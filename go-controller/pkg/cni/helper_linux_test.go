@@ -22,7 +22,11 @@ import (
 	"github.com/vishvananda/netlink"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	ktypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
+	corev1listers "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/tools/cache"
 	kexec "k8s.io/utils/exec"
 	"sigs.k8s.io/knftables"
 
@@ -1244,8 +1248,105 @@ func TestPodRequest_deletePodConntrack(t *testing.T) {
 					}
 				}
 			}
-			tc.inpPodRequest.deletePodConntrack()
+			tc.inpPodRequest.deletePodConntrack(nil)
 			mockTypeResult.AssertExpectations(t)
+		})
+	}
+}
+
+func TestPodRequest_isIPOwnedByAnotherPod(t *testing.T) {
+	const (
+		ns      = "kv-live-migration-84"
+		nadKey  = ovntypes.DefaultNetworkName
+		srcName = "virt-launcher-vm-source"
+		srcUID  = "uid-source"
+		tgtName = "virt-launcher-vm-target"
+		tgtUID  = "uid-target"
+	)
+	theIP := ovntest.MustParseIP("10.13.224.7")
+
+	annotatedPod := func(name, uid string, completed bool, ipCIDR string) *corev1.Pod {
+		ipNets := ovntest.MustParseIPNets(ipCIDR)
+		anns, err := util.MarshalPodAnnotation(nil, &util.PodAnnotation{
+			IPs: ipNets,
+			MAC: util.IPAddrToHWAddr(ipNets[0].IP),
+		}, nadKey)
+		require.NoError(t, err)
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:        name,
+				Namespace:   ns,
+				UID:         ktypes.UID(uid),
+				Annotations: anns,
+			},
+		}
+		if completed {
+			pod.Status.Phase = corev1.PodSucceeded
+		}
+		return pod
+	}
+	newLister := func(pods ...*corev1.Pod) corev1listers.PodLister {
+		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+		for _, p := range pods {
+			require.NoError(t, indexer.Add(p))
+		}
+		return corev1listers.NewPodLister(indexer)
+	}
+
+	tests := []struct {
+		desc     string
+		prUID    string
+		prName   string
+		lister   corev1listers.PodLister
+		expected bool
+	}{
+		{
+			desc:     "nil lister returns false (e.g. unprivileged shim without apiserver)",
+			prUID:    srcUID,
+			lister:   nil,
+			expected: false,
+		},
+		{
+			desc:     "another (target) pod owns the IP -> true (live migration in progress)",
+			prUID:    srcUID,
+			lister:   newLister(annotatedPod(srcName, srcUID, false, "10.13.224.7/20"), annotatedPod(tgtName, tgtUID, false, "10.13.224.7/20")),
+			expected: true,
+		},
+		{
+			desc:     "only the source pod owns the IP -> false (genuine deletion, IP released)",
+			prUID:    srcUID,
+			lister:   newLister(annotatedPod(srcName, srcUID, false, "10.13.224.7/20")),
+			expected: false,
+		},
+		{
+			desc:     "owning pod is completed -> false",
+			prUID:    srcUID,
+			lister:   newLister(annotatedPod(srcName, srcUID, false, "10.13.224.7/20"), annotatedPod(tgtName, tgtUID, true, "10.13.224.7/20")),
+			expected: false,
+		},
+		{
+			desc:     "another pod with a different IP -> false",
+			prUID:    srcUID,
+			lister:   newLister(annotatedPod(srcName, srcUID, false, "10.13.224.7/20"), annotatedPod(tgtName, tgtUID, false, "10.13.224.99/20")),
+			expected: false,
+		},
+		{
+			desc:     "no source UID: exclude source by name, target owns IP -> true",
+			prName:   srcName,
+			lister:   newLister(annotatedPod(srcName, "", false, "10.13.224.7/20"), annotatedPod(tgtName, tgtUID, false, "10.13.224.7/20")),
+			expected: true,
+		},
+	}
+
+	for i, tc := range tests {
+		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
+			pr := &PodRequest{
+				PodNamespace: ns,
+				PodName:      tc.prName,
+				PodUID:       tc.prUID,
+				nadKey:       nadKey,
+			}
+			require.Equal(t, tc.expected, pr.isIPOwnedByAnotherPod(tc.lister, theIP))
 		})
 	}
 }

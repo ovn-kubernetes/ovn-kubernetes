@@ -22,6 +22,8 @@ import (
 	"github.com/safchain/ethtool"
 	"github.com/vishvananda/netlink"
 
+	"k8s.io/apimachinery/pkg/labels"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/knftables"
 
@@ -686,7 +688,7 @@ func ConfigureOVS(ctx context.Context, namespace, podName, podIfName, hostIfaceN
 
 type PodRequestInterfaceOps interface {
 	ConfigureInterface(pr *PodRequest, getter PodInfoGetter, ifInfo *PodInterfaceInfo) ([]*current.Interface, error)
-	UnconfigureInterface(pr *PodRequest, ifInfo *PodInterfaceInfo) error
+	UnconfigureInterface(pr *PodRequest, ifInfo *PodInterfaceInfo, podLister corev1listers.PodLister) error
 }
 
 type defaultPodRequestInterfaceOps struct{}
@@ -767,7 +769,7 @@ func (*defaultPodRequestInterfaceOps) ConfigureInterface(pr *PodRequest, getter 
 	return []*current.Interface{hostIface, contIface}, nil
 }
 
-func (*defaultPodRequestInterfaceOps) UnconfigureInterface(pr *PodRequest, ifInfo *PodInterfaceInfo) error {
+func (*defaultPodRequestInterfaceOps) UnconfigureInterface(pr *PodRequest, ifInfo *PodInterfaceInfo, podLister corev1listers.PodLister) error {
 	podDesc := fmt.Sprintf("for pod %s/%s NAD %s", pr.PodNamespace, pr.PodName, pr.nadName)
 	klog.V(5).Infof("Tear down interface (%+v) %s", *pr, podDesc)
 	if ifInfo.IsDPUHostMode {
@@ -881,12 +883,12 @@ func (*defaultPodRequestInterfaceOps) UnconfigureInterface(pr *PodRequest, ifInf
 		if err != nil {
 			klog.Errorf("Failed to clearPodBandwidth sandbox %v %s: %v", pr.SandboxID, podDesc, err)
 		}
-		pr.deletePodConntrack()
+		pr.deletePodConntrack(podLister)
 	}
 	return nil
 }
 
-func (pr *PodRequest) deletePodConntrack() {
+func (pr *PodRequest) deletePodConntrack(podLister corev1listers.PodLister) {
 	if pr.CNIConf.PrevResult == nil {
 		return
 	}
@@ -905,12 +907,67 @@ func (pr *PodRequest) deletePodConntrack() {
 				continue
 			}
 		}
+		// During KubeVirt live migration the VM IP is preserved and moves to the
+		// migration target pod. Flushing conntrack for an IP that is still owned
+		// by another pod would tear down established connections (e.g. the
+		// north/south NodePort/SNAT ingress connection routed to the VM), which
+		// must survive the migration. Skip the flush for such preserved IPs; the
+		// genuinely released IPs are still flushed. This mirrors the IP-release
+		// guard the controller already applies in canReleasePodIPs.
+		if pr.isIPOwnedByAnotherPod(podLister, ip.Address.IP) {
+			klog.V(5).Infof("Skipping conntrack flush for IP %s of pod %s/%s: still owned by another pod (e.g. live migration target)",
+				ip.Address.IP.String(), pr.PodNamespace, pr.PodName)
+			continue
+		}
 		_, err = util.DeleteConntrack(ip.Address.IP.String(), 0, "", netlink.ConntrackReplyAnyIP, nil)
 		if err != nil {
 			klog.Errorf("Failed to delete Conntrack Entry for %s: %v", ip.Address.IP.String(), err)
 			continue
 		}
 	}
+}
+
+// isIPOwnedByAnotherPod returns true when a pod other than the one whose CNI DEL
+// is being processed (pr) currently owns ip on pr's network, according to the
+// OVN pod annotation. This detects KubeVirt live migration, where the VM IP is
+// preserved and held by the migration target pod while the source pod is torn
+// down. When podLister is nil (e.g. the unprivileged CNI shim, which has no
+// apiserver access) it returns false so the conntrack flush keeps its previous
+// behavior.
+func (pr *PodRequest) isIPOwnedByAnotherPod(podLister corev1listers.PodLister, ip net.IP) bool {
+	if podLister == nil {
+		return false
+	}
+	pods, err := podLister.Pods(pr.PodNamespace).List(labels.Everything())
+	if err != nil {
+		klog.Warningf("Failed to list pods in namespace %s to check ownership of IP %s for pod %s: %v",
+			pr.PodNamespace, ip.String(), pr.PodName, err)
+		return false
+	}
+	for _, p := range pods {
+		// Skip the pod being deleted (the conntrack owner being torn down).
+		if pr.PodUID != "" {
+			if string(p.UID) == pr.PodUID {
+				continue
+			}
+		} else if p.Name == pr.PodName {
+			continue
+		}
+		if util.PodCompleted(p) || util.PodWantsHostNetwork(p) {
+			continue
+		}
+		podAnnotation, err := util.UnmarshalPodAnnotation(p.Annotations, pr.nadKey)
+		if err != nil {
+			// pod not (yet) annotated for this network; cannot own the IP here
+			continue
+		}
+		for _, ipNet := range podAnnotation.IPs {
+			if ipNet.IP.Equal(ip) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (pr *PodRequest) deletePort(ifaceName, podNamespace, podName string) {
