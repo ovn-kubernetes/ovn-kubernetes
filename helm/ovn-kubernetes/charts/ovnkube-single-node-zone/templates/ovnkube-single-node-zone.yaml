@@ -411,6 +411,8 @@ spec:
           value: {{ default 6081 .Values.global.encapPort | quote }}
         - name: OVN_DISABLE_PKT_MTU_CHECK
           value: {{ default "" .Values.global.disablePacketMtuCheck | quote }}
+        - name: ENABLE_IPSEC
+          value: {{ hasKey .Values.global "enableIpsec" | ternary .Values.global.enableIpsec false | quote }}
         - name: OVN_NETFLOW_TARGETS
           value: {{ default "" .Values.global.netFlowTargets | quote }}
         - name: OVN_SFLOW_TARGETS

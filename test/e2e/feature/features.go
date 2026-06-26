@@ -23,6 +23,7 @@ var (
 	DisablePacketMTUCheck = New("DisablePacketMTUCheck")
 	VirtualMachineSupport = New("VirtualMachineSupport")
 	Interconnect          = New("Interconnect")
+	IPsec                 = New("IPsec")
 	Multicast             = New("Multicast")
 	MultiHoming           = New("MultiHoming")
 	NodeIPMACMigration    = New("NodeIPMACMigration")
