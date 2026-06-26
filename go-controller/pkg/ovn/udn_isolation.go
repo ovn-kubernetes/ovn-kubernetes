@@ -318,6 +318,11 @@ func ConfigureAdvertisedNetworkIsolation(nbClient libovsdbclient.Client) error {
 	dropACL := BuildAdvertisedNetworkSubnetsDropACL(addrSet)
 	pg := libovsdbutil.BuildPortGroup(GetAdvertisedNetworkSubnetsDropPGdbIDs(), nil, nil)
 
+	ops, err = migrateAdvertisedNetworkDropACLToPortGroup(nbClient, pg, dropACL, ops)
+	if err != nil {
+		return err
+	}
+
 	ops, err = libovsdbops.CreateOrUpdateACLsOps(nbClient, ops, nil, dropACL)
 	if err != nil {
 		return fmt.Errorf("failed to create or update advertised network isolation drop ACL: %w", err)
@@ -334,6 +339,78 @@ func ConfigureAdvertisedNetworkIsolation(nbClient libovsdbclient.Client) error {
 		return fmt.Errorf("failed to configure advertised network isolation: %w", err)
 	}
 	return nil
+}
+
+// migrateAdvertisedNetworkDropACLToPortGroup handles upgrade from switch-based drop ACL.
+// If the port group already exists, migration was already done. Otherwise, it looks up
+// the existing drop ACL by index. If found, it removes it from switches and populates the
+// port group with the stor ports of affected switches. If the index lookup fails with
+// multiple results (the race condition this migration fixes), it falls back to a predicate
+// scan. It sets dropACL.UUID to the first existing ACL's UUID so the caller can update it
+// in place.
+func migrateAdvertisedNetworkDropACLToPortGroup(nbClient libovsdbclient.Client, pg *nbdb.PortGroup, dropACL *nbdb.ACL, ops []ovsdb.Operation) ([]ovsdb.Operation, error) {
+	_, err := libovsdbops.GetPortGroup(nbClient, &nbdb.PortGroup{Name: pg.Name})
+	if err == nil {
+		return ops, nil
+	}
+	if !errors.Is(err, libovsdbclient.ErrNotFound) {
+		return nil, fmt.Errorf("failed to get advertised network isolation port group: %w", err)
+	}
+
+	var existingDropACLs []*nbdb.ACL
+	existingACL, err := libovsdbops.GetACL(nbClient, &nbdb.ACL{ExternalIDs: GetAdvertisedNetworkSubnetsDropACLdbIDs().GetExternalIDs()})
+	if errors.Is(err, libovsdbclient.ErrNotFound) {
+		return ops, nil
+	}
+	if err == nil {
+		existingDropACLs = []*nbdb.ACL{existingACL}
+	} else {
+		// multiple ACLs found (the race condition this migration fixes), fall back to predicate scan
+		existingDropACLs, err = libovsdbops.FindACLsWithPredicate(nbClient,
+			libovsdbops.GetPredicate[*nbdb.ACL](GetAdvertisedNetworkSubnetsDropACLdbIDs(), nil))
+		if err != nil {
+			return nil, fmt.Errorf("failed to find advertised network drop ACLs: %w", err)
+		}
+	}
+	// shouldn't happen but safe-guard it
+	if len(existingDropACLs) == 0 {
+		return ops, nil
+	}
+
+	dropACL.UUID = existingDropACLs[0].UUID
+
+	allDropACLUUIDs := sets.New[string]()
+	for _, acl := range existingDropACLs {
+		allDropACLUUIDs.Insert(acl.UUID)
+	}
+
+	var affectedSwitches []string
+	p := func(sw *nbdb.LogicalSwitch) bool {
+		if allDropACLUUIDs.HasAny(sw.ACLs...) {
+			affectedSwitches = append(affectedSwitches, sw.Name)
+			return true
+		}
+		return false
+	}
+	ops, err = libovsdbops.RemoveACLsFromLogicalSwitchesWithPredicateOps(nbClient, ops, p, existingDropACLs...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to remove stale drop ACLs from switches: %w", err)
+	}
+
+	for _, swName := range affectedSwitches {
+		storPortName := util.GetNetworkScopedSwitchToRouterPortNameFromSwitchName(swName)
+		storLSP, err := libovsdbops.GetLogicalSwitchPort(nbClient, &nbdb.LogicalSwitchPort{Name: storPortName})
+		if errors.Is(err, libovsdbclient.ErrNotFound) {
+			klog.Warningf("Skipping advertised network isolation port group population for switch %s: stor port %s not found", swName, storPortName)
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to get stor port %s: %w", storPortName, err)
+		}
+		pg.Ports = append(pg.Ports, storLSP.UUID)
+	}
+
+	return ops, nil
 }
 
 // CleanupStaleAdvertisedNetworkSubnets removes subnets from the advertised network subnets address set
