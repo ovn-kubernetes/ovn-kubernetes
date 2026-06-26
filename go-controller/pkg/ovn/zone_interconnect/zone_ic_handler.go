@@ -465,8 +465,7 @@ func (zic *ZoneInterconnectHandler) addTransitSwitchConfig(sw *nbdb.LogicalSwitc
 //     to the node logical switch port in the transit switch
 //   - remove any stale static routes in the ovn_cluster_router for the node
 //
-// All nbdb operations (LRP add, LSP add, stale route deletes) are committed in
-// a single OVSDB transaction.
+// All nbdb operations are committed in a single OVSDB transaction.
 func (zic *ZoneInterconnectHandler) createLocalZoneNodeResources(node *corev1.Node, nodeID int) error {
 	nodeTransitSwitchPortIPs, err := util.ParseNodeTransitSwitchPortAddrs(node)
 	if err != nil || len(nodeTransitSwitchPortIPs) == 0 {
@@ -533,10 +532,10 @@ func (zic *ZoneInterconnectHandler) createLocalZoneNodeResources(node *corev1.No
 //     Eg. if the node name is ovn-worker and the network is default, the name would be - tstor.ovn-worker
 //     if the node name is ovn-worker and the network name is blue, the logical port name would be - blue.tstor.ovn-worker
 //   - binds the remote port to the node remote chassis in SBDB
+//   - removes any IC static routes that conflict with this node's routes
 //   - adds static routes for the remote node via the remote port ip in the ovn_cluster_router
 //
-// All nbdb operations (LSP add, static routes add, leftover LRP cleanup) are
-// committed in a single OVSDB transaction.
+// All nbdb operations are committed in a single OVSDB transaction.
 func (zic *ZoneInterconnectHandler) createRemoteZoneNodeResources(node *corev1.Node, nodeID int, nodeTransitSwitchPortIPs, nodeSubnets, nodeGRPIPs []*net.IPNet) error {
 	transitRouterPortMac := util.IPAddrToHWAddr(nodeTransitSwitchPortIPs[0].IP)
 	var transitRouterPortNetworks []string
@@ -571,6 +570,12 @@ func (zic *ZoneInterconnectHandler) createRemoteZoneNodeResources(node *corev1.N
 
 	remotePortName := zic.GetNetworkScopedName(types.TransitSwitchToRouterPrefix + node.Name)
 	ops, err = zic.addNodeLogicalSwitchPortOps(ops, zic.networkTransitSwitchName, remotePortName, lportTypeRemote, []string{remotePortAddr}, lspOptions, externalIDs)
+	if err != nil {
+		return err
+	}
+
+	// Remove stale IC routes that would conflict with this node's new routes.
+	ops, err = zic.deleteRemoteNodeStaleStaticRoutesOps(ops, node, nodeTransitSwitchPortIPs, nodeSubnets, nodeGRPIPs)
 	if err != nil {
 		return err
 	}
@@ -650,6 +655,61 @@ func (zic *ZoneInterconnectHandler) cleanupNode(nodeName string) error {
 	}
 
 	return nil
+}
+
+// deleteRemoteNodeStaleStaticRoutesOps builds ops to remove IC static routes
+// on the cluster router that conflict with this node's valid (prefix, nexthop)
+// pairs, built from its current annotations. Two cases are removed:
+//   - routes tagged ic-node == this node whose (prefix, nexthop) is not in the
+//     valid set (this node's own stale routes).
+//   - routes tagged ic-node != this node sharing a prefix with this node but
+//     pointing at an invalid nexthop (the ECMP conflict from a previously-deleted node).
+func (zic *ZoneInterconnectHandler) deleteRemoteNodeStaleStaticRoutesOps(ops []ovsdb.Operation, node *corev1.Node, nodeTransitSwitchPortIPs, nodeSubnets, nodeGRPIPs []*net.IPNet) ([]ovsdb.Operation, error) {
+	// Build valid (prefix -> set of nexthops) pairs for this node.
+	validPairs := make(map[string]sets.Set[string])
+	addPair := func(prefix, nexthop string) {
+		if validPairs[prefix] == nil {
+			validPairs[prefix] = sets.New[string]()
+		}
+		validPairs[prefix].Insert(nexthop)
+	}
+
+	for _, sr := range zic.getStaticRoutes(nodeSubnets, nodeTransitSwitchPortIPs, false) {
+		addPair(sr.prefix, sr.nexthop)
+	}
+
+	if len(nodeGRPIPs) > 0 {
+		for _, sr := range zic.getStaticRoutes(nodeGRPIPs, nodeTransitSwitchPortIPs, true) {
+			addPair(sr.prefix, sr.nexthop)
+		}
+	}
+
+	p := func(lrsr *nbdb.LogicalRouterStaticRoute) bool {
+		if lrsr.ExternalIDs == nil {
+			return false
+		}
+		icNode := lrsr.ExternalIDs["ic-node"]
+		if icNode == "" {
+			// Not an IC route; leave alone.
+			return false
+		}
+
+		nexthops, exists := validPairs[lrsr.IPPrefix]
+
+		if icNode == node.Name {
+			// This node's route. Delete if its (prefix, nexthop) is not in
+			// the valid set.
+			if !exists {
+				return true
+			}
+			return !nexthops.Has(lrsr.Nexthop)
+		}
+
+		// Another node's route. Delete only on prefix-match with invalid nexthop.
+		return exists && !nexthops.Has(lrsr.Nexthop)
+	}
+
+	return libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicateOps(zic.nbClient, ops, zic.networkClusterRouterName, p)
 }
 
 func (zic *ZoneInterconnectHandler) cleanupNodeClusterRouterPortOps(ops []ovsdb.Operation, nodeName string) ([]ovsdb.Operation, error) {
@@ -734,7 +794,8 @@ func (zic *ZoneInterconnectHandler) addRemoteNodeStaticRoutesOps(ops []ovsdb.Ope
 }
 
 // deleteLocalNodeStaticRoutesOps builds ops to delete the static routes added by
-// the function addRemoteNodeStaticRoutesOps.
+// addRemoteNodeStaticRoutesOps, and removes any other stale IC routes on this
+// node's prefix (in case this node was previously a remote node).
 func (zic *ZoneInterconnectHandler) deleteLocalNodeStaticRoutesOps(ops []ovsdb.Operation, node *corev1.Node, nodeTransitSwitchPortIPs []*net.IPNet) ([]ovsdb.Operation, error) {
 	// skip types.NetworkExternalID check in the predicate function as this static route may be deleted
 	// before types.NetworkExternalID external-ids is set correctly during upgrade.
@@ -764,34 +825,33 @@ func (zic *ZoneInterconnectHandler) deleteLocalNodeStaticRoutesOps(ops []ovsdb.O
 		}
 	}
 
-	if zic.IsUserDefinedNetwork() {
-		// UDN cluster router doesn't connect to a join switch
-		// or to a Gateway router.
-		return ops, nil
-	}
+	var nodeGRPIPs []*net.IPNet
+	if !zic.IsUserDefinedNetwork() {
+		// Clear the routes connecting to the GW Router for the default network
+		nodeGRPIPs, err = udn.GetGWRouterIPs(node, zic.GetNetInfo())
+		if err != nil {
+			if util.IsAnnotationNotSetError(err) {
+				// FIXME(tssurya): This is present for backwards compatibility
+				// Remove me a few months from now
+				var err1 error
+				nodeGRPIPs, err1 = util.ParseNodeGatewayRouterLRPAddrs(node)
+				if err1 != nil {
+					return nil, fmt.Errorf("failed to parse node %s Gateway router LRP Addrs annotation %w", node.Name, err1)
+				}
+			}
+		}
 
-	// Clear the routes connecting to the GW Router for the default network
-	nodeGRPIPs, err := udn.GetGWRouterIPs(node, zic.GetNetInfo())
-	if err != nil {
-		if util.IsAnnotationNotSetError(err) {
-			// FIXME(tssurya): This is present for backwards compatibility
-			// Remove me a few months from now
-			var err1 error
-			nodeGRPIPs, err1 = util.ParseNodeGatewayRouterLRPAddrs(node)
-			if err1 != nil {
-				return nil, fmt.Errorf("failed to parse node %s Gateway router LRP Addrs annotation %w", node.Name, err1)
+		nodenodeGRPIPStaticRoutes := zic.getStaticRoutes(nodeGRPIPs, nodeTransitSwitchPortIPs, true)
+		for _, staticRoute := range nodenodeGRPIPStaticRoutes {
+			if err := deleteRouteOps(staticRoute.prefix, staticRoute.nexthop); err != nil {
+				return nil, fmt.Errorf("error deleting static route %s - %s from the router %s : %w", staticRoute.prefix, staticRoute.nexthop, zic.networkClusterRouterName, err)
 			}
 		}
 	}
 
-	nodenodeGRPIPStaticRoutes := zic.getStaticRoutes(nodeGRPIPs, nodeTransitSwitchPortIPs, true)
-	for _, staticRoute := range nodenodeGRPIPStaticRoutes {
-		if err := deleteRouteOps(staticRoute.prefix, staticRoute.nexthop); err != nil {
-			return nil, fmt.Errorf("error deleting static route %s - %s from the router %s : %w", staticRoute.prefix, staticRoute.nexthop, zic.networkClusterRouterName, err)
-		}
-	}
-
-	return ops, nil
+	// Also remove any remaining stale IC routes on this node's prefix that this
+	// (in case this node was previously a remote node).
+	return zic.deleteRemoteNodeStaleStaticRoutesOps(ops, node, nodeTransitSwitchPortIPs, nodeSubnets, nodeGRPIPs)
 }
 
 // interconnectStaticRoute represents a static route
