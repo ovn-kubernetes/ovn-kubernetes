@@ -18,17 +18,16 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
-
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iptables"
 )
 
 // podIPConfig holds pod specific info to implement egress IP for secondary host networks for a single pod IP. A pod may
 // contain multiple IPs (one for single stack, 2 for dual stack).
 type podIPConfig struct {
-	failed      bool // used for retry
-	v6          bool
-	ipTableRule iptables.RuleArg
-	ipRule      netlink.Rule
+	failed    bool // used for retry
+	v6        bool
+	snatKey   string // pod IP used as key in nftables SNAT map
+	snatValue string // egress IP used as value in nftables SNAT map
+	ipRule    netlink.Rule
 }
 
 func newPodIPConfig() *podIPConfig {
@@ -39,7 +38,7 @@ func (pIC *podIPConfig) equal(pIC2 *podIPConfig) bool {
 	if pIC.v6 != pIC2.v6 {
 		return false
 	}
-	if !equal(pIC.ipTableRule.Args, pIC2.ipTableRule.Args) {
+	if pIC.snatKey != pIC2.snatKey || pIC.snatValue != pIC2.snatValue {
 		return false
 	}
 	if pIC.ipRule.String() != pIC2.ipRule.String() {
@@ -296,16 +295,4 @@ func (c *Controller) listPodsByNamespaceAndSelector(namespace string, selector *
 	}
 	return pods, nil
 
-}
-
-func equal(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i, v := range a {
-		if v != b[i] {
-			return false
-		}
-	}
-	return true
 }
