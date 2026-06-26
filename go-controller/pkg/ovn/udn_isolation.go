@@ -10,12 +10,14 @@ import (
 	"strconv"
 	"strings"
 
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -288,6 +290,39 @@ func GetAdvertisedNetworkSubnetsPassACLdbIDs(controller, networkName string, net
 			libovsdbops.ObjectNameKey: networkName,
 			libovsdbops.NetworkKey:    strconv.Itoa(networkID),
 		})
+}
+
+// ConfigureAdvertisedNetworkIsolation ensures the global resources for advertised network isolation exist.
+func ConfigureAdvertisedNetworkIsolation(nbClient libovsdbclient.Client) error {
+	addressSetFactory := addressset.NewOvnAddressSetFactory(nbClient, config.IPv4Mode, config.IPv6Mode)
+	_, err := addressSetFactory.EnsureAddressSet(GetAdvertisedNetworkSubnetsAddressSetDBIDs())
+	return err
+}
+
+// CleanupStaleAdvertisedNetworkSubnets removes subnets from the advertised network subnets address set
+// that are not in validSubnets.
+func CleanupStaleAdvertisedNetworkSubnets(nbClient libovsdbclient.Client, validSubnets sets.Set[string]) error {
+	addressSetFactory := addressset.NewOvnAddressSetFactory(nbClient, config.IPv4Mode, config.IPv6Mode)
+	addrSet, err := addressSetFactory.GetAddressSet(GetAdvertisedNetworkSubnetsAddressSetDBIDs())
+	if err != nil && !errors.Is(err, libovsdbclient.ErrNotFound) {
+		return fmt.Errorf("failed to get advertised subnets address set: %w", err)
+	}
+	if addrSet == nil {
+		return nil
+	}
+	v4Addrs, v6Addrs := addrSet.GetAddresses()
+	var stale []string
+	for _, addr := range append(v4Addrs, v6Addrs...) {
+		if !validSubnets.Has(addr) {
+			stale = append(stale, addr)
+		}
+	}
+	if len(stale) > 0 {
+		if err := addrSet.DeleteAddresses(stale); err != nil {
+			return fmt.Errorf("failed to delete stale addresses %q from advertised network subnets address set: %w", stale, err)
+		}
+	}
+	return nil
 }
 
 // BuildAdvertisedNetworkSubnetsDropACL builds the advertised network subnets drop ACL:
