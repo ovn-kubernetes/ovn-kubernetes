@@ -291,6 +291,15 @@ func (gw *GatewayManager) createGWRouter(gwConfig *GatewayConfig) (*nbdb.Logical
 	if gw.netInfo.GetNetworkName() == types.DefaultNetworkName {
 		logicalRouterOptions["snat-ct-zone"] = "0"
 	}
+	// Defensive: since nat-addresses=router isn't set on UDN external
+	// switch ports, there is no extra benefit from setting this to true
+	// today. However, the default (false) would allow GARP/RARP if
+	// nat-addresses were ever added back; keeping it true ensures that
+	// any future change enabling GARPs on UDN GRs must explicitly
+	// justify which traffic flow requires it.
+	if gw.netInfo.IsUserDefinedNetwork() {
+		logicalRouterOptions["disable_garp_rarp"] = "true"
+	}
 	if gw.netInfo.TopologyType() == types.Layer2Topology {
 		// When multiple networks are set of the same logical-router-port
 		// the networks get lexicographically sorted; thus there is no
@@ -1191,26 +1200,30 @@ func (gw *GatewayManager) addExternalSwitch(prefix, interfaceID, gatewayRouter, 
 
 	// Also add the port to connect the external_switch to the router.
 	externalSwitchPortToRouter := prefix + types.EXTSwitchToGWRouterPrefix + gatewayRouter
+	etorOptions := map[string]string{
+		libovsdbops.RouterPort: externalRouterPort,
+	}
+	if !gw.netInfo.IsUserDefinedNetwork() {
+		// nat-addresses=router programs OVN to send GARPs for all external IPs
+		// that the logical switch port has been configured to use. This is
+		// necessary for egress IP because if an egress IP is moved between two
+		// nodes, the nodes need to actively update the ARP cache of all neighbors
+		// as to notify them the change.
+		// For UDNs this is not set: UDN GRs only carry masquerade IPs which are
+		// link-local and identical across nodes, so GARPs for them cause an ARP
+		// storm on the physical network. EgressIP for UDNs has no SNATs on the
+		// GR, so nat-addresses=router is not needed.
+		etorOptions["nat-addresses"] = "router"
+
+		// Setting nat-addresses to router will send out GARPs for all externalIPs and LB VIPs
+		// hosted on the GR. Setting exclude-lb-vips-from-garp to true will make sure GARPs for
+		// LB VIPs are not sent, thereby preventing GARP overload.
+		etorOptions["exclude-lb-vips-from-garp"] = "true"
+	}
 	externalLogicalSwitchPortToRouter := nbdb.LogicalSwitchPort{
-		Name: externalSwitchPortToRouter,
-		Type: "router",
-		Options: map[string]string{
-			libovsdbops.RouterPort: externalRouterPort,
-
-			// This option will program OVN to start sending GARPs for all external IPS
-			// that the logical switch port has been configured to use. This is
-			// necessary for egress IP because if an egress IP is moved between two
-			// nodes, the nodes need to actively update the ARP cache of all neighbors
-			// as to notify them the change. If this is not the case: packets will
-			// continue to be routed to the old node which hosted the egress IP before
-			// it was moved, and the connections will fail.
-			"nat-addresses": "router",
-
-			// Setting nat-addresses to router will send out GARPs for all externalIPs and LB VIPs
-			// hosted on the GR. Setting exclude-lb-vips-from-garp to true will make sure GARPs for
-			// LB VIPs are not sent, thereby preventing GARP overload.
-			"exclude-lb-vips-from-garp": "true",
-		},
+		Name:      externalSwitchPortToRouter,
+		Type:      "router",
+		Options:   etorOptions,
 		Addresses: []string{macAddress},
 	}
 
