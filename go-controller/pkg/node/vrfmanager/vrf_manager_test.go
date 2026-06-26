@@ -17,6 +17,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/sets"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	netlink_mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/vishvananda/netlink"
@@ -95,6 +96,7 @@ var _ = ginkgo.Describe("VRF manager", func() {
 	}
 
 	ginkgo.BeforeEach(func() {
+		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 		c = NewController(routemanager.NewController())
 
 		nlMock = &mocks.NetLinkOps{}
@@ -145,6 +147,24 @@ var _ = ginkgo.Describe("VRF manager", func() {
 			gomega.Expect(err).Should(gomega.HaveOccurred())
 		})
 
+		ginkgo.It("uses configured routing table ID start for ownership checks", func() {
+			config.OvnKubeNode.RoutingTableIDStart = 2000
+
+			err := c.AddVRF("this.name.is.ok", "other", 1999, nil)
+			gomega.Expect(err).Should(gomega.HaveOccurred())
+			gomega.Expect(err.Error()).To(gomega.ContainSubstring("lower than 2000"))
+
+			err = c.AddVRF(vrfLinkName1, "", 2000, nil)
+			gomega.Expect(err).Should(gomega.HaveOccurred())
+			gomega.Expect(err.Error()).To(gomega.ContainSubstring("not managed by ovn-kubernetes"))
+
+			nlMock.On("LinkList").Return([]netlink.Link{buildVRF(vrfLinkName1), buildVRF(vrfLinkName2)}, nil)
+			err = c.Repair(sets.New[string]())
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+			nlMock.AssertNotCalled(ginkgo.GinkgoT(), "LinkDelete", buildVRF(vrfLinkName1))
+			nlMock.AssertCalled(ginkgo.GinkgoT(), "LinkDelete", buildVRF(vrfLinkName2))
+		})
+
 		ginkgo.It("delete VRF", func() {
 			err := c.AddVRF(vrfLinkName2, "", getVRFTable(vrfLinkName2), nil)
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
@@ -189,6 +209,7 @@ var _ = ginkgo.Describe("VRF manager tests with a network namespace", func() {
 		wg     *sync.WaitGroup
 	)
 	ginkgo.BeforeEach(func() {
+		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 		var err error
 		testNS, err = testutils.NewNS()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())

@@ -67,6 +67,8 @@ global:
   enableNetworkSegmentation: false
   # -- Configure to use route advertisements feature with ovn-kubernetes
   enableRouteAdvertisements: false
+  # -- Optional Linux routing table ID start used by ovnkube-node for generated VRF/route tables.
+  # routingTableIDStart: 1002
   # -- Configure to enable no-overlay mode for the default network
   enableNoOverlay: false
   # -- Configure to enable SNAT for outbound traffic in no-overlay mode
