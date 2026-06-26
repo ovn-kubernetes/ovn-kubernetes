@@ -13,9 +13,17 @@ package v1alpha1
 type BandwidthApplyConfiguration struct {
 	// rate The value of rate limit in kbps. Traffic over the limit
 	// will be dropped.
+	//
+	// K8s 1.36 validates CRD integer maximums against the OpenAPI integer
+	// format. This uint32 range exceeds int32, so controller-gen must emit
+	// format:int64 while the Go API type remains uint32.
 	Rate *uint32 `json:"rate,omitempty"`
 	// burst The value of burst rate limit in kilobits.
 	// This also needs rate to be specified.
+	//
+	// K8s 1.36 validates CRD integer maximums against the OpenAPI integer
+	// format. This uint32 range exceeds int32, so controller-gen must emit
+	// format:int64 while the Go API type remains uint32.
 	Burst *uint32 `json:"burst,omitempty"`
 }
 
