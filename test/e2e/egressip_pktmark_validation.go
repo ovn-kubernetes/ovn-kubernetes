@@ -85,21 +85,33 @@ var _ = ginkgo.Describe("[secondary-host-eip] Egress IP Packet Mark Solution Val
 		Items []egressIPObject `json:"items"`
 	}
 
-	// Helper to get egress IP status items
+	// // Helper to get egress IP status items
+	// getEgressIPStatusItems := func() []egressIPStatus {
+	// 	egressIPObjs := &egressIPObjects{}
+	// 	egressIPStdout, err := e2ekubectl.RunKubectl("default", "get", "egressips", "-o", "json")
+	// 	if err != nil {
+	// 		framework.Failf("Error: failed to get the EgressIP object, err: %v", err)
+	// 	}
+	// 	err = json.Unmarshal([]byte(egressIPStdout), egressIPObjs)
+	// 	if err != nil {
+	// 		framework.Failf("Error: failed to unmarshal EgressIP object, err: %v", err)
+	// 	}
+	// 	if len(egressIPObjs.Items) == 0 {
+	// 		framework.Failf("Error: no EgressIP objects found")
+	// 	}
+	// 	return egressIPObjs.Items[0].Status.Items
+	// }
 	getEgressIPStatusItems := func() []egressIPStatus {
-		egressIPObjs := &egressIPObjects{}
-		egressIPStdout, err := e2ekubectl.RunKubectl("default", "get", "egressips", "-o", "json")
+		egressIPObj := &egressIPObject{}
+		egressIPStdout, err := e2ekubectl.RunKubectl("default", "get", "egressips", egressIPName, "-o", "json")
 		if err != nil {
 			framework.Failf("Error: failed to get the EgressIP object, err: %v", err)
 		}
-		err = json.Unmarshal([]byte(egressIPStdout), egressIPObjs)
+		err = json.Unmarshal([]byte(egressIPStdout), egressIPObj)
 		if err != nil {
 			framework.Failf("Error: failed to unmarshal EgressIP object, err: %v", err)
 		}
-		if len(egressIPObjs.Items) == 0 {
-			framework.Failf("Error: no EgressIP objects found")
-		}
-		return egressIPObjs.Items[0].Status.Items
+		return egressIPObj.Status.Items
 	}
 
 	// Helper to verify egress IP status length
@@ -707,7 +719,19 @@ spec:
 			}
 		}
 
-		ginkgo.By("Step 9: Final validation summary")
+		ginkgo.By("Step 9: Verify all pods use egress IP (no traffic leaks)")
+		// Verify pods are using the egress IP
+		for i := 0; i < numTestPods; i++ {
+			podName := fmt.Sprintf("%s-%d", podNamePrefix, i)
+			conditionFunc := targetExternalContainerAndTest(secondaryTargetContainer, podNamespace.Name, podName, true, []string{normalizedEgressIP})
+			err = wait.PollUntilContextTimeout(context.Background(), retryInterval, retryTimeout, true, func(ctx context.Context) (bool, error) {
+				return conditionFunc()
+			})
+			framework.ExpectNoError(err, "Pod %s should be using egress IP", podName)
+		}
+		framework.Logf("✓ All %d pods verified to use egress IP %s", numTestPods, normalizedEgressIP)
+
+		ginkgo.By("Step 10: Final validation summary")
 		framework.Logf("====================================")
 		framework.Logf("Packet Mark Solution Validation PASSED:")
 		framework.Logf("  ✓ OVN NB DB: LRPs created with pkt_mark=%s", egressIPUnreadyMark)
@@ -719,7 +743,7 @@ spec:
 		framework.Logf("  ✓ Traffic: All pods using egress IP %s", normalizedEgressIP)
 		framework.Logf("====================================")
 
-		ginkgo.By("Step 10: Cleanup - Delete test pods")
+		ginkgo.By("Step 11: Cleanup - Delete test pods")
 		for i := 0; i < numTestPods; i++ {
 			podName := fmt.Sprintf("%s-%d", podNamePrefix, i)
 			err := f.ClientSet.CoreV1().Pods(podNamespace.Name).Delete(context.TODO(), podName, metav1.DeleteOptions{})

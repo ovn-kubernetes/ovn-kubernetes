@@ -86,21 +86,34 @@ var _ = ginkgo.Describe("[secondary-host-eip] Egress IP Traffic Leak Prevention 
 		Items []egressIPObject `json:"items"`
 	}
 
+	// // Helper to get egress IP status items
+	// getEgressIPStatusItems := func() []egressIPStatus {
+	// 	egressIPObjs := &egressIPObjects{}
+	// 	egressIPStdout, err := e2ekubectl.RunKubectl("default", "get", "egressips", "-o", "json")
+	// 	if err != nil {
+	// 		framework.Failf("Error: failed to get the EgressIP object, err: %v", err)
+	// 	}
+	// 	err = json.Unmarshal([]byte(egressIPStdout), egressIPObjs)
+	// 	if err != nil {
+	// 		framework.Failf("Error: failed to unmarshal EgressIP object, err: %v", err)
+	// 	}
+	// 	if len(egressIPObjs.Items) == 0 {
+	// 		framework.Failf("Error: no EgressIP objects found")
+	// 	}
+	// 	return egressIPObjs.Items[0].Status.Items
+	// }
 	// Helper to get egress IP status items
 	getEgressIPStatusItems := func() []egressIPStatus {
-		egressIPObjs := &egressIPObjects{}
-		egressIPStdout, err := e2ekubectl.RunKubectl("default", "get", "egressips", "-o", "json")
+		egressIPObj := &egressIPObject{}
+		egressIPStdout, err := e2ekubectl.RunKubectl("default", "get", "egressips", egressIPName, "-o", "json")
 		if err != nil {
 			framework.Failf("Error: failed to get the EgressIP object, err: %v", err)
 		}
-		err = json.Unmarshal([]byte(egressIPStdout), egressIPObjs)
+		err = json.Unmarshal([]byte(egressIPStdout), egressIPObj)
 		if err != nil {
 			framework.Failf("Error: failed to unmarshal EgressIP object, err: %v", err)
 		}
-		if len(egressIPObjs.Items) == 0 {
-			framework.Failf("Error: no EgressIP objects found")
-		}
-		return egressIPObjs.Items[0].Status.Items
+		return egressIPObj.Status.Items
 	}
 
 	// Helper to verify egress IP status length
@@ -140,6 +153,10 @@ var _ = ginkgo.Describe("[secondary-host-eip] Egress IP Traffic Leak Prevention 
 	)
 
 	ginkgo.BeforeEach(func() {
+		podIPsLock.Lock()
+		podIPs = []string{}
+		podIPsLock.Unlock()
+
 		// Determine if this is an IPv6 test run
 		nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 3)
 		framework.ExpectNoError(err)
@@ -457,7 +474,7 @@ func createExistingPodsTrafficMonitorPodLogs(f *framework.Framework, name, nodeN
 			Containers: []v1.Container{
 				{
 					Name:  "traffic-monitor",
-					Image: "docker.io/nicolaka/netshoot:latest",
+					Image: images.Netshoot(),
 					Command: []string{
 						"/bin/bash",
 						"-c",
@@ -509,16 +526,8 @@ func checkExistingPodsTrafficForLeaksLogs(f *framework.Framework, monitorPodName
 	// Use kubectl logs to retrieve the container logs
 	output, err := e2ekubectl.RunKubectl(namespace, "logs", monitorPodName)
 	if err != nil {
-		framework.Logf("Warning: failed to read monitor pod logs: %v", err)
-		framework.Logf("Attempting to read logs via exec...")
-
-		// Fallback: try to get logs via exec and dmesg/journalctl if available
-		execCmd := "dmesg"
-		output, err = e2ekubectl.RunKubectl(namespace, "exec", monitorPodName, "--", "/bin/sh", "-c", execCmd)
-		if err != nil {
-			framework.Logf("Warning: failed to read logs via exec: %v", err)
-			return leakedIPs
-		}
+		framework.Logf("Warning: failed to read monitor pod tcpdump logs: %v", err)
+		return leakedIPs
 	}
 
 	framework.Logf("Retrieved %d lines of tcpdump output from monitor pod logs", len(strings.Split(output, "\n")))

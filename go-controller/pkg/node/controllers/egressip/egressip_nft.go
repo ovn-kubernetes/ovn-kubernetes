@@ -53,13 +53,13 @@ func (c *Controller) initEgressIPUnreadyNFTChain() error {
 	tx := nft.NewTransaction()
 
 	// Create the dedicated chain for egress IP unready traffic
-	// Use priority 100 (before local gateway masquerade at 101, but after egress IP SNAT)
+	// Use priority 101 (after all SNAT rules at 100, before local gateway masquerade)
 	unreadyChain := &knftables.Chain{
 		Name:     nftEgressIPUnreadyChain,
 		Comment:  knftables.PtrTo("OVN egress IP unready traffic handling"),
 		Type:     knftables.PtrTo(knftables.FilterType),
 		Hook:     knftables.PtrTo(knftables.PostroutingHook),
-		Priority: knftables.PtrTo(knftables.BaseChainPriority("mangle + 100")),
+		Priority: knftables.PtrTo(knftables.BaseChainPriority("srcnat + 1")),
 	}
 	tx.Add(unreadyChain)
 
