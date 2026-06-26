@@ -832,14 +832,6 @@ func (c *Controller) deleteIPConfig(podIPConfigToDelete *podIPConfig) error {
 		return err
 	}
 
-	// Remove pod IP from ready set (nftables)
-	podIP := getPodIPFromConfig(podIPConfigToDelete)
-	if podIP != nil {
-		if err := c.removePodIPFromReadySet(podIP); err != nil {
-			return fmt.Errorf("failed to remove pod from ready set: %v", err)
-		}
-	}
-
 	if podIPConfigToDelete.v6 {
 		if err := c.iptablesManager.DeleteRule(utiliptables.TableNAT, iptChainName, utiliptables.ProtocolIPv6,
 			podIPConfigToDelete.ipTableRule); err != nil {
@@ -881,16 +873,6 @@ func (c *Controller) applyPodConfig(existingPodIPsConfig *podIPConfigList, updat
 			if err := c.iptablesManager.EnsureRule(utiliptables.TableNAT, iptChainName, utiliptables.ProtocolIPv4, newPodIPConfig.ipTableRule); err != nil {
 				existingPodIPsConfig.insertOverwriteFailed(*newPodIPConfig)
 				return fmt.Errorf("failed to ensure rules (%+v) in chain %s: %v", newPodIPConfig.ipTableRule, iptChainName, err)
-			}
-		}
-
-		// Add pod IP to ready set (nftables)
-		// This signals that SNAT is configured and traffic can flow
-		podIP := getPodIPFromConfig(newPodIPConfig)
-		if podIP != nil {
-			if err := c.addPodIPToReadySet(podIP); err != nil {
-				existingPodIPsConfig.insertOverwriteFailed(*newPodIPConfig)
-				return fmt.Errorf("failed to add pod to ready set: %v", err)
 			}
 		}
 

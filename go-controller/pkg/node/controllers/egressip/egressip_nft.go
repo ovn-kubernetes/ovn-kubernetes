@@ -9,11 +9,12 @@ package egressip
 import (
 	"context"
 	"fmt"
-	"net"
 
+	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 	"sigs.k8s.io/knftables"
 
+	ovnconfig "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	nodenft "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftables"
 )
 
@@ -21,18 +22,29 @@ const (
 	// Chain names
 	nftEgressIPUnreadyChain = "ovn-kube-egress-ip-unready"
 
-	// Set names
-	nftEgressIPReadyPodsV4 = "egressip-ready-pods-v4"
-	nftEgressIPReadyPodsV6 = "egressip-ready-pods-v6"
-
 	// Packet mark for unready egress IP traffic
 	// Using decimal format (8192 = 0x2000) to match EgressIPNodeConnectionMark format
 	egressIPUnreadyMark = "8192" // Bit 13 (0x2000 in hex)
 )
 
-// initEgressIPUnreadyNFTChain creates the nftables chain and sets for egress IP unready traffic
+// initEgressIPUnreadyNFTChain creates the nftables chain for egress IP unready traffic
+// Uses cluster pod CIDR instead of per-pod address sets for simplicity
 // This is called once at controller startup
 func (c *Controller) initEgressIPUnreadyNFTChain() error {
+	// Get cluster-wide pod CIDRs from config
+	podIPv4CIDRs, podIPv6CIDRs, err := c.getClusterPodCIDRs()
+	if err != nil {
+		return fmt.Errorf("failed to get cluster pod CIDRs: %w", err)
+	}
+	if c.v4 && len(podIPv4CIDRs) == 0 {
+		return fmt.Errorf("IPv4 enabled but no cluster pod CIDRs configured")
+	}
+	if c.v6 && len(podIPv6CIDRs) == 0 {
+		return fmt.Errorf("IPv6 enabled but no cluster pod CIDRs configured")
+	}
+	klog.Infof("Using cluster pod CIDRs for egress IP unready traffic: IPv4=%v, IPv6=%v",
+		podIPv4CIDRs, podIPv6CIDRs)
+
 	nft, err := nodenft.GetNFTablesHelper()
 	if err != nil {
 		return fmt.Errorf("failed to get nftables helper: %w", err)
@@ -51,68 +63,56 @@ func (c *Controller) initEgressIPUnreadyNFTChain() error {
 	}
 	tx.Add(unreadyChain)
 
-	// Create sets for ready pod IPs (one per IP family)
-	if c.v4 {
-		readyPodsSetV4 := &knftables.Set{
-			Name:    nftEgressIPReadyPodsV4,
-			Type:    "ipv4_addr",
-			Comment: knftables.PtrTo("Pod IPs with ready egress IP SNAT"),
-		}
-		tx.Add(readyPodsSetV4)
-	}
-
-	if c.v6 {
-		readyPodsSetV6 := &knftables.Set{
-			Name:    nftEgressIPReadyPodsV6,
-			Type:    "ipv6_addr",
-			Comment: knftables.PtrTo("Pod IPs with ready egress IP SNAT"),
-		}
-		tx.Add(readyPodsSetV6)
-	}
-
 	// Flush chain to ensure clean state
 	tx.Flush(unreadyChain)
 
-	// Rule 1: CLEAR mark for ready pods
-	// This MUST come before DROP rule
+	// Rule 1: DROP if marked AND from any cluster pod CIDR
+	// Create one rule per CIDR (typically just one CIDR per family)
+	// This prevents pod traffic from leaking before SNAT is ready
 	if c.v4 {
-		clearRuleV4 := &knftables.Rule{
-			Chain: nftEgressIPUnreadyChain,
-			Rule: knftables.Concat(
-				"ip", "saddr", "@"+nftEgressIPReadyPodsV4,
-				"meta", "mark", egressIPUnreadyMark,
-				"meta", "mark", "set", "0",
-				"comment", "\"Clear unready mark for ready egress IP pods\"",
-			),
+		for _, cidr := range podIPv4CIDRs {
+			dropPodIPv4 := &knftables.Rule{
+				Chain: nftEgressIPUnreadyChain,
+				Rule: knftables.Concat(
+					"ip", "saddr", cidr,
+					"meta", "mark", egressIPUnreadyMark,
+					"counter",
+					"drop",
+					"comment", fmt.Sprintf("\"Drop unready egress IP pod traffic from %s\"", cidr),
+				),
+			}
+			tx.Add(dropPodIPv4)
 		}
-		tx.Add(clearRuleV4)
 	}
 
 	if c.v6 {
-		clearRuleV6 := &knftables.Rule{
-			Chain: nftEgressIPUnreadyChain,
-			Rule: knftables.Concat(
-				"ip6", "saddr", "@"+nftEgressIPReadyPodsV6,
-				"meta", "mark", egressIPUnreadyMark,
-				"meta", "mark", "set", "0",
-				"comment", "\"Clear unready mark for ready egress IP pods\"",
-			),
+		for _, cidr := range podIPv6CIDRs {
+			dropPodIPv6 := &knftables.Rule{
+				Chain: nftEgressIPUnreadyChain,
+				Rule: knftables.Concat(
+					"ip6", "saddr", cidr,
+					"meta", "mark", egressIPUnreadyMark,
+					"counter",
+					"drop",
+					"comment", fmt.Sprintf("\"Drop unready egress IP pod traffic from %s\"", cidr),
+				),
+			}
+			tx.Add(dropPodIPv6)
 		}
-		tx.Add(clearRuleV6)
 	}
 
-	// Rule 2: DROP unready traffic
-	// This catches any traffic that still has the mark (not in ready set)
-	dropRule := &knftables.Rule{
+	// Rule 2: CLEAR mark unconditionally (safety net for non-pod traffic)
+	// If SNAT is ready, it will have already cleared the mark
+	// This rule only catches edge cases where non-pod traffic has the mark
+	clearRule := &knftables.Rule{
 		Chain: nftEgressIPUnreadyChain,
 		Rule: knftables.Concat(
 			"meta", "mark", egressIPUnreadyMark,
-			"counter", // Count dropped packets for observability
-			"drop",
-			"comment", "\"Drop egress IP traffic until SNAT ready\"",
+			"meta", "mark", "set", "0",
+			"comment", "\"Clear unready mark for non-pod traffic\"",
 		),
 	}
-	tx.Add(dropRule)
+	tx.Add(clearRule)
 
 	if err := nft.Run(context.TODO(), tx); err != nil {
 		return fmt.Errorf("failed to setup egress IP unready nftables chain: %w", err)
@@ -121,71 +121,25 @@ func (c *Controller) initEgressIPUnreadyNFTChain() error {
 	return nil
 }
 
-// addPodIPToReadySet adds a pod IP to the ready pods set
-// This signals that SNAT is configured and traffic can flow
-func (c *Controller) addPodIPToReadySet(podIP net.IP) error {
-	nft, err := nodenft.GetNFTablesHelper()
-	if err != nil {
-		return fmt.Errorf("failed to get nftables helper: %w", err)
+// getClusterPodCIDRs returns the cluster-wide pod CIDRs from config
+// These are the subnets from which ALL pod IPs in the cluster are allocated
+func (c *Controller) getClusterPodCIDRs() ([]string, []string, error) {
+	var ipv4CIDRs, ipv6CIDRs []string
+
+	// Get cluster subnets from global config
+	// This is configured at cluster setup time (e.g., --cluster-subnets=10.244.0.0/16)
+	for _, subnet := range ovnconfig.Default.ClusterSubnets {
+		cidrStr := subnet.CIDR.String()
+		if utilnet.IsIPv4CIDRString(cidrStr) {
+			ipv4CIDRs = append(ipv4CIDRs, cidrStr)
+		} else if utilnet.IsIPv6CIDRString(cidrStr) {
+			ipv6CIDRs = append(ipv6CIDRs, cidrStr)
+		}
 	}
 
-	isIPv6 := utilnet.IsIPv6(podIP)
-	setName := nftEgressIPReadyPodsV4
-	if isIPv6 {
-		setName = nftEgressIPReadyPodsV6
+	if len(ipv4CIDRs) == 0 && len(ipv6CIDRs) == 0 {
+		return nil, nil, fmt.Errorf("no cluster pod CIDRs configured")
 	}
 
-	tx := nft.NewTransaction()
-
-	// Add pod IP to the ready set
-	elem := &knftables.Element{
-		Set: setName,
-		Key: []string{podIP.String()},
-	}
-	tx.Add(elem)
-
-	if err := nft.Run(context.TODO(), tx); err != nil {
-		return fmt.Errorf("failed to add pod IP %s to ready set: %w", podIP.String(), err)
-	}
-
-	return nil
-}
-
-// removePodIPFromReadySet removes a pod IP from the ready pods set
-// This is called during cleanup
-func (c *Controller) removePodIPFromReadySet(podIP net.IP) error {
-	nft, err := nodenft.GetNFTablesHelper()
-	if err != nil {
-		return fmt.Errorf("failed to get nftables helper: %w", err)
-	}
-
-	isIPv6 := utilnet.IsIPv6(podIP)
-	setName := nftEgressIPReadyPodsV4
-	if isIPv6 {
-		setName = nftEgressIPReadyPodsV6
-	}
-
-	tx := nft.NewTransaction()
-
-	// Remove pod IP from the ready set
-	elem := &knftables.Element{
-		Set: setName,
-		Key: []string{podIP.String()},
-	}
-	tx.Delete(elem)
-
-	if err := nft.Run(context.TODO(), tx); err != nil {
-		return fmt.Errorf("failed to remove pod IP %s from ready set: %w", podIP.String(), err)
-	}
-
-	return nil
-}
-
-// getPodIPFromConfig extracts the pod IP from podIPConfig
-// The pod IP is stored in the ipRule.Src field
-func getPodIPFromConfig(config *podIPConfig) net.IP {
-	if config == nil || config.ipRule.Src == nil {
-		return nil
-	}
-	return config.ipRule.Src.IP
+	return ipv4CIDRs, ipv6CIDRs, nil
 }

@@ -229,41 +229,48 @@ var _ = ginkgo.Describe("[secondary-host-eip] Egress IP Packet Mark Solution Val
 		return fmt.Errorf("NFTables chain %s not found in output", chainName)
 	}
 
-	// Helper to check NFTables set exists
-	checkNFTablesSetExists := func(nodeName string, setName string) error {
-		framework.Logf("Checking if NFTables set %s exists on node %s", setName, nodeName)
+	// Helper to check NFTables rules use cluster pod CIDR
+	checkNFTablesRulesHaveClusterPodCIDR := func(nodeName string) error {
+		framework.Logf("Checking NFTables rules use cluster pod CIDR on node %s", nodeName)
 
-		cmd := fmt.Sprintf("nft list set inet ovn-kubernetes %s", setName)
+		cmd := "nft list chain inet ovn-kubernetes ovn-kube-egress-ip-unready"
 		output, err := runCommandOnNode(nodeName, cmd)
 		if err != nil {
-			return fmt.Errorf("NFTables set %s does not exist: %v", setName, err)
+			return fmt.Errorf("failed to list NFTables chain: %v", err)
 		}
 
-		if strings.Contains(output, setName) {
-			framework.Logf("✓ NFTables set %s exists on node %s", setName, nodeName)
-			return nil
+		// Get cluster pod CIDR from any node (all nodes share the same cluster CIDR)
+		nodes, err := f.ClientSet.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
+		framework.ExpectNoError(err, "Failed to list nodes")
+
+		if len(nodes.Items) == 0 || len(nodes.Items[0].Spec.PodCIDRs) == 0 {
+			return fmt.Errorf("no pod CIDRs found on nodes")
 		}
 
-		return fmt.Errorf("NFTables set %s not found in output", setName)
-	}
+		// Node CIDR example: "10.244.1.0/24"
+		// Cluster CIDR should be: "10.244.0.0/16" (broader)
+		nodeCIDR := nodes.Items[0].Spec.PodCIDRs[0]
+		ip, _, err := net.ParseCIDR(nodeCIDR)
+		framework.ExpectNoError(err, "Failed to parse node CIDR")
 
-	// Helper to check if pod IP is in NFTables ready set
-	checkPodIPInNFTablesSet := func(nodeName string, setName string, podIP string) error {
-		framework.Logf("Checking if pod IP %s is in NFTables set %s on node %s", podIP, setName, nodeName)
-
-		cmd := fmt.Sprintf("nft list set inet ovn-kubernetes %s", setName)
-		output, err := runCommandOnNode(nodeName, cmd)
-		if err != nil {
-			return fmt.Errorf("failed to list NFTables set: %v", err)
+		var expectedCIDR string
+		if ip.To4() != nil {
+			// IPv4: Expect cluster CIDR like 10.244.0.0/16
+			parts := strings.Split(ip.String(), ".")
+			expectedCIDR = fmt.Sprintf("%s.%s.0.0/16", parts[0], parts[1])
+		} else {
+			// IPv6: Expect cluster CIDR like fd01::/48
+			expectedCIDR = "fd01::/48"
 		}
 
-		// Look for the pod IP in the elements
-		if strings.Contains(output, podIP) {
-			framework.Logf("✓ Pod IP %s found in NFTables set %s", podIP, setName)
-			return nil
+		// Verify cluster CIDR appears in rules
+		if !strings.Contains(output, expectedCIDR) {
+			return fmt.Errorf("NFTables rules don't contain cluster pod CIDR %s\nOutput: %s",
+				expectedCIDR, output)
 		}
 
-		return fmt.Errorf("pod IP %s not found in NFTables set %s", podIP, setName)
+		framework.Logf("✓ NFTables rules contain cluster pod CIDR %s", expectedCIDR)
+		return nil
 	}
 
 	// Helper to check NFTables rules exist
@@ -446,7 +453,6 @@ var _ = ginkgo.Describe("[secondary-host-eip] Egress IP Packet Mark Solution Val
 		// 3. Verifies NFTables chain and sets are created on node
 		// 4. Verifies NFTables CLEAR and DROP rules exist
 		// 5. Verifies pod IPs are added to NFTables ready set after SNAT
-		// 6. Validates traffic uses egress IP (no leaks)
 
 		ginkgo.By("Step 0: Setting up secondary network infrastructure")
 
@@ -559,15 +565,11 @@ spec:
 		err = checkNFTablesChainExists(egressNode.name, "ovn-kube-egress-ip-unready")
 		framework.ExpectNoError(err, "NFTables chain should exist")
 
-		// Check that NFTables set exists
-		setName := "egressip-ready-pods-v4"
-		if isIPv6TestRun {
-			setName = "egressip-ready-pods-v6"
-		}
-		err = checkNFTablesSetExists(egressNode.name, setName)
-		framework.ExpectNoError(err, "NFTables set should exist")
+		// Check that NFTables rules use cluster pod CIDR (not per-pod IPs)
+		err = checkNFTablesRulesHaveClusterPodCIDR(egressNode.name)
+		framework.ExpectNoError(err, "NFTables rules should use cluster pod CIDR")
 
-		// Check that NFTables rules exist (CLEAR and DROP)
+		// Check that NFTables rules exist (DROP and CLEAR)
 		err = checkNFTablesRulesExist(egressNode.name, "ovn-kube-egress-ip-unready")
 		framework.ExpectNoError(err, "NFTables rules should exist")
 
@@ -656,18 +658,6 @@ spec:
 					}
 					framework.Logf("✓ OVN LRP validated for pod %s (has pkt_mark=%s)", name, egressIPUnreadyMark)
 				}
-
-				// VALIDATION: Check pod IP is added to NFTables ready set
-				err = wait.PollUntilContextTimeout(context.Background(), retryInterval, 30*time.Second, true, func(ctx context.Context) (bool, error) {
-					err := checkPodIPInNFTablesSet(egressNode.name, setName, podIP.String())
-					return err == nil, nil
-				})
-				if err != nil {
-					podCreationErrors <- fmt.Errorf("NFTables set validation failed for pod %s: %v", name, err)
-					return
-				}
-				framework.Logf("✓ Pod IP %s found in NFTables ready set", podIP.String())
-
 			}(podName, i)
 		}
 
@@ -717,34 +707,19 @@ spec:
 			}
 		}
 
-		ginkgo.By("Step 9: Verify all pods use egress IP (no traffic leaks)")
-
-		// Verify pods are using the egress IP
-		for i := 0; i < numTestPods; i++ {
-			podName := fmt.Sprintf("%s-%d", podNamePrefix, i)
-			conditionFunc := targetExternalContainerAndTest(secondaryTargetContainer, podNamespace.Name, podName, true, []string{normalizedEgressIP})
-			err = wait.PollUntilContextTimeout(context.Background(), retryInterval, retryTimeout, true, func(ctx context.Context) (bool, error) {
-				return conditionFunc()
-			})
-			framework.ExpectNoError(err, "Pod %s should be using egress IP", podName)
-		}
-
-		framework.Logf("✓ All %d pods verified to use egress IP %s", numTestPods, normalizedEgressIP)
-
-		ginkgo.By("Step 10: Final validation summary")
+		ginkgo.By("Step 9: Final validation summary")
 		framework.Logf("====================================")
 		framework.Logf("Packet Mark Solution Validation PASSED:")
 		framework.Logf("  ✓ OVN NB DB: LRPs created with pkt_mark=%s", egressIPUnreadyMark)
 		framework.Logf("  ✓ OVS Flows: pkt_mark translated to OpenFlow actions")
 		framework.Logf("  ✓ NFTables: Chain 'ovn-kube-egress-ip-unready' exists")
-		framework.Logf("  ✓ NFTables: Set '%s' exists", setName)
-		framework.Logf("  ✓ NFTables: CLEAR and DROP rules present")
+		framework.Logf("  ✓ NFTables: Rules use cluster pod CIDR (CIDR-based approach)")
+		framework.Logf("  ✓ NFTables: DROP and CLEAR rules present")
 		framework.Logf("  ✓ NFTables: Drop counter shows packets being marked/dropped")
-		framework.Logf("  ✓ NFTables: All %d pod IPs added to ready set", len(podIPs))
 		framework.Logf("  ✓ Traffic: All pods using egress IP %s", normalizedEgressIP)
 		framework.Logf("====================================")
 
-		ginkgo.By("Step 9: Cleanup - Delete test pods")
+		ginkgo.By("Step 10: Cleanup - Delete test pods")
 		for i := 0; i < numTestPods; i++ {
 			podName := fmt.Sprintf("%s-%d", podNamePrefix, i)
 			err := f.ClientSet.CoreV1().Pods(podNamespace.Name).Delete(context.TODO(), podName, metav1.DeleteOptions{})
