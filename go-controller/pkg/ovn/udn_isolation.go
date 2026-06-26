@@ -264,7 +264,9 @@ func (oc *DefaultNetworkController) getUDNOpenPortDbIDs(podNamespacedName string
 		})
 }
 
-// advertisedNetworkSubnetsKey is the object name key for the global advertised networks addressset and the global deny ACL
+// advertisedNetworkSubnetsKey is the object name key for the global advertised
+// networks addressset, the global deny ACL and the port group hosting the deny
+// ACL.
 const advertisedNetworkSubnetsKey = "advertised-network-subnets"
 
 // GetAdvertisedNetworkSubnetsAddressSetDBIDs returns the DB IDs for the advertised network subnets addressset
@@ -272,6 +274,19 @@ func GetAdvertisedNetworkSubnetsAddressSetDBIDs() *libovsdbops.DbObjectIDs {
 	return libovsdbops.NewDbObjectIDs(libovsdbops.AddressSetAdvertisedNetwork, types.DefaultNetworkControllerName, map[libovsdbops.ExternalIDKey]string{
 		libovsdbops.ObjectNameKey: advertisedNetworkSubnetsKey,
 	})
+}
+
+// GetAdvertisedNetworkSubnetsDropPGdbIDs returns the DB IDs for the advertised network subnets drop port group
+func GetAdvertisedNetworkSubnetsDropPGdbIDs() *libovsdbops.DbObjectIDs {
+	return libovsdbops.NewDbObjectIDs(libovsdbops.PortGroupAdvertisedNetwork, types.DefaultNetworkControllerName,
+		map[libovsdbops.ExternalIDKey]string{
+			libovsdbops.ObjectNameKey: advertisedNetworkSubnetsKey,
+		})
+}
+
+// GetAdvertisedNetworkSubnetsDropPGName returns the hashed name for the advertised network subnets drop port group
+func GetAdvertisedNetworkSubnetsDropPGName() string {
+	return libovsdbutil.GetPortGroupName(GetAdvertisedNetworkSubnetsDropPGdbIDs())
 }
 
 // GetAdvertisedNetworkSubnetsDropACLdbIDs returns the DB IDs for the advertised network subnets drop ACL
@@ -295,8 +310,30 @@ func GetAdvertisedNetworkSubnetsPassACLdbIDs(controller, networkName string, net
 // ConfigureAdvertisedNetworkIsolation ensures the global resources for advertised network isolation exist.
 func ConfigureAdvertisedNetworkIsolation(nbClient libovsdbclient.Client) error {
 	addressSetFactory := addressset.NewOvnAddressSetFactory(nbClient, config.IPv4Mode, config.IPv6Mode)
-	_, err := addressSetFactory.EnsureAddressSet(GetAdvertisedNetworkSubnetsAddressSetDBIDs())
-	return err
+	addrSet, ops, err := addressSetFactory.EnsureAddressSetOps(GetAdvertisedNetworkSubnetsAddressSetDBIDs())
+	if err != nil {
+		return fmt.Errorf("failed to ensure advertised subnets address set: %w", err)
+	}
+
+	dropACL := BuildAdvertisedNetworkSubnetsDropACL(addrSet)
+	pg := libovsdbutil.BuildPortGroup(GetAdvertisedNetworkSubnetsDropPGdbIDs(), nil, nil)
+
+	ops, err = libovsdbops.CreateOrUpdateACLsOps(nbClient, ops, nil, dropACL)
+	if err != nil {
+		return fmt.Errorf("failed to create or update advertised network isolation drop ACL: %w", err)
+	}
+
+	pg.ACLs = []string{dropACL.UUID}
+
+	ops, err = libovsdbops.CreatePortGroupOps(nbClient, ops, pg)
+	if err != nil {
+		return fmt.Errorf("failed to create advertised network isolation port group: %w", err)
+	}
+
+	if _, err = libovsdbops.TransactAndCheck(nbClient, ops); err != nil {
+		return fmt.Errorf("failed to configure advertised network isolation: %w", err)
+	}
+	return nil
 }
 
 // CleanupStaleAdvertisedNetworkSubnets removes subnets from the advertised network subnets address set
