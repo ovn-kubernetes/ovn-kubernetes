@@ -22,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	apimachinerytypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 
 	"github.com/ovn-kubernetes/libovsdb/client"
 
@@ -59,7 +60,7 @@ func (stub *podRequestInterfaceOpsStub) ConfigureInterface(pr *PodRequest, _ cli
 	}
 	return nil, nil
 }
-func (stub *podRequestInterfaceOpsStub) UnconfigureInterface(_ *PodRequest, ifInfo *PodInterfaceInfo) error {
+func (stub *podRequestInterfaceOpsStub) UnconfigureInterface(_ *PodRequest, ifInfo *PodInterfaceInfo, _ corev1listers.PodLister, _ *corev1.Pod) error {
 	stub.unconfiguredInterfaces = append(stub.unconfiguredInterfaces, ifInfo)
 	return nil
 }

@@ -488,7 +488,7 @@ func (pr *PodRequest) cmdDel(clientset *ClientSet) (*Response, error) {
 		NetdevName:    netdevName,
 	}
 	if !config.UnprivilegedMode {
-		err := podRequestInterfaceOps.UnconfigureInterface(pr, podInterfaceInfo)
+		err := podRequestInterfaceOps.UnconfigureInterface(pr, podInterfaceInfo, clientset.podLister, pod)
 		if err != nil {
 			return nil, err
 		}
