@@ -110,8 +110,16 @@ add map inet ovn-kubernetes nodeports-v4 { type inet_proto . inet_service : ipv4
 add map inet ovn-kubernetes nodeports-v6 { type inet_proto . inet_service : ipv6_addr . inet_service ; comment "DNAT mappings for ordinary IPv6 NodePort traffic" ; }
 add map inet ovn-kubernetes nodeports-etp-local-v4 { type inet_proto . inet_service : ipv4_addr . inet_service ; comment "DNAT mappings for IPv4 NodePort traffic with ExternalTrafficPolicy: Local" ; }
 add map inet ovn-kubernetes nodeports-etp-local-v6 { type inet_proto . inet_service : ipv6_addr . inet_service ; comment "DNAT mappings for IPv6 NodePort traffic with ExternalTrafficPolicy: Local" ; }
+add map inet ovn-kubernetes external-ips-etp-local-v4 { type ipv4_addr . inet_proto . inet_service : ipv4_addr . inet_service ; comment "DNAT mappings for IPv4 ExternalIP/LB traffic with ExternalTrafficPolicy: Local" ; }
+add map inet ovn-kubernetes external-ips-etp-local-v6 { type ipv6_addr . inet_proto . inet_service : ipv6_addr . inet_service ; comment "DNAT mappings for IPv6 ExternalIP/LB traffic with ExternalTrafficPolicy: Local" ; }
+add map inet ovn-kubernetes external-ips-v4 { type ipv4_addr . inet_proto . inet_service : ipv4_addr . inet_service ; comment "DNAT mappings for ordinary IPv4 ExternalIP/LB traffic" ; }
+add map inet ovn-kubernetes external-ips-v6 { type ipv6_addr . inet_proto . inet_service : ipv6_addr . inet_service ; comment "DNAT mappings for ordinary IPv6 ExternalIP/LB traffic" ; }
+add rule inet ovn-kubernetes services-etp dnat ip addr . port to  ip daddr . meta l4proto . th dport map @external-ips-etp-local-v4
+add rule inet ovn-kubernetes services-etp dnat ip6 addr . port to  ip6 daddr . meta l4proto . th dport map @external-ips-etp-local-v6
 add rule inet ovn-kubernetes services-etp fib daddr type local dnat ip addr . port to meta l4proto . th dport map @nodeports-etp-local-v4
 add rule inet ovn-kubernetes services-etp fib daddr type local dnat ip6 addr . port to meta l4proto . th dport map @nodeports-etp-local-v6
+add rule inet ovn-kubernetes services dnat ip to  ip daddr . meta l4proto . th dport map @external-ips-v4
+add rule inet ovn-kubernetes services dnat ip6 to  ip6 daddr . meta l4proto . th dport map @external-ips-v6
 add rule inet ovn-kubernetes services fib daddr type local dnat ip addr . port to meta l4proto . th dport map @nodeports-v4
 add rule inet ovn-kubernetes services fib daddr type local dnat ip6 addr . port to meta l4proto . th dport map @nodeports-v6
 add rule inet ovn-kubernetes services-output jump services
@@ -1386,12 +1394,10 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 					"-j OVN-KUBE-NODEPORT",
 					"-j OVN-KUBE-ITP",
 				},
-				"OVN-KUBE-NODEPORT": []string{},
-				"OVN-KUBE-EXTERNALIP": []string{
-					fmt.Sprintf("-p %s -d %s --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, externalIP, service.Spec.Ports[0].Port, service.Spec.ClusterIP, service.Spec.Ports[0].Port),
-				},
-				"OVN-KUBE-ETP": []string{},
-				"OVN-KUBE-ITP": []string{},
+				"OVN-KUBE-NODEPORT":   []string{},
+				"OVN-KUBE-EXTERNALIP": []string{},
+				"OVN-KUBE-ETP":        []string{},
+				"OVN-KUBE-ITP":        []string{},
 			},
 			"filter": {},
 			"mangle": {
@@ -1418,6 +1424,7 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 		if util.IsNetworkSegmentationSupportEnabled() {
 			expectedNFT += nftablesRulesUDN
 		}
+		expectedNFT += "add element inet ovn-kubernetes external-ips-v4 { 1.1.1.1 . tcp . 8032 : 10.129.0.2 . 8032 }"
 		err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 		Expect(err).NotTo(HaveOccurred())
 
