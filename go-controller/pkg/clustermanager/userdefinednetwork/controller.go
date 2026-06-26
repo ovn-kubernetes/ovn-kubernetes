@@ -792,6 +792,12 @@ func (c *Controller) syncUserDefinedNetwork(udn *userdefinednetworkv1.UserDefine
 			klog.Infof("Finalizer removed from UserDefinedNetworks [%s/%s]", udn.Namespace, udn.Name)
 			metrics.DecrementUDNCount(role, topology)
 			metrics.DeleteDynamicUDNNodeCount(util.GenerateUDNNetworkName(udn.Namespace, udn.Name))
+
+			if config.Metrics.EnableScaleMetrics {
+				// Clean up UDN metric time series to prevent cardinality explosion
+				networkName := util.GenerateUDNNetworkName(udn.Namespace, udn.Name)
+				metrics.CleanupUDNMetrics(networkName)
+			}
 		}
 
 		return nil, nil
