@@ -285,6 +285,22 @@ func initController(namespaces []corev1.Namespace, pods []corev1.Pod, egressIPs 
 	// Initialize fake nftables helper and egress IP unready chain
 	// This mimics what the real Run() method does
 	nodenft.SetFakeNFTablesHelper()
+
+	// Set up cluster subnets for NFTables initialization
+	// Reset first to avoid accumulation between tests
+	ovnconfig.Default.ClusterSubnets = nil
+	// Use standard test cluster CIDRs
+	if v4 {
+		_, cidr, _ := net.ParseCIDR("10.244.0.0/16")
+		ovnconfig.Default.ClusterSubnets = append(ovnconfig.Default.ClusterSubnets,
+			ovnconfig.CIDRNetworkEntry{CIDR: cidr})
+	}
+	if v6 {
+		_, cidr, _ := net.ParseCIDR("fd01::/48")
+		ovnconfig.Default.ClusterSubnets = append(ovnconfig.Default.ClusterSubnets,
+			ovnconfig.CIDRNetworkEntry{CIDR: cidr})
+	}
+
 	if err := c.initEgressIPUnreadyNFTChain(); err != nil {
 		return nil, nil, err
 	}
