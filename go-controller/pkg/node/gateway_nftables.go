@@ -39,6 +39,69 @@ const (
 	nftablesUDNMasqChain          = "ovn-kube-udn-masq"
 )
 
+// initGatewayNFTables initializes chains/sets/maps used for Service proxying rules.
+func initGatewayNFTables() error {
+	nft, err := nodenft.GetNFTablesHelper()
+	if err != nil {
+		return err
+	}
+
+	tx := nft.NewTransaction()
+
+	tx.Add(&knftables.Chain{
+		Name:    "services",
+		Comment: knftables.PtrTo("DNAT for ordinary NodePort/ExternalIP/LB traffic"),
+	})
+	tx.Flush(&knftables.Chain{
+		Name: "services",
+	})
+	tx.Add(&knftables.Chain{
+		Name:    "services-etp",
+		Comment: knftables.PtrTo("Special DNAT for NodePort/ExternalIP/LB traffic with ExternalTrafficPolicy: Local"),
+	})
+	tx.Flush(&knftables.Chain{
+		Name: "services-etp",
+	})
+
+	// Create chains that hook to netfilter and invoke our service chains as appropriate.
+	tx.Add(&knftables.Chain{
+		Name:     "services-prerouting",
+		Type:     knftables.PtrTo(knftables.NATType),
+		Hook:     knftables.PtrTo(knftables.PreroutingHook),
+		Priority: knftables.PtrTo(knftables.DNATPriority),
+	})
+	tx.Flush(&knftables.Chain{
+		Name: "services-prerouting",
+	})
+	tx.Add(&knftables.Rule{
+		Chain: "services-prerouting",
+		Rule:  "jump services-etp",
+	})
+	tx.Add(&knftables.Rule{
+		Chain: "services-prerouting",
+		Rule:  "jump services",
+	})
+	tx.Add(&knftables.Chain{
+		Name:     "services-output",
+		Type:     knftables.PtrTo(knftables.NATType),
+		Hook:     knftables.PtrTo(knftables.OutputHook),
+		Priority: knftables.PtrTo(knftables.DNATPriority),
+	})
+	tx.Flush(&knftables.Chain{
+		Name: "services-output",
+	})
+	tx.Add(&knftables.Rule{
+		Chain: "services-output",
+		Rule:  "jump services",
+	})
+
+	if err := nft.Run(context.TODO(), tx); err != nil {
+		return fmt.Errorf("could not set up service nftables rules: %w", err)
+	}
+
+	return nil
+}
+
 // getNoSNATNodePortRules returns elements to add to the "mgmtport-no-snat-nodeports"
 // set to prevent SNAT of sourceIP when passing through the management port, for an
 // `externalTrafficPolicy: Local` service with NodePorts.

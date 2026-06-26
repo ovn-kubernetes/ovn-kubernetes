@@ -100,6 +100,17 @@ add chain inet ovn-kubernetes ovn-kube-pod-subnet-masq
 add rule inet ovn-kubernetes ovn-kube-pod-subnet-masq ip saddr 10.1.1.0/24 masquerade
 `
 
+// The additional rules expected if initGatewayNFTables() is called
+const nftablesRulesGatewayServices = `
+add chain inet ovn-kubernetes services { comment "DNAT for ordinary NodePort/ExternalIP/LB traffic" ; }
+add chain inet ovn-kubernetes services-etp { comment "Special DNAT for NodePort/ExternalIP/LB traffic with ExternalTrafficPolicy: Local" ; }
+add chain inet ovn-kubernetes services-output { type nat hook output priority -100 ; }
+add chain inet ovn-kubernetes services-prerouting { type nat hook prerouting priority -100 ; }
+add rule inet ovn-kubernetes services-output jump services
+add rule inet ovn-kubernetes services-prerouting jump services-etp
+add rule inet ovn-kubernetes services-prerouting jump services
+`
+
 func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 	eth0Name, eth0MAC, eth0GWIP, eth0CIDR string, gatewayVLANID uint, l netlink.Link, hwOffload, setNodeIP bool) {
 	const mtu string = "1234"
@@ -537,7 +548,7 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 		err = f6.MatchState(expectedTables, nil)
 		Expect(err).NotTo(HaveOccurred())
 
-		expectedNFT := nftablesRulesBase
+		expectedNFT := nftablesRulesBase + nftablesRulesGatewayServices
 		err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 		Expect(err).NotTo(HaveOccurred())
 
@@ -1395,7 +1406,7 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 		err = f6.MatchState(expectedTables, nil)
 		Expect(err).NotTo(HaveOccurred())
 
-		expectedNFT := nftablesRulesBase + nftablesRulesLocalGateway
+		expectedNFT := nftablesRulesBase + nftablesRulesLocalGateway + nftablesRulesGatewayServices
 		if util.IsNetworkSegmentationSupportEnabled() {
 			expectedNFT += nftablesRulesUDN
 		}
