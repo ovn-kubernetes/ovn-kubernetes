@@ -569,7 +569,7 @@ func getFieldsToUpdate(model model.Model, fieldNames []ModelUpdateField) []inter
 			case LogicalSwitchPortEnabled:
 				fields = append(fields, &t.Enabled)
 			default:
-				panic(fmt.Sprintf("getFieldsToUpdate: unknown or unsupported field %q for LogicalSwitchPort", field))
+				panic(fmt.Sprintf("getFieldsToUpdate: unknown or unsupported field %d for LogicalSwitchPort", field))
 			}
 		}
 	case *nbdb.PortGroup:
@@ -582,7 +582,7 @@ func getFieldsToUpdate(model model.Model, fieldNames []ModelUpdateField) []inter
 			case PortGroupExternalIDs:
 				fields = append(fields, &t.ExternalIDs)
 			default:
-				panic(fmt.Sprintf("getFieldsToUpdate: unknown or unsupported field %q for PortGroup", field))
+				panic(fmt.Sprintf("getFieldsToUpdate: unknown or unsupported field %d for PortGroup", field))
 			}
 		}
 	default:
