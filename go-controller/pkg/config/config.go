@@ -30,6 +30,7 @@ import (
 	kexec "k8s.io/utils/exec"
 	utilnet "k8s.io/utils/net"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/tls"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
@@ -158,6 +159,9 @@ var (
 
 	// Metrics holds Prometheus metrics-related parameters.
 	Metrics MetricsConfig
+
+	// TLS holds TLS-related configuration parameters.
+	TLS TLSConfig
 
 	// OVNKubernetesFeature config holds OVN-Kubernetes feature enhancement config file parameters and command-line overrides
 	OVNKubernetesFeature = OVNKubernetesFeatureConfig{
@@ -473,6 +477,30 @@ type MetricsConfig struct {
 	EnableScaleMetrics   bool `gcfg:"enable-scale-metrics"`
 }
 
+// TLSConfig holds TLS-related configuration parameters.
+type TLSConfig struct {
+	MinVersion   string `gcfg:"tls-min-version"`
+	CipherSuites string `gcfg:"tls-cipher-suites"`
+
+	// ApplyOptions is the parsed and validated TLS configuration function
+	// that can be applied to tls.Config. This is populated during config
+	// initialization and should not be set via config file or CLI.
+	ApplyOptions tls.ApplyConfigOptions
+}
+
+// ParseCipherSuites parses the comma-separated CipherSuites string into a slice.
+// Trims whitespace and filters out empty strings.
+func (c *TLSConfig) ParseCipherSuites() []string {
+	suites := strings.Split(c.CipherSuites, ",")
+	result := make([]string, 0, len(suites))
+	for _, suite := range suites {
+		if trimmed := strings.TrimSpace(suite); trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
+}
+
 // OVNKubernetesFeatureConfig holds OVN-Kubernetes feature enhancement config file parameters and command-line overrides
 type OVNKubernetesFeatureConfig struct {
 	// Admin Network Policy feature is enabled
@@ -703,6 +731,7 @@ type config struct {
 	OVNKubernetesFeature OVNKubernetesFeatureConfig
 	Kubernetes           KubernetesConfig
 	Metrics              MetricsConfig
+	TLS                  TLSConfig
 	OvnNorth             OvnAuthConfig
 	OvnSouth             OvnAuthConfig
 	Gateway              GatewayConfig
@@ -724,6 +753,7 @@ var (
 	savedOVNKubernetesFeature OVNKubernetesFeatureConfig
 	savedKubernetes           KubernetesConfig
 	savedMetrics              MetricsConfig
+	savedTLS                  TLSConfig
 	savedOvnNorth             OvnAuthConfig
 	savedOvnSouth             OvnAuthConfig
 	savedGateway              GatewayConfig
@@ -755,6 +785,7 @@ func init() {
 	savedOVNKubernetesFeature = OVNKubernetesFeature
 	savedKubernetes = Kubernetes
 	savedMetrics = Metrics
+	savedTLS = TLS
 	savedOvnNorth = OvnNorth
 	savedOvnSouth = OvnSouth
 	savedGateway = Gateway
@@ -788,6 +819,7 @@ func PrepareTestConfig() error {
 	OVNKubernetesFeature = savedOVNKubernetesFeature
 	Kubernetes = savedKubernetes
 	Metrics = savedMetrics
+	TLS = savedTLS
 	OvnNorth = savedOvnNorth
 	OvnSouth = savedOvnSouth
 	Gateway = savedGateway
@@ -1499,6 +1531,20 @@ var MetricsFlags = []cli.Flag{
 	},
 }
 
+// TLSFlags capture TLS-related options
+var TLSFlags = []cli.Flag{
+	&cli.StringFlag{
+		Name:        "tls-min-version",
+		Usage:       "Minimum TLS version supported",
+		Destination: &cliConfig.TLS.MinVersion,
+	},
+	&cli.StringFlag{
+		Name:        "tls-cipher-suites",
+		Usage:       "Comma-separated list of cipher suites (TLS 1.0-1.2 only; ignored for TLS 1.3)",
+		Destination: &cliConfig.TLS.CipherSuites,
+	},
+}
+
 // OvnNBFlags capture OVN northbound database options. The cert/key flags
 // below are no longer used for OVN DB connection (which is unix-socket only)
 // but their values are still consumed by the Egress IP gRPC health-check
@@ -1821,6 +1867,7 @@ func GetFlags(customFlags []cli.Flag) []cli.Flag {
 	flags = append(flags, OVNK8sFeatureFlags...)
 	flags = append(flags, K8sFlags...)
 	flags = append(flags, MetricsFlags...)
+	flags = append(flags, TLSFlags...)
 	flags = append(flags, OvnNBFlags...)
 	flags = append(flags, OvnSBFlags...)
 	flags = append(flags, OVNGatewayFlags...)
@@ -2094,6 +2141,27 @@ func buildMetricsConfig(cli, file *config) error {
 	// And CLI overrides over config file, Kubernetes, and default values
 	if err := overrideFields(&Metrics, &cli.Metrics, &savedMetrics); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func buildTLSConfig(cli, file *config) error {
+	// Copy config file values over default values
+	if err := overrideFields(&TLS, &file.TLS, &savedTLS); err != nil {
+		return err
+	}
+
+	// And CLI overrides over config file and default values
+	if err := overrideFields(&TLS, &cli.TLS, &savedTLS); err != nil {
+		return err
+	}
+
+	// Parse and validate the TLS config, storing the result
+	var err error
+	TLS.ApplyOptions, err = tls.NewApplyConfigOptions(TLS.MinVersion, TLS.ParseCipherSuites())
+	if err != nil {
+		return fmt.Errorf("invalid TLS configuration: %v", err)
 	}
 
 	return nil
@@ -2704,6 +2772,10 @@ func initConfigWithPath(ctx *cli.Context, exec kexec.Interface, saPath string, d
 	// Metrics must be built after Kubernetes to ensure metrics options override
 	// legacy Kubernetes metrics options
 	if err = buildMetricsConfig(&cliConfig, &cfg); err != nil {
+		return "", err
+	}
+
+	if err = buildTLSConfig(&cliConfig, &cfg); err != nil {
 		return "", err
 	}
 

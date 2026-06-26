@@ -17,10 +17,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
-
-	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -432,43 +429,22 @@ func writePlainText(statusCode int, text string, w http.ResponseWriter) {
 	fmt.Fprintln(w, text)
 }
 
-// StartMetricsServer runs the prometheus listener so that OVN K8s metrics can be collected.
-// It now reuses the unified MetricServer implementation so it can share plumbing with the
-// OVN/OVS metrics server. TLS and pprof behaviour remain unchanged.
-func StartMetricsServer(bindAddress string, enablePprof bool, certFile string, keyFile string,
-	stopChan <-chan struct{}, wg *sync.WaitGroup) {
-	opts := MetricServerOptions{
-		BindAddress: bindAddress,
-		CertFile:    certFile,
-		KeyFile:     keyFile,
-		EnablePprof: enablePprof,
-		// Use default registry so existing metric registrations keep working.
-		Registerer: prometheus.DefaultRegisterer,
-	}
+// StartMetricsServer runs the prometheus listener so that metrics can be collected.
+// It registers metrics based on the enabled flags in MetricServerOptions and returns
+// the MetricServer instance to allow dynamic metric registration via Enable* methods.
+func StartMetricsServer(opts MetricServerOptions, stopChan <-chan struct{}, wg *sync.WaitGroup) *MetricServer {
+	klog.Infof("Starting Metrics Server on address: %s", opts.BindAddress)
+	metricsServer := NewMetricServer(opts)
 
-	server := NewMetricServer(opts, nil, nil)
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		server.Run(stopChan)
-	}()
-}
-
-// StartOVNMetricsServer runs the prometheus listener so that OVN metrics can be collected
-func StartOVNMetricsServer(opts MetricServerOptions,
-	ovsClient libovsdbclient.Client,
-	kubeClient kubernetes.Interface,
-	stopChan <-chan struct{}, wg *sync.WaitGroup) *MetricServer {
-
-	klog.Infof("Create OVN Metrics Server on address: %s", opts.BindAddress)
-	metricsServer := NewMetricServer(opts, ovsClient, kubeClient)
+	// Register metrics based on the enabled flags in opts.
+	// This is safe to call unconditionally as registerMetrics only registers
+	// metrics for which the corresponding Enable* flag is true.
 	metricsServer.registerMetrics()
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		klog.Infof("OVN Metrics Server starts to run ...")
+		klog.Infof("Metrics Server starts to run ...")
 		metricsServer.Run(stopChan)
 	}()
 

@@ -17,11 +17,11 @@ import (
 
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	utilwait "k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
+	ovntls "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/tls"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
@@ -31,8 +31,9 @@ type MetricServerOptions struct {
 	BindAddress string
 
 	// TLS configuration
-	CertFile string
-	KeyFile  string
+	CertFile        string
+	KeyFile         string
+	ApplyTLSOptions ovntls.ApplyConfigOptions
 
 	// Feature flags
 	EnableOVSMetrics           bool
@@ -41,17 +42,14 @@ type MetricServerOptions struct {
 	EnableOVNNorthdMetrics     bool
 	EnablePprof                bool
 
+	OVSDBClient libovsdbclient.Client
+
 	// OnFatalError is called when an unrecoverable error occurs (e.g., failed to bind to address).
 	// If set, it allows the caller to trigger a graceful shutdown.
 	OnFatalError func()
 
 	// Prometheus plumbing
 	Registerer prometheus.Registerer
-
-	// Kubernetes integration
-	K8sClient   kubernetes.Interface
-	K8sNodeName string
-	OVSDBClient libovsdbclient.Client
 
 	dbIsClustered  bool
 	dbFoundViaPath bool
@@ -61,9 +59,6 @@ type MetricServerOptions struct {
 type MetricServer struct {
 	// Configuration
 	opts MetricServerOptions
-
-	ovsDBClient libovsdbclient.Client
-	kubeClient  kubernetes.Interface
 
 	ovsDbProperties []*util.OvsDbProperties
 
@@ -76,17 +71,15 @@ type MetricServer struct {
 }
 
 // NewMetricServer creates a new MetricServer instance
-func NewMetricServer(opts MetricServerOptions, ovsDBClient libovsdbclient.Client, kubeClient kubernetes.Interface) *MetricServer {
+func NewMetricServer(opts MetricServerOptions) *MetricServer {
 	registerer := opts.Registerer
 	if registerer == nil {
 		registerer = prometheus.NewRegistry()
 	}
 
 	server := &MetricServer{
-		opts:        opts,
-		ovsDBClient: ovsDBClient,
-		registerer:  registerer,
-		kubeClient:  kubeClient,
+		opts:       opts,
+		registerer: registerer,
 	}
 
 	server.mux = http.NewServeMux()
@@ -120,7 +113,7 @@ func NewMetricServer(opts MetricServerOptions, ovsDBClient libovsdbclient.Client
 func (s *MetricServer) registerMetrics() {
 	if s.opts.EnableOVSMetrics {
 		klog.Infof("MetricServer registers OVS metrics")
-		registerOvsMetrics(s.ovsDBClient, s.registerer)
+		registerOvsMetrics(s.opts.OVSDBClient, s.registerer)
 	}
 	if s.opts.EnableOVNDBMetrics {
 		klog.Infof("MetricServer registers OVN DB metrics")
@@ -128,7 +121,7 @@ func (s *MetricServer) registerMetrics() {
 	}
 	if s.opts.EnableOVNControllerMetrics {
 		klog.Infof("MetricServer registers OVN Controller metrics")
-		RegisterOvnControllerMetrics(s.ovsDBClient, s.registerer)
+		RegisterOvnControllerMetrics(s.opts.OVSDBClient, s.registerer)
 	}
 	if s.opts.EnableOVNNorthdMetrics {
 		klog.Infof("MetricServer registers OVN Northd metrics")
@@ -139,16 +132,16 @@ func (s *MetricServer) registerMetrics() {
 // updateOvsMetrics updates the OVS metrics
 func (s *MetricServer) updateOvsMetrics() {
 	ovsDatapathMetricsUpdate()
-	if err := updateOvsBridgeMetrics(s.ovsDBClient, util.RunOVSOfctl); err != nil {
+	if err := updateOvsBridgeMetrics(s.opts.OVSDBClient, util.RunOVSOfctl); err != nil {
 		klog.Errorf("Updating ovs bridge metrics failed: %s", err.Error())
 	}
-	if err := updateOvsInterfaceMetrics(s.ovsDBClient); err != nil {
+	if err := updateOvsInterfaceMetrics(s.opts.OVSDBClient); err != nil {
 		klog.Errorf("Updating ovs interface metrics failed: %s", err.Error())
 	}
 	if err := setOvsMemoryMetrics(util.RunOvsVswitchdAppCtl); err != nil {
 		klog.Errorf("Updating ovs memory metrics failed: %s", err.Error())
 	}
-	if err := setOvsHwOffloadMetrics(s.ovsDBClient); err != nil {
+	if err := setOvsHwOffloadMetrics(s.opts.OVSDBClient); err != nil {
 		klog.Errorf("Updating ovs hardware offload metrics failed: %s", err.Error())
 	}
 	coverageShowMetricsUpdate(ovsVswitchd)
@@ -156,7 +149,7 @@ func (s *MetricServer) updateOvsMetrics() {
 
 // updateOvnControllerMetrics updates the OVN Controller metrics
 func (s *MetricServer) updateOvnControllerMetrics() {
-	if err := setOvnControllerConfigurationMetrics(s.ovsDBClient); err != nil {
+	if err := setOvnControllerConfigurationMetrics(s.opts.OVSDBClient); err != nil {
 		klog.Errorf("Setting ovn controller config metrics failed: %s", err.Error())
 	}
 
@@ -230,6 +223,11 @@ func (s *MetricServer) Run(stopChan <-chan struct{}) {
 					return &cert, nil
 				},
 			}
+
+			if s.opts.ApplyTLSOptions != nil {
+				s.opts.ApplyTLSOptions(s.server.TLSConfig)
+			}
+
 			listenAndServe = func() error { return s.server.ListenAndServeTLS("", "") }
 		}
 

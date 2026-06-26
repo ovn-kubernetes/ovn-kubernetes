@@ -170,6 +170,10 @@ node-server-cert=/path/to/node-metrics.crt
 enable-config-duration=true
 enable-scale-metrics=true
 
+[tls]
+tls-min-version=VersionTLS12
+tls-cipher-suites=TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+
 [logging]
 loglevel=5
 logfile=/var/log/ovnkube.log
@@ -330,6 +334,8 @@ var _ = Describe("Config Operations", func() {
 			gomega.Expect(Kubernetes.DNSServiceName).To(gomega.Equal("kube-dns"))
 			gomega.Expect(Metrics.NodeServerPrivKey).To(gomega.Equal(""))
 			gomega.Expect(Metrics.NodeServerCert).To(gomega.Equal(""))
+			gomega.Expect(TLS.MinVersion).To(gomega.Equal(""))
+			gomega.Expect(TLS.ParseCipherSuites()).To(gomega.BeEmpty())
 			gomega.Expect(Default.ClusterSubnets).To(gomega.Equal([]CIDRNetworkEntry{
 				{ovntest.MustParseIPNet("10.128.0.0/14"), 23},
 			}))
@@ -523,6 +529,12 @@ var _ = Describe("Config Operations", func() {
 			gomega.Expect(Metrics.EnableConfigDuration).To(gomega.BeTrue())
 			gomega.Expect(Metrics.EnableScaleMetrics).To(gomega.BeTrue())
 
+			gomega.Expect(TLS.MinVersion).To(gomega.Equal("VersionTLS12"))
+			gomega.Expect(TLS.ParseCipherSuites()).To(gomega.Equal([]string{
+				"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+				"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+			}))
+
 			gomega.Expect(OvnNorth.PrivKey).To(gomega.Equal("/path/to/nb-client-private.key"))
 			gomega.Expect(OvnNorth.Cert).To(gomega.Equal("/path/to/nb-client.crt"))
 			gomega.Expect(OvnNorth.CACert).To(gomega.Equal("/path/to/nb-client-ca.crt"))
@@ -639,6 +651,12 @@ var _ = Describe("Config Operations", func() {
 			gomega.Expect(Metrics.EnableConfigDuration).To(gomega.BeTrue())
 			gomega.Expect(Metrics.EnableScaleMetrics).To(gomega.BeTrue())
 
+			gomega.Expect(TLS.MinVersion).To(gomega.Equal("VersionTLS13"))
+			gomega.Expect(TLS.ParseCipherSuites()).To(gomega.Equal([]string{
+				"TLS_AES_128_GCM_SHA256",
+				"TLS_AES_256_GCM_SHA384",
+			}))
+
 			gomega.Expect(OvnNorth.PrivKey).To(gomega.Equal("/client/privkey"))
 			gomega.Expect(OvnNorth.Cert).To(gomega.Equal("/client/cert"))
 			gomega.Expect(OvnNorth.CACert).To(gomega.Equal("/client/cacert"))
@@ -731,6 +749,8 @@ var _ = Describe("Config Operations", func() {
 			"-metrics-enable-pprof=false",
 			"-ofctrl-wait-before-clear=5000",
 			"-metrics-enable-config-duration=true",
+			"-tls-min-version=VersionTLS13",
+			"-tls-cipher-suites=TLS_AES_128_GCM_SHA256,TLS_AES_256_GCM_SHA384",
 			"-egressip-reachability-total-timeout=5",
 			"-egressip-node-healthcheck-port=4321",
 			"-enable-multi-network=true",
