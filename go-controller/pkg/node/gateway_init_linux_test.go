@@ -102,6 +102,7 @@ add rule inet ovn-kubernetes ovn-kube-pod-subnet-masq ip saddr 10.1.1.0/24 masqu
 const nftablesRulesGatewayServices = `
 add chain inet ovn-kubernetes services { comment "DNAT for ordinary NodePort/ExternalIP/LB traffic" ; }
 add chain inet ovn-kubernetes services-etp { comment "Special DNAT for NodePort/ExternalIP/LB traffic with ExternalTrafficPolicy: Local" ; }
+add chain inet ovn-kubernetes services-etp-no-nodeport { comment "Special DNAT for ExternalIP/LB traffic with ExternalTrafficPolicy: Local and no NodePorts" ; }
 add chain inet ovn-kubernetes services-output { type nat hook output priority -100 ; }
 add chain inet ovn-kubernetes services-prerouting { type nat hook prerouting priority -100 ; }
 add map inet ovn-kubernetes nodeports-v4 { type inet_proto . inet_service : ipv4_addr . inet_service ; comment "DNAT mappings for ordinary IPv4 NodePort traffic" ; }
@@ -122,6 +123,7 @@ add rule inet ovn-kubernetes services fib daddr type local dnat ip addr . port t
 add rule inet ovn-kubernetes services fib daddr type local dnat ip6 addr . port to meta l4proto . th dport map @nodeports-v6
 add rule inet ovn-kubernetes services-output jump services
 add rule inet ovn-kubernetes services-prerouting jump services-etp
+add rule inet ovn-kubernetes services-prerouting jump services-etp-no-nodeport
 add rule inet ovn-kubernetes services-prerouting jump services
 `
 
