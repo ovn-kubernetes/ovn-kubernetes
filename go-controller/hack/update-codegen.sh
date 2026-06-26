@@ -28,7 +28,7 @@ BINS=(
     informer-gen
     lister-gen
 )
-GO111MODULE=on go install $(printf "k8s.io/code-generator/cmd/%s@v0.35.1 " "${BINS[@]}")
+GO111MODULE=on go install $(printf "k8s.io/code-generator/cmd/%s@v0.36.2 " "${BINS[@]}")
 cd "${olddir}"
 if [[ "${builddir}" == /tmp/* ]]; then #paranoia
     rm -rf "${builddir}"
@@ -53,7 +53,6 @@ get_crd_version() {
 deepcopy-gen \
   --go-header-file hack/boilerplate.go.txt \
   --output-file zz_generated.deepcopy.go \
-  --bounding-dirs github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types \
   github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types
 
 for crd in ${crds}; do
@@ -71,7 +70,6 @@ for crd in ${crds}; do
   deepcopy-gen \
     --go-header-file hack/boilerplate.go.txt \
     --output-file zz_generated.deepcopy.go \
-    --bounding-dirs github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd \
     github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version} \
     "$@"
 
