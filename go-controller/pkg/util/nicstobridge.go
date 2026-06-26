@@ -7,14 +7,25 @@
 package util
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/vishvananda/netlink"
 
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
+
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+	"github.com/ovn-kubernetes/libovsdb/ovsdb"
+
+	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
 
 const (
@@ -26,35 +37,77 @@ func GetBridgeName(iface string) string {
 	return fmt.Sprintf("br%s", iface)
 }
 
-// getBridgePortsInterfaces returns a mapping of bridge brName ports to its interfaces
-func getBridgePortsInterfaces(brName string) (map[string][]string, error) {
-	stdout, stderr, err := RunOVSVsctl("list-ports", brName)
+// getBridgePortsInterfaces returns a mapping of bridge ports to their
+// resolved Interface rows.
+func getBridgePortsInterfaces(ovsClient libovsdbclient.Client, br *vswitchd.Bridge) (map[string][]*vswitchd.Interface, error) {
+	portUUIDs := map[string]struct{}{}
+	ifaceUUIDs := map[string]struct{}{}
+	portToIfaceUUIDs := map[string][]string{}
+	portsToInterfaces := make(map[string][]*vswitchd.Interface)
+	for _, portUUID := range br.Ports {
+		portUUIDs[portUUID] = struct{}{}
+	}
+	ports, err := ovsops.FindOVSPortsWithPredicate(ovsClient, func(port *vswitchd.Port) bool {
+		_, ok := portUUIDs[port.UUID]
+		return ok
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get list of ports on bridge %q:, stderr: %q, error: %v",
-			brName, stderr, err)
+		return nil, fmt.Errorf("failed to get ports on bridge %q: %w", br.Name, err)
+	}
+	portByUUID := make(map[string]*vswitchd.Port, len(ports))
+	for _, port := range ports {
+		portByUUID[port.UUID] = port
+	}
+	for _, portUUID := range br.Ports {
+		port, ok := portByUUID[portUUID]
+		if !ok {
+			return nil, fmt.Errorf("failed to get port %s on bridge %q: %w", portUUID, br.Name, libovsdbclient.ErrNotFound)
+		}
+		for _, ifaceUUID := range port.Interfaces {
+			ifaceUUIDs[ifaceUUID] = struct{}{}
+		}
+		portToIfaceUUIDs[port.Name] = port.Interfaces
 	}
 
-	portsToInterfaces := make(map[string][]string)
-	for _, port := range strings.Split(stdout, "\n") {
-		stdout, stderr, err = RunOVSVsctl("get", "Port", port, "Interfaces")
-		if err != nil {
-			return nil, fmt.Errorf("failed to get port %q on bridge %q:, stderr: %q, error: %v",
-				port, brName, stderr, err)
+	ifaces, err := ovsops.FindInterfacesWithPredicate(ovsClient, func(iface *vswitchd.Interface) bool {
+		_, ok := ifaceUUIDs[iface.UUID]
+		return ok
+	})
+	if err != nil {
+		return nil, err
+	}
 
+	ifaceByUUID := make(map[string]*vswitchd.Interface, len(ifaces))
+	for _, iface := range ifaces {
+		ifaceByUUID[iface.UUID] = iface
+	}
+	for portName, ifaceUUIDs := range portToIfaceUUIDs {
+		portsToInterfaces[portName] = make([]*vswitchd.Interface, 0, len(ifaceUUIDs))
+		for _, ifaceUUID := range ifaceUUIDs {
+			iface, ok := ifaceByUUID[ifaceUUID]
+			if !ok {
+				return nil, fmt.Errorf("failed to get interface %s on port %q: %w", ifaceUUID, portName, libovsdbclient.ErrNotFound)
+			}
+			portsToInterfaces[portName] = append(portsToInterfaces[portName], iface)
 		}
-		// remove brackets on list of interfaces
-		ifaces := strings.TrimPrefix(strings.TrimSuffix(stdout, "]"), "[")
-		portsToInterfaces[port] = strings.Split(ifaces, ",")
 	}
 	return portsToInterfaces, nil
 }
 
 // GetNicName returns the physical NIC name, given an OVS bridge name
 // configured by NicToBridge()
-func GetNicName(brName string) (string, error) {
+func GetNicName(ovsClient libovsdbclient.Client, brName string) (string, error) {
+	br, err := ovsops.GetBridge(ovsClient, brName)
+	if err != nil {
+		return "", fmt.Errorf("failed to get bridge %q: %w", brName, err)
+	}
+
+	if uplink := br.ExternalIDs["bridge-uplink"]; uplink != "" {
+		return uplink, nil
+	}
+
 	// Check for system type port (required to be set if using NetworkManager)
-	var stdout, stderr string
-	portsToInterfaces, err := getBridgePortsInterfaces(brName)
+	portsToInterfaces, err := getBridgePortsInterfaces(ovsClient, br)
 	if err != nil {
 		return "", err
 	}
@@ -62,14 +115,7 @@ func GetNicName(brName string) (string, error) {
 	systemPorts := make([]string, 0)
 	for port, ifaces := range portsToInterfaces {
 		for _, iface := range ifaces {
-			stdout, stderr, err = RunOVSVsctl("get", "Interface", strings.TrimSpace(iface), "Type")
-			if err != nil {
-				return "", fmt.Errorf("failed to get Interface %q Type on bridge %q:, stderr: %q, error: %v",
-					iface, brName, stderr, err)
-
-			}
-			// If system Type we know this is the OVS port is the NIC
-			if stdout == "system" {
+			if iface.Type == "system" {
 				systemPorts = append(systemPorts, port)
 			}
 		}
@@ -81,19 +127,12 @@ func GetNicName(brName string) (string, error) {
 			"this method of determining the uplink port", brName)
 	}
 
-	// Check for bridge-uplink to indicate the NIC
-	stdout, stderr, err = RunOVSVsctl(
-		"br-get-external-id", brName, "bridge-uplink")
-	if err != nil {
-		return "", fmt.Errorf("failed to get the bridge-uplink for the bridge %q:, stderr: %q, error: %v",
-			brName, stderr, err)
-	}
-	if stdout == "" && strings.HasPrefix(brName, "br") {
+	if strings.HasPrefix(brName, "br") {
 		// This would happen if the bridge was created before the bridge-uplink
 		// changes got integrated. Assuming naming format of "br<nic name>".
 		return brName[len("br"):], nil
 	}
-	return stdout, nil
+	return "", fmt.Errorf("unable to resolve uplink for bridge %q: no system-typed port, no bridge-uplink external-id, and bridge name has no \"br\" prefix to strip", brName)
 }
 
 func saveIPAddress(oldLink, newLink netlink.Link, addrs []netlink.Addr) error {
@@ -224,25 +263,15 @@ func setupDefaultFile() {
 
 // NicToBridge creates a OVS bridge for the 'iface' and also moves the IP
 // address and routes of 'iface' to OVS bridge.
-func NicToBridge(iface string) (string, error) {
+func NicToBridge(ovsClient libovsdbclient.Client, iface string) (string, error) {
 	ifaceLink, err := netLinkOps.LinkByName(iface)
 	if err != nil {
 		return "", err
 	}
 
 	bridge := GetBridgeName(iface)
-	ovsArgs := []string{
-		"--", "--may-exist", "add-br", bridge,
-		"--", "br-set-external-id", bridge, "bridge-id", bridge,
-		"--", "br-set-external-id", bridge, "bridge-uplink", iface,
-		"--", "set", "bridge", bridge, "fail-mode=standalone",
-		fmt.Sprintf("other_config:hwaddr=%s", ifaceLink.Attrs().HardwareAddr),
-		"--", "--may-exist", "add-port", bridge, iface,
-		"--", "set", "port", iface, "other-config:transient=true",
-	}
-	stdout, stderr, err := RunOVSVsctl(ovsArgs...)
-	if err != nil {
-		klog.Errorf("Failed to create OVS bridge, stdout: %q, stderr: %q, error: %v", stdout, stderr, err)
+	if err := ovsops.CreateOrUpdateNicBridge(ovsClient, bridge, iface, ifaceLink.Attrs().HardwareAddr.String()); err != nil {
+		klog.Errorf("Failed to create OVS bridge %q: %v", bridge, err)
 		return "", err
 	}
 	klog.Infof("Successfully created OVS bridge %q", bridge)
@@ -260,9 +289,26 @@ func NicToBridge(iface string) (string, error) {
 		return "", err
 	}
 
-	bridgeLink, err := netLinkOps.LinkByName(bridge)
-	if err != nil {
-		return "", err
+	// Unlike `ovs-vsctl add-br`, the libovsdb transaction returns as soon as
+	// the OVSDB row is committed — ovs-vswitchd may not yet have materialised
+	// the kernel netdev. Poll briefly so callers see the same "bridge ready
+	// for use" semantics as the legacy shell-out.
+	var bridgeLink netlink.Link
+	if err := wait.PollUntilContextTimeout(context.Background(), 100*time.Millisecond, 10*time.Second, true, func(_ context.Context) (bool, error) {
+		bridgeLink, err = netLinkOps.LinkByName(bridge)
+		if err != nil {
+			var notFound netlink.LinkNotFoundError
+			if errors.As(err, &notFound) {
+				// netdev hasn't materialised yet; keep polling.
+				return false, nil
+			}
+			// Any other error (netlink socket issue, etc.) is not
+			// going to be fixed by waiting — exit immediately.
+			return false, err
+		}
+		return true, nil
+	}); err != nil {
+		return "", fmt.Errorf("bridge %q netdev did not appear: %w", bridge, err)
 	}
 
 	// save ip addresses to bridge.
@@ -279,8 +325,9 @@ func NicToBridge(iface string) (string, error) {
 }
 
 // BridgeToNic moves the IP address and routes of internal port of the bridge to
-// underlying NIC interface and deletes the OVS bridge.
-func BridgeToNic(bridge string) error {
+// underlying NIC interface and deletes the OVS bridge. Patch ports attached to
+// the bridge have their peers on br-int removed first.
+func BridgeToNic(ovsClient libovsdbclient.Client, bridge string) error {
 	// Internal port is named same as the bridge
 	bridgeLink, err := netLinkOps.LinkByName(bridge)
 	if err != nil {
@@ -298,7 +345,7 @@ func BridgeToNic(bridge string) error {
 		return err
 	}
 
-	nicName, err := GetNicName(bridge)
+	nicName, err := GetNicName(ovsClient, bridge)
 	if err != nil {
 		return err
 	}
@@ -317,43 +364,73 @@ func BridgeToNic(bridge string) error {
 		return err
 	}
 
-	// for every bridge interface that is of type "patch", find the peer
-	// interface and delete that interface from the integration bridge
-	stdout, stderr, err := RunOVSVsctl("list-ifaces", bridge)
+	// For every patch interface on the bridge, find its peer interface and
+	// delete the peer port from the integration bridge.
+	br, err := ovsops.GetBridge(ovsClient, bridge)
 	if err != nil {
-		klog.Errorf("Failed to get interfaces for OVS bridge: %q, "+
-			"stderr: %q, error: %v", bridge, stderr, err)
+		klog.Errorf("Failed to look up OVS bridge %q: %v", bridge, err)
 		return err
 	}
-	ifacesList := strings.Split(strings.TrimSpace(stdout), "\n")
-	for _, iface := range ifacesList {
-		stdout, stderr, err = RunOVSVsctl("get", "interface", iface, "type")
+	var ops []ovsdb.Operation
+	for _, portUUID := range br.Ports {
+		port := &vswitchd.Port{UUID: portUUID}
+		ctx, cancel := context.WithTimeout(context.Background(), ovntypes.OVSDBTimeout)
+		err := ovsClient.Get(ctx, port)
+		cancel()
 		if err != nil {
-			klog.Warningf("Failed to determine the type of interface: %q, "+
-				"stderr: %q, error: %v", iface, stderr, err)
-			continue
-		} else if stdout != "patch" {
-			continue
-		}
-		stdout, stderr, err = RunOVSVsctl("get", "interface", iface, "options:peer")
-		if err != nil {
-			klog.Warningf("Failed to get the peer port for patch interface: %q, "+
-				"stderr: %q, error: %v", iface, stderr, err)
+			klog.Warningf("Failed to look up Port %s on bridge %q: %v", portUUID, bridge, err)
 			continue
 		}
-		// stdout has the peer interface, just delete it
-		peer := strings.TrimSpace(stdout)
-		_, stderr, err = RunOVSVsctl("--if-exists", "del-port", "br-int", peer)
-		if err != nil {
-			klog.Warningf("Failed to delete patch port %q on br-int, "+
-				"stderr: %q, error: %v", peer, stderr, err)
+		for _, ifaceUUID := range port.Interfaces {
+			iface := &vswitchd.Interface{UUID: ifaceUUID}
+			ctx, cancel := context.WithTimeout(context.Background(), ovntypes.OVSDBTimeout)
+			err := ovsClient.Get(ctx, iface)
+			cancel()
+			if err != nil {
+				klog.Warningf("Failed to look up Interface %s on port %q: %v", ifaceUUID, port.Name, err)
+				continue
+			}
+			if iface.Type != "patch" {
+				continue
+			}
+			peer := iface.Options["peer"]
+			if peer == "" {
+				klog.Warningf("Patch interface %q has no peer option", iface.Name)
+				continue
+			}
+			peerPort, err := ovsops.GetOVSPort(ovsClient, peer)
+			if err != nil {
+				if !errors.Is(err, libovsdbclient.ErrNotFound) {
+					klog.Warningf("Failed to look up patch peer port %q: %v", peer, err)
+				}
+				continue
+			}
+			peerBridge, err := ovsops.GetPortBridge(ovsClient, peer)
+			if err != nil {
+				if !errors.Is(err, libovsdbclient.ErrNotFound) {
+					klog.Warningf("Failed to look up bridge for patch peer port %q: %v", peer, err)
+				}
+				continue
+			}
+			if peerBridge.Name != "br-int" {
+				klog.Warningf("Patch peer port %q is on bridge %q, not br-int", peer, peerBridge.Name)
+				continue
+			}
+			ops, err = ovsops.DeletePortWithInterfacesOps(ovsClient, ops, peerPort, "br-int")
+			if err != nil {
+				klog.Warningf("Failed to build delete operations for patch port %q on br-int: %v", peer, err)
+			}
 		}
 	}
 
 	// Now delete the bridge
-	stdout, stderr, err = RunOVSVsctl("--", "--if-exists", "del-br", bridge)
+	ops, err = ovsops.DeleteBridgeOps(ovsClient, ops, bridge)
 	if err != nil {
-		klog.Errorf("Failed to delete OVS bridge, stdout: %q, stderr: %q, error: %v", stdout, stderr, err)
+		klog.Errorf("Failed to build delete operations for OVS bridge %q: %v", bridge, err)
+		return err
+	}
+	if _, err := ovsops.TransactAndCheck(ovsClient, ops); err != nil {
+		klog.Errorf("Failed to delete OVS bridge %q: %v", bridge, err)
 		return err
 	}
 	klog.Infof("Successfully deleted OVS bridge %q", bridge)
