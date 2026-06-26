@@ -4149,7 +4149,12 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				// Create CloudPrivateIPConfig with MISMATCH
 				// This simulates: controller wants node2, but cloud has it on node1
 				cloudPrivateIPConfig := ocpcloudnetworkapi.CloudPrivateIPConfig{
-					ObjectMeta: newCloudPrivateIPConfigMeta(egressIP),
+					ObjectMeta: metav1.ObjectMeta{
+						Name: egressIP,
+						Annotations: map[string]string{
+							util.OVNEgressIPOwnerRefLabel: egressIPName,
+						},
+					},
 					Spec: ocpcloudnetworkapi.CloudPrivateIPConfigSpec{
 						Node: node2Name, // Controller wants this node
 					},
