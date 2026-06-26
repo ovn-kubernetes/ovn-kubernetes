@@ -450,3 +450,150 @@ func TestDeleteLogicalRouterStaticRoutes(t *testing.T) {
 		})
 	}
 }
+
+func TestDeleteLogicalRouterPortsOps(t *testing.T) {
+	fakeLRP1 := &nbdb.LogicalRouterPort{
+		UUID:     buildNamedUUID(),
+		Name:     "lrp1",
+		MAC:      "00:00:00:00:00:01",
+		Networks: []string{"192.168.1.1/24"},
+	}
+	fakeLRP2 := &nbdb.LogicalRouterPort{
+		UUID:     buildNamedUUID(),
+		Name:     "lrp2",
+		MAC:      "00:00:00:00:00:02",
+		Networks: []string{"192.168.2.1/24"},
+	}
+	fakeLRP3 := &nbdb.LogicalRouterPort{
+		UUID:     buildNamedUUID(),
+		Name:     "lrp3",
+		MAC:      "00:00:00:00:00:03",
+		Networks: []string{"192.168.3.1/24"},
+	}
+
+	initialNbdb := libovsdbtest.TestSetup{
+		NBData: []libovsdbtest.TestData{
+			fakeLRP1,
+			fakeLRP2,
+			fakeLRP3,
+			&nbdb.LogicalRouter{
+				Name:  "rtr1",
+				UUID:  buildNamedUUID(),
+				Ports: []string{fakeLRP1.UUID, fakeLRP2.UUID, fakeLRP3.UUID},
+			},
+		},
+	}
+
+	expectedNbdb := libovsdbtest.TestSetup{
+		NBData: []libovsdbtest.TestData{
+			fakeLRP3,
+			&nbdb.LogicalRouter{
+				Name:  "rtr1",
+				UUID:  buildNamedUUID(),
+				Ports: []string{fakeLRP3.UUID},
+			},
+		},
+	}
+
+	nbClient, cleanup, err := libovsdbtest.NewNBTestHarness(initialNbdb, nil)
+	if err != nil {
+		t.Fatalf("failed to set up test harness: %v", err)
+	}
+	t.Cleanup(cleanup.Cleanup)
+
+	router := &nbdb.LogicalRouter{Name: "rtr1"}
+	ops, err := DeleteLogicalRouterPortsOps(nbClient, nil,
+		router,
+		&nbdb.LogicalRouterPort{Name: "lrp1"},
+		&nbdb.LogicalRouterPort{Name: "lrp2"},
+	)
+	if err != nil {
+		t.Fatal(fmt.Errorf("DeleteLogicalRouterPortsOps() error = %v", err))
+	}
+
+	_, err = TransactAndCheck(nbClient, ops)
+	if err != nil {
+		t.Fatal(fmt.Errorf("TransactAndCheck() error = %v", err))
+	}
+
+	matcher := libovsdbtest.HaveData(expectedNbdb.NBData)
+	success, err := matcher.Match(nbClient)
+
+	if !success {
+		t.Fatal(fmt.Errorf("expected NBDB didn't match actual, err: %v", matcher.FailureMessage(nbClient)))
+	}
+	if err != nil {
+		t.Fatal(fmt.Errorf("matcher encountered error: %v", err))
+	}
+}
+
+func TestDeleteLogicalRouterPorts(t *testing.T) {
+	fakeLRP1 := &nbdb.LogicalRouterPort{
+		UUID:     buildNamedUUID(),
+		Name:     "lrp1",
+		MAC:      "00:00:00:00:00:01",
+		Networks: []string{"192.168.1.1/24"},
+	}
+	fakeLRP2 := &nbdb.LogicalRouterPort{
+		UUID:     buildNamedUUID(),
+		Name:     "lrp2",
+		MAC:      "00:00:00:00:00:02",
+		Networks: []string{"192.168.2.1/24"},
+	}
+	fakeLRP3 := &nbdb.LogicalRouterPort{
+		UUID:     buildNamedUUID(),
+		Name:     "lrp3",
+		MAC:      "00:00:00:00:00:03",
+		Networks: []string{"192.168.3.1/24"},
+	}
+
+	initialNbdb := libovsdbtest.TestSetup{
+		NBData: []libovsdbtest.TestData{
+			fakeLRP1,
+			fakeLRP2,
+			fakeLRP3,
+			&nbdb.LogicalRouter{
+				Name:  "rtr1",
+				UUID:  buildNamedUUID(),
+				Ports: []string{fakeLRP1.UUID, fakeLRP2.UUID, fakeLRP3.UUID},
+			},
+		},
+	}
+
+	expectedNbdb := libovsdbtest.TestSetup{
+		NBData: []libovsdbtest.TestData{
+			fakeLRP3,
+			&nbdb.LogicalRouter{
+				Name:  "rtr1",
+				UUID:  buildNamedUUID(),
+				Ports: []string{fakeLRP3.UUID},
+			},
+		},
+	}
+
+	nbClient, cleanup, err := libovsdbtest.NewNBTestHarness(initialNbdb, nil)
+	if err != nil {
+		t.Fatalf("failed to set up test harness: %v", err)
+	}
+	t.Cleanup(cleanup.Cleanup)
+
+	router := &nbdb.LogicalRouter{Name: "rtr1"}
+	err = DeleteLogicalRouterPorts(nbClient,
+		router,
+		&nbdb.LogicalRouterPort{Name: "lrp1"},
+		&nbdb.LogicalRouterPort{Name: "lrp2"},
+	)
+	if err != nil {
+		t.Fatal(fmt.Errorf("DeleteLogicalRouterPorts() error = %v", err))
+	}
+
+	matcher := libovsdbtest.HaveData(expectedNbdb.NBData)
+	success, err := matcher.Match(nbClient)
+
+	if !success {
+		t.Fatal(fmt.Errorf("expected NBDB didn't match actual, err: %v", matcher.FailureMessage(nbClient)))
+	}
+	if err != nil {
+		t.Fatal(fmt.Errorf("matcher encountered error: %v", err))
+	}
+}
