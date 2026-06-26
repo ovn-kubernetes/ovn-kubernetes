@@ -1893,6 +1893,9 @@ func newNodePortWatcher(
 				return nil, err
 			}
 		}
+		if err := initGatewayNFTables(); err != nil {
+			return nil, err
+		}
 		if util.IsNetworkSegmentationSupportEnabled() {
 			if err := configureUDNServicesNFTables(); err != nil {
 				return nil, fmt.Errorf("unable to configure UDN nftables: %w", err)
