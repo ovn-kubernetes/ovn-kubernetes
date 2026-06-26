@@ -1062,13 +1062,13 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 	if ofPortPhys != "" {
 		defaultNetConfig := b.netConfig[types.DefaultNetworkName]
 		// table 0, Ingress/Egress flows for MEG enabled pods and advertised UDNs
-		// priority 300: Ingress traffic to MEG pods and advertised UDNs
-		// priority 301: Ingress traffic to node management traffic
+		// priority 300: Ingress traffic to MEG pods and advertised UDNs. The node management port IP is part of <nodeSubnet>
+		// and is handled by this flow as well, so it retraces the gateway router instead of being short-circuited to the physical
+		// bridge LOCAL port.
 		// priority 104: Egress traffic from advertised UDNs or MEG enabled pods
 		// priority 103: For egressIP, drop packets coming from pods from other nodes headed externally that were not SNATed.
 		// example flows in SGW mode EIP enabled:
 		//   table=0, n_packets=0, n_bytes=0, priority=300,ip,in_port=eth0,nw_dst=<nodeSubnet> actions=output:4
-		//   table=0, n_packets=0, n_bytes=0, priority=301,ip,in_port=eth0,nw_dst=<mgmtIP> actions=output:LOCAL
 		//   table=0, n_packets=0, n_bytes=0, priority=104,ip,in_port=4,dl_src=02:42:ac:12:00:03,nw_src=<nodeSubnet> actions=output:eth0
 		//   table=0, n_packets=0, n_bytes=0, priority=103,ip,in_port=4,nw_src=<clusterSubnet> actions=drop
 		// example flows in LGW mode EIP enabled:
@@ -1077,7 +1077,6 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 		//   table=0, n_packets=0, n_bytes=0, priority=103,ip,in_port=4,nw_src=<clusterSubnet> actions=drop
 		// example flows in SGW mode EIP disabled:
 		//   table=0, n_packets=0, n_bytes=0, priority=300,ip,in_port=eth0,nw_dst=<nodeSubnet> actions=output:4
-		//   table=0, n_packets=0, n_bytes=0, priority=301,ip,in_port=eth0,nw_dst=<mgmtIP> actions=output:LOCAL
 		//   table=0, n_packets=0, n_bytes=0, priority=104,ip,in_port=4,dl_src=02:42:ac:12:00:03,nw_src=<nodeSubnet> actions=output:eth0
 		// example flows in LGW mode EIP disabled:
 		//   table=0, n_packets=0, n_bytes=0, priority=300,ip,in_port=eth0,nw_dst=<nodeSubnet> actions=output:LOCAL
@@ -1123,22 +1122,6 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 					fmt.Sprintf("cookie=%s, priority=300, table=0, in_port=%s, %s, %s_dst=%s, "+
 						"actions=output:%s",
 						nodetypes.DefaultOpenFlowCookie, ofPortPhys, ipv, ipv, subnet, output))
-				// except node management traffic
-				mgmtIP, err := util.MatchFirstIPNetFamily(utilnet.IsIPv6CIDR(subnet), netConfig.ManagementIPs)
-				if err != nil {
-					return nil, fmt.Errorf("failed to find the management IP matching the IP family of the subnet %q", subnet)
-				}
-
-				if mgmtIP == nil {
-					return nil, fmt.Errorf("unable to determine management IP for subnet %s", subnet.String())
-				}
-				if config.Gateway.Mode != config.GatewayModeLocal {
-					dftFlows = append(dftFlows,
-						fmt.Sprintf("cookie=%s, priority=301, table=0, in_port=%s, %s, %s_dst=%s, "+
-							"actions=output:%s",
-							nodetypes.DefaultOpenFlowCookie, ofPortPhys, ipv, ipv, mgmtIP.IP, nodetypes.OvsLocalPort),
-					)
-				}
 
 				if disableSNATMultipleGWs || isNetworkAdvertised {
 					// MEG and advertised UDN networks requires that local pod traffic can leave the node without SNAT.
