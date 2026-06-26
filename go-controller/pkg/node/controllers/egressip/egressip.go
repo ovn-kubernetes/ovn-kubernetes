@@ -54,12 +54,11 @@ import (
 )
 
 const (
-	rulePriority        = 6000 // the priority of the ip routing rules created by the controller. Egress Service priority is 5000.
-	ruleFwMarkPriority  = 5999 // the priority of the ip routing rules for LGW mode when we want to skip processing eip ip rules because dst is a node ip. Pkt will be fw marked with 1008.
-	routingTableIDStart = 1000
-	chainName           = "OVN-KUBE-EGRESS-IP-MULTI-NIC"
-	iptChainName        = utiliptables.Chain(chainName)
-	maxRetries          = 15
+	rulePriority       = 6000 // the priority of the ip routing rules created by the controller. Egress Service priority is 5000.
+	ruleFwMarkPriority = 5999 // the priority of the ip routing rules for LGW mode when we want to skip processing eip ip rules because dst is a node ip. Pkt will be fw marked with 1008.
+	chainName          = "OVN-KUBE-EGRESS-IP-MULTI-NIC"
+	iptChainName       = utiliptables.Chain(chainName)
+	maxRetries         = 15
 )
 
 var (

@@ -13,10 +13,23 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	mock_k8s_io_utils_exec "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/utils/exec"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks"
 )
+
+func TestCalculateRouteTableID(t *testing.T) {
+	require.NoError(t, config.PrepareTestConfig())
+	t.Cleanup(func() {
+		require.NoError(t, config.PrepareTestConfig())
+	})
+
+	assert.Equal(t, 1005, CalculateRouteTableID(5))
+
+	config.OvnKubeNode.RoutingTableIDStart = 2000
+	assert.Equal(t, 2005, CalculateRouteTableID(5))
+}
 
 func TestNextSloppyIP(t *testing.T) {
 	tests := []struct {
