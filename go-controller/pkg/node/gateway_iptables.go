@@ -19,7 +19,6 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	nodeipt "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iptables"
 	nodeutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/util"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 )
@@ -109,44 +108,6 @@ func getGatewayInitRules(chain string, proto iptables.Protocol) []nodeipt.Rule {
 		)
 	}
 	return iptRules
-}
-
-// getITPLocalIPTRules returns the IPTable REDIRECT or MARK rules for the provided service
-// `svcPort` corresponds to port details for this service as specified in the service object
-// `clusterIP` is clusterIP is the VIP of the service to match on
-// `svcHasLocalHostNetEndPnt` is true if this service has at least one host-networked endpoint that is local to this node
-// NOTE: Currently invoked only for Internal Traffic Policy
-func getITPLocalIPTRules(svcPort corev1.ServicePort, clusterIP string, svcHasLocalHostNetEndPnt bool) []nodeipt.Rule {
-	if svcHasLocalHostNetEndPnt {
-		return []nodeipt.Rule{
-			{
-				Table: "nat",
-				Chain: iptableITPChain,
-				Args: []string{
-					"-p", string(svcPort.Protocol),
-					"-d", clusterIP,
-					"--dport", fmt.Sprintf("%v", svcPort.Port),
-					"-j", "REDIRECT",
-					"--to-port", fmt.Sprintf("%v", int32(svcPort.TargetPort.IntValue())),
-				},
-				Protocol: getIPTablesProtocol(clusterIP),
-			},
-		}
-	}
-	return []nodeipt.Rule{
-		{
-			Table: "mangle",
-			Chain: iptableITPChain,
-			Args: []string{
-				"-p", string(svcPort.Protocol),
-				"-d", string(clusterIP),
-				"--dport", fmt.Sprintf("%d", svcPort.Port),
-				"-j", "MARK",
-				"--set-xmark", string(types.OVNKubeITPMark),
-			},
-			Protocol: getIPTablesProtocol(clusterIP),
-		},
-	}
 }
 
 func getGatewayForwardRules(cidrs []*net.IPNet) map[iptables.Protocol][]nodeipt.Rule {
@@ -371,21 +332,7 @@ func recreateIPTRules(table, chain string, keepIPTRules []nodeipt.Rule) error {
 
 // getGatewayIPTRules returns ClusterIP, NodePort, ExternalIP and LoadBalancer iptables
 // rules for service. This must be used in conjunction with getGatewayNFTRules.
-//
-// case3: if svcHasLocalHostNetEndPnt and svcTypeIsITPLocal, rule that redirects clusterIP traffic to host targetPort is added.
-//
-//	if !svcHasLocalHostNetEndPnt and svcTypeIsITPLocal, rule that marks clusterIP traffic to steer it to ovn-k8s-mp0 is added.
 func getGatewayIPTRules(service *corev1.Service, localEndpoints util.PortToLBEndpoints, svcHasLocalHostNetEndPnt bool) []nodeipt.Rule {
 	rules := make([]nodeipt.Rule, 0)
-	clusterIPs := util.GetClusterIPs(service)
-	svcTypeIsITPLocal := util.ServiceInternalTrafficPolicyLocal(service)
-	for _, svcPort := range service.Spec.Ports {
-		if svcTypeIsITPLocal {
-			// case3 (see function decription for details)
-			for _, clusterIP := range clusterIPs {
-				rules = append(rules, getITPLocalIPTRules(svcPort, clusterIP, svcHasLocalHostNetEndPnt)...)
-			}
-		}
-	}
 	return rules
 }

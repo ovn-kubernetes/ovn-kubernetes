@@ -33,7 +33,6 @@ import (
 	nodenft "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/retry"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks"
 
@@ -3294,9 +3293,7 @@ var _ = Describe("Node Operations", func() {
 						"OUTPUT": []string{
 							"-j OVN-KUBE-ITP",
 						},
-						"OVN-KUBE-ITP": []string{
-							fmt.Sprintf("-p %s -d %s --dport %d -j MARK --set-xmark %s", service.Spec.Ports[0].Protocol, service.Spec.ClusterIP, service.Spec.Ports[0].Port, types.OVNKubeITPMark),
-						},
+						"OVN-KUBE-ITP": []string{},
 					},
 				}
 				f4 := iptV4.(*util.FakeIPTables)
@@ -3305,6 +3302,7 @@ var _ = Describe("Node Operations", func() {
 				expectedNFT := nftablesRulesBase + nftablesRulesGatewayServices
 				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes mgmtport-no-snat-nodeports { tcp . %v }\n", service.Spec.Ports[0].NodePort)
 				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes nodeports-v4 { %s . %d : %s . %d }\n", strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].NodePort, service.Spec.ClusterIP, service.Spec.Ports[0].Port)
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes itp-services-to-mark-v4 { %s . %s . %d }\n", service.Spec.ClusterIP, strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].Port)
 				Expect(nodenft.MatchNFTRules(expectedNFT, nft.Dump())).To(Succeed())
 
 				expectedFlows := []string{
@@ -3434,10 +3432,8 @@ var _ = Describe("Node Operations", func() {
 						},
 						"OVN-KUBE-NODEPORT":   []string{},
 						"OVN-KUBE-EXTERNALIP": []string{},
-						"OVN-KUBE-ITP": []string{
-							fmt.Sprintf("-p %s -d %s --dport %d -j REDIRECT --to-port %d", service.Spec.Ports[0].Protocol, service.Spec.ClusterIP, service.Spec.Ports[0].Port, int32(service.Spec.Ports[0].TargetPort.IntValue())),
-						},
-						"OVN-KUBE-ETP": []string{},
+						"OVN-KUBE-ITP":        []string{},
+						"OVN-KUBE-ETP":        []string{},
 					},
 					"filter": {},
 					"mangle": {
@@ -3452,6 +3448,7 @@ var _ = Describe("Node Operations", func() {
 
 				expectedNFT := nftablesRulesBase + nftablesRulesGatewayServices
 				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes nodeports-v4 { %s . %d : %s . %d }\n", strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].NodePort, service.Spec.ClusterIP, service.Spec.Ports[0].Port)
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes itp-services-to-redirect-v4 { %s . %s . %d : %d }\n", service.Spec.ClusterIP, strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].Port, service.Spec.Ports[0].TargetPort.IntValue())
 				Expect(nodenft.MatchNFTRules(expectedNFT, nft.Dump())).To(Succeed())
 
 				expectedFlows := []string{
