@@ -21,6 +21,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/endpointslicemirror"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/managedbgp"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/networkconnect"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/node"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/nooverlay"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/routeadvertisements"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/status_manager"
@@ -28,6 +29,7 @@ import (
 	udntemplate "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork/template"
 	vtepcontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/vtep"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	nodecontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/node"
 	networkconnectclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/clientset/versioned"
 	rainformer "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/informers/externalversions/routeadvertisements/v1"
@@ -77,6 +79,9 @@ type ClusterManager struct {
 	noOverlayController  *nooverlay.Controller
 	managedBGPController *managedbgp.Controller
 	vtepController       *vtepcontroller.Controller
+
+	// nodeAnnotationBatcher batches node annotation updates across all networks
+	nodeAnnotationBatcher *node.NodeAnnotationBatcher
 }
 
 // NewClusterManager creates a new cluster manager to manage the cluster nodes.
@@ -88,6 +93,7 @@ func NewClusterManager(
 ) (*ClusterManager, error) {
 
 	wf = wf.ShallowClone()
+
 	cm := &ClusterManager{
 		client:         ovnClient.KubeClient,
 		wf:             wf,
@@ -118,17 +124,20 @@ func NewClusterManager(
 	cm.statusManager = status_manager.NewStatusManager(wf, ovnClient, cm.networkManager.Interface())
 
 	nodeController := nodecontroller.NewController(wf, "clustermanager-node", cm.networkManager.Interface())
-	defaultNetClusterController := newDefaultNetworkClusterController(&util.DefaultNetInfo{}, ovnClient, wf, recorder, nodeController)
+
+	kubeInterface := &kube.Kube{KClient: ovnClient.KubeClient}
+	cm.nodeAnnotationBatcher = node.NewNodeAnnotationBatcher(kubeInterface)
+
+	cm.defaultNetClusterController = newDefaultNetworkClusterController(&util.DefaultNetInfo{}, ovnClient, wf, recorder, nodeController, cm.nodeAnnotationBatcher)
 	zoneClusterController, err := newZoneClusterController(ovnClient, wf)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create zone cluster controller, err : %w", err)
 	}
-	cm.defaultNetClusterController = defaultNetClusterController
 	cm.nodeController = nodeController
 	cm.zoneClusterController = zoneClusterController
 
 	if config.OVNKubernetesFeature.EnableMultiNetwork {
-		cm.udnClusterManager, err = newUserDefinedNetworkClusterManager(ovnClient, wf, cm.networkManager.Interface(), recorder, nodeController)
+		cm.udnClusterManager, err = newUserDefinedNetworkClusterManager(ovnClient, wf, cm.networkManager.Interface(), recorder, nodeController, cm.nodeAnnotationBatcher)
 		if err != nil {
 			return nil, err
 		}
@@ -245,6 +254,10 @@ func (cm *ClusterManager) Start(ctx context.Context) error {
 		return err
 	}
 
+	if err := controller.Start(cm.nodeAnnotationBatcher.Reconciler()); err != nil {
+		return err
+	}
+
 	if err := cm.defaultNetClusterController.Start(ctx); err != nil {
 		return err
 	}
@@ -326,6 +339,7 @@ func (cm *ClusterManager) Start(ctx context.Context) error {
 // Stop the cluster manager.
 func (cm *ClusterManager) Stop() {
 	klog.Info("Stopping the cluster manager")
+
 	cm.defaultNetClusterController.Stop()
 	cm.zoneClusterController.Stop()
 
@@ -364,6 +378,8 @@ func (cm *ClusterManager) Stop() {
 		cm.noOverlayController = nil
 	}
 	cm.nodeController.Stop()
+
+	controller.Stop(cm.nodeAnnotationBatcher.Reconciler())
 }
 
 func (cm *ClusterManager) NewNetworkController(netInfo util.NetInfo) (networkmanager.NetworkController, error) {
