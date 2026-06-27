@@ -18,6 +18,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	rafake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned/fake"
+	uplinkfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/clientset/versioned/fake"
 	udnv1fake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/fake"
 	vtepv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
 	vtepv1fake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/clientset/versioned/fake"
@@ -50,6 +51,7 @@ var _ = Describe("VTEPNotifier", func() {
 			KubeClient:                fake.NewSimpleClientset(),
 			NetworkAttchDefClient:     netv1fake.NewSimpleClientset(),
 			UserDefinedNetworkClient:  udnv1fake.NewSimpleClientset(),
+			UplinkClient:              uplinkfake.NewSimpleClientset(),
 			RouteAdvertisementsClient: rafake.NewSimpleClientset(),
 			FRRClient:                 frrfake.NewSimpleClientset(),
 			VTEPClient:                vtepClient,

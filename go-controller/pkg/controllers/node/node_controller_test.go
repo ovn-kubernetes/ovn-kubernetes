@@ -29,6 +29,7 @@ type fakeNodeHandler struct {
 	reconcileCalls int
 	deleteCalls    int
 	lastOldNode    *corev1.Node
+	gatewaySyncs   []string
 }
 
 func (f *fakeNodeHandler) GetNetworkName() string {
@@ -52,6 +53,10 @@ func (f *fakeNodeHandler) ReconcileNode(oldNode *corev1.Node, newNode *corev1.No
 func (f *fakeNodeHandler) SyncNodes(_ []*corev1.Node) error {
 	f.syncCalls++
 	return f.syncErr
+}
+
+func (f *fakeNodeHandler) MarkGatewaySyncNeeded(nodeName string) {
+	f.gatewaySyncs = append(f.gatewaySyncs, nodeName)
 }
 
 type fakeNodeActivityNetworkManager struct {
@@ -228,6 +233,28 @@ func TestReconcileUpdateScopedNetworkOnly(t *testing.T) {
 	}
 	if handlerB.reconcileCalls != 0 {
 		t.Fatalf("expected net-b handler to not be called, got %d", handlerB.reconcileCalls)
+	}
+}
+
+func TestReconcileNetworkGatewayMarksScopedNetworkOnly(t *testing.T) {
+	handlerA := &fakeNodeHandler{netName: "net-a"}
+	handlerB := &fakeNodeHandler{netName: "net-b"}
+	handlers := syncmap.NewSyncMap[NodeHandler]()
+	handlers.Store(handlerA.netName, handlerA)
+	handlers.Store(handlerB.netName, handlerB)
+
+	c := &NodeController{
+		nodeController: newNodeControllerForTest(1, nil),
+		handlers:       handlers,
+	}
+
+	c.ReconcileNetworkGateway("node-a", "net-a")
+
+	if len(handlerA.gatewaySyncs) != 1 || handlerA.gatewaySyncs[0] != "node-a" {
+		t.Fatalf("expected net-a gateway sync for node-a, got %v", handlerA.gatewaySyncs)
+	}
+	if len(handlerB.gatewaySyncs) != 0 {
+		t.Fatalf("expected net-b to not be marked, got %v", handlerB.gatewaySyncs)
 	}
 }
 

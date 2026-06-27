@@ -519,6 +519,12 @@ func (oc *Layer2UserDefinedNetworkController) RegisterNodeHandler() error {
 	return oc.nodeReconciler.RegisterNetworkController(oc)
 }
 
+// MarkGatewaySyncNeeded forces the next node reconciliation to sync gateway
+// state even when node annotations did not change.
+func (oc *Layer2UserDefinedNetworkController) MarkGatewaySyncNeeded(nodeName string) {
+	oc.gatewaysFailed.Store(nodeName, true)
+}
+
 // ReconcileNode reconciles a node for a layer2 UDN controller.
 func (oc *Layer2UserDefinedNetworkController) ReconcileNode(oldNode, newNode *corev1.Node, oldState, newState *nodecontroller.NodeAnnotationState) error {
 	if newNode == nil {
@@ -1113,9 +1119,20 @@ func (oc *Layer2UserDefinedNetworkController) addOrUpdateUDNClusterSubnetEgressS
 }
 
 func (oc *Layer2UserDefinedNetworkController) nodeGatewayConfig(node *corev1.Node) (*GatewayConfig, error) {
-	l3GatewayConfig, err := util.ParseNodeL3GatewayAnnotation(node)
+	l3GatewayConfig, hasUplink, err := oc.uplinkGatewayConfig(node)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get node %s network %s L3 gateway config: %v", node.Name, oc.GetNetworkName(), err)
+		return nil, fmt.Errorf(
+			"failed to get node %s network %s Uplink gateway config: %w",
+			node.Name,
+			oc.GetNetworkName(),
+			err,
+		)
+	}
+	if !hasUplink {
+		l3GatewayConfig, err = util.ParseNodeL3GatewayAnnotation(node)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get node %s network %s L3 gateway config: %w", node.Name, oc.GetNetworkName(), err)
+		}
 	}
 
 	networkName := oc.GetNetworkName()

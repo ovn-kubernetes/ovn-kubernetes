@@ -130,6 +130,11 @@ set_common_default_params() {
   OVN_HA=${OVN_HA:-false}
   OVN_GATEWAY_MODE=${OVN_GATEWAY_MODE:-shared}
   OVN_SECOND_BRIDGE=${OVN_SECOND_BRIDGE:-false}
+  OVN_UPLINK_BRIDGE=${OVN_UPLINK_BRIDGE:-false}
+  OVN_UPLINK_BRIDGE_NAME=${OVN_UPLINK_BRIDGE_NAME:-ovsbr1}
+  OVN_UPLINK_NETWORK_NAME=${OVN_UPLINK_NETWORK_NAME:-uplink}
+  OVN_UPLINK_NETWORK_IPV4=${OVN_UPLINK_NETWORK_IPV4:-172.28.0.0/16}
+  OVN_UPLINK_NETWORK_IPV6=${OVN_UPLINK_NETWORK_IPV6:-fc00:f853:ccd:e800::/64}
   OVN_DISABLE_SNAT_MULTIPLE_GWS=${OVN_DISABLE_SNAT_MULTIPLE_GWS:-false}
   OVN_DISABLE_FORWARDING=${OVN_DISABLE_FORWARDING:-false}
   OVN_UNPRIVILEGED_MODE=${OVN_UNPRIVILEGED_MODE:-false}
@@ -229,6 +234,10 @@ set_common_default_params() {
   fi
   if [ "$ENABLE_EVPN" == true ] && [ "$OVN_GATEWAY_MODE" != "local" ]; then
     echo "EVPN requires local gateway mode (-gm local)"
+    exit 1
+  fi
+  if [ "$OVN_UPLINK_BRIDGE" == true ] && [ "${DPU_MODE:-none}" != "none" ]; then
+    echo "Uplink bridge provisioning is supported only for regular KIND deployments"
     exit 1
   fi
   
@@ -440,6 +449,289 @@ docker_create_second_interface() {
   for n in $KIND_NODES; do
     "$OCI_BIN" network connect xgw "$n"
   done
+}
+
+kind_uplink_network_value() {
+  local container=$1
+  local field=$2
+
+  "$OCI_BIN" inspect "$container" | jq -r \
+    --arg network "${OVN_UPLINK_NETWORK_NAME}" \
+    --arg field "$field" \
+    '.[0].NetworkSettings.Networks[$network][$field] // empty'
+}
+
+oci_network_subnets() {
+  local network=$1
+
+  "$OCI_BIN" network inspect "$network" | jq -r '
+    .[0] as $network |
+    [
+      $network.IPAM.Config[]?.Subnet,
+      $network.subnets[]?.subnet
+    ] | map(select(. != null and . != "")) | .[]
+  '
+}
+
+validate_uplink_network_subnets() {
+  local network=$1
+  local existing_subnets subnet missing_subnets unexpected_subnets
+
+  if ! existing_subnets=$(oci_network_subnets "$network" | sort -u); then
+    echo "failed to inspect OCI network ${network}" >&2
+    exit 1
+  fi
+
+  for subnet in "${OVN_UPLINK_NETWORK_IPV4}" "${OVN_UPLINK_NETWORK_IPV6}"; do
+    if ! printf '%s\n' "$existing_subnets" | grep -Fxq "$subnet"; then
+      missing_subnets="${missing_subnets} ${subnet}"
+    fi
+  done
+
+  while IFS= read -r subnet; do
+    case "$subnet" in
+    ""|"${OVN_UPLINK_NETWORK_IPV4}"|"${OVN_UPLINK_NETWORK_IPV6}")
+      ;;
+    *)
+      unexpected_subnets="${unexpected_subnets} ${subnet}"
+      ;;
+    esac
+  done <<< "$existing_subnets"
+
+  if [ -n "${missing_subnets}" ] || [ -n "${unexpected_subnets}" ]; then
+    echo "OCI network ${network} subnets do not match expected Uplink subnets" >&2
+    echo "Expected subnets: ${OVN_UPLINK_NETWORK_IPV4} ${OVN_UPLINK_NETWORK_IPV6}" >&2
+    echo "Existing subnets: ${existing_subnets}" >&2
+    exit 1
+  fi
+}
+
+ensure_uplink_network() {
+  if "$OCI_BIN" network inspect "${OVN_UPLINK_NETWORK_NAME}" >/dev/null 2>&1; then
+    validate_uplink_network_subnets "${OVN_UPLINK_NETWORK_NAME}"
+    return
+  fi
+
+  "$OCI_BIN" network create --ipv6 --driver=bridge "${OVN_UPLINK_NETWORK_NAME}" \
+    --subnet="${OVN_UPLINK_NETWORK_IPV4}" \
+    --subnet="${OVN_UPLINK_NETWORK_IPV6}"
+}
+
+docker_create_uplink_interface() {
+  echo "adding Uplink interfaces to nodes"
+
+  ensure_uplink_network
+
+  KIND_NODES=$(kind_get_nodes)
+  for n in $KIND_NODES; do
+    if [ -z "$(kind_uplink_network_value "$n" IPAddress)" ]; then
+      "$OCI_BIN" network connect "${OVN_UPLINK_NETWORK_NAME}" "$n"
+    fi
+  done
+}
+
+disable_bridge_netfilter() {
+  echo "disabling bridge netfilter for KIND container bridge networks"
+
+  sudo modprobe br_netfilter || true
+  for sysctl_name in \
+    net.bridge.bridge-nf-call-iptables \
+    net.bridge.bridge-nf-call-ip6tables; do
+    if sysctl -n "${sysctl_name}" >/dev/null 2>&1; then
+      sudo sysctl -w "${sysctl_name}=0"
+    fi
+  done
+}
+
+find_kind_uplink_interface() {
+  local node=$1
+  local ip iface
+
+  ip=$(kind_uplink_network_value "$node" IPAddress)
+  if [ -n "$ip" ]; then
+    iface=$("$OCI_BIN" exec "$node" sh -c \
+      "ip -o -4 addr show | awk -v ip='${ip}' '\$4 ~ \"^\" ip \"/\" {print \$2; exit}'")
+    if [ -n "$iface" ]; then
+      echo "$iface"
+      return 0
+    fi
+  fi
+
+  ip=$(kind_uplink_network_value "$node" GlobalIPv6Address)
+  if [ -n "$ip" ]; then
+    iface=$("$OCI_BIN" exec "$node" sh -c \
+      "ip -o -6 addr show | awk -v ip='${ip}' '\$4 ~ \"^\" ip \"/\" {print \$2; exit}'")
+    if [ -n "$iface" ]; then
+      echo "$iface"
+      return 0
+    fi
+  fi
+
+  echo "failed to find node interface for network ${OVN_UPLINK_NETWORK_NAME} on ${node}" >&2
+  return 1
+}
+
+configure_kind_uplink_bridge() {
+  echo "configuring unmanaged Uplink bridge ${OVN_UPLINK_BRIDGE_NAME}"
+
+  KIND_NODES=$(kind_get_nodes)
+  for n in $KIND_NODES; do
+    local iface pod
+    iface=$(find_kind_uplink_interface "$n")
+    pod=$(kubectl -n ovn-kubernetes get pod \
+      -l app=ovnkube-node \
+      --field-selector "spec.nodeName=${n}" \
+      -o jsonpath='{.items[0].metadata.name}')
+    if [ -z "$pod" ]; then
+      echo "failed to find ovnkube-node pod on ${n}" >&2
+      return 1
+    fi
+    local existing_iface
+    existing_iface=$(kubectl -n ovn-kubernetes exec "$pod" -c ovn-controller -- \
+      ovs-vsctl br-get-external-id "${OVN_UPLINK_BRIDGE_NAME}" bridge-uplink 2>/dev/null || true)
+    if [ -n "$existing_iface" ]; then
+      iface=$existing_iface
+    fi
+    kubectl -n ovn-kubernetes exec "$pod" -c ovn-controller -- \
+      ovs-vsctl --may-exist add-br "${OVN_UPLINK_BRIDGE_NAME}"
+    kubectl -n ovn-kubernetes exec "$pod" -c ovn-controller -- \
+      ovs-vsctl --may-exist add-port "${OVN_UPLINK_BRIDGE_NAME}" "$iface"
+    kubectl -n ovn-kubernetes exec "$pod" -c ovn-controller -- \
+      ovs-vsctl br-set-external-id "${OVN_UPLINK_BRIDGE_NAME}" bridge-uplink "$iface"
+    "$OCI_BIN" exec "$n" sh -c 'bridge=$1; iface=$2; ip link set dev "$bridge" up;
+      for addr in $(ip -o -4 addr show dev "$iface" scope global | awk "{print \$4}"); do
+        ip addr add "$addr" dev "$bridge" 2>/dev/null || true;
+        ip addr del "$addr" dev "$iface" 2>/dev/null || true;
+      done;
+      for addr in $(ip -o -6 addr show dev "$iface" scope global | awk "{print \$4}"); do
+        ip addr add "$addr" dev "$bridge" 2>/dev/null || true;
+        ip addr del "$addr" dev "$iface" 2>/dev/null || true;
+      done' sh "${OVN_UPLINK_BRIDGE_NAME}" "$iface"
+    echo "Uplink nodeConfig: node=${n} hostInterfaceName=${OVN_UPLINK_BRIDGE_NAME} bridge=${OVN_UPLINK_BRIDGE_NAME} bridgeUplink=${iface}"
+  done
+}
+
+configure_frr_uplink_receive_config() {
+  local frr_uplink_ipv4=$1
+  local frr_uplink_ipv6=$2
+  local receive_file
+  local kubectl_cmd=(kubectl)
+
+  if [ -z "${frr_uplink_ipv4}" ] && [ -z "${frr_uplink_ipv6}" ]; then
+    echo "external FRR has no IP address on ${OVN_UPLINK_NETWORK_NAME}" >&2
+    return 1
+  fi
+  if frr_k8s_remote_enabled; then
+    kubectl_cmd=(kubectl --kubeconfig "$(frr_k8s_host_kubeconfig)")
+  fi
+
+  receive_file=$(mktemp)
+  {
+    echo "apiVersion: frrk8s.metallb.io/v1beta1"
+    echo "kind: FRRConfiguration"
+    echo "metadata:"
+    echo "  name: uplink-receive-all"
+    echo "  labels:"
+    echo "    name: uplink-receive-all"
+    echo "spec:"
+    echo "  bgp:"
+    echo "    routers:"
+    echo "    - asn: 64512"
+    echo "      neighbors:"
+    if [ -n "${frr_uplink_ipv4}" ]; then
+      echo "      - address: ${frr_uplink_ipv4}"
+      echo "        asn: 64512"
+      echo "        disableMP: true"
+      echo "        toReceive:"
+      echo "          allowed:"
+      echo "            mode: filtered"
+      echo "            prefixes:"
+      echo "            - prefix: ${BGP_SERVER_NET_SUBNET_IPV4}"
+    fi
+    if [ "$PLATFORM_IPV6_SUPPORT" == true ] && [ -n "${frr_uplink_ipv6}" ]; then
+      echo "      - address: ${frr_uplink_ipv6}"
+      echo "        asn: 64512"
+      echo "        disableMP: true"
+      echo "        toReceive:"
+      echo "          allowed:"
+      echo "            mode: filtered"
+      echo "            prefixes:"
+      echo "            - prefix: ${BGP_SERVER_NET_SUBNET_IPV6}"
+    fi
+  } > "${receive_file}"
+
+  "${kubectl_cmd[@]}" apply -n frr-k8s-system -f "${receive_file}"
+  rm -f "${receive_file}"
+  echo "Uplink FRRConfiguration selector: name=uplink-receive-all"
+}
+
+configure_frr_uplink_peers() {
+  if [ "$OVN_UPLINK_BRIDGE" != true ] ||
+     [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ] ||
+     [ "$ENABLE_NO_OVERLAY_MANAGED_ROUTING" == true ] ||
+     [ "${DPU_MODE:-none}" == "host" ]; then
+    return
+  fi
+
+  echo "configuring external FRR for Uplink network ${OVN_UPLINK_NETWORK_NAME}"
+  "$OCI_BIN" network connect "${OVN_UPLINK_NETWORK_NAME}" frr || true
+
+  local attempts=0
+  while ! "$OCI_BIN" exec frr vtysh -c "show daemons" >/dev/null 2>&1; do
+    if (( ++attempts > 30 )); then
+      echo "error: FRR daemons did not become ready for Uplink peering" >&2
+      return 1
+    fi
+    sleep 1
+  done
+
+  local frr_uplink_ipv4 frr_uplink_ipv6
+  frr_uplink_ipv4=$(kind_uplink_network_value frr IPAddress)
+  frr_uplink_ipv6=$(kind_uplink_network_value frr GlobalIPv6Address)
+
+  local ipv4_neighbors=()
+  local ipv6_neighbors=()
+  local node_ip
+  KIND_NODES=$(kind_get_nodes)
+  for n in $KIND_NODES; do
+    node_ip=$(kind_uplink_network_value "$n" IPAddress)
+    if [ -n "${node_ip}" ]; then
+      ipv4_neighbors+=("${node_ip}")
+    fi
+    if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
+      node_ip=$(kind_uplink_network_value "$n" GlobalIPv6Address)
+      if [ -n "${node_ip}" ]; then
+        ipv6_neighbors+=("${node_ip}")
+      fi
+    fi
+  done
+
+  local vtysh_cmds=(-c "configure terminal" -c "router bgp 64512")
+  for node_ip in "${ipv4_neighbors[@]}" "${ipv6_neighbors[@]}"; do
+    vtysh_cmds+=(-c "neighbor ${node_ip} remote-as 64512")
+  done
+  if ((${#ipv4_neighbors[@]} > 0)); then
+    vtysh_cmds+=(-c "address-family ipv4 unicast")
+    for node_ip in "${ipv4_neighbors[@]}"; do
+      vtysh_cmds+=(-c "neighbor ${node_ip} activate")
+      vtysh_cmds+=(-c "neighbor ${node_ip} route-reflector-client")
+    done
+    vtysh_cmds+=(-c "exit-address-family")
+  fi
+  if ((${#ipv6_neighbors[@]} > 0)); then
+    vtysh_cmds+=(-c "address-family ipv6 unicast")
+    for node_ip in "${ipv6_neighbors[@]}"; do
+      vtysh_cmds+=(-c "neighbor ${node_ip} activate")
+      vtysh_cmds+=(-c "neighbor ${node_ip} route-reflector-client")
+    done
+    vtysh_cmds+=(-c "exit-address-family")
+  fi
+  vtysh_cmds+=(-c "end" -c "write memory")
+  "$OCI_BIN" exec frr vtysh "${vtysh_cmds[@]}"
+
+  "$OCI_BIN" exec frr ip route delete default || true
+  "$OCI_BIN" exec frr ip -6 route delete default || true
+  configure_frr_uplink_receive_config "${frr_uplink_ipv4}" "${frr_uplink_ipv6}"
 }
 
 check_ipv6() {

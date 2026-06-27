@@ -264,12 +264,22 @@ func (npw *nodePortWatcher) updateServiceFlowCache(service *corev1.Service, netI
 
 	var netConfig *bridgeconfig.BridgeUDNConfiguration
 	var actions string
+	ofPortPhys := npw.ofportPhys
+	bridgeMAC := npw.ofm.getDefaultBridgeMAC()
+	bridgeName := npw.gwBridge.GetBridgeName()
 
 	if add {
 		netConfig = npw.ofm.getActiveNetwork(netInfo)
 		if netConfig == nil {
 			return fmt.Errorf("failed to get active network config for network %s", netInfo.GetNetworkName())
 		}
+		bridge := npw.ofm.getBridgeForNetwork(netInfo)
+		if bridge == nil {
+			return fmt.Errorf("failed to get bridge config for network %s", netInfo.GetNetworkName())
+		}
+		_, _, ofPortPhys = bridge.GetPortConfigurations()
+		bridgeMAC = bridge.GetMAC()
+		bridgeName = bridge.GetBridgeName()
 		actions = fmt.Sprintf("output:%s", netConfig.OfPortPatch)
 	}
 
@@ -299,7 +309,7 @@ func (npw *nodePortWatcher) updateServiceFlowCache(service *corev1.Service, netI
 				key = strings.Join([]string{"NodePort", service.Namespace, service.Name, flowProtocol, fmt.Sprintf("%d", svcPort.NodePort)}, "_")
 				// Delete if needed and skip to next protocol
 				if !add {
-					npw.ofm.deleteFlowsByKey(key)
+					npw.ofm.deleteNetworkFlowsByKey(key)
 					continue
 				}
 				cookie, err = svcToCookie(service.Namespace, service.Name, flowProtocol, svcPort.NodePort)
@@ -339,26 +349,26 @@ func (npw *nodePortWatcher) updateServiceFlowCache(service *corev1.Service, netI
 					nodeIPs, _ := npw.nodeIPManager.ListAddresses()
 					nodeportFlows, nodeportGroups := npw.hostNetworkServiceOpenFlows(
 						service, key, cookie, flowProtocol,
-						fmt.Sprintf("in_port=%s, %s, tp_dst=%d", npw.ofportPhys, flowProtocol, svcPort.NodePort),
-						gatewayAddress, lbe, nodeIPs)
+						fmt.Sprintf("in_port=%s, %s, tp_dst=%d", ofPortPhys, flowProtocol, svcPort.NodePort),
+						gatewayAddress, lbe, nodeIPs, ofPortPhys)
 					if len(nodeportFlows) > 0 {
-						npw.ofm.updateFlowCacheEntry(key, nodeportFlows)
-						npw.ofm.updateGroupCacheEntry(key, nodeportGroups)
+						npw.ofm.updateNetworkFlowCacheEntry(netInfo, key, nodeportFlows)
+						npw.ofm.updateNetworkGroupCacheEntry(netInfo, key, nodeportGroups)
 					} else {
-						npw.ofm.updateGroupCacheEntry(key, nil)
+						npw.ofm.updateNetworkGroupCacheEntry(netInfo, key, nil)
 					}
 				} else if config.Gateway.Mode == config.GatewayModeShared {
 					// case2 (see function description for details)
-					npw.ofm.updateFlowCacheEntry(key, []string{
+					npw.ofm.updateNetworkFlowCacheEntry(netInfo, key, []string{
 						// table=0, matches on service traffic towards nodePort and sends it to OVN pipeline
 						fmt.Sprintf("cookie=%s, priority=110, in_port=%s, %s, tp_dst=%d, "+
 							"actions=%s",
-							cookie, npw.ofportPhys, flowProtocol, svcPort.NodePort, actions),
+							cookie, ofPortPhys, flowProtocol, svcPort.NodePort, actions),
 						// table=0, matches on return traffic from service nodePort and sends it out to primary node interface (br-ex)
 						fmt.Sprintf("cookie=%s, priority=110, in_port=%s, dl_src=%s, %s, tp_src=%d, "+
 							"actions=output:%s",
-							cookie, netConfig.OfPortPatch, npw.ofm.getDefaultBridgeMAC(), flowProtocol, svcPort.NodePort, npw.ofportPhys)})
-					npw.ofm.updateGroupCacheEntry(key, nil)
+							cookie, netConfig.OfPortPatch, bridgeMAC, flowProtocol, svcPort.NodePort, ofPortPhys)})
+					npw.ofm.updateNetworkGroupCacheEntry(netInfo, key, nil)
 				}
 			}
 		}
@@ -391,7 +401,7 @@ func (npw *nodePortWatcher) updateServiceFlowCache(service *corev1.Service, netI
 		var ofPorts []string
 		// don't get the ports unless we need to as it is a costly operation
 		if (len(extParsedIPs) > 0 || len(ingParsedIPs) > 0) && add {
-			ofPorts, err = util.GetOpenFlowPorts(npw.gwBridge.GetBridgeName(), false)
+			ofPorts, err = util.GetOpenFlowPorts(bridgeName, false)
 			if err != nil {
 				// in the odd case that getting all ports from the bridge should not work,
 				// simply output to LOCAL (this should work well in the vast majority of cases, anyway)
@@ -400,12 +410,14 @@ func (npw *nodePortWatcher) updateServiceFlowCache(service *corev1.Service, netI
 			}
 		}
 		if err = npw.createLbAndExternalSvcFlows(service, netConfig, &svcPort, add, hasLocalHostNetworkEp,
-			localEndpoints, protocol, actions, ingParsedIPs, "Ingress", ofPorts); err != nil {
+			localEndpoints, protocol, actions, ingParsedIPs, "Ingress", ofPorts, netInfo, ofPortPhys,
+			bridgeMAC); err != nil {
 			errors = append(errors, err)
 		}
 
 		if err = npw.createLbAndExternalSvcFlows(service, netConfig, &svcPort, add, hasLocalHostNetworkEp,
-			localEndpoints, protocol, actions, extParsedIPs, "External", ofPorts); err != nil {
+			localEndpoints, protocol, actions, extParsedIPs, "External", ofPorts, netInfo, ofPortPhys,
+			bridgeMAC); err != nil {
 			errors = append(errors, err)
 		}
 	}
@@ -487,7 +499,8 @@ func (npw *nodePortWatcher) updateServiceFlowCache(service *corev1.Service, netI
 // `ipType` is either "External" or "Ingress"
 func (npw *nodePortWatcher) createLbAndExternalSvcFlows(service *corev1.Service, netConfig *bridgeconfig.BridgeUDNConfiguration,
 	svcPort *corev1.ServicePort, add bool, hasLocalHostNetworkEp bool, localEndpoints util.PortToLBEndpoints,
-	protocol string, actions string, externalIPOrLBIngressIPs []string, ipType string, ofPorts []string) error {
+	protocol string, actions string, externalIPOrLBIngressIPs []string, ipType string, ofPorts []string,
+	netInfo util.NetInfo, ofPortPhys string, bridgeMAC net.HardwareAddr) error {
 	var errors []error
 
 	for _, externalIPOrLBIngressIP := range externalIPOrLBIngressIPs {
@@ -514,11 +527,11 @@ func (npw *nodePortWatcher) createLbAndExternalSvcFlows(service *corev1.Service,
 		key := strings.Join([]string{ipType, service.Namespace, service.Name, externalIPOrLBIngressIP, fmt.Sprintf("%d", svcPort.Port)}, "_")
 		// Delete if needed and skip to next protocol
 		if !add {
-			npw.ofm.deleteFlowsByKey(key)
+			npw.ofm.deleteNetworkFlowsByKey(key)
 			continue
 		}
 		// add the ARP bypass flow regardless of service type or gateway modes since its applicable in all scenarios.
-		arpFlow := npw.generateARPBypassFlow(ofPorts, netConfig.OfPortPatch, externalIPOrLBIngressIP, cookie)
+		arpFlow := npw.generateARPBypassFlow(ofPorts, netConfig.OfPortPatch, externalIPOrLBIngressIP, cookie, ofPortPhys)
 		externalIPFlows = append(externalIPFlows, arpFlow)
 		// This allows external traffic ingress when the svc's ExternalTrafficPolicy is
 		// set to Local, and the backend pod is HostNetworked. We need to add
@@ -555,38 +568,38 @@ func (npw *nodePortWatcher) createLbAndExternalSvcFlows(service *corev1.Service,
 			nodeIPs, _ := npw.nodeIPManager.ListAddresses()
 			hostNetworkFlows, hostNetworkGroups := npw.hostNetworkServiceOpenFlows(
 				service, key, cookie, flowProtocol,
-				fmt.Sprintf("in_port=%s, %s, %s=%s, tp_dst=%d", npw.ofportPhys, flowProtocol, nwDst, externalIPOrLBIngressIP, svcPort.Port),
-				gatewayAddress, lbe, nodeIPs)
+				fmt.Sprintf("in_port=%s, %s, %s=%s, tp_dst=%d", ofPortPhys, flowProtocol, nwDst, externalIPOrLBIngressIP, svcPort.Port),
+				gatewayAddress, lbe, nodeIPs, ofPortPhys)
 			externalIPFlows = append(externalIPFlows, hostNetworkFlows...)
 			if len(hostNetworkFlows) > 0 {
-				npw.ofm.updateGroupCacheEntry(key, hostNetworkGroups)
+				npw.ofm.updateNetworkGroupCacheEntry(netInfo, key, hostNetworkGroups)
 			} else {
-				npw.ofm.updateGroupCacheEntry(key, nil)
+				npw.ofm.updateNetworkGroupCacheEntry(netInfo, key, nil)
 			}
 		} else if config.Gateway.Mode == config.GatewayModeShared {
 			// add the ICMP Fragmentation flow for shared gateway mode.
-			icmpFlow := nodeutil.GenerateICMPFragmentationFlow(externalIPOrLBIngressIP, netConfig.OfPortPatch, npw.ofportPhys, cookie, 110)
+			icmpFlow := nodeutil.GenerateICMPFragmentationFlow(externalIPOrLBIngressIP, netConfig.OfPortPatch, ofPortPhys, cookie, 110)
 			externalIPFlows = append(externalIPFlows, icmpFlow)
 			// case2 (see function description for details)
 			externalIPFlows = append(externalIPFlows,
 				// table=0, matches on service traffic towards externalIP or LB ingress and sends it to OVN pipeline
 				fmt.Sprintf("cookie=%s, priority=110, in_port=%s, %s, %s=%s, tp_dst=%d, "+
 					"actions=%s",
-					cookie, npw.ofportPhys, flowProtocol, nwDst, externalIPOrLBIngressIP, svcPort.Port, actions),
+					cookie, ofPortPhys, flowProtocol, nwDst, externalIPOrLBIngressIP, svcPort.Port, actions),
 				// table=0, matches on return traffic from service externalIP or LB ingress and sends it out to primary node interface (br-ex)
 				fmt.Sprintf("cookie=%s, priority=110, in_port=%s, dl_src=%s, %s, %s=%s, tp_src=%d, "+
 					"actions=output:%s",
-					cookie, netConfig.OfPortPatch, npw.ofm.getDefaultBridgeMAC(), flowProtocol, nwSrc, externalIPOrLBIngressIP, svcPort.Port, npw.ofportPhys))
-			npw.ofm.updateGroupCacheEntry(key, nil)
+					cookie, netConfig.OfPortPatch, bridgeMAC, flowProtocol, nwSrc, externalIPOrLBIngressIP, svcPort.Port, ofPortPhys))
+			npw.ofm.updateNetworkGroupCacheEntry(netInfo, key, nil)
 		}
-		npw.ofm.updateFlowCacheEntry(key, externalIPFlows)
+		npw.ofm.updateNetworkFlowCacheEntry(netInfo, key, externalIPFlows)
 	}
 
 	return utilerrors.Join(errors...)
 }
 
 func (npw *nodePortWatcher) hostNetworkServiceOpenFlows(service *corev1.Service, key, cookie, flowProtocol, match, gatewayAddress string,
-	lbe util.LBEndpoints, nodeIPs []net.IP) ([]string, []string) {
+	lbe util.LBEndpoints, nodeIPs []net.IP, ofPortPhys string) ([]string, []string) {
 	targetPorts := hostNetworkTargetPorts(lbe, nodeIPs, strings.Contains(flowProtocol, "6"))
 	if len(targetPorts) == 0 {
 		return nil, nil
@@ -629,7 +642,7 @@ func (npw *nodePortWatcher) hostNetworkServiceOpenFlows(service *corev1.Service,
 
 	flows = append(flows,
 		// table 7 sends the reply packet back out eth0 to the external client. The constant cookie is used because this flow is common to all ETP service traffic.
-		fmt.Sprintf("cookie=%s, priority=110, table=7, actions=output:%s", etpSvcOpenFlowCookie, npw.ofportPhys))
+		fmt.Sprintf("cookie=%s, priority=110, table=7, actions=output:%s", etpSvcOpenFlowCookie, ofPortPhys))
 	return flows, groups
 }
 
@@ -676,7 +689,7 @@ func hostNetworkServiceGroupID(key string) uint32 {
 
 // generate ARP/NS bypass flow which will send the ARP/NS request everywhere *but* to OVN
 // OpenFlow will not do hairpin switching, so we can safely add the origin port to the list of ports, too
-func (npw *nodePortWatcher) generateARPBypassFlow(ofPorts []string, ofPortPatch, ipAddr string, cookie string) string {
+func (npw *nodePortWatcher) generateARPBypassFlow(ofPorts []string, ofPortPatch, ipAddr string, cookie string, ofPortPhys string) string {
 	addrResDst := "arp_tpa"
 	addrResProto := "arp, arp_op=1"
 	if utilnet.IsIPv6String(ipAddr) {
@@ -691,7 +704,7 @@ func (npw *nodePortWatcher) generateARPBypassFlow(ofPorts []string, ofPortPatch,
 		// simply output to LOCAL (this should work well in the vast majority of cases, anyway)
 		arpFlow = fmt.Sprintf("cookie=%s, priority=110, in_port=%s, %s, %s=%s, "+
 			"actions=output:%s",
-			cookie, npw.ofportPhys, addrResProto, addrResDst, ipAddr, nodetypes.OvsLocalPort)
+			cookie, ofPortPhys, addrResProto, addrResDst, ipAddr, nodetypes.OvsLocalPort)
 	} else {
 		// cover the case where breth0 has more than 3 ports, e.g. if an admin adds a 4th port
 		// and the ExternalIP would be on that port
@@ -699,7 +712,7 @@ func (npw *nodePortWatcher) generateARPBypassFlow(ofPorts []string, ofPortPatch,
 		// Filtering ofPortPhys is for consistency / readability only, OpenFlow will not send
 		// out the in_port normally (see man 7 ovs-actions)
 		for _, port := range ofPorts {
-			if port == ofPortPatch || port == npw.ofportPhys {
+			if port == ofPortPatch || port == ofPortPhys {
 				continue
 			}
 			arpPortsFiltered = append(arpPortsFiltered, port)
@@ -710,11 +723,11 @@ func (npw *nodePortWatcher) generateARPBypassFlow(ofPorts []string, ofPortPatch,
 			match_vlan := fmt.Sprintf("dl_vlan=%d,", config.Gateway.VLANID)
 			arpFlow = fmt.Sprintf("cookie=%s, priority=110, in_port=%s, %s, %s, %s=%s, "+
 				"actions=strip_vlan,output:%s",
-				cookie, npw.ofportPhys, match_vlan, addrResProto, addrResDst, ipAddr, strings.Join(arpPortsFiltered, ","))
+				cookie, ofPortPhys, match_vlan, addrResProto, addrResDst, ipAddr, strings.Join(arpPortsFiltered, ","))
 		} else {
 			arpFlow = fmt.Sprintf("cookie=%s, priority=110, in_port=%s, %s, %s=%s, "+
 				"actions=output:%s",
-				cookie, npw.ofportPhys, addrResProto, addrResDst, ipAddr, strings.Join(arpPortsFiltered, ","))
+				cookie, ofPortPhys, addrResProto, addrResDst, ipAddr, strings.Join(arpPortsFiltered, ","))
 		}
 	}
 
@@ -822,7 +835,8 @@ func addServiceRules(service *corev1.Service, netInfo util.NetInfo, localEndpoin
 			}
 		}
 		nftElems := getGatewayNFTRules(service, localEndpoints, svcHasLocalHostNetEndPnt)
-		if netInfo.IsPrimaryNetwork() && activeNetwork != nil {
+		if activeNetwork != nil &&
+			shouldAddUDNServiceMarkRules(netInfo, npw.nodeIPManager.nodeName) {
 			nftElems = append(nftElems, getUDNNFTRules(service, activeNetwork)...)
 		}
 		if len(nftElems) > 0 {
@@ -1296,7 +1310,8 @@ func (npw *nodePortWatcher) SyncServices(services []interface{}) error {
 		if !npw.dpuMode {
 			keepIPTRules = append(keepIPTRules, getGatewayIPTRules(service, localEndpoints, hasLocalHostNetworkEp)...)
 			keepNFTSetElems = append(keepNFTSetElems, getGatewayNFTRules(service, localEndpoints, hasLocalHostNetworkEp)...)
-			if util.IsNetworkSegmentationSupportEnabled() && netInfo.IsPrimaryNetwork() {
+			if util.IsNetworkSegmentationSupportEnabled() &&
+				shouldAddUDNServiceMarkRules(netInfo, npw.nodeIPManager.nodeName) {
 				netConfig := npw.ofm.getActiveNetwork(netInfo)
 				if netConfig == nil {
 					return fmt.Errorf("failed to get active network config for network %s", netInfo.GetNetworkName())

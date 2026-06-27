@@ -294,7 +294,7 @@ var _ = Describe("Node Operations", func() {
 				// Service might be "added" once or twice.  Take that into account.
 				minNFakeCommands := nInitialFakeCommands + 1
 				fExec.AddRepeatedFakeCmd(&ovntest.ExpectedCmd{
-					Cmd: "ovs-ofctl show ",
+					Cmd: "ovs-ofctl show breth0",
 				}, minNFakeCommands)
 
 				externalIP := "1.1.1.1"
@@ -406,7 +406,7 @@ var _ = Describe("Node Operations", func() {
 			app.Action = func(*cli.Context) error {
 				externalIP := "1.1.1.1"
 				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
-					Cmd: "ovs-ofctl show ",
+					Cmd: "ovs-ofctl show breth0",
 				})
 
 				service := *newService("service1", "namespace1", "10.129.0.2",
@@ -653,7 +653,7 @@ var _ = Describe("Node Operations", func() {
 				// Service might be "added" once or twice.  Take that into account.
 				minNFakeCommands := nInitialFakeCommands + 1
 				fExec.AddRepeatedFakeCmd(&ovntest.ExpectedCmd{
-					Cmd: "ovs-ofctl show ",
+					Cmd: "ovs-ofctl show breth0",
 				}, minNFakeCommands)
 
 				externalIP := "1.1.1.1"
@@ -746,11 +746,11 @@ var _ = Describe("Node Operations", func() {
 				externalIP := "1.1.1.1"
 				config.Gateway.Mode = config.GatewayModeLocal
 				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
-					Cmd: "ovs-ofctl show ",
+					Cmd: "ovs-ofctl show breth0",
 					Err: fmt.Errorf("deliberate error to fall back to output:LOCAL"),
 				})
 				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
-					Cmd: "ovs-ofctl show ",
+					Cmd: "ovs-ofctl show breth0",
 					Err: fmt.Errorf("deliberate error to fall back to output:LOCAL"),
 				})
 				service := *newService("service1", "namespace1", "10.129.0.2",
@@ -862,15 +862,15 @@ var _ = Describe("Node Operations", func() {
 				externalIP := "1.1.1.1"
 				config.Gateway.Mode = config.GatewayModeLocal
 				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
-					Cmd: "ovs-ofctl show ",
+					Cmd: "ovs-ofctl show breth0",
 					Err: fmt.Errorf("deliberate error to fall back to output:LOCAL"),
 				})
 				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
-					Cmd: "ovs-ofctl show ",
+					Cmd: "ovs-ofctl show breth0",
 					Err: fmt.Errorf("deliberate error to fall back to output:LOCAL"),
 				})
 				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
-					Cmd: "ovs-ofctl show ",
+					Cmd: "ovs-ofctl show breth0",
 					Err: fmt.Errorf("deliberate error to fall back to output:LOCAL"),
 				})
 				svcPortName := "http"
@@ -996,7 +996,7 @@ var _ = Describe("Node Operations", func() {
 			app.Action = func(*cli.Context) error {
 				minNFakeCommands := nInitialFakeCommands + 1
 				fExec.AddRepeatedFakeCmd(&ovntest.ExpectedCmd{
-					Cmd: "ovs-ofctl show ",
+					Cmd: "ovs-ofctl show breth0",
 				}, minNFakeCommands)
 
 				config.Gateway.Mode = config.GatewayModeLocal
@@ -1146,11 +1146,11 @@ var _ = Describe("Node Operations", func() {
 				externalIP := "1.1.1.1"
 				config.Gateway.Mode = config.GatewayModeLocal
 				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
-					Cmd: "ovs-ofctl show ",
+					Cmd: "ovs-ofctl show breth0",
 					Err: fmt.Errorf("deliberate error to fall back to output:LOCAL"),
 				})
 				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
-					Cmd: "ovs-ofctl show ",
+					Cmd: "ovs-ofctl show breth0",
 					Err: fmt.Errorf("deliberate error to fall back to output:LOCAL"),
 				})
 				service := *newService("service1", "namespace1", "10.129.0.2",
@@ -1258,11 +1258,11 @@ var _ = Describe("Node Operations", func() {
 				externalIP := "1.1.1.1"
 				config.Gateway.Mode = config.GatewayModeShared
 				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
-					Cmd: "ovs-ofctl show ",
+					Cmd: "ovs-ofctl show breth0",
 					Err: fmt.Errorf("deliberate error to fall back to output:LOCAL"),
 				})
 				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
-					Cmd: "ovs-ofctl show ",
+					Cmd: "ovs-ofctl show breth0",
 					Err: fmt.Errorf("deliberate error to fall back to output:LOCAL"),
 				})
 				service := *newService("service1", "namespace1", "10.129.0.2",
@@ -1393,11 +1393,11 @@ var _ = Describe("Node Operations", func() {
 				externalIP := "1.1.1.1"
 				svcStatusIP := "5.5.5.5"
 				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
-					Cmd: "ovs-ofctl show ",
+					Cmd: "ovs-ofctl show breth0",
 					Err: fmt.Errorf("deliberate error to fall back to output:LOCAL"),
 				})
 				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
-					Cmd: "ovs-ofctl show ",
+					Cmd: "ovs-ofctl show breth0",
 					Err: fmt.Errorf("deliberate error to fall back to output:LOCAL"),
 				})
 				service := *newService("service1", "namespace1", "10.129.0.2",
@@ -1651,7 +1651,7 @@ var _ = Describe("Node Operations", func() {
 				// Service might be "added" once or twice.  Take that into account.
 				minNFakeCommands := nInitialFakeCommands + 1
 				fExec.AddRepeatedFakeCmd(&ovntest.ExpectedCmd{
-					Cmd: "ovs-ofctl show ",
+					Cmd: "ovs-ofctl show breth0",
 				}, minNFakeCommands)
 
 				externalIPv4 := "10.10.10.1"
@@ -1751,7 +1751,7 @@ var _ = Describe("Node Operations", func() {
 				// Service might be "added" once or twice.  Take that into account.
 				minNFakeCommands := nInitialFakeCommands + 1
 				fExec.AddRepeatedFakeCmd(&ovntest.ExpectedCmd{
-					Cmd: "ovs-ofctl show ",
+					Cmd: "ovs-ofctl show breth0",
 				}, minNFakeCommands)
 
 				externalIP := "1.1.1.1"
@@ -2344,7 +2344,7 @@ var _ = Describe("Node Operations", func() {
 				// Service might be "added" once or twice.  Take that into account.
 				minNFakeCommands := nInitialFakeCommands + 1
 				fExec.AddRepeatedFakeCmd(&ovntest.ExpectedCmd{
-					Cmd: "ovs-ofctl show ",
+					Cmd: "ovs-ofctl show breth0",
 				}, minNFakeCommands)
 
 				externalIP := "10.10.10.1"
@@ -2470,15 +2470,15 @@ var _ = Describe("Node Operations", func() {
 				externalIP2 := "1.1.1.2"
 				config.Gateway.Mode = config.GatewayModeLocal
 				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
-					Cmd: "ovs-ofctl show ",
+					Cmd: "ovs-ofctl show breth0",
 					Err: fmt.Errorf("deliberate error to fall back to output:LOCAL"),
 				})
 				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
-					Cmd: "ovs-ofctl show ",
+					Cmd: "ovs-ofctl show breth0",
 					Err: fmt.Errorf("deliberate error to fall back to output:LOCAL"),
 				})
 				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
-					Cmd: "ovs-ofctl show ",
+					Cmd: "ovs-ofctl show breth0",
 					Err: fmt.Errorf("deliberate error to fall back to output:LOCAL"),
 				})
 				service := *newService("service1", "namespace1", "10.129.0.2",
@@ -2582,7 +2582,7 @@ var _ = Describe("Node Operations", func() {
 				badExternalIP := "10.10.10.aa"
 				goodExternalIP := "10.10.10.1"
 				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
-					Cmd: "ovs-ofctl show ",
+					Cmd: "ovs-ofctl show breth0",
 				})
 
 				externalIPPort := int32(8034)

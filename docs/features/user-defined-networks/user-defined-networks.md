@@ -81,6 +81,11 @@ need the UDN are scheduled on that node.
 See the [Dynamic UDN feature page](dynamic-udn.md) for enablement,
 observability, and limitations.
 
+For primary CUDNs that need a different external gateway path than the cluster
+default gateway bridge, see the [Uplinks feature page](uplinks.md). Uplinks
+allow a CUDN to use a pre-provisioned OVS bridge on selected nodes, including
+regular node and DPU deployments.
+
 ## Workflow Description
 
 A tenant consists of one or more namespaces in a cluster. Network segmentation

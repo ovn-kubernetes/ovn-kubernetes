@@ -124,6 +124,7 @@ nav:
   - Features:
     - Universal Connectivity:
       - UserDefinedNetwork: features/user-defined-networks/user-defined-networks.md
+      - Uplinks for UserDefinedNetworks: features/user-defined-networks/uplinks.md
       - Connecting UserDefinedNetworks: features/user-defined-networks/cluster-network-connect.md
       - Dynamic UDN Node Allocation: features/user-defined-networks/dynamic-udn.md
     - NetworkSecurityControls:

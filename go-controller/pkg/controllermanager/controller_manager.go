@@ -306,7 +306,11 @@ func NewControllerManager(ovnClient *util.OVNClientset, wf *factory.WatchFactory
 	cm.nodeController = nodecontroller.NewNodeController(cm.watchFactory, cm.networkManager.Interface())
 
 	if util.IsRouteAdvertisementsEnabled() {
-		cm.routeImportManager = routeimport.New(config.Default.Zone, cm.nbClient)
+		if util.IsNetworkSegmentationSupportEnabled() {
+			cm.routeImportManager = routeimport.New(config.Default.Zone, cm.nbClient, wf.UplinkStateInformer().Lister())
+		} else {
+			cm.routeImportManager = routeimport.New(config.Default.Zone, cm.nbClient, nil)
+		}
 	}
 	cm.addressSetManager = addresssetmanager.NewAddressSetManager(cm.watchFactory.PodCoreInformer(),
 		cm.watchFactory.NamespaceInformer(), cm.watchFactory.NodeCoreInformer(), cm.nbClient, cm.networkManager.Interface().GetNetworkNameForNADKey)

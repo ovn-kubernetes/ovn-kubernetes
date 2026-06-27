@@ -25,11 +25,24 @@ type ClusterUserDefinedNetwork struct {
 }
 
 // ClusterUserDefinedNetworkSpec defines the desired state of ClusterUserDefinedNetwork.
+// +kubebuilder:validation:XValidation:rule="!has(self.uplinks) || size(self.uplinks) == 0 || ((self.network.topology == 'Layer2' && has(self.network.layer2) && self.network.layer2.role == 'Primary') || (self.network.topology == 'Layer3' && has(self.network.layer3) && self.network.layer3.role == 'Primary'))", message="spec.uplinks is supported only for primary Layer2 and Layer3 networks"
+// +kubebuilder:validation:XValidation:rule="!has(self.uplinks) || size(self.uplinks) == 0 || !has(self.network.transport) || self.network.transport != 'EVPN'", message="spec.uplinks is not supported with EVPN transport"
 type ClusterUserDefinedNetworkSpec struct {
 	// NamespaceSelector Label selector for which namespace network should be available for.
 	// +kubebuilder:validation:Required
 	// +required
 	NamespaceSelector metav1.LabelSelector `json:"namespaceSelector"`
+
+	// Uplinks references Uplink resources used for this network's external
+	// traffic. This release supports one Uplink. When omitted, existing gateway
+	// behavior is preserved.
+	// +kubebuilder:validation:MaxItems=1
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=253
+	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="uplinks is immutable"
+	// +optional
+	Uplinks []string `json:"uplinks,omitempty"`
 
 	// Network is the user-defined-network spec
 	// +kubebuilder:validation:Required

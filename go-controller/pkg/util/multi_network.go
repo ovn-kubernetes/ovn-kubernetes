@@ -68,6 +68,7 @@ type NetInfo interface {
 	EVPNIPVRFVNI() int32
 	EVPNIPVRFRouteTarget() string
 	EVPNIPVRFVID() int
+	Uplink() string
 	GetNodeGatewayIP(hostSubnet *net.IPNet) *net.IPNet
 	GetNodeManagementIP(hostSubnet *net.IPNet) *net.IPNet
 
@@ -716,6 +717,11 @@ func (nInfo *DefaultNetInfo) EVPNIPVRFVID() int {
 	return 0
 }
 
+// Uplink returns empty as Uplink is not supported on the default network.
+func (nInfo *DefaultNetInfo) Uplink() string {
+	return ""
+}
+
 func (nInfo *DefaultNetInfo) GetNodeGatewayIP(hostSubnet *net.IPNet) *net.IPNet {
 	return GetNodeGatewayIfAddr(hostSubnet)
 }
@@ -751,6 +757,7 @@ type userDefinedNetInfo struct {
 	transport    string
 	evpn         *ovncnitypes.EVPNConfig
 	outboundSNAT string
+	uplink       string
 }
 
 func (nInfo *userDefinedNetInfo) GetNetInfo() NetInfo {
@@ -947,6 +954,11 @@ func (nInfo *userDefinedNetInfo) EVPNIPVRFVID() int {
 	return nInfo.evpn.IPVRF.VID
 }
 
+// Uplink returns the Uplink resource selected by this network.
+func (nInfo *userDefinedNetInfo) Uplink() string {
+	return nInfo.uplink
+}
+
 func (nInfo *userDefinedNetInfo) GetNodeGatewayIP(hostSubnet *net.IPNet) *net.IPNet {
 	if IsPreconfiguredUDNAddressesEnabled() && nInfo.TopologyType() == types.Layer2Topology && nInfo.IsPrimaryNetwork() {
 		isIPV6 := knet.IsIPv6CIDR(hostSubnet)
@@ -1069,6 +1081,9 @@ func (nInfo *userDefinedNetInfo) canReconcile(other NetInfo) bool {
 	if nInfo.Transport() != other.Transport() {
 		return false
 	}
+	if nInfo.Uplink() != other.Uplink() {
+		return false
+	}
 	if nInfo.EVPNVTEPName() != other.EVPNVTEPName() {
 		return false
 	}
@@ -1135,6 +1150,7 @@ func (nInfo *userDefinedNetInfo) copy() *userDefinedNetInfo {
 		transport:             nInfo.transport,
 		evpn:                  nInfo.evpn,
 		outboundSNAT:          nInfo.outboundSNAT,
+		uplink:                nInfo.uplink,
 	}
 	// copy mutables
 	c.mutableNetInfo.copyFrom(&nInfo.mutableNetInfo)
@@ -1160,6 +1176,7 @@ func newLayer3NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 		transport:      netconf.Transport,
 		evpn:           netconf.EVPN,
 		outboundSNAT:   netconf.OutboundSNAT,
+		uplink:         netconf.Uplink,
 		mutableNetInfo: mutableNetInfo{
 			id:      types.InvalidID,
 			nads:    sets.Set[string]{},
@@ -1237,6 +1254,7 @@ func newLayer2NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 		managementIPs:         managementIPs,
 		transport:             netconf.Transport,
 		evpn:                  netconf.EVPN,
+		uplink:                netconf.Uplink,
 		mutableNetInfo: mutableNetInfo{
 			id:      types.InvalidID,
 			nads:    sets.Set[string]{},
@@ -1270,6 +1288,7 @@ func newLocalnetNetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error
 		vlan:                uint(netconf.VLANID),
 		allowPersistentIPs:  netconf.AllowPersistentIPs,
 		physicalNetworkName: netconf.PhysicalNetworkName,
+		uplink:              netconf.Uplink,
 		mutableNetInfo: mutableNetInfo{
 			id:      types.InvalidID,
 			nads:    sets.Set[string]{},
