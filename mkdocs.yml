@@ -35,6 +35,10 @@ theme:
     - navigation.tabs.sticky
     - content.code.annotate
     - content.code.copy
+hooks:
+  - hooks/section_index.py
+extra_javascript:
+  - js/section-redirects.js
 plugins:
   - search
   - meta-descriptions
