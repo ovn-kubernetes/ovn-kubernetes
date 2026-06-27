@@ -321,7 +321,6 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 			existingNode.Status = corev1.NodeStatus{Addresses: []corev1.NodeAddress{nodeAddr}}
 		}
 
-		iptV4, iptV6 := util.SetFakeIPTablesHelpers()
 		nft := nodenft.SetFakeNFTablesHelper()
 
 		ovsClient, ovsCleanup := newTestOVSClient()
@@ -546,44 +545,6 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 			}, 5).Should(BeTrue(), "invalid annotation, hw-offload is disabled but found annotation "+
 				"'k8s.ovn.org/gateway-mtu-support' with value == \"false\"")
 		}
-
-		expectedTables := map[string]util.FakeTable{
-			"nat": {
-				"PREROUTING": []string{
-					"-j OVN-KUBE-ETP",
-					"-j OVN-KUBE-EXTERNALIP",
-					"-j OVN-KUBE-NODEPORT",
-				},
-				"OUTPUT": []string{
-					"-j OVN-KUBE-EXTERNALIP",
-					"-j OVN-KUBE-NODEPORT",
-					"-j OVN-KUBE-ITP",
-				},
-				"OVN-KUBE-NODEPORT":   []string{},
-				"OVN-KUBE-EXTERNALIP": []string{},
-				"OVN-KUBE-ETP":        []string{},
-				"OVN-KUBE-ITP":        []string{},
-			},
-			"filter": {},
-			"mangle": {
-				"OUTPUT": []string{
-					"-j OVN-KUBE-ITP",
-				},
-				"OVN-KUBE-ITP": []string{},
-			},
-		}
-		f4 := iptV4.(*util.FakeIPTables)
-		err = f4.MatchState(expectedTables, nil)
-		Expect(err).NotTo(HaveOccurred())
-
-		expectedTables = map[string]util.FakeTable{
-			"nat":    {},
-			"filter": {},
-			"mangle": {},
-		}
-		f6 := iptV6.(*util.FakeIPTables)
-		err = f6.MatchState(expectedTables, nil)
-		Expect(err).NotTo(HaveOccurred())
 
 		expectedNFT := nftablesRulesBase + nftablesRulesGatewayServices
 		err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
@@ -1339,7 +1300,6 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 		Expect(err).NotTo(HaveOccurred())
 
 		k := &kube.Kube{KClient: kubeFakeClient}
-		iptV4, iptV6 := util.SetFakeIPTablesHelpers()
 
 		nodeAnnotator := kube.NewNodeAnnotator(k, existingNode.Name)
 
@@ -1459,61 +1419,6 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Eventually(fexec.CalledMatchesExpected, 5).Should(BeTrue(), fexec.ErrorDesc)
-
-		expectedTables := map[string]util.FakeTable{
-			"nat": {
-				"PREROUTING": []string{
-					"-j OVN-KUBE-ETP",
-					"-j OVN-KUBE-EXTERNALIP",
-					"-j OVN-KUBE-NODEPORT",
-				},
-				"OUTPUT": []string{
-					"-j OVN-KUBE-EXTERNALIP",
-					"-j OVN-KUBE-NODEPORT",
-					"-j OVN-KUBE-ITP",
-				},
-				"OVN-KUBE-NODEPORT":   []string{},
-				"OVN-KUBE-EXTERNALIP": []string{},
-				"OVN-KUBE-ETP":        []string{},
-				"OVN-KUBE-ITP":        []string{},
-			},
-			"filter": {
-				"FORWARD": []string{
-					"-d 169.254.169.1 -j ACCEPT",
-					"-s 169.254.169.1 -j ACCEPT",
-					"-d 172.16.1.0/24 -j ACCEPT",
-					"-s 172.16.1.0/24 -j ACCEPT",
-					"-d 10.1.0.0/16 -j ACCEPT",
-					"-s 10.1.0.0/16 -j ACCEPT",
-					"-i ovn-k8s-mp0 -j ACCEPT",
-					"-o ovn-k8s-mp0 -j ACCEPT",
-				},
-				"INPUT": []string{
-					"-i ovn-k8s-mp0 -m comment --comment from OVN to localhost -j ACCEPT",
-				},
-			},
-			"mangle": {
-				"OUTPUT": []string{
-					"-j OVN-KUBE-ITP",
-				},
-				"OVN-KUBE-ITP": []string{},
-			},
-		}
-		f4 := iptV4.(*util.FakeIPTables)
-		err = f4.MatchState(expectedTables, map[util.FakePolicyKey]string{{
-			Table: "filter",
-			Chain: "FORWARD",
-		}: "DROP"})
-		Expect(err).NotTo(HaveOccurred())
-
-		expectedTables = map[string]util.FakeTable{
-			"nat":    {},
-			"filter": {},
-			"mangle": {},
-		}
-		f6 := iptV6.(*util.FakeIPTables)
-		err = f6.MatchState(expectedTables, nil)
-		Expect(err).NotTo(HaveOccurred())
 
 		expectedNFT := nftablesRulesBase + nftablesRulesLocalGateway + nftablesRulesGatewayServices
 		if util.IsNetworkSegmentationSupportEnabled() {

@@ -309,6 +309,9 @@ func initGatewayNFTables() error {
 		return fmt.Errorf("could not set up service nftables rules: %w", err)
 	}
 
+	// If there are legacy IPTables rules left around, clean them up, ignoring errors.
+	cleanupGatewayIPTables()
+
 	return nil
 }
 
@@ -603,8 +606,7 @@ func getUDNExternalIPsMarkNFTRules(svcPort corev1.ServicePort, externalIPs []str
 	return nftRules
 }
 
-// getGatewayNFTRules returns nftables rules for service. This must be used in conjunction
-// with getGatewayIPTRulesForService.
+// getGatewayNFTRules returns nftables rules for service.
 //
 // FIXME: This function is only called if config.NodeportEnable is true, but it is also
 // used for `internalTrafficPolicy: Local` handling, which should not be gated behind
@@ -1137,4 +1139,12 @@ func delLocalGatewayPodSubnetNFTRules() error {
 	}
 
 	return nil
+}
+
+// getMasqueradeVIP returns the .3 masquerade VIP based on the protocol (v4/v6) of provided IP string
+func getMasqueradeVIP(ip string) string {
+	if utilnet.IsIPv6String(ip) {
+		return config.Gateway.MasqueradeIPs.V6HostETPLocalMasqueradeIP.String()
+	}
+	return config.Gateway.MasqueradeIPs.V4HostETPLocalMasqueradeIP.String()
 }
