@@ -7,6 +7,7 @@ package mocks
 
 import (
 	mock "github.com/stretchr/testify/mock"
+
 	labels "k8s.io/apimachinery/pkg/labels"
 
 	v1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"

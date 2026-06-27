@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -44,7 +45,7 @@ func TestNetworkPolicyV2Conformance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error when creating Kubernetes ClientSet: %v", err)
 	}
-	err = netpolv1alpha1.AddToScheme(client.Scheme())
+	err = netpolv1alpha1.Install(client.Scheme())
 	if err != nil {
 		t.Fatalf("Error initializing API scheme: %v", err)
 	}

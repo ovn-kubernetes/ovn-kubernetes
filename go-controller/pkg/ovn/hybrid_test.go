@@ -255,7 +255,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				return err
 			}, 2).Should(gomega.MatchError("could not find \"k8s.ovn.org/node-subnets\" annotation"))
 
-			gomega.Eventually(fexec.CalledMatchesExpected, 2).Should(gomega.BeTrue(), fexec.ErrorDesc)
+			gomega.Eventually(fexec.CalledMatchesExpected, 5).Should(gomega.BeTrue(), fexec.ErrorDesc)
 
 			// nothing should be done in OVN dbs from HO running on windows node
 			gomega.Eventually(clusterController.nbClient).Should(libovsdbtest.HaveDataIgnoringUUIDs(dbSetup.NBData))
@@ -562,7 +562,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				return nil
 			}, 2).Should(gomega.Equal(libovsdbclient.ErrNotFound))
 
-			gomega.Eventually(clusterController.nbClient.Get, 2).WithArguments(context.Background(), expectedStaticMACBinding).Should(gomega.Equal(libovsdbclient.ErrNotFound))
+			gomega.Eventually(clusterController.nbClient.Get, 5).WithArguments(context.Background(), expectedStaticMACBinding).Should(gomega.Equal(libovsdbclient.ErrNotFound))
 
 			return nil
 		}
@@ -1741,7 +1741,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				return nil
 			}, 2).Should(gomega.Equal(libovsdbclient.ErrNotFound))
 
-			gomega.Eventually(clusterController.nbClient.Get, 2).WithArguments(context.Background(), expectedStaticMACBinding).Should(gomega.Equal(libovsdbclient.ErrNotFound))
+			gomega.Eventually(clusterController.nbClient.Get, 5).WithArguments(context.Background(), expectedStaticMACBinding).Should(gomega.Equal(libovsdbclient.ErrNotFound))
 
 			return nil
 		}

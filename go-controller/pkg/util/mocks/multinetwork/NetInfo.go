@@ -6,11 +6,11 @@
 package mocks
 
 import (
-	config "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
-	mock "github.com/stretchr/testify/mock"
-
 	net "net"
 
+	mock "github.com/stretchr/testify/mock"
+
+	config "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	util "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 

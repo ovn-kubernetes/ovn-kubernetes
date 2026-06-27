@@ -497,7 +497,7 @@ func getTestDataFromClientCache(client libovsdbclient.Client) []TestData {
 // function provided
 func replaceUUIDs(data TestData, mapFrom func(string, int) string) {
 	v := reflect.ValueOf(data)
-	if v.Kind() != reflect.Ptr {
+	if v.Kind() != reflect.Pointer {
 		return
 	}
 	v = v.Elem()
@@ -534,7 +534,7 @@ func replaceUUIDs(data TestData, mapFrom func(string, int) string) {
 // getUUID gets the value of the field with ovsdb tag `uuid`
 func getUUID(x TestData) (string, int) {
 	v := reflect.ValueOf(x)
-	if v.Kind() != reflect.Ptr {
+	if v.Kind() != reflect.Pointer {
 		return "", -1
 	}
 	v = v.Elem()

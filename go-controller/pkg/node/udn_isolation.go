@@ -126,7 +126,7 @@ func (m *UDNHostIsolationManager) Start(ctx context.Context) error {
 			Kind: "Node",
 			Name: m.nodeName,
 		}
-		m.recorder.Eventf(nodeRef, kapi.EventTypeWarning, "UDNKubeletProbesNotSupported", message)
+		m.recorder.Eventf(nodeRef, kapi.EventTypeWarning, "UDNKubeletProbesNotSupported", "%s", message)
 	}
 	nft, err := nodenft.GetNFTablesHelper()
 	if err != nil {

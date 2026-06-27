@@ -7,13 +7,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
-	"golang.org/x/exp/maps"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -1181,7 +1182,7 @@ func (bnc *BaseNetworkController) trackPodsReleasedBeforeStartup(podAnnotations 
 
 	// order the pods, running pods first, then completed pods ordered by
 	// initialization time
-	pods := maps.Keys(podAnnotations)
+	pods := slices.Collect(maps.Keys(podAnnotations))
 	sort.Slice(pods, func(i, j int) bool {
 		if !util.PodCompleted(pods[i]) {
 			return true

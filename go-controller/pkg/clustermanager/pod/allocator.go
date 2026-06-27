@@ -463,7 +463,7 @@ func (a *PodAllocator) recordPodErrorEvent(pod *corev1.Pod, podErr error) {
 			pod.Namespace, pod.Name, err)
 	} else {
 		klog.V(5).Infof("Posting a %s event for Pod %s/%s", corev1.EventTypeWarning, pod.Namespace, pod.Name)
-		a.recorder.Eventf(podRef, corev1.EventTypeWarning, "ErrorAllocatingPod", podErr.Error())
+		a.recorder.Eventf(podRef, corev1.EventTypeWarning, "ErrorAllocatingPod", "%s", podErr.Error())
 	}
 }
 

@@ -75,7 +75,7 @@ linters:
       - builtin$
       - examples$
     rules:
-      # Ignore SA1019 in k8s v1.35 rebase
+      # Ignore SA1019 in k8s v1.36 rebase
       # https://github.com/ovn-kubernetes/ovn-kubernetes/issues/6102
       - linters:
           - staticcheck

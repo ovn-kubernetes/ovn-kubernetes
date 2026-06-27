@@ -979,6 +979,55 @@ fi
 			return addresses
 		}
 
+		virtLauncherNetworkStatusIPs = func(vmi *kubevirtv1.VirtualMachineInstance, networkName string, expectedNumberOfAddresses int) []string {
+			GinkgoHelper()
+			step := by(vmi.Name, "Wait for virt-launcher network-status addresses")
+			addressesFn := func() ([]string, error) {
+				podList, err := fr.ClientSet.CoreV1().Pods(vmi.Namespace).List(context.TODO(), metav1.ListOptions{
+					LabelSelector: fmt.Sprintf("%s=%s", kubevirtv1.VirtualMachineNameLabel, vmi.Name),
+				})
+				if err != nil {
+					return nil, err
+				}
+				if len(podList.Items) == 0 {
+					return nil, fmt.Errorf("no virt-launcher pod found for VMI %s", vmi.Name)
+				}
+				var pod *corev1.Pod
+				for i := range podList.Items {
+					if podList.Items[i].Status.Phase == corev1.PodRunning {
+						pod = &podList.Items[i]
+						break
+					}
+				}
+				if pod == nil {
+					pod = &podList.Items[0]
+				}
+				networkStatuses, err := podNetworkStatus(pod, func(ns nadapi.NetworkStatus) bool {
+					return ns.Name == vmi.Namespace+"/"+networkName
+				})
+				if err != nil {
+					return nil, err
+				}
+				if len(networkStatuses) == 0 {
+					return nil, fmt.Errorf("no network status found for network %s on virt-launcher pod %s", networkName, pod.Name)
+				}
+				var ips []string
+				for _, ip := range networkStatuses[0].IPs {
+					if !netip.MustParseAddr(ip).IsLinkLocalUnicast() {
+						ips = append(ips, ip)
+					}
+				}
+				return ips, nil
+			}
+			Eventually(addressesFn).
+				WithPolling(time.Second).
+				WithTimeout(10*time.Second).
+				Should(HaveLen(expectedNumberOfAddresses), step)
+			addresses, err := addressesFn()
+			Expect(err).NotTo(HaveOccurred())
+			return addresses
+		}
+
 		generateVMI = func(labels map[string]string, annotations map[string]string, nodeSelector map[string]string, networkSource kubevirtv1.NetworkSource, cloudInitVolumeSource kubevirtv1.VolumeSource, image string) *kubevirtv1.VirtualMachineInstance {
 			return &kubevirtv1.VirtualMachineInstance{
 				ObjectMeta: metav1.ObjectMeta{
@@ -2037,17 +2086,14 @@ ip route add %[3]s via %[4]s
 				WithPolling(time.Second).
 				Should(Succeed(), step)
 
-			// IPv6 is not supported for secondaries with IPAM since
-			// KubeVirt does not run a DHCPv6 server for bridge bindings,
-			// so the VMI status will only report IPv4 addresses.
-			// For primary UDNs, expect dual-stack (2 addresses); for
-			// secondaries, expect IPv4 only (1 address).
 			step = by(vmi.Name, "Wait for addresses at the virtual machine")
 			expectedNumberOfAddresses := len(dualCIDRs)
-			if td.role != udnv1.NetworkRolePrimary {
-				expectedNumberOfAddresses = 1
+			var expectedAddreses []string
+			if td.role == udnv1.NetworkRolePrimary {
+				expectedAddreses = virtualMachineAddressesFromStatus(vmi, expectedNumberOfAddresses)
+			} else {
+				expectedAddreses = virtLauncherNetworkStatusIPs(vmi, networkName, expectedNumberOfAddresses)
 			}
-			expectedAddreses := virtualMachineAddressesFromStatus(vmi, expectedNumberOfAddresses)
 			if _, hasIPRequests := vmi.Annotations[kubevirt.AddressesAnnotation]; hasIPRequests {
 				Expect(expectedAddreses).To(ConsistOf(filterIPs(fr.ClientSet, staticIPv4, staticIPv6)), "expected addresses should be consistent with the static IPs")
 			}
@@ -2125,7 +2171,12 @@ ip route add %[3]s via %[4]s
 			step = by(vmi.Name, fmt.Sprintf("Login to virtual machine after %s %s", td.resource.description, td.test.description))
 			Expect(virtClient.LoginToFedora(vmi, "fedora", "fedora")).To(Succeed(), step)
 
-			obtainedAddresses := virtualMachineAddressesFromStatus(vmi, expectedNumberOfAddresses)
+			var obtainedAddresses []string
+			if td.role == udnv1.NetworkRolePrimary {
+				obtainedAddresses = virtualMachineAddressesFromStatus(vmi, expectedNumberOfAddresses)
+			} else {
+				obtainedAddresses = virtLauncherNetworkStatusIPs(vmi, networkName, expectedNumberOfAddresses)
+			}
 
 			Expect(obtainedAddresses).To(Equal(expectedAddreses))
 			Eventually(kubevirt.RetrieveAllGlobalAddressesFromGuest).

@@ -457,7 +457,7 @@ var _ = Describe("Link", func() {
 				} else {
 					f.Set(reflect.MakeSlice(f.Type(), 1, 1))
 				}
-			case reflect.Ptr:
+			case reflect.Pointer:
 				f.Set(reflect.New(f.Type().Elem()))
 			case reflect.Map:
 				f.Set(reflect.MakeMap(f.Type()))

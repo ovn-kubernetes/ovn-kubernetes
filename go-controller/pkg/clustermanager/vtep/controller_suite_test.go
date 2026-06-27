@@ -15,6 +15,11 @@ func TestVTEPController(t *testing.T) {
 	// Fake clientsets from third-party libraries don't yet support WatchList semantics
 	// introduced in K8s 1.35, causing informers to hang waiting for bookmark events.
 	// See: https://github.com/kubernetes/kubernetes/issues/135895
+	t.Setenv("KUBE_FEATURE_AtomicFIFO", "false")
+	t.Setenv("KUBE_FEATURE_StaleControllerConsistencyDaemonSet", "false")
+	t.Setenv("KUBE_FEATURE_StaleControllerConsistencyStatefulSet", "false")
+	t.Setenv("KUBE_FEATURE_StaleControllerConsistencyReplicaSet", "false")
+	t.Setenv("KUBE_FEATURE_StaleControllerConsistencyJob", "false")
 	t.Setenv("KUBE_FEATURE_WatchListClient", "false")
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "VTEP Controller Suite")
