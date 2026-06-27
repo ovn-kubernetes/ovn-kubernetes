@@ -782,7 +782,16 @@ func (c *Controller) updateEIP(existing *state, update *config) error {
 		}
 	}
 	// apply new changes
+	// Apply configuration in strict order to avoid race conditions: routes → IP rules → iptables → IP on interface → annotation.
+	// Annotation serves as readiness signal for OVN controller to program logical router policies.
 	if update != nil && update.eIPConfig != nil && update.eIPConfig.addr != nil && len(update.eIPConfig.routes) > 0 {
+		for _, routeToAdd := range update.eIPConfig.routes {
+			if err := c.routeManager.Add(routeToAdd); err != nil {
+				return fmt.Errorf("failed to add egress IP route %v, err: %w", routeToAdd, err)
+			}
+		}
+		existing.eIPConfig.routes = update.eIPConfig.routes
+
 		for updatedTargetNS, updatedTargetPod := range update.namespacesWithPodIPConfigs {
 			existingNs, found := existing.namespacesWithPodIPConfigs[updatedTargetNS]
 			if !found {
@@ -802,22 +811,17 @@ func (c *Controller) updateEIP(existing *state, update *config) error {
 				}
 			}
 		}
-		if err := c.addIPToAnnotation(update.eIPConfig.addr.IP.String()); err != nil {
-			return fmt.Errorf("failed to add egress IP address to annotation: %v", err)
-		}
+
 		// TODO(mk): only apply the follow when its new config or when it failed to apply
 		// Ok to repeat requests to route manager and link manager
 		if err := c.linkManager.AddAddress(*update.eIPConfig.addr); err != nil {
 			return fmt.Errorf("failed to add address to link: %v", err)
 		}
 		existing.eIPConfig.addr = update.eIPConfig.addr
-		// route manager manages retry
-		for _, routeToAdd := range update.eIPConfig.routes {
-			if err := c.routeManager.Add(routeToAdd); err != nil {
-				return err
-			}
+
+		if err := c.addIPToAnnotation(update.eIPConfig.addr.IP.String()); err != nil {
+			return fmt.Errorf("failed to add egress IP address to annotation: %v", err)
 		}
-		existing.eIPConfig.routes = update.eIPConfig.routes
 	}
 	return nil
 }

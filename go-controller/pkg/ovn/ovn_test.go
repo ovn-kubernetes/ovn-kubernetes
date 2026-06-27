@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"sync"
 
 	ipamclaimsapi "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1"
@@ -22,6 +23,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/record"
 	anpapi "sigs.k8s.io/network-policy-api/apis/v1alpha1"
@@ -695,6 +697,48 @@ func (o *FakeOVN) patchEgressIPObj(nodeName, egressIPName, egressIP string) {
 	}
 	err := o.controller.eIPC.patchReplaceEgressIPStatus(egressIPName, status)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+}
+
+// setNodeSecondaryHostEgressIPAnnotation simulates the node controller setting the
+// k8s.ovn.org/secondary-host-egress-ips annotation after configuring host-side routes/IP rules/iptables.
+// This is needed for OVN controller to proceed with programming logical router policies for secondary host egress IPs.
+func (o *FakeOVN) setNodeSecondaryHostEgressIPAnnotation(nodeName, egressIP string) {
+	node, err := o.fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+	// Parse node's egress IP configuration to check if this IP is a secondary host egress IP
+	parsedNodeEIPConfig, err := util.ParseNodePrimaryIfAddr(node)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+	eIP := net.ParseIP(egressIP)
+	gomega.Expect(eIP).NotTo(gomega.BeNil())
+
+	// If it's NOT an OVN network, it's a secondary host egress IP
+	if !util.IsOVNNetwork(parsedNodeEIPConfig, eIP) {
+		// Get existing annotation value
+		existingIPs, err := util.ParseNodeSecondaryHostEgressIPsAnnotation(node)
+		if err != nil && !util.IsAnnotationNotSetError(err) {
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		}
+		if existingIPs == nil {
+			existingIPs = sets.New[string]()
+		}
+
+		// Add the new IP
+		existingIPs.Insert(egressIP)
+
+		// Update the annotation
+		if node.Annotations == nil {
+			node.Annotations = map[string]string{}
+		}
+		ipsSlice := sets.List(existingIPs)
+		annotationValue, err := json.Marshal(ipsSlice)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		node.Annotations[util.OVNNodeSecondaryHostEgressIPs] = string(annotationValue)
+
+		_, err = o.fakeClient.KubeClient.CoreV1().Nodes().Update(context.TODO(), node, metav1.UpdateOptions{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	}
 }
 
 func nadGVR() metav1.GroupVersionResource {
