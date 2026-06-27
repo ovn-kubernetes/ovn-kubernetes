@@ -76,6 +76,12 @@ const (
 	NoReRouteUDNPodToCDNSvc egressIPNoReroutePolicyName = "EIP-No-Reroute-Pod-To-CDN-Svc"
 	ReplyTrafficMark        egressIPQoSRuleName         = "EgressIP-Mark-Reply-Traffic"
 	dbIDEIPNamePodDivider                               = "_"
+
+	// Packet mark for unready egress IP traffic on secondary host interfaces
+	// This mark will be cleared by node controller when SNAT is ready
+	// Using bit 13 (0x2000 = 8192 decimal) to avoid conflicts with existing marks
+	// IMPORTANT: Using decimal format like EgressIPNodeConnectionMark for consistency
+	egressIPUnreadyMark = "8192"
 )
 
 func getEgressIPAddrSetDbIDs(name egressIPAddrSetName, network, controller string) *libovsdbops.DbObjectIDs {
@@ -3236,6 +3242,22 @@ func (e *EgressIPController) createReroutePolicyOps(ni util.NetInfo, ops []ovsdb
 		}
 		addPktMarkToLRPOptions(options, mark.String())
 	}
+
+	// For default network with secondary host interface, set unready mark
+	// This mark will be cleared by node controller when SNAT is ready
+	if ni.IsDefault() {
+		eIPIP := net.ParseIP(status.EgressIP)
+		eNode, err := e.watchFactory.GetNode(status.Node)
+		if err == nil {
+			parsedNodeEIPConfig, err := util.GetNodeEIPConfig(eNode)
+			if err == nil && !util.IsOVNNetwork(parsedNodeEIPConfig, eIPIP) {
+				// This is a secondary host interface egress IP
+				// Set the unready mark that node controller will clear
+				addPktMarkToLRPOptions(options, egressIPUnreadyMark)
+			}
+		}
+	}
+
 	dbIDs := getEgressIPLRPReRouteDbIDs(egressIPName, podNamespace, podName, ipFamily, ni.GetNetworkName(), e.controllerName)
 	p := libovsdbops.GetPredicate[*nbdb.LogicalRouterPolicy](dbIDs, nil)
 	// Handle all pod IPs that match the egress IP address family
