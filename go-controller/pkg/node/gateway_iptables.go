@@ -12,22 +12,20 @@ import (
 
 	"github.com/coreos/go-iptables/iptables"
 
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	nodeipt "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iptables"
 	nodeutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
-	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 )
 
 const (
-	iptableNodePortChain   = "OVN-KUBE-NODEPORT"   // called from nat-PREROUTING and nat-OUTPUT
-	iptableExternalIPChain = "OVN-KUBE-EXTERNALIP" // called from nat-PREROUTING and nat-OUTPUT
-	iptableETPChain        = "OVN-KUBE-ETP"        // called from nat-PREROUTING only
-	iptableITPChain        = "OVN-KUBE-ITP"        // called from mangle-OUTPUT and nat-OUTPUT
+	// Legacy iptables service chains; only cleaned up; never used
+	iptableNodePortChain   = "OVN-KUBE-NODEPORT"
+	iptableExternalIPChain = "OVN-KUBE-EXTERNALIP"
+	iptableETPChain        = "OVN-KUBE-ETP"
+	iptableITPChain        = "OVN-KUBE-ITP"
 )
 
 func clusterIPTablesProtocols() []iptables.Protocol {
@@ -49,26 +47,10 @@ func getIPTablesProtocol(ip string) iptables.Protocol {
 	return iptables.ProtocolIPv4
 }
 
-// getMasqueradeVIP returns the .3 masquerade VIP based on the protocol (v4/v6) of provided IP string
-func getMasqueradeVIP(ip string) string {
-	if utilnet.IsIPv6String(ip) {
-		return config.Gateway.MasqueradeIPs.V6HostETPLocalMasqueradeIP.String()
-	}
-	return config.Gateway.MasqueradeIPs.V4HostETPLocalMasqueradeIP.String()
-}
-
 // insertIptRules adds the provided rules in an insert fashion
 // i.e each rule gets added at the first position in the chain
 func insertIptRules(rules []nodeipt.Rule) error {
 	return nodeipt.AddRules(rules, false)
-}
-
-// restoreIptRulesFiltered restores the provided rules in an insert fashion with a filter for table/chain
-// i.e each rule gets added at the first position in the chain
-// filter is defined as a map of table/chains. Only rules matching this filter will be restored.
-// If no rules match the filter, the chain will still be restored as empty as specified in the filter.
-func restoreIptRulesFiltered(rules []nodeipt.Rule, filter map[string]map[string]struct{}) error {
-	return nodeipt.RestoreRulesFiltered(rules, filter)
 }
 
 // deleteIptRules removes provided rules from the chain
@@ -262,77 +244,25 @@ func initLocalGatewayIPTFilterRules(ifname string) error {
 	return nil
 }
 
-func addChaintoTable(ipt util.IPTablesHelper, tableName, chain string) {
-	if err := ipt.NewChain(tableName, chain); err != nil {
-		klog.V(5).Infof("Chain: \"%s\" in table: \"%s\" already exists, skipping creation: %v", chain, tableName, err)
-	}
-}
-
-func handleGatewayIPTables(iptCallback func(rules []nodeipt.Rule) error, genGatewayChainRules func(chain string, proto iptables.Protocol) []nodeipt.Rule) error {
+func cleanupGatewayIPTables() {
 	rules := make([]nodeipt.Rule, 0)
-	// (NOTE: Order is important, add jump to iptableETPChain before jump to NP/EIP chains)
-	for _, chain := range []string{iptableITPChain, iptableNodePortChain, iptableExternalIPChain, iptableETPChain} {
-		for _, proto := range clusterIPTablesProtocols() {
-			ipt, err := util.GetIPTablesHelper(proto)
-			if err != nil {
-				return err
-			}
-			addChaintoTable(ipt, "nat", chain)
-			if chain == iptableITPChain {
-				addChaintoTable(ipt, "mangle", chain)
-			}
-			rules = append(rules, genGatewayChainRules(chain, proto)...)
+	// We clean up both IPv4 and IPv6, regardless of what is currently in use
+	for _, proto := range []iptables.Protocol{iptables.ProtocolIPv4, iptables.ProtocolIPv6} {
+		ipt, err := util.GetIPTablesHelper(proto)
+		if err != nil {
+			continue
 		}
-	}
-	if err := iptCallback(rules); err != nil {
-		return fmt.Errorf("failed to handle iptables rules %v: %v", rules, err)
-	}
-	return nil
-}
-
-func initSharedGatewayIPTables() error {
-	if err := handleGatewayIPTables(insertIptRules, getGatewayInitRules); err != nil {
-		return err
-	}
-	return nil
-}
-
-func initLocalGatewayIPTables() error {
-	if err := handleGatewayIPTables(insertIptRules, getGatewayInitRules); err != nil {
-		return err
-	}
-	return nil
-}
-
-func cleanupSharedGatewayIPTChains() {
-	for _, chain := range []string{iptableNodePortChain, iptableExternalIPChain} {
-		// We clean up both IPv4 and IPv6, regardless of what is currently in use
-		for _, proto := range []iptables.Protocol{iptables.ProtocolIPv4, iptables.ProtocolIPv6} {
-			ipt, err := util.GetIPTablesHelper(proto)
-			if err != nil {
-				return
-			}
+		for _, chain := range []string{iptableITPChain, iptableNodePortChain, iptableExternalIPChain, iptableETPChain} {
+			rules = append(rules, getGatewayInitRules(chain, proto)...)
+		}
+		_ = nodeipt.DelRules(rules)
+		for _, chain := range []string{iptableITPChain, iptableNodePortChain, iptableExternalIPChain, iptableETPChain} {
 			_ = ipt.ClearChain("nat", chain)
 			_ = ipt.DeleteChain("nat", chain)
+			if chain == iptableITPChain {
+				_ = ipt.ClearChain("mangle", chain)
+				_ = ipt.DeleteChain("mangle", chain)
+			}
 		}
 	}
-}
-
-func recreateIPTRules(table, chain string, keepIPTRules []nodeipt.Rule) error {
-	var errors []error
-	var err error
-	klog.Infof("Recreating iptables rules for table: %s, chain: %s", table, chain)
-	// filter is a map of the table/chain to program rules for, as all rules are included in keepIPTRules
-	filter := map[string]map[string]struct{}{table: {chain: {}}}
-	if err = restoreIptRulesFiltered(keepIPTRules, filter); err != nil {
-		errors = append(errors, err)
-	}
-	return utilerrors.Join(errors...)
-}
-
-// getGatewayIPTRules returns ClusterIP, NodePort, ExternalIP and LoadBalancer iptables
-// rules for service. This must be used in conjunction with getGatewayNFTRules.
-func getGatewayIPTRules(service *corev1.Service, localEndpoints util.PortToLBEndpoints, svcHasLocalHostNetEndPnt bool) []nodeipt.Rule {
-	rules := make([]nodeipt.Rule, 0)
-	return rules
 }
