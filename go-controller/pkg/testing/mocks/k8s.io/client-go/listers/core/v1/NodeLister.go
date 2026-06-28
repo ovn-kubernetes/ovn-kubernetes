@@ -7,6 +7,7 @@ package mocks
 
 import (
 	mock "github.com/stretchr/testify/mock"
+
 	v1 "k8s.io/api/core/v1"
 	labels "k8s.io/apimachinery/pkg/labels"
 )

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"reflect"
 	"slices"
@@ -18,7 +19,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
-	"golang.org/x/exp/maps"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -410,7 +410,7 @@ func (nInfo *mutableNetInfo) GetEgressIPAdvertisedOnNodeVRFs(node string) []stri
 func (nInfo *mutableNetInfo) GetEgressIPAdvertisedNodes() []string {
 	nInfo.RLock()
 	defer nInfo.RUnlock()
-	return maps.Keys(nInfo.eipAdvertisements)
+	return slices.Collect(maps.Keys(nInfo.eipAdvertisements))
 }
 
 // SetNADs replaces the NADs associated with the network

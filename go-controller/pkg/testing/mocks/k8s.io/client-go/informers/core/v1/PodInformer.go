@@ -7,6 +7,7 @@ package mocks
 
 import (
 	mock "github.com/stretchr/testify/mock"
+
 	corev1 "k8s.io/client-go/listers/core/v1"
 	cache "k8s.io/client-go/tools/cache"
 )

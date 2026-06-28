@@ -119,7 +119,7 @@ func isEmptyStatusManagedField(mf metav1.ManagedFieldsEntry) bool {
 
 	// Parse the fieldsV1 JSON to check if it's just {"f:status":{}}
 	var fields map[string]interface{}
-	if err := json.Unmarshal(mf.FieldsV1.Raw, &fields); err != nil {
+	if err := json.Unmarshal(mf.FieldsV1.GetRawBytes(), &fields); err != nil {
 		return false
 	}
 
