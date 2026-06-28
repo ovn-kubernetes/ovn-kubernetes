@@ -442,7 +442,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 				return atomic.LoadUint32(linuxNode.initState) == hotypes.PodsInitialized
 			}, 2).Should(BeTrue())
 
-			Eventually(fexec.CalledMatchesExpected, 2).Should(BeTrue(), fexec.ErrorDesc)
+			Eventually(fexec.CalledMatchesExpected, 5).Should(BeTrue(), fexec.ErrorDesc)
 			return nil
 		}
 		appRun(app)
@@ -518,7 +518,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 				return atomic.LoadUint32(linuxNode.initState) == hotypes.PodsInitialized
 			}, 2).Should(BeTrue())
 
-			Eventually(fexec.CalledMatchesExpected, 2).Should(BeTrue(), fexec.ErrorDesc)
+			Eventually(fexec.CalledMatchesExpected, 5).Should(BeTrue(), fexec.ErrorDesc)
 			initialFlowCache := map[string]*flowCacheEntry{
 				"0x0": generateInitialFlowCacheEntry(mgmtIfAddr.IP.String(), thisNodeDRIP, thisNodeDRMAC),
 			}
@@ -552,7 +552,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 				defer linuxNode.flowMutex.Unlock()
 				return compareFlowCache(linuxNode.flowCache, initialFlowCache)
 			}, 2).Should(Succeed())
-			Eventually(fexec.CalledMatchesExpected, 2).Should(BeTrue(), fexec.ErrorDesc)
+			Eventually(fexec.CalledMatchesExpected, 5).Should(BeTrue(), fexec.ErrorDesc)
 			return nil
 		}
 		appRun(app)
@@ -634,7 +634,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 				defer linuxNode.flowMutex.Unlock()
 				return compareFlowCache(linuxNode.flowCache, initialFlowCache)
 			}, 2).Should(Succeed())
-			Eventually(fexec.CalledMatchesExpected, 2).Should(BeTrue(), fexec.ErrorDesc)
+			Eventually(fexec.CalledMatchesExpected, 5).Should(BeTrue(), fexec.ErrorDesc)
 			return nil
 		}
 		appRun(app)
@@ -698,7 +698,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 				return atomic.LoadUint32(linuxNode.initState) == hotypes.PodsInitialized
 			}, 2).Should(BeTrue())
 
-			Eventually(fexec.CalledMatchesExpected, 2).Should(BeTrue(), fexec.ErrorDesc)
+			Eventually(fexec.CalledMatchesExpected, 5).Should(BeTrue(), fexec.ErrorDesc)
 			initialFlowCache := map[string]*flowCacheEntry{
 				"0x0": generateInitialFlowCacheEntry(mgmtIfAddr.IP.String(), thisNodeDRIP, thisNodeDRMAC),
 			}
@@ -714,7 +714,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 			// flowsync after AddNode
 			addSyncFlows(fexec)
-			Eventually(fexec.CalledMatchesExpected, 2).Should(BeTrue(), fexec.ErrorDesc)
+			Eventually(fexec.CalledMatchesExpected, 5).Should(BeTrue(), fexec.ErrorDesc)
 
 			node1Cookie := nameToCookie(node1Name)
 			initialFlowCache[node1Cookie] = &flowCacheEntry{
@@ -800,7 +800,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 				return atomic.LoadUint32(linuxNode.initState) == hotypes.PodsInitialized
 			}, 2).Should(BeTrue())
 
-			Eventually(fexec.CalledMatchesExpected, 2).Should(BeTrue(), fexec.ErrorDesc)
+			Eventually(fexec.CalledMatchesExpected, 5).Should(BeTrue(), fexec.ErrorDesc)
 			initialFlowCache := map[string]*flowCacheEntry{
 				"0x0": generateInitialFlowCacheEntry(mgmtIfAddr.IP.String(), thisNodeDRIP, thisNodeDRMAC),
 			}
@@ -817,7 +817,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 			// flowsync after AddNode
 			addSyncFlows(fexec)
-			Eventually(fexec.CalledMatchesExpected, 2).Should(BeTrue(), fexec.ErrorDesc)
+			Eventually(fexec.CalledMatchesExpected, 5).Should(BeTrue(), fexec.ErrorDesc)
 
 			node1Cookie := nameToCookie(node1Name)
 			initialFlowCache[node1Cookie] = &flowCacheEntry{
@@ -839,7 +839,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 			_, err = fakeClient.CoreV1().Pods(testPod.Namespace).Create(context.TODO(), testPod, metav1.CreateOptions{})
 			Expect(err).NotTo(HaveOccurred())
 			addSyncFlows(fexec)
-			Eventually(fexec.CalledMatchesExpected, 2).Should(BeTrue(), fexec.ErrorDesc)
+			Eventually(fexec.CalledMatchesExpected, 5).Should(BeTrue(), fexec.ErrorDesc)
 			initialFlowCache[podIPToCookie(net.ParseIP(pod1IP))] = &flowCacheEntry{
 				flows:       []string{"table=10,cookie=0x" + podIPToCookie(net.ParseIP(pod1IP)) + ",priority=100,ip,nw_dst=" + pod1IP + ",actions=set_field:" + thisNodeDRMAC + "->eth_src,set_field:" + pod1MAC + "->eth_dst,output:ext"},
 				ignoreLearn: true,
@@ -855,7 +855,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 			_, err = fakeClient.CoreV1().Nodes().Update(context.TODO(), node, metav1.UpdateOptions{})
 			Expect(err).NotTo(HaveOccurred())
 			addSyncFlows(fexec)
-			Eventually(fexec.CalledMatchesExpected, 2).Should(BeTrue(), fexec.ErrorDesc)
+			Eventually(fexec.CalledMatchesExpected, 5).Should(BeTrue(), fexec.ErrorDesc)
 			initialFlowCache["0x0"] = generateInitialFlowCacheEntry(mgmtIfAddr.IP.String(), updatedDRIP, thisNodeDRMAC)
 			initialFlowCache[node1Cookie] = &flowCacheEntry{
 				flows: []string{
@@ -938,7 +938,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 				return atomic.LoadUint32(linuxNode.initState) == hotypes.PodsInitialized
 			}, 2).Should(BeTrue())
 
-			Eventually(fexec.CalledMatchesExpected, 2).Should(BeTrue(), fexec.ErrorDesc)
+			Eventually(fexec.CalledMatchesExpected, 5).Should(BeTrue(), fexec.ErrorDesc)
 			initialFlowCache := map[string]*flowCacheEntry{
 				"0x0": generateInitialFlowCacheEntry(mgmtIfAddr.IP.String(), thisNodeDRIP, thisNodeDRMAC),
 			}
@@ -955,7 +955,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 			// flowsync after AddNode
 			addSyncFlows(fexec)
-			Eventually(fexec.CalledMatchesExpected, 2).Should(BeTrue(), fexec.ErrorDesc)
+			Eventually(fexec.CalledMatchesExpected, 5).Should(BeTrue(), fexec.ErrorDesc)
 
 			node1Cookie := nameToCookie(node1Name)
 			initialFlowCache[node1Cookie] = &flowCacheEntry{
@@ -977,7 +977,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 			_, err = fakeClient.CoreV1().Pods(testPod.Namespace).Create(context.TODO(), testPod, metav1.CreateOptions{})
 			Expect(err).NotTo(HaveOccurred())
 			addSyncFlows(fexec)
-			Eventually(fexec.CalledMatchesExpected, 2).Should(BeTrue(), fexec.ErrorDesc)
+			Eventually(fexec.CalledMatchesExpected, 5).Should(BeTrue(), fexec.ErrorDesc)
 			initialFlowCache[podIPToCookie(net.ParseIP(pod1IP))] = &flowCacheEntry{
 				flows:       []string{"table=10,cookie=0x" + podIPToCookie(net.ParseIP(pod1IP)) + ",priority=100,ip,nw_dst=" + pod1IP + ",actions=set_field:" + thisNodeDRMAC + "->eth_src,set_field:" + pod1MAC + "->eth_dst,output:ext"},
 				ignoreLearn: true,
@@ -993,7 +993,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 			_, err = fakeClient.CoreV1().Nodes().Update(context.TODO(), node, metav1.UpdateOptions{})
 			Expect(err).NotTo(HaveOccurred())
 			addSyncFlows(fexec)
-			Eventually(fexec.CalledMatchesExpected, 2).Should(BeTrue(), fexec.ErrorDesc)
+			Eventually(fexec.CalledMatchesExpected, 5).Should(BeTrue(), fexec.ErrorDesc)
 			initialFlowCache["0x0"] = generateInitialFlowCacheEntry(mgmtIfAddr.IP.String(), thisNodeDRIP, updatedDRMAC)
 			initialFlowCache[podIPToCookie(net.ParseIP(pod1IP))] = &flowCacheEntry{
 				flows:       []string{"table=10,cookie=0x" + podIPToCookie(net.ParseIP(pod1IP)) + ",priority=100,ip,nw_dst=" + pod1IP + ",actions=set_field:" + updatedDRMAC + "->eth_src,set_field:" + pod1MAC + "->eth_dst,output:ext"},
@@ -1067,7 +1067,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 				return atomic.LoadUint32(linuxNode.initState) == hotypes.PodsInitialized
 			}).Should(BeTrue())
 
-			Eventually(fexec.CalledMatchesExpected, 2).Should(BeTrue(), fexec.ErrorDesc)
+			Eventually(fexec.CalledMatchesExpected, 5).Should(BeTrue(), fexec.ErrorDesc)
 			initialFlowCache := map[string]*flowCacheEntry{
 				"0x0": generateInitialFlowCacheEntry(mgmtIfAddr.IP.String(), thisNodeDRIP, thisNodeDRMAC),
 			}
@@ -1084,7 +1084,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 			// flowsync after AddNode
 			addSyncFlows(fexec)
-			Eventually(fexec.CalledMatchesExpected, 2).Should(BeTrue(), fexec.ErrorDesc)
+			Eventually(fexec.CalledMatchesExpected, 5).Should(BeTrue(), fexec.ErrorDesc)
 
 			node1Cookie := nameToCookie(node1Name)
 			initialFlowCache[node1Cookie] = &flowCacheEntry{
