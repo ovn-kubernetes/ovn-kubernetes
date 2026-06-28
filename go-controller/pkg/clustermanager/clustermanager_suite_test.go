@@ -16,6 +16,11 @@ func init() {
 	// Fake clientsets from third-party libraries don't yet support WatchList semantics
 	// introduced in K8s 1.35, causing informers to hang waiting for bookmark events.
 	// See: https://github.com/kubernetes/kubernetes/issues/135895
+	os.Setenv("KUBE_FEATURE_AtomicFIFO", "false")
+	os.Setenv("KUBE_FEATURE_StaleControllerConsistencyDaemonSet", "false")
+	os.Setenv("KUBE_FEATURE_StaleControllerConsistencyStatefulSet", "false")
+	os.Setenv("KUBE_FEATURE_StaleControllerConsistencyReplicaSet", "false")
+	os.Setenv("KUBE_FEATURE_StaleControllerConsistencyJob", "false")
 	os.Setenv("KUBE_FEATURE_WatchListClient", "false")
 }
 

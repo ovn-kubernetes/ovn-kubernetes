@@ -20,7 +20,7 @@ func TestClusterNode(t *testing.T) {
 	// k8s.io/kubernetes/pkg/features replaces client-go's env-var-based feature gates
 	// with utilfeature.DefaultMutableFeatureGate.
 	// See: https://github.com/kubernetes/kubernetes/issues/135895
-	if err := utilfeature.DefaultMutableFeatureGate.SetFromMap(map[string]bool{"WatchListClient": false}); err != nil {
+	if err := utilfeature.DefaultMutableFeatureGate.SetFromMap(map[string]bool{"WatchListClient": false, "AtomicFIFO": false, "StaleControllerConsistencyJob": false, "StaleControllerConsistencyReplicaSet": false, "StaleControllerConsistencyStatefulSet": false, "StaleControllerConsistencyDaemonSet": false}); err != nil {
 		t.Fatalf("Failed to disable WatchListClient feature gate: %v", err)
 	}
 	gomega.RegisterFailHandler(ginkgo.Fail)
