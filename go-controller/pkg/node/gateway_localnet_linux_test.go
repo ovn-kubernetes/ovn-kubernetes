@@ -824,13 +824,6 @@ var _ = Describe("Node Operations", func() {
 						"OVN-KUBE-ITP": []string{},
 					},
 				}
-				expectedLBIngressFlows := []string{
-					"cookie=0x10c6b89e483ea111, priority=110, in_port=eth0, arp, arp_op=1, arp_tpa=5.5.5.5, actions=output:LOCAL",
-				}
-				expectedLBExternalIPFlows := []string{
-					"cookie=0x71765945a31dc2f1, priority=110, in_port=eth0, arp, arp_op=1, arp_tpa=1.1.1.1, actions=output:LOCAL",
-				}
-
 				f4 := iptV4.(*util.FakeIPTables)
 				err = f4.MatchState(expectedTables, nil)
 				Expect(err).NotTo(HaveOccurred())
@@ -840,6 +833,12 @@ var _ = Describe("Node Operations", func() {
 				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				Expect(err).NotTo(HaveOccurred())
 
+				expectedLBIngressFlows := []string{
+					"cookie=0x10c6b89e483ea111, priority=110, in_port=eth0, arp, arp_op=1, arp_tpa=5.5.5.5, actions=output:LOCAL",
+				}
+				expectedLBExternalIPFlows := []string{
+					"cookie=0x71765945a31dc2f1, priority=110, in_port=eth0, arp, arp_op=1, arp_tpa=1.1.1.1, actions=output:LOCAL",
+				}
 				flows := fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
 				Expect(flows).To(BeNil())
 				flows = fNPW.ofm.getFlowsByKey("Ingress_namespace1_service1_5.5.5.5_8080")
@@ -965,13 +964,6 @@ var _ = Describe("Node Operations", func() {
 						"OVN-KUBE-ITP": []string{},
 					},
 				}
-				expectedLBIngressFlows := []string{
-					"cookie=0xd8c1fe514f305bc1, priority=110, in_port=eth0, arp, arp_op=1, arp_tpa=5.5.5.5, actions=output:LOCAL",
-				}
-				expectedLBExternalIPFlows := []string{
-					"cookie=0x799e0efe5404e9a1, priority=110, in_port=eth0, arp, arp_op=1, arp_tpa=1.1.1.1, actions=output:LOCAL",
-				}
-
 				f4 := iptV4.(*util.FakeIPTables)
 				Expect(f4.MatchState(expectedTables, nil)).To(Succeed())
 
@@ -981,6 +973,12 @@ var _ = Describe("Node Operations", func() {
 				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				Expect(err).NotTo(HaveOccurred())
 
+				expectedLBIngressFlows := []string{
+					"cookie=0xd8c1fe514f305bc1, priority=110, in_port=eth0, arp, arp_op=1, arp_tpa=5.5.5.5, actions=output:LOCAL",
+				}
+				expectedLBExternalIPFlows := []string{
+					"cookie=0x799e0efe5404e9a1, priority=110, in_port=eth0, arp, arp_op=1, arp_tpa=1.1.1.1, actions=output:LOCAL",
+				}
 				Expect(fNPW.ofm.getFlowsByKey("Ingress_namespace1_service1_5.5.5.5_80")).To(Equal(expectedLBIngressFlows))
 				Expect(fNPW.ofm.getFlowsByKey("External_namespace1_service1_1.1.1.1_80")).To(Equal(expectedLBExternalIPFlows))
 
@@ -1266,14 +1264,6 @@ var _ = Describe("Node Operations", func() {
 						"OVN-KUBE-ITP": []string{},
 					},
 				}
-
-				expectedLBIngressFlows := []string{
-					"cookie=0x10c6b89e483ea111, priority=110, in_port=eth0, arp, arp_op=1, arp_tpa=5.5.5.5, actions=output:LOCAL",
-				}
-				expectedLBExternalIPFlows := []string{
-					"cookie=0x71765945a31dc2f1, priority=110, in_port=eth0, arp, arp_op=1, arp_tpa=1.1.1.1, actions=output:LOCAL",
-				}
-
 				f4 := iptV4.(*util.FakeIPTables)
 				err = f4.MatchState(expectedTables, nil)
 				Expect(err).NotTo(HaveOccurred())
@@ -1282,6 +1272,12 @@ var _ = Describe("Node Operations", func() {
 				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				Expect(err).NotTo(HaveOccurred())
 
+				expectedLBIngressFlows := []string{
+					"cookie=0x10c6b89e483ea111, priority=110, in_port=eth0, arp, arp_op=1, arp_tpa=5.5.5.5, actions=output:LOCAL",
+				}
+				expectedLBExternalIPFlows := []string{
+					"cookie=0x71765945a31dc2f1, priority=110, in_port=eth0, arp, arp_op=1, arp_tpa=1.1.1.1, actions=output:LOCAL",
+				}
 				flows := fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
 				Expect(flows).To(BeNil())
 				flows = fNPW.ofm.getFlowsByKey("Ingress_namespace1_service1_5.5.5.5_8080")
@@ -1380,6 +1376,15 @@ var _ = Describe("Node Operations", func() {
 						"OVN-KUBE-ITP": []string{},
 					},
 				}
+				f4 := iptV4.(*util.FakeIPTables)
+				err = f4.MatchState(expectedTables, nil)
+				Expect(err).NotTo(HaveOccurred())
+
+				expectedNFT := nftablesRulesBase
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes mgmtport-no-snat-nodeports { tcp . %v }\n", service.Spec.Ports[0].NodePort)
+				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
+				Expect(err).NotTo(HaveOccurred())
+
 				expectedNodePortFlows := []string{
 					"cookie=0x453ae29bcbbc08bd, priority=110, in_port=eth0, tcp, tp_dst=31111, actions=output:patch-breth0_ov",
 					fmt.Sprintf("cookie=0x453ae29bcbbc08bd, priority=110, in_port=patch-breth0_ov, dl_src=%s, tcp, tp_src=31111, actions=output:eth0",
@@ -1399,16 +1404,6 @@ var _ = Describe("Node Operations", func() {
 					fmt.Sprintf("cookie=0x71765945a31dc2f1, priority=110, in_port=patch-breth0_ov, dl_src=%s, tcp, nw_src=1.1.1.1, tp_src=8080, actions=output:eth0",
 						gwMAC),
 				}
-
-				f4 := iptV4.(*util.FakeIPTables)
-				err = f4.MatchState(expectedTables, nil)
-				Expect(err).NotTo(HaveOccurred())
-
-				expectedNFT := nftablesRulesBase
-				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes mgmtport-no-snat-nodeports { tcp . %v }\n", service.Spec.Ports[0].NodePort)
-				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
-				Expect(err).NotTo(HaveOccurred())
-
 				flows := fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
 				Expect(flows).To(Equal(expectedNodePortFlows))
 				flows = fNPW.ofm.getFlowsByKey("Ingress_namespace1_service1_5.5.5.5_8080")
@@ -1538,6 +1533,14 @@ var _ = Describe("Node Operations", func() {
 						"OVN-KUBE-ITP": []string{},
 					},
 				}
+				f4 := iptV4.(*util.FakeIPTables)
+				err = f4.MatchState(expectedTables, nil)
+				Expect(err).NotTo(HaveOccurred())
+
+				expectedNFT := nftablesRulesBase
+				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
+				Expect(err).NotTo(HaveOccurred())
+
 				expectedNodePortFlows := []string{
 					fmt.Sprintf("cookie=0x453ae29bcbbc08bd, priority=110, in_port=eth0, tcp, tp_dst=%d, "+
 						"actions=ct(commit,zone=64003,nat(dst=%s:%d),table=6)", svcNodePort, v4localnetGatewayIP, epPortValue),
@@ -1568,15 +1571,6 @@ var _ = Describe("Node Operations", func() {
 						"actions=ct(zone=64003 nat,table=7)", epPortValue),
 					"cookie=0xe745ecf105, priority=110, table=7, actions=output:eth0",
 				}
-
-				f4 := iptV4.(*util.FakeIPTables)
-				err = f4.MatchState(expectedTables, nil)
-				Expect(err).NotTo(HaveOccurred())
-
-				expectedNFT := nftablesRulesBase
-				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
-				Expect(err).NotTo(HaveOccurred())
-
 				flows := fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
 				Expect(flows).To(Equal(expectedNodePortFlows))
 				flows = fNPW.ofm.getFlowsByKey("Ingress_namespace1_service1_5.5.5.5_8080")
@@ -1870,8 +1864,8 @@ var _ = Describe("Node Operations", func() {
 					return f6.MatchState(expectedTables, nil)
 				}, "2s").Should(Succeed())
 
+				expectedNFT := nftablesRulesBase
 				Eventually(func() error {
-					expectedNFT := nftablesRulesBase
 					return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				}, "2s").Should(Succeed())
 
@@ -1958,8 +1952,8 @@ var _ = Describe("Node Operations", func() {
 					return f6.MatchState(expectedTables, nil)
 				}, "2s").Should(Succeed())
 
+				expectedNFT := nftablesRulesBase
 				Eventually(func() error {
-					expectedNFT := nftablesRulesBase
 					return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				}, "2s").Should(Succeed())
 
@@ -2455,8 +2449,8 @@ var _ = Describe("Node Operations", func() {
 					return f4.MatchState(expectedTables, nil)
 				}).Should(Succeed())
 
+				expectedNFT := nftablesRulesBase
 				Eventually(func() error {
-					expectedNFT := nftablesRulesBase
 					return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				}).Should(Succeed())
 
@@ -2495,8 +2489,8 @@ var _ = Describe("Node Operations", func() {
 					return f4.MatchState(expectedTables, nil)
 				}, "2s").Should(Succeed())
 
+				expectedNFT = nftablesRulesBase
 				Eventually(func() error {
-					expectedNFT := nftablesRulesBase
 					return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				}, "2s").Should(Succeed())
 
@@ -2724,10 +2718,9 @@ var _ = Describe("Node Operations", func() {
 						service.Spec.Ports[0].Protocol, goodExternalIP, service.Spec.Ports[0].Port,
 						service.Spec.ClusterIP, service.Spec.Ports[0].Port)}
 				expectedTables["nat"]["OVN-KUBE-EXTERNALIP"] = ovn_kube_external_ip_field
-				Eventually(func(g Gomega) {
+				Eventually(func() error {
 					f4 := iptV4.(*util.FakeIPTables)
-					err = f4.MatchState(expectedTables, nil)
-					g.Expect(err).NotTo(HaveOccurred())
+					return f4.MatchState(expectedTables, nil)
 				}).Should(Succeed())
 
 				// TODO Make delete operation fail, check retry entry, run a successful delete
@@ -2802,8 +2795,8 @@ var _ = Describe("Node Operations", func() {
 					return f4.MatchState(expectedTables, nil)
 				}).Should(Succeed())
 
+				expectedNFT := nftablesRulesBase
 				Eventually(func() error {
-					expectedNFT := nftablesRulesBase
 					return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				}).Should(Succeed())
 
@@ -2842,8 +2835,8 @@ var _ = Describe("Node Operations", func() {
 					return f4.MatchState(expectedTables, nil)
 				}, "2s").Should(Succeed())
 
+				expectedNFT = nftablesRulesBase
 				Eventually(func() error {
-					expectedNFT := nftablesRulesBase
 					return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				}, "2s").Should(Succeed())
 
@@ -2979,8 +2972,8 @@ var _ = Describe("Node Operations", func() {
 					return f4.MatchState(expectedTables, nil)
 				}, "2s").Should(Succeed())
 
+				expectedNFT = nftablesRulesBase
 				Eventually(func() error {
-					expectedNFT = nftablesRulesBase
 					return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				}, "2s").Should(Succeed())
 
@@ -3073,13 +3066,6 @@ var _ = Describe("Node Operations", func() {
 						"OVN-KUBE-ITP": []string{},
 					},
 				}
-				expectedFlows := []string{
-					// default
-					"cookie=0x453ae29bcbbc08bd, priority=110, in_port=eth0, tcp, tp_dst=31111, actions=output:patch-breth0_ov",
-					fmt.Sprintf("cookie=0x453ae29bcbbc08bd, priority=110, in_port=patch-breth0_ov, dl_src=%s, tcp, tp_src=31111, actions=output:eth0",
-						gwMAC),
-				}
-
 				f4 := iptV4.(*util.FakeIPTables)
 				Expect(f4.MatchState(expectedTables, nil)).To(Succeed())
 
@@ -3087,6 +3073,12 @@ var _ = Describe("Node Operations", func() {
 				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes mgmtport-no-snat-nodeports { tcp . %v }\n", service.Spec.Ports[0].NodePort)
 				Expect(nodenft.MatchNFTRules(expectedNFT, nft.Dump())).To(Succeed())
 
+				expectedFlows := []string{
+					// default
+					"cookie=0x453ae29bcbbc08bd, priority=110, in_port=eth0, tcp, tp_dst=31111, actions=output:patch-breth0_ov",
+					fmt.Sprintf("cookie=0x453ae29bcbbc08bd, priority=110, in_port=patch-breth0_ov, dl_src=%s, tcp, tp_src=31111, actions=output:eth0",
+						gwMAC),
+				}
 				flows := fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
 				Expect(flows).To(Equal(expectedFlows))
 
@@ -3125,8 +3117,8 @@ var _ = Describe("Node Operations", func() {
 					return f4.MatchState(expectedTables, nil)
 				}, "2s").Should(Succeed())
 
+				expectedNFT = nftablesRulesBase
 				Eventually(func() error {
-					expectedNFT = nftablesRulesBase
 					return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				}, "2s").Should(Succeed())
 
@@ -3224,19 +3216,18 @@ var _ = Describe("Node Operations", func() {
 						"OVN-KUBE-ITP": []string{},
 					},
 				}
-				expectedFlows := []string{
-					"cookie=0x453ae29bcbbc08bd, priority=110, in_port=eth0, tcp, tp_dst=31111, actions=ct(commit,zone=64003,nat(dst=10.244.0.1:443),table=6)",
-					"cookie=0xe745ecf105, priority=110, table=6, actions=output:LOCAL",
-					"cookie=0x8ba455e19afe30d1, priority=110, in_port=LOCAL, tcp, tp_src=443, actions=ct(zone=64003 nat,table=7)",
-					"cookie=0xe745ecf105, priority=110, table=7, actions=output:eth0",
-				}
-
 				f4 := iptV4.(*util.FakeIPTables)
 				Expect(f4.MatchState(expectedTables, nil)).To(Succeed())
 
 				expectedNFT := nftablesRulesBase
 				Expect(nodenft.MatchNFTRules(expectedNFT, nft.Dump())).To(Succeed())
 
+				expectedFlows := []string{
+					"cookie=0x453ae29bcbbc08bd, priority=110, in_port=eth0, tcp, tp_dst=31111, actions=ct(commit,zone=64003,nat(dst=10.244.0.1:443),table=6)",
+					"cookie=0xe745ecf105, priority=110, table=6, actions=output:LOCAL",
+					"cookie=0x8ba455e19afe30d1, priority=110, in_port=LOCAL, tcp, tp_src=443, actions=ct(zone=64003 nat,table=7)",
+					"cookie=0xe745ecf105, priority=110, table=7, actions=output:eth0",
+				}
 				flows := fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
 				Expect(flows).To(Equal(expectedFlows))
 
@@ -3275,8 +3266,8 @@ var _ = Describe("Node Operations", func() {
 					return f4.MatchState(expectedTables, nil)
 				}, "2s").Should(Succeed())
 
+				expectedNFT = nftablesRulesBase
 				Eventually(func() error {
-					expectedNFT = nftablesRulesBase
 					return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				}, "2s").Should(Succeed())
 
@@ -3368,13 +3359,6 @@ var _ = Describe("Node Operations", func() {
 						},
 					},
 				}
-				expectedFlows := []string{
-					// default
-					"cookie=0x453ae29bcbbc08bd, priority=110, in_port=eth0, tcp, tp_dst=31111, actions=output:patch-breth0_ov",
-					fmt.Sprintf("cookie=0x453ae29bcbbc08bd, priority=110, in_port=patch-breth0_ov, dl_src=%s, tcp, tp_src=31111, actions=output:eth0",
-						gwMAC),
-				}
-
 				f4 := iptV4.(*util.FakeIPTables)
 				Expect(f4.MatchState(expectedTables, nil)).To(Succeed())
 
@@ -3382,6 +3366,12 @@ var _ = Describe("Node Operations", func() {
 				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes mgmtport-no-snat-nodeports { tcp . %v }\n", service.Spec.Ports[0].NodePort)
 				Expect(nodenft.MatchNFTRules(expectedNFT, nft.Dump())).To(Succeed())
 
+				expectedFlows := []string{
+					// default
+					"cookie=0x453ae29bcbbc08bd, priority=110, in_port=eth0, tcp, tp_dst=31111, actions=output:patch-breth0_ov",
+					fmt.Sprintf("cookie=0x453ae29bcbbc08bd, priority=110, in_port=patch-breth0_ov, dl_src=%s, tcp, tp_src=31111, actions=output:eth0",
+						gwMAC),
+				}
 				flows := fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
 				Expect(flows).To(Equal(expectedFlows))
 
@@ -3420,8 +3410,8 @@ var _ = Describe("Node Operations", func() {
 					return f4.MatchState(expectedTables, nil)
 				}, "2s").Should(Succeed())
 
+				expectedNFT = nftablesRulesBase
 				Eventually(func() error {
-					expectedNFT = nftablesRulesBase
 					return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				}, "2s").Should(Succeed())
 
@@ -3518,19 +3508,18 @@ var _ = Describe("Node Operations", func() {
 						"OVN-KUBE-ITP": []string{},
 					},
 				}
-				expectedFlows := []string{
-					"cookie=0x453ae29bcbbc08bd, priority=110, in_port=eth0, tcp, tp_dst=31111, actions=ct(commit,zone=64003,nat(dst=10.244.0.1:443),table=6)",
-					"cookie=0xe745ecf105, priority=110, table=6, actions=output:LOCAL",
-					"cookie=0x8ba455e19afe30d1, priority=110, in_port=LOCAL, tcp, tp_src=443, actions=ct(zone=64003 nat,table=7)",
-					"cookie=0xe745ecf105, priority=110, table=7, actions=output:eth0",
-				}
-
 				f4 := iptV4.(*util.FakeIPTables)
 				Expect(f4.MatchState(expectedTables, nil)).To(Succeed())
 
 				expectedNFT := nftablesRulesBase
 				Expect(nodenft.MatchNFTRules(expectedNFT, nft.Dump())).To(Succeed())
 
+				expectedFlows := []string{
+					"cookie=0x453ae29bcbbc08bd, priority=110, in_port=eth0, tcp, tp_dst=31111, actions=ct(commit,zone=64003,nat(dst=10.244.0.1:443),table=6)",
+					"cookie=0xe745ecf105, priority=110, table=6, actions=output:LOCAL",
+					"cookie=0x8ba455e19afe30d1, priority=110, in_port=LOCAL, tcp, tp_src=443, actions=ct(zone=64003 nat,table=7)",
+					"cookie=0xe745ecf105, priority=110, table=7, actions=output:eth0",
+				}
 				Expect(fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")).To(Equal(expectedFlows))
 
 				addConntrackMocks(netlinkMock, []ctFilterDesc{{"10.129.0.2", 8080, corev1.ProtocolTCP, netlink.ConntrackOrigDstIP}, {"192.168.18.15", 31111, corev1.ProtocolTCP, netlink.ConntrackOrigDstIP}})
@@ -3568,8 +3557,8 @@ var _ = Describe("Node Operations", func() {
 					return f4.MatchState(expectedTables, nil)
 				}, "2s").Should(Succeed())
 
+				expectedNFT = nftablesRulesBase
 				Eventually(func() error {
-					expectedNFT = nftablesRulesBase
 					return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				}, "2s").Should(Succeed())
 
