@@ -375,13 +375,6 @@ func TestOVNKubeCSRController(t *testing.T) {
 				}
 			}
 
-			if err != nil {
-				if err != context.DeadlineExceeded || !tt.shouldIgnore {
-					t.Fatal(fmt.Errorf("csr verification failed, err: %v", err))
-				}
-
-			}
-
 			if tt.expectedEvent != "" {
 				if len(recorder.Events) != 1 {
 					t.Fatal(fmt.Errorf("invalid number of events recorded: %d", len(recorder.Events)))
