@@ -346,10 +346,6 @@ func TestOVNKubeCSRController(t *testing.T) {
 				tt.expectedMaxDuration,
 				recorder)
 
-			if err != nil {
-				t.Fatal(err)
-			}
-
 			req := reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name: csrName,

@@ -602,7 +602,7 @@ install_metallb() {
     'kind_path = os.path.join(build_path, "kind")' \
     'kind_path = "kind"'
 
-  # MetalLB v0.15.3 still pins its in-cluster FRR speaker containers to 10.4.1.
+  # MetalLB pins its in-cluster FRR speaker containers to its shipped version.
   # Keep the pinned upstream string for patching, but replace the actual
   # deployed image so CI exercises the same FRR build as the rest of our BGP
   # setup and coredump debugging.
