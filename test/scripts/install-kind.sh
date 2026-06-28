@@ -48,7 +48,7 @@ install_kind() {
 }
 
 pushd $TMP_DIR
-K8S_VERSION="v1.35.0"
+K8S_VERSION="v1.36.2"
 
 # Install kubectl for K8S_VERSION in use
 curl -sL https://dl.k8s.io/${K8S_VERSION}/kubernetes-client-linux-${ARCH}.tar.gz | sudo tar xvz -C /usr/local/bin kubernetes/client/bin/kubectl --strip-components 3
