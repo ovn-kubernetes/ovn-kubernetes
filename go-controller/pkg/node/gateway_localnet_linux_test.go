@@ -1340,6 +1340,8 @@ var _ = Describe("Node Operations", func() {
 				}
 				expectedNodePortFlows := []string{
 					"cookie=0x453ae29bcbbc08bd, priority=110, in_port=eth0, tcp, tp_dst=31111, actions=output:patch-breth0_ov",
+					fmt.Sprintf("cookie=0x453ae29bcbbc08bd, priority=110, in_port=patch-breth0_ov, dl_src=%s, tcp, tp_dst=31111, ip_dst=%s, actions=drop",
+						gwMAC, v4localnetGatewayIP),
 					fmt.Sprintf("cookie=0x453ae29bcbbc08bd, priority=110, in_port=patch-breth0_ov, dl_src=%s, tcp, tp_src=31111, actions=output:eth0",
 						gwMAC),
 				}
@@ -3034,6 +3036,8 @@ var _ = Describe("Node Operations", func() {
 				expectedFlows := []string{
 					// default
 					"cookie=0x453ae29bcbbc08bd, priority=110, in_port=eth0, tcp, tp_dst=31111, actions=output:patch-breth0_ov",
+					fmt.Sprintf("cookie=0x453ae29bcbbc08bd, priority=110, in_port=patch-breth0_ov, dl_src=%s, tcp, tp_dst=31111, ip_dst=%s, actions=drop",
+						gwMAC, v4localnetGatewayIP),
 					fmt.Sprintf("cookie=0x453ae29bcbbc08bd, priority=110, in_port=patch-breth0_ov, dl_src=%s, tcp, tp_src=31111, actions=output:eth0",
 						gwMAC),
 				}
@@ -3329,6 +3333,8 @@ var _ = Describe("Node Operations", func() {
 				expectedFlows := []string{
 					// default
 					"cookie=0x453ae29bcbbc08bd, priority=110, in_port=eth0, tcp, tp_dst=31111, actions=output:patch-breth0_ov",
+					fmt.Sprintf("cookie=0x453ae29bcbbc08bd, priority=110, in_port=patch-breth0_ov, dl_src=%s, tcp, tp_dst=31111, ip_dst=%s, actions=drop",
+						gwMAC, v4localnetGatewayIP),
 					fmt.Sprintf("cookie=0x453ae29bcbbc08bd, priority=110, in_port=patch-breth0_ov, dl_src=%s, tcp, tp_src=31111, actions=output:eth0",
 						gwMAC),
 				}
