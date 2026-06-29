@@ -204,9 +204,26 @@ func (bsnc *BaseUserDefinedNetworkController) DeleteUserDefinedNetworkResourceCo
 }
 
 // reconcilePodForUserDefinedNetwork is the pod reconciliation entry point for
-// UDN controllers. It computes the add/update decision from current controller
-// state while the implementation still delegates to the legacy ensure path.
+// UDN controller add/update events.
 func (bsnc *BaseUserDefinedNetworkController) reconcilePodForUserDefinedNetwork(pod *corev1.Pod) error {
+	return bsnc.reconcilePodStateForUserDefinedNetwork(podReconcilePresent, pod, nil)
+}
+
+func (bsnc *BaseUserDefinedNetworkController) reconcilePodStateForUserDefinedNetwork(state podReconcileState, pod *corev1.Pod, portInfoMap map[string]*lpInfo) error {
+	switch state {
+	case podReconcilePresent:
+		return bsnc.reconcilePresentPodForUserDefinedNetwork(pod)
+	case podReconcileDeleted:
+		return bsnc.reconcileDeletedPodForUserDefinedNetwork(pod, portInfoMap)
+	default:
+		return fmt.Errorf("unsupported pod reconcile state %q for pod %s/%s on network %s", state, pod.Namespace, pod.Name, bsnc.GetNetworkName())
+	}
+}
+
+// reconcilePresentPodForUserDefinedNetwork computes the add/update decision
+// from current controller state while the implementation still delegates to the
+// legacy ensure path.
+func (bsnc *BaseUserDefinedNetworkController) reconcilePresentPodForUserDefinedNetwork(pod *corev1.Pod) error {
 	addPort := bsnc.shouldEnsurePodForUserDefinedNetwork(pod)
 	return bsnc.ensurePodForUserDefinedNetwork(pod, addPort)
 }
@@ -461,9 +478,15 @@ func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(pod 
 	return nil
 }
 
-// deletePodForUserDefinedNetwork is the pod delete entry point for UDN
-// controllers. It currently delegates to the legacy remove path.
+// deletePodForUserDefinedNetwork is the current delete entry point for UDN
+// controller pod events.
 func (bsnc *BaseUserDefinedNetworkController) deletePodForUserDefinedNetwork(pod *corev1.Pod, portInfoMap map[string]*lpInfo) error {
+	return bsnc.reconcilePodStateForUserDefinedNetwork(podReconcileDeleted, pod, portInfoMap)
+}
+
+// reconcileDeletedPodForUserDefinedNetwork uses the delete event object as the
+// desired-absent context while cleanup still depends on legacy remove helpers.
+func (bsnc *BaseUserDefinedNetworkController) reconcileDeletedPodForUserDefinedNetwork(pod *corev1.Pod, portInfoMap map[string]*lpInfo) error {
 	return bsnc.removePodForUserDefinedNetwork(pod, portInfoMap)
 }
 
