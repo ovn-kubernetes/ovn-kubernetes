@@ -623,22 +623,27 @@ func (oc *DefaultNetworkController) syncUDNIsolation() error {
 		{oc.getUDNACLDbIDs(allowHostSecondaryACL, libovsdbutil.ACLIngress), oc.getUDNACLDbIDs(allowHostPrimaryUDNACL, libovsdbutil.ACLIngress)},
 	}
 
-	aclsToUpdate := make([]*nbdb.ACL, 0)
-	for _, update := range updates {
-		legacyACLs, err := libovsdbops.FindACLsWithPredicate(oc.nbClient, libovsdbops.GetPredicate[*nbdb.ACL](update.old, nil))
-		if err != nil {
-			return fmt.Errorf("unable to find ACLs for UDN Isolation sync: %w", err)
+	var aclsToUpdate []*nbdb.ACL
+	_, err := libovsdbops.FindACLsWithPredicate(oc.nbClient, func(acl *nbdb.ACL) bool {
+		for _, update := range updates {
+			p := libovsdbops.GetPredicate[*nbdb.ACL](update.old, nil)
+			if p(acl) {
+				copy := *acl
+				copy.ExternalIDs = update.new.GetExternalIDs()
+				aclName := libovsdbutil.GetACLName(update.new)
+				copy.Name = &aclName
+				aclsToUpdate = append(aclsToUpdate, &copy)
+				return false
+			}
 		}
-		for _, acl := range legacyACLs {
-			externalIDs := update.new.GetExternalIDs()
-			acl.ExternalIDs = externalIDs
-			aclName := libovsdbutil.GetACLName(update.new)
-			acl.Name = &aclName
-			aclsToUpdate = append(aclsToUpdate, acl)
-		}
+		return false
+	})
+	if err != nil {
+		return fmt.Errorf("unable to find ACLs for UDN Isolation sync: %w", err)
 	}
+
 	if len(aclsToUpdate) > 0 {
-		err := batching.Batch[*nbdb.ACL](20000, aclsToUpdate, func(batchACLs []*nbdb.ACL) error {
+		err := batching.Batch(20000, aclsToUpdate, func(batchACLs []*nbdb.ACL) error {
 			return libovsdbops.CreateOrUpdateACLs(oc.nbClient, oc.GetSamplingConfig(), batchACLs...)
 		})
 		if err != nil {
