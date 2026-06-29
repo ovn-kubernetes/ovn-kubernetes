@@ -987,6 +987,52 @@ var _ = Describe("Node Operations", func() {
 
 				Expect(fNPW.ofm.getFlowsByKey("Ingress_namespace1_service1_5.5.5.5_80")).To(Equal(expectedLBIngressFlows))
 				Expect(fNPW.ofm.getFlowsByKey("External_namespace1_service1_1.1.1.1_80")).To(Equal(expectedLBExternalIPFlows))
+
+				// Delete the service and confirm the rules get deleted
+				addConntrackMocks(netlinkMock, []ctFilterDesc{
+					{"1.1.1.1", 80, corev1.ProtocolTCP, netlink.ConntrackOrigDstIP},
+					{"5.5.5.5", 80, corev1.ProtocolTCP, netlink.ConntrackOrigDstIP},
+					{"10.129.0.2", 80, corev1.ProtocolTCP, netlink.ConntrackOrigDstIP}})
+				Expect(fakeClient.KubeClient.CoreV1().Services(service.Namespace).Delete(
+					context.Background(), service.Name, metav1.DeleteOptions{})).To(Succeed())
+				expectedTables = map[string]util.FakeTable{
+					"nat": {
+						"PREROUTING": []string{
+							"-j OVN-KUBE-ETP",
+							"-j OVN-KUBE-EXTERNALIP",
+							"-j OVN-KUBE-NODEPORT",
+						},
+						"OUTPUT": []string{
+							"-j OVN-KUBE-EXTERNALIP",
+							"-j OVN-KUBE-NODEPORT",
+							"-j OVN-KUBE-ITP",
+						},
+						"OVN-KUBE-NODEPORT":   []string{},
+						"OVN-KUBE-EXTERNALIP": []string{},
+						"OVN-KUBE-ETP":        []string{},
+						"OVN-KUBE-ITP":        []string{},
+					},
+					"filter": {},
+					"mangle": {
+						"OUTPUT": []string{
+							"-j OVN-KUBE-ITP",
+						},
+						"OVN-KUBE-ITP": []string{},
+					},
+				}
+				Eventually(func() error {
+					f4 := iptV4.(*util.FakeIPTables)
+					return f4.MatchState(expectedTables, nil)
+				}, "2s").Should(Succeed())
+
+				expectedNFT = nftablesRulesBase
+				Eventually(func() error {
+					return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
+				}, "2s").Should(Succeed())
+
+				Expect(fNPW.ofm.getFlowsByKey("Ingress_namespace1_service1_5.5.5.5_80")).To(BeEmpty())
+				Expect(fNPW.ofm.getFlowsByKey("External_namespace1_service1_1.1.1.1_80")).To(BeEmpty())
+
 				return nil
 			}
 			Expect(app.Run([]string{app.Name})).To(Succeed())
