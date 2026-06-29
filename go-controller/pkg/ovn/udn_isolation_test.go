@@ -68,20 +68,42 @@ var _ = Describe("UDN Isolation", func() {
 		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 		fakeController := getFakeController(types.DefaultNetworkControllerName)
 
-		By("initializing the database with legacy secondary IDs")
+		By("initializing the database with all legacy ACLs")
 		pgIDs := fakeController.getSecondaryPodsPortGroupDbIDs()
 		pgName := libovsdbutil.GetPortGroupName(pgIDs)
-		egressDenyIDs := fakeController.getUDNACLDbIDs(denySecondaryACL, libovsdbutil.ACLEgress)
-		match := libovsdbutil.GetACLMatch(pgName, "", libovsdbutil.ACLEgress)
-		egressDenyACL := libovsdbutil.BuildACL(egressDenyIDs, types.PrimaryUDNDenyPriority, match, nbdb.ACLActionDrop,
-			nil, libovsdbutil.LportEgress, isolationTier)
-		// required to make sure port group correctly references the ACL
-		egressDenyACL.UUID = egressDenyIDs.String() + "-UUID"
 
-		pg := libovsdbutil.BuildPortGroup(pgIDs, nil, []*nbdb.ACL{egressDenyACL})
+		type legacyACLDef struct {
+			oldName  string
+			newName  string
+			dir      libovsdbutil.ACLDirection
+			priority int
+			action   string
+			applyDir libovsdbutil.ACLPipelineType
+		}
+		legacyACLDefs := []legacyACLDef{
+			{denySecondaryACL, denyPrimaryUDNACL, libovsdbutil.ACLEgress, types.PrimaryUDNDenyPriority, nbdb.ACLActionDrop, libovsdbutil.LportEgress},
+			{legacyAllowHostARPACL, allowHostARPACL, libovsdbutil.ACLEgress, types.PrimaryUDNAllowPriority, nbdb.ACLActionAllow, libovsdbutil.LportEgress},
+			{denySecondaryACL, denyPrimaryUDNACL, libovsdbutil.ACLIngress, types.PrimaryUDNDenyPriority, nbdb.ACLActionDrop, libovsdbutil.LportIngress},
+			{legacyAllowHostARPACL, allowHostARPACL, libovsdbutil.ACLIngress, types.PrimaryUDNAllowPriority, nbdb.ACLActionAllow, libovsdbutil.LportIngress},
+			{allowHostSecondaryACL, allowHostPrimaryUDNACL, libovsdbutil.ACLIngress, types.PrimaryUDNAllowPriority, nbdb.ACLActionAllowRelated, libovsdbutil.LportIngress},
+		}
+
+		var legacyACLs []*nbdb.ACL
+		nbData := []libovsdbtest.TestData{}
+		for _, def := range legacyACLDefs {
+			oldIDs := fakeController.getUDNACLDbIDs(def.oldName, def.dir)
+			match := libovsdbutil.GetACLMatch(pgName, "", def.dir)
+			acl := libovsdbutil.BuildACL(oldIDs, def.priority, match, def.action, nil, def.applyDir, isolationTier)
+			acl.UUID = oldIDs.String() + "-UUID"
+			legacyACLs = append(legacyACLs, acl)
+			nbData = append(nbData, acl)
+		}
+
+		pg := libovsdbutil.BuildPortGroup(pgIDs, nil, legacyACLs)
+		nbData = append(nbData, pg)
 
 		nbClient, nbCleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{
-			NBData: []libovsdbtest.TestData{egressDenyACL, pg},
+			NBData: nbData,
 		}, nil)
 		Expect(err).NotTo(HaveOccurred())
 		defer nbCleanup.Cleanup()
@@ -93,13 +115,25 @@ var _ = Describe("UDN Isolation", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(pgs).To(HaveLen(1))
 		Expect(pgs[0].ExternalIDs).To(Equal(fakeController.getSecondaryPodsPortGroupDbIDs().GetExternalIDs()))
-		By("expect updated ACL with proper external_ids")
+		By("expect all ACLs updated with proper external_ids and names")
 		acls, err := libovsdbops.FindACLsWithPredicate(nbClient, func(_ *nbdb.ACL) bool { return true })
 		Expect(err).NotTo(HaveOccurred())
-		Expect(acls).To(HaveLen(1))
-		Expect(acls[0].ExternalIDs).To(Equal(fakeController.getUDNACLDbIDs(denyPrimaryUDNACL, libovsdbutil.ACLEgress).GetExternalIDs()))
-		By("expect updated ACL with proper name")
-		Expect(*acls[0].Name).To(BeEmpty())
+		Expect(acls).To(HaveLen(len(legacyACLDefs)))
+		for _, def := range legacyACLDefs {
+			newIDs := fakeController.getUDNACLDbIDs(def.newName, def.dir)
+			expectedExtIDs := newIDs.GetExternalIDs()
+			found := false
+			for _, acl := range acls {
+				if acl.ExternalIDs[libovsdbops.ObjectNameKey.String()] == expectedExtIDs[libovsdbops.ObjectNameKey.String()] &&
+					acl.ExternalIDs[libovsdbops.PolicyDirectionKey.String()] == expectedExtIDs[libovsdbops.PolicyDirectionKey.String()] {
+					Expect(acl.ExternalIDs).To(Equal(expectedExtIDs))
+					Expect(*acl.Name).To(BeEmpty())
+					found = true
+					break
+				}
+			}
+			Expect(found).To(BeTrue(), "expected ACL with name=%s dir=%s not found", def.newName, def.dir)
+		}
 	})
 
 	Describe("ConfigureAdvertisedNetworkIsolation", func() {
