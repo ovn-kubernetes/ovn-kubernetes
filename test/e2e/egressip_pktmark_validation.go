@@ -26,6 +26,7 @@ import (
 	utilnet "k8s.io/utils/net"
 
 	ovnutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
 	infraapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
@@ -230,79 +231,24 @@ var _ = ginkgo.Describe("[secondary-host-eip] Egress IP Packet Mark Solution Val
 			return fmt.Errorf("failed to list NFTables chain: %v", err)
 		}
 
-		// Get pod CIDRs from all nodes to determine cluster-wide CIDRs
-		// In dual-stack or multi-CIDR setups, we need to check all IP families
-		nodes, err := f.ClientSet.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
-		framework.ExpectNoError(err, "Failed to list nodes")
-
-		if len(nodes.Items) == 0 {
-			return fmt.Errorf("no nodes found in cluster")
+		// Get cluster pod CIDRs from ovn-config ConfigMap
+		cm, err := f.ClientSet.CoreV1().ConfigMaps(deploymentconfig.Get().OVNKubernetesNamespace()).Get(
+			context.TODO(), "ovn-config", metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to get ovn-config ConfigMap: %v", err)
 		}
 
-		// Collect all unique pod CIDRs across all nodes
-		// Node CIDRs are subnets of cluster CIDR(s)
-		ipv4NodeCIDRs := make(map[string]bool)
-		ipv6NodeCIDRs := make(map[string]bool)
-
-		for _, node := range nodes.Items {
-			for _, podCIDR := range node.Spec.PodCIDRs {
-				ip, ipnet, err := net.ParseCIDR(podCIDR)
-				if err != nil {
-					framework.Logf("Warning: failed to parse CIDR %s: %v", podCIDR, err)
-					continue
-				}
-				if ip.To4() != nil {
-					ipv4NodeCIDRs[ipnet.String()] = true
-				} else {
-					ipv6NodeCIDRs[ipnet.String()] = true
-				}
-			}
+		netCIDR := cm.Data["net_cidr"]
+		if netCIDR == "" {
+			return fmt.Errorf("net_cidr not found in ovn-config ConfigMap")
 		}
 
-		if len(ipv4NodeCIDRs) == 0 && len(ipv6NodeCIDRs) == 0 {
-			return fmt.Errorf("no pod CIDRs found on any nodes")
-		}
-
-		framework.Logf("Found node pod CIDRs - IPv4: %v, IPv6: %v", ipv4NodeCIDRs, ipv6NodeCIDRs)
-
-		// Derive expected cluster CIDRs from node CIDRs
-		// Typical: node CIDRs like 10.244.X.0/24 → cluster CIDR 10.244.0.0/16
+		// Parse the CIDR string (may be comma-separated for dual-stack)
 		expectedCIDRs := []string{}
-
-		if len(ipv4NodeCIDRs) > 0 {
-			// Get any IPv4 node CIDR to derive cluster CIDR
-			var sampleIPv4CIDR string
-			for cidr := range ipv4NodeCIDRs {
-				sampleIPv4CIDR = cidr
-				break
-			}
-			ip, _, _ := net.ParseCIDR(sampleIPv4CIDR)
-			// Derive cluster CIDR: zero last two octets, use /16 (common for K8s)
-			parts := strings.Split(ip.String(), ".")
-			clusterCIDR := fmt.Sprintf("%s.%s.0.0/16", parts[0], parts[1])
-			expectedCIDRs = append(expectedCIDRs, clusterCIDR)
-		}
-
-		if len(ipv6NodeCIDRs) > 0 {
-			// Get any IPv6 node CIDR to derive cluster CIDR
-			var sampleIPv6CIDR string
-			for cidr := range ipv6NodeCIDRs {
-				sampleIPv6CIDR = cidr
-				break
-			}
-			ip, ipnet, _ := net.ParseCIDR(sampleIPv6CIDR)
-			// Derive cluster CIDR: typically /48 for cluster, /64 for nodes
-			ones, _ := ipnet.Mask.Size()
-			if ones >= 48 {
-				// Zero the /48 to /64 range for cluster CIDR
-				ipBytes := ip.To16()
-				ipBytes[6] = 0
-				ipBytes[7] = 0
-				clusterCIDR := fmt.Sprintf("%s/48", net.IP(ipBytes).String())
-				expectedCIDRs = append(expectedCIDRs, clusterCIDR)
-			} else {
-				// Already broad, use as-is
-				expectedCIDRs = append(expectedCIDRs, ipnet.String())
+		for _, cidr := range strings.Split(netCIDR, ",") {
+			cidr = strings.TrimSpace(cidr)
+			if cidr != "" {
+				expectedCIDRs = append(expectedCIDRs, cidr)
 			}
 		}
 
