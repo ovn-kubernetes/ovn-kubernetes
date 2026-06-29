@@ -417,18 +417,20 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 			udnPortInfo := podInfo.udnPodInfos[netInfo.netName].allportInfo[netInfo.nadName]
 			podMAC, err := net.ParseMAC(udnPortInfo.podMAC)
 			Expect(err).NotTo(HaveOccurred())
-			portInfo := userDefinedNetController.bnc.logicalPortCache.add(
+			userDefinedNetController.bnc.logicalPortCache.addWithNetworkName(
 				initialPod,
 				userDefinedNetController.bnc.GetNetworkScopedSwitchName(nodeName),
 				netInfo.nadName,
+				netInfo.netName,
 				portUUID,
 				podMAC,
 				[]*net.IPNet{testing.MustParseIPNet(fmt.Sprintf("%s/%d", udnPortInfo.podIP, udnPortInfo.prefixLen))},
 			)
+			appliedState := userDefinedNetController.bnc.getPortInfoForUserDefinedNetwork(initialPod)
+			Expect(appliedState).To(HaveKey(netInfo.nadName))
 
-			Expect(userDefinedNetController.bnc.removePodForUserDefinedNetwork(initialPod, map[string]*lpInfo{
-				netInfo.nadName: portInfo,
-			})).To(Succeed())
+			userDefinedNetController.bnc.networkManager = networkmanager.Default().Interface()
+			Expect(userDefinedNetController.bnc.removePodForUserDefinedNetwork(initialPod, appliedState)).To(Succeed())
 
 			_, err = libovsdbops.GetLogicalSwitchPort(fakeOvn.nbClient, &nbdb.LogicalSwitchPort{Name: portName})
 			Expect(errors.Is(err, libovsdbclient.ErrNotFound)).To(BeTrue())
