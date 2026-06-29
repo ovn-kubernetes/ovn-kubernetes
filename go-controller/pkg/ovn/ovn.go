@@ -98,10 +98,32 @@ func (oc *DefaultNetworkController) recordPodEvent(reason string, addErr error, 
 	}
 }
 
-// reconcilePod is the pod reconciliation entry point for the default network.
-// It computes the add/update decision from current controller state while the
-// implementation still delegates to the legacy ensure path.
+type podReconcileState string
+
+const (
+	podReconcilePresent podReconcileState = "present"
+	podReconcileDeleted podReconcileState = "deleted"
+)
+
+func (oc *DefaultNetworkController) reconcilePodState(state podReconcileState, pod *corev1.Pod, portInfo *lpInfo) error {
+	switch state {
+	case podReconcilePresent:
+		return oc.reconcilePresentPod(pod)
+	case podReconcileDeleted:
+		return oc.reconcileDeletedPod(pod, portInfo)
+	default:
+		return fmt.Errorf("unsupported pod reconcile state %q for pod %s/%s", state, pod.Namespace, pod.Name)
+	}
+}
+
+// reconcilePod is the current add/update entry point for the default network.
 func (oc *DefaultNetworkController) reconcilePod(pod *corev1.Pod) error {
+	return oc.reconcilePodState(podReconcilePresent, pod, nil)
+}
+
+// reconcilePresentPod computes the add/update decision from current controller
+// state while the implementation still delegates to the legacy ensure path.
+func (oc *DefaultNetworkController) reconcilePresentPod(pod *corev1.Pod) error {
 	addPort := oc.shouldEnsurePodLogicalPort(pod, ovntypes.DefaultNetworkName)
 	return oc.ensurePod(pod, addPort)
 }
@@ -186,9 +208,14 @@ func (oc *DefaultNetworkController) ensureRemoteZonePod(pod *corev1.Pod) error {
 	return nil
 }
 
-// deletePod is the pod delete entry point for the default network. It currently
-// delegates to the legacy remove path.
+// deletePod is the current delete entry point for the default network.
 func (oc *DefaultNetworkController) deletePod(pod *corev1.Pod, portInfo *lpInfo) error {
+	return oc.reconcilePodState(podReconcileDeleted, pod, portInfo)
+}
+
+// reconcileDeletedPod uses the delete event object as the desired-absent
+// context while cleanup still depends on legacy remove helpers.
+func (oc *DefaultNetworkController) reconcileDeletedPod(pod *corev1.Pod, portInfo *lpInfo) error {
 	return oc.removePod(pod, portInfo)
 }
 
