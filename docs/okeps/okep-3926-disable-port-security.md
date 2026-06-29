@@ -30,8 +30,9 @@ backends.
 
 ## Non-Goals
 
-- Disabling port security on the default (primary) cluster network. The security implications of
-  removing MAC/IP spoofing protection on the cluster's primary network are too significant.
+- Disabling port security on the default cluster network - or any namespace primary network.
+  The security implications of removing MAC/IP spoofing protection on the cluster's primary
+  network are too significant.
 - Per-pod granularity for port security settings. The configuration knob is per-network; all pods
   attached to a given network share the same port security posture.
 - Layer3 topology support. Layer3 uses router-based forwarding where port security has different
@@ -45,6 +46,16 @@ backends.
 - Namespace-scoped UserDefinedNetwork (UDN) resources cannot enable this feature, as
   disabling port security is a cluster-admin decision that should not be available to namespace
   users.
+
+## Future Goals
+
+- **Per-attachment port security granularity**, probably added via a new `WorkloadOptOut` mode.
+  Port security stays enabled by default on the network, but individual pods may opt out. The
+  admin controls whether the network permits overrides; the annotation is the per-pod opt-in
+  signal. This follows the two-level model proven by OpenStack Neutron.
+- **Per-pod allowed MAC addresses**, probably via an `AllowList` mode. This will allow workloads
+  to declare additional permitted MAC addresses without fully disabling port security.
+- Both extensions are non-breaking enum additions to the existing `PortSecurityConfig` struct.
 
 ## Introduction
 
@@ -214,8 +225,9 @@ Add one field to the `NetConf` struct:
 
 The field is optional and defaults to `"Enabled"` (port security enabled, preserving current
 behavior). It accepts the values `"Enabled"` and `"Disabled"`. It is valid on `layer2` and
-`localnet` topologies only, and requires `ipam.mode` to be `Disabled` (i.e., subnets must not be
-specified). Setting it on a `layer3` topology or with IPAM enabled results in a validation error.
+`localnet` topologies only, requires `ipam.mode` to be `Disabled` (i.e., subnets must not be
+specified), and the network role must be `"secondary"`. Setting it on a `layer3` topology or
+with IPAM enabled results in a validation error.
 
 #### ClusterUserDefinedNetwork CRD
 
