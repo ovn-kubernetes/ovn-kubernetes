@@ -284,7 +284,8 @@ func initController(namespaces []corev1.Namespace, pods []corev1.Pod, egressIPs 
 
 	// Initialize fake nftables helper and egress IP unready chain
 	// This mimics what the real Run() method does
-	nodenft.SetFakeNFTablesHelper()
+	// Create a fresh fake for this test to ensure isolation
+	_ = nodenft.SetFakeNFTablesHelper()
 
 	// Set up cluster subnets for NFTables initialization
 	// Reset first to avoid accumulation between tests
