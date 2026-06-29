@@ -98,34 +98,27 @@ func (oc *DefaultNetworkController) recordPodEvent(reason string, addErr error, 
 	}
 }
 
-type podReconcileState string
+func (oc *DefaultNetworkController) GetPodState(pod *corev1.Pod) interface{} {
+	return oc.getPortInfo(pod)
+}
 
-const (
-	podReconcilePresent podReconcileState = "present"
-	podReconcileDeleted podReconcileState = "deleted"
-)
-
-func (oc *DefaultNetworkController) reconcilePodState(state podReconcileState, pod *corev1.Pod, portInfo *lpInfo) error {
-	switch state {
-	case podReconcilePresent:
-		return oc.reconcilePresentPod(pod)
-	case podReconcileDeleted:
-		return oc.reconcileDeletedPod(pod, portInfo)
-	default:
-		return fmt.Errorf("unsupported pod reconcile state %q for pod %s/%s", state, pod.Namespace, pod.Name)
+func (oc *DefaultNetworkController) ReconcilePod(oldPod, newPod *corev1.Pod, cachedState interface{}, forceAdd bool) error {
+	if newPod == nil {
+		if oldPod == nil {
+			return fmt.Errorf("pod delete reconcile for network %s is missing pod", oc.GetNetworkName())
+		}
+		var portInfo *lpInfo
+		if cachedState != nil {
+			var ok bool
+			portInfo, ok = cachedState.(*lpInfo)
+			if !ok {
+				return fmt.Errorf("pod delete reconcile for network %s expected *lpInfo cache state but got %T", oc.GetNetworkName(), cachedState)
+			}
+		}
+		return oc.reconcileDeletedPod(oldPod, portInfo)
 	}
-}
-
-// reconcilePod is the current add/update entry point for the default network.
-func (oc *DefaultNetworkController) reconcilePod(pod *corev1.Pod) error {
-	return oc.reconcilePodState(podReconcilePresent, pod, nil)
-}
-
-// reconcilePresentPod computes the add/update decision from current controller
-// state while the implementation still delegates to the legacy ensure path.
-func (oc *DefaultNetworkController) reconcilePresentPod(pod *corev1.Pod) error {
-	addPort := oc.shouldEnsurePodLogicalPort(pod, ovntypes.DefaultNetworkName)
-	return oc.ensurePod(pod, addPort)
+	addPort := forceAdd || oc.shouldEnsurePodLogicalPort(newPod, ovntypes.DefaultNetworkName)
+	return oc.ensurePod(newPod, addPort)
 }
 
 // ensurePod tries to set up a pod. It returns nil on success and error on failure; failure
@@ -206,11 +199,6 @@ func (oc *DefaultNetworkController) ensureRemoteZonePod(pod *corev1.Pod) error {
 		return kubevirt.EnsureRemoteZonePodAddressesToNodeRoute(oc.watchFactory, oc.nbClient, pod)
 	}
 	return nil
-}
-
-// deletePod is the current delete entry point for the default network.
-func (oc *DefaultNetworkController) deletePod(pod *corev1.Pod, portInfo *lpInfo) error {
-	return oc.reconcilePodState(podReconcileDeleted, pod, portInfo)
 }
 
 // reconcileDeletedPod uses the delete event object as the desired-absent

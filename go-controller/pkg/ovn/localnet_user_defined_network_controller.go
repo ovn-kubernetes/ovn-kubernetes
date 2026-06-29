@@ -102,7 +102,14 @@ func (h *LocalnetUserDefinedNetworkControllerEventHandler) IsResourceScheduled(o
 // AddResource adds the specified object to the cluster according to its type and returns the error,
 // if any, yielded during object creation.
 // Given an object to add and a boolean specifying if the function was executed from iterateRetryResources
-func (h *LocalnetUserDefinedNetworkControllerEventHandler) AddResource(obj interface{}, _ bool) error {
+func (h *LocalnetUserDefinedNetworkControllerEventHandler) AddResource(obj interface{}, fromRetryLoop bool) error {
+	if h.objType == factory.PodType {
+		pod, ok := obj.(*corev1.Pod)
+		if !ok {
+			return fmt.Errorf("could not cast %T object to *corev1.Pod", obj)
+		}
+		return h.oc.ReconcilePod(nil, pod, nil, fromRetryLoop)
+	}
 	return h.oc.AddUserDefinedNetworkResourceCommon(h.objType, obj)
 }
 
