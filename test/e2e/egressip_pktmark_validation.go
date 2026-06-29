@@ -35,7 +35,6 @@ var _ = ginkgo.Describe("[secondary-host-eip] Egress IP Packet Mark Solution Val
 	const (
 		egressIPName        = "egressip-pktmark-test"
 		egressIPYaml        = "/tmp/egressip-pktmark.yaml"
-		monitorPodName      = "traffic-monitor-pktmark"
 		podNamePrefix       = "pktmark-pod"
 		numTestPods         = 1 // Smaller number for focused validation
 		retryInterval       = 1 * time.Second
@@ -79,10 +78,6 @@ var _ = ginkgo.Describe("[secondary-host-eip] Egress IP Packet Mark Solution Val
 		Status struct {
 			Items []egressIPStatus `json:"items"`
 		} `json:"status"`
-	}
-
-	type egressIPObjects struct {
-		Items []egressIPObject `json:"items"`
 	}
 
 	getEgressIPStatusItems := func() []egressIPStatus {
@@ -235,37 +230,99 @@ var _ = ginkgo.Describe("[secondary-host-eip] Egress IP Packet Mark Solution Val
 			return fmt.Errorf("failed to list NFTables chain: %v", err)
 		}
 
-		// Get cluster pod CIDR from any node (all nodes share the same cluster CIDR)
+		// Get pod CIDRs from all nodes to determine cluster-wide CIDRs
+		// In dual-stack or multi-CIDR setups, we need to check all IP families
 		nodes, err := f.ClientSet.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
 		framework.ExpectNoError(err, "Failed to list nodes")
 
-		if len(nodes.Items) == 0 || len(nodes.Items[0].Spec.PodCIDRs) == 0 {
-			return fmt.Errorf("no pod CIDRs found on nodes")
+		if len(nodes.Items) == 0 {
+			return fmt.Errorf("no nodes found in cluster")
 		}
 
-		// Node CIDR example: "10.244.1.0/24"
-		// Cluster CIDR should be: "10.244.0.0/16" (broader)
-		nodeCIDR := nodes.Items[0].Spec.PodCIDRs[0]
-		ip, _, err := net.ParseCIDR(nodeCIDR)
-		framework.ExpectNoError(err, "Failed to parse node CIDR")
+		// Collect all unique pod CIDRs across all nodes
+		// Node CIDRs are subnets of cluster CIDR(s)
+		ipv4NodeCIDRs := make(map[string]bool)
+		ipv6NodeCIDRs := make(map[string]bool)
 
-		var expectedCIDR string
-		if ip.To4() != nil {
-			// IPv4: Expect cluster CIDR like 10.244.0.0/16
+		for _, node := range nodes.Items {
+			for _, podCIDR := range node.Spec.PodCIDRs {
+				ip, ipnet, err := net.ParseCIDR(podCIDR)
+				if err != nil {
+					framework.Logf("Warning: failed to parse CIDR %s: %v", podCIDR, err)
+					continue
+				}
+				if ip.To4() != nil {
+					ipv4NodeCIDRs[ipnet.String()] = true
+				} else {
+					ipv6NodeCIDRs[ipnet.String()] = true
+				}
+			}
+		}
+
+		if len(ipv4NodeCIDRs) == 0 && len(ipv6NodeCIDRs) == 0 {
+			return fmt.Errorf("no pod CIDRs found on any nodes")
+		}
+
+		framework.Logf("Found node pod CIDRs - IPv4: %v, IPv6: %v", ipv4NodeCIDRs, ipv6NodeCIDRs)
+
+		// Derive expected cluster CIDRs from node CIDRs
+		// Typical: node CIDRs like 10.244.X.0/24 → cluster CIDR 10.244.0.0/16
+		expectedCIDRs := []string{}
+
+		if len(ipv4NodeCIDRs) > 0 {
+			// Get any IPv4 node CIDR to derive cluster CIDR
+			var sampleIPv4CIDR string
+			for cidr := range ipv4NodeCIDRs {
+				sampleIPv4CIDR = cidr
+				break
+			}
+			ip, _, _ := net.ParseCIDR(sampleIPv4CIDR)
+			// Derive cluster CIDR: zero last two octets, use /16 (common for K8s)
 			parts := strings.Split(ip.String(), ".")
-			expectedCIDR = fmt.Sprintf("%s.%s.0.0/16", parts[0], parts[1])
-		} else {
-			// IPv6: Expect cluster CIDR like fd01::/48
-			expectedCIDR = "fd01::/48"
+			clusterCIDR := fmt.Sprintf("%s.%s.0.0/16", parts[0], parts[1])
+			expectedCIDRs = append(expectedCIDRs, clusterCIDR)
 		}
 
-		// Verify cluster CIDR appears in rules
-		if !strings.Contains(output, expectedCIDR) {
-			return fmt.Errorf("NFTables rules don't contain cluster pod CIDR %s\nOutput: %s",
-				expectedCIDR, output)
+		if len(ipv6NodeCIDRs) > 0 {
+			// Get any IPv6 node CIDR to derive cluster CIDR
+			var sampleIPv6CIDR string
+			for cidr := range ipv6NodeCIDRs {
+				sampleIPv6CIDR = cidr
+				break
+			}
+			ip, ipnet, _ := net.ParseCIDR(sampleIPv6CIDR)
+			// Derive cluster CIDR: typically /48 for cluster, /64 for nodes
+			ones, _ := ipnet.Mask.Size()
+			if ones >= 48 {
+				// Zero the /48 to /64 range for cluster CIDR
+				ipBytes := ip.To16()
+				ipBytes[6] = 0
+				ipBytes[7] = 0
+				clusterCIDR := fmt.Sprintf("%s/48", net.IP(ipBytes).String())
+				expectedCIDRs = append(expectedCIDRs, clusterCIDR)
+			} else {
+				// Already broad, use as-is
+				expectedCIDRs = append(expectedCIDRs, ipnet.String())
+			}
 		}
 
-		framework.Logf("✓ NFTables rules contain cluster pod CIDR %s", expectedCIDR)
+		framework.Logf("Expected cluster pod CIDRs: %v", expectedCIDRs)
+
+		// Verify NFTables rules contain at least one expected CIDR
+		// This confirms CIDR-based approach (not per-pod IPs)
+		foundAny := false
+		for _, expectedCIDR := range expectedCIDRs {
+			if strings.Contains(output, expectedCIDR) {
+				framework.Logf("✓ Found cluster pod CIDR %s in NFTables rules", expectedCIDR)
+				foundAny = true
+			}
+		}
+
+		if !foundAny {
+			return fmt.Errorf("NFTables rules don't contain any expected cluster pod CIDRs %v\nOutput: %s",
+				expectedCIDRs, output)
+		}
+
 		return nil
 	}
 
@@ -310,61 +367,26 @@ var _ = ginkgo.Describe("[secondary-host-eip] Egress IP Packet Mark Solution Val
 		return nil
 	}
 
-	// Helper to check NFTables drop counters - CRITICAL for validating the fix works
-	checkNFTablesDropCounters := func(nodeName string, chainName string) (int, error) {
-		framework.Logf("Checking NFTables drop counters in chain %s on node %s", chainName, nodeName)
-
-		cmd := fmt.Sprintf("nft list chain inet ovn-kubernetes %s", chainName)
-		output, err := runCommandOnNode(nodeName, cmd)
-		if err != nil {
-			return 0, fmt.Errorf("failed to list NFTables chain: %v", err)
-		}
-
-		framework.Logf("NFTables chain output for counter check:\n%s", output)
-
-		// Look for counter in DROP rule
-		// Format: "meta mark 0x2000 counter packets 123 bytes 12345 drop"
-		lines := strings.Split(output, "\n")
-		for _, line := range lines {
-			if strings.Contains(line, "drop") && strings.Contains(line, "counter") {
-				// Try to extract packet count
-				// Example: "meta mark 0x2000 counter packets 42 bytes 5040 drop"
-				if strings.Contains(line, "packets") {
-					fields := strings.Fields(line)
-					for i, field := range fields {
-						if field == "packets" && i+1 < len(fields) {
-							var count int
-							_, err := fmt.Sscanf(fields[i+1], "%d", &count)
-							if err == nil {
-								framework.Logf("✓ NFTables DROP rule has counter: %d packets dropped", count)
-								return count, nil
-							}
-						}
-					}
-				}
-			}
-		}
-
-		framework.Logf("⚠ WARNING: No counter found in DROP rule - cannot verify if any packets were dropped!")
-		return 0, nil
-	}
-
 	// Helper to check OVS flows for packet marking - CRITICAL diagnostic
 	checkOVSFlowsForPacketMark := func(nodeName string, podIP string) error {
 		framework.Logf("Checking OVS flows for packet mark actions for pod IP %s on node %s", podIP, nodeName)
 
 		// Check logical flows in OVN SB DB
-		cmd := fmt.Sprintf("ovn-sbctl lflow-list | grep -i 'pkt.mark' | grep -i '%s' || echo 'No flows found'", podIP)
+		cmd := fmt.Sprintf("ovn-sbctl lflow-list | grep -i 'pkt.mark' | grep -i '%s'", podIP)
 		output, err := runOVNNBCTLCommand(nodeName, cmd)
 		if err != nil {
 			framework.Logf("Warning: failed to query OVN SB flows: %v", err)
 		} else {
 			framework.Logf("OVN logical flows with pkt.mark for pod %s:\n%s", podIP, output)
+			// Check if we got actual flows or just empty output
+			if strings.TrimSpace(output) == "" || strings.Contains(output, "No flows found") {
+				return fmt.Errorf("no OVN SB logical flows found with pkt.mark for pod %s - mark not being set in control plane", podIP)
+			}
 		}
 
 		// Check OpenFlow flows on br-int for mark actions
-		// Look for load:0x2000->NXM_NX_PKT_MARK[] which sets the packet mark
-		cmd2 := fmt.Sprintf("ovs-ofctl dump-flows br-int | grep -E 'load:.*NXM_NX_PKT_MARK|set_field.*pkt_mark' || echo 'No mark flows found'")
+		// Look specifically for load:0x2000->NXM_NX_PKT_MARK[] which sets mark to 8192 (0x2000)
+		cmd2 := fmt.Sprintf("ovs-ofctl dump-flows br-int | grep -E 'load:.*NXM_NX_PKT_MARK|set_field.*pkt_mark'")
 		output2, err := runCommandOnNode(nodeName, cmd2)
 		if err != nil {
 			framework.Logf("Warning: failed to query OVS flows: %v", err)
@@ -372,11 +394,18 @@ var _ = ginkgo.Describe("[secondary-host-eip] Egress IP Packet Mark Solution Val
 			framework.Logf("OpenFlow mark actions on br-int:\n%s", output2)
 		}
 
-		// CRITICAL CHECK: Does OVN's pkt_mark translate to OVS actions?
-		if !strings.Contains(output2, "NXM_NX_PKT_MARK") && !strings.Contains(output2, "pkt_mark") {
-			framework.Logf("⚠ CRITICAL WARNING: No OVS flows found that set pkt_mark!")
-			framework.Logf("This indicates OVN's pkt_mark in LRP is NOT translating to OpenFlow actions!")
-			return fmt.Errorf("OVN pkt_mark not translated to OVS flows - packets won't be marked in datapath")
+		// CRITICAL CHECK: Does OVN's pkt_mark translate to OVS actions with the SPECIFIC mark value?
+		// We expect load:0x2000->NXM_NX_PKT_MARK[] or equivalent for mark=8192
+		hasExpectedMark := strings.Contains(output2, "load:0x2000->NXM_NX_PKT_MARK") ||
+			strings.Contains(output2, "load:8192->NXM_NX_PKT_MARK") ||
+			strings.Contains(output2, "set_field:0x2000->pkt_mark") ||
+			strings.Contains(output2, "set_field:8192->pkt_mark")
+
+		if !hasExpectedMark {
+			framework.Logf("⚠ CRITICAL WARNING: No OVS flows found that set pkt_mark to 0x2000 (8192)!")
+			framework.Logf("This indicates OVN's pkt_mark in LRP is NOT translating to OpenFlow actions with the expected value!")
+			framework.Logf("Expected to find: load:0x2000->NXM_NX_PKT_MARK[] or set_field:0x2000->pkt_mark")
+			return fmt.Errorf("OVN pkt_mark not translated to OVS flows with expected value 0x2000/8192 - packets won't be marked correctly in datapath")
 		}
 
 		return nil
@@ -686,24 +715,7 @@ spec:
 			framework.Logf("✓ OVS flows validated - pkt_mark should propagate to kernel")
 		}
 
-		ginkgo.By("Step 8: Check NFTables drop counters (diagnostic)")
-
-		// Check if NFTables is actually dropping any packets
-		dropCount, err := checkNFTablesDropCounters(egressNode.name, "ovn-kube-egress-ip-unready")
-		if err != nil {
-			framework.Logf("Warning: Could not check drop counters: %v", err)
-		} else {
-			framework.Logf("NFTables drop counter: %d packets", dropCount)
-			if dropCount == 0 {
-				framework.Logf("⚠ WARNING: Drop counter is 0 - this suggests packets are NOT being marked!")
-				framework.Logf("Expected: Some packets dropped during reconciliation window")
-				framework.Logf("Actual: No drops detected - mark propagation may be failing")
-			} else {
-				framework.Logf("✓ Drop counter shows %d packets were dropped - marking is working!", dropCount)
-			}
-		}
-
-		ginkgo.By("Step 9: Verify all pods use egress IP (no traffic leaks)")
+		ginkgo.By("Step 8: Verify all pods use egress IP (no traffic leaks)")
 		// Verify pods are using the egress IP
 		for i := 0; i < numTestPods; i++ {
 			podName := fmt.Sprintf("%s-%d", podNamePrefix, i)
@@ -715,7 +727,7 @@ spec:
 		}
 		framework.Logf("✓ All %d pods verified to use egress IP %s", numTestPods, normalizedEgressIP)
 
-		ginkgo.By("Step 10: Final validation summary")
+		ginkgo.By("Step 9: Final validation summary")
 		framework.Logf("====================================")
 		framework.Logf("Packet Mark Solution Validation PASSED:")
 		framework.Logf("  ✓ OVN NB DB: LRPs created with pkt_mark=%s", egressIPUnreadyMark)
@@ -723,11 +735,10 @@ spec:
 		framework.Logf("  ✓ NFTables: Chain 'ovn-kube-egress-ip-unready' exists")
 		framework.Logf("  ✓ NFTables: Rules use cluster pod CIDR (CIDR-based approach)")
 		framework.Logf("  ✓ NFTables: DROP and CLEAR rules present")
-		framework.Logf("  ✓ NFTables: Drop counter shows packets being marked/dropped")
 		framework.Logf("  ✓ Traffic: All pods using egress IP %s", normalizedEgressIP)
 		framework.Logf("====================================")
 
-		ginkgo.By("Step 11: Cleanup - Delete test pods")
+		ginkgo.By("Step 10: Cleanup - Delete test pods")
 		for i := 0; i < numTestPods; i++ {
 			podName := fmt.Sprintf("%s-%d", podNamePrefix, i)
 			err := f.ClientSet.CoreV1().Pods(podNamespace.Name).Delete(context.TODO(), podName, metav1.DeleteOptions{})

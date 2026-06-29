@@ -408,15 +408,15 @@ spec:
 		ginkgo.By("Step 8: Wait for reconciliation to complete and verify egress IP is used")
 
 		// Verify pods are now using the egress IP
-		// for i := 0; i < 3 && i < numTestPods; i++ {
-		// 	podName := fmt.Sprintf("%s-%d", podNamePrefix, i)
-		// 	conditionFunc := targetExternalContainerAndTest(secondaryTargetContainer, podNamespace.Name, podName, true, []string{normalizedEgressIP})
-		// 	err = wait.PollUntilContextTimeout(context.Background(), retryInterval, retryTimeout, true, func(ctx context.Context) (bool, error) {
-		// 		return conditionFunc()
-		// 	})
-		// 	framework.ExpectNoError(err, "Pod %s should be using egress IP after reconciliation", podName)
-		// }
-		// framework.Logf("Verified pods are now using egress IP %s correctly", normalizedEgressIP)
+		for i := 0; i < 3 && i < numTestPods; i++ {
+			podName := fmt.Sprintf("%s-%d", podNamePrefix, i)
+			conditionFunc := targetExternalContainerAndTest(secondaryTargetContainer, podNamespace.Name, podName, true, []string{normalizedEgressIP})
+			err = wait.PollUntilContextTimeout(context.Background(), retryInterval, retryTimeout, true, func(ctx context.Context) (bool, error) {
+				return conditionFunc()
+			})
+			framework.ExpectNoError(err, "Pod %s should be using egress IP after reconciliation", podName)
+		}
+		framework.Logf("Verified pods are now using egress IP %s correctly", normalizedEgressIP)
 
 		ginkgo.By("Step 9: Analyze traffic capture for pod IP leaks during EgressIP application")
 		// This is the critical check: did any traffic leak with pod IPs during the transition?
