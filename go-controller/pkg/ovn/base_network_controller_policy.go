@@ -6,6 +6,7 @@ package ovn
 import (
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 )
 
@@ -55,6 +57,10 @@ type defaultDenyPortGroups struct {
 	// if adding a port to db for a policy fails, map shouldn't be changed
 	ingressPortToPolicies map[string]sets.Set[string]
 	egressPortToPolicies  map[string]sets.Set[string]
+	// Last LSP UUID asserted into each default-deny port group.
+	// Used when per-policy records lag a recreated port.
+	ingressPortToAssertedUUID map[string]string
+	egressPortToAssertedUUID  map[string]string
 	// policies is a map of policies that use this port group
 	// policy keys must be unique, and it can be retrieved with (np *networkPolicy) getKey()
 	policies map[string]bool
@@ -64,16 +70,49 @@ type defaultDenyPortGroups struct {
 // returns lists of new ports to add to the default deny port groups.
 // If port should be added to ingress and/or egress default deny port group depends on policy spec.
 func (sharedPGs *defaultDenyPortGroups) addPortsForPolicy(np *networkPolicy,
-	portNamesToUUIDs map[string]string) (ingressDenyPorts, egressDenyPorts []string) {
+	portNamesToUUIDs map[string]string) (ingressDenyPorts, egressDenyPorts []string, restoreAssertedUUIDs func()) {
 	ingressDenyPorts = []string{}
 	egressDenyPorts = []string{}
 
+	previousIngressAsserted := map[string]string{}
+	previousIngressAssertedOK := map[string]bool{}
+	previousEgressAsserted := map[string]string{}
+	previousEgressAssertedOK := map[string]bool{}
+	for portName := range portNamesToUUIDs {
+		if np.isIngress {
+			previousIngressAsserted[portName], previousIngressAssertedOK[portName] = sharedPGs.ingressPortToAssertedUUID[portName]
+		}
+		if np.isEgress {
+			previousEgressAsserted[portName], previousEgressAssertedOK[portName] = sharedPGs.egressPortToAssertedUUID[portName]
+		}
+	}
+	restoreAssertedUUIDs = func() {
+		for portName := range portNamesToUUIDs {
+			if np.isIngress {
+				if previousIngressAssertedOK[portName] {
+					sharedPGs.ingressPortToAssertedUUID[portName] = previousIngressAsserted[portName]
+				} else {
+					delete(sharedPGs.ingressPortToAssertedUUID, portName)
+				}
+			}
+			if np.isEgress {
+				if previousEgressAssertedOK[portName] {
+					sharedPGs.egressPortToAssertedUUID[portName] = previousEgressAsserted[portName]
+				} else {
+					delete(sharedPGs.egressPortToAssertedUUID, portName)
+				}
+			}
+		}
+	}
+
 	if np.isIngress {
 		for portName, portUUID := range portNamesToUUIDs {
-			// if this is the first NP referencing this pod, then we
-			// need to add it to the port group.
-			if sharedPGs.ingressPortToPolicies[portName].Len() == 0 {
+			// Reassert changed UUIDs; refcounts are by port name.
+			if sharedPGs.ingressPortToPolicies[portName].Len() == 0 || sharedPGs.ingressPortToAssertedUUID[portName] != portUUID {
 				ingressDenyPorts = append(ingressDenyPorts, portUUID)
+				sharedPGs.ingressPortToAssertedUUID[portName] = portUUID
+			}
+			if sharedPGs.ingressPortToPolicies[portName].Len() == 0 {
 				sharedPGs.ingressPortToPolicies[portName] = sets.Set[string]{}
 			}
 			// increment the reference count.
@@ -82,9 +121,11 @@ func (sharedPGs *defaultDenyPortGroups) addPortsForPolicy(np *networkPolicy,
 	}
 	if np.isEgress {
 		for portName, portUUID := range portNamesToUUIDs {
-			if sharedPGs.egressPortToPolicies[portName].Len() == 0 {
-				// again, reference count is 0, so add to port
+			if sharedPGs.egressPortToPolicies[portName].Len() == 0 || sharedPGs.egressPortToAssertedUUID[portName] != portUUID {
 				egressDenyPorts = append(egressDenyPorts, portUUID)
+				sharedPGs.egressPortToAssertedUUID[portName] = portUUID
+			}
+			if sharedPGs.egressPortToPolicies[portName].Len() == 0 {
 				sharedPGs.egressPortToPolicies[portName] = sets.Set[string]{}
 			}
 			// bump reference count
@@ -107,8 +148,14 @@ func (sharedPGs *defaultDenyPortGroups) deletePortsForPolicy(np *networkPolicy,
 			// Delete and Len can be used for zero-value nil set
 			sharedPGs.ingressPortToPolicies[portName].Delete(np.getKey())
 			if sharedPGs.ingressPortToPolicies[portName].Len() == 0 {
-				ingressDenyPorts = append(ingressDenyPorts, portUUID)
+				// Delete the asserted UUID; recorded policy UUIDs may be stale.
+				deleteUUID := portUUID
+				if assertedUUID, ok := sharedPGs.ingressPortToAssertedUUID[portName]; ok {
+					deleteUUID = assertedUUID
+				}
+				ingressDenyPorts = append(ingressDenyPorts, deleteUUID)
 				delete(sharedPGs.ingressPortToPolicies, portName)
+				delete(sharedPGs.ingressPortToAssertedUUID, portName)
 			}
 		}
 	}
@@ -116,8 +163,13 @@ func (sharedPGs *defaultDenyPortGroups) deletePortsForPolicy(np *networkPolicy,
 		for portName, portUUID := range portNamesToUUIDs {
 			sharedPGs.egressPortToPolicies[portName].Delete(np.getKey())
 			if sharedPGs.egressPortToPolicies[portName].Len() == 0 {
-				egressDenyPorts = append(egressDenyPorts, portUUID)
+				deleteUUID := portUUID
+				if assertedUUID, ok := sharedPGs.egressPortToAssertedUUID[portName]; ok {
+					deleteUUID = assertedUUID
+				}
+				egressDenyPorts = append(egressDenyPorts, deleteUUID)
 				delete(sharedPGs.egressPortToPolicies, portName)
+				delete(sharedPGs.egressPortToAssertedUUID, portName)
 			}
 		}
 	}
@@ -162,7 +214,7 @@ type networkPolicy struct {
 	isIngress       bool
 	isEgress        bool
 
-	// localPodSelector mirrors the policy pod selector used by pod-driven membership reconciliation.
+	// Selector used by pod-driven membership reconciliation.
 	localPodSelector labels.Selector
 	// peerAddressSets stores PodSelectorAddressSet keys for peers that this network policy was successfully added to.
 	// Required for cleanup.
@@ -397,9 +449,11 @@ func (bnc *BaseNetworkController) buildDenyACLs(namespace, pgName string, aclLog
 func (bnc *BaseNetworkController) addPolicyToDefaultPortGroups(np *networkPolicy, aclLogging *libovsdbutil.ACLLoggingLevels) error {
 	return bnc.sharedNetpolPortGroups.DoWithLock(np.namespace, func(pgKey string) error {
 		sharedPGs, loaded := bnc.sharedNetpolPortGroups.LoadOrStore(pgKey, &defaultDenyPortGroups{
-			ingressPortToPolicies: map[string]sets.Set[string]{},
-			egressPortToPolicies:  map[string]sets.Set[string]{},
-			policies:              map[string]bool{},
+			ingressPortToPolicies:     map[string]sets.Set[string]{},
+			egressPortToPolicies:      map[string]sets.Set[string]{},
+			ingressPortToAssertedUUID: map[string]string{},
+			egressPortToAssertedUUID:  map[string]string{},
+			policies:                  map[string]bool{},
 		})
 		if !loaded {
 			// create port groups with acls
@@ -570,18 +624,32 @@ func getPolicyType(policy *knet.NetworkPolicy) (bool, bool) {
 	return policyTypeIngress, policyTypeEgress
 }
 
-// getNewLocalPolicyPorts will find and return port info for every given pod obj, that is not found in
-// np.localPods.
-// if there are problems with fetching port info from logicalPortCache, error will be added to returned error array.
-func (bnc *BaseNetworkController) getNewLocalPolicyPorts(np *networkPolicy,
-	objs ...interface{}) (policyPortsToUUIDs map[string]string, policyPortUUIDs []string, errs []error) {
+// localPolicyPortsResult groups policy membership adds, stale removals, and retries.
+type localPolicyPortsResult struct {
+	portsToUUIDs      map[string]string
+	stalePortsToUUIDs map[string]string
+	failedPods        []*corev1.Pod
+	errs              []error
+}
 
-	policyPortUUIDs = []string{}
-	policyPortsToUUIDs = map[string]string{}
-	errs = []error{}
+func portGroupPortUUIDs(portNamesToUUIDs map[string]string) []string {
+	uuids := make([]string, 0, len(portNamesToUUIDs))
+	for _, uuid := range portNamesToUUIDs {
+		uuids = append(uuids, uuid)
+	}
+	return uuids
+}
 
-	for _, obj := range objs {
-		pod := obj.(*corev1.Pod)
+// getNewLocalPolicyPorts resolves selected pods that are not current policy members.
+func (bnc *BaseNetworkController) getNewLocalPolicyPorts(np *networkPolicy, pods ...*corev1.Pod) localPolicyPortsResult {
+	result := localPolicyPortsResult{
+		portsToUUIDs:      map[string]string{},
+		stalePortsToUUIDs: map[string]string{},
+		errs:              []error{},
+	}
+
+	for _, pod := range pods {
+		podFailed := false
 		if pod.Spec.NodeName == "" {
 			// pod is not yet scheduled, will receive update event for it
 			continue
@@ -599,80 +667,87 @@ func (bnc *BaseNetworkController) getNewLocalPolicyPorts(np *networkPolicy,
 
 		nadKeys, err := bnc.getPodNADKeys(pod)
 		if err != nil {
-			// A pod with a malformed network selection annotation has no ports
-			// on this network; the config error is surfaced by pod reconciliation.
+			// Pod reconciliation reports malformed attachment state.
 			klog.Warningf("Failed to get NAD keys for pod %s/%s for networkPolicy %s, err: %v",
 				pod.Namespace, pod.Name, np.name, err)
 			continue
 		}
 		for _, nadKey := range nadKeys {
 			logicalPortName := bnc.GetLogicalPortName(pod, nadKey)
-			if _, ok := np.localPods.Load(logicalPortName); ok {
-				// port is already added for this policy
-				continue
-			}
+			recordedPortUUID, recorded := np.localPods.Load(logicalPortName)
 
 			// Return error for retry if
 			// 1. getting pod LSP from the cache fails,
 			// 2. the gotten LSP is scheduled for removal (stateful-sets).
 			portInfo, err := bnc.logicalPortCache.get(pod, nadKey)
 			if err != nil {
+				if recorded {
+					// Already a member; pod delete cleans recorded membership.
+					continue
+				}
 				klog.Warningf("Failed to get get LSP for pod %s/%s NAD key %s for networkPolicy %s, err: %v",
 					pod.Namespace, pod.Name, nadKey, np.name, err)
-				errs = append(errs, fmt.Errorf("unable to get port info for pod %s/%s NAD key %s", pod.Namespace, pod.Name, nadKey))
+				result.errs = append(result.errs, fmt.Errorf("unable to get port info for pod %s/%s NAD key %s: %w", pod.Namespace, pod.Name, nadKey, err))
+				podFailed = true
 				continue
 			}
 
 			// Add pod to errObjs if LSP is scheduled for deletion
 			if !portInfo.expires.IsZero() {
+				if recorded {
+					continue
+				}
 				klog.Warningf("Stale LSP %s for network policy %s found in cache",
 					portInfo.name, np.name)
-				errs = append(errs, fmt.Errorf("unable to get port info for pod %s/%s NAD key %s", pod.Namespace, pod.Name, nadKey))
+				result.errs = append(result.errs, fmt.Errorf("unable to get port info for pod %s/%s NAD key %s", pod.Namespace, pod.Name, nadKey))
+				podFailed = true
 				continue
+			}
+
+			if recorded {
+				if recordedPortUUID.(string) == portInfo.uuid {
+					continue
+				}
+				// Replace recorded membership for a previous LSP incarnation.
+				result.stalePortsToUUIDs[logicalPortName] = recordedPortUUID.(string)
 			}
 
 			// LSP get succeeded and LSP is up to fresh
 			klog.V(5).Infof("Fresh LSP %s for network policy %s found in cache",
 				portInfo.name, np.name)
 
-			policyPortUUIDs = append(policyPortUUIDs, portInfo.uuid)
-			policyPortsToUUIDs[portInfo.name] = portInfo.uuid
+			result.portsToUUIDs[portInfo.name] = portInfo.uuid
+		}
+		if podFailed {
+			result.failedPods = append(result.failedPods, pod)
 		}
 	}
 
-	return
+	return result
 }
 
-// getExistingLocalPolicyPorts will find and return port info for every given pod obj, that is present in np.localPods.
-func (bnc *BaseNetworkController) getExistingLocalPolicyPorts(np *networkPolicy,
-	objs ...interface{}) (policyPortsToUUIDs map[string]string, policyPortUUIDs []string, err error) {
-	klog.Infof("Processing NetworkPolicy %s/%s to delete %d local pods...", np.namespace, np.name, len(objs))
-
-	policyPortUUIDs = []string{}
-	policyPortsToUUIDs = map[string]string{}
-	for _, obj := range objs {
-		pod := obj.(*corev1.Pod)
-
-		nadKeys, err := bnc.getPodNADKeys(pod)
-		if err != nil {
-			klog.Warningf("Failed to get NAD keys for pod %s/%s for networkPolicy %s, err: %v",
-				pod.Namespace, pod.Name, np.name, err)
+// getExistingLocalPolicyPorts matches recorded membership by pod identity.
+func (bnc *BaseNetworkController) getExistingLocalPolicyPorts(np *networkPolicy, pods ...*corev1.Pod) map[string]string {
+	policyPortsToUUIDs := map[string]string{}
+	for _, pod := range pods {
+		if !bnc.IsUserDefinedNetwork() {
+			logicalPortName := util.GetLogicalPortName(pod.Namespace, pod.Name)
+			if loadedPortUUID, ok := np.localPods.Load(logicalPortName); ok {
+				policyPortsToUUIDs[logicalPortName] = loadedPortUUID.(string)
+			}
 			continue
 		}
-		for _, nadKey := range nadKeys {
-			logicalPortName := bnc.GetLogicalPortName(pod, nadKey)
-			loadedPortUUID, ok := np.localPods.Load(logicalPortName)
-			if !ok {
-				// port is already deleted for this policy
-				continue
+		// Recorded UDN keys can be stale; match by pod identity suffix.
+		udnPortSuffix := "_" + util.GetLogicalPortName(pod.Namespace, pod.Name)
+		np.localPods.Range(func(key, value interface{}) bool {
+			logicalPortName := key.(string)
+			if strings.HasSuffix(logicalPortName, udnPortSuffix) {
+				policyPortsToUUIDs[logicalPortName] = value.(string)
 			}
-			portUUID := loadedPortUUID.(string)
-
-			policyPortsToUUIDs[logicalPortName] = portUUID
-			policyPortUUIDs = append(policyPortUUIDs, portUUID)
-		}
+			return true
+		})
 	}
-	return
+	return policyPortsToUUIDs
 }
 
 // denyPGAddPorts adds ports to default deny port groups.
@@ -699,11 +774,12 @@ func (bnc *BaseNetworkController) denyPGAddPorts(np *networkPolicy, portNamesToU
 		return fmt.Errorf("port groups for ns %s don't exist", np.namespace)
 	}
 
-	ingressDenyPorts, egressDenyPorts := sharedPGs.addPortsForPolicy(np, portNamesToUUIDs)
+	ingressDenyPorts, egressDenyPorts, restoreAssertedUUIDs := sharedPGs.addPortsForPolicy(np, portNamesToUUIDs)
 	// counters were updated, update back to initial values on error
 	defer func() {
 		if err != nil {
 			sharedPGs.deletePortsForPolicy(np, portNamesToUUIDs)
+			restoreAssertedUUIDs()
 		}
 	}()
 
@@ -796,52 +872,78 @@ func (bnc *BaseNetworkController) denyPGDeletePorts(np *networkPolicy, portNames
 	return nil
 }
 
-func (bnc *BaseNetworkController) addLocalPodsToNetworkPolicy(np *networkPolicy, objs ...interface{}) error {
-	if !bnc.IsUserDefinedNetwork() && config.Metrics.EnableScaleMetrics {
-		start := time.Now()
-		defer func() {
-			duration := time.Since(start)
-			metrics.RecordNetpolLocalPodEvent("add", duration)
-		}()
+// removeRecordedPolicyPorts removes recorded policy/default-deny ports.
+func (bnc *BaseNetworkController) removeRecordedPolicyPorts(np *networkPolicy, portNamesToUUIDs map[string]string) error {
+	ops, err := libovsdbops.DeletePortsFromPortGroupOps(bnc.nbClient, nil, np.portGroupName, portGroupPortUUIDs(portNamesToUUIDs)...)
+	if err != nil {
+		return fmt.Errorf("unable to get ops to delete ports from policy port group %s: %w", np.portGroupName, err)
 	}
+	if err = bnc.denyPGDeletePorts(np, portNamesToUUIDs, false, ops); err != nil {
+		return fmt.Errorf("unable to delete ports from default deny port groups: %w", err)
+	}
+	for portName := range portNamesToUUIDs {
+		np.localPods.Delete(portName)
+	}
+	return nil
+}
+
+// addLocalPodsToNetworkPolicy adds pods and returns pods that need retry.
+func (bnc *BaseNetworkController) addLocalPodsToNetworkPolicy(np *networkPolicy, pods ...*corev1.Pod) ([]*corev1.Pod, error) {
+	np.RLock()
+	defer np.RUnlock()
+	if np.deleted {
+		return nil, nil
+	}
+	result := bnc.getNewLocalPolicyPorts(np, pods...)
+	if len(result.stalePortsToUUIDs) > 0 {
+		// Drop stale recorded membership before re-adding fresh UUIDs.
+		if err := bnc.removeRecordedPolicyPorts(np, result.stalePortsToUUIDs); err != nil {
+			return pods, fmt.Errorf("unable to replace stale policy ports: %w", err)
+		}
+	}
+	if len(result.portsToUUIDs) > 0 {
+		if !bnc.IsUserDefinedNetwork() && config.Metrics.EnableScaleMetrics {
+			start := time.Now()
+			defer func() {
+				duration := time.Since(start)
+				metrics.RecordNetpolLocalPodEvent("add", duration)
+			}()
+		}
+		var err error
+		var ops []ovsdb.Operation
+		policyPortUUIDs := portGroupPortUUIDs(result.portsToUUIDs)
+		if !PortGroupHasPorts(bnc.nbClient, np.portGroupName, policyPortUUIDs) {
+			ops, err = libovsdbops.AddPortsToPortGroupOps(bnc.nbClient, nil, np.portGroupName, policyPortUUIDs...)
+			if err != nil {
+				return pods, fmt.Errorf("unable to get ops to add new pod to policy port group %s: %w", np.portGroupName, err)
+			}
+		}
+		if err = bnc.denyPGAddPorts(np, result.portsToUUIDs, ops); err != nil {
+			return pods, fmt.Errorf("unable to add new pod to default deny port group: %w", err)
+		}
+		for portName, portUUID := range result.portsToUUIDs {
+			np.localPods.Store(portName, portUUID)
+		}
+	}
+
+	if len(result.errs) > 0 {
+		return result.failedPods, utilerrors.Join(result.errs...)
+	}
+	return nil, nil
+}
+
+func (bnc *BaseNetworkController) deleteLocalPodsFromNetworkPolicy(np *networkPolicy, pods ...*corev1.Pod) error {
 	np.RLock()
 	defer np.RUnlock()
 	if np.deleted {
 		return nil
 	}
-	// get info for new pods that are not listed in np.localPods
-	portNamesToUUIDs, policyPortUUIDs, errs := bnc.getNewLocalPolicyPorts(np, objs...)
-	// for multiple objects, try to update the ones that were fetched successfully
-	// return error for errPods in the end
-	if len(portNamesToUUIDs) > 0 {
-		var err error
-		// add pods to policy port group
-		var ops []ovsdb.Operation
-		if !PortGroupHasPorts(bnc.nbClient, np.portGroupName, policyPortUUIDs) {
-			ops, err = libovsdbops.AddPortsToPortGroupOps(bnc.nbClient, nil, np.portGroupName, policyPortUUIDs...)
-			if err != nil {
-				return fmt.Errorf("unable to get ops to add new pod to policy port group %s: %v", np.portGroupName, err)
-			}
-		}
-		// add pods to default deny port group
-		// make sure to only pass newly added pods
-		// ops will be transacted by denyPGAddPorts
-		if err = bnc.denyPGAddPorts(np, portNamesToUUIDs, ops); err != nil {
-			return fmt.Errorf("unable to add new pod to default deny port group: %v", err)
-		}
-		// all operations were successful, update np.localPods
-		for portName, portUUID := range portNamesToUUIDs {
-			np.localPods.Store(portName, portUUID)
-		}
+
+	portNamesToUUIDs := bnc.getExistingLocalPolicyPorts(np, pods...)
+	if len(portNamesToUUIDs) == 0 {
+		return nil
 	}
 
-	if len(errs) > 0 {
-		return utilerrors.Join(errs...)
-	}
-	return nil
-}
-
-func (bnc *BaseNetworkController) deleteLocalPodsFromNetworkPolicy(np *networkPolicy, objs ...interface{}) error {
 	if !bnc.IsUserDefinedNetwork() && config.Metrics.EnableScaleMetrics {
 		start := time.Now()
 		defer func() {
@@ -849,36 +951,9 @@ func (bnc *BaseNetworkController) deleteLocalPodsFromNetworkPolicy(np *networkPo
 			metrics.RecordNetpolLocalPodEvent("delete", duration)
 		}()
 	}
-	np.RLock()
-	defer np.RUnlock()
-	if np.deleted {
-		return nil
-	}
+	klog.Infof("Processing NetworkPolicy %s/%s to delete %d local pods...", np.namespace, np.name, len(portNamesToUUIDs))
 
-	portNamesToUUIDs, policyPortUUIDs, err := bnc.getExistingLocalPolicyPorts(np, objs...)
-	if err != nil {
-		return err
-	}
-
-	if len(portNamesToUUIDs) > 0 {
-		var err error
-		// del pods from policy port group
-		var ops []ovsdb.Operation
-		ops, err = libovsdbops.DeletePortsFromPortGroupOps(bnc.nbClient, nil, np.portGroupName, policyPortUUIDs...)
-		if err != nil {
-			return fmt.Errorf("unable to get ops to add new pod to policy port group: %v", err)
-		}
-		// delete pods from default deny port group
-		if err = bnc.denyPGDeletePorts(np, portNamesToUUIDs, false, ops); err != nil {
-			return fmt.Errorf("unable to add new pod to default deny port group: %v", err)
-		}
-		// all operations were successful, update np.localPods
-		for portName := range portNamesToUUIDs {
-			np.localPods.Delete(portName)
-		}
-	}
-
-	return nil
+	return bnc.removeRecordedPolicyPorts(np, portNamesToUUIDs)
 }
 
 func (bnc *BaseNetworkController) addNetworkPolicyToNamespaceIndex(np *networkPolicy) {
@@ -887,7 +962,7 @@ func (bnc *BaseNetworkController) addNetworkPolicyToNamespaceIndex(np *networkPo
 	}
 	_ = bnc.networkPolicyKeysByNamespace.DoWithLock(np.namespace, func(namespace string) error {
 		policyKeys, _ := bnc.networkPolicyKeysByNamespace.Load(namespace)
-		indexedPolicyKeys := sets.New[string](sets.List(policyKeys)...)
+		indexedPolicyKeys := policyKeys.Clone()
 		indexedPolicyKeys.Insert(np.getKey())
 		bnc.networkPolicyKeysByNamespace.Store(namespace, indexedPolicyKeys)
 		return nil
@@ -903,7 +978,7 @@ func (bnc *BaseNetworkController) deleteNetworkPolicyFromNamespaceIndex(np *netw
 		if !ok {
 			return nil
 		}
-		indexedPolicyKeys := sets.New[string](sets.List(policyKeys)...)
+		indexedPolicyKeys := policyKeys.Clone()
 		indexedPolicyKeys.Delete(np.getKey())
 		if indexedPolicyKeys.Len() == 0 {
 			bnc.networkPolicyKeysByNamespace.Delete(namespace)
@@ -923,8 +998,7 @@ func (bnc *BaseNetworkController) getNetworkPolicyKeysForNamespace(namespace str
 		return sets.List(policyKeys)
 	}
 
-	// Some focused unit tests construct BaseNetworkController directly.
-	// Preserve their behavior without requiring every test to populate the index.
+	// Fallback for focused tests that do not populate the namespace index.
 	var policyKeys []string
 	for _, npKey := range bnc.networkPolicies.GetKeys() {
 		np, ok := bnc.networkPolicies.Load(npKey)
@@ -955,7 +1029,7 @@ func (bnc *BaseNetworkController) reconcilePodNetworkPolicyMembership(pod *corev
 		}
 
 		if localPodSelector.Matches(labels.Set(pod.Labels)) {
-			if err := bnc.addLocalPodsToNetworkPolicy(np, pod); err != nil {
+			if _, err := bnc.addLocalPodsToNetworkPolicy(np, pod); err != nil {
 				errs = append(errs, fmt.Errorf("failed to add pod %s/%s to network policy %s: %w", pod.Namespace, pod.Name, npKey, err))
 			}
 		} else {
@@ -972,9 +1046,7 @@ func (bnc *BaseNetworkController) deletePodNetworkPolicyMembership(pod *corev1.P
 		return nil
 	}
 	var errs []error
-	// Delete is intentionally unconditional. The pod may no longer match the
-	// current selector, but removal is idempotent and clears any previously
-	// recorded membership for this pod.
+	// Clear any recorded membership, even if the pod no longer matches.
 	for _, npKey := range bnc.getNetworkPolicyKeysForNamespace(pod.Namespace) {
 		np, ok := bnc.networkPolicies.Load(npKey)
 		if !ok || np == nil {
@@ -987,9 +1059,7 @@ func (bnc *BaseNetworkController) deletePodNetworkPolicyMembership(pod *corev1.P
 	return utilerrors.Join(errs...)
 }
 
-// requeueLocalPodsForNetworkPolicy requeues the policy's selected pods so
-// pod-driven membership reconciliation retries pods that the initial policy
-// sync could not handle.
+// requeueLocalPodsForNetworkPolicy requeues pods whose policy sync failed.
 func (bnc *BaseNetworkController) requeueLocalPodsForNetworkPolicy(pods []*corev1.Pod) {
 	if bnc.retryPods == nil {
 		return
@@ -1143,8 +1213,7 @@ func (bnc *BaseNetworkController) createNetworkPolicy(policy *knet.NetworkPolicy
 			return err
 		}
 
-		// 4. Build policy ACLs and port group. Selected local pods will be added
-		// after the policy is indexed for pod-driven membership reconciliation.
+		// 4. Build policy ACLs and port group; pods are added after indexing.
 
 		pgDbIDs := bnc.getNetworkPolicyPortGroupDbIDs(policy.Namespace, policy.Name)
 		np.portGroupName = libovsdbutil.GetPortGroupName(pgDbIDs)
@@ -1183,28 +1252,19 @@ func (bnc *BaseNetworkController) createNetworkPolicy(policy *knet.NetworkPolicy
 		np.localPodSelector = sel
 		bnc.addNetworkPolicyToNamespaceIndex(np)
 
-		// 5. Unlock network policy before syncing pods to avoid deadlock,
-		// since pod sync takes np.RLock
+		// 5. Unlock network policy before pod sync, which takes np.RLock.
 		np.Unlock()
 		npLocked = false
 
-		// 7. Sync existing local pods. Future membership changes are handled
-		// by pod events. A failed pod list aborts policy creation so it is
-		// retried; per-pod membership failures are ignored: the policy stays
-		// in the namespace index, so failed pods are retried individually via
-		// pod-driven membership reconciliation.
+		// 7. Sync existing pods; failed pods are requeued through pod events.
 		pods, err := bnc.watchFactory.GetPodsBySelector(policy.Namespace, policy.Spec.PodSelector)
 		if err != nil {
 			return fmt.Errorf("failed to list local pods for network policy %s/%s: %w", policy.Namespace, policy.Name, err)
 		}
-		objs := make([]interface{}, 0, len(pods))
-		for _, pod := range pods {
-			objs = append(objs, pod)
-		}
-		if err := bnc.addLocalPodsToNetworkPolicy(np, objs...); err != nil {
-			klog.Errorf("Failed to sync local pods for network policy %s/%s on network %s, pods will be retried individually: %v",
-				policy.Namespace, policy.Name, bnc.GetNetworkName(), err)
-			bnc.requeueLocalPodsForNetworkPolicy(pods)
+		if failedPods, err := bnc.addLocalPodsToNetworkPolicy(np, pods...); err != nil {
+			klog.Errorf("Failed to sync local pods for network policy %s/%s on network %s, %d pods will be retried individually: %v",
+				policy.Namespace, policy.Name, bnc.GetNetworkName(), len(failedPods), err)
+			bnc.requeueLocalPodsForNetworkPolicy(failedPods)
 		}
 		return nil
 	})

@@ -113,7 +113,13 @@ func (h *layer2UserDefinedNetworkControllerEventHandler) IsResourceScheduled(obj
 // if any, yielded during object creation.
 // Given an object to add and a boolean specifying if the function was executed from iterateRetryResources
 func (h *layer2UserDefinedNetworkControllerEventHandler) AddResource(obj interface{}, fromRetryLoop bool) error {
-	_ = fromRetryLoop
+	if h.objType == factory.PodType {
+		pod, ok := obj.(*corev1.Pod)
+		if !ok {
+			return fmt.Errorf("could not cast %T object to *corev1.Pod", obj)
+		}
+		return h.oc.ReconcilePod(nil, pod, nil, fromRetryLoop)
+	}
 	return h.oc.AddUserDefinedNetworkResourceCommon(h.objType, obj)
 }
 
@@ -131,8 +137,9 @@ func (h *layer2UserDefinedNetworkControllerEventHandler) DeleteResource(obj, cac
 func (h *layer2UserDefinedNetworkControllerEventHandler) UpdateResource(oldObj, newObj interface{}, inRetryCache bool) error {
 	switch h.objType {
 	case factory.PodType:
+		oldPod := oldObj.(*corev1.Pod)
 		newPod := newObj.(*corev1.Pod)
-		if err := h.oc.reconcilePodForUserDefinedNetwork(newPod); err != nil {
+		if err := h.oc.ReconcilePod(oldPod, newPod, nil, inRetryCache); err != nil {
 			return err
 		}
 

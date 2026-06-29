@@ -259,7 +259,7 @@ func (bnc *BaseNetworkController) deletePodLogicalPort(pod *corev1.Pod, portInfo
 
 	var allOps, ops []ovsdb.Operation
 
-	if ops, err = bnc.deletePodFromNamespace(pod.Namespace,
+	if ops, err = bnc.deletePodFromNamespacePortGroupOps(nil, pod.Namespace,
 		portUUID); err != nil {
 		return nil, fmt.Errorf("unable to delete pod %s from namespace: %w", podDesc, err)
 	}
@@ -741,10 +741,6 @@ func (bnc *BaseNetworkController) delLSPOps(logicalPort, switchName,
 	}
 
 	return ops, nil
-}
-
-func (bnc *BaseNetworkController) deletePodFromNamespace(ns string, portUUID string) ([]ovsdb.Operation, error) {
-	return bnc.deletePodFromNamespacePortGroupOps(nil, ns, portUUID)
 }
 
 // isPodScheduledinLocalZone returns true when the pod is scheduled on a node
