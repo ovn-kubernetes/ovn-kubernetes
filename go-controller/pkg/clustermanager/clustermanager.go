@@ -48,7 +48,7 @@ type ClusterManager struct {
 	client                      clientset.Interface
 	defaultNetClusterController *networkClusterController
 	nodeController              *nodecontroller.NodeController
-	zoneClusterController       *zoneClusterController
+	nodeAllocationController    *nodeAllocationController
 	wf                          *factory.WatchFactory
 	udnClusterManager           *userDefinedNetworkClusterManager
 	// Controller used for programming node allocation for egress IP
@@ -119,13 +119,13 @@ func NewClusterManager(
 
 	nodeController := nodecontroller.NewController(wf, "clustermanager-node", cm.networkManager.Interface())
 	defaultNetClusterController := newDefaultNetworkClusterController(&util.DefaultNetInfo{}, ovnClient, wf, recorder, nodeController)
-	zoneClusterController, err := newZoneClusterController(ovnClient, wf)
+	nodeAllocationController, err := newNodeAllocationController(ovnClient, wf)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create zone cluster controller, err : %w", err)
+		return nil, fmt.Errorf("failed to create node allocation controller, err : %w", err)
 	}
 	cm.defaultNetClusterController = defaultNetClusterController
 	cm.nodeController = nodeController
-	cm.zoneClusterController = zoneClusterController
+	cm.nodeAllocationController = nodeAllocationController
 
 	if config.OVNKubernetesFeature.EnableMultiNetwork {
 		cm.udnClusterManager, err = newUserDefinedNetworkClusterManager(ovnClient, wf, cm.networkManager.Interface(), recorder, nodeController)
@@ -249,8 +249,8 @@ func (cm *ClusterManager) Start(ctx context.Context) error {
 		return err
 	}
 
-	if err := cm.zoneClusterController.Start(ctx); err != nil {
-		return fmt.Errorf("could not start zone controller, err: %w", err)
+	if err := cm.nodeAllocationController.Start(ctx); err != nil {
+		return fmt.Errorf("could not start node allocation controller, err: %w", err)
 	}
 
 	if config.OVNKubernetesFeature.EnableEgressIP {
@@ -327,7 +327,7 @@ func (cm *ClusterManager) Start(ctx context.Context) error {
 func (cm *ClusterManager) Stop() {
 	klog.Info("Stopping the cluster manager")
 	cm.defaultNetClusterController.Stop()
-	cm.zoneClusterController.Stop()
+	cm.nodeAllocationController.Stop()
 
 	if config.OVNKubernetesFeature.EnableEgressIP {
 		cm.eIPC.Stop()
