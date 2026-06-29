@@ -45,6 +45,18 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 		Expect(config.PrepareTestConfig()).To(Succeed())
 	})
 
+	It("allows the retry framework to process unscheduled UDN pods", func() {
+		pod := ovntest.NewPod("namespace", "pod", "", "")
+		retryEligibilityChecks := map[string]func(interface{}) bool{
+			"layer3":   (&Layer3UserDefinedNetworkControllerEventHandler{objType: factory.PodType}).IsResourceScheduled,
+			"layer2":   (&layer2UserDefinedNetworkControllerEventHandler{objType: factory.PodType}).IsResourceScheduled,
+			"localnet": (&LocalnetUserDefinedNetworkControllerEventHandler{objType: factory.PodType}).IsResourceScheduled,
+		}
+		for topology, isResourceScheduled := range retryEligibilityChecks {
+			Expect(isResourceScheduled(pod)).To(BeTrue(), topology)
+		}
+	})
+
 	type dhcpTest struct {
 		vmName                string
 		ips                   []string

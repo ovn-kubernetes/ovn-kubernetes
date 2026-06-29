@@ -959,6 +959,53 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 
+		ginkgo.It("forced pod reconcile re-runs the add path and re-reserves pod IPs after switch IPAM rebuild", func() {
+			app.Action = func(*cli.Context) error {
+				namespaceT := *ovntest.NewNamespace("namespace1")
+				t := newTPod(
+					"node1",
+					"10.128.1.0/24",
+					"10.128.1.2",
+					"10.128.1.1",
+					"myPod",
+					"10.128.1.3",
+					"0a:58:0a:80:01:03",
+					namespaceT.Name,
+				)
+				pod := ovntest.NewPod(t.namespace, t.podName, t.nodeName, t.podIP)
+				setPodAnnotations(pod, t)
+
+				fakeOvn.startWithDBSetup(initialDB,
+					&corev1.NamespaceList{Items: []corev1.Namespace{namespaceT}},
+					&corev1.NodeList{Items: []corev1.Node{*newNode(node1Name, "192.168.126.202/24")}},
+					&corev1.PodList{Items: []corev1.Pod{*pod}},
+				)
+				t.populateLogicalSwitchCache(fakeOvn)
+				err := fakeOvn.controller.WatchNamespaces()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				gomega.Expect(fakeOvn.controller.addLogicalPort(pod)).To(gomega.Succeed())
+				podIPs := ovntest.MustParseIPNets(t.podIP + "/24")
+				gomega.Expect(fakeOvn.controller.lsManager.AllocateIPs(t.nodeName, podIPs)).To(gomega.Equal(ipallocator.ErrAllocated))
+
+				// Simulate a node resync rebuilding IPAM without pod reservations.
+				t.populateLogicalSwitchCache(fakeOvn)
+
+				// Normal reconcile does not re-run add and leaves the IP free.
+				gomega.Expect(fakeOvn.controller.ReconcilePod(pod, pod, nil, false)).To(gomega.Succeed())
+				gomega.Expect(fakeOvn.controller.lsManager.AllocateIPs(t.nodeName, podIPs)).To(gomega.Succeed())
+				gomega.Expect(fakeOvn.controller.lsManager.ReleaseIPs(t.nodeName, podIPs)).To(gomega.Succeed())
+
+				// Forced reconcile re-runs add and re-reserves the IP.
+				gomega.Expect(fakeOvn.controller.ReconcilePod(nil, pod, nil, true)).To(gomega.Succeed())
+				gomega.Expect(fakeOvn.controller.lsManager.AllocateIPs(t.nodeName, podIPs)).To(gomega.Equal(ipallocator.ErrAllocated))
+
+				return nil
+			}
+
+			gomega.Expect(app.Run([]string{app.Name})).To(gomega.Succeed())
+		})
+
 		ginkgo.It("retryPod cache operations while adding a new pod", func() {
 			app.Action = func(*cli.Context) error {
 				config.Gateway.DisableSNATMultipleGWs = true
@@ -1006,7 +1053,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 						Namespace: namespaceT.Name,
 					},
 				}
-				err = fakeOvn.controller.ensurePod(podObj, true) // this fails since pod doesn't exist to set annotations
+				err = fakeOvn.controller.ensurePod(podObj, true, true) // this fails since pod doesn't exist to set annotations
 				gomega.Expect(err).To(gomega.HaveOccurred())
 
 				key, err := retry.GetResourceKey(podObj)
