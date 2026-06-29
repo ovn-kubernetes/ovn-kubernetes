@@ -285,8 +285,8 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 			Expect(ok).To(BeTrue())
 
 			// Set local zone to only include localNodeName
-			controller.bnc.localZoneNodes = &sync.Map{}
-			controller.bnc.localZoneNodes.Store(localNodeName, true)
+			controller.bnc.localNodes = &sync.Map{}
+			controller.bnc.localNodes.Store(localNodeName, true)
 
 			return controller.bnc, fakeOVN
 		}

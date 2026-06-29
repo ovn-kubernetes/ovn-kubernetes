@@ -635,5 +635,5 @@ func injectNode(fakeOvn *FakeOVN) {
 		},
 	}
 	gomega.ExpectWithOffset(1, fakeOvn.controller.watchFactory.NodeInformer().GetStore().Add(node)).To(gomega.Succeed())
-	fakeOvn.controller.localZoneNodes.Store(node.Name, true)
+	fakeOvn.controller.localNodes.Store(node.Name, true)
 }

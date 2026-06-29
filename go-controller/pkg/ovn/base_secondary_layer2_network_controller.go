@@ -270,14 +270,14 @@ func (oc *BaseLayer2UserDefinedNetworkController) initializeLogicalSwitch(switch
 }
 
 func (oc *BaseLayer2UserDefinedNetworkController) addUpdateNodeEvent(node *corev1.Node) error {
-	if oc.isLocalZoneNode(node) {
+	if oc.isLocalNode(node) {
 		return oc.addUpdateLocalNodeEvent(node)
 	}
 	return oc.addUpdateRemoteNodeEvent(node)
 }
 
 func (oc *BaseLayer2UserDefinedNetworkController) addUpdateLocalNodeEvent(node *corev1.Node) error {
-	_, present := oc.localZoneNodes.LoadOrStore(node.Name, true)
+	_, present := oc.localNodes.LoadOrStore(node.Name, true)
 
 	if !present {
 		// process all pods so they are reconfigured as local
@@ -292,7 +292,7 @@ func (oc *BaseLayer2UserDefinedNetworkController) addUpdateLocalNodeEvent(node *
 }
 
 func (oc *BaseLayer2UserDefinedNetworkController) addUpdateRemoteNodeEvent(node *corev1.Node) error {
-	_, present := oc.localZoneNodes.Load(node.Name)
+	_, present := oc.localNodes.Load(node.Name)
 
 	if present {
 		err := oc.deleteNodeEvent(node)
@@ -312,7 +312,7 @@ func (oc *BaseLayer2UserDefinedNetworkController) addUpdateRemoteNodeEvent(node 
 }
 
 func (oc *BaseLayer2UserDefinedNetworkController) deleteNodeEvent(node *corev1.Node) error {
-	oc.localZoneNodes.Delete(node.Name)
+	oc.localNodes.Delete(node.Name)
 	return nil
 }
 
@@ -324,8 +324,8 @@ func (oc *BaseLayer2UserDefinedNetworkController) syncNodes(nodes []interface{})
 		}
 
 		// Add the node to the foundNodes only if it belongs to the local zone.
-		if oc.isLocalZoneNode(node) {
-			oc.localZoneNodes.Store(node.Name, true)
+		if oc.isLocalNode(node) {
+			oc.localNodes.Store(node.Name, true)
 		}
 	}
 

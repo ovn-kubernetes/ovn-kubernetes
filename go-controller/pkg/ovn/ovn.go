@@ -106,7 +106,7 @@ func (oc *DefaultNetworkController) ensurePod(oldPod, pod *corev1.Pod, addPort b
 		return nil
 	}
 
-	if oc.isPodScheduledinLocalZone(pod) {
+	if oc.isPodScheduledOnLocalNode(pod) {
 		klog.V(5).Infof("Ensuring zone local for Pod %s/%s in node %s", pod.Namespace, pod.Name, pod.Spec.NodeName)
 		return oc.ensureLocalZonePod(oldPod, pod, addPort)
 	}
@@ -176,7 +176,7 @@ func (oc *DefaultNetworkController) ensureRemoteZonePod(_, pod *corev1.Pod) erro
 // removePod tried to tear down a pod. It returns nil on success and error on failure;
 // failure indicates the pod tear down should be retried later.
 func (oc *DefaultNetworkController) removePod(pod *corev1.Pod, portInfo *lpInfo) error {
-	if oc.isPodScheduledinLocalZone(pod) {
+	if oc.isPodScheduledOnLocalNode(pod) {
 		if err := oc.removeLocalZonePod(pod, portInfo); err != nil {
 			return err
 		}
@@ -411,7 +411,7 @@ func (oc *DefaultNetworkController) newANPController() error {
 		oc.watchFactory.PodCoreInformer(),
 		oc.watchFactory.NodeCoreInformer(),
 		oc.addressSetFactory,
-		oc.isPodScheduledinLocalZone,
+		oc.isPodScheduledOnLocalNode,
 		oc.zone,
 		oc.recorder,
 		oc.observManager,

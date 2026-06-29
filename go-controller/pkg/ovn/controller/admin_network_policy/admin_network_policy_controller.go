@@ -56,14 +56,14 @@ type Controller struct {
 	eventRecorder record.EventRecorder
 	// An address set factory that creates address sets
 	addressSetFactory addressset.AddressSetFactory
-	// pass in the isPodScheduledinLocalZone util from bnc - used only to determine
+	// pass in the isPodScheduledOnLocalNode util from bnc - used only to determine
 	// what zones the pods are in.
-	// isPodScheduledinLocalZone returns whether the provided pod is in a zone local to the zone controller
+	// isPodScheduledOnLocalNode returns whether the provided pod is scheduled on a node local to this controller.
 	// So if pod is not scheduled yet it is considered remote. Also if we can't fetch node from kapi and determing the zone,
 	// we consider it remote - this is ok for this controller as this variable is only used to
 	// determine if we need to add pod's port to port group or not - future updates should
 	// take care of reconciling the state of the cluster
-	isPodScheduledinLocalZone func(*corev1.Pod) bool
+	isPodScheduledOnLocalNode func(*corev1.Pod) bool
 	// store's the name of the zone that this controller belongs to
 	zone string
 
@@ -117,7 +117,7 @@ func NewController(
 	podInformer corev1informers.PodInformer,
 	nodeInformer corev1informers.NodeInformer,
 	addressSetFactory addressset.AddressSetFactory,
-	isPodScheduledinLocalZone func(*corev1.Pod) bool,
+	isPodScheduledOnLocalNode func(*corev1.Pod) bool,
 	zone string,
 	recorder record.EventRecorder,
 	observManager *observability.Manager) (*Controller, error) {
@@ -127,7 +127,7 @@ func NewController(
 		nbClient:                  nbClient,
 		anpClientSet:              anpClient,
 		addressSetFactory:         addressSetFactory,
-		isPodScheduledinLocalZone: isPodScheduledinLocalZone,
+		isPodScheduledOnLocalNode: isPodScheduledOnLocalNode,
 		zone:                      zone,
 		anpCache:                  make(map[string]*adminNetworkPolicyState),
 		anpPriorityMap:            make(map[int32]string),

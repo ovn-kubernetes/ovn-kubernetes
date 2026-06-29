@@ -193,7 +193,7 @@ func NewLocalnetUserDefinedNetworkController(
 					stopChan:                    stopChan,
 					wg:                          &sync.WaitGroup{},
 					cancelableCtx:               util.NewCancelableContext(),
-					localZoneNodes:              &sync.Map{},
+					localNodes:                  &sync.Map{},
 					networkManager:              networkManager,
 					addressSetManager:           addressSetManager,
 					nodeReconciler:              nodeReconciler,

@@ -784,7 +784,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 					t.migrationTarget.populateLogicalSwitchCache(fakeOvn)
 				}
 				for _, remoteNode := range t.remoteNodes {
-					fakeOvn.controller.localZoneNodes.Delete(remoteNode)
+					fakeOvn.controller.localNodes.Delete(remoteNode)
 				}
 
 				Expect(fakeOvn.controller.WatchNamespaces()).ToNot(HaveOccurred())
@@ -896,7 +896,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 				}
 
 				for router, testpod := range map[*nbdb.LogicalRouter]testVirtLauncherPod{expectedGWRouter: t.testVirtLauncherPod, expectedMigrationTargetGWRouter: t.migrationTarget.testVirtLauncherPod} {
-					if _, isLocal := fakeOvn.controller.localZoneNodes.Load(testpod.nodeName); isLocal && router != nil && testpod.podName != "" {
+					if _, isLocal := fakeOvn.controller.localNodes.Load(testpod.nodeName); isLocal && router != nil && testpod.podName != "" {
 						natIDs, nats := composeNats(testpod)
 						router.Nat = append(router.Nat, natIDs...)
 						for _, nat := range nats {
@@ -1012,7 +1012,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 				// it happen?
 				// https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5627
 				expectedNATs := map[string][]*nbdb.NAT{}
-				if _, isLocal := fakeOvn.controller.localZoneNodes.Load(deleteFirst.nodeName); isLocal {
+				if _, isLocal := fakeOvn.controller.localNodes.Load(deleteFirst.nodeName); isLocal {
 					_, nats := composeNats(deleteFirst)
 					expectedNATs[deleteFirstRouter.Name] = nats
 				}

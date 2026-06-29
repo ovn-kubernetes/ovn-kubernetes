@@ -596,7 +596,7 @@ func (bnc *BaseNetworkController) getNewLocalPolicyPorts(np *networkPolicy,
 			continue
 		}
 
-		if !bnc.isPodScheduledinLocalZone(pod) {
+		if !bnc.isPodScheduledOnLocalNode(pod) {
 			continue
 		}
 

@@ -3769,10 +3769,10 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					fakeOvn.controller.eIPC.nodeZoneState.Store(node1Name, isnode1Local)
 					fakeOvn.controller.eIPC.nodeZoneState.Store(node2Name, isnode2Local)
 					if isnode1Local {
-						fakeOvn.controller.localZoneNodes.Store(node1Name, true)
+						fakeOvn.controller.localNodes.Store(node1Name, true)
 					}
 					if isnode2Local {
-						fakeOvn.controller.localZoneNodes.Store(node2Name, true)
+						fakeOvn.controller.localNodes.Store(node2Name, true)
 					}
 
 					_, err = fakeOvn.fakeClient.EgressIPClient.K8sV1().EgressIPs().Create(context.TODO(), &eIP, metav1.CreateOptions{})
@@ -7631,8 +7631,8 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					if node2Zone == "remote" {
 						isNode2Local = false
 					}
-					fakeOvn.controller.localZoneNodes.Store(node1.Name, isNode1Local)
-					fakeOvn.controller.localZoneNodes.Store(node2.Name, isNode2Local)
+					fakeOvn.controller.localNodes.Store(node1.Name, isNode1Local)
+					fakeOvn.controller.localNodes.Store(node2.Name, isNode2Local)
 					err := fakeOvn.controller.lsManager.AddOrUpdateSwitch(node1.Name, []*net.IPNet{ovntest.MustParseIPNet(v4Node1Subnet)}, nil)
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					err = fakeOvn.controller.lsManager.AddOrUpdateSwitch(node2.Name, []*net.IPNet{ovntest.MustParseIPNet(v4Node2Subnet)}, nil)
@@ -14739,8 +14739,8 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 				// hack pod to be in the provided zone
 				fakeOvn.controller.eIPC.nodeZoneState.Store(node1Name, true)
 				fakeOvn.controller.eIPC.nodeZoneState.Store(node2Name, false)
-				fakeOvn.controller.localZoneNodes.Store(node1Name, true)
-				fakeOvn.controller.localZoneNodes.Store(node2Name, false)
+				fakeOvn.controller.localNodes.Store(node1Name, true)
+				fakeOvn.controller.localNodes.Store(node2Name, false)
 
 				err := fakeOvn.controller.WatchEgressIPPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -15025,8 +15025,8 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 				// hack pod to be in the provided zone
 				fakeOvn.controller.eIPC.nodeZoneState.Store(node1Name, true)
 				fakeOvn.controller.eIPC.nodeZoneState.Store(node2Name, false)
-				fakeOvn.controller.localZoneNodes.Store(node1Name, true)
-				fakeOvn.controller.localZoneNodes.Store(node2Name, false)
+				fakeOvn.controller.localNodes.Store(node1Name, true)
+				fakeOvn.controller.localNodes.Store(node2Name, false)
 
 				err := fakeOvn.controller.WatchEgressIPPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())

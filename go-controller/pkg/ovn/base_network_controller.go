@@ -160,10 +160,10 @@ type BaseNetworkController struct {
 	// use a chain of cancelable contexts for this
 	cancelableCtx util.CancelableContext
 
-	// List of nodes which belong to the local zone (stored as a sync map)
+	// List of nodes local to this controller (stored as a sync map).
 	// If the map is nil, it means the controller is not tracking the node events
-	// and all the nodes are considered as local zone nodes.
-	localZoneNodes *sync.Map
+	// and all nodes are considered local.
+	localNodes *sync.Map
 
 	// zoneICHandler creates the interconnect resources for local nodes and remote nodes.
 	// Interconnect resources are Transit switch and logical ports connecting this transit switch
@@ -194,7 +194,7 @@ func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed f
 	// gather some information first
 	var reconcileNodes []string
 	subnetsChanged := clusterSubnetsChanged(oc, netInfo)
-	oc.localZoneNodes.Range(func(key, _ any) bool {
+	oc.localNodes.Range(func(key, _ any) bool {
 		nodeName := key.(string)
 		wasAdvertised := util.IsPodNetworkAdvertisedAtNode(oc, nodeName)
 		isAdvertised := util.IsPodNetworkAdvertisedAtNode(netInfo, nodeName)
@@ -909,28 +909,27 @@ func (bnc *BaseNetworkController) getClusterPortGroupName(base string) string {
 	return libovsdbutil.GetPortGroupName(bnc.getClusterPortGroupDbIDs(base))
 }
 
-// GetLocalZoneNodes returns the list of local zone nodes
-// A node is considered a local zone node if the zone name
-// set in the node's annotation matches with the zone name
-// set in the OVN Northbound database (to which this controller is connected to).
-func (bnc *BaseNetworkController) GetLocalZoneNodes() ([]*corev1.Node, error) {
+// GetLocalNodes returns the list of nodes local to this controller. A node is
+// considered local if its zone annotation matches the OVN Northbound database
+// zone that this controller is connected to.
+func (bnc *BaseNetworkController) GetLocalNodes() ([]*corev1.Node, error) {
 	nodes, err := bnc.watchFactory.GetNodes()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get nodes: %v", err)
 	}
 
-	var zoneNodes []*corev1.Node
+	var localNodes []*corev1.Node
 	for _, n := range nodes {
-		if bnc.isLocalZoneNode(n) {
-			zoneNodes = append(zoneNodes, n)
+		if bnc.isLocalNode(n) {
+			localNodes = append(localNodes, n)
 		}
 	}
 
-	return zoneNodes, nil
+	return localNodes, nil
 }
 
-// isLocalZoneNode returns true if the node is part of the local zone.
-func (bnc *BaseNetworkController) isLocalZoneNode(node *corev1.Node) bool {
+// isLocalNode returns true if the node is local to this controller.
+func (bnc *BaseNetworkController) isLocalNode(node *corev1.Node) bool {
 	return util.GetNodeZone(node) == bnc.zone
 }
 
@@ -1131,7 +1130,7 @@ func (bnc *BaseNetworkController) newNetworkQoSController() error {
 		nadInformer,
 		bnc.networkManager,
 		bnc.addressSetFactory,
-		bnc.isPodScheduledinLocalZone,
+		bnc.isPodScheduledOnLocalNode,
 		bnc.zone,
 	)
 	return err

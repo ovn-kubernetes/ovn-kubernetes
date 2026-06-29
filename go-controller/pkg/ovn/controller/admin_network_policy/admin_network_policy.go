@@ -447,7 +447,7 @@ func (c *Controller) convertANPSubjectToLSPs(anp *adminNetworkPolicyState) ([]*n
 			return nil, err
 		}
 		for _, pod := range pods {
-			if util.PodWantsHostNetwork(pod) || util.PodCompleted(pod) || !util.PodScheduled(pod) || !c.isPodScheduledinLocalZone(pod) {
+			if util.PodWantsHostNetwork(pod) || util.PodCompleted(pod) || !util.PodScheduled(pod) || !c.isPodScheduledOnLocalNode(pod) {
 				continue
 			}
 			logicalPortName := util.GetLogicalPortName(pod.Namespace, pod.Name)
