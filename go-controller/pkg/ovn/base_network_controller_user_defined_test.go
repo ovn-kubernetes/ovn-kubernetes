@@ -50,6 +50,18 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 		Expect(config.PrepareTestConfig()).To(Succeed())
 	})
 
+	It("allows the retry framework to process unscheduled UDN pods", func() {
+		pod := ovntest.NewPod("namespace", "pod", "", "")
+		retryEligibilityChecks := map[string]func(interface{}) bool{
+			"layer3":   (&Layer3UserDefinedNetworkControllerEventHandler{objType: factory.PodType}).IsResourceScheduled,
+			"layer2":   (&layer2UserDefinedNetworkControllerEventHandler{objType: factory.PodType}).IsResourceScheduled,
+			"localnet": (&LocalnetUserDefinedNetworkControllerEventHandler{objType: factory.PodType}).IsResourceScheduled,
+		}
+		for topology, isResourceScheduled := range retryEligibilityChecks {
+			Expect(isResourceScheduled(pod)).To(BeTrue(), topology)
+		}
+	})
+
 	type dhcpTest struct {
 		vmName                string
 		ips                   []string
@@ -715,9 +727,9 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 			NADNetworks:     map[string]util.NetInfo{},
 		}).Interface()
 
-		fakeOVN.portCache.addWithNetworkName(
+		fakeOVN.portCache.add(
 			pod, switchName, nadKey, netInfo.GetNetworkName(), lsp.UUID, podMAC, podIPs)
-		fakeOVN.portCache.addWithNetworkName(
+		fakeOVN.portCache.add(
 			pod, foreignSwitch, foreignNADKey, "orangenet", foreignLSP.UUID, podMAC, podIPs)
 		portInfoMap := controller.bnc.getPortInfoForUserDefinedNetwork(pod)
 		Expect(portInfoMap).To(HaveKey(nadKey))
@@ -796,7 +808,7 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 
 		Expect(libovsdbops.CreateOrUpdateLogicalSwitchPortsOnSwitch(
 			fakeOVN.nbClient, &nbdb.LogicalSwitch{Name: switchName}, lsp)).To(Succeed())
-		fakeOVN.portCache.add(pod, switchName, nadKey, lsp.UUID, podMAC, podIPs)
+		fakeOVN.portCache.add(pod, switchName, nadKey, netInfo.GetNetworkName(), lsp.UUID, podMAC, podIPs)
 		_, err = fakeNetworkManager.GetPrimaryNADForNamespace(pod.Namespace)
 		Expect(err).To(MatchError(util.IsInvalidPrimaryNetworkError, "IsInvalidPrimaryNetworkError"))
 		Expect(controller.bnc.FilterOutResource(factory.PodType, pod)).To(BeTrue())
