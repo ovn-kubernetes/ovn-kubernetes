@@ -44,7 +44,20 @@ func (bsnc *BaseUserDefinedNetworkController) getPortInfoForUserDefinedNetwork(p
 		return nil
 	}
 	portInfoMap, _ := bsnc.logicalPortCache.getAll(pod)
-	return portInfoMap
+	if len(portInfoMap) == 0 {
+		return nil
+	}
+
+	networkPortInfoMap := map[string]*lpInfo{}
+	for nadKey, portInfo := range portInfoMap {
+		if portInfo != nil && portInfo.appliedNetworkName == bsnc.GetNetworkName() {
+			networkPortInfoMap[nadKey] = portInfo
+		}
+	}
+	if len(networkPortInfoMap) == 0 {
+		return nil
+	}
+	return networkPortInfoMap
 }
 
 // GetInternalCacheEntryForUserDefinedNetwork returns the internal cache entry for this object, given an object and its type.
@@ -487,7 +500,7 @@ func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(pod 
 	txOkCallBack()
 
 	if lsp != nil {
-		_ = bsnc.logicalPortCache.add(pod, switchName, nadKey, lsp.UUID, podAnnotation.MAC, podAnnotation.IPs)
+		_ = bsnc.logicalPortCache.addWithNetworkName(pod, switchName, nadKey, bsnc.GetNetworkName(), lsp.UUID, podAnnotation.MAC, podAnnotation.IPs)
 		if bsnc.onLogicalPortCacheAdd != nil {
 			bsnc.onLogicalPortCacheAdd(pod, nadKey)
 		}
@@ -576,14 +589,11 @@ func (bsnc *BaseUserDefinedNetworkController) removePodForUserDefinedNetwork(pod
 			nadKeys[nadKey] = struct{}{}
 		}
 	}
-	for nadKey, portInfo := range portInfoMap {
-		owned, err := ownedByController(nadKey, portInfo)
-		if err != nil {
-			return err
-		}
-		if owned {
-			nadKeys[nadKey] = struct{}{}
-		}
+	for nadKey := range portInfoMap {
+		// Cached entries come from this controller's applied-state retry
+		// snapshot. Do not re-check the live NAD mapping here; it may already
+		// be gone by the time a delete retry runs.
+		nadKeys[nadKey] = struct{}{}
 	}
 	orderedNADKeys := make([]string, 0, len(nadKeys))
 	for nadKey := range nadKeys {

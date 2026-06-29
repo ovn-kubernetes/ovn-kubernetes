@@ -715,13 +715,13 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 			NADNetworks:     map[string]util.NetInfo{},
 		}).Interface()
 
-		portInfoMap := map[string]*lpInfo{
-			nadKey: fakeOVN.portCache.add(
-				pod, switchName, nadKey, lsp.UUID, podMAC, podIPs),
-			foreignNADKey: fakeOVN.portCache.add(
-				pod, foreignSwitch, foreignNADKey,
-				foreignLSP.UUID, podMAC, podIPs),
-		}
+		fakeOVN.portCache.addWithNetworkName(
+			pod, switchName, nadKey, netInfo.GetNetworkName(), lsp.UUID, podMAC, podIPs)
+		fakeOVN.portCache.addWithNetworkName(
+			pod, foreignSwitch, foreignNADKey, "orangenet", foreignLSP.UUID, podMAC, podIPs)
+		portInfoMap := controller.bnc.getPortInfoForUserDefinedNetwork(pod)
+		Expect(portInfoMap).To(HaveKey(nadKey))
+		Expect(portInfoMap).NotTo(HaveKey(foreignNADKey))
 		Expect(controller.bnc.removePodForUserDefinedNetwork(
 			pod, portInfoMap)).To(Succeed())
 
