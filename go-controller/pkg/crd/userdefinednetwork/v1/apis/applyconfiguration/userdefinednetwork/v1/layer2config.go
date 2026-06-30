@@ -59,6 +59,16 @@ type Layer2ConfigApplyConfiguration struct {
 	// It is not recommended to set this field without explicit need and understanding of the OVN network topology.
 	// When omitted, the platform will choose a reasonable default which is subject to change over time.
 	JoinSubnets *userdefinednetworkv1.DualStackCIDRs `json:"joinSubnets,omitempty"`
+	// serviceSubnets specifies a list of CIDRs reserved for load-balancer VIP allocation.
+	// OVN-Kubernetes allocates VIPs from these ranges for LoadBalancer Services with an
+	// OVN VIP loadBalancerClass. IPs in these ranges are excluded from automatic pod assignment.
+	//
+	// Each item must be within the range of the specified CIDR(s) in `subnets`.
+	// Must not overlap with `reservedSubnets` or `infrastructureSubnets`.
+	// The format should match standard CIDR notation (for example, "10.128.0.0/16").
+	// This field must be omitted if `subnets` is unset or `ipam.mode` is `Disabled`.
+	// This field is only supported for Primary networks.
+	ServiceSubnets []userdefinednetworkv1.CIDR `json:"serviceSubnets,omitempty"`
 	// IPAM section contains IPAM-related configuration for the network.
 	IPAM *IPAMConfigApplyConfiguration `json:"ipam,omitempty"`
 }
@@ -126,6 +136,16 @@ func (b *Layer2ConfigApplyConfiguration) WithDefaultGatewayIPs(value userdefined
 // If called multiple times, the JoinSubnets field is set to the value of the last call.
 func (b *Layer2ConfigApplyConfiguration) WithJoinSubnets(value userdefinednetworkv1.DualStackCIDRs) *Layer2ConfigApplyConfiguration {
 	b.JoinSubnets = &value
+	return b
+}
+
+// WithServiceSubnets adds the given value to the ServiceSubnets field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the ServiceSubnets field.
+func (b *Layer2ConfigApplyConfiguration) WithServiceSubnets(values ...userdefinednetworkv1.CIDR) *Layer2ConfigApplyConfiguration {
+	for i := range values {
+		b.ServiceSubnets = append(b.ServiceSubnets, values[i])
+	}
 	return b
 }
 

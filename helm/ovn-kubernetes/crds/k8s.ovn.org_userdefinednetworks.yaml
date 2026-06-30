@@ -180,6 +180,26 @@ spec:
                     - Primary
                     - Secondary
                     type: string
+                  serviceSubnets:
+                    description: |-
+                      serviceSubnets specifies a list of CIDRs reserved for load-balancer VIP allocation.
+                      OVN-Kubernetes allocates VIPs from these ranges for LoadBalancer Services with an
+                      OVN VIP loadBalancerClass. IPs in these ranges are excluded from automatic pod assignment.
+
+                      Each item must be within the range of the specified CIDR(s) in `subnets`.
+                      Must not overlap with `reservedSubnets` or `infrastructureSubnets`.
+                      The format should match standard CIDR notation (for example, "10.128.0.0/16").
+                      This field must be omitted if `subnets` is unset or `ipam.mode` is `Disabled`.
+                      This field is only supported for Primary networks.
+                    items:
+                      maxLength: 43
+                      type: string
+                      x-kubernetes-validations:
+                      - message: CIDR is invalid
+                        rule: isCIDR(self)
+                    maxItems: 10
+                    minItems: 1
+                    type: array
                   subnets:
                     description: |-
                       Subnets are used for the pod network across the cluster.
@@ -269,6 +289,35 @@ spec:
                     bits set)
                   rule: '!has(self.reservedSubnets) || self.reservedSubnets.all(s,
                     isCIDR(s) && cidr(s) == cidr(s).masked())'
+                - message: serviceSubnets must be unset when subnets is unset
+                  rule: '!has(self.serviceSubnets) || has(self.subnets)'
+                - message: serviceSubnets is only supported for Primary network
+                  rule: '!has(self.serviceSubnets) || has(self.role) && self.role
+                    == ''Primary'''
+                - message: serviceSubnets must be unset when ipam.mode is Disabled
+                  rule: '!has(self.ipam) || !has(self.ipam.mode) || self.ipam.mode
+                    != ''Disabled'' || !has(self.serviceSubnets)'
+                - fieldPath: .serviceSubnets
+                  message: serviceSubnets must be subnetworks of the networks specified
+                    in the subnets field
+                  rule: '!has(self.serviceSubnets) || self.serviceSubnets.all(e, self.subnets.exists(s,
+                    cidr(s).containsCIDR(cidr(e))))'
+                - message: serviceSubnets and reservedSubnets must not overlap
+                  rule: '!has(self.serviceSubnets) || !has(self.reservedSubnets) ||
+                    self.serviceSubnets.all(svc, !self.reservedSubnets.exists(reserved,
+                    cidr(svc).containsCIDR(cidr(reserved)) || cidr(reserved).containsCIDR(cidr(svc))))'
+                - message: serviceSubnets and infrastructureSubnets must not overlap
+                  rule: '!has(self.serviceSubnets) || !has(self.infrastructureSubnets)
+                    || self.serviceSubnets.all(svc, !self.infrastructureSubnets.exists(infra,
+                    cidr(svc).containsCIDR(cidr(infra)) || cidr(infra).containsCIDR(cidr(svc))))'
+                - message: serviceSubnets must not contain any of the defaultGatewayIPs
+                  rule: '!has(self.serviceSubnets) || !has(self.defaultGatewayIPs)
+                    || self.serviceSubnets.all(svc, !self.defaultGatewayIPs.exists(gw,
+                    cidr(svc).containsIP(gw)))'
+                - message: serviceSubnets must be a masked network address (no host
+                    bits set)
+                  rule: '!has(self.serviceSubnets) || self.serviceSubnets.all(s, isCIDR(s)
+                    && cidr(s) == cidr(s).masked())'
               layer3:
                 description: Layer3 is the Layer3 topology configuration.
                 properties:

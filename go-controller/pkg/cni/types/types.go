@@ -44,6 +44,12 @@ type NetConf struct {
 	// valid for layer2 network topology with primary role only
 	// eg. "10.1.130.0/30, 10.1.130.64/30"
 	InfrastructureSubnets string `json:"infrastructureSubnets,omitempty"`
+	// comma-separated list of CIDRs reserved for load-balancer VIP allocation.
+	// OVN-Kubernetes allocates VIPs from these ranges for LoadBalancer Services with an OVN VIP loadBalancerClass.
+	// IPs in these ranges are excluded from automatic pod assignment.
+	// valid for layer2 primary network topology only
+	// eg. "10.10.10.0/24, 10.10.11.0/24"
+	ServiceSubnets string `json:"serviceSubnets,omitempty"`
 	// join subnet cidr is required for supporting
 	// services and ingress for user defined networks
 	// in case of dualstack cluster, please do a comma-separated list
@@ -139,6 +145,7 @@ func (n NetConf) MarshalJSON() ([]byte, error) {
 		ExcludeSubnets        string      `json:"excludeSubnets,omitempty"`
 		ReservedSubnets       string      `json:"reservedSubnets,omitempty"`
 		InfrastructureSubnets string      `json:"infrastructureSubnets,omitempty"`
+		ServiceSubnets        string      `json:"serviceSubnets,omitempty"`
 		JoinSubnet            string      `json:"joinSubnet,omitempty"`
 		TransitSubnet         string      `json:"transitSubnet,omitempty"`
 		DefaultGatewayIPs     string      `json:"defaultGatewayIPs,omitempty"`
@@ -168,6 +175,7 @@ func (n NetConf) MarshalJSON() ([]byte, error) {
 		ExcludeSubnets:        n.ExcludeSubnets,
 		ReservedSubnets:       n.ReservedSubnets,
 		InfrastructureSubnets: n.InfrastructureSubnets,
+		ServiceSubnets:        n.ServiceSubnets,
 		JoinSubnet:            n.JoinSubnet,
 		TransitSubnet:         n.TransitSubnet,
 		DefaultGatewayIPs:     n.DefaultGatewayIPs,

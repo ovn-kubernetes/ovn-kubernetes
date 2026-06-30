@@ -53,6 +53,7 @@ spec:
                   enum:
                   - PodNetwork
                   - EgressIP
+                  - LoadBalancerVIP
                   type: string
                 maxItems: 2
                 minItems: 1

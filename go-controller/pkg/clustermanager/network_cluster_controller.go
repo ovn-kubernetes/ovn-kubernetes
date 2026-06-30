@@ -1097,14 +1097,56 @@ func newIPAllocatorForNetwork(netInfo util.NetInfo) (subnet.Allocator, error) {
 		ipNets = append(ipNets, subnet.CIDR)
 	}
 
+	var infraIPs []*net.IPNet
 	if isLayer2UserDefinedPrimaryNetwork(netInfo) && len(netInfo.InfrastructureSubnets()) == 0 {
-		excludeSubnets = append(excludeSubnets, infrastructureExcludeCIDRs(netInfo)...)
+		infraIPs = infrastructureExcludeCIDRs(netInfo)
+		excludeSubnets = append(excludeSubnets, infraIPs...)
 	}
+
+	// serviceSubnets are reserved for VIP allocation by the UDN VIP controller.
+	//
+	// serviceSubnets may be either within or outside the pod subnet (subnets field):
+	//   a) Within the pod subnet: reserve them so pods are not auto-assigned those IPs.
+	//      Validate that they don't overlap with auto-computed infrastructure IPs.
+	//   b) Outside the pod subnet: pods can never be assigned those IPs anyway, so no
+	//      reservation is needed. Passing them to the allocator as ReservedSubnets
+	//      would cause an error ("not contained in any of the subnets"), so we skip.
+	svcSubnets := netInfo.ServiceSubnets()
+	var svcSubnetsInPodCIDR []*net.IPNet
+	for _, svcSubnet := range svcSubnets {
+		inPodCIDR := false
+		for _, subnet := range netInfo.Subnets() {
+			if subnet.CIDR.Contains(svcSubnet.IP) {
+				inPodCIDR = true
+				break
+			}
+		}
+		if inPodCIDR {
+			// Validate no overlap with auto-computed infra IPs within the pod subnet.
+			for _, infraIP := range infraIPs {
+				if svcSubnet.Contains(infraIP.IP) {
+					return nil, fmt.Errorf(
+						"serviceSubnets %s overlaps with auto-computed infrastructure IP %s "+
+							"for network %q; use a range that does not include the gateway or "+
+							"management-port IPs, or use an external CIDR outside the pod subnet",
+						svcSubnet, infraIP.IP, netInfo.GetNetworkName(),
+					)
+				}
+			}
+			svcSubnetsInPodCIDR = append(svcSubnetsInPodCIDR, svcSubnet)
+		}
+		// External serviceSubnets (outside pod subnet): no reservation needed.
+	}
+
+	// Reserve only the serviceSubnets that lie within the pod subnet.
+	// External serviceSubnets don't need reservation (pods can't be allocated
+	// IPs outside the pod subnet by the IPAM anyway).
+	reservedSubnets := append(netInfo.ReservedSubnets(), svcSubnetsInPodCIDR...)
 
 	if err := ipAllocator.AddOrUpdateSubnet(subnet.SubnetConfig{
 		Name:            netInfo.GetNetworkName(),
 		Subnets:         ipNets,
-		ReservedSubnets: netInfo.ReservedSubnets(),
+		ReservedSubnets: reservedSubnets,
 		ExcludeSubnets:  excludeSubnets,
 	}); err != nil {
 		return nil, err

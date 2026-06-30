@@ -33,6 +33,7 @@ import (
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/udnvip"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	controllerutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	eiptypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
@@ -48,6 +49,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
+	udnvipzone "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/udnvip"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -78,6 +80,7 @@ type Controller struct {
 	raLister        ralisters.RouteAdvertisementsLister
 	namespaceLister corelisters.NamespaceLister
 	vtepLister      vteplisters.VTEPLister
+	svcLister       corelisters.ServiceLister
 
 	frrClient frrclientset.Interface
 	nadClient nadclientset.Interface
@@ -89,6 +92,7 @@ type Controller struct {
 	nodeController controllerutil.Controller
 	raController   controllerutil.Controller
 	nsController   controllerutil.Controller
+	svcController  controllerutil.Controller
 
 	nm networkmanager.Interface
 }
@@ -107,6 +111,7 @@ func NewController(
 		nodeLister:      wf.NodeCoreInformer().Lister(),
 		raLister:        wf.RouteAdvertisementsInformer().Lister(),
 		namespaceLister: wf.NamespaceInformer().Lister(),
+		svcLister:       wf.ServiceCoreInformer().Lister(),
 		frrClient:       ovnClient.FRRClient,
 		nadClient:       ovnClient.NetworkAttchDefClient,
 		raClient:        ovnClient.RouteAdvertisementsClient,
@@ -190,6 +195,29 @@ func NewController(
 	}
 	c.nsController = controllerutil.NewController("clustermanager routeadvertisements namespace controller", nsConfig)
 
+	// Watch LoadBalancer VIP services: when a routed-mode VIP service is created,
+	// updated (VIP written to status), or deleted, reconcile all RAs that advertise
+	// Watch UDN LoadBalancer services: when a VIP is allocated (ingress changes)
+	// re-reconcile all LoadBalancerVIP RouteAdvertisements so FRRConfigurations
+	// are regenerated.
+	svcConfig := &controllerutil.ControllerConfig[corev1.Service]{
+		RateLimiter: workqueue.DefaultTypedControllerRateLimiter[string](),
+		Reconcile:   c.reconcileLoadBalancerVIP,
+		Threadiness: 1,
+		Informer:    wf.ServiceCoreInformer().Informer(),
+		Lister:      wf.ServiceCoreInformer().Lister().List,
+		ObjNeedsUpdate: func(old, new *corev1.Service) bool {
+			if !udnvip.IsUDNVIPService(new) {
+				return false
+			}
+			// Re-reconcile when VIP is allocated or when ETP changes
+			// (ETP drives which nodes advertise the /32).
+			return len(new.Status.LoadBalancer.Ingress) != len(old.Status.LoadBalancer.Ingress) ||
+				new.Spec.ExternalTrafficPolicy != old.Spec.ExternalTrafficPolicy
+		},
+	}
+	c.svcController = controllerutil.NewController("clustermanager routeadvertisements service controller", svcConfig)
+
 	if util.IsEVPNEnabled() {
 		c.vtepLister = wf.VTEPInformer().Lister()
 	}
@@ -206,6 +234,7 @@ func (c *Controller) Start() error {
 		c.nodeController,
 		c.nsController,
 		c.raController,
+		c.svcController,
 	)
 }
 
@@ -217,6 +246,7 @@ func (c *Controller) Stop() {
 		c.nodeController,
 		c.nsController,
 		c.raController,
+		c.svcController,
 	)
 	klog.Infof("Cluster manager routeadvertisements stopped")
 }
@@ -359,6 +389,10 @@ type selectedNetworks struct {
 	ipVRFConfigs []*ipVRFConfig
 	// networkTransport is a map of selected network to their transport mode
 	networkTransport map[string]string
+	// vipPrefixesByNode holds VIP CIDR strings per node for LoadBalancerVIP
+	// advertisement. Populated once per reconcile from the node annotation
+	// written by the zone controller. Plain ECMP — no local-pref.
+	vipPrefixesByNode map[string][]string
 }
 
 // vrfConfig holds base VRF EVPN configuration for a network
@@ -706,6 +740,12 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 		return prefixes, nil
 	}
 
+	// Pre-compute LoadBalancerVIP prefixes by node before the per-node loop.
+	// Reads the node annotation written by the zone controller (no NBDB needed).
+	if advertisements.Has(ratypes.LoadBalancerVIP) {
+		selectedNetworks.vipPrefixesByNode = c.getVIPPrefixesByNodeAnnotation(selectedNetworks)
+	}
+
 	generated := []*frrtypes.FRRConfiguration{}
 	for nodeName, frrConfigs := range nodeToFRRConfig {
 		// reset node specific information
@@ -725,6 +765,14 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 		}
 		// order, dedup
 		selectedNetworks.hostSubnets = sets.List(sets.New(selectedNetworks.hostSubnets...))
+
+		// For LoadBalancerVIP, add this node's VIP /32 prefixes to hostSubnets.
+		if advertisements.Has(ratypes.LoadBalancerVIP) {
+			selectedNetworks.hostSubnets = append(
+				selectedNetworks.hostSubnets,
+				selectedNetworks.vipPrefixesByNode[nodeName]...)
+			selectedNetworks.hostSubnets = sets.List(sets.New(selectedNetworks.hostSubnets...))
+		}
 
 		// if there is no prefixes to advertise for this node, skip it
 		if len(selectedNetworks.hostSubnets) == 0 {
@@ -900,6 +948,9 @@ func (c *Controller) generateFRRConfiguration(
 					neighbor.ToAdvertise.NextHop.IPv4 = nextHop
 				}
 			}
+
+			// LoadBalancerVIP: VIP /32s are already in advertisePrefixes via
+			// hostSubnets. Plain ECMP — no local-pref differentiation needed.
 
 			// For no-overlay networks, add routes to pod subnets to the accepted routes list
 			// frr-k8s will merge the prefixes from both the generated and the base FRRConfiguration
@@ -1719,4 +1770,122 @@ func (c *Controller) reconcileEgressIPs(string) error {
 	}
 
 	return nil
+}
+
+// reconcileLoadBalancerVIP is called when a UDN LoadBalancer service changes.
+// It re-queues all RouteAdvertisements that include LoadBalancerVIP so their
+// FRRConfigurations are regenerated.
+func (c *Controller) reconcileLoadBalancerVIP(string) error {
+	ras, err := c.raLister.List(labels.Everything())
+	if err != nil {
+		return err
+	}
+	for _, ra := range ras {
+		if sets.New(ra.Spec.Advertisements...).Has(ratypes.LoadBalancerVIP) {
+			c.raController.Reconcile(ra.Name)
+		}
+	}
+	return nil
+}
+
+// getVIPPrefixesByNodeAnnotation returns a map of nodeName → VIP CIDR strings
+// for all UDN LoadBalancer services in the selected networks.
+// It reads the node annotation written by the zone controller
+// (UDNLBActiveVIPsAnnotation), which lists the VIP /32s this node is active
+// for (i.e. has local backends or a proxy pod).
+//
+// Advertisement scope is driven by Service.spec.externalTrafficPolicy:
+//
+//	externalTrafficPolicy: Cluster (default)
+//	  Advertise the VIP /32 from ALL nodes in the cluster.  Any node can
+//	  handle the traffic — OVN will DNAT to a backend wherever it lives.
+//	  Maximises ECMP path count.
+//
+//	externalTrafficPolicy: Local
+//	  Advertise the VIP /32 only from nodes that have a running backend pod
+//	  matching the service selector. Traffic is therefore delivered to a node
+//	  that can serve it without a cross-node GENEVE hop.
+//
+// No NBDB access required — the zone controller is the source of truth.
+func (c *Controller) getVIPPrefixesByNodeAnnotation(selectedNetworks *selectedNetworks) map[string][]string {
+	result := map[string][]string{}
+
+	nodes, err := c.nodeLister.List(labels.Everything())
+	if err != nil {
+		klog.Warningf("RouteAdvertisements: failed to list nodes for LoadBalancerVIP: %v", err)
+		return result
+	}
+
+	// allNodeNames is used for ETP=Cluster broadcast.
+	allNodeNames := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		allNodeNames = append(allNodeNames, n.Name)
+	}
+
+	for _, networkName := range selectedNetworks.networks {
+		netInfo := c.nm.GetNetwork(networkName)
+		if netInfo == nil {
+			continue
+		}
+		annKey := netInfo.GetNetworkScopedName(udnvipzone.UDNLBActiveVIPsAnnotation)
+
+		// Build node → set-of-active-VIP-CIDRs from the zone controller annotation.
+		// Used for ETP=Local filtering.
+		nodeActiveVIPs := map[string]sets.Set[string]{}
+		for _, node := range nodes {
+			raw, ok := node.Annotations[annKey]
+			if !ok || raw == "" {
+				continue
+			}
+			var cidrs []string
+			if err := json.Unmarshal([]byte(raw), &cidrs); err != nil {
+				klog.Warningf("RouteAdvertisements: node %s annotation %s: %v",
+					node.Name, annKey, err)
+				continue
+			}
+			nodeActiveVIPs[node.Name] = sets.New(cidrs...)
+		}
+
+		// For each UDN VIP service in this network, decide which nodes should
+		// advertise based on externalTrafficPolicy.
+		for _, ns := range netInfo.GetNADNamespaces() {
+			svcs, err := c.svcLister.Services(ns).List(labels.Everything())
+			if err != nil {
+				continue
+			}
+			for _, svc := range svcs {
+				if !udnvip.IsUDNVIPService(svc) {
+					continue
+				}
+				if len(svc.Status.LoadBalancer.Ingress) == 0 {
+					continue // VIP not yet allocated
+				}
+				vipIP := svc.Status.LoadBalancer.Ingress[0].IP
+				prefix := vipIP + "/32"
+				if utilnet.IsIPv6String(vipIP) {
+					prefix = vipIP + "/128"
+				}
+
+				if svc.Spec.ExternalTrafficPolicy == corev1.ServiceExternalTrafficPolicyLocal {
+					// ETP=Local: only nodes with a local selector-matched backend pod.
+					for nodeName, activeVIPs := range nodeActiveVIPs {
+						if activeVIPs.Has(prefix) {
+							result[nodeName] = append(result[nodeName], prefix)
+						}
+					}
+				} else {
+					// ETP=Cluster (default): all nodes.
+					for _, nodeName := range allNodeNames {
+						result[nodeName] = append(result[nodeName], prefix)
+					}
+				}
+			}
+		}
+	}
+
+	// Deduplicate (a node may appear in multiple networks or multiple services).
+	for nodeName, cidrs := range result {
+		result[nodeName] = sets.List(sets.New(cidrs...))
+	}
+	return result
 }
