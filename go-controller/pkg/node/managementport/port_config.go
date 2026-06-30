@@ -120,6 +120,7 @@ func (mpcfg *managementPortConfig) getAddresses() []*net.IPNet {
 
 type managementPortIPFamilyConfig struct {
 	clusterSubnets []*net.IPNet
+	podSubnets     []*net.IPNet
 	ifAddr         *net.IPNet
 	gwIP           net.IP
 }
@@ -134,6 +135,7 @@ func newManagementPortIPFamilyConfig(hostSubnet *net.IPNet, isIPv6 bool, netInfo
 	for _, subnet := range config.Default.ClusterSubnets {
 		if utilnet.IsIPv6CIDR(subnet.CIDR) == isIPv6 {
 			cfg.clusterSubnets = append(cfg.clusterSubnets, subnet.CIDR)
+			cfg.podSubnets = append(cfg.podSubnets, subnet.CIDR)
 		}
 	}
 	// add the .3 masqueradeIP to add the route via mp0 for ETP=local case

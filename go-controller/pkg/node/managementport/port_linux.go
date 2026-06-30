@@ -41,9 +41,13 @@ const (
 	// the source IP must be preserved).
 	nftMgmtPortChain = "mgmtport-snat"
 
-	// ovnkubeSvcViaMgmPortRT is the number of the custom routing table used to steer host->service
-	// traffic packets into OVN via ovn-k8s-mp0. Currently only used for ITP=local traffic.
-	ovnkubeSvcViaMgmPortRT = "7"
+	// ovnkubeMgmPortRT is the custom routing table used to steer selected host traffic
+	// into OVN via ovn-k8s-mp0.
+	ovnkubeMgmPortRT = 7
+
+	// ovnkubeNoOverlayPodRulePriority is lower priority than the ITP service fwmark
+	// rule that also uses ovnkubeMgmPortRT.
+	ovnkubeNoOverlayPodRulePriority = 31
 
 	ovsPort         = "ovs"
 	netdevPort      = "netdev"
@@ -284,6 +288,11 @@ func setupManagementPortIPFamilyConfig(link netlink.Link, mpcfg *managementPortC
 			klog.Warningf("Could not add route entry for subnet %s via gateway %s: %v", subnet, cfg.gwIP, err)
 		}
 	}
+	if shouldConfigureNoOverlayPodRouteViaManagementPort() {
+		if err := setupNoOverlayPodRouteViaManagementPort(link, cfg, routeManager); err != nil {
+			return err
+		}
+	}
 
 	// Add a neighbour entry on the K8s node to map routerIP with routerMAC. This is
 	// required because in certain cases ARP requests from the K8s Node to the routerIP
@@ -322,6 +331,92 @@ func setupManagementPortIPFamilyConfig(link netlink.Link, mpcfg *managementPortC
 	}
 
 	return nil
+}
+
+func shouldConfigureNoOverlayPodRouteViaManagementPort() bool {
+	return config.IsModeFull() && config.Default.Transport == types.NetworkTransportNoOverlay
+}
+
+func setupNoOverlayPodRouteViaManagementPort(link netlink.Link, cfg *managementPortIPFamilyConfig, routeManager *routemanager.Controller) error {
+	if routeManager == nil {
+		return fmt.Errorf("route manager is required to configure no-overlay pod routes via management port")
+	}
+	for _, subnet := range cfg.podSubnets {
+		subnetCopy := *subnet
+		if err := routeManager.Add(netlink.Route{
+			LinkIndex: link.Attrs().Index,
+			Gw:        cfg.gwIP,
+			Dst:       &subnetCopy,
+			MTU:       config.Default.RoutableMTU,
+			Table:     ovnkubeMgmPortRT,
+		}); err != nil {
+			return fmt.Errorf("could not add no-overlay pod route entry for subnet %s via gateway %s in table %d: %w",
+				subnet, cfg.gwIP, ovnkubeMgmPortRT, err)
+		}
+		if err := ensureNoOverlayPodRoutingRule(subnet); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ensureNoOverlayPodRoutingRule(subnet *net.IPNet) error {
+	rule := netlink.NewRule()
+	rule.Priority = ovnkubeNoOverlayPodRulePriority
+	rule.Table = ovnkubeMgmPortRT
+	// For policy routing, iif lo scopes the rule to locally generated traffic.
+	rule.IifName = "lo"
+	rule.Dst = subnet
+	if utilnet.IsIPv6CIDR(subnet) {
+		rule.Family = netlink.FAMILY_V6
+	} else {
+		rule.Family = netlink.FAMILY_V4
+	}
+
+	exists, err := noOverlayPodRoutingRuleExists(rule)
+	if err != nil {
+		return fmt.Errorf("could not list no-overlay pod routing rules for subnet %s: %w", subnet, err)
+	}
+	if exists {
+		return nil
+	}
+	if err := util.GetNetLinkOps().RuleAdd(rule); err != nil && !util.GetNetLinkOps().IsAlreadyExistsError(err) {
+		return fmt.Errorf("could not add no-overlay pod routing rule for subnet %s in table %d: %w",
+			subnet, ovnkubeMgmPortRT, err)
+	}
+	return nil
+}
+
+func noOverlayPodRoutingRuleExists(rule *netlink.Rule) (bool, error) {
+	filterMask := netlink.RT_FILTER_PRIORITY | netlink.RT_FILTER_TABLE | netlink.RT_FILTER_DST
+	rules, err := util.GetNetLinkOps().RuleListFiltered(rule.Family, rule, filterMask)
+	if err != nil {
+		return false, err
+	}
+	for _, existing := range rules {
+		if noOverlayPodRoutingRulesEqual(&existing, rule) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func noOverlayPodRoutingRulesEqual(existing, desired *netlink.Rule) bool {
+	return existing.Priority == desired.Priority &&
+		existing.Table == desired.Table &&
+		existing.Family == desired.Family &&
+		existing.Mark == desired.Mark &&
+		existing.IifName == desired.IifName &&
+		existing.OifName == desired.OifName &&
+		ipNetsEqual(existing.Src, desired.Src) &&
+		ipNetsEqual(existing.Dst, desired.Dst)
+}
+
+func ipNetsEqual(a, b *net.IPNet) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.String() == b.String()
 }
 
 func setupManagementPortConfig(link netlink.Link, cfg *managementPortConfig, routeManager *routemanager.Controller) error {
@@ -699,16 +794,16 @@ func DelLegacyMgtPortIptRules() {
 // let's us forward service traffic to ovn-k8s-mp0 as opposed to the default
 // route towards breth0
 func initMgmPortRoutingRules(mgmtCfg *managementPortConfig) error {
-	// create ovnkubeSvcViaMgmPortRT and service route towards ovn-k8s-mp0
+	// create ovnkubeMgmPortRT and service route towards ovn-k8s-mp0
 	for _, hostSubnet := range mgmtCfg.hostSubnets {
 		isIPv6 := utilnet.IsIPv6CIDR(hostSubnet)
 		gatewayIP := mgmtCfg.netInfo.GetNodeGatewayIP(hostSubnet).IP.String()
 		for _, svcCIDR := range config.Kubernetes.ServiceCIDRs {
 			if isIPv6 == utilnet.IsIPv6CIDR(svcCIDR) {
-				if stdout, stderr, err := util.RunIP("route", "replace", "table", ovnkubeSvcViaMgmPortRT, svcCIDR.String(), "via", gatewayIP, "dev", types.K8sMgmtIntfName); err != nil {
-					return fmt.Errorf("error adding routing table entry into custom routing table: %s: stdout: %s, stderr: %s, err: %v", ovnkubeSvcViaMgmPortRT, stdout, stderr, err)
+				if stdout, stderr, err := util.RunIP("route", "replace", "table", fmt.Sprintf("%d", ovnkubeMgmPortRT), svcCIDR.String(), "via", gatewayIP, "dev", types.K8sMgmtIntfName); err != nil {
+					return fmt.Errorf("error adding routing table entry into custom routing table: %d: stdout: %s, stderr: %s, err: %v", ovnkubeMgmPortRT, stdout, stderr, err)
 				}
-				klog.V(5).Infof("Successfully added route into custom routing table: %s", ovnkubeSvcViaMgmPortRT)
+				klog.V(5).Infof("Successfully added route into custom routing table: %d", ovnkubeMgmPortRT)
 			}
 		}
 	}
@@ -718,9 +813,9 @@ func initMgmPortRoutingRules(mgmtCfg *managementPortConfig) error {
 		if err != nil {
 			return fmt.Errorf("error listing routing rules, stdout: %s, stderr: %s, err: %v", stdout, stderr, err)
 		}
-		if !strings.Contains(stdout, fmt.Sprintf("from all fwmark %s lookup %s", types.OVNKubeITPMark, ovnkubeSvcViaMgmPortRT)) {
-			if stdout, stderr, err := util.RunIP(family, "rule", "add", "fwmark", types.OVNKubeITPMark, "lookup", ovnkubeSvcViaMgmPortRT, "prio", "30"); err != nil {
-				return fmt.Errorf("error adding routing rule for service via management table (%s): stdout: %s, stderr: %s, err: %v", ovnkubeSvcViaMgmPortRT, stdout, stderr, err)
+		if !strings.Contains(stdout, fmt.Sprintf("from all fwmark %s lookup %d", types.OVNKubeITPMark, ovnkubeMgmPortRT)) {
+			if stdout, stderr, err := util.RunIP(family, "rule", "add", "fwmark", types.OVNKubeITPMark, "lookup", fmt.Sprintf("%d", ovnkubeMgmPortRT), "prio", "30"); err != nil {
+				return fmt.Errorf("error adding routing rule for service via management table (%d): stdout: %s, stderr: %s, err: %v", ovnkubeMgmPortRT, stdout, stderr, err)
 			}
 		}
 		return nil
