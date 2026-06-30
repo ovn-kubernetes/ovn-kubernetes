@@ -189,6 +189,17 @@ func buildServiceLBConfigs(service *corev1.Service, endpointSlices []*discovery.
 		vips := util.GetClusterIPs(service)
 		externalVips := util.GetExternalAndLBIPs(service)
 
+		// UDN LoadBalancer (k8s.ovn.org/udn-loadbalancer):
+		// The VIP stays in externalVips and falls through to the normal
+		// buildClusterLBs path — same as any other LoadBalancer service.
+		// Both the VIP and ClusterIP end up in clusterLBGroup so the GR
+		// carries LB rules for both, enabling:
+		//   • pod → VIP: OVN switch LB DNAT (same as ClusterIP)
+		//   • external → VIP: BGP routes to node, GR LB DNAT (no /32 kernel
+		//     routes or br-ex flows needed; no existing flows for UDN subnets)
+		//   • external → ClusterIP: standard GR LB (unchanged k8s behaviour)
+		// No special action needed here.
+
 		// if ETP=Local, then treat ExternalIPs and LoadBalancer IPs specially
 		// otherwise, they're just cluster IPs
 		// This is NEVER influenced by InternalTrafficPolicy
@@ -267,6 +278,10 @@ func buildClusterLBs(service *corev1.Service, configs []lbConfig, nodeInfos []no
 	if useLBGroup {
 		nodeSwitches = make([]string, 0)
 		nodeRouters = make([]string, 0)
+		// Use the full clusterLBGroup for all Layer2 UDN services (including
+		// UDN LoadBalancer). The GR carries LB rules for both VIP and ClusterIP,
+		// so external traffic arriving via BGP or from the host netns is DNAT'd
+		// correctly without any br-ex flow or kernel route plumbing.
 		groups = []string{netInfo.GetNetworkScopedLoadBalancerGroupName(types.ClusterLBGroupName)}
 	} else {
 		nodeSwitches = make([]string, 0, len(nodeInfos))
