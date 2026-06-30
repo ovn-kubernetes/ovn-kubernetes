@@ -1268,25 +1268,6 @@ var _ = Describe("Management Port tests", func() {
 		netInfo.On("GetPodNetworkAdvertisedOnNodeVRFs", "worker-node").Return(nil)
 		netInfo.On("GetNodeGatewayIP", hostSubnets[0]).Return(util.GetNodeGatewayIfAddr(hostSubnets[0]))
 		netInfo.On("GetNodeManagementIP", hostSubnets[0]).Return(util.GetNodeManagementIfAddr(hostSubnets[0]))
-		It("does not add default cluster subnet routes through the management port for DPU host no-overlay", func() {
-			config.OvnKubeNode.Mode = types.NodeModeDPUHost
-			config.Gateway.Mode = config.GatewayModeShared
-			config.Default.Transport = types.NetworkTransportNoOverlay
-			config.Default.ClusterSubnets = []config.CIDRNetworkEntry{{
-				CIDR:             ovntest.MustParseIPNet("10.1.0.0/16"),
-				HostSubnetLength: 24,
-			}}
-
-			cfg, err := newManagementPortIPFamilyConfig(hostSubnets[0], false, netInfo)
-			Expect(err).NotTo(HaveOccurred())
-
-			var routeSubnets []string
-			for _, subnet := range cfg.clusterSubnets {
-				routeSubnets = append(routeSubnets, subnet.String())
-			}
-			Expect(routeSubnets).NotTo(ContainElement("10.1.0.0/16"))
-			Expect(routeSubnets).To(ConsistOf(fmt.Sprintf("%s/32", config.Gateway.MasqueradeIPs.V4HostETPLocalMasqueradeIP.String())))
-		})
 		It("Creates managementPort by default", func() {
 			mgmtPort, err := NewManagementPortController(nil, node, hostSubnets, netdevName, rep, nil, netInfo)
 			Expect(err).NotTo(HaveOccurred())

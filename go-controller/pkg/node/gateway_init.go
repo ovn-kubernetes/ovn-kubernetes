@@ -194,40 +194,6 @@ func configureSvcRouteViaInterface(routeManager *routemanager.Controller, iface 
 	return nil
 }
 
-func shouldConfigureDPUHostNoOverlayPodCIDRRoute() bool {
-	return config.IsModeDPUHost() &&
-		config.Gateway.Mode == config.GatewayModeShared &&
-		config.Default.Transport == types.NetworkTransportNoOverlay
-}
-
-func configureDPUHostNoOverlayPodCIDRRoute(routeManager *routemanager.Controller, iface string, gwIPs []net.IP) error {
-	link, err := util.LinkSetUp(iface)
-	if err != nil {
-		return fmt.Errorf("unable to get link for %s, error: %v", iface, err)
-	}
-
-	mtu := config.Default.MTU
-	if config.Default.RoutableMTU != 0 {
-		mtu = config.Default.RoutableMTU
-	}
-
-	for _, clusterSubnet := range config.Default.ClusterSubnets {
-		subnet := clusterSubnet.CIDR
-		isV6 := utilnet.IsIPv6CIDR(subnet)
-		gwIP, err := util.MatchIPFamily(isV6, gwIPs)
-		if err != nil {
-			return fmt.Errorf("unable to find gateway IP for subnet: %v, found IPs: %v", subnet, gwIPs)
-		}
-		subnetCopy := *subnet
-		gwIPCopy := gwIP[0]
-		err = routeManager.Add(netlink.Route{LinkIndex: link.Attrs().Index, Gw: gwIPCopy, Dst: &subnetCopy, MTU: mtu})
-		if err != nil {
-			return fmt.Errorf("unable to add gateway IP route for subnet: %v, %v", subnet, err)
-		}
-	}
-	return nil
-}
-
 // getNodePrimaryIfAddrs returns the appropriate interface addresses based on the node mode
 func getNodePrimaryIfAddrs(watchFactory factory.NodeWatchFactory, nodeName string, gatewayIntf string) ([]*net.IPNet, error) {
 	switch config.OvnKubeNode.Mode {

@@ -84,7 +84,6 @@ nav:
     - Service Traffic Policy: design/service-traffic-policy.md
     - Host To NodePort Hairpin: design/host-to-node-port-hairpin-trafficflow.md
     - ExternalIPs/LoadBalancerIngress: design/external-ip-and-loadbalancer-ingress.md
-    - DPU Host No-Overlay Routing: design/dpu-host-no-overlay-routing.md
     - Internal Subnets: design/ovn-kubernetes-subnets.md
     - Kubevirt VM Live Migration: features/live-migration.md
   - Getting Started:
