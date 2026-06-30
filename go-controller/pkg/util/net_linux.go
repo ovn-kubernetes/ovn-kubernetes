@@ -57,6 +57,7 @@ type NetLinkOps interface {
 	RouteListFiltered(family int, filter *netlink.Route, filterMask uint64) ([]netlink.Route, error)
 	RuleListFiltered(family int, filter *netlink.Rule, filterMask uint64) ([]netlink.Rule, error)
 	RuleAdd(rule *netlink.Rule) error
+	RuleDel(rule *netlink.Rule) error
 	NeighAdd(neigh *netlink.Neigh) error
 	NeighSet(neigh *netlink.Neigh) error
 	NeighDel(neigh *netlink.Neigh) error
@@ -237,6 +238,10 @@ func (defaultNetLinkOps) RuleListFiltered(family int, filter *netlink.Rule, filt
 
 func (defaultNetLinkOps) RuleAdd(rule *netlink.Rule) error {
 	return netlink.RuleAdd(rule)
+}
+
+func (defaultNetLinkOps) RuleDel(rule *netlink.Rule) error {
+	return netlink.RuleDel(rule)
 }
 
 func (defaultNetLinkOps) NeighAdd(neigh *netlink.Neigh) error {

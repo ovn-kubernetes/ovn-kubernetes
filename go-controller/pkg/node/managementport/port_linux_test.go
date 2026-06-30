@@ -71,6 +71,7 @@ type managementPortTestConfig struct {
 	expectedGatewayIP        string
 
 	isRoutingAdvertised bool
+	isNoOverlay         bool
 }
 
 func (mptc *managementPortTestConfig) GetNodeSubnetCIDR() *net.IPNet {
@@ -103,18 +104,19 @@ func checkMgmtPortTestNFTables(configs []managementPortTestConfig, mgmtPortName 
 	wantReturnRule = true
 
 	for _, cfg := range configs {
+		isPodNetworkAdvertised := cfg.isRoutingAdvertised || cfg.isNoOverlay
 		if cfg.family == netlink.FAMILY_V4 {
 			snatV4Rule = "snat ip to " + cfg.expectedManagementPortIP
 			wantSNATV4Rule = true
 			returnNonLocalV4Rule = "meta nfproto ipv4 fib saddr type != local"
-			wantReturnNonLocalV4Rule = cfg.isRoutingAdvertised
+			wantReturnNonLocalV4Rule = isPodNetworkAdvertised
 			returnMgmtIPV4Rule = "meta nfproto ipv4 ip saddr " + cfg.expectedManagementPortIP
 			wantReturnMgmtIPV4Rule = true
 		} else {
 			snatV6Rule = "snat ip6 to " + cfg.expectedManagementPortIP
 			wantSNATV6Rule = true
 			returnNonLocalV6Rule = "meta nfproto ipv6 fib saddr type != local"
-			wantReturnNonLocalV6Rule = cfg.isRoutingAdvertised
+			wantReturnNonLocalV6Rule = isPodNetworkAdvertised
 			returnMgmtIPV6Rule = "meta nfproto ipv6 ip6 saddr " + cfg.expectedManagementPortIP
 			wantReturnMgmtIPV6Rule = true
 		}
@@ -171,7 +173,6 @@ func checkMgmtTestPortIpsAndRoutes(
 		g.Expect(foundAddr).To(BeTrue(), "did not find expected management port IP %s", mgtPortAddrs[i].String())
 
 		// Check whether the routes have been added
-		j := 0
 		gatewayIP := ovntest.MustParseIP(cfg.expectedGatewayIP)
 		subnets := []string{cfg.clusterCIDR}
 		for _, subnet := range subnets {
@@ -188,9 +189,31 @@ func checkMgmtTestPortIpsAndRoutes(
 				}
 			}
 			g.Expect(foundRoute).To(BeTrue(), "did not find expected route to %s", subnet)
+			if cfg.isNoOverlay {
+				route := &netlink.Route{Dst: dstIPnet, Table: ovnkubeMgmPortRT}
+				filterMask := netlink.RT_FILTER_DST | netlink.RT_FILTER_TABLE
+				foundRoute := false
+				routes, err := netlink.RouteListFiltered(cfg.family, route, filterMask)
+				g.Expect(err).ToNot(HaveOccurred())
+				for _, r := range routes {
+					if r.Gw.Equal(gatewayIP) && r.LinkIndex == mgmtPortLink.Attrs().Index {
+						foundRoute = true
+						break
+					}
+				}
+				g.Expect(foundRoute).To(BeTrue(), "did not find expected no-overlay table %d route to %s", ovnkubeMgmPortRT, subnet)
+
+				rule := netlink.NewRule()
+				rule.Priority = ovnkubeNoOverlayPodRulePriority
+				rule.Table = ovnkubeMgmPortRT
+				rule.IifName = "lo"
+				rule.Dst = dstIPnet
+				rule.Family = cfg.family
+				foundRule, err := noOverlayPodRoutingRuleExists(rule)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(foundRule).To(BeTrue(), "did not find expected no-overlay pod routing rule to %s", subnet)
+			}
 		}
-		j++
-		g.Expect(j).To(Equal(1))
 
 		// Check whether router IP has been added in the arp entry for mgmt port
 		neighbours, err := netlink.NeighList(mgmtPortLink.Attrs().Index, cfg.family)
@@ -232,7 +255,7 @@ func testManagementPort(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.Net
 	fexec.AddFakeCmdsNoOutputNoError([]string{
 		"ovs-vsctl --timeout=15 -- --if-exists del-port br-int " + legacyMgtPort + " -- --may-exist add-port br-int " + mgtPort + " -- set interface " + mgtPort + " mac=\"" + mgmtPortMAC.String() + "\"" + " type=internal mtu_request=" + mtu + " external-ids:iface-id=" + legacyMgtPort,
 	})
-	var isRoutingAdvertised bool
+	var isRoutingAdvertised, isNoOverlay bool
 	for _, cfg := range configs {
 		// We do not enable per-interface forwarding for IPv6
 		if cfg.family == netlink.FAMILY_V4 {
@@ -242,6 +265,7 @@ func testManagementPort(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.Net
 			})
 		}
 		isRoutingAdvertised = isRoutingAdvertised || cfg.isRoutingAdvertised
+		isNoOverlay = isNoOverlay || cfg.isNoOverlay
 	}
 
 	err := util.SetExec(fexec)
@@ -274,7 +298,11 @@ func testManagementPort(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.Net
 		KubeClient: fakeClient,
 	}
 
-	netInfo.On("Transport").Return("")
+	transport := ""
+	if isNoOverlay {
+		transport = types.NetworkTransportNoOverlay
+	}
+	netInfo.On("Transport").Return(transport)
 	if isRoutingAdvertised {
 		netInfo.On("GetPodNetworkAdvertisedOnNodeVRFs", nodeName).Return([]string{"vrf"})
 	} else {
@@ -282,6 +310,12 @@ func testManagementPort(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.Net
 	}
 	_, err = config.InitConfig(ctx, fexec, nil)
 	Expect(err).NotTo(HaveOccurred())
+	if isNoOverlay {
+		config.Default.Transport = types.NetworkTransportNoOverlay
+		config.OVNKubernetesFeature.EnableRouteAdvertisements = true
+		config.NoOverlay.OutboundSNAT = types.NoOverlaySNATEnabled
+		config.NoOverlay.Routing = config.NoOverlayRoutingManaged
+	}
 	kubeInterface := &kube.KubeOVN{Kube: kube.Kube{KClient: fakeClient}, ANPClient: anpfake.NewSimpleClientset(),
 		EIPClient: egressipv1fake.NewSimpleClientset(), EgressFirewallClient: &egressfirewallfake.Clientset{},
 		EgressServiceClient: &egressservicefake.Clientset{}, NetworkQoSClient: &networkqosfake.Clientset{}}
@@ -319,6 +353,9 @@ func testManagementPort(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.Net
 		Expect(err).NotTo(HaveOccurred())
 		defer close(stop)
 		Eventually(checkMgmtTestPortIpsAndRoutes).WithArguments(configs, mgtPort, mgtPortAddrs, expectedLRPMAC).Should(Succeed())
+		if isNoOverlay {
+			checkNoOverlayPodRouteLookup(configs, mgtPort)
+		}
 		return nil
 	})
 	Expect(err).NotTo(HaveOccurred())
@@ -329,6 +366,50 @@ func testManagementPort(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.Net
 	checkMgmtPortTestNFTables(configs, mgtPort)
 
 	Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
+}
+
+func checkNoOverlayPodRouteLookup(configs []managementPortTestConfig, mgmtPortName string) {
+	mgmtPortLink, err := netlink.LinkByName(mgmtPortName)
+	Expect(err).NotTo(HaveOccurred())
+
+	bgpLink := &netlink.Dummy{
+		LinkAttrs: netlink.LinkAttrs{Name: "bgp0"},
+	}
+	Expect(netlink.LinkAdd(bgpLink)).To(Succeed())
+	bgpRouteLink, err := netlink.LinkByName("bgp0")
+	Expect(err).NotTo(HaveOccurred())
+	Expect(netlink.LinkSetUp(bgpRouteLink)).To(Succeed())
+
+	for _, cfg := range configs {
+		if !cfg.isNoOverlay {
+			continue
+		}
+		remoteNodeSubnet := ovntest.MustParseIPNet("10.1.2.0/24")
+		if cfg.family == netlink.FAMILY_V6 {
+			remoteNodeSubnet = ovntest.MustParseIPNet("fda6:0:0:2::/64")
+		}
+		gatewayIP := ovntest.MustParseIP(cfg.expectedGatewayIP)
+
+		Expect(netlink.RouteAdd(&netlink.Route{
+			LinkIndex: bgpRouteLink.Attrs().Index,
+			Dst:       remoteNodeSubnet,
+			Scope:     netlink.SCOPE_LINK,
+		})).To(Succeed())
+
+		mainRoute := &netlink.Route{Dst: remoteNodeSubnet}
+		routes, err := netlink.RouteListFiltered(cfg.family, mainRoute, netlink.RT_FILTER_DST)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(routes).NotTo(BeEmpty())
+		Expect(routes[0].LinkIndex).To(Equal(bgpRouteLink.Attrs().Index))
+
+		podSubnet := ovntest.MustParseIPNet(cfg.clusterCIDR)
+		tableRoute := &netlink.Route{Dst: podSubnet, Table: ovnkubeMgmPortRT}
+		routes, err = netlink.RouteListFiltered(cfg.family, tableRoute, netlink.RT_FILTER_DST|netlink.RT_FILTER_TABLE)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(routes).NotTo(BeEmpty())
+		Expect(routes[0].LinkIndex).To(Equal(mgmtPortLink.Attrs().Index))
+		Expect(routes[0].Gw.Equal(gatewayIP)).To(BeTrue(), "expected route gateway %s, got %s", gatewayIP, routes[0].Gw)
+	}
 }
 
 func testManagementPortDPU(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.NetNS,
@@ -589,6 +670,49 @@ var _ = Describe("Management Port tests", func() {
 		AfterEach(func() {
 			netlinkOpsMock.AssertExpectations(t)
 			Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc)
+		})
+
+		Context("Reconciling no-overlay pod routing", func() {
+			It("ignores no-overlay pod routing rules for other input interfaces", func() {
+				podSubnet := ovntest.MustParseIPNet("10.1.0.0/16")
+				rule := newNoOverlayPodRoutingRule(podSubnet)
+				otherRule := *rule
+				otherRule.IifName = "eth0"
+				ruleFilterMask := netlink.RT_FILTER_PRIORITY | netlink.RT_FILTER_TABLE | netlink.RT_FILTER_DST
+				netlinkOpsMock.On("RuleListFiltered", netlink.FAMILY_V4, rule, ruleFilterMask).Return([]netlink.Rule{otherRule}, nil)
+
+				exists, err := noOverlayPodRoutingRuleExists(rule)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(exists).To(BeFalse())
+			})
+
+			It("removes stale no-overlay pod routing in local gateway mode", func() {
+				config.Default.Transport = types.NetworkTransportNoOverlay
+				config.Gateway.Mode = config.GatewayModeLocal
+
+				podSubnet := ovntest.MustParseIPNet("10.1.0.0/16")
+				cfg := &managementPortIPFamilyConfig{
+					podSubnets: []*net.IPNet{podSubnet},
+				}
+				rule := newNoOverlayPodRoutingRule(podSubnet)
+				ruleFilterMask := netlink.RT_FILTER_PRIORITY | netlink.RT_FILTER_TABLE | netlink.RT_FILTER_DST
+				netlinkOpsMock.On("RuleListFiltered", netlink.FAMILY_V4, rule, ruleFilterMask).Return([]netlink.Rule{*rule}, nil)
+				netlinkOpsMock.On("RuleDel", rule).Return(nil)
+
+				routeFilter := &netlink.Route{Dst: podSubnet, Table: ovnkubeMgmPortRT}
+				routeFilterMask := netlink.RT_FILTER_DST | netlink.RT_FILTER_TABLE
+				staleRoute := netlink.Route{
+					LinkIndex: 10,
+					Gw:        ovntest.MustParseIP("10.1.1.1"),
+					Dst:       podSubnet,
+					Table:     ovnkubeMgmPortRT,
+				}
+				netlinkOpsMock.On("RouteListFiltered", netlink.FAMILY_V4, routeFilter, routeFilterMask).Return([]netlink.Route{staleRoute}, nil)
+				netlinkOpsMock.On("RouteDel", &staleRoute).Return(nil)
+
+				err := reconcileNoOverlayPodRouteViaManagementPort(linkMock, cfg, routemanager.NewController())
+				Expect(err).NotTo(HaveOccurred())
+			})
 		})
 
 		Context("Syncing netdevice interface", func() {
@@ -1028,6 +1152,72 @@ var _ = Describe("Management Port tests", func() {
 				err := app.Run([]string{
 					app.Name,
 					"--cluster-subnets=" + v4clusterCIDR,
+				})
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			ovntest.OnSupportedPlatformsIt("sets up no-overlay pod routing through the management port for IPv4 clusters", func() {
+				app.Action = func(ctx *cli.Context) error {
+					testManagementPort(ctx, fexec, testNS,
+						[]managementPortTestConfig{
+							{
+								family: netlink.FAMILY_V4,
+
+								clusterCIDR: v4clusterCIDR,
+								nodeSubnet:  v4nodeSubnet,
+
+								expectedManagementPortIP: v4mgtPortIP,
+								expectedGatewayIP:        v4gwIP,
+
+								isNoOverlay: true,
+							},
+						}, v4lrpMAC, false)
+					return nil
+				}
+				err := app.Run([]string{
+					app.Name,
+					"--cluster-subnets=" + v4clusterCIDR,
+					"--gateway-mode=" + string(config.GatewayModeShared),
+				})
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			ovntest.OnSupportedPlatformsIt("sets up no-overlay pod routing through the management port for dual-stack clusters", func() {
+				app.Action = func(ctx *cli.Context) error {
+					testManagementPort(ctx, fexec, testNS,
+						[]managementPortTestConfig{
+							{
+								family: netlink.FAMILY_V4,
+
+								clusterCIDR: v4clusterCIDR,
+								serviceCIDR: v4serviceCIDR,
+								nodeSubnet:  v4nodeSubnet,
+
+								expectedManagementPortIP: v4mgtPortIP,
+								expectedGatewayIP:        v4gwIP,
+
+								isNoOverlay: true,
+							},
+							{
+								family: netlink.FAMILY_V6,
+
+								clusterCIDR: v6clusterCIDR,
+								serviceCIDR: v6serviceCIDR,
+								nodeSubnet:  v6nodeSubnet,
+
+								expectedManagementPortIP: v6mgtPortIP,
+								expectedGatewayIP:        v6gwIP,
+
+								isNoOverlay: true,
+							},
+						}, v4lrpMAC, false)
+					return nil
+				}
+				err := app.Run([]string{
+					app.Name,
+					"--cluster-subnets=" + v4clusterCIDR + "," + v6clusterCIDR,
+					"--k8s-service-cidr=" + v4serviceCIDR + "," + v6serviceCIDR,
+					"--gateway-mode=" + string(config.GatewayModeShared),
 				})
 				Expect(err).NotTo(HaveOccurred())
 			})
