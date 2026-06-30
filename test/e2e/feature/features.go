@@ -32,6 +32,7 @@ var (
 	Unidle                = New("Unidle")
 	NetworkQos            = New("NetworkQos")
 	NetworkConnect        = New("NetworkConnect")
+	UDNVIPLoadBalancer    = New("UDNVIPLoadBalancer")
 )
 
 func New(name string) ginkgo.Labels {
