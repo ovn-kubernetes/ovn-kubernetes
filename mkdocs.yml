@@ -101,6 +101,7 @@ nav:
   - Developer Guide:
       - Contributing Guide: governance/CONTRIBUTING.md
       - Governance: governance/GOVERNANCE.md
+      - Project Scope: governance/SCOPE.md
       - Reviewing Guide: governance/REVIEWING.md
       - Project Areas: developer-guide/areas.md
       - Coding Guide: developer-guide/developer.md
