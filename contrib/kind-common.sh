@@ -1572,9 +1572,12 @@ deploy_frr_external_container() {
   # can peer with acting as BGP (reflector) external gateway
   pushd "${FRR_TMP_DIR}"/frr-k8s/hack/demo || exit 1
   # modify config template to configure neighbors as route reflector clients
-  # First check if IPv4 network already exists
-  grep -q 'network '"${BGP_SERVER_NET_SUBNET_IPV4}" frr/frr.conf.tmpl || \
-    sed -i '/address-family ipv4 unicast/a \ \ network '"${BGP_SERVER_NET_SUBNET_IPV4}"'' frr/frr.conf.tmpl
+  # First check if IPv4 networks already exist
+  local ipv4_external_prefix
+  for ipv4_external_prefix in ${BGP_SERVER_NET_SUBNET_IPV4} ${BGP_ADDITIONAL_EXTERNAL_PREFIXES_IPV4:-}; do
+    grep -q 'network '"${ipv4_external_prefix}" frr/frr.conf.tmpl || \
+      sed -i '/address-family ipv4 unicast/a \ \ network '"${ipv4_external_prefix}"'' frr/frr.conf.tmpl
+  done
 
   # Add route reflector client config
   sed -i '/remote-as 64512/a \ neighbor {{ . }} route-reflector-client' frr/frr.conf.tmpl
@@ -1688,10 +1691,24 @@ deploy_bgp_external_server() {
   $OCI_BIN run  --cap-add NET_ADMIN --user 0  -d --network bgpnet  --rm  --name bgpserver -p "${BGP_SERVER_HOST_PORT}:8080"  registry.k8s.io/e2e-test-images/agnhost:2.45 netexec
   # let's make the bgp external server have its default route towards FRR router so that we don't need to add routes during tests back to the pods in the
   # cluster for return traffic
-  local bgp_network_frr_v4 bgp_network_frr_v6 kind_network_frr_v4 kind_network_frr_v6
+  local bgp_network_frr_v4 bgp_network_frr_v6 kind_network_frr_v4 kind_network_frr_v6 ipv4_external_prefix
   bgp_network_frr_v4=$($OCI_BIN inspect -f '{{.NetworkSettings.Networks.bgpnet.IPAddress}}' frr)
   echo "FRR bgp network IPv4: ${bgp_network_frr_v4}"
   $OCI_BIN exec bgpserver ip route replace default via "$bgp_network_frr_v4"
+  if [ -n "${BGP_ADDITIONAL_EXTERNAL_PREFIXES_IPV4:-}" ]; then
+    local frr_default_gw_v4
+    frr_default_gw_v4=$($OCI_BIN exec frr ip -4 route show default | awk '{print $3; exit}')
+    if [ -z "${frr_default_gw_v4}" ]; then
+      echo "error: could not determine FRR default IPv4 gateway for additional external prefixes" >&2
+      exit 1
+    fi
+    # bgpnet is connected; extra host prefixes need RIB routes before strict mode
+    # drops FRR's default route, or BGP will not advertise them.
+    for ipv4_external_prefix in ${BGP_ADDITIONAL_EXTERNAL_PREFIXES_IPV4}; do
+      echo "Adding FRR route for external IPv4 prefix ${ipv4_external_prefix} via ${frr_default_gw_v4}"
+      $OCI_BIN exec frr ip route replace "${ipv4_external_prefix}" via "${frr_default_gw_v4}"
+    done
+  fi
   if  [ "$PLATFORM_IPV6_SUPPORT" == true ] ; then
     bgp_network_frr_v6=$($OCI_BIN inspect -f '{{.NetworkSettings.Networks.bgpnet.GlobalIPv6Address}}' frr)
     echo "FRR bgp network IPv6: ${bgp_network_frr_v6}"
@@ -1818,6 +1835,8 @@ wait_for_frr_k8s() {
 apply_frr_k8s_receive_config() {
   # apply a BGP peer configration with the external gateway that does not
   # exchange routes
+  local ipv4_external_prefix LINE_NUM
+
   pushd "${FRR_TMP_DIR}"/frr-k8s/hack/demo/configs || exit 1
   sed 's/mode: all/mode: filtered/g' receive_all.yaml > receive_filtered.yaml
   if frr_k8s_remote_enabled && [ -n "${DPU_SIM_GATEWAY_NETWORK:-}" ]; then
@@ -1825,6 +1844,11 @@ apply_frr_k8s_receive_config() {
   fi
   # Allow receiving the bgp external server's prefix
   sed -i '/mode: filtered/a\            prefixes:\n            - prefix: '"${BGP_SERVER_NET_SUBNET_IPV4}"'' receive_filtered.yaml
+  for ipv4_external_prefix in ${BGP_ADDITIONAL_EXTERNAL_PREFIXES_IPV4:-}; do
+    for LINE_NUM in $(grep -n "prefix: ${BGP_SERVER_NET_SUBNET_IPV4}" receive_filtered.yaml | cut -d ':' -f 1 | sort -rn); do
+      sed -i "${LINE_NUM}a\\            - prefix: ${ipv4_external_prefix}" receive_filtered.yaml
+    done
+  done
   # If IPv6 is enabled, add the IPv6 prefix as well
   if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     # Find all line numbers where the IPv4 prefix is defined

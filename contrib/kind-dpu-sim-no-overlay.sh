@@ -69,6 +69,24 @@ resolve_kind_provider() {
   exit 1
 }
 
+detect_kind_external_host_ipv4() {
+  ip -j route get 1 2>/dev/null | jq -r '.[0].prefsrc // empty' 2>/dev/null || true
+}
+
+add_ipv4_external_prefix() {
+  local prefix=$1
+
+  case " ${BGP_ADDITIONAL_EXTERNAL_PREFIXES_IPV4:-} " in
+    *" ${prefix} "*) return ;;
+  esac
+
+  if [ -n "${BGP_ADDITIONAL_EXTERNAL_PREFIXES_IPV4:-}" ]; then
+    BGP_ADDITIONAL_EXTERNAL_PREFIXES_IPV4="${BGP_ADDITIONAL_EXTERNAL_PREFIXES_IPV4} ${prefix}"
+  else
+    BGP_ADDITIONAL_EXTERNAL_PREFIXES_IPV4="${prefix}"
+  fi
+}
+
 cleanup_bgp_artifacts() {
   local provider=$1
 
@@ -96,6 +114,13 @@ BGP_SERVER_NET_SUBNET_IPV4=${BGP_SERVER_NET_SUBNET_IPV4:-172.27.0.0/16}
 BGP_SERVER_NET_SUBNET_IPV6=${BGP_SERVER_NET_SUBNET_IPV6:-fc00:f853:ccd:e797::/64}
 export BGP_SERVER_NET_SUBNET_IPV4
 export BGP_SERVER_NET_SUBNET_IPV6
+KIND_EXTERNAL_HOST_IPV4=${KIND_EXTERNAL_HOST_IPV4:-$(detect_kind_external_host_ipv4)}
+if [ -n "${KIND_EXTERNAL_HOST_IPV4}" ]; then
+  add_ipv4_external_prefix "${KIND_EXTERNAL_HOST_IPV4}/32"
+  export BGP_ADDITIONAL_EXTERNAL_PREFIXES_IPV4
+else
+  echo "warning: could not determine Kind external host IPv4" >&2
+fi
 DPU_SIM_UPLINK_ENABLE=${DPU_SIM_UPLINK_ENABLE:-true}
 DPU_SIM_UPLINK_NETWORK=${DPU_SIM_UPLINK_NETWORK:-dpu-sim-uplink}
 DPU_SIM_UPLINK_SUBNET=${DPU_SIM_UPLINK_SUBNET:-172.31.0.0/24}
@@ -380,6 +405,8 @@ fi
 echo "Using KIND_EXPERIMENTAL_PROVIDER=${KIND_EXPERIMENTAL_PROVIDER}"
 echo "Using KIND_HELM_OVN_TIMEOUT=${KIND_HELM_OVN_TIMEOUT}"
 echo "Using BGP_SERVER_NET_SUBNET_IPV4=${BGP_SERVER_NET_SUBNET_IPV4}"
+echo "Using KIND_EXTERNAL_HOST_IPV4=${KIND_EXTERNAL_HOST_IPV4:-}"
+echo "Using BGP_ADDITIONAL_EXTERNAL_PREFIXES_IPV4=${BGP_ADDITIONAL_EXTERNAL_PREFIXES_IPV4:-}"
 
 cleanup_bgp_artifacts "${KIND_EXPERIMENTAL_PROVIDER}"
 
