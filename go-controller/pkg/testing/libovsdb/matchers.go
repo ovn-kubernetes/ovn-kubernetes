@@ -135,7 +135,7 @@ func testDataEqual(x, y TestData, ignoreUUIDs bool) bool {
 	if v1.Type() != v2.Type() {
 		return false
 	}
-	if v1.Kind() != reflect.Ptr {
+	if v1.Kind() != reflect.Pointer {
 		return false
 	}
 	v1 = v1.Elem()
@@ -150,7 +150,7 @@ func testDataEqual(x, y TestData, ignoreUUIDs bool) bool {
 		f1 := v1.Field(i)
 		f2 := v2.Field(i)
 		switch f1.Kind() {
-		case reflect.Ptr:
+		case reflect.Pointer:
 			uv1 := reflect.Indirect(f1)
 			uv2 := reflect.Indirect(f2)
 			switch uv1.Kind() {

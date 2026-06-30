@@ -21,6 +21,11 @@ function gocmd {
 # introduced in K8s 1.35, causing informers to hang waiting for bookmark events.
 # See: https://github.com/kubernetes/kubernetes/issues/135895
 export KUBE_FEATURE_WatchListClient=false
+export KUBE_FEATURE_StaleControllerConsistencyJob=false
+export KUBE_FEATURE_StaleControllerConsistencyReplicaSet=false
+export KUBE_FEATURE_StaleControllerConsistencyStatefulSet=false
+export KUBE_FEATURE_StaleControllerConsistencyDaemonSet=false
+export KUBE_FEATURE_AtomicFIFO=false
 
 cd "${OVN_KUBE_ROOT}"
 

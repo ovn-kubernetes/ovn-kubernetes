@@ -94,7 +94,7 @@ func (oc *DefaultNetworkController) recordPodEvent(reason string, addErr error, 
 			pod.Namespace, pod.Name, err)
 	} else {
 		klog.V(5).Infof("Posting a %s event for Pod %s/%s", corev1.EventTypeWarning, pod.Namespace, pod.Name)
-		oc.recorder.Eventf(podRef, corev1.EventTypeWarning, reason, addErr.Error())
+		oc.recorder.Eventf(podRef, corev1.EventTypeWarning, reason, "%s", addErr.Error())
 	}
 }
 
