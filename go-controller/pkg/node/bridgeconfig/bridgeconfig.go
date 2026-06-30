@@ -18,7 +18,7 @@ import (
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/udn"
-	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
+	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/egressip"
 	nodetypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/types"
 	nodeutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/util"
@@ -81,6 +81,7 @@ type BridgeConfiguration struct {
 
 	// variables that are only set on creation and never changed
 	// don't require mutex lock to read
+	ovsClient  libovsdbclient.Client
 	nodeName   string
 	bridgeName string
 	uplinkName string
@@ -119,7 +120,8 @@ func NewBridgeConfiguration(ovsClient libovsdbclient.Client, intfName, nodeName,
 		defaultNetConfig.ManagementIPs = append(defaultNetConfig.ManagementIPs, util.GetNodeManagementIfAddr(subnet))
 	}
 	res := BridgeConfiguration{
-		nodeName: nodeName,
+		ovsClient: ovsClient,
+		nodeName:  nodeName,
 		netConfig: map[string]*BridgeUDNConfiguration{
 			types.DefaultNetworkName: defaultNetConfig,
 		},
@@ -157,7 +159,7 @@ func NewBridgeConfiguration(ovsClient libovsdbclient.Client, intfName, nodeName,
 	}
 
 	if isGWAcclInterface {
-		bridgeName, _, err := util.RunOVSVsctl("port-to-br", intfRep)
+		bridge, err := ovsops.GetPortBridge(ovsClient, intfRep)
 		if err != nil {
 			return nil, fmt.Errorf("failed to find bridge that has port %s: %w", intfRep, err)
 		}
@@ -165,62 +167,73 @@ func NewBridgeConfiguration(ovsClient libovsdbclient.Client, intfName, nodeName,
 		if err != nil {
 			return nil, fmt.Errorf("failed to get netdevice link for %s: %w", gwIntf, err)
 		}
-		uplinkName, err := util.GetNicName(bridgeName)
+		uplinkName, err := util.GetNicName(ovsClient, bridge.Name)
 		if err != nil {
-			return nil, fmt.Errorf("failed to find nic name for bridge %s: %w", bridgeName, err)
+			return nil, fmt.Errorf("failed to find nic name for bridge %s: %w", bridge.Name, err)
 		}
-		res.bridgeName = bridgeName
+		res.bridgeName = bridge.Name
 		res.uplinkName = uplinkName
 		res.gwIfaceRep = intfRep
 		res.gwIface = gwIntf
 		res.macAddress = link.Attrs().HardwareAddr
-	} else if bridgeName, _, err := util.RunOVSVsctl("port-to-br", intfName); err == nil {
-		// This is an OVS bridge's internal port
-		uplinkName, err := util.GetNicName(bridgeName)
-		if err != nil {
-			return nil, fmt.Errorf("failed to find nic name for bridge %s: %w", bridgeName, err)
-		}
-		res.bridgeName = bridgeName
-		res.gwIface = bridgeName
-		res.uplinkName = uplinkName
-		gwIntf = bridgeName
-	} else if _, _, err := util.RunOVSVsctl("br-exists", intfName); err != nil {
-		// This is not a OVS bridge. We need to create a OVS bridge
-		// and add cluster.GatewayIntf as a port of that bridge.
-		bridgeName, err := util.NicToBridge(intfName)
-		if err != nil {
-			return nil, fmt.Errorf("nicToBridge failed for %s: %w", intfName, err)
-		}
-		if config.Gateway.DPUHostGatewayRepresentorInterface != "" {
-			_, stderr, repErr := util.RunOVSVsctl(
-				"--", "--may-exist", "add-port", bridgeName, config.Gateway.DPUHostGatewayRepresentorInterface,
-				"--", "set", "port", config.Gateway.DPUHostGatewayRepresentorInterface, "other-config:transient=true",
-			)
-			if repErr != nil {
-				return nil, fmt.Errorf("failed to add DPU host gateway representor %s to bridge %s: %w, stderr: %s",
-					config.Gateway.DPUHostGatewayRepresentorInterface, bridgeName, repErr, stderr)
-			}
-			klog.Infof("Adding host representor interface %s to bridge %s", config.Gateway.DPUHostGatewayRepresentorInterface, bridgeName)
-			res.gwIfaceRep = config.Gateway.DPUHostGatewayRepresentorInterface
-		}
-		res.bridgeName = bridgeName
-		res.gwIface = bridgeName
-		res.uplinkName = intfName
-		gwIntf = bridgeName
 	} else {
-		// gateway interface is an OVS bridge
-		uplinkName, err := getIntfName(intfName)
+		bridge, err := ovsops.GetPortBridge(ovsClient, intfName)
 		if err != nil {
-			if config.Gateway.Mode == config.GatewayModeLocal && config.Gateway.AllowNoUplink {
-				klog.Infof("Could not find uplink for %s, setup gateway bridge with no uplink port, egress IP and egress GW will not work", intfName)
+			if !errors.Is(err, libovsdbclient.ErrNotFound) {
+				return nil, fmt.Errorf("failed to find bridge that has port %s: %w", intfName, err)
+			}
+			if _, err := ovsops.GetBridge(ovsClient, intfName); err != nil {
+				if !errors.Is(err, libovsdbclient.ErrNotFound) {
+					return nil, fmt.Errorf("failed to check whether %s is an OVS bridge: %w", intfName, err)
+				}
+				// This is not a OVS bridge. We need to create a OVS bridge
+				// and add cluster.GatewayIntf as a port of that bridge.
+				bridgeName, err := util.NicToBridge(ovsClient, intfName)
+				if err != nil {
+					return nil, fmt.Errorf("nicToBridge failed for %s: %w", intfName, err)
+				}
+				if config.Gateway.DPUHostGatewayRepresentorInterface != "" {
+					_, stderr, repErr := util.RunOVSVsctl(
+						"--", "--may-exist", "add-port", bridgeName, config.Gateway.DPUHostGatewayRepresentorInterface,
+						"--", "set", "port", config.Gateway.DPUHostGatewayRepresentorInterface, "other-config:transient=true",
+					)
+					if repErr != nil {
+						return nil, fmt.Errorf("failed to add DPU host gateway representor %s to bridge %s: %w, stderr: %s",
+							config.Gateway.DPUHostGatewayRepresentorInterface, bridgeName, repErr, stderr)
+					}
+					klog.Infof("Adding host representor interface %s to bridge %s", config.Gateway.DPUHostGatewayRepresentorInterface, bridgeName)
+					res.gwIfaceRep = config.Gateway.DPUHostGatewayRepresentorInterface
+				}
+				res.bridgeName = bridgeName
+				res.gwIface = bridgeName
+				res.uplinkName = intfName
+				gwIntf = bridgeName
 			} else {
-				return nil, fmt.Errorf("failed to find intfName for %s: %w", intfName, err)
+				// gateway interface is an OVS bridge
+				uplinkName, err := getIntfName(ovsClient, intfName)
+				if err != nil {
+					if config.Gateway.Mode == config.GatewayModeLocal && config.Gateway.AllowNoUplink {
+						klog.Infof("Could not find uplink for %s, setup gateway bridge with no uplink port, egress IP and egress GW will not work", intfName)
+					} else {
+						return nil, fmt.Errorf("failed to find intfName for %s: %w", intfName, err)
+					}
+				} else {
+					res.uplinkName = uplinkName
+				}
+				res.bridgeName = intfName
+				res.gwIface = intfName
 			}
 		} else {
+			// This is an OVS bridge's internal port
+			uplinkName, err := util.GetNicName(ovsClient, bridge.Name)
+			if err != nil {
+				return nil, fmt.Errorf("failed to find nic name for bridge %s: %w", bridge.Name, err)
+			}
+			res.bridgeName = bridge.Name
+			res.gwIface = bridge.Name
 			res.uplinkName = uplinkName
+			gwIntf = bridge.Name
 		}
-		res.bridgeName = intfName
-		res.gwIface = intfName
 	}
 	// Now, we get IP addresses for the bridge
 	if len(gwIPs) > 0 {
@@ -274,13 +287,13 @@ func (b *BridgeConfiguration) setDPUHostGatewayConfiguration(nodeName string) er
 		// When the DPU host representor was not provided explicitly, discover
 		// it by inspecting the ports attached to the gateway bridge.
 		klog.V(5).Infof("No DPU host gateway representor configured, discovering host representor from bridge %s", b.bridgeName)
-		hostRep, err := util.GetDPUOps().GetDPUHostRepInterface(b.bridgeName)
+		hostRep, err := util.GetDPUOps().GetDPUHostRepInterface(b.ovsClient, b.bridgeName)
 		if err != nil {
 			return err
 		}
 		b.gwIfaceRep = hostRep
 	}
-	macAddress, err := util.GetDPUOps().GetHostGatewayMACAddress(b.bridgeName, nodeName)
+	macAddress, err := util.GetDPUOps().GetHostGatewayMACAddress(b.ovsClient, b.bridgeName, nodeName)
 	if err != nil {
 		return err
 	}
@@ -577,12 +590,12 @@ func gatewayReady(patchPort string) bool {
 	return true
 }
 
-func getIntfName(gatewayIntf string) (string, error) {
+func getIntfName(ovsClient libovsdbclient.Client, gatewayIntf string) (string, error) {
 	// The given (or autodetected) interface is an OVS bridge and this could be
 	// created by us using util.NicToBridge() or it was pre-created by the user.
 
 	// Is intfName a port of gatewayIntf?
-	intfName, err := util.GetNicName(gatewayIntf)
+	intfName, err := util.GetNicName(ovsClient, gatewayIntf)
 	if err != nil {
 		return "", err
 	}

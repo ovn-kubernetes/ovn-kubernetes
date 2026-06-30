@@ -7,9 +7,20 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+	"github.com/ovn-kubernetes/libovsdb/model"
+	"github.com/ovn-kubernetes/libovsdb/ovsdb"
+
+	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
 
-func clearPodBandwidth(sandboxID string) error {
+func clearPodBandwidth(ovsClient libovsdbclient.Client, sandboxID string) error {
+	if ovsClient != nil {
+		return clearPodBandwidthWithOVSClient(ovsClient, sandboxID)
+	}
+
 	// interfaces will have the same name as ports
 	portList, err := ovsFind("interface", "name", "external-ids:sandbox="+sandboxID)
 	if err != nil {
@@ -17,6 +28,50 @@ func clearPodBandwidth(sandboxID string) error {
 	}
 
 	return clearPodBandwidthForPorts(portList, sandboxID)
+}
+
+func clearPodBandwidthWithOVSClient(ovsClient libovsdbclient.Client, sandboxID string) error {
+	ifaces, err := ovsops.FindInterfacesWithPredicate(ovsClient, func(iface *vswitchd.Interface) bool {
+		return iface.ExternalIDs["sandbox"] == sandboxID
+	})
+	if err != nil {
+		return err
+	}
+	portNames := make(map[string]struct{}, len(ifaces))
+	for _, iface := range ifaces {
+		portNames[iface.Name] = struct{}{}
+	}
+
+	var ops []ovsdb.Operation
+	ports, err := ovsops.FindOVSPortsWithPredicate(ovsClient, func(port *vswitchd.Port) bool {
+		_, ok := portNames[port.Name]
+		return ok
+	})
+	if err != nil {
+		return err
+	}
+	for _, port := range ports {
+		update := &vswitchd.Port{UUID: port.UUID}
+		portOps, err := ovsClient.Where(update).Update(update, &update.QOS)
+		if err != nil {
+			return err
+		}
+		ops = append(ops, portOps...)
+	}
+
+	qos := &vswitchd.QoS{}
+	qosOps, err := ovsClient.WhereAll(qos, model.Condition{
+		Field:    &qos.ExternalIDs,
+		Function: ovsdb.ConditionIncludes,
+		Value:    map[string]string{"sandbox": sandboxID},
+	}).Delete()
+	if err != nil {
+		return err
+	}
+	ops = append(ops, qosOps...)
+
+	_, err = ovsops.TransactAndCheck(ovsClient, ops)
+	return err
 }
 
 func clearPodBandwidthForPorts(portList []string, sandboxID string) error {
