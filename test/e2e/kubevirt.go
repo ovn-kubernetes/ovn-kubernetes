@@ -57,9 +57,6 @@ import (
 	"k8s.io/utils/ptr"
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 
-	butaneconfig "github.com/coreos/butane/config"
-	butanecommon "github.com/coreos/butane/config/common"
-
 	ipamclaimsv1alpha1 "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1"
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
@@ -124,8 +121,6 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 		clientSet           kubernetes.Interface
 		nadClient           nadclient.K8sCniCncfIoV1Interface
 		providerCtx         infraapi.Context
-		// Systemd resolvd prevent resolving kube api service by fqdn, so
-		// we replace it here with NetworkManager
 
 		isDualStack = func() bool {
 			GinkgoHelper()
@@ -803,34 +798,19 @@ fi
 			checkLiveMigrationFailed(vmi.Name)
 		}
 
-		ipv4 = func(iface kubevirt.Interface) []kubevirt.Address {
-			return iface.IPv4.Address
-		}
-
-		ipv6 = func(iface kubevirt.Interface) []kubevirt.Address {
-			return iface.IPv6.Address
-		}
-
-		findNonLoopbackInterface = func(interfaces []kubevirt.Interface) *kubevirt.Interface {
-			for _, iface := range interfaces {
-				if iface.Name != "lo" {
-					return &iface
-				}
-			}
-			return nil
-		}
-
-		addressByFamily = func(familyFn func(iface kubevirt.Interface) []kubevirt.Address, vmi *kubevirtv1.VirtualMachineInstance) func() ([]kubevirt.Address, error) {
-			return func() ([]kubevirt.Address, error) {
-				networkState, err := kubevirt.RetrieveNetworkState(virtClient, vmi)
+		globalAddressesByFamily = func(isOfFamily func(string) bool, vmi *kubevirtv1.VirtualMachineInstance) func() ([]string, error) {
+			return func() ([]string, error) {
+				addresses, err := kubevirt.RetrieveAllGlobalAddressesFromGuest(virtClient, vmi)
 				if err != nil {
 					return nil, err
 				}
-				iface := findNonLoopbackInterface(networkState.Interfaces)
-				if iface == nil {
-					return nil, fmt.Errorf("missing non loopback interface")
+				familyAddresses := []string{}
+				for _, address := range addresses {
+					if isOfFamily(address) {
+						familyAddresses = append(familyAddresses, address)
+					}
 				}
-				return familyFn(*iface), nil
+				return familyAddresses, nil
 			}
 		}
 
@@ -912,31 +892,30 @@ fi
 			waitVirtualMachineInstanceReadinessWith(vmi, corev1.ConditionFalse)
 		}
 
-		waitVirtualMachineAddresses = func(vmi *kubevirtv1.VirtualMachineInstance) []kubevirt.Address {
+		waitVirtualMachineAddresses = func(vmi *kubevirtv1.VirtualMachineInstance) {
 			GinkgoHelper()
 			step := by(vmi.Name, "Wait for virtual machine to receive IPv4 address from DHCP")
-			Eventually(addressByFamily(ipv4, vmi)).
+			Eventually(globalAddressesByFamily(utilnet.IsIPv4String, vmi)).
 				WithPolling(time.Second).
 				WithTimeout(5*time.Minute).
 				Should(HaveLen(1), step)
-			addresses, err := addressByFamily(ipv4, vmi)()
-			Expect(err).NotTo(HaveOccurred())
 			if isDualStack() {
-				output, err := virtClient.RunCommand(vmi, `echo '{"interfaces":[{"name":"enp1s0","type":"ethernet","state":"up","ipv4":{"enabled":true,"dhcp":true},"ipv6":{"enabled":true,"dhcp":true,"autoconf":false}}],"routes":{"config":[{"destination":"::/0","next-hop-interface":"enp1s0","next-hop-address":"fe80::1"}]}}' |nmstatectl apply`, 5*time.Second)
+				// KubeVirt bridge binding does not configure IPv6 automatically on
+				// the default pod network. Request the OVN-assigned address via
+				// stateful DHCPv6 (no SLAAC) and add the default route via the OVN
+				// gateway link-local address, using nmcli (shipped in the image)
+				// instead of nmstatectl.
+				output, err := virtClient.RunCommand(vmi, `nmcli device modify eth0 ipv6.method dhcp +ipv6.routes "::/0 fe80::1"`, 5*time.Second)
 				Expect(err).NotTo(HaveOccurred(), output)
 				step = by(vmi.Name, "Wait for virtual machine to receive IPv6 address from DHCP")
-				Eventually(addressByFamily(ipv6, vmi)).
+				Eventually(globalAddressesByFamily(utilnet.IsIPv6String, vmi)).
 					WithPolling(time.Second).
 					WithTimeout(5*time.Minute).
-					Should(HaveLen(2), func() string {
-						output, _ := virtClient.RunCommand(vmi, "journalctl -u nmstate", 2*time.Second)
-						return step + " -> journal nmstate: " + output
+					Should(HaveLen(1), func() string {
+						out, _ := virtClient.RunCommand(vmi, "nmcli device show eth0", 5*time.Second)
+						return step + " -> nmcli device show eth0:\n" + out
 					})
-				ipv6Addresses, err := addressByFamily(ipv6, vmi)()
-				Expect(err).NotTo(HaveOccurred())
-				addresses = append(addresses, ipv6Addresses...)
 			}
-			return addresses
 		}
 
 		waitForVMPodErrorEvent = func(vmName string, expectedErrorSubstring string) {
@@ -1069,32 +1048,6 @@ fi
 			}
 		}
 
-		fcosVMI = func(labels map[string]string, annotations map[string]string, nodeSelector map[string]string, networkSource kubevirtv1.NetworkSource, butane string) (*kubevirtv1.VirtualMachineInstance, error) {
-			workingDirectory, err := os.Getwd()
-			if err != nil {
-				return nil, err
-			}
-			ignition, _, err := butaneconfig.TranslateBytes([]byte(butane), butanecommon.TranslateBytesOptions{
-				TranslateOptions: butanecommon.TranslateOptions{
-					FilesDir: workingDirectory,
-				},
-			})
-			cloudInitVolumeSource := kubevirtv1.VolumeSource{
-				CloudInitConfigDrive: &kubevirtv1.CloudInitConfigDriveSource{
-					UserData: string(ignition),
-				},
-			}
-			return generateVMI(labels, annotations, nodeSelector, networkSource, cloudInitVolumeSource, kubevirt.FedoraCoreOSContainerDiskImage), nil
-		}
-
-		fcosVM = func(labels map[string]string, annotations map[string]string, nodeSelector map[string]string, networkSource kubevirtv1.NetworkSource, butane string) (*kubevirtv1.VirtualMachine, error) {
-			vmi, err := fcosVMI(labels, annotations, nodeSelector, networkSource, butane)
-			if err != nil {
-				return nil, err
-			}
-			return generateVM(vmi), nil
-		}
-
 		fedoraWithTestToolingVMI = func(labels map[string]string, annotations map[string]string, nodeSelector map[string]string, networkSource kubevirtv1.NetworkSource, userData, networkData string) *kubevirtv1.VirtualMachineInstance {
 			cloudInitVolumeSource := kubevirtv1.VolumeSource{
 				CloudInitNoCloud: &kubevirtv1.CloudInitNoCloudSource{
@@ -1139,7 +1092,7 @@ ethernets:
 			return vm
 		}
 
-		composeDefaultNetworkLiveMigratableVM = func(labels map[string]string, butane string) (*kubevirtv1.VirtualMachine, error) {
+		composeDefaultNetworkLiveMigratableVM = func(labels map[string]string, userData, networkData string) *kubevirtv1.VirtualMachine {
 			annotations := map[string]string{
 				"kubevirt.io/allow-pod-bridge-network-live-migration": "",
 			}
@@ -1149,59 +1102,54 @@ ethernets:
 			networkSource := kubevirtv1.NetworkSource{
 				Pod: &kubevirtv1.PodNetwork{},
 			}
-			return fcosVM(labels, annotations, nodeSelector, networkSource, butane)
+			return fedoraWithTestToolingVM(labels, annotations, nodeSelector, networkSource, userData, networkData)
 		}
 
 		composeDefaultNetworkLiveMigratableVMs = func(numberOfVMs int, labels map[string]string) ([]*kubevirtv1.VirtualMachine, error) {
-			butane := fmt.Sprintf(`
-variant: fcos
-version: 1.4.0
-storage:
-  files:
-    - path: /root/test/server.go
-      contents:
-        local: kubevirt/echoserver/main.go
-systemd:
-  units:
-    - name: systemd-resolved.service
-      mask: true
-    - name: replace-resolved.service
-      enabled: true
-      contents: |
-        [Unit]
-        Description=Replace systemd resolvd with NetworkManager
-        Wants=network-online.target
-        After=network-online.target
-        [Service]
-        ExecStart=rm -f /etc/resolv.conf
-        ExecStart=systemctl restart NetworkManager
-        Type=oneshot
-        [Install]
-        WantedBy=multi-user.target
-    - name: echoserver.service
-      enabled: true
-      contents: |
-        [Unit]
-        Description=Golang echo server
-        Wants=replace-resolved.service
-        After=replace-resolved.service
-        [Service]
-        ExecStart=podman run --name tcpserver --tls-verify=false --privileged --net=host -v /root/test:/test:z registry.access.redhat.com/ubi9/go-toolset:1.20 go run /test/server.go %d
-        [Install]
-        WantedBy=multi-user.target
-passwd:
-  users:
-  - name: core
-    password_hash: $y$j9T$b7RFf2LW7MUOiF4RyLHKA0$T.Ap/uzmg8zrTcUNXyXvBvT26UgkC6zZUVg3UKXeEp5
-`, tcpServerPort)
+			// The fedora-with-test-tooling image is provisioned with cloud-init.
+			// Install golang at boot and run the echo server (embedded below)
+			// with "go run" as a systemd service. The image's nsswitch.conf
+			// already prefers "dns" over the systemd-resolved NSS module, so
+			// resolving cluster service FQDNs works without masking
+			// systemd-resolved.
+			serverGo, err := os.ReadFile("kubevirt/echoserver/main.go")
+			if err != nil {
+				return nil, err
+			}
+			userData := fmt.Sprintf(`#cloud-config
+password: fedora
+chpasswd: { expire: False }
+packages:
+  - golang
+write_files:
+  - path: /root/test/server.go
+    encoding: b64
+    content: %[1]s
+  - path: /etc/systemd/system/echoserver.service
+    content: |
+      [Unit]
+      Description=Golang echo server
+      Wants=network-online.target
+      After=network-online.target
+      [Service]
+      Environment=HOME=/root
+      Environment=GOTOOLCHAIN=local
+      ExecStart=/usr/bin/go run /root/test/server.go %[2]d
+      Restart=always
+      [Install]
+      WantedBy=multi-user.target
+runcmd:
+  - systemctl daemon-reload
+  - systemctl enable --now echoserver.service
+`, base64.StdEncoding.EncodeToString(serverGo), tcpServerPort)
+			networkData := `version: 2
+ethernets:
+  eth0:
+    dhcp4: true`
 
 			vms := []*kubevirtv1.VirtualMachine{}
 			for i := 1; i <= numberOfVMs; i++ {
-				vm, err := composeDefaultNetworkLiveMigratableVM(labels, butane)
-				if err != nil {
-					return nil, err
-				}
-				vms = append(vms, vm)
+				vms = append(vms, composeDefaultNetworkLiveMigratableVM(labels, userData, networkData))
 			}
 			return vms, nil
 		}
@@ -1224,7 +1172,15 @@ passwd:
 			}
 			err := crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(virtClient.LoginToFedora(vmi, "core", "fedora")).To(Succeed(), step)
+			Expect(virtClient.LoginToFedora(vmi, "fedora", "fedora")).To(Succeed(), step)
+
+			// LoginToFedora only opens the console; cloud-init (package install
+			// of golang and the runcmd that enables echoserver.service) may still
+			// be running. Wait for it to finish so the echo server is up before
+			// the service is exposed and dialed.
+			step = by(vm.Name, "Wait for cloud-init to finish")
+			output, err := virtClient.RunCommand(vmi, "cloud-init status --wait", 5*time.Minute)
+			Expect(err).NotTo(HaveOccurred(), step+": "+output)
 
 			waitVirtualMachineAddresses(vmi)
 
@@ -1232,7 +1188,7 @@ passwd:
 			svc, err := fr.ClientSet.CoreV1().Services(namespace).Create(context.TODO(), composeService("tcpserver", vm.Name, tcpServerPort), metav1.CreateOptions{})
 			Expect(err).NotTo(HaveOccurred(), step)
 			defer func() {
-				output, err := virtClient.RunCommand(vmi, "podman logs tcpserver", 10*time.Second)
+				output, err := virtClient.RunCommand(vmi, "journalctl -u echoserver.service --no-pager", 10*time.Second)
 				Expect(err).NotTo(HaveOccurred())
 				fmt.Printf("%s tcpserver logs: %s", vmi.Name, output)
 			}()
@@ -1501,7 +1457,7 @@ passwd:
 		})
 
 		AfterAll(func() {
-			Expect(removeImagesInNodes(kubevirt.FedoraCoreOSContainerDiskImage)).To(Succeed())
+			Expect(removeImagesInNodes(kubevirt.FedoraWithTestToolingContainerDiskImage)).To(Succeed())
 		})
 
 		DescribeTable("when live migration", func(td liveMigrationTestData) {
@@ -1615,7 +1571,7 @@ passwd:
 	})
 	Context("with user defined networks and persistent ips configured", Ordered, func() {
 		AfterAll(func() {
-			Expect(removeImagesInNodes(kubevirt.FedoraContainerDiskImage)).To(Succeed())
+			Expect(removeImagesInNodes(kubevirt.FedoraWithTestToolingContainerDiskImage)).To(Succeed())
 		})
 		type testCommand struct {
 			description string
@@ -2441,7 +2397,7 @@ ethernets:
 			namespace = fr.Namespace.Name
 		})
 		AfterAll(func() {
-			Expect(removeImagesInNodes(kubevirt.FedoraContainerDiskImage)).To(Succeed())
+			Expect(removeImagesInNodes(kubevirt.FedoraWithTestToolingContainerDiskImage)).To(Succeed())
 		})
 		var (
 			ipv4CIDR             = "172.31.0.0/24"
