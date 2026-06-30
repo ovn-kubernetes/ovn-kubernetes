@@ -4,6 +4,7 @@
 package mocks
 
 import (
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -12,56 +13,71 @@ import (
 
 type GaugeMock struct {
 	value float64
+	mutex sync.Mutex
 }
 
 func NewGaugeMock() *GaugeMock {
 	return &GaugeMock{}
 }
 
-func (GaugeMock) Desc() *prometheus.Desc {
+func (h *GaugeMock) Desc() *prometheus.Desc {
 	panic("unimplemented")
 }
 
-func (GaugeMock) Write(*io_prometheus_client.Metric) error {
+func (h *GaugeMock) Write(*io_prometheus_client.Metric) error {
 	panic("unimplemented")
 }
 
-func (GaugeMock) Describe(chan<- *prometheus.Desc) {
-	panic("unimplemented")
+func (h *GaugeMock) Describe(chan<- *prometheus.Desc) {
 }
 
-func (GaugeMock) Collect(chan<- prometheus.Metric) {
-	panic("unimplemented")
+func (h *GaugeMock) Collect(chan<- prometheus.Metric) {
 }
 
 func (h *GaugeMock) Observe(value float64) {
+	h.mutex.Lock()
+	defer h.mutex.Unlock()
 	h.value = value
 }
 
 func (gm *GaugeMock) Set(value float64) {
+	gm.mutex.Lock()
+	defer gm.mutex.Unlock()
 	gm.value = value
 }
 
 func (gm *GaugeMock) Inc() {
+	gm.mutex.Lock()
+	defer gm.mutex.Unlock()
 	gm.value++
 }
 
 func (gm *GaugeMock) Dec() {
+	gm.mutex.Lock()
+	defer gm.mutex.Unlock()
 	gm.value--
 }
 
 func (gm *GaugeMock) Add(value float64) {
+	gm.mutex.Lock()
+	defer gm.mutex.Unlock()
 	gm.value += value
 }
 
 func (gm *GaugeMock) Sub(value float64) {
+	gm.mutex.Lock()
+	defer gm.mutex.Unlock()
 	gm.value -= value
 }
 
 func (gm *GaugeMock) SetToCurrentTime() {
+	gm.mutex.Lock()
+	defer gm.mutex.Unlock()
 	gm.value = float64(time.Now().UnixMilli())
 }
 
 func (gm *GaugeMock) GetValue() float64 {
+	gm.mutex.Lock()
+	defer gm.mutex.Unlock()
 	return gm.value
 }

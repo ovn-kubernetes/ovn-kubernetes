@@ -367,7 +367,15 @@ var _ = ginkgo.Describe("Pod to pod TCP with low MTU", func() {
 						cmd)
 					framework.ExpectNoError(err, "Checking ip route cache output failed")
 					framework.Logf(" ip route output in client pod: %s", stdout)
-					gomega.Expect(stdout).To(gomega.MatchRegexp("mtu 1342"))
+
+					// MTU calculation: node MTU (1400) - Geneve overhead (58 bytes) - IPsec ESP overhead (34 bytes if enabled)
+					// Without IPsec: 1400 - 58 = 1342
+					// With IPsec: 1400 - 58 - 34 = 1308
+					expectedMTU := 1342
+					if isIPsecEnabled() {
+						expectedMTU = 1308
+					}
+					gomega.Expect(stdout).To(gomega.MatchRegexp(fmt.Sprintf("mtu %d", expectedMTU)))
 				}
 			})
 		})

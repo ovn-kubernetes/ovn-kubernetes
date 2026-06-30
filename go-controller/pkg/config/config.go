@@ -535,6 +535,7 @@ type OVNKubernetesFeatureConfig struct {
 	// UDNDeletionGracePeriod specified in number of seconds to wait before garbage collecting a UDN. Applies
 	// only when Dynamic UDN Allocation is enabled.
 	UDNDeletionGracePeriod time.Duration `gcfg:"udn-deletion-grace-period"`
+	EnableIPsec            bool          `gcfg:"enable-ipsec"`
 }
 
 // GatewayMode holds the node gateway mode
@@ -1354,6 +1355,12 @@ var OVNK8sFeatureFlags = []cli.Flag{
 			"feature is used.",
 		Destination: &cliConfig.OVNKubernetesFeature.UDNDeletionGracePeriod,
 		Value:       OVNKubernetesFeature.UDNDeletionGracePeriod,
+	},
+	&cli.BoolFlag{
+		Name:        "enable-ipsec",
+		Usage:       "Configure IPsec Encryption for ovn-kubernetes managed pod to pod traffic.",
+		Destination: &cliConfig.OVNKubernetesFeature.EnableIPsec,
+		Value:       OVNKubernetesFeature.EnableIPsec,
 	},
 }
 

@@ -9,8 +9,11 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 // MetricCNIRequestDuration is a prometheus metric that tracks the duration
@@ -52,7 +55,7 @@ var metricOvnKubeNodeLogFileSize = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 
 var registerNodeMetricsOnce sync.Once
 
-func RegisterNodeMetrics(stopChan <-chan struct{}) {
+func RegisterNodeMetrics(stopChan <-chan struct{}, wg *sync.WaitGroup, ovsDBClient libovsdbclient.Client) error {
 	registerNodeMetricsOnce.Do(func() {
 		// ovnkube-node metrics
 		prometheus.MustRegister(MetricCNIRequestDuration)
@@ -85,4 +88,8 @@ func RegisterNodeMetrics(stopChan <-chan struct{}) {
 		prometheus.MustRegister(metricOvnKubeNodeLogFileSize)
 		go ovnKubeLogFileSizeMetricsUpdater(metricOvnKubeNodeLogFileSize, stopChan)
 	})
+	if config.OVNKubernetesFeature.EnableIPsec {
+		return MonitorIPsecTunnelsState(stopChan, wg, ovsDBClient, util.RunOVSAppctlWithTimeout)
+	}
+	return nil
 }

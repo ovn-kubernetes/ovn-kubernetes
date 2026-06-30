@@ -39,6 +39,9 @@ spec:
       serviceAccountName: ovnkube-node
       hostNetwork: true
       dnsPolicy: Default
+      {{- if eq (hasKey .Values.global "unprivilegedMode" | ternary .Values.global.unprivilegedMode false) false }}
+      hostPID: true
+      {{- end }}
       priorityClassName: "system-node-critical"
       initContainers:
       - name: ovn-keys
@@ -202,6 +205,16 @@ spec:
 
           # Workaround for https://github.com/libreswan/libreswan/issues/373
           ulimit -n 1024
+
+          # On ovn-ipsec pod restart, the old pluto PID file may remain even though the
+          # process is gone. This prevents the new pluto daemon from starting, with the
+          # error: "/run/pluto/pluto.pid already exists".
+          # If the file exists but no pluto process is running, remove the stale PID file
+          # before starting a new pluto process.
+          if [ -f /var/run/pluto/pluto.pid ] && ! pgrep -F /var/run/pluto/pluto.pid > /dev/null 2>&1; then
+            echo "Removing stale pluto.pid"
+            rm -f /var/run/pluto/pluto.pid
+          fi
 
           /usr/libexec/ipsec/addconn --config /etc/ipsec.conf --checkconfig
           # Check kernel modules only for libreswan version <= 5.2. The _stackmanager binary is

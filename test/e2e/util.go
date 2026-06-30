@@ -1455,6 +1455,11 @@ func isPreConfiguredUdnAddressesEnabled() bool {
 	return val == "true"
 }
 
+func isIPsecEnabled() bool {
+	val, present := os.LookupEnv("ENABLE_IPSEC")
+	return present && val == "true"
+}
+
 func getNodeContainerName() string {
 	return "ovnkube-controller"
 }

@@ -9,9 +9,14 @@ import (
 	"runtime"
 	"strconv"
 	"sync"
+	"syscall"
 	"time"
 
+	"github.com/containernetworking/plugins/pkg/ns"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/vishvananda/netlink/nl"
+	"github.com/vishvananda/netns"
+	"golang.org/x/sys/unix"
 
 	corev1 "k8s.io/api/core/v1"
 	kapimtypes "k8s.io/apimachinery/pkg/types"
@@ -247,6 +252,13 @@ var metricIPsecEnabled = prometheus.NewGauge(prometheus.GaugeOpts{
 	Subsystem: types.MetricOvnkubeSubsystemController,
 	Name:      "ipsec_enabled",
 	Help:      "Specifies whether IPSec is enabled for this cluster(1) or not enabled for this cluster(0)",
+})
+
+var metricIPsecTunnelIKEChildSAState = prometheus.NewGauge(prometheus.GaugeOpts{
+	Namespace: types.MetricOvnkubeNamespace,
+	Subsystem: types.MetricOvnkubeSubsystemController,
+	Name:      "ipsec_tunnel_ike_child_sa_state",
+	Help:      "Specifies whether IPSec Child SAs are established for the Geneve tunnels(1) or not(0)",
 })
 
 var metricEgressRoutingViaHost = prometheus.NewGauge(prometheus.GaugeOpts{
@@ -610,6 +622,168 @@ func ipsecMetricHandler(table string, model model.Model) {
 		metricIPsecEnabled.Set(1)
 	} else {
 		metricIPsecEnabled.Set(0)
+	}
+}
+
+// subscribeFn defines the function signature for subscribing to xfrm events.
+type xfrmSubscribeFn func() (bool, chan []syscall.NetlinkMessage, *nl.NetlinkSocket, error)
+
+// MonitorIPsecTunnelsState will register a metric for the ipsec tunnel ike child sa establishment status.
+// It will then subscribe to xfrm netlink events and update the metric with ike child sa establishment up
+// or down status.
+func MonitorIPsecTunnelsState(stopChan <-chan struct{}, wg *sync.WaitGroup, ovsDBClient libovsdbclient.Client, ovsAppctl ovsAppctlClient) error {
+	if ovsDBClient == nil {
+		klog.Warningf("ovsDBClient is not set, can not retrieve IPsec tunnel ike child sa establishment metric")
+		return nil
+	}
+	if err := prometheus.Register(metricIPsecTunnelIKEChildSAState); err != nil {
+		if _, ok := err.(prometheus.AlreadyRegisteredError); !ok {
+			return err
+		}
+	}
+	subscribe := func() (bool, chan []syscall.NetlinkMessage, *nl.NetlinkSocket, error) {
+		groups, err := getXfrmMcastGroups([]nl.XfrmMsgType{nl.XFRM_MSG_NEWSA, nl.XFRM_MSG_DELSA, nl.XFRM_MSG_UPDSA,
+			nl.XFRM_MSG_NEWPOLICY, nl.XFRM_MSG_DELPOLICY, nl.XFRM_MSG_UPDPOLICY})
+		if err != nil {
+			return false, nil, nil, fmt.Errorf("error creating XFRM groups: %v", err)
+		}
+		sock, err := nl.SubscribeAt(netns.None(), netns.None(), unix.NETLINK_XFRM, groups...)
+		if err != nil {
+			return false, nil, nil, fmt.Errorf("error subscribing XFRM events: %v", err)
+		}
+		// Buffered channel to prevent deadlock: allows reader to send one final
+		// message during shutdown even if main handler has already exited.
+		msgCh := make(chan []syscall.NetlinkMessage, 1)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer close(msgCh)
+			for {
+				msgs, from, err := sock.Receive()
+				if err != nil {
+					klog.Infof("XFRM reader exiting: %v", err)
+					return
+				}
+				if from.Pid != nl.PidKernel {
+					klog.Warningf("Unexpected XFRM sender pid %d (expected %d)", from.Pid, nl.PidKernel)
+					continue
+				}
+				select {
+				case msgCh <- msgs:
+				case <-stopChan:
+					return
+				}
+			}
+		}()
+		// Initial reconciliation
+		updateIPsecTunnelStateMetric(ovsDBClient, ovsAppctl)
+		return true, msgCh, sock, nil
+	}
+
+	return runInternalIPsec(stopChan, wg, ovsDBClient, ovsAppctl, subscribe)
+}
+
+// reconcile period for xfrm event handler, this would kick in for every 60 seconds if
+// there is no explicit xfrm events. when xfrm event occurs, reconcile period is
+// automatically extended by another 60 seconds.
+var xfrmHandlerReconcilePeriod = 60 * time.Second
+
+// runInternalIPsec runs the main monitoring loop with subscription handling.
+func runInternalIPsec(stopChan <-chan struct{}, wg *sync.WaitGroup,
+	ovsDBClient libovsdbclient.Client, ovsAppctl ovsAppctlClient, subscribe xfrmSubscribeFn) error {
+	// Get the current network namespace handle
+	currentNs, err := ns.GetCurrentNS()
+	if err != nil {
+		return fmt.Errorf("error retrieving current net namespace, err: %v", err)
+	}
+	subscribed, xfrmCh, sock, err := subscribe()
+	if err != nil {
+		return err
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		err = currentNs.Do(func(_ ns.NetNS) error {
+			xfrmSyncTimer := time.NewTicker(xfrmHandlerReconcilePeriod)
+			defer xfrmSyncTimer.Stop()
+			for {
+				select {
+				case msgs, ok := <-xfrmCh:
+					xfrmSyncTimer.Reset(xfrmHandlerReconcilePeriod)
+					if !ok {
+						// Channel closed (i.e. netlink socket reader is exited)
+						// Check if shutdown is requested.
+						select {
+						case <-stopChan:
+							return nil
+						default:
+							if subscribed, xfrmCh, sock, err = subscribe(); err != nil {
+								klog.Errorf("Error during XFRM re-subscribe due to channel closing: %v", err)
+							}
+						}
+						continue
+					}
+					if len(msgs) > 0 {
+						updateIPsecTunnelStateMetric(ovsDBClient, ovsAppctl)
+					}
+				case <-xfrmSyncTimer.C:
+					updateIPsecTunnelStateMetric(ovsDBClient, ovsAppctl)
+					if !subscribed {
+						if subscribed, xfrmCh, sock, err = subscribe(); err != nil {
+							klog.Errorf("Error during XFRM events re-subscribe: %v", err)
+						}
+					}
+				case <-stopChan:
+					// Trigger xfrm netlink socket reader exit.
+					if sock != nil {
+						sock.Close()
+					}
+					return nil
+				}
+			}
+		})
+		if err != nil {
+			klog.Errorf("Failed to run XFRM event handler goroutine, err: %v", err)
+		}
+	}()
+	return nil
+}
+
+func getXfrmMcastGroups(types []nl.XfrmMsgType) ([]uint, error) {
+	groups := make([]uint, 0)
+	if len(types) == 0 {
+		return nil, fmt.Errorf("no xfrm msg type specified")
+	}
+	for _, t := range types {
+		var group uint
+		switch t {
+		case nl.XFRM_MSG_ACQUIRE:
+			group = nl.XFRMNLGRP_ACQUIRE
+		case nl.XFRM_MSG_EXPIRE:
+			group = nl.XFRMNLGRP_EXPIRE
+		case nl.XFRM_MSG_NEWSA, nl.XFRM_MSG_DELSA, nl.XFRM_MSG_UPDSA:
+			group = nl.XFRMNLGRP_SA
+		case nl.XFRM_MSG_NEWPOLICY, nl.XFRM_MSG_DELPOLICY, nl.XFRM_MSG_UPDPOLICY:
+			group = nl.XFRMNLGRP_POLICY
+		default:
+			return nil, fmt.Errorf("unsupported xfrm group: %x", t)
+		}
+		groups = append(groups, group)
+	}
+	return groups, nil
+}
+
+func updateIPsecTunnelStateMetric(ovsDBClient libovsdbclient.Client, ovsAppctl ovsAppctlClient) {
+	ipsecEstablished, err := areAllIPsecTunnelsEstablished(ovsDBClient, ovsAppctl)
+	if err != nil {
+		klog.Errorf("Error in checking IPsec tunnel states, err: %v", err)
+		metricIPsecTunnelIKEChildSAState.Set(0)
+		return
+	}
+	if ipsecEstablished {
+		metricIPsecTunnelIKEChildSAState.Set(1)
+	} else {
+		metricIPsecTunnelIKEChildSAState.Set(0)
 	}
 }
 
