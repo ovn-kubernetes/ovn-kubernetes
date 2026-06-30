@@ -36,6 +36,11 @@ const (
 // +kubebuilder:validation:XValidation:rule="!has(self.subnets) || self.subnets.size() == 1 || !self.subnets.exists(i, self.subnets.filter(j, j.cidr == i.cidr).size() > 1)", message="Subnets with same CIDR are not allowed"
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.subnets) || oldSelf.subnets.all(old, self.subnets.exists(new, new.cidr == old.cidr && (!has(old.hostSubnet) && !has(new.hostSubnet) || has(old.hostSubnet) && has(new.hostSubnet) && old.hostSubnet == new.hostSubnet)))", message="hostSubnet is immutable"
 // +kubebuilder:validation:XValidation:rule="!has(self.subnets) || self.subnets.size() == 1 || self.subnets.all(i, self.subnets.all(j, cidr(i.cidr).ip().family() != cidr(j.cidr).ip().family() || (has(i.hostSubnet) == has(j.hostSubnet) && (!has(i.hostSubnet) || i.hostSubnet == j.hostSubnet))))", message="Subnets from the same IP family must use the same hostSubnet value"
+// +kubebuilder:validation:XValidation:rule="!has(self.serviceSubnets) || has(self.subnets)", message="serviceSubnets must be unset when subnets is unset"
+// +kubebuilder:validation:XValidation:rule="!has(self.serviceSubnets) || has(self.role) && self.role == 'Primary'", message="serviceSubnets is only supported for Primary network"
+// +kubebuilder:validation:XValidation:rule="!has(self.serviceSubnets) || self.serviceSubnets.all(s, isCIDR(s) && cidr(s) == cidr(s).masked())", message="serviceSubnets must be a masked network address (no host bits set)"
+// +kubebuilder:validation:XValidation:rule="!has(self.serviceSubnets) || !has(self.joinSubnets) || self.serviceSubnets.all(svc, !self.joinSubnets.exists(j, cidr(svc).containsCIDR(cidr(j)) || cidr(j).containsCIDR(cidr(svc))))", message="serviceSubnets must not overlap with joinSubnets"
+// +kubebuilder:validation:XValidation:rule="!has(self.serviceSubnets) || !has(self.subnets) || self.serviceSubnets.all(svc, !self.subnets.exists(s, cidr(s.cidr).containsCIDR(cidr(svc))))", message="serviceSubnets must not be within any subnets CIDR for Layer3 topology (use an external address block)"
 
 type Layer3Config struct {
 	// Role describes the network role in the pod.
@@ -80,6 +85,28 @@ type Layer3Config struct {
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="joinSubnets is immutable"
 	// +optional
 	JoinSubnets DualStackCIDRs `json:"joinSubnets,omitempty"`
+
+	// serviceSubnets specifies a list of CIDRs reserved for load-balancer VIP allocation.
+	// OVN-Kubernetes allocates VIPs from these ranges for LoadBalancer Services with
+	// loadBalancerClass k8s.ovn.org/udn-loadbalancer.
+	//
+	// For Layer3 topology, serviceSubnets MUST be external to all configured subnets
+	// (i.e. not within any cidr listed in the subnets field). This is because each
+	// node is allocated a per-node slice of the subnets range by the node allocator,
+	// which does not currently support carving out sub-ranges for VIP use.
+	// Using an independent address block (e.g. a dedicated service CIDR from your
+	// IPAM) is the recommended approach and avoids any interaction with per-node
+	// subnet allocation.
+	//
+	// Pods receive a host route for the serviceSubnets CIDR via their node's gateway,
+	// so VIPs are reachable from within the UDN.
+	//
+	// Must not overlap with joinSubnets. Must be a valid masked CIDR.
+	// Only supported for Primary networks.
+	// +optional
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=10
+	ServiceSubnets []CIDR `json:"serviceSubnets,omitempty"`
 }
 
 // +kubebuilder:validation:XValidation:rule="!has(self.hostSubnet) || !isCIDR(self.cidr) || self.hostSubnet > cidr(self.cidr).prefixLength()", message="HostSubnet must be smaller than CIDR subnet"
@@ -118,6 +145,13 @@ type Layer3Subnet struct {
 // +kubebuilder:validation:XValidation:rule="!has(self.infrastructureSubnets) || !has(self.reservedSubnets) || self.infrastructureSubnets.all(infra, !self.reservedSubnets.exists(reserved, cidr(infra).containsCIDR(reserved) || cidr(reserved).containsCIDR(infra)))", message="infrastructureSubnets and reservedSubnets must not overlap"
 // +kubebuilder:validation:XValidation:rule="!has(self.infrastructureSubnets) || self.infrastructureSubnets.all(s, isCIDR(s) && cidr(s) == cidr(s).masked())", message="infrastructureSubnets must be a masked network address (no host bits set)"
 // +kubebuilder:validation:XValidation:rule="!has(self.reservedSubnets) || self.reservedSubnets.all(s, isCIDR(s) && cidr(s) == cidr(s).masked())", message="reservedSubnets must be a masked network address (no host bits set)"
+// +kubebuilder:validation:XValidation:rule="!has(self.serviceSubnets) || has(self.subnets)", message="serviceSubnets must be unset when subnets is unset"
+// +kubebuilder:validation:XValidation:rule="!has(self.serviceSubnets) || has(self.role) && self.role == 'Primary'", message="serviceSubnets is only supported for Primary network"
+// +kubebuilder:validation:XValidation:rule="!has(self.ipam) || !has(self.ipam.mode) || self.ipam.mode != 'Disabled' || !has(self.serviceSubnets)", message="serviceSubnets must be unset when ipam.mode is Disabled"
+// +kubebuilder:validation:XValidation:rule="!has(self.serviceSubnets) || !has(self.reservedSubnets) || self.serviceSubnets.all(svc, !self.reservedSubnets.exists(reserved, cidr(svc).containsCIDR(cidr(reserved)) || cidr(reserved).containsCIDR(cidr(svc))))", message="serviceSubnets and reservedSubnets must not overlap"
+// +kubebuilder:validation:XValidation:rule="!has(self.serviceSubnets) || !has(self.infrastructureSubnets) || self.serviceSubnets.all(svc, !self.infrastructureSubnets.exists(infra, cidr(svc).containsCIDR(cidr(infra)) || cidr(infra).containsCIDR(cidr(svc))))", message="serviceSubnets and infrastructureSubnets must not overlap"
+// +kubebuilder:validation:XValidation:rule="!has(self.serviceSubnets) || !has(self.defaultGatewayIPs) || self.serviceSubnets.all(svc, !self.defaultGatewayIPs.exists(gw, cidr(svc).containsIP(gw)))", message="serviceSubnets must not contain any of the defaultGatewayIPs"
+// +kubebuilder:validation:XValidation:rule="!has(self.serviceSubnets) || self.serviceSubnets.all(s, isCIDR(s) && cidr(s) == cidr(s).masked())", message="serviceSubnets must be a masked network address (no host bits set)"
 type Layer2Config struct {
 	// Role describes the network role in the pod.
 	//
@@ -192,6 +226,28 @@ type Layer2Config struct {
 	//
 	// +optional
 	JoinSubnets DualStackCIDRs `json:"joinSubnets,omitempty"`
+
+	// serviceSubnets specifies a list of CIDRs reserved for load-balancer VIP allocation.
+	// OVN-Kubernetes allocates VIPs from these ranges for LoadBalancer Services with
+	// loadBalancerClass k8s.ovn.org/udn-loadbalancer.
+	//
+	// Each CIDR may be either:
+	//   a) Within the range of the specified CIDR(s) in `subnets` — pods on the UDN
+	//      can reach VIPs directly via the OVN switch LB without leaving the L2 segment.
+	//   b) Outside the UDN subnet entirely — useful for stable IP ranges managed
+	//      externally (e.g. existing DNS/IP management systems). Pods receive a host
+	//      route for the external VIP range via the UDN gateway so they can still
+	//      reach VIPs. External clients reach VIPs via BGP-advertised /32 routes.
+	//
+	// Must not overlap with `reservedSubnets`, `infrastructureSubnets`, or
+	// `defaultGatewayIPs`. Must be a valid masked CIDR (no host bits set).
+	// Format: standard CIDR notation (for example, "192.168.100.0/24").
+	// This field must be omitted if `subnets` is unset or `ipam.mode` is `Disabled`.
+	// This field is only supported for Primary networks.
+	// +optional
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=10
+	ServiceSubnets []CIDR `json:"serviceSubnets,omitempty"`
 
 	// IPAM section contains IPAM-related configuration for the network.
 	// +optional

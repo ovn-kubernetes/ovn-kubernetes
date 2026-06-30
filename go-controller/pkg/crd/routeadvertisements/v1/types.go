@@ -60,7 +60,7 @@ type RouteAdvertisementsSpec struct {
 }
 
 // AdvertisementType determines the type of advertisement.
-// +kubebuilder:validation:Enum=PodNetwork;EgressIP
+// +kubebuilder:validation:Enum=PodNetwork;EgressIP;LoadBalancerVIP
 type AdvertisementType string
 
 const (
@@ -69,6 +69,27 @@ const (
 
 	// EgressIP determines that egress IPs are being advertised.
 	EgressIP AdvertisementType = "EgressIP"
+
+	// LoadBalancerVIP advertises each UDN LoadBalancer VIP as a /32 (or /128) anycast prefix.
+	//
+	// Which nodes advertise the prefix is driven by the Service's externalTrafficPolicy:
+	//   - Cluster (default): all cluster nodes advertise. ECMP distributes traffic to any
+	//     node; OVN DNAT may forward cross-node.
+	//   - Local: only nodes that have a Running local backend pod (matching the service
+	//     selector) advertise. Traffic lands only on nodes
+	//     that can serve it locally, preserving the client source IP end-to-end.
+	//
+	// The VIP appears in Service.status.loadBalancer.ingress so ExternalDNS and other
+	// standard tooling work without modification.
+	//
+	// This advertisement type is complementary to PodNetwork:
+	//   - PodNetwork + LoadBalancerVIP: UDN pod CIDRs and service VIPs are both advertised.
+	//   - LoadBalancerVIP only: service VIPs are reachable externally; the UDN pod network
+	//     is private ("service-only" mode).
+	//   - Neither: the UDN is fully isolated; no external BGP reachability.
+	//
+	// Only applicable to CUDNs with serviceSubnets configured.
+	LoadBalancerVIP AdvertisementType = "LoadBalancerVIP"
 )
 
 const (
