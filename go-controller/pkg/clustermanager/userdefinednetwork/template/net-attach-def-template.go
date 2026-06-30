@@ -178,6 +178,7 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter, opts *
 			netConfSpec.InfrastructureSubnets = cidrString(cfg.InfrastructureSubnets)
 			netConfSpec.DefaultGatewayIPs = ipString(cfg.DefaultGatewayIPs)
 		}
+		netConfSpec.ServiceSubnets = cidrString(cfg.ServiceSubnets)
 		netConfSpec.JoinSubnet = cidrString(renderJoinSubnets(cfg.Role, cfg.JoinSubnets))
 		// now generate transit subnet for layer2 topology
 		if cfg.Role == userdefinednetworkv1.NetworkRolePrimary {
@@ -276,6 +277,9 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter, opts *
 		if len(netConfSpec.DefaultGatewayIPs) > 0 {
 			cniNetConf["defaultGatewayIPs"] = netConfSpec.DefaultGatewayIPs
 		}
+	}
+	if len(netConfSpec.ServiceSubnets) > 0 {
+		cniNetConf["serviceSubnets"] = netConfSpec.ServiceSubnets
 	}
 
 	if netConfSpec.Transport != "" {
