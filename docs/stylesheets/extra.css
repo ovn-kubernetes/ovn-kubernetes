@@ -1170,3 +1170,9 @@ body:has(#__drawer:checked) {
     height: 100dvh;
   }
 }
+.md-version {
+  font-size: 0.9rem;
+  position: relative;
+  right: 2rem;
+  top: 0.2rem;
+}

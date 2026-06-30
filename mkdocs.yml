@@ -3,6 +3,9 @@ site_url: https://www.ovn.org/ovn-kubernetes/
 repo_url: https://github.com/ovn-kubernetes/ovn-kubernetes
 repo_name: ovn-kubernetes/ovn-kubernetes
 edit_uri: edit/master/docs
+extra:
+  version:
+    provider: mike
 extra_css:
   - stylesheets/extra.css
 site_dir: site
