@@ -13,7 +13,7 @@
 set -e
 
 if [ "${KUBECONFIG}" == "" ]; then
-  export KUBECONFIG=${HOME}/ovn.conf
+  export KUBECONFIG="${HOME}/${KIND_CLUSTER_NAME:-ovn}.conf
 fi
 export OVN_IMAGE=${OVN_IMAGE:-ovn-daemonset-fedora:pr}
 
