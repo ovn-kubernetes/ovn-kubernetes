@@ -715,7 +715,16 @@ func (oc *Layer3UserDefinedNetworkController) SyncNodes(nodes []*corev1.Node) er
 	return oc.syncNodes(nodesToInterfaces(nodes))
 }
 
-func (oc *Layer3UserDefinedNetworkController) init() error {
+func (oc *Layer3UserDefinedNetworkController) init() (err error) {
+	start := time.Now()
+	defer func() {
+		if err == nil && config.Metrics.EnableScaleMetrics {
+			duration := time.Since(start)
+			metrics.RecordUDNNBDBProgrammedDuration(oc.TopologyType(), duration.Seconds())
+			klog.Infof("Recorded NBDB programmed duration for network %s: %v", oc.GetNetworkName(), duration)
+		}
+	}()
+
 	if err := oc.gatherJoinSwitchIPs(); err != nil {
 		return fmt.Errorf("failed to gather join switch IPs for network %s: %v", oc.GetNetworkName(), err)
 	}
