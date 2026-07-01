@@ -294,6 +294,8 @@ func (m *AddressSetManager) syncClusterNodeIPsAddressSetLocked() error {
 // psAddrSetHashV4, psAddrSetHashV6 may be set to empty string if address set for that ipFamily wasn't created.
 func (m *AddressSetManager) EnsureAddressSet(podSelector, namespaceSelector, nodeSelector *metav1.LabelSelector,
 	namespace, backRef, controllerName string, netInfo util.NetInfo, legacyNetpolMode bool) (addrSetKey, psAddrSetHashV4, psAddrSetHashV6 string, err error) {
+	klog.Infof("DEBUG: EnsureAddressSet called with podSelector: %v, namespaceSelector: %v, nodeSelector: %v, namespace: %s, netInfo.name: %v",
+		podSelector, namespaceSelector, nodeSelector, namespace, netInfo.GetNetworkName())
 	nodeSelector = normalizeNodeSelector(nodeSelector)
 	if podSelector == nil {
 		err = fmt.Errorf("pod selector is nil")
@@ -498,6 +500,7 @@ func (m *AddressSetManager) reconcilePod(podKey string) error {
 				}
 				// check if pod's node matches address set's node selector
 				if pod == nil || addrSet.selectedNodes == nil || addrSet.selectedNodes.Has(pod.Spec.NodeName) {
+					klog.Infof("DEBUG: reconcilePod: pod %s/%s is on a node that is selected by address set %s, reconciling", namespace, name, addrSetKey)
 					m.addressSetReconciler.Reconcile(addrSetKey)
 					return nil
 				}
@@ -506,6 +509,7 @@ func (m *AddressSetManager) reconcilePod(podKey string) error {
 			// only check address sets that have previously matched pod's namespace to avoid extra reconciliations
 			previouslyMatchedNamespaces := addrSet.selectedNamespaces
 			if previouslyMatchedNamespaces == nil || previouslyMatchedNamespaces.Has(namespace) {
+				klog.Infof("DEBUG: reconcilePod: pod %s/%s is in a namespace that is selected by address set %s, reconciling", namespace, name, addrSetKey)
 				m.addressSetReconciler.Reconcile(addrSetKey)
 				return nil
 			}
@@ -552,6 +556,7 @@ func (m *AddressSetManager) updateHostNetworkNamespaceExists() error {
 
 		m.hostNetworkNamespaceIPsPerNode = ips
 		for addrSetKey := range m.hostNetworkSelectingAddrSets {
+			klog.Infof("DEBUG: updateHostNetworkNamespaceExists: host network namespace %s was created, reconciling address set %s", config.Kubernetes.HostNetworkNamespace, addrSetKey)
 			m.addressSetReconciler.Reconcile(addrSetKey)
 		}
 	}
@@ -584,12 +589,14 @@ func (m *AddressSetManager) reconcileNamespace(nsKey string) error {
 			}
 			if currentlyMatchedNamespaces.Has(nsKey) {
 				// this namespace is relevant for this address set, reconcile
+				klog.Infof("DEBUG: reconcileNamespace: namespace %s is selected by address set %s, reconciling", nsKey, addrSetKey)
 				m.addressSetReconciler.Reconcile(addrSetKey)
 				return nil
 			}
 			// now check if this address set was matching this namespace before, if yes, reconcile since it might not match anymore
 			previouslyMatchedNamespaces := addrSet.selectedNamespaces
 			if previouslyMatchedNamespaces.Has(nsKey) {
+				klog.Infof("DEBUG: reconcileNamespace: namespace %s was selected by address set %s, reconciling", nsKey, addrSetKey)
 				m.addressSetReconciler.Reconcile(addrSetKey)
 				return nil
 			}
@@ -651,6 +658,7 @@ func (m *AddressSetManager) reconcileNode(nodeKey string) error {
 			}
 			if currentlyMatchedNodes.Has(nodeKey) {
 				// this node is relevant for this address set, reconcile
+				klog.Infof("DEBUG: reconcileNode: node %s is selected by address set %s, reconciling", nodeKey, addrSetKey)
 				m.addressSetReconciler.Reconcile(addrSetKey)
 				return nil
 			}
@@ -658,6 +666,7 @@ func (m *AddressSetManager) reconcileNode(nodeKey string) error {
 			previouslyMatchedNodes := addrSet.selectedNodes
 			// previouslyMatchedNodes == nil means the address set hasn't been reconciled yet, so need to reconcile
 			if previouslyMatchedNodes == nil || previouslyMatchedNodes.Has(nodeKey) {
+				klog.Infof("DEBUG: reconcileNode: node %s was selected by address set %s, reconciling", nodeKey, addrSetKey)
 				m.addressSetReconciler.Reconcile(addrSetKey)
 				return nil
 			}
@@ -691,6 +700,7 @@ func (m *AddressSetManager) updateHostNetworkIPs(nodeName string) error {
 			return nil
 		}
 		for addrSetKey := range m.hostNetworkSelectingAddrSets {
+			klog.Infof("DEBUG: updateHostNetworkIPs: node %s was deleted or is now hybrid overlay, reconciling address set %s", nodeName, addrSetKey)
 			m.addressSetReconciler.Reconcile(addrSetKey)
 		}
 		return nil
@@ -707,6 +717,7 @@ func (m *AddressSetManager) updateHostNetworkIPs(nodeName string) error {
 	}
 	m.hostNetworkNamespaceIPsPerNode[node.Name] = hostNetworkPolicyIPs
 	for addrSetKey := range m.hostNetworkSelectingAddrSets {
+		klog.Infof("DEBUG: updateHostNetworkIPs: node %s was added/updated, reconciling address set %s", nodeName, addrSetKey)
 		m.addressSetReconciler.Reconcile(addrSetKey)
 	}
 	return nil
