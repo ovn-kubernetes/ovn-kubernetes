@@ -538,10 +538,10 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 				return compareFlowCache(linuxNode.flowCache, initialFlowCache)
 			}, 2).Should(Succeed())
 
-			_, err = fakeClient.CoreV1().Pods(testPod.Namespace).Create(context.TODO(), testPod, metav1.CreateOptions{})
-			Expect(err).NotTo(HaveOccurred())
 			// flowSync after add pods
 			addSyncFlows(fexec)
+			_, err = fakeClient.CoreV1().Pods(testPod.Namespace).Create(context.TODO(), testPod, metav1.CreateOptions{})
+			Expect(err).NotTo(HaveOccurred())
 
 			initialFlowCache[podIPToCookie(net.ParseIP(pod1IP))] = &flowCacheEntry{
 				flows:       []string{"table=10,cookie=0x" + podIPToCookie(net.ParseIP(pod1IP)) + ",priority=100,ip,nw_dst=" + pod1IP + ",actions=set_field:" + thisNodeDRMAC + "->eth_src,set_field:" + pod1MAC + "->eth_dst,output:ext"},
@@ -710,10 +710,10 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 
 			windowsAnnotation := createNodeAnnotationsForSubnet(node1Subnet)
 			windowsAnnotation[hotypes.HybridOverlayDRMAC] = node1DRMAC
-			_, err = fakeClient.CoreV1().Nodes().Create(context.TODO(), createNode(node1Name, "windows", node1IP, windowsAnnotation), metav1.CreateOptions{})
-			Expect(err).NotTo(HaveOccurred())
 			// flowsync after AddNode
 			addSyncFlows(fexec)
+			_, err = fakeClient.CoreV1().Nodes().Create(context.TODO(), createNode(node1Name, "windows", node1IP, windowsAnnotation), metav1.CreateOptions{})
+			Expect(err).NotTo(HaveOccurred())
 			Eventually(fexec.CalledMatchesExpected, 2).Should(BeTrue(), fexec.ErrorDesc)
 
 			node1Cookie := nameToCookie(node1Name)
@@ -813,10 +813,10 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 			// setup windows node
 			windowsAnnotation := createNodeAnnotationsForSubnet(node1Subnet)
 			windowsAnnotation[hotypes.HybridOverlayDRMAC] = node1DRMAC
-			_, err = fakeClient.CoreV1().Nodes().Create(context.TODO(), createNode(node1Name, "windows", node1IP, windowsAnnotation), metav1.CreateOptions{})
-			Expect(err).NotTo(HaveOccurred())
 			// flowsync after AddNode
 			addSyncFlows(fexec)
+			_, err = fakeClient.CoreV1().Nodes().Create(context.TODO(), createNode(node1Name, "windows", node1IP, windowsAnnotation), metav1.CreateOptions{})
+			Expect(err).NotTo(HaveOccurred())
 			Eventually(fexec.CalledMatchesExpected, 2).Should(BeTrue(), fexec.ErrorDesc)
 
 			node1Cookie := nameToCookie(node1Name)
@@ -836,9 +836,9 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 
 			// setup local pod
 			testPod := createPod("test", "pod1", thisNode, pod1CIDR, pod1MAC)
+			addSyncFlows(fexec)
 			_, err = fakeClient.CoreV1().Pods(testPod.Namespace).Create(context.TODO(), testPod, metav1.CreateOptions{})
 			Expect(err).NotTo(HaveOccurred())
-			addSyncFlows(fexec)
 			Eventually(fexec.CalledMatchesExpected, 2).Should(BeTrue(), fexec.ErrorDesc)
 			initialFlowCache[podIPToCookie(net.ParseIP(pod1IP))] = &flowCacheEntry{
 				flows:       []string{"table=10,cookie=0x" + podIPToCookie(net.ParseIP(pod1IP)) + ",priority=100,ip,nw_dst=" + pod1IP + ",actions=set_field:" + thisNodeDRMAC + "->eth_src,set_field:" + pod1MAC + "->eth_dst,output:ext"},
@@ -852,9 +852,9 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 
 			//update Node DRIP
 			node.Annotations[hotypes.HybridOverlayDRIP] = updatedDRIP
+			addSyncFlows(fexec)
 			_, err = fakeClient.CoreV1().Nodes().Update(context.TODO(), node, metav1.UpdateOptions{})
 			Expect(err).NotTo(HaveOccurred())
-			addSyncFlows(fexec)
 			Eventually(fexec.CalledMatchesExpected, 2).Should(BeTrue(), fexec.ErrorDesc)
 			initialFlowCache["0x0"] = generateInitialFlowCacheEntry(mgmtIfAddr.IP.String(), updatedDRIP, thisNodeDRMAC)
 			initialFlowCache[node1Cookie] = &flowCacheEntry{
@@ -951,10 +951,10 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 			// setup windows node
 			windowsAnnotation := createNodeAnnotationsForSubnet(node1Subnet)
 			windowsAnnotation[hotypes.HybridOverlayDRMAC] = node1DRMAC
-			_, err = fakeClient.CoreV1().Nodes().Create(context.TODO(), createNode(node1Name, "windows", node1IP, windowsAnnotation), metav1.CreateOptions{})
-			Expect(err).NotTo(HaveOccurred())
 			// flowsync after AddNode
 			addSyncFlows(fexec)
+			_, err = fakeClient.CoreV1().Nodes().Create(context.TODO(), createNode(node1Name, "windows", node1IP, windowsAnnotation), metav1.CreateOptions{})
+			Expect(err).NotTo(HaveOccurred())
 			Eventually(fexec.CalledMatchesExpected, 2).Should(BeTrue(), fexec.ErrorDesc)
 
 			node1Cookie := nameToCookie(node1Name)
@@ -974,9 +974,9 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 
 			// setup local pod
 			testPod := createPod("test", "pod1", thisNode, pod1CIDR, pod1MAC)
+			addSyncFlows(fexec)
 			_, err = fakeClient.CoreV1().Pods(testPod.Namespace).Create(context.TODO(), testPod, metav1.CreateOptions{})
 			Expect(err).NotTo(HaveOccurred())
-			addSyncFlows(fexec)
 			Eventually(fexec.CalledMatchesExpected, 2).Should(BeTrue(), fexec.ErrorDesc)
 			initialFlowCache[podIPToCookie(net.ParseIP(pod1IP))] = &flowCacheEntry{
 				flows:       []string{"table=10,cookie=0x" + podIPToCookie(net.ParseIP(pod1IP)) + ",priority=100,ip,nw_dst=" + pod1IP + ",actions=set_field:" + thisNodeDRMAC + "->eth_src,set_field:" + pod1MAC + "->eth_dst,output:ext"},
@@ -990,9 +990,9 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 
 			//update Node DRIP
 			annotations[hotypes.HybridOverlayDRMAC] = updatedDRMAC
+			addSyncFlows(fexec)
 			_, err = fakeClient.CoreV1().Nodes().Update(context.TODO(), node, metav1.UpdateOptions{})
 			Expect(err).NotTo(HaveOccurred())
-			addSyncFlows(fexec)
 			Eventually(fexec.CalledMatchesExpected, 2).Should(BeTrue(), fexec.ErrorDesc)
 			initialFlowCache["0x0"] = generateInitialFlowCacheEntry(mgmtIfAddr.IP.String(), thisNodeDRIP, updatedDRMAC)
 			initialFlowCache[podIPToCookie(net.ParseIP(pod1IP))] = &flowCacheEntry{
@@ -1080,10 +1080,10 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 			// setup hybrid overlay node
 			windowsAnnotation := createNodeAnnotationsForSubnet(node1Subnet)
 			windowsAnnotation[hotypes.HybridOverlayDRMAC] = node1DRMAC
-			_, err = fakeClient.CoreV1().Nodes().Create(context.TODO(), createNode(node1Name, "windows", node1IP, windowsAnnotation), metav1.CreateOptions{})
-			Expect(err).NotTo(HaveOccurred())
 			// flowsync after AddNode
 			addSyncFlows(fexec)
+			_, err = fakeClient.CoreV1().Nodes().Create(context.TODO(), createNode(node1Name, "windows", node1IP, windowsAnnotation), metav1.CreateOptions{})
+			Expect(err).NotTo(HaveOccurred())
 			Eventually(fexec.CalledMatchesExpected, 2).Should(BeTrue(), fexec.ErrorDesc)
 
 			node1Cookie := nameToCookie(node1Name)
