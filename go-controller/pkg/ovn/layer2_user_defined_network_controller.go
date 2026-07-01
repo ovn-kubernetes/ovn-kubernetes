@@ -1135,7 +1135,14 @@ func (oc *Layer2UserDefinedNetworkController) nodeGatewayConfig(node *corev1.Nod
 		return nil, fmt.Errorf("failed to get masquerade IPs, network %s (%d): %v", networkName, networkID, err)
 	}
 
-	l3GatewayConfig.IPAddresses = append(l3GatewayConfig.IPAddresses, masqIPs...)
+	for _, masqIP := range masqIPs {
+		if masqIP == nil {
+			continue
+		}
+		hostMask := util.GetIPFullMask(masqIP.IP)
+		l3GatewayConfig.IPAddresses = append(l3GatewayConfig.IPAddresses,
+			&net.IPNet{IP: masqIP.IP, Mask: hostMask})
+	}
 
 	// Always SNAT to the per network masquerade IP.
 	var externalIPs []net.IP
