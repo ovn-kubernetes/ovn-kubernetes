@@ -14,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 
@@ -1147,19 +1148,22 @@ func (bnc *BaseNetworkController) enqueueLocalPolicyBootstrapFailures(np *networ
 	if len(pods) == 0 {
 		return nil
 	}
-	if bnc.retryPods == nil {
-		return fmt.Errorf("pod retry framework is not initialized for %d network policy %s bootstrap failures: %w",
+	if bnc.podReconciler == nil {
+		return fmt.Errorf("pod reconciler is not initialized for %d network policy %s bootstrap failures: %w",
 			len(pods), np.getKey(), utilerrors.Join(resolutionErrors...))
 	}
 
 	var enqueueErrors []error
 	for _, pod := range pods {
-		if err := bnc.retryPods.AddRetryObjWithAddNoBackoff(pod); err != nil {
+		podKey, err := cache.MetaNamespaceKeyFunc(pod)
+		if err != nil {
 			enqueueErrors = append(enqueueErrors,
-				fmt.Errorf("failed to enqueue pod %s/%s after network policy bootstrap failure: %w", pod.Namespace, pod.Name, err))
+				fmt.Errorf("failed to get key for pod %s/%s after network policy bootstrap failure: %w",
+					pod.Namespace, pod.Name, err))
+			continue
 		}
+		bnc.podReconciler.ReconcileNetwork(podKey, bnc.GetNetworkName())
 	}
-	bnc.retryPods.RequestRetryObjs()
 	klog.Errorf("Network policy %s bootstrap had %d pod resolution failures queued for retry: %v",
 		np.getKey(), len(pods), utilerrors.Join(resolutionErrors...))
 	return utilerrors.Join(enqueueErrors...)
@@ -1358,7 +1362,7 @@ func (bnc *BaseNetworkController) createNetworkPolicy(policy *knet.NetworkPolicy
 				policy.Namespace, policy.Name, bnc.GetNetworkName(), err)
 		}
 
-		// 7. Never acquire retry pod locks while holding the policy lock.
+		// 7. Never enqueue pod reconciliation while holding the policy lock.
 		np.Unlock()
 		npLocked = false
 		if err := bnc.enqueueLocalPolicyBootstrapFailures(np, failedPods, resolutionErrors); err != nil {

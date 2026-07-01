@@ -141,6 +141,31 @@ func (c *PortCache) add(pod *corev1.Pod, logicalSwitch, nadKey, appliedNetworkNa
 	return cloneLPInfo(portInfo)
 }
 
+// invalidatePodForNetwork forgets this controller's applied port observations
+// for one pod. The shared pod reconciler retains its independent applied-state
+// snapshot, so delete retries remain safe while the next desired-state pass is
+// forced to verify/create the actual logical ports again.
+func (c *PortCache) invalidatePodForNetwork(pod *corev1.Pod, networkName string) {
+	podName := fmt.Sprintf("%s/%s", pod.Namespace, pod.Name)
+	c.Lock()
+	defer c.Unlock()
+
+	infoMap, ok := c.cache[podName]
+	if !ok {
+		return
+	}
+	for nadKey, info := range infoMap {
+		if info == nil || info.appliedNetworkName != networkName {
+			continue
+		}
+		klog.V(5).Infof("port-cache(%s): invalidating port after dependency change for network %s", info.name, networkName)
+		delete(infoMap, nadKey)
+	}
+	if len(infoMap) == 0 {
+		delete(c.cache, podName)
+	}
+}
+
 // removeAllForNetwork clears applied port state for a cleaned-up network.
 func (c *PortCache) removeAllForNetwork(networkName string) {
 	c.Lock()

@@ -80,6 +80,63 @@ var _ = ginkgo.Describe("Subnet IP allocator operations", func() {
 			}
 		})
 
+		ginkgo.It("preserves allocations when updating with identical subnet config", func() {
+			subnets := []string{
+				"10.1.1.0/24",
+			}
+
+			err := allocator.AddOrUpdateSubnet(SubnetConfig{
+				Name:    subnetName,
+				Subnets: ovntest.MustParseIPNets(subnets...),
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			ips, err := allocator.AllocateNextIPs(subnetName)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(ips).To(gomega.HaveLen(1))
+			gomega.Expect(ips[0].String()).To(gomega.Equal("10.1.1.1/24"))
+
+			err = allocator.AddOrUpdateSubnet(SubnetConfig{
+				Name:    subnetName,
+				Subnets: ovntest.MustParseIPNets(subnets...),
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			ips, err = allocator.AllocateNextIPs(subnetName)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(ips).To(gomega.HaveLen(1))
+			gomega.Expect(ips[0].String()).To(gomega.Equal("10.1.1.2/24"))
+		})
+
+		ginkgo.It("rebuilds allocations when exclude config changes", func() {
+			subnets := []string{
+				"10.1.1.0/24",
+			}
+
+			err := allocator.AddOrUpdateSubnet(SubnetConfig{
+				Name:    subnetName,
+				Subnets: ovntest.MustParseIPNets(subnets...),
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			ips, err := allocator.AllocateNextIPs(subnetName)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(ips).To(gomega.HaveLen(1))
+			gomega.Expect(ips[0].String()).To(gomega.Equal("10.1.1.1/24"))
+
+			err = allocator.AddOrUpdateSubnet(SubnetConfig{
+				Name:           subnetName,
+				Subnets:        ovntest.MustParseIPNets(subnets...),
+				ExcludeSubnets: ovntest.MustParseIPNets("10.1.1.0/29"),
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			ips, err = allocator.AllocateNextIPs(subnetName)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(ips).To(gomega.HaveLen(1))
+			gomega.Expect(ips[0].String()).To(gomega.Equal("10.1.1.8/24"))
+		})
+
 		ginkgo.It("excludes subnets correctly", func() {
 			subnets := []string{
 				"10.1.1.0/24",
