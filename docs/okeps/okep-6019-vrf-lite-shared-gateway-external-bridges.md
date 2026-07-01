@@ -239,13 +239,13 @@ or node-local interface/OVS state are enforced by controllers and reported throu
 * `nodeConfigs[*].type` must be `OVSBridge`.
 * `nodeConfigs[*].hostInterfaceName` must be a valid Linux interface name. Existence, resolution to exactly one
   backing OVS bridge, link state, IP address data on the resolved bridge or gateway interface, MAC address,
-  route/default-gateway data when present, MTU, and any OVS VLAN tag are discovered or validated by the node reconcilers
+  route/default-gateway data when present, and any OVS VLAN tag are discovered or validated by the node reconcilers
   because they depend on node-local state. OVN-Kubernetes does not configure these admin-provisioned properties through
   the `Uplink` API.
 * For a given node, at most one node config in a `Uplink` may apply in this OKEP. Because `nodeSelector` overlap depends
   on live node labels, this cannot be fully enforced by CRD schema validation. The Uplink controller resolves selected
-  node configs per node; if more than one applies to a node, the `Uplink` and affected `UplinkState` objects report
-  degraded status until the overlap is resolved.
+  node configs per node; if more than one applies to a node, the `Uplink` reports `Ready=False` and affected
+  `UplinkState` objects report `Ready=False` until the overlap is resolved.
 * If no node config applies to a node where a CUDN referencing the `Uplink` is active, cluster-manager reports
   `UplinkNotFoundForNode` in CUDN status and no gateway configuration is generated for that node.
 * `Uplink.spec.nodeConfigs` is mutable. Updating a node config can temporarily degrade CUDNs that reference the `Uplink`
@@ -256,18 +256,19 @@ or node-local interface/OVS state are enforced by controllers and reported throu
 `Uplink.status.conditions` is owned by the ovnkube-cluster-manager Uplink controller and contains aggregate state only.
 The controller derives this state from `Uplink`, Nodes, and the per-node `UplinkState` objects:
 
-* `Degraded`: at least one selected node has an error or required missing state in its corresponding `UplinkState`, or
-  current node labels make the `nodeConfigs` selection ambiguous.
+* `Ready`: `True` when every selected node has a usable matching `UplinkState`; `False` when at least one selected node
+  has an error or required missing state in its corresponding `UplinkState`, or current node labels make the
+  `nodeConfigs` selection ambiguous.
 
 Because `nodeConfigs[*].nodeSelector` depends on node labels, `Uplink.status` can change without `Uplink.spec` changing.
 This is expected. For example, labeling a new node into a node config creates or updates that node's `UplinkState`; if
 the host interface is missing or cannot be resolved to an OVS bridge on that node,
-`Uplink.status.conditions[Degraded]` becomes true.
+`Uplink.status.conditions[Ready]` becomes false.
 
 When one or more CUDNs reference an `Uplink`, ovnkube-cluster-manager keeps a finalizer on the `Uplink` so it cannot be
 deleted while still selected by a CUDN.
 
-`Uplink.status.conditions[Degraded]` is aggregate, operator-facing health for the `Uplink` object. It is not consumed
+`Uplink.status.conditions[Ready]` is aggregate, operator-facing health for the `Uplink` object. It is not consumed
 directly as CUDN readiness, because two Dynamic UDN-backed CUDNs can reference the same `Uplink` while being active on
 different node sets. CUDN uplink readiness is derived by cluster-manager from the referenced `Uplink` spec and the
 `UplinkState` objects relevant to that specific CUDN/UDN active node set. This OKEP allows only one referenced `Uplink`,
@@ -283,21 +284,24 @@ node-owned gateway data in a typed API.
 Kubernetes object name limits. If the combined name would be too long, OVN-Kubernetes uses a deterministic
 DNS-subdomain-safe name built from truncated name prefixes plus a stable hash of the full `<uplink-name>/<node-name>`
 pair. Controllers must treat `status.uplinkName` and `status.nodeName` as the canonical identity, not parse identity from
-the object name. Labels are lookup aids; when full names do not fit label value limits, OVN-Kubernetes should use stable
-hash label values and store the full names in the `k8s.ovn.org/uplink` and `k8s.ovn.org/node` annotations and status. On
-`UplinkState` delete events, controllers should derive the affected `Uplink` from `status.uplinkName` when available, or
-from the `k8s.ovn.org/uplink` annotation when status is unavailable. If neither identity source is present in the delete
-tombstone, the controller may fall back to reconciling all `Uplink` objects. The user does not set spec fields on this
-resource; OVN-Kubernetes creates and updates it.
+the object name. `status.uplinkName` and `status.nodeName` are selectable fields so controllers and users can query by
+Uplink and node without relying on generated names, labels, or annotations. On `UplinkState` delete events, controllers
+should derive the affected `Uplink` from `status.uplinkName` when available. If that identity source is not present in the
+delete tombstone, the controller may fall back to reconciling all `Uplink` objects. The user does not set spec fields on
+this resource; OVN-Kubernetes creates and updates it.
+
+Example field selector queries:
+
+```bash
+kubectl get uplinkstates --field-selector status.uplinkName=blue-underlay
+kubectl get uplinkstates --field-selector status.uplinkName=blue-underlay,status.nodeName=ovn-worker-a
+```
 
 ```yaml
 apiVersion: k8s.ovn.org/v1alpha1
 kind: UplinkState
 metadata:
   name: blue-underlay.ovn-worker-a
-  labels:
-    k8s.ovn.org/uplink: blue-underlay
-    k8s.ovn.org/node: ovn-worker-a
 status:
   uplinkName: blue-underlay
   nodeName: ovn-worker-a
@@ -319,6 +323,10 @@ status:
 #### UplinkState status
 
 These fields are reconciliation inputs as well as user-visible status:
+
+`UplinkState` intentionally does not use a separate Kubernetes status subresource. OVN-Kubernetes sets the canonical
+identity and initial status when it creates the object, then updates the same status fields with server-side apply. This
+keeps `status.uplinkName` and `status.nodeName` immediately available for field-selector based watches and queries.
 
 The top-level status fields describe generic resolved L3 gateway data that OVN-Kubernetes needs regardless of the uplink
 type: selected host interface, MAC address, IP addresses, default gateways, and readiness. Type-specific resolved data
@@ -364,8 +372,6 @@ current state:
 * `HostInterfaceNotFound`: the selected `hostInterfaceName` does not exist on the node or DPU-Host.
 * `BridgeNotFound`: the selected host interface cannot be resolved to a backing OVS bridge.
 * `BridgeInvalid`: the bridge exists but has an unsupported or ambiguous layout.
-* `MTUInvalid`: the resolved bridge/gateway path MTU is smaller than the effective OVN-Kubernetes gateway/pod MTU this
-  network must carry.
 * `GatewayInfoUnavailable`: OVN-Kubernetes cannot discover the gateway MAC/IP data needed for OVN configuration.
 * `WaitingForDPU`: DPU-Host has published host-side data but is waiting for DPU-side bridge validation.
 * `WaitingForDPUHost`: DPU-side reconciliation is waiting for the DPU-Host to publish host-side L3 data.
@@ -386,10 +392,8 @@ deployments, the DPU-side representor is discovered locally and is not published
 
 MTU is also not part of the `Uplink` or `UplinkState` API. The user must provision a consistent MTU on the physical
 uplink, OVS bridge, and host gateway interface. In DPU deployments, this includes the host-side gateway interface and the
-DPU-side representor path that backs the resolved bridge. OVN-Kubernetes validates that the resolved bridge/gateway path
-MTU is at least large enough for the effective OVN-Kubernetes gateway/pod MTU this network must carry. If that validation
-fails, the node's `UplinkState` reports `Ready=False` with reason `MTUInvalid`. `Uplink` does not provide a way to raise
-a CUDN above OVN-Kubernetes' effective network MTU.
+DPU-side representor path that backs the resolved bridge. `Uplink` does not provide a way to raise a CUDN above
+OVN-Kubernetes' effective network MTU.
 
 ### CUDN CRD extension
 
@@ -464,8 +468,8 @@ item. Future multi-uplink work may add keyed per-uplink status if detailed per-u
 When multiple active nodes fail uplink readiness for the same CUDN, `UplinksReady` remains a single aggregate condition.
 The condition reason is selected deterministically from the failing reasons. The message contains a bounded summary, such
 as the number of affected active nodes and a small sample of node names. It must not list every failed node in large
-clusters. Full per-node details remain in the corresponding `UplinkState` objects, which can be queried by the
-`k8s.ovn.org/uplink` and `k8s.ovn.org/node` labels or annotations.
+clusters. Full per-node details remain in the corresponding `UplinkState` objects, which can be queried with field
+selectors on `status.uplinkName` and `status.nodeName`.
 
 `UplinksReady=True` for CUDNs without `spec.uplinks` keeps the condition usable as a component of any future aggregate
 CUDN readiness condition without requiring consumers to special-case the absence of an uplink.
@@ -484,7 +488,7 @@ require a separate managed routing/provisioning API and is out of scope.
 
 The CUDN status controller runs in ovnkube-cluster-manager. It watches the referenced `Uplink` objects, Nodes, and
 `UplinkState` objects, then derives the CUDN's external uplink readiness from the node-local state relevant to that CUDN.
-It does not treat aggregate `Uplink.status.conditions[Degraded]` as a direct CUDN readiness input, and it does not rely on
+It does not treat aggregate `Uplink.status.conditions[Ready]` as a direct CUDN readiness input, and it does not rely on
 ovnkube-node directly updating CUDN status. This OKEP allows only one referenced `Uplink`.
 
 For node-local checks, the CUDN status controller filters `UplinkState` by the CUDN/UDN's relevant node set. For Dynamic
@@ -586,7 +590,7 @@ host shared gateway IP from `UplinkState.status.ipAddresses`.
 For DPU deployments, generated FRR configuration for the host node is applied to the corresponding DPU FRR instance. The
 RouteAdvertisements controller uses `UplinkState.status.ipAddresses` as the source for the host shared gateway next-hop
 when generating next-hop override configuration. If the matching `UplinkState` does not yet have host shared gateway IPs,
-RouteAdvertisements reconciliation waits and reports pending/degraded status rather than generating incomplete FRR
+RouteAdvertisements reconciliation waits and reports pending/not-ready status rather than generating incomplete FRR
 configuration.
 
 For Uplink-backed networks using route import, OVN-Kubernetes also scopes imported BGP routes to the selected uplink
@@ -607,8 +611,8 @@ as pending for that network rather than importing routes from another interface.
 * Resolves `Uplink.spec.nodeConfigs` against live Nodes and reports controller-detected configuration problems, including
   multiple node configs matching the same node and CUDN active nodes that have no matching node config.
 * Aggregates `UplinkState.status.conditions[Ready]` reasons such as `HostInterfaceNotFound`, `BridgeNotFound`,
-  `BridgeInvalid`, `MTUInvalid`, `GatewayInfoUnavailable`, `WaitingForDPU`, `WaitingForDPUHost`, and
-  `NodeSelectorOverlap` into `Uplink.status.conditions[Degraded]`.
+  `BridgeInvalid`, `GatewayInfoUnavailable`, `WaitingForDPU`, `WaitingForDPUHost`, and `NodeSelectorOverlap` into
+  `Uplink.status.conditions[Ready]`.
 * Derives CUDN reason `UplinkOverlapOnNode` from affected `UplinkState` objects with reason `NodeSelectorOverlap`.
 * Resolves nodes selected by a referencing active CUDN but not selected by any `Uplink.spec.nodeConfigs` entry into CUDN
   reason `UplinkNotFoundForNode`.
@@ -616,7 +620,7 @@ as pending for that network rather than importing routes from another interface.
   reference the `Uplink`.
 * Aggregates per-node state without storing per-node details in `Uplink.status`.
 * Reflects uplink readiness into CUDN status using dedicated uplink readiness reasons derived from the referenced
-  `Uplink` spec and active-node-scoped `UplinkState` objects, not from aggregate `Uplink.status.conditions[Degraded]`.
+  `Uplink` spec and active-node-scoped `UplinkState` objects, not from aggregate `Uplink.status.conditions[Ready]`.
 
 #### Node uplink reconciler (OVNKube-Node Full mode)
 
@@ -628,8 +632,8 @@ For each CUDN with `spec.uplinks` on a node where the CUDN/UDN is active:
 2. Validate that `nodeConfigs[*].hostInterfaceName` exists and carries the expected host-side gateway L3
    identity.
 3. Resolve the OVS bridge that contains the host interface and validate the bridge layout.
-4. Discover the host interface MAC address, IP addresses, default gateways, MTU, and any OVS VLAN tag on that interface
-   from existing host and OVS state.
+4. Discover the host interface MAC address, IP addresses, default gateways, and any OVS VLAN tag on that interface from
+   existing host and OVS state.
 5. Determine the CUDN's effective routing domain from matching `RouteAdvertisements`. If the CUDN resolves to a
    per-CUDN VRF, attach the selected host interface to the CUDN VRF. If the CUDN resolves to the default VRF, remove any
    OVN-Kubernetes-owned CUDN VRF attachment for that interface and leave it in the default VRF. OVN-Kubernetes does not
@@ -641,8 +645,8 @@ For each CUDN with `spec.uplinks` on a node where the CUDN/UDN is active:
    is tagged in OVS.
 9. Detect unsupported effective per-node bridge conflicts, including multiple active CUDNs selecting the same bridge while
    requiring distinct non-default VRFs, and record the node-local conflict in `UplinkState`.
-10. Create or update this node's `UplinkState`, including ownership labels, `hostInterfaceName`, `ovsBridge.name`, gateway
-    data, and node-local discovery conditions.
+10. Create or update this node's `UplinkState`, including canonical identity fields, `hostInterfaceName`,
+    `ovsBridge.name`, gateway data, and node-local discovery conditions.
 11. Record node-local failure details for VRF attachment failure, bridge mapping failure, or unsupported bridge sharing in
    `UplinkState`, so cluster-manager can derive the corresponding CUDN status reason such as
    `UplinkConfigurationConflict`.
@@ -665,8 +669,8 @@ DPU-Host reconciler:
 
 1. Watch `Uplink` and the matching `UplinkState` for the host node.
 2. Resolve the referenced `Uplink` and the node config that applies to the host node.
-3. Find `nodeConfigs[*].hostInterfaceName` on the DPU-Host and discover its MAC address, IP addresses, default
-   gateways, and MTU.
+3. Find `nodeConfigs[*].hostInterfaceName` on the DPU-Host and discover its MAC address, IP addresses, and default
+   gateways.
 4. Determine the CUDN's effective routing domain from matching `RouteAdvertisements`. Attach the selected host interface
    to the host-side CUDN VRF only for per-CUDN VRF-Lite isolation; otherwise leave it in the default VRF.
 5. Update this node's `UplinkState.status` with `hostInterfaceName`, `macAddress`, `ipAddresses`, `defaultGateways`, and
@@ -868,8 +872,8 @@ path.
 ### Uplink
 
 * If the selected host interface is missing, or the resolved OVS bridge is missing or malformed on a node, the matching
-  `UplinkState` is degraded. Retries continue, and local netlink/OVS change notifications or periodic resync requeue the
-  Uplink when admin-owned host or OVS state changes.
+  `UplinkState` reports `Ready=False`. Retries continue, and local netlink/OVS change notifications or periodic resync
+  requeue the Uplink when admin-owned host or OVS state changes.
 * Per-node failures are reported on the matching `UplinkState`; `Uplink.status.conditions` reports aggregate health only.
 * If an admin deletes or changes the OVS bridge, OVN-Kubernetes does not recreate or repair the bridge. It updates status
   and retries validation.
@@ -906,7 +910,7 @@ path.
   * CUDN validation for `spec.uplinks`.
   * CUDN external gateway data is derived from `UplinkState` without mutating the
     `k8s.ovn.org/l3-gateway-config` node annotation.
-  * rejection/degraded status when multiple active CUDNs select the same effective OVS bridge on a node for unsupported
+  * rejection/not-ready status when multiple active CUDNs select the same effective OVS bridge on a node for unsupported
     distinct non-default VRF use.
   * local gateway mode rejecting `spec.uplinks` with `UplinkUnsupportedGatewayMode`.
   * EVPN transport rejecting `spec.uplinks` with `UplinkUnsupportedTransport`.
@@ -914,8 +918,8 @@ path.
 * Node integration tests:
   * host interface validation and pre-existing OVS bridge resolution.
   * missing or ambiguous bridge layout status.
-  * host interface MAC address, IP address, default gateway, MTU, resolved OVS bridge, and OVS VLAN tag discovery from
-    existing node state.
+  * host interface MAC address, IP address, default gateway, resolved OVS bridge, and OVS VLAN tag discovery from existing
+    node state.
   * full-mode RouteAdvertisements-driven VRF attachment, detachment, and cleanup for the selected host interface.
   * RouteAdvertisements-driven UDN VRF default-route add/remove behavior for Uplink-backed networks.
   * bridge mapping creation and cleanup for the normalized CUDN network name.
