@@ -249,6 +249,28 @@ func AddACLsToLogicalSwitchOps(nbClient libovsdbclient.Client, ops []ovsdb.Opera
 	return m.CreateOrUpdateOps(ops, opModels)
 }
 
+// RemoveACLsFromLogicalSwitchOps removes the provided ACLs from the named logical switch
+// and returns the corresponding ops
+func RemoveACLsFromLogicalSwitchOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, name string, acls ...*nbdb.ACL) ([]ovsdb.Operation, error) {
+	sw := &nbdb.LogicalSwitch{
+		Name: name,
+		ACLs: make([]string, 0, len(acls)),
+	}
+	for _, acl := range acls {
+		sw.ACLs = append(sw.ACLs, acl.UUID)
+	}
+
+	opModel := operationModel{
+		Model:            sw,
+		OnModelMutations: []interface{}{&sw.ACLs},
+		ErrNotFound:      false,
+		BulkOp:           false,
+	}
+
+	m := newModelClient(nbClient)
+	return m.DeleteOps(ops, opModel)
+}
+
 // RemoveACLsFromLogicalSwitchesWithPredicateOps looks up logical switches from the cache
 // based on a given predicate, removes from them the provided ACLs, and returns the
 // corresponding ops

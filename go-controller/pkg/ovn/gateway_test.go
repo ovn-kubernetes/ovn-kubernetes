@@ -60,8 +60,23 @@ func generateAdvertisedUDNIsolationExpectedNB(testData []libovsdbtest.TestData, 
 	passACL.UUID = "advertised-udn-isolation-pass-acl-UUID"
 	dropACL := BuildAdvertisedNetworkSubnetsDropACL(addrSet)
 	dropACL.UUID = "advertised-udn-isolation-drop-acl-UUID"
-	nodeSwitch.ACLs = append(nodeSwitch.ACLs, passACL.UUID, dropACL.UUID)
-	testData = append(testData, passACL, dropACL)
+	nodeSwitch.ACLs = append(nodeSwitch.ACLs, passACL.UUID)
+	pg := libovsdbutil.BuildPortGroup(GetAdvertisedNetworkSubnetsDropPGdbIDs(), nil, []*nbdb.ACL{dropACL})
+	pg.UUID = "advertised-udn-isolation-drop-pg-UUID"
+	pg.Ports = []string{types.SwitchToRouterPrefix + nodeSwitch.Name + "-UUID"}
+	testData = append(testData, passACL, dropACL, pg)
+
+	var cidrs []string
+	for _, subnet := range clusterIPSubnets {
+		cidrs = append(cidrs, subnet.String())
+	}
+	v4set, v6set := addressset.GetTestDbAddrSets(GetAdvertisedNetworkSubnetsAddressSetDBIDs(), cidrs)
+	if config.IPv4Mode {
+		testData = append(testData, v4set)
+	}
+	if config.IPv6Mode {
+		testData = append(testData, v6set)
+	}
 
 	return testData
 }

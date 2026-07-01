@@ -46,6 +46,9 @@ type AddressSetFactory interface {
 	// EnsureAddressSet makes sure that an address set object exists in ovn
 	// with the given dbIDs.
 	EnsureAddressSet(dbIDs *libovsdbops.DbObjectIDs) (AddressSet, error)
+	// EnsureAddressSetOps returns ops to make sure that an address set object
+	// exists in ovn with the given dbIDs, without overwriting existing addresses.
+	EnsureAddressSetOps(dbIDs *libovsdbops.DbObjectIDs) (AddressSet, []ovsdb.Operation, error)
 	// ProcessEachAddressSet calls the given function for each address set of type dbIDsType owned by given ownerController.
 	ProcessEachAddressSet(ownerController string, dbIDsType *libovsdbops.ObjectIDsType, iteratorFn AddressSetIterFunc) error
 	// DestroyAddressSet deletes the address sets with given dbIDs.
@@ -116,18 +119,12 @@ func (asf *ovnAddressSetFactory) NewAddressSet(dbIDs *libovsdbops.DbObjectIDs, a
 // and contains the given addresses, or an error. Internally it creates
 // address set ops for v4Addresses and v6Addresses each.
 func (asf *ovnAddressSetFactory) NewAddressSetOps(dbIDs *libovsdbops.DbObjectIDs, addresses []string) (AddressSet, []ovsdb.Operation, error) {
-	if err := asf.validateDbIDs(dbIDs); err != nil {
-		return nil, nil, fmt.Errorf("failed to create address set ops: %w", err)
-	}
 	return asf.ensureOvnAddressSetsOps(addresses, dbIDs, true)
 }
 
 // EnsureAddressSet makes sure that an address set object exists in ovn
 // with the given dbIDs.
 func (asf *ovnAddressSetFactory) EnsureAddressSet(dbIDs *libovsdbops.DbObjectIDs) (AddressSet, error) {
-	if err := asf.validateDbIDs(dbIDs); err != nil {
-		return nil, fmt.Errorf("failed to ensure address set: %w", err)
-	}
 	as, ops, err := asf.ensureOvnAddressSetsOps(nil, dbIDs, false)
 	if err != nil {
 		return nil, err
@@ -137,6 +134,12 @@ func (asf *ovnAddressSetFactory) EnsureAddressSet(dbIDs *libovsdbops.DbObjectIDs
 		return nil, err
 	}
 	return as, nil
+}
+
+// EnsureAddressSetOps returns ops to make sure that an address set object
+// exists in ovn with the given dbIDs, without overwriting existing addresses.
+func (asf *ovnAddressSetFactory) EnsureAddressSetOps(dbIDs *libovsdbops.DbObjectIDs) (AddressSet, []ovsdb.Operation, error) {
+	return asf.ensureOvnAddressSetsOps(nil, dbIDs, false)
 }
 
 func getDbIDsWithIPFamily(dbIDs *libovsdbops.DbObjectIDs, ipFamily string) *libovsdbops.DbObjectIDs {
@@ -237,6 +240,9 @@ func (asf *ovnAddressSetFactory) DestroyAddressSet(dbIDs *libovsdbops.DbObjectID
 // be returned
 func (asf *ovnAddressSetFactory) ensureOvnAddressSetsOps(addresses []string, dbIDs *libovsdbops.DbObjectIDs,
 	updateAS bool) (*ovnAddressSets, []ovsdb.Operation, error) {
+	if err := asf.validateDbIDs(dbIDs); err != nil {
+		return nil, nil, err
+	}
 	var (
 		v4set, v6set             *ovnAddressSet
 		v4Addresses, v6Addresses []string
