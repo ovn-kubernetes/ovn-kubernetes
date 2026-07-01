@@ -241,7 +241,8 @@ func (oc *DefaultNetworkController) reconcileDeletedPod(pod *corev1.Pod, portInf
 // removePod tried to tear down a pod. It returns nil on success and error on failure;
 // failure indicates the pod tear down should be retried later.
 func (oc *DefaultNetworkController) removePod(pod *corev1.Pod, portInfo *lpInfo) error {
-	if oc.isPodScheduledinLocalZone(pod) {
+	localZonePod := oc.isPodScheduledinLocalZone(pod)
+	if localZonePod {
 		if err := oc.removeLocalZonePod(pod, portInfo); err != nil {
 			return err
 		}
@@ -251,8 +252,15 @@ func (oc *DefaultNetworkController) removePod(pod *corev1.Pod, portInfo *lpInfo)
 		}
 	}
 
-	err := kubevirt.CleanUpLiveMigratablePod(oc.nbClient, oc.watchFactory, pod)
-	if err != nil {
+	routeZone := kubevirt.OvnRemoteZone
+	if localZonePod {
+		routeZone = kubevirt.OvnLocalZone
+	}
+	if err := kubevirt.CleanUpFailedLiveMigrationTargetPod(oc.nbClient, oc.watchFactory, pod, routeZone); err != nil {
+		return err
+	}
+
+	if err := kubevirt.CleanUpLiveMigratablePod(oc.nbClient, oc.watchFactory, pod); err != nil {
 		return err
 	}
 

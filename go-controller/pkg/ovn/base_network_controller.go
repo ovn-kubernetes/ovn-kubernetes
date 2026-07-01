@@ -885,6 +885,12 @@ func (bnc *BaseNetworkController) recordPodErrorEvent(pod *corev1.Pod, podErr er
 	bnc.recordPodErrorEventWithReason(pod, "ErrorReconcilingPod", podErr)
 }
 
+// RecordPodError records a pod reconcile error with the retry-compatible
+// reason emitted by the shared pod controller.
+func (bnc *BaseNetworkController) RecordPodError(pod *corev1.Pod, reason string, podErr error) {
+	bnc.recordPodErrorEventWithReason(pod, reason, podErr)
+}
+
 func (bnc *BaseNetworkController) recordPodErrorEventWithReason(pod *corev1.Pod, reason string, podErr error) {
 	podRef, err := ref.GetReference(scheme.Scheme, pod)
 	if err != nil {

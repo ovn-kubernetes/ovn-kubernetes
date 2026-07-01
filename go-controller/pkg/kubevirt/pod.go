@@ -432,6 +432,46 @@ func CleanUpLiveMigratablePod(nbClient libovsdbclient.Client, watchFactory *fact
 	})
 }
 
+// IsFailedLiveMigrationTarget returns true when pod is the terminal target pod
+// of a failed live migration.
+func IsFailedLiveMigrationTarget(podLister listersv1.PodLister, pod *corev1.Pod) (bool, error) {
+	if !IsPodLiveMigratable(pod) {
+		return false, nil
+	}
+	liveMigrationStatus, err := DiscoverLiveMigrationStatus(podLister, pod)
+	if err != nil {
+		return false, err
+	}
+	return liveMigrationStatus != nil &&
+		liveMigrationStatus.State == LiveMigrationFailed &&
+		liveMigrationStatus.TargetPod != nil &&
+		samePod(liveMigrationStatus.TargetPod, pod), nil
+}
+
+// CleanUpFailedLiveMigrationTargetPod removes local OVN state created for a
+// failed live-migration target pod while the source pod remains active.
+func CleanUpFailedLiveMigrationTargetPod(nbClient libovsdbclient.Client, watchFactory *factory.WatchFactory, pod *corev1.Pod, zone string) error {
+	failedTarget, err := IsFailedLiveMigrationTarget(watchFactory.PodCoreInformer().Lister(), pod)
+	if err != nil {
+		return fmt.Errorf("failed checking failed live migration target pod %s/%s: %w", pod.Namespace, pod.Name, err)
+	}
+	if !failedTarget {
+		return nil
+	}
+
+	return withLiveMigrationVMLock(pod, func() error {
+		if zone == OvnLocalZone {
+			if err := DeleteDHCPOptionsWithZone(nbClient, pod, OvnLocalZone); err != nil {
+				return err
+			}
+		}
+		if err := DeleteRoutingForMigratedPodWithZone(nbClient, pod, zone); err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
 // SyncVirtualMachines deletes stale OVN resources for missing VMs or VMs in the wrong zone.
 func SyncVirtualMachines(nbClient libovsdbclient.Client, vms map[ktypes.NamespacedName]bool, controllerName string) error {
 	if err := libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicate(nbClient, ovntypes.OVNClusterRouter, func(item *nbdb.LogicalRouterStaticRoute) bool {

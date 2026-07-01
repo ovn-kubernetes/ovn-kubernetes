@@ -181,7 +181,7 @@ func (oc *DefaultNetworkController) deleteLogicalPort(pod *corev1.Pod, portInfo 
 		return nil
 	}
 
-	pInfo, err := oc.deletePodLogicalPort(pod, portInfo, types.DefaultNetworkName)
+	pInfo, shouldRelease, err := oc.deletePodLogicalPort(pod, portInfo, types.DefaultNetworkName)
 	if err != nil {
 		return err
 	}
@@ -195,19 +195,31 @@ func (oc *DefaultNetworkController) deleteLogicalPort(pod *corev1.Pod, portInfo 
 		}
 	}
 
-	// do not remove SNATs/GW routes/IPAM for an IP address unless we have validated no other pod is using it
 	if pInfo == nil {
 		return nil
 	}
 
-	if config.Gateway.DisableSNATMultipleGWs {
+	failedMigrationTarget, err := kubevirt.IsFailedLiveMigrationTarget(oc.watchFactory.PodCoreInformer().Lister(), pod)
+	if err != nil {
+		return err
+	}
+	cleanupPodNetworkState := shouldRelease || failedMigrationTarget
+
+	if config.Gateway.DisableSNATMultipleGWs && cleanupPodNetworkState {
 		if err := oc.deletePodSNAT(pInfo.logicalSwitch, []*net.IPNet{}, pInfo.ips); err != nil {
 			return fmt.Errorf("cannot delete GR SNAT for pod %s: %w", podDesc, err)
 		}
 	}
-	podNsName := ktypes.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}
-	if err := oc.deleteGWRoutesForPod(podNsName, pInfo.ips); err != nil {
-		return fmt.Errorf("cannot delete GW Routes for pod %s: %w", podDesc, err)
+
+	if cleanupPodNetworkState {
+		podNsName := ktypes.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}
+		if err := oc.deleteGWRoutesForPod(podNsName, pInfo.ips); err != nil {
+			return fmt.Errorf("cannot delete GW Routes for pod %s: %w", podDesc, err)
+		}
+	}
+
+	if !shouldRelease {
+		return nil
 	}
 
 	if kubevirt.IsPodLiveMigratable(pod) {

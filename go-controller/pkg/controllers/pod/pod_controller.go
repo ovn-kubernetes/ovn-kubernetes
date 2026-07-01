@@ -29,6 +29,12 @@ type NetworkHandler interface {
 	ReconcilePod(oldPod, newPod *corev1.Pod, cachedState interface{}) error
 }
 
+// ErrorRecorder records reconcile failures for handlers that expose
+// user-visible Kubernetes events.
+type ErrorRecorder interface {
+	RecordPodError(pod *corev1.Pod, reason string, err error)
+}
+
 // RelatedPodHandler requeues pods that share external state with the current pod.
 type RelatedPodHandler interface {
 	RelatedPodKeys(pod *corev1.Pod) ([]string, error)
@@ -183,18 +189,21 @@ func (c *Controller) reconcilePod(key string) error {
 		return c.reconcileRelatedPods(podKey)
 	}
 
-	// A pod's network controllers all patch the same pod-networks annotation.
-	// Serialize by pod key so per-network reconciles cannot clobber each other.
-	c.podLocks.LockKey(podKey)
-	defer c.podLocks.UnlockKey(podKey)
-
 	return c.handlers.DoWithLock(netName, func(handlerKey string) error {
 		handler, ok := c.handlers.Load(handlerKey)
 		if !ok || handler == nil {
 			return nil
 		}
-		return c.reconcilePodForNetwork(handler, podKey, netName)
+		return c.reconcilePodForNetworkWithPodLock(handler, podKey, netName)
 	})
+}
+
+func (c *Controller) reconcilePodForNetworkWithPodLock(handler NetworkHandler, podKey, netName string) error {
+	// A pod's network controllers all patch the same pod-networks annotation.
+	// Serialize by pod key so per-network reconciles cannot clobber each other.
+	c.podLocks.LockKey(podKey)
+	defer c.podLocks.UnlockKey(podKey)
+	return c.reconcilePodForNetwork(handler, podKey, netName)
 }
 
 func (c *Controller) reconcileRelatedPods(podKey string) error {
@@ -255,6 +264,7 @@ func (c *Controller) reconcilePodForNetwork(handler NetworkHandler, podKey, netN
 
 	expected, err := handler.PodExpectedOnNetwork(pod)
 	if err != nil {
+		c.recordPodError(handler, pod, "ErrorUpdatingResource", err)
 		return err
 	}
 
@@ -267,9 +277,12 @@ func (c *Controller) reconcilePodForNetwork(handler NetworkHandler, podKey, netN
 
 	if !expected {
 		if applied == nil {
+			if util.PodCompleted(pod) {
+				return c.reconcileAbsent(handler, podKey, netName, nil, pod)
+			}
 			return nil
 		}
-		return c.reconcileDelete(handler, podKey, netName, applied)
+		return c.reconcileAbsent(handler, podKey, netName, applied, nil)
 	}
 
 	var oldPod *corev1.Pod
@@ -277,6 +290,11 @@ func (c *Controller) reconcilePodForNetwork(handler NetworkHandler, podKey, netN
 		oldPod = applied.pod
 	}
 	if err := handler.ReconcilePod(oldPod, pod, nil); err != nil {
+		reason := "ErrorAddingResource"
+		if oldPod != nil {
+			reason = "ErrorUpdatingResource"
+		}
+		c.recordPodError(handler, pod, reason, err)
 		return err
 	}
 	c.setAppliedPod(netName, podKey, pod, handler.GetPodState(pod))
@@ -284,19 +302,44 @@ func (c *Controller) reconcilePodForNetwork(handler NetworkHandler, podKey, netN
 }
 
 func (c *Controller) reconcileDelete(handler NetworkHandler, podKey, netName string, applied *appliedPodState) error {
+	return c.reconcileAbsent(handler, podKey, netName, applied, nil)
+}
+
+func (c *Controller) reconcileAbsent(handler NetworkHandler, podKey, netName string, applied *appliedPodState, fallbackPod *corev1.Pod) error {
+	var state interface{}
+	deletePod := fallbackPod
 	if applied == nil || applied.pod == nil {
+		if deletePod != nil {
+			if err := handler.ReconcilePod(deletePod, nil, nil); err != nil {
+				c.recordPodError(handler, deletePod, "ErrorDeletingResource", err)
+				return err
+			}
+		}
 		c.deleteAppliedPod(netName, podKey)
 		return nil
 	}
-	deletePod := applied.pod
+	deletePod = applied.pod
+	state = applied.state
 	if applied.latestPod != nil && applied.latestPod.UID == applied.pod.UID {
 		deletePod = applied.latestPod
 	}
-	if err := handler.ReconcilePod(deletePod, nil, applied.state); err != nil {
+	if err := handler.ReconcilePod(deletePod, nil, state); err != nil {
+		c.recordPodError(handler, deletePod, "ErrorDeletingResource", err)
 		return err
 	}
 	c.deleteAppliedPod(netName, podKey)
 	return nil
+}
+
+func (c *Controller) recordPodError(handler NetworkHandler, pod *corev1.Pod, reason string, err error) {
+	if pod == nil || err == nil {
+		return
+	}
+	recorder, ok := handler.(ErrorRecorder)
+	if !ok {
+		return
+	}
+	recorder.RecordPodError(pod, reason, err)
 }
 
 func (c *Controller) bootstrapNetwork(netName string, handler NetworkHandler) error {
@@ -323,7 +366,12 @@ func (c *Controller) bootstrapNetwork(netName string, handler NetworkHandler) er
 		if state := handler.GetPodState(pod); state != nil {
 			c.setAppliedPod(netName, key, pod, state)
 		}
-		c.ReconcileNetwork(key, netName)
+		if err := c.reconcilePodForNetworkWithPodLock(handler, key, netName); err != nil {
+			// Preserve the normal retry contract for pods that cannot be
+			// reconciled during startup while still applying successful pods
+			// synchronously for dependent controller bootstrap.
+			c.ReconcileNetwork(key, netName)
+		}
 	}
 	return nil
 }
