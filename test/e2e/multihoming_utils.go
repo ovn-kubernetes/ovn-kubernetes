@@ -30,6 +30,9 @@ import (
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/ip"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/allocators"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig/api"
+	deploymentconfigapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig/api"
 )
 
 func netCIDR(netCIDR string, netPrefixLengthPerNode int) string {
@@ -41,7 +44,11 @@ func joinStrings(vals ...string) string {
 }
 
 func primaryLayer3MultiCIDRs() string {
-	return joinStrings(primaryLayer3MultiIPv4CIDRs(), primaryLayer3MultiIPv6CIDRs())
+	if deploymentconfig.Get().IsConfigurationEnabled(deploymentconfigapi.L3UDNMultiSubnetConfig) {
+		return joinStrings(primaryLayer3MultiIPv4CIDRs(), primaryLayer3MultiIPv6CIDRs())
+	}
+	// Backward compatible: single subnet per IP family
+	return joinStrings(primaryLayer3SingleIPv4CIDR(), primaryLayer3SingleIPv6CIDR())
 }
 
 // primaryLayer3IPv4CIDRs returns two IPv4 CIDRs for a primary network in layer3
@@ -64,14 +71,34 @@ func primaryLayer3IPv6CIDRs() (string, string) {
 	return subnets6[0], subnets6[1]
 }
 
+// primaryLayer3SingleIPv4CIDR returns a single IPv4 CIDR for backward compatibility
+// with CRDs that don't support multiple subnets per Layer3 topology.
+func primaryLayer3SingleIPv4CIDR() string {
+	subnets4, _ := allocators.GetNthFirstUDNSubnets(1)
+	return subnets4[0] + "/24"
+}
+
+// primaryLayer3SingleIPv6CIDR returns a single IPv6 CIDR for backward compatibility
+// with CRDs that don't support multiple subnets per Layer3 topology.
+func primaryLayer3SingleIPv6CIDR() string {
+	_, subnets6 := allocators.GetNthFirstUDNSubnets(1)
+	return subnets6[0] + "/64"
+}
+
 func primaryLayer3MultiIPv4CIDRs() string {
-	subnet1, subnet2 := primaryLayer3IPv4CIDRs()
-	return joinStrings(subnet1, subnet2)
+	if deploymentconfig.Get().IsConfigurationEnabled(api.L3UDNMultiSubnetConfig) {
+		subnet1, subnet2 := primaryLayer3IPv4CIDRs()
+		return joinStrings(subnet1, subnet2)
+	}
+	return primaryLayer3SingleIPv4CIDR()
 }
 
 func primaryLayer3MultiIPv6CIDRs() string {
-	subnet1, subnet2 := primaryLayer3IPv6CIDRs()
-	return joinStrings(subnet1, subnet2)
+	if deploymentconfig.Get().IsConfigurationEnabled(api.L3UDNMultiSubnetConfig) {
+		subnet1, subnet2 := primaryLayer3IPv6CIDRs()
+		return joinStrings(subnet1, subnet2)
+	}
+	return primaryLayer3SingleIPv6CIDR()
 }
 
 func filterCIDRsAndJoin(cs clientset.Interface, cidrs string) string {
