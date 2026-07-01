@@ -4,6 +4,7 @@
 package pod
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"testing"
@@ -84,7 +85,7 @@ func (f *fakePodHandler) PodExpectedOnNetwork(pod *corev1.Pod) (bool, error) {
 	return f.expect[key], nil
 }
 
-func (f *fakePodHandler) ReconcilePod(oldPod, newPod *corev1.Pod, lastState interface{}) (interface{}, error) {
+func (f *fakePodHandler) ReconcilePod(ctx context.Context, oldPod, newPod *corev1.Pod, lastState interface{}) (interface{}, error) {
 	if newPod != nil && f.reconcileStarted != nil {
 		f.reconcileOnce.Do(func() { close(f.reconcileStarted) })
 		if f.reconcileContinue != nil {
@@ -243,13 +244,13 @@ func TestRegisterNetworkControllerQueuesAndSignalsInitialReconcile(t *testing.T)
 
 	// Exercise the reconciles directly so the initial-attempt barrier can be
 	// inspected after each key; enqueueing itself is asserted above.
-	if err := c.reconcilePod("ns/a|net-a"); err != nil {
+	if err := c.reconcilePod(context.Background(), "ns/a|net-a"); err != nil {
 		t.Fatalf("unexpected reconcile error: %v", err)
 	}
 	if isClosed(done) {
 		t.Fatal("expected barrier to stay open until every pod is attempted")
 	}
-	if err := c.reconcilePod("ns/b|net-a"); err != nil {
+	if err := c.reconcilePod(context.Background(), "ns/b|net-a"); err != nil {
 		t.Fatalf("unexpected reconcile error: %v", err)
 	}
 	if !isClosed(done) {
@@ -280,7 +281,7 @@ func TestRegisterNetworkControllerBarrierClosesOnFailedAttempts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected register error: %v", err)
 	}
-	if err := c.reconcilePod("ns/pod|net-a"); err == nil {
+	if err := c.reconcilePod(context.Background(), "ns/pod|net-a"); err == nil {
 		t.Fatal("expected reconcile error")
 	}
 	// A failed first attempt still counts: a wedged pod must not block
@@ -313,7 +314,7 @@ func TestRegisterNetworkControllerPublishesBeforeBlockedSync(t *testing.T) {
 	}
 	reconcileErr := make(chan error, 1)
 	go func() {
-		reconcileErr <- c.reconcilePod("ns/pod|net-a")
+		reconcileErr <- c.reconcilePod(context.Background(), "ns/pod|net-a")
 	}()
 	select {
 	case <-handler.reconcileStarted:
@@ -350,7 +351,7 @@ func TestReconcileNetworkWithInvalidationWaitsForInFlightPodReconcile(t *testing
 
 	reconcileErr := make(chan error, 1)
 	go func() {
-		reconcileErr <- c.reconcilePod("ns/pod|net-a")
+		reconcileErr <- c.reconcilePod(context.Background(), "ns/pod|net-a")
 	}()
 	<-handler.reconcileStarted
 
@@ -411,7 +412,7 @@ func TestBootstrapDeleteBeforeFirstAttemptUsesLatestDeleteObject(t *testing.T) {
 		t.Fatalf("unexpected register error: %v", err)
 	}
 
-	if err := c.reconcilePod("ns/pod|net-a"); err != nil {
+	if err := c.reconcilePod(context.Background(), "ns/pod|net-a"); err != nil {
 		t.Fatalf("unexpected reconcile error: %v", err)
 	}
 	if handler.deleteCalls != 1 {
@@ -435,7 +436,7 @@ func TestBootstrapReplacementDeletesListedUIDBeforeReconcilingCurrentUID(t *test
 		t.Fatalf("unexpected register error: %v", err)
 	}
 	c.podLister = newPodLister(t, newPod)
-	if err := c.reconcilePod("ns/pod|net-a"); err != nil {
+	if err := c.reconcilePod(context.Background(), "ns/pod|net-a"); err != nil {
 		t.Fatalf("unexpected reconcile error: %v", err)
 	}
 
@@ -475,7 +476,7 @@ func TestBootstrapDeleteTombstoneWinsOverListedReplacement(t *testing.T) {
 		t.Fatalf("unexpected register error: %v", err)
 	}
 
-	if err := c.reconcilePod("ns/pod|net-a"); err != nil {
+	if err := c.reconcilePod(context.Background(), "ns/pod|net-a"); err != nil {
 		t.Fatalf("unexpected reconcile error: %v", err)
 	}
 	if got := handler.events; len(got) != 2 || got[0] != "delete:old" || got[1] != "reconcile:new" {
@@ -496,7 +497,7 @@ func TestUIDReplacementTeardownPrecedesExpectedError(t *testing.T) {
 	}
 
 	c.podLister = newPodLister(t, newPod)
-	err := c.reconcilePod("ns/pod|net-a")
+	err := c.reconcilePod(context.Background(), "ns/pod|net-a")
 	if err == nil {
 		t.Fatal("expected replacement eligibility error")
 	}
@@ -532,7 +533,7 @@ func TestLateBootstrapDeleteTombstoneReplacesListedReplacementSeed(t *testing.T)
 		t.Fatalf("unexpected register error: %v", err)
 	}
 
-	if err := c.reconcilePod("ns/pod|net-a"); err != nil {
+	if err := c.reconcilePod(context.Background(), "ns/pod|net-a"); err != nil {
 		t.Fatalf("unexpected reconcile error: %v", err)
 	}
 	if got := handler.events; len(got) != 2 || got[0] != "delete:old" || got[1] != "reconcile:new" {
@@ -552,12 +553,12 @@ func TestReconcileRetryAfterFailedAddStillLooksLikeAdd(t *testing.T) {
 	if _, err := c.RegisterNetworkController(handler); err != nil {
 		t.Fatalf("unexpected register error: %v", err)
 	}
-	if err := c.reconcilePod("ns/pod|net-a"); err == nil {
+	if err := c.reconcilePod(context.Background(), "ns/pod|net-a"); err == nil {
 		t.Fatal("expected reconcile error")
 	}
 
 	handler.reconcileErr = nil
-	if err := c.reconcilePod("ns/pod|net-a"); err != nil {
+	if err := c.reconcilePod(context.Background(), "ns/pod|net-a"); err != nil {
 		t.Fatalf("unexpected retry error: %v", err)
 	}
 	if handler.lastOldPod != nil {
@@ -576,7 +577,7 @@ func TestDeregisterNetworkControllerClearsState(t *testing.T) {
 	if _, err := c.RegisterNetworkController(handler); err != nil {
 		t.Fatalf("unexpected register error: %v", err)
 	}
-	if err := c.reconcilePod("ns/pod|net-a"); err != nil {
+	if err := c.reconcilePod(context.Background(), "ns/pod|net-a"); err != nil {
 		t.Fatalf("unexpected reconcile error: %v", err)
 	}
 
@@ -588,7 +589,7 @@ func TestDeregisterNetworkControllerClearsState(t *testing.T) {
 		t.Fatalf("expected entries to be cleared, got %#v", entry)
 	}
 	// Reconciles for a deregistered network are silent no-ops.
-	if err := c.reconcilePod("ns/pod|net-a"); err != nil {
+	if err := c.reconcilePod(context.Background(), "ns/pod|net-a"); err != nil {
 		t.Fatalf("unexpected reconcile error: %v", err)
 	}
 	if handler.reconcileCalls != 1 {
@@ -607,7 +608,7 @@ func TestDeregisterCleanupFinishesBeforeSameNameRegistration(t *testing.T) {
 	if _, err := c.RegisterNetworkController(oldHandler); err != nil {
 		t.Fatalf("unexpected old-generation register error: %v", err)
 	}
-	if err := c.reconcilePod("ns/pod|net-a"); err != nil {
+	if err := c.reconcilePod(context.Background(), "ns/pod|net-a"); err != nil {
 		t.Fatalf("unexpected old-generation reconcile error: %v", err)
 	}
 
@@ -736,7 +737,7 @@ func TestReconcilePodUIDChangeDeletesBeforeReconcile(t *testing.T) {
 	}
 	c.markApplied(handler.netName, "ns/pod", oldPod, "old-state")
 
-	if err := c.reconcilePodForNetwork(handler, "ns/pod", handler.netName); err != nil {
+	if err := c.reconcilePodForNetwork(context.Background(), handler, "ns/pod", handler.netName); err != nil {
 		t.Fatalf("unexpected reconcile error: %v", err)
 	}
 
@@ -761,7 +762,7 @@ func TestReconcilePodDeleteClearsEntry(t *testing.T) {
 	handler := &fakePodHandler{netName: "net-a"}
 	c.markApplied(handler.netName, "ns/pod", oldPod, "old-state")
 
-	if err := c.reconcilePodForNetwork(handler, "ns/pod", handler.netName); err != nil {
+	if err := c.reconcilePodForNetwork(context.Background(), handler, "ns/pod", handler.netName); err != nil {
 		t.Fatalf("unexpected reconcile error: %v", err)
 	}
 
@@ -787,7 +788,7 @@ func TestReconcilePodRecordsUpdateError(t *testing.T) {
 	}
 	c.markApplied(handler.netName, "ns/pod", oldPod, "old-state")
 
-	if err := c.reconcilePodForNetwork(handler, "ns/pod", handler.netName); err == nil {
+	if err := c.reconcilePodForNetwork(context.Background(), handler, "ns/pod", handler.netName); err == nil {
 		t.Fatal("expected reconcile error")
 	}
 
@@ -809,7 +810,7 @@ func TestReconcilePodRecordsErrorOncePerFailureStreak(t *testing.T) {
 	// Reconciles retry indefinitely; repeated identical failures must not
 	// flood the recorder with duplicate events.
 	for i := 0; i < 3; i++ {
-		if err := c.reconcilePodForNetwork(handler, "ns/pod", handler.netName); err == nil {
+		if err := c.reconcilePodForNetwork(context.Background(), handler, "ns/pod", handler.netName); err == nil {
 			t.Fatal("expected reconcile error")
 		}
 	}
@@ -819,7 +820,7 @@ func TestReconcilePodRecordsErrorOncePerFailureStreak(t *testing.T) {
 
 	// A different error is recorded again.
 	handler.reconcileErr = errors.New("bang")
-	if err := c.reconcilePodForNetwork(handler, "ns/pod", handler.netName); err == nil {
+	if err := c.reconcilePodForNetwork(context.Background(), handler, "ns/pod", handler.netName); err == nil {
 		t.Fatal("expected reconcile error")
 	}
 	if len(handler.recordedErrors) != 2 {
@@ -828,11 +829,11 @@ func TestReconcilePodRecordsErrorOncePerFailureStreak(t *testing.T) {
 
 	// After a successful reconcile the next failure starts a new streak.
 	handler.reconcileErr = nil
-	if err := c.reconcilePodForNetwork(handler, "ns/pod", handler.netName); err != nil {
+	if err := c.reconcilePodForNetwork(context.Background(), handler, "ns/pod", handler.netName); err != nil {
 		t.Fatalf("unexpected reconcile error: %v", err)
 	}
 	handler.reconcileErr = errors.New("bang")
-	if err := c.reconcilePodForNetwork(handler, "ns/pod", handler.netName); err == nil {
+	if err := c.reconcilePodForNetwork(context.Background(), handler, "ns/pod", handler.netName); err == nil {
 		t.Fatal("expected reconcile error")
 	}
 	if len(handler.recordedErrors) != 3 {
@@ -850,7 +851,7 @@ func TestReconcilePodRecordsDeleteError(t *testing.T) {
 	}
 	c.markApplied(handler.netName, "ns/pod", oldPod, "old-state")
 
-	if err := c.reconcilePodForNetwork(handler, "ns/pod", handler.netName); err == nil {
+	if err := c.reconcilePodForNetwork(context.Background(), handler, "ns/pod", handler.netName); err == nil {
 		t.Fatal("expected reconcile error")
 	}
 
@@ -864,7 +865,7 @@ func TestReconcilePodAbsentWithoutEntryDoesNotLeak(t *testing.T) {
 	c := newPodControllerForTest(t)
 	handler := &fakePodHandler{netName: "net-a"}
 
-	if err := c.reconcilePodForNetwork(handler, "ns/pod", handler.netName); err != nil {
+	if err := c.reconcilePodForNetwork(context.Background(), handler, "ns/pod", handler.netName); err != nil {
 		t.Fatalf("unexpected reconcile error: %v", err)
 	}
 	if handler.deleteCalls != 0 || len(c.entries) != 0 {
@@ -881,7 +882,7 @@ func TestReconcilePodDeleteAfterFailedAddRunsTeardown(t *testing.T) {
 		reconcileErr: errors.New("boom"),
 	}
 
-	if err := c.reconcilePodForNetwork(handler, "ns/pod", handler.netName); err == nil {
+	if err := c.reconcilePodForNetwork(context.Background(), handler, "ns/pod", handler.netName); err == nil {
 		t.Fatal("expected reconcile error")
 	}
 
@@ -890,7 +891,7 @@ func TestReconcilePodDeleteAfterFailedAddRunsTeardown(t *testing.T) {
 	c.podLister = newPodLister(t)
 	handler.reconcileErr = nil
 
-	if err := c.reconcilePodForNetwork(handler, "ns/pod", handler.netName); err != nil {
+	if err := c.reconcilePodForNetwork(context.Background(), handler, "ns/pod", handler.netName); err != nil {
 		t.Fatalf("unexpected reconcile error: %v", err)
 	}
 	if handler.deleteCalls != 1 {
@@ -910,7 +911,7 @@ func TestReconcileCompletedUnexpectedPodWithoutEntryRunsDelete(t *testing.T) {
 	c := newPodControllerForTest(t, pod)
 	handler := &fakePodHandler{netName: "net-a", expect: map[string]bool{"ns/pod": false}}
 
-	if err := c.reconcilePodForNetwork(handler, "ns/pod", handler.netName); err != nil {
+	if err := c.reconcilePodForNetwork(context.Background(), handler, "ns/pod", handler.netName); err != nil {
 		t.Fatalf("unexpected reconcile error: %v", err)
 	}
 
@@ -935,7 +936,7 @@ func TestFallbackDeleteFailureRetainsPodAfterInformerDeletion(t *testing.T) {
 		reconcileErr: errors.New("delete failed"),
 	}
 
-	if err := c.reconcilePodForNetwork(handler, "ns/pod", handler.netName); err == nil {
+	if err := c.reconcilePodForNetwork(context.Background(), handler, "ns/pod", handler.netName); err == nil {
 		t.Fatal("expected first fallback delete to fail")
 	}
 	entry := c.entryForTest(handler.netName, "ns/pod")
@@ -945,7 +946,7 @@ func TestFallbackDeleteFailureRetainsPodAfterInformerDeletion(t *testing.T) {
 
 	c.podLister = newPodLister(t)
 	handler.reconcileErr = nil
-	if err := c.reconcilePodForNetwork(handler, "ns/pod", handler.netName); err != nil {
+	if err := c.reconcilePodForNetwork(context.Background(), handler, "ns/pod", handler.netName); err != nil {
 		t.Fatalf("unexpected retry error: %v", err)
 	}
 	if handler.deleteCalls != 1 || handler.lastDeletePod == nil || handler.lastDeletePod.UID != pod.UID {
@@ -962,14 +963,14 @@ func TestReconcileCompletedUnexpectedPodDeleteDedupedByUID(t *testing.T) {
 	c := newPodControllerForTest(t, pod)
 	handler := &fakePodHandler{netName: "net-a", expect: map[string]bool{"ns/pod": false}}
 
-	if err := c.reconcilePodForNetwork(handler, "ns/pod", handler.netName); err != nil {
+	if err := c.reconcilePodForNetwork(context.Background(), handler, "ns/pod", handler.netName); err != nil {
 		t.Fatalf("unexpected reconcile error: %v", err)
 	}
 	if handler.deleteCalls != 1 {
 		t.Fatalf("expected first completed reconcile to delete, got %d", handler.deleteCalls)
 	}
 
-	if err := c.reconcilePodForNetwork(handler, "ns/pod", handler.netName); err != nil {
+	if err := c.reconcilePodForNetwork(context.Background(), handler, "ns/pod", handler.netName); err != nil {
 		t.Fatalf("unexpected reconcile error: %v", err)
 	}
 	if handler.deleteCalls != 1 {
@@ -978,7 +979,7 @@ func TestReconcileCompletedUnexpectedPodDeleteDedupedByUID(t *testing.T) {
 
 	c.podLister = newPodLister(t)
 	c.refreshLastSeen(pod)
-	if err := c.reconcilePodForNetwork(handler, "ns/pod", handler.netName); err != nil {
+	if err := c.reconcilePodForNetwork(context.Background(), handler, "ns/pod", handler.netName); err != nil {
 		t.Fatalf("unexpected reconcile error: %v", err)
 	}
 	if handler.deleteCalls != 1 {
@@ -988,7 +989,7 @@ func TestReconcileCompletedUnexpectedPodDeleteDedupedByUID(t *testing.T) {
 	recreatedPod := newPod("ns", "pod", "new")
 	c.podLister = newPodLister(t, recreatedPod)
 	handler.expect["ns/pod"] = true
-	if err := c.reconcilePodForNetwork(handler, "ns/pod", handler.netName); err != nil {
+	if err := c.reconcilePodForNetwork(context.Background(), handler, "ns/pod", handler.netName); err != nil {
 		t.Fatalf("unexpected reconcile error: %v", err)
 	}
 	if handler.reconcileCalls != 1 {
@@ -1071,7 +1072,7 @@ func TestSuccessfulReconcileDoesNotOverwriteNewerTerminalLastSeen(t *testing.T) 
 
 	reconcileErr := make(chan error, 1)
 	go func() {
-		reconcileErr <- c.reconcilePodForNetwork(handler, "ns/pod", handler.netName)
+		reconcileErr <- c.reconcilePodForNetwork(context.Background(), handler, "ns/pod", handler.netName)
 	}()
 	<-handler.reconcileStarted
 	c.refreshLastSeen(terminalPod)
@@ -1086,7 +1087,7 @@ func TestSuccessfulReconcileDoesNotOverwriteNewerTerminalLastSeen(t *testing.T) 
 	}
 
 	c.podLister = newPodLister(t)
-	if err := c.reconcilePodForNetwork(handler, "ns/pod", handler.netName); err != nil {
+	if err := c.reconcilePodForNetwork(context.Background(), handler, "ns/pod", handler.netName); err != nil {
 		t.Fatalf("unexpected teardown error: %v", err)
 	}
 	if handler.lastDeletePod == nil || handler.lastDeletePod.Status.Phase != corev1.PodSucceeded {
@@ -1114,7 +1115,7 @@ func TestListerSnapshotCannotOverwriteLaterSameUIDObservationAtMarkSeen(t *testi
 
 	reconcileErr := make(chan error, 1)
 	go func() {
-		reconcileErr <- c.reconcilePodForNetwork(handler, "ns/pod", handler.netName)
+		reconcileErr <- c.reconcilePodForNetwork(context.Background(), handler, "ns/pod", handler.netName)
 	}()
 	<-handler.expectedStarted // lister read has completed
 	c.refreshLastSeen(newerPod)
@@ -1148,7 +1149,7 @@ func TestFallbackSnapshotCannotOverwriteLaterSameUIDDeleteObservation(t *testing
 
 	reconcileErr := make(chan error, 1)
 	go func() {
-		reconcileErr <- c.reconcilePodForNetwork(handler, "ns/pod", handler.netName)
+		reconcileErr <- c.reconcilePodForNetwork(context.Background(), handler, "ns/pod", handler.netName)
 	}()
 	<-handler.expectedStarted // lister read has completed
 	c.rememberDeletedPod(newerDeletePod)
@@ -1255,7 +1256,7 @@ func TestDeleteRelatedPodLookupFailureRetainsEntryAndRetries(t *testing.T) {
 	}
 	c.markApplied(handler.netName, "ns/pod", pod, "old-state")
 
-	if err := c.reconcilePodForNetwork(handler, "ns/pod", handler.netName); err == nil {
+	if err := c.reconcilePodForNetwork(context.Background(), handler, "ns/pod", handler.netName); err == nil {
 		t.Fatal("expected related-pod lookup failure")
 	}
 	if entry := c.entryForTest(handler.netName, "ns/pod"); entry == nil {
@@ -1267,7 +1268,7 @@ func TestDeleteRelatedPodLookupFailureRetainsEntryAndRetries(t *testing.T) {
 
 	handler.relatedErr = nil
 	handler.relatedKeys = []string{"ns/related"}
-	if err := c.reconcilePodForNetwork(handler, "ns/pod", handler.netName); err != nil {
+	if err := c.reconcilePodForNetwork(context.Background(), handler, "ns/pod", handler.netName); err != nil {
 		t.Fatalf("unexpected retry error: %v", err)
 	}
 	if handler.deleteCalls != 1 {
