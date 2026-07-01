@@ -2450,9 +2450,9 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 					},
 				)
 
-				// initialize the localZoneNodes empty so the controller thinks
+				// initialize the localNodes empty so the controller thinks
 				// the node is on a remote zone
-				fakeOvn.controller.localZoneNodes = &sync.Map{}
+				fakeOvn.controller.localNodes = &sync.Map{}
 
 				err := fakeOvn.controller.WatchNamespaces()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -2471,7 +2471,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 
-		ginkgo.It("falls back to node zone lookup when localZoneNodes misses", func() {
+		ginkgo.It("falls back to node zone lookup when localNodes misses", func() {
 			app.Action = func(*cli.Context) error {
 				localNode := newNode(node1Name, "192.168.126.202/24")
 				localNode.Annotations[util.OvnNodeZoneName] = ovntypes.OvnDefaultZone
@@ -2488,15 +2488,15 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				)
 
 				// Simulate a startup window where node cache entries are not yet populated.
-				fakeOvn.controller.localZoneNodes = &sync.Map{}
+				fakeOvn.controller.localNodes = &sync.Map{}
 
 				localPod := ovntest.NewPod("ns1", "local-pod", node1Name, "10.128.1.3")
 				remotePod := ovntest.NewPod("ns1", "remote-pod", node2Name, "10.128.1.4")
 				unscheduledPod := ovntest.NewPod("ns1", "unscheduled-pod", "", "")
 
-				gomega.Expect(fakeOvn.controller.isPodScheduledinLocalZone(localPod)).To(gomega.BeTrue())
-				gomega.Expect(fakeOvn.controller.isPodScheduledinLocalZone(remotePod)).To(gomega.BeFalse())
-				gomega.Expect(fakeOvn.controller.isPodScheduledinLocalZone(unscheduledPod)).To(gomega.BeFalse())
+				gomega.Expect(fakeOvn.controller.isPodScheduledOnLocalNode(localPod)).To(gomega.BeTrue())
+				gomega.Expect(fakeOvn.controller.isPodScheduledOnLocalNode(remotePod)).To(gomega.BeFalse())
+				gomega.Expect(fakeOvn.controller.isPodScheduledOnLocalNode(unscheduledPod)).To(gomega.BeFalse())
 
 				return nil
 			}
@@ -2537,7 +2537,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 					},
 				)
 
-				fakeOvn.controller.localZoneNodes = nil
+				fakeOvn.controller.localNodes = nil
 				err := fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				return nil

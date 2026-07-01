@@ -823,8 +823,8 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 			i, n, _ := net.ParseCIDR("10.128.1.3" + "/23")
 			n.IP = i
 			fakeOVN.controller.logicalPortCache.add(podLocalT, "", types.DefaultNetworkName, "", nil, []*net.IPNet{n})
-			// add pod to local zone (isPodScheduledinLocalZone logic depends on cache entry)
-			fakeOVN.controller.localZoneNodes.Store(podLocalT.Spec.NodeName, true)
+			// add pod to local zone (isPodScheduledOnLocalNode logic depends on cache entry)
+			fakeOVN.controller.localNodes.Store(podLocalT.Spec.NodeName, true)
 
 			eq := newEgressQoSObject("default", namespaceT.Name, []egressqosapi.EgressQoSRule{
 				{
@@ -1027,7 +1027,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 			expectEgressQoSStatusMessageEventually(fakeOVN, namespaceT.Name, false)
 
 			if podZone == "local" {
-				fakeOVN.controller.localZoneNodes.Store(podT.Spec.NodeName, true)
+				fakeOVN.controller.localNodes.Store(podT.Spec.NodeName, true)
 			}
 
 			ginkgo.By("Create pod and validate its ip address in the address set")

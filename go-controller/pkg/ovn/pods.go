@@ -55,7 +55,7 @@ func (oc *DefaultNetworkController) syncPods(pods []interface{}) error {
 			if err != nil {
 				return err
 			}
-		} else if oc.isPodScheduledinLocalZone(pod) {
+		} else if oc.isPodScheduledOnLocalNode(pod) {
 			if switchesNotFound[pod.Spec.NodeName] {
 				klog.Warningf("Cannot allocate IPs for %s/%s, node was not found after 30 seconds", pod.Namespace, pod.Name)
 				continue
@@ -104,7 +104,7 @@ func (oc *DefaultNetworkController) syncPods(pods []interface{}) error {
 		}
 
 		// only update annotations for pods belonging to my zone
-		if oc.isPodScheduledinLocalZone(pod) {
+		if oc.isPodScheduledOnLocalNode(pod) {
 			// delete the outdated hybrid overlay subnet route if it exists
 			newRoutes := []util.PodRoute{}
 			// HO is IPv4 only
@@ -148,7 +148,7 @@ func (oc *DefaultNetworkController) syncPods(pods []interface{}) error {
 		// allocate all previously annoted hybridOverlay Distributed Router IP addresses. Allocation needs to happen here
 		// before a Pod Add event can be processed and be allocated a previously assigned hybridOverlay Distributed Router IP address.
 		// we do not support manually setting the hybrid overlay DRIP address
-		nodes, err := oc.GetLocalZoneNodes()
+		nodes, err := oc.GetLocalNodes()
 		if err != nil {
 			return fmt.Errorf("failed to get nodes: %v", err)
 		}
@@ -376,12 +376,12 @@ func (oc *DefaultNetworkController) allocateSyncMigratablePodIPsOnZone(vms map[k
 
 	// If there is a vmKey this VM is not stale so it should be in sync
 	if vmKey != nil {
-		vms[*vmKey] = oc.isPodScheduledinLocalZone(pod)
+		vms[*vmKey] = oc.isPodScheduledOnLocalNode(pod)
 	}
 
 	// For remote pods we the logical switch port is not present so
 	// empty expectedLogicalPortName is returned
-	if _, ok := oc.localZoneNodes.Load(pod.Spec.NodeName); !ok {
+	if _, ok := oc.localNodes.Load(pod.Spec.NodeName); !ok {
 		expectedLogicalPortName = ""
 	}
 

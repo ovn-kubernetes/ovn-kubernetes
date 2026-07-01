@@ -228,7 +228,7 @@ func newDefaultNetworkControllerCommon(
 			sharedNetpolPortGroups:      syncmap.NewSyncMap[*defaultDenyPortGroups](),
 			stopChan:                    defaultStopChan,
 			wg:                          defaultWg,
-			localZoneNodes:              &sync.Map{},
+			localNodes:                  &sync.Map{},
 			zoneICHandler:               zoneICHandler,
 			cancelableCtx:               util.NewCancelableContext(),
 			observManager:               observManager,
@@ -388,9 +388,9 @@ func (oc *DefaultNetworkController) startNodeReconciliation() error {
 }
 
 func (oc *DefaultNetworkController) waitForInitialNodeSync() error {
-	nodes, err := oc.GetLocalZoneNodes()
+	nodes, err := oc.GetLocalNodes()
 	if err != nil {
-		return fmt.Errorf("failed to get local zone nodes for initial node sync wait: %w", err)
+		return fmt.Errorf("failed to get local nodes for initial node sync wait: %w", err)
 	}
 	for _, node := range nodes {
 		if util.NoHostSubnet(node) {
@@ -408,7 +408,7 @@ func (oc *DefaultNetworkController) waitForInitialNodeSync() error {
 			}
 			return false, nil
 		}); err != nil {
-			return fmt.Errorf("failed waiting for local zone node %s logical switch %s for network %s: %w",
+			return fmt.Errorf("failed waiting for local node %s logical switch %s for network %s: %w",
 				node.Name, switchName, oc.GetNetworkName(), err)
 		}
 	}
@@ -466,7 +466,7 @@ func (oc *DefaultNetworkController) ReconcileNode(oldNode, newNode *corev1.Node,
 	}
 
 	var aggregatedErrors []error
-	if oc.isLocalZoneNode(newNode) {
+	if oc.isLocalNode(newNode) {
 		var nodeSyncsParam *nodeSyncs
 		hoNeedsCleanup := false
 		if !config.HybridOverlay.Enabled {
@@ -508,7 +508,7 @@ func (oc *DefaultNetworkController) ReconcileNode(oldNode, newNode *corev1.Node,
 					syncZoneIC:            true,
 				}
 			}
-		} else if oc.isLocalZoneNode(oldNode) {
+		} else if oc.isLocalNode(oldNode) {
 			_, nodeSync := oc.addNodeFailed.Load(newNode.Name)
 			nodeSync = nodeSync || defaultNodeSubnetChangedWithState(oldNode, newNode, oldState, newState)
 			_, failed := oc.nodeClusterRouterPortFailed.Load(newNode.Name)
@@ -553,7 +553,7 @@ func (oc *DefaultNetworkController) ReconcileNode(oldNode, newNode *corev1.Node,
 		} else {
 			// Sync interconnect state when the node moved from local to remote, changed zone clusters,
 			// switched from hybrid-overlay to OVN management, or its remote reachability inputs changed.
-			syncZoneIC = syncZoneIC || oc.isLocalZoneNode(oldNode) ||
+			syncZoneIC = syncZoneIC || oc.isLocalNode(oldNode) ||
 				defaultNodeSubnetChangedWithState(oldNode, newNode, oldState, newState) ||
 				oc.nodeZoneClusterChanged(oldNode, newNode) ||
 				switchToOvnNode ||
@@ -1027,7 +1027,7 @@ func (h *defaultNetworkControllerEventHandler) AddResource(obj interface{}, from
 		// Update node in zone cache; value will be true if node is local
 		// to this zone and false if its not
 		h.oc.eIPC.nodeZoneState.LockKey(node.Name)
-		h.oc.eIPC.nodeZoneState.Store(node.Name, h.oc.isLocalZoneNode(node))
+		h.oc.eIPC.nodeZoneState.Store(node.Name, h.oc.isLocalNode(node))
 		h.oc.eIPC.nodeZoneState.UnlockKey(node.Name)
 
 		shouldSyncReroute := true
@@ -1040,7 +1040,7 @@ func (h *defaultNetworkControllerEventHandler) AddResource(obj interface{}, from
 		if shouldSyncReroute {
 			// add the 103 qos rule to new node's switch
 			// NOTE: We don't need to remove this on node delete since entire node switch will get cleaned up
-			if h.oc.isLocalZoneNode(node) {
+			if h.oc.isLocalNode(node) {
 				if err := h.oc.eIPC.ensureDefaultNoRerouteQoSRules(node.Name); err != nil {
 					h.oc.syncEIPNodeRerouteFailed.Store(node.Name, true)
 					return err
@@ -1111,13 +1111,13 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(oldObj, newObj int
 		// Update node in zone cache; value will be true if node is local
 		// to this zone and false if its not
 		h.oc.eIPC.nodeZoneState.LockKey(newNode.Name)
-		h.oc.eIPC.nodeZoneState.Store(newNode.Name, h.oc.isLocalZoneNode(newNode))
+		h.oc.eIPC.nodeZoneState.Store(newNode.Name, h.oc.isLocalNode(newNode))
 		h.oc.eIPC.nodeZoneState.UnlockKey(newNode.Name)
 
 		_, syncEIPNodeRerouteFailed := h.oc.syncEIPNodeRerouteFailed.Load(newNode.Name)
 
 		// node moved from remote -> local or previously failed reroute config
-		if (!h.oc.isLocalZoneNode(oldNode) || syncEIPNodeRerouteFailed) && h.oc.isLocalZoneNode(newNode) {
+		if (!h.oc.isLocalNode(oldNode) || syncEIPNodeRerouteFailed) && h.oc.isLocalNode(newNode) {
 			if err := h.oc.eIPC.ensureDefaultNoRerouteQoSRules(newNode.Name); err != nil {
 				return err
 			}

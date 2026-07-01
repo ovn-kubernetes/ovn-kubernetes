@@ -163,7 +163,7 @@ func (oc *DefaultNetworkController) createASForEgressQoSRule(podSelector metav1.
 	podsIps := []net.IP{}
 	for _, pod := range pods {
 		// we don't handle HostNetworked or completed pods or not-scheduled pods or remote-zone pods
-		if !util.PodWantsHostNetwork(pod) && !util.PodCompleted(pod) && util.PodScheduled(pod) && oc.isPodScheduledinLocalZone(pod) {
+		if !util.PodWantsHostNetwork(pod) && !util.PodCompleted(pod) && util.PodScheduled(pod) && oc.isPodScheduledOnLocalNode(pod) {
 			podIPs, err := util.GetPodIPsOfNetwork(pod, oc.GetNetInfo(), nil)
 			if err != nil && !errors.Is(err, util.ErrNoPodIPFound) {
 				return nil, nil, err
@@ -746,7 +746,7 @@ func (oc *DefaultNetworkController) syncEgressQoSPod(key string) error {
 
 	klog.V(5).Infof("Pod %s retrieved from lister: %v", pod.Name, pod)
 
-	if util.PodWantsHostNetwork(pod) || !oc.isPodScheduledinLocalZone(pod) { // we don't handle HostNetworked or remote zone pods
+	if util.PodWantsHostNetwork(pod) || !oc.isPodScheduledOnLocalNode(pod) { // we don't handle HostNetworked or remote zone pods
 		return nil
 	}
 
@@ -810,7 +810,7 @@ func (oc *DefaultNetworkController) onEgressQoSPodAdd(obj interface{}) {
 	}
 	pod := obj.(*corev1.Pod)
 	// only process this pod if it is local to this zone
-	if !oc.isPodScheduledinLocalZone(pod) {
+	if !oc.isPodScheduledOnLocalNode(pod) {
 		// NOTE: This means we don't handle the case where pod goes from
 		// being local to remote. So far there is no use case for this to happen.
 		// Also when we think about a pod going from local to remote - what does that mean?
@@ -840,8 +840,8 @@ func (oc *DefaultNetworkController) onEgressQoSPodUpdate(oldObj, newObj interfac
 	newPodLabels := labels.Set(newPod.Labels)
 	oldPodIPs, _ := util.GetPodIPsOfNetwork(oldPod, oc.GetNetInfo(), nil)
 	newPodIPs, _ := util.GetPodIPsOfNetwork(newPod, oc.GetNetInfo(), nil)
-	isOldPodLocal := oc.isPodScheduledinLocalZone(oldPod)
-	isNewPodLocal := oc.isPodScheduledinLocalZone(newPod)
+	isOldPodLocal := oc.isPodScheduledOnLocalNode(oldPod)
+	isNewPodLocal := oc.isPodScheduledOnLocalNode(newPod)
 	oldPodCompleted := util.PodCompleted(oldPod)
 	newPodCompleted := util.PodCompleted(newPod)
 	if labels.Equals(oldPodLabels, newPodLabels) &&
@@ -869,7 +869,7 @@ func (oc *DefaultNetworkController) onEgressQoSPodDelete(obj interface{}) {
 	}
 	pod := obj.(*corev1.Pod)
 	// only process this pod if it is local to this zone
-	if !oc.isPodScheduledinLocalZone(pod) {
+	if !oc.isPodScheduledOnLocalNode(pod) {
 		// NOTE: This means we don't handle the case where pod goes from
 		// being local to remote. So far there is no use case for this to happen.
 		// Also when we think about a pod going from local to remote - what does that mean?

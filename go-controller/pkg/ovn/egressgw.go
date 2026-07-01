@@ -70,7 +70,7 @@ func (oc *DefaultNetworkController) isPodInLocalZone(pod *corev1.Pod) (bool, err
 	if err != nil {
 		return false, err
 	}
-	return oc.isLocalZoneNode(node), nil
+	return oc.isLocalNode(node), nil
 }
 
 func (oc *DefaultNetworkController) deleteLogicalRouterStaticRoute(podIP, mask, gw, gr string) error {
@@ -212,7 +212,7 @@ func (oc *DefaultNetworkController) deletePodSNAT(nodeName string, extIPs, podIP
 		}
 		return err
 	}
-	if !oc.isLocalZoneNode(node) {
+	if !oc.isLocalNode(node) {
 		klog.V(4).Infof("Node %s is not in the local zone %s", nodeName, oc.zone)
 		return nil
 	}

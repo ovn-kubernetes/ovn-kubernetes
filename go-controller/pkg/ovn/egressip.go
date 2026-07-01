@@ -1047,7 +1047,7 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 		}
 		e.nodeZoneState.UnlockKey(status.Node)
 	}
-	if !proceed && !e.isPodScheduledinLocalZone(pod) {
+	if !proceed && !e.isPodScheduledOnLocalNode(pod) {
 		return nil // nothing to do if none of the status nodes are local to this controller and the pod is also remote
 	}
 	for _, status := range remainingAssignments {
@@ -1078,7 +1078,7 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 			return err
 		}
 	}
-	if e.isPodScheduledinLocalZone(pod) {
+	if e.isPodScheduledOnLocalNode(pod) {
 		if err := e.addPodIPsToAddressSet(ni.GetNetworkName(), e.controllerName, podIPs...); err != nil {
 			return fmt.Errorf("cannot add egressPodIPs for the pod %s/%s to the address set: err: %v", pod.Namespace, pod.Name, err)
 		}
@@ -1258,7 +1258,7 @@ func (e *EgressIPController) deletePodEgressIPAssignments(ni util.NetInfo, name 
 		// so remove the podKey from cache only if we are sure
 		// there are no more egressStatuses managing this pod
 		klog.V(5).Infof("Deleting pod key %s from assignment cache", podKey)
-		if e.isPodScheduledinLocalZone(pod) {
+		if e.isPodScheduledOnLocalNode(pod) {
 			if err := e.deletePodIPsFromAddressSet(ni.GetNetworkName(), e.controllerName, podStatus.podIPs...); err != nil {
 				return fmt.Errorf("cannot delete egressPodIPs for the pod %s from the address set: err: %v", podKey, err)
 			}
@@ -1307,28 +1307,28 @@ func (e *EgressIPController) deletePreviousNetworkPodEgressIPAssignments(ni util
 	}
 }
 
-// isPodScheduledinLocalZone returns true if
+// isPodScheduledOnLocalNode returns true if
 //   - e.nodeZoneState is nil or
 //   - the pod.Spec.NodeName is in the local zone according to e.nodeZoneState
 //
 // false otherwise.
-func (e *EgressIPController) isPodScheduledinLocalZone(pod *corev1.Pod) bool {
-	isLocalZonePod := true
+func (e *EgressIPController) isPodScheduledOnLocalNode(pod *corev1.Pod) bool {
+	isLocalPod := true
 
 	if e.nodeZoneState != nil {
 		if util.PodScheduled(pod) {
 			if isLocal, ok := e.nodeZoneState.Load(pod.Spec.NodeName); ok {
-				isLocalZonePod = isLocal
+				isLocalPod = isLocal
 			}
 		} else {
-			isLocalZonePod = false
+			isLocalPod = false
 		}
 	}
-	return isLocalZonePod
+	return isLocalPod
 }
 
-// isLocalZoneNode returns true if the node is part of the local zone.
-func (e *EgressIPController) isLocalZoneNode(node *corev1.Node) bool {
+// isLocalNode returns true if the node is part of the local zone.
+func (e *EgressIPController) isLocalNode(node *corev1.Node) bool {
 	return util.GetNodeZone(node) == e.zone
 }
 
@@ -1443,7 +1443,7 @@ func (e *EgressIPController) SyncLocalNodeZonesCache() error {
 		// The EgressNodeType events (which are basically all node updates) should
 		// constantly update this cache as nodes get added, updated and removed
 		e.nodeZoneState.LockKey(node.Name)
-		e.nodeZoneState.Store(node.Name, e.isLocalZoneNode(node))
+		e.nodeZoneState.Store(node.Name, e.isLocalNode(node))
 		e.nodeZoneState.UnlockKey(node.Name)
 	}
 	return nil
@@ -2134,11 +2134,11 @@ func (e *EgressIPController) generateCacheForEgressIP() (egressIPCache, error) {
 	if err != nil {
 		return cache, fmt.Errorf("failed to get all nodes: %v", err)
 	}
-	localZoneNodes := sets.New[string]()
+	localNodes := sets.New[string]()
 	nodeNames := e.nodeZoneState.GetKeys()
 	for _, nodeName := range nodeNames {
 		if isLocal, ok := e.nodeZoneState.Load(nodeName); ok && isLocal {
-			localZoneNodes.Insert(nodeName)
+			localNodes.Insert(nodeName)
 		}
 	}
 	// network name -> node name -> redirect IPs
@@ -2162,8 +2162,8 @@ func (e *EgressIPController) generateCacheForEgressIP() (egressIPCache, error) {
 		}
 		redirectCache[ni.GetNetworkName()] = map[string]redirectIPs{}
 		var localNodeName string
-		if localZoneNodes.Len() > 0 {
-			localNodeName = localZoneNodes.UnsortedList()[0]
+		if localNodes.Len() > 0 {
+			localNodeName = localNodes.UnsortedList()[0]
 		}
 		routerName, err := getTopologyScopedRouterName(ni, localNodeName)
 		if err != nil {
@@ -2211,7 +2211,7 @@ func (e *EgressIPController) generateCacheForEgressIP() (egressIPCache, error) {
 				}
 			}
 
-			if localZoneNodes.Has(node.Name) {
+			if localNodes.Has(node.Name) {
 				if e.v4 {
 					if gatewayRouterIP, err := e.getGatewayNextHop(ni, node, false); err != nil {
 						klog.V(5).Infof("Unable to retrieve gateway IP for node: %s, protocol is IPv4: err: %v", node.Name, err)
@@ -2287,7 +2287,7 @@ func (e *EgressIPController) generateCacheForEgressIP() (egressIPCache, error) {
 			}
 			egressIPIPNodeCache[eipIP.String()] = status.Node
 			egressIPToAssignedNodes[egressIP.Name][eipIP.String()] = status.Node
-			if localZoneNodes.Has(status.Node) {
+			if localNodes.Has(status.Node) {
 				egressLocalNodesCache.Insert(status.Node)
 			}
 			egressIPNameNodesCache[egressIP.Name] = append(egressIPNameNodesCache[egressIP.Name], status.Node)
@@ -2324,7 +2324,7 @@ func (e *EgressIPController) generateCacheForEgressIP() (egressIPCache, error) {
 				if !util.PodNeedsSNAT(pod) {
 					continue
 				}
-				if egressLocalNodesCache.Len() == 0 && !e.isPodScheduledinLocalZone(pod) {
+				if egressLocalNodesCache.Len() == 0 && !e.isPodScheduledOnLocalNode(pod) {
 					continue // don't process anything on controllers that have nothing to do with the pod
 				}
 				nadKey, err := e.getPodNADKeyForNetwork(ni, pod)
@@ -2341,7 +2341,7 @@ func (e *EgressIPController) generateCacheForEgressIP() (egressIPCache, error) {
 					continue
 				}
 				podKey := getPodKey(pod)
-				if e.isPodScheduledinLocalZone(pod) {
+				if e.isPodScheduledOnLocalNode(pod) {
 					//
 					_, ok := egressIPsCache[egressIP.Name][ni.GetNetworkName()].egressLocalPods[podKey]
 					if !ok {
@@ -2405,7 +2405,7 @@ func (e *EgressIPController) addEgressNode(node *corev1.Node) error {
 	if node == nil {
 		return nil
 	}
-	if e.isLocalZoneNode(node) {
+	if e.isLocalNode(node) {
 		klog.V(5).Infof("Egress node: %s about to be initialized", node.Name)
 		if e.zone != types.OvnDefaultZone {
 			// NOTE: EgressIP is not supported on multi-nodes-in-same-zone case
@@ -2726,7 +2726,7 @@ func (e *EgressIPController) addPodEgressIPAssignment(ni util.NetInfo, egressIPN
 	}
 	eIPIP := net.ParseIP(status.EgressIP)
 	isLocalZoneEgressNode, loadedEgressNode := e.nodeZoneState.Load(status.Node)
-	isLocalZonePod, loadedPodNode := e.nodeZoneState.Load(pod.Spec.NodeName)
+	isLocalPod, loadedPodNode := e.nodeZoneState.Load(pod.Spec.NodeName)
 	eNode, err := e.watchFactory.GetNode(status.Node)
 	if err != nil {
 		return fmt.Errorf("failed to add pod %s/%s because failed to lookup node %s: %v", pod.Namespace, pod.Name,
@@ -2766,7 +2766,7 @@ func (e *EgressIPController) addPodEgressIPAssignment(ni util.NetInfo, egressIPN
 				}
 			}
 		}
-		if ni.IsDefault() && !isOVNNetwork && (loadedPodNode && !isLocalZonePod) {
+		if ni.IsDefault() && !isOVNNetwork && (loadedPodNode && !isLocalPod) {
 			// For CDNs, configure LRP with reroute action for non-local-zone pods on egress nodes to support redirect to local management port
 			// when the egress IP is assigned to a host secondary interface
 			routerName, err := getTopologyScopedRouterName(ni, pod.Spec.NodeName)
@@ -2782,7 +2782,7 @@ func (e *EgressIPController) addPodEgressIPAssignment(ni util.NetInfo, egressIPN
 
 	// For L2, we always attach an LRP with reroute action to the Nodes gateway router. If the pod is remote, use the local zone Node name to generate the GW router name.
 	nodeName := pod.Spec.NodeName
-	if loadedEgressNode && loadedPodNode && !isLocalZonePod && isLocalZoneEgressNode && ni.IsUserDefinedNetwork() &&
+	if loadedEgressNode && loadedPodNode && !isLocalPod && isLocalZoneEgressNode && ni.IsUserDefinedNetwork() &&
 		ni.TopologyType() == types.Layer2Topology && !config.Layer2UsesTransitRouter {
 		nodeName = status.Node
 	}
@@ -2794,13 +2794,13 @@ func (e *EgressIPController) addPodEgressIPAssignment(ni util.NetInfo, egressIPN
 	// exec when node is local OR when pods are local or L2 UDN
 	// don't add a reroute policy if the egress node towards which we are adding this doesn't exist
 	if loadedEgressNode && loadedPodNode {
-		if isLocalZonePod || (isLocalZoneEgressNode && ni.IsUserDefinedNetwork() && ni.TopologyType() == types.Layer2Topology) {
+		if isLocalPod || (isLocalZoneEgressNode && ni.IsUserDefinedNetwork() && ni.TopologyType() == types.Layer2Topology) {
 			ops, err = e.createReroutePolicyOps(ni, ops, podIPs, status, mark, egressIPName, nextHopIP, routerName, pod.Namespace, pod.Name)
 			if err != nil {
 				return fmt.Errorf("unable to create logical router policy ops, err: %v", err)
 			}
 		}
-		if isLocalZonePod {
+		if isLocalPod {
 			ops, err = e.deleteExternalGWPodSNATOps(ni, ops, pod, podIPs, status, isOVNNetwork)
 			if err != nil {
 				return err
@@ -2826,7 +2826,7 @@ func (e *EgressIPController) deletePodEgressIPAssignment(ni util.NetInfo, egress
 		}()
 	}
 	isLocalZoneEgressNode, loadedEgressNode := e.nodeZoneState.Load(status.Node)
-	isLocalZonePod, loadedPodNode := e.nodeZoneState.Load(pod.Spec.NodeName)
+	isLocalPod, loadedPodNode := e.nodeZoneState.Load(pod.Spec.NodeName)
 	var nextHopIP string
 	var isOVNNetwork bool
 	// node may not exist - attempt to retrieve it
@@ -2851,7 +2851,7 @@ func (e *EgressIPController) deletePodEgressIPAssignment(ni util.NetInfo, egress
 	}
 	// For L2, we always attach an LRP with reroute action to the Nodes gateway router. If the pod is remote, use the local zone Node name to generate the GW router name.
 	nodeName := pod.Spec.NodeName
-	if !isLocalZonePod && isLocalZoneEgressNode && ni.IsUserDefinedNetwork() &&
+	if !isLocalPod && isLocalZoneEgressNode && ni.IsUserDefinedNetwork() &&
 		ni.TopologyType() == types.Layer2Topology && !config.Layer2UsesTransitRouter {
 		nodeName = status.Node
 	}
@@ -2861,7 +2861,7 @@ func (e *EgressIPController) deletePodEgressIPAssignment(ni util.NetInfo, egress
 	}
 	var ops []ovsdb.Operation
 	// For CDN only, add SNATs to support external GW feature
-	if ni.IsDefault() && (!loadedPodNode || isLocalZonePod) {
+	if ni.IsDefault() && (!loadedPodNode || isLocalPod) {
 		ops, err = e.addExternalGWPodSNATOps(ni, nil, pod.Namespace, pod.Name, status)
 		if err != nil {
 			return err
@@ -2871,7 +2871,7 @@ func (e *EgressIPController) deletePodEgressIPAssignment(ni util.NetInfo, egress
 	// Case 1 - node where pod is hosted is not known
 	// Case 2 - pod is within the local zone
 	// case 3 - a local zone node is egress node and pod is attached to layer 2. For layer2, there is always an LRP attached to the egress Node GW router
-	if !loadedPodNode || isLocalZonePod || (isLocalZoneEgressNode && ni.IsUserDefinedNetwork() &&
+	if !loadedPodNode || isLocalPod || (isLocalZoneEgressNode && ni.IsUserDefinedNetwork() &&
 		ni.TopologyType() == types.Layer2Topology) {
 		ops, err = e.deleteReroutePolicyOps(ni, ops, status, egressIPName, nextHopIP, routerName, pod.Namespace, pod.Name)
 		if errors.Is(err, libovsdbclient.ErrNotFound) {
@@ -2883,7 +2883,7 @@ func (e *EgressIPController) deletePodEgressIPAssignment(ni util.NetInfo, egress
 	}
 
 	if loadedEgressNode && isLocalZoneEgressNode {
-		if ni.IsDefault() && !isOVNNetwork && (!loadedPodNode || !isLocalZonePod) { // node is deleted (we can't determine zone so we always try and nuke OR pod is remote to zone)
+		if ni.IsDefault() && !isOVNNetwork && (!loadedPodNode || !isLocalPod) { // node is deleted (we can't determine zone so we always try and nuke OR pod is remote to zone)
 			// For CDNs, delete reroute for non-local-zone pods on egress nodes when the egress IP is assigned to a secondary host interface
 			ops, err = e.deleteReroutePolicyOps(ni, ops, status, egressIPName, nextHopIP, routerName, pod.Namespace, pod.Name)
 			if err != nil {
@@ -2954,8 +2954,8 @@ func (e *EgressIPController) addExternalGWPodSNATOps(ni util.NetInfo, ops []ovsd
 			return ops, nil
 		}
 
-		isLocalZonePod, loadedPodNode := e.nodeZoneState.Load(pod.Spec.NodeName)
-		if pod.Spec.NodeName == status.Node && loadedPodNode && isLocalZonePod && util.PodNeedsSNAT(pod) {
+		isLocalPod, loadedPodNode := e.nodeZoneState.Load(pod.Spec.NodeName)
+		if pod.Spec.NodeName == status.Node && loadedPodNode && isLocalPod && util.PodNeedsSNAT(pod) {
 			// if the pod still exists, add snats to->nodeIP (on the node where the pod exists) for these podIPs after deleting the snat to->egressIP
 			// NOTE: This needs to be done only if the pod was on the same node as egressNode
 			extIPs, err := getExternalIPsGR(e.watchFactory, pod.Spec.NodeName)
@@ -4051,7 +4051,7 @@ func (e *EgressIPController) getPodIPs(ni util.NetInfo, pod *corev1.Pod, nadKey 
 		}
 		return ipNetsCopy
 	}
-	if e.isPodScheduledinLocalZone(pod) {
+	if e.isPodScheduledOnLocalNode(pod) {
 		// Retrieve the pod's networking configuration from the
 		// logicalPortCache. The reason for doing this: a) only normal network
 		// pods are placed in this cache, b) once the pod is placed here we know
