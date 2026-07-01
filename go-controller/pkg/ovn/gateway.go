@@ -190,57 +190,68 @@ func (gw *GatewayManager) cleanupStalePodSNATs(nodeName string, nodeIPs []*net.I
 	if gw.netInfo.IsUserDefinedNetwork() && gw.getNetworkNameForNADKey == nil {
 		return fmt.Errorf("missing NAD resolver for network %q", gw.netInfo.GetNetworkName())
 	}
-	// collect all the pod IPs for which we should be doing the SNAT;
-	// if DisableSNATMultipleGWs==false we consider all
-	// the SNATs stale
-	podIPsWithSNAT := sets.New[string]()
-	if config.Gateway.DisableSNATMultipleGWs {
-		pods, err := gw.watchFactory.GetAllPods()
-		if err != nil {
-			return fmt.Errorf("unable to list existing pods on node: %s, %w",
-				nodeName, err)
-		}
-		for _, pod := range pods {
-			pod := *pod
-			if !util.PodScheduled(&pod) { //if the pod is not scheduled we should not remove the nat
-				continue
-			}
-			if pod.Spec.NodeName != nodeName {
-				continue
-			}
-			if util.PodCompleted(&pod) {
-				collidingPod, err := findPodWithIPAddresses(gw.watchFactory, gw.netInfo, []net.IP{utilnet.ParseIPSloppy(pod.Status.PodIP)}, "", gw.getNetworkNameForNADKey) //even if a pod is completed we should still delete the nat if the ip is not in use anymore
-				if err != nil {
-					return fmt.Errorf("lookup for pods with same ip as %s %s failed: %w", pod.Namespace, pod.Name, err)
-				}
-				if collidingPod != nil { //if the ip is in use we should not remove the nat
-					continue
-				}
-			}
-			podIPs, err := util.GetPodIPsOfNetwork(&pod, gw.netInfo, gw.getNetworkNameForNADKey)
-			if err != nil && errors.Is(err, util.ErrNoPodIPFound) {
-				// It is possible that the pod is scheduled during this time, but the LSP add or
-				// IP Allocation has not happened and it is waiting for the WatchPods to start
-				// after WatchNodes completes (This function is called during syncNodes). So since
-				// the pod doesn't have any IPs, there is no SNAT here to keep for this pod so we skip
-				// this pod from processing and move onto the next one.
-				klog.Warningf("Unable to fetch podIPs for pod %s/%s: %v", pod.Namespace, pod.Name, err)
-				continue // no-op
-			} else if err != nil {
-				return fmt.Errorf("unable to fetch podIPs for pod %s/%s: %w", pod.Namespace, pod.Name, err)
-			}
-			for _, podIP := range podIPs {
-				podIPsWithSNAT.Insert(podIP.String())
-			}
-		}
-	}
 
 	gatewayRouter := &nbdb.LogicalRouter{
 		Name: gw.gwRouterName,
 	}
 	routerNATs, err := libovsdbops.GetRouterNATs(gw.nbClient, gatewayRouter)
-	if err != nil && errors.Is(err, libovsdbclient.ErrNotFound) {
+	if err != nil {
+		if errors.Is(err, libovsdbclient.ErrNotFound) {
+			// router not found, nothing to clean up
+			return nil
+		}
 		return fmt.Errorf("unable to get NAT entries for router %s on node %s: %w", gatewayRouter.Name, nodeName, err)
+	}
+	if len(routerNATs) == 0 {
+		// no nats, nothing to clean up
+		return nil
+	}
+
+	// collect all the pod IPs for which we should be doing the SNAT;
+	// if DisableSNATMultipleGWs==false we consider all
+	// the SNATs stale
+	podIPsWithSNAT := sets.New[string]()
+	if config.Gateway.DisableSNATMultipleGWs {
+		// For UDNs, only scan namespaces attached to this network.
+		// For the default network NADNamespaces is empty; GetPods("")
+		// falls back to listing all pods (ListAllByNamespace on "").
+		nadNamespaces := gw.netInfo.GetNADNamespaces()
+		if len(nadNamespaces) == 0 {
+			nadNamespaces = []string{""}
+		}
+		for _, ns := range nadNamespaces {
+			pods, err := gw.watchFactory.GetPods(ns)
+			if err != nil {
+				return fmt.Errorf("unable to list existing pods in namespace %q: %w", ns, err)
+			}
+			for _, pod := range pods {
+				if !util.PodScheduled(pod) {
+					continue
+				}
+				if pod.Spec.NodeName != nodeName {
+					continue
+				}
+				if util.PodCompleted(pod) {
+					collidingPod, err := findPodWithIPAddresses(gw.watchFactory, gw.netInfo, []net.IP{utilnet.ParseIPSloppy(pod.Status.PodIP)}, "", gw.getNetworkNameForNADKey)
+					if err != nil {
+						return fmt.Errorf("lookup for pods with same ip as %s %s failed: %w", pod.Namespace, pod.Name, err)
+					}
+					if collidingPod != nil {
+						continue
+					}
+				}
+				podIPs, err := util.GetPodIPsOfNetwork(pod, gw.netInfo, gw.getNetworkNameForNADKey)
+				if err != nil && errors.Is(err, util.ErrNoPodIPFound) {
+					klog.Warningf("Unable to fetch podIPs for pod %s/%s: %v", pod.Namespace, pod.Name, err)
+					continue
+				} else if err != nil {
+					return fmt.Errorf("unable to fetch podIPs for pod %s/%s: %w", pod.Namespace, pod.Name, err)
+				}
+				for _, podIP := range podIPs {
+					podIPsWithSNAT.Insert(podIP.String())
+				}
+			}
+		}
 	}
 
 	nodeIPset := sets.New(util.IPNetsIPToStringSlice(nodeIPs)...)

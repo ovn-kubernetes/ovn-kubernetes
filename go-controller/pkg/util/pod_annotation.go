@@ -401,12 +401,47 @@ func SecondaryNetworkPodIPs(pod *corev1.Pod, networkInfo NetInfo, getNetworkName
 	if getNetworkNameForNADKey == nil {
 		return nil, fmt.Errorf("missing NAD resolver for network %q", networkInfo.GetNetworkName())
 	}
-	podNADKeys, err := PodNADKeys(pod, networkInfo, getNetworkNameForNADKey)
+	if networkInfo.IsPrimaryNetwork() {
+		podNetworks, err := UnmarshalPodAnnotationAllNetworks(pod.Annotations)
+		if err != nil {
+			return nil, err
+		}
+		for nadKey, ann := range podNetworks {
+			networkName := getNetworkNameForNADKey(nadKey)
+			if networkName == "" || networkName != networkInfo.GetNetworkName() {
+				continue
+			}
+			annIPs, err := podAnnotationIPs(&ann)
+			if err != nil {
+				return nil, err
+			}
+			ips = append(ips, annIPs...)
+		}
+		return ips, nil
+	}
+
+	on, networkMap, err := getPodNADToNetworkMapping(pod, networkInfo, getNetworkNameForNADKey)
+	if err != nil {
+		return nil, err
+	} else if !on {
+		return []net.IP{}, nil
+	}
+
+	podNetworks, err := UnmarshalPodAnnotationAllNetworks(pod.Annotations)
 	if err != nil {
 		return nil, err
 	}
-	for _, nadKey := range podNADKeys {
-		ips = append(ips, getAnnotatedPodIPs(pod, nadKey)...)
+
+	for nadKey := range networkMap {
+		ann, ok := podNetworks[nadKey]
+		if !ok {
+			continue
+		}
+		annIPs, err := podAnnotationIPs(&ann)
+		if err != nil {
+			return nil, err
+		}
+		ips = append(ips, annIPs...)
 	}
 	return ips, nil
 }
@@ -447,6 +482,22 @@ func PodNADKeys(pod *corev1.Pod, netinfo NetInfo, getNetworkNameForNADKey func(n
 		nadKeys = append(nadKeys, nadKey)
 	}
 	return nadKeys, nil
+}
+
+func podAnnotationIPs(ann *podAnnotation) ([]net.IP, error) {
+	ipStrs := ann.IPs
+	if len(ipStrs) == 0 && ann.IP != "" {
+		ipStrs = []string{ann.IP}
+	}
+	ips := make([]net.IP, 0, len(ipStrs))
+	for _, ipStr := range ipStrs {
+		ip, _, err := net.ParseCIDR(ipStr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse pod IP %q: %v", ipStr, err)
+		}
+		ips = append(ips, ip)
+	}
+	return ips, nil
 }
 
 func getAnnotatedPodIPs(pod *corev1.Pod, nadKey string) []net.IP {
