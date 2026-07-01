@@ -114,6 +114,8 @@ BGP_SERVER_NET_SUBNET_IPV4=${BGP_SERVER_NET_SUBNET_IPV4:-172.27.0.0/16}
 BGP_SERVER_NET_SUBNET_IPV6=${BGP_SERVER_NET_SUBNET_IPV6:-fc00:f853:ccd:e797::/64}
 export BGP_SERVER_NET_SUBNET_IPV4
 export BGP_SERVER_NET_SUBNET_IPV6
+# Advertise the host address Kind uses for external traffic so host-published
+# external servers are reachable through the no-overlay FRR path.
 KIND_EXTERNAL_HOST_IPV4=${KIND_EXTERNAL_HOST_IPV4:-$(detect_kind_external_host_ipv4)}
 if [ -n "${KIND_EXTERNAL_HOST_IPV4}" ]; then
   add_ipv4_external_prefix "${KIND_EXTERNAL_HOST_IPV4}/32"

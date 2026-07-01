@@ -1606,24 +1606,57 @@ EOF
 configure_frr_k8s_routes() {
   # Add routes for pod networks dynamically into the github runner for return traffic to pass back
   if [ "$ADVERTISE_DEFAULT_NETWORK" = "true" ]; then
+    local kubectl_cmd=(kubectl)
+    local host_kubeconfig ipv4_route_gateway ipv6_route_gateway
+    if frr_k8s_remote_enabled; then
+      host_kubeconfig=$(frr_k8s_host_kubeconfig)
+      if [ -n "${host_kubeconfig}" ]; then
+        kubectl_cmd=(kubectl --kubeconfig "${host_kubeconfig}")
+      fi
+      # DPU-sim no-overlay mode routes worker pod subnets through the external FRR container.
+      if [ "$ENABLE_NO_OVERLAY" == true ] && [ -n "${DPU_SIM_GATEWAY_NETWORK:-}" ] && $OCI_BIN ps --format '{{.Names}}' | grep -Eq '^frr$'; then
+        if [ "$PLATFORM_IPV4_SUPPORT" == true ]; then
+          ipv4_route_gateway=$($OCI_BIN inspect -f '{{.NetworkSettings.Networks.kind.IPAddress}}' frr)
+          if [ -z "${ipv4_route_gateway}" ]; then
+            echo "error: could not determine FRR kind network IPv4 address for pod network routes" >&2
+            exit 1
+          fi
+          echo "Using FRR kind network IPv4 ${ipv4_route_gateway} for pod network return routes"
+        fi
+        if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
+          ipv6_route_gateway=$($OCI_BIN inspect -f '{{.NetworkSettings.Networks.kind.GlobalIPv6Address}}' frr)
+          if [ -z "${ipv6_route_gateway}" ]; then
+            echo "error: could not determine FRR kind network IPv6 address for pod network routes" >&2
+            exit 1
+          fi
+          echo "Using FRR kind network IPv6 ${ipv6_route_gateway} for pod network return routes"
+        fi
+      fi
+    fi
+
     echo "Adding routes for Kubernetes pod networks..."
-    NODES=$(kubectl get nodes -o jsonpath='{.items[*].metadata.name}')
+    NODES=$("${kubectl_cmd[@]}" get nodes -o jsonpath='{.items[*].metadata.name}')
     echo "Found nodes: $NODES"
     for node in $NODES; do
       # Get the addresses
-      node_ips=$(kubectl get node $node -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')
+      node_ips=$("${kubectl_cmd[@]}" get node $node -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')
       # Get subnet information
-      subnet_json=$(kubectl get node $node -o jsonpath='{.metadata.annotations.k8s\.ovn\.org/node-subnets}')
+      subnet_json=$("${kubectl_cmd[@]}" get node $node -o jsonpath='{.metadata.annotations.k8s\.ovn\.org/node-subnets}')
+      node_is_control_plane=$("${kubectl_cmd[@]}" get node "$node" -o json | jq -r '(.metadata.labels // {}) | has("node-role.kubernetes.io/control-plane")')
       
       if [ "$PLATFORM_IPV4_SUPPORT" == true ]; then
         # Extract IPv4 address (first address)
         node_ipv4=$(echo "$node_ips" | awk '{print $1}')
         ipv4_subnet=$(echo "$subnet_json" | jq -r '.default[0]')
+        ipv4_nexthop=$node_ipv4
+        if [ -n "${ipv4_route_gateway}" ] && [ "${node_is_control_plane}" != true ]; then
+          ipv4_nexthop=$ipv4_route_gateway
+        fi
         
         # Add IPv4 route
-        if [ -n "$ipv4_subnet" ] && [ -n "$node_ipv4" ]; then
-          echo "Adding IPv4 route for $node ($node_ipv4): $ipv4_subnet"
-          sudo ip route replace $ipv4_subnet via $node_ipv4
+        if [ -n "$ipv4_subnet" ] && [ -n "$ipv4_nexthop" ]; then
+          echo "Adding IPv4 route for $node via $ipv4_nexthop: $ipv4_subnet"
+          sudo ip route replace "$ipv4_subnet" via "$ipv4_nexthop"
         fi
       fi
 
@@ -1632,10 +1665,14 @@ configure_frr_k8s_routes() {
         # Extract IPv6 address (second address, if present)
         node_ipv6=$(echo "$node_ips" | awk '{print $2}')
         ipv6_subnet=$(echo "$subnet_json" | jq -r '.default[1] // empty')
+        ipv6_nexthop=$node_ipv6
+        if [ -n "${ipv6_route_gateway}" ] && [ "${node_is_control_plane}" != true ]; then
+          ipv6_nexthop=$ipv6_route_gateway
+        fi
         
-        if [ -n "$ipv6_subnet" ] && [ -n "$node_ipv6" ]; then
-          echo "Adding IPv6 route for $node ($node_ipv6): $ipv6_subnet"
-          sudo ip -6 route replace $ipv6_subnet via $node_ipv6
+        if [ -n "$ipv6_subnet" ] && [ -n "$ipv6_nexthop" ]; then
+          echo "Adding IPv6 route for $node via $ipv6_nexthop: $ipv6_subnet"
+          sudo ip -6 route replace "$ipv6_subnet" via "$ipv6_nexthop"
         fi
       fi
     done
