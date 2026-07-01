@@ -700,7 +700,8 @@ func (ncc *networkClusterController) shouldReconcileNode(
 	return ncc.relevantNodeAnnotationsChanged(oldState, newState)
 }
 
-func (ncc *networkClusterController) relevantNodeAnnotationsChanged(oldState, newState *sharednode.NodeAnnotationState) bool {
+func (ncc *networkClusterController) relevantNodeAnnotationsChanged(
+	oldState, newState *sharednode.NodeAnnotationState) bool {
 	if ncc.nodeAllocator.HasNodeSubnetAllocation() &&
 		sharednode.NodeSubnetAnnotationChangedForNetworkWithState(oldState, newState, ncc.GetNetworkName()) {
 		return true
