@@ -59,12 +59,20 @@ import (
 )
 
 const (
-	serverContainerName    = "bgpserver"
-	routerContainerName    = "frr"
-	echoClientPodName      = "echo-client-pod"
-	bgpExternalNetworkName = "bgpnet"
-	netexecPort            = 8080
+	serverContainerName                     = "bgpserver"
+	routerContainerName                     = "frr"
+	echoClientPodName                       = "echo-client-pod"
+	bgpExternalNetworkName                  = "bgpnet"
+	netexecPort                             = 8080
+	defaultNetworkRouteAdvertisementNameEnv = "E2E_DEFAULT_NETWORK_ROUTE_ADVERTISEMENT_NAME"
 )
+
+func defaultNetworkRouteAdvertisementName() string {
+	if name := os.Getenv(defaultNetworkRouteAdvertisementNameEnv); name != "" {
+		return name
+	}
+	return "default"
+}
 
 func init() {
 	if os.Getenv("ENABLE_ROUTE_ADVERTISEMENTS") == "true" {
@@ -77,6 +85,7 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 	var frrContainerIPv4, frrContainerIPv6 string
 	var nodes *corev1.NodeList
 	f := wrappedTestFramework("pod2external-route-advertisements")
+	defaultNetworkRAName := defaultNetworkRouteAdvertisementName()
 
 	ginkgo.BeforeEach(func() {
 		serverContainerIPs = getBGPServerContainerIPs(f)
@@ -96,7 +105,7 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 		var err error
 
 		ginkgo.BeforeEach(func() {
-			if !isDefaultNetworkAdvertised() {
+			if !isDefaultNetworkAdvertised(defaultNetworkRAName) {
 				e2eskipper.Skipf(
 					"skipping pod to external server tests when podNetwork is not advertised",
 				)
@@ -171,7 +180,7 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 			ginkgo.By("routes to the default pod network are advertised to external frr router")
 			// Get the first element in the advertisements array (assuming you want to check the first one)
 			gomega.Eventually(func() string {
-				podNetworkValue, err := e2ekubectl.RunKubectl("", "get", "ra", "default", "--template={{index .spec.advertisements 0}}")
+				podNetworkValue, err := e2ekubectl.RunKubectl("", "get", "ra", defaultNetworkRAName, "--template={{index .spec.advertisements 0}}")
 				if err != nil {
 					return ""
 				}
@@ -179,7 +188,7 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 			}, 5*time.Second, time.Second).Should(gomega.Equal("PodNetwork"))
 
 			gomega.Eventually(func() string {
-				reason, err := e2ekubectl.RunKubectl("", "get", "ra", "default", "-o", "jsonpath={.status.conditions[?(@.type=='Accepted')].reason}")
+				reason, err := e2ekubectl.RunKubectl("", "get", "ra", defaultNetworkRAName, "-o", "jsonpath={.status.conditions[?(@.type=='Accepted')].reason}")
 				if err != nil {
 					return ""
 				}
@@ -290,7 +299,7 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 			ginkgo.By("routes to the default pod network are advertised to external frr router")
 			// Get the first element in the advertisements array (assuming you want to check the first one)
 			gomega.Eventually(func() string {
-				podNetworkValue, err := e2ekubectl.RunKubectl("", "get", "ra", "default", "--template={{index .spec.advertisements 0}}")
+				podNetworkValue, err := e2ekubectl.RunKubectl("", "get", "ra", defaultNetworkRAName, "--template={{index .spec.advertisements 0}}")
 				if err != nil {
 					return ""
 				}
@@ -298,7 +307,7 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 			}, 5*time.Second, time.Second).Should(gomega.Equal("PodNetwork"))
 
 			gomega.Eventually(func() string {
-				reason, err := e2ekubectl.RunKubectl("", "get", "ra", "default", "-o", "jsonpath={.status.conditions[?(@.type=='Accepted')].reason}")
+				reason, err := e2ekubectl.RunKubectl("", "get", "ra", defaultNetworkRAName, "-o", "jsonpath={.status.conditions[?(@.type=='Accepted')].reason}")
 				if err != nil {
 					return ""
 				}
@@ -477,26 +486,17 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 				return nil
 			}, 30*time.Second, 2*time.Second).Should(gomega.Succeed(), "With default network being advertised initially, pod to second node test failed")
 
-			// defer add default network RA back to restore to the original test setup
-			ra := &rav1.RouteAdvertisements{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "default",
-				},
-				Spec: rav1.RouteAdvertisementsSpec{
-					NetworkSelectors: apitypes.NetworkSelectors{
-						apitypes.NetworkSelector{
-							NetworkSelectionType: apitypes.DefaultNetwork,
-						},
-					},
-					NodeSelector:             metav1.LabelSelector{},
-					FRRConfigurationSelector: metav1.LabelSelector{},
-					Advertisements: []rav1.AdvertisementType{
-						rav1.PodNetwork,
-					},
-				},
-			}
 			raClient, err := raclientset.NewForConfig(f.ClientConfig())
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			originalRA, err := raClient.K8sV1().RouteAdvertisements().Get(context.TODO(), defaultNetworkRAName, metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Defer adding the original default-network RA back to restore the original
+			// test setup, including its FRR configuration selector.
+			ra := &rav1.RouteAdvertisements{
+				ObjectMeta: metav1.ObjectMeta{Name: originalRA.Name},
+				Spec:       originalRA.Spec,
+			}
 
 			defer func() {
 				ra, err = raClient.K8sV1().RouteAdvertisements().Create(context.TODO(), ra, metav1.CreateOptions{})
@@ -583,11 +583,11 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 			}()
 
 			ginkgo.By("Delete route advertisement")
-			_, err = e2ekubectl.RunKubectl("", "delete", "ra", "default", "--ignore-not-found=true")
+			_, err = e2ekubectl.RunKubectl("", "delete", "ra", defaultNetworkRAName, "--ignore-not-found=true")
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			// Make sure default RA is deleted
-			_, err = e2ekubectl.RunKubectl("", "get", "ra", "default")
+			_, err = e2ekubectl.RunKubectl("", "get", "ra", defaultNetworkRAName)
 			gomega.Expect(err).To(gomega.HaveOccurred())
 
 			ginkgo.By("After default network is toggled to unadvertised, run test towards the external agnhost echo server from client pod again, egressing packets should be SNATed to pod's host nodeIP")
