@@ -1912,6 +1912,8 @@ write_files:
 					&cudn.Spec.Network,
 					bgpAlloc,
 					bgpASN,
+					bgpASN,
+					routerContainerName,
 					"br"+shortName,
 					"vx"+shortName,
 					sharedNodeIPsVTEPName,
