@@ -276,6 +276,12 @@ jobs:
         sudo apt-get install linux-modules-extra-$(uname -r) -y
         sudo modprobe vrf
 
+    - name: Setup envtest
+      run: |
+        go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+        ENVTEST_ASSETS=$(setup-envtest use 1.35.x --bin-dir ${{ github.workspace }}/envtest-bins -p path)
+        echo "KUBEBUILDER_ASSETS=${ENVTEST_ASSETS}" >> $GITHUB_ENV
+
     - name: Run unit tests
       run: |
         set -x
