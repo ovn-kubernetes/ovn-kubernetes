@@ -30,6 +30,14 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
+const (
+	// defaultNetworkReconcilerThreadiness defines the number of worker goroutines
+	// for processing network reconciliation events. Value of 5 provides good
+	// parallelism for bulk UDN creation while controlling resource consumption.
+	// Aligns with Kubernetes controller-manager conventions and UDN service controller.
+	defaultNetworkReconcilerThreadiness = 5
+)
+
 func newNetworkController(name, zone, node string, cm ControllerManager, wf watchFactory) *networkController {
 	nc := &networkController{
 		name:                   fmt.Sprintf("[%s network controller]", name),
@@ -48,7 +56,7 @@ func newNetworkController(name, zone, node string, cm ControllerManager, wf watc
 	networkConfig := &controller.ReconcilerConfig{
 		RateLimiter: workqueue.DefaultTypedControllerRateLimiter[string](),
 		Reconcile:   nc.syncNetwork,
-		Threadiness: 1,
+		Threadiness: defaultNetworkReconcilerThreadiness,
 		MaxAttempts: controller.InfiniteAttempts,
 	}
 	nc.networkReconciler = controller.NewReconciler(
