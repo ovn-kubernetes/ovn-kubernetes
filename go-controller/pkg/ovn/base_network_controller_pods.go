@@ -423,7 +423,33 @@ func (bnc *BaseNetworkController) shouldEnsurePodLogicalPort(pod *corev1.Pod, na
 		return false
 	}
 	portInfo, err := bnc.logicalPortCache.get(pod, nadKey)
-	return err != nil || !portInfo.expires.IsZero()
+	if err != nil || !portInfo.expires.IsZero() {
+		return true
+	}
+	podIPs, err := util.GetPodCIDRsWithFullMask(pod, bnc.GetNetInfo(), bnc.getNetworkNameForNADKeyFunc())
+	if err != nil || len(podIPs) == 0 {
+		return false
+	}
+	return !sameIPSet(portInfo.ips, podIPs)
+}
+
+func sameIPSet(a, b []*net.IPNet) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	ips := sets.New[string]()
+	for _, ipNet := range a {
+		if ipNet == nil {
+			continue
+		}
+		ips.Insert(ipNet.IP.String())
+	}
+	for _, ipNet := range b {
+		if ipNet == nil || !ips.Has(ipNet.IP.String()) {
+			return false
+		}
+	}
+	return true
 }
 
 func (bnc *BaseNetworkController) getExpectedSwitchName(pod *corev1.Pod) (string, error) {
@@ -786,15 +812,36 @@ func (bnc *BaseNetworkController) isPodScheduledinLocalZone(pod *corev1.Pod) boo
 
 // WatchPods starts the watching of the Pod resource and calls back the appropriate handler logic
 func (bnc *BaseNetworkController) WatchPods() error {
-	if bnc.podHandler != nil {
+	if bnc.podHandlerRegistered {
 		return nil
 	}
-
-	handler, err := bnc.retryPods.WatchResource()
-	if err == nil {
-		bnc.podHandler = handler
+	if bnc.podReconciler == nil {
+		return fmt.Errorf("shared pod reconciler is required for network %s", bnc.GetNetworkName())
 	}
-	return err
+	if bnc.podHandler == nil {
+		return fmt.Errorf("pod handler is required for network %s", bnc.GetNetworkName())
+	}
+	if err := bnc.podReconciler.Start(); err != nil {
+		return err
+	}
+	if err := bnc.podReconciler.RegisterNetworkController(bnc.podHandler); err != nil {
+		return err
+	}
+	bnc.podHandlerRegistered = true
+	return nil
+}
+
+func podsToInterfaces(pods []*corev1.Pod) []interface{} {
+	objs := make([]interface{}, 0, len(pods))
+	for _, pod := range pods {
+		objs = append(objs, pod)
+	}
+	return objs
+}
+
+// RelatedPodKeys returns pod keys that should be requeued with this pod.
+func (bnc *BaseNetworkController) RelatedPodKeys(pod *corev1.Pod) ([]string, error) {
+	return kubevirt.RelatedPodKeys(bnc.watchFactory.PodCoreInformer().Lister(), pod)
 }
 
 func calculateStaticIPs(podDesc string, ips []string) ([]*net.IPNet, error) {

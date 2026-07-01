@@ -14,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 
@@ -991,16 +992,18 @@ func (bnc *BaseNetworkController) deletePodNetworkPolicyMembership(pod *corev1.P
 // pod-driven membership reconciliation retries pods that the initial policy
 // sync could not handle.
 func (bnc *BaseNetworkController) requeueLocalPodsForNetworkPolicy(pods []*corev1.Pod) {
-	if bnc.retryPods == nil {
+	if bnc.podReconciler == nil {
 		return
 	}
 	for _, pod := range pods {
-		if err := bnc.retryPods.AddRetryObjWithAddNoBackoff(pod); err != nil {
-			klog.Errorf("Failed to requeue pod %s/%s for network policy sync on network %s: %v",
+		podKey, err := cache.MetaNamespaceKeyFunc(pod)
+		if err != nil {
+			klog.Errorf("Failed to get key for pod %s/%s for network policy sync on network %s: %v",
 				pod.Namespace, pod.Name, bnc.GetNetworkName(), err)
+			continue
 		}
+		bnc.podReconciler.ReconcileNetwork(podKey, bnc.GetNetworkName())
 	}
-	bnc.retryPods.RequestRetryObjs()
 }
 
 func (bnc *BaseNetworkController) getNetworkPolicyPortGroupDbIDs(namespace, name string) *libovsdbops.DbObjectIDs {
