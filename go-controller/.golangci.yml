@@ -17,6 +17,7 @@ linters:
     govet:
       disable:
         - fieldalignment
+        - inline
         - shadow
       enable-all: true
     importas:

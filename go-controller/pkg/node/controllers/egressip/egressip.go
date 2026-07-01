@@ -1275,7 +1275,7 @@ func (c *Controller) removeStaleAddresses(staleAddresses sets.Set[addrLink], add
 	for _, address := range staleAddresses.UnsortedList() {
 		nlAddr, ok := addrStrToNetlinkAddr[address.addr]
 		if !ok {
-			return fmt.Errorf("expected to find address %q in map: %+v", address, addrStrToNetlinkAddr)
+			return fmt.Errorf("expected to find address %v in map: %+v", address, addrStrToNetlinkAddr)
 		}
 		if err := c.linkManager.DelAddress(nlAddr); err != nil {
 			return fmt.Errorf("failed to delete address from link: %v", err)

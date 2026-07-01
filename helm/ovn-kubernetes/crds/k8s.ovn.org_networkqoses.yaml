@@ -67,7 +67,11 @@ spec:
                           description: |-
                             burst The value of burst rate limit in kilobits.
                             This also needs rate to be specified.
-                          format: int32
+
+                            K8s 1.36 validates CRD integer maximums against the OpenAPI integer
+                            format. This uint32 range exceeds int32, so controller-gen must emit
+                            format:int64 while the Go API type remains uint32.
+                          format: int64
                           maximum: 4294967295
                           minimum: 1
                           type: integer
@@ -75,7 +79,11 @@ spec:
                           description: |-
                             rate The value of rate limit in kbps. Traffic over the limit
                             will be dropped.
-                          format: int32
+
+                            K8s 1.36 validates CRD integer maximums against the OpenAPI integer
+                            format. This uint32 range exceeds int32, so controller-gen must emit
+                            format:int64 while the Go API type remains uint32.
+                          format: int64
                           maximum: 4294967295
                           minimum: 1
                           type: integer

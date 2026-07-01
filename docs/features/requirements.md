@@ -3,9 +3,9 @@
 OVN-Kubernetes has additional dependencies for the external components, here are the recommended (not necessarily minimal)
 supported versions.
 
-| OVN-Kubernetes release | OVN release | nft binary | multus | CNI spec | k8s  | 
+| OVN-Kubernetes release | OVN release | nft binary | multus | CNI spec | k8s  |
 |------------------------|-------------|------------|--------|----------|------|
-| master                 | 26.03       | 1.0.1+     | v4.1.3 | 1.1.0    | 1.35 |
+| master                 | 26.03       | 1.0.1+     | v4.1.3 | 1.1.0    | 1.36 |
 | 1.2                    | 25.09       | 1.0.1+     | v4.1.3 | 0.4.0    | 1.34 |
 | 1.1                    | 25.03       | 1.0.1+     | v4.1.3 | 0.4.0    | 1.33 |
 | 1.0                    | 24.03       | -          | v4.1.0 | 0.4.0    | 1.29 |
