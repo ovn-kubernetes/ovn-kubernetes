@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"reflect"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -50,6 +51,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/syncmap"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 )
 
 // CommonNetworkControllerInfo structure is place holder for all fields shared among controllers.
@@ -211,7 +213,7 @@ func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed f
 	reconcilePendingPods := !oc.IsDefault() && oc.updateNADKeysChanged(nadKeys)
 	reconcileNamespaces := sets.NewString()
 	if oc.IsPrimaryNetwork() {
-		// since CanServeNamespace filters out namespace events for namespaces unknown
+		// since shouldFilterNamespace filters out namespace events for namespaces unknown
 		// to be served by this primary network, we need to reconcile namespaces once
 		// the network is reconfigured to serve a namespace.
 		reconcileNamespaces = sets.NewString(netInfo.GetNADNamespaces()...).Difference(
@@ -292,6 +294,9 @@ func (oc *BaseNetworkController) doReconcile(reconcileRoutes, reconcilePendingPo
 			continue
 		}
 		namespaceAdded = true
+		if err := oc.addRemotePodsInNamespace(ns); err != nil {
+			klog.Errorf("Failed to requeue remote pods for namespace %s on network %s: %v", ns, oc.GetNetworkName(), err)
+		}
 	}
 	if namespaceAdded {
 		oc.retryNamespaces.RequestRetryObjs()
@@ -336,24 +341,37 @@ func (oc *BaseUserDefinedNetworkController) FilterOutResource(objType reflect.Ty
 	}
 }
 
-func (oc *BaseUserDefinedNetworkController) shouldFilterNamespace(namespace string) bool {
-	if !oc.IsPrimaryNetwork() || oc.networkManager == nil {
-		return !util.CanServeNamespace(oc.GetNetInfo(), namespace)
+// shouldFilterNamespace reports whether namespace's events should be filtered out because
+// it doesn't belong to this network. For primary networks, this asks the network manager
+// for the namespace's actual primary NAD rather than checking this controller's own NetInfo,
+// which under Dynamic UDN can diverge from it.
+func (bnc *BaseNetworkController) shouldFilterNamespace(namespace string) bool {
+	// Default network handles all namespaces
+	// Secondary networks can handle pods from different namespaces
+	if !bnc.IsPrimaryNetwork() {
+		return false
+	}
+	if bnc.networkManager == nil {
+		return !bnc.hasNADNamespace(namespace)
 	}
 
-	nadKey, err := oc.networkManager.GetPrimaryNADForNamespace(namespace)
+	nadKey, err := bnc.networkManager.GetPrimaryNADForNamespace(namespace)
 	if err != nil {
-		return false
+		return util.IsInvalidPrimaryNetworkError(err)
 	}
 	if nadKey == types.DefaultNetworkName {
 		return true
 	}
 
-	networkName := oc.networkManager.GetNetworkNameForNADKey(nadKey)
+	networkName := bnc.networkManager.GetNetworkNameForNADKey(nadKey)
 	if networkName == "" {
-		return !util.CanServeNamespace(oc.GetNetInfo(), namespace)
+		return !bnc.hasNADNamespace(namespace)
 	}
-	return networkName != oc.GetNetworkName()
+	return networkName != bnc.GetNetworkName()
+}
+
+func (bnc *BaseNetworkController) hasNADNamespace(namespace string) bool {
+	return slices.Contains(bnc.GetNADNamespaces(), namespace)
 }
 
 func getNetworkControllerName(netName string) string {
@@ -688,6 +706,38 @@ func (bnc *BaseNetworkController) addAllPodsOnNode(nodeName string) []error {
 	}
 	bnc.retryPods.RequestRetryObjs()
 	return errs
+}
+
+// addRemotePodsInNamespace requeues non-terminal remote pods in a namespace once it
+// becomes served by this network. Their Add may have been filtered by shouldFilterNamespace
+// while GetPrimaryNADForNamespace returned InvalidPrimaryNetworkError, and by then they can
+// be past Pending, so RequeuePendingPods misses them. Local pods are skipped: they can't get
+// past Pending without this controller's processing them.
+func (bnc *BaseNetworkController) addRemotePodsInNamespace(namespace string) error {
+	pods, err := bnc.watchFactory.GetPods(namespace)
+	if err != nil {
+		return fmt.Errorf("unable to list pods in namespace %s: %w", namespace, err)
+	}
+
+	var errs []error
+	podsAdded := false
+	for _, pod := range pods {
+		pod := *pod
+		if util.PodCompleted(&pod) || util.PodWantsHostNetwork(&pod) || bnc.isPodScheduledinLocalZone(&pod) {
+			continue
+		}
+		klog.V(5).Infof("Adding remote running pod %s/%s to retryPods for network %s",
+			pod.Namespace, pod.Name, bnc.GetNetworkName())
+		if err := bnc.retryPods.AddRetryObjWithAddNoBackoff(&pod); err != nil {
+			errs = append(errs, fmt.Errorf("failed to add pod %s/%s to retryPods: %w", pod.Namespace, pod.Name, err))
+			continue
+		}
+		podsAdded = true
+	}
+	if podsAdded {
+		bnc.retryPods.RequestRetryObjs()
+	}
+	return utilerrors.Join(errs...)
 }
 
 // getNamespaceLocked locks namespacesMutex, looks up ns, and (if found), returns it with

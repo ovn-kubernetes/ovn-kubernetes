@@ -26,6 +26,7 @@ import (
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/addresssetmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/udnenabledsvc"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/retry"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -463,6 +464,47 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 		// Should skip pod without error when GetActiveNetworkForNamespace returns InvalidPrimaryNetworkError
 		err = controller.bnc.syncPodsForUserDefinedNetwork(initialPodList)
 		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("picks up an already-running remote pod when its namespace newly joins a running primary UDN", func() {
+		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+		config.OVNKubernetesFeature.EnableMultiNetwork = true
+
+		const (
+			localNode    = "node-local"
+			newNamespace = "greenamespace"
+		)
+		// bluenet is already running, serving a different namespace
+		initialNad := ovntest.GenerateNAD("bluenet", "initialnad", "bluenamespace",
+			types.Layer3Topology, "100.128.0.0/16", types.NetworkRolePrimary)
+
+		remotePod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Namespace: newNamespace, Name: "remote-running"},
+			Spec:       corev1.PodSpec{NodeName: "node-remote"},
+			Status:     corev1.PodStatus{Phase: corev1.PodRunning},
+		}
+		namespaceObj := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: newNamespace}}
+
+		fakeOVN := NewFakeOVN(false)
+		fakeOVN.start(namespaceObj, remotePod)
+		DeferCleanup(fakeOVN.shutdown)
+
+		Expect(fakeOVN.NewUserDefinedNetworkController(initialNad)).To(Succeed())
+		controller, ok := fakeOVN.userDefinedNetworkControllers["bluenet"]
+		Expect(ok).To(BeTrue())
+		bnc := controller.bnc
+
+		bnc.localZoneNodes = &sync.Map{}
+		bnc.localZoneNodes.Store(localNode, true)
+
+		// bluenet now also picks up greenamespace, where remotePod is already Running
+		afterInfo := util.NewMutableNetInfo(bnc.GetNetInfo())
+		afterInfo.AddNADs(util.GetNADName(newNamespace, "rednad"))
+		Expect(bnc.reconcile(afterInfo, func(string) {})).To(Succeed())
+
+		key, err := retry.GetResourceKey(remotePod)
+		Expect(err).NotTo(HaveOccurred())
+		retry.CheckRetryObjectEventually(key, true, bnc.retryPods)
 	})
 
 })
