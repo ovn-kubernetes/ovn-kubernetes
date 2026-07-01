@@ -80,6 +80,11 @@ data:
     frr-namespace = {{ .Values.global.managedBGPFRRNamespace | default "frr-k8s-system" }}
 {{- end }}
 {{- end }}
+{{- if hasKey .Values.global "routingTableIDStart" }}
+
+    [ovnkubenode]
+    routing-table-id-start = {{ .Values.global.routingTableIDStart }}
+{{- end }}
 
 {{- if or .Values.global.skipCallToK8s (eq (include "needNamespace" $hostNetworkNamespace) "true") }}
 ---

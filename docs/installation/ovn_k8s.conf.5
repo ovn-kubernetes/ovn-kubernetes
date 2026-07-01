@@ -114,6 +114,19 @@ The port, by default, is 6442. E.g., ssl:1.2.3.4:6642
 .TP
 \fBserver-cacert\fR=
 
+.SH [OvnKubeNode]
+.TP
+\fBrouting-table-id-start\fR=
+Optional start of the Linux route table ID range managed by ovnkube-node for
+generated VRF tables, such as UDN VRFs, and EgressIP route tables. The route
+table ID is calculated by adding this value to the Linux interface index.
+Values lower than 1000 or greater than 2147483647 are rejected. If unset,
+ovnkube-node uses its built-in default.
+Changing this value while UserDefinedNetwork or ClusterUserDefinedNetwork VRFs
+or EgressIP assignments exist is not supported. Delete those networks and
+EgressIP assignments, and allow ovnkube-node to clean up their VRFs and route
+tables before changing this value.
+
 .SH [Gateway]
 .TP
 \fBmode\fR=shared
