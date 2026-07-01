@@ -26,11 +26,14 @@ type PortCache struct {
 }
 
 type lpInfo struct {
-	name          string
-	uuid          string
-	logicalSwitch string
-	ips           []*net.IPNet
-	mac           net.HardwareAddr
+	name string
+	uuid string
+	// appliedNetworkName is the network controller that wrote this cache entry.
+	// It is intentionally applied state, not a live NAD-to-network lookup.
+	appliedNetworkName string
+	logicalSwitch      string
+	ips                []*net.IPNet
+	mac                net.HardwareAddr
 	// expires, if non-nil, indicates that this object is scheduled to be
 	// removed at the given time
 	expires time.Time
@@ -80,6 +83,14 @@ func (c *PortCache) getAll(pod *corev1.Pod) (map[string]*lpInfo, error) {
 }
 
 func (c *PortCache) add(pod *corev1.Pod, logicalSwitch, nadKey, uuid string, mac net.HardwareAddr, ips []*net.IPNet) *lpInfo {
+	appliedNetworkName := ""
+	if nadKey == types.DefaultNetworkName {
+		appliedNetworkName = types.DefaultNetworkName
+	}
+	return c.addWithNetworkName(pod, logicalSwitch, nadKey, appliedNetworkName, uuid, mac, ips)
+}
+
+func (c *PortCache) addWithNetworkName(pod *corev1.Pod, logicalSwitch, nadKey, appliedNetworkName, uuid string, mac net.HardwareAddr, ips []*net.IPNet) *lpInfo {
 	var logicalPort string
 
 	podName := fmt.Sprintf("%s/%s", pod.Namespace, pod.Name)
@@ -91,11 +102,12 @@ func (c *PortCache) add(pod *corev1.Pod, logicalSwitch, nadKey, uuid string, mac
 	c.Lock()
 	defer c.Unlock()
 	portInfo := &lpInfo{
-		logicalSwitch: logicalSwitch,
-		name:          logicalPort,
-		uuid:          uuid,
-		ips:           ips,
-		mac:           mac,
+		logicalSwitch:      logicalSwitch,
+		name:               logicalPort,
+		uuid:               uuid,
+		appliedNetworkName: appliedNetworkName,
+		ips:                ips,
+		mac:                mac,
 	}
 	klog.V(5).Infof("port-cache(%s): added port %+v with IP: %s and MAC: %s",
 		logicalPort, portInfo, portInfo.ips, portInfo.mac)

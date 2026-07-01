@@ -21,14 +21,11 @@ import (
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/retry"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 )
 
@@ -165,12 +162,8 @@ type networkPolicy struct {
 	isIngress       bool
 	isEgress        bool
 
-	// network policy owns only 1 local pod handler
-	localPodHandler *factory.Handler
-	// localPodSelector mirrors the selector used by the local pod watcher.
+	// localPodSelector mirrors the policy pod selector used by pod-driven membership reconciliation.
 	localPodSelector labels.Selector
-	// retry framework for this policy's local pod selector watcher
-	localPodRetry *retry.RetryFramework
 	// peerAddressSets stores PodSelectorAddressSet keys for peers that this network policy was successfully added to.
 	// Required for cleanup.
 	peerAddressSets []string
@@ -191,8 +184,6 @@ type networkPolicy struct {
 	// or this value will be set to true and handler can't proceed.
 	// Use networkPolicy.RLock to read this field and hold it for the whole event handling.
 	deleted bool
-
-	cancelableContext *util.CancelableContext
 }
 
 func NewNetworkPolicy(policy *knet.NetworkPolicy) *networkPolicy {
@@ -793,15 +784,7 @@ func (bnc *BaseNetworkController) denyPGDeletePorts(np *networkPolicy, portNames
 	return nil
 }
 
-// handleLocalPodSelectorAddFunc adds a new pod to an existing NetworkPolicy, should be retriable.
-func (bnc *BaseNetworkController) handleLocalPodSelectorAddFunc(np *networkPolicy, objs ...interface{}) error {
-	if !bnc.IsUserDefinedNetwork() && config.Metrics.EnableScaleMetrics {
-		start := time.Now()
-		defer func() {
-			duration := time.Since(start)
-			metrics.RecordNetpolLocalPodEvent("add", duration)
-		}()
-	}
+func (bnc *BaseNetworkController) addLocalPodsToNetworkPolicy(np *networkPolicy, objs ...interface{}) error {
 	np.RLock()
 	defer np.RUnlock()
 	if np.deleted {
@@ -839,15 +822,7 @@ func (bnc *BaseNetworkController) handleLocalPodSelectorAddFunc(np *networkPolic
 	return nil
 }
 
-// handleLocalPodSelectorDelFunc handles delete event for local pod, should be retriable
-func (bnc *BaseNetworkController) handleLocalPodSelectorDelFunc(np *networkPolicy, objs ...interface{}) error {
-	if !bnc.IsUserDefinedNetwork() && config.Metrics.EnableScaleMetrics {
-		start := time.Now()
-		defer func() {
-			duration := time.Since(start)
-			metrics.RecordNetpolLocalPodEvent("delete", duration)
-		}()
-	}
+func (bnc *BaseNetworkController) deleteLocalPodsFromNetworkPolicy(np *networkPolicy, objs ...interface{}) error {
 	np.RLock()
 	defer np.RUnlock()
 	if np.deleted {
@@ -880,74 +855,138 @@ func (bnc *BaseNetworkController) handleLocalPodSelectorDelFunc(np *networkPolic
 	return nil
 }
 
-// This function starts a watcher for local pods. Sync function and add event for every existing pod
-// will be executed sequentially first, and an error will be returned if something fails.
-// LocalPodSelectorType uses handleLocalPodSelectorAddFunc on Add and Update,
-// and handleLocalPodSelectorDelFunc on Delete.
-func (bnc *BaseNetworkController) addLocalPodHandler(policy *knet.NetworkPolicy, np *networkPolicy) error {
-	// NetworkPolicy is validated by the apiserver
-	sel, err := metav1.LabelSelectorAsSelector(&policy.Spec.PodSelector)
-	if err != nil {
-		klog.Errorf("Could not set up watcher for local pods: %v", err)
-		return err
-	}
-
-	// Add all local pods in a syncFunction to minimize db ops.
-	syncFunc := func(objs []interface{}) error {
-		// ignore returned error, since any pod that wasn't properly handled will be retried individually.
-		_ = bnc.handleLocalPodSelectorAddFunc(np, objs...)
-		return nil
-	}
-	retryLocalPods := bnc.newNetpolRetryFramework(
-		factory.LocalPodSelectorType,
-		syncFunc,
-		&NetworkPolicyExtraParameters{
-			np: np,
-		},
-		np.cancelableContext.Done())
-
-	podHandler, err := retryLocalPods.WatchResourceFiltered(policy.Namespace, sel)
-	if err != nil {
-		klog.Errorf("WatchResource failed for addLocalPodHandler: %v", err)
-		return err
-	}
-
-	np.localPodHandler = podHandler
-	np.localPodSelector = sel
-	np.localPodRetry = retryLocalPods
-	return nil
-}
-
-// requestLocalPodPolicyRetriesForPod requests immediate retries for local pod
-// selector handlers that currently have a failed retry entry for this pod.
-func (bnc *BaseNetworkController) requestLocalPodPolicyRetriesForPod(pod *corev1.Pod, reason string) {
-	if bnc.networkPolicies == nil || pod == nil {
+func (bnc *BaseNetworkController) addNetworkPolicyToNamespaceIndex(np *networkPolicy) {
+	if bnc.networkPolicyKeysByNamespace == nil || np == nil {
 		return
 	}
+	_ = bnc.networkPolicyKeysByNamespace.DoWithLock(np.namespace, func(namespace string) error {
+		policyKeys, _ := bnc.networkPolicyKeysByNamespace.Load(namespace)
+		indexedPolicyKeys := sets.New[string](sets.List(policyKeys)...)
+		indexedPolicyKeys.Insert(np.getKey())
+		bnc.networkPolicyKeysByNamespace.Store(namespace, indexedPolicyKeys)
+		return nil
+	})
+}
+
+func (bnc *BaseNetworkController) deleteNetworkPolicyFromNamespaceIndex(np *networkPolicy) {
+	if bnc.networkPolicyKeysByNamespace == nil || np == nil {
+		return
+	}
+	_ = bnc.networkPolicyKeysByNamespace.DoWithLock(np.namespace, func(namespace string) error {
+		policyKeys, ok := bnc.networkPolicyKeysByNamespace.Load(namespace)
+		if !ok {
+			return nil
+		}
+		indexedPolicyKeys := sets.New[string](sets.List(policyKeys)...)
+		indexedPolicyKeys.Delete(np.getKey())
+		if indexedPolicyKeys.Len() == 0 {
+			bnc.networkPolicyKeysByNamespace.Delete(namespace)
+			return nil
+		}
+		bnc.networkPolicyKeysByNamespace.Store(namespace, indexedPolicyKeys)
+		return nil
+	})
+}
+
+func (bnc *BaseNetworkController) getNetworkPolicyKeysForNamespace(namespace string) []string {
+	if bnc.networkPolicyKeysByNamespace != nil {
+		policyKeys, ok := bnc.networkPolicyKeysByNamespace.Load(namespace)
+		if !ok {
+			return nil
+		}
+		return sets.List(policyKeys)
+	}
+
+	// Some focused unit tests construct BaseNetworkController directly.
+	// Preserve their behavior without requiring every test to populate the index.
+	var policyKeys []string
 	for _, npKey := range bnc.networkPolicies.GetKeys() {
 		np, ok := bnc.networkPolicies.Load(npKey)
-		if !ok || np == nil || np.namespace != pod.Namespace {
-			continue
-		}
-		np.RLock()
-		localPodSelector := np.localPodSelector
-		retryLocalPods := np.localPodRetry
-		deleted := np.deleted
-		np.RUnlock()
-		if deleted || retryLocalPods == nil || localPodSelector == nil || !localPodSelector.Matches(labels.Set(pod.Labels)) {
-			continue
-		}
-		requested, err := retryLocalPods.RequestRetryObjWithNoBackoff(pod)
-		if err != nil {
-			klog.Warningf("Failed to request immediate localPodSelector retry for network policy %s, pod %s/%s: %v",
-				npKey, pod.Namespace, pod.Name, err)
-			continue
-		}
-		if requested {
-			klog.V(5).Infof("Requested immediate localPodSelector retry for network policy %s, pod %s/%s due to %s",
-				npKey, pod.Namespace, pod.Name, reason)
+		if ok && np != nil && np.namespace == namespace {
+			policyKeys = append(policyKeys, npKey)
 		}
 	}
+	return policyKeys
+}
+
+func (bnc *BaseNetworkController) reconcilePodNetworkPolicyMembership(pod *corev1.Pod) error {
+	if bnc.networkPolicies == nil {
+		return nil
+	}
+	var errs []error
+	for _, npKey := range bnc.getNetworkPolicyKeysForNamespace(pod.Namespace) {
+		np, ok := bnc.networkPolicies.Load(npKey)
+		if !ok || np == nil {
+			continue
+		}
+
+		np.RLock()
+		deleted := np.deleted
+		localPodSelector := np.localPodSelector
+		np.RUnlock()
+		if deleted || localPodSelector == nil {
+			continue
+		}
+
+		if localPodSelector.Matches(labels.Set(pod.Labels)) {
+			if err := bnc.addLocalPodsToNetworkPolicy(np, pod); err != nil {
+				errs = append(errs, fmt.Errorf("failed to add pod %s/%s to network policy %s: %w", pod.Namespace, pod.Name, npKey, err))
+			}
+		} else {
+			if err := bnc.deleteLocalPodsFromNetworkPolicy(np, pod); err != nil {
+				errs = append(errs, fmt.Errorf("failed to delete pod %s/%s from network policy %s: %w", pod.Namespace, pod.Name, npKey, err))
+			}
+		}
+	}
+	return utilerrors.Join(errs...)
+}
+
+func (bnc *BaseNetworkController) deletePodNetworkPolicyMembership(pod *corev1.Pod) error {
+	if bnc.networkPolicies == nil {
+		return nil
+	}
+	var errs []error
+	// Delete is intentionally unconditional. The pod may no longer match the
+	// current selector, but removal is idempotent and clears any previously
+	// recorded membership for this pod.
+	for _, npKey := range bnc.getNetworkPolicyKeysForNamespace(pod.Namespace) {
+		np, ok := bnc.networkPolicies.Load(npKey)
+		if !ok || np == nil {
+			continue
+		}
+		if err := bnc.deleteLocalPodsFromNetworkPolicy(np, pod); err != nil {
+			errs = append(errs, fmt.Errorf("failed to delete pod %s/%s from network policy %s: %w", pod.Namespace, pod.Name, npKey, err))
+		}
+	}
+	return utilerrors.Join(errs...)
+}
+
+// handleLocalPodSelectorAddFunc adds a new pod to an existing NetworkPolicy, should be retriable.
+func (bnc *BaseNetworkController) handleLocalPodSelectorAddFunc(np *networkPolicy, objs ...interface{}) error {
+	if !bnc.IsUserDefinedNetwork() && config.Metrics.EnableScaleMetrics {
+		start := time.Now()
+		defer func() {
+			duration := time.Since(start)
+			metrics.RecordNetpolLocalPodEvent("add", duration)
+		}()
+	}
+	return bnc.addLocalPodsToNetworkPolicy(np, objs...)
+}
+
+// syncLocalPodsForNetworkPolicy adds existing matching pods to a newly created
+// network policy. Future membership changes are handled by pod-driven
+// reconciliation.
+func (bnc *BaseNetworkController) syncLocalPodsForNetworkPolicy(policy *knet.NetworkPolicy, np *networkPolicy) error {
+	pods, err := bnc.watchFactory.GetPodsBySelector(policy.Namespace, policy.Spec.PodSelector)
+	if err != nil {
+		return fmt.Errorf("failed to list local pods for network policy %s/%s: %w", policy.Namespace, policy.Name, err)
+	}
+
+	objs := make([]interface{}, 0, len(pods))
+	for _, pod := range pods {
+		objs = append(objs, pod)
+	}
+	return bnc.handleLocalPodSelectorAddFunc(np, objs...)
 }
 
 func (bnc *BaseNetworkController) getNetworkPolicyPortGroupDbIDs(namespace, name string) *libovsdbops.DbObjectIDs {
@@ -971,13 +1010,12 @@ func (bnc *BaseNetworkController) createNetworkPolicy(policy *knet.NetworkPolicy
 	// 1. Cleanup old policy if it failed to be created
 	// 2. Build gress policies, create addressSets for peers
 	// 3. Add policy to default deny port group.
-	// 4. Build policy ACLs and port group. All the local pods that this policy
-	// selects will be eventually added to this port group.
+	// 4. Build policy ACLs and port group.
 	// Pods are not added to default deny port groups yet, this is just a preparation step
-	// 5. Unlock networkPolicy before starting pod handlers to avoid deadlock
-	// since pod handlers take np.RLock
+	// 5. Unlock networkPolicy before syncing pods to avoid deadlock
+	// since pod sync takes np.RLock
 	// 6. Start peer handlers to update all allow rules first
-	// 7. Start local pod handlers, that will update networkPolicy and default deny port groups with selected pods.
+	// 7. Sync existing local pods. Future membership changes are handled by pod events.
 
 	npKey := getPolicyKey(policy)
 	var np *networkPolicy
@@ -1091,8 +1129,8 @@ func (bnc *BaseNetworkController) createNetworkPolicy(policy *knet.NetworkPolicy
 			return err
 		}
 
-		// 4. Build policy ACLs and port group. All the local pods that this policy
-		// selects will be eventually added to this port group.
+		// 4. Build policy ACLs and port group. Selected local pods will be added
+		// after the policy is indexed for pod-driven membership reconciliation.
 
 		pgDbIDs := bnc.getNetworkPolicyPortGroupDbIDs(policy.Namespace, policy.Name)
 		np.portGroupName = libovsdbutil.GetPortGroupName(pgDbIDs)
@@ -1124,20 +1162,22 @@ func (bnc *BaseNetworkController) createNetworkPolicy(policy *knet.NetworkPolicy
 		}
 		txOkCallBack()
 
-		// 5. Unlock network policy before starting pod handlers to avoid deadlock,
-		// since pod handlers take np.RLock
+		sel, err := metav1.LabelSelectorAsSelector(&policy.Spec.PodSelector)
+		if err != nil {
+			return fmt.Errorf("could not set up local pod selector for network policy %s/%s: %w", policy.Namespace, policy.Name, err)
+		}
+		np.localPodSelector = sel
+		bnc.addNetworkPolicyToNamespaceIndex(np)
+
+		// 5. Unlock network policy before syncing pods to avoid deadlock,
+		// since pod sync takes np.RLock
 		np.Unlock()
 		npLocked = false
 
-		if np.cancelableContext == nil {
-			cancelableContext := util.NewCancelableContextChild(bnc.cancelableCtx)
-			np.cancelableContext = &cancelableContext
-		}
-
-		// 7. Start local pod handlers, that will update networkPolicy and default deny port groups with selected pods.
-		err = bnc.addLocalPodHandler(policy, np)
-		if err != nil {
-			return fmt.Errorf("failed to start local pod handler: %v", err)
+		// 7. Sync existing local pods. Future membership changes are handled by pod events.
+		if err := bnc.syncLocalPodsForNetworkPolicy(policy, np); err != nil {
+			bnc.deleteNetworkPolicyFromNamespaceIndex(np)
+			return fmt.Errorf("failed to sync local pods for network policy: %w", err)
 		}
 		return nil
 	})
@@ -1341,9 +1381,7 @@ func (bnc *BaseNetworkController) cleanupNetworkPolicy(np *networkPolicy) error 
 
 	// signal to local pod/peer handlers to ignore new events
 	np.deleted = true
-
-	// stop handlers, retriable
-	bnc.shutdownHandlers(np)
+	bnc.deleteNetworkPolicyFromNamespaceIndex(np)
 	var err error
 
 	// Delete the port group, idempotent
@@ -1386,24 +1424,6 @@ func (bnc *BaseNetworkController) cleanupNetworkPolicy(np *networkPolicy) error 
 	// this is the signal that cleanup was successful
 	bnc.networkPolicies.Delete(npKey)
 	return nil
-}
-
-type NetworkPolicyExtraParameters struct {
-	np *networkPolicy
-}
-
-func (bnc *BaseNetworkController) shutdownHandlers(np *networkPolicy) {
-	if np.cancelableContext != nil {
-		np.cancelableContext.Cancel()
-		np.cancelableContext = nil
-	}
-
-	if np.localPodHandler != nil {
-		bnc.watchFactory.RemovePodHandler(np.localPodHandler)
-		np.localPodHandler = nil
-		np.localPodSelector = nil
-		np.localPodRetry = nil
-	}
 }
 
 // The following 2 functions should return the same key for network policy based on k8s on internal networkPolicy object

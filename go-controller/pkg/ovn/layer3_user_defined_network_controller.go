@@ -106,7 +106,13 @@ func (h *Layer3UserDefinedNetworkControllerEventHandler) IsResourceScheduled(obj
 // if any, yielded during object creation.
 // Given an object to add and a boolean specifying if the function was executed from iterateRetryResources
 func (h *Layer3UserDefinedNetworkControllerEventHandler) AddResource(obj interface{}, fromRetryLoop bool) error {
-	_ = fromRetryLoop
+	if h.objType == factory.PodType {
+		pod, ok := obj.(*corev1.Pod)
+		if !ok {
+			return fmt.Errorf("could not cast %T object to *corev1.Pod", obj)
+		}
+		return h.oc.ReconcilePod(nil, pod, nil, fromRetryLoop)
+	}
 	return h.oc.AddUserDefinedNetworkResourceCommon(h.objType, obj)
 }
 
@@ -227,25 +233,26 @@ func NewLayer3UserDefinedNetworkController(
 	oc := &Layer3UserDefinedNetworkController{
 		BaseUserDefinedNetworkController: BaseUserDefinedNetworkController{
 			BaseNetworkController: BaseNetworkController{
-				CommonNetworkControllerInfo: *cnci,
-				controllerName:              getNetworkControllerName(netInfo.GetNetworkName()),
-				ReconcilableNetInfo:         util.NewReconcilableNetInfo(netInfo),
-				lsManager:                   lsm.NewLogicalSwitchManager(),
-				logicalPortCache:            portCache,
-				namespaces:                  make(map[string]*namespaceInfo),
-				namespacesMutex:             sync.Mutex{},
-				addressSetFactory:           addressSetFactory,
-				networkPolicies:             syncmap.NewSyncMap[*networkPolicy](),
-				sharedNetpolPortGroups:      syncmap.NewSyncMap[*defaultDenyPortGroups](),
-				stopChan:                    stopChan,
-				wg:                          &sync.WaitGroup{},
-				localZoneNodes:              &sync.Map{},
-				cancelableCtx:               util.NewCancelableContext(),
-				networkManager:              networkManager,
-				routeImportManager:          routeImportManager,
-				addressSetManager:           addressSetManager,
-				nodeReconciler:              nodeReconciler,
-				nodeAnnotationCache:         nodeAnnotationCache,
+				CommonNetworkControllerInfo:  *cnci,
+				controllerName:               getNetworkControllerName(netInfo.GetNetworkName()),
+				ReconcilableNetInfo:          util.NewReconcilableNetInfo(netInfo),
+				lsManager:                    lsm.NewLogicalSwitchManager(),
+				logicalPortCache:             portCache,
+				namespaces:                   make(map[string]*namespaceInfo),
+				namespacesMutex:              sync.Mutex{},
+				addressSetFactory:            addressSetFactory,
+				networkPolicies:              syncmap.NewSyncMap[*networkPolicy](),
+				networkPolicyKeysByNamespace: syncmap.NewSyncMap[sets.Set[string]](),
+				sharedNetpolPortGroups:       syncmap.NewSyncMap[*defaultDenyPortGroups](),
+				stopChan:                     stopChan,
+				wg:                           &sync.WaitGroup{},
+				localZoneNodes:               &sync.Map{},
+				cancelableCtx:                util.NewCancelableContext(),
+				networkManager:               networkManager,
+				routeImportManager:           routeImportManager,
+				addressSetManager:            addressSetManager,
+				nodeReconciler:               nodeReconciler,
+				nodeAnnotationCache:          nodeAnnotationCache,
 			},
 		},
 		mgmtPortFailed:              sync.Map{},
@@ -260,7 +267,6 @@ func NewLayer3UserDefinedNetworkController(
 
 	if oc.IsPrimaryNetwork() {
 		oc.onLogicalPortCacheAdd = func(pod *corev1.Pod, _ string) {
-			oc.requestLocalPodPolicyRetriesForPod(pod, "logical port cache update")
 			if oc.eIPController != nil {
 				oc.eIPController.addEgressIPPodRetry(pod, "logical port cache update")
 			}
