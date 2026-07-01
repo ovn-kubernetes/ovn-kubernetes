@@ -391,6 +391,9 @@ func (cm *ControllerManager) initDefaultNetworkController(observManager *observa
 func (cm *ControllerManager) Start(ctx context.Context) error {
 	klog.Info("Starting the ovnkube controller")
 
+	// Configure metrics early so workqueue provider is set before any workqueues are created
+	cm.configureMetrics(cm.stopChan)
+
 	// Make sure that the ovnkube-controller zone matches with the Northbound db zone.
 	// Wait for 300s before giving up
 	maxTimeout := 300 * time.Second
@@ -453,8 +456,6 @@ func (cm *ControllerManager) Start(ctx context.Context) error {
 	if err = cm.setTopologyType(); err != nil {
 		return fmt.Errorf("failed to set layer2 topology type: %w", err)
 	}
-
-	cm.configureMetrics(cm.stopChan)
 
 	cm.configureSvcTemplateSupport()
 

@@ -54,13 +54,13 @@ var (
 	latency = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    QueueLatencyKey,
 		Help:    "How long in seconds an item stays in workqueue before being requested.",
-		Buckets: prometheus.ExponentialBuckets(10e-9, 10, 10),
+		Buckets: prometheus.ExponentialBuckets(10e-3, 10, 6),
 	}, []string{"name"})
 
 	workDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    WorkDurationKey,
 		Help:    "How long in seconds processing an item from workqueue takes.",
-		Buckets: prometheus.ExponentialBuckets(10e-9, 10, 10),
+		Buckets: prometheus.ExponentialBuckets(10e-3, 10, 6),
 	}, []string{"name"})
 
 	unfinished = prometheus.NewGaugeVec(prometheus.GaugeOpts{
@@ -88,10 +88,6 @@ var (
 )
 
 type prometheusMetricsProvider struct {
-}
-
-func init() {
-	workqueue.SetProvider(prometheusMetricsProvider{})
 }
 
 func (prometheusMetricsProvider) NewDepthMetric(name string) workqueue.GaugeMetric {
@@ -123,6 +119,8 @@ func (prometheusMetricsProvider) NewRetriesMetric(name string) workqueue.Counter
 }
 
 func registerWorkqueueMetrics(namespace, subsystem string) {
+	workqueue.SetProvider(prometheusMetricsProvider{})
+
 	registry := prometheus.WrapRegistererWithPrefix(
 		fmt.Sprintf("%s_%s_workqueue_", namespace, subsystem),
 		prometheus.DefaultRegisterer,
