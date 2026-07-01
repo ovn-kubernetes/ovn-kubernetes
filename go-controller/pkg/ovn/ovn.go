@@ -11,8 +11,6 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/kubernetes/scheme"
-	ref "k8s.io/client-go/tools/reference"
 	"k8s.io/klog/v2"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
@@ -22,6 +20,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kubevirt"
 	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics/recorders"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/addresssetmanager"
 	anpcontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/admin_network_policy"
@@ -87,22 +86,26 @@ func (oc *DefaultNetworkController) getPortInfo(pod *corev1.Pod) *lpInfo {
 	return portInfo
 }
 
-func (oc *DefaultNetworkController) recordPodEvent(reason string, addErr error, pod *corev1.Pod) {
-	podRef, err := ref.GetReference(scheme.Scheme, pod)
-	if err != nil {
-		klog.Errorf("Couldn't get a reference to pod %s/%s to post an event: '%v'",
-			pod.Namespace, pod.Name, err)
-	} else {
-		klog.V(5).Infof("Posting a %s event for Pod %s/%s", corev1.EventTypeWarning, pod.Namespace, pod.Name)
-		oc.recorder.Eventf(podRef, corev1.EventTypeWarning, reason, addErr.Error())
-	}
+func (oc *DefaultNetworkController) SyncPods(pods []*corev1.Pod) error {
+	return oc.syncPods(podsToInterfaces(pods))
 }
 
 func (oc *DefaultNetworkController) GetPodState(pod *corev1.Pod) interface{} {
 	return oc.getPortInfo(pod)
 }
 
-func (oc *DefaultNetworkController) ReconcilePod(oldPod, newPod *corev1.Pod, cachedState interface{}, forceAdd bool) error {
+func (oc *DefaultNetworkController) PodExpectedOnNetwork(pod *corev1.Pod) (bool, error) {
+	return util.PodScheduled(pod) && oc.podExpectedInLogicalCache(pod), nil
+}
+
+func (oc *DefaultNetworkController) ReconcilePod(oldPod, newPod *corev1.Pod, cachedState interface{}) (err error) {
+	recordedPod := oc.recordPodReconcileStart(oldPod, newPod)
+	defer func() {
+		if err == nil && recordedPod != nil {
+			recorders.GetConfigDurationRecorder().End("pod", recordedPod.Namespace, recordedPod.Name)
+		}
+	}()
+
 	if newPod == nil {
 		if oldPod == nil {
 			return fmt.Errorf("pod delete reconcile for network %s is missing pod", oc.GetNetworkName())
@@ -117,8 +120,31 @@ func (oc *DefaultNetworkController) ReconcilePod(oldPod, newPod *corev1.Pod, cac
 		}
 		return oc.reconcileDeletedPod(oldPod, portInfo)
 	}
-	addPort := forceAdd || oc.shouldEnsurePodLogicalPort(newPod, ovntypes.DefaultNetworkName)
+	addPort := oc.shouldEnsurePodLogicalPort(newPod, ovntypes.DefaultNetworkName)
 	return oc.ensurePod(newPod, addPort)
+}
+
+func (oc *DefaultNetworkController) recordPodReconcileStart(oldPod, newPod *corev1.Pod) *corev1.Pod {
+	var pod *corev1.Pod
+	switch {
+	case newPod == nil:
+		pod = oldPod
+		if pod != nil && oc.podRecorder != nil {
+			oc.podRecorder.CleanPod(pod.UID)
+		}
+	case oldPod == nil:
+		pod = newPod
+		if oc.podRecorder != nil {
+			oc.podRecorder.AddPod(pod.UID)
+		}
+	default:
+		pod = newPod
+	}
+
+	if pod != nil {
+		recorders.GetConfigDurationRecorder().Start("pod", pod.Namespace, pod.Name)
+	}
+	return pod
 }
 
 // ensurePod tries to set up a pod. It returns nil on success and error on failure; failure
@@ -153,8 +179,13 @@ func (oc *DefaultNetworkController) ensureLocalZonePod(pod *corev1.Pod, addPort 
 		}()
 	}
 
+	liveMigratable := kubevirt.IsPodLiveMigratable(pod)
+	var podAnnotation *util.PodAnnotation
+
 	if !util.PodWantsHostNetwork(pod) && addPort {
-		if err := oc.addLogicalPort(pod); err != nil {
+		var err error
+		podAnnotation, err = oc.addLogicalPortWithAnnotation(pod)
+		if err != nil {
 			return fmt.Errorf("addLogicalPort failed for %s/%s: %w", pod.Namespace, pod.Name, err)
 		}
 	}
@@ -182,9 +213,9 @@ func (oc *DefaultNetworkController) ensureLocalZonePod(pod *corev1.Pod, addPort 
 		}
 	}
 
-	if kubevirt.IsPodLiveMigratable(pod) {
+	if liveMigratable {
 		v4Subnets, v6Subnets := util.GetClusterSubnetsWithHostPrefix()
-		return kubevirt.EnsureLocalZonePodAddressesToNodeRoute(oc.watchFactory, oc.nbClient, oc.lsManager, pod, ovntypes.DefaultNetworkName, append(v4Subnets, v6Subnets...))
+		return kubevirt.EnsureLocalZonePodAddressesToNodeRoute(oc.watchFactory, oc.nbClient, oc.lsManager, pod, podAnnotation, ovntypes.DefaultNetworkName, append(v4Subnets, v6Subnets...), addPort)
 	}
 
 	return nil

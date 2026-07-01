@@ -24,6 +24,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/pod"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	nodecontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/node"
+	podcontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/pod"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/udn"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kubevirt"
@@ -112,14 +113,7 @@ func (h *layer2UserDefinedNetworkControllerEventHandler) IsResourceScheduled(obj
 // AddResource adds the specified object to the cluster according to its type and returns the error,
 // if any, yielded during object creation.
 // Given an object to add and a boolean specifying if the function was executed from iterateRetryResources
-func (h *layer2UserDefinedNetworkControllerEventHandler) AddResource(obj interface{}, fromRetryLoop bool) error {
-	if h.objType == factory.PodType {
-		pod, ok := obj.(*corev1.Pod)
-		if !ok {
-			return fmt.Errorf("could not cast %T object to *corev1.Pod", obj)
-		}
-		return h.oc.ReconcilePod(nil, pod, nil, fromRetryLoop)
-	}
+func (h *layer2UserDefinedNetworkControllerEventHandler) AddResource(obj interface{}, _ bool) error {
 	return h.oc.AddUserDefinedNetworkResourceCommon(h.objType, obj)
 }
 
@@ -135,21 +129,7 @@ func (h *layer2UserDefinedNetworkControllerEventHandler) DeleteResource(obj, cac
 // Given an old and a new object; The inRetryCache boolean argument is to indicate if the given resource
 // is in the retryCache or not.
 func (h *layer2UserDefinedNetworkControllerEventHandler) UpdateResource(oldObj, newObj interface{}, inRetryCache bool) error {
-	switch h.objType {
-	case factory.PodType:
-		oldPod := oldObj.(*corev1.Pod)
-		newPod := newObj.(*corev1.Pod)
-		if err := h.oc.ReconcilePod(oldPod, newPod, nil, inRetryCache); err != nil {
-			return err
-		}
-
-		if h.oc.isPodScheduledinLocalZone(newPod) {
-			return h.oc.updateLocalPodEvent(newPod)
-		}
-		return nil
-	default:
-		return h.oc.UpdateUserDefinedNetworkResourceCommon(h.objType, oldObj, newObj, inRetryCache)
-	}
+	return h.oc.UpdateUserDefinedNetworkResourceCommon(h.objType, oldObj, newObj, inRetryCache)
 }
 
 func (h *layer2UserDefinedNetworkControllerEventHandler) SyncFunc(objs []interface{}) error {
@@ -160,9 +140,6 @@ func (h *layer2UserDefinedNetworkControllerEventHandler) SyncFunc(objs []interfa
 		syncFunc = h.syncFunc
 	} else {
 		switch h.objType {
-		case factory.PodType:
-			syncFunc = h.oc.syncPodsForUserDefinedNetwork
-
 		case factory.NamespaceType:
 			syncFunc = h.oc.syncNamespaces
 
@@ -240,6 +217,7 @@ func NewLayer2UserDefinedNetworkController(
 	eIPController *EgressIPController,
 	addressSetManager *addresssetmanager.AddressSetManager,
 	nodeReconciler *nodecontroller.NodeController,
+	podReconciler *podcontroller.Controller,
 	serviceController *svccontroller.Controller,
 ) (*Layer2UserDefinedNetworkController, error) {
 
@@ -292,6 +270,7 @@ func NewLayer2UserDefinedNetworkController(
 					addressSetManager:            addressSetManager,
 					nodeReconciler:               nodeReconciler,
 					nodeAnnotationCache:          nodeAnnotationCache,
+					podReconciler:                podReconciler,
 				},
 			},
 		},
@@ -302,6 +281,7 @@ func NewLayer2UserDefinedNetworkController(
 		eIPController:          eIPController,
 		remoteNodesNoRouter:    sync.Map{},
 	}
+	oc.podHandler = oc
 	if oc.IsPrimaryNetwork() {
 		oc.onLogicalPortCacheAdd = func(pod *corev1.Pod, _ string) {
 			if oc.eIPController != nil {
@@ -355,6 +335,7 @@ func (oc *Layer2UserDefinedNetworkController) Start(_ context.Context) error {
 	}
 	if err := oc.run(); err != nil {
 		oc.DeregisterServiceNetwork()
+		oc.DeregisterPodHandler()
 		oc.DeregisterNodeHandler()
 		return err
 	}
@@ -508,6 +489,7 @@ func (oc *Layer2UserDefinedNetworkController) init() error {
 func (oc *Layer2UserDefinedNetworkController) Stop() {
 	klog.Infof("Stopping controller for UDN %s", oc.GetNetworkName())
 	oc.DeregisterServiceNetwork()
+	oc.DeregisterPodHandler()
 	oc.BaseLayer2UserDefinedNetworkController.stop()
 }
 
@@ -625,9 +607,17 @@ func (oc *Layer2UserDefinedNetworkController) SyncNodes(nodes []*corev1.Node) er
 	return oc.syncNodes(nodesToInterfaces(nodes))
 }
 
-func (oc *Layer2UserDefinedNetworkController) initRetryFramework() {
-	oc.retryPods = oc.newRetryFramework(factory.PodType)
+func (oc *Layer2UserDefinedNetworkController) ReconcilePod(oldPod, newPod *corev1.Pod, cachedState interface{}) error {
+	if err := oc.BaseUserDefinedNetworkController.ReconcilePod(oldPod, newPod, cachedState); err != nil {
+		return err
+	}
+	if newPod != nil && oc.isPodScheduledinLocalZone(newPod) {
+		return oc.updateLocalPodEvent(newPod)
+	}
+	return nil
+}
 
+func (oc *Layer2UserDefinedNetworkController) initRetryFramework() {
 	// When a user-defined network is enabled as a primary network for namespace,
 	// then watch for namespace and network policy events.
 	if oc.IsPrimaryNetwork() {

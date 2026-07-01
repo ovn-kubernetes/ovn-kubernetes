@@ -60,23 +60,33 @@ func (bsnc *BaseUserDefinedNetworkController) getPortInfoForUserDefinedNetwork(p
 	return networkPortInfoMap
 }
 
-// GetInternalCacheEntryForUserDefinedNetwork returns the internal cache entry for this object, given an object and its type.
-// This is now used only for pods, which will get their the logical port cache entry.
-func (bsnc *BaseUserDefinedNetworkController) GetInternalCacheEntryForUserDefinedNetwork(objType reflect.Type, obj interface{}) interface{} {
-	switch objType {
-	case factory.PodType:
-		pod := obj.(*corev1.Pod)
-		return bsnc.GetPodState(pod)
-	default:
-		return nil
-	}
+func (bsnc *BaseUserDefinedNetworkController) GetInternalCacheEntryForUserDefinedNetwork(_ reflect.Type, _ interface{}) interface{} {
+	return nil
+}
+
+func (bsnc *BaseUserDefinedNetworkController) SyncPods(pods []*corev1.Pod) error {
+	return bsnc.syncPodsForUserDefinedNetwork(podsToInterfaces(pods))
 }
 
 func (bsnc *BaseUserDefinedNetworkController) GetPodState(pod *corev1.Pod) interface{} {
 	return bsnc.getPortInfoForUserDefinedNetwork(pod)
 }
 
-func (bsnc *BaseUserDefinedNetworkController) ReconcilePod(oldPod, newPod *corev1.Pod, cachedState interface{}, forceAdd bool) error {
+func (bsnc *BaseUserDefinedNetworkController) PodExpectedOnNetwork(pod *corev1.Pod) (bool, error) {
+	if !bsnc.podExpectedInLogicalCache(pod) {
+		return false, nil
+	}
+	on, _, err := bsnc.podNetworkSelectionForUserDefinedNetwork(pod)
+	if err != nil {
+		if _, ok := err.(*podNetworkConfigError); ok {
+			return true, nil
+		}
+		return false, err
+	}
+	return on, nil
+}
+
+func (bsnc *BaseUserDefinedNetworkController) ReconcilePod(oldPod, newPod *corev1.Pod, cachedState interface{}) error {
 	if newPod == nil {
 		if oldPod == nil {
 			return fmt.Errorf("pod delete reconcile for network %s is missing pod", bsnc.GetNetworkName())
@@ -91,21 +101,18 @@ func (bsnc *BaseUserDefinedNetworkController) ReconcilePod(oldPod, newPod *corev
 		}
 		return bsnc.reconcileDeletedPodForUserDefinedNetwork(oldPod, portInfoMap)
 	}
-	addPort := forceAdd || bsnc.shouldEnsurePodForUserDefinedNetwork(newPod)
-	return bsnc.ensurePodForUserDefinedNetwork(newPod, addPort)
+	addPort := bsnc.shouldEnsurePodForUserDefinedNetwork(newPod)
+	eventReason := "ErrorAddingResource"
+	if oldPod != nil {
+		eventReason = "ErrorUpdatingResource"
+	}
+	return bsnc.ensurePodForUserDefinedNetwork(newPod, addPort, eventReason)
 }
 
 // AddUserDefinedNetworkResourceCommon adds the specified object to the cluster according to its type and returns the error,
 // if any, yielded during object creation. This function is called for User Defined Networks only.
 func (bsnc *BaseUserDefinedNetworkController) AddUserDefinedNetworkResourceCommon(objType reflect.Type, obj interface{}) error {
 	switch objType {
-	case factory.PodType:
-		pod, ok := obj.(*corev1.Pod)
-		if !ok {
-			return fmt.Errorf("could not cast %T object to *knet.Pod", obj)
-		}
-		return bsnc.ReconcilePod(nil, pod, nil, false)
-
 	case factory.NamespaceType:
 		ns, ok := obj.(*corev1.Namespace)
 		if !ok {
@@ -144,13 +151,8 @@ func (bsnc *BaseUserDefinedNetworkController) AddUserDefinedNetworkResourceCommo
 // called for User Defined Networks only.
 // Given an old and a new object; The inRetryCache boolean argument is to indicate if the given resource
 // is in the retryCache or not.
-func (bsnc *BaseUserDefinedNetworkController) UpdateUserDefinedNetworkResourceCommon(objType reflect.Type, oldObj, newObj interface{}, inRetryCache bool) error {
+func (bsnc *BaseUserDefinedNetworkController) UpdateUserDefinedNetworkResourceCommon(objType reflect.Type, oldObj, newObj interface{}, _ bool) error {
 	switch objType {
-	case factory.PodType:
-		oldPod := oldObj.(*corev1.Pod)
-		newPod := newObj.(*corev1.Pod)
-		return bsnc.ReconcilePod(oldPod, newPod, nil, inRetryCache)
-
 	case factory.NamespaceType:
 		oldNs, newNs := oldObj.(*corev1.Namespace), newObj.(*corev1.Namespace)
 		return bsnc.updateNamespaceForUserDefinedNetwork(oldNs, newNs)
@@ -202,12 +204,8 @@ func (bsnc *BaseUserDefinedNetworkController) UpdateUserDefinedNetworkResourceCo
 // Given an object and optionally a cachedObj; cachedObj is the internal cache entry for this object,
 // used for now for pods.
 // This function is called for User Defined Networks only.
-func (bsnc *BaseUserDefinedNetworkController) DeleteUserDefinedNetworkResourceCommon(objType reflect.Type, obj, cachedObj interface{}) error {
+func (bsnc *BaseUserDefinedNetworkController) DeleteUserDefinedNetworkResourceCommon(objType reflect.Type, obj, _ interface{}) error {
 	switch objType {
-	case factory.PodType:
-		pod := obj.(*corev1.Pod)
-		return bsnc.ReconcilePod(pod, nil, cachedObj, false)
-
 	case factory.NamespaceType:
 		ns := obj.(*corev1.Namespace)
 		return bsnc.deleteNamespaceForUserDefinedNetwork(ns)
@@ -324,7 +322,7 @@ func (bsnc *BaseUserDefinedNetworkController) podNetworkSelectionForUserDefinedN
 
 // ensurePodForUserDefinedNetwork tries to set up the User Defined Network for a pod. It returns nil on success and error
 // on failure; failure indicates the pod set up should be retried later.
-func (bsnc *BaseUserDefinedNetworkController) ensurePodForUserDefinedNetwork(pod *corev1.Pod, addPort bool) error {
+func (bsnc *BaseUserDefinedNetworkController) ensurePodForUserDefinedNetwork(pod *corev1.Pod, addPort bool, eventReason string) error {
 	// Try unscheduled pods later
 	if !util.PodScheduled(pod) {
 		return nil
@@ -362,7 +360,7 @@ func (bsnc *BaseUserDefinedNetworkController) ensurePodForUserDefinedNetwork(pod
 	on, networkMap, err := bsnc.podNetworkSelectionForUserDefinedNetwork(pod)
 	if err != nil {
 		if configErr, ok := err.(*podNetworkConfigError); ok {
-			bsnc.recordPodErrorEvent(pod, configErr.err)
+			bsnc.recordPodErrorEventWithReason(pod, eventReason, configErr.err)
 			// configuration error, no need to retry, do not return error
 			klog.Errorf("Error getting network-attachment for pod %s/%s network %s: %v",
 				pod.Namespace, pod.Name, bsnc.GetNetworkName(), configErr.err)
