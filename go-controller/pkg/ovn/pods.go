@@ -241,21 +241,26 @@ func (oc *DefaultNetworkController) canCleanupPodIPResources(pod *corev1.Pod, sw
 	return oc.lsManager.OwnsIPs(switchName, oc.podIPOwner(pod, types.DefaultNetworkName), ips), nil
 }
 
-func (oc *DefaultNetworkController) addLogicalPort(ctx context.Context, pod *corev1.Pod) (policyReconciled bool, err error) {
+func (oc *DefaultNetworkController) addLogicalPort(ctx context.Context, pod *corev1.Pod) (bool, error) {
+	_, policyReconciled, err := oc.addLogicalPortWithAnnotation(ctx, pod)
+	return policyReconciled, err
+}
+
+func (oc *DefaultNetworkController) addLogicalPortWithAnnotation(ctx context.Context, pod *corev1.Pod) (podAnnotation *util.PodAnnotation, policyReconciled bool, err error) {
 	// If a node does node have an assigned hostsubnet don't wait for the logical switch to appear
 	switchName := pod.Spec.NodeName
 	if oc.lsManager.IsNonHostSubnetSwitch(switchName) {
-		return false, nil
+		return nil, false, nil
 	}
 
 	_, networkMap, err := util.GetDefaultPodNADToNetworkMapping(pod)
 	if err != nil {
 		// multus won't add this Pod if this fails, should never happen
-		return false, fmt.Errorf("error getting default-network's network-attachment for pod %s/%s: %v", pod.Namespace, pod.Name, err)
+		return nil, false, fmt.Errorf("error getting default-network's network-attachment for pod %s/%s: %v", pod.Namespace, pod.Name, err)
 	}
 	// for default network, networkMap either is empty or contains only one network selection element
 	if len(networkMap) > 1 {
-		return false, fmt.Errorf("more than one NAD requested on default network for pod %s/%s", pod.Namespace, pod.Name)
+		return nil, false, fmt.Errorf("more than one NAD requested on default network for pod %s/%s", pod.Namespace, pod.Name)
 	}
 
 	var network *nadapi.NetworkSelectionElement
@@ -266,7 +271,6 @@ func (oc *DefaultNetworkController) addLogicalPort(ctx context.Context, pod *cor
 	var libovsdbExecuteTime time.Duration
 	var lsp *nbdb.LogicalSwitchPort
 	var ops []ovsdb.Operation
-	var podAnnotation *util.PodAnnotation
 	var newlyCreatedPort bool
 	// Keep track of how long syncs take.
 	start := time.Now()
@@ -278,32 +282,35 @@ func (oc *DefaultNetworkController) addLogicalPort(ctx context.Context, pod *cor
 	nadKey := types.DefaultNetworkName
 	ops, lsp, podAnnotation, newlyCreatedPort, err = oc.addLogicalPortToNetwork(ctx, pod, nadKey, network, nil)
 	if err != nil {
-		return false, err
+		return nil, false, err
 	}
 
 	// If default network is not primary, update secondaryPods port group to isolate default network
 	networkRole, err := oc.GetNetworkRole(pod)
 	if err != nil {
-		return false, err
+		return nil, false, err
 	}
 	if networkRole == types.NetworkRoleInfrastructure && util.IsNetworkSegmentationSupportEnabled() {
 		pgName := libovsdbutil.GetPortGroupName(oc.getSecondaryPodsPortGroupDbIDs())
 		if ops, err = libovsdbops.AddPortsToPortGroupOps(oc.nbClient, ops, pgName, lsp.UUID); err != nil {
-			return false, err
+			return nil, false, err
 		}
 		// set open ports for UDN pods, use function without transact, since lsp is not created yet.
 		var parseErr error
 		ops, parseErr, err = oc.setUDNPodOpenPortsOps(pod.Namespace+"/"+pod.Name, pod.Annotations, lsp.Name, ops)
 		err = utilerrors.Join(parseErr, err)
 		if err != nil {
-			return false, fmt.Errorf("failed to set UDN pod %s/%s open ports: %w", pod.Namespace, pod.Name, err)
+			return nil, false, fmt.Errorf("failed to set UDN pod %s/%s open ports: %w", pod.Namespace, pod.Name, err)
 		}
 	}
 
-	// Ensure namespace port group membership before pod setup succeeds.
+	// Ensure pod-owned namespace port group membership before pod setup succeeds.
+	unlockNamespacePortGroup := oc.lockNamespacePortGroup(pod.Namespace)
+
 	ops, err = oc.addPodToNamespacePortGroupOps(ops, pod.Namespace, lsp.UUID)
 	if err != nil {
-		return false, err
+		unlockNamespacePortGroup()
+		return nil, false, err
 	}
 
 	if config.Gateway.DisableSNATMultipleGWs {
@@ -312,7 +319,8 @@ func (oc *DefaultNetworkController) addLogicalPort(ctx context.Context, pod *cor
 		// AdminPolicyBasedExternalRoute controller.
 		snatOps, err := oc.AddPodSNATOps(pod.Spec.NodeName, podAnnotation.IPs)
 		if err != nil {
-			return false, err
+			unlockNamespacePortGroup()
+			return nil, false, err
 		}
 		ops = append(ops, snatOps...)
 	}
@@ -325,9 +333,10 @@ func (oc *DefaultNetworkController) addLogicalPort(ctx context.Context, pod *cor
 
 	transactStart := time.Now()
 	policyReconciled, err = oc.transactPodLogicalPort(pod, nadKey, switchName, lsp, podAnnotation, ops)
+	unlockNamespacePortGroup()
 	libovsdbExecuteTime = time.Since(transactStart)
 	if err != nil {
-		return false, err
+		return nil, false, err
 	}
 	txOkCallBack()
 	oc.podRecorder.AddLSP(pod.UID, oc.GetNetInfo())
@@ -338,7 +347,7 @@ func (oc *DefaultNetworkController) addLogicalPort(ctx context.Context, pod *cor
 
 	if kubevirt.IsPodLiveMigratable(pod) {
 		if err := oc.ensureDHCP(pod, podAnnotation, lsp); err != nil {
-			return false, fmt.Errorf("failed configuring DHCP for default network at pod %s/%s: %w", pod.Namespace, pod.Name, err)
+			return nil, false, fmt.Errorf("failed configuring DHCP for default network at pod %s/%s: %w", pod.Namespace, pod.Name, err)
 		}
 	}
 
@@ -346,7 +355,7 @@ func (oc *DefaultNetworkController) addLogicalPort(ctx context.Context, pod *cor
 	if newlyCreatedPort {
 		metrics.RecordPodCreated(pod, oc.GetNetInfo())
 	}
-	return policyReconciled, nil
+	return podAnnotation, policyReconciled, nil
 }
 
 func (oc *DefaultNetworkController) allocateSyncPodsIPs(pod *corev1.Pod) (string, *util.PodAnnotation, error) {

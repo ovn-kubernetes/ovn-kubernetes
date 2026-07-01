@@ -117,8 +117,7 @@ We prefer level-driven controllers built with `pkg/controller/controller.go`. Wh
 ### Pod reconciliation and applied state
 
 The default and user-defined network controllers route pod events through
-`ReconcilePod`. The existing event and retry framework still schedules the work;
-this entry point does not introduce a separate pod controller. Add and update
+`ReconcilePod`. The shared pod controller schedules the work. Add and update
 passes derive required work from the current pod and the controller's applied
 logical-port state, rather than relying only on the preceding event.
 
@@ -144,3 +143,46 @@ in the [multi-homing limitations](../features/multiple-networks/multi-homing.md#
 Removing a NAD from that annotation does not prove that its interface or port
 has been removed. Existing policy protection is retained until the recorded LSP
 is gone. This does not provide hot-unplug or change CNI/IPAM ownership.
+
+### Shared pod reconciliation
+
+`pkg/controllers/pod` watches pods once and queues work for registered network
+handlers. Workers read the latest pod from the informer; events are notifications
+to reconcile, not an ordered list of operations to replay. Work is keyed by pod
+and network, but execution is serialized by pod key across networks because all
+attachments share the pod-networks annotation. Network registration and
+deregistration also serialize by network name.
+
+The shared controller and its OVN handlers preserve these invariants:
+
+- **Applied state advances only on success.** Each network retains the last
+  successfully reconciled pod and the handler's teardown state. A failed attempt
+  keeps those snapshots; handlers retain incomplete port state separately so a
+  retry or deletion can finish partially completed work. Informer objects are
+  read-only and must not be used as mutable applied-state storage.
+- **Replacement is teardown followed by setup.** A different UID at the same
+  namespace/name does not overwrite the old generation's state. Teardown must
+  finish first, and OVN cleanup checks ownership before touching a replacement's
+  logical port or releasing its IP reservation.
+- **Leaving a network is not Kubernetes deletion.** `ReconcilePod` receives a nil
+  desired pod for both cases. A live pod can later reattach to the same network;
+  handlers must not infer pod lifecycle completion from that argument alone.
+- **Retries retain cleanup information.** The latest observed pod and bootstrap
+  snapshot provide teardown inputs even if setup never succeeded. A successful
+  teardown is not repeated merely because requeueing related pods failed.
+  Independent networks still receive related-pod work when another lookup fails.
+- **Startup is a barrier, not proof of convergence.** Registration seeds pod
+  state and runs `SyncPods` before allowing that network's workers to proceed.
+  The initial-attempt barrier closes after every listed pod has been attempted,
+  including failures; failed keys remain on the retry queue. Deregistration stops
+  new work and drains in-flight calls before forgetting the network's state.
+- **Ambiguous configuration preserves applied attachments.** A malformed UDN
+  attachment selection produces a configuration event rather than deleting
+  existing ports based on an incomplete desired set. A later relevant update
+  triggers another reconcile. Operational failures remain retryable.
+
+This removes per-network pod event handlers, coalesces repeated events, and gives
+setup, update, and teardown a common retry model. It also avoids replaying completed
+cleanup and preserves state needed to recover from partial failures. It does not
+serialize pod work with namespace reconciliation or make multi-transaction OVN
+programming atomic.

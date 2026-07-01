@@ -4,6 +4,7 @@
 package pod
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -35,7 +36,7 @@ type NetworkHandler interface {
 	// teardown, with lastState carrying the state returned by the last
 	// successful reconcile of the pod, if any. On success it returns the state
 	// to cache for the eventual teardown.
-	ReconcilePod(oldPod, newPod *corev1.Pod, lastState interface{}) (interface{}, error)
+	ReconcilePod(ctx context.Context, oldPod, newPod *corev1.Pod, lastState interface{}) (interface{}, error)
 }
 
 // ErrorRecorder records reconcile failures for handlers that expose
@@ -472,7 +473,7 @@ func (c *Controller) networkNames() []string {
 	return names
 }
 
-func (c *Controller) reconcilePod(key string) error {
+func (c *Controller) reconcilePod(ctx context.Context, key string) error {
 	podKey, netName := parseScopedPodQueueKey(key)
 	if netName == "" {
 		for _, networkName := range c.networkNames() {
@@ -492,7 +493,7 @@ func (c *Controller) reconcilePod(key string) error {
 	// Serialize by pod key so per-network reconciles cannot clobber each other.
 	c.podLocks.LockKey(podKey)
 	defer c.podLocks.UnlockKey(podKey)
-	return c.reconcilePodForNetwork(net.handler, podKey, netName)
+	return c.reconcilePodForNetwork(ctx, net.handler, podKey, netName)
 }
 
 func (c *Controller) reconcileRelatedPods(podKey string) error {
@@ -541,7 +542,7 @@ func (c *Controller) reconcileRelatedPodsForNetwork(handler NetworkHandler, netN
 	return nil
 }
 
-func (c *Controller) reconcilePodForNetwork(handler NetworkHandler, podKey, netName string) error {
+func (c *Controller) reconcilePodForNetwork(ctx context.Context, handler NetworkHandler, podKey, netName string) error {
 	namespace, name, err := cache.SplitMetaNamespaceKey(podKey)
 	if err != nil {
 		return fmt.Errorf("failed to split pod key %s: %w", podKey, err)
@@ -558,7 +559,7 @@ func (c *Controller) reconcilePodForNetwork(handler NetworkHandler, podKey, netN
 	podFound := err == nil
 
 	if !podFound {
-		return c.teardown(handler, podKey, netName, nil, observationSequence)
+		return c.teardown(ctx, handler, podKey, netName, nil, observationSequence)
 	}
 
 	if uid := c.entryUID(netName, podKey); uid != "" && uid != pod.UID {
@@ -566,7 +567,7 @@ func (c *Controller) reconcilePodForNetwork(handler NetworkHandler, podKey, netN
 		// down before evaluating the replacement. In particular, an error while
 		// deciding replacement eligibility must never overwrite the only old-UID
 		// tombstone before it is deleted.
-		if err := c.teardown(handler, podKey, netName, nil, observationSequence); err != nil {
+		if err := c.teardown(ctx, handler, podKey, netName, nil, observationSequence); err != nil {
 			return err
 		}
 	}
@@ -588,7 +589,7 @@ func (c *Controller) reconcilePodForNetwork(handler NetworkHandler, podKey, netN
 			}
 			fallbackPod = pod
 		}
-		if err := c.teardown(handler, podKey, netName, fallbackPod, observationSequence); err != nil {
+		if err := c.teardown(ctx, handler, podKey, netName, fallbackPod, observationSequence); err != nil {
 			return err
 		}
 		if fallbackPod != nil {
@@ -598,7 +599,7 @@ func (c *Controller) reconcilePodForNetwork(handler NetworkHandler, podKey, netN
 	}
 
 	applied, state := c.markSeen(netName, podKey, pod, observationSequence)
-	newState, err := handler.ReconcilePod(applied, pod, state)
+	newState, err := handler.ReconcilePod(ctx, applied, pod, state)
 	if err != nil {
 		reason := "ErrorAddingResource"
 		if applied != nil {
@@ -614,7 +615,7 @@ func (c *Controller) reconcilePodForNetwork(handler NetworkHandler, podKey, netN
 // teardown reconciles the pod as absent using the entry's best available pod
 // object, or fallbackPod when no entry exists. On success it requeues related
 // pods and clears the entry.
-func (c *Controller) teardown(handler NetworkHandler, podKey, netName string, fallbackPod *corev1.Pod, observationSequence uint64) error {
+func (c *Controller) teardown(ctx context.Context, handler NetworkHandler, podKey, netName string, fallbackPod *corev1.Pod, observationSequence uint64) error {
 	if fallbackPod != nil {
 		c.rememberTeardownFallback(netName, podKey, fallbackPod, observationSequence)
 	}
@@ -624,7 +625,7 @@ func (c *Controller) teardown(handler NetworkHandler, podKey, netName string, fa
 		complete := c.entries[netName][podKey].teardownComplete
 		c.stateMu.RUnlock()
 		if !complete {
-			if _, err := handler.ReconcilePod(deletePod, nil, state); err != nil {
+			if _, err := handler.ReconcilePod(ctx, deletePod, nil, state); err != nil {
 				c.recordPodError(handler, netName, podKey, deletePod, "ErrorDeletingResource", err)
 				return err
 			}

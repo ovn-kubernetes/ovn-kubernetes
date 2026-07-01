@@ -4,6 +4,7 @@
 package networkqos
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -113,7 +114,7 @@ func reconcilePodForDestinations(nqosState *networkQoSState, podNs *corev1.Names
 				populateAddresses(addressSetMap, dest.DestAddrSet.GetName(), addresses)
 			} else {
 				// no match, remove the pod if it's previously selected
-				if err := dest.removePod(fullPodName, addresses); err != nil {
+				if err := dest.removePod(context.Background(), fullPodName, addresses); err != nil {
 					return fmt.Errorf("failed to delete addresses {%s} from dest address set %s for NetworkQoS %s/%s, rule index %d: %v", strings.Join(addresses, ","), dest.DestAddrSet.GetName(), nqosState.namespace, nqosState.name, index, err)
 				}
 			}
