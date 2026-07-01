@@ -357,7 +357,7 @@ func mockOvsVSwitchdProcess(t *testing.T) (int, func()) {
 
 	// Ensure the fake process has some thread
 	assert.Eventually(t, func() bool {
-		tasks, err := getThreadsOfProcess(cmd.Process.Pid)
+		tasks, err := getThreadsOfProcess(cmd.Process.Pid, "pmd")
 		assert.NoError(t, err)
 		return len(tasks) > 1
 	}, time.Second, 100*time.Millisecond, "ovs-vswitchd fake process does not have enough threads")
@@ -426,7 +426,7 @@ func assertPIDHasSchedAffinity(t *testing.T, pid int, expectedCPUSet unix.CPUSet
 		return actual == expectedCPUSet
 	}, 2*time.Second, 10*time.Millisecond, "pid[%d] Expected CPUSet %#x != Actual CPUSet %#x", pid, expectedCPUSet, actual)
 
-	tasks, err := getThreadsOfProcess(pid)
+	tasks, err := getThreadsOfProcess(pid, "")
 	require.NoError(t, err)
 
 	for _, task := range tasks {
