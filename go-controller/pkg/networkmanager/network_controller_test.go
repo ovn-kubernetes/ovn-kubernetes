@@ -114,12 +114,16 @@ func TestSetAdvertisements(t *testing.T) {
 	}
 
 	tests := []struct {
-		name            string
-		network         *ovncnitypes.NetConf
-		ra              *ratypes.RouteAdvertisements
-		node            corev1.Node
-		expectNoNetwork bool
-		expected        map[string][]string
+		name                      string
+		network                   *ovncnitypes.NetConf
+		ra                        *ratypes.RouteAdvertisements
+		node                      corev1.Node
+		missingRA                 bool
+		expectNoNetwork           bool
+		existingPodAdvertisements map[string][]string
+		existingEIPAdvertisements map[string][]string
+		expected                  map[string][]string
+		expectedEIP               map[string][]string
 	}{
 		{
 			name:    "reconciles VRF advertisements for selected node of default node network controller",
@@ -152,24 +156,59 @@ func TestSetAdvertisements(t *testing.T) {
 			node:    otherNode,
 		},
 		{
-			name:    "ignores advertisements that are not accepted",
+			name:    "ignores advertisements with no Accepted condition",
 			network: defaultNetwork,
 			ra:      &podNetworkRANotAccepted,
 			node:    testNode,
 		},
 		{
-			name:            "fails for advertisements that are rejected",
-			network:         primaryNetwork,
-			ra:              &podNetworkRARejected,
-			node:            testNode,
-			expectNoNetwork: true,
+			name:    "starts new network without advertisements when advertisements are rejected",
+			network: primaryNetwork,
+			ra:      &podNetworkRARejected,
+			node:    testNode,
 		},
 		{
-			name:            "fails for advertisements that are old",
-			network:         primaryNetwork,
-			ra:              &podNetworkRAOutdated,
-			node:            testNode,
-			expectNoNetwork: true,
+			name:    "starts new network without advertisements when advertisements are old",
+			network: primaryNetwork,
+			ra:      &podNetworkRAOutdated,
+			node:    testNode,
+		},
+		{
+			name:    "preserves existing advertisements when advertisements are rejected",
+			network: primaryNetwork,
+			ra:      &podNetworkRARejected,
+			node:    testNode,
+			existingPodAdvertisements: map[string][]string{
+				testNodeName: {"previous-pod-vrf"},
+			},
+			existingEIPAdvertisements: map[string][]string{
+				testNodeName: {"previous-eip-vrf"},
+			},
+			expected: map[string][]string{
+				testNodeName: {"previous-pod-vrf"},
+			},
+			expectedEIP: map[string][]string{
+				testNodeName: {"previous-eip-vrf"},
+			},
+		},
+		{
+			name:      "preserves existing advertisements when route advertisement is missing",
+			network:   primaryNetwork,
+			ra:        &podNetworkRA,
+			node:      testNode,
+			missingRA: true,
+			existingPodAdvertisements: map[string][]string{
+				testNodeName: {"previous-pod-vrf"},
+			},
+			existingEIPAdvertisements: map[string][]string{
+				testNodeName: {"previous-eip-vrf"},
+			},
+			expected: map[string][]string{
+				testNodeName: {"previous-pod-vrf"},
+			},
+			expectedEIP: map[string][]string{
+				testNodeName: {"previous-eip-vrf"},
+			},
 		},
 	}
 	for _, tt := range tests {
@@ -200,8 +239,10 @@ func TestSetAdvertisements(t *testing.T) {
 
 			_, err = fakeClient.KubeClient.CoreV1().Nodes().Create(context.Background(), &tt.node, metav1.CreateOptions{})
 			g.Expect(err).ToNot(gomega.HaveOccurred())
-			_, err = fakeClient.RouteAdvertisementsClient.K8sV1().RouteAdvertisements().Create(context.Background(), tt.ra, metav1.CreateOptions{})
-			g.Expect(err).ToNot(gomega.HaveOccurred())
+			if !tt.missingRA {
+				_, err = fakeClient.RouteAdvertisementsClient.K8sV1().RouteAdvertisements().Create(context.Background(), tt.ra, metav1.CreateOptions{})
+				g.Expect(err).ToNot(gomega.HaveOccurred())
+			}
 			_, err = fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespace).Create(context.Background(), nad, metav1.CreateOptions{})
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 
@@ -215,6 +256,19 @@ func TestSetAdvertisements(t *testing.T) {
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 			mutableNetInfo := util.NewMutableNetInfo(netInfo)
 			mutableNetInfo.AddNADs(testNADName)
+
+			if tt.existingPodAdvertisements != nil || tt.existingEIPAdvertisements != nil {
+				existingNetInfo := util.NewMutableNetInfo(netInfo)
+				existingNetInfo.AddNADs(testNADName)
+				existingNetInfo.SetPodNetworkAdvertisedVRFs(tt.existingPodAdvertisements)
+				existingNetInfo.SetEgressIPAdvertisedVRFs(tt.existingEIPAdvertisements)
+				existingController := &testNetworkController{
+					ReconcilableNetInfo: util.NewReconcilableNetInfo(existingNetInfo),
+					tcm:                 tcm,
+				}
+				tcm.controllers[testNetworkKey(netInfo)] = existingController
+				nm.setNetworkState(existingNetInfo.GetNetworkName(), &networkControllerState{controller: existingController})
+			}
 
 			nm.getNADKeysForNetwork = func(networkName string) []string {
 				if networkName == mutableNetInfo.GetNetworkName() {
@@ -246,6 +300,10 @@ func TestSetAdvertisements(t *testing.T) {
 					tt.expected = map[string][]string{}
 				}
 				g.Expect(reconcilable.GetPodNetworkAdvertisedVRFs()).To(gomega.Equal(tt.expected))
+				if tt.expectedEIP == nil {
+					tt.expectedEIP = map[string][]string{}
+				}
+				g.Expect(reconcilable.GetEgressIPAdvertisedVRFs()).To(gomega.Equal(tt.expectedEIP))
 			}
 
 			g.Eventually(meetsExpectations).Should(gomega.Succeed())
