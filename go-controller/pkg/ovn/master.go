@@ -645,6 +645,28 @@ func (oc *DefaultNetworkController) addUpdateLocalNodeEvent(node *corev1.Node, n
 		}
 	}
 
+	// Sync no-overlay SNAT exemption address set before gateway sync. Gateway
+	// NAT creation needs the address set UUID to avoid creating a plain SNAT
+	// that must be fixed by a later reconciliation.
+	if util.IsNoOverlaySNATExemptionNeeded(oc) && (nSyncs.syncNode || nSyncs.syncGw) {
+		hostAddrs, err := util.GetNodeHostAddrs(node)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to get host addresses for node %s: %w", node.Name, err))
+			if nSyncs.syncGw {
+				nSyncs.syncGw = false
+				oc.gatewaysFailed.Store(node.Name, true)
+			}
+		} else {
+			if err := syncNoOverlaySNATExemptionAddressSet(oc.addressSetFactory, oc.GetNetInfo(), oc.controllerName, hostAddrs); err != nil {
+				errs = append(errs, fmt.Errorf("failed to sync no-overlay SNAT exemption address set: %w", err))
+				if nSyncs.syncGw {
+					nSyncs.syncGw = false
+					oc.gatewaysFailed.Store(node.Name, true)
+				}
+			}
+		}
+	}
+
 	if nSyncs.syncGw {
 		err := oc.syncNodeGateway(node)
 		if err != nil {
@@ -692,21 +714,6 @@ func (oc *DefaultNetworkController) addUpdateLocalNodeEvent(node *corev1.Node, n
 		} else if !chassisFailed {
 			// In no-overlay mode, if chassis handler succeeded, clear the failed state
 			oc.syncZoneICFailed.Delete(node.Name)
-		}
-	}
-
-	// Sync no-overlay SNAT exemption address set for no-overlay mode with outbound SNAT enabled in SGW mode.
-	// The address set contains cluster CIDRs + local zone node IPs and is used in SNAT
-	// exemption rules to prevent SNATing pod-to-pod and pod-to-local-node traffic.
-	// In LGW mode, nftables sets are used instead.
-	if util.IsNoOverlaySNATExemptionNeeded(oc) && (nSyncs.syncNode || nSyncs.syncGw) {
-		hostAddrs, err := util.GetNodeHostAddrs(node)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("failed to get host addresses for node %s: %w", node.Name, err))
-		} else {
-			if err := syncNoOverlaySNATExemptionAddressSet(oc.addressSetFactory, oc.GetNetInfo(), oc.controllerName, hostAddrs); err != nil {
-				errs = append(errs, fmt.Errorf("failed to sync no-overlay SNAT exemption address set: %w", err))
-			}
 		}
 	}
 
@@ -889,5 +896,25 @@ func (oc *DefaultNetworkController) gatewayOptions() []GatewayOption {
 			oc.switchLoadBalancerGroupUUID,
 		))
 	}
+	if util.IsNoOverlaySNATExemptionNeeded(oc) {
+		opts = append(opts, WithDuplicateNoOverlayClusterSNATCleanup(oc.cleanupDuplicateNoOverlayClusterSNATsOnce))
+	}
 	return opts
+}
+
+func (oc *DefaultNetworkController) cleanupDuplicateNoOverlayClusterSNATsOnce(gw *GatewayManager, gwRouter *nbdb.LogicalRouter, desiredNATs []*nbdb.NAT) error {
+	oc.duplicateNoOverlayClusterSNATCleanupLock.Lock()
+	defer oc.duplicateNoOverlayClusterSNATCleanupLock.Unlock()
+
+	if oc.duplicateNoOverlayClusterSNATCleanupDoneRouters == nil {
+		oc.duplicateNoOverlayClusterSNATCleanupDoneRouters = map[string]struct{}{}
+	}
+	if _, ok := oc.duplicateNoOverlayClusterSNATCleanupDoneRouters[gwRouter.Name]; ok {
+		return nil
+	}
+	if err := gw.cleanupDuplicateNoOverlayClusterSNATs(gwRouter, desiredNATs); err != nil {
+		return err
+	}
+	oc.duplicateNoOverlayClusterSNATCleanupDoneRouters[gwRouter.Name] = struct{}{}
+	return nil
 }
