@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/coreos/go-iptables/iptables"
 	"github.com/stretchr/testify/mock"
 	"github.com/urfave/cli/v2"
 	"github.com/vishvananda/netlink"
@@ -27,6 +28,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/bridgeconfig"
+	nodeipt "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iptables"
 	nodenft "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/retry"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
@@ -85,14 +87,8 @@ func startNodePortWatcher(n *nodePortWatcher, fakeClient *util.OVNNodeClientset)
 		subnets = append(subnets, subnet.CIDR)
 	}
 	subnets = append(subnets, config.Kubernetes.ServiceCIDRs...)
-	if config.Gateway.DisableForwarding {
-		if err := initExternalBridgeServiceForwardingRules(subnets); err != nil {
-			return fmt.Errorf("failed to add accept rules in forwarding table for bridge %s: err %v", linkName, err)
-		}
-	} else {
-		if err := delExternalBridgeServiceForwardingRules(subnets); err != nil {
-			return fmt.Errorf("failed to delete accept rules in forwarding table for bridge %s: err %v", linkName, err)
-		}
+	if err := initExternalBridgeServiceForwardingRules(subnets); err != nil {
+		return fmt.Errorf("failed to configure iptables forwarding rules for bridge %s: err %v", linkName, err)
 	}
 
 	// set up a controller to handle events on services to mock the nodeportwatcher bits
@@ -3545,8 +3541,12 @@ var _ = Describe("Node Operations", func() {
 	Context("disable-forwarding", func() {
 		It("adds or removes iptables rules upon change in forwarding mode", func() {
 			app.Action = func(*cli.Context) error {
-				config.Default.ClusterSubnets = []config.CIDRNetworkEntry{{CIDR: ovntest.MustParseIPNet("10.1.0.0/16"), HostSubnetLength: 24}}
-				config.Kubernetes.ServiceCIDRs = ovntest.MustParseIPNets("172.16.1.0/24")
+				config.Default.ClusterSubnets = []config.CIDRNetworkEntry{
+					{CIDR: ovntest.MustParseIPNet("fd00:10:1::/48"), HostSubnetLength: 64},
+				}
+				config.Kubernetes.ServiceCIDRs = ovntest.MustParseIPNets("fd00:172:16::/108")
+				config.IPv4Mode = false
+				config.IPv6Mode = true
 				config.Gateway.DisableForwarding = true
 
 				stopChan := make(chan struct{})
@@ -3561,6 +3561,8 @@ var _ = Describe("Node Operations", func() {
 
 				fNPW.watchFactory = wf
 				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
+				Expect(configureGlobalForwarding()).To(Succeed())
+
 				expectedTables := map[string]util.FakeTable{
 					"nat": {
 						"PREROUTING": []string{
@@ -3580,12 +3582,12 @@ var _ = Describe("Node Operations", func() {
 					},
 					"filter": {
 						"FORWARD": []string{
-							"-d 169.254.169.1 -j ACCEPT",
-							"-s 169.254.169.1 -j ACCEPT",
-							"-d 172.16.1.0/24 -j ACCEPT",
-							"-s 172.16.1.0/24 -j ACCEPT",
-							"-d 10.1.0.0/16 -j ACCEPT",
-							"-s 10.1.0.0/16 -j ACCEPT",
+							"-d fd69::1 -j ACCEPT",
+							"-s fd69::1 -j ACCEPT",
+							"-d fd00:172:16::/108 -j ACCEPT",
+							"-s fd00:172:16::/108 -j ACCEPT",
+							"-d fd00:10:1::/48 -j ACCEPT",
+							"-s fd00:10:1::/48 -j ACCEPT",
 						},
 					},
 					"mangle": {
@@ -3595,21 +3597,11 @@ var _ = Describe("Node Operations", func() {
 						"OVN-KUBE-ITP": []string{},
 					},
 				}
-
-				Expect(configureGlobalForwarding()).To(Succeed())
-				f4 := iptV4.(*util.FakeIPTables)
-				err = f4.MatchState(expectedTables, map[util.FakePolicyKey]string{{
+				f6 := iptV6.(*util.FakeIPTables)
+				err = f6.MatchState(expectedTables, map[util.FakePolicyKey]string{{
 					Table: "filter",
 					Chain: "FORWARD",
 				}: "DROP"})
-				Expect(err).NotTo(HaveOccurred())
-				expectedTables = map[string]util.FakeTable{
-					"nat":    {},
-					"filter": {},
-					"mangle": {},
-				}
-				f6 := iptV6.(*util.FakeIPTables)
-				err = f6.MatchState(expectedTables, nil)
 				Expect(err).NotTo(HaveOccurred())
 
 				// Enable forwarding and test deletion of iptables rules from FORWARD chain
@@ -3617,6 +3609,7 @@ var _ = Describe("Node Operations", func() {
 				fNPW.watchFactory = wf
 				Expect(configureGlobalForwarding()).To(Succeed())
 				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
+
 				expectedTables = map[string]util.FakeTable{
 					"nat": {
 						"PREROUTING": []string{
@@ -3645,25 +3638,128 @@ var _ = Describe("Node Operations", func() {
 					},
 				}
 
-				f4 = iptV4.(*util.FakeIPTables)
-				err = f4.MatchState(expectedTables, map[util.FakePolicyKey]string{{
+				f6 = iptV6.(*util.FakeIPTables)
+				err = f6.MatchState(expectedTables, map[util.FakePolicyKey]string{{
 					Table: "filter",
 					Chain: "FORWARD",
 				}: "ACCEPT"})
-				Expect(err).NotTo(HaveOccurred())
-				expectedTables = map[string]util.FakeTable{
-					"nat":    {},
-					"filter": {},
-					"mangle": {},
-				}
-				f6 = iptV6.(*util.FakeIPTables)
-				err = f6.MatchState(expectedTables, nil)
 				Expect(err).NotTo(HaveOccurred())
 				return nil
 			}
 			err := app.Run([]string{app.Name})
 			Expect(err).NotTo(HaveOccurred())
 		})
-	})
 
+		It("updates the default FORWARD policy correctly according to the config", func() {
+			expectedTablesEmpty := map[string]util.FakeTable{
+				"filter": {
+					"FORWARD": []string{},
+				},
+				"nat":    {},
+				"mangle": {},
+			}
+
+			expectedPolicyDrop := map[util.FakePolicyKey]string{{
+				Table: "filter",
+				Chain: "FORWARD",
+			}: "DROP"}
+			expectedPolicyAccept := map[util.FakePolicyKey]string{{
+				Table: "filter",
+				Chain: "FORWARD",
+			}: "ACCEPT"}
+			expectedPolicyNotSet := map[util.FakePolicyKey]string{}
+
+			err := iptV4.NewChain("filter", "FORWARD")
+			Expect(err).NotTo(HaveOccurred())
+			err = iptV6.NewChain("filter", "FORWARD")
+			Expect(err).NotTo(HaveOccurred())
+			f4 := iptV4.(*util.FakeIPTables)
+			f6 := iptV6.(*util.FakeIPTables)
+			config.IPv4Mode = true
+			config.IPv6Mode = true
+
+			util.SetSupportsIPv6InterfaceForwarding(false)
+
+			By("setting DisableForwarding = true, and confirming that configureGlobalForwarding() sets the IPv6 policy to DROP")
+			config.Gateway.DisableForwarding = true
+			err = configureGlobalForwarding()
+			Expect(err).NotTo(HaveOccurred())
+			err = f4.MatchState(expectedTablesEmpty, expectedPolicyNotSet)
+			Expect(err).NotTo(HaveOccurred())
+			err = f6.MatchState(expectedTablesEmpty, expectedPolicyDrop)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("manually creating some of the rules OVN-K would create when DisableForwarding is true, and setting the IPv4 policy to DROP")
+			var rules []nodeipt.Rule
+			rules = append(rules, getMasqueradeIpTablesForwardRules(config.Gateway.MasqueradeIPs.V4OVNMasqueradeIP, iptables.ProtocolIPv4)...)
+			rules = append(rules, getMasqueradeIpTablesForwardRules(config.Gateway.MasqueradeIPs.V6OVNMasqueradeIP, iptables.ProtocolIPv6)...)
+			err = nodeipt.AddRules(rules, false)
+			Expect(err).NotTo(HaveOccurred())
+			err = iptV4.ChangePolicy("filter", "FORWARD", "DROP")
+			Expect(err).NotTo(HaveOccurred())
+
+			expectedTablesV4 := map[string]util.FakeTable{
+				"filter": {
+					"FORWARD": []string{
+						"-d 169.254.169.1 -j ACCEPT",
+						"-s 169.254.169.1 -j ACCEPT",
+					},
+				},
+				"nat":    {},
+				"mangle": {},
+			}
+			err = f4.MatchState(expectedTablesV4, expectedPolicyDrop)
+			Expect(err).NotTo(HaveOccurred())
+			expectedTablesV6 := map[string]util.FakeTable{
+				"filter": {
+					"FORWARD": []string{
+						"-d fd69::1 -j ACCEPT",
+						"-s fd69::1 -j ACCEPT",
+					},
+				},
+				"nat":    {},
+				"mangle": {},
+			}
+			err = f6.MatchState(expectedTablesV6, expectedPolicyDrop)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("setting DisableForwarding = false, and confirming that configureGlobalForwarding() sets the policy to ACCEPT for both IPv4 and IPv6")
+			config.Gateway.DisableForwarding = false
+			err = configureGlobalForwarding()
+			Expect(err).NotTo(HaveOccurred())
+			err = f4.MatchState(expectedTablesV4, expectedPolicyAccept)
+			Expect(err).NotTo(HaveOccurred())
+			err = f6.MatchState(expectedTablesV6, expectedPolicyAccept)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("setting DisableForwarding = true with SupportsIPv6InterfaceForwarding() also true, and confirming that configureGlobalForwarding() does not change the policy")
+			config.Gateway.DisableForwarding = true
+			util.SetSupportsIPv6InterfaceForwarding(true)
+			defer util.SetSupportsIPv6InterfaceForwarding(false)
+			err = configureGlobalForwarding()
+			Expect(err).NotTo(HaveOccurred())
+			err = f4.MatchState(expectedTablesV4, expectedPolicyAccept)
+			Expect(err).NotTo(HaveOccurred())
+			err = f6.MatchState(expectedTablesV6, expectedPolicyAccept)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("deleting the OVN-K DisableForwarding rules and manually setting the policy back to DROP")
+			err = nodeipt.DelRules(rules)
+			Expect(err).NotTo(HaveOccurred())
+			err = iptV4.ChangePolicy("filter", "FORWARD", "DROP")
+			Expect(err).NotTo(HaveOccurred())
+			err = iptV6.ChangePolicy("filter", "FORWARD", "DROP")
+			Expect(err).NotTo(HaveOccurred())
+
+			By("setting DisableForwarding = false, and confirming that configureGlobalForwarding() doesn't change the policy")
+			config.Gateway.DisableForwarding = false
+			util.SetSupportsIPv6InterfaceForwarding(false)
+			err = configureGlobalForwarding()
+			Expect(err).NotTo(HaveOccurred())
+			err = f4.MatchState(expectedTablesEmpty, expectedPolicyDrop)
+			Expect(err).NotTo(HaveOccurred())
+			err = f6.MatchState(expectedTablesEmpty, expectedPolicyDrop)
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
 })

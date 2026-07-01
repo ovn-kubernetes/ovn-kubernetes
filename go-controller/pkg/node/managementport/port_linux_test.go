@@ -234,7 +234,7 @@ func testManagementPort(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.Net
 	})
 	var isRoutingAdvertised bool
 	for _, cfg := range configs {
-		// We do not enable per-interface forwarding for IPv6
+		// We do not enable per-interface forwarding for IPv6 for this test suite
 		if cfg.family == netlink.FAMILY_V4 {
 			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 				Cmd:    "sysctl -w net.ipv4.conf.ovn-k8s-mp0.forwarding = 1",

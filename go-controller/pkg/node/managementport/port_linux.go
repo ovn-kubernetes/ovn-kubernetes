@@ -308,19 +308,6 @@ func setupManagementPortIPFamilyConfig(link netlink.Link, mpcfg *managementPortC
 		return err
 	}
 
-	protocol := iptables.ProtocolIPv4
-	if mpcfg.ipv6 != nil && cfg == mpcfg.ipv6 {
-		protocol = iptables.ProtocolIPv6
-	}
-
-	// IPv6 forwarding is enabled globally
-	if protocol == iptables.ProtocolIPv4 {
-		err := util.SetForwardingModeForInterface(types.K8sMgmtIntfName)
-		if err != nil {
-			klog.Warning(err)
-		}
-	}
-
 	return nil
 }
 
@@ -332,6 +319,10 @@ func setupManagementPortConfig(link netlink.Link, cfg *managementPortConfig, rou
 	}
 	if cfg.ipv6 != nil && err == nil {
 		err = setupManagementPortIPFamilyConfig(link, cfg, cfg.ipv6, routeManager)
+	}
+
+	if err == nil {
+		err = util.SetForwardingModeForInterface(types.K8sMgmtIntfName)
 	}
 
 	return err
