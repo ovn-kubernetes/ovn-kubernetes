@@ -684,8 +684,11 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 				}
 			} else {
 				subnets, err = getHostSubnets(nodeName, network)
-				if err != nil || len(subnets) == 0 {
+				if err != nil {
 					return nil, fmt.Errorf("%w: will wait for subnet annotation to be set for node %q and network %q: %w", errConfig, nodeName, network, err)
+				}
+				if len(subnets) == 0 {
+					return nil, fmt.Errorf("%w: will wait for subnet annotation to be set for node %q and network %q", errConfig, nodeName, network)
 				}
 			}
 
