@@ -1827,6 +1827,56 @@ func TestValidateNetConfOutboundSNAT(t *testing.T) {
 	}
 }
 
+func TestValidateNetConfUplinkGatewayMode(t *testing.T) {
+	tests := []struct {
+		name          string
+		gatewayMode   config.GatewayMode
+		uplink        string
+		expectedError string
+	}{
+		{
+			name:        "uplink is accepted in shared gateway mode",
+			gatewayMode: config.GatewayModeShared,
+			uplink:      "blue-uplink",
+		},
+		{
+			name:          "uplink is rejected in local gateway mode",
+			gatewayMode:   config.GatewayModeLocal,
+			uplink:        "blue-uplink",
+			expectedError: `uplink "blue-uplink" is supported only in shared gateway mode`,
+		},
+		{
+			name:        "local gateway mode is accepted without uplink",
+			gatewayMode: config.GatewayModeLocal,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+			config.Gateway.Mode = test.gatewayMode
+
+			nadName := "namespace/network"
+			netconf := &ovncnitypes.NetConf{
+				NetConf: cnitypes.NetConf{
+					Name: "network",
+				},
+				NADName:  nadName,
+				Topology: ovntypes.Layer3Topology,
+				Uplink:   test.uplink,
+			}
+
+			err := ValidateNetConf(nadName, netconf)
+			if test.expectedError != "" {
+				g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring(test.expectedError)))
+			} else {
+				g.Expect(err).NotTo(gomega.HaveOccurred())
+			}
+		})
+	}
+}
+
 func TestNewNetInfo(t *testing.T) {
 	type testConfig struct {
 		desc          string

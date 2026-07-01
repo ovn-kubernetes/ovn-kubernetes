@@ -94,6 +94,11 @@ func (in *ClusterUserDefinedNetworkList) DeepCopyObject() runtime.Object {
 func (in *ClusterUserDefinedNetworkSpec) DeepCopyInto(out *ClusterUserDefinedNetworkSpec) {
 	*out = *in
 	in.NamespaceSelector.DeepCopyInto(&out.NamespaceSelector)
+	if in.Uplinks != nil {
+		in, out := &in.Uplinks, &out.Uplinks
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	in.Network.DeepCopyInto(&out.Network)
 	return
 }

@@ -69,6 +69,7 @@ usage() {
     echo "       [ --frr-k8s-host-kubeconfig <file> ]"
     echo "       [ --frr-k8s-remote-node-map <host=dpu[,host=dpu...]> ]"
     echo "       [ --enable-coredumps ]"
+    echo "       [ -ub | --uplink-bridge ]"
     echo "       [ -h ]"
     echo ""
     echo "--delete                                      Delete current cluster"
@@ -128,6 +129,7 @@ usage() {
     echo "-ifa | --ipfix-cache-active-timeout           Maximum period in seconds for which an IPFIX flow record is cached. DEFAULT: 60"
     echo "-lcl | --libovsdb-client-logfile              Separate logs for libovsdb client into provided file. DEFAULT: do not separate."
     echo "-eb  | --egress-gw-separate-bridge            The external gateway traffic uses a separate bridge (sets up xgw bridge and eth1)."
+    echo "-ub  | --uplink-bridge                        Create an unmanaged OVS bridge for Uplink testing on each KIND node."
     echo "-lr  | --local-kind-registry                  Configure kind to use a local container registry for images."
     echo "-ep  | --experimental-provider                Use an experimental OCI provider such as podman instead of docker."
     echo "--deploy                                      Deploy ovn-kubernetes without restarting kind"
@@ -326,6 +328,8 @@ parse_args() {
                                                   ;;
             -eb | --egress-gw-separate-bridge )   OVN_SECOND_BRIDGE=true
                                                   ;;
+            -ub | --uplink-bridge )               OVN_UPLINK_BRIDGE=true
+                                                  ;;
             -lr | --local-kind-registry )         KIND_LOCAL_REGISTRY=true
                                                   ;;
             -ep | --experimental-provider )       shift
@@ -465,6 +469,11 @@ print_params() {
      echo "ENABLE_NO_OVERLAY_MANAGED_ROUTING = $ENABLE_NO_OVERLAY_MANAGED_ROUTING"
      echo "OVN_GATEWAY_MODE = $OVN_GATEWAY_MODE"
      echo "OVN_SECOND_BRIDGE = $OVN_SECOND_BRIDGE"
+     echo "OVN_UPLINK_BRIDGE = $OVN_UPLINK_BRIDGE"
+     echo "OVN_UPLINK_BRIDGE_NAME = $OVN_UPLINK_BRIDGE_NAME"
+     echo "OVN_UPLINK_NETWORK_NAME = $OVN_UPLINK_NETWORK_NAME"
+     echo "OVN_UPLINK_NETWORK_IPV4 = $OVN_UPLINK_NETWORK_IPV4"
+     echo "OVN_UPLINK_NETWORK_IPV6 = $OVN_UPLINK_NETWORK_IPV6"
      echo "OVN_DISABLE_SNAT_MULTIPLE_GWS = $OVN_DISABLE_SNAT_MULTIPLE_GWS"
      echo "OVN_DISABLE_FORWARDING = $OVN_DISABLE_FORWARDING"
      echo "OVN_UNPRIVILEGED_MODE = $OVN_UNPRIVILEGED_MODE"
@@ -528,6 +537,10 @@ helm_prereqs() {
     sudo sysctl fs.inotify.max_user_watches=524288
     # increase fs.inotify.max_user_instances
     sudo sysctl fs.inotify.max_user_instances=512
+    if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ] ||
+       [ "$OVN_UPLINK_BRIDGE" == true ]; then
+      disable_bridge_netfilter
+    fi
 }
 
 helm_extra_values_args() {
@@ -667,7 +680,13 @@ if [ "$KIND_ADD_NODES" == true ]; then
   if [[ "${KIND_LOCAL_REGISTRY}" == true ]]; then
     connect_local_registry
   fi
+  if [ "$OVN_UPLINK_BRIDGE" == true ]; then
+    docker_create_uplink_interface
+  fi
   kubectl_wait_pods
+  if [ "$OVN_UPLINK_BRIDGE" == true ]; then
+    configure_kind_uplink_bridge
+  fi
   exit 0
 fi
 
@@ -688,6 +707,9 @@ if [ "$KIND_CREATE" == true ]; then
     remove_default_route
     add_dns_hostnames
   fi
+fi
+if [ "$OVN_UPLINK_BRIDGE" == true ]; then
+  docker_create_uplink_interface
 fi
 # when kind-helm.sh is run from inside a container, rewrite the kubeconfig API URL
 # to the control-plane container's IP (127.0.0.1 is not reachable across containers).
@@ -760,6 +782,9 @@ fi
 # fi
 
 kubectl_wait_pods
+if [ "$OVN_UPLINK_BRIDGE" == true ]; then
+  configure_kind_uplink_bridge
+fi
 
 if [ "$OVN_ENABLE_DNSNAMERESOLVER" == true ]; then
     kubectl_wait_dnsnameresolver_pods
@@ -785,6 +810,7 @@ if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ] && [ "${DPU_MODE}" != "host" ]; th
   wait_for_frr_k8s
   if [ "$ENABLE_NO_OVERLAY_MANAGED_ROUTING" != true ]; then
     configure_frr_k8s
+    configure_frr_uplink_peers
   fi
 fi
 

@@ -28,10 +28,10 @@ var reconcilePeriod = 60 * time.Second
 type vrf struct {
 	name  string
 	table uint32
-	// managedSlave is the desired netlink interface who's master will be this VRF.
-	// It cannot be changed after VRF creation.
-	managedSlave string
-	routes       []netlink.Route
+	// managedSlaves are the desired netlink interfaces whose master will be
+	// this VRF.
+	managedSlaves sets.Set[string]
+	routes        []netlink.Route
 }
 
 type Controller struct {
@@ -181,8 +181,9 @@ func (vrfm *Controller) syncVRF(link netlink.Link) error {
 	return vrfm.sync(vrf)
 }
 
-// sync ensures that the netlink VRF device exists, and the managedSlave is enslaved to it.
-// It does not handle removal of the VRF or managedSlave, other than if it detects a conflict while adding.
+// sync ensures that the netlink VRF device exists, and the managedSlaves are
+// enslaved to it. It does not handle removal of the VRF or managedSlaves,
+// other than if it detects a conflict while adding.
 func (vrfm *Controller) sync(vrf vrf) error {
 	vrfLink, err := util.GetNetLinkOps().LinkByName(vrf.name)
 	var mustRecreate bool
@@ -227,14 +228,14 @@ func (vrfm *Controller) sync(vrf vrf) error {
 			return fmt.Errorf("failed to get VRF device %s operationally up, err: %v", vrf.name, err)
 		}
 	}
-	if len(vrf.managedSlave) > 0 {
-		alreadyEnslaved, err := isInterfaceSlaveOfVRF(vrf.managedSlave, vrfLink.Attrs().Index)
+	for managedSlave := range vrf.managedSlaves {
+		alreadyEnslaved, err := isInterfaceSlaveOfVRF(managedSlave, vrfLink.Attrs().Index)
 		if err != nil {
-			return fmt.Errorf("failed to check if %s is slave of VRF device %s, err: %v", vrf.managedSlave, vrfLink.Attrs().Name, err)
+			return fmt.Errorf("failed to check if %s is slave of VRF device %s, err: %v", managedSlave, vrfLink.Attrs().Name, err)
 		}
 		if !alreadyEnslaved {
-			if err = enslaveInterfaceToVRF(vrf.name, vrf.managedSlave); err != nil {
-				return fmt.Errorf("failed to enslave interface %s into VRF device: %s, err: %v", vrf.managedSlave, vrf.name, err)
+			if err = enslaveInterfaceToVRF(vrf.name, managedSlave); err != nil {
+				return fmt.Errorf("failed to enslave interface %s into VRF device: %s, err: %v", managedSlave, vrf.name, err)
 			}
 		}
 	}
@@ -247,6 +248,19 @@ func (vrfm *Controller) sync(vrf vrf) error {
 
 	vrfm.vrfs[vrfLink.Attrs().Index] = vrf
 	return nil
+}
+
+func newVRF(name string, table uint32, slaveInterface string, routes []netlink.Route) vrf {
+	managedSlaves := sets.New[string]()
+	if slaveInterface != "" {
+		managedSlaves.Insert(slaveInterface)
+	}
+	return vrf{
+		name:          name,
+		table:         table,
+		managedSlaves: managedSlaves,
+		routes:        routes,
+	}
 }
 
 // AddVRF adds a VRF device into the node.
@@ -269,23 +283,67 @@ func (vrfm *Controller) AddVRF(name string, slaveInterface string, table uint32,
 		vrfDev, ok = vrfm.vrfs[vrfLink.Attrs().Index]
 		if ok {
 			klog.V(5).Infof("VRF Manager: VRF %s already found in the cache", name)
-			if vrfDev.managedSlave != slaveInterface {
+			if slaveInterface != "" && !vrfDev.managedSlaves.Has(slaveInterface) {
 				return fmt.Errorf("VRF Manager: slave interface mismatch for VRF device %s", name)
 			}
 			if vrfDev.table != table {
 				return fmt.Errorf("VRF Manager: table id mismatch for VRF device %s", name)
 			}
 		} else {
-			vrfDev = vrf{name, table, slaveInterface, routes}
+			vrfDev = newVRF(name, table, slaveInterface, routes)
 		}
 	}
 
 	if err != nil && util.GetNetLinkOps().IsLinkNotFoundError(err) {
-		vrfDev = vrf{name, table, slaveInterface, routes}
+		vrfDev = newVRF(name, table, slaveInterface, routes)
 	} else if err != nil {
 		return fmt.Errorf("failed to retrieve VRF device %s, err: %v", name, err)
 	}
 
+	return vrfm.sync(vrfDev)
+}
+
+// AddVRFSlave adds another slave interface to an existing VRF.
+func (vrfm *Controller) AddVRFSlave(name string, slaveInterface string) error {
+	vrfm.mu.Lock()
+	defer vrfm.mu.Unlock()
+
+	if slaveInterface == "" {
+		return nil
+	}
+	vrfLink, err := util.GetNetLinkOps().LinkByName(name)
+	if err != nil {
+		return fmt.Errorf("failed to retrieve VRF device %s, err: %v", name, err)
+	}
+	vrfDev, ok := vrfm.vrfs[vrfLink.Attrs().Index]
+	if !ok {
+		return fmt.Errorf("failed to find VRF %s", name)
+	}
+	vrfDev.managedSlaves.Insert(slaveInterface)
+	return vrfm.sync(vrfDev)
+}
+
+// DeleteVRFSlave stops managing a slave interface for an existing VRF.
+func (vrfm *Controller) DeleteVRFSlave(name string, slaveInterface string) error {
+	vrfm.mu.Lock()
+	defer vrfm.mu.Unlock()
+
+	if slaveInterface == "" {
+		return nil
+	}
+	vrfLink, err := util.GetNetLinkOps().LinkByName(name)
+	if err != nil {
+		return fmt.Errorf("failed to retrieve VRF device %s, err: %v", name, err)
+	}
+	vrfDev, ok := vrfm.vrfs[vrfLink.Attrs().Index]
+	if !ok {
+		return fmt.Errorf("failed to find VRF %s", name)
+	}
+	vrfDev.managedSlaves.Delete(slaveInterface)
+	if err = releaseInterfaceFromVRF(slaveInterface, vrfLink.Attrs().Index); err != nil {
+		return fmt.Errorf("failed to release interface %s from VRF %s, err: %v",
+			slaveInterface, name, err)
+	}
 	return vrfm.sync(vrfDev)
 }
 
@@ -463,4 +521,19 @@ func enslaveInterfaceToVRF(vrfName, ifName string) error {
 		return fmt.Errorf("failed to enslave interface %s to VRF %s: %v", ifName, vrfName, err)
 	}
 	return nil
+}
+
+func releaseInterfaceFromVRF(ifName string, vrfIndex int) error {
+	iface, err := util.GetNetLinkOps().LinkByName(ifName)
+	if err != nil {
+		if util.GetNetLinkOps().IsLinkNotFoundError(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to retrieve interface %s, err: %v", ifName, err)
+	}
+	if iface.Attrs().MasterIndex != vrfIndex {
+		return nil
+	}
+	klog.V(5).Infof("Releasing interface %s from VRF", ifName)
+	return util.GetNetLinkOps().LinkSetNoMaster(iface)
 }

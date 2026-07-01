@@ -16,6 +16,10 @@ import (
 type ClusterUserDefinedNetworkSpecApplyConfiguration struct {
 	// NamespaceSelector Label selector for which namespace network should be available for.
 	NamespaceSelector *metav1.LabelSelectorApplyConfiguration `json:"namespaceSelector,omitempty"`
+	// Uplinks references Uplink resources used for this network's external
+	// traffic. Currently, one Uplink is supported. When omitted, existing gateway
+	// behavior is preserved.
+	Uplinks []string `json:"uplinks,omitempty"`
 	// Network is the user-defined-network spec
 	Network *NetworkSpecApplyConfiguration `json:"network,omitempty"`
 }
@@ -31,6 +35,16 @@ func ClusterUserDefinedNetworkSpec() *ClusterUserDefinedNetworkSpecApplyConfigur
 // If called multiple times, the NamespaceSelector field is set to the value of the last call.
 func (b *ClusterUserDefinedNetworkSpecApplyConfiguration) WithNamespaceSelector(value *metav1.LabelSelectorApplyConfiguration) *ClusterUserDefinedNetworkSpecApplyConfiguration {
 	b.NamespaceSelector = value
+	return b
+}
+
+// WithUplinks adds the given value to the Uplinks field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the Uplinks field.
+func (b *ClusterUserDefinedNetworkSpecApplyConfiguration) WithUplinks(values ...string) *ClusterUserDefinedNetworkSpecApplyConfiguration {
+	for i := range values {
+		b.Uplinks = append(b.Uplinks, values[i])
+	}
 	return b
 }
 

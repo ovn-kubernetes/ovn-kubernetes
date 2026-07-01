@@ -11,7 +11,10 @@ import (
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/klog/v2"
 
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	uplinkclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/clientset/versioned"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iprulemanager"
@@ -43,7 +46,13 @@ func NewUserDefinedNodeNetworkController(
 	ruleManager *iprulemanager.Controller,
 	mpdm *managementport.MgmtPortDeviceManager,
 	defaultNetworkGateway Gateway,
+	ovsClient libovsdbclient.Client,
+	uplinkClient uplinkclientset.Interface,
 ) (*UserDefinedNodeNetworkController, error) {
+	if netInfo.Uplink() != "" && config.Gateway.Mode != config.GatewayModeShared {
+		return nil, fmt.Errorf("uplink %q for network %s is supported only in shared gateway mode",
+			netInfo.Uplink(), netInfo.GetNetworkName())
+	}
 
 	snnc := &UserDefinedNodeNetworkController{
 		BaseNodeNetworkController: BaseNodeNetworkController{
@@ -63,7 +72,8 @@ func NewUserDefinedNodeNetworkController(
 		}
 
 		snnc.gateway, err = NewUserDefinedNetworkGateway(snnc.GetNetInfo(), node,
-			snnc.watchFactory.NodeCoreInformer().Lister(), snnc.Kube, vrfManager, ruleManager, defaultNetworkGateway)
+			snnc.watchFactory.NodeCoreInformer().Lister(), snnc.Kube, vrfManager, ruleManager, defaultNetworkGateway,
+			ovsClient, uplinkClient, snnc.watchFactory.UplinkStateInformer().Lister())
 		if err != nil {
 			return nil, fmt.Errorf("error creating UDN gateway for network %s: %v", netInfo.GetNetworkName(), err)
 		}
