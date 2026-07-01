@@ -343,7 +343,7 @@ func (oc *BaseUserDefinedNetworkController) shouldFilterNamespace(namespace stri
 
 	nadKey, err := oc.networkManager.GetPrimaryNADForNamespace(namespace)
 	if err != nil {
-		return false
+		return util.IsInvalidPrimaryNetworkError(err)
 	}
 	if nadKey == types.DefaultNetworkName {
 		return true
