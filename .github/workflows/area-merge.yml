@@ -8,10 +8,17 @@ on:
 
 jobs:
   area-merge:
+    # Only react to /area-maintainer-approved at the start of a comment, and
+    # never to comments authored by bots. Comments posted by this workflow use
+    # a GitHub App token, so (unlike the default GITHUB_TOKEN) they DO trigger
+    # new issue_comment events — matching the command anywhere in any comment
+    # body previously caused the bot to react to its own status/error messages
+    # in an infinite loop.
     if: >
       (github.event_name == 'issue_comment' &&
        github.event.issue.pull_request &&
-       contains(github.event.comment.body, '/area-maintainer-approved')) ||
+       github.event.comment.user.type != 'Bot' &&
+       startsWith(github.event.comment.body, '/area-maintainer-approved')) ||
       github.event_name == 'check_suite'
     runs-on: ubuntu-latest
     steps:
@@ -33,6 +40,10 @@ jobs:
 
       - name: Area maintainer merge check
         uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        env:
+          # The login the bot's own comments are posted under, used by
+          # area-merge.js to recognize (and ignore) its own comments.
+          BOT_LOGIN: ${{ steps.merge-app-token-generator.outputs.app-slug }}[bot]
         with:
           github-token: ${{ steps.merge-app-token-generator.outputs.token }}
           script: |
