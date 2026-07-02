@@ -20,9 +20,14 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/vishvananda/netlink"
+	kubevirtv1 "kubevirt.io/api/core/v1"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	ktypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
+	corev1listers "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/tools/cache"
 	kexec "k8s.io/utils/exec"
 	"sigs.k8s.io/knftables"
 
@@ -1244,8 +1249,101 @@ func TestPodRequest_deletePodConntrack(t *testing.T) {
 					}
 				}
 			}
-			tc.inpPodRequest.deletePodConntrack()
+			tc.inpPodRequest.deletePodConntrack(nil)
 			mockTypeResult.AssertExpectations(t)
+		})
+	}
+}
+
+func TestPodRequest_vmRunningOnMigrationTarget(t *testing.T) {
+	const (
+		ns      = "kv-live-migration-84"
+		vmName  = "vm1"
+		srcName = "virt-launcher-vm1-source"
+		tgtName = "virt-launcher-vm1-target"
+	)
+	// virtPod builds a virt-launcher pod for vm1. ready sets the migration
+	// target-ready annotation; completed marks the pod as finished.
+	virtPod := func(name string, ready, completed bool) *corev1.Pod {
+		anns := map[string]string{kubevirtv1.DomainAnnotation: vmName}
+		if ready {
+			anns[kubevirtv1.MigrationTargetReadyTimestamp] = "2026-06-29T06:14:48Z"
+		}
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:        name,
+				Namespace:   ns,
+				UID:         ktypes.UID(name),
+				Labels:      map[string]string{kubevirtv1.AppLabel: "virt-launcher", kubevirtv1.VirtualMachineNameLabel: vmName},
+				Annotations: anns,
+			},
+		}
+		if completed {
+			pod.Status.Phase = corev1.PodSucceeded
+		}
+		return pod
+	}
+	nonVMPod := func(name string) *corev1.Pod {
+		return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, UID: ktypes.UID(name)}}
+	}
+	newLister := func(pods ...*corev1.Pod) corev1listers.PodLister {
+		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+		for _, p := range pods {
+			require.NoError(t, indexer.Add(p))
+		}
+		return corev1listers.NewPodLister(indexer)
+	}
+
+	tests := []struct {
+		desc     string
+		lister   corev1listers.PodLister
+		expected bool
+	}{
+		{
+			desc:     "nil lister (unprivileged shim) -> flush",
+			lister:   nil,
+			expected: false,
+		},
+		{
+			desc:     "source pod not in lister -> flush",
+			lister:   newLister(virtPod(tgtName, true, false)),
+			expected: false,
+		},
+		{
+			desc:     "single VM pod, no migration -> flush",
+			lister:   newLister(virtPod(srcName, false, false)),
+			expected: false,
+		},
+		{
+			desc:     "non-VM pod -> flush",
+			lister:   newLister(nonVMPod(srcName)),
+			expected: false,
+		},
+		{
+			desc:     "two living VM pods (migration in progress) -> keep conntrack",
+			lister:   newLister(virtPod(srcName, false, false), virtPod(tgtName, false, false)),
+			expected: true,
+		},
+		{
+			desc:     "migration target ready, source gone -> keep conntrack",
+			lister:   newLister(virtPod(srcName, false, false), virtPod(tgtName, true, false)),
+			expected: true,
+		},
+		{
+			desc:     "migration failed (target completed, source living) -> flush",
+			lister:   newLister(virtPod(srcName, false, false), virtPod(tgtName, false, true)),
+			expected: false,
+		},
+	}
+
+	for i, tc := range tests {
+		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
+			pr := &PodRequest{
+				PodNamespace: ns,
+				PodName:      srcName,
+				nadKey:       ovntypes.DefaultNetworkName,
+			}
+			require.Equal(t, tc.expected, pr.vmRunningOnMigrationTarget(tc.lister))
 		})
 	}
 }

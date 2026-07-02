@@ -22,9 +22,11 @@ import (
 	"github.com/safchain/ethtool"
 	"github.com/vishvananda/netlink"
 
+	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/knftables"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kubevirt"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -686,7 +688,7 @@ func ConfigureOVS(ctx context.Context, namespace, podName, podIfName, hostIfaceN
 
 type PodRequestInterfaceOps interface {
 	ConfigureInterface(pr *PodRequest, getter PodInfoGetter, ifInfo *PodInterfaceInfo) ([]*current.Interface, error)
-	UnconfigureInterface(pr *PodRequest, ifInfo *PodInterfaceInfo) error
+	UnconfigureInterface(pr *PodRequest, ifInfo *PodInterfaceInfo, podLister corev1listers.PodLister) error
 }
 
 type defaultPodRequestInterfaceOps struct{}
@@ -767,7 +769,7 @@ func (*defaultPodRequestInterfaceOps) ConfigureInterface(pr *PodRequest, getter 
 	return []*current.Interface{hostIface, contIface}, nil
 }
 
-func (*defaultPodRequestInterfaceOps) UnconfigureInterface(pr *PodRequest, ifInfo *PodInterfaceInfo) error {
+func (*defaultPodRequestInterfaceOps) UnconfigureInterface(pr *PodRequest, ifInfo *PodInterfaceInfo, podLister corev1listers.PodLister) error {
 	podDesc := fmt.Sprintf("for pod %s/%s NAD %s", pr.PodNamespace, pr.PodName, pr.nadName)
 	klog.V(5).Infof("Tear down interface (%+v) %s", *pr, podDesc)
 	if ifInfo.IsDPUHostMode {
@@ -881,18 +883,30 @@ func (*defaultPodRequestInterfaceOps) UnconfigureInterface(pr *PodRequest, ifInf
 		if err != nil {
 			klog.Errorf("Failed to clearPodBandwidth sandbox %v %s: %v", pr.SandboxID, podDesc, err)
 		}
-		pr.deletePodConntrack()
+		pr.deletePodConntrack(podLister)
 	}
 	return nil
 }
 
-func (pr *PodRequest) deletePodConntrack() {
+func (pr *PodRequest) deletePodConntrack(podLister corev1listers.PodLister) {
 	if pr.CNIConf.PrevResult == nil {
 		return
 	}
 	result, err := current.NewResultFromResult(pr.CNIConf.PrevResult)
 	if err != nil {
 		klog.Warningf("Could not convert result to current version: %v", err)
+		return
+	}
+
+	// During KubeVirt live migration the VM IP is preserved and moves to the
+	// migration target pod running on another node. Flushing this pod's
+	// conntrack on CNI DEL would tear down established connections (e.g. the
+	// north/south NodePort/SNAT ingress connection routed to the VM) that must
+	// survive the migration. Skip the flush while the VM is still running on
+	// the migration target; genuine deletions still flush as before.
+	if pr.vmRunningOnMigrationTarget(podLister) {
+		klog.V(5).Infof("Skipping conntrack flush for pod %s/%s: VM live migration in progress, IPs preserved on the migration target",
+			pr.PodNamespace, pr.PodName)
 		return
 	}
 
@@ -911,6 +925,33 @@ func (pr *PodRequest) deletePodConntrack() {
 			continue
 		}
 	}
+}
+
+// vmRunningOnMigrationTarget returns true when the pod being torn down belongs
+// to a KubeVirt VM that is live migrating and is still running on the migration
+// target pod (on another node). In that case the VM IP is preserved on the
+// target, so conntrack for it must be kept to avoid breaking established
+// connections (e.g. north/south NodePort/SNAT ingress). When podLister is nil
+// (the unprivileged CNI shim has no apiserver access) it returns false so the
+// flush keeps its previous behavior.
+func (pr *PodRequest) vmRunningOnMigrationTarget(podLister corev1listers.PodLister) bool {
+	if podLister == nil {
+		return false
+	}
+	pod, err := podLister.Pods(pr.PodNamespace).Get(pr.PodName)
+	if err != nil {
+		// Source pod is already gone or not visible; nothing preserved, flush.
+		return false
+	}
+	status, err := kubevirt.DiscoverLiveMigrationStatus(podLister, pod)
+	if err != nil {
+		klog.Warningf("Failed to discover live migration status for pod %s/%s: %v", pr.PodNamespace, pr.PodName, err)
+		return false
+	}
+	if status == nil {
+		return false
+	}
+	return status.State == kubevirt.LiveMigrationInProgress || status.State == kubevirt.LiveMigrationTargetDomainReady
 }
 
 func (pr *PodRequest) deletePort(ifaceName, podNamespace, podName string) {
