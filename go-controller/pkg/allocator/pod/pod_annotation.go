@@ -4,6 +4,7 @@
 package pod
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -24,6 +25,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/udn"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/persistentips"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/tracing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -75,6 +77,7 @@ func WithMACRegistry(m mac.Register) AllocatorOption {
 // honored, a new set of IPs will be allocated unless reallocateIP is set to
 // false.
 func (allocator *PodAnnotationAllocator) AllocatePodAnnotation(
+	ctx context.Context,
 	ipAllocator subnet.NamedAllocator,
 	node *corev1.Node,
 	pod *corev1.Pod,
@@ -87,6 +90,7 @@ func (allocator *PodAnnotationAllocator) AllocatePodAnnotation(
 	error) {
 
 	return allocatePodAnnotation(
+		ctx,
 		allocator.podLister,
 		allocator.kube,
 		ipAllocator,
@@ -103,6 +107,7 @@ func (allocator *PodAnnotationAllocator) AllocatePodAnnotation(
 }
 
 func allocatePodAnnotation(
+	ctx context.Context,
 	podLister listers.PodLister,
 	kube kube.Interface,
 	ipAllocator subnet.NamedAllocator,
@@ -141,6 +146,7 @@ func allocatePodAnnotation(
 	}
 
 	err = util.UpdatePodWithRetryOrRollback(
+		ctx,
 		podLister,
 		kube,
 		pod,
@@ -164,6 +170,7 @@ func allocatePodAnnotation(
 // honored, a new set of IPs will be allocated unless reallocateIP is set to
 // false.
 func (allocator *PodAnnotationAllocator) AllocatePodAnnotationWithTunnelID(
+	ctx context.Context,
 	ipAllocator subnet.NamedAllocator,
 	idAllocator id.NamedAllocator,
 	node *corev1.Node,
@@ -177,6 +184,7 @@ func (allocator *PodAnnotationAllocator) AllocatePodAnnotationWithTunnelID(
 	error) {
 
 	return allocatePodAnnotationWithTunnelID(
+		ctx,
 		allocator.podLister,
 		allocator.kube,
 		ipAllocator,
@@ -194,6 +202,7 @@ func (allocator *PodAnnotationAllocator) AllocatePodAnnotationWithTunnelID(
 }
 
 func allocatePodAnnotationWithTunnelID(
+	ctx context.Context,
 	podLister listers.PodLister,
 	kube kube.Interface,
 	ipAllocator subnet.NamedAllocator,
@@ -230,6 +239,7 @@ func allocatePodAnnotationWithTunnelID(
 	}
 
 	err = util.UpdatePodWithRetryOrRollback(
+		ctx,
 		podLister,
 		kube,
 		pod,
@@ -493,7 +503,8 @@ func allocatePodAnnotationWithRollback(
 		}
 	}
 
-	if hasIPAM {
+	if hasIPAM && !skipIPAM {
+		_, ipSpan := startPodAnnotationSpan(ctx, tracing.SpanNameAllocateIPAddresses, pod, nadKey, network)
 		if len(tentative.IPs) > 0 {
 			if err = ipAllocator.AllocateIPs(tentative.IPs); err != nil && !shouldSkipAllocateIPsError(err, isNetworkAllocated, ipamClaim) {
 				err = fmt.Errorf("failed to ensure requested or annotated IPs %v for %s: %w",
@@ -567,6 +578,9 @@ func allocatePodAnnotationWithRollback(
 	if needsAnnotationUpdate {
 		updatedPod = pod
 		updatedPod.Annotations, err = util.MarshalPodAnnotation(updatedPod.Annotations, tentative, nadKey)
+		if util.IsAnnotationAlreadySetError(err) {
+			err = nil
+		}
 		podAnnotation = tentative
 	}
 

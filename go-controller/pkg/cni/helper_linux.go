@@ -22,6 +22,7 @@ import (
 	"github.com/containernetworking/plugins/pkg/ns"
 	"github.com/safchain/ethtool"
 	"github.com/vishvananda/netlink"
+	"go.opentelemetry.io/otel/codes"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -33,6 +34,7 @@ import (
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kubevirt"
 	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/tracing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
@@ -842,7 +844,17 @@ type defaultPodRequestInterfaceOps struct{}
 var podRequestInterfaceOps PodRequestInterfaceOps = &defaultPodRequestInterfaceOps{}
 
 // ConfigureInterface sets up the container interface
-func (*defaultPodRequestInterfaceOps) ConfigureInterface(pr *PodRequest, ovsClient client.Client, getter PodInfoGetter, ifInfo *PodInterfaceInfo) ([]*current.Interface, error) {
+func (*defaultPodRequestInterfaceOps) ConfigureInterface(pr *PodRequest, ovsClient client.Client, getter PodInfoGetter, ifInfo *PodInterfaceInfo) (ifaces []*current.Interface, err error) {
+	ctx, span := tracing.StartSpan(pr.ctx, tracing.SpanNameConfigureInterface)
+	span.SetAttributes(pr.getSpanAttributes()...)
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
+	span.SetAttributes(cniRequestAttrs(pr)...)
 	netns, err := ns.GetNS(pr.Netns)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open netns %q: %v", pr.Netns, err)
@@ -869,7 +881,7 @@ func (*defaultPodRequestInterfaceOps) ConfigureInterface(pr *PodRequest, ovsClie
 	}
 
 	if !ifInfo.IsDPUHostMode {
-		err = ConfigureOVS(pr.ctx, ovsClient, pr.PodNamespace, pr.PodName, pr.IfName, hostIface.Name, ifInfo, pr.SandboxID, pr.CNIConf.DeviceID, pr.IsVFIO, getter)
+		err = ConfigureOVS(ctx, ovsClient, pr.PodNamespace, pr.PodName, pr.IfName, hostIface.Name, ifInfo, pr.SandboxID, pr.CNIConf.DeviceID, pr.IsVFIO, getter)
 		if err != nil {
 			pr.deletePort(hostIface.Name, pr.PodNamespace, pr.PodName)
 			return nil, err
@@ -916,6 +928,17 @@ func (*defaultPodRequestInterfaceOps) ConfigureInterface(pr *PodRequest, ovsClie
 }
 
 func (*defaultPodRequestInterfaceOps) UnconfigureInterface(pr *PodRequest, ifInfo *PodInterfaceInfo, podLister corev1listers.PodLister, pod *corev1.Pod) error {
+	_, span := tracing.StartSpan(pr.ctx, tracing.SpanNameUnconfigureInterface)
+	span.SetAttributes(pr.getSpanAttributes()...)
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
+	span.SetAttributes(cniRequestAttrs(pr)...)
+
 	podDesc := fmt.Sprintf("for pod %s/%s NAD %s", pr.PodNamespace, pr.PodName, pr.nadName)
 	klog.V(5).Infof("Tear down interface (%+v) %s", *pr, podDesc)
 	if ifInfo.IsDPUHostMode {

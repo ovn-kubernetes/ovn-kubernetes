@@ -235,6 +235,7 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 		role              string
 		topology          string
 		expectAllocate    bool
+		expectNoReconcile bool
 		expectIPRelease   bool
 		expectIDRelease   bool
 		expectMACReserve  *net.HardwareAddr
@@ -576,7 +577,7 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 			},
 			role:         types.NetworkRolePrimary,
 			expectError:  "failed to get NAD to network mapping: unexpected primary network \"nad\" specified with a NetworkSelectionElement &{Name:nad Namespace:namespace IPRequest:[] MacRequest: InfinibandGUIDRequest: InterfaceRequest: PortMappingsRequest:[] BandwidthRequest:<nil> CNIArgs:<nil> GatewayRequest:[] IPAMClaimReference:}",
-			expectEvents: []string{"Warning ErrorAllocatingPod unexpected primary network \"nad\" specified with a NetworkSelectionElement &{Name:nad Namespace:namespace IPRequest:[] MacRequest: InfinibandGUIDRequest: InterfaceRequest: PortMappingsRequest:[] BandwidthRequest:<nil> CNIArgs:<nil> GatewayRequest:[] IPAMClaimReference:}"},
+			expectEvents: []string{"Warning ErrorAllocatingPod failed to get NAD to network mapping: unexpected primary network \"nad\" specified with a NetworkSelectionElement &{Name:nad Namespace:namespace IPRequest:[] MacRequest: InfinibandGUIDRequest: InterfaceRequest: PortMappingsRequest:[] BandwidthRequest:<nil> CNIArgs:<nil> GatewayRequest:[] IPAMClaimReference:}"},
 		},
 		{
 			name: "Pod on network with exhausted ip pool, expect event and error",
@@ -857,6 +858,67 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 			expectIPRelease:  true,
 			expectIDRelease:  true,
 		},
+		// On update events, NADs whose allocation is already reflected in the
+		// k8s.ovn.org/pod-networks annotation are skipped, but release still has
+		// to run once the pod completes.
+		{
+			name: "Pod updated, NAD already annotated, expect no reconcile",
+			ipam: true,
+			podAnnotation: &util.PodAnnotation{
+				IPs: ovntest.MustParseIPNets("10.1.130.3/24"),
+				MAC: util.IPAddrToHWAddr(ovntest.MustParseIPNets("10.1.130.3/24")[0].IP),
+			},
+			args: args{
+				old: &testPod{
+					scheduled: true,
+					network:   &nadapi.NetworkSelectionElement{Namespace: "namespace", Name: "nad"},
+				},
+				new: &testPod{
+					scheduled: true,
+					network:   &nadapi.NetworkSelectionElement{Namespace: "namespace", Name: "nad"},
+				},
+			},
+			expectNoReconcile: true,
+		},
+		{
+			name: "Pod updated, NAD not annotated, expect allocation",
+			ipam: true,
+			args: args{
+				old: &testPod{
+					scheduled: true,
+					network:   &nadapi.NetworkSelectionElement{Namespace: "namespace", Name: "nad"},
+				},
+				new: &testPod{
+					scheduled: true,
+					network:   &nadapi.NetworkSelectionElement{Namespace: "namespace", Name: "nad"},
+				},
+			},
+			expectAllocate: true,
+		},
+		{
+			name:         "Pod updated to completed, NAD already annotated, expect release",
+			ipam:         true,
+			idAllocation: true,
+			podAnnotation: &util.PodAnnotation{
+				IPs: ovntest.MustParseIPNets("10.1.130.3/24"),
+				MAC: util.IPAddrToHWAddr(ovntest.MustParseIPNets("10.1.130.3/24")[0].IP),
+			},
+			args: args{
+				release: true,
+				old: &testPod{
+					scheduled: true,
+					network:   &nadapi.NetworkSelectionElement{Namespace: "namespace", Name: "nad"},
+				},
+				new: &testPod{
+					scheduled: true,
+					completed: true,
+					network:   &nadapi.NetworkSelectionElement{Namespace: "namespace", Name: "nad"},
+				},
+			},
+			expectIPRelease: true,
+			expectIDRelease: true,
+			expectTracked:   true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1047,7 +1109,7 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 				}
 			}
 
-			err = a.reconcile(old, new, tt.args.release)
+			err = a.reconcile(context.Background(), old, new, tt.args.release)
 			if len(tt.expectError) > 0 {
 				g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring(tt.expectError)))
 			} else if err != nil {
@@ -1056,6 +1118,12 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 
 			if tt.expectAllocate != allocated {
 				t.Errorf("expected pod ips allocated to be %v but it was %v", tt.expectAllocate, allocated)
+			}
+
+			if tt.expectNoReconcile {
+				// looking up the pod's node is unique to the allocation path, so
+				// no lookup means no NAD was reconciled at all
+				nodeListerMock.AssertNotCalled(t, "Get", mock.AnythingOfType("string"))
 			}
 
 			if tt.expectIPRelease != ipallocator.released {
