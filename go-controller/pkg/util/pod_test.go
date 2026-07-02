@@ -4,6 +4,7 @@
 package util
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -126,7 +127,7 @@ func TestUpdatePodWithAllocationOrRollback(t *testing.T) {
 				kubeMock.On("PatchPodStatusAnnotations", pod, mock.AnythingOfType("*v1.Pod")).Return(nil)
 			}
 
-			err := UpdatePodWithRetryOrRollback(podListerMock, kubeMock, &corev1.Pod{}, allocate)
+			err := UpdatePodWithRetryOrRollback(context.Background(), podListerMock, kubeMock, &corev1.Pod{}, allocate)
 
 			if (err != nil) != tt.expectErr {
 				t.Errorf("UpdatePodWithAllocationOrRollback() error = %v, expectErr %v", err, tt.expectErr)

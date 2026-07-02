@@ -1,31 +1,20 @@
-// SPDX-FileCopyrightText: Copyright The OVN-Kubernetes Contributors
-// SPDX-License-Identifier: Apache-2.0
-
 package ovn
 
 import (
 	"context"
-	"fmt"
 	"net"
-	"sync"
-	gotesting "testing"
-	"time"
 
+	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	kubevirtv1 "kubevirt.io/api/core/v1"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	utilnet "k8s.io/utils/net"
-	"k8s.io/utils/ptr"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
-	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/addresssetmanager"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/udnenabledsvc"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/sbdb"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -102,11 +91,7 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 				Namespace: "foo",
 				Name:      "dummy",
 				Labels: map[string]string{
-					kubevirtv1.AppLabel:                "virt-launcher",
 					kubevirtv1.VirtualMachineNameLabel: t.vmName,
-				},
-				Annotations: map[string]string{
-					kubevirtv1.DomainAnnotation: t.vmName,
 				},
 			},
 		}
@@ -226,158 +211,6 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 			},
 		}),
 	)
-	Context("enableSourceLSPFailedLiveMigration", func() {
-		const (
-			vmName        = "test-vm"
-			nadKey        = "awips/mgmt"
-			localNodeName = "node-local"
-		)
-
-		newVirtLauncherPod := func(name, nodeName string, phase corev1.PodPhase, annotations map[string]string) *corev1.Pod {
-			if annotations == nil {
-				annotations = map[string]string{}
-			}
-			annotations[kubevirtv1.DomainAnnotation] = vmName
-			pod := &corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      name,
-					Namespace: "awips",
-					Labels: map[string]string{
-						kubevirtv1.AppLabel:                "virt-launcher",
-						kubevirtv1.VirtualMachineNameLabel: vmName,
-					},
-					CreationTimestamp: metav1.Time{Time: time.Now()},
-					Annotations:       annotations,
-					OwnerReferences: []metav1.OwnerReference{{
-						APIVersion: "kubevirt.io/v1",
-						Kind:       "VirtualMachineInstance",
-						Name:       vmName,
-					}},
-				},
-				Spec: corev1.PodSpec{
-					NodeName: nodeName,
-				},
-				Status: corev1.PodStatus{
-					Phase: phase,
-				},
-			}
-			return pod
-		}
-
-		setupControllerWithDBSetup := func(dbSetup *libovsdbtest.TestSetup, pods ...*corev1.Pod) (*BaseUserDefinedNetworkController, *FakeOVN) {
-			localnetNAD := ovntest.GenerateNAD("mgmt", "mgmt", "awips",
-				types.LocalnetTopology, "", types.NetworkRoleSecondary)
-
-			fakeOVN := NewFakeOVN(false)
-			objs := []runtime.Object{}
-			for _, p := range pods {
-				objs = append(objs, p)
-			}
-			if dbSetup != nil {
-				fakeOVN.startWithDBSetup(*dbSetup, objs...)
-			} else {
-				fakeOVN.start(objs...)
-			}
-			DeferCleanup(fakeOVN.shutdown)
-
-			Expect(fakeOVN.NewUserDefinedNetworkController(localnetNAD)).To(Succeed())
-			controller, ok := fakeOVN.userDefinedNetworkControllers["mgmt"]
-			Expect(ok).To(BeTrue())
-
-			// Set local zone to only include localNodeName
-			controller.bnc.localZoneNodes = &sync.Map{}
-			controller.bnc.localZoneNodes.Store(localNodeName, true)
-
-			return controller.bnc, fakeOVN
-		}
-
-		setupController := func(pods ...*corev1.Pod) *BaseUserDefinedNetworkController {
-			bnc, _ := setupControllerWithDBSetup(nil, pods...)
-			return bnc
-		}
-
-		It("should skip source LSP re-enable when source pod is on a remote node", func() {
-			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
-			config.OVNKubernetesFeature.EnableMultiNetwork = true
-
-			sourcePod := newVirtLauncherPod("virt-launcher-"+vmName+"-source", "node-remote", corev1.PodRunning, nil)
-			// Target pod is local, failed (completed) — triggers LiveMigrationFailed detection
-			targetPod := newVirtLauncherPod("virt-launcher-"+vmName+"-target", localNodeName, corev1.PodFailed, nil)
-			// Make target created after source so DiscoverLiveMigrationStatus picks it as target
-			targetPod.CreationTimestamp = metav1.Time{Time: sourcePod.CreationTimestamp.Add(time.Second)}
-
-			bnc := setupController(sourcePod, targetPod)
-
-			// Call with empty IPs (IPAM-less localnet) — this would fail without the locality guard
-			err := bnc.enableSourceLSPFailedLiveMigration(targetPod, nadKey, "", nil)
-			Expect(err).NotTo(HaveOccurred(), "should not error when source pod is on a remote node")
-		})
-
-		It("should skip source LSP re-enable when source pod LSP is not local", func() {
-			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
-			config.OVNKubernetesFeature.EnableMultiNetwork = true
-
-			sourcePod := newVirtLauncherPod("virt-launcher-"+vmName+"-source", "node-remote", corev1.PodRunning, nil)
-			targetPod := newVirtLauncherPod("virt-launcher-"+vmName+"-target", localNodeName, corev1.PodSucceeded, nil)
-			targetPod.CreationTimestamp = metav1.Time{Time: sourcePod.CreationTimestamp.Add(time.Second)}
-
-			bnc := setupController(sourcePod, targetPod)
-
-			err := bnc.enableSourceLSPFailedLiveMigration(targetPod, nadKey, "", nil)
-			Expect(err).NotTo(HaveOccurred(), "should not error when source pod LSP is not local")
-		})
-
-		It("should re-enable source LSP when source pod is local and migration failed", func() {
-			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
-			config.OVNKubernetesFeature.EnableMultiNetwork = true
-
-			sourcePodName := "virt-launcher-" + vmName + "-source"
-			sourcePod := newVirtLauncherPod(sourcePodName, localNodeName, corev1.PodRunning, nil)
-			targetPod := newVirtLauncherPod("virt-launcher-"+vmName+"-target", localNodeName, corev1.PodFailed, nil)
-			targetPod.CreationTimestamp = metav1.Time{Time: sourcePod.CreationTimestamp.Add(time.Second)}
-
-			// Build LSP and switch names matching what the controller will compute:
-			//   LSP name: GetUserDefinedNetworkLogicalPortName(namespace, podName, nadKey)
-			//   Switch name: GetNetworkScopedSwitchName(OVNLocalnetSwitch)
-			sourceLSPName := util.GetUserDefinedNetworkLogicalPortName(sourcePod.Namespace, sourcePodName, nadKey)
-			sourceLSP := &nbdb.LogicalSwitchPort{
-				UUID:    sourceLSPName + "-UUID",
-				Name:    sourceLSPName,
-				Enabled: ptr.To(false),
-			}
-			switchName := util.GetUserDefinedNetworkPrefix("mgmt") + types.OVNLocalnetSwitch
-			logicalSwitch := &nbdb.LogicalSwitch{
-				UUID:  switchName + "-UUID",
-				Name:  switchName,
-				Ports: []string{sourceLSP.UUID},
-			}
-
-			dbSetup := &libovsdbtest.TestSetup{
-				NBData: []libovsdbtest.TestData{
-					logicalSwitch,
-					sourceLSP,
-				},
-			}
-
-			bnc, fakeOVN := setupControllerWithDBSetup(dbSetup, sourcePod, targetPod)
-
-			mac := "0a:58:0a:80:00:05"
-			ips := []string{"10.128.0.5/24"}
-			err := bnc.enableSourceLSPFailedLiveMigration(targetPod, nadKey, mac, ips)
-			Expect(err).NotTo(HaveOccurred(), "should re-enable source LSP without error")
-
-			// Verify the LSP was updated: Enabled=true and addresses set
-			expectedLSP := &nbdb.LogicalSwitchPort{
-				UUID:      sourceLSP.UUID,
-				Name:      sourceLSPName,
-				Enabled:   ptr.To(true),
-				Addresses: []string{mac + " 10.128.0.5"},
-			}
-			expectedSwitch := logicalSwitch.DeepCopy()
-			Expect(fakeOVN.nbClient).To(libovsdbtest.HaveData(expectedSwitch, expectedLSP))
-		})
-	})
-
 	It("should not fail to sync pods if namespace is gone", func() {
 		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
@@ -392,7 +225,6 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 				},
 			},
 		)
-		DeferCleanup(fakeOVN.shutdown)
 		Expect(fakeOVN.NewUserDefinedNetworkController(nad)).To(Succeed())
 		controller, ok := fakeOVN.userDefinedNetworkControllers["bluenet"]
 		Expect(ok).To(BeTrue())
@@ -416,277 +248,298 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 		Expect(err).NotTo(HaveOccurred())
 	})
 
-	It("should not fail to sync pods if namespace has primary UDN label but NAD not ready", func() {
-		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
-		config.OVNKubernetesFeature.EnableMultiNetwork = true
-		fakeOVN := NewFakeOVN(false)
-		// Create namespace with primary UDN label but no NAD
-		namespace := &corev1.Namespace{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "test-namespace",
-				Labels: map[string]string{
-					types.RequiredUDNNamespaceLabel: "",
-				},
-			},
-		}
-		fakeOVN.start(
-			&corev1.Node{
+	Context("with layer2 interconnect and multi-VTEP support", func() {
+
+		var (
+			layer2NAD *nadapi.NetworkAttachmentDefinition
+
+			testNode1    corev1.Node
+			testNode2    corev1.Node
+			node1Chassis sbdb.Chassis
+			node2Chassis sbdb.Chassis
+
+			node1Encap1 sbdb.Encap
+			node1Encap2 sbdb.Encap
+			node2Encap1 sbdb.Encap
+			node2Encap2 sbdb.Encap
+
+			initialDB libovsdbtest.TestSetup
+		)
+
+		BeforeEach(func() {
+			// Restore global default values before each testcase
+			Expect(config.PrepareTestConfig()).To(Succeed())
+
+			// Create layer2 NAD
+			layer2NAD = ovntest.GenerateNAD("blue-l2-net", "blue-l2-net", "blue-ns",
+				types.Layer2Topology, "10.1.0.0/16", types.NetworkRoleSecondary)
+			ovntest.AnnotateNADWithNetworkID("2", layer2NAD)
+
+			node1ChassisID := "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6"
+			node2ChassisID := "cb9ec8fa-b409-4ef3-9f42-d9283c47aac7"
+			// node1 is a local zone node
+			testNode1 = corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: "worker1",
+					Name: "node1",
 					Annotations: map[string]string{
-						"k8s.ovn.org/network-ids": `{"other": "3"}`,
+						util.OvnNodeChassisID: node1ChassisID,
+						util.OvnNodeID:        "2",
+						util.OvnNodeZoneName:  "node1",
 					},
 				},
-			},
-			namespace,
-		)
-		DeferCleanup(fakeOVN.shutdown)
-		Expect(fakeOVN.NewUserDefinedNetworkController(nad)).To(Succeed())
-		controller, ok := fakeOVN.userDefinedNetworkControllers["bluenet"]
-		Expect(ok).To(BeTrue())
-		// inject a real networkManager so GetActiveNetworkForNamespace will get called
-		nadController, err := networkmanager.NewForZone("dummyZone", nil, fakeOVN.watcher)
-		Expect(err).NotTo(HaveOccurred())
-		controller.bnc.networkManager = nadController.Interface()
+				Status: corev1.NodeStatus{
+					Addresses: []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: "10.0.0.10"}},
+				},
+			}
+			// node2 is a remote zone node
+			testNode2 = corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "node2",
+					Annotations: map[string]string{
+						util.OvnNodeChassisID: node2ChassisID,
+						util.OvnNodeID:        "3",
+						util.OvnNodeZoneName:  "node2",
+					},
+				},
+				Status: corev1.NodeStatus{
+					Addresses: []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: "10.0.0.11"}},
+				},
+			}
 
-		// Pod in namespace with primary UDN label but no NAD causes InvalidPrimaryNetworkError
-		podInLabeledNamespace := &corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{
-				Namespace: "test-namespace",
-				Name:      "test-pod",
-			},
-		}
+			node1Encap1 = sbdb.Encap{ChassisName: node1ChassisID, IP: "10.0.0.11", UUID: "6b6216bc-b409-4ef3-9f42-d9283c47aac6", Type: "geneve"}
+			node1Encap2 = sbdb.Encap{ChassisName: node1ChassisID, IP: "10.0.0.12", UUID: "6b6216bc-b409-4ef3-9f42-d9283c47aac7", Type: "geneve"}
+			node2Encap1 = sbdb.Encap{ChassisName: node2ChassisID, IP: "10.0.0.21", UUID: "6b6216bc-b409-4ef3-9f42-d9283c47aac8", Type: "geneve"}
+			node2Encap2 = sbdb.Encap{ChassisName: node2ChassisID, IP: "10.0.0.22", UUID: "6b6216bc-b409-4ef3-9f42-d9283c47aac9", Type: "geneve"}
 
-		var initialPodList []interface{}
-		initialPodList = append(initialPodList, podInLabeledNamespace)
+			node1Chassis = sbdb.Chassis{Name: node1ChassisID, Hostname: testNode1.ObjectMeta.Name, UUID: node1ChassisID, Encaps: []string{node1Encap1.UUID, node1Encap2.UUID}}
+			node2Chassis = sbdb.Chassis{Name: node2ChassisID, Hostname: testNode2.ObjectMeta.Name, UUID: node2ChassisID, Encaps: []string{node2Encap1.UUID, node2Encap2.UUID}}
 
-		// Should skip pod without error when GetActiveNetworkForNamespace returns InvalidPrimaryNetworkError
-		err = controller.bnc.syncPodsForUserDefinedNetwork(initialPodList)
-		Expect(err).NotTo(HaveOccurred())
+			initialDB.SBData = []libovsdbtest.TestData{
+				&node1Encap1, &node1Encap2, &node2Encap1, &node2Encap2,
+				&node1Chassis, &node2Chassis,
+			}
+
+		})
+
+		It("should set requested-encap-ip option for remote pod logical switch port", func() {
+			// Enable interconnect for layer2 topology
+			config.OVNKubernetesFeature.EnableInterconnect = true
+			config.OVNKubernetesFeature.EnableMultiNetwork = true
+
+			fakeOVN := NewFakeOVN(true)
+
+			// Pass layer2NAD so it is in the fake client and network manager can resolve
+			// GetNetworkNameForNADKey("blue-ns/blue-l2-net") -> "blue-l2-net"
+			fakeOVN.startWithDBSetup(initialDB, &testNode1, &testNode2,
+				&nadapi.NetworkAttachmentDefinitionList{Items: []nadapi.NetworkAttachmentDefinition{*layer2NAD}})
+			defer fakeOVN.shutdown()
+
+			// Create the layer2 network controller
+			Expect(fakeOVN.NewUserDefinedNetworkController(layer2NAD)).To(Succeed())
+			controller, ok := fakeOVN.userDefinedNetworkControllers["blue-l2-net"]
+			Expect(ok).To(BeTrue())
+			controller.bnc.localZoneNodes.Store(testNode1.ObjectMeta.Name, true)
+
+			// Get the full layer2 controller and call init() to set up logical switch
+			fullL2Controller, ok := fakeOVN.fullL2UDNControllers["blue-l2-net"]
+			Expect(ok).To(BeTrue())
+			err := fullL2Controller.init()
+			Expect(err).NotTo(HaveOccurred())
+
+			podAnnotation := &util.PodAnnotation{
+				IPs:      []*net.IPNet{ovntest.MustParseIPNet("10.1.0.3/24")},
+				MAC:      ovntest.MustParseMAC("0a:58:0a:01:00:03"),
+				Role:     types.NetworkRoleSecondary,
+				TunnelID: 19,
+			}
+
+			// Create remote pod with encap IP annotation
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "blue-ns",
+					Name:      "pod-1",
+					Annotations: map[string]string{
+						"k8s.v1.cni.cncf.io/networks": "blue-ns/blue-l2-net",
+					},
+				},
+				Spec: corev1.PodSpec{
+					NodeName: testNode2.ObjectMeta.Name,
+				},
+			}
+
+			annotation, err := util.MarshalPodAnnotation(pod.Annotations, podAnnotation, "blue-ns/blue-l2-net")
+			Expect(err).NotTo(HaveOccurred())
+			pod.Annotations = annotation
+
+			By("Verify the conditions that should trigger requested-encap-ip update")
+			isLocalPod := controller.bnc.isPodScheduledinLocalZone(pod)
+			isLayer2Interconnect := controller.bnc.isLayer2Interconnect()
+			Expect(isLocalPod).To(BeFalse(), "Pod should be on remote node")
+			Expect(isLayer2Interconnect).To(BeTrue(), "Layer2 interconnect should be enabled")
+
+			layer2NADName := util.GetNADName(layer2NAD.ObjectMeta.Namespace, layer2NAD.ObjectMeta.Name)
+			transitSwitchPortName := controller.bnc.GetLogicalPortName(pod, layer2NADName)
+
+			By("Calling ensurePodForUserDefinedNetwork for Pod creation event without encap IP")
+			err = controller.bnc.ensurePodForUserDefinedNetwork(context.Background(), nil, pod, true)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying requested-encap-ip is not set when encap IP annotation is not present")
+			verifyLogicalSwitchPortRequestedEncapIP(fakeOVN, transitSwitchPortName, "", false)
+
+			newPod := pod.DeepCopy()
+			podAnnotation.EncapIP = node2Encap2.IP
+
+			annotation, err = util.MarshalPodAnnotation(newPod.Annotations, podAnnotation, "blue-ns/blue-l2-net")
+			Expect(err).NotTo(HaveOccurred())
+			newPod.Annotations = annotation
+
+			By("Calling ensurePodForUserDefinedNetwork for Pod update event with encap IP")
+			err = controller.bnc.ensurePodForUserDefinedNetwork(context.Background(), pod, newPod, false)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying requested-encap-ip was updated according to encap IP")
+			verifyLogicalSwitchPortRequestedEncapIP(fakeOVN, transitSwitchPortName, node2Encap2.IP, true)
+		})
+
+		It("should set requested-encap-ip option for remote pod logical switch port on pod creation when encap IP annotation exists", func() {
+			// Enable interconnect for layer2 topology
+			config.OVNKubernetesFeature.EnableInterconnect = true
+			config.OVNKubernetesFeature.EnableMultiNetwork = true
+
+			fakeOVN := NewFakeOVN(true)
+			fakeOVN.startWithDBSetup(initialDB, &testNode1, &testNode2,
+				&nadapi.NetworkAttachmentDefinitionList{Items: []nadapi.NetworkAttachmentDefinition{*layer2NAD}})
+			defer fakeOVN.shutdown()
+
+			Expect(fakeOVN.NewUserDefinedNetworkController(layer2NAD)).To(Succeed())
+			controller, ok := fakeOVN.userDefinedNetworkControllers["blue-l2-net"]
+			Expect(ok).To(BeTrue())
+			controller.bnc.localZoneNodes.Store(testNode1.ObjectMeta.Name, true)
+
+			fullL2Controller, ok := fakeOVN.fullL2UDNControllers["blue-l2-net"]
+			Expect(ok).To(BeTrue())
+			err := fullL2Controller.init()
+			Expect(err).NotTo(HaveOccurred())
+
+			podAnnotation := &util.PodAnnotation{
+				IPs:      []*net.IPNet{ovntest.MustParseIPNet("10.1.0.5/24")},
+				MAC:      ovntest.MustParseMAC("0a:58:0a:01:00:05"),
+				Role:     types.NetworkRoleSecondary,
+				TunnelID: 21,
+				EncapIP:  node2Encap2.IP,
+			}
+
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "blue-ns",
+					Name:      "pod-remote-create-encap",
+					Annotations: map[string]string{
+						"k8s.v1.cni.cncf.io/networks": "blue-ns/blue-l2-net",
+					},
+				},
+				Spec: corev1.PodSpec{
+					NodeName: testNode2.ObjectMeta.Name,
+				},
+			}
+
+			annotation, err := util.MarshalPodAnnotation(pod.Annotations, podAnnotation, "blue-ns/blue-l2-net")
+			Expect(err).NotTo(HaveOccurred())
+			pod.Annotations = annotation
+
+			By("Verify the pod is remote to this zone and layer2 interconnect is enabled")
+			Expect(controller.bnc.isPodScheduledinLocalZone(pod)).To(BeFalse(), "Pod should be on remote node")
+			Expect(controller.bnc.isLayer2Interconnect()).To(BeTrue(), "Layer2 interconnect should be enabled")
+
+			layer2NADName := util.GetNADName(layer2NAD.ObjectMeta.Namespace, layer2NAD.ObjectMeta.Name)
+			transitSwitchPortName := controller.bnc.GetLogicalPortName(pod, layer2NADName)
+
+			By("Calling ensurePodForUserDefinedNetwork for Pod creation event with encap IP")
+			err = controller.bnc.ensurePodForUserDefinedNetwork(context.Background(), nil, pod, true)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying requested-encap-ip was set according to encap IP on pod creation")
+			verifyLogicalSwitchPortRequestedEncapIP(fakeOVN, transitSwitchPortName, node2Encap2.IP, true)
+		})
+
+		It("should not set requested-encap-ip option for local pod logical switch port", func() {
+			// Enable interconnect for layer2 topology
+			config.OVNKubernetesFeature.EnableInterconnect = true
+			config.OVNKubernetesFeature.EnableMultiNetwork = true
+
+			fakeOVN := NewFakeOVN(true)
+			fakeOVN.startWithDBSetup(initialDB, &testNode1, &testNode2,
+				&nadapi.NetworkAttachmentDefinitionList{Items: []nadapi.NetworkAttachmentDefinition{*layer2NAD}})
+			defer fakeOVN.shutdown()
+
+			Expect(fakeOVN.NewUserDefinedNetworkController(layer2NAD)).To(Succeed())
+			controller, ok := fakeOVN.userDefinedNetworkControllers["blue-l2-net"]
+			Expect(ok).To(BeTrue())
+			controller.bnc.localZoneNodes.Store(testNode1.ObjectMeta.Name, true)
+
+			fullL2Controller, ok := fakeOVN.fullL2UDNControllers["blue-l2-net"]
+			Expect(ok).To(BeTrue())
+			err := fullL2Controller.init()
+			Expect(err).NotTo(HaveOccurred())
+
+			podAnnotation := &util.PodAnnotation{
+				IPs:      []*net.IPNet{ovntest.MustParseIPNet("10.1.0.4/24")},
+				MAC:      ovntest.MustParseMAC("0a:58:0a:01:00:04"),
+				Role:     types.NetworkRoleSecondary,
+				TunnelID: 20,
+				EncapIP:  node1Encap2.IP,
+			}
+
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "blue-ns",
+					Name:      "pod-local-1",
+					Annotations: map[string]string{
+						"k8s.v1.cni.cncf.io/networks": "blue-ns/blue-l2-net",
+					},
+				},
+				Spec: corev1.PodSpec{
+					NodeName: testNode1.ObjectMeta.Name,
+				},
+			}
+
+			annotation, err := util.MarshalPodAnnotation(pod.Annotations, podAnnotation, "blue-ns/blue-l2-net")
+			Expect(err).NotTo(HaveOccurred())
+			pod.Annotations = annotation
+
+			By("Verify the pod is local to this zone")
+			Expect(controller.bnc.isPodScheduledinLocalZone(pod)).To(BeTrue(), "Pod should be on local node")
+			Expect(controller.bnc.isLayer2Interconnect()).To(BeTrue(), "Layer2 interconnect should be enabled")
+
+			layer2NADName := util.GetNADName(layer2NAD.ObjectMeta.Namespace, layer2NAD.ObjectMeta.Name)
+			logicalPortName := controller.bnc.GetLogicalPortName(pod, layer2NADName)
+
+			By("Calling ensurePodForUserDefinedNetwork for local Pod creation event")
+			err = controller.bnc.ensurePodForUserDefinedNetwork(context.Background(), nil, pod, true)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying requested-encap-ip is not set for local pod logical switch port")
+			verifyLogicalSwitchPortRequestedEncapIP(fakeOVN, logicalPortName, "", false)
+		})
 	})
-
 })
 
-func TestAdvertisedSharedGatewaySNATUsesLiveAllowedExtIPSets(t *gotesting.T) {
-	for _, outboundSNAT := range []string{types.NoOverlaySNATDisabled, types.NoOverlaySNATEnabled} {
-		t.Run(outboundSNAT, func(t *gotesting.T) {
-			bsnc, asf, localPodSubnets := newAdvertisedSNATTestController(t, outboundSNAT, config.GatewayModeShared)
-			seedAdvertisedSNATAddressSets(t, asf)
+func verifyLogicalSwitchPortRequestedEncapIP(fakeOVN *FakeOVN, logicalPortName, expectedEncapIP string, expectedPresent bool) {
+	var logicalSwitchPorts []*nbdb.LogicalSwitchPort
+	Expect(fakeOVN.nbClient.List(context.Background(), &logicalSwitchPorts)).To(Succeed())
 
-			expectAdvertisedSNATUsesLiveAllowedExtIPs(t, bsnc, asf, localPodSubnets)
-		})
-	}
-}
+	for _, lsp := range logicalSwitchPorts {
+		if lsp.Name != logicalPortName {
+			continue
+		}
 
-func TestAdvertisedSharedGatewaySNATFailsWithoutAllowedExtIPsForFamily(t *gotesting.T) {
-	bsnc, asf, localPodSubnets := newAdvertisedSNATTestController(t, types.NoOverlaySNATDisabled, config.GatewayModeShared)
-	config.IPv6Mode = false
-	seedAdvertisedSNATAddressSets(t, asf)
-
-	g := NewWithT(t)
-	_, err := bsnc.buildUDNEgressSNAT(localPodSubnets, "rtos-bluenet-worker1", true)
-	g.Expect(err).To(MatchError(ContainSubstring(
-		"failed to build allowed_ext_ips SNAT for advertised network bluenet, subnet ae70::/64: no address set UUID for IPv6",
-	)))
-}
-
-func TestAdvertisedLocalGatewaySNATUsesDestinationMatch(t *gotesting.T) {
-	bsnc, asf, localPodSubnets := newAdvertisedSNATTestController(t, types.NoOverlaySNATDisabled, config.GatewayModeLocal)
-	seedAdvertisedSNATAddressSets(t, asf)
-
-	expectAdvertisedSNATUsesDestinationMatch(t, bsnc, asf, localPodSubnets)
-}
-
-func newAdvertisedSNATTestController(
-	t *gotesting.T,
-	outboundSNAT string,
-	gatewayMode config.GatewayMode,
-) (*BaseUserDefinedNetworkController, *addressset.FakeAddressSetFactory, []*net.IPNet) {
-	t.Helper()
-	return newAdvertisedSNATTestControllerForTopology(
-		t,
-		types.Layer3Topology,
-		"100.128.0.0/16/24,ae70::/60/64",
-		outboundSNAT,
-		gatewayMode,
-		ovntest.MustParseIPNets("100.128.0.0/24", "ae70::/64"),
-	)
-}
-
-func newAdvertisedSNATTestControllerForTopology(
-	t *gotesting.T,
-	topology string,
-	cidrs string,
-	outboundSNAT string,
-	gatewayMode config.GatewayMode,
-	localPodSubnets []*net.IPNet,
-) (*BaseUserDefinedNetworkController, *addressset.FakeAddressSetFactory, []*net.IPNet) {
-	t.Helper()
-	RegisterTestingT(t)
-	if err := config.PrepareTestConfig(); err != nil {
-		t.Fatalf("failed to prepare test config: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = config.PrepareTestConfig()
-	})
-	config.IPv4Mode = true
-	config.IPv6Mode = true
-	config.Gateway.Mode = gatewayMode
-	config.Gateway.V4MasqueradeSubnet = "169.254.0.0/16"
-	config.Gateway.V6MasqueradeSubnet = "fd69::/112"
-
-	const (
-		networkName = "bluenet"
-		nadName     = "rednad"
-		namespace   = "greenamespace"
-	)
-	nad := ovntest.GenerateNADWithConfig(nadName, namespace, fmt.Sprintf(`
-{
-        "cniVersion": "1.1.0",
-        "name": %q,
-        "type": "ovn-k8s-cni-overlay",
-        "topology": %q,
-        "subnets": %q,
-        "mtu": 1300,
-        "netAttachDefName": %q,
-        "role": %q,
-        "transport": %q,
-        "outboundSNAT": %q
-}
-`,
-		networkName,
-		topology,
-		cidrs,
-		fmt.Sprintf("%s/%s", namespace, nadName),
-		types.NetworkRolePrimary,
-		types.NetworkTransportNoOverlay,
-		outboundSNAT,
-	))
-	ovntest.AnnotateNADWithNetworkID("3", nad)
-	netInfo, err := util.ParseNADInfo(nad)
-	if err != nil {
-		t.Fatalf("failed to parse NAD: %v", err)
+		requestedEncapIP, present := lsp.Options[libovsdbops.RequestedEncapIP]
+		Expect(present).To(Equal(expectedPresent))
+		if expectedPresent {
+			Expect(requestedEncapIP).To(Equal(expectedEncapIP))
+		}
+		return
 	}
 
-	controllerName := getNetworkControllerName(netInfo.GetNetworkName())
-	asf := addressset.NewFakeAddressSetFactory(controllerName)
-	node := corev1.Node{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "worker1",
-			Annotations: map[string]string{
-				util.OVNNodeHostCIDRs: `["192.168.126.11/24","fd00::11/64"]`,
-			},
-		},
-	}
-	clientSet := util.GetOVNClientset(&corev1.NodeList{Items: []corev1.Node{node}}).GetOVNKubeControllerClientset()
-	watchFactory, err := factory.NewOVNKubeControllerWatchFactory(clientSet)
-	if err != nil {
-		t.Fatalf("failed to create watch factory: %v", err)
-	}
-	if err := watchFactory.Start(); err != nil {
-		t.Fatalf("failed to start watch factory: %v", err)
-	}
-	t.Cleanup(watchFactory.Shutdown)
-
-	nbClient, _, libovsdbCleanup, err := libovsdbtest.NewNBSBTestHarness(libovsdbtest.TestSetup{})
-	if err != nil {
-		t.Fatalf("failed to create libovsdb test harness: %v", err)
-	}
-	t.Cleanup(libovsdbCleanup.Cleanup)
-	addressSetManager := addresssetmanager.NewAddressSetManager(
-		watchFactory.PodCoreInformer(),
-		watchFactory.NamespaceInformer(),
-		watchFactory.NodeCoreInformer(),
-		nbClient,
-		networkmanager.Default().Interface().GetNetworkNameForNADKey,
-	)
-	return &BaseUserDefinedNetworkController{
-			BaseNetworkController: BaseNetworkController{
-				controllerName:      controllerName,
-				ReconcilableNetInfo: util.NewReconcilableNetInfo(netInfo),
-				addressSetFactory:   asf,
-				addressSetManager:   addressSetManager,
-			},
-		},
-		asf,
-		localPodSubnets
-}
-
-func seedAdvertisedSNATAddressSets(t *gotesting.T, asf addressset.AddressSetFactory) {
-	t.Helper()
-	nodeIPsASIDs := getClusterNodeIPsAddrSetDbIDsForTest()
-	if _, err := asf.NewAddressSet(nodeIPsASIDs, []string{"192.168.126.11", "fd00::11"}); err != nil {
-		t.Fatalf("failed to create node IP address set: %v", err)
-	}
-
-	svcIPsASIDs := udnenabledsvc.GetAddressSetDBIDs()
-	if _, err := asf.NewAddressSet(svcIPsASIDs, []string{"10.96.0.10", "fd02::10"}); err != nil {
-		t.Fatalf("failed to create UDN-enabled service address set: %v", err)
-	}
-}
-
-func expectAdvertisedSNATUsesLiveAllowedExtIPs(
-	t *gotesting.T,
-	bsnc *BaseUserDefinedNetworkController,
-	asf addressset.AddressSetFactory,
-	localPodSubnets []*net.IPNet,
-) {
-	t.Helper()
-	g := NewWithT(t)
-
-	snats, err := bsnc.buildUDNEgressSNAT(localPodSubnets, "rtos-bluenet-worker1", true)
-	g.Expect(err).NotTo(HaveOccurred())
-	g.Expect(snats).To(HaveLen(4))
-
-	nodeIPsAS, err := asf.GetAddressSet(getClusterNodeIPsAddrSetDbIDsForTest())
-	g.Expect(err).NotTo(HaveOccurred())
-	nodeIPv4ASUUID, nodeIPv6ASUUID := nodeIPsAS.GetASUUID()
-	svcIPsAS, err := asf.GetAddressSet(udnenabledsvc.GetAddressSetDBIDs())
-	g.Expect(err).NotTo(HaveOccurred())
-	svcIPv4ASUUID, svcIPv6ASUUID := svcIPsAS.GetASUUID()
-
-	actualAllowedExtIPsByLogicalIP := map[string][]string{}
-	for _, snat := range snats {
-		g.Expect(snat.Match).To(Equal(""))
-		g.Expect(snat.AllowedExtIPs).NotTo(BeNil())
-		g.Expect(snat.ExemptedExtIPs).To(BeNil())
-		actualAllowedExtIPsByLogicalIP[snat.LogicalIP] = append(
-			actualAllowedExtIPsByLogicalIP[snat.LogicalIP],
-			*snat.AllowedExtIPs,
-		)
-	}
-	g.Expect(actualAllowedExtIPsByLogicalIP["100.128.0.0/24"]).To(ConsistOf(nodeIPv4ASUUID, svcIPv4ASUUID))
-	g.Expect(actualAllowedExtIPsByLogicalIP["ae70::/64"]).To(ConsistOf(nodeIPv6ASUUID, svcIPv6ASUUID))
-}
-
-func expectAdvertisedSNATUsesDestinationMatch(
-	t *gotesting.T,
-	bsnc *BaseUserDefinedNetworkController,
-	asf addressset.AddressSetFactory,
-	localPodSubnets []*net.IPNet,
-) {
-	t.Helper()
-	g := NewWithT(t)
-
-	snats, err := bsnc.buildUDNEgressSNAT(localPodSubnets, "rtos-bluenet-worker1", true)
-	g.Expect(err).NotTo(HaveOccurred())
-	g.Expect(snats).To(HaveLen(2))
-
-	nodeIPsAS, err := asf.GetAddressSet(getClusterNodeIPsAddrSetDbIDsForTest())
-	g.Expect(err).NotTo(HaveOccurred())
-	svcIPsAS, err := asf.GetAddressSet(udnenabledsvc.GetAddressSetDBIDs())
-	g.Expect(err).NotTo(HaveOccurred())
-
-	dstMac := util.IPAddrToHWAddr(bsnc.GetNodeManagementIP(localPodSubnets[0]).IP)
-	dstMacMatch := getMasqueradeManagementIPSNATMatch(dstMac.String())
-	v4Match := getClusterNodesDestinationBasedSNATMatch(utilnet.IPv4, nodeIPsAS, svcIPsAS)
-	v6Match := getClusterNodesDestinationBasedSNATMatch(utilnet.IPv6, nodeIPsAS, svcIPsAS)
-
-	g.Expect(snats[0].Match).To(Equal(fmt.Sprintf("%s && %s", dstMacMatch, v4Match)))
-	g.Expect(snats[0].AllowedExtIPs).To(BeNil())
-	g.Expect(snats[0].ExemptedExtIPs).To(BeNil())
-
-	g.Expect(snats[1].Match).To(Equal(fmt.Sprintf("%s && %s", dstMacMatch, v6Match)))
-	g.Expect(snats[1].AllowedExtIPs).To(BeNil())
-	g.Expect(snats[1].ExemptedExtIPs).To(BeNil())
+	Fail("No Logical_Switch_Port found for transit switch port")
 }
