@@ -896,7 +896,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 				}
 
 				for router, testpod := range map[*nbdb.LogicalRouter]testVirtLauncherPod{expectedGWRouter: t.testVirtLauncherPod, expectedMigrationTargetGWRouter: t.migrationTarget.testVirtLauncherPod} {
-					if _, isLocal := fakeOvn.controller.localZoneNodes.Load(testpod.nodeName); isLocal && router != nil && testpod.podName != "" {
+					if _, isLocal := fakeOvn.controller.localZoneNodes.Load(testpod.nodeName); isLocal && router != nil && testpod.podName != "" && !virtLauncherCompleted(testpod) {
 						natIDs, nats := composeNats(testpod)
 						router.Nat = append(router.Nat, natIDs...)
 						for _, nat := range nats {
@@ -1012,7 +1012,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 				// it happen?
 				// https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5627
 				expectedNATs := map[string][]*nbdb.NAT{}
-				if _, isLocal := fakeOvn.controller.localZoneNodes.Load(deleteFirst.nodeName); isLocal {
+				if _, isLocal := fakeOvn.controller.localZoneNodes.Load(deleteFirst.nodeName); isLocal && !virtLauncherCompleted(deleteFirst) {
 					_, nats := composeNats(deleteFirst)
 					expectedNATs[deleteFirstRouter.Name] = nats
 				}

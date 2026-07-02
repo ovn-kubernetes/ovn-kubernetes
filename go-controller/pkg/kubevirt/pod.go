@@ -19,6 +19,7 @@ import (
 	listersv1 "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/retry"
+	"k8s.io/utils/ptr"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
@@ -429,6 +430,83 @@ func CleanUpLiveMigratablePod(nbClient libovsdbclient.Client, watchFactory *fact
 		}
 		if err := DeleteRoutingForMigratedPod(nbClient, pod); err != nil {
 			return err
+		}
+		return nil
+	})
+}
+
+// IsFailedLiveMigrationTarget returns true when pod is the terminal target pod
+// of a failed live migration.
+func IsFailedLiveMigrationTarget(podLister listersv1.PodLister, pod *corev1.Pod) (bool, error) {
+	if !IsPodLiveMigratable(pod) {
+		return false, nil
+	}
+	liveMigrationStatus, err := DiscoverLiveMigrationStatus(podLister, pod)
+	if err != nil {
+		return false, err
+	}
+	return liveMigrationStatus != nil &&
+		liveMigrationStatus.State == LiveMigrationFailed &&
+		liveMigrationStatus.TargetPod != nil &&
+		samePod(liveMigrationStatus.TargetPod, pod), nil
+}
+
+// CleanUpFailedLiveMigrationTargetPod removes local OVN state created for a
+// failed live-migration target pod while the source pod remains active. Only
+// routes pointing at the target pod's node are removed: routes are matched by
+// VM, so the VM's active routes pointing at the source pod's node must be
+// left alone.
+func CleanUpFailedLiveMigrationTargetPod(nbClient libovsdbclient.Client, watchFactory *factory.WatchFactory, pod *corev1.Pod, zone string) error {
+	failedTarget, err := IsFailedLiveMigrationTarget(watchFactory.PodCoreInformer().Lister(), pod)
+	if err != nil {
+		return fmt.Errorf("failed checking failed live migration target pod %s/%s: %w", pod.Namespace, pod.Name, err)
+	}
+	if !failedTarget {
+		return nil
+	}
+
+	vmDescription, err := NewVMDescriptionFromPod(pod)
+	if err != nil {
+		return err
+	}
+	if vmDescription == nil {
+		return nil
+	}
+
+	routeMatchesTargetNode := func(item *nbdb.LogicalRouterStaticRoute) bool {
+		return item.OutputPort != nil && *item.OutputPort == ovntypes.RouterToSwitchPrefix+pod.Spec.NodeName
+	}
+	if zone == OvnRemoteZone {
+		// Remote-zone routes carry no output port; they point at the target
+		// node via its transit switch port address as nexthop.
+		node, err := watchFactory.GetNode(pod.Spec.NodeName)
+		if err != nil {
+			// Node is gone: its routes are cleaned up by node deletion and
+			// virtual machine sync.
+			return nil
+		}
+		transitSwitchPortAddrs, err := util.ParseNodeTransitSwitchPortAddrs(node)
+		if err != nil {
+			return err
+		}
+		targetNexthops := map[string]struct{}{}
+		for _, addr := range transitSwitchPortAddrs {
+			targetNexthops[addr.IP.String()] = struct{}{}
+		}
+		routeMatchesTargetNode = func(item *nbdb.LogicalRouterStaticRoute) bool {
+			_, ok := targetNexthops[item.Nexthop]
+			return ok
+		}
+	}
+
+	return withLiveMigrationVMLock(pod, func() error {
+		routePredicate := func(item *nbdb.LogicalRouterStaticRoute) bool {
+			return item.ExternalIDs[OvnZoneExternalIDKey] == zone &&
+				externalIDsContainsVM(item.ExternalIDs, ptr.To(vmDescription.Key())) &&
+				routeMatchesTargetNode(item)
+		}
+		if err := libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicate(nbClient, ovntypes.OVNClusterRouter, routePredicate); err != nil {
+			return fmt.Errorf("failed deleting failed live migration target pod routes for pod %s/%s: %w", pod.Namespace, pod.Name, err)
 		}
 		return nil
 	})

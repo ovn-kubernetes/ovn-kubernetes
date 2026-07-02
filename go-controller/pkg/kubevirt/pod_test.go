@@ -16,6 +16,8 @@ import (
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
+	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 
@@ -465,3 +467,86 @@ func newKubevirtPodWithLongName(phase corev1.PodPhase, creationOffset time.Durat
 		},
 	}
 }
+
+var _ = Describe("CleanUpFailedLiveMigrationTargetPod", func() {
+	const (
+		sourceNodeName      = "node2"
+		targetNodeName      = "node3"
+		sourceNodeTransitIP = "100.88.0.2"
+		targetNodeTransitIP = "100.88.0.3"
+	)
+
+	It("deletes only remote-zone routes pointing at the failed target pod's node", func() {
+		sourcePod := runningKubevirtPod(time.Duration(0))
+		targetPod := failedKubevirtPod(time.Duration(1))
+		for _, pod := range []*corev1.Pod{&sourcePod, &targetPod} {
+			pod.Annotations[kubevirtv1.AllowPodBridgeNetworkLiveMigrationAnnotation] = "true"
+		}
+		sourcePod.Spec.NodeName = sourceNodeName
+		targetPod.Spec.NodeName = targetNodeName
+
+		Expect(config.PrepareTestConfig()).To(Succeed())
+		fakeClient := util.GetOVNClientset().GetOVNKubeControllerClientset()
+		wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClient)
+		Expect(err).ToNot(HaveOccurred())
+		defer wf.Shutdown()
+		for _, pod := range []corev1.Pod{sourcePod, targetPod} {
+			_, err := fakeClient.KubeClient.CoreV1().Pods(pod.Namespace).Create(context.Background(), &pod, metav1.CreateOptions{})
+			Expect(err).ToNot(HaveOccurred())
+		}
+		targetNode := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: targetNodeName,
+				Annotations: map[string]string{
+					"k8s.ovn.org/node-transit-switch-port-ifaddr": `{"ipv4":"` + targetNodeTransitIP + `/16"}`,
+				},
+			},
+		}
+		_, err = fakeClient.KubeClient.CoreV1().Nodes().Create(context.Background(), targetNode, metav1.CreateOptions{})
+		Expect(err).ToNot(HaveOccurred())
+		Expect(wf.Start()).To(Succeed())
+
+		vmRouteExternalIDs := map[string]string{
+			OvnZoneExternalIDKey:         OvnRemoteZone,
+			VirtualMachineExternalIDsKey: vmName,
+			NamespaceExternalIDsKey:      corev1.NamespaceDefault,
+		}
+		// The VM's active route still points at the source pod's node and must
+		// survive the failed-target cleanup.
+		sourceRoute := &nbdb.LogicalRouterStaticRoute{
+			UUID:        "source-route-UUID",
+			IPPrefix:    "10.128.2.5",
+			Nexthop:     sourceNodeTransitIP,
+			Policy:      &nbdb.LogicalRouterStaticRoutePolicyDstIP,
+			ExternalIDs: vmRouteExternalIDs,
+		}
+		targetRoute := &nbdb.LogicalRouterStaticRoute{
+			UUID:        "target-route-UUID",
+			IPPrefix:    "10.128.2.5",
+			Nexthop:     targetNodeTransitIP,
+			Policy:      &nbdb.LogicalRouterStaticRoutePolicyDstIP,
+			ExternalIDs: vmRouteExternalIDs,
+		}
+		clusterRouter := &nbdb.LogicalRouter{
+			UUID:         "cluster-router-UUID",
+			Name:         ovntypes.OVNClusterRouter,
+			StaticRoutes: []string{sourceRoute.UUID, targetRoute.UUID},
+		}
+		nbClient, cleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{
+			NBData: []libovsdbtest.TestData{sourceRoute, targetRoute, clusterRouter},
+		}, nil)
+		Expect(err).ToNot(HaveOccurred())
+		defer cleanup.Cleanup()
+
+		Expect(CleanUpFailedLiveMigrationTargetPod(nbClient, wf, &targetPod, OvnRemoteZone)).To(Succeed())
+
+		Eventually(nbClient).Should(libovsdbtest.HaveData(
+			sourceRoute,
+			&nbdb.LogicalRouter{
+				UUID:         "cluster-router-UUID",
+				Name:         ovntypes.OVNClusterRouter,
+				StaticRoutes: []string{sourceRoute.UUID},
+			},
+		))
+	})
+})
