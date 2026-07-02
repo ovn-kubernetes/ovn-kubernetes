@@ -256,29 +256,72 @@ func (oc *DefaultNetworkController) ensureRemoteZonePod(_ context.Context, pod *
 	return nil
 }
 
+type podCleanupStep struct {
+	operation string
+	cleanup   func() error
+}
+
+// runPodCleanupSteps attempts every cleanup step so a failure in one subsystem
+// does not prevent independent state from being removed by another subsystem.
+func runPodCleanupSteps(steps ...podCleanupStep) error {
+	var errs []error
+	for _, step := range steps {
+		if err := step.cleanup(); err != nil {
+			errs = append(errs, fmt.Errorf("failed to %s: %w", step.operation, err))
+		}
+	}
+	return utilerrors.Join(errs...)
+}
+
 // removePod tries to tear down a pod. It returns nil on success and error on failure;
 // failure indicates the pod tear down should be retried later.
 func (oc *DefaultNetworkController) removePod(ctx context.Context, pod *corev1.Pod, portInfo *lpInfo) error {
-	// Clear applied state regardless of which zone handles the delete.
+	// Clear applied state regardless of which node handles the delete.
 	defer oc.logicalPortCache.remove(pod, ovntypes.DefaultNetworkName)
 
 	if err := kubevirt.CleanUpLiveMigratablePod(oc.nbClient, oc.watchFactory, pod); err != nil {
 		return err
 	}
 
-	if oc.isPodScheduledOnLocalNode(pod) {
-		if err := oc.removeLocalZonePod(ctx, pod, portInfo); err != nil {
-			return err
-		}
-	} else {
-		if err := oc.removeRemoteZonePod(ctx, pod); err != nil {
-			return err
+	localNodePod := oc.isPodScheduledOnLocalNode(pod)
+	location := "remote-node"
+	zoneCleanup := func() error {
+		return oc.removeRemoteZonePod(ctx, pod)
+	}
+	if localNodePod {
+		location = "local-node"
+		zoneCleanup = func() error {
+			return oc.removeLocalZonePod(ctx, pod, portInfo)
 		}
 	}
 
-	// A failed port deletion must not remove policy protection from a live LSP.
-	if err := oc.deletePodNetworkPolicyMembership(pod); err != nil {
-		return fmt.Errorf("failed to delete network policy membership for pod %s/%s: %w", pod.Namespace, pod.Name, err)
+	routeZone := kubevirt.OvnRemoteZone
+	if localNodePod {
+		routeZone = kubevirt.OvnLocalZone
+	}
+
+	if err := runPodCleanupSteps(
+		podCleanupStep{
+			operation: fmt.Sprintf("remove %s pod %s/%s", location, pod.Namespace, pod.Name),
+			cleanup: func() error {
+				if err := zoneCleanup(); err != nil {
+					return err
+				}
+				// Keep policy protection until port teardown succeeds.
+				if err := oc.deletePodNetworkPolicyMembership(pod); err != nil {
+					return fmt.Errorf("failed to delete network policy membership: %w", err)
+				}
+				return nil
+			},
+		},
+		podCleanupStep{
+			operation: fmt.Sprintf("clean up failed live migration target pod %s/%s", pod.Namespace, pod.Name),
+			cleanup: func() error {
+				return kubevirt.CleanUpFailedLiveMigrationTargetPod(oc.nbClient, oc.watchFactory, pod, routeZone)
+			},
+		},
+	); err != nil {
+		return err
 	}
 
 	return nil
