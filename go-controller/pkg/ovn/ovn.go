@@ -126,7 +126,13 @@ func (oc *DefaultNetworkController) ReconcilePod(oldPod, newPod *corev1.Pod, cac
 		return oc.reconcileDeletedPod(oldPod, portInfo)
 	}
 	addPort := oc.shouldEnsurePodLogicalPort(newPod, ovntypes.DefaultNetworkName)
-	return oc.ensurePod(newPod, addPort)
+	if err := oc.ensurePod(newPod, addPort); err != nil {
+		return err
+	}
+	if addPort && oc.eIPC != nil {
+		oc.eIPC.addEgressIPPodRetry(newPod, "pod logical port reconcile")
+	}
+	return nil
 }
 
 func (oc *DefaultNetworkController) recordPodReconcileStart(oldPod, newPod *corev1.Pod) *corev1.Pod {

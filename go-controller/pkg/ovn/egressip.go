@@ -1016,14 +1016,16 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 		}
 		delete(podState.egressStatuses.statusMap, staleStatus)
 	}
+	reprogrammed := map[egressipv1.EgressIPStatusItem]struct{}{}
 	if len(reprogramAssignments) > 0 {
 		klog.V(2).Infof("Pod %s IPs changed, forcing egress IP status reprogram for statuses: %+v", podKey, reprogramAssignments)
-		if err := e.deletePodEgressIPAssignments(ni, name, reprogramAssignments, pod, false); err != nil {
+		if err := e.deletePodEgressIPAssignmentsWithOptions(ni, name, reprogramAssignments, pod, false, false); err != nil {
 			return fmt.Errorf("failed to force reprogram of pod %s statuses %v for egress IP %s: %w",
 				podKey, reprogramAssignments, name, err)
 		}
 		for _, status := range reprogramAssignments {
 			delete(podState.egressStatuses.statusMap, status)
+			reprogrammed[status] = struct{}{}
 		}
 		remainingAssignments = append(remainingAssignments, reprogramAssignments...)
 	}
@@ -1075,6 +1077,19 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 			})
 		})
 		if err != nil {
+			if _, ok := reprogrammed[status]; ok {
+				// The reprogram delete skipped the external GW pod SNAT
+				// restore because the re-add normally replaces the SNAT right
+				// away. Restore it here so a failed re-add does not leave the
+				// pod without any SNAT until the retry succeeds.
+				restoreErr := e.nodeZoneState.DoWithLock(pod.Spec.NodeName, func(_ string) error {
+					return e.addExternalGWPodSNAT(ni, pod.Namespace, pod.Name, status)
+				})
+				if restoreErr != nil {
+					klog.Errorf("Failed to restore external GW pod SNAT for pod %s after failed egress IP %s reprogram: %v",
+						podKey, name, restoreErr)
+				}
+			}
 			return err
 		}
 	}
@@ -1211,6 +1226,12 @@ func (e *EgressIPController) deletePodEgressIPAssignmentsWithCleanup(ni util.Net
 // If assignStandby is true, any standby EgressIP for the pod will be promoted to active.
 func (e *EgressIPController) deletePodEgressIPAssignments(ni util.NetInfo, name string, statusesToRemove []egressipv1.EgressIPStatusItem, pod *corev1.Pod,
 	assignStandby bool) error {
+	return e.deletePodEgressIPAssignmentsWithOptions(ni, name, statusesToRemove, pod, assignStandby, true)
+}
+
+// deletePodEgressIPAssignmentsWithOptions *must* be called with podAssignment lock on pod.
+func (e *EgressIPController) deletePodEgressIPAssignmentsWithOptions(ni util.NetInfo, name string, statusesToRemove []egressipv1.EgressIPStatusItem, pod *corev1.Pod,
+	assignStandby, restoreExternalGWPodSNAT bool) error {
 	podKey := getPodKey(pod)
 	podStatus, exists := e.podAssignment.Load(podKey)
 	if !exists {
@@ -1232,14 +1253,14 @@ func (e *EgressIPController) deletePodEgressIPAssignments(ni util.NetInfo, name 
 			err := e.nodeZoneState.DoWithLock(nodesToLock[0], func(_ string) error {
 				if statusToRemove.Node == pod.Spec.NodeName {
 					// we are safe, no need to grab lock again
-					if err := e.deletePodEgressIPAssignment(ni, name, statusToRemove, pod); err != nil {
+					if err := e.deletePodEgressIPAssignment(ni, name, statusToRemove, pod, restoreExternalGWPodSNAT); err != nil {
 						return err
 					}
 					podStatus.egressStatuses.delete(statusToRemove)
 					return nil
 				}
 				return e.nodeZoneState.DoWithLock(nodesToLock[1], func(_ string) error {
-					if err := e.deletePodEgressIPAssignment(ni, name, statusToRemove, pod); err != nil {
+					if err := e.deletePodEgressIPAssignment(ni, name, statusToRemove, pod, restoreExternalGWPodSNAT); err != nil {
 						return err
 					}
 					podStatus.egressStatuses.delete(statusToRemove)
@@ -2814,7 +2835,7 @@ func (e *EgressIPController) addPodEgressIPAssignment(ni util.NetInfo, egressIPN
 // deletePodEgressIPAssignment deletes the OVN programmed egress IP
 // configuration mentioned for addPodEgressIPAssignment.
 // This function should be called with lock on nodeZoneState cache key status.Node and pod.Spec.NodeName
-func (e *EgressIPController) deletePodEgressIPAssignment(ni util.NetInfo, egressIPName string, status egressipv1.EgressIPStatusItem, pod *corev1.Pod) (err error) {
+func (e *EgressIPController) deletePodEgressIPAssignment(ni util.NetInfo, egressIPName string, status egressipv1.EgressIPStatusItem, pod *corev1.Pod, restoreExternalGWPodSNAT bool) (err error) {
 	if config.Metrics.EnableScaleMetrics {
 		start := time.Now()
 		defer func() {
@@ -2861,7 +2882,7 @@ func (e *EgressIPController) deletePodEgressIPAssignment(ni util.NetInfo, egress
 	}
 	var ops []ovsdb.Operation
 	// For CDN only, add SNATs to support external GW feature
-	if ni.IsDefault() && (!loadedPodNode || isLocalZonePod) {
+	if restoreExternalGWPodSNAT && ni.IsDefault() && (!loadedPodNode || isLocalZonePod) {
 		ops, err = e.addExternalGWPodSNATOps(ni, nil, pod.Namespace, pod.Name, status)
 		if err != nil {
 			return err
