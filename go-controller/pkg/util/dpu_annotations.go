@@ -4,6 +4,7 @@
 package util
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
@@ -223,6 +224,7 @@ func UpdatePodDPUConnStatusWithRetry(podLister listers.PodLister, kube kube.Inte
 	}
 
 	return UpdatePodWithRetryOrRollback(
+		context.Background(),
 		podLister,
 		kube,
 		pod,
@@ -243,6 +245,7 @@ func UpdatePodDPUConnDetailsWithRetry(podLister listers.PodLister, kube kube.Int
 	}
 
 	return UpdatePodWithRetryOrRollback(
+		context.Background(),
 		podLister,
 		kube,
 		pod,

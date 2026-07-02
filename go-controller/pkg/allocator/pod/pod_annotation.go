@@ -4,12 +4,16 @@
 package pod
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
 
 	ipamclaimsapi "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1"
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	corev1 "k8s.io/api/core/v1"
 	listers "k8s.io/client-go/listers/core/v1"
@@ -24,6 +28,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/udn"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/persistentips"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/tracing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -75,6 +80,7 @@ func WithMACRegistry(m mac.Register) AllocatorOption {
 // honored, a new set of IPs will be allocated unless reallocateIP is set to
 // false.
 func (allocator *PodAnnotationAllocator) AllocatePodAnnotation(
+	ctx context.Context,
 	ipAllocator subnet.NamedAllocator,
 	node *corev1.Node,
 	pod *corev1.Pod,
@@ -87,6 +93,7 @@ func (allocator *PodAnnotationAllocator) AllocatePodAnnotation(
 	error) {
 
 	return allocatePodAnnotation(
+		ctx,
 		allocator.podLister,
 		allocator.kube,
 		ipAllocator,
@@ -103,6 +110,7 @@ func (allocator *PodAnnotationAllocator) AllocatePodAnnotation(
 }
 
 func allocatePodAnnotation(
+	ctx context.Context,
 	podLister listers.PodLister,
 	kube kube.Interface,
 	ipAllocator subnet.NamedAllocator,
@@ -122,9 +130,15 @@ func allocatePodAnnotation(
 	// no id allocation
 	var idAllocator id.NamedAllocator
 
+	ctx, span := startPodAnnotationSpan(ctx, tracing.SpanNameUpdatePodNetworkAllocation, pod, nadKey, network)
+	defer func() {
+		finishSpan(span, err)
+	}()
+
 	allocateToPodWithRollback := func(currentPod *corev1.Pod) (*corev1.Pod, func(), error) {
 		var rollback func()
 		updatedPod, podAnnotation, rollback, err = allocatePodAnnotationWithRollback(
+			ctx,
 			ipAllocator,
 			idAllocator,
 			netInfo,
@@ -141,6 +155,7 @@ func allocatePodAnnotation(
 	}
 
 	err = util.UpdatePodWithRetryOrRollback(
+		ctx,
 		podLister,
 		kube,
 		pod,
@@ -164,6 +179,7 @@ func allocatePodAnnotation(
 // honored, a new set of IPs will be allocated unless reallocateIP is set to
 // false.
 func (allocator *PodAnnotationAllocator) AllocatePodAnnotationWithTunnelID(
+	ctx context.Context,
 	ipAllocator subnet.NamedAllocator,
 	idAllocator id.NamedAllocator,
 	node *corev1.Node,
@@ -177,6 +193,7 @@ func (allocator *PodAnnotationAllocator) AllocatePodAnnotationWithTunnelID(
 	error) {
 
 	return allocatePodAnnotationWithTunnelID(
+		ctx,
 		allocator.podLister,
 		allocator.kube,
 		ipAllocator,
@@ -194,6 +211,7 @@ func (allocator *PodAnnotationAllocator) AllocatePodAnnotationWithTunnelID(
 }
 
 func allocatePodAnnotationWithTunnelID(
+	ctx context.Context,
 	podLister listers.PodLister,
 	kube kube.Interface,
 	ipAllocator subnet.NamedAllocator,
@@ -211,9 +229,15 @@ func allocatePodAnnotationWithTunnelID(
 	podAnnotation *util.PodAnnotation,
 	err error) {
 
+	ctx, span := startPodAnnotationSpan(ctx, tracing.SpanNameUpdatePodNetworkAllocation, pod, nadKey, network)
+	defer func() {
+		finishSpan(span, err)
+	}()
+
 	allocateToPodWithRollback := func(currentPod *corev1.Pod) (*corev1.Pod, func(), error) {
 		var rollback func()
 		updatedPod, podAnnotation, rollback, err = allocatePodAnnotationWithRollback(
+			ctx,
 			ipAllocator,
 			idAllocator,
 			netInfo,
@@ -230,6 +254,7 @@ func allocatePodAnnotationWithTunnelID(
 	}
 
 	err = util.UpdatePodWithRetryOrRollback(
+		ctx,
 		podLister,
 		kube,
 		pod,
@@ -335,6 +360,7 @@ func validateIPFamilyMatchesNetwork(netInfo util.NetInfo, ipRequests []string) e
 // implementations. Use an inlined implementation if you want to extract
 // information from it as a side-effect.
 func allocatePodAnnotationWithRollback(
+	ctx context.Context,
 	ipAllocator subnet.NamedAllocator,
 	idAllocator id.NamedAllocator,
 	netInfo util.NetInfo,
@@ -417,6 +443,7 @@ func allocatePodAnnotationWithRollback(
 	needsID := tentative.TunnelID == 0 && hasIDAllocation
 
 	if hasIDAllocation {
+		_, idSpan := startPodAnnotationSpan(ctx, tracing.SpanNameAllocateTunnelID, pod, nadKey, network)
 		if needsID {
 			tentative.TunnelID, err = idAllocator.AllocateID()
 		} else {
@@ -425,10 +452,13 @@ func allocatePodAnnotationWithRollback(
 
 		if err != nil {
 			err = fmt.Errorf("failed to assign pod id for %s: %w", podDesc, err)
+			finishSpan(idSpan, err)
 			return
 		}
 
 		releaseID = tentative.TunnelID
+		idSpan.SetAttributes(attribute.Bool(tracing.SpanAttrOvnTunnelIDAllocated, needsID))
+		finishSpan(idSpan, nil)
 	}
 
 	hasIPAM := util.DoesNetworkRequireIPAM(netInfo)
@@ -448,12 +478,19 @@ func allocatePodAnnotationWithRollback(
 		hasIPAMClaim = false
 	}
 	if hasIPAMClaim {
+		_, claimSpan := startPodAnnotationSpan(ctx, tracing.SpanNameResolveIPAMClaim, pod, nadKey, network)
 		ipamClaim, err = claimsReconciler.FindIPAMClaim(network.IPAMClaimReference, network.Namespace)
 		if err != nil {
 			err = fmt.Errorf("error retrieving IPAMClaim for pod %s/%s: %w", pod.GetNamespace(), pod.GetName(), err)
+			finishSpan(claimSpan, err)
 			return
 		}
 		hasIPAMClaim = ipamClaim != nil && len(ipamClaim.Status.IPs) > 0
+		claimSpan.SetAttributes(
+			attribute.Bool(tracing.SpanAttrOvnIPAMClaimFound, ipamClaim != nil),
+			attribute.Bool(tracing.SpanAttrOvnIPAMClaimHasIPs, hasIPAMClaim),
+		)
+		finishSpan(claimSpan, nil)
 	}
 
 	defer func() {
@@ -493,11 +530,13 @@ func allocatePodAnnotationWithRollback(
 	}
 
 	if hasIPAM {
+		_, ipSpan := startPodAnnotationSpan(ctx, tracing.SpanNameAllocateIPAddresses, pod, nadKey, network)
 		if len(tentative.IPs) > 0 {
 			if err = ipAllocator.AllocateIPs(tentative.IPs); err != nil && !shouldSkipAllocateIPsError(err, isNetworkAllocated, ipamClaim) {
 				err = fmt.Errorf("failed to ensure requested or annotated IPs %v for %s: %w",
 					util.StringSlice(tentative.IPs), podDesc, err)
 				if !reallocateOnNonStaticIPRequest {
+					finishSpan(ipSpan, err)
 					return
 				}
 				klog.Warning(err.Error())
@@ -518,15 +557,22 @@ func allocatePodAnnotationWithRollback(
 			tentative.IPs, err = ipAllocator.AllocateNextIPs()
 			if err != nil {
 				err = fmt.Errorf("failed to assign pod addresses for %s: %w", podDesc, err)
+				finishSpan(ipSpan, err)
 				return
 			}
 
 			// copy the IPs that would need to be released
 			releaseIPs = util.CopyIPNets(tentative.IPs)
 		}
+		ipSpan.SetAttributes(
+			attribute.Bool(tracing.SpanAttrOvnIPAMClaim, hasIPAMClaim),
+			attribute.Bool(tracing.SpanAttrOvnStaticIPRequest, hasStaticIPRequest),
+		)
+		finishSpan(ipSpan, nil)
 	}
 
 	if needsIPOrMAC {
+		_, macSpan := startPodAnnotationSpan(ctx, tracing.SpanNameReserveMACAddress, pod, nadKey, network)
 		// handle mac address
 		if network != nil && network.MacRequest != "" {
 			tentative.MAC, err = net.ParseMAC(network.MacRequest)
@@ -536,6 +582,7 @@ func allocatePodAnnotationWithRollback(
 			tentative.MAC, err = util.GenerateRandMAC()
 		}
 		if err != nil {
+			finishSpan(macSpan, err)
 			return
 		}
 		if macRegistry != nil {
@@ -546,6 +593,7 @@ func allocatePodAnnotationWithRollback(
 					err = fmt.Errorf("failed to reserve MAC address %q for owner %q on NAD key %q: %w",
 						tentative.MAC, macOwnerID, nadKey, rerr)
 					klog.Errorf("%v, network-name: %q", err, networkName)
+					finishSpan(macSpan, err)
 					return
 				}
 			} else {
@@ -553,23 +601,61 @@ func allocatePodAnnotationWithRollback(
 				releaseMAC = tentative.MAC
 			}
 		}
+		finishSpan(macSpan, nil)
 
 		// handle routes & gateways
+		_, routesSpan := startPodAnnotationSpan(ctx, tracing.SpanNameConfigureRoutesAndGateways, pod, nadKey, network)
 		err = AddRoutesGatewayIP(netInfo, node, pod, tentative, network)
 		if err != nil {
+			finishSpan(routesSpan, err)
 			return
 		}
+		finishSpan(routesSpan, nil)
 	}
 
 	needsAnnotationUpdate := needsIPOrMAC || needsID
+	trace.SpanFromContext(ctx).SetAttributes(attribute.Bool(tracing.SpanAttrPodAnnotationUpdateNeeded, needsAnnotationUpdate))
 
 	if needsAnnotationUpdate {
 		updatedPod = pod
 		updatedPod.Annotations, err = util.MarshalPodAnnotation(updatedPod.Annotations, tentative, nadKey)
 		podAnnotation = tentative
+		trace.SpanFromContext(ctx).SetAttributes(attribute.Bool(tracing.SpanAttrPodAnnotationAlreadySet, false))
 	}
 
 	return
+}
+
+func startPodAnnotationSpan(
+	ctx context.Context,
+	name string,
+	pod *corev1.Pod,
+	nadKey string,
+	network *nadapi.NetworkSelectionElement,
+) (context.Context, trace.Span) {
+	ctx, span := tracing.StartSpan(ctx, name)
+	attrs := tracing.PodAttrs(pod.Namespace, pod.Name, string(pod.UID))
+	if nadKey != "" {
+		attrs = append(attrs, attribute.String(tracing.SpanAttrK8sNADKey, nadKey))
+	}
+	if network != nil {
+		if network.Name != "" {
+			attrs = append(attrs, attribute.String(tracing.SpanAttrK8sNADName, network.Name))
+		}
+		if network.Namespace != "" {
+			attrs = append(attrs, attribute.String(tracing.SpanAttrK8sNADNamespace, network.Namespace))
+		}
+	}
+	span.SetAttributes(attrs...)
+	return ctx, span
+}
+
+func finishSpan(span trace.Span, err error) {
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	}
+	span.End()
 }
 
 func joinSubnetToRoute(netinfo util.NetInfo, isIPv6 bool, gatewayIP net.IP) util.PodRoute {

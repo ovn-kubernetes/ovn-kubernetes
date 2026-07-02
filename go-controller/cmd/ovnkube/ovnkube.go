@@ -19,6 +19,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/urfave/cli/v2"
+	"go.opentelemetry.io/otel/attribute"
 
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/leaderelection"
@@ -38,6 +39,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
 	ovnnode "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/routemanager"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/tracing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 )
@@ -434,6 +436,30 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 		}
 	}()
 	startTime := time.Now()
+
+	if config.OVNKubernetesFeature.EnableTracing && (runMode.node || runMode.ovnkubeController || runMode.clusterManager) {
+		resourceAttrs := []attribute.KeyValue{}
+		if runMode.node && runMode.identity != "" {
+			resourceAttrs = append(resourceAttrs, attribute.String(tracing.SpanAttrK8sNodeName, runMode.identity))
+		}
+
+		component := "ovnkube-cluster-manager"
+		if runMode.node || runMode.ovnkubeController {
+			component = "ovnkube-node"
+		}
+
+		if err := tracing.Init(component, config.Tracing, resourceAttrs...); err != nil {
+			klog.Warningf("Tracing disabled, failed to initialize provider: %v", err)
+		} else {
+			defer func() {
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				if shutdownErr := tracing.Shutdown(shutdownCtx); shutdownErr != nil {
+					klog.Warningf("Failed to shut down tracing provider: %v", shutdownErr)
+				}
+			}()
+		}
+	}
 
 	if runMode.cleanupNode {
 		return ovnnode.CleanupClusterNode(runMode.identity)

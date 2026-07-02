@@ -14,8 +14,6 @@ import (
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
 	ipamclaimsapi "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1"
-	fakeipamclaimclient "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1/apis/clientset/versioned/fake"
-	ipamclaimsfactory "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1/apis/informers/externalversions"
 	ipamclaimslister "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1/apis/listers/ipamclaims/v1alpha1"
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	"github.com/onsi/gomega"
@@ -27,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	apitypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/id"
@@ -576,7 +575,7 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 			},
 			role:         types.NetworkRolePrimary,
 			expectError:  "failed to get NAD to network mapping: unexpected primary network \"nad\" specified with a NetworkSelectionElement &{Name:nad Namespace:namespace IPRequest:[] MacRequest: InfinibandGUIDRequest: InterfaceRequest: PortMappingsRequest:[] BandwidthRequest:<nil> CNIArgs:<nil> GatewayRequest:[] IPAMClaimReference:}",
-			expectEvents: []string{"Warning ErrorAllocatingPod unexpected primary network \"nad\" specified with a NetworkSelectionElement &{Name:nad Namespace:namespace IPRequest:[] MacRequest: InfinibandGUIDRequest: InterfaceRequest: PortMappingsRequest:[] BandwidthRequest:<nil> CNIArgs:<nil> GatewayRequest:[] IPAMClaimReference:}"},
+			expectEvents: []string{"Warning ErrorAllocatingPod failed to get NAD to network mapping: unexpected primary network \"nad\" specified with a NetworkSelectionElement &{Name:nad Namespace:namespace IPRequest:[] MacRequest: InfinibandGUIDRequest: InterfaceRequest: PortMappingsRequest:[] BandwidthRequest:<nil> CNIArgs:<nil> GatewayRequest:[] IPAMClaimReference:}"},
 		},
 		{
 			name: "Pod on network with exhausted ip pool, expect event and error",
@@ -1047,7 +1046,7 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 				}
 			}
 
-			err = a.reconcile(old, new, tt.args.release)
+			err = a.reconcile(context.Background(), old, new, tt.args.release)
 			if len(tt.expectError) > 0 {
 				g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring(tt.expectError)))
 			} else if err != nil {
@@ -1092,12 +1091,12 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 }
 
 func generateIPAMClaimsListerAndTeardownFunc(stopChannel <-chan struct{}, ipamClaims ...runtime.Object) (ipamclaimslister.IPAMClaimLister, func()) {
-	ipamClaimClient := fakeipamclaimclient.NewSimpleClientset(ipamClaims...)
-	informerFactory := ipamclaimsfactory.NewSharedInformerFactory(ipamClaimClient, 0)
-	lister := informerFactory.K8s().V1alpha1().IPAMClaims().Lister()
-	informerFactory.Start(stopChannel)
-	informerFactory.WaitForCacheSync(stopChannel)
-	return lister, func() {
-		informerFactory.Shutdown()
+	_ = stopChannel
+	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+	for _, obj := range ipamClaims {
+		if claim, ok := obj.(*ipamclaimsapi.IPAMClaim); ok {
+			_ = indexer.Add(claim)
+		}
 	}
+	return ipamclaimslister.NewIPAMClaimLister(indexer), func() {}
 }

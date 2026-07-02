@@ -35,6 +35,7 @@ import (
 	zoneic "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/zone_interconnect"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/retry"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/syncmap"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/tracing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
@@ -106,8 +107,8 @@ func (h *Layer3UserDefinedNetworkControllerEventHandler) IsResourceScheduled(obj
 // if any, yielded during object creation.
 // Given an object to add and a boolean specifying if the function was executed from iterateRetryResources
 func (h *Layer3UserDefinedNetworkControllerEventHandler) AddResource(obj interface{}, fromRetryLoop bool) error {
-	_ = fromRetryLoop
-	return h.oc.AddUserDefinedNetworkResourceCommon(h.objType, obj)
+	ctx := tracing.ContextWithRetryLoop(context.Background(), fromRetryLoop)
+	return h.oc.AddUserDefinedNetworkResourceCommon(ctx, h.objType, obj)
 }
 
 // UpdateResource updates the specified object in the cluster to its version in newObj according to its
@@ -117,7 +118,8 @@ func (h *Layer3UserDefinedNetworkControllerEventHandler) AddResource(obj interfa
 func (h *Layer3UserDefinedNetworkControllerEventHandler) UpdateResource(oldObj, newObj interface{}, inRetryCache bool) error {
 	switch h.objType {
 	default:
-		return h.oc.UpdateUserDefinedNetworkResourceCommon(h.objType, oldObj, newObj, inRetryCache)
+		ctx := tracing.ContextWithRetryLoop(context.Background(), inRetryCache)
+		return h.oc.UpdateUserDefinedNetworkResourceCommon(ctx, h.objType, oldObj, newObj)
 	}
 }
 
@@ -125,7 +127,7 @@ func (h *Layer3UserDefinedNetworkControllerEventHandler) UpdateResource(oldObj, 
 // Given an object and optionally a cachedObj; cachedObj is the internal cache entry for this object,
 // used for now for pods and network policies.
 func (h *Layer3UserDefinedNetworkControllerEventHandler) DeleteResource(obj, cachedObj interface{}) error {
-	return h.oc.DeleteUserDefinedNetworkResourceCommon(h.objType, obj, cachedObj)
+	return h.oc.DeleteUserDefinedNetworkResourceCommon(context.Background(), h.objType, obj, cachedObj)
 }
 
 func (h *Layer3UserDefinedNetworkControllerEventHandler) SyncFunc(objs []interface{}) error {

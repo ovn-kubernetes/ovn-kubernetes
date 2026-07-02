@@ -27,6 +27,7 @@ import (
 	lsm "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/retry"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/syncmap"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/tracing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -101,8 +102,9 @@ func (h *LocalnetUserDefinedNetworkControllerEventHandler) IsResourceScheduled(o
 // AddResource adds the specified object to the cluster according to its type and returns the error,
 // if any, yielded during object creation.
 // Given an object to add and a boolean specifying if the function was executed from iterateRetryResources
-func (h *LocalnetUserDefinedNetworkControllerEventHandler) AddResource(obj interface{}, _ bool) error {
-	return h.oc.AddUserDefinedNetworkResourceCommon(h.objType, obj)
+func (h *LocalnetUserDefinedNetworkControllerEventHandler) AddResource(obj interface{}, fromRetryLoop bool) error {
+	ctx := tracing.ContextWithRetryLoop(context.Background(), fromRetryLoop)
+	return h.oc.AddUserDefinedNetworkResourceCommon(ctx, h.objType, obj)
 }
 
 // UpdateResource updates the specified object in the cluster to its version in newObj according to its
@@ -110,14 +112,15 @@ func (h *LocalnetUserDefinedNetworkControllerEventHandler) AddResource(obj inter
 // Given an old and a new object; The inRetryCache boolean argument is to indicate if the given resource
 // is in the retryCache or not.
 func (h *LocalnetUserDefinedNetworkControllerEventHandler) UpdateResource(oldObj, newObj interface{}, inRetryCache bool) error {
-	return h.oc.UpdateUserDefinedNetworkResourceCommon(h.objType, oldObj, newObj, inRetryCache)
+	ctx := tracing.ContextWithRetryLoop(context.Background(), inRetryCache)
+	return h.oc.UpdateUserDefinedNetworkResourceCommon(ctx, h.objType, oldObj, newObj)
 }
 
 // DeleteResource deletes the object from the cluster according to the delete logic of its resource type.
 // Given an object and optionally a cachedObj; cachedObj is the internal cache entry for this object,
 // used for now for pods and network policies.
 func (h *LocalnetUserDefinedNetworkControllerEventHandler) DeleteResource(obj, cachedObj interface{}) error {
-	return h.oc.DeleteUserDefinedNetworkResourceCommon(h.objType, obj, cachedObj)
+	return h.oc.DeleteUserDefinedNetworkResourceCommon(context.Background(), h.objType, obj, cachedObj)
 }
 
 func (h *LocalnetUserDefinedNetworkControllerEventHandler) SyncFunc(objs []interface{}) error {

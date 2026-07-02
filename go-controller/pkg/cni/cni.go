@@ -4,11 +4,15 @@
 package cni
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"strings"
 
 	current "github.com/containernetworking/cni/pkg/types/100"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -22,6 +26,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kubevirt"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/tracing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -52,6 +57,39 @@ type notFoundError struct{}
 
 func (*notFoundError) Error() string {
 	return "not found"
+}
+
+func cniRequestAttrs(pr *PodRequest) []attribute.KeyValue {
+	attrs := append(
+		tracing.PodAttrs(pr.PodNamespace, pr.PodName, pr.PodUID),
+		attribute.String(tracing.SpanAttrCNICommand, string(pr.Command)),
+		attribute.String(tracing.SpanAttrCNIIfName, pr.IfName),
+		attribute.String(tracing.SpanAttrCNINetworkName, pr.netName),
+		attribute.String(tracing.SpanAttrCNINADName, pr.nadName),
+		attribute.String(tracing.SpanAttrCNINADKey, pr.nadKey),
+		attribute.String(tracing.SpanAttrCNISandboxID, pr.SandboxID),
+	)
+	if pr.CNIConf != nil {
+		attrs = append(attrs,
+			attribute.String(tracing.SpanAttrOvnNetworkTopology, pr.CNIConf.Topology),
+		)
+		if pr.CNIConf.DeviceID != "" {
+			attrs = append(attrs, attribute.String(tracing.SpanAttrCNIDeviceID, pr.CNIConf.DeviceID))
+		}
+	}
+	return attrs
+}
+
+func (pr *PodRequest) startTracePodRequest(operation tracing.Operation, annotations map[string]string) trace.Span {
+	if pr.ctx == nil {
+		pr.ctx = context.Background()
+	}
+	ctx := tracing.ContextWithOperation(pr.ctx, operation)
+	ctx = tracing.ContextWithSpanNamePrefix(ctx, tracing.NodeCNIPodSpanPrefix)
+	ctx, span := tracing.StartTrace(ctx, annotations)
+	pr.ctx = ctx
+	span.SetAttributes(cniRequestAttrs(pr)...)
+	return span
 }
 
 func validateBandwidthIsReasonable(rsrc *resource.Quantity) error {
@@ -128,6 +166,16 @@ func (pr *PodRequest) cmdAdd(kubeAuth *KubeAPIAuth, clientset *ClientSet, ovsCli
 	if err != nil {
 		return nil, fmt.Errorf("failed to get pod %s/%s: %v", namespace, podName, err)
 	}
+
+	span := pr.startTracePodRequest(tracing.OperationAdd, pod.Annotations)
+	defer func() {
+		span.SetAttributes(cniRequestAttrs(pr)...)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
 
 	// nadKey is only set for default network and primary UDN
 	if pr.nadKey == "" {
@@ -215,9 +263,9 @@ func (pr *PodRequest) cmdAdd(kubeAuth *KubeAPIAuth, clientset *ClientSet, ovsCli
 	return response, nil
 }
 
-func (pr *PodRequest) cmdDel(clientset *ClientSet) (*Response, error) {
+func (pr *PodRequest) cmdDel(clientset *ClientSet) (response *Response, err error) {
 	// assume success case, return an empty Result
-	response := &Response{}
+	response = &Response{}
 	response.Result = &current.Result{}
 
 	namespace := pr.PodNamespace
@@ -232,6 +280,20 @@ func (pr *PodRequest) cmdDel(clientset *ClientSet) (*Response, error) {
 			return nil, fmt.Errorf("failed to get pod %s/%s: %w", pr.PodNamespace, pr.PodName, err)
 		}
 	}
+
+	var annotations map[string]string
+	if pod != nil {
+		annotations = pod.Annotations
+	}
+	span := pr.startTracePodRequest(tracing.OperationDelete, annotations)
+	defer func() {
+		span.SetAttributes(cniRequestAttrs(pr)...)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
 
 	if pod != nil && pr.netName != types.DefaultNetworkName {
 		nadKey, err := GetCNINADKey(pod, pr.IfName, pr.nadName)
@@ -276,6 +338,7 @@ func (pr *PodRequest) cmdDel(clientset *ClientSet) (*Response, error) {
 				}
 
 				err = util.UpdatePodWithRetryOrRollback(
+					pr.ctx,
 					clientset.podLister,
 					&kube.Kube{KClient: clientset.kclient},
 					pod,

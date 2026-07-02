@@ -1,0 +1,79 @@
+package tracing
+
+const (
+	// NodeNetworkControllerPodSpanPrefix prefixes pod spans emitted by ovnkube-node
+	// network-controller paths.
+	NodeNetworkControllerPodSpanPrefix = "ovnkube-node.network-controller.pod"
+
+	// ClusterManagerNetworkControllerPodSpanPrefix prefixes pod spans emitted by
+	// ovnkube-cluster-manager network-controller paths.
+	ClusterManagerNetworkControllerPodSpanPrefix = "ovnkube-cluster-manager.network-controller.pod"
+
+	// NodeCNIPodSpanPrefix prefixes pod spans emitted by the ovnkube-node CNI server.
+	NodeCNIPodSpanPrefix = "ovnkube-node.cni.pod"
+
+	ResourceAttrServiceName      = "service.name"
+	ResourceAttrServiceComponent = "service.component"
+
+	SpanNameAllocateTunnelID           = "allocate-tunnel-id"
+	SpanNameResolveIPAMClaim           = "resolve-ipam-claim"
+	SpanNameAllocateIPAddresses        = "allocate-ip-addresses"
+	SpanNameReserveMACAddress          = "reserve-mac-address"
+	SpanNameConfigureRoutesAndGateways = "configure-routes-and-gateways"
+	SpanNameConfigureInterface         = "configure-interface"
+	SpanNameUnconfigureInterface       = "unconfigure-interface"
+	SpanNamePatchPodStatusAnnotations  = "patch-pod-status-annotations"
+	SpanNameNetworkDeleteLogicalPort   = "delete-logical-port"
+	SpanNameNetworkAddLogicalPort      = "add-logical-port"
+	SpanNameSetupLogicalNetwork        = "setup-logical-network"
+	SpanNameSetupLocalPodNetwork       = "setup-local-pod-network"
+	SpanNameTeardownLocalPodNetwork    = "teardown-local-pod-network"
+	SpanNameTeardownLogicalNetwork     = "teardown-logical-network"
+	SpanNameUpdatePodNetworkAnnotation = "update-pod-network-annotation"
+	SpanNameUpdatePodNetworkAllocation = "update-pod-network-allocation"
+	SpanNameReleasePodNetwork          = "release-pod-network"
+	SpanNameAllocatePodNetwork         = "allocate-pod-network"
+
+	SpanAttrCNICommand                 = "cni.command"
+	SpanAttrCNIDeviceID                = "cni.device.id"
+	SpanAttrCNIIfName                  = "cni.ifname"
+	SpanAttrCNINADKey                  = "cni.nad.key"
+	SpanAttrCNINADName                 = "cni.nad.name"
+	SpanAttrCNINetworkName             = "cni.network.name"
+	SpanAttrCNISandboxID               = "cni.sandbox.id"
+	SpanAttrErrorMessage               = "error.message"
+	SpanAttrErrorType                  = "error.type"
+	SpanAttrK8sNADKey                  = "k8s.nad.key"
+	SpanAttrK8sNADName                 = "k8s.nad.name"
+	SpanAttrK8sNADNamespace            = "k8s.nad.namespace"
+	SpanAttrK8sNodeName                = "k8s.node.name"
+	SpanAttrK8sPodDeleted              = "k8s.pod.deleted"
+	SpanAttrK8sPodName                 = "k8s.pod.name"
+	SpanAttrK8sPodNamespace            = "k8s.pod.namespace"
+	SpanAttrK8sPodUID                  = "k8s.pod.uid"
+	SpanAttrOvnAddPort                 = "ovn.add_port"
+	SpanAttrOvnIPAMClaim               = "ovn.ipam.claim"
+	SpanAttrOvnIPAMClaimFound          = "ovn.ipam.claim.found"
+	SpanAttrOvnIPAMClaimHasIPs         = "ovn.ipam.claim.has_ips"
+	SpanAttrOvnIPAMClaimName           = "ovn.ipam.claim.name"
+	SpanAttrOvnIPRequestCount          = "ovn.ip_request.count"
+	SpanAttrOvnMACRequest              = "ovn.mac_request"
+	SpanAttrOvnNetworkName             = "ovn.network.name"
+	SpanAttrOvnNetworkPrimary          = "ovn.network.primary"
+	SpanAttrOvnNetworkRole             = "ovn.network.role"
+	SpanAttrOvnNetworkTopology         = "ovn.network.topology"
+	SpanAttrOvnNetworkUserDefined      = "ovn.network.user_defined"
+	SpanAttrOvnSkipReason              = "ovn.skip_reason"
+	SpanAttrOvnStaticIPRequest         = "ovn.static_ip_request"
+	SpanAttrOvnTunnelIDAllocated       = "ovn.tunnel_id.allocated"
+	SpanAttrPodAnnotationAlreadySet    = "pod.annotation.already_set"
+	SpanAttrPodAnnotationPatchAttempts = "pod.annotation.patch.attempts"
+	SpanAttrPodAnnotationUpdated       = "pod.annotation.updated"
+	SpanAttrPodAnnotationUpdateNeeded  = "pod.annotation.update_needed"
+	SpanAttrPodHostNetwork             = "pod.host_network"
+	SpanAttrPodScheduled               = "pod.scheduled"
+	SpanAttrRetryAttempt               = "retry.attempt"
+	SpanAttrRetryLoop                  = "retry.loop"
+
+	SpanEventPodAnnotationPatchRetry = "pod.annotation.patch.retry"
+)

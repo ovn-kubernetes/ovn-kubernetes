@@ -4,6 +4,7 @@
 package util
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -499,7 +500,7 @@ func GetK8sPodAllNetworkSelections(pod *corev1.Pod) ([]*nadapi.NetworkSelectionE
 
 // UpdatePodAnnotationWithRetry updates the pod annotation on the pod retrying
 // on conflict
-func UpdatePodAnnotationWithRetry(podLister listers.PodLister, kube kube.Interface, pod *corev1.Pod, podAnnotation *PodAnnotation, nadKey string) error {
+func UpdatePodAnnotationWithRetry(ctx context.Context, podLister listers.PodLister, kube kube.Interface, pod *corev1.Pod, podAnnotation *PodAnnotation, nadKey string) error {
 	updatePodAnnotationNoRollback := func(pod *corev1.Pod) (*corev1.Pod, func(), error) {
 		var err error
 		pod.Annotations, err = MarshalPodAnnotation(pod.Annotations, podAnnotation, nadKey)
@@ -510,6 +511,7 @@ func UpdatePodAnnotationWithRetry(podLister listers.PodLister, kube kube.Interfa
 	}
 
 	return UpdatePodWithRetryOrRollback(
+		ctx,
 		podLister,
 		kube,
 		pod,

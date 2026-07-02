@@ -142,13 +142,16 @@ func (pICL *podIPConfigList) delete(pICs ...podIPConfig) {
 func (c *Controller) onPodAdd(obj interface{}) {
 	pod, ok := obj.(*corev1.Pod)
 	if !ok {
-		utilruntime.HandleError(fmt.Errorf("expecting %T but received %T", &corev1.Pod{}, obj))
+		err := fmt.Errorf("expecting %T but received %T", &corev1.Pod{}, obj)
+		utilruntime.HandleError(err)
 		return
 	}
 	if pod == nil {
-		utilruntime.HandleError(errors.New("invalid Pod provided to onPodAdd()"))
+		err := errors.New("invalid Pod provided to onPodAdd()")
+		utilruntime.HandleError(err)
 		return
 	}
+
 	// if the pod does not have IPs AND there are no multus network status annotations found, skip it
 	if len(pod.Status.PodIPs) == 0 {
 		return
@@ -159,18 +162,22 @@ func (c *Controller) onPodAdd(obj interface{}) {
 func (c *Controller) onPodUpdate(oldObj, newObj interface{}) {
 	o, ok := oldObj.(*corev1.Pod)
 	if !ok {
-		utilruntime.HandleError(fmt.Errorf("expecting %T but received %T", &corev1.Pod{}, o))
+		err := fmt.Errorf("expecting %T but received %T", &corev1.Pod{}, oldObj)
+		utilruntime.HandleError(err)
 		return
 	}
 	n, ok := newObj.(*corev1.Pod)
 	if !ok {
-		utilruntime.HandleError(fmt.Errorf("expecting %T but received %T", &corev1.Pod{}, n))
+		err := fmt.Errorf("expecting %T but received %T", &corev1.Pod{}, newObj)
+		utilruntime.HandleError(err)
 		return
 	}
 	if o == nil || n == nil {
-		utilruntime.HandleError(errors.New("invalid Pod provided to onPodUpdate()"))
+		err := errors.New("invalid Pod provided to onPodUpdate()")
+		utilruntime.HandleError(err)
 		return
 	}
+
 	// if labels AND assigned Pod IPs AND the multus network status annotations are the same, skip processing changes to the pod.
 	if reflect.DeepEqual(o.Labels, n.Labels) &&
 		reflect.DeepEqual(o.Status.PodIPs, n.Status.PodIPs) {
@@ -184,17 +191,20 @@ func (c *Controller) onPodDelete(obj interface{}) {
 	if !ok {
 		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
 		if !ok {
-			utilruntime.HandleError(fmt.Errorf("couldn't get object from tombstone %#v", obj))
+			err := fmt.Errorf("couldn't get object from tombstone %#v", obj)
+			utilruntime.HandleError(err)
 			return
 		}
 		pod, ok = tombstone.Obj.(*corev1.Pod)
 		if !ok {
-			utilruntime.HandleError(fmt.Errorf("tombstone contained object that is not a Pod: %#v", tombstone.Obj))
+			err := fmt.Errorf("tombstone contained object that is not a Pod: %#v", tombstone.Obj)
+			utilruntime.HandleError(err)
 			return
 		}
 	}
 	if pod != nil {
 		c.podQueue.Add(pod)
+		return
 	}
 }
 

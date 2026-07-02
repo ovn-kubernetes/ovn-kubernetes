@@ -40,6 +40,7 @@ import (
 	zoneinterconnect "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/zone_interconnect"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/retry"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/syncmap"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/tracing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
@@ -113,15 +114,15 @@ func (h *layer2UserDefinedNetworkControllerEventHandler) IsResourceScheduled(obj
 // if any, yielded during object creation.
 // Given an object to add and a boolean specifying if the function was executed from iterateRetryResources
 func (h *layer2UserDefinedNetworkControllerEventHandler) AddResource(obj interface{}, fromRetryLoop bool) error {
-	_ = fromRetryLoop
-	return h.oc.AddUserDefinedNetworkResourceCommon(h.objType, obj)
+	ctx := tracing.ContextWithRetryLoop(context.Background(), fromRetryLoop)
+	return h.oc.AddUserDefinedNetworkResourceCommon(ctx, h.objType, obj)
 }
 
 // DeleteResource deletes the object from the cluster according to the delete logic of its resource type.
 // Given an object and optionally a cachedObj; cachedObj is the internal cache entry for this object,
 // used for now for pods and network policies.
 func (h *layer2UserDefinedNetworkControllerEventHandler) DeleteResource(obj, cachedObj interface{}) error {
-	return h.oc.DeleteUserDefinedNetworkResourceCommon(h.objType, obj, cachedObj)
+	return h.oc.DeleteUserDefinedNetworkResourceCommon(context.Background(), h.objType, obj, cachedObj)
 }
 
 // UpdateResource updates the specified object in the cluster to its version in newObj according to its
@@ -133,16 +134,22 @@ func (h *layer2UserDefinedNetworkControllerEventHandler) UpdateResource(oldObj, 
 	case factory.PodType:
 		newPod := newObj.(*corev1.Pod)
 		oldPod := oldObj.(*corev1.Pod)
-		if err := h.oc.ensurePodForUserDefinedNetwork(newPod, shouldAddPort(oldPod, newPod, inRetryCache)); err != nil {
+		ctx := tracing.ContextWithRetryLoop(context.Background(), inRetryCache)
+		if !h.oc.isPodScheduledinLocalZone(newPod) {
+			ctx = tracing.ContextWithSpansDisabled(ctx)
+		}
+		ctx = tracing.ContextWithOperation(ctx, tracing.OperationUpdate)
+		needsAdd := shouldAddPort(oldPod, newPod, inRetryCache)
+
+		if err := h.oc.ensurePodForUserDefinedNetwork(ctx, newPod, needsAdd); err != nil {
 			return err
 		}
-
 		if h.oc.isPodScheduledinLocalZone(newPod) {
 			return h.oc.updateLocalPodEvent(newPod)
 		}
 		return nil
 	default:
-		return h.oc.UpdateUserDefinedNetworkResourceCommon(h.objType, oldObj, newObj, inRetryCache)
+		return h.oc.UpdateUserDefinedNetworkResourceCommon(context.Background(), h.objType, oldObj, newObj)
 	}
 }
 

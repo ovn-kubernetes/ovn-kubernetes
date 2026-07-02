@@ -4,11 +4,15 @@
 package pod
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
 
 	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -27,6 +31,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/persistentips"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/tracing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -151,9 +156,14 @@ func (a *PodAllocator) GetNetworkRole(pod *corev1.Pod) (string, error) {
 
 // Reconcile allocates or releases IPs for pods updating the pod annotation
 // as necessary with all the additional information derived from those IPs
-func (a *PodAllocator) Reconcile(old, new *corev1.Pod) error {
+func (a *PodAllocator) Reconcile(ctx context.Context, old, new *corev1.Pod) error {
 	releaseFromAllocator := true
-	return a.reconcile(old, new, releaseFromAllocator)
+	return a.reconcile(ctx, old, new, releaseFromAllocator)
+}
+
+// ShouldReconcilePod reports whether pod allocation has work to do for the pod.
+func (a *PodAllocator) ShouldReconcilePod(pod *corev1.Pod) bool {
+	return util.PodScheduled(pod) && !util.PodWantsHostNetwork(pod)
 }
 
 // Sync initializes the allocator with pods that already exist on the cluster
@@ -169,7 +179,11 @@ func (a *PodAllocator) Sync(objs []interface{}) error {
 			klog.Errorf("Could not cast %T object to *corev1.Pod", obj)
 			continue
 		}
-		err := a.reconcile(nil, pod, releaseFromAllocator)
+		if !a.ShouldReconcilePod(pod) {
+			continue
+		}
+		ctx := tracing.ContextWithSpansDisabled(context.Background())
+		err := a.reconcile(ctx, nil, pod, releaseFromAllocator)
 		if err != nil {
 			klog.Errorf("Failed to sync pod %s/%s: %v", pod.Namespace, pod.Name, err)
 		}
@@ -178,31 +192,15 @@ func (a *PodAllocator) Sync(objs []interface{}) error {
 	return nil
 }
 
-func (a *PodAllocator) reconcile(old, new *corev1.Pod, releaseFromAllocator bool) error {
-	var pod *corev1.Pod
-	if old != nil {
-		pod = old
-	}
-	if new != nil {
-		pod = new
-	}
-
-	podScheduled := util.PodScheduled(pod)
-	podWantsHostNetwork := util.PodWantsHostNetwork(pod)
-
-	// nothing to do for a unscheduled or host network pods
-	if !podScheduled || podWantsHostNetwork {
-		return nil
-	}
-
+func (a *PodAllocator) podNetworkMapping(pod *corev1.Pod, isDelete bool) (bool, map[string]*nettypes.NetworkSelectionElement, error) {
 	var activeNetwork util.NetInfo
 	var err error
 
-	if new != nil {
+	if !isDelete {
 		if a.netInfo.IsPrimaryNetwork() {
 			activeNetwork, err = a.getActiveNetworkForPod(pod)
 			if err != nil {
-				return fmt.Errorf("failed looking for an active network: %w", err)
+				return false, nil, fmt.Errorf("failed looking for an active network: %w", err)
 			}
 		}
 	} else if a.netInfo.IsPrimaryNetwork() {
@@ -212,7 +210,7 @@ func (a *PodAllocator) reconcile(old, new *corev1.Pod, releaseFromAllocator bool
 		// annotations handled in GetPodNADToNetworkMappingWithActiveNetwork.
 		podNetworks, err := util.UnmarshalPodAnnotationAllNetworks(pod.Annotations)
 		if err != nil {
-			return err
+			return false, nil, err
 		}
 		for nadKey := range podNetworks {
 			networkName := a.networkManager.GetNetworkNameForNADKey(nadKey)
@@ -223,7 +221,7 @@ func (a *PodAllocator) reconcile(old, new *corev1.Pod, releaseFromAllocator bool
 		}
 		if activeNetwork == nil {
 			klog.V(5).Infof("Skipping pod cleanup for %s/%s on network %s", pod.Namespace, pod.Name, a.netInfo.GetNetworkName())
-			return nil
+			return false, nil, nil
 		}
 	}
 
@@ -235,20 +233,67 @@ func (a *PodAllocator) reconcile(old, new *corev1.Pod, releaseFromAllocator bool
 		a.networkManager.GetPrimaryNADForNamespace,
 	)
 	if err != nil {
+		return false, nil, fmt.Errorf("failed to get NAD to network mapping: %w", err)
+	}
+	return onNetwork, networkMap, nil
+}
+
+func (a *PodAllocator) reconcile(ctx context.Context, old, new *corev1.Pod, releaseFromAllocator bool) error {
+	var pod *corev1.Pod
+	if old != nil {
+		pod = old
+	}
+	if new != nil {
+		pod = new
+	}
+
+	onNetwork, networkMap, err := a.podNetworkMapping(pod, new == nil)
+	if err != nil {
 		a.recordPodErrorEvent(pod, err)
-		return fmt.Errorf("failed to get NAD to network mapping: %w", err)
+		return err
 	}
 
 	// nothing to do if not on this network
 	// Note: we are not considering a hotplug scenario where we would have to
 	// release IPs if the pod was unplugged from the network
 	if !onNetwork {
+		a.setPodReconcileSkipReason(ctx, "not_on_network")
 		return nil
 	}
 
-	// reconcile for each NAD
+	reconciledNADs := sets.New[string]()
+	for nadKey := range networkMap {
+		// For update events, skip already-annotated NADs; only reconcile NADs
+		// that are not yet present in k8s.ovn.org/pod-networks.
+		if old != nil && new != nil {
+			if _, err := util.UnmarshalPodAnnotation(new.Annotations, nadKey); err == nil {
+				reconciledNADs = reconciledNADs.Insert(nadKey)
+			}
+		}
+	}
+
+	if len(reconciledNADs) == len(networkMap) {
+		return nil
+	}
+
+	ctx = tracing.ContextWithSpanNamePrefix(ctx, tracing.ClusterManagerNetworkControllerPodSpanPrefix)
+	ctx, rootSpan := tracing.StartTrace(ctx, pod.Annotations)
+	a.setPodReconcileSpanAttrs(ctx, pod)
+	defer func() {
+		if err != nil {
+			rootSpan.RecordError(err)
+			rootSpan.SetStatus(codes.Error, err.Error())
+		}
+		rootSpan.End()
+	}()
+
+	// reconcile for each not yet reconciled NAD
 	for nadKey, network := range networkMap {
-		err = a.reconcileForNAD(old, new, nadKey, network, releaseFromAllocator)
+		if reconciledNADs.Has(nadKey) {
+			continue
+		}
+
+		err = a.reconcileForNAD(ctx, old, new, nadKey, network, releaseFromAllocator)
 		if err != nil {
 			return err
 		}
@@ -257,7 +302,24 @@ func (a *PodAllocator) reconcile(old, new *corev1.Pod, releaseFromAllocator bool
 	return nil
 }
 
-func (a *PodAllocator) reconcileForNAD(old, new *corev1.Pod, nadKey string, network *nettypes.NetworkSelectionElement, releaseIPsFromAllocator bool) error {
+func (a *PodAllocator) setPodReconcileSpanAttrs(ctx context.Context, pod *corev1.Pod) {
+	span := trace.SpanFromContext(ctx)
+	attrs := []attribute.KeyValue{
+		attribute.Bool(tracing.SpanAttrPodScheduled, util.PodScheduled(pod)),
+		attribute.Bool(tracing.SpanAttrPodHostNetwork, util.PodWantsHostNetwork(pod)),
+		attribute.String(tracing.SpanAttrOvnNetworkName, a.netInfo.GetNetworkName()),
+		attribute.String(tracing.SpanAttrOvnNetworkTopology, a.netInfo.TopologyType()),
+		attribute.Bool(tracing.SpanAttrOvnNetworkPrimary, a.netInfo.IsPrimaryNetwork()),
+		attribute.Bool(tracing.SpanAttrOvnNetworkUserDefined, a.netInfo.IsUserDefinedNetwork()),
+	}
+	span.SetAttributes(attrs...)
+}
+
+func (a *PodAllocator) setPodReconcileSkipReason(ctx context.Context, reason string) {
+	trace.SpanFromContext(ctx).SetAttributes(attribute.String(tracing.SpanAttrOvnSkipReason, reason))
+}
+
+func (a *PodAllocator) reconcileForNAD(ctx context.Context, old, new *corev1.Pod, nadKey string, network *nettypes.NetworkSelectionElement, releaseIPsFromAllocator bool) error {
 	var pod *corev1.Pod
 	if old != nil {
 		pod = old
@@ -269,14 +331,20 @@ func (a *PodAllocator) reconcileForNAD(old, new *corev1.Pod, nadKey string, netw
 	podCompleted := util.PodCompleted(pod)
 
 	if podCompleted || podDeleted {
-		return a.releasePodOnNAD(pod, nadKey, network, podDeleted, releaseIPsFromAllocator)
+		return a.releasePodOnNAD(ctx, pod, nadKey, network, podDeleted, releaseIPsFromAllocator)
 	}
 
-	return a.allocatePodOnNAD(pod, nadKey, network)
+	return a.allocatePodOnNAD(ctx, pod, nadKey, network)
 }
 
-func (a *PodAllocator) releasePodOnNAD(pod *corev1.Pod, nadKey string, network *nettypes.NetworkSelectionElement,
+func (a *PodAllocator) releasePodOnNAD(ctx context.Context, pod *corev1.Pod, nadKey string, network *nettypes.NetworkSelectionElement,
 	podDeleted, releaseFromAllocator bool) error {
+	_, span := a.startPodNetworkSpan(ctx, tracing.SpanNameReleasePodNetwork, pod, nadKey, network)
+	defer span.End()
+	span.SetAttributes(
+		attribute.Bool(tracing.SpanAttrK8sPodDeleted, podDeleted),
+	)
+
 	podAnnotation, _ := util.UnmarshalPodAnnotation(pod.Annotations, nadKey)
 	if podAnnotation == nil {
 		// track release pods even if they have no annotation in case a user
@@ -307,6 +375,8 @@ func (a *PodAllocator) releasePodOnNAD(pod *corev1.Pod, nadKey string, network *
 		if apierrors.IsNotFound(err) {
 			klog.Errorf("Failed to retrieve IPAMClaim %q but will release IPs: %v", network.IPAMClaimReference, err)
 		} else if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			return fmt.Errorf("failed to get IPAMClaim %s/%s: %w", network.Namespace, network.IPAMClaimReference, err)
 		}
 	}
@@ -332,6 +402,8 @@ func (a *PodAllocator) releasePodOnNAD(pod *corev1.Pod, nadKey string, network *
 	if doReleaseIPs {
 		err := a.ipAllocator.ReleaseIPs(a.netInfo.GetNetworkName(), podAnnotation.IPs)
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			return fmt.Errorf("failed to release ips %v for pod %s/%s and NAD key %s: %w",
 				util.StringSlice(podAnnotation.IPs),
 				pod.Name,
@@ -345,6 +417,8 @@ func (a *PodAllocator) releasePodOnNAD(pod *corev1.Pod, nadKey string, network *
 
 	if doRelease {
 		if err := a.podAnnotationAllocator.ReleasePodReservedMacAddress(pod, podAnnotation.MAC); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			return fmt.Errorf(`failed to release pod "%s/%s" mac %q: %v`,
 				pod.Namespace, pod.Name, podAnnotation.MAC, err)
 		}
@@ -359,7 +433,10 @@ func (a *PodAllocator) releasePodOnNAD(pod *corev1.Pod, nadKey string, network *
 	return nil
 }
 
-func (a *PodAllocator) allocatePodOnNAD(pod *corev1.Pod, nadKey string, network *nettypes.NetworkSelectionElement) error {
+func (a *PodAllocator) allocatePodOnNAD(ctx context.Context, pod *corev1.Pod, nadKey string, network *nettypes.NetworkSelectionElement) error {
+	ctx, span := a.startPodNetworkSpan(ctx, tracing.SpanNameAllocatePodNetwork, pod, nadKey, network)
+	defer span.End()
+
 	var ipAllocator subnet.NamedAllocator
 	if util.DoesNetworkRequireIPAM(a.netInfo) {
 		ipAllocator = a.ipAllocator.ForSubnet(a.netInfo.GetNetworkName())
@@ -375,8 +452,11 @@ func (a *PodAllocator) allocatePodOnNAD(pod *corev1.Pod, nadKey string, network 
 	reallocate := false
 	networkRole, err := a.GetNetworkRole(pod)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return err
 	}
+	span.SetAttributes(attribute.String(tracing.SpanAttrOvnNetworkRole, networkRole))
 
 	if networkRole == types.NetworkRoleNone {
 		// pod not on this controller, nothing to do
@@ -385,10 +465,13 @@ func (a *PodAllocator) allocatePodOnNAD(pod *corev1.Pod, nadKey string, network 
 
 	node, err := a.nodeLister.Get(pod.Spec.NodeName)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("failed to get node %q: %w", pod.Spec.NodeName, err)
 	}
 
 	updatedPod, podAnnotation, err := a.podAnnotationAllocator.AllocatePodAnnotationWithTunnelID(
+		ctx,
 		ipAllocator,
 		idAllocator,
 		node,
@@ -406,8 +489,13 @@ func (a *PodAllocator) allocatePodOnNAD(pod *corev1.Pod, nadKey string, network 
 			errors.Is(err, podallocator.ErrIPFamilyMismatch) {
 			a.recordPodErrorEvent(pod, err)
 		}
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return err
 	}
+	span.SetAttributes(
+		attribute.Bool(tracing.SpanAttrPodAnnotationUpdated, updatedPod != nil),
+	)
 
 	if updatedPod != nil {
 		klog.V(5).Infof("Allocated IP addresses %v, mac address %s, gateways %v, routes %s and tunnel id %d for pod %s/%s on NAD key %s",
@@ -421,6 +509,40 @@ func (a *PodAllocator) allocatePodOnNAD(pod *corev1.Pod, nadKey string, network 
 	}
 
 	return err
+}
+
+func (a *PodAllocator) startPodNetworkSpan(ctx context.Context, name string, pod *corev1.Pod, nadKey string, network *nettypes.NetworkSelectionElement) (context.Context, trace.Span) {
+	ctx, span := tracing.StartSpan(ctx, name)
+	attrs := append(
+		tracing.PodAttrs(pod.Namespace, pod.Name, string(pod.UID)),
+		attribute.String(tracing.SpanAttrOvnNetworkName, a.netInfo.GetNetworkName()),
+		attribute.String(tracing.SpanAttrOvnNetworkTopology, a.netInfo.TopologyType()),
+		attribute.Bool(tracing.SpanAttrOvnNetworkPrimary, a.netInfo.IsPrimaryNetwork()),
+		attribute.Bool(tracing.SpanAttrOvnNetworkUserDefined, a.netInfo.IsUserDefinedNetwork()),
+	)
+	if pod.Spec.NodeName != "" {
+		attrs = append(attrs, attribute.String(tracing.SpanAttrK8sNodeName, pod.Spec.NodeName))
+	}
+	if nadKey != "" {
+		attrs = append(attrs, attribute.String(tracing.SpanAttrK8sNADKey, nadKey))
+	}
+	if network != nil {
+		if network.Name != "" {
+			attrs = append(attrs, attribute.String(tracing.SpanAttrK8sNADName, network.Name))
+		}
+		if network.Namespace != "" {
+			attrs = append(attrs, attribute.String(tracing.SpanAttrK8sNADNamespace, network.Namespace))
+		}
+		if network.IPAMClaimReference != "" {
+			attrs = append(attrs, attribute.String(tracing.SpanAttrOvnIPAMClaimName, network.IPAMClaimReference))
+		}
+		attrs = append(attrs,
+			attribute.Int(tracing.SpanAttrOvnIPRequestCount, len(network.IPRequest)),
+			attribute.Bool(tracing.SpanAttrOvnMACRequest, network.MacRequest != ""),
+		)
+	}
+	span.SetAttributes(attrs...)
+	return ctx, span
 }
 
 func (a *PodAllocator) addReleasedPod(nadKey, uid string) {
