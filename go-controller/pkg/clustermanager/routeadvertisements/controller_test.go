@@ -2409,13 +2409,7 @@ exit
 			cache.WaitForCacheSync(context.Background().Done(), hasSynced...)
 
 			err = nm.Start()
-			// some test cases start with a bad RA status, avoid asserting
-			// initial sync in this case as it will fail
-			if tt.ra == nil || tt.ra.Status == nil || *tt.ra.Status == metav1.ConditionTrue {
-				g.Expect(err).ToNot(gomega.HaveOccurred())
-			} else {
-				g.Expect(err).To(gomega.HaveOccurred())
-			}
+			g.Expect(err).ToNot(gomega.HaveOccurred())
 			// we just need the inital sync
 			nm.Stop()
 
