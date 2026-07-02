@@ -103,7 +103,7 @@ func (oc *DefaultNetworkController) PodExpectedOnNetwork(pod *corev1.Pod) (bool,
 	return util.PodScheduled(pod) && oc.podExpectedInLogicalCache(pod), nil
 }
 
-func (oc *DefaultNetworkController) ReconcilePod(oldPod, newPod *corev1.Pod, cachedState interface{}) (err error) {
+func (oc *DefaultNetworkController) ReconcilePod(oldPod, newPod *corev1.Pod, lastState interface{}) (state interface{}, err error) {
 	recordedPod := oc.recordPodReconcileStart(oldPod, newPod)
 	defer func() {
 		if err == nil && recordedPod != nil {
@@ -113,26 +113,26 @@ func (oc *DefaultNetworkController) ReconcilePod(oldPod, newPod *corev1.Pod, cac
 
 	if newPod == nil {
 		if oldPod == nil {
-			return fmt.Errorf("pod delete reconcile for network %s is missing pod", oc.GetNetworkName())
+			return nil, fmt.Errorf("pod delete reconcile for network %s is missing pod", oc.GetNetworkName())
 		}
 		var portInfo *lpInfo
-		if cachedState != nil {
+		if lastState != nil {
 			var ok bool
-			portInfo, ok = cachedState.(*lpInfo)
+			portInfo, ok = lastState.(*lpInfo)
 			if !ok {
-				return fmt.Errorf("pod delete reconcile for network %s expected *lpInfo cache state but got %T", oc.GetNetworkName(), cachedState)
+				return nil, fmt.Errorf("pod delete reconcile for network %s expected *lpInfo cache state but got %T", oc.GetNetworkName(), lastState)
 			}
 		}
-		return oc.reconcileDeletedPod(oldPod, portInfo)
+		return nil, oc.reconcileDeletedPod(oldPod, portInfo)
 	}
 	addPort := oc.shouldEnsurePodLogicalPort(newPod, ovntypes.DefaultNetworkName)
 	if err := oc.ensurePod(newPod, addPort); err != nil {
-		return err
+		return nil, err
 	}
 	if addPort && oc.eIPC != nil {
 		oc.eIPC.addEgressIPPodRetry(newPod, "pod logical port reconcile")
 	}
-	return nil
+	return oc.getPortInfo(newPod), nil
 }
 
 func (oc *DefaultNetworkController) recordPodReconcileStart(oldPod, newPod *corev1.Pod) *corev1.Pod {

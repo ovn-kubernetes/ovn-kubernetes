@@ -25,13 +25,16 @@ import (
 // NetworkHandler reconciles pod state for a single network.
 type NetworkHandler interface {
 	GetNetworkName() string
+	// SyncPods performs the initial full-network sync before per-pod
+	// reconciliation is queued for the handler.
 	SyncPods(pods []*corev1.Pod) error
-	// GetPodState returns the handler's cached state for the pod. It must
-	// return an untyped nil when it has no state for the pod, so callers can
-	// compare the result against nil without knowing the concrete type.
-	GetPodState(pod *corev1.Pod) interface{}
+	// PodExpectedOnNetwork returns whether the pod should exist on the network.
 	PodExpectedOnNetwork(pod *corev1.Pod) (bool, error)
-	ReconcilePod(oldPod, newPod *corev1.Pod, cachedState interface{}) error
+	// ReconcilePod is the single level-driven entry point. newPod == nil means
+	// teardown, with lastState carrying the state returned by the last
+	// successful reconcile of the pod, if any. On success it returns the state
+	// to cache for the eventual teardown.
+	ReconcilePod(oldPod, newPod *corev1.Pod, lastState interface{}) (interface{}, error)
 }
 
 // ErrorRecorder records reconcile failures for handlers that expose
@@ -45,15 +48,90 @@ type RelatedPodHandler interface {
 	RelatedPodKeys(pod *corev1.Pod) ([]string, error)
 }
 
-type appliedPodState struct {
-	// pod is the last successfully applied pod, nil when every reconcile
-	// attempt for the pod has failed so far.
-	pod *corev1.Pod
-	// latestPod is the latest informer object seen for the pod. It is kept
-	// even when reconciliation fails so delete teardown always has a pod
-	// object to clean up partially applied state with.
-	latestPod *corev1.Pod
-	state     interface{}
+// podEntry is the level-driven record for a pod on a network. All fields are
+// guarded by Controller.stateMu. Pod objects are shared informer references
+// and MUST NOT be modified.
+type podEntry struct {
+	// applied is the last successfully reconciled pod, nil while no reconcile
+	// has succeeded yet.
+	applied *corev1.Pod
+	// lastSeen is the newest informer object observed for the pod, recorded on
+	// every reconcile attempt and informer update so teardown always has a pod
+	// object even when every reconcile failed.
+	lastSeen *corev1.Pod
+	// state is the handler state returned by the last successful reconcile.
+	state interface{}
+	// lastErr dedups error events to one per failure streak.
+	lastErr string
+}
+
+// podEntryUID returns the UID the entry tracks, preferring the last
+// successfully applied pod and falling back to the last seen one.
+func podEntryUID(entry *podEntry) apitypes.UID {
+	if entry.applied != nil {
+		return entry.applied.UID
+	}
+	if entry.lastSeen != nil {
+		return entry.lastSeen.UID
+	}
+	return ""
+}
+
+// activeNetwork tracks a registered handler and its lifecycle: in-flight
+// reconciles for deregistration draining, and the initial-listing barrier.
+type activeNetwork struct {
+	handler NetworkHandler
+
+	mu     sync.Mutex
+	closed bool
+	wg     sync.WaitGroup
+	// pending tracks initial-listing pods not yet attempted; done is closed
+	// once every one of them has been reconciled at least once, successfully
+	// or not. Failed pods stay on the retry queue like any other.
+	pending map[string]struct{}
+	done    chan struct{}
+}
+
+// enter reserves an in-flight reconcile slot; it fails once the network is
+// being deregistered.
+func (n *activeNetwork) enter() bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.closed {
+		return false
+	}
+	n.wg.Add(1)
+	return true
+}
+
+func (n *activeNetwork) leave() {
+	n.wg.Done()
+}
+
+// markAttempted records that a pod from the initial listing has been
+// reconciled at least once and closes the barrier when the listing is done.
+func (n *activeNetwork) markAttempted(podKey string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.pending == nil {
+		return
+	}
+	delete(n.pending, podKey)
+	if len(n.pending) == 0 {
+		n.pending = nil
+		close(n.done)
+	}
+}
+
+// close marks the network deregistered and releases any barrier waiters.
+func (n *activeNetwork) close() {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.closed = true
+	if n.pending != nil {
+		n.pending = nil
+		close(n.done)
+	}
 }
 
 // Controller reconciles pod state for all registered networks.
@@ -63,23 +141,18 @@ type Controller struct {
 	podController controller.Controller
 	podLister     corev1listers.PodLister
 
-	handlers *syncmap.SyncMap[NetworkHandler]
+	// podLocks serializes reconciles per pod across networks: a pod's network
+	// controllers all patch the same pod-networks annotation.
 	podLocks *syncmap.SyncMap[struct{}]
 
-	// netLocksMu guards netLocks. Each network's RWMutex serializes handler
-	// registration/deregistration (write lock) against in-flight reconciles
-	// (read lock) while still allowing reconciles of the same network to run
-	// concurrently.
-	netLocksMu sync.Mutex
-	netLocks   map[string]*sync.RWMutex
+	// networksMu guards networks.
+	networksMu sync.RWMutex
+	networks   map[string]*activeNetwork
 
-	stateMu     sync.RWMutex
-	appliedPods map[string]map[string]*appliedPodState
-	// recordedPodErrors tracks the last recorded reconcile error per network
-	// and pod. Reconciles retry indefinitely, so events are recorded only
-	// when a pod's failure streak starts or its error changes; recorders may
-	// block or flood otherwise. Guarded by stateMu.
-	recordedPodErrors map[string]map[string]string
+	// stateMu guards entries and every podEntry.
+	stateMu sync.RWMutex
+	// entries is keyed by network name, then pod key.
+	entries map[string]map[string]*podEntry
 
 	startMu sync.Mutex
 	started bool
@@ -91,12 +164,11 @@ const scopedPodQueueKeySeparator = "|"
 func NewController(wf *factory.WatchFactory, name string) *Controller {
 	podInformer := wf.PodCoreInformer()
 	c := &Controller{
-		name:        name,
-		podLister:   podInformer.Lister(),
-		handlers:    syncmap.NewSyncMap[NetworkHandler](),
-		podLocks:    syncmap.NewSyncMap[struct{}](),
-		netLocks:    map[string]*sync.RWMutex{},
-		appliedPods: map[string]map[string]*appliedPodState{},
+		name:      name,
+		podLister: podInformer.Lister(),
+		podLocks:  syncmap.NewSyncMap[struct{}](),
+		networks:  map[string]*activeNetwork{},
+		entries:   map[string]map[string]*podEntry{},
 	}
 
 	podControllerConfig := &controller.ControllerConfig[corev1.Pod]{
@@ -117,7 +189,7 @@ func NewPodController(wf *factory.WatchFactory) *Controller {
 	return NewController(wf, "pod-network")
 }
 
-// Start starts the pod worker.
+// Start starts the pod workers.
 func (c *Controller) Start() error {
 	c.startMu.Lock()
 	defer c.startMu.Unlock()
@@ -133,7 +205,7 @@ func (c *Controller) Start() error {
 	return nil
 }
 
-// Stop stops the pod worker.
+// Stop stops the pod workers.
 func (c *Controller) Stop() {
 	c.startMu.Lock()
 	c.started = false
@@ -166,93 +238,127 @@ func (c *Controller) ReconcilePendingPods(netName string) error {
 }
 
 func (c *Controller) podNeedsUpdate(_, newPod *corev1.Pod) bool {
-	// Keep same-UID delete teardown using the latest informer state while still
+	// Keep same-UID teardown using the latest informer state while still
 	// enqueueing every pod update.
-	c.refreshAppliedPodFromInformer(newPod)
+	c.refreshLastSeenFromInformer(newPod)
 	return true
 }
 
-// netLock returns the RWMutex for a network, creating it when needed.
-// Entries are never removed: deleting one could let a reconcile holding the
-// old lock run concurrently with a re-registration under a fresh lock. The
-// map is bounded by the set of network names ever registered.
-func (c *Controller) netLock(netName string) *sync.RWMutex {
-	c.netLocksMu.Lock()
-	defer c.netLocksMu.Unlock()
-	if c.netLocks == nil {
-		c.netLocks = map[string]*sync.RWMutex{}
-	}
-	lock := c.netLocks[netName]
-	if lock == nil {
-		lock = &sync.RWMutex{}
-		c.netLocks[netName] = lock
-	}
-	return lock
-}
-
-// RegisterNetworkController registers or replaces a per-network pod handler.
-func (c *Controller) RegisterNetworkController(handler NetworkHandler) error {
+// RegisterNetworkController registers a per-network pod handler. It syncs the
+// handler against a full pod listing, publishes it and queues every listed pod
+// for reconciliation. The returned channel is closed once every listed pod has
+// been reconciled at least once, successfully or not; callers that depend on
+// pods being applied before their own bootstrap may wait on it, provided the
+// controller has been started.
+func (c *Controller) RegisterNetworkController(handler NetworkHandler) (<-chan struct{}, error) {
 	if handler == nil {
-		return fmt.Errorf("%s: nil pod handler registration", c.name)
+		return nil, fmt.Errorf("%s: nil pod handler registration", c.name)
 	}
 	netName := handler.GetNetworkName()
-	lock := c.netLock(netName)
-	lock.Lock()
-	defer lock.Unlock()
-	if existing, ok := c.handlers.Load(netName); ok && existing != nil {
+
+	c.networksMu.Lock()
+	if _, ok := c.networks[netName]; ok {
+		c.networksMu.Unlock()
 		panic(fmt.Sprintf("%s: duplicate pod handler registration for network %q", c.name, netName))
 	}
-	c.handlers.Store(netName, handler)
-	if err := c.bootstrapNetwork(netName, handler); err != nil {
-		c.handlers.Delete(netName)
-		return fmt.Errorf("%s: failed to bootstrap network %s: %w", c.name, netName, err)
+	c.networksMu.Unlock()
+
+	pods, err := c.podLister.List(labels.Everything())
+	if err != nil {
+		return nil, fmt.Errorf("%s: failed to list pods to bootstrap network %s: %w", c.name, netName, err)
 	}
-	return nil
+	if err := handler.SyncPods(pods); err != nil {
+		return nil, fmt.Errorf("%s: failed to bootstrap network %s: %w", c.name, netName, err)
+	}
+
+	net := &activeNetwork{
+		handler: handler,
+		pending: map[string]struct{}{},
+		done:    make(chan struct{}),
+	}
+	podKeys := make([]string, 0, len(pods))
+	for _, pod := range pods {
+		key, err := cache.MetaNamespaceKeyFunc(pod)
+		if err != nil {
+			return nil, fmt.Errorf("%s: failed to get pod key for %s/%s: %w", c.name, pod.Namespace, pod.Name, err)
+		}
+		podKeys = append(podKeys, key)
+		net.pending[key] = struct{}{}
+	}
+	if len(net.pending) == 0 {
+		net.pending = nil
+		close(net.done)
+	}
+
+	c.networksMu.Lock()
+	if _, ok := c.networks[netName]; ok {
+		c.networksMu.Unlock()
+		panic(fmt.Sprintf("%s: duplicate pod handler registration for network %q", c.name, netName))
+	}
+	c.networks[netName] = net
+	c.networksMu.Unlock()
+
+	for _, key := range podKeys {
+		c.ReconcileNetwork(key, netName)
+	}
+	return net.done, nil
 }
 
-// DeregisterNetworkController removes a per-network pod handler and clears
-// associated applied-state tracking.
+// DeregisterNetworkController removes a per-network pod handler, waits for its
+// in-flight reconciles to drain and clears associated pod state tracking.
 func (c *Controller) DeregisterNetworkController(netName string) {
-	lock := c.netLock(netName)
-	lock.Lock()
-	defer lock.Unlock()
-	c.handlers.Delete(netName)
+	c.networksMu.Lock()
+	net := c.networks[netName]
+	delete(c.networks, netName)
+	c.networksMu.Unlock()
+	if net == nil {
+		return
+	}
+	net.close()
+	net.wg.Wait()
+
 	c.stateMu.Lock()
-	delete(c.appliedPods, netName)
-	delete(c.recordedPodErrors, netName)
+	delete(c.entries, netName)
 	c.stateMu.Unlock()
+}
+
+func (c *Controller) getNetwork(netName string) *activeNetwork {
+	c.networksMu.RLock()
+	defer c.networksMu.RUnlock()
+	return c.networks[netName]
+}
+
+func (c *Controller) networkNames() []string {
+	c.networksMu.RLock()
+	defer c.networksMu.RUnlock()
+	names := make([]string, 0, len(c.networks))
+	for name := range c.networks {
+		names = append(names, name)
+	}
+	return names
 }
 
 func (c *Controller) reconcilePod(key string) error {
 	podKey, netName := parseScopedPodQueueKey(key)
 	if netName == "" {
-		for _, networkName := range c.handlers.GetKeys() {
+		for _, networkName := range c.networkNames() {
 			c.ReconcileNetwork(podKey, networkName)
 		}
 		return c.reconcileRelatedPods(podKey)
 	}
 
-	// Take a read lock so reconciles of the same network run concurrently
-	// while handler (de)registration is excluded. Try-lock so queue workers
-	// requeue instead of blocking behind a long synchronous bootstrap.
-	lock := c.netLock(netName)
-	if !lock.TryRLock() {
-		return fmt.Errorf("%s: network %s is busy registering, requeueing pod %s", c.name, netName, podKey)
-	}
-	defer lock.RUnlock()
-	handler, ok := c.handlers.Load(netName)
-	if !ok || handler == nil {
+	net := c.getNetwork(netName)
+	if net == nil || !net.enter() {
 		return nil
 	}
-	return c.reconcilePodForNetworkWithPodLock(handler, podKey, netName)
-}
+	defer net.leave()
+	defer net.markAttempted(podKey)
 
-func (c *Controller) reconcilePodForNetworkWithPodLock(handler NetworkHandler, podKey, netName string) error {
 	// A pod's network controllers all patch the same pod-networks annotation.
 	// Serialize by pod key so per-network reconciles cannot clobber each other.
 	c.podLocks.LockKey(podKey)
 	defer c.podLocks.UnlockKey(podKey)
-	return c.reconcilePodForNetwork(handler, podKey, netName)
+	return c.reconcilePodForNetwork(net.handler, podKey, netName)
 }
 
 func (c *Controller) reconcileRelatedPods(podKey string) error {
@@ -268,12 +374,12 @@ func (c *Controller) reconcileRelatedPods(podKey string) error {
 		return err
 	}
 
-	for _, networkName := range c.handlers.GetKeys() {
-		handler, ok := c.handlers.Load(networkName)
-		if !ok || handler == nil {
+	for _, networkName := range c.networkNames() {
+		net := c.getNetwork(networkName)
+		if net == nil {
 			continue
 		}
-		relatedHandler, ok := handler.(RelatedPodHandler)
+		relatedHandler, ok := net.handler.(RelatedPodHandler)
 		if !ok {
 			continue
 		}
@@ -303,91 +409,59 @@ func (c *Controller) reconcilePodForNetwork(handler NetworkHandler, podKey, netN
 	}
 	podFound := err == nil
 
-	applied := c.getAppliedPod(netName, podKey)
 	if !podFound {
-		if applied == nil {
-			return nil
-		}
-		return c.reconcileDelete(handler, podKey, netName, applied)
+		return c.teardown(handler, podKey, netName, nil)
 	}
 
 	expected, err := handler.PodExpectedOnNetwork(pod)
 	if err != nil {
+		c.markSeen(netName, podKey, pod)
 		c.recordPodError(handler, netName, podKey, pod, "ErrorUpdatingResource", err)
 		return err
 	}
 
-	if applied != nil && appliedPodUID(applied) != pod.UID {
-		if err := c.reconcileDelete(handler, podKey, netName, applied); err != nil {
+	if uid := c.entryUID(netName, podKey); uid != "" && uid != pod.UID {
+		// The pod was recreated under the same name; tear the old instance
+		// down before reconciling the new one.
+		if err := c.teardown(handler, podKey, netName, nil); err != nil {
 			return err
 		}
-		applied = nil
 	}
 
 	if !expected {
-		if applied == nil {
-			if util.PodCompleted(pod) {
-				return c.reconcileAbsent(handler, podKey, netName, nil, pod)
-			}
-			return nil
+		// Tear down whatever the entry knows about; completed pods without an
+		// entry still get a best-effort teardown with the informer object.
+		var fallbackPod *corev1.Pod
+		if util.PodCompleted(pod) {
+			fallbackPod = pod
 		}
-		return c.reconcileAbsent(handler, podKey, netName, applied, nil)
+		return c.teardown(handler, podKey, netName, fallbackPod)
 	}
 
-	var oldPod *corev1.Pod
-	if applied != nil {
-		oldPod = applied.pod
-	}
-	if err := handler.ReconcilePod(oldPod, pod, nil); err != nil {
+	applied, state := c.markSeen(netName, podKey, pod)
+	newState, err := handler.ReconcilePod(applied, pod, state)
+	if err != nil {
 		reason := "ErrorAddingResource"
-		if oldPod != nil {
+		if applied != nil {
 			reason = "ErrorUpdatingResource"
 		}
 		c.recordPodError(handler, netName, podKey, pod, reason, err)
-		// Remember the attempted pod so a delete arriving before a successful
-		// retry still tears down partially applied state.
-		c.setAttemptedPod(netName, podKey, pod)
 		return err
 	}
-	c.setAppliedPod(netName, podKey, pod, handler.GetPodState(pod))
+	c.markApplied(netName, podKey, pod, newState)
 	return nil
 }
 
-// appliedPodUID returns the UID the applied-state entry tracks, preferring the
-// last successfully applied pod and falling back to the last attempted one.
-func appliedPodUID(applied *appliedPodState) apitypes.UID {
-	if applied.pod != nil {
-		return applied.pod.UID
-	}
-	if applied.latestPod != nil {
-		return applied.latestPod.UID
-	}
-	return ""
-}
-
-func (c *Controller) reconcileDelete(handler NetworkHandler, podKey, netName string, applied *appliedPodState) error {
-	return c.reconcileAbsent(handler, podKey, netName, applied, nil)
-}
-
-func (c *Controller) reconcileAbsent(handler NetworkHandler, podKey, netName string, applied *appliedPodState, fallbackPod *corev1.Pod) error {
-	var state interface{}
-	deletePod := fallbackPod
-	if applied != nil {
-		switch {
-		case applied.pod != nil:
-			deletePod = applied.pod
-			state = applied.state
-			if applied.latestPod != nil && applied.latestPod.UID == applied.pod.UID {
-				deletePod = applied.latestPod
-			}
-		case applied.latestPod != nil:
-			// The pod was attempted but never successfully applied. Tear down
-			// best-effort so partially applied state does not leak.
-			deletePod = applied.latestPod
-		}
+// teardown reconciles the pod as absent using the entry's best available pod
+// object, or fallbackPod when no entry exists. On success it requeues related
+// pods and clears the entry.
+func (c *Controller) teardown(handler NetworkHandler, podKey, netName string, fallbackPod *corev1.Pod) error {
+	deletePod, state := c.teardownPod(netName, podKey)
+	if deletePod == nil {
+		deletePod = fallbackPod
 	}
 	if deletePod != nil {
-		if err := handler.ReconcilePod(deletePod, nil, state); err != nil {
+		if _, err := handler.ReconcilePod(deletePod, nil, state); err != nil {
 			c.recordPodError(handler, netName, podKey, deletePod, "ErrorDeletingResource", err)
 			return err
 		}
@@ -396,7 +470,7 @@ func (c *Controller) reconcileAbsent(handler NetworkHandler, podKey, netName str
 		// is restored promptly.
 		c.requeueRelatedPods(handler, netName, podKey, deletePod)
 	}
-	c.deleteAppliedPod(netName, podKey)
+	c.deleteEntry(netName, podKey)
 	return nil
 }
 
@@ -420,6 +494,9 @@ func (c *Controller) requeueRelatedPods(handler NetworkHandler, netName, podKey 
 	}
 }
 
+// recordPodError records a reconcile failure once per failure streak:
+// reconciles retry indefinitely and must not flood the recorder with
+// duplicate events.
 func (c *Controller) recordPodError(handler NetworkHandler, netName, podKey string, pod *corev1.Pod, reason string, err error) {
 	if pod == nil || err == nil {
 		return
@@ -428,135 +505,103 @@ func (c *Controller) recordPodError(handler NetworkHandler, netName, podKey stri
 	if !ok {
 		return
 	}
-	if !c.markRecordedPodError(netName, podKey, reason+": "+err.Error()) {
+	errMsg := reason + ": " + err.Error()
+	c.stateMu.Lock()
+	entry := c.ensureEntryLocked(netName, podKey)
+	if entry.lastErr == errMsg {
+		c.stateMu.Unlock()
 		return
 	}
+	entry.lastErr = errMsg
+	c.stateMu.Unlock()
 	recorder.RecordPodError(pod, reason, err)
 }
 
-// markRecordedPodError returns true when the error starts a failure streak or
-// differs from the last recorded error for the pod on the network.
-func (c *Controller) markRecordedPodError(netName, podKey, errMsg string) bool {
-	c.stateMu.Lock()
-	defer c.stateMu.Unlock()
-	if c.recordedPodErrors == nil {
-		c.recordedPodErrors = map[string]map[string]string{}
-	}
-	pods := c.recordedPodErrors[netName]
+// ensureEntryLocked returns the entry for the pod on the network, creating it
+// when needed. Callers must hold stateMu.
+func (c *Controller) ensureEntryLocked(netName, podKey string) *podEntry {
+	pods := c.entries[netName]
 	if pods == nil {
-		pods = map[string]string{}
-		c.recordedPodErrors[netName] = pods
+		pods = map[string]*podEntry{}
+		c.entries[netName] = pods
 	}
-	if pods[podKey] == errMsg {
-		return false
+	entry := pods[podKey]
+	if entry == nil {
+		entry = &podEntry{}
+		pods[podKey] = entry
 	}
-	pods[podKey] = errMsg
-	return true
+	return entry
 }
 
-// clearRecordedPodError resets error-event dedup after a successful reconcile.
-// Callers must hold stateMu.
-func (c *Controller) clearRecordedPodError(netName, podKey string) {
-	pods := c.recordedPodErrors[netName]
+// entryUID returns the UID tracked for the pod on the network, empty when
+// nothing is tracked.
+func (c *Controller) entryUID(netName, podKey string) apitypes.UID {
+	c.stateMu.RLock()
+	defer c.stateMu.RUnlock()
+	entry := c.entries[netName][podKey]
+	if entry == nil {
+		return ""
+	}
+	return podEntryUID(entry)
+}
+
+// markSeen records the pod as the latest observed object before a reconcile
+// attempt, so a later teardown always has a pod object even when every
+// reconcile failed. It returns the last applied pod and state for the attempt.
+func (c *Controller) markSeen(netName, podKey string, pod *corev1.Pod) (*corev1.Pod, interface{}) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	entry := c.ensureEntryLocked(netName, podKey)
+	entry.lastSeen = pod
+	return entry.applied, entry.state
+}
+
+// markApplied records a successful reconcile and resets error-event dedup.
+func (c *Controller) markApplied(netName, podKey string, pod *corev1.Pod, state interface{}) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	entry := c.ensureEntryLocked(netName, podKey)
+	entry.applied = pod
+	entry.lastSeen = pod
+	entry.state = state
+	entry.lastErr = ""
+}
+
+// teardownPod returns the best pod object and state to tear down with: the
+// latest observed object when it matches the applied pod's UID, otherwise the
+// applied pod itself, otherwise the last attempted object with no state.
+func (c *Controller) teardownPod(netName, podKey string) (*corev1.Pod, interface{}) {
+	c.stateMu.RLock()
+	defer c.stateMu.RUnlock()
+	entry := c.entries[netName][podKey]
+	if entry == nil {
+		return nil, nil
+	}
+	if entry.applied == nil {
+		return entry.lastSeen, nil
+	}
+	if entry.lastSeen != nil && entry.lastSeen.UID == entry.applied.UID {
+		return entry.lastSeen, entry.state
+	}
+	return entry.applied, entry.state
+}
+
+func (c *Controller) deleteEntry(netName, podKey string) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	pods := c.entries[netName]
 	if pods == nil {
 		return
 	}
 	delete(pods, podKey)
 	if len(pods) == 0 {
-		delete(c.recordedPodErrors, netName)
+		delete(c.entries, netName)
 	}
 }
 
-func (c *Controller) bootstrapNetwork(netName string, handler NetworkHandler) error {
-	pods, err := c.podLister.List(labels.Everything())
-	if err != nil {
-		return err
-	}
-	if err := handler.SyncPods(pods); err != nil {
-		return err
-	}
-
-	for _, pod := range pods {
-		expected, err := handler.PodExpectedOnNetwork(pod)
-		if err != nil {
-			return err
-		}
-		if !expected {
-			continue
-		}
-		key, err := cache.MetaNamespaceKeyFunc(pod)
-		if err != nil {
-			return fmt.Errorf("failed to get pod key for %s/%s: %w", pod.Namespace, pod.Name, err)
-		}
-		if state := handler.GetPodState(pod); state != nil {
-			c.setAppliedPod(netName, key, pod, state)
-		}
-		if err := c.reconcilePodForNetworkWithPodLock(handler, key, netName); err != nil {
-			// Preserve the normal retry contract for pods that cannot be
-			// reconciled during startup while still applying successful pods
-			// synchronously for dependent controller bootstrap.
-			c.ReconcileNetwork(key, netName)
-		}
-	}
-	return nil
-}
-
-func (c *Controller) getAppliedPod(netName, podKey string) *appliedPodState {
-	c.stateMu.RLock()
-	defer c.stateMu.RUnlock()
-	pods := c.appliedPods[netName]
-	if pods == nil {
-		return nil
-	}
-	applied := pods[podKey]
-	if applied == nil {
-		return nil
-	}
-	var latestPod *corev1.Pod
-	if applied.latestPod != nil {
-		latestPod = applied.latestPod.DeepCopy()
-	}
-	return &appliedPodState{
-		pod:       applied.pod.DeepCopy(),
-		latestPod: latestPod,
-		state:     applied.state,
-	}
-}
-
-func (c *Controller) setAppliedPod(netName, podKey string, pod *corev1.Pod, state interface{}) {
-	c.stateMu.Lock()
-	defer c.stateMu.Unlock()
-	pods := c.appliedPods[netName]
-	if pods == nil {
-		pods = map[string]*appliedPodState{}
-		c.appliedPods[netName] = pods
-	}
-	pods[podKey] = &appliedPodState{
-		pod:       pod.DeepCopy(),
-		latestPod: pod.DeepCopy(),
-		state:     state,
-	}
-	c.clearRecordedPodError(netName, podKey)
-}
-
-// setAttemptedPod records the pod for delete teardown when a reconcile attempt
-// fails before any state was successfully applied.
-func (c *Controller) setAttemptedPod(netName, podKey string, pod *corev1.Pod) {
-	c.stateMu.Lock()
-	defer c.stateMu.Unlock()
-	pods := c.appliedPods[netName]
-	if pods == nil {
-		pods = map[string]*appliedPodState{}
-		c.appliedPods[netName] = pods
-	}
-	if applied := pods[podKey]; applied != nil {
-		applied.latestPod = pod.DeepCopy()
-		return
-	}
-	pods[podKey] = &appliedPodState{latestPod: pod.DeepCopy()}
-}
-
-func (c *Controller) refreshAppliedPodFromInformer(pod *corev1.Pod) {
+// refreshLastSeenFromInformer keeps entries tracking the pod's current UID
+// pointed at the newest informer object.
+func (c *Controller) refreshLastSeenFromInformer(pod *corev1.Pod) {
 	if pod == nil {
 		return
 	}
@@ -566,26 +611,12 @@ func (c *Controller) refreshAppliedPodFromInformer(pod *corev1.Pod) {
 	}
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
-	for _, pods := range c.appliedPods {
-		applied := pods[podKey]
-		if applied == nil || appliedPodUID(applied) != pod.UID {
+	for _, pods := range c.entries {
+		entry := pods[podKey]
+		if entry == nil || podEntryUID(entry) != pod.UID {
 			continue
 		}
-		applied.latestPod = pod.DeepCopy()
-	}
-}
-
-func (c *Controller) deleteAppliedPod(netName, podKey string) {
-	c.stateMu.Lock()
-	defer c.stateMu.Unlock()
-	c.clearRecordedPodError(netName, podKey)
-	pods := c.appliedPods[netName]
-	if pods == nil {
-		return
-	}
-	delete(pods, podKey)
-	if len(pods) == 0 {
-		delete(c.appliedPods, netName)
+		entry.lastSeen = pod
 	}
 }
 

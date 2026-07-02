@@ -44,38 +44,30 @@ func (f *fakePodHandler) SyncPods(_ []*corev1.Pod) error {
 	return nil
 }
 
-func (f *fakePodHandler) GetPodState(pod *corev1.Pod) interface{} {
-	key := pod.Namespace + "/" + pod.Name
-	if f.state != nil {
-		return f.state[key]
-	}
-	return string(pod.UID)
-}
-
 func (f *fakePodHandler) PodExpectedOnNetwork(pod *corev1.Pod) (bool, error) {
 	key := pod.Namespace + "/" + pod.Name
 	return f.expect[key], nil
 }
 
-func (f *fakePodHandler) ReconcilePod(oldPod, newPod *corev1.Pod, cachedState interface{}) error {
+func (f *fakePodHandler) ReconcilePod(oldPod, newPod *corev1.Pod, lastState interface{}) (interface{}, error) {
 	if f.reconcileErr != nil {
-		return f.reconcileErr
+		return nil, f.reconcileErr
 	}
 	if newPod == nil {
 		f.deleteCalls++
 		f.events = append(f.events, "delete:"+string(oldPod.UID))
-		f.lastDeletePod = oldPod.DeepCopy()
-		f.lastState = cachedState
-		return nil
+		f.lastDeletePod = oldPod
+		f.lastState = lastState
+		return nil, nil
 	}
 	f.reconcileCalls++
 	f.events = append(f.events, "reconcile:"+string(newPod.UID))
-	if oldPod != nil {
-		f.lastOldPod = oldPod.DeepCopy()
-	} else {
-		f.lastOldPod = nil
+	f.lastOldPod = oldPod
+	key := newPod.Namespace + "/" + newPod.Name
+	if f.state != nil {
+		return f.state[key], nil
 	}
-	return nil
+	return string(newPod.UID), nil
 }
 
 func (f *fakePodHandler) RecordPodError(pod *corev1.Pod, reason string, err error) {
@@ -117,66 +109,139 @@ func newPodControllerForTest(t *testing.T, pods ...*corev1.Pod) *Controller {
 			},
 			ObjNeedsUpdate: func(_, _ *corev1.Pod) bool { return true },
 		}),
-		handlers:    syncmap.NewSyncMap[NetworkHandler](),
-		podLocks:    syncmap.NewSyncMap[struct{}](),
-		appliedPods: map[string]map[string]*appliedPodState{},
+		podLocks: syncmap.NewSyncMap[struct{}](),
+		networks: map[string]*activeNetwork{},
+		entries:  map[string]map[string]*podEntry{},
 	}
 }
 
-func TestRegisterNetworkControllerBootstrapsExpectedPodsOnly(t *testing.T) {
+func (c *Controller) entryForTest(netName, podKey string) *podEntry {
+	c.stateMu.RLock()
+	defer c.stateMu.RUnlock()
+	return c.entries[netName][podKey]
+}
+
+func isClosed(ch <-chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
+}
+
+func TestRegisterNetworkControllerQueuesAndSignalsInitialReconcile(t *testing.T) {
 	podA := newPod("ns", "a", "uid-a")
 	podB := newPod("ns", "b", "uid-b")
-	podC := newPod("ns", "c", "uid-c")
-	c := newPodControllerForTest(t, podA, podB, podC)
+	c := newPodControllerForTest(t, podA, podB)
 	handler := &fakePodHandler{
 		netName: "net-a",
 		expect: map[string]bool{
 			"ns/a": true,
 			"ns/b": false,
-			"ns/c": true,
-		},
-		state: map[string]interface{}{
-			"ns/a": "state-a",
 		},
 	}
 
-	if err := c.RegisterNetworkController(handler); err != nil {
+	done, err := c.RegisterNetworkController(handler)
+	if err != nil {
 		t.Fatalf("unexpected register error: %v", err)
 	}
-
 	if handler.syncCalls != 1 {
 		t.Fatalf("expected one sync call, got %d", handler.syncCalls)
 	}
-	if applied := c.getAppliedPod(handler.netName, "ns/a"); applied == nil {
-		t.Fatal("expected ns/a to be recorded as applied")
+	// Registration only queues work; nothing is reconciled inline.
+	if handler.reconcileCalls != 0 {
+		t.Fatalf("expected no inline reconcile during registration, got %d", handler.reconcileCalls)
 	}
-	if applied := c.getAppliedPod(handler.netName, "ns/b"); applied != nil {
-		t.Fatal("expected ns/b to be skipped")
+	if isClosed(done) {
+		t.Fatal("expected initial reconcile barrier to be open")
 	}
-	if applied := c.getAppliedPod(handler.netName, "ns/c"); applied == nil {
-		t.Fatal("expected ns/c without existing state to be reconciled and recorded")
+
+	// Drain the queued keys the way a worker would.
+	if err := c.reconcilePod("ns/a|net-a"); err != nil {
+		t.Fatalf("unexpected reconcile error: %v", err)
 	}
-	if handler.reconcileCalls != 2 {
-		t.Fatalf("expected ns/a and ns/c to be reconciled during bootstrap, got %d", handler.reconcileCalls)
+	if isClosed(done) {
+		t.Fatal("expected barrier to stay open until every pod is attempted")
 	}
-	reconciled := map[string]bool{}
-	for _, event := range handler.events {
-		reconciled[event] = true
+	if err := c.reconcilePod("ns/b|net-a"); err != nil {
+		t.Fatalf("unexpected reconcile error: %v", err)
 	}
-	if !reconciled["reconcile:uid-a"] || !reconciled["reconcile:uid-c"] {
-		t.Fatalf("unexpected bootstrap events: %#v", handler.events)
+	if !isClosed(done) {
+		t.Fatal("expected barrier to close after every pod was attempted")
+	}
+
+	if handler.reconcileCalls != 1 {
+		t.Fatalf("expected only the expected pod to be reconciled, got %d", handler.reconcileCalls)
+	}
+	if entry := c.entryForTest("net-a", "ns/a"); entry == nil || entry.applied == nil || entry.state != "uid-a" {
+		t.Fatalf("expected applied entry with state for ns/a, got %#v", entry)
+	}
+	if entry := c.entryForTest("net-a", "ns/b"); entry != nil {
+		t.Fatalf("expected no entry for unexpected pod, got %#v", entry)
+	}
+}
+
+func TestRegisterNetworkControllerBarrierClosesOnFailedAttempts(t *testing.T) {
+	pod := newPod("ns", "pod", "uid")
+	c := newPodControllerForTest(t, pod)
+	handler := &fakePodHandler{
+		netName:      "net-a",
+		expect:       map[string]bool{"ns/pod": true},
+		reconcileErr: errors.New("boom"),
+	}
+
+	done, err := c.RegisterNetworkController(handler)
+	if err != nil {
+		t.Fatalf("unexpected register error: %v", err)
+	}
+	if err := c.reconcilePod("ns/pod|net-a"); err == nil {
+		t.Fatal("expected reconcile error")
+	}
+	// A failed first attempt still counts: a wedged pod must not block
+	// dependent controllers forever; it stays on the retry queue.
+	if !isClosed(done) {
+		t.Fatal("expected barrier to close after failed attempt")
+	}
+}
+
+func TestDeregisterNetworkControllerClearsState(t *testing.T) {
+	pod := newPod("ns", "pod", "uid")
+	c := newPodControllerForTest(t, pod)
+	handler := &fakePodHandler{netName: "net-a", expect: map[string]bool{"ns/pod": true}}
+
+	if _, err := c.RegisterNetworkController(handler); err != nil {
+		t.Fatalf("unexpected register error: %v", err)
+	}
+	if err := c.reconcilePod("ns/pod|net-a"); err != nil {
+		t.Fatalf("unexpected reconcile error: %v", err)
+	}
+
+	c.DeregisterNetworkController("net-a")
+	if c.getNetwork("net-a") != nil {
+		t.Fatal("expected network to be deregistered")
+	}
+	if entry := c.entryForTest("net-a", "ns/pod"); entry != nil {
+		t.Fatalf("expected entries to be cleared, got %#v", entry)
+	}
+	// Reconciles for a deregistered network are silent no-ops.
+	if err := c.reconcilePod("ns/pod|net-a"); err != nil {
+		t.Fatalf("unexpected reconcile error: %v", err)
+	}
+	if handler.reconcileCalls != 1 {
+		t.Fatalf("expected no reconcile after deregistration, got %d", handler.reconcileCalls)
 	}
 }
 
 func TestReconcilePodUIDChangeDeletesBeforeReconcile(t *testing.T) {
 	oldPod := newPod("ns", "pod", "old")
-	newPod := newPod("ns", "pod", "new")
-	c := newPodControllerForTest(t, newPod)
+	newerPod := newPod("ns", "pod", "new")
+	c := newPodControllerForTest(t, newerPod)
 	handler := &fakePodHandler{
 		netName: "net-a",
 		expect:  map[string]bool{"ns/pod": true},
 	}
-	c.setAppliedPod(handler.netName, "ns/pod", oldPod, "old-state")
+	c.markApplied(handler.netName, "ns/pod", oldPod, "old-state")
 
 	if err := c.reconcilePodForNetwork(handler, "ns/pod", handler.netName); err != nil {
 		t.Fatalf("unexpected reconcile error: %v", err)
@@ -191,17 +256,17 @@ func TestReconcilePodUIDChangeDeletesBeforeReconcile(t *testing.T) {
 	if handler.lastState != "old-state" {
 		t.Fatalf("expected old cached state, got %#v", handler.lastState)
 	}
-	applied := c.getAppliedPod(handler.netName, "ns/pod")
-	if applied == nil || applied.pod.UID != newPod.UID {
-		t.Fatalf("expected applied pod to be updated to new UID, got %#v", applied)
+	entry := c.entryForTest(handler.netName, "ns/pod")
+	if entry == nil || entry.applied == nil || entry.applied.UID != newerPod.UID {
+		t.Fatalf("expected applied entry updated to new UID, got %#v", entry)
 	}
 }
 
-func TestReconcilePodDeleteClearsAppliedState(t *testing.T) {
+func TestReconcilePodDeleteClearsEntry(t *testing.T) {
 	oldPod := newPod("ns", "pod", "old")
 	c := newPodControllerForTest(t)
 	handler := &fakePodHandler{netName: "net-a", expect: map[string]bool{}}
-	c.setAppliedPod(handler.netName, "ns/pod", oldPod, "old-state")
+	c.markApplied(handler.netName, "ns/pod", oldPod, "old-state")
 
 	if err := c.reconcilePodForNetwork(handler, "ns/pod", handler.netName); err != nil {
 		t.Fatalf("unexpected reconcile error: %v", err)
@@ -213,21 +278,21 @@ func TestReconcilePodDeleteClearsAppliedState(t *testing.T) {
 	if handler.lastDeletePod.UID != oldPod.UID || handler.lastState != "old-state" {
 		t.Fatalf("unexpected delete input pod=%#v state=%#v", handler.lastDeletePod, handler.lastState)
 	}
-	if applied := c.getAppliedPod(handler.netName, "ns/pod"); applied != nil {
-		t.Fatal("expected applied state to be cleared")
+	if entry := c.entryForTest(handler.netName, "ns/pod"); entry != nil {
+		t.Fatal("expected entry to be cleared")
 	}
 }
 
 func TestReconcilePodRecordsUpdateError(t *testing.T) {
 	oldPod := newPod("ns", "pod", "uid")
-	newPod := newPod("ns", "pod", "uid")
-	c := newPodControllerForTest(t, newPod)
+	currentPod := newPod("ns", "pod", "uid")
+	c := newPodControllerForTest(t, currentPod)
 	handler := &fakePodHandler{
 		netName:      "net-a",
 		expect:       map[string]bool{"ns/pod": true},
 		reconcileErr: errors.New("boom"),
 	}
-	c.setAppliedPod(handler.netName, "ns/pod", oldPod, "old-state")
+	c.markApplied(handler.netName, "ns/pod", oldPod, "old-state")
 
 	if err := c.reconcilePodForNetwork(handler, "ns/pod", handler.netName); err == nil {
 		t.Fatal("expected reconcile error")
@@ -290,7 +355,7 @@ func TestReconcilePodRecordsDeleteError(t *testing.T) {
 		expect:       map[string]bool{},
 		reconcileErr: errors.New("boom"),
 	}
-	c.setAppliedPod(handler.netName, "ns/pod", oldPod, "old-state")
+	c.markApplied(handler.netName, "ns/pod", oldPod, "old-state")
 
 	if err := c.reconcilePodForNetwork(handler, "ns/pod", handler.netName); err == nil {
 		t.Fatal("expected reconcile error")
@@ -302,15 +367,15 @@ func TestReconcilePodRecordsDeleteError(t *testing.T) {
 	}
 }
 
-func TestReconcilePodAbsentWithoutAppliedStateDoesNotLeak(t *testing.T) {
+func TestReconcilePodAbsentWithoutEntryDoesNotLeak(t *testing.T) {
 	c := newPodControllerForTest(t)
 	handler := &fakePodHandler{netName: "net-a", expect: map[string]bool{}}
 
 	if err := c.reconcilePodForNetwork(handler, "ns/pod", handler.netName); err != nil {
 		t.Fatalf("unexpected reconcile error: %v", err)
 	}
-	if handler.deleteCalls != 0 || len(c.appliedPods) != 0 {
-		t.Fatalf("expected no delete and no applied state, got deletes=%d applied=%#v", handler.deleteCalls, c.appliedPods)
+	if handler.deleteCalls != 0 || len(c.entries) != 0 {
+		t.Fatalf("expected no delete and no entries, got deletes=%d entries=%#v", handler.deleteCalls, c.entries)
 	}
 }
 
@@ -341,12 +406,12 @@ func TestReconcilePodDeleteAfterFailedAddRunsTeardown(t *testing.T) {
 	if handler.lastDeletePod.UID != pod.UID || handler.lastState != nil {
 		t.Fatalf("unexpected delete input pod=%#v state=%#v", handler.lastDeletePod, handler.lastState)
 	}
-	if applied := c.getAppliedPod(handler.netName, "ns/pod"); applied != nil {
-		t.Fatal("expected applied state to be cleared")
+	if entry := c.entryForTest(handler.netName, "ns/pod"); entry != nil {
+		t.Fatal("expected entry to be cleared")
 	}
 }
 
-func TestReconcileCompletedUnexpectedPodWithoutAppliedStateRunsDelete(t *testing.T) {
+func TestReconcileCompletedUnexpectedPodWithoutEntryRunsDelete(t *testing.T) {
 	pod := newPod("ns", "pod", "uid")
 	pod.Status.Phase = corev1.PodFailed
 	c := newPodControllerForTest(t, pod)
@@ -362,49 +427,46 @@ func TestReconcileCompletedUnexpectedPodWithoutAppliedStateRunsDelete(t *testing
 	if handler.lastDeletePod.UID != pod.UID || handler.lastState != nil {
 		t.Fatalf("unexpected delete input pod=%#v state=%#v", handler.lastDeletePod, handler.lastState)
 	}
-	if applied := c.getAppliedPod(handler.netName, "ns/pod"); applied != nil {
-		t.Fatal("expected no applied state after fallback delete")
+	if entry := c.entryForTest(handler.netName, "ns/pod"); entry != nil {
+		t.Fatal("expected no entry after fallback delete")
 	}
 }
 
-func TestPodNeedsUpdateRefreshesDeletePodForSameUID(t *testing.T) {
+func TestPodNeedsUpdateRefreshesLastSeenForSameUID(t *testing.T) {
 	oldPod := newPod("ns", "pod", "uid")
 	oldPod.Status.Phase = corev1.PodRunning
 	latestPod := oldPod.DeepCopy()
 	latestPod.Status.Phase = corev1.PodSucceeded
 	c := newPodControllerForTest(t)
 	handler := &fakePodHandler{netName: "net-a", expect: map[string]bool{}}
-	c.setAppliedPod(handler.netName, "ns/pod", oldPod, "old-state")
+	c.markApplied(handler.netName, "ns/pod", oldPod, "old-state")
 
 	if !c.podNeedsUpdate(oldPod, latestPod) {
-		t.Fatal("expected pod update to require reconcile")
-	}
-	if err := c.reconcilePodForNetwork(handler, "ns/pod", handler.netName); err != nil {
-		t.Fatalf("unexpected reconcile error: %v", err)
+		t.Fatal("expected podNeedsUpdate to be true")
 	}
 
-	if handler.lastDeletePod.Status.Phase != corev1.PodSucceeded {
-		t.Fatalf("expected delete to use latest same-UID pod status, got %s", handler.lastDeletePod.Status.Phase)
+	deletePod, state := c.teardownPod(handler.netName, "ns/pod")
+	if deletePod == nil || deletePod.Status.Phase != corev1.PodSucceeded {
+		t.Fatalf("expected teardown to use latest informer pod, got %#v", deletePod)
+	}
+	if state != "old-state" {
+		t.Fatalf("expected applied state to survive refresh, got %#v", state)
 	}
 }
 
-func TestPodNeedsUpdateDoesNotRefreshDeletePodForDifferentUID(t *testing.T) {
+func TestPodNeedsUpdateDoesNotRefreshLastSeenForDifferentUID(t *testing.T) {
 	oldPod := newPod("ns", "pod", "old")
-	oldPod.Status.Phase = corev1.PodRunning
-	newPod := newPod("ns", "pod", "new")
-	newPod.Status.Phase = corev1.PodSucceeded
+	replacementPod := newPod("ns", "pod", "new")
 	c := newPodControllerForTest(t)
 	handler := &fakePodHandler{netName: "net-a", expect: map[string]bool{}}
-	c.setAppliedPod(handler.netName, "ns/pod", oldPod, "old-state")
+	c.markApplied(handler.netName, "ns/pod", oldPod, "old-state")
 
-	if !c.podNeedsUpdate(oldPod, newPod) {
-		t.Fatal("expected pod update to require reconcile")
-	}
-	if err := c.reconcilePodForNetwork(handler, "ns/pod", handler.netName); err != nil {
-		t.Fatalf("unexpected reconcile error: %v", err)
+	if !c.podNeedsUpdate(oldPod, replacementPod) {
+		t.Fatal("expected podNeedsUpdate to be true")
 	}
 
-	if handler.lastDeletePod.UID != oldPod.UID || handler.lastDeletePod.Status.Phase != corev1.PodRunning {
-		t.Fatalf("expected delete to keep old applied pod, got uid=%s phase=%s", handler.lastDeletePod.UID, handler.lastDeletePod.Status.Phase)
+	deletePod, _ := c.teardownPod(handler.netName, "ns/pod")
+	if deletePod == nil || deletePod.UID != oldPod.UID {
+		t.Fatalf("expected teardown to keep the applied pod for a different UID, got %#v", deletePod)
 	}
 }

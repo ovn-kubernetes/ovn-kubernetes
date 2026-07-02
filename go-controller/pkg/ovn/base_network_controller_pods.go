@@ -819,10 +819,15 @@ func (bnc *BaseNetworkController) WatchPods() error {
 	if err := bnc.podReconciler.Start(); err != nil {
 		return err
 	}
-	if err := bnc.podReconciler.RegisterNetworkController(bnc.podHandler); err != nil {
+	done, err := bnc.podReconciler.RegisterNetworkController(bnc.podHandler)
+	if err != nil {
 		return err
 	}
 	bnc.podHandlerRegistered = true
+	// Wait until every existing pod has been reconciled at least once so
+	// dependent controllers bootstrap against applied pod state. Pods whose
+	// first reconcile failed stay on the retry queue like any other.
+	<-done
 	return nil
 }
 

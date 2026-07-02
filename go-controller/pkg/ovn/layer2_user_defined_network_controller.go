@@ -607,14 +607,17 @@ func (oc *Layer2UserDefinedNetworkController) SyncNodes(nodes []*corev1.Node) er
 	return oc.syncNodes(nodesToInterfaces(nodes))
 }
 
-func (oc *Layer2UserDefinedNetworkController) ReconcilePod(oldPod, newPod *corev1.Pod, cachedState interface{}) error {
-	if err := oc.BaseUserDefinedNetworkController.ReconcilePod(oldPod, newPod, cachedState); err != nil {
-		return err
+func (oc *Layer2UserDefinedNetworkController) ReconcilePod(oldPod, newPod *corev1.Pod, lastState interface{}) (interface{}, error) {
+	state, err := oc.BaseUserDefinedNetworkController.ReconcilePod(oldPod, newPod, lastState)
+	if err != nil {
+		return nil, err
 	}
 	if newPod != nil && oc.isPodScheduledinLocalZone(newPod) {
-		return oc.updateLocalPodEvent(newPod)
+		if err := oc.updateLocalPodEvent(newPod); err != nil {
+			return nil, err
+		}
 	}
-	return nil
+	return state, nil
 }
 
 func (oc *Layer2UserDefinedNetworkController) initRetryFramework() {

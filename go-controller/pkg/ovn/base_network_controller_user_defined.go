@@ -91,27 +91,30 @@ func (bsnc *BaseUserDefinedNetworkController) PodExpectedOnNetwork(pod *corev1.P
 	return on, nil
 }
 
-func (bsnc *BaseUserDefinedNetworkController) ReconcilePod(oldPod, newPod *corev1.Pod, cachedState interface{}) error {
+func (bsnc *BaseUserDefinedNetworkController) ReconcilePod(oldPod, newPod *corev1.Pod, lastState interface{}) (interface{}, error) {
 	if newPod == nil {
 		if oldPod == nil {
-			return fmt.Errorf("pod delete reconcile for network %s is missing pod", bsnc.GetNetworkName())
+			return nil, fmt.Errorf("pod delete reconcile for network %s is missing pod", bsnc.GetNetworkName())
 		}
 		var portInfoMap map[string]*lpInfo
-		if cachedState != nil {
+		if lastState != nil {
 			var ok bool
-			portInfoMap, ok = cachedState.(map[string]*lpInfo)
+			portInfoMap, ok = lastState.(map[string]*lpInfo)
 			if !ok {
-				return fmt.Errorf("pod delete reconcile for network %s expected map[string]*lpInfo cache state but got %T", bsnc.GetNetworkName(), cachedState)
+				return nil, fmt.Errorf("pod delete reconcile for network %s expected map[string]*lpInfo cache state but got %T", bsnc.GetNetworkName(), lastState)
 			}
 		}
-		return bsnc.reconcileDeletedPodForUserDefinedNetwork(oldPod, portInfoMap)
+		return nil, bsnc.reconcileDeletedPodForUserDefinedNetwork(oldPod, portInfoMap)
 	}
 	addPort := bsnc.shouldEnsurePodForUserDefinedNetwork(newPod)
 	eventReason := "ErrorAddingResource"
 	if oldPod != nil {
 		eventReason = "ErrorUpdatingResource"
 	}
-	return bsnc.ensurePodForUserDefinedNetwork(newPod, addPort, eventReason)
+	if err := bsnc.ensurePodForUserDefinedNetwork(newPod, addPort, eventReason); err != nil {
+		return nil, err
+	}
+	return bsnc.getPortInfoForUserDefinedNetwork(newPod), nil
 }
 
 // AddUserDefinedNetworkResourceCommon adds the specified object to the cluster according to its type and returns the error,
