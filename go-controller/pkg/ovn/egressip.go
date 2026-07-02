@@ -2708,6 +2708,27 @@ func (e *EgressIPController) addStandByEgressIPAssignment(ni util.NetInfo, podKe
 	return nil
 }
 
+// isSecondaryHostEgressIPReady checks if the node controller has finished configuring
+// a secondary host egress IP on the given node. For secondary host egress IPs (not OVN-managed),
+// the node controller must first configure routes, IP rules, and iptables before OVN can
+// safely route traffic to the host. The node controller signals readiness by adding the
+// egress IP to the k8s.ovn.org/secondary-host-egress-ips annotation.
+func (e *EgressIPController) isSecondaryHostEgressIPReady(node *corev1.Node, egressIP string) (bool, error) {
+	assignedIPs, err := util.ParseNodeSecondaryHostEgressIPsAnnotation(node)
+	if err != nil {
+		if util.IsAnnotationNotSetError(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to parse secondary host egress IPs annotation for node %s: %w", node.Name, err)
+	}
+
+	if !assignedIPs.Has(egressIP) {
+		return false, nil
+	}
+
+	return assignedIPs.Has(egressIP), nil
+}
+
 // addPodEgressIPAssignment will program OVN with logical router policies
 // (routing pod traffic to the egress node) and NAT objects on the egress node
 // (SNAT-ing to the egress IP).
@@ -2737,6 +2758,22 @@ func (e *EgressIPController) addPodEgressIPAssignment(ni util.NetInfo, egressIPN
 		return fmt.Errorf("failed to get node %s egress IP config: %w", eNode.Name, err)
 	}
 	isOVNNetwork := util.IsOVNNetwork(parsedNodeEIPConfig, eIPIP)
+
+	// For secondary host egress IPs, wait for node controller to finish configuration
+	// before programming OVN logical router policies. This prevents the race condition where
+	// OVN routes traffic to the host before host-side routes/IP rules/iptables are ready.
+	if !isOVNNetwork {
+		ready, err := e.isSecondaryHostEgressIPReady(eNode, status.EgressIP)
+		if err != nil {
+			return fmt.Errorf("failed to check if secondary host egress IP %s is ready on node %s: %w",
+				status.EgressIP, eNode.Name, err)
+		}
+		if !ready {
+			return types.NewSuppressedError(fmt.Errorf("won't add OVN logical router policies for secondary host egress IP %s on node %s before node controller configuration",
+				status.EgressIP, status.Node))
+		}
+	}
+
 	nextHopIP, err := e.getNextHop(ni, status.Node, status.EgressIP, egressIPName, isLocalZoneEgressNode, isOVNNetwork)
 	if err != nil {
 		return fmt.Errorf("failed to determine next hop for pod %s/%s when configuring egress IP %s"+

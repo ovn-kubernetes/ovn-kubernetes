@@ -5,6 +5,7 @@ package ovn
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"strings"
@@ -586,6 +587,13 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 			logicalRouterOptions := map[string]string{
 				"dynamic_neigh_routers": dynamicNeighRouters,
 			}
+			// Set the secondary host egress IP annotation since this is a secondary host network egress IP
+			if node1.Annotations == nil {
+				node1.Annotations = map[string]string{}
+			}
+			annotationValue, err := json.Marshal([]string{egressIP})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			node1.Annotations[util.OVNNodeSecondaryHostEgressIPs] = string(annotationValue)
 			fakeOvn.startWithDBSetup(
 				libovsdbtest.TestSetup{
 					NBData: []libovsdbtest.TestData{
@@ -637,7 +645,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					Items: []corev1.Namespace{*egressNamespace},
 				})
 
-			err := fakeOvn.controller.WatchEgressIPPods()
+			err = fakeOvn.controller.WatchEgressIPPods()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			err = fakeOvn.controller.WatchEgressIPNamespaces()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -902,6 +910,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 					fakeOvn.patchEgressIPObj(node2Name, egressIPName, egressIP)
+					fakeOvn.setNodeSecondaryHostEgressIPAnnotation(node2Name, egressIP)
 					gomega.Eventually(getEgressIPStatusLen(egressIPName)).Should(gomega.Equal(1))
 					gomega.Eventually(nodeSwitch).Should(gomega.Equal(node2.Name))
 					egressIPs, _ = getEgressIPStatus(egressIPName)
@@ -1218,6 +1227,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 					fakeOvn.patchEgressIPObj(node1Name, egressIPName, egressIP)
+					fakeOvn.setNodeSecondaryHostEgressIPAnnotation(node1Name, egressIP)
 
 					gomega.Eventually(getEgressIPStatusLen(egressIPName)).Should(gomega.Equal(1))
 					egressIPs, eIPNodes := getEgressIPStatus(egressIPName)
@@ -1239,6 +1249,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Nodes().Update(context.TODO(), &node2, metav1.UpdateOptions{})
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					fakeOvn.patchEgressIPObj(node2Name, egressIPName, egressIP)
+					fakeOvn.setNodeSecondaryHostEgressIPAnnotation(node2Name, egressIP)
 
 					// sleep long enough for TransactWithRetry to fail, causing egressnode operations to fail
 					// there is a chance that both egressnode events(node1 removal and node2 update) will end up in the same event queue
@@ -1264,6 +1275,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					//	gomega.Not(gomega.BeNil()), // config should not be nil
 					//)
 					fakeOvn.patchEgressIPObj(node2Name, egressIPName, egressIP)
+					fakeOvn.setNodeSecondaryHostEgressIPAnnotation(node2Name, egressIP)
 					connCtx, cancel := context.WithTimeout(context.Background(), config.Default.OVSDBTxnTimeout)
 					defer cancel()
 					resetNBClient(connCtx, fakeOvn.controller.nbClient)
@@ -1633,6 +1645,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 					fakeOvn.patchEgressIPObj(node1Name, egressIPName, egressIP)
+					fakeOvn.setNodeSecondaryHostEgressIPAnnotation(node1Name, egressIP)
 
 					gomega.Eventually(getEgressIPStatusLen(egressIPName)).Should(gomega.Equal(1))
 					egressIPs, eIPNodes := getEgressIPStatus(egressIPName)
@@ -1654,6 +1667,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Nodes().Update(context.TODO(), &node2, metav1.UpdateOptions{})
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					fakeOvn.patchEgressIPObj(node2Name, egressIPName, egressIP)
+					fakeOvn.setNodeSecondaryHostEgressIPAnnotation(node2Name, egressIP)
 
 					// sleep long enough for TransactWithRetry to fail, causing egressnode operations to fail
 					// there is a chance that both egressnode events(node1 removal and node2 update) will end up in the same event queue
@@ -2030,6 +2044,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 					fakeOvn.patchEgressIPObj(node2Name, egressIPName, egressIP)
+					fakeOvn.setNodeSecondaryHostEgressIPAnnotation(node2Name, egressIP)
 					gomega.Eventually(getEgressIPStatusLen(egressIPName)).Should(gomega.Equal(1))
 					gomega.Eventually(nodeSwitch).Should(gomega.Equal(node2.Name))
 					egressIPs, _ = getEgressIPStatus(egressIPName)
@@ -2418,6 +2433,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					gomega.Expect(egressIPs[0]).To(gomega.Equal(egressIPOVN))
 					time.Sleep(20 * time.Millisecond)
 					fakeOvn.patchEgressIPObj(node1Name, egressIP2Name, egressIPSecondaryHost)
+					fakeOvn.setNodeSecondaryHostEgressIPAnnotation(node1Name, egressIPSecondaryHost)
 					gomega.Eventually(getEgressIPStatusLen(egressIP2Name)).Should(gomega.Equal(1))
 					gomega.Eventually(nodeSwitch).Should(gomega.Equal(node1.Name))
 					egressIPs, _ = getEgressIPStatus(egressIP2Name)
@@ -2816,6 +2832,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 					fakeOvn.patchEgressIPObj(node1Name, egressIPName, egressIP)
+					fakeOvn.setNodeSecondaryHostEgressIPAnnotation(node1Name, egressIP)
 
 					gomega.Eventually(getEgressIPStatusLen(egressIPName)).Should(gomega.Equal(1))
 					egressIPs, nodes := getEgressIPStatus(egressIPName)
@@ -2992,6 +3009,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					// W0608 12:53:33.728205 1161455 base_network_controller_egressip.go:2030] Unable to retrieve gateway IP for node: node1, protocol is IPv6: false, err: attempt at finding node gateway router network information failed, err: unable to find router port rtoj-GR_node1: object not found
 					// 2023-04-25T11:01:13.2804834Z W0425 11:01:13.280407   21055 base_network_controller_egressip.go:2036] Unable to fetch transit switch IP for node: node1: err: failed to get node node1: node "node1" not found
 					fakeOvn.patchEgressIPObj(node2Name, egressIPName, egressIP)
+					fakeOvn.setNodeSecondaryHostEgressIPAnnotation(node2Name, egressIP)
 					gomega.Eventually(getEgressIPStatusLen(egressIPName)).Should(gomega.Equal(1))
 					gomega.Eventually(nodeSwitch).Should(gomega.Equal(node2.Name)) // egressIP successfully reassigned to node2
 					egressIPs, _ = getEgressIPStatus(egressIPName)
@@ -3282,6 +3300,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 					fakeOvn.patchEgressIPObj(node2Name, egressIPName, egressIP)
+					fakeOvn.setNodeSecondaryHostEgressIPAnnotation(node2Name, egressIP)
 					gomega.Eventually(getEgressIPStatusLen(egressIPName)).Should(gomega.Equal(1))
 					gomega.Eventually(nodeSwitch).Should(gomega.Equal(node2.Name))
 					egressIPs, _ = getEgressIPStatus(egressIPName)
@@ -9809,6 +9828,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				fakeOvn.patchEgressIPObj(node2Name, egressIPName, egressIP)
+				fakeOvn.setNodeSecondaryHostEgressIPAnnotation(node2Name, egressIP)
 				gomega.Eventually(getEgressIPStatusLen(egressIPName)).Should(gomega.Equal(1))
 
 				egressIPs, nodes := getEgressIPStatus(egressIPName)
@@ -15573,6 +15593,164 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 			}
 			err := app.Run([]string{app.Name})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+	})
+
+	ginkgo.Context("Secondary host egress IP annotation readiness", func() {
+		ginkgo.It("should wait for node annotation before programming OVN logical components", func() {
+			config.OVNKubernetesFeature.EnableInterconnect = true
+			egressIP := "10.10.10.10"
+			zone := "global"
+			node1IPv4OVN := "192.168.126.202/24"
+			node1IPv4TranSwitchIP := "100.88.0.2/16"
+			node1IPv4SecondaryHost1 := "10.10.10.4/24"
+			node1IPv4SecondaryHost2 := "5.5.5.10/24"
+			_, node1Subnet, _ := net.ParseCIDR(v4Node1Subnet)
+			node1IPv4Addresses := []string{node1IPv4OVN, node1IPv4SecondaryHost1, node1IPv4SecondaryHost2}
+
+			egressPod := *ovntest.NewPodWithLabels(eipNamespace, podName, node1Name, podV4IP, egressPodLabel)
+			egressNamespace := ovntest.NewNamespace(eipNamespace)
+			nodes := getIPv4Nodes([]nodeInfo{{node1IPv4Addresses, zone, node1IPv4TranSwitchIP}})
+			node1 := nodes[0]
+			node1.Labels = map[string]string{
+				"k8s.ovn.org/egress-assignable": "",
+			}
+
+			eIP := egressipv1.EgressIP{
+				ObjectMeta: newEgressIPMeta(egressIPName),
+				Spec: egressipv1.EgressIPSpec{
+					EgressIPs: []string{egressIP},
+					PodSelector: metav1.LabelSelector{
+						MatchLabels: egressPodLabel,
+					},
+					NamespaceSelector: metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"name": egressNamespace.Name,
+						},
+					},
+				},
+				Status: egressipv1.EgressIPStatus{
+					Items: []egressipv1.EgressIPStatusItem{
+						{
+							Node:     node1Name,
+							EgressIP: egressIP,
+						},
+					},
+				},
+			}
+			node1Switch := &nbdb.LogicalSwitch{
+				UUID:  node1.Name + "-UUID",
+				Name:  node1.Name,
+				Ports: []string{"k8s-" + node1.Name + "-UUID"},
+			}
+			dynamicNeighRouters := "true"
+			if config.OVNKubernetesFeature.EnableInterconnect {
+				dynamicNeighRouters = "false"
+			}
+
+			logicalRouterOptions := map[string]string{
+				"dynamic_neigh_routers": dynamicNeighRouters,
+			}
+			fakeOvn.startWithDBSetup(
+				libovsdbtest.TestSetup{
+					NBData: []libovsdbtest.TestData{
+						&nbdb.LogicalRouterPort{
+							UUID:     types.GWRouterToJoinSwitchPrefix + types.GWRouterPrefix + node1.Name + "-UUID",
+							Name:     types.GWRouterToJoinSwitchPrefix + types.GWRouterPrefix + node1.Name,
+							Networks: []string{nodeLogicalRouterIfAddrV4},
+						},
+						&nbdb.LogicalRouter{
+							Name: types.OVNClusterRouter,
+							UUID: types.OVNClusterRouter + "-UUID",
+						},
+						&nbdb.LogicalRouter{
+							Name:    types.GWRouterPrefix + node1.Name,
+							UUID:    types.GWRouterPrefix + node1.Name + "-UUID",
+							Ports:   []string{types.GWRouterToJoinSwitchPrefix + types.GWRouterPrefix + node1.Name + "-UUID"},
+							Options: logicalRouterOptions,
+						},
+						&nbdb.LogicalSwitchPort{
+							UUID: types.EXTSwitchToGWRouterPrefix + types.GWRouterPrefix + node1Name + "-UUID",
+							Name: types.EXTSwitchToGWRouterPrefix + types.GWRouterPrefix + node1Name,
+							Type: "router",
+							Options: map[string]string{
+								libovsdbops.RouterPort:      types.GWRouterToExtSwitchPrefix + "GR_" + node1Name,
+								"nat-addresses":             "router",
+								"exclude-lb-vips-from-garp": "true",
+							},
+						},
+						&nbdb.LogicalSwitchPort{
+							UUID:      "k8s-" + node1.Name + "-UUID",
+							Name:      "k8s-" + node1.Name,
+							Addresses: []string{"fe:1a:b2:3f:0e:fb " + util.GetNodeManagementIfAddr(node1Subnet).IP.String()},
+						},
+						&nbdb.LogicalSwitch{
+							UUID:  types.ExternalSwitchPrefix + node1Name + "-UUID",
+							Name:  types.ExternalSwitchPrefix + node1Name,
+							Ports: []string{types.EXTSwitchToGWRouterPrefix + types.GWRouterPrefix + node1Name + "-UUID"},
+						},
+						node1Switch,
+					},
+				},
+				&egressipv1.EgressIPList{
+					Items: []egressipv1.EgressIP{eIP},
+				},
+				&corev1.NodeList{
+					Items: []corev1.Node{node1},
+				},
+				&corev1.NamespaceList{
+					Items: []corev1.Namespace{*egressNamespace},
+				})
+
+			err := fakeOvn.controller.WatchEgressIPPods()
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			err = fakeOvn.controller.WatchEgressIPNamespaces()
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			err = fakeOvn.controller.WatchEgressNodes()
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			err = fakeOvn.controller.WatchEgressIP()
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			i, n, _ := net.ParseCIDR(podV4IP + "/23")
+			n.IP = i
+			fakeOvn.controller.logicalPortCache.add(&egressPod, "", types.DefaultNetworkName, "", nil, []*net.IPNet{n})
+
+			ginkgo.By("Creating egress pod and verifying no logical router policy is created initially")
+			_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(egressPod.Namespace).Create(context.TODO(), &egressPod, metav1.CreateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Consistently(func() int {
+				policies, _ := libovsdbops.FindLogicalRouterPoliciesWithPredicate(fakeOvn.nbClient, func(lrp *nbdb.LogicalRouterPolicy) bool {
+					return lrp.Priority == types.EgressIPReroutePriority &&
+						lrp.Match == fmt.Sprintf("ip4.src == %s", egressPod.Status.PodIP)
+				})
+				return len(policies)
+			}, "500ms", "100ms").Should(gomega.Equal(0))
+
+			ginkgo.By("Adding secondary host egress IP to node annotation to signal readiness")
+			if node1.Annotations == nil {
+				node1.Annotations = map[string]string{}
+			}
+			annotationValue, err := json.Marshal([]string{egressIP})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			node1.Annotations[util.OVNNodeSecondaryHostEgressIPs] = string(annotationValue)
+			_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Nodes().Update(context.TODO(), &node1, metav1.UpdateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			ginkgo.By("Triggering pod retry with no backoff and verifying retry succeeds")
+			key, err := retry.GetResourceKey(&egressPod)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			retry.SetRetryObjWithNoBackoff(key, fakeOvn.controller.retryEgressIPPods)
+			fakeOvn.controller.retryEgressIPPods.RequestRetryObjs()
+			retry.CheckRetryObjectEventually(key, false, fakeOvn.controller.retryEgressIPPods)
+
+			ginkgo.By("Verifying the logical router policy is created after annotation readiness")
+			gomega.Eventually(func() int {
+				policies, _ := libovsdbops.FindLogicalRouterPoliciesWithPredicate(fakeOvn.nbClient, func(lrp *nbdb.LogicalRouterPolicy) bool {
+					return lrp.Priority == types.EgressIPReroutePriority &&
+						lrp.Match == fmt.Sprintf("ip4.src == %s", egressPod.Status.PodIP)
+				})
+				return len(policies)
+			}, "5s", "100ms").Should(gomega.Equal(1))
 		})
 	})
 })
