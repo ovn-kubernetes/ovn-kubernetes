@@ -1919,6 +1919,136 @@ create_kind_cluster() {
   cat "${KUBECONFIG}"
 }
 
+# setup_perf_isolation applies CPU pinning and memory limits to KIND node
+# containers for reproducible performance testing. Call after create_kind_cluster().
+#
+# Dynamically detects available CPUs and total memory, then divides them:
+#   - Workers get equal shares of ~60% of cores (priority — they run workloads)
+#   - Control-plane gets ~20% of cores
+#   - Infra/Prometheus nodes share remaining ~20% of cores
+#   - Memory: workers get equal large shares, CP slightly less, infra smallest
+#   - ~40% of total memory reserved for host OS, Docker, image layers
+#
+# Memory-swap is set equal to memory to disable swap inside KIND containers.
+setup_perf_isolation() {
+  local cluster_name="${KIND_CLUSTER_NAME:-ovn}"
+  local oci="${OCI_BIN:-docker}"
+
+  local nodes
+  nodes=$(kind get nodes --name "${cluster_name}" 2>/dev/null | sort)
+  if [ -z "$nodes" ]; then
+    echo "setup_perf_isolation: no KIND nodes found for cluster '${cluster_name}'"
+    return 1
+  fi
+
+  # Detect host resources
+  local total_cpus
+  total_cpus=$(nproc)
+  local total_mem_kb
+  total_mem_kb=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+  local total_mem_gb=$((total_mem_kb / 1024 / 1024))
+
+  local num_workers="${KIND_NUM_WORKER:-3}"
+  local cp_nodes=()
+  local worker_nodes=()
+  local infra_nodes=()
+  local worker_count=0
+
+  for node in $nodes; do
+    if [[ "$node" == *"control-plane"* ]]; then
+      cp_nodes+=("$node")
+    else
+      worker_count=$((worker_count + 1))
+      if [ "$worker_count" -le "$num_workers" ]; then
+        worker_nodes+=("$node")
+      else
+        infra_nodes+=("$node")
+      fi
+    fi
+  done
+
+  local total_nodes=$(( ${#cp_nodes[@]} + ${#worker_nodes[@]} + ${#infra_nodes[@]} ))
+
+  # Divide CPUs: workers get ~60%, CP gets ~20%, infra shares ~20%
+  # Minimum 2 cores per node to avoid starvation
+  local worker_cores_each=$(( (total_cpus * 60 / 100) / ${#worker_nodes[@]} ))
+  [ "$worker_cores_each" -lt 2 ] && worker_cores_each=2
+  local cp_cores=$(( total_cpus * 20 / 100 ))
+  [ "$cp_cores" -lt 2 ] && cp_cores=2
+
+  # Allocate memory: ~60% total budget, split proportionally
+  # Workers: equal large shares, CP: same as worker, infra: half
+  local mem_budget_gb=$(( total_mem_gb * 60 / 100 ))
+  local infra_count=${#infra_nodes[@]}
+  [ "$infra_count" -eq 0 ] && infra_count=1  # avoid div by zero in formula
+  # worker_mem * num_workers + cp_mem * num_cp + infra_mem * num_infra = budget
+  # worker_mem = cp_mem, infra_mem = worker_mem / 2
+  # worker_mem * (num_workers + num_cp + num_infra/2) = budget
+  local denom=$(( ${#worker_nodes[@]} + ${#cp_nodes[@]} ))
+  # Add infra contribution (each counts as half a worker)
+  denom=$(( denom * 2 + ${#infra_nodes[@]} ))
+  local worker_mem_gb=$(( mem_budget_gb * 2 / denom ))
+  [ "$worker_mem_gb" -lt 2 ] && worker_mem_gb=2
+  local cp_mem_gb=$worker_mem_gb
+  local infra_mem_gb=$(( worker_mem_gb / 2 ))
+  [ "$infra_mem_gb" -lt 2 ] && infra_mem_gb=2
+
+  echo "=== Applying CPU pinning and memory limits ==="
+  echo "  Host: ${total_cpus} CPUs, ${total_mem_gb}GB RAM"
+  echo "  Cluster: ${cluster_name} (${total_nodes} nodes)"
+  echo "  Control-plane (${#cp_nodes[@]}): ${cp_nodes[*]}"
+  echo "  Workers (${#worker_nodes[@]}): ${worker_nodes[*]}"
+  echo "  Infra (${#infra_nodes[@]}): ${infra_nodes[*]}"
+
+  local core_cursor=0
+
+  # Control-plane
+  for node in "${cp_nodes[@]}"; do
+    local start=$core_cursor
+    local end=$((core_cursor + cp_cores - 1))
+    echo "  Pinning ${node} -> CPUs ${start}-${end}, ${cp_mem_gb}g"
+    $oci update --cpuset-cpus="${start}-${end}" --memory="${cp_mem_gb}g" --memory-swap="${cp_mem_gb}g" "$node" >/dev/null
+    core_cursor=$((end + 1))
+  done
+
+  # Workers
+  for node in "${worker_nodes[@]}"; do
+    local start=$core_cursor
+    local end=$((core_cursor + worker_cores_each - 1))
+    # Clamp to max available
+    [ "$end" -ge "$total_cpus" ] && end=$((total_cpus - 1))
+    echo "  Pinning ${node} -> CPUs ${start}-${end}, ${worker_mem_gb}g"
+    $oci update --cpuset-cpus="${start}-${end}" --memory="${worker_mem_gb}g" --memory-swap="${worker_mem_gb}g" "$node" >/dev/null
+    core_cursor=$((end + 1))
+  done
+
+  # Infra/Prometheus: share remaining cores equally
+  if [ "${#infra_nodes[@]}" -gt 0 ]; then
+    local remaining_cores=$((total_cpus - core_cursor))
+    local infra_cores_each=$((remaining_cores / ${#infra_nodes[@]}))
+    [ "$infra_cores_each" -lt 2 ] && infra_cores_each=2
+
+    for node in "${infra_nodes[@]}"; do
+      local start=$core_cursor
+      local end=$((core_cursor + infra_cores_each - 1))
+      [ "$end" -ge "$total_cpus" ] && end=$((total_cpus - 1))
+      echo "  Pinning ${node} -> CPUs ${start}-${end}, ${infra_mem_gb}g"
+      $oci update --cpuset-cpus="${start}-${end}" --memory="${infra_mem_gb}g" --memory-swap="${infra_mem_gb}g" "$node" >/dev/null
+      core_cursor=$((end + 1))
+    done
+  fi
+
+  # Verify
+  echo "  Verification:"
+  for node in $nodes; do
+    local cpus mem
+    cpus=$($oci inspect --format '{{.HostConfig.CpusetCpus}}' "$node")
+    mem=$($oci inspect --format '{{.HostConfig.Memory}}' "$node")
+    echo "    ${node}: CPUs=${cpus} Memory=$((mem / 1073741824))GB"
+  done
+  echo "=== CPU pinning and memory limits applied ==="
+}
+
 remove_no_schedule_taint() {
   KIND_NODES=$(kind_get_nodes | sort)
   for n in $KIND_NODES; do
