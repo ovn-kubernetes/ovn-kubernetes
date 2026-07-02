@@ -110,6 +110,7 @@ nav:
       - CI Testing Guide: ci/ci.md
       - Debugging: developer-guide/debugging.md
       - Release Guide: developer-guide/release.md
+      - Maintenance Guide: developer-guide/maintenance.md
   - API Reference Guide:
       - Introduction: api-reference/introduction.md
       - EgressIP: api-reference/egress-ip-api-spec.md
