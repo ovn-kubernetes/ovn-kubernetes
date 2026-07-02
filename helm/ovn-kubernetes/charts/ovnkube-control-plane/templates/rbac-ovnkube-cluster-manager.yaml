@@ -116,7 +116,7 @@ rules:
       resources:
           - adminnetworkpolicies/status
           - baselineadminnetworkpolicies/status
-      verbs: [ "patch" ]
+      verbs: [ "patch", "update" ]
 
     {{- if eq (hasKey .Values.global "enableNetworkSegmentation" | ternary .Values.global.enableNetworkSegmentation false) true }}
     - apiGroups: ["discovery.k8s.io"]
