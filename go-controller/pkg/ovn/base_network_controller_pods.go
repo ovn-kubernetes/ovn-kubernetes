@@ -196,13 +196,13 @@ func (bnc *BaseNetworkController) lookupPortUUIDAndSwitchName(logicalPort string
 }
 
 func (bnc *BaseNetworkController) deletePodLogicalPort(pod *corev1.Pod, portInfo *lpInfo,
-	nadKey string) (*lpInfo, error) {
+	nadKey string) (*lpInfo, bool, error) {
 	var portUUID, switchName, logicalPort string
 	var podIfAddrs []*net.IPNet
 
 	expectedSwitchName, err := bnc.getExpectedSwitchName(pod)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	podDesc := fmt.Sprintf("pod %s/%s/%s", nadKey, pod.Namespace, pod.Name)
@@ -215,16 +215,16 @@ func (bnc *BaseNetworkController) deletePodLogicalPort(pod *corev1.Pod, portInfo
 			if util.IsAnnotationNotSetError(err) {
 				// if the annotation doesn’t exist, that’s not an error. It means logical port does not need to be deleted.
 				klog.V(5).Infof("No annotations on %s, no need to delete its logical port: %s", podDesc, logicalPort)
-				return nil, nil
+				return nil, false, nil
 			}
-			return nil, fmt.Errorf("unable to unmarshal pod annotations for %s: %w", podDesc, err)
+			return nil, false, fmt.Errorf("unable to unmarshal pod annotations for %s: %w", podDesc, err)
 		}
 
 		// Since portInfo is not available, use ovn to locate the logical switch (named after the node name) for the logical port.
 		portUUID, switchName, err = bnc.lookupPortUUIDAndSwitchName(logicalPort)
 		if err != nil {
 			if !errors.Is(err, libovsdbclient.ErrNotFound) {
-				return nil, fmt.Errorf("unable to locate portUUID+switchName for %s: %w", podDesc, err)
+				return nil, false, fmt.Errorf("unable to locate portUUID+switchName for %s: %w", podDesc, err)
 			}
 			// The logical port no longer exists in OVN. The caller expects this function to be idem-potent,
 			// so the proper action to take is to use an empty uuid and extract the node name from the pod spec.
@@ -253,7 +253,7 @@ func (bnc *BaseNetworkController) deletePodLogicalPort(pod *corev1.Pod, portInfo
 	if bnc.allocatesPodAnnotation() {
 		shouldRelease, err = bnc.shouldReleaseDeletedPod(pod, switchName, nadKey, podIfAddrs)
 		if err != nil {
-			return nil, fmt.Errorf("unable to determine if ip should be released: %v", err)
+			return nil, false, fmt.Errorf("unable to determine if ip should be released: %v", err)
 		}
 	}
 
@@ -261,14 +261,14 @@ func (bnc *BaseNetworkController) deletePodLogicalPort(pod *corev1.Pod, portInfo
 
 	if ops, err = bnc.deletePodFromNamespacePortGroupOps(nil, pod.Namespace,
 		portUUID); err != nil {
-		return nil, fmt.Errorf("unable to delete pod %s from namespace: %w", podDesc, err)
+		return nil, false, fmt.Errorf("unable to delete pod %s from namespace: %w", podDesc, err)
 	}
 	allOps = append(allOps, ops...)
 
 	ops, err = bnc.delLSPOps(logicalPort, switchName, portUUID)
 	// Tolerate cases where logical switch of the logical port no longer exist in OVN.
 	if err != nil && !errors.Is(err, libovsdbclient.ErrNotFound) {
-		return nil, fmt.Errorf("failed to create delete ops for the lsp: %s: %s", logicalPort, err)
+		return nil, false, fmt.Errorf("failed to create delete ops for the lsp: %s: %s", logicalPort, err)
 	}
 	allOps = append(allOps, ops...)
 
@@ -280,14 +280,9 @@ func (bnc *BaseNetworkController) deletePodLogicalPort(pod *corev1.Pod, portInfo
 
 	_, err = libovsdbops.TransactAndCheck(bnc.nbClient, allOps)
 	if err != nil {
-		return nil, fmt.Errorf("cannot delete logical switch port %s, %v", logicalPort, err)
+		return nil, false, fmt.Errorf("cannot delete logical switch port %s, %v", logicalPort, err)
 	}
 	txOkCallBack()
-
-	// do not remove SNATs/GW routes/IPAM for an IP address unless we have validated no other pod is using it
-	if !shouldRelease {
-		return nil, nil
-	}
 
 	pInfo := lpInfo{
 		name:          logicalPort,
@@ -295,7 +290,7 @@ func (bnc *BaseNetworkController) deletePodLogicalPort(pod *corev1.Pod, portInfo
 		logicalSwitch: switchName,
 		ips:           podIfAddrs,
 	}
-	return &pInfo, nil
+	return &pInfo, shouldRelease, nil
 }
 
 // findPodWithIPAddresses finds any pods with the same IPs in a running state on the cluster

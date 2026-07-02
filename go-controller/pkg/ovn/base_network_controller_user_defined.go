@@ -1177,7 +1177,7 @@ func (bsnc *BaseUserDefinedNetworkController) removePodForUserDefinedNetwork(pod
 			podForLogicalPortDelete = pod.DeepCopy()
 			podForLogicalPortDelete.Status.Phase = corev1.PodSucceeded
 		}
-		pInfo, err := bsnc.deletePodLogicalPort(podForLogicalPortDelete, portInfoMap[nadKey], nadKey)
+		pInfo, shouldRelease, err := bsnc.deletePodLogicalPort(podForLogicalPortDelete, portInfoMap[nadKey], nadKey)
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -1189,7 +1189,7 @@ func (bsnc *BaseUserDefinedNetworkController) removePodForUserDefinedNetwork(pod
 		}
 
 		// do not release IP address unless we have validated no other pod is using it
-		if pInfo == nil || len(pInfo.ips) == 0 {
+		if pInfo == nil || len(pInfo.ips) == 0 || !shouldRelease {
 			bsnc.forgetPodReleasedBeforeStartup(string(pod.UID), nadKey)
 			continue
 		}
