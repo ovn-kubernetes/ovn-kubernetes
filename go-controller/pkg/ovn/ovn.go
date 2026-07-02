@@ -11,8 +11,6 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/kubernetes/scheme"
-	ref "k8s.io/client-go/tools/reference"
 	"k8s.io/klog/v2"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
@@ -22,6 +20,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kubevirt"
 	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics/recorders"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/addresssetmanager"
 	anpcontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/admin_network_policy"
@@ -87,20 +86,70 @@ func (oc *DefaultNetworkController) getPortInfo(pod *corev1.Pod) *lpInfo {
 	return portInfo
 }
 
-func (oc *DefaultNetworkController) recordPodEvent(reason string, addErr error, pod *corev1.Pod) {
-	podRef, err := ref.GetReference(scheme.Scheme, pod)
-	if err != nil {
-		klog.Errorf("Couldn't get a reference to pod %s/%s to post an event: '%v'",
-			pod.Namespace, pod.Name, err)
-	} else {
-		klog.V(5).Infof("Posting a %s event for Pod %s/%s", corev1.EventTypeWarning, pod.Namespace, pod.Name)
-		oc.recorder.Eventf(podRef, corev1.EventTypeWarning, reason, addErr.Error())
+func (oc *DefaultNetworkController) SyncPods(pods []*corev1.Pod) error {
+	return oc.syncPods(podsToInterfaces(pods))
+}
+
+func (oc *DefaultNetworkController) GetPodState(pod *corev1.Pod) interface{} {
+	return oc.getPortInfo(pod)
+}
+
+func (oc *DefaultNetworkController) PodExpectedOnNetwork(pod *corev1.Pod) (bool, error) {
+	return util.PodScheduled(pod) && oc.podExpectedInLogicalCache(pod), nil
+}
+
+func (oc *DefaultNetworkController) ReconcilePod(oldPod, newPod *corev1.Pod, cachedState interface{}) (err error) {
+	recordedPod := oc.recordPodReconcileStart(oldPod, newPod)
+	defer func() {
+		if err == nil && recordedPod != nil {
+			recorders.GetConfigDurationRecorder().End("pod", recordedPod.Namespace, recordedPod.Name)
+		}
+	}()
+
+	if newPod == nil {
+		if oldPod == nil {
+			return fmt.Errorf("pod delete reconcile for network %s is missing pod", oc.GetNetworkName())
+		}
+		var portInfo *lpInfo
+		if cachedState != nil {
+			var ok bool
+			portInfo, ok = cachedState.(*lpInfo)
+			if !ok {
+				return fmt.Errorf("pod delete reconcile for network %s expected *lpInfo cache state but got %T", oc.GetNetworkName(), cachedState)
+			}
+		}
+		return oc.reconcileDeletedPod(oldPod, portInfo)
 	}
+	addPort := oc.shouldEnsurePodLogicalPort(newPod, ovntypes.DefaultNetworkName)
+	return oc.ensurePod(newPod, addPort)
+}
+
+func (oc *DefaultNetworkController) recordPodReconcileStart(oldPod, newPod *corev1.Pod) *corev1.Pod {
+	var pod *corev1.Pod
+	switch {
+	case newPod == nil:
+		pod = oldPod
+		if pod != nil && oc.podRecorder != nil {
+			oc.podRecorder.CleanPod(pod.UID)
+		}
+	case oldPod == nil:
+		pod = newPod
+		if oc.podRecorder != nil {
+			oc.podRecorder.AddPod(pod.UID)
+		}
+	default:
+		pod = newPod
+	}
+
+	if pod != nil {
+		recorders.GetConfigDurationRecorder().Start("pod", pod.Namespace, pod.Name)
+	}
+	return pod
 }
 
 // ensurePod tries to set up a pod. It returns nil on success and error on failure; failure
 // indicates the pod set up should be retried later.
-func (oc *DefaultNetworkController) ensurePod(oldPod, pod *corev1.Pod, addPort bool) error {
+func (oc *DefaultNetworkController) ensurePod(pod *corev1.Pod, addPort bool) error {
 	// Try unscheduled pods later
 	if !util.PodScheduled(pod) {
 		return nil
@@ -108,16 +157,16 @@ func (oc *DefaultNetworkController) ensurePod(oldPod, pod *corev1.Pod, addPort b
 
 	if oc.isPodScheduledinLocalZone(pod) {
 		klog.V(5).Infof("Ensuring zone local for Pod %s/%s in node %s", pod.Namespace, pod.Name, pod.Spec.NodeName)
-		return oc.ensureLocalZonePod(oldPod, pod, addPort)
+		return oc.ensureLocalZonePod(pod, addPort)
 	}
 
 	klog.V(5).Infof("Ensuring zone remote for Pod %s/%s in node %s", pod.Namespace, pod.Name, pod.Spec.NodeName)
-	return oc.ensureRemoteZonePod(oldPod, pod)
+	return oc.ensureRemoteZonePod(pod)
 }
 
 // ensureLocalZonePod tries to set up a local zone pod. It returns nil on success and error on failure; failure
 // indicates the pod set up should be retried later.
-func (oc *DefaultNetworkController) ensureLocalZonePod(oldPod, pod *corev1.Pod, addPort bool) error {
+func (oc *DefaultNetworkController) ensureLocalZonePod(pod *corev1.Pod, addPort bool) error {
 	if config.Metrics.EnableScaleMetrics {
 		start := time.Now()
 		defer func() {
@@ -130,16 +179,20 @@ func (oc *DefaultNetworkController) ensureLocalZonePod(oldPod, pod *corev1.Pod, 
 		}()
 	}
 
+	liveMigratable := kubevirt.IsPodLiveMigratable(pod)
+	var podAnnotation *util.PodAnnotation
+
 	if !util.PodWantsHostNetwork(pod) && addPort {
-		if err := oc.addLogicalPort(pod); err != nil {
+		var err error
+		podAnnotation, err = oc.addLogicalPortWithAnnotation(pod)
+		if err != nil {
 			return fmt.Errorf("addLogicalPort failed for %s/%s: %w", pod.Namespace, pod.Name, err)
 		}
 	}
 
-	// update open ports for UDN pods on pod update.
-	if util.IsNetworkSegmentationSupportEnabled() && !util.PodWantsHostNetwork(pod) && !addPort &&
-		pod != nil && oldPod != nil &&
-		pod.Annotations[util.UDNOpenPortsAnnotationName] != oldPod.Annotations[util.UDNOpenPortsAnnotationName] {
+	// Reconcile open ports for UDN pods from current pod state on every
+	// non-add pass.
+	if util.IsNetworkSegmentationSupportEnabled() && !util.PodWantsHostNetwork(pod) && !addPort {
 		networkRole, err := oc.GetNetworkRole(pod)
 		if err != nil {
 			return err
@@ -154,9 +207,15 @@ func (oc *DefaultNetworkController) ensureLocalZonePod(oldPod, pod *corev1.Pod, 
 		}
 	}
 
-	if kubevirt.IsPodLiveMigratable(pod) {
+	if !util.PodWantsHostNetwork(pod) && !addPort {
+		if err := oc.reconcilePodNetworkPolicyMembership(pod); err != nil {
+			return fmt.Errorf("failed to reconcile network policy membership for pod %s/%s: %w", pod.Namespace, pod.Name, err)
+		}
+	}
+
+	if liveMigratable {
 		v4Subnets, v6Subnets := util.GetClusterSubnetsWithHostPrefix()
-		return kubevirt.EnsureLocalZonePodAddressesToNodeRoute(oc.watchFactory, oc.nbClient, oc.lsManager, pod, ovntypes.DefaultNetworkName, append(v4Subnets, v6Subnets...))
+		return kubevirt.EnsureLocalZonePodAddressesToNodeRoute(oc.watchFactory, oc.nbClient, oc.lsManager, pod, podAnnotation, ovntypes.DefaultNetworkName, append(v4Subnets, v6Subnets...), addPort)
 	}
 
 	return nil
@@ -166,17 +225,24 @@ func (oc *DefaultNetworkController) ensureLocalZonePod(oldPod, pod *corev1.Pod, 
 //   - For live-migratable VMs, ensures remote-zone pod-to-node routes
 //
 // It returns nil on success and error on failure; failure indicates the pod set up should be retried later.
-func (oc *DefaultNetworkController) ensureRemoteZonePod(_, pod *corev1.Pod) error {
+func (oc *DefaultNetworkController) ensureRemoteZonePod(pod *corev1.Pod) error {
 	if kubevirt.IsPodLiveMigratable(pod) {
 		return kubevirt.EnsureRemoteZonePodAddressesToNodeRoute(oc.watchFactory, oc.nbClient, pod)
 	}
 	return nil
 }
 
+// reconcileDeletedPod uses the delete event object as the desired-absent
+// context while cleanup still depends on legacy remove helpers.
+func (oc *DefaultNetworkController) reconcileDeletedPod(pod *corev1.Pod, portInfo *lpInfo) error {
+	return oc.removePod(pod, portInfo)
+}
+
 // removePod tried to tear down a pod. It returns nil on success and error on failure;
 // failure indicates the pod tear down should be retried later.
 func (oc *DefaultNetworkController) removePod(pod *corev1.Pod, portInfo *lpInfo) error {
-	if oc.isPodScheduledinLocalZone(pod) {
+	localZonePod := oc.isPodScheduledinLocalZone(pod)
+	if localZonePod {
 		if err := oc.removeLocalZonePod(pod, portInfo); err != nil {
 			return err
 		}
@@ -186,8 +252,15 @@ func (oc *DefaultNetworkController) removePod(pod *corev1.Pod, portInfo *lpInfo)
 		}
 	}
 
-	err := kubevirt.CleanUpLiveMigratablePod(oc.nbClient, oc.watchFactory, pod)
-	if err != nil {
+	routeZone := kubevirt.OvnRemoteZone
+	if localZonePod {
+		routeZone = kubevirt.OvnLocalZone
+	}
+	if err := kubevirt.CleanUpFailedLiveMigrationTargetPod(oc.nbClient, oc.watchFactory, pod, routeZone); err != nil {
+		return err
+	}
+
+	if err := kubevirt.CleanUpLiveMigratablePod(oc.nbClient, oc.watchFactory, pod); err != nil {
 		return err
 	}
 
@@ -198,8 +271,6 @@ func (oc *DefaultNetworkController) removePod(pod *corev1.Pod, portInfo *lpInfo)
 // removeLocalZonePod tries to tear down a local zone pod. It returns nil on success and error on failure;
 // failure indicates the pod tear down should be retried later.
 func (oc *DefaultNetworkController) removeLocalZonePod(pod *corev1.Pod, portInfo *lpInfo) error {
-	oc.logicalPortCache.remove(pod, ovntypes.DefaultNetworkName)
-
 	if config.Metrics.EnableScaleMetrics {
 		start := time.Now()
 		defer func() {
@@ -210,9 +281,15 @@ func (oc *DefaultNetworkController) removeLocalZonePod(pod *corev1.Pod, portInfo
 	if util.PodWantsHostNetwork(pod) {
 		return nil
 	}
+	defer oc.logicalPortCache.remove(pod, ovntypes.DefaultNetworkName)
+
 	if err := oc.deleteLogicalPort(pod, portInfo); err != nil {
 		return fmt.Errorf("deleteLogicalPort failed for pod %s: %w",
 			getPodNamespacedName(pod), err)
+	}
+
+	if err := oc.deletePodNetworkPolicyMembership(pod); err != nil {
+		return fmt.Errorf("failed to delete network policy membership for pod %s/%s: %w", pod.Namespace, pod.Name, err)
 	}
 
 	return nil

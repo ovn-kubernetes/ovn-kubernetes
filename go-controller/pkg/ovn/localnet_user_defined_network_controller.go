@@ -13,10 +13,12 @@ import (
 	mnpapi "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/apis/k8s.cni.cncf.io/v1beta1"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/pod"
 	nodecontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/node"
+	podcontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/pod"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics/recorders"
@@ -128,9 +130,6 @@ func (h *LocalnetUserDefinedNetworkControllerEventHandler) SyncFunc(objs []inter
 		syncFunc = h.syncFunc
 	} else {
 		switch h.objType {
-		case factory.PodType:
-			syncFunc = h.oc.syncPodsForUserDefinedNetwork
-
 		case factory.NamespaceType:
 			syncFunc = h.oc.syncNamespaces
 
@@ -166,6 +165,7 @@ func NewLocalnetUserDefinedNetworkController(
 	networkManager networkmanager.Interface,
 	addressSetManager *addresssetmanager.AddressSetManager,
 	nodeReconciler *nodecontroller.NodeController,
+	podReconciler *podcontroller.Controller,
 ) *LocalnetUserDefinedNetworkController {
 
 	stopChan := make(chan struct{})
@@ -180,28 +180,31 @@ func NewLocalnetUserDefinedNetworkController(
 		BaseLayer2UserDefinedNetworkController{
 			BaseUserDefinedNetworkController: BaseUserDefinedNetworkController{
 				BaseNetworkController: BaseNetworkController{
-					CommonNetworkControllerInfo: *cnci,
-					controllerName:              getNetworkControllerName(netInfo.GetNetworkName()),
-					ReconcilableNetInfo:         util.NewReconcilableNetInfo(netInfo),
-					lsManager:                   lsm.NewL2SwitchManager(),
-					logicalPortCache:            NewPortCache(stopChan),
-					namespaces:                  make(map[string]*namespaceInfo),
-					namespacesMutex:             sync.Mutex{},
-					addressSetFactory:           addressSetFactory,
-					networkPolicies:             syncmap.NewSyncMap[*networkPolicy](),
-					sharedNetpolPortGroups:      syncmap.NewSyncMap[*defaultDenyPortGroups](),
-					stopChan:                    stopChan,
-					wg:                          &sync.WaitGroup{},
-					cancelableCtx:               util.NewCancelableContext(),
-					localZoneNodes:              &sync.Map{},
-					networkManager:              networkManager,
-					addressSetManager:           addressSetManager,
-					nodeReconciler:              nodeReconciler,
-					nodeAnnotationCache:         nodeAnnotationCache,
+					CommonNetworkControllerInfo:  *cnci,
+					controllerName:               getNetworkControllerName(netInfo.GetNetworkName()),
+					ReconcilableNetInfo:          util.NewReconcilableNetInfo(netInfo),
+					lsManager:                    lsm.NewL2SwitchManager(),
+					logicalPortCache:             NewPortCache(stopChan),
+					namespaces:                   make(map[string]*namespaceInfo),
+					namespacesMutex:              sync.Mutex{},
+					addressSetFactory:            addressSetFactory,
+					networkPolicies:              syncmap.NewSyncMap[*networkPolicy](),
+					networkPolicyKeysByNamespace: syncmap.NewSyncMap[sets.Set[string]](),
+					sharedNetpolPortGroups:       syncmap.NewSyncMap[*defaultDenyPortGroups](),
+					stopChan:                     stopChan,
+					wg:                           &sync.WaitGroup{},
+					cancelableCtx:                util.NewCancelableContext(),
+					localZoneNodes:               &sync.Map{},
+					networkManager:               networkManager,
+					addressSetManager:            addressSetManager,
+					nodeReconciler:               nodeReconciler,
+					nodeAnnotationCache:          nodeAnnotationCache,
+					podReconciler:                podReconciler,
 				},
 			},
 		},
 	}
+	oc.podHandler = &oc.BaseUserDefinedNetworkController
 
 	if oc.allocatesPodAnnotation() {
 		oc.podAnnotationAllocator = pod.NewPodAnnotationAllocator(
@@ -235,6 +238,7 @@ func (oc *LocalnetUserDefinedNetworkController) Start(_ context.Context) error {
 		return err
 	}
 	if err := oc.run(); err != nil {
+		oc.DeregisterPodHandler()
 		oc.DeregisterNodeHandler()
 		return err
 	}
@@ -315,8 +319,6 @@ func (oc *LocalnetUserDefinedNetworkController) SyncNodes(nodes []*corev1.Node) 
 }
 
 func (oc *LocalnetUserDefinedNetworkController) initRetryFramework() {
-	oc.retryPods = oc.newRetryFramework(factory.PodType)
-
 	// For secondary networks, we don't have to watch namespace events if
 	// multi-network policy support is not enabled. We don't support
 	// multi-network policy for IPAM-less secondary networks either.

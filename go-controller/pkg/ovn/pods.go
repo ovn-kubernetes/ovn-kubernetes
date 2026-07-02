@@ -181,7 +181,7 @@ func (oc *DefaultNetworkController) deleteLogicalPort(pod *corev1.Pod, portInfo 
 		return nil
 	}
 
-	pInfo, err := oc.deletePodLogicalPort(pod, portInfo, types.DefaultNetworkName)
+	pInfo, shouldRelease, err := oc.deletePodLogicalPort(pod, portInfo, types.DefaultNetworkName)
 	if err != nil {
 		return err
 	}
@@ -195,19 +195,31 @@ func (oc *DefaultNetworkController) deleteLogicalPort(pod *corev1.Pod, portInfo 
 		}
 	}
 
-	// do not remove SNATs/GW routes/IPAM for an IP address unless we have validated no other pod is using it
 	if pInfo == nil {
 		return nil
 	}
 
-	if config.Gateway.DisableSNATMultipleGWs {
+	failedMigrationTarget, err := kubevirt.IsFailedLiveMigrationTarget(oc.watchFactory.PodCoreInformer().Lister(), pod)
+	if err != nil {
+		return err
+	}
+	cleanupPodNetworkState := shouldRelease || failedMigrationTarget
+
+	if config.Gateway.DisableSNATMultipleGWs && cleanupPodNetworkState {
 		if err := oc.deletePodSNAT(pInfo.logicalSwitch, []*net.IPNet{}, pInfo.ips); err != nil {
 			return fmt.Errorf("cannot delete GR SNAT for pod %s: %w", podDesc, err)
 		}
 	}
-	podNsName := ktypes.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}
-	if err := oc.deleteGWRoutesForPod(podNsName, pInfo.ips); err != nil {
-		return fmt.Errorf("cannot delete GW Routes for pod %s: %w", podDesc, err)
+
+	if cleanupPodNetworkState {
+		podNsName := ktypes.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}
+		if err := oc.deleteGWRoutesForPod(podNsName, pInfo.ips); err != nil {
+			return fmt.Errorf("cannot delete GW Routes for pod %s: %w", podDesc, err)
+		}
+	}
+
+	if !shouldRelease {
+		return nil
 	}
 
 	if kubevirt.IsPodLiveMigratable(pod) {
@@ -237,21 +249,26 @@ func (oc *DefaultNetworkController) deleteLogicalPort(pod *corev1.Pod, portInfo 
 	return oc.releasePodIPs(pInfo)
 }
 
-func (oc *DefaultNetworkController) addLogicalPort(pod *corev1.Pod) (err error) {
+func (oc *DefaultNetworkController) addLogicalPort(pod *corev1.Pod) error {
+	_, err := oc.addLogicalPortWithAnnotation(pod)
+	return err
+}
+
+func (oc *DefaultNetworkController) addLogicalPortWithAnnotation(pod *corev1.Pod) (podAnnotation *util.PodAnnotation, err error) {
 	// If a node does node have an assigned hostsubnet don't wait for the logical switch to appear
 	switchName := pod.Spec.NodeName
 	if oc.lsManager.IsNonHostSubnetSwitch(switchName) {
-		return nil
+		return nil, nil
 	}
 
 	_, networkMap, err := util.GetDefaultPodNADToNetworkMapping(pod)
 	if err != nil {
 		// multus won't add this Pod if this fails, should never happen
-		return fmt.Errorf("error getting default-network's network-attachment for pod %s/%s: %v", pod.Namespace, pod.Name, err)
+		return nil, fmt.Errorf("error getting default-network's network-attachment for pod %s/%s: %v", pod.Namespace, pod.Name, err)
 	}
 	// for default network, networkMap either is empty or contains only one network selection element
 	if len(networkMap) > 1 {
-		return fmt.Errorf("more than one NAD requested on default network for pod %s/%s", pod.Namespace, pod.Name)
+		return nil, fmt.Errorf("more than one NAD requested on default network for pod %s/%s", pod.Namespace, pod.Name)
 	}
 
 	var network *nadapi.NetworkSelectionElement
@@ -262,7 +279,6 @@ func (oc *DefaultNetworkController) addLogicalPort(pod *corev1.Pod) (err error) 
 	var libovsdbExecuteTime time.Duration
 	var lsp *nbdb.LogicalSwitchPort
 	var ops []ovsdb.Operation
-	var podAnnotation *util.PodAnnotation
 	var newlyCreatedPort bool
 	// Keep track of how long syncs take.
 	start := time.Now()
@@ -274,34 +290,33 @@ func (oc *DefaultNetworkController) addLogicalPort(pod *corev1.Pod) (err error) 
 	nadKey := types.DefaultNetworkName
 	ops, lsp, podAnnotation, newlyCreatedPort, err = oc.addLogicalPortToNetwork(pod, nadKey, network, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// If default network is not primary, update secondaryPods port group to isolate default network
 	networkRole, err := oc.GetNetworkRole(pod)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if networkRole == types.NetworkRoleInfrastructure && util.IsNetworkSegmentationSupportEnabled() {
 		pgName := libovsdbutil.GetPortGroupName(oc.getSecondaryPodsPortGroupDbIDs())
 		if ops, err = libovsdbops.AddPortsToPortGroupOps(oc.nbClient, ops, pgName, lsp.UUID); err != nil {
-			return err
+			return nil, err
 		}
 		// set open ports for UDN pods, use function without transact, since lsp is not created yet.
 		var parseErr error
 		ops, parseErr, err = oc.setUDNPodOpenPortsOps(pod.Namespace+"/"+pod.Name, pod.Annotations, lsp.Name, ops)
 		err = utilerrors.Join(parseErr, err)
 		if err != nil {
-			return fmt.Errorf("failed to set UDN pod %s/%s open ports: %w", pod.Namespace, pod.Name, err)
+			return nil, fmt.Errorf("failed to set UDN pod %s/%s open ports: %w", pod.Namespace, pod.Name, err)
 		}
 	}
 
-	// Ensure the namespace/nsInfo exists
-	addOps, err := oc.addLocalPodToNamespace(pod.Namespace, lsp.UUID)
+	// Ensure pod-owned namespace port group membership before pod setup succeeds.
+	ops, err = oc.addPodToNamespacePortGroupOps(ops, pod.Namespace, lsp.UUID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	ops = append(ops, addOps...)
 
 	if config.Gateway.DisableSNATMultipleGWs {
 		// Add NAT rules to pods if disable SNAT is set. External gateway routes
@@ -309,7 +324,7 @@ func (oc *DefaultNetworkController) addLogicalPort(pod *corev1.Pod) (err error) 
 		// AdminPolicyBasedExternalRoute controller.
 		snatOps, err := oc.AddPodSNATOps(pod.Spec.NodeName, podAnnotation.IPs)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		ops = append(ops, snatOps...)
 	}
@@ -324,14 +339,14 @@ func (oc *DefaultNetworkController) addLogicalPort(pod *corev1.Pod) (err error) 
 	_, err = libovsdbops.TransactAndCheckAndSetUUIDs(oc.nbClient, lsp, ops)
 	libovsdbExecuteTime = time.Since(transactStart)
 	if err != nil {
-		return fmt.Errorf("error transacting operations %+v: %v", ops, err)
+		return nil, fmt.Errorf("error transacting operations %+v: %v", ops, err)
 	}
 	txOkCallBack()
 	oc.podRecorder.AddLSP(pod.UID, oc.GetNetInfo())
 
 	// if somehow lspUUID is empty, there is a bug here with interpreting OVSDB results
 	if len(lsp.UUID) == 0 {
-		return fmt.Errorf("UUID is empty from LSP: %+v", *lsp)
+		return nil, fmt.Errorf("UUID is empty from LSP: %+v", *lsp)
 	}
 
 	// Add the pod's logical switch port to the port cache
@@ -340,9 +355,13 @@ func (oc *DefaultNetworkController) addLogicalPort(pod *corev1.Pod) (err error) 
 		oc.onLogicalPortCacheAdd(pod, types.DefaultNetworkName)
 	}
 
+	if err := oc.reconcilePodNetworkPolicyMembership(pod); err != nil {
+		return nil, err
+	}
+
 	if kubevirt.IsPodLiveMigratable(pod) {
 		if err := oc.ensureDHCP(pod, podAnnotation, lsp); err != nil {
-			return fmt.Errorf("failed configuring DHCP for default network at pod %s/%s: %w", pod.Namespace, pod.Name, err)
+			return nil, fmt.Errorf("failed configuring DHCP for default network at pod %s/%s: %w", pod.Namespace, pod.Name, err)
 		}
 	}
 
@@ -350,7 +369,7 @@ func (oc *DefaultNetworkController) addLogicalPort(pod *corev1.Pod) (err error) 
 	if newlyCreatedPort {
 		metrics.RecordPodCreated(pod, oc.GetNetInfo())
 	}
-	return nil
+	return podAnnotation, nil
 }
 
 func (oc *DefaultNetworkController) allocateSyncPodsIPs(pod *corev1.Pod) (string, *util.PodAnnotation, error) {

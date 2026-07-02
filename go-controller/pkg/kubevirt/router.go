@@ -72,17 +72,27 @@ func DeleteRoutingForMigratedPod(nbClient libovsdbclient.Client, pod *corev1.Pod
 //     priority than route to use overlay in case of pod to pod communication
 //   - static route with VM ip as dst-ip prefix and output port the LRP pointing to the VM's node switch
 func EnsureLocalZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory, nbClient libovsdbclient.Client,
-	lsManager *logicalswitchmanager.LogicalSwitchManager, pod *corev1.Pod, nadKey string, clusterSubnets []config.CIDRNetworkEntry) error {
-	vmReady, err := virtualMachineReady(watchFactory, pod)
+	lsManager *logicalswitchmanager.LogicalSwitchManager, pod *corev1.Pod, podAnnotation *util.PodAnnotation, nadKey string, clusterSubnets []config.CIDRNetworkEntry, ensureDefaultRouteToExternal bool) error {
+	return withLiveMigrationVMLock(pod, func() error {
+		return ensureLocalZonePodAddressesToNodeRouteLocked(watchFactory, nbClient, lsManager, pod, podAnnotation, nadKey, clusterSubnets, ensureDefaultRouteToExternal)
+	})
+}
+
+func ensureLocalZonePodAddressesToNodeRouteLocked(watchFactory *factory.WatchFactory, nbClient libovsdbclient.Client,
+	lsManager *logicalswitchmanager.LogicalSwitchManager, pod *corev1.Pod, podAnnotation *util.PodAnnotation, nadKey string, clusterSubnets []config.CIDRNetworkEntry, ensureDefaultRouteToExternal bool) error {
+	vmReady, liveMigrationStatus, err := virtualMachineReadyStatus(watchFactory, pod)
 	if err != nil {
 		return err
 	}
 	if !vmReady {
 		return nil
 	}
-	podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, nadKey)
-	if err != nil {
-		return fmt.Errorf("failed reading local pod annotation: %v", err)
+	ensureDefaultRouteToExternal = ensureDefaultRouteToExternal || isFailedLiveMigrationSource(liveMigrationStatus, pod)
+	if podAnnotation == nil {
+		podAnnotation, err = util.UnmarshalPodAnnotation(pod.Annotations, nadKey)
+		if err != nil {
+			return fmt.Errorf("failed reading local pod annotation: %v", err)
+		}
 	}
 
 	nodeOwningSubnet, _ := ZoneContainsPodSubnet(lsManager, podAnnotation.IPs)
@@ -96,19 +106,21 @@ func EnsureLocalZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory, 
 		return nil
 	}
 
-	// NOTE: EIP & ESVC use same route and if this is already present thanks to
-	// those features, this will be a no-op.
-	node, err := watchFactory.GetNode(pod.Spec.NodeName)
-	if err != nil {
-		return fmt.Errorf("failed getting to list node %q for pod %s/%s: %w", pod.Spec.NodeName, pod.Namespace, pod.Name, err)
-	}
-	gatewayIPs, err := udn.GetGWRouterIPs(node, &util.DefaultNetInfo{})
-	if err != nil {
-		return fmt.Errorf("failed to get default network gateway router join IPs for node %q: %w", node.Name, err)
-	}
-	if err := libovsdbutil.CreateDefaultRouteToExternal(nbClient, types.OVNClusterRouter,
-		types.GWRouterPrefix+pod.Spec.NodeName, clusterSubnets, gatewayIPs); err != nil {
-		return err
+	if ensureDefaultRouteToExternal {
+		// NOTE: EIP & ESVC use same route and if this is already present thanks to
+		// those features, this will be a no-op.
+		node, err := watchFactory.GetNode(pod.Spec.NodeName)
+		if err != nil {
+			return fmt.Errorf("failed getting to list node %q for pod %s/%s: %w", pod.Spec.NodeName, pod.Namespace, pod.Name, err)
+		}
+		gatewayIPs, err := udn.GetGWRouterIPs(node, &util.DefaultNetInfo{})
+		if err != nil {
+			return fmt.Errorf("failed to get default network gateway router join IPs for node %q: %w", node.Name, err)
+		}
+		if err := libovsdbutil.CreateDefaultRouteToExternal(nbClient, types.OVNClusterRouter,
+			types.GWRouterPrefix+pod.Spec.NodeName, clusterSubnets, gatewayIPs); err != nil {
+			return err
+		}
 	}
 
 	for _, podIP := range podAnnotation.IPs {
@@ -151,6 +163,12 @@ func EnsureLocalZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory, 
 //   - A dst-ip with live migrated pod ip as prefix and nexthop the pod's
 //     current node transit switch port.
 func EnsureRemoteZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory, nbClient libovsdbclient.Client, pod *corev1.Pod) error {
+	return withLiveMigrationVMLock(pod, func() error {
+		return ensureRemoteZonePodAddressesToNodeRouteLocked(watchFactory, nbClient, pod)
+	})
+}
+
+func ensureRemoteZonePodAddressesToNodeRouteLocked(watchFactory *factory.WatchFactory, nbClient libovsdbclient.Client, pod *corev1.Pod) error {
 	vmReady, err := virtualMachineReady(watchFactory, pod)
 	if err != nil {
 		return err
@@ -230,12 +248,29 @@ func EnsureRemoteZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory,
 }
 
 func virtualMachineReady(watchFactory *factory.WatchFactory, pod *corev1.Pod) (bool, error) {
+	ready, _, err := virtualMachineReadyStatus(watchFactory, pod)
+	return ready, err
+}
+
+func virtualMachineReadyStatus(watchFactory *factory.WatchFactory, pod *corev1.Pod) (bool, *LiveMigrationStatus, error) {
+	if util.PodWantsHostNetwork(pod) || !IsPodLiveMigratable(pod) {
+		return false, nil, nil
+	}
+
+	liveMigrationStatus, err := DiscoverLiveMigrationStatus(watchFactory.PodCoreInformer().Lister(), pod)
+	if err != nil {
+		return false, nil, err
+	}
+	if isFailedLiveMigrationSource(liveMigrationStatus, pod) {
+		return true, liveMigrationStatus, nil
+	}
+
 	isMigratedSourcePodStale, err := IsMigratedSourcePodStale(watchFactory, pod)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
-	if util.PodWantsHostNetwork(pod) || !IsPodLiveMigratable(pod) || isMigratedSourcePodStale {
-		return false, nil
+	if isMigratedSourcePodStale {
+		return false, liveMigrationStatus, nil
 	}
 
 	// When a virtual machine starts up, this
@@ -249,5 +284,12 @@ func virtualMachineReady(watchFactory *factory.WatchFactory, pod *corev1.Pod) (b
 	targetReadyTimestamp := pod.Annotations[kubevirtv1.MigrationTargetReadyTimestamp]
 
 	// VM is ready to receive traffic
-	return targetNode == pod.Spec.NodeName || targetReadyTimestamp != "", nil
+	return targetNode == pod.Spec.NodeName || targetReadyTimestamp != "", liveMigrationStatus, nil
+}
+
+func isFailedLiveMigrationSource(liveMigrationStatus *LiveMigrationStatus, pod *corev1.Pod) bool {
+	return liveMigrationStatus != nil &&
+		liveMigrationStatus.State == LiveMigrationFailed &&
+		liveMigrationStatus.SourcePod != nil &&
+		liveMigrationStatus.SourcePod.UID == pod.UID
 }

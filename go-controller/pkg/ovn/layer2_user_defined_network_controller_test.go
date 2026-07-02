@@ -538,6 +538,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 				fakeOvn.addressSetManager,
 				nil,
 				nil,
+				nil,
 			)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(dummyController.Cleanup()).To(Succeed())
@@ -625,6 +626,9 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(acls).NotTo(BeEmpty(), "ACL referencing the address set should exist")
 			}).WithTimeout(5 * time.Second).Should(Succeed())
+			// Stop pod reconciliation before cleanup so the recreated
+			// controller can register a handler for the same network.
+			l2Controller.DeregisterPodHandler()
 			Expect(l2Controller.Cleanup()).To(Succeed())
 
 			// Verify address set was cleaned from the NB DB
@@ -648,6 +652,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 				nil,
 				fakeOvn.addressSetManager,
 				nil,
+				fakeOvn.udnPodController,
 				fakeOvn.controller.ServiceController(),
 			)
 			Expect(err).NotTo(HaveOccurred())
