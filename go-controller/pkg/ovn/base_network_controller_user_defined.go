@@ -494,7 +494,7 @@ func (bsnc *BaseUserDefinedNetworkController) removeStalePodPortsForUserDefinedN
 		}
 
 		bsnc.logicalPortCache.remove(pod, nadKey)
-		pInfo, err := bsnc.deletePodLogicalPort(pod, portInfo, nadKey)
+		pInfo, shouldRelease, err := bsnc.deletePodLogicalPort(pod, portInfo, nadKey)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("failed to delete stale logical port of pod %s/%s for NAD key %s: %w",
 				pod.Namespace, pod.Name, nadKey, err))
@@ -503,7 +503,7 @@ func (bsnc *BaseUserDefinedNetworkController) removeStalePodPortsForUserDefinedN
 		if !bsnc.allocatesPodAnnotation() {
 			continue
 		}
-		if pInfo == nil || len(pInfo.ips) == 0 {
+		if pInfo == nil || len(pInfo.ips) == 0 || !shouldRelease {
 			bsnc.forgetPodReleasedBeforeStartup(string(pod.UID), nadKey)
 			continue
 		}
@@ -1211,7 +1211,7 @@ func (bsnc *BaseUserDefinedNetworkController) removePodForUserDefinedNetwork(pod
 			podForLogicalPortDelete = pod.DeepCopy()
 			podForLogicalPortDelete.Status.Phase = corev1.PodSucceeded
 		}
-		pInfo, err := bsnc.deletePodLogicalPort(podForLogicalPortDelete, portInfoMap[nadKey], nadKey)
+		pInfo, shouldRelease, err := bsnc.deletePodLogicalPort(podForLogicalPortDelete, portInfoMap[nadKey], nadKey)
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -1223,7 +1223,7 @@ func (bsnc *BaseUserDefinedNetworkController) removePodForUserDefinedNetwork(pod
 		}
 
 		// do not release IP address unless we have validated no other pod is using it
-		if pInfo == nil || len(pInfo.ips) == 0 {
+		if pInfo == nil || len(pInfo.ips) == 0 || !shouldRelease {
 			bsnc.forgetPodReleasedBeforeStartup(string(pod.UID), nadKey)
 			continue
 		}
