@@ -850,6 +850,14 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 			clientPod, err = createPod(f, echoClientPodName, nodes.Items[1].Name, f.Namespace.Name, []string{"bash", "-c", "sleep infinity"}, nil)
 			framework.ExpectNoError(err)
 
+			// With dynamic UDN allocation, the network only exists on nodes
+			// that run workloads attached to it, which here is just the
+			// client pod's node: only expect it to be advertised.
+			advertisedNodes := nodes.Items
+			if isDynamicUDNEnabled() {
+				advertisedNodes = []corev1.Node{nodes.Items[1]}
+			}
+
 			// Create route advertisement
 			ginkgo.By("create router advertisement")
 			raClient, err := raclientset.NewForConfig(f.ClientConfig())
@@ -941,7 +949,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 
 			ginkgo.By("ensure CUDN pod subnet is advertised to the external FRR router")
 			for _, serverContainerIP := range serverContainerIPs {
-				for _, node := range nodes.Items {
+				for _, node := range advertisedNodes {
 					if cudnTemplate.Spec.Network.Layer3 != nil {
 						checkL3NodePodRoute(node, serverContainerIP, routerContainerName, types.CUDNPrefix+cUDN.Name)
 					} else if cudnTemplate.Spec.Network.Layer2 != nil {
@@ -952,13 +960,19 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 				}
 			}
 
+			if isDynamicUDNEnabled() && cudnTemplate.Spec.Network.Layer3 != nil {
+				ginkgo.By("ensure nodes without workloads attached to the network get no subnet allocated for it")
+				expectNoUDNSubnetOnNodesExcept(nodes.Items, clientPod.Spec.NodeName, types.CUDNPrefix+cUDN.Name)
+			}
+
 			layer2LocalGateway := cudnTemplate.Spec.Network.Layer2 != nil && IsGatewayModeLocal(f.ClientSet)
 			if layer2LocalGateway {
 				ginkgo.By("ensure CUDN VRF has a BGP-imported route to the external server CIDR")
 			} else {
 				ginkgo.By("ensure CUDN gateway router has a BGP-imported route to the external server CIDR")
 			}
-			for _, node := range nodes.Items {
+			// the network topology only exists on the nodes it is allocated on
+			for _, node := range advertisedNodes {
 				nodeName := node.Name
 				for _, tc := range []struct {
 					cidr, nextHop string
