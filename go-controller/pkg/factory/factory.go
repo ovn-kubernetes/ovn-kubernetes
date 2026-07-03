@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -267,6 +268,21 @@ var (
 func informerObjectTrim(obj interface{}) (interface{}, error) {
 	if accessor, err := meta.Accessor(obj); err == nil {
 		accessor.SetManagedFields(nil)
+	}
+	if ns, ok := obj.(*corev1.Namespace); ok {
+		// OVN-K only reads annotations with the k8s.ovn.org/ prefix from namespaces
+		// (acl-logging, multicast-enabled, external-gw-pod-ips). Strip all other
+		// annotations to reduce per-object memory when external controllers (e.g.
+		// ArgoCD) add large annotations that OVN-K does not consume.
+		if len(ns.Annotations) > 0 {
+			trimmed := make(map[string]string, len(ns.Annotations))
+			for k, v := range ns.Annotations {
+				if strings.HasPrefix(k, "k8s.ovn.org/") {
+					trimmed[k] = v
+				}
+			}
+			ns.Annotations = trimmed
+		}
 	}
 	if pod, ok := obj.(*corev1.Pod); ok {
 		// OVN-K does not consume pod volumes from informer cache.
