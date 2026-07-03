@@ -169,6 +169,12 @@ if [ "$ENABLE_NO_OVERLAY" != true ]; then
   skip_label "Feature:NoOverlay"
 fi
 
+# RouteAdvertisements tests over dynamically allocated UDNs require a cluster
+# with both route advertisements and dynamic UDN allocation enabled.
+if [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ] || [ "$DYNAMIC_UDN_ALLOCATION" != true ]; then
+  skip_label "Feature:RouteAdvertisementsDynamicUDN"
+fi
+
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ]; then
   skip_label "Feature:RouteAdvertisements"
 else

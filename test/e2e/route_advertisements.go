@@ -694,6 +694,78 @@ func cudnLayer3SubnetsB() []udnv1.Layer3Subnet {
 	}}
 }
 
+// expectNoUDNSubnetOnNodesExcept asserts that, with dynamic UDN allocation,
+// no node other than activeNodeName gets a subnet allocated for the network.
+func expectNoUDNSubnetOnNodesExcept(nodes []corev1.Node, activeNodeName, netName string) {
+	ginkgo.GinkgoHelper()
+	gomega.Consistently(func() error {
+		for _, node := range nodes {
+			if node.Name == activeNodeName {
+				continue
+			}
+			if _, _, err := getNodePodCIDRs(node.Name, netName); err == nil {
+				return fmt.Errorf("node %s has a subnet allocated for network %s", node.Name, netName)
+			}
+		}
+		return nil
+	}, 10*time.Second, 2*time.Second).Should(gomega.Succeed())
+}
+
+// expectNodesNotAdvertisedInFRR asserts that the external FRR router has no
+// route within the network's subnets via any node other than activeNodeName.
+func expectNodesNotAdvertisedInFRR(nodes []corev1.Node, activeNodeName, v4CIDR, v6CIDR string) {
+	ginkgo.GinkgoHelper()
+	externalContainer := infraapi.ExternalContainer{Name: routerContainerName}
+	type familyCheck struct {
+		routeCmd []string
+		nextHop  func(corev1.Node) string
+	}
+	var checks []familyCheck
+	if v4CIDR != "" {
+		checks = append(checks, familyCheck{
+			routeCmd: []string{"ip", "route", "show", "root", v4CIDR},
+			nextHop: func(node corev1.Node) string {
+				ips := e2enode.GetAddressesByTypeAndFamily(&node, corev1.NodeInternalIP, corev1.IPv4Protocol)
+				if len(ips) == 0 {
+					return ""
+				}
+				return ips[0]
+			},
+		})
+	}
+	if v6CIDR != "" {
+		checks = append(checks, familyCheck{
+			routeCmd: []string{"ip", "-6", "route", "show", "root", v6CIDR},
+			nextHop: func(node corev1.Node) string {
+				// BGP uses the link-local address as the IPv6 nexthop
+				lla, err := GetNodeIPv6LinkLocalAddressForEth0(node.Name)
+				if err != nil {
+					return ""
+				}
+				return lla
+			},
+		})
+	}
+	gomega.Consistently(func() error {
+		for _, check := range checks {
+			routes, err := infraprovider.Get().ExecExternalContainerCommand(externalContainer, check.routeCmd)
+			if err != nil {
+				return fmt.Errorf("failed to get BGP routes from the external router: %w", err)
+			}
+			for _, node := range nodes {
+				if node.Name == activeNodeName {
+					continue
+				}
+				if nextHop := check.nextHop(node); nextHop != "" && strings.Contains(routes, nextHop) {
+					return fmt.Errorf("external router has a route within %q via node %s (%s): %s",
+						strings.Join(check.routeCmd, " "), node.Name, nextHop, routes)
+				}
+			}
+		}
+		return nil
+	}, 10*time.Second, 2*time.Second).Should(gomega.Succeed())
+}
+
 var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advertised", feature.RouteAdvertisements, func() {
 	var serverContainerIPs []string
 	var frrContainerIPv4, frrContainerIPv6 string
@@ -775,17 +847,8 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 
 			// Create client pod
 			ginkgo.By("Creating client pod")
-			podSpec := e2epod.NewAgnhostPod(f.Namespace.Name, echoClientPodName, nil, nil, nil)
-			podSpec.Spec.NodeName = nodes.Items[1].Name
-			for k := range podSpec.Spec.Containers {
-				if podSpec.Spec.Containers[k].Name == "agnhost-container" {
-					podSpec.Spec.Containers[k].Command = []string{
-						"sleep",
-						"infinity",
-					}
-				}
-			}
-			clientPod = e2epod.NewPodClient(f).CreateSync(context.TODO(), podSpec)
+			clientPod, err = createPod(f, echoClientPodName, nodes.Items[1].Name, f.Namespace.Name, []string{"bash", "-c", "sleep infinity"}, nil)
+			framework.ExpectNoError(err)
 
 			// Create route advertisement
 			ginkgo.By("create router advertisement")
@@ -1185,6 +1248,170 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 			},
 		),
 	)
+})
+
+// With dynamic UDN allocation, a network only exists on nodes that run
+// workloads attached to it and only those nodes get a subnet allocated for it.
+// A pod-network RouteAdvertisements selecting such a network must not wait for
+// subnets on the remaining nodes to reach the Accepted status, and must start
+// advertising a node as soon as the network is activated on it.
+var _ = ginkgo.Describe("BGP: When an advertised CUDN network is dynamically allocated", feature.RouteAdvertisementsDynamicUDN, func() {
+	var nodes *corev1.NodeList
+
+	f := wrappedTestFramework("dynamic-udn-route-advertisements")
+	f.SkipNamespaceCreation = true
+
+	ginkgo.BeforeEach(func() {
+		if !isDynamicUDNEnabled() {
+			ginkgo.Skip("test requires DYNAMIC_UDN_ALLOCATION=true")
+		}
+		namespace, err := f.CreateNamespace(context.TODO(), f.BaseName, map[string]string{
+			"e2e-framework":           f.BaseName,
+			RequiredUDNNamespaceLabel: "",
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		f.Namespace = namespace
+
+		ginkgo.By("Selecting 3 schedulable nodes")
+		nodes, err = e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 3)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(len(nodes.Items)).To(gomega.BeNumerically(">", 2))
+	})
+
+	ginkgo.It("is accepted when the network is allocated on a subset of the nodes only", func() {
+		ginkgo.By("create ClusterUserDefinedNetwork")
+		cudnTemplate := &udnv1.ClusterUserDefinedNetwork{
+			ObjectMeta: metav1.ObjectMeta{
+				// Keep generated CUDN names under the Linux 15-byte interface
+				// limit so the VRF name is unique instead of network ID based.
+				GenerateName: "bgp-dyn-",
+				Labels:       map[string]string{"bgp-dynamic-udn": ""},
+			},
+			Spec: udnv1.ClusterUserDefinedNetworkSpec{
+				NamespaceSelector: metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{
+					Key:      "kubernetes.io/metadata.name",
+					Operator: metav1.LabelSelectorOpIn,
+					Values:   []string{f.Namespace.Name},
+				}}},
+				Network: udnv1.NetworkSpec{
+					Topology: udnv1.NetworkTopologyLayer3,
+					Layer3: &udnv1.Layer3Config{
+						Role: "Primary",
+						// use a dedicated range: other suites advertise their
+						// networks to the same external router and may run in
+						// parallel with this test
+						Subnets: []udnv1.Layer3Subnet{{
+							CIDR:       "106.106.0.0/16",
+							HostSubnet: 24,
+						}, {
+							CIDR:       "2016:100:200::0/60",
+							HostSubnet: 64,
+						}},
+					},
+				},
+			},
+		}
+		cudnTemplate.Spec.Network.Layer3.Subnets = filterL3Subnets(f.ClientSet, cudnTemplate.Spec.Network.Layer3.Subnets)
+		var v4CIDR, v6CIDR string
+		for _, subnet := range cudnTemplate.Spec.Network.Layer3.Subnets {
+			if utilnet.IsIPv6CIDRString(string(subnet.CIDR)) {
+				v6CIDR = string(subnet.CIDR)
+			} else {
+				v4CIDR = string(subnet.CIDR)
+			}
+		}
+		udnClient, err := udnclientset.NewForConfig(f.ClientConfig())
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		cUDN, err := udnClient.K8sV1().ClusterUserDefinedNetworks().Create(context.Background(), cudnTemplate, metav1.CreateOptions{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		ginkgo.DeferCleanup(func() {
+			udnClient.K8sV1().ClusterUserDefinedNetworks().Delete(context.TODO(), cUDN.Name, metav1.DeleteOptions{})
+		})
+		gomega.Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cUDN.Name), 5*time.Second, time.Second).Should(gomega.Succeed())
+		netName := types.CUDNPrefix + cUDN.Name
+
+		ginkgo.DeferCleanup(func() {
+			ginkgo.By(fmt.Sprintf("delete pods in %s namespace to unblock CUDN CR & associate NAD deletion", f.Namespace.Name))
+			gomega.Expect(f.ClientSet.CoreV1().Pods(f.Namespace.Name).DeleteCollection(context.Background(), metav1.DeleteOptions{}, metav1.ListOptions{})).To(gomega.Succeed())
+		})
+
+		activeNode := nodes.Items[0]
+		otherNode := nodes.Items[1]
+
+		ginkgo.By(fmt.Sprintf("Creating a pod attached to the network on node %s only", activeNode.Name))
+		_, err = createPod(f, "dynamic-udn-pod-1", activeNode.Name, f.Namespace.Name, []string{"bash", "-c", "sleep infinity"}, nil)
+		framework.ExpectNoError(err)
+
+		ginkgo.By(fmt.Sprintf("Node %s gets a subnet allocated for the network while the other nodes do not", activeNode.Name))
+		gomega.Eventually(func() error {
+			_, _, err := getNodePodCIDRs(activeNode.Name, netName)
+			return err
+		}, 30*time.Second, time.Second).Should(gomega.Succeed(),
+			"node %s must have a subnet allocated for network %s", activeNode.Name, netName)
+		expectNoUDNSubnetOnNodesExcept(nodes.Items, activeNode.Name, netName)
+
+		ginkgo.By("create route advertisement advertising the network")
+		raClient, err := raclientset.NewForConfig(f.ClientConfig())
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		ra := &rav1.RouteAdvertisements{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "bgp-dynamic-udn-ra",
+			},
+			Spec: rav1.RouteAdvertisementsSpec{
+				NetworkSelectors: apitypes.NetworkSelectors{
+					apitypes.NetworkSelector{
+						NetworkSelectionType: apitypes.ClusterUserDefinedNetworks,
+						ClusterUserDefinedNetworkSelector: &apitypes.ClusterUserDefinedNetworkSelector{
+							NetworkSelector: metav1.LabelSelector{
+								MatchLabels: map[string]string{"bgp-dynamic-udn": ""},
+							},
+						},
+					},
+				},
+				NodeSelector:             metav1.LabelSelector{},
+				FRRConfigurationSelector: metav1.LabelSelector{},
+				Advertisements: []rav1.AdvertisementType{
+					rav1.PodNetwork,
+				},
+			},
+		}
+		ra, err = raClient.K8sV1().RouteAdvertisements().Create(context.TODO(), ra, metav1.CreateOptions{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		ginkgo.DeferCleanup(func() { raClient.K8sV1().RouteAdvertisements().Delete(context.TODO(), ra.Name, metav1.DeleteOptions{}) })
+
+		ginkgo.By("ensure the route advertisement is accepted although the network is not allocated on all nodes")
+		gomega.Eventually(routeAdvertisementsReadyFunc(*raClient, ra.Name), 30*time.Second, time.Second).Should(gomega.Succeed())
+
+		checkNodeAdvertisedInFRR := func(node corev1.Node) {
+			var podv4CIDR, podv6CIDR string
+			gomega.Eventually(func() error {
+				var err error
+				podv4CIDR, podv6CIDR, err = getNodePodCIDRs(node.Name, netName)
+				return err
+			}, 30*time.Second, time.Second).Should(gomega.Succeed(),
+				"node %s must have a subnet allocated for network %s", node.Name, netName)
+			if isIPv4Supported(f.ClientSet) && podv4CIDR != "" {
+				checkRouteInFRR(node, podv4CIDR, routerContainerName, false)
+			}
+			if isIPv6Supported(f.ClientSet) && podv6CIDR != "" {
+				checkRouteInFRR(node, podv6CIDR, routerContainerName, true)
+			}
+		}
+
+		ginkgo.By(fmt.Sprintf("ensure the network pod subnet of node %s is advertised to the external FRR router", activeNode.Name))
+		checkNodeAdvertisedInFRR(activeNode)
+
+		ginkgo.By("ensure nodes where the network is not allocated are not advertised to the external FRR router")
+		expectNodesNotAdvertisedInFRR(nodes.Items, activeNode.Name, v4CIDR, v6CIDR)
+
+		ginkgo.By(fmt.Sprintf("Creating a second pod on node %s activates the network on it and gets it advertised", otherNode.Name))
+		_, err = createPod(f, "dynamic-udn-pod-2", otherNode.Name, f.Namespace.Name, []string{"bash", "-c", "sleep infinity"}, nil)
+		framework.ExpectNoError(err)
+		checkNodeAdvertisedInFRR(otherNode)
+
+		gomega.Eventually(routeAdvertisementsReadyFunc(*raClient, ra.Name), 10*time.Second, time.Second).Should(gomega.Succeed(),
+			"the route advertisement must remain accepted")
+	})
 })
 
 var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
