@@ -175,16 +175,13 @@ if [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ] || [ "$DYNAMIC_UDN_ALLOCATION" != 
   skip_label "Feature:RouteAdvertisementsDynamicUDN"
 fi
 
-# With dynamic UDN allocation, networks only exist on nodes that run workloads
-# attached to them (okep-5552). Skip the RouteAdvertisements tests that have
-# not been adapted to that yet:
-# - the isolation tests expect the networks and their NodePort services to be
-#   reachable through every node, which does not hold for nodes where the
-#   network is not rendered (a documented limitation of dynamic UDN allocation)
-# - the VRF-Lite and EVPN tests (only supported in local gateway mode today)
-#   set up and expect per-network topology on every node
+# The "BGP: For BGP configured networks" tests (VRF-Lite and EVPN CUDNs) only
+# run in local gateway mode, while dynamic UDN allocation is only covered in
+# shared gateway mode lanes, so the two never overlap in CI. Skip them
+# explicitly on dynamic UDN clusters regardless: they set up and expect
+# per-network topology on every node, which does not hold with dynamic UDN
+# allocation (okep-5552).
 if [ "$DYNAMIC_UDN_ALLOCATION" == true ]; then
-  skip "BGP: isolation between advertised networks"
   skip "BGP: For BGP configured networks"
 fi
 

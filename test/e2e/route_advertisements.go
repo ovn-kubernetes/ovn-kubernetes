@@ -1431,6 +1431,9 @@ var _ = ginkgo.Describe("BGP: When an advertised CUDN network is dynamically all
 var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
 	ginkgo.DescribeTableSubtree("between advertised networks", func(cudnATemplate, cudnBTemplate *udnv1.ClusterUserDefinedNetwork) {
 		const curlConnectionTimeoutCode = "28"
+		// match the whole phrase: a bare "7" is always contained in the curl
+		// error output, if only in the target address
+		const curlConnectionRefusedCode = "exit code 7"
 		const nodePortBackendLabel = "nodeport-backend"
 		const clientNodeBackend = "client-node"
 		const remoteNodeBackend = "remote-node"
@@ -1445,6 +1448,9 @@ var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
 
 		// podNetB is in cudnB hosted on nodes[1], podNetDefault is in the default network hosted on nodes[1] - done in BeforeEach
 		var podNetB, podNetDefault *corev1.Pod
+		// nodesNetB are the nodes where cudnB is expected to exist: all of them,
+		// or just the node running its only pod with dynamic UDN allocation
+		var nodesNetB []corev1.Node
 		var svcNodePortNetA, svcNodePortNetAClientNodeBackend, svcNodePortNetARemoteNodeBackend, svcNodePortNetANodePortNodeBackend, svcNodePortNetB, svcNodePortNetDefault, svcNodePortETPLocalDefault, svcNodePortETPLocalNetA *corev1.Service
 		var cudnA, cudnB *udnv1.ClusterUserDefinedNetwork
 		var ra *rav1.RouteAdvertisements
@@ -1520,7 +1526,10 @@ var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
 				gomega.Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnB.Name), 5*time.Second, time.Second).Should(gomega.Succeed())
 
 				ginkgo.By("Selecting 3 schedulable nodes")
-				nodes, err = e2enode.GetReadySchedulableNodes(context.TODO(), f.ClientSet)
+				// bound the node list: network pods are only scheduled on the
+				// first 3 nodes, and with dynamic UDN allocation the networks
+				// are only expected on the nodes that run their pods
+				nodes, err = e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 3)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				gomega.Expect(len(nodes.Items)).To(gomega.BeNumerically(">", 2))
 				// create host networked pod
@@ -1719,18 +1728,36 @@ var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
 					}
 				}
 
+				// With dynamic UDN allocation, networks only exist on nodes that
+				// run workloads attached to them: network A runs pods on every
+				// node while network B only runs a pod on nodes[1].
+				nodesNetB = nodes.Items
+				if isDynamicUDNEnabled() {
+					nodesNetB = []corev1.Node{nodes.Items[1]}
+				}
+
 				ginkgo.By("ensure routes from UDNs are learned by the external FRR router")
 				serverContainerIPs := getBGPServerContainerIPs(f)
 				for _, serverContainerIP := range serverContainerIPs {
 					for _, node := range nodes.Items {
 						if cudnA.Spec.Network.Topology == udnv1.NetworkTopologyLayer3 {
 							checkL3NodePodRoute(node, serverContainerIP, routerContainerName, types.CUDNPrefix+cudnA.Name)
-							checkL3NodePodRoute(node, serverContainerIP, routerContainerName, types.CUDNPrefix+cudnB.Name)
 						} else {
 							checkL2NodePodRoute(node, serverContainerIP, routerContainerName, cudnATemplate.Spec.Network.Layer2.Subnets)
+						}
+					}
+					for _, node := range nodesNetB {
+						if cudnB.Spec.Network.Topology == udnv1.NetworkTopologyLayer3 {
+							checkL3NodePodRoute(node, serverContainerIP, routerContainerName, types.CUDNPrefix+cudnB.Name)
+						} else {
 							checkL2NodePodRoute(node, serverContainerIP, routerContainerName, cudnBTemplate.Spec.Network.Layer2.Subnets)
 						}
 					}
+				}
+
+				if isDynamicUDNEnabled() && cudnB.Spec.Network.Topology == udnv1.NetworkTopologyLayer3 {
+					ginkgo.By("ensure nodes without workloads attached to network B get no subnet allocated for it")
+					expectNoUDNSubnetOnNodesExcept(nodes.Items, podNetB.Spec.NodeName, types.CUDNPrefix+cudnB.Name)
 				}
 			})
 
@@ -2185,15 +2212,29 @@ var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
 						}
 						nodePort := svcNodePortNetB.Spec.Ports[0].NodePort
 						// sourceIP will be joinSubnetIP for nodeports, so only using hostname endpoint
-						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePort)) + "/hostname", curlConnectionTimeoutCode, true
+						expectedOut := curlConnectionTimeoutCode
+						if isDynamicUDNEnabled() && cudnBTemplate.Spec.Network.Topology == udnv1.NetworkTopologyLayer3 {
+							// network B is not active on the client's node: for L3
+							// networks the connection is rejected instead of timing
+							// out, for both IP families
+							expectedOut = curlConnectionRefusedCode
+						}
+						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePort)) + "/hostname", expectedOut, true
 					}),
 				ginkgo.Entry("[ETP=Cluster] UDN pod to a different node nodeport service in different UDN network should work",
 					func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
 						clientPod := podsNetA[0]
 						// The service is backed by podNetB.
 						// We want to hit the nodeport on a different node from the client.
-						// client is on nodes[0]. Let's hit nodeport on nodes[2].
-						node, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), nodes.Items[2].Name, metav1.GetOptions{})
+						// client is on nodes[0]. Let's hit nodeport on nodes[2]. With
+						// dynamic UDN allocation the service is only reachable through
+						// nodes where network B is active, so use the backend's node
+						// nodes[1] instead, still different from the client's.
+						targetNodeName := nodes.Items[2].Name
+						if isDynamicUDNEnabled() {
+							targetNodeName = podNetB.Spec.NodeName
+						}
+						node, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), targetNodeName, metav1.GetOptions{})
 						framework.ExpectNoError(err)
 						nodeIPv4, nodeIPv6 := getNodeAddresses(node)
 						nodeIP := nodeIPv4
@@ -2204,6 +2245,28 @@ var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
 
 						// sourceIP will be joinSubnetIP for nodeports, so only using hostname endpoint
 						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePort)) + "/hostname", "", false
+					}),
+				ginkgo.Entry("[ETP=Cluster] UDN pod to a nodeport service in a different UDN network via a node where that network is not active should not work",
+					func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
+						if !isDynamicUDNEnabled() {
+							e2eskipper.Skipf("Test requires dynamic UDN allocation: networks are active on every node otherwise")
+						}
+						// Documented limitation of dynamic UDN allocation (okep-5552):
+						// NodePort services with external traffic policy "Cluster" do
+						// not work when sending traffic to nodes where the backing
+						// network is not active. Network B is only active on nodes[1],
+						// so its nodeport service is not reachable through nodes[2].
+						clientPod := podsNetA[0]
+						node, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), nodes.Items[2].Name, metav1.GetOptions{})
+						framework.ExpectNoError(err)
+						nodeIPv4, nodeIPv6 := getNodeAddresses(node)
+						nodeIP := nodeIPv4
+						if ipFamily == utilnet.IPv6 {
+							nodeIP = nodeIPv6
+						}
+						nodePort := svcNodePortNetB.Spec.Ports[0].NodePort
+
+						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePort)) + "/hostname", "", true
 					}),
 				ginkgo.Entry("[ETP=LOCAL] UDN pod to the same node nodeport service in same UDN network should work",
 					func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
