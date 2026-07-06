@@ -14,11 +14,13 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/ginkgo/v2/dsl/table"
 	"github.com/onsi/gomega"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
@@ -3063,6 +3065,272 @@ spec:
 			}, 30*time.Second, 2*time.Second).Should(gomega.BeTrue(),
 				"Neighbor entry should appear")
 			gomega.Expect(neighborMAC).Should(gomega.Equal(inf.MAC), "neighbor entry should have the correct MAC address")
+		})
+
+		var _ = ginkgo.Describe("[secondary-host-eip] Egress IP Traffic Leak Prevention with Packet Mark Validation", func() {
+			const (
+				egressIPName   = "egressip-pktmark-validation-test"
+				egressIPYaml   = "/tmp/egressip-pktmark-validation.yaml"
+				monitorPodName = "traffic-monitor-existing"
+				podNamePrefix  = "existing-pod"
+				numTestPods    = 2 // Create multiple pods to stress reconciliation
+				retryInterval  = 1 * time.Second
+				retryTimeout   = 120 * time.Second
+			)
+
+			var (
+				// Pod IPs to check for leaks
+				podIPs     []string
+				podIPsLock sync.Mutex
+			)
+
+			ginkgo.BeforeEach(func() {
+				podIPsLock.Lock()
+				podIPs = []string{}
+				podIPsLock.Unlock()
+			})
+
+			ginkgo.It("Should prevent pod IP traffic leak when EgressIP on secondary interface is applied to existing running pods", func() {
+				// Test Overview:
+				// This test validates a different race condition scenario:
+				// 1. Pods are created FIRST and are actively sending traffic
+				// 2. Then an EgressIP object is created and applied to them
+				// 3. During the reconciliation window, traffic should NOT leak with pod IPs
+				//
+				// This tests the transition from "normal routing" to "egress IP routing"
+				// which is common in production when EgressIP policies are added to existing workloads.
+
+				if isUserDefinedNetwork(netConfigParams) {
+					ginkgo.Skip("Unsupported for UDNs")
+				}
+
+				ginkgo.By("Step 0: Setting up egress IP address")
+
+				// Determine egress IP based on IP family
+				// Use SubTree's existing secondary network infrastructure
+				egressIPAddr := "10.10.10.200" // IPv4 egress IP (different from other test)
+				if isIPv6TestRun {
+					egressIPAddr = "2001:db8:abcd:1234::200" // IPv6 egress IP (different from other test)
+				}
+
+				targetIP := secondaryTargetExternalContainer.GetIPv4()
+				if isIPv6TestRun {
+					targetIP = secondaryTargetExternalContainer.GetIPv6()
+				}
+				framework.Logf("Using external target container with IP %s", targetIP)
+
+				ginkgo.By("Step 1: Label egress node for future egress IP assignment")
+				labelNodeForEgress(f, egress1Node.name)
+				defer unlabelNodeForEgress(f, egress1Node.name)
+
+				ginkgo.By("Step 2: Label namespace for egress IP selection")
+				podNamespace := f.Namespace
+				labels := map[string]string{
+					"egress-test": "existing-pods",
+				}
+				updateNamespaceLabels(f, podNamespace, labels)
+
+				ginkgo.By("Step 3: Start traffic monitoring BEFORE creating EgressIP and pods")
+				// Starts monitor pod with tcpdump using filter to get traffic from
+				// egress node secondary interface, and filter it based on external node IP address
+				// and source address from pod IPs subnet.
+				// Given this filter, any tcpdump packet output is a traffic leak.
+				secondaryNetwork, err := infraprovider.Get().GetNetwork(secondaryNetworkName)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "network %s must exist", secondaryNetworkName)
+				secondaryIface, err := infraprovider.Get().GetK8NodeNetworkInterface(egress1Node.name, secondaryNetwork)
+				framework.ExpectNoError(err, "failed to get network interface for network %s on node %s", secondaryNetworkName, egress1Node.name)
+
+				podV4CIDR, podV6CIDR, err := getNodePodCIDRs(pod1Node.name, "default")
+				framework.ExpectNoError(err, "failed to get pod CIDRs for node %s", pod1Node.name)
+				podCIDR := podV4CIDR
+				if isIPv6TestRun {
+					podCIDR = podV6CIDR
+				}
+				gomega.Expect(podCIDR).NotTo(gomega.BeEmpty(), "pod CIDR must not be empty for node %s", pod1Node.name)
+				monitorFilter := fmt.Sprintf("src net %s and dst host %s", podCIDR, targetIP)
+
+				ctx, ctxCancel := context.WithCancel(context.Background())
+				monitorOutput := ""
+				finishedMonitor := make(chan struct{})
+				go func() {
+					defer close(finishedMonitor)
+					var monitorErr error
+					monitorOutput, monitorErr = monitorTcpdumpOnNode(ctx, f, monitorPodName, egress1Node.name, secondaryIface.InfName,
+						"-n -vv -l", monitorFilter)
+					framework.ExpectNoError(monitorErr, "Failed to read monitor pod logs")
+				}()
+				framework.Logf("Traffic monitor pod started on node %s", egress1Node.name)
+
+				ginkgo.By(fmt.Sprintf("Step 4: Create %d pods FIRST (before EgressIP exists)", numTestPods))
+				// Pods are created before EgressIP, they will initially use normal routing (their pod IPs as source)
+
+				podEgressLabel := map[string]string{
+					"egress-existing-pod": "true",
+				}
+
+				// Create pods with continuous traffic generation
+				// These pods will keep sending traffic throughout the test
+				eg := errgroup.Group{}
+				for i := 0; i < numTestPods; i++ {
+					podName := fmt.Sprintf("%s-%d", podNamePrefix, i)
+					eg.Go(func() error {
+						// Main container continuously pings the target
+						// This ensures traffic is flowing when EgressIP is applied
+						mainCommand := []string{
+							"/bin/sh",
+							"-c",
+							fmt.Sprintf("while true; do ping -c 1 -W 1 %s || true; sleep 0.5; done", targetIP),
+						}
+
+						createPod := &corev1.Pod{
+							ObjectMeta: metav1.ObjectMeta{
+								Name:      podName,
+								Namespace: podNamespace.Name,
+								Labels:    podEgressLabel,
+							},
+							Spec: corev1.PodSpec{
+								NodeSelector: map[string]string{
+									"kubernetes.io/hostname": pod1Node.name,
+								},
+								Containers: []corev1.Container{
+									{
+										Name:    "continuous-ping",
+										Image:   images.AgnHost(),
+										Command: mainCommand,
+									},
+								},
+								RestartPolicy: corev1.RestartPolicyNever,
+							},
+						}
+
+						createdPod, err := f.ClientSet.CoreV1().Pods(podNamespace.Name).Create(context.TODO(), createPod, metav1.CreateOptions{})
+						if err != nil {
+							return fmt.Errorf("failed to create pod %s: %v", podName, err)
+						}
+
+						// Wait for pod to be running
+						err = pod.WaitForPodRunningInNamespace(context.TODO(), f.ClientSet, createdPod)
+						if err != nil {
+							return fmt.Errorf("failed waiting for pod %s to be running: %v", podName, err)
+						}
+
+						// Get pod IP
+						podIP, err := getPodIPWithRetry(f.ClientSet, isIPv6TestRun, podNamespace.Name, podName)
+						if err != nil {
+							return fmt.Errorf("failed to get IP for pod %s: %v", podName, err)
+						}
+
+						podIPsLock.Lock()
+						podIPs = append(podIPs, podIP.String())
+						podIPsLock.Unlock()
+
+						framework.Logf("Created pod %s with IP %s", podName, podIP.String())
+						return nil
+					})
+				}
+
+				// Check for any pod creation errors
+				if err := eg.Wait(); err != nil {
+					framework.Failf("Failed to create some pods: %v", err)
+				}
+
+				framework.Logf("Successfully created %d pods, collected %d pod IPs", numTestPods, len(podIPs))
+				defer func() {
+					ginkgo.By("Cleanup - Delete test pods")
+					for i := 0; i < numTestPods; i++ {
+						podName := fmt.Sprintf("%s-%d", podNamePrefix, i)
+						err := f.ClientSet.CoreV1().Pods(podNamespace.Name).Delete(context.TODO(), podName, metav1.DeleteOptions{})
+						if err != nil {
+							framework.Logf("Warning: failed to delete pod %s: %v", podName, err)
+						}
+					}
+				}()
+
+				ginkgo.By("Step 5: Create EgressIP object and apply it to existing running pods")
+				// THIS IS THE CRITICAL MOMENT: EgressIP is created while pods are actively sending traffic
+				// We want to detect any leaks during the reconciliation window
+
+				// Create the EgressIP CRD
+				egressIPConfig := fmt.Sprintf(`apiVersion: k8s.ovn.org/v1
+kind: EgressIP
+metadata:
+  name: %s
+spec:
+  egressIPs:
+  - "%s"
+  podSelector:
+    matchLabels:
+      egress-existing-pod: "true"
+  namespaceSelector:
+    matchLabels:
+      egress-test: existing-pods
+`, egressIPName, egressIPAddr)
+
+				// Normalize IPv6 address for comparison
+				normalizedEgressIP := egressIPAddr
+				if isIPv6TestRun {
+					normalizedEgressIP = net.ParseIP(egressIPAddr).String()
+				}
+
+				err = os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644)
+				framework.ExpectNoError(err, "Failed to write EgressIP YAML")
+				defer func() {
+					if err := os.Remove(egressIPYaml); err != nil {
+						framework.Logf("Unable to remove the egressIPYaml CRD config from disk: %v", err)
+					}
+				}()
+				framework.Logf("Creating EgressIP object with IP %s for existing running pods", normalizedEgressIP)
+				e2ekubectl.RunKubectlOrDie("default", "create", "-f", egressIPYaml)
+				defer func() {
+					framework.Logf("Deleting EgressIP object")
+					e2ekubectl.RunKubectlOrDie("default", "delete", "-f", egressIPYaml, "--ignore-not-found=true")
+				}()
+
+				ginkgo.By("Step 6: Verify EgressIP status is assigned to egress node")
+				var egressIPStatusItems []egressIPStatus
+				err = wait.PollUntilContextTimeout(context.Background(), retryInterval, retryTimeout, true, func(ctx context.Context) (bool, error) {
+					egressIPStatusItems = verifyEgressIPStatusLengthEquals(1, nil)
+					if len(egressIPStatusItems) != 1 {
+						return false, nil
+					}
+					if egressIPStatusItems[0].Node != egress1Node.name {
+						framework.Logf("EgressIP not yet assigned to correct node, current: %s, expected: %s",
+							egressIPStatusItems[0].Node, egress1Node.name)
+						return false, nil
+					}
+					if egressIPStatusItems[0].EgressIP != normalizedEgressIP {
+						framework.Logf("EgressIP address mismatch, current: %s, expected: %s",
+							egressIPStatusItems[0].EgressIP, normalizedEgressIP)
+						return false, nil
+					}
+					return true, nil
+				})
+				framework.ExpectNoError(err, "Failed to verify EgressIP status")
+				framework.Logf("EgressIP %s assigned to node %s", normalizedEgressIP, egress1Node.name)
+
+				ginkgo.By("Step 7: Wait for reconciliation to complete and verify egress IP is used")
+
+				// Verify pods are now using the egress IP
+				for i := 0; i < numTestPods; i++ {
+					podName := fmt.Sprintf("%s-%d", podNamePrefix, i)
+					conditionFunc := targetExternalContainerAndTest(secondaryTargetExternalContainer, podNamespace.Name, podName, true, []string{normalizedEgressIP})
+					err = wait.PollUntilContextTimeout(context.Background(), retryInterval, retryTimeout, true, func(ctx context.Context) (bool, error) {
+						return conditionFunc()
+					})
+					framework.ExpectNoError(err, "Pod %s should be using egress IP after reconciliation", podName)
+				}
+				framework.Logf("Verified pods are now using egress IP %s correctly", normalizedEgressIP)
+
+				ginkgo.By("Step 8: Analyze traffic capture for pod IP leaks during EgressIP application")
+				// This is the critical check: did any traffic leak with pod IPs during the transition?
+				ctxCancel()
+				<-finishedMonitor
+				if strings.Contains(monitorOutput, targetIP) {
+					framework.Failf("TRAFFIC LEAK DETECTED! Pod IPs were seen in traffic to %s"+
+						"This indicates traffic leaked with pod source IPs instead of egress IP %s during EgressIP application to existing pods.\ntcpdump output:\n%s",
+						targetIP, normalizedEgressIP, monitorOutput)
+				}
+			})
 		})
 
 		// two pods attached to different namespaces but the same role primary user defined network
