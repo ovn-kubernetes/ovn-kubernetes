@@ -216,6 +216,33 @@ priority=103,ip,in_port=2,nw_src=<clusterSubnet> actions=drop
 priority=100,ip,in_port=2 actions=ct(commit,zone=64000,exec(set_field:0x1->ct_mark)),output:1
 ```
 
+In case of an egress IP assigned to a secondary host interface, a pkt_mark=1009 is added to the reroute policy in the egress node:
+```shell
+[root@ovn-worker ~]# ovn-nbctl lr-policy-list ovn_cluster_router
+Routing Policies
+      1004 inport == "rtos-ovn-worker" && ip4.dst == 172.18.0.121 /* ovn-worker */         reroute                10.244.1.2
+       102 (ip4.src == $a8519615025667110816 || ip4.src == $a13607449821398607916) && ip4.dst == $a1042611113178530741           allow               pkt_mark=1008
+       102 ip4.src == 10.244.0.0/16 && ip4.dst == 10.244.0.0/16           allow
+       102 ip4.src == 10.244.0.0/16 && ip4.dst == 100.64.0.0/16           allow
+       102                                     pkt.mark == 42           allow
+       100                             ip4.src == 10.244.0.13         reroute                10.244.1.2               pkt_mark=1009
+```
+
+And in each node an nftable chain is added in postrouting hook with priority `srcnat+1` 
+with a set of rules to drop marked (notice, 1009 == 0x000003f1) traffic from any pod CIDR subnet:
+```shell
+table inet ovn-kubernetes {
+	chain ovn-kube-egress-ip {
+		comment "OVN egress IP traffic handling"
+		type filter hook postrouting priority srcnat + 1; policy accept;
+		ip saddr 10.244.0.0/16 meta mark 0x000003f1 drop comment "Drop egress IP pod traffic from 10.244.0.0/16"
+	}
+}
+```
+
+This guarantees that while differences might occur in reconciliation time, traffic would not
+leak the egress secondary interface with the pod IP as source address (i.e., when the reroute LRP is applied before the SNAT).
+
 ## Special considerations for Egress IPs hosted by standard linux interfaces
 If you wish to assign an Egress IP to a standard linux interface (non OVS type), then the following is required:
 * Link is up

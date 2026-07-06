@@ -41,6 +41,7 @@ import (
 	ovnkube "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	ovniptables "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iptables"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/linkmanager"
+	nodenft "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
@@ -280,6 +281,27 @@ func initController(namespaces []corev1.Namespace, pods []corev1.Pod, egressIPs 
 	if err != nil {
 		return nil, nil, err
 	}
+
+	// Initialize fake nftables helper and egress IP chain
+	// This mimics what the real Run() method does
+	// Create a fresh fake for this test to ensure isolation
+	_ = nodenft.SetFakeNFTablesHelper()
+
+	// Set up cluster subnets for NFTables initialization
+	// Reset first to avoid accumulation between tests
+	ovnconfig.Default.ClusterSubnets = nil
+	// Use standard test cluster CIDRs
+	if v4 {
+		_, cidr, _ := net.ParseCIDR("10.244.0.0/16")
+		ovnconfig.Default.ClusterSubnets = append(ovnconfig.Default.ClusterSubnets,
+			ovnconfig.CIDRNetworkEntry{CIDR: cidr})
+	}
+	if v6 {
+		_, cidr, _ := net.ParseCIDR("fd01::/48")
+		ovnconfig.Default.ClusterSubnets = append(ovnconfig.Default.ClusterSubnets,
+			ovnconfig.CIDRNetworkEntry{CIDR: cidr})
+	}
+
 	_, err = c.namespaceInformer.AddEventHandler(
 		factory.WithUpdateHandlingForObjReplace(cache.ResourceEventHandlerFuncs{
 			AddFunc:    c.onNamespaceAdd,
@@ -326,6 +348,10 @@ func runController(testNS ns.NetNS, c *Controller) (cleanupFn, error) {
 				gomega.PanicWith(fmt.Sprintf("timed out waiting for %q caches to sync", resourceName))
 			}
 		}(se.resourceName, se.syncFn)
+	}
+
+	if err := nodenft.InitEgressIPNFTChain(c.v4, c.v6); err != nil {
+		return nil, err
 	}
 
 	wg := &sync.WaitGroup{}

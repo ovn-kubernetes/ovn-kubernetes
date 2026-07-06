@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
@@ -390,6 +391,166 @@ func targetExternalContainerAndTest(externalContainer infraapi.ExternalContainer
 func removeSliceElement(s []string, i int) []string {
 	s[i] = s[len(s)-1]
 	return s[:len(s)-1]
+}
+
+// createExistingPodsTrafficMonitorPodLogs creates a pod that monitors traffic on the secondary network interface
+// This version outputs tcpdump directly to pod logs (stdout) instead of saving to files
+func createExistingPodsTrafficMonitorPodLogs(f *framework.Framework, name, nodeName, targetIP string) *corev1.Pod {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: f.Namespace.Name,
+		},
+		Spec: corev1.PodSpec{
+			NodeSelector: map[string]string{
+				"kubernetes.io/hostname": nodeName,
+			},
+			HostNetwork: true,
+			Containers: []corev1.Container{
+				{
+					Name:  "traffic-monitor",
+					Image: images.Netshoot(),
+					Command: []string{
+						"/bin/bash",
+						"-c",
+						fmt.Sprintf(`
+							# Find the interface with IP in the secondary network range
+							IFACE=$(ip -o addr show | grep -E '10\.10\.10\.|2001:db8:abcd:1234' | awk '{print $2}' | head -1)
+							if [ -z "$IFACE" ]; then
+								echo "ERROR: Could not find secondary network interface"
+								exit 1
+							fi
+							echo "=== Starting traffic monitoring on interface $IFACE for target IP %s ==="
+							echo "=== tcpdump will capture all traffic to/from %s ==="
+							echo "=== Looking for pattern: IP <pod_ip> > %s ==="
+							echo ""
+
+							# Run tcpdump and output directly to stdout (pod logs)
+							# -n: Don't resolve hostnames (faster, shows IPs)
+							# -vv: Very verbose output
+							# -l: Line buffered (immediate output to logs)
+							# host: Filter traffic to/from target IP only
+							exec tcpdump -i $IFACE -n -vv -l host %s
+						`, targetIP, targetIP, targetIP, targetIP),
+					},
+					SecurityContext: &corev1.SecurityContext{
+						Privileged: func(b bool) *bool { return &b }(true),
+					},
+				},
+			},
+			RestartPolicy: corev1.RestartPolicyNever,
+		},
+	}
+	createdPod, err := f.ClientSet.CoreV1().Pods(f.Namespace.Name).Create(context.TODO(), pod, metav1.CreateOptions{})
+	framework.ExpectNoError(err, "Failed to create traffic monitor pod")
+	return createdPod
+}
+
+// checkExistingPodsTrafficForLeaksLogs analyzes the tcpdump output from pod logs to detect any pod IPs in the traffic
+func checkExistingPodsTrafficForLeaksLogs(monitorPodName, namespace string, podIPs []string, targetIP string) []string {
+	framework.Logf("Analyzing traffic from monitor pod logs for %d pod IPs during EgressIP application", len(podIPs))
+	framework.Logf("Pod IPs to check: %v", podIPs)
+	leakedIPs := []string{}
+
+	// Get pod logs directly (tcpdump output)
+	// Use kubectl logs to retrieve the container logs
+	output, err := e2ekubectl.RunKubectl(namespace, "logs", monitorPodName)
+	if err != nil {
+		framework.Logf("Warning: failed to read monitor pod tcpdump logs: %v", err)
+		return leakedIPs
+	}
+	framework.Logf("Retrieved %d lines of tcpdump output from monitor pod logs", len(strings.Split(output, "\n")))
+	// Check if each pod IP appears in the traffic log
+	// tcpdump output format examples:
+	// "10.244.1.79 > 10.10.10.3: ICMP echo request, id 26, seq 0, length 64"
+	// "IP 10.244.1.79.12345 > 10.10.10.3.80: Flags [S], seq 123, length 0"
+	for _, podIP := range podIPs {
+		if strings.Contains(output, podIP) && strings.Contains(output, targetIP) {
+			lines := strings.Split(output, "\n")
+			for _, line := range lines {
+				// Look for lines where pod IP appears as source going to target
+				// No need to check traffic direction, pods are pinging external node
+				if strings.Contains(line, podIP) && strings.Contains(line, targetIP) {
+					framework.Logf("LEAK DETECTED: Pod IP %s found as source in traffic capture during EgressIP application", podIP)
+					framework.Logf("  Matching line: %s", line)
+					leakedIPs = append(leakedIPs, podIP)
+					break // Only count each pod IP once
+					// }
+				}
+			}
+		}
+	}
+	if len(leakedIPs) == 0 {
+		framework.Logf("Traffic analysis complete: No pod IPs detected as source in %d lines of tcpdump output",
+			len(strings.Split(output, "\n")))
+		framework.Logf("Sample of captured traffic (first 10 lines):")
+		lines := strings.Split(output, "\n")
+		for i, line := range lines {
+			if i >= 10 {
+				break
+			}
+			if strings.TrimSpace(line) != "" {
+				framework.Logf("  %s", line)
+			}
+		}
+	} else {
+		framework.Logf("LEAK SUMMARY: Found %d pod IPs leaking traffic: %v", len(leakedIPs), leakedIPs)
+	}
+	return leakedIPs
+}
+
+// Helper function to run OVN nbctl command on a node
+func runOVNNBCTLCommand(nodeName string, cmd string) (string, error) {
+	// Run command via kubectl exec on ovnkube-node pod
+	ovnPodName, err := getOVNKubeNodePodName(nodeName)
+	if err != nil {
+		return "", err
+	}
+
+	fullCmd := fmt.Sprintf("kubectl exec -n ovn-kubernetes %s -c ovnkube-controller -- %s", ovnPodName, cmd)
+	output, err := e2ekubectl.RunKubectl("default", "exec", "-n", "ovn-kubernetes", ovnPodName, "-c", "ovnkube-controller", "--", "sh", "-c", cmd)
+	if err != nil {
+		return "", fmt.Errorf("failed to run command '%s': %v", fullCmd, err)
+	}
+
+	return output, nil
+}
+
+// Helper function to run command on a node
+func runCommandOnNode(nodeName string, cmd string) (string, error) {
+	// Run command via kubectl exec on ovnkube-node pod
+	ovnPodName, err := getOVNKubeNodePodName(nodeName)
+	if err != nil {
+		return "", err
+	}
+
+	// Use ovnkube-node container for NFTables commands
+	output, err := e2ekubectl.RunKubectl("default", "exec", "-n", "ovn-kubernetes", ovnPodName, "-c", "ovnkube-controller", "--", "sh", "-c", cmd)
+	if err != nil {
+		return "", fmt.Errorf("failed to run command on node %s: %v", nodeName, err)
+	}
+
+	return output, nil
+}
+
+// Helper to get ovnkube-node pod name for a given node
+func getOVNKubeNodePodName(nodeName string) (string, error) {
+	// List pods in ovn-kubernetes namespace with node selector
+	output, err := e2ekubectl.RunKubectl("default", "get", "pods", "-n", "ovn-kubernetes",
+		"-l", "app=ovnkube-node",
+		"--field-selector", fmt.Sprintf("spec.nodeName=%s", nodeName),
+		"-o", "jsonpath='{.items[0].metadata.name}'")
+	if err != nil {
+		return "", fmt.Errorf("failed to get ovnkube-node pod for node %s: %v", nodeName, err)
+	}
+
+	// Remove quotes from jsonpath output
+	podName := strings.Trim(output, "'")
+	if podName == "" {
+		return "", fmt.Errorf("no ovnkube-node pod found for node %s", nodeName)
+	}
+
+	return podName, nil
 }
 
 type egressIPStatus struct {
@@ -3063,6 +3224,554 @@ spec:
 			}, 30*time.Second, 2*time.Second).Should(gomega.BeTrue(),
 				"Neighbor entry should appear")
 			gomega.Expect(neighborMAC).Should(gomega.Equal(inf.MAC), "neighbor entry should have the correct MAC address")
+		})
+
+		var _ = ginkgo.Describe("[secondary-host-eip] Egress IP Traffic Leak Prevention with Packet Mark Validation", func() {
+			const (
+				egressIPChainName                      = "ovn-kube-egress-ip"
+				egressIPName                           = "egressip-pktmark-validation-test"
+				egressIPYaml                           = "/tmp/egressip-pktmark-validation.yaml"
+				monitorPodName                         = "traffic-monitor-existing"
+				podNamePrefix                          = "existing-pod"
+				numTestPods                            = 2 // Create multiple pods to stress reconciliation
+				retryInterval                          = 1 * time.Second
+				retryTimeout                           = 120 * time.Second
+				monitorCheckInterval                   = 500 * time.Millisecond
+				monitorTimeout                         = 60 * time.Second
+				egressIPSecondaryInterfaceMark         = types.EgressIPSecondaryInterfaceMark
+				egressIPSecondaryInterfaceMarkHex      = "0x000003f1"
+				egressIPSecondaryInterfaceMarkHexShort = "0x3f1"
+			)
+
+			// Helper to check OVN NB DB for LRP with packet mark
+			checkOVNLRPHasPktMark := func(nodeName string, podIP string, expectedMark string) error {
+				framework.Logf("Checking OVN NB DB for LRP with pkt_mark for pod IP %s", podIP)
+
+				// Run ovn-nbctl to list logical router policies
+				// We need to find the reroute policy for this pod IP
+				cmd := fmt.Sprintf("ovn-nbctl --format=json list Logical_Router_Policy")
+				output, err := runOVNNBCTLCommand(nodeName, cmd)
+				if err != nil {
+					return fmt.Errorf("failed to query OVN NB DB: %v", err)
+				}
+
+				// Parse OVN JSON output (data-table format)
+				// Format: {"data": [[row1], [row2], ...], "headings": ["col1", "col2", ...]}
+				var result struct {
+					Data     [][]interface{} `json:"data"`
+					Headings []string        `json:"headings"`
+				}
+				err = json.Unmarshal([]byte(output), &result)
+				if err != nil {
+					return fmt.Errorf("failed to parse OVN NB output: %v", err)
+				}
+
+				// Create a map of heading names to column indices
+				headingIndex := make(map[string]int)
+				for i, heading := range result.Headings {
+					headingIndex[heading] = i
+				}
+
+				// Find the indices for the fields we need
+				matchIdx, hasMatch := headingIndex["match"]
+				optionsIdx, hasOptions := headingIndex["options"]
+
+				if !hasMatch || !hasOptions {
+					return fmt.Errorf("OVN output missing required fields (match or options)")
+				}
+
+				// Look for policy matching the pod IP
+				for _, row := range result.Data {
+					if len(row) <= matchIdx || len(row) <= optionsIdx {
+						continue
+					}
+
+					// Get the match field
+					match, ok := row[matchIdx].(string)
+					if !ok {
+						continue
+					}
+
+					// Check if this is the reroute policy for our pod
+					if strings.Contains(match, podIP) {
+						framework.Logf("Found LRP for pod IP %s: match=%s", podIP, match)
+
+						// Get the options field - format is ["map", [["pkt_mark", "0x2000"]]]
+						options, ok := row[optionsIdx].([]interface{})
+						if !ok || len(options) < 2 {
+							return fmt.Errorf("LRP for pod %s has invalid options field", podIP)
+						}
+
+						// Check if this is a "map" type
+						if mapType, ok := options[0].(string); !ok || mapType != "map" {
+							return fmt.Errorf("LRP options is not a map for pod %s", podIP)
+						}
+
+						// Parse the map entries - format is [["key1", "val1"], ["key2", "val2"], ...]
+						mapEntries, ok := options[1].([]interface{})
+						if !ok {
+							return fmt.Errorf("LRP options map entries invalid for pod %s", podIP)
+						}
+
+						// Look for pkt_mark entry
+						for _, entry := range mapEntries {
+							pair, ok := entry.([]interface{})
+							if !ok || len(pair) != 2 {
+								continue
+							}
+
+							key, keyOk := pair[0].(string)
+							value, valOk := pair[1].(string)
+							if keyOk && valOk && key == "pkt_mark" {
+								framework.Logf("Found pkt_mark in LRP options: %s", value)
+								if value == expectedMark {
+									framework.Logf("✓ LRP for pod %s has correct pkt_mark=%s", podIP, expectedMark)
+									return nil
+								}
+								return fmt.Errorf("LRP has pkt_mark=%s, expected %s", value, expectedMark)
+							}
+						}
+
+						return fmt.Errorf("LRP for pod %s found but does not have pkt_mark option", podIP)
+					}
+				}
+
+				return fmt.Errorf("no LRP found for pod IP %s", podIP)
+			}
+
+			// Helper to check NFTables chain exists on node
+			checkNFTablesChainExists := func(nodeName string, chainName string) error {
+				framework.Logf("Checking if NFTables chain %s exists on node %s", chainName, nodeName)
+
+				cmd := fmt.Sprintf("nft list chain inet ovn-kubernetes %s", chainName)
+				output, err := runCommandOnNode(nodeName, cmd)
+				if err != nil {
+					return fmt.Errorf("NFTables chain %s does not exist: %v", chainName, err)
+				}
+
+				if strings.Contains(output, chainName) {
+					framework.Logf("✓ NFTables chain %s exists on node %s", chainName, nodeName)
+					return nil
+				}
+
+				return fmt.Errorf("NFTables chain %s not found in output", chainName)
+			}
+
+			// Helper to check NFTables rules use cluster pod CIDR
+			checkNFTablesRulesHaveClusterPodCIDR := func(nodeName string) error {
+				framework.Logf("Checking NFTables rules use cluster pod CIDR on node %s", nodeName)
+
+				cmd := fmt.Sprintf("nft list chain inet ovn-kubernetes %s", egressIPChainName)
+				output, err := runCommandOnNode(nodeName, cmd)
+				if err != nil {
+					return fmt.Errorf("failed to list NFTables chain: %v", err)
+				}
+
+				// Get cluster pod CIDRs from ovn-config ConfigMap
+				cm, err := f.ClientSet.CoreV1().ConfigMaps(deploymentconfig.Get().OVNKubernetesNamespace()).Get(
+					context.TODO(), "ovn-config", metav1.GetOptions{})
+				if err != nil {
+					return fmt.Errorf("failed to get ovn-config ConfigMap: %v", err)
+				}
+
+				netCIDR := cm.Data["net_cidr"]
+				if netCIDR == "" {
+					return fmt.Errorf("net_cidr not found in ovn-config ConfigMap")
+				}
+
+				// Parse the CIDR string (may be comma-separated for dual-stack)
+				expectedCIDRs := []string{}
+				for _, cidr := range strings.Split(netCIDR, ",") {
+					cidr = strings.TrimSpace(cidr)
+					if cidr != "" {
+						expectedCIDRs = append(expectedCIDRs, cidr)
+					}
+				}
+
+				framework.Logf("Expected cluster pod CIDRs: %v", expectedCIDRs)
+
+				// Verify NFTables rules contain at least one expected CIDR
+				// This confirms CIDR-based approach (not per-pod IPs)
+				foundAny := false
+				for _, expectedCIDR := range expectedCIDRs {
+					if strings.Contains(output, expectedCIDR) {
+						framework.Logf("✓ Found cluster pod CIDR %s in NFTables rules", expectedCIDR)
+						foundAny = true
+					}
+				}
+
+				if !foundAny {
+					return fmt.Errorf("NFTables rules don't contain any expected cluster pod CIDRs %v\nOutput: %s",
+						expectedCIDRs, output)
+				}
+
+				return nil
+			}
+
+			// Helper to check NFTables rules exist
+			checkNFTablesRulesExist := func(nodeName string, chainName string) error {
+				framework.Logf("Checking NFTables rules in chain %s on node %s", chainName, nodeName)
+
+				cmd := fmt.Sprintf("nft list chain inet ovn-kubernetes %s", chainName)
+				output, err := runCommandOnNode(nodeName, cmd)
+				if err != nil {
+					return fmt.Errorf("failed to list NFTables chain: %v", err)
+				}
+
+				// Log the actual NFTables output for debugging
+				framework.Logf("NFTables chain output:\n%s", output)
+
+				// Check for DROP rule
+				if !strings.Contains(output, "drop") {
+					return fmt.Errorf("DROP rule not found in chain %s", chainName)
+				}
+				framework.Logf("✓ Found DROP rule in chain %s", chainName)
+
+				// Check for the correct mark value (hex or decimal)
+				hasDecimalMark := strings.Contains(output, egressIPSecondaryInterfaceMark)
+				hasMarkShortForm := strings.Contains(output, egressIPSecondaryInterfaceMarkHex)
+
+				if !hasDecimalMark && !hasMarkShortForm {
+					return fmt.Errorf("mark value %s (or %s decimal) not found in chain %s\nOutput: %s",
+						egressIPSecondaryInterfaceMarkHex, egressIPSecondaryInterfaceMark, chainName, output)
+				}
+				framework.Logf("✓ Found correct mark value in chain %s", chainName)
+
+				return nil
+			}
+
+			// Helper to check OVS flows for packet marking - CRITICAL diagnostic
+			checkOVSFlowsForPacketMark := func(nodeName string, podIP string) error {
+				framework.Logf("Checking OVS flows for packet mark actions for pod IP %s on node %s", podIP, nodeName)
+
+				// Check logical flows in OVN SB DB
+				cmd := fmt.Sprintf("ovn-sbctl lflow-list | grep -i 'pkt.mark' | grep -i '%s'", podIP)
+				output, err := runOVNNBCTLCommand(nodeName, cmd)
+				if err != nil {
+					framework.Logf("Warning: failed to query OVN SB flows: %v", err)
+				} else {
+					framework.Logf("OVN logical flows with pkt.mark for pod %s:\n%s", podIP, output)
+					// Check if we got actual flows or just empty output
+					if strings.TrimSpace(output) == "" || strings.Contains(output, "No flows found") {
+						return fmt.Errorf("no OVN SB logical flows found with pkt.mark for pod %s - mark not being set in control plane", podIP)
+					}
+				}
+
+				// Check OpenFlow flows on br-int for mark actions
+				// Look specifically for load:0x2000->NXM_NX_PKT_MARK[] which sets mark to 1009 (0x2000)
+				cmd2 := fmt.Sprintf("ovs-ofctl dump-flows br-int | grep -E 'load:.*NXM_NX_PKT_MARK|set_field.*pkt_mark'")
+				output2, err := runCommandOnNode(nodeName, cmd2)
+				if err != nil {
+					framework.Logf("Warning: failed to query OVS flows: %v", err)
+				} else {
+					framework.Logf("OpenFlow mark actions on br-int:\n%s", output2)
+				}
+
+				// CRITICAL CHECK: Does OVN's pkt_mark translate to OVS actions with the SPECIFIC mark value?
+				// We expect load:0x3f1->NXM_NX_PKT_MARK[] or equivalent for mark=1009
+				hasExpectedMark := strings.Contains(output2, fmt.Sprintf("load:%s->NXM_NX_PKT_MARK", egressIPSecondaryInterfaceMarkHexShort)) ||
+					strings.Contains(output2, fmt.Sprintf("load:%s->NXM_NX_PKT_MARK", egressIPSecondaryInterfaceMark))
+
+				if !hasExpectedMark {
+					framework.Logf("⚠ CRITICAL WARNING: No OVS flows found that set pkt_mark (%s)!", egressIPSecondaryInterfaceMark)
+					framework.Logf("This indicates OVN's pkt_mark in LRP is NOT translating to OpenFlow actions with the expected value!")
+					return fmt.Errorf("OVN pkt_mark not translated to OVS flows with expected value %s - packets won't be marked correctly in datapath", egressIPSecondaryInterfaceMark)
+				}
+
+				return nil
+			}
+
+			var (
+				// Pod IPs to check for leaks
+				podIPs     []string
+				podIPsLock sync.Mutex
+			)
+
+			ginkgo.BeforeEach(func() {
+				podIPsLock.Lock()
+				podIPs = []string{}
+				podIPsLock.Unlock()
+			})
+
+			ginkgo.It("Should prevent pod IP traffic leak when EgressIP on secondary interface is applied to existing running pods", func() {
+				// Test Overview:
+				// This test validates a different race condition scenario:
+				// 1. Pods are created FIRST and are actively sending traffic
+				// 2. Then an EgressIP object is created and applied to them
+				// 3. During the reconciliation window, traffic should NOT leak with pod IPs
+				//
+				// This tests the transition from "normal routing" to "egress IP routing"
+				// which is common in production when EgressIP policies are added to existing workloads.
+
+				if isUserDefinedNetwork(netConfigParams) {
+					ginkgo.Skip("Unsupported for UDNs")
+				}
+
+				ginkgo.By("Step 0: Setting up egress IP address")
+
+				// Determine egress IP based on IP family
+				// Use SubTree's existing secondary network infrastructure
+				egressIPAddr := "10.10.10.200" // IPv4 egress IP (different from other test)
+				if isIPv6TestRun {
+					egressIPAddr = "2001:db8:abcd:1234::200" // IPv6 egress IP (different from other test)
+				}
+
+				targetIP := secondaryTargetExternalContainer.GetIPv4()
+				if isIPv6TestRun {
+					targetIP = secondaryTargetExternalContainer.GetIPv6()
+				}
+				framework.Logf("Using external target container with IP %s", targetIP)
+
+				ginkgo.By("Step 1: Label egress node for future egress IP assignment")
+				labelNodeForEgress(f, egress1Node.name)
+				defer unlabelNodeForEgress(f, egress1Node.name)
+
+				ginkgo.By("Step 2: Label namespace for egress IP selection")
+				podNamespace := f.Namespace
+				labels := map[string]string{
+					"egress-test": "existing-pods",
+				}
+				updateNamespaceLabels(f, podNamespace, labels)
+
+				ginkgo.By("Step 3: Start traffic monitoring BEFORE creating EgressIP and pods")
+				// This pod will capture traffic during the EgressIP application
+				monitorPod := createExistingPodsTrafficMonitorPodLogs(f, monitorPodName, egress1Node.name, targetIP)
+
+				// Wait for monitor pod to be ready
+				err := pod.WaitForPodRunningInNamespace(context.TODO(), f.ClientSet, monitorPod)
+				framework.ExpectNoError(err, "Monitor pod failed to start")
+				framework.Logf("Traffic monitor pod started on node %s", egress1Node.name)
+
+				ginkgo.By("Step 4: Verify NFTables infrastructure is created on node")
+
+				// Check that NFTables chain exists
+				err = checkNFTablesChainExists(egress1Node.name, egressIPChainName)
+				framework.ExpectNoError(err, "NFTables chain should exist")
+
+				// Check that NFTables rules use cluster pod CIDR (not per-pod IPs)
+				err = checkNFTablesRulesHaveClusterPodCIDR(egress1Node.name)
+				framework.ExpectNoError(err, "NFTables rules should use cluster pod CIDR")
+
+				// Check that NFTables rules exist (DROP and CLEAR)
+				err = checkNFTablesRulesExist(egress1Node.name, egressIPChainName)
+				framework.ExpectNoError(err, "NFTables rules should exist")
+
+				framework.Logf("✓ NFTables infrastructure validated on node %s", egress1Node.name)
+
+				ginkgo.By(fmt.Sprintf("Step 5: Create %d pods FIRST (before EgressIP exists)", numTestPods))
+				// This is the KEY DIFFERENCE: pods are created before EgressIP
+				// Pods will initially use normal routing (their pod IPs as source)
+
+				podEgressLabel := map[string]string{
+					"egress-existing-pod": "true",
+				}
+
+				// Create pods with continuous traffic generation
+				// These pods will keep sending traffic throughout the test
+				var wg sync.WaitGroup
+				podCreationErrors := make(chan error, numTestPods)
+
+				for i := 0; i < numTestPods; i++ {
+					wg.Add(1)
+					podName := fmt.Sprintf("%s-%d", podNamePrefix, i)
+
+					go func(name string) {
+						defer wg.Done()
+
+						// Main container continuously pings the target
+						// This ensures traffic is flowing when EgressIP is applied
+						mainCommand := []string{
+							"/bin/sh",
+							"-c",
+							fmt.Sprintf("while true; do ping -c 1 -W 1 %s || true; sleep 0.5; done", targetIP),
+						}
+
+						createPod := &corev1.Pod{
+							ObjectMeta: metav1.ObjectMeta{
+								Name:      name,
+								Namespace: podNamespace.Name,
+								Labels:    podEgressLabel,
+							},
+							Spec: corev1.PodSpec{
+								NodeSelector: map[string]string{
+									"kubernetes.io/hostname": pod1Node.name,
+								},
+								Containers: []corev1.Container{
+									{
+										Name:    "continuous-ping",
+										Image:   images.AgnHost(),
+										Command: mainCommand,
+									},
+								},
+								RestartPolicy: corev1.RestartPolicyNever,
+							},
+						}
+
+						createdPod, err := f.ClientSet.CoreV1().Pods(podNamespace.Name).Create(context.TODO(), createPod, metav1.CreateOptions{})
+						if err != nil {
+							podCreationErrors <- fmt.Errorf("failed to create pod %s: %v", name, err)
+							return
+						}
+
+						// Wait for pod to be running
+						err = pod.WaitForPodRunningInNamespace(context.TODO(), f.ClientSet, createdPod)
+						if err != nil {
+							podCreationErrors <- fmt.Errorf("failed waiting for pod %s to be running: %v", name, err)
+							return
+						}
+
+						// Get pod IP
+						podIP, err := getPodIPWithRetry(f.ClientSet, isIPv6TestRun, podNamespace.Name, name)
+						if err != nil {
+							podCreationErrors <- fmt.Errorf("failed to get IP for pod %s: %v", name, err)
+							return
+						}
+
+						podIPsLock.Lock()
+						podIPs = append(podIPs, podIP.String())
+						podIPsLock.Unlock()
+
+						framework.Logf("Created pod %s with IP %s", name, podIP.String())
+					}(podName)
+				}
+
+				// Wait for all pod creation goroutines to complete
+				wg.Wait()
+				close(podCreationErrors)
+
+				// Check for any pod creation errors
+				var creationErrors []error
+				for err := range podCreationErrors {
+					creationErrors = append(creationErrors, err)
+				}
+				if len(creationErrors) > 0 {
+					framework.Failf("Failed to create some pods: %v", creationErrors)
+				}
+
+				framework.Logf("Successfully created %d pods, collected %d pod IPs", numTestPods, len(podIPs))
+
+				ginkgo.By("Step 6: Create EgressIP object and apply it to existing running pods")
+				// THIS IS THE CRITICAL MOMENT: EgressIP is created while pods are actively sending traffic
+				// We want to detect any leaks during the reconciliation window
+
+				// Create the EgressIP CRD
+				egressIPConfig := fmt.Sprintf(`apiVersion: k8s.ovn.org/v1
+kind: EgressIP
+metadata:
+  name: %s
+spec:
+  egressIPs:
+  - "%s"
+  podSelector:
+    matchLabels:
+      egress-existing-pod: "true"
+  namespaceSelector:
+    matchLabels:
+      egress-test: existing-pods
+`, egressIPName, egressIPAddr)
+
+				// Normalize IPv6 address for comparison
+				normalizedEgressIP := egressIPAddr
+				if isIPv6TestRun {
+					normalizedEgressIP = net.ParseIP(egressIPAddr).String()
+				}
+
+				err = os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644)
+				framework.ExpectNoError(err, "Failed to write EgressIP YAML")
+				defer func() {
+					if err := os.Remove(egressIPYaml); err != nil {
+						framework.Logf("Unable to remove the egressIPYaml CRD config from disk: %v", err)
+					}
+				}()
+				framework.Logf("Creating EgressIP object with IP %s for existing running pods", normalizedEgressIP)
+				e2ekubectl.RunKubectlOrDie("default", "create", "-f", egressIPYaml)
+				defer func() {
+					framework.Logf("Deleting EgressIP object")
+					e2ekubectl.RunKubectlOrDie("default", "delete", "-f", egressIPYaml, "--ignore-not-found=true")
+				}()
+
+				ginkgo.By("Step 7: Verify EgressIP status is assigned to egress node")
+				var egressIPStatusItems []egressIPStatus
+				err = wait.PollUntilContextTimeout(context.Background(), retryInterval, retryTimeout, true, func(ctx context.Context) (bool, error) {
+					egressIPStatusItems = verifyEgressIPStatusLengthEquals(1, nil)
+					if len(egressIPStatusItems) != 1 {
+						return false, nil
+					}
+					if egressIPStatusItems[0].Node != egress1Node.name {
+						framework.Logf("EgressIP not yet assigned to correct node, current: %s, expected: %s",
+							egressIPStatusItems[0].Node, egress1Node.name)
+						return false, nil
+					}
+					if egressIPStatusItems[0].EgressIP != normalizedEgressIP {
+						framework.Logf("EgressIP address mismatch, current: %s, expected: %s",
+							egressIPStatusItems[0].EgressIP, normalizedEgressIP)
+						return false, nil
+					}
+					return true, nil
+				})
+				framework.ExpectNoError(err, "Failed to verify EgressIP status")
+				framework.Logf("EgressIP %s assigned to node %s", normalizedEgressIP, egress1Node.name)
+
+				ginkgo.By("Step 8: Check OVN LRP has pkt_mark for pod IPs")
+				for _, podIP := range podIPs {
+					err = wait.PollUntilContextTimeout(context.Background(), retryInterval, 30*time.Second, true, func(ctx context.Context) (bool, error) {
+						err := checkOVNLRPHasPktMark(egress1Node.name, podIP, egressIPSecondaryInterfaceMark)
+						return err == nil, nil
+					})
+					if err != nil {
+						framework.Failf("OVN LRP validation failed for pod %s: %v", podIP, err)
+					}
+					framework.Logf("✓ OVN LRP validated for pod %s (has pkt_mark=%s)", podIP, egressIPSecondaryInterfaceMark)
+				}
+
+				ginkgo.By("Step 9: CRITICAL - Verify OVS flows translate pkt_mark to datapath actions")
+
+				// Check if OVN's pkt_mark in LRP actually translates to OpenFlow actions
+				// This is THE critical check - if this fails, packets won't be marked at all!
+				if len(podIPs) > 0 {
+					err = checkOVSFlowsForPacketMark(egress1Node.name, podIPs[0])
+					if err != nil {
+						framework.Logf("❌ CRITICAL FAILURE: %v", err)
+						framework.Logf("This explains why traffic is leaking - OVN pkt_mark doesn't set kernel skb->mark!")
+						framework.Failf("OVS flow validation failed: %v", err)
+					}
+					framework.Logf("✓ OVS flows validated - pkt_mark should propagate to kernel")
+				}
+
+				ginkgo.By("Step 10: Wait for reconciliation to complete and verify egress IP is used")
+
+				// Verify pods are now using the egress IP
+				for i := 0; i < numTestPods; i++ {
+					podName := fmt.Sprintf("%s-%d", podNamePrefix, i)
+					conditionFunc := targetExternalContainerAndTest(secondaryTargetExternalContainer, podNamespace.Name, podName, true, []string{normalizedEgressIP})
+					err = wait.PollUntilContextTimeout(context.Background(), retryInterval, retryTimeout, true, func(ctx context.Context) (bool, error) {
+						return conditionFunc()
+					})
+					framework.ExpectNoError(err, "Pod %s should be using egress IP after reconciliation", podName)
+				}
+				framework.Logf("Verified pods are now using egress IP %s correctly", normalizedEgressIP)
+
+				ginkgo.By("Step 11: Analyze traffic capture for pod IP leaks during EgressIP application")
+				// This is the critical check: did any traffic leak with pod IPs during the transition?
+
+				leakedPodIPs := checkExistingPodsTrafficForLeaksLogs(monitorPodName, podNamespace.Name, podIPs, targetIP)
+
+				if len(leakedPodIPs) > 0 {
+					framework.Failf("TRAFFIC LEAK DETECTED! The following pod IPs were seen in traffic to %s: %v\n"+
+						"This indicates traffic leaked with pod source IPs instead of egress IP %s during EgressIP application to existing pods.",
+						targetIP, leakedPodIPs, normalizedEgressIP)
+				}
+
+				framework.Logf("SUCCESS: No pod IP traffic leaks detected during EgressIP application. All traffic transitioned to egress IP %s", normalizedEgressIP)
+				ginkgo.By("Step 12: Cleanup - Delete test pods")
+				for i := 0; i < numTestPods; i++ {
+					podName := fmt.Sprintf("%s-%d", podNamePrefix, i)
+					err := f.ClientSet.CoreV1().Pods(podNamespace.Name).Delete(context.TODO(), podName, metav1.DeleteOptions{})
+					if err != nil {
+						framework.Logf("Warning: failed to delete pod %s: %v", podName, err)
+					}
+				}
+			})
 		})
 
 		// two pods attached to different namespaces but the same role primary user defined network
