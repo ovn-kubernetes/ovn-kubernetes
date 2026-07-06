@@ -41,6 +41,7 @@ import (
 	ovnkube "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	ovniptables "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iptables"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/linkmanager"
+	nodenft "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
@@ -146,9 +147,19 @@ const (
 )
 
 var (
-	egressPodLabel  = map[string]string{"egress": "needed"}
-	namespace1Label = map[string]string{"prod1": ""}
-	namespace2Label = map[string]string{"prod2": ""}
+	egressPodLabel                              = map[string]string{"egress": "needed"}
+	namespace1Label                             = map[string]string{"prod1": ""}
+	namespace2Label                             = map[string]string{"prod2": ""}
+	nftRuleEgressIPSecondaryInterfaceAnnotation = `
+      add table inet ovn-kubernetes
+      add chain inet ovn-kubernetes ovn-kube-egress-ip { type filter hook postrouting priority srcnat + 1 ; comment "OVN egress IP traffic handling" ; }
+	`
+	nftRuleEgressIPSecondaryInterfaceMarkRuleIPv4 = `
+      add rule inet ovn-kubernetes ovn-kube-egress-ip ip saddr %s meta mark 1009  drop comment "Drop egress IP pod traffic from %s"
+	`
+	nftRuleEgressIPSecondaryInterfaceMarkRuleIPv6 = `
+      add rule inet ovn-kubernetes ovn-kube-egress-ip ip6 saddr %s meta mark 1009  drop comment "Drop egress IP pod traffic from %s"
+	`
 )
 
 type cleanupFn func() error
@@ -280,6 +291,22 @@ func initController(namespaces []corev1.Namespace, pods []corev1.Pod, egressIPs 
 	if err != nil {
 		return nil, nil, err
 	}
+
+	// Set up cluster subnets for NFTables initialization
+	// Reset first to avoid accumulation between tests
+	ovnconfig.Default.ClusterSubnets = nil
+	// Use standard test cluster CIDRs
+	if v4 {
+		_, cidr, _ := net.ParseCIDR(dummy1IPv4CIDRNetwork)
+		ovnconfig.Default.ClusterSubnets = append(ovnconfig.Default.ClusterSubnets,
+			ovnconfig.CIDRNetworkEntry{CIDR: cidr})
+	}
+	if v6 {
+		_, cidr, _ := net.ParseCIDR(dummy1IPv6CIDRNetworkCompressed)
+		ovnconfig.Default.ClusterSubnets = append(ovnconfig.Default.ClusterSubnets,
+			ovnconfig.CIDRNetworkEntry{CIDR: cidr})
+	}
+
 	_, err = c.namespaceInformer.AddEventHandler(
 		factory.WithUpdateHandlingForObjReplace(cache.ResourceEventHandlerFuncs{
 			AddFunc:    c.onNamespaceAdd,
@@ -326,6 +353,10 @@ func runController(testNS ns.NetNS, c *Controller) (cleanupFn, error) {
 				gomega.PanicWith(fmt.Sprintf("timed out waiting for %q caches to sync", resourceName))
 			}
 		}(se.resourceName, se.syncFn)
+	}
+
+	if err := nodenft.InitEgressIPNFTChain(c.v4, c.v6); err != nil {
+		return nil, err
 	}
 
 	wg := &sync.WaitGroup{}
@@ -456,6 +487,12 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 			egressIPList = append(egressIPList, *expectedEIPConfig.eIP)
 		}
 		ginkgo.By("setting up test environment")
+
+		// Initialize fake nftables helper and egress IP chain
+		// This mimics what the real Run() method does
+		// Create a fresh fake for this test to ensure isolation
+		nft := nodenft.SetFakeNFTablesHelper()
+
 		// determine which IP versions we must support from the Egress IPs defined
 		v4, v6 := getEIPsIPVersions(expectedEIPConfigs)
 		// setup "node" environment before controller is started
@@ -465,6 +502,22 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 		cleanupControllerFn, err := runController(testNS, c)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+		ginkgo.By("verify expected Egress IP secondary interface nftable rules match")
+		nftEgressIPRulesExpected := nftRuleEgressIPSecondaryInterfaceAnnotation
+		if v4 {
+			nftEgressIPRulesv4Expected := fmt.Sprintf(nftRuleEgressIPSecondaryInterfaceMarkRuleIPv4,
+				dummy1IPv4CIDRNetwork, dummy1IPv4CIDRNetwork)
+			nftEgressIPRulesExpected += "\n" + nftEgressIPRulesv4Expected
+		}
+		if v6 {
+			nftEgressIPRulesv6Expected := fmt.Sprintf(nftRuleEgressIPSecondaryInterfaceMarkRuleIPv6,
+				dummy1IPv6CIDRNetworkCompressed, dummy1IPv6CIDRNetworkCompressed)
+			nftEgressIPRulesExpected += "\n" + nftEgressIPRulesv6Expected
+		}
+		gomega.Eventually(func() error {
+			return nodenft.MatchNFTRules(nftEgressIPRulesExpected, nft.Dump())
+		}).WithTimeout(2 * time.Second).ShouldNot(gomega.HaveOccurred())
+
 		ginkgo.By("verify expected IPTable rules match what was found")
 		// Ensure only the iptables rules we expect are present on the chain
 		gomega.Eventually(func() error {
@@ -1143,6 +1196,12 @@ var _ = ginkgo.Describe("VRF", func() {
 		egressIPList := []egressipv1.EgressIP{*newEgressIP(egressIP1Name, egressIP1IPV4, node1Name, namespace1Label, egressPodLabel)}
 		pods := []corev1.Pod{newPodWithLabels(namespace1, pod1Name, node1Name, pod1IPv4, egressPodLabel)}
 		namespaces := []corev1.Namespace{newNamespaceWithLabels(namespace1, namespace1Label)}
+
+		// Initialize fake nftables helper and egress IP chain
+		// This mimics what the real Run() method does
+		// Create a fresh fake for this test to ensure isolation
+		_ = nodenft.SetFakeNFTablesHelper()
+
 		ginkgo.By("start controller")
 		c, _, err := initController(namespaces, pods, egressIPList, nodeConfig, true, false, true)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())

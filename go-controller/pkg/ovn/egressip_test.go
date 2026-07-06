@@ -685,6 +685,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					Match:       fmt.Sprintf("ip4.src == %s", egressPod.Status.PodIP),
 					Action:      nbdb.LogicalRouterPolicyActionReroute,
 					Nexthops:    []string{node1MgntIP.To4().String()},
+					Options:     map[string]string{"pkt_mark": types.EgressIPSecondaryInterfaceMark},
 					ExternalIDs: getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
 					UUID:        "reroute-UUID",
 				},
@@ -1711,6 +1712,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 							Match:       fmt.Sprintf("ip4.src == %s", egressPod.Status.PodIP),
 							Action:      nbdb.LogicalRouterPolicyActionReroute,
 							Nexthops:    []string{node2MgntIP.To4().String()},
+							Options:     map[string]string{"pkt_mark": types.EgressIPSecondaryInterfaceMark},
 							ExternalIDs: getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
 							UUID:        "reroute-UUID",
 						},
@@ -2056,9 +2058,16 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 						servedPodIPs = nil
 					}
 					egressIPServedPodsASv4, _ := buildEgressIPServedPodsAddressSets(servedPodIPs, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName)
+					var reroutePolicy *nbdb.LogicalRouterPolicy
+					if node2Zone == "remote" {
+						reroutePolicy = getReRoutePolicy(egressPod.Status.PodIP, "4", "reroute-UUID", reroutePolicyNextHop,
+							getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs())
+					} else {
+						reroutePolicy = getReRoutePolicySecondaryHost(egressPod.Status.PodIP, "4", "reroute-UUID", reroutePolicyNextHop,
+							getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs())
+					}
 					expectedDatabaseState := []libovsdbtest.TestData{
-						getReRoutePolicy(egressPod.Status.PodIP, "4", "reroute-UUID", reroutePolicyNextHop,
-							getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs()),
+						reroutePolicy,
 						&nbdb.LogicalRouterPolicy{
 							Priority:    types.DefaultNoRereoutePriority,
 							Match:       "ip4.src == 10.128.0.0/14 && ip4.dst == 10.128.0.0/14",
@@ -2170,12 +2179,23 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 						egressNodeIPsASv4, _ := buildEgressIPNodeAddressSets(egressNodeIPs)
 						expectedDatabaseState = append(expectedDatabaseState, egressNodeIPsASv4)
 					}
-					if node1Zone == "remote" {
+					if node1Zone == "remote" && node2Zone == "remote" {
 						expectedDatabaseState = append(expectedDatabaseState, getReRoutePolicy(egressPod.Status.PodIP, "4", "remote-reroute-UUID", reroutePolicyNextHop,
 							getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs()))
 						expectedDatabaseState[6].(*nbdb.LogicalRouter).Policies = expectedDatabaseState[6].(*nbdb.LogicalRouter).Policies[1:]                            // remove LRP ref
 						expectedDatabaseState[6].(*nbdb.LogicalRouter).Policies = append(expectedDatabaseState[6].(*nbdb.LogicalRouter).Policies, "remote-reroute-UUID") // remove LRP ref
 						expectedDatabaseState = expectedDatabaseState[1:]                                                                                                // remove LRP
+						ipNets, _ := util.ParseIPNets(append(node1IPv4Addresses, node2IPv4Addresses...))
+						egressNodeIPs := []string{}
+						for _, ipNet := range ipNets {
+							egressNodeIPs = append(egressNodeIPs, ipNet.IP.String())
+						}
+						egressNodeIPsASv4, _ := buildEgressIPNodeAddressSets(egressNodeIPs)
+						expectedDatabaseState = append(expectedDatabaseState, egressNodeIPsASv4)
+					}
+					if node1Zone == "remote" && node2Zone == "global" {
+						// For secondary host networks with remote pods on local egress nodes,
+						// reroute policy is still created to redirect to local management port
 						ipNets, _ := util.ParseIPNets(append(node1IPv4Addresses, node2IPv4Addresses...))
 						egressNodeIPs := []string{}
 						for _, ipNet := range ipNets {
@@ -2440,31 +2460,31 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					if !interconnect {
 						lrps = append(lrps, getReRoutePolicy(egressPod1Node1.Status.PodIP, "4", "reroute-UUID", egressPod1Node1Reroute,
 							getEgressIPLRPReRouteDbIDs(eIPOVN.Name, egressPod1Node1.Namespace, egressPod1Node1.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs()),
-							getReRoutePolicy(egressPod2Node1.Status.PodIP, "4", "reroute-UUID2", egressPod2Node1Reroute,
+							getReRoutePolicySecondaryHost(egressPod2Node1.Status.PodIP, "4", "reroute-UUID2", egressPod2Node1Reroute,
 								getEgressIPLRPReRouteDbIDs(eIPSecondaryHost.Name, egressPod2Node1.Namespace, egressPod2Node1.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs()),
 							getReRoutePolicy(egressPod3Node2.Status.PodIP, "4", "reroute-UUID3", egressPod3Node2Reroute,
 								getEgressIPLRPReRouteDbIDs(eIPOVN.Name, egressPod3Node2.Namespace, egressPod3Node2.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs()),
-							getReRoutePolicy(egressPod4Node2.Status.PodIP, "4", "reroute-UUID4", egressPod4Node2Reroute,
+							getReRoutePolicySecondaryHost(egressPod4Node2.Status.PodIP, "4", "reroute-UUID4", egressPod4Node2Reroute,
 								getEgressIPLRPReRouteDbIDs(eIPSecondaryHost.Name, egressPod4Node2.Namespace, egressPod4Node2.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs()))
 					}
 
 					if interconnect && node1Zone == "global" && node2Zone == "global" {
 						lrps = append(lrps, getReRoutePolicy(egressPod1Node1.Status.PodIP, "4", "reroute-UUID", egressPod1Node1Reroute,
 							getEgressIPLRPReRouteDbIDs(eIPOVN.Name, egressPod1Node1.Namespace, egressPod1Node1.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs()),
-							getReRoutePolicy(egressPod2Node1.Status.PodIP, "4", "reroute-UUID2", egressPod2Node1Reroute,
+							getReRoutePolicySecondaryHost(egressPod2Node1.Status.PodIP, "4", "reroute-UUID2", egressPod2Node1Reroute,
 								getEgressIPLRPReRouteDbIDs(eIPSecondaryHost.Name, egressPod2Node1.Namespace, egressPod2Node1.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs()),
 							getReRoutePolicy(egressPod3Node2.Status.PodIP, "4", "reroute-UUID3", egressPod3Node2Reroute,
 								getEgressIPLRPReRouteDbIDs(eIPOVN.Name, egressPod3Node2.Namespace, egressPod3Node2.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs()),
-							getReRoutePolicy(egressPod4Node2.Status.PodIP, "4", "reroute-UUID4", egressPod4Node2Reroute,
+							getReRoutePolicySecondaryHost(egressPod4Node2.Status.PodIP, "4", "reroute-UUID4", egressPod4Node2Reroute,
 								getEgressIPLRPReRouteDbIDs(eIPSecondaryHost.Name, egressPod4Node2.Namespace, egressPod4Node2.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs()))
 					}
 
 					if interconnect && node1Zone == "global" && node2Zone == "remote" {
 						lrps = append(lrps, getReRoutePolicy(egressPod1Node1.Status.PodIP, "4", "reroute-UUID", egressPod1Node1Reroute,
 							getEgressIPLRPReRouteDbIDs(eIPOVN.Name, egressPod1Node1.Namespace, egressPod1Node1.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs()),
-							getReRoutePolicy(egressPod2Node1.Status.PodIP, "4", "reroute-UUID2", egressPod2Node1Reroute,
+							getReRoutePolicySecondaryHost(egressPod2Node1.Status.PodIP, "4", "reroute-UUID2", egressPod2Node1Reroute,
 								getEgressIPLRPReRouteDbIDs(eIPSecondaryHost.Name, egressPod2Node1.Namespace, egressPod2Node1.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs()),
-							getReRoutePolicy(podV4IP4, "4", "egressip-pod4node2", egressPod4Node2Reroute,
+							getReRoutePolicySecondaryHost(podV4IP4, "4", "egressip-pod4node2", egressPod4Node2Reroute,
 								getEgressIPLRPReRouteDbIDs(eIPSecondaryHost.Name, egressPod4Node2.Namespace, egressPod4Node2.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs()))
 					}
 
@@ -3311,9 +3331,16 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 						egressNodeIPs = append(egressNodeIPs, ipNet.IP.String())
 					}
 					egressNodeIPsASv4, _ := buildEgressIPNodeAddressSets(egressNodeIPs)
+					var reroutePolicy *nbdb.LogicalRouterPolicy
+					if node2Zone == "remote" {
+						reroutePolicy = getReRoutePolicy(egressPod.Status.PodIP, "4", "reroute-UUID", reroutePolicyNextHop,
+							getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs())
+					} else {
+						reroutePolicy = getReRoutePolicySecondaryHost(egressPod.Status.PodIP, "4", "reroute-UUID", reroutePolicyNextHop,
+							getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs())
+					}
 					expectedDatabaseState := []libovsdbtest.TestData{
-						getReRoutePolicy(egressPod.Status.PodIP, "4", "reroute-UUID", reroutePolicyNextHop,
-							getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs()),
+						reroutePolicy,
 						&nbdb.LogicalRouterPolicy{
 							Priority:    types.DefaultNoRereoutePriority,
 							Match:       "(ip4.src == $a8519615025667110816 || ip4.src == $a13607449821398607916) && ip4.dst == $a1042611113178530741",
@@ -3422,7 +3449,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 						node2Switch.QOSRules = []string{"default-QoS-UUID"}
 					}
 					if node1Zone == "remote" {
-						podPolicy := getReRoutePolicy(podV4IP, "4", "static-reroute-UUID", []string{node2MgntIP.To4().String()},
+						podPolicy := getReRoutePolicySecondaryHost(podV4IP, "4", "static-reroute-UUID", []string{node2MgntIP.To4().String()},
 							getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs())
 						expectedDatabaseState = append(expectedDatabaseState, podPolicy)
 						expectedDatabaseState[6].(*nbdb.LogicalRouter).Policies = append(expectedDatabaseState[6].(*nbdb.LogicalRouter).Policies, "static-reroute-UUID")
@@ -15632,6 +15659,18 @@ func getReRoutePolicy(podIP, ipFamily, uuid string, nextHops []string, externalI
 		Match:       fmt.Sprintf("ip%s.src == %s", ipFamily, podIP),
 		Action:      nbdb.LogicalRouterPolicyActionReroute,
 		Nexthops:    nextHops,
+		ExternalIDs: externalID,
+		UUID:        uuid,
+	}
+}
+
+func getReRoutePolicySecondaryHost(podIP, ipFamily, uuid string, nextHops []string, externalID map[string]string) *nbdb.LogicalRouterPolicy {
+	return &nbdb.LogicalRouterPolicy{
+		Priority:    types.EgressIPReroutePriority,
+		Match:       fmt.Sprintf("ip%s.src == %s", ipFamily, podIP),
+		Action:      nbdb.LogicalRouterPolicyActionReroute,
+		Nexthops:    nextHops,
+		Options:     map[string]string{"pkt_mark": types.EgressIPSecondaryInterfaceMark},
 		ExternalIDs: externalID,
 		UUID:        uuid,
 	}
