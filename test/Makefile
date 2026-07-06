@@ -52,7 +52,7 @@ shard-%:
 	PLATFORM_IPV6_SUPPORT=$(PLATFORM_IPV6_SUPPORT) \
 	DUALSTACK_CONVERSION=$(DUALSTACK_CONVERSION) \
 	SINGLE_NODE_CLUSTER=$(SINGLE_NODE_CLUSTER) \
-	./scripts/e2e-kind.sh $@ $(WHAT)
+	./scripts/e2e-kind.sh $@ "$(WHAT)"
 	$(call check-coredumps)
 
 # control-plane: coredump check is handled by the test framework (wrappedTestFramework)
@@ -63,7 +63,7 @@ control-plane:
 	PLATFORM_IPV4_SUPPORT=$(PLATFORM_IPV4_SUPPORT) \
 	PLATFORM_IPV6_SUPPORT=$(PLATFORM_IPV6_SUPPORT) \
 	OVN_HA=$(OVN_HA) \
-	./scripts/e2e-cp.sh $(WHAT)
+	./scripts/e2e-cp.sh "$(WHAT)"
 
 .PHONY: conformance
 conformance:
@@ -80,5 +80,5 @@ tools:
 .PHONY: traffic-flow-tests
 traffic-flow-tests:
 	TRAFFIC_FLOW_TESTS=$(TRAFFIC_FLOW_TESTS) \
-	./scripts/traffic-flow-tests.sh $(WHAT)
+	./scripts/traffic-flow-tests.sh "$(WHAT)"
 	$(call check-coredumps)

@@ -38,3 +38,14 @@ func (k kind) PrimaryInterfaceName() string {
 func (k kind) GetAgnHostContainerImage() string {
 	return image.GetE2EImage(image.Agnhost)
 }
+
+func (k kind) IsConfigurationEnabled(config api.Config) bool {
+	switch config {
+	case api.L3UDNMultiSubnetConfig:
+		// Currently enabled by default for Kind cluster. Could use
+		// an ENV variable check instead if we need variability later.
+		return true
+	default:
+		return false
+	}
+}
