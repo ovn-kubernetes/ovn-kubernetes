@@ -737,10 +737,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {"ha": "noHA", "interconnect": "interconnect-single-node-zones", "num-zones": "3"}
+          - {"ha": "noHA"}
     needs: [ build-pr ]
     env:
-      JOB_NAME: "DualStack-conversion-shared-${{ matrix.ha }}-${{ matrix.interconnect }}"
+      JOB_NAME: "DualStack-conversion-shared-${{ matrix.ha }}"
       OVN_HA: "${{ matrix.ha == 'HA' }}"
       PLATFORM_IPV4_SUPPORT: "true"
       PLATFORM_IPV6_SUPPORT: "false"
@@ -748,7 +748,6 @@ jobs:
       OVN_GATEWAY_MODE: "shared"
       OVN_MULTICAST_ENABLE:  "false"
       DUALSTACK_CONVERSION:  "true"
-      KIND_NUM_ZONES: "${{ matrix.num-zones }}"
     steps:
 
     - name: Check out code into the Go module directory
