@@ -40,8 +40,23 @@ func UpdatePodWithRetryOrRollback(podLister listers.PodLister, kube kube.Interfa
 	defer func() {
 		klog.V(5).Infof("[%s/%s] pod update took %v", pod.Namespace, pod.Name, time.Since(start))
 	}()
+	// The patch built by PatchPodStatusAnnotations may be guarded by a
+	// resourceVersion test that fails if the patch was built from a stale pod.
+	// The informer cache can stay stale for the whole retry window when the
+	// apiserver is under load (e.g. a concurrent writer just bumped the pod's
+	// resourceVersion and the watch event has not been delivered yet), in
+	// which case retrying from the lister would keep failing with the same
+	// error. So once a patch attempt fails in a retryable way, fetch the pod
+	// directly from the apiserver on the next attempt.
+	fetchLive := false
 	err := retry.OnError(OvnConflictBackoff, IsPodAnnotationUpdateRetryable, func() error {
-		oldPod, err := podLister.Pods(pod.Namespace).Get(pod.Name)
+		var oldPod *corev1.Pod
+		var err error
+		if fetchLive {
+			oldPod, err = kube.GetPod(pod.Namespace, pod.Name)
+		} else {
+			oldPod, err = podLister.Pods(pod.Namespace).Get(pod.Name)
+		}
 		if err != nil {
 			return err
 		}
@@ -58,8 +73,13 @@ func UpdatePodWithRetryOrRollback(podLister listers.PodLister, kube kube.Interfa
 		}
 
 		err = kube.PatchPodStatusAnnotations(oldPod, updatedPod)
-		if err != nil && rollback != nil {
-			rollback()
+		if err != nil {
+			if IsPodAnnotationUpdateRetryable(err) {
+				fetchLive = true
+			}
+			if rollback != nil {
+				rollback()
+			}
 		}
 		return err
 	})
