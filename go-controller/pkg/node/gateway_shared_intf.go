@@ -97,6 +97,16 @@ const (
 	nftablesUDNMarkExternalIPsV6Map = "udn-mark-external-ips-v6"
 )
 
+// serviceHasAllocatedNodePort returns true if the service has at least one port with NodePort > 0
+func serviceHasAllocatedNodePort(service *corev1.Service) bool {
+	for _, port := range service.Spec.Ports {
+		if port.NodePort > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // configureUDNServicesNFTables configures the nftables chains, rules, and verdict maps
 // that are used to set packet marks on externally exposed UDN services
 func configureUDNServicesNFTables() error {
@@ -1064,16 +1074,20 @@ func (npw *nodePortWatcher) deleteConntrackForUpdatedUDPServiceIPPorts(old, new 
 	clusterIPsDeletedCount, clusterIPsErrs := deleteStaleUDPConntrackForUDPPortsAndIPs(new.Spec.Ports, newClusterIPs, old.Spec.Ports, oldClusterIPs, old.Namespace, old.Name, false)
 
 	// Node IPs
+	// Check if services have any ports with NodePort actually allocated
+	newHasNodePort := util.ServiceTypeHasNodePort(new) && serviceHasAllocatedNodePort(new)
+	oldHasNodePort := util.ServiceTypeHasNodePort(old) && serviceHasAllocatedNodePort(old)
+
 	var nodeIPs []net.IP
-	if util.ServiceTypeHasNodePort(new) || util.ServiceTypeHasNodePort(old) {
+	if newHasNodePort || oldHasNodePort {
 		nodeIPs, _ = npw.nodeIPManager.ListAddresses()
 	}
 	var newNodeIPs []net.IP
-	if util.ServiceTypeHasNodePort(new) {
+	if newHasNodePort {
 		newNodeIPs = nodeIPs
 	}
 	var oldNodeIPs []net.IP
-	if util.ServiceTypeHasNodePort(old) {
+	if oldHasNodePort {
 		oldNodeIPs = nodeIPs
 	}
 	nodePortDeletedCount, nodePortErrs := deleteStaleUDPConntrackForUDPPortsAndIPs(new.Spec.Ports, newNodeIPs, old.Spec.Ports, oldNodeIPs, old.Namespace, old.Name, true)
@@ -1185,11 +1199,14 @@ func (npw *nodePortWatcher) deleteConntrackForService(service *corev1.Service) e
 	if err := deleteConntrackForServiceVIP(externalIPs, service.Spec.Ports, service.Namespace, service.Name); err != nil {
 		return err
 	}
-	if util.ServiceTypeHasNodePort(service) {
+	if util.ServiceTypeHasNodePort(service) && serviceHasAllocatedNodePort(service) {
 		// remove conntrack entries for NodePorts
 		nodeIPs, _ := npw.nodeIPManager.ListAddresses()
 		for _, nodeIP := range nodeIPs {
 			for _, svcPort := range service.Spec.Ports {
+				if svcPort.NodePort == 0 {
+					continue
+				}
 				if _, err := util.DeleteConntrackServicePort(nodeIP.String(), svcPort.NodePort, svcPort.Protocol,
 					netlink.ConntrackOrigDstIP, nil); err != nil {
 					return fmt.Errorf("failed to delete conntrack entry for service %s/%s with nodeIP %s, nodePort %d, protocol %s: %v",
