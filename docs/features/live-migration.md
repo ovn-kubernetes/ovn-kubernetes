@@ -268,39 +268,19 @@ To implement live migration ovn-kubernetes do the following:
 **Point to point routing:**
 
 When the VM is running at a node that does not "own" it's IP address - e.g. after a live migration - 
-after a live migration, do point to point routing with a policy for non 
-interconnect and a cluster wide static route for interconnected zones, it will
-route outbound traffic and a static route to route inboud.
+point to point routing is done with static routes: at the local zone (zone where 
+vm is running) a route to route inbound traffic to the VM and a cluster wide 
+route to route egress n/s traffic to the gw router; at remote zones a static 
+route to route traffic to the migrated VM over the transit switch port address.
 By doing this, the VM can live migrate to different node and keep previous 
 addresses (IP / MAC), thus preserving n/s and e/w communication, and ensuring traffic
 goes over the node where the VM is running. The latter reduces inter node communication.
 
-If the VM is going back to the node that "owns" the ip, those static routes and 
-policies should be reconciled (deleted).
-
-```text
-       ┌───────────────────────────┐
-       │     ovn_cluster_router    │
-┌───────────────────────────┐   ┌────────────────────────────┐
-│ static route (ingress all)│───│ policy  (egress n/s)       │
-│ prefix: 10.244.0.8        │   │ match: ip4.src==10.244.0.8 │
-│ nexthop: 10.244.0.8       │   │ action: reroute            │
-│ output-port: rtos-node1   │   │ nexthop: 10.64.0.2         │
-│ policy: dst-ip            │   │                            │  
-└───────────────────────────┘   └────────────────────────────┘ 
-- static route: ingress traffic to VM's IP via VM's node port
-- policy: egress n/s traffic from VM's IP via gateway router ip
-```
-
-When ovn-kubernetes is deployed with multiple ovn zones interconected 
-an extra static route is added to the local zone (zone where vm is running) to
-route egress n/s traffic to the gw router. Note that for interconnect the
-previous policy is not needed, at remote zones a static route is address to 
-enroute VM egress traffic over the transit switch port address.
+If the VM is going back to the node that "owns" the ip, those static routes 
+should be reconciled (deleted).
 
 If the transit switch port address is 10.64.0.3 and gw router is 10.64.0.2, 
-those below are the static route added to the topology when running with 
-multiple zones:
+those below are the static routes added to the topology:
 
 ```text
 Local zone:
