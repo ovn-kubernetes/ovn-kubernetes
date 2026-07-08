@@ -2191,16 +2191,31 @@ var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
 						return clientPod.Name, clientPod.Namespace, target, podsNetA[2].Name, false
 					}),
 				ginkgo.Entry("[ETP=Cluster] UDN pod to the same node nodeport service in different UDN network should not work",
-					// FIXME: This test should work: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5419
-					// This traffic flow is expected to work eventually but doesn't work today on Layer3 (v4 and v6) and Layer2 (v4 and v6) networks.
-					// Reason it doesn't work today is because UDN networks don't have MAC bindings for masqueradeIPs of other networks.
-					// Traffic flow: UDN pod in network A -> samenode nodeIP:nodePort service of networkB
-					// UDN pod in networkA -> ovn-switch -> ovn-cluster-router (SNAT to masqueradeIP of networkA) -> mpX interface ->
-					// enters the host and hits IPTables rules to DNAT to clusterIP:Port of service of networkB.
-					// Then it hits the pkt_mark flows on breth0 and get's sent into networkB's patchport where it hits the GR.
-					// On the GR we DNAT to backend pod and SNAT to joinIP.
-					// Reply: Pod replies and now OVN in networkB tries to ARP for the masqueradeIP of networkA which is the source and simply
-					// fails as it doesn't know how to reach this masqueradeIP.
+					// FIXME: IPv4 should also work: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5419
+					//
+					// Cross-UDN same-node nodeport traffic goes through the management port in both
+					// local and shared gateway modes (the priority 1004 LRP on the cluster router
+					// reroutes traffic destined for the local node's IP to the management port):
+					// UDN pod in networkA -> ovn-switch -> ovn-cluster-router (SNAT to masqueradeIP)
+					// -> mpX interface -> host nftables (DNAT nodePort->clusterIP) -> breth0 table 0 -> table 2
+					//
+					// IPv6 works: nftables "fib daddr type local" succeeds for IPv6 regardless of
+					// incoming interface, so the pkt_mark is set and breth0 table 2 dispatches the
+					// packet to networkB's patch port. The mask narrowing (/112 -> /128) on the GR
+					// external port makes the static route (fd69::/112 -> fd69::4) take effect for
+					// the reply, routing it back through the management port to networkA.
+					//
+					// IPv4 fails: the kernel's IPv4 FIB lookup in "fib daddr type local" is
+					// interface-aware. Since the node IP (e.g. 172.18.0.2) is local on breth0, not
+					// on ovn-k8s-mpX, the lookup fails and the pkt_mark is never set:
+					//   $ ip route get 172.18.0.2 iif ovn-k8s-mp7
+					//   RTNETLINK answers: Invalid argument
+					//   $ ip -6 route get fc00:f853:ccd:e793::2 iif ovn-k8s-mp7
+					//   local fc00:f853:ccd:e793::2 ... iif ovn-k8s-mp7 pref medium
+					// Without the mark, the packet hits the priority=200 drop flow in breth0 table 2
+					// (nw_src=masqueradeIP -> drop).
+					// The original pkt_mark design (PR#4792) was intended for external clients hitting
+					// the node IP, not for cross-UDN traffic arriving on a UDN management port.
 					func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
 						clientPod := podsNetA[0]
 						node, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), nodes.Items[0].Name, metav1.GetOptions{})
@@ -2211,15 +2226,16 @@ var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
 							nodeIP = nodeIPv6
 						}
 						nodePort := svcNodePortNetB.Spec.Ports[0].NodePort
-						// sourceIP will be joinSubnetIP for nodeports, so only using hostname endpoint
-						expectedOut := curlConnectionTimeoutCode
-						if isDynamicUDNEnabled() && cudnBTemplate.Spec.Network.Topology == udnv1.NetworkTopologyLayer3 {
-							// network B is not active on the client's node: for L3
-							// networks the connection is rejected instead of timing
-							// out, for both IP families
-							expectedOut = curlConnectionRefusedCode
+						expectErr = ipFamily == utilnet.IPv4
+						if expectErr {
+							expectedOutput = curlConnectionTimeoutCode
+							if isDynamicUDNEnabled() && cudnBTemplate.Spec.Network.Topology == udnv1.NetworkTopologyLayer3 {
+								// network B is not active on the client's node: for L3
+								// networks the connection is rejected instead of timing out
+								expectedOutput = curlConnectionRefusedCode
+							}
 						}
-						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePort)) + "/hostname", expectedOut, true
+						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePort)) + "/hostname", expectedOutput, expectErr
 					}),
 				ginkgo.Entry("[ETP=Cluster] UDN pod to a different node nodeport service in different UDN network should work",
 					func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
@@ -2296,20 +2312,35 @@ var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
 						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortA)) + "/hostname", "", false
 					}),
 
-				ginkgo.Entry("[ETP=LOCAL] UDN pod to the same node nodeport service in different UDN network should not work",
-					func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
-						// FIXME: This test should work: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5419
-						clientPod := podNetB
-						node, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), clientPod.Spec.NodeName, metav1.GetOptions{})
-						framework.ExpectNoError(err)
-						nodeIPv4, nodeIPv6 := getNodeAddresses(node)
-						nodeIP := nodeIPv4
-						if ipFamily == utilnet.IPv6 {
-							nodeIP = nodeIPv6
-						}
-						nodePortA := svcNodePortETPLocalNetA.Spec.Ports[0].NodePort
-						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortA)) + "/hostname", curlConnectionTimeoutCode, true
-					}),
+			ginkgo.Entry("[ETP=LOCAL] UDN pod to the same node nodeport service in different UDN network should not work",
+				// FIXME: IPv4 should also work: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5419
+				// Shared Gateway (SGW):
+				//   IPv4 fails because nftables "fib daddr type local" does not match when the
+				//   packet arrives on ovn-k8s-mpX (kernel IPv4 FIB lookup is interface-aware).
+				//   Without the pkt_mark, the packet is dropped by breth0 table 2 isolation flows.
+				//   IPv6 works because "fib daddr type local" succeeds for IPv6 regardless of
+				//   incoming interface, so pkt_mark is set and breth0 dispatches the packet correctly.
+				// Local Gateway (LGW):
+				//   Both IPv4 and IPv6 fail. ETP=Local DNATs to the host masquerade IP (fd69::3 /
+				//   169.254.0.3), which routes back to the UDN management port (each UDN routing
+				//   table has a route for the masquerade IP pointing to its own mp), creating a
+				//   routing loop between the management port and OVN.
+				func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
+					clientPod := podNetB
+					node, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), clientPod.Spec.NodeName, metav1.GetOptions{})
+					framework.ExpectNoError(err)
+					nodeIPv4, nodeIPv6 := getNodeAddresses(node)
+					nodeIP := nodeIPv4
+					if ipFamily == utilnet.IPv6 {
+						nodeIP = nodeIPv6
+					}
+					nodePortA := svcNodePortETPLocalNetA.Spec.Ports[0].NodePort
+					expectErr = ipFamily == utilnet.IPv4 || IsGatewayModeLocal(f.ClientSet)
+					if expectErr {
+						expectedOutput = curlConnectionTimeoutCode
+					}
+					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortA)) + "/hostname", expectedOutput, expectErr
+				}),
 				ginkgo.Entry("[ETP=LOCAL] UDN pod to a different node nodeport service in different UDN network should work",
 					func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
 						clientPod := podNetB
