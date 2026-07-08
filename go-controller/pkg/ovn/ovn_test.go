@@ -348,7 +348,7 @@ func (o *FakeOVN) init(nadList []nettypes.NetworkAttachmentDefinition) {
 	if err == nil {
 		for _, node := range existingNodes {
 			o.controller.localNodes.Store(node.Name, true)
-			if util.GetNodeZone(node) == types.OvnDefaultZone || util.GetNodeZone(node) == config.Default.Zone {
+			if util.IsNodeLocalToZone(node, config.Default.Zone) {
 				for _, udnController := range o.userDefinedNetworkControllers {
 					if udnController.bnc.localNodes != nil {
 						udnController.bnc.localNodes.Store(node.Name, true)

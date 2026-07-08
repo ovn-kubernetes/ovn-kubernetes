@@ -24,9 +24,9 @@ import (
 )
 
 func TestSetAdvertisements(t *testing.T) {
-	testZoneName := "testZone"
 	testNodeName := "testNode"
 	testNodeOnZoneName := "testNodeOnZone"
+	testZoneName := testNodeOnZoneName
 	testNADName := "test/NAD"
 	testRAName := "testRA"
 	testVRFName := "testVRF"

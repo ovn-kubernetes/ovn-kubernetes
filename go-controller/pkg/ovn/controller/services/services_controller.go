@@ -477,7 +477,7 @@ func (c *Controller) nodeInfoMapForNetwork(state *networkState) map[string]nodeI
 func zoneNodeInfos(zone string, nodeInfoByName map[string]nodeInfo) []nodeInfo {
 	out := make([]nodeInfo, 0, len(nodeInfoByName))
 	for _, node := range nodeInfoByName {
-		if node.zone == zone {
+		if zone == types.OvnDefaultZone || node.name == zone {
 			out = append(out, node)
 		}
 	}

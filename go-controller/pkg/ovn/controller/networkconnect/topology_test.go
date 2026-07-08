@@ -1024,7 +1024,7 @@ func TestSyncNetworkConnectionsInactiveNetwork(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "node1",
 			Annotations: map[string]string{
-				util.OvnNodeZoneName:       "zone1",
+				util.OvnNodeZoneName:       "node1",
 				util.OvnNodeID:             "1",
 				util.OvnNodeChassisID:      chassisIDForNode("node1"),
 				"k8s.ovn.org/node-subnets": string(node1SubnetsBytes),
@@ -1115,7 +1115,7 @@ func TestSyncNetworkConnectionsInactiveNetwork(t *testing.T) {
 	// Controller with connect router and both network routers.
 	c := &Controller{
 		nbClient:       nbClient,
-		zone:           "zone1",
+		zone:           "node1",
 		nodeLister:     wf.NodeCoreInformer().Lister(),
 		networkManager: nm,
 		localZoneNode:  node1,

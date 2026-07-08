@@ -67,5 +67,5 @@ func (c *Controller) syncNetworkQoSNode(key string) error {
 
 // isNodeInLocalZone returns whether the provided node is in a zone local to the zone controller
 func (c *Controller) isNodeInLocalZone(node *corev1.Node) bool {
-	return util.GetNodeZone(node) == c.zone
+	return util.IsNodeLocalToZone(node, c.zone)
 }

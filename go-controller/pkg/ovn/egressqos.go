@@ -225,7 +225,7 @@ func (oc *DefaultNetworkController) initEgressQoSController(
 	)
 	_, err = nodeInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    oc.onEgressQoSNodeAdd,    // we only care about new logical switches being added
-		UpdateFunc: oc.onEgressQoSNodeUpdate, // we care about node's zone changes so that if add event didn't do anything update can take care of it
+		UpdateFunc: oc.onEgressQoSNodeUpdate, // retained for node updates already delivered by the informer
 		DeleteFunc: func(_ interface{}) {},
 	})
 	if err != nil {
@@ -924,13 +924,15 @@ func (oc *DefaultNetworkController) onEgressQoSNodeAdd(obj interface{}) {
 		return
 	}
 	node := obj.(*corev1.Node)
-	if util.GetNodeZone(node) != oc.zone {
+	if !util.IsNodeLocalToZone(node, oc.zone) {
 		return
 	}
 	oc.egressQoSNodeQueue.Add(key)
 }
 
-// onEgressQoSNodeUpdate queues the node for processing if it changed zones
+// onEgressQoSNodeUpdate keeps the legacy update hook. With one-node-per-zone
+// locality, node zone annotation updates do not move a node into this
+// controller's local zone.
 func (oc *DefaultNetworkController) onEgressQoSNodeUpdate(oldObj, newObj interface{}) {
 	oldNode := oldObj.(*corev1.Node)
 	newNode := newObj.(*corev1.Node)
@@ -938,17 +940,7 @@ func (oc *DefaultNetworkController) onEgressQoSNodeUpdate(oldObj, newObj interfa
 		!newNode.GetDeletionTimestamp().IsZero() {
 		return
 	}
-	// During a nodeAdd event, the ovnkube-node can take some time to add the zone
-	// annotation to the node, during that interim time we might consider the node
-	// as remote and hence the addNode event might not do anything. So we need to
-	// watch for node updates. We also ensure we only process local node zones by
-	// comparing to the controller's zone. That will cover the remote->local case.
-	// The local->remote case is not covered or handled here because in that
-	// scenario the addUpdateRemoteNodeEvent function which calls the cleanupNodeResources
-	// will just cleanup the switch resource for the node.
-	oldNodeZone := util.GetNodeZone(oldNode)
-	newNodeZone := util.GetNodeZone(newNode)
-	if oldNodeZone == newNodeZone || newNodeZone != oc.zone {
+	if util.IsNodeLocalToZone(oldNode, oc.zone) || !util.IsNodeLocalToZone(newNode, oc.zone) {
 		return
 	}
 	key, err := cache.MetaNamespaceKeyFunc(newObj)

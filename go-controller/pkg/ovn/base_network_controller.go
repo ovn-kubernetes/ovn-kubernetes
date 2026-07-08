@@ -909,9 +909,7 @@ func (bnc *BaseNetworkController) getClusterPortGroupName(base string) string {
 	return libovsdbutil.GetPortGroupName(bnc.getClusterPortGroupDbIDs(base))
 }
 
-// GetLocalNodes returns the list of nodes local to this controller. A node is
-// considered local if its zone annotation matches the OVN Northbound database
-// zone that this controller is connected to.
+// GetLocalNodes returns the list of nodes local to this controller.
 func (bnc *BaseNetworkController) GetLocalNodes() ([]*corev1.Node, error) {
 	nodes, err := bnc.watchFactory.GetNodes()
 	if err != nil {
@@ -930,7 +928,7 @@ func (bnc *BaseNetworkController) GetLocalNodes() ([]*corev1.Node, error) {
 
 // isLocalNode returns true if the node is local to this controller.
 func (bnc *BaseNetworkController) isLocalNode(node *corev1.Node) bool {
-	return util.GetNodeZone(node) == bnc.zone
+	return util.IsNodeLocalToZone(node, bnc.zone)
 }
 
 // GetNetworkRole returns the role of this controller's network for the given pod

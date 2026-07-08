@@ -2564,10 +2564,10 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 					}).WithTimeout(5 * time.Second).Should(Succeed())
 				})
 
-				It("should reconcile when node zone annotation is updated", func() {
+				It("should keep the node local when its zone annotation is updated", func() {
 					// Setup with node in local zone
-					// The controller considers a node "local" when util.GetNodeZone(node) == c.zone
-					// So we set controller's zoneName to match the node's zone annotation
+					// The controller considers a node "local" when the controller zone
+					// matches the node name.
 					zoneName = "node1"
 					networks := []testNetwork{
 						{name: "zone-update-net", id: 1, topologyType: ovntypes.Layer3Topology,
@@ -2627,7 +2627,9 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 							"10.128.1.0/24", "fd00:10:128:1::/64", nexthopV4, nexthopV6)
 					}).WithTimeout(5 * time.Second).Should(Succeed())
 
-					// Update node's zone annotation to a different zone
+					// Update node's zone annotation to a different zone. Locality is
+					// derived from the node name, so this does not move the node to
+					// remote-zone handling.
 					node, err := fakeClientset.KubeClient.CoreV1().Nodes().Get(
 						context.Background(), "node1", metav1.GetOptions{})
 					Expect(err).NotTo(HaveOccurred())
@@ -2637,20 +2639,23 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 						context.Background(), node, metav1.UpdateOptions{})
 					Expect(err).NotTo(HaveOccurred())
 
-					// Controller should reconcile - port and routes should still exist (now treated as remote zone)
+					// Controller should reconcile and keep local ports/routes.
 					Consistently(func() error {
 						return verifyRouterPortsCount(nbClient, getConnectRouterName("zone-update-cnc"), 1)
 					}).WithTimeout(2 * time.Second).Should(Succeed())
 
-					// After zone update, connect router port should be remote (no peer, has requested-chassis)
-					Eventually(func() error {
-						return verifyRouterPortIsRemote(nbClient, connectPortName, getExpectedPortTunnelKey("192.168.0.0/24", "fd00:192:168::/64", ovntypes.Layer3Topology, 1))
-					}).WithTimeout(5 * time.Second).Should(Succeed())
+					// After zone update, connect router port should remain local.
+					Consistently(func() error {
+						return verifyRouterPortIsLocal(nbClient, connectPortName, getExpectedPortTunnelKey("192.168.0.0/24", "fd00:192:168::/64", ovntypes.Layer3Topology, 1), networkPortName)
+					}).WithTimeout(2 * time.Second).Should(Succeed())
 
-					// Network router port is deleted for remote nodes - only connect router side port exists
-					Eventually(func() error {
-						return verifyRouterPortsCount(nbClient, networks[0].RouterName(), 0)
-					}).WithTimeout(5 * time.Second).Should(Succeed())
+					Consistently(func() error {
+						return verifyRouterPortIsLocal(nbClient, networkPortName, 0, connectPortName)
+					}).WithTimeout(2 * time.Second).Should(Succeed())
+
+					Consistently(func() error {
+						return verifyRouterPortsCount(nbClient, networks[0].RouterName(), 1)
+					}).WithTimeout(2 * time.Second).Should(Succeed())
 
 					// Verify routes still exist after zone change
 					Consistently(func() error {
@@ -2668,13 +2673,13 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 							subnets: []string{"10.128.0.0/14/23", "fd00:10:128::/48/64"}},
 					}
 					nodes := []testNode{
-						// local-node has zone annotation "local-node" which matches c.zone
+						// local-node has a name that matches c.zone.
 						{name: "local-node", id: 1, zone: "local-node", nodeSubnets: map[string]subnetPair{
 							"zone-net": {"10.128.1.0/24", "fd00:10:128:1::/64"}}},
-						// remote-node is in different zone
-						{name: "remote-node-1", id: 2, zone: "remote-zone", nodeSubnets: map[string]subnetPair{
+						// remote nodes are in their own zones.
+						{name: "remote-node-1", id: 2, zone: "remote-node-1", nodeSubnets: map[string]subnetPair{
 							"zone-net": {"10.128.2.0/24", "fd00:10:128:2::/64"}}},
-						{name: "remote-node-2", id: 3, zone: "remote-zone", nodeSubnets: map[string]subnetPair{
+						{name: "remote-node-2", id: 3, zone: "remote-node-2", nodeSubnets: map[string]subnetPair{
 							"zone-net": {"10.128.3.0/24", "fd00:10:128:3::/64"}}},
 					}
 					initialDB := createInitialDBWithRouters(networks)

@@ -677,6 +677,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 					},
 				},
 			)
+			fakeOVN.controller.zone = node1Name
 
 			// Create one EgressQoS
 			eq := newEgressQoSObject("default", namespaceT.Name, []egressqosapi.EgressQoSRule{
@@ -724,7 +725,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 			// Ensure default EgressQoS object is updated with zone success status.
 			expectEgressQoSStatusMessageEventually(fakeOVN, namespaceT.Name, false)
 
-			kapiNode, node3Switch, err := createNodeAndLS(fakeOVN, "node3", "non-global")
+			kapiNode, node3Switch, err := createNodeAndLS(fakeOVN, "node3", "node3")
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			expectedDatabaseState = []libovsdbtest.TestData{
 				qos1,
@@ -737,14 +738,14 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 			// we won't add any qos objects because node is not local
 			gomega.Eventually(fakeOVN.nbClient).Should(libovsdbtest.HaveDataIgnoringUUIDs(expectedDatabaseState))
 
-			// update the node's zone to be local
+			// Update the node's zone annotation. Locality is derived from the
+			// node name, so this does not make node3 local to node1's controller.
 			kapiNode.Annotations["k8s.ovn.org/zone-name"] = "global"
 			kapiNode.ResourceVersion = "100"
 			_, err = fakeOVN.fakeClient.KubeClient.CoreV1().Nodes().Update(context.TODO(), kapiNode, metav1.UpdateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			// we will now add qos objects because node became local
-			node3Switch.QOSRules = []string{qos1.UUID, qos2.UUID}
-			gomega.Eventually(fakeOVN.nbClient, 3).Should(libovsdbtest.HaveDataIgnoringUUIDs(expectedDatabaseState))
+			// we still won't add any qos objects because node3 is not local
+			gomega.Consistently(fakeOVN.nbClient, 3).Should(libovsdbtest.HaveDataIgnoringUUIDs(expectedDatabaseState))
 			// Ensure default EgressQoS object is updated with zone success status.
 			expectEgressQoSStatusMessageEventually(fakeOVN, namespaceT.Name, false)
 

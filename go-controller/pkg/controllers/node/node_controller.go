@@ -542,7 +542,7 @@ func (c *NodeController) shouldFilterByRemoteNetworkActivity(node *corev1.Node, 
 	if localZone == "" {
 		localZone = types.OvnDefaultZone
 	}
-	return util.GetNodeZone(node) != localZone
+	return !util.IsNodeLocalToZone(node, localZone)
 }
 
 // scopedNodeQueueKey allows us to queue keys with network references.

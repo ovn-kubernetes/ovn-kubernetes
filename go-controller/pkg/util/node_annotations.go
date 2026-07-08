@@ -1175,6 +1175,20 @@ func GetNodeZone(node *corev1.Node) string {
 	return zoneName
 }
 
+// IsNodeLocalToZone returns whether the node belongs to the controller zone.
+// OVN-Kubernetes only supports single-node zones, so non-default zones are
+// named after their node. The default zone remains a legacy single-zone
+// exception where every node is local to the controller.
+func IsNodeLocalToZone(node *corev1.Node, zone string) bool {
+	if zone == "" {
+		return false
+	}
+	if zone == types.OvnDefaultZone {
+		return true
+	}
+	return node.Name == zone
+}
+
 // NodeZoneAnnotationChanged returns true if the ovnNodeZoneName in the corev1.Nodes doesn't match
 func NodeZoneAnnotationChanged(oldNode, newNode *corev1.Node) bool {
 	return oldNode.Annotations[OvnNodeZoneName] != newNode.Annotations[OvnNodeZoneName]

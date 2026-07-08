@@ -1329,7 +1329,7 @@ func (e *EgressIPController) isPodScheduledOnLocalNode(pod *corev1.Pod) bool {
 
 // isLocalNode returns true if the node is part of the local zone.
 func (e *EgressIPController) isLocalNode(node *corev1.Node) bool {
-	return util.GetNodeZone(node) == e.zone
+	return util.IsNodeLocalToZone(node, e.zone)
 }
 
 type egressIPCache struct {

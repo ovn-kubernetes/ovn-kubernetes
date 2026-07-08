@@ -236,7 +236,7 @@ func TestNodeControllerDoesNotFilterDefaultNetwork(t *testing.T) {
 		t.Fatalf("failed to prepare test config: %v", err)
 	}
 	config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
-	config.Default.Zone = "local-zone"
+	config.Default.Zone = "local-node"
 
 	controller := &NodeController{networkManager: networkmanager.Default().Interface()}
 	remoteNode := &corev1.Node{
@@ -331,6 +331,7 @@ func TestReconcileNodeRemoteNodeBecomesActiveTreatsAsAdd(t *testing.T) {
 	}
 	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 	config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
+	config.Default.Zone = "local-node"
 
 	handler := &fakeNodeHandler{netName: "net-a"}
 	handlers := syncmap.NewSyncMap[NodeHandler]()
@@ -378,6 +379,7 @@ func TestReconcileNodeRemoteNodeBecomesInactiveDeletes(t *testing.T) {
 	}
 	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 	config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
+	config.Default.Zone = "local-node"
 
 	handler := &fakeNodeHandler{netName: "net-a"}
 	handlers := syncmap.NewSyncMap[NodeHandler]()
