@@ -21,3 +21,11 @@ func Get() api.DeploymentConfig {
 	}
 	return deploymentConfig
 }
+
+// TryGet returns the deployment config and true if set, nil and false otherwise.
+func TryGet() (api.DeploymentConfig, bool) {
+	if deploymentConfig == nil {
+		return nil, false
+	}
+	return deploymentConfig, true
+}
