@@ -128,6 +128,7 @@ func (h *egressIPClusterControllerEventHandler) UpdateResource(oldObj, newObj in
 		isNewReady := h.eIPC.isEgressNodeReady(newNode)
 		isNewReachable := h.eIPC.isEgressNodeReachable(newNode)
 		isHostCIDRsAltered := util.NodeHostCIDRsAnnotationChanged(oldNode, newNode)
+		isCloudEgressIPConfigAltered := util.CloudEgressIPConfigAnnotationChanged(oldNode, newNode)
 		h.eIPC.setNodeEgressReady(newNode.Name, isNewReady)
 		if !oldHadEgressLabel && newHasEgressLabel {
 			klog.Infof("Node: %s has been labeled, adding it for egress assignment", newNode.Name)
@@ -142,7 +143,7 @@ func (h *egressIPClusterControllerEventHandler) UpdateResource(oldObj, newObj in
 			}
 			return nil
 		}
-		if isOldReady == isNewReady && !isHostCIDRsAltered {
+		if isOldReady == isNewReady && !isHostCIDRsAltered && !isCloudEgressIPConfigAltered {
 			return nil
 		}
 		if !isNewReady {
@@ -151,7 +152,17 @@ func (h *egressIPClusterControllerEventHandler) UpdateResource(oldObj, newObj in
 				return err
 			}
 		} else if isNewReady && isNewReachable {
-			klog.Infof("Node: %s is ready and reachable, adding it for egress assignment", newNode.Name)
+			// Build a log message that captures all reasons we are re-evaluating,
+			// so operators can correlate annotation changes with re-assignments even
+			// when multiple conditions change simultaneously.
+			switch {
+			case isCloudEgressIPConfigAltered && isHostCIDRsAltered:
+				klog.Infof("Node: %s cloud egress IP config annotation and host CIDRs changed, re-evaluating egress IP assignments", newNode.Name)
+			case isCloudEgressIPConfigAltered:
+				klog.Infof("Node: %s cloud egress IP config annotation changed, re-evaluating egress IP assignments", newNode.Name)
+			default:
+				klog.Infof("Node: %s is ready and reachable, adding it for egress assignment", newNode.Name)
+			}
 			h.eIPC.setNodeEgressReachable(newNode.Name, isNewReachable)
 			if err := h.eIPC.addEgressNode(newNode.Name); err != nil {
 				return err

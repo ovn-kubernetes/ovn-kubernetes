@@ -1803,6 +1803,163 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 			err := app.Run([]string{app.Name})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
+
+		ginkgo.It("cloud egress IP config annotation update should trigger egress IP re-evaluation", func() {
+			// When cloud-network-config-controller adds or corrects the
+			// cloud.network.openshift.io/egress-ipconfig annotation on a node (e.g.
+			// adding an IPv6 subnet that was initially absent because the AWS subnet's
+			// IPv6 CIDR block was not yet in "associated" state), the node update
+			// handler must call addEgressNode so that previously-unassigned EgressIPs
+			// can be reconsidered and assigned.
+			//
+			// The EgressIP has a single IPv6 address so that one node is sufficient —
+			// the assignment algorithm disallows two IPs from the same EgressIP object
+			// on the same node.
+			app.Action = func(*cli.Context) error {
+				config.Kubernetes.PlatformType = string(ocpconfigapi.AWSPlatformType)
+
+				nodeIPv4 := "192.168.126.12/24"
+				egressIPv6 := "fc00:f853:ccd:e793::101"
+
+				// Node starts with IPv4-only cloud egress-ipconfig — simulates CNCC
+				// not yet having observed the IPv6 CIDR association on the cloud subnet.
+				node := corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: node1Name,
+						Annotations: map[string]string{
+							"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf(`{"ipv4": "%s", "ipv6": ""}`, nodeIPv4),
+							"k8s.ovn.org/node-subnets":        fmt.Sprintf(`{"default":["%s"]}`, v4NodeSubnet),
+							util.OVNNodeHostCIDRs:             fmt.Sprintf(`["%s"]`, nodeIPv4),
+							"cloud.network.openshift.io/egress-ipconfig": fmt.Sprintf(
+								`[{"interface":"eth0","ifaddr":{"ipv4":"%s"},"capacity":{}}]`, nodeIPv4),
+						},
+						Labels: map[string]string{"k8s.ovn.org/egress-assignable": ""},
+					},
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
+							{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+						},
+					},
+				}
+				eIP := egressipv1.EgressIP{
+					ObjectMeta: newEgressIPMeta(egressIPName),
+					Spec:       egressipv1.EgressIPSpec{EgressIPs: []string{egressIPv6}},
+				}
+
+				fakeClusterManagerOVN.start(
+					&egressipv1.EgressIPList{Items: []egressipv1.EgressIP{eIP}},
+					&corev1.NodeList{Items: []corev1.Node{node}},
+				)
+				_, err := fakeClusterManagerOVN.eIPC.WatchEgressNodes()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				_, err = fakeClusterManagerOVN.eIPC.WatchEgressIP()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				_, err = fakeClusterManagerOVN.eIPC.WatchCloudPrivateIPConfig()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Phase 1: wait for the node ADD event to be processed (node appears
+				// in the allocator cache). The IPv6 EgressIP remains unassigned because
+				// the node's cloud egress-ipconfig has no IPv6 subnet yet.
+				gomega.Eventually(doesEgressIPAllocatorContainSafely).WithArguments(node1Name).Should(gomega.BeTrue())
+				ipv6CPIPCName := ipStringToCloudPrivateIPConfigName(egressIPv6)
+				gomega.Consistently(func() error {
+					_, err := fakeClusterManagerOVN.fakeClient.CloudNetworkClient.CloudV1().
+						CloudPrivateIPConfigs().Get(context.TODO(), ipv6CPIPCName, metav1.GetOptions{})
+					return err
+				}).ShouldNot(gomega.Succeed())
+
+				// Phase 2: CNCC corrects the annotation to add the IPv6 subnet.
+				node.Annotations["cloud.network.openshift.io/egress-ipconfig"] = fmt.Sprintf(
+					`[{"interface":"eth0","ifaddr":{"ipv4":"%s","ipv6":"fc00:f853:ccd:e793::/64"},"capacity":{}}]`,
+					nodeIPv4)
+				_, err = fakeClusterManagerOVN.fakeClient.KubeClient.CoreV1().Nodes().Update(
+					context.TODO(), &node, metav1.UpdateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// The annotation change must trigger addEgressNode → reconcileEgressIP
+				// runs for the still-unassigned IPv6 EgressIP → CloudPrivateIPConfig
+				// is created, proving the early-return guard was not hit.
+				gomega.Eventually(func() error {
+					_, err := fakeClusterManagerOVN.fakeClient.CloudNetworkClient.CloudV1().
+						CloudPrivateIPConfigs().Get(context.TODO(), ipv6CPIPCName, metav1.GetOptions{})
+					return err
+				}).Should(gomega.Succeed())
+
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("unrelated annotation update should not trigger egress IP re-evaluation on cloud platform", func() {
+			// Counterpart to the test above: changing an annotation that is neither
+			// cloud.network.openshift.io/egress-ipconfig, k8s.ovn.org/host-cidrs,
+			// nor node readiness must NOT call addEgressNode (early-return guard).
+			app.Action = func(*cli.Context) error {
+				config.Kubernetes.PlatformType = string(ocpconfigapi.AWSPlatformType)
+
+				nodeIPv4 := "192.168.126.12/24"
+				egressIPv6 := "fc00:f853:ccd:e793::101"
+
+				node := corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: node1Name,
+						Annotations: map[string]string{
+							"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf(`{"ipv4": "%s", "ipv6": ""}`, nodeIPv4),
+							"k8s.ovn.org/node-subnets":        fmt.Sprintf(`{"default":["%s"]}`, v4NodeSubnet),
+							util.OVNNodeHostCIDRs:             fmt.Sprintf(`["%s"]`, nodeIPv4),
+							"cloud.network.openshift.io/egress-ipconfig": fmt.Sprintf(
+								`[{"interface":"eth0","ifaddr":{"ipv4":"%s"},"capacity":{}}]`, nodeIPv4),
+						},
+						Labels: map[string]string{"k8s.ovn.org/egress-assignable": ""},
+					},
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
+							{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+						},
+					},
+				}
+				eIP := egressipv1.EgressIP{
+					ObjectMeta: newEgressIPMeta(egressIPName),
+					Spec:       egressipv1.EgressIPSpec{EgressIPs: []string{egressIPv6}},
+				}
+
+				fakeClusterManagerOVN.start(
+					&egressipv1.EgressIPList{Items: []egressipv1.EgressIP{eIP}},
+					&corev1.NodeList{Items: []corev1.Node{node}},
+				)
+				_, err := fakeClusterManagerOVN.eIPC.WatchEgressNodes()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				_, err = fakeClusterManagerOVN.eIPC.WatchEgressIP()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				_, err = fakeClusterManagerOVN.eIPC.WatchCloudPrivateIPConfig()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Wait for the node ADD event to be fully processed before sending
+				// the unrelated UPDATE.
+				gomega.Eventually(doesEgressIPAllocatorContainSafely).WithArguments(node1Name).Should(gomega.BeTrue())
+
+				// Touch an unrelated annotation — readiness, host-cidrs, and
+				// cloud egress-ipconfig are all unchanged.
+				node.Annotations["test"] = "dummy"
+				_, err = fakeClusterManagerOVN.fakeClient.KubeClient.CoreV1().Nodes().Update(
+					context.TODO(), &node, metav1.UpdateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// IPv6 CloudPrivateIPConfig must remain absent throughout — the
+				// early-return guard should fire since no relevant annotation changed.
+				ipv6CPIPCName := ipStringToCloudPrivateIPConfigName(egressIPv6)
+				gomega.Consistently(func() error {
+					_, err := fakeClusterManagerOVN.fakeClient.CloudNetworkClient.CloudV1().
+						CloudPrivateIPConfigs().Get(context.TODO(), ipv6CPIPCName, metav1.GetOptions{})
+					return err
+				}).ShouldNot(gomega.Succeed())
+
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
 	})
 
 	ginkgo.Context("IPv6 assignment", func() {
