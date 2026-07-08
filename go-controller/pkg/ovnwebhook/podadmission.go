@@ -39,6 +39,12 @@ var interconnectPodAnnotations = map[string]checkPodAnnot{
 
 		podAnnot, err := util.UnmarshalPodAnnotation(map[string]string{types.OvnPodAnnotationName: v.value}, types.DefaultNetworkName)
 		if err != nil {
+			// When a pod attaches to multiple NADs, the ovnkube-node network
+			// controllers may patch the pod-networks annotation in any order. If a
+			// secondary/primary network controller sets its annotation before the
+			// default network controller, there is no default network entry yet.
+			// The subnet check below only applies to the default network, so there
+			// is nothing to validate in that case.
 			if util.IsAnnotationNotSetError(err) {
 				return nil
 			}

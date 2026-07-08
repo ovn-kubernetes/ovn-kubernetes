@@ -280,6 +280,33 @@ func TestPodAdmission_ValidateUpdate(t *testing.T) {
 			},
 		},
 		{
+			name: "ovnkube-node can set OvnPodAnnotationName annotation for a secondary NAD before the default network entry exists",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        nodeName,
+					Annotations: map[string]string{"k8s.ovn.org/node-subnets": `{"default":"192.168.0.0/24"}`},
+				},
+			},
+			ctx: admission.NewContextWithRequest(context.TODO(), admission.Request{
+				AdmissionRequest: admv1.AdmissionRequest{UserInfo: authenticationv1.UserInfo{
+					Username: userName,
+				}},
+			}),
+			oldObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: podName,
+				},
+				Spec: corev1.PodSpec{NodeName: nodeName},
+			},
+			newObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        podName,
+					Annotations: map[string]string{util.OvnPodAnnotationName: `{"test/primary":{"ip_addresses":["10.1.0.4/24"],"mac_address":"0a:58:0a:01:00:04","role":"primary"}}`},
+				},
+				Spec: corev1.PodSpec{NodeName: nodeName},
+			},
+		},
+		{
 			name: "ovnkube-node can modify DPUConnectionDetailsAnnot annotation on a pod",
 			node: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
