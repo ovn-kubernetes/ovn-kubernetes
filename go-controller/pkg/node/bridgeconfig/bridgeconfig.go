@@ -187,7 +187,7 @@ func NewBridgeConfiguration(ovsClient libovsdbclient.Client, intfName, nodeName,
 	} else if _, _, err := util.RunOVSVsctl("br-exists", intfName); err != nil {
 		// This is not a OVS bridge. We need to create a OVS bridge
 		// and add cluster.GatewayIntf as a port of that bridge.
-		bridgeName, err := util.NicToBridge(intfName)
+		bridgeName, err := util.NicToBridge(intfName, config.Default.MTU)
 		if err != nil {
 			return nil, fmt.Errorf("nicToBridge failed for %s: %w", intfName, err)
 		}
@@ -221,6 +221,9 @@ func NewBridgeConfiguration(ovsClient libovsdbclient.Client, intfName, nodeName,
 		}
 		res.bridgeName = intfName
 		res.gwIface = intfName
+		if err := util.SetBridgeMTU(intfName, config.Default.MTU); err != nil {
+			klog.Warningf("Failed to set MTU on existing bridge %q: %v", intfName, err)
+		}
 	}
 	// Now, we get IP addresses for the bridge
 	if len(gwIPs) > 0 {

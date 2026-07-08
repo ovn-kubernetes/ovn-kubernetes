@@ -558,7 +558,8 @@ func TestNicToBridge(t *testing.T) {
 			ovntest.ProcessMockFnList(&mockNetLinkOps.Mock, tc.onRetArgsNetLinkLibOpers)
 			ovntest.ProcessMockFnList(&mockLink.Mock, tc.onRetArgsLinkIfaceOpers)
 
-			res, err := NicToBridge(tc.inpIface)
+			// Pass 0 for MTU in test to skip MTU configuration
+			res, err := NicToBridge(tc.inpIface, 0)
 			t.Log(res, err)
 			if tc.errExp {
 				require.Error(t, err)

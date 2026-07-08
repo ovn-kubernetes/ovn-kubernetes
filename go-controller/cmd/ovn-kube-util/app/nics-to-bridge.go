@@ -31,7 +31,9 @@ var NicsToBridgeCommand = cli.Command{
 
 		var errorList []error
 		for _, nic := range args.Slice() {
-			if _, err := util.NicToBridge(nic); err != nil {
+			// For CLI utility, pass 0 as MTU to skip MTU configuration
+			// MTU should be set by the main ovnkube process with proper config
+			if _, err := util.NicToBridge(nic, 0); err != nil {
 				errorList = append(errorList, err)
 			}
 		}

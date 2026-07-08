@@ -173,6 +173,60 @@ func saveRoute(oldLink, newLink netlink.Link, routes []netlink.Route) error {
 	return nil
 }
 
+// setBridgeMTU sets the MTU on the bridge interface to match the configured overlay MTU.
+// This function is needed to ensure br-ex respects the user-configured MTU value,
+// particularly in environments like AWS ISO regions where the default physical MTU
+// differs from what the overlay network should use.
+func setBridgeMTU(bridgeLink netlink.Link, mtu int) error {
+	if mtu <= 0 {
+		// Skip if MTU is not set or invalid
+		return nil
+	}
+
+	bridgeName := bridgeLink.Attrs().Name
+	currentMTU := bridgeLink.Attrs().MTU
+	if currentMTU == mtu {
+		klog.V(5).Infof("Bridge %s already has MTU %d", bridgeName, mtu)
+		return nil
+	}
+
+	klog.Infof("Setting bridge %s MTU from %d to %d", bridgeName, currentMTU, mtu)
+
+	// First, set MTU in OVS database for the bridge interface
+	// This ensures OVS doesn't reset the MTU back to the port's MTU
+	mtuStr := fmt.Sprintf("%d", mtu)
+	if _, stderr, err := RunOVSVsctl("set", "Interface", bridgeName, fmt.Sprintf("mtu_request=%s", mtuStr)); err != nil {
+		klog.Warningf("Failed to set OVS MTU for bridge %s: stderr=%q, err=%v", bridgeName, stderr, err)
+		// Continue anyway - try netlink even if OVS command fails
+	}
+
+	// Then set MTU via netlink (for the Linux interface)
+	if err := netLinkOps.LinkSetMTU(bridgeLink, mtu); err != nil {
+		return fmt.Errorf("failed to set MTU %d on bridge %s: %v", mtu, bridgeName, err)
+	}
+
+	return nil
+}
+
+// SetBridgeMTU sets the MTU on a bridge by name. This is a public wrapper around setBridgeMTU
+// for use by other packages when the bridge already exists.
+// Used to set MTU on existing bridges that were created before the fix.
+// Parameters:
+//   - bridgeName: the name of the bridge interface
+//   - mtu: the MTU value to set (0 or negative values are skipped)
+func SetBridgeMTU(bridgeName string, mtu int) error {
+	if mtu <= 0 {
+		return nil // Skip MTU setting if mtu is 0 or negative
+	}
+
+	bridgeLink, err := netLinkOps.LinkByName(bridgeName)
+	if err != nil {
+		return fmt.Errorf("failed to get bridge %q: %w", bridgeName, err)
+	}
+
+	return setBridgeMTU(bridgeLink, mtu)
+}
+
 func setupDefaultFile() {
 	platform, err := runningPlatform()
 	if err != nil {
@@ -224,7 +278,12 @@ func setupDefaultFile() {
 
 // NicToBridge creates a OVS bridge for the 'iface' and also moves the IP
 // address and routes of 'iface' to OVS bridge.
-func NicToBridge(iface string) (string, error) {
+// It also sets the bridge MTU to match the configured overlay MTU to ensure
+// consistent MTU across all OVN-Kubernetes managed interfaces.
+// Parameters:
+//   - iface: the physical network interface name
+//   - mtu: the MTU value to set on the bridge (0 or negative values are ignored)
+func NicToBridge(iface string, mtu int) (string, error) {
 	ifaceLink, err := netLinkOps.LinkByName(iface)
 	if err != nil {
 		return "", err
@@ -273,6 +332,16 @@ func NicToBridge(iface string) (string, error) {
 	// save routes to bridge.
 	if err = saveRoute(ifaceLink, bridgeLink, routes); err != nil {
 		return "", err
+	}
+
+	// Set bridge MTU to match configured overlay MTU.
+	// This ensures br-ex respects the user-configured MTU value (e.g., for AWS ISO regions)
+	// instead of inheriting the default physical interface MTU.
+	// IMPORTANT: This MUST be done AFTER saveIPAddress() which calls LinkSetUp(),
+	// because bringing the bridge up causes OVS to recalculate the bridge MTU from its ports.
+	if err := setBridgeMTU(bridgeLink, mtu); err != nil {
+		klog.Warningf("Failed to set MTU on bridge %q: %v", bridge, err)
+		// Don't fail the entire operation if MTU setting fails - log and continue
 	}
 
 	return bridge, nil
