@@ -44,7 +44,8 @@ func joinStrings(vals ...string) string {
 }
 
 func primaryLayer3MultiCIDRs() string {
-	if deploymentconfig.Get().IsConfigurationEnabled(deploymentconfigapi.L3UDNMultiSubnetConfig) {
+	dc, ok := deploymentconfig.TryGet()
+	if ok && dc.IsConfigurationEnabled(deploymentconfigapi.L3UDNMultiSubnetConfig) {
 		return joinStrings(primaryLayer3MultiIPv4CIDRs(), primaryLayer3MultiIPv6CIDRs())
 	}
 	// Backward compatible: single subnet per IP family
