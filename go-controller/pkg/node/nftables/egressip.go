@@ -14,7 +14,6 @@ import (
 	"sigs.k8s.io/knftables"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
@@ -61,7 +60,7 @@ func InitEgressIPNFTChain(v4, v6 bool) error {
 		counterIfDebug = "counter"
 	}
 
-	// Rule 1: DROP if marked AND from any cluster pod CIDR
+	// Rule 1: DROP if from any cluster pod CIDR
 	// This prevents pod traffic from leaking before SNAT is ready
 	if v4 {
 		for _, cidr := range podIPv4CIDRs {
@@ -69,7 +68,6 @@ func InitEgressIPNFTChain(v4, v6 bool) error {
 				Chain: nftEgressIPChain,
 				Rule: knftables.Concat(
 					"ip", "saddr", cidr.String(),
-					"meta", "mark", types.EgressIPSecondaryInterfaceMark,
 					counterIfDebug,
 					"drop",
 					"comment", fmt.Sprintf("\"Drop egress IP pod traffic from %s\"", cidr),
@@ -84,7 +82,6 @@ func InitEgressIPNFTChain(v4, v6 bool) error {
 				Chain: nftEgressIPChain,
 				Rule: knftables.Concat(
 					"ip6", "saddr", cidr.String(),
-					"meta", "mark", types.EgressIPSecondaryInterfaceMark,
 					counterIfDebug,
 					"drop",
 					"comment", fmt.Sprintf("\"Drop egress IP pod traffic from %s\"", cidr),

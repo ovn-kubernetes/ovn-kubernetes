@@ -3228,116 +3228,17 @@ spec:
 
 		var _ = ginkgo.Describe("[secondary-host-eip] Egress IP Traffic Leak Prevention with Packet Mark Validation", func() {
 			const (
-				egressIPChainName                      = "ovn-kube-egress-ip"
-				egressIPName                           = "egressip-pktmark-validation-test"
-				egressIPYaml                           = "/tmp/egressip-pktmark-validation.yaml"
-				monitorPodName                         = "traffic-monitor-existing"
-				podNamePrefix                          = "existing-pod"
-				numTestPods                            = 2 // Create multiple pods to stress reconciliation
-				retryInterval                          = 1 * time.Second
-				retryTimeout                           = 120 * time.Second
-				monitorCheckInterval                   = 500 * time.Millisecond
-				monitorTimeout                         = 60 * time.Second
-				egressIPSecondaryInterfaceMark         = types.EgressIPSecondaryInterfaceMark
-				egressIPSecondaryInterfaceMarkHex      = "0x000003f1"
-				egressIPSecondaryInterfaceMarkHexShort = "0x3f1"
+				egressIPChainName    = "ovn-kube-egress-ip"
+				egressIPName         = "egressip-pktmark-validation-test"
+				egressIPYaml         = "/tmp/egressip-pktmark-validation.yaml"
+				monitorPodName       = "traffic-monitor-existing"
+				podNamePrefix        = "existing-pod"
+				numTestPods          = 2 // Create multiple pods to stress reconciliation
+				retryInterval        = 1 * time.Second
+				retryTimeout         = 120 * time.Second
+				monitorCheckInterval = 500 * time.Millisecond
+				monitorTimeout       = 60 * time.Second
 			)
-
-			// Helper to check OVN NB DB for LRP with packet mark
-			checkOVNLRPHasPktMark := func(nodeName string, podIP string, expectedMark string) error {
-				framework.Logf("Checking OVN NB DB for LRP with pkt_mark for pod IP %s", podIP)
-
-				// Run ovn-nbctl to list logical router policies
-				// We need to find the reroute policy for this pod IP
-				cmd := fmt.Sprintf("ovn-nbctl --format=json list Logical_Router_Policy")
-				output, err := runOVNNBCTLCommand(nodeName, cmd)
-				if err != nil {
-					return fmt.Errorf("failed to query OVN NB DB: %v", err)
-				}
-
-				// Parse OVN JSON output (data-table format)
-				// Format: {"data": [[row1], [row2], ...], "headings": ["col1", "col2", ...]}
-				var result struct {
-					Data     [][]interface{} `json:"data"`
-					Headings []string        `json:"headings"`
-				}
-				err = json.Unmarshal([]byte(output), &result)
-				if err != nil {
-					return fmt.Errorf("failed to parse OVN NB output: %v", err)
-				}
-
-				// Create a map of heading names to column indices
-				headingIndex := make(map[string]int)
-				for i, heading := range result.Headings {
-					headingIndex[heading] = i
-				}
-
-				// Find the indices for the fields we need
-				matchIdx, hasMatch := headingIndex["match"]
-				optionsIdx, hasOptions := headingIndex["options"]
-
-				if !hasMatch || !hasOptions {
-					return fmt.Errorf("OVN output missing required fields (match or options)")
-				}
-
-				// Look for policy matching the pod IP
-				for _, row := range result.Data {
-					if len(row) <= matchIdx || len(row) <= optionsIdx {
-						continue
-					}
-
-					// Get the match field
-					match, ok := row[matchIdx].(string)
-					if !ok {
-						continue
-					}
-
-					// Check if this is the reroute policy for our pod
-					if strings.Contains(match, podIP) {
-						framework.Logf("Found LRP for pod IP %s: match=%s", podIP, match)
-
-						// Get the options field - format is ["map", [["pkt_mark", "0x2000"]]]
-						options, ok := row[optionsIdx].([]interface{})
-						if !ok || len(options) < 2 {
-							return fmt.Errorf("LRP for pod %s has invalid options field", podIP)
-						}
-
-						// Check if this is a "map" type
-						if mapType, ok := options[0].(string); !ok || mapType != "map" {
-							return fmt.Errorf("LRP options is not a map for pod %s", podIP)
-						}
-
-						// Parse the map entries - format is [["key1", "val1"], ["key2", "val2"], ...]
-						mapEntries, ok := options[1].([]interface{})
-						if !ok {
-							return fmt.Errorf("LRP options map entries invalid for pod %s", podIP)
-						}
-
-						// Look for pkt_mark entry
-						for _, entry := range mapEntries {
-							pair, ok := entry.([]interface{})
-							if !ok || len(pair) != 2 {
-								continue
-							}
-
-							key, keyOk := pair[0].(string)
-							value, valOk := pair[1].(string)
-							if keyOk && valOk && key == "pkt_mark" {
-								framework.Logf("Found pkt_mark in LRP options: %s", value)
-								if value == expectedMark {
-									framework.Logf("✓ LRP for pod %s has correct pkt_mark=%s", podIP, expectedMark)
-									return nil
-								}
-								return fmt.Errorf("LRP has pkt_mark=%s, expected %s", value, expectedMark)
-							}
-						}
-
-						return fmt.Errorf("LRP for pod %s found but does not have pkt_mark option", podIP)
-					}
-				}
-
-				return fmt.Errorf("no LRP found for pod IP %s", podIP)
-			}
 
 			// Helper to check NFTables chain exists on node
 			checkNFTablesChainExists := func(nodeName string, chainName string) error {
@@ -3426,57 +3327,6 @@ spec:
 					return fmt.Errorf("DROP rule not found in chain %s", chainName)
 				}
 				framework.Logf("✓ Found DROP rule in chain %s", chainName)
-
-				// Check for the correct mark value (hex or decimal)
-				hasDecimalMark := strings.Contains(output, egressIPSecondaryInterfaceMark)
-				hasMarkShortForm := strings.Contains(output, egressIPSecondaryInterfaceMarkHex)
-
-				if !hasDecimalMark && !hasMarkShortForm {
-					return fmt.Errorf("mark value %s (or %s decimal) not found in chain %s\nOutput: %s",
-						egressIPSecondaryInterfaceMarkHex, egressIPSecondaryInterfaceMark, chainName, output)
-				}
-				framework.Logf("✓ Found correct mark value in chain %s", chainName)
-
-				return nil
-			}
-
-			// Helper to check OVS flows for packet marking - CRITICAL diagnostic
-			checkOVSFlowsForPacketMark := func(nodeName string, podIP string) error {
-				framework.Logf("Checking OVS flows for packet mark actions for pod IP %s on node %s", podIP, nodeName)
-
-				// Check logical flows in OVN SB DB
-				cmd := fmt.Sprintf("ovn-sbctl lflow-list | grep -i 'pkt.mark' | grep -i '%s'", podIP)
-				output, err := runOVNNBCTLCommand(nodeName, cmd)
-				if err != nil {
-					framework.Logf("Warning: failed to query OVN SB flows: %v", err)
-				} else {
-					framework.Logf("OVN logical flows with pkt.mark for pod %s:\n%s", podIP, output)
-					// Check if we got actual flows or just empty output
-					if strings.TrimSpace(output) == "" || strings.Contains(output, "No flows found") {
-						return fmt.Errorf("no OVN SB logical flows found with pkt.mark for pod %s - mark not being set in control plane", podIP)
-					}
-				}
-
-				// Check OpenFlow flows on br-int for mark actions
-				// Look specifically for load:0x2000->NXM_NX_PKT_MARK[] which sets mark to 1009 (0x2000)
-				cmd2 := fmt.Sprintf("ovs-ofctl dump-flows br-int | grep -E 'load:.*NXM_NX_PKT_MARK|set_field.*pkt_mark'")
-				output2, err := runCommandOnNode(nodeName, cmd2)
-				if err != nil {
-					framework.Logf("Warning: failed to query OVS flows: %v", err)
-				} else {
-					framework.Logf("OpenFlow mark actions on br-int:\n%s", output2)
-				}
-
-				// CRITICAL CHECK: Does OVN's pkt_mark translate to OVS actions with the SPECIFIC mark value?
-				// We expect load:0x3f1->NXM_NX_PKT_MARK[] or equivalent for mark=1009
-				hasExpectedMark := strings.Contains(output2, fmt.Sprintf("load:%s->NXM_NX_PKT_MARK", egressIPSecondaryInterfaceMarkHexShort)) ||
-					strings.Contains(output2, fmt.Sprintf("load:%s->NXM_NX_PKT_MARK", egressIPSecondaryInterfaceMark))
-
-				if !hasExpectedMark {
-					framework.Logf("⚠ CRITICAL WARNING: No OVS flows found that set pkt_mark (%s)!", egressIPSecondaryInterfaceMark)
-					framework.Logf("This indicates OVN's pkt_mark in LRP is NOT translating to OpenFlow actions with the expected value!")
-					return fmt.Errorf("OVN pkt_mark not translated to OVS flows with expected value %s - packets won't be marked correctly in datapath", egressIPSecondaryInterfaceMark)
-				}
 
 				return nil
 			}
@@ -3711,32 +3561,6 @@ spec:
 				})
 				framework.ExpectNoError(err, "Failed to verify EgressIP status")
 				framework.Logf("EgressIP %s assigned to node %s", normalizedEgressIP, egress1Node.name)
-
-				ginkgo.By("Step 8: Check OVN LRP has pkt_mark for pod IPs")
-				for _, podIP := range podIPs {
-					err = wait.PollUntilContextTimeout(context.Background(), retryInterval, 30*time.Second, true, func(ctx context.Context) (bool, error) {
-						err := checkOVNLRPHasPktMark(egress1Node.name, podIP, egressIPSecondaryInterfaceMark)
-						return err == nil, nil
-					})
-					if err != nil {
-						framework.Failf("OVN LRP validation failed for pod %s: %v", podIP, err)
-					}
-					framework.Logf("✓ OVN LRP validated for pod %s (has pkt_mark=%s)", podIP, egressIPSecondaryInterfaceMark)
-				}
-
-				ginkgo.By("Step 9: CRITICAL - Verify OVS flows translate pkt_mark to datapath actions")
-
-				// Check if OVN's pkt_mark in LRP actually translates to OpenFlow actions
-				// This is THE critical check - if this fails, packets won't be marked at all!
-				if len(podIPs) > 0 {
-					err = checkOVSFlowsForPacketMark(egress1Node.name, podIPs[0])
-					if err != nil {
-						framework.Logf("❌ CRITICAL FAILURE: %v", err)
-						framework.Logf("This explains why traffic is leaking - OVN pkt_mark doesn't set kernel skb->mark!")
-						framework.Failf("OVS flow validation failed: %v", err)
-					}
-					framework.Logf("✓ OVS flows validated - pkt_mark should propagate to kernel")
-				}
 
 				ginkgo.By("Step 10: Wait for reconciliation to complete and verify egress IP is used")
 
