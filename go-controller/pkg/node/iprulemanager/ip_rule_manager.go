@@ -4,9 +4,11 @@
 package iprulemanager
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/vishvananda/netlink"
@@ -73,16 +75,7 @@ func (rm *Controller) Run(stopCh <-chan struct{}, syncPeriod time.Duration) {
 
 // Add ensures an IP rule is applied even if it is altered by something else, it will be restored
 func (rm *Controller) Add(rule netlink.Rule) error {
-	rm.mu.Lock()
-	defer rm.mu.Unlock()
-	// check if we are already managing this rule and if so, no-op
-	for _, existingRule := range rm.rules {
-		if areNetlinkRulesEqual(existingRule.rule, &rule) {
-			return nil
-		}
-	}
-	rm.rules = append(rm.rules, ipRule{rule: &rule}) // empty metadata
-	return rm.reconcile()
+	return rm.AddWithMetadata(rule, "")
 }
 
 // AddWithMetadata ensures an IP rule along with its metadata is applied even if it is altered by something else, it will be restored
@@ -96,7 +89,11 @@ func (rm *Controller) AddWithMetadata(rule netlink.Rule, metadata string) error 
 		}
 	}
 	rm.rules = append(rm.rules, ipRule{rule: &rule, metadata: metadata})
-	return rm.reconcile()
+	if err := netlink.RuleAdd(&rule); err != nil && !errors.Is(err, syscall.EEXIST) {
+		return err
+	}
+
+	return nil
 }
 
 // Delete stops managed an IP rule and ensures its deleted
