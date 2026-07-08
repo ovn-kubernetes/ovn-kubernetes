@@ -886,6 +886,14 @@ func NodeHostCIDRsAnnotationChanged(oldNode, newNode *corev1.Node) bool {
 	return oldNode.Annotations[OVNNodeHostCIDRs] != newNode.Annotations[OVNNodeHostCIDRs]
 }
 
+// CloudEgressIPConfigAnnotationChanged returns true if the cloud egress IP
+// configuration annotation changed between oldNode and newNode. This annotation
+// is managed by cloud-network-config-controller and carries the IPv4/IPv6
+// subnets and capacity for egress IP assignment on cloud platforms.
+func CloudEgressIPConfigAnnotationChanged(oldNode, newNode *corev1.Node) bool {
+	return oldNode.Annotations[cloudEgressIPConfigAnnotationKey] != newNode.Annotations[cloudEgressIPConfigAnnotationKey]
+}
+
 // ParseNodeHostCIDRs returns the parsed host CIDRS living on a node
 func ParseNodeHostCIDRs(node *corev1.Node) (sets.Set[string], error) {
 	addrAnnotation, ok := node.Annotations[OVNNodeHostCIDRs]

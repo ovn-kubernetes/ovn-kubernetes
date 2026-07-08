@@ -812,6 +812,67 @@ func TestNodeDontSNATSubnetAnnotationChanged(t *testing.T) {
 	}
 }
 
+func TestCloudEgressIPConfigAnnotationChanged(t *testing.T) {
+	v4Only := `[{"interface":"eth0","ifaddr":{"ipv4":"192.168.126.12/24"},"capacity":{}}]`
+	dualStack := `[{"interface":"eth0","ifaddr":{"ipv4":"192.168.126.12/24","ipv6":"fc00:f853:ccd:e793::12/64"},"capacity":{}}]`
+
+	tests := []struct {
+		desc    string
+		oldNode *corev1.Node
+		newNode *corev1.Node
+		result  bool
+	}{
+		{
+			desc:    "annotation added",
+			oldNode: &corev1.Node{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{}}},
+			newNode: &corev1.Node{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{
+				cloudEgressIPConfigAnnotationKey: v4Only,
+			}}},
+			result: true,
+		},
+		{
+			desc: "annotation removed",
+			oldNode: &corev1.Node{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{
+				cloudEgressIPConfigAnnotationKey: v4Only,
+			}}},
+			newNode: &corev1.Node{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{}}},
+			result:  true,
+		},
+		{
+			desc: "annotation value changed (IPv6 subnet added)",
+			oldNode: &corev1.Node{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{
+				cloudEgressIPConfigAnnotationKey: v4Only,
+			}}},
+			newNode: &corev1.Node{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{
+				cloudEgressIPConfigAnnotationKey: dualStack,
+			}}},
+			result: true,
+		},
+		{
+			desc: "false: annotation unchanged",
+			oldNode: &corev1.Node{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{
+				cloudEgressIPConfigAnnotationKey: v4Only,
+			}}},
+			newNode: &corev1.Node{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{
+				cloudEgressIPConfigAnnotationKey: v4Only,
+			}}},
+			result: false,
+		},
+		{
+			desc:    "false: annotation absent in both",
+			oldNode: &corev1.Node{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{}}},
+			newNode: &corev1.Node{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{}}},
+			result:  false,
+		},
+	}
+
+	for i, tc := range tests {
+		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
+			assert.Equal(t, tc.result, CloudEgressIPConfigAnnotationChanged(tc.oldNode, tc.newNode))
+		})
+	}
+}
+
 func TestParseNodeDontSNATSubnetsList(t *testing.T) {
 	tests := []struct {
 		desc        string
