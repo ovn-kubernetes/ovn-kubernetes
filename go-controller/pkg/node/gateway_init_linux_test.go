@@ -172,6 +172,9 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 				})
 			},
 		})
+		fexec.AddFakeCmdsNoOutputNoError([]string{
+			"ovs-vsctl --timeout=15 set Interface breth0 mtu_request=" + mtu,
+		})
 		if config.IPv4Mode {
 			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 				Cmd:    "sysctl -w net.ipv4.conf.breth0.forwarding = 1",
@@ -657,6 +660,10 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 				Output: "net.ipv6.conf.brp0.forwarding = 1",
 			})
 		}
+		// SetBridgeMTU for existing bridge
+		fexec.AddFakeCmdsNoOutputNoError([]string{
+			"ovs-vsctl --timeout=15 set Interface " + brphys + " mtu_request=" + mtu,
+		})
 		// bridgedGatewayNodeSetup
 		// GetOVSPortMACAddress
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
@@ -1136,6 +1143,9 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 					return nil
 				})
 			},
+		})
+		fexec.AddFakeCmdsNoOutputNoError([]string{
+			"ovs-vsctl --timeout=15 set Interface breth0 mtu_request=" + mtu,
 		})
 		if config.IPv4Mode {
 			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
