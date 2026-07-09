@@ -818,8 +818,38 @@ func (eIPC *egressIPClusterController) addEgressNode(nodeName string) error {
 	return nil
 }
 
+// cleanAllocationsForNodeLocked cleans all EgressIP allocations for a given node
+// without disconnecting the health client or removing the node from the cache.
+// This is used when a node loses the egress-assignable label but is not being deleted.
+// The node remains in the cache and can be re-labeled for egress IP assignment later.
+//
+// Caller MUST hold eIPC.nodeAllocator.Lock()
+func (eIPC *egressIPClusterController) cleanAllocationsForNodeLocked(nodeName string) {
+	eNode, exists := eIPC.nodeAllocator.cache[nodeName]
+	if !exists {
+		klog.V(5).Infof("Node %s not found in allocator cache (already removed)", nodeName)
+		return
+	}
+
+	// Clean all allocations that were on this node from ALL nodes in cache.
+	// This defensive approach handles race conditions where allocations may
+	// have been moved to other nodes before we acquired the lock.
+	for egressIP, egressIPName := range eNode.allocations {
+		for scanNodeName, scanNode := range eIPC.nodeAllocator.cache {
+			if allocName, exists := scanNode.allocations[egressIP]; exists && allocName == egressIPName {
+				klog.V(5).Infof("Deleting egress IP allocation from cache - node: %s, EIP name: %s, IP: %s",
+					scanNodeName, egressIPName, egressIP)
+				delete(scanNode.allocations, egressIP)
+			}
+		}
+	}
+	// Note: Node remains in cache, health client stays connected
+	klog.V(5).Infof("Cleaned allocations for egress node: %s (node remains in cache)", nodeName)
+}
+
 // deleteNodeForEgressLocked removes the node from allocator cache and cleans
 // all its EgressIP allocations from the cache under a single lock.
+// This is used when a node is being deleted from Kubernetes.
 // This ensures the node cannot be reselected for new assignments while being
 // torn down, preventing race conditions where allocations could be lost.
 //
@@ -876,11 +906,14 @@ func (eIPC *egressIPClusterController) deleteEgressNode(nodeName string) error {
 	var errorAggregate []error
 	klog.V(5).Infof("Egress node: %s about to be removed", nodeName)
 
-	// Clean allocator cache and remove node atomically.
+	// Clean allocations from cache atomically.
 	// This prevents race conditions where the node could be reselected
 	// for new assignments while allocations are being cleaned.
+	// Note: This is for when a node loses the egress-assignable label,
+	// not when the node is deleted. The node remains in cache for potential
+	// re-labeling later.
 	eIPC.nodeAllocator.Lock()
-	eIPC.deleteNodeForEgressLocked(nodeName)
+	eIPC.cleanAllocationsForNodeLocked(nodeName)
 	eIPC.nodeAllocator.Unlock()
 
 	// Since the node has been labelled as "not usable" for egress IP
