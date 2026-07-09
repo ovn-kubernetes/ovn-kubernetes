@@ -37,6 +37,7 @@ import (
 	lsm "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/routeimport"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/topology"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/udnvip"
 	zoneinterconnect "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/zone_interconnect"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/retry"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/syncmap"
@@ -215,6 +216,9 @@ type Layer2UserDefinedNetworkController struct {
 	// Shared controller in charge of services. Nil for cleanup-only controllers.
 	svcController *svccontroller.Controller
 
+	// vipZoneController manages virtual LSPs (ARP responders) and HA_Chassis_Groups for UDN VIP services.
+	vipZoneController *udnvip.ZoneController
+
 	// EgressIP controller utilized only to initialize a network with OVN polices to support EgressIP functionality.
 	eIPController *EgressIPController
 
@@ -308,6 +312,14 @@ func NewLayer2UserDefinedNetworkController(
 
 	if util.IsNetworkSegmentationSupportEnabled() && netInfo.IsPrimaryNetwork() {
 		oc.svcController = serviceController
+		oc.vipZoneController = udnvip.NewZoneController(
+			cnci.zone,
+			netInfo,
+			cnci.kube.KClient,
+			cnci.watchFactory.ServiceCoreInformer(),
+			cnci.watchFactory.PodCoreInformer(),
+			cnci.watchFactory.NodeCoreInformer(),
+		)
 		oc.defaultGatewayReconciler = kubevirt.NewDefaultGatewayReconciler(
 			oc.watchFactory,
 			oc.GetNetInfo(),
@@ -370,6 +382,19 @@ func (oc *Layer2UserDefinedNetworkController) run() error {
 		if err != nil {
 			return err
 		}
+	}
+	if oc.vipZoneController != nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			<-oc.stopChan
+			cancel()
+		}()
+		go func() {
+			if err := oc.vipZoneController.Start(ctx); err != nil {
+				klog.Errorf("UDN VIP zone controller for network %s failed: %v",
+					oc.GetNetworkName(), err)
+			}
+		}()
 	}
 	return nil
 }

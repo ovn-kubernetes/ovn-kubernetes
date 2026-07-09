@@ -24,6 +24,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/nooverlay"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/routeadvertisements"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/status_manager"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/udnvip"
 	udncontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork"
 	udntemplate "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork/template"
 	vtepcontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/vtep"
@@ -77,6 +78,7 @@ type ClusterManager struct {
 	noOverlayController  *nooverlay.Controller
 	managedBGPController *managedbgp.Controller
 	vtepController       *vtepcontroller.Controller
+	vipController        *udnvip.Controller
 }
 
 // NewClusterManager creates a new cluster manager to manage the cluster nodes.
@@ -204,6 +206,13 @@ func NewClusterManager(
 		if cm.udnClusterManager != nil {
 			cm.udnClusterManager.SetNetworkStatusReporter(udnController.UpdateSubsystemCondition)
 		}
+
+		cm.vipController = udnvip.NewController(
+			ovnClient.KubeClient,
+			wf.ServiceCoreInformer(),
+			wf.NamespaceCoreInformer(),
+			wf.ClusterUserDefinedNetworkInformer().Lister(),
+		)
 	}
 
 	if util.IsNetworkConnectEnabled() {
@@ -286,6 +295,7 @@ func (cm *ClusterManager) Start(ctx context.Context) error {
 		if err := cm.userDefinedNetworkController.Run(); err != nil {
 			return err
 		}
+		go cm.vipController.Run(ctx.Done())
 	}
 
 	if cm.networkConnectController != nil {

@@ -246,6 +246,28 @@ const (
 	LoadBalancerKindExternalID = OvnK8sPrefix + "/" + "kind"
 	// key for load_balancer service external-id
 	LoadBalancerOwnerExternalID = OvnK8sPrefix + "/" + "owner"
+
+	// UDNLoadBalancerClass is the loadBalancerClass for UDN VIP LoadBalancer services.
+	//
+	// OVN-K allocates a VIP from serviceSubnets and places it in the UDN's
+	// switch-only LB group alongside the ClusterIP — identical mechanism to
+	// ClusterIP, so cross-node DNAT is handled by OVN's per-chassis ct_commit.
+	//
+	// For external (BGP-routed) traffic the zone controller programs a kernel
+	// /32 host route (dev <udn-mp0>) on each node that has local backends, so
+	// arriving packets enter OVN via the UDN management port and hit the switch
+	// LB before any routing decision is made.
+	//
+	// The RouteAdvertisements controller advertises the VIP /32 from every node
+	// that has a local backend or proxy pod (plain ECMP, no local-pref).
+	UDNLoadBalancerClass = "k8s.ovn.org/udn-loadbalancer"
+	// UDNVIPAnnotation is the optional annotation on a LoadBalancer Service that
+	// requests a specific VIP from the CUDN's serviceSubnets range.
+	// Value: a bare IP address, e.g. "10.200.200.42".
+	UDNVIPAnnotation = OvnK8sPrefix + "/udn-vip"
+	// UDNLBRouteExternalID tags the kernel /32 host-route OVS-flow external ID
+	// so the zone controller can identify and remove stale routes.
+	UDNLBRouteExternalID = OvnK8sPrefix + "/udn-lb-route"
 	// key for UDN enabled services routes
 	UDNEnabledServiceExternalID = OvnK8sPrefix + "/" + "udn-enabled-default-service"
 	// key for management port name, indicating the netdev link name associated with the given management port representor OVS interface

@@ -650,6 +650,17 @@ func AddRoutesGatewayIP(
 				podAnnotation.Routes = append(podAnnotation.Routes, serviceCIDRToRoute(isIPv6, gatewayIPnet.IP)...)
 				// Ensure UDN join subnet traffic always goes to UDN LSP
 				podAnnotation.Routes = append(podAnnotation.Routes, joinSubnetToRoute(netinfo, isIPv6, gatewayIPnet.IP))
+				// Route UDN serviceSubnets (VIP ranges) via the gateway so pods never
+				// ARP for VIP IPs directly on the L2 segment; traffic goes to the
+				// gateway where the OVN LB rule DNATs it to the backend.
+				for _, svcSubnet := range netinfo.ServiceSubnets() {
+					if isIPv6 == utilnet.IsIPv6CIDR(svcSubnet) {
+						podAnnotation.Routes = append(podAnnotation.Routes, util.PodRoute{
+							Dest:    svcSubnet,
+							NextHop: gatewayIPnet.IP,
+						})
+					}
+				}
 				if network != nil && len(network.GatewayRequest) == 0 { // if specific default route for pod was not requested then add gatewayIP
 					podAnnotation.Gateways = append(podAnnotation.Gateways, gatewayIPnet.IP)
 				}
@@ -701,6 +712,17 @@ func AddRoutesGatewayIP(
 				podAnnotation.Routes = append(podAnnotation.Routes, serviceCIDRToRoute(isIPv6, gatewayIPnet.IP)...)
 				// Ensure UDN join subnet traffic always goes to UDN LSP
 				podAnnotation.Routes = append(podAnnotation.Routes, joinSubnetToRoute(netinfo, isIPv6, gatewayIPnet.IP))
+				// Route UDN serviceSubnets (VIP ranges) via the per-node gateway.
+				// For Layer3 topology, serviceSubnets are always external to the pod
+				// subnet, so the gateway route is required for VIPs to be reachable.
+				for _, svcSubnet := range netinfo.ServiceSubnets() {
+					if isIPv6 == utilnet.IsIPv6CIDR(svcSubnet) {
+						podAnnotation.Routes = append(podAnnotation.Routes, util.PodRoute{
+							Dest:    svcSubnet,
+							NextHop: gatewayIPnet.IP,
+						})
+					}
+				}
 				if network != nil && len(network.GatewayRequest) == 0 { // if specific default route for pod was not requested then add gatewayIP
 					podAnnotation.Gateways = append(podAnnotation.Gateways, gatewayIPnet.IP)
 				}

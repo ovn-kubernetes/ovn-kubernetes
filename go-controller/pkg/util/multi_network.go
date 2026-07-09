@@ -52,6 +52,7 @@ type NetInfo interface {
 	ExcludeSubnets() []*net.IPNet
 	ReservedSubnets() []*net.IPNet
 	InfrastructureSubnets() []*net.IPNet
+	ServiceSubnets() []*net.IPNet
 	JoinSubnetV4() *net.IPNet
 	JoinSubnetV6() *net.IPNet
 	JoinSubnets() []*net.IPNet
@@ -609,6 +610,11 @@ func (nInfo *DefaultNetInfo) InfrastructureSubnets() []*net.IPNet {
 	return nil
 }
 
+// ServiceSubnets returns the defaultNetConfInfo's ServiceSubnets value (always nil for the default network)
+func (nInfo *DefaultNetInfo) ServiceSubnets() []*net.IPNet {
+	return nil
+}
+
 // JoinSubnetV4 returns the defaultNetConfInfo's JoinSubnetV4 value
 // call when ipv4mode=true
 func (nInfo *DefaultNetInfo) JoinSubnetV4() *net.IPNet {
@@ -741,6 +747,7 @@ type userDefinedNetInfo struct {
 	excludeSubnets        []*net.IPNet
 	reservedSubnets       []*net.IPNet
 	infrastructureSubnets []*net.IPNet
+	serviceSubnets        []*net.IPNet
 	joinSubnets           []*net.IPNet
 	transitSubnets        []*net.IPNet
 
@@ -998,6 +1005,11 @@ func (nInfo *userDefinedNetInfo) InfrastructureSubnets() []*net.IPNet {
 	return nInfo.infrastructureSubnets
 }
 
+// ServiceSubnets returns the ServiceSubnets value
+func (nInfo *userDefinedNetInfo) ServiceSubnets() []*net.IPNet {
+	return nInfo.serviceSubnets
+}
+
 // JoinSubnetV4 returns the defaultNetConfInfo's JoinSubnetV4 value
 // call when ipv4mode=true
 func (nInfo *userDefinedNetInfo) JoinSubnetV4() *net.IPNet {
@@ -1107,6 +1119,9 @@ func (nInfo *userDefinedNetInfo) canReconcile(other NetInfo) bool {
 	if !cmp.Equal(nInfo.infrastructureSubnets, other.InfrastructureSubnets(), cmpopts.SortSlices(lessIPNet)) {
 		return false
 	}
+	if !cmp.Equal(nInfo.serviceSubnets, other.ServiceSubnets(), cmpopts.SortSlices(lessIPNet)) {
+		return false
+	}
 	if !cmp.Equal(nInfo.joinSubnets, other.JoinSubnets(), cmpopts.SortSlices(lessIPNet)) {
 		return false
 	}
@@ -1127,6 +1142,7 @@ func (nInfo *userDefinedNetInfo) copy() *userDefinedNetInfo {
 		excludeSubnets:        nInfo.excludeSubnets,
 		reservedSubnets:       nInfo.reservedSubnets,
 		infrastructureSubnets: nInfo.infrastructureSubnets,
+		serviceSubnets:        nInfo.serviceSubnets,
 		joinSubnets:           nInfo.joinSubnets,
 		transitSubnets:        nInfo.transitSubnets,
 		physicalNetworkName:   nInfo.physicalNetworkName,
@@ -1184,7 +1200,7 @@ func newLayer2NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 		return nil, err
 	}
 
-	var reserved, infra []*net.IPNet
+	var reserved, infra, svcSubnets []*net.IPNet
 	if IsPreconfiguredUDNAddressesEnabled() {
 		reserved, err = parseSubnetList(netconf.ReservedSubnets)
 		if err != nil {
@@ -1200,6 +1216,16 @@ func newLayer2NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 		}
 		if err := validateSubnetContainment(infra, subnets, config.NewInfrastructureSubnetNotContainedError); err != nil {
 			return nil, err
+		}
+	}
+
+	if netconf.ServiceSubnets != "" {
+		svcSubnets, err = parseSubnetList(netconf.ServiceSubnets)
+		if err != nil {
+			return nil, fmt.Errorf("invalid service subnets for %s netconf %s: %v", netconf.Topology, netconf.Name, err)
+		}
+		if err := validateSubnetContainment(svcSubnets, subnets, config.NewReservedSubnetNotContainedError); err != nil {
+			return nil, fmt.Errorf("service subnets not contained within network subnets: %w", err)
 		}
 	}
 
@@ -1231,6 +1257,7 @@ func newLayer2NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 		excludeSubnets:        excludes,
 		reservedSubnets:       reserved,
 		infrastructureSubnets: infra,
+		serviceSubnets:        svcSubnets,
 		mtu:                   netconf.MTU,
 		allowPersistentIPs:    netconf.AllowPersistentIPs,
 		defaultGatewayIPs:     defaultGatewayIPs,
@@ -1604,6 +1631,16 @@ func ValidateNetConf(nadName string, netconf *ovncnitypes.NetConf) error {
 
 	if netconf.ReservedSubnets != "" && netconf.Topology != types.Layer2Topology {
 		return fmt.Errorf("reservedSubnets is only supported for layer2 topology")
+	}
+
+	if netconf.ServiceSubnets != "" &&
+		netconf.Topology != types.Layer2Topology &&
+		netconf.Topology != types.Layer3Topology {
+		return fmt.Errorf("serviceSubnets is only supported for layer2 and layer3 topology")
+	}
+
+	if netconf.ServiceSubnets != "" && netconf.Role != types.NetworkRolePrimary {
+		return fmt.Errorf("serviceSubnets is only supported for primary networks")
 	}
 
 	if netconf.DefaultGatewayIPs != "" && netconf.Topology != types.Layer2Topology {

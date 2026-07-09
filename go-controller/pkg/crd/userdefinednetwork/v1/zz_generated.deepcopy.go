@@ -241,6 +241,11 @@ func (in *Layer2Config) DeepCopyInto(out *Layer2Config) {
 		*out = make(DualStackCIDRs, len(*in))
 		copy(*out, *in)
 	}
+	if in.ServiceSubnets != nil {
+		in, out := &in.ServiceSubnets, &out.ServiceSubnets
+		*out = make([]CIDR, len(*in))
+		copy(*out, *in)
+	}
 	if in.IPAM != nil {
 		in, out := &in.IPAM, &out.IPAM
 		*out = new(IPAMConfig)
