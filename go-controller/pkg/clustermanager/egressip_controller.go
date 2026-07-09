@@ -1687,8 +1687,9 @@ func (eIPC *egressIPClusterController) reconcileCloudPrivateIPConfig(old, new *o
 						newCloudPrivateIPConfig.Name, newCloudPrivateIPConfig.Spec.Node,
 						cond.Message, cond.Reason, egressIPName)
 
+					egressIPString := cloudPrivateIPConfigNameToIPString(newCloudPrivateIPConfig.Name)
 					// Clean stale cache entry to prevent retrying same failed node
-					eIPC.deleteAllAllocatorEgressIPAssignments(egressIPName, newCloudPrivateIPConfig.Name)
+					eIPC.deleteAllAllocatorEgressIPAssignments(egressIPName, egressIPString)
 
 					// Trigger reallocation to a different node
 					egressIP, err := eIPC.kube.GetEgressIP(egressIPName)
@@ -1735,9 +1736,10 @@ func (eIPC *egressIPClusterController) reconcileCloudPrivateIPConfig(old, new *o
 					newCloudPrivateIPConfig.Status.Node,
 					egressIPName)
 
+				egressIPString := cloudPrivateIPConfigNameToIPString(newCloudPrivateIPConfig.Name)
 				// Strategy: Accept cloud reality (status.node) to minimize disruption
 				// Clean cache entry on spec.node (where we THOUGHT it should be)
-				eIPC.deleteAllAllocatorEgressIPAssignments(egressIPName, newCloudPrivateIPConfig.Name)
+				eIPC.deleteAllAllocatorEgressIPAssignments(egressIPName, egressIPString)
 
 				// Trigger reconciliation to sync cache to actual cloud state (status.node)
 				egressIP, err := eIPC.kube.GetEgressIP(egressIPName)
