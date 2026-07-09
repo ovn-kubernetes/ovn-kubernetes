@@ -4481,7 +4481,8 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				//
 				// This is different from Test #1 where "bogus1" doesn't exist (stale).
 				// Here, eIP1 exists and legitimately owns the IP.
-				gomega.Eventually(getEgressIPStatusLen("egressip-2"), "2s").Should(gomega.Equal(0))
+				// Use Consistently to prove eIP2 stays unassigned (not just momentarily)
+				gomega.Consistently(getEgressIPStatusLen("egressip-2"), "2s").Should(gomega.Equal(0))
 
 				// Verify eIP1 still owns the IP on the same node (not cleaned as stale)
 				egressIPs1, nodes1 = getEgressIPStatus("egressip-1")
