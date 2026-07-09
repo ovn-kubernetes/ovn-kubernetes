@@ -2061,14 +2061,14 @@ func expectedLogicalRouterPolicy(routerPolicyUUID1 string, netInfo util.NetInfo,
 		priority      = 1004
 		rerouteAction = "reroute"
 	)
+	inport := netInfo.GetNetworkScopedRouterToSwitchPortName(nodeName)
 	networkScopedSwitchName := netInfo.GetNetworkScopedSwitchName(nodeName)
-	lrpName := fmt.Sprintf("%s%s", types.RouterToSwitchPrefix, networkScopedSwitchName)
 
 	return &nbdb.LogicalRouterPolicy{
 		UUID:        routerPolicyUUID1,
 		Action:      rerouteAction,
 		ExternalIDs: standardNonDefaultNetworkExtIDs(netInfo),
-		Match:       fmt.Sprintf("inport == %q && ip4.dst == %s /* %s */", lrpName, destIP, networkScopedSwitchName),
+		Match:       fmt.Sprintf("inport == %q && ip4.dst == %s /* %s */", inport, destIP, networkScopedSwitchName),
 		Nexthops:    []string{nextHop},
 		Priority:    priority,
 	}
