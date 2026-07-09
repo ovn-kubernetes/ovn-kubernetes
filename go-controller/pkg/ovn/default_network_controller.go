@@ -564,9 +564,11 @@ func (oc *DefaultNetworkController) ReconcileNode(oldNode, newNode *corev1.Node,
 			klog.Infof("Node %q in remote zone %q, network %q, needs interconnect zone sync up",
 				newNode.Name, util.GetNodeZone(newNode), oc.GetNetworkName())
 		}
-		// Reprovisioning the DPU, including OVS, changes the chassis system ID without changing the node.
-		// Delete the stale remote chassis mapping so the new chassis can be associated cleanly.
-		if oldNode != nil && config.OvnKubeNode.Mode == types.NodeModeDPU && nodeChassisChanged(oldNode, newNode) {
+		// When the chassis system ID changes (e.g. DPU reprovisioning), delete the
+		// stale remote chassis mapping so the new chassis can be associated cleanly.
+		if oldNode != nil && nodeChassisChanged(oldNode, newNode) {
+			klog.Infof("Node %q chassis-id changed from %q to %q, deleting stale remote chassis",
+				newNode.Name, oldNode.Annotations[util.OvnNodeChassisID], newNode.Annotations[util.OvnNodeChassisID])
 			if err := oc.zoneChassisHandler.DeleteRemoteZoneNode(oldNode); err != nil {
 				aggregatedErrors = append(aggregatedErrors, err)
 			}
