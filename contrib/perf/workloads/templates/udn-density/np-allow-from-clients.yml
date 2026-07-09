@@ -10,7 +10,7 @@ spec:
   - from:
     - namespaceSelector:
         matchLabels:
-          kubernetes.io/metadata.name: "{{.JobName}}-{{.Iteration}}"
+          kubernetes.io/metadata.name: "{{.nsPrefix}}-{{.Iteration}}"
       podSelector:
         matchLabels:
           app: client
