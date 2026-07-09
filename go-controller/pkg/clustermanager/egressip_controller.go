@@ -818,52 +818,70 @@ func (eIPC *egressIPClusterController) addEgressNode(nodeName string) error {
 	return nil
 }
 
-// cleanupNodeEgressIPAllocations cleans all EgressIP allocations for a given node
-// from the allocator cache. This prevents stale cache entries that can occur due
-// to race conditions where reassignment happens before cleanup completes.
-// The cleanup scans ALL nodes in the cache to remove duplicates that may have
-// been created by concurrent reassignment operations.
-func (eIPC *egressIPClusterController) cleanupNodeEgressIPAllocations(nodeName, logContext string) {
-	// Collect IPs to clean while holding lock
-	eIPC.nodeAllocator.Lock()
-	toClean := make(map[string]string)
-	if eNode, exists := eIPC.nodeAllocator.cache[nodeName]; exists {
-		for egressIP, egressIPName := range eNode.allocations {
-			toClean[egressIP] = egressIPName
+// deleteNodeForEgressLocked removes the node from allocator cache and cleans
+// all its EgressIP allocations from the cache under a single lock.
+// This ensures the node cannot be reselected for new assignments while being
+// torn down, preventing race conditions where allocations could be lost.
+//
+// Caller MUST hold eIPC.nodeAllocator.Lock()
+//
+// This function:
+// 1. Cleans all allocations for IPs that were on this node (from ALL nodes)
+// 2. Disconnects the health client
+// 3. Removes the node from the allocator cache
+//
+// The cleanup is defensive - it scans all nodes to remove allocations that
+// match the IPs assigned to this node, not just this node's allocation map.
+// This handles race conditions where an IP may have been reassigned to another
+// node before cleanup completes.
+func (eIPC *egressIPClusterController) deleteNodeForEgressLocked(nodeName string) {
+	eNode, exists := eIPC.nodeAllocator.cache[nodeName]
+	if !exists {
+		klog.V(5).Infof("Node %s not found in allocator cache (already removed)", nodeName)
+		return
+	}
+
+	// Clean all allocations that were on this node from ALL nodes in cache.
+	// This defensive approach handles race conditions where allocations may
+	// have been moved to other nodes before we acquired the lock.
+	for egressIP, egressIPName := range eNode.allocations {
+		for scanNodeName, scanNode := range eIPC.nodeAllocator.cache {
+			if allocName, exists := scanNode.allocations[egressIP]; exists && allocName == egressIPName {
+				klog.V(5).Infof("Deleting egress IP allocation from cache - node: %s, EIP name: %s, IP: %s",
+					scanNodeName, egressIPName, egressIP)
+				delete(scanNode.allocations, egressIP)
+			}
 		}
 	}
-	eIPC.nodeAllocator.Unlock()
 
-	// Clean from ALL nodes (defensive against race conditions)
-	for egressIP, egressIPName := range toClean {
-		klog.V(5).Infof("Cleaning cache %s - node: %s, EIP name: %s, IP: %s",
-			logContext, nodeName, egressIPName, egressIP)
-		eIPC.deleteAllAllocatorEgressIPAssignments(egressIPName, egressIP)
-	}
+	// Disconnect health check client
+	eNode.healthClient.Disconnect()
+
+	// Remove node from cache
+	delete(eIPC.nodeAllocator.cache, nodeName)
+	klog.V(5).Infof("Egress node: %s removed from allocator cache", nodeName)
 }
 
 // deleteNodeForEgress remove the default allow logical router policies for the
 // node and removes the node from the allocator cache.
+// This operation is atomic to prevent race conditions where the node could be
+// reselected for new assignments while being torn down.
 func (eIPC *egressIPClusterController) deleteNodeForEgress(node *corev1.Node) {
-	// Clean up all EgressIP allocations before removing node from cache
-	eIPC.cleanupNodeEgressIPAllocations(node.Name, "before node deletion")
-
-	// Final node removal
 	eIPC.nodeAllocator.Lock()
-	if eNode, exists := eIPC.nodeAllocator.cache[node.Name]; exists {
-		eNode.healthClient.Disconnect()
-		delete(eIPC.nodeAllocator.cache, node.Name)
-	}
-	eIPC.nodeAllocator.Unlock()
+	defer eIPC.nodeAllocator.Unlock()
+	eIPC.deleteNodeForEgressLocked(node.Name)
 }
 
 func (eIPC *egressIPClusterController) deleteEgressNode(nodeName string) error {
 	var errorAggregate []error
 	klog.V(5).Infof("Egress node: %s about to be removed", nodeName)
 
-	// Clean allocator cache for all EgressIPs on this node BEFORE triggering
-	// reassignment. This prevents duplicate cache entries from race conditions.
-	eIPC.cleanupNodeEgressIPAllocations(nodeName, "before node becomes unassignable")
+	// Clean allocator cache and remove node atomically.
+	// This prevents race conditions where the node could be reselected
+	// for new assignments while allocations are being cleaned.
+	eIPC.nodeAllocator.Lock()
+	eIPC.deleteNodeForEgressLocked(nodeName)
+	eIPC.nodeAllocator.Unlock()
 
 	// Since the node has been labelled as "not usable" for egress IP
 	// assignments we need to find all egress IPs which have an assignment to
