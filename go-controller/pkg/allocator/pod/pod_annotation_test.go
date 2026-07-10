@@ -4,6 +4,7 @@
 package pod
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -1404,6 +1405,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 			}
 
 			pod, podAnnotation, rollback, err := allocatePodAnnotationWithRollback(
+				context.Background(),
 				tt.args.ipAllocator,
 				tt.args.idAllocator,
 				tt.netInfo,
