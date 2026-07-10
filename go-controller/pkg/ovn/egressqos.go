@@ -924,7 +924,7 @@ func (oc *DefaultNetworkController) onEgressQoSNodeAdd(obj interface{}) {
 		return
 	}
 	node := obj.(*corev1.Node)
-	if util.GetNodeZone(node) != oc.zone {
+	if !oc.isLocalNode(node) {
 		return
 	}
 	oc.egressQoSNodeQueue.Add(key)

@@ -783,11 +783,6 @@ func (bnc *BaseNetworkController) isPodScheduledinLocalZone(pod *corev1.Pod) boo
 		return false
 	}
 
-	// Only trust informer fallback when zone information is explicit. Missing
-	// zone annotation defaults to "local" and can misclassify remote pods.
-	if _, ok := node.Annotations[util.OvnNodeZoneName]; !ok {
-		return false
-	}
 	return bnc.isLocalZoneNode(node)
 }
 

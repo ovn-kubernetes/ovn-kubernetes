@@ -18,6 +18,52 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
+func TestBaseNetworkController_isLocalNode(t *testing.T) {
+	tests := []struct {
+		name           string
+		controllerZone string
+		node           *corev1.Node
+		want           bool
+	}{
+		{
+			name:           "matches node in controller zone",
+			controllerZone: "node1",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        "node1",
+					Annotations: map[string]string{util.OvnNodeZoneName: "node1"},
+				},
+			},
+			want: true,
+		},
+		{
+			name:           "does not match unannotated node",
+			controllerZone: "node1",
+			node:           &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1"}},
+			want:           false,
+		},
+		{
+			name:           "does not match node in a different zone",
+			controllerZone: "node1",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        "node2",
+					Annotations: map[string]string{util.OvnNodeZoneName: "node2"},
+				},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			bnc := &BaseNetworkController{CommonNetworkControllerInfo: CommonNetworkControllerInfo{zone: tt.controllerZone}}
+			g.Expect(bnc.isLocalNode(tt.node)).To(gomega.Equal(tt.want))
+		})
+	}
+}
+
 func TestBaseNetworkController_trackPodsReleasedBeforeStartup(t *testing.T) {
 	tests := []struct {
 		name           string
