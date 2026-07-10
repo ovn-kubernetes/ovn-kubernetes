@@ -26,6 +26,9 @@ import (
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1"
 	"k8s.io/utils/cpuset"
 
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+
+	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
@@ -42,7 +45,7 @@ var kubeletConfigFilePath = "/host/etc/kubernetes/kubelet.conf"
 // masks to that of the current process.
 // This feature is enabled by the presence of a non-empty file in the path `/etc/openvswitch/enable_dynamic_cpu_affinity`
 // we're passing the podResCli from the caller, so we could support unit-tests
-func Run(ctx context.Context, stopCh <-chan struct{}, podResCli podresourcesapi.PodResourcesListerClient) {
+func Run(ctx context.Context, stopCh <-chan struct{}, podResCli podresourcesapi.PodResourcesListerClient, ovsClient libovsdbclient.Client) {
 
 	// The file must be present at startup to enable the feature
 	isFeatureEnabled, err := isFileNotEmpty(featureEnablerFile)
@@ -133,7 +136,7 @@ func Run(ctx context.Context, stopCh <-chan struct{}, podResCli podresourcesapi.
 			}
 			// add reservedSystemCPUs as well, because PodResourcesAPI does not count for them.
 			cpus = cpus.Union(reservedCPUs)
-			err = setOvsVSwitchdCPUAffinity(&cpus)
+			err = setOvsVSwitchdCPUAffinity(&cpus, ovsClient)
 			if err != nil {
 				klog.Warningf("Error while aligning ovs-vswitchd CPUs to current process: %v", err)
 			}
@@ -173,15 +176,17 @@ func isFileNotEmpty(filename string) (bool, error) {
 	return f.Size() > 0, nil
 }
 
-func setOvsVSwitchdCPUAffinity(set *cpuset.CPUSet) error {
+func setOvsVSwitchdCPUAffinity(set *cpuset.CPUSet, ovsClient libovsdbclient.Client) error {
 
 	ovsVSwitchdPID, err := getOvsVSwitchdPIDFn()
 	if err != nil {
 		return fmt.Errorf("can't retrieve ovs-vswitchd PID: %w", err)
 	}
 
-	klog.V(5).Infof("Managing ovs-vswitchd[%s] daemon CPU affinity", ovsVSwitchdPID)
-	return setProcessCPUAffinity(ovsVSwitchdPID, set, true)
+	dpdkEnabled := isDPDKEnabled(ovsClient)
+
+	klog.V(5).Infof("Managing ovs-vswitchd[%s] daemon CPU affinity (dpdk=%v)", ovsVSwitchdPID, dpdkEnabled)
+	return setProcessCPUAffinity(ovsVSwitchdPID, set, dpdkEnabled)
 }
 
 func setOvsDBServerCPUAffinity(set *cpuset.CPUSet) error {
@@ -485,4 +490,18 @@ func getAllocatableCPUs(ctx context.Context, podResCli podresourcesapi.PodResour
 		return cpuset.CPUSet{}, fmt.Errorf("GetAllocatableResources failed: %w", err)
 	}
 	return cpuset.New(convertInt64ToInt(allocatableResp.CpuIds)...), nil
+}
+
+// isDPDKEnabled checks the libovsdb cache for the dpdk_initialized column
+// in the Open_vSwitch table.
+func isDPDKEnabled(ovsClient libovsdbclient.Client) bool {
+	if ovsClient == nil {
+		return false
+	}
+	ovs, err := ovsops.GetOpenvSwitch(ovsClient)
+	if err != nil {
+		klog.V(5).Infof("Cannot read Open_vSwitch table: %v", err)
+		return false
+	}
+	return ovs.DpdkInitialized
 }

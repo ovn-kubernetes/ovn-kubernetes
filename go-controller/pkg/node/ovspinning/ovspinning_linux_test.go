@@ -109,7 +109,7 @@ func TestAlignCPUAffinity(t *testing.T) {
 					&kubeletpodresourcesv1.AllocatableResourcesResponse{CpuIds: tc.allocatableCPUs}, nil)
 				mockClient.On("List", mock.Anything, mock.Anything).Return(
 					buildListPodResourcesResponse(tc.usedCPUs), nil)
-				Run(context.Background(), stopCh, mockClient)
+				Run(context.Background(), stopCh, mockClient, nil)
 			}()
 
 			expectedUnixCPUSet := convertCPUSet(&expectedCPUs)
