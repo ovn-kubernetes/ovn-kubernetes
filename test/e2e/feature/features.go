@@ -29,6 +29,7 @@ var (
 	NoOverlay             = New("NoOverlay")
 	OVSCPUPin             = New("OVSCPUPin")
 	RouteAdvertisements   = New("RouteAdvertisements")
+	Tracing               = New("Tracing")
 	Unidle                = New("Unidle")
 	NetworkQos            = New("NetworkQos")
 	NetworkConnect        = New("NetworkConnect")
