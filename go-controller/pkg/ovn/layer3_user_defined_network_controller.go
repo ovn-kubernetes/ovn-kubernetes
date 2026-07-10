@@ -776,8 +776,8 @@ func (oc *Layer3UserDefinedNetworkController) init() (err error) {
 	// This is needed for both local and shared gateway modes
 	if oc.GetNetInfo().Transport() == types.NetworkTransportNoOverlay &&
 		oc.GetNetInfo().OutboundSNAT() == types.NoOverlaySNATEnabled {
-		if _, err := initNoOverlaySNATExemptionAddressSet(oc.addressSetFactory, oc.GetNetInfo(), oc.controllerName); err != nil {
-			return fmt.Errorf("failed to initialize noOverlay SNAT exemption address set for network %s: %w", oc.GetNetworkName(), err)
+		if _, err := ensureNoOverlaySNATExemptionAddressSet(oc.addressSetFactory, oc.GetNetInfo(), oc.controllerName); err != nil {
+			return fmt.Errorf("failed to ensure noOverlay SNAT exemption address set for network %s: %w", oc.GetNetworkName(), err)
 		}
 	}
 

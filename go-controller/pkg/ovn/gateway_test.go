@@ -2562,6 +2562,24 @@ var _ = ginkgo.Describe("AddPodSNATOps", func() {
 		gomega.Expect(foundNATOp).To(gomega.BeTrue(), "Should have NAT insert operation")
 	})
 
+	ginkgo.It("returns an error when the no-overlay exemption address set is missing", func() {
+		originalTransport := config.Default.Transport
+		defer func() { config.Default.Transport = originalTransport }()
+		config.Default.Transport = types.NetworkTransportNoOverlay
+
+		originalOutboundSNAT := config.NoOverlay.OutboundSNAT
+		defer func() { config.NoOverlay.OutboundSNAT = originalOutboundSNAT }()
+		config.NoOverlay.OutboundSNAT = types.NoOverlaySNATEnabled
+
+		originalGatewayMode := config.Gateway.Mode
+		defer func() { config.Gateway.Mode = originalGatewayMode }()
+		config.Gateway.Mode = config.GatewayModeShared
+
+		ops, err := controller.AddPodSNATOps(nodeName, ovntest.MustParseIPNets("10.128.1.5/24"))
+		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("no-overlay SNAT exemption address set")))
+		gomega.Expect(ops).To(gomega.BeNil())
+	})
+
 	ginkgo.It("returns error when node is not found", func() {
 		podIPs := ovntest.MustParseIPNets("10.128.1.5/24")
 

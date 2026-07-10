@@ -19,13 +19,8 @@ const (
 	asName = "no-overlay-snat-exemption"
 )
 
-// initNoOverlaySNATExemptionAddressSet creates the address set for SNAT exemption in no-overlay mode.
-func initNoOverlaySNATExemptionAddressSet(
-	addressSetFactory addressset.AddressSetFactory,
-	netInfo util.NetInfo,
-	controllerName string,
-) (addressset.AddressSet, error) {
-	dbIDs := libovsdbops.NewDbObjectIDs(
+func getNoOverlaySNATExemptionAddressSetDbIDs(netInfo util.NetInfo, controllerName string) *libovsdbops.DbObjectIDs {
+	return libovsdbops.NewDbObjectIDs(
 		libovsdbops.AddressSetNoOverlaySNATExemption,
 		controllerName,
 		map[libovsdbops.ExternalIDKey]string{
@@ -33,16 +28,26 @@ func initNoOverlaySNATExemptionAddressSet(
 			libovsdbops.NetworkKey:    netInfo.GetNetworkName(),
 		},
 	)
+}
 
-	// Create the address set with empty initial addresses
+// ensureNoOverlaySNATExemptionAddressSet ensures that the address set for SNAT exemption in
+// no-overlay mode exists for every enabled IP family.
+func ensureNoOverlaySNATExemptionAddressSet(
+	addressSetFactory addressset.AddressSetFactory,
+	netInfo util.NetInfo,
+	controllerName string,
+) (addressset.AddressSet, error) {
+	dbIDs := getNoOverlaySNATExemptionAddressSetDbIDs(netInfo, controllerName)
+
+	// Ensure the address set exists with empty initial addresses
 	// Addresses will be added during controller initialization
 	as, err := addressSetFactory.EnsureAddressSet(dbIDs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create no-overlay SNAT exemption address set for network %s: %w",
+		return nil, fmt.Errorf("failed to ensure no-overlay SNAT exemption address set for network %s: %w",
 			netInfo.GetNetworkName(), err)
 	}
 
-	klog.Infof("Initialized no-overlay SNAT exemption address set for network %s", netInfo.GetNetworkName())
+	klog.V(5).Infof("Ensured no-overlay SNAT exemption address set for network %s", netInfo.GetNetworkName())
 	return as, nil
 }
 
@@ -53,14 +58,7 @@ func getNoOverlaySNATExemptionAddressSet(
 	netInfo util.NetInfo,
 	controllerName string,
 ) (addressset.AddressSet, error) {
-	dbIDs := libovsdbops.NewDbObjectIDs(
-		libovsdbops.AddressSetNoOverlaySNATExemption,
-		controllerName,
-		map[libovsdbops.ExternalIDKey]string{
-			libovsdbops.ObjectNameKey: asName,
-			libovsdbops.NetworkKey:    netInfo.GetNetworkName(),
-		},
-	)
+	dbIDs := getNoOverlaySNATExemptionAddressSetDbIDs(netInfo, controllerName)
 
 	as, err := addressSetFactory.GetAddressSet(dbIDs)
 	if err != nil {
@@ -89,14 +87,7 @@ func cleanupNoOverlaySNATExemptionAddressSet(
 		return fmt.Errorf("failed to cleanup no-overlay SNAT exemption address set: address set factory is nil")
 	}
 
-	dbIDs := libovsdbops.NewDbObjectIDs(
-		libovsdbops.AddressSetNoOverlaySNATExemption,
-		controllerName,
-		map[libovsdbops.ExternalIDKey]string{
-			libovsdbops.ObjectNameKey: asName,
-			libovsdbops.NetworkKey:    netInfo.GetNetworkName(),
-		},
-	)
+	dbIDs := getNoOverlaySNATExemptionAddressSetDbIDs(netInfo, controllerName)
 
 	if err := addressSetFactory.DestroyAddressSet(dbIDs); err != nil {
 		return fmt.Errorf("failed to cleanup no-overlay SNAT exemption address set for network %s: %w",
@@ -126,10 +117,17 @@ func syncNoOverlaySNATExemptionAddressSet(
 	if err != nil {
 		return err
 	}
-	if as == nil {
-		// Address set doesn't exist yet - create it first
-		if as, err = initNoOverlaySNATExemptionAddressSet(addressSetFactory, netInfo, controllerName); err != nil {
-			return fmt.Errorf("failed to create no-overlay SNAT exemption address set: %w", err)
+	addressSetNeedsEnsure := as == nil
+	if as != nil {
+		v4UUID, v6UUID := as.GetASUUID()
+		ipv4Mode, ipv6Mode := netInfo.IPMode()
+		addressSetNeedsEnsure = (ipv4Mode && v4UUID == "") || (ipv6Mode && v6UUID == "")
+	}
+	if addressSetNeedsEnsure {
+		// EnsureAddressSet also creates a family that was enabled after the
+		// address set was first created, for example during a dual-stack upgrade.
+		if as, err = ensureNoOverlaySNATExemptionAddressSet(addressSetFactory, netInfo, controllerName); err != nil {
+			return fmt.Errorf("failed to ensure no-overlay SNAT exemption address set: %w", err)
 		}
 	}
 
@@ -168,7 +166,9 @@ func syncNoOverlaySNATExemptionAddressSet(
 }
 
 // getNoOverlaySNATExemptionAsUUID returns the hashed address set UUIDs for IPv4 and IPv6.
-// These hash names are used to reference the address set in SNAT rules.
+// These hash names are used to reference the address set in SNAT rules. The address set
+// is synced before gateway sync, so every enabled IP family must have a UUID: return an
+// error otherwise so that no SNAT is ever created without exemptions.
 func getNoOverlaySNATExemptionAsUUID(
 	addressSetFactory addressset.AddressSetFactory,
 	netInfo util.NetInfo,
@@ -178,10 +178,16 @@ func getNoOverlaySNATExemptionAsUUID(
 	if err != nil {
 		return "", "", err
 	}
-	if as == nil {
-		return "", "", nil
+	var v4UUID, v6UUID string
+	if as != nil {
+		v4UUID, v6UUID = as.GetASUUID()
 	}
-
-	v4UUID, v6UUID := as.GetASUUID()
+	ipv4Mode, ipv6Mode := netInfo.IPMode()
+	if ipv4Mode && v4UUID == "" {
+		return "", "", fmt.Errorf("no-overlay SNAT exemption address set for network %s has no IPv4 UUID", netInfo.GetNetworkName())
+	}
+	if ipv6Mode && v6UUID == "" {
+		return "", "", fmt.Errorf("no-overlay SNAT exemption address set for network %s has no IPv6 UUID", netInfo.GetNetworkName())
+	}
 	return v4UUID, v6UUID, nil
 }
