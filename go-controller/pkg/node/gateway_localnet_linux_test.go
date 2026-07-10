@@ -282,7 +282,7 @@ var _ = Describe("Node Operations", func() {
 	})
 
 	Context("on startup", func() {
-		It("removes stale iptables rules while keeping remaining intact", func() {
+		It("removes stale nftables rules while keeping remaining intact", func() {
 			app.Action = func(*cli.Context) error {
 				// Create tables/chains/sets/etc
 				err := initGatewayNFTables()
@@ -360,7 +360,7 @@ var _ = Describe("Node Operations", func() {
 	})
 
 	Context("on add", func() {
-		It("inits iptables rules with ExternalIP", func() {
+		It("inits nftables rules with ExternalIP", func() {
 			app.Action = func(*cli.Context) error {
 				externalIP := "1.1.1.1"
 				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
@@ -401,7 +401,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("inits iptables rules with NodePort", func() {
+		It("inits nftables rules with NodePort", func() {
 			app.Action = func(*cli.Context) error {
 
 				service := *newService("service1", "namespace1", "10.129.0.2",
@@ -446,7 +446,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("inits iptables rules and openflows with NodePort where ETP=local, LGW", func() {
+		It("inits nftables rules and openflows with NodePort where ETP=local, LGW", func() {
 			app.Action = func(*cli.Context) error {
 				config.Gateway.Mode = config.GatewayModeLocal
 				epPortName := "https"
@@ -511,7 +511,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("inits iptables rules with LoadBalancer", func() {
+		It("inits nftables rules with LoadBalancer", func() {
 			app.Action = func(*cli.Context) error {
 				// Depending on the order of informer event processing the initial
 				// Service might be "added" once or twice.  Take that into account.
@@ -573,7 +573,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("inits iptables rules and openflows with LoadBalancer where ETP=local, LGW mode", func() {
+		It("inits nftables rules and openflows with LoadBalancer where ETP=local, LGW mode", func() {
 			app.Action = func(*cli.Context) error {
 				externalIP := "1.1.1.1"
 				config.Gateway.Mode = config.GatewayModeLocal
@@ -656,7 +656,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("inits iptables rules and openflows with LoadBalancer where AllocateLoadBalancerNodePorts=False, ETP=local, LGW mode", func() {
+		It("inits nftables rules and openflows with LoadBalancer where AllocateLoadBalancerNodePorts=False, ETP=local, LGW mode", func() {
 			app.Action = func(*cli.Context) error {
 				externalIP := "1.1.1.1"
 				config.Gateway.Mode = config.GatewayModeLocal
@@ -775,7 +775,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(app.Run([]string{app.Name})).To(Succeed())
 		})
 
-		It("inits iptables rules and openflows with named port and AllocateLoadBalancerNodePorts=False, ETP=local, LGW mode", func() {
+		It("inits nftables rules and openflows with named port and AllocateLoadBalancerNodePorts=False, ETP=local, LGW mode", func() {
 			app.Action = func(*cli.Context) error {
 				minNFakeCommands := nInitialFakeCommands + 1
 				fExec.AddRepeatedFakeCmd(&ovntest.ExpectedCmd{
@@ -876,7 +876,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("inits iptables rules and openflows with LoadBalancer where ETP=cluster, LGW mode", func() {
+		It("inits nftables rules and openflows with LoadBalancer where ETP=cluster, LGW mode", func() {
 			app.Action = func(*cli.Context) error {
 				externalIP := "1.1.1.1"
 				config.Gateway.Mode = config.GatewayModeLocal
@@ -955,7 +955,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("inits iptables rules and openflows with LoadBalancer where ETP=local, SGW mode", func() {
+		It("inits nftables rules and openflows with LoadBalancer where ETP=local, SGW mode", func() {
 			app.Action = func(*cli.Context) error {
 				externalIP := "1.1.1.1"
 				config.Gateway.Mode = config.GatewayModeShared
@@ -1049,7 +1049,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("inits iptables rules and openflows with LoadBalancer where ETP=local, SGW mode, with named ports, with "+
+		It("inits nftables rules and openflows with LoadBalancer where ETP=local, SGW mode, with named ports, with "+
 			"host networked pods and with external IP", func() {
 			app.Action = func(*cli.Context) error {
 				nodeName := "node"
@@ -1171,7 +1171,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("inits iptables rules with DualStack NodePort", func() {
+		It("inits nftables rules with DualStack NodePort", func() {
 			app.Action = func(*cli.Context) error {
 				nodePort := int32(31111)
 
@@ -1224,7 +1224,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("inits iptables rules for ExternalIP with DualStack", func() {
+		It("inits nftables rules for ExternalIP with DualStack", func() {
 			app.Action = func(*cli.Context) error {
 
 				// Depending on the order of informer event processing the initial
@@ -1281,7 +1281,7 @@ var _ = Describe("Node Operations", func() {
 	})
 
 	Context("on delete", func() {
-		It("deletes iptables rules with ExternalIP", func() {
+		It("deletes nftables rules with ExternalIP", func() {
 			app.Action = func(*cli.Context) error {
 				// Depending on the order of informer event processing the initial
 				// Service might be "added" once or twice.  Take that into account.
@@ -1334,7 +1334,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("deletes iptables rules for NodePort", func() {
+		It("deletes nftables rules for NodePort", func() {
 			app.Action = func(*cli.Context) error {
 				nodePort := int32(31111)
 
@@ -1791,7 +1791,7 @@ var _ = Describe("Node Operations", func() {
 	})
 
 	Context("on add and delete", func() {
-		It("manages iptables rules with ExternalIP", func() {
+		It("manages nftables rules with ExternalIP", func() {
 			app.Action = func(*cli.Context) error {
 				// Depending on the order of informer event processing the initial
 				// Service might be "added" once or twice.  Take that into account.
@@ -1963,7 +1963,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("manages iptables rules with ExternalIP through retry logic", func() {
+		It("manages nftables rules with ExternalIP through retry logic", func() {
 			app.Action = func(*cli.Context) error {
 				var nodePortWatcherRetry *retry.RetryFramework
 				var err error
@@ -2052,7 +2052,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("manages iptables rules for NodePort", func() {
+		It("manages nftables rules for NodePort", func() {
 			app.Action = func(*cli.Context) error {
 				nodePort := int32(38034)
 
@@ -2105,7 +2105,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("manages iptables rules and openflows for NodePort backed by ovn-k pods where ETP=local, LGW", func() {
+		It("manages nftables rules and openflows for NodePort backed by ovn-k pods where ETP=local, LGW", func() {
 			app.Action = func(*cli.Context) error {
 				config.Gateway.Mode = config.GatewayModeLocal
 				epPortName := "https"
@@ -2184,7 +2184,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("manages iptables rules and openflows for NodePort backed by ovn-k pods where ETP=local, SGW", func() {
+		It("manages nftables rules and openflows for NodePort backed by ovn-k pods where ETP=local, SGW", func() {
 			app.Action = func(*cli.Context) error {
 				config.Gateway.Mode = config.GatewayModeShared
 				epPortName := "https"
@@ -2269,7 +2269,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("manages iptables rules and openflows for NodePort backed by local-host-networked pods where ETP=local, LGW", func() {
+		It("manages nftables rules and openflows for NodePort backed by local-host-networked pods where ETP=local, LGW", func() {
 			app.Action = func(*cli.Context) error {
 				config.Gateway.Mode = config.GatewayModeLocal
 				outport := int32(443)
@@ -2358,7 +2358,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("manages iptables rules and openflows for NodePort backed by ovn-k pods where ITP=local and ETP=local", func() {
+		It("manages nftables rules and openflows for NodePort backed by ovn-k pods where ITP=local and ETP=local", func() {
 			app.Action = func(*cli.Context) error {
 				config.Gateway.Mode = config.GatewayModeShared
 				epPortName := "https"
@@ -2441,7 +2441,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("manages iptables rules and openflows for NodePort backed by local-host-networked pods where ETP=local and ITP=local", func() {
+		It("manages nftables rules and openflows for NodePort backed by local-host-networked pods where ETP=local and ITP=local", func() {
 			app.Action = func(*cli.Context) error {
 				config.Gateway.Mode = config.GatewayModeLocal
 				epPortName := "https"

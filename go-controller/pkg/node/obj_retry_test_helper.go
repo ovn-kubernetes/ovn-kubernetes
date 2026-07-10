@@ -27,7 +27,7 @@ func (h *nodePortWatcherEventHandler) FilterOutResource(_ interface{}) bool {
 	return false
 }
 
-// used only in unit tests to narrow the scope to just the nodeport iptables changes and not all the other parts that
+// used only in unit tests to narrow the scope to just the nodeport nftables changes and not all the other parts that
 // go along with the gateway type (port claim, openflow, healthchecker)
 func (n *nodePortWatcher) newRetryFrameworkForTests(objectType reflect.Type, stopChan <-chan struct{}, wg *sync.WaitGroup) *retry.RetryFramework {
 	resourceHandler := &retry.ResourceHandler{
