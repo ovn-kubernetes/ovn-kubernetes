@@ -143,7 +143,7 @@ func initController(k8sObjects, routePolicyObjects []runtime.Object) {
 	_, err = libovsdbutil.GetNBZone(nbClient)
 	if err != nil {
 		nbZoneFailed = true
-		err = createTestNBGlobal(nbClient, "global")
+		err = createTestNBGlobal(nbClient, "node1")
 		Expect(err).NotTo(HaveOccurred())
 	}
 	// this package tests apbRoute controller separately from the legacy functionality, therefore
@@ -165,7 +165,7 @@ func initController(k8sObjects, routePolicyObjects []runtime.Object) {
 	if nbZoneFailed {
 		// Delete the NBGlobal row as this function created it.  Otherwise, many tests would fail while
 		// checking the expectedData in the NBDB.
-		err = deleteTestNBGlobal(nbClient, "global")
+		err = deleteTestNBGlobal(nbClient, "node1")
 		Expect(err).NotTo(HaveOccurred())
 	}
 

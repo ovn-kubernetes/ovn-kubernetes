@@ -340,6 +340,7 @@ var _ = Describe("OVN Multicast with IP Address Family", func() {
 	BeforeEach(func() {
 		// Restore global default values before each testcase
 		Expect(config.PrepareTestConfig()).To(Succeed())
+		config.Zone = nodeName
 		config.EnableMulticast = true
 		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 		config.OVNKubernetesFeature.EnableMultiNetwork = true

@@ -2407,22 +2407,17 @@ func (e *EgressIPController) addEgressNode(node *corev1.Node) error {
 	}
 	if e.isLocalZoneNode(node) {
 		klog.V(5).Infof("Egress node: %s about to be initialized", node.Name)
-		if e.zone != types.OvnDefaultZone {
-			// NOTE: EgressIP is not supported on multi-nodes-in-same-zone case
-			// NOTE2: We don't want this route for all-nodes-in-same-zone (default zone) case because
-			// it makes no sense - all nodes are connected via the same ovn_cluster_router
-			// NOTE3: When the node gets deleted we do not remove this route intentionally because
-			// if the node is gone, then the ovn_cluster_router is also gone along with all
-			// the routes on it.
-			ni := e.networkManager.GetNetwork(types.DefaultNetworkName)
-			gatewayIPs, err := udn.GetGWRouterIPs(node, &util.DefaultNetInfo{})
-			if err != nil {
-				return fmt.Errorf("failed to get default network gateway router join IPs for node %q: %w", node.Name, err)
-			}
-			if err := libovsdbutil.CreateDefaultRouteToExternal(e.nbClient, ni.GetNetworkScopedClusterRouterName(),
-				ni.GetNetworkScopedGWRouterName(node.Name), ni.Subnets(), gatewayIPs); err != nil {
-				return fmt.Errorf("failed to create route to external for network %s: %v", ni.GetNetworkName(), err)
-			}
+		// When the node gets deleted we do not remove this route intentionally because
+		// if the node is gone, then the ovn_cluster_router is also gone along with all
+		// the routes on it.
+		ni := e.networkManager.GetNetwork(types.DefaultNetworkName)
+		gatewayIPs, err := udn.GetGWRouterIPs(node, &util.DefaultNetInfo{})
+		if err != nil {
+			return fmt.Errorf("failed to get default network gateway router join IPs for node %q: %w", node.Name, err)
+		}
+		if err := libovsdbutil.CreateDefaultRouteToExternal(e.nbClient, ni.GetNetworkScopedClusterRouterName(),
+			ni.GetNetworkScopedGWRouterName(node.Name), ni.Subnets(), gatewayIPs); err != nil {
+			return fmt.Errorf("failed to create route to external for network %s: %v", ni.GetNetworkName(), err)
 		}
 	}
 	return nil

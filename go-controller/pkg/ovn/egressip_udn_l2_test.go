@@ -99,6 +99,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
 		gomega.Expect(config.PrepareTestConfig()).Should(gomega.Succeed())
+		config.Zone = node1Name
 		config.OVNKubernetesFeature.EnableEgressIP = true
 		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 		config.OVNKubernetesFeature.EnableMultiNetwork = true

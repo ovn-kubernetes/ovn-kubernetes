@@ -266,6 +266,10 @@ func (cm *ControllerManager) CleanupStaleNetworks(validNetworks ...util.NetInfo)
 func NewControllerManager(ovnClient *util.OVNClientset, wf *factory.WatchFactory,
 	libovsdbOvnNBClient libovsdbclient.Client, libovsdbOvnSBClient libovsdbclient.Client,
 	recorder record.EventRecorder, wg *sync.WaitGroup) (*ControllerManager, error) {
+	if config.Zone == "" {
+		return nil, fmt.Errorf("ovnkube-controller zone is required")
+	}
+
 	podRecorder := metrics.NewPodRecorder()
 
 	stopCh := make(chan struct{})
@@ -298,7 +302,7 @@ func NewControllerManager(ovnClient *util.OVNClientset, wf *factory.WatchFactory
 
 	cm.networkManager = networkmanager.Default()
 	if config.OVNKubernetesFeature.EnableMultiNetwork {
-		cm.networkManager, err = networkmanager.NewForZone(config.Default.Zone, cm, wf)
+		cm.networkManager, err = networkmanager.NewForZone(config.Zone, cm, wf)
 		if err != nil {
 			return nil, err
 		}
@@ -307,9 +311,9 @@ func NewControllerManager(ovnClient *util.OVNClientset, wf *factory.WatchFactory
 
 	if util.IsRouteAdvertisementsEnabled() {
 		if util.IsNetworkSegmentationSupportEnabled() {
-			cm.routeImportManager = routeimport.New(config.Default.Zone, cm.nbClient, wf.UplinkStateInformer().Lister())
+			cm.routeImportManager = routeimport.New(config.Zone, cm.nbClient, wf.UplinkStateInformer().Lister())
 		} else {
-			cm.routeImportManager = routeimport.New(config.Default.Zone, cm.nbClient, nil)
+			cm.routeImportManager = routeimport.New(config.Zone, cm.nbClient, nil)
 		}
 	}
 	cm.addressSetManager = addresssetmanager.NewAddressSetManager(cm.watchFactory.PodCoreInformer(),
@@ -401,7 +405,7 @@ func (cm *ControllerManager) Start(ctx context.Context) error {
 	// Make sure that the ovnkube-controller zone matches with the Northbound db zone.
 	// Wait for 300s before giving up
 	maxTimeout := 300 * time.Second
-	klog.Infof("Waiting up to %s for NBDB zone to match: %s", maxTimeout, config.Default.Zone)
+	klog.Infof("Waiting up to %s for NBDB zone to match: %s", maxTimeout, config.Zone)
 	start := time.Now()
 	var zone string
 	var err1 error
@@ -410,16 +414,16 @@ func (cm *ControllerManager) Start(ctx context.Context) error {
 		if err1 != nil {
 			return false, nil
 		}
-		if config.Default.Zone != zone {
-			err1 = fmt.Errorf("config zone %s different from NBDB zone %s", config.Default.Zone, zone)
+		if config.Zone != zone {
+			err1 = fmt.Errorf("process zone %s different from NBDB zone %s", config.Zone, zone)
 			return false, nil
 		}
 		return true, nil
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to start default ovnkube-controller - OVN NBDB zone %s does not match the configured zone %q: errors: %v, %v",
-			zone, config.Default.Zone, err, err1)
+		return fmt.Errorf("failed to start default ovnkube-controller - OVN NBDB zone %s does not match the process zone %q: errors: %v, %v",
+			zone, config.Zone, err, err1)
 	}
 	klog.Infof("NBDB zone sync took: %s", time.Since(start))
 
@@ -432,7 +436,7 @@ func (cm *ControllerManager) Start(ctx context.Context) error {
 	// Really this covers a use case where a node is going from local -> remote, but has not yet annotated itself.
 	// In this case ovnkube-controller on this remote node will treat the node as remote, and then once the annotation
 	// appears will convert it to local, which may or may not clean up DB resources correctly.
-	klog.Infof("Waiting up to %s for a node to have %q zone", maxTimeout, config.Default.Zone)
+	klog.Infof("Waiting up to %s for a node to have %q zone", maxTimeout, config.Zone)
 	start = time.Now()
 	err = wait.PollUntilContextTimeout(ctx, 250*time.Millisecond, maxTimeout, true, func(_ context.Context) (bool, error) {
 		nodes, err := cm.watchFactory.GetNodes()
@@ -441,11 +445,11 @@ func (cm *ControllerManager) Start(ctx context.Context) error {
 			return false, nil
 		}
 		if len(nodes) == 0 {
-			klog.Infof("No nodes in cluster: waiting for a node to have %q zone is not needed", config.Default.Zone)
+			klog.Infof("No nodes in cluster: waiting for a node to have %q zone is not needed", config.Zone)
 			return true, nil
 		}
 		for _, node := range nodes {
-			if util.GetNodeZone(node) == config.Default.Zone {
+			if util.GetNodeZone(node) == config.Zone {
 				return true, nil
 			}
 		}
@@ -453,7 +457,7 @@ func (cm *ControllerManager) Start(ctx context.Context) error {
 	})
 	if err != nil {
 		return fmt.Errorf("failed to start default network controller - while waiting for any node to have zone: %q, error: %v",
-			config.Default.Zone, err)
+			config.Zone, err)
 	}
 	klog.Infof("Waiting for node in zone sync took: %s", time.Since(start))
 
@@ -595,7 +599,7 @@ func (cm *ControllerManager) setTopologyType() error {
 	// set it to true and check if all the nodes in the zone already have annotation
 	config.Layer2UsesTransitRouter = true
 	for _, node := range nodes.Items {
-		if util.GetNodeZone(&node) == config.Default.Zone && node.Annotations[util.Layer2TopologyVersion] != util.TransitRouterTopoVersion {
+		if util.GetNodeZone(&node) == config.Zone && node.Annotations[util.Layer2TopologyVersion] != util.TransitRouterTopoVersion {
 			// at least one node doesn't have the annotation
 			config.Layer2UsesTransitRouter = false
 			break
@@ -675,7 +679,7 @@ func (cm *ControllerManager) hasLocalPodsOnSwitch(sw *nbdb.LogicalSwitch) (bool,
 
 func (cm *ControllerManager) setUDNLayer2NodeUsesTransitRouter(nodeList *corev1.NodeList) error {
 	for _, node := range nodeList.Items {
-		if util.GetNodeZone(&node) == config.Default.Zone {
+		if util.GetNodeZone(&node) == config.Zone {
 			if err := cm.kube.SetAnnotationsOnNode(node.Name, map[string]interface{}{
 				util.Layer2TopologyVersion: util.TransitRouterTopoVersion}); err != nil {
 				return fmt.Errorf("failed to set annotation %s on node %s: %w", util.Layer2TopologyVersion, node.Name, err)

@@ -172,7 +172,7 @@ func (c *Controller) syncNode(key string) error {
 	}
 
 	// At this point the node exists and is ready.
-	if c.zone != types.OvnDefaultZone && c.isNodeInLocalZone(n) {
+	if c.isNodeInLocalZone(n) {
 		if err := c.createDefaultRouteToExternalForIC(c.nbClient, c.GetNetworkScopedClusterRouterName(),
 			c.GetNetworkScopedGWRouterName(nodeName), c.Subnets(), gatewayIPs); err != nil {
 			return err

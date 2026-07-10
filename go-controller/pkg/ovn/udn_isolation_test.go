@@ -25,6 +25,7 @@ import (
 var _ = Describe("UDN Isolation", func() {
 	BeforeEach(func() {
 		Expect(config.PrepareTestConfig()).To(Succeed())
+		config.Zone = nodeName
 	})
 
 	It("ACLs should be updated to the Primary tier ", func() {

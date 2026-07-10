@@ -816,16 +816,13 @@ func (oc *DefaultNetworkController) run(_ context.Context) error {
 		if err = oc.apbExternalRouteController.Run(oc.wg, 1); err != nil {
 			return err
 		}
-		// In a multi-zone setup, flush conntrack on the ovnkube-controller side and not
-		// on the ovnkube-node side, since they are run in the
-		// same process. TODO(tssurya): In upstream ovnk, its possible to run these as different processes
-		// in which case this flushing feature is not supported.
-		if oc.zone != types.OvnDefaultZone {
-			// every minute cleanup stale conntrack entries if any
-			go wait.Until(func() {
-				oc.checkAndDeleteStaleConntrackEntries()
-			}, time.Minute*1, oc.stopChan)
-		}
+		// In interconnect, flush conntrack on the ovnkube-controller side and not
+		// on the ovnkube-node side, since they are run in the same process.
+		// TODO(tssurya): In upstream ovnk, its possible to run these as different
+		// processes in which case this flushing feature is not supported.
+		go wait.Until(func() {
+			oc.checkAndDeleteStaleConntrackEntries()
+		}, time.Minute*1, oc.stopChan)
 	}
 
 	if config.OVNKubernetesFeature.EnableNetworkQoS {

@@ -25,6 +25,7 @@ var _ = ginkgo.Describe("No-Overlay SNAT Exemption Address Set", func() {
 
 	ginkgo.BeforeEach(func() {
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+		config.Zone = "node1"
 		fakeOvn = NewFakeOVN(false)
 		fakeOvn.start()
 		addressSetFactory = fakeOvn.controller.addressSetFactory

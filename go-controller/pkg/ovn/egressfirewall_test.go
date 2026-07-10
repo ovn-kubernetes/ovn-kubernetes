@@ -295,6 +295,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+		config.Zone = node1Name
 		config.OVNKubernetesFeature.EnableEgressFirewall = true
 
 		app = cli.NewApp()

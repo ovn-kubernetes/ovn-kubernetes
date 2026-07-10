@@ -301,8 +301,6 @@ const (
 	// PrimaryIDKey is used as a primary client index
 	PrimaryIDKey = OvnK8sPrefix + "/id"
 
-	OvnDefaultZone = "global"
-
 	// EgressService "reserved" hosts - when set on an EgressService they have a special meaning
 
 	EgressServiceNoHost     = ""    // set on services with no allocated node

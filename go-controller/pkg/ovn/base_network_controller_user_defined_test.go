@@ -43,6 +43,7 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 	BeforeEach(func() {
 		// Restore global default values before each testcase
 		Expect(config.PrepareTestConfig()).To(Succeed())
+		config.Zone = "worker1"
 	})
 
 	type dhcpTest struct {
@@ -265,6 +266,7 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 		}
 
 		setupControllerWithDBSetup := func(dbSetup *libovsdbtest.TestSetup, pods ...*corev1.Pod) (*BaseUserDefinedNetworkController, *FakeOVN) {
+			config.Zone = localNodeName
 			localnetNAD := ovntest.GenerateNAD("mgmt", "mgmt", "awips",
 				types.LocalnetTopology, "", types.NetworkRoleSecondary)
 

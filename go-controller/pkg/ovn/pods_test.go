@@ -51,7 +51,7 @@ func newNode(nodeName, nodeIPv4CIDR string) *corev1.Node {
 				"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":\"%s\"}", v4Node1Subnet),
 				util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", nodeIPv4CIDR),
 				util.OvnNodeChassisID:             chassisIDForNode(nodeName),
-				"k8s.ovn.org/zone-name":           "global",
+				"k8s.ovn.org/zone-name":           nodeName,
 			},
 			Labels: map[string]string{
 				"k8s.ovn.org/egress-assignable": "",
@@ -68,7 +68,7 @@ func newNode(nodeName, nodeIPv4CIDR string) *corev1.Node {
 	}
 }
 
-func newNodeGlobalZoneNotEgressableV4Only(nodeName, nodeIPv4 string) *corev1.Node {
+func newNodeNotEgressableV4Only(nodeName, nodeIPv4 string) *corev1.Node {
 	return &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: nodeName,
@@ -77,7 +77,7 @@ func newNodeGlobalZoneNotEgressableV4Only(nodeName, nodeIPv4 string) *corev1.Nod
 				"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":\"%s\"}", v4Node1Subnet),
 				util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", nodeIPv4),
 				util.OvnNodeChassisID:             chassisIDForNode(nodeName),
-				"k8s.ovn.org/zone-name":           "global",
+				"k8s.ovn.org/zone-name":           nodeName,
 			},
 		},
 		Status: corev1.NodeStatus{
@@ -91,7 +91,7 @@ func newNodeGlobalZoneNotEgressableV4Only(nodeName, nodeIPv4 string) *corev1.Nod
 	}
 }
 
-func newNodeGlobalZoneNotEgressableV6Only(nodeName, nodeIPv6 string) *corev1.Node {
+func newNodeNotEgressableV6Only(nodeName, nodeIPv6 string) *corev1.Node {
 	return &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: nodeName,
@@ -100,7 +100,7 @@ func newNodeGlobalZoneNotEgressableV6Only(nodeName, nodeIPv6 string) *corev1.Nod
 				"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":\"%s\"}", v6Node1Subnet),
 				util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", nodeIPv6),
 				util.OvnNodeChassisID:             chassisIDForNode(nodeName),
-				"k8s.ovn.org/zone-name":           "global",
+				"k8s.ovn.org/zone-name":           nodeName,
 			},
 		},
 		Status: corev1.NodeStatus{
@@ -468,6 +468,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+		config.Zone = node1Name
 
 		app = cli.NewApp()
 		app.Name = "test"
@@ -1853,6 +1854,9 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				testNode := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "node1",
+						Annotations: map[string]string{
+							util.OvnNodeZoneName: "node1",
+						},
 					},
 				}
 
@@ -2085,11 +2089,17 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				testNodeWithLS := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "node1",
+						Annotations: map[string]string{
+							util.OvnNodeZoneName: "node1",
+						},
 					},
 				}
 				testNodeWithoutLS := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "node2",
+						Annotations: map[string]string{
+							util.OvnNodeZoneName: "node2",
+						},
 					},
 				}
 				fakeOvn.startWithDBSetup(initialDB,
@@ -2473,10 +2483,11 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 
 		ginkgo.It("falls back to node zone lookup when localZoneNodes misses", func() {
 			app.Action = func(*cli.Context) error {
+				config.Zone = node1Name
 				localNode := newNode(node1Name, "192.168.126.202/24")
-				localNode.Annotations[util.OvnNodeZoneName] = ovntypes.OvnDefaultZone
+				localNode.Annotations[util.OvnNodeZoneName] = node1Name
 				remoteNode := newNode(node2Name, "192.168.126.203/24")
-				remoteNode.Annotations[util.OvnNodeZoneName] = "remote-zone"
+				remoteNode.Annotations[util.OvnNodeZoneName] = node2Name
 
 				fakeOvn.startWithDBSetup(initialDB,
 					&corev1.NodeList{

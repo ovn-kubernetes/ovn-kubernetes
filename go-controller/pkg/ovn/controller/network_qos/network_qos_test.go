@@ -1184,7 +1184,7 @@ func initEnv(clientset *util.OVNClientset, initialDB *libovsdbtest.TestSetup) {
 	_, err = libovsdbutil.GetNBZone(nbClient)
 	if err != nil {
 		nbZoneFailed = true
-		err = createTestNBGlobal(nbClient, "global")
+		err = createTestNBGlobal(nbClient, "node1")
 		Expect(err).NotTo(HaveOccurred())
 	}
 

@@ -60,11 +60,13 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 	const (
 		node1Name string = "node1"
 		node2Name string = "node2"
+		node3Name string = "node3"
 	)
 
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+		config.Zone = node1Name
 		config.OVNKubernetesFeature.EnableEgressQoS = true
 
 		app = cli.NewApp()
@@ -519,6 +521,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 
 	ginkgo.It("should respond to node events correctly", func() {
 		app.Action = func(*cli.Context) error {
+			config.Zone = node3Name
 			namespaceT := *testing.NewNamespace("namespace1")
 
 			node1Switch := &nbdb.LogicalSwitch{
@@ -598,7 +601,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 			// Ensure default EgressQoS object is updated with zone success status.
 			expectEgressQoSStatusMessageEventually(fakeOVN, namespaceT.Name, false)
 
-			_, node3Switch, err := createNodeAndLS(fakeOVN, "node3", "global")
+			_, node3Switch, err := createNodeAndLS(fakeOVN, node3Name, node3Name)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			node3Switch.QOSRules = []string{qos1.UUID, qos2.UUID}
@@ -645,6 +648,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 
 	ginkgo.It("should respond to node zone update events correctly", func() {
 		app.Action = func(*cli.Context) error {
+			config.Zone = node3Name
 			namespaceT := *testing.NewNamespace("namespace1")
 
 			node1Switch := &nbdb.LogicalSwitch{
@@ -724,7 +728,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 			// Ensure default EgressQoS object is updated with zone success status.
 			expectEgressQoSStatusMessageEventually(fakeOVN, namespaceT.Name, false)
 
-			kapiNode, node3Switch, err := createNodeAndLS(fakeOVN, "node3", "non-global")
+			kapiNode, node3Switch, err := createNodeAndLS(fakeOVN, node3Name, "")
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			expectedDatabaseState = []libovsdbtest.TestData{
 				qos1,
@@ -738,7 +742,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 			gomega.Eventually(fakeOVN.nbClient).Should(libovsdbtest.HaveDataIgnoringUUIDs(expectedDatabaseState))
 
 			// update the node's zone to be local
-			kapiNode.Annotations["k8s.ovn.org/zone-name"] = "global"
+			kapiNode.Annotations["k8s.ovn.org/zone-name"] = node3Name
 			kapiNode.ResourceVersion = "100"
 			_, err = fakeOVN.fakeClient.KubeClient.CoreV1().Nodes().Update(context.TODO(), kapiNode, metav1.UpdateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -945,7 +949,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 	})
 
 	ginkgo.DescribeTable("Ensure QoS AddressSet is updated properly for pod events",
-		func(podZone string) {
+		func(podLocal bool) {
 			namespaceT := *testing.NewNamespace("namespace1")
 
 			nodeSwitch := &nbdb.LogicalSwitch{
@@ -1026,7 +1030,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 			// Ensure default EgressQoS object is updated with zone success status.
 			expectEgressQoSStatusMessageEventually(fakeOVN, namespaceT.Name, false)
 
-			if podZone == "local" {
+			if podLocal {
 				fakeOVN.controller.localZoneNodes.Store(podT.Spec.NodeName, true)
 			}
 
@@ -1034,7 +1038,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 			_, err := fakeOVN.fakeClient.KubeClient.CoreV1().Pods(podT.Namespace).Create(context.TODO(), podT, metav1.CreateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			qosAS = getEgressQosAddrSetDbIDs(namespaceT.Name, "999", controllerName)
-			if podZone == "local" {
+			if podLocal {
 				fakeOVN.asf.EventuallyExpectAddressSetWithAddresses(qosAS, []string{"10.128.1.3"})
 			} else {
 				fakeOVN.asf.EventuallyExpectAddressSetWithAddresses(qosAS, nil)
@@ -1046,14 +1050,14 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 			_, err = fakeOVN.fakeClient.KubeClient.CoreV1().Pods(podT.Namespace).Update(context.TODO(), podT, metav1.UpdateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			qosAS = getEgressQosAddrSetDbIDs(namespaceT.Name, "999", controllerName)
-			if podZone == "local" {
+			if podLocal {
 				fakeOVN.asf.EventuallyExpectAddressSetWithAddresses(qosAS, []string{"10.128.1.3"})
 			} else {
 				fakeOVN.asf.EventuallyExpectAddressSetWithAddresses(qosAS, nil)
 			}
 		},
-		ginkgo.Entry("create and update pod in local zone", "local"),
-		ginkgo.Entry("create and update pod in remote zone", "remote"),
+		ginkgo.Entry("create and update pod in local zone", true),
+		ginkgo.Entry("create and update pod in remote zone", false),
 	)
 })
 
@@ -1080,8 +1084,9 @@ func createNodeAndLS(fakeOVN *FakeOVN, name, zone string) (*corev1.Node, *nbdb.L
 			},
 		},
 	}
-	node.Annotations = map[string]string{
-		"k8s.ovn.org/zone-name": zone,
+	node.Annotations = map[string]string{}
+	if zone != "" {
+		node.Annotations["k8s.ovn.org/zone-name"] = zone
 	}
 	kapiNode, err := fakeOVN.fakeClient.KubeClient.CoreV1().Nodes().Create(context.TODO(), &node, metav1.CreateOptions{})
 	if err != nil {

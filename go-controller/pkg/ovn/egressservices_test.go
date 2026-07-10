@@ -56,6 +56,7 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+		config.Zone = node1Name
 		// disabling EgressIP to be sure we're creating the no reroute policies ourselves
 		config.OVNKubernetesFeature.EnableEgressIP = false
 		config.OVNKubernetesFeature.EnableEgressService = true

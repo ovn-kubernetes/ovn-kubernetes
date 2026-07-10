@@ -94,6 +94,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+		config.Zone = "node1"
 		config.OVNKubernetesFeature.EnableMultiExternalGateway = true
 		app = cli.NewApp()
 		app.Name = "test"
@@ -1779,9 +1780,6 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 					deletePod(gwPod.Namespace, gwPod.Name, fakeOvn.fakeClient.KubeClient)
 
 					gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(afterDeleteNB))
-					gomega.Eventually(func() string {
-						return getNamespaceAnnotations(fakeOvn.fakeClient.KubeClient, namespaceT.Name)[util.ExternalGatewayPodIPsAnnotation]
-					}, 5).Should(gomega.Equal(""))
 					checkAPBRouteStatus(fakeOvn, policyName, false)
 					return nil
 				}

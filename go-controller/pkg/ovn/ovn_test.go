@@ -284,7 +284,7 @@ func (o *FakeOVN) init(nadList []nettypes.NetworkAttachmentDefinition) {
 	if o.networkManager == nil {
 		o.networkManager = networkmanager.Default()
 		if config.OVNKubernetesFeature.EnableMultiNetwork {
-			o.networkManager, err = networkmanager.NewForZone(config.Default.Zone, &networkmanager.FakeControllerManager{}, o.watcher)
+			o.networkManager, err = networkmanager.NewForZone(config.Zone, &networkmanager.FakeControllerManager{}, o.watcher)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		}
 	}
@@ -360,7 +360,7 @@ func (o *FakeOVN) init(nadList []nettypes.NetworkAttachmentDefinition) {
 	if err == nil {
 		for _, node := range existingNodes {
 			o.controller.localZoneNodes.Store(node.Name, true)
-			if util.GetNodeZone(node) == types.OvnDefaultZone || util.GetNodeZone(node) == config.Default.Zone {
+			if o.controller.isLocalZoneNode(node) {
 				for _, udnController := range o.userDefinedNetworkControllers {
 					if udnController.bnc.localZoneNodes != nil {
 						udnController.bnc.localZoneNodes.Store(node.Name, true)
@@ -481,7 +481,10 @@ func NewOvnController(
 	_, err := libovsdbutil.GetNBZone(libovsdbOvnNBClient)
 	if err != nil {
 		nbZoneFailed = true
-		err = createTestNBGlobal(libovsdbOvnNBClient, "global")
+		if config.Zone == "" {
+			return nil, fmt.Errorf("test must configure zone or seed NB_Global")
+		}
+		err = createTestNBGlobal(libovsdbOvnNBClient, config.Zone)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	}
 	cnci, err := NewCommonNetworkControllerInfo(
@@ -604,9 +607,14 @@ func (o *FakeOVN) NewUserDefinedNetworkController(netattachdef *nettypes.Network
 		_, err := libovsdbutil.GetNBZone(o.nbClient)
 		if err != nil {
 			nbZoneFailed = true
-			zone := types.OvnDefaultZone
-			if config.Default.Zone != "" {
-				zone = config.Default.Zone
+			zone := ""
+			if config.Zone != "" {
+				zone = config.Zone
+			} else if o.controller != nil && o.controller.zone != "" {
+				zone = o.controller.zone
+			}
+			if zone == "" {
+				return fmt.Errorf("test must configure zone or seed NB_Global")
 			}
 			err = createTestNBGlobal(o.nbClient, zone)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())

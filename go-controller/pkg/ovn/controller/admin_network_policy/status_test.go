@@ -115,7 +115,7 @@ func newANPControllerWithDBSetup(dbSetup libovsdbtest.TestSetup, initANPs anpapi
 	_, err = libovsdbutil.GetNBZone(nbClient)
 	if err != nil {
 		nbZoneFailed = true
-		err = createTestNBGlobal(nbClient, "global")
+		err = createTestNBGlobal(nbClient, "node1")
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	}
 	addressSetFactory := addressset.NewOvnAddressSetFactory(nbClient, config.IPv4Mode, config.IPv6Mode)
@@ -140,7 +140,7 @@ func newANPControllerWithDBSetup(dbSetup libovsdbtest.TestSetup, initANPs anpapi
 	if nbZoneFailed {
 		// Delete the NBGlobal row as this function created it.  Otherwise many tests would fail while
 		// checking the expectedData in the NBDB.
-		err = deleteTestNBGlobal(nbClient, "global")
+		err = deleteTestNBGlobal(nbClient, "node1")
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	}
 	controller.anpCacheSynced = alwaysReady

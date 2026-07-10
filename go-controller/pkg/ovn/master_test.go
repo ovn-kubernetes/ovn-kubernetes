@@ -92,6 +92,7 @@ func (n tNode) k8sNode(nodeID string) corev1.Node {
 				ovnNodeID:             nodeID,
 				util.OVNNodeHostCIDRs: fmt.Sprintf("[\"%s\"]", fmt.Sprintf("%s/24", n.NodeIP)),
 				ovnNodePrimaryIfAddr:  fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", fmt.Sprintf("%s/24", n.NodeIP), ""),
+				util.OvnNodeZoneName:  n.Name,
 			},
 		},
 		Status: corev1.NodeStatus{
@@ -517,6 +518,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 			NodeMgmtPortMAC:      "0a:58:0a:01:01:02",
 			DnatSnatIP:           "169.254.0.1",
 		}
+		config.Zone = node1.Name
 		_, clusterIPNet, err := net.ParseCIDR(clusterCIDR)
 		gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
@@ -1022,52 +1024,6 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	})
 
-	ginkgo.DescribeTable("doesn't retry deleting a node that is missing annotation",
-		func(node *corev1.Node) {
-			app.Action = func(ctx *cli.Context) error {
-				_, err := config.InitConfig(ctx, nil, nil)
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				startFakeController(oc, wg)
-				ginkgo.By("create new node with no annotation defined and ensure reconciliation fails")
-				_, err = kubeFakeClient.CoreV1().Nodes().Create(context.TODO(), node, metav1.CreateOptions{})
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				gomega.Eventually(func() bool {
-					_, failed := oc.addNodeFailed.Load(node.Name)
-					return failed
-				}).Should(gomega.BeTrue())
-				ginkgo.By("delete node and check that there are no retries for the deleted node")
-				err = kubeFakeClient.CoreV1().Nodes().Delete(context.TODO(), node.Name, metav1.DeleteOptions{})
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				return nil
-			}
-			err := app.Run([]string{
-				app.Name,
-			})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-		},
-		ginkgo.Entry("k8s.ovn.org/node-subnets",
-			&corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "newNode",
-					Annotations: map[string]string{
-						"k8s.ovn.org/node-id": "2",
-					},
-				},
-			},
-		),
-		ginkgo.Entry("k8s.ovn.org/node-id",
-			&corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "newNode",
-					Annotations: map[string]string{
-						"k8s.ovn.org/node-subnets": "{\"default\": [\"10.130.0.0/23\", \"fd01:0:0:2::/64\"]}",
-					},
-				},
-			},
-		),
-	)
-
 	ginkgo.It("delete a partially constructed node", func() {
 		app.Action = func(ctx *cli.Context) error {
 			_, err := config.InitConfig(ctx, nil, nil)
@@ -1149,7 +1105,8 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "ho-node",
 					Annotations: map[string]string{
-						util.OvnNodeID: "3",
+						util.OvnNodeID:       "3",
+						util.OvnNodeZoneName: node1.Name,
 					},
 				},
 			}
@@ -1191,21 +1148,18 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 			_, err := config.InitConfig(ctx, nil, nil)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			newNodeSubnet := "10.1.1.0/24"
-			newNode := &corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "newNode",
-					Annotations: map[string]string{
-						"k8s.ovn.org/node-subnets":    fmt.Sprintf("{\"default\":[\"%s\", \"fd02:0:0:2::2895/64\"]}", newNodeSubnet),
-						"k8s.ovn.org/node-chassis-id": chassisIDForNode("newNode"),
-						util.OvnNodeID:                "2",
-					},
-				},
-			}
+			gomega.Expect(nodeAnnotator.Set(util.OVNNodeEncapIPs, []string{node1.NodeIP})).To(gomega.Succeed())
+			gomega.Expect(nodeAnnotator.Set(util.OvnTransitSwitchPortAddr,
+				map[string]string{"ipv4": "100.88.0.2/16"})).To(gomega.Succeed())
+			gomega.Expect(nodeAnnotator.Run()).To(gomega.Succeed())
 
 			startFakeController(oc, wg)
 
-			_, err = kubeFakeClient.CoreV1().Nodes().Create(context.TODO(), newNode, metav1.CreateOptions{})
+			nodeSubnet := "10.1.1.0/24"
+			localNode, err := kubeFakeClient.CoreV1().Nodes().Get(context.TODO(), node1.Name, metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			localNode.Annotations["k8s.ovn.org/node-subnets"] = fmt.Sprintf("{\"default\":[\"%s\", \"fd02:0:0:2::2895/64\"]}", nodeSubnet)
+			_, err = kubeFakeClient.CoreV1().Nodes().Update(context.TODO(), localNode, metav1.UpdateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			// check that a node event complaining about the mismatch between
@@ -1216,18 +1170,18 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 				eventsCopy := make([]string, 0, len(events))
 				eventsCopy = append(eventsCopy, events...)
 				return eventsCopy
-			}, 10).Should(gomega.ContainElement(gomega.ContainSubstring("failed to get expected host subnets for node newNode; expected v4 true have true, expected v6 false have true")))
+			}, 10).Should(gomega.ContainElement(gomega.ContainSubstring("failed to get expected host subnets for node node1; expected v4 true have true, expected v6 false have true")))
 
 			// Simulate the ClusterManager reconciling the node annotations to single-stack
-			newNode, err = kubeFakeClient.CoreV1().Nodes().Get(context.TODO(), newNode.Name, metav1.GetOptions{})
+			localNode, err = kubeFakeClient.CoreV1().Nodes().Get(context.TODO(), localNode.Name, metav1.GetOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			newNode.Annotations["k8s.ovn.org/node-subnets"] = fmt.Sprintf("{\"default\":[\"%s\"]}", newNodeSubnet)
-			_, err = kubeFakeClient.CoreV1().Nodes().Update(context.TODO(), newNode, metav1.UpdateOptions{})
+			localNode.Annotations["k8s.ovn.org/node-subnets"] = fmt.Sprintf("{\"default\":[\"%s\"]}", nodeSubnet)
+			_, err = kubeFakeClient.CoreV1().Nodes().Update(context.TODO(), localNode, metav1.UpdateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			// Ensure that the node's switch is eventually created once the annotations
 			// are reconciled by the network cluster controller
-			newNodeLS := &nbdb.LogicalSwitch{Name: newNode.Name}
+			newNodeLS := &nbdb.LogicalSwitch{Name: localNode.Name}
 			gomega.Eventually(func() error {
 				_, err := libovsdbops.GetLogicalSwitch(nbClient, newNodeLS)
 				return err
@@ -1253,40 +1207,32 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 			gomega.Expect(config.IPv4Mode).To(gomega.BeTrue())
 			gomega.Expect(config.IPv6Mode).To(gomega.BeTrue())
 
-			newNodeIpv4Subnet := "10.1.1.0/24"
-			newNode := &corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "newNode",
-					Annotations: map[string]string{
-						"k8s.ovn.org/node-subnets":                   fmt.Sprintf("{\"default\":[\"%s\"]}", newNodeIpv4Subnet),
-						"k8s.ovn.org/node-chassis-id":                chassisIDForNode("newNode"),
-						"k8s.ovn.org/node-gateway-router-lrp-ifaddr": "{\"ipv4\":\"100.64.0.2/16\"}",
-					},
-				},
-			}
+			gomega.Expect(nodeAnnotator.Set(util.OVNNodeEncapIPs, []string{node1.NodeIP})).To(gomega.Succeed())
+			gomega.Expect(nodeAnnotator.Set(util.OvnTransitSwitchPortAddr,
+				map[string]string{"ipv4": "100.88.0.2/16", "ipv6": "fd97::2/64"})).To(gomega.Succeed())
+			gomega.Expect(nodeAnnotator.Run()).To(gomega.Succeed())
 
 			startFakeController(oc, wg)
 
-			_, err = kubeFakeClient.CoreV1().Nodes().Create(context.TODO(), newNode, metav1.CreateOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
 			// Simulate the ClusterManager reconciling the node annotations to dual-stack
-			newNode, err = kubeFakeClient.CoreV1().Nodes().Get(context.TODO(), newNode.Name, metav1.GetOptions{})
+			nodeIpv4Subnet := "10.1.1.0/24"
+			localNode, err := kubeFakeClient.CoreV1().Nodes().Get(context.TODO(), node1.Name, metav1.GetOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			newNodeIpv6SubnetPrefix := "aef0:0:0:2::"
 			newNodeIpv6Subnet := newNodeIpv6SubnetPrefix + "2895/64"
-			newNode.Annotations["k8s.ovn.org/node-subnets"] = fmt.Sprintf("{\"default\":[\"%s\", \"%s\"]}", newNodeIpv4Subnet, newNodeIpv6Subnet)
-			_, err = kubeFakeClient.CoreV1().Nodes().Update(context.TODO(), newNode, metav1.UpdateOptions{})
+			localNode.Annotations["k8s.ovn.org/node-subnets"] = fmt.Sprintf("{\"default\":[\"%s\", \"%s\"]}", nodeIpv4Subnet, newNodeIpv6Subnet)
+			localNode.Annotations["k8s.ovn.org/node-gateway-router-lrp-ifaddr"] = "{\"ipv4\":\"100.64.0.2/16\"}"
+			_, err = kubeFakeClient.CoreV1().Nodes().Update(context.TODO(), localNode, metav1.UpdateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			// Ensure that the node's switch is eventually created once the annotations
 			// are reconciled by the network cluster controller
 			gomega.Eventually(func() bool {
-				newNodeLS, err := libovsdbops.GetLogicalSwitch(nbClient, &nbdb.LogicalSwitch{Name: newNode.Name})
+				newNodeLS, err := libovsdbops.GetLogicalSwitch(nbClient, &nbdb.LogicalSwitch{Name: localNode.Name})
 				if err != nil {
 					return false
 				}
-				if newNodeLS.OtherConfig["subnet"] != newNodeIpv4Subnet {
+				if newNodeLS.OtherConfig["subnet"] != nodeIpv4Subnet {
 					return false
 				}
 				if newNodeLS.OtherConfig["ipv6_prefix"] != newNodeIpv6SubnetPrefix {
@@ -1644,6 +1590,7 @@ func TestController_syncNodes(t *testing.T) {
 					Name: "node1",
 					Annotations: map[string]string{
 						"k8s.ovn.org/node-chassis-id": chassisIDForNode(node1Name),
+						util.OvnNodeZoneName:          node1Name,
 					},
 				},
 			}
@@ -1672,6 +1619,7 @@ func TestController_syncNodes(t *testing.T) {
 			}
 			t.Cleanup(libovsdbCleanup.Cleanup)
 
+			config.Zone = node1Name
 			controller, err := NewOvnController(
 				fakeClient,
 				f,

@@ -10,12 +10,10 @@ import (
 
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
 // GetNBZone returns the zone name configured in the OVN Northbound database.
-// If the zone name is not configured, it returns the default zone name - "global"
-// It retuns error if there is no NBGlobal row.
+// It returns an error if there is no NBGlobal row or if the zone name is not configured.
 func GetNBZone(nbClient libovsdbclient.Client) (string, error) {
 	nbGlobal := &nbdb.NBGlobal{}
 	nbGlobal, err := libovsdbops.GetNBGlobal(nbClient, nbGlobal)
@@ -24,7 +22,7 @@ func GetNBZone(nbClient libovsdbclient.Client) (string, error) {
 	}
 
 	if nbGlobal.Name == "" {
-		return types.OvnDefaultZone, nil
+		return "", fmt.Errorf("OVN Northbound DB zone name is not set")
 	}
 
 	return nbGlobal.Name, nil
