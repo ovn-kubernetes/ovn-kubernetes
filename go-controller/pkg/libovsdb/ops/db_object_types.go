@@ -50,6 +50,9 @@ const (
 	// UDNIsolationOwnerType means the object is needed to implement UserDefinedNetwork isolation
 	UDNIsolationOwnerType          ownerType = "UDNIsolation"
 	ClusterNetworkConnectOwnerType ownerType = "ClusterNetworkConnect"
+	// NoOverlayClusterSubnetSNATOwnerType is the cluster-subnet egress SNAT with
+	// no-overlay SNAT exemptions on a node's gateway router
+	NoOverlayClusterSubnetSNATOwnerType ownerType = "NoOverlayClusterSubnetSNAT"
 
 	// owner extra IDs, make sure to define only 1 ExternalIDKey for every string value
 	PriorityKey             ExternalIDKey = "priority"
@@ -391,6 +394,17 @@ var NATEgressIP = newObjectIDsType(nat, EgressIPOwnerType, []ExternalIDKey{
 	ObjectNameKey,
 	// the IP Family for this policy, ip4 or ip6 or ip(dualstack)
 	IPFamilyKey,
+})
+
+var NATNoOverlayClusterSubnetSNAT = newObjectIDsType(nat, NoOverlayClusterSubnetSNATOwnerType, []ExternalIDKey{
+	// the node whose gateway router holds this SNAT
+	ObjectNameKey,
+	// the SNATed cluster subnet
+	CIDRKey,
+	// the IP family of the cluster subnet, v4 or v6
+	IPFamilyKey,
+	// network name
+	NetworkKey,
 })
 
 var QoSEgressQoS = newObjectIDsType(qos, EgressQoSOwnerType, []ExternalIDKey{

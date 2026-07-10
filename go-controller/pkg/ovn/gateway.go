@@ -964,15 +964,11 @@ func (gw *GatewayManager) updateGWRouterNAT(nodeName string, gwConfig *GatewayCo
 	if !config.Gateway.DisableSNATMultipleGWs || gw.netInfo.IsPrimaryNetwork() {
 		var v4UUID, v6UUID string
 		var err error
-		if util.IsNoOverlaySNATExemptionNeeded(gw.netInfo) {
+		snatExemptionNeeded := util.IsNoOverlaySNATExemptionNeeded(gw.netInfo)
+		controllerName := getNetworkControllerName(gw.netInfo.GetNetworkName())
+		if snatExemptionNeeded {
 			// Get the no-overlay SNAT exemption address set UUIDs
 			addressSetFactory := addressset.NewOvnAddressSetFactory(gw.nbClient, config.IPv4Mode, config.IPv6Mode)
-			// Use the correct controller name: default-network-controller for default network,
-			// <networkName>-network-controller for user-defined networks
-			controllerName := types.DefaultNetworkControllerName
-			if gw.netInfo.IsUserDefinedNetwork() {
-				controllerName = getNetworkControllerName(gw.netInfo.GetNetworkName())
-			}
 			v4UUID, v6UUID, err = getNoOverlaySNATExemptionAsUUID(addressSetFactory, gw.netInfo, controllerName)
 			if err != nil {
 				return fmt.Errorf("failed to get no-overlay SNAT exemption address set UUID: %w", err)
@@ -981,7 +977,7 @@ func (gw *GatewayManager) updateGWRouterNAT(nodeName string, gwConfig *GatewayCo
 
 		isNetworkAdvertised := gw.isRoutingAdvertised(nodeName)
 		var clusterNodeIPsAddrSetDbIDs *libovsdbops.DbObjectIDs
-		if isNetworkAdvertised && !util.IsNoOverlaySNATExemptionNeeded(gw.netInfo) {
+		if isNetworkAdvertised && !snatExemptionNeeded {
 			clusterNodeIPsAddrSetDbIDs, err = gw.addressSetManager.EnsureClusterNodeIPsAddressSet(addresssetmanager.ClusterNodeIPsRouteAdvertisementsBackRef)
 			if err != nil {
 				return fmt.Errorf("failed to ensure cluster node IP address set for route advertisements: %w", err)
@@ -1015,12 +1011,35 @@ func (gw *GatewayManager) updateGWRouterNAT(nodeName string, gwConfig *GatewayCo
 				exemptedExtIPs = v4UUID
 			}
 
-			nat = libovsdbops.BuildSNATWithExemptedExtIPs(&externalIP[0], entry, "", extIDs, snatMatch, exemptedExtIPs)
+			natExtIDs := extIDs
+			if snatExemptionNeeded {
+				// Mark the SNAT with DB IDs so that it can be told apart from
+				// cluster-subnet SNATs created without exemptions.
+				natExtIDs = getNoOverlayClusterSubnetSNATDbIDs(controllerName, gw.netInfo.GetNetworkName(), nodeName, entry).GetExternalIDs()
+				maps.Copy(natExtIDs, extIDs)
+			}
+
+			nat = libovsdbops.BuildSNATWithExemptedExtIPs(&externalIP[0], entry, "", natExtIDs, snatMatch, exemptedExtIPs)
 			nats = append(nats, nat)
 		}
-		err = libovsdbops.CreateOrUpdateNATs(gw.nbClient, gwRouter, nats...)
+		natOps, err := libovsdbops.CreateOrUpdateNATsOps(gw.nbClient, nil, gwRouter, nats...)
 		if err != nil {
-			return fmt.Errorf("failed to update SNAT rule for pod on router %s error: %v", gw.gwRouterName, err)
+			return fmt.Errorf("failed to build SNAT ops for pod on router %s error: %w", gw.gwRouterName, err)
+		}
+		if snatExemptionNeeded {
+			// A cluster-subnet SNAT without our DB IDs is not matched by the ops
+			// above and would keep SNATing exempted traffic: delete such stale
+			// rows in the same transaction, so the exempted SNAT never coexists
+			// with a stale twin. Stale rows are left behind by versions that
+			// predate the DB IDs or by a transport switch from overlay to
+			// no-overlay.
+			natOps, err = gw.deleteStaleNoOverlayClusterSNATsOps(natOps, gwRouter, controllerName, nats)
+			if err != nil {
+				return fmt.Errorf("failed to build stale no-overlay SNAT cleanup ops on router %s error: %w", gw.gwRouterName, err)
+			}
+		}
+		if _, err := libovsdbops.TransactAndCheck(gw.nbClient, natOps); err != nil {
+			return fmt.Errorf("failed to update SNAT rule for pod on router %s error: %w", gw.gwRouterName, err)
 		}
 	} else {
 		// ensure we do not have any leftover SNAT entries after an upgrade
@@ -1038,6 +1057,93 @@ func (gw *GatewayManager) updateGWRouterNAT(nodeName string, gwConfig *GatewayCo
 		return fmt.Errorf("failed to sync stale SNATs on node %s: %v", nodeName, err)
 	}
 	return nil
+}
+
+// getNoOverlayClusterSubnetSNATDbIDs returns the DB IDs identifying the SNAT
+// that a gateway router applies to a cluster subnet, with no-overlay SNAT
+// exemptions, on the network scoped by controllerName and networkName.
+func getNoOverlayClusterSubnetSNATDbIDs(controllerName, networkName, nodeName string, clusterSubnet *net.IPNet) *libovsdbops.DbObjectIDs {
+	// Use the same ip-family value ("ip4"/"ip6") as the other NAT owners so the
+	// rows can be looked up consistently.
+	ipFamily := string(IPFamilyValueV4)
+	if utilnet.IsIPv6CIDR(clusterSubnet) {
+		ipFamily = string(IPFamilyValueV6)
+	}
+	return libovsdbops.NewDbObjectIDs(libovsdbops.NATNoOverlayClusterSubnetSNAT, controllerName,
+		map[libovsdbops.ExternalIDKey]string{
+			libovsdbops.ObjectNameKey: nodeName,
+			libovsdbops.CIDRKey:       libovsdbops.BuildCIDRKey(clusterSubnet.String()),
+			libovsdbops.IPFamilyKey:   ipFamily,
+			libovsdbops.NetworkKey:    networkName,
+		})
+}
+
+// deleteStaleNoOverlayClusterSNATsOps appends operations that delete stale
+// cluster-subnet SNATs from the gateway router. desiredNATs are the DB-ID-marked
+// SNATs that the router should have; any other SNAT covering the same cluster
+// subnets is stale and would SNAT traffic that should be exempted. Stale SNATs
+// are left behind by versions that predate the DB IDs, by a default network
+// transport switch from overlay to no-overlay, or by a change in the desired
+// SNATs themselves. Deleting them in the same transaction that creates the
+// desired SNATs guarantees the exempted SNAT never coexists with a stale twin.
+func (gw *GatewayManager) deleteStaleNoOverlayClusterSNATsOps(ops []ovsdb.Operation, gwRouter *nbdb.LogicalRouter, controllerName string, desiredNATs []*nbdb.NAT) ([]ovsdb.Operation, error) {
+	// A desired SNAT is told apart from its stale twin by row UUID. A desired
+	// SNAT that is being inserted has no existing row and hence no stale twin.
+	desiredUUIDs := sets.Set[string]{}
+	for _, desiredNAT := range desiredNATs {
+		desiredUUIDs.Insert(desiredNAT.UUID)
+	}
+
+	routerNATs, err := libovsdbops.GetRouterNATs(gw.nbClient, gwRouter)
+	if err != nil {
+		return ops, fmt.Errorf("unable to get NAT entries for router %+v: %w", gwRouter, err)
+	}
+
+	isMarkedClusterSubnetSNAT := libovsdbops.GetPredicate[*nbdb.NAT](
+		libovsdbops.NewDbObjectIDs(libovsdbops.NATNoOverlayClusterSubnetSNAT, controllerName, nil), nil)
+
+	staleNATUUIDs := sets.Set[string]{}
+	for _, routerNAT := range routerNATs {
+		// Keep the desired rows.
+		if desiredUUIDs.Has(routerNAT.UUID) {
+			continue
+		}
+		// A NAT marked with our DB IDs but no longer desired, e.g. for a
+		// cluster subnet that was removed.
+		if isMarkedClusterSubnetSNAT(routerNAT) {
+			staleNATUUIDs.Insert(routerNAT.UUID)
+			continue
+		}
+		// An unmarked SNAT for the same cluster subnet as a desired SNAT,
+		// created without exemptions before they were enabled on this network.
+		// The logical IP alone identifies it: the gateway router holds at most
+		// one cluster-subnet SNAT per subnet, so any twin, even one carrying a
+		// stale external IP, is stale.
+		for _, desiredNAT := range desiredNATs {
+			if routerNAT.Type == nbdb.NATTypeSNAT &&
+				routerNAT.LogicalIP == desiredNAT.LogicalIP &&
+				ptr.Equal(routerNAT.LogicalPort, desiredNAT.LogicalPort) {
+				staleNATUUIDs.Insert(routerNAT.UUID)
+				break
+			}
+		}
+	}
+
+	if staleNATUUIDs.Len() == 0 {
+		return ops, nil
+	}
+
+	// Delete by exact row UUID: an unmarked twin has fewer external IDs than the
+	// marked desired row and, with exempted_ext_ips no longer part of NAT
+	// equivalence, isEquivalentNAT would treat it as equivalent to that row, so a
+	// model-based delete would also drop the desired SNAT.
+	ops, err = libovsdbops.DeleteNATsWithPredicateOps(gw.nbClient, ops, func(nat *nbdb.NAT) bool {
+		return staleNATUUIDs.Has(nat.UUID)
+	})
+	if err != nil {
+		return ops, fmt.Errorf("unable to build stale no-overlay SNAT cleanup operations for router %s: %w", gwRouter.Name, err)
+	}
+	return ops, nil
 }
 
 // gatewayInit creates a gateway router for the local chassis.
