@@ -652,7 +652,7 @@ func (c *networkController) isNodeManaged(node *corev1.Node) bool {
 	case c.node == "" && c.zone == "":
 		// cluster manager manages all nodes
 		return true
-	case util.GetNodeZone(node) == c.zone:
+	case c.zone != "" && util.GetNodeZone(node) == c.zone:
 		// ovnkube-controller manages nodes of its zone
 		return true
 	case node.Name == c.node:
