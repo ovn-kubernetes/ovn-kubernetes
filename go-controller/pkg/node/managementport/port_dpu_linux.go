@@ -171,7 +171,7 @@ func (mp *managementPortNetdev) create() error {
 		}
 	}
 
-	// configure management port: name, mac, MTU, iptables
+	// configure management port: name, mac, MTU, nftables
 	// mac addr, derived from the first entry in host subnets using the .2 address as mac with a fixed prefix.
 	klog.V(5).Infof("Setup netdevice management port: %s (deviceID: %s)", link.Attrs().Name, mp.deviceID)
 	mgmtPortMac := util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(mp.cfg.hostSubnets[0]).IP)

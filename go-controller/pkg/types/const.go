@@ -343,7 +343,7 @@ const (
 	// OVNKubeITPMark is the fwmark used for host->ITP=local svc traffic. Note
 	// that the fwmark is not a part of the packet, but just stored by kernel in
 	// its memory to track/filter packet. Hence fwmark is lost as soon as packet
-	// exits the host. The mark is set with an iptables rule by gateway and used
+	// exits the host. The mark is set with an nftables rule by gateway and used
 	// to route to management port.
 	OVNKubeITPMark = "0x1745ec" // constant itp(174)-service(5ec)
 

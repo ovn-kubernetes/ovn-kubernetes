@@ -843,7 +843,7 @@ func GetEndpointsForService(endpointSlices []*discoveryv1.EndpointSlice, service
 	targetEndpoints := newTargetEndpoints(endpointSlices)
 
 	// Build list of valid service port keys, if a non-nil service was provided. Otherwise, if service is nil, this
-	// is a deletion (at least for the iptables / nftables logic) and thus accept all endpoints.
+	// is a deletion (at least for the nftables logic) and thus accept all endpoints.
 	validServicePortKeys := map[string]bool{}
 	if service != nil {
 		for _, servicePort := range service.Spec.Ports {

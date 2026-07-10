@@ -24,15 +24,6 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
-// gateway_nftables.go contains code for dealing with nftables rules; it is used in
-// conjunction with gateway_iptables.go.
-//
-// For the most part, using a mix of iptables and nftables rules does not matter, since
-// both of them are handled by netfilter. However, in cases where there is a close
-// ordering dependency between two rules (especially, in any case where it's necessary to
-// use an "accept" rule to override a later "drop" rule), then those rules will need to
-// either both be iptables or both be nftables.
-
 // nftables chain names
 const (
 	nftablesLocalGatewayMasqChain = "ovn-kube-local-gw-masq"

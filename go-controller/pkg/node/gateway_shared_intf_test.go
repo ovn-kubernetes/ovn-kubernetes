@@ -221,7 +221,7 @@ func verifyNFTablesRule(nft knftables.Interface, serviceIP string, servicePort, 
 }
 
 // setupServiceAndEndpointSliceWithRules creates a service and endpoint slice, adds them to npw,
-// and verifies iptables rules are created. Returns the created endpoint slice.
+// and verifies nftables rules are created. Returns the created endpoint slice.
 func setupServiceAndEndpointSliceWithRules(npw *nodePortWatcher, nft knftables.Interface, svcName, namespace, serviceIP, endpointIP string, servicePort, nodePort int32, annotations map[string]string) *discovery.EndpointSlice {
 	// Create service
 	service := newService(svcName, namespace, serviceIP,

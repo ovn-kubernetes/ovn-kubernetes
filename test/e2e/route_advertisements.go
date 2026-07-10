@@ -2196,7 +2196,7 @@ var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
 					// Reason it doesn't work today is because UDN networks don't have MAC bindings for masqueradeIPs of other networks.
 					// Traffic flow: UDN pod in network A -> samenode nodeIP:nodePort service of networkB
 					// UDN pod in networkA -> ovn-switch -> ovn-cluster-router (SNAT to masqueradeIP of networkA) -> mpX interface ->
-					// enters the host and hits IPTables rules to DNAT to clusterIP:Port of service of networkB.
+					// enters the host and hits NFTables rules to DNAT to clusterIP:Port of service of networkB.
 					// Then it hits the pkt_mark flows on breth0 and get's sent into networkB's patchport where it hits the GR.
 					// On the GR we DNAT to backend pod and SNAT to joinIP.
 					// Reply: Pod replies and now OVN in networkB tries to ARP for the masqueradeIP of networkA which is the source and simply
