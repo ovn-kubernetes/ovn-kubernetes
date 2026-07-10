@@ -166,9 +166,8 @@ func NewForZone(
 	cm ControllerManager,
 	wf watchFactory,
 ) (Controller, error) {
-	z := zone
-	if zone == types.OvnDefaultZone {
-		z = ""
+	if zone == "" {
+		return nil, errors.New("zone manager requires a zone")
 	}
 	return new(
 		"zone-nad-controller",
@@ -179,7 +178,7 @@ func NewForZone(
 		nil,
 		nil,
 		nil,
-		z,
+		zone,
 	)
 }
 

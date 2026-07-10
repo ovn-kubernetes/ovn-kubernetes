@@ -555,11 +555,7 @@ func (c *NodeController) shouldFilterByRemoteNetworkActivity(node *corev1.Node, 
 	if node == nil || netName == types.DefaultNetworkName || !config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
 		return false
 	}
-	localZone := config.Default.Zone
-	if localZone == "" {
-		localZone = types.OvnDefaultZone
-	}
-	return util.GetNodeZone(node) != localZone
+	return util.GetNodeZone(node) != config.Zone
 }
 
 // scopedNodeQueueKey allows us to queue keys with network references.

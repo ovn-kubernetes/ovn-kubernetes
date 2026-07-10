@@ -82,7 +82,7 @@ func newControllerWithDBSetupForNetwork(dbSetup libovsdbtest.TestSetup, netInfo 
 	_, err = libovsdbutil.GetNBZone(nbClient)
 	if err != nil {
 		nbZoneFailed = true
-		if err = createTestNBGlobal(nbClient, "global"); err != nil {
+		if err = createTestNBGlobal(nbClient, "node1"); err != nil {
 			return nil, err
 		}
 	}
@@ -2081,7 +2081,7 @@ func getNodeInfo(nodeName string, nodeIPsV4 []string, nodeIPsV6 []string) *nodeI
 		gatewayRouterName:  nodeGWRouterName(nodeName),
 		switchName:         nodeSwitchName(nodeName),
 		chassisID:          nodeName,
-		zone:               types.OvnDefaultZone,
+		zone:               nodeName,
 	}
 }
 

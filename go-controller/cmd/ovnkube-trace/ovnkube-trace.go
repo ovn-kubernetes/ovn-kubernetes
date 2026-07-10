@@ -647,13 +647,8 @@ func getDatabaseURIs(coreclient *corev1client.CoreV1Client, restconfig *rest.Con
 		klog.V(5).Infof("execInPod('%s') failed with err: '%s', stderr: '%s', stdout: '%s', Pod Name '%s' \n", psCmd, err, hostError, hostOutput, podName)
 		return nil, err
 	}
-	// Retrieve the zone name from psCmd output.
-	// The psCmd output contains zone string like below:
-	// ... --zone ovn-worker2 ...
-	zoneRe := regexp.MustCompile(`--zone(=| )[^\s]+`)
-	if res := zoneRe.FindString(hostOutput); len(res) > 6 {
-		podInfo.InterConnectZoneName = strings.TrimSpace(res[6:])
-	}
+	// In single-node-zone mode, the interconnect zone is the node name.
+	podInfo.InterConnectZoneName = podInfo.NodeName
 	re := regexp.MustCompile(`--nb-address(=| )[^\s]+`)
 	nbAddress := re.FindString(hostOutput)
 	if len(nbAddress) > 13 {

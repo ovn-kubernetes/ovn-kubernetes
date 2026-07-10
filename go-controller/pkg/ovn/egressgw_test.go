@@ -39,6 +39,7 @@ var _ = ginkgo.Describe("OVN Egress Gateway Operations", func() {
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+		config.Zone = "node1"
 		config.OVNKubernetesFeature.EnableMultiExternalGateway = true
 
 		app = cli.NewApp()
@@ -631,6 +632,7 @@ func injectNode(fakeOvn *FakeOVN) {
 			Annotations: map[string]string{"k8s.ovn.org/l3-gateway-config": `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"169.254.33.2/24", "next-hop":"169.254.33.1"}}`,
 				"k8s.ovn.org/node-chassis-id": chassisIDForNode("node1"),
 				"k8s.ovn.org/node-subnets":    `{"default":"10.128.1.0/24"}`,
+				util.OvnNodeZoneName:          "node1",
 			},
 		},
 	}

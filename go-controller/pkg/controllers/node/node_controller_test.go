@@ -265,14 +265,14 @@ func TestNodeControllerDoesNotFilterDefaultNetwork(t *testing.T) {
 		t.Fatalf("failed to prepare test config: %v", err)
 	}
 	config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
-	config.Default.Zone = "local-zone"
+	config.Zone = "local-node"
 
 	controller := &NodeController{networkManager: networkmanager.Default().Interface()}
 	remoteNode := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "node-a",
 			Annotations: map[string]string{
-				util.OvnNodeZoneName: "remote-zone",
+				util.OvnNodeZoneName: "node-a",
 			},
 		},
 	}
@@ -360,6 +360,7 @@ func TestReconcileNodeRemoteNodeBecomesActiveTreatsAsAdd(t *testing.T) {
 	}
 	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 	config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
+	config.Zone = "local-node"
 
 	handler := &fakeNodeHandler{netName: "net-a"}
 	handlers := syncmap.NewSyncMap[NodeHandler]()
@@ -378,7 +379,7 @@ func TestReconcileNodeRemoteNodeBecomesActiveTreatsAsAdd(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "node-a",
 			Annotations: map[string]string{
-				util.OvnNodeZoneName: "remote-zone",
+				util.OvnNodeZoneName: "node-a",
 			},
 		},
 	}
@@ -407,6 +408,7 @@ func TestReconcileNodeRemoteNodeBecomesInactiveDeletes(t *testing.T) {
 	}
 	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 	config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
+	config.Zone = "local-node"
 
 	handler := &fakeNodeHandler{netName: "net-a"}
 	handlers := syncmap.NewSyncMap[NodeHandler]()
@@ -416,7 +418,7 @@ func TestReconcileNodeRemoteNodeBecomesInactiveDeletes(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "node-a",
 			Annotations: map[string]string{
-				util.OvnNodeZoneName: "remote-zone",
+				util.OvnNodeZoneName: "node-a",
 			},
 		},
 	}
@@ -437,7 +439,7 @@ func TestReconcileNodeRemoteNodeBecomesInactiveDeletes(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "node-a",
 			Annotations: map[string]string{
-				util.OvnNodeZoneName: "remote-zone",
+				util.OvnNodeZoneName: "node-a",
 			},
 		},
 	}

@@ -296,6 +296,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+		config.Zone = node1Name
 		config.OVNKubernetesFeature.EnableAdminNetworkPolicy = true
 		// IC true or false does not really effect this feature
 
@@ -341,8 +342,6 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 						},
 					},
 				)
-
-				fakeOVN.controller.zone = node1Name // ensure we set the controller's zone as the node's zone
 				err := fakeOVN.controller.WatchNamespaces()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOVN.controller.WatchPods()
@@ -1164,7 +1163,6 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 						},
 					},
 				)
-				fakeOVN.controller.zone = node1Name // ensure we set the controller's zone as the node's zone
 				t1.portName = util.GetLogicalPortName(t1.namespace, t1.podName)
 				t1.populateLogicalSwitchCache(fakeOVN)
 				t2.portName = util.GetLogicalPortName(t2.namespace, t2.podName)
@@ -1674,8 +1672,6 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 						},
 					},
 				)
-
-				fakeOVN.controller.zone = node1Name // ensure we set the controller's zone as the node's zone
 				t.portName = util.GetLogicalPortName(t.namespace, t.podName)
 				t.populateLogicalSwitchCache(fakeOVN)
 				t2.portName = util.GetLogicalPortName(t2.namespace, t2.podName)
@@ -1945,7 +1941,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				return len(anp.Status.Conditions)
 			}).Should(gomega.Equal(1))
-			gomega.Expect(anp.Status.Conditions[0].Type).To(gomega.Equal("Ready-In-Zone-global"))
+			gomega.Expect(anp.Status.Conditions[0].Type).To(gomega.Equal(fmt.Sprintf("Ready-In-Zone-%s", node1Name)))
 			gomega.Expect(anp.Status.Conditions[0].Message).To(gomega.Equal("Setting up OVN DB plumbing was successful"))
 			gomega.Expect(anp.Status.Conditions[0].Reason).To(gomega.Equal("SetupSucceeded"))
 			gomega.Expect(anp.Status.Conditions[0].Status).To(gomega.Equal(metav1.ConditionTrue))
@@ -1963,7 +1959,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					return len(dupANP.Status.Conditions)
 				}).Should(gomega.Equal(1))
-				gomega.Expect(dupANP.Status.Conditions[0].Type).To(gomega.Equal("Ready-In-Zone-global"))
+				gomega.Expect(dupANP.Status.Conditions[0].Type).To(gomega.Equal(fmt.Sprintf("Ready-In-Zone-%s", node1Name)))
 				gomega.Expect(dupANP.Status.Conditions[0].Message).To(gomega.Equal("Setting up OVN DB plumbing was successful"))
 				gomega.Expect(dupANP.Status.Conditions[0].Reason).To(gomega.Equal("SetupSucceeded"))
 				gomega.Expect(dupANP.Status.Conditions[0].Status).To(gomega.Equal(metav1.ConditionTrue))
@@ -1993,7 +1989,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					return len(dupANP.Status.Conditions)
 				}).Should(gomega.Equal(1))
-				gomega.Expect(dupANP.Status.Conditions[0].Type).To(gomega.Equal("Ready-In-Zone-global"))
+				gomega.Expect(dupANP.Status.Conditions[0].Type).To(gomega.Equal(fmt.Sprintf("Ready-In-Zone-%s", node1Name)))
 				gomega.Expect(dupANP.Status.Conditions[0].Message).To(gomega.Equal("Setting up OVN DB plumbing was successful"))
 				gomega.Expect(dupANP.Status.Conditions[0].Reason).To(gomega.Equal("SetupSucceeded"))
 				gomega.Expect(dupANP.Status.Conditions[0].Status).To(gomega.Equal(metav1.ConditionTrue))
@@ -2016,7 +2012,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					return len(dupANP.Status.Conditions)
 				}).Should(gomega.Equal(1))
-				gomega.Expect(dupANP.Status.Conditions[0].Type).To(gomega.Equal("Ready-In-Zone-global"))
+				gomega.Expect(dupANP.Status.Conditions[0].Type).To(gomega.Equal(fmt.Sprintf("Ready-In-Zone-%s", node1Name)))
 				gomega.Expect(dupANP.Status.Conditions[0].Message).To(gomega.Equal("Setting up OVN DB plumbing was successful"))
 				gomega.Expect(dupANP.Status.Conditions[0].Reason).To(gomega.Equal("SetupSucceeded"))
 				gomega.Expect(dupANP.Status.Conditions[0].Status).To(gomega.Equal(metav1.ConditionTrue))
@@ -2038,7 +2034,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					return len(dupANP.Status.Conditions)
 				}).Should(gomega.Equal(1))
-				gomega.Expect(dupANP.Status.Conditions[0].Type).To(gomega.Equal("Ready-In-Zone-global"))
+				gomega.Expect(dupANP.Status.Conditions[0].Type).To(gomega.Equal(fmt.Sprintf("Ready-In-Zone-%s", node1Name)))
 				gomega.Expect(dupANP.Status.Conditions[0].Message).To(gomega.Equal("Setting up OVN DB plumbing was successful"))
 				gomega.Expect(dupANP.Status.Conditions[0].Reason).To(gomega.Equal("SetupSucceeded"))
 				gomega.Expect(dupANP.Status.Conditions[0].Status).To(gomega.Equal(metav1.ConditionTrue))
@@ -2057,7 +2053,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					return anp.Status.Conditions[0].Message
 				}).Should(gomega.Equal("Setting up OVN DB plumbing was successful"))
-				gomega.Expect(anp.Status.Conditions[0].Type).To(gomega.Equal("Ready-In-Zone-global"))
+				gomega.Expect(anp.Status.Conditions[0].Type).To(gomega.Equal(fmt.Sprintf("Ready-In-Zone-%s", node1Name)))
 				gomega.Expect(anp.Status.Conditions[0].Reason).To(gomega.Equal("SetupSucceeded"))
 				gomega.Expect(anp.Status.Conditions[0].Status).To(gomega.Equal(metav1.ConditionTrue))
 				gomega.Eventually(func() int {
@@ -2094,7 +2090,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					return len(anp.Status.Conditions)
 				}).Should(gomega.Equal(1))
-				gomega.Expect(anp.Status.Conditions[0].Type).To(gomega.Equal("Ready-In-Zone-global"))
+				gomega.Expect(anp.Status.Conditions[0].Type).To(gomega.Equal(fmt.Sprintf("Ready-In-Zone-%s", node1Name)))
 				gomega.Expect(anp.Status.Conditions[0].Message).To(gomega.Equal("error attempting to add ANP harry-potter with " +
 					"priority 100 because, OVNK only supports priority ranges 0-99"))
 				gomega.Expect(anp.Status.Conditions[0].Reason).To(gomega.Equal("SetupFailed"))
@@ -2116,7 +2112,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					return len(anp.Status.Conditions)
 				}).Should(gomega.Equal(1))
-				gomega.Expect(anp.Status.Conditions[0].Type).To(gomega.Equal("Ready-In-Zone-global"))
+				gomega.Expect(anp.Status.Conditions[0].Type).To(gomega.Equal(fmt.Sprintf("Ready-In-Zone-%s", node1Name)))
 				gomega.Expect(anp.Status.Conditions[0].Message).To(gomega.Equal("Setting up OVN DB plumbing was successful"))
 				gomega.Expect(anp.Status.Conditions[0].Reason).To(gomega.Equal("SetupSucceeded"))
 				gomega.Expect(anp.Status.Conditions[0].Status).To(gomega.Equal(metav1.ConditionTrue))
@@ -2134,7 +2130,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 					return anp.Status.Conditions[0].Message
 				}).Should(gomega.Equal("error attempting to add ANP harry-potter with " +
 					"priority 500 because, OVNK only supports priority ranges 0-99"))
-				gomega.Expect(anp.Status.Conditions[0].Type).To(gomega.Equal("Ready-In-Zone-global"))
+				gomega.Expect(anp.Status.Conditions[0].Type).To(gomega.Equal(fmt.Sprintf("Ready-In-Zone-%s", node1Name)))
 				gomega.Expect(anp.Status.Conditions[0].Reason).To(gomega.Equal("SetupFailed"))
 				gomega.Expect(anp.Status.Conditions[0].Status).To(gomega.Equal(metav1.ConditionFalse))
 				gomega.Eventually(func() int {

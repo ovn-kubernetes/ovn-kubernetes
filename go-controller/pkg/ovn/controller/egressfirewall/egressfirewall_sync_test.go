@@ -71,7 +71,7 @@ func TestEFControllerSync_UpdatesOnSubnetChangeAndSkipsWhenUnchanged(t *testing.
 	const (
 		namespace = "namespace1"
 		udnName   = "udn-test"
-		zone      = "global"
+		zone      = "node1"
 	)
 
 	netInfo1 := mustNetInfo(t, udnName, "10.128.0.0/14")
@@ -201,7 +201,7 @@ func TestEFControllerSync_AddsCIDRExclusionWhenPrimaryNetworkAddsOverlappingSubn
 	const (
 		namespace = "namespace1"
 		udnName   = "udn-test"
-		zone      = "global"
+		zone      = "node1"
 	)
 
 	netInfoBefore := mustNetInfo(t, udnName, "10.128.0.0/16")
