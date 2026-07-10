@@ -622,6 +622,7 @@ jobs:
       ENABLE_NO_OVERLAY: "${{ matrix.no-overlay != '' }}"
       ENABLE_NO_OVERLAY_OUTBOUND_SNAT: "${{ matrix.no-overlay == 'snat-enabled' || matrix.no-overlay == 'managed' }}"
       ENABLE_NO_OVERLAY_MANAGED_ROUTING: "${{ matrix.no-overlay == 'managed' }}"
+      ENABLE_TRACING: "${{ matrix.target == 'multi-homing' && matrix.gateway-mode == 'shared' && matrix.network-segmentation == '' }}"
     steps:
     - name: Verify selected image build
       env:
@@ -770,6 +771,9 @@ jobs:
       run: |
         if [ "${{ matrix.target }}" == "multi-homing" ]; then
           make -C test control-plane WHAT="Multi Homing"
+          if [[ $ENABLE_TRACING == "true" ]]; then
+            make -C test control-plane WHAT="Tracing"
+          fi
         elif [ "${{ matrix.target }}" == "no-uplink" ]; then
           make -C test shard-network
         elif [ "${{ matrix.target }}" == "node-ip-mac-migration" ]; then

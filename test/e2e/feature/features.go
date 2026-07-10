@@ -37,6 +37,7 @@ var (
 	// with both route advertisements and dynamic UDN allocation enabled.
 	RouteAdvertisementsDynamicUDN = New("RouteAdvertisementsDynamicUDN")
 	Uplink                        = New("Uplink")
+	Tracing                       = New("Tracing")
 	Unidle                        = New("Unidle")
 	NetworkQos                    = New("NetworkQos")
 	NetworkConnect                = New("NetworkConnect")
