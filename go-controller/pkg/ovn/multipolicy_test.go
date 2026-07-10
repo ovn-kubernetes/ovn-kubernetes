@@ -218,6 +218,7 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+		config.Zone = nodeName
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
 		config.OVNKubernetesFeature.EnableMultiNetworkPolicy = true
 
