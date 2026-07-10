@@ -89,10 +89,12 @@ func (n tNode) k8sNode(nodeID string) corev1.Node {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: n.Name,
 			Annotations: map[string]string{
-				ovnNodeID:             nodeID,
-				util.OVNNodeHostCIDRs: fmt.Sprintf("[\"%s\"]", fmt.Sprintf("%s/24", n.NodeIP)),
-				ovnNodePrimaryIfAddr:  fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", fmt.Sprintf("%s/24", n.NodeIP), ""),
-				util.OvnNodeZoneName:  n.Name,
+				ovnNodeID:                     nodeID,
+				util.OVNNodeHostCIDRs:         fmt.Sprintf("[\"%s\"]", fmt.Sprintf("%s/24", n.NodeIP)),
+				ovnNodePrimaryIfAddr:          fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", fmt.Sprintf("%s/24", n.NodeIP), ""),
+				util.OVNNodeEncapIPs:          fmt.Sprintf("[\"%s\"]", n.NodeIP),
+				util.OvnTransitSwitchPortAddr: `{"ipv4":"100.88.0.2/16"}`,
+				util.OvnNodeZoneName:          n.Name,
 			},
 		},
 		Status: corev1.NodeStatus{
@@ -313,9 +315,35 @@ func addNodeLogicalFlows(testData []libovsdbtest.TestData, expectedOVNClusterRou
 		expectedClusterPortGroup, node, false)
 }
 
-// expectedTransitSwitch returns the default-network transit switch that
-// ovnkube-controller creates during node sync. Tests that exercise node sync
-// should include this in their expected NBDB state.
+// expectedLocalTransitResources returns the default-network interconnect
+// resources that ovnkube-controller creates while syncing the local node.
+func expectedLocalTransitResources(clusterRouter *nbdb.LogicalRouter) []libovsdbtest.TestData {
+	transitRouterPort := &nbdb.LogicalRouterPort{
+		UUID:     "rtots-node1-UUID",
+		Name:     "rtots-node1",
+		MAC:      "0a:58:64:58:00:02",
+		Networks: []string{"100.88.0.2/16"},
+		Options:  map[string]string{"mcast_flood": "true"},
+	}
+	transitSwitchPort := &nbdb.LogicalSwitchPort{
+		UUID:      "tstor-node1-UUID",
+		Name:      "tstor-node1",
+		Type:      "router",
+		Addresses: []string{"router"},
+		ExternalIDs: map[string]string{
+			"node": "node1",
+		},
+		Options: map[string]string{
+			"requested-tnl-key": "2",
+			"router-port":       "rtots-node1",
+		},
+	}
+	transitSwitch := expectedTransitSwitch()
+	transitSwitch.Ports = []string{transitSwitchPort.UUID}
+	clusterRouter.Ports = append(clusterRouter.Ports, transitRouterPort.UUID)
+	return []libovsdbtest.TestData{transitSwitch, transitRouterPort, transitSwitchPort}
+}
+
 func expectedTransitSwitch() *nbdb.LogicalSwitch {
 	return &nbdb.LogicalSwitch{
 		UUID: "transit_switch-UUID",
@@ -670,7 +698,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 				expectedNodeSwitch, node1.Name, clusterSubnets, []*net.IPNet{subnet}, l3GatewayConfig,
 				[]*net.IPNet{classBIPAddress(node1.LrpIP)}, []*net.IPNet{classBIPAddress(node1.DrLrpIP)},
 				skipSnat, node1.NodeMgmtPortIP, "1400", node1.NodeIP)
-			expectedNBDatabaseState = append(expectedNBDatabaseState, expectedTransitSwitch())
+			expectedNBDatabaseState = append(expectedNBDatabaseState, expectedLocalTransitResources(expectedOVNClusterRouter)...)
 			gomega.Eventually(oc.nbClient).Should(libovsdbtest.HaveData(expectedNBDatabaseState))
 
 			return nil
@@ -720,7 +748,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 				expectedNodeSwitch, node1.Name, clusterSubnets, []*net.IPNet{subnet}, l3GatewayConfig,
 				[]*net.IPNet{classBIPAddress(node1.LrpIP)}, []*net.IPNet{classBIPAddress(node1.DrLrpIP)},
 				skipSnat, node1.NodeMgmtPortIP, "1400", node1.NodeIP)
-			expectedNBDatabaseState = append(expectedNBDatabaseState, expectedTransitSwitch())
+			expectedNBDatabaseState = append(expectedNBDatabaseState, expectedLocalTransitResources(expectedOVNClusterRouter)...)
 			gomega.Eventually(oc.nbClient).Should(libovsdbtest.HaveData(expectedNBDatabaseState))
 
 			return nil
@@ -756,7 +784,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 				expectedNodeSwitch, node1.Name, clusterSubnets, []*net.IPNet{subnet}, l3GatewayConfig,
 				[]*net.IPNet{classBIPAddress(node1.LrpIP)}, []*net.IPNet{classBIPAddress(node1.DrLrpIP)},
 				skipSnat, node1.NodeMgmtPortIP, "1400", node1.NodeIP)
-			expectedNBDatabaseState = append(expectedNBDatabaseState, expectedTransitSwitch())
+			expectedNBDatabaseState = append(expectedNBDatabaseState, expectedLocalTransitResources(expectedOVNClusterRouter)...)
 			gomega.Eventually(oc.nbClient).Should(libovsdbtest.HaveData(expectedNBDatabaseState))
 
 			return nil
@@ -862,7 +890,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 					expectedNBDatabaseState = append(expectedNBDatabaseState, expectedNat)
 					GR.Nat = append(GR.Nat, expectedNat.UUID)
 				}
-				expectedNBDatabaseState = append(expectedNBDatabaseState, expectedTransitSwitch())
+				expectedNBDatabaseState = append(expectedNBDatabaseState, expectedLocalTransitResources(expectedOVNClusterRouter)...)
 				gomega.Eventually(oc.nbClient).Should(libovsdbtest.HaveData(expectedNBDatabaseState))
 
 				return nil
@@ -933,7 +961,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 				expectedNodeSwitch, node1.Name, clusterSubnets, []*net.IPNet{subnet}, l3GatewayConfig,
 				[]*net.IPNet{classBIPAddress(node1.LrpIP)}, []*net.IPNet{classBIPAddress(node1.DrLrpIP)},
 				skipSnat, node1.NodeMgmtPortIP, "1400", node1.NodeIP)
-			expectedNBDatabaseState = append(expectedNBDatabaseState, expectedTransitSwitch())
+			expectedNBDatabaseState = append(expectedNBDatabaseState, expectedLocalTransitResources(expectedOVNClusterRouter)...)
 			gomega.Eventually(oc.nbClient).Should(libovsdbtest.HaveData(expectedNBDatabaseState))
 
 			ginkgo.By("modifying the node and triggering an update")

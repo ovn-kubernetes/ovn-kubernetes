@@ -1564,6 +1564,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				hotypes.HybridOverlayDRIP:  nodeHOIP,
 				hotypes.HybridOverlayDRMAC: nodeHOMAC,
 				"k8s.ovn.org/ovn-node-id":  "2",
+				util.OvnNodeZoneName:       node1.Name,
 			}
 
 			kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{

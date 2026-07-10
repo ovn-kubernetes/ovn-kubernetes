@@ -5,6 +5,7 @@ package ovn
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"strings"
@@ -15525,7 +15526,7 @@ func getNodeObj(nodeName string, annotations, labels map[string]string) corev1.N
 	if _, ok := nodeAnnotations[util.OvnNodeZoneName]; !ok {
 		nodeAnnotations[util.OvnNodeZoneName] = nodeName
 	}
-	return corev1.Node{
+	node := corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        nodeName,
 			Annotations: nodeAnnotations,
@@ -15540,6 +15541,26 @@ func getNodeObj(nodeName string, annotations, labels map[string]string) corev1.N
 			},
 		},
 	}
+	if _, ok := nodeAnnotations[util.OVNNodeEncapIPs]; !ok {
+		if primaryIfAddr, err := util.GetNodeIfAddrAnnotation(&node); err == nil {
+			encapIPs := []string{}
+			for _, cidr := range []string{primaryIfAddr.IPv4, primaryIfAddr.IPv6} {
+				if cidr == "" {
+					continue
+				}
+				ip, _, err := net.ParseCIDR(cidr)
+				if err == nil {
+					encapIPs = append(encapIPs, ip.String())
+				}
+			}
+			if len(encapIPs) > 0 {
+				encapAnnotation, err := json.Marshal(encapIPs)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				nodeAnnotations[util.OVNNodeEncapIPs] = string(encapAnnotation)
+			}
+		}
+	}
+	return node
 }
 
 func getSwitchManagementPortIP(node *corev1.Node) (net.IP, error) {
