@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -136,7 +137,16 @@ func Run(ctx context.Context, stopCh <-chan struct{}, podResCli podresourcesapi.
 			}
 			// add reservedSystemCPUs as well, because PodResourcesAPI does not count for them.
 			cpus = cpus.Union(reservedCPUs)
-			err = setOvsVSwitchdCPUAffinity(&cpus, ovsClient)
+
+			// When DPDK is enabled, remove the CPUs dedicated to PMD threads from the
+			// affinity set so that non-PMD OVS threads don't compete with them.
+			pmdCPUs, enabled := getPmdCPUs(ovsClient)
+			if enabled && !pmdCPUs.IsEmpty() {
+				cpus = cpus.Difference(pmdCPUs)
+				klog.V(5).Infof("Excluding PMD CPUs %s from ovs-vswitchd affinity", pmdCPUs)
+			}
+
+			err = setOvsVSwitchdCPUAffinity(&cpus, enabled)
 			if err != nil {
 				klog.Warningf("Error while aligning ovs-vswitchd CPUs to current process: %v", err)
 			}
@@ -176,14 +186,12 @@ func isFileNotEmpty(filename string) (bool, error) {
 	return f.Size() > 0, nil
 }
 
-func setOvsVSwitchdCPUAffinity(set *cpuset.CPUSet, ovsClient libovsdbclient.Client) error {
+func setOvsVSwitchdCPUAffinity(set *cpuset.CPUSet, dpdkEnabled bool) error {
 
 	ovsVSwitchdPID, err := getOvsVSwitchdPIDFn()
 	if err != nil {
 		return fmt.Errorf("can't retrieve ovs-vswitchd PID: %w", err)
 	}
-
-	dpdkEnabled := isDPDKEnabled(ovsClient)
 
 	klog.V(5).Infof("Managing ovs-vswitchd[%s] daemon CPU affinity (dpdk=%v)", ovsVSwitchdPID, dpdkEnabled)
 	return setProcessCPUAffinity(ovsVSwitchdPID, set, dpdkEnabled)
@@ -492,16 +500,50 @@ func getAllocatableCPUs(ctx context.Context, podResCli podresourcesapi.PodResour
 	return cpuset.New(convertInt64ToInt(allocatableResp.CpuIds)...), nil
 }
 
-// isDPDKEnabled checks the libovsdb cache for the dpdk_initialized column
-// in the Open_vSwitch table.
-func isDPDKEnabled(ovsClient libovsdbclient.Client) bool {
-	if ovsClient == nil {
-		return false
-	}
+// getPmdCPUs returns the PMD CPU set and whether DPDK is enabled.
+func getPmdCPUs(ovsClient libovsdbclient.Client) (cpuset.CPUSet, bool) {
 	ovs, err := ovsops.GetOpenvSwitch(ovsClient)
 	if err != nil {
-		klog.V(5).Infof("Cannot read Open_vSwitch table: %v", err)
-		return false
+		klog.V(5).Infof("Cannot read Open_vSwitch table for pmd-cpu-mask: %v", err)
+		return cpuset.New(), false
 	}
-	return ovs.DpdkInitialized
+	if !ovs.DpdkInitialized {
+		return cpuset.New(), false
+	}
+
+	mask, ok := ovs.OtherConfig["pmd-cpu-mask"]
+	if !ok || mask == "" {
+		return cpuset.New(), true
+	}
+
+	pmdCPUs, err := parsePmdCpuMask(mask)
+	if err != nil {
+		klog.Warningf("Failed to parse pmd-cpu-mask %q: %v", mask, err)
+		return cpuset.New(), true
+	}
+	return pmdCPUs, true
+}
+
+// parsePmdCpuMask parses a hex bitmask string (e.g. "0xc", "C", "0x0006")
+// into a cpuset.CPUSet.
+func parsePmdCpuMask(mask string) (cpuset.CPUSet, error) {
+	mask = strings.TrimSpace(mask)
+	mask = strings.TrimPrefix(mask, "0x")
+	mask = strings.TrimPrefix(mask, "0X")
+	if mask == "" {
+		return cpuset.New(), nil
+	}
+
+	v := new(big.Int)
+	if _, ok := v.SetString(mask, 16); !ok {
+		return cpuset.New(), fmt.Errorf("invalid hex mask: %q", mask)
+	}
+
+	var positions []int
+	for i := 0; i < v.BitLen(); i++ {
+		if v.Bit(i) == 1 {
+			positions = append(positions, i)
+		}
+	}
+	return cpuset.New(positions...), nil
 }
