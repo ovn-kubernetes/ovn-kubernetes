@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"os"
 
-	"golang.org/x/exp/maps"
+	"maps"
 
 	corev1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
@@ -109,7 +109,7 @@ func NewPodAdmissionWebhook(nodeLister listers.NodeLister, podAdmissions []PodAd
 	return &PodAdmission{
 		nodeLister:        nodeLister,
 		annotations:       interconnectPodAnnotations,
-		annotationKeys:    sets.New[string](maps.Keys(interconnectPodAnnotations)...),
+		annotationKeys:    sets.New[string](slices.Collect(maps.Keys(interconnectPodAnnotations))...),
 		extraAllowedUsers: sets.New[string](extraAllowedUsers...),
 		podAdmissions:     podAdmissions,
 	}
@@ -136,7 +136,7 @@ func (p PodAdmission) ValidateUpdate(ctx context.Context, oldPod, newPod *corev1
 	isOVNKubeNode, podAdmission, nodeName := checkNodeIdentity(p.podAdmissions, req.UserInfo)
 
 	changes := mapDiff(oldPod.Annotations, newPod.Annotations)
-	changedKeys := maps.Keys(changes)
+	changedKeys := slices.Collect(maps.Keys(changes))
 
 	// user is in additional acceptance condition list
 	if podAdmission != nil {

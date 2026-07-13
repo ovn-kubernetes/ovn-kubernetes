@@ -9,7 +9,7 @@ import (
 	"reflect"
 	"strings"
 
-	"golang.org/x/exp/maps"
+	"maps"
 
 	corev1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
@@ -92,7 +92,7 @@ func NewNodeAdmissionWebhook(enableHybridOverlay bool, extraAllowedUsers ...stri
 	}
 	return &NodeAdmission{
 		annotationChecks:  checks,
-		annotationKeys:    sets.New[string](maps.Keys(checks)...),
+		annotationKeys:    sets.New[string](slices.Collect(maps.Keys(checks))...),
 		extraAllowedUsers: sets.New[string](extraAllowedUsers...),
 	}
 }
@@ -118,7 +118,7 @@ func (p NodeAdmission) ValidateUpdate(ctx context.Context, oldNode, newNode *cor
 	nodeName, isOVNKubeNode := ovnkubeNodeIdentity(req.UserInfo)
 
 	changes := mapDiff(oldNode.Annotations, newNode.Annotations)
-	changedKeys := maps.Keys(changes)
+	changedKeys := slices.Collect(maps.Keys(changes))
 
 	if !isOVNKubeNode {
 		if !p.annotationKeys.HasAny(changedKeys...) {
