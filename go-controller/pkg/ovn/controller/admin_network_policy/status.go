@@ -59,7 +59,8 @@ func doesStatusNeedAnUpdate(existingCondition *metav1.Condition, newCondition me
 	// Check if Status, Reason, and Message are all the same - if so, no update needed
 	if existingCondition.Status == newCondition.Status &&
 		existingCondition.Reason == newCondition.Reason &&
-		existingCondition.Message == newCondition.Message {
+		existingCondition.Message == newCondition.Message &&
+		existingCondition.ObservedGeneration == newCondition.ObservedGeneration {
 		return false
 	}
 	return true
@@ -108,6 +109,7 @@ func (c *Controller) updateANPZoneStatusCondition(newCondition metav1.Condition,
 	if err != nil {
 		return err
 	}
+	newCondition.ObservedGeneration = anp.Generation
 	existingCondition := meta.FindStatusCondition(anp.Status.Conditions, newCondition.Type)
 	if !doesStatusNeedAnUpdate(existingCondition, newCondition) {
 		// status is already in the desired state, skip the update to reduce API server load
@@ -122,6 +124,7 @@ func (c *Controller) updateANPZoneStatusCondition(newCondition metav1.Condition,
 		}
 		existingCondition.Reason = newCondition.Reason
 		existingCondition.Message = newCondition.Message
+		existingCondition.ObservedGeneration = newCondition.ObservedGeneration
 		newCondition = *existingCondition
 	}
 	applyObj := anpapiapply.AdminNetworkPolicy(anpName).
@@ -175,6 +178,7 @@ func (c *Controller) updateBANPZoneStatusCondition(newCondition metav1.Condition
 	if err != nil {
 		return err
 	}
+	newCondition.ObservedGeneration = banp.Generation
 	existingCondition := meta.FindStatusCondition(banp.Status.Conditions, newCondition.Type)
 	if !doesStatusNeedAnUpdate(existingCondition, newCondition) {
 		// status is already in the desired state, skip the update to reduce API server load
@@ -189,6 +193,7 @@ func (c *Controller) updateBANPZoneStatusCondition(newCondition metav1.Condition
 		}
 		existingCondition.Reason = newCondition.Reason
 		existingCondition.Message = newCondition.Message
+		existingCondition.ObservedGeneration = newCondition.ObservedGeneration
 		newCondition = *existingCondition
 	}
 	applyObj := anpapiapply.BaselineAdminNetworkPolicy(banpName).
