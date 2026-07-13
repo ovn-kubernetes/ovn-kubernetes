@@ -404,6 +404,61 @@ func (as *fakeAddressSets) GetAddresses() ([]string, []string) {
 	return v4addresses, v6addresses
 }
 
+// ApplyAddressChanges removes toRemove then adds toAdd in one transaction.
+// Addresses present in both slices are dropped as no-ops. No-op when both slices are empty.
+func (as *fakeAddressSets) ApplyAddressChanges(toAdd, toRemove []string) error {
+	toAdd, toRemove = NormalizeAddressChanges(toAdd, toRemove)
+	if len(toAdd) == 0 && len(toRemove) == 0 {
+		return nil
+	}
+
+	v4Remove, v6Remove := splitAddressesByFamily(toRemove)
+	v4Add, v6Add := splitAddressesByFamily(toAdd)
+
+	as.Lock()
+	defer as.Unlock()
+
+	if err := as.validateApplyAddressChangesLocked(); err != nil {
+		return err
+	}
+
+	if as.ipv4 != nil && (len(v4Add) > 0 || len(v4Remove) > 0) {
+		as.ipv4.addresses = computeFakeAddressSetChanges(as.ipv4.addresses, v4Add, v4Remove)
+	}
+	if as.ipv6 != nil && (len(v6Add) > 0 || len(v6Remove) > 0) {
+		as.ipv6.addresses = computeFakeAddressSetChanges(as.ipv6.addresses, v6Add, v6Remove)
+	}
+	return nil
+}
+
+func (as *fakeAddressSets) validateApplyAddressChangesLocked() error {
+	if as.ipv4 != nil {
+		if err := as.ipv4.ensureNotDestroyed(); err != nil {
+			return err
+		}
+	}
+	if as.ipv6 != nil {
+		if err := as.ipv6.ensureNotDestroyed(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func computeFakeAddressSetChanges(current map[string]string, toAdd, toRemove []string) map[string]string {
+	next := make(map[string]string, len(current)+len(toAdd))
+	for k, v := range current {
+		next[k] = v
+	}
+	for _, addr := range getUniqueAddresses(toRemove) {
+		delete(next, addr)
+	}
+	for _, addr := range getUniqueAddresses(toAdd) {
+		next[addr] = addr
+	}
+	return next
+}
+
 func (as *fakeAddressSets) SetAddresses(addresses []string) error {
 	allAddresses := []string{}
 	if as.ipv4 != nil {
@@ -465,6 +520,13 @@ func (as *fakeAddressSets) Destroy() error {
 	}
 	if as.ipv6 != nil {
 		return as.ipv6.destroy()
+	}
+	return nil
+}
+
+func (as *fakeAddressSet) ensureNotDestroyed() error {
+	if atomic.LoadUint32(&as.destroyed) != 0 {
+		return fmt.Errorf("address set %s is destroyed", as.name)
 	}
 	return nil
 }

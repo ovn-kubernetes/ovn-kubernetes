@@ -597,8 +597,9 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 
 		recorder = record.NewFakeRecorder(10)
 		netManager := networkmanager.Default()
-		addressSetManager := addresssetmanager.NewAddressSetManager(f.PodCoreInformer(), f.NamespaceInformer(),
+		addressSetManager, err := addresssetmanager.NewAddressSetManager(f.PodCoreInformer(), f.NamespaceInformer(),
 			f.NodeCoreInformer(), nbClient, netManager.Interface().GetNetworkNameForNADKey)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "creating address set manager should succeed")
 		oc, err = NewOvnController(
 			fakeClient,
 			f,

@@ -593,13 +593,16 @@ func newAdvertisedSNATTestControllerForTopology(
 		t.Fatalf("failed to create libovsdb test harness: %v", err)
 	}
 	t.Cleanup(libovsdbCleanup.Cleanup)
-	addressSetManager := addresssetmanager.NewAddressSetManager(
+	addressSetManager, err := addresssetmanager.NewAddressSetManager(
 		watchFactory.PodCoreInformer(),
 		watchFactory.NamespaceInformer(),
 		watchFactory.NodeCoreInformer(),
 		nbClient,
 		networkmanager.Default().Interface().GetNetworkNameForNADKey,
 	)
+	if err != nil {
+		t.Fatalf("failed to create address set manager: %v", err)
+	}
 	return &BaseUserDefinedNetworkController{
 			BaseNetworkController: BaseNetworkController{
 				controllerName:      controllerName,

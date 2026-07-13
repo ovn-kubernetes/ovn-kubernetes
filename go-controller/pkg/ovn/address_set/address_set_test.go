@@ -4,6 +4,9 @@
 package addressset
 
 import (
+	"context"
+	"sync/atomic"
+
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/urfave/cli/v2"
@@ -16,6 +19,17 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 )
+
+// countingNBClient counts Transact calls so tests can assert no OVN write occurred.
+type countingNBClient struct {
+	libovsdbclient.Client
+	transactCount atomic.Int64
+}
+
+func (c *countingNBClient) Transact(ctx context.Context, ops ...ovsdb.Operation) ([]ovsdb.OperationResult, error) {
+	c.transactCount.Add(1)
+	return c.Client.Transact(ctx, ops...)
+}
 
 func getDbAddrSets(dbIDs *libovsdbops.DbObjectIDs, ipFamily string, ips []string) *nbdb.AddressSet {
 	asv4, asv6 := GetTestDbAddrSets(dbIDs, ips)
@@ -524,6 +538,108 @@ var _ = ginkgo.Describe("OVN Address Set operations", func() {
 			err := app.Run([]string{app.Name})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
+
+		ginkgo.It("applies address changes without reading existing addresses", func() {
+			app.Action = func(ctx *cli.Context) error {
+				const (
+					addr1 string = "1.2.3.4"
+					addr2 string = "2.3.4.5"
+					addr3 string = "7.8.9.10"
+				)
+
+				_, err := config.InitConfig(ctx, nil, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				asFactory = NewOvnAddressSetFactory(nbClient, config.IPv4Mode, config.IPv6Mode)
+				as, err := asFactory.NewAddressSet(addrsetDbIDs, []string{addr1, addr2})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				err = as.ApplyAddressChanges([]string{addr3}, []string{addr1})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				expectedDatabaseState := getDbAsV4(addrsetDbIDs, []string{addr2, addr3})
+				gomega.Eventually(nbClient).Should(libovsdbtest.HaveDataIgnoringUUIDs(expectedDatabaseState))
+
+				// Contrast: AddAddressesReturnOps skips the write after a membership
+				// cache read when the IP is already present.
+				checkedOps, err := as.AddAddressesReturnOps([]string{addr2})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(checkedOps).To(gomega.BeEmpty(),
+					"AddAddressesReturnOps should no-op when the address is already present")
+
+				// ApplyAddressChanges must still emit ops for an already-present
+				// address; restoring hasAddresses would make this empty.
+				ovnAS, ok := as.(*ovnAddressSets)
+				gomega.Expect(ok).To(gomega.BeTrue())
+				uncheckedOps, err := ovnAS.ApplyAddressChangesReturnOps([]string{addr2}, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(uncheckedOps).NotTo(gomega.BeEmpty(),
+					"ApplyAddressChangesReturnOps must not skip writes via membership cache reads")
+				return nil
+			}
+
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("is a no-op when apply address changes receives empty add and remove", func() {
+			app.Action = func(ctx *cli.Context) error {
+				const addr1 string = "1.2.3.4"
+
+				_, err := config.InitConfig(ctx, nil, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				countingClient := &countingNBClient{Client: nbClient}
+				asFactory = NewOvnAddressSetFactory(countingClient, config.IPv4Mode, config.IPv6Mode)
+				as, err := asFactory.NewAddressSet(addrsetDbIDs, []string{addr1})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				expectedDatabaseState := getDbAsV4(addrsetDbIDs, []string{addr1})
+				gomega.Eventually(countingClient).Should(libovsdbtest.HaveDataIgnoringUUIDs(expectedDatabaseState))
+				transactsBefore := countingClient.transactCount.Load()
+
+				err = as.ApplyAddressChanges(nil, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(countingClient.transactCount.Load()).To(gomega.Equal(transactsBefore),
+					"empty ApplyAddressChanges must not write to OVN")
+				gomega.Eventually(countingClient).Should(libovsdbtest.HaveDataIgnoringUUIDs(expectedDatabaseState))
+				return nil
+			}
+
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("drops addresses present in both add and remove as no-ops", func() {
+			app.Action = func(ctx *cli.Context) error {
+				const (
+					addr1 string = "1.2.3.4"
+					addr2 string = "2.3.4.5"
+				)
+
+				_, err := config.InitConfig(ctx, nil, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				asFactory = NewOvnAddressSetFactory(nbClient, config.IPv4Mode, config.IPv6Mode)
+				as, err := asFactory.NewAddressSet(addrsetDbIDs, []string{addr1, addr2})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				ovnAS, ok := as.(*ovnAddressSets)
+				gomega.Expect(ok).To(gomega.BeTrue())
+				ops, err := ovnAS.ApplyAddressChangesReturnOps(
+					[]string{addr1, addr2}, []string{addr1})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(ops).To(gomega.HaveLen(1),
+					"addr1 in both slices should cancel; only addr2 add should remain")
+
+				err = as.ApplyAddressChanges([]string{addr1}, []string{addr1})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				expectedDatabaseState := getDbAsV4(addrsetDbIDs, []string{addr1, addr2})
+				gomega.Eventually(nbClient).Should(libovsdbtest.HaveDataIgnoringUUIDs(expectedDatabaseState))
+				return nil
+			}
+
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
 	})
 
 	ginkgo.Context("Dual stack : when creating an address set object", func() {
@@ -651,6 +767,51 @@ var _ = ginkgo.Describe("OVN Address Set operations", func() {
 	})
 
 	ginkgo.Context("Dual Stack : when manipulating IPs in an address set object", func() {
+		ginkgo.It("applies address changes without reading existing addresses", func() {
+			app.Action = func(ctx *cli.Context) error {
+				const (
+					addr1 string = "1.2.3.4"
+					addr2 string = "5.6.7.8"
+					addr3 string = "2001:db8::1"
+					addr4 string = "2001:db8::2"
+					addr5 string = "9.10.11.12"
+					addr6 string = "2001:db8::3"
+				)
+
+				_, err := config.InitConfig(ctx, nil, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				config.IPv6Mode = true
+
+				asFactory = NewOvnAddressSetFactory(nbClient, config.IPv4Mode, config.IPv6Mode)
+				as, err := asFactory.NewAddressSet(addrsetDbIDs, []string{addr1, addr2, addr3, addr4})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				err = as.ApplyAddressChanges([]string{addr5, addr6}, []string{addr1, addr3})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				expectedDatabaseState := []libovsdbtest.TestData{
+					getDbAddrSets(addrsetDbIDs, ipv4InternalID, []string{addr2, addr5}),
+					getDbAddrSets(addrsetDbIDs, ipv6InternalID, []string{addr4, addr6}),
+				}
+				gomega.Eventually(nbClient).Should(libovsdbtest.HaveDataIgnoringUUIDs(expectedDatabaseState))
+
+				checkedOps, err := as.AddAddressesReturnOps([]string{addr2, addr4})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(checkedOps).To(gomega.BeEmpty(),
+					"AddAddressesReturnOps should no-op when the addresses are already present")
+
+				ovnAS, ok := as.(*ovnAddressSets)
+				gomega.Expect(ok).To(gomega.BeTrue())
+				uncheckedOps, err := ovnAS.ApplyAddressChangesReturnOps([]string{addr2, addr4}, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(uncheckedOps).NotTo(gomega.BeEmpty(),
+					"ApplyAddressChangesReturnOps must not skip writes via membership cache reads")
+				return nil
+			}
+
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
 		ginkgo.It("adds IP to an empty dual stack address set", func() {
 			app.Action = func(ctx *cli.Context) error {
 				const addr1 string = "1.2.3.4"

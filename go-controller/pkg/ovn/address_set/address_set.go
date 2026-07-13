@@ -74,6 +74,13 @@ type AddressSet interface {
 	DeleteAddresses(addresses []string) error
 	// DeleteAddressesReturnOps returns the ops needed to delete the slice of addresses from the address set
 	DeleteAddressesReturnOps(addresses []string) ([]ovsdb.Operation, error)
+	// ApplyAddressChanges applies incremental add/remove in a single OVN transaction without
+	// reading current address-set state from the libovsdb cache (bypasses hasAddresses /
+	// hasOnlyAddresses). Callers that maintain an accurate in-memory mirror (e.g.
+	// AddressSetManager) use this to avoid redundant OVN cache lookups on every update.
+	// Addresses present in both toAdd and toRemove are dropped as no-ops.
+	// No-op when both toAdd and toRemove are empty (after that filtering).
+	ApplyAddressChanges(toAdd, toRemove []string) error
 	// Destroy deletes the entire address set
 	Destroy() error
 }
@@ -507,6 +514,74 @@ func (as *ovnAddressSets) DeleteAddresses(addresses []string) error {
 	return nil
 }
 
+// ApplyAddressChanges applies toRemove then toAdd in one OVN transaction.
+// Unlike SetAddresses / AddAddresses, it does not read existing addresses from OVN to decide
+// whether a write is needed — the caller must only pass a real delta.
+// Addresses present in both slices are dropped as no-ops before building ops.
+func (as *ovnAddressSets) ApplyAddressChanges(toAdd, toRemove []string) error {
+	var ops []ovsdb.Operation
+	var err error
+	if ops, err = as.ApplyAddressChangesReturnOps(toAdd, toRemove); err != nil {
+		return err
+	}
+	if len(ops) == 0 {
+		return nil
+	}
+	_, err = libovsdbops.TransactAndCheck(as.nbClient, ops)
+	if err != nil {
+		return fmt.Errorf("failed to apply address changes to address set %s (%v)", as.name, err)
+	}
+	return nil
+}
+
+// ApplyAddressChangesReturnOps builds ops to remove then add addresses without checking
+// whether they already exist in the libovsdb cache. Addresses present in both slices are
+// dropped so no useless mutate ops are emitted.
+func (as *ovnAddressSets) ApplyAddressChangesReturnOps(toAdd, toRemove []string) ([]ovsdb.Operation, error) {
+	toAdd, toRemove = NormalizeAddressChanges(toAdd, toRemove)
+	if len(toAdd) == 0 && len(toRemove) == 0 {
+		return nil, nil
+	}
+	var ops []ovsdb.Operation
+	var err error
+	if ops, err = as.DeleteAddressesReturnOps(toRemove); err != nil {
+		return nil, err
+	}
+	var addOps []ovsdb.Operation
+	if addOps, err = as.AddAddressesReturnOpsUnchecked(toAdd); err != nil {
+		return nil, err
+	}
+	ops = append(ops, addOps...)
+	return ops, nil
+}
+
+// AddAddressesReturnOpsUnchecked builds add ops without calling hasAddresses (no OVN cache read).
+// Intended for callers that already validated membership via an in-memory mirror.
+func (as *ovnAddressSets) AddAddressesReturnOpsUnchecked(addresses []string) ([]ovsdb.Operation, error) {
+	var ops []ovsdb.Operation
+	var err error
+	if len(addresses) == 0 {
+		return ops, nil
+	}
+
+	v4addresses, v6addresses := splitAddressesByFamily(getUniqueAddresses(addresses))
+	var op []ovsdb.Operation
+	if as.v6 != nil {
+		if op, err = as.v6.addAddressesUnchecked(v6addresses); err != nil {
+			return nil, fmt.Errorf("failed to add addresses to the v6 set: %w", err)
+		}
+		ops = append(ops, op...)
+	}
+	if as.v4 != nil {
+		if op, err = as.v4.addAddressesUnchecked(v4addresses); err != nil {
+			return nil, fmt.Errorf("failed to add addresses to the v4 set: %w", err)
+		}
+		ops = append(ops, op...)
+	}
+
+	return ops, nil
+}
+
 func (as *ovnAddressSets) DeleteAddressesReturnOps(addresses []string) ([]ovsdb.Operation, error) {
 	var ops []ovsdb.Operation
 	var err error
@@ -584,6 +659,7 @@ func (as *ovnAddressSet) getAddresses() ([]string, error) {
 }
 
 // addAddresses appends the set of addresses to the existing address_set.
+// Skips the write when hasAddresses reports all addresses already present (OVN cache read).
 func (as *ovnAddressSet) addAddresses(addresses []string) ([]ovsdb.Operation, error) {
 	if len(addresses) == 0 {
 		return nil, nil
@@ -595,15 +671,25 @@ func (as *ovnAddressSet) addAddresses(addresses []string) ([]ovsdb.Operation, er
 		return nil, nil
 	}
 
-	klog.V(5).Infof("(%s) adding Addresses (%s) to address set", asDetail(as), uniqAddresses)
+	return as.addAddressesUnchecked(uniqAddresses)
+}
+
+// addAddressesUnchecked builds add ops without checking existing OVN addresses.
+// addresses must already be unique (callers uniquify once before invoking).
+func (as *ovnAddressSet) addAddressesUnchecked(addresses []string) ([]ovsdb.Operation, error) {
+	if len(addresses) == 0 {
+		return nil, nil
+	}
+
+	klog.V(5).Infof("(%s) adding Addresses (%s) to address set", asDetail(as), addresses)
 
 	addrset := nbdb.AddressSet{
 		UUID: as.uuid,
 		Name: as.hashName,
 	}
-	ops, err := libovsdbops.AddAddressesToAddressSetOps(as.nbClient, nil, &addrset, uniqAddresses...)
+	ops, err := libovsdbops.AddAddressesToAddressSetOps(as.nbClient, nil, &addrset, addresses...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to add addresses %v to address set %+v: %v", uniqAddresses, addrset, err)
+		return nil, fmt.Errorf("failed to add addresses %v to address set %+v: %v", addresses, addrset, err)
 	}
 
 	return ops, nil
@@ -714,7 +800,22 @@ func splitAddressesByFamily(addresses []string) (v4, v6 []string) {
 	return
 }
 
-// Takes a slice of addresses and returns a slice with unique address strings
+// GetUniqueAddresses returns a slice with unique address strings. Exported for callers
+// (e.g. AddressSetManager) that need the same dedupe used by SetAddresses / AddAddresses.
+func GetUniqueAddresses(addresses []string) []string {
+	return getUniqueAddresses(addresses)
+}
+
+// NormalizeAddressChanges dedupes each slice and drops addresses present in both toAdd and
+// toRemove (net no-ops that would otherwise emit remove-then-add mutations).
+func NormalizeAddressChanges(toAdd, toRemove []string) (add, remove []string) {
+	addSet := sets.New(toAdd...)
+	removeSet := sets.New(toRemove...)
+	both := addSet.Intersection(removeSet)
+	return addSet.Difference(both).UnsortedList(), removeSet.Difference(both).UnsortedList()
+}
+
+// getUniqueAddresses returns a slice with unique address strings.
 func getUniqueAddresses(addresses []string) []string {
 	s := sets.New[string]()
 	for _, address := range addresses {
