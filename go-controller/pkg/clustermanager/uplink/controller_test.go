@@ -664,6 +664,31 @@ func TestUplinkControllerPropagatesCUDNUplinkStateGatewayFailure(t *testing.T) {
 	))
 }
 
+func TestUplinkControllerPropagatesCUDNUplinkConfigurationConflict(t *testing.T) {
+	g := gomega.NewWithT(t)
+	setSharedGatewayMode(t)
+	controller, client := newTestController(t,
+		newNode("node-a", map[string]string{"role": "blue"}),
+		newUplink("br-blue", "role", "blue", "br-blue"),
+		newGatewayFailedUplinkState(
+			"br-blue",
+			"node-a",
+			"br-blue",
+			uplinkv1alpha1.UplinkStateReasonConfigurationConflict,
+		),
+		newCUDN("blue", "br-blue"),
+	)
+
+	g.Expect(controller.reconcileCUDN("blue")).To(gomega.Succeed())
+
+	cond := getCUDNCondition(g, client, "blue", conditionTypeUplinksReady)
+	g.Expect(cond).To(gomega.And(
+		gomega.HaveField("Status", metav1.ConditionFalse),
+		gomega.HaveField("Reason", reasonUplinkConfigurationConflict),
+		gomega.HaveField("Message", gomega.ContainSubstring("br-blue/node-a=UplinkConfigurationConflict")),
+	))
+}
+
 func TestUplinkControllerSummarizesMixedCUDNUplinkFailures(t *testing.T) {
 	g := gomega.NewWithT(t)
 	setSharedGatewayMode(t)

@@ -173,6 +173,7 @@ EOF
     --kubeconfig "${HOST_KUBECONFIG}" \
     --dpu-mode host \
     --network-segmentation-enable \
+    --dynamic-udn-allocation \
     --multi-network-enable \
     --route-advertisements-enable \
     --no-overlay-enable \
@@ -196,6 +197,7 @@ install_ovnk_dpu() {
     --dpu-mode dpu \
     --multi-network-enable \
     --network-segmentation-enable \
+    --dynamic-udn-allocation \
     --route-advertisements-enable \
     --no-overlay-enable \
     --advertise-default-network \

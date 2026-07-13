@@ -35,6 +35,19 @@ type vrf struct {
 	routes        []netlink.Route
 }
 
+// VRFSlaveConflictError reports that an interface is already assigned to a
+// different VRF and cannot be moved without disrupting its current network.
+type VRFSlaveConflictError struct {
+	Interface    string
+	RequestedVRF string
+	ExistingVRF  string
+}
+
+func (e *VRFSlaveConflictError) Error() string {
+	return fmt.Sprintf("interface %s is already assigned to VRF %s and cannot be assigned to VRF %s",
+		e.Interface, e.ExistingVRF, e.RequestedVRF)
+}
+
 type Controller struct {
 	mu           *sync.Mutex
 	vrfs         map[int]vrf
@@ -319,6 +332,31 @@ func (vrfm *Controller) AddVRFSlave(name string, slaveInterface string) error {
 	vrfDev, ok := vrfm.vrfs[vrfLink.Attrs().Index]
 	if !ok {
 		return fmt.Errorf("failed to find VRF %s", name)
+	}
+	for _, existingVRF := range vrfm.vrfs {
+		if existingVRF.name != name && existingVRF.managedSlaves.Has(slaveInterface) {
+			return &VRFSlaveConflictError{
+				Interface:    slaveInterface,
+				RequestedVRF: name,
+				ExistingVRF:  existingVRF.name,
+			}
+		}
+	}
+
+	slaveLink, err := util.GetNetLinkOps().LinkByName(slaveInterface)
+	if err != nil {
+		return fmt.Errorf("failed to retrieve slave interface %s: %v", slaveInterface, err)
+	}
+	if slaveLink.Attrs().MasterIndex != 0 && slaveLink.Attrs().MasterIndex != vrfLink.Attrs().Index {
+		masterLink, err := util.GetNetLinkOps().LinkByIndex(slaveLink.Attrs().MasterIndex)
+		if err != nil {
+			return fmt.Errorf("failed to retrieve master for slave interface %s: %v", slaveInterface, err)
+		}
+		return &VRFSlaveConflictError{
+			Interface:    slaveInterface,
+			RequestedVRF: name,
+			ExistingVRF:  masterLink.Attrs().Name,
+		}
 	}
 	vrfDev.managedSlaves.Insert(slaveInterface)
 	return vrfm.sync(vrfDev)

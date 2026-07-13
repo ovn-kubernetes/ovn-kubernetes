@@ -260,6 +260,11 @@ deployments, the DPU-local bridge interface is attached to the CUDN VRF on the
 DPU side. FRR peers in that VRF, and ovnkube reflects the routes learned in
 that VRF into the OVN gateway routers for the CUDN.
 
+Multiple Dynamic CUDNs may use the same Uplink with `targetVRF: auto` when
+their active node sets do not overlap. If more than one such CUDN becomes
+active on the same node, the Uplink bridge cannot be attached to both CUDN
+VRFs and OVN-Kubernetes reports `UplinkConfigurationConflict`.
+
 Example RouteAdvertisements for VRF-Lite:
 
 ```yaml
@@ -349,6 +354,9 @@ Common problems:
 * `UplinkState` with `GatewayReady` condition status `False` and reason
   `UplinkVRFAttachmentFailed`: OVN-Kubernetes could not attach or detach the
   Uplink gateway interface for the CUDN routing domain.
+* `UplinkState` with `GatewayReady` condition status `False` and reason
+  `UplinkConfigurationConflict`: the resolved Uplink bridge is already
+  attached to a different VRF on this node.
 * CUDN with `UplinksReady` condition status `False` and reason
   `UplinkNotReadyForNode`: at least one active node for the CUDN does not have
   a ready matching `UplinkState`.
@@ -358,6 +366,9 @@ Common problems:
 * CUDN with `UplinksReady` condition status `False` and reason
   `UplinkOverlapOnNode`: multiple `nodeConfigs` in the referenced Uplink select
   the same active node.
+* CUDN with `UplinksReady` condition status `False` and reason
+  `UplinkConfigurationConflict`: the CUDN is part of an unsupported same-node
+  Uplink bridge sharing configuration.
 * CUDN with `UplinksReady` condition status `False` and reason
   `UplinkUnsupportedGatewayMode`: the cluster is not running shared gateway
   mode.

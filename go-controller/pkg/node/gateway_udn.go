@@ -5,6 +5,7 @@ package node
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"time"
@@ -1287,14 +1288,17 @@ func (udng *UserDefinedNetworkGateway) reconcileUplinkGatewayVRFSlave(vrfDeviceN
 		}
 		if err := udng.vrfManager.AddVRFSlave(vrfDeviceName, udng.gwInterfaceName); err != nil {
 			return udng.setUplinkStateGatewayFailure(
-				uplinkv1alpha1.UplinkStateReasonVRFAttachmentFailed,
+				uplinkVRFAttachmentFailureReason(err),
 				fmt.Errorf("could not add Uplink gateway interface %s to VRF %s for network %s: %w",
 					udng.gwInterfaceName, vrfDeviceName, udng.GetNetworkName(), err),
 			)
 		}
-		return udng.clearUplinkStateGatewayFailure(
+		if err := udng.clearUplinkStateGatewayFailure(
 			uplinkv1alpha1.UplinkStateReasonVRFAttachmentFailed,
-		)
+		); err != nil {
+			return err
+		}
+		return udng.clearUplinkStateGatewayFailure(uplinkv1alpha1.UplinkStateReasonConfigurationConflict)
 	}
 
 	if err := udng.vrfManager.DeleteVRFSlave(vrfDeviceName, udng.gwInterfaceName); err != nil {
@@ -1304,9 +1308,20 @@ func (udng *UserDefinedNetworkGateway) reconcileUplinkGatewayVRFSlave(vrfDeviceN
 				udng.gwInterfaceName, vrfDeviceName, udng.GetNetworkName(), err),
 		)
 	}
-	return udng.clearUplinkStateGatewayFailure(
+	if err := udng.clearUplinkStateGatewayFailure(
 		uplinkv1alpha1.UplinkStateReasonVRFAttachmentFailed,
-	)
+	); err != nil {
+		return err
+	}
+	return udng.clearUplinkStateGatewayFailure(uplinkv1alpha1.UplinkStateReasonConfigurationConflict)
+}
+
+func uplinkVRFAttachmentFailureReason(err error) string {
+	var conflict *vrfmanager.VRFSlaveConflictError
+	if errors.As(err, &conflict) {
+		return uplinkv1alpha1.UplinkStateReasonConfigurationConflict
+	}
+	return uplinkv1alpha1.UplinkStateReasonVRFAttachmentFailed
 }
 
 // updateUDNVRFIPRules updates IP rules for a network depending on whether the

@@ -66,6 +66,7 @@ const (
 	reasonUplinkTerminating            = "UplinkTerminating"
 	reasonUplinkVRFAttachmentFailed    = "UplinkVRFAttachmentFailed"
 	reasonUplinkBridgeMappingFailed    = "UplinkBridgeMappingFailed"
+	reasonUplinkConfigurationConflict  = "UplinkConfigurationConflict"
 
 	networkRefSeparator = "\x00"
 )
@@ -739,6 +740,8 @@ func cudnUplinkStateGatewayNotReadyReason(state *uplinkv1alpha1.UplinkState) str
 		return reasonUplinkVRFAttachmentFailed
 	case uplinkv1alpha1.UplinkStateReasonBridgeMappingFailed:
 		return reasonUplinkBridgeMappingFailed
+	case uplinkv1alpha1.UplinkStateReasonConfigurationConflict:
+		return reasonUplinkConfigurationConflict
 	default:
 		return reasonUplinkNotReadyForNode
 	}

@@ -542,6 +542,22 @@ func TestUplinkStateGatewayReadyCondition(t *testing.T) {
 	}
 }
 
+func TestUplinkVRFAttachmentFailureReason(t *testing.T) {
+	conflictErr := fmt.Errorf("failed to attach: %w", &vrfmanager.VRFSlaveConflictError{
+		Interface:    "breth1",
+		RequestedVRF: "blue",
+		ExistingVRF:  "red",
+	})
+	if got := uplinkVRFAttachmentFailureReason(conflictErr); got != uplinkv1alpha1.UplinkStateReasonConfigurationConflict {
+		t.Fatalf("expected configuration conflict reason, got %q", got)
+	}
+
+	got := uplinkVRFAttachmentFailureReason(fmt.Errorf("netlink failed"))
+	if got != uplinkv1alpha1.UplinkStateReasonVRFAttachmentFailed {
+		t.Fatalf("expected VRF attachment failure reason, got %q", got)
+	}
+}
+
 func TestGetDefaultRouteDoesNotFallBackForUplinkWithoutNextHops(t *testing.T) {
 	if err := config.PrepareTestConfig(); err != nil {
 		t.Fatalf("failed to prepare test config: %v", err)

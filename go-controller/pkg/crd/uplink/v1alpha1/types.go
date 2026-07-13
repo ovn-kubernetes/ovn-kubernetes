@@ -35,6 +35,7 @@ const (
 	UplinkStateReasonNodeSelectorOverlap             = "NodeSelectorOverlap"
 	UplinkStateReasonVRFAttachmentFailed             = "UplinkVRFAttachmentFailed"
 	UplinkStateReasonBridgeMappingFailed             = "UplinkBridgeMappingFailed"
+	UplinkStateReasonConfigurationConflict           = "UplinkConfigurationConflict"
 )
 
 // InterfaceName is a Linux interface name.

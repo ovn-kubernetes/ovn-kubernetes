@@ -232,7 +232,9 @@ jobs:
           export ENABLE_NETWORK_SEGMENTATION=true
           export ENABLE_ROUTE_ADVERTISEMENTS=true
           export ENABLE_NO_OVERLAY=true
+          export DYNAMIC_UDN_ALLOCATION=true
           make -C test control-plane WHAT="Network Segmentation Uplink route advertisements uses the Uplink interface as the targetVRF auto BGP peering path"
+          make -C test control-plane WHAT="Uplink route advertisements with Dynamic UDN allocation allows node-disjoint Dynamic CUDNs to share a targetVRF auto Uplink and rejects overlap"
 
       - name: Export kind logs on failure
         if: failure()
