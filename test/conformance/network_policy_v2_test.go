@@ -44,8 +44,7 @@ func TestNetworkPolicyV2Conformance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error when creating Kubernetes ClientSet: %v", err)
 	}
-	err = netpolv1alpha1.AddToScheme(client.Scheme())
-	if err != nil {
+	if err = netpolv1alpha1.Install(client.Scheme()); err != nil {
 		t.Fatalf("Error initializing API scheme: %v", err)
 	}
 
