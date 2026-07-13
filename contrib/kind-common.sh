@@ -583,7 +583,7 @@ align_metallb_pool_with_ip_family() {
 }
 
 install_metallb() {
-  local metallb_version=v0.15.3
+  local metallb_version=v0.16.0
   mkdir -p /tmp/metallb
   local builddir
   builddir=$(mktemp -d "${METALLB_DIR}/XXXXXX")
@@ -608,15 +608,15 @@ install_metallb() {
   # setup and coredump debugging.
   replace_in_file_or_exit \
     config/frr/speaker-patch.yaml \
-    "${FRR_K8S_UPSTREAM_FRR_IMAGE}" \
+    "${METALLB_UPSTREAM_FRR_IMAGE}" \
     "${FRR_DEPLOYED_IMAGE}"
   replace_in_file_or_exit \
     config/manifests/metallb-frr.yaml \
-    "${FRR_K8S_UPSTREAM_FRR_IMAGE}" \
+    "${METALLB_UPSTREAM_FRR_IMAGE}" \
     "${FRR_DEPLOYED_IMAGE}"
   replace_in_file_or_exit \
     charts/metallb/values.yaml \
-    "tag: ${FRR_K8S_UPSTREAM_FRR_IMAGE##*:}" \
+    "tag: ${METALLB_UPSTREAM_FRR_IMAGE##*:}" \
     "tag: ${FRR_DEPLOYED_IMAGE##*:}"
 
   pip install -r dev-env/requirements.txt
@@ -1214,6 +1214,7 @@ get_kubevirt_release_url() {
 readonly FRR_K8S_VERSION=v0.0.0-20260603082256-b43efcb206be
 readonly FRR_K8S_GIT_REF=b43efcb206be
 readonly FRR_K8S_UPSTREAM_FRR_IMAGE=quay.io/frrouting/frr:10.4.1
+readonly METALLB_UPSTREAM_FRR_IMAGE=quay.io/frrouting/frr:10.5.3
 readonly FRR_K8S_ALL_IN_ONE_UPSTREAM_FRR_IMAGE=quay.io/frrouting/frr:10.4.3
 readonly FRR_DEPLOYED_IMAGE=quay.io/frrouting/frr:10.6.0
 # Override to test newer FRR builds in the in-cluster frr-k8s daemonset
