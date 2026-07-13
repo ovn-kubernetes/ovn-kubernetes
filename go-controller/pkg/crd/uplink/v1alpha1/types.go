@@ -21,19 +21,20 @@ const (
 )
 
 const (
-	UplinkStateReasonReady                  = "Ready"
-	UplinkStateReasonHostInterfaceNotFound  = "HostInterfaceNotFound"
-	UplinkStateReasonBridgeNotFound         = "BridgeNotFound"
-	UplinkStateReasonBridgeUplinkNotFound   = "BridgeUplinkNotFound"
-	UplinkStateReasonBridgeInvalid          = "BridgeInvalid"
-	UplinkStateReasonInvalidHostInterface   = "InvalidHostInterface"
-	UplinkStateReasonGatewayInfoUnavailable = "GatewayInfoUnavailable"
-	UplinkStateReasonWaitingForDPU          = "WaitingForDPU"
-	UplinkStateReasonWaitingForDPUHost      = "WaitingForDPUHost"
-	UplinkStateReasonNodeNotSelected        = "NodeNotSelected"
-	UplinkStateReasonNodeSelectorOverlap    = "NodeSelectorOverlap"
-	UplinkStateReasonVRFAttachmentFailed    = "UplinkVRFAttachmentFailed"
-	UplinkStateReasonBridgeMappingFailed    = "UplinkBridgeMappingFailed"
+	UplinkStateReasonReady                           = "Ready"
+	UplinkStateReasonHostInterfaceNotFound           = "HostInterfaceNotFound"
+	UplinkStateReasonBridgeNotFound                  = "BridgeNotFound"
+	UplinkStateReasonBridgeUplinkNotFound            = "BridgeUplinkNotFound"
+	UplinkStateReasonBridgeInvalid                   = "BridgeInvalid"
+	UplinkStateReasonDefaultGatewayBridgeUnsupported = "DefaultGatewayBridgeUnsupported"
+	UplinkStateReasonInvalidHostInterface            = "InvalidHostInterface"
+	UplinkStateReasonGatewayInfoUnavailable          = "GatewayInfoUnavailable"
+	UplinkStateReasonWaitingForDPU                   = "WaitingForDPU"
+	UplinkStateReasonWaitingForDPUHost               = "WaitingForDPUHost"
+	UplinkStateReasonNodeNotSelected                 = "NodeNotSelected"
+	UplinkStateReasonNodeSelectorOverlap             = "NodeSelectorOverlap"
+	UplinkStateReasonVRFAttachmentFailed             = "UplinkVRFAttachmentFailed"
+	UplinkStateReasonBridgeMappingFailed             = "UplinkBridgeMappingFailed"
 )
 
 // InterfaceName is a Linux interface name.

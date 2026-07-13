@@ -32,6 +32,7 @@ This feature does not currently support:
 * Local gateway mode.
 * EVPN transport.
 * Creating or configuring the external OVS bridge.
+* Reusing the cluster default shared gateway bridge as an Uplink.
 * More than one Uplink per CUDN.
 
 ## API Overview
@@ -338,6 +339,10 @@ Common problems:
 * `UplinkState` with `Ready` condition status `False` and reason
   `BridgeInvalid`: the selected bridge is not a valid external bridge, for
   example `br-int`.
+* `UplinkState` with `Ready` condition status `False` and reason
+  `DefaultGatewayBridgeUnsupported`: the selected bridge is the cluster
+  default shared gateway bridge, which cannot currently be reused as an
+  Uplink.
 * `UplinkState` with `GatewayReady` condition status `False` and reason
   `UplinkBridgeMappingFailed`: OVN-Kubernetes could not configure the CUDN
   bridge mapping on the resolved OVS bridge.

@@ -89,6 +89,16 @@ func TestNodeNeedsUpdate(t *testing.T) {
 	updatedLocalNode.Labels = map[string]string{"example.com/uplink": "blue"}
 	g.Expect(controller.nodeNeedsUpdate(localNode, updatedLocalNode)).To(gomega.BeTrue())
 
+	updatedLocalNode = localNode.DeepCopy()
+	updatedLocalNode.Annotations = map[string]string{
+		util.OvnNodeL3GatewayConfig: `{"default":{"mode":"shared","bridge-id":"breth0"}}`,
+	}
+	g.Expect(controller.nodeNeedsUpdate(localNode, updatedLocalNode)).To(gomega.BeTrue())
+
+	updatedLocalNode = localNode.DeepCopy()
+	updatedLocalNode.Annotations = map[string]string{util.OvnNodeChassisID: "chassis-id"}
+	g.Expect(controller.nodeNeedsUpdate(localNode, updatedLocalNode)).To(gomega.BeTrue())
+
 	updatedRemoteNode := remoteNode.DeepCopy()
 	updatedRemoteNode.Labels = map[string]string{"example.com/uplink": "blue"}
 	g.Expect(controller.nodeNeedsUpdate(remoteNode, updatedRemoteNode)).To(gomega.BeFalse())
@@ -214,12 +224,69 @@ func TestNodeUplinkControllerPublishesReadyState(t *testing.T) {
 	g.Expect(state.Status.MACAddress).To(gomega.Equal(uplinkv1alpha1.MACAddress("02:42:ac:12:00:02")))
 	g.Expect(state.Status.IPAddresses).To(gomega.Equal([]uplinkv1alpha1.IPAddressCIDR{"192.0.2.10/24"}))
 	g.Expect(state.Status.DefaultGateways).To(gomega.Equal([]uplinkv1alpha1.IPAddress{"192.0.2.1"}))
+	g.Expect(state.Status.OVSBridge).NotTo(gomega.BeNil())
 	g.Expect(state.Status.OVSBridge.Name).To(gomega.Equal("br-blue"))
 	g.Expect(state.Status.Conditions).To(gomega.ContainElement(gomega.And(
 		gomega.HaveField("Type", uplinkv1alpha1.UplinkStateConditionReady),
 		gomega.HaveField("Status", metav1.ConditionTrue),
 		gomega.HaveField("Reason", uplinkv1alpha1.UplinkStateReasonReady),
 	)))
+}
+
+func TestNodeUplinkControllerRejectsDefaultGatewayBridge(t *testing.T) {
+	tests := []struct {
+		name string
+		mode string
+	}{
+		{
+			name: "Full",
+			mode: ovntypes.NodeModeFull,
+		},
+		{
+			name: "DPU",
+			mode: ovntypes.NodeModeDPU,
+		},
+		{
+			name: "DPU host",
+			mode: ovntypes.NodeModeDPUHost,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+			config.OvnKubeNode.Mode = test.mode
+
+			state := newUplinkState("br-blue.node-a", "br-blue", "node-a")
+			if test.mode == ovntypes.NodeModeDPU || test.mode == ovntypes.NodeModeDPUHost {
+				state = newHostReadyUplinkState("br-blue.node-a", "br-blue", "node-a", "uplink0")
+			}
+			if test.mode == ovntypes.NodeModeDPUHost {
+				state.Status.OVSBridge = &uplinkv1alpha1.OVSBridgeStatus{Name: "br-default"}
+			}
+
+			controller, client := newTestController(t,
+				fakeHostDiscoverer{state: newStatusTestHostState()},
+				fakeBridgeResolver{bridgeName: "br-default"},
+				newNodeWithDefaultGatewayBridge("node-a", map[string]string{"role": "blue"}, "br-default"),
+				newUplink("br-blue", "role", "blue", "uplink0"),
+				state,
+			)
+
+			g.Expect(controller.reconcileUplinkState("br-blue.node-a")).To(gomega.Succeed())
+
+			state = getUplinkState(g, client, "br-blue.node-a")
+			g.Expect(state.Status.OVSBridge).NotTo(gomega.BeNil())
+			g.Expect(state.Status.OVSBridge.Name).To(gomega.Equal("br-default"))
+			g.Expect(state.Status.Conditions).To(gomega.ContainElement(gomega.And(
+				gomega.HaveField("Type", uplinkv1alpha1.UplinkStateConditionReady),
+				gomega.HaveField("Status", metav1.ConditionFalse),
+				gomega.HaveField("Reason", uplinkv1alpha1.UplinkStateReasonDefaultGatewayBridgeUnsupported),
+				gomega.HaveField("Message", gomega.ContainSubstring("default shared gateway bridge br-default")),
+			)))
+		})
+	}
 }
 
 func TestNodeUplinkControllerSkipsUnchangedStatus(t *testing.T) {
@@ -644,9 +711,22 @@ func newTestController(
 }
 
 func newNode(name string, nodeLabels map[string]string) *corev1.Node {
+	return newNodeWithDefaultGatewayBridge(name, nodeLabels, "breth0")
+}
+
+func newNodeWithDefaultGatewayBridge(name string, nodeLabels map[string]string, bridgeName string) *corev1.Node {
 	return &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:   name,
+			Name: name,
+			Annotations: map[string]string{
+				util.OvnNodeChassisID: "chassis-id",
+				util.OvnNodeL3GatewayConfig: fmt.Sprintf(
+					`{"default":{"mode":"shared","bridge-id":%q,"interface-id":"breth0_node-a",`+
+						`"mac-address":"02:42:ac:12:00:01","ip-addresses":["192.0.2.2/24"],`+
+						`"next-hops":["192.0.2.1"],"node-port-enable":"true"}}`,
+					bridgeName,
+				),
+			},
 			Labels: nodeLabels,
 		},
 	}

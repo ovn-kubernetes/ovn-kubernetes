@@ -276,8 +276,9 @@ func (c *Controller) reconcileUplinkState(key string) error {
 	}
 
 	hostInterfaceName := string(nodeConfig.HostInterfaceName)
+	var hostState *hostInterfaceState
 	if config.OvnKubeNode.Mode == ovntypes.NodeModeDPU {
-		hostState, err := hostInterfaceStateFromStatus(state, hostInterfaceName)
+		hostState, err = hostInterfaceStateFromStatus(state, hostInterfaceName)
 		if err != nil {
 			return c.updateUplinkStateStatus(
 				state,
@@ -289,6 +290,35 @@ func (c *Controller) reconcileUplinkState(key string) error {
 				err.Error(),
 			)
 		}
+	} else {
+		hostState, err = c.hostDiscoverer.Discover(hostInterfaceName)
+		if err != nil {
+			return c.updateUplinkStateStatus(
+				state,
+				hostInterfaceName,
+				nil,
+				"",
+				metav1.ConditionFalse,
+				discoveryReason(err),
+				err.Error(),
+			)
+		}
+	}
+
+	defaultBridgeName, err := defaultGatewayBridgeName(node)
+	if err != nil {
+		return c.updateUplinkStateStatus(
+			state,
+			hostInterfaceName,
+			hostState,
+			"",
+			metav1.ConditionFalse,
+			discoveryReason(err),
+			err.Error(),
+		)
+	}
+
+	if config.OvnKubeNode.Mode == ovntypes.NodeModeDPU {
 		bridgeName, err := c.bridgeResolver.ResolveByHostMAC(hostState.macAddress, c.nodeName)
 		if err != nil {
 			return c.updateUplinkStateStatus(
@@ -301,7 +331,7 @@ func (c *Controller) reconcileUplinkState(key string) error {
 				err.Error(),
 			)
 		}
-		if err := c.validateBridgeUplink(bridgeName, hostInterfaceName, false); err != nil {
+		if err := c.validateBridgeUplink(bridgeName, hostInterfaceName, defaultBridgeName, false); err != nil {
 			return c.updateUplinkStateStatus(
 				state,
 				hostInterfaceName,
@@ -321,20 +351,22 @@ func (c *Controller) reconcileUplinkState(key string) error {
 		)
 	}
 
-	hostState, err := c.hostDiscoverer.Discover(hostInterfaceName)
-	if err != nil {
-		return c.updateUplinkStateStatus(
-			state,
-			hostInterfaceName,
-			nil,
-			"",
-			metav1.ConditionFalse,
-			discoveryReason(err),
-			err.Error(),
-		)
-	}
-
 	if config.OvnKubeNode.Mode == ovntypes.NodeModeDPUHost {
+		bridgeName := ""
+		if string(state.Status.HostInterfaceName) == hostInterfaceName && state.Status.OVSBridge != nil {
+			bridgeName = state.Status.OVSBridge.Name
+		}
+		if err := validateDefaultGatewayBridge(bridgeName, defaultBridgeName); err != nil {
+			return c.updateUplinkStateStatus(
+				state,
+				hostInterfaceName,
+				hostState,
+				"",
+				metav1.ConditionFalse,
+				discoveryReason(err),
+				err.Error(),
+			)
+		}
 		if dpuSideBridgeReadyForHostInterface(state, hostInterfaceName) {
 			// The DPU side has resolved the OVS bridge. The DPU-host side
 			// now publishes host interface details under its field manager.
@@ -369,7 +401,7 @@ func (c *Controller) reconcileUplinkState(key string) error {
 			err.Error(),
 		)
 	}
-	if err := c.validateBridgeUplink(bridgeName, hostInterfaceName, true); err != nil {
+	if err := c.validateBridgeUplink(bridgeName, hostInterfaceName, defaultBridgeName, true); err != nil {
 		return c.updateUplinkStateStatus(
 			state,
 			hostInterfaceName,
@@ -407,9 +439,28 @@ func selectedNodeConfigForNode(
 	return selected, nil
 }
 
+func defaultGatewayBridgeName(node *corev1.Node) (string, error) {
+	gatewayConfig, err := util.ParseNodeL3GatewayAnnotation(node)
+	if err != nil {
+		return "", newDiscoveryError(
+			uplinkv1alpha1.UplinkStateReasonGatewayInfoUnavailable,
+			fmt.Errorf("failed to determine the default shared gateway bridge for node %q: %w",
+				node.Name, err),
+		)
+	}
+	if gatewayConfig.BridgeID == "" {
+		return "", newDiscoveryError(
+			uplinkv1alpha1.UplinkStateReasonGatewayInfoUnavailable,
+			fmt.Errorf("default shared gateway bridge is not available for node %q", node.Name),
+		)
+	}
+	return gatewayConfig.BridgeID, nil
+}
+
 func (c *Controller) validateBridgeUplink(
 	bridgeName string,
 	hostInterfaceName string,
+	defaultGatewayBridgeName string,
 	rejectHostInterfaceAsUplink bool,
 ) error {
 	if bridgeName == ovsIntegrationBridge {
@@ -418,6 +469,9 @@ func (c *Controller) validateBridgeUplink(
 			fmt.Errorf("OVN integration bridge %s cannot be used as an Uplink bridge",
 				bridgeName),
 		)
+	}
+	if err := validateDefaultGatewayBridge(bridgeName, defaultGatewayBridgeName); err != nil {
+		return err
 	}
 	uplinkName, err := c.bridgeResolver.BridgeUplink(bridgeName)
 	if err != nil {
@@ -431,6 +485,16 @@ func (c *Controller) validateBridgeUplink(
 		)
 	}
 	return nil
+}
+
+func validateDefaultGatewayBridge(bridgeName, defaultGatewayBridgeName string) error {
+	if bridgeName != defaultGatewayBridgeName {
+		return nil
+	}
+	return newDiscoveryError(
+		uplinkv1alpha1.UplinkStateReasonDefaultGatewayBridgeUnsupported,
+		fmt.Errorf("default shared gateway bridge %s cannot be used as an Uplink bridge", bridgeName),
+	)
 }
 
 func (c *Controller) updateReadyUplinkStateStatus(
@@ -800,7 +864,12 @@ func (c *Controller) nodeNeedsUpdate(oldObj, newObj *corev1.Node) bool {
 	if oldObj == nil {
 		return true
 	}
+	// ParseNodeL3GatewayAnnotation requires a chassis ID for enabled gateways.
+	// Watch its initial population so reconciliation recovers from a missing
+	// annotation even though Uplink discovery does not use the chassis ID itself.
 	return !reflect.DeepEqual(oldObj.Labels, newObj.Labels) ||
+		util.NodeL3GatewayAnnotationChanged(oldObj, newObj) ||
+		util.NodeChassisIDAnnotationChanged(oldObj, newObj) ||
 		oldObj.DeletionTimestamp.IsZero() != newObj.DeletionTimestamp.IsZero()
 }
 
