@@ -160,7 +160,7 @@ func (hcs *server) SyncServices(newServices map[types.NamespacedName]uint16) err
 						Namespace: nsn.Namespace,
 						Name:      nsn.Name,
 						UID:       types.UID(nsn.String()),
-					}, corev1.EventTypeWarning, "FailedToStartServiceHealthcheck", err.Error())
+					}, corev1.EventTypeWarning, "FailedToStartServiceHealthcheck", "%s", err.Error())
 			}
 			errors = append(errors, err)
 			continue
