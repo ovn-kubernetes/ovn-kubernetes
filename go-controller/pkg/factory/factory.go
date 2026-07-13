@@ -334,10 +334,6 @@ func NewOVNKubeControllerWatchFactory(ovnClientset *util.OVNKubeControllerClient
 		stopChan:             make(chan struct{}),
 	}
 
-	if err := anpapi.AddToScheme(anpscheme.Scheme); err != nil {
-		return nil, err
-	}
-
 	if err := egressipapi.AddToScheme(egressipscheme.Scheme); err != nil {
 		return nil, err
 	}
