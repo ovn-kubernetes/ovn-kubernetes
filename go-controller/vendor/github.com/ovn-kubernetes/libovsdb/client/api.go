@@ -128,7 +128,7 @@ func (a api) List(ctx context.Context, result any) error {
 	}
 
 	resultPtr := reflect.ValueOf(result)
-	if resultPtr.Type().Kind() != reflect.Ptr {
+	if resultPtr.Type().Kind() != reflect.Pointer {
 		return &ErrWrongType{resultPtr.Type(), "Expected pointer to slice of valid Models"}
 	}
 
@@ -141,7 +141,7 @@ func (a api) List(ctx context.Context, result any) error {
 	// structs
 	var appendValue func(reflect.Value)
 	var m model.Model
-	if resultVal.Type().Elem().Kind() == reflect.Ptr {
+	if resultVal.Type().Elem().Kind() == reflect.Pointer {
 		m = reflect.New(resultVal.Type().Elem().Elem()).Interface()
 		appendValue = func(v reflect.Value) {
 			resultVal.Set(reflect.Append(resultVal, v))
@@ -158,9 +158,14 @@ func (a api) List(ctx context.Context, result any) error {
 		return err
 	}
 
-	if a.cond != nil && a.cond.Table() != table {
-		return &ErrWrongType{resultPtr.Type(),
-			fmt.Sprintf("Table derived from input type (%s) does not match Table from Condition (%s)", table, a.cond.Table())}
+	if a.cond != nil {
+		if errCond, ok := a.cond.(*errorConditional); ok {
+			return errCond.err
+		}
+		if a.cond.Table() != table {
+			return &ErrWrongType{resultPtr.Type(),
+				fmt.Sprintf("Table derived from input type (%s) does not match Table from Condition (%s)", table, a.cond.Table())}
+		}
 	}
 
 	tableCache := a.cache.Table(table)
@@ -635,6 +640,9 @@ func (a api) getTableFromFunc(predicate any) (string, error) {
 	predType := reflect.TypeOf(predicate)
 	if predType == nil || predType.Kind() != reflect.Func {
 		return "", &ErrWrongType{predType, "Expected function"}
+	}
+	if reflect.ValueOf(predicate).IsNil() {
+		return "", &ErrWrongType{predType, "Expected non-nil function"}
 	}
 	if predType.NumIn() != 1 || predType.NumOut() != 1 || predType.Out(0).Kind() != reflect.Bool {
 		return "", &ErrWrongType{predType, "Expected func(Model) bool"}

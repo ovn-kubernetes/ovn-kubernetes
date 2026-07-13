@@ -106,7 +106,7 @@ github.com/fsnotify/fsnotify/internal
 # github.com/fxamacker/cbor/v2 v2.9.0
 ## explicit; go 1.20
 github.com/fxamacker/cbor/v2
-# github.com/gabriel-vasile/mimetype v1.4.10
+# github.com/gabriel-vasile/mimetype v1.4.13
 ## explicit; go 1.21
 github.com/gabriel-vasile/mimetype
 github.com/gabriel-vasile/mimetype/internal/charset
@@ -148,8 +148,8 @@ github.com/go-playground/locales/currency
 # github.com/go-playground/universal-translator v0.18.1
 ## explicit; go 1.18
 github.com/go-playground/universal-translator
-# github.com/go-playground/validator/v10 v10.28.0
-## explicit; go 1.24.0
+# github.com/go-playground/validator/v10 v10.30.3
+## explicit; go 1.25.0
 github.com/go-playground/validator/v10
 # github.com/go-task/slim-sprig/v3 v3.0.0
 ## explicit; go 1.20
@@ -419,8 +419,8 @@ github.com/openshift/custom-resource-status/conditions/v1
 # github.com/ovn-kubernetes/dpu-simulator/lib/dpusim v0.0.0-20260507161134-3aec48e5cb25
 ## explicit; go 1.25.0
 github.com/ovn-kubernetes/dpu-simulator/lib/dpusim
-# github.com/ovn-kubernetes/libovsdb v0.8.2-0.20260302130604-c07ce22366ac
-## explicit; go 1.24.0
+# github.com/ovn-kubernetes/libovsdb v0.8.2-0.20260302130604-c07ce22366ac => github.com/dave-tucker/libovsdb v0.5.2-0.20260710115505-f86dbc30de0a
+## explicit; go 1.25.0
 github.com/ovn-kubernetes/libovsdb/cache
 github.com/ovn-kubernetes/libovsdb/client
 github.com/ovn-kubernetes/libovsdb/database
@@ -542,8 +542,8 @@ go.yaml.in/yaml/v2
 # go.yaml.in/yaml/v3 v3.0.4
 ## explicit; go 1.16
 go.yaml.in/yaml/v3
-# golang.org/x/crypto v0.46.0
-## explicit; go 1.24.0
+# golang.org/x/crypto v0.52.0
+## explicit; go 1.25.0
 golang.org/x/crypto/cryptobyte
 golang.org/x/crypto/cryptobyte/asn1
 golang.org/x/crypto/ed25519
@@ -552,11 +552,11 @@ golang.org/x/crypto/sha3
 ## explicit; go 1.20
 golang.org/x/exp/constraints
 golang.org/x/exp/maps
-# golang.org/x/mod v0.30.0
-## explicit; go 1.24.0
+# golang.org/x/mod v0.35.0
+## explicit; go 1.25.0
 golang.org/x/mod/semver
-# golang.org/x/net v0.48.0
-## explicit; go 1.24.0
+# golang.org/x/net v0.54.0
+## explicit; go 1.25.0
 golang.org/x/net/bpf
 golang.org/x/net/context
 golang.org/x/net/html
@@ -568,6 +568,7 @@ golang.org/x/net/http2/hpack
 golang.org/x/net/icmp
 golang.org/x/net/idna
 golang.org/x/net/internal/httpcommon
+golang.org/x/net/internal/httpsfv
 golang.org/x/net/internal/iana
 golang.org/x/net/internal/socket
 golang.org/x/net/internal/socks
@@ -581,22 +582,22 @@ golang.org/x/net/websocket
 ## explicit; go 1.24.0
 golang.org/x/oauth2
 golang.org/x/oauth2/internal
-# golang.org/x/sync v0.19.0
-## explicit; go 1.24.0
+# golang.org/x/sync v0.20.0
+## explicit; go 1.25.0
 golang.org/x/sync/errgroup
-# golang.org/x/sys v0.40.0
-## explicit; go 1.24.0
+# golang.org/x/sys v0.45.0
+## explicit; go 1.25.0
 golang.org/x/sys/cpu
 golang.org/x/sys/plan9
 golang.org/x/sys/unix
 golang.org/x/sys/windows
 golang.org/x/sys/windows/registry
 golang.org/x/sys/windows/svc
-# golang.org/x/term v0.38.0
-## explicit; go 1.24.0
+# golang.org/x/term v0.43.0
+## explicit; go 1.25.0
 golang.org/x/term
-# golang.org/x/text v0.32.0
-## explicit; go 1.24.0
+# golang.org/x/text v0.37.0
+## explicit; go 1.25.0
 golang.org/x/text/encoding
 golang.org/x/text/encoding/charmap
 golang.org/x/text/encoding/htmlindex
@@ -620,8 +621,8 @@ golang.org/x/text/unicode/norm
 # golang.org/x/time v0.11.0
 ## explicit; go 1.23.0
 golang.org/x/time/rate
-# golang.org/x/tools v0.39.0
-## explicit; go 1.24.0
+# golang.org/x/tools v0.44.0
+## explicit; go 1.25.0
 golang.org/x/tools/cover
 golang.org/x/tools/go/ast/edge
 golang.org/x/tools/go/ast/inspector
@@ -1437,3 +1438,4 @@ sigs.k8s.io/yaml
 # github.com/coreos/go-iptables => github.com/trozet/go-iptables v0.0.0-20240328221912-077e672b3808
 # github.com/gogo/protobuf => github.com/gogo/protobuf v1.3.2
 # github.com/j-keck/arping => github.com/JacobTanenbaum/arping v0.0.0-20240209152419-3987db83bd51
+# github.com/ovn-kubernetes/libovsdb => github.com/dave-tucker/libovsdb v0.5.2-0.20260710115505-f86dbc30de0a
