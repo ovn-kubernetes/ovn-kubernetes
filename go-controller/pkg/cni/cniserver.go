@@ -41,6 +41,13 @@ import (
 const kubeletDefaultCRIOperationTimeout = 2 * time.Minute
 const resourceNameAnnot = "k8s.v1.cni.cncf.io/resourceName"
 
+func cniRequestTimeout() time.Duration {
+	if config.CNI.CNIRequestTimeout > 0 {
+		return config.CNI.CNIRequestTimeout
+	}
+	return kubeletDefaultCRIOperationTimeout
+}
+
 // *** The Server is PRIVATE API between OVN components and may be
 // changed at any time.  It is in no way a supported interface or API. ***
 //
@@ -259,8 +266,7 @@ func (s *Server) handleCNIRequest(r *http.Request) (result []byte, err error) {
 	if err := json.Unmarshal(b, &cr); err != nil {
 		return nil, err
 	}
-	// Match the Kubelet default CRI operation timeout of 2m.
-	ctx, cancel := context.WithTimeout(context.Background(), kubeletDefaultCRIOperationTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), cniRequestTimeout())
 	defer cancel()
 
 	cmd, ok := cr.Env["CNI_COMMAND"]

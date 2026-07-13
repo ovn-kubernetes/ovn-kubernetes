@@ -86,6 +86,11 @@ physical interface as a trunk.
 
 ## CNI Config
 
+Set the `CNI_REQUEST_TIMEOUT` environment variable to override the timeout for
+CNI shim requests to the local CNI server. The value must be a positive Go
+duration (for example, `45s`). When unset, the default is the two-minute CRI
+operation timeout.
+
 ## Kubernetes Config
 
 ## Metrics Config
