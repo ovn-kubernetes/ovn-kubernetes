@@ -1104,8 +1104,7 @@ config:
 			// Do just one migration that will fail
 			if td.shouldExpectFailure {
 				by(vm.Name, "Live migrate virtual machine to check failed migration")
-				liveMigrateVirtualMachine(vm.Name)
-				checkLiveMigrationFailed(vm.Name)
+				liveMigrateFailed(vmi)
 				checkConnectivityAndNetworkPolicies(vm.Name, externalContainer, serverAddresses, serverPort, "after live migrate to check failed migration")
 			} else {
 				originalNode := vmi.Status.NodeName
@@ -1430,24 +1429,6 @@ config:
 					vmCreationRetries++
 					return err
 				}).WithPolling(time.Second).WithTimeout(time.Minute).Should(Succeed())
-			}
-
-			for _, vm := range vms {
-				By(fmt.Sprintf("Create virtual machine %s", vm.Name))
-				if td.shouldExpectFailure {
-					By("annotating the VMI with `fail fast`")
-					vmKey := types.NamespacedName{Namespace: namespace, Name: vm.Name}
-					var vmi kubevirtv1.VirtualMachineInstance
-
-					Eventually(func() error {
-						err = crClient.Get(context.TODO(), vmKey, &vmi)
-						if err == nil {
-							vmi.ObjectMeta.Annotations[kubevirtv1.FuncTestLauncherFailFastAnnotation] = "true"
-							err = crClient.Update(context.TODO(), &vmi)
-						}
-						return err
-					}).WithPolling(time.Second).WithTimeout(time.Minute).Should(Succeed())
-				}
 			}
 
 			for _, vm := range vms {
