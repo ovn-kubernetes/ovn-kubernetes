@@ -103,7 +103,7 @@ func TestIPAlloc(t *testing.T) {
 			cs := fake.NewSimpleClientset(getNodesWithIPs(tc.existingPrimaryNodeIPs))
 			pipa, err := newPrimaryIPAllocator(cs.CoreV1().Nodes())
 			if err != nil {
-				t.Errorf(err.Error())
+				t.Errorf("%s", err.Error())
 				return
 			}
 			for _, expectedIPStr := range tc.expectedFromAllocateNext {
