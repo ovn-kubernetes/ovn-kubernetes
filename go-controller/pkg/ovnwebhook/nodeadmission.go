@@ -6,10 +6,10 @@ package ovnwebhook
 import (
 	"context"
 	"fmt"
-	"reflect"
-	"strings"
-
 	"maps"
+	"reflect"
+	"slices"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"

@@ -12,20 +12,20 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
-	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
-	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/diagnostics"
-	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
-	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
-	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/ipalloc"
-	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/label"
-
-	deploymentkind "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig/configs/kind"
-	infraproviderkind "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/providers/kind"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2econfig "k8s.io/kubernetes/test/e2e/framework/config"
+
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
+	deploymentkind "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig/configs/kind"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/diagnostics"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
+	infraproviderkind "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/providers/kind"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/ipalloc"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/label"
 )
 
 // https://github.com/kubernetes/kubernetes/blob/v1.16.4/test/e2e/e2e_test.go#L62

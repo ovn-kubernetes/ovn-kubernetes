@@ -9,6 +9,7 @@ import (
 	v1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	k8s_cni_cncf_iov1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
 	mock "github.com/stretchr/testify/mock"
+
 	labels "k8s.io/apimachinery/pkg/labels"
 )
 

@@ -4,10 +4,12 @@
 package util
 
 import (
+	"cmp"
 	"crypto/rand"
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"maps"
 	"net"
 	"regexp"
 	"slices"
@@ -17,8 +19,6 @@ import (
 	"time"
 
 	"github.com/urfave/cli/v2"
-	"cmp"
-	"maps"
 
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
