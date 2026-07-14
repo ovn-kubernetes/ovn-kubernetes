@@ -1,4 +1,4 @@
-# OKEP-3926: Disable Port Security on Secondary Networks
+# OKEP-3926: Disable MAC Spoof Protection on Secondary Networks
 
 * Issue: [#3926](https://github.com/ovn-kubernetes/ovn-kubernetes/issues/3926)
 
@@ -20,21 +20,21 @@ backends.
 
 ## Goals
 
-- Provide a per-network configuration option to disable port security on IPAM less OVN secondary
-  networks on layer2 and localnet topologies to achieve feature parity with the bridge CNI's
-  `macspoofchk` capability.
+- Provide a per-network configuration option to disable MAC spoof protection on IPAM less OVN
+  secondary networks on layer2 and localnet topologies to achieve feature parity with the bridge
+  CNI's `macspoofchk` capability.
 - Enable unknown MAC address delivery.
-- Avoid using ARP/NDP flooding as much as possible when port security is disabled.
+- Avoid using ARP/NDP flooding as much as possible when MAC spoof protection is disabled.
 - Support configuration through the NAD JSON config and the ClusterUserDefinedNetwork (CUDN) CRD
   API only.
 
 ## Non-Goals
 
-- Disabling port security on the default cluster network - or any namespace primary network.
-  The security implications of removing MAC/IP spoofing protection on the cluster's primary
-  network are too significant.
-- Per-pod granularity for port security settings. The configuration knob is per-network; all pods
-  attached to a given network share the same port security posture.
+- Disabling MAC spoof protection on the default cluster network - or any namespace primary
+  network. The security implications of removing MAC/IP spoofing protection on the cluster's
+  primary network are too significant.
+- Per-pod granularity for MAC spoof protection settings. The configuration knob is per-network;
+  all pods attached to a given network share the same MAC spoof protection posture.
 - Layer3 topology support. Layer3 uses router-based forwarding where port security has different
   semantics and the concept of "unknown L2 addresses" does not apply.
 - Replacing or modifying the existing `ipam.mode: Disabled` behavior, which already disables
@@ -44,18 +44,18 @@ backends.
 - MAC learning or dynamic FDB management at the OVN-Kubernetes level; OVN manages its own FDB
   natively.
 - Namespace-scoped UserDefinedNetwork (UDN) resources cannot enable this feature, as
-  disabling port security is a cluster-admin decision that should not be available to namespace
-  users.
+  disabling MAC spoof protection is a cluster-admin decision that should not be available to
+  namespace users.
 
 ## Future Goals
 
-- **Per-attachment port security granularity**, probably added via a new `WorkloadOptOut` mode.
-  Port security stays enabled by default on the network, but individual pods may opt out. The
-  admin controls whether the network permits overrides; the annotation is the per-pod opt-in
-  signal. This follows the two-level model proven by OpenStack Neutron.
+- **Per-attachment MAC spoof protection granularity**, probably added via a new `WorkloadOptOut`
+  mode. MAC spoof protection stays enabled by default on the network, but individual pods may
+  opt out. The admin controls whether the network permits overrides; the annotation is the
+  per-pod opt-in signal. This follows the two-level model proven by OpenStack Neutron.
 - **Per-pod allowed MAC addresses**, probably via an `AllowList` mode. This will allow workloads
-  to declare additional permitted MAC addresses without fully disabling port security.
-- Both extensions are non-breaking enum additions to the existing `PortSecurityConfig` struct.
+  to declare additional permitted MAC addresses without fully disabling MAC spoof protection.
+- Both extensions are non-breaking enum additions to the existing `MACSecurityConfig` struct.
 
 ## Introduction
 
@@ -115,7 +115,7 @@ enforced. However, **MAC-level port security remains active**: the LSP still res
 to the assigned MAC address. The feature proposed in this OKEP goes further by also disabling
 MAC-level port security and enabling `unknown` address handling.
 
-`portSecurity.mode: Disabled` requires `ipam.mode: Disabled`.
+`macSecurity.mode: Disabled` requires `ipam.mode: Disabled`.
 
 ### Bridge CNI Parity
 
@@ -137,14 +137,15 @@ networks without losing this capability.
 
 ### Story 1: KubeVirt Nested Virtualization with Bridged Networking
 
-As a VM operator running [KubeVirt](https://kubevirt.io/), I want to disable port security on a
-secondary OVN layer2 network so that VMs running inside VMs can use bridged networking with
-their own MAC addresses, enabling those nested VMs to communicate directly on the L2 segment.
+As a VM operator running [KubeVirt](https://kubevirt.io/), I want to disable MAC spoof
+protection on a secondary OVN layer2 network so that VMs running inside VMs can use bridged
+networking with their own MAC addresses, enabling those nested VMs to communicate directly on the
+L2 segment.
 
 **Example scenario:** A KubeVirt VM is in turn running virtualization workloads. Without disabling
-port security, OVN drops the frame because the nested VM source MAC does not match the outer VM LSP's
-`port_security` entry. With port security disabled, the frame is accepted and forwarded on the
-logical switch.
+MAC spoof protection, OVN drops the frame because the nested VM source MAC does not match the
+outer VM LSP's `port_security` entry. With MAC spoof protection disabled, the frame is accepted
+and forwarded on the logical switch.
 
 Additionally, other pods (or VMs) on the same L2 network need to send unicast traffic to the nested
 VM. Without `unknown` in the addresses column, the logical switch has no port to deliver these
@@ -188,22 +189,22 @@ pod's LSP, rather than flooding it to all `unknown` ports on the switch.
 As a VM operator, I want to run a VM that acts as a network bridge between an OVN localnet
 secondary network and an OVN layer2 overlay secondary network, forwarding traffic between the
 two segments. The bridging VM has interfaces on both networks and relays frames with MAC
-addresses that differ from its own assigned MACs. Without disabling port security, the relayed
-frames are dropped on both networks because their source MACs don't match the VM pod's LSP
-`port_security` entries.
+addresses that differ from its own assigned MACs. Without disabling MAC spoof protection, the
+relayed frames are dropped on both networks because their source MACs don't match the VM pod's
+LSP `port_security` entries.
 
 ## Proposed Solution
 
 ### Summary
 
-Introduce a per-network `portSecurity` configuration sub-struct with a `mode` enum
+Introduce a per-network `macSecurity` configuration sub-struct with a `mode` enum
 discriminator that, when set to `Disabled`:
 
 1. Leaves the `port_security` column empty on all LSPs attached to the network.
 2. Appends `unknown` to the `addresses` column of each LSP.
 3. Sets `force_fdb_lookup=true` in the `options` column of each LSP.
 
-The `portSecurity` sub-struct with a `mode` enum discriminator follows the established CRD
+The `macSecurity` sub-struct with a `mode` enum discriminator follows the established CRD
 pattern used by `VLANConfig` (mode + sub-struct) and `IPAMConfig` (mode + lifecycle).
 
 ### API Details
@@ -219,19 +220,19 @@ Add one field to the `NetConf` struct:
     "netAttachDefName": "kubevirt/nested-virt-net",
     "topology": "layer2",
     "name": "nested-virt-net",
-    "portSecurityMode": "Disabled"
+    "macSecurityMode": "Disabled"
 }
 ```
 
-The field is optional and defaults to `"Enabled"` (port security enabled, preserving current
-behavior). It accepts the values `"Enabled"` and `"Disabled"`. It is valid on `layer2` and
-`localnet` topologies only, requires `ipam.mode` to be `Disabled` (i.e., subnets must not be
+The field is optional and defaults to `"Enabled"` (MAC spoof protection enabled, preserving
+current behavior). It accepts the values `"Enabled"` and `"Disabled"`. It is valid on `layer2`
+and `localnet` topologies only, requires `ipam.mode` to be `Disabled` (i.e., subnets must not be
 specified), and the network role must be `"secondary"`. Setting it on a `layer3` topology or
 with IPAM enabled results in a validation error.
 
 #### ClusterUserDefinedNetwork CRD
 
-Add a `portSecurity` sub-struct with a `mode` enum discriminator to `Layer2Config` and
+Add a `macSecurity` sub-struct with a `mode` enum discriminator to `Layer2Config` and
 `LocalnetConfig` in the CUDN CRD API, following the pattern established by
 [OKEP-5085](okep-5085-localnet-api.md) for extending the CUDN CRD and the discriminated
 union pattern used by `VLANConfig` and `IPAMConfig`. This field is only supported on
@@ -255,7 +256,7 @@ spec:
       role: Secondary
       ipam:
         mode: Disabled
-      portSecurity:
+      macSecurity:
         mode: Disabled
 ```
 
@@ -277,7 +278,7 @@ spec:
       physicalNetworkName: physnet1
       ipam:
         mode: Disabled
-      portSecurity:
+      macSecurity:
         mode: Disabled
 ```
 
@@ -286,77 +287,77 @@ spec:
 New type definitions:
 
 ```go
-// PortSecurityMode defines the port security enforcement mode for logical switch ports.
+// MACSecurityMode defines the MAC spoof protection enforcement mode for logical switch ports.
 // +kubebuilder:validation:Enum=Enabled;Disabled
-type PortSecurityMode string
+type MACSecurityMode string
 
 const (
-	// PortSecurityModeEnabled restricts traffic on logical switch ports to the assigned
+	// MACSecurityModeEnabled restricts traffic on logical switch ports to the assigned
 	// MAC (and IP, when IPAM is enabled) addresses. This is the default behavior.
-	PortSecurityModeEnabled PortSecurityMode = "Enabled"
+	MACSecurityModeEnabled MACSecurityMode = "Enabled"
 
-	// PortSecurityModeDisabled removes port security restrictions and enables unknown MAC
+	// MACSecurityModeDisabled removes MAC spoof protection restrictions and enables unknown MAC
 	// address handling via the OVN `unknown` address keyword with `force_fdb_lookup` for
 	// FDB-based unicast delivery.
-	PortSecurityModeDisabled PortSecurityMode = "Disabled"
+	MACSecurityModeDisabled MACSecurityMode = "Disabled"
 )
 
-// PortSecurityConfig configures port security behavior on logical switch ports attached
+// MACSecurityConfig configures MAC spoof protection behavior on logical switch ports attached
 // to this network.
 // +union
-type PortSecurityConfig struct {
-	// Mode controls the port security enforcement posture.
+type MACSecurityConfig struct {
+	// Mode controls the MAC spoof protection enforcement posture.
 	// `Enabled` (default) restricts traffic to assigned addresses.
-	// `Disabled` removes all port security restrictions and enables unknown MAC address
+	// `Disabled` removes all MAC spoof protection restrictions and enables unknown MAC address
 	// handling for nested virtualization and NFV use cases.
 	// Only `Disabled` requires ipam.mode to be Disabled.
 	// +kubebuilder:default=Enabled
 	// +kubebuilder:validation:Required
 	// +required
 	// +unionDiscriminator
-	Mode PortSecurityMode `json:"mode"`
+	Mode MACSecurityMode `json:"mode"`
 }
 ```
 
 For both `Layer2Config` and `LocalnetConfig`:
 
 ```go
-// PortSecurity configures port security behavior on logical switch ports attached to this
-// network. When omitted, port security defaults to Enabled (the current default behavior).
+// MACSecurity configures MAC spoof protection behavior on logical switch ports attached to this
+// network. When omitted, MAC spoof protection defaults to Enabled (the current default behavior).
 // Only applicable to Secondary role networks on ClusterUserDefinedNetwork resources.
 // +optional
-PortSecurity *PortSecurityConfig `json:"portSecurity,omitempty"`
+MACSecurity *MACSecurityConfig `json:"macSecurity,omitempty"`
 ```
 
 #### CRD Validation Rules
 
 The following CEL validations should be added:
 
-- `portSecurity.mode: Disabled` is only allowed when `role` is `Secondary`:
+- `macSecurity.mode: Disabled` is only allowed when `role` is `Secondary`:
   ```text
-  rule: "!has(self.portSecurity) || self.portSecurity.mode != 'Disabled' || self.role == 'Secondary'"
-  message: "portSecurity.mode Disabled is only supported for Secondary networks"
+  rule: "!has(self.macSecurity) || self.macSecurity.mode != 'Disabled' || self.role == 'Secondary'"
+  message: "macSecurity.mode Disabled is only supported for Secondary networks"
   ```
 
-- `portSecurity` is not allowed on namespace-scoped `UserDefinedNetwork` resources.
+- `macSecurity` is not allowed on namespace-scoped `UserDefinedNetwork` resources.
   Since `UserDefinedNetworkSpec` and `ClusterUserDefinedNetworkSpec` share the same
   `Layer2Config` type, this constraint must be enforced at the `UserDefinedNetworkSpec` level:
   ```text
-  rule: "!has(self.layer2) || !has(self.layer2.portSecurity)"
-  message: "portSecurity is only supported on ClusterUserDefinedNetwork"
+  rule: "!has(self.layer2) || !has(self.layer2.macSecurity)"
+  message: "macSecurity is only supported on ClusterUserDefinedNetwork"
   ```
 
-- `portSecurity.mode: Disabled` requires `ipam.mode` to be `Disabled`:
+- `macSecurity.mode: Disabled` requires `ipam.mode` to be `Disabled`:
   ```text
-  rule: "!has(self.portSecurity) || self.portSecurity.mode != 'Disabled' || (has(self.ipam) && has(self.ipam.mode) && self.ipam.mode == 'Disabled')"
-  message: "portSecurity.mode Disabled requires ipam.mode to be Disabled"
+  rule: "!has(self.macSecurity) || self.macSecurity.mode != 'Disabled' || (has(self.ipam) && has(self.ipam.mode) && self.ipam.mode == 'Disabled')"
+  message: "macSecurity.mode Disabled requires ipam.mode to be Disabled"
   ```
 
-- `portSecurity.mode` is immutable after creation (changing port security on a live network
-  requires reconfiguring all existing LSPs; this can be relaxed in a future iteration):
+- `macSecurity.mode` is immutable after creation (changing MAC spoof protection on a live
+  network requires reconfiguring all existing LSPs; this can be relaxed in a future iteration):
   ```text
-  rule: "!has(oldSelf.portSecurity) || (has(self.portSecurity) && oldSelf.portSecurity.mode == self.portSecurity.mode)"
-  message: "portSecurity.mode is immutable after creation"
+  rule: "!has(oldSelf.macSecurity) || (has(self.macSecurity) && oldSelf.macSecurity.mode == self.macSecurity.mode)"
+  message: "macSecurity.mode is immutable after creation"
   ```
 
   > **Note:** The existing CRD definitions already enforce full immutability at the parent
@@ -368,27 +369,28 @@ The following CEL validations should be added:
 #### NAD Generation from CRD
 
 The CUDN controller that generates NADs from CRD specs must translate the
-`portSecurity.mode` field to the NAD JSON config `portSecurityMode` field, following the
+`macSecurity.mode` field to the NAD JSON config `macSecurityMode` field, following the
 same pattern used for other fields like `physicalNetworkName`, `allowPersistentIPs`, etc.
-When `portSecurity` is omitted in the CRD, the NAD should either omit `portSecurityMode`
+When `macSecurity` is omitted in the CRD, the NAD should either omit `macSecurityMode`
 or set it to `"Enabled"` (both are equivalent).
 
 #### Interaction with IPAM Mode
 
-| IPAM Mode  | portSecurity.mode      | MAC Port Security | Unknown Addresses | Notes                                |
+| IPAM Mode  | macSecurity.mode       | MAC Port Security | Unknown Addresses | Notes                                |
 |------------|------------------------|-------------------|-------------------|--------------------------------------|
 | `Disabled` | `Enabled` (default)   | Enabled           | Disabled          | MAC-only security, no IPs assigned   |
 | `Disabled` | `Disabled`             | Disabled          | Enabled           | Full L2 flexibility, no restrictions |
 
-#### Future: Per-Attachment Port Security
+#### Future: Per-Attachment MAC Spoof Protection
 
-The `PortSecurityMode` enum is intentionally extensible. A future `WorkloadOptOut` mode is
-the anticipated path for per-attachment port security granularity, following the two-level
-model proven by OpenStack Neutron where a network-level default can be overridden per port.
+The `MACSecurityMode` enum is intentionally extensible. A future `WorkloadOptOut` mode is
+the anticipated path for per-attachment MAC spoof protection granularity, following the
+two-level model proven by OpenStack Neutron where a network-level default can be overridden
+per port.
 
-With `portSecurity.mode: WorkloadOptOut`, port security remains enabled by default on all
-LSPs attached to the network, but individual pods may opt out via a pod annotation (e.g.,
-`k8s.ovn.org/port-security-override`). The annotation is only honored on networks where
+With `macSecurity.mode: WorkloadOptOut`, MAC spoof protection remains enabled by default on
+all LSPs attached to the network, but individual pods may opt out via a pod annotation (e.g.,
+`k8s.ovn.org/mac-security-override`). The annotation is only honored on networks where
 the cluster admin has explicitly set `WorkloadOptOut`; on `Enabled` or `Disabled` networks
 the annotation has no effect. This preserves the admin as the sole decision-maker: the admin
 controls whether the network permits overrides, while the annotation is just the opt-in
@@ -397,25 +399,25 @@ signal per attachment.
 This mode addresses mixed-role networks where a small number of specialized pods (virtual
 routers, nested hypervisors, keepalived pairs) need MAC freedom while the remaining pods
 benefit from anti-spoofing protection. Without per-attachment granularity, the admin must
-either disable port security for all pods or create separate networks for different security
-postures.
+either disable MAC spoof protection for all pods or create separate networks for different
+security postures.
 
 The same per-attachment mechanism provides the natural integration point for a future
-`AllowList` mode with per-pod `allowedMACs`. Rather than fully disabling port security, a
-pod annotation could declare additional MAC addresses to append to the LSP's `port_security`
+`AllowList` mode with per-pod `allowedMACs`. Rather than fully disabling MAC spoof protection,
+a pod annotation could declare additional MAC addresses to append to the LSP's `port_security`
 column (e.g., `k8s.ovn.org/allowed-addresses: '{"net": ["00:00:5e:00:01:01"]}'`). OVN's
 `port_security` column natively accepts multiple MAC entries per LSP, so this maps directly
 to the underlying data model.
 
 Both extensions — `WorkloadOptOut` and `AllowList` — can be added as non-breaking enum
-additions to the existing `PortSecurityConfig` struct. The initial `Enabled`/`Disabled` API
+additions to the existing `MACSecurityConfig` struct. The initial `Enabled`/`Disabled` API
 proposed in this OKEP is forward-compatible with these future modes.
 
 ### Implementation Details
 
 #### OVN Logical Topology
 
-The following diagram illustrates how port security affects traffic flow:
+The following diagram illustrates how MAC spoof protection affects traffic flow:
 
 ```
  Pod A (VM with MAC fa:16:3e:aa:bb:cc)
@@ -424,7 +426,7 @@ The following diagram illustrates how port security affects traffic flow:
    |
  OVS Bridge (br-int)
    |
-   | OVN LSP (port_security: [] if portSecurity.mode: Disabled)
+   | OVN LSP (port_security: [] if macSecurity.mode: Disabled)
    |          (addresses: ["0a:58:...", "unknown"])
    |          (options: {force_fdb_lookup: "true"})
    |
@@ -437,12 +439,12 @@ The following diagram illustrates how port security affects traffic flow:
  Pod B (can send unicast to fa:16:3e:aa:bb:cc via FDB)
 ```
 
-When `portSecurity.mode` is `Enabled` (default), the LSP has:
+When `macSecurity.mode` is `Enabled` (default), the LSP has:
 - `addresses: ["0a:58:c0:a8:01:03"]`
 - `port_security: ["0a:58:c0:a8:01:03"]`
 - No `unknown` in addresses, no `force_fdb_lookup`
 
-When `portSecurity.mode` is `Disabled` (requires `ipam.mode: Disabled`), the LSP has:
+When `macSecurity.mode` is `Disabled` (requires `ipam.mode: Disabled`), the LSP has:
 - `addresses: ["0a:58:c0:a8:01:03", "unknown"]` (MAC only, no IP — IPAM is disabled)
 - `port_security: []` (empty)
 - `options: {"force_fdb_lookup": "true", ...}`
@@ -451,7 +453,7 @@ When `portSecurity.mode` is `Disabled` (requires `ipam.mode: Disabled`), the LSP
 
 #### E2E Tests
 
-- Create a secondary layer2 network with `portSecurity.mode: Disabled`.
+- Create a secondary layer2 network with `macSecurity.mode: Disabled`.
 - Deploy two pods on the network.
 - From pod A, send traffic with a spoofed source MAC address.
 - Verify pod B receives the traffic (it would be dropped without the feature).
@@ -460,9 +462,9 @@ When `portSecurity.mode` is `Disabled` (requires `ipam.mode: Disabled`), the LSP
 
 #### Cross Feature Testing
 
-- Verify that `allowPersistentIPs` and `portSecurity.mode: Disabled` are mutually exclusive:
+- Verify that `allowPersistentIPs` and `macSecurity.mode: Disabled` are mutually exclusive:
   `allowPersistentIPs` requires IPAM enabled (to assign and persist IPs across live migrations),
-  while `portSecurity.mode: Disabled` requires `ipam.mode: Disabled`. Validation should reject
+  while `macSecurity.mode: Disabled` requires `ipam.mode: Disabled`. Validation should reject
   a CUDN that specifies both.
 
 ### Documentation Details
@@ -473,16 +475,17 @@ When `portSecurity.mode` is `Disabled` (requires `ipam.mode: Disabled`), the LSP
 
 ## Risks, Known Limitations and Mitigations
 
-1. **Security risk from disabled port security**: Disabling port security allows any pod on the
-   network to send traffic with arbitrary MAC and IP addresses, enabling MAC spoofing, ARP
-   spoofing/poisoning (allowing MITM attacks on the L2 segment), and potentially IP spoofing
-   attacks.
+1. **Security risk from disabled MAC spoof protection**: Disabling MAC spoof protection allows
+   any pod on the network to send traffic with arbitrary MAC and IP addresses, enabling MAC
+   spoofing, ARP spoofing/poisoning (allowing MITM attacks on the L2 segment), and potentially
+   IP spoofing attacks.
    - **Mitigation**: The feature is opt-in, per-network, restricted to secondary networks with
      `Secondary` role only, and only available on cluster-scoped `ClusterUserDefinedNetwork`
      resources. Namespace-scoped `UserDefinedNetwork` resources cannot enable this feature,
-     ensuring that only cluster administrators can disable port security. The default remains
-     secure (port security enabled). Administrators deploying this feature should use encrypted
-     transports on networks with port security disabled when sensitive traffic is present.
+     ensuring that only cluster administrators can disable MAC spoof protection. The default
+     remains secure (MAC spoof protection enabled). Administrators deploying this feature should
+     use encrypted transports on networks with MAC spoof protection disabled when sensitive
+     traffic is present.
 
 2. **Broadcast storm risk with unknown addresses**: Adding `unknown` to LSP addresses means
    unicast frames for unknown MACs are delivered to all `unknown` ports, which can create
@@ -493,8 +496,9 @@ When `portSecurity.mode` is `Disabled` (requires `ipam.mode: Disabled`), the LSP
      supports this option.
 
 3. **Immutability constraint**: The field is immutable after creation in the initial
-   implementation, meaning administrators cannot toggle port security on an existing network.
-   - **Mitigation**: This is a deliberate simplification. Toggling port security on a live
+   implementation, meaning administrators cannot toggle MAC spoof protection on an existing
+   network.
+   - **Mitigation**: This is a deliberate simplification. Toggling MAC spoof protection on a live
      network would require updating all existing LSPs atomically. This can be relaxed in a
      future iteration once the reconciliation logic is proven.
 
@@ -505,15 +509,15 @@ OVN 24.03 or later for the `force_fdb_lookup` optimization, which is already the
 version supported by OVN-Kubernetes.
 
 No special version skew handling is required: the feature is a per-network configuration option.
-Controllers running older versions that do not recognize the `portSecurity` sub-struct will
+Controllers running older versions that do not recognize the `macSecurity` sub-struct will
 ignore the field (it defaults to `Enabled`), and existing networks will continue to function
-with port security enabled.
+with MAC spoof protection enabled.
 
 ## Backwards Compatibility
 
-- The `portSecurity` sub-struct is optional. When omitted, the default behavior is `Enabled`,
+- The `macSecurity` sub-struct is optional. When omitted, the default behavior is `Enabled`,
   preserving the current behavior of enforcing port security on all LSPs.
-- The NAD JSON config `portSecurityMode` field is additive and optional. Existing NAD
+- The NAD JSON config `macSecurityMode` field is additive and optional. Existing NAD
   configurations without the field continue to work identically.
 - The CRD field is an optional pointer with nil default. Existing CUDN resources are unaffected.
   UDN resources cannot use this field with `mode: Disabled`.
@@ -530,18 +534,18 @@ proposed two independent boolean fields:
   `force_fdb_lookup` is set.
 
 **Why rejected:** There is no identified use case for controlling these behaviors independently.
-If port security is disabled (allowing arbitrary source MACs), the network must also handle
+If MAC spoof protection is disabled (allowing arbitrary source MACs), the network must also handle
 `unknown` destination MACs — otherwise, return traffic to spoofed MAC addresses would be dropped.
-Conversely, enabling `unknown` addresses without disabling port security is contradictory: the
-port would accept traffic for unknown MACs but still enforce source MAC restrictions.
+Conversely, enabling `unknown` addresses without disabling MAC spoof protection is contradictory:
+the port would accept traffic for unknown MACs but still enforce source MAC restrictions.
 
-Two independent booleans create a 2×2 configuration matrix where two of the four states are
+Two independent booleans create a 2x2 configuration matrix where two of the four states are
 invalid or nonsensical. A single consolidated knob eliminates this confusion.
 
 ### Alternative 2: Per-Pod Annotation
 
-Instead of a per-network setting, port security could be controlled via a per-pod annotation
-(e.g., `k8s.ovn.org/allow-mac-spoofing: "true"`).
+Instead of a per-network setting, MAC spoof protection could be controlled via a per-pod
+annotation (e.g., `k8s.ovn.org/allow-mac-spoofing: "true"`).
 
 **Why rejected:**
 - **Security**: Any pod (or user with pod-create access) could potentially set the annotation,
@@ -549,9 +553,9 @@ Instead of a per-network setting, port security could be controlled via a per-po
   requires cluster-admin intervention.
 - **Consistency**: The bridge CNI's `macspoofchk` is per-network, and OVN-Kubernetes should
   follow the same granularity for consistency.
-- **Semantics**: Port security is a property of the network infrastructure, not of individual
-  workloads. A mixed network where some pods have port security and others don't creates complex
-  and hard-to-reason-about security boundaries.
+- **Semantics**: MAC spoof protection is a property of the network infrastructure, not of
+  individual workloads. A mixed network where some pods have MAC spoof protection and others
+  don't creates complex and hard-to-reason-about security boundaries.
 - Per-pod control could be considered as a future extension if a use case emerges.
 
 ### Alternative 3: NAD-Only (No CRD Integration)
@@ -566,7 +570,7 @@ which defeats the purpose of the CRD controller.
 
 ### Alternative 4: Three-Valued Enum
 
-Instead of two modes, use a three-valued enum `portSecurity.mode: Enabled | MACOnly | Disabled`:
+Instead of two modes, use a three-valued enum `macSecurity.mode: Enabled | MACOnly | Disabled`:
 - `Enabled` (default): full MAC + IP port security.
 - `MACOnly`: only MAC port security, no IP restrictions.
 - `Disabled`: no port security at all.
@@ -585,10 +589,32 @@ Use a simple boolean field `allowUnknownAddresses: bool` directly on `Layer2Conf
 **Why rejected:** Kubernetes API conventions discourage boolean fields because they cannot grow
 to accommodate future requirements. If a third security posture is needed later (e.g., an
 allow-list mode for VRRP/keepalived), a boolean requires either a second field (creating
-field interaction complexity) or a breaking API change. The `portSecurity` sub-struct with a
+field interaction complexity) or a breaking API change. The `macSecurity` sub-struct with a
 mode enum discriminator follows the established `VLANConfig` and `IPAMConfig` patterns in the
 CRD, provides a natural extension point for future modes and per-mode parameters, and costs
 only marginally more boilerplate than a boolean.
+
+### Alternative 6: `portSecurity` and `macSpoofing` Naming
+
+Two earlier iterations of this OKEP used different field names before settling on
+`macSecurity`:
+
+1. `portSecurity` with a `mode` discriminator.
+2. `macSpoofing` with a `mode` discriminator.
+
+**Why `portSecurity` was rejected:** While "port security" accurately describes the OVN-level
+mechanism being configured, it is overly broad and could imply control over IP-level
+restrictions or other port-level security features beyond MAC spoofing.
+
+**Why `macSpoofing` was rejected:** `macSpoofing` names the field after the attack the knob
+protects against rather than the security posture itself. This makes the enum values read
+ambiguously: `macSpoofing.mode: Enabled` could be misread as "spoofing is enabled" (i.e., the
+port is vulnerable) instead of its intended meaning, "spoof protection is enabled" (i.e., the
+default, secure state). `macSecurity.mode: Enabled` removes that ambiguity — it reads naturally
+as "MAC security is on," which matches the field's default value and secure-by-default posture,
+and `macSecurity.mode: Disabled` reads just as naturally as "MAC security is off." The
+`macSecurity` name still aligns with the bridge CNI's `macspoofchk` terminology that users are
+already familiar with, while removing the double-negative naming issue.
 
 ## References
 
