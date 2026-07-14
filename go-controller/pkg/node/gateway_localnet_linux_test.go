@@ -3585,7 +3585,7 @@ var _ = Describe("Node Operations", func() {
 	})
 
 	Context("disable-forwarding", func() {
-		It("adds or removes iptables rules upon change in forwarding mode", func() {
+		ovntest.OnSupportedPlatformsIt("adds or removes iptables rules upon change in forwarding mode", func() {
 			app.Action = func(*cli.Context) error {
 				config.Default.ClusterSubnets = []config.CIDRNetworkEntry{
 					{CIDR: ovntest.MustParseIPNet("fd00:10:1::/48"), HostSubnetLength: 64},
@@ -3696,7 +3696,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("updates the default FORWARD policy correctly according to the config", func() {
+		ovntest.OnSupportedPlatformsIt("updates the default FORWARD policy correctly according to the config", func() {
 			expectedTablesEmpty := map[string]util.FakeTable{
 				"filter": {
 					"FORWARD": []string{},
