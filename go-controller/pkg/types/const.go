@@ -158,6 +158,7 @@ const (
 	// Packet marking
 	EgressIPNodeConnectionMark         = "1008"
 	EgressIPReplyTrafficConnectionMark = 42
+	SecondaryEgressIPMark              = "1009" // Mark for secondary host EgressIP to enable nftables protection
 
 	// primary user defined network's default join subnet value
 	// users can configure custom values using NADs
