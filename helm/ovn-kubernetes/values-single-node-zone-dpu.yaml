@@ -84,6 +84,8 @@ global:
   managedBGPFRRNamespace: "frr-k8s-system"
   # -- Configure to enable workloads with preconfigured network connect to user defined networks (UDN) with ovn-kubernetes
   enablePreconfiguredUDNAddresses: false
+  # -- Namespace/name of the default cluster network NAD. Empty uses the ovn-kubernetes built-in default (ovn-kubernetes/default)
+  #clusterDefaultNAD: ""
   # -- Configure to enable IPsec
   enableIpsec: false
   # -- Use SSL transport for the Egress IP gRPC health-check (NB cert paths

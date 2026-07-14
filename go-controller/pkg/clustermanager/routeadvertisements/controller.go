@@ -296,7 +296,7 @@ func (c *Controller) ReconcileNetwork(_ string, old, new util.NetInfo) {
 		// if the namespaces served by a network changed, it is possible that
 		// those namespaces are served or no longer served by the default
 		// network, so reconcile it as well
-		c.nadController.Reconcile(config.Kubernetes.OVNConfigNamespace + "/" + types.DefaultNetworkName)
+		c.nadController.Reconcile(config.Default.ClusterDefaultNADName)
 	}
 }
 
@@ -1642,7 +1642,7 @@ func (c *Controller) getSelectedNADs(networkSelectors apitypes.NetworkSelectors)
 			// make sure a NAD exists for it
 			nad, err := util.EnsureDefaultNetworkNAD(c.nadLister, c.nadClient)
 			if err != nil {
-				return nil, fmt.Errorf("failed to get/create default network NAD: %w", err)
+				return nil, fmt.Errorf("failed to ensure default network NAD: %w", err)
 			}
 			selected = append(selected, nad)
 		case apitypes.ClusterUserDefinedNetworks:

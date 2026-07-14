@@ -15,27 +15,27 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
-// EnsureDefaultNetworkNAD ensures that a well-known NAD exists for the
-// default network in ovn-k namespace. This will allow the users to customize
-// the primary UDN attachments with static IPs, and/or MAC address requests, by
-// using the multus-cni `default network` feature.
+// EnsureDefaultNetworkNAD ensures that a NAD exists for the default network at
+// the location configured by the cluster-default-nad option. This allows users
+// to customize the primary UDN attachments with static IPs, and/or MAC address
+// requests, by using the multus-cni `default network` feature.
 func EnsureDefaultNetworkNAD(nadLister nadlisters.NetworkAttachmentDefinitionLister, nadClient nadclientset.Interface) (*nadtypes.NetworkAttachmentDefinition, error) {
-	nad, err := nadLister.NetworkAttachmentDefinitions(config.Kubernetes.OVNConfigNamespace).Get(types.DefaultNetworkName)
+	namespace, name := config.Default.ClusterDefaultNetworkNAD.Namespace, config.Default.ClusterDefaultNetworkNAD.Name
+	nad, err := nadLister.NetworkAttachmentDefinitions(namespace).Get(name)
 	if err != nil && !apierrors.IsNotFound(err) {
 		return nil, err
 	}
 	if nad != nil {
 		return nad, nil
 	}
-	return nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(config.Kubernetes.OVNConfigNamespace).Create(
+	return nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespace).Create(
 		context.Background(),
 		&nadtypes.NetworkAttachmentDefinition{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      types.DefaultNetworkName,
-				Namespace: config.Kubernetes.OVNConfigNamespace,
+				Name:      name,
+				Namespace: namespace,
 			},
 			Spec: nadtypes.NetworkAttachmentDefinitionSpec{
 				Config: fmt.Sprintf("{\"cniVersion\": \"%s\", \"name\": \"ovn-kubernetes\", \"type\": \"%s\"}", config.CNISpecVersion, config.CNI.Plugin),
