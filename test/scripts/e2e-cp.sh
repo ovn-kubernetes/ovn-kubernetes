@@ -148,6 +148,13 @@ elif [[ "${WHAT}" != "${NETWORK_SEGMENTATION_TESTS}"* ]]; then
   skip_label "Feature:NetworkSegmentation"
 fi
 
+# Network Segmentation suite selection uses a feature label and removes the
+# suite prefix from the positional arguments. Keep any text after that prefix
+# as a narrower Ginkgo focus.
+if [[ "${WHAT}" == "${NETWORK_SEGMENTATION_TESTS} "* ]]; then
+  set -- "${WHAT#"${NETWORK_SEGMENTATION_TESTS} "}"
+fi
+
 # Only run cluster network connect tests if they are explicitly requested
 # To conserve CI resources, we run these tests as part of the network segmentation tests
 CLUSTER_NETWORK_CONNECT_TESTS="ClusterNetworkConnect"
