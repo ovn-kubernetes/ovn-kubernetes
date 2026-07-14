@@ -636,7 +636,7 @@ fi
 				Version: kubevirtv1.GroupVersion.Version,
 			})
 
-			if err := client.List(context.Background(), unstructuredVMIMigrations); err != nil {
+			if err := client.List(context.Background(), unstructuredVMIMigrations, crclient.InNamespace(namespace)); err != nil {
 				return nil, err
 			}
 			if len(unstructuredVMIMigrations.Items) == 0 {
