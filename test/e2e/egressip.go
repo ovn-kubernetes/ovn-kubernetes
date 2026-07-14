@@ -3073,7 +3073,7 @@ spec:
 				egressIPYaml   = "/tmp/egressip-pktmark-validation.yaml"
 				monitorPodName = "traffic-monitor-existing"
 				podNamePrefix  = "existing-pod"
-				numTestPods    = 2 // Create multiple pods to stress reconciliation
+				numTestPods    = 15 // Create multiple pods to stress reconciliation
 				retryInterval  = 1 * time.Second
 				retryTimeout   = 120 * time.Second
 			)
@@ -3140,24 +3140,24 @@ spec:
 				secondaryIface, err := infraprovider.Get().GetK8NodeNetworkInterface(egress1Node.name, secondaryNetwork)
 				framework.ExpectNoError(err, "failed to get network interface for network %s on node %s", secondaryNetworkName, egress1Node.name)
 
-				podV4CIDR, podV6CIDR, err := getNodePodCIDRs(pod1Node.name, "default")
-				framework.ExpectNoError(err, "failed to get pod CIDRs for node %s", pod1Node.name)
+				podV4CIDR, podV6CIDR, err := getNodePodCIDRs(egress1Node.name, "default")
+				framework.ExpectNoError(err, "failed to get pod CIDRs for node %s", egress1Node.name)
 				podCIDR := podV4CIDR
 				if isIPv6TestRun {
 					podCIDR = podV6CIDR
 				}
-				gomega.Expect(podCIDR).NotTo(gomega.BeEmpty(), "pod CIDR must not be empty for node %s", pod1Node.name)
-				monitorFilter := fmt.Sprintf("src net %s and dst host %s", podCIDR, targetIP)
+				gomega.Expect(podCIDR).NotTo(gomega.BeEmpty(), "pod CIDR must not be empty for node %s", egress1Node.name)
+				monitorFilter := fmt.Sprintf("host %s", targetIP)
 
 				ctx, ctxCancel := context.WithCancel(context.Background())
 				monitorOutput := ""
 				finishedMonitor := make(chan struct{})
 				go func() {
 					defer close(finishedMonitor)
-					monitorOutput = monitorTcpdumpOnNode(ctx, f, monitorPodName, egress1Node.name, secondaryIface.InfName,
-						"-n -vv -U", monitorFilter)
+					monitorOutput = monitorTcpdumpOnNode(ctx, f, monitorPodName, egress1Node.name,
+						"any", "-n -vv -l", monitorFilter)
 				}()
-				framework.Logf("Traffic monitor pod started on node %s", egress1Node.name)
+				framework.Logf("Traffic monitor pod started on node %s with filter %s on iface %s", egress1Node.name, monitorFilter, secondaryIface.InfName)
 
 				ginkgo.By(fmt.Sprintf("Step 4: Create %d pods FIRST (before EgressIP exists)", numTestPods))
 				// Pods are created before EgressIP, they will initially use normal routing (their pod IPs as source)
@@ -3189,7 +3189,7 @@ spec:
 								},
 								Spec: corev1.PodSpec{
 									NodeSelector: map[string]string{
-										"kubernetes.io/hostname": pod1Node.name,
+										"kubernetes.io/hostname": egress1Node.name,
 									},
 									Containers: []corev1.Container{
 										{
@@ -3325,10 +3325,15 @@ spec:
 				// This is the critical check: did any traffic leak with pod IPs during the transition?
 				ctxCancel()
 				<-finishedMonitor
-				if strings.Contains(monitorOutput, targetIP) {
-					framework.Failf("TRAFFIC LEAK DETECTED! Pod IPs were seen in traffic to %s"+
-						"This indicates traffic leaked with pod source IPs instead of egress IP %s during EgressIP application to existing pods.\ntcpdump output:\n%s",
-						targetIP, normalizedEgressIP, monitorOutput)
+
+				time.Sleep(time.Second * 120)
+				for _, podIP := range podIPs {
+					if strings.Contains(monitorOutput, podIP) {
+						framework.Failf("TRAFFIC LEAK DETECTED! Pod IPs were seen in traffic with podIP %s to %s"+
+							"This indicates traffic leaked with pod source IPs instead of egress IP %s during EgressIP application to existing pods.\ntcpdump output:\n%s",
+							podIP, targetIP, normalizedEgressIP, monitorOutput)
+						break
+					}
 				}
 			})
 		})

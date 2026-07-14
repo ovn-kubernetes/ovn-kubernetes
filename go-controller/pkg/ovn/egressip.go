@@ -2753,10 +2753,6 @@ func (e *EgressIPController) addPodEgressIPAssignment(ni util.NetInfo, egressIPN
 		}
 		policyOpsMark = mark.String()
 	}
-	// For default network with secondary host interface, set egress ip secondary interface mark in reroute policy
-	if ni.IsDefault() && !isOVNNetwork && isLocalZoneEgressNode {
-		policyOpsMark = types.EgressIPSecondaryInterfaceMark
-	}
 
 	var ops []ovsdb.Operation
 	if loadedEgressNode && isLocalZoneEgressNode {

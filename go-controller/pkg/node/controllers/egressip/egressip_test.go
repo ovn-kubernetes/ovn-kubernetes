@@ -144,6 +144,8 @@ const (
 	pod4IPv6Compressed              = "fd46::4"
 	pod4IPv6CIDRCompressed          = pod4IPv6Compressed + "/128"
 	node1OVNNetworkV4               = "11.11.0.0/16"
+	node1PodSubnetV4                = "192.168.100.0/24"
+	node1PodSubnetV6                = "fd46::/112"
 )
 
 var (
@@ -355,14 +357,22 @@ func runController(testNS ns.NetNS, c *Controller) (cleanupFn, error) {
 		}(se.resourceName, se.syncFn)
 	}
 
-	if err := nodenft.InitEgressIPNFTChain(c.v4, c.v6); err != nil {
+	node, err := c.nodeLister.Get(c.nodeName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get node %s: %v", c.nodeName, err)
+	}
+	nodeSubnets, err := util.ParseNodeHostSubnetAnnotation(node, "default")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get node %s host subnets: %v", c.nodeName, err)
+	}
+	if err := nodenft.InitEgressIPNFTChain(c.v4, c.v6, nodeSubnets); err != nil {
 		return nil, err
 	}
 
 	wg := &sync.WaitGroup{}
 	runSubControllers(testNS, c, wg, stopCh)
 
-	err := testNS.Do(func(ns.NetNS) error {
+	err = testNS.Do(func(ns.NetNS) error {
 		return c.ruleManager.OwnPriority(rulePriority)
 	})
 	if err != nil {
@@ -1483,10 +1493,22 @@ func getNodeObj(testNode nodeConfig, createEIPAnnot bool) corev1.Node {
 			hostCIDRs = append(hostCIDRs, fmt.Sprintf("\"%s\"", addrs.cidr))
 		}
 	}
+
+	nodeSubnets := []string{}
+	for _, entry := range ovnconfig.Default.ClusterSubnets {
+		if !utilnet.IsIPv6CIDR(entry.CIDR) {
+			nodeSubnets = append(nodeSubnets, node1PodSubnetV4)
+		} else {
+			nodeSubnets = append(nodeSubnets, node1PodSubnetV6)
+		}
+	}
+	nodeSubnetsJSON, _ := json.Marshal(nodeSubnets)
+
 	annots := map[string]string{
 		"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}",
 			node1OVNNetworkV4, ""),
-		util.OVNNodeHostCIDRs: fmt.Sprintf("[%s]", strings.Join(hostCIDRs, ",")),
+		util.OVNNodeHostCIDRs:      fmt.Sprintf("[%s]", strings.Join(hostCIDRs, ",")),
+		"k8s.ovn.org/node-subnets": fmt.Sprintf(`{"default":%s}`, nodeSubnetsJSON),
 	}
 	if createEIPAnnot && assignedEIPs.Len() > 0 {
 		bytes, err := json.Marshal(assignedEIPs.UnsortedList())

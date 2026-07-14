@@ -327,7 +327,15 @@ func (c *Controller) Run(stopCh <-chan struct{}, wg *sync.WaitGroup, threads int
 		return fmt.Errorf("failed to run EgressIP controller because migration from using address labels to a node annotation failed: %v", err)
 	}
 
-	if err := nftables.InitEgressIPNFTChain(c.v4, c.v6); err != nil {
+	node, err := c.nodeLister.Get(c.nodeName)
+	if err != nil {
+		return fmt.Errorf("failed to get node %s: %w", c.nodeName, err)
+	}
+	nodeSubnets, err := util.ParseNodeHostSubnetAnnotation(node, types.DefaultNetworkName)
+	if err != nil {
+		return fmt.Errorf("failed to get node %s host subnets: %w", c.nodeName, err)
+	}
+	if err := nftables.InitEgressIPNFTChain(c.v4, c.v6, nodeSubnets); err != nil {
 		return fmt.Errorf("failed to initialize nftables default drop rule for secondary egressip: %w", err)
 	}
 
