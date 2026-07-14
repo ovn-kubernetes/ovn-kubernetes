@@ -38,6 +38,34 @@ type lpInfo struct {
 	expires time.Time
 }
 
+func cloneLPInfo(info *lpInfo) *lpInfo {
+	if info == nil {
+		return nil
+	}
+
+	cloned := *info
+	if info.mac != nil {
+		cloned.mac = append(net.HardwareAddr(nil), info.mac...)
+	}
+	if info.ips != nil {
+		cloned.ips = make([]*net.IPNet, len(info.ips))
+		for i, ipNet := range info.ips {
+			if ipNet == nil {
+				continue
+			}
+			clonedIPNet := *ipNet
+			if ipNet.IP != nil {
+				clonedIPNet.IP = append(net.IP(nil), ipNet.IP...)
+			}
+			if ipNet.Mask != nil {
+				clonedIPNet.Mask = append(net.IPMask(nil), ipNet.Mask...)
+			}
+			cloned.ips[i] = &clonedIPNet
+		}
+	}
+	return &cloned
+}
+
 func NewPortCache(stopChan <-chan struct{}) *PortCache {
 	return &PortCache{
 		stopChan: stopChan,
@@ -57,9 +85,8 @@ func (c *PortCache) get(pod *corev1.Pod, nadKey string) (*lpInfo, error) {
 	c.RLock()
 	defer c.RUnlock()
 	if infoMap, ok := c.cache[podName]; ok {
-		if info, ok := infoMap[nadKey]; ok {
-			x := *info
-			return &x, nil
+		if info, ok := infoMap[nadKey]; ok && info != nil {
+			return cloneLPInfo(info), nil
 		}
 	}
 	return nil, fmt.Errorf("logical port %s (NAD key %s) for pod %s not found in cache",
@@ -71,10 +98,11 @@ func (c *PortCache) getAll(pod *corev1.Pod) (map[string]*lpInfo, error) {
 	c.RLock()
 	defer c.RUnlock()
 	if infoMap, ok := c.cache[podName]; ok {
-		// make a copy of this lpInfo map and return
-		lpInfoMap := map[string]*lpInfo{}
+		// Return an independent applied-state snapshot. In particular, cache
+		// expiration must not mutate state retained by delete retries.
+		lpInfoMap := make(map[string]*lpInfo, len(infoMap))
 		for k, v := range infoMap {
-			lpInfoMap[k] = v
+			lpInfoMap[k] = cloneLPInfo(v)
 		}
 		return lpInfoMap, nil
 	}
@@ -93,14 +121,14 @@ func (c *PortCache) add(pod *corev1.Pod, logicalSwitch, nadKey, appliedNetworkNa
 	}
 	c.Lock()
 	defer c.Unlock()
-	portInfo := &lpInfo{
+	portInfo := cloneLPInfo(&lpInfo{
 		logicalSwitch:      logicalSwitch,
 		name:               logicalPort,
 		uuid:               uuid,
 		appliedNetworkName: appliedNetworkName,
 		ips:                ips,
 		mac:                mac,
-	}
+	})
 	klog.V(5).Infof("port-cache(%s): added port %+v with IP: %s and MAC: %s",
 		logicalPort, portInfo, portInfo.ips, portInfo.mac)
 	m, ok := c.cache[podName]
@@ -110,7 +138,7 @@ func (c *PortCache) add(pod *corev1.Pod, logicalSwitch, nadKey, appliedNetworkNa
 		m = map[string]*lpInfo{nadKey: portInfo}
 		c.cache[podName] = m
 	}
-	return portInfo
+	return cloneLPInfo(portInfo)
 }
 
 // removeAllForNetwork clears applied port state for a cleaned-up network.
@@ -119,6 +147,10 @@ func (c *PortCache) removeAllForNetwork(networkName string) {
 	defer c.Unlock()
 	for podName, infoMap := range c.cache {
 		for nadKey, info := range infoMap {
+			if info == nil {
+				delete(infoMap, nadKey)
+				continue
+			}
 			if info.appliedNetworkName != networkName {
 				continue
 			}
@@ -149,7 +181,19 @@ func (c *PortCache) remove(pod *corev1.Pod, nadKey string) {
 		return
 	}
 	info, ok := infoMap[nadKey]
-	if !ok || !info.expires.IsZero() {
+	if !ok {
+		klog.V(5).Infof("port-cache(%s): port not found in cache or already marked for removal", logicalPort)
+		return
+	}
+	if info == nil {
+		delete(infoMap, nadKey)
+		if len(infoMap) == 0 {
+			delete(c.cache, podName)
+		}
+		klog.V(5).Infof("port-cache(%s): removed invalid nil cache entry", logicalPort)
+		return
+	}
+	if !info.expires.IsZero() {
 		klog.V(5).Infof("port-cache(%s): port not found in cache or already marked for removal", logicalPort)
 		return
 	}
@@ -169,8 +213,8 @@ func (c *PortCache) remove(pod *corev1.Pod, nadKey string) {
 			// that was deleted and re-added before the timer expires.
 			infoMap, ok := c.cache[podName]
 			if ok {
-				if info, ok := infoMap[nadKey]; ok && !info.expires.IsZero() {
-					if time.Now().After(info.expires) {
+				if info, ok := infoMap[nadKey]; ok {
+					if info == nil || (!info.expires.IsZero() && time.Now().After(info.expires)) {
 						klog.V(5).Infof("port-cache(%s): removing port", logicalPort)
 						delete(infoMap, nadKey)
 						if len(infoMap) == 0 {

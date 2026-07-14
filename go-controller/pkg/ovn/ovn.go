@@ -198,10 +198,15 @@ func (oc *DefaultNetworkController) ensureLocalZonePod(pod *corev1.Pod, addPort,
 }
 
 // ensureRemoteZonePod tries to set up remote zone pod bits required to interconnect it.
+//   - Reconciles network-policy membership so a pod moved out of the local zone
+//     is removed from local policy and default-deny port groups
 //   - For live-migratable VMs, ensures remote-zone pod-to-node routes
 //
 // It returns nil on success and error on failure; failure indicates the pod set up should be retried later.
 func (oc *DefaultNetworkController) ensureRemoteZonePod(pod *corev1.Pod) error {
+	if err := oc.reconcilePodNetworkPolicyMembership(pod); err != nil {
+		return fmt.Errorf("failed to reconcile network policy membership for remote pod %s/%s: %w", pod.Namespace, pod.Name, err)
+	}
 	if kubevirt.IsPodLiveMigratable(pod) {
 		return kubevirt.EnsureRemoteZonePodAddressesToNodeRoute(oc.watchFactory, oc.nbClient, pod)
 	}
