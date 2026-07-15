@@ -2564,10 +2564,8 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 					}).WithTimeout(5 * time.Second).Should(Succeed())
 				})
 
-				It("should reconcile when node zone annotation is updated", func() {
-					// Setup with node in local zone
-					// The controller considers a node "local" when util.GetNodeZone(node) == c.zone
-					// So we set controller's zoneName to match the node's zone annotation
+				It("should keep the controller node local when its zone annotation is updated", func() {
+					// The controller node name, rather than its zone annotation, determines locality.
 					zoneName = "node1"
 					networks := []testNetwork{
 						{name: "zone-update-net", id: 1, topologyType: ovntypes.Layer3Topology,
@@ -2637,22 +2635,20 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 						context.Background(), node, metav1.UpdateOptions{})
 					Expect(err).NotTo(HaveOccurred())
 
-					// Controller should reconcile - port and routes should still exist (now treated as remote zone)
+					// The annotation update must not change the node's locality.
 					Consistently(func() error {
 						return verifyRouterPortsCount(nbClient, getConnectRouterName("zone-update-cnc"), 1)
 					}).WithTimeout(2 * time.Second).Should(Succeed())
 
-					// After zone update, connect router port should be remote (no peer, has requested-chassis)
-					Eventually(func() error {
-						return verifyRouterPortIsRemote(nbClient, connectPortName, getExpectedPortTunnelKey("192.168.0.0/24", "fd00:192:168::/64", ovntypes.Layer3Topology, 1))
-					}).WithTimeout(5 * time.Second).Should(Succeed())
+					Consistently(func() error {
+						return verifyRouterPortIsLocal(nbClient, connectPortName, getExpectedPortTunnelKey("192.168.0.0/24", "fd00:192:168::/64", ovntypes.Layer3Topology, 1), networkPortName)
+					}).WithTimeout(2 * time.Second).Should(Succeed())
 
-					// Network router port is deleted for remote nodes - only connect router side port exists
-					Eventually(func() error {
-						return verifyRouterPortsCount(nbClient, networks[0].RouterName(), 0)
-					}).WithTimeout(5 * time.Second).Should(Succeed())
+					Consistently(func() error {
+						return verifyRouterPortIsLocal(nbClient, networkPortName, 0, connectPortName)
+					}).WithTimeout(2 * time.Second).Should(Succeed())
 
-					// Verify routes still exist after zone change
+					// Routes remain programmed as well.
 					Consistently(func() error {
 						return verifyRouterStaticRoutes(nbClient, getConnectRouterName("zone-update-cnc"),
 							"zone-update-cnc", 1, 1,
