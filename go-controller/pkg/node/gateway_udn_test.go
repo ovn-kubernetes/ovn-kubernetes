@@ -28,6 +28,8 @@ import (
 	"sigs.k8s.io/knftables"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+	"github.com/ovn-kubernetes/libovsdb/model"
+	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	rafakeclient "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned/fake"
@@ -175,6 +177,8 @@ func setUpGatewayFakeOVSCommands(fexec *ovntest.FakeExec) {
 		Cmd:    "ovs-vsctl --timeout=15 get interface breth0 ofport",
 		Output: "7",
 	})
+	// newNodePortWatcher() looks up the physical interface's ofport via exec;
+	// this is unrelated to checkPorts(), which now reads it from libovsdb.
 	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 		Cmd:    "ovs-vsctl --timeout=15 --if-exists get interface breth0 ofport",
 		Output: "7",
@@ -192,34 +196,39 @@ func setUpUDNOpenflowManagerFakeOVSCommands(fexec *ovntest.FakeExec) {
 	})
 }
 
-func setUpUDNOpenflowManagerCheckPortsFakeOVSCommands(fexec *ovntest.FakeExec) {
-	// Default and UDN patch port
-	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "ovs-vsctl --timeout=15 --if-exists get Interface patch-breth0_bluenet_worker1-to-br-int ofport",
-		Output: "15",
-	})
-	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "ovs-vsctl --timeout=15 --if-exists get Interface patch-breth0_worker1-to-br-int ofport",
-		Output: "5",
-	})
-	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "ovs-vsctl --timeout=15 --if-exists get interface breth0 ofport",
-		Output: "7",
-	})
+// addOVSPatchPortInterface creates an OVS Port+Interface with the given ofport
+// and attaches it to bridgeName, so checkPorts() can find it via libovsdb.
+func addOVSPatchPortInterface(ovsClient libovsdbclient.Client, bridgeName, portName string, ofport int) {
+	GinkgoHelper()
+	iface := &vswitchd.Interface{UUID: "iface-" + portName, Name: portName, Type: "patch", Ofport: &ofport}
+	ifaceOps, err := ovsClient.Create(iface)
+	Expect(err).NotTo(HaveOccurred())
 
-	// After simulated deletion.
-	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "ovs-vsctl --timeout=15 --if-exists get Interface patch-breth0_bluenet_worker1-to-br-int ofport",
-		Output: "",
+	port := &vswitchd.Port{UUID: "port-" + portName, Name: portName, Interfaces: []string{iface.UUID}}
+	portOps, err := ovsClient.Create(port)
+	Expect(err).NotTo(HaveOccurred())
+
+	bridge := &vswitchd.Bridge{Name: bridgeName}
+	Expect(ovsClient.Get(context.Background(), bridge)).To(Succeed())
+	mutateOps, err := ovsClient.Where(bridge).Mutate(bridge, model.Mutation{
+		Field:   &bridge.Ports,
+		Mutator: ovsdb.MutateOperationInsert,
+		Value:   []string{port.UUID},
 	})
-	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "ovs-vsctl --timeout=15 --if-exists get Interface patch-breth0_worker1-to-br-int ofport",
-		Output: "5",
-	})
-	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "ovs-vsctl --timeout=15 --if-exists get interface breth0 ofport",
-		Output: "7",
-	})
+	Expect(err).NotTo(HaveOccurred())
+
+	ops := append(ifaceOps, portOps...)
+	ops = append(ops, mutateOps...)
+	_, err = ovsops.TransactAndCheck(ovsClient, ops)
+	Expect(err).NotTo(HaveOccurred())
+}
+
+// removeOVSPatchPortInterface deletes the OVS Port+Interface previously added
+// with addOVSPatchPortInterface, simulating ovn-controller tearing down a
+// stale patch port.
+func removeOVSPatchPortInterface(ovsClient libovsdbclient.Client, bridgeName, portName string) {
+	GinkgoHelper()
+	Expect(ovsops.DeletePortWithInterfaces(ovsClient, bridgeName, portName)).To(Succeed())
 }
 
 func deleteStaleManagementPortFakeCommands(fexec *ovntest.FakeExec, mgtPort string) {
@@ -237,7 +246,7 @@ func openflowManagerCheckPorts(ofMgr *openflowManager) {
 	sort.SliceStable(netConfigs, func(i, j int) bool {
 		return netConfigs[i].PatchPort < netConfigs[j].PatchPort
 	})
-	Expect(checkPorts(netConfigs, uplink, ofPortPhys)).To(Succeed())
+	Expect(checkPorts(ofMgr.ovsClient, netConfigs, uplink, ofPortPhys)).To(Succeed())
 }
 
 func getDummyOpenflowManager() *openflowManager {
@@ -327,7 +336,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 					Ports: []string{"breth0-port-uuid", "eth0-port-uuid"},
 				},
 				&vswitchd.Port{UUID: "breth0-port-uuid", Name: "breth0", Interfaces: []string{"breth0-iface-uuid"}},
-				&vswitchd.Interface{UUID: "breth0-iface-uuid", Name: "breth0", Type: "system"},
+				&vswitchd.Interface{UUID: "breth0-iface-uuid", Name: "breth0", Type: "system", Ofport: ptr.To(7)},
 				&vswitchd.Port{UUID: "eth0-port-uuid", Name: "eth0"},
 			},
 		})
@@ -625,7 +634,6 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		getCreationFakeCommands(fexec, mgtPort, mgtPortMAC, netName, nodeName, netInfo.MTU())
 		getRPFilterLooseModeFakeCommands(fexec)
 		setUpUDNOpenflowManagerFakeOVSCommands(fexec)
-		setUpUDNOpenflowManagerCheckPortsFakeOVSCommands(fexec)
 		getDeletionFakeOVSCommands(fexec, mgtPort)
 		nodeLister.On("Get", mock.AnythingOfType("string")).Return(node, nil)
 		kubeFakeClient := fake.NewSimpleClientset(
@@ -777,6 +785,8 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 				}
 			}
 			Expect(udnFlows).To(Equal(16))
+			addOVSPatchPortInterface(ovsClient, "breth0", "patch-breth0_worker1-to-br-int", 5)
+			addOVSPatchPortInterface(ovsClient, "breth0", "patch-breth0_bluenet_worker1-to-br-int", 15)
 			openflowManagerCheckPorts(udnGateway.openflowManager)
 
 			for _, svcCIDR := range config.Kubernetes.ServiceCIDRs {
@@ -789,7 +799,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 
 			// The second call to checkPorts() will return no ofPort for the UDN - simulating a deletion that already was
 			// processed by ovn-northd/ovn-controller.  We should not be panicking on that.
-			// See setUpUDNOpenflowManagerCheckPortsFakeOVSCommands() for the order of ofPort query results.
+			removeOVSPatchPortInterface(ovsClient, "breth0", "patch-breth0_bluenet_worker1-to-br-int")
 			openflowManagerCheckPorts(udnGateway.openflowManager)
 
 			cnode := node.DeepCopy()
@@ -1050,7 +1060,6 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		getCreationFakeCommands(fexec, mgtPort, mgtPortMAC, netName, nodeName, netInfo.MTU())
 		getRPFilterLooseModeFakeCommands(fexec)
 		setUpUDNOpenflowManagerFakeOVSCommands(fexec)
-		setUpUDNOpenflowManagerCheckPortsFakeOVSCommands(fexec)
 		getDeletionFakeOVSCommands(fexec, mgtPort)
 		nodeLister.On("Get", mock.AnythingOfType("string")).Return(node, nil)
 		kubeFakeClient := fake.NewSimpleClientset(
@@ -1197,6 +1206,8 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 				}
 			}
 			Expect(udnFlows).To(Equal(16))
+			addOVSPatchPortInterface(ovsClient, "breth0", "patch-breth0_worker1-to-br-int", 5)
+			addOVSPatchPortInterface(ovsClient, "breth0", "patch-breth0_bluenet_worker1-to-br-int", 15)
 			openflowManagerCheckPorts(udnGateway.openflowManager)
 
 			for _, svcCIDR := range config.Kubernetes.ServiceCIDRs {
@@ -1209,7 +1220,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 
 			// The second call to checkPorts() will return no ofPort for the UDN - simulating a deletion that already was
 			// processed by ovn-northd/ovn-controller.  We should not be panicking on that.
-			// See setUpUDNOpenflowManagerCheckPortsFakeOVSCommands() for the order of ofPort query results.
+			removeOVSPatchPortInterface(ovsClient, "breth0", "patch-breth0_bluenet_worker1-to-br-int")
 			openflowManagerCheckPorts(udnGateway.openflowManager)
 
 			cnode := node.DeepCopy()
@@ -1282,7 +1293,6 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		getCreationFakeCommands(fexec, mgtPort, mgtPortMAC, netName, nodeName, mutableNetInfo.MTU())
 		getRPFilterLooseModeFakeCommands(fexec)
 		setUpUDNOpenflowManagerFakeOVSCommands(fexec)
-		setUpUDNOpenflowManagerCheckPortsFakeOVSCommands(fexec)
 		getDeletionFakeOVSCommands(fexec, mgtPort)
 		nodeLister.On("Get", mock.AnythingOfType("string")).Return(node, nil)
 		kubeFakeClient := fake.NewSimpleClientset(
@@ -1435,6 +1445,8 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 				}
 			}
 			Expect(udnFlows).To(Equal(18))
+			addOVSPatchPortInterface(ovsClient, "breth0", "patch-breth0_worker1-to-br-int", 5)
+			addOVSPatchPortInterface(ovsClient, "breth0", "patch-breth0_bluenet_worker1-to-br-int", 15)
 			openflowManagerCheckPorts(udnGateway.openflowManager)
 
 			for _, svcCIDR := range config.Kubernetes.ServiceCIDRs {
@@ -1449,7 +1461,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 
 			// The second call to checkPorts() will return no ofPort for the UDN - simulating a deletion that already was
 			// processed by ovn-northd/ovn-controller.  We should not be panicking on that.
-			// See setUpUDNOpenflowManagerCheckPortsFakeOVSCommands() for the order of ofPort query results.
+			removeOVSPatchPortInterface(ovsClient, "breth0", "patch-breth0_bluenet_worker1-to-br-int")
 			openflowManagerCheckPorts(udnGateway.openflowManager)
 
 			cnode := node.DeepCopy()

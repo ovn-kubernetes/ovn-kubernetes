@@ -1818,9 +1818,9 @@ func newGateway(
 			}
 		}
 
-		gw.openflowManager, err = newGatewayOpenFlowManager(gwBridge, exGwBridge)
+		gw.openflowManager, err = newGatewayOpenFlowManager(gwBridge, exGwBridge, ovsClient)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to create gateway OpenFlow manager: %w", err)
 		}
 
 		// resync flows on IP change
