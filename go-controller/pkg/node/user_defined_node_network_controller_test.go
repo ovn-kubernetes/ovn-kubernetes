@@ -32,6 +32,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	factoryMocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory/mocks"
 	kubemocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube/mocks"
+	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iprulemanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/managementport"
@@ -212,15 +213,20 @@ var _ = Describe("UserDefinedNodeNetworkController: UserDefinedPrimaryNetwork Ga
 		var ovsErr error
 		ovsClient, ovsCleanup, ovsErr = libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
 			OVSData: []libovsdbtest.TestData{
-				&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{"breth0-uuid"}},
+				&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{"breth0-uuid", "br-int-uuid"}, ExternalIDs: map[string]string{"system-id": "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6"}},
+				&vswitchd.Bridge{UUID: "br-int-uuid", Name: "br-int"},
 				&vswitchd.Bridge{
 					UUID:  "breth0-uuid",
 					Name:  "breth0",
-					Ports: []string{"breth0-port-uuid", "eth0-port-uuid"},
+					Ports: []string{"breth0-port-uuid", "eth0-port-uuid", "default-patch-port-uuid", "udn-patch-port-uuid"},
 				},
 				&vswitchd.Port{UUID: "breth0-port-uuid", Name: "breth0", Interfaces: []string{"breth0-iface-uuid"}},
-				&vswitchd.Interface{UUID: "breth0-iface-uuid", Name: "breth0", Type: "system"},
+				&vswitchd.Interface{UUID: "breth0-iface-uuid", Name: "breth0", Type: "system", MACInUse: ptr.To("00:00:00:55:66:99"), Ofport: ptr.To(7)},
 				&vswitchd.Port{UUID: "eth0-port-uuid", Name: "eth0"},
+				&vswitchd.Port{UUID: "default-patch-port-uuid", Name: "patch-breth0_worker1-to-br-int", Interfaces: []string{"default-patch-iface-uuid"}},
+				&vswitchd.Interface{UUID: "default-patch-iface-uuid", Name: "patch-breth0_worker1-to-br-int", Ofport: ptr.To(5)},
+				&vswitchd.Port{UUID: "udn-patch-port-uuid", Name: "patch-breth0_bluenet_worker1-to-br-int", Interfaces: []string{"udn-patch-iface-uuid"}},
+				&vswitchd.Interface{UUID: "udn-patch-iface-uuid", Name: "patch-breth0_bluenet_worker1-to-br-int", Ofport: ptr.To(15)},
 			},
 		})
 		Expect(ovsErr).NotTo(HaveOccurred())
@@ -414,13 +420,10 @@ var _ = Describe("UserDefinedNodeNetworkController: UserDefinedPrimaryNetwork Ga
 
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
-			setManagementPortFakeCommands(fexec, nodeName)
+			setManagementPortFakeCommands(fexec)
 			setUpGatewayFakeOVSCommands(fexec)
-			deleteStaleManagementPortFakeCommands(fexec, mgtPort)
 			getCreationFakeCommands(fexec, mgtPort, mgtPortMAC, netName, nodeName, NetInfo.MTU())
 			getRPFilterLooseModeFakeCommands(fexec)
-			setUpUDNOpenflowManagerFakeOVSCommands(fexec)
-			getDeletionFakeOVSCommands(fexec, mgtPort)
 
 			gatewayNextHops, gatewayIntf, err := getGatewayNextHops(ovsClient)
 			Expect(err).NotTo(HaveOccurred())
@@ -431,6 +434,9 @@ var _ = Describe("UserDefinedNodeNetworkController: UserDefinedPrimaryNetwork Ga
 					Name: types.K8sMgmtIntfName,
 				},
 			})
+			Expect(err).NotTo(HaveOccurred())
+			err = ovsops.CreateOrUpdatePodPort(ovsClient, "br-int", types.K8sMgmtIntfName,
+				&vswitchd.Port{}, &vswitchd.Interface{Type: "internal"})
 			Expect(err).NotTo(HaveOccurred())
 			err = mp.Start(stopCh)
 			Expect(err).NotTo(HaveOccurred())
@@ -479,7 +485,7 @@ var _ = Describe("UserDefinedNodeNetworkController: UserDefinedPrimaryNetwork Ga
 				ipRulesManager,
 				nil,
 				localGw,
-				nil,
+				ovsClient,
 				nil,
 			)
 			Expect(err).NotTo(HaveOccurred())

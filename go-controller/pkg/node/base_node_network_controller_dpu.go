@@ -5,6 +5,7 @@ package node
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -13,6 +14,8 @@ import (
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
+
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
@@ -302,13 +305,25 @@ func (bnnc *BaseNodeNetworkController) delRepPort(pod *corev1.Pod, dpuCD *util.D
 	//TODO(adrianc): handle: clearPodBandwidth(pr.SandboxID), pr.deletePodConntrack()
 	podDesc := fmt.Sprintf("pod %s/%s for NAD %s", pod.Namespace, pod.Name, nadKey)
 	klog.Infof("Delete VF representor %s for %s", vfRepName, podDesc)
-	ifExists, sandbox, expectedNADKey, err := util.GetOVSPortPodInfo(vfRepName)
+	if bnnc.ovsClient == nil {
+		return fmt.Errorf("cannot delete VF representor %s for %s without an OVS client", vfRepName, podDesc)
+	}
+	iface, err := ovsops.GetOVSInterface(bnnc.ovsClient, vfRepName)
+	ifExists := err == nil
+	if errors.Is(err, libovsdbclient.ErrNotFound) {
+		err = nil
+	}
 	if err != nil {
 		return err
 	}
 	if !ifExists {
 		klog.Infof("VF representor %s for %s is not an OVS interface, nothing to do", vfRepName, podDesc)
 		return nil
+	}
+	sandbox := iface.ExternalIDs["sandbox"]
+	expectedNADKey := iface.ExternalIDs[types.NADExternalID]
+	if expectedNADKey == "" {
+		expectedNADKey = types.DefaultNetworkName
 	}
 	if sandbox != dpuCD.SandboxId {
 		return fmt.Errorf("OVS port %s was added for sandbox (%s), expecting (%s)", vfRepName, sandbox, dpuCD.SandboxId)

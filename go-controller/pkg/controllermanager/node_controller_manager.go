@@ -21,6 +21,7 @@ import (
 	kexec "k8s.io/utils/exec"
 
 	"github.com/ovn-kubernetes/libovsdb/client"
+	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/deviceresource"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni"
@@ -169,7 +170,7 @@ func (ncm *NodeControllerManager) syncManagementPorts(validNetworks ...util.NetI
 		// delete stale internal management port OVS interface
 		for mgmtPortIfName, mgmtPortOVSIfName := range internalMgmtPorts {
 			if !validMpx.Has(mgmtPortIfName) {
-				err := managementport.DeleteManagementPortInternalOVSInterface("unknownNetwork", mgmtPortOVSIfName)
+				err := managementport.DeleteManagementPortInternalOVSInterface(ncm.ovsClient, "unknownNetwork", mgmtPortOVSIfName)
 				if err != nil {
 					errs = append(errs, fmt.Errorf("failed to delete stale OVS management port %s for unknown network: %w", mgmtPortOVSIfName, err))
 				}
@@ -179,7 +180,7 @@ func (ncm *NodeControllerManager) syncManagementPorts(validNetworks ...util.NetI
 		// delete stale representor management port OVS interface
 		for mgmtPortIfName, repInfo := range repMgmtPorts {
 			if !validMpx.Has(mgmtPortIfName) {
-				err := managementport.DeleteManagementPortRepInterface(repInfo.netName, repInfo.name, repInfo.name)
+				err := managementport.DeleteManagementPortRepInterface(ncm.ovsClient, repInfo.netName, repInfo.name, repInfo.name)
 				if err != nil {
 					errs = append(errs, fmt.Errorf("failed to delete stale OVS representor management port %s: %w", mgmtPortIfName, err))
 				}
@@ -268,6 +269,9 @@ func isNetworkManagerRequiredForNode() bool {
 // NewNodeControllerManager creates a new OVN controller manager to manage all the controller for all networks
 func NewNodeControllerManager(ovnClient *util.OVNClientset, wf factory.NodeWatchFactory, name string,
 	wg *sync.WaitGroup, eventRecorder record.EventRecorder, routeManager *routemanager.Controller, ovsClient client.Client) (*NodeControllerManager, error) {
+	if config.OvnKubeNode.Mode != ovntypes.NodeModeDPUHost && ovsClient == nil {
+		return nil, fmt.Errorf("OVS client is required in node mode %s", config.OvnKubeNode.Mode)
+	}
 	ncm := &NodeControllerManager{
 		name: name,
 		ovnNodeClient: &util.OVNNodeClientset{
@@ -396,7 +400,7 @@ func (ncm *NodeControllerManager) Start(ctx context.Context, isOVNKubeController
 	if config.OvnKubeNode.Mode != ovntypes.NodeModeDPUHost {
 		// start health check to ensure there are no stale OVS internal ports
 		go wait.Until(func() {
-			checkForStaleOVSInternalPorts()
+			checkForStaleOVSInternalPorts(ncm.ovsClient)
 			ncm.checkForStaleOVSPodInterfaces()
 		}, time.Minute, ncm.stopChan)
 	}
@@ -593,50 +597,61 @@ func (ncm *NodeControllerManager) checkForStaleOVSPodInterfaces() {
 
 // checkForStaleOVSInternalPorts checks for OVS internal ports without any ofport assigned,
 // they are stale ports that must be deleted
-func checkForStaleOVSInternalPorts() {
+func checkForStaleOVSInternalPorts(ovsClient client.Client) {
 	// Track how long scrubbing stale interfaces takes
 	start := time.Now()
 	defer func() {
 		klog.V(5).Infof("CheckForStaleOVSInternalPorts took %v", time.Since(start))
 	}()
 
-	stdout, _, err := util.RunOVSVsctl("--data=bare", "--no-headings", "--columns=name", "find",
-		"interface", "ofport=-1")
+	staleInterfaces, err := ovsops.FindInterfacesWithPredicate(ovsClient, func(iface *vswitchd.Interface) bool {
+		return iface.Ofport != nil && *iface.Ofport == -1
+	})
 	if err != nil {
-		klog.Errorf("Failed to list OVS interfaces with ofport set to -1")
+		klog.Errorf("Failed to list OVS interfaces with ofport set to -1: %v", err)
 		return
 	}
-	if len(stdout) == 0 {
+	if len(staleInterfaces) == 0 {
 		return
 	}
-	// Batched command length overload shouldn't be a worry here since the number
-	// of interfaces per node should never be very large
-	// TODO: change this to use libovsdb
-	staleInterfaceArgs := []string{}
-	values := strings.Split(stdout, "\n\n")
-	for _, val := range values {
-		if val == ovntypes.K8sMgmtIntfName || val == ovntypes.K8sMgmtIntfName+"_0" {
+
+	staleInterfaceUUIDs := make(map[string]struct{}, len(staleInterfaces))
+	for _, iface := range staleInterfaces {
+		if iface.Name == ovntypes.K8sMgmtIntfName || iface.Name == ovntypes.K8sMgmtIntfName+"_0" {
 			klog.Errorf("Management port %s is missing. Perhaps the host rebooted "+
-				"or SR-IOV VFs were disabled on the host.", val)
+				"or SR-IOV VFs were disabled on the host.", iface.Name)
 			continue
 		}
-		klog.Warningf("Found stale interface %s, so queuing it to be deleted", val)
-		if len(staleInterfaceArgs) > 0 {
-			staleInterfaceArgs = append(staleInterfaceArgs, "--")
-		}
-
-		staleInterfaceArgs = append(staleInterfaceArgs, "--if-exists", "--with-iface", "del-port", val)
+		staleInterfaceUUIDs[iface.UUID] = struct{}{}
 	}
-
-	// Don't call ovs if all interfaces were skipped in the loop above
-	if len(staleInterfaceArgs) == 0 {
+	if len(staleInterfaceUUIDs) == 0 {
 		return
 	}
 
-	_, stderr, err := util.RunOVSVsctl(staleInterfaceArgs...)
+	stalePorts, err := ovsops.FindOVSPortsWithPredicate(ovsClient, func(port *vswitchd.Port) bool {
+		for _, ifaceUUID := range port.Interfaces {
+			if _, ok := staleInterfaceUUIDs[ifaceUUID]; ok {
+				return true
+			}
+		}
+		return false
+	})
 	if err != nil {
-		klog.Errorf("Failed to delete OVS port/interfaces: stderr: %s (%v)",
-			stderr, err)
+		klog.Errorf("Failed to find OVS ports for stale interfaces: %v", err)
+		return
+	}
+
+	var ops []ovsdb.Operation
+	for _, port := range stalePorts {
+		klog.Warningf("Found stale OVS port %s, so queuing it to be deleted", port.Name)
+		ops, err = ovsops.DeletePortWithInterfacesOps(ovsClient, ops, port, "br-int")
+		if err != nil {
+			klog.Errorf("Failed to build deletion operations for stale OVS port %s: %v", port.Name, err)
+			return
+		}
+	}
+	if _, err := ovsops.TransactAndCheck(ovsClient, ops); err != nil {
+		klog.Errorf("Failed to delete stale OVS ports/interfaces: %v", err)
 	}
 }
 
