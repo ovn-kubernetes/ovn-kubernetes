@@ -38,6 +38,7 @@ import (
 
 type podRequestInterfaceOpsStub struct {
 	unconfiguredInterfaces []*PodInterfaceInfo
+	unconfigureOVSClients  []client.Client
 }
 
 func (stub *podRequestInterfaceOpsStub) ConfigureInterface(pr *PodRequest, _ client.Client, _ PodInfoGetter, pii *PodInterfaceInfo) ([]*current.Interface, error) {
@@ -54,8 +55,9 @@ func (stub *podRequestInterfaceOpsStub) ConfigureInterface(pr *PodRequest, _ cli
 	}
 	return nil, nil
 }
-func (stub *podRequestInterfaceOpsStub) UnconfigureInterface(_ *PodRequest, ifInfo *PodInterfaceInfo) error {
+func (stub *podRequestInterfaceOpsStub) UnconfigureInterface(_ *PodRequest, ovsClient client.Client, ifInfo *PodInterfaceInfo) error {
 	stub.unconfiguredInterfaces = append(stub.unconfiguredInterfaces, ifInfo)
+	stub.unconfigureOVSClients = append(stub.unconfigureOVSClients, ovsClient)
 	return nil
 }
 
@@ -247,6 +249,7 @@ var _ = Describe("Network Segmentation", func() {
 			pr.Command = CNIDel
 			handlePodRequest()
 			Expect(prInterfaceOpsStub.unconfiguredInterfaces).To(HaveLen(1))
+			Expect(prInterfaceOpsStub.unconfigureOVSClients).To(ConsistOf(cniServer.ovsClient))
 		})
 	})
 	Context("with network segmentation fg enabled and annotation with role field", func() {
@@ -282,10 +285,19 @@ var _ = Describe("Network Segmentation", func() {
 					pr.Command = CNIDel
 					handlePodRequest()
 					Expect(prInterfaceOpsStub.unconfiguredInterfaces).To(HaveLen(1))
+					Expect(prInterfaceOpsStub.unconfigureOVSClients).To(ConsistOf(cniServer.ovsClient))
 				})
 				It("should fail cmdAdd when the server has no OVS client", func() {
 					startCNIServer(testing.NewNamespace(pod.Namespace), pod)
 					cniServer.ovsClient = nil
+
+					_, err := cniServer.handleCNIRequest(podRequestToHTTPRequest(&pr))
+					Expect(err).To(MatchError(ContainSubstring("OVS client is required in privileged mode")))
+				})
+				It("should fail cmdDel when the server has no OVS client", func() {
+					startCNIServer(testing.NewNamespace(pod.Namespace), pod)
+					cniServer.ovsClient = nil
+					pr.Command = CNIDel
 
 					_, err := cniServer.handleCNIRequest(podRequestToHTTPRequest(&pr))
 					Expect(err).To(MatchError(ContainSubstring("OVS client is required in privileged mode")))

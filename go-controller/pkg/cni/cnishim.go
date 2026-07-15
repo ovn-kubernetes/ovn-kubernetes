@@ -344,7 +344,7 @@ func (p *Plugin) CmdDel(args *skel.CmdArgs) error {
 			}
 		}
 
-		err = podRequestInterfaceOps.UnconfigureInterface(pr, response.PodIFInfo)
+		err = podRequestInterfaceOps.UnconfigureInterface(pr, nil, response.PodIFInfo)
 	}
 	return err
 }

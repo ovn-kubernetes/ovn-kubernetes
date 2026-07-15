@@ -600,6 +600,82 @@ func getExistingIfaceMeta(ovsClient client.Client, name string) (string, string,
 	return util.GetExternalIDValByKey(extIds[0], "iface-id"), nadKey, true, nil
 }
 
+func findInterfacesWithSandbox(ovsClient client.Client, sandboxID string) ([]string, error) {
+	if ovsClient == nil {
+		return ovsFind("Interface", "name", "external-ids:sandbox="+sandboxID)
+	}
+	ifaces, err := ovsops.FindInterfacesWithPredicate(ovsClient, func(iface *vswitchd.Interface) bool {
+		return iface.ExternalIDs["sandbox"] == sandboxID
+	})
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(ifaces))
+	for _, iface := range ifaces {
+		names = append(names, iface.Name)
+	}
+	return names, nil
+}
+
+func findPodInterfaces(ovsClient client.Client, sandboxID, podIfName, netName, nadKey string) ([]string, error) {
+	if ovsClient == nil {
+		conditions := []string{
+			"external-ids:sandbox=" + sandboxID,
+			fmt.Sprintf("external_ids:pod-if-name=%s", podIfName),
+		}
+		ifaces, err := ovsFind("Interface", "name", conditions...)
+		if err == nil && len(ifaces) == 1 {
+			return ifaces, nil
+		}
+
+		conditions = []string{"external-ids:sandbox=" + sandboxID}
+		if netName != types.DefaultNetworkName {
+			conditions = append(conditions, fmt.Sprintf("external_ids:%s=%s", types.NADExternalID, nadKey))
+		} else {
+			conditions = append(conditions, fmt.Sprintf("external_ids:%s{=}[]", types.NADExternalID))
+		}
+		return ovsFind("Interface", "name", conditions...)
+	}
+
+	ifaces, err := ovsops.FindInterfacesWithPredicate(ovsClient, func(iface *vswitchd.Interface) bool {
+		return iface.ExternalIDs["sandbox"] == sandboxID && iface.ExternalIDs["pod-if-name"] == podIfName
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(ifaces) != 1 {
+		ifaces, err = ovsops.FindInterfacesWithPredicate(ovsClient, func(iface *vswitchd.Interface) bool {
+			if iface.ExternalIDs["sandbox"] != sandboxID {
+				return false
+			}
+			if netName == types.DefaultNetworkName {
+				return iface.ExternalIDs[types.NADExternalID] == ""
+			}
+			return iface.ExternalIDs[types.NADExternalID] == nadKey
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	names := make([]string, 0, len(ifaces))
+	for _, iface := range ifaces {
+		names = append(names, iface.Name)
+	}
+	return names, nil
+}
+
+func getInterfaceExternalID(ovsClient client.Client, ifaceName, key string) (string, error) {
+	if ovsClient == nil {
+		return ovsGet("interface", ifaceName, "external_ids", key)
+	}
+	iface, err := ovsops.GetOVSInterface(ovsClient, ifaceName)
+	if err != nil {
+		return "", err
+	}
+	return iface.ExternalIDs[key], nil
+}
+
 // addOrUpdatePodPort creates or updates the OVS port and its single backing
 // Interface on br-int for the given pod iface. extIDs becomes the Interface
 // external_ids without removing keys owned by other components. On the default
@@ -626,7 +702,7 @@ func addOrUpdatePodPort(ovsClient client.Client, hostIfaceName string,
 				return fmt.Errorf("failed to clear default-network external IDs from interface %s: %v", hostIfaceName, err)
 			}
 		}
-		if _, err := ovsops.TransactAndCheck(ovsClient, ops); err != nil {
+		if err := ovsops.TransactAndCheckAndWaitForVSwitchd(ovsClient, ops); err != nil {
 			return fmt.Errorf("failure in plugging pod interface: %v", err)
 		}
 		return nil
@@ -813,7 +889,7 @@ func ConfigureOVS(ctx context.Context, ovsClient client.Client, namespace, podNa
 			return fmt.Errorf("failed to set host veth txqlen: %v", err)
 		}
 
-		if err := setPodBandwidth(sandboxID, hostIfaceName, ifInfo.Ingress, ifInfo.Egress); err != nil {
+		if err := setPodBandwidth(ovsClient, sandboxID, hostIfaceName, ifInfo.Ingress, ifInfo.Egress); err != nil {
 			return err
 		}
 	}
@@ -830,7 +906,7 @@ func ConfigureOVS(ctx context.Context, ovsClient client.Client, namespace, podNa
 
 type PodRequestInterfaceOps interface {
 	ConfigureInterface(pr *PodRequest, ovsClient client.Client, getter PodInfoGetter, ifInfo *PodInterfaceInfo) ([]*current.Interface, error)
-	UnconfigureInterface(pr *PodRequest, ifInfo *PodInterfaceInfo) error
+	UnconfigureInterface(pr *PodRequest, ovsClient client.Client, ifInfo *PodInterfaceInfo) error
 }
 
 type defaultPodRequestInterfaceOps struct{}
@@ -867,7 +943,7 @@ func (*defaultPodRequestInterfaceOps) ConfigureInterface(pr *PodRequest, ovsClie
 	if !ifInfo.IsDPUHostMode {
 		err = ConfigureOVS(pr.ctx, ovsClient, pr.PodNamespace, pr.PodName, pr.IfName, hostIface.Name, ifInfo, pr.SandboxID, pr.CNIConf.DeviceID, pr.IsVFIO, getter)
 		if err != nil {
-			pr.deletePort(hostIface.Name, pr.PodNamespace, pr.PodName)
+			pr.deletePort(ovsClient, hostIface.Name, pr.PodNamespace, pr.PodName)
 			return nil, err
 		}
 	}
@@ -911,7 +987,7 @@ func (*defaultPodRequestInterfaceOps) ConfigureInterface(pr *PodRequest, ovsClie
 	return []*current.Interface{hostIface, contIface}, nil
 }
 
-func (*defaultPodRequestInterfaceOps) UnconfigureInterface(pr *PodRequest, ifInfo *PodInterfaceInfo) error {
+func (*defaultPodRequestInterfaceOps) UnconfigureInterface(pr *PodRequest, ovsClient client.Client, ifInfo *PodInterfaceInfo) error {
 	podDesc := fmt.Sprintf("for pod %s/%s NAD %s", pr.PodNamespace, pr.PodName, pr.nadName)
 	klog.V(5).Infof("Tear down interface (%+v) %s", *pr, podDesc)
 	if ifInfo.IsDPUHostMode {
@@ -1001,7 +1077,7 @@ func (*defaultPodRequestInterfaceOps) UnconfigureInterface(pr *PodRequest, ifInf
 					pr.CNIConf.DeviceID, podDesc, err)
 			}
 		}
-		portList, err := ovsFind("interface", "name", "external-ids:sandbox="+pr.SandboxID)
+		portList, err := findInterfacesWithSandbox(ovsClient, pr.SandboxID)
 		if err != nil {
 			return fmt.Errorf("failed to list interfaces in OVS during delete for sandbox: %s, err: %w",
 				pr.SandboxID, err)
@@ -1009,7 +1085,7 @@ func (*defaultPodRequestInterfaceOps) UnconfigureInterface(pr *PodRequest, ifInf
 		// hostIfName is not empty if using device ID, a secondary network, or segmentation not enabled
 		// delete the port in traditional fashion
 		if hostIfName != "" {
-			pr.deletePort(hostIfName, pr.PodNamespace, pr.PodName)
+			pr.deletePort(ovsClient, hostIfName, pr.PodNamespace, pr.PodName)
 		} else {
 			// this is a primary interface deletion and segmentation is enabled, delete all ports
 			// delete happens in reverse order for attached networks, so this is the final deletion
@@ -1019,9 +1095,9 @@ func (*defaultPodRequestInterfaceOps) UnconfigureInterface(pr *PodRequest, ifInf
 				klog.V(5).Infof("Removing multiple interfaces for primary network segmentation (%+v) %s: %s",
 					*pr, podDesc, strings.Join(portList, ","))
 			}
-			pr.deletePorts(portList, pr.PodNamespace, pr.PodName)
+			pr.deletePorts(ovsClient, portList, pr.PodNamespace, pr.PodName)
 		}
-		err = clearPodBandwidthForPorts(portList, pr.SandboxID)
+		err = clearPodBandwidth(ovsClient, pr.SandboxID)
 		if err != nil {
 			klog.Errorf("Failed to clearPodBandwidth sandbox %v %s: %v", pr.SandboxID, podDesc, err)
 		}
@@ -1057,7 +1133,7 @@ func (pr *PodRequest) deletePodConntrack() {
 	}
 }
 
-func (pr *PodRequest) deletePort(ifaceName, podNamespace, podName string) {
+func (pr *PodRequest) deletePort(ovsClient client.Client, ifaceName, podNamespace, podName string) {
 	podDesc := fmt.Sprintf("%s/%s", podNamespace, podName)
 
 	var isVFDevice bool
@@ -1080,10 +1156,16 @@ func (pr *PodRequest) deletePort(ifaceName, podNamespace, podName string) {
 		}
 	}
 
-	out, err := ovsExec("del-port", "br-int", ifaceName)
-	if err != nil && !strings.Contains(err.Error(), "no port named") {
-		// DEL should be idempotent; don't return an error just log it
-		klog.Warningf("Failed to delete pod %q OVS port %s: %v\n  %q", podDesc, ifaceName, err, string(out))
+	if ovsClient != nil {
+		if err := ovsops.DeletePortWithInterfaces(ovsClient, "br-int", ifaceName); err != nil {
+			klog.Warningf("Failed to delete pod %q OVS port %s: %v", podDesc, ifaceName, err)
+		}
+	} else {
+		out, err := ovsExec("del-port", "br-int", ifaceName)
+		if err != nil && !strings.Contains(err.Error(), "no port named") {
+			// DEL should be idempotent; don't return an error just log it
+			klog.Warningf("Failed to delete pod %q OVS port %s: %v\n  %q", podDesc, ifaceName, err, string(out))
+		}
 	}
 
 	// skip deleting representor ports
@@ -1094,9 +1176,9 @@ func (pr *PodRequest) deletePort(ifaceName, podNamespace, podName string) {
 	}
 }
 
-func (pr *PodRequest) deletePorts(ifaces []string, podNamespace, podName string) {
+func (pr *PodRequest) deletePorts(ovsClient client.Client, ifaces []string, podNamespace, podName string) {
 	for _, iface := range ifaces {
-		pr.deletePort(iface, podNamespace, podName)
+		pr.deletePort(ovsClient, iface, podNamespace, podName)
 	}
 }
 
