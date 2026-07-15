@@ -39,7 +39,6 @@ import (
 	uplinklisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/listers/uplink/v1alpha1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
 	nodeutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/util"
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	uplinkutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/uplink"
@@ -1205,7 +1204,7 @@ type defaultOVSBridgeResolver struct {
 }
 
 func (r defaultOVSBridgeResolver) Resolve(hostInterfaceName string) (string, error) {
-	bridge, err := ovsops.GetBridge(r.ovsClient, hostInterfaceName)
+	bridge, err := libovsdbops.GetBridge(r.ovsClient, hostInterfaceName)
 	if err == nil {
 		return bridge.Name, nil
 	}
@@ -1240,7 +1239,7 @@ func (r defaultOVSBridgeResolver) Resolve(hostInterfaceName string) (string, err
 }
 
 func (r defaultOVSBridgeResolver) BridgeUplink(bridgeName string) (string, error) {
-	bridge, err := ovsops.GetBridge(r.ovsClient, bridgeName)
+	bridge, err := libovsdbops.GetBridge(r.ovsClient, bridgeName)
 	if err != nil {
 		return "", newDiscoveryError(
 			uplinkv1alpha1.UplinkStateReasonBridgeUplinkNotFound,
@@ -1342,7 +1341,7 @@ func (r defaultOVSBridgeResolver) BridgeUplink(bridgeName string) (string, error
 	// resolved name is later used to read the uplink's ofport for flow
 	// programming and to apply per-netdev settings, which assume a single
 	// interface. Kernel bonds attached as a single interface work today.
-	uplinkInterfaces, err := ovsops.FindInterfacesWithPredicate(r.ovsClient, func(iface *vswitchd.Interface) bool {
+	uplinkInterfaces, err := libovsdbops.FindInterfacesWithPredicate(r.ovsClient, func(iface *vswitchd.Interface) bool {
 		return iface.Name == uplinkName
 	})
 	if err != nil {
@@ -1402,7 +1401,7 @@ func (r defaultOVSBridgeResolver) ResolveByHostFunction(
 }
 
 func (r defaultOVSBridgeResolver) ResolveByHostMAC(hostMAC net.HardwareAddr, nodeName string) (string, error) {
-	bridges, err := ovsops.ListBridges(r.ovsClient)
+	bridges, err := libovsdbops.ListBridges(r.ovsClient)
 	if err != nil {
 		return "", newDiscoveryError(
 			uplinkv1alpha1.UplinkStateReasonBridgeNotFound,
@@ -1452,7 +1451,7 @@ func (r defaultOVSBridgeResolver) bridgeForPortOrInterface(name string) (string,
 		portIDs[port.UUID] = struct{}{}
 	}
 
-	bridges, err := ovsops.ListBridges(r.ovsClient)
+	bridges, err := libovsdbops.ListBridges(r.ovsClient)
 	if err != nil {
 		return "", fmt.Errorf("failed to list OVS bridges for %s: %w", name, err)
 	}

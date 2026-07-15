@@ -76,7 +76,7 @@ func emptyNodeInformer() coreinformers.NodeInformer {
 	return informerfactory.NewSharedInformerFactory(fake.NewSimpleClientset(), 0).Core().V1().Nodes()
 }
 
-func getCreationFakeCommands(fexec *ovntest.FakeExec, mgtPort, mgtPortMAC, netName, nodeName string, mtu int) {
+func getCreationFakeCommands(fexec *ovntest.FakeExec, mgtPort string) {
 	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 		Cmd:    "sysctl -w net.ipv4.conf." + mgtPort + ".forwarding = 1",
 		Output: "net.ipv4.conf." + mgtPort + ".forwarding = 1",
@@ -1030,7 +1030,6 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		netName               = "bluenet"
 		netID                 = "3"
 		nodeName       string = "worker1"
-		mgtPortMAC     string = "00:00:00:55:66:77" // dummy MAC used for fake commands
 		fexec          *ovntest.FakeExec
 		testNS         ns.NetNS
 		factoryMock    factoryMocks.NodeWatchFactory
@@ -1172,10 +1171,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		ovntest.AnnotateNADWithNetworkID(netID, nad)
 		netInfo, err := util.ParseNADInfo(nad)
 		Expect(err).NotTo(HaveOccurred())
-		_, ipNet, err := net.ParseCIDR(v4NodeSubnet)
-		Expect(err).NotTo(HaveOccurred())
-		mgtPortMAC = util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(ipNet).IP).String()
-		getCreationFakeCommands(fexec, mgtPort, mgtPortMAC, netName, nodeName, netInfo.MTU())
+		getCreationFakeCommands(fexec, mgtPort)
 		getRPFilterLooseModeFakeCommands(fexec)
 		nodeLister.On("Get", mock.AnythingOfType("string")).Return(node, nil)
 		factoryMock.On("GetNodeForWindows", "worker1").Return(node, nil)
@@ -1259,10 +1255,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		ovntest.AnnotateNADWithNetworkID(netID, nad)
 		netInfo, err := util.ParseNADInfo(nad)
 		Expect(err).NotTo(HaveOccurred())
-		_, ipNet, err := net.ParseCIDR(v4NodeSubnet)
-		Expect(err).NotTo(HaveOccurred())
-		mgtPortMAC = util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(ipNet).IP).String()
-		getCreationFakeCommands(fexec, mgtPort, mgtPortMAC, netName, nodeName, netInfo.MTU())
+		getCreationFakeCommands(fexec, mgtPort)
 		getRPFilterLooseModeFakeCommands(fexec)
 		nodeLister.On("Get", mock.AnythingOfType("string")).Return(node, nil)
 		factoryMock.On("GetNodeForWindows", "worker1").Return(node, nil)
@@ -1359,10 +1352,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 
 		setManagementPortFakeCommands(fexec)
 		setUpGatewayFakeOVSCommands(fexec)
-		_, ipNet, err := net.ParseCIDR(v4NodeSubnet)
-		Expect(err).NotTo(HaveOccurred())
-		mgtPortMAC = util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(ipNet).IP).String()
-		getCreationFakeCommands(fexec, mgtPort, mgtPortMAC, netName, nodeName, netInfo.MTU())
+		getCreationFakeCommands(fexec, mgtPort)
 		getRPFilterLooseModeFakeCommands(fexec)
 		nodeLister.On("Get", mock.AnythingOfType("string")).Return(node, nil)
 		kubeFakeClient := fake.NewSimpleClientset(
@@ -1596,9 +1586,6 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 
 		setManagementPortFakeCommands(fexec)
 		setUpGatewayFakeOVSCommands(fexec)
-		_, ipNet, err := net.ParseCIDR(v4NodeSubnet)
-		Expect(err).NotTo(HaveOccurred())
-		mgtPortMAC = util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(ipNet).IP).String()
 		nodeLister.On("Get", mock.AnythingOfType("string")).Return(node, nil)
 		kubeFakeClient := fake.NewSimpleClientset(
 			&corev1.NodeList{
@@ -1789,13 +1776,9 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		ovntest.AnnotateNADWithNetworkID(netID, nad)
 		netInfo, err := util.ParseNADInfo(nad)
 		Expect(err).NotTo(HaveOccurred())
-		_, ipNet, err := net.ParseCIDR(v4NodeSubnet)
-		Expect(err).NotTo(HaveOccurred())
-		mgtPortMAC = util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(ipNet).IP).String()
-
 		setManagementPortFakeCommands(fexec)
 		setUpGatewayFakeOVSCommands(fexec)
-		getCreationFakeCommands(fexec, mgtPort, mgtPortMAC, netName, nodeName, netInfo.MTU())
+		getCreationFakeCommands(fexec, mgtPort)
 		getRPFilterLooseModeFakeCommands(fexec)
 		nodeLister.On("Get", mock.AnythingOfType("string")).Return(node, nil)
 		kubeFakeClient := fake.NewSimpleClientset(
@@ -2025,10 +2008,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		mutableNetInfo.SetPodNetworkAdvertisedVRFs(map[string][]string{node.Name: {netName}})
 		setManagementPortFakeCommands(fexec)
 		setUpGatewayFakeOVSCommands(fexec)
-		_, ipNet, err := net.ParseCIDR(v4NodeSubnet)
-		Expect(err).NotTo(HaveOccurred())
-		mgtPortMAC = util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(ipNet).IP).String()
-		getCreationFakeCommands(fexec, mgtPort, mgtPortMAC, netName, nodeName, mutableNetInfo.MTU())
+		getCreationFakeCommands(fexec, mgtPort)
 		getRPFilterLooseModeFakeCommands(fexec)
 		nodeLister.On("Get", mock.AnythingOfType("string")).Return(node, nil)
 		kubeFakeClient := fake.NewSimpleClientset(
