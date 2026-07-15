@@ -12,8 +12,6 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
-
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 func (c *Controller) processNextNQOSNodeWorkItem(wg *sync.WaitGroup) bool {
@@ -67,5 +65,5 @@ func (c *Controller) syncNetworkQoSNode(key string) error {
 
 // isNodeInLocalZone returns whether the provided node is in a zone local to the zone controller
 func (c *Controller) isNodeInLocalZone(node *corev1.Node) bool {
-	return util.GetNodeZone(node) == c.zone
+	return node.Name == c.zone
 }

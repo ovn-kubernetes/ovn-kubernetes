@@ -174,7 +174,7 @@ func (c *Controller) computeNodeInfo() ([]*corev1.Node, sets.Set[string], error)
 	currentNodeIDs := sets.New[string]()
 	var localNode *corev1.Node
 	for _, node := range allNodes {
-		if util.GetNodeZone(node) == c.zone {
+		if node.Name == c.zone {
 			// we don't support multiple local nodes per zone for this feature
 			localNode = node
 		}
@@ -730,7 +730,7 @@ func (c *Controller) ensureConnectPortsOps(ops []ovsdb.Operation, cnc *networkco
 			connectPortName := getConnectRouterToNetworkRouterPortName(cncName, networkName, node.Name)
 			networkPortName := getNetworkRouterToConnectRouterPortName(networkName, node.Name, cncName)
 
-			isLocalNode := util.GetNodeZone(node) == c.zone
+			isLocalNode := node.Name == c.zone
 			nodeActive := c.networkManager.NodeHasNetwork(node.Name, networkName)
 
 			if isLocalNode {

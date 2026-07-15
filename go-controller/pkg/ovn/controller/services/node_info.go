@@ -32,9 +32,6 @@ type nodeInfo struct {
 	// if nodePort is disabled on this node?
 	nodePortDisabled bool
 
-	// The node's zone
-	zone string
-
 	// The list of node's management IPs
 	mgmtIPs []net.IP
 }
@@ -115,7 +112,6 @@ func nodeInfoForNetwork(node *corev1.Node, netInfo util.NetInfo) (*nodeInfo, err
 		switchName:         switchName,
 		chassisID:          chassisID,
 		nodePortDisabled:   !nodePortEnabled,
-		zone:               util.GetNodeZone(node),
 	}
 	for i := range hsn {
 		ni.podSubnets = append(ni.podSubnets, *hsn[i])

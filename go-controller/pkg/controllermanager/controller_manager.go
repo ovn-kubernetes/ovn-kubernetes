@@ -16,7 +16,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
@@ -29,7 +28,6 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics/recorders"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -47,6 +45,7 @@ import (
 
 // ControllerManager structure is the object manages all controllers
 type ControllerManager struct {
+	nodeName     string
 	client       clientset.Interface
 	kube         *kube.KubeOVN
 	watchFactory *factory.WatchFactory
@@ -82,10 +81,7 @@ type ControllerManager struct {
 func (cm *ControllerManager) NewNetworkController(nInfo util.NetInfo) (networkmanager.NetworkController, error) {
 	// Pass a shallow clone of the watch factory, this allows multiplexing
 	// informers for user-defined networks.
-	cnci, err := cm.newCommonNetworkControllerInfo(cm.watchFactory.ShallowClone())
-	if err != nil {
-		return nil, fmt.Errorf("failed to create network controller info %w", err)
-	}
+	cnci := cm.newCommonNetworkControllerInfo(cm.watchFactory.ShallowClone())
 	topoType := nInfo.TopologyType()
 	switch topoType {
 	case ovntypes.Layer3Topology:
@@ -116,10 +112,7 @@ func (cm *ControllerManager) NewNetworkController(nInfo util.NetInfo) (networkma
 func (cm *ControllerManager) newDummyNetworkController(topoType, netName, role string) (networkmanager.NetworkController, error) {
 	// Pass a shallow clone of the watch factory, this allows multiplexing
 	// informers for user-defined Networks.
-	cnci, err := cm.newCommonNetworkControllerInfo(cm.watchFactory.ShallowClone())
-	if err != nil {
-		return nil, fmt.Errorf("failed to create network controller info %w", err)
-	}
+	cnci := cm.newCommonNetworkControllerInfo(cm.watchFactory.ShallowClone())
 	netInfo, _ := util.NewNetInfo(&ovncnitypes.NetConf{NetConf: cnitypes.NetConf{Name: netName}, Topology: topoType, Role: role})
 	switch topoType {
 	case ovntypes.Layer3Topology:
@@ -263,18 +256,19 @@ func (cm *ControllerManager) CleanupStaleNetworks(validNetworks ...util.NetInfo)
 }
 
 // NewControllerManager creates a new ovnkube controller manager to manage all the controller for all networks
-func NewControllerManager(ovnClient *util.OVNClientset, wf *factory.WatchFactory,
+func NewControllerManager(nodeName string, ovnClient *util.OVNClientset, wf *factory.WatchFactory,
 	libovsdbOvnNBClient libovsdbclient.Client, libovsdbOvnSBClient libovsdbclient.Client,
 	recorder record.EventRecorder, wg *sync.WaitGroup) (*ControllerManager, error) {
-	if config.Zone == "" {
-		return nil, fmt.Errorf("ovnkube-controller zone is required")
+	if nodeName == "" {
+		return nil, fmt.Errorf("ovnkube-controller node name is required")
 	}
 
 	podRecorder := metrics.NewPodRecorder()
 
 	stopCh := make(chan struct{})
 	cm := &ControllerManager{
-		client: ovnClient.KubeClient,
+		nodeName: nodeName,
+		client:   ovnClient.KubeClient,
 		kube: &kube.KubeOVN{
 			Kube:                 kube.Kube{KClient: ovnClient.KubeClient},
 			ANPClient:            ovnClient.ANPClient,
@@ -302,18 +296,18 @@ func NewControllerManager(ovnClient *util.OVNClientset, wf *factory.WatchFactory
 
 	cm.networkManager = networkmanager.Default()
 	if config.OVNKubernetesFeature.EnableMultiNetwork {
-		cm.networkManager, err = networkmanager.NewForZone(config.Zone, cm, wf)
+		cm.networkManager, err = networkmanager.NewForNode(cm.nodeName, cm, wf)
 		if err != nil {
 			return nil, err
 		}
 	}
-	cm.nodeController = nodecontroller.NewNodeController(cm.watchFactory, cm.networkManager.Interface())
+	cm.nodeController = nodecontroller.NewNodeController(cm.watchFactory, cm.networkManager.Interface(), cm.nodeName)
 
 	if util.IsRouteAdvertisementsEnabled() {
 		if util.IsNetworkSegmentationSupportEnabled() {
-			cm.routeImportManager = routeimport.New(config.Zone, cm.nbClient, wf.UplinkStateInformer().Lister())
+			cm.routeImportManager = routeimport.New(cm.nodeName, cm.nbClient, wf.UplinkStateInformer().Lister())
 		} else {
-			cm.routeImportManager = routeimport.New(config.Zone, cm.nbClient, nil)
+			cm.routeImportManager = routeimport.New(cm.nodeName, cm.nbClient, nil)
 		}
 	}
 	cm.addressSetManager = addresssetmanager.NewAddressSetManager(cm.watchFactory.PodCoreInformer(),
@@ -372,17 +366,14 @@ func (cm *ControllerManager) createACLLoggingMeter() error {
 }
 
 // newCommonNetworkControllerInfo creates and returns the common networkController info
-func (cm *ControllerManager) newCommonNetworkControllerInfo(wf *factory.WatchFactory) (*ovn.CommonNetworkControllerInfo, error) {
+func (cm *ControllerManager) newCommonNetworkControllerInfo(wf *factory.WatchFactory) *ovn.CommonNetworkControllerInfo {
 	return ovn.NewCommonNetworkControllerInfo(cm.client, cm.kube, wf, cm.recorder, cm.nbClient,
-		cm.sbClient, cm.podRecorder, cm.multicastSupport, cm.svcTemplateSupport)
+		cm.sbClient, cm.podRecorder, cm.multicastSupport, cm.svcTemplateSupport, cm.nodeName)
 }
 
 // initDefaultNetworkController creates the controller for default network
 func (cm *ControllerManager) initDefaultNetworkController(observManager *observability.Manager) error {
-	cnci, err := cm.newCommonNetworkControllerInfo(cm.watchFactory)
-	if err != nil {
-		return fmt.Errorf("failed to create common network controller info: %w", err)
-	}
+	cnci := cm.newCommonNetworkControllerInfo(cm.watchFactory)
 	defaultController, err := ovn.NewDefaultNetworkController(cnci, observManager, cm.networkManager.Interface(), cm.routeImportManager, cm.eIPController, cm.portCache, cm.addressSetManager, cm.nodeController)
 	if err != nil {
 		return err
@@ -402,64 +393,10 @@ func (cm *ControllerManager) Start(ctx context.Context) error {
 	// Configure metrics early so workqueue provider is set before any workqueues are created
 	cm.configureMetrics(cm.stopChan)
 
-	// Make sure that the ovnkube-controller zone matches with the Northbound db zone.
-	// Wait for 300s before giving up
-	maxTimeout := 300 * time.Second
-	klog.Infof("Waiting up to %s for NBDB zone to match: %s", maxTimeout, config.Zone)
-	start := time.Now()
-	var zone string
-	var err1 error
-	err := wait.PollUntilContextTimeout(ctx, 250*time.Millisecond, maxTimeout, true, func(_ context.Context) (bool, error) {
-		zone, err1 = libovsdbutil.GetNBZone(cm.nbClient)
-		if err1 != nil {
-			return false, nil
-		}
-		if config.Zone != zone {
-			err1 = fmt.Errorf("process zone %s different from NBDB zone %s", config.Zone, zone)
-			return false, nil
-		}
-		return true, nil
-	})
-
-	if err != nil {
-		return fmt.Errorf("failed to start default ovnkube-controller - OVN NBDB zone %s does not match the process zone %q: errors: %v, %v",
-			zone, config.Zone, err, err1)
-	}
-	klog.Infof("NBDB zone sync took: %s", time.Since(start))
-
-	err = cm.watchFactory.Start()
+	err := cm.watchFactory.Start()
 	if err != nil {
 		return err
 	}
-
-	// Wait for one node to have the zone we want to manage, otherwise there is no point in configuring NBDB.
-	// Really this covers a use case where a node is going from local -> remote, but has not yet annotated itself.
-	// In this case ovnkube-controller on this remote node will treat the node as remote, and then once the annotation
-	// appears will convert it to local, which may or may not clean up DB resources correctly.
-	klog.Infof("Waiting up to %s for a node to have %q zone", maxTimeout, config.Zone)
-	start = time.Now()
-	err = wait.PollUntilContextTimeout(ctx, 250*time.Millisecond, maxTimeout, true, func(_ context.Context) (bool, error) {
-		nodes, err := cm.watchFactory.GetNodes()
-		if err != nil {
-			klog.Errorf("Unable to get nodes from informer while waiting for node zone sync")
-			return false, nil
-		}
-		if len(nodes) == 0 {
-			klog.Infof("No nodes in cluster: waiting for a node to have %q zone is not needed", config.Zone)
-			return true, nil
-		}
-		for _, node := range nodes {
-			if util.GetNodeZone(node) == config.Zone {
-				return true, nil
-			}
-		}
-		return false, nil
-	})
-	if err != nil {
-		return fmt.Errorf("failed to start default network controller - while waiting for any node to have zone: %q, error: %v",
-			config.Zone, err)
-	}
-	klog.Infof("Waiting for node in zone sync took: %s", time.Since(start))
 
 	if err = cm.setTopologyType(); err != nil {
 		return fmt.Errorf("failed to set layer2 topology type: %w", err)
@@ -487,7 +424,7 @@ func (cm *ControllerManager) Start(ctx context.Context) error {
 	if config.OVNKubernetesFeature.EnableEgressIP {
 		cm.eIPController = ovn.NewEIPController(cm.nbClient, cm.kube, cm.watchFactory, cm.recorder, cm.portCache, cm.networkManager.Interface(),
 			addressset.NewOvnAddressSetFactory(cm.nbClient, config.IPv4Mode, config.IPv6Mode), cm.addressSetManager,
-			config.IPv4Mode, config.IPv6Mode, zone, ovntypes.DefaultNetworkControllerName)
+			config.IPv4Mode, config.IPv6Mode, cm.nodeName, ovntypes.DefaultNetworkControllerName)
 		// FIXME(martinkennelly): remove when EIP controller is fully extracted from from DNC and started here. Ensure SyncLocalNodeZonesCache is re-enabled in EIP controller.
 		if err = cm.eIPController.SyncLocalNodeZonesCache(); err != nil {
 			klog.Warningf("Failed to sync EgressIP controllers local node node cache: %v", err)
@@ -596,10 +533,10 @@ func (cm *ControllerManager) setTopologyType() error {
 	if err != nil {
 		return fmt.Errorf("unable to get nodes from informer while setting topology type for layer2: %w", err)
 	}
-	// set it to true and check if all the nodes in the zone already have annotation
+	// Set it to true and check whether the controller node already has the annotation.
 	config.Layer2UsesTransitRouter = true
 	for _, node := range nodes.Items {
-		if util.GetNodeZone(&node) == config.Zone && node.Annotations[util.Layer2TopologyVersion] != util.TransitRouterTopoVersion {
+		if node.Name == cm.nodeName && node.Annotations[util.Layer2TopologyVersion] != util.TransitRouterTopoVersion {
 			// at least one node doesn't have the annotation
 			config.Layer2UsesTransitRouter = false
 			break
@@ -679,7 +616,7 @@ func (cm *ControllerManager) hasLocalPodsOnSwitch(sw *nbdb.LogicalSwitch) (bool,
 
 func (cm *ControllerManager) setUDNLayer2NodeUsesTransitRouter(nodeList *corev1.NodeList) error {
 	for _, node := range nodeList.Items {
-		if util.GetNodeZone(&node) == config.Zone {
+		if node.Name == cm.nodeName {
 			if err := cm.kube.SetAnnotationsOnNode(node.Name, map[string]interface{}{
 				util.Layer2TopologyVersion: util.TransitRouterTopoVersion}); err != nil {
 				return fmt.Errorf("failed to set annotation %s on node %s: %w", util.Layer2TopologyVersion, node.Name, err)

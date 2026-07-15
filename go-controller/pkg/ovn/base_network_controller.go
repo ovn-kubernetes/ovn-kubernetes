@@ -75,8 +75,8 @@ type CommonNetworkControllerInfo struct {
 	// Supports OVN Template Load Balancers?
 	svcTemplateSupport bool
 
-	// Northbound database zone name to which this Controller is connected to - aka local zone
-	zone string
+	// Kubernetes node managed by this controller.
+	nodeName string
 }
 
 // BaseNetworkController structure holds per-network fields and network specific configuration
@@ -160,11 +160,6 @@ type BaseNetworkController struct {
 	// use a chain of cancelable contexts for this
 	cancelableCtx util.CancelableContext
 
-	// List of nodes which belong to the local zone (stored as a sync map)
-	// If the map is nil, it means the controller is not tracking the node events
-	// and all the nodes are considered as local zone nodes.
-	localZoneNodes *sync.Map
-
 	// zoneICHandler creates the interconnect resources for local nodes and remote nodes.
 	// Interconnect resources are Transit switch and logical ports connecting this transit switch
 	// to the cluster router. Please see zone_interconnect/interconnect_handler.go for more details.
@@ -194,18 +189,12 @@ func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed f
 	// gather some information first
 	var reconcileNodes []string
 	subnetsChanged := clusterSubnetsChanged(oc, netInfo)
-	oc.localZoneNodes.Range(func(key, _ any) bool {
-		nodeName := key.(string)
-		wasAdvertised := util.IsPodNetworkAdvertisedAtNode(oc, nodeName)
-		isAdvertised := util.IsPodNetworkAdvertisedAtNode(netInfo, nodeName)
-		reconcileSubnetChange := subnetsChanged && (isAdvertised || config.OVNKubernetesFeature.EnableEgressIP)
-		if wasAdvertised == isAdvertised && !reconcileSubnetChange {
-			// noop
-			return true
-		}
-		reconcileNodes = append(reconcileNodes, nodeName)
-		return true
-	})
+	wasAdvertised := util.IsPodNetworkAdvertisedAtNode(oc, oc.nodeName)
+	isAdvertised := util.IsPodNetworkAdvertisedAtNode(netInfo, oc.nodeName)
+	reconcileSubnetChange := subnetsChanged && (isAdvertised || config.OVNKubernetesFeature.EnableEgressIP)
+	if wasAdvertised != isAdvertised || reconcileSubnetChange {
+		reconcileNodes = append(reconcileNodes, oc.nodeName)
+	}
 	reconcileRoutes := oc.routeImportManager != nil && oc.routeImportManager.NeedsReconciliation(netInfo)
 	nadKeys := oc.networkManager.GetNADKeysForNetwork(netInfo.GetNetworkName())
 	reconcilePendingPods := !oc.IsDefault() && oc.updateNADKeysChanged(nadKeys)
@@ -370,12 +359,8 @@ func (bnc *BaseNetworkController) getNetworkNameForNADKeyFunc() func(nadKey stri
 // NewCommonNetworkControllerInfo creates CommonNetworkControllerInfo shared by controllers
 func NewCommonNetworkControllerInfo(client clientset.Interface, kube *kube.KubeOVN, wf *factory.WatchFactory,
 	recorder record.EventRecorder, nbClient libovsdbclient.Client, sbClient libovsdbclient.Client,
-	podRecorder *metrics.PodRecorder, multicastSupport, svcTemplateSupport bool,
-) (*CommonNetworkControllerInfo, error) {
-	zone, err := libovsdbutil.GetNBZone(nbClient)
-	if err != nil {
-		return nil, fmt.Errorf("error getting NB zone name : err - %w", err)
-	}
+	podRecorder *metrics.PodRecorder, multicastSupport, svcTemplateSupport bool, nodeName string,
+) *CommonNetworkControllerInfo {
 	return &CommonNetworkControllerInfo{
 		client:             client,
 		kube:               kube,
@@ -386,8 +371,8 @@ func NewCommonNetworkControllerInfo(client clientset.Interface, kube *kube.KubeO
 		podRecorder:        podRecorder,
 		multicastSupport:   multicastSupport,
 		svcTemplateSupport: svcTemplateSupport,
-		zone:               zone,
-	}, nil
+		nodeName:           nodeName,
+	}
 }
 
 func (bnc *BaseNetworkController) GetLogicalPortName(pod *corev1.Pod, nadKey string) string {
@@ -909,29 +894,26 @@ func (bnc *BaseNetworkController) getClusterPortGroupName(base string) string {
 	return libovsdbutil.GetPortGroupName(bnc.getClusterPortGroupDbIDs(base))
 }
 
-// GetLocalZoneNodes returns the list of local zone nodes
-// A node is considered a local zone node if the zone name
-// set in the node's annotation matches with the zone name
-// set in the OVN Northbound database (to which this controller is connected to).
-func (bnc *BaseNetworkController) GetLocalZoneNodes() ([]*corev1.Node, error) {
+// GetLocalNodes returns the node managed by this controller when it exists.
+func (bnc *BaseNetworkController) GetLocalNodes() ([]*corev1.Node, error) {
 	nodes, err := bnc.watchFactory.GetNodes()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get nodes: %v", err)
+		return nil, fmt.Errorf("failed to get nodes: %w", err)
 	}
 
-	var zoneNodes []*corev1.Node
+	var localNodes []*corev1.Node
 	for _, n := range nodes {
-		if bnc.isLocalZoneNode(n) {
-			zoneNodes = append(zoneNodes, n)
+		if bnc.isLocalNode(n) {
+			localNodes = append(localNodes, n)
 		}
 	}
 
-	return zoneNodes, nil
+	return localNodes, nil
 }
 
-// isLocalZoneNode returns true if the node is part of the local zone.
-func (bnc *BaseNetworkController) isLocalZoneNode(node *corev1.Node) bool {
-	return util.GetNodeZone(node) == bnc.zone
+// isLocalNode returns true if the node is local to this controller.
+func (cnci *CommonNetworkControllerInfo) isLocalNode(node *corev1.Node) bool {
+	return node.Name == cnci.nodeName
 }
 
 // GetNetworkRole returns the role of this controller's network for the given pod
@@ -1131,8 +1113,8 @@ func (bnc *BaseNetworkController) newNetworkQoSController() error {
 		nadInformer,
 		bnc.networkManager,
 		bnc.addressSetFactory,
-		bnc.isPodScheduledinLocalZone,
-		bnc.zone,
+		bnc.isPodScheduledOnLocalNode,
+		bnc.nodeName,
 	)
 	return err
 }

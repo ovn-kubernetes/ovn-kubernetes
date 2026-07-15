@@ -20,7 +20,6 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/syncmap"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 // NodeHandler handles node reconciliation for a single network.
@@ -42,7 +41,8 @@ type NodeHandler interface {
 
 // NodeController reconciles node topology for all registered networks.
 type NodeController struct {
-	name string
+	name     string
+	nodeName string
 
 	nodeController controller.Controller
 	networkManager networkmanager.Interface
@@ -116,8 +116,13 @@ func NewController(wf *factory.WatchFactory, name string, networkManager network
 }
 
 // NewNodeController builds a controller that handles node events for all UDNs.
-func NewNodeController(wf *factory.WatchFactory, networkManager networkmanager.Interface) *NodeController {
-	return NewController(wf, "node-topology", networkManager)
+func NewNodeController(wf *factory.WatchFactory, networkManager networkmanager.Interface, nodeName string) *NodeController {
+	if nodeName == "" {
+		panic("node controller node name must not be empty")
+	}
+	c := NewController(wf, "node-topology", networkManager)
+	c.nodeName = nodeName
+	return c
 }
 
 // Start starts the node worker.
@@ -549,13 +554,13 @@ func (c *NodeController) deleteNodeActive(netName, nodeName string) {
 }
 
 // shouldFilterByRemoteNetworkActivity returns true when dynamic UDN activity
-// filtering should be applied for the node. This is limited to remote-zone
-// nodes; local-zone nodes always run unfiltered reconciliation.
+// filtering should be applied for the node. The controller's own node always
+// runs unfiltered reconciliation.
 func (c *NodeController) shouldFilterByRemoteNetworkActivity(node *corev1.Node, netName string) bool {
 	if node == nil || netName == types.DefaultNetworkName || !config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
 		return false
 	}
-	return util.GetNodeZone(node) != config.Zone
+	return node.Name != c.nodeName
 }
 
 // scopedNodeQueueKey allows us to queue keys with network references.

@@ -261,16 +261,6 @@ func determineOvnkubeRunMode(ctx *cli.Context) (*ovnkubeRunMode, error) {
 	return mode, nil
 }
 
-func configureZone(runMode *ovnkubeRunMode) error {
-	if runMode.ovnkubeController || runMode.node {
-		if runMode.identity == "" {
-			return fmt.Errorf("ovnkube-controller/node zone identity is required")
-		}
-		config.Zone = runMode.identity
-	}
-	return nil
-}
-
 // Determine if we should serve both ovnkube-node and OVN/OVS metrics on a single endpoint.
 func combineMetricsEndpoints(runMode *ovnkubeRunMode) bool {
 	return runMode != nil &&
@@ -327,10 +317,6 @@ func startOvnKube(ctx *cli.Context, cancel context.CancelFunc) error {
 	if err != nil {
 		return err
 	}
-	if err := configureZone(runMode); err != nil {
-		return err
-	}
-
 	eventRecorder := util.EventRecorder(ovnClientset.KubeClient)
 
 	if config.Metrics.BindAddress != "" && !combineMetricsEndpoints(runMode) {
@@ -523,6 +509,7 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 			}
 
 			controllerManager, err := controllermanager.NewControllerManager(
+				runMode.identity,
 				ovnClientset,
 				watchFactory,
 				libovsdbOvnNBClient,
