@@ -3764,10 +3764,10 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					fakeOvn.controller.eIPC.nodeZoneState.Store(node1Name, isnode1Local)
 					fakeOvn.controller.eIPC.nodeZoneState.Store(node2Name, isnode2Local)
 					if isnode1Local {
-						fakeOvn.controller.localZoneNodes.Store(node1Name, true)
+						fakeOvn.controller.localNodes.Store(node1Name, true)
 					}
 					if isnode2Local {
-						fakeOvn.controller.localZoneNodes.Store(node2Name, true)
+						fakeOvn.controller.localNodes.Store(node2Name, true)
 					}
 
 					_, err = fakeOvn.fakeClient.EgressIPClient.K8sV1().EgressIPs().Create(context.TODO(), &eIP, metav1.CreateOptions{})
@@ -6409,13 +6409,9 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 	ginkgo.Context("WatchEgressNodes", func() {
 		ginkgo.DescribeTable("retries egress node setup after reroute setup failed", func(update bool) {
 			app.Action = func(*cli.Context) error {
-				node := getNodeObj(node1Name, map[string]string{
-					util.OvnNodeID:       "1",
-					util.OvnNodeZoneName: node1Name,
-				}, nil)
+				node := getNodeObj(node1Name, map[string]string{util.OvnNodeID: "1"}, nil)
 				fakeOvn.startWithDBSetup(libovsdbtest.TestSetup{
 					NBData: []libovsdbtest.TestData{
-						&nbdb.NBGlobal{Name: node1Name},
 						&nbdb.LogicalRouter{
 							Name: types.OVNClusterRouter,
 							UUID: types.OVNClusterRouter + "-UUID",
@@ -6454,55 +6450,6 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 			ginkgo.Entry("during an add retry", false),
 			ginkgo.Entry("during an update", true),
 		)
-
-		ginkgo.It("creates egress node routes when a node becomes local", func() {
-			app.Action = func(*cli.Context) error {
-				localNode := getNodeObj(node1Name, map[string]string{
-					util.OvnNodeID:       "1",
-					util.OvnNodeZoneName: node1Name,
-				}, nil)
-				remoteNode := localNode.DeepCopy()
-				remoteNode.Annotations[util.OvnNodeZoneName] = node2Name
-
-				fakeOvn.startWithDBSetup(libovsdbtest.TestSetup{
-					NBData: []libovsdbtest.TestData{
-						&nbdb.NBGlobal{Name: node1Name},
-						&nbdb.LogicalRouter{
-							Name: types.OVNClusterRouter,
-							UUID: types.OVNClusterRouter + "-UUID",
-						},
-						&nbdb.LogicalSwitch{
-							Name: node1Name,
-							UUID: node1Name + "-UUID",
-						},
-					},
-				}, &corev1.NodeList{Items: []corev1.Node{localNode}})
-				handler := &defaultNetworkControllerEventHandler{
-					objType: factory.EgressNodeType,
-					oc:      fakeOvn.controller,
-				}
-				gomega.Expect(handler.UpdateResource(remoteNode, &localNode, false)).NotTo(gomega.Succeed())
-				_, rerouteRetryPending := fakeOvn.controller.syncEIPNodeRerouteFailed.Load(localNode.Name)
-				gomega.Expect(rerouteRetryPending).To(gomega.BeTrue())
-
-				gomega.Expect(fakeOvn.controller.eIPC.initClusterEgressPolicies(nil)).To(gomega.Succeed())
-				gomega.Expect(handler.UpdateResource(&localNode, &localNode, true)).To(gomega.Succeed())
-				_, rerouteRetryPending = fakeOvn.controller.syncEIPNodeRerouteFailed.Load(localNode.Name)
-				gomega.Expect(rerouteRetryPending).To(gomega.BeFalse())
-
-				var routes []nbdb.LogicalRouterStaticRoute
-				err := fakeOvn.nbClient.WhereCache(func(route *nbdb.LogicalRouterStaticRoute) bool {
-					return route.IPPrefix == v4ClusterSubnet &&
-						route.Policy != nil && *route.Policy == nbdb.LogicalRouterStaticRoutePolicySrcIP
-				}).List(context.Background(), &routes)
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				gomega.Expect(routes).To(gomega.HaveLen(1))
-				return nil
-			}
-
-			gomega.Expect(app.Run([]string{app.Name})).To(gomega.Succeed())
-		})
-
 		ginkgo.It("should populated egress node data as they are tagged `egress assignable` with variants of IPv4/IPv6", func() {
 			app.Action = func(*cli.Context) error {
 				config.IPv6Mode = true
@@ -7717,8 +7664,8 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 							Items: []corev1.Pod{egressPod1},
 						},
 					)
-					fakeOvn.controller.localZoneNodes.Store(node1.Name, isNode1Local)
-					fakeOvn.controller.localZoneNodes.Store(node2.Name, isNode2Local)
+					fakeOvn.controller.localNodes.Store(node1.Name, isNode1Local)
+					fakeOvn.controller.localNodes.Store(node2.Name, isNode2Local)
 					err := fakeOvn.controller.lsManager.AddOrUpdateSwitch(node1.Name, []*net.IPNet{ovntest.MustParseIPNet(v4Node1Subnet)}, nil)
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					err = fakeOvn.controller.lsManager.AddOrUpdateSwitch(node2.Name, []*net.IPNet{ovntest.MustParseIPNet(v4Node2Subnet)}, nil)
@@ -14689,8 +14636,8 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 				// hack pod to be in the provided zone
 				fakeOvn.controller.eIPC.nodeZoneState.Store(node1Name, true)
 				fakeOvn.controller.eIPC.nodeZoneState.Store(node2Name, false)
-				fakeOvn.controller.localZoneNodes.Store(node1Name, true)
-				fakeOvn.controller.localZoneNodes.Store(node2Name, false)
+				fakeOvn.controller.localNodes.Store(node1Name, true)
+				fakeOvn.controller.localNodes.Store(node2Name, false)
 
 				err := fakeOvn.controller.WatchEgressIPPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -14975,8 +14922,8 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 				// hack pod to be in the provided zone
 				fakeOvn.controller.eIPC.nodeZoneState.Store(node1Name, true)
 				fakeOvn.controller.eIPC.nodeZoneState.Store(node2Name, false)
-				fakeOvn.controller.localZoneNodes.Store(node1Name, true)
-				fakeOvn.controller.localZoneNodes.Store(node2Name, false)
+				fakeOvn.controller.localNodes.Store(node1Name, true)
+				fakeOvn.controller.localNodes.Store(node2Name, false)
 
 				err := fakeOvn.controller.WatchEgressIPPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())

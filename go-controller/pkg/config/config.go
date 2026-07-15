@@ -118,11 +118,6 @@ var (
 		Transport:                    "",
 	}
 
-	// Zone is the node identity for zone-scoped ovnkube-controller/node
-	// processes. It is populated by ovnkube from the run mode identity and is
-	// not user configurable.
-	Zone string
-
 	// Logging holds logging-related parsed config file parameters and command-line overrides
 	Logging = LoggingConfig{
 		File:                "", // do not log to a file by default
@@ -841,7 +836,6 @@ func init() {
 // provide a pristine environment between tests.
 func PrepareTestConfig() error {
 	Default = savedDefault
-	Zone = ""
 	Logging = savedLogging
 	Logging.Level = 5
 	Monitoring = savedMonitoring
@@ -957,7 +951,7 @@ var CommonFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name:  "init-ovnkube-controller",
-		Usage: "initialize ovnkube-controller (but not cluster-manager), requires the hostname as argument",
+		Usage: "initialize ovnkube-controller (but not cluster-manager), requires the Kubernetes node name as argument",
 	},
 	&cli.StringFlag{
 		Name:  "init-node",

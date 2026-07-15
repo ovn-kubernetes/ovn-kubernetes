@@ -81,7 +81,7 @@ func (nb *northBoundClient) isPodInLocalZone(pod *corev1.Pod) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return util.GetNodeZone(node) == nb.zone, nil
+	return node.Name == nb.zone, nil
 }
 
 // delAllHybridRoutePolicies deletes all the 501 hybrid-route-policies that
@@ -214,7 +214,7 @@ func (nb *northBoundClient) deletePodSNAT(nodeName, gwRouterName string, extIPs,
 	if err != nil {
 		return err
 	}
-	if util.GetNodeZone(node) != nb.zone {
+	if node.Name != nb.zone {
 		klog.V(4).Infof("Node %s is not in the local zone %s", nodeName, nb.zone)
 		return nil
 	}

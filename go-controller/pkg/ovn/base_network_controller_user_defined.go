@@ -330,7 +330,7 @@ func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(pod 
 	// we need to create a logical port for all local pods
 	// we also need to create a remote logical port for remote pods on layer2
 	// topologies with interconnect
-	isLocalPod := bsnc.isPodScheduledinLocalZone(pod)
+	isLocalPod := bsnc.isPodScheduledOnLocalNode(pod)
 	requiresLogicalPort := isLocalPod || bsnc.isLayer2WithInterconnectTransport()
 
 	if requiresLogicalPort {
@@ -564,7 +564,7 @@ func (bsnc *BaseUserDefinedNetworkController) syncPodsForUserDefinedNetwork(pods
 			continue
 		}
 
-		isLocalPod := bsnc.isPodScheduledinLocalZone(pod)
+		isLocalPod := bsnc.isPodScheduledOnLocalNode(pod)
 		hasRemotePort := !isLocalPod || bsnc.isLayer2WithInterconnectTransport()
 
 		for nadKey := range networkMap {
@@ -1071,7 +1071,7 @@ func (bsnc *BaseUserDefinedNetworkController) enableSourceLSPFailedLiveMigration
 // hasPodLogicalPort On localnet topologies with interconnect the pod's LSP lives only on the
 // node where the pod was scheduled
 func (bsnc *BaseUserDefinedNetworkController) hasPodLogicalPort(pod *corev1.Pod) bool {
-	return pod != nil && (bsnc.isPodScheduledinLocalZone(pod) || bsnc.isLayer2WithInterconnectTransport())
+	return pod != nil && (bsnc.isPodScheduledOnLocalNode(pod) || bsnc.isLayer2WithInterconnectTransport())
 }
 
 func shouldAddPort(oldPod, newPod *corev1.Pod, inRetryCache bool) bool {

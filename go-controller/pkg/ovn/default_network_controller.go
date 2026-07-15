@@ -194,6 +194,7 @@ func newDefaultNetworkControllerCommon(
 		networkManager,
 		cnci.recorder,
 		defaultNetInfo,
+		cnci.nodeName,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create new service controller while creating new default network controller: %w", err)
@@ -211,7 +212,7 @@ func newDefaultNetworkControllerCommon(
 		cnci.nbClient,
 		addressSetFactory,
 		types.DefaultNetworkControllerName,
-		cnci.zone,
+		cnci.nodeName,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create new admin policy based external route controller while creating new default network controller :%w", err)
@@ -231,7 +232,6 @@ func newDefaultNetworkControllerCommon(
 			sharedNetpolPortGroups:      syncmap.NewSyncMap[*defaultDenyPortGroups](),
 			stopChan:                    defaultStopChan,
 			wg:                          defaultWg,
-			localZoneNodes:              &sync.Map{},
 			zoneICHandler:               zoneICHandler,
 			cancelableCtx:               util.NewCancelableContext(),
 			observManager:               observManager,
@@ -255,7 +255,7 @@ func newDefaultNetworkControllerCommon(
 			networkManager,
 			nodeReconciler,
 			routeImportManager,
-			cnci.zone,
+			cnci.nodeName,
 		)
 	}
 	// Allocate IPs for logical router port "GwRouterToJoinSwitchPrefix + OVNClusterRouter". This should always
@@ -403,7 +403,7 @@ func (oc *DefaultNetworkController) startNodeReconciliation() error {
 }
 
 func (oc *DefaultNetworkController) waitForInitialNodeSync() error {
-	nodes, err := oc.GetLocalZoneNodes()
+	nodes, err := oc.GetLocalNodes()
 	if err != nil {
 		return fmt.Errorf("failed to get local zone nodes for initial node sync wait: %w", err)
 	}
@@ -481,7 +481,7 @@ func (oc *DefaultNetworkController) ReconcileNode(oldNode, newNode *corev1.Node,
 	}
 
 	var aggregatedErrors []error
-	if oc.isLocalZoneNode(newNode) {
+	if oc.isLocalNode(newNode) {
 		var nodeSyncsParam *nodeSyncs
 		hoNeedsCleanup := false
 		if !config.HybridOverlay.Enabled {
@@ -523,7 +523,7 @@ func (oc *DefaultNetworkController) ReconcileNode(oldNode, newNode *corev1.Node,
 					syncZoneIC:            true,
 				}
 			}
-		} else if oc.isLocalZoneNode(oldNode) {
+		} else if oc.isLocalNode(oldNode) {
 			_, nodeSync := oc.addNodeFailed.Load(newNode.Name)
 			nodeSync = nodeSync || defaultNodeSubnetChangedWithState(oldNode, newNode, oldState, newState)
 			_, failed := oc.nodeClusterRouterPortFailed.Load(newNode.Name)
@@ -568,7 +568,7 @@ func (oc *DefaultNetworkController) ReconcileNode(oldNode, newNode *corev1.Node,
 		} else {
 			// Sync interconnect state when the node moved from local to remote, changed zone clusters,
 			// switched from hybrid-overlay to OVN management, or its remote reachability inputs changed.
-			syncZoneIC = syncZoneIC || oc.isLocalZoneNode(oldNode) ||
+			syncZoneIC = syncZoneIC || oc.isLocalNode(oldNode) ||
 				defaultNodeSubnetChangedWithState(oldNode, newNode, oldState, newState) ||
 				oc.nodeZoneClusterChanged(oldNode, newNode) ||
 				switchToOvnNode ||
@@ -773,7 +773,7 @@ func (oc *DefaultNetworkController) run(_ context.Context) error {
 			return err
 		}
 
-		oc.efController, err = efcontroller.NewEFController("egress-firewall-controller", oc.zone, oc.kube, oc.nbClient,
+		oc.efController, err = efcontroller.NewEFController("egress-firewall-controller", oc.nodeName, oc.kube, oc.nbClient,
 			oc.watchFactory.NamespaceInformer().Lister(), oc.watchFactory.NodeCoreInformer(), oc.watchFactory.EgressFirewallInformer(),
 			oc.networkManager, oc.dnsNameResolver, oc.observManager)
 		if err != nil {
@@ -1046,7 +1046,7 @@ func (h *defaultNetworkControllerEventHandler) AddResource(obj interface{}, from
 		// Update node in zone cache; value will be true if node is local
 		// to this zone and false if its not
 		h.oc.eIPC.nodeZoneState.LockKey(node.Name)
-		h.oc.eIPC.nodeZoneState.Store(node.Name, h.oc.isLocalZoneNode(node))
+		h.oc.eIPC.nodeZoneState.Store(node.Name, h.oc.isLocalNode(node))
 		h.oc.eIPC.nodeZoneState.UnlockKey(node.Name)
 
 		shouldSyncReroute := true
@@ -1062,7 +1062,7 @@ func (h *defaultNetworkControllerEventHandler) AddResource(obj interface{}, from
 		if shouldSyncReroute {
 			// add the 103 qos rule to new node's switch
 			// NOTE: We don't need to remove this on node delete since entire node switch will get cleaned up
-			if h.oc.isLocalZoneNode(node) {
+			if h.oc.isLocalNode(node) {
 				if err := h.oc.eIPC.ensureDefaultNoRerouteQoSRules(node.Name); err != nil {
 					h.oc.syncEIPNodeRerouteFailed.Store(node.Name, true)
 					return err
@@ -1133,15 +1133,14 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(oldObj, newObj int
 		// Update node in zone cache; value will be true if node is local
 		// to this zone and false if its not
 		h.oc.eIPC.nodeZoneState.LockKey(newNode.Name)
-		h.oc.eIPC.nodeZoneState.Store(newNode.Name, h.oc.isLocalZoneNode(newNode))
+		h.oc.eIPC.nodeZoneState.Store(newNode.Name, h.oc.isLocalNode(newNode))
 		h.oc.eIPC.nodeZoneState.UnlockKey(newNode.Name)
 
 		_, rerouteRetryPending := h.oc.syncEIPNodeRerouteFailed.Load(newNode.Name)
-		newNodeIsLocal := h.oc.isLocalZoneNode(newNode)
-		nodeBecameLocal := !h.oc.isLocalZoneNode(oldNode) && newNodeIsLocal
+		newNodeIsLocal := h.oc.isLocalNode(newNode)
 
-		// node moved from remote -> local or previously failed reroute config
-		if nodeBecameLocal || (rerouteRetryPending && newNodeIsLocal) {
+		// Retry previously failed reroute configuration for the local node.
+		if rerouteRetryPending && newNodeIsLocal {
 			if err := h.oc.eIPC.ensureDefaultNoRerouteQoSRules(newNode.Name); err != nil {
 				h.oc.syncEIPNodeRerouteFailed.Store(newNode.Name, true)
 				return err
@@ -1159,7 +1158,9 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(oldObj, newObj int
 		}
 
 		_, syncEIPNodeFailed := h.oc.syncEIPNodeFailed.Load(newNode.Name)
-		if syncEIPNodeFailed || rerouteRetryPending || nodeBecameLocal {
+		// A reroute failure from AddResource prevented addEgressNode from
+		// running. Retry it after the reroute setup succeeds.
+		if syncEIPNodeFailed || rerouteRetryPending {
 			err := h.oc.eIPC.addEgressNode(newNode)
 			if err != nil {
 				h.oc.syncEIPNodeFailed.Store(newNode.Name, true)

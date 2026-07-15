@@ -1024,7 +1024,7 @@ var _ = Describe("Layer3 UDN Transport Mode - Interconnect", func() {
 							CommonNetworkControllerInfo: *cnci,
 							ReconcilableNetInfo:         util.NewReconcilableNetInfo(netInfo),
 							zoneICHandler:               zoneICHandler,
-							localZoneNodes:              &sync.Map{},
+							localNodes:              &sync.Map{},
 						},
 					},
 				}
@@ -1107,7 +1107,7 @@ var _ = Describe("Layer3 UDN Transport Mode - Interconnect", func() {
 							CommonNetworkControllerInfo: *cnci,
 							ReconcilableNetInfo:         util.NewReconcilableNetInfo(netInfo),
 							zoneICHandler:               zoneICHandler,
-							localZoneNodes:              &sync.Map{},
+							localNodes:              &sync.Map{},
 						},
 					},
 				}
@@ -1199,7 +1199,7 @@ var _ = Describe("Layer3 UDN Transport Mode - Interconnect", func() {
 							CommonNetworkControllerInfo: *cnci,
 							ReconcilableNetInfo:         util.NewReconcilableNetInfo(netInfo),
 							zoneICHandler:               zoneICHandler,
-							localZoneNodes:              &sync.Map{},
+							localNodes:              &sync.Map{},
 						},
 					},
 				}

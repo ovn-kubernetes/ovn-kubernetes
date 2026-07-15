@@ -102,14 +102,14 @@ func invokeICHandlerDeleteNodeFunction(icHandler *ZoneInterconnectHandler, nodes
 }
 
 func checkInterconnectResources(zone string, netName string, nbClient libovsdbclient.Client, testNodesRouteInfo map[string]map[string]string, nodes ...*corev1.Node) error {
-	localZoneNodes := []*corev1.Node{}
+	localNodes := []*corev1.Node{}
 	remoteZoneNodes := []*corev1.Node{}
 	localZoneNodeNames := []string{}
 	remoteZoneNodeNames := []string{}
 	for _, node := range nodes {
 		nodeZone := util.GetNodeZone(node)
 		if nodeZone == zone {
-			localZoneNodes = append(localZoneNodes, node)
+			localNodes = append(localNodes, node)
 			localZoneNodeNames = append(localZoneNodeNames, node.Name)
 		} else {
 			remoteZoneNodes = append(remoteZoneNodes, node)
@@ -131,7 +131,7 @@ func checkInterconnectResources(zone string, netName string, nbClient libovsdbcl
 		return fmt.Errorf("could not find transit switch %s in the nb db for network %s : err - %v", s.Name, netName, err)
 	}
 
-	noOfTSPorts := len(localZoneNodes) + len(remoteZoneNodes)
+	noOfTSPorts := len(localNodes) + len(remoteZoneNodes)
 
 	if len(ts.Ports) != noOfTSPorts {
 		return fmt.Errorf("transit switch %s doesn't have expected logical ports.  Found %d : Expected %d ports",
@@ -164,7 +164,7 @@ func checkInterconnectResources(zone string, netName string, nbClient libovsdbcl
 	// and for remote zone nodes, it should be of type 'remote'.
 	expectedTsPorts := make([]string, noOfTSPorts)
 	i = 0
-	for _, node := range localZoneNodes {
+	for _, node := range localNodes {
 		// The logical port for the local zone nodes should be of type patch.
 		nodeTSPortName := getNetworkScopedName(netName, types.TransitSwitchToRouterPrefix+node.Name)
 		expectedTsPorts[i] = nodeTSPortName + ":router"
@@ -212,7 +212,7 @@ func checkInterconnectResources(zone string, netName string, nbClient libovsdbcl
 	sort.Strings(icClusterRouterPorts)
 
 	expectedICClusterRouterPorts := []string{}
-	for _, node := range localZoneNodes {
+	for _, node := range localNodes {
 		expectedICClusterRouterPorts = append(expectedICClusterRouterPorts, getNetworkScopedName(netName, types.RouterToTransitSwitchPrefix+node.Name))
 	}
 	sort.Strings(expectedICClusterRouterPorts)

@@ -39,7 +39,6 @@ import (
 	globalconfig "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics/recorders"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -144,6 +143,7 @@ func NewController(client clientset.Interface,
 	networkManager networkmanager.Interface,
 	recorder record.EventRecorder,
 	netInfo util.NetInfo,
+	nodeName string,
 ) (*Controller, error) {
 	klog.V(4).Infof("Creating services controller for network=%s", netInfo.GetNetworkName())
 	state := newNetworkState(netInfo, newRepair(serviceInformer.Lister(), nbClient), NetworkOptions{})
@@ -168,11 +168,7 @@ func NewController(client clientset.Interface,
 		networkStates: syncmap.NewSyncMap[*networkState](),
 	}
 	c.networkStates.Store(netInfo.GetNetworkName(), state)
-	zone, err := libovsdbutil.GetNBZone(c.nbClient)
-	if err != nil {
-		return nil, fmt.Errorf("unable to get the NB Zone : err - %w", err)
-	}
-	c.zone = zone
+	c.zone = nodeName
 	return c, nil
 }
 
@@ -476,8 +472,8 @@ func (c *Controller) nodeInfoMapForNetwork(state *networkState) map[string]nodeI
 
 func zoneNodeInfos(zone string, nodeInfoByName map[string]nodeInfo) []nodeInfo {
 	out := make([]nodeInfo, 0, len(nodeInfoByName))
-	for _, node := range nodeInfoByName {
-		if node.zone == zone {
+	for nodeName, node := range nodeInfoByName {
+		if nodeName == zone {
 			out = append(out, node)
 		}
 	}

@@ -746,8 +746,8 @@ func getOVNSBZone() (string, error) {
 func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 	klog.Infof("Initializing the default node network controller")
 
-	if config.Zone == "" {
-		return fmt.Errorf("ovnkube-node zone is required")
+	if nc.name == "" {
+		return fmt.Errorf("ovnkube-node name is required")
 	}
 
 	var err error
@@ -803,8 +803,8 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 	var err1 error
 
 	if config.IsModeDPUHost() {
-		// There is no SBDB to connect to in DPU Host mode, so use the process zone.
-		sbZone = config.Zone
+		// There is no SBDB to connect to in DPU Host mode, so use the node name.
+		sbZone = nc.name
 	} else {
 		err = wait.PollUntilContextTimeout(ctx, 500*time.Millisecond, 300*time.Second, true, func(_ context.Context) (bool, error) {
 			sbZone, err = getOVNSBZone()
@@ -813,14 +813,14 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 				return false, nil
 			}
 
-			if config.Zone != sbZone {
-				err1 = fmt.Errorf("node %s zone %s mismatch with the Southbound zone %s", nc.name, config.Zone, sbZone)
+			if nc.name != sbZone {
+				err1 = fmt.Errorf("node name %s does not match the Southbound zone %s", nc.name, sbZone)
 				return false, nil
 			}
 			return true, nil
 		})
 		if err != nil {
-			return fmt.Errorf("timed out waiting for the node zone %s to match the OVN Southbound db zone, err: %v, err1: %v", config.Zone, err, err1)
+			return fmt.Errorf("timed out waiting for the node zone %s to match the OVN Southbound db zone, err: %v, err1: %v", nc.name, err, err1)
 		}
 
 		for _, auth := range []config.OvnAuthConfig{config.OvnNorth, config.OvnSouth} {
