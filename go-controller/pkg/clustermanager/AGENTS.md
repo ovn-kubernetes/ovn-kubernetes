@@ -69,6 +69,51 @@ direct access to OVN NB/SB databases.
   direction is to avoid per-zone/per-node status aggregation where
   possible.
 
+- **NADs are an implementation detail, not a user API** — Users create
+  `UserDefinedNetwork` or `ClusterUserDefinedNetwork` CRDs. The cluster
+  manager's UDN controller renders the corresponding
+  `NetworkAttachmentDefinition` (NAD) from the CRD spec and creates it
+  in the appropriate namespace. ovnkube-controller and ovnkube-node
+  only **watch** NADs via `pkg/networkmanager`'s `nadController` to
+  discover network definitions and start/stop per-network controllers.
+  If a NAD is deleted externally, the cluster manager re-creates it.
+  This separation means the NAD is an internal handoff mechanism
+  between the cluster manager (producer) and the zone components
+  (consumers), not something users should create or modify directly.
+
+- **CRDs over annotations for newer APIs** — Early OVN-Kubernetes
+  features relied on node/pod annotations and NADs for configuration.
+  NADs have no schema validation, limited RBAC controls, and no status
+  subresource. Newer features use typed CRDs instead:
+  `UserDefinedNetwork` replaced direct NAD creation for tenants,
+  `UplinkState` models per-node gateway state to avoid annotation
+  sprawl, and `RouteAdvertisements` express BGP intent declaratively.
+  The direction is CRDs for any user-facing or multi-writer API
+  surface.
+
+- **Interconnect mode and why zones exist** — The original
+  architecture used a single centralized OVN Northbound database and
+  RAFT for HA, which suffered from split-brain issues and poor
+  scaling. Interconnect mode replaced this with per-zone OVN NB/SB
+  databases (one zone per node by default). Each zone's
+  ovnkube-controller manages only its local database, and OVN
+  Interconnect handles cross-zone traffic via geneve tunnels. The
+  cluster manager exists partly to coordinate across zones (allocations,
+  status) since individual zone controllers only see their local DB.
+
+- **Designed to be lightweight** — Because the cluster manager is a
+  centralized singleton, it must stay lightweight to avoid becoming a
+  bottleneck or a scalability concern. It deliberately avoids OVN DB
+  access, heavy reconciliation loops, and per-pod processing wherever
+  possible. Its work is primarily cluster-scoped allocations (subnets,
+  IDs), CRD reconciliation, and status aggregation — all of which
+  operate on coarse-grained objects (nodes, networks) rather than
+  fine-grained ones (pods, ports). The exception is L2 IPAM, which
+  requires per-pod IP allocation centrally because L2 networks have no
+  per-node subnet partitioning. Any new feature that would add per-pod
+  or high-frequency work should go into the per-zone
+  ovnkube-controller instead.
+
 ## Key Types
 
 | Type | Description |

@@ -82,6 +82,37 @@ databases directly.
   they are resilient to missed events and avoid the subtle race
   conditions inherent in event-driven designs.
 
+- **CNI server runs inside ovnkube-node** — The CNI plugin executable
+  (`ovn-k8s-cni-overlay`) is a thin shim that forwards requests over a
+  private root-only unix socket to the CNI server running inside
+  ovnkube-node. This design keeps all pod interface setup logic
+  (OVS port creation, IP configuration, bandwidth shaping) in a
+  long-lived daemon with access to caches and watch factories, rather
+  than in the short-lived CNI binary invoked by the container runtime.
+
+- **Host-originated service traffic requires nftables even in SGW** —
+  In shared gateway mode, external traffic is handled entirely in the
+  OVS/OpenFlow datapath. However, traffic originating from the node
+  itself (e.g. localhost accessing a NodePort) bypasses OVS and must
+  be handled by host nftables DNAT rules. This is why nftables rules
+  exist even in SGW mode — they cover the host-originated edge case
+  that OVS cannot intercept.
+
+- **breth0 is created and owned by ovnkube-node, not OVN** — Unlike
+  `br-int` (the OVN integration bridge, created and managed by
+  ovn-controller), the gateway bridge (`breth0`) is created and
+  programmed by ovnkube-node. During node setup, ovnkube-node creates
+  an OVS bridge named `br<iface>` (e.g. `eth0` → `breth0`), moves the
+  primary NIC into it as an uplink port, and migrates the NIC's IP
+  addresses and routes (including the default route) onto the bridge.
+  If the gateway interface is already an OVS bridge (e.g. `br-ex`),
+  ovnkube uses it directly. ovn-controller then creates a patch port
+  linking the gateway bridge to `br-int`. ovnkube-node programs
+  OpenFlow rules on the gateway bridge to steer external/service
+  traffic between the physical network and OVN — this avoids making
+  the shared gateway act as a full router with ARP/control-plane
+  overhead.
+
 ## Key Types
 
 | Type | Description |

@@ -99,6 +99,107 @@ libovsdb. This is the only component that programs OVN directly.
   direction for all new controllers — it eliminates the class of bugs
   where a missed event causes permanent drift.
 
+- **Annotations as the inter-component communication bus** —
+  Components do not share database access. Instead, K8s annotations on
+  nodes and pods serve as the state-passing channel: ovnkube-node
+  writes host-discovered network config (encap IPs, management port
+  details, gateway config) into node annotations; ovnkube-controller
+  reads them and programs OVN accordingly. Similarly, pod network
+  annotations carry IP assignments from IPAM to the CNI path. This
+  decoupling allows components to restart independently and simplifies
+  the trust model — but the annotation-based approach has known scale
+  limits (annotation size, API server write load) that newer features
+  are working to reduce.
+
+- **OVN topology varies by network type** — Each network type creates
+  a different set of OVN logical objects. The default network uses
+  bare names; UDNs prefix every object with `<netname>_` (where `-`
+  and `/` in the network name are replaced with `.`).
+
+  Two traffic directions define the topology:
+  - **East-west** (pod-to-pod within the cluster): flows through node
+    logical switches and the distributed cluster router.
+  - **North-south** (pod-to-external or external-to-pod): flows
+    through the gateway router (GR), which connects to the cluster
+    router via a join switch, and exits through an external switch
+    tied to the physical network. With User Defined Networks, each
+    network needs its own join subnet to avoid route ambiguity when
+    pods have multiple interfaces.
+
+  Secondary networks only carry east-west traffic — they have no
+  north-south path (no GR, no join switch, no external switch).
+  Only the default network and **primary** UDNs get the full
+  north-south gateway stack.
+
+  Topologies per network type:
+  - **Default network**: distributed cluster router
+    (`ovn_cluster_router`) + per-node logical switch (`<node>`) +
+    per-node gateway router (`GR_<node>`) + join switch (`join`)
+    connecting GRs to the cluster router + external switch
+    (`ext_<node>`). Key ports follow a prefix convention:
+    `rtos-`/`stor-` (router↔switch), `rtoj-`/`jtor-` (GR↔join),
+    `rtoe-`/`etor-` (GR↔external).
+  - **L3 UDN (primary)**: same shape as default but all names are
+    scoped — e.g. `<net>_ovn_cluster_router`, `<net>_<node>` (node
+    switch), `GR_<net>_<node>`, `<net>_join`, `ext_<net>_<node>`.
+  - **L3 UDN (secondary)**: cluster router and per-node switches
+    only (east-west). No GR, join switch, or external switch.
+  - **L2 UDN (primary)**: a single flat logical switch
+    (`<net>_ovn_layer2_switch`) shared by all nodes — no per-node
+    switches. A transit router (`<net>_transit_router`) replaces the
+    classic cluster-router + join-switch pattern: GRs peer directly
+    with the transit router via `rtotr-`/`trtor-` ports.
+  - **L2 UDN (secondary)**: the flat switch only — no router at all.
+  - **Localnet UDN (always secondary)**: a single logical switch
+    (`<net>_ovn_localnet_switch`) with a `localnet`-type port
+    (`<net>_ovn_localnet_port`) mapped to a physical network via
+    `ovn-bridge-mappings`. No router, no gateway stack, no per-node
+    switches — traffic exits directly to the physical network.
+  - **No-overlay (default network or primary L3 UDNs)**: the same
+    OVN logical objects are created (cluster router, per-node
+    switches, GRs, join switch for primary) but Geneve encapsulation
+    is disabled and the transit switch is not created. The GR routes
+    only this node's local pod subnet(s) to the cluster router
+    (instead of all cluster subnets in overlay mode). For remote pod
+    subnets, the `routeimport` controller subscribes to netlink
+    events, reads BGP-learned routes from the network's kernel VRF
+    (installed by FRR), and copies them as static routes into the
+    GR — so the GR forwards off-node pod traffic out the physical
+    network via BGP next-hops.
+  - **EVPN (primary L2/L3 UDNs)**: the local OVN topology stays —
+    L3 keeps its cluster router, per-node switches, GRs, and join
+    switch; L2 keeps its flat switch, transit router, and GRs. What
+    is removed is the transit switch and its cross-zone ports (the
+    Geneve interconnect layer). Instead, east-west traffic is
+    VXLAN-encapsulated by Linux bridge + VTEP devices that FRR
+    configures on each node. The OVN logical switch connects to the
+    Linux bridge via an internal port, bridging OVN flows into the
+    EVPN fabric. This eliminates double encapsulation (Geneve inside
+    VXLAN) and integrates natively with data center spine-leaf EVPN
+    fabrics. Currently local gateway mode only.
+  - **Cluster Network Connect (primary UDNs only)**: when a
+    `ClusterNetworkConnect` CR selects multiple primary UDNs, a
+    connect router (`connect_router_<cnc>`) is created to bridge
+    their otherwise-isolated topologies. Each selected network's
+    cluster/transit router gets a port peered into the connect
+    router, with static routes enabling cross-network traffic.
+
+- **Port groups and address sets for network policy** — NetworkPolicy
+  ACLs target OVN port groups (sets of selected pod logical switch
+  ports) rather than creating per-port ACLs, which would cause O(pods)
+  ACL duplication. Peer selectors (ingress `from` / egress `to`) are
+  realized as OVN address sets that dynamically track pod/namespace
+  membership. This combination keeps the number of OVN ACLs
+  proportional to the number of policies, not pods.
+
+- **External IDs for OVN DB ownership tracking** — Every OVN NB/SB
+  object created by ovnkube-controller is tagged with `external_ids`
+  keys (controller name, network name, node name, etc.). These tags
+  enable safe cleanup of stale objects on restart, cross-controller
+  isolation (e.g. preventing KubeVirt cleanup from deleting non-KubeVirt
+  resources), and upgrade-safe reconciliation when external-ID schemas
+  evolve.
+
 - **Per-topology UDN controllers (and their scale cost)** — L2, L3,
   and localnet topologies have fundamentally different OVN constructs
   (L2 has no router, L3 has per-node subnets and a distributed router,
@@ -112,6 +213,21 @@ libovsdb. This is the only component that programs OVN directly.
   long-term direction is to consolidate into a single network
   controller that plumbs all networks, eliminating per-network
   overhead.
+
+- **Stale-object cleanup on restart** — When ovnkube-controller
+  restarts, networks may have been deleted while it was down. The
+  controller manager reconstructs "dummy" network controllers from
+  external IDs found in the OVN DB to clean up orphaned objects
+  (logical switches, ports, ACLs) before starting live controllers.
+  This reconstruction-based cleanup ensures no stale OVN objects
+  survive restarts, even if the K8s API no longer has a record of the
+  deleted network.
+
+- **Startup zone-gate** — The controller manager waits until the OVN
+  NB database's zone name matches the expected zone and at least one
+  local node exists before starting controllers. This prevents
+  wrong-zone programming and avoids the hazard of misclassifying local
+  vs remote resources during rolling upgrades or zone migrations.
 
 ## Key Types
 
