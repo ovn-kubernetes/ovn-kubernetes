@@ -26,7 +26,6 @@ import (
 	crdtypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
@@ -1163,7 +1162,6 @@ func eventuallySwitchHasNoQoS(switchName string, qos *nbdb.QoS) {
 }
 
 func initEnv(clientset *util.OVNClientset, initialDB *libovsdbtest.TestSetup) {
-	var nbZoneFailed bool
 	var err error
 	stopChan = make(chan struct{})
 
@@ -1181,17 +1179,6 @@ func initEnv(clientset *util.OVNClientset, initialDB *libovsdbtest.TestSetup) {
 	nbClient, nbsbCleanup, err = libovsdbtest.NewNBTestHarness(*initialDB, nil)
 	Expect(err).NotTo(HaveOccurred())
 
-	_, err = libovsdbutil.GetNBZone(nbClient)
-	if err != nil {
-		nbZoneFailed = true
-		err = createTestNBGlobal(nbClient, "node1")
-		Expect(err).NotTo(HaveOccurred())
-	}
-
-	if nbZoneFailed {
-		err = deleteTestNBGlobal(nbClient)
-		Expect(err).NotTo(HaveOccurred())
-	}
 	defaultAddrsetFactory = addressset.NewFakeAddressSetFactory(defaultControllerName)
 	streamAddrsetFactory = addressset.NewFakeAddressSetFactory("stream-network-controller")
 }
@@ -1246,35 +1233,4 @@ func shutdownController() {
 		close(stopChan)
 		stopChan = nil
 	}
-}
-
-func createTestNBGlobal(nbClient libovsdbclient.Client, zone string) error {
-	nbGlobal := &nbdb.NBGlobal{Name: zone}
-	ops, err := nbClient.Create(nbGlobal)
-	if err != nil {
-		return err
-	}
-
-	_, err = nbClient.Transact(context.Background(), ops...)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func deleteTestNBGlobal(nbClient libovsdbclient.Client) error {
-	p := func(_ *nbdb.NBGlobal) bool {
-		return true
-	}
-	ops, err := nbClient.WhereCache(p).Delete()
-	if err != nil {
-		return err
-	}
-	_, err = nbClient.Transact(context.Background(), ops...)
-	if err != nil {
-		return err
-	}
-
-	return nil
 }

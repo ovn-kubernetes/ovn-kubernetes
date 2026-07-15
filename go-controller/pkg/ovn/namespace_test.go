@@ -70,9 +70,7 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 		// Restore global default values before each testcase
 		err := config.PrepareTestConfig()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		config.Zone = "node1"
-
-		fakeOvn = NewFakeOVN(false)
+		fakeOvn = NewFakeOVN(false, "node1")
 		wg = &sync.WaitGroup{}
 	})
 

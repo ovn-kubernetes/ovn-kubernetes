@@ -338,7 +338,6 @@ var _ = Describe("Config Operations", func() {
 			gomega.Expect(Default.ClusterSubnets).To(gomega.Equal([]CIDRNetworkEntry{
 				{ovntest.MustParseIPNet("10.128.0.0/14"), 23},
 			}))
-			gomega.Expect(Zone).To(gomega.Equal(""))
 			gomega.Expect(IPv4Mode).To(gomega.BeTrue())
 			gomega.Expect(IPv6Mode).To(gomega.BeFalse())
 			gomega.Expect(HybridOverlay.Enabled).To(gomega.BeFalse())
@@ -552,8 +551,6 @@ routing-table-id-start=2002
 			gomega.Expect(Default.ClusterSubnets).To(gomega.Equal([]CIDRNetworkEntry{
 				{ovntest.MustParseIPNet("10.132.0.0/14"), 23},
 			}))
-			gomega.Expect(Zone).To(gomega.Equal(""))
-
 			gomega.Expect(Metrics.BindAddress).To(gomega.Equal("1.1.1.1:8080"))
 			gomega.Expect(Metrics.OVNMetricsBindAddress).To(gomega.Equal("1.1.1.2:8081"))
 			gomega.Expect(Metrics.ExportOVSMetrics).To(gomega.BeTrue())
@@ -674,8 +671,6 @@ routing-table-id-start=2002
 			gomega.Expect(Default.ClusterSubnets).To(gomega.Equal([]CIDRNetworkEntry{
 				{ovntest.MustParseIPNet("10.130.0.0/15"), 24},
 			}))
-			gomega.Expect(Zone).To(gomega.Equal(""))
-
 			gomega.Expect(Metrics.BindAddress).To(gomega.Equal("2.2.2.2:8080"))
 			gomega.Expect(Metrics.OVNMetricsBindAddress).To(gomega.Equal("2.2.2.3:8081"))
 			gomega.Expect(Metrics.ExportOVSMetrics).To(gomega.BeTrue())

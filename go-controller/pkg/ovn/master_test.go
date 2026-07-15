@@ -546,7 +546,6 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 			NodeMgmtPortMAC:      "0a:58:0a:01:01:02",
 			DnatSnatIP:           "169.254.0.1",
 		}
-		config.Zone = node1.Name
 		_, clusterIPNet, err := net.ParseCIDR(clusterCIDR)
 		gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
@@ -642,6 +641,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 			nil,
 			NewPortCache(stopChan),
 			addressSetManager,
+			node1.Name,
 		)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		gomega.Expect(oc).NotTo(gomega.BeNil())
@@ -1127,19 +1127,17 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			atomic.StoreUint32(&oc.allInitialPodsProcessed, 1)
 
+			badNode, err := fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), node1.Name, metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			badNode.Annotations = map[string]string{
+				util.OvnNodeID:       "3",
+				util.OvnNodeZoneName: node1.Name,
+			}
+			_, err = fakeClient.KubeClient.CoreV1().Nodes().Update(context.TODO(), badNode, metav1.UpdateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
 			startDefaultNodeController(oc)
 
-			badNode := &corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "ho-node",
-					Annotations: map[string]string{
-						util.OvnNodeID:       "3",
-						util.OvnNodeZoneName: node1.Name,
-					},
-				},
-			}
-			_, err = fakeClient.KubeClient.CoreV1().Nodes().Create(context.TODO(), badNode, metav1.CreateOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			gomega.Eventually(func() bool {
 				_, failed := oc.addNodeFailed.Load(badNode.Name)
 				return failed
@@ -1647,7 +1645,6 @@ func TestController_syncNodes(t *testing.T) {
 			}
 			t.Cleanup(libovsdbCleanup.Cleanup)
 
-			config.Zone = node1Name
 			controller, err := NewOvnController(
 				fakeClient,
 				f,
@@ -1661,6 +1658,7 @@ func TestController_syncNodes(t *testing.T) {
 				nil,
 				NewPortCache(stopChan),
 				nil,
+				node1Name,
 			)
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 			err = controller.syncNodes([]interface{}{&testNode})
@@ -1767,6 +1765,7 @@ func TestController_deleteStaleNodeChassis(t *testing.T) {
 				nil,
 				NewPortCache(stopChan),
 				nil,
+				tt.node.Name,
 			)
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 

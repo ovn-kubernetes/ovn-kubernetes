@@ -25,7 +25,6 @@ import (
 var _ = Describe("UDN Isolation", func() {
 	BeforeEach(func() {
 		Expect(config.PrepareTestConfig()).To(Succeed())
-		config.Zone = nodeName
 	})
 
 	It("ACLs should be updated to the Primary tier ", func() {
@@ -109,7 +108,7 @@ var _ = Describe("UDN Isolation", func() {
 		config.IPv4Mode = true
 		config.IPv6Mode = false
 
-		fakeOVN := NewFakeOVN(true)
+		fakeOVN := NewFakeOVN(true, nodeName)
 
 		netInfoBefore := dummyPrimaryLayer3UserDefinedNetwork("192.168.0.0/16", "192.168.1.0/24")
 		nadBefore, err := newNetworkAttachmentDefinition(ns, nadName, *netInfoBefore.netconf())
@@ -156,7 +155,7 @@ var _ = Describe("UDN Isolation", func() {
 		config.IPv4Mode = true
 		config.IPv6Mode = false
 
-		fakeOVN := NewFakeOVN(true)
+		fakeOVN := NewFakeOVN(true, nodeName)
 
 		netInfoBefore := dummyPrimaryLayer3UserDefinedNetwork("192.168.0.0/16", "192.168.1.0/24")
 		nadBefore, err := newNetworkAttachmentDefinition(ns, nadName, *netInfoBefore.netconf())

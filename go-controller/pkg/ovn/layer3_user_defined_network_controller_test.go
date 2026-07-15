@@ -9,7 +9,6 @@ import (
 	"net"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
@@ -88,7 +87,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 		app.Flags = config.Flags
 
 		useFakeAddressSets := false
-		fakeOvn = NewFakeOVN(useFakeAddressSets)
+		fakeOvn = NewFakeOVN(useFakeAddressSets, nodeName)
 		initialDB = libovsdbtest.TestSetup{
 			NBData: []libovsdbtest.TestData{
 				&nbdb.LogicalSwitch{
@@ -116,7 +115,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				}
 			}
 			config.Gateway.Mode = gwMode
-			config.Zone = nodeName
 			if knet.IsIPv6CIDRString(netInfo.clustersubnets) {
 				config.IPv6Mode = true
 				// tests dont support dualstack yet
@@ -342,7 +340,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 					config.Gateway.DisableSNATMultipleGWs = testConfig.gatewayConfig.DisableSNATMultipleGWs
 				}
 			}
-			config.Zone = nodeName
 			app.Action = func(_ *cli.Context) error {
 				netConf := netInfo.netconf()
 				networkConfig, err := util.NewNetInfo(netConf)
@@ -486,7 +483,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 	It("primary Layer 3 UDN: controller creates entities via init/watchers, then dummy Cleanup() removes them", func() {
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
 		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
-		config.Zone = nodeName
 		netInfo := dummyPrimaryLayer3UserDefinedNetwork("192.168.0.0/16", "192.168.1.0/24")
 		app.Action = func(ctx *cli.Context) error {
 			netConf := netInfo.netconf()
@@ -602,7 +598,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 			config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
 			config.OVNKubernetesFeature.EnableMultiNetwork = true
 			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
-			config.Zone = nodeName
 			config.Gateway.V4MasqueradeSubnet = "169.254.0.0/16"
 
 			// Basic UDN setup
@@ -792,7 +787,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 			config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
 			config.OVNKubernetesFeature.EnableMultiNetwork = true
 			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
-			config.Zone = nodeName
 			config.Gateway.V4MasqueradeSubnet = "169.254.0.0/16"
 
 			const (
@@ -1024,7 +1018,6 @@ var _ = Describe("Layer3 UDN Transport Mode - Interconnect", func() {
 							CommonNetworkControllerInfo: *cnci,
 							ReconcilableNetInfo:         util.NewReconcilableNetInfo(netInfo),
 							zoneICHandler:               zoneICHandler,
-							localNodes:              &sync.Map{},
 						},
 					},
 				}
@@ -1107,7 +1100,6 @@ var _ = Describe("Layer3 UDN Transport Mode - Interconnect", func() {
 							CommonNetworkControllerInfo: *cnci,
 							ReconcilableNetInfo:         util.NewReconcilableNetInfo(netInfo),
 							zoneICHandler:               zoneICHandler,
-							localNodes:              &sync.Map{},
 						},
 					},
 				}
@@ -1199,7 +1191,6 @@ var _ = Describe("Layer3 UDN Transport Mode - Interconnect", func() {
 							CommonNetworkControllerInfo: *cnci,
 							ReconcilableNetInfo:         util.NewReconcilableNetInfo(netInfo),
 							zoneICHandler:               zoneICHandler,
-							localNodes:              &sync.Map{},
 						},
 					},
 				}
@@ -1246,8 +1237,7 @@ var _ = Describe("Layer3 CUDN OutboundSNAT for no-overlay mode", func() {
 
 	BeforeEach(func() {
 		Expect(config.PrepareTestConfig()).To(Succeed())
-		config.Zone = nodeName
-		fakeOvn = NewFakeOVN(false)
+		fakeOvn = NewFakeOVN(false, nodeName)
 	})
 
 	AfterEach(func() {
@@ -1774,7 +1764,7 @@ func newNodeWithUserDefinedNetworks(nodeName string, nodeIPv4CIDR string, netInf
 	nextHopIP := util.GetNodeGatewayIfAddr(nodeCIDR).IP
 	nodeCIDR.IP = nodeIP
 
-	zone := config.Zone
+	zone := nodeName
 
 	return &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{

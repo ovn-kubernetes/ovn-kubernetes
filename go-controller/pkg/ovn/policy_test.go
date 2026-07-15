@@ -644,13 +644,11 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
-		config.Zone = nodeName
-
 		app = cli.NewApp()
 		app.Name = "test"
 		app.Flags = config.Flags
 
-		fakeOvn = NewFakeOVN(false)
+		fakeOvn = NewFakeOVN(false, nodeName)
 
 		gomegaFormatMaxLength = format.MaxLength
 		format.MaxLength = 0

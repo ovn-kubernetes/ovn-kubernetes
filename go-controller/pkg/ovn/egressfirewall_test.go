@@ -273,7 +273,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		fakeOVN.controller.efController, err = efcontroller.NewEFController(
 			"egress-firewall-controller",
-			fakeOVN.controller.zone,
+			fakeOVN.controller.nodeName,
 			fakeOVN.controller.kube,
 			fakeOVN.controller.nbClient,
 			fakeOVN.controller.watchFactory.NamespaceInformer().Lister(),
@@ -295,14 +295,13 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
-		config.Zone = node1Name
 		config.OVNKubernetesFeature.EnableEgressFirewall = true
 
 		app = cli.NewApp()
 		app.Name = "test"
 		app.Flags = config.Flags
 
-		fakeOVN = NewFakeOVN(false)
+		fakeOVN = NewFakeOVN(false, node1Name)
 		clusterPortGroup = newClusterPortGroup()
 		nodeSwitch = &nbdb.LogicalSwitch{
 			UUID: node1Name + "-UUID",

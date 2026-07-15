@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -468,13 +467,11 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
-		config.Zone = node1Name
-
 		app = cli.NewApp()
 		app.Name = "test"
 		app.Flags = config.Flags
 
-		fakeOvn = NewFakeOVN(true)
+		fakeOvn = NewFakeOVN(true, node1Name)
 		initialDB = libovsdbtest.TestSetup{
 			NBData: []libovsdbtest.TestData{
 				&nbdb.LogicalSwitch{
@@ -2032,6 +2029,13 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 						},
 					},
 				)
+				localPortUUIDs := map[string]string{}
+				for _, localPod := range []testPod{t1, t3} {
+					portName := util.GetLogicalPortName(localPod.namespace, localPod.podName)
+					lsp, err := libovsdbops.GetLogicalSwitchPort(fakeOvn.nbClient, &nbdb.LogicalSwitchPort{Name: portName})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					localPortUUIDs[portName] = lsp.UUID
+				}
 				t1.populateLogicalSwitchCache(fakeOvn)
 				t2.populateLogicalSwitchCache(fakeOvn)
 				t3.populateLogicalSwitchCache(fakeOvn)
@@ -2043,8 +2047,30 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				// check db values are updated to correlate with test pods settings
+				expectedPodsAndSwitches := getDefaultNetExpectedPodsAndSwitches([]testPod{t1, t2, t3}, []string{"node1", "node2"})
+				for _, item := range expectedPodsAndSwitches {
+					if lsp, ok := item.(*nbdb.LogicalSwitchPort); ok && lsp.Name == util.GetLogicalPortName(t2.namespace, t2.podName) {
+						// A remote-zone port keeps its MAC and IP as separate
+						// address entries.
+						lsp.Addresses = []string{t2.podMAC, t2.podIP}
+					}
+				}
 				gomega.Eventually(fakeOvn.nbClient).Should(
-					libovsdbtest.HaveData(getDefaultNetExpectedPodsAndSwitches([]testPod{t1, t2, t3}, []string{"node1", "node2"})))
+					libovsdbtest.HaveDataIgnoringUUIDs(expectedPodsAndSwitches))
+				// Existing ports for pods on the controller node are updated in
+				// place. The remote pod port may be reconstructed during startup.
+				for _, localPod := range []testPod{t1, t3} {
+					portName := util.GetLogicalPortName(localPod.namespace, localPod.podName)
+					gomega.Eventually(func() string {
+						lsp, err := libovsdbops.GetLogicalSwitchPort(fakeOvn.nbClient, &nbdb.LogicalSwitchPort{
+							Name: portName,
+						})
+						if err != nil {
+							return ""
+						}
+						return lsp.UUID
+					}).Should(gomega.Equal(localPortUUIDs[portName]))
+				}
 				// check annotations are preserved
 				// makes sense only when handling is finished, therefore check after nbdb is updated
 				annotations := getPodAnnotations(fakeOvn.fakeClient.KubeClient, t1.namespace, t1.podName)
@@ -2460,9 +2486,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 					},
 				)
 
-				// initialize the localNodes empty so the controller thinks
-				// the node is on a remote zone
-				fakeOvn.controller.localNodes = &sync.Map{}
+				fakeOvn.controller.nodeName = node2Name
 
 				err := fakeOvn.controller.WatchNamespaces()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -2481,9 +2505,8 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 
-		ginkgo.It("falls back to node zone lookup when localNodes misses", func() {
+		ginkgo.It("uses the controller node identity for pod locality", func() {
 			app.Action = func(*cli.Context) error {
-				config.Zone = node1Name
 				localNode := newNode(node1Name, "192.168.126.202/24")
 				localNode.Annotations[util.OvnNodeZoneName] = node1Name
 				remoteNode := newNode(node2Name, "192.168.126.203/24")
@@ -2497,9 +2520,6 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 						},
 					},
 				)
-
-				// Simulate a startup window where node cache entries are not yet populated.
-				fakeOvn.controller.localNodes = &sync.Map{}
 
 				localPod := ovntest.NewPod("ns1", "local-pod", node1Name, "10.128.1.3")
 				remotePod := ovntest.NewPod("ns1", "remote-pod", node2Name, "10.128.1.4")
@@ -2548,7 +2568,6 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 					},
 				)
 
-				fakeOvn.controller.localNodes = nil
 				err := fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				return nil

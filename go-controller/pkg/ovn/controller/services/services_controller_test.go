@@ -24,12 +24,9 @@ import (
 	utilnet "k8s.io/utils/net"
 	"k8s.io/utils/ptr"
 
-	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
-
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
-	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	kubetest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
@@ -75,18 +72,6 @@ func newControllerWithDBSetupForNetwork(dbSetup libovsdbtest.TestSetup, netInfo 
 	}
 	recorder := record.NewFakeRecorder(10)
 
-	nbZoneFailed := false
-	// Try to get the NBZone.  If there is an error, create NB_Global record.
-	// Otherwise NewController() will return error since it
-	// calls libovsdbutil.GetNBZone().
-	_, err = libovsdbutil.GetNBZone(nbClient)
-	if err != nil {
-		nbZoneFailed = true
-		if err = createTestNBGlobal(nbClient, nodeA); err != nil {
-			return nil, err
-		}
-	}
-
 	controller, err := NewController(client.KubeClient,
 		nbClient,
 		factoryMock.ServiceCoreInformer(),
@@ -95,17 +80,10 @@ func newControllerWithDBSetupForNetwork(dbSetup libovsdbtest.TestSetup, netInfo 
 		networkmanager.Default().Interface(),
 		recorder,
 		netInfo,
+		nodeA,
 	)
 	if err != nil {
 		return nil, err
-	}
-
-	if nbZoneFailed {
-		// Delete the NBGlobal row as this function created it.  Otherwise many tests would fail while
-		// checking the expectedData in the NBDB.
-		if err = deleteTestNBGlobal(nbClient); err != nil {
-			return nil, err
-		}
 	}
 
 	if err = controller.initTopLevelCache(); err != nil {
@@ -2063,7 +2041,6 @@ func getNodeInfo(nodeName string, nodeIPsV4 []string, nodeIPsV6 []string) *nodeI
 		gatewayRouterName:  nodeGWRouterName(nodeName),
 		switchName:         nodeSwitchName(nodeName),
 		chassisID:          nodeName,
-		zone:               nodeName,
 	}
 }
 
@@ -2073,37 +2050,4 @@ func temporarilyEnableGomegaMaxLengthFormat() {
 
 func restoreGomegaMaxLengthFormat(originalLength int) {
 	format.MaxLength = originalLength
-}
-
-func createTestNBGlobal(nbClient libovsdbclient.Client, zone string) error {
-	nbGlobal := &nbdb.NBGlobal{Name: zone}
-	ops, err := nbClient.Create(nbGlobal)
-	if err != nil {
-		return err
-	}
-
-	_, err = nbClient.Transact(context.Background(), ops...)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func deleteTestNBGlobal(nbClient libovsdbclient.Client) error {
-	p := func(*nbdb.NBGlobal) bool {
-		return true
-	}
-
-	ops, err := nbClient.WhereCache(p).Delete()
-	if err != nil {
-		return err
-	}
-
-	_, err = nbClient.Transact(context.Background(), ops...)
-	if err != nil {
-		return err
-	}
-
-	return nil
 }

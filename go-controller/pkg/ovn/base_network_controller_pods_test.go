@@ -20,14 +20,14 @@ import (
 
 func TestBaseNetworkController_isLocalNode(t *testing.T) {
 	tests := []struct {
-		name           string
-		controllerZone string
-		node           *corev1.Node
-		want           bool
+		name               string
+		controllerNodeName string
+		node               *corev1.Node
+		want               bool
 	}{
 		{
-			name:           "matches node in controller zone",
-			controllerZone: "node1",
+			name:               "matches controller node",
+			controllerNodeName: "node1",
 			node: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:        "node1",
@@ -37,14 +37,14 @@ func TestBaseNetworkController_isLocalNode(t *testing.T) {
 			want: true,
 		},
 		{
-			name:           "does not match unannotated node",
-			controllerZone: "node1",
-			node:           &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1"}},
-			want:           false,
+			name:               "matches controller node without a zone annotation",
+			controllerNodeName: "node1",
+			node:               &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1"}},
+			want:               true,
 		},
 		{
-			name:           "does not match node in a different zone",
-			controllerZone: "node1",
+			name:               "does not match a different node",
+			controllerNodeName: "node1",
 			node: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:        "node2",
@@ -58,7 +58,7 @@ func TestBaseNetworkController_isLocalNode(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			g := gomega.NewWithT(t)
-			bnc := &BaseNetworkController{CommonNetworkControllerInfo: CommonNetworkControllerInfo{zone: tt.controllerZone}}
+			bnc := &BaseNetworkController{CommonNetworkControllerInfo: CommonNetworkControllerInfo{nodeName: tt.controllerNodeName}}
 			g.Expect(bnc.isLocalNode(tt.node)).To(gomega.Equal(tt.want))
 		})
 	}

@@ -56,7 +56,6 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
-		config.Zone = node1Name
 		// disabling EgressIP to be sure we're creating the no reroute policies ourselves
 		config.OVNKubernetesFeature.EnableEgressIP = false
 		config.OVNKubernetesFeature.EnableEgressService = true
@@ -68,7 +67,7 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 		app.Name = "test"
 		app.Flags = config.Flags
 
-		fakeOVN = NewFakeOVN(true)
+		fakeOVN = NewFakeOVN(true, node1Name)
 	})
 
 	ginkgo.AfterEach(func() {
@@ -544,7 +543,7 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 					},
 				)
 
-				fakeOVN.controller.zone = node1Name
+				fakeOVN.controller.nodeName = node1Name
 				fakeOVN.InitAndRunEgressSVCController()
 				clusterRouter.Policies = []string{"toKeepLRP1-UUID", "toKeepLRP2-UUID", "toKeepLRSR1-UUID"}
 				expectedDatabaseState := []libovsdbtest.TestData{
@@ -682,7 +681,7 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 					},
 				)
 
-				fakeOVN.controller.zone = node1Name
+				fakeOVN.controller.nodeName = node1Name
 				fakeOVN.InitAndRunEgressSVCController()
 
 				v4lrp1 := egressServiceRouterPolicy("v4lrp1-UUID", "testns/svc1", "10.128.1.5", "10.128.1.2")
@@ -839,7 +838,7 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 					},
 				)
 
-				fakeOVN.controller.zone = node1Name
+				fakeOVN.controller.nodeName = node1Name
 				fakeOVN.InitAndRunEgressSVCController()
 
 				v4lrp1 := egressServiceRouterPolicy("v4lrp1-UUID", "testns/svc1", "10.128.1.5", "10.128.1.2")
@@ -997,7 +996,7 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 					},
 				)
 
-				fakeOVN.controller.zone = node1Name
+				fakeOVN.controller.nodeName = node1Name
 				fakeOVN.InitAndRunEgressSVCController()
 
 				v4lrp1 := egressServiceRouterPolicy("v4lrp1-UUID", "testns/svc1", "10.128.1.5", "10.128.1.2")
@@ -1257,7 +1256,7 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 					},
 				)
 
-				fakeOVN.controller.zone = node1Name
+				fakeOVN.controller.nodeName = node1Name
 				fakeOVN.InitAndRunEgressSVCController()
 
 				svc1v4iclrp1 := egressServiceRouterPolicy("svc1v4lrsr1-UUID", "testns/svc1:ic", "10.128.2.5", "10.128.1.2")

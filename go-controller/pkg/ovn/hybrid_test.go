@@ -154,8 +154,6 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
-		config.Zone = "node1"
-
 		app = cli.NewApp()
 		app.Name = "test"
 		app.Flags = config.Flags
@@ -229,6 +227,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				nil,
 				NewPortCache(stopChan),
 				nil,
+				"node1",
 			)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			c, cancel := context.WithCancel(ctx.Context)
@@ -394,6 +393,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				nil,
 				NewPortCache(stopChan),
 				nil,
+				"node1",
 			)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -746,6 +746,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				nil,
 				NewPortCache(stopChan),
 				nil,
+				"node1",
 			)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -925,6 +926,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				nil,
 				NewPortCache(stopChan),
 				nil,
+				"node1",
 			)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -1240,6 +1242,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				nil,
 				NewPortCache(stopChan),
 				nil,
+				"node1",
 			)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -1448,6 +1451,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				nil,
 				NewPortCache(stopChan),
 				nil,
+				"node1",
 			)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -1663,6 +1667,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				nil,
 				NewPortCache(stopChan),
 				nil,
+				"node1",
 			)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
