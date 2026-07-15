@@ -33,7 +33,7 @@ func TestShouldReconcileNodeIgnoresOtherNetworkTunnelIDChanges(t *testing.T) {
 		Subnets:  "10.1.0.0/16",
 	})
 	ncc := &networkClusterController{ReconcilableNetInfo: util.NewReconcilableNetInfo(netInfo)}
-	ncc.nodeAllocator = cmnode.NewNodeAllocator(1, netInfo, nil, nil, nil)
+	ncc.nodeAllocator = cmnode.NewNodeAllocator(1, netInfo, nil, nil, nil, nil)
 
 	oldNode := testNodeWithAnnotations("node1", map[string]string{
 		types.UDNLayer2NodeGRLRPTunnelIDAnnotation: `{"blue":"7","red":"9"}`,
@@ -60,7 +60,7 @@ func TestShouldReconcileNodeIgnoresOtherNetworkSubnetChanges(t *testing.T) {
 		NetConf: cnitypes.NetConf{Name: types.DefaultNetworkName, Type: "ovn-k8s-cni-overlay"},
 	})
 	ncc := &networkClusterController{ReconcilableNetInfo: util.NewReconcilableNetInfo(netInfo)}
-	ncc.nodeAllocator = cmnode.NewNodeAllocator(1, netInfo, nil, nil, nil)
+	ncc.nodeAllocator = cmnode.NewNodeAllocator(1, netInfo, nil, nil, nil, nil)
 
 	oldNode := testNodeWithAnnotations("node1", map[string]string{
 		types.NodeSubnetsAnnotation: `{"default":"10.1.0.0/24","red":"10.2.0.0/24"}`,
@@ -92,7 +92,7 @@ func TestShouldReconcileNodeWhenNetworkSpecificTunnelIDChanges(t *testing.T) {
 		Subnets:  "10.1.0.0/16",
 	})
 	ncc := &networkClusterController{ReconcilableNetInfo: util.NewReconcilableNetInfo(netInfo)}
-	ncc.nodeAllocator = cmnode.NewNodeAllocator(1, netInfo, nil, nil, nil)
+	ncc.nodeAllocator = cmnode.NewNodeAllocator(1, netInfo, nil, nil, nil, nil)
 
 	oldNode := testNodeWithAnnotations("node1", map[string]string{
 		types.UDNLayer2NodeGRLRPTunnelIDAnnotation: `{"blue":"7","red":"9"}`,
@@ -119,7 +119,7 @@ func TestShouldReconcileNodeWhenNetworkSpecificSubnetChanges(t *testing.T) {
 		NetConf: cnitypes.NetConf{Name: types.DefaultNetworkName, Type: "ovn-k8s-cni-overlay"},
 	})
 	ncc := &networkClusterController{ReconcilableNetInfo: util.NewReconcilableNetInfo(netInfo)}
-	ncc.nodeAllocator = cmnode.NewNodeAllocator(1, netInfo, nil, nil, nil)
+	ncc.nodeAllocator = cmnode.NewNodeAllocator(1, netInfo, nil, nil, nil, nil)
 
 	oldNode := testNodeWithAnnotations("node1", map[string]string{
 		types.NodeSubnetsAnnotation: `{"default":"10.1.0.0/24","red":"10.2.0.0/24"}`,
