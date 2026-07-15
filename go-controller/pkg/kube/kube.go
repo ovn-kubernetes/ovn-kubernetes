@@ -65,6 +65,9 @@ type Interface interface {
 	PatchNode(old, new *corev1.Node) error
 	UpdateNodeStatus(node *corev1.Node) error
 	PatchPodStatusAnnotations(oldPod, newPod *corev1.Pod) error
+	// GetPod returns the pod fetched directly from the API server, bypassing
+	// any informer cache. Use it when a fresh resourceVersion is required.
+	GetPod(namespace, name string) (*corev1.Pod, error)
 	// GetNodeForWindows should only be used for windows hybrid overlay binary and never in linux code
 	GetNodeForWindows(name string) (*corev1.Node, error)
 	GetNodesForWindows() ([]*corev1.Node, error)
@@ -244,6 +247,12 @@ func (k *Kube) PatchPodStatusAnnotations(oldPod, newPod *corev1.Pod) error {
 		klog.Errorf("Error in patching annotations on pod %s: %v", podDesc, err)
 	}
 	return err
+}
+
+// GetPod returns the pod fetched directly from the API server, bypassing any
+// informer cache. Use it when a fresh resourceVersion is required.
+func (k *Kube) GetPod(namespace, name string) (*corev1.Pod, error) {
+	return k.KClient.CoreV1().Pods(namespace).Get(context.TODO(), name, metav1.GetOptions{})
 }
 
 // SetAnnotationsOnNode takes the node name and map of key/value string pairs to set as annotations

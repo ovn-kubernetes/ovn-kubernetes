@@ -17,5 +17,6 @@ func TestAdder(t *testing.T) {
 	gomega.RegisterFailHandler(ginkgo.Fail)
 	util.SetFakeIPTablesHelpers()
 	nodenft.SetFakeNFTablesHelper()
+	util.SetSupportsIPv6InterfaceForwarding(false)
 	ginkgo.RunSpecs(t, "Management Port Suite")
 }

@@ -8,13 +8,30 @@
 const fs = require('fs');
 
 module.exports = async ({ github, context, core }) => {
+  // Comments created by this workflow are posted under the GitHub App
+  // identity (e.g. "ovn-kubernetes-merge-bot[bot]"), NOT "github-actions[bot]".
+  // Unlike the default GITHUB_TOKEN, comments created with an App token DO
+  // trigger new issue_comment workflow runs, so the bot must be able to
+  // recognize its own comments to avoid reacting to them in a loop.
+  const botLogin = process.env.BOT_LOGIN || 'ovn-kubernetes-merge-bot[bot]';
+
   // --- Determine which PRs to process and who triggered ---
   let pullNumbers = [];
   let commenter = null;
 
   if (context.eventName === 'issue_comment') {
+    // Defense in depth (the workflow `if` also enforces this): only accept
+    // the command at the start of a comment authored by a human. Bot
+    // status/error messages merely mentioning the command must never be
+    // treated as a merge request.
+    const comment = context.payload.comment;
+    if (comment.user.type === 'Bot' ||
+        !comment.body.trim().startsWith('/area-maintainer-approved')) {
+      core.info('Ignoring comment: authored by a bot or not a /area-maintainer-approved command');
+      return;
+    }
     pullNumbers.push(context.payload.issue.number);
-    commenter = context.payload.comment.user.login.toLowerCase();
+    commenter = comment.user.login.toLowerCase();
   } else if (context.eventName === 'check_suite') {
     const suite = context.payload.check_suite;
     for (const pr of (suite.pull_requests || [])) {
@@ -133,8 +150,8 @@ module.exports = async ({ github, context, core }) => {
       allComments = await fetchAllComments(prNumber);
       const mergeComment = [...allComments]
         .reverse()
-        .find(c => c.body.includes('/area-maintainer-approved') &&
-                   c.user.login !== 'github-actions[bot]' &&
+        .find(c => c.body.trim().startsWith('/area-maintainer-approved') &&
+                   c.user.type !== 'Bot' &&
                    c.user.login.toLowerCase() !== prAuthor);
       if (mergeComment) {
         requester = mergeComment.user.login.toLowerCase();
@@ -153,7 +170,7 @@ module.exports = async ({ github, context, core }) => {
       if (!allComments) allComments = await fetchAllComments(prNumber);
       const waitingMarker = `<!-- area-merge-sha:${pr.head.sha} -->`;
       const isWaiting = allComments.some(c =>
-        c.user.login === 'github-actions[bot]' &&
+        c.user.login === botLogin &&
         c.body.includes(waitingMarker)
       );
       if (!isWaiting) {
@@ -301,7 +318,7 @@ module.exports = async ({ github, context, core }) => {
       const shaMarker = `<!-- area-merge-sha:${ref} -->`;
       if (!allComments) allComments = await fetchAllComments(prNumber);
       const alreadyWaiting = allComments.some(c =>
-        c.user.login === 'github-actions[bot]' &&
+        c.user.login === botLogin &&
         c.body.includes(shaMarker)
       );
       if (!alreadyWaiting) {

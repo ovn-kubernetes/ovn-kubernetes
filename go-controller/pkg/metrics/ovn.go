@@ -13,7 +13,8 @@ import (
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
-	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
@@ -100,6 +101,14 @@ var metricOVNControllerSBDBConnection = prometheus.NewGauge(prometheus.GaugeOpts
 	Name:      "southbound_database_connected",
 	Help:      "Specifies if OVN controller is connected to OVN southbound database (1) or not (0)",
 })
+
+var metricUDNNBDBProgrammedDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+	Namespace: types.MetricOvnkubeNamespace,
+	Subsystem: types.MetricOvnkubeSubsystemController,
+	Name:      "udn_nbdb_programmed_duration_seconds",
+	Help:      "NBDB programming duration for UDN network initialization, aggregated by topology",
+	Buckets:   prometheus.ExponentialBuckets(.001, 2, 18), // 1ms to ~131s
+}, []string{"topology"})
 
 var (
 	ovnControllerVersion       string
@@ -386,6 +395,9 @@ func RegisterOvnControllerMetrics(ovsDBClient libovsdbclient.Client, ovnRegistry
 
 	// ovn-controller metrics
 	ovnRegistry.MustRegister(metricOVNControllerSBDBConnection)
+	if config.Metrics.EnableScaleMetrics {
+		ovnRegistry.MustRegister(metricUDNNBDBProgrammedDuration)
+	}
 	ovnRegistry.MustRegister(prometheus.NewCounterFunc(
 		prometheus.CounterOpts{
 			Namespace: types.MetricOvnNamespace,
@@ -445,4 +457,9 @@ func RegisterOvnControllerMetrics(ovsDBClient libovsdbclient.Client, ovnRegistry
 	// Register the ovn-controller coverage/show metrics
 	componentStopwatchShowMetricsMap[ovnController] = ovnControllerStopwatchShowMetricsMap
 	registerStopwatchShowMetrics(ovnRegistry, ovnController, types.MetricOvnNamespace, types.MetricOvnSubsystemController)
+}
+
+// RecordUDNNBDBProgrammedDuration records the NBDB programming duration for UDN network initialization.
+func RecordUDNNBDBProgrammedDuration(topology string, duration float64) {
+	metricUDNNBDBProgrammedDuration.WithLabelValues(topology).Observe(duration)
 }

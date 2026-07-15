@@ -55,6 +55,8 @@ jobs:
       replicas: 1
 
     - objectTemplate: workloads/templates/udn-density/np-allow-from-clients.yml
+      inputVars:
+        nsPrefix: cudn-density-l2-namespaces
       replicas: 1
 
     - objectTemplate: workloads/templates/udn-density/service.yml

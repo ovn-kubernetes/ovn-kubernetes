@@ -32,7 +32,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
-	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
+	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/bridgeconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/egressip"
@@ -46,6 +46,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
 
 const (
@@ -74,10 +75,6 @@ const (
 	// nftablesUDNBGPOutputChain is a base chain used for blocking the local processes
 	// from accessing any of the advertised UDN networks
 	nftablesUDNBGPOutputChain = "udn-bgp-drop"
-
-	// nftablesDPUHostNoOverlaySNATChain SNATs DPU-host host-network traffic
-	// to the host masquerade IP before handing it to OVN for no-overlay pod CIDRs.
-	nftablesDPUHostNoOverlaySNATChain = "dpu-host-no-overlay-snat"
 
 	// nftablesAdvertisedUDNsSetV[4|6] is a set containing advertised UDN subnets
 	nftablesAdvertisedUDNsSetV4 = "advertised-udn-subnets-v4"
@@ -1910,14 +1907,8 @@ func newNodePortWatcher(
 			subnets = append(subnets, subnet.CIDR)
 		}
 		subnets = append(subnets, config.Kubernetes.ServiceCIDRs...)
-		if config.Gateway.DisableForwarding {
-			if err := initExternalBridgeServiceForwardingRules(subnets); err != nil {
-				return nil, fmt.Errorf("failed to add accept rules in forwarding table for bridge %s: err %v", gwBridge.GetGatewayIface(), err)
-			}
-		} else {
-			if err := delExternalBridgeServiceForwardingRules(subnets); err != nil {
-				return nil, fmt.Errorf("failed to delete accept rules in forwarding table for bridge %s: err %v", gwBridge.GetGatewayIface(), err)
-			}
+		if err := initExternalBridgeServiceForwardingRules(subnets); err != nil {
+			return nil, fmt.Errorf("failed to configure iptables forwarding rules for bridge %s: err %v", gwBridge.GetGatewayIface(), err)
 		}
 	}
 
@@ -1948,16 +1939,23 @@ func newNodePortWatcher(
 func cleanupSharedGateway(ovsClient libovsdbclient.Client) error {
 	if (config.IsModeDPU() || config.IsModeFull()) && ovsClient != nil {
 		// NicToBridge() may be created before-hand, only delete the patch port here
-		stdout, stderr, err := util.RunOVSVsctl("--columns=name", "--no-heading", "find", "port",
-			"external_ids:ovn-localnet-port!=_")
+		ports, err := ovsops.FindOVSPortsWithPredicate(ovsClient, func(p *vswitchd.Port) bool {
+			_, ok := p.ExternalIDs["ovn-localnet-port"]
+			return ok
+		})
 		if err != nil {
-			return fmt.Errorf("failed to get ovn-localnet-port port stderr:%s (%v)", stderr, err)
+			return fmt.Errorf("failed to list ovn-localnet-port ports: %w", err)
 		}
-		ports := strings.Fields(strings.Trim(stdout, "\""))
 		for _, port := range ports {
-			_, stderr, err := util.RunOVSVsctl("--if-exists", "del-port", strings.Trim(port, "\""))
+			bridge, err := ovsops.GetPortBridge(ovsClient, port.Name)
 			if err != nil {
-				return fmt.Errorf("failed to delete port %s stderr:%s (%v)", port, stderr, err)
+				if errors.Is(err, libovsdbclient.ErrNotFound) {
+					continue
+				}
+				return fmt.Errorf("failed to find bridge for port %s: %w", port.Name, err)
+			}
+			if err := ovsops.DeletePortWithInterfaces(ovsClient, bridge.Name, port.Name); err != nil {
+				return fmt.Errorf("failed to delete port %s: %w", port.Name, err)
 			}
 		}
 
@@ -1990,7 +1988,7 @@ func cleanupSharedGateway(ovsClient libovsdbclient.Client) error {
 			return nil
 		}
 
-		_, stderr, err = util.AddOFFlowWithSpecificAction(bridgeName, util.NormalAction)
+		_, stderr, err := util.AddOFFlowWithSpecificAction(bridgeName, util.NormalAction)
 		if err != nil {
 			return fmt.Errorf("failed to replace-flows on bridge %q stderr:%s (%v)", bridgeName, stderr, err)
 		}
@@ -2235,18 +2233,6 @@ func (r *masqueradeReconciler) ensure() error {
 	if err := configureSvcRouteViaInterface(r.routeManager, gwIface, DummyNextHopIPs()); err != nil {
 		return fmt.Errorf("failed to configure service route: %w", err)
 	}
-	if shouldConfigureDPUHostNoOverlayPodCIDRRoute() {
-		if err := configureDPUHostNoOverlayPodCIDRRoute(r.routeManager, gwIface, DummyNextHopIPs()); err != nil {
-			return fmt.Errorf("failed to configure DPU host no-overlay pod CIDR route: %w", err)
-		}
-		if err := setupDPUHostNoOverlaySNAT(gwIface); err != nil {
-			return fmt.Errorf("failed to configure DPU host no-overlay SNAT: %w", err)
-		}
-	} else {
-		if err := teardownDPUHostNoOverlaySNAT(); err != nil {
-			return fmt.Errorf("failed to remove DPU host no-overlay SNAT: %w", err)
-		}
-	}
 	// 3. ARP/ND entries for masquerade IPs.
 	if err := addHostMACBindings(gwIface); err != nil {
 		return fmt.Errorf("failed to add MAC bindings: %w", err)
@@ -2254,81 +2240,6 @@ func (r *masqueradeReconciler) ensure() error {
 
 	r.lastLinkIndex = link.Attrs().Index
 	klog.Infof("Masquerade resources ensured on %s (ifindex=%d)", gwIface, r.lastLinkIndex)
-	return nil
-}
-
-func setupDPUHostNoOverlaySNAT(gwIface string) error {
-	nft, err := nodenft.GetNFTablesHelper()
-	if err != nil {
-		return err
-	}
-	tx := nft.NewTransaction()
-
-	tx.Add(&knftables.Chain{
-		Name:     nftablesDPUHostNoOverlaySNATChain,
-		Comment:  knftables.PtrTo("OVN DPU host no-overlay SNAT"),
-		Type:     knftables.PtrTo(knftables.NATType),
-		Hook:     knftables.PtrTo(knftables.PostroutingHook),
-		Priority: knftables.PtrTo(knftables.SNATPriority),
-	})
-	tx.Flush(&knftables.Chain{Name: nftablesDPUHostNoOverlaySNATChain})
-	tx.Add(&knftables.Rule{
-		Chain: nftablesDPUHostNoOverlaySNATChain,
-		Rule: knftables.Concat(
-			"oifname", "!=", gwIface,
-			"return",
-		),
-	})
-
-	for _, clusterSubnet := range config.Default.ClusterSubnets {
-		subnet := clusterSubnet.CIDR
-		if utilnet.IsIPv6CIDR(subnet) {
-			tx.Add(&knftables.Rule{
-				Chain: nftablesDPUHostNoOverlaySNATChain,
-				Rule: knftables.Concat(
-					"ip6 daddr", subnet,
-					"ip6 saddr", "!=", config.Gateway.MasqueradeIPs.V6HostMasqueradeIP,
-					"snat ip6 to", config.Gateway.MasqueradeIPs.V6HostMasqueradeIP,
-				),
-			})
-			continue
-		}
-		tx.Add(&knftables.Rule{
-			Chain: nftablesDPUHostNoOverlaySNATChain,
-			Rule: knftables.Concat(
-				"ip daddr", subnet,
-				"ip saddr", "!=", config.Gateway.MasqueradeIPs.V4HostMasqueradeIP,
-				"snat ip to", config.Gateway.MasqueradeIPs.V4HostMasqueradeIP,
-			),
-		})
-	}
-
-	if err := nft.Run(context.TODO(), tx); err != nil {
-		return fmt.Errorf("could not update nftables rule for DPU host no-overlay SNAT: %w", err)
-	}
-	return nil
-}
-
-func teardownDPUHostNoOverlaySNAT() error {
-	nft, err := nodenft.GetNFTablesHelper()
-	if err != nil {
-		return err
-	}
-	tx := nft.NewTransaction()
-
-	chain := &knftables.Chain{
-		Name:     nftablesDPUHostNoOverlaySNATChain,
-		Type:     knftables.PtrTo(knftables.NATType),
-		Hook:     knftables.PtrTo(knftables.PostroutingHook),
-		Priority: knftables.PtrTo(knftables.SNATPriority),
-	}
-	tx.Add(chain)
-	tx.Flush(chain)
-	tx.Delete(chain)
-
-	if err := nft.Run(context.TODO(), tx); err != nil && !knftables.IsNotFound(err) {
-		return fmt.Errorf("could not remove nftables rule for DPU host no-overlay SNAT: %w", err)
-	}
 	return nil
 }
 

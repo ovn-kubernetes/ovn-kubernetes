@@ -449,7 +449,16 @@ func (oc *Layer2UserDefinedNetworkController) Cleanup() error {
 	return nil
 }
 
-func (oc *Layer2UserDefinedNetworkController) init() error {
+func (oc *Layer2UserDefinedNetworkController) init() (err error) {
+	start := time.Now()
+	defer func() {
+		if err == nil && config.Metrics.EnableScaleMetrics {
+			duration := time.Since(start)
+			metrics.RecordUDNNBDBProgrammedDuration(oc.TopologyType(), duration.Seconds())
+			klog.Infof("Recorded NBDB programmed duration for network %s: %v", oc.GetNetworkName(), duration)
+		}
+	}()
+
 	// Create default Control Plane Protection (COPP) entry for routers
 	defaultCOPPUUID, err := EnsureDefaultCOPP(oc.nbClient)
 	if err != nil {

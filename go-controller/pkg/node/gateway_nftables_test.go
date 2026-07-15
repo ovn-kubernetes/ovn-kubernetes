@@ -10,7 +10,6 @@ import (
 	"sigs.k8s.io/knftables"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
-	nodenft "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftables"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 
@@ -267,38 +266,6 @@ var _ = Describe("Gateway NFTables", func() {
 					Chain: nftablesPodSubnetMasqChain,
 				}))
 			})
-		})
-	})
-
-	Describe("setupDPUHostNoOverlaySNAT", func() {
-		It("SNATs default cluster CIDR traffic to the host masquerade IP", func() {
-			nft := nodenft.SetFakeNFTablesHelper()
-			config.Default.ClusterSubnets = []config.CIDRNetworkEntry{
-				{CIDR: ovntest.MustParseIPNet("10.244.0.0/16")},
-				{CIDR: ovntest.MustParseIPNet("fd00:10:244::/48")},
-			}
-
-			Expect(setupDPUHostNoOverlaySNAT("breth0")).To(Succeed())
-			dump := nft.Dump()
-
-			Expect(dump).To(ContainSubstring("add chain inet ovn-kubernetes dpu-host-no-overlay-snat"))
-			Expect(dump).To(ContainSubstring("add rule inet ovn-kubernetes dpu-host-no-overlay-snat oifname != breth0 return"))
-			Expect(dump).To(ContainSubstring("ip daddr 10.244.0.0/16 ip saddr != 169.254.169.2 snat ip to 169.254.169.2"))
-			Expect(dump).To(ContainSubstring("ip6 daddr fd00:10:244::/48 ip6 saddr != fd69::2 snat ip6 to fd69::2"))
-		})
-
-		It("removes DPU host no-overlay SNAT rules", func() {
-			nft := nodenft.SetFakeNFTablesHelper()
-			config.Default.ClusterSubnets = []config.CIDRNetworkEntry{
-				{CIDR: ovntest.MustParseIPNet("10.244.0.0/16")},
-			}
-
-			Expect(setupDPUHostNoOverlaySNAT("breth0")).To(Succeed())
-			Expect(nft.Dump()).To(ContainSubstring("dpu-host-no-overlay-snat"))
-
-			Expect(teardownDPUHostNoOverlaySNAT()).To(Succeed())
-			Expect(nft.Dump()).NotTo(ContainSubstring("dpu-host-no-overlay-snat"))
-			Expect(teardownDPUHostNoOverlaySNAT()).To(Succeed())
 		})
 	})
 })

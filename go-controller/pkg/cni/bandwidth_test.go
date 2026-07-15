@@ -4,6 +4,7 @@
 package cni
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -13,8 +14,13 @@ import (
 
 	kexec "k8s.io/utils/exec"
 
+	"github.com/ovn-kubernetes/libovsdb/ovsdb"
+
+	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
+	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	mock_k8s_io_utils_exec "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/utils/exec"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
 
 func TestClearPodBandwidth(t *testing.T) {
@@ -110,7 +116,7 @@ func TestClearPodBandwidth(t *testing.T) {
 			// note runner is defined in pkg/cni/ovs.go file
 			runner = tc.runnerInstance
 
-			e := clearPodBandwidth("sandboxID")
+			e := clearPodBandwidth(nil, "sandboxID")
 
 			if tc.expectedErr {
 				require.Error(t, e)
@@ -122,6 +128,57 @@ func TestClearPodBandwidth(t *testing.T) {
 			mockKexecIface.AssertExpectations(t)
 		})
 	}
+}
+
+func TestClearPodBandwidthWithOVSClient(t *testing.T) {
+	ovsUUID := "00000000-0000-0000-0000-000000000001"
+	bridgeUUID := "00000000-0000-0000-0000-000000000002"
+	sandboxPortUUID := "00000000-0000-0000-0000-000000000003"
+	sandboxIfaceUUID := "00000000-0000-0000-0000-000000000004"
+	qosUUID := "00000000-0000-0000-0000-000000000005"
+	otherPortUUID := "00000000-0000-0000-0000-000000000006"
+	otherIfaceUUID := "00000000-0000-0000-0000-000000000007"
+	otherQOSUUID := "00000000-0000-0000-0000-000000000008"
+	ovsClient, cleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
+		OVSData: []libovsdbtest.TestData{
+			&vswitchd.OpenvSwitch{UUID: ovsUUID, Bridges: []string{bridgeUUID}},
+			&vswitchd.Bridge{UUID: bridgeUUID, Name: "br-int", Ports: []string{sandboxPortUUID, otherPortUUID}},
+			&vswitchd.Port{UUID: sandboxPortUUID, Name: "sandbox-port", Interfaces: []string{sandboxIfaceUUID}, QOS: &qosUUID},
+			&vswitchd.Interface{UUID: sandboxIfaceUUID, Name: "sandbox-port", ExternalIDs: map[string]string{"sandbox": "sandboxID"}},
+			&vswitchd.QoS{UUID: qosUUID, Type: "linux-htb", ExternalIDs: map[string]string{"sandbox": "sandboxID"}},
+			&vswitchd.Port{UUID: otherPortUUID, Name: "other-port", Interfaces: []string{otherIfaceUUID}, QOS: &otherQOSUUID},
+			&vswitchd.Interface{UUID: otherIfaceUUID, Name: "other-port", ExternalIDs: map[string]string{"sandbox": "other-sandbox"}},
+			&vswitchd.QoS{UUID: otherQOSUUID, Type: "linux-htb", ExternalIDs: map[string]string{"sandbox": "other-sandbox"}},
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(cleanup.Cleanup)
+	qosExists := func(uuid string) bool {
+		results, err := ovsops.TransactAndCheck(ovsClient, []ovsdb.Operation{{
+			Op:    ovsdb.OperationSelect,
+			Table: vswitchd.QoSTable,
+			Where: []ovsdb.Condition{
+				ovsdb.NewCondition("_uuid", ovsdb.ConditionEqual, ovsdb.UUID{GoUUID: uuid}),
+			},
+		}})
+		require.NoError(t, err)
+		require.Len(t, results, 1)
+		return len(results[0].Rows) > 0
+	}
+
+	require.NoError(t, clearPodBandwidth(ovsClient, "sandboxID"))
+
+	sandboxPort := &vswitchd.Port{UUID: sandboxPortUUID}
+	require.NoError(t, ovsClient.Get(context.Background(), sandboxPort))
+	require.Nil(t, sandboxPort.QOS)
+
+	require.False(t, qosExists(qosUUID), "expected sandbox QoS to be deleted")
+
+	otherPort := &vswitchd.Port{UUID: otherPortUUID}
+	require.NoError(t, ovsClient.Get(context.Background(), otherPort))
+	require.NotNil(t, otherPort.QOS)
+	require.Equal(t, otherQOSUUID, *otherPort.QOS)
+	require.True(t, qosExists(otherQOSUUID), "expected unrelated QoS to be preserved")
 }
 
 func TestSetPodBandwidth(t *testing.T) {

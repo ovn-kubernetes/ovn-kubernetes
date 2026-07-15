@@ -18,6 +18,7 @@ import (
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	nodeipt "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iptables"
+	nodeutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
@@ -266,16 +267,13 @@ func getExternalIPTRules(svcPort corev1.ServicePort, externalIP, dstIP string, s
 	}
 }
 
-func getGatewayForwardRules(cidrs []*net.IPNet) []nodeipt.Rule {
-	var returnRules []nodeipt.Rule
-	protocols := make(map[iptables.Protocol]struct{})
+func getGatewayForwardRules(cidrs []*net.IPNet) map[iptables.Protocol][]nodeipt.Rule {
+	returnRules := map[iptables.Protocol][]nodeipt.Rule{}
 
 	// Add rules for all CIDRs.
 	for _, cidr := range cidrs {
 		protocol := getIPTablesProtocol(cidr.IP.String())
-		protocols[protocol] = struct{}{}
-
-		returnRules = append(returnRules, []nodeipt.Rule{
+		returnRules[protocol] = append(returnRules[protocol], []nodeipt.Rule{
 			{
 				Table: "filter",
 				Chain: "FORWARD",
@@ -298,12 +296,12 @@ func getGatewayForwardRules(cidrs []*net.IPNet) []nodeipt.Rule {
 	}
 
 	// Add rules for MasqueraIPs.
-	for protocol := range protocols {
+	for protocol := range returnRules {
 		masqueradeIP := config.Gateway.MasqueradeIPs.V4OVNMasqueradeIP
 		if protocol == iptables.ProtocolIPv6 {
 			masqueradeIP = config.Gateway.MasqueradeIPs.V6OVNMasqueradeIP
 		}
-		returnRules = append(returnRules, getMasqueradeIpTablesForwardRules(masqueradeIP, protocol)...)
+		returnRules[protocol] = append(returnRules[protocol], getMasqueradeIpTablesForwardRules(masqueradeIP, protocol)...)
 	}
 
 	return returnRules
@@ -352,24 +350,29 @@ func getMasqueradeIpTablesNATRules(masqueradeIP net.IP, protocol iptables.Protoc
 	}
 }
 
-// initExternalBridgeForwardingRules sets up iptables rules for br-* interface svc traffic forwarding
+// initExternalBridgeForwardingRules adds or removes iptables rules for br-* interface svc
+// traffic forwarding:
 // -A FORWARD -s 10.96.0.0/16 -j ACCEPT
 // -A FORWARD -d 10.96.0.0/16 -j ACCEPT
 // -A FORWARD -s 169.254.169.1 -j ACCEPT
 // -A FORWARD -d 169.254.169.1 -j ACCEPT
 func initExternalBridgeServiceForwardingRules(cidrs []*net.IPNet) error {
-	return insertIptRules(getGatewayForwardRules(cidrs))
+	allRules := getGatewayForwardRules(cidrs)
+	for protocol, rules := range allRules {
+		var err error
+		if nodeutil.NeedIPTablesForwardingRules(protocol) {
+			err = insertIptRules(rules)
+		} else {
+			err = deleteIptRules(rules)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-// delExternalBridgeServiceForwardingRules removes iptables rules which might
-// have been added to disable forwarding
-func delExternalBridgeServiceForwardingRules(cidrs []*net.IPNet) error {
-	return deleteIptRules(getGatewayForwardRules(cidrs))
-}
-
-func getLocalGatewayFilterRules(ifname string, cidr *net.IPNet) []nodeipt.Rule {
-	// Allow packets to/from the gateway interface in case defaults deny
-	protocol := getIPTablesProtocol(cidr.IP.String())
+func getLocalGatewayFilterRules(ifname string, protocol iptables.Protocol) []nodeipt.Rule {
 	return []nodeipt.Rule{
 		{
 			Table: "filter",
@@ -389,29 +392,30 @@ func getLocalGatewayFilterRules(ifname string, cidr *net.IPNet) []nodeipt.Rule {
 			},
 			Protocol: protocol,
 		},
-		{
-			Table: "filter",
-			Chain: "INPUT",
-			Args: []string{
-				"-i", ifname,
-				"-m", "comment", "--comment", "from OVN to localhost",
-				"-j", "ACCEPT",
-			},
-			Protocol: protocol,
-		},
 	}
 }
 
-// initLocalGatewayIPTFilterRules sets up iptables rules for interfaces
-func initLocalGatewayIPTFilterRules(ifname string, cidr *net.IPNet) error {
-	// Insert the filter table rules because they need to be evaluated BEFORE the DROP rules
-	// we have for forwarding. DO NOT change the ordering; specially important
-	// during SGW->LGW rollouts and restarts.
-	err := insertIptRules(getLocalGatewayFilterRules(ifname, cidr))
-	if err != nil {
-		return fmt.Errorf("unable to insert forwarding rules %v", err)
+// initLocalGatewayIPTFilterRules creates or deletes iptables forward rules for the
+// management port.
+func initLocalGatewayIPTFilterRules(ifname string) error {
+	for _, protocol := range clusterIPTablesProtocols() {
+		rules := getLocalGatewayFilterRules(ifname, protocol)
+		if nodeutil.NeedIPTablesForwardingRules(protocol) {
+			// Insert (rather than append) the filter table rules because they
+			// need to be evaluated BEFORE the DROP rules we have for
+			// forwarding. DO NOT change the ordering; especially important
+			// during SGW->LGW rollouts and restarts.
+			err := insertIptRules(rules)
+			if err != nil {
+				return fmt.Errorf("unable to insert forwarding rules %v", err)
+			}
+		} else {
+			err := deleteIptRules(rules)
+			if err != nil {
+				return fmt.Errorf("unable to clean up stale forwarding rules %v", err)
+			}
+		}
 	}
-	// NOTE: nftables masquerade rules are now handled separately in initLocalGatewayNFTNATRules
 	return nil
 }
 

@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"io"
 	"net"
@@ -49,6 +50,12 @@ var _ = Describe("MetricServer", func() {
 				t.opts.EnableOVNDBMetrics = tc.enableOVNDB
 				t.opts.EnableOVNControllerMetrics = tc.enableOVNController
 				t.opts.EnableOVNNorthdMetrics = tc.enableOVNNorthd
+
+				savedEnableScaleMetrics := config.Metrics.EnableScaleMetrics
+				config.Metrics.EnableScaleMetrics = tc.enableScaleMetrics
+				DeferCleanup(func() {
+					config.Metrics.EnableScaleMetrics = savedEnableScaleMetrics
+				})
 
 				// Mock the exec runner for RunOvsVswitchdAppCtl calls
 				mockCmd := new(mock_k8s_io_utils_exec.Cmd)
@@ -367,11 +374,18 @@ func newMetricsTestDriver() *metricsTestDriver {
 }
 
 func (t *metricsTestDriver) testTLSHandshake(clientVersion int, clientCipherSuites []uint16, verify func(Gomega, tls.ConnectionState, error)) {
+	// Load the server's certificate to create a trusted cert pool
+	certPool := x509.NewCertPool()
+	certPEM, err := os.ReadFile(t.opts.CertFile)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(certPool.AppendCertsFromPEM(certPEM)).To(BeTrue())
+
 	tlsConfig := &tls.Config{
-		InsecureSkipVerify: true,
-		MinVersion:         uint16(clientVersion),
-		MaxVersion:         uint16(clientVersion),
-		CipherSuites:       clientCipherSuites,
+		RootCAs:      certPool,
+		ServerName:   "localhost", // matches the cert's CommonName/DNSNames
+		MinVersion:   uint16(clientVersion),
+		MaxVersion:   uint16(clientVersion),
+		CipherSuites: clientCipherSuites,
 	}
 
 	Eventually(func(g Gomega) {
@@ -429,6 +443,7 @@ type metricsTestCase struct {
 	enableOVNDB         bool
 	enableOVNController bool
 	enableOVNNorthd     bool
+	enableScaleMetrics  bool
 	mockRunCommands     []ovntest.TestifyMockHelper
 	expectedMetrics     []string
 }
@@ -605,6 +620,7 @@ var (
 
 	OVNControllerMetricsTestCase = metricsTestCase{
 		enableOVNController: true,
+		enableScaleMetrics:  true,
 		mockRunCommands: []ovntest.TestifyMockHelper{
 			// ovs-ofctl -t 5 dump-aggregate br-int
 			{

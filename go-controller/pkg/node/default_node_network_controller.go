@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/containernetworking/plugins/pkg/ip"
+	"github.com/coreos/go-iptables/iptables"
 	"github.com/vishvananda/netlink"
 
 	corev1 "k8s.io/api/core/v1"
@@ -37,6 +38,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/informer"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
+	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/controllers/egressip"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/controllers/egressservice"
@@ -48,6 +50,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/podresourcesapi"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	nodetypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/types"
+	nodeutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/apbroute"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/healthcheck"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/retry"
@@ -76,6 +79,10 @@ type BaseNodeNetworkController struct {
 
 	// networkManager used for getting network information
 	networkManager networkmanager.Interface
+
+	// ovsClient is the libovsdb client connected to the local ovsdb-server.
+	// Used by DPU representor cleanup and other OVS-aware bookkeeping.
+	ovsClient client.Client
 
 	// podNADToDPUCDMap tracks the NAD/DPU_ConnectionDetails mapping for all NADs that each pod requests.
 	// Key is pod.UUID; value is nadToDPUCDMap (of map[string]*util.DPUConnectionDetails). Key of nadToDPUCDMap
@@ -141,8 +148,6 @@ type DefaultNodeNetworkController struct {
 
 	nodeAddress net.IP
 	sbZone      string
-
-	ovsClient client.Client
 }
 
 func newDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, stopChan chan struct{},
@@ -155,9 +160,9 @@ func newDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, sto
 			networkManager:                  networkManager,
 			stopChan:                        stopChan,
 			wg:                              wg,
+			ovsClient:                       ovsClient,
 		},
 		routeManager: routeManager,
-		ovsClient:    ovsClient,
 	}
 	if util.IsNetworkSegmentationSupportEnabled() && (config.IsModeDPUHost() || config.IsModeFull()) {
 		c.udnHostIsolationManager = NewUDNHostIsolationManager(config.IPv4Mode, config.IPv6Mode,
@@ -547,7 +552,7 @@ func setEncapPort(ctx context.Context) error {
 	return nil
 }
 
-func isOVNControllerReady() (bool, error) {
+func isOVNControllerReady(ovsClient client.Client) (bool, error) {
 	// check node's connection status
 	ret, _, err := util.RunOVNControllerAppCtl("connection-status")
 	if err != nil {
@@ -559,8 +564,10 @@ func isOVNControllerReady() (bool, error) {
 	}
 
 	// check whether br-int exists on node
-	_, _, err = util.RunOVSVsctl("--", "br-exists", "br-int")
-	if err != nil {
+	if _, err := ovsops.GetBridge(ovsClient, "br-int"); err != nil {
+		if !errors.Is(err, client.ErrNotFound) {
+			return false, fmt.Errorf("could not check br-int bridge existence: %w", err)
+		}
 		return false, nil
 	}
 
@@ -756,7 +763,7 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 
 	if config.IsModeDPU() || config.IsModeFull() {
 		// Bootstrap flows in OVS if just normal flow is present
-		if err := bootstrapOVSFlows(nc.name); err != nil {
+		if err := bootstrapOVSFlows(nc.ovsClient, nc.name); err != nil {
 			return fmt.Errorf("failed to bootstrap OVS flows: %w", err)
 		}
 	}
@@ -1046,13 +1053,11 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 		}(nc.stopChan)
 	} else if config.IsModeDPU() || config.IsModeFull() {
 		// attempt to cleanup the possibly stale bridge
-		_, stderr, err := util.RunOVSVsctl("--if-exists", "del-br", "br-ext")
-		if err != nil {
-			klog.Errorf("Deletion of bridge br-ext failed: %v (%v)", err, stderr)
+		if err := ovsops.DeleteBridge(nc.ovsClient, "br-ext"); err != nil {
+			klog.Errorf("Deletion of bridge br-ext failed: %v", err)
 		}
-		_, stderr, err = util.RunOVSVsctl("--if-exists", "del-port", "br-int", "int")
-		if err != nil {
-			klog.Errorf("Deletion of port int on  br-int failed: %v (%v)", err, stderr)
+		if err := ovsops.DeletePortWithInterfaces(nc.ovsClient, "br-int", "int"); err != nil {
+			klog.Errorf("Deletion of port int on br-int failed: %v", err)
 		}
 	}
 
@@ -1589,22 +1594,20 @@ func DummyMasqueradeIPs() []net.IP {
 	return nextHops
 }
 
-// configureGlobalForwarding configures the global forwarding settings.
-// It sets the FORWARD policy to DROP/ACCEPT based on the config.Gateway.DisableForwarding value for all enabled IP families.
-// For IPv6 it additionally always enables the global forwarding.
+// configureGlobalForwarding configures the global forwarding settings for IPv6 when
+// per-interface forwarding is not available. It enables global forwarding, and sets the
+// ip6tables FORWARD policy to DROP if config.Gateway.DisableForwarding is set (or sets it
+// back to ACCEPT if it had previously set it DROP and DisableForwarding is now unset).
+//
+// This function assumes that other forwarding setup will also be performed. Specifically,
+// you must call util.SetForwardingModeForInterface() to enable per-interface
+// forwarding on the interfaces that need it (the bridge and management port interfaces).
+// And if config.Gateway.DisableForwarding is set, you must call
+// initExternalBridgeServiceForwardingRules() to create netfilter rules to forward the
+// traffic that OVN-Kubernetes needs, and block other traffic from being forwarded.
 func configureGlobalForwarding() error {
-	// Global forwarding works differently for IPv6:
-	//   conf/all/forwarding - BOOLEAN
-	//    Enable global IPv6 forwarding between all interfaces.
-	//	  IPv4 and IPv6 work differently here; e.g. netfilter must be used
-	//	  to control which interfaces may forward packets and which not.
-	// https://www.kernel.org/doc/Documentation/networking/ip-sysctl.txt
-	//
-	// It is not possible to configure the IPv6 forwarding per interface by
-	// setting the net.ipv6.conf.<ifname>.forwarding sysctl. Instead,
-	// the opposite approach is required where the global forwarding
-	// is enabled and an iptables rule is added to restrict it by default.
-	if config.IPv6Mode {
+	if config.IPv6Mode && !util.SupportsIPv6InterfaceForwarding() {
+		// Enable global forwarding since per-interface forwarding isn't available.
 		if err := ip.EnableIP6Forward(); err != nil {
 			return fmt.Errorf("could not set the correct global forwarding value for ipv6:  %w", err)
 		}
@@ -1617,15 +1620,34 @@ func configureGlobalForwarding() error {
 			return fmt.Errorf("failed to get the iptables helper: %w", err)
 		}
 
-		target := "ACCEPT"
-		if config.Gateway.DisableForwarding {
-			target = "DROP"
-
+		desiredPolicy := ""
+		if nodeutil.NeedIPTablesForwardingRules(proto) {
+			desiredPolicy = "DROP"
+		} else {
+			// If there's evidence that we previously configured
+			// DisableForwarding, then change the policy back to ACCEPT now.
+			// (Note that the rules we look for here will be deleted later
+			// by the gateway setup.)
+			masqueradeIP := config.Gateway.MasqueradeIPs.V4OVNMasqueradeIP
+			if proto == iptables.ProtocolIPv6 {
+				masqueradeIP = config.Gateway.MasqueradeIPs.V6OVNMasqueradeIP
+			}
+			forwardRules := getMasqueradeIpTablesForwardRules(masqueradeIP, proto)
+			if len(forwardRules) != 0 {
+				rule := forwardRules[0]
+				if ruleExists, _ := ipt.Exists(rule.Table, rule.Chain, rule.Args...); ruleExists {
+					desiredPolicy = "ACCEPT"
+				}
+			}
 		}
-		if err := ipt.ChangePolicy("filter", "FORWARD", target); err != nil {
-			return fmt.Errorf("failed to change the forward policy to %q: %w", target, err)
+
+		if desiredPolicy != "" {
+			if err := ipt.ChangePolicy("filter", "FORWARD", desiredPolicy); err != nil {
+				return fmt.Errorf("failed to change the forward policy to %q: %w", desiredPolicy, err)
+			}
 		}
 	}
+
 	return nil
 }
 

@@ -579,6 +579,102 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 
+		ginkgo.It("AddRemoteZoneNode cleans up conflicting routes from previously-deleted nodes before adding the node", func() {
+			app.Action = func(ctx *cli.Context) error {
+				dbSetup := libovsdbtest.TestSetup{
+					NBData: initialNBDB,
+					SBData: initialSBDB,
+				}
+
+				_, err := config.InitConfig(ctx, nil, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				var libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
+				libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				err = createTransitSwitchPortBindings(libovsdbOvnSBClient, types.DefaultNetworkName, &testNode1, &testNode2, &testNode3)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				zoneICHandler := NewZoneInterconnectHandler(&util.DefaultNetInfo{}, libovsdbOvnNBClient, libovsdbOvnSBClient, nil)
+				err = zoneICHandler.createOrUpdateTransitSwitch(0)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Set up 3 healthy nodes - all transit ports + legitimate routes present
+				err = invokeICHandlerAddNodeFunction("global", zoneICHandler, &testNode1, &testNode2, &testNode3)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = checkInterconnectResources("global", types.DefaultNetworkName, libovsdbOvnNBClient, testNodesRouteInfo, &testNode1, &testNode2, &testNode3)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Inject a stale route attributed to a deleted node "oldNode4" whose
+				// prefix matches one of node3's prefixes but with a different
+				// nexthop. This represents the bug: a previously-deleted node
+				// left behind a route on a subnet that's now being recycled to
+				// node3, and the dead nexthop would cause ECMP collision.
+				staleConflictingRoute := nbdb.LogicalRouterStaticRoute{
+					IPPrefix: "10.244.4.0/24", // matches one of node3's subnet prefixes
+					Nexthop:  "100.88.0.99",   // dead transit IP belonging to oldNode4
+					ExternalIDs: map[string]string{
+						"ic-node":             "oldNode4",
+						"k8s.ovn.org/network": types.DefaultNetworkName,
+					},
+				}
+				staleConflictingRoutePredicate := func(route *nbdb.LogicalRouterStaticRoute) bool {
+					return route.IPPrefix == staleConflictingRoute.IPPrefix &&
+						route.Nexthop == staleConflictingRoute.Nexthop &&
+						route.ExternalIDs != nil &&
+						route.ExternalIDs["ic-node"] == "oldNode4"
+				}
+				ops, err := libovsdbops.CreateOrUpdateLogicalRouterStaticRoutesWithPredicateOps(libovsdbOvnNBClient, nil, types.OVNClusterRouter, &staleConflictingRoute, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				_, err = libovsdbops.TransactAndCheck(libovsdbOvnNBClient, ops)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Sanity: stale route exists before cleanup
+				clusterRouter, err := libovsdbops.GetLogicalRouter(libovsdbOvnNBClient, &nbdb.LogicalRouter{Name: types.OVNClusterRouter})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				staleRoutesBefore, err := libovsdbops.GetRouterLogicalRouterStaticRoutesWithPredicate(libovsdbOvnNBClient, clusterRouter, staleConflictingRoutePredicate)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(staleRoutesBefore).To(gomega.HaveLen(1), "stale conflicting route should exist before cleanup")
+
+				// Re-add node3. The per-node cleanup must detect the stale route from
+				// oldNode4 on a prefix that belongs to node3 and remove it before
+				// node3's new routes are added. This prevents ECMP collision.
+				err = zoneICHandler.AddRemoteZoneNode(&testNode3)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Stale conflicting route should be gone
+				clusterRouter, err = libovsdbops.GetLogicalRouter(libovsdbOvnNBClient, &nbdb.LogicalRouter{Name: types.OVNClusterRouter})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				staleRoutesAfter, err := libovsdbops.GetRouterLogicalRouterStaticRoutesWithPredicate(libovsdbOvnNBClient, clusterRouter, staleConflictingRoutePredicate)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(staleRoutesAfter).To(gomega.BeEmpty(), "stale conflicting route from oldNode4 should have been removed")
+
+				// Verify only ONE route exists for the recycled prefix - no ECMP
+				prefixPredicate := func(route *nbdb.LogicalRouterStaticRoute) bool {
+					return route.IPPrefix == "10.244.4.0/24"
+				}
+				routesForPrefix, err := libovsdbops.GetRouterLogicalRouterStaticRoutesWithPredicate(libovsdbOvnNBClient, clusterRouter, prefixPredicate)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(routesForPrefix).To(gomega.HaveLen(1), "only node3's route should exist for the recycled prefix - no ECMP collision")
+				gomega.Expect(routesForPrefix[0].ExternalIDs["ic-node"]).To(gomega.Equal(testNode3.Name), "the remaining route should belong to node3")
+
+				// All 3 nodes' resources otherwise intact
+				err = checkInterconnectResources("global", types.DefaultNetworkName, libovsdbOvnNBClient, testNodesRouteInfo, &testNode1, &testNode2, &testNode3)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				return nil
+			}
+
+			err := app.Run([]string{
+				app.Name,
+				"-cluster-subnets=" + clusterCIDR,
+				"-init-cluster-manager",
+				"-zone-join-switch-subnets=" + joinSubnetCIDR,
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
 		ginkgo.It("CleanupStaleNodes with nil should cleanup all transit switch ports for no-overlay migration", func() {
 			app.Action = func(ctx *cli.Context) error {
 				dbSetup := libovsdbtest.TestSetup{

@@ -1067,6 +1067,24 @@ func (_m *NetLinkOps) RuleAdd(rule *netlink.Rule) error {
 	return r0
 }
 
+// RuleDel provides a mock function with given fields: rule
+func (_m *NetLinkOps) RuleDel(rule *netlink.Rule) error {
+	ret := _m.Called(rule)
+
+	if len(ret) == 0 {
+		panic("no return value specified for RuleDel")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(*netlink.Rule) error); ok {
+		r0 = rf(rule)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
 // RuleListFiltered provides a mock function with given fields: family, filter, filterMask
 func (_m *NetLinkOps) RuleListFiltered(family int, filter *netlink.Rule, filterMask uint64) ([]netlink.Rule, error) {
 	ret := _m.Called(family, filter, filterMask)
