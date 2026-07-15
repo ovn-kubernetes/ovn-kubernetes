@@ -557,8 +557,6 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 	BeforeEach(func() {
 		// Restore global default values before each testcase
 		Expect(config.PrepareTestConfig()).To(Succeed())
-		config.Zone = node1
-
 		app = cli.NewApp()
 		app.Name = "test"
 		app.Flags = config.Flags
@@ -567,7 +565,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 		config.EnableMulticast = false
 		config.Gateway.DisableSNATMultipleGWs = true
 
-		fakeOvn = NewFakeOVN(true)
+		fakeOvn = NewFakeOVN(true, node1)
 	})
 
 	AfterEach(func() {
@@ -723,7 +721,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 			}
 
 			app.Action = func(*cli.Context) error {
-				config.Zone = localZoneNode(t)
+				fakeOvn.zone = localZoneNode(t)
 				fakeOvn.startWithDBSetup(initialDB,
 					&corev1.NamespaceList{
 						Items: []corev1.Namespace{
@@ -790,11 +788,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 				if t.migrationTarget.nodeName != "" {
 					t.migrationTarget.populateLogicalSwitchCache(fakeOvn)
 				}
-				for _, node := range []string{node1, node2, node3} {
-					if node != localZoneNode(t) {
-						fakeOvn.controller.localNodes.Delete(node)
-					}
-				}
+				fakeOvn.controller.nodeName = localZoneNode(t)
 
 				Expect(fakeOvn.controller.WatchNamespaces()).ToNot(HaveOccurred())
 				Expect(fakeOvn.controller.WatchPods()).ToNot(HaveOccurred())
@@ -905,7 +899,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 				}
 
 				for router, testpod := range map[*nbdb.LogicalRouter]testVirtLauncherPod{expectedGWRouter: t.testVirtLauncherPod, expectedMigrationTargetGWRouter: t.migrationTarget.testVirtLauncherPod} {
-					if _, isLocal := fakeOvn.controller.localNodes.Load(testpod.nodeName); isLocal && router != nil && testpod.podName != "" {
+					if testpod.nodeName == fakeOvn.controller.nodeName && router != nil && testpod.podName != "" {
 						natIDs, nats := composeNats(testpod)
 						router.Nat = append(router.Nat, natIDs...)
 						for _, nat := range nats {
@@ -1021,7 +1015,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 				// it happen?
 				// https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5627
 				expectedNATs := map[string][]*nbdb.NAT{}
-				if _, isLocal := fakeOvn.controller.localNodes.Load(deleteFirst.nodeName); isLocal {
+				if deleteFirst.nodeName == fakeOvn.controller.nodeName {
 					_, nats := composeNats(deleteFirst)
 					expectedNATs[deleteFirstRouter.Name] = nats
 				}

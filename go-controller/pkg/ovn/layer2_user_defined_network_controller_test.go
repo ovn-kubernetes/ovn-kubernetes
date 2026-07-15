@@ -73,14 +73,12 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 
 	BeforeEach(func() {
 		Expect(config.PrepareTestConfig()).To(Succeed()) // reset defaults
-		config.Zone = nodeName
-
 		app = cli.NewApp()
 		app.Name = "test"
 		app.Flags = config.Flags
 
 		useFakeAddressSets := false
-		fakeOvn = NewFakeOVN(useFakeAddressSets)
+		fakeOvn = NewFakeOVN(useFakeAddressSets, nodeName)
 		initialDB = libovsdbtest.TestSetup{
 			NBData: []libovsdbtest.TestData{},
 		}
@@ -367,7 +365,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 				gwConfig, err := util.ParseNodeL3GatewayAnnotation(testNode)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(gwConfig.NextHops).NotTo(BeEmpty())
-				nbZone := &nbdb.NBGlobal{Name: config.Zone, UUID: config.Zone}
+				nbZone := &nbdb.NBGlobal{Name: nodeName, UUID: nodeName}
 
 				n := testing.NewNamespace(ns)
 				if netInfo.isPrimary {
@@ -476,7 +474,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 			const nodeIPv4CIDR = "192.168.126.202/24"
 			testNode, err := newNodeWithUserDefinedNetworks(nodeName, nodeIPv4CIDR, netInfo)
 			Expect(err).NotTo(HaveOccurred())
-			nbZone := &nbdb.NBGlobal{Name: config.Zone, UUID: config.Zone}
+			nbZone := &nbdb.NBGlobal{Name: nodeName, UUID: nodeName}
 
 			// Minimal initialDB: no UDN entities. init() + watchers create them.
 			initialDB.NBData = append(initialDB.NBData, nbZone)
@@ -587,7 +585,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 
 			testNode, err := newNodeWithUserDefinedNetworks(nodeName, "192.168.126.202/24", netInfo)
 			Expect(err).NotTo(HaveOccurred())
-			nbZone := &nbdb.NBGlobal{Name: config.Zone, UUID: config.Zone}
+			nbZone := &nbdb.NBGlobal{Name: nodeName, UUID: nodeName}
 			initialDB.NBData = append(initialDB.NBData, nbZone)
 
 			fakeOvn.startWithDBSetup(
@@ -672,7 +670,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 	})
 
 	It("controller should cleanup stale nodes on startup", func() {
-		config.Zone = nodeName
 		app.Action = func(*cli.Context) error {
 			netInfo := dummyLayer2PrimaryUserDefinedNetwork("192.168.0.0/16")
 			netConf := netInfo.netconf()
@@ -869,7 +866,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 			config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
 			config.OVNKubernetesFeature.EnableMultiNetwork = true
 			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
-			config.Zone = nodeName
 			config.Gateway.V4MasqueradeSubnet = "169.254.0.0/16"
 
 			// Basic UDN setup
@@ -1022,8 +1018,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 			config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
 			config.OVNKubernetesFeature.EnableMultiNetwork = true
 			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
-			config.Zone = nodeName
-
 			netInfo := dummyLayer2PrimaryUserDefinedNetwork("100.200.0.0/16")
 			nsA := "namespace-a"
 			nsB := "namespace-b"
@@ -1447,7 +1441,6 @@ func setupConfig(netInfo userDefinedNetInfo, testConfig testConfiguration, gatew
 		// tests dont support dualstack yet
 		config.IPv4Mode = false
 	}
-	config.Zone = nodeName
 }
 
 func notReadyMigrationInfo() *liveMigrationInfo {

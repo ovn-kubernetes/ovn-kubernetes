@@ -39,14 +39,13 @@ var _ = ginkgo.Describe("OVN Egress Gateway Operations", func() {
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
-		config.Zone = "node1"
 		config.OVNKubernetesFeature.EnableMultiExternalGateway = true
 
 		app = cli.NewApp()
 		app.Name = "test"
 		app.Flags = config.Flags
 
-		fakeOvn = NewFakeOVN(true)
+		fakeOvn = NewFakeOVN(true, "node1")
 	})
 
 	ginkgo.AfterEach(func() {
@@ -637,5 +636,5 @@ func injectNode(fakeOvn *FakeOVN) {
 		},
 	}
 	gomega.ExpectWithOffset(1, fakeOvn.controller.watchFactory.NodeInformer().GetStore().Add(node)).To(gomega.Succeed())
-	fakeOvn.controller.localNodes.Store(node.Name, true)
+	fakeOvn.controller.nodeName = node.Name
 }

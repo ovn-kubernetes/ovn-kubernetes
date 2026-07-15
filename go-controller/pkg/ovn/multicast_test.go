@@ -340,7 +340,6 @@ var _ = Describe("OVN Multicast with IP Address Family", func() {
 	BeforeEach(func() {
 		// Restore global default values before each testcase
 		Expect(config.PrepareTestConfig()).To(Succeed())
-		config.Zone = nodeName
 		config.EnableMulticast = true
 		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
@@ -355,7 +354,7 @@ var _ = Describe("OVN Multicast with IP Address Family", func() {
 		// alternative approach is to give this flag to app.Run, but that require more changes.
 		//app.Flags = config.Flags
 
-		fakeOvn = NewFakeOVN(false)
+		fakeOvn = NewFakeOVN(false, nodeName)
 		gomegaFormatMaxLength = format.MaxLength
 		format.MaxLength = 0
 	})

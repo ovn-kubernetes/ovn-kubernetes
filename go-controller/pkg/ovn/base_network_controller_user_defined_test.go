@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"sync"
 	gotesting "testing"
 	"time"
 
@@ -44,7 +43,6 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 	BeforeEach(func() {
 		// Restore global default values before each testcase
 		Expect(config.PrepareTestConfig()).To(Succeed())
-		config.Zone = "worker1"
 	})
 
 	type dhcpTest struct {
@@ -57,7 +55,7 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 	DescribeTable("with layer2 primary UDN when configuring DHCP", func(t dhcpTest) {
 		layer2NAD := ovntest.GenerateNAD("bluenet", "rednad", "greenamespace",
 			types.Layer2Topology, "100.128.0.0/16", types.NetworkRolePrimary)
-		fakeOVN := NewFakeOVN(true)
+		fakeOVN := NewFakeOVN(true, "worker1")
 		lsp := &nbdb.LogicalSwitchPort{
 			Name: "vm-port",
 			UUID: "vm-port-UUID",
@@ -267,11 +265,10 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 		}
 
 		setupControllerWithDBSetup := func(dbSetup *libovsdbtest.TestSetup, pods ...*corev1.Pod) (*BaseUserDefinedNetworkController, *FakeOVN) {
-			config.Zone = localNodeName
 			localnetNAD := ovntest.GenerateNAD("mgmt", "mgmt", "awips",
 				types.LocalnetTopology, "", types.NetworkRoleSecondary)
 
-			fakeOVN := NewFakeOVN(false)
+			fakeOVN := NewFakeOVN(false, localNodeName)
 			objs := []runtime.Object{}
 			for _, p := range pods {
 				objs = append(objs, p)
@@ -287,9 +284,7 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 			controller, ok := fakeOVN.userDefinedNetworkControllers["mgmt"]
 			Expect(ok).To(BeTrue())
 
-			// Set local zone to only include localNodeName
-			controller.bnc.localNodes = &sync.Map{}
-			controller.bnc.localNodes.Store(localNodeName, true)
+			controller.bnc.nodeName = localNodeName
 
 			return controller.bnc, fakeOVN
 		}
@@ -384,7 +379,7 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 	It("should not fail to sync pods if namespace is gone", func() {
 		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
-		fakeOVN := NewFakeOVN(false)
+		fakeOVN := NewFakeOVN(false, "worker1")
 		fakeOVN.start(
 			&corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
@@ -422,7 +417,7 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 	It("should not fail to sync pods if namespace has primary UDN label but NAD not ready", func() {
 		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
-		fakeOVN := NewFakeOVN(false)
+		fakeOVN := NewFakeOVN(false, "worker1")
 		// Create namespace with primary UDN label but no NAD
 		namespace := &corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{
@@ -487,7 +482,7 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 		}
 		namespaceObj := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: newNamespace}}
 
-		fakeOVN := NewFakeOVN(false)
+		fakeOVN := NewFakeOVN(false, localNode)
 		fakeOVN.start(namespaceObj, remotePod)
 		DeferCleanup(fakeOVN.shutdown)
 
@@ -495,9 +490,6 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 		controller, ok := fakeOVN.userDefinedNetworkControllers["bluenet"]
 		Expect(ok).To(BeTrue())
 		bnc := controller.bnc
-
-		bnc.localZoneNodes = &sync.Map{}
-		bnc.localZoneNodes.Store(localNode, true)
 
 		// bluenet now also picks up greenamespace, where remotePod is already Running
 		afterInfo := util.NewMutableNetInfo(bnc.GetNetInfo())

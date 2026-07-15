@@ -66,14 +66,13 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
-		config.Zone = node1Name
 		config.OVNKubernetesFeature.EnableEgressQoS = true
 
 		app = cli.NewApp()
 		app.Name = "test"
 		app.Flags = config.Flags
 
-		fakeOVN = NewFakeOVN(true)
+		fakeOVN = NewFakeOVN(true, node1Name)
 	})
 
 	ginkgo.AfterEach(func() {
@@ -521,7 +520,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 
 	ginkgo.It("should respond to node events correctly", func() {
 		app.Action = func(*cli.Context) error {
-			config.Zone = node3Name
+			fakeOVN.zone = node3Name
 			namespaceT := *testing.NewNamespace("namespace1")
 
 			node1Switch := &nbdb.LogicalSwitch{
@@ -648,7 +647,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 
 	ginkgo.It("should respond to node zone update events correctly", func() {
 		app.Action = func(*cli.Context) error {
-			config.Zone = node3Name
+			fakeOVN.zone = node3Name
 			namespaceT := *testing.NewNamespace("namespace1")
 
 			node1Switch := &nbdb.LogicalSwitch{
@@ -828,7 +827,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 			n.IP = i
 			fakeOVN.controller.logicalPortCache.add(podLocalT, "", types.DefaultNetworkName, "", nil, []*net.IPNet{n})
 			// add pod to local zone (isPodScheduledOnLocalNode logic depends on cache entry)
-			fakeOVN.controller.localNodes.Store(podLocalT.Spec.NodeName, true)
+			fakeOVN.controller.nodeName = podLocalT.Spec.NodeName
 
 			eq := newEgressQoSObject("default", namespaceT.Name, []egressqosapi.EgressQoSRule{
 				{
@@ -1031,7 +1030,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 			expectEgressQoSStatusMessageEventually(fakeOVN, namespaceT.Name, false)
 
 			if podLocal {
-				fakeOVN.controller.localNodes.Store(podT.Spec.NodeName, true)
+				fakeOVN.controller.nodeName = podT.Spec.NodeName
 			}
 
 			ginkgo.By("Create pod and validate its ip address in the address set")

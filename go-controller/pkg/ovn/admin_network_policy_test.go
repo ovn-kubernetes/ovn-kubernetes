@@ -296,7 +296,6 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
-		config.Zone = node1Name
 		config.OVNKubernetesFeature.EnableAdminNetworkPolicy = true
 		// IC true or false does not really effect this feature
 
@@ -304,7 +303,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 		app.Name = "test"
 		app.Flags = config.Flags
 
-		fakeOVN = NewFakeOVN(false)
+		fakeOVN = NewFakeOVN(false, node1Name)
 	})
 
 	ginkgo.AfterEach(func() {

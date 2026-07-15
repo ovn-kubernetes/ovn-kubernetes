@@ -24,7 +24,6 @@ import (
 	adminpolicybasedrouteapi "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1"
 	adminpolicybasedrouteclient "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
-	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
@@ -94,41 +93,7 @@ var (
 		}}
 )
 
-func createTestNBGlobal(nbClient libovsdbclient.Client, zone string) error {
-	nbGlobal := &nbdb.NBGlobal{Name: zone}
-	ops, err := nbClient.Create(nbGlobal)
-	if err != nil {
-		return err
-	}
-
-	_, err = nbClient.Transact(context.Background(), ops...)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func deleteTestNBGlobal(nbClient libovsdbclient.Client, _ string) error {
-	p := func(*nbdb.NBGlobal) bool {
-		return true
-	}
-
-	ops, err := nbClient.WhereCache(p).Delete()
-	if err != nil {
-		return err
-	}
-
-	_, err = nbClient.Transact(context.Background(), ops...)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
 func initController(k8sObjects, routePolicyObjects []runtime.Object) {
-	var nbZoneFailed bool
 	stopChan = make(chan struct{})
 	fakeClient = fake.NewSimpleClientset(append(k8sObjects, node)...)
 	fakeRouteClient = adminpolicybasedrouteclient.NewSimpleClientset(routePolicyObjects...)
@@ -137,15 +102,6 @@ func initController(k8sObjects, routePolicyObjects []runtime.Object) {
 		AdminPolicyRouteClient: fakeRouteClient,
 	}, "test-node")
 	Expect(err).NotTo(HaveOccurred())
-	// Try to get the NBZone.  If there is an error, create NB_Global record.
-	// Otherwise NewController() will return error since it
-	// calls libovsdbutil.GetNBZone().
-	_, err = libovsdbutil.GetNBZone(nbClient)
-	if err != nil {
-		nbZoneFailed = true
-		err = createTestNBGlobal(nbClient, "node1")
-		Expect(err).NotTo(HaveOccurred())
-	}
 	// this package tests apbRoute controller separately from the legacy functionality, therefore
 	// it is not necessary to pass DefaultNetworkController name
 	controllerName := "test-controller"
@@ -161,13 +117,6 @@ func initController(k8sObjects, routePolicyObjects []runtime.Object) {
 		controllerName,
 		"single-zone")
 	Expect(err).NotTo(HaveOccurred())
-
-	if nbZoneFailed {
-		// Delete the NBGlobal row as this function created it.  Otherwise, many tests would fail while
-		// checking the expectedData in the NBDB.
-		err = deleteTestNBGlobal(nbClient, "node1")
-		Expect(err).NotTo(HaveOccurred())
-	}
 
 	err = iFactory.Start()
 	Expect(err).NotTo(HaveOccurred())

@@ -16,51 +16,14 @@ import (
 	anpapi "sigs.k8s.io/network-policy-api/apis/v1alpha1"
 	anpfake "sigs.k8s.io/network-policy-api/pkg/client/clientset/versioned/fake"
 
-	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
-
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
-	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 var alwaysReady = func() bool { return true }
-
-func createTestNBGlobal(nbClient libovsdbclient.Client, zone string) error {
-	nbGlobal := &nbdb.NBGlobal{Name: zone}
-	ops, err := nbClient.Create(nbGlobal)
-	if err != nil {
-		return err
-	}
-
-	_, err = nbClient.Transact(context.Background(), ops...)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func deleteTestNBGlobal(nbClient libovsdbclient.Client, _ string) error {
-	p := func(*nbdb.NBGlobal) bool {
-		return true
-	}
-
-	ops, err := nbClient.WhereCache(p).Delete()
-	if err != nil {
-		return err
-	}
-
-	_, err = nbClient.Transact(context.Background(), ops...)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
 
 var initialANP = anpapi.AdminNetworkPolicy{
 	ObjectMeta: metav1.ObjectMeta{
@@ -108,16 +71,6 @@ func newANPControllerWithDBSetup(dbSetup libovsdbtest.TestSetup, initANPs anpapi
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	err = watcher.Start()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	nbZoneFailed := false
-	// Try to get the NBZone.  If there is an error, create NB_Global record.
-	// Otherwise NewController() will return error since it
-	// calls util.GetNBZone().
-	_, err = libovsdbutil.GetNBZone(nbClient)
-	if err != nil {
-		nbZoneFailed = true
-		err = createTestNBGlobal(nbClient, "node1")
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	}
 	addressSetFactory := addressset.NewOvnAddressSetFactory(nbClient, config.IPv4Mode, config.IPv6Mode)
 	recorder := record.NewFakeRecorder(10)
 	controller, err := NewController(
@@ -137,12 +90,6 @@ func newANPControllerWithDBSetup(dbSetup libovsdbtest.TestSetup, initANPs anpapi
 	)
 	gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
-	if nbZoneFailed {
-		// Delete the NBGlobal row as this function created it.  Otherwise many tests would fail while
-		// checking the expectedData in the NBDB.
-		err = deleteTestNBGlobal(nbClient, "node1")
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	}
 	controller.anpCacheSynced = alwaysReady
 	controller.banpCacheSynced = alwaysReady
 	controller.anpNamespaceSynced = alwaysReady
