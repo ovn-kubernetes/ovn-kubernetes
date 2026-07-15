@@ -209,7 +209,7 @@ func (c *PodTrackerController) syncAll() error {
 	}
 
 	for _, pod := range pods {
-		if pod.Spec.NodeName == "" || pod.DeletionTimestamp != nil {
+		if pod.Spec.NodeName == "" || util.PodCompleted(pod) {
 			continue
 		}
 
@@ -297,6 +297,13 @@ func (c *PodTrackerController) needUpdate(old, new *corev1.Pod) bool {
 		return true
 	}
 
+	// Reconcile when all pod containers have stopped so its network references
+	// can be removed. A deletion timestamp alone does not mean the pod has
+	// finished terminating.
+	if util.PodCompleted(old) != util.PodCompleted(new) {
+		return true
+	}
+
 	// If the network attachment annotations changed, reconcile.
 	oldAnno := old.Annotations[nadv1.NetworkAttachmentAnnot]
 	newAnno := new.Annotations[nadv1.NetworkAttachmentAnnot]
@@ -321,8 +328,8 @@ func (c *PodTrackerController) reconcile(key string) error {
 		return fmt.Errorf("failed to get pod %q from cache: %v", key, err)
 	}
 
-	// If pod is terminating → remove from cache
-	if pod.DeletionTimestamp != nil {
+	// Keep terminating pods tracked until all their containers have stopped.
+	if util.PodCompleted(pod) {
 		c.deletePodFromCache(key)
 		return nil
 	}

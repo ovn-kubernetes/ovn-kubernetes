@@ -16,6 +16,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	corelisters "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/tools/cache"
 
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
@@ -231,6 +233,78 @@ func TestPodTrackerControllerWithInformerAndDelete(t *testing.T) {
 			}, "2s", "50ms").Should(gomega.Succeed())
 		})
 	}
+}
+
+func TestPodTrackerControllerTracksTerminatingPodsUntilCompleted(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	deletionTimestamp := metav1.Now()
+	runningPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pod",
+			Namespace: "testns",
+			Annotations: map[string]string{
+				nadv1.NetworkAttachmentAnnot: `[{"name":"secondary"}]`,
+			},
+		},
+		Spec:   corev1.PodSpec{NodeName: "node1"},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+	terminatingPod := runningPod.DeepCopy()
+	terminatingPod.DeletionTimestamp = &deletionTimestamp
+	completedPod := terminatingPod.DeepCopy()
+	completedPod.Status.Phase = corev1.PodSucceeded
+	completedPod.Name = "completed-pod"
+
+	podIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{
+		cache.NamespaceIndex: cache.MetaNamespaceIndexFunc,
+	})
+	g.Expect(podIndexer.Add(terminatingPod)).To(gomega.Succeed())
+	g.Expect(podIndexer.Add(completedPod)).To(gomega.Succeed())
+
+	namespaceIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+	g.Expect(namespaceIndexer.Add(&corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "testns"},
+	})).To(gomega.Succeed())
+
+	var events []refChange
+	ptc := &PodTrackerController{
+		name:               "test-pod-tracker",
+		nodeNADToPodCache:  make(map[string]map[string]map[string]struct{}),
+		podToNodeNAD:       make(map[string]nodeNAD),
+		podLister:          corelisters.NewPodLister(podIndexer),
+		namespaceLister:    corelisters.NewNamespaceLister(namespaceIndexer),
+		onNetworkRefChange: func(node, nad string, active bool) { events = append(events, refChange{node, nad, active}) },
+		primaryNADForNamespace: func(string) (string, error) {
+			return ovntypes.DefaultNetworkName, nil
+		},
+	}
+
+	// A deletion timestamp by itself must neither enqueue cleanup nor prevent
+	// the pod from being restored during initial cache synchronization.
+	g.Expect(ptc.needUpdate(runningPod, terminatingPod)).To(gomega.BeFalse())
+	g.Expect(ptc.syncAll()).To(gomega.Succeed())
+	g.Expect(ptc.podToNodeNAD).To(gomega.HaveKey("testns/pod"))
+	g.Expect(ptc.podToNodeNAD).NotTo(gomega.HaveKey("testns/completed-pod"))
+
+	// Reconciliation caused by an unrelated event must also retain a
+	// terminating pod while its containers are still running.
+	g.Expect(ptc.reconcile("testns/pod")).To(gomega.Succeed())
+	g.Expect(ptc.podToNodeNAD).To(gomega.HaveKey("testns/pod"))
+
+	// Once the pod is terminal, its update is reconciled and the last network
+	// reference is removed.
+	completedTerminatingPod := terminatingPod.DeepCopy()
+	completedTerminatingPod.Status.Phase = corev1.PodSucceeded
+	g.Expect(ptc.needUpdate(terminatingPod, completedTerminatingPod)).To(gomega.BeTrue())
+	g.Expect(podIndexer.Update(completedTerminatingPod)).To(gomega.Succeed())
+	g.Expect(ptc.reconcile("testns/pod")).To(gomega.Succeed())
+	g.Expect(ptc.podToNodeNAD).NotTo(gomega.HaveKey("testns/pod"))
+	g.Expect(ptc.nodeNADToPodCache).NotTo(gomega.HaveKey("node1"))
+	g.Expect(events).To(gomega.Equal([]refChange{
+		{node: "node1", nad: "testns/secondary", active: true},
+		{node: "node1", nad: "testns/secondary", active: false},
+	}))
 }
 
 func TestPodTrackerControllerSyncAll(t *testing.T) {
