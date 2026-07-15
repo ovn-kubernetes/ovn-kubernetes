@@ -18,7 +18,7 @@ import (
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
-	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
+	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/managementport"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -112,8 +112,8 @@ func cleanupLocalnetGateway(ovsClient libovsdbclient.Client, physnet string) err
 		}
 		if physnet == m[0] {
 			bridgeName := m[1]
-			if _, stderr, err := util.RunOVSVsctl("--", "--if-exists", "del-br", bridgeName); err != nil {
-				return fmt.Errorf("failed to ovs-vsctl del-br %s stderr:%s (%v)", bridgeName, stderr, err)
+			if err := ovsops.DeleteBridge(ovsClient, bridgeName); err != nil {
+				return fmt.Errorf("failed to delete bridge %s: %w", bridgeName, err)
 			}
 			break
 		}

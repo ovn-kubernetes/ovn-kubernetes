@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"net"
 	"strconv"
-	"strings"
 	"sync"
 
 	"github.com/k8snetworkplumbingwg/sriovnet"
@@ -19,8 +18,10 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-kubernetes/dpu-simulator/lib/dpusim"
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 )
 
 // DPU operations abstraction.
@@ -40,12 +41,12 @@ type DPUOps interface {
 	// GetDPUHostRepInterface returns the host representor interface attached to bridge
 	// On switchdev hardware this discovers the VF/SF representor via sriovnet.
 	// On simulated platforms this is either a veth peer or virtio interface.
-	GetDPUHostRepInterface(bridgeName string) (string, error)
+	GetDPUHostRepInterface(ovsClient libovsdbclient.Client, bridgeName string) (string, error)
 
 	// GetHostGatewayMACAddress returns the MAC address of the host-side
 	// interface that corresponds to the DPU-side Host representor.
 	// nodeName is the K8s node name of the host this DPU operates behalf of.
-	GetHostGatewayMACAddress(bridgeName, nodeName string) (net.HardwareAddr, error)
+	GetHostGatewayMACAddress(ovsClient libovsdbclient.Client, bridgeName, nodeName string) (net.HardwareAddr, error)
 
 	// ResolveDeviceDetails returns PF and VF indices for a device identified
 	// by either a PCI address (e.g. "0000:03:00.2") or a netdev name
@@ -105,34 +106,32 @@ func IsSimulatedDPU() bool {
 
 type SwitchdevDPUOps struct{}
 
-func (n *SwitchdevDPUOps) GetDPUHostRepInterface(bridgeName string) (string, error) {
-	portsToInterfaces, err := getBridgePortsInterfaces(bridgeName)
+func (n *SwitchdevDPUOps) GetDPUHostRepInterface(ovsClient libovsdbclient.Client, bridgeName string) (string, error) {
+	br, err := ovsops.GetBridge(ovsClient, bridgeName)
+	if err != nil {
+		return "", fmt.Errorf("failed to get bridge %q: %w", bridgeName, err)
+	}
+
+	portsToInterfaces, err := getBridgePortsInterfaces(ovsClient, br)
 	if err != nil {
 		return "", err
 	}
 
 	for _, ifaces := range portsToInterfaces {
 		for _, iface := range ifaces {
-			stdout, stderr, err := RunOVSVsctl("get", "Interface", strings.TrimSpace(iface), "Name")
-			if err != nil {
-				return "", fmt.Errorf("failed to get Interface %q Name on bridge %q:, stderr: %q, error: %v",
-					iface, bridgeName, stderr, err)
-
-			}
-			flavor, err := GetSriovnetOps().GetRepresentorPortFlavour(stdout)
+			flavor, err := GetSriovnetOps().GetRepresentorPortFlavour(iface.Name)
 			if err == nil && flavor == sriovnet.PORT_FLAVOUR_PCI_PF {
 				// host representor interface found
-				return stdout, nil
+				return iface.Name, nil
 			}
-			continue
 		}
 	}
 	// No host interface found in provided bridge
 	return "", fmt.Errorf("dpu host interface was not found for bridge %q", bridgeName)
 }
 
-func (n *SwitchdevDPUOps) GetHostGatewayMACAddress(bridgeName, _ string) (net.HardwareAddr, error) {
-	hostRep, err := n.GetDPUHostRepInterface(bridgeName)
+func (n *SwitchdevDPUOps) GetHostGatewayMACAddress(ovsClient libovsdbclient.Client, bridgeName, _ string) (net.HardwareAddr, error) {
+	hostRep, err := n.GetDPUHostRepInterface(ovsClient, bridgeName)
 	if err != nil {
 		return nil, err
 	}
@@ -204,11 +203,11 @@ func (s *SimulatedDPUOps) getDPURepresentor(pfId, funcId string) (string, error)
 	return "", fmt.Errorf("simulated representor %s not found: link name or alias not present", rep)
 }
 
-func (s *SimulatedDPUOps) GetDPUHostRepInterface(_ string) (string, error) {
+func (s *SimulatedDPUOps) GetDPUHostRepInterface(_ libovsdbclient.Client, _ string) (string, error) {
 	return dpusim.HostGatewayPeerInterface, nil
 }
 
-func (s *SimulatedDPUOps) GetHostGatewayMACAddress(_, nodeName string) (net.HardwareAddr, error) {
+func (s *SimulatedDPUOps) GetHostGatewayMACAddress(_ libovsdbclient.Client, _, nodeName string) (net.HardwareAddr, error) {
 	if nodeName == "" {
 		return nil, fmt.Errorf("nodeName must be provided for simulated GetHostGatewayMACAddress")
 	}

@@ -116,10 +116,11 @@ func TestCNIServer(t *testing.T) {
 		t.Fatalf("failed to start watch factory: %v", err)
 	}
 
-	ovsClient, err := newOVSClientWithExternalIDs(map[string]string{})
+	ovsClient, ovsCleanup, err := newOVSClientWithExternalIDs(map[string]string{})
 	if err != nil {
 		t.Fatalf("failed to call newOVSClientWithExternalIDs: %v", err)
 	}
+	t.Cleanup(ovsCleanup.Cleanup)
 	s, err := NewCNIServer(wf, fakeClient, networkmanager.Default().Interface(), ovsClient, nil)
 	if err != nil {
 		t.Fatalf("error creating CNI server: %v", err)
@@ -343,10 +344,11 @@ func TestCNIServerStatusNotReady(t *testing.T) {
 		t.Fatalf("failed to start watch factory: %v", err)
 	}
 
-	ovsClient, err := newOVSClientWithExternalIDs(map[string]string{})
+	ovsClient, ovsCleanup, err := newOVSClientWithExternalIDs(map[string]string{})
 	if err != nil {
 		t.Fatalf("failed to call newOVSClientWithExternalIDs: %v", err)
 	}
+	t.Cleanup(ovsCleanup.Cleanup)
 	dpuHealth := &fakeDPUHealth{ready: false, reason: "lease expired"}
 	s, err := NewCNIServer(wf, fakeClient, networkmanager.Default().Interface(), ovsClient, dpuHealth)
 	if err != nil {
@@ -412,6 +414,60 @@ func TestCNIServerStatusNotReady(t *testing.T) {
 		} else if len(body) != 0 {
 			t.Fatalf("[%s] expected empty body for success, got %q", tc.name, string(body))
 		}
+	}
+}
+
+func TestNewCNIServerRequiresOVSClientInPrivilegedMode(t *testing.T) {
+	if err := config.PrepareTestConfig(); err != nil {
+		t.Fatalf("failed to prepare test config: %v", err)
+	}
+	fakeClient := fake.NewSimpleClientset()
+	fakeClientset := &util.OVNNodeClientset{
+		KubeClient: fakeClient,
+	}
+	wf, err := factory.NewNodeWatchFactory(fakeClientset, nodeName)
+	if err != nil {
+		t.Fatalf("failed to create watch factory: %v", err)
+	}
+
+	tests := []struct {
+		name             string
+		mode             string
+		unprivilegedMode bool
+		wantErr          bool
+	}{
+		{
+			name:    "full mode privileged requires ovs client",
+			mode:    ovntypes.NodeModeFull,
+			wantErr: true,
+		},
+		{
+			name:             "full mode unprivileged allows nil ovs client",
+			mode:             ovntypes.NodeModeFull,
+			unprivilegedMode: true,
+		},
+		{
+			name: "dpu host privileged allows nil ovs client",
+			mode: ovntypes.NodeModeDPUHost,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config.OvnKubeNode.Mode = tt.mode
+			config.UnprivilegedMode = tt.unprivilegedMode
+
+			_, err := NewCNIServer(wf, fakeClient, networkmanager.Default().Interface(), nil, nil)
+			if tt.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "OVS client is required in privileged mode") {
+					t.Fatalf("expected OVS client error, got %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("expected NewCNIServer to succeed, got %v", err)
+			}
+		})
 	}
 }
 
