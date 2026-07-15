@@ -106,6 +106,8 @@ func TestNewUnmanagedBridgeConfigurationResolvesDPUHostRepresentor(t *testing.T)
 	uplinkInterfaceUUID := "eth1-interface-uuid"
 	hostRepPortUUID := "pfhpf0-port-uuid"
 	hostRepInterfaceUUID := "pfhpf0-interface-uuid"
+	uplinkOfport := 7
+	hostRepOfport := 8
 	ovsClient, ovsCleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
 		OVSData: []libovsdbtest.TestData{
 			&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{bridgeUUID}},
@@ -116,20 +118,13 @@ func TestNewUnmanagedBridgeConfigurationResolvesDPUHostRepresentor(t *testing.T)
 				ExternalIDs: map[string]string{"bridge-uplink": "eth1"},
 			},
 			&vswitchd.Port{UUID: uplinkPortUUID, Name: "eth1", Interfaces: []string{uplinkInterfaceUUID}},
-			&vswitchd.Interface{UUID: uplinkInterfaceUUID, Name: "eth1", Type: "system"},
+			&vswitchd.Interface{UUID: uplinkInterfaceUUID, Name: "eth1", Type: "system", Ofport: &uplinkOfport},
 			&vswitchd.Port{UUID: hostRepPortUUID, Name: "pfhpf0", Interfaces: []string{hostRepInterfaceUUID}},
-			&vswitchd.Interface{UUID: hostRepInterfaceUUID, Name: "pfhpf0", Type: "system"},
+			&vswitchd.Interface{UUID: hostRepInterfaceUUID, Name: "pfhpf0", Type: "system", Ofport: &hostRepOfport},
 		},
 	})
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	t.Cleanup(ovsCleanup.Cleanup)
-
-	fexec := ovntest.NewLooseCompareFakeExec()
-	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "ovs-vsctl --timeout=15 get interface eth1 ofport",
-		Output: "7",
-	})
-	g.Expect(util.SetExec(fexec)).To(gomega.Succeed())
 
 	sriovOps := utilmocks.NewSriovnetOps(t)
 	origSriovOps := util.GetSriovnetOps()
@@ -138,7 +133,8 @@ func TestNewUnmanagedBridgeConfigurationResolvesDPUHostRepresentor(t *testing.T)
 		util.SetSriovnetOpsInst(origSriovOps)
 	})
 	sriovOps.On("GetRepresentorPortFlavour", "eth1").
-		Return(sriovnet.PortFlavour(sriovnet.PORT_FLAVOUR_UNKNOWN), fmt.Errorf("not a PF representor"))
+		Return(sriovnet.PortFlavour(sriovnet.PORT_FLAVOUR_UNKNOWN), fmt.Errorf("not a PF representor")).
+		Maybe()
 	sriovOps.On("GetRepresentorPortFlavour", "pfhpf0").
 		Return(sriovnet.PortFlavour(sriovnet.PORT_FLAVOUR_PCI_PF), nil)
 
@@ -154,5 +150,7 @@ func TestNewUnmanagedBridgeConfigurationResolvesDPUHostRepresentor(t *testing.T)
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(bridge.GetGatewayIfaceRep()).To(gomega.Equal("pfhpf0"))
 	g.Expect(bridge.GetStaticFDBPort()).To(gomega.Equal("pfhpf0"))
-	g.Expect(fexec.CalledMatchesExpected()).To(gomega.BeTrue(), fexec.ErrorDesc())
+	g.Expect(bridge.ConfigureBridgePorts()).To(gomega.Succeed())
+	g.Expect(bridge.ofPortPhys).To(gomega.Equal("7"))
+	g.Expect(bridge.ofPortHost).To(gomega.Equal("8"))
 }
