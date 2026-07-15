@@ -1838,52 +1838,6 @@ var _ = Describe("Gateway unit tests", func() {
 		})
 	})
 
-	Context("configureDPUHostNoOverlayPodCIDRRoute", func() {
-		It("configures pod CIDR routes on interface without a route source", func() {
-			_, ipnet, err := net.ParseCIDR("10.244.0.0/16")
-			Expect(err).ToNot(HaveOccurred())
-			config.Default.ClusterSubnets = []config.CIDRNetworkEntry{{CIDR: ipnet, HostSubnetLength: 24}}
-			gwIPs := []net.IP{net.ParseIP("169.254.0.4")}
-
-			lnk := &linkMock.Link{}
-			lnkAttr := &netlink.LinkAttrs{
-				Name:  "ens1f0",
-				Index: 5,
-			}
-			expectedRoute := &netlink.Route{
-				Dst:       ipnet,
-				LinkIndex: 5,
-				Scope:     netlink.SCOPE_UNIVERSE,
-				Gw:        gwIPs[0],
-				MTU:       config.Default.MTU,
-				Table:     syscall.RT_TABLE_MAIN,
-			}
-
-			lnk.On("Attrs").Return(lnkAttr)
-			netlinkMock.On("LinkByName", lnkAttr.Name).Return(lnk, nil)
-			netlinkMock.On("LinkByIndex", lnkAttr.Index).Return(lnk, nil)
-			netlinkMock.On("LinkSetUp", mock.Anything).Return(nil)
-			netlinkMock.On("RouteReplace", expectedRoute).Return(nil)
-
-			wg := &sync.WaitGroup{}
-			rm := routemanager.NewController()
-			util.SetNetLinkOpMockInst(netlinkMock)
-			stopCh := make(chan struct{})
-			wg.Add(1)
-			go func() {
-				rm.Run(stopCh, 10*time.Second)
-				wg.Done()
-			}()
-			defer func() {
-				close(stopCh)
-				wg.Wait()
-			}()
-
-			err = configureDPUHostNoOverlayPodCIDRRoute(rm, "ens1f0", gwIPs)
-			Expect(err).ToNot(HaveOccurred())
-		})
-	})
-
 	Context("getGatewayNextHops", func() {
 
 		It("Finds correct gateway interface and nexthops without configuration", func() {

@@ -76,10 +76,6 @@ const (
 	// from accessing any of the advertised UDN networks
 	nftablesUDNBGPOutputChain = "udn-bgp-drop"
 
-	// nftablesDPUHostNoOverlaySNATChain SNATs DPU-host host-network traffic
-	// to the host masquerade IP before handing it to OVN for no-overlay pod CIDRs.
-	nftablesDPUHostNoOverlaySNATChain = "dpu-host-no-overlay-snat"
-
 	// nftablesAdvertisedUDNsSetV[4|6] is a set containing advertised UDN subnets
 	nftablesAdvertisedUDNsSetV4 = "advertised-udn-subnets-v4"
 	nftablesAdvertisedUDNsSetV6 = "advertised-udn-subnets-v6"
@@ -2237,18 +2233,6 @@ func (r *masqueradeReconciler) ensure() error {
 	if err := configureSvcRouteViaInterface(r.routeManager, gwIface, DummyNextHopIPs()); err != nil {
 		return fmt.Errorf("failed to configure service route: %w", err)
 	}
-	if shouldConfigureDPUHostNoOverlayPodCIDRRoute() {
-		if err := configureDPUHostNoOverlayPodCIDRRoute(r.routeManager, gwIface, DummyNextHopIPs()); err != nil {
-			return fmt.Errorf("failed to configure DPU host no-overlay pod CIDR route: %w", err)
-		}
-		if err := setupDPUHostNoOverlaySNAT(gwIface); err != nil {
-			return fmt.Errorf("failed to configure DPU host no-overlay SNAT: %w", err)
-		}
-	} else {
-		if err := teardownDPUHostNoOverlaySNAT(); err != nil {
-			return fmt.Errorf("failed to remove DPU host no-overlay SNAT: %w", err)
-		}
-	}
 	// 3. ARP/ND entries for masquerade IPs.
 	if err := addHostMACBindings(gwIface); err != nil {
 		return fmt.Errorf("failed to add MAC bindings: %w", err)
@@ -2256,81 +2240,6 @@ func (r *masqueradeReconciler) ensure() error {
 
 	r.lastLinkIndex = link.Attrs().Index
 	klog.Infof("Masquerade resources ensured on %s (ifindex=%d)", gwIface, r.lastLinkIndex)
-	return nil
-}
-
-func setupDPUHostNoOverlaySNAT(gwIface string) error {
-	nft, err := nodenft.GetNFTablesHelper()
-	if err != nil {
-		return err
-	}
-	tx := nft.NewTransaction()
-
-	tx.Add(&knftables.Chain{
-		Name:     nftablesDPUHostNoOverlaySNATChain,
-		Comment:  knftables.PtrTo("OVN DPU host no-overlay SNAT"),
-		Type:     knftables.PtrTo(knftables.NATType),
-		Hook:     knftables.PtrTo(knftables.PostroutingHook),
-		Priority: knftables.PtrTo(knftables.SNATPriority),
-	})
-	tx.Flush(&knftables.Chain{Name: nftablesDPUHostNoOverlaySNATChain})
-	tx.Add(&knftables.Rule{
-		Chain: nftablesDPUHostNoOverlaySNATChain,
-		Rule: knftables.Concat(
-			"oifname", "!=", gwIface,
-			"return",
-		),
-	})
-
-	for _, clusterSubnet := range config.Default.ClusterSubnets {
-		subnet := clusterSubnet.CIDR
-		if utilnet.IsIPv6CIDR(subnet) {
-			tx.Add(&knftables.Rule{
-				Chain: nftablesDPUHostNoOverlaySNATChain,
-				Rule: knftables.Concat(
-					"ip6 daddr", subnet,
-					"ip6 saddr", "!=", config.Gateway.MasqueradeIPs.V6HostMasqueradeIP,
-					"snat ip6 to", config.Gateway.MasqueradeIPs.V6HostMasqueradeIP,
-				),
-			})
-			continue
-		}
-		tx.Add(&knftables.Rule{
-			Chain: nftablesDPUHostNoOverlaySNATChain,
-			Rule: knftables.Concat(
-				"ip daddr", subnet,
-				"ip saddr", "!=", config.Gateway.MasqueradeIPs.V4HostMasqueradeIP,
-				"snat ip to", config.Gateway.MasqueradeIPs.V4HostMasqueradeIP,
-			),
-		})
-	}
-
-	if err := nft.Run(context.TODO(), tx); err != nil {
-		return fmt.Errorf("could not update nftables rule for DPU host no-overlay SNAT: %w", err)
-	}
-	return nil
-}
-
-func teardownDPUHostNoOverlaySNAT() error {
-	nft, err := nodenft.GetNFTablesHelper()
-	if err != nil {
-		return err
-	}
-	tx := nft.NewTransaction()
-
-	chain := &knftables.Chain{
-		Name:     nftablesDPUHostNoOverlaySNATChain,
-		Type:     knftables.PtrTo(knftables.NATType),
-		Hook:     knftables.PtrTo(knftables.PostroutingHook),
-		Priority: knftables.PtrTo(knftables.SNATPriority),
-	}
-	tx.Add(chain)
-	tx.Flush(chain)
-	tx.Delete(chain)
-
-	if err := nft.Run(context.TODO(), tx); err != nil && !knftables.IsNotFound(err) {
-		return fmt.Errorf("could not remove nftables rule for DPU host no-overlay SNAT: %w", err)
-	}
 	return nil
 }
 
