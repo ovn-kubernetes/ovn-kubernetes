@@ -623,7 +623,16 @@ graph LR
     LS -->|"8"| P["Local Pod"]:::pod
 ```
 
-**Reply path (EgressIP as source):**
+**Reply path (same-node, EgressIP on primary network):**
+
+The reply uses the GR SNAT path because the EgressIP lives on the
+primary (`breth0`) network on the same node. For EgressIP on a
+**secondary NIC** or on a **different node**, the reply follows the
+corresponding paths described in the
+[Egress via EgressIPs](#pod-to-external-via-egressips--same-node-eip-on-secondary-network)
+and
+[Different-node EgressIP](#pod-to-external-via-egressips--different-node-eip-on-primary-br-ex-shared-network)
+sections above.
 
 ```mermaid
 %%{init: {'theme': 'base', 'flowchart': {'nodeSpacing': 60, 'rankSpacing': 50, 'padding': 35}, 'themeVariables': {'fontSize': '70px', 'primaryTextColor': '#000000', 'secondaryTextColor': '#000000', 'tertiaryTextColor': '#000000', 'textColor': '#000000', 'nodeTextColor': '#000000'}}}%%
@@ -659,7 +668,7 @@ graph TD
     CR -->|"intra-zone routing"| LS
     CR -->|"cross-zone routing"| TS["Transit Switch · cluster-wide"]:::ts
     CR -->|"north-south routing"| JS["Join Switch"]:::sw
-    JS --> GR["Gateway Router · per node · SNAT / DNAT"]:::rtr
+    JS --> GR["Gateway Router · per node · SNAT / DNAT (shared gw)"]:::rtr
     GR --> ES["External Switch · per node"]:::sw
     ES --> BRINT["breth0 ↔ eth0"]:::sw
 ```
@@ -671,7 +680,7 @@ graph TD
 | **Logical Switch** | Node-local | Hosts pod ports; attaches load balancers for service DNAT |
 | **ovn_cluster_router** | Per zone | Routes east-west traffic; connects to transit switch for cross-zone |
 | **Join Switch** | Per zone | Connects ovn_cluster_router to gateway routers |
-| **Gateway Router** | Per node | Handles north-south traffic; SNAT (egress) and DNAT (ingress) |
+| **Gateway Router** | Per node | Handles north-south traffic; SNAT/DNAT in shared gateway mode. In local gateway mode (`routingViaHost=true`) SNAT and DNAT happen in the host networking stack instead |
 | **External Switch** | Per node | Bridges gateway router to the physical network via breth0 |
 | **Transit Switch** | Cluster-wide | Carries cross-zone traffic over GENEVE tunnels on the underlay |
 | **ovn-k8s-mp0** | Per node | Management port for host ↔ OVN pod connectivity |
