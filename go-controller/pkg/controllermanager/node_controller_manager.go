@@ -78,6 +78,8 @@ type NodeControllerManager struct {
 	evpnController *evpn.Controller
 	// uplink controller that publishes node-local UplinkState
 	uplinkController *nodeuplink.Controller
+	// coordinates aggregate gateway programming for CUDNs using each Uplink
+	uplinkGatewayController *node.UplinkGatewayController
 }
 
 // NewNetworkController create node user-defined network controllers for the given NetInfo
@@ -95,7 +97,7 @@ func (ncm *NodeControllerManager) NewNetworkController(nInfo util.NetInfo) (netw
 		// informers for UDNs.
 		udnc, err := node.NewUserDefinedNodeNetworkController(ncm.newCommonNetworkControllerInfo(ncm.watchFactory.(*factory.WatchFactory).ShallowClone()),
 			nInfo, ncm.networkManager.Interface(), ncm.vrfManager, ncm.ruleManager, ncm.mpdm,
-			ncm.defaultNodeNetworkController.Gateway, ncm.ovsClient, ncm.ovnNodeClient.UplinkClient)
+			ncm.defaultNodeNetworkController.Gateway, ncm.ovsClient, ncm.uplinkGatewayController)
 		if err != nil && ncm.mpdm != nil && util.IsNetworkSegmentationSupportEnabled() && nInfo.IsPrimaryNetwork() {
 			_ = ncm.mpdm.ReleaseDeviceIDForNetwork(nInfo.GetNetworkName())
 		}
@@ -224,6 +226,9 @@ func (ncm *NodeControllerManager) CleanupStaleNetworks(validNetworks ...util.Net
 	if !util.IsNetworkSegmentationSupportEnabled() {
 		return nil
 	}
+	if err := ncm.uplinkGatewayController.SyncNetworks(validNetworks...); err != nil {
+		errs = append(errs, err)
+	}
 
 	err := ncm.syncManagementPorts(validNetworks...)
 	if err != nil {
@@ -317,6 +322,11 @@ func NewNodeControllerManager(ovnClient *util.OVNClientset, wf factory.NodeWatch
 	}
 	if util.IsNetworkSegmentationSupportEnabled() {
 		ncm.uplinkController = nodeuplink.NewController(name, wf, ncm.ovnNodeClient, ncm.ovsClient)
+		ncm.uplinkGatewayController = node.NewUplinkGatewayController(
+			name,
+			ncm.ovnNodeClient.UplinkClient,
+			wf.UplinkStateInformer().Lister(),
+		)
 	}
 
 	return ncm, nil
@@ -630,6 +640,9 @@ func checkForStaleOVSInternalPorts() {
 	}
 }
 
-func (ncm *NodeControllerManager) Reconcile(_ string, _, _ util.NetInfo) error {
-	return nil
+func (ncm *NodeControllerManager) Reconcile(_ string, current, network util.NetInfo) error {
+	if !util.IsNetworkSegmentationSupportEnabled() || current != nil || network == nil || network.Uplink() == "" {
+		return nil
+	}
+	return ncm.uplinkGatewayController.PrepareNetwork(network)
 }

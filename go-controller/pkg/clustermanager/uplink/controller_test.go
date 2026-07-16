@@ -765,6 +765,56 @@ func TestUplinkControllerReportsCUDNGatewayProgrammingPending(t *testing.T) {
 	))
 }
 
+func TestUplinkControllerPropagatesCUDNGatewayConfigurationPending(t *testing.T) {
+	g := gomega.NewWithT(t)
+	setSharedGatewayMode(t)
+	controller, client := newTestController(t,
+		newNode("node-a", map[string]string{"role": "blue"}),
+		newUplink("br-blue", "role", "blue", "br-blue"),
+		newGatewayFailedUplinkState(
+			"br-blue",
+			"node-a",
+			"br-blue",
+			uplinkv1alpha1.UplinkStateReasonGatewayConfigurationPending,
+		),
+		newCUDN("blue", "br-blue"),
+	)
+
+	g.Expect(controller.reconcileCUDN("blue")).To(gomega.Succeed())
+
+	cond := getCUDNCondition(g, client, "blue", conditionTypeUplinksReady)
+	g.Expect(cond).To(gomega.And(
+		gomega.HaveField("Status", metav1.ConditionFalse),
+		gomega.HaveField("Reason", reasonGatewayConfigurationPending),
+		gomega.HaveField("Message", gomega.ContainSubstring("br-blue/node-a=GatewayConfigurationPending")),
+	))
+}
+
+func TestUplinkControllerPropagatesCUDNUplinkGatewayProgrammingFailure(t *testing.T) {
+	g := gomega.NewWithT(t)
+	setSharedGatewayMode(t)
+	controller, client := newTestController(t,
+		newNode("node-a", map[string]string{"role": "blue"}),
+		newUplink("br-blue", "role", "blue", "br-blue"),
+		newGatewayFailedUplinkState(
+			"br-blue",
+			"node-a",
+			"br-blue",
+			uplinkv1alpha1.UplinkStateReasonGatewayProgrammingFailed,
+		),
+		newCUDN("blue", "br-blue"),
+	)
+
+	g.Expect(controller.reconcileCUDN("blue")).To(gomega.Succeed())
+
+	cond := getCUDNCondition(g, client, "blue", conditionTypeUplinksReady)
+	g.Expect(cond).To(gomega.And(
+		gomega.HaveField("Status", metav1.ConditionFalse),
+		gomega.HaveField("Reason", reasonUplinkGatewayProgrammingFailed),
+		gomega.HaveField("Message", gomega.ContainSubstring("br-blue/node-a=UplinkGatewayProgrammingFailed")),
+	))
+}
+
 func TestUplinkControllerPropagatesCUDNUplinkConfigurationConflict(t *testing.T) {
 	g := gomega.NewWithT(t)
 	setSharedGatewayMode(t)

@@ -15,8 +15,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/util/retry"
@@ -29,8 +27,6 @@ import (
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	uplinkv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1"
-	uplinkapply "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/applyconfiguration/uplink/v1alpha1"
-	uplinkclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/clientset/versioned"
 	uplinklisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/listers/uplink/v1alpha1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/udn"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
@@ -62,7 +58,6 @@ const (
 	// created on DPUs. DPU mode has no host management interface to derive a
 	// table from, so this avoids colliding with link-index based tables.
 	dpuUDNVRFRouteTableIDStart = 100000
-	uplinkGatewayFieldManager  = "ovnkube-node-udn-gateway-controller"
 )
 
 // UserDefinedNetworkGateway contains information
@@ -103,9 +98,9 @@ type UserDefinedNetworkGateway struct {
 	// management port controller
 	mgmtPortController *managementport.UDNManagementPortController
 
-	ovsClient         libovsdbclient.Client
-	uplinkClient      uplinkclientset.Interface
-	uplinkStateLister uplinklisters.UplinkStateLister
+	ovsClient               libovsdbclient.Client
+	uplinkStateLister       uplinklisters.UplinkStateLister
+	uplinkGatewayController *UplinkGatewayController
 	// openflowBridgeName selects the openflow manager target for this gateway.
 	// defaultOpenFlowBridgeSetName means the default bridge plus external gateway bridge.
 	openflowBridgeName string
@@ -131,8 +126,8 @@ type UserDefinedNetworkGateway struct {
 
 func NewUserDefinedNetworkGateway(netInfo util.NetInfo, node *corev1.Node, nodeLister listers.NodeLister,
 	kubeInterface kube.Interface, vrfManager *vrfmanager.Controller, ruleManager iprulemanager.Interface,
-	defaultNetworkGateway Gateway, ovsClient libovsdbclient.Client, uplinkClient uplinkclientset.Interface,
-	uplinkStateLister uplinklisters.UplinkStateLister) (*UserDefinedNetworkGateway, error) {
+	defaultNetworkGateway Gateway, ovsClient libovsdbclient.Client, uplinkStateLister uplinklisters.UplinkStateLister,
+	uplinkGatewayController *UplinkGatewayController) (*UserDefinedNetworkGateway, error) {
 	// Generate a per network conntrack mark and masquerade IPs to be used for egress traffic.
 	var (
 		v4MasqIPs *udn.MasqueradeIPs
@@ -179,25 +174,25 @@ func NewUserDefinedNetworkGateway(netInfo util.NetInfo, node *corev1.Node, nodeL
 	}
 
 	return &UserDefinedNetworkGateway{
-		NetInfo:            netInfo,
-		node:               node,
-		nodeLister:         nodeLister,
-		kubeInterface:      kubeInterface,
-		vrfManager:         vrfManager,
-		masqCTMark:         masqCTMark,
-		pktMark:            pktMark,
-		v4MasqIPs:          v4MasqIPs,
-		v6MasqIPs:          v6MasqIPs,
-		gateway:            gw,
-		ruleManager:        ruleManager,
-		ovsClient:          ovsClient,
-		uplinkClient:       uplinkClient,
-		uplinkStateLister:  uplinkStateLister,
-		openflowBridgeName: defaultOpenFlowBridgeSetName,
-		nextHops:           gw.nextHops,
-		reconcile:          make(chan struct{}, 1),
-		gwInterfaceName:    gwInterfaceName,
-		gwInterfaceIndex:   gwInterfaceIndex,
+		NetInfo:                 netInfo,
+		node:                    node,
+		nodeLister:              nodeLister,
+		kubeInterface:           kubeInterface,
+		vrfManager:              vrfManager,
+		masqCTMark:              masqCTMark,
+		pktMark:                 pktMark,
+		v4MasqIPs:               v4MasqIPs,
+		v6MasqIPs:               v6MasqIPs,
+		gateway:                 gw,
+		ruleManager:             ruleManager,
+		ovsClient:               ovsClient,
+		uplinkStateLister:       uplinkStateLister,
+		uplinkGatewayController: uplinkGatewayController,
+		openflowBridgeName:      defaultOpenFlowBridgeSetName,
+		nextHops:                gw.nextHops,
+		reconcile:               make(chan struct{}, 1),
+		gwInterfaceName:         gwInterfaceName,
+		gwInterfaceIndex:        gwInterfaceIndex,
 	}, nil
 }
 
@@ -258,27 +253,22 @@ func (udng *UserDefinedNetworkGateway) ensureUplinkGateway() (*bridgeconfig.Brid
 		resolved.macAddress,
 	)
 	if err != nil {
-		return nil, udng.setUplinkStateGatewayFailure(
+		return nil, newUplinkGatewayError(
 			uplinkv1alpha1.UplinkStateReasonBridgeMappingFailed,
 			err,
 		)
 	}
 	if err := bridge.ConfigureBridgePorts(); err != nil {
-		return nil, udng.setUplinkStateGatewayFailure(
+		return nil, newUplinkGatewayError(
 			uplinkv1alpha1.UplinkStateReasonBridgeMappingFailed,
 			err,
 		)
 	}
 	if err := configureUplinkStaticFDBEntry(bridge); err != nil {
-		return nil, udng.setUplinkStateGatewayFailure(
+		return nil, newUplinkGatewayError(
 			uplinkv1alpha1.UplinkStateReasonBridgeMappingFailed,
 			err,
 		)
-	}
-	if err := udng.clearUplinkStateGatewayFailure(
-		uplinkv1alpha1.UplinkStateReasonBridgeMappingFailed,
-	); err != nil {
-		return nil, err
 	}
 	return bridge, nil
 }
@@ -347,90 +337,6 @@ func resolvedUplinkGatewayFromState(
 		return nil, err
 	}
 	return parseResolvedUplinkGateway(state)
-}
-
-func (udng *UserDefinedNetworkGateway) setUplinkStateGatewayReadyCondition(
-	status metav1.ConditionStatus,
-	reason string,
-	message string,
-) error {
-	if udng.Uplink() == "" {
-		return nil
-	}
-
-	stateName := uplinkutil.StateName(udng.Uplink(), udng.node.Name)
-	state, err := uplinkutil.GetState(udng.uplinkStateLister, udng.Uplink(), udng.node.Name)
-	if err != nil {
-		return fmt.Errorf("failed to get UplinkState %s from cache: %w", stateName, err)
-	}
-
-	condition, changed := util.MergeStatusCondition(
-		state.Status.Conditions,
-		metav1.Condition{
-			Type:    uplinkv1alpha1.UplinkStateConditionGatewayReady,
-			Status:  status,
-			Reason:  reason,
-			Message: message,
-		},
-	)
-	if !changed {
-		return nil
-	}
-
-	_, err = udng.uplinkClient.K8sV1alpha1().UplinkStates().Apply(
-		context.Background(),
-		uplinkapply.UplinkState(stateName).WithStatus(
-			uplinkapply.UplinkStateStatus().WithConditions(util.ConditionToApply(condition)),
-		),
-		metav1.ApplyOptions{
-			FieldManager: uplinkGatewayFieldManager,
-			Force:        true,
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("failed to apply UplinkState %s status: %w", stateName, err)
-	}
-	return nil
-}
-
-func (udng *UserDefinedNetworkGateway) setUplinkStateGatewayFailure(reason string, err error) error {
-	message := err.Error()
-	statusErr := udng.setUplinkStateGatewayReadyCondition(
-		metav1.ConditionFalse,
-		reason,
-		message,
-	)
-	return utilerrors.Join(err, statusErr)
-}
-
-func (udng *UserDefinedNetworkGateway) clearUplinkStateGatewayFailure(reason string) error {
-	if udng.Uplink() == "" {
-		return nil
-	}
-
-	stateName := uplinkutil.StateName(udng.Uplink(), udng.node.Name)
-	state, err := uplinkutil.GetState(udng.uplinkStateLister, udng.Uplink(), udng.node.Name)
-	if apierrors.IsNotFound(err) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("failed to get UplinkState %s from cache: %w", stateName, err)
-	}
-	condition := meta.FindStatusCondition(
-		state.Status.Conditions,
-		uplinkv1alpha1.UplinkStateConditionGatewayReady,
-	)
-	if condition != nil && condition.Status != metav1.ConditionFalse {
-		return nil
-	}
-	if condition != nil && condition.Reason != reason {
-		return nil
-	}
-	return udng.setUplinkStateGatewayReadyCondition(
-		metav1.ConditionTrue,
-		uplinkv1alpha1.UplinkStateReasonGatewayConfigured,
-		"Uplink gateway programming succeeded",
-	)
 }
 
 func parseResolvedUplinkGateway(state *uplinkv1alpha1.UplinkState) (*resolvedUplinkGateway, error) {
@@ -537,6 +443,23 @@ func (udng *UserDefinedNetworkGateway) addMarkChain() error {
 // AddNetwork will be responsible to create all plumbings
 // required by this UDN on the gateway side
 func (udng *UserDefinedNetworkGateway) AddNetwork() error {
+	var err error
+	if udng.Uplink() == "" {
+		err = udng.addNetwork()
+	} else {
+		err = udng.uplinkGatewayController.ReconcileNetwork(udng.NetInfo, udng.addNetwork)
+	}
+	if err != nil {
+		return err
+	}
+
+	// Run gateway reconciliation only after initial programming and its
+	// aggregate readiness update have both succeeded.
+	udng.run()
+	return nil
+}
+
+func (udng *UserDefinedNetworkGateway) addNetwork() error {
 	if (config.IsModeDPU() || config.IsModeFull()) && udng.openflowManager == nil {
 		return fmt.Errorf("openflow manager has not been provided for network: %s", udng.NetInfo.GetNetworkName())
 	}
@@ -658,11 +581,16 @@ func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 			if err := udng.gateway.Reconcile(); err != nil {
 				return fmt.Errorf("failed to reconcile flows on bridge for network %s; error: %v", udng.GetNetworkName(), err)
 			}
+			if udng.Uplink() != "" {
+				if err := udng.syncUplinkBridgeFlows(); err != nil {
+					return err
+				}
+			}
 			return nil
 		}
 		waiter.AddWait(readyFunc, postFunc)
 		if err := waiter.Wait(); err != nil {
-			return err
+			return newUplinkGatewayError(uplinkv1alpha1.UplinkStateReasonBridgeMappingFailed, err)
 		}
 	} else {
 		if err := udng.gateway.Reconcile(); err != nil {
@@ -676,9 +604,6 @@ func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 		}
 	}
 
-	// run gateway reconciliation loop on network configuration changes
-	udng.run()
-
 	return nil
 }
 
@@ -690,6 +615,23 @@ func (udng *UserDefinedNetworkGateway) GetNetworkRuleMetadata() string {
 // the gateway side. It's considered invalid to call this instance after
 // DelNetwork has returned succesfully.
 func (udng *UserDefinedNetworkGateway) DelNetwork() error {
+	var err error
+	if udng.Uplink() == "" {
+		err = udng.delNetwork()
+	} else {
+		err = udng.uplinkGatewayController.DeleteNetwork(udng.NetInfo, udng.delNetwork)
+	}
+	if err != nil {
+		return err
+	}
+
+	// Close only after cleanup and the aggregate readiness update succeed so a
+	// status-update retry cannot close the channel twice.
+	close(udng.reconcile)
+	return nil
+}
+
+func (udng *UserDefinedNetworkGateway) delNetwork() error {
 	var errs []error
 	vrfDeviceName := util.GetNetworkVRFName(udng.NetInfo)
 	if config.IsModeDPUHost() || config.IsModeFull() {
@@ -716,6 +658,11 @@ func (udng *UserDefinedNetworkGateway) DelNetwork() error {
 			errs = append(errs, fmt.Errorf("failed to reconcile default gateway for network %s, err: %v", udng.GetNetworkName(), err))
 		}
 	}
+	if udng.Uplink() != "" && (config.IsModeDPU() || config.IsModeFull()) {
+		if _, err := udng.openflowManager.syncUplinkBridgeFlows(udng.openflowBridgeName); err != nil {
+			errs = append(errs, newUplinkGatewayError(uplinkv1alpha1.UplinkStateReasonGatewayProgrammingFailed, err))
+		}
+	}
 
 	if config.IsModeDPUHost() || config.IsModeFull() {
 		err := udng.deleteAdvertisedUDNIsolationRules()
@@ -738,9 +685,6 @@ func (udng *UserDefinedNetworkGateway) DelNetwork() error {
 		return utilerrors.Join(errs...)
 	}
 
-	// close channel only when successful since we can be called multiple times
-	// on failure
-	close(udng.reconcile)
 	return nil
 }
 
@@ -1157,6 +1101,12 @@ func generateIPRuleForUDNSubnet(udnIP *net.IPNet, isIPv6 bool, vrfTableId uint) 
 func (udng *UserDefinedNetworkGateway) run() {
 	go func() {
 		for range udng.reconcile {
+			reconcile := udng.doReconcile
+			if udng.Uplink() != "" {
+				reconcile = func() error {
+					return udng.uplinkGatewayController.ReconcileNetwork(udng.NetInfo, udng.doReconcile)
+				}
+			}
 			err := retry.OnError(
 				wait.Backoff{
 					Duration: 10 * time.Millisecond,
@@ -1171,7 +1121,7 @@ func (udng *UserDefinedNetworkGateway) run() {
 						return true
 					}
 				},
-				udng.doReconcile,
+				reconcile,
 			)
 			if err != nil {
 				klog.Errorf("Failed to reconcile gateway for network %s: %v", udng.GetNetworkName(), err)
@@ -1247,6 +1197,23 @@ func (udng *UserDefinedNetworkGateway) doReconcile() error {
 			return fmt.Errorf("error while updating advertised UDN isolation rules for network %s: %w", udng.GetNetworkName(), err)
 		}
 	}
+	if udng.Uplink() != "" && (config.IsModeDPU() || config.IsModeFull()) {
+		if err := udng.syncUplinkBridgeFlows(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (udng *UserDefinedNetworkGateway) syncUplinkBridgeFlows() error {
+	found, err := udng.openflowManager.syncUplinkBridgeFlows(udng.openflowBridgeName)
+	if err != nil {
+		return newUplinkGatewayError(uplinkv1alpha1.UplinkStateReasonGatewayProgrammingFailed, err)
+	}
+	if !found {
+		return newUplinkGatewayError(uplinkv1alpha1.UplinkStateReasonGatewayProgrammingFailed,
+			fmt.Errorf("uplink bridge %s not found", udng.openflowBridgeName))
+	}
 	return nil
 }
 
@@ -1279,7 +1246,7 @@ func (udng *UserDefinedNetworkGateway) reconcileUplinkGatewayVRFSlave(vrfDeviceN
 	if udng.shouldEnslaveUplinkGatewayToVRF() {
 		if config.IPv6Mode {
 			if err := util.SetIPv6KeepAddrOnDownForInterface(udng.gwInterfaceName); err != nil {
-				return udng.setUplinkStateGatewayFailure(
+				return newUplinkGatewayError(
 					uplinkv1alpha1.UplinkStateReasonVRFAttachmentFailed,
 					fmt.Errorf("could not preserve IPv6 addresses on Uplink gateway interface %s for network %s: %w",
 						udng.gwInterfaceName, udng.GetNetworkName(), err),
@@ -1287,33 +1254,23 @@ func (udng *UserDefinedNetworkGateway) reconcileUplinkGatewayVRFSlave(vrfDeviceN
 			}
 		}
 		if err := udng.vrfManager.AddVRFSlave(vrfDeviceName, udng.gwInterfaceName); err != nil {
-			return udng.setUplinkStateGatewayFailure(
+			return newUplinkGatewayError(
 				uplinkVRFAttachmentFailureReason(err),
 				fmt.Errorf("could not add Uplink gateway interface %s to VRF %s for network %s: %w",
 					udng.gwInterfaceName, vrfDeviceName, udng.GetNetworkName(), err),
 			)
 		}
-		if err := udng.clearUplinkStateGatewayFailure(
-			uplinkv1alpha1.UplinkStateReasonVRFAttachmentFailed,
-		); err != nil {
-			return err
-		}
-		return udng.clearUplinkStateGatewayFailure(uplinkv1alpha1.UplinkStateReasonConfigurationConflict)
+		return nil
 	}
 
 	if err := udng.vrfManager.DeleteVRFSlave(vrfDeviceName, udng.gwInterfaceName); err != nil {
-		return udng.setUplinkStateGatewayFailure(
+		return newUplinkGatewayError(
 			uplinkv1alpha1.UplinkStateReasonVRFAttachmentFailed,
 			fmt.Errorf("could not remove Uplink gateway interface %s from VRF %s for network %s: %w",
 				udng.gwInterfaceName, vrfDeviceName, udng.GetNetworkName(), err),
 		)
 	}
-	if err := udng.clearUplinkStateGatewayFailure(
-		uplinkv1alpha1.UplinkStateReasonVRFAttachmentFailed,
-	); err != nil {
-		return err
-	}
-	return udng.clearUplinkStateGatewayFailure(uplinkv1alpha1.UplinkStateReasonConfigurationConflict)
+	return nil
 }
 
 func uplinkVRFAttachmentFailureReason(err error) string {

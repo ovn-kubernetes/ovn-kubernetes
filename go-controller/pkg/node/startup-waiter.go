@@ -65,7 +65,7 @@ func (w *startupWaiter) Wait() error {
 	w.wg.Wait()
 	close(errors)
 	for err := range errors {
-		return fmt.Errorf("error waiting for node readiness: %v", err)
+		return fmt.Errorf("error waiting for node readiness: %w", err)
 	}
 	return nil
 }

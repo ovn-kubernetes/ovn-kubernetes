@@ -33,8 +33,10 @@ const (
 	UplinkStateReasonWaitingForDPU                   = "WaitingForDPU"
 	UplinkStateReasonWaitingForDPUHost               = "WaitingForDPUHost"
 	UplinkStateReasonNodeSelectorOverlap             = "NodeSelectorOverlap"
+	UplinkStateReasonGatewayConfigurationPending     = "GatewayConfigurationPending"
 	UplinkStateReasonVRFAttachmentFailed             = "UplinkVRFAttachmentFailed"
 	UplinkStateReasonBridgeMappingFailed             = "UplinkBridgeMappingFailed"
+	UplinkStateReasonGatewayProgrammingFailed        = "UplinkGatewayProgrammingFailed"
 	UplinkStateReasonConfigurationConflict           = "UplinkConfigurationConflict"
 )
 

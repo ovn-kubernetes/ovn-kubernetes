@@ -140,7 +140,7 @@ var _ = Describe("UserDefinedNodeNetworkController", func() {
 			nil,
 			&gateway{openflowManager: ofm},
 			nil,
-			uplinkfake.NewSimpleClientset(),
+			nil,
 		)
 		Expect(err).NotTo(HaveOccurred())
 		err = controller.Start(context.Background())
@@ -480,7 +480,7 @@ var _ = Describe("UserDefinedNodeNetworkController: UserDefinedPrimaryNetwork Ga
 				nil,
 				localGw,
 				nil,
-				uplinkfake.NewSimpleClientset(),
+				nil,
 			)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(controller.gateway).To(Not(BeNil()))

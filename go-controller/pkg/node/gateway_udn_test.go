@@ -23,7 +23,6 @@ import (
 	"golang.org/x/sys/unix"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/cache"
@@ -390,159 +389,6 @@ func TestConfigureUplinkStaticFDBEntry(t *testing.T) {
 				t.Fatalf("%s", fexec.ErrorDesc())
 			}
 		})
-	}
-}
-
-func TestUplinkStateGatewayStatusRejectsMismatchedIdentity(t *testing.T) {
-	if err := config.PrepareTestConfig(); err != nil {
-		t.Fatalf("failed to prepare test config: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = config.PrepareTestConfig()
-	})
-	config.Gateway.Mode = config.GatewayModeShared
-
-	nad := generateUplinkNAD("red", "rednad", "greenamespace",
-		types.Layer3Topology, "100.128.0.0/16/24", types.NetworkRolePrimary, "uplink1")
-	netInfo, err := util.ParseNADInfo(nad)
-	if err != nil {
-		t.Fatalf("failed to parse NAD: %v", err)
-	}
-
-	const nodeName = "node-a"
-	stateName := uplinkutil.StateName("uplink1", nodeName)
-	state := &uplinkv1alpha1.UplinkState{
-		ObjectMeta: metav1.ObjectMeta{Name: stateName},
-		Spec: uplinkv1alpha1.UplinkStateSpec{
-			UplinkName: "other-uplink",
-			NodeName:   nodeName,
-		},
-	}
-	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
-	if err := indexer.Add(state); err != nil {
-		t.Fatalf("failed to add UplinkState: %v", err)
-	}
-	client := uplinkfake.NewSimpleClientset(state.DeepCopy())
-	udng := &UserDefinedNetworkGateway{
-		NetInfo:           netInfo,
-		node:              &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}},
-		uplinkClient:      client,
-		uplinkStateLister: uplinklisters.NewUplinkStateLister(indexer),
-	}
-
-	tests := []struct {
-		name string
-		call func() error
-	}{
-		{
-			name: "set condition",
-			call: func() error {
-				return udng.setUplinkStateGatewayReadyCondition(
-					metav1.ConditionFalse,
-					uplinkv1alpha1.UplinkStateReasonBridgeMappingFailed,
-					"failed",
-				)
-			},
-		},
-		{
-			name: "clear condition",
-			call: func() error {
-				return udng.clearUplinkStateGatewayFailure(uplinkv1alpha1.UplinkStateReasonBridgeMappingFailed)
-			},
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			err := test.call()
-			if err == nil || !strings.Contains(err.Error(), "reports uplinkName \"other-uplink\"") {
-				t.Fatalf("expected identity validation error, got %v", err)
-			}
-			if len(client.Actions()) != 0 {
-				t.Fatalf("expected no client actions, got %v", client.Actions())
-			}
-		})
-	}
-}
-
-func TestUplinkStateGatewayReadyCondition(t *testing.T) {
-	if err := config.PrepareTestConfig(); err != nil {
-		t.Fatalf("failed to prepare test config: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = config.PrepareTestConfig()
-	})
-	config.Gateway.Mode = config.GatewayModeShared
-
-	nad := generateUplinkNAD("red", "rednad", "greenamespace",
-		types.Layer3Topology, "100.128.0.0/16/24", types.NetworkRolePrimary, "uplink1")
-	netInfo, err := util.ParseNADInfo(nad)
-	if err != nil {
-		t.Fatalf("failed to parse NAD: %v", err)
-	}
-
-	const nodeName = "node-a"
-	stateName := uplinkutil.StateName("uplink1", nodeName)
-	state := &uplinkv1alpha1.UplinkState{
-		ObjectMeta: metav1.ObjectMeta{Name: stateName},
-		Spec: uplinkv1alpha1.UplinkStateSpec{
-			UplinkName: "uplink1",
-			NodeName:   nodeName,
-		},
-		Status: uplinkv1alpha1.UplinkStateStatus{
-			Conditions: []metav1.Condition{{
-				Type:   uplinkv1alpha1.UplinkStateConditionResolved,
-				Status: metav1.ConditionTrue,
-				Reason: uplinkv1alpha1.UplinkStateReasonResolved,
-			}},
-		},
-	}
-	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
-	if err := indexer.Add(state); err != nil {
-		t.Fatalf("failed to add UplinkState: %v", err)
-	}
-	client := uplinkfake.NewSimpleClientset(state.DeepCopy())
-	udng := &UserDefinedNetworkGateway{
-		NetInfo:           netInfo,
-		node:              &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}},
-		uplinkClient:      client,
-		uplinkStateLister: uplinklisters.NewUplinkStateLister(indexer),
-	}
-
-	if err := udng.setUplinkStateGatewayReadyCondition(
-		metav1.ConditionFalse,
-		uplinkv1alpha1.UplinkStateReasonBridgeMappingFailed,
-		"failed to configure bridge mapping",
-	); err != nil {
-		t.Fatalf("failed to set GatewayReady condition: %v", err)
-	}
-	updated, err := client.K8sV1alpha1().UplinkStates().Get(context.Background(), stateName, metav1.GetOptions{})
-	if err != nil {
-		t.Fatalf("failed to get UplinkState: %v", err)
-	}
-	resolved := meta.FindStatusCondition(updated.Status.Conditions, uplinkv1alpha1.UplinkStateConditionResolved)
-	if resolved == nil || resolved.Status != metav1.ConditionTrue {
-		t.Fatalf("expected discovery Resolved condition to remain true, got %#v", resolved)
-	}
-	gatewayReady := meta.FindStatusCondition(updated.Status.Conditions, uplinkv1alpha1.UplinkStateConditionGatewayReady)
-	if gatewayReady == nil || gatewayReady.Status != metav1.ConditionFalse ||
-		gatewayReady.Reason != uplinkv1alpha1.UplinkStateReasonBridgeMappingFailed {
-		t.Fatalf("unexpected GatewayReady condition: %#v", gatewayReady)
-	}
-
-	if err := indexer.Update(updated.DeepCopy()); err != nil {
-		t.Fatalf("failed to update cached UplinkState: %v", err)
-	}
-	if err := udng.clearUplinkStateGatewayFailure(uplinkv1alpha1.UplinkStateReasonBridgeMappingFailed); err != nil {
-		t.Fatalf("failed to clear gateway failure: %v", err)
-	}
-	updated, err = client.K8sV1alpha1().UplinkStates().Get(context.Background(), stateName, metav1.GetOptions{})
-	if err != nil {
-		t.Fatalf("failed to get UplinkState: %v", err)
-	}
-	gatewayReady = meta.FindStatusCondition(updated.Status.Conditions, uplinkv1alpha1.UplinkStateConditionGatewayReady)
-	if gatewayReady == nil || gatewayReady.Status != metav1.ConditionTrue ||
-		gatewayReady.Reason != uplinkv1alpha1.UplinkStateReasonGatewayConfigured {
-		t.Fatalf("unexpected recovered GatewayReady condition: %#v", gatewayReady)
 	}
 }
 
@@ -1069,7 +915,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			defer GinkgoRecover()
 			ofm := getDummyOpenflowManager()
 			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, factoryMock.NodeCoreInformer().Lister(),
-				&kubeMock, vrf, nil, &gateway{openflowManager: ofm}, nil, uplinkfake.NewSimpleClientset(), nil)
+				&kubeMock, vrf, nil, &gateway{openflowManager: ofm}, nil, nil, nil)
 			Expect(err).NotTo(HaveOccurred())
 			localSubnets, err := udnGateway.getLocalSubnets()
 			Expect(err).NotTo(HaveOccurred())
@@ -1120,7 +966,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			defer GinkgoRecover()
 			ofm := getDummyOpenflowManager()
 			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, factoryMock.NodeCoreInformer().Lister(),
-				&kubeMock, vrf, nil, &gateway{openflowManager: ofm}, nil, uplinkfake.NewSimpleClientset(), nil)
+				&kubeMock, vrf, nil, &gateway{openflowManager: ofm}, nil, nil, nil)
 			Expect(err).NotTo(HaveOccurred())
 			localSubnets, err := udnGateway.getLocalSubnets()
 			Expect(err).NotTo(HaveOccurred())
@@ -1160,7 +1006,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			defer GinkgoRecover()
 			ofm := getDummyOpenflowManager()
 			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, factoryMock.NodeCoreInformer().Lister(),
-				&kubeMock, vrf, nil, &gateway{openflowManager: ofm}, nil, uplinkfake.NewSimpleClientset(), nil)
+				&kubeMock, vrf, nil, &gateway{openflowManager: ofm}, nil, nil, nil)
 			Expect(err).NotTo(HaveOccurred())
 			localSubnets, err := udnGateway.getLocalSubnets()
 			Expect(err).NotTo(HaveOccurred())
@@ -1211,7 +1057,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			defer GinkgoRecover()
 			ofm := getDummyOpenflowManager()
 			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, factoryMock.NodeCoreInformer().Lister(),
-				&kubeMock, vrf, nil, &gateway{openflowManager: ofm}, nil, uplinkfake.NewSimpleClientset(), nil)
+				&kubeMock, vrf, nil, &gateway{openflowManager: ofm}, nil, nil, nil)
 			Expect(err).NotTo(HaveOccurred())
 			localSubnets, err := udnGateway.getLocalSubnets()
 			Expect(err).NotTo(HaveOccurred())
@@ -1374,7 +1220,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			localGw.openflowManager.syncFlows()
 
 			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, wf.NodeCoreInformer().Lister(),
-				&kubeMock, vrf, ipRulesManager, localGw, nil, uplinkfake.NewSimpleClientset(), nil)
+				&kubeMock, vrf, ipRulesManager, localGw, nil, nil, nil)
 			Expect(err).NotTo(HaveOccurred())
 			flowMap := udnGateway.gateway.openflowManager.defaultBridge.flowCache
 			Expect(flowMap["DEFAULT"]).To(HaveLen(50))
@@ -1606,7 +1452,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 
 			By("injecting error into ipRulesManager to ensure everything else still cleans up")
 			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, wf.NodeCoreInformer().Lister(),
-				&kubeMock, vrf, &iprulemanager.FakeControllerWithError{}, localGw, nil, uplinkfake.NewSimpleClientset(), nil)
+				&kubeMock, vrf, &iprulemanager.FakeControllerWithError{}, localGw, nil, nil, nil)
 			Expect(err).NotTo(HaveOccurred())
 			localSubnets, err := udnGateway.getLocalSubnets()
 			Expect(err).NotTo(HaveOccurred())
@@ -1798,7 +1644,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			localGw.openflowManager.syncFlows()
 
 			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, wf.NodeCoreInformer().Lister(),
-				&kubeMock, vrf, ipRulesManager, localGw, nil, uplinkfake.NewSimpleClientset(), nil)
+				&kubeMock, vrf, ipRulesManager, localGw, nil, nil, nil)
 			Expect(err).NotTo(HaveOccurred())
 			flowMap := udnGateway.gateway.openflowManager.defaultBridge.flowCache
 			Expect(flowMap["DEFAULT"]).To(HaveLen(50))
@@ -2037,7 +1883,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			localGw.openflowManager.syncFlows()
 
 			udnGateway, err := NewUserDefinedNetworkGateway(mutableNetInfo, node, wf.NodeCoreInformer().Lister(),
-				&kubeMock, vrf, ipRulesManager, localGw, nil, uplinkfake.NewSimpleClientset(), nil)
+				&kubeMock, vrf, ipRulesManager, localGw, nil, nil, nil)
 			Expect(err).NotTo(HaveOccurred())
 			flowMap := udnGateway.gateway.openflowManager.defaultBridge.flowCache
 			Expect(flowMap["DEFAULT"]).To(HaveLen(50))
@@ -2143,7 +1989,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 			ofm := getDummyOpenflowManager()
-			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, nil, nil, vrf, nil, &gateway{openflowManager: ofm}, nil, uplinkfake.NewSimpleClientset(), nil)
+			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, nil, nil, vrf, nil, &gateway{openflowManager: ofm}, nil, nil, nil)
 			Expect(err).NotTo(HaveOccurred())
 			mplink, err := netlink.LinkByName(mgtPort)
 			Expect(err).NotTo(HaveOccurred())
@@ -2218,7 +2064,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 			ofm := getDummyOpenflowManager()
-			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, nil, nil, vrf, nil, &gateway{openflowManager: ofm}, nil, uplinkfake.NewSimpleClientset(), nil)
+			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, nil, nil, vrf, nil, &gateway{openflowManager: ofm}, nil, nil, nil)
 			Expect(err).NotTo(HaveOccurred())
 			link, err := netlink.LinkByName("breth0")
 			Expect(err).NotTo(HaveOccurred())
@@ -2314,7 +2160,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 			ofm := getDummyOpenflowManager()
-			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, nil, nil, vrf, nil, &gateway{openflowManager: ofm}, nil, uplinkfake.NewSimpleClientset(), nil)
+			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, nil, nil, vrf, nil, &gateway{openflowManager: ofm}, nil, nil, nil)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(udnGateway.ensureDPUVRF()).To(Succeed())
 
@@ -2356,7 +2202,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			ofm := getDummyOpenflowManager()
 			udnGateway, err := NewUserDefinedNetworkGateway(mutableNetInfo, node, nil, nil, vrf, nil,
 				&gateway{openflowManager: ofm, nextHops: ovntest.MustParseIPs(config.Gateway.NextHop)},
-				nil, uplinkfake.NewSimpleClientset(), nil)
+				nil, nil, nil)
 			Expect(err).NotTo(HaveOccurred())
 			mplink, err := netlink.LinkByName(mgtPort)
 			Expect(err).NotTo(HaveOccurred())
@@ -2399,7 +2245,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 			ofm := getDummyOpenflowManager()
-			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, nil, nil, vrf, nil, &gateway{openflowManager: ofm}, nil, uplinkfake.NewSimpleClientset(), nil)
+			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, nil, nil, vrf, nil, &gateway{openflowManager: ofm}, nil, nil, nil)
 			Expect(err).NotTo(HaveOccurred())
 			mplink, err := netlink.LinkByName(mgtPort)
 			Expect(err).NotTo(HaveOccurred())
@@ -2459,7 +2305,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 			ofm := getDummyOpenflowManager()
-			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, nil, nil, vrf, nil, &gateway{openflowManager: ofm}, nil, uplinkfake.NewSimpleClientset(), nil)
+			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, nil, nil, vrf, nil, &gateway{openflowManager: ofm}, nil, nil, nil)
 			Expect(err).NotTo(HaveOccurred())
 			mplink, err := netlink.LinkByName(mgtPort)
 			Expect(err).NotTo(HaveOccurred())
@@ -2532,10 +2378,9 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 			ofm := getDummyOpenflowManager()
-			uplinkState, uplinkStateLister := newGatewayUplinkStateAndLister("uplink1", node.Name)
+			_, uplinkStateLister := newGatewayUplinkStateAndLister("uplink1", node.Name)
 			udnGateway, err := NewUserDefinedNetworkGateway(mutableNetInfo, node, nil, nil, vrf, nil,
-				&gateway{openflowManager: ofm}, nil, uplinkfake.NewSimpleClientset(uplinkState.DeepCopy()),
-				uplinkStateLister)
+				&gateway{openflowManager: ofm}, nil, uplinkStateLister, nil)
 			Expect(err).NotTo(HaveOccurred())
 			uplinkLink := ovntest.AddLink("ovsbr1")
 			udnGateway.gwInterfaceName = uplinkLink.Attrs().Name
@@ -2588,7 +2433,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 			ofm := getDummyOpenflowManager()
-			udnGateway, err := NewUserDefinedNetworkGateway(mutableNetInfo, node, nil, nil, vrf, nil, &gateway{openflowManager: ofm}, nil, uplinkfake.NewSimpleClientset(), nil)
+			udnGateway, err := NewUserDefinedNetworkGateway(mutableNetInfo, node, nil, nil, vrf, nil, &gateway{openflowManager: ofm}, nil, nil, nil)
 			Expect(err).NotTo(HaveOccurred())
 			mplink, err := netlink.LinkByName(mgtPort)
 			Expect(err).NotTo(HaveOccurred())
@@ -2949,7 +2794,7 @@ func TestConstructUDNVRFIPRules(t *testing.T) {
 				},
 			})
 			g.Expect(err).NotTo(HaveOccurred())
-			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, nil, nil, nil, nil, &gateway{openflowManager: ofm}, nil, uplinkfake.NewSimpleClientset(), nil)
+			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, nil, nil, nil, nil, &gateway{openflowManager: ofm}, nil, nil, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			// delete dummy gateway interface after creating UDN gateway(Need to run this test as root)
 			err = netlink.LinkDel(&netlink.Dummy{
@@ -3133,7 +2978,7 @@ func TestConstructUDNVRFIPRulesPodNetworkAdvertisedToDefaultVRF(t *testing.T) {
 				},
 			})
 			g.Expect(err).NotTo(HaveOccurred())
-			udnGateway, err := NewUserDefinedNetworkGateway(mutableNetInfo, node, nil, nil, nil, nil, &gateway{openflowManager: ofm}, nil, uplinkfake.NewSimpleClientset(), nil)
+			udnGateway, err := NewUserDefinedNetworkGateway(mutableNetInfo, node, nil, nil, nil, nil, &gateway{openflowManager: ofm}, nil, nil, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			// delete dummy gateway interface after creating UDN gateway(Need to run this test as root)
 			err = netlink.LinkDel(&netlink.Dummy{
@@ -3325,7 +3170,7 @@ func TestConstructUDNVRFIPRulesPodNetworkAdvertisedToNonDefaultVRF(t *testing.T)
 				},
 			})
 			g.Expect(err).NotTo(HaveOccurred())
-			udnGateway, err := NewUserDefinedNetworkGateway(mutableNetInfo, node, nil, nil, nil, nil, &gateway{openflowManager: ofm}, nil, uplinkfake.NewSimpleClientset(), nil)
+			udnGateway, err := NewUserDefinedNetworkGateway(mutableNetInfo, node, nil, nil, nil, nil, &gateway{openflowManager: ofm}, nil, nil, nil)
 			g.Expect(err).NotTo(HaveOccurred())
 			// delete dummy gateway interface after creating UDN gateway(Need to run this test as root)
 			err = netlink.LinkDel(&netlink.Dummy{

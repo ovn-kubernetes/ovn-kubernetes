@@ -14,7 +14,6 @@ import (
 	"github.com/ovn-kubernetes/libovsdb/client"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
-	uplinkclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/clientset/versioned"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iprulemanager"
@@ -47,7 +46,7 @@ func NewUserDefinedNodeNetworkController(
 	mpdm *managementport.MgmtPortDeviceManager,
 	defaultNetworkGateway Gateway,
 	ovsClient client.Client,
-	uplinkClient uplinkclientset.Interface,
+	uplinkGatewayController *UplinkGatewayController,
 ) (*UserDefinedNodeNetworkController, error) {
 	if netInfo.Uplink() != "" && config.Gateway.Mode != config.GatewayModeShared {
 		return nil, fmt.Errorf("uplink %q for network %s is supported only in shared gateway mode",
@@ -74,7 +73,7 @@ func NewUserDefinedNodeNetworkController(
 
 		snnc.gateway, err = NewUserDefinedNetworkGateway(snnc.GetNetInfo(), node,
 			snnc.watchFactory.NodeCoreInformer().Lister(), snnc.Kube, vrfManager, ruleManager, defaultNetworkGateway,
-			ovsClient, uplinkClient, snnc.watchFactory.UplinkStateInformer().Lister())
+			ovsClient, snnc.watchFactory.UplinkStateInformer().Lister(), uplinkGatewayController)
 		if err != nil {
 			return nil, fmt.Errorf("error creating UDN gateway for network %s: %v", netInfo.GetNetworkName(), err)
 		}
@@ -160,6 +159,12 @@ func (nc *UserDefinedNodeNetworkController) shouldReconcileNetworkChange(old, ne
 // 2. OpenFlows on br-ex bridge to forward traffic to correct ofports
 func (nc *UserDefinedNodeNetworkController) Reconcile(netInfo util.NetInfo) error {
 	reconcilePodNetwork := nc.shouldReconcileNetworkChange(nc.ReconcilableNetInfo, netInfo)
+	if reconcilePodNetwork && nc.gateway != nil && nc.Uplink() != "" {
+		if err := nc.gateway.uplinkGatewayController.PrepareNetwork(netInfo); err != nil {
+			return fmt.Errorf("failed to prepare Uplink gateway reconciliation for network %s: %w",
+				nc.GetNetworkName(), err)
+		}
+	}
 
 	err := util.ReconcileNetInfo(nc.ReconcilableNetInfo, netInfo)
 	if err != nil {

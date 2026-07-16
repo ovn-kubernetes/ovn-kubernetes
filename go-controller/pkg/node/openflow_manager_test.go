@@ -4,6 +4,7 @@
 package node
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/bridgeconfig"
@@ -80,6 +81,58 @@ func TestOpenFlowManagerCleansUnusedUplinkBridgeFlows(t *testing.T) {
 	}
 	if !fexec.CalledMatchesExpected() {
 		t.Fatalf("expected cleanup to replace flows on the unused uplink bridge")
+	}
+}
+
+func TestOpenFlowManagerSyncsUplinkBridgeFlows(t *testing.T) {
+	fexec := ovntest.NewFakeExec()
+	if err := util.SetExec(fexec); err != nil {
+		t.Fatalf("failed to set fake exec: %v", err)
+	}
+	t.Cleanup(util.ResetRunner)
+	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+		Cmd: "ovs-ofctl -O OpenFlow13 --bundle replace-flows breth0 -",
+	})
+
+	ofBridge := newOpenflowBridge(bridgeconfig.TestDefaultBridgeConfig())
+	ofBridge.updateFlowCacheEntry("NORMAL", []string{"table=0,priority=0,actions=NORMAL"})
+	ofm := &openflowManager{
+		defaultBridge: newOpenflowBridge(bridgeconfig.TestDefaultBridgeConfig()),
+		uplinkBridges: map[string]*openflowBridge{
+			"breth0": ofBridge,
+		},
+	}
+
+	found, err := ofm.syncUplinkBridgeFlows("breth0")
+	if err != nil {
+		t.Fatalf("failed to sync uplink bridge flows: %v", err)
+	}
+	if !found {
+		t.Fatal("expected uplink bridge to be found")
+	}
+	if !fexec.CalledMatchesExpected() {
+		t.Fatal("expected uplink bridge flows to be replaced")
+	}
+
+	expectedErr := errors.New("failed to replace flows")
+	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+		Cmd: "ovs-ofctl -O OpenFlow13 --bundle replace-flows breth0 -",
+		Err: expectedErr,
+	})
+	found, err = ofm.syncUplinkBridgeFlows("breth0")
+	if !found {
+		t.Fatal("expected uplink bridge to be found when flow sync fails")
+	}
+	if !errors.Is(err, expectedErr) {
+		t.Fatalf("expected flow replacement error, got %v", err)
+	}
+
+	found, err = ofm.syncUplinkBridgeFlows("missing")
+	if err != nil {
+		t.Fatalf("unexpected error for missing uplink bridge: %v", err)
+	}
+	if found {
+		t.Fatal("expected missing uplink bridge not to be found")
 	}
 }
 

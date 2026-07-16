@@ -220,6 +220,20 @@ func (c *openflowManager) getUplinkBridge(bridgeName string) (*openflowBridge, b
 	return bridge, found
 }
 
+func (c *openflowManager) syncUplinkBridgeFlows(bridgeName string) (bool, error) {
+	c.uplinkBridgesMu.Lock()
+	defer c.uplinkBridgesMu.Unlock()
+
+	bridge, found := c.uplinkBridges[bridgeName]
+	if !found {
+		return false, nil
+	}
+	if err := bridge.syncFlows(); err != nil {
+		return true, fmt.Errorf("failed to sync flows for uplink bridge %s: %w", bridgeName, err)
+	}
+	return true, nil
+}
+
 func (c *openflowManager) doWithUplinkBridgeForNetwork(nInfo util.NetInfo, fn func(*openflowBridge) error) (bool, error) {
 	foundBridge := false
 	err := c.forEachUplinkBridge(func(_ string, bridge *openflowBridge) error {

@@ -54,19 +54,21 @@ const (
 	obsoleteUplinkConditionDegraded   = "Degraded"
 	obsoleteUplinkConditionReferenced = "Referenced"
 
-	conditionTypeUplinksReady          = "UplinksReady"
-	reasonUplinksReady                 = "UplinksReady"
-	reasonUplinksNotReady              = "UplinksNotReady"
-	reasonUplinkUnsupportedGatewayMode = "UplinkUnsupportedGatewayMode"
-	reasonUplinkUnsupportedTransport   = "UplinkUnsupportedTransport"
-	reasonUplinkNotFound               = "UplinkNotFound"
-	reasonUplinkOverlapOnNode          = "UplinkOverlapOnNode"
-	reasonUplinkNotFoundForNode        = "UplinkNotFoundForNode"
-	reasonUplinkNotResolvedForNode     = "UplinkNotResolvedForNode"
-	reasonUplinkTerminating            = "UplinkTerminating"
-	reasonUplinkVRFAttachmentFailed    = "UplinkVRFAttachmentFailed"
-	reasonUplinkBridgeMappingFailed    = "UplinkBridgeMappingFailed"
-	reasonUplinkConfigurationConflict  = "UplinkConfigurationConflict"
+	conditionTypeUplinksReady            = "UplinksReady"
+	reasonUplinksReady                   = "UplinksReady"
+	reasonUplinksNotReady                = "UplinksNotReady"
+	reasonUplinkUnsupportedGatewayMode   = "UplinkUnsupportedGatewayMode"
+	reasonUplinkUnsupportedTransport     = "UplinkUnsupportedTransport"
+	reasonUplinkNotFound                 = "UplinkNotFound"
+	reasonUplinkOverlapOnNode            = "UplinkOverlapOnNode"
+	reasonUplinkNotFoundForNode          = "UplinkNotFoundForNode"
+	reasonUplinkNotResolvedForNode       = "UplinkNotResolvedForNode"
+	reasonUplinkTerminating              = "UplinkTerminating"
+	reasonGatewayConfigurationPending    = "GatewayConfigurationPending"
+	reasonUplinkVRFAttachmentFailed      = "UplinkVRFAttachmentFailed"
+	reasonUplinkBridgeMappingFailed      = "UplinkBridgeMappingFailed"
+	reasonUplinkGatewayProgrammingFailed = "UplinkGatewayProgrammingFailed"
+	reasonUplinkConfigurationConflict    = "UplinkConfigurationConflict"
 
 	networkRefSeparator = "\x00"
 )
@@ -812,10 +814,14 @@ func cudnUplinkStateGatewayNotReadyReason(state *uplinkv1alpha1.UplinkState) str
 		return ""
 	}
 	switch condition.Reason {
+	case uplinkv1alpha1.UplinkStateReasonGatewayConfigurationPending:
+		return reasonGatewayConfigurationPending
 	case uplinkv1alpha1.UplinkStateReasonVRFAttachmentFailed:
 		return reasonUplinkVRFAttachmentFailed
 	case uplinkv1alpha1.UplinkStateReasonBridgeMappingFailed:
 		return reasonUplinkBridgeMappingFailed
+	case uplinkv1alpha1.UplinkStateReasonGatewayProgrammingFailed:
+		return reasonUplinkGatewayProgrammingFailed
 	case uplinkv1alpha1.UplinkStateReasonConfigurationConflict:
 		return reasonUplinkConfigurationConflict
 	default:

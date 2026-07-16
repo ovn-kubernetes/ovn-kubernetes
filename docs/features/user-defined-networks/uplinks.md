@@ -178,10 +178,14 @@ status:
 ```
 
 The `Resolved` condition reports node-local host interface and OVS bridge
-discovery. The `GatewayReady` condition reports CUDN gateway programming on
-the resolved bridge, including bridge mapping and VRF attachment. A gateway
-programming failure does not change discovery `Resolved`; the CUDN-specific
-`UplinksReady` condition reflects both states.
+discovery. The `GatewayReady` condition reports aggregate gateway programming
+for every CUDN active on this Uplink and node. This includes bridge mappings,
+physical patch ports, per-network bridge configuration, OpenFlow, and VRF
+attachment. When the active CUDN set changes, `GatewayReady` first becomes
+`False` with reason `GatewayConfigurationPending` and returns to `True` only
+after the complete active set converges. A gateway programming failure does not
+change discovery `Resolved`; the CUDN-specific `UplinksReady` condition reflects
+both states.
 
 The `Uplink` object reports aggregate status:
 
@@ -360,11 +364,17 @@ Common problems:
   default shared gateway bridge, which cannot currently be reused as an
   Uplink.
 * `UplinkState` with `GatewayReady` condition status `False` and reason
+  `GatewayConfigurationPending`: the active CUDN set changed and complete
+  gateway programming has not converged yet.
+* `UplinkState` with `GatewayReady` condition status `False` and reason
   `UplinkBridgeMappingFailed`: OVN-Kubernetes could not configure the CUDN
-  bridge mapping on the resolved OVS bridge.
+  bridge mappings or discover a physical patch port on the resolved OVS bridge.
 * `UplinkState` with `GatewayReady` condition status `False` and reason
   `UplinkVRFAttachmentFailed`: OVN-Kubernetes could not attach or detach the
   Uplink gateway interface for the CUDN routing domain.
+* `UplinkState` with `GatewayReady` condition status `False` and reason
+  `UplinkGatewayProgrammingFailed`: OVN-Kubernetes could not reconcile the
+  per-network bridge configuration or gateway OpenFlow for the active CUDNs.
 * `UplinkState` with `GatewayReady` condition status `False` and reason
   `UplinkConfigurationConflict`: the resolved Uplink bridge is already
   attached to a different VRF on this node.
