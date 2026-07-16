@@ -400,10 +400,14 @@ jobs:
 
     - name: Extract and print coredump stack traces
       if: always()
+      continue-on-error: true
+      timeout-minutes: 30
       run: ./contrib/print-coredump-stacktraces.sh /tmp/kind/logs
 
     - name: Upload coredump stack traces
       if: always()
+      continue-on-error: true
+      timeout-minutes: 5
       uses: actions/upload-artifact@v7
       with:
         name: coredump-stacktraces-${{ env.JOB_NAME }}-${{ github.run_id }}
@@ -441,10 +445,14 @@ jobs:
 
     - name: Extract and print coredump stack traces
       if: always()
+      continue-on-error: true
+      timeout-minutes: 30
       run: ./contrib/print-coredump-stacktraces.sh /tmp/kind/logs-kind-pr-branch
 
     - name: Upload coredump stack traces
       if: always()
+      continue-on-error: true
+      timeout-minutes: 5
       uses: actions/upload-artifact@v7
       with:
         name: coredump-stacktraces-${{ env.JOB_NAME }}-${{ github.run_id }}-after-upgrade
@@ -748,10 +756,14 @@ jobs:
 
     - name: Extract and print coredump stack traces
       if: always()
+      continue-on-error: true
+      timeout-minutes: 30
       run: ./contrib/print-coredump-stacktraces.sh /tmp/kind/logs
 
     - name: Upload coredump stack traces
       if: always()
+      continue-on-error: true
+      timeout-minutes: 5
       uses: actions/upload-artifact@v7
       with:
         name: coredump-stacktraces-${{ env.JOB_NAME }}-${{ github.run_id }}-${{ strategy.job-index }}
@@ -865,10 +877,14 @@ jobs:
 
     - name: Extract and print coredump stack traces
       if: always()
+      continue-on-error: true
+      timeout-minutes: 30
       run: ./contrib/print-coredump-stacktraces.sh /tmp/kind/logs
 
     - name: Upload coredump stack traces
       if: always()
+      continue-on-error: true
+      timeout-minutes: 5
       uses: actions/upload-artifact@v7
       with:
         name: coredump-stacktraces-${{ env.JOB_NAME }}-${{ github.run_id }}
