@@ -27,7 +27,9 @@ concurrency:
 jobs:
   comment:
     name: Post coredump stack traces
-    if: github.event.workflow_run.event == 'pull_request'
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'failure'
     runs-on: ubuntu-24.04
     steps:
     - name: Check out the trusted default branch
@@ -50,11 +52,25 @@ jobs:
         fi
         echo "number=${pr_number}" >> "$GITHUB_OUTPUT"
 
-    - name: Download coredump stack traces
+    - name: Find the coredump stack trace artifact
+      id: artifact
       if: steps.pr.outputs.number != ''
+      env:
+        GH_TOKEN: ${{ github.token }}
+        RUN_ID: ${{ github.event.workflow_run.id }}
+        ARTIFACT_NAME: coredump-stacktraces-${{ github.event.workflow_run.id }}
+      run: |
+        found=$(gh api --method GET \
+          "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/artifacts" \
+          -f name="$ARTIFACT_NAME" \
+          --jq '.total_count > 0')
+        echo "found=${found}" >> "$GITHUB_OUTPUT"
+
+    - name: Download coredump stack traces
+      if: steps.artifact.outputs.found == 'true'
       uses: actions/download-artifact@v8
       with:
-        pattern: coredump-stacktraces-*
+        name: coredump-stacktraces-${{ github.event.workflow_run.id }}
         path: ${{ runner.temp }}/coredump-stacktraces
         github-token: ${{ github.token }}
         run-id: ${{ github.event.workflow_run.id }}
@@ -67,8 +83,8 @@ jobs:
         RUN_URL: ${{ github.event.workflow_run.html_url }}
         TRACE_DIR: ${{ runner.temp }}/coredump-stacktraces
       run: |
-        python3 contrib/coredump/format-stacktrace-comment.py \
-          --input-dir coredump-stacktraces \
+        python3 contrib/coredump/github/format-comment.py \
+          --input-dir "$TRACE_DIR" \
           --run-id "$RUN_ID" \
           --run-url "$RUN_URL" \
           --output coredump-stacktrace-comment.md \

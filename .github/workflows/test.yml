@@ -398,22 +398,6 @@ jobs:
         docker exec ovn-worker crictl images
         docker exec ovn-worker2 crictl images
 
-    - name: Extract and print coredump stack traces
-      if: always()
-      continue-on-error: true
-      timeout-minutes: 30
-      run: ./contrib/print-coredump-stacktraces.sh /tmp/kind/logs
-
-    - name: Upload coredump stack traces
-      if: always()
-      continue-on-error: true
-      timeout-minutes: 5
-      uses: actions/upload-artifact@v7
-      with:
-        name: coredump-stacktraces-${{ env.JOB_NAME }}-${{ github.run_id }}
-        path: /tmp/kind/logs/stacktraces
-        if-no-files-found: ignore
-
     - name: Upload kind logs
       if: always()
       uses: actions/upload-artifact@v7
@@ -443,28 +427,23 @@ jobs:
       if: always()
       run: ./contrib/export-kind-logs.sh /tmp/kind/logs-kind-pr-branch
 
-    - name: Extract and print coredump stack traces
-      if: always()
-      continue-on-error: true
-      timeout-minutes: 30
-      run: ./contrib/print-coredump-stacktraces.sh /tmp/kind/logs-kind-pr-branch
-
-    - name: Upload coredump stack traces
-      if: always()
-      continue-on-error: true
-      timeout-minutes: 5
-      uses: actions/upload-artifact@v7
-      with:
-        name: coredump-stacktraces-${{ env.JOB_NAME }}-${{ github.run_id }}-after-upgrade
-        path: /tmp/kind/logs-kind-pr-branch/stacktraces
-        if-no-files-found: ignore
-
     - name: Upload kind logs
       if: always()
       uses: actions/upload-artifact@v7
       with:
         name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}-after-upgrade
         path: /tmp/kind/logs-kind-pr-branch
+
+    - name: Upload coredumps for post-processing
+      if: failure()
+      continue-on-error: true
+      timeout-minutes: 5
+      uses: actions/upload-artifact@v7
+      with:
+        name: coredumps-${{ env.JOB_NAME }}-${{ github.run_id }}
+        path: /tmp/kind/logs/coredumps
+        if-no-files-found: ignore
+        retention-days: 1
 
   e2e:
     name: e2e
@@ -754,28 +733,23 @@ jobs:
             mv -v /tmp/{,kind/logs/}traffic_flow_test_result.json ||:
         fi
 
-    - name: Extract and print coredump stack traces
-      if: always()
-      continue-on-error: true
-      timeout-minutes: 30
-      run: ./contrib/print-coredump-stacktraces.sh /tmp/kind/logs
-
-    - name: Upload coredump stack traces
-      if: always()
-      continue-on-error: true
-      timeout-minutes: 5
-      uses: actions/upload-artifact@v7
-      with:
-        name: coredump-stacktraces-${{ env.JOB_NAME }}-${{ github.run_id }}-${{ strategy.job-index }}
-        path: /tmp/kind/logs/stacktraces
-        if-no-files-found: ignore
-
     - name: Upload kind logs
       if: always()
       uses: actions/upload-artifact@v7
       with:
         name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}-${{ strategy.job-index }}
         path: /tmp/kind/logs
+
+    - name: Upload coredumps for post-processing
+      if: failure()
+      continue-on-error: true
+      timeout-minutes: 5
+      uses: actions/upload-artifact@v7
+      with:
+        name: coredumps-${{ env.JOB_NAME }}-${{ github.run_id }}-${{ strategy.job-index }}
+        path: /tmp/kind/logs/coredumps
+        if-no-files-found: ignore
+        retention-days: 1
 
   e2e-dual-conversion:
     name: e2e-dual-conversion
@@ -875,28 +849,23 @@ jobs:
       if: always()
       run: ./contrib/export-kind-logs.sh
 
-    - name: Extract and print coredump stack traces
-      if: always()
-      continue-on-error: true
-      timeout-minutes: 30
-      run: ./contrib/print-coredump-stacktraces.sh /tmp/kind/logs
-
-    - name: Upload coredump stack traces
-      if: always()
-      continue-on-error: true
-      timeout-minutes: 5
-      uses: actions/upload-artifact@v7
-      with:
-        name: coredump-stacktraces-${{ env.JOB_NAME }}-${{ github.run_id }}
-        path: /tmp/kind/logs/stacktraces
-        if-no-files-found: ignore
-
     - name: Upload kind logs
       if: always()
       uses: actions/upload-artifact@v7
       with:
         name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}
         path: /tmp/kind/logs
+
+    - name: Upload coredumps for post-processing
+      if: failure()
+      continue-on-error: true
+      timeout-minutes: 5
+      uses: actions/upload-artifact@v7
+      with:
+        name: coredumps-${{ env.JOB_NAME }}-${{ github.run_id }}
+        path: /tmp/kind/logs/coredumps
+        if-no-files-found: ignore
+        retention-days: 1
 
     - name: Export ovn dbs
       if: ${{ failure() }}
@@ -914,3 +883,45 @@ jobs:
       with:
         name: kind-ovndbs-${{ env.JOB_NAME }}-${{ github.run_id }}
         path: /tmp/kind/ovndbs
+
+  coredump-stacktraces:
+    name: Collect coredump stack traces
+    if: always() && contains(needs.*.result, 'failure')
+    continue-on-error: true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    needs:
+      - ovn-upgrade-e2e
+      - e2e
+      - e2e-dual-conversion
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v6
+      with:
+        persist-credentials: false
+
+    - name: Free up disk space
+      continue-on-error: true
+      timeout-minutes: 10
+      uses: ./.github/actions/free-disk-space
+
+    - name: Download coredumps from failed E2E lanes
+      uses: actions/download-artifact@v8
+      with:
+        pattern: coredumps-*
+        path: /tmp/coredumps
+
+    - name: Extract and print coredump stack traces
+      continue-on-error: true
+      timeout-minutes: 90
+      run: ./contrib/coredump/collect-stacktraces.sh /tmp/coredumps /tmp/stacktraces
+
+    - name: Upload combined coredump stack traces
+      if: always()
+      continue-on-error: true
+      timeout-minutes: 5
+      uses: actions/upload-artifact@v7
+      with:
+        name: coredump-stacktraces-${{ github.run_id }}
+        path: /tmp/stacktraces
+        if-no-files-found: ignore

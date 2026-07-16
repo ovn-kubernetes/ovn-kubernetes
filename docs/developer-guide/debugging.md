@@ -25,7 +25,9 @@ what went wrong.
    searches all containers for the crashed binary and copies it alongside the coredump.
 
 4. **Artifacts are uploaded** to GitHub Actions and can be downloaded from the job's
-   artifacts section.
+   artifacts section. Failed E2E lanes also upload their coredumps for an isolated
+   post-processing job. That job extracts every available trace, prints them in one
+   job log, and uploads one combined trace artifact for the PR comment workflow.
 
 ### Downloading Artifacts
 
@@ -41,11 +43,13 @@ job page. Extract it to find:
 
 ### Automated Stack Trace Extraction
 
-The `contrib/extract-coredump-stacktraces.sh` script accepts a tar archive of
-exported KIND logs and writes stack traces to a local directory:
+The `contrib/coredump/extract-stacktraces.sh` script accepts either a tar archive
+of exported KIND logs or an extracted `coredumps` directory and writes stack
+traces to a local directory:
 
 ```bash
-./contrib/extract-coredump-stacktraces.sh kind-logs.tar.gz stacktraces
+./contrib/coredump/extract-stacktraces.sh kind-logs.tar.gz stacktraces
+./contrib/coredump/extract-stacktraces.sh kind-logs/coredumps stacktraces
 ```
 
 The script supports three image families: Fedora `ovn-daemonset` C binaries,
