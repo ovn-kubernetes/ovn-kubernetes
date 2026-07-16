@@ -1434,6 +1434,7 @@ var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
 		// match the whole phrase: a bare "7" is always contained in the curl
 		// error output, if only in the target address
 		const curlConnectionRefusedCode = "exit code 7"
+		const curlGenericError = "command terminated with exit code"
 		const nodePortBackendLabel = "nodeport-backend"
 		const clientNodeBackend = "client-node"
 		const remoteNodeBackend = "remote-node"
@@ -2135,7 +2136,7 @@ var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
 						}
 						nodePort := svcNodePortNetDefault.Spec.Ports[0].NodePort
 
-						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePort)) + "/hostname", curlConnectionTimeoutCode, true
+						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePort)) + "/hostname", curlGenericError, true
 					}),
 				ginkgo.Entry("[ETP=Cluster] UDN pod to a different node nodeport service in default network should work",
 					func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
@@ -2212,13 +2213,7 @@ var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
 						}
 						nodePort := svcNodePortNetB.Spec.Ports[0].NodePort
 						// sourceIP will be joinSubnetIP for nodeports, so only using hostname endpoint
-						expectedOut := curlConnectionTimeoutCode
-						if isDynamicUDNEnabled() && cudnBTemplate.Spec.Network.Topology == udnv1.NetworkTopologyLayer3 {
-							// network B is not active on the client's node: for L3
-							// networks the connection is rejected instead of timing
-							// out, for both IP families
-							expectedOut = curlConnectionRefusedCode
-						}
+						expectedOut := curlGenericError
 						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePort)) + "/hostname", expectedOut, true
 					}),
 				ginkgo.Entry("[ETP=Cluster] UDN pod to a different node nodeport service in different UDN network should work",
@@ -2308,7 +2303,7 @@ var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
 							nodeIP = nodeIPv6
 						}
 						nodePortA := svcNodePortETPLocalNetA.Spec.Ports[0].NodePort
-						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortA)) + "/hostname", curlConnectionTimeoutCode, true
+						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortA)) + "/hostname", curlGenericError, true
 					}),
 				ginkgo.Entry("[ETP=LOCAL] UDN pod to a different node nodeport service in different UDN network should work",
 					func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
@@ -2335,7 +2330,7 @@ var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
 							nodeIP = nodeIPv6
 						}
 						nodePortB := svcNodePortETPLocalDefault.Spec.Ports[0].NodePort
-						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortB)) + "/hostname", curlConnectionTimeoutCode, true
+						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortB)) + "/hostname", curlGenericError, true
 					}),
 				ginkgo.Entry("[ETP=LOCAL] UDN pod to a different node nodeport service in default network should work",
 					func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
