@@ -398,6 +398,10 @@ jobs:
         docker exec ovn-worker crictl images
         docker exec ovn-worker2 crictl images
 
+    - name: Extract and print coredump stack traces
+      if: always()
+      run: ./contrib/print-coredump-stacktraces.sh /tmp/kind/logs
+
     - name: Upload kind logs
       if: always()
       uses: actions/upload-artifact@v7
@@ -426,6 +430,10 @@ jobs:
     - name: Export kind logs
       if: always()
       run: ./contrib/export-kind-logs.sh /tmp/kind/logs-kind-pr-branch
+
+    - name: Extract and print coredump stack traces
+      if: always()
+      run: ./contrib/print-coredump-stacktraces.sh /tmp/kind/logs-kind-pr-branch
 
     - name: Upload kind logs
       if: always()
@@ -722,6 +730,10 @@ jobs:
             mv -v /tmp/{,kind/logs/}traffic_flow_test_result.json ||:
         fi
 
+    - name: Extract and print coredump stack traces
+      if: always()
+      run: ./contrib/print-coredump-stacktraces.sh /tmp/kind/logs
+
     - name: Upload kind logs
       if: always()
       uses: actions/upload-artifact@v7
@@ -826,6 +838,10 @@ jobs:
     - name: Export kind logs
       if: always()
       run: ./contrib/export-kind-logs.sh
+
+    - name: Extract and print coredump stack traces
+      if: always()
+      run: ./contrib/print-coredump-stacktraces.sh /tmp/kind/logs
 
     - name: Upload kind logs
       if: always()
