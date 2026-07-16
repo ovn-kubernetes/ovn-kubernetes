@@ -125,14 +125,14 @@ func (m *anpZoneDeleteCleanupManager) doStartupCleanup(currentZones sets.Set[str
 	staleZones := sets.New[string]()
 	for _, anp := range existingANPs {
 		for _, mf := range anp.ManagedFields {
-			if mf.Subresource == "status" && !currentZones.Has(mf.Manager) && isEmptyStatusManagedField(mf) {
+			if mf.Subresource == "status" && !currentZones.Has(mf.Manager) {
 				staleZones.Insert(mf.Manager)
 			}
 		}
 	}
 	for _, banp := range existingBANPs {
 		for _, mf := range banp.ManagedFields {
-			if mf.Subresource == "status" && !currentZones.Has(mf.Manager) && isEmptyStatusManagedField(mf) {
+			if mf.Subresource == "status" && !currentZones.Has(mf.Manager) {
 				staleZones.Insert(mf.Manager)
 			}
 		}

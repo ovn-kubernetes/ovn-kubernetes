@@ -4,7 +4,6 @@
 package status_manager
 
 import (
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"sync"
@@ -109,39 +108,6 @@ func (m *typedStatusManager[T]) Stop() {
 	controller.Stop(m.objController)
 }
 
-// isEmptyStatusManagedField checks if a managedField entry is managing only an empty status field.
-// This is the signature left by previous code that called ApplyStatus with an empty status.
-// Example: fieldsV1: {"f:status":{}}
-func isEmptyStatusManagedField(mf metav1.ManagedFieldsEntry) bool {
-	if mf.FieldsV1 == nil || mf.Subresource != "status" {
-		return false
-	}
-
-	// Parse the fieldsV1 JSON to check if it's just {"f:status":{}}
-	var fields map[string]interface{}
-	if err := json.Unmarshal(mf.FieldsV1.Raw, &fields); err != nil {
-		return false
-	}
-
-	// Check if it only has one "f:status" key
-	if len(fields) != 1 {
-		return false
-	}
-
-	statusField, ok := fields["f:status"]
-	if !ok {
-		return false
-	}
-
-	// Check if "f:status" is empty
-	statusMap, ok := statusField.(map[string]interface{})
-	if !ok {
-		return false
-	}
-	// Empty status: {} or contains only empty nested fields
-	return len(statusMap) == 0
-}
-
 // doStartupCleanup performs a one-time cleanup of stale managedFields for all objects.
 // This handles the upgrade scenario where previous code left stale managedFields.
 // Returns an error if any cleanup operations failed.
@@ -157,10 +123,14 @@ func (m *typedStatusManager[T]) doStartupCleanup(zones sets.Set[string]) error {
 	for _, obj := range objects {
 		managedFields := m.resource.getManagedFields(obj)
 
-		// Check for stale empty-status managedFields
+		// Check for stale status managedFields
 		for _, mf := range managedFields {
-			if !zones.Has(mf.Manager) && isEmptyStatusManagedField(mf) {
-				klog.V(5).Infof("StatusManager %s: cleaning up stale empty-status managedField for manager: %s", m.name, mf.Manager)
+			// Skip cluster-manager (global aggregator)
+			if mf.Manager == clusterManagerName {
+				continue
+			}
+			if !zones.Has(mf.Manager) && mf.Subresource == "status" {
+				klog.V(5).Infof("StatusManager %s: cleaning up stale status managedField for manager: %s", m.name, mf.Manager)
 				applyAsZoneController := &metav1.ApplyOptions{
 					Force:        true,
 					FieldManager: mf.Manager,
