@@ -6,6 +6,7 @@
 
 readonly COREDUMP_GLOB='core.*'
 readonly STACKTRACE_SUFFIX='.stacktrace.txt'
+readonly STACKTRACE_GLOB="*${STACKTRACE_SUFFIX}"
 
 stacktrace_path() {
   local output_dir=$1
