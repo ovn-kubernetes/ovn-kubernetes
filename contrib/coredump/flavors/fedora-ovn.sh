@@ -2,9 +2,11 @@
 # SPDX-FileCopyrightText: Copyright The OVN-Kubernetes Contributors
 # SPDX-License-Identifier: Apache-2.0
 
-# Run inside the exact Fedora base image recorded in KIND log artifacts.
+# Fedora OVN flavor: run inside the recorded Fedora base image.
 
 set -euo pipefail
+
+source /gdb-stacktrace.sh
 
 die() {
   echo "error: $*" >&2
@@ -17,13 +19,13 @@ extract_ovn_version() {
     | sed -n '1p'
 }
 
-[ "$#" -ge 5 ] || die "expected an RPM architecture and one or more coredumps"
-[ $((($# - 1) % 4)) -eq 0 ] || die "incomplete coredump arguments"
-: "${RECORDED_FEDORA_BASE_IMAGE:?RECORDED_FEDORA_BASE_IMAGE is required}"
+[ "$#" -ge 6 ] || die "expected Fedora metadata and one or more coredumps"
+[ $((($# - 2) % 4)) -eq 0 ] || die "incomplete coredump arguments"
 : "${DEBUG_IMAGE:?DEBUG_IMAGE is required}"
 
 rpm_arch=$1
-shift
+recorded_fedora_base_image=$2
+shift 2
 
 declare -a coredump_args=("$@")
 
@@ -68,18 +70,11 @@ for ((i = 0; i < ${#coredump_args[@]}; i += 4)); do
     echo "Core dump: $(basename "$core")"
     echo "Executable: $(basename "$binary")"
     echo "Runtime image: ${runtime_image}"
-    echo "Recorded Fedora base image: ${RECORDED_FEDORA_BASE_IMAGE}"
+    echo "Recorded Fedora base image: ${recorded_fedora_base_image}"
     echo "Debug image: ${DEBUG_IMAGE}"
     echo "OVN build: ${ovn_build}"
     echo
-    if ! gdb --batch --quiet \
-      -iex 'set debuginfod enabled off' \
-      -ex 'set pagination off' \
-      -ex 'info threads' \
-      -ex 'thread apply all bt full' \
-      "$binary" "$core"; then
-      echo
-      echo "GDB failed to extract this stack trace."
+    if ! gdb_stacktrace "$binary" "$core"; then
       status=1
     fi
   } > "$output" 2>&1

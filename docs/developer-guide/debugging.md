@@ -48,13 +48,14 @@ exported KIND logs and writes stack traces to a local directory:
 ./contrib/extract-coredump-stacktraces.sh kind-logs.tar.gz stacktraces
 ```
 
-The script currently supports `ovn-northd` and `ovn-controller` coredumps from
-the Fedora `ovn-daemonset` image. It uses the image metadata in the artifact to
-run GDB in the exact Fedora base image and install the matching OVN runtime and
-debuginfo RPMs. If that digest is no longer available, it falls back to the
-Fedora release recorded in the binary. Docker and network access to Fedora and
-Koji are required. Set `OCI_BIN` to use another Docker-compatible container
-runtime.
+The script supports three image families: Fedora `ovn-daemonset` C binaries,
+Go binaries, and FRR daemons from the Alpine-based `quay.io/frrouting/frr`
+image. It selects GDB or Delve from the collected binary and image metadata,
+then batches coredumps that can share one debugger container. Fedora OVN traces
+install the matching runtime and debuginfo RPMs from Koji; FRR traces use the
+exact recorded image and its bundled split debug files. Docker and network
+access are required. Set `OCI_BIN` to use another Docker-compatible container
+runtime, or `GO_DEBUG_IMAGE` to override the Fedora image that provides Delve.
 
 ### Debugging with Delve
 
