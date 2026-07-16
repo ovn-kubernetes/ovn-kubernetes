@@ -169,6 +169,22 @@ if [ "$ENABLE_NO_OVERLAY" != true ]; then
   skip_label "Feature:NoOverlay"
 fi
 
+# RouteAdvertisements tests over dynamically allocated UDNs require a cluster
+# with both route advertisements and dynamic UDN allocation enabled.
+if [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ] || [ "$DYNAMIC_UDN_ALLOCATION" != true ]; then
+  skip_label "Feature:RouteAdvertisementsDynamicUDN"
+fi
+
+# The "BGP: For BGP configured networks" tests (VRF-Lite and EVPN CUDNs) only
+# run in local gateway mode, while dynamic UDN allocation is only covered in
+# shared gateway mode lanes, so the two never overlap in CI. Skip them
+# explicitly on dynamic UDN clusters regardless: they set up and expect
+# per-network topology on every node, which does not hold with dynamic UDN
+# allocation (okep-5552).
+if [ "$DYNAMIC_UDN_ALLOCATION" == true ]; then
+  skip "BGP: For BGP configured networks"
+fi
+
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ]; then
   skip_label "Feature:RouteAdvertisements"
 else

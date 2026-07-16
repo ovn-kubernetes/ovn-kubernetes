@@ -29,9 +29,13 @@ var (
 	NoOverlay             = New("NoOverlay")
 	OVSCPUPin             = New("OVSCPUPin")
 	RouteAdvertisements   = New("RouteAdvertisements")
-	Unidle                = New("Unidle")
-	NetworkQos            = New("NetworkQos")
-	NetworkConnect        = New("NetworkConnect")
+	// RouteAdvertisementsDynamicUDN covers RouteAdvertisements behavior that
+	// is specific to dynamic UDN allocation; these tests require clusters
+	// with both route advertisements and dynamic UDN allocation enabled.
+	RouteAdvertisementsDynamicUDN = New("RouteAdvertisementsDynamicUDN")
+	Unidle                        = New("Unidle")
+	NetworkQos                    = New("NetworkQos")
+	NetworkConnect                = New("NetworkConnect")
 )
 
 func New(name string) ginkgo.Labels {

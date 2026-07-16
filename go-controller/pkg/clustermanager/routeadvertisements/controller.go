@@ -91,7 +91,16 @@ type Controller struct {
 	nsController   controllerutil.Controller
 
 	nm networkmanager.Interface
+	// networkRefReconcilerID identifies our registration with the network
+	// manager for network activity change notifications
+	networkRefReconcilerID uint64
 }
+
+// networkRefReconcilerFunc adapts a function to the
+// networkmanager.NetworkRefReconciler interface.
+type networkRefReconcilerFunc func(node, networkName string)
+
+func (f networkRefReconcilerFunc) Reconcile(node, networkName string) { f(node, networkName) }
 
 // NewController builds a controller that reconciles RouteAdvertisements
 func NewController(
@@ -199,6 +208,12 @@ func NewController(
 
 func (c *Controller) Start() error {
 	defer klog.Infof("Cluster manager routeadvertisements started")
+	// reconcile when a network goes active or inactive on a node: some of
+	// these changes, like a network going active again during the deletion
+	// grace period, update no object we watch
+	c.networkRefReconcilerID = c.nm.RegisterNetworkRefReconciler(networkRefReconcilerFunc(func(_, _ string) {
+		c.raController.ReconcileAll()
+	}))
 	return controllerutil.Start(
 		c.eipController,
 		c.frrController,
@@ -210,6 +225,7 @@ func (c *Controller) Start() error {
 }
 
 func (c *Controller) Stop() {
+	c.nm.DeRegisterNetworkRefReconciler(c.networkRefReconcilerID)
 	controllerutil.Stop(
 		c.eipController,
 		c.frrController,
@@ -716,7 +732,29 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 		selectedNetworks.hostSubnets = []string{}
 
 		// gather node specific information
+		nodeNetworks := make([]string, 0, len(selectedNetworks.networks))
 		for _, network := range selectedNetworks.networks {
+			if !c.nm.NodeHasNetwork(nodeName, network) {
+				// only advertise a network on nodes where it is active, that
+				// is, with pods or EgressIPs attached to it; NodeHasNetwork
+				// returns false only with dynamic UDN allocation enabled.
+				// The network manager notifies us when a network goes active
+				// or inactive on a node.
+				continue
+			}
+			if config.OVNKubernetesFeature.EnableDynamicUDNAllocation &&
+				selectedNetworks.networkTopology[network] == types.Layer2Topology &&
+				!c.nodeHasLayer2Allocation(nodeName, network) {
+				// without its tunnel ID allocated, the node cannot have
+				// rendered the layer2 network yet, so don't advertise it:
+				// unlike layer3, there are no per-node prefixes to otherwise
+				// wait for. The allocation is a node annotation update that
+				// triggers the advertising reconcile.
+				// TODO: replace with a per-node network status once
+				// available, to know when the network is actually rendered.
+				continue
+			}
+			nodeNetworks = append(nodeNetworks, network)
 			selectedNetworks.hostNetworkSubnets[network], err = getPrefixes(nodeName, network,
 				selectedNetworks.networkTopology[network], selectedNetworks.networkSubnets[network])
 			if err != nil {
@@ -750,18 +788,61 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 			}
 			if new == nil {
 				// if we got nil, we didn't match any VRF
+				if ra.Spec.TargetVRF == "auto" && frrConfigOnlyMatchesInactiveNetworks(frrConfig, selectedNetworks, nodeNetworks) {
+					// this FRRConfiguration only carries routers for VRFs of
+					// selected networks that are not active on this node:
+					// skip it for this node instead of failing, mirroring the
+					// per-network skip above.
+					continue
+				}
 				return nil, nil, fmt.Errorf("%w: FRRConfiguration %q selected for node %q has no VRF matching the RouteAdvertisements target VRF or any selected network",
 					errConfig, frrConfig.Name, nodeName)
 			}
 			generated = append(generated, new)
 		}
-		// check that we matched all the selected networks on 'auto'
-		if ra.Spec.TargetVRF == "auto" && !matchedNetworks.HasAll(selectedNetworks.networks...) {
+		// check that we matched all the networks selected for this node on 'auto'
+		if ra.Spec.TargetVRF == "auto" && !matchedNetworks.HasAll(nodeNetworks...) {
 			return nil, nil, fmt.Errorf("%w: selected FRRConfigurations for node %q don't match all selected networks with target VRF 'auto'", errConfig, nodeName)
 		}
 	}
 
 	return generated, nads, nil
+}
+
+// nodeHasLayer2Allocation reports whether the node has a gateway router LRP
+// tunnel ID allocated for the layer2 network.
+func (c *Controller) nodeHasLayer2Allocation(nodeName, network string) bool {
+	node, err := c.nodeLister.Get(nodeName)
+	if err != nil {
+		return false
+	}
+	return util.HasUDNLayer2NodeGRLRPTunnelID(node, network)
+}
+
+// frrConfigOnlyMatchesInactiveNetworks helps decide whether an
+// FRRConfiguration that matched no router for a node is a configuration
+// error. It is not an error if the FRRConfiguration is dedicated to selected
+// networks that are simply not active on the node: that is, its router
+// VRFs reference at least one selected network, and none of the referenced
+// networks are among the ones advertised on the node (nodeNetworks). Used
+// with target VRF 'auto' to skip such FRRConfigurations for the node.
+func frrConfigOnlyMatchesInactiveNetworks(frrConfig *frrtypes.FRRConfiguration, selected *selectedNetworks, nodeNetworks []string) bool {
+	advertised := sets.New(nodeNetworks...)
+	referencesSelected := false
+	for _, router := range frrConfig.Spec.BGP.Routers {
+		network := selected.networkVRFs[router.VRF]
+		if router.VRF == "" && slices.Contains(selected.networks, types.DefaultNetworkName) {
+			network = types.DefaultNetworkName
+		}
+		if network == "" {
+			continue
+		}
+		referencesSelected = true
+		if advertised.Has(network) {
+			return false
+		}
+	}
+	return referencesSelected
 }
 
 // generateFRRConfiguration generates a FRRConfiguration from a source for a
@@ -1621,6 +1702,9 @@ func nodeNeedsUpdate(oldObj, newObj *corev1.Node) bool {
 	return oldObj == nil || newObj == nil ||
 		!reflect.DeepEqual(oldObj.Labels, newObj.Labels) ||
 		util.NodeSubnetAnnotationChanged(oldObj, newObj) ||
+		// with dynamic UDN allocation, the tunnel ID allocation determines
+		// which nodes advertise a layer2 network
+		oldObj.Annotations[types.UDNLayer2NodeGRLRPTunnelIDAnnotation] != newObj.Annotations[types.UDNLayer2NodeGRLRPTunnelIDAnnotation] ||
 		oldObj.Annotations[util.OvnNodeIfAddr] != newObj.Annotations[util.OvnNodeIfAddr] ||
 		util.NodeL3GatewayAnnotationChanged(oldObj, newObj) ||
 		util.NodeChassisIDAnnotationChanged(oldObj, newObj) ||

@@ -143,6 +143,7 @@ type testNode struct {
 	Labels                    map[string]string
 	PrimaryAddressAnnotation  string
 	SubnetsAnnotation         string
+	TunnelIDsAnnotation       string
 	L3GatewayConfigAnnotation string
 	ChassisIDAnnotation       string
 	VTEPIPs                   map[string][]string
@@ -157,6 +158,9 @@ func (tn testNode) Node() *corev1.Node {
 	annotations := map[string]string{
 		"k8s.ovn.org/node-subnets": tn.SubnetsAnnotation,
 		util.OvnNodeIfAddr:         primaryAddressAnnotation,
+	}
+	if tn.TunnelIDsAnnotation != "" {
+		annotations[types.UDNLayer2NodeGRLRPTunnelIDAnnotation] = tn.TunnelIDsAnnotation
 	}
 	if tn.L3GatewayConfigAnnotation != "" {
 		annotations[util.OvnNodeL3GatewayConfig] = tn.L3GatewayConfigAnnotation
@@ -181,6 +185,24 @@ func (tn testNode) Node() *corev1.Node {
 			Labels:      tn.Labels,
 			Generation:  int64(tn.Generation),
 			Annotations: annotations,
+		},
+	}
+}
+
+type testPod struct {
+	Name      string
+	Namespace string
+	Node      string
+}
+
+func (tp testPod) Pod() *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      tp.Name,
+			Namespace: tp.Namespace,
+		},
+		Spec: corev1.PodSpec{
+			NodeName: tp.Node,
 		},
 	}
 }
@@ -522,11 +544,13 @@ func TestController_reconcile(t *testing.T) {
 		nads                 []*testNAD
 		nodes                []*testNode
 		namespaces           []*testNamespace
+		pods                 []*testPod
 		eips                 []*testEIP
 		vteps                []*vtepv1.VTEP
 		reconcile            string
 		transport            string
 		gatewayMode          config.GatewayMode
+		dynamicUDN           bool
 		ipv6                 bool
 		wantErr              bool
 		expectAcceptedStatus metav1.ConditionStatus
@@ -2289,6 +2313,272 @@ exit
 			expectFRRConfigs:     []*testFRRConfig{},
 			expectNADAnnotations: map[string]map[string]string{"blue": {}},
 		},
+		{
+			name:       "with dynamic UDN allocation, ignores nodes where the selected network is not allocated and advertises dual-stack subnets where it is",
+			dynamicUDN: true,
+			ipv6:       true,
+			ra:         &testRA{Name: "ra", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100"},
+							{ASN: 1, Address: "fd02::ffff:100:64"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "blue", Namespace: "blue", Network: util.GenerateCUDNNetworkName("blue"), Topology: "layer3", Subnet: "1.3.0.0/16,fd01:3::/48", Labels: map[string]string{"selected": "true"}},
+			},
+			namespaces: []*testNamespace{{Name: "blue"}},
+			pods:       []*testPod{{Name: "pod", Namespace: "blue", Node: "node"}},
+			nodes: []*testNode{
+				// "node" runs a pod attached to the network and has subnets
+				// allocated for it, "node2" does not and must not block the
+				// RouteAdvertisements from being accepted, not even with its
+				// stale empty subnet entry for the network
+				{Name: "node", SubnetsAnnotation: "{\"default\":[\"1.1.0.0/24\",\"fd01::/64\"], \"cluster_udn_blue\":[\"1.3.0.0/24\",\"fd01:3::/64\"]}"},
+				{Name: "node2", SubnetsAnnotation: "{\"default\":[\"1.1.1.0/24\",\"fd01:0:0:1::/64\"], \"cluster_udn_blue\":[]}"},
+			},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.3.0.0/24", "fd01:3::/64"}, Imports: []string{"blue"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.3.0.0/24"}},
+							{ASN: 1, Address: "fd02::ffff:100:64", Advertise: []string{"fd01:3::/64"}},
+						}},
+						{ASN: 1, VRF: "blue", Imports: []string{"default"}},
+					}},
+			},
+			expectNADAnnotations: map[string]map[string]string{"blue": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
+		},
+		{
+			name:       "with dynamic UDN allocation and 'auto' target VRF, only requires matching the networks allocated on each node",
+			dynamicUDN: true,
+			ra:         &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, VRF: "blue", Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100"},
+						}},
+						{ASN: 1, VRF: "red", Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "blue", Namespace: "blue", Network: util.GenerateCUDNNetworkName("blue"), Topology: "layer3", Subnet: "1.3.0.0/16", Labels: map[string]string{"selected": "true"}},
+				{Name: "red", Namespace: "red", Network: util.GenerateCUDNNetworkName("red"), Topology: "layer3", Subnet: "1.2.0.0/16", Labels: map[string]string{"selected": "true"}},
+			},
+			namespaces: []*testNamespace{{Name: "blue"}, {Name: "red"}},
+			pods:       []*testPod{{Name: "pod", Namespace: "blue", Node: "node"}},
+			nodes: []*testNode{
+				// "node" is only active for network blue: with 'auto' target
+				// VRF, network red not matching any router VRF on it must not
+				// block the RouteAdvertisements from being accepted
+				{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\", \"cluster_udn_blue\":\"1.3.0.0/24\"}"},
+				{Name: "node2", SubnetsAnnotation: "{\"default\":\"1.1.1.0/24\"}"},
+			},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
+					Routers: []*testRouter{
+						{ASN: 1, VRF: "blue", Prefixes: []string{"1.3.0.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.3.0.0/24"}},
+						}},
+					}},
+			},
+			expectNADAnnotations: map[string]map[string]string{"blue": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}, "red": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
+		},
+		{
+			name:       "with dynamic UDN allocation, withdraws a network from nodes where it is no longer active even if still allocated",
+			dynamicUDN: true,
+			ra:         &testRA{Name: "ra", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "blue", Namespace: "blue", Network: util.GenerateCUDNNetworkName("blue"), Topology: "layer3", Subnet: "1.3.0.0/16", Labels: map[string]string{"selected": "true"}},
+			},
+			namespaces: []*testNamespace{{Name: "blue"}},
+			pods:       []*testPod{{Name: "pod", Namespace: "blue", Node: "node"}},
+			nodes: []*testNode{
+				// "node" runs a pod attached to the network; "node2" does not
+				// but still has a subnet allocated for it, as during the
+				// deletion grace period after its last workload left: only
+				// "node" must be advertised
+				{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\", \"cluster_udn_blue\":\"1.3.0.0/24\"}"},
+				{Name: "node2", SubnetsAnnotation: "{\"default\":\"1.1.1.0/24\", \"cluster_udn_blue\":\"1.3.1.0/24\"}"},
+			},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.3.0.0/24"}, Imports: []string{"blue"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.3.0.0/24"}},
+						}},
+						{ASN: 1, VRF: "blue", Imports: []string{"default"}},
+					}},
+			},
+			expectNADAnnotations: map[string]map[string]string{"blue": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
+		},
+		{
+			name:       "with dynamic UDN allocation, advertises a layer2 network from nodes where it is active and its tunnel ID is allocated",
+			dynamicUDN: true,
+			ra:         &testRA{Name: "ra", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "green", Namespace: "green", Network: util.GenerateCUDNNetworkName("green"), Topology: "layer2", Subnet: "1.4.0.0/16", Labels: map[string]string{"selected": "true"}},
+			},
+			namespaces: []*testNamespace{{Name: "green"}},
+			pods:       []*testPod{{Name: "pod", Namespace: "green", Node: "node"}},
+			nodes: []*testNode{
+				// layer2 networks have no per-node subnets: "node" runs a pod
+				// attached to the network and has its gateway router LRP
+				// tunnel ID allocated; "node2" still has a tunnel ID
+				// allocated but no workloads, and must not be advertised
+				{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\"}", TunnelIDsAnnotation: "{\"cluster_udn_green\":\"5\"}"},
+				{Name: "node2", SubnetsAnnotation: "{\"default\":\"1.1.1.0/24\"}", TunnelIDsAnnotation: "{\"cluster_udn_green\":\"6\"}"},
+			},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.4.0.0/16"}, Imports: []string{"green"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.4.0.0/16"}},
+						}},
+						{ASN: 1, VRF: "green", Imports: []string{"default"}},
+					}},
+			},
+			expectNADAnnotations: map[string]map[string]string{"green": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
+		},
+		{
+			name:       "with dynamic UDN allocation, does not advertise a layer2 network from an active node until its tunnel ID is allocated",
+			dynamicUDN: true,
+			ra:         &testRA{Name: "ra", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "green", Namespace: "green", Network: util.GenerateCUDNNetworkName("green"), Topology: "layer2", Subnet: "1.4.0.0/16", Labels: map[string]string{"selected": "true"}},
+			},
+			namespaces: []*testNamespace{{Name: "green"}},
+			pods:       []*testPod{{Name: "pod", Namespace: "green", Node: "node"}},
+			nodes: []*testNode{
+				// "node" runs a pod attached to the network but has no tunnel
+				// ID allocated for it yet: it must not be advertised before
+				// the network is rendered on it, that is, once the tunnel ID
+				// allocation lands on the node annotations
+				{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\"}"},
+			},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs:     []*testFRRConfig{},
+			expectNADAnnotations: map[string]map[string]string{"green": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
+		},
+		{
+			name:       "with dynamic UDN allocation and 'auto' target VRF, skips FRRConfigurations that only match networks not allocated on the node",
+			dynamicUDN: true,
+			ra:         &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig-blue",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, VRF: "blue", Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100"},
+						}},
+					},
+				},
+				{
+					Name:      "frrConfig-red",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, VRF: "red", Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "blue", Namespace: "blue", Network: util.GenerateCUDNNetworkName("blue"), Topology: "layer3", Subnet: "1.3.0.0/16", Labels: map[string]string{"selected": "true"}},
+				{Name: "red", Namespace: "red", Network: util.GenerateCUDNNetworkName("red"), Topology: "layer3", Subnet: "1.2.0.0/16", Labels: map[string]string{"selected": "true"}},
+			},
+			namespaces: []*testNamespace{{Name: "blue"}, {Name: "red"}},
+			pods:       []*testPod{{Name: "pod", Namespace: "blue", Node: "node"}},
+			nodes: []*testNode{
+				// "node" is only active for network blue: the source
+				// FRRConfiguration carrying only network red's VRF must be
+				// skipped for it instead of blocking the RouteAdvertisements
+				// from being accepted
+				{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\", \"cluster_udn_blue\":\"1.3.0.0/24\"}"},
+				{Name: "node2", SubnetsAnnotation: "{\"default\":\"1.1.1.0/24\"}"},
+			},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig-blue/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
+					Routers: []*testRouter{
+						{ASN: 1, VRF: "blue", Prefixes: []string{"1.3.0.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.3.0.0/24"}},
+						}},
+					}},
+			},
+			expectNADAnnotations: map[string]map[string]string{"blue": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}, "red": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -2316,6 +2606,8 @@ exit
 			config.OVNKubernetesFeature.EnableRouteAdvertisements = true
 			config.OVNKubernetesFeature.EnableEgressIP = true
 			config.OVNKubernetesFeature.EnableEVPN = true
+			config.OVNKubernetesFeature.EnableNetworkSegmentation = tt.dynamicUDN
+			config.OVNKubernetesFeature.EnableDynamicUDNAllocation = tt.dynamicUDN
 			// satisfy EVPN LGW restriction, otherwise no effect
 			config.Gateway.Mode = config.GatewayModeLocal
 			if tt.gatewayMode != "" {
@@ -2352,6 +2644,11 @@ exit
 
 			for _, namespace := range tt.namespaces {
 				_, err := fakeClientset.KubeClient.CoreV1().Namespaces().Create(context.Background(), namespace.Namespace(), metav1.CreateOptions{})
+				g.Expect(err).ToNot(gomega.HaveOccurred())
+			}
+
+			for _, pod := range tt.pods {
+				_, err := fakeClientset.KubeClient.CoreV1().Pods(pod.Namespace).Create(context.Background(), pod.Pod(), metav1.CreateOptions{})
 				g.Expect(err).ToNot(gomega.HaveOccurred())
 			}
 
@@ -2492,6 +2789,136 @@ exit
 			}
 		})
 	}
+}
+
+// TestController_reconcileOnNetworkActivity verifies that the controller
+// reconciles on network activity changes notified by the network manager: a
+// network going active on a node that still has its subnet allocated, as
+// after a pod is recreated during the deletion grace period, updates no
+// object the controller watches.
+func TestController_reconcileOnNetworkActivity(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	frrNamespace := "frrNamespace"
+	config.Default.ClusterSubnets = []config.CIDRNetworkEntry{
+		{
+			CIDR:             ovntest.MustParseIPNet("1.1.0.0/16"),
+			HostSubnetLength: 24,
+		},
+	}
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	config.OVNKubernetesFeature.EnableRouteAdvertisements = true
+	config.OVNKubernetesFeature.EnableEgressIP = true
+	config.OVNKubernetesFeature.EnableEVPN = true
+	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+	config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
+	config.Gateway.Mode = config.GatewayModeLocal
+
+	fakeClientset := util.GetOVNClientset().GetClusterManagerClientset()
+	addGenerateNameReactor[*frrfake.Clientset](fakeClientset.FRRClient)
+
+	ra := &testRA{Name: "ra", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}}
+	_, err := fakeClientset.RouteAdvertisementsClient.K8sV1().RouteAdvertisements().Create(context.Background(), ra.RouteAdvertisements(), metav1.CreateOptions{})
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	frrConfig := &testFRRConfig{
+		Name:      "frrConfig",
+		Namespace: frrNamespace,
+		Routers: []*testRouter{
+			{ASN: 1, Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+				{ASN: 1, Address: "1.0.0.100"},
+			}},
+		},
+	}
+	_, err = fakeClientset.FRRClient.ApiV1beta1().FRRConfigurations(frrConfig.Namespace).Create(context.Background(), frrConfig.FRRConfiguration(), metav1.CreateOptions{})
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	nad := &testNAD{Name: "blue", Namespace: "blue", Network: util.GenerateCUDNNetworkName("blue"), Topology: "layer3", Subnet: "1.3.0.0/16", Labels: map[string]string{"selected": "true"}}
+	_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nad.Namespace).Create(context.Background(), nad.NAD(), metav1.CreateOptions{})
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	// the node still has a subnet allocated for the network, as during the
+	// deletion grace period, but no workloads attached to it
+	node := &testNode{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\", \"cluster_udn_blue\":\"1.3.0.0/24\"}"}
+	_, err = fakeClientset.KubeClient.CoreV1().Nodes().Create(context.Background(), node.Node(), metav1.CreateOptions{})
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	for _, namespace := range []string{"blue", config.Kubernetes.OVNConfigNamespace} {
+		_, err = fakeClientset.KubeClient.CoreV1().Namespaces().Create(context.Background(),
+			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}}, metav1.CreateOptions{})
+		g.Expect(err).ToNot(gomega.HaveOccurred())
+	}
+
+	wf, err := factory.NewClusterManagerWatchFactory(fakeClientset)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	nm, err := networkmanager.NewForCluster(&networkmanager.FakeControllerManager{}, wf, fakeClientset, nil, id.NewTunnelKeyAllocator("TunnelKeys"))
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	c := NewController(nm.Interface(), wf, fakeClientset)
+
+	// prime the default network NAD
+	defaultNAD, err := util.EnsureDefaultNetworkNAD(c.nadLister, c.nadClient)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	defaultNAD.Annotations = map[string]string{types.OvnNetworkNameAnnotation: types.DefaultNetworkName}
+	_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(defaultNAD.Namespace).Update(context.Background(), defaultNAD, metav1.UpdateOptions{})
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	err = wf.Start()
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	defer wf.Shutdown()
+
+	cache.WaitForCacheSync(
+		context.Background().Done(),
+		wf.RouteAdvertisementsInformer().Informer().HasSynced,
+		wf.FRRConfigurationsInformer().Informer().HasSynced,
+		wf.NADInformer().Informer().HasSynced,
+		wf.NodeCoreInformer().Informer().HasSynced,
+		wf.EgressIPInformer().Informer().HasSynced,
+	)
+
+	// keep the network manager running so that pod events reach its trackers
+	err = nm.Start()
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	defer nm.Stop()
+
+	err = c.Start()
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	defer c.Stop()
+
+	t.Cleanup(func() { metrics.DeleteRouteAdvertisementCondition("ra") })
+
+	generatedFRRConfigs := func() []string {
+		frrConfigs, err := fakeClientset.FRRClient.ApiV1beta1().FRRConfigurations(frrNamespace).List(context.Background(), metav1.ListOptions{})
+		g.Expect(err).ToNot(gomega.HaveOccurred())
+		var generated []string
+		for _, frrConfig := range frrConfigs.Items {
+			if key, ok := frrConfig.Annotations[types.OvnRouteAdvertisementsKey]; ok {
+				generated = append(generated, key)
+			}
+		}
+		return generated
+	}
+
+	// the network is not active on the node: nothing is advertised
+	raAccepted := func() bool {
+		ra, err := fakeClientset.RouteAdvertisementsClient.K8sV1().RouteAdvertisements().Get(context.Background(), "ra", metav1.GetOptions{})
+		if err != nil {
+			return false
+		}
+		return meta.IsStatusConditionTrue(ra.Status.Conditions, "Accepted")
+	}
+	g.Eventually(raAccepted, 5*time.Second).Should(gomega.BeTrue())
+	g.Expect(generatedFRRConfigs()).To(gomega.BeEmpty())
+
+	// scheduling a pod on the node activates the network there without
+	// updating any object the controller watches: the network manager
+	// notification must trigger the reconcile that advertises the node
+	pod := &testPod{Name: "pod", Namespace: "blue", Node: "node"}
+	_, err = fakeClientset.KubeClient.CoreV1().Pods(pod.Namespace).Create(context.Background(), pod.Pod(), metav1.CreateOptions{})
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	g.Eventually(generatedFRRConfigs, 5*time.Second).Should(gomega.ConsistOf("ra/frrConfig/node"))
 }
 
 func TestUpdates(t *testing.T) {
