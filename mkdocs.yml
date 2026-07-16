@@ -178,5 +178,6 @@ nav:
     - EVPN: okeps/okep-5088-evpn.md
     - DPU Healthcheck: okeps/okep-5674-dpu-healthcheck.md
     - Extend Primary UDN/CUDN to Support Multiple Cluster Subnets in Layer3 Topology: okeps/okep-5377-extend-udn-to-support-multiple-cluster-subnets-in-layer3-topology.md
+    - Scalable ARP/NDP Broadcast Handling for UDN: okeps/okep-6691-scalable-arp-ndp-broadcast-udn.md
   - Blog:
     - blog/index.md
