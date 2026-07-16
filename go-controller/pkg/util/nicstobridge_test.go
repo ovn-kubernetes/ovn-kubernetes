@@ -5,6 +5,7 @@ package util
 
 import (
 	"fmt"
+	"net"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -357,6 +358,11 @@ func TestNicToBridge(t *testing.T) {
 	// below is defined in net_linux.go
 	netLinkOps = mockNetLinkOps
 
+	nicHWAddr, err := net.ParseMAC("00:11:22:33:44:55")
+	require.NoError(t, err)
+	randomHWAddr, err := net.ParseMAC("66:77:88:99:aa:bb")
+	require.NoError(t, err)
+
 	rootOvs := func() []libovsdbtest.TestData {
 		return []libovsdbtest.TestData{&vswitchd.OpenvSwitch{UUID: "root-ovs"}}
 	}
@@ -429,6 +435,7 @@ func TestNicToBridge(t *testing.T) {
 				{OnCallMethodName: "AddrList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{[]netlink.Addr{{IPNet: ovntest.MustParseIPNet("192.168.1.15/24")}}, nil}},
 				{OnCallMethodName: "RouteList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{[]netlink.Route{{Dst: ovntest.MustParseIPNet("10.168.1.0/24")}}, nil}},
 				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{nil, fmt.Errorf("mock error")}},
+				{OnCallMethodName: "IsLinkNotFoundError", OnCallMethodArgType: []string{"*errors.errorString"}, RetArgList: []interface{}{false}},
 			},
 			onRetArgsLinkIfaceOpers: []ovntest.TestifyMockHelper{
 				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}},
@@ -446,7 +453,7 @@ func TestNicToBridge(t *testing.T) {
 				{OnCallMethodName: "LinkSetUp", OnCallMethodArgType: []string{"*mocks.Link"}, RetArgList: []interface{}{fmt.Errorf("mock error")}},
 			},
 			onRetArgsLinkIfaceOpers: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}},
+				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}, CallTimes: 2},
 			},
 		},
 		{
@@ -462,8 +469,7 @@ func TestNicToBridge(t *testing.T) {
 				{OnCallMethodName: "RouteDel", OnCallMethodArgType: []string{"*netlink.Route"}, RetArgList: []interface{}{fmt.Errorf("mock error")}},
 			},
 			onRetArgsLinkIfaceOpers: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}},
-				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}},
+				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}, CallTimes: 3},
 			},
 		},
 		{
@@ -481,13 +487,39 @@ func TestNicToBridge(t *testing.T) {
 				{OnCallMethodName: "RouteAdd", OnCallMethodArgType: []string{"*netlink.Route"}, RetArgList: []interface{}{nil}},
 			},
 			onRetArgsLinkIfaceOpers: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}},
-				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}},
+				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}, CallTimes: 3},
+			},
+		},
+		{
+			desc:           "bridge is not used until it inherits the NIC MAC address",
+			inpIface:       "eth0",
+			outBridge:      "breth0",
+			initialOvsData: rootOvs(),
+			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
+				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
+				{OnCallMethodName: "AddrList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{[]netlink.Addr{}, nil}},
+				{OnCallMethodName: "RouteList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{[]netlink.Route{}, nil}},
+				// the bridge netdev first materialises with a random MAC
+				// address, then ovs-vswitchd applies the NIC MAC address
+				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
+				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
+				{OnCallMethodName: "LinkSetUp", OnCallMethodArgType: []string{"*mocks.Link"}, RetArgList: []interface{}{nil}},
+			},
+			onRetArgsLinkIfaceOpers: []ovntest.TestifyMockHelper{
+				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "eth0", HardwareAddr: nicHWAddr}}},
+				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "breth0", HardwareAddr: randomHWAddr}}},
+				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "breth0", HardwareAddr: nicHWAddr}}},
 			},
 		},
 	}
 	for i, tc := range tests {
 		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
+			// reset the shared mocks so that one case cannot leak
+			// expectations or recorded calls into the next
+			mockNetLinkOps.Mock.ExpectedCalls = nil
+			mockNetLinkOps.Mock.Calls = nil
+			mockLink.Mock.ExpectedCalls = nil
+			mockLink.Mock.Calls = nil
 			ovntest.ProcessMockFnList(&mockNetLinkOps.Mock, tc.onRetArgsNetLinkLibOpers)
 			ovntest.ProcessMockFnList(&mockLink.Mock, tc.onRetArgsLinkIfaceOpers)
 
