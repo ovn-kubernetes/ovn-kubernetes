@@ -402,6 +402,14 @@ jobs:
       if: always()
       run: ./contrib/print-coredump-stacktraces.sh /tmp/kind/logs
 
+    - name: Upload coredump stack traces
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: coredump-stacktraces-${{ env.JOB_NAME }}-${{ github.run_id }}
+        path: /tmp/kind/logs/stacktraces
+        if-no-files-found: ignore
+
     - name: Upload kind logs
       if: always()
       uses: actions/upload-artifact@v7
@@ -434,6 +442,14 @@ jobs:
     - name: Extract and print coredump stack traces
       if: always()
       run: ./contrib/print-coredump-stacktraces.sh /tmp/kind/logs-kind-pr-branch
+
+    - name: Upload coredump stack traces
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: coredump-stacktraces-${{ env.JOB_NAME }}-${{ github.run_id }}-after-upgrade
+        path: /tmp/kind/logs-kind-pr-branch/stacktraces
+        if-no-files-found: ignore
 
     - name: Upload kind logs
       if: always()
@@ -734,6 +750,14 @@ jobs:
       if: always()
       run: ./contrib/print-coredump-stacktraces.sh /tmp/kind/logs
 
+    - name: Upload coredump stack traces
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: coredump-stacktraces-${{ env.JOB_NAME }}-${{ github.run_id }}-${{ strategy.job-index }}
+        path: /tmp/kind/logs/stacktraces
+        if-no-files-found: ignore
+
     - name: Upload kind logs
       if: always()
       uses: actions/upload-artifact@v7
@@ -842,6 +866,14 @@ jobs:
     - name: Extract and print coredump stack traces
       if: always()
       run: ./contrib/print-coredump-stacktraces.sh /tmp/kind/logs
+
+    - name: Upload coredump stack traces
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: coredump-stacktraces-${{ env.JOB_NAME }}-${{ github.run_id }}
+        path: /tmp/kind/logs/stacktraces
+        if-no-files-found: ignore
 
     - name: Upload kind logs
       if: always()
