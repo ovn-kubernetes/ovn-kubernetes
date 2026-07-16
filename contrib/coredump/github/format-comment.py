@@ -18,8 +18,8 @@ MAX_COMMENT_SIZE = 60_000
 MAX_TRACES = 50
 TRUNCATION_NOTICE = "\n\n… truncated; the full trace is in the workflow artifact."
 TEMPLATE_DIR = Path(__file__).resolve().parent
-COMMENT_TEMPLATE_PATH = TEMPLATE_DIR / "stacktrace-comment.md.tmpl"
-SECTION_TEMPLATE_PATH = TEMPLATE_DIR / "stacktrace-section.html.tmpl"
+COMMENT_TEMPLATE_PATH = TEMPLATE_DIR / "comment.md.tmpl"
+SECTION_TEMPLATE_PATH = TEMPLATE_DIR / "section.html.tmpl"
 
 
 class NoTracesError(ValueError):

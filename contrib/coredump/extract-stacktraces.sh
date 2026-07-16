@@ -2,15 +2,15 @@
 # SPDX-FileCopyrightText: Copyright The OVN-Kubernetes Contributors
 # SPDX-License-Identifier: Apache-2.0
 
-# Extract stack traces from coredumps in a tar archive of KIND logs.
+# Extract stack traces from a KIND log archive or collected coredump directory.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 readonly SCRIPT_DIR
-source "${SCRIPT_DIR}/coredump/common.sh"
-readonly GDB_STACKTRACE_HELPER="${SCRIPT_DIR}/coredump/gdb-stacktrace.sh"
-readonly FLAVOR_DIR="${SCRIPT_DIR}/coredump/flavors"
+source "${SCRIPT_DIR}/common.sh"
+readonly GDB_STACKTRACE_HELPER="${SCRIPT_DIR}/gdb-stacktrace.sh"
+readonly FLAVOR_DIR="${SCRIPT_DIR}/flavors"
 readonly OCI_BIN="${OCI_BIN:-docker}"
 readonly GO_DEBUG_IMAGE="${GO_DEBUG_IMAGE:-quay.io/fedora/fedora:latest}"
 
@@ -29,11 +29,16 @@ CORE_PLATFORM=""
 CORE_RPM_ARCH=""
 CORE_TRACE_PATH=""
 
+output_dir=""
+search_root=""
+work_dir=""
+
 usage() {
   cat <<EOF
-Usage: $(basename "$0") KIND_LOGS_TARBALL [OUTPUT_DIRECTORY]
+Usage: $(basename "$0") KIND_LOGS_TARBALL_OR_COREDUMP_DIRECTORY [OUTPUT_DIRECTORY]
 
-Extract stack traces from coredumps collected with export-kind-logs.sh.
+Extract stack traces from coredumps collected with export-kind-logs.sh. The
+input may be a KIND logs tar archive or its coredumps directory.
 Stack traces are written to OUTPUT_DIRECTORY (default: ./stacktraces).
 
 Currently supported:
@@ -400,62 +405,115 @@ process_coredump_dir() {
     "$coredump_dir" "$platform" "$frr_image" "${alpine_frr_args[@]}"
 }
 
-if [ "$#" -eq 1 ] && { [ "$1" = "-h" ] || [ "$1" = "--help" ]; }; then
-  usage
-  exit 0
-fi
-if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
-  usage >&2
-  exit 2
-fi
+check_prerequisites() {
+  [ -r "$GDB_STACKTRACE_HELPER" ] \
+    || die "debugger helper not found: ${GDB_STACKTRACE_HELPER}"
+  command -v file >/dev/null 2>&1 || die "file not found"
+  command -v strings >/dev/null 2>&1 || die "strings not found"
+}
 
-archive=$1
-output_dir=${2:-"$(pwd)/stacktraces"}
+prepare_output_dir() {
+  output_dir=$1
+  mkdir -p "$output_dir"
+  output_dir=$(cd -- "$output_dir" >/dev/null 2>&1 && pwd -P)
+}
 
-[ -f "$archive" ] || die "archive not found: ${archive}"
-[ -r "$GDB_STACKTRACE_HELPER" ] || die "debugger helper not found: ${GDB_STACKTRACE_HELPER}"
-command -v tar >/dev/null 2>&1 || die "tar not found"
-command -v file >/dev/null 2>&1 || die "file not found"
-command -v strings >/dev/null 2>&1 || die "strings not found"
+cleanup_work_dir() {
+  if [ -n "$work_dir" ]; then
+    rm -rf -- "$work_dir"
+  fi
+}
 
-archive_dir=$(cd -- "$(dirname "$archive")" >/dev/null 2>&1 && pwd -P)
-archive="${archive_dir}/$(basename "$archive")"
-mkdir -p "$output_dir"
-output_dir=$(cd -- "$output_dir" >/dev/null 2>&1 && pwd -P)
-
-work_dir=$(mktemp -d)
-trap 'rm -rf "$work_dir"' EXIT
-work_dir=$(cd -- "$work_dir" >/dev/null 2>&1 && pwd -P)
-unpack_dir="${work_dir}/kind-logs"
-mkdir -p "$unpack_dir"
-
-if ! tar -tf "$archive" >/dev/null; then
-  die "not a readable tar archive: ${archive}"
-fi
-if ! tar -tf "$archive" | awk '
-  /^\// { exit 1 }
-  {
-    count = split($0, parts, "/")
-    for (i = 1; i <= count; i++) {
-      if (parts[i] == "..") exit 1
+archive_paths_are_safe() {
+  tar -tf "$1" | awk '
+    /^\// { exit 1 }
+    {
+      count = split($0, parts, "/")
+      for (i = 1; i <= count; i++) {
+        if (parts[i] == "..") exit 1
+      }
     }
-  }
-'; then
-  die "archive contains an unsafe path"
-fi
-tar -xf "$archive" -C "$unpack_dir"
+  '
+}
 
-while IFS= read -r -d '' coredump_dir; do
-  COREDUMP_DIRS=$((COREDUMP_DIRS + 1))
-  process_coredump_dir "$coredump_dir"
-done < <(find "$unpack_dir" -type d -name coredumps -print0)
+extract_archive() {
+  local input=$1
+  local archive_dir archive
 
-if [ "$COREDUMP_DIRS" -eq 0 ]; then
-  echo "No coredump directory found in ${archive}"
-elif [ "$SUPPORTED_CORES" -eq 0 ] && [ "$FAILED_CORES" -eq 0 ]; then
-  echo "No supported coredumps found in ${archive}"
-fi
+  command -v tar >/dev/null 2>&1 || die "tar not found"
+  archive_dir=$(cd -- "$(dirname "$input")" >/dev/null 2>&1 && pwd -P)
+  archive="${archive_dir}/$(basename "$input")"
 
-if [ "$FAILED_CORES" -ne 0 ]; then
-  die "failed to process ${FAILED_CORES} coredump(s)"
-fi
+  work_dir=$(mktemp -d)
+  trap cleanup_work_dir EXIT
+  work_dir=$(cd -- "$work_dir" >/dev/null 2>&1 && pwd -P)
+  search_root="${work_dir}/kind-logs"
+  mkdir -p "$search_root"
+
+  if ! archive_paths_are_safe "$archive"; then
+    die "archive is unreadable or contains an unsafe path: ${archive}"
+  fi
+  tar -xf "$archive" -C "$search_root"
+}
+
+prepare_input() {
+  local input=$1
+
+  if [ -d "$input" ]; then
+    search_root=$(cd -- "$input" >/dev/null 2>&1 && pwd -P)
+  elif [ -f "$input" ]; then
+    extract_archive "$input"
+  else
+    die "input not found: ${input}"
+  fi
+}
+
+process_input_coredumps() {
+  local coredump_dir
+
+  if has_coredumps "$search_root"; then
+    COREDUMP_DIRS=$((COREDUMP_DIRS + 1))
+    process_coredump_dir "$search_root"
+  else
+    while IFS= read -r -d '' coredump_dir; do
+      COREDUMP_DIRS=$((COREDUMP_DIRS + 1))
+      process_coredump_dir "$coredump_dir"
+    done < <(find "$search_root" -type d -name coredumps -print0)
+  fi
+}
+
+report_results() {
+  local input=$1
+
+  if [ "$COREDUMP_DIRS" -eq 0 ]; then
+    echo "No coredump directory found in ${input}"
+  elif [ "$SUPPORTED_CORES" -eq 0 ] && [ "$FAILED_CORES" -eq 0 ]; then
+    echo "No supported coredumps found in ${input}"
+  fi
+
+  if [ "$FAILED_CORES" -ne 0 ]; then
+    die "failed to process ${FAILED_CORES} coredump(s)"
+  fi
+}
+
+main() {
+  local input
+
+  if [ "$#" -eq 1 ] && { [ "$1" = "-h" ] || [ "$1" = "--help" ]; }; then
+    usage
+    return
+  fi
+  if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
+    usage >&2
+    return 2
+  fi
+
+  input=$1
+  check_prerequisites
+  prepare_output_dir "${2:-"$(pwd)/stacktraces"}"
+  prepare_input "$input"
+  process_input_coredumps
+  report_results "$input"
+}
+
+main "$@"
