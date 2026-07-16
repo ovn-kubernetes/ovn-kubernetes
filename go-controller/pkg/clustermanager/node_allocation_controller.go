@@ -28,8 +28,8 @@ const (
 	maxNodeIDs = 5000
 )
 
-// zoneClusterController is the cluster controller for managing all the zone(s) in the cluster.
-type zoneClusterController struct {
+// nodeAllocationController allocates node IDs and transit switch port addresses.
+type nodeAllocationController struct {
 	kube         kube.Interface
 	watchFactory *factory.WatchFactory
 	stopChan     chan struct{}
@@ -49,7 +49,7 @@ type zoneClusterController struct {
 	transitSwitchIPv6Generator *ipgenerator.IPGenerator
 }
 
-func newZoneClusterController(ovnClient *util.OVNClusterManagerClientset, wf *factory.WatchFactory) (*zoneClusterController, error) {
+func newNodeAllocationController(ovnClient *util.OVNClusterManagerClientset, wf *factory.WatchFactory) (*nodeAllocationController, error) {
 	// Since we don't assign 0 to any node, create IDAllocator with one extra element in maxIds.
 	nodeIDAllocator := id.NewIDAllocator("NodeIDs", maxNodeIDs+1)
 	// Reserve the id 0. We don't want to assign this id to any of the nodes.
@@ -81,7 +81,7 @@ func newZoneClusterController(ovnClient *util.OVNClusterManagerClientset, wf *fa
 		}
 	}
 
-	zcc := &zoneClusterController{
+	nac := &nodeAllocationController{
 		kube:                       kube,
 		watchFactory:               wf,
 		stopChan:                   make(chan struct{}),
@@ -91,48 +91,48 @@ func newZoneClusterController(ovnClient *util.OVNClusterManagerClientset, wf *fa
 		transitSwitchIPv6Generator: transitSwitchIPv6Generator,
 	}
 
-	zcc.initRetryFramework()
-	return zcc, nil
+	nac.initRetryFramework()
+	return nac, nil
 }
 
-func (zcc *zoneClusterController) initRetryFramework() {
+func (nac *nodeAllocationController) initRetryFramework() {
 	// We are interested in only nodes
 	resourceHandler := &objretry.ResourceHandler{
 		HasUpdateFunc:          true,
 		NeedsUpdateDuringRetry: false,
 		ObjType:                factory.NodeType,
-		EventHandler: &zoneClusterControllerEventHandler{
+		EventHandler: &nodeAllocationControllerEventHandler{
 			objType:  factory.NodeType,
-			zcc:      zcc,
+			nac:      nac,
 			syncFunc: nil,
 		},
 	}
 
-	zcc.retryNodes = objretry.NewRetryFramework("zoneClusterController", zcc.stopChan, zcc.wg, zcc.watchFactory, resourceHandler)
+	nac.retryNodes = objretry.NewRetryFramework("nodeAllocationController", nac.stopChan, nac.wg, nac.watchFactory, resourceHandler)
 }
 
-// Start starts the zone cluster controller to watch the kubernetes nodes
-func (zcc *zoneClusterController) Start(_ context.Context) error {
-	nodeHandler, err := zcc.retryNodes.WatchResource()
+// Start starts the node allocation controller to watch the kubernetes nodes
+func (nac *nodeAllocationController) Start(_ context.Context) error {
+	nodeHandler, err := nac.retryNodes.WatchResource()
 
 	if err != nil {
 		return fmt.Errorf("unable to watch nodes: %w", err)
 	}
 
-	zcc.nodeHandler = nodeHandler
+	nac.nodeHandler = nodeHandler
 	return nil
 }
 
-func (zcc *zoneClusterController) Stop() {
-	close(zcc.stopChan)
-	zcc.wg.Wait()
+func (nac *nodeAllocationController) Stop() {
+	close(nac.stopChan)
+	nac.wg.Wait()
 
-	if zcc.nodeHandler != nil {
-		zcc.watchFactory.RemoveNodeHandler(zcc.nodeHandler)
+	if nac.nodeHandler != nil {
+		nac.watchFactory.RemoveNodeHandler(nac.nodeHandler)
 	}
 }
 
-func needsZoneAllocation(node *corev1.Node) bool {
+func needsNodeAllocation(node *corev1.Node) bool {
 	if config.HybridOverlay.Enabled && util.NoHostSubnet(node) {
 		// skip hybrid overlay nodes
 		return false
@@ -148,12 +148,12 @@ func needsZoneAllocation(node *corev1.Node) bool {
 }
 
 // handleAddUpdateNodeEvent handles the add or update node event
-func (zcc *zoneClusterController) handleAddUpdateNodeEvent(node *corev1.Node) error {
+func (nac *nodeAllocationController) handleAddUpdateNodeEvent(node *corev1.Node) error {
 	if config.HybridOverlay.Enabled && util.NoHostSubnet(node) {
 		// skip hybrid overlay nodes
 		return nil
 	}
-	allocatedNodeID, err := zcc.nodeIDAllocator.AllocateID(node.Name)
+	allocatedNodeID, err := nac.nodeIDAllocator.AllocateID(node.Name)
 	if err != nil {
 		return fmt.Errorf("failed to allocate an id to the node %s : err - %w", node.Name, err)
 	}
@@ -165,14 +165,14 @@ func (zcc *zoneClusterController) handleAddUpdateNodeEvent(node *corev1.Node) er
 	var v4Addr, v6Addr *net.IPNet
 
 	if config.IPv4Mode {
-		v4Addr, err = zcc.transitSwitchIPv4Generator.GenerateIP(allocatedNodeID)
+		v4Addr, err = nac.transitSwitchIPv4Generator.GenerateIP(allocatedNodeID)
 		if err != nil {
 			return fmt.Errorf("failed to generate transit switch port IPv4 address for node %s : err - %w", node.Name, err)
 		}
 	}
 
 	if config.IPv6Mode {
-		v6Addr, err = zcc.transitSwitchIPv6Generator.GenerateIP(allocatedNodeID)
+		v6Addr, err = nac.transitSwitchIPv6Generator.GenerateIP(allocatedNodeID)
 		if err != nil {
 			return fmt.Errorf("failed to generate transit switch port IPv6 address for node %s : err - %w", node.Name, err)
 		}
@@ -184,20 +184,20 @@ func (zcc *zoneClusterController) handleAddUpdateNodeEvent(node *corev1.Node) er
 			node.Name, err)
 	}
 
-	return zcc.kube.SetAnnotationsOnNode(node.Name, nodeAnnotations)
+	return nac.kube.SetAnnotationsOnNode(node.Name, nodeAnnotations)
 }
 
-// handleAddUpdateNodeEvent handles the delete node event
-func (zcc *zoneClusterController) handleDeleteNode(node *corev1.Node) error {
-	zcc.nodeIDAllocator.ReleaseID(node.Name)
+// handleDeleteNode handles the delete node event.
+func (nac *nodeAllocationController) handleDeleteNode(node *corev1.Node) error {
+	nac.nodeIDAllocator.ReleaseID(node.Name)
 	return nil
 }
 
-func (zcc *zoneClusterController) syncNodes(nodes []interface{}) error {
-	return zcc.syncNodeIDs(nodes)
+func (nac *nodeAllocationController) syncNodes(nodes []interface{}) error {
+	return nac.syncNodeIDs(nodes)
 }
 
-func (zcc *zoneClusterController) syncNodeIDs(nodes []interface{}) error {
+func (nac *nodeAllocationController) syncNodeIDs(nodes []interface{}) error {
 	duplicateIdNodes := []string{}
 
 	for _, nodeObj := range nodes {
@@ -209,7 +209,7 @@ func (zcc *zoneClusterController) syncNodeIDs(nodes []interface{}) error {
 		nodeID, _ := util.GetNodeID(node)
 		if nodeID != util.InvalidNodeID {
 			klog.Infof("Node %s has the id %d set", node.Name, nodeID)
-			if err := zcc.nodeIDAllocator.ReserveID(node.Name, nodeID); err != nil {
+			if err := nac.nodeIDAllocator.ReserveID(node.Name, nodeID); err != nil {
 				// The id set on this node is duplicate.
 				klog.Infof("Node %s has a duplicate id %d set", node.Name, nodeID)
 				duplicateIdNodes = append(duplicateIdNodes, node.Name)
@@ -218,7 +218,7 @@ func (zcc *zoneClusterController) syncNodeIDs(nodes []interface{}) error {
 	}
 
 	for i := range duplicateIdNodes {
-		newNodeID, err := zcc.nodeIDAllocator.AllocateID(duplicateIdNodes[i])
+		newNodeID, err := nac.nodeIDAllocator.AllocateID(duplicateIdNodes[i])
 		if err != nil {
 			return fmt.Errorf("failed to allocate id for node %s : err - %w", duplicateIdNodes[i], err)
 		} else {
@@ -229,27 +229,27 @@ func (zcc *zoneClusterController) syncNodeIDs(nodes []interface{}) error {
 	return nil
 }
 
-// zoneClusterControllerEventHandler object handles the events
+// nodeAllocationControllerEventHandler object handles the events
 // from retry framework.
-type zoneClusterControllerEventHandler struct {
+type nodeAllocationControllerEventHandler struct {
 	objretry.DefaultEventHandler
 
 	objType  reflect.Type
-	zcc      *zoneClusterController
+	nac      *nodeAllocationController
 	syncFunc func([]interface{}) error
 
 	nodeSyncFailed sync.Map
 }
 
-func (h *zoneClusterControllerEventHandler) FilterOutResource(_ interface{}) bool {
+func (h *nodeAllocationControllerEventHandler) FilterOutResource(_ interface{}) bool {
 	return false
 }
 
-// zoneClusterControllerEventHandler functions
+// nodeAllocationControllerEventHandler functions
 
 // AddResource adds the specified object to the cluster according to its type and
 // returns the error, if any, yielded during object creation.
-func (h *zoneClusterControllerEventHandler) AddResource(obj interface{}, _ bool) error {
+func (h *nodeAllocationControllerEventHandler) AddResource(obj interface{}, _ bool) error {
 	var err error
 
 	switch h.objType {
@@ -258,7 +258,7 @@ func (h *zoneClusterControllerEventHandler) AddResource(obj interface{}, _ bool)
 		if !ok {
 			return fmt.Errorf("could not cast %T object to *corev1.Node", obj)
 		}
-		if err = h.zcc.handleAddUpdateNodeEvent(node); err != nil {
+		if err = h.nac.handleAddUpdateNodeEvent(node); err != nil {
 			h.nodeSyncFailed.Store(node.Name, true)
 			return fmt.Errorf("node add failed for %s, will try again later: %w",
 				node.Name, err)
@@ -273,7 +273,7 @@ func (h *zoneClusterControllerEventHandler) AddResource(obj interface{}, _ bool)
 // UpdateResource updates the specified object in the cluster to its version in newObj according
 // to its type and returns the error, if any, yielded during the object update.
 // The inRetryCache boolean argument is to indicate if the given resource is in the retryCache or not.
-func (h *zoneClusterControllerEventHandler) UpdateResource(_, newObj interface{}, _ bool) error {
+func (h *nodeAllocationControllerEventHandler) UpdateResource(_, newObj interface{}, _ bool) error {
 	var err error
 
 	switch h.objType {
@@ -283,11 +283,11 @@ func (h *zoneClusterControllerEventHandler) UpdateResource(_, newObj interface{}
 			return fmt.Errorf("could not cast %T object to *corev1.Node", newObj)
 		}
 		_, nodeFailed := h.nodeSyncFailed.Load(node.GetName())
-		if !nodeFailed && !needsZoneAllocation(node) {
+		if !nodeFailed && !needsNodeAllocation(node) {
 			// node ID and transit switch IP are assigned by us and cannot change
 			return nil
 		}
-		if err = h.zcc.handleAddUpdateNodeEvent(node); err != nil {
+		if err = h.nac.handleAddUpdateNodeEvent(node); err != nil {
 			return fmt.Errorf("node update failed for %s, will try again later: %w",
 				node.Name, err)
 		}
@@ -300,14 +300,14 @@ func (h *zoneClusterControllerEventHandler) UpdateResource(_, newObj interface{}
 
 // DeleteResource deletes the object from the cluster according to the delete logic of its resource type.
 // cachedObj is the internal cache entry for this object, used for now for pods and network policies.
-func (h *zoneClusterControllerEventHandler) DeleteResource(obj, _ interface{}) error {
+func (h *nodeAllocationControllerEventHandler) DeleteResource(obj, _ interface{}) error {
 	switch h.objType {
 	case factory.NodeType:
 		node, ok := obj.(*corev1.Node)
 		if !ok {
 			return fmt.Errorf("could not cast obj of type %T to *knet.Node", obj)
 		}
-		err := h.zcc.handleDeleteNode(node)
+		err := h.nac.handleDeleteNode(node)
 		if err != nil {
 			return err
 		}
@@ -316,7 +316,7 @@ func (h *zoneClusterControllerEventHandler) DeleteResource(obj, _ interface{}) e
 	return nil
 }
 
-func (h *zoneClusterControllerEventHandler) SyncFunc(objs []interface{}) error {
+func (h *nodeAllocationControllerEventHandler) SyncFunc(objs []interface{}) error {
 	var syncFunc func([]interface{}) error
 
 	if h.syncFunc != nil {
@@ -325,7 +325,7 @@ func (h *zoneClusterControllerEventHandler) SyncFunc(objs []interface{}) error {
 	} else {
 		switch h.objType {
 		case factory.NodeType:
-			syncFunc = h.zcc.syncNodes
+			syncFunc = h.nac.syncNodes
 
 		default:
 			return fmt.Errorf("no sync function for object type %s", h.objType)
@@ -337,7 +337,7 @@ func (h *zoneClusterControllerEventHandler) SyncFunc(objs []interface{}) error {
 	return syncFunc(objs)
 }
 
-func (h *zoneClusterControllerEventHandler) AreResourcesEqual(obj1, obj2 interface{}) (bool, error) {
+func (h *nodeAllocationControllerEventHandler) AreResourcesEqual(obj1, obj2 interface{}) (bool, error) {
 	// switch based on type
 	if h.objType == factory.NodeType {
 		node1, ok := obj1.(*corev1.Node)
@@ -368,7 +368,7 @@ func (h *zoneClusterControllerEventHandler) AreResourcesEqual(obj1, obj2 interfa
 
 // GetResourceFromInformerCache returns the latest state of the object from the informers cache
 // given an object key and its type
-func (h *zoneClusterControllerEventHandler) GetResourceFromInformerCache(key string) (interface{}, error) {
+func (h *nodeAllocationControllerEventHandler) GetResourceFromInformerCache(key string) (interface{}, error) {
 	var obj interface{}
 	var name string
 	var err error
@@ -380,7 +380,7 @@ func (h *zoneClusterControllerEventHandler) GetResourceFromInformerCache(key str
 
 	switch h.objType {
 	case factory.NodeType:
-		obj, err = h.zcc.watchFactory.GetNode(name)
+		obj, err = h.nac.watchFactory.GetNode(name)
 
 	default:
 		err = fmt.Errorf("object type %s not supported, cannot retrieve it from informers cache",
