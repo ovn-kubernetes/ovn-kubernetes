@@ -17,11 +17,6 @@ linters:
     govet:
       disable:
         - fieldalignment
-        # govet.enable-all also enables the inline analyzer. With the Go 1.26
-        # toolchain and golangci-lint v2.12.2 used here, enabling inline made
-        # make lint exit before reporting analyzer results, while the same
-        # tree passes with inline disabled. Keep the rest of govet enabled.
-        - inline
         - shadow
       enable-all: true
     importas:
