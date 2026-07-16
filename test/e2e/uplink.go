@@ -15,6 +15,7 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	uplinkv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1"
 	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/allocators"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
@@ -27,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -130,7 +132,7 @@ var _ = ginkgo.Describe("Network Segmentation Uplink default-VRF egress", featur
 
 		uplinkName := "uplink" + testSuffix
 		createUplink(f, ictx, uplinkName, nodes.Items, nodeIfaces, bridgeName)
-		waitForUplinkStatesReady(f, uplinkName, bridgeName, nodes.Items)
+		waitForUplinkStatesResolved(f, uplinkName, bridgeName, nodes.Items)
 		waitForUplinkStatesDefaultGateways(f, uplinkName, nodes.Items, ipFamilySet)
 
 		serverName := "upsrv" + testSuffix
@@ -248,7 +250,7 @@ var _ = ginkgo.Describe("Network Segmentation Uplink route advertisements", feat
 		gomega.Expect(configureUplinkBridge(f, ictx, bridgeName, nodeIfaces)).To(gomega.Succeed())
 
 		createUplink(f, ictx, networkName, nodes.Items, nodeIfaces, bridgeName)
-		waitForUplinkStatesReady(f, networkName, bridgeName, nodes.Items)
+		waitForUplinkStatesResolved(f, networkName, bridgeName, nodes.Items)
 
 		networkSpec := uplinkLayer3NetworkSpec(ipFamilySet, bgpAlloc.UDNSubnet, bgpAlloc.UDNSubnet6)
 		namespace, err := createUplinkAdvertisedCUDN(
@@ -400,7 +402,7 @@ var _ = ginkgo.Describe("Uplink route advertisements with Dynamic UDN allocation
 
 		uplinkName := "updyn" + testSuffix
 		createUplink(f, ictx, uplinkName, nodes, nodeIfaces, hostInterfaceName)
-		waitForUplinkStatesReady(f, uplinkName, bridgeName, nodes)
+		waitForUplinkStatesResolved(f, uplinkName, bridgeName, nodes)
 
 		type networkOnNode struct {
 			name      string
@@ -575,7 +577,7 @@ var _ = ginkgo.Describe("Network Segmentation Uplink route advertisements", feat
 		gomega.Expect(configureUplinkBridge(f, ictx, bridgeName, nodeIfaces)).To(gomega.Succeed())
 
 		createUplink(f, ictx, networkName, nodes.Items, nodeIfaces, bridgeName)
-		waitForUplinkStatesReady(f, networkName, bridgeName, nodes.Items)
+		waitForUplinkStatesResolved(f, networkName, bridgeName, nodes.Items)
 
 		networkSpec := uplinkLayer3NetworkSpec(ipFamilySet, bgpAlloc.UDNSubnet, bgpAlloc.UDNSubnet6)
 		namespace, err := createUplinkAdvertisedCUDN(
@@ -771,7 +773,7 @@ func runDPUUplinkVRFLiteRouteAdvertisements(
 	nodeIfaces := collectDPUHostUplinkInterfaces(dpuHostNodes)
 
 	createUplink(f, ictx, networkName, dpuHostNodes, nodeIfaces, "")
-	waitForUplinkStatesReady(f, networkName, os.Getenv(uplinkDPUExpectedBridgeEnv), dpuHostNodes)
+	waitForUplinkStatesResolved(f, networkName, os.Getenv(uplinkDPUExpectedBridgeEnv), dpuHostNodes)
 
 	serverCIDRs := []string{
 		envOrDefault(uplinkBGPServerIPv4CIDREnv, uplinkDefaultBGPServerIPv4CIDR),
@@ -1341,7 +1343,7 @@ func createUplink(
 	})
 }
 
-func waitForUplinkStatesReady(f *framework.Framework, uplinkName string, bridgeName string, nodes []corev1.Node) {
+func waitForUplinkStatesResolved(f *framework.Framework, uplinkName string, bridgeName string, nodes []corev1.Node) {
 	ginkgo.GinkgoHelper()
 
 	for _, node := range nodes {
@@ -1355,15 +1357,15 @@ func waitForUplinkStatesReady(f *framework.Framework, uplinkName string, bridgeN
 			if err != nil {
 				return err
 			}
-			var ready *metav1.Condition
+			var resolved *metav1.Condition
 			for i := range conditions {
-				if conditions[i].Type == "Ready" {
-					ready = &conditions[i]
+				if conditions[i].Type == uplinkv1alpha1.UplinkStateConditionResolved {
+					resolved = &conditions[i]
 					break
 				}
 			}
-			if ready == nil || ready.Status != metav1.ConditionTrue {
-				return fmt.Errorf("UplinkState %s is not ready: %#v", state.GetName(), ready)
+			if resolved == nil || resolved.Status != metav1.ConditionTrue {
+				return fmt.Errorf("UplinkState %s is not resolved: %#v", state.GetName(), resolved)
 			}
 			resolvedBridge, _, err := unstructured.NestedString(state.Object, "status", "ovsBridge", "name")
 			if err != nil {
@@ -1389,7 +1391,7 @@ func waitForUplinkStatesReady(f *framework.Framework, uplinkName string, bridgeN
 			return nil
 		}).WithTimeout(uplinkTimeout).WithPolling(uplinkPoll).Should(
 			gomega.Succeed(),
-			"expected UplinkState for uplink %q on node %q to become ready",
+			"expected UplinkState for uplink %q on node %q to become resolved",
 			uplinkName,
 			node.Name,
 		)
@@ -1456,35 +1458,21 @@ func waitForUplinkStatesDefaultGateways(
 }
 
 func getUplinkState(f *framework.Framework, uplinkName string, nodeName string) (*unstructured.Unstructured, error) {
+	fieldSelector := fields.AndSelectors(
+		fields.OneTermEqualSelector("spec.uplinkName", uplinkName),
+		fields.OneTermEqualSelector("spec.nodeName", nodeName),
+	).String()
 	stateList, err := f.DynamicClient.Resource(uplinkStateGVR).List(
 		context.Background(),
-		metav1.ListOptions{},
+		metav1.ListOptions{FieldSelector: fieldSelector},
 	)
 	if err != nil {
 		return nil, err
 	}
-	for i := range stateList.Items {
-		state := &stateList.Items[i]
-		stateUplink, _, err := unstructured.NestedString(state.Object, "status", "uplinkName")
-		if err != nil {
-			return nil, err
-		}
-		stateNode, _, err := unstructured.NestedString(state.Object, "status", "nodeName")
-		if err != nil {
-			return nil, err
-		}
-		annotations := state.GetAnnotations()
-		if stateUplink == "" {
-			stateUplink = annotations["k8s.ovn.org/uplink"]
-		}
-		if stateNode == "" {
-			stateNode = annotations["k8s.ovn.org/node"]
-		}
-		if stateUplink == uplinkName && stateNode == nodeName {
-			return state, nil
-		}
+	if len(stateList.Items) == 0 {
+		return nil, fmt.Errorf("failed to find UplinkState for uplink %q on node %q", uplinkName, nodeName)
 	}
-	return nil, fmt.Errorf("failed to find UplinkState for uplink %q on node %q", uplinkName, nodeName)
+	return &stateList.Items[0], nil
 }
 
 func createNodeScopedUplinkFRRConfiguration(

@@ -482,7 +482,7 @@ func (c *controller) getRouteLinkIndexFilter(network util.NetInfo) (int, error) 
 	}
 	condition := meta.FindStatusCondition(
 		state.Status.Conditions,
-		uplinkv1alpha1.UplinkStateConditionReady,
+		uplinkv1alpha1.UplinkStateConditionResolved,
 	)
 	if condition == nil || condition.Status != metav1.ConditionTrue {
 		return noRouteLinkIndex, nil

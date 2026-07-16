@@ -128,7 +128,7 @@ DPU deployments split Uplink discovery across the host and DPU components:
   to find the DPU-local representor and OVS bridge, validates the bridge, and
   writes `status.ovsBridge.name`.
 * Once both sides have published the required data, the `UplinkState` becomes
-  `Ready=True`.
+  `Resolved=True`.
 
 The user does not provide the DPU-local OVS bridge name in the `Uplink` API.
 The DPU side derives it from the DPU-local OVS bridge state. The bridge must
@@ -141,8 +141,12 @@ consistently by the platform.
 
 ## UplinkState and Conditions
 
-`UplinkState` is a cluster-scoped, per-node status object. Its name is derived
+`UplinkState` is a cluster-scoped, per-node state object. Its name is derived
 from the Uplink name and node name. It is owned by the `Uplink`.
+
+The required, immutable `spec.uplinkName` and `spec.nodeName` fields are the
+canonical identity. `UplinkState` does not use a status subresource, allowing
+OVN-Kubernetes to create the identity and initial status in one API operation.
 
 Example:
 
@@ -151,9 +155,10 @@ apiVersion: k8s.ovn.org/v1alpha1
 kind: UplinkState
 metadata:
   name: tenant-blue.worker-a
-status:
+spec:
   uplinkName: tenant-blue
   nodeName: worker-a
+status:
   type: OVSBridge
   hostInterfaceName: ovsbr1
   ovsBridge:
@@ -164,56 +169,62 @@ status:
   defaultGateways:
   - 172.28.0.1
   conditions:
-  - type: Ready
+  - type: Resolved
     status: "True"
-    reason: Ready
+    reason: Resolved
   - type: GatewayReady
     status: "True"
-    reason: Ready
+    reason: GatewayConfigured
 ```
 
-The `Ready` condition reports node-local host interface and OVS bridge
+The `Resolved` condition reports node-local host interface and OVS bridge
 discovery. The `GatewayReady` condition reports CUDN gateway programming on
 the resolved bridge, including bridge mapping and VRF attachment. A gateway
-programming failure does not change discovery `Ready`; the CUDN-specific
+programming failure does not change discovery `Resolved`; the CUDN-specific
 `UplinksReady` condition reflects both states.
 
 The `Uplink` object reports aggregate status:
 
 * `Ready=True` means every selected node has successfully discovered a
-  matching `UplinkState`.
+  matching `UplinkState` with `Resolved=True`.
 * `Ready=False` means one or more selected nodes are missing or have failed
   Uplink discovery, or the `Uplink` spec selects nodes incorrectly.
+
+For node-scoped failures, the `Ready` message reports the number of affected
+nodes out of all selected nodes and a bounded sample of node names and
+underlying `UplinkState` reasons. `GatewayReady` is not part of this aggregate;
+it is evaluated for the active nodes of each CUDN.
 
 `UplinkState` supports field selection by Uplink name and node name:
 
 ```bash
-$ kubectl get uplinkstate --field-selector status.uplinkName=tenant-blue
-NAME                   UPLINK        NODE       READY
+$ kubectl get uplinkstate --field-selector spec.uplinkName=tenant-blue
+NAME                   UPLINK        NODE       RESOLVED
 tenant-blue.worker-a   tenant-blue   worker-a   True
 tenant-blue.worker-b   tenant-blue   worker-b   True
 
-$ kubectl get uplinkstate --field-selector status.uplinkName=tenant-blue,status.nodeName=worker-a -o yaml
+$ kubectl get uplinkstate --field-selector spec.uplinkName=tenant-blue,spec.nodeName=worker-a -o yaml
 apiVersion: v1
 items:
 - apiVersion: k8s.ovn.org/v1alpha1
   kind: UplinkState
   metadata:
     name: tenant-blue.worker-a
-  status:
+  spec:
     uplinkName: tenant-blue
     nodeName: worker-a
+  status:
     type: OVSBridge
     hostInterfaceName: ovsbr1
     ovsBridge:
       name: ovsbr1
     conditions:
-    - type: Ready
+    - type: Resolved
       status: "True"
-      reason: Ready
+      reason: Resolved
     - type: GatewayReady
       status: "True"
-      reason: Ready
+      reason: GatewayConfigured
 kind: List
 metadata:
   resourceVersion: ""
@@ -317,7 +328,7 @@ kubectl get uplink tenant-blue -o yaml
 Check the per-node discovery state:
 
 ```bash
-kubectl get uplinkstate --field-selector status.uplinkName=tenant-blue -o wide
+kubectl get uplinkstate --field-selector spec.uplinkName=tenant-blue -o wide
 kubectl get uplinkstate tenant-blue.worker-a -o yaml
 ```
 
@@ -332,19 +343,19 @@ Common problems:
 * `Uplink` with `Ready` condition status `False` and reason
   `MissingUplinkState`: the selected node has not created or published its
   `UplinkState`.
-* `UplinkState` with `Ready` condition status `False` and reason
+* `UplinkState` with `Resolved` condition status `False` and reason
   `HostInterfaceNotFound`: the selected `hostInterfaceName` does not exist on
   the node.
-* `UplinkState` with `Ready` condition status `False` and reason
+* `UplinkState` with `Resolved` condition status `False` and reason
   `BridgeNotFound`: OVN-Kubernetes could not map `hostInterfaceName` to an OVS
   bridge.
-* `UplinkState` with `Ready` condition status `False` and reason
+* `UplinkState` with `Resolved` condition status `False` and reason
   `BridgeUplinkNotFound`: the resolved OVS bridge does not have a discoverable
   physical uplink port.
-* `UplinkState` with `Ready` condition status `False` and reason
+* `UplinkState` with `Resolved` condition status `False` and reason
   `BridgeInvalid`: the selected bridge is not a valid external bridge, for
   example `br-int`.
-* `UplinkState` with `Ready` condition status `False` and reason
+* `UplinkState` with `Resolved` condition status `False` and reason
   `DefaultGatewayBridgeUnsupported`: the selected bridge is the cluster
   default shared gateway bridge, which cannot currently be reused as an
   Uplink.
@@ -358,8 +369,8 @@ Common problems:
   `UplinkConfigurationConflict`: the resolved Uplink bridge is already
   attached to a different VRF on this node.
 * CUDN with `UplinksReady` condition status `False` and reason
-  `UplinkNotReadyForNode`: at least one active node for the CUDN does not have
-  a ready matching `UplinkState`.
+  `UplinkNotResolvedForNode`: at least one active node for the CUDN does not have
+  a matching `UplinkState` with `Resolved=True`.
 * CUDN with `UplinksReady` condition status `False` and reason
   `UplinkNotFoundForNode`: the referenced Uplink does not select an active node
   for the CUDN.

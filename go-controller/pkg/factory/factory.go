@@ -332,7 +332,7 @@ func newUplinkStateSharedInformerFactory(
 		client,
 		resyncInterval,
 		uplinkinformerfactory.WithTweakListOptions(func(options *metav1.ListOptions) {
-			options.FieldSelector = fields.OneTermEqualSelector("status.nodeName", nodeName).String()
+			options.FieldSelector = fields.OneTermEqualSelector("spec.nodeName", nodeName).String()
 		}),
 	)
 }

@@ -1356,8 +1356,8 @@ func (c *Controller) getDPUHostGatewayNextHops(
 		return nil, fmt.Errorf("%w: failed to get UplinkState %q for DPU host node %q: %w",
 			errConfig, stateName, node.Name, err)
 	}
-	if !meta.IsStatusConditionTrue(state.Status.Conditions, uplinkv1alpha1.UplinkStateConditionReady) {
-		return nil, fmt.Errorf("%w: waiting for UplinkState %q to become ready for DPU host node %q",
+	if !meta.IsStatusConditionTrue(state.Status.Conditions, uplinkv1alpha1.UplinkStateConditionResolved) {
+		return nil, fmt.Errorf("%w: waiting for UplinkState %q to become resolved for DPU host node %q",
 			errPending, stateName, node.Name)
 	}
 

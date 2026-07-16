@@ -29,6 +29,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &uplinkv1alpha1.UplinkSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("UplinkState"):
 		return &uplinkv1alpha1.UplinkStateApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("UplinkStateSpec"):
+		return &uplinkv1alpha1.UplinkStateSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("UplinkStateStatus"):
 		return &uplinkv1alpha1.UplinkStateStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("UplinkStatus"):

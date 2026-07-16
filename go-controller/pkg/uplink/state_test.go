@@ -22,17 +22,19 @@ func TestValidateOVSBridgeState(t *testing.T) {
 
 	state.Status.Conditions[0].Status = metav1.ConditionFalse
 	g.Expect(ValidateOVSBridgeState(state, "blue", "node-a", true)).To(gomega.MatchError(
-		gomega.ContainSubstring("is not ready")))
+		gomega.ContainSubstring("is not resolved")))
 
 	g.Expect(ValidateOVSBridgeState(state, "blue", "node-a", false)).To(gomega.Succeed())
 }
 
-func testUplinkState(readyStatus metav1.ConditionStatus) *uplinkv1alpha1.UplinkState {
+func testUplinkState(resolvedStatus metav1.ConditionStatus) *uplinkv1alpha1.UplinkState {
 	return &uplinkv1alpha1.UplinkState{
 		ObjectMeta: metav1.ObjectMeta{Name: "blue-node-a"},
+		Spec: uplinkv1alpha1.UplinkStateSpec{
+			UplinkName: "blue",
+			NodeName:   "node-a",
+		},
 		Status: uplinkv1alpha1.UplinkStateStatus{
-			UplinkName:        "blue",
-			NodeName:          "node-a",
 			Type:              uplinkv1alpha1.UplinkTypeOVSBridge,
 			HostInterfaceName: "breth0",
 			OVSBridge: &uplinkv1alpha1.OVSBridgeStatus{
@@ -40,9 +42,9 @@ func testUplinkState(readyStatus metav1.ConditionStatus) *uplinkv1alpha1.UplinkS
 			},
 			Conditions: []metav1.Condition{
 				{
-					Type:               uplinkv1alpha1.UplinkStateConditionReady,
-					Status:             readyStatus,
-					Reason:             uplinkv1alpha1.UplinkStateReasonReady,
+					Type:               uplinkv1alpha1.UplinkStateConditionResolved,
+					Status:             resolvedStatus,
+					Reason:             uplinkv1alpha1.UplinkStateReasonResolved,
 					LastTransitionTime: metav1.NewTime(time.Now()),
 				},
 			},

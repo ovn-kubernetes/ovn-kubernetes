@@ -24,11 +24,11 @@ func StateName(uplinkName, nodeName string) string {
 }
 
 func StateIdentity(state *uplinkv1alpha1.UplinkState) (uplinkName, nodeName string) {
-	return state.Status.UplinkName, state.Status.NodeName
+	return state.Spec.UplinkName, state.Spec.NodeName
 }
 
 // GetState returns the UplinkState for an Uplink and node after validating that
-// the identity stored in its status matches the requested identity.
+// the identity stored in its spec matches the requested identity.
 func GetState(
 	lister uplinklisters.UplinkStateLister, uplinkName, nodeName string,
 ) (*uplinkv1alpha1.UplinkState, error) {

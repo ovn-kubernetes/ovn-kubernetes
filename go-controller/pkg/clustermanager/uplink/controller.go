@@ -47,7 +47,7 @@ const (
 	reasonNodeSelectorOverlap      = "NodeSelectorOverlap"
 	reasonNoMatchingNodes          = "NoMatchingNodes"
 	reasonMissingUplinkState       = "MissingUplinkState"
-	reasonUplinkStateNotReady      = "UplinkStateNotReady"
+	reasonUplinkStateNotResolved   = "UplinkStateNotResolved"
 	reasonUplinkStateIdentityError = "UplinkStateIdentityError"
 	reasonReady                    = "Ready"
 
@@ -62,7 +62,7 @@ const (
 	reasonUplinkNotFound               = "UplinkNotFound"
 	reasonUplinkOverlapOnNode          = "UplinkOverlapOnNode"
 	reasonUplinkNotFoundForNode        = "UplinkNotFoundForNode"
-	reasonUplinkNotReadyForNode        = "UplinkNotReadyForNode"
+	reasonUplinkNotResolvedForNode     = "UplinkNotResolvedForNode"
 	reasonUplinkTerminating            = "UplinkTerminating"
 	reasonUplinkVRFAttachmentFailed    = "UplinkVRFAttachmentFailed"
 	reasonUplinkBridgeMappingFailed    = "UplinkBridgeMappingFailed"
@@ -104,6 +104,12 @@ type cudnUplinkFailure struct {
 	uplink string
 	reason string
 	node   string
+}
+
+type uplinkNodeFailure struct {
+	node   string
+	reason string
+	detail string
 }
 
 // NewController creates a new cluster-manager Uplink controller.
@@ -637,7 +643,7 @@ func (c *Controller) deleteUplinkStatesFor(uplinkName string) error {
 		return fmt.Errorf("failed to list UplinkStates: %w", err)
 	}
 	for _, state := range states {
-		if state.Status.UplinkName != uplinkName {
+		if state.Spec.UplinkName != uplinkName {
 			continue
 		}
 		if err := c.deleteUplinkState(state.Name); err != nil {
@@ -664,12 +670,8 @@ func (c *Controller) readyCondition(
 	selected map[string]uplinkv1alpha1.UplinkNodeConfig,
 	conflicts []string,
 ) (metav1.ConditionStatus, string, string) {
-	if len(conflicts) > 0 {
-		return metav1.ConditionFalse, reasonNodeSelectorOverlap,
-			fmt.Sprintf("multiple Uplink nodeConfigs select nodes: %s",
-				strings.Join(conflicts, ","))
-	}
-	if len(selected) == 0 {
+	selectedNodes := len(selected) + len(conflicts)
+	if selectedNodes == 0 {
 		return metav1.ConditionFalse, reasonNoMatchingNodes,
 			"no nodes match any Uplink nodeConfig"
 	}
@@ -680,51 +682,122 @@ func (c *Controller) readyCondition(
 	}
 	sort.Strings(nodeNames)
 
+	failures := make([]uplinkNodeFailure, 0, len(conflicts))
+	for _, nodeName := range conflicts {
+		failures = append(failures, uplinkNodeFailure{
+			node:   nodeName,
+			reason: reasonNodeSelectorOverlap,
+			detail: reasonNodeSelectorOverlap,
+		})
+	}
 	for _, nodeName := range nodeNames {
 		entry := selected[nodeName]
 		stateName := uplinkutil.StateName(uplink.Name, nodeName)
 		state, err := c.uplinkStateLister.Get(stateName)
 		if err != nil {
-			if apierrors.IsNotFound(err) {
-				return metav1.ConditionFalse, reasonMissingUplinkState,
-					fmt.Sprintf("UplinkState %s is missing", stateName)
+			detail := reasonMissingUplinkState
+			if !apierrors.IsNotFound(err) {
+				detail = fmt.Sprintf("UplinkStateLookupFailed: %v", err)
 			}
-			return metav1.ConditionFalse, reasonMissingUplinkState,
-				fmt.Sprintf("failed to get UplinkState %s: %v", stateName, err)
+			failures = append(failures, uplinkNodeFailure{
+				node:   nodeName,
+				reason: reasonMissingUplinkState,
+				detail: detail,
+			})
+			continue
 		}
 
 		stateUplink, stateNode := uplinkutil.StateIdentity(state)
 		if stateUplink != uplink.Name {
-			return metav1.ConditionFalse, reasonUplinkStateIdentityError,
-				fmt.Sprintf("UplinkState %s reports uplinkName %q",
-					stateName, stateUplink)
+			failures = append(failures, uplinkNodeFailure{
+				node:   nodeName,
+				reason: reasonUplinkStateIdentityError,
+				detail: fmt.Sprintf("UplinkStateIdentityError: uplinkName=%q", stateUplink),
+			})
+			continue
 		}
 		if stateNode != nodeName {
-			return metav1.ConditionFalse, reasonUplinkStateIdentityError,
-				fmt.Sprintf("UplinkState %s reports nodeName %q",
-					stateName, stateNode)
+			failures = append(failures, uplinkNodeFailure{
+				node:   nodeName,
+				reason: reasonUplinkStateIdentityError,
+				detail: fmt.Sprintf("UplinkStateIdentityError: nodeName=%q", stateNode),
+			})
+			continue
 		}
 
-		if !resolvedUplinkReady(state, entry) {
-			return metav1.ConditionFalse, reasonUplinkStateNotReady,
-				fmt.Sprintf("UplinkState %s is not ready", stateName)
+		if detail := uplinkStateNotResolvedReason(state, entry); detail != "" {
+			failures = append(failures, uplinkNodeFailure{
+				node:   nodeName,
+				reason: reasonUplinkStateNotResolved,
+				detail: detail,
+			})
 		}
 	}
-	return metav1.ConditionTrue, reasonReady, "all selected nodes are ready"
+	if len(failures) > 0 {
+		return metav1.ConditionFalse, aggregateUplinkFailureReason(failures),
+			uplinkNodeFailureMessage(failures, selectedNodes)
+	}
+	return metav1.ConditionTrue, reasonReady,
+		fmt.Sprintf("all %d selected node(s) are resolved", selectedNodes)
 }
 
-func resolvedUplinkReady(state *uplinkv1alpha1.UplinkState, nodeConfig uplinkv1alpha1.UplinkNodeConfig) bool {
-	if state.Status.Type != nodeConfig.Type {
-		return false
-	}
-	if state.Status.HostInterfaceName != nodeConfig.HostInterfaceName {
-		return false
-	}
+func uplinkStateNotResolvedReason(
+	state *uplinkv1alpha1.UplinkState,
+	nodeConfig uplinkv1alpha1.UplinkNodeConfig,
+) string {
 	cond := meta.FindStatusCondition(
 		state.Status.Conditions,
-		uplinkv1alpha1.UplinkStateConditionReady,
+		uplinkv1alpha1.UplinkStateConditionResolved,
 	)
-	return cond != nil && cond.Status == metav1.ConditionTrue
+	if cond == nil {
+		return "ResolvedConditionMissing"
+	}
+	if cond.Status != metav1.ConditionTrue {
+		if cond.Reason != "" {
+			return cond.Reason
+		}
+		return reasonUplinkStateNotResolved
+	}
+	if state.Status.Type != nodeConfig.Type || state.Status.HostInterfaceName != nodeConfig.HostInterfaceName {
+		return "NodeConfigMismatch"
+	}
+	return ""
+}
+
+func uplinkStateResolved(state *uplinkv1alpha1.UplinkState, nodeConfig uplinkv1alpha1.UplinkNodeConfig) bool {
+	return uplinkStateNotResolvedReason(state, nodeConfig) == ""
+}
+
+func aggregateUplinkFailureReason(failures []uplinkNodeFailure) string {
+	reasons := sets.New[string]()
+	for _, failure := range failures {
+		reasons.Insert(failure.reason)
+	}
+	for _, reason := range []string{
+		reasonNodeSelectorOverlap,
+		reasonMissingUplinkState,
+		reasonUplinkStateNotResolved,
+		reasonUplinkStateIdentityError,
+	} {
+		if reasons.Has(reason) {
+			return reason
+		}
+	}
+	return reasonUplinkStateNotResolved
+}
+
+func uplinkNodeFailureMessage(failures []uplinkNodeFailure, selectedNodes int) string {
+	examples := make([]string, 0, len(failures))
+	for _, failure := range failures {
+		examples = append(examples, fmt.Sprintf("%s=%s", failure.node, failure.detail))
+	}
+	sort.Strings(examples)
+	const maxFailureExamples = 3
+	if len(examples) > maxFailureExamples {
+		examples = examples[:maxFailureExamples]
+	}
+	return fmt.Sprintf("%d of %d selected node(s) have readiness failures; examples: %s",
+		len(failures), selectedNodes, strings.Join(examples, ", "))
 }
 
 func cudnUplinkStateGatewayNotReadyReason(state *uplinkv1alpha1.UplinkState) string {
@@ -732,7 +805,10 @@ func cudnUplinkStateGatewayNotReadyReason(state *uplinkv1alpha1.UplinkState) str
 		state.Status.Conditions,
 		uplinkv1alpha1.UplinkStateConditionGatewayReady,
 	)
-	if condition == nil || condition.Status == metav1.ConditionTrue {
+	if condition == nil {
+		return reasonUplinksNotReady
+	}
+	if condition.Status == metav1.ConditionTrue {
 		return ""
 	}
 	switch condition.Reason {
@@ -743,7 +819,7 @@ func cudnUplinkStateGatewayNotReadyReason(state *uplinkv1alpha1.UplinkState) str
 	case uplinkv1alpha1.UplinkStateReasonConfigurationConflict:
 		return reasonUplinkConfigurationConflict
 	default:
-		return reasonUplinkNotReadyForNode
+		return reasonUplinksNotReady
 	}
 }
 
@@ -803,7 +879,7 @@ func (c *Controller) cudnUplinksReadyStatus(
 
 	activeNodes, err := c.activeCUDNNodes(cudn)
 	if err != nil {
-		return metav1.ConditionFalse, reasonUplinkNotReadyForNode,
+		return metav1.ConditionFalse, reasonUplinkNotResolvedForNode,
 			fmt.Sprintf("failed to list active nodes for CUDN %s: %v",
 				cudn.Name, err)
 	}
@@ -831,7 +907,7 @@ func (c *Controller) cudnUplinksReadyStatus(
 		// Uplink status, but only report CUDN failures for active CUDN nodes.
 		selected, conflicts, err := c.resolveSelectedNodeConfigs(uplink)
 		if err != nil {
-			return metav1.ConditionFalse, reasonUplinkNotReadyForNode,
+			return metav1.ConditionFalse, reasonUplinkNotResolvedForNode,
 				fmt.Sprintf("Uplink %s has invalid nodeConfigs: %v",
 					uplinkName, err)
 		}
@@ -859,15 +935,15 @@ func (c *Controller) cudnUplinksReadyStatus(
 			if err != nil {
 				failures = append(failures, cudnUplinkFailure{
 					uplink: uplinkName,
-					reason: reasonUplinkNotReadyForNode,
+					reason: reasonUplinkNotResolvedForNode,
 					node:   node.Name,
 				})
 				continue
 			}
-			if !resolvedUplinkReady(state, nodeConfig) {
+			if !uplinkStateResolved(state, nodeConfig) {
 				failures = append(failures, cudnUplinkFailure{
 					uplink: uplinkName,
-					reason: reasonUplinkNotReadyForNode,
+					reason: reasonUplinkNotResolvedForNode,
 					node:   node.Name,
 				})
 				continue
@@ -1012,8 +1088,8 @@ func uplinkStateNeedsUpdate(oldObj, newObj *uplinkv1alpha1.UplinkState) bool {
 	if oldObj == nil {
 		return true
 	}
-	return !reflect.DeepEqual(oldObj.Status, newObj.Status) ||
-		!reflect.DeepEqual(oldObj.Annotations, newObj.Annotations)
+	return !reflect.DeepEqual(oldObj.Spec, newObj.Spec) ||
+		!reflect.DeepEqual(oldObj.Status, newObj.Status)
 }
 
 func cudnNeedsUpdate(oldObj, newObj *udnv1.ClusterUserDefinedNetwork) bool {

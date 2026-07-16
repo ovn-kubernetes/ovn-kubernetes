@@ -18,9 +18,11 @@ import (
 func TestUplinkApplyReactorPreservesUnmentionedStatusFields(t *gotesting.T) {
 	client := uplinkfake.NewSimpleClientset(&uplinkv1alpha1.UplinkState{
 		ObjectMeta: metav1.ObjectMeta{Name: "uplink1.node1"},
+		Spec: uplinkv1alpha1.UplinkStateSpec{
+			UplinkName: "uplink1",
+			NodeName:   "node1",
+		},
 		Status: uplinkv1alpha1.UplinkStateStatus{
-			UplinkName:        "uplink1",
-			NodeName:          "node1",
 			Type:              uplinkv1alpha1.UplinkTypeOVSBridge,
 			HostInterfaceName: "eth1",
 			OVSBridge:         &uplinkv1alpha1.OVSBridgeStatus{Name: "ovsbr1"},
@@ -49,7 +51,7 @@ func TestUplinkApplyReactorPreservesUnmentionedStatusFields(t *gotesting.T) {
 		uplinkapply.UplinkState("uplink1.node1").WithStatus(
 			uplinkapply.UplinkStateStatus().WithConditions(
 				metaapply.Condition().
-					WithType(string(uplinkv1alpha1.UplinkStateConditionReady)).
+					WithType(string(uplinkv1alpha1.UplinkStateConditionResolved)).
 					WithStatus(metav1.ConditionFalse).
 					WithReason(string(uplinkv1alpha1.UplinkStateReasonBridgeInvalid)).
 					WithMessage("bridge is invalid"),

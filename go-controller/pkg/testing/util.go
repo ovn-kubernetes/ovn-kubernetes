@@ -268,14 +268,6 @@ func AddUplinkApplyReactor(fakeClient *uplinkfake.Clientset) {
 		}
 
 		uplinkState := existingObj.(*uplinkv1alpha1.UplinkState)
-		if err := patchUplinkStateStatusField(patchData.Status, "uplinkName",
-			func(value string) { uplinkState.Status.UplinkName = value }); err != nil {
-			return true, nil, err
-		}
-		if err := patchUplinkStateStatusField(patchData.Status, "nodeName",
-			func(value string) { uplinkState.Status.NodeName = value }); err != nil {
-			return true, nil, err
-		}
 		if err := patchUplinkStateStatusField(patchData.Status, "type",
 			func(value uplinkv1alpha1.UplinkType) { uplinkState.Status.Type = value }); err != nil {
 			return true, nil, err

@@ -192,7 +192,7 @@ func (c *Controller) reconcileUplink(key string) error {
 		return c.deleteUplinkState(uplinkutil.StateName(uplink.Name, c.nodeName))
 	}
 
-	state, err := c.ensureUplinkState(uplink)
+	state, err := c.ensureUplinkState(uplink, nodeConfig, nodeConfigErr)
 	if err != nil {
 		return err
 	}
@@ -234,9 +234,6 @@ func (c *Controller) reconcileUplinkState(key string) error {
 		return fmt.Errorf("failed to get UplinkState %s: %w", key, err)
 	}
 	uplinkName, _ := uplinkutil.StateIdentity(state)
-	if uplinkName == "" {
-		return nil
-	}
 
 	uplink, err := c.uplinkLister.Get(uplinkName)
 	if err != nil {
@@ -264,15 +261,7 @@ func (c *Controller) reconcileUplinkState(key string) error {
 		)
 	}
 	if nodeConfig == nil {
-		return c.updateUplinkStateStatus(
-			state,
-			string(state.Status.HostInterfaceName),
-			nil,
-			"",
-			metav1.ConditionFalse,
-			uplinkv1alpha1.UplinkStateReasonNodeNotSelected,
-			fmt.Sprintf("Uplink %q does not select node %q", uplink.Name, c.nodeName),
-		)
+		return c.deleteUplinkState(state.Name)
 	}
 
 	hostInterfaceName := string(nodeConfig.HostInterfaceName)
@@ -342,7 +331,7 @@ func (c *Controller) reconcileUplinkState(key string) error {
 				err.Error(),
 			)
 		}
-		return c.updateReadyUplinkStateStatus(
+		return c.updateResolvedUplinkStateStatus(
 			state,
 			hostInterfaceName,
 			hostState,
@@ -367,10 +356,10 @@ func (c *Controller) reconcileUplinkState(key string) error {
 				err.Error(),
 			)
 		}
-		if dpuSideBridgeReadyForHostInterface(state, hostInterfaceName) {
+		if dpuSideBridgeResolvedForHostInterface(state, hostInterfaceName) {
 			// The DPU side has resolved the OVS bridge. The DPU-host side
 			// now publishes host interface details under its field manager.
-			return c.updateReadyUplinkStateStatus(
+			return c.updateResolvedUplinkStateStatus(
 				state,
 				hostInterfaceName,
 				hostState,
@@ -413,7 +402,7 @@ func (c *Controller) reconcileUplinkState(key string) error {
 		)
 	}
 
-	return c.updateReadyUplinkStateStatus(
+	return c.updateResolvedUplinkStateStatus(
 		state,
 		hostInterfaceName,
 		hostState,
@@ -497,7 +486,7 @@ func validateDefaultGatewayBridge(bridgeName, defaultGatewayBridgeName string) e
 	)
 }
 
-func (c *Controller) updateReadyUplinkStateStatus(
+func (c *Controller) updateResolvedUplinkStateStatus(
 	state *uplinkv1alpha1.UplinkState,
 	hostInterfaceName string,
 	hostState *hostInterfaceState,
@@ -510,7 +499,7 @@ func (c *Controller) updateReadyUplinkStateStatus(
 		hostState,
 		bridgeName,
 		metav1.ConditionTrue,
-		uplinkv1alpha1.UplinkStateReasonReady,
+		uplinkv1alpha1.UplinkStateReasonResolved,
 		message,
 	)
 }
@@ -524,16 +513,13 @@ func (c *Controller) updateUplinkStateStatus(
 	reason string,
 	message string,
 ) error {
-	uplinkName, nodeName := uplinkutil.StateIdentity(state)
-	condition := readyCondition(state, hostInterfaceName, status, reason, message)
+	condition := resolvedCondition(state, hostInterfaceName, status, reason, message)
 	desiredStatus := desiredUplinkStateStatus(state, hostInterfaceName, hostState, bridgeName, condition)
 	if reflect.DeepEqual(state.Status, desiredStatus) {
 		return nil
 	}
 
 	statusApply := uplinkapply.UplinkStateStatus().
-		WithUplinkName(uplinkName).
-		WithNodeName(nodeName).
 		WithType(uplinkv1alpha1.UplinkTypeOVSBridge).
 		WithConditions(util.ConditionToApply(condition))
 
@@ -588,8 +574,6 @@ func desiredUplinkStateStatus(
 		desired = state.DeepCopy().Status
 	}
 
-	desired.UplinkName = state.Status.UplinkName
-	desired.NodeName = state.Status.NodeName
 	desired.Type = uplinkv1alpha1.UplinkTypeOVSBridge
 	desired.HostInterfaceName = uplinkv1alpha1.InterfaceName(hostInterfaceName)
 	desired.Conditions = append([]metav1.Condition(nil), state.Status.Conditions...)
@@ -632,14 +616,14 @@ func setUplinkStateBridgeStatus(status *uplinkv1alpha1.UplinkStateStatus, bridge
 	}
 }
 
-func dpuSideBridgeReadyForHostInterface(state *uplinkv1alpha1.UplinkState, hostInterfaceName string) bool {
+func dpuSideBridgeResolvedForHostInterface(state *uplinkv1alpha1.UplinkState, hostInterfaceName string) bool {
 	if state.Status.OVSBridge == nil || state.Status.OVSBridge.Name == "" {
 		return false
 	}
-	readyCondition := readyConditionForHostInterface(state, hostInterfaceName)
-	return readyCondition != nil &&
-		readyCondition.Status == metav1.ConditionTrue &&
-		readyCondition.Reason == uplinkv1alpha1.UplinkStateReasonReady
+	resolvedCondition := resolvedConditionForHostInterface(state, hostInterfaceName)
+	return resolvedCondition != nil &&
+		resolvedCondition.Status == metav1.ConditionTrue &&
+		resolvedCondition.Reason == uplinkv1alpha1.UplinkStateReasonResolved
 }
 
 // StatusFieldManager returns the field manager used by ovnkube-node when it
@@ -655,7 +639,7 @@ func StatusFieldManager() string {
 	}
 }
 
-func readyCondition(
+func resolvedCondition(
 	state *uplinkv1alpha1.UplinkState,
 	hostInterfaceName string,
 	status metav1.ConditionStatus,
@@ -663,11 +647,11 @@ func readyCondition(
 	message string,
 ) metav1.Condition {
 	var existing []metav1.Condition
-	if current := readyConditionForHostInterface(state, hostInterfaceName); current != nil {
+	if current := resolvedConditionForHostInterface(state, hostInterfaceName); current != nil {
 		existing = []metav1.Condition{*current}
 	}
 	condition, _ := util.MergeStatusCondition(existing, metav1.Condition{
-		Type:    uplinkv1alpha1.UplinkStateConditionReady,
+		Type:    uplinkv1alpha1.UplinkStateConditionResolved,
 		Status:  status,
 		Reason:  reason,
 		Message: message,
@@ -675,24 +659,28 @@ func readyCondition(
 	return condition
 }
 
-func readyConditionForHostInterface(state *uplinkv1alpha1.UplinkState, hostInterfaceName string) *metav1.Condition {
+func resolvedConditionForHostInterface(state *uplinkv1alpha1.UplinkState, hostInterfaceName string) *metav1.Condition {
 	if string(state.Status.HostInterfaceName) != hostInterfaceName {
 		return nil
 	}
 	return meta.FindStatusCondition(
 		state.Status.Conditions,
-		uplinkv1alpha1.UplinkStateConditionReady,
+		uplinkv1alpha1.UplinkStateConditionResolved,
 	)
 }
 
-func (c *Controller) ensureUplinkState(uplink *uplinkv1alpha1.Uplink) (*uplinkv1alpha1.UplinkState, error) {
+func (c *Controller) ensureUplinkState(
+	uplink *uplinkv1alpha1.Uplink,
+	nodeConfig *uplinkv1alpha1.UplinkNodeConfig,
+	nodeConfigErr error,
+) (*uplinkv1alpha1.UplinkState, error) {
 	name := uplinkutil.StateName(uplink.Name, c.nodeName)
 	state, err := c.uplinkStateLister.Get(name)
 	if err != nil {
 		if !apierrors.IsNotFound(err) {
 			return nil, fmt.Errorf("failed to get UplinkState %s: %w", name, err)
 		}
-		state = desiredUplinkState(uplink, c.nodeName, name)
+		state = desiredUplinkState(uplink, c.nodeName, name, nodeConfig, nodeConfigErr)
 		created, err := c.uplinkClient.K8sV1alpha1().UplinkStates().Create(
 			context.Background(),
 			state,
@@ -719,7 +707,7 @@ func (c *Controller) ensureUplinkState(uplink *uplinkv1alpha1.Uplink) (*uplinkv1
 		return nil, nil
 	}
 
-	desired := desiredUplinkState(uplink, c.nodeName, name)
+	desired := desiredUplinkState(uplink, c.nodeName, name, nodeConfig, nodeConfigErr)
 	if !reflect.DeepEqual(state.Labels, desired.Labels) ||
 		!reflect.DeepEqual(state.Annotations, desired.Annotations) ||
 		!reflect.DeepEqual(state.OwnerReferences, desired.OwnerReferences) {
@@ -740,8 +728,13 @@ func (c *Controller) ensureUplinkState(uplink *uplinkv1alpha1.Uplink) (*uplinkv1
 	return state, nil
 }
 
-func desiredUplinkState(uplink *uplinkv1alpha1.Uplink, nodeName, name string) *uplinkv1alpha1.UplinkState {
-	return &uplinkv1alpha1.UplinkState{
+func desiredUplinkState(
+	uplink *uplinkv1alpha1.Uplink,
+	nodeName, name string,
+	nodeConfig *uplinkv1alpha1.UplinkNodeConfig,
+	nodeConfigErr error,
+) *uplinkv1alpha1.UplinkState {
+	state := &uplinkv1alpha1.UplinkState{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 			OwnerReferences: []metav1.OwnerReference{
@@ -751,11 +744,27 @@ func desiredUplinkState(uplink *uplinkv1alpha1.Uplink, nodeName, name string) *u
 				),
 			},
 		},
-		Status: uplinkv1alpha1.UplinkStateStatus{
+		Spec: uplinkv1alpha1.UplinkStateSpec{
 			UplinkName: uplink.Name,
 			NodeName:   nodeName,
 		},
 	}
+	if nodeConfig != nil {
+		state.Status.Type = nodeConfig.Type
+		state.Status.HostInterfaceName = nodeConfig.HostInterfaceName
+	}
+	if nodeConfigErr != nil {
+		state.Status.Conditions = []metav1.Condition{
+			{
+				Type:               uplinkv1alpha1.UplinkStateConditionResolved,
+				Status:             metav1.ConditionFalse,
+				Reason:             discoveryReason(nodeConfigErr),
+				Message:            nodeConfigErr.Error(),
+				LastTransitionTime: metav1.Now(),
+			},
+		}
+	}
+	return state
 }
 
 func (c *Controller) deleteUplinkState(name string) error {
@@ -851,7 +860,8 @@ func uplinkStateNeedsUpdate(oldObj, newObj *uplinkv1alpha1.UplinkState) bool {
 	if oldObj == nil {
 		return true
 	}
-	return !reflect.DeepEqual(oldObj.Status, newObj.Status) ||
+	return !reflect.DeepEqual(oldObj.Spec, newObj.Spec) ||
+		!reflect.DeepEqual(oldObj.Status, newObj.Status) ||
 		!reflect.DeepEqual(oldObj.Labels, newObj.Labels) ||
 		!reflect.DeepEqual(oldObj.Annotations, newObj.Annotations) ||
 		!reflect.DeepEqual(oldObj.OwnerReferences, newObj.OwnerReferences)

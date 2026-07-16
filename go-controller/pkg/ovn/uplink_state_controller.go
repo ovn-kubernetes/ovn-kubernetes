@@ -71,8 +71,8 @@ func newUplinkStateController(
 		Reconcile:   c.syncUplinkState,
 		ObjNeedsUpdate: func(oldObj, newObj *uplinkv1alpha1.UplinkState) bool {
 			return oldObj == nil || newObj == nil ||
-				!reflect.DeepEqual(oldObj.Status, newObj.Status) ||
-				!reflect.DeepEqual(oldObj.Annotations, newObj.Annotations)
+				!reflect.DeepEqual(oldObj.Spec, newObj.Spec) ||
+				!reflect.DeepEqual(oldObj.Status, newObj.Status)
 		},
 		Threadiness: 1,
 		MaxAttempts: controllerutil.InfiniteAttempts,

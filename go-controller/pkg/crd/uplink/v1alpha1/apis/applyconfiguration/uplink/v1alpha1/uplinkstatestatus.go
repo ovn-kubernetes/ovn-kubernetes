@@ -13,10 +13,6 @@ import (
 // UplinkStateStatusApplyConfiguration represents a declarative configuration of the UplinkStateStatus type for use
 // with apply.
 type UplinkStateStatusApplyConfiguration struct {
-	// UplinkName is the Uplink this state belongs to.
-	UplinkName *string `json:"uplinkName,omitempty"`
-	// NodeName is the node this state belongs to.
-	NodeName *string `json:"nodeName,omitempty"`
 	// Type is defined by the matched nodeConfig of the Uplink.
 	Type *uplinkv1alpha1.UplinkType `json:"type,omitempty"`
 	// HostInterfaceName is the host-visible Linux interface selected by
@@ -31,7 +27,8 @@ type UplinkStateStatusApplyConfiguration struct {
 	// DefaultGateways are default route next-hop IPs discovered for the
 	// selected host interface.
 	DefaultGateways []uplinkv1alpha1.IPAddress `json:"defaultGateways,omitempty"`
-	// Conditions reports node-local discovery state for this resolved uplink.
+	// Conditions reports node-local discovery and gateway programming state for
+	// this resolved uplink.
 	Conditions []v1.ConditionApplyConfiguration `json:"conditions,omitempty"`
 }
 
@@ -39,22 +36,6 @@ type UplinkStateStatusApplyConfiguration struct {
 // apply.
 func UplinkStateStatus() *UplinkStateStatusApplyConfiguration {
 	return &UplinkStateStatusApplyConfiguration{}
-}
-
-// WithUplinkName sets the UplinkName field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the UplinkName field is set to the value of the last call.
-func (b *UplinkStateStatusApplyConfiguration) WithUplinkName(value string) *UplinkStateStatusApplyConfiguration {
-	b.UplinkName = &value
-	return b
-}
-
-// WithNodeName sets the NodeName field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the NodeName field is set to the value of the last call.
-func (b *UplinkStateStatusApplyConfiguration) WithNodeName(value string) *UplinkStateStatusApplyConfiguration {
-	b.NodeName = &value
-	return b
 }
 
 // WithType sets the Type field in the declarative configuration to the given value

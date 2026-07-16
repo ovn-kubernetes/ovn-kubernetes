@@ -294,7 +294,7 @@ func configureUplinkStaticFDBEntry(bridge *bridgeconfig.BridgeConfiguration) err
 		config.Gateway.VLANID)
 }
 
-func (udng *UserDefinedNetworkGateway) resolveUplinkGateway(requireReadyBridge bool) (*resolvedUplinkGateway, error) {
+func (udng *UserDefinedNetworkGateway) resolveUplinkGateway(requireResolvedBridge bool) (*resolvedUplinkGateway, error) {
 	stateName := uplinkutil.StateName(udng.Uplink(), udng.node.Name)
 	state, err := uplinkutil.GetState(udng.uplinkStateLister, udng.Uplink(), udng.node.Name)
 	if err != nil {
@@ -304,7 +304,7 @@ func (udng *UserDefinedNetworkGateway) resolveUplinkGateway(requireReadyBridge b
 		}
 		return nil, fmt.Errorf("failed to get UplinkState %s: %w", stateName, err)
 	}
-	return resolvedUplinkGatewayFromState(state, udng.Uplink(), udng.node.Name, requireReadyBridge)
+	return resolvedUplinkGatewayFromState(state, udng.Uplink(), udng.node.Name, requireResolvedBridge)
 }
 
 func configureUplinkGatewayRPFilter(resolved *resolvedUplinkGateway, ipv4Mode bool) error {
@@ -341,9 +341,9 @@ func uplinkGatewayInterfaceName(resolved *resolvedUplinkGateway) string {
 func resolvedUplinkGatewayFromState(
 	state *uplinkv1alpha1.UplinkState,
 	uplinkName, nodeName string,
-	requireReadyBridge bool,
+	requireResolvedBridge bool,
 ) (*resolvedUplinkGateway, error) {
-	if err := uplinkutil.ValidateOVSBridgeState(state, uplinkName, nodeName, requireReadyBridge); err != nil {
+	if err := uplinkutil.ValidateOVSBridgeState(state, uplinkName, nodeName, requireResolvedBridge); err != nil {
 		return nil, err
 	}
 	return parseResolvedUplinkGateway(state)
@@ -428,7 +428,7 @@ func (udng *UserDefinedNetworkGateway) clearUplinkStateGatewayFailure(reason str
 	}
 	return udng.setUplinkStateGatewayReadyCondition(
 		metav1.ConditionTrue,
-		uplinkv1alpha1.UplinkStateReasonReady,
+		uplinkv1alpha1.UplinkStateReasonGatewayConfigured,
 		"Uplink gateway programming succeeded",
 	)
 }

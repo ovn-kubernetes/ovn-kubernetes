@@ -22,7 +22,7 @@ func TestGetState(t *testing.T) {
 	lister := uplinklisters.NewUplinkStateLister(indexer)
 	state := &uplinkv1alpha1.UplinkState{
 		ObjectMeta: metav1.ObjectMeta{Name: StateName("blue", "node-a")},
-		Status: uplinkv1alpha1.UplinkStateStatus{
+		Spec: uplinkv1alpha1.UplinkStateSpec{
 			UplinkName: "blue",
 			NodeName:   "node-a",
 		},
@@ -33,7 +33,7 @@ func TestGetState(t *testing.T) {
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(actual).To(gomega.BeIdenticalTo(state))
 
-	state.Status.NodeName = "node-b"
+	state.Spec.NodeName = "node-b"
 	_, err = GetState(lister, "blue", "node-a")
 	g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("expected uplinkName \"blue\" and nodeName \"node-a\"")))
 

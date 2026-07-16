@@ -562,16 +562,18 @@ func newRouteImportUplinkStateLister(
 		ObjectMeta: metav1.ObjectMeta{
 			Name: uplinkutil.StateName(uplinkName, nodeName),
 		},
-		Status: uplinkv1alpha1.UplinkStateStatus{
+		Spec: uplinkv1alpha1.UplinkStateSpec{
 			UplinkName: uplinkName,
 			NodeName:   nodeName,
-			Type:       uplinkv1alpha1.UplinkTypeOVSBridge,
+		},
+		Status: uplinkv1alpha1.UplinkStateStatus{
+			Type: uplinkv1alpha1.UplinkTypeOVSBridge,
 			OVSBridge: &uplinkv1alpha1.OVSBridgeStatus{
 				Name: bridgeName,
 			},
 			Conditions: []metav1.Condition{
 				{
-					Type:   uplinkv1alpha1.UplinkStateConditionReady,
+					Type:   uplinkv1alpha1.UplinkStateConditionResolved,
 					Status: metav1.ConditionTrue,
 				},
 			},

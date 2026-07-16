@@ -16,12 +16,13 @@ const (
 )
 
 const (
-	UplinkStateConditionReady        = "Ready"
+	UplinkStateConditionResolved     = "Resolved"
 	UplinkStateConditionGatewayReady = "GatewayReady"
 )
 
 const (
-	UplinkStateReasonReady                           = "Ready"
+	UplinkStateReasonResolved                        = "Resolved"
+	UplinkStateReasonGatewayConfigured               = "GatewayConfigured"
 	UplinkStateReasonHostInterfaceNotFound           = "HostInterfaceNotFound"
 	UplinkStateReasonBridgeNotFound                  = "BridgeNotFound"
 	UplinkStateReasonBridgeUplinkNotFound            = "BridgeUplinkNotFound"
@@ -31,7 +32,6 @@ const (
 	UplinkStateReasonGatewayInfoUnavailable          = "GatewayInfoUnavailable"
 	UplinkStateReasonWaitingForDPU                   = "WaitingForDPU"
 	UplinkStateReasonWaitingForDPUHost               = "WaitingForDPUHost"
-	UplinkStateReasonNodeNotSelected                 = "NodeNotSelected"
 	UplinkStateReasonNodeSelectorOverlap             = "NodeSelectorOverlap"
 	UplinkStateReasonVRFAttachmentFailed             = "UplinkVRFAttachmentFailed"
 	UplinkStateReasonBridgeMappingFailed             = "UplinkBridgeMappingFailed"
@@ -144,28 +144,40 @@ type UplinkList struct {
 // +kubebuilder:resource:path=uplinkstates,scope=Cluster
 // +kubebuilder:singular=uplinkstate
 // +kubebuilder:object:root=true
-// +kubebuilder:selectablefield:JSONPath=".status.uplinkName"
-// +kubebuilder:selectablefield:JSONPath=".status.nodeName"
-// +kubebuilder:printcolumn:name="Uplink",type=string,JSONPath=".status.uplinkName"
-// +kubebuilder:printcolumn:name="Node",type=string,JSONPath=".status.nodeName"
-// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
+// +kubebuilder:selectablefield:JSONPath=".spec.uplinkName"
+// +kubebuilder:selectablefield:JSONPath=".spec.nodeName"
+// +kubebuilder:printcolumn:name="Uplink",type=string,JSONPath=".spec.uplinkName"
+// +kubebuilder:printcolumn:name="Node",type=string,JSONPath=".spec.nodeName"
+// +kubebuilder:printcolumn:name="Resolved",type=string,JSONPath=`.status.conditions[?(@.type=="Resolved")].status`
 type UplinkState struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	// +kubebuilder:validation:Required
+	// +required
+	Spec UplinkStateSpec `json:"spec"`
 
 	// +optional
 	Status UplinkStateStatus `json:"status,omitempty"`
 }
 
-type UplinkStateStatus struct {
+type UplinkStateSpec struct {
 	// UplinkName is the Uplink this state belongs to.
-	// +optional
-	UplinkName string `json:"uplinkName,omitempty"`
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="uplinkName is immutable"
+	// +required
+	UplinkName string `json:"uplinkName"`
 
 	// NodeName is the node this state belongs to.
-	// +optional
-	NodeName string `json:"nodeName,omitempty"`
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="nodeName is immutable"
+	// +required
+	NodeName string `json:"nodeName"`
+}
 
+type UplinkStateStatus struct {
 	// Type is defined by the matched nodeConfig of the Uplink.
 	// +kubebuilder:validation:Enum=OVSBridge
 	// +optional

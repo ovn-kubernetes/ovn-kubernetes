@@ -30,7 +30,7 @@ func TestUplinkStateSharedInformerFactoryFiltersByNode(t *testing.T) {
 			if !ok || action.GetResource().Resource != "uplinkstates" {
 				continue
 			}
-			if got, want := listAction.GetListRestrictions().Fields.String(), "status.nodeName="+nodeName; got != want {
+			if got, want := listAction.GetListRestrictions().Fields.String(), "spec.nodeName="+nodeName; got != want {
 				t.Fatalf("unexpected UplinkState field selector: got %q, want %q", got, want)
 			}
 			return

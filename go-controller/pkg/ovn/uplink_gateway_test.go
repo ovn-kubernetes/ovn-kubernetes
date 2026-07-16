@@ -37,19 +37,21 @@ func TestResolvedUplinkL3GatewayConfig(t *testing.T) {
 	g.Expect(gwConfig.NodePortEnable).To(gomega.BeTrue())
 }
 
-func TestUplinkStateReady(t *testing.T) {
+func TestUplinkStateResolved(t *testing.T) {
 	g := gomega.NewWithT(t)
 
-	g.Expect(uplinkutil.StateReady(testUplinkState(metav1.ConditionTrue))).To(gomega.BeTrue())
-	g.Expect(uplinkutil.StateReady(testUplinkState(metav1.ConditionFalse))).To(gomega.BeFalse())
+	g.Expect(uplinkutil.StateResolved(testUplinkState(metav1.ConditionTrue))).To(gomega.BeTrue())
+	g.Expect(uplinkutil.StateResolved(testUplinkState(metav1.ConditionFalse))).To(gomega.BeFalse())
 }
 
-func testUplinkState(readyStatus metav1.ConditionStatus) *uplinkv1alpha1.UplinkState {
+func testUplinkState(resolvedStatus metav1.ConditionStatus) *uplinkv1alpha1.UplinkState {
 	return &uplinkv1alpha1.UplinkState{
 		ObjectMeta: metav1.ObjectMeta{Name: "blue-node-a"},
+		Spec: uplinkv1alpha1.UplinkStateSpec{
+			UplinkName: "blue",
+			NodeName:   "node-a",
+		},
 		Status: uplinkv1alpha1.UplinkStateStatus{
-			UplinkName:        "blue",
-			NodeName:          "node-a",
 			Type:              uplinkv1alpha1.UplinkTypeOVSBridge,
 			HostInterfaceName: "breth0",
 			OVSBridge: &uplinkv1alpha1.OVSBridgeStatus{
@@ -60,9 +62,9 @@ func testUplinkState(readyStatus metav1.ConditionStatus) *uplinkv1alpha1.UplinkS
 			DefaultGateways: []uplinkv1alpha1.IPAddress{"192.0.2.1"},
 			Conditions: []metav1.Condition{
 				{
-					Type:               uplinkv1alpha1.UplinkStateConditionReady,
-					Status:             readyStatus,
-					Reason:             uplinkv1alpha1.UplinkStateReasonReady,
+					Type:               uplinkv1alpha1.UplinkStateConditionResolved,
+					Status:             resolvedStatus,
+					Reason:             uplinkv1alpha1.UplinkStateReasonResolved,
 					LastTransitionTime: metav1.NewTime(time.Now()),
 				},
 			},

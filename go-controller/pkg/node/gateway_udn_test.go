@@ -231,9 +231,11 @@ func TestEnsureUplinkGatewayRequiresValidInterface(t *testing.T) {
 			indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
 			state := &uplinkv1alpha1.UplinkState{
 				ObjectMeta: metav1.ObjectMeta{Name: uplinkutil.StateName("uplink1", "node-a")},
+				Spec: uplinkv1alpha1.UplinkStateSpec{
+					UplinkName: "uplink1",
+					NodeName:   "node-a",
+				},
 				Status: uplinkv1alpha1.UplinkStateStatus{
-					UplinkName:        "uplink1",
-					NodeName:          "node-a",
 					Type:              uplinkv1alpha1.UplinkTypeOVSBridge,
 					HostInterfaceName: uplinkv1alpha1.InterfaceName(tt.interfaceName),
 					MACAddress:        "02:42:ac:12:00:02",
@@ -411,7 +413,7 @@ func TestUplinkStateGatewayStatusRejectsMismatchedIdentity(t *testing.T) {
 	stateName := uplinkutil.StateName("uplink1", nodeName)
 	state := &uplinkv1alpha1.UplinkState{
 		ObjectMeta: metav1.ObjectMeta{Name: stateName},
-		Status: uplinkv1alpha1.UplinkStateStatus{
+		Spec: uplinkv1alpha1.UplinkStateSpec{
 			UplinkName: "other-uplink",
 			NodeName:   nodeName,
 		},
@@ -482,13 +484,15 @@ func TestUplinkStateGatewayReadyCondition(t *testing.T) {
 	stateName := uplinkutil.StateName("uplink1", nodeName)
 	state := &uplinkv1alpha1.UplinkState{
 		ObjectMeta: metav1.ObjectMeta{Name: stateName},
-		Status: uplinkv1alpha1.UplinkStateStatus{
+		Spec: uplinkv1alpha1.UplinkStateSpec{
 			UplinkName: "uplink1",
 			NodeName:   nodeName,
+		},
+		Status: uplinkv1alpha1.UplinkStateStatus{
 			Conditions: []metav1.Condition{{
-				Type:   uplinkv1alpha1.UplinkStateConditionReady,
+				Type:   uplinkv1alpha1.UplinkStateConditionResolved,
 				Status: metav1.ConditionTrue,
-				Reason: uplinkv1alpha1.UplinkStateReasonReady,
+				Reason: uplinkv1alpha1.UplinkStateReasonResolved,
 			}},
 		},
 	}
@@ -515,9 +519,9 @@ func TestUplinkStateGatewayReadyCondition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get UplinkState: %v", err)
 	}
-	ready := meta.FindStatusCondition(updated.Status.Conditions, uplinkv1alpha1.UplinkStateConditionReady)
-	if ready == nil || ready.Status != metav1.ConditionTrue {
-		t.Fatalf("expected discovery Ready condition to remain true, got %#v", ready)
+	resolved := meta.FindStatusCondition(updated.Status.Conditions, uplinkv1alpha1.UplinkStateConditionResolved)
+	if resolved == nil || resolved.Status != metav1.ConditionTrue {
+		t.Fatalf("expected discovery Resolved condition to remain true, got %#v", resolved)
 	}
 	gatewayReady := meta.FindStatusCondition(updated.Status.Conditions, uplinkv1alpha1.UplinkStateConditionGatewayReady)
 	if gatewayReady == nil || gatewayReady.Status != metav1.ConditionFalse ||
@@ -537,7 +541,7 @@ func TestUplinkStateGatewayReadyCondition(t *testing.T) {
 	}
 	gatewayReady = meta.FindStatusCondition(updated.Status.Conditions, uplinkv1alpha1.UplinkStateConditionGatewayReady)
 	if gatewayReady == nil || gatewayReady.Status != metav1.ConditionTrue ||
-		gatewayReady.Reason != uplinkv1alpha1.UplinkStateReasonReady {
+		gatewayReady.Reason != uplinkv1alpha1.UplinkStateReasonGatewayConfigured {
 		t.Fatalf("unexpected recovered GatewayReady condition: %#v", gatewayReady)
 	}
 }
@@ -822,9 +826,11 @@ func newGatewayUplinkStateAndLister(
 		ObjectMeta: metav1.ObjectMeta{
 			Name: uplinkutil.StateName(uplinkName, nodeName),
 		},
+		Spec: uplinkv1alpha1.UplinkStateSpec{
+			UplinkName: uplinkName,
+			NodeName:   nodeName,
+		},
 		Status: uplinkv1alpha1.UplinkStateStatus{
-			UplinkName:        uplinkName,
-			NodeName:          nodeName,
 			Type:              uplinkv1alpha1.UplinkTypeOVSBridge,
 			HostInterfaceName: "ovsbr1",
 			OVSBridge: &uplinkv1alpha1.OVSBridgeStatus{
@@ -832,7 +838,7 @@ func newGatewayUplinkStateAndLister(
 			},
 			Conditions: []metav1.Condition{
 				{
-					Type:   uplinkv1alpha1.UplinkStateConditionReady,
+					Type:   uplinkv1alpha1.UplinkStateConditionResolved,
 					Status: metav1.ConditionTrue,
 				},
 			},

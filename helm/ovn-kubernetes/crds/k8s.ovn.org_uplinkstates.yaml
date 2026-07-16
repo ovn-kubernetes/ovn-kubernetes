@@ -15,14 +15,14 @@ spec:
   scope: Cluster
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .status.uplinkName
+    - jsonPath: .spec.uplinkName
       name: Uplink
       type: string
-    - jsonPath: .status.nodeName
+    - jsonPath: .spec.nodeName
       name: Node
       type: string
-    - jsonPath: .status.conditions[?(@.type=="Ready")].status
-      name: Ready
+    - jsonPath: .status.conditions[?(@.type=="Resolved")].status
+      name: Resolved
       type: string
     name: v1alpha1
     schema:
@@ -47,11 +47,34 @@ spec:
             type: string
           metadata:
             type: object
+          spec:
+            properties:
+              nodeName:
+                description: NodeName is the node this state belongs to.
+                maxLength: 253
+                minLength: 1
+                type: string
+                x-kubernetes-validations:
+                - message: nodeName is immutable
+                  rule: self == oldSelf
+              uplinkName:
+                description: UplinkName is the Uplink this state belongs to.
+                maxLength: 253
+                minLength: 1
+                type: string
+                x-kubernetes-validations:
+                - message: uplinkName is immutable
+                  rule: self == oldSelf
+            required:
+            - nodeName
+            - uplinkName
+            type: object
           status:
             properties:
               conditions:
-                description: Conditions reports node-local discovery state for this
-                  resolved uplink.
+                description: |-
+                  Conditions reports node-local discovery and gateway programming state for
+                  this resolved uplink.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -147,9 +170,6 @@ spec:
                   interface.
                 pattern: ^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$
                 type: string
-              nodeName:
-                description: NodeName is the node this state belongs to.
-                type: string
               ovsBridge:
                 description: OVSBridge contains resolved OVS bridge data.
                 properties:
@@ -166,14 +186,13 @@ spec:
                 enum:
                 - OVSBridge
                 type: string
-              uplinkName:
-                description: UplinkName is the Uplink this state belongs to.
-                type: string
             type: object
+        required:
+        - spec
         type: object
     selectableFields:
-    - jsonPath: .status.uplinkName
-    - jsonPath: .status.nodeName
+    - jsonPath: .spec.uplinkName
+    - jsonPath: .spec.nodeName
     served: true
     storage: true
     subresources: {}

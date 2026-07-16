@@ -18,6 +18,7 @@ import (
 type UplinkStateApplyConfiguration struct {
 	v1.TypeMetaApplyConfiguration    `json:",inline"`
 	*v1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`
+	Spec                             *UplinkStateSpecApplyConfiguration   `json:"spec,omitempty"`
 	Status                           *UplinkStateStatusApplyConfiguration `json:"status,omitempty"`
 }
 
@@ -189,6 +190,14 @@ func (b *UplinkStateApplyConfiguration) ensureObjectMetaApplyConfigurationExists
 	if b.ObjectMetaApplyConfiguration == nil {
 		b.ObjectMetaApplyConfiguration = &v1.ObjectMetaApplyConfiguration{}
 	}
+}
+
+// WithSpec sets the Spec field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Spec field is set to the value of the last call.
+func (b *UplinkStateApplyConfiguration) WithSpec(value *UplinkStateSpecApplyConfiguration) *UplinkStateApplyConfiguration {
+	b.Spec = value
+	return b
 }
 
 // WithStatus sets the Status field in the declarative configuration to the given value
