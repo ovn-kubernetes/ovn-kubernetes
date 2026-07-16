@@ -39,6 +39,23 @@ job page. Extract it to find:
     └── ovnkube                         # Matching binary
 ```
 
+### Automated Stack Trace Extraction
+
+The `contrib/extract-coredump-stacktraces.sh` script accepts a tar archive of
+exported KIND logs and writes stack traces to a local directory:
+
+```bash
+./contrib/extract-coredump-stacktraces.sh kind-logs.tar.gz stacktraces
+```
+
+The script currently supports `ovn-northd` and `ovn-controller` coredumps from
+the Fedora `ovn-daemonset` image. It uses the image metadata in the artifact to
+run GDB in the exact Fedora base image and install the matching OVN runtime and
+debuginfo RPMs. If that digest is no longer available, it falls back to the
+Fedora release recorded in the binary. Docker and network access to Fedora and
+Koji are required. Set `OCI_BIN` to use another Docker-compatible container
+runtime.
+
 ### Debugging with Delve
 
 Use the [Delve](https://github.com/go-delve/delve) debugger for post-mortem analysis.
