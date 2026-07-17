@@ -35,6 +35,13 @@ func TestBridgeConfig(brName string) *BridgeConfiguration {
 	}
 }
 
+// SetIPs allows tests to configure bridge IP addresses for verifying VRF route computation
+func (b *BridgeConfiguration) SetIPs(ips []*net.IPNet) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	b.ips = ips
+}
+
 func (b *BridgeConfiguration) GetNetConfigLen() int {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
