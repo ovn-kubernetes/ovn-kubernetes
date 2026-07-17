@@ -5,20 +5,20 @@ set -o pipefail
 
 HERE=$(dirname "$(readlink --canonicalize "$BASH_SOURCE")")
 ROOT=$(readlink --canonicalize "$HERE/..")
-TMPDIR=$(mktemp -d)
-trap 'rm -rf "$TMPDIR"' EXIT
+VERIFY_TMP_DIR=$(mktemp -d)
+trap 'rm -rf "$VERIFY_TMP_DIR"' EXIT
 
 echo "Checking that go.mod and go.sum are tidy"
-cp "$ROOT/go.mod" "$TMPDIR/go.mod"
-cp "$ROOT/go.sum" "$TMPDIR/go.sum"
+cp "$ROOT/go.mod" "$VERIFY_TMP_DIR/go.mod"
+cp "$ROOT/go.sum" "$VERIFY_TMP_DIR/go.sum"
 
 cd "$ROOT/"
-go mod tidy
+go mod tidy -modfile="$VERIFY_TMP_DIR/go.mod"
 cd -
 
-if ! cmp -s "$ROOT/go.mod" "$TMPDIR/go.mod" || ! cmp -s "$ROOT/go.sum" "$TMPDIR/go.sum"; then
+if ! cmp -s "$ROOT/go.mod" "$VERIFY_TMP_DIR/go.mod" || ! cmp -s "$ROOT/go.sum" "$VERIFY_TMP_DIR/go.sum"; then
     echo "ERROR: detected go.mod or go.sum inconsistency after 'go mod tidy':"
-    diff -u "$TMPDIR/go.mod" "$ROOT/go.mod" || true
-    diff -u "$TMPDIR/go.sum" "$ROOT/go.sum" || true
+    diff -u "$ROOT/go.mod" "$VERIFY_TMP_DIR/go.mod" || true
+    diff -u "$ROOT/go.sum" "$VERIFY_TMP_DIR/go.sum" || true
     exit 1
 fi
