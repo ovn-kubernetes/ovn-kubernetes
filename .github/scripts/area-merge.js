@@ -1,7 +1,8 @@
 // Area Maintainer Merge Bot
 //
 // Parses CODEOWNERS to determine area maintainer authorization, then verifies
-// file scope and CI status before merging PRs via /area-maintainer-approved.
+// file scope and CI status before merging PRs via /area-maintainer-approved
+// (issued either as a PR comment or in a PR review body).
 //
 // Called from .github/workflows/area-merge.yml via actions/github-script.
 
@@ -32,6 +33,17 @@ module.exports = async ({ github, context, core }) => {
     }
     pullNumbers.push(context.payload.issue.number);
     commenter = comment.user.login.toLowerCase();
+  } else if (context.eventName === 'pull_request_review') {
+    // Same defense in depth for the command placed in a PR review body
+    // (e.g. an "Approve" review whose summary starts with the command).
+    const review = context.payload.review;
+    if (review.user.type === 'Bot' ||
+        !(review.body || '').trim().startsWith('/area-maintainer-approved')) {
+      core.info('Ignoring review: authored by a bot or not a /area-maintainer-approved command');
+      return;
+    }
+    pullNumbers.push(context.payload.pull_request.number);
+    commenter = review.user.login.toLowerCase();
   } else if (context.eventName === 'check_suite') {
     const suite = context.payload.check_suite;
     for (const pr of (suite.pull_requests || [])) {
@@ -114,6 +126,25 @@ module.exports = async ({ github, context, core }) => {
     return allComments;
   }
 
+  async function fetchAllReviews(prNumber) {
+    const allReviews = [];
+    let page = 1;
+    while (true) {
+      const { data: reviews } = await github.rest.pulls.listReviews({
+        owner: context.repo.owner,
+        repo: context.repo.repo,
+        pull_number: prNumber,
+        per_page: 100,
+        page: page,
+      });
+      if (reviews.length === 0) break;
+      allReviews.push(...reviews);
+      if (reviews.length < 100) break;
+      page++;
+    }
+    return allReviews;
+  }
+
   // --- Process each PR ---
   for (const prNumber of pullNumbers) {
     core.info(`Processing PR #${prNumber}`);
@@ -143,18 +174,25 @@ module.exports = async ({ github, context, core }) => {
       continue;
     }
 
-    // For check_suite retries, find who previously ran /area-maintainer-approved
+    // For check_suite retries, find who previously ran /area-maintainer-approved,
+    // either in a PR comment or in a PR review body.
     let requester = commenter;
     let allComments = null;
     if (!requester) {
       allComments = await fetchAllComments(prNumber);
-      const mergeComment = [...allComments]
-        .reverse()
-        .find(c => c.body.trim().startsWith('/area-maintainer-approved') &&
-                   c.user.type !== 'Bot' &&
-                   c.user.login.toLowerCase() !== prAuthor);
-      if (mergeComment) {
-        requester = mergeComment.user.login.toLowerCase();
+      const reviews = await fetchAllReviews(prNumber);
+      const isMergeRequest = c =>
+        (c.body || '').trim().startsWith('/area-maintainer-approved') &&
+        c.user.type !== 'Bot' &&
+        c.user.login.toLowerCase() !== prAuthor;
+      const mergeRequest = [...allComments, ...reviews]
+        .filter(isMergeRequest)
+        .sort((a, b) =>
+          new Date(a.created_at || a.submitted_at || 0) -
+          new Date(b.created_at || b.submitted_at || 0))
+        .pop();
+      if (mergeRequest) {
+        requester = mergeRequest.user.login.toLowerCase();
       }
     }
 
