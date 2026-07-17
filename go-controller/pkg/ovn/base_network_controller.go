@@ -432,15 +432,6 @@ func (bnc *BaseNetworkController) getOVNClusterRouterPortToJoinSwitchIfAddrs() (
 	return gwLRPIPs, nil
 }
 
-// getCRToSwitchPortName returns a cluster router name for layer3 topo and transit router name for layer2 topo.
-// In the context of baseNetworkController they are similar.
-func (bnc *BaseNetworkController) getCRToSwitchPortName(switchName string) string {
-	if bnc.TopologyType() == types.Layer2Topology {
-		return types.TransitRouterToSwitchPrefix + switchName
-	}
-	return types.RouterToSwitchPrefix + switchName
-}
-
 // syncNodeClusterRouterPort ensures a node's LS to the cluster router's LRP is created.
 // NOTE: We could have created the router port in createNodeLogicalSwitch() instead of here,
 // but chassis ID is not available at that moment. We need the chassis ID to set the
@@ -470,9 +461,8 @@ func (bnc *BaseNetworkController) syncNodeClusterRouterPort(node *corev1.Node, h
 		}
 	}
 
-	switchName := bnc.GetNetworkScopedSwitchName(node.Name)
 	logicalRouterName := bnc.GetNetworkScopedClusterRouterName()
-	lrpName := bnc.getCRToSwitchPortName(switchName)
+	lrpName := bnc.GetNetworkScopedRouterToSwitchPortName(node.Name)
 	lrpNetworks := []string{}
 	for _, hostSubnet := range hostSubnets {
 		gwIfAddr := bnc.GetNodeGatewayIP(hostSubnet)
@@ -606,11 +596,11 @@ func (bnc *BaseNetworkController) createNodeLogicalSwitch(nodeName string, hostS
 
 	// Connect the switch to the router.
 	logicalSwitchPort := nbdb.LogicalSwitchPort{
-		Name:      types.SwitchToRouterPrefix + switchName,
+		Name:      bnc.GetNetworkScopedSwitchToRouterPortName(nodeName),
 		Type:      "router",
 		Addresses: []string{"router"},
 		Options: map[string]string{
-			libovsdbops.RouterPort: types.RouterToSwitchPrefix + switchName,
+			libovsdbops.RouterPort: bnc.GetNetworkScopedRouterToSwitchPortName(nodeName),
 		},
 	}
 	if bnc.IsDefault() {
@@ -651,7 +641,7 @@ func (bnc *BaseNetworkController) deleteNodeLogicalNetwork(nodeName string) erro
 	logicalRouterName := bnc.GetNetworkScopedClusterRouterName()
 	logicalRouter := nbdb.LogicalRouter{Name: logicalRouterName}
 	logicalRouterPort := nbdb.LogicalRouterPort{
-		Name: types.RouterToSwitchPrefix + switchName,
+		Name: bnc.GetNetworkScopedRouterToSwitchPortName(nodeName),
 	}
 	err = libovsdbops.DeleteLogicalRouterPorts(bnc.nbClient, &logicalRouter, &logicalRouterPort)
 	if err != nil {
