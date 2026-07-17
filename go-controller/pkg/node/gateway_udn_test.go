@@ -2127,6 +2127,80 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
 	})
 
+	ovntest.OnSupportedPlatformsIt("should compute routes for all cluster subnets of a multi-subnet user defined network", func() {
+		config.Gateway.Interface = "eth0"
+		config.IPv4Mode = true
+		config.IPv6Mode = true
+		config.Kubernetes.ServiceCIDRs = ovntest.MustParseIPNets("10.96.0.0/16", "fd00:10:96::/112")
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: nodeName,
+				Annotations: map[string]string{
+					"k8s.ovn.org/node-subnets": fmt.Sprintf("{\"%s\":[\"%s\", \"%s\"]}", netName, v4NodeSubnet, v6NodeSubnet),
+				},
+			},
+		}
+		// A multi-subnet Layer3 UDN with two IPv4 and two IPv6 cluster subnets.
+		// The node only owns a host subnet out of the first subnet of each family.
+		nad := ovntest.GenerateNAD(netName, "rednad", "greenamespace",
+			types.Layer3Topology, "100.128.0.0/16/24,100.129.0.0/16/24,ae70::/60/64,ae71::/60/64", types.NetworkRolePrimary)
+		ovntest.AnnotateNADWithNetworkID(netID, nad)
+		netInfo, err := util.ParseNADInfo(nad)
+		Expect(err).NotTo(HaveOccurred())
+		err = testNS.Do(func(ns.NetNS) error {
+			defer GinkgoRecover()
+			ofm := getDummyOpenflowManager()
+			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, nil, nil, vrf, nil,
+				&gateway{openflowManager: ofm}, nil, nil, nil)
+			Expect(err).NotTo(HaveOccurred())
+			mplink, err := netlink.LinkByName(mgtPort)
+			Expect(err).NotTo(HaveOccurred())
+			vrfTableId := util.CalculateRouteTableID(mplink.Attrs().Index)
+			udnGateway.vrfTableId = vrfTableId
+
+			routes, err := udnGateway.computeRoutesForUDN(mplink)
+			Expect(err).NotTo(HaveOccurred())
+			// Compared to a single-subnet UDN (10 routes) there is one extra
+			// cluster subnet route per IP family, so 12 routes total.
+			Expect(routes).To(HaveLen(12))
+
+			// IPv4 ETP=Local service masquerade IP route
+			Expect(*routes[4].Dst).To(Equal(*ovntest.MustParseIPNet("169.254.169.3/32")))
+			Expect(routes[4].LinkIndex).To(Equal(mplink.Attrs().Index))
+			Expect(routes[4].Gw.Equal(ovntest.MustParseIP("100.128.0.1"))).To(BeTrue())
+
+			// Both IPv4 cluster subnets are routed via the node's IPv4 gateway IP.
+			Expect(*routes[5].Dst).To(Equal(*ovntest.MustParseIPNet("100.128.0.0/16")))
+			Expect(routes[5].LinkIndex).To(Equal(mplink.Attrs().Index))
+			Expect(routes[5].Gw.Equal(ovntest.MustParseIP("100.128.0.1"))).To(BeTrue())
+			Expect(*routes[6].Dst).To(Equal(*ovntest.MustParseIPNet("100.129.0.0/16")))
+			Expect(routes[6].LinkIndex).To(Equal(mplink.Attrs().Index))
+			Expect(routes[6].Gw.Equal(ovntest.MustParseIP("100.128.0.1"))).To(BeTrue())
+
+			// IPv6 ETP=Local service masquerade IP route
+			Expect(*routes[7].Dst).To(Equal(*ovntest.MustParseIPNet("fd69::3/128")))
+			Expect(routes[7].LinkIndex).To(Equal(mplink.Attrs().Index))
+			Expect(routes[7].Gw.Equal(ovntest.MustParseIP("ae70::1"))).To(BeTrue())
+
+			// Both IPv6 cluster subnets are routed via the node's IPv6 gateway IP.
+			Expect(*routes[8].Dst).To(Equal(*ovntest.MustParseIPNet("ae70::/60")))
+			Expect(routes[8].LinkIndex).To(Equal(mplink.Attrs().Index))
+			Expect(routes[8].Gw.Equal(ovntest.MustParseIP("ae70::1"))).To(BeTrue())
+			Expect(*routes[9].Dst).To(Equal(*ovntest.MustParseIPNet("ae71::/60")))
+			Expect(routes[9].LinkIndex).To(Equal(mplink.Attrs().Index))
+			Expect(routes[9].Gw.Equal(ovntest.MustParseIP("ae70::1"))).To(BeTrue())
+
+			// IPv4 and IPv6 default unreachable routes.
+			Expect(*routes[10].Dst).To(Equal(*ovntest.MustParseIPNet("0.0.0.0/0")))
+			Expect(routes[10].Type).To(Equal(unix.RTN_UNREACHABLE))
+			Expect(*routes[11].Dst).To(Equal(*ovntest.MustParseIPNet("::/0")))
+			Expect(routes[11].Type).To(Equal(unix.RTN_UNREACHABLE))
+			return nil
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
+	})
+
 	ovntest.OnSupportedPlatformsIt("should create a route import VRF in DPU mode", func() {
 		config.OvnKubeNode.Mode = types.NodeModeDPU
 		config.Gateway.Mode = config.GatewayModeShared

@@ -155,6 +155,26 @@ func getNetCIDRSubnet(netCIDR string) (string, error) {
 	return "", fmt.Errorf("invalid network cidr: %q", netCIDR)
 }
 
+// containingNetworkSubnet returns the configured UDN network subnet that contains
+// the given node subnet. clusterCIDRsv4/v6 are maps of configured network
+// subnets keyed by their CIDR string (for example "10.0.0.0/23").
+func containingNetworkSubnet(nodeSubnet *net.IPNet, clusterCIDRsv4, clusterCIDRsv6 map[string]struct{}) (string, error) {
+	candidates := clusterCIDRsv4
+	if utilnet.IsIPv6CIDR(nodeSubnet) {
+		candidates = clusterCIDRsv6
+	}
+	for cidr := range candidates {
+		_, networkSubnet, err := net.ParseCIDR(cidr)
+		if err != nil {
+			return "", fmt.Errorf("invalid configured network subnet %q: %w", cidr, err)
+		}
+		if networkSubnet.Contains(nodeSubnet.IP) {
+			return cidr, nil
+		}
+	}
+	return "", fmt.Errorf("node subnet %s is not contained in any configured network subnet", nodeSubnet)
+}
+
 type networkAttachmentConfigParams struct {
 	cidr                string
 	excludeCIDRs        []string
