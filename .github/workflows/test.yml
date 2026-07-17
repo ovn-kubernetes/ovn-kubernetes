@@ -1,18 +1,22 @@
 name: ovn-ci
 
 on:
-  merge_group:
-  pull_request:
-    branches: [ master,release-* ]
-    # Only run jobs if at least one non-doc file is changed
-    paths-ignore:
-      - 'docs/**'
-      - '**/*.md'
-      - 'mkdocs.yml'
-      - '.github/ISSUE_TEMPLATE/**'
-      - '.github/PULL_REQUEST_TEMPLATE.md'
-  schedule:
-    - cron: '0 */12 * * *'
+  # NOTE: Temporarily disabled while iterating on the DPU simulator CI lane
+  # (see DPU Offload workflow). Only manual runs are enabled here so the other
+  # e2e lanes don't run. Restore the merge_group/pull_request/schedule triggers
+  # below before merging.
+  # merge_group:
+  # pull_request:
+  #   branches: [ master,release-* ]
+  #   # Only run jobs if at least one non-doc file is changed
+  #   paths-ignore:
+  #     - 'docs/**'
+  #     - '**/*.md'
+  #     - 'mkdocs.yml'
+  #     - '.github/ISSUE_TEMPLATE/**'
+  #     - '.github/PULL_REQUEST_TEMPLATE.md'
+  # schedule:
+  #   - cron: '0 */12 * * *'
   workflow_dispatch:
 
 permissions:

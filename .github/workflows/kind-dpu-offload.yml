@@ -107,18 +107,19 @@ jobs:
         working-directory: dpu-simulator
         run: ./bin/dpu-sim tft run --check --config config-kind-ovnk-offload.yaml
 
-      - name: Export kind logs on failure
+      - name: Export debug logs on failure
         if: failure()
-        run: |
-          kind export logs /tmp/kind-offload-logs --name dpu-sim-host-kind 2>/dev/null || true
-          kind export logs /tmp/kind-offload-logs --name dpu-sim-dpu-kind 2>/dev/null || true
+        working-directory: ovn-kubernetes
+        env:
+          DPU_SIM_PATH: ${{ github.workspace }}/dpu-simulator
+        run: ./contrib/export-dpu-sim-logs.sh /tmp/kind-dpu-offload-logs
 
-      - name: Upload kind logs on failure
+      - name: Upload debug logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: kind-dpu-offload-logs
-          path: /tmp/kind-offload-logs
+          path: /tmp/kind-dpu-offload-logs
           if-no-files-found: ignore
 
       - name: Upload TFT results on failure
@@ -210,19 +211,14 @@ jobs:
         working-directory: dpu-simulator
         run: ./bin/dpu-sim tft run --check --config "${DPU_SIM_CONFIG}"
 
-      - name: Export kind logs on failure
+      - name: Export debug logs on failure
         if: failure()
-        run: |
-          mkdir -p /tmp/kind-dpu-no-overlay-logs
-          for cluster in dpu-sim-host dpu-sim-host-kind dpu-sim-dpu dpu-sim-dpu-kind; do
-            kind export logs /tmp/kind-dpu-no-overlay-logs --name "${cluster}" 2>/dev/null || true
-          done
-          kubectl --kubeconfig dpu-simulator/kubeconfig/dpu-sim-host.kubeconfig get pods -A -o wide \
-            > /tmp/kind-dpu-no-overlay-logs/dpu-sim-host-pods.txt 2>&1 || true
-          kubectl --kubeconfig dpu-simulator/kubeconfig/dpu-sim-dpu.kubeconfig get pods -A -o wide \
-            > /tmp/kind-dpu-no-overlay-logs/dpu-sim-dpu-pods.txt 2>&1 || true
+        working-directory: ovn-kubernetes
+        env:
+          DPU_SIM_PATH: ${{ github.workspace }}/dpu-simulator
+        run: ./contrib/export-dpu-sim-logs.sh /tmp/kind-dpu-no-overlay-logs
 
-      - name: Upload kind logs on failure
+      - name: Upload debug logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
