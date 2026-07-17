@@ -184,6 +184,44 @@ var _ = Describe("Network Segmentation", func() {
 		return response
 	}
 
+	Context("CNI DEL on a simulated DPU host", func() {
+		BeforeEach(func() {
+			config.OvnKubeNode.Mode = ovntypes.NodeModeDPUHost
+			config.OvnKubeNode.SimulateDPU = true
+			pr.Command = CNIDel
+			pr.CNIConf.DeviceID = "eth0-14"
+		})
+
+		It("unconfigures the device after the pod is deleted", func() {
+			startCNIServer(testing.NewNamespace(pr.PodNamespace))
+
+			handlePodRequest()
+
+			Expect(prInterfaceOpsStub.unconfiguredInterfaces).To(ConsistOf(&PodInterfaceInfo{
+				IsDPUHostMode: true,
+				NetdevName:    pr.CNIConf.DeviceID,
+			}))
+		})
+
+		It("unconfigures the device after its connection details are removed", func() {
+			pod = &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        pr.PodName,
+					Namespace:   pr.PodNamespace,
+					Annotations: map[string]string{},
+				},
+			}
+			startCNIServer(testing.NewNamespace(pr.PodNamespace), pod)
+
+			handlePodRequest()
+
+			Expect(prInterfaceOpsStub.unconfiguredInterfaces).To(ConsistOf(&PodInterfaceInfo{
+				IsDPUHostMode: true,
+				NetdevName:    pr.CNIConf.DeviceID,
+			}))
+		})
+	})
+
 	Context("with network segmentation fg disabled and annotation without role field", func() {
 		BeforeEach(func() {
 			config.OVNKubernetesFeature.EnableMultiNetwork = false

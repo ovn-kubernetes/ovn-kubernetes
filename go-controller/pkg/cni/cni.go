@@ -250,48 +250,55 @@ func (pr *PodRequest) cmdDel(clientset *ClientSet) (*Response, error) {
 	netdevName := ""
 	if pr.CNIConf.DeviceID != "" {
 		if config.IsModeDPUHost() {
+			var dpuCD *util.DPUConnectionDetails
 			if pod == nil {
 				// no need to update DPU connection-details annotation if pod is already removed
 				klog.Warningf("Failed to get pod %s/%s: %v", pr.PodNamespace, pr.PodName, err)
-				return response, nil
+			} else {
+				dpuCD, err = util.UnmarshalPodDPUConnDetails(pod.Annotations, pr.nadKey)
+				if err != nil {
+					klog.Warningf("Failed to get DPU connection details annotation for pod %s/%s NAD key %s: %v", pr.PodNamespace,
+						pr.PodName, pr.nadKey, err)
+				}
 			}
-			dpuCD, err := util.UnmarshalPodDPUConnDetails(pod.Annotations, pr.nadKey)
-			if err != nil {
-				klog.Warningf("Failed to get DPU connection details annotation for pod %s/%s NAD key %s: %v", pr.PodNamespace,
-					pr.PodName, pr.nadKey, err)
-				return response, nil
-			}
-
-			// check if this cmdDel is meant for the current sandbox, if not, directly return
-			if dpuCD.SandboxId != pr.SandboxID {
-				klog.Infof("The cmdDel request for sandbox %s is not meant for the currently configured "+
-					"pod %s/%s on NAD key %s with sandbox %s. Ignoring this request.",
-					pr.SandboxID, namespace, podName, pr.nadKey, dpuCD.SandboxId)
-				return response, nil
-			}
-
-			netdevName = dpuCD.VfNetdevName
-			if pr.netName == types.DefaultNetworkName {
-				// if this is the default network name, remove the whole DPU connection-details annotation,
-				// including the primary UDN connection-details if any
-				updatePodAnnotationNoRollback := func(pod *corev1.Pod) (*corev1.Pod, func(), error) {
-					delete(pod.Annotations, util.DPUConnectionDetailsAnnot)
-					return pod, nil, nil
+			if dpuCD == nil {
+				if !util.IsSimulatedDPU() {
+					return response, nil
+				}
+				// A simulated device is a veth and is destroyed with the pod namespace unless it is moved back first.
+				netdevName = pr.CNIConf.DeviceID
+			} else {
+				// check if this cmdDel is meant for the current sandbox, if not, directly return
+				if dpuCD.SandboxId != pr.SandboxID {
+					klog.Infof("The cmdDel request for sandbox %s is not meant for the currently configured "+
+						"pod %s/%s on NAD key %s with sandbox %s. Ignoring this request.",
+						pr.SandboxID, namespace, podName, pr.nadKey, dpuCD.SandboxId)
+					return response, nil
 				}
 
-				err = util.UpdatePodWithRetryOrRollback(
-					clientset.podLister,
-					&kube.Kube{KClient: clientset.kclient},
-					pod,
-					updatePodAnnotationNoRollback,
-				)
-			} else {
-				// Delete the DPU connection-details annotation for this NAD
-				err = pr.updatePodDPUConnDetailsWithRetry(&kube.Kube{KClient: clientset.kclient}, clientset.podLister, nil)
-			}
-			// not an error if pod has already been deleted
-			if err != nil && !apierrors.IsNotFound(err) {
-				return nil, fmt.Errorf("failed to cleanup the DPU connection details annotation for NAD key %s: %v", pr.nadKey, err)
+				netdevName = dpuCD.VfNetdevName
+				if pr.netName == types.DefaultNetworkName {
+					// if this is the default network name, remove the whole DPU connection-details annotation,
+					// including the primary UDN connection-details if any
+					updatePodAnnotationNoRollback := func(pod *corev1.Pod) (*corev1.Pod, func(), error) {
+						delete(pod.Annotations, util.DPUConnectionDetailsAnnot)
+						return pod, nil, nil
+					}
+
+					err = util.UpdatePodWithRetryOrRollback(
+						clientset.podLister,
+						&kube.Kube{KClient: clientset.kclient},
+						pod,
+						updatePodAnnotationNoRollback,
+					)
+				} else {
+					// Delete the DPU connection-details annotation for this NAD
+					err = pr.updatePodDPUConnDetailsWithRetry(&kube.Kube{KClient: clientset.kclient}, clientset.podLister, nil)
+				}
+				// not an error if pod has already been deleted
+				if err != nil && !apierrors.IsNotFound(err) {
+					return nil, fmt.Errorf("failed to cleanup the DPU connection details annotation for NAD key %s: %v", pr.nadKey, err)
+				}
 			}
 		} else {
 			// Find the hostInterface name
