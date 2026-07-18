@@ -201,7 +201,7 @@ const (
 
 func (c *Controller) updateNQOSStatusToReady(namespace, name string) error {
 	cond := metav1.Condition{
-		Type:    conditionTypeReady + c.zone,
+		Type:    conditionTypeReady + c.nodeName,
 		Status:  metav1.ConditionTrue,
 		Reason:  reasonQoSSetupSuccess,
 		Message: "NetworkQoS was applied successfully",
@@ -212,7 +212,7 @@ func (c *Controller) updateNQOSStatusToReady(namespace, name string) error {
 		return fmt.Errorf("failed to update the status of NetworkQoS %s/%s, err: %v", namespace, name, err)
 	}
 	klog.V(5).Infof("%s: successfully patched the status of NetworkQoS %s/%s with condition type %v/%v in %v seconds",
-		c.controllerName, namespace, name, conditionTypeReady+c.zone, metav1.ConditionTrue, time.Since(startTime).Seconds())
+		c.controllerName, namespace, name, conditionTypeReady+c.nodeName, metav1.ConditionTrue, time.Since(startTime).Seconds())
 	recordStatusPatchDuration(c.controllerName, time.Since(startTime).Milliseconds())
 	return nil
 }
@@ -223,7 +223,7 @@ func (c *Controller) updateNQOSStatusToNotReady(namespace, name, reason string, 
 		msg = fmt.Sprintf("NetworkQoS %s/%s - %s, error details: %v", namespace, name, reason, err)
 	}
 	cond := metav1.Condition{
-		Type:    conditionTypeReady + c.zone,
+		Type:    conditionTypeReady + c.nodeName,
 		Status:  metav1.ConditionFalse,
 		Reason:  reasonQoSSetupFailed,
 		Message: msg,
@@ -234,7 +234,7 @@ func (c *Controller) updateNQOSStatusToNotReady(namespace, name, reason string, 
 	if err != nil {
 		klog.Warningf("%s: failed to update the status of NetworkQoS %s/%s, err: %v", c.controllerName, namespace, name, err)
 	} else {
-		klog.V(6).Infof("%s: successfully patched status of NetworkQoS %s/%s with condition type %v/%v in %v seconds", c.controllerName, namespace, name, conditionTypeReady+c.zone, metav1.ConditionTrue, time.Since(startTime).Seconds())
+		klog.V(6).Infof("%s: successfully patched status of NetworkQoS %s/%s with condition type %v/%v in %v seconds", c.controllerName, namespace, name, conditionTypeReady+c.nodeName, metav1.ConditionTrue, time.Since(startTime).Seconds())
 		recordStatusPatchDuration(c.controllerName, time.Since(startTime).Milliseconds())
 	}
 }
@@ -267,7 +267,7 @@ func (c *Controller) updateNQOStatusCondition(newCondition metav1.Condition, nam
 
 	applyObj := nqosapiapply.NetworkQoS(name, namespace).
 		WithStatus(nqosapiapply.Status().WithConditions(newConditionApply))
-	_, err = c.nqosClientSet.K8sV1alpha1().NetworkQoSes(namespace).ApplyStatus(context.TODO(), applyObj, metav1.ApplyOptions{FieldManager: c.zone, Force: true})
+	_, err = c.nqosClientSet.K8sV1alpha1().NetworkQoSes(namespace).ApplyStatus(context.TODO(), applyObj, metav1.ApplyOptions{FieldManager: c.nodeName, Force: true})
 	return err
 }
 

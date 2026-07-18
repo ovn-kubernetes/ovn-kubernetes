@@ -2280,7 +2280,7 @@ var _ = ginkgo.Describe("No-overlay cluster SNAT cleanup", func() {
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 		config.Gateway.Mode = config.GatewayModeShared
 		config.Gateway.EphemeralPortRange = config.DefaultEphemeralPortRange
-		fakeOvn = NewFakeOVN(false)
+		fakeOvn = NewFakeOVN(false, nodeName)
 	})
 
 	ginkgo.AfterEach(func() {
@@ -2717,7 +2717,6 @@ var _ = ginkgo.Describe("AddPodSNATOps", func() {
 					util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s/24\", \"%s/64\"]", nodeIP, nodeIPv6),
 					"k8s.ovn.org/node-chassis-id":     "test-chassis",
 					util.OvnNodeL3GatewayConfig:       fmt.Sprintf(`{"default":{"mode":"shared","mac-address":"7e:57:f8:f0:3c:49", "ip-addresses": ["%s/24", "%s/64"], "next-hops": ["192.168.1.1", "fd00::1"]}}`, nodeIP, nodeIPv6),
-					util.OvnNodeZoneName:              nodeName,
 				},
 			},
 			Status: corev1.NodeStatus{

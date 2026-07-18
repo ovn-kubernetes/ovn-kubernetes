@@ -554,8 +554,8 @@ func (c *NodeController) deleteNodeActive(netName, nodeName string) {
 }
 
 // shouldFilterByRemoteNetworkActivity returns true when dynamic UDN activity
-// filtering should be applied for the node. The controller's own node always
-// runs unfiltered reconciliation.
+// filtering should be applied for the node. This is limited to remote nodes;
+// the controller's own node always runs unfiltered reconciliation.
 func (c *NodeController) shouldFilterByRemoteNetworkActivity(node *corev1.Node, netName string) bool {
 	if node == nil || netName == types.DefaultNetworkName || !config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
 		return false

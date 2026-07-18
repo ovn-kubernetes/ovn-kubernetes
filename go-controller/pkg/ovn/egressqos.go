@@ -224,8 +224,7 @@ func (oc *DefaultNetworkController) initEgressQoSController(
 		workqueue.TypedRateLimitingQueueConfig[string]{Name: "egressqosnodes"},
 	)
 	_, err = nodeInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    oc.onEgressQoSNodeAdd,    // we only care about new logical switches being added
-		UpdateFunc: oc.onEgressQoSNodeUpdate, // we care about node's zone changes so that if add event didn't do anything update can take care of it
+		AddFunc:    oc.onEgressQoSNodeAdd, // we only care about new logical switches being added
 		DeleteFunc: func(_ interface{}) {},
 	})
 	if err != nil {
@@ -928,17 +927,6 @@ func (oc *DefaultNetworkController) onEgressQoSNodeAdd(obj interface{}) {
 		return
 	}
 	oc.egressQoSNodeQueue.Add(key)
-}
-
-// onEgressQoSNodeUpdate intentionally ignores updates. Controller locality is
-// fixed by the process node name, so a node update cannot change locality.
-func (oc *DefaultNetworkController) onEgressQoSNodeUpdate(oldObj, newObj interface{}) {
-	oldNode := oldObj.(*corev1.Node)
-	newNode := newObj.(*corev1.Node)
-	if oldNode.ResourceVersion == newNode.ResourceVersion ||
-		!newNode.GetDeletionTimestamp().IsZero() {
-		return
-	}
 }
 
 func (oc *DefaultNetworkController) runEgressQoSNodeWorker(wg *sync.WaitGroup) {

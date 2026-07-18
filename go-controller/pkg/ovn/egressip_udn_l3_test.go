@@ -419,10 +419,6 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				iUDN, nUDN, _ := net.ParseCIDR(v4Pod1IPNode1Net1 + "/23")
 				nUDN.IP = iUDN
 				fakeOvn.controller.logicalPortCache.add(&egressPodUDNLocal, "", util.GetNADName(nad.Namespace, nad.Name), "", nil, []*net.IPNet{nUDN})
-				fakeOvn.controller.eIPC.nodeZoneState.Store(node1Name, true)
-				fakeOvn.controller.eIPC.nodeZoneState.Store(node2Name, false)
-				fakeOvn.controller.eIPC.zone = node1.Name
-				fakeOvn.controller.nodeName = node1.Name
 				err = fakeOvn.eIPController.ensureRouterPoliciesForNetwork(netInfo, &node1)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.eIPController.ensureSwitchPoliciesForNode(netInfo, node1Name)

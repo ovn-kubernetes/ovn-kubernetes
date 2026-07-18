@@ -64,7 +64,7 @@ type CommonNodeNetworkControllerInfo struct {
 	Kube                   kube.Interface
 	watchFactory           factory.NodeWatchFactory
 	recorder               record.EventRecorder
-	name                   string
+	name                   string // Kubernetes node name managed by this controller.
 	apbExternalRouteClient adminpolicybasedrouteclientset.Interface
 	// route manager that creates and manages routes
 	routeManager *routemanager.Controller

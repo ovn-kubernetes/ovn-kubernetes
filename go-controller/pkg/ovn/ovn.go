@@ -411,7 +411,6 @@ func (oc *DefaultNetworkController) newANPController() error {
 		oc.watchFactory.PodCoreInformer(),
 		oc.watchFactory.NodeCoreInformer(),
 		oc.addressSetFactory,
-		oc.isPodScheduledOnLocalNode,
 		oc.nodeName,
 		oc.recorder,
 		oc.observManager,

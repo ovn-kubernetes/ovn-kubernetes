@@ -395,7 +395,7 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 		controller, ok := fakeOVN.userDefinedNetworkControllers["bluenet"]
 		Expect(ok).To(BeTrue())
 		// inject a real networkManager instead of a fake one, so getActiveNetworkForNamespace will get called
-		nadController, err := networkmanager.NewForZone("dummyZone", nil, fakeOVN.watcher)
+		nadController, err := networkmanager.NewForNode("worker1", nil, fakeOVN.watcher)
 		Expect(err).NotTo(HaveOccurred())
 		controller.bnc.networkManager = nadController.Interface()
 
@@ -443,7 +443,7 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 		controller, ok := fakeOVN.userDefinedNetworkControllers["bluenet"]
 		Expect(ok).To(BeTrue())
 		// inject a real networkManager so GetActiveNetworkForNamespace will get called
-		nadController, err := networkmanager.NewForZone("dummyZone", nil, fakeOVN.watcher)
+		nadController, err := networkmanager.NewForNode("worker1", nil, fakeOVN.watcher)
 		Expect(err).NotTo(HaveOccurred())
 		controller.bnc.networkManager = nadController.Interface()
 

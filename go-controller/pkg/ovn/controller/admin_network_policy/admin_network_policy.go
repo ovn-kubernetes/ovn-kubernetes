@@ -447,7 +447,7 @@ func (c *Controller) convertANPSubjectToLSPs(anp *adminNetworkPolicyState) ([]*n
 			return nil, err
 		}
 		for _, pod := range pods {
-			if util.PodWantsHostNetwork(pod) || util.PodCompleted(pod) || !util.PodScheduled(pod) || !c.isPodScheduledOnLocalNode(pod) {
+			if util.PodWantsHostNetwork(pod) || util.PodCompleted(pod) || !c.isPodScheduledOnLocalNode(pod) {
 				continue
 			}
 			logicalPortName := util.GetLogicalPortName(pod.Namespace, pod.Name)
@@ -512,6 +512,10 @@ func (c *Controller) convertANPSubjectToLSPs(anp *adminNetworkPolicyState) ([]*n
 	anp.subject.namespaces = namespaceCache
 
 	return lsports, nil
+}
+
+func (c *Controller) isPodScheduledOnLocalNode(pod *corev1.Pod) bool {
+	return util.PodScheduled(pod) && pod.Spec.NodeName == c.nodeName
 }
 
 // clearAdminNetworkPolicy will handle the logic for deleting all db objects related

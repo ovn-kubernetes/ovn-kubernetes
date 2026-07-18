@@ -83,7 +83,6 @@ func newANPControllerWithDBSetup(dbSetup libovsdbtest.TestSetup, initANPs anpapi
 		watcher.PodCoreInformer(),
 		watcher.NodeCoreInformer(),
 		addressSetFactory,
-		nil, // we don't care about pods in this test
 		"targaryen",
 		recorder,
 		nil,
@@ -291,7 +290,7 @@ func TestAddOrUpdateAdminNetworkPolicyStatus(t *testing.T) {
 	}).Should(gomega.Equal(1))
 	anp, err := controller.anpClientSet.PolicyV1alpha1().AdminNetworkPolicies().Get(context.TODO(), anpName, metav1.GetOptions{})
 	g.Expect(err).NotTo(gomega.HaveOccurred())
-	g.Expect(anp.Status.Conditions[0].Type).To(gomega.Equal(policyReadyStatusType + controller.zone))
+	g.Expect(anp.Status.Conditions[0].Type).To(gomega.Equal(policyReadyStatusType + controller.nodeName))
 	g.Expect(anp.Status.Conditions[0].Message).To(gomega.Equal(message))
 	g.Expect(anp.Status.Conditions[0].Reason).To(gomega.Equal(policyNotReadyReason))
 	g.Expect(anp.Status.Conditions[0].Status).To(gomega.Equal(metav1.ConditionFalse))
@@ -305,7 +304,7 @@ func TestAddOrUpdateAdminNetworkPolicyStatus(t *testing.T) {
 	}).Should(gomega.Equal(1))
 	anp, err = controller.anpClientSet.PolicyV1alpha1().AdminNetworkPolicies().Get(context.TODO(), anpName, metav1.GetOptions{})
 	g.Expect(err).NotTo(gomega.HaveOccurred())
-	g.Expect(anp.Status.Conditions[0].Type).To(gomega.Equal(policyReadyStatusType + controller.zone))
+	g.Expect(anp.Status.Conditions[0].Type).To(gomega.Equal(policyReadyStatusType + controller.nodeName))
 	g.Expect(anp.Status.Conditions[0].Message).To(gomega.Equal("Setting up OVN DB plumbing was successful"))
 	g.Expect(anp.Status.Conditions[0].Reason).To(gomega.Equal(policyReadyReason))
 	g.Expect(anp.Status.Conditions[0].Status).To(gomega.Equal(metav1.ConditionTrue))
@@ -319,7 +318,7 @@ func TestAddOrUpdateAdminNetworkPolicyStatus(t *testing.T) {
 	}).Should(gomega.Equal(1))
 	banp, err := controller.anpClientSet.PolicyV1alpha1().BaselineAdminNetworkPolicies().Get(context.TODO(), banpName, metav1.GetOptions{})
 	g.Expect(err).NotTo(gomega.HaveOccurred())
-	g.Expect(banp.Status.Conditions[0].Type).To(gomega.Equal(policyReadyStatusType + controller.zone))
+	g.Expect(banp.Status.Conditions[0].Type).To(gomega.Equal(policyReadyStatusType + controller.nodeName))
 	g.Expect(banp.Status.Conditions[0].Message).To(gomega.Equal(message))
 	g.Expect(banp.Status.Conditions[0].Reason).To(gomega.Equal(policyNotReadyReason))
 	g.Expect(banp.Status.Conditions[0].Status).To(gomega.Equal(metav1.ConditionFalse))
@@ -333,7 +332,7 @@ func TestAddOrUpdateAdminNetworkPolicyStatus(t *testing.T) {
 	}, "2s").Should(gomega.Equal(1))
 	banp, err = controller.anpClientSet.PolicyV1alpha1().BaselineAdminNetworkPolicies().Get(context.TODO(), banpName, metav1.GetOptions{})
 	g.Expect(err).NotTo(gomega.HaveOccurred())
-	g.Expect(banp.Status.Conditions[0].Type).To(gomega.Equal(policyReadyStatusType + controller.zone))
+	g.Expect(banp.Status.Conditions[0].Type).To(gomega.Equal(policyReadyStatusType + controller.nodeName))
 	g.Expect(banp.Status.Conditions[0].Message).To(gomega.Equal("Setting up OVN DB plumbing was successful"))
 	g.Expect(banp.Status.Conditions[0].Reason).To(gomega.Equal(policyReadyReason))
 	g.Expect(banp.Status.Conditions[0].Status).To(gomega.Equal(metav1.ConditionTrue))

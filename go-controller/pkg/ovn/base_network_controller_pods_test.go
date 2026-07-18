@@ -11,57 +11,36 @@ import (
 	"github.com/onsi/gomega"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
-func TestBaseNetworkController_isLocalNode(t *testing.T) {
-	tests := []struct {
-		name               string
-		controllerNodeName string
-		node               *corev1.Node
-		want               bool
-	}{
-		{
-			name:               "matches controller node",
-			controllerNodeName: "node1",
-			node: &corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:        "node1",
-					Annotations: map[string]string{util.OvnNodeZoneName: "node1"},
-				},
-			},
-			want: true,
-		},
-		{
-			name:               "matches controller node without a zone annotation",
-			controllerNodeName: "node1",
-			node:               &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1"}},
-			want:               true,
-		},
-		{
-			name:               "does not match a different node",
-			controllerNodeName: "node1",
-			node: &corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:        "node2",
-					Annotations: map[string]string{util.OvnNodeZoneName: "node2"},
-				},
-			},
-			want: false,
-		},
-	}
+func TestBaseNetworkController_GetLocalNode(t *testing.T) {
+	g := gomega.NewWithT(t)
+	clientSet := util.GetOVNClientset(&corev1.NodeList{Items: []corev1.Node{{
+		ObjectMeta: metav1.ObjectMeta{Name: "node1"},
+	}}}).GetOVNKubeControllerClientset()
+	watchFactory, err := factory.NewOVNKubeControllerWatchFactory(clientSet, "test-node")
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(watchFactory.Start()).To(gomega.Succeed())
+	t.Cleanup(watchFactory.Shutdown)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			g := gomega.NewWithT(t)
-			bnc := &BaseNetworkController{CommonNetworkControllerInfo: CommonNetworkControllerInfo{nodeName: tt.controllerNodeName}}
-			g.Expect(bnc.isLocalNode(tt.node)).To(gomega.Equal(tt.want))
-		})
-	}
+	bnc := &BaseNetworkController{CommonNetworkControllerInfo: CommonNetworkControllerInfo{
+		watchFactory: watchFactory,
+		nodeName:     "node1",
+	}}
+	node, err := bnc.GetLocalNode()
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(node.Name).To(gomega.Equal("node1"))
+
+	bnc.nodeName = "missing-node"
+	_, err = bnc.GetLocalNode()
+	g.Expect(apierrors.IsNotFound(err)).To(gomega.BeTrue())
 }
 
 func TestBaseNetworkController_trackPodsReleasedBeforeStartup(t *testing.T) {

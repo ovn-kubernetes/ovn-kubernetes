@@ -189,13 +189,13 @@ type BaseNetworkController struct {
 
 func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed func(string)) error {
 	// gather some information first
-	var reconcileNodes []string
+	reconcileLocalNode := false
 	subnetsChanged := clusterSubnetsChanged(oc, netInfo)
 	wasAdvertised := util.IsPodNetworkAdvertisedAtNode(oc, oc.nodeName)
 	isAdvertised := util.IsPodNetworkAdvertisedAtNode(netInfo, oc.nodeName)
 	reconcileSubnetChange := subnetsChanged && (isAdvertised || config.OVNKubernetesFeature.EnableEgressIP)
 	if wasAdvertised != isAdvertised || reconcileSubnetChange {
-		reconcileNodes = append(reconcileNodes, oc.nodeName)
+		reconcileLocalNode = true
 	}
 	reconcileRoutes := oc.routeImportManager != nil && oc.routeImportManager.NeedsReconciliation(netInfo)
 	nadKeys := oc.networkManager.GetNADKeysForNetwork(netInfo.GetNetworkName())
@@ -214,7 +214,7 @@ func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed f
 	if err != nil {
 		return fmt.Errorf("failed to reconcile network information for network %s: %v", oc.GetNetworkName(), err)
 	}
-	return oc.doReconcile(reconcileRoutes, reconcilePendingPods, reconcileNodes, setNodeFailed, reconcileNamespaces.List())
+	return oc.doReconcile(reconcileRoutes, reconcilePendingPods, reconcileLocalNode, setNodeFailed, reconcileNamespaces.List())
 }
 
 func clusterSubnetsChanged(old, new util.NetInfo) bool {
@@ -246,7 +246,7 @@ func (oc *BaseNetworkController) updateNADKeysChanged(nadKeys []string) bool {
 // provided on the arguments of the method. This method returns no error and logs them
 // instead since once the controller NetInfo has been updated there is no point in retrying.
 func (oc *BaseNetworkController) doReconcile(reconcileRoutes, reconcilePendingPods bool,
-	reconcileNodes []string, setNodeFailed func(string), reconcileNamespaces []string,
+	reconcileLocalNode bool, setNodeFailed func(string), reconcileNamespaces []string,
 ) error {
 	if reconcileRoutes {
 		err := oc.routeImportManager.ReconcileNetwork(oc.GetNetworkName())
@@ -255,9 +255,9 @@ func (oc *BaseNetworkController) doReconcile(reconcileRoutes, reconcilePendingPo
 		}
 	}
 
-	for _, nodeName := range reconcileNodes {
-		setNodeFailed(nodeName)
-		oc.nodeReconciler.ReconcileNetwork(nodeName, oc.GetNetworkName())
+	if reconcileLocalNode {
+		setNodeFailed(oc.nodeName)
+		oc.nodeReconciler.ReconcileNetwork(oc.nodeName, oc.GetNetworkName())
 	}
 
 	if reconcilePendingPods {
@@ -934,21 +934,13 @@ func (bnc *BaseNetworkController) getClusterPortGroupName(base string) string {
 	return libovsdbutil.GetPortGroupName(bnc.getClusterPortGroupDbIDs(base))
 }
 
-// GetLocalNodes returns the node managed by this controller when it exists.
-func (bnc *BaseNetworkController) GetLocalNodes() ([]*corev1.Node, error) {
-	nodes, err := bnc.watchFactory.GetNodes()
+// GetLocalNode returns the node managed by this controller.
+func (bnc *BaseNetworkController) GetLocalNode() (*corev1.Node, error) {
+	node, err := bnc.watchFactory.GetNode(bnc.nodeName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get nodes: %w", err)
+		return nil, fmt.Errorf("failed to get local node %q: %w", bnc.nodeName, err)
 	}
-
-	var localNodes []*corev1.Node
-	for _, n := range nodes {
-		if bnc.isLocalNode(n) {
-			localNodes = append(localNodes, n)
-		}
-	}
-
-	return localNodes, nil
+	return node, nil
 }
 
 // isLocalNode returns true if the node is local to this controller.
@@ -1149,11 +1141,9 @@ func (bnc *BaseNetworkController) newNetworkQoSController() error {
 		bnc.watchFactory.NetworkQoSInformer(),
 		bnc.watchFactory.NamespaceCoreInformer(),
 		bnc.watchFactory.PodCoreInformer(),
-		bnc.watchFactory.NodeCoreInformer(),
 		nadInformer,
 		bnc.networkManager,
 		bnc.addressSetFactory,
-		bnc.isPodScheduledOnLocalNode,
 		bnc.nodeName,
 	)
 	return err

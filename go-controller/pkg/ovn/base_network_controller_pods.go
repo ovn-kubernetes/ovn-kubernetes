@@ -113,58 +113,49 @@ func (bnc *BaseNetworkController) allocatePodIPsOnSwitch(pod *corev1.Pod,
 }
 
 func (bnc *BaseNetworkController) deleteStaleLogicalSwitchPorts(expectedLogicalPorts map[string]bool) error {
-	var switchNames []string
+	var switchName string
 
-	// get all switches that Pod logical port would be reside on.
+	// Get the switch that Pod logical ports reside on.
 	topoType := bnc.TopologyType()
 	if !bnc.IsUserDefinedNetwork() || topoType == ovntypes.Layer3Topology {
-		// for default network and layer3 topology type networks, get all local zone node switches
-		nodes, err := bnc.GetLocalNodes()
+		// For default network and layer3 topology type networks, get the local node switch.
+		node, err := bnc.GetLocalNode()
 		if err != nil {
-			return fmt.Errorf("failed to get nodes: %v", err)
+			return err
 		}
-
-		switchNames = make([]string, 0, len(nodes))
-		for _, n := range nodes {
-			// skip nodes that are not running ovnk (inferred from host subnets)
-			switchName := bnc.GetNetworkScopedSwitchName(n.Name)
-			if bnc.isNonHostSubnetSwitch(switchName) {
-				continue
-			}
-			switchNames = append(switchNames, switchName)
+		// Skip nodes that are not running ovnk (inferred from host subnets).
+		switchName = bnc.GetNetworkScopedSwitchName(node.Name)
+		if bnc.isNonHostSubnetSwitch(switchName) {
+			return nil
 		}
 	} else if topoType == ovntypes.Layer2Topology {
-		switchNames = []string{bnc.GetNetworkScopedSwitchName(ovntypes.OVNLayer2Switch)}
+		switchName = bnc.GetNetworkScopedSwitchName(ovntypes.OVNLayer2Switch)
 	} else if topoType == ovntypes.LocalnetTopology {
-		switchNames = []string{bnc.GetNetworkScopedSwitchName(ovntypes.OVNLocalnetSwitch)}
+		switchName = bnc.GetNetworkScopedSwitchName(ovntypes.OVNLocalnetSwitch)
 	} else {
 		return fmt.Errorf("topology type %s not supported", topoType)
 	}
 
-	return bnc.deleteStaleLogicalSwitchPortsOnSwitches(switchNames, expectedLogicalPorts)
+	return bnc.deleteStaleLogicalSwitchPortsOnSwitch(switchName, expectedLogicalPorts)
 }
 
-func (bnc *BaseNetworkController) deleteStaleLogicalSwitchPortsOnSwitches(switchNames []string,
+func (bnc *BaseNetworkController) deleteStaleLogicalSwitchPortsOnSwitch(switchName string,
 	expectedLogicalPorts map[string]bool) error {
-	var ops []ovsdb.Operation
-	var err error
-	for _, switchName := range switchNames {
-		p := func(item *nbdb.LogicalSwitchPort) bool {
-			return item.ExternalIDs["pod"] == "true" && !expectedLogicalPorts[item.Name]
-		}
-		sw := nbdb.LogicalSwitch{
-			Name: switchName,
-		}
+	p := func(item *nbdb.LogicalSwitchPort) bool {
+		return item.ExternalIDs["pod"] == "true" && !expectedLogicalPorts[item.Name]
+	}
+	sw := nbdb.LogicalSwitch{
+		Name: switchName,
+	}
 
-		ops, err = libovsdbops.DeleteLogicalSwitchPortsWithPredicateOps(bnc.nbClient, ops, &sw, p)
-		if err != nil {
-			return fmt.Errorf("could not generate ops to delete stale ports from logical switch %s (%+v)", switchName, err)
-		}
+	ops, err := libovsdbops.DeleteLogicalSwitchPortsWithPredicateOps(bnc.nbClient, nil, &sw, p)
+	if err != nil {
+		return fmt.Errorf("could not generate ops to delete stale ports from logical switch %s (%+v)", switchName, err)
 	}
 
 	_, err = libovsdbops.TransactAndCheck(bnc.nbClient, ops)
 	if err != nil {
-		return fmt.Errorf("could not remove stale logicalPorts from switches for network %s (%+v)", bnc.GetNetworkName(), err)
+		return fmt.Errorf("could not remove stale logicalPorts from switch %s for network %s (%+v)", switchName, bnc.GetNetworkName(), err)
 	}
 	return nil
 }

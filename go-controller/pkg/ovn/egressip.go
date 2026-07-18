@@ -1424,10 +1424,6 @@ func (e *EgressIPController) SyncLocalNodeZonesCache() error {
 		return fmt.Errorf("unable to fetch nodes from watch factory %w", err)
 	}
 	for _, node := range nodes {
-		// NOTE: Even at this stage, there can be a race; bnc.nodeName might be the nodeName
-		// while the node's annotations are not yet set, so it still shows global.
-		// The EgressNodeType events (which are basically all node updates) should
-		// constantly update this cache as nodes get added, updated and removed
 		e.nodeZoneState.LockKey(node.Name)
 		e.nodeZoneState.Store(node.Name, e.isLocalNode(node))
 		e.nodeZoneState.UnlockKey(node.Name)
@@ -1435,14 +1431,11 @@ func (e *EgressIPController) SyncLocalNodeZonesCache() error {
 	return nil
 }
 
-// getALocalZoneNodeName fetches the first local OVN zone Node. Support for multiple Nodes per OVN zone is not supported
-// and neither is changing a Nodes OVN zone. This function supports said assumptions.
+// getALocalZoneNodeName returns the controller's node after it has been observed
+// in the node state cache.
 func (e *EgressIPController) getALocalZoneNodeName() (string, error) {
-	nodeNames := e.nodeZoneState.GetKeys()
-	for _, nodeName := range nodeNames {
-		if isLocal, ok := e.nodeZoneState.Load(nodeName); ok && isLocal {
-			return nodeName, nil
-		}
+	if isLocal, ok := e.nodeZoneState.Load(e.zone); ok && isLocal {
+		return e.zone, nil
 	}
 	return "", fmt.Errorf("failed to find a local OVN zone Node")
 }
@@ -1644,11 +1637,8 @@ func (e *EgressIPController) syncStaleGWMarkRules(egressIPCache egressIPCache) e
 			}
 			// gather local node names
 			localNodeNames := make([]string, 0, 1)
-			allNodes := e.nodeZoneState.GetKeys()
-			for _, node := range allNodes {
-				if isLocal, ok := e.nodeZoneState.Load(node); ok && isLocal {
-					localNodeNames = append(localNodeNames, node)
-				}
+			if isLocal, ok := e.nodeZoneState.Load(e.zone); ok && isLocal {
+				localNodeNames = append(localNodeNames, e.zone)
 			}
 			invalidLRPPredicate = func(item *nbdb.LogicalRouterPolicy) bool {
 				return invalidLRPUUIDs.Has(item.UUID)
@@ -2121,11 +2111,8 @@ func (e *EgressIPController) generateCacheForEgressIP() (egressIPCache, error) {
 		return cache, fmt.Errorf("failed to get all nodes: %v", err)
 	}
 	localNodes := sets.New[string]()
-	nodeNames := e.nodeZoneState.GetKeys()
-	for _, nodeName := range nodeNames {
-		if isLocal, ok := e.nodeZoneState.Load(nodeName); ok && isLocal {
-			localNodes.Insert(nodeName)
-		}
+	if isLocal, ok := e.nodeZoneState.Load(e.zone); ok && isLocal {
+		localNodes.Insert(e.zone)
 	}
 	// network name -> node name -> redirect IPs
 	redirectCache := map[string]map[string]redirectIPs{}

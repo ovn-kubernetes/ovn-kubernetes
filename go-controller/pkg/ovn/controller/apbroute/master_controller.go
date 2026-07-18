@@ -50,7 +50,7 @@ func NewExternalMasterController(
 	nbClient libovsdbclient.Client,
 	addressSetFactory addressset.AddressSetFactory,
 	controllerName string,
-	zoneID string,
+	nodeName string,
 ) (*ExternalGatewayMasterController, error) {
 
 	externalGWRouteInfo := NewExternalGatewayRouteInfoCache()
@@ -61,7 +61,7 @@ func NewExternalMasterController(
 		nbClient:                 nbClient,
 		addressSetFactory:        addressSetFactory,
 		controllerName:           controllerName,
-		zone:                     zoneID,
+		nodeName:                 nodeName,
 		externalGatewayRouteInfo: externalGWRouteInfo,
 	}
 
@@ -69,7 +69,7 @@ func NewExternalMasterController(
 		apbRoutePolicyClient:     apbRoutePolicyClient,
 		ExternalGWRouteInfoCache: externalGWRouteInfo,
 		nbClient:                 nbCli,
-		zoneID:                   zoneID,
+		zoneID:                   nodeName,
 	}
 	c.mgr = newExternalPolicyManager(
 		stopCh,

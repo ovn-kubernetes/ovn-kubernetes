@@ -148,18 +148,15 @@ func (oc *DefaultNetworkController) syncPods(pods []interface{}) error {
 		// allocate all previously annoted hybridOverlay Distributed Router IP addresses. Allocation needs to happen here
 		// before a Pod Add event can be processed and be allocated a previously assigned hybridOverlay Distributed Router IP address.
 		// we do not support manually setting the hybrid overlay DRIP address
-		nodes, err := oc.GetLocalNodes()
+		node, err := oc.GetLocalNode()
 		if err != nil {
-			return fmt.Errorf("failed to get nodes: %v", err)
+			return err
 		}
-		for _, node := range nodes {
-			// allocation also happens during Add/Update Node events we only want to allocate any addresses allocated as hybrid overlay
-			// distributed router ips during a previous run of ovn-k controller to ensure that incoming pod events will not take the address that
-			// the node is expecting as the hybrid overlay DRIP
-			if _, ok := node.Annotations[hotypes.HybridOverlayDRIP]; ok {
-				if err := oc.allocateHybridOverlayDRIP(node); err != nil {
-					return fmt.Errorf("cannot allocate hybridOverlay DRIP on node %s (%v)", node.Name, err)
-				}
+		// Allocation also happens during Add/Update Node events. Allocate any address
+		// retained from a previous run before pod events can claim it.
+		if _, ok := node.Annotations[hotypes.HybridOverlayDRIP]; ok {
+			if err := oc.allocateHybridOverlayDRIP(node); err != nil {
+				return fmt.Errorf("cannot allocate hybridOverlay DRIP on node %s (%v)", node.Name, err)
 			}
 		}
 	}

@@ -115,7 +115,7 @@ func (ni *testNetInfo) OutboundSNAT() string {
 }
 
 type FakeOVN struct {
-	zone              string
+	nodeName          string
 	fakeClient        *util.OVNKubeControllerClientset
 	watcher           *factory.WatchFactory
 	controller        *DefaultNetworkController
@@ -144,12 +144,13 @@ type FakeOVN struct {
 }
 
 // NOTE: the FakeAddressSetFactory is no longer needed and should no longer be used. starting to phase out FakeAddressSetFactory
-func NewFakeOVN(useFakeAddressSet bool, zone ...string) *FakeOVN {
+func NewFakeOVN(useFakeAddressSet bool, nodeName string) *FakeOVN {
 	var asf *addressset.FakeAddressSetFactory
 	if useFakeAddressSet {
 		asf = addressset.NewFakeAddressSetFactory(types.DefaultNetworkControllerName)
 	}
 	fakeOVN := &FakeOVN{
+		nodeName:     nodeName,
 		asf:          asf,
 		fakeRecorder: record.NewFakeRecorder(10),
 		egressQoSWg:  &sync.WaitGroup{},
@@ -160,9 +161,6 @@ func NewFakeOVN(useFakeAddressSet bool, zone ...string) *FakeOVN {
 		fullL2UDNControllers:          map[string]*Layer2UserDefinedNetworkController{},
 		fullL3UDNControllers:          map[string]*Layer3UserDefinedNetworkController{},
 		fullLocalnetUDNControllers:    map[string]*LocalnetUserDefinedNetworkController{},
-	}
-	if len(zone) > 0 {
-		fakeOVN.zone = zone[0]
 	}
 	return fakeOVN
 }
@@ -298,7 +296,7 @@ func (o *FakeOVN) init(nadList []nettypes.NetworkAttachmentDefinition) {
 	if o.networkManager == nil {
 		o.networkManager = networkmanager.Default()
 		if config.OVNKubernetesFeature.EnableMultiNetwork {
-			o.networkManager, err = networkmanager.NewForNode(o.zone, &networkmanager.FakeControllerManager{}, o.watcher)
+			o.networkManager, err = networkmanager.NewForNode(o.nodeName, &networkmanager.FakeControllerManager{}, o.watcher)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		}
 	}
@@ -342,7 +340,7 @@ func (o *FakeOVN) init(nadList []nettypes.NetworkAttachmentDefinition) {
 		o.eIPController,
 		o.portCache,
 		o.addressSetManager,
-		o.zone,
+		o.nodeName,
 	)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	o.controller.multicastSupport = config.EnableMulticast
@@ -467,7 +465,7 @@ func NewOvnController(
 	eIPController *EgressIPController,
 	portCache *PortCache,
 	addressSetManager *addresssetmanager.AddressSetManager,
-	zone string,
+	nodeName string,
 ) (*DefaultNetworkController, error) {
 
 	fakeAddr, ok := addressSetFactory.(*addressset.FakeAddressSetFactory)
@@ -496,7 +494,7 @@ func NewOvnController(
 		&podRecorder,
 		false, // multicast support
 		true,  // templates support
-		zone,
+		nodeName,
 	)
 
 	nodeReconciler := nodecontroller.NewNodeController(wf, networkManager, cnci.nodeName)
@@ -564,7 +562,7 @@ func (o *FakeOVN) NewUserDefinedNetworkController(netattachdef *nettypes.Network
 			&podRecorder,
 			false, // multicast support
 			true,  // templates support
-			o.zone,
+			o.nodeName,
 		)
 
 		asf := addressset.NewFakeAddressSetFactory(getNetworkControllerName(netName))
@@ -617,8 +615,8 @@ func (o *FakeOVN) registerUDNNodeHandler(networkName string) error {
 	if c, ok := o.fullL2UDNControllers[networkName]; ok {
 		return c.RegisterNodeHandler()
 	}
-	if c, ok := o.fullLocalnetUDNControllers[networkName]; ok {
-		return c.RegisterNodeHandler()
+	if _, ok := o.fullLocalnetUDNControllers[networkName]; ok {
+		return nil
 	}
 	return fmt.Errorf("no concrete UDN controller found for network %s", networkName)
 }

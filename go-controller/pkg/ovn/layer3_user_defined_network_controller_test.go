@@ -503,14 +503,11 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 			testNode, err := newNodeWithUserDefinedNetworks(nodeName, nodeIPv4CIDR, netInfo)
 			Expect(err).NotTo(HaveOccurred())
 
-			nbZone := &nbdb.NBGlobal{Name: nodeName, UUID: nodeName}
-			// Post-cleanup DB: default net node switch + NB_Global + global entities (Copp, meters) as in Layer2 test.
-			defaultNetExpectations := generateUDNPostInitDB(append(emptyDefaultClusterNetworkNodeSwitch(nodeName), nbZone))
+			// Post-cleanup DB: default net node switch + global entities (Copp, meters) as in Layer2 test.
+			defaultNetExpectations := generateUDNPostInitDB(emptyDefaultClusterNetworkNodeSwitch(nodeName))
 
 			// Minimal initialDB: default net node switch, no UDN entities. The UDN controller's Start()
 			// runs init() which creates cluster router and join switch; then node sync creates per-node entities.
-			initialDB.NBData = append(initialDB.NBData, nbZone)
-
 			fakeOvn.startWithDBSetup(
 				initialDB,
 				&corev1.NamespaceList{Items: []corev1.Namespace{*newUDNNamespace(ns)}},

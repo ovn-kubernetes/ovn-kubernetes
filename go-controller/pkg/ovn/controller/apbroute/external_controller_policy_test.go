@@ -115,7 +115,7 @@ func initController(k8sObjects, routePolicyObjects []runtime.Object) {
 		nbClient,
 		addressset.NewFakeAddressSetFactory(controllerName),
 		controllerName,
-		"single-zone")
+		node.Name)
 	Expect(err).NotTo(HaveOccurred())
 
 	err = iFactory.Start()

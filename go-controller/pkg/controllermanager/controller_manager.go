@@ -12,7 +12,6 @@ import (
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
 
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	clientset "k8s.io/client-go/kubernetes"
@@ -506,21 +505,13 @@ func (cm *ControllerManager) Reconcile(_ string, _, _ util.NetInfo) error {
 }
 
 func (cm *ControllerManager) setTopologyType() error {
-	nodes, err := cm.kube.KClient.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
+	node, err := cm.watchFactory.GetNode(cm.nodeName)
 	if err != nil {
-		return fmt.Errorf("unable to get nodes from informer while setting topology type for layer2: %w", err)
+		return fmt.Errorf("unable to get controller node %s from informer while setting topology type for layer2: %w", cm.nodeName, err)
 	}
-	// Set it to true and check whether the controller node already has the annotation.
-	config.Layer2UsesTransitRouter = true
-	for _, node := range nodes.Items {
-		if node.Name == cm.nodeName && node.Annotations[util.Layer2TopologyVersion] != util.TransitRouterTopoVersion {
-			// at least one node doesn't have the annotation
-			config.Layer2UsesTransitRouter = false
-			break
-		}
-	}
+	config.Layer2UsesTransitRouter = node.Annotations[util.Layer2TopologyVersion] == util.TransitRouterTopoVersion
 	if config.Layer2UsesTransitRouter {
-		// all nodes are already using new topology, no need to do anything extra
+		// The controller node is already using the new topology, no need to do anything extra.
 		return nil
 	}
 
@@ -567,7 +558,7 @@ func (cm *ControllerManager) setTopologyType() error {
 
 	klog.Infof("Switching to transit router for layer2 networks")
 	config.Layer2UsesTransitRouter = true
-	return cm.setUDNLayer2NodeUsesTransitRouter(nodes)
+	return cm.setUDNLayer2NodeUsesTransitRouter()
 }
 
 func (cm *ControllerManager) hasLocalPodsOnSwitch(sw *nbdb.LogicalSwitch) (bool, error) {
@@ -591,14 +582,10 @@ func (cm *ControllerManager) hasLocalPodsOnSwitch(sw *nbdb.LogicalSwitch) (bool,
 	return false, nil
 }
 
-func (cm *ControllerManager) setUDNLayer2NodeUsesTransitRouter(nodeList *corev1.NodeList) error {
-	for _, node := range nodeList.Items {
-		if node.Name == cm.nodeName {
-			if err := cm.kube.SetAnnotationsOnNode(node.Name, map[string]interface{}{
-				util.Layer2TopologyVersion: util.TransitRouterTopoVersion}); err != nil {
-				return fmt.Errorf("failed to set annotation %s on node %s: %w", util.Layer2TopologyVersion, node.Name, err)
-			}
-		}
+func (cm *ControllerManager) setUDNLayer2NodeUsesTransitRouter() error {
+	if err := cm.kube.SetAnnotationsOnNode(cm.nodeName, map[string]interface{}{
+		util.Layer2TopologyVersion: util.TransitRouterTopoVersion}); err != nil {
+		return fmt.Errorf("failed to set annotation %s on node %s: %w", util.Layer2TopologyVersion, cm.nodeName, err)
 	}
 	return nil
 }

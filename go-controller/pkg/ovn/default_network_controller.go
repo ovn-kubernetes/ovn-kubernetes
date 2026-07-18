@@ -403,29 +403,27 @@ func (oc *DefaultNetworkController) startNodeReconciliation() error {
 }
 
 func (oc *DefaultNetworkController) waitForInitialNodeSync() error {
-	nodes, err := oc.GetLocalNodes()
+	node, err := oc.GetLocalNode()
 	if err != nil {
-		return fmt.Errorf("failed to get local zone nodes for initial node sync wait: %w", err)
+		return fmt.Errorf("failed to get local node for initial node sync wait: %w", err)
 	}
-	for _, node := range nodes {
-		if util.NoHostSubnet(node) {
-			continue
+	if util.NoHostSubnet(node) {
+		return nil
+	}
+	switchName := oc.GetNetworkScopedSwitchName(node.Name)
+	if err := wait.PollUntilContextTimeout(context.Background(), 30*time.Millisecond, 30*time.Second, true, func(_ context.Context) (bool, error) {
+		if oc.hasLocalNodeSwitchState(node) {
+			return true, nil
 		}
-		switchName := oc.GetNetworkScopedSwitchName(node.Name)
-		if err := wait.PollUntilContextTimeout(context.Background(), 30*time.Millisecond, 30*time.Second, true, func(_ context.Context) (bool, error) {
-			if oc.hasLocalNodeSwitchState(node) {
-				return true, nil
-			}
-			if _, failed := oc.addNodeFailed.Load(node.Name); failed {
-				// Allow startup to continue when the initial node add failed and the
-				// shared node controller is retrying in the background.
-				return true, nil
-			}
-			return false, nil
-		}); err != nil {
-			return fmt.Errorf("failed waiting for local zone node %s logical switch %s for network %s: %w",
-				node.Name, switchName, oc.GetNetworkName(), err)
+		if _, failed := oc.addNodeFailed.Load(node.Name); failed {
+			// Allow startup to continue when the initial node add failed and the
+			// shared node controller is retrying in the background.
+			return true, nil
 		}
+		return false, nil
+	}); err != nil {
+		return fmt.Errorf("failed waiting for local node %s logical switch %s for network %s: %w",
+			node.Name, switchName, oc.GetNetworkName(), err)
 	}
 	return nil
 }
@@ -500,9 +498,8 @@ func (oc *DefaultNetworkController) ReconcileNode(oldNode, newNode *corev1.Node,
 			_, gwSync := oc.gatewaysFailed.Load(newNode.Name)
 			_, hoSync := oc.hybridOverlayFailed.Load(newNode.Name)
 			_, zoneICSync := oc.syncZoneICFailed.Load(newNode.Name)
-			// When a bootstrap retry first failed while the node was remote, only syncZoneICFailed may be set.
-			// If the node later becomes local before any local switch state was populated in lsManager, we must
-			// do the full local node add instead of replaying only the previous remote-zone retry state.
+			// Only replay individual failed pieces after the local switch state exists;
+			// otherwise perform the full local-node add.
 			localSwitchReady := oc.hasLocalNodeSwitchState(newNode)
 			if localSwitchReady && (nodeSync || clusterRtrSync || mgmtSync || gwSync || hoSync || zoneICSync) {
 				nodeSyncsParam = &nodeSyncs{
@@ -523,7 +520,7 @@ func (oc *DefaultNetworkController) ReconcileNode(oldNode, newNode *corev1.Node,
 					syncZoneIC:            true,
 				}
 			}
-		} else if oc.isLocalNode(oldNode) {
+		} else {
 			_, nodeSync := oc.addNodeFailed.Load(newNode.Name)
 			nodeSync = nodeSync || defaultNodeSubnetChangedWithState(oldNode, newNode, oldState, newState)
 			_, failed := oc.nodeClusterRouterPortFailed.Load(newNode.Name)
@@ -546,17 +543,6 @@ func (oc *DefaultNetworkController) ReconcileNode(oldNode, newNode *corev1.Node,
 				syncHo:                switchToOvnNode || hoSync || hoNeedsCleanup,
 				syncZoneIC:            syncZoneIC,
 			}
-		} else {
-			klog.Infof("Node %s moved from the remote zone %s to local zone %s, in network: %q",
-				newNode.Name, util.GetNodeZone(oldNode), util.GetNodeZone(newNode), oc.GetNetworkName())
-			nodeSyncsParam = &nodeSyncs{
-				syncNode:              true,
-				syncClusterRouterPort: true,
-				syncMgmtPort:          true,
-				syncGw:                true,
-				syncHo:                true,
-				syncZoneIC:            true,
-			}
 		}
 		if err := oc.addUpdateLocalNodeEvent(newNode, nodeSyncsParam); err != nil {
 			aggregatedErrors = append(aggregatedErrors, err)
@@ -566,10 +552,9 @@ func (oc *DefaultNetworkController) ReconcileNode(oldNode, newNode *corev1.Node,
 		if oldNode == nil {
 			syncZoneIC = true
 		} else {
-			// Sync interconnect state when the node moved from local to remote, changed zone clusters,
-			// switched from hybrid-overlay to OVN management, or its remote reachability inputs changed.
-			syncZoneIC = syncZoneIC || oc.isLocalNode(oldNode) ||
-				defaultNodeSubnetChangedWithState(oldNode, newNode, oldState, newState) ||
+			// Sync interconnect state when the node changed zone clusters, switched from
+			// hybrid-overlay to OVN management, or its remote reachability inputs changed.
+			syncZoneIC = syncZoneIC || defaultNodeSubnetChangedWithState(oldNode, newNode, oldState, newState) ||
 				oc.nodeZoneClusterChanged(oldNode, newNode) ||
 				switchToOvnNode ||
 				util.NodeEncapIPsChanged(oldNode, newNode) ||

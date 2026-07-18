@@ -1206,13 +1206,10 @@ func initNetworkQoSController(netInfo util.NetInfo, nadKeys []string, addrsetFac
 		watchFactory.NetworkQoSInformer(),
 		watchFactory.NamespaceCoreInformer(),
 		watchFactory.PodCoreInformer(),
-		watchFactory.NodeCoreInformer(),
 		watchFactory.NADInformer(),
 		networkMgr,
 		addrsetFactory,
-		func(pod *corev1.Pod) bool {
-			return pod.Spec.NodeName == "node1"
-		}, "node1")
+		"node1")
 	Expect(err).NotTo(HaveOccurred())
 	err = watchFactory.Start()
 	Expect(err).NotTo(HaveOccurred())

@@ -17,6 +17,7 @@ import (
 	"k8s.io/klog/v2"
 
 	nqosv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 func (c *Controller) processNextNQOSPodWorkItem(wg *sync.WaitGroup) bool {
@@ -53,6 +54,10 @@ func (c *Controller) syncNetworkQoSPod(eventData *eventData[*corev1.Pod]) error 
 	}
 	recordPodReconcileDuration(c.controllerName, time.Since(startTime).Milliseconds())
 	return nil
+}
+
+func (c *Controller) isPodScheduledOnLocalNode(pod *corev1.Pod) bool {
+	return util.PodScheduled(pod) && pod.Spec.NodeName == c.nodeName
 }
 
 // setPodForNQOS will check if the pod meets source selector or dest selector

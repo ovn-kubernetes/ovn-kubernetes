@@ -208,7 +208,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 			return nil
 		}
 
-		localZoneNode = func(t testData) string {
+		localNode = func(t testData) string {
 			if t.localNode != "" {
 				return t.localNode
 			}
@@ -216,7 +216,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 		}
 
 		isLocalNode = func(t testData, node string) bool {
-			return node == localZoneNode(t)
+			return node == localNode(t)
 		}
 
 		kubevirtOVNTestData = func(t testData, previousData []libovsdb.TestData) []libovsdb.TestData {
@@ -721,7 +721,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 			}
 
 			app.Action = func(*cli.Context) error {
-				fakeOvn.zone = localZoneNode(t)
+				fakeOvn.nodeName = localNode(t)
 				fakeOvn.startWithDBSetup(initialDB,
 					&corev1.NamespaceList{
 						Items: []corev1.Namespace{
@@ -788,7 +788,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 				if t.migrationTarget.nodeName != "" {
 					t.migrationTarget.populateLogicalSwitchCache(fakeOvn)
 				}
-				fakeOvn.controller.nodeName = localZoneNode(t)
+				fakeOvn.controller.nodeName = localNode(t)
 
 				Expect(fakeOvn.controller.WatchNamespaces()).ToNot(HaveOccurred())
 				Expect(fakeOvn.controller.WatchPods()).ToNot(HaveOccurred())

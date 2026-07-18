@@ -1154,6 +1154,44 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	})
 
+	ginkgo.DescribeTable("doesn't retry deleting the local node that is missing annotation",
+		func(missingAnnotation string) {
+			app.Action = func(ctx *cli.Context) error {
+				_, err := config.InitConfig(ctx, nil, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				localNode, err := kubeFakeClient.CoreV1().Nodes().Get(context.TODO(), node1.Name, metav1.GetOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				delete(localNode.Annotations, missingAnnotation)
+				_, err = kubeFakeClient.CoreV1().Nodes().Update(context.TODO(), localNode, metav1.UpdateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				startFakeController(oc, wg)
+				ginkgo.By("ensuring reconciliation of the partially annotated local node fails")
+				failureRecorded := func() bool {
+					if missingAnnotation == types.NodeSubnetsAnnotation {
+						_, failed := oc.addNodeFailed.Load(localNode.Name)
+						return failed
+					}
+					_, failed := oc.syncZoneICFailed.Load(localNode.Name)
+					return failed
+				}
+				gomega.Eventually(failureRecorded).Should(gomega.BeTrue())
+
+				ginkgo.By("deleting the local node and ensuring its failed state is cleared")
+				err = kubeFakeClient.CoreV1().Nodes().Delete(context.TODO(), localNode.Name, metav1.DeleteOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Eventually(failureRecorded).Should(gomega.BeFalse())
+				return nil
+			}
+
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		},
+		ginkgo.Entry(types.NodeSubnetsAnnotation, types.NodeSubnetsAnnotation),
+		ginkgo.Entry(ovnNodeID, ovnNodeID),
+	)
+
 	ginkgo.It("delete a partially constructed node", func() {
 		app.Action = func(ctx *cli.Context) error {
 			_, err := config.InitConfig(ctx, nil, nil)

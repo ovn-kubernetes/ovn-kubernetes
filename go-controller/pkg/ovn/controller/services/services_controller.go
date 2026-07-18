@@ -166,9 +166,9 @@ func NewController(client clientset.Interface,
 		nodesSynced:   nodeInformer.Informer().HasSynced,
 		state:         state,
 		networkStates: syncmap.NewSyncMap[*networkState](),
+		nodeName:      nodeName,
 	}
 	c.networkStates.Store(netInfo.GetNetworkName(), state)
-	c.zone = nodeName
 	return c, nil
 }
 
@@ -214,7 +214,7 @@ type Controller struct {
 	state *networkState
 	// networkStates maps each registered network to its mutable service-controller state.
 	networkStates *syncmap.SyncMap[*networkState]
-	zone          string
+	nodeName      string
 
 	// handlers stored for shutdown
 	nodeHandler     cache.ResourceEventHandlerRegistration
@@ -456,7 +456,7 @@ func (c *Controller) nodeInfosForNetwork(netInfo util.NetInfo) ([]nodeInfo, map[
 		nodeMap[node.Name] = *ni
 	}
 
-	return zoneNodeInfos(c.zone, nodeMap), nodeMap, nil
+	return localNodeInfos(c.nodeName, nodeMap), nodeMap, nil
 }
 
 func (c *Controller) nodeInfoMapForNetwork(state *networkState) map[string]nodeInfo {
@@ -470,14 +470,11 @@ func (c *Controller) nodeInfoMapForNetwork(state *networkState) map[string]nodeI
 	return nodeInfoByName
 }
 
-func zoneNodeInfos(zone string, nodeInfoByName map[string]nodeInfo) []nodeInfo {
-	out := make([]nodeInfo, 0, len(nodeInfoByName))
-	for nodeName, node := range nodeInfoByName {
-		if nodeName == zone {
-			out = append(out, node)
-		}
+func localNodeInfos(nodeName string, nodeInfoByName map[string]nodeInfo) []nodeInfo {
+	out := make([]nodeInfo, 0, 1)
+	if node, ok := nodeInfoByName[nodeName]; ok {
+		out = append(out, node)
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].name < out[j].name })
 	return out
 }
 
@@ -865,7 +862,7 @@ func (c *Controller) syncNodeInfoMapForNetwork(state *networkState, nodeInfoByNa
 		state.nodeInfosByName[nodeName] = nodeInfo
 	}
 
-	state.nodeInfos = zoneNodeInfos(c.zone, state.nodeInfosByName)
+	state.nodeInfos = localNodeInfos(c.nodeName, state.nodeInfosByName)
 	if !state.useTemplates {
 		return
 	}

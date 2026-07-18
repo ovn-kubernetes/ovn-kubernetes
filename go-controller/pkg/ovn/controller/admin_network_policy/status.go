@@ -69,7 +69,7 @@ func doesStatusNeedAnUpdate(existingCondition *metav1.Condition, newCondition me
 // Each zone's ovnkube-controller will call this, hence let's update status using server-side-apply
 func (c *Controller) updateANPStatusToReady(anpName string) error {
 	readyCondition := metav1.Condition{
-		Type:    policyReadyStatusType + c.zone,
+		Type:    policyReadyStatusType + c.nodeName,
 		Status:  metav1.ConditionTrue,
 		Reason:  policyReadyReason,
 		Message: "Setting up OVN DB plumbing was successful",
@@ -91,7 +91,7 @@ func (c *Controller) updateANPStatusToNotReady(anpName, message string) error {
 		message = message[:32766]
 	}
 	notReadyCondition := metav1.Condition{
-		Type:    policyReadyStatusType + c.zone,
+		Type:    policyReadyStatusType + c.nodeName,
 		Status:  metav1.ConditionFalse,
 		Reason:  policyNotReadyReason,
 		Message: message,
@@ -127,7 +127,7 @@ func (c *Controller) updateANPZoneStatusCondition(newCondition metav1.Condition,
 	applyObj := anpapiapply.AdminNetworkPolicy(anpName).
 		WithStatus(anpapiapply.AdminNetworkPolicyStatus().WithConditions(newCondition))
 	_, err = c.anpClientSet.PolicyV1alpha1().AdminNetworkPolicies().
-		ApplyStatus(context.TODO(), applyObj, metav1.ApplyOptions{FieldManager: c.zone, Force: true})
+		ApplyStatus(context.TODO(), applyObj, metav1.ApplyOptions{FieldManager: c.nodeName, Force: true})
 	if err == nil {
 		klog.V(5).Infof("Patched the status of ANP %s with condition type %s/%s, reason %s, message: %s",
 			anpName, newCondition.Type, newCondition.Status, newCondition.Reason, newCondition.Message)
@@ -139,7 +139,7 @@ func (c *Controller) updateANPZoneStatusCondition(newCondition metav1.Condition,
 // Each zone's ovnkube-controller will call this, hence let's update status using server-side-apply
 func (c *Controller) updateBANPStatusToReady(banpName string) error {
 	readyCondition := metav1.Condition{
-		Type:    policyReadyStatusType + c.zone,
+		Type:    policyReadyStatusType + c.nodeName,
 		Status:  metav1.ConditionTrue,
 		Reason:  policyReadyReason,
 		Message: "Setting up OVN DB plumbing was successful",
@@ -158,7 +158,7 @@ func (c *Controller) updateBANPStatusToReady(banpName string) error {
 // this ANP instead of having to manually check logs across zones
 func (c *Controller) updateBANPStatusToNotReady(banpName, message string) error {
 	notReadyCondition := metav1.Condition{
-		Type:    policyReadyStatusType + c.zone,
+		Type:    policyReadyStatusType + c.nodeName,
 		Status:  metav1.ConditionFalse,
 		Reason:  policyNotReadyReason,
 		Message: message,
@@ -194,7 +194,7 @@ func (c *Controller) updateBANPZoneStatusCondition(newCondition metav1.Condition
 	applyObj := anpapiapply.BaselineAdminNetworkPolicy(banpName).
 		WithStatus(anpapiapply.BaselineAdminNetworkPolicyStatus().WithConditions(newCondition))
 	_, err = c.anpClientSet.PolicyV1alpha1().BaselineAdminNetworkPolicies().
-		ApplyStatus(context.TODO(), applyObj, metav1.ApplyOptions{FieldManager: c.zone, Force: true})
+		ApplyStatus(context.TODO(), applyObj, metav1.ApplyOptions{FieldManager: c.nodeName, Force: true})
 	if err == nil {
 		klog.V(5).Infof("Patched the status of BANP %s with condition type %s/%s, reason %s, message: %s",
 			banpName, newCondition.Type, newCondition.Status, newCondition.Reason, newCondition.Message)

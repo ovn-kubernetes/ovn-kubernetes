@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net"
 
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 
@@ -35,7 +34,6 @@ func (oc *BaseLayer2UserDefinedNetworkController) stop() {
 		return
 	}
 	klog.Infof("Stop secondary %s network controller of network %s", oc.TopologyType(), oc.GetNetworkName())
-	oc.DeregisterNodeHandler()
 	close(oc.stopChan)
 	oc.stopChan = nil
 	oc.cancelableCtx.Cancel()
@@ -266,37 +264,6 @@ func (oc *BaseLayer2UserDefinedNetworkController) initializeLogicalSwitch(switch
 	}
 
 	return &logicalSwitch, nil
-}
-
-func (oc *BaseLayer2UserDefinedNetworkController) addUpdateNodeEvent(node *corev1.Node) error {
-	if oc.isLocalNode(node) {
-		return oc.addUpdateLocalNodeEvent(node)
-	}
-	return oc.addUpdateRemoteNodeEvent(node)
-}
-
-func (oc *BaseLayer2UserDefinedNetworkController) addUpdateLocalNodeEvent(_ *corev1.Node) error {
-	return nil
-}
-
-func (oc *BaseLayer2UserDefinedNetworkController) addUpdateRemoteNodeEvent(_ *corev1.Node) error {
-	return nil
-}
-
-func (oc *BaseLayer2UserDefinedNetworkController) deleteNodeEvent(_ *corev1.Node) error {
-	return nil
-}
-
-func (oc *BaseLayer2UserDefinedNetworkController) syncNodes(nodes []interface{}) error {
-	for _, tmp := range nodes {
-		_, ok := tmp.(*corev1.Node)
-		if !ok {
-			return fmt.Errorf("spurious object in syncNodes: %v", tmp)
-		}
-
-	}
-
-	return nil
 }
 
 // getDenyARPAndNSOnMACVRF provides ACLs to drop ARP and NS from pods to the

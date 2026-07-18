@@ -119,7 +119,7 @@ func (c *serviceController) testNodeInfos(nodeInfos ...*nodeInfo) []nodeInfo {
 		}
 		nodeInfoByName[nodeInfo.name] = *nodeInfo
 	}
-	return zoneNodeInfos(c.zone, nodeInfoByName)
+	return localNodeInfos(c.nodeName, nodeInfoByName)
 }
 
 func setServiceControllerStartupDone(c *Controller, done bool) {
@@ -321,12 +321,11 @@ func TestReconcileNetworkRefreshesNodeProjection(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: nodeA,
 			Annotations: map[string]string{
-				util.OvnNodeZoneName:  nodeA,
 				util.OVNNodeHostCIDRs: `["10.0.0.1/24"]`,
 			},
 		},
 	}
-	controller.zone = nodeA
+	controller.nodeName = nodeA
 	g.Expect(controller.nodeInformer.Informer().GetStore().Add(node)).To(gomega.Succeed())
 
 	g.Expect(controller.RegisterNetwork(initialNetInfo, NetworkOptions{
