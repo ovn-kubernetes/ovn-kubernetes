@@ -721,7 +721,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 			}
 
 			app.Action = func(*cli.Context) error {
-				fakeOvn.zone = localZoneNode(t)
+				fakeOvn.nodeName = localZoneNode(t)
 				fakeOvn.startWithDBSetup(initialDB,
 					&corev1.NamespaceList{
 						Items: []corev1.Namespace{

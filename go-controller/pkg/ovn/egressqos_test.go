@@ -520,7 +520,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 
 	ginkgo.It("should respond to node events correctly", func() {
 		app.Action = func(*cli.Context) error {
-			fakeOVN.zone = node3Name
+			fakeOVN.nodeName = node3Name
 			namespaceT := *testing.NewNamespace("namespace1")
 
 			node1Switch := &nbdb.LogicalSwitch{
@@ -647,7 +647,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 
 	ginkgo.It("should respond to node zone update events correctly", func() {
 		app.Action = func(*cli.Context) error {
-			fakeOVN.zone = node3Name
+			fakeOVN.nodeName = node3Name
 			namespaceT := *testing.NewNamespace("namespace1")
 
 			node1Switch := &nbdb.LogicalSwitch{

@@ -105,7 +105,7 @@ func (ni *testNetInfo) OutboundSNAT() string {
 }
 
 type FakeOVN struct {
-	zone              string
+	nodeName          string
 	fakeClient        *util.OVNKubeControllerClientset
 	watcher           *factory.WatchFactory
 	controller        *DefaultNetworkController
@@ -134,7 +134,7 @@ type FakeOVN struct {
 }
 
 // NOTE: the FakeAddressSetFactory is no longer needed and should no longer be used. starting to phase out FakeAddressSetFactory
-func NewFakeOVN(useFakeAddressSet bool, zone ...string) *FakeOVN {
+func NewFakeOVN(useFakeAddressSet bool, nodeName ...string) *FakeOVN {
 	var asf *addressset.FakeAddressSetFactory
 	if useFakeAddressSet {
 		asf = addressset.NewFakeAddressSetFactory(types.DefaultNetworkControllerName)
@@ -151,8 +151,8 @@ func NewFakeOVN(useFakeAddressSet bool, zone ...string) *FakeOVN {
 		fullL3UDNControllers:          map[string]*Layer3UserDefinedNetworkController{},
 		fullLocalnetUDNControllers:    map[string]*LocalnetUserDefinedNetworkController{},
 	}
-	if len(zone) > 0 {
-		fakeOVN.zone = zone[0]
+	if len(nodeName) > 0 {
+		fakeOVN.nodeName = nodeName[0]
 	}
 	return fakeOVN
 }
@@ -288,7 +288,7 @@ func (o *FakeOVN) init(nadList []nettypes.NetworkAttachmentDefinition) {
 	if o.networkManager == nil {
 		o.networkManager = networkmanager.Default()
 		if config.OVNKubernetesFeature.EnableMultiNetwork {
-			o.networkManager, err = networkmanager.NewForNode(o.zone, &networkmanager.FakeControllerManager{}, o.watcher)
+			o.networkManager, err = networkmanager.NewForNode(o.nodeName, &networkmanager.FakeControllerManager{}, o.watcher)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		}
 	}
@@ -332,7 +332,7 @@ func (o *FakeOVN) init(nadList []nettypes.NetworkAttachmentDefinition) {
 		o.eIPController,
 		o.portCache,
 		o.addressSetManager,
-		o.zone,
+		o.nodeName,
 	)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	o.controller.multicastSupport = config.EnableMulticast
@@ -457,7 +457,7 @@ func NewOvnController(
 	eIPController *EgressIPController,
 	portCache *PortCache,
 	addressSetManager *addresssetmanager.AddressSetManager,
-	zone string,
+	nodeName string,
 ) (*DefaultNetworkController, error) {
 
 	fakeAddr, ok := addressSetFactory.(*addressset.FakeAddressSetFactory)
@@ -486,7 +486,7 @@ func NewOvnController(
 		&podRecorder,
 		false, // multicast support
 		true,  // templates support
-		zone,
+		nodeName,
 	)
 
 	nodeReconciler := nodecontroller.NewNodeController(wf, networkManager, cnci.nodeName)
@@ -554,7 +554,7 @@ func (o *FakeOVN) NewUserDefinedNetworkController(netattachdef *nettypes.Network
 			&podRecorder,
 			false, // multicast support
 			true,  // templates support
-			o.zone,
+			o.nodeName,
 		)
 
 		asf := addressset.NewFakeAddressSetFactory(getNetworkControllerName(netName))

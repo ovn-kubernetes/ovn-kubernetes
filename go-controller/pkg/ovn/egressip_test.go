@@ -1063,7 +1063,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					node2 := nodes[1]
 					node3 := nodes[2]
 					config.IPv4Mode = true
-					fakeOvn.zone = node3Name
+					fakeOvn.nodeName = node3Name
 					egressPod := *ovntest.NewPodWithLabels(eipNamespace, podName, node3Name, podV4IP, egressPodLabel)
 					egressNamespace := ovntest.NewNamespace(eipNamespace)
 
@@ -1445,7 +1445,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					node2 := nodes[1]
 					node3 := nodes[2]
 					config.IPv4Mode = true
-					fakeOvn.zone = node3Name
+					fakeOvn.nodeName = node3Name
 					egressPod := *ovntest.NewPodWithLabels(eipNamespace, podName, node3Name, podV4IP, egressPodLabel)
 					egressNamespace := ovntest.NewNamespace(eipNamespace)
 
@@ -1833,7 +1833,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 			func(interconnect bool, controllerZone string) {
 				app.Action = func(*cli.Context) error {
 					egressIP := "10.10.10.20"
-					fakeOvn.zone = controllerZone
+					fakeOvn.nodeName = controllerZone
 					node1Zone := node1Name
 					node2Zone := node2Name
 					node1Local := controllerZone == node1Zone
@@ -2193,7 +2193,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 				app.Action = func(*cli.Context) error {
 					egressIPOVN := "192.168.126.190"
 					egressIPSecondaryHost := "10.10.10.20"
-					fakeOvn.zone = controllerZone
+					fakeOvn.nodeName = controllerZone
 					node1Zone := node1Name
 					node2Zone := node2Name
 					node1Local := controllerZone == node1Zone
@@ -2637,7 +2637,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 				app.Action = func(*cli.Context) error {
 
 					egressIP := "192.168.126.101"
-					fakeOvn.zone = controllerZone
+					fakeOvn.nodeName = controllerZone
 					node1Zone := node1Name
 					node2Zone := node2Name
 					node1Local := controllerZone == node1Zone
@@ -3097,7 +3097,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 			func(interconnect bool, controllerZone string) {
 				app.Action = func(*cli.Context) error {
 					egressIP := "10.10.10.10"
-					fakeOvn.zone = controllerZone
+					fakeOvn.nodeName = controllerZone
 					node1Zone := node1Name
 					node2Zone := node2Name
 					node1Local := controllerZone == node1Zone
@@ -5565,7 +5565,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					egressIP1 := "192.168.126.101"
 					egressIP2 := "192.168.126.102"
 					egressIP3 := "192.168.126.103"
-					fakeOvn.zone = controllerZone
+					fakeOvn.nodeName = controllerZone
 					node1Zone := node1Name
 					node2Zone := node2Name
 					node1Local := controllerZone == node1Zone
@@ -7508,7 +7508,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					egressIP1 := "192.168.126.25"
 					egressIP2 := "192.168.126.30"
 					egressIP3 := "192.168.126.35"
-					fakeOvn.zone = controllerZone
+					fakeOvn.nodeName = controllerZone
 					node1Zone := node1Name
 					node2Zone := node2Name
 					isNode1Local := !interconnect || controllerZone == node1Zone
@@ -13590,6 +13590,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", node1IPv4CIDR, node1IPv6CIDR),
 					"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":[\"%s\", \"%s\"]}", v4Node1Subnet, v6Node1Subnet),
 					util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\",\"%s\"]", node1IPv4CIDR, node1IPv6CIDR),
+					util.OvnNodeID:                    "2",
 				}
 				labels := map[string]string{
 					"k8s.ovn.org/egress-assignable": "",
@@ -13599,12 +13600,16 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", node2IPv4CIDR, ""),
 					"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":\"%s\"}", v4Node1Subnet),
 					util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", node2IPv4CIDR),
+					util.OvnNodeID:                    "3",
+					util.OvnTransitSwitchPortAddr:     "{\"ipv4\":\"100.88.0.3/16\"}",
 				}
 				node2 := getNodeObj(node2Name, annotations, labels)
 				annotations = map[string]string{
 					"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", node3IPv4CIDR, ""),
 					"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":\"%s\"}", v4Node1Subnet),
 					util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", node3IPv4CIDR),
+					util.OvnNodeID:                    "4",
+					util.OvnTransitSwitchPortAddr:     "{\"ipv4\":\"100.88.0.4/16\"}",
 				}
 				node3 := getNodeObj(node3Name, annotations, labels)
 
@@ -13637,6 +13642,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					UUID: node3.Name + "-UUID",
 					Name: node3.Name,
 				}
+				defaultRoute := getReRouteStaticRoute(v4ClusterSubnet, nodeLogicalRouterIPv4[0])
 				fakeOvn.startWithDBSetup(
 					libovsdbtest.TestSetup{
 						NBData: []libovsdbtest.TestData{
@@ -13809,6 +13815,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 						UUID: types.OVNClusterRouter + "-UUID",
 						Policies: []string{"no-reroute-UUID", "no-reroute-service-UUID", "default-no-reroute-node-UUID",
 							"default-v6-no-reroute-node-UUID", "default-no-reroute-reply-traffic"},
+						StaticRoutes: []string{defaultRoute.UUID},
 					},
 					&nbdb.LogicalRouter{
 						Name:  types.GWRouterPrefix + node1.Name,
@@ -13873,6 +13880,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					node1Switch,
 					node2Switch,
 					node3Switch,
+					defaultRoute,
 					getDefaultQoSRule(false, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName),
 					getDefaultQoSRule(true, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName),
 					egressSVCServedPodsASv4, egressSVCServedPodsASv6, egressIPServedPodsASv4, egressIPServedPodsASv6, egressNodeIPsASv4, egressNodeIPsASv6,
@@ -13955,7 +13963,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 						Priority: types.EgressIPReroutePriority,
 						Match:    fmt.Sprintf("ip4.src == %s", egressPod1.Status.PodIP),
 						Action:   nbdb.LogicalRouterPolicyActionReroute,
-						Nexthops: []string{"100.64.0.2"},
+						Nexthops: []string{"100.64.0.2", "100.88.0.4"},
 						ExternalIDs: getEgressIPLRPReRouteDbIDs(egressIPName, egressPod1.Namespace, egressPod1.Name,
 							"ip4", types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
 						UUID: "reroute-UUID1",
@@ -13976,6 +13984,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 						UUID: types.OVNClusterRouter + "-UUID",
 						Policies: []string{"no-reroute-UUID", "no-reroute-service-UUID", "default-no-reroute-node-UUID",
 							"default-v6-no-reroute-node-UUID", "default-no-reroute-reply-traffic", "reroute-UUID1"},
+						StaticRoutes: []string{defaultRoute.UUID},
 					},
 					&nbdb.LogicalRouter{
 						Name:  types.GWRouterPrefix + node1.Name,
@@ -14041,6 +14050,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					node1Switch,
 					node2Switch,
 					node3Switch,
+					defaultRoute,
 					getDefaultQoSRule(false, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName),
 					getDefaultQoSRule(true, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName),
 					egressSVCServedPodsASv4, egressSVCServedPodsASv6, egressIPServedPodsASv4, egressIPServedPodsASv6, egressNodeIPsASv4, egressNodeIPsASv6,
@@ -14128,7 +14138,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 						Priority: types.EgressIPReroutePriority,
 						Match:    fmt.Sprintf("ip4.src == %s", egressPod1.Status.PodIP),
 						Action:   nbdb.LogicalRouterPolicyActionReroute,
-						Nexthops: []string{"100.64.0.2"},
+						Nexthops: []string{"100.64.0.2", "100.88.0.3"},
 						ExternalIDs: getEgressIPLRPReRouteDbIDs(egressIPName, egressPod1.Namespace, egressPod1.Name,
 							"ip4", types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
 						UUID: "reroute-UUID1",
@@ -14149,6 +14159,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 						UUID: types.OVNClusterRouter + "-UUID",
 						Policies: []string{"no-reroute-UUID", "no-reroute-service-UUID", "default-no-reroute-node-UUID",
 							"default-v6-no-reroute-node-UUID", "default-no-reroute-reply-traffic", "reroute-UUID1"},
+						StaticRoutes: []string{defaultRoute.UUID},
 					},
 					&nbdb.LogicalRouter{
 						Name:  types.GWRouterPrefix + node1.Name,
@@ -14214,6 +14225,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					node1Switch,
 					node2Switch,
 					node3Switch,
+					defaultRoute,
 					getDefaultQoSRule(false, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName),
 					getDefaultQoSRule(true, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName),
 					egressSVCServedPodsASv4, egressSVCServedPodsASv6, egressIPServedPodsASv4, egressIPServedPodsASv6, egressNodeIPsASv4, egressNodeIPsASv6,
