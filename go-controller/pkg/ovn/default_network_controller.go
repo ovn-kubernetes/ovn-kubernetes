@@ -1037,6 +1037,9 @@ func (h *defaultNetworkControllerEventHandler) AddResource(obj interface{}, from
 		if fromRetryLoop {
 			_, shouldSyncReroute = h.oc.syncEIPNodeRerouteFailed.Load(node.Name)
 			_, shouldSyncEIPNode = h.oc.syncEIPNodeFailed.Load(node.Name)
+			// addEgressNode runs after the reroute setup, so a reroute failure
+			// means that the egress node setup was never attempted.
+			shouldSyncEIPNode = shouldSyncEIPNode || shouldSyncReroute
 		}
 
 		if shouldSyncReroute {
@@ -1116,16 +1119,18 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(oldObj, newObj int
 		h.oc.eIPC.nodeZoneState.Store(newNode.Name, h.oc.isLocalZoneNode(newNode))
 		h.oc.eIPC.nodeZoneState.UnlockKey(newNode.Name)
 
-		_, syncEIPNodeRerouteFailed := h.oc.syncEIPNodeRerouteFailed.Load(newNode.Name)
+		_, rerouteRetryPending := h.oc.syncEIPNodeRerouteFailed.Load(newNode.Name)
+		newNodeIsLocal := h.oc.isLocalZoneNode(newNode)
+		nodeBecameLocal := !h.oc.isLocalZoneNode(oldNode) && newNodeIsLocal
 
 		// node moved from remote -> local or previously failed reroute config
-		if (!h.oc.isLocalZoneNode(oldNode) || syncEIPNodeRerouteFailed) && h.oc.isLocalZoneNode(newNode) {
+		if nodeBecameLocal || (rerouteRetryPending && newNodeIsLocal) {
 			if err := h.oc.eIPC.ensureDefaultNoRerouteQoSRules(newNode.Name); err != nil {
 				return err
 			}
 		}
 		// update the nodeIP in the default-reRoute (102 priority) destination address-set
-		if syncEIPNodeRerouteFailed || util.NodeHostCIDRsAnnotationChanged(oldNode, newNode) {
+		if rerouteRetryPending || util.NodeHostCIDRsAnnotationChanged(oldNode, newNode) {
 			klog.Infof("Egress IP detected IP address change for node %s. Updating no re-route policies", newNode.Name)
 			err := h.oc.eIPC.ensureDefaultNoRerouteNodePolicies()
 			if err != nil {
@@ -1136,7 +1141,7 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(oldObj, newObj int
 		}
 
 		_, syncEIPNodeFailed := h.oc.syncEIPNodeFailed.Load(newNode.Name)
-		if syncEIPNodeFailed {
+		if syncEIPNodeFailed || rerouteRetryPending || nodeBecameLocal {
 			err := h.oc.eIPC.addEgressNode(newNode)
 			if err != nil {
 				h.oc.syncEIPNodeFailed.Store(newNode.Name, true)
