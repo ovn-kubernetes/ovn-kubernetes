@@ -1310,13 +1310,16 @@ func TestPodRequest_migrationPreservedIPs(t *testing.T) {
 	}
 
 	// virtPod builds a virt-launcher pod for vm1 with the given annotations,
-	// pod phase and OVN pod-networks annotation (NAD key -> IPs in CIDR
+	// pod phase (defaulting to Running) and OVN pod-networks annotation (NAD key -> IPs in CIDR
 	// format). The target pod gets a later creation timestamp than the
 	// source, since DiscoverLiveMigrationStatus relies on creation time
 	// ordering to tell them apart.
 	virtPod := func(name string, anns map[string]string, phase corev1.PodPhase, networks map[string][]string) *corev1.Pod {
 		if anns == nil {
 			anns = map[string]string{}
+		}
+		if phase == "" {
+			phase = corev1.PodRunning
 		}
 		anns[kubevirtv1.DomainAnnotation] = vmName
 		if networks != nil {
