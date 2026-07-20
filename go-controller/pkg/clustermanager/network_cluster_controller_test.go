@@ -17,6 +17,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
@@ -481,6 +482,155 @@ func TestReconcileNodeMarksNodeSyncFailedOnCleanupError(t *testing.T) {
 	g.Expect(failed).To(gomega.BeTrue())
 	_, parseErr := util.ParseNetworkIDAnnotation(node, networkName)
 	g.Expect(parseErr).To(gomega.HaveOccurred())
+}
+
+func TestInitReserveTransitTunnelKey(t *testing.T) {
+	tests := []struct {
+		name           string
+		transitRouter  bool
+		nodeTunnelIDs  map[string]int // node name -> tunnel ID annotation
+		wantAllocMinID int            // verify AllocateID returns >= this value
+	}{
+		// Transit router ON: only the transit-router-to-switch key (ID 1) is
+		// reserved. Node tunnel IDs are not consumed by the allocator.
+		{
+			name:           "transit router: no nodes, transit key reserved",
+			transitRouter:  true,
+			nodeTunnelIDs:  nil,
+			wantAllocMinID: 2,
+		},
+		{
+			name:          "transit router: node IDs are not consumed by allocator",
+			transitRouter: true,
+			nodeTunnelIDs: map[string]int{
+				"node1": 10,
+				"node2": 11,
+			},
+			wantAllocMinID: 2,
+		},
+		// Transit router OFF: no transit key reservation.
+		// Node tunnel IDs are consumed by the allocator.
+		{
+			name:           "no transit router: no nodes, no transit key reserved",
+			transitRouter:  false,
+			nodeTunnelIDs:  nil,
+			wantAllocMinID: 1,
+		},
+		{
+			name:          "no transit router: node IDs consumed by allocator",
+			transitRouter: false,
+			nodeTunnelIDs: map[string]int{
+				"node1": 10,
+				"node2": 11,
+			},
+			wantAllocMinID: 1,
+		},
+		{
+			name:          "no transit router: node with ID 1 consumed by allocator",
+			transitRouter: false,
+			nodeTunnelIDs: map[string]int{
+				"node1": 1,
+			},
+			wantAllocMinID: 2,
+		},
+		{
+			name:          "no transit router: node without annotation",
+			transitRouter: false,
+			nodeTunnelIDs: map[string]int{
+				"node1": types.InvalidID,
+			},
+			wantAllocMinID: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+
+			err := config.PrepareTestConfig()
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+			config.OVNKubernetesFeature.EnableMultiNetwork = true
+			config.Layer2UsesTransitRouter = tt.transitRouter
+
+			const networkName = "l2-primary-test"
+			netConf := &ovncnitypes.NetConf{
+				NetConf: cnitypes.NetConf{
+					Name: networkName,
+					Type: "ovn-k8s-cni-overlay",
+				},
+				Topology: types.Layer2Topology,
+				Role:     types.NetworkRolePrimary,
+			}
+			netInfo, err := util.NewNetInfo(netConf)
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+
+			var nodes []corev1.Node
+			for nodeName, tunnelID := range tt.nodeTunnelIDs {
+				node := corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:        nodeName,
+						Annotations: map[string]string{},
+					},
+				}
+				if tunnelID != types.InvalidID {
+					node.Annotations, err = util.UpdateUDNLayer2NodeGRLRPTunnelIDs(node.Annotations, networkName, tunnelID)
+					g.Expect(err).ToNot(gomega.HaveOccurred())
+				}
+				nodes = append(nodes, node)
+			}
+
+			runtimeObjs := make([]runtime.Object, len(nodes))
+			for i := range nodes {
+				runtimeObjs[i] = &nodes[i]
+			}
+			fakeClient := util.GetOVNClientset(runtimeObjs...).GetClusterManagerClientset()
+
+			wf, err := factory.NewClusterManagerWatchFactory(fakeClient)
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+			g.Expect(wf.Start()).To(gomega.Succeed())
+			defer wf.Shutdown()
+
+			nm := &networkmanager.FakeNetworkManager{}
+			nodeController := nodecontroller.NewController(wf, "clustermanager-node", nm)
+			g.Expect(nodeController.Start()).To(gomega.Succeed())
+			defer nodeController.Stop()
+
+			ncc := newNetworkClusterController(
+				netInfo,
+				fakeClient,
+				wf,
+				nil,
+				nm,
+				nil,
+				nodeController,
+			)
+
+			err = ncc.init()
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+			g.Expect(ncc.tunnelIDAllocator).ToNot(gomega.BeNil())
+
+			// Verify transit-router-to-switch key reservation depends on mode.
+			// Reserve-then-release to probe without affecting subsequent allocation.
+			transitKeyErr := ncc.tunnelIDAllocator.ReserveID("transit-key-probe", transitRouterToSwitchTunnelKey)
+			if transitKeyErr == nil {
+				ncc.tunnelIDAllocator.ReleaseID("transit-key-probe")
+			}
+			if tt.transitRouter {
+				g.Expect(transitKeyErr).To(gomega.HaveOccurred(),
+					"transit key (ID %d) should be reserved when transit router is enabled", transitRouterToSwitchTunnelKey)
+			}
+
+			// Verify the next allocated ID reflects the reservation state:
+			// transit router ON reserves ID 1 so pods start at 2;
+			// transit router OFF has no reservation so pods start at 1
+			// (unless a node consumed low IDs).
+			nextID, allocErr := ncc.tunnelIDAllocator.AllocateID("test-pod")
+			g.Expect(allocErr).ToNot(gomega.HaveOccurred())
+			g.Expect(nextID).To(gomega.BeNumerically(">=", tt.wantAllocMinID),
+				"allocated ID should be >= %d", tt.wantAllocMinID)
+		})
+	}
 }
 
 func getUDNNodesRenderedMetric(t *testing.T, networkName string) float64 {

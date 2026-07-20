@@ -25,6 +25,7 @@ func TestShouldReconcileNodeIgnoresOtherNetworkTunnelIDChanges(t *testing.T) {
 	}
 	config.OVNKubernetesFeature.EnableMultiNetwork = true
 	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+	config.Layer2UsesTransitRouter = false
 
 	netInfo := mustClusterManagerNetInfo(t, &ovncnitypes.NetConf{
 		NetConf:  cnitypes.NetConf{Name: "blue", Type: "ovn-k8s-cni-overlay"},
@@ -35,19 +36,67 @@ func TestShouldReconcileNodeIgnoresOtherNetworkTunnelIDChanges(t *testing.T) {
 	ncc := &networkClusterController{ReconcilableNetInfo: util.NewReconcilableNetInfo(netInfo)}
 	ncc.nodeAllocator = cmnode.NewNodeAllocator(1, netInfo, nil, nil, nil)
 
+	// If both (oldNode or newNode) have TransitRouterTopoVersion it should not reconcile
 	oldNode := testNodeWithAnnotations("node1", map[string]string{
 		types.UDNLayer2NodeGRLRPTunnelIDAnnotation: `{"blue":"7","red":"9"}`,
 	})
 	newNode := testNodeWithAnnotations("node1", map[string]string{
-		types.UDNLayer2NodeGRLRPTunnelIDAnnotation: `{"blue":"7","red":"10"}`,
+		types.UDNLayer2NodeGRLRPTunnelIDAnnotation: `{"blue":"8","red":"10"}`,
 	})
 
 	cache := sharednode.NewNodeAnnotationCache()
 	oldState := cache.UpdateNodeAnnotationState(oldNode, false)
 	newState := cache.UpdateNodeAnnotationState(newNode, true)
 
+	if !ncc.shouldReconcileNode(oldNode, newNode, oldState, newState, false, false) {
+		t.Fatal("expected changed network tunnel ID to trigger reconciliation")
+	}
+
+	// If both (oldNode or newNode) have not TransitRouterTopoVersion it should not reconcile
+	// if there are no changes in tunnel ID
+	oldNode = testNodeWithAnnotations("node1", map[string]string{
+		types.UDNLayer2NodeGRLRPTunnelIDAnnotation: `{"blue":"7","red":"9"}`,
+	})
+	newNode = testNodeWithAnnotations("node1", map[string]string{
+		types.UDNLayer2NodeGRLRPTunnelIDAnnotation: `{"blue":"7","red":"10"}`,
+	})
+
+	oldState = cache.UpdateNodeAnnotationState(oldNode, false)
+	newState = cache.UpdateNodeAnnotationState(newNode, true)
+
 	if ncc.shouldReconcileNode(oldNode, newNode, oldState, newState, false, false) {
 		t.Fatal("expected unchanged network tunnel ID to avoid reconciliation")
+	}
+
+	// No reconciliation should happen if tunnel ID changes or not.
+	config.Layer2UsesTransitRouter = true
+
+	oldNode = testNodeWithAnnotations("node1", map[string]string{
+		types.UDNLayer2NodeGRLRPTunnelIDAnnotation: `{"blue":"7","red":"9"}`,
+	})
+	newNode = testNodeWithAnnotations("node1", map[string]string{
+		types.UDNLayer2NodeGRLRPTunnelIDAnnotation: `{"blue":"8","red":"10"}`,
+	})
+
+	oldState = cache.UpdateNodeAnnotationState(oldNode, false)
+	newState = cache.UpdateNodeAnnotationState(newNode, true)
+
+	if ncc.shouldReconcileNode(oldNode, newNode, oldState, newState, false, false) {
+		t.Fatal("expected changed network tunnel ID to not trigger reconciliation when Layer2UsesTransitRouter is true")
+	}
+
+	oldNode = testNodeWithAnnotations("node1", map[string]string{
+		types.UDNLayer2NodeGRLRPTunnelIDAnnotation: `{"blue":"7","red":"9"}`,
+	})
+	newNode = testNodeWithAnnotations("node1", map[string]string{
+		types.UDNLayer2NodeGRLRPTunnelIDAnnotation: `{"blue":"7","red":"10"}`,
+	})
+
+	oldState = cache.UpdateNodeAnnotationState(oldNode, false)
+	newState = cache.UpdateNodeAnnotationState(newNode, true)
+
+	if ncc.shouldReconcileNode(oldNode, newNode, oldState, newState, false, false) {
+		t.Fatal("expected unchanged network tunnel ID to not trigger reconciliation when Layer2UsesTransitRouter is true")
 	}
 }
 
@@ -84,6 +133,7 @@ func TestShouldReconcileNodeWhenNetworkSpecificTunnelIDChanges(t *testing.T) {
 	}
 	config.OVNKubernetesFeature.EnableMultiNetwork = true
 	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+	config.Layer2UsesTransitRouter = false // Needed, so it reconciles UDNLayer2NodeGRLRPTunnelIDAnnotation
 
 	netInfo := mustClusterManagerNetInfo(t, &ovncnitypes.NetConf{
 		NetConf:  cnitypes.NetConf{Name: "blue", Type: "ovn-k8s-cni-overlay"},

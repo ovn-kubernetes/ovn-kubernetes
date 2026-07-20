@@ -42,6 +42,12 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
+const (
+	// reserve tunnel key = 1 for transitRouterToSwitch port
+	// matches same variable in transit_router.go
+	transitRouterToSwitchTunnelKey = 1
+)
+
 type NetworkStatusReporter func(networkName string, fieldManager string, condition *metav1.Condition, events ...*util.EventDetails) error
 
 // networkClusterController is the cluster controller for the networks. An
@@ -406,7 +412,7 @@ func (ncc *networkClusterController) init() error {
 		if err = ncc.tunnelIDAllocator.ReserveID("zero", types.NoTunnelID); err != nil {
 			return err
 		}
-		if util.IsNetworkSegmentationSupportEnabled() && ncc.IsPrimaryNetwork() {
+		if util.IsNetworkSegmentationSupportEnabled() && ncc.IsPrimaryNetwork() && !config.Layer2UsesTransitRouter {
 			// if the network is a primary L2 UDN network, then we need to reserve
 			// the IDs used by each node in this network's pod allocator
 			nodes, err := ncc.watchFactory.GetNodes()
@@ -429,6 +435,13 @@ func (ncc *networkClusterController) init() error {
 						return fmt.Errorf("unable to reserve id for network %s, node %s: %w", ncc.GetNetworkName(), node.Name, err)
 					}
 				}
+			}
+		}
+		// With transit router, no node tunnel IDs are allocated, but we must
+		// still reserve ID 1 so pod IDs don't collide with tunnel key on the switch-to-transit-router LSP.
+		if config.Layer2UsesTransitRouter {
+			if err := ncc.tunnelIDAllocator.ReserveID("reserved-transit-switch-key", transitRouterToSwitchTunnelKey); err != nil {
+				return err
 			}
 		}
 	}
@@ -700,7 +713,8 @@ func (ncc *networkClusterController) shouldReconcileNode(
 	return ncc.relevantNodeAnnotationsChanged(oldState, newState)
 }
 
-func (ncc *networkClusterController) relevantNodeAnnotationsChanged(oldState, newState *sharednode.NodeAnnotationState) bool {
+func (ncc *networkClusterController) relevantNodeAnnotationsChanged(
+	oldState, newState *sharednode.NodeAnnotationState) bool {
 	if ncc.nodeAllocator.HasNodeSubnetAllocation() &&
 		sharednode.NodeSubnetAnnotationChangedForNetworkWithState(oldState, newState, ncc.GetNetworkName()) {
 		return true

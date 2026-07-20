@@ -378,8 +378,10 @@ func (na *NodeAllocator) syncNodeNetworkAnnotations(node *corev1.Node) error {
 			updatedSubnetsMap[networkName] = validExistingSubnets
 		}
 	}
+	// TunnelID annotation is set in node only if Layer2UsesTransitRouter is disabled.
+	// Given that tunnelID only is used by `createGWRouterPeerSwitchPort`.
 	newTunnelID := types.NoTunnelID
-	if util.IsNetworkSegmentationSupportEnabled() && na.netInfo.IsPrimaryNetwork() && util.DoesNetworkRequireTunnelIDs(na.netInfo) {
+	if na.HasNodeTunnelIDAllocation() {
 		existingTunnelID, err := util.ParseUDNLayer2NodeGRLRPTunnelIDs(node, networkName)
 		if err != nil && !util.IsAnnotationNotSetError(err) {
 			return fmt.Errorf("failed to fetch tunnelID annotation from the node %s for network %s, err: %v",
@@ -731,7 +733,8 @@ func (na *NodeAllocator) HasNodeSubnetAllocation() bool {
 func (na *NodeAllocator) HasNodeTunnelIDAllocation() bool {
 	return util.IsNetworkSegmentationSupportEnabled() &&
 		na.netInfo.IsPrimaryNetwork() &&
-		util.DoesNetworkRequireTunnelIDs(na.netInfo)
+		util.DoesNetworkRequireTunnelIDs(na.netInfo) &&
+		!config.Layer2UsesTransitRouter
 }
 
 func (na *NodeAllocator) markAllocatedNetworksForUnmanagedHONode(node *corev1.Node) error {
