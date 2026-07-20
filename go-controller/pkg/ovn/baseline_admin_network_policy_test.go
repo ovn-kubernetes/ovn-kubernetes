@@ -385,7 +385,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 					{
 						Name:   "slytherin-don't-talk-to-gryffindor",
 						Action: anpapi.BaselineAdminNetworkPolicyRuleActionDeny,
-						To: []anpapi.AdminNetworkPolicyEgressPeer{
+						To: []anpapi.BaselineAdminNetworkPolicyEgressPeer{
 							{
 								Namespaces: &metav1.LabelSelector{
 									MatchLabels: peerDenyLabel,
@@ -396,7 +396,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 					{
 						Name:   "hufflepuff-talk-to-gryffindor",
 						Action: anpapi.BaselineAdminNetworkPolicyRuleActionAllow,
-						To: []anpapi.AdminNetworkPolicyEgressPeer{
+						To: []anpapi.BaselineAdminNetworkPolicyEgressPeer{
 							{
 								Pods: &anpapi.NamespacedPod{ // test different kind of peer expression
 									NamespaceSelector: metav1.LabelSelector{
@@ -418,7 +418,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 					{
 						Name:   "ravenclaw-deny-to-gryffindor",
 						Action: anpapi.BaselineAdminNetworkPolicyRuleActionDeny,
-						To: []anpapi.AdminNetworkPolicyEgressPeer{
+						To: []anpapi.BaselineAdminNetworkPolicyEgressPeer{
 							{
 								Namespaces: &metav1.LabelSelector{
 									MatchLabels: peerPassLabel,
@@ -792,7 +792,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 						{
 							Name:   "allow-traffic-to-hufflepuff-from-gryffindor",
 							Action: anpapi.BaselineAdminNetworkPolicyRuleActionAllow,
-							To: []anpapi.AdminNetworkPolicyEgressPeer{
+							To: []anpapi.BaselineAdminNetworkPolicyEgressPeer{
 								{
 									Namespaces: &metav1.LabelSelector{
 										MatchLabels: peerAllowLabel,
@@ -972,7 +972,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 					{
 						Name:   "deny-traffic-to-slytherin-and-linux-nodes-from-gryffindor",
 						Action: anpapi.BaselineAdminNetworkPolicyRuleActionDeny,
-						To: []anpapi.AdminNetworkPolicyEgressPeer{
+						To: []anpapi.BaselineAdminNetworkPolicyEgressPeer{
 							{
 								Namespaces: &metav1.LabelSelector{
 									MatchLabels: peerDenyLabel,
@@ -991,7 +991,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 					{
 						Name:   "allow-traffic-to-hufflepuff-and--all-nodes-from-gryffindor",
 						Action: anpapi.BaselineAdminNetworkPolicyRuleActionAllow,
-						To: []anpapi.AdminNetworkPolicyEgressPeer{
+						To: []anpapi.BaselineAdminNetworkPolicyEgressPeer{
 							{
 								Pods: &anpapi.NamespacedPod{ // test different kind of peer expression
 									NamespaceSelector: metav1.LabelSelector{
@@ -1341,7 +1341,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 						{ // 3 ACLs
 							Name:   "allow-traffic-to-hufflepuff-from-gryffindor",
 							Action: anpapi.BaselineAdminNetworkPolicyRuleActionAllow,
-							To: []anpapi.AdminNetworkPolicyEgressPeer{
+							To: []anpapi.BaselineAdminNetworkPolicyEgressPeer{
 								{
 									Namespaces: &metav1.LabelSelector{
 										MatchLabels: peerAllowLabel,

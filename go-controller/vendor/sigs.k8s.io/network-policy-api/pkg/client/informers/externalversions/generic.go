@@ -19,11 +19,12 @@ limitations under the License.
 package externalversions
 
 import (
-	"fmt"
+	fmt "fmt"
 
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	cache "k8s.io/client-go/tools/cache"
 	v1alpha1 "sigs.k8s.io/network-policy-api/apis/v1alpha1"
+	v1alpha2 "sigs.k8s.io/network-policy-api/apis/v1alpha2"
 )
 
 // GenericInformer is type of SharedIndexInformer which will locate and delegate to other
@@ -57,6 +58,10 @@ func (f *sharedInformerFactory) ForResource(resource schema.GroupVersionResource
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Policy().V1alpha1().AdminNetworkPolicies().Informer()}, nil
 	case v1alpha1.SchemeGroupVersion.WithResource("baselineadminnetworkpolicies"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Policy().V1alpha1().BaselineAdminNetworkPolicies().Informer()}, nil
+
+		// Group=policy.networking.k8s.io, Version=v1alpha2
+	case v1alpha2.SchemeGroupVersion.WithResource("clusternetworkpolicies"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Policy().V1alpha2().ClusterNetworkPolicies().Informer()}, nil
 
 	}
 

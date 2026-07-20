@@ -19,17 +19,33 @@ limitations under the License.
 package v1alpha1
 
 import (
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
-// AdminNetworkPolicyIngressPeerApplyConfiguration represents an declarative configuration of the AdminNetworkPolicyIngressPeer type for use
+// AdminNetworkPolicyIngressPeerApplyConfiguration represents a declarative configuration of the AdminNetworkPolicyIngressPeer type for use
 // with apply.
+//
+// AdminNetworkPolicyIngressPeer defines a peer to allow traffic to.
+//
+// Exactly one of the fields must be set for a given peer and this is enforced
+// by the validation rules on the CRD. If an implementation sees no fields are
+// set then it can infer that the deployed CRD is of an incompatible version
+// with an unknown field.  In that case it should fail closed.
+//
+// For "Allow" rules, "fail closed" means: "treat the rule as matching no
+// traffic". For "Deny" and "Pass" rules, "fail closed" means: "treat the rule
+// as a 'Deny all' rule".
 type AdminNetworkPolicyIngressPeerApplyConfiguration struct {
-	Namespaces *v1.LabelSelector                `json:"namespaces,omitempty"`
-	Pods       *NamespacedPodApplyConfiguration `json:"pods,omitempty"`
+	// Namespaces defines a way to select all pods within a set of Namespaces.
+	// Note that host-networked pods are not included in this type of peer.
+	Namespaces *v1.LabelSelectorApplyConfiguration `json:"namespaces,omitempty"`
+	// Pods defines a way to select a set of pods in
+	// a set of namespaces. Note that host-networked pods
+	// are not included in this type of peer.
+	Pods *NamespacedPodApplyConfiguration `json:"pods,omitempty"`
 }
 
-// AdminNetworkPolicyIngressPeerApplyConfiguration constructs an declarative configuration of the AdminNetworkPolicyIngressPeer type for use with
+// AdminNetworkPolicyIngressPeerApplyConfiguration constructs a declarative configuration of the AdminNetworkPolicyIngressPeer type for use with
 // apply.
 func AdminNetworkPolicyIngressPeer() *AdminNetworkPolicyIngressPeerApplyConfiguration {
 	return &AdminNetworkPolicyIngressPeerApplyConfiguration{}
@@ -38,8 +54,8 @@ func AdminNetworkPolicyIngressPeer() *AdminNetworkPolicyIngressPeerApplyConfigur
 // WithNamespaces sets the Namespaces field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Namespaces field is set to the value of the last call.
-func (b *AdminNetworkPolicyIngressPeerApplyConfiguration) WithNamespaces(value v1.LabelSelector) *AdminNetworkPolicyIngressPeerApplyConfiguration {
-	b.Namespaces = &value
+func (b *AdminNetworkPolicyIngressPeerApplyConfiguration) WithNamespaces(value *v1.LabelSelectorApplyConfiguration) *AdminNetworkPolicyIngressPeerApplyConfiguration {
+	b.Namespaces = value
 	return b
 }
 
