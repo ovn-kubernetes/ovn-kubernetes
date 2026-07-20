@@ -1616,12 +1616,22 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 							return fmt.Errorf("transit switch ips for node %s not allocated", n.Name)
 						}
 
+						// Wait for the other initial node annotation writer before testing reallocation.
+						hostSubnets, err := util.ParseNodeHostSubnetAnnotation(updatedNode, ovntypes.DefaultNetworkName)
+						if err != nil {
+							return fmt.Errorf("error parsing host subnet annotation for node %s: %v", n.Name, err)
+						}
+						if len(hostSubnets) < 1 {
+							return fmt.Errorf("host subnet for node %s not allocated", n.Name)
+						}
+
 						return nil
 					}).ShouldNot(gomega.HaveOccurred())
 				}
 
 				// Clear the transit switch port ip annotation from node 1.
-				node1, _ := fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), "node1", metav1.GetOptions{})
+				node1, err := fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), "node1", metav1.GetOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				nodeAnnotations := node1.Annotations
 				nodeAnnotator := kube.NewNodeAnnotator(&kube.Kube{KClient: kubeFakeClient}, "node1")
 				for k, v := range nodeAnnotations {
@@ -1651,7 +1661,10 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 					if len(transitSwitchIps) < 1 {
 						return fmt.Errorf("transit switch ips for node node1 not allocated")
 					}
-					gomega.Expect(node1TransitSwitchIps).To(gomega.Equal(updatedNode1TransitSwitchIps))
+					if node1TransitSwitchIps != updatedNode1TransitSwitchIps {
+						return fmt.Errorf("expected transit switch ips %q for node node1, got %q",
+							node1TransitSwitchIps, updatedNode1TransitSwitchIps)
+					}
 					return nil
 				}).ShouldNot(gomega.HaveOccurred())
 
