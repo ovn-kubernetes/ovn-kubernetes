@@ -249,8 +249,6 @@ func TestSetAdvertisements(t *testing.T) {
 			err = wf.Start()
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 			defer wf.Shutdown()
-			g.Expect(nm.Start()).To(gomega.Succeed())
-			defer nm.Stop()
 
 			netInfo, err := util.NewNetInfo(tt.network)
 			g.Expect(err).ToNot(gomega.HaveOccurred())
@@ -278,6 +276,8 @@ func TestSetAdvertisements(t *testing.T) {
 			}
 
 			nm.EnsureNetwork(mutableNetInfo)
+			g.Expect(nm.Start()).To(gomega.Succeed())
+			defer nm.Stop()
 
 			meetsExpectations := func(g gomega.Gomega) {
 				tcm.Lock()
