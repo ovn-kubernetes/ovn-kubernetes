@@ -58,6 +58,7 @@ type NetLinkOps interface {
 	RouteAdd(route *netlink.Route) error
 	RouteReplace(route *netlink.Route) error
 	RouteListFiltered(family int, filter *netlink.Route, filterMask uint64) ([]netlink.Route, error)
+	RuleList(family int) ([]netlink.Rule, error)
 	RuleListFiltered(family int, filter *netlink.Rule, filterMask uint64) ([]netlink.Rule, error)
 	RuleAdd(rule *netlink.Rule) error
 	RuleDel(rule *netlink.Rule) error
@@ -110,12 +111,33 @@ func GetNetLinkOps() NetLinkOps {
 	return netLinkOps
 }
 
+func newNetlinkHandle(nlFamilies ...int) (*netlink.Handle, error) {
+	h, err := netlink.NewHandle(nlFamilies...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create netlink handle: %v", err)
+	}
+	h.RetryInterrupted()
+	return h, nil
+}
+
 func (defaultNetLinkOps) LinkList() ([]netlink.Link, error) {
-	return netlink.LinkList()
+	h, err := newNetlinkHandle(unix.NETLINK_ROUTE)
+	if err != nil {
+		return nil, err
+	}
+	defer h.Close()
+
+	return h.LinkList()
 }
 
 func (defaultNetLinkOps) LinkByName(ifaceName string) (netlink.Link, error) {
-	return netlink.LinkByName(ifaceName)
+	h, err := newNetlinkHandle(unix.NETLINK_ROUTE)
+	if err != nil {
+		return nil, err
+	}
+	defer h.Close()
+
+	return h.LinkByName(ifaceName)
 }
 
 func (defaultNetLinkOps) LinkByIndex(index int) (netlink.Link, error) {
@@ -195,14 +217,13 @@ func (defaultNetLinkOps) IsAlreadyExistsError(err error) bool {
 // AddrList uses a per-call handle with NETLINK_GET_STRICT_CHK enabled to allow
 // the kernel to filter addresses by ifindex server-side instead of dumping all.
 func (defaultNetLinkOps) AddrList(link netlink.Link, family int) ([]netlink.Addr, error) {
-	h, err := netlink.NewHandle(unix.NETLINK_ROUTE)
+	h, err := newNetlinkHandle(unix.NETLINK_ROUTE)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create netlink handle: %v", err)
+		return nil, err
 	}
 	defer h.Close()
 	if err := h.SetStrictCheck(true); err != nil {
 		klog.V(5).Infof("Failed to enable strict check on netlink handle, falling back to unfiltered dump: %v", err)
-		return netlink.AddrList(link, family)
 	}
 	return h.AddrList(link, family)
 }
@@ -216,7 +237,13 @@ func (defaultNetLinkOps) AddrAdd(link netlink.Link, addr *netlink.Addr) error {
 }
 
 func (defaultNetLinkOps) RouteList(link netlink.Link, family int) ([]netlink.Route, error) {
-	return netlink.RouteList(link, family)
+	h, err := newNetlinkHandle(unix.NETLINK_ROUTE)
+	if err != nil {
+		return nil, err
+	}
+	defer h.Close()
+
+	return h.RouteList(link, family)
 }
 
 func (defaultNetLinkOps) RouteDel(route *netlink.Route) error {
@@ -232,11 +259,23 @@ func (defaultNetLinkOps) RouteReplace(route *netlink.Route) error {
 }
 
 func (defaultNetLinkOps) RouteListFiltered(family int, filter *netlink.Route, filterMask uint64) ([]netlink.Route, error) {
-	return netlink.RouteListFiltered(family, filter, filterMask)
+	h, err := newNetlinkHandle(unix.NETLINK_ROUTE)
+	if err != nil {
+		return nil, err
+	}
+	defer h.Close()
+
+	return h.RouteListFiltered(family, filter, filterMask)
 }
 
 func (defaultNetLinkOps) RuleListFiltered(family int, filter *netlink.Rule, filterMask uint64) ([]netlink.Rule, error) {
-	return netlink.RuleListFiltered(family, filter, filterMask)
+	h, err := newNetlinkHandle(unix.NETLINK_ROUTE)
+	if err != nil {
+		return nil, err
+	}
+	defer h.Close()
+
+	return h.RuleListFiltered(family, filter, filterMask)
 }
 
 func (defaultNetLinkOps) RuleAdd(rule *netlink.Rule) error {
@@ -260,11 +299,23 @@ func (defaultNetLinkOps) NeighDel(neigh *netlink.Neigh) error {
 }
 
 func (defaultNetLinkOps) NeighList(linkIndex, family int) ([]netlink.Neigh, error) {
-	return netlink.NeighList(linkIndex, family)
+	h, err := newNetlinkHandle(unix.NETLINK_ROUTE)
+	if err != nil {
+		return nil, err
+	}
+	defer h.Close()
+
+	return h.NeighList(linkIndex, family)
 }
 
 func (defaultNetLinkOps) ConntrackDeleteFilters(table netlink.ConntrackTableType, family netlink.InetFamily, filters ...netlink.CustomConntrackFilter) (uint, error) {
-	return netlink.ConntrackDeleteFilters(table, family, filters...)
+	h, err := newNetlinkHandle(unix.NETLINK_NETFILTER)
+	if err != nil {
+		return 0, err
+	}
+	defer h.Close()
+
+	return h.ConntrackDeleteFilters(table, family, filters...)
 }
 
 func (defaultNetLinkOps) RouteSubscribeWithOptions(ch chan<- netlink.RouteUpdate, done <-chan struct{}, options netlink.RouteSubscribeOptions) error {
@@ -300,15 +351,33 @@ func (defaultNetLinkOps) BridgeVlanDelTunnelInfo(link netlink.Link, vid uint16, 
 }
 
 func (defaultNetLinkOps) BridgeVlanTunnelShowDev(link netlink.Link) ([]nl.TunnelInfo, error) {
-	return netlink.BridgeVlanTunnelShowDev(link)
+	h, err := newNetlinkHandle(unix.NETLINK_ROUTE)
+	if err != nil {
+		return nil, err
+	}
+	defer h.Close()
+
+	return h.BridgeVlanTunnelShowDev(link)
 }
 
 func (defaultNetLinkOps) BridgeVlanList() (map[int32][]*nl.BridgeVlanInfo, error) {
-	return netlink.BridgeVlanList()
+	h, err := newNetlinkHandle(unix.NETLINK_ROUTE)
+	if err != nil {
+		return nil, err
+	}
+	defer h.Close()
+
+	return h.BridgeVlanList()
 }
 
 func (defaultNetLinkOps) BridgeVniList() (map[int32][]*nl.BridgeVniInfo, error) {
-	return netlink.BridgeVniList()
+	h, err := newNetlinkHandle(unix.NETLINK_ROUTE)
+	if err != nil {
+		return nil, err
+	}
+	defer h.Close()
+
+	return h.BridgeVniList()
 }
 
 func (defaultNetLinkOps) LinkSetVlanTunnel(link netlink.Link, mode bool) error {
@@ -328,7 +397,23 @@ func (defaultNetLinkOps) LinkSetIsolated(link netlink.Link, mode bool) error {
 }
 
 func (defaultNetLinkOps) LinkGetProtinfo(link netlink.Link) (netlink.Protinfo, error) {
-	return netlink.LinkGetProtinfo(link)
+	h, err := newNetlinkHandle(unix.NETLINK_ROUTE)
+	if err != nil {
+		return netlink.Protinfo{}, err
+	}
+	defer h.Close()
+
+	return h.LinkGetProtinfo(link)
+}
+
+func (defaultNetLinkOps) RuleList(family int) ([]netlink.Rule, error) {
+	h, err := newNetlinkHandle(unix.NETLINK_ROUTE)
+	if err != nil {
+		return nil, err
+	}
+	defer h.Close()
+
+	return h.RuleList(family)
 }
 
 func getFamily(ip net.IP) int {
@@ -346,6 +431,10 @@ func LinkByName(interfaceName string) (netlink.Link, error) {
 		return nil, fmt.Errorf("failed to lookup link %s: %w", interfaceName, err)
 	}
 	return link, nil
+}
+
+func RuleList(family int) ([]netlink.Rule, error) {
+	return netLinkOps.RuleList(family)
 }
 
 // LinkSetUp returns the netlink device with its state marked up
