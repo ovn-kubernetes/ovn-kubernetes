@@ -87,6 +87,11 @@ type ControllerConfig[T any] struct {
 	// ObjNeedsUpdate tells if object should be reconciled.
 	// May be called with oldObj = nil on Add, won't be called on Delete.
 	ObjNeedsUpdate func(oldObj, newObj *T) bool
+	// ObjDeleted is called with the deleted object before its key is queued.
+	// Reconcilers should still derive desired presence from the lister; this hook
+	// is only for controllers that need the delete object for absent-state
+	// bookkeeping.
+	ObjDeleted func(obj *T)
 }
 
 // controller has the basic functionality, and may have some wrappers to provide
@@ -251,7 +256,17 @@ func (c *controller[T]) onUpdate(oldObjInterface, newObjInterface interface{}) {
 }
 
 func (c *controller[T]) onDelete(objInterface interface{}) {
-	key, err := cache.MetaNamespaceKeyFunc(objInterface)
+	if c.config.ObjDeleted != nil {
+		if obj, ok := objInterface.(*T); ok {
+			c.config.ObjDeleted(obj)
+		} else if tombstone, ok := objInterface.(cache.DeletedFinalStateUnknown); ok {
+			if obj, ok := tombstone.Obj.(*T); ok {
+				c.config.ObjDeleted(obj)
+			}
+		}
+	}
+
+	key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(objInterface)
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("controller %s: couldn't get key for object %+v: %v", c.name, objInterface, err))
 		return

@@ -196,13 +196,13 @@ func (bnc *BaseNetworkController) lookupPortUUIDAndSwitchName(logicalPort string
 }
 
 func (bnc *BaseNetworkController) deletePodLogicalPort(pod *corev1.Pod, portInfo *lpInfo,
-	nadKey string) (*lpInfo, error) {
+	nadKey string) (*lpInfo, bool, error) {
 	var portUUID, switchName, logicalPort string
 	var podIfAddrs []*net.IPNet
 
 	expectedSwitchName, err := bnc.getExpectedSwitchName(pod)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	podDesc := fmt.Sprintf("pod %s/%s/%s", nadKey, pod.Namespace, pod.Name)
@@ -215,16 +215,16 @@ func (bnc *BaseNetworkController) deletePodLogicalPort(pod *corev1.Pod, portInfo
 			if util.IsAnnotationNotSetError(err) {
 				// if the annotation doesn’t exist, that’s not an error. It means logical port does not need to be deleted.
 				klog.V(5).Infof("No annotations on %s, no need to delete its logical port: %s", podDesc, logicalPort)
-				return nil, nil
+				return nil, false, nil
 			}
-			return nil, fmt.Errorf("unable to unmarshal pod annotations for %s: %w", podDesc, err)
+			return nil, false, fmt.Errorf("unable to unmarshal pod annotations for %s: %w", podDesc, err)
 		}
 
 		// Since portInfo is not available, use ovn to locate the logical switch (named after the node name) for the logical port.
 		portUUID, switchName, err = bnc.lookupPortUUIDAndSwitchName(logicalPort)
 		if err != nil {
 			if !errors.Is(err, libovsdbclient.ErrNotFound) {
-				return nil, fmt.Errorf("unable to locate portUUID+switchName for %s: %w", podDesc, err)
+				return nil, false, fmt.Errorf("unable to locate portUUID+switchName for %s: %w", podDesc, err)
 			}
 			// The logical port no longer exists in OVN. The caller expects this function to be idem-potent,
 			// so the proper action to take is to use an empty uuid and extract the node name from the pod spec.
@@ -253,22 +253,22 @@ func (bnc *BaseNetworkController) deletePodLogicalPort(pod *corev1.Pod, portInfo
 	if bnc.allocatesPodAnnotation() {
 		shouldRelease, err = bnc.shouldReleaseDeletedPod(pod, switchName, nadKey, podIfAddrs)
 		if err != nil {
-			return nil, fmt.Errorf("unable to determine if ip should be released: %v", err)
+			return nil, false, fmt.Errorf("unable to determine if ip should be released: %v", err)
 		}
 	}
 
 	var allOps, ops []ovsdb.Operation
 
-	if ops, err = bnc.deletePodFromNamespace(pod.Namespace,
+	if ops, err = bnc.deletePodFromNamespacePortGroupOps(nil, pod.Namespace,
 		portUUID); err != nil {
-		return nil, fmt.Errorf("unable to delete pod %s from namespace: %w", podDesc, err)
+		return nil, false, fmt.Errorf("unable to delete pod %s from namespace: %w", podDesc, err)
 	}
 	allOps = append(allOps, ops...)
 
 	ops, err = bnc.delLSPOps(logicalPort, switchName, portUUID)
 	// Tolerate cases where logical switch of the logical port no longer exist in OVN.
 	if err != nil && !errors.Is(err, libovsdbclient.ErrNotFound) {
-		return nil, fmt.Errorf("failed to create delete ops for the lsp: %s: %s", logicalPort, err)
+		return nil, false, fmt.Errorf("failed to create delete ops for the lsp: %s: %s", logicalPort, err)
 	}
 	allOps = append(allOps, ops...)
 
@@ -280,14 +280,9 @@ func (bnc *BaseNetworkController) deletePodLogicalPort(pod *corev1.Pod, portInfo
 
 	_, err = libovsdbops.TransactAndCheck(bnc.nbClient, allOps)
 	if err != nil {
-		return nil, fmt.Errorf("cannot delete logical switch port %s, %v", logicalPort, err)
+		return nil, false, fmt.Errorf("cannot delete logical switch port %s, %v", logicalPort, err)
 	}
 	txOkCallBack()
-
-	// do not remove SNATs/GW routes/IPAM for an IP address unless we have validated no other pod is using it
-	if !shouldRelease {
-		return nil, nil
-	}
 
 	pInfo := lpInfo{
 		name:          logicalPort,
@@ -295,7 +290,7 @@ func (bnc *BaseNetworkController) deletePodLogicalPort(pod *corev1.Pod, portInfo
 		logicalSwitch: switchName,
 		ips:           podIfAddrs,
 	}
-	return &pInfo, nil
+	return &pInfo, shouldRelease, nil
 }
 
 // findPodWithIPAddresses finds any pods with the same IPs in a running state on the cluster
@@ -416,6 +411,40 @@ func (bnc *BaseNetworkController) podExpectedInLogicalCache(pod *corev1.Pod) boo
 	return !util.PodWantsHostNetwork(pod) &&
 		!bnc.isNonHostSubnetSwitch(switchName) &&
 		!util.PodCompleted(pod)
+}
+
+func (bnc *BaseNetworkController) shouldEnsurePodLogicalPort(pod *corev1.Pod, nadKey string) bool {
+	if !util.PodScheduled(pod) || !bnc.podExpectedInLogicalCache(pod) {
+		return false
+	}
+	portInfo, err := bnc.logicalPortCache.get(pod, nadKey)
+	if err != nil || !portInfo.expires.IsZero() {
+		return true
+	}
+	podIPs, err := util.GetPodCIDRsWithFullMask(pod, bnc.GetNetInfo(), bnc.getNetworkNameForNADKeyFunc())
+	if err != nil || len(podIPs) == 0 {
+		return false
+	}
+	return !sameIPSet(portInfo.ips, podIPs)
+}
+
+func sameIPSet(a, b []*net.IPNet) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	ips := sets.New[string]()
+	for _, ipNet := range a {
+		if ipNet == nil {
+			continue
+		}
+		ips.Insert(ipNet.IP.String())
+	}
+	for _, ipNet := range b {
+		if ipNet == nil || !ips.Has(ipNet.IP.String()) {
+			return false
+		}
+	}
+	return true
 }
 
 func (bnc *BaseNetworkController) getExpectedSwitchName(pod *corev1.Pod) (string, error) {
@@ -735,25 +764,6 @@ func (bnc *BaseNetworkController) delLSPOps(logicalPort, switchName,
 	return ops, nil
 }
 
-func (bnc *BaseNetworkController) deletePodFromNamespace(ns string, portUUID string) ([]ovsdb.Operation, error) {
-	// for UDN, namespace may be not managed
-	nsInfo, nsUnlock := bnc.getNamespaceLocked(ns, true)
-	if nsInfo == nil {
-		return nil, nil
-	}
-	defer nsUnlock()
-	var ops []ovsdb.Operation
-	var err error
-
-	if nsInfo.portGroupName != "" && len(portUUID) > 0 {
-		if ops, err = libovsdbops.DeletePortsFromPortGroupOps(bnc.nbClient, ops, nsInfo.portGroupName, portUUID); err != nil {
-			return nil, err
-		}
-	}
-
-	return ops, nil
-}
-
 // isPodScheduledinLocalZone returns true when the pod is scheduled on a node
 // that belongs to this controller's local zone.
 // When localZoneNodes is configured, the node set is used as the primary cache.
@@ -793,15 +803,42 @@ func (bnc *BaseNetworkController) isPodScheduledinLocalZone(pod *corev1.Pod) boo
 
 // WatchPods starts the watching of the Pod resource and calls back the appropriate handler logic
 func (bnc *BaseNetworkController) WatchPods() error {
-	if bnc.podHandler != nil {
+	if bnc.podHandlerRegistered {
 		return nil
 	}
-
-	handler, err := bnc.retryPods.WatchResource()
-	if err == nil {
-		bnc.podHandler = handler
+	if bnc.podReconciler == nil {
+		return fmt.Errorf("shared pod reconciler is required for network %s", bnc.GetNetworkName())
 	}
-	return err
+	if bnc.podHandler == nil {
+		return fmt.Errorf("pod handler is required for network %s", bnc.GetNetworkName())
+	}
+	if err := bnc.podReconciler.Start(); err != nil {
+		return err
+	}
+	done, err := bnc.podReconciler.RegisterNetworkController(bnc.podHandler)
+	if err != nil {
+		return err
+	}
+	bnc.podHandlerRegistered = true
+	// Wait until every existing pod has been attempted at least once before
+	// starting dependent controllers. This is a bounded bootstrap barrier, not
+	// a guarantee that every pod was applied; failed pods remain on the retry
+	// queue like any other.
+	<-done
+	return nil
+}
+
+func podsToInterfaces(pods []*corev1.Pod) []interface{} {
+	objs := make([]interface{}, 0, len(pods))
+	for _, pod := range pods {
+		objs = append(objs, pod)
+	}
+	return objs
+}
+
+// RelatedPodKeys returns pod keys that should be requeued with this pod.
+func (bnc *BaseNetworkController) RelatedPodKeys(pod *corev1.Pod) ([]string, error) {
+	return kubevirt.RelatedPodKeys(bnc.watchFactory.PodCoreInformer().Lister(), pod)
 }
 
 func calculateStaticIPs(podDesc string, ips []string) ([]*net.IPNet, error) {
