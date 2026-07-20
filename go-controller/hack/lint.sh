@@ -4,7 +4,7 @@
 
 VERSION=v2.5.0
 : "${GOLANGCI_LINT_VERSION:=$VERSION}"
-extra_flags=(--verbose --modules-download-mode=vendor --timeout=15m0s)
+extra_flags=(--verbose --modules-download-mode=readonly --timeout=15m0s)
 if [ "$#" -ne 1 ]; then
   if [ "$#" -eq 2 ] && [ "$2" == "fix" ]; then
     extra_flags+=(--fix)

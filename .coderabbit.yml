@@ -285,8 +285,6 @@ reviews:
           deletion (e.g. remove from ACLs first). Flag operations
           that delete referenced objects without cleanup.
         - Changes to this package without unit tests: flag it.
-  path_filters:
-    - "!**/vendor/**"
   # https://docs.coderabbit.ai/pr-reviews/pre-merge-checks
   # NOTE: "@coderabbitai ignore pre-merge checks" overrides ALL failing
   # checks on the PR, not individual ones. There is no per-check override.

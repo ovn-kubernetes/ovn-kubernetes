@@ -29,7 +29,7 @@ build_binaries() {
     for bin in "$@"; do
         binbase=$(basename ${bin})
         env CGO_ENABLED=0 "$GO" build -v \
-            -mod vendor \
+            -mod=readonly \
             -gcflags "${GCFLAGS}" \
             -ldflags "-B ${BUILDID} \
                 -X ${OVN_KUBE_GO_PACKAGE}/pkg/config.Commit=${GIT_COMMIT} \
@@ -54,7 +54,7 @@ build_windows_binaries() {
     for bin in "$@"; do
         binbase=$(basename ${bin})
         GOOS=windows GOARCH=amd64 go build -v \
-            -mod vendor \
+            -mod=readonly \
             -gcflags "${GCFLAGS}" \
             -ldflags "-B ${BUILDID} \
 		`if [ "$binbase" != "ovnkube" ]; then echo ${LDFLAGS}; fi`" \
