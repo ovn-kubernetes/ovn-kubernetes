@@ -1048,7 +1048,7 @@ func TestSyncNetworkConnectionsInactiveNetwork(t *testing.T) {
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
 	// Start node informer so getNodeSubnet can resolve node annotations.
-	wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClientset)
+	wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClientset, "test-node")
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	err = wf.Start()
 	g.Expect(err).ToNot(gomega.HaveOccurred())
@@ -1704,7 +1704,7 @@ func TestEnsureRoutingPoliciesOps(t *testing.T) {
 			}()
 
 			// Create watch factory
-			wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClientset)
+			wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClientset, "test-node")
 			require.NoError(t, err)
 			err = wf.Start()
 			require.NoError(t, err)
@@ -2232,7 +2232,7 @@ func TestEnsureStaticRoutesOps(t *testing.T) {
 			}()
 
 			// Create watch factory
-			wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClientset)
+			wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClientset, "test-node")
 			require.NoError(t, err)
 			err = wf.Start()
 			require.NoError(t, err)
@@ -2916,7 +2916,7 @@ func TestEnsureLoadBalancerGroupOps(t *testing.T) {
 				require.NoError(t, err)
 			}
 
-			wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClientset)
+			wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClientset, "test-node")
 			require.NoError(t, err)
 			err = wf.Start()
 			require.NoError(t, err)
@@ -3986,7 +3986,7 @@ func TestEnsureStaticRoutesOpsDeletesInactiveLayer3RemoteNodeRoutes(t *testing.T
 	_, err := fakeClientset.KubeClient.CoreV1().Nodes().Create(context.Background(), node, metav1.CreateOptions{})
 	require.NoError(t, err)
 
-	wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClientset)
+	wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClientset, "test-node")
 	require.NoError(t, err)
 	err = wf.Start()
 	require.NoError(t, err)

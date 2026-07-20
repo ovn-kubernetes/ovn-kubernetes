@@ -420,7 +420,7 @@ func TestController_reconcileNode(t *testing.T) {
 		context.Background(), node, metav1.CreateOptions{})
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
-	wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClientset)
+	wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClientset, "test-node")
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
 	err = wf.Start()
@@ -997,7 +997,7 @@ func TestController_reconcileService(t *testing.T) {
 		context.Background(), svc, metav1.CreateOptions{})
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
-	wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClientset)
+	wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClientset, "test-node")
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
 	err = wf.Start()

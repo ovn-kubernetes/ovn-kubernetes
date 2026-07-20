@@ -301,6 +301,60 @@ func (b *BridgeConfiguration) setDPUHostGatewayConfiguration(nodeName string) er
 	return nil
 }
 
+// NewUnmanagedBridgeConfiguration creates a bridge configuration for an
+// existing OVS bridge. The caller is responsible for provisioning the bridge
+// and moving gateway IPs/MACs onto the selected host interface.
+func NewUnmanagedBridgeConfiguration(ovsClient libovsdbclient.Client, bridgeName, hostInterfaceName, nodeName,
+	physicalNetworkName string, gwIPs []*net.IPNet, macAddress net.HardwareAddr) (*BridgeConfiguration, error) {
+	if _, err := ovsops.GetBridge(ovsClient, bridgeName); err != nil {
+		return nil, fmt.Errorf("failed to find OVS bridge %s: %w", bridgeName, err)
+	}
+	if len(gwIPs) == 0 {
+		return nil, fmt.Errorf("gateway IP addresses are required for OVS bridge %s", bridgeName)
+	}
+	if macAddress == nil {
+		return nil, fmt.Errorf("gateway MAC address is required for OVS bridge %s", bridgeName)
+	}
+	uplinkName, err := getIntfName(ovsClient, bridgeName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find uplink interface for OVS bridge %s: %w", bridgeName, err)
+	}
+	interfaceID, err := bridgedGatewayNodeSetup(ovsClient, nodeName, bridgeName, physicalNetworkName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to set up shared interface gateway: %v", err)
+	}
+
+	gwIface := hostInterfaceName
+	var gwIfaceRep string
+	if gwIface == "" || config.IsModeDPU() {
+		gwIface = bridgeName
+		if config.IsModeDPU() {
+			gwIfaceRep, err = util.GetDPUOps().GetDPUHostRepInterface(ovsClient, bridgeName)
+			if err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		gwIfaceRep, err = gatewayHostOVSInterface(bridgeName, gwIface)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &BridgeConfiguration{
+		nodeName:    nodeName,
+		bridgeName:  bridgeName,
+		uplinkName:  uplinkName,
+		gwIface:     gwIface,
+		gwIfaceRep:  gwIfaceRep,
+		interfaceID: interfaceID,
+		ips:         gwIPs,
+		macAddress:  macAddress,
+		netConfig:   map[string]*BridgeUDNConfiguration{},
+		eipMarkIPs:  egressip.NewMarkIPsCache(),
+	}, nil
+}
+
 func (b *BridgeConfiguration) GetGatewayIface() string {
 	return b.gwIface
 }
@@ -421,6 +475,12 @@ func (b *BridgeConfiguration) GetActiveNetworkBridgeConfigCopy(networkName strin
 		return netConfig.ShallowCopy()
 	}
 	return nil
+}
+
+func (b *BridgeConfiguration) HasNetworkConfigs() bool {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	return len(b.netConfig) > 0
 }
 
 // must be called with mutex held
@@ -658,10 +718,39 @@ func bridgedGatewayNodeSetup(ovsClient libovsdbclient.Client, nodeName, bridgeNa
 }
 
 func getRepresentor(intfName string) (string, error) {
-	deviceID, err := util.GetDeviceIDFromNetdevice(intfName)
-	if err != nil {
-		return "", err
+	return util.GetNetdeviceRepresentorName(intfName)
+}
+
+func gatewayHostOVSInterface(bridgeName, gwIface string) (string, error) {
+	if gwIface == "" || gwIface == bridgeName {
+		return "", nil
 	}
 
-	return util.GetFunctionRepresentorName(deviceID)
+	if bridgeForInterface, _, err := util.RunOVSVsctl("port-to-br", gwIface); err == nil {
+		bridgeForInterface = strings.TrimSpace(bridgeForInterface)
+		if bridgeForInterface == bridgeName {
+			return gwIface, nil
+		}
+		if bridgeForInterface != "" {
+			return "", fmt.Errorf("gateway interface %s belongs to OVS bridge %s, expected %s",
+				gwIface, bridgeForInterface, bridgeName)
+		}
+	}
+
+	gwIfaceRep, err := getRepresentor(gwIface)
+	if err != nil {
+		return "", fmt.Errorf("gateway interface %s is not the OVS bridge interface, an OVS port on bridge %s, or an accelerated VF/SF netdevice: %w",
+			gwIface, bridgeName, err)
+	}
+	bridgeForRep, stderr, err := util.RunOVSVsctl("port-to-br", gwIfaceRep)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve OVS bridge for representor %s of gateway interface %s, stderr: %q, error: %w",
+			gwIfaceRep, gwIface, stderr, err)
+	}
+	bridgeForRep = strings.TrimSpace(bridgeForRep)
+	if bridgeForRep != bridgeName {
+		return "", fmt.Errorf("representor %s of gateway interface %s belongs to OVS bridge %s, expected %s",
+			gwIfaceRep, gwIface, bridgeForRep, bridgeName)
+	}
+	return gwIfaceRep, nil
 }

@@ -105,7 +105,7 @@ func TestPodTrackerControllerWithInformerAndDelete(t *testing.T) {
 
 			// Setup fake client + watch factory
 			fakeClient := util.GetOVNClientset().GetOVNKubeControllerClientset()
-			wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClient)
+			wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClient, "test-node")
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 
 			// Create PodTrackerController with dummy callback
@@ -243,7 +243,7 @@ func TestPodTrackerControllerSyncAll(t *testing.T) {
 
 	// Setup fake client + watch factory
 	fakeClient := util.GetOVNClientset().GetOVNKubeControllerClientset()
-	wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClient)
+	wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClient, "test-node")
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
 	// Track callback events

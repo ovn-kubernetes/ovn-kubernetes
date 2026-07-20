@@ -868,7 +868,7 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 				fakeClientset = util.GetOVNClientset(objects...).GetOVNKubeControllerClientset()
 
 				// Create watch factory
-				wf, err = factory.NewOVNKubeControllerWatchFactory(fakeClientset)
+				wf, err = factory.NewOVNKubeControllerWatchFactory(fakeClientset, "test-node")
 				Expect(err).NotTo(HaveOccurred())
 
 				err = wf.Start()
@@ -2901,7 +2901,7 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 					}
 					fakeClientset = util.GetOVNClientset(nodeObjs...).GetOVNKubeControllerClientset()
 
-					wf, err = factory.NewOVNKubeControllerWatchFactory(fakeClientset)
+					wf, err = factory.NewOVNKubeControllerWatchFactory(fakeClientset, "test-node")
 					Expect(err).NotTo(HaveOccurred())
 					err = wf.Start()
 					Expect(err).NotTo(HaveOccurred())

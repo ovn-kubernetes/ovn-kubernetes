@@ -20,6 +20,7 @@ import (
 	ratypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
 	rafake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned/fake"
 	apitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
+	uplinkfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/clientset/versioned/fake"
 	udnv1fake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/fake"
 	vtepv1fake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
@@ -48,6 +49,7 @@ var _ = Describe("RouteAdvertisementsNotifier", func() {
 			KubeClient:                fake.NewSimpleClientset(),
 			NetworkAttchDefClient:     netv1fake.NewSimpleClientset(),
 			UserDefinedNetworkClient:  udnv1fake.NewSimpleClientset(),
+			UplinkClient:              uplinkfake.NewSimpleClientset(),
 			RouteAdvertisementsClient: raClient,
 			FRRClient:                 frrfake.NewSimpleClientset(),
 			VTEPClient:                vtepv1fake.NewSimpleClientset(),
@@ -236,7 +238,7 @@ var _ = Describe("RouteAdvertisementsNotifier", func() {
 			}).Should(BeEquivalentTo(2), "should notify when Accepted condition changes from True to False")
 		})
 
-		It("should NOT notify when irrelevant spec fields change", func() {
+		It("should notify when TargetVRF changes", func() {
 			Eventually(func() map[string]int64 {
 				return s.GetReconciledKeys()
 			}).Should(Equal(map[string]int64{
@@ -245,20 +247,15 @@ var _ = Describe("RouteAdvertisementsNotifier", func() {
 				"test-ra-2": 1,
 			}))
 
-			// Update TargetVRF (should NOT trigger notification)
 			ra, err := raClient.K8sV1().RouteAdvertisements().Get(context.Background(), "test-ra-1", metav1.GetOptions{})
 			Expect(err).NotTo(HaveOccurred())
 			ra.Spec.TargetVRF = "new-vrf"
 			_, err = raClient.K8sV1().RouteAdvertisements().Update(context.Background(), ra, metav1.UpdateOptions{})
 			Expect(err).NotTo(HaveOccurred())
 
-			Consistently(func() map[string]int64 {
-				return s.GetReconciledKeys()
-			}).Should(Equal(map[string]int64{
-				"test-ra-0": 1,
-				"test-ra-1": 1,
-				"test-ra-2": 1,
-			}), "should NOT notify when irrelevant fields change")
+			Eventually(func() int64 {
+				return s.GetReconciledKeys()["test-ra-1"]
+			}).Should(BeEquivalentTo(2), "should notify when TargetVRF changes")
 		})
 
 		It("should NOT notify when non-Accepted conditions change", func() {

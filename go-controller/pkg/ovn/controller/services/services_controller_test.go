@@ -65,7 +65,7 @@ func newControllerWithDBSetupForNetwork(dbSetup libovsdbtest.TestSetup, netInfo 
 
 	client := util.GetOVNClientset().GetOVNKubeControllerClientset()
 
-	factoryMock, err := factory.NewOVNKubeControllerWatchFactory(client)
+	factoryMock, err := factory.NewOVNKubeControllerWatchFactory(client, "test-node")
 	if err != nil {
 		return nil, err
 	}

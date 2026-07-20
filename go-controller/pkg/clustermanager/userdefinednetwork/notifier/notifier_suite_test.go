@@ -11,6 +11,7 @@ import (
 )
 
 func TestNotifier(t *testing.T) {
+	t.Setenv("KUBE_FEATURE_WatchListClient", "false")
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Notifier Suite")
 }

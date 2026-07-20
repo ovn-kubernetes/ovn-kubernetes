@@ -204,7 +204,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				EgressQoSClient:      egressQoSFakeClient,
 			}
 
-			f, err = factory.NewOVNKubeControllerWatchFactory(fakeClient.GetOVNKubeControllerClientset())
+			f, err = factory.NewOVNKubeControllerWatchFactory(fakeClient.GetOVNKubeControllerClientset(), "test-node")
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			err = f.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -339,7 +339,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			updatedNode, err := fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), testNode.Name, metav1.GetOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			f, err = factory.NewOVNKubeControllerWatchFactory(fakeClient.GetOVNKubeControllerClientset())
+			f, err = factory.NewOVNKubeControllerWatchFactory(fakeClient.GetOVNKubeControllerClientset(), "test-node")
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			err = f.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -641,7 +641,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			updatedNode, err := fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), testNode.Name, metav1.GetOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			f, err = factory.NewOVNKubeControllerWatchFactory(fakeClient.GetOVNKubeControllerClientset())
+			f, err = factory.NewOVNKubeControllerWatchFactory(fakeClient.GetOVNKubeControllerClientset(), "test-node")
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			err = f.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -870,7 +870,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			updatedNode, err := fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), testNode.Name, metav1.GetOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			f, err = factory.NewOVNKubeControllerWatchFactory(fakeClient.GetOVNKubeControllerClientset())
+			f, err = factory.NewOVNKubeControllerWatchFactory(fakeClient.GetOVNKubeControllerClientset(), "test-node")
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			err = f.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1188,7 +1188,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			updatedNode, err := fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), testNode1.Name, metav1.GetOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			f, err = factory.NewOVNKubeControllerWatchFactory(fakeClient.GetOVNKubeControllerClientset())
+			f, err = factory.NewOVNKubeControllerWatchFactory(fakeClient.GetOVNKubeControllerClientset(), "test-node")
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			err = f.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1396,7 +1396,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			updatedNode, err := fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), testNode.Name, metav1.GetOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			f, err = factory.NewOVNKubeControllerWatchFactory(fakeClient.GetOVNKubeControllerClientset())
+			f, err = factory.NewOVNKubeControllerWatchFactory(fakeClient.GetOVNKubeControllerClientset(), "test-node")
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			err = f.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1595,7 +1595,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			f, err = factory.NewOVNKubeControllerWatchFactory(fakeClient)
+			f, err = factory.NewOVNKubeControllerWatchFactory(fakeClient, "test-node")
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			err = f.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())

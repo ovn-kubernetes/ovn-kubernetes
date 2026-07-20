@@ -65,6 +65,7 @@ func TestHostNetworkServiceOpenFlowsUsesGroupForMultipleHostNetworkTargetPorts(t
 			{Port: 10090, V4IPs: []string{"192.168.18.15"}},
 		},
 		[]net.IP{net.ParseIP("192.168.18.15")},
+		"eth0",
 	)
 
 	groupID := hostNetworkServiceGroupID(key)

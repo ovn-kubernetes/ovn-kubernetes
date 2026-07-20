@@ -104,7 +104,7 @@ func newANPControllerWithDBSetup(dbSetup libovsdbtest.TestSetup, initANPs anpapi
 			&initBANPs,
 		),
 	}
-	watcher, err := factory.NewOVNKubeControllerWatchFactory(fakeClient.GetOVNKubeControllerClientset())
+	watcher, err := factory.NewOVNKubeControllerWatchFactory(fakeClient.GetOVNKubeControllerClientset(), "test-node")
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	err = watcher.Start()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())

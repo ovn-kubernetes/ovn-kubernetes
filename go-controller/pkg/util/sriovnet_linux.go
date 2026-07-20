@@ -161,6 +161,16 @@ func GetFunctionRepresentorName(deviceID string) (string, error) {
 	return rep, nil
 }
 
+// GetNetdeviceRepresentorName returns the VF/SF representor name for a host
+// netdevice.
+func GetNetdeviceRepresentorName(netdev string) (string, error) {
+	deviceID, err := GetDeviceIDFromNetdevice(netdev)
+	if err != nil {
+		return "", err
+	}
+	return GetFunctionRepresentorName(deviceID)
+}
+
 // GetNetdevNameFromDeviceId returns the netdevice name from the passed device ID.
 func GetNetdevNameFromDeviceId(deviceId string, deviceInfo nadapi.DeviceInfo) (string, error) {
 	var netdevices []string

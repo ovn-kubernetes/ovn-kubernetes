@@ -209,7 +209,7 @@ func TestEgressIPTrackerControllerWithInformer(t *testing.T) {
 
 			// Fake client and watch factory
 			fakeClient := util.GetOVNClientset().GetOVNKubeControllerClientset()
-			wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClient)
+			wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClient, "test-node")
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 
 			tracker := NewEgressIPTrackerController("test", wf, func(node, nad string, active bool) {
