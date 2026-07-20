@@ -57,8 +57,6 @@ type BaselineAdminNetworkPolicySpec struct {
 	// Subject defines the pods to which this BaselineAdminNetworkPolicy applies.
 	// Note that host-networked pods are not included in subject selection.
 	//
-	// Support: Core
-	//
 	Subject AdminNetworkPolicySubject `json:"subject"`
 
 	// Ingress is the list of Ingress rules to be applied to the selected pods
@@ -69,8 +67,6 @@ type BaselineAdminNetworkPolicySpec struct {
 	// Thus, a rule that appears at the top of the ingress rules
 	// would take the highest precedence.
 	// BANPs with no ingress rules do not affect ingress traffic.
-	//
-	// Support: Core
 	//
 	// +optional
 	// +kubebuilder:validation:MaxItems=100
@@ -84,8 +80,6 @@ type BaselineAdminNetworkPolicySpec struct {
 	// Thus, a rule that appears at the top of the egress rules
 	// would take the highest precedence.
 	// BANPs with no egress rules do not affect egress traffic.
-	//
-	// Support: Core
 	//
 	// +optional
 	// +kubebuilder:validation:MaxItems=100
@@ -101,8 +95,6 @@ type BaselineAdminNetworkPolicyIngressRule struct {
 	// improve observability, readability and error-reporting for any applied
 	// BaselineAdminNetworkPolicies.
 	//
-	// Support: Core
-	//
 	// +optional
 	// +kubebuilder:validation:MaxLength=100
 	Name string `json:"name,omitempty"`
@@ -112,16 +104,12 @@ type BaselineAdminNetworkPolicyIngressRule struct {
 	// Allow: allows the selected traffic
 	// Deny: denies the selected traffic
 	//
-	// Support: Core
-	//
 	Action BaselineAdminNetworkPolicyRuleAction `json:"action"`
 
 	// From is the list of sources whose traffic this rule applies to.
-	// If any AdminNetworkPolicyIngressPeer matches the source of incoming
+	// If any element matches the source of incoming
 	// traffic then the specified action is applied.
 	// This field must be defined and contain at least one item.
-	//
-	// Support: Core
 	//
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=100
@@ -133,9 +121,8 @@ type BaselineAdminNetworkPolicyIngressRule struct {
 	// So it matches on the destination port for the ingress traffic.
 	// If Ports is not set then the rule does not filter traffic via port.
 	//
-	// Support: Core
-	//
 	// +optional
+	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=100
 	Ports *[]AdminNetworkPolicyPort `json:"ports,omitempty"`
 }
@@ -151,8 +138,6 @@ type BaselineAdminNetworkPolicyEgressRule struct {
 	// improve observability, readability and error-reporting for any applied
 	// BaselineAdminNetworkPolicies.
 	//
-	// Support: Core
-	//
 	// +optional
 	// +kubebuilder:validation:MaxLength=100
 	Name string `json:"name,omitempty"`
@@ -162,25 +147,22 @@ type BaselineAdminNetworkPolicyEgressRule struct {
 	// Allow: allows the selected traffic
 	// Deny: denies the selected traffic
 	//
-	// Support: Core
-	//
 	Action BaselineAdminNetworkPolicyRuleAction `json:"action"`
 
 	// To is the list of destinations whose traffic this rule applies to.
-	// If any AdminNetworkPolicyEgressPeer matches the destination of outgoing
+	// If any element matches the destination of outgoing
 	// traffic then the specified action is applied.
 	// This field must be defined and contain at least one item.
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=100
 	//
-	// Support: Core
-	//
-	To []AdminNetworkPolicyEgressPeer `json:"to"`
+	To []BaselineAdminNetworkPolicyEgressPeer `json:"to"`
 
 	// Ports allows for matching traffic based on port and protocols.
 	// This field is a list of destination ports for the outgoing egress traffic.
 	// If Ports is not set then the rule does not filter traffic via port.
 	// +optional
+	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=100
 	Ports *[]AdminNetworkPolicyPort `json:"ports,omitempty"`
 }
@@ -188,11 +170,64 @@ type BaselineAdminNetworkPolicyEgressRule struct {
 // BaselineAdminNetworkPolicyRuleAction string describes the BaselineAdminNetworkPolicy
 // action type.
 //
-// Support: Core
-//
 // +enum
 // +kubebuilder:validation:Enum={"Allow", "Deny"}
 type BaselineAdminNetworkPolicyRuleAction string
+
+// BaselineAdminNetworkPolicyEgressPeer defines a peer to allow traffic to.
+//
+// Exactly one of the fields must be set for a given peer and this is enforced
+// by the validation rules on the CRD. If an implementation sees no fields are
+// set then it can infer that the deployed CRD is of an incompatible version
+// with an unknown field.  In that case it should fail closed.
+//
+// For "Allow" rules, "fail closed" means: "treat the rule as matching no
+// traffic". For "Deny" and "Pass" rules, "fail closed" means: "treat the rule
+// as a 'Deny all' rule".
+//
+// +kubebuilder:validation:MaxProperties=1
+// +kubebuilder:validation:MinProperties=1
+type BaselineAdminNetworkPolicyEgressPeer struct {
+	// Namespaces defines a way to select all pods within a set of Namespaces.
+	// Note that host-networked pods are not included in this type of peer.
+	//
+	// +optional
+	Namespaces *metav1.LabelSelector `json:"namespaces,omitempty"`
+	// Pods defines a way to select a set of pods in
+	// a set of namespaces. Note that host-networked pods
+	// are not included in this type of peer.
+	//
+	// +optional
+	Pods *NamespacedPod `json:"pods,omitempty"`
+	// Nodes defines a way to select a set of nodes in
+	// the cluster (based on the node's labels). It selects
+	// the nodeIPs as the peer type by matching on the IPs
+	// present in the node.Status.Addresses field of the node.
+	// This field follows standard label selector
+	// semantics; if present but empty, it selects all Nodes.
+	//
+	// <network-policy-api:experimental>
+	// +optional
+	Nodes *metav1.LabelSelector `json:"nodes,omitempty"`
+	// Networks defines a way to select peers via CIDR blocks.
+	// This is intended for representing entities that live outside the cluster,
+	// which can't be selected by pods, namespaces and nodes peers, but note
+	// that cluster-internal traffic will be checked against the rule as
+	// well. So if you Allow or Deny traffic to `"0.0.0.0/0"`, that will allow
+	// or deny all IPv4 pod-to-pod traffic as well. If you don't want that,
+	// add a rule that Passes all pod traffic before the Networks rule.
+	//
+	// Each item in Networks should be provided in the CIDR format and should be
+	// IPv4 or IPv6, for example "10.0.0.0/8" or "fd00::/8".
+	//
+	// Networks can have upto 25 CIDRs specified.
+	//
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=25
+	Networks []CIDR `json:"networks,omitempty"`
+}
 
 const (
 	// BaselineAdminNetworkPolicyRuleActionDeny enables admins to deny traffic.

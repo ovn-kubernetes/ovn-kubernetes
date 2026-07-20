@@ -279,6 +279,15 @@ func newAdminNetworkPolicyEgressPeer(raw anpapi.AdminNetworkPolicyEgressPeer) (*
 	return anpPeer, nil
 }
 
+func newBaselineAdminNetworkPolicyEgressPeer(raw anpapi.BaselineAdminNetworkPolicyEgressPeer) (*adminNetworkPolicyPeer, error) {
+	return newAdminNetworkPolicyEgressPeer(anpapi.AdminNetworkPolicyEgressPeer{
+		Namespaces: raw.Namespaces,
+		Pods:       raw.Pods,
+		Nodes:      raw.Nodes,
+		Networks:   raw.Networks,
+	})
+}
+
 // newAdminNetworkPolicyIngressRule takes the provided ANP API Ingress Rule and creates a new corresponding
 // gressRule cache object for that Rule.
 func newAdminNetworkPolicyIngressRule(raw anpapi.AdminNetworkPolicyIngressRule, index, priority int32) (*gressRule, error) {
@@ -451,7 +460,7 @@ func newBaselineAdminNetworkPolicyEgressRule(raw anpapi.BaselineAdminNetworkPoli
 		peerAddresses: sets.New[string](),
 	}
 	for _, peer := range raw.To {
-		banpPeer, err := newAdminNetworkPolicyEgressPeer(peer)
+		banpPeer, err := newBaselineAdminNetworkPolicyEgressPeer(peer)
 		if err != nil {
 			return nil, err
 		}

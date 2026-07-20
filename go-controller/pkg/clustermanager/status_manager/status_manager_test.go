@@ -53,6 +53,18 @@ func getNodeWithZone(nodeName, zoneName string) *corev1.Node {
 	}
 }
 
+func anpStatusManagedField(zone string) metav1.ManagedFieldsEntry {
+	return metav1.ManagedFieldsEntry{
+		Manager:     zone,
+		Subresource: "status",
+		Operation:   metav1.ManagedFieldsOperationApply,
+		FieldsV1: &metav1.FieldsV1{Raw: []byte(fmt.Sprintf(
+			`{"f:status":{"f:conditions":{"k:{\"type\":\"Ready-In-Zone-%s\"}":{".":{},"f:message":{},"f:reason":{},"f:status":{},"f:type":{}}}}}`,
+			zone,
+		))},
+	}
+}
+
 func newAdminNetworkPolicy(name string, priority int32) anpapi.AdminNetworkPolicy {
 	return anpapi.AdminNetworkPolicy{
 		ObjectMeta: util.NewObjectMeta(name, ""),
@@ -631,6 +643,86 @@ var _ = Describe("Cluster Manager Status Manager", func() {
 		Eventually(func() uint32 {
 			return atomic.LoadUint32(&banpWerePatched)
 		}).Should(Equal(uint32(2)))
+	})
+
+	It("Should clean up stale ANP/BANP managedFields on startup when zone is gone", func() {
+		config.OVNKubernetesFeature.EnableMultiExternalGateway = false
+		config.OVNKubernetesFeature.EnableEgressFirewall = false
+		config.OVNKubernetesFeature.EnableEgressQoS = false
+		config.OVNKubernetesFeature.EnableNetworkQoS = false
+		config.OVNKubernetesFeature.EnableAdminNetworkPolicy = true
+
+		anp := newAdminNetworkPolicy("harry-potter", 5)
+		anp.Status = anpapi.AdminNetworkPolicyStatus{
+			Conditions: []metav1.Condition{
+				{Type: "Ready-In-Zone-zone1", Status: metav1.ConditionTrue, Reason: "SetupSucceeded", Message: "ANP Rules applied"},
+				{Type: "Ready-In-Zone-zone2", Status: metav1.ConditionTrue, Reason: "SetupSucceeded", Message: "ANP Rules applied"},
+			},
+		}
+		anp.ManagedFields = []metav1.ManagedFieldsEntry{
+			anpStatusManagedField("zone1"),
+			anpStatusManagedField("zone2"),
+			anpStatusManagedField("zone3-deleted"),
+		}
+
+		banp := newBaselineAdminNetworkPolicy("default")
+		banp.Status = anpapi.BaselineAdminNetworkPolicyStatus{
+			Conditions: []metav1.Condition{
+				{Type: "Ready-In-Zone-zone1", Status: metav1.ConditionTrue, Reason: "SetupSucceeded", Message: "BANP Rules applied"},
+				{Type: "Ready-In-Zone-zone2", Status: metav1.ConditionTrue, Reason: "SetupSucceeded", Message: "BANP Rules applied"},
+			},
+		}
+		banp.ManagedFields = []metav1.ManagedFieldsEntry{
+			anpStatusManagedField("zone1"),
+			anpStatusManagedField("zone2"),
+			anpStatusManagedField("zone3-deleted"),
+		}
+
+		var zone3DeletedCleanupCalled atomic.Uint32
+
+		objects := []runtime.Object{&anp, &banp}
+		zones := sets.New("zone1", "zone2")
+		for _, zone := range zones.UnsortedList() {
+			objects = append(objects, getNodeWithZone(zone, zone))
+		}
+		fakeClient = util.GetOVNClientset(objects...).GetClusterManagerClientset()
+
+		recordZone3DeletedCleanup := func(action clienttesting.Action) {
+			patchAction, ok := action.(clienttesting.PatchActionImpl)
+			if !ok || patchAction.GetSubresource() != "status" {
+				return
+			}
+			if patchAction.PatchOptions.FieldManager == "zone3-deleted" {
+				zone3DeletedCleanupCalled.Add(1)
+			}
+		}
+		fakeClient.ANPClient.(*anpfake.Clientset).PrependReactor("patch", "adminnetworkpolicies", func(action clienttesting.Action) (handled bool, ret runtime.Object, err error) {
+			recordZone3DeletedCleanup(action)
+			return false, nil, nil
+		})
+		fakeClient.ANPClient.(*anpfake.Clientset).PrependReactor("patch", "baselineadminnetworkpolicies", func(action clienttesting.Action) (handled bool, ret runtime.Object, err error) {
+			recordZone3DeletedCleanup(action)
+			return false, nil, nil
+		})
+
+		var err error
+		wf, err = factory.NewClusterManagerWatchFactory(fakeClient)
+		Expect(err).NotTo(HaveOccurred())
+		statusManager = NewStatusManager(wf, fakeClient, networkmanager.Default().Interface())
+
+		err = wf.Start()
+		Expect(err).NotTo(HaveOccurred())
+
+		// Seed current zones before startup cleanup runs. ANP-only tests have no typed
+		// status managers, so the zone tracker does not run automatically.
+		statusManager.onZoneUpdate(sets.New("zone1", "zone2"))
+
+		err = statusManager.Start()
+		Expect(err).NotTo(HaveOccurred())
+
+		Eventually(func() uint32 {
+			return zone3DeletedCleanupCalled.Load()
+		}).Should(Equal(uint32(2)), "Expected cleanup ApplyStatus for stale zone3-deleted on both ANP and BANP")
 	})
 
 	It("Should clean up EgressFirewall managedFields when a zone is deleted", func() {

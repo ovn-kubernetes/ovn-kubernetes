@@ -82,7 +82,7 @@ func GetOVNClientset(objects ...runtime.Object) *OVNClientset {
 			nads = append(nads, object)
 		case *adminpolicybasedrouteapi.AdminPolicyBasedExternalRoute:
 			apbExternalRouteObjects = append(apbExternalRouteObjects, object)
-		case *anpapi.AdminNetworkPolicy:
+		case *anpapi.AdminNetworkPolicy, *anpapi.BaselineAdminNetworkPolicy:
 			anpObjects = append(anpObjects, object)
 		case *ocpnetworkapiv1alpha1.DNSNameResolver:
 			dnsNameResolverObjects = append(dnsNameResolverObjects, object)
@@ -112,7 +112,7 @@ func GetOVNClientset(objects ...runtime.Object) *OVNClientset {
 
 	return &OVNClientset{
 		KubeClient:                fake.NewSimpleClientset(v1Objects...),
-		ANPClient:                 anpfake.NewSimpleClientset(anpObjects...),
+		ANPClient:                 anpfake.NewClientset(anpObjects...),
 		EgressIPClient:            egressipfake.NewSimpleClientset(egressIPObjects...),
 		EgressFirewallClient:      egressfirewallfake.NewSimpleClientset(egressFirewallObjects...),
 		CloudNetworkClient:        cloudservicefake.NewSimpleClientset(cloudObjects...),

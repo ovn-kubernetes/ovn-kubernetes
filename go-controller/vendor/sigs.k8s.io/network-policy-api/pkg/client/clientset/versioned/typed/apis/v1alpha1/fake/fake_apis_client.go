@@ -29,11 +29,11 @@ type FakePolicyV1alpha1 struct {
 }
 
 func (c *FakePolicyV1alpha1) AdminNetworkPolicies() v1alpha1.AdminNetworkPolicyInterface {
-	return &FakeAdminNetworkPolicies{c}
+	return newFakeAdminNetworkPolicies(c)
 }
 
 func (c *FakePolicyV1alpha1) BaselineAdminNetworkPolicies() v1alpha1.BaselineAdminNetworkPolicyInterface {
-	return &FakeBaselineAdminNetworkPolicies{c}
+	return newFakeBaselineAdminNetworkPolicies(c)
 }
 
 // RESTClient returns a RESTClient that is used to communicate

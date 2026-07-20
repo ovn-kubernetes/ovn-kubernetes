@@ -19,24 +19,24 @@ limitations under the License.
 package v1alpha1
 
 import (
-	"context"
+	context "context"
 	time "time"
 
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	watch "k8s.io/apimachinery/pkg/watch"
 	cache "k8s.io/client-go/tools/cache"
-	apisv1alpha1 "sigs.k8s.io/network-policy-api/apis/v1alpha1"
+	networkpolicyapiapisv1alpha1 "sigs.k8s.io/network-policy-api/apis/v1alpha1"
 	versioned "sigs.k8s.io/network-policy-api/pkg/client/clientset/versioned"
 	internalinterfaces "sigs.k8s.io/network-policy-api/pkg/client/informers/externalversions/internalinterfaces"
-	v1alpha1 "sigs.k8s.io/network-policy-api/pkg/client/listers/apis/v1alpha1"
+	apisv1alpha1 "sigs.k8s.io/network-policy-api/pkg/client/listers/apis/v1alpha1"
 )
 
 // BaselineAdminNetworkPolicyInformer provides access to a shared informer and lister for
 // BaselineAdminNetworkPolicies.
 type BaselineAdminNetworkPolicyInformer interface {
 	Informer() cache.SharedIndexInformer
-	Lister() v1alpha1.BaselineAdminNetworkPolicyLister
+	Lister() apisv1alpha1.BaselineAdminNetworkPolicyLister
 }
 
 type baselineAdminNetworkPolicyInformer struct {
@@ -56,21 +56,33 @@ func NewBaselineAdminNetworkPolicyInformer(client versioned.Interface, resyncPer
 // one. This reduces memory footprint and number of connections to the server.
 func NewFilteredBaselineAdminNetworkPolicyInformer(client versioned.Interface, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
 	return cache.NewSharedIndexInformer(
-		&cache.ListWatch{
+		cache.ToListWatcherWithWatchListSemantics(&cache.ListWatch{
 			ListFunc: func(options v1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.PolicyV1alpha1().BaselineAdminNetworkPolicies().List(context.TODO(), options)
+				return client.PolicyV1alpha1().BaselineAdminNetworkPolicies().List(context.Background(), options)
 			},
 			WatchFunc: func(options v1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.PolicyV1alpha1().BaselineAdminNetworkPolicies().Watch(context.TODO(), options)
+				return client.PolicyV1alpha1().BaselineAdminNetworkPolicies().Watch(context.Background(), options)
 			},
-		},
-		&apisv1alpha1.BaselineAdminNetworkPolicy{},
+			ListWithContextFunc: func(ctx context.Context, options v1.ListOptions) (runtime.Object, error) {
+				if tweakListOptions != nil {
+					tweakListOptions(&options)
+				}
+				return client.PolicyV1alpha1().BaselineAdminNetworkPolicies().List(ctx, options)
+			},
+			WatchFuncWithContext: func(ctx context.Context, options v1.ListOptions) (watch.Interface, error) {
+				if tweakListOptions != nil {
+					tweakListOptions(&options)
+				}
+				return client.PolicyV1alpha1().BaselineAdminNetworkPolicies().Watch(ctx, options)
+			},
+		}, client),
+		&networkpolicyapiapisv1alpha1.BaselineAdminNetworkPolicy{},
 		resyncPeriod,
 		indexers,
 	)
@@ -81,9 +93,9 @@ func (f *baselineAdminNetworkPolicyInformer) defaultInformer(client versioned.In
 }
 
 func (f *baselineAdminNetworkPolicyInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&apisv1alpha1.BaselineAdminNetworkPolicy{}, f.defaultInformer)
+	return f.factory.InformerFor(&networkpolicyapiapisv1alpha1.BaselineAdminNetworkPolicy{}, f.defaultInformer)
 }
 
-func (f *baselineAdminNetworkPolicyInformer) Lister() v1alpha1.BaselineAdminNetworkPolicyLister {
-	return v1alpha1.NewBaselineAdminNetworkPolicyLister(f.Informer().GetIndexer())
+func (f *baselineAdminNetworkPolicyInformer) Lister() apisv1alpha1.BaselineAdminNetworkPolicyLister {
+	return apisv1alpha1.NewBaselineAdminNetworkPolicyLister(f.Informer().GetIndexer())
 }

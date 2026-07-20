@@ -19,160 +19,35 @@ limitations under the License.
 package fake
 
 import (
-	"context"
-	json "encoding/json"
-	"fmt"
-
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	labels "k8s.io/apimachinery/pkg/labels"
-	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
-	testing "k8s.io/client-go/testing"
+	gentype "k8s.io/client-go/gentype"
 	v1alpha1 "sigs.k8s.io/network-policy-api/apis/v1alpha1"
 	apisv1alpha1 "sigs.k8s.io/network-policy-api/pkg/client/applyconfiguration/apis/v1alpha1"
+	typedapisv1alpha1 "sigs.k8s.io/network-policy-api/pkg/client/clientset/versioned/typed/apis/v1alpha1"
 )
 
-// FakeBaselineAdminNetworkPolicies implements BaselineAdminNetworkPolicyInterface
-type FakeBaselineAdminNetworkPolicies struct {
+// fakeBaselineAdminNetworkPolicies implements BaselineAdminNetworkPolicyInterface
+type fakeBaselineAdminNetworkPolicies struct {
+	*gentype.FakeClientWithListAndApply[*v1alpha1.BaselineAdminNetworkPolicy, *v1alpha1.BaselineAdminNetworkPolicyList, *apisv1alpha1.BaselineAdminNetworkPolicyApplyConfiguration]
 	Fake *FakePolicyV1alpha1
 }
 
-var baselineadminnetworkpoliciesResource = v1alpha1.SchemeGroupVersion.WithResource("baselineadminnetworkpolicies")
-
-var baselineadminnetworkpoliciesKind = v1alpha1.SchemeGroupVersion.WithKind("BaselineAdminNetworkPolicy")
-
-// Get takes name of the baselineAdminNetworkPolicy, and returns the corresponding baselineAdminNetworkPolicy object, and an error if there is any.
-func (c *FakeBaselineAdminNetworkPolicies) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1alpha1.BaselineAdminNetworkPolicy, err error) {
-	obj, err := c.Fake.
-		Invokes(testing.NewRootGetAction(baselineadminnetworkpoliciesResource, name), &v1alpha1.BaselineAdminNetworkPolicy{})
-	if obj == nil {
-		return nil, err
+func newFakeBaselineAdminNetworkPolicies(fake *FakePolicyV1alpha1) typedapisv1alpha1.BaselineAdminNetworkPolicyInterface {
+	return &fakeBaselineAdminNetworkPolicies{
+		gentype.NewFakeClientWithListAndApply[*v1alpha1.BaselineAdminNetworkPolicy, *v1alpha1.BaselineAdminNetworkPolicyList, *apisv1alpha1.BaselineAdminNetworkPolicyApplyConfiguration](
+			fake.Fake,
+			"",
+			v1alpha1.SchemeGroupVersion.WithResource("baselineadminnetworkpolicies"),
+			v1alpha1.SchemeGroupVersion.WithKind("BaselineAdminNetworkPolicy"),
+			func() *v1alpha1.BaselineAdminNetworkPolicy { return &v1alpha1.BaselineAdminNetworkPolicy{} },
+			func() *v1alpha1.BaselineAdminNetworkPolicyList { return &v1alpha1.BaselineAdminNetworkPolicyList{} },
+			func(dst, src *v1alpha1.BaselineAdminNetworkPolicyList) { dst.ListMeta = src.ListMeta },
+			func(list *v1alpha1.BaselineAdminNetworkPolicyList) []*v1alpha1.BaselineAdminNetworkPolicy {
+				return gentype.ToPointerSlice(list.Items)
+			},
+			func(list *v1alpha1.BaselineAdminNetworkPolicyList, items []*v1alpha1.BaselineAdminNetworkPolicy) {
+				list.Items = gentype.FromPointerSlice(items)
+			},
+		),
+		fake,
 	}
-	return obj.(*v1alpha1.BaselineAdminNetworkPolicy), err
-}
-
-// List takes label and field selectors, and returns the list of BaselineAdminNetworkPolicies that match those selectors.
-func (c *FakeBaselineAdminNetworkPolicies) List(ctx context.Context, opts v1.ListOptions) (result *v1alpha1.BaselineAdminNetworkPolicyList, err error) {
-	obj, err := c.Fake.
-		Invokes(testing.NewRootListAction(baselineadminnetworkpoliciesResource, baselineadminnetworkpoliciesKind, opts), &v1alpha1.BaselineAdminNetworkPolicyList{})
-	if obj == nil {
-		return nil, err
-	}
-
-	label, _, _ := testing.ExtractFromListOptions(opts)
-	if label == nil {
-		label = labels.Everything()
-	}
-	list := &v1alpha1.BaselineAdminNetworkPolicyList{ListMeta: obj.(*v1alpha1.BaselineAdminNetworkPolicyList).ListMeta}
-	for _, item := range obj.(*v1alpha1.BaselineAdminNetworkPolicyList).Items {
-		if label.Matches(labels.Set(item.Labels)) {
-			list.Items = append(list.Items, item)
-		}
-	}
-	return list, err
-}
-
-// Watch returns a watch.Interface that watches the requested baselineAdminNetworkPolicies.
-func (c *FakeBaselineAdminNetworkPolicies) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
-	return c.Fake.
-		InvokesWatch(testing.NewRootWatchAction(baselineadminnetworkpoliciesResource, opts))
-}
-
-// Create takes the representation of a baselineAdminNetworkPolicy and creates it.  Returns the server's representation of the baselineAdminNetworkPolicy, and an error, if there is any.
-func (c *FakeBaselineAdminNetworkPolicies) Create(ctx context.Context, baselineAdminNetworkPolicy *v1alpha1.BaselineAdminNetworkPolicy, opts v1.CreateOptions) (result *v1alpha1.BaselineAdminNetworkPolicy, err error) {
-	obj, err := c.Fake.
-		Invokes(testing.NewRootCreateAction(baselineadminnetworkpoliciesResource, baselineAdminNetworkPolicy), &v1alpha1.BaselineAdminNetworkPolicy{})
-	if obj == nil {
-		return nil, err
-	}
-	return obj.(*v1alpha1.BaselineAdminNetworkPolicy), err
-}
-
-// Update takes the representation of a baselineAdminNetworkPolicy and updates it. Returns the server's representation of the baselineAdminNetworkPolicy, and an error, if there is any.
-func (c *FakeBaselineAdminNetworkPolicies) Update(ctx context.Context, baselineAdminNetworkPolicy *v1alpha1.BaselineAdminNetworkPolicy, opts v1.UpdateOptions) (result *v1alpha1.BaselineAdminNetworkPolicy, err error) {
-	obj, err := c.Fake.
-		Invokes(testing.NewRootUpdateAction(baselineadminnetworkpoliciesResource, baselineAdminNetworkPolicy), &v1alpha1.BaselineAdminNetworkPolicy{})
-	if obj == nil {
-		return nil, err
-	}
-	return obj.(*v1alpha1.BaselineAdminNetworkPolicy), err
-}
-
-// UpdateStatus was generated because the type contains a Status member.
-// Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-func (c *FakeBaselineAdminNetworkPolicies) UpdateStatus(ctx context.Context, baselineAdminNetworkPolicy *v1alpha1.BaselineAdminNetworkPolicy, opts v1.UpdateOptions) (*v1alpha1.BaselineAdminNetworkPolicy, error) {
-	obj, err := c.Fake.
-		Invokes(testing.NewRootUpdateSubresourceAction(baselineadminnetworkpoliciesResource, "status", baselineAdminNetworkPolicy), &v1alpha1.BaselineAdminNetworkPolicy{})
-	if obj == nil {
-		return nil, err
-	}
-	return obj.(*v1alpha1.BaselineAdminNetworkPolicy), err
-}
-
-// Delete takes name of the baselineAdminNetworkPolicy and deletes it. Returns an error if one occurs.
-func (c *FakeBaselineAdminNetworkPolicies) Delete(ctx context.Context, name string, opts v1.DeleteOptions) error {
-	_, err := c.Fake.
-		Invokes(testing.NewRootDeleteActionWithOptions(baselineadminnetworkpoliciesResource, name, opts), &v1alpha1.BaselineAdminNetworkPolicy{})
-	return err
-}
-
-// DeleteCollection deletes a collection of objects.
-func (c *FakeBaselineAdminNetworkPolicies) DeleteCollection(ctx context.Context, opts v1.DeleteOptions, listOpts v1.ListOptions) error {
-	action := testing.NewRootDeleteCollectionAction(baselineadminnetworkpoliciesResource, listOpts)
-
-	_, err := c.Fake.Invokes(action, &v1alpha1.BaselineAdminNetworkPolicyList{})
-	return err
-}
-
-// Patch applies the patch and returns the patched baselineAdminNetworkPolicy.
-func (c *FakeBaselineAdminNetworkPolicies) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1alpha1.BaselineAdminNetworkPolicy, err error) {
-	obj, err := c.Fake.
-		Invokes(testing.NewRootPatchSubresourceAction(baselineadminnetworkpoliciesResource, name, pt, data, subresources...), &v1alpha1.BaselineAdminNetworkPolicy{})
-	if obj == nil {
-		return nil, err
-	}
-	return obj.(*v1alpha1.BaselineAdminNetworkPolicy), err
-}
-
-// Apply takes the given apply declarative configuration, applies it and returns the applied baselineAdminNetworkPolicy.
-func (c *FakeBaselineAdminNetworkPolicies) Apply(ctx context.Context, baselineAdminNetworkPolicy *apisv1alpha1.BaselineAdminNetworkPolicyApplyConfiguration, opts v1.ApplyOptions) (result *v1alpha1.BaselineAdminNetworkPolicy, err error) {
-	if baselineAdminNetworkPolicy == nil {
-		return nil, fmt.Errorf("baselineAdminNetworkPolicy provided to Apply must not be nil")
-	}
-	data, err := json.Marshal(baselineAdminNetworkPolicy)
-	if err != nil {
-		return nil, err
-	}
-	name := baselineAdminNetworkPolicy.Name
-	if name == nil {
-		return nil, fmt.Errorf("baselineAdminNetworkPolicy.Name must be provided to Apply")
-	}
-	obj, err := c.Fake.
-		Invokes(testing.NewRootPatchSubresourceAction(baselineadminnetworkpoliciesResource, *name, types.ApplyPatchType, data), &v1alpha1.BaselineAdminNetworkPolicy{})
-	if obj == nil {
-		return nil, err
-	}
-	return obj.(*v1alpha1.BaselineAdminNetworkPolicy), err
-}
-
-// ApplyStatus was generated because the type contains a Status member.
-// Add a +genclient:noStatus comment above the type to avoid generating ApplyStatus().
-func (c *FakeBaselineAdminNetworkPolicies) ApplyStatus(ctx context.Context, baselineAdminNetworkPolicy *apisv1alpha1.BaselineAdminNetworkPolicyApplyConfiguration, opts v1.ApplyOptions) (result *v1alpha1.BaselineAdminNetworkPolicy, err error) {
-	if baselineAdminNetworkPolicy == nil {
-		return nil, fmt.Errorf("baselineAdminNetworkPolicy provided to Apply must not be nil")
-	}
-	data, err := json.Marshal(baselineAdminNetworkPolicy)
-	if err != nil {
-		return nil, err
-	}
-	name := baselineAdminNetworkPolicy.Name
-	if name == nil {
-		return nil, fmt.Errorf("baselineAdminNetworkPolicy.Name must be provided to Apply")
-	}
-	obj, err := c.Fake.
-		Invokes(testing.NewRootPatchSubresourceAction(baselineadminnetworkpoliciesResource, *name, types.ApplyPatchType, data, "status"), &v1alpha1.BaselineAdminNetworkPolicy{})
-	if obj == nil {
-		return nil, err
-	}
-	return obj.(*v1alpha1.BaselineAdminNetworkPolicy), err
 }

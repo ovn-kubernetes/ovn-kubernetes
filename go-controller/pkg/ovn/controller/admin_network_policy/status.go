@@ -10,6 +10,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	metav1apply "k8s.io/client-go/applyconfigurations/meta/v1"
 	"k8s.io/klog/v2"
 	anpapiapply "sigs.k8s.io/network-policy-api/pkg/client/applyconfiguration/apis/v1alpha1"
 )
@@ -125,7 +126,7 @@ func (c *Controller) updateANPZoneStatusCondition(newCondition metav1.Condition,
 		newCondition = *existingCondition
 	}
 	applyObj := anpapiapply.AdminNetworkPolicy(anpName).
-		WithStatus(anpapiapply.AdminNetworkPolicyStatus().WithConditions(newCondition))
+		WithStatus(anpapiapply.AdminNetworkPolicyStatus().WithConditions(conditionApplyConfiguration(newCondition)))
 	_, err = c.anpClientSet.PolicyV1alpha1().AdminNetworkPolicies().
 		ApplyStatus(context.TODO(), applyObj, metav1.ApplyOptions{FieldManager: c.zone, Force: true})
 	if err == nil {
@@ -192,7 +193,7 @@ func (c *Controller) updateBANPZoneStatusCondition(newCondition metav1.Condition
 		newCondition = *existingCondition
 	}
 	applyObj := anpapiapply.BaselineAdminNetworkPolicy(banpName).
-		WithStatus(anpapiapply.BaselineAdminNetworkPolicyStatus().WithConditions(newCondition))
+		WithStatus(anpapiapply.BaselineAdminNetworkPolicyStatus().WithConditions(conditionApplyConfiguration(newCondition)))
 	_, err = c.anpClientSet.PolicyV1alpha1().BaselineAdminNetworkPolicies().
 		ApplyStatus(context.TODO(), applyObj, metav1.ApplyOptions{FieldManager: c.zone, Force: true})
 	if err == nil {
@@ -200,4 +201,14 @@ func (c *Controller) updateBANPZoneStatusCondition(newCondition metav1.Condition
 			banpName, newCondition.Type, newCondition.Status, newCondition.Reason, newCondition.Message)
 	}
 	return err
+}
+
+func conditionApplyConfiguration(c metav1.Condition) *metav1apply.ConditionApplyConfiguration {
+	return metav1apply.Condition().
+		WithType(c.Type).
+		WithStatus(c.Status).
+		WithReason(c.Reason).
+		WithMessage(c.Message).
+		WithLastTransitionTime(c.LastTransitionTime).
+		WithObservedGeneration(c.ObservedGeneration)
 }
