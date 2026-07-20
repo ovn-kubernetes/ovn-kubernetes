@@ -7,7 +7,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
 
@@ -45,6 +47,54 @@ func GetOpenvSwitch(ovsClient libovsdbclient.Client) (*vswitchd.OpenvSwitch, err
 	}
 
 	return openvSwitchList[0], nil
+}
+
+// TransactAndCheckAndWaitForVSwitchd transacts ops and waits for ovs-vswitchd
+// to apply them, matching ovs-vsctl's default next_cfg/cur_cfg synchronization.
+func TransactAndCheckAndWaitForVSwitchd(ovsClient libovsdbclient.Client, ops []ovsdb.Operation) error {
+	if len(ops) == 0 {
+		return nil
+	}
+	ovs, err := GetOpenvSwitch(ovsClient)
+	if err != nil {
+		return err
+	}
+	where := []ovsdb.Condition{ovsdb.NewCondition("_uuid", ovsdb.ConditionEqual, ovsdb.UUID{GoUUID: ovs.UUID})}
+	ops = append(ops,
+		ovsdb.Operation{Op: ovsdb.OperationMutate, Table: vswitchd.OpenvSwitchTable, Where: where,
+			Mutations: []ovsdb.Mutation{*ovsdb.NewMutation("next_cfg", ovsdb.MutateOperationAdd, 1)}},
+		ovsdb.Operation{Op: ovsdb.OperationSelect, Table: vswitchd.OpenvSwitchTable, Where: where, Columns: []string{"next_cfg"}},
+	)
+	results, err := TransactAndCheck(ovsClient, ops)
+	if err != nil {
+		return err
+	}
+	rows := results[len(results)-1].Rows
+	if len(rows) != 1 {
+		return fmt.Errorf("expected one Open_vSwitch row, got %d", len(rows))
+	}
+	value := rows[0]["next_cfg"]
+	var nextCfg int
+	switch value := value.(type) {
+	case int:
+		nextCfg = value
+	case float64:
+		nextCfg = int(value)
+	default:
+		return fmt.Errorf("unexpected next_cfg value %T(%v)", value, value)
+	}
+	err = wait.PollUntilContextTimeout(context.Background(), 100*time.Millisecond, types.OVSDBTimeout, true,
+		func(ctx context.Context) (bool, error) {
+			ovs := &vswitchd.OpenvSwitch{UUID: ovs.UUID}
+			if err := ovsClient.Get(ctx, ovs); err != nil {
+				return false, err
+			}
+			return ovs.CurCfg >= nextCfg, nil
+		})
+	if err != nil {
+		return fmt.Errorf("waiting for ovs-vswitchd to apply configuration %d: %w", nextCfg, err)
+	}
+	return nil
 }
 
 // UpdateOpenvSwitchExternalIDs merges the given map into the Open_vSwitch
