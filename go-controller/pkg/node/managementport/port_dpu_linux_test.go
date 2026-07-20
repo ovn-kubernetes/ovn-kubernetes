@@ -333,7 +333,7 @@ var _ = Describe("Mananagement port DPU tests", func() {
 			mockOVSListInterfaceMgmtPortNotExistCmd(execMock, types.K8sMgmtIntfName)
 
 			// mock createPlatformManagementPort, we fail it as it covers what we want to test without the
-			// need to mock the entire flow down to routes and iptable rules.
+			// need to mock the entire flow down to routes and nftables rules.
 			netlinkOpsMock.On("LinkByName", mock.Anything).Return(nil, fmt.Errorf(
 				"createPlatformManagementPort error"))
 
@@ -364,7 +364,7 @@ var _ = Describe("Mananagement port DPU tests", func() {
 			netlinkOpsMock.On("LinkSetUp", linkMock).Return(nil)
 
 			// mock createPlatformManagementPort, we fail it as it covers what we want to test without the
-			// need to mock the entire flow down to routes and iptable rules.
+			// need to mock the entire flow down to routes and nftables rules.
 			netlinkOpsMock.On("LinkByName", mock.Anything).Return(nil, fmt.Errorf(
 				"createPlatformManagementPort error"))
 

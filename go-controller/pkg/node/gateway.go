@@ -51,8 +51,8 @@ type gateway struct {
 	loadBalancerHealthChecker informer.ServiceAndEndpointsEventHandler
 	// portClaimWatcher is for reserving ports for virtual IPs allocated by the cluster on the host
 	portClaimWatcher informer.ServiceEventHandler
-	// nodePortWatcherIptables is used in Shared GW mode to handle nodePort IPTable rules
-	nodePortWatcherIptables informer.ServiceEventHandler
+	// nodePortWatcherNFTables is used in Shared GW mode to handle nodePort nftables rules
+	nodePortWatcherNFTables informer.ServiceEventHandler
 	// nodePortWatcher is used in Local+Shared GW modes to handle nodePort flows in shared OVS bridge
 	nodePortWatcher      informer.ServiceAndEndpointsEventHandler
 	openflowManager      *openflowManager
@@ -89,8 +89,8 @@ func (g *gateway) AddService(svc *corev1.Service) error {
 			errors = append(errors, err)
 		}
 	}
-	if g.nodePortWatcherIptables != nil {
-		if err = g.nodePortWatcherIptables.AddService(svc); err != nil {
+	if g.nodePortWatcherNFTables != nil {
+		if err = g.nodePortWatcherNFTables.AddService(svc); err != nil {
 			errors = append(errors, err)
 		}
 	}
@@ -116,8 +116,8 @@ func (g *gateway) UpdateService(old, new *corev1.Service) error {
 			errors = append(errors, err)
 		}
 	}
-	if g.nodePortWatcherIptables != nil {
-		if err = g.nodePortWatcherIptables.UpdateService(old, new); err != nil {
+	if g.nodePortWatcherNFTables != nil {
+		if err = g.nodePortWatcherNFTables.UpdateService(old, new); err != nil {
 			errors = append(errors, err)
 		}
 	}
@@ -143,8 +143,8 @@ func (g *gateway) DeleteService(svc *corev1.Service) error {
 			errors = append(errors, err)
 		}
 	}
-	if g.nodePortWatcherIptables != nil {
-		if err = g.nodePortWatcherIptables.DeleteService(svc); err != nil {
+	if g.nodePortWatcherNFTables != nil {
+		if err = g.nodePortWatcherNFTables.DeleteService(svc); err != nil {
 			errors = append(errors, err)
 		}
 	}
@@ -164,8 +164,8 @@ func (g *gateway) SyncServices(objs []interface{}) error {
 	if err == nil && g.nodePortWatcher != nil {
 		err = g.nodePortWatcher.SyncServices(objs)
 	}
-	if err == nil && g.nodePortWatcherIptables != nil {
-		err = g.nodePortWatcherIptables.SyncServices(objs)
+	if err == nil && g.nodePortWatcherNFTables != nil {
+		err = g.nodePortWatcherNFTables.SyncServices(objs)
 	}
 	if err != nil {
 		return fmt.Errorf("gateway sync services failed: %v", err)

@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -32,7 +33,6 @@ import (
 	nodenft "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/retry"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks"
 
@@ -69,7 +69,7 @@ func initFakeNodePortWatcher() *nodePortWatcher {
 }
 
 func startNodePortWatcher(n *nodePortWatcher, fakeClient *util.OVNNodeClientset) error {
-	if err := initLocalGatewayIPTables(); err != nil {
+	if err := initGatewayNFTables(); err != nil {
 		return err
 	}
 
@@ -113,7 +113,7 @@ func startNodePortWatcher(n *nodePortWatcher, fakeClient *util.OVNNodeClientset)
 }
 
 func startNodePortWatcherWithRetry(n *nodePortWatcher, fakeClient *util.OVNNodeClientset, stopChan chan struct{}, wg *sync.WaitGroup) (*retry.RetryFramework, error) {
-	if err := initLocalGatewayIPTables(); err != nil {
+	if err := initGatewayNFTables(); err != nil {
 		return nil, err
 	}
 
@@ -245,12 +245,11 @@ one and started again to exercise the tests.
 */
 var _ = Describe("Node Operations", func() {
 	var (
-		app          *cli.App
-		fExec        *ovntest.FakeExec
-		iptV4, iptV6 util.IPTablesHelper
-		nft          *knftables.Fake
-		fNPW         *nodePortWatcher
-		netlinkMock  *mocks.NetLinkOps
+		app         *cli.App
+		fExec       *ovntest.FakeExec
+		nft         *knftables.Fake
+		fNPW        *nodePortWatcher
+		netlinkMock *mocks.NetLinkOps
 
 		nInitialFakeCommands int
 	)
@@ -271,7 +270,6 @@ var _ = Describe("Node Operations", func() {
 		Expect(err).NotTo(HaveOccurred())
 		nInitialFakeCommands = 1
 
-		iptV4, iptV6 = util.SetFakeIPTablesHelpers()
 		nft = nodenft.SetFakeNFTablesHelper()
 		err = nft.ParseDump(nftablesRulesBase)
 		Expect(err).NotTo(HaveOccurred())
@@ -284,8 +282,12 @@ var _ = Describe("Node Operations", func() {
 	})
 
 	Context("on startup", func() {
-		It("removes stale iptables rules while keeping remaining intact", func() {
+		It("removes stale nftables rules while keeping remaining intact", func() {
 			app.Action = func(*cli.Context) error {
+				// Create tables/chains/sets/etc
+				err := initGatewayNFTables()
+				Expect(err).NotTo(HaveOccurred())
+
 				// Depending on the order of informer event processing the initial
 				// Service might be "added" once or twice.  Take that into account.
 				minNFakeCommands := nInitialFakeCommands + 1
@@ -308,9 +310,9 @@ var _ = Describe("Node Operations", func() {
 					false, false,
 				)
 
-				fakeRules := getExternalIPTRules(service.Spec.Ports[0], externalIP, service.Spec.ClusterIP, false, false)
-				Expect(insertIptRules(fakeRules)).To(Succeed())
-				fakeRules = getExternalIPTRules(
+				fakeRules := getExternalIPNFTRules(service.Spec.Ports[0], externalIP, service.Spec.ClusterIP, false, false)
+				Expect(nodenft.AddObjects(fakeRules)).To(Succeed())
+				fakeRules = getExternalIPNFTRules(
 					corev1.ServicePort{
 						Port:     27000,
 						Protocol: corev1.ProtocolUDP,
@@ -321,21 +323,12 @@ var _ = Describe("Node Operations", func() {
 					false,
 					false,
 				)
-				Expect(insertIptRules(fakeRules)).To(Succeed())
+				Expect(nodenft.AddObjects(fakeRules)).To(Succeed())
 
-				expectedTables := map[string]util.FakeTable{
-					"nat": {
-						"OVN-KUBE-EXTERNALIP": []string{
-							"-p UDP -d 10.10.10.10 --dport 27000 -j DNAT --to-destination 172.32.0.12:27000",
-							fmt.Sprintf("-p %s -d %s --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, externalIP, service.Spec.Ports[0].Port, service.Spec.ClusterIP, service.Spec.Ports[0].Port),
-						},
-					},
-					"filter": {},
-					"mangle": {},
-				}
-
-				f4 := iptV4.(*util.FakeIPTables)
-				err := f4.MatchState(expectedTables, nil)
+				expectedNFT := nftablesRulesBase + nftablesRulesGatewayServices
+				expectedNFT += "add element inet ovn-kubernetes external-ips-v4 { 1.1.1.1 . tcp . 8032 : 10.129.0.2 . 8032 }\n"
+				expectedNFT += "add element inet ovn-kubernetes external-ips-v4 { 10.10.10.10 . udp . 27000 : 172.32.0.12 . 27000 }\n"
+				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				Expect(err).NotTo(HaveOccurred())
 
 				stopChan := make(chan struct{})
@@ -354,39 +347,8 @@ var _ = Describe("Node Operations", func() {
 					return fExec.CalledMatchesExpectedAtLeastN(minNFakeCommands)
 				}, "2s").Should(BeTrue(), fExec.ErrorDesc)
 
-				expectedTables = map[string]util.FakeTable{
-					"nat": {
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-NODEPORT": []string{},
-						"OVN-KUBE-EXTERNALIP": []string{
-							fmt.Sprintf("-p %s -d %s --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, externalIP, service.Spec.Ports[0].Port, service.Spec.ClusterIP, service.Spec.Ports[0].Port),
-						},
-						"OVN-KUBE-ETP": []string{},
-						"OVN-KUBE-ITP": []string{},
-					},
-					"filter": {},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-				}
-
-				f4 = iptV4.(*util.FakeIPTables)
-				err = f4.MatchState(expectedTables, nil)
-				Expect(err).NotTo(HaveOccurred())
-
-				expectedNFT := nftablesRulesBase
+				expectedNFT = nftablesRulesBase + nftablesRulesGatewayServices
+				expectedNFT += "add element inet ovn-kubernetes external-ips-v4 { 1.1.1.1 . tcp . 8032 : 10.129.0.2 . 8032 }\n"
 				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				Expect(err).NotTo(HaveOccurred())
 
@@ -398,7 +360,7 @@ var _ = Describe("Node Operations", func() {
 	})
 
 	Context("on add", func() {
-		It("inits iptables rules with ExternalIP", func() {
+		It("inits nftables rules with ExternalIP", func() {
 			app.Action = func(*cli.Context) error {
 				externalIP := "1.1.1.1"
 				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
@@ -431,46 +393,15 @@ var _ = Describe("Node Operations", func() {
 				fNPW.watchFactory = wf
 				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
 
-				expectedTables := map[string]util.FakeTable{
-					"nat": {
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-NODEPORT": []string{},
-						"OVN-KUBE-EXTERNALIP": []string{
-							fmt.Sprintf("-p %s -d %s --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, externalIP, service.Spec.Ports[0].Port, service.Spec.ClusterIP, service.Spec.Ports[0].Port),
-						},
-						"OVN-KUBE-ETP": []string{},
-						"OVN-KUBE-ITP": []string{},
-					},
-					"filter": {},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-				}
-
-				f4 := iptV4.(*util.FakeIPTables)
-				err = f4.MatchState(expectedTables, nil)
-				Expect(err).NotTo(HaveOccurred())
-
-				expectedNFT := nftablesRulesBase
+				expectedNFT := nftablesRulesBase + nftablesRulesGatewayServices
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes external-ips-v4 { %s . %s . %d : %s . %d }\n", externalIP, strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].Port, service.Spec.ClusterIP, service.Spec.Ports[0].Port)
 				return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 			}
 			err := app.Run([]string{app.Name})
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("inits iptables rules with NodePort", func() {
+		It("inits nftables rules with NodePort", func() {
 			app.Action = func(*cli.Context) error {
 
 				service := *newService("service1", "namespace1", "10.129.0.2",
@@ -507,46 +438,15 @@ var _ = Describe("Node Operations", func() {
 				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
 				Expect(fExec.CalledMatchesExpected()).To(BeTrue(), fExec.ErrorDesc)
 
-				expectedTables := map[string]util.FakeTable{
-					"nat": {
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-NODEPORT": []string{
-							fmt.Sprintf("-p %s -m addrtype --dst-type LOCAL --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, service.Spec.Ports[0].NodePort, service.Spec.ClusterIP, service.Spec.Ports[0].Port),
-						},
-						"OVN-KUBE-EXTERNALIP": []string{},
-						"OVN-KUBE-ETP":        []string{},
-						"OVN-KUBE-ITP":        []string{},
-					},
-					"filter": {},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-				}
-
-				f4 := iptV4.(*util.FakeIPTables)
-				err = f4.MatchState(expectedTables, nil)
-				Expect(err).NotTo(HaveOccurred())
-
-				expectedNFT := nftablesRulesBase
+				expectedNFT := nftablesRulesBase + nftablesRulesGatewayServices
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes nodeports-v4 { %s . %d : %s . %d }\n", strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].NodePort, service.Spec.ClusterIP, service.Spec.Ports[0].Port)
 				return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 			}
 			err := app.Run([]string{app.Name})
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("inits iptables rules and openflows with NodePort where ETP=local, LGW", func() {
+		It("inits nftables rules and openflows with NodePort where ETP=local, LGW", func() {
 			app.Action = func(*cli.Context) error {
 				config.Gateway.Mode = config.GatewayModeLocal
 				epPortName := "https"
@@ -595,42 +495,10 @@ var _ = Describe("Node Operations", func() {
 				fNPW.watchFactory = wf
 				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
 
-				expectedTables := map[string]util.FakeTable{
-					"nat": {
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-NODEPORT": []string{
-							fmt.Sprintf("-p %s -m addrtype --dst-type LOCAL --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, service.Spec.Ports[0].NodePort, service.Spec.ClusterIP, service.Spec.Ports[0].Port),
-						},
-						"OVN-KUBE-EXTERNALIP": []string{},
-						"OVN-KUBE-ETP": []string{
-							fmt.Sprintf("-p %s -m addrtype --dst-type LOCAL --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, service.Spec.Ports[0].NodePort, config.Gateway.MasqueradeIPs.V4HostETPLocalMasqueradeIP.String(), service.Spec.Ports[0].NodePort),
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-					"filter": {},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-				}
-
-				f4 := iptV4.(*util.FakeIPTables)
-				err = f4.MatchState(expectedTables, nil)
-				Expect(err).NotTo(HaveOccurred())
-
-				expectedNFT := nftablesRulesBase
+				expectedNFT := nftablesRulesBase + nftablesRulesGatewayServices
 				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes mgmtport-no-snat-nodeports { tcp . %v }\n", service.Spec.Ports[0].NodePort)
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes nodeports-v4 { %s . %d : %s . %d }\n", strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].NodePort, service.Spec.ClusterIP, service.Spec.Ports[0].Port)
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes nodeports-etp-local-v4 { %s . %d : %s . %d }\n", strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].NodePort, config.Gateway.MasqueradeIPs.V4HostETPLocalMasqueradeIP.String(), service.Spec.Ports[0].NodePort)
 				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				Expect(err).NotTo(HaveOccurred())
 
@@ -643,7 +511,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("inits iptables rules with LoadBalancer", func() {
+		It("inits nftables rules with LoadBalancer", func() {
 			app.Action = func(*cli.Context) error {
 				// Depending on the order of informer event processing the initial
 				// Service might be "added" once or twice.  Take that into account.
@@ -695,49 +563,17 @@ var _ = Describe("Node Operations", func() {
 					return fExec.CalledMatchesExpectedAtLeastN(minNFakeCommands)
 				}, "2s").Should(BeTrue(), fExec.ErrorDesc)
 
-				expectedTables := map[string]util.FakeTable{
-					"nat": {
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-NODEPORT": []string{
-							fmt.Sprintf("-p %s -m addrtype --dst-type LOCAL --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, service.Spec.Ports[0].NodePort, service.Spec.ClusterIP, service.Spec.Ports[0].Port),
-						},
-						"OVN-KUBE-EXTERNALIP": []string{
-							fmt.Sprintf("-p %s -d %s --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, service.Status.LoadBalancer.Ingress[0].IP, service.Spec.Ports[0].Port, service.Spec.ClusterIP, service.Spec.Ports[0].Port),
-							fmt.Sprintf("-p %s -d %s --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, externalIP, service.Spec.Ports[0].Port, service.Spec.ClusterIP, service.Spec.Ports[0].Port),
-						},
-						"OVN-KUBE-ETP": []string{},
-						"OVN-KUBE-ITP": []string{},
-					},
-					"filter": {},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-				}
-
-				f4 := iptV4.(*util.FakeIPTables)
-				err = f4.MatchState(expectedTables, nil)
-				Expect(err).NotTo(HaveOccurred())
-
-				expectedNFT := nftablesRulesBase
+				expectedNFT := nftablesRulesBase + nftablesRulesGatewayServices
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes nodeports-v4 { %s . %d : %s . %d }\n", strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].NodePort, service.Spec.ClusterIP, service.Spec.Ports[0].Port)
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes external-ips-v4 { %s . %s . %d : %s . %d }\n", externalIP, strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].Port, service.Spec.ClusterIP, service.Spec.Ports[0].Port)
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes external-ips-v4 { %s . %s . %d : %s . %d }\n", service.Status.LoadBalancer.Ingress[0].IP, strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].Port, service.Spec.ClusterIP, service.Spec.Ports[0].Port)
 				return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 			}
 			err := app.Run([]string{app.Name})
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("inits iptables rules and openflows with LoadBalancer where ETP=local, LGW mode", func() {
+		It("inits nftables rules and openflows with LoadBalancer where ETP=local, LGW mode", func() {
 			app.Action = func(*cli.Context) error {
 				externalIP := "1.1.1.1"
 				config.Gateway.Mode = config.GatewayModeLocal
@@ -790,56 +626,23 @@ var _ = Describe("Node Operations", func() {
 				fNPW.watchFactory = wf
 				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
 
-				expectedTables := map[string]util.FakeTable{
-					"nat": {
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-NODEPORT": []string{
-							fmt.Sprintf("-p %s -m addrtype --dst-type LOCAL --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, service.Spec.Ports[0].NodePort, service.Spec.ClusterIP, service.Spec.Ports[0].Port),
-						},
-						"OVN-KUBE-EXTERNALIP": []string{
-							fmt.Sprintf("-p %s -d %s --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, service.Status.LoadBalancer.Ingress[0].IP, service.Spec.Ports[0].Port, service.Spec.ClusterIP, service.Spec.Ports[0].Port),
-							fmt.Sprintf("-p %s -d %s --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, externalIP, service.Spec.Ports[0].Port, service.Spec.ClusterIP, service.Spec.Ports[0].Port),
-						},
-						"OVN-KUBE-ETP": []string{
-							fmt.Sprintf("-p %s -d %s --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, service.Status.LoadBalancer.Ingress[0].IP, service.Spec.Ports[0].Port, config.Gateway.MasqueradeIPs.V4HostETPLocalMasqueradeIP.String(), service.Spec.Ports[0].NodePort),
-							fmt.Sprintf("-p %s -d %s --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, externalIP, service.Spec.Ports[0].Port, config.Gateway.MasqueradeIPs.V4HostETPLocalMasqueradeIP.String(), service.Spec.Ports[0].NodePort),
-							fmt.Sprintf("-p %s -m addrtype --dst-type LOCAL --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, service.Spec.Ports[0].NodePort, config.Gateway.MasqueradeIPs.V4HostETPLocalMasqueradeIP.String(), service.Spec.Ports[0].NodePort),
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-					"filter": {},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-				}
+				expectedNFT := nftablesRulesBase + nftablesRulesGatewayServices
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes mgmtport-no-snat-nodeports { tcp . %v }\n", service.Spec.Ports[0].NodePort)
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes nodeports-v4 { %s . %d : %s . %d }\n", strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].NodePort, service.Spec.ClusterIP, service.Spec.Ports[0].Port)
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes external-ips-v4 { %s . %s . %d : %s . %d }\n", externalIP, strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].Port, service.Spec.ClusterIP, service.Spec.Ports[0].Port)
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes external-ips-v4 { %s . %s . %d : %s . %d }\n", service.Status.LoadBalancer.Ingress[0].IP, strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].Port, service.Spec.ClusterIP, service.Spec.Ports[0].Port)
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes nodeports-etp-local-v4 { %s . %d : %s . %d }\n", strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].NodePort, config.Gateway.MasqueradeIPs.V4HostETPLocalMasqueradeIP.String(), service.Spec.Ports[0].NodePort)
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes external-ips-etp-local-v4 { %s . %s . %d : %s . %d }\n", externalIP, strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].Port, config.Gateway.MasqueradeIPs.V4HostETPLocalMasqueradeIP.String(), service.Spec.Ports[0].NodePort)
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes external-ips-etp-local-v4 { %s . %s . %d : %s . %d }\n", service.Status.LoadBalancer.Ingress[0].IP, strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].Port, config.Gateway.MasqueradeIPs.V4HostETPLocalMasqueradeIP.String(), service.Spec.Ports[0].NodePort)
+				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
+				Expect(err).NotTo(HaveOccurred())
+
 				expectedLBIngressFlows := []string{
 					"cookie=0x10c6b89e483ea111, priority=110, in_port=eth0, arp, arp_op=1, arp_tpa=5.5.5.5, actions=output:LOCAL",
 				}
 				expectedLBExternalIPFlows := []string{
 					"cookie=0x71765945a31dc2f1, priority=110, in_port=eth0, arp, arp_op=1, arp_tpa=1.1.1.1, actions=output:LOCAL",
 				}
-
-				f4 := iptV4.(*util.FakeIPTables)
-				err = f4.MatchState(expectedTables, nil)
-				Expect(err).NotTo(HaveOccurred())
-
-				expectedNFT := nftablesRulesBase
-				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes mgmtport-no-snat-nodeports { tcp . %v }\n", service.Spec.Ports[0].NodePort)
-				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
-				Expect(err).NotTo(HaveOccurred())
-
 				flows := fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
 				Expect(flows).To(BeNil())
 				flows = fNPW.ofm.getFlowsByKey("Ingress_namespace1_service1_5.5.5.5_8080")
@@ -853,7 +656,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("inits iptables rules and openflows with LoadBalancer where AllocateLoadBalancerNodePorts=False, ETP=local, LGW mode", func() {
+		It("inits nftables rules and openflows with LoadBalancer where AllocateLoadBalancerNodePorts=False, ETP=local, LGW mode", func() {
 			app.Action = func(*cli.Context) error {
 				externalIP := "1.1.1.1"
 				config.Gateway.Mode = config.GatewayModeLocal
@@ -932,55 +735,22 @@ var _ = Describe("Node Operations", func() {
 				fNPW.watchFactory = wf
 				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
 
-				expectedTables := map[string]util.FakeTable{
-					"nat": {
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-NODEPORT": []string{},
-						"OVN-KUBE-EXTERNALIP": []string{
-							fmt.Sprintf("-p %s -d %s --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, service.Status.LoadBalancer.Ingress[0].IP, service.Spec.Ports[0].Port, service.Spec.ClusterIP, service.Spec.Ports[0].Port),
-							fmt.Sprintf("-p %s -d %s --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, externalIP, service.Spec.Ports[0].Port, service.Spec.ClusterIP, service.Spec.Ports[0].Port),
-						},
-						"OVN-KUBE-ETP": []string{
-							fmt.Sprintf("-p %s -d %s --dport %v -j DNAT --to-destination %s:%d -m statistic --mode random --probability 0.5000000000", service.Spec.Ports[0].Protocol, service.Status.LoadBalancer.Ingress[0].IP, service.Spec.Ports[0].Port, ep1.Addresses[0], int32(service.Spec.Ports[0].TargetPort.IntValue())),
-							fmt.Sprintf("-p %s -d %s --dport %v -j DNAT --to-destination %s:%d -m statistic --mode random --probability 1.0000000000", service.Spec.Ports[0].Protocol, service.Status.LoadBalancer.Ingress[0].IP, service.Spec.Ports[0].Port, ep2.Addresses[0], int32(service.Spec.Ports[0].TargetPort.IntValue())),
-							fmt.Sprintf("-p %s -d %s --dport %v -j DNAT --to-destination %s:%d -m statistic --mode random --probability 0.5000000000", service.Spec.Ports[0].Protocol, externalIP, service.Spec.Ports[0].Port, ep1.Addresses[0], int32(service.Spec.Ports[0].TargetPort.IntValue())),
-							fmt.Sprintf("-p %s -d %s --dport %v -j DNAT --to-destination %s:%d -m statistic --mode random --probability 1.0000000000", service.Spec.Ports[0].Protocol, externalIP, service.Spec.Ports[0].Port, ep2.Addresses[0], int32(service.Spec.Ports[0].TargetPort.IntValue())),
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-					"filter": {},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-				}
+				expectedNFT := nftablesRulesBase + nftablesRulesGatewayServices
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes mgmtport-no-snat-services-v4 { %s . tcp . %d }\n", ep1.Addresses[0], int32(service.Spec.Ports[0].TargetPort.IntValue()))
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes mgmtport-no-snat-services-v4 { %s . tcp . %d }\n", ep2.Addresses[0], int32(service.Spec.Ports[0].TargetPort.IntValue()))
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes external-ips-v4 { %s . %s . %d : %s . %d }\n", externalIP, strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].Port, service.Spec.ClusterIP, service.Spec.Ports[0].Port)
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes external-ips-v4 { %s . %s . %d : %s . %d }\n", service.Status.LoadBalancer.Ingress[0].IP, strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].Port, service.Spec.ClusterIP, service.Spec.Ports[0].Port)
+				expectedNFT += fmt.Sprintf("add rule inet ovn-kubernetes services-etp-no-nodeport ip daddr %s meta l4proto %s th dport %d dnat ip addr . port to numgen random mod 2 map { 0 : %s . %d , 1 : %s . %d } comment \"namespace1/service1:http\"\n", externalIP, strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].Port, ep1.Addresses[0], service.Spec.Ports[0].TargetPort.IntValue(), ep2.Addresses[0], service.Spec.Ports[0].TargetPort.IntValue())
+				expectedNFT += fmt.Sprintf("add rule inet ovn-kubernetes services-etp-no-nodeport ip daddr %s meta l4proto %s th dport %d dnat ip addr . port to numgen random mod 2 map { 0 : %s . %d , 1 : %s . %d } comment \"namespace1/service1:http\"\n", service.Status.LoadBalancer.Ingress[0].IP, strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].Port, ep1.Addresses[0], service.Spec.Ports[0].TargetPort.IntValue(), ep2.Addresses[0], service.Spec.Ports[0].TargetPort.IntValue())
+				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
+				Expect(err).NotTo(HaveOccurred())
+
 				expectedLBIngressFlows := []string{
 					"cookie=0xd8c1fe514f305bc1, priority=110, in_port=eth0, arp, arp_op=1, arp_tpa=5.5.5.5, actions=output:LOCAL",
 				}
 				expectedLBExternalIPFlows := []string{
 					"cookie=0x799e0efe5404e9a1, priority=110, in_port=eth0, arp, arp_op=1, arp_tpa=1.1.1.1, actions=output:LOCAL",
 				}
-
-				f4 := iptV4.(*util.FakeIPTables)
-				Expect(f4.MatchState(expectedTables, nil)).To(Succeed())
-
-				expectedNFT := nftablesRulesBase
-				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes mgmtport-no-snat-services-v4 { %s . tcp . %d }\n", ep1.Addresses[0], int32(service.Spec.Ports[0].TargetPort.IntValue()))
-				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes mgmtport-no-snat-services-v4 { %s . tcp . %d }\n", ep2.Addresses[0], int32(service.Spec.Ports[0].TargetPort.IntValue()))
-				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
-				Expect(err).NotTo(HaveOccurred())
-
 				Expect(fNPW.ofm.getFlowsByKey("Ingress_namespace1_service1_5.5.5.5_80")).To(Equal(expectedLBIngressFlows))
 				Expect(fNPW.ofm.getFlowsByKey("External_namespace1_service1_1.1.1.1_80")).To(Equal(expectedLBExternalIPFlows))
 
@@ -991,37 +761,8 @@ var _ = Describe("Node Operations", func() {
 					{"10.129.0.2", 80, corev1.ProtocolTCP, netlink.ConntrackOrigDstIP}})
 				Expect(fakeClient.KubeClient.CoreV1().Services(service.Namespace).Delete(
 					context.Background(), service.Name, metav1.DeleteOptions{})).To(Succeed())
-				expectedTables = map[string]util.FakeTable{
-					"nat": {
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-NODEPORT":   []string{},
-						"OVN-KUBE-EXTERNALIP": []string{},
-						"OVN-KUBE-ETP":        []string{},
-						"OVN-KUBE-ITP":        []string{},
-					},
-					"filter": {},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-				}
-				Eventually(func() error {
-					f4 := iptV4.(*util.FakeIPTables)
-					return f4.MatchState(expectedTables, nil)
-				}, "2s").Should(Succeed())
 
-				expectedNFT = nftablesRulesBase
+				expectedNFT = nftablesRulesBase + nftablesRulesGatewayServices
 				Eventually(func() error {
 					return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				}, "2s").Should(Succeed())
@@ -1034,7 +775,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(app.Run([]string{app.Name})).To(Succeed())
 		})
 
-		It("inits iptables rules and openflows with named port and AllocateLoadBalancerNodePorts=False, ETP=local, LGW mode", func() {
+		It("inits nftables rules and openflows with named port and AllocateLoadBalancerNodePorts=False, ETP=local, LGW mode", func() {
 			app.Action = func(*cli.Context) error {
 				minNFakeCommands := nInitialFakeCommands + 1
 				fExec.AddRepeatedFakeCmd(&ovntest.ExpectedCmd{
@@ -1114,63 +855,15 @@ var _ = Describe("Node Operations", func() {
 				fNPW.watchFactory = wf
 				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
 
-				expectedTables := map[string]util.FakeTable{
-					"nat": {
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-NODEPORT": []string{},
-						"OVN-KUBE-EXTERNALIP": []string{
-							fmt.Sprintf("-p %s -d %s --dport %d -j DNAT --to-destination %s:%v",
-								service.Spec.Ports[0].Protocol,
-								service.Status.LoadBalancer.Ingress[0].IP,
-								service.Spec.Ports[0].Port,
-								service.Spec.ClusterIP,
-								service.Spec.Ports[0].Port),
-						},
-						"OVN-KUBE-ETP": []string{
-							fmt.Sprintf("-p %s -d %s --dport %d -j DNAT --to-destination %s:%d -m statistic --mode random --probability 0.5000000000",
-								service.Spec.Ports[0].Protocol,
-								service.Status.LoadBalancer.Ingress[0].IP,
-								service.Spec.Ports[0].Port,
-								endpointSlice.Endpoints[0].Addresses[0],
-								*endpointSlice.Ports[0].Port),
-							fmt.Sprintf("-p %s -d %s --dport %d -j DNAT --to-destination %s:%d -m statistic --mode random --probability 1.0000000000",
-								service.Spec.Ports[0].Protocol,
-								service.Status.LoadBalancer.Ingress[0].IP,
-								service.Spec.Ports[0].Port,
-								endpointSlice.Endpoints[1].Addresses[0],
-								*endpointSlice.Ports[0].Port),
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-					"filter": {},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-				}
-
-				f4 := iptV4.(*util.FakeIPTables)
-				err = f4.MatchState(expectedTables, nil)
-				Expect(err).NotTo(HaveOccurred())
-
-				expectedNFT := nftablesRulesBase
+				expectedNFT := nftablesRulesBase + nftablesRulesGatewayServices
 				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes mgmtport-no-snat-services-v4 { %s . tcp . %v }\n"+
 					"add element inet ovn-kubernetes mgmtport-no-snat-services-v4 { %s . tcp . %v }\n",
 					endpointSlice.Endpoints[1].Addresses[0],
 					*endpointSlice.Ports[0].Port,
 					endpointSlice.Endpoints[0].Addresses[0],
 					*endpointSlice.Ports[0].Port)
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes external-ips-v4 { %s . %s . %d : %s . %d }\n", service.Status.LoadBalancer.Ingress[0].IP, strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].Port, service.Spec.ClusterIP, service.Spec.Ports[0].Port)
+				expectedNFT += fmt.Sprintf("add rule inet ovn-kubernetes services-etp-no-nodeport ip daddr %s meta l4proto %s th dport %d dnat ip addr . port to numgen random mod 2 map { 0 : %s . %d , 1 : %s . %d } comment \"namespace1/service1:https-port\"\n", service.Status.LoadBalancer.Ingress[0].IP, strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].Port, ep1.Addresses[0], *endpointSlice.Ports[0].Port, ep2.Addresses[0], *endpointSlice.Ports[0].Port)
 				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				Expect(err).NotTo(HaveOccurred())
 
@@ -1183,7 +876,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("inits iptables rules and openflows with LoadBalancer where ETP=cluster, LGW mode", func() {
+		It("inits nftables rules and openflows with LoadBalancer where ETP=cluster, LGW mode", func() {
 			app.Action = func(*cli.Context) error {
 				externalIP := "1.1.1.1"
 				config.Gateway.Mode = config.GatewayModeLocal
@@ -1236,36 +929,12 @@ var _ = Describe("Node Operations", func() {
 				fNPW.watchFactory = wf
 				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
 
-				expectedTables := map[string]util.FakeTable{
-					"nat": {
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-NODEPORT": []string{
-							fmt.Sprintf("-p %s -m addrtype --dst-type LOCAL --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, service.Spec.Ports[0].NodePort, service.Spec.ClusterIP, service.Spec.Ports[0].Port),
-						},
-						"OVN-KUBE-EXTERNALIP": []string{
-							fmt.Sprintf("-p %s -d %s --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, service.Status.LoadBalancer.Ingress[0].IP, service.Spec.Ports[0].Port, service.Spec.ClusterIP, service.Spec.Ports[0].Port),
-							fmt.Sprintf("-p %s -d %s --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, externalIP, service.Spec.Ports[0].Port, service.Spec.ClusterIP, service.Spec.Ports[0].Port),
-						},
-						"OVN-KUBE-ETP": []string{},
-						"OVN-KUBE-ITP": []string{},
-					},
-					"filter": {},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-				}
+				expectedNFT := nftablesRulesBase + nftablesRulesGatewayServices
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes nodeports-v4 { %s . %d : %s . %d }\n", strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].NodePort, service.Spec.ClusterIP, service.Spec.Ports[0].Port)
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes external-ips-v4 { %s . %s . %d : %s . %d }\n", externalIP, strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].Port, service.Spec.ClusterIP, service.Spec.Ports[0].Port)
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes external-ips-v4 { %s . %s . %d : %s . %d }\n", service.Status.LoadBalancer.Ingress[0].IP, strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].Port, service.Spec.ClusterIP, service.Spec.Ports[0].Port)
+				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
+				Expect(err).NotTo(HaveOccurred())
 
 				expectedLBIngressFlows := []string{
 					"cookie=0x10c6b89e483ea111, priority=110, in_port=eth0, arp, arp_op=1, arp_tpa=5.5.5.5, actions=output:LOCAL",
@@ -1273,15 +942,6 @@ var _ = Describe("Node Operations", func() {
 				expectedLBExternalIPFlows := []string{
 					"cookie=0x71765945a31dc2f1, priority=110, in_port=eth0, arp, arp_op=1, arp_tpa=1.1.1.1, actions=output:LOCAL",
 				}
-
-				f4 := iptV4.(*util.FakeIPTables)
-				err = f4.MatchState(expectedTables, nil)
-				Expect(err).NotTo(HaveOccurred())
-
-				expectedNFT := nftablesRulesBase
-				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
-				Expect(err).NotTo(HaveOccurred())
-
 				flows := fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
 				Expect(flows).To(BeNil())
 				flows = fNPW.ofm.getFlowsByKey("Ingress_namespace1_service1_5.5.5.5_8080")
@@ -1295,7 +955,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("inits iptables rules and openflows with LoadBalancer where ETP=local, SGW mode", func() {
+		It("inits nftables rules and openflows with LoadBalancer where ETP=local, SGW mode", func() {
 			app.Action = func(*cli.Context) error {
 				externalIP := "1.1.1.1"
 				config.Gateway.Mode = config.GatewayModeShared
@@ -1347,39 +1007,16 @@ var _ = Describe("Node Operations", func() {
 				fNPW.watchFactory = wf
 				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
 
-				expectedTables := map[string]util.FakeTable{
-					"nat": {
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-NODEPORT": []string{
-							fmt.Sprintf("-p %s -m addrtype --dst-type LOCAL --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, service.Spec.Ports[0].NodePort, service.Spec.ClusterIP, service.Spec.Ports[0].Port),
-						},
-						"OVN-KUBE-EXTERNALIP": []string{
-							fmt.Sprintf("-p %s -d %s --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, service.Status.LoadBalancer.Ingress[0].IP, service.Spec.Ports[0].Port, service.Spec.ClusterIP, service.Spec.Ports[0].Port),
-							fmt.Sprintf("-p %s -d %s --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, externalIP, service.Spec.Ports[0].Port, service.Spec.ClusterIP, service.Spec.Ports[0].Port),
-						},
-						"OVN-KUBE-ETP": []string{
-							fmt.Sprintf("-p %s -d %s --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, service.Status.LoadBalancer.Ingress[0].IP, service.Spec.Ports[0].Port, config.Gateway.MasqueradeIPs.V4HostETPLocalMasqueradeIP.String(), service.Spec.Ports[0].NodePort),
-							fmt.Sprintf("-p %s -d %s --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, externalIP, service.Spec.Ports[0].Port, config.Gateway.MasqueradeIPs.V4HostETPLocalMasqueradeIP.String(), service.Spec.Ports[0].NodePort),
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-					"filter": {},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-				}
+				expectedNFT := nftablesRulesBase + nftablesRulesGatewayServices
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes mgmtport-no-snat-nodeports { tcp . %v }\n", service.Spec.Ports[0].NodePort)
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes nodeports-v4 { %s . %d : %s . %d }\n", strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].NodePort, service.Spec.ClusterIP, service.Spec.Ports[0].Port)
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes external-ips-v4 { %s . %s . %d : %s . %d }\n", externalIP, strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].Port, service.Spec.ClusterIP, service.Spec.Ports[0].Port)
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes external-ips-v4 { %s . %s . %d : %s . %d }\n", service.Status.LoadBalancer.Ingress[0].IP, strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].Port, service.Spec.ClusterIP, service.Spec.Ports[0].Port)
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes external-ips-etp-local-v4 { %s . %s . %d : %s . %d }\n", externalIP, strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].Port, config.Gateway.MasqueradeIPs.V4HostETPLocalMasqueradeIP.String(), service.Spec.Ports[0].NodePort)
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes external-ips-etp-local-v4 { %s . %s . %d : %s . %d }\n", service.Status.LoadBalancer.Ingress[0].IP, strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].Port, config.Gateway.MasqueradeIPs.V4HostETPLocalMasqueradeIP.String(), service.Spec.Ports[0].NodePort)
+				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
+				Expect(err).NotTo(HaveOccurred())
+
 				expectedNodePortFlows := []string{
 					"cookie=0x453ae29bcbbc08bd, priority=110, in_port=eth0, tcp, tp_dst=31111, actions=output:patch-breth0_ov",
 					fmt.Sprintf("cookie=0x453ae29bcbbc08bd, priority=110, in_port=patch-breth0_ov, dl_src=%s, tcp, tp_src=31111, actions=output:eth0",
@@ -1399,16 +1036,6 @@ var _ = Describe("Node Operations", func() {
 					fmt.Sprintf("cookie=0x71765945a31dc2f1, priority=110, in_port=patch-breth0_ov, dl_src=%s, tcp, nw_src=1.1.1.1, tp_src=8080, actions=output:eth0",
 						gwMAC),
 				}
-
-				f4 := iptV4.(*util.FakeIPTables)
-				err = f4.MatchState(expectedTables, nil)
-				Expect(err).NotTo(HaveOccurred())
-
-				expectedNFT := nftablesRulesBase
-				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes mgmtport-no-snat-nodeports { tcp . %v }\n", service.Spec.Ports[0].NodePort)
-				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
-				Expect(err).NotTo(HaveOccurred())
-
 				flows := fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
 				Expect(flows).To(Equal(expectedNodePortFlows))
 				flows = fNPW.ofm.getFlowsByKey("Ingress_namespace1_service1_5.5.5.5_8080")
@@ -1422,7 +1049,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("inits iptables rules and openflows with LoadBalancer where ETP=local, SGW mode, with named ports, with "+
+		It("inits nftables rules and openflows with LoadBalancer where ETP=local, SGW mode, with named ports, with "+
 			"host networked pods and with external IP", func() {
 			app.Action = func(*cli.Context) error {
 				nodeName := "node"
@@ -1494,50 +1121,13 @@ var _ = Describe("Node Operations", func() {
 				fNPW.watchFactory = wf
 				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
 
-				expectedTables := map[string]util.FakeTable{
-					"nat": {
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-NODEPORT": []string{
-							fmt.Sprintf("-p %s -m addrtype --dst-type LOCAL --dport %v -j DNAT --to-destination %s:%v",
-								service.Spec.Ports[0].Protocol,
-								service.Spec.Ports[0].NodePort,
-								service.Spec.ClusterIP,
-								service.Spec.Ports[0].Port),
-						},
-						"OVN-KUBE-EXTERNALIP": []string{
-							fmt.Sprintf("-p %s -d %s --dport %v -j DNAT --to-destination %s:%v",
-								service.Spec.Ports[0].Protocol,
-								svcStatusIP,
-								service.Spec.Ports[0].Port,
-								service.Spec.ClusterIP,
-								service.Spec.Ports[0].Port),
-							fmt.Sprintf("-p %s -d %s --dport %v -j DNAT --to-destination %s:%v",
-								service.Spec.Ports[0].Protocol,
-								externalIP,
-								service.Spec.Ports[0].Port,
-								service.Spec.ClusterIP,
-								service.Spec.Ports[0].Port),
-						},
-						"OVN-KUBE-ETP": []string{},
-						"OVN-KUBE-ITP": []string{},
-					},
-					"filter": {},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-				}
+				expectedNFT := nftablesRulesBase + nftablesRulesGatewayServices
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes nodeports-v4 { %s . %d : %s . %d }\n", strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].NodePort, service.Spec.ClusterIP, service.Spec.Ports[0].Port)
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes external-ips-v4 { %s . %s . %d : %s . %d }\n", externalIP, strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].Port, service.Spec.ClusterIP, service.Spec.Ports[0].Port)
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes external-ips-v4 { %s . %s . %d : %s . %d }\n", svcStatusIP, strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].Port, service.Spec.ClusterIP, service.Spec.Ports[0].Port)
+				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
+				Expect(err).NotTo(HaveOccurred())
+
 				expectedNodePortFlows := []string{
 					fmt.Sprintf("cookie=0x453ae29bcbbc08bd, priority=110, in_port=eth0, tcp, tp_dst=%d, "+
 						"actions=ct(commit,zone=64003,nat(dst=%s:%d),table=6)", svcNodePort, v4localnetGatewayIP, epPortValue),
@@ -1568,15 +1158,6 @@ var _ = Describe("Node Operations", func() {
 						"actions=ct(zone=64003 nat,table=7)", epPortValue),
 					"cookie=0xe745ecf105, priority=110, table=7, actions=output:eth0",
 				}
-
-				f4 := iptV4.(*util.FakeIPTables)
-				err = f4.MatchState(expectedTables, nil)
-				Expect(err).NotTo(HaveOccurred())
-
-				expectedNFT := nftablesRulesBase
-				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
-				Expect(err).NotTo(HaveOccurred())
-
 				flows := fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
 				Expect(flows).To(Equal(expectedNodePortFlows))
 				flows = fNPW.ofm.getFlowsByKey("Ingress_namespace1_service1_5.5.5.5_8080")
@@ -1590,7 +1171,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("inits iptables rules with DualStack NodePort", func() {
+		It("inits nftables rules with DualStack NodePort", func() {
 			app.Action = func(*cli.Context) error {
 				nodePort := int32(31111)
 
@@ -1631,52 +1212,9 @@ var _ = Describe("Node Operations", func() {
 				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
 				Expect(fExec.CalledMatchesExpected()).To(BeTrue(), fExec.ErrorDesc)
 
-				expectedTables4 := map[string]util.FakeTable{
-					"nat": {
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-NODEPORT": []string{
-							fmt.Sprintf("-p %s -m addrtype --dst-type LOCAL --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, service.Spec.Ports[0].NodePort, service.Spec.ClusterIPs[0], service.Spec.Ports[0].Port),
-						},
-						"OVN-KUBE-EXTERNALIP": []string{},
-						"OVN-KUBE-ETP":        []string{},
-						"OVN-KUBE-ITP":        []string{},
-					},
-					"filter": {},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-				}
-
-				f4 := iptV4.(*util.FakeIPTables)
-				err = f4.MatchState(expectedTables4, nil)
-				Expect(err).NotTo(HaveOccurred())
-
-				expectedTables6 := map[string]util.FakeTable{
-					"nat": {
-						"OVN-KUBE-NODEPORT": []string{
-							fmt.Sprintf("-p %s -m addrtype --dst-type LOCAL --dport %v -j DNAT --to-destination [%s]:%v", service.Spec.Ports[0].Protocol, service.Spec.Ports[0].NodePort, service.Spec.ClusterIPs[1], service.Spec.Ports[0].Port),
-						},
-					},
-					"filter": {},
-					"mangle": {},
-				}
-				f6 := iptV6.(*util.FakeIPTables)
-				err = f6.MatchState(expectedTables6, nil)
-				Expect(err).NotTo(HaveOccurred())
-
-				expectedNFT := nftablesRulesBase
+				expectedNFT := nftablesRulesBase + nftablesRulesGatewayServices
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes nodeports-v4 { %s . %d : %s . %d }\n", strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].NodePort, service.Spec.ClusterIPs[0], service.Spec.Ports[0].Port)
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes nodeports-v6 { %s . %d : %s . %d }\n", strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].NodePort, service.Spec.ClusterIPs[1], service.Spec.Ports[0].Port)
 				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				Expect(err).NotTo(HaveOccurred())
 
@@ -1686,7 +1224,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("inits iptables rules for ExternalIP with DualStack", func() {
+		It("inits nftables rules for ExternalIP with DualStack", func() {
 			app.Action = func(*cli.Context) error {
 
 				// Depending on the order of informer event processing the initial
@@ -1732,53 +1270,9 @@ var _ = Describe("Node Operations", func() {
 					return fExec.CalledMatchesExpectedAtLeastN(minNFakeCommands)
 				}, "2s").Should(BeTrue(), fExec.ErrorDesc)
 
-				expectedTables4 := map[string]util.FakeTable{
-					"nat": {
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-EXTERNALIP": []string{
-							fmt.Sprintf("-p %s -d %s --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, externalIPv4, service.Spec.Ports[0].Port, clusterIPv4, service.Spec.Ports[0].Port),
-						},
-						"OVN-KUBE-NODEPORT": []string{},
-						"OVN-KUBE-ETP":      []string{},
-						"OVN-KUBE-ITP":      []string{},
-					},
-					"filter": {},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-				}
-
-				f4 := iptV4.(*util.FakeIPTables)
-				err = f4.MatchState(expectedTables4, nil)
-				Expect(err).NotTo(HaveOccurred())
-
-				expectedTables6 := map[string]util.FakeTable{
-					"nat": {
-						"OVN-KUBE-EXTERNALIP": []string{
-							fmt.Sprintf("-p %s -d %s --dport %v -j DNAT --to-destination [%s]:%v", service.Spec.Ports[0].Protocol, externalIPv6, service.Spec.Ports[0].Port, clusterIPv6, service.Spec.Ports[0].Port),
-						},
-					},
-					"filter": {},
-					"mangle": {},
-				}
-
-				f6 := iptV6.(*util.FakeIPTables)
-				err = f6.MatchState(expectedTables6, nil)
-				Expect(err).NotTo(HaveOccurred())
-
-				expectedNFT := nftablesRulesBase
+				expectedNFT := nftablesRulesBase + nftablesRulesGatewayServices
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes external-ips-v4 { %s . %s . %d : %s . %d }\n", externalIPv4, strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].Port, clusterIPv4, service.Spec.Ports[0].Port)
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes external-ips-v6 { %s . %s . %d : %s . %d }\n", externalIPv6, strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].Port, clusterIPv6, service.Spec.Ports[0].Port)
 				return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 			}
 			err := app.Run([]string{app.Name})
@@ -1787,7 +1281,7 @@ var _ = Describe("Node Operations", func() {
 	})
 
 	Context("on delete", func() {
-		It("deletes iptables rules with ExternalIP", func() {
+		It("deletes nftables rules with ExternalIP", func() {
 			app.Action = func(*cli.Context) error {
 				// Depending on the order of informer event processing the initial
 				// Service might be "added" once or twice.  Take that into account.
@@ -1829,49 +1323,8 @@ var _ = Describe("Node Operations", func() {
 					return fExec.CalledMatchesExpectedAtLeastN(minNFakeCommands)
 				}, "2s").Should(BeTrue(), fExec.ErrorDesc)
 
-				expectedTables := map[string]util.FakeTable{
-					"nat": {
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-NODEPORT":   []string{},
-						"OVN-KUBE-EXTERNALIP": []string{},
-						"OVN-KUBE-ETP":        []string{},
-						"OVN-KUBE-ITP":        []string{},
-					},
-					"filter": {},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-				}
-
+				expectedNFT := nftablesRulesBase + nftablesRulesGatewayServices
 				Eventually(func() error {
-					f4 := iptV4.(*util.FakeIPTables)
-					return f4.MatchState(expectedTables, nil)
-				}, "2s").Should(Succeed())
-
-				expectedTables = map[string]util.FakeTable{
-					"nat":    {},
-					"filter": {},
-					"mangle": {},
-				}
-				Eventually(func() error {
-					f6 := iptV6.(*util.FakeIPTables)
-					return f6.MatchState(expectedTables, nil)
-				}, "2s").Should(Succeed())
-
-				Eventually(func() error {
-					expectedNFT := nftablesRulesBase
 					return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				}, "2s").Should(Succeed())
 
@@ -1881,7 +1334,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("deletes iptables rules for NodePort", func() {
+		It("deletes nftables rules for NodePort", func() {
 			app.Action = func(*cli.Context) error {
 				nodePort := int32(31111)
 
@@ -1916,50 +1369,8 @@ var _ = Describe("Node Operations", func() {
 					context.Background(), service.Name, metav1.DeleteOptions{})).To(Succeed())
 				Eventually(fExec.CalledMatchesExpected, "2s").Should(BeTrue(), fExec.ErrorDesc)
 
-				expectedTables := map[string]util.FakeTable{
-					"nat": {
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-NODEPORT":   []string{},
-						"OVN-KUBE-EXTERNALIP": []string{},
-						"OVN-KUBE-ETP":        []string{},
-						"OVN-KUBE-ITP":        []string{},
-					},
-					"filter": {},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-				}
-
+				expectedNFT := nftablesRulesBase + nftablesRulesGatewayServices
 				Eventually(func() error {
-					f4 := iptV4.(*util.FakeIPTables)
-					return f4.MatchState(expectedTables, nil)
-				}, "2s").Should(Succeed())
-
-				expectedTables = map[string]util.FakeTable{
-					"nat":    {},
-					"filter": {},
-					"mangle": {},
-				}
-
-				Eventually(func() error {
-					f6 := iptV6.(*util.FakeIPTables)
-					return f6.MatchState(expectedTables, nil)
-				}, "2s").Should(Succeed())
-
-				Eventually(func() error {
-					expectedNFT := nftablesRulesBase
 					return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				}, "2s").Should(Succeed())
 
@@ -2380,7 +1791,7 @@ var _ = Describe("Node Operations", func() {
 	})
 
 	Context("on add and delete", func() {
-		It("manages iptables rules with ExternalIP", func() {
+		It("manages nftables rules with ExternalIP", func() {
 			app.Action = func(*cli.Context) error {
 				// Depending on the order of informer event processing the initial
 				// Service might be "added" once or twice.  Take that into account.
@@ -2420,43 +1831,9 @@ var _ = Describe("Node Operations", func() {
 					return fExec.CalledMatchesExpectedAtLeastN(minNFakeCommands)
 				}, "2s").Should(BeTrue(), fExec.ErrorDesc)
 
-				expectedTables := map[string]util.FakeTable{
-					"nat": {
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-EXTERNALIP": []string{
-							fmt.Sprintf("-p %s -d %s --dport %v -j DNAT --to-destination %s:%v",
-								service.Spec.Ports[0].Protocol, externalIP, service.Spec.Ports[0].Port,
-								service.Spec.ClusterIP, service.Spec.Ports[0].Port),
-						},
-						"OVN-KUBE-NODEPORT": []string{},
-						"OVN-KUBE-ETP":      []string{},
-						"OVN-KUBE-ITP":      []string{},
-					},
-					"filter": {},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-				}
-
+				expectedNFT := nftablesRulesBase + nftablesRulesGatewayServices
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes external-ips-v4 { %s . %s . %d : %s . %d }\n", externalIP, strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].Port, service.Spec.ClusterIP, service.Spec.Ports[0].Port)
 				Eventually(func() error {
-					f4 := iptV4.(*util.FakeIPTables)
-					return f4.MatchState(expectedTables, nil)
-				}).Should(Succeed())
-
-				Eventually(func() error {
-					expectedNFT := nftablesRulesBase
 					return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				}).Should(Succeed())
 
@@ -2464,39 +1841,8 @@ var _ = Describe("Node Operations", func() {
 				Expect(fakeClient.KubeClient.CoreV1().Services(service.Namespace).Delete(
 					context.Background(), service.Name, metav1.DeleteOptions{})).To(Succeed())
 
-				expectedTables = map[string]util.FakeTable{
-					"nat": {
-						"OVN-KUBE-EXTERNALIP": []string{},
-						"OVN-KUBE-NODEPORT":   []string{},
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ETP": []string{},
-						"OVN-KUBE-ITP": []string{},
-					},
-					"filter": {},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-				}
-
+				expectedNFT = nftablesRulesBase + nftablesRulesGatewayServices
 				Eventually(func() error {
-					f4 := iptV4.(*util.FakeIPTables)
-					return f4.MatchState(expectedTables, nil)
-				}, "2s").Should(Succeed())
-
-				Eventually(func() error {
-					expectedNFT := nftablesRulesBase
 					return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				}, "2s").Should(Succeed())
 
@@ -2617,7 +1963,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("manages iptables rules with ExternalIP through retry logic", func() {
+		It("manages nftables rules with ExternalIP through retry logic", func() {
 			app.Action = func(*cli.Context) error {
 				var nodePortWatcherRetry *retry.RetryFramework
 				var err error
@@ -2669,39 +2015,14 @@ var _ = Describe("Node Operations", func() {
 					context.TODO(), &service, metav1.CreateOptions{})
 				Expect(err).NotTo(HaveOccurred())
 
-				// expected ip tables with no external IP set
-				expectedTables := map[string]util.FakeTable{
-					"nat": {
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-EXTERNALIP": []string{},
-						"OVN-KUBE-NODEPORT":   []string{},
-						"OVN-KUBE-ETP":        []string{},
-						"OVN-KUBE-ITP":        []string{},
-					},
-					"filter": {},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-				}
 				By("verify that a new retry entry for this service exists")
 				key, err := retry.GetResourceKey(&service)
 				Expect(err).NotTo(HaveOccurred())
 				retry.CheckRetryObjectEventually(key, true, nodePortWatcherRetry)
-				// check iptables
-				f4 := iptV4.(*util.FakeIPTables)
-				err = f4.MatchState(expectedTables, nil)
+
+				// check nftables
+				expectedNFT := nftablesRulesBase + nftablesRulesGatewayServices
+				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				Expect(err).NotTo(HaveOccurred())
 
 				// HACK: Fix the service by setting a correct external IP address in newObj field
@@ -2718,16 +2039,10 @@ var _ = Describe("Node Operations", func() {
 				nodePortWatcherRetry.RequestRetryObjs()
 				retry.CheckRetryObjectEventually(key, false, nodePortWatcherRetry) // entry should be gone
 
-				// now expect ip tables to show the external IP
-				ovn_kube_external_ip_field := []string{
-					fmt.Sprintf("-p %s -d %s --dport %v -j DNAT --to-destination %s:%v",
-						service.Spec.Ports[0].Protocol, goodExternalIP, service.Spec.Ports[0].Port,
-						service.Spec.ClusterIP, service.Spec.Ports[0].Port)}
-				expectedTables["nat"]["OVN-KUBE-EXTERNALIP"] = ovn_kube_external_ip_field
-				Eventually(func(g Gomega) {
-					f4 := iptV4.(*util.FakeIPTables)
-					err = f4.MatchState(expectedTables, nil)
-					g.Expect(err).NotTo(HaveOccurred())
+				// now expect nftables to show the external IP
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes external-ips-v4 { %s . %s . %d : %s . %d }\n", goodExternalIP, strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].Port, service.Spec.ClusterIP, service.Spec.Ports[0].Port)
+				Eventually(func() error {
+					return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				}).Should(Succeed())
 
 				// TODO Make delete operation fail, check retry entry, run a successful delete
@@ -2737,7 +2052,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("manages iptables rules for NodePort", func() {
+		It("manages nftables rules for NodePort", func() {
 			app.Action = func(*cli.Context) error {
 				nodePort := int32(38034)
 
@@ -2769,41 +2084,9 @@ var _ = Describe("Node Operations", func() {
 				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
 				Eventually(fExec.CalledMatchesExpected).Should(BeTrue(), fExec.ErrorDesc)
 
-				expectedTables := map[string]util.FakeTable{
-					"nat": {
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-NODEPORT": []string{
-							fmt.Sprintf("-p %s -m addrtype --dst-type LOCAL --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, nodePort, service.Spec.ClusterIP, service.Spec.Ports[0].Port),
-						},
-						"OVN-KUBE-EXTERNALIP": []string{},
-						"OVN-KUBE-ETP":        []string{},
-						"OVN-KUBE-ITP":        []string{},
-					},
-					"filter": {},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-				}
-
+				expectedNFT := nftablesRulesBase + nftablesRulesGatewayServices
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes nodeports-v4 { %s . %d : %s . %d }\n", strings.ToLower(string(service.Spec.Ports[0].Protocol)), nodePort, service.Spec.ClusterIPs[0], service.Spec.Ports[0].Port)
 				Eventually(func() error {
-					f4 := iptV4.(*util.FakeIPTables)
-					return f4.MatchState(expectedTables, nil)
-				}).Should(Succeed())
-
-				Eventually(func() error {
-					expectedNFT := nftablesRulesBase
 					return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				}).Should(Succeed())
 
@@ -2811,39 +2094,8 @@ var _ = Describe("Node Operations", func() {
 				Expect(fakeClient.KubeClient.CoreV1().Services(service.Namespace).Delete(
 					context.Background(), service.Name, metav1.DeleteOptions{})).To(Succeed())
 
-				expectedTables = map[string]util.FakeTable{
-					"nat": {
-						"OVN-KUBE-EXTERNALIP": []string{},
-						"OVN-KUBE-NODEPORT":   []string{},
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ETP": []string{},
-						"OVN-KUBE-ITP": []string{},
-					},
-					"filter": {},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-				}
-
+				expectedNFT = nftablesRulesBase + nftablesRulesGatewayServices
 				Eventually(func() error {
-					f4 := iptV4.(*util.FakeIPTables)
-					return f4.MatchState(expectedTables, nil)
-				}, "2s").Should(Succeed())
-
-				Eventually(func() error {
-					expectedNFT := nftablesRulesBase
 					return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				}, "2s").Should(Succeed())
 
@@ -2853,7 +2105,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("manages iptables rules and openflows for NodePort backed by ovn-k pods where ETP=local, LGW", func() {
+		It("manages nftables rules and openflows for NodePort backed by ovn-k pods where ETP=local, LGW", func() {
 			app.Action = func(*cli.Context) error {
 				config.Gateway.Mode = config.GatewayModeLocal
 				epPortName := "https"
@@ -2904,41 +2156,10 @@ var _ = Describe("Node Operations", func() {
 				fNPW.watchFactory = wf
 				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
 
-				expectedTables := map[string]util.FakeTable{
-					"nat": {
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-NODEPORT": []string{
-							fmt.Sprintf("-p %s -m addrtype --dst-type LOCAL --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, service.Spec.Ports[0].NodePort, service.Spec.ClusterIP, service.Spec.Ports[0].Port),
-						},
-						"OVN-KUBE-EXTERNALIP": []string{},
-						"OVN-KUBE-ETP": []string{
-							fmt.Sprintf("-p %s -m addrtype --dst-type LOCAL --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, service.Spec.Ports[0].NodePort, config.Gateway.MasqueradeIPs.V4HostETPLocalMasqueradeIP.String(), service.Spec.Ports[0].NodePort),
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-					"filter": {},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-				}
-
-				f4 := iptV4.(*util.FakeIPTables)
-				Expect(f4.MatchState(expectedTables, nil)).To(Succeed())
-
-				expectedNFT := nftablesRulesBase
+				expectedNFT := nftablesRulesBase + nftablesRulesGatewayServices
 				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes mgmtport-no-snat-nodeports { tcp . %v }\n", service.Spec.Ports[0].NodePort)
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes nodeports-v4 { %s . %d : %s . %d }\n", strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].NodePort, service.Spec.ClusterIP, service.Spec.Ports[0].Port)
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes nodeports-etp-local-v4 { %s . %d : %s . %d }\n", strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].NodePort, config.Gateway.MasqueradeIPs.V4HostETPLocalMasqueradeIP.String(), service.Spec.Ports[0].NodePort)
 				Expect(nodenft.MatchNFTRules(expectedNFT, nft.Dump())).To(Succeed())
 
 				flows := fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
@@ -2948,39 +2169,8 @@ var _ = Describe("Node Operations", func() {
 				Expect(fakeClient.KubeClient.CoreV1().Services(service.Namespace).Delete(
 					context.Background(), service.Name, metav1.DeleteOptions{})).To(Succeed())
 
-				expectedTables = map[string]util.FakeTable{
-					"nat": {
-						"OVN-KUBE-EXTERNALIP": []string{},
-						"OVN-KUBE-NODEPORT":   []string{},
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ETP": []string{},
-						"OVN-KUBE-ITP": []string{},
-					},
-					"filter": {},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-				}
-
+				expectedNFT = nftablesRulesBase + nftablesRulesGatewayServices
 				Eventually(func() error {
-					f4 := iptV4.(*util.FakeIPTables)
-					return f4.MatchState(expectedTables, nil)
-				}, "2s").Should(Succeed())
-
-				Eventually(func() error {
-					expectedNFT = nftablesRulesBase
 					return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				}, "2s").Should(Succeed())
 
@@ -2994,7 +2184,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("manages iptables rules and openflows for NodePort backed by ovn-k pods where ETP=local, SGW", func() {
+		It("manages nftables rules and openflows for NodePort backed by ovn-k pods where ETP=local, SGW", func() {
 			app.Action = func(*cli.Context) error {
 				config.Gateway.Mode = config.GatewayModeShared
 				epPortName := "https"
@@ -3046,47 +2236,17 @@ var _ = Describe("Node Operations", func() {
 				fNPW.watchFactory = wf
 				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
 
-				expectedTables := map[string]util.FakeTable{
-					"nat": {
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-NODEPORT": []string{
-							fmt.Sprintf("-p %s -m addrtype --dst-type LOCAL --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, service.Spec.Ports[0].NodePort, service.Spec.ClusterIP, service.Spec.Ports[0].Port),
-						},
-						"OVN-KUBE-EXTERNALIP": []string{},
-						"OVN-KUBE-ETP":        []string{},
-						"OVN-KUBE-ITP":        []string{},
-					},
-					"filter": {},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-				}
+				expectedNFT := nftablesRulesBase + nftablesRulesGatewayServices
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes mgmtport-no-snat-nodeports { tcp . %v }\n", service.Spec.Ports[0].NodePort)
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes nodeports-v4 { %s . %d : %s . %d }\n", strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].NodePort, service.Spec.ClusterIP, service.Spec.Ports[0].Port)
+				Expect(nodenft.MatchNFTRules(expectedNFT, nft.Dump())).To(Succeed())
+
 				expectedFlows := []string{
 					// default
 					"cookie=0x453ae29bcbbc08bd, priority=110, in_port=eth0, tcp, tp_dst=31111, actions=output:patch-breth0_ov",
 					fmt.Sprintf("cookie=0x453ae29bcbbc08bd, priority=110, in_port=patch-breth0_ov, dl_src=%s, tcp, tp_src=31111, actions=output:eth0",
 						gwMAC),
 				}
-
-				f4 := iptV4.(*util.FakeIPTables)
-				Expect(f4.MatchState(expectedTables, nil)).To(Succeed())
-
-				expectedNFT := nftablesRulesBase
-				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes mgmtport-no-snat-nodeports { tcp . %v }\n", service.Spec.Ports[0].NodePort)
-				Expect(nodenft.MatchNFTRules(expectedNFT, nft.Dump())).To(Succeed())
-
 				flows := fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
 				Expect(flows).To(Equal(expectedFlows))
 
@@ -3094,39 +2254,8 @@ var _ = Describe("Node Operations", func() {
 				Expect(fakeClient.KubeClient.CoreV1().Services(service.Namespace).Delete(
 					context.Background(), service.Name, metav1.DeleteOptions{})).To(Succeed())
 
-				expectedTables = map[string]util.FakeTable{
-					"nat": {
-						"OVN-KUBE-EXTERNALIP": []string{},
-						"OVN-KUBE-NODEPORT":   []string{},
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ETP": []string{},
-						"OVN-KUBE-ITP": []string{},
-					},
-					"filter": {},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-				}
-
+				expectedNFT = nftablesRulesBase + nftablesRulesGatewayServices
 				Eventually(func() error {
-					f4 = iptV4.(*util.FakeIPTables)
-					return f4.MatchState(expectedTables, nil)
-				}, "2s").Should(Succeed())
-
-				Eventually(func() error {
-					expectedNFT = nftablesRulesBase
 					return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				}, "2s").Should(Succeed())
 
@@ -3140,7 +2269,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("manages iptables rules and openflows for NodePort backed by local-host-networked pods where ETP=local, LGW", func() {
+		It("manages nftables rules and openflows for NodePort backed by local-host-networked pods where ETP=local, LGW", func() {
 			app.Action = func(*cli.Context) error {
 				config.Gateway.Mode = config.GatewayModeLocal
 				outport := int32(443)
@@ -3197,46 +2326,16 @@ var _ = Describe("Node Operations", func() {
 				res := fNPW.nodeIPManager.cidrs.Has(fmt.Sprintf("%s/32", ep1.Addresses[0]))
 				Expect(res).To(BeTrue())
 
-				expectedTables := map[string]util.FakeTable{
-					"nat": {
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-NODEPORT": []string{
-							fmt.Sprintf("-p %s -m addrtype --dst-type LOCAL --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, service.Spec.Ports[0].NodePort, service.Spec.ClusterIP, service.Spec.Ports[0].Port),
-						},
-						"OVN-KUBE-EXTERNALIP": []string{},
-						"OVN-KUBE-ETP":        []string{},
-						"OVN-KUBE-ITP":        []string{},
-					},
-					"filter": {},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-				}
+				expectedNFT := nftablesRulesBase + nftablesRulesGatewayServices
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes nodeports-v4 { %s . %d : %s . %d }\n", strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].NodePort, service.Spec.ClusterIP, service.Spec.Ports[0].Port)
+				Expect(nodenft.MatchNFTRules(expectedNFT, nft.Dump())).To(Succeed())
+
 				expectedFlows := []string{
 					"cookie=0x453ae29bcbbc08bd, priority=110, in_port=eth0, tcp, tp_dst=31111, actions=ct(commit,zone=64003,nat(dst=10.244.0.1:443),table=6)",
 					"cookie=0xe745ecf105, priority=110, table=6, actions=output:LOCAL",
 					"cookie=0x8ba455e19afe30d1, priority=110, in_port=LOCAL, tcp, tp_src=443, actions=ct(zone=64003 nat,table=7)",
 					"cookie=0xe745ecf105, priority=110, table=7, actions=output:eth0",
 				}
-
-				f4 := iptV4.(*util.FakeIPTables)
-				Expect(f4.MatchState(expectedTables, nil)).To(Succeed())
-
-				expectedNFT := nftablesRulesBase
-				Expect(nodenft.MatchNFTRules(expectedNFT, nft.Dump())).To(Succeed())
-
 				flows := fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
 				Expect(flows).To(Equal(expectedFlows))
 
@@ -3244,39 +2343,8 @@ var _ = Describe("Node Operations", func() {
 				Expect(fakeClient.KubeClient.CoreV1().Services(service.Namespace).Delete(
 					context.Background(), service.Name, metav1.DeleteOptions{})).To(Succeed())
 
-				expectedTables = map[string]util.FakeTable{
-					"nat": {
-						"OVN-KUBE-EXTERNALIP": []string{},
-						"OVN-KUBE-NODEPORT":   []string{},
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-						"OVN-KUBE-ETP": []string{},
-					},
-					"filter": {},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-				}
-
+				expectedNFT = nftablesRulesBase + nftablesRulesGatewayServices
 				Eventually(func() error {
-					f4 = iptV4.(*util.FakeIPTables)
-					return f4.MatchState(expectedTables, nil)
-				}, "2s").Should(Succeed())
-
-				Eventually(func() error {
-					expectedNFT = nftablesRulesBase
 					return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				}, "2s").Should(Succeed())
 
@@ -3290,7 +2358,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("manages iptables rules and openflows for NodePort backed by ovn-k pods where ITP=local and ETP=local", func() {
+		It("manages nftables rules and openflows for NodePort backed by ovn-k pods where ITP=local and ETP=local", func() {
 			app.Action = func(*cli.Context) error {
 				config.Gateway.Mode = config.GatewayModeShared
 				epPortName := "https"
@@ -3339,49 +2407,18 @@ var _ = Describe("Node Operations", func() {
 				fNPW.watchFactory = wf
 				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
 
-				expectedTables := map[string]util.FakeTable{
-					"nat": {
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-NODEPORT": []string{
-							fmt.Sprintf("-p %s -m addrtype --dst-type LOCAL --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, service.Spec.Ports[0].NodePort, service.Spec.ClusterIP, service.Spec.Ports[0].Port),
-						},
-						"OVN-KUBE-EXTERNALIP": []string{},
-						"OVN-KUBE-ITP":        []string{},
-						"OVN-KUBE-ETP":        []string{},
-					},
-					"filter": {},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{
-							fmt.Sprintf("-p %s -d %s --dport %d -j MARK --set-xmark %s", service.Spec.Ports[0].Protocol, service.Spec.ClusterIP, service.Spec.Ports[0].Port, types.OVNKubeITPMark),
-						},
-					},
-				}
+				expectedNFT := nftablesRulesBase + nftablesRulesGatewayServices
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes mgmtport-no-snat-nodeports { tcp . %v }\n", service.Spec.Ports[0].NodePort)
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes nodeports-v4 { %s . %d : %s . %d }\n", strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].NodePort, service.Spec.ClusterIP, service.Spec.Ports[0].Port)
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes itp-services-to-mark-v4 { %s . %s . %d }\n", service.Spec.ClusterIP, strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].Port)
+				Expect(nodenft.MatchNFTRules(expectedNFT, nft.Dump())).To(Succeed())
+
 				expectedFlows := []string{
 					// default
 					"cookie=0x453ae29bcbbc08bd, priority=110, in_port=eth0, tcp, tp_dst=31111, actions=output:patch-breth0_ov",
 					fmt.Sprintf("cookie=0x453ae29bcbbc08bd, priority=110, in_port=patch-breth0_ov, dl_src=%s, tcp, tp_src=31111, actions=output:eth0",
 						gwMAC),
 				}
-
-				f4 := iptV4.(*util.FakeIPTables)
-				Expect(f4.MatchState(expectedTables, nil)).To(Succeed())
-
-				expectedNFT := nftablesRulesBase
-				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes mgmtport-no-snat-nodeports { tcp . %v }\n", service.Spec.Ports[0].NodePort)
-				Expect(nodenft.MatchNFTRules(expectedNFT, nft.Dump())).To(Succeed())
-
 				flows := fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
 				Expect(flows).To(Equal(expectedFlows))
 
@@ -3389,39 +2426,8 @@ var _ = Describe("Node Operations", func() {
 				Expect(fakeClient.KubeClient.CoreV1().Services(service.Namespace).Delete(
 					context.Background(), service.Name, metav1.DeleteOptions{})).To(Succeed())
 
-				expectedTables = map[string]util.FakeTable{
-					"nat": {
-						"OVN-KUBE-EXTERNALIP": []string{},
-						"OVN-KUBE-NODEPORT":   []string{},
-						"OVN-KUBE-ITP":        []string{},
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ETP": []string{},
-					},
-					"filter": {},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-				}
-
+				expectedNFT = nftablesRulesBase + nftablesRulesGatewayServices
 				Eventually(func() error {
-					f4 = iptV4.(*util.FakeIPTables)
-					return f4.MatchState(expectedTables, nil)
-				}, "2s").Should(Succeed())
-
-				Eventually(func() error {
-					expectedNFT = nftablesRulesBase
 					return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				}, "2s").Should(Succeed())
 
@@ -3435,7 +2441,7 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("manages iptables rules and openflows for NodePort backed by local-host-networked pods where ETP=local and ITP=local", func() {
+		It("manages nftables rules and openflows for NodePort backed by local-host-networked pods where ETP=local and ITP=local", func() {
 			app.Action = func(*cli.Context) error {
 				config.Gateway.Mode = config.GatewayModeLocal
 				epPortName := "https"
@@ -3489,87 +2495,26 @@ var _ = Describe("Node Operations", func() {
 				// to ensure the endpoint is local-host-networked
 				res := fNPW.nodeIPManager.cidrs.Has(fmt.Sprintf("%s/32", endpointSlice.Endpoints[0].Addresses[0]))
 				Expect(res).To(BeTrue())
-				expectedTables := map[string]util.FakeTable{
-					"nat": {
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-NODEPORT": []string{
-							fmt.Sprintf("-p %s -m addrtype --dst-type LOCAL --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, service.Spec.Ports[0].NodePort, service.Spec.ClusterIP, service.Spec.Ports[0].Port),
-						},
-						"OVN-KUBE-EXTERNALIP": []string{},
-						"OVN-KUBE-ITP": []string{
-							fmt.Sprintf("-p %s -d %s --dport %d -j REDIRECT --to-port %d", service.Spec.Ports[0].Protocol, service.Spec.ClusterIP, service.Spec.Ports[0].Port, int32(service.Spec.Ports[0].TargetPort.IntValue())),
-						},
-						"OVN-KUBE-ETP": []string{},
-					},
-					"filter": {},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-				}
+
+				expectedNFT := nftablesRulesBase + nftablesRulesGatewayServices
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes nodeports-v4 { %s . %d : %s . %d }\n", strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].NodePort, service.Spec.ClusterIP, service.Spec.Ports[0].Port)
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes itp-services-to-redirect-v4 { %s . %s . %d : %d }\n", service.Spec.ClusterIP, strings.ToLower(string(service.Spec.Ports[0].Protocol)), service.Spec.Ports[0].Port, service.Spec.Ports[0].TargetPort.IntValue())
+				Expect(nodenft.MatchNFTRules(expectedNFT, nft.Dump())).To(Succeed())
+
 				expectedFlows := []string{
 					"cookie=0x453ae29bcbbc08bd, priority=110, in_port=eth0, tcp, tp_dst=31111, actions=ct(commit,zone=64003,nat(dst=10.244.0.1:443),table=6)",
 					"cookie=0xe745ecf105, priority=110, table=6, actions=output:LOCAL",
 					"cookie=0x8ba455e19afe30d1, priority=110, in_port=LOCAL, tcp, tp_src=443, actions=ct(zone=64003 nat,table=7)",
 					"cookie=0xe745ecf105, priority=110, table=7, actions=output:eth0",
 				}
-
-				f4 := iptV4.(*util.FakeIPTables)
-				Expect(f4.MatchState(expectedTables, nil)).To(Succeed())
-
-				expectedNFT := nftablesRulesBase
-				Expect(nodenft.MatchNFTRules(expectedNFT, nft.Dump())).To(Succeed())
-
 				Expect(fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")).To(Equal(expectedFlows))
 
 				addConntrackMocks(netlinkMock, []ctFilterDesc{{"10.129.0.2", 8080, corev1.ProtocolTCP, netlink.ConntrackOrigDstIP}, {"192.168.18.15", 31111, corev1.ProtocolTCP, netlink.ConntrackOrigDstIP}})
 				Expect(fakeClient.KubeClient.CoreV1().Services(service.Namespace).Delete(
 					context.Background(), service.Name, metav1.DeleteOptions{})).To(Succeed())
 
-				expectedTables = map[string]util.FakeTable{
-					"nat": {
-						"OVN-KUBE-EXTERNALIP": []string{},
-						"OVN-KUBE-NODEPORT":   []string{},
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-						"OVN-KUBE-ETP": []string{},
-					},
-					"filter": {},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-				}
-
+				expectedNFT = nftablesRulesBase + nftablesRulesGatewayServices
 				Eventually(func() error {
-					f4 := iptV4.(*util.FakeIPTables)
-					return f4.MatchState(expectedTables, nil)
-				}, "2s").Should(Succeed())
-
-				Eventually(func() error {
-					expectedNFT = nftablesRulesBase
 					return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				}, "2s").Should(Succeed())
 
@@ -3594,6 +2539,7 @@ var _ = Describe("Node Operations", func() {
 				config.IPv4Mode = false
 				config.IPv6Mode = true
 				config.Gateway.DisableForwarding = true
+				_, iptV6 := util.SetFakeIPTablesHelpers()
 
 				stopChan := make(chan struct{})
 				fakeClient := util.GetOVNClientset().GetNodeClientset()
@@ -3610,22 +2556,7 @@ var _ = Describe("Node Operations", func() {
 				Expect(configureGlobalForwarding()).To(Succeed())
 
 				expectedTables := map[string]util.FakeTable{
-					"nat": {
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-NODEPORT":   []string{},
-						"OVN-KUBE-EXTERNALIP": []string{},
-						"OVN-KUBE-ETP":        []string{},
-						"OVN-KUBE-ITP":        []string{},
-					},
+					"nat": {},
 					"filter": {
 						"FORWARD": []string{
 							"-d fd69::1 -j ACCEPT",
@@ -3636,12 +2567,7 @@ var _ = Describe("Node Operations", func() {
 							"-s fd00:10:1::/48 -j ACCEPT",
 						},
 					},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
+					"mangle": {},
 				}
 				f6 := iptV6.(*util.FakeIPTables)
 				err = f6.MatchState(expectedTables, map[util.FakePolicyKey]string{{
@@ -3657,31 +2583,11 @@ var _ = Describe("Node Operations", func() {
 				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
 
 				expectedTables = map[string]util.FakeTable{
-					"nat": {
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-NODEPORT":   []string{},
-						"OVN-KUBE-EXTERNALIP": []string{},
-						"OVN-KUBE-ETP":        []string{},
-						"OVN-KUBE-ITP":        []string{},
-					},
+					"nat": {},
 					"filter": {
 						"FORWARD": []string{},
 					},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
+					"mangle": {},
 				}
 
 				f6 = iptV6.(*util.FakeIPTables)
@@ -3697,6 +2603,8 @@ var _ = Describe("Node Operations", func() {
 		})
 
 		ovntest.OnSupportedPlatformsIt("updates the default FORWARD policy correctly according to the config", func() {
+			iptV4, iptV6 := util.SetFakeIPTablesHelpers()
+
 			expectedTablesEmpty := map[string]util.FakeTable{
 				"filter": {
 					"FORWARD": []string{},

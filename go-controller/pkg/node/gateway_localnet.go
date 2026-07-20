@@ -28,7 +28,7 @@ func initLocalGateway(hostSubnets []*net.IPNet, mgmtPort managementport.Interfac
 		return nil
 	}
 
-	klog.Info("Adding iptables/nftables masquerading rules for new local gateway")
+	klog.Info("Adding iptables/nftables rules for new local gateway")
 
 	// Set up iptables filter rules to allow traffic to/from the management port.
 	ifName := mgmtPort.GetInterfaceName()

@@ -7,6 +7,7 @@
 package node
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/fake"
+	"sigs.k8s.io/knftables"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	adminpolicybasedrouteclient "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/clientset/versioned/fake"
@@ -27,6 +29,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
+	nodenft "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	netlink_mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/vishvananda/netlink"
@@ -195,13 +198,21 @@ func (m *mockNetworkManagerWithActiveUDN) GetActiveNetworkForNamespace(_ string)
 	return m.netInfo, nil
 }
 
-// verifyIPTablesRule checks if an iptables rule exists and asserts the expected state
-func verifyIPTablesRule(ipt util.IPTablesHelper, serviceIP string, servicePort, nodePort int32, shouldExist bool, message string) {
-	exists, err := ipt.Exists("nat", "OVN-KUBE-NODEPORT",
-		"-p", "TCP", "-m", "addrtype", "--dst-type", "LOCAL",
-		"--dport", fmt.Sprintf("%d", nodePort), "-j", "DNAT",
-		"--to-destination", fmt.Sprintf("%s:%d", serviceIP, servicePort))
+// verifyNFTablesRule checks if an nftables rule exists and asserts the expected state
+func verifyNFTablesRule(nft knftables.Interface, serviceIP string, servicePort, nodePort int32, shouldExist bool, message string) {
+	elements, err := nft.ListElements(context.Background(), "map", "nodeports-v4")
 	Expect(err).NotTo(HaveOccurred())
+
+	servicePortStr := fmt.Sprintf("%d", servicePort)
+	nodePortStr := fmt.Sprintf("%d", nodePort)
+
+	exists := false
+	for _, elem := range elements {
+		if elem.Key[0] == "tcp" && elem.Key[1] == nodePortStr && elem.Value[0] == serviceIP && elem.Value[1] == servicePortStr {
+			exists = true
+			break
+		}
+	}
 	if shouldExist {
 		Expect(exists).To(BeTrue(), message)
 	} else {
@@ -210,8 +221,8 @@ func verifyIPTablesRule(ipt util.IPTablesHelper, serviceIP string, servicePort, 
 }
 
 // setupServiceAndEndpointSliceWithRules creates a service and endpoint slice, adds them to npw,
-// and verifies iptables rules are created. Returns the created endpoint slice.
-func setupServiceAndEndpointSliceWithRules(npw *nodePortWatcher, ipt util.IPTablesHelper, svcName, namespace, serviceIP, endpointIP string, servicePort, nodePort int32, annotations map[string]string) *discovery.EndpointSlice {
+// and verifies nftables rules are created. Returns the created endpoint slice.
+func setupServiceAndEndpointSliceWithRules(npw *nodePortWatcher, nft knftables.Interface, svcName, namespace, serviceIP, endpointIP string, servicePort, nodePort int32, annotations map[string]string) *discovery.EndpointSlice {
 	// Create service
 	service := newService(svcName, namespace, serviceIP,
 		[]corev1.ServicePort{{
@@ -261,8 +272,8 @@ func setupServiceAndEndpointSliceWithRules(npw *nodePortWatcher, ipt util.IPTabl
 	err = npw.AddEndpointSlice(epSlice)
 	Expect(err).NotTo(HaveOccurred())
 
-	// Verify iptables rules were created
-	verifyIPTablesRule(ipt, serviceIP, servicePort, nodePort, true, "iptables rule should exist before deletion")
+	// Verify nftables rules were created
+	verifyNFTablesRule(nft, serviceIP, servicePort, nodePort, true, "nftables rule should exist before deletion")
 
 	return epSlice
 }
@@ -272,7 +283,7 @@ var _ = Describe("DeleteEndpointSlice", func() {
 		fakeClient *util.OVNNodeClientset
 		watcher    *factory.WatchFactory
 		npw        *nodePortWatcher
-		iptV4      util.IPTablesHelper
+		nft        knftables.Interface
 	)
 
 	const (
@@ -302,7 +313,7 @@ var _ = Describe("DeleteEndpointSlice", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		// Initialize nodePortWatcher with default network manager
-		iptV4, _ = util.SetFakeIPTablesHelpers()
+		nft = nodenft.SetFakeNFTablesHelper()
 		npw = initFakeNodePortWatcher()
 		npw.watchFactory = watcher
 		npw.networkManager = networkmanager.Default().Interface()
@@ -310,6 +321,11 @@ var _ = Describe("DeleteEndpointSlice", func() {
 		// Initialize nodeIPManager (required for GetLocalEligibleEndpointAddresses)
 		k := &kube.Kube{KClient: fakeClient.KubeClient}
 		npw.nodeIPManager = newAddressManagerInternal(nodeName, k, nil, watcher, nil, nil, false)
+
+		// Since the tests here never call startNodePortWatcher(), we have to call
+		// initGatewayNFTables() ourselves to set up the sets, maps, etc.
+		err = initGatewayNFTables()
+		Expect(err).NotTo(HaveOccurred())
 	})
 
 	AfterEach(func() {
@@ -318,9 +334,9 @@ var _ = Describe("DeleteEndpointSlice", func() {
 
 	Context("when UDN is deleted before processing endpoint slice", func() {
 		It("should execute delServiceRules and gracefully skip addServiceRules", func() {
-			// Setup service and endpoint slice with iptables rules
+			// Setup service and endpoint slice with nftables rules
 			// Add UDN annotation to simulate a mirrored UDN EndpointSlice
-			epSlice := setupServiceAndEndpointSliceWithRules(npw, iptV4, testService, testNamespace, "10.96.0.2", "10.244.0.2", 80, 30081,
+			epSlice := setupServiceAndEndpointSliceWithRules(npw, nft, testService, testNamespace, "10.96.0.2", "10.244.0.2", 80, 30081,
 				map[string]string{types.UserDefinedNetworkEndpointSliceAnnotation: "test-udn"})
 
 			// Replace network manager with one that returns InvalidPrimaryNetworkError
@@ -333,15 +349,15 @@ var _ = Describe("DeleteEndpointSlice", func() {
 			// Should gracefully handle UDN deletion (no error)
 			Expect(err).NotTo(HaveOccurred())
 
-			// iptables rules should be deleted even when UDN is deleted
-			verifyIPTablesRule(iptV4, "10.96.0.2", 80, 30081, false, "iptables rule should be deleted even when UDN is deleted")
+			// nftables rules should be deleted even when UDN is deleted
+			verifyNFTablesRule(nft, "10.96.0.2", 80, 30081, false, "nftables rule should be deleted even when UDN is deleted")
 		})
 	})
 
 	Context("when network lookup returns other errors", func() {
 		It("should execute delServiceRules but return error from network lookup", func() {
-			// Setup service and endpoint slice with iptables rules
-			epSlice := setupServiceAndEndpointSliceWithRules(npw, iptV4, testService, testNamespace, "10.96.0.3", "10.244.0.3", 80, 30082, nil)
+			// Setup service and endpoint slice with nftables rules
+			epSlice := setupServiceAndEndpointSliceWithRules(npw, nft, testService, testNamespace, "10.96.0.3", "10.244.0.3", 80, 30082, nil)
 
 			// Replace network manager with one that returns a generic error
 			npw.networkManager = &mockNetworkManagerWithError{}
@@ -355,8 +371,8 @@ var _ = Describe("DeleteEndpointSlice", func() {
 			Expect(err.Error()).To(ContainSubstring(testNamespace))
 			Expect(err.Error()).To(ContainSubstring(testService))
 
-			// iptables rules should still be deleted even when error is returned
-			verifyIPTablesRule(iptV4, "10.96.0.3", 80, 30082, false, "iptables rule should be deleted even when error occurs")
+			// nftables rules should still be deleted even when error is returned
+			verifyNFTablesRule(nft, "10.96.0.3", 80, 30082, false, "nftables rule should be deleted even when error occurs")
 		})
 	})
 
@@ -375,8 +391,8 @@ var _ = Describe("DeleteEndpointSlice", func() {
 
 	Context("when namespace is deleted before processing endpoint slice", func() {
 		It("should clean up old rules even when namespace is gone", func() {
-			// Setup service and endpoint slice with iptables rules
-			epSlice := setupServiceAndEndpointSliceWithRules(npw, iptV4, testService, testNamespace, "10.96.0.10", "10.244.0.5", 80, 30090, nil)
+			// Setup service and endpoint slice with nftables rules
+			epSlice := setupServiceAndEndpointSliceWithRules(npw, nft, testService, testNamespace, "10.96.0.10", "10.244.0.5", 80, 30090, nil)
 
 			// Simulate namespace not found error
 			npw.networkManager = &mockNetworkManagerWithNamespaceNotFoundError{}
@@ -384,8 +400,8 @@ var _ = Describe("DeleteEndpointSlice", func() {
 			// Verify no error (graceful handling)
 			Expect(err).NotTo(HaveOccurred())
 
-			// iptables rules should be deleted even though namespace lookup failed
-			verifyIPTablesRule(iptV4, "10.96.0.10", 80, 30090, false, "iptables rule should be deleted even when namespace lookup fails")
+			// nftables rules should be deleted even though namespace lookup failed
+			verifyNFTablesRule(nft, "10.96.0.10", 80, 30090, false, "nftables rule should be deleted even when namespace lookup fails")
 		})
 	})
 })
@@ -395,7 +411,7 @@ var _ = Describe("SyncServices", func() {
 		fakeClient *util.OVNNodeClientset
 		watcher    *factory.WatchFactory
 		npw        *nodePortWatcher
-		iptV4      util.IPTablesHelper
+		nft        knftables.Interface
 	)
 
 	const (
@@ -423,13 +439,18 @@ var _ = Describe("SyncServices", func() {
 		err = watcher.Start()
 		Expect(err).NotTo(HaveOccurred())
 
-		iptV4, _ = util.SetFakeIPTablesHelpers()
+		nft = nodenft.SetFakeNFTablesHelper()
 		npw = initFakeNodePortWatcher()
 		npw.watchFactory = watcher
 		npw.networkManager = networkmanager.Default().Interface()
 
 		k := &kube.Kube{KClient: fakeClient.KubeClient}
 		npw.nodeIPManager = newAddressManagerInternal(nodeName, k, nil, watcher, nil, nil, false)
+
+		// Since the tests here never call startNodePortWatcher(), we have to call
+		// initGatewayNFTables() ourselves to set up the sets, maps, etc.
+		err = initGatewayNFTables()
+		Expect(err).NotTo(HaveOccurred())
 	})
 
 	AfterEach(func() {
@@ -453,8 +474,8 @@ var _ = Describe("SyncServices", func() {
 			err := npw.SyncServices([]interface{}{service})
 			Expect(err).NotTo(HaveOccurred())
 
-			verifyIPTablesRule(iptV4, "10.96.0.20", 80, 30091, false,
-				"iptables rule should not be created when primary network is invalid")
+			verifyNFTablesRule(nft, "10.96.0.20", 80, 30091, false,
+				"nftables rule should not be created when primary network is invalid")
 		})
 	})
 
@@ -475,8 +496,8 @@ var _ = Describe("SyncServices", func() {
 			err := npw.SyncServices([]interface{}{service})
 			Expect(err).NotTo(HaveOccurred())
 
-			verifyIPTablesRule(iptV4, "10.96.0.30", 80, 30092, false,
-				"iptables rule should not be created when UDN is inactive on this node")
+			verifyNFTablesRule(nft, "10.96.0.30", 80, 30092, false,
+				"nftables rule should not be created when UDN is inactive on this node")
 		})
 	})
 
@@ -532,8 +553,8 @@ var _ = Describe("SyncServices", func() {
 			err = npw.SyncServices([]interface{}{service})
 			Expect(err).NotTo(HaveOccurred())
 
-			verifyIPTablesRule(iptV4, "10.96.0.40", 80, 30093, true,
-				"iptables rule should be created when UDN is active on this node")
+			verifyNFTablesRule(nft, "10.96.0.40", 80, 30093, true,
+				"nftables rule should be created when UDN is active on this node")
 		})
 	})
 })
