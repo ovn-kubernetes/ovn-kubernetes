@@ -615,7 +615,13 @@ func addOrUpdatePodPort(ovsClient client.Client, hostIfaceName string,
 			iface.Type = "dpdk"
 			iface.MTURequest = &m
 		}
-		port := &vswitchd.Port{OtherConfig: map[string]string{"transient": "true"}}
+		// Do NOT tag the port as transient: with containerized OVS,
+		// ovsdb-server restarts on every ovs-node container restart (helm
+		// upgrade, eviction, OOM...), not just node reboot, and its
+		// --delete-transient-ports would scrub the live pod veth row from
+		// conf.db. Nothing re-adds it, so every non-hostNetwork pod on the
+		// node loses connectivity until a fresh CNI ADD.
+		port := &vswitchd.Port{}
 		ops, err := ovsops.CreateOrUpdatePodPortOps(ovsClient, nil, "br-int", hostIfaceName, port, iface)
 		if err != nil {
 			return fmt.Errorf("failed to build operations for plugging pod interface: %v", err)
@@ -632,7 +638,7 @@ func addOrUpdatePodPort(ovsClient client.Client, hostIfaceName string,
 		return nil
 	}
 	args := []string{
-		"--may-exist", "add-port", "br-int", hostIfaceName, "other_config:transient=true",
+		"--may-exist", "add-port", "br-int", hostIfaceName,
 		"--", "set", "interface", hostIfaceName,
 	}
 	// Walk extIDs in the canonical ovs-vsctl arg order that this CNI has
@@ -712,8 +718,7 @@ func ConfigureOVS(ctx context.Context, ovsClient client.Client, namespace, podNa
 		}
 	}
 
-	// Add the new sandbox's OVS port, tag the port as transient so stale
-	// pod ports are scrubbed on hard reboot
+	// Add the new sandbox's OVS port
 	extIDs := map[string]string{
 		"attached_mac": ifInfo.MAC.String(),
 		"iface-id":     ifaceID,

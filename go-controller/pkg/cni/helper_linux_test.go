@@ -1501,7 +1501,7 @@ func TestConfigureOVS(t *testing.T) {
 			// ovs-vsctl add port to br-int
 			ovsAddPortCmd := fmt.Sprintf(
 				"ovs-vsctl --timeout=30 --may-exist "+
-					"add-port br-int %s other_config:transient=true "+
+					"add-port br-int %s "+
 					"-- set interface %s external_ids:attached_mac=%s "+
 					"external_ids:iface-id=%s external_ids:iface-id-ver=%s "+
 					"external_ids:sandbox=%s ",
