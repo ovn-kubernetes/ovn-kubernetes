@@ -11,48 +11,68 @@
 #
 # So this file will change over time.
 
-FROM ubuntu:26.04
+ARG BUILDER_IMAGE
+ARG OVN_KUBERNETES_DIR=.
+ARG KUBECTL_MINOR=1.35
+ARG UBUNTU_BASE_IMAGE=ubuntu:26.04
+
+FROM --platform=${BUILDPLATFORM} ${BUILDER_IMAGE} AS ovnkube-builder
+
+ARG OVN_KUBERNETES_DIR
+ARG TARGETOS
+ARG TARGETARCH
+
+WORKDIR /workspace
+RUN dnf install --best --refresh -y make git
+COPY ${OVN_KUBERNETES_DIR} ovn-kubernetes
+RUN cd ovn-kubernetes/dist/images && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} make bld
+
+FROM ${UBUNTU_BASE_IMAGE}
+
+ARG KUBECTL_MINOR
 
 USER root
 
-RUN apt-get update && apt-get install -y iproute2 curl software-properties-common util-linux nftables
+# Install bootstrap packages, verify the Kubernetes repo signing key
+# fingerprint, then install runtime dependencies and kubectl in one layer.
+RUN apt-get update && apt-get install -y \
+    ca-certificates curl gpg iproute2 software-properties-common util-linux nftables && \
+    mkdir -p -m 755 /etc/apt/keyrings && \
+    kubectl_apt_signing_fingerprint=DE15B14486CD377B9E876E1A234654DA9A296436 && \
+    kubectl_key=/tmp/kubernetes-apt-keyring.asc && \
+    curl -fsSL https://pkgs.k8s.io/core:/stable:/v${KUBECTL_MINOR}/deb/Release.key -o "${kubectl_key}" && \
+    test "$(gpg --show-keys --with-colons "${kubectl_key}" | awk -F: '/^fpr:/ {print $10; exit}')" = "${kubectl_apt_signing_fingerprint}" && \
+    gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg "${kubectl_key}" && \
+    rm -f "${kubectl_key}" && \
+    chmod 644 /etc/apt/keyrings/kubernetes-apt-keyring.gpg && \
+    echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v${KUBECTL_MINOR}/deb/ /" > /etc/apt/sources.list.d/kubernetes.list && \
+    chmod 644 /etc/apt/sources.list.d/kubernetes.list && \
+    apt-get update && apt-get install -y \
+    openvswitch-switch openvswitch-common ovn-central ovn-common ovn-host kubectl && \
+    rm -rf /var/lib/apt/lists/*
 
-# Install OVS and OVN packages.
-RUN apt-get update && apt-get install -y openvswitch-switch openvswitch-common ovn-central ovn-common ovn-host
-
-RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
-    && install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
-
-RUN mkdir -p /var/run/openvswitch
-
-# Built in ../../go_controller, then the binaries are copied here.
+# Built in the ovnkube-builder stage, then the binaries are copied here.
 # put things where they are in the pkg
-RUN mkdir -p /usr/libexec/cni/
-COPY ovnkube ovn-kube-util hybrid-overlay-node ovnkube-identity ovnkube-observ /usr/bin/
-COPY ovn-k8s-cni-overlay /usr/libexec/cni/ovn-k8s-cni-overlay
+RUN mkdir -p /var/run/openvswitch /usr/libexec/cni/
+COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/ovnkube /workspace/ovn-kubernetes/dist/images/ovn-kube-util /workspace/ovn-kubernetes/dist/images/hybrid-overlay-node /workspace/ovn-kubernetes/dist/images/ovnkube-identity /workspace/ovn-kubernetes/dist/images/ovnkube-observ /usr/bin/
+COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/ovn-k8s-cni-overlay /usr/libexec/cni/ovn-k8s-cni-overlay
 
 # ovnkube.sh is the entry point. This script examines environment
 # variables to direct operation and configure ovn
-COPY ovnkube.sh /root/
+COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/ovnkube.sh /workspace/ovn-kubernetes/dist/images/git_info /root/
 # override the pkg's ovn_k8s.conf with this local copy
-COPY ovn_k8s.conf /etc/openvswitch/ovn_k8s.conf
-
-# copy git commit number into image
-COPY git_info /root
+COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/ovn_k8s.conf /etc/openvswitch/ovn_k8s.conf
 
 # include checked-in third-party license files in the final image
 COPY LICENSES/ /usr/share/licenses/ovn-kubernetes/
 
 # iptables wrappers
-COPY ./iptables-scripts/iptables /usr/sbin/
-COPY ./iptables-scripts/iptables-save /usr/sbin/
-COPY ./iptables-scripts/iptables-restore /usr/sbin/
-COPY ./iptables-scripts/ip6tables /usr/sbin/
-COPY ./iptables-scripts/ip6tables-save /usr/sbin/
-COPY ./iptables-scripts/ip6tables-restore /usr/sbin/
+COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/iptables-scripts/iptables /workspace/ovn-kubernetes/dist/images/iptables-scripts/iptables-save /workspace/ovn-kubernetes/dist/images/iptables-scripts/iptables-restore /workspace/ovn-kubernetes/dist/images/iptables-scripts/ip6tables /workspace/ovn-kubernetes/dist/images/iptables-scripts/ip6tables-save /workspace/ovn-kubernetes/dist/images/iptables-scripts/ip6tables-restore /usr/sbin/
 
 LABEL io.k8s.display-name="ovn-kubernetes" \
-      io.k8s.description="ovnkube ubuntu image" 
+      io.k8s.description="This is a Kubernetes network plugin that provides an overlay network using OVN." \
+      maintainer="ovn-kubernetes@googlegroups.com"
 
 WORKDIR /root
 ENTRYPOINT /root/ovnkube.sh
