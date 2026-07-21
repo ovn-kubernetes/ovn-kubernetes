@@ -65,6 +65,8 @@ global:
   enableMultiNetwork: false
   # -- Configure to use user defined networks (UDN) feature with ovn-kubernetes
   enableNetworkSegmentation: false
+  # -- Comma-separated systemd service names that may run kubelet
+  kubeletServiceNames: "kubelet.service"
   # -- Configure to use route advertisements feature with ovn-kubernetes
   enableRouteAdvertisements: false
   # -- Optional Linux routing table ID start used by ovnkube-node for generated VRF/route tables.

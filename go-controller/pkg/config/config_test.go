@@ -339,6 +339,7 @@ var _ = Describe("Config Operations", func() {
 			gomega.Expect(Default.ClusterSubnets).To(gomega.Equal([]CIDRNetworkEntry{
 				{ovntest.MustParseIPNet("10.128.0.0/14"), 23},
 			}))
+			gomega.Expect(Default.KubeletServiceNames).To(gomega.Equal([]string{"kubelet.service"}))
 			gomega.Expect(Default.Zone).To(gomega.Equal("global"))
 			gomega.Expect(IPv4Mode).To(gomega.BeTrue())
 			gomega.Expect(IPv6Mode).To(gomega.BeFalse())
@@ -1480,6 +1481,57 @@ udn-allowed-default-services= ns/svc, ns1/svc1
 			"-config-file=" + cfgFile.Name(),
 		}
 		err = app.Run(cliArgs)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	})
+
+	DescribeTable("parses kubelet service names",
+		func(raw string, expected []string) {
+			serviceNames, err := parseKubeletServiceNames(raw)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(serviceNames).To(gomega.Equal(expected))
+		},
+		Entry("one name", "kubelet.service", []string{"kubelet.service"}),
+		Entry("multiple names with whitespace and empty entries",
+			" kubelet.service, , custom-kubelet.service,",
+			[]string{"kubelet.service", "custom-kubelet.service"}),
+	)
+
+	It("rejects empty kubelet service names", func() {
+		serviceNames, err := parseKubeletServiceNames(" , , ")
+		gomega.Expect(err).To(gomega.MatchError("kubelet service names must contain at least one name"))
+		gomega.Expect(serviceNames).To(gomega.BeNil())
+	})
+
+	It("accepts configured kubelet service names", func() {
+		err := os.WriteFile(cfgFile.Name(), []byte(`[default]
+kubelet-service-names= kubelet.service, , custom-kubelet.service,
+`), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		app.Action = func(ctx *cli.Context) error {
+			_, err = InitConfig(ctx, kexec.New(), nil)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(Default.KubeletServiceNames).To(gomega.Equal(
+				[]string{"kubelet.service", "custom-kubelet.service"}))
+			return nil
+		}
+		err = app.Run([]string{app.Name, "-config-file=" + cfgFile.Name()})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	})
+
+	It("rejects configured empty kubelet service names", func() {
+		err := os.WriteFile(cfgFile.Name(), []byte(`[default]
+kubelet-service-names= , ,
+`), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		app.Action = func(ctx *cli.Context) error {
+			_, err = InitConfig(ctx, kexec.New(), nil)
+			gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring(
+				"kubelet service names must contain at least one name")))
+			return nil
+		}
+		err = app.Run([]string{app.Name, "-config-file=" + cfgFile.Name()})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	})
 	Describe("OvnDBAuth operations", func() {

@@ -115,6 +115,7 @@ var (
 		RawClusterSubnets:            "10.128.0.0/14/23",
 		Zone:                         types.OvnDefaultZone,
 		RawUDNAllowedDefaultServices: "default/kubernetes,kube-system/kube-dns",
+		RawKubeletServiceNames:       "kubelet.service",
 		Transport:                    "",
 	}
 
@@ -369,6 +370,13 @@ type DefaultConfig struct {
 	// UDNAllowedDefaultServices holds a list of namespaced names of
 	// default cluster network services accessible from primary user-defined networks
 	UDNAllowedDefaultServices []string
+
+	// RawKubeletServiceNames holds the unparsed kubelet systemd service names.
+	// It should only be used inside the config module.
+	RawKubeletServiceNames string `gcfg:"kubelet-service-names"`
+
+	// KubeletServiceNames holds the systemd service names that may run kubelet.
+	KubeletServiceNames []string
 
 	// Transport specifies the transport technology used for the default network.
 	// Accepts: "" (empty, uses OVN default overlay) or "no-overlay".
@@ -808,6 +816,7 @@ func init() {
 	savedOvsPaths = OvsPaths
 	savedNoOverlay = NoOverlay
 	savedManagedBGP = ManagedBGP
+	cliConfig.Default.RawKubeletServiceNames = savedDefault.RawKubeletServiceNames
 	cli.VersionPrinter = func(_ *cli.Context) {
 		fmt.Printf("Version: %s\n", Version)
 		fmt.Printf("Git commit: %s\n", Commit)
@@ -2619,6 +2628,11 @@ func completeDefaultConfig(allSubnets *ConfigSubnets) error {
 		return fmt.Errorf("UDN allowed services field is invalid: %v", err)
 	}
 
+	Default.KubeletServiceNames, err = parseKubeletServiceNames(Default.RawKubeletServiceNames)
+	if err != nil {
+		return fmt.Errorf("kubelet service names field is invalid: %v", err)
+	}
+
 	Default.HostMasqConntrackZone = Default.ConntrackZone + 1
 	Default.OVNMasqConntrackZone = Default.ConntrackZone + 2
 	Default.HostNodePortConntrackZone = Default.ConntrackZone + 3
@@ -2645,6 +2659,19 @@ func parseServicesNamespacedNames(servicesRaw string) ([]string, error) {
 		services = append(services, svcKey)
 	}
 	return services, nil
+}
+
+func parseKubeletServiceNames(rawServiceNames string) ([]string, error) {
+	var serviceNames []string
+	for _, rawServiceName := range strings.Split(rawServiceNames, ",") {
+		if serviceName := strings.TrimSpace(rawServiceName); serviceName != "" {
+			serviceNames = append(serviceNames, serviceName)
+		}
+	}
+	if len(serviceNames) == 0 {
+		return nil, fmt.Errorf("kubelet service names must contain at least one name")
+	}
+	return serviceNames, nil
 }
 
 // getConfigFilePath returns config file path and 'true' if the config file is
