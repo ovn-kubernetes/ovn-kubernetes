@@ -137,8 +137,11 @@ func TestNewUnmanagedBridgeConfigurationResolvesDPUHostRepresentor(t *testing.T)
 	t.Cleanup(func() {
 		util.SetSriovnetOpsInst(origSriovOps)
 	})
+	// GetDPUHostRepInterface iterates bridge ports in map order and returns on
+	// the first PF representor, so eth1 may or may not be probed before pfhpf0.
 	sriovOps.On("GetRepresentorPortFlavour", "eth1").
-		Return(sriovnet.PortFlavour(sriovnet.PORT_FLAVOUR_UNKNOWN), fmt.Errorf("not a PF representor"))
+		Return(sriovnet.PortFlavour(sriovnet.PORT_FLAVOUR_UNKNOWN), fmt.Errorf("not a PF representor")).
+		Maybe()
 	sriovOps.On("GetRepresentorPortFlavour", "pfhpf0").
 		Return(sriovnet.PortFlavour(sriovnet.PORT_FLAVOUR_PCI_PF), nil)
 
