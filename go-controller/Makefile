@@ -92,21 +92,26 @@ clean:
 
 .PHONY: lint gofmt verify-go-mod-vendor third-party-licenses verify-third-party-licenses
 
+# Absolute path to this Makefile's directory (go-controller/), so lint works when invoked
+# via `make -f <path-to-go-controller-dir>/Makefile lint` from another directory.
+GO_CONTROLLER_ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+LINT_SH := $(GO_CONTROLLER_ROOT)hack/lint.sh
+
 lint:
 ifeq ($(CONTAINER_RUNNABLE), 0)
-	@GOPATH=${GOPATH} ./hack/lint.sh $(CONTAINER_RUNTIME) || { echo "lint failed! Try running 'make lint-fix'"; exit 1; }
+	@GOPATH=${GOPATH} $(LINT_SH) $(CONTAINER_RUNTIME) || { echo "lint failed! Try running 'make lint-fix'"; exit 1; }
 else
 	echo "no container runtime. attempting to run natively";
-	@GOPATH=${GOPATH} ./hack/lint.sh run-natively || { echo "running lint locally failed!"; exit 1; }
+	@GOPATH=${GOPATH} $(LINT_SH) run-natively || { echo "running lint locally failed!"; exit 1; }
 endif
 
 lint-fix:
 ifeq ($(CONTAINER_RUNNABLE), 0)
-	@GOPATH=${GOPATH} ./hack/lint.sh $(CONTAINER_RUNTIME) fix || { echo "ERROR: lint fix failed! There is a bug that changes file ownership to root \
+	@GOPATH=${GOPATH} $(LINT_SH) $(CONTAINER_RUNTIME) fix || { echo "ERROR: lint fix failed! There is a bug that changes file ownership to root \
 	when this happens. To fix it, simply run 'chown -R <user>:<group> *' from the repo root."; exit 1; }
 else
 	echo "no container runtime. attempting to run natively w/ -fix flag";
-	@GOPATH=${GOPATH} ./hack/lint.sh run-natively fix || { echo "running lint fix locally failed! There is a bug that changes file ownership to root \
+	@GOPATH=${GOPATH} $(LINT_SH) run-natively fix || { echo "running lint fix locally failed! There is a bug that changes file ownership to root \
 	when this happens. To fix it, simply run 'chown -R <user>:<group> *' from the repo root."; exit 1; }
 endif
 
