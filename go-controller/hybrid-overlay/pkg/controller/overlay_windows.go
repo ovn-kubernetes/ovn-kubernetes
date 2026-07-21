@@ -155,7 +155,7 @@ func CreateNetworkPolicySetting(networkAdapterName string) (*hcn.NetworkPolicy, 
 		NetworkAdapterName: networkAdapterName,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed ot marshal network adapter policy: %v", err)
+		return nil, fmt.Errorf("failed to marshal network adapter policy: %v", err)
 	}
 
 	return &hcn.NetworkPolicy{

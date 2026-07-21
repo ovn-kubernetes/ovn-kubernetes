@@ -47,7 +47,7 @@ func ovnControllerReadiness(target string) error {
 	// dependent on are running and you need to use ovs-appctl via the unix control path
 	ovsdbPid, err := os.ReadFile("/var/run/openvswitch/ovsdb-server.pid")
 	if err != nil {
-		return fmt.Errorf("failed to get pid for osvdb-server process: %v", err)
+		return fmt.Errorf("failed to get pid for ovsdb-server process: %v", err)
 	}
 	ctlFile := fmt.Sprintf("/var/run/openvswitch/ovsdb-server.%s.ctl", strings.Trim(string(ovsdbPid), " \n"))
 	_, _, err = util.RunOVSAppctlWithTimeout(5, "-t", ctlFile, "ovsdb-server/list-dbs")

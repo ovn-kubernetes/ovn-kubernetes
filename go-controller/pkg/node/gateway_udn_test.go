@@ -72,45 +72,38 @@ func TestAddNetworkSemaphoreSerializesConcurrentCalls(t *testing.T) {
 	}
 
 	const workers = 5
-	var (
-		mu         sync.Mutex
-		maxRunning int
-		curRunning int
-		startOrder []int
-		wg         sync.WaitGroup
-	)
+	entered := make(chan int, workers)
+	release := make(chan struct{})
+	var wg sync.WaitGroup
 
 	wg.Add(workers)
 	for i := range workers {
 		go func(id int) {
 			defer wg.Done()
-
-			// Acquire the semaphore the same way AddNetwork does.
 			addNetworkSemaphore <- struct{}{}
 			defer func() { <-addNetworkSemaphore }()
-
-			mu.Lock()
-			curRunning++
-			if curRunning > maxRunning {
-				maxRunning = curRunning
-			}
-			startOrder = append(startOrder, id)
-			mu.Unlock()
-
-			// Simulate work that AddNetwork performs (OVS port creation, VRF, etc.)
-			time.Sleep(10 * time.Millisecond)
-
-			mu.Lock()
-			curRunning--
-			mu.Unlock()
+			entered <- id
+			<-release
 		}(i)
+	}
+
+	var startOrder []int
+	for range workers {
+		id := <-entered
+		startOrder = append(startOrder, id)
+		// At this point exactly one worker holds the semaphore.
+		// If serialization were broken, multiple ids would arrive
+		// on `entered` before we send on `release`.
+		select {
+		case extra := <-entered:
+			t.Fatalf("worker %d entered while worker %d still held the semaphore", extra, id)
+		default:
+		}
+		release <- struct{}{}
 	}
 
 	wg.Wait()
 
-	if maxRunning != 1 {
-		t.Errorf("expected max concurrency of 1, got %d", maxRunning)
-	}
 	if len(startOrder) != workers {
 		t.Errorf("expected %d completions, got %d", workers, len(startOrder))
 	}
