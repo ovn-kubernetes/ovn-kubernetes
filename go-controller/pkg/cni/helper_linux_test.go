@@ -27,7 +27,9 @@ import (
 	"sigs.k8s.io/knftables"
 
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
+	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
+	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	cni_type_mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/containernetworking/cni/pkg/types"
 	cni_ns_mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/containernetworking/plugins/pkg/ns"
 	netlink_mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/vishvananda/netlink"
@@ -36,6 +38,7 @@ import (
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	util_mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
 
 func TestRenameLink(t *testing.T) {
@@ -1748,4 +1751,54 @@ func genIfaceID(podNamespace, podName string) string {
 
 func genOfctlDumpFlowsCmd(queryStr string) string {
 	return fmt.Sprintf("ovs-ofctl --timeout=10 --no-stats --strict dump-flows br-int %s", queryStr)
+}
+
+// Upgrade scenario: pod ports created by versions that still tagged them
+// other_config:transient=true must have the marker stripped at startup, or
+// the next ovsdb-server restart (--delete-transient-ports) scrubs them.
+func TestClearPodPortsLegacyTransient(t *testing.T) {
+	podIfaceUUID := "pod-iface-uuid"
+	podPortUUID := "pod-port-uuid"
+	cleanIfaceUUID := "clean-iface-uuid"
+	cleanPortUUID := "clean-port-uuid"
+	uplinkIfaceUUID := "uplink-iface-uuid"
+	uplinkPortUUID := "uplink-port-uuid"
+
+	// legacy pod port: sandbox external-id + transient marker -> must be cleared
+	podIface := &vswitchd.Interface{UUID: podIfaceUUID, Name: "veth-legacy",
+		ExternalIDs: map[string]string{"sandbox": "abc123", "iface-id": "ns_pod"}}
+	podPort := &vswitchd.Port{UUID: podPortUUID, Name: "veth-legacy", Interfaces: []string{podIfaceUUID},
+		OtherConfig: map[string]string{"transient": "true", "unmanaged": "keep"}}
+	// post-fix pod port: sandbox but no transient -> untouched
+	cleanIface := &vswitchd.Interface{UUID: cleanIfaceUUID, Name: "veth-clean",
+		ExternalIDs: map[string]string{"sandbox": "def456", "iface-id": "ns_pod2"}}
+	cleanPort := &vswitchd.Port{UUID: cleanPortUUID, Name: "veth-clean", Interfaces: []string{cleanIfaceUUID}}
+	// host uplink port: transient but no sandbox -> must keep its marker
+	uplinkIface := &vswitchd.Interface{UUID: uplinkIfaceUUID, Name: "eno1"}
+	uplinkPort := &vswitchd.Port{UUID: uplinkPortUUID, Name: "eno1", Interfaces: []string{uplinkIfaceUUID},
+		OtherConfig: map[string]string{"transient": "true"}}
+
+	brInt := &vswitchd.Bridge{UUID: "br-int-uuid", Name: "br-int", Ports: []string{podPortUUID, cleanPortUUID}}
+	brEx := &vswitchd.Bridge{UUID: "br-ex-uuid", Name: "br-ex", Ports: []string{uplinkPortUUID}}
+	ovs := &vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{"br-int-uuid", "br-ex-uuid"}}
+
+	ovsClient, cleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
+		OVSData: []libovsdbtest.TestData{ovs, brInt, brEx, podPort, podIface, cleanPort, cleanIface, uplinkPort, uplinkIface},
+	})
+	require.NoError(t, err)
+	t.Cleanup(cleanup.Cleanup)
+
+	require.NoError(t, ClearPodPortsLegacyTransient(ovsClient))
+
+	got, err := ovsops.GetOVSPort(ovsClient, "veth-legacy")
+	require.NoError(t, err)
+	assert.NotContains(t, got.OtherConfig, "transient")
+	assert.Equal(t, "keep", got.OtherConfig["unmanaged"])
+
+	got, err = ovsops.GetOVSPort(ovsClient, "eno1")
+	require.NoError(t, err)
+	assert.Equal(t, "true", got.OtherConfig["transient"])
+
+	// idempotent on a second run
+	require.NoError(t, ClearPodPortsLegacyTransient(ovsClient))
 }

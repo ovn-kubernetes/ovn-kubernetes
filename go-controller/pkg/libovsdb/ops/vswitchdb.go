@@ -406,6 +406,28 @@ func RemoveOVSInterfaceExternalIDsOps(ovsClient libovsdbclient.Client, ops []ovs
 	return m.DeleteOps(ops, opModel)
 }
 
+// RemoveOVSPortOtherConfig removes the given keys from a Port's
+// other_config. Missing keys and a missing port are no-ops. This is the
+// libovsdb equivalent of `ovs-vsctl remove Port <name> other_config <key>`.
+func RemoveOVSPortOtherConfig(ovsClient libovsdbclient.Client, name string, keys ...string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	cfg := make(map[string]string, len(keys))
+	for _, key := range keys {
+		cfg[key] = ""
+	}
+	port := &vswitchd.Port{Name: name, OtherConfig: cfg}
+	opModel := operationModel{
+		Model:            port,
+		OnModelMutations: []interface{}{&port.OtherConfig},
+		ErrNotFound:      false,
+		BulkOp:           false,
+	}
+	m := newModelClient(ovsClient)
+	return m.Delete(opModel)
+}
+
 // ListInterfaces looks up all OVS interfaces from the cache. This is the
 // libovsdb equivalent of `ovs-vsctl list Interface`.
 func ListInterfaces(ovsClient libovsdbclient.Client) ([]*vswitchd.Interface, error) {
