@@ -64,6 +64,82 @@ import (
 	. "github.com/onsi/gomega"
 )
 
+func TestAddNetworkSemaphoreSerializesConcurrentCalls(t *testing.T) {
+	// Drain the semaphore in case a previous test left it occupied.
+	select {
+	case <-addNetworkSemaphore:
+	default:
+	}
+
+	const workers = 5
+	var (
+		mu         sync.Mutex
+		maxRunning int
+		curRunning int
+		startOrder []int
+		wg         sync.WaitGroup
+	)
+
+	wg.Add(workers)
+	for i := range workers {
+		go func(id int) {
+			defer wg.Done()
+
+			// Acquire the semaphore the same way AddNetwork does.
+			addNetworkSemaphore <- struct{}{}
+			defer func() { <-addNetworkSemaphore }()
+
+			mu.Lock()
+			curRunning++
+			if curRunning > maxRunning {
+				maxRunning = curRunning
+			}
+			startOrder = append(startOrder, id)
+			mu.Unlock()
+
+			// Simulate work that AddNetwork performs (OVS port creation, VRF, etc.)
+			time.Sleep(10 * time.Millisecond)
+
+			mu.Lock()
+			curRunning--
+			mu.Unlock()
+		}(i)
+	}
+
+	wg.Wait()
+
+	if maxRunning != 1 {
+		t.Errorf("expected max concurrency of 1, got %d", maxRunning)
+	}
+	if len(startOrder) != workers {
+		t.Errorf("expected %d completions, got %d", workers, len(startOrder))
+	}
+}
+
+func TestAddNetworkSemaphoreReleasedOnReturn(t *testing.T) {
+	// Drain the semaphore in case a previous test left it occupied.
+	select {
+	case <-addNetworkSemaphore:
+	default:
+	}
+
+	// Simulate two sequential acquires to confirm the semaphore is properly
+	// released after each use (mirrors the defer pattern in AddNetwork).
+	for i := 0; i < 3; i++ {
+		done := make(chan struct{})
+		go func() {
+			addNetworkSemaphore <- struct{}{}
+			defer close(done)
+			defer func() { <-addNetworkSemaphore }()
+		}()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("iteration %d: semaphore was not released from previous use", i)
+		}
+	}
+}
+
 func getCreationFakeCommands(fexec *ovntest.FakeExec, mgtPort, mgtPortMAC, netName, nodeName string, mtu int) {
 	fexec.AddFakeCmdsNoOutputNoError([]string{
 		"ovs-vsctl --timeout=15" +
