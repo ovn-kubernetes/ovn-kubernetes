@@ -529,7 +529,7 @@ jobs:
     needs: [ build-pr, build-pr-ubuntu ]
     if: ${{ !cancelled() }}
     env:
-      JOB_NAME: "${{ matrix.target }}-${{ matrix.ha }}-${{ matrix.gateway-mode }}-${{ matrix.ipfamily }}-${{ matrix.disable-snat-multiple-gws }}-${{ matrix.second-bridge }}-${{ matrix.ic }}"
+      JOB_NAME: "${{ matrix.target }}-${{ matrix.ha }}-${{ matrix.gateway-mode }}-${{ matrix.ipfamily }}-${{ matrix.disable-snat-multiple-gws }}-${{ matrix.second-bridge }}-${{ matrix.ic }}-${{ matrix.image_family || 'fedora' }}"
       OVN_HYBRID_OVERLAY_ENABLE: ${{ matrix.target == 'control-plane' && (matrix.ipfamily == 'ipv4' || matrix.ipfamily == 'dualstack' ) }}
       OVN_MULTICAST_ENABLE:  "${{ matrix.target == 'control-plane' || startsWith(matrix.target, 'network-segmentation') || startsWith(matrix.target, 'bgp') }}"
       OVN_EMPTY_LB_EVENTS: "${{ matrix.target == 'control-plane' || startsWith(matrix.target, 'bgp') }}"
