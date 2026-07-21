@@ -47,8 +47,13 @@ func NewController(recorder record.EventRecorder, serviceInformer cache.SharedIn
 	}
 
 	klog.Info("Registering OVN SB ControllerEvent handler")
+	sbCache := sbClient.Cache()
+	if sbCache == nil {
+		// the client cache is only available once the client is connected
+		return nil, fmt.Errorf("SB DB client is not connected, no cache to register the ControllerEvent handler on")
+	}
 	// add all empty lb backend events to a channel
-	sbClient.Cache().AddEventHandler(
+	sbCache.AddEventHandler(
 		&libovsdbcache.EventHandlerFuncs{
 			AddFunc: func(_ string, m model.Model) {
 				if event, ok := m.(*sbdb.ControllerEvent); ok {

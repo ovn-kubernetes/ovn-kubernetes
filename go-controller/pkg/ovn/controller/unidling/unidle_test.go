@@ -45,6 +45,27 @@ var _ = Describe("Unidling Controller", func() {
 		}
 	})
 
+	It("should fail creation when the SB client is not connected", func() {
+		client := fake.NewSimpleClientset()
+		recorder := record.NewFakeRecorder(10)
+		informerFactory := informers.NewSharedInformerFactory(client, 0)
+		serviceInformer := informerFactory.Core().V1().Services().Informer()
+
+		// an SB client that was never connected has a nil cache
+		dbModel, err := sbdb.FullDatabaseModel()
+		Expect(err).NotTo(HaveOccurred())
+		sbClient, err := libovsdbclient.NewOVSDBClient(dbModel)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(sbClient.Cache()).To(BeNil())
+
+		_, err = NewController(
+			recorder,
+			serviceInformer,
+			sbClient,
+		)
+		Expect(err).To(MatchError(ContainSubstring("not connected")))
+	})
+
 	It("should respond to a controller event", func() {
 		client := fake.NewSimpleClientset()
 		recorder := record.NewFakeRecorder(10)
