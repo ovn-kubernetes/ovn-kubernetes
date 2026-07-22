@@ -897,15 +897,23 @@ func (udng *UserDefinedNetworkGateway) computeRoutesForUDN(mpLink netlink.Link) 
 				})
 				continue
 			}
+			// Route every cluster subnet of the same IP family via this
+			// node's gateway IP into OVN. A multi-subnet Layer3 UDN has more
+			// than one cluster subnet; routing only the subnet that contains
+			// the local gateway IP left host-networked traffic destined to
+			// pods on the network's other cluster subnets without a route
+			// into OVN, so it fell through to the VRF default route and left
+			// the node via the external gateway.
 			for _, clusterSubnet := range udng.Subnets() {
-				if clusterSubnet.CIDR.Contains(gwIP.IP) {
-					retVal = append(retVal, netlink.Route{
-						LinkIndex: mpLink.Attrs().Index,
-						Dst:       clusterSubnet.CIDR,
-						Gw:        gwIP.IP,
-						Table:     udng.vrfTableId,
-					})
+				if utilnet.IsIPv6CIDR(clusterSubnet.CIDR) != utilnet.IsIPv6(gwIP.IP) {
+					continue
 				}
+				retVal = append(retVal, netlink.Route{
+					LinkIndex: mpLink.Attrs().Index,
+					Dst:       clusterSubnet.CIDR,
+					Gw:        gwIP.IP,
+					Table:     udng.vrfTableId,
+				})
 			}
 		}
 	}
