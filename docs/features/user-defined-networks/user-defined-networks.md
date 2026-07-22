@@ -502,6 +502,34 @@ k8s.ovn.org/open-default-ports: |
 which means we open up allow ACLs and nftrules to allow traffic
 to reach at those ports.
 
+#### When kubelet probes to UDN pods are not supported
+
+The `socket cgroupv2` match above needs kubelet to run in a cgroup that
+ovnkube-node can find, and it needs the kernel to support the match. That is not
+always the case:
+
+- kubelet is not managed by systemd, so there is no `kubelet.service` cgroup.
+  On Talos Linux, for example, kubelet runs under `podruntime/kubelet`.
+- the node still uses cgroup v1.
+- the kernel was built without `CONFIG_NFT_SOCKET`, so nftables has no socket
+  match at all, so the rule cannot be loaded even when the cgroup path is found.
+  Talos Linux 1.12 ships such a kernel.
+
+In those cases ovnkube-node still isolates UDN pods from the host, but leaves
+out the rule that lets kubelet through. It logs a warning and reports a
+`UDNKubeletProbesNotSupported` event on the node. `httpGet` and `tcpSocket`
+probes to primary UDN pods are dropped, and there are two ways around that:
+
+- use `exec` probes, which run inside the pod and never cross the host network,
+  or
+- open the probe ports with the `open-default-ports` annotation shown above.
+  Note that this lets any host process reach those ports, not only kubelet.
+
+On a host that does not run systemd at all, also set
+`global.hostHasSystemd=false` in the helm chart. Otherwise the ovnkube-node pod
+fails to start, because the host `/run/systemd/private` socket it mounts does
+not exist.
+
 ### Overlapping PodIPs
 
 Two networks can have the same subnet since they are completely
