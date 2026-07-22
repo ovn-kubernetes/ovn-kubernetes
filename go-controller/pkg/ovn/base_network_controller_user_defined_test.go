@@ -598,7 +598,7 @@ func newAdvertisedSNATTestControllerForTopology(
 		watchFactory.NamespaceInformer(),
 		watchFactory.NodeCoreInformer(),
 		nbClient,
-		networkmanager.Default().Interface().GetNetworkNameForNADKey,
+		networkmanager.Default().Interface(),
 	)
 	return &BaseUserDefinedNetworkController{
 			BaseNetworkController: BaseNetworkController{

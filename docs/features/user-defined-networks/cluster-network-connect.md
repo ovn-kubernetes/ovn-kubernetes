@@ -391,6 +391,18 @@ for the full specification.
 | `ServiceNetwork` | ClusterIP services are accessible across connected networks, but pods cannot reach each other directly. NodePort and LoadBalancer services are already reachable across UDNs by default. |
 | Both | Full pod + service connectivity. |
 
+### Network Policies
+
+For CNCs with `PodNetwork` connectivity, Kubernetes NetworkPolicy peer
+selectors resolve pods on the policy's network and on its directly connected
+networks. This allows a `namespaceSelector`, optionally combined with a
+`podSelector`, to allow ingress from or egress to pods on another connected
+primary UDN. Policy peer selection follows CNC's non-transitive model and does
+not expand across `ServiceNetwork`-only connections.
+
+The policy itself remains scoped to the primary network of its namespace. CNC
+does not cause that policy to be installed on the connected peer networks.
+
 ### Sizing `connectSubnets`
 
 The `connectSubnets` CIDR and `networkPrefix` control how many networks
@@ -560,12 +572,6 @@ Routing Policies
 
 ## Known Issues
 
-* **Network Policies do not span connected networks**: Network Policy
-  peers cannot currently be selected across connected networks. If two
-  UDNs are connected via CNC, a NetworkPolicy in one network cannot
-  reference pods in the other network as ingress/egress peers. Handling
-  overlapping IPs across connected networks is also not yet supported.
-  See [#6331](https://github.com/ovn-kubernetes/ovn-kubernetes/issues/6331).
 * **Advertised networks are not supported in isolated mode**: Connecting
   two BGP-advertised networks that use geneve tunnels for east-west
   traffic is not yet supported. See

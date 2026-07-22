@@ -176,6 +176,19 @@ type testNetworkRefReconciler struct {
 	}
 }
 
+type testPodNetworkConnectReconciler struct {
+	updates chan string
+}
+
+func (tr *testPodNetworkConnectReconciler) ReconcilePodNetworkConnect(networkNames []string) {
+	if tr == nil || tr.updates == nil {
+		return
+	}
+	for _, networkName := range networkNames {
+		tr.updates <- networkName
+	}
+}
+
 func (tr *testNetworkRefReconciler) Reconcile(node, networkName string) {
 	if tr == nil || tr.updates == nil {
 		return
@@ -1919,7 +1932,60 @@ func TestNodeHasNetworkIncludesCNCConnectivity(t *testing.T) {
 	g.Expect(nc.NodeHasNetwork("node1", "net-c")).To(gomega.BeFalse())
 }
 
-func TestSyncCNCIncludesClusterIPServiceConnectivity(t *testing.T) {
+func TestGetPodNetworkConnectedNetworksReturnsOnlyDirectPeers(t *testing.T) {
+	g := gomega.NewWithT(t)
+	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+
+	newPrimaryNetwork := func(name, subnet string, networkID int) util.MutableNetInfo {
+		netInfo, err := util.NewNetInfo(&ovncnitypes.NetConf{
+			NetConf: cnitypes.NetConf{
+				Name: name,
+				Type: "ovn-k8s-cni-overlay",
+			},
+			Topology: types.Layer2Topology,
+			Role:     types.NetworkRolePrimary,
+			Subnets:  subnet,
+		})
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+		mutableNetInfo := util.NewMutableNetInfo(netInfo)
+		mutableNetInfo.SetNetworkID(networkID)
+		return mutableNetInfo
+	}
+
+	networks := map[string]util.MutableNetInfo{
+		"net-a": newPrimaryNetwork("net-a", "10.1.0.0/24", 1),
+		"net-b": newPrimaryNetwork("net-b", "10.2.0.0/24", 2),
+		"net-c": newPrimaryNetwork("net-c", "10.3.0.0/24", 3),
+	}
+	networkIDAllocator := id.NewIDAllocator("NetworkIDs", MaxNetworks)
+	g.Expect(networkIDAllocator.ReserveID(types.DefaultNetworkName, types.DefaultNetworkID)).To(gomega.Succeed())
+	for networkName, netInfo := range networks {
+		g.Expect(networkIDAllocator.ReserveID(networkName, netInfo.GetNetworkID())).To(gomega.Succeed())
+	}
+
+	nc := &nadController{
+		networkIDAllocator: networkIDAllocator,
+		networkController: &networkController{
+			networks: networks,
+			networksByID: map[int]string{
+				1: "net-a",
+				2: "net-b",
+				3: "net-c",
+			},
+		},
+		cncPodNetworkConnectedNetworks: map[string]sets.Set[string]{
+			"net-a": sets.New[string]("net-b"),
+			"net-b": sets.New[string]("net-a", "net-c"),
+			"net-c": sets.New[string]("net-b"),
+		},
+	}
+
+	connectedNetworks := nc.GetPodNetworkConnectedNetworks("net-a")
+	g.Expect(connectedNetworks).To(gomega.HaveLen(1))
+	g.Expect(connectedNetworks[0].GetNetworkName()).To(gomega.Equal("net-b"))
+}
+
+func TestSyncCNCDistinguishesServiceAndPodNetworkConnectivity(t *testing.T) {
 	g := gomega.NewWithT(t)
 
 	networkIDAllocator := id.NewIDAllocator("NetworkIDs", MaxNetworks)
@@ -1947,17 +2013,36 @@ func TestSyncCNCIncludesClusterIPServiceConnectivity(t *testing.T) {
 			"net-a": sets.New[string](),
 			"net-b": sets.New[string](),
 		},
-		cncConnectedNetworks: map[string]sets.Set[string]{},
+		cncConnectedNetworks:           map[string]sets.Set[string]{},
+		cncPodNetworkConnectedNetworks: map[string]sets.Set[string]{},
 		cncLister: &fakeCNCLister{
 			cncs: map[string]*networkconnectv1.ClusterNetworkConnect{
 				cnc.Name: cnc,
 			},
 		},
 	}
+	updates := make(chan string, 4)
+	reconcilerID := nc.RegisterPodNetworkConnectReconciler(&testPodNetworkConnectReconciler{updates: updates})
+	defer nc.DeRegisterPodNetworkConnectReconciler(reconcilerID)
 
 	g.Expect(nc.syncAllCNCs()).To(gomega.Succeed())
 	g.Expect(nc.cncConnectedNetworks["net-a"].Has("net-b")).To(gomega.BeTrue())
 	g.Expect(nc.cncConnectedNetworks["net-b"].Has("net-a")).To(gomega.BeTrue())
+	g.Expect(nc.cncPodNetworkConnectedNetworks).To(gomega.BeEmpty())
+	g.Consistently(updates, 100*time.Millisecond).ShouldNot(gomega.Receive())
+
+	cnc.Spec.Connectivity = []networkconnectv1.ConnectivityType{networkconnectv1.PodNetwork}
+	g.Expect(nc.syncCNC(cnc.Name)).To(gomega.Succeed())
+	g.Expect(nc.cncPodNetworkConnectedNetworks["net-a"].Has("net-b")).To(gomega.BeTrue())
+	g.Expect(nc.cncPodNetworkConnectedNetworks["net-b"].Has("net-a")).To(gomega.BeTrue())
+	g.Eventually(updates, time.Second).Should(gomega.Receive(gomega.Equal("net-a")))
+	g.Eventually(updates, time.Second).Should(gomega.Receive(gomega.Equal("net-b")))
+
+	cnc.Spec.Connectivity = []networkconnectv1.ConnectivityType{networkconnectv1.ServiceNetwork}
+	g.Expect(nc.syncCNC(cnc.Name)).To(gomega.Succeed())
+	g.Expect(nc.cncPodNetworkConnectedNetworks).To(gomega.BeEmpty())
+	g.Eventually(updates, time.Second).Should(gomega.Receive(gomega.Equal("net-a")))
+	g.Eventually(updates, time.Second).Should(gomega.Receive(gomega.Equal("net-b")))
 }
 
 func TestSyncCNCSyncsOnlyRequestedCNC(t *testing.T) {

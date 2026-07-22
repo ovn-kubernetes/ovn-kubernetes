@@ -43,6 +43,12 @@ type NetworkRefReconciler interface {
 	Reconcile(node string, networkName string)
 }
 
+// PodNetworkConnectReconciler is notified when the direct PodNetwork peers of
+// a network change because of a ClusterNetworkConnect update.
+type PodNetworkConnectReconciler interface {
+	ReconcilePodNetworkConnect(networkNames []string)
+}
+
 type watchFactory interface {
 	NADInformer() nadinformers.NetworkAttachmentDefinitionInformer
 	ClusterNetworkConnectInformer() networkconnectinformer.ClusterNetworkConnectInformer
@@ -114,6 +120,15 @@ type Interface interface {
 	RegisterNetworkRefReconciler(r NetworkRefReconciler) uint64
 	// DeRegisterNetworkRefReconciler removes a previously registered reconciler.
 	DeRegisterNetworkRefReconciler(id uint64)
+	// GetPodNetworkConnectedNetworks returns copies of the networks directly
+	// connected to networkName by a CNC with PodNetwork connectivity. CNC
+	// connectivity is intentionally non-transitive.
+	GetPodNetworkConnectedNetworks(networkName string) []util.NetInfo
+	// RegisterPodNetworkConnectReconciler registers a reconciler to be notified
+	// when a network's direct PodNetwork CNC peers change.
+	RegisterPodNetworkConnectReconciler(r PodNetworkConnectReconciler) uint64
+	// DeRegisterPodNetworkConnectReconciler removes a previously registered reconciler.
+	DeRegisterPodNetworkConnectReconciler(id uint64)
 
 	// GetNetworkByID returns the network with the given ID or nil if not found.
 	// This is an O(1) lookup using an internal index.
@@ -157,6 +172,7 @@ func NewForCluster(
 		recorder,
 		tunnelKeysAllocator,
 		"",
+		false,
 	)
 }
 
@@ -180,6 +196,7 @@ func NewForZone(
 		nil,
 		nil,
 		z,
+		true,
 	)
 }
 
@@ -199,6 +216,7 @@ func NewForNode(
 		nil,
 		nil,
 		node,
+		false,
 	)
 }
 
@@ -215,8 +233,9 @@ func new(
 	recorder record.EventRecorder,
 	tunnelKeysAllocator *id.TunnelKeysAllocator,
 	filterNADsOnNode string,
+	trackPodNetworkConnect bool,
 ) (Controller, error) {
-	return newController(name, zone, node, cm, wf, ovnClient, recorder, tunnelKeysAllocator, filterNADsOnNode)
+	return newController(name, zone, node, cm, wf, ovnClient, recorder, tunnelKeysAllocator, filterNADsOnNode, trackPodNetworkConnect)
 }
 
 // ControllerManager manages controllers. Needs to be provided in order to build
@@ -329,6 +348,16 @@ func (nm defaultNetworkManager) RegisterNetworkRefReconciler(_ NetworkRefReconci
 }
 
 func (nm defaultNetworkManager) DeRegisterNetworkRefReconciler(_ uint64) {}
+
+func (nm defaultNetworkManager) GetPodNetworkConnectedNetworks(_ string) []util.NetInfo {
+	return nil
+}
+
+func (nm defaultNetworkManager) RegisterPodNetworkConnectReconciler(_ PodNetworkConnectReconciler) uint64 {
+	return 0
+}
+
+func (nm defaultNetworkManager) DeRegisterPodNetworkConnectReconciler(_ uint64) {}
 
 func (nm defaultNetworkManager) GetNetworkByID(id int) util.NetInfo {
 	if id != types.DefaultNetworkID {
