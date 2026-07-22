@@ -103,6 +103,7 @@ type Layer3Subnet struct {
 // +kubebuilder:validation:XValidation:rule="has(self.ipam) && has(self.ipam.mode) && self.ipam.mode != 'Enabled' || has(self.subnets)", message="Subnets is required with ipam.mode is Enabled or unset"
 // +kubebuilder:validation:XValidation:rule="!has(self.ipam) || !has(self.ipam.mode) || self.ipam.mode != 'Disabled' || !has(self.subnets)", message="Subnets must be unset when ipam.mode is Disabled"
 // +kubebuilder:validation:XValidation:rule="!has(self.ipam) || !has(self.ipam.mode) || self.ipam.mode != 'Disabled' || self.role == 'Secondary'", message="Disabled ipam.mode is only supported for Secondary network"
+// +kubebuilder:validation:XValidation:rule="!has(self.ipam) || !has(self.ipam.mode) || self.ipam.mode != 'DHCP'", message="DHCP ipam.mode is not supported for Layer2 topology, use Localnet topology instead"
 // +kubebuilder:validation:XValidation:rule="!has(self.joinSubnets) || has(self.role) && self.role == 'Primary'", message="JoinSubnets is only supported for Primary network"
 // +kubebuilder:validation:XValidation:rule="!has(self.subnets) || !has(self.mtu) || !self.subnets.exists_one(i, isCIDR(i) && cidr(i).ip().family() == 6) || self.mtu >= 1280", message="MTU should be greater than or equal to 1280 when IPv6 subnet is used"
 // +kubebuilder:validation:XValidation:rule="!has(self.defaultGatewayIPs) || has(self.role) && self.role == 'Primary'", message="defaultGatewayIPs is only supported for Primary network"
@@ -207,6 +208,10 @@ type IPAMConfig struct {
 	// `Disabled` means OVN-Kubernetes will only assign MAC addresses and provide layer 2 communication, letting users
 	// configure IP addresses for the pods.
 	// `Disabled` is only available for Secondary networks.
+	// `DHCP` delegates IP assignment to a DHCP server reachable on the physical network; OVN-Kubernetes
+	// does not allocate addresses. Lease acquisition depends on the workload type: regular pods use the
+	// DHCP CNI plugin on the node, while KubeVirt virtual machines run a DHCP client inside the guest OS.
+	// Only supported for Localnet Secondary networks.
 	// By disabling IPAM, any Kubernetes features that rely on selecting pods by IP will no longer function
 	// (such as network policy, services, etc). Additionally, IP port security will also be disabled for interfaces attached to this network.
 	// Defaults to `Enabled`.
@@ -223,12 +228,13 @@ type IPAMConfig struct {
 	Lifecycle NetworkIPAMLifecycle `json:"lifecycle,omitempty"`
 }
 
-// +kubebuilder:validation:Enum=Enabled;Disabled
+// +kubebuilder:validation:Enum=Enabled;Disabled;DHCP
 type IPAMMode string
 
 const (
 	IPAMEnabled  IPAMMode = "Enabled"
 	IPAMDisabled IPAMMode = "Disabled"
+	IPAMDHCP     IPAMMode = "DHCP"
 )
 
 type NetworkRole string

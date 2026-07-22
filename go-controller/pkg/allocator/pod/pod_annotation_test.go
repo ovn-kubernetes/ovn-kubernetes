@@ -271,6 +271,21 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 		t.Fatalf("failed to generate random mac")
 	}
 
+	localnetNetInfo := func(ipamType string) util.NetInfo {
+		netInfo, err := util.NewNetInfo(&ovncnitypes.NetConf{
+			Topology: types.LocalnetTopology,
+			NetConf: cnitypes.NetConf{
+				Name: "network",
+				IPAM: cnitypes.IPAM{Type: ipamType},
+			},
+			NADName: util.GetNADName("namespace", "network"),
+		})
+		if err != nil {
+			t.Fatalf("failed to create NetInfo: %v", err)
+		}
+		return netInfo
+	}
+
 	type args struct {
 		ipAllocator subnet.NamedAllocator
 		idAllocator id.NamedAllocator
@@ -1297,6 +1312,36 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 			},
 			wantReservedMAC:          requestedMACParsed,
 			wantReleaseMACOnRollback: nil,
+		},
+		{
+			// on localnet networks configured with ipam.type "dhcp", the IPAM
+			// mode is surfaced in the pod annotation so downstream consumers
+			// know that IPAM is external
+			name:    "expect IPAM mode dhcp, localnet network with dhcp ipam.type",
+			netInfo: localnetNetInfo("dhcp"),
+			nadName: util.GetNADName("namespace", "network"),
+			args: args{
+				network: &nadapi.NetworkSelectionElement{MacRequest: requestedMAC},
+			},
+			wantUpdatedPod: true,
+			wantPodAnnotation: &util.PodAnnotation{
+				MAC:      requestedMACParsed,
+				IPAMMode: "dhcp",
+			},
+		},
+		{
+			// on localnet networks without ipam.type, no IPAM mode is set in
+			// the pod annotation
+			name:    "expect empty IPAM mode, localnet network without ipam.type",
+			netInfo: localnetNetInfo(""),
+			nadName: util.GetNADName("namespace", "network"),
+			args: args{
+				network: &nadapi.NetworkSelectionElement{MacRequest: requestedMAC},
+			},
+			wantUpdatedPod: true,
+			wantPodAnnotation: &util.PodAnnotation{
+				MAC: requestedMACParsed,
+			},
 		},
 	}
 	for _, tt := range tests {

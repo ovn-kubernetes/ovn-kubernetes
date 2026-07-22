@@ -314,12 +314,17 @@ spec:
                               `Disabled` means OVN-Kubernetes will only assign MAC addresses and provide layer 2 communication, letting users
                               configure IP addresses for the pods.
                               `Disabled` is only available for Secondary networks.
+                              `DHCP` delegates IP assignment to a DHCP server reachable on the physical network; OVN-Kubernetes
+                              does not allocate addresses. Lease acquisition depends on the workload type: regular pods use the
+                              DHCP CNI plugin on the node, while KubeVirt virtual machines run a DHCP client inside the guest OS.
+                              Only supported for Localnet Secondary networks.
                               By disabling IPAM, any Kubernetes features that rely on selecting pods by IP will no longer function
                               (such as network policy, services, etc). Additionally, IP port security will also be disabled for interfaces attached to this network.
                               Defaults to `Enabled`.
                             enum:
                             - Enabled
                             - Disabled
+                            - DHCP
                             type: string
                         type: object
                         x-kubernetes-validations:
@@ -422,6 +427,10 @@ spec:
                         network
                       rule: '!has(self.ipam) || !has(self.ipam.mode) || self.ipam.mode
                         != ''Disabled'' || self.role == ''Secondary'''
+                    - message: DHCP ipam.mode is not supported for Layer2 topology,
+                        use Localnet topology instead
+                      rule: '!has(self.ipam) || !has(self.ipam.mode) || self.ipam.mode
+                        != ''DHCP'''
                     - message: JoinSubnets is only supported for Primary network
                       rule: '!has(self.joinSubnets) || has(self.role) && self.role
                         == ''Primary'''
@@ -672,12 +681,17 @@ spec:
                               `Disabled` means OVN-Kubernetes will only assign MAC addresses and provide layer 2 communication, letting users
                               configure IP addresses for the pods.
                               `Disabled` is only available for Secondary networks.
+                              `DHCP` delegates IP assignment to a DHCP server reachable on the physical network; OVN-Kubernetes
+                              does not allocate addresses. Lease acquisition depends on the workload type: regular pods use the
+                              DHCP CNI plugin on the node, while KubeVirt virtual machines run a DHCP client inside the guest OS.
+                              Only supported for Localnet Secondary networks.
                               By disabling IPAM, any Kubernetes features that rely on selecting pods by IP will no longer function
                               (such as network policy, services, etc). Additionally, IP port security will also be disabled for interfaces attached to this network.
                               Defaults to `Enabled`.
                             enum:
                             - Enabled
                             - Disabled
+                            - DHCP
                             type: string
                         type: object
                         x-kubernetes-validations:
@@ -800,6 +814,9 @@ spec:
                         and forbidden otherwise
                       rule: '!has(self.ipam) || !has(self.ipam.mode) || self.ipam.mode
                         == ''Enabled'' ? has(self.subnets) : !has(self.subnets)'
+                    - message: DHCP ipam.mode is only supported for Secondary network
+                      rule: '!has(self.ipam) || !has(self.ipam.mode) || self.ipam.mode
+                        != ''DHCP'' || self.role == ''Secondary'''
                     - message: excludeSubnets must be unset when subnets is unset
                       rule: '!has(self.excludeSubnets) || has(self.subnets)'
                     - message: MTU should be greater than or equal to 1280 when an

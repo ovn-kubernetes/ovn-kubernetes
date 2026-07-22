@@ -113,7 +113,9 @@ func (bsnc *BaseUserDefinedNetworkController) UpdateUserDefinedNetworkResourceCo
 		oldPod := oldObj.(*corev1.Pod)
 		newPod := newObj.(*corev1.Pod)
 
-		return bsnc.ensurePodForUserDefinedNetwork(newPod, shouldAddPort(oldPod, newPod, inRetryCache))
+		addPort := shouldAddPort(oldPod, newPod, inRetryCache) ||
+			bsnc.dhcpPodNetworksChanged(oldPod, newPod)
+		return bsnc.ensurePodForUserDefinedNetwork(newPod, addPort)
 
 	case factory.NamespaceType:
 		oldNs, newNs := oldObj.(*corev1.Namespace), newObj.(*corev1.Namespace)
@@ -1076,6 +1078,57 @@ func (bsnc *BaseUserDefinedNetworkController) hasPodLogicalPort(pod *corev1.Pod)
 
 func shouldAddPort(oldPod, newPod *corev1.Pod, inRetryCache bool) bool {
 	return inRetryCache || util.PodScheduled(oldPod) != util.PodScheduled(newPod)
+}
+
+// dhcpPodNetworksChanged returns true when this network learns IPs from an
+// external DHCP server and this network's entries in the pod-networks
+// annotation changed. ovnkube-node patches the DHCP-learned IP into the
+// annotation during CNI ADD after the port was first created. So the port
+// must be reprocessed to pick up the IP (LSP addresses/port security and
+// IP-based features such as MultiNetworkPolicy and NetworkQoS).
+//
+// The annotation is a single blob shared by every network the pod attaches
+// to, and DHCP pods are multi-homed by construction (localnet is
+// secondary-only) — so a whole-string comparison would turn every other
+// network's annotation write (at least one per network during pod bring-up)
+// into a spurious full addLogicalPort pass with a real NBDB transaction.
+// Compare only the entries belonging to this network, resolved the same way
+// removePodForUserDefinedNetwork does.
+func (bsnc *BaseUserDefinedNetworkController) dhcpPodNetworksChanged(oldPod, newPod *corev1.Pod) bool {
+	if bsnc.IPAMType() != types.IPAMTypeDHCP || oldPod == nil || newPod == nil {
+		return false
+	}
+	if oldPod.Annotations[types.OvnPodAnnotationName] == newPod.Annotations[types.OvnPodAnnotationName] {
+		return false
+	}
+	oldNetworks, err := util.UnmarshalPodAnnotationAllNetworks(oldPod.Annotations)
+	if err != nil {
+		return true
+	}
+	newNetworks, err := util.UnmarshalPodAnnotationAllNetworks(newPod.Annotations)
+	if err != nil {
+		// fail toward reprocessing: addLogicalPort is idempotent, a missed
+		// DHCP IP update is not
+		return true
+	}
+	for nadKey, newEntry := range newNetworks {
+		if bsnc.networkManager.GetNetworkNameForNADKey(nadKey) != bsnc.GetNetworkName() {
+			continue
+		}
+		oldEntry, existed := oldNetworks[nadKey]
+		if !existed || !reflect.DeepEqual(oldEntry, newEntry) {
+			return true
+		}
+	}
+	for nadKey := range oldNetworks {
+		if bsnc.networkManager.GetNetworkNameForNADKey(nadKey) != bsnc.GetNetworkName() {
+			continue
+		}
+		if _, stillThere := newNetworks[nadKey]; !stillThere {
+			return true
+		}
+	}
+	return false
 }
 
 func nodesToInterfaces(nodes []*corev1.Node) []interface{} {

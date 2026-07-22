@@ -103,6 +103,13 @@ type PodAnnotation struct {
 	//     is otherwise locked for all intents and purposes.
 	// At a given time a pod can have only 1 network with role:"primary"
 	Role string
+
+	// IPAMMode describes the IPAM mode configured for this network.
+	// Empty means OVN-K assigns the IP from the subnet (default behavior).
+	// "dhcp" means the workload (typically a VM) obtains its IP from an
+	// external DHCP server. Downstream consumers (e.g. cloud-init generators)
+	// can use this hint to render the guest-side network config accordingly.
+	IPAMMode string
 }
 
 // PodRoute describes any routes to be added to the pod's network namespace
@@ -130,6 +137,7 @@ type podAnnotation struct {
 
 	TunnelID int    `json:"tunnel_id,omitempty"`
 	Role     string `json:"role,omitempty"`
+	IPAMMode string `json:"ipam_mode,omitempty"`
 }
 
 // Internal struct used to marshal PodRoute to the pod annotation
@@ -157,6 +165,7 @@ func MarshalPodAnnotation(annotations map[string]string, podInfo *PodAnnotation,
 		TunnelID: podInfo.TunnelID,
 		MAC:      podInfo.MAC.String(),
 		Role:     podInfo.Role,
+		IPAMMode: podInfo.IPAMMode,
 	}
 
 	if len(podInfo.IPs) == 1 {
@@ -173,12 +182,21 @@ func MarshalPodAnnotation(annotations map[string]string, podInfo *PodAnnotation,
 
 	existingPa, ok := podNetworks[nadKey]
 	if ok {
-		if len(pa.IPs) != len(existingPa.IPs) {
-			return nil, ErrOverridePodIPs
-		}
-		for _, ip := range pa.IPs {
-			if !SliceHasStringItem(existingPa.IPs, ip) {
+		// IPs of a DHCP IPAM network are owned by the external DHCP server
+		// and only reported in the annotation: ovnkube-node fills them in
+		// during CNI ADD (after the entry was first created without IPs)
+		// and may legitimately replace them on a repeat CNI ADD (sandbox
+		// recreation) when the server hands out a new lease. There is no
+		// OVN-K IPAM allocation to leak, so allow the IP overwrite for
+		// those entries.
+		if existingPa.IPAMMode != types.IPAMTypeDHCP {
+			if len(pa.IPs) != len(existingPa.IPs) {
 				return nil, ErrOverridePodIPs
+			}
+			for _, ip := range pa.IPs {
+				if !SliceHasStringItem(existingPa.IPs, ip) {
+					return nil, ErrOverridePodIPs
+				}
 			}
 		}
 	}
@@ -238,6 +256,7 @@ func UnmarshalPodAnnotation(annotations map[string]string, nadKey string) (*PodA
 	podAnnotation := &PodAnnotation{
 		TunnelID: a.TunnelID,
 		Role:     a.Role,
+		IPAMMode: a.IPAMMode,
 	}
 	podAnnotation.MAC, err = net.ParseMAC(a.MAC)
 	if err != nil {

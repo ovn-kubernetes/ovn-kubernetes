@@ -275,6 +275,12 @@ const (
 	Layer2Topology   = "layer2"
 	LocalnetTopology = "localnet"
 
+	// IPAMTypeDHCP is the NAD "ipam.type" value that hands IP address
+	// management on a localnet network over to an external DHCP server:
+	// OVN-Kubernetes allocates no addresses on such networks and only
+	// reports the DHCP-assigned ones.
+	IPAMTypeDHCP = "dhcp"
+
 	// different types of network roles
 	// defined in CNI netconf as a user-defined network
 	NetworkRolePrimary   = "primary"

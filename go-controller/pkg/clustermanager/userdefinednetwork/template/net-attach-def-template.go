@@ -96,6 +96,7 @@ func renderNADSpec(networkName, nadName string, spec SpecGetter, uplink string, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to render CNI network config: %w", err)
 	}
+
 	cniNetConfRaw, err := json.Marshal(cniNetConf)
 	if err != nil {
 		return nil, err
@@ -193,6 +194,17 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter, uplink
 		}
 	case userdefinednetworkv1.NetworkTopologyLocalnet:
 		cfg := spec.GetLocalnet()
+		// mirror the Layer2 branch: re-validate the IPAM config at render time
+		// so invalid combinations (e.g. DHCP mode with Persistent lifecycle)
+		// are rejected even when the cluster's CRDs predate the CEL rules.
+		if err := validateIPAM(cfg.IPAM); err != nil {
+			return nil, err
+		}
+		// reflect the DHCP mode in the netconf: it is validated by
+		// ValidateNetConf below and emitted into the generated NAD config.
+		if cfg.IPAM != nil && cfg.IPAM.Mode == userdefinednetworkv1.IPAMDHCP {
+			netConfSpec.IPAM.Type = types.IPAMTypeDHCP
+		}
 		netConfSpec.Role = strings.ToLower(string(cfg.Role))
 		netConfSpec.MTU = localnetMTU(cfg.MTU)
 		netConfSpec.AllowPersistentIPs = cfg.IPAM != nil && cfg.IPAM.Lifecycle == userdefinednetworkv1.IPAMLifecyclePersistent
@@ -263,6 +275,15 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter, uplink
 	}
 	if netConfSpec.PhysicalNetworkName != "" {
 		cniNetConf["physicalNetworkName"] = netConfSpec.PhysicalNetworkName
+	}
+	// Emit the IPAM section whenever a delegated IPAM type is set (today
+	// only DHCP, decided once in the topology branch above), so
+	// ovn-k8s-cni-overlay delegates to that IPAM plugin internally during
+	// CmdAdd (same pattern as sriov-cni calling ipam.ExecAdd).
+	if netConfSpec.IPAM.Type != "" {
+		cniNetConf["ipam"] = map[string]interface{}{
+			"type": netConfSpec.IPAM.Type,
+		}
 	}
 	if len(netConfSpec.ExcludeSubnets) > 0 {
 		cniNetConf["excludeSubnets"] = netConfSpec.ExcludeSubnets

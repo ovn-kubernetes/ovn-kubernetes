@@ -122,6 +122,16 @@ func TestMarshalPodAnnotation(t *testing.T) {
 			},
 			expectedOutput: map[string]string{"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":null,"mac_address":"","ipv6_lla_gateway_ip":"fe80::"}}`},
 		},
+		{
+			desc:           "PodAnnotation instance when IPAMMode is set to dhcp",
+			inpPodAnnot:    PodAnnotation{IPAMMode: "dhcp"},
+			expectedOutput: map[string]string{"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":null,"mac_address":"","ipam_mode":"dhcp"}}`},
+		},
+		{
+			desc:           "ipam_mode is omitted when IPAMMode is not set",
+			inpPodAnnot:    PodAnnotation{Role: types.NetworkRoleSecondary},
+			expectedOutput: map[string]string{"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":null,"mac_address":"","role":"secondary"}}`},
+		},
 	}
 
 	for i, tc := range tests {
@@ -271,6 +281,70 @@ func TestUnmarshalPodAnnotation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestUnmarshalPodAnnotationIPAMMode(t *testing.T) {
+	inpAnnotMap := map[string]string{"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":["192.168.0.5/24"],"mac_address":"0a:58:fd:98:00:01","ip_address":"192.168.0.5/24","ipam_mode":"dhcp"}}`}
+	res, e := UnmarshalPodAnnotation(inpAnnotMap, "default")
+	require.NoError(t, e)
+	require.NotNil(t, res)
+	assert.Equal(t, "dhcp", res.IPAMMode)
+}
+
+// TestMarshalPodAnnotationDHCPOverwrite covers the override guard for
+// entries whose IPs are learned from an external DHCP server (ipam_mode=dhcp):
+// ovnkube-node fills the IPs in during CNI ADD after the entry was created
+// without IPs, and may replace them on a repeat CNI ADD (sandbox recreation)
+// when the DHCP server hands out a new lease. Non-DHCP entries must keep the
+// strict no-override behavior.
+func TestMarshalPodAnnotationDHCPOverwrite(t *testing.T) {
+	const nadKey = "foo-ns/localnet-nad"
+	mac := ovntest.MustParseMAC("0a:58:fd:98:00:01")
+
+	newAnnotations := func(entry string) map[string]string {
+		return map[string]string{"k8s.ovn.org/pod-networks": `{"` + nadKey + `":` + entry + `}`}
+	}
+	dhcpPodInfo := func(macStr, ip string) *PodAnnotation {
+		podInfo := &PodAnnotation{
+			MAC:      ovntest.MustParseMAC(macStr),
+			IPAMMode: "dhcp",
+			Role:     types.NetworkRoleSecondary,
+		}
+		if ip != "" {
+			podInfo.IPs = []*net.IPNet{ovntest.MustParseIPNet(ip)}
+		}
+		return podInfo
+	}
+
+	t.Run("fills IPs into a DHCP entry created without IPs", func(t *testing.T) {
+		annotations := newAnnotations(`{"mac_address":"` + mac.String() + `","role":"secondary","ipam_mode":"dhcp"}`)
+		updated, err := MarshalPodAnnotation(annotations, dhcpPodInfo(mac.String(), "10.1.192.102/24"), nadKey)
+		require.NoError(t, err)
+		assert.Contains(t, updated["k8s.ovn.org/pod-networks"], "10.1.192.102/24")
+	})
+
+	t.Run("overwrites the IPs of a DHCP entry on a new lease", func(t *testing.T) {
+		annotations := newAnnotations(`{"ip_addresses":["10.1.192.102/24"],"mac_address":"` + mac.String() + `","role":"secondary","ipam_mode":"dhcp"}`)
+		updated, err := MarshalPodAnnotation(annotations, dhcpPodInfo(mac.String(), "10.1.192.150/24"), nadKey)
+		require.NoError(t, err)
+		assert.Contains(t, updated["k8s.ovn.org/pod-networks"], "10.1.192.150/24")
+		assert.NotContains(t, updated["k8s.ovn.org/pod-networks"], "10.1.192.102/24")
+	})
+
+	t.Run("re-marshaling a DHCP entry with unchanged IPs is idempotent", func(t *testing.T) {
+		annotations := newAnnotations(`{"ip_addresses":["10.1.192.102/24"],"mac_address":"` + mac.String() + `","role":"secondary","ipam_mode":"dhcp"}`)
+		updated, err := MarshalPodAnnotation(annotations, dhcpPodInfo(mac.String(), "10.1.192.102/24"), nadKey)
+		require.NoError(t, err)
+		assert.Contains(t, updated["k8s.ovn.org/pod-networks"], "10.1.192.102/24")
+	})
+
+	t.Run("still refuses to change the IPs of a non-DHCP entry", func(t *testing.T) {
+		annotations := newAnnotations(`{"ip_addresses":["10.1.192.102/24"],"mac_address":"` + mac.String() + `","role":"secondary"}`)
+		podInfo := dhcpPodInfo(mac.String(), "10.1.192.150/24")
+		podInfo.IPAMMode = ""
+		_, err := MarshalPodAnnotation(annotations, podInfo, nadKey)
+		require.ErrorIs(t, err, ErrOverridePodIPs)
+	})
 }
 
 func TestGetPodIPsOfNetwork(t *testing.T) {
