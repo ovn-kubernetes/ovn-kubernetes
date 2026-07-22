@@ -11,6 +11,7 @@ import (
 	gotesting "testing"
 	"time"
 
+	cnitypes "github.com/containernetworking/cni/pkg/types"
 	kubevirtv1 "kubevirt.io/api/core/v1"
 
 	corev1 "k8s.io/api/core/v1"
@@ -19,6 +20,7 @@ import (
 	utilnet "k8s.io/utils/net"
 	"k8s.io/utils/ptr"
 
+	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -689,4 +691,99 @@ func expectAdvertisedSNATUsesDestinationMatch(
 	g.Expect(snats[1].Match).To(Equal(fmt.Sprintf("%s && %s", dstMacMatch, v6Match)))
 	g.Expect(snats[1].AllowedExtIPs).To(BeNil())
 	g.Expect(snats[1].ExemptedExtIPs).To(BeNil())
+}
+
+// TestDHCPPodNetworksChanged covers the pod-update re-trigger for DHCP IPAM
+// networks: ovnkube-node patches the DHCP-learned IP into the pod-networks
+// annotation during CNI ADD — after the LSP was first created — so an
+// annotation-only pod update must reprocess the port for these networks
+// (and only for them).
+func TestDHCPPodNetworksChanged(t *gotesting.T) {
+	newController := func(g Gomega, ipamType string) *BaseUserDefinedNetworkController {
+		netconf := &ovncnitypes.NetConf{
+			NetConf: cnitypes.NetConf{
+				Name: "localnet-net",
+				Type: "ovn-k8s-cni-overlay",
+				IPAM: cnitypes.IPAM{Type: ipamType},
+			},
+			NADName:  "foo-ns/localnet-nad",
+			Topology: types.LocalnetTopology,
+		}
+		netInfo, err := util.NewNetInfo(netconf)
+		g.Expect(err).NotTo(HaveOccurred())
+		return &BaseUserDefinedNetworkController{
+			BaseNetworkController: BaseNetworkController{
+				ReconcilableNetInfo: util.NewReconcilableNetInfo(netInfo),
+				networkManager: &networkmanager.FakeNetworkManager{
+					NADNetworks: map[string]util.NetInfo{"foo-ns/localnet-nad": netInfo},
+				},
+			},
+		}
+	}
+
+	newPod := func(podNetworks string) *corev1.Pod {
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:        "bar-pod",
+				Namespace:   "foo-ns",
+				Annotations: map[string]string{},
+			},
+		}
+		if podNetworks != "" {
+			pod.Annotations[types.OvnPodAnnotationName] = podNetworks
+		}
+		return pod
+	}
+
+	withoutIPs := `{"foo-ns/localnet-nad":{"mac_address":"0a:58:fd:98:00:01","role":"secondary","ipam_mode":"dhcp"}}`
+	withIPs := `{"foo-ns/localnet-nad":{"ip_addresses":["10.1.192.102/24"],"mac_address":"0a:58:fd:98:00:01","gateway_ips":["10.1.192.1"],"role":"secondary","ipam_mode":"dhcp"}}`
+	// this network's entry identical to withoutIPs; only the default
+	// network's entry appears — the write every multi-homed pod gets
+	withOtherNetworkEntry := `{"default":{"ip_addresses":["10.244.1.5/24"],"mac_address":"0a:58:0a:f4:01:05","role":"primary"},"foo-ns/localnet-nad":{"mac_address":"0a:58:fd:98:00:01","role":"secondary","ipam_mode":"dhcp"}}`
+	// the realistic multi-homed timeline: by CNI-patch time the default
+	// network's entry is already in the blob; the patch adds the lease
+	// (IPs + gateway) to this network's entry and touches nothing else
+	withOtherNetworkEntryAndIPs := `{"default":{"ip_addresses":["10.244.1.5/24"],"mac_address":"0a:58:0a:f4:01:05","role":"primary"},"foo-ns/localnet-nad":{"ip_addresses":["10.1.192.102/24"],"mac_address":"0a:58:fd:98:00:01","gateway_ips":["10.1.192.1"],"role":"secondary","ipam_mode":"dhcp"}}`
+
+	t.Run("triggers when the annotation gains the DHCP-learned IPs", func(t *gotesting.T) {
+		g := NewWithT(t)
+		bsnc := newController(g, "dhcp")
+		g.Expect(bsnc.dhcpPodNetworksChanged(newPod(withoutIPs), newPod(withIPs))).To(BeTrue())
+	})
+
+	t.Run("does not trigger when the annotation is unchanged", func(t *gotesting.T) {
+		g := NewWithT(t)
+		bsnc := newController(g, "dhcp")
+		g.Expect(bsnc.dhcpPodNetworksChanged(newPod(withIPs), newPod(withIPs))).To(BeFalse())
+	})
+
+	t.Run("does not trigger on non-DHCP networks", func(t *gotesting.T) {
+		g := NewWithT(t)
+		bsnc := newController(g, "")
+		g.Expect(bsnc.dhcpPodNetworksChanged(newPod(withoutIPs), newPod(withIPs))).To(BeFalse())
+	})
+
+	t.Run("does not trigger without an old pod", func(t *gotesting.T) {
+		g := NewWithT(t)
+		bsnc := newController(g, "dhcp")
+		g.Expect(bsnc.dhcpPodNetworksChanged(nil, newPod(withIPs))).To(BeFalse())
+	})
+
+	t.Run("does not trigger when only another network's entry changes", func(t *gotesting.T) {
+		g := NewWithT(t)
+		bsnc := newController(g, "dhcp")
+		g.Expect(bsnc.dhcpPodNetworksChanged(newPod(withoutIPs), newPod(withOtherNetworkEntry))).To(BeFalse())
+	})
+
+	t.Run("triggers when this network's entry is removed", func(t *gotesting.T) {
+		g := NewWithT(t)
+		bsnc := newController(g, "dhcp")
+		g.Expect(bsnc.dhcpPodNetworksChanged(newPod(withIPs), newPod(`{}`))).To(BeTrue())
+	})
+
+	t.Run("triggers on the CNI lease patch of this network's entry in a multi-homed annotation", func(t *gotesting.T) {
+		g := NewWithT(t)
+		bsnc := newController(g, "dhcp")
+		g.Expect(bsnc.dhcpPodNetworksChanged(newPod(withOtherNetworkEntry), newPod(withOtherNetworkEntryAndIPs))).To(BeTrue())
+	})
 }

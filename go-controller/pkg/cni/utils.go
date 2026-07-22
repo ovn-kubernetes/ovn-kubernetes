@@ -73,9 +73,15 @@ func (c *ClientSet) getPod(namespace, name string) (*corev1.Pod, error) {
 	if pod == nil {
 		// If the pod wasn't in our local cache, ask for it directly
 		pod, err = c.kclient.CoreV1().Pods(namespace).Get(context.TODO(), name, metav1.GetOptions{})
+		if err != nil {
+			// the typed client returns a non-nil empty Pod alongside the
+			// error; never hand that to callers guarding on pod != nil
+			// (e.g. cmdDel of a force-deleted pod)
+			return nil, err
+		}
 	}
 
-	return pod, err
+	return pod, nil
 }
 
 // GetPodAnnotations obtains the pod UID and annotation from the cache or apiserver

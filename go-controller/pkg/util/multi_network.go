@@ -71,6 +71,9 @@ type NetInfo interface {
 	Uplink() string
 	GetNodeGatewayIP(hostSubnet *net.IPNet) *net.IPNet
 	GetNodeManagementIP(hostSubnet *net.IPNet) *net.IPNet
+	// IPAMType returns the ipam.type configured in the NAD ("" when unset,
+	// "dhcp" for the VFIO DHCP flow on localnet secondary networks).
+	IPAMType() string
 
 	// dynamic information, can change over time
 
@@ -730,6 +733,12 @@ func (nInfo *DefaultNetInfo) GetNodeManagementIP(hostSubnet *net.IPNet) *net.IPN
 	return GetNodeManagementIfAddr(hostSubnet)
 }
 
+// IPAMType returns the ipam.type configured in the NAD. Default network never
+// uses an external IPAM plugin, so this is always "".
+func (nInfo *DefaultNetInfo) IPAMType() string {
+	return ""
+}
+
 // userDefinedNetInfo holds the network name information for a User Defined Network if non-nil
 type userDefinedNetInfo struct {
 	mutableNetInfo
@@ -758,6 +767,11 @@ type userDefinedNetInfo struct {
 	evpn         *ovncnitypes.EVPNConfig
 	outboundSNAT string
 	uplink       string
+
+	// ipamType is the ipam.type value from the NAD config (e.g. "dhcp"). It
+	// is purely informational and is surfaced into the pod-networks
+	// annotation so downstream consumers know that IPAM is external.
+	ipamType string
 }
 
 func (nInfo *userDefinedNetInfo) GetNetInfo() NetInfo {
@@ -983,6 +997,12 @@ func (nInfo *userDefinedNetInfo) GetNodeManagementIP(hostSubnet *net.IPNet) *net
 	return GetNodeManagementIfAddr(hostSubnet)
 }
 
+// IPAMType returns the ipam.type configured in the NAD (e.g. "dhcp" on a
+// localnet secondary network when IPAM is delegated to an external DHCP server).
+func (nInfo *userDefinedNetInfo) IPAMType() string {
+	return nInfo.ipamType
+}
+
 // IPMode returns the ipv4/ipv6 mode
 func (nInfo *userDefinedNetInfo) IPMode() (bool, bool) {
 	return nInfo.ipv4mode, nInfo.ipv6mode
@@ -1078,6 +1098,14 @@ func (nInfo *userDefinedNetInfo) canReconcile(other NetInfo) bool {
 	if nInfo.physicalNetworkName != other.PhysicalNetworkName() {
 		return false
 	}
+	// ipamType flips the network's addressing semantics wholesale (OVN-K
+	// allocator vs external DHCP): the allocator's ipam_mode stamping, the
+	// CNI's DHCP delegation and dhcpPodNetworksChanged must all agree, so
+	// an in-place change must tear the controller down and recreate it with
+	// the new netInfo, like the other immutable fields here.
+	if nInfo.ipamType != other.IPAMType() {
+		return false
+	}
 	if nInfo.Transport() != other.Transport() {
 		return false
 	}
@@ -1151,6 +1179,7 @@ func (nInfo *userDefinedNetInfo) copy() *userDefinedNetInfo {
 		evpn:                  nInfo.evpn,
 		outboundSNAT:          nInfo.outboundSNAT,
 		uplink:                nInfo.uplink,
+		ipamType:              nInfo.ipamType,
 	}
 	// copy mutables
 	c.mutableNetInfo.copyFrom(&nInfo.mutableNetInfo)
@@ -1289,6 +1318,7 @@ func newLocalnetNetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error
 		allowPersistentIPs:  netconf.AllowPersistentIPs,
 		physicalNetworkName: netconf.PhysicalNetworkName,
 		uplink:              netconf.Uplink,
+		ipamType:            netconf.IPAM.Type,
 		mutableNetInfo: mutableNetInfo{
 			id:      types.InvalidID,
 			nads:    sets.Set[string]{},
@@ -1570,8 +1600,19 @@ func ValidateNetConf(nadName string, netconf *ovncnitypes.NetConf) error {
 		return err
 	}
 
-	if netconf.AllowPersistentIPs && netconf.Topology == types.Layer3Topology {
-		return fmt.Errorf("layer3 topology does not allow persistent IPs")
+	// Persistent IPs (IPAMClaims) preserve OVN-Kubernetes-allocated addresses
+	// across workload restarts, so they require OVN-K IPAM: not on layer3
+	// (per-node subnets tie IPs to nodes) and not without subnets (manually
+	// configured or DHCP-owned addresses are not OVN-K allocations). The CRD
+	// rules reject these at admission; this covers hand-written NADs.
+	if netconf.AllowPersistentIPs {
+		if netconf.Topology == types.Layer3Topology {
+			return fmt.Errorf("layer3 topology does not allow persistent IPs")
+		}
+		if netconf.Subnets == "" {
+			return fmt.Errorf("error parsing Network Attachment Definition %s: allowPersistentIPs requires "+
+				"OVN-Kubernetes-managed IPAM (the subnets attribute must be set)", nadName)
+		}
 	}
 
 	if netconf.Role != "" && netconf.Role != types.NetworkRoleSecondary && netconf.Topology == types.LocalnetTopology {
@@ -1583,8 +1624,21 @@ func ValidateNetConf(nadName string, netconf *ovncnitypes.NetConf) error {
 		return fmt.Errorf("invalid network role value %s", netconf.Role)
 	}
 
-	if netconf.IPAM.Type != "" {
+	if netconf.IPAM.Type != "" && netconf.IPAM.Type != types.IPAMTypeDHCP {
 		return fmt.Errorf("error parsing Network Attachment Definition %s: %w", nadName, ErrorUnsupportedIPAMKey)
+	}
+	if netconf.IPAM.Type == types.IPAMTypeDHCP && netconf.Topology != types.LocalnetTopology {
+		return fmt.Errorf("error parsing Network Attachment Definition %s: ipam.type %q is only supported with localnet topology",
+			nadName, netconf.IPAM.Type)
+	}
+	// subnets switches on OVN-K IPAM throughout the stack, which would compete
+	// with the external DHCP server for address ownership (double-addressed
+	// interfaces, OVN allocator leaks when the DHCP-learned IP overwrites the
+	// annotation). The CUDN CEL rules already forbid the combination; enforce
+	// it here as well for hand-written NADs.
+	if netconf.IPAM.Type == types.IPAMTypeDHCP && netconf.Subnets != "" {
+		return fmt.Errorf("error parsing Network Attachment Definition %s: ipam.type %q cannot be used together with the subnets attribute; "+
+			"addresses are assigned by the external DHCP server", nadName, netconf.IPAM.Type)
 	}
 
 	// Validate transport if specified

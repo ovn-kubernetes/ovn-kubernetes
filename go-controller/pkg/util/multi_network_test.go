@@ -300,6 +300,91 @@ func TestParseNetconf(t *testing.T) {
 			expectedError: fmt.Errorf("error parsing Network Attachment Definition ns1/nad1: IPAM key is not supported. Use OVN-K provided IPAM via the `subnets` attribute"),
 		},
 		{
+			desc: "valid attachment definition for a localnet topology with DHCP IPAM and no subnets",
+			inputNetAttachDefConfigSpec: `
+    {
+            "name": "tenantred",
+            "type": "ovn-k8s-cni-overlay",
+            "topology": "localnet",
+            "netAttachDefName": "ns1/nad1",
+            "ipam": {"type": "dhcp"}
+    }
+`,
+			expectedNetConf: &ovncnitypes.NetConf{
+				Topology: "localnet",
+				NADName:  "ns1/nad1",
+				MTU:      1400,
+				NetConf:  cnitypes.NetConf{Name: "tenantred", Type: "ovn-k8s-cni-overlay", IPAM: cnitypes.IPAM{Type: "dhcp"}},
+			},
+		},
+		{
+			desc: "attachment definition for a layer2 topology with DHCP IPAM",
+			inputNetAttachDefConfigSpec: `
+    {
+            "name": "tenantred",
+            "type": "ovn-k8s-cni-overlay",
+            "topology": "layer2",
+            "netAttachDefName": "ns1/nad1",
+            "ipam": {"type": "dhcp"}
+    }
+`,
+			expectedError: fmt.Errorf("error parsing Network Attachment Definition ns1/nad1: ipam.type \"dhcp\" is only supported with localnet topology"),
+		},
+		{
+			desc: "attachment definition for a localnet topology with DHCP IPAM and persistent IPs",
+			inputNetAttachDefConfigSpec: `
+    {
+            "name": "tenantred",
+            "type": "ovn-k8s-cni-overlay",
+            "topology": "localnet",
+            "netAttachDefName": "ns1/nad1",
+            "allowPersistentIPs": true,
+            "ipam": {"type": "dhcp"}
+    }
+`,
+			expectedError: fmt.Errorf("error parsing Network Attachment Definition ns1/nad1: allowPersistentIPs requires OVN-Kubernetes-managed IPAM (the subnets attribute must be set)"),
+		},
+		{
+			desc: "attachment definition with persistent IPs but no subnets (IPAM-less)",
+			inputNetAttachDefConfigSpec: `
+    {
+            "name": "tenantred",
+            "type": "ovn-k8s-cni-overlay",
+            "topology": "layer2",
+            "netAttachDefName": "ns1/nad1",
+            "allowPersistentIPs": true
+    }
+`,
+			expectedError: fmt.Errorf("error parsing Network Attachment Definition ns1/nad1: allowPersistentIPs requires OVN-Kubernetes-managed IPAM (the subnets attribute must be set)"),
+		},
+		{
+			desc: "attachment definition for a localnet topology with DHCP IPAM and subnets",
+			inputNetAttachDefConfigSpec: `
+    {
+            "name": "tenantred",
+            "type": "ovn-k8s-cni-overlay",
+            "topology": "localnet",
+            "netAttachDefName": "ns1/nad1",
+            "subnets": "172.18.0.0/16",
+            "ipam": {"type": "dhcp"}
+    }
+`,
+			expectedError: fmt.Errorf("error parsing Network Attachment Definition ns1/nad1: ipam.type \"dhcp\" cannot be used together with the subnets attribute; addresses are assigned by the external DHCP server"),
+		},
+		{
+			desc: "attachment definition for a layer3 topology with DHCP IPAM",
+			inputNetAttachDefConfigSpec: `
+    {
+            "name": "tenantred",
+            "type": "ovn-k8s-cni-overlay",
+            "topology": "layer3",
+            "netAttachDefName": "ns1/nad1",
+            "ipam": {"type": "dhcp"}
+    }
+`,
+			expectedError: fmt.Errorf("error parsing Network Attachment Definition ns1/nad1: ipam.type \"dhcp\" is only supported with localnet topology"),
+		},
+		{
 			desc: "attachment definition missing the NAD name attribute",
 			inputNetAttachDefConfigSpec: `
     {
@@ -676,6 +761,46 @@ func TestParseNetconf(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestIPAMType(t *testing.T) {
+	t.Run("localnet network with DHCP IPAM", func(t *testing.T) {
+		g := gomega.NewWithT(t)
+		netInfo, err := NewNetInfo(&ovncnitypes.NetConf{
+			NetConf:  cnitypes.NetConf{Name: "localnet-network", IPAM: cnitypes.IPAM{Type: "dhcp"}},
+			Topology: ovntypes.LocalnetTopology,
+			NADName:  "ns1/nad1",
+		})
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+		g.Expect(netInfo.IPAMType()).To(gomega.Equal("dhcp"))
+	})
+
+	t.Run("localnet network without IPAM", func(t *testing.T) {
+		g := gomega.NewWithT(t)
+		netInfo, err := NewNetInfo(&ovncnitypes.NetConf{
+			NetConf:  cnitypes.NetConf{Name: "localnet-network"},
+			Topology: ovntypes.LocalnetTopology,
+			NADName:  "ns1/nad1",
+		})
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+		g.Expect(netInfo.IPAMType()).To(gomega.BeEmpty())
+	})
+
+	t.Run("default network", func(t *testing.T) {
+		g := gomega.NewWithT(t)
+		g.Expect((&DefaultNetInfo{}).IPAMType()).To(gomega.BeEmpty())
+	})
+
+	t.Run("copy preserves the IPAM type", func(t *testing.T) {
+		g := gomega.NewWithT(t)
+		netInfo, err := NewNetInfo(&ovncnitypes.NetConf{
+			NetConf:  cnitypes.NetConf{Name: "localnet-network", IPAM: cnitypes.IPAM{Type: "dhcp"}},
+			Topology: ovntypes.LocalnetTopology,
+			NADName:  "ns1/nad1",
+		})
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+		g.Expect(NewMutableNetInfo(netInfo).IPAMType()).To(gomega.Equal("dhcp"))
+	})
 }
 
 func TestJoinSubnets(t *testing.T) {
@@ -1982,6 +2107,20 @@ func TestAreNetworksCompatible(t *testing.T) {
 			anotherNetwork:         &userDefinedNetInfo{transport: ""},
 			expectedResult:         true,
 			expectationDescription: "networks with no EVPN config should be compatible",
+		},
+		{
+			desc:                   "ipam.type update (no IPAM to DHCP)",
+			aNetwork:               &userDefinedNetInfo{},
+			anotherNetwork:         &userDefinedNetInfo{ipamType: "dhcp"},
+			expectedResult:         false,
+			expectationDescription: "toggling ipam.type must recreate the network controller",
+		},
+		{
+			desc:                   "same dhcp ipam.type is compatible",
+			aNetwork:               &userDefinedNetInfo{ipamType: "dhcp"},
+			anotherNetwork:         &userDefinedNetInfo{ipamType: "dhcp"},
+			expectedResult:         true,
+			expectationDescription: "unchanged ipam.type must not force a recreate",
 		},
 	}
 

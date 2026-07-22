@@ -8,31 +8,62 @@ package cni
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/containernetworking/cni/pkg/invoke"
+	cnitypes "github.com/containernetworking/cni/pkg/types"
 	current "github.com/containernetworking/cni/pkg/types/100"
 	"github.com/containernetworking/plugins/pkg/ip"
 	"github.com/containernetworking/plugins/pkg/ns"
+	"github.com/insomniacslk/dhcp/dhcpv4"
+	"github.com/insomniacslk/dhcp/dhcpv4/nclient4"
+	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	"github.com/safchain/ethtool"
 	"github.com/vishvananda/netlink"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/knftables"
 
 	"github.com/ovn-kubernetes/libovsdb/client"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
+
+const (
+	// vmDHCPTimeout bounds each attempt of the one-shot VM DORA; nclient4
+	// doubles it per retry, so with vmDHCPRetries attempts one exchange
+	// phase waits at most 10s+20s = 30s, and a full DORA (DISCOVER +
+	// REQUEST) at most 60s — half the 2-minute CNI request deadline
+	// (kubeletDefaultCRIOperationTimeout), leaving room for the VFIO
+	// rebind and interface teardown when no DHCP server answers. Both
+	// values are pinned here so a library default change cannot silently
+	// push the worst case past the request deadline.
+	vmDHCPTimeout = 10 * time.Second
+	vmDHCPRetries = 2
+)
+
+// dhcpLeaseMarkerDir holds the per-sandbox DHCP lease markers on DPU-host
+// nodes, which have no host OVS to record them in. It lives in tmpfs, so the
+// markers share the lifetime of the DHCP daemon's in-memory leases (both are
+// cleared on reboot). It is a var so unit tests can point it at a tempdir.
+var dhcpLeaseMarkerDir = "/var/run/ovn-kubernetes/dhcp-lease"
 
 func addRoute(ipn *net.IPNet, gw net.IP, dev netlink.Link, mtu, table int) error {
 	return util.GetNetLinkOps().RouteAdd(&netlink.Route{
@@ -64,6 +95,30 @@ func replaceRouteECMP(ipn *net.IPNet, gw net.IP, devs []netlink.Link, mtu int) e
 // This is a good value that allows fast streams of small packets to be aggregated,
 // without introducing noticeable latency in slower traffic.
 const udpPacketAggregationTimeout = 50 * time.Microsecond
+
+const (
+	mlx5CoreDriver = "mlx5_core"
+	vfioPCIDriver  = "vfio-pci"
+
+	// pciVendorMellanox is the PCI vendor ID of NVIDIA/Mellanox NICs, as read
+	// from the sysfs vendor attribute.
+	pciVendorMellanox = "0x15b3"
+)
+
+// vfKernelDriverByVendor maps PCI vendor IDs to the kernel VF netdev driver
+// used for the temporary VFIO→kernel driver handoff. Only vendors validated
+// with this flow are listed — the handoff refuses unknown vendors before
+// touching the driver binding (OKEP-6224: an unknown/unsupported NIC vendor
+// must fail the CNI request).
+var vfKernelDriverByVendor = map[string]string{
+	pciVendorMellanox: mlx5CoreDriver, // NVIDIA/Mellanox ConnectX
+}
+
+// sysfs PCI roots; vars so unit tests can point them at a fake sysfs tree.
+var (
+	sysBusPCIDevices = "/sys/bus/pci/devices"
+	sysBusPCIDrivers = "/sys/bus/pci/drivers"
+)
 
 var udpPacketAggregationTimeoutBytes = []byte(fmt.Sprintf("%d\n", udpPacketAggregationTimeout.Nanoseconds()))
 
@@ -480,6 +535,178 @@ func setupSriovInterface(netns ns.NetNS, containerID, ifName string, ifInfo *Pod
 	}
 
 	return hostIface, contIface, nil
+}
+
+func getPCIDeviceDriver(deviceID string) (string, error) {
+	driverPath := filepath.Join(sysBusPCIDevices, deviceID, "driver")
+	driverTarget, err := os.Readlink(driverPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to read driver for PCI device %s: %w", deviceID, err)
+	}
+	return filepath.Base(driverTarget), nil
+}
+
+// getPCIDeviceVendor returns the device's PCI vendor ID as sysfs reports it
+// (lowercase hex with a 0x prefix, e.g. "0x15b3").
+func getPCIDeviceVendor(deviceID string) (string, error) {
+	raw, err := os.ReadFile(filepath.Join(sysBusPCIDevices, deviceID, "vendor"))
+	if err != nil {
+		return "", fmt.Errorf("failed to read PCI vendor of device %s: %w", deviceID, err)
+	}
+	return strings.TrimSpace(string(raw)), nil
+}
+
+// vfKernelDriverForDevice returns the kernel netdev driver matching the VF's
+// hardware, detected from its PCI vendor ID. An unsupported vendor is an
+// explicit error so the VFIO DHCP handoff fails cleanly before any driver
+// unbind happens, instead of force-probing a driver that cannot serve the
+// device (driver_override bypasses the kernel's device-ID matching).
+func vfKernelDriverForDevice(deviceID string) (string, error) {
+	vendor, err := getPCIDeviceVendor(deviceID)
+	if err != nil {
+		return "", err
+	}
+	driver, ok := vfKernelDriverByVendor[vendor]
+	if !ok {
+		return "", fmt.Errorf("cannot run DHCP on VFIO device %s: unsupported NIC vendor %s, "+
+			"no kernel driver known for the DHCP driver handoff (supported: %s NVIDIA/Mellanox → %s)",
+			deviceID, vendor, pciVendorMellanox, mlx5CoreDriver)
+	}
+	return driver, nil
+}
+
+func writePCIDeviceDriverOverride(deviceID, driver string) error {
+	overridePath := filepath.Join(sysBusPCIDevices, deviceID, "driver_override")
+	overrideValue := []byte(driver)
+	if driver == "" {
+		overrideValue = []byte("\n")
+	}
+	if err := os.WriteFile(overridePath, overrideValue, 0o644); err != nil {
+		return fmt.Errorf("failed to write driver override for PCI device %s: %w", deviceID, err)
+	}
+	return nil
+}
+
+// readPCIDeviceDriverOverride returns the device's current driver_override
+// value, "" when unset (sysfs reports "(null)") or when the device's sysfs
+// entry does not exist.
+func readPCIDeviceDriverOverride(deviceID string) (string, error) {
+	raw, err := os.ReadFile(filepath.Join(sysBusPCIDevices, deviceID, "driver_override"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to read driver override of PCI device %s: %w", deviceID, err)
+	}
+	v := strings.TrimSpace(string(raw))
+	if v == "(null)" {
+		return "", nil
+	}
+	return v, nil
+}
+
+// healInterruptedVFIOHandoff returns the device to vfio-pci when a previous
+// CNI ADD died mid driver-handoff. runLocalnetVFIODHCP keeps driver_override
+// pinned to vfio-pci for the whole handoff as the pin lives in the kernel, so
+// it survives an ovnkube-node crash which makes the interrupted state
+// detectable: the override says vfio-pci while the device is bound elsewhere.
+// Without this repair the retried ADD would read the crash-corrupted binding
+// at its IsVFIO check and silently configure the VM's VF as a kernel netdev;
+// the VM then fails on the missing /dev/vfio device and no retry converges.
+func healInterruptedVFIOHandoff(deviceID string) error {
+	currentDriver, err := getPCIDeviceDriver(deviceID)
+	if err != nil {
+		return err
+	}
+	if currentDriver == vfioPCIDriver {
+		// already bound where it belongs — nothing to repair
+		return nil
+	}
+	override, err := readPCIDeviceDriverOverride(deviceID)
+	if err != nil {
+		return err
+	}
+	if override != vfioPCIDriver {
+		// no vfio pin: a regular kernel-bound VF (or no sysfs entry at all),
+		// not an interrupted handoff
+		return nil
+	}
+	klog.Warningf("Device %s is bound to %q but pinned to %s — repairing an interrupted VFIO DHCP handoff",
+		deviceID, currentDriver, vfioPCIDriver)
+	if err := dhcpOps.BindPCIDeviceDriver(deviceID, vfioPCIDriver); err != nil {
+		return fmt.Errorf("failed to restore device %s to %s after an interrupted handoff: %w",
+			deviceID, vfioPCIDriver, err)
+	}
+	// bindPCIDeviceDriver ends with the override cleared; restore the pin
+	return writePCIDeviceDriverOverride(deviceID, vfioPCIDriver)
+}
+
+// bindPCIDeviceDriver rebinds a PCI device to the given driver via sysfs.
+// Note: it always ends with driver_override cleared; callers that rely on a
+// persistent pin (the VFIO DHCP handoff and its crash repair) re-write the
+// pin after each call.
+func bindPCIDeviceDriver(deviceID, driver string) error {
+	currentDriver, err := getPCIDeviceDriver(deviceID)
+	if err != nil {
+		return err
+	}
+	if currentDriver == driver {
+		return nil
+	}
+
+	if err := writePCIDeviceDriverOverride(deviceID, driver); err != nil {
+		return err
+	}
+
+	if currentDriver != "" {
+		unbindPath := filepath.Join(sysBusPCIDevices, deviceID, "driver", "unbind")
+		if err := os.WriteFile(unbindPath, []byte(deviceID), 0o644); err != nil {
+			_ = writePCIDeviceDriverOverride(deviceID, "")
+			return fmt.Errorf("failed to unbind PCI device %s from driver %s: %w", deviceID, currentDriver, err)
+		}
+	}
+
+	bindPath := filepath.Join(sysBusPCIDrivers, driver, "bind")
+	if err := os.WriteFile(bindPath, []byte(deviceID), 0o644); err != nil {
+		bindErr := fmt.Errorf("failed to bind PCI device %s to driver %s: %w", deviceID, driver, err)
+		// The device was already unbound above; try to give it back to its
+		// original driver rather than leaving it bound to nothing. The
+		// override must point at the original driver for the bind to be
+		// honored (e.g. vfio-pci only claims devices via driver_override).
+		// Recovery failures ride along in the returned error: only the
+		// caller can act on a device left bound to nothing.
+		if currentDriver != "" {
+			if rerr := writePCIDeviceDriverOverride(deviceID, currentDriver); rerr != nil {
+				bindErr = errors.Join(bindErr, fmt.Errorf("failed to restore driver override to %s: %w", currentDriver, rerr))
+			} else if rerr := os.WriteFile(filepath.Join(sysBusPCIDrivers, currentDriver, "bind"),
+				[]byte(deviceID), 0o644); rerr != nil {
+				bindErr = errors.Join(bindErr, fmt.Errorf("failed to restore PCI device to driver %s: %w", currentDriver, rerr))
+			}
+		}
+		if oerr := writePCIDeviceDriverOverride(deviceID, ""); oerr != nil {
+			bindErr = errors.Join(bindErr, oerr)
+		}
+		return bindErr
+	}
+
+	if err := writePCIDeviceDriverOverride(deviceID, ""); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (pr *PodRequest) shouldRunLocalnetVFIODriverHandoff() bool {
+	return pr != nil &&
+		pr.CNIConf != nil &&
+		pr.CNIConf.DeviceID != "" &&
+		pr.IsVFIO &&
+		pr.netName != types.DefaultNetworkName &&
+		pr.nadName != types.DefaultNetworkName &&
+		pr.CNIConf.Topology == types.LocalnetTopology
 }
 
 func getPfEncapIP(ovsClient client.Client, deviceID string) (string, error) {
@@ -1163,4 +1390,854 @@ func setupIngressFilterWithTableAndLifetimeMatcher(nft knftables.Interface, ifac
 
 	return nil
 
+}
+
+// DHCPOps abstracts the DHCP IPAM operations so unit tests can stub them
+// without exec'ing the dhcp plugin binary, opening raw DHCP sockets, or
+// entering a network namespace.
+type DHCPOps interface {
+	ExecAdd(pr *PodRequest) (*current.Result, error)
+	ExecDel(pr *PodRequest) error
+	DoOneShot(pr *PodRequest) (*current.Result, error)
+	ApplyResult(netnsPath, ifName string, dhcpResult *current.Result) error
+	BindPCIDeviceDriver(deviceID, driver string) error
+}
+
+type defaultDHCPOps struct{}
+
+var dhcpOps DHCPOps = &defaultDHCPOps{}
+
+func (*defaultDHCPOps) ExecAdd(pr *PodRequest) (*current.Result, error)   { return pr.execDHCPAdd() }
+func (*defaultDHCPOps) ExecDel(pr *PodRequest) error                      { return pr.execDHCPDel() }
+func (*defaultDHCPOps) DoOneShot(pr *PodRequest) (*current.Result, error) { return pr.doOneShotDHCP() }
+func (*defaultDHCPOps) ApplyResult(netnsPath, ifName string, dhcpResult *current.Result) error {
+	return applyDHCPResult(netnsPath, ifName, dhcpResult)
+}
+func (*defaultDHCPOps) BindPCIDeviceDriver(deviceID, driver string) error {
+	return bindPCIDeviceDriver(deviceID, driver)
+}
+
+// dhcpPluginExec overrides the exec environment handed to the CNI invoke API
+// for the delegated dhcp plugin; nil selects the library default. Unit tests
+// inject a fake to avoid exec'ing the plugin binary.
+var dhcpPluginExec invoke.Exec
+
+// findDHCPPlugin locates the dhcp plugin binary in the CNI path, honoring the
+// injected exec in tests.
+func findDHCPPlugin(cniPath string) (string, error) {
+	if dhcpPluginExec != nil {
+		return dhcpPluginExec.FindInPath(types.IPAMTypeDHCP, filepath.SplitList(cniPath))
+	}
+	return invoke.FindInPath(types.IPAMTypeDHCP, filepath.SplitList(cniPath))
+}
+
+// execDHCPAdd delegates to the DHCP IPAM plugin to obtain IP configuration
+// for the pod interface, applies the result (IPs, routes, gateway) inside
+// the container netns, and returns the DHCP result for the caller to merge
+// into the CNI result and report via the pod-networks annotation.
+//
+// This runs on the server side (ovnkube-node) in privileged mode.
+// Unlike the shim, the server does not inherit kubelet's CNI_* env vars,
+// so we use invoke.Args to explicitly provide them.
+func (pr *PodRequest) execDHCPAdd() (*current.Result, error) {
+	dhcpConfBytes, err := pr.buildDHCPConf()
+	if err != nil {
+		return nil, err
+	}
+
+	cniPath := getCNIPath()
+	pluginPath, err := findDHCPPlugin(cniPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find dhcp plugin in CNI_PATH (%s): %v", cniPath, err)
+	}
+
+	// Build explicit CNI args since the server doesn't have kubelet's env
+	cniArgs := &invoke.Args{
+		Command:     "ADD",
+		ContainerID: pr.SandboxID,
+		NetNS:       pr.Netns,
+		IfName:      pr.IfName,
+		Path:        cniPath,
+	}
+
+	ipamResult, err := invoke.ExecPluginWithResult(pr.ctx, pluginPath, dhcpConfBytes, cniArgs, dhcpPluginExec)
+	if err != nil {
+		return nil, fmt.Errorf("DHCP plugin ADD failed: %v", err)
+	}
+
+	dhcpResult, err := current.GetResult(ipamResult)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse DHCP result: %v", err)
+	}
+
+	if len(dhcpResult.IPs) == 0 {
+		return nil, fmt.Errorf("DHCP returned no IP addresses")
+	}
+
+	pr.filterDHCPDefaultRoutes(dhcpResult)
+
+	klog.Infof("DHCP IPAM for pod %s/%s on %s: IPs=%v",
+		pr.PodNamespace, pr.PodName, pr.IfName, dhcpResult.IPs)
+
+	// Apply DHCP-obtained IPs and routes to the interface inside the container netns.
+	if err := dhcpOps.ApplyResult(pr.Netns, pr.IfName, dhcpResult); err != nil {
+		// On failure, release the DHCP lease
+		delArgs := &invoke.Args{
+			Command:     "DEL",
+			ContainerID: pr.SandboxID,
+			NetNS:       pr.Netns,
+			IfName:      pr.IfName,
+			Path:        cniPath,
+		}
+		// Best-effort rollback: the ADD is failing regardless, but an
+		// unreleased lease outlives it (the daemon keeps renewing until the
+		// retried ADD's DEL or the TTL), so leave a trace when the release
+		// also fails.
+		if delErr := invoke.ExecPluginWithoutResult(pr.ctx, pluginPath, dhcpConfBytes, delArgs, dhcpPluginExec); delErr != nil {
+			klog.Warningf("DHCP: failed to release lease for pod %s/%s iface %s while rolling back a failed ADD: %v",
+				pr.PodNamespace, pr.PodName, pr.IfName, delErr)
+		}
+		return nil, fmt.Errorf("failed to apply DHCP result to %s: %v", pr.IfName, err)
+	}
+
+	return dhcpResult, nil
+}
+
+// updatePodNetworksAnnotationWithDHCPResult patches the pod's
+// k8s.ovn.org/pod-networks entry for this NAD with the DHCP-learned
+// ip_addresses/gateway_ips so ovnkube-controller programs the logical switch
+// port with them and IP-based features (MultiNetworkPolicy, NetworkQoS) see
+// the address. The IPs of a DHCP entry are owned by the external DHCP server;
+// on a repeat CNI ADD (sandbox recreation) with a new lease they are
+// overwritten with the newly learned ones.
+func (pr *PodRequest) updatePodNetworksAnnotationWithDHCPResult(clientset *ClientSet, dhcpResult *current.Result) error {
+	pod, err := clientset.getPod(pr.PodNamespace, pr.PodName)
+	if err != nil {
+		return fmt.Errorf("failed to get pod %s/%s: %w", pr.PodNamespace, pr.PodName, err)
+	}
+
+	updateFn := func(pod *corev1.Pod) (*corev1.Pod, func(), error) {
+		// The lease belongs to this request's sandbox: if that sandbox's
+		// netns is gone, kubelet has torn it down. Since kubelet
+		// completes the old sandbox's DEL before creating a new one, a newer
+		// sandbox may already have patched its fresh lease, which this
+		// abandoned request (nothing cancels an in-flight ADD when kubelet
+		// times it out and moves on) must not overwrite with its stale one.
+		// The check sits INSIDE updateFn so every retry attempt re-runs it:
+		// a write conflict with the newer sandbox's patch forces a retry and
+		// deterministically lands here after the netns is gone.
+		if _, err := os.Stat(pr.Netns); err != nil {
+			return nil, nil, fmt.Errorf("sandbox %s of pod %s/%s was superseded (netns %q is gone), "+
+				"refusing to patch a stale DHCP lease: %w",
+				pr.SandboxID, pr.PodNamespace, pr.PodName, pr.Netns, err)
+		}
+		// guard against the pod having been deleted and recreated since this
+		// CNI ADD started; never report this sandbox's lease on a new instance
+		if pr.PodUID != "" && string(pod.UID) != pr.PodUID {
+			return nil, nil, fmt.Errorf("pod %s/%s UID %q does not match CNI request UID %q",
+				pr.PodNamespace, pr.PodName, pod.UID, pr.PodUID)
+		}
+		podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, pr.nadKey)
+		if err != nil {
+			return nil, nil, fmt.Errorf("no pod-networks entry for NAD key %s: %w", pr.nadKey, err)
+		}
+		podAnnotation.IPs = nil
+		podAnnotation.Gateways = nil
+		for _, ipc := range dhcpResult.IPs {
+			addr := ipc.Address
+			podAnnotation.IPs = append(podAnnotation.IPs, &addr)
+			if ipc.Gateway != nil {
+				podAnnotation.Gateways = append(podAnnotation.Gateways, ipc.Gateway)
+			}
+		}
+		annotations, err := util.MarshalPodAnnotation(pod.Annotations, podAnnotation, pr.nadKey)
+		if err != nil {
+			if util.IsAnnotationAlreadySetError(err) {
+				// repeat CNI ADD with the same lease, nothing to update
+				return pod, nil, nil
+			}
+			return nil, nil, err
+		}
+		pod.Annotations = annotations
+		return pod, nil, nil
+	}
+	return util.UpdatePodWithRetryOrRollback(clientset.podLister, &kube.Kube{KClient: clientset.kclient}, pod, updateFn)
+}
+
+// execDHCPDel releases the DHCP lease by delegating DEL to the DHCP plugin.
+func (pr *PodRequest) execDHCPDel() error {
+	dhcpConfBytes, err := pr.buildDHCPConf()
+	if err != nil {
+		return err
+	}
+
+	cniPath := getCNIPath()
+	pluginPath, err := findDHCPPlugin(cniPath)
+	if err != nil {
+		return fmt.Errorf("failed to find dhcp plugin in CNI_PATH (%s): %v", cniPath, err)
+	}
+
+	cniArgs := &invoke.Args{
+		Command:     "DEL",
+		ContainerID: pr.SandboxID,
+		NetNS:       pr.Netns,
+		IfName:      pr.IfName,
+		Path:        cniPath,
+	}
+
+	return invoke.ExecPluginWithoutResult(pr.ctx, pluginPath, dhcpConfBytes, cniArgs, dhcpPluginExec)
+}
+
+func (pr *PodRequest) dhcpLeaseMarkerPath() string {
+	return filepath.Join(dhcpLeaseMarkerDir, pr.SandboxID+"_"+pr.IfName)
+}
+
+// recordDHCPLeaseMarker records that the DHCP CNI daemon holds (or is about to
+// be asked for) a lease for this sandbox, so cmdDel keys the release off
+// node-local state and needs no apiserver access. Full mode uses the host OVS
+// interface external_ids; DPU-host nodes have no host OVS, so a host-local
+// file (keyed by sandbox+ifname) is used instead.
+func (pr *PodRequest) recordDHCPLeaseMarker(result *current.Result) error {
+	if config.IsModeDPUHost() {
+		if err := os.MkdirAll(dhcpLeaseMarkerDir, 0o700); err != nil {
+			return fmt.Errorf("failed to create DHCP lease marker dir %q: %w", dhcpLeaseMarkerDir, err)
+		}
+		return os.WriteFile(pr.dhcpLeaseMarkerPath(), nil, 0o600)
+	}
+	return markDHCPDaemonLeaseOVS(result)
+}
+
+// dhcpLeaseMarkerExists reports whether cmdAdd recorded a daemon-managed DHCP
+// lease for this sandbox. Consulting node-local state (OVS in full mode, a
+// file on DPU-host) instead of the pod object keeps the decision correct when
+// the pod was already deleted from the apiserver (e.g. force delete): KubeVirt
+// VM pods never carry the marker, so their DEL never sends a bogus release.
+// (false, nil) means there is provably nothing to release: repeat DEL, or a
+// VM pod that never recorded one. A lookup failure is returned as an error,
+// not folded into false: mistaking "couldn't check" for "no lease" would skip
+// the RELEASE while the teardown below deletes the marker with the port,
+// leaking the daemon lease with no retry path.
+func (pr *PodRequest) dhcpLeaseMarkerExists() (bool, error) {
+	if config.IsModeDPUHost() {
+		if _, err := os.Stat(pr.dhcpLeaseMarkerPath()); err != nil {
+			if os.IsNotExist(err) {
+				return false, nil
+			}
+			return false, fmt.Errorf("failed to check the DHCP lease marker of pod %s/%s (sandbox %s): %w",
+				pr.PodNamespace, pr.PodName, pr.SandboxID, err)
+		}
+		return true, nil
+	}
+	return pr.dhcpDaemonLeaseRecordedOVS()
+}
+
+// removeDHCPLeaseMarker clears the marker after the lease is released. In full
+// mode the OVS marker dies with the port on UnconfigureInterface, so this is a
+// no-op there; on DPU-host it unlinks the file.
+func (pr *PodRequest) removeDHCPLeaseMarker() {
+	if config.IsModeDPUHost() {
+		if err := os.Remove(pr.dhcpLeaseMarkerPath()); err != nil && !os.IsNotExist(err) {
+			klog.Warningf("Failed to remove DHCP lease marker for pod %s/%s: %v",
+				pr.PodNamespace, pr.PodName, err)
+		}
+	}
+}
+
+// markDHCPDaemonLeaseOVS records the marker on the pod's host-side OVS
+// interface, using the same bounded retry as the ConfigureOVS port-add
+// transaction. The marker is removed together with the port on teardown.
+func markDHCPDaemonLeaseOVS(result *current.Result) error {
+	hostIfaceName := ""
+	for _, iface := range result.Interfaces {
+		if iface.Sandbox == "" && iface.Name != "" {
+			hostIfaceName = iface.Name
+			break
+		}
+	}
+	if hostIfaceName == "" {
+		return fmt.Errorf("no host-side interface in the CNI result to record the DHCP lease marker on")
+	}
+	backoff := wait.Backoff{Duration: 100 * time.Millisecond, Steps: 3}
+	return retry.OnError(backoff, func(error) bool { return true }, func() error {
+		return ovsSet("interface", hostIfaceName, "external_ids:dhcp-lease=true")
+	})
+}
+
+// dhcpDaemonLeaseRecordedOVS reads the marker back from the host OVS interface.
+// Zero matches is the legitimate "port already gone" repeat-DEL case; an
+// ovs-vsctl failure is a lookup error, not evidence of absence.
+func (pr *PodRequest) dhcpDaemonLeaseRecordedOVS() (bool, error) {
+	ovsIfNames, err := ovsFind("Interface", "name",
+		"external-ids:sandbox="+pr.SandboxID,
+		fmt.Sprintf("external_ids:pod-if-name=%s", pr.IfName))
+	if err != nil {
+		return false, fmt.Errorf("failed to look up the OVS interface of pod %s/%s (sandbox %s, iface %s) to check the DHCP lease marker: %w",
+			pr.PodNamespace, pr.PodName, pr.SandboxID, pr.IfName, err)
+	}
+	if len(ovsIfNames) != 1 {
+		// 0: the port (and with it the marker) is already gone — repeat DEL,
+		// nothing to release. >1 cannot legitimately happen since
+		// sandbox+pod-if-name is unique per attachment.
+		return false, nil
+	}
+	out, err := ovsGet("interface", ovsIfNames[0], "external_ids", "dhcp-lease")
+	if err != nil {
+		return false, fmt.Errorf("failed to read the DHCP lease marker from OVS interface %s of pod %s/%s: %w",
+			ovsIfNames[0], pr.PodNamespace, pr.PodName, err)
+	}
+	return out == "true", nil
+}
+
+// buildDHCPConf constructs the JSON network config that the DHCP IPAM plugin expects.
+//
+// The cniVersion is inherited from the UDN-generated NAD (config.CNISpecVersion,
+// currently "1.1.0") and forwarded to the delegated /opt/cni/bin/dhcp plugin,
+// which validates it against the CNI spec versions its vendored cni library
+// supports. CNI spec 1.1.0 is accepted by plugins vendoring cni >= v1.2.0,
+// first shipped in containernetworking/plugins v1.6.0 (2024-10-15; v1.5.x
+// still vendored cni v1.1.2, which tops out at spec 1.0.0 and rejects this
+// config with an unsupported-version error). Both the dhcp binary and the
+// long-running dhcp daemon on the node must therefore come from
+// containernetworking/plugins v1.6.0 or newer.
+func (pr *PodRequest) buildDHCPConf() ([]byte, error) {
+	conf := map[string]any{
+		"cniVersion": pr.CNIConf.CNIVersion,
+		"name":       pr.CNIConf.Name,
+		"type":       "ovn-k8s-cni-overlay",
+		"ipam": map[string]any{
+			"type": types.IPAMTypeDHCP,
+		},
+	}
+	return json.Marshal(conf)
+}
+
+// getCNIPath returns the CNI plugin binary search path.
+// It checks CNI_PATH env var first (set by kubelet or the container runtime),
+// then falls back to the standard /opt/cni/bin directory.
+// The ovnkube-node DaemonSet must mount the host's CNI bin directory
+// for DHCP IPAM plugin delegation to work.
+func getCNIPath() string {
+	if p := os.Getenv("CNI_PATH"); p != "" {
+		return p
+	}
+	return "/opt/cni/bin"
+}
+
+// filterDHCPDefaultRoutes drops default routes from a pod's DHCP result.
+// DHCP IPAM is restricted to Secondary networks (CRD CEL rule), and a
+// secondary attachment must not compete with the pod's primary network for
+// the default route — matching how every other OVN-Kubernetes secondary
+// attachment behaves. Off-subnet reachability via the localnet belongs in
+// explicit option-121 subnet routes, which are kept; a deliberate
+// default-route override remains available via the Multus gateway request,
+// which Multus applies itself. KubeVirt VM guests are unaffected: their
+// in-guest DHCP client applies the server's routes, default route included.
+func (pr *PodRequest) filterDHCPDefaultRoutes(dhcpResult *current.Result) {
+	routes := dhcpResult.Routes[:0]
+	for _, route := range dhcpResult.Routes {
+		if ones, _ := route.Dst.Mask.Size(); ones == 0 {
+			klog.Infof("DHCP: dropping default route via %s for pod %s/%s iface %s: "+
+				"the pod's primary network owns the default route",
+				route.GW, pr.PodNamespace, pr.PodName, pr.IfName)
+			continue
+		}
+		routes = append(routes, route)
+	}
+	dhcpResult.Routes = routes
+}
+
+// applyDHCPResult applies the IP addresses and routes of a DHCP IPAM result
+// to the named interface inside the container network namespace, playing the
+// role of upstream ipam.ConfigureIface for the delegated dhcp plugin's result.
+func applyDHCPResult(netnsPath, ifName string, dhcpResult *current.Result) error {
+	netns, err := ns.GetNS(netnsPath)
+	if err != nil {
+		return fmt.Errorf("failed to open netns %q: %v", netnsPath, err)
+	}
+	defer netns.Close()
+
+	return netns.Do(func(_ ns.NetNS) error {
+		return applyDHCPResultInNS(ifName, dhcpResult)
+	})
+}
+
+// applyDHCPResultInNS does the actual interface configuration and must run
+// inside the container network namespace. The result's routes are installed
+// exactly as handed in, honoring scope (on-link option-121 routes carry
+// SCOPE_LINK), priority and table like upstream ipam.ConfigureIface. The
+// IPConfig gateway is reporting-only metadata and contributes no route: the
+// dhcp daemon already encodes the server's routing intent — RFC 3442
+// precedence included — in the routes list, so a gateway-derived default
+// route here would either duplicate it or install a route the server said
+// to ignore. A nil-GW fallback like upstream's is deliberately absent:
+// daemon results always carry explicit routers.
+func applyDHCPResultInNS(ifName string, dhcpResult *current.Result) error {
+	link, err := util.GetNetLinkOps().LinkByName(ifName)
+	if err != nil {
+		return fmt.Errorf("failed to find interface %s: %v", ifName, err)
+	}
+
+	// Add IP addresses from DHCP; EEXIST is tolerated so a repeated ADD
+	// stays idempotent
+	for _, ipConfig := range dhcpResult.IPs {
+		addr := &netlink.Addr{IPNet: &ipConfig.Address}
+		if err := util.GetNetLinkOps().AddrAdd(link, addr); err != nil && !os.IsExist(err) {
+			return fmt.Errorf("failed to add IP %s to %s: %v",
+				ipConfig.Address.String(), ifName, err)
+		}
+		klog.Infof("DHCP: applied IP %s to %s", ipConfig.Address.String(), ifName)
+	}
+
+	// Route failures are fatal, like upstream ipam.ConfigureIface and
+	// setupNetwork in this file: a pod missing its DHCP-advertised routes
+	// must not report a successful ADD. Only EEXIST is tolerated, for the
+	// same idempotency reason as above.
+	for _, route := range dhcpResult.Routes {
+		nlRoute := netlink.Route{
+			LinkIndex: link.Attrs().Index,
+			Dst:       &route.Dst,
+			Gw:        route.GW,
+			Priority:  route.Priority,
+		}
+		if route.Table != nil {
+			nlRoute.Table = *route.Table
+		}
+		if route.Scope != nil {
+			nlRoute.Scope = netlink.Scope(*route.Scope)
+		}
+		if err := util.GetNetLinkOps().RouteAdd(&nlRoute); err != nil && !os.IsExist(err) {
+			return fmt.Errorf("failed to add route dst=%s gw=%s scope=%d on %s: %v",
+				route.Dst.String(), route.GW, nlRoute.Scope, ifName, err)
+		}
+		klog.Infof("DHCP: applied route dst=%s gw=%s on %s", route.Dst.String(), route.GW, ifName)
+	}
+
+	return nil
+}
+
+const (
+	netDevPollTimeout  = 5 * time.Second
+	netDevPollInterval = 200 * time.Millisecond
+)
+
+// getNetdevName resolves the host netdev name for a PCI/aux device, polling
+// until it appears. After the VFIO→kernel driver handoff the kernel creates the
+// netdev asynchronously, so a single lookup can race with the driver bind; poll
+// until the netdev shows up instead of failing on the transient lookup error.
+func getNetdevName(ctx context.Context, deviceID string, deviceInfo nadapi.DeviceInfo) (string, error) {
+	var netdevName string
+	retries := 0
+	err := wait.PollUntilContextTimeout(ctx, netDevPollInterval, netDevPollTimeout, true,
+		func(_ context.Context) (bool, error) {
+			var localErr error
+			netdevName, localErr = util.GetNetdevNameFromDeviceId(deviceID, deviceInfo)
+			retries++
+			// The netdev may not exist yet right after a driver rebind; keep
+			// polling rather than aborting on the transient "no netdevice" error.
+			return localErr == nil && netdevName != "", nil
+		})
+	if err != nil {
+		return "", fmt.Errorf("failed to find netdev for device %s after %d retries: %w", deviceID, retries, err)
+	}
+	return netdevName, nil
+}
+
+// runLocalnetVFIODHCP acquires a DHCP lease for a VFIO VF on a localnet network.
+// It temporarily unbinds the VF from vfio-pci and rebinds it to the kernel
+// driver matching its hardware (detected from the PCI vendor ID) to get a
+// netdev, performs a DHCP DORA exchange to discover the IP, then rebinds to
+// vfio-pci. VFs of unsupported NIC vendors are rejected before any driver
+// state is touched.
+//
+// This must run AFTER ConfigureOVS so the representor→OVS→localnet path is
+// ready for DHCP packets to reach the physical network.
+//
+// Unlike the pod (DHCPManaged) case, this does NOT use the CNI DHCP daemon.
+// It uses the insomniacslk/dhcp library directly to acquire the lease.
+// No lease maintenance is performed and the VM's own DHCP client takes over.
+func (pr *PodRequest) runLocalnetVFIODHCP() (dhcpResult *current.Result, retErr error) {
+	deviceID := pr.CNIConf.DeviceID
+
+	currentDriver, err := getPCIDeviceDriver(deviceID)
+	if err != nil {
+		return nil, err
+	}
+	if currentDriver != vfioPCIDriver {
+		return nil, fmt.Errorf("pci device %s is not bound to %s, found %q",
+			deviceID, vfioPCIDriver, currentDriver)
+	}
+
+	// Detect the kernel driver matching this VF's hardware BEFORE any driver
+	// state is touched: an unsupported vendor must fail cleanly here, not
+	// halfway through an unbind/bind cycle with a raw sysfs error.
+	kernelDriver, err := vfKernelDriverForDevice(deviceID)
+	if err != nil {
+		return nil, err
+	}
+
+	klog.Infof("VFIO DHCP: acquiring lease for pod %s/%s device %s via driver %s",
+		pr.PodNamespace, pr.PodName, deviceID, kernelDriver)
+
+	// Always restore vfio-pci on the way out, no matter where we fail below.
+	// This must be registered before the driver swap is attempted: the swap
+	// unbinds from vfio-pci before binding the kernel driver, so a failure
+	// halfway leaves the VF bound to nothing. Rebinding is a no-op when the
+	// device is still (or already back) on vfio-pci.
+	defer func() {
+		if err := dhcpOps.BindPCIDeviceDriver(deviceID, vfioPCIDriver); err != nil {
+			if retErr != nil {
+				retErr = fmt.Errorf("%w; rebind to %s failed: %v",
+					retErr, vfioPCIDriver, err)
+			} else {
+				retErr = fmt.Errorf("rebind device %s to %s failed: %w",
+					deviceID, vfioPCIDriver, err)
+			}
+			dhcpResult = nil
+			// the failed bind's internal rollback clears driver_override;
+			// re-pin so the retried ADD's repair check still fires
+			if perr := writePCIDeviceDriverOverride(deviceID, vfioPCIDriver); perr != nil {
+				klog.Warningf("Failed to re-pin device %s to %s after a failed rebind: %v",
+					deviceID, vfioPCIDriver, perr)
+			}
+		} else {
+			klog.Infof("VFIO DHCP: device %s rebound to %s",
+				deviceID, vfioPCIDriver)
+			// leave the pin in place: it matches how SR-IOV tooling keeps
+			// vfio devices bound across reprobes, and keeps the ADD-time
+			// repair (healInterruptedVFIOHandoff) armed for the next crash
+			if err := writePCIDeviceDriverOverride(deviceID, vfioPCIDriver); err != nil {
+				klog.Warningf("Failed to restore the %s pin on device %s: %v",
+					vfioPCIDriver, deviceID, err)
+			}
+		}
+	}()
+
+	// Unbind from vfio-pci, bind to the hardware-matching kernel driver to
+	// get a netdev
+	if err := dhcpOps.BindPCIDeviceDriver(deviceID, kernelDriver); err != nil {
+		return nil, fmt.Errorf("failed to bind device %s to %s: %w",
+			deviceID, kernelDriver, err)
+	}
+	// The device is now on the kernel driver but belongs to vfio-pci. Record
+	// that intent in driver_override immediately: the pin lives in the
+	// kernel, survives an ovnkube-node crash, and never affects the current
+	// binding. It is what healInterruptedVFIOHandoff keys the repair off
+	// when a retried ADD finds the device mid-handoff. Failing here is safe as
+	// the deferred rebind above restores vfio-pci on the way out.
+	if err := writePCIDeviceDriverOverride(deviceID, vfioPCIDriver); err != nil {
+		return nil, fmt.Errorf("failed to pin device %s to %s during the DHCP handoff: %w",
+			deviceID, vfioPCIDriver, err)
+	}
+
+	// Discover the temporary netdev
+	netdevName, err := getNetdevName(pr.ctx, deviceID, pr.deviceInfo)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find netdev for device %s: %w",
+			deviceID, err)
+	}
+
+	link, err := util.GetNetLinkOps().LinkByName(netdevName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to lookup netdev %s: %w", netdevName, err)
+	}
+	if err := util.GetNetLinkOps().LinkSetUp(link); err != nil {
+		return nil, fmt.Errorf("failed to bring up %s: %w", netdevName, err)
+	}
+
+	klog.Infof("VFIO DHCP: device %s netdev %s MAC %s is up, starting DHCP",
+		deviceID, netdevName, link.Attrs().HardwareAddr)
+
+	// One-shot DHCP directly using insomniacslk/dhcp. No daemon involved.
+	// The temporary netdev carries the MAC that ConfigureInterface programmed
+	// on the VF (the annotation MAC the VM will use), so the lease is keyed to
+	// the identity the guest's DHCP client will present after boot.
+	// Release immediately (probe semantics): the vfio-pci rebind below
+	// destroys the transmit path, so a lease kept across a failed rebind
+	// could never be released. Requires a static MAC→IP reservation for the
+	// guest to re-acquire the same IP at boot.
+	dhcpResult, err = acquireDHCPLease(pr.ctx, netdevName, link.Attrs().HardwareAddr, true)
+	if err != nil {
+		return nil, fmt.Errorf("DHCP lease acquisition failed on %s: %w", netdevName, err)
+	}
+
+	klog.Infof("VFIO DHCP: pod %s/%s device %s got IP=%s gw=%s",
+		pr.PodNamespace, pr.PodName, deviceID,
+		dhcpResult.IPs[0].Address.String(), dhcpResult.IPs[0].Gateway)
+
+	// The result is only reported (CNI result + pod-networks annotation).
+	// No AddrAdd is needed for VFIO, as it has no netdev in the container netns and the VF is
+	// rebound to vfio-pci; the VM's own DHCP client manages the lease after boot.
+	return dhcpResult, nil
+}
+
+// doOneShotDHCP performs a single DHCP DORA to discover the externally-assigned
+// IP for a KubeVirt VM workload and returns it for reporting (CNI result,
+// pod-networks annotation and NBDB programming). The IP is never applied to the
+// interface:
+//   - VFIO passthrough: the VF is rebound to vfio-pci afterwards, so any address
+//     configured on the temporary netdev would be discarded.
+//   - non-VFIO (l2bridge/managedTap): applying the IP would start KubeVirt's
+//     in-pod dnsmasq, which conflicts with the external DHCP server and prevents
+//     the guest from renewing its lease.
+//
+// In both cases the guest runs its own DHCP client after boot and owns the lease
+// lifecycle; no lease maintenance is done
+func (pr *PodRequest) doOneShotDHCP() (*current.Result, error) {
+	if pr.shouldRunLocalnetVFIODriverHandoff() {
+		// VFIO passthrough: a temporary driver handoff exposes a host netdev for
+		// the DORA exchange, after which the VF is rebound to vfio-pci.
+		return pr.runLocalnetVFIODHCP()
+	}
+	// non-VFIO binding: the netdev already exists in the pod netns.
+	return pr.acquireOneShotDHCPInPodNetns()
+}
+
+// acquireOneShotDHCPInPodNetns performs a one-shot DHCP DORA on the pod-netns
+// interface for a non-VFIO KubeVirt VM (l2bridge/managedTap binding) to discover
+// the IP assigned by the external DHCP server. The discovered IP is returned
+// for reporting only and is deliberately NOT applied to the interface, since
+// configuring it would trigger KubeVirt's in-pod dnsmasq.
+func (pr *PodRequest) acquireOneShotDHCPInPodNetns() (*current.Result, error) {
+	netns, err := ns.GetNS(pr.Netns)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open netns %q: %w", pr.Netns, err)
+	}
+	defer netns.Close()
+
+	var dhcpResult *current.Result
+	if err := netns.Do(func(_ ns.NetNS) error {
+		link, err := util.GetNetLinkOps().LinkByName(pr.IfName)
+		if err != nil {
+			return fmt.Errorf("failed to find interface %s: %w", pr.IfName, err)
+		}
+		if err := util.GetNetLinkOps().LinkSetUp(link); err != nil {
+			return fmt.Errorf("failed to bring up %s: %w", pr.IfName, err)
+		}
+		// KubeVirt's bridge binding hands the pod interface MAC to the guest,
+		// so keying the lease on it matches the guest's later DHCP identity.
+		// Keep the lease: the netdev persists in the pod netns for the VM's
+		// lifetime and the guest's DHCP client, presenting the same MAC-based
+		// client-id, renews this very lease at boot — the lease is handed
+		// over, not leaked. Releasing here would only open a window for the
+		// pool to reassign the IP before the guest boots.
+		dhcpResult, err = acquireDHCPLease(pr.ctx, pr.IfName, link.Attrs().HardwareAddr, false)
+		if err != nil {
+			return fmt.Errorf("DHCP lease acquisition failed on %s: %w", pr.IfName, err)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	klog.Infof("VM DHCP: pod %s/%s iface %s discovered IP=%s gw=%s (reported only, not applied)",
+		pr.PodNamespace, pr.PodName, pr.IfName,
+		dhcpResult.IPs[0].Address.String(), dhcpResult.IPs[0].Gateway)
+
+	return dhcpResult, nil
+}
+
+// mergeDHCPResultIntoCNIResult copies the DHCP-discovered IPs and routes into the
+// CNI result so they are surfaced in the pod-networks annotation and programmed
+// in the OVN NBDB. It does not modify the interface itself.
+func mergeDHCPResultIntoCNIResult(dhcpResult, result *current.Result) {
+	// Reference the container-side interface (the one with a sandbox path).
+	// When none exists — e.g. VFIO, where the VF has no netdev in the pod
+	// netns — leave ips[].interface unset: the CNI spec makes it optional,
+	// and a fabricated index would point at a host-side interface or, with
+	// an empty interfaces list, be out of range.
+	var contIfIdx *int
+	for i, iface := range result.Interfaces {
+		if iface.Sandbox != "" {
+			contIfIdx = current.Int(i)
+			break
+		}
+	}
+	for _, ipConfig := range dhcpResult.IPs {
+		ipConfig.Interface = contIfIdx
+		result.IPs = append(result.IPs, ipConfig)
+	}
+	result.Routes = append(result.Routes, dhcpResult.Routes...)
+}
+
+// dhcpClientID returns the RFC 2132 Client-ID (option 61) for the given
+// hardware address: a 1-byte hardware type (0x01 = Ethernet) followed by the
+// address itself.
+func dhcpClientID(hwAddr net.HardwareAddr) []byte {
+	return append([]byte{0x01}, hwAddr...)
+}
+
+// acquireDHCPLease performs a DHCP DORA (Discover, Offer, Request, Ack) exchange
+// on the given interface using the insomniacslk/dhcp library and returns the
+// result. No lease maintenance is performed — the caller is responsible for
+// any subsequent renewals or releases.
+//
+// DHCP IPAM mode is IPv4-only: this client speaks DHCPv4 (as does the
+// delegated dhcp IPAM plugin on the pod path); IPv6 addressing (DHCPv6 or
+// SLAAC) is neither acquired nor reported.
+//
+// The DHCP Client-ID option (option 61) is explicitly set to the RFC 2132
+// htype-prefixed hardware address (0x01 + MAC). This matches the Client-ID
+// sent by common guest DHCP clients keyed on the MAC (Windows, NetworkManager
+// with ipv4.dhcp-client-id=mac, dhclient with a configured client-id).
+// This ensures the external DHCP server keys the lease identically whether the
+// request comes from this one-shot DORA during CNI ADD or from the VM's own
+// DHCP client after boot, so the guest renews this very lease instead of
+// being allocated a different IP (ISC dhcpd in particular records a second
+// lease when the Client-ID presence differs between requests).
+func acquireDHCPLease(ctx context.Context, ifName string, hwAddr net.HardwareAddr, releaseLease bool) (*current.Result, error) {
+	// Create a raw DHCP client on the interface
+	client, err := nclient4.New(ifName,
+		nclient4.WithTimeout(vmDHCPTimeout),
+		nclient4.WithRetry(vmDHCPRetries),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create DHCP client on %s: %w", ifName, err)
+	}
+	defer client.Close()
+
+	// Perform full DORA: DISCOVER → OFFER → REQUEST → ACK
+	lease, err := client.Request(ctx,
+		dhcpv4.WithOption(dhcpv4.OptClientIdentifier(dhcpClientID(hwAddr))),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("DHCP request failed on %s: %w", ifName, err)
+	}
+
+	if lease.ACK == nil {
+		return nil, fmt.Errorf("DHCP lease has no ACK")
+	}
+
+	if releaseLease {
+		// Probe semantics: the DORA above only learns the server's assignment
+		// for this MAC; the lease is returned immediately, while the netdev
+		// still exists, so no later failure (in particular a failed vfio-pci
+		// rebind, which destroys the transmit path) can strand it until TTL.
+		// The guest re-acquires at boot — a static MAC→IP reservation on the
+		// server is required for it to receive the IP already published in
+		// the pod annotation. Best-effort by protocol (RFC 2131 §4.4.4,
+		// releases are unacknowledged): on failure the lease simply expires
+		// at TTL, exactly as if no release was sent.
+		if err := releaseDHCPLease(ifName, lease, hwAddr); err != nil {
+			klog.Warningf("DHCP: failed to release one-shot lease on %s: %v", ifName, err)
+		}
+	}
+
+	return dhcpACKToCNIResult(ifName, lease.ACK)
+}
+
+// releaseDHCPLease sends a DHCPRELEASE for a lease acquired by
+// acquireDHCPLease. RFC 2131 §4.4.4 requires the release be unicast to the
+// server sourced from the leased address; since the one-shot path never
+// configures the lease on the netdev, the address is added transiently (with
+// the lease's real mask, so the kernel's prefix route provides reachability
+// and ARP) for the kernel-socket send, mirroring containernetworking/plugins
+// PR #1271. The vendored NewReleaseFromACK does not carry the Client
+// Identifier, so it is passed explicitly — the server matched this lease on
+// option 61 and would not apply a release without it.
+//
+// The DHCP server is assumed to be on the leased subnet. With a relayed
+// (off-subnet) server the unicast send has no route and this falls back to
+// the legacy raw-socket release (source 0.0.0.0, L2 broadcast), which such
+// servers may ignore — the lease then expires at TTL. See the DHCP IPAM
+// documentation.
+func releaseDHCPLease(ifName string, lease *nclient4.Lease, hwAddr net.HardwareAddr) error {
+	clientID := dhcpv4.WithOption(dhcpv4.OptClientIdentifier(dhcpClientID(hwAddr)))
+	leasedIP := lease.ACK.YourIPAddr
+	mask := lease.ACK.SubnetMask()
+
+	if link, err := util.GetNetLinkOps().LinkByName(ifName); err == nil && mask != nil {
+		addr := &netlink.Addr{IPNet: &net.IPNet{IP: leasedIP, Mask: mask}}
+		if err := util.GetNetLinkOps().AddrAdd(link, addr); err == nil {
+			defer func() { _ = util.GetNetLinkOps().AddrDel(link, addr) }()
+			c, err := nclient4.New(ifName,
+				nclient4.WithUnicast(&net.UDPAddr{IP: leasedIP, Port: nclient4.ClientPort}))
+			if err == nil {
+				defer c.Close()
+				if err := c.Release(lease, clientID); err == nil {
+					return nil
+				}
+			}
+		}
+	}
+
+	// Legacy raw-socket fallback (source 0.0.0.0, L2 broadcast) — lenient
+	// servers accept it; strict or relayed ones may not.
+	c, err := nclient4.New(ifName)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	return c.Release(lease, clientID)
+}
+
+// dhcpACKToCNIResult converts a DHCPACK into a CNI result, mirroring the
+// delegated dhcp IPAM plugin (containernetworking/plugins/plugins/ipam/dhcp)
+// so pods (plugin delegation) and VMs (this one-shot DORA) report identical
+// results for the same lease:
+//   - a missing or malformed subnet mask (option 1) fails the request, like
+//     upstream lease.IPNet ("DHCP option Subnet Mask not found in DHCPACK"),
+//     instead of being defaulted to a prefix no real client would compute;
+//   - the first Router (option 3) is reported as the IPConfig gateway,
+//     unconditionally, like upstream daemon Allocate;
+//   - per RFC 3442 and upstream lease.Routes, when Classless Static Routes
+//     (option 121) are present they are the entire route set (on-link routes
+//     carry SCOPE_LINK) and the Router option contributes no default route;
+//     otherwise the router is added as an explicit default route. The
+//     deprecated classful Static Routes option (33) is not parsed — the
+//     vendored dhcpv4 library has no parser for it.
+func dhcpACKToCNIResult(ifName string, ack *dhcpv4.DHCPv4) (*current.Result, error) {
+	ip := ack.YourIPAddr
+	if ip == nil || ip.IsUnspecified() {
+		return nil, fmt.Errorf("DHCP ACK on %s has no IP address", ifName)
+	}
+
+	mask := ack.SubnetMask()
+	if mask == nil {
+		return nil, fmt.Errorf("DHCP option Subnet Mask not found in DHCPACK on %s", ifName)
+	}
+
+	// Extract the gateway (option 3) with the library parser, which
+	// validates the option layout; servers may return several routers —
+	// use the first, as standard clients do.
+	var gateway net.IP
+	if routers := ack.Router(); len(routers) > 0 {
+		gateway = routers[0]
+	}
+
+	result := &current.Result{
+		IPs: []*current.IPConfig{{
+			Address: net.IPNet{IP: ip, Mask: mask},
+			Gateway: gateway,
+		}},
+	}
+
+	// Extract classless static routes (option 121) with the library parser
+	// (RFC 3442): malformed option data — e.g. a prefix length > 32 — is
+	// rejected wholesale rather than half-parsed into bogus routes that
+	// could masquerade as a default route.
+	result.Routes = classlessRoutesToCNIRoutes(ack.ClasslessStaticRoute())
+	if len(result.Routes) == 0 && gateway != nil {
+		result.Routes = append(result.Routes, &cnitypes.Route{
+			Dst: net.IPNet{IP: net.IPv4zero, Mask: net.CIDRMask(0, 32)},
+			GW:  gateway,
+		})
+	}
+
+	return result, nil
+}
+
+// classlessRoutesToCNIRoutes converts RFC 3442 routes parsed by the dhcpv4
+// library into CNI result routes. An unspecified router means an on-link
+// route; it is marked SCOPE_LINK, as the delegated dhcp IPAM plugin does.
+func classlessRoutesToCNIRoutes(routes []*dhcpv4.Route) []*cnitypes.Route {
+	var cniRoutes []*cnitypes.Route
+	for _, r := range routes {
+		route := &cnitypes.Route{Dst: *r.Dest, GW: r.Router}
+		if r.Router.IsUnspecified() {
+			scope := int(netlink.SCOPE_LINK)
+			route.Scope = &scope
+		}
+		cniRoutes = append(cniRoutes, route)
+	}
+	return cniRoutes
 }
