@@ -312,6 +312,71 @@ func TestSetAdvertisements(t *testing.T) {
 	}
 }
 
+func TestNewForZoneRequiresZone(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	controller, err := NewForZone("", &FakeControllerManager{}, nil)
+	g.Expect(err).To(gomega.MatchError("zone manager requires a zone"))
+	g.Expect(controller).To(gomega.BeNil())
+}
+
+func TestNetworkControllerIsNodeManaged(t *testing.T) {
+	const (
+		localNode = "local-node"
+		localZone = "local-zone"
+	)
+
+	tests := []struct {
+		name       string
+		controller *networkController
+		node       *corev1.Node
+		want       bool
+	}{
+		{
+			name:       "cluster manager manages unannotated node",
+			controller: &networkController{},
+			node:       &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1"}},
+			want:       true,
+		},
+		{
+			name:       "node manager manages its own unannotated node",
+			controller: &networkController{node: localNode},
+			node:       &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: localNode}},
+			want:       true,
+		},
+		{
+			name:       "node manager ignores foreign unannotated node",
+			controller: &networkController{node: localNode},
+			node:       &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "other-node"}},
+			want:       false,
+		},
+		{
+			name:       "zone manager manages node in its zone",
+			controller: &networkController{zone: localZone},
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        "node1",
+					Annotations: map[string]string{util.OvnNodeZoneName: localZone},
+				},
+			},
+			want: true,
+		},
+		{
+			name:       "zone manager ignores unannotated node",
+			controller: &networkController{zone: localZone},
+			node:       &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1"}},
+			want:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			g.Expect(tt.controller.isNodeManaged(tt.node)).To(gomega.Equal(tt.want))
+		})
+	}
+}
+
 func TestNetworkControllerReconcilePendingNetworkRefChange(t *testing.T) {
 	g := gomega.NewWithT(t)
 	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())

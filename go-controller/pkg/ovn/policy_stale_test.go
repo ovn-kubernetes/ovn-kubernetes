@@ -245,7 +245,7 @@ var _ = ginkgo.Describe("OVN Stale NetworkPolicy Operations", func() {
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
-		fakeOvn = NewFakeOVN(false)
+		fakeOvn = NewFakeOVN(false, "node1")
 
 		initialData := getHairpinningACLsV4AndPortGroup()
 		initialDB = libovsdbtest.TestSetup{

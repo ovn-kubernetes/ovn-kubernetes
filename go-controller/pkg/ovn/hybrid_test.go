@@ -46,6 +46,7 @@ import (
 func newTestNode(name, os, ovnHostSubnet, hybridHostSubnet, drMAC string) corev1.Node {
 	var err error
 	annotations := make(map[string]string)
+	annotations[util.OvnNodeZoneName] = name
 	if ovnHostSubnet != "" {
 		annotations, err = util.UpdateNodeHostSubnetAnnotation(annotations, ovntest.MustParseIPNets(ovnHostSubnet), types.DefaultNetworkName)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -74,6 +75,7 @@ func newTestHONode(name, hybridHostSubnet, drMAC string) corev1.Node {
 		annotations[hotypes.HybridOverlayDRMAC] = drMAC
 	}
 	annotations[util.OvnNodeChassisID] = "79fdcfc4-6fe6-4cd3-8242-c0f85a4668ec"
+	annotations[util.OvnNodeZoneName] = name
 	return corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        name,
@@ -152,7 +154,6 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
-
 		app = cli.NewApp()
 		app.Name = "test"
 		app.Flags = config.Flags
@@ -226,6 +227,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				nil,
 				NewPortCache(stopChan),
 				nil,
+				"node1",
 			)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			c, cancel := context.WithCancel(ctx.Context)
@@ -391,6 +393,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				nil,
 				NewPortCache(stopChan),
 				nil,
+				"node1",
 			)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -743,6 +746,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				nil,
 				NewPortCache(stopChan),
 				nil,
+				"node1",
 			)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -922,6 +926,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				nil,
 				NewPortCache(stopChan),
 				nil,
+				"node1",
 			)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -1237,6 +1242,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				nil,
 				NewPortCache(stopChan),
 				nil,
+				"node1",
 			)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -1445,6 +1451,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				nil,
 				NewPortCache(stopChan),
 				nil,
+				"node1",
 			)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -1561,6 +1568,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				hotypes.HybridOverlayDRIP:  nodeHOIP,
 				hotypes.HybridOverlayDRMAC: nodeHOMAC,
 				"k8s.ovn.org/ovn-node-id":  "2",
+				util.OvnNodeZoneName:       node1.Name,
 			}
 
 			kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
@@ -1659,6 +1667,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				nil,
 				NewPortCache(stopChan),
 				nil,
+				"node1",
 			)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 

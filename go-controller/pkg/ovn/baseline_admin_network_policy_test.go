@@ -130,7 +130,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 		app.Name = "test"
 		app.Flags = config.Flags
 
-		fakeOVN = NewFakeOVN(false)
+		fakeOVN = NewFakeOVN(false, node1Name)
 	})
 
 	ginkgo.AfterEach(func() {
@@ -169,7 +169,6 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 					},
 				)
 
-				fakeOVN.controller.zone = node1Name
 				err := fakeOVN.controller.WatchNamespaces()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOVN.controller.WatchPods()
@@ -934,7 +933,6 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 					},
 				)
 
-				fakeOVN.controller.zone = node1Name // ensure we set the controller's zone as the node's zone
 				t.portName = util.GetLogicalPortName(t.namespace, t.podName)
 				t.populateLogicalSwitchCache(fakeOVN)
 				t2.portName = util.GetLogicalPortName(t2.namespace, t2.podName)
@@ -1253,7 +1251,6 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 						},
 					},
 				)
-				fakeOVN.controller.zone = node1Name // ensure we set the controller's zone as the node's zone
 				t1.portName = util.GetLogicalPortName(t1.namespace, t1.podName)
 				t1.populateLogicalSwitchCache(fakeOVN)
 				t2.portName = util.GetLogicalPortName(t2.namespace, t2.podName)

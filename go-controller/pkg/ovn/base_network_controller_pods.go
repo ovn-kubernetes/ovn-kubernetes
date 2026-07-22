@@ -119,7 +119,7 @@ func (bnc *BaseNetworkController) deleteStaleLogicalSwitchPorts(expectedLogicalP
 	topoType := bnc.TopologyType()
 	if !bnc.IsUserDefinedNetwork() || topoType == ovntypes.Layer3Topology {
 		// for default network and layer3 topology type networks, get all local zone node switches
-		nodes, err := bnc.GetLocalZoneNodes()
+		nodes, err := bnc.GetLocalNodes()
 		if err != nil {
 			return fmt.Errorf("failed to get nodes: %v", err)
 		}
@@ -630,7 +630,7 @@ func (bnc *BaseNetworkController) addLogicalPortToNetwork(pod *corev1.Pod, nadKe
 
 	// On layer2 topology with interconnect, we need to add specific port config
 	if bnc.isLayer2WithInterconnectTransport() {
-		isRemotePort := !bnc.isPodScheduledinLocalZone(pod)
+		isRemotePort := !bnc.isPodScheduledOnLocalNode(pod)
 		err = bnc.zoneICHandler.AddTransitPortConfig(isRemotePort, podAnnotation, lsp)
 		if err != nil {
 			return nil, nil, nil, false, err
@@ -754,41 +754,10 @@ func (bnc *BaseNetworkController) deletePodFromNamespace(ns string, portUUID str
 	return ops, nil
 }
 
-// isPodScheduledinLocalZone returns true when the pod is scheduled on a node
-// that belongs to this controller's local zone.
-// When localZoneNodes is configured, the node set is used as the primary cache.
-// On cache miss, it falls back to the node informer to avoid stale "remote"
-// classification while node state is still converging.
-func (bnc *BaseNetworkController) isPodScheduledinLocalZone(pod *corev1.Pod) bool {
-	if bnc.localZoneNodes == nil {
-		return true
-	}
-
-	if !util.PodScheduled(pod) {
-		return false
-	}
-
-	if _, isLocalZonePod := bnc.localZoneNodes.Load(pod.Spec.NodeName); isLocalZonePod {
-		return true
-	}
-
-	if bnc.watchFactory == nil {
-		return false
-	}
-
-	// TODO(trozet): refactor this function to have proper error handling and not rely on
-	// on node controller cache anymore
-	node, err := bnc.watchFactory.GetNode(pod.Spec.NodeName)
-	if err != nil {
-		return false
-	}
-
-	// Only trust informer fallback when zone information is explicit. Missing
-	// zone annotation defaults to "local" and can misclassify remote pods.
-	if _, ok := node.Annotations[util.OvnNodeZoneName]; !ok {
-		return false
-	}
-	return bnc.isLocalZoneNode(node)
+// isPodScheduledOnLocalNode returns true when the pod is scheduled on the node
+// managed by this controller.
+func (bnc *BaseNetworkController) isPodScheduledOnLocalNode(pod *corev1.Pod) bool {
+	return util.PodScheduled(pod) && pod.Spec.NodeName == bnc.nodeName
 }
 
 // WatchPods starts the watching of the Pod resource and calls back the appropriate handler logic

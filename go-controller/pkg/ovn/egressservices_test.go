@@ -67,7 +67,7 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 		app.Name = "test"
 		app.Flags = config.Flags
 
-		fakeOVN = NewFakeOVN(true)
+		fakeOVN = NewFakeOVN(true, node1Name)
 	})
 
 	ginkgo.AfterEach(func() {
@@ -543,7 +543,7 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 					},
 				)
 
-				fakeOVN.controller.zone = node1Name
+				fakeOVN.controller.nodeName = node1Name
 				fakeOVN.InitAndRunEgressSVCController()
 				clusterRouter.Policies = []string{"toKeepLRP1-UUID", "toKeepLRP2-UUID", "toKeepLRSR1-UUID"}
 				expectedDatabaseState := []libovsdbtest.TestData{
@@ -681,7 +681,7 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 					},
 				)
 
-				fakeOVN.controller.zone = node1Name
+				fakeOVN.controller.nodeName = node1Name
 				fakeOVN.InitAndRunEgressSVCController()
 
 				v4lrp1 := egressServiceRouterPolicy("v4lrp1-UUID", "testns/svc1", "10.128.1.5", "10.128.1.2")
@@ -838,7 +838,7 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 					},
 				)
 
-				fakeOVN.controller.zone = node1Name
+				fakeOVN.controller.nodeName = node1Name
 				fakeOVN.InitAndRunEgressSVCController()
 
 				v4lrp1 := egressServiceRouterPolicy("v4lrp1-UUID", "testns/svc1", "10.128.1.5", "10.128.1.2")
@@ -996,7 +996,7 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 					},
 				)
 
-				fakeOVN.controller.zone = node1Name
+				fakeOVN.controller.nodeName = node1Name
 				fakeOVN.InitAndRunEgressSVCController()
 
 				v4lrp1 := egressServiceRouterPolicy("v4lrp1-UUID", "testns/svc1", "10.128.1.5", "10.128.1.2")
@@ -1256,7 +1256,7 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 					},
 				)
 
-				fakeOVN.controller.zone = node1Name
+				fakeOVN.controller.nodeName = node1Name
 				fakeOVN.InitAndRunEgressSVCController()
 
 				svc1v4iclrp1 := egressServiceRouterPolicy("svc1v4lrsr1-UUID", "testns/svc1:ic", "10.128.2.5", "10.128.1.2")
@@ -1515,6 +1515,7 @@ func nodeFor(name, ipv4, ipv6, v4subnet, v6subnet, transitIPv4, transitIPv6 stri
 			Name: name,
 			Annotations: map[string]string{
 				"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", ipv4, ipv6),
+				util.OVNNodeEncapIPs:              fmt.Sprintf("[\"%s\",\"%s\"]", ipv4, ipv6),
 				util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\",\"%s\"]", fmt.Sprintf("%s/24", ipv4), fmt.Sprintf("%s/64", ipv6)),
 				"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":[\"%s\",\"%s\"]}", v4subnet, v6subnet),
 				util.OvnNodeChassisID:             chassisIDForNode(name),

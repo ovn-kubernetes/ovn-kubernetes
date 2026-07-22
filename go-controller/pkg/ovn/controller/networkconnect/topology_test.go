@@ -1115,7 +1115,7 @@ func TestSyncNetworkConnectionsInactiveNetwork(t *testing.T) {
 	// Controller with connect router and both network routers.
 	c := &Controller{
 		nbClient:       nbClient,
-		zone:           "zone1",
+		zone:           "node1",
 		nodeLister:     wf.NodeCoreInformer().Lister(),
 		networkManager: nm,
 		localZoneNode:  node1,

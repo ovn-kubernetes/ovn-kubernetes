@@ -551,6 +551,7 @@ func TestController_reconcile(t *testing.T) {
 		transport            string
 		gatewayMode          config.GatewayMode
 		dynamicUDN           bool
+		layer2TransitRouter  bool
 		ipv6                 bool
 		wantErr              bool
 		expectAcceptedStatus metav1.ConditionStatus
@@ -2495,6 +2496,46 @@ exit
 			expectNADAnnotations: map[string]map[string]string{"green": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
 		},
 		{
+			name:                "with dynamic UDN allocation and transit router, advertises an active layer2 network without a tunnel ID allocation",
+			dynamicUDN:          true,
+			layer2TransitRouter: true,
+			ra:                  &testRA{Name: "ra", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "green", Namespace: "green", Network: util.GenerateCUDNNetworkName("green"), Topology: "layer2", Subnet: "1.4.0.0/16", Labels: map[string]string{"selected": "true"}},
+			},
+			namespaces: []*testNamespace{{Name: "green"}},
+			pods:       []*testPod{{Name: "pod", Namespace: "green", Node: "node"}},
+			nodes: []*testNode{
+				{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\"}"},
+			},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.4.0.0/16"}, Imports: []string{"green"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.4.0.0/16"}},
+						}},
+						{ASN: 1, VRF: "green", Imports: []string{"default"}},
+					}},
+			},
+			expectNADAnnotations: map[string]map[string]string{"green": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
+		},
+		{
 			name:       "with dynamic UDN allocation, does not advertise a layer2 network from an active node until its tunnel ID is allocated",
 			dynamicUDN: true,
 			ra:         &testRA{Name: "ra", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
@@ -2586,6 +2627,9 @@ exit
 			gMaxLength := format.MaxLength
 			format.MaxLength = 0
 			defer func() { format.MaxLength = gMaxLength }()
+			previousLayer2TransitRouter := config.Layer2UsesTransitRouter
+			config.Layer2UsesTransitRouter = tt.layer2TransitRouter
+			t.Cleanup(func() { config.Layer2UsesTransitRouter = previousLayer2TransitRouter })
 
 			config.Default.ClusterSubnets = []config.CIDRNetworkEntry{
 				{

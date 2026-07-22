@@ -430,8 +430,7 @@ var _ = ginkgo.Describe("Gateway Init Operations", func() {
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
-
-		fakeOvn = NewFakeOVN(true)
+		fakeOvn = NewFakeOVN(true, nodeName)
 	})
 
 	ginkgo.AfterEach(func() {
@@ -2120,7 +2119,7 @@ var _ = ginkgo.Describe("Gateway Router static routes to the distributed router"
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 		config.Gateway.Mode = config.GatewayModeShared
 		config.Gateway.EphemeralPortRange = config.DefaultEphemeralPortRange
-		fakeOvn = NewFakeOVN(true)
+		fakeOvn = NewFakeOVN(true, nodeName)
 	})
 
 	ginkgo.AfterEach(func() {
@@ -2252,7 +2251,7 @@ var _ = ginkgo.Describe("GetNetworkScopedClusterSubnetSNATMatch", func() {
 
 	ginkgo.BeforeEach(func() {
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
-		fakeOvn = NewFakeOVN(false)
+		fakeOvn = NewFakeOVN(false, nodeName)
 		fakeOvn.start()
 		netInfo = &testNetInfo{
 			NetInfo: fakeOvn.controller.GetNetInfo(),
@@ -2404,7 +2403,7 @@ var _ = ginkgo.Describe("AddPodSNATOps", func() {
 
 	ginkgo.BeforeEach(func() {
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
-		fakeOvn = NewFakeOVN(false)
+		fakeOvn = NewFakeOVN(false, nodeName)
 
 		// Create the gateway router in the fake database
 		gwRouterName := "GR_" + nodeName
@@ -2423,6 +2422,7 @@ var _ = ginkgo.Describe("AddPodSNATOps", func() {
 					util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s/24\", \"%s/64\"]", nodeIP, nodeIPv6),
 					"k8s.ovn.org/node-chassis-id":     "test-chassis",
 					util.OvnNodeL3GatewayConfig:       fmt.Sprintf(`{"default":{"mode":"shared","mac-address":"7e:57:f8:f0:3c:49", "ip-addresses": ["%s/24", "%s/64"], "next-hops": ["192.168.1.1", "fd00::1"]}}`, nodeIP, nodeIPv6),
+					util.OvnNodeZoneName:              nodeName,
 				},
 			},
 			Status: corev1.NodeStatus{

@@ -1165,11 +1165,11 @@ func SetNodeZone(nodeAnnotator kube.Annotator, zoneName string) error {
 }
 
 // GetNodeZone returns the zone of the node set in the 'ovnNodeZoneName' node annotation.
-// If the annotation is not set, it returns the 'default' zone name.
+// If the annotation is not set, it returns an empty zone.
 func GetNodeZone(node *corev1.Node) string {
 	zoneName, ok := node.Annotations[OvnNodeZoneName]
 	if !ok {
-		return types.OvnDefaultZone
+		return ""
 	}
 
 	return zoneName

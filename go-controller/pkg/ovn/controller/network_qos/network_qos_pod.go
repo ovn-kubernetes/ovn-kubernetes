@@ -69,7 +69,7 @@ func (c *Controller) setPodForNQOS(pod *corev1.Pod, nqosState *networkQoSState, 
 	}
 	fullPodName := joinMetaNamespaceAndName(pod.Namespace, pod.Name)
 	// is pod in this zone
-	if c.isPodScheduledinLocalZone(pod) {
+	if c.isPodScheduledOnLocalNode(pod) {
 		if matchSource := nqosState.matchSourceSelector(pod); matchSource {
 			// pod's labels match source selector
 			if err = nqosState.configureSourcePod(c, pod, addresses); err == nil {

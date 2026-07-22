@@ -128,8 +128,6 @@ type DefaultNodeNetworkController struct {
 	routeManager  *routemanager.Controller
 	linkManager   *linkmanager.Controller
 
-	// retry framework for namespaces, used for the removal of stale conntrack entries for external gateways
-	retryNamespaces *retry.RetryFramework
 	// retry framework for endpoint slices, used for the removal of stale conntrack entries for services
 	retryEndpointSlices *retry.RetryFramework
 
@@ -246,7 +244,6 @@ func NewDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, net
 }
 
 func (nc *DefaultNodeNetworkController) initRetryFrameworkForNode() {
-	nc.retryNamespaces = nc.newRetryFrameworkNode(factory.NamespaceExGwType)
 	nc.retryEndpointSlices = nc.newRetryFrameworkNode(factory.EndpointSliceForStaleConntrackRemovalType)
 	nc.retryNodes = nc.newRetryFrameworkNode(factory.NodeType)
 }
@@ -730,13 +727,12 @@ func createNodeManagementPortController(
 }
 
 // getOVNSBZone returns the zone name stored in the Southbound db.
-// It returns the default zone name if "options:name" is not set in the SB_Global row
+// It returns an error if "options:name" is not set in the SB_Global row.
 func getOVNSBZone() (string, error) {
 	dbZone, stderr, err := util.RunOVNSbctl("get", "SB_Global", ".", "options:name")
 	if err != nil {
 		if strings.Contains(stderr, "ovn-sbctl: no key \"name\" in SB_Global record") {
-			// If the options:name is not present, assume default zone
-			return types.OvnDefaultZone, nil
+			return "", fmt.Errorf("OVN Southbound DB zone name is not set")
 		}
 		return "", err
 	}
@@ -749,6 +745,10 @@ func getOVNSBZone() (string, error) {
 // to allow UDNNC to reference the openflow manager created in Init.
 func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 	klog.Infof("Initializing the default node network controller")
+
+	if nc.name == "" {
+		return fmt.Errorf("ovnkube-node name is required")
+	}
 
 	var err error
 	var node *corev1.Node
@@ -803,8 +803,8 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 	var err1 error
 
 	if config.IsModeDPUHost() {
-		// There is no SBDB to connect to in DPU Host mode, so we will just take the default input config zone
-		sbZone = config.Default.Zone
+		// There is no SBDB to connect to in DPU Host mode, so use the node name.
+		sbZone = nc.name
 	} else {
 		err = wait.PollUntilContextTimeout(ctx, 500*time.Millisecond, 300*time.Second, true, func(_ context.Context) (bool, error) {
 			sbZone, err = getOVNSBZone()
@@ -813,14 +813,14 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 				return false, nil
 			}
 
-			if config.Default.Zone != sbZone {
-				err1 = fmt.Errorf("node %s zone %s mismatch with the Southbound zone %s", nc.name, config.Default.Zone, sbZone)
+			if nc.name != sbZone {
+				err1 = fmt.Errorf("node name %s does not match the Southbound zone %s", nc.name, sbZone)
 				return false, nil
 			}
 			return true, nil
 		})
 		if err != nil {
-			return fmt.Errorf("timed out waiting for the node zone %s to match the OVN Southbound db zone, err: %v, err1: %v", config.Default.Zone, err, err1)
+			return fmt.Errorf("timed out waiting for the node zone %s to match the OVN Southbound db zone, err: %v, err1: %v", nc.name, err, err1)
 		}
 
 		for _, auth := range []config.OvnAuthConfig{config.OvnNorth, config.OvnSouth} {
@@ -1074,21 +1074,6 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 	}
 
 	if config.IsModeDPU() || config.IsModeFull() {
-		// In single-zone deployments (default zone), ovnkube-controller patches the
-		// "k8s.ovn.org/external-gw-pod-ips" namespace annotation; ovnkube-node
-		// watches it here and flushes conntrack on every node. In multi-zone
-		// interconnect, ovnkube-controller flushes conntrack directly and skips
-		// the annotation.
-		if nc.sbZone == types.OvnDefaultZone {
-			err := nc.WatchNamespaces()
-			if err != nil {
-				return fmt.Errorf("failed to watch namespaces: %w", err)
-			}
-			// every minute cleanup stale conntrack entries if any
-			go wait.Until(func() {
-				nc.checkAndDeleteStaleConntrackEntries()
-			}, time.Minute*1, nc.stopChan)
-		}
 		err = nc.WatchEndpointSlices()
 		if err != nil {
 			return fmt.Errorf("failed to watch endpointSlices: %w", err)
@@ -1314,59 +1299,6 @@ func (nc *DefaultNodeNetworkController) WatchEndpointSlices() error {
 		return err
 	}
 	_, err := nc.retryEndpointSlices.WatchResource()
-	return err
-}
-
-func exGatewayPodsAnnotationsChanged(oldNs, newNs *corev1.Namespace) bool {
-	// In reality we only care about exgw pod deletions, however since the list of IPs is not expected to change
-	// that often, let's check for *any* changes to these annotations compared to their previous state and trigger
-	// the logic for checking if we need to delete any conntrack entries
-	return oldNs.Annotations[util.ExternalGatewayPodIPsAnnotation] != newNs.Annotations[util.ExternalGatewayPodIPsAnnotation]
-}
-
-func (nc *DefaultNodeNetworkController) checkAndDeleteStaleConntrackEntries() {
-	namespaces, err := nc.watchFactory.GetNamespaces()
-	if err != nil {
-		klog.Errorf("Unable to get namespaces from informer: %v", err)
-	}
-	for _, namespace := range namespaces {
-		// Only namespaces targeted by an AdminPolicyBasedExternalRoute can have
-		// external-gateway ECMP conntrack entries to reconcile (the legacy
-		// routing-external-gws annotation is no longer supported).
-		gatewayIPs, err := nc.apbExternalRouteNodeController.GetAdminPolicyBasedExternalRouteIPsForTargetNamespace(namespace.Name)
-		if err != nil {
-			klog.Errorf("Unable to retrieve gateway IPs for Admin Policy Based External Route objects for namespace %s: %v", namespace.Name, err)
-			continue
-		}
-		if gatewayIPs.Len() == 0 {
-			continue
-		}
-		pods, err := nc.watchFactory.GetPods(namespace.Name)
-		if err != nil {
-			klog.Warningf("Unable to get pods from informer for namespace %s: %v", namespace.Name, err)
-		}
-		if len(pods) > 0 || err != nil {
-			// we only need to proceed if there is at least one pod in this namespace on this node
-			// OR if we couldn't fetch the pods for some reason at this juncture
-			_ = nc.syncConntrackForExternalGateways(namespace)
-		}
-	}
-}
-
-func (nc *DefaultNodeNetworkController) syncConntrackForExternalGateways(newNs *corev1.Namespace) error {
-	gatewayIPs, err := nc.apbExternalRouteNodeController.GetAdminPolicyBasedExternalRouteIPsForTargetNamespace(newNs.Name)
-	if err != nil {
-		return fmt.Errorf("unable to retrieve gateway IPs for Admin Policy Based External Route objects: %w", err)
-	}
-	// ARP for the gateway IPs' MACs to form an allowlist; conntrack entries whose
-	// destination MAC is no longer valid (e.g. after a gateway MAC change) are removed.
-	return util.SyncConntrackForExternalGateways(gatewayIPs, nil, func() ([]*corev1.Pod, error) {
-		return nc.watchFactory.GetPods(newNs.Name)
-	})
-}
-
-func (nc *DefaultNodeNetworkController) WatchNamespaces() error {
-	_, err := nc.retryNamespaces.WatchResource()
 	return err
 }
 

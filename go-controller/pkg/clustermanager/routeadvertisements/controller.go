@@ -787,13 +787,13 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 				continue
 			}
 			if config.OVNKubernetesFeature.EnableDynamicUDNAllocation &&
+				!config.Layer2UsesTransitRouter &&
 				selectedNetworks.networkTopology[network] == types.Layer2Topology &&
 				!c.nodeHasLayer2Allocation(nodeName, network) {
-				// without its tunnel ID allocated, the node cannot have
-				// rendered the layer2 network yet, so don't advertise it:
-				// unlike layer3, there are no per-node prefixes to otherwise
-				// wait for. The allocation is a node annotation update that
-				// triggers the advertising reconcile.
+				// Legacy layer2 topology uses the tunnel ID allocation as a
+				// signal that the network is rendered on the node. Transit-router
+				// topology intentionally has no such allocation, so NodeHasNetwork
+				// above is the available signal there.
 				// TODO: replace with a per-node network status once
 				// available, to know when the network is actually rendered.
 				continue

@@ -24,12 +24,9 @@ import (
 	utilnet "k8s.io/utils/net"
 	"k8s.io/utils/ptr"
 
-	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
-
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
-	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	kubetest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
@@ -75,18 +72,6 @@ func newControllerWithDBSetupForNetwork(dbSetup libovsdbtest.TestSetup, netInfo 
 	}
 	recorder := record.NewFakeRecorder(10)
 
-	nbZoneFailed := false
-	// Try to get the NBZone.  If there is an error, create NB_Global record.
-	// Otherwise NewController() will return error since it
-	// calls libovsdbutil.GetNBZone().
-	_, err = libovsdbutil.GetNBZone(nbClient)
-	if err != nil {
-		nbZoneFailed = true
-		if err = createTestNBGlobal(nbClient, "global"); err != nil {
-			return nil, err
-		}
-	}
-
 	controller, err := NewController(client.KubeClient,
 		nbClient,
 		factoryMock.ServiceCoreInformer(),
@@ -95,17 +80,10 @@ func newControllerWithDBSetupForNetwork(dbSetup libovsdbtest.TestSetup, netInfo 
 		networkmanager.Default().Interface(),
 		recorder,
 		netInfo,
+		nodeA,
 	)
 	if err != nil {
 		return nil, err
-	}
-
-	if nbZoneFailed {
-		// Delete the NBGlobal row as this function created it.  Otherwise many tests would fail while
-		// checking the expectedData in the NBDB.
-		if err = deleteTestNBGlobal(nbClient); err != nil {
-			return nil, err
-		}
 	}
 
 	if err = controller.initTopLevelCache(); err != nil {
@@ -569,7 +547,6 @@ func TestSyncServices(t *testing.T) {
 						lbGroup(types.ClusterSwitchLBGroupName),
 						lbGroup(types.ClusterRouterLBGroupName),
 						nodeIPTemplate(nodeAInfo),
-						nodeIPTemplate(nodeBInfo),
 					},
 				},
 				{
@@ -621,7 +598,6 @@ func TestSyncServices(t *testing.T) {
 						lbGroupForNetwork(types.ClusterRouterLBGroupName, l3UDN),
 
 						nodeIPTemplate(nodeAInfo),
-						nodeIPTemplate(nodeBInfo),
 					},
 				},
 				{
@@ -671,7 +647,6 @@ func TestSyncServices(t *testing.T) {
 						lbGroupForNetwork(types.ClusterRouterLBGroupName, l2UDN),
 
 						nodeIPTemplate(nodeAInfo),
-						nodeIPTemplate(nodeBInfo),
 					},
 				},
 			},
@@ -751,7 +726,6 @@ func TestSyncServices(t *testing.T) {
 						lbGroup(types.ClusterSwitchLBGroupName),
 						lbGroup(types.ClusterRouterLBGroupName),
 						nodeIPTemplate(nodeAInfo),
-						nodeIPTemplate(nodeBInfo),
 					},
 				},
 				{
@@ -817,7 +791,6 @@ func TestSyncServices(t *testing.T) {
 						lbGroupForNetwork(types.ClusterRouterLBGroupName, l3UDN),
 
 						nodeIPTemplate(nodeAInfo),
-						nodeIPTemplate(nodeBInfo),
 					},
 				},
 				{
@@ -879,7 +852,6 @@ func TestSyncServices(t *testing.T) {
 						lbGroupForNetwork(types.ClusterRouterLBGroupName, l2UDN),
 
 						nodeIPTemplate(nodeAInfo),
-						nodeIPTemplate(nodeBInfo),
 					},
 				},
 			},
@@ -977,7 +949,6 @@ func TestSyncServices(t *testing.T) {
 						lbGroup(types.ClusterSwitchLBGroupName, nodeMergedTemplateLoadBalancerName(ns, serviceName, corev1.IPv4Protocol)),
 						lbGroup(types.ClusterRouterLBGroupName, nodeMergedTemplateLoadBalancerName(ns, serviceName, corev1.IPv4Protocol)),
 						nodeIPTemplate(nodeAInfo),
-						nodeIPTemplate(nodeBInfo),
 					},
 				},
 				{
@@ -1041,7 +1012,6 @@ func TestSyncServices(t *testing.T) {
 						lbGroupForNetwork(types.ClusterRouterLBGroupName, l3UDN, nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv4Protocol, l3UDN)),
 
 						nodeIPTemplate(nodeAInfo),
-						nodeIPTemplate(nodeBInfo),
 					},
 				},
 				{
@@ -1103,7 +1073,6 @@ func TestSyncServices(t *testing.T) {
 						lbGroupForNetwork(types.ClusterRouterLBGroupName, l2UDN, nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv4Protocol, l2UDN)),
 
 						nodeIPTemplate(nodeAInfo),
-						nodeIPTemplate(nodeBInfo),
 					},
 				},
 			},
@@ -1201,7 +1170,6 @@ func TestSyncServices(t *testing.T) {
 						lbGroup(types.ClusterSwitchLBGroupName, nodeMergedTemplateLoadBalancerName(ns, serviceName, corev1.IPv4Protocol)),
 						lbGroup(types.ClusterRouterLBGroupName, nodeMergedTemplateLoadBalancerName(ns, serviceName, corev1.IPv4Protocol)),
 						nodeIPTemplate(nodeAInfo),
-						nodeIPTemplate(nodeBInfo),
 					},
 					dbStateAfterDeleting: []libovsdbtest.TestData{
 						&nbdb.LoadBalancer{
@@ -1214,16 +1182,14 @@ func TestSyncServices(t *testing.T) {
 							},
 							ExternalIDs: loadBalancerExternalIDs(namespacedServiceName(ns, serviceName)),
 						},
-						nodeMergedTemplateLoadBalancer(nodePort, serviceName, ns, outPort, nodeAEndpoint, nodeBEndpointIP),
 						nodeLogicalSwitch(nodeA, initialLsGroups),
 						nodeLogicalSwitch(nodeB, initialLsGroups),
 						nodeLogicalRouter(nodeA, initialLrGroups),
 						nodeLogicalRouter(nodeB, initialLrGroups),
 						lbGroup(types.ClusterLBGroupName, loadBalancerClusterWideTCPServiceName(ns, serviceName)),
-						lbGroup(types.ClusterSwitchLBGroupName, nodeMergedTemplateLoadBalancerName(ns, serviceName, corev1.IPv4Protocol)),
-						lbGroup(types.ClusterRouterLBGroupName, nodeMergedTemplateLoadBalancerName(ns, serviceName, corev1.IPv4Protocol)),
+						lbGroup(types.ClusterSwitchLBGroupName),
+						lbGroup(types.ClusterRouterLBGroupName),
 						nodeIPTemplate(nodeAInfo),
-						nodeIPTemplate(nodeBInfo),
 					},
 				},
 				{
@@ -1286,7 +1252,6 @@ func TestSyncServices(t *testing.T) {
 						lbGroupForNetwork(types.ClusterRouterLBGroupName, l3UDN, nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv4Protocol, l3UDN)),
 
 						nodeIPTemplate(nodeAInfo),
-						nodeIPTemplate(nodeBInfo),
 					},
 					dbStateAfterDeleting: []libovsdbtest.TestData{
 						&nbdb.LoadBalancer{
@@ -1299,7 +1264,6 @@ func TestSyncServices(t *testing.T) {
 							},
 							ExternalIDs: loadBalancerExternalIDsForNetwork(namespacedServiceName(ns, serviceName), l3UDN.GetNetworkName()),
 						},
-						nodeMergedTemplateLoadBalancerForNetwork(nodePort, serviceName, ns, outPort, l3UDN, nodeAEndpointUDN, nodeBEndpointIPUDN),
 						nodeLogicalSwitch(nodeA, initialLsGroups),
 						nodeLogicalSwitch(nodeB, initialLsGroups),
 						nodeLogicalSwitchForNetwork(nodeA, initialLsGroups, l3UDN),
@@ -1314,11 +1278,10 @@ func TestSyncServices(t *testing.T) {
 						lbGroup(types.ClusterSwitchLBGroupName),
 						lbGroup(types.ClusterRouterLBGroupName),
 						lbGroupForNetwork(types.ClusterLBGroupName, l3UDN, clusterWideTCPServiceLoadBalancerNameForNetwork(ns, serviceName, l3UDN)),
-						lbGroupForNetwork(types.ClusterSwitchLBGroupName, l3UDN, nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv4Protocol, l3UDN)),
-						lbGroupForNetwork(types.ClusterRouterLBGroupName, l3UDN, nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv4Protocol, l3UDN)),
+						lbGroupForNetwork(types.ClusterSwitchLBGroupName, l3UDN),
+						lbGroupForNetwork(types.ClusterRouterLBGroupName, l3UDN),
 
 						nodeIPTemplate(nodeAInfo),
-						nodeIPTemplate(nodeBInfo),
 					},
 				},
 				{
@@ -1379,7 +1342,6 @@ func TestSyncServices(t *testing.T) {
 						lbGroupForNetwork(types.ClusterRouterLBGroupName, l2UDN, nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv4Protocol, l2UDN)),
 
 						nodeIPTemplate(nodeAInfo),
-						nodeIPTemplate(nodeBInfo),
 					},
 					dbStateAfterDeleting: []libovsdbtest.TestData{
 						&nbdb.LoadBalancer{
@@ -1392,7 +1354,6 @@ func TestSyncServices(t *testing.T) {
 							},
 							ExternalIDs: loadBalancerExternalIDsForNetwork(namespacedServiceName(ns, serviceName), l2UDN.GetNetworkName()),
 						},
-						nodeMergedTemplateLoadBalancerForNetwork(nodePort, serviceName, ns, outPort, l2UDN, nodeAEndpointUDN, nodeBEndpointIPUDN),
 						nodeLogicalSwitch(nodeA, initialLsGroups),
 						nodeLogicalSwitch(nodeB, initialLsGroups),
 						nodeLogicalSwitchForNetwork("", initialLsGroups, l2UDN),
@@ -1406,11 +1367,10 @@ func TestSyncServices(t *testing.T) {
 						lbGroup(types.ClusterSwitchLBGroupName),
 						lbGroup(types.ClusterRouterLBGroupName),
 						lbGroupForNetwork(types.ClusterLBGroupName, l2UDN, clusterWideTCPServiceLoadBalancerNameForNetwork(ns, serviceName, l2UDN)),
-						lbGroupForNetwork(types.ClusterSwitchLBGroupName, l2UDN, nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv4Protocol, l2UDN)),
-						lbGroupForNetwork(types.ClusterRouterLBGroupName, l2UDN, nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv4Protocol, l2UDN)),
+						lbGroupForNetwork(types.ClusterSwitchLBGroupName, l2UDN),
+						lbGroupForNetwork(types.ClusterRouterLBGroupName, l2UDN),
 
 						nodeIPTemplate(nodeAInfo),
-						nodeIPTemplate(nodeBInfo),
 					},
 				},
 			},
@@ -2081,7 +2041,6 @@ func getNodeInfo(nodeName string, nodeIPsV4 []string, nodeIPsV6 []string) *nodeI
 		gatewayRouterName:  nodeGWRouterName(nodeName),
 		switchName:         nodeSwitchName(nodeName),
 		chassisID:          nodeName,
-		zone:               types.OvnDefaultZone,
 	}
 }
 
@@ -2091,37 +2050,4 @@ func temporarilyEnableGomegaMaxLengthFormat() {
 
 func restoreGomegaMaxLengthFormat(originalLength int) {
 	format.MaxLength = originalLength
-}
-
-func createTestNBGlobal(nbClient libovsdbclient.Client, zone string) error {
-	nbGlobal := &nbdb.NBGlobal{Name: zone}
-	ops, err := nbClient.Create(nbGlobal)
-	if err != nil {
-		return err
-	}
-
-	_, err = nbClient.Transact(context.Background(), ops...)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func deleteTestNBGlobal(nbClient libovsdbclient.Client) error {
-	p := func(*nbdb.NBGlobal) bool {
-		return true
-	}
-
-	ops, err := nbClient.WhereCache(p).Delete()
-	if err != nil {
-		return err
-	}
-
-	_, err = nbClient.Transact(context.Background(), ops...)
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
