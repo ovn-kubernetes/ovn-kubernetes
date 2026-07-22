@@ -47,6 +47,8 @@ const (
 	nftablesUDNOpenPortsICMPv6 = "udn-open-ports-icmp-v6"
 	nftablesUDNPodIPsv4        = "udn-pod-default-ips-v4"
 	nftablesUDNPodIPsv6        = "udn-pod-default-ips-v6"
+	// name of the cgroup directory kubelet runs under when it is managed by systemd.
+	kubeletCgroupName = "kubelet.service"
 )
 
 // UDNHostIsolationManager manages the host isolation for user defined networks.
@@ -96,37 +98,66 @@ func NewUDNHostIsolationManager(ipv4, ipv6 bool, podInformer coreinformers.PodIn
 	return m
 }
 
+// findKubeletCgroupPath looks for the kubelet cgroup under the given cgroup root and
+// stores it, relative to that root, in m.kubeletCgroupPath.
+// kind cluster uses "kubelet.slice/kubelet.service", while OCP cluster uses "system.slice/kubelet.service".
+// as long as ovn-k node is running as a privileged container, we can access the host cgroup directory.
+func (m *UDNHostIsolationManager) findKubeletCgroupPath(cgroupRoot string) error {
+	err := filepath.WalkDir(cgroupRoot, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() && d.Name() == kubeletCgroupName {
+			relPath, err := filepath.Rel(cgroupRoot, path)
+			if err != nil {
+				return err
+			}
+			m.kubeletCgroupPath = relPath
+			klog.Infof("Found kubelet cgroup path: %s", m.kubeletCgroupPath)
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to walk %s: %w", cgroupRoot, err)
+	}
+	if m.kubeletCgroupPath == "" {
+		return fmt.Errorf("no %q directory found under %s", kubeletCgroupName, cgroupRoot)
+	}
+	return nil
+}
+
+// reportKubeletProbesUnsupported logs and reports on the node that kubelet probes to
+// primary UDN pods won't be allowed. Host isolation itself is unaffected.
+func (m *UDNHostIsolationManager) reportKubeletProbesUnsupported(reason string) {
+	message := fmt.Sprintf("Kubelet probes to primary UDN pods are not supported on node %s: %s. "+
+		"Use the %s pod annotation to allow the probe ports from the host.",
+		m.nodeName, reason, util.UDNOpenPortsAnnotationName)
+	klog.Warning(message)
+	m.recordNodeWarning("UDNKubeletProbesNotSupported", message)
+}
+
+func (m *UDNHostIsolationManager) recordNodeWarning(reason, message string) {
+	nodeRef := &corev1.ObjectReference{
+		Kind: "Node",
+		Name: m.nodeName,
+	}
+	m.recorder.Eventf(nodeRef, kapi.EventTypeWarning, reason, "%s", message)
+}
+
 // Start must be called on node setup.
 func (m *UDNHostIsolationManager) Start(ctx context.Context) error {
 	klog.Infof("Starting UDN host isolation manager")
+	// A failure to set m.kubeletCgroupPath is not fatal: host isolation is still set up,
+	// only the rule that lets kubelet reach primary UDN pods is left out.
 	if hostUsesCgroupv2() {
-		// find kubelet cgroup path.
-		// kind cluster uses "kubelet.slice/kubelet.service", while OCP cluster uses "system.slice/kubelet.service".
-		// as long as ovn-k node is running as a privileged container, we can access the host cgroup directory.
-		err := filepath.WalkDir("/sys/fs/cgroup", func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return nil
-			}
-			if d.Name() == "kubelet.service" {
-				m.kubeletCgroupPath = strings.TrimPrefix(path, "/sys/fs/cgroup/")
-				klog.Infof("Found kubelet cgroup path: %s", m.kubeletCgroupPath)
-				return filepath.SkipAll
-			}
-			return nil
-		})
-		if err != nil || m.kubeletCgroupPath == "" {
-			return fmt.Errorf("failed to find kubelet cgroup path: %w", err)
+		if err := m.findKubeletCgroupPath(unifiedMountpoint); err != nil {
+			// kubelet is not running under a systemd-managed cgroup, which is the case
+			// on distributions that don't use systemd to run it.
+			m.reportKubeletProbesUnsupported(err.Error())
 		}
 	} else {
-		// We can't use cgroup v2 match, so m.kubeletCgroupPath will be empty.
-		// As a side effect, all kubelet probes will fail, but host isolation will still work.
-		message := fmt.Sprintf("Kubelet probes for UDN are not supported on the node %s as it uses cgroup v1.", m.nodeName)
-		klog.Warning(message)
-		nodeRef := &corev1.ObjectReference{
-			Kind: "Node",
-			Name: m.nodeName,
-		}
-		m.recorder.Eventf(nodeRef, kapi.EventTypeWarning, "UDNKubeletProbesNotSupported", "%s", message)
+		m.reportKubeletProbesUnsupported("the node uses cgroup v1")
 	}
 	nft, err := nodenft.GetNFTablesHelper()
 	if err != nil {
@@ -137,8 +168,17 @@ func (m *UDNHostIsolationManager) Start(ctx context.Context) error {
 	if err = m.setupUDNIsolationFromHost(); err != nil {
 		return fmt.Errorf("failed to setup UDN host isolation: %w", err)
 	}
-	if err = m.runKubeletRestartTracker(ctx); err != nil {
-		return fmt.Errorf("failed to run kubelet restart tracker: %w", err)
+	// The tracker only exists to re-resolve the kubelet cgroup match, so it is pointless
+	// without one. Not being able to run it leaves that match in place but unrefreshed,
+	// which is still better than not isolating UDN pods from the host at all.
+	if m.kubeletCgroupPath != "" {
+		if err = m.runKubeletRestartTracker(ctx); err != nil {
+			message := fmt.Sprintf("Kubelet restarts are not tracked on node %s: %v. "+
+				"Kubelet probes to primary UDN pods will stop working if kubelet is restarted.",
+				m.nodeName, err)
+			klog.Warning(message)
+			m.recordNodeWarning("UDNKubeletRestartTrackingUnavailable", message)
+		}
 	}
 	return controller.StartWithInitialSync(m.podInitialSync, m.podController)
 }
@@ -184,7 +224,25 @@ func CleanupUDNHostIsolation() error {
 	return nft.Run(context.TODO(), tx)
 }
 
+// setupUDNIsolationFromHost creates the udn-isolation chain and its sets.
+// The kubelet cgroup match can be rejected when the rules are loaded, for instance on a
+// kernel built without CONFIG_NFT_SOCKET, where the socket match does not exist at all.
+// Isolating UDN pods from the host matters more than kubelet probes, so the rules are
+// re-applied without the kubelet match in that case.
 func (m *UDNHostIsolationManager) setupUDNIsolationFromHost() error {
+	err := m.nft.Run(context.TODO(), m.isolationTransaction())
+	if err != nil && m.kubeletCgroupPath != "" {
+		m.kubeletCgroupPath = ""
+		m.reportKubeletProbesUnsupported(fmt.Sprintf("the kubelet cgroup match could not be loaded: %v", err))
+		err = m.nft.Run(context.TODO(), m.isolationTransaction())
+	}
+	if err != nil {
+		return fmt.Errorf("could not setup nftables rules for UDN from host isolation: %v", err)
+	}
+	return nil
+}
+
+func (m *UDNHostIsolationManager) isolationTransaction() *knftables.Transaction {
 	tx := m.nft.NewTransaction()
 	tx.Add(&knftables.Chain{
 		Name:     UDNIsolationChain,
@@ -228,11 +286,14 @@ func (m *UDNHostIsolationManager) setupUDNIsolationFromHost() error {
 	})
 	m.addRules(tx)
 
-	err := m.nft.Run(context.TODO(), tx)
-	if err != nil {
-		return fmt.Errorf("could not setup nftables rules for UDN from host isolation: %v", err)
-	}
-	return nil
+	return tx
+}
+
+// cgroupv2Level returns the "level" argument of the nftables socket cgroupv2 match for
+// the given cgroup path. The match compares the cgroup ancestor at that level, so the
+// level has to be the depth of the path, e.g. 2 for "kubelet.slice/kubelet.service".
+func cgroupv2Level(cgroupPath string) string {
+	return fmt.Sprintf("level %d", strings.Count(cgroupPath, "/")+1)
 }
 
 func (m *UDNHostIsolationManager) addRules(tx *knftables.Transaction) {
@@ -256,7 +317,7 @@ func (m *UDNHostIsolationManager) addRules(tx *knftables.Transaction) {
 			tx.Add(&knftables.Rule{
 				Chain: UDNIsolationChain,
 				Rule: knftables.Concat(
-					"socket", "cgroupv2", "level 2", m.kubeletCgroupPath,
+					"socket", "cgroupv2", cgroupv2Level(m.kubeletCgroupPath), m.kubeletCgroupPath,
 					"ip", "daddr", "@", nftablesUDNPodIPsv4, "accept"),
 			})
 		}
@@ -286,7 +347,7 @@ func (m *UDNHostIsolationManager) addRules(tx *knftables.Transaction) {
 			tx.Add(&knftables.Rule{
 				Chain: UDNIsolationChain,
 				Rule: knftables.Concat(
-					"socket", "cgroupv2", "level 2", m.kubeletCgroupPath,
+					"socket", "cgroupv2", cgroupv2Level(m.kubeletCgroupPath), m.kubeletCgroupPath,
 					"ip6", "daddr", "@", nftablesUDNPodIPsv6, "accept"),
 			})
 		}

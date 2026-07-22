@@ -5,8 +5,11 @@ package node
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -14,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ktypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/knftables"
 	"sigs.k8s.io/yaml"
 
@@ -563,3 +567,125 @@ func newPodWithIPs(namespace, name string, primaryUDN bool, ips []string, openPo
 		},
 	}
 }
+
+// nftRunFailer fails the first `failures` calls to Run, then delegates to the wrapped
+// interface. It stands in for the kernel rejecting the socket cgroupv2 match.
+type nftRunFailer struct {
+	knftables.Interface
+	failures int
+}
+
+func (f *nftRunFailer) Run(ctx context.Context, tx *knftables.Transaction) error {
+	if f.failures > 0 {
+		f.failures--
+		return errors.New("Could not process rule: No such file or directory")
+	}
+	return f.Interface.Run(ctx, tx)
+}
+
+var _ = Describe("UDN Host isolation setup", func() {
+	const nodeName = "node1"
+
+	var (
+		manager  *UDNHostIsolationManager
+		fakeNFT  *knftables.Fake
+		recorder *record.FakeRecorder
+	)
+
+	expectedDump := func(kubeletCgroupPath string) string {
+		result := `add table inet ovn-kubernetes
+add chain inet ovn-kubernetes udn-isolation { type filter hook output priority 0 ; comment "Host isolation for user defined networks" ; }
+add set inet ovn-kubernetes udn-open-ports-icmp-v4 { type ipv4_addr ; comment "default network IPs of pods in user defined networks that allow ICMP (IPv4)" ; }
+add set inet ovn-kubernetes udn-open-ports-icmp-v6 { type ipv6_addr ; comment "default network IPs of pods in user defined networks that allow ICMP (IPv6)" ; }
+add set inet ovn-kubernetes udn-open-ports-v4 { type ipv4_addr . inet_proto . inet_service ; comment "default network open ports of pods in user defined networks (IPv4)" ; }
+add set inet ovn-kubernetes udn-open-ports-v6 { type ipv6_addr . inet_proto . inet_service ; comment "default network open ports of pods in user defined networks (IPv6)" ; }
+add set inet ovn-kubernetes udn-pod-default-ips-v4 { type ipv4_addr ; comment "default network IPs of pods in user defined networks (IPv4)" ; }
+add set inet ovn-kubernetes udn-pod-default-ips-v6 { type ipv6_addr ; comment "default network IPs of pods in user defined networks (IPv6)" ; }
+add rule inet ovn-kubernetes udn-isolation ip daddr . meta l4proto . th dport @udn-open-ports-v4 accept
+add rule inet ovn-kubernetes udn-isolation ip daddr @udn-open-ports-icmp-v4 meta l4proto icmp accept
+`
+		if kubeletCgroupPath != "" {
+			result += fmt.Sprintf("add rule inet ovn-kubernetes udn-isolation socket cgroupv2 %s %s ip daddr @udn-pod-default-ips-v4 accept\n",
+				cgroupv2Level(kubeletCgroupPath), kubeletCgroupPath)
+		}
+		result += `add rule inet ovn-kubernetes udn-isolation ip daddr @udn-pod-default-ips-v4 drop
+add rule inet ovn-kubernetes udn-isolation ip6 daddr . meta l4proto . th dport @udn-open-ports-v6 accept
+add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-open-ports-icmp-v6 meta l4proto icmpv6 accept
+`
+		if kubeletCgroupPath != "" {
+			result += fmt.Sprintf("add rule inet ovn-kubernetes udn-isolation socket cgroupv2 %s %s ip6 daddr @udn-pod-default-ips-v6 accept\n",
+				cgroupv2Level(kubeletCgroupPath), kubeletCgroupPath)
+		}
+		result += "add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-pod-default-ips-v6 drop\n"
+		return result
+	}
+
+	BeforeEach(func() {
+		fakeNFT = nodenft.SetFakeNFTablesHelper()
+		recorder = record.NewFakeRecorder(10)
+		manager = &UDNHostIsolationManager{
+			ipv4:     true,
+			ipv6:     true,
+			nodeName: nodeName,
+			recorder: recorder,
+			nft:      fakeNFT,
+		}
+	})
+
+	Context("kubelet cgroup discovery", func() {
+		It("finds the kubelet cgroup relative to the cgroup root", func() {
+			cgroupRoot := GinkgoT().TempDir()
+			Expect(os.MkdirAll(filepath.Join(cgroupRoot, "kubelet.slice", kubeletCgroupName), 0o755)).To(Succeed())
+
+			Expect(manager.findKubeletCgroupPath(cgroupRoot)).To(Succeed())
+			Expect(manager.kubeletCgroupPath).To(Equal(filepath.Join("kubelet.slice", kubeletCgroupName)))
+		})
+
+		It("fails when kubelet does not run under a systemd cgroup", func() {
+			cgroupRoot := GinkgoT().TempDir()
+			Expect(os.MkdirAll(filepath.Join(cgroupRoot, "podruntime", "kubelet"), 0o755)).To(Succeed())
+
+			Expect(manager.findKubeletCgroupPath(cgroupRoot)).To(MatchError(ContainSubstring(kubeletCgroupName)))
+			Expect(manager.kubeletCgroupPath).To(BeEmpty())
+		})
+	})
+
+	DescribeTable("derives the socket cgroupv2 match level from the cgroup path depth",
+		func(cgroupPath, expectedLevel string) {
+			Expect(cgroupv2Level(cgroupPath)).To(Equal(expectedLevel))
+		},
+		Entry("systemd layout", "kubelet.slice/kubelet.service", "level 2"),
+		Entry("single component", "kubelet", "level 1"),
+		Entry("nested layout", "runtime.slice/kubelet.slice/kubelet.service", "level 3"),
+	)
+
+	Context("nftables setup", func() {
+		It("allows kubelet to reach UDN pods when the kubelet cgroup is known", func() {
+			manager.kubeletCgroupPath = "kubelet.slice/kubelet.service"
+
+			Expect(manager.setupUDNIsolationFromHost()).To(Succeed())
+			Expect(nodenft.MatchNFTRules(expectedDump("kubelet.slice/kubelet.service"), fakeNFT.Dump())).To(Succeed())
+		})
+
+		It("still isolates UDN pods when the kubelet cgroup is unknown", func() {
+			Expect(manager.setupUDNIsolationFromHost()).To(Succeed())
+			Expect(nodenft.MatchNFTRules(expectedDump(""), fakeNFT.Dump())).To(Succeed())
+		})
+
+		It("drops the kubelet rule when it cannot be loaded, and reports it on the node", func() {
+			manager.kubeletCgroupPath = "kubelet.slice/kubelet.service"
+			manager.nft = &nftRunFailer{Interface: fakeNFT, failures: 1}
+
+			Expect(manager.setupUDNIsolationFromHost()).To(Succeed())
+			Expect(manager.kubeletCgroupPath).To(BeEmpty())
+			Expect(nodenft.MatchNFTRules(expectedDump(""), fakeNFT.Dump())).To(Succeed())
+			Expect(recorder.Events).To(Receive(ContainSubstring("UDNKubeletProbesNotSupported")))
+		})
+
+		It("fails when the isolation rules cannot be loaded at all", func() {
+			manager.nft = &nftRunFailer{Interface: fakeNFT, failures: 2}
+
+			Expect(manager.setupUDNIsolationFromHost()).NotTo(Succeed())
+		})
+	})
+})
