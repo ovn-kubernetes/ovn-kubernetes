@@ -61,6 +61,14 @@ reviews:
           suggest cloning to an upstream GitHub issue and linking that instead.
         - If a PR renames, changes, or removes any code entity (flag,
           config, CRD, API, binary), flag if existing docs become stale.
+        - AGENTS.md files exist at multiple levels (e.g.
+          go-controller/AGENTS.md, go-controller/pkg/AGENTS.md,
+          go-controller/pkg/crd/AGENTS.md) and serve as the AI and
+          developer index. Flag if a PR adds, removes, or renames
+          directories/packages, changes coding conventions, renames
+          binaries/components, or alters architecture without updating
+          the nearest AGENTS.md. They must stay in sync with the
+          actual codebase.
         - Flag PRs over ~7000 lines (additions + deletions) or
           single-PR full OKEP / large feature implementations touching
           many unrelated components — suggest splitting into smaller,
@@ -91,6 +99,14 @@ reviews:
         - Flag broken or dead links, wrong anchors, outdated URLs.
         - If a code entity (CRD, field, flag, binary) was renamed or removed,
           flag stale references in docs.
+    - path: "**/AGENTS.md"
+      instructions: |
+        - AGENTS.md files are the AI and developer index for the
+          directory they live in. They document package layout,
+          conventions, and coding standards.
+        - When reviewing changes to an AGENTS.md, verify accuracy:
+          package names must match actual directories, descriptions
+          must reflect current behavior, and links must not be broken.
     - path: "go-controller/pkg/crd/**"
       instructions: |
         - k8s.ovn.org CRD API types and generated client code.
@@ -155,14 +171,17 @@ reviews:
           deferred unlocks, deadlock potential, and shared state between
           controllers. Flag unprotected concurrent map/slice access.
         - Flag missing nil checks on OVS/OVN DB results, optional
-          Kubernetes fields, and interface type assertions.
+          Kubernetes fields, and interface type assertions. Conversely,
+          flag redundant defensive nil checks where the value is
+          guaranteed non-nil by the call chain or API contract — these
+          add noise and obscure real logic.
         - Flag resource leaks: unclosed channels, namespace handles,
           informer factories, or goroutines without shutdown paths.
         - Use klog for logging (not fmt.Print or log.*). Flag misuse
           of log levels (e.g. klog.Infof for errors instead of klog.Errorf or klog.Warningf,
           klog.V(5) for important events that should be at lower verbosity).
-        - Flag bare error returns (return err) without adding
-          context. Errors should be wrapped with fmt.Errorf to add
+        - Errors should be wrapped with fmt.Errorf to add context.
+          Don't flag returns where the error already carries sufficient
           context. Use %w when the caller should be able to inspect
           the underlying error with errors.Is/errors.As. Use %v
           when the underlying error is an implementation detail that
