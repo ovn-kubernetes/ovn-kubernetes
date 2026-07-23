@@ -52,8 +52,6 @@ import (
 
 const (
 	ovnNodeSubnets = "k8s.ovn.org/node-subnets"
-	// ovnNodeZoneNameAnnotation is the node annotation name to store the node zone name.
-	ovnNodeZoneNameAnnotation = "k8s.ovn.org/zone-name"
 	// ovnGatewayMTUSupport annotation determines if options:gateway_mtu shall be set for a node's gateway router
 	ovnGatewayMTUSupport = "k8s.ovn.org/gateway-mtu-support"
 )
@@ -1279,16 +1277,6 @@ func isPreConfiguredUdnAddressesEnabled() bool {
 
 func getNodeContainerName() string {
 	return "ovnkube-controller"
-}
-
-// getNodeZone returns the node's zone
-func getNodeZone(node *v1.Node) (string, error) {
-	nodeZone, ok := node.Annotations[ovnNodeZoneNameAnnotation]
-	if !ok {
-		return "", fmt.Errorf("zone for the node %s not set in the annotation %s", node.Name, ovnNodeZoneNameAnnotation)
-	}
-
-	return nodeZone, nil
 }
 
 // adds route to a docker node with a full mask
