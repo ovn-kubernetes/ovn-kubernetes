@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	nadtypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
@@ -100,6 +101,12 @@ type Controller struct {
 	// networkRefReconcilerID identifies our registration with the network
 	// manager for network activity change notifications
 	networkRefReconcilerID uint64
+
+	// raNetworks caches the networks each RouteAdvertisements selects, so
+	// that a network activity change only reconciles the RouteAdvertisements
+	// selecting that network
+	raNetworksLock sync.RWMutex
+	raNetworks     map[string]sets.Set[string]
 }
 
 // networkRefReconcilerFunc adapts a function to the
@@ -107,6 +114,37 @@ type Controller struct {
 type networkRefReconcilerFunc func(node, networkName string)
 
 func (f networkRefReconcilerFunc) Reconcile(node, networkName string) { f(node, networkName) }
+
+// setRANetworks caches the networks selected by a RouteAdvertisements.
+func (c *Controller) setRANetworks(ra string, networks []string) {
+	c.raNetworksLock.Lock()
+	defer c.raNetworksLock.Unlock()
+	c.raNetworks[ra] = sets.New(networks...)
+}
+
+// deleteRANetworks removes a RouteAdvertisements from the selected networks
+// cache.
+func (c *Controller) deleteRANetworks(ra string) {
+	c.raNetworksLock.Lock()
+	defer c.raNetworksLock.Unlock()
+	delete(c.raNetworks, ra)
+}
+
+// getRAsForNetwork returns the RouteAdvertisements known to select the
+// network. A RouteAdvertisements not in the cache has not been reconciled
+// yet: its pending reconcile will read the current activity state of its
+// networks, so it doesn't need this notification.
+func (c *Controller) getRAsForNetwork(network string) []string {
+	c.raNetworksLock.RLock()
+	defer c.raNetworksLock.RUnlock()
+	var ras []string
+	for ra, networks := range c.raNetworks {
+		if networks.Has(network) {
+			ras = append(ras, ra)
+		}
+	}
+	return ras
+}
 
 // NewController builds a controller that reconciles RouteAdvertisements
 func NewController(
@@ -125,6 +163,7 @@ func NewController(
 		nadClient:       ovnClient.NetworkAttchDefClient,
 		raClient:        ovnClient.RouteAdvertisementsClient,
 		nm:              nm,
+		raNetworks:      map[string]sets.Set[string]{},
 	}
 	if util.IsNetworkSegmentationSupportEnabled() {
 		c.uplinkStateLister = wf.UplinkStateInformer().Lister()
@@ -238,8 +277,15 @@ func (c *Controller) Start() error {
 	// reconcile when a network goes active or inactive on a node: some of
 	// these changes, like a network going active again during the deletion
 	// grace period, update no object we watch
-	c.networkRefReconcilerID = c.nm.RegisterNetworkRefReconciler(networkRefReconcilerFunc(func(_, _ string) {
-		c.raController.ReconcileAll()
+	c.networkRefReconcilerID = c.nm.RegisterNetworkRefReconciler(networkRefReconcilerFunc(func(_, networkName string) {
+		ras := c.getRAsForNetwork(networkName)
+		if len(ras) == 0 {
+			klog.V(5).Infof("No RouteAdvertisements select network %s, ignoring its activity change", networkName)
+			return
+		}
+		for _, ra := range ras {
+			c.raController.Reconcile(ra)
+		}
 	}))
 	controllers := []controllerutil.Reconciler{
 		c.frrController,
@@ -341,6 +387,7 @@ func (c *Controller) reconcile(name string) error {
 
 	if ra == nil {
 		metrics.DeleteRouteAdvertisementCondition(name)
+		c.deleteRANetworks(name)
 	}
 
 	hadUpdates, err := c.reconcileRouteAdvertisements(name, ra)
@@ -561,6 +608,13 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 	slices.SortFunc(selectedNetworks.macVRFConfigs, func(a, b *vrfConfig) int { return int(a.VNI - b.VNI) })
 	slices.SortFunc(selectedNetworks.ipVRFConfigs, func(a, b *ipVRFConfig) int { return int(a.VNI - b.VNI) })
 	selectedNetworks.networks = sets.List(networkSet)
+	// cache the selected networks so that network activity changes only
+	// reconcile the RouteAdvertisements selecting them. Returning early above
+	// keeps the previous entry, which matches the FRRConfigurations still
+	// deployed from the last successful reconcile; the errors returned above
+	// are only resolved by RA/NAD/node updates, which we watch and which
+	// refresh this cache.
+	c.setRANetworks(ra.Name, selectedNetworks.networks)
 
 	// gather selected nodes
 	nodeSelector, err := metav1.LabelSelectorAsSelector(&ra.Spec.NodeSelector)
