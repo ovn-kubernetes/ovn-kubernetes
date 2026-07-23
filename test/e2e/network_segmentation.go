@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
@@ -2485,6 +2486,179 @@ spec:
 					}),
 				),
 			),
+		)
+	})
+
+	Context("concurrent UDN provisioning", func() {
+		const concurrentUDNs = 5
+
+		DescribeTable(
+			"maintains data path connectivity during burst UDN creation",
+			func(
+				topology string,
+				multiSubnet bool,
+			) {
+				By("ensuring at least 2 schedulable nodes exist")
+				nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.Background(), cs, 2)
+				framework.ExpectNoError(err)
+				if len(nodes.Items) < 2 {
+					ginkgo.Skip("requires at least 2 Nodes")
+				}
+				node1Name, node2Name := nodes.Items[0].GetName(), nodes.Items[1].GetName()
+
+				By("allocating unique CIDRs for each concurrent UDN")
+				nextSubnets := newTestNetworkSubnetsAllocator()
+				cidrs := make([]string, concurrentUDNs)
+				for i := range concurrentUDNs {
+					v4, v6 := nextSubnets(multiSubnet)
+					cidrs[i] = filterCIDRsAndJoin(cs, joinStrings(append(v4, v6...)...))
+				}
+
+				By("deploying connectivity-probe pods on the default network")
+				defaultNetNs := f.Namespace.Name + "-default"
+				_, err = cs.CoreV1().Namespaces().Create(context.Background(), &v1.Namespace{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: defaultNetNs,
+					},
+				}, metav1.CreateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				defer func() {
+					Expect(cs.CoreV1().Namespaces().Delete(context.Background(), defaultNetNs, metav1.DeleteOptions{})).To(Succeed())
+				}()
+
+				probeServerConfig := *podConfig(
+					"probe-server",
+					withCommand(func() []string {
+						return httpServerContainerCmd(podClusterNetPort)
+					}),
+					withNodeSelector(map[string]string{nodeHostnameKey: node1Name}),
+				)
+				probeServerConfig.namespace = defaultNetNs
+				probeClientConfig := *podConfig(
+					"probe-client",
+					withNodeSelector(map[string]string{nodeHostnameKey: node2Name}),
+				)
+				probeClientConfig.namespace = defaultNetNs
+
+				runUDNPod(cs, defaultNetNs, probeServerConfig, nil)
+				runUDNPod(cs, defaultNetNs, probeClientConfig, nil)
+
+				probeServerIPv4, probeServerIPv6, err := podIPsForDefaultNetwork(cs, defaultNetNs, probeServerConfig.name)
+				Expect(err).NotTo(HaveOccurred(), "failed to get default network IPs for probe server pod %s/%s", defaultNetNs, probeServerConfig.name)
+
+				By("verifying baseline cross-node connectivity before burst creation")
+				for _, probeIP := range []string{probeServerIPv4, probeServerIPv6} {
+					if probeIP == "" {
+						continue
+					}
+					Expect(connectToServer(probeClientConfig, probeIP, podClusterNetPort)).To(Succeed(), "baseline cross-node connectivity check failed for %s", probeIP)
+				}
+
+				By("creating namespaces for concurrent UDNs")
+				type udnInstance struct {
+					namespace string
+					netName   string
+				}
+				udnInstances := make([]udnInstance, concurrentUDNs)
+				for i := range concurrentUDNs {
+					nsName := fmt.Sprintf("%s-burst-%d-%s", f.Namespace.Name, i, rand.String(5))
+					netName := fmt.Sprintf("burst-net-%d", i)
+					udnInstances[i] = udnInstance{namespace: nsName, netName: netName}
+					_, err := cs.CoreV1().Namespaces().Create(context.Background(), &v1.Namespace{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:   nsName,
+							Labels: map[string]string{RequiredUDNNamespaceLabel: ""},
+						},
+					}, metav1.CreateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					defer func() {
+						Expect(cs.CoreV1().Namespaces().Delete(context.Background(), nsName, metav1.DeleteOptions{})).To(Succeed())
+					}()
+				}
+
+				By("creating all UDNs concurrently to trigger burst provisioning")
+				var wg sync.WaitGroup
+				wg.Add(concurrentUDNs)
+				for i := range concurrentUDNs {
+					go func(idx int) {
+						defer ginkgo.GinkgoRecover()
+						defer wg.Done()
+						inst := udnInstances[idx]
+						netConfig := &networkAttachmentConfigParams{
+							name:      inst.netName,
+							namespace: inst.namespace,
+							topology:  topology,
+							cidr:      cidrs[idx],
+							role:      "primary",
+						}
+						udnManifest := generateUserDefinedNetworkManifest(netConfig, cs)
+						cleanup, err := createManifest(inst.namespace, udnManifest)
+						Expect(err).NotTo(HaveOccurred())
+						DeferCleanup(cleanup)
+					}(i)
+				}
+				done := make(chan struct{})
+				go func() {
+					wg.Wait()
+					close(done)
+				}()
+				select {
+				case <-done:
+				case <-time.After(60 * time.Second):
+					framework.Failf("timed out waiting for burst UDN creation goroutines to finish")
+				}
+
+				By("waiting for all UDNs to reach NetworkCreated condition")
+				for _, inst := range udnInstances {
+					Eventually(
+						userDefinedNetworkReadyFunc(f.DynamicClient, inst.namespace, inst.netName),
+						60*time.Second, time.Second,
+					).Should(Succeed(), "UDN %s/%s did not reach NetworkCreated", inst.namespace, inst.netName)
+				}
+
+				By("verifying cross-node connectivity was not disrupted during the burst")
+				for _, probeIP := range []string{probeServerIPv4, probeServerIPv6} {
+					if probeIP == "" {
+						continue
+					}
+					Eventually(func() error {
+						return connectToServer(probeClientConfig, probeIP, podClusterNetPort)
+					}, 30*time.Second, 2*time.Second).Should(Succeed(), "post-burst cross-node connectivity check failed for %s", probeIP)
+				}
+
+				By("verifying UDN data path with pods on the first burst-created network")
+				verifyInst := udnInstances[0]
+				serverPodConfig := *podConfig(
+					"udn-server",
+					withCommand(func() []string {
+						return httpServerContainerCmd(podClusterNetPort)
+					}),
+					withNodeSelector(map[string]string{nodeHostnameKey: node1Name}),
+				)
+				serverPodConfig.namespace = verifyInst.namespace
+				clientPodConfig := *podConfig("udn-client",
+					withNodeSelector(map[string]string{nodeHostnameKey: node2Name}),
+				)
+				clientPodConfig.namespace = verifyInst.namespace
+
+				runUDNPod(cs, verifyInst.namespace, serverPodConfig, nil)
+				runUDNPod(cs, verifyInst.namespace, clientPodConfig, nil)
+
+				serverIP, err := getPodAnnotationIPsForAttachmentByIndex(
+					cs,
+					verifyInst.namespace,
+					serverPodConfig.name,
+					namespacedName(verifyInst.namespace, verifyInst.netName),
+					0,
+				)
+				Expect(err).NotTo(HaveOccurred())
+
+				Eventually(func() error {
+					return reachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, podClusterNetPort)
+				}, 2*time.Minute, 6*time.Second).Should(Succeed())
+			},
+			Entry("L3", "layer3", true),
+			Entry("L2", "layer2", false),
 		)
 	})
 })
