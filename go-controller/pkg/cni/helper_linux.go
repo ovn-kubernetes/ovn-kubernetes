@@ -570,6 +570,57 @@ func deleteStalePodPorts(ovsClient client.Client, ifaceID, hostIfaceName string)
 	return nil
 }
 
+// ClearPodPortsLegacyTransient strips the legacy other_config:transient
+// marker from existing pod ports. Older versions tagged every pod veth port
+// with transient=true; since ovsdb-server runs with
+// --delete-transient-ports, ports created before the marker was dropped
+// would still be scrubbed on the next ovsdb-server restart even though new
+// ports no longer carry it. CNI ADD never re-runs for running pods, so the
+// marker must be cleared out-of-band at startup. Pod ports are recognized
+// by the sandbox external-id on their Interface; other transient users
+// (host uplink, DPU representors) don't carry it and are left alone.
+func ClearPodPortsLegacyTransient(ovsClient client.Client) error {
+	if ovsClient != nil {
+		podIfaces, err := ovsops.FindInterfacesWithPredicate(ovsClient, func(i *vswitchd.Interface) bool {
+			return i.ExternalIDs["sandbox"] != ""
+		})
+		if err != nil {
+			return fmt.Errorf("failed to list pod interfaces: %v", err)
+		}
+		podPorts := make(map[string]bool, len(podIfaces))
+		for _, i := range podIfaces {
+			podPorts[i.Name] = true
+		}
+		transient, err := ovsops.FindOVSPortsWithPredicate(ovsClient, func(p *vswitchd.Port) bool {
+			return podPorts[p.Name] && p.OtherConfig["transient"] != ""
+		})
+		if err != nil {
+			return fmt.Errorf("failed to list transient pod ports: %v", err)
+		}
+		for _, p := range transient {
+			if err := ovsops.RemoveOVSPortOtherConfig(ovsClient, p.Name, "transient"); err != nil {
+				return fmt.Errorf("failed to clear transient marker from pod port %s: %v", p.Name, err)
+			}
+			klog.Infof("Cleared legacy transient marker from pod port %s", p.Name)
+		}
+		return nil
+	}
+	names, err := ovsFind("Port", "name", "other_config:transient=true")
+	if err != nil {
+		return fmt.Errorf("failed to list transient ports: %v", err)
+	}
+	for _, name := range names {
+		if sandbox, err := ovsGet("Interface", name, "external_ids", "sandbox"); err != nil || sandbox == "" {
+			continue
+		}
+		if out, err := ovsExec("remove", "Port", name, "other_config", "transient"); err != nil {
+			return fmt.Errorf("failed to clear transient marker from pod port %s: %v\n %q", name, err, out)
+		}
+		klog.Infof("Cleared legacy transient marker from pod port %s", name)
+	}
+	return nil
+}
+
 // getExistingIfaceMeta returns the iface-id and effective NAD key recorded in
 // the named Interface's external_ids, or (_, _, false) if the interface does
 // not exist. An absent NADExternalID is mapped to types.DefaultNetworkName so
@@ -615,7 +666,13 @@ func addOrUpdatePodPort(ovsClient client.Client, hostIfaceName string,
 			iface.Type = "dpdk"
 			iface.MTURequest = &m
 		}
-		port := &vswitchd.Port{OtherConfig: map[string]string{"transient": "true"}}
+		// Do NOT tag the port as transient: with containerized OVS,
+		// ovsdb-server restarts on every ovs-node container restart (helm
+		// upgrade, eviction, OOM...), not just node reboot, and its
+		// --delete-transient-ports would scrub the live pod veth row from
+		// conf.db. Nothing re-adds it, so every non-hostNetwork pod on the
+		// node loses connectivity until a fresh CNI ADD.
+		port := &vswitchd.Port{}
 		ops, err := ovsops.CreateOrUpdatePodPortOps(ovsClient, nil, "br-int", hostIfaceName, port, iface)
 		if err != nil {
 			return fmt.Errorf("failed to build operations for plugging pod interface: %v", err)
@@ -632,7 +689,7 @@ func addOrUpdatePodPort(ovsClient client.Client, hostIfaceName string,
 		return nil
 	}
 	args := []string{
-		"--may-exist", "add-port", "br-int", hostIfaceName, "other_config:transient=true",
+		"--may-exist", "add-port", "br-int", hostIfaceName,
 		"--", "set", "interface", hostIfaceName,
 	}
 	// Walk extIDs in the canonical ovs-vsctl arg order that this CNI has
@@ -712,8 +769,7 @@ func ConfigureOVS(ctx context.Context, ovsClient client.Client, namespace, podNa
 		}
 	}
 
-	// Add the new sandbox's OVS port, tag the port as transient so stale
-	// pod ports are scrubbed on hard reboot
+	// Add the new sandbox's OVS port
 	extIDs := map[string]string{
 		"attached_mac": ifInfo.MAC.String(),
 		"iface-id":     ifaceID,
