@@ -16,6 +16,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	uplinkv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1"
 	uplinkapply "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/applyconfiguration/uplink/v1alpha1"
 	uplinkclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/clientset/versioned"
@@ -56,9 +57,14 @@ type uplinkGatewayState struct {
 // UplinkGatewayController coordinates gateway programming and readiness for
 // all active CUDNs using an Uplink on the local node.
 type UplinkGatewayController struct {
-	nodeName            string
-	uplinkClient        uplinkclientset.Interface
-	uplinkStateLister   uplinklisters.UplinkStateLister
+	nodeName          string
+	uplinkClient      uplinkclientset.Interface
+	uplinkStateLister uplinklisters.UplinkStateLister
+	// The DPU owns GatewayReady in split-DPU deployments because it is the
+	// component that waits for OVN patch ports and programs OVS/OpenFlow.
+	// DPU-host gateway reconciliation still runs, but must not race the DPU
+	// for ownership of the shared condition.
+	publishStatus       bool
 	mutex               sync.Mutex
 	uplinks             map[string]*uplinkGatewayState
 	uplinkByNetworkName map[string]string
@@ -74,6 +80,7 @@ func NewUplinkGatewayController(
 		nodeName:            nodeName,
 		uplinkClient:        uplinkClient,
 		uplinkStateLister:   uplinkStateLister,
+		publishStatus:       !config.IsModeDPUHost(),
 		uplinks:             map[string]*uplinkGatewayState{},
 		uplinkByNetworkName: map[string]string{},
 	}
@@ -282,6 +289,10 @@ func (c *UplinkGatewayController) publishGatewayConditions(uplinkNames []string)
 // publishGatewayCondition writes the aggregate GatewayReady condition for all
 // active CUDNs using the node-local UplinkState.
 func (c *UplinkGatewayController) publishGatewayCondition(uplinkName string) error {
+	if !c.publishStatus {
+		return nil
+	}
+
 	c.mutex.Lock()
 	uplinkState := c.uplinks[uplinkName]
 	c.mutex.Unlock()
