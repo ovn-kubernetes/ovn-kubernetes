@@ -140,6 +140,8 @@ type BaseNetworkController struct {
 	// Allowed order of locking is namespace Lock -> oc.networkPolicies key Lock -> networkPolicy.Lock
 	// Don't take namespace Lock while holding networkPolicy key lock to avoid deadlock.
 	networkPolicies *syncmap.SyncMap[*networkPolicy]
+	// Indexes policies by namespace for pod membership reconciliation.
+	networkPolicyKeysByNamespace *syncmap.SyncMap[sets.Set[string]]
 
 	// map of existing shared port groups for network policies
 	// port group exists in the db if and only if port group key is present in this map
@@ -840,21 +842,6 @@ func (bnc *BaseNetworkController) syncNodeManagementPort(node *corev1.Node, swit
 	return mgmtPortIPs, nil
 }
 
-// addLocalPodToNamespaceLocked returns the ops needed to add the pod's IP to the namespace
-// address set and the port UUID (if applicable) to the namespace port group.
-// This function must be called with the nsInfo lock taken.
-func (bnc *BaseNetworkController) addLocalPodToNamespaceLocked(nsInfo *namespaceInfo, portUUID string) ([]ovsdb.Operation, error) {
-	var ops []ovsdb.Operation
-	var err error
-	if portUUID != "" && nsInfo.portGroupName != "" {
-		if ops, err = libovsdbops.AddPortsToPortGroupOps(bnc.nbClient, ops, nsInfo.portGroupName, portUUID); err != nil {
-			return nil, err
-		}
-	}
-
-	return ops, nil
-}
-
 func (bnc *BaseNetworkController) recordNodeErrorEvent(node *corev1.Node, nodeErr error) {
 	if bnc.IsUserDefinedNetwork() {
 		// TBD, noop for UDN for now
@@ -888,12 +875,11 @@ func (bnc *BaseNetworkController) doesNetworkRequireIPAM() bool {
 	return util.DoesNetworkRequireIPAM(bnc.GetNetInfo())
 }
 
-func (bnc *BaseNetworkController) getPodNADKeys(pod *corev1.Pod) []string {
+func (bnc *BaseNetworkController) getPodNADKeys(pod *corev1.Pod) ([]string, error) {
 	if !bnc.IsUserDefinedNetwork() {
-		return []string{types.DefaultNetworkName}
+		return []string{types.DefaultNetworkName}, nil
 	}
-	podNADKeys, _ := util.PodNADKeys(pod, bnc.GetNetInfo(), bnc.networkManager.GetNetworkNameForNADKey)
-	return podNADKeys
+	return util.PodNADKeys(pod, bnc.GetNetInfo(), bnc.networkManager.GetNetworkNameForNADKey)
 }
 
 func (bnc *BaseNetworkController) getClusterPortGroupDbIDs(base string) *libovsdbops.DbObjectIDs {
