@@ -304,10 +304,12 @@ spec:
         - mountPath: /var/lib/ovn/
           name: host-var-lib-ovs
           readOnly: true
+        {{- if eq (hasKey .Values.global "hostHasSystemd" | ternary .Values.global.hostHasSystemd true) true }}
         - mountPath: /run/systemd/private
           name: run-systemd
           subPath: private
           readOnly: true
+        {{- end }}
         - mountPath: /var/run/k8s.cni.cncf.io/devinfo/dp
           name: host-devinfo-dp
           readOnly: true
@@ -652,9 +654,11 @@ spec:
       - name: host-var-lib-ovs
         hostPath:
           path: /var/lib/openvswitch
+      {{- if eq (hasKey .Values.global "hostHasSystemd" | ternary .Values.global.hostHasSystemd true) true }}
       - name: run-systemd
         hostPath:
           path: /run/systemd
+      {{- end }}
       - name: host-devinfo-dp
         hostPath:
           path: /var/run/k8s.cni.cncf.io/devinfo/dp
