@@ -2543,12 +2543,16 @@ spec:
 				runUDNPod(cs, defaultNetNs, probeServerConfig, nil)
 				runUDNPod(cs, defaultNetNs, probeClientConfig, nil)
 
-				probeServerIPv4, _, err := podIPsForDefaultNetwork(cs, defaultNetNs, probeServerConfig.name)
+				probeServerIPv4, probeServerIPv6, err := podIPsForDefaultNetwork(cs, defaultNetNs, probeServerConfig.name)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(probeServerIPv4).NotTo(BeEmpty())
 
 				By("verifying baseline cross-node connectivity before burst creation")
-				Expect(connectToServer(probeClientConfig, probeServerIPv4, podClusterNetPort)).To(Succeed())
+				for _, probeIP := range []string{probeServerIPv4, probeServerIPv6} {
+					if probeIP == "" {
+						continue
+					}
+					Expect(connectToServer(probeClientConfig, probeIP, podClusterNetPort)).To(Succeed())
+				}
 
 				By("creating namespaces for concurrent UDNs")
 				type udnInstance struct {
@@ -2593,20 +2597,34 @@ spec:
 						DeferCleanup(cleanup)
 					}(i)
 				}
-				wg.Wait()
+				done := make(chan struct{})
+				go func() {
+					wg.Wait()
+					close(done)
+				}()
+				select {
+				case <-done:
+				case <-time.After(60 * time.Second):
+					framework.Failf("timed out waiting for burst UDN creation goroutines to finish")
+				}
 
 				By("waiting for all UDNs to reach NetworkCreated condition")
 				for _, inst := range udnInstances {
 					Eventually(
 						userDefinedNetworkReadyFunc(f.DynamicClient, inst.namespace, inst.netName),
 						60*time.Second, time.Second,
-					).Should(Succeed())
+					).Should(Succeed(), "UDN %s/%s did not reach NetworkCreated", inst.namespace, inst.netName)
 				}
 
 				By("verifying cross-node connectivity was not disrupted during the burst")
-				Eventually(func() error {
-					return connectToServer(probeClientConfig, probeServerIPv4, podClusterNetPort)
-				}, 30*time.Second, 2*time.Second).Should(Succeed())
+				for _, probeIP := range []string{probeServerIPv4, probeServerIPv6} {
+					if probeIP == "" {
+						continue
+					}
+					Eventually(func() error {
+						return connectToServer(probeClientConfig, probeIP, podClusterNetPort)
+					}, 30*time.Second, 2*time.Second).Should(Succeed(), "post-burst cross-node connectivity check failed for %s", probeIP)
+				}
 
 				By("verifying UDN data path with pods on the first burst-created network")
 				verifyInst := udnInstances[0]
