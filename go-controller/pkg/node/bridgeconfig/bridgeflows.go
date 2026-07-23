@@ -818,6 +818,10 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 		dftFlows = append(dftFlows,
 			fmt.Sprintf("cookie=%s, priority=10, table=0, %s dl_dst=%s, actions=%s",
 				nodetypes.DefaultOpenFlowCookie, matchVLAN, bridgeMacAddress, actions))
+
+		if util.IsNetworkSegmentationSupportEnabled() {
+			dftFlows = append(dftFlows, b.arpFanoutFilterFlows(ofPortPhys, matchVLAN)...)
+		}
 	}
 
 	// table 0, check packets coming from OVN have the correct mac address. Low priority flows that are a catch all
@@ -1151,11 +1155,13 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 		// has no default network configuration.
 		if config.IPv6Mode {
 			// REMOVEME(trozet) when https://bugzilla.kernel.org/show_bug.cgi?id=11797 is resolved
-			// must flood icmpv6 Route Advertisement and Neighbor Advertisement traffic as it fails to create a CT entry
+			// must flood icmpv6 Route Advertisement and Neighbor Advertisement traffic as it fails to create a CT entry.
+			// CUDN patches are no-flood so FLOOD alone won't reach them; prepend explicit outputs.
+			cudnActions := b.patchOutputActions(true)
 			for _, icmpType := range []int{types.RouteAdvertisementICMPType, types.NeighborAdvertisementICMPType} {
 				dftFlows = append(dftFlows,
-					fmt.Sprintf("cookie=%s, priority=14, table=1,icmp6,icmpv6_type=%d actions=FLOOD",
-						nodetypes.DefaultOpenFlowCookie, icmpType))
+					fmt.Sprintf("cookie=%s, priority=14, table=1,icmp6,icmpv6_type=%d actions=%sFLOOD",
+						nodetypes.DefaultOpenFlowCookie, icmpType, cudnActions))
 			}
 			if hasDefaultNetConfig {
 				// We send BFD traffic both on the host and in ovn
@@ -1294,6 +1300,114 @@ func (b *BridgeConfiguration) allowNodeIPGARPFlows(nodeIPs []net.IP) []string {
 
 	}
 	return flows
+}
+
+// arpFanoutFilterFlows prevents ARP requests and IPv6 Neighbor Solicitations
+// for local node IPs from reaching CUDN GR patch ports.
+//
+// The generic priority-10 fan-out rule replicates all unicast traffic destined
+// to the bridge MAC to every patch port. For broadcast ARP and IPv6 multicast
+// NS, the priority-0 NORMAL action floods to all ports. In both cases CUDN
+// GRs receive the request and reply for the node IP. Since all CUDN GRs share
+// the same node IP on their external interface, each one generates a reply
+// (ARP reply or NA). These duplicate replies flood the physical network and
+// cause remote nodes to passively learn redundant MAC_Bindings, driving
+// ovs-vswitchd CPU up.
+//
+// This function relies on CUDN patch ports being configured with OVS no-flood,
+// so that NORMAL's flood action never reaches them.
+//
+// Priority-12 flows intercept node-IP ARP/NDP and send only to the default
+// patch + NORMAL. NORMAL preserves FDB learning while no-flood excludes CUDNs.
+//
+// Priority-11 flows match external broadcast ARP (in_port=<phys>) and
+// explicitly forward to all GR patches so that external GARPs (e.g. gateway
+// MAC changes) still reach CUDNs for MAC_Binding updates. Node-IP ARPs are
+// caught at priority-12 first.
+//
+// Must be called with bridge.mutex held.
+func (b *BridgeConfiguration) arpFanoutFilterFlows(ofPortPhys, matchVLAN string) []string {
+	defaultNetConfig, found := b.netConfig[types.DefaultNetworkName]
+	if !found || defaultNetConfig.OfPortPatch == "" {
+		return nil
+	}
+
+	var flows []string
+
+	// Priority-12: ARP/NS for node IP → only default patch + NORMAL.
+	// NORMAL learns the external source MAC in the FDB and delivers to
+	// LOCAL (static FDB entry). No-flood on CUDN ports prevents them from
+	// receiving the packet via NORMAL's flood.
+	for _, ip := range b.ips {
+		if ip.IP.To4() != nil {
+			flows = append(flows,
+				fmt.Sprintf("cookie=%s, priority=12, table=0, %s arp, arp_op=1, arp_tpa=%s, "+
+					"actions=output:%s,NORMAL",
+					nodetypes.DefaultOpenFlowCookie, matchVLAN, ip.IP,
+					defaultNetConfig.OfPortPatch))
+		} else {
+			flows = append(flows,
+				fmt.Sprintf("cookie=%s, priority=12, table=0, %s icmp6, icmpv6_type=%d, nd_target=%s, "+
+					"actions=output:%s,NORMAL",
+					nodetypes.DefaultOpenFlowCookie, matchVLAN, types.NeighborSolicitationICMPType, ip.IP,
+					defaultNetConfig.OfPortPatch))
+		}
+	}
+
+	// Priority-11: external broadcast ARP (including GARPs) arriving on the
+	// physical port → explicitly forward to all GR patches so CUDNs can
+	// update MAC_Bindings when an external entity (e.g. gateway router)
+	// announces a new MAC. NORMAL handles FDB learning and delivery to
+	// LOCAL/physical. Without this, no-flood would prevent CUDNs from
+	// ever seeing external MAC announcements.
+	// The in_port match scopes to the physical port so that OVN-originated
+	// traffic from patch ports (already handled at priority 10 and above)
+	// is not affected.
+	// Only generated when CUDN patches exist (without them, NORMAL already
+	// floods to the default patch which is not no-flood).
+	allPatchActions := b.patchOutputActions(false)
+	if ofPortPhys != "" && b.hasCUDNPatchPorts() {
+		if config.IPv4Mode {
+			flows = append(flows,
+				fmt.Sprintf("cookie=%s, priority=11, table=0, in_port=%s, %s dl_dst=ff:ff:ff:ff:ff:ff, arp, "+
+					"actions=%sNORMAL",
+					nodetypes.DefaultOpenFlowCookie, ofPortPhys, matchVLAN, allPatchActions))
+		}
+		if config.IPv6Mode {
+			// dl_dst=33:33:00:00:00:01 is the Ethernet multicast MAC for IPv6
+			// all-nodes multicast (ff02::1). IPv6 multicast MACs are formed as
+			// 33:33 + last 4 bytes of the IPv6 multicast address.
+			// This restricts to unsolicited NAs (IPv6 GARP equivalent) only;
+			// unicast solicited NAs are handled by the priority-10 fan-out.
+			flows = append(flows,
+				fmt.Sprintf("cookie=%s, priority=11, table=0, in_port=%s, %s dl_dst=33:33:00:00:00:01, icmp6, icmpv6_type=%d, "+
+					"actions=%sNORMAL",
+					nodetypes.DefaultOpenFlowCookie, ofPortPhys, matchVLAN, types.NeighborAdvertisementICMPType, allPatchActions))
+		}
+	}
+
+	return flows
+}
+
+// patchOutputActions returns the "output:<port>," action string for patched
+// network ports. If cudnOnly is true, the default network patch port is
+// excluded (only CUDN ports). Must be called with bridge.mutex held.
+func (b *BridgeConfiguration) patchOutputActions(cudnOnly bool) string {
+	defaultNetConfig := b.netConfig[types.DefaultNetworkName]
+	var actions string
+	for _, netConfig := range b.patchedNetConfigs() {
+		if cudnOnly && defaultNetConfig != nil && netConfig.OfPortPatch == defaultNetConfig.OfPortPatch {
+			continue
+		}
+		actions += "output:" + netConfig.OfPortPatch + ","
+	}
+	return actions
+}
+
+// hasCUDNPatchPorts returns true if any non-default network has its patch port set.
+// Must be called with bridge.mutex held.
+func (b *BridgeConfiguration) hasCUDNPatchPorts() bool {
+	return b.patchOutputActions(true) != ""
 }
 
 func getIPv(ipnet *net.IPNet) string {
