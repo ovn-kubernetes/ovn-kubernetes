@@ -2544,14 +2544,14 @@ spec:
 				runUDNPod(cs, defaultNetNs, probeClientConfig, nil)
 
 				probeServerIPv4, probeServerIPv6, err := podIPsForDefaultNetwork(cs, defaultNetNs, probeServerConfig.name)
-				Expect(err).NotTo(HaveOccurred())
+				Expect(err).NotTo(HaveOccurred(), "failed to get default network IPs for probe server pod %s/%s", defaultNetNs, probeServerConfig.name)
 
 				By("verifying baseline cross-node connectivity before burst creation")
 				for _, probeIP := range []string{probeServerIPv4, probeServerIPv6} {
 					if probeIP == "" {
 						continue
 					}
-					Expect(connectToServer(probeClientConfig, probeIP, podClusterNetPort)).To(Succeed())
+					Expect(connectToServer(probeClientConfig, probeIP, podClusterNetPort)).To(Succeed(), "baseline cross-node connectivity check failed for %s", probeIP)
 				}
 
 				By("creating namespaces for concurrent UDNs")
