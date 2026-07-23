@@ -670,3 +670,29 @@ func DeletePortWithInterfacesOps(ovsClient libovsdbclient.Client, ops []ovsdb.Op
 
 	return m.DeleteOps(ops, portModel, bridgeModel)
 }
+
+// SetPortNoFlood sets other_config:no-flood=true on the named OVS port,
+// preventing NORMAL action from flooding packets to that port.
+//
+// Equivalent: ovs-ofctl mod-port <bridge> <port> no-flood
+// (the OVSDB path achieves the same via other_config rather than OpenFlow
+// OFPT_PORT_MOD, but OVS honours both equivalently.)
+func SetPortNoFlood(ovsClient libovsdbclient.Client, portName string) error {
+	port := &vswitchd.Port{
+		Name:        portName,
+		OtherConfig: map[string]string{"no-flood": "true"},
+	}
+	portModel := operationModel{
+		Model:            port,
+		OnModelMutations: []interface{}{&port.OtherConfig},
+		ErrNotFound:      true,
+		BulkOp:           false,
+	}
+	m := newModelClient(ovsClient)
+	ops, err := m.CreateOrUpdateOps(nil, portModel)
+	if err != nil {
+		return err
+	}
+	_, err = TransactAndCheck(ovsClient, ops)
+	return err
+}
