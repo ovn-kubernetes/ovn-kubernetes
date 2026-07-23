@@ -604,6 +604,14 @@ func ServiceTypeHasNodePort(service *corev1.Service) bool {
 		(service.Spec.Type == corev1.ServiceTypeLoadBalancer && LoadBalancerServiceHasNodePortAllocation(service))
 }
 
+// ServiceHasNodePortAllocated checks if the service has NodePort allocated for the given service port.
+// Returns true if the service type supports NodePort AND the port has a non-zero NodePort value.
+// This accounts for LoadBalancer services with allocateLoadBalancerNodePorts=false, where NodePort
+// may be set in the spec but should not be used.
+func ServiceHasNodePortAllocated(service *corev1.Service, svcPort corev1.ServicePort) bool {
+	return ServiceTypeHasNodePort(service) && svcPort.NodePort > 0
+}
+
 // ServiceTypeHasLoadBalancer checks if the service has an associated LoadBalancer or not
 func ServiceTypeHasLoadBalancer(service *corev1.Service) bool {
 	return service.Spec.Type == corev1.ServiceTypeLoadBalancer
