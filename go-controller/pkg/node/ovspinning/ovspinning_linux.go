@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -26,8 +27,13 @@ import (
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1"
 	"k8s.io/utils/cpuset"
 
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+
+	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
+
+const PmdPrefix string = "pmd"
 
 // These variables are meant to be used in unit tests
 var tickDuration time.Duration = 1 * time.Second
@@ -40,7 +46,7 @@ var kubeletConfigFilePath = "/host/etc/kubernetes/kubelet.conf"
 // masks to that of the current process.
 // This feature is enabled by the presence of a non-empty file in the path `/etc/openvswitch/enable_dynamic_cpu_affinity`
 // we're passing the podResCli from the caller, so we could support unit-tests
-func Run(ctx context.Context, stopCh <-chan struct{}, podResCli podresourcesapi.PodResourcesListerClient) {
+func Run(ctx context.Context, stopCh <-chan struct{}, podResCli podresourcesapi.PodResourcesListerClient, ovsClient libovsdbclient.Client) {
 
 	// The file must be present at startup to enable the feature
 	isFeatureEnabled, err := isFileNotEmpty(featureEnablerFile)
@@ -131,7 +137,16 @@ func Run(ctx context.Context, stopCh <-chan struct{}, podResCli podresourcesapi.
 			}
 			// add reservedSystemCPUs as well, because PodResourcesAPI does not count for them.
 			cpus = cpus.Union(reservedCPUs)
-			err = setOvsVSwitchdCPUAffinity(&cpus)
+
+			// When DPDK is enabled, remove the CPUs dedicated to PMD threads from the
+			// affinity set so that non-PMD OVS threads don't compete with them.
+			pmdCPUs, enabled := getPmdCPUs(ovsClient)
+			if enabled && !pmdCPUs.IsEmpty() {
+				cpus = cpus.Difference(pmdCPUs)
+				klog.V(5).Infof("Excluding PMD CPUs %s from ovs-vswitchd affinity", pmdCPUs)
+			}
+
+			err = setOvsVSwitchdCPUAffinity(&cpus, enabled)
 			if err != nil {
 				klog.Warningf("Error while aligning ovs-vswitchd CPUs to current process: %v", err)
 			}
@@ -171,15 +186,15 @@ func isFileNotEmpty(filename string) (bool, error) {
 	return f.Size() > 0, nil
 }
 
-func setOvsVSwitchdCPUAffinity(set *cpuset.CPUSet) error {
+func setOvsVSwitchdCPUAffinity(set *cpuset.CPUSet, dpdkEnabled bool) error {
 
 	ovsVSwitchdPID, err := getOvsVSwitchdPIDFn()
 	if err != nil {
 		return fmt.Errorf("can't retrieve ovs-vswitchd PID: %w", err)
 	}
 
-	klog.V(5).Infof("Managing ovs-vswitchd[%s] daemon CPU affinity", ovsVSwitchdPID)
-	return setProcessCPUAffinity(ovsVSwitchdPID, set)
+	klog.V(5).Infof("Managing ovs-vswitchd[%s] daemon CPU affinity (dpdk=%v)", ovsVSwitchdPID, dpdkEnabled)
+	return setProcessCPUAffinity(ovsVSwitchdPID, set, dpdkEnabled)
 }
 
 func setOvsDBServerCPUAffinity(set *cpuset.CPUSet) error {
@@ -190,7 +205,7 @@ func setOvsDBServerCPUAffinity(set *cpuset.CPUSet) error {
 	}
 
 	klog.V(5).Infof("Managing ovsdb-server[%s] daemon CPU affinity", ovsDBserverPID)
-	return setProcessCPUAffinity(ovsDBserverPID, set)
+	return setProcessCPUAffinity(ovsDBserverPID, set, false)
 }
 
 // setProcessCPUAffinity sets the CPU affinity of a target process and all its threads
@@ -205,6 +220,7 @@ func setOvsDBServerCPUAffinity(set *cpuset.CPUSet) error {
 // Parameters:
 //   - targetPIDStr: string representation of the target process ID
 //   - set: pointer to the desired CPU set; if empty, current process affinity is used
+//   - skipPmds: whether to try to skip PMD threads from affinity setting or not
 //
 // Returns:
 //   - error: any error encountered during PID conversion, affinity retrieval, or setting
@@ -212,7 +228,7 @@ func setOvsDBServerCPUAffinity(set *cpuset.CPUSet) error {
 // The function skips setting affinity if the target process already has the desired
 // CPU affinity. Individual thread affinity setting failures are logged as warnings
 // but don't stop the overall operation.
-func setProcessCPUAffinity(targetPIDStr string, set *cpuset.CPUSet) error {
+func setProcessCPUAffinity(targetPIDStr string, set *cpuset.CPUSet, skipPmds bool) error {
 
 	targetPID, err := strconv.Atoi(targetPIDStr)
 	if err != nil {
@@ -247,6 +263,9 @@ func setProcessCPUAffinity(targetPIDStr string, set *cpuset.CPUSet) error {
 
 	klog.Infof("Setting CPU affinity of PID(%d) (ntasks=%d) to %s, was %s", targetPID, len(taskIDs), printCPUSet(desiredProcessCPUs), printCPUSet(targetProcessCPUs))
 	for _, taskID := range taskIDs {
+		if skipPmds && isPmdThread(taskID) {
+			continue
+		}
 		err = unix.SchedSetaffinity(taskID, &desiredProcessCPUs)
 		if err != nil {
 			// The task may have been stopped, don't break the loop and continue setting CPU affinity on other tasks.
@@ -301,6 +320,15 @@ func printCPUSet(cpus unix.CPUSet) string {
 		result.WriteString(",")
 	}
 	return strings.TrimRight(result.String(), ",")
+}
+
+func isPmdThread(tid int) bool {
+	threadName, err := os.ReadFile(fmt.Sprintf("/proc/%d/comm", tid))
+	if err != nil {
+		klog.Errorf("Unable to get name of task ID %d", tid)
+		return false
+	}
+	return strings.HasPrefix(string(threadName), PmdPrefix)
 }
 
 // getThreadsOfProcess returns the list of thread IDs of the given process
@@ -470,4 +498,52 @@ func getAllocatableCPUs(ctx context.Context, podResCli podresourcesapi.PodResour
 		return cpuset.CPUSet{}, fmt.Errorf("GetAllocatableResources failed: %w", err)
 	}
 	return cpuset.New(convertInt64ToInt(allocatableResp.CpuIds)...), nil
+}
+
+// getPmdCPUs returns the PMD CPU set and whether DPDK is enabled.
+func getPmdCPUs(ovsClient libovsdbclient.Client) (cpuset.CPUSet, bool) {
+	ovs, err := ovsops.GetOpenvSwitch(ovsClient)
+	if err != nil {
+		klog.V(5).Infof("Cannot read Open_vSwitch table for pmd-cpu-mask: %v", err)
+		return cpuset.New(), false
+	}
+	if !ovs.DpdkInitialized {
+		return cpuset.New(), false
+	}
+
+	mask, ok := ovs.OtherConfig["pmd-cpu-mask"]
+	if !ok || mask == "" {
+		return cpuset.New(), true
+	}
+
+	pmdCPUs, err := parsePmdCpuMask(mask)
+	if err != nil {
+		klog.Warningf("Failed to parse pmd-cpu-mask %q: %v", mask, err)
+		return cpuset.New(), true
+	}
+	return pmdCPUs, true
+}
+
+// parsePmdCpuMask parses a hex bitmask string (e.g. "0xc", "C", "0x0006")
+// into a cpuset.CPUSet.
+func parsePmdCpuMask(mask string) (cpuset.CPUSet, error) {
+	mask = strings.TrimSpace(mask)
+	mask = strings.TrimPrefix(mask, "0x")
+	mask = strings.TrimPrefix(mask, "0X")
+	if mask == "" {
+		return cpuset.New(), nil
+	}
+
+	v := new(big.Int)
+	if _, ok := v.SetString(mask, 16); !ok {
+		return cpuset.New(), fmt.Errorf("invalid hex mask: %q", mask)
+	}
+
+	var positions []int
+	for i := 0; i < v.BitLen(); i++ {
+		if v.Bit(i) == 1 {
+			positions = append(positions, i)
+		}
+	}
+	return cpuset.New(positions...), nil
 }

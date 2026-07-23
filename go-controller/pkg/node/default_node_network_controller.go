@@ -1187,7 +1187,7 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 				klog.V(4).Infof("Error closing PodResourcesAPI client: %v", err)
 			}
 		}()
-		ovspinning.Run(ctx, stopCh, podResClient)
+		ovspinning.Run(ctx, stopCh, podResClient, nc.ovsClient)
 	}(nc.stopChan)
 
 	klog.Infof("Default node network controller initialized and ready.")
