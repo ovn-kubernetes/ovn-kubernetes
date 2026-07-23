@@ -151,6 +151,8 @@ spec:
           value: {{ default "" .Values.global.dynamicUDNGracePeriod | quote }}
         - name: OVN_ADVERTISED_UDN_ISOLATION_MODE
           value: {{ default "strict" .Values.global.advertisedUDNIsolationMode | quote }}
+        - name: OVNKUBE_CLUSTER_DEFAULT_NAD
+          value: {{ default "" .Values.global.clusterDefaultNAD | quote }}
         - name: OVN_NO_OVERLAY_ENABLE
           value: {{ default "false" .Values.global.enableNoOverlay | quote }}
         - name: OVN_HYBRID_OVERLAY_NET_CIDR

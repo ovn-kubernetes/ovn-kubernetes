@@ -2628,11 +2628,12 @@ exit
 				g.Expect(err).ToNot(gomega.HaveOccurred())
 			}
 
+			defaultNADName := config.Default.ClusterDefaultNetworkNAD
 			var defaultNAD *nadtypes.NetworkAttachmentDefinition
 			for _, nad := range tt.nads {
 				n, err := fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nad.Namespace).Create(context.Background(), nad.NAD(), metav1.CreateOptions{})
 				g.Expect(err).ToNot(gomega.HaveOccurred())
-				if nad.Name == types.DefaultNetworkName && nad.Namespace == config.Kubernetes.OVNConfigNamespace {
+				if nad.Name == defaultNADName.Name && nad.Namespace == defaultNADName.Namespace {
 					defaultNAD = n
 				}
 			}
@@ -2673,7 +2674,7 @@ exit
 			// prime the default network NAD namespace
 			namespace := &corev1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: config.Kubernetes.OVNConfigNamespace,
+					Name: config.Default.ClusterDefaultNetworkNAD.Namespace,
 				},
 			}
 			_, err = fakeClientset.KubeClient.CoreV1().Namespaces().Create(context.Background(), namespace, metav1.CreateOptions{})
@@ -2843,7 +2844,7 @@ func TestController_reconcileOnNetworkActivity(t *testing.T) {
 	_, err = fakeClientset.KubeClient.CoreV1().Nodes().Create(context.Background(), node.Node(), metav1.CreateOptions{})
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
-	for _, namespace := range []string{"blue", config.Kubernetes.OVNConfigNamespace} {
+	for _, namespace := range []string{"blue", config.Default.ClusterDefaultNetworkNAD.Namespace} {
 		_, err = fakeClientset.KubeClient.CoreV1().Namespaces().Create(context.Background(),
 			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}}, metav1.CreateOptions{})
 		g.Expect(err).ToNot(gomega.HaveOccurred())

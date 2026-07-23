@@ -1496,7 +1496,7 @@ func GetAnnotatedNetworkName(netattachdef *nettypes.NetworkAttachmentDefinition)
 	if netattachdef == nil {
 		return ""
 	}
-	if netattachdef.Name == types.DefaultNetworkName && netattachdef.Namespace == config.Kubernetes.OVNConfigNamespace {
+	if netattachdef.Name == config.Default.ClusterDefaultNetworkNAD.Name && netattachdef.Namespace == config.Default.ClusterDefaultNetworkNAD.Namespace {
 		return types.DefaultNetworkName
 	}
 	return netattachdef.Annotations[types.OvnNetworkNameAnnotation]
@@ -1821,15 +1821,24 @@ func getPodNADToNetworkMappingWithPredicate(
 
 // overrideActiveNSEWithDefaultNSE overrides the provided active NetworkSelectionElement with the IP and MAC requests from
 // the default NetworkSelectionElement after validating its namespace and name.
-func overrideActiveNSEWithDefaultNSE(defaultNSE, activeNSE *nettypes.NetworkSelectionElement) error {
-	if defaultNSE.Namespace != config.Kubernetes.OVNConfigNamespace {
-		return fmt.Errorf("unexpected default NSE namespace %q, expected %q", defaultNSE.Namespace, config.Kubernetes.OVNConfigNamespace)
+func overrideActiveNSEWithDefaultNSE(defaultNSE, activeNSE *nettypes.NetworkSelectionElement, topologyType string) error {
+	expected := config.Default.ClusterDefaultNetworkNAD
+	if defaultNSE.Namespace != expected.Namespace {
+		return fmt.Errorf("unexpected default NSE namespace %q, expected %q", defaultNSE.Namespace, expected.Namespace)
 	}
-	if defaultNSE.Name != types.DefaultNetworkName {
-		return fmt.Errorf("unexpected default NSE name %q, expected %q", defaultNSE.Name, types.DefaultNetworkName)
+	if defaultNSE.Name != expected.Name {
+		return fmt.Errorf("unexpected default NSE name %q, expected %q", defaultNSE.Name, expected.Name)
 	}
-	activeNSE.IPRequest = defaultNSE.IPRequest
-	activeNSE.MacRequest = defaultNSE.MacRequest
+	// Layer2 accepts requested IPs and MACs. Layer3 accepts only a MAC to retain node-local IPAM.
+	switch topologyType {
+	case types.Layer2Topology:
+		// Limit the static ip and mac requests to the layer2 primary UDN
+		activeNSE.IPRequest = defaultNSE.IPRequest
+		activeNSE.MacRequest = defaultNSE.MacRequest
+	case types.Layer3Topology:
+		// Limit mac requests to the layer3 primary UDN
+		activeNSE.MacRequest = defaultNSE.MacRequest
+	}
 	return nil
 }
 
@@ -1908,18 +1917,11 @@ func GetPodNADToNetworkMappingWithActiveNetwork(
 		}
 	}
 
-	// Feature gate integration: EnablePreconfiguredUDNAddresses controls default network IP/MAC transfer to active network
-	if IsPreconfiguredUDNAddressesEnabled() {
-		// Limit the static ip and mac requests to the layer2 primary UDN when EnablePreconfiguredUDNAddresses is enabled, we
-		// don't need to explicitly check this is primary UDN since
-		// the "active network" concept is exactly that.
-		if activeNetwork.TopologyType() == types.Layer2Topology {
-			// If there are static IPs and MACs at the default NSE, override the active NSE with them
-			if defaultNSE != nil {
-				if err := overrideActiveNSEWithDefaultNSE(defaultNSE, activeNSE); err != nil {
-					return false, nil, err
-				}
-			}
+	// Feature gate integration: EnablePreconfiguredUDNAddresses controls default network IP/MAC transfer to active network,
+	// we don't need to explicitly check this is primary UDN since the "active network" concept is exactly that.
+	if IsPreconfiguredUDNAddressesEnabled() && defaultNSE != nil {
+		if err := overrideActiveNSEWithDefaultNSE(defaultNSE, activeNSE, activeNetwork.TopologyType()); err != nil {
+			return false, nil, err
 		}
 	}
 

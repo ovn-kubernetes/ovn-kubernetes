@@ -405,6 +405,8 @@ spec:
           value: {{ default "" .Values.global.dynamicUDNGracePeriod | quote }}
         - name: OVN_ADVERTISED_UDN_ISOLATION_MODE
           value: {{ default "strict" .Values.global.advertisedUDNIsolationMode | quote }}
+        - name: OVNKUBE_CLUSTER_DEFAULT_NAD
+          value: {{ default "" .Values.global.clusterDefaultNAD | quote }}
         - name: OVN_EMPTY_LB_EVENTS
           value: {{ default "" .Values.global.emptyLbEvents | quote }}
         - name: OVN_ACL_LOGGING_RATE_LIMIT
