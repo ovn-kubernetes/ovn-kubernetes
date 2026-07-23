@@ -297,12 +297,9 @@ func startOvnKube(ctx *cli.Context, cancel context.CancelFunc) error {
 	}()
 
 	if config.Kubernetes.BootstrapKubeconfig != "" {
-		// In the case of dpus K8S_NODE will be set to dpu host's name
-		var csrNodeName string
-		if config.IsModeDPU() {
-			csrNodeName = os.Getenv("K8S_NODE_DPU")
-		} else {
-			csrNodeName = os.Getenv("K8S_NODE")
+		csrNodeName := os.Getenv("K8S_NODE")
+		if csrNodeName == "" {
+			return fmt.Errorf("node identity (K8S_NODE) is not set")
 		}
 		if err := util.StartNodeCertificateManager(ctx.Context, ovnKubeStartWg, csrNodeName, &config.Kubernetes); err != nil {
 			return fmt.Errorf("failed to start the node certificate manager: %w", err)

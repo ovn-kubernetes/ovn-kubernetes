@@ -32,7 +32,6 @@ spec:
       imagePullSecrets:
       - name: {{ .Values.global.imagePullSecretName }}
       {{- end }}
-      serviceAccountName: ovnkube-node
       hostNetwork: true
       dnsPolicy: Default
       {{- if eq (hasKey .Values.global "unprivilegedMode" | ternary .Values.global.unprivilegedMode false) false }}

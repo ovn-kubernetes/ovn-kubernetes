@@ -37,7 +37,6 @@ var commonNodeAnnotationChecks = map[string]checkNodeAnnot{
 	util.OvnNodeGatewayMtuSupport:          nil,
 	util.OvnNodeManagementPort:             nil,
 	util.OvnNodeDontSNATSubnets:            nil,
-	util.OVNNodePrimaryDPUHostAddr:         nil,
 	util.OvnNodeChassisID: func(v annotationChange, _ string) error {
 		if v.action == removed {
 			return fmt.Errorf("%s cannot be removed", util.OvnNodeChassisID)
@@ -77,23 +76,79 @@ var hybridOverlayNodeAnnotationChecks = map[string]checkNodeAnnot{
 	hotypes.HybridOverlayDRIP:  nil,
 }
 
+// dpuHostNodeAnnotationChecks holds annotations allowed for ovnkube-node running in dpu-host
+// mode (identity system:ovn-node-dpu-host:<node>). These are
+// the host-side annotations. All other node annotations are written by the DPU via the ovnkube-node-dpu identity
+var dpuHostNodeAnnotationChecks = map[string]checkNodeAnnot{
+	util.OVNNodePrimaryDPUHostAddr: nil,
+	util.OVNNodeHostCIDRs:          nil,
+	util.OvnNodeMasqCIDR:           nil,
+	util.OvnNodeManagementPort:     nil,
+	// EgressIPs assigned to a secondary host (standard linux) interface are
+	// programmed by the node-side EgressIP controller running in dpu-host mode,
+	// since the interface lives in the host network namespace.
+	util.OVNNodeSecondaryHostEgressIPs: nil,
+	util.OvnNodeZoneName: func(v annotationChange, nodeName string) error {
+		if (v.action == added || v.action == changed) &&
+			(v.value == types.OvnDefaultZone || v.value == nodeName) {
+			return nil
+		}
+		return fmt.Errorf("%s can only be set to %s or %s, it cannot be removed", util.OvnNodeZoneName, types.OvnDefaultZone, nodeName)
+	},
+}
+
+// dpuNodeAnnotationChecks holds annotations allowed for ovnkube-node-dpu when updating
+// the DPU-host node belonging to it.
+var dpuNodeAnnotationChecks = map[string]checkNodeAnnot{
+	util.OVNNodeEncapIPs:        nil,
+	util.OvnNodeIfAddr:          nil,
+	util.OvnNodeL3GatewayConfig: nil,
+	// EgressIPs assigned to the default external OVS bridge interface are
+	// programmed by the DPU (canHandleBridgeEgressIP is gated to DPU/full mode),
+	// since that is where OVS runs.
+	util.OVNNodeBridgeEgressIPs: nil,
+	util.OvnNodeChassisID: func(v annotationChange, _ string) error {
+		if v.action == removed {
+			return fmt.Errorf("%s cannot be removed", util.OvnNodeChassisID)
+		}
+		if v.action == changed {
+			return fmt.Errorf("%s cannot be changed once set", util.OvnNodeChassisID)
+		}
+		return nil
+	},
+	util.OvnNodeGatewayMtuSupport: nil,
+}
+
 type NodeAdmission struct {
-	annotationChecks  map[string]checkNodeAnnot
-	annotationKeys    sets.Set[string]
-	extraAllowedUsers sets.Set[string]
+	annotationChecks        map[string]checkNodeAnnot
+	annotationKeys          sets.Set[string]
+	dpuAnnotationChecks     map[string]checkNodeAnnot
+	dpuAnnotationKeys       sets.Set[string]
+	dpuHostAnnotationChecks map[string]checkNodeAnnot
+	dpuHostAnnotationKeys   sets.Set[string]
+	extraAllowedUsers       sets.Set[string]
 }
 
 func NewNodeAdmissionWebhook(enableHybridOverlay bool, extraAllowedUsers ...string) *NodeAdmission {
 	checks := make(map[string]checkNodeAnnot)
 	maps.Copy(checks, commonNodeAnnotationChecks)
+	dpuChecks := make(map[string]checkNodeAnnot)
+	maps.Copy(dpuChecks, dpuNodeAnnotationChecks)
 	maps.Copy(checks, interconnectNodeAnnotationChecks)
+	maps.Copy(dpuChecks, interconnectNodeAnnotationChecks)
+	dpuHostChecks := make(map[string]checkNodeAnnot)
+	maps.Copy(dpuHostChecks, dpuHostNodeAnnotationChecks)
 	if enableHybridOverlay {
 		maps.Copy(checks, hybridOverlayNodeAnnotationChecks)
 	}
 	return &NodeAdmission{
-		annotationChecks:  checks,
-		annotationKeys:    sets.New[string](maps.Keys(checks)...),
-		extraAllowedUsers: sets.New[string](extraAllowedUsers...),
+		annotationChecks:        checks,
+		annotationKeys:          sets.New[string](maps.Keys(checks)...),
+		dpuAnnotationChecks:     dpuChecks,
+		dpuAnnotationKeys:       sets.New[string](maps.Keys(dpuChecks)...),
+		dpuHostAnnotationChecks: dpuHostChecks,
+		dpuHostAnnotationKeys:   sets.New[string](maps.Keys(dpuHostChecks)...),
+		extraAllowedUsers:       sets.New[string](extraAllowedUsers...),
 	}
 }
 
@@ -115,14 +170,41 @@ func (p NodeAdmission) ValidateUpdate(ctx context.Context, oldNode, newNode *cor
 	if err != nil {
 		return nil, err
 	}
-	nodeName, isOVNKubeNode := ovnkubeNodeIdentity(req.UserInfo)
+	var isOVNKubeNode, isDPUHostNode, isDPUUser bool
+	var nodeName string
+	nodeName, isOVNKubeNode = ovnkubeNodeIdentity(req.UserInfo)
+	if !isOVNKubeNode {
+		nodeName, isDPUHostNode = dpuHostNodeIdentity(req.UserInfo)
+		if !isDPUHostNode {
+			isDPUUser = isDPUExtraAllowedUser(p.extraAllowedUsers, req.UserInfo.Username)
+		}
+	}
+	isNodeIdentity := isOVNKubeNode || isDPUHostNode
+
+	var effectiveKeys sets.Set[string]
+	var effectiveChecks map[string]checkNodeAnnot
+	identityDescription := "ovnkube-node on node"
+	switch {
+	case isDPUUser:
+		effectiveKeys = p.dpuAnnotationKeys
+		effectiveChecks = p.dpuAnnotationChecks
+		identityDescription = "ovnkube-node-dpu for node"
+		nodeName = newNode.Name
+	case isDPUHostNode:
+		effectiveKeys = p.dpuHostAnnotationKeys
+		effectiveChecks = p.dpuHostAnnotationChecks
+		identityDescription = "ovnkube-node on dpu-host node"
+	default:
+		effectiveKeys = p.annotationKeys
+		effectiveChecks = p.annotationChecks
+	}
 
 	changes := mapDiff(oldNode.Annotations, newNode.Annotations)
 	changedKeys := maps.Keys(changes)
 
-	if !isOVNKubeNode {
+	if !isNodeIdentity && !isDPUUser {
 		if !p.annotationKeys.HasAny(changedKeys...) {
-			// the user is not an ovnkube-node and hasn't changed any ovnkube-node annotations
+			// the user is not an ovnkube-node* and hasn't changed any ovnkube-node annotations
 			return nil, nil
 		}
 
@@ -134,12 +216,12 @@ func (p NodeAdmission) ValidateUpdate(ctx context.Context, oldNode, newNode *cor
 				p.annotationKeys.Intersection(sets.New[string](changedKeys...)).UnsortedList())
 		}
 
-		// The user is not ovnkube-node, in this case the nodeName comes from the object
+		// The user is not ovnkube-node*, in this case the nodeName comes from the object
 		nodeName = newNode.Name
 	}
 
 	for _, key := range changedKeys {
-		if check := p.annotationChecks[key]; check != nil {
+		if check := effectiveChecks[key]; check != nil {
 			if err := check(changes[key], nodeName); err != nil {
 				return nil, fmt.Errorf("user: %q is not allowed to set %s on node %q: %v", req.UserInfo.Username, key, newNode.Name, err)
 			}
@@ -147,20 +229,20 @@ func (p NodeAdmission) ValidateUpdate(ctx context.Context, oldNode, newNode *cor
 	}
 
 	// All the checks beyond this point are ovnkube-node specific
-	// If the user is not ovnkube-node exit here
-	if !isOVNKubeNode {
+	// If the user is not ovnkube-node, ovnkube-node-dpu-host or ovnkube-node-dpu exit here
+	if !isNodeIdentity && !isDPUUser {
 		return nil, nil
 	}
 
-	if newNode.Name != nodeName {
-		return nil, fmt.Errorf("ovnkube-node on node: %q is not allowed to modify nodes %q annotations", nodeName, newNode.Name)
+	if isNodeIdentity && newNode.Name != nodeName {
+		return nil, fmt.Errorf("%s: %q is not allowed to modify annotations on node %q", identityDescription, nodeName, newNode.Name)
 	}
 
-	// ovnkube-node is not allowed to change annotations outside of it's scope
-	if !p.annotationKeys.HasAll(changedKeys...) {
-		return nil, fmt.Errorf("ovnkube-node on node: %q is not allowed to set the following annotations: %v",
+	// ovnkube-node / ovnkube-node-dpu-host / ovnkube-node-dpu is not allowed to change annotations outside of its scope
+	if !effectiveKeys.HasAll(changedKeys...) {
+		return nil, fmt.Errorf("%s: %q is not allowed to set the following annotations: %v", identityDescription,
 			nodeName,
-			sets.New[string](changedKeys...).Difference(p.annotationKeys).UnsortedList())
+			sets.New[string](changedKeys...).Difference(effectiveKeys).UnsortedList())
 	}
 
 	// Verify that nothing but the annotations changed.
@@ -190,7 +272,7 @@ func (p NodeAdmission) ValidateUpdate(ctx context.Context, oldNode, newNode *cor
 	}
 	if !apiequality.Semantic.DeepEqual(oldNodeShallowCopy.ObjectMeta, newNodeShallowCopy.ObjectMeta) ||
 		!apiequality.Semantic.DeepEqual(oldNodeShallowCopy.Status, newNodeShallowCopy.Status) {
-		return nil, fmt.Errorf("ovnkube-node on node: %q is not allowed to modify anything other than annotations", nodeName)
+		return nil, fmt.Errorf("%s: %q is not allowed to modify anything other than annotations", identityDescription, nodeName)
 	}
 
 	return nil, nil

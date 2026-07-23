@@ -904,8 +904,10 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 	}
 	nc.nodeAddress = nodeAddr
 
-	if err := util.SetNodeZone(nodeAnnotator, sbZone); err != nil {
-		return fmt.Errorf("failed to set node zone annotation for node %s: %w", nc.name, err)
+	if config.IsModeDPUHost() || config.IsModeFull() {
+		if err := util.SetNodeZone(nodeAnnotator, sbZone); err != nil {
+			return fmt.Errorf("failed to set node zone annotation for node %s: %w", nc.name, err)
+		}
 	}
 
 	// Set the node-encap-ips annotation with the configured encap IP.

@@ -975,10 +975,12 @@ ovnkube-identity() {
 
     # extra-allowed-user:
     #   ovnkube-cluster-manager service account - required for multi-homing
+    #   ovnkube-node-dpu service account - required for DPU access to the DPU-host cluster when identity is enabled
     exec /usr/bin/ovnkube-identity  --k8s-apiserver="${K8S_APISERVER}" \
     --webhook-cert-dir="/etc/webhook-cert" \
     ${ovnkube_enable_hybrid_overlay_flag} \
     --extra-allowed-user="system:serviceaccount:${ovn_kubernetes_namespace}:ovnkube-cluster-manager" \
+    --extra-allowed-user="system:serviceaccount:${ovn_kubernetes_namespace}:ovnkube-node-dpu" \
     --loglevel="${ovnkube_loglevel}"
 
     exit 9

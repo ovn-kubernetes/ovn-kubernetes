@@ -47,8 +47,17 @@ func TestNewNodeAdmissionWebhook(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := NewNodeAdmissionWebhook(tt.enableHybridOverlay); !got.annotationKeys.HasAll(tt.expectedKeys...) {
+			got := NewNodeAdmissionWebhook(tt.enableHybridOverlay)
+			if !got.annotationKeys.HasAll(tt.expectedKeys...) {
 				t.Errorf("NewNodeAdmissionWebhook() = %v, want %v", got.annotationKeys, tt.expectedKeys)
+			}
+			// webhook must always have the DPU-allowed node annotation keys
+			if !got.dpuAnnotationKeys.HasAll(maps.Keys(dpuNodeAnnotationChecks)...) {
+				t.Errorf("NewNodeAdmissionWebhook() dpuAnnotationKeys = %v, want all of %v", got.dpuAnnotationKeys, maps.Keys(dpuNodeAnnotationChecks))
+			}
+			// webhook must always have the DPUHost-allowed node annotation keys
+			if !got.dpuHostAnnotationKeys.HasAll(maps.Keys(dpuHostNodeAnnotationChecks)...) {
+				t.Errorf("NewNodeAdmissionWebhook() dpuHostAnnotationKeys = %v, want all of %v", got.dpuHostAnnotationKeys, maps.Keys(dpuHostNodeAnnotationChecks))
 			}
 		})
 	}
@@ -145,7 +154,7 @@ func TestNodeAdmission_ValidateUpdate(t *testing.T) {
 					Annotations: map[string]string{util.OVNNodeHostCIDRs: "new"},
 				},
 			},
-			expectedErr: fmt.Errorf("ovnkube-node on node: %q is not allowed to modify nodes %q annotations", nodeName+"_rougeOne", nodeName),
+			expectedErr: fmt.Errorf("ovnkube-node on node: %q is not allowed to modify annotations on node %q", nodeName+"_rougeOne", nodeName),
 		},
 		{
 			name: "ovnkube-node cannot modify annotations that do not belong to it",
@@ -399,6 +408,148 @@ func TestNodeAdmission_ValidateUpdate(t *testing.T) {
 		})
 	}
 }
+func TestNodeAdmission_ValidateUpdateExtraUsers(t *testing.T) {
+	extraUser := "system:serviceaccount:ovn-kubernetes:ovnkube-node-dpu"
+	adm := NewNodeAdmissionWebhook(false, extraUser)
+	tests := []struct {
+		name        string
+		ctx         context.Context
+		oldObj      *corev1.Node
+		newObj      *corev1.Node
+		expectedErr error
+	}{
+		{
+			name: "ovnkube-node-dpu can add annotation on its host node",
+			ctx: admission.NewContextWithRequest(context.TODO(), admission.Request{
+				AdmissionRequest: v1.AdmissionRequest{UserInfo: authenticationv1.UserInfo{
+					Username: extraUser,
+				}},
+			}),
+			oldObj: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "dpu-host",
+				},
+			},
+			newObj: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        "dpu-host",
+					Annotations: map[string]string{util.OvnNodeChassisID: "chassisID"},
+				},
+			},
+		},
+		{
+			name: "ovnkube-node-dpu cannot set annotations not in DPU allowed set",
+			ctx: admission.NewContextWithRequest(context.TODO(), admission.Request{
+				AdmissionRequest: v1.AdmissionRequest{UserInfo: authenticationv1.UserInfo{
+					Username: extraUser,
+				}},
+			}),
+			oldObj: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: nodeName,
+				},
+			},
+			newObj: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        nodeName,
+					Annotations: map[string]string{util.OVNNodeHostCIDRs: "192.168.1.0/24"},
+				},
+			},
+			expectedErr: fmt.Errorf("ovnkube-node-dpu for node: %q is not allowed to set the following annotations: %v", nodeName, []string{util.OVNNodeHostCIDRs}),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := adm.ValidateUpdate(tt.ctx, tt.oldObj, tt.newObj)
+			if err != tt.expectedErr && (err == nil || tt.expectedErr == nil || err.Error() != tt.expectedErr.Error()) {
+				t.Errorf("ValidateUpdate() error = %v, expectedErr %v", err, tt.expectedErr)
+				return
+			}
+		})
+	}
+}
+func TestNodeAdmission_ValidateUpdateDPUHost(t *testing.T) {
+	adm := NewNodeAdmissionWebhook(false)
+	// dpu-host is identified by its own per-node username prefix
+	// (system:ovn-node-dpu-host:<node>).
+	dpuHostUser := authenticationv1.UserInfo{
+		Username: fmt.Sprintf("%s:%s", csrapprover.NamePrefixDPUHost, nodeName),
+		Groups:   []string{"system:nodes", csrapprover.OVNNodesDPUHostGroup, "system:authenticated"},
+	}
+	tests := []struct {
+		name        string
+		ctx         context.Context
+		oldObj      *corev1.Node
+		newObj      *corev1.Node
+		expectedErr error
+	}{
+		{
+			name: "dpu-host can set its host-side annotations",
+			ctx: admission.NewContextWithRequest(context.TODO(), admission.Request{
+				AdmissionRequest: v1.AdmissionRequest{UserInfo: dpuHostUser},
+			}),
+			oldObj: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Name: nodeName},
+			},
+			newObj: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: nodeName,
+					Annotations: map[string]string{
+						util.OVNNodePrimaryDPUHostAddr: "10.0.0.1/24",
+						util.OVNNodeHostCIDRs:          "[\"10.0.0.1/24\"]",
+						util.OvnNodeMasqCIDR:           "masq",
+						util.OvnNodeManagementPort:     "mgmt",
+					},
+				},
+			},
+		},
+		{
+			name: "dpu-host cannot set annotations owned by the DPU (e.g. chassis-id)",
+			ctx: admission.NewContextWithRequest(context.TODO(), admission.Request{
+				AdmissionRequest: v1.AdmissionRequest{UserInfo: dpuHostUser},
+			}),
+			oldObj: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Name: nodeName},
+			},
+			newObj: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        nodeName,
+					Annotations: map[string]string{util.OvnNodeChassisID: "chassisID"},
+				},
+			},
+			expectedErr: fmt.Errorf("ovnkube-node on dpu-host node: %q is not allowed to set the following annotations: %v", nodeName, []string{util.OvnNodeChassisID}),
+		},
+		{
+			name: "dpu-host cannot modify annotations on a different node",
+			ctx: admission.NewContextWithRequest(context.TODO(), admission.Request{
+				AdmissionRequest: v1.AdmissionRequest{UserInfo: dpuHostUser},
+			}),
+			oldObj: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        nodeName + "_other",
+					Annotations: map[string]string{util.OVNNodeHostCIDRs: "old"},
+				},
+			},
+			newObj: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        nodeName + "_other",
+					Annotations: map[string]string{util.OVNNodeHostCIDRs: "new"},
+				},
+			},
+			expectedErr: fmt.Errorf("ovnkube-node on dpu-host node: %q is not allowed to modify annotations on node %q", nodeName, nodeName+"_other"),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := adm.ValidateUpdate(tt.ctx, tt.oldObj, tt.newObj)
+			if err != tt.expectedErr && (err == nil || tt.expectedErr == nil || err.Error() != tt.expectedErr.Error()) {
+				t.Errorf("ValidateUpdate() error = %v, expectedErr %v", err, tt.expectedErr)
+				return
+			}
+		})
+	}
+}
+
 func TestNodeAdmission_ValidateUpdateHybridOverlay(t *testing.T) {
 	adm := NewNodeAdmissionWebhook(true)
 	tests := []struct {

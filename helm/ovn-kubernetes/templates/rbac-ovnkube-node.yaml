@@ -1,3 +1,5 @@
+{{- $tags := (.Values.tags | default dict) }}
+{{- if ne (index $tags "ovnkube-single-node-zone-dpu") true }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -5,7 +7,8 @@ metadata:
     namespace: ovn-kubernetes
 
 # When ovn_enable_ovnkube_identity is true, an ovnkube-node process will identify as a user in a system:ovn-nodes group,
-# not the ovnkube-node serviceAccount
+# not the ovnkube-node serviceAccount.
+
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -238,39 +241,4 @@ rules:
       verbs:
           - get
           - create
-
-{{- $tags := (.Values.tags | default dict) }}
-{{- if (index $tags "ovnkube-node-dpu-host") }}
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-    name: ovnkube-node-dpu-leases
-    namespace: ovn-kubernetes
-roleRef:
-    name: ovnkube-node-dpu-leases
-    kind: Role
-    apiGroup: rbac.authorization.k8s.io
-subjects:
-    {{- if eq (hasKey .Values.global "enableOvnKubeIdentity" | ternary .Values.global.enableOvnKubeIdentity true) true }}
-    - kind: Group
-      name: system:ovn-nodes
-      apiGroup: rbac.authorization.k8s.io
-    {{- else }}
-    - kind: ServiceAccount
-      name: ovnkube-node
-      namespace: ovn-kubernetes
-    {{- end }}
-
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-    name: ovnkube-node-dpu-leases
-    namespace: ovn-kubernetes
-rules:
-    - apiGroups: ["coordination.k8s.io"]
-      resources:
-          - leases
-      verbs: [ "get", "create", "update" ]
 {{- end }}

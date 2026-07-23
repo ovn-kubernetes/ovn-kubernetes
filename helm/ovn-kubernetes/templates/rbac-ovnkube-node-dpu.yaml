@@ -1,0 +1,138 @@
+{{- $tags := (.Values.tags | default dict) }}
+{{- if eq (index $tags "ovnkube-node-dpu-host") true }}
+# ovnkube-node-dpu SA is used by nodes in DPU cluster to access the DPU-host cluster API.
+# DPU health lease Role (ovnkube-node-dpu-leases) is defined in rbac-ovnkube-node-dpu-host.yaml.
+# When ovnkube-identity is enabled, the admission webhook applies DPU-specific annotation whitelists for this SA.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+    name: ovnkube-node-dpu
+    namespace: ovn-kubernetes
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+    name: ovnkube-node-dpu-token
+    namespace: ovn-kubernetes
+    annotations:
+        kubernetes.io/service-account.name: ovnkube-node-dpu
+type: kubernetes.io/service-account-token
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+    name: ovnkube-node-dpu
+rules:
+    - apiGroups: [""]
+      resources:
+          - namespaces
+          - nodes
+          - pods
+          - services
+          - endpoints
+      verbs: [ "get", "list", "watch" ]
+    - apiGroups: ["discovery.k8s.io"]
+      resources:
+          - endpointslices
+      verbs: [ "get", "list", "watch" ]
+    - apiGroups: ["k8s.cni.cncf.io"]
+      resources:
+          - network-attachment-definitions
+      verbs: ["list", "get", "watch"]
+    - apiGroups: ["networking.k8s.io"]
+      resources:
+          - networkpolicies
+      verbs: [ "get", "list", "watch" ]
+    - apiGroups: ["k8s.cni.cncf.io"]
+      resources:
+          - ipamclaims
+          - multi-networkpolicies
+      verbs: ["list", "get", "watch"]
+    - apiGroups: [ "k8s.cni.cncf.io" ]
+      resources:
+          - ipamclaims/status
+      verbs: [ "patch", "update" ]
+    - apiGroups: ["k8s.ovn.org"]
+      resources:
+          - egressfirewalls/status
+          - adminpolicybasedexternalroutes/status
+          - egressqoses/status
+          - routeadvertisements/status
+          - networkqoses/status
+      verbs: [ "patch", "update" ]
+    - apiGroups: ["policy.networking.k8s.io"]
+      resources:
+          - adminnetworkpolicies/status
+          - baselineadminnetworkpolicies/status
+      verbs: [ "patch", "update" ]
+    - apiGroups: ["policy.networking.k8s.io"]
+      resources:
+          - adminnetworkpolicies
+          - baselineadminnetworkpolicies
+      verbs: ["list", "get", "watch"]
+    - apiGroups: ["k8s.ovn.org"]
+      resources:
+          - egressfirewalls
+          - egressips
+          - egressqoses
+          - egressservices
+          - adminpolicybasedexternalroutes
+          - userdefinednetworks
+          - clusteruserdefinednetworks
+          - networkqoses
+          - clusternetworkconnects
+      verbs: [ "get", "list", "watch" ]
+    {{- if or (eq (hasKey .Values.global "enableRouteAdvertisements" | ternary .Values.global.enableRouteAdvertisements false) true) (eq (hasKey .Values.global "enableNoOverlayManagedRouting" | ternary .Values.global.enableNoOverlayManagedRouting false) true) }}
+    - apiGroups: ["k8s.ovn.org"]
+      resources:
+          - routeadvertisements
+      verbs: [ "get", "list", "watch" ]
+    {{- end }}
+    - apiGroups: [""]
+      resources:
+          - events
+      verbs: ["create", "patch", "update"]
+    - apiGroups: [""]
+      resources:
+          - pods/status
+          - nodes/status
+      verbs: [ "patch", "update" ]
+    {{- if eq (hasKey .Values.global "enableDNSNameResolver" | ternary .Values.global.enableDNSNameResolver false) true }}
+    - apiGroups: ["network.openshift.io"]
+      resources:
+          - dnsnameresolvers
+      verbs: [ "get", "list", "watch" ]
+    {{- end }}
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+    name: ovnkube-node-dpu
+roleRef:
+    name: ovnkube-node-dpu
+    kind: ClusterRole
+    apiGroup: rbac.authorization.k8s.io
+subjects:
+    - kind: ServiceAccount
+      name: ovnkube-node-dpu
+      namespace: ovn-kubernetes
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+    name: ovnkube-node-dpu-leases
+    namespace: ovn-kubernetes
+roleRef:
+    name: ovnkube-node-dpu-leases
+    kind: Role
+    apiGroup: rbac.authorization.k8s.io
+subjects:
+    - kind: ServiceAccount
+      name: ovnkube-node-dpu
+      namespace: ovn-kubernetes
+{{- end }}
