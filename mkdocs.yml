@@ -74,7 +74,7 @@ markdown_extensions:
       permalink: true
 nav:
   - Overview:
-    - Introduction: index.md
+    - index.md
     - Architecture: design/architecture.md
     - Network Topology: design/topology.md
     - Gateway Modes: design/gateway-modes.md
@@ -87,6 +87,7 @@ nav:
     - Internal Subnets: design/ovn-kubernetes-subnets.md
     - Kubevirt VM Live Migration: features/live-migration.md
   - Getting Started:
+    - getting-started/index.md
     - Launching OVN-Kubernetes sandbox env: installation/launching-ovn-kubernetes-on-kind.md
     - Launching OVN-Kubernetes Using Helm: installation/launching-ovn-kubernetes-with-helm.md
     - Launching OVN-Kubernetes with DPU Acceleration: installation/launching-ovn-kubernetes-with-dpu.md
@@ -98,6 +99,7 @@ nav:
     - Deploying Services on OVN-Kubernetes cluster: getting-started/example-service-creation.md
     - Setup and Building: getting-started/building-ovn-kubernetes.md
   - Developer Guide:
+      - developer-guide/index.md
       - Contributing Guide: governance/CONTRIBUTING.md
       - Governance: governance/GOVERNANCE.md
       - Reviewing Guide: governance/REVIEWING.md
@@ -110,6 +112,7 @@ nav:
       - Debugging: developer-guide/debugging.md
       - Release Guide: developer-guide/release.md
   - API Reference Guide:
+      - api-reference/index.md
       - Introduction: api-reference/introduction.md
       - EgressIP: api-reference/egress-ip-api-spec.md
       - EgressService: api-reference/egress-service-api-spec.md
@@ -121,23 +124,29 @@ nav:
       - ClusterNetworkConnect: api-reference/clusternetworkconnect-api-spec.md
       - VTEP: api-reference/vtep-api-spec.md
   - Features:
+    - features/index.md
     - Universal Connectivity:
+      - features/user-defined-networks/index.md
       - UserDefinedNetwork: features/user-defined-networks/user-defined-networks.md
       - Uplinks for UserDefinedNetworks: features/user-defined-networks/uplinks.md
       - Connecting UserDefinedNetworks: features/user-defined-networks/cluster-network-connect.md
       - Dynamic UDN Node Allocation: features/user-defined-networks/dynamic-udn.md
     - NetworkSecurityControls:
+      - features/network-security-controls/index.md
       - AdminNetworkPolicy: features/network-security-controls/admin-network-policy.md
       - NetworkPolicy: features/network-security-controls/network-policy.md
       - EgressFirewall: features/network-security-controls/egress-firewall.md
     - ClusterEgressControls:
+      - features/cluster-egress-controls/index.md
       - EgressIP: features/cluster-egress-controls/egress-ip.md
       - EgressService: features/cluster-egress-controls/egress-service.md
       - EgressQoS: features/cluster-egress-controls/egress-qos.md
       - EgressGateway: features/cluster-egress-controls/egress-gateway.md
     - InfrastructureSecurityControls:
+      - features/infrastructure-security-controls/index.md
       - NodeIdentity: features/infrastructure-security-controls/node-identity.md
     - MultiNetworking:
+      - features/multiple-networks/index.md
       - Multihoming: features/multiple-networks/multi-homing.md
       - MultiNetworkPolicies: features/multiple-networks/multi-network-policies.md
       - MultiNetworkRails: features/multiple-networks/multi-vtep.md
@@ -149,21 +158,26 @@ nav:
     - HybridOverlay: features/hybrid-overlay.md
     - OVS Dynamic CPU Affinity: features/ovs-dynamic-cpu-affinity.md
     - Hardware Acceleration:
+      - features/hardware-offload/index.md
       - OVS Acceleration with kernel datapath: features/hardware-offload/ovs-kernel.md
       - OVS Acceleration with DOCA datapath: features/hardware-offload/ovs-doca.md
     - BGP Integration:
+      - features/bgp-integration/index.md
       - Route Advertisements: features/bgp-integration/route-advertisements.md
       - No-Overlay Mode: features/bgp-integration/no-overlay.md
       - EVPN: features/bgp-integration/evpn.md
   - Troubleshooting:
+    - troubleshooting/index.md
     - Introduction: troubleshooting/debugging.md
     - OVNKube Trace: troubleshooting/ovnkube-trace.md
     - Logging: troubleshooting/logging.md
   - Observability:
+    - observability/index.md
     - Metrics: observability/metrics.md
     - SDN Dashboard: observability/sdn-dashboard.md
     - OVN observability: observability/ovn-observability.md
   - Enhancement Proposals:
+    - okeps/index.md
     # - FeatureName: okeps/<filename.md>
     - Localnet API: okeps/okep-5085-localnet-api.md
     - Network QoS: okeps/okep-4380-network-qos.md
@@ -182,3 +196,5 @@ nav:
     - Disable Port Security: okeps/okep-3926-disable-port-security.md
   - Blog:
     - blog/index.md
+    - Accelerating and Securing Kubernetes Networking with DPUs: blog/dpu-acceleration.md
+    - Debugging NetworkPolicies with NetObserv: blog/netobserv.md
