@@ -18,6 +18,60 @@ OVN should work with any supported OVS release, extra requirements for OVS versi
 Some of the requirements are feature-specific.
 
 ## UDN
+
+### Masquerade Subnet Sizing
+
+When UserDefinedNetworks are in use, the `internalMasqueradeSubnet` (IPv4) and
+`internalMasqueradeV6Subnet` (IPv6) must be large enough to accommodate the maximum
+number of concurrent networks (`MaxNetworks = 4096`).
+
+The masquerade IP index formula (from `go-controller/pkg/generator/udn/masquerade_ips.go`):
+
+```
+GatewayRouter  index = 10 + networkID × 2 − 1
+ManagementPort index = 10 + networkID × 2
+```
+
+For `networkID = MaxNetworks = 4096`, the highest index is `8202`. The subnet must
+contain at least `8203` IPs:
+
+| IPv4 Subnet | IPs    | Max safe networkID | Safe with MaxNetworks=4096? |
+|-------------|--------|-------------------|----------------------------|
+| /29         | 8      | 0                 | NO — cannot fit 1 UDN       |
+| /24         | 256    | 123               | NO — crashes after ~123 total creates |
+| /20         | 4096   | 2043              | NO — crashes after ~2043 total creates |
+| /19         | 8192   | 4091              | NO — max index 8202 > 8192  |
+| **/18**     | 16384  | 8187              | **YES — minimum safe size** |
+| /17         | 32768  | 16379             | YES — recommended (default for new installs) |
+
+**Recommendation:** Use `/17` for IPv4 (`169.254.0.0/17`). This matches the default
+for new installs and provides headroom well beyond `MaxNetworks`. The `/17` range
+(`169.254.0.0–169.254.127.255`) is specifically chosen to avoid overlapping with the
+cloud metadata IP `169.254.169.254`.
+
+**Note on the 4096 limit:** `MaxNetworks = 4096` is tied to OVN's transit switch
+tunnel key reservation. OVN reserves a deterministic key at
+`BaseTransitSwitchTunnelKey + networkID` for each network's transit switch, with
+exactly 4096 slots reserved at the top of the 24-bit key space. See
+[ovn-util.h](https://github.com/ovn-org/ovn/blob/cfaf849c034469502fc97149f20676dec4d76595/lib/ovn-util.h#L159-L164).
+
+**Clusters upgraded from pre-4.17:** The default masquerade subnet prior to OCP 4.17
+was `169.254.169.0/29` — only 8 IPs, insufficient for even a single UDN. Clusters
+installed before 4.17 and subsequently upgraded retain this default. A day-2
+configuration change is required before creating UDNs:
+
+```bash
+# IPv4 — change masquerade subnet to /17
+kubectl patch networks.operator.openshift.io cluster --type=merge -p \
+  '{"spec":{"defaultNetwork":{"ovnKubernetesConfig":{"gatewayConfig":
+  {"ipv4":{"internalMasqueradeSubnet":"169.254.0.0/17"}}}}}}'
+```
+
+This triggers an ovnkube-node rollout. Once complete, UDN create/delete churn will
+not produce "out of range" masquerade IP errors.
+
+### Kubelet Network Probes
+
 For kubelet network probes to work with UDN pods, the following are required:
 - kernel fix 7f3287db654395f9c5ddd246325ff7889f550286: netfilter: nft_socket: make cgroupsv2 matching work with namespaces)
 
