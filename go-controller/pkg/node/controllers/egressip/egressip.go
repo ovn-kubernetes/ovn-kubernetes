@@ -1149,7 +1149,7 @@ func (c *Controller) migrateFromAddrLabelToAnnotation() error {
 	if len(assignedAddresses) == 0 {
 		return nil
 	}
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	return retry.OnError(retry.DefaultRetry, util.IsNodeAnnotationPatchRetryable, func() error {
 		node, err = c.nodeLister.Get(c.nodeName)
 		if err != nil {
 			return err
@@ -1163,7 +1163,7 @@ func (c *Controller) migrateFromAddrLabelToAnnotation() error {
 			nodeToUpdate.Annotations = map[string]string{}
 		}
 		nodeToUpdate.Annotations[util.OVNNodeSecondaryHostEgressIPs] = string(patch)
-		return c.kube.UpdateNodeStatus(nodeToUpdate)
+		return c.kube.PatchNodeStatusAnnotations(node, nodeToUpdate)
 	})
 }
 
@@ -1173,7 +1173,7 @@ func (c *Controller) addIPToAnnotation(ip string) error {
 	if !isValidIP(ip) {
 		return fmt.Errorf("invalid IP %q", ip)
 	}
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	return retry.OnError(retry.DefaultRetry, util.IsNodeAnnotationPatchRetryable, func() error {
 		node, err := c.nodeLister.Get(c.nodeName)
 		if err != nil {
 			return err
@@ -1199,7 +1199,7 @@ func (c *Controller) addIPToAnnotation(ip string) error {
 			nodeToUpdate.Annotations = map[string]string{}
 		}
 		nodeToUpdate.Annotations[util.OVNNodeSecondaryHostEgressIPs] = string(patch)
-		return c.kube.UpdateNodeStatus(nodeToUpdate)
+		return c.kube.PatchNodeStatusAnnotations(node, nodeToUpdate)
 	})
 }
 
@@ -1209,7 +1209,7 @@ func (c *Controller) deleteIPFromAnnotation(ip string) error {
 	if !isValidIP(ip) {
 		return fmt.Errorf("invalid IP %q", ip)
 	}
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	return retry.OnError(retry.DefaultRetry, util.IsNodeAnnotationPatchRetryable, func() error {
 		node, err := c.nodeLister.Get(c.nodeName)
 		if err != nil {
 			return err
@@ -1235,7 +1235,7 @@ func (c *Controller) deleteIPFromAnnotation(ip string) error {
 			nodeToUpdate.Annotations = map[string]string{}
 		}
 		nodeToUpdate.Annotations[util.OVNNodeSecondaryHostEgressIPs] = string(patch)
-		return c.kube.UpdateNodeStatus(nodeToUpdate)
+		return c.kube.PatchNodeStatusAnnotations(node, nodeToUpdate)
 	})
 }
 

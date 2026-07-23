@@ -64,6 +64,8 @@ type Interface interface {
 	SetLabelsOnNode(nodeName string, labels map[string]interface{}) error
 	PatchNode(old, new *corev1.Node) error
 	UpdateNodeStatus(node *corev1.Node) error
+	PatchNodeStatus(old, new *corev1.Node) error
+	PatchNodeStatusAnnotations(oldNode, newNode *corev1.Node) error
 	PatchPodStatusAnnotations(oldPod, newPod *corev1.Pod) error
 	// GetPod returns the pod fetched directly from the API server, bypassing
 	// any informer cache. Use it when a fresh resourceVersion is required.
@@ -179,7 +181,7 @@ func (k *Kube) PatchPodStatusAnnotations(oldPod, newPod *corev1.Pod) error {
 
 	ops := []jsonPatchOp{}
 	requiresResourceVersionGuard := false
-	if oldPod.Annotations == nil {
+	if len(oldPod.Annotations) == 0 {
 		ops = append(ops, jsonPatchOp{
 			Op:    "add",
 			Path:  "/metadata/annotations",
@@ -397,6 +399,153 @@ func (k *Kube) PatchNode(old, new *corev1.Node) error {
 func (k *Kube) UpdateNodeStatus(node *corev1.Node) error {
 	klog.Infof("Updating status on node %s", node.Name)
 	_, err := k.KClient.CoreV1().Nodes().UpdateStatus(context.TODO(), node, metav1.UpdateOptions{})
+	return err
+}
+
+// PatchNodeStatus patches the node status subresource using a strategic merge
+// patch computed from the old and new node objects. Only the fields that differ
+// between old and new are sent to the API server, so informer-trimmed fields
+// that are identical in both objects do not overwrite the server state.
+func (k *Kube) PatchNodeStatus(old, new *corev1.Node) error {
+	oldNodeObjectJson, err := json.Marshal(old)
+	if err != nil {
+		klog.Errorf("Unable to marshal node %s: %v", old.Name, err)
+		return err
+	}
+
+	newNodeObjectJson, err := json.Marshal(new)
+	if err != nil {
+		klog.Errorf("Unable to marshal node %s: %v", new.Name, err)
+		return err
+	}
+
+	patchBytes, err := strategicpatch.CreateTwoWayMergePatch(oldNodeObjectJson, newNodeObjectJson, corev1.Node{})
+	if err != nil {
+		klog.Errorf("Unable to create patch for node %s: %v", old.Name, err)
+		return err
+	}
+
+	if _, err = k.KClient.CoreV1().Nodes().Patch(context.TODO(), old.Name, types.StrategicMergePatchType, patchBytes, metav1.PatchOptions{}, "status"); err != nil {
+		klog.Errorf("Unable to patch node status %s: %v", old.Name, err)
+		return err
+	}
+
+	return nil
+}
+
+// PatchNodeStatusAnnotations patches only node annotations through the status
+// subresource using compare-and-retry semantics on the old node state. This
+// avoids sending the full node status (which may have fields trimmed by the
+// informer transform) back to the API server.
+//
+// There are two concurrency cases to handle:
+//  1. The annotation key already exists on the old node. In that case we can use a
+//     narrow JSON patch "test" on that specific key so we only retry if another
+//     writer changed the same annotation.
+//  2. The annotation key does not exist on the old node. In that case a per-key
+//     "test" cannot protect us because two stale writers could both issue an
+//     unconditional "add" and the last one would win. For that create case we add
+//     a resourceVersion guard so only one writer based on that node snapshot can
+//     create the missing key; losers will retry from the latest node state and
+//     recompute a merged annotation value.
+//
+// Real informer/API nodes always have a resourceVersion. If a synthetic caller
+// passes an object without one, we skip that extra guard and fall back to the
+// narrower per-key tests that are available.
+func (k *Kube) PatchNodeStatusAnnotations(oldNode, newNode *corev1.Node) error {
+	if oldNode.Name != newNode.Name {
+		return fmt.Errorf("cannot patch annotations for different nodes %s and %s",
+			oldNode.Name, newNode.Name)
+	}
+
+	changedKeys := make(map[string]struct{})
+	for key, oldValue := range oldNode.Annotations {
+		if newValue, ok := newNode.Annotations[key]; !ok || oldValue != newValue {
+			changedKeys[key] = struct{}{}
+		}
+	}
+	for key, newValue := range newNode.Annotations {
+		if oldValue, ok := oldNode.Annotations[key]; !ok || oldValue != newValue {
+			changedKeys[key] = struct{}{}
+		}
+	}
+	if len(changedKeys) == 0 {
+		return nil
+	}
+
+	keys := make([]string, 0, len(changedKeys))
+	for key := range changedKeys {
+		keys = append(keys, key)
+	}
+
+	ops := []jsonPatchOp{}
+	requiresResourceVersionGuard := false
+	if len(oldNode.Annotations) == 0 {
+		ops = append(ops, jsonPatchOp{
+			Op:    "add",
+			Path:  "/metadata/annotations",
+			Value: map[string]string{},
+		})
+		requiresResourceVersionGuard = true
+	}
+	for _, key := range keys {
+		path := "/metadata/annotations/" + escapeJSONPatchPathKey(key)
+		oldValue, oldOK := oldNode.Annotations[key]
+		newValue, newOK := newNode.Annotations[key]
+		if oldOK {
+			ops = append(ops, jsonPatchOp{
+				Op:    "test",
+				Path:  path,
+				Value: oldValue,
+			})
+		} else if newOK {
+			requiresResourceVersionGuard = true
+		}
+		switch {
+		case newOK && oldOK:
+			ops = append(ops, jsonPatchOp{
+				Op:    "replace",
+				Path:  path,
+				Value: newValue,
+			})
+		case newOK:
+			ops = append(ops, jsonPatchOp{
+				Op:    "add",
+				Path:  path,
+				Value: newValue,
+			})
+		default:
+			ops = append(ops, jsonPatchOp{
+				Op:   "remove",
+				Path: path,
+			})
+		}
+	}
+	if requiresResourceVersionGuard && oldNode.ResourceVersion != "" {
+		ops = append([]jsonPatchOp{{
+			Op:    "test",
+			Path:  "/metadata/resourceVersion",
+			Value: oldNode.ResourceVersion,
+		}}, ops...)
+	}
+
+	patchData, err := json.Marshal(ops)
+	if err != nil {
+		return fmt.Errorf("failed to marshal annotation patch for node %s: %w", oldNode.Name, err)
+	}
+
+	klog.Infof("Patching annotations on node %s", oldNode.Name)
+	_, err = k.KClient.CoreV1().Nodes().Patch(
+		context.TODO(),
+		oldNode.Name,
+		types.JSONPatchType,
+		patchData,
+		metav1.PatchOptions{},
+		"status",
+	)
+	if err != nil {
+		klog.Errorf("Error in patching annotations on node %s: %v", oldNode.Name, err)
+	}
 	return err
 }
 
