@@ -54,25 +54,111 @@ for more details.
 ## Website Guide
 
 We are utilizing [GitHub Pages](https://docs.github.com/en/pages/quickstart) to host the ovn-kubernetes.io website. The website's
-content is composed in Markdown and stored within the 'docs' directory at the root
+content is composed in Markdown and stored within the `docs/` directory at the root
 of our repository. For static site generation, we employ the [MkDocs](https://www.mkdocs.org/user-guide/writing-your-docs/) framework,
-managed by the 'mkdocs.yml' configuration file located next to the 'docs' folder.
-Additionally, we use the [Material](https://squidfunk.github.io/mkdocs-material/setup/) framework on top of  MkDocs, which enhances our
+managed by the `mkdocs.yml` configuration file located next to the `docs/` folder.
+Additionally, we use the [Material](https://squidfunk.github.io/mkdocs-material/setup/) framework on top of MkDocs, which enhances our
 site with advanced features like customizable navigation, color schemes, and site
-search capabilities
+search capabilities.
 
-Any changes to the files in the doc folder or the mkdocs.yml file is picked up by
-a GitHub Action workflow that will automatically publish the changes to the website.
+The published site is **versioned** with [mike](https://github.com/jimporter/mike).
+Each `release-*` branch and `master` appears in a version dropdown on the docs site.
+Deploy logic lives in
+[`hack/build-docs.sh`](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/hack/build-docs.sh)
+and is invoked via `make -C docs build-docs` (see
+[`docs/Makefile`](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/docs/Makefile)).
+The
+[Publish Versioned Docs](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/.github/workflows/docs-versioning.yml)
+workflow runs that target with `PUSH=1` and updates the `gh-pages` branch.
+
+The [docs.yml](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/.github/workflows/docs.yml)
+workflow keeps a `test-deploy` job so pull requests still validate that docs build
+cleanly. It does not publish the live site; publishing is owned by the versioning
+workflow so the two do not overwrite each other.
+
+### Versioned docs: how publishing works
+
+The versioning workflow runs on pushes to `master` or any `release-*` branch when
+docs-related paths change (`docs/**`, `mkdocs.yml`, the workflow file,
+`hack/build-docs.sh`, or `requirements.txt`). By default each run rebuilds **all**
+versions so Latest/Stable/Legacy labels and the version dropdown stay consistent.
+
+- The nav structure (`nav:` in `mkdocs.yml`) is **per-branch**. A new page added
+  on `master` does not appear in older release versions (and will not break them).
+  To ship a page in an older release, backport the markdown **and** update that
+  branch's `mkdocs.yml` nav.
+- Visual styling is shared: the build copies `docs/stylesheets/extra.css` from
+  `master` onto every version at build time. Make CSS changes on `master` only.
+  Do not edit `extra.css` on release branches — the file is overwritten, and
+  `hack/build-docs.sh` hard-fails if it has local modifications on a `release-*`
+  branch.
+- When a new `release-X.Y` branch is created, the workflow discovers it
+  (via the `create` event and/or a docs push) and the dropdown labels shift:
+  - highest `release-*` → `<ver> (Latest)` (also the mike `latest` alias)
+  - second-highest → `<ver> (Stable)`
+  - older releases → `<ver> (Legacy)`
+  - `master` → `Master (Dev)`
+  Example today: `1.3 (Latest)`, `1.2 (Stable)`, `1.1 (Legacy)`, `1.0 (Legacy)`.
+  After `release-1.4` appears: `1.4 (Latest)`, `1.3 (Stable)`, and older stay
+  `(Legacy)`. No workflow edits are required.
+- Every branch that is deployed must have a root `mkdocs.yml`. The build injects
+  `extra.version.provider: mike` if missing, but the file itself must exist.
+- Do not manually push to or develop on `gh-pages`. The versioning workflow owns it.
+- Prefer `make -C docs build-docs` over ad-hoc `mike` commands so the same
+  validations run locally and in CI.
+
+### Manual rebuild (workflow_dispatch)
+
+Anyone with write access can trigger a rebuild from the **Actions** tab
+(Publish Versioned Docs). The `releases` input defaults to `all`. Set it to a
+comma-separated list of existing branches (for example `release-1.1` or
+`release-1.1,master`) to rebuild only those. Unknown branch names fail the job.
+
+### What triggers a rebuild (and what does not)
+
+| Event | Rebuilds docs site? |
+|-------|---------------------|
+| Push to `master` / `release-*` changing `docs/**`, `mkdocs.yml`, the versioning workflow, `hack/build-docs.sh`, or `requirements.txt` | Yes (all versions) |
+| Creating a new `release-*` branch | Yes (`create` event; labels recompute) |
+| Manual **workflow_dispatch** | Yes (`all` or the branches you list) |
+| Go-only / non-docs commits on `master` or `release-*` | No (by design) |
+
+### After this lands on master (one-time + first-run checks)
+
+Upstream currently has GitHub Pages enabled but **no `gh-pages` branch** — the
+old site was published with the Actions `deploy-pages` flow. Mike needs branch
+publishing. A repo admin must do this once after the first successful
+**Publish Versioned Docs** run (or right before it):
+
+1. Open
+   [Settings → Pages](https://github.com/ovn-kubernetes/ovn-kubernetes/settings/pages)
+   on `ovn-kubernetes/ovn-kubernetes`.
+2. Under **Build and deployment → Source**, choose **Deploy from a branch**.
+3. Branch: **`gh-pages`** / folder: **`/` (root)**. Save.
+4. Keep the custom domain (`ovn-kubernetes.io`) as already configured.
+
+Then verify the first merge deploy:
+
+1. Actions → **Publish Versioned Docs** is green for the merge commit.
+2. The `gh-pages` branch exists and contains `versions.json` plus `master/`,
+   `1.3/`, `1.2/`, …
+3. Locally: `git fetch origin gh-pages && mike list` shows titles like
+   `Master (Dev)`, `1.3 (Latest)`, `1.2 (Stable)`, `1.1 (Legacy)`, `1.0 (Legacy)`.
+4. On the live site, the version dropdown switches and each version’s nav/content
+   matches that release branch.
+
+If Pages is still set to **GitHub Actions**, the workflow can succeed while the
+public site does not update — fix the Source setting above.
 
 ## How to test your documentation changes?
 
 ### Option 1) Build and view docs with a PR
 
 Pushing docs changes to the ovn-kubernetes/ovn-kubernetes project as a pull request will
-run the job name "[Test and Deploy static content to Pages](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/.github/workflows/docs.yml)" which has a step to save the
+run the job name "[Test Docs Build](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/.github/workflows/docs.yml)" which has a step to save the
 docs artifacts. You can download those as a .zip file, extract and view them locally.
 
-### Option 2) Build and serve docs locally
+### Option 2) Build and serve a single version locally
 
 In order to test changes locally to either mkdocs.yml or to files under docs/ folder,
 please follow the instructions below.
@@ -127,3 +213,44 @@ Now you can browse the website on your browser using the above URL.
 As you make changes and save the files, the mkdocs server notices that and re-builds the website.
 It also spews out any WARNINGS or ERRORS with respect to the changes that you have just made. If
 the changes look good, then go ahead and submit the PR.
+
+### Option 3) Preview versioned docs locally with mike
+
+Install dependencies once:
+
+```bash
+pip install -r requirements.txt
+```
+
+**Preview unmerged work on your feature branch** (CSS, `mkdocs.yml`, dropdown UI).
+`make -C docs build-docs` is the wrong tool for this — it checks out remote
+`origin/master` / `origin/release-*` and will not show your local PR changes.
+
+```bash
+# On your feature branch:
+mike deploy --title "Master (Dev)" master
+mike set-default master
+mike serve
+```
+
+Open `http://localhost:8000`. For a single-version preview without mike, use
+`mkdocs serve` as in Option 2.
+
+**Mimic what CI publishes** (content from remote branches only):
+
+```bash
+make -C docs build-docs                 # all origin/release-* + origin/master
+make -C docs build-docs RELEASES=master # only origin/master
+mike serve
+```
+
+Push the local `gh-pages` branch only if you intend to update the remote
+(CI already does this with `PUSH=1`):
+
+```bash
+make -C docs build-docs PUSH=1
+```
+
+`hack/build-docs.sh` refuses to run while checked out on `gh-pages`, and
+refuses to continue if `extra.css` is dirty on a `release-*` branch. There
+is no interactive override.
