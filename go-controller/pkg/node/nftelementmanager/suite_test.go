@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright The OVN-Kubernetes Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-package egressip
+//go:build linux
+// +build linux
+
+package nftelementmanager
 
 import (
 	"testing"
@@ -12,8 +15,8 @@ import (
 	nodenft "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftables"
 )
 
-func TestAdder(t *testing.T) {
+func TestNFTElementManager(t *testing.T) {
 	nodenft.SetFakeNFTablesHelper()
 	gomega.RegisterFailHandler(ginkgo.Fail)
-	ginkgo.RunSpecs(t, "EgressIP Controller Suite")
+	ginkgo.RunSpecs(t, "NFT Element Manager Suite")
 }

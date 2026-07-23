@@ -161,6 +161,23 @@ const (
 	// Packet mark for egress IP traffic on secondary host interfaces
 	// This mark will be cleared by node controller when SNAT is ready
 	EgressIPSecondaryInterfaceMark = "1009"
+	// EgressIPConnmarkMark is the packet mark used by LGW conntrack save/restore rules and the
+	// node IP fwmark IP rule. Same value as EgressIPNodeConnectionMark, kept as an int here since
+	// nftables rule building and netlink.Rule.Mark both need it in that form.
+	EgressIPConnmarkMark = 1008
+
+	// EgressIPNFTablesChainName is the nftables chain for EgressIP SNAT rules (postrouting hook, SNAT priority)
+	EgressIPNFTablesChainName = "egress-ip-snat"
+	// EgressIPNFTablesMapV4 is the nftables map for IPv4 SNAT mappings: podIP+oif -> egressIP
+	EgressIPNFTablesMapV4 = "egress-ip-snat-v4"
+	// EgressIPNFTablesMapV6 is the nftables map for IPv6 SNAT mappings: podIP+oif -> egressIP
+	EgressIPNFTablesMapV6 = "egress-ip-snat-v6"
+	// EgressIPNFTablesConnmarkChainName is the nftables chain for LGW connmark save/restore rules
+	// (prerouting hook, mangle priority)
+	EgressIPNFTablesConnmarkChainName = "egress-ip-connmark"
+	// EgressIPNFTablesSecondaryInterfaceChainName is the nftables chain that drops pod traffic
+	// egressing a secondary interface before SNAT has been programmed
+	EgressIPNFTablesSecondaryInterfaceChainName = "ovn-kube-egress-ip"
 
 	// primary user defined network's default join subnet value
 	// users can configure custom values using NADs
