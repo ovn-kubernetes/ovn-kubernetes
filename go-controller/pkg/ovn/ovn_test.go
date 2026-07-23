@@ -87,10 +87,20 @@ type testNetInfo struct {
 	outboundSNAT string
 	subnets      []config.CIDRNetworkEntry
 	transport    string
+	// ipMode, when set, overrides IPMode() as {IPv4, IPv6}; otherwise the
+	// embedded NetInfo's IPMode() is used.
+	ipMode *[2]bool
 }
 
 func (ni *testNetInfo) TopologyType() string {
 	return ni.topology
+}
+
+func (ni *testNetInfo) IPMode() (bool, bool) {
+	if ni.ipMode != nil {
+		return ni.ipMode[0], ni.ipMode[1]
+	}
+	return ni.NetInfo.IPMode()
 }
 
 func (ni *testNetInfo) Subnets() []config.CIDRNetworkEntry {

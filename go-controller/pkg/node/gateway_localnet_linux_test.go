@@ -1789,12 +1789,14 @@ var _ = Describe("Node Operations", func() {
 	Context("on delete", func() {
 		It("deletes iptables rules with ExternalIP", func() {
 			app.Action = func(*cli.Context) error {
-				// Depending on the order of informer event processing the initial
-				// Service might be "added" once or twice.  Take that into account.
 				minNFakeCommands := nInitialFakeCommands + 1
+				// Depending on the order of informer event processing the initial
+				// Service might be "added" once or twice. Add one more command for
+				// the delete handler's OpenFlow sync.
+				maxNFakeCommands := nInitialFakeCommands + 2
 				fExec.AddRepeatedFakeCmd(&ovntest.ExpectedCmd{
 					Cmd: "ovs-ofctl show breth0",
-				}, minNFakeCommands)
+				}, maxNFakeCommands)
 
 				externalIP := "1.1.1.1"
 				service := *newService("service1", "namespace1", "10.129.0.2",

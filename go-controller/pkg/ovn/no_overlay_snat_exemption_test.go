@@ -46,7 +46,7 @@ var _ = ginkgo.Describe("No-Overlay SNAT Exemption Address Set", func() {
 				{CIDR: cidr, HostSubnetLength: 24},
 			}
 
-			_, err = initNoOverlaySNATExemptionAddressSet(addressSetFactory, netInfo, controllerName)
+			_, err = ensureNoOverlaySNATExemptionAddressSet(addressSetFactory, netInfo, controllerName)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 
@@ -110,6 +110,40 @@ var _ = ginkgo.Describe("No-Overlay SNAT Exemption Address Set", func() {
 			gomega.Expect(secondIPv6).To(gomega.Equal(firstIPv6))
 		})
 
+		ginkgo.It("creates a missing address-set family during a dual-stack upgrade", func() {
+			as, err := getNoOverlaySNATExemptionAddressSet(addressSetFactory, netInfo, controllerName)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			originalV4UUID, originalV6UUID := as.GetASUUID()
+			gomega.Expect(originalV4UUID).NotTo(gomega.BeEmpty())
+			gomega.Expect(originalV6UUID).To(gomega.BeEmpty())
+
+			_, ipv6CIDR, err := net.ParseCIDR("fd00:10:128::/48")
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			netInfo.subnets = append(netInfo.subnets, config.CIDRNetworkEntry{
+				CIDR:             ipv6CIDR,
+				HostSubnetLength: 64,
+			})
+			netInfo.ipMode = &[2]bool{true, true}
+			dualStackFactory := addressset.NewOvnAddressSetFactory(fakeOvn.nbClient, true, true)
+			nodeIPs := []string{"192.168.1.10", "fd00::10"}
+
+			err = syncNoOverlaySNATExemptionAddressSet(dualStackFactory, netInfo, controllerName, nodeIPs)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			as, err = getNoOverlaySNATExemptionAddressSet(dualStackFactory, netInfo, controllerName)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			v4UUID, v6UUID := as.GetASUUID()
+			gomega.Expect(v4UUID).To(gomega.Equal(originalV4UUID))
+			gomega.Expect(v6UUID).NotTo(gomega.BeEmpty())
+
+			ipv4Addrs, ipv6Addrs := as.GetAddresses()
+			gomega.Expect(ipv4Addrs).To(gomega.ConsistOf("10.128.0.0/14", "192.168.1.10"))
+			gomega.Expect(ipv6Addrs).To(gomega.ConsistOf("fd00:10:128::/48", "fd00::10"))
+
+			_, _, err = getNoOverlaySNATExemptionAsUUID(dualStackFactory, netInfo, controllerName)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
 		ginkgo.It("updates node IPs when they change", func() {
 			// First sync with initial node IPs
 			initialNodeIPs := []string{"192.168.1.10"}
@@ -160,7 +194,7 @@ var _ = ginkgo.Describe("No-Overlay SNAT Exemption Address Set", func() {
 
 	ginkgo.Context("cleanupNoOverlaySNATExemptionAddressSet", func() {
 		ginkgo.It("removes the address set", func() {
-			_, err := initNoOverlaySNATExemptionAddressSet(addressSetFactory, netInfo, controllerName)
+			_, err := ensureNoOverlaySNATExemptionAddressSet(addressSetFactory, netInfo, controllerName)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			// Verify address set exists before cleanup
@@ -200,7 +234,7 @@ var _ = ginkgo.Describe("No-Overlay SNAT Exemption Address Set", func() {
 
 	ginkgo.Context("getNoOverlaySNATExemptionAsUUID", func() {
 		ginkgo.It("returns UUIDs for IPv4 and IPv6 address sets when it exists", func() {
-			_, err := initNoOverlaySNATExemptionAddressSet(addressSetFactory, netInfo, controllerName)
+			_, err := ensureNoOverlaySNATExemptionAddressSet(addressSetFactory, netInfo, controllerName)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			v4UUID, v6UUID, err := getNoOverlaySNATExemptionAsUUID(addressSetFactory, netInfo, controllerName)
@@ -216,10 +250,26 @@ var _ = ginkgo.Describe("No-Overlay SNAT Exemption Address Set", func() {
 			}
 		})
 
-		ginkgo.It("returns empty strings when it doesn't exist", func() {
-			v4UUID, v6UUID, err := getNoOverlaySNATExemptionAsUUID(addressSetFactory, netInfo, controllerName)
+		ginkgo.It("returns an error when it doesn't exist", func() {
+			_, _, err := getNoOverlaySNATExemptionAsUUID(addressSetFactory, netInfo, controllerName)
+			gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("no-overlay SNAT exemption address set")))
+		})
+
+		ginkgo.It("does not require the missing family for a single-stack network on a dual-stack cluster", func() {
+			// A dual-stack cluster with an IPv4-only network: the network's
+			// address set only ever holds the IPv4 family, so the missing IPv6
+			// UUID must not be treated as an error.
+			config.IPv4Mode = true
+			config.IPv6Mode = true
+			netInfo.ipMode = &[2]bool{true, false}
+			singleStackFactory := addressset.NewOvnAddressSetFactory(fakeOvn.nbClient, true, false)
+
+			_, err := ensureNoOverlaySNATExemptionAddressSet(singleStackFactory, netInfo, controllerName)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(v4UUID).To(gomega.BeEmpty())
+
+			v4UUID, v6UUID, err := getNoOverlaySNATExemptionAsUUID(singleStackFactory, netInfo, controllerName)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(v4UUID).NotTo(gomega.BeEmpty())
 			gomega.Expect(v6UUID).To(gomega.BeEmpty())
 		})
 	})

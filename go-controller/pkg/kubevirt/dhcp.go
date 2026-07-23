@@ -6,7 +6,6 @@ package kubevirt
 import (
 	"fmt"
 	"net"
-	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	ktypes "k8s.io/apimachinery/pkg/types"
@@ -175,7 +174,7 @@ func composeDHCPOptions(controllerName string, vmKey ktypes.NamespacedName, dhcp
 	dhcpvOptionsDbObjectID := libovsdbops.NewDbObjectIDs(libovsdbops.VirtualMachineDHCPOptions, controllerName,
 		map[libovsdbops.ExternalIDKey]string{
 			libovsdbops.ObjectNameKey: vmKey.String(),
-			libovsdbops.CIDRKey:       strings.ReplaceAll(dhcpOptions.Cidr, ":", "."),
+			libovsdbops.CIDRKey:       libovsdbops.BuildCIDRKey(dhcpOptions.Cidr),
 		})
 	dhcpOptions.ExternalIDs = dhcpvOptionsDbObjectID.GetExternalIDs()
 	dhcpOptions.ExternalIDs[OvnZoneExternalIDKey] = OvnLocalZone

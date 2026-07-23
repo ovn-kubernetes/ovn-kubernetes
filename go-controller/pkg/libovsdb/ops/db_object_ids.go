@@ -83,6 +83,12 @@ func ParseNamespaceNameKey(key string) (namespace, name string, err error) {
 	return s[0], s[1], nil
 }
 
+// BuildCIDRKey formats a CIDR for use as an ExternalIDKey value: IPv6 CIDRs
+// contain ":", which is the delimiter used to build the primary ID.
+func BuildCIDRKey(cidr string) string {
+	return strings.ReplaceAll(cidr, ":", ".")
+}
+
 // dbIDsMap is used to make sure the same ownerType is not defined twice for the same dbObjType to avoid conflicts.
 // It is filled in newObjectIDsType when registering new ObjectIDsType
 var dbIDsMap = map[dbObjType]map[ownerType]bool{}
