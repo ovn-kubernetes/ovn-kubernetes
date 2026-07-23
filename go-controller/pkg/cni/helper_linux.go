@@ -23,11 +23,16 @@ import (
 	"github.com/safchain/ethtool"
 	"github.com/vishvananda/netlink"
 
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/util/sets"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/knftables"
 
 	"github.com/ovn-kubernetes/libovsdb/client"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kubevirt"
 	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
@@ -830,7 +835,7 @@ func ConfigureOVS(ctx context.Context, ovsClient client.Client, namespace, podNa
 
 type PodRequestInterfaceOps interface {
 	ConfigureInterface(pr *PodRequest, ovsClient client.Client, getter PodInfoGetter, ifInfo *PodInterfaceInfo) ([]*current.Interface, error)
-	UnconfigureInterface(pr *PodRequest, ifInfo *PodInterfaceInfo) error
+	UnconfigureInterface(pr *PodRequest, ifInfo *PodInterfaceInfo, podLister corev1listers.PodLister) error
 }
 
 type defaultPodRequestInterfaceOps struct{}
@@ -911,7 +916,7 @@ func (*defaultPodRequestInterfaceOps) ConfigureInterface(pr *PodRequest, ovsClie
 	return []*current.Interface{hostIface, contIface}, nil
 }
 
-func (*defaultPodRequestInterfaceOps) UnconfigureInterface(pr *PodRequest, ifInfo *PodInterfaceInfo) error {
+func (*defaultPodRequestInterfaceOps) UnconfigureInterface(pr *PodRequest, ifInfo *PodInterfaceInfo, podLister corev1listers.PodLister) error {
 	podDesc := fmt.Sprintf("for pod %s/%s NAD %s", pr.PodNamespace, pr.PodName, pr.nadName)
 	klog.V(5).Infof("Tear down interface (%+v) %s", *pr, podDesc)
 	if ifInfo.IsDPUHostMode {
@@ -1025,12 +1030,12 @@ func (*defaultPodRequestInterfaceOps) UnconfigureInterface(pr *PodRequest, ifInf
 		if err != nil {
 			klog.Errorf("Failed to clearPodBandwidth sandbox %v %s: %v", pr.SandboxID, podDesc, err)
 		}
-		pr.deletePodConntrack()
+		pr.deletePodConntrack(podLister)
 	}
 	return nil
 }
 
-func (pr *PodRequest) deletePodConntrack() {
+func (pr *PodRequest) deletePodConntrack(podLister corev1listers.PodLister) {
 	if pr.CNIConf.PrevResult == nil {
 		return
 	}
@@ -1039,6 +1044,16 @@ func (pr *PodRequest) deletePodConntrack() {
 		klog.Warningf("Could not convert result to current version: %v", err)
 		return
 	}
+
+	// During KubeVirt live migration the VM IPs are preserved and move to the
+	// migration target pod running on another node. Flushing them on this
+	// pod's CNI DEL would tear down established connections (e.g. the
+	// north/south NodePort/SNAT ingress connection routed to the VM) that must
+	// survive the migration. Compute, once per DEL, the set of IPs still owned
+	// by another living pod of the VM and skip only those; genuinely released
+	// IPs (e.g. the source pod's default-network IP) are still flushed as
+	// before.
+	preservedIPs := pr.migrationPreservedIPs(podLister)
 
 	for _, ip := range result.IPs {
 		// Skip known non-sandbox interfaces
@@ -1049,12 +1064,93 @@ func (pr *PodRequest) deletePodConntrack() {
 				continue
 			}
 		}
+		if preservedIPs.Has(ip.Address.IP.String()) {
+			klog.V(5).Infof("Skipping conntrack flush for pod %s/%s IP %s: IP is preserved on another pod of the live-migrated VM",
+				pr.PodNamespace, pr.PodName, ip.Address.IP.String())
+			continue
+		}
 		_, err = util.DeleteConntrack(ip.Address.IP.String(), 0, "", netlink.ConntrackReplyAnyIP, nil)
 		if err != nil {
 			klog.Errorf("Failed to delete Conntrack Entry for %s: %v", ip.Address.IP.String(), err)
 			continue
 		}
 	}
+}
+
+// migrationPreservedIPs returns the set of IP addresses that are preserved on
+// another living pod of the same KubeVirt VM as the pod being torn down,
+// because of a live migration: the migration target pod when the source is
+// deleted, or the source pod when a failed migration target is deleted. The
+// pods are listed once and the surviving pod's OVN annotation (all networks)
+// is unmarshalled once, so the per-IP guard in deletePodConntrack is a set
+// lookup. Only the IPs actually preserved across the migration are returned:
+// the cluster default network is skipped, since it allocates per-node subnets
+// and its IPs move with the pod, not with the VM; genuinely released IPs keep
+// being flushed.
+//
+// An empty set is returned (flush everything, the previous behavior) when:
+//   - podLister is nil (the unprivileged CNI shim has no apiserver access)
+//   - the pod is already gone from the informer or does not belong to a
+//     live-migratable VM
+//   - there is no live migration, or no other living pod of the VM owns IPs
+//
+// Note: the guard requires cluster-wide pod visibility, since the surviving
+// pod of a live migration always runs on a different node. The cniserver's
+// podLister is backed by factory.LocalPodInformer(), which today watches pods
+// on all nodes; if that informer is ever scoped down to node-local pods, this
+// guard would silently degrade to flushing everything (see the TODO on the
+// pod informer registration in pkg/factory/factory.go NewNodeWatchFactory).
+func (pr *PodRequest) migrationPreservedIPs(podLister corev1listers.PodLister) sets.Set[string] {
+	preservedIPs := sets.New[string]()
+	if podLister == nil {
+		return preservedIPs
+	}
+	pod, err := podLister.Pods(pr.PodNamespace).Get(pr.PodName)
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			klog.Warningf("Failed finding pod %s/%s: %v", pr.PodNamespace, pr.PodName, err)
+		}
+		// Pod is already gone or not visible; nothing preserved, flush.
+		return preservedIPs
+	}
+	status, err := kubevirt.DiscoverLiveMigrationStatus(podLister, pod)
+	if err != nil {
+		klog.Warningf("Failed to discover live migration status for pod %s/%s: %v", pr.PodNamespace, pr.PodName, err)
+		return preservedIPs
+	}
+	if status == nil {
+		return preservedIPs
+	}
+	for _, vmPod := range []*corev1.Pod{status.SourcePod, status.TargetPod} {
+		if vmPod == nil || vmPod.Name == pr.PodName || util.PodCompleted(vmPod) {
+			continue
+		}
+		podNetworks, err := util.UnmarshalPodAnnotationAllNetworks(vmPod.Annotations)
+		if err != nil {
+			klog.Warningf("Failed to unmarshal OVN pod annotation of live migration pod %s/%s: %v",
+				vmPod.Namespace, vmPod.Name, err)
+			continue
+		}
+		for nadName, podNetwork := range podNetworks {
+			// The cluster default network allocates per-node subnets, so its
+			// IPs are never preserved across a live migration: the surviving
+			// pod owns a different IP from its own node's subnet, and the
+			// deleted pod's default-network IP is genuinely released.
+			if nadName == types.DefaultNetworkName {
+				continue
+			}
+			for _, ipStr := range podNetwork.IPs {
+				ip, _, err := net.ParseCIDR(ipStr)
+				if err != nil {
+					klog.Warningf("Failed to parse IP %q from OVN pod annotation of live migration pod %s/%s: %v",
+						ipStr, vmPod.Namespace, vmPod.Name, err)
+					continue
+				}
+				preservedIPs.Insert(ip.String())
+			}
+		}
+	}
+	return preservedIPs
 }
 
 func (pr *PodRequest) deletePort(ifaceName, podNamespace, podName string) {
