@@ -45,6 +45,7 @@ type GatewayConfig struct {
 	gwRouterJoinCIDRs          []*net.IPNet
 	hostAddrs                  []string
 	externalIPs                []net.IP
+	udnEgressSNATIPs           []net.IP
 	ovnClusterLRPToJoinIfAddrs []*net.IPNet
 }
 

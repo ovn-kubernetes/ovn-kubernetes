@@ -11,6 +11,8 @@ export KIND_CLUSTER_NAME=${KIND_CLUSTER_NAME:-ovn}
 
 SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 
+bash "${SCRIPT_DIR}/udn-upgrade-snat.sh" setup
+
 # Stash current replica counts and scale the controller Deployments to 0 so
 # their old pods exit before helm re-creates them with the new image.
 # DaemonSets are left to roll via their RollingUpdate strategy.
@@ -78,6 +80,9 @@ for ds in ovnkube-node ovnkube-single-node-zone; do
     kubectl -n ovn-kubernetes rollout status daemonset "$ds" --timeout=600s
   fi
 done
+
+bash "${SCRIPT_DIR}/udn-upgrade-snat.sh" verify
+bash "${SCRIPT_DIR}/udn-upgrade-snat.sh" cleanup
 
 # Remove the control-plane taint so e2e shard-conformance workloads can
 # schedule on the control-plane node (unchanged from the original script;

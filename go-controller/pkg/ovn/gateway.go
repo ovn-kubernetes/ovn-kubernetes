@@ -880,22 +880,37 @@ func (gw *GatewayManager) syncNATsForGRIPChange(gwConfig *GatewayConfig, oldExtI
 			continue
 		}
 
-		// check external ip changed
-		for _, externalIP := range gwConfig.externalIPs {
-			oldExternalIP, err := util.MatchFirstIPFamily(utilnet.IsIPv6(externalIP), oldExtIPs)
-			if err != nil {
-				return fmt.Errorf("failed to update GW SNAT rule for pods on router %s error: %v", gw.gwRouterName, err)
+		if nat.ExternalIDs[types.UDNEgressSNATVersionExternalID] == types.UDNEgressSNATVersionV2 {
+			for _, externalIP := range gwConfig.udnEgressSNATIPs {
+				oldExternalIP, err := util.MatchFirstIPFamily(utilnet.IsIPv6(externalIP), oldExtIPs)
+				if err != nil {
+					return fmt.Errorf("failed to update UDN egress SNAT v2 rule on router %s error: %v", gw.gwRouterName, err)
+				}
+				if externalIP.String() == oldExternalIP.String() {
+					continue
+				}
+				if nat.ExternalIP == oldExternalIP.String() {
+					natModified = true
+					nat.ExternalIP = externalIP.String()
+				}
 			}
-			if externalIP.String() == oldExternalIP.String() {
-				// no external ip change, skip
-				continue
+		} else if !gw.netInfo.IsUserDefinedNetwork() {
+			// check external ip changed
+			for _, externalIP := range gwConfig.externalIPs {
+				oldExternalIP, err := util.MatchFirstIPFamily(utilnet.IsIPv6(externalIP), oldExtIPs)
+				if err != nil {
+					return fmt.Errorf("failed to update GW SNAT rule for pods on router %s error: %v", gw.gwRouterName, err)
+				}
+				if externalIP.String() == oldExternalIP.String() {
+					// no external ip change, skip
+					continue
+				}
+				if nat.ExternalIP == oldExternalIP.String() {
+					// needs to be updated
+					natModified = true
+					nat.ExternalIP = externalIP.String()
+				}
 			}
-			if nat.ExternalIP == oldExternalIP.String() {
-				// needs to be updated
-				natModified = true
-				nat.ExternalIP = externalIP.String()
-			}
-
 		}
 
 		// note, nat.LogicalIP may be a CIDR or IP, we don't care unless it's an IP
@@ -926,6 +941,18 @@ func (gw *GatewayManager) syncNATsForGRIPChange(gwConfig *GatewayConfig, oldExtI
 		}
 	}
 	return nil
+}
+
+const udnEgressSNATV2Priority = 100
+
+func udnEgressSNATV2Match(match string, ipFamily utilnet.IPFamily) string {
+	if match != "" {
+		return match
+	}
+	if ipFamily == utilnet.IPv6 {
+		return "ip6"
+	}
+	return "ip4"
 }
 
 func (gw *GatewayManager) updateGWRouterNAT(nodeName string, gwConfig *GatewayConfig, gwLRPIPs []net.IP, gwRouter *nbdb.LogicalRouter) error {
@@ -1016,6 +1043,26 @@ func (gw *GatewayManager) updateGWRouterNAT(nodeName string, gwConfig *GatewayCo
 
 			nat = libovsdbops.BuildSNATWithExemptedExtIPs(&externalIP[0], entry, "", extIDs, snatMatch, exemptedExtIPs)
 			nats = append(nats, nat)
+			if gw.netInfo.IsUserDefinedNetwork() && config.Gateway.Mode == config.GatewayModeShared &&
+				len(gwConfig.udnEgressSNATIPs) > 0 {
+				udnEgressSNATIP, err := util.MatchIPFamily(utilnet.IsIPv6CIDR(entry), gwConfig.udnEgressSNATIPs)
+				if err != nil {
+					return fmt.Errorf("failed to create UDN egress SNAT v2 rules for gateway router %s: %v",
+						gw.gwRouterName, err)
+				}
+				v2ExtIDs := maps.Clone(extIDs)
+				v2ExtIDs[types.UDNEgressSNATVersionExternalID] = types.UDNEgressSNATVersionV2
+				v2Nat := libovsdbops.BuildSNATWithExemptedExtIPs(
+					&udnEgressSNATIP[0],
+					entry,
+					"",
+					v2ExtIDs,
+					udnEgressSNATV2Match(snatMatch, ipFamily),
+					exemptedExtIPs,
+				)
+				v2Nat.Priority = udnEgressSNATV2Priority
+				nats = append(nats, v2Nat)
+			}
 		}
 		err = libovsdbops.CreateOrUpdateNATs(gw.nbClient, gwRouter, nats...)
 		if err != nil {

@@ -72,6 +72,8 @@ jobs:
   build-base:
     name: Build-base
     runs-on: ubuntu-24.04
+    env:
+      OVN_UPGRADE_FROM_REF: release-1.3
     steps:
     # Create a cache for the built base image
     - name: Restore base image cache
@@ -97,8 +99,8 @@ jobs:
             exit 0
         fi
 
-        if docker pull ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-fedora:${{ github.base_ref || github.ref_name }}; then
-            docker tag ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-fedora:${{ github.base_ref || github.ref_name }} ovn-daemonset-fedora:dev
+        if docker pull ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-fedora:${{ env.OVN_UPGRADE_FROM_REF }}; then
+            docker tag ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-fedora:${{ env.OVN_UPGRADE_FROM_REF }} ovn-daemonset-fedora:dev
 
             echo "BASE_IMAGE_RESTORED=true" >> "$GITHUB_OUTPUT"
             exit 0
@@ -108,7 +110,7 @@ jobs:
       if: steps.is_base_image_build_needed.outputs.BASE_IMAGE_RESTORED != 'true' && success()
       uses: actions/checkout@v6
       with:
-        ref: ${{ github.base_ref || github.ref_name }}
+        ref: ${{ env.OVN_UPGRADE_FROM_REF }}
 
     - name: Set up Go
       if: steps.is_base_image_build_needed.outputs.BASE_IMAGE_RESTORED != 'true' && success()
@@ -345,6 +347,9 @@ jobs:
       OVN_HYBRID_OVERLAY_ENABLE: "false"
       OVN_GATEWAY_MODE: "${{ matrix.gateway-mode }}"
       OVN_MULTICAST_ENABLE:  "false"
+      OVN_UPGRADE_FROM_REF: release-1.3
+      ENABLE_MULTI_NET: "${{ matrix.gateway-mode == 'shared' }}"
+      ENABLE_NETWORK_SEGMENTATION: "${{ matrix.gateway-mode == 'shared' }}"
       # TODO(koolzz): deprecate once infra is switched completely to kind-helm.sh
       USE_HELM: "true"
     steps:
@@ -352,7 +357,7 @@ jobs:
     - name: Check out code into the Go module directory - from Base branch
       uses: actions/checkout@v6
       with:
-          ref: ${{ github.base_ref || github.ref_name }}
+          ref: ${{ env.OVN_UPGRADE_FROM_REF }}
 
     - name: Set up Go
       uses: actions/setup-go@v6
