@@ -24,6 +24,7 @@ import (
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	egressipv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
@@ -6443,6 +6444,96 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 		})
 	})
 	ginkgo.Context("WatchEgressNodes", func() {
+		ginkgo.DescribeTable("retries egress node setup after reroute setup failed", func(update bool) {
+			app.Action = func(*cli.Context) error {
+				node := getNodeObj(node1Name, map[string]string{
+					util.OvnNodeID:       "1",
+					util.OvnNodeZoneName: node1Name,
+				}, nil)
+				fakeOvn.startWithDBSetup(libovsdbtest.TestSetup{
+					NBData: []libovsdbtest.TestData{
+						&nbdb.NBGlobal{Name: node1Name},
+						&nbdb.LogicalRouter{
+							Name: types.OVNClusterRouter,
+							UUID: types.OVNClusterRouter + "-UUID",
+						},
+						&nbdb.LogicalSwitch{
+							Name: node1Name,
+							UUID: node1Name + "-UUID",
+						},
+					},
+				}, &corev1.NodeList{Items: []corev1.Node{node}})
+				gomega.Expect(fakeOvn.controller.eIPC.initClusterEgressPolicies(nil)).To(gomega.Succeed())
+
+				fakeOvn.controller.syncEIPNodeRerouteFailed.Store(node.Name, true)
+				handler := &defaultNetworkControllerEventHandler{
+					objType: factory.EgressNodeType,
+					oc:      fakeOvn.controller,
+				}
+				if update {
+					gomega.Expect(handler.UpdateResource(&node, &node, true)).To(gomega.Succeed())
+				} else {
+					gomega.Expect(handler.AddResource(&node, true)).To(gomega.Succeed())
+				}
+
+				var routes []nbdb.LogicalRouterStaticRoute
+				err := fakeOvn.nbClient.WhereCache(func(route *nbdb.LogicalRouterStaticRoute) bool {
+					return route.IPPrefix == v4ClusterSubnet &&
+						route.Policy != nil && *route.Policy == nbdb.LogicalRouterStaticRoutePolicySrcIP
+				}).List(context.Background(), &routes)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(routes).To(gomega.HaveLen(1))
+				return nil
+			}
+
+			gomega.Expect(app.Run([]string{app.Name})).To(gomega.Succeed())
+		},
+			ginkgo.Entry("during an add retry", false),
+			ginkgo.Entry("during an update", true),
+		)
+
+		ginkgo.It("creates egress node routes when a node becomes local", func() {
+			app.Action = func(*cli.Context) error {
+				localNode := getNodeObj(node1Name, map[string]string{
+					util.OvnNodeID:       "1",
+					util.OvnNodeZoneName: node1Name,
+				}, nil)
+				remoteNode := localNode.DeepCopy()
+				remoteNode.Annotations[util.OvnNodeZoneName] = node2Name
+
+				fakeOvn.startWithDBSetup(libovsdbtest.TestSetup{
+					NBData: []libovsdbtest.TestData{
+						&nbdb.NBGlobal{Name: node1Name},
+						&nbdb.LogicalRouter{
+							Name: types.OVNClusterRouter,
+							UUID: types.OVNClusterRouter + "-UUID",
+						},
+						&nbdb.LogicalSwitch{
+							Name: node1Name,
+							UUID: node1Name + "-UUID",
+						},
+					},
+				}, &corev1.NodeList{Items: []corev1.Node{localNode}})
+				gomega.Expect(fakeOvn.controller.eIPC.initClusterEgressPolicies(nil)).To(gomega.Succeed())
+
+				handler := &defaultNetworkControllerEventHandler{
+					objType: factory.EgressNodeType,
+					oc:      fakeOvn.controller,
+				}
+				gomega.Expect(handler.UpdateResource(remoteNode, &localNode, false)).To(gomega.Succeed())
+
+				var routes []nbdb.LogicalRouterStaticRoute
+				err := fakeOvn.nbClient.WhereCache(func(route *nbdb.LogicalRouterStaticRoute) bool {
+					return route.IPPrefix == v4ClusterSubnet &&
+						route.Policy != nil && *route.Policy == nbdb.LogicalRouterStaticRoutePolicySrcIP
+				}).List(context.Background(), &routes)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(routes).To(gomega.HaveLen(1))
+				return nil
+			}
+
+			gomega.Expect(app.Run([]string{app.Name})).To(gomega.Succeed())
+		})
 
 		ginkgo.It("should populated egress node data as they are tagged `egress assignable` with variants of IPv4/IPv6", func() {
 			app.Action = func(*cli.Context) error {
