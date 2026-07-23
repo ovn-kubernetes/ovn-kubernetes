@@ -7,9 +7,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"testing"
-
-	"golang.org/x/exp/maps"
 
 	v1 "k8s.io/api/admission/v1"
 	authenticationv1 "k8s.io/api/authentication/v1"
@@ -37,12 +37,12 @@ func TestNewNodeAdmissionWebhook(t *testing.T) {
 	}{
 		{
 			name:         "should contain common and interconnect annotations",
-			expectedKeys: maps.Keys(defaultAnnotations),
+			expectedKeys: slices.Collect(maps.Keys(defaultAnnotations)),
 		},
 		{
 			name:                "should contain common, interconnect, and hybrid overlay annotations in hybrid overlay",
 			enableHybridOverlay: true,
-			expectedKeys:        maps.Keys(hoAnnotations),
+			expectedKeys:        slices.Collect(maps.Keys(hoAnnotations)),
 		},
 	}
 	for _, tt := range tests {

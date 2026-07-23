@@ -434,7 +434,7 @@ func onModels(models interface{}, do func(interface{}) error) error {
 	if !v.IsValid() {
 		return nil
 	}
-	if v.Kind() == reflect.Ptr {
+	if v.Kind() == reflect.Pointer {
 		if v.IsNil() {
 			return nil
 		}
@@ -453,7 +453,7 @@ func onModels(models interface{}, do func(interface{}) error) error {
 			}
 		case reflect.Interface:
 			fallthrough
-		case reflect.Ptr:
+		case reflect.Pointer:
 			for i := 0; i < v.Len(); i++ {
 				model := v.Index(i).Interface()
 				err := do(model)
@@ -569,7 +569,7 @@ func getFieldsToUpdate(model model.Model, fieldNames []ModelUpdateField) []inter
 			case LogicalSwitchPortEnabled:
 				fields = append(fields, &t.Enabled)
 			default:
-				panic(fmt.Sprintf("getFieldsToUpdate: unknown or unsupported field %q for LogicalSwitchPort", field))
+				panic(fmt.Sprintf("getFieldsToUpdate: unknown or unsupported field %d for LogicalSwitchPort", field))
 			}
 		}
 	case *nbdb.PortGroup:
@@ -582,7 +582,7 @@ func getFieldsToUpdate(model model.Model, fieldNames []ModelUpdateField) []inter
 			case PortGroupExternalIDs:
 				fields = append(fields, &t.ExternalIDs)
 			default:
-				panic(fmt.Sprintf("getFieldsToUpdate: unknown or unsupported field %q for PortGroup", field))
+				panic(fmt.Sprintf("getFieldsToUpdate: unknown or unsupported field %d for PortGroup", field))
 			}
 		}
 	default:

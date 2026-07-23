@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright The OVN-Kubernetes Contributors
 # SPDX-License-Identifier: Apache-2.0
 
-VERSION=v2.5.0
+VERSION=v2.12.2
 : "${GOLANGCI_LINT_VERSION:=$VERSION}"
 extra_flags=(--verbose --modules-download-mode=vendor --timeout=15m0s)
 if [ "$#" -ne 1 ]; then
@@ -18,7 +18,7 @@ if [ "$1" = "run-natively" ]; then
   # fetch the golangci-lint installer and install the required version
   mkdir -p /tmp/local/bin/
   tmp_installer="$(mktemp)"
-  if ! curl -sSL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh -o "${tmp_installer}"; then
+  if ! curl -sSL https://golangci-lint.run/install.sh -o "${tmp_installer}"; then
     echo "failed to download golangci-lint installer" >&2
     exit 1
   fi
