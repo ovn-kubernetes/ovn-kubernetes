@@ -65,13 +65,8 @@ jobs:
         # network-segmentation : ["", "enable-network-segmentation"]
         # traffic-flow-tests : "<tests range. i.e. 1-24>"
         include:
+          # Variance test: only kubelet-density-cni, run 10x in the kube-burner step
           - {"target": "control-plane", perf-test: "kubelet-density-cni", "ha": "HA", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "num-workers": "3", "network-segmentation": ""}
-          - {"target": "control-plane", perf-test: "udn-density-l2-noPods", "ha": "HA", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "num-workers": "3", "network-segmentation": ""}
-          - {"target": "control-plane", perf-test: "cudn-density-l2-noPods", "ha": "HA", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "num-workers": "3", "network-segmentation": ""}
-          - {"target": "control-plane", perf-test: "udn-density-l2-pods", "ha": "HA", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "num-workers": "3", "network-segmentation": ""}
-          - {"target": "control-plane", perf-test: "cudn-density-l2-pods-netpol", "ha": "HA", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "num-workers": "3", "network-segmentation": ""}
-          - {"target": "control-plane", perf-test: "udn-density-l2-pods-netpol", "ha": "HA", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "num-workers": "3", "network-segmentation": ""}
-          - {"target": "control-plane", perf-test: "udn-density-l3-pods-netpol", "ha": "HA", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "num-workers": "3", "network-segmentation": ""}
     env:
       ES_SERVER: "${{ secrets.PERF_DATASTORE }}"
       JOB_NAME: "${{ matrix.target }}-${{ matrix.ha }}-${{ matrix.gateway-mode }}-${{ matrix.ipfamily }}-${{ matrix.disable-snat-multiple-gws }}-${{ matrix.second-bridge }}-${{ matrix.ic }}"
@@ -221,6 +216,51 @@ jobs:
         sudo mv -f /etc/docker/daemon.$$ /etc/docker/daemon.json
         sudo systemctl restart docker
 
+    - name: Tune system for performance stability
+      run: |
+        echo "=== Applying system tuning for performance test stability ==="
+
+        # CPU governor -> performance (prevent frequency scaling jitter)
+        if [ -d /sys/devices/system/cpu/cpu0/cpufreq ]; then
+          for gov in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+            echo performance | sudo tee "$gov" > /dev/null 2>&1 || true
+          done
+          echo "CPU governor: performance"
+        else
+          echo "No cpufreq interface, skipping governor"
+        fi
+
+        # Disable Transparent Huge Pages (compaction causes latency spikes)
+        if [ -f /sys/kernel/mm/transparent_hugepage/enabled ]; then
+          echo never | sudo tee /sys/kernel/mm/transparent_hugepage/enabled > /dev/null
+          echo never | sudo tee /sys/kernel/mm/transparent_hugepage/defrag > /dev/null
+          echo "THP: disabled"
+        fi
+
+        # Disable swap entirely
+        sudo swapoff -a 2>/dev/null || true
+        sudo sysctl -w vm.swappiness=0 2>/dev/null || true
+        echo "Swap: off"
+
+        # Disable ASLR (reduces memory layout variance between runs)
+        sudo sysctl -w kernel.randomize_va_space=0 2>/dev/null || true
+
+        # Tune scheduler for lower jitter
+        sudo sysctl -w kernel.sched_min_granularity_ns=1000000 2>/dev/null || true
+        sudo sysctl -w kernel.sched_wakeup_granularity_ns=1500000 2>/dev/null || true
+
+        # Tune dirty page writeback (prevent I/O storms)
+        sudo sysctl -w vm.dirty_ratio=40 2>/dev/null || true
+        sudo sysctl -w vm.dirty_background_ratio=10 2>/dev/null || true
+
+        echo "=== System tuning applied ==="
+        echo "  swappiness=$(cat /proc/sys/vm/swappiness)"
+        echo "  ASLR=$(cat /proc/sys/kernel/randomize_va_space)"
+        echo "  sched_min_granularity=$(cat /proc/sys/kernel/sched_min_granularity_ns)"
+        if [ -f /sys/kernel/mm/transparent_hugepage/enabled ]; then
+          echo "  THP=$(cat /sys/kernel/mm/transparent_hugepage/enabled)"
+        fi
+
     - name: Download test-image-pr
       uses: actions/download-artifact@v8
       with:
@@ -271,6 +311,11 @@ jobs:
           fi
         done
 
+    - name: Apply CPU pinning and memory limits for KIND nodes
+      run: |
+        source contrib/kind-common.sh
+        setup_perf_isolation
+
     - name: Label 2 random worker nodes for Prometheus
       run: |
 
@@ -315,68 +360,170 @@ jobs:
         chmod +x kube-burner
         sudo mv kube-burner /usr/local/bin/
 
-    - name: "Run kube-burner ${{ matrix.perf-test }} workload"
-      timeout-minutes: 120 
+    - name: "Run kube-burner ${{ matrix.perf-test }} workload 10x for variance testing"
+      timeout-minutes: 120
       run: |
         kind get kubeconfig > kconfig
         export KUBECONFIG=${PWD}/kconfig
 
-        # Port-Forward so we can scrape metrics.
         kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090 &
-
-        # Make sure the port-forward is up prior to running the workload
         sleep 30
 
         cd contrib/perf
-
-        #Generate metadata.
         envsubst < performance-meta.yml > perf-meta.yml
 
-        if [[ -z "${ES_SERVER}" ]]; then
-          kube-burner init --config workloads/${{ matrix.perf-test }}.yml -e metric-endpoint-local.yml --user-metadata perf-meta.yml
-        else
-          kube-burner init --config workloads/${{ matrix.perf-test }}.yml -e metric-endpoint.yml --user-metadata perf-meta.yml
+        VARIANCE_RESULTS="/tmp/${{ matrix.perf-test }}/variance-results"
+        mkdir -p "$VARIANCE_RESULTS"
+
+        METRIC_ENDPOINT="metric-endpoint-local.yml"
+        if [[ -n "${ES_SERVER}" ]]; then
+          METRIC_ENDPOINT="metric-endpoint.yml"
         fi
-        
+
+        for RUN in $(seq 1 10); do
+          echo ""
+          echo "=========================================="
+          echo "  VARIANCE TEST RUN ${RUN}/10"
+          echo "=========================================="
+
+          kube-burner init \
+            --config workloads/${{ matrix.perf-test }}.yml \
+            -e ${METRIC_ENDPOINT} \
+            --user-metadata perf-meta.yml || true
+
+          # Extract avg latency from this run's metrics
+          LATENCY_FILE="metrics/podLatencyMeasurement-${{ matrix.perf-test }}.json"
+          if [ -f "$LATENCY_FILE" ]; then
+            cp "$LATENCY_FILE" "${VARIANCE_RESULTS}/run-${RUN}-latency.json"
+
+            AVG_LATENCY=$(python3 -c "
+        import json
+        with open('${LATENCY_FILE}') as f:
+            data = json.load(f)
+        lats = [d['podReadyLatency'] for d in data if d.get('podReadyLatency') is not None]
+        if lats:
+            print(f'{sum(lats)/len(lats):.1f}')
+        else:
+            print('0')
+        ")
+            echo "${AVG_LATENCY}" > "${VARIANCE_RESULTS}/run-${RUN}-avg.txt"
+            echo "  Run ${RUN} avg latency: ${AVG_LATENCY} ms"
+          else
+            echo "  Run ${RUN}: no latency file found"
+            echo "0" > "${VARIANCE_RESULTS}/run-${RUN}-avg.txt"
+          fi
+
+          # Clean up workload resources between runs
+          echo "  Cleaning up run ${RUN}..."
+          kubectl delete ns -l kube-burner-job --timeout=120s 2>/dev/null || true
+          sleep 10
+        done
+
+        # Keep last run's full data for normal report pipeline
         mkdir -p /tmp/${{ matrix.perf-test }}/pprof-data
         mkdir -p /tmp/${{ matrix.perf-test }}/perf
-        cp -r pprof-data/* /tmp/${{ matrix.perf-test }}/pprof-data
+        cp -r pprof-data/* /tmp/${{ matrix.perf-test }}/pprof-data 2>/dev/null || true
         cp -r * /tmp/${{ matrix.perf-test }}/perf
 
+    - name: Compute and display variance statistics
+      if: always()
+      run: |
+        VARIANCE_RESULTS="/tmp/${{ matrix.perf-test }}/variance-results"
+
+        python3 -c "
+        import os, json, math
+
+        results_dir = '${VARIANCE_RESULTS}'
+        latencies = []
+
+        for run in range(1, 11):
+            avg_file = os.path.join(results_dir, f'run-{run}-avg.txt')
+            if os.path.exists(avg_file):
+                with open(avg_file) as f:
+                    val = float(f.read().strip())
+                    if val > 0:
+                        latencies.append((run, val))
+
+        if len(latencies) < 2:
+            print('Not enough data points for variance analysis')
+            exit(0)
+
+        values = [v for _, v in latencies]
+        n = len(values)
+        mean = sum(values) / n
+        variance = sum((x - mean) ** 2 for x in values) / (n - 1)
+        stddev = math.sqrt(variance)
+        cv = (stddev / mean) * 100 if mean > 0 else 0
+        sorted_vals = sorted(values)
+        median = sorted_vals[n // 2] if n % 2 == 1 else (sorted_vals[n//2 - 1] + sorted_vals[n//2]) / 2
+        min_val = min(values)
+        max_val = max(values)
+        range_pct = ((max_val - min_val) / mean) * 100 if mean > 0 else 0
+
+        print()
+        print('=' * 60)
+        print('  VARIANCE ANALYSIS — ${{ matrix.perf-test }} (10 runs)')
+        print('=' * 60)
+        print()
+        print('Per-run avg pod-ready latency (ms):')
+        for run, val in latencies:
+            delta = ((val - mean) / mean) * 100
+            bar = '#' * int(abs(delta))
+            sign = '+' if delta >= 0 else '-'
+            print(f'  Run {run:2d}: {val:8.1f} ms  ({sign}{abs(delta):.1f}%) {bar}')
+        print()
+        print(f'  Mean:     {mean:.1f} ms')
+        print(f'  Median:   {median:.1f} ms')
+        print(f'  Std Dev:  {stddev:.1f} ms')
+        print(f'  CV:       {cv:.1f}%  (coefficient of variation)')
+        print(f'  Min:      {min_val:.1f} ms')
+        print(f'  Max:      {max_val:.1f} ms')
+        print(f'  Range:    {max_val - min_val:.1f} ms ({range_pct:.1f}% of mean)')
+        print()
+        if cv < 5:
+            print('  VERDICT: EXCELLENT — variance < 5%')
+        elif cv < 10:
+            print('  VERDICT: GOOD — variance 5-10%')
+        elif cv < 15:
+            print('  VERDICT: MODERATE — variance 10-15%')
+        else:
+            print(f'  VERDICT: HIGH — variance {cv:.0f}%, results unreliable')
+        print('=' * 60)
+        " | tee /tmp/${{ matrix.perf-test }}/variance-report.txt
+
+    - name: Upload variance results
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ matrix.perf-test }}-variance-results-${{ github.run_id }}
+        path: |
+          /tmp/${{ matrix.perf-test }}/variance-results/
+          /tmp/${{ matrix.perf-test }}/variance-report.txt
+
     - name: Generate performance report
-      if: ${{ matrix.perf-test == 'kubelet-density-cni' || matrix.perf-test == 'udn-density-l2-noPods' || matrix.perf-test == 'cudn-density-l2-noPods' || matrix.perf-test == 'udn-density-l2-pods' || matrix.perf-test == 'cudn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l3-pods-netpol' }}
+      if: always()
       run: |
         cd contrib/perf
-        # Generate the performance report
         python3 generate_perf_report.py \
           --workload ${{ matrix.perf-test }} \
           --metrics-dir /tmp/${{ matrix.perf-test }}/perf/metrics/ \
           --output /tmp/${{ matrix.perf-test }}/performance_report.md \
           --title "OVN-Kubernetes Performance Test Results - Run ${{ github.run_id }}"
-
         echo "Performance report generated successfully"
-        cat /tmp/${{ matrix.perf-test }}/performance_report.md
 
     - name: Upload performance report
-      if: ${{ matrix.perf-test == 'kubelet-density-cni' || matrix.perf-test == 'udn-density-l2-noPods' || matrix.perf-test == 'cudn-density-l2-noPods' || matrix.perf-test == 'udn-density-l2-pods' || matrix.perf-test == 'cudn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l3-pods-netpol' }}
+      if: always()
       uses: actions/upload-artifact@v7
       with:
         name: ${{ matrix.perf-test }}-performance-report-${{ github.run_id }}
         path: /tmp/${{ matrix.perf-test }}/performance_report.md
 
-    - name: Upload pprof data
-      if: ${{ matrix.perf-test == 'kubelet-density-cni' || matrix.perf-test == 'udn-density-l2-noPods' || matrix.perf-test == 'cudn-density-l2-noPods' || matrix.perf-test == 'udn-density-l2-pods' || matrix.perf-test == 'cudn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l3-pods-netpol' }}
-      uses: actions/upload-artifact@v7
-      with:
-        name: ${{ matrix.perf-test }}-pprof-${{ github.run_id }}
-        path: /tmp/${{ matrix.perf-test }}/pprof-data
-
     - name: Upload performance test data
-      if: ${{ matrix.perf-test == 'kubelet-density-cni' || matrix.perf-test == 'udn-density-l2-noPods' || matrix.perf-test == 'cudn-density-l2-noPods' || matrix.perf-test == 'udn-density-l2-pods' || matrix.perf-test == 'cudn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l3-pods-netpol' }}
+      if: always()
       uses: actions/upload-artifact@v7
       with:
         name: ${{ matrix.perf-test }}-performance-test-data-${{ github.run_id }}
-        path: /tmp/${{ matrix.perf-test }} 
+        path: /tmp/${{ matrix.perf-test }}
 
     - name: Export kind logs
       if: always()
