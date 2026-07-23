@@ -43,49 +43,114 @@ func getGatewayNextHops(ovsClient libovsdbclient.Client) ([]net.IP, string, erro
 		needIPv6NextHop = true
 	}
 
-	if config.Gateway.NextHop != "" {
-		nextHopsRaw := strings.Split(config.Gateway.NextHop, ",")
-		if len(nextHopsRaw) > 2 {
-			return nil, "", fmt.Errorf("unexpected next-hops are provided, more than 2 next-hops is not allowed: %s", config.Gateway.NextHop)
-		}
-		for _, nh := range nextHopsRaw {
-			// Parse NextHop to make sure it is valid before using. Return error if not valid.
-			nextHop := net.ParseIP(nh)
-			if nextHop == nil {
-				return nil, "", fmt.Errorf("failed to parse configured next-hop: %s", config.Gateway.NextHop)
-			}
-			if config.IPv4Mode {
-				if needIPv4NextHop {
-					if !utilnet.IsIPv6(nextHop) {
-						gatewayNextHops = append(gatewayNextHops, nextHop)
-						needIPv4NextHop = false
-					}
-				} else {
-					if !utilnet.IsIPv6(nextHop) {
-						return nil, "", fmt.Errorf("only one IPv4 next-hop is allowed: %s", config.Gateway.NextHop)
-					}
-				}
-			}
-
-			if config.IPv6Mode {
-				if needIPv6NextHop {
-					if utilnet.IsIPv6(nextHop) {
-						gatewayNextHops = append(gatewayNextHops, nextHop)
-						needIPv6NextHop = false
-					}
-				} else {
-					if utilnet.IsIPv6(nextHop) {
-						return nil, "", fmt.Errorf("only one IPv6 next-hop is allowed: %s", config.Gateway.NextHop)
-					}
-				}
-			}
-		}
-	}
+	// Translate gateway interface port→bridge up-front so the `self`
+	// keyword (below) can look up routes on the bridge that owns the IPs
+	// after OVS takeover.
 	gatewayIntf := config.Gateway.Interface
 	if gatewayIntf != "" && (config.IsModeDPU() || config.IsModeFull()) {
 		if bridge, err := ovsops.GetPortBridge(ovsClient, gatewayIntf); err == nil {
 			// This is an OVS bridge's internal port
 			gatewayIntf = bridge.Name
+		}
+	}
+
+	if config.Gateway.NextHop != "" {
+		switch strings.ToLower(strings.TrimSpace(config.Gateway.NextHop)) {
+		case "self":
+			// Derive per-node next-hop from the first `via` route on
+			// --gateway-interface (or its OVS bridge). Accepts any
+			// prefix, so works on interfaces that only carry a
+			// rack-scoped non-default route. Fatal if no via route is
+			// found — the user asked explicitly for self-derivation.
+			if gatewayIntf == "" {
+				return nil, "", fmt.Errorf("--gateway-nexthop=self requires --gateway-interface to be set")
+			}
+			if needIPv4NextHop {
+				nh, err := resolveNextHopSelf(gatewayIntf, netlink.FAMILY_V4)
+				if err != nil {
+					return nil, "", fmt.Errorf("--gateway-nexthop=self (IPv4): %w", err)
+				}
+				if nh == nil {
+					return nil, "", fmt.Errorf("--gateway-nexthop=self (IPv4): no via route found on %q", gatewayIntf)
+				}
+				gatewayNextHops = append(gatewayNextHops, nh)
+				needIPv4NextHop = false
+			}
+			if needIPv6NextHop {
+				nh, err := resolveNextHopSelf(gatewayIntf, netlink.FAMILY_V6)
+				if err != nil {
+					return nil, "", fmt.Errorf("--gateway-nexthop=self (IPv6): %w", err)
+				}
+				if nh == nil {
+					return nil, "", fmt.Errorf("--gateway-nexthop=self (IPv6): no via route found on %q", gatewayIntf)
+				}
+				gatewayNextHops = append(gatewayNextHops, nh)
+				needIPv6NextHop = false
+			}
+		case "default":
+			// Use the system default route's next-hop, regardless of
+			// which interface carries it. Useful for setups whose
+			// default route is the OVN gateway but whose IP may
+			// change (DHCP / migrations) so hardcoding is brittle.
+			if needIPv4NextHop {
+				nh, err := resolveNextHopDefault(netlink.FAMILY_V4)
+				if err != nil {
+					return nil, "", fmt.Errorf("--gateway-nexthop=default (IPv4): %w", err)
+				}
+				if nh == nil {
+					return nil, "", fmt.Errorf("--gateway-nexthop=default (IPv4): no IPv4 default route on the host")
+				}
+				gatewayNextHops = append(gatewayNextHops, nh)
+				needIPv4NextHop = false
+			}
+			if needIPv6NextHop {
+				nh, err := resolveNextHopDefault(netlink.FAMILY_V6)
+				if err != nil {
+					return nil, "", fmt.Errorf("--gateway-nexthop=default (IPv6): %w", err)
+				}
+				if nh == nil {
+					return nil, "", fmt.Errorf("--gateway-nexthop=default (IPv6): no IPv6 default route on the host")
+				}
+				gatewayNextHops = append(gatewayNextHops, nh)
+				needIPv6NextHop = false
+			}
+		default:
+			nextHopsRaw := strings.Split(config.Gateway.NextHop, ",")
+			if len(nextHopsRaw) > 2 {
+				return nil, "", fmt.Errorf("unexpected next-hops are provided, more than 2 next-hops is not allowed: %s", config.Gateway.NextHop)
+			}
+			for _, nh := range nextHopsRaw {
+				// Parse NextHop to make sure it is valid before using. Return error if not valid.
+				nextHop := net.ParseIP(nh)
+				if nextHop == nil {
+					return nil, "", fmt.Errorf("failed to parse configured next-hop: %s", config.Gateway.NextHop)
+				}
+				if config.IPv4Mode {
+					if needIPv4NextHop {
+						if !utilnet.IsIPv6(nextHop) {
+							gatewayNextHops = append(gatewayNextHops, nextHop)
+							needIPv4NextHop = false
+						}
+					} else {
+						if !utilnet.IsIPv6(nextHop) {
+							return nil, "", fmt.Errorf("only one IPv4 next-hop is allowed: %s", config.Gateway.NextHop)
+						}
+					}
+				}
+
+				if config.IPv6Mode {
+					if needIPv6NextHop {
+						if utilnet.IsIPv6(nextHop) {
+							gatewayNextHops = append(gatewayNextHops, nextHop)
+							needIPv6NextHop = false
+						}
+					} else {
+						if utilnet.IsIPv6(nextHop) {
+							return nil, "", fmt.Errorf("only one IPv6 next-hop is allowed: %s", config.Gateway.NextHop)
+						}
+					}
+				}
+			}
 		}
 	}
 

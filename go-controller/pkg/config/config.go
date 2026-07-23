@@ -1657,7 +1657,12 @@ var OVNGatewayFlags = []cli.Flag{
 			"OVN gateway.  This is many times just the default gateway " +
 			"of the node in question. If not specified, the default gateway" +
 			"configured in the node is used. Only useful with " +
-			"\"init-gateways\"",
+			"\"init-gateways\". Special keyword values: \"self\" — derive the " +
+			"next-hop per-node from the first `via` route on --gateway-interface " +
+			"(or its OVS bridge), accepting any prefix not just the default route; " +
+			"\"default\" — use the system default route's gateway IP regardless of " +
+			"which interface carries it. Keywords are case-insensitive and resolve " +
+			"separately for IPv4 and IPv6 in dual-stack mode.",
 		Destination: &cliConfig.Gateway.NextHop,
 	},
 	&cli.UintFlag{
