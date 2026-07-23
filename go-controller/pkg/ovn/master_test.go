@@ -987,13 +987,18 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 			err = fakeClient.KubeClient.CoreV1().Nodes().Delete(context.TODO(), testNode.Name, metav1.DeleteOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
+			// The retry framework serializes work per object: if an add/update
+			// reconciliation for the node was already in flight when nbdb went
+			// down, it blocks for up to one transaction timeout before the
+			// delete can even start, and the delete then needs up to one more
+			// transaction timeout to fail. Allow for both plus scheduling.
 			gomega.Eventually(func() []string {
 				eventsLock.Lock()
 				defer eventsLock.Unlock()
 				eventsCopy := make([]string, 0, len(events))
 				eventsCopy = append(eventsCopy, events...)
 				return eventsCopy
-			}, config.Default.OVSDBTxnTimeout+time.Second).Should(gomega.ContainElement(
+			}, 3*config.Default.OVSDBTxnTimeout).Should(gomega.ContainElement(
 				gomega.ContainSubstring("error deleting node node1 logical network"),
 			))
 
@@ -1381,10 +1386,12 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 			gomega.Expect(nodeAnnotator.Run()).To(gomega.Succeed())
 
 			ginkgo.By("waiting for the gateway sync to fail and set the marker")
+			// as above, allow for a serialized in-flight reconciliation plus
+			// the gateway sync attempt, each up to one transaction timeout
 			gomega.Eventually(func() bool {
 				_, failed := oc.gatewaysFailed.Load(node1.Name)
 				return failed
-			}, config.Default.OVSDBTxnTimeout+time.Second).Should(gomega.BeTrue())
+			}, 3*config.Default.OVSDBTxnTimeout).Should(gomega.BeTrue())
 
 			ginkgo.By("bringing NBDB back up")
 			connCtx, cancel := context.WithTimeout(context.Background(), config.Default.OVSDBTxnTimeout)
