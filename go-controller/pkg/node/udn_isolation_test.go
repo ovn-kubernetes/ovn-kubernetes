@@ -650,6 +650,81 @@ add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-open-ports-icmp-v6 met
 		})
 	})
 
+	Context("generic kubelet cgroup detection from /proc", func() {
+		// writeProcEntry creates a fake /proc/<pid> with the given comm, exe target and
+		// cgroup file, mirroring what findKubeletPID reads from a real procfs.
+		writeProcEntry := func(procRoot, pid, comm, exe, cgroup string) {
+			dir := filepath.Join(procRoot, pid)
+			Expect(os.MkdirAll(dir, 0o755)).To(Succeed(), "create proc entry for pid "+pid)
+			Expect(os.WriteFile(filepath.Join(dir, "comm"), []byte(comm+"\n"), 0o644)).To(Succeed(), "write comm for pid "+pid)
+			Expect(os.Symlink(exe, filepath.Join(dir, "exe"))).To(Succeed(), "write exe link for pid "+pid)
+			Expect(os.WriteFile(filepath.Join(dir, "cgroup"), []byte(cgroup), 0o644)).To(Succeed(), "write cgroup for pid "+pid)
+		}
+
+		It("resolves the kubelet cgroup from its process, systemd layout", func() {
+			procRoot := GinkgoT().TempDir()
+			cgroupRoot := GinkgoT().TempDir()
+			writeProcEntry(procRoot, "1234", "kubelet", "/usr/bin/kubelet", "0::/kubelet.slice/kubelet.service\n")
+			Expect(os.MkdirAll(filepath.Join(cgroupRoot, "kubelet.slice", "kubelet.service"), 0o755)).To(Succeed(), "create cgroup dir")
+
+			path, err := detectKubeletCgroupPath(procRoot, cgroupRoot)
+			Expect(err).NotTo(HaveOccurred(), "detect kubelet cgroup")
+			Expect(path).To(Equal("kubelet.slice/kubelet.service"), "resolved cgroup path")
+		})
+
+		It("resolves the kubelet cgroup when kubelet is not managed by systemd", func() {
+			procRoot := GinkgoT().TempDir()
+			cgroupRoot := GinkgoT().TempDir()
+			writeProcEntry(procRoot, "1", "systemd-decoy", "/usr/lib/systemd/systemd", "0::/init.scope\n")
+			writeProcEntry(procRoot, "42", "kubelet", "/usr/local/bin/kubelet", "0::/podruntime/kubelet\n")
+			Expect(os.MkdirAll(filepath.Join(cgroupRoot, "podruntime", "kubelet"), 0o755)).To(Succeed(), "create cgroup dir")
+
+			path, err := detectKubeletCgroupPath(procRoot, cgroupRoot)
+			Expect(err).NotTo(HaveOccurred(), "detect kubelet cgroup")
+			Expect(path).To(Equal("podruntime/kubelet"), "resolved cgroup path")
+		})
+
+		It("fails when there is no kubelet process", func() {
+			procRoot := GinkgoT().TempDir()
+			cgroupRoot := GinkgoT().TempDir()
+			writeProcEntry(procRoot, "7", "containerd", "/usr/bin/containerd", "0::/system.slice/containerd.service\n")
+
+			_, err := detectKubeletCgroupPath(procRoot, cgroupRoot)
+			Expect(err).To(MatchError(ContainSubstring("no \"kubelet\" process")), "no kubelet process error")
+		})
+
+		It("ignores a process that only renamed its comm to kubelet", func() {
+			procRoot := GinkgoT().TempDir()
+			cgroupRoot := GinkgoT().TempDir()
+			// comm says kubelet, but the executable is something else, so it must not
+			// be trusted for the isolation match.
+			writeProcEntry(procRoot, "8", "kubelet", "/tmp/evil/imposter", "0::/evil/imposter\n")
+
+			_, err := detectKubeletCgroupPath(procRoot, cgroupRoot)
+			Expect(err).To(MatchError(ContainSubstring("no \"kubelet\" process")), "imposter rejected")
+		})
+
+		It("fails when kubelet runs at the cgroup root", func() {
+			procRoot := GinkgoT().TempDir()
+			cgroupRoot := GinkgoT().TempDir()
+			writeProcEntry(procRoot, "99", "kubelet", "/usr/bin/kubelet", "0::/\n")
+
+			_, err := detectKubeletCgroupPath(procRoot, cgroupRoot)
+			Expect(err).To(HaveOccurred(), "cgroup root rejected")
+		})
+
+		It("fails when the detected cgroup is not present under the cgroup root", func() {
+			procRoot := GinkgoT().TempDir()
+			cgroupRoot := GinkgoT().TempDir()
+			// kubelet reports a path that does not exist under the cgroup root the
+			// nftables match resolves against, e.g. a mismatched cgroup namespace.
+			writeProcEntry(procRoot, "5", "kubelet", "/usr/bin/kubelet", "0::/podruntime/kubelet\n")
+
+			_, err := detectKubeletCgroupPath(procRoot, cgroupRoot)
+			Expect(err).To(MatchError(ContainSubstring("not present under")), "cgroup-namespace mismatch rejected")
+		})
+	})
+
 	DescribeTable("derives the socket cgroupv2 match level from the cgroup path depth",
 		func(cgroupPath, expectedLevel string) {
 			Expect(cgroupv2Level(cgroupPath)).To(Equal(expectedLevel))
