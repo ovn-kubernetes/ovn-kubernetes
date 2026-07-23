@@ -1766,6 +1766,7 @@ write_files:
 					externalMACVRFContainer.Name,
 					&externalContainer,
 					externalContainer.Name,
+					false,
 				)).To(Succeed())
 				// Register namespace deletion on the infra context so it runs
 				// before VTEP poll in LIFO cleanup order. VTEP has a finalizer
