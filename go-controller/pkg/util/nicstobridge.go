@@ -270,7 +270,8 @@ func NicToBridge(ovsClient libovsdbclient.Client, iface string) (string, error) 
 	}
 
 	bridge := GetBridgeName(iface)
-	if err := ovsops.CreateOrUpdateNicBridge(ovsClient, bridge, iface, ifaceLink.Attrs().HardwareAddr.String()); err != nil {
+	nicMAC := ifaceLink.Attrs().HardwareAddr.String()
+	if err := ovsops.CreateOrUpdateNicBridge(ovsClient, bridge, iface, nicMAC); err != nil {
 		klog.Errorf("Failed to create OVS bridge %q: %v", bridge, err)
 		return "", err
 	}
@@ -291,14 +292,18 @@ func NicToBridge(ovsClient libovsdbclient.Client, iface string) (string, error) 
 
 	// Unlike `ovs-vsctl add-br`, the libovsdb transaction returns as soon as
 	// the OVSDB row is committed — ovs-vswitchd may not yet have materialised
-	// the kernel netdev. Poll briefly so callers see the same "bridge ready
-	// for use" semantics as the legacy shell-out.
+	// the kernel netdev or applied its configuration. Poll until the netdev
+	// exists with the MAC address inherited from the NIC, so callers see the
+	// same "bridge ready for use" semantics as the legacy shell-out. In
+	// particular, the bridge must not be brought up before its MAC address is
+	// set: the kernel would generate the IPv6 link-local address from the
+	// initial random MAC address and would not regenerate it when the MAC
+	// address changes on a live interface.
 	var bridgeLink netlink.Link
 	if err := wait.PollUntilContextTimeout(context.Background(), 100*time.Millisecond, 10*time.Second, true, func(_ context.Context) (bool, error) {
 		bridgeLink, err = netLinkOps.LinkByName(bridge)
 		if err != nil {
-			var notFound netlink.LinkNotFoundError
-			if errors.As(err, &notFound) {
+			if netLinkOps.IsLinkNotFoundError(err) {
 				// netdev hasn't materialised yet; keep polling.
 				return false, nil
 			}
@@ -306,9 +311,13 @@ func NicToBridge(ovsClient libovsdbclient.Client, iface string) (string, error) 
 			// going to be fixed by waiting — exit immediately.
 			return false, err
 		}
+		if bridgeLink.Attrs().HardwareAddr.String() != nicMAC {
+			// hwaddr not applied yet; keep polling.
+			return false, nil
+		}
 		return true, nil
 	}); err != nil {
-		return "", fmt.Errorf("bridge %q netdev did not appear: %w", bridge, err)
+		return "", fmt.Errorf("bridge %q netdev did not appear with the MAC address %s of NIC %q: %w", bridge, nicMAC, iface, err)
 	}
 
 	// save ip addresses to bridge.
