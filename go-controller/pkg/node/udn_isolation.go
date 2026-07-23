@@ -49,6 +49,8 @@ const (
 	nftablesUDNPodIPsv6        = "udn-pod-default-ips-v6"
 	// name of the cgroup directory kubelet runs under when it is managed by systemd.
 	kubeletCgroupName = "kubelet.service"
+	// comm name of the kubelet process, used to resolve its cgroup generically.
+	kubeletProcessName = "kubelet"
 )
 
 // UDNHostIsolationManager manages the host isolation for user defined networks.
@@ -127,6 +129,110 @@ func (m *UDNHostIsolationManager) findKubeletCgroupPath(cgroupRoot string) error
 	return nil
 }
 
+// resolveKubeletCgroupPath resolves the cgroup kubelet runs under and stores it in
+// m.kubeletCgroupPath. It first reads the cgroup of the running kubelet process,
+// which works regardless of whether kubelet is managed by systemd, and falls back to
+// the systemd cgroup layout lookup. When neither resolves it, kubelet probes to
+// primary UDN pods are reported as unsupported and the path is left empty.
+func (m *UDNHostIsolationManager) resolveKubeletCgroupPath() {
+	path, err := detectKubeletCgroupPath(procMountpoint, unifiedMountpoint)
+	if err == nil {
+		m.kubeletCgroupPath = path
+		klog.Infof("Found kubelet cgroup path from its process: %s", path)
+		return
+	}
+	klog.V(5).Infof("Could not resolve kubelet cgroup from its process, "+
+		"falling back to the systemd cgroup layout: %v", err)
+	if err := m.findKubeletCgroupPath(unifiedMountpoint); err != nil {
+		// kubelet is not running under a systemd-managed cgroup, which is the case
+		// on distributions that don't use systemd to run it.
+		m.reportKubeletProbesUnsupported(err.Error())
+	}
+}
+
+// detectKubeletCgroupPath resolves the cgroup v2 path kubelet runs under by reading
+// the cgroup of the running kubelet process, so it does not depend on kubelet being
+// managed by systemd or on any particular cgroup directory name. The path is returned
+// relative to cgroupRoot and is verified to exist under it, so it matches the root the
+// nftables socket cgroupv2 match resolves against.
+func detectKubeletCgroupPath(procRoot, cgroupRoot string) (string, error) {
+	pid, err := findKubeletPID(procRoot)
+	if err != nil {
+		return "", err
+	}
+	rel, err := readKubeletCgroupv2Path(procRoot, pid)
+	if err != nil {
+		return "", fmt.Errorf("failed to read cgroup of kubelet process %s: %w", pid, err)
+	}
+	if _, err := os.Stat(filepath.Join(cgroupRoot, rel)); err != nil {
+		return "", fmt.Errorf("kubelet cgroup %q of process %s is not present under %s: %w", rel, pid, cgroupRoot, err)
+	}
+	return rel, nil
+}
+
+// findKubeletPID returns the PID of the running kubelet process. ovnkube-node runs in
+// the host PID namespace, so the host kubelet is visible. A candidate is matched on its
+// comm name and then confirmed by its executable, because comm is set by the process
+// itself and could be spoofed. The resolved cgroup feeds a security match, so the extra
+// check keeps a process that merely renamed itself to "kubelet" from being trusted.
+func findKubeletPID(procRoot string) (string, error) {
+	entries, err := os.ReadDir(procRoot)
+	if err != nil {
+		return "", fmt.Errorf("failed to read %s: %w", procRoot, err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		pid := entry.Name()
+		if _, err := strconv.Atoi(pid); err != nil {
+			continue
+		}
+		comm, err := os.ReadFile(filepath.Join(procRoot, pid, "comm"))
+		if err != nil {
+			// the process may have exited, or comm may be unreadable; skip it.
+			continue
+		}
+		if strings.TrimSpace(string(comm)) != kubeletProcessName {
+			continue
+		}
+		// comm is mutable, so confirm the process really runs the kubelet binary.
+		exe, err := os.Readlink(filepath.Join(procRoot, pid, "exe"))
+		if err != nil {
+			continue
+		}
+		if filepath.Base(exe) == kubeletProcessName {
+			return pid, nil
+		}
+	}
+	return "", fmt.Errorf("no %q process found under %s", kubeletProcessName, procRoot)
+}
+
+// readKubeletCgroupv2Path reads the unified (cgroup v2) hierarchy path from a process
+// cgroup file. The file lists one entry per line as "hierarchy-ID:controllers:path";
+// the cgroup v2 entry has ID 0 and no controllers. The returned path is relative to
+// the cgroup root, with the leading slash trimmed.
+func readKubeletCgroupv2Path(procRoot, pid string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(procRoot, pid, "cgroup"))
+	if err != nil {
+		return "", fmt.Errorf("reading cgroup file: %w", err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		parts := strings.SplitN(line, ":", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		if parts[0] == "0" && parts[1] == "" {
+			rel := strings.TrimPrefix(parts[2], "/")
+			if rel == "" {
+				return "", fmt.Errorf("kubelet runs at the cgroup root")
+			}
+			return rel, nil
+		}
+	}
+	return "", fmt.Errorf("no cgroup v2 entry found")
+}
+
 // reportKubeletProbesUnsupported logs and reports on the node that kubelet probes to
 // primary UDN pods won't be allowed. Host isolation itself is unaffected.
 func (m *UDNHostIsolationManager) reportKubeletProbesUnsupported(reason string) {
@@ -151,11 +257,7 @@ func (m *UDNHostIsolationManager) Start(ctx context.Context) error {
 	// A failure to set m.kubeletCgroupPath is not fatal: host isolation is still set up,
 	// only the rule that lets kubelet reach primary UDN pods is left out.
 	if hostUsesCgroupv2() {
-		if err := m.findKubeletCgroupPath(unifiedMountpoint); err != nil {
-			// kubelet is not running under a systemd-managed cgroup, which is the case
-			// on distributions that don't use systemd to run it.
-			m.reportKubeletProbesUnsupported(err.Error())
-		}
+		m.resolveKubeletCgroupPath()
 	} else {
 		m.reportKubeletProbesUnsupported("the node uses cgroup v1")
 	}
@@ -818,6 +920,7 @@ var (
 
 const (
 	unifiedMountpoint = "/sys/fs/cgroup"
+	procMountpoint    = "/proc"
 )
 
 // this function is copied from github.com/opencontainers/runc/libcontainer/cgroups to avoid extra dependencies.
