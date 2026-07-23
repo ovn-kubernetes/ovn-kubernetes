@@ -895,13 +895,14 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 						dftFlows = append(dftFlows, hostNetworkNormalActionFlows(netConfig, bridgeMacAddress, hostSubnets, false)...)
 					}
 				} else {
-					//  for UDN we additionally SNAT the packet from masquerade IP -> node IP
+					// Temporary offload experiment: the UDN GR already
+					// SNATs to node IP, so only commit/mark on br-ex.
 					dftFlows = append(dftFlows,
 						fmt.Sprintf("cookie=%s, priority=100, in_port=%s, dl_src=%s, %s, %s_src=%s, "+
-							"actions=ct(commit, zone=%d, nat(src=%s), exec(set_field:%s->ct_mark)), output:%s",
+							"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:%s",
 							nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, bridgeMacAddress, protoPrefixV4, protoPrefixV4,
-							netConfig.V4MasqIPs.GatewayRouter.IP, config.Default.ConntrackZone,
-							physicalIP.IP, netConfig.MasqCTMark, ofPortPhys))
+							physicalIP.IP, config.Default.ConntrackZone,
+							netConfig.MasqCTMark, ofPortPhys))
 				}
 			}
 
@@ -1012,13 +1013,14 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 						dftFlows = append(dftFlows, hostNetworkNormalActionFlows(netConfig, bridgeMacAddress, hostSubnets, true)...)
 					}
 				} else {
-					//  for UDN we additionally SNAT the packet from masquerade IP -> node IP
+					// Temporary offload experiment: the UDN GR already
+					// SNATs to node IP, so only commit/mark on br-ex.
 					dftFlows = append(dftFlows,
 						fmt.Sprintf("cookie=%s, priority=100, in_port=%s, dl_src=%s, %s, %s_src=%s, "+
-							"actions=ct(commit, zone=%d, nat(src=%s), exec(set_field:%s->ct_mark)), output:%s",
+							"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:%s",
 							nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, bridgeMacAddress, protoPrefixV6, protoPrefixV6,
-							netConfig.V6MasqIPs.GatewayRouter.IP, config.Default.ConntrackZone,
-							physicalIP.IP, netConfig.MasqCTMark, ofPortPhys))
+							physicalIP.IP, config.Default.ConntrackZone,
+							netConfig.MasqCTMark, ofPortPhys))
 				}
 			}
 
