@@ -70,7 +70,7 @@ set_common_default_params() {
   KIND_CREATE=${KIND_CREATE:-true}
   KIND_IMAGE=${KIND_IMAGE:-kindest/node}
   KIND_CLUSTER_NAME=${KIND_CLUSTER_NAME:-ovn}
-  K8S_VERSION=${K8S_VERSION:-v1.35.0}
+  K8S_VERSION=${K8S_VERSION:-v1.36.2}
   KIND_SETTLE_DURATION=${KIND_SETTLE_DURATION:-30}
   KIND_CONFIG=${KIND_CONFIG:-${DIR}/kind.yaml.j2}
   KIND_LOCAL_REGISTRY=${KIND_LOCAL_REGISTRY:-false}
@@ -91,11 +91,20 @@ set_common_default_params() {
 
   # Image/source code params
   OVN_IMAGE=${OVN_IMAGE:-local}
+  OVN_IMAGE_FAMILY=${OVN_IMAGE_FAMILY:-fedora}
   OVN_REPO=${OVN_REPO:-""}
   OVN_GITREF=${OVN_GITREF:-""}
   # Pods to force-delete on --deploy so they respawn with the kind-loaded image.
   # ovs-node excluded: restarting it under live ovnkube-node pods breaks the cluster.
   OVN_DEPLOY_PODS=${OVN_DEPLOY_PODS:-"ovnkube-identity ovnkube-control-plane ovnkube-node"}
+  case "${OVN_IMAGE_FAMILY}" in
+    fedora|ubuntu)
+      ;;
+    *)
+      echo "Unsupported OVN image family: ${OVN_IMAGE_FAMILY}"
+      exit 1
+      ;;
+  esac
 
   # Subnet params
   # Input not currently validated. Modify outside script at your own risk.
@@ -271,10 +280,11 @@ set_common_default_params() {
 }
 
 set_ovn_image() {
+  local ovn_image_repo="ovn-daemonset-${OVN_IMAGE_FAMILY}"
   if [ "${KIND_LOCAL_REGISTRY:-false}" == true ]; then
-    OVN_IMAGE="localhost:5000/ovn-daemonset-fedora:latest"
+    OVN_IMAGE="localhost:5000/${ovn_image_repo}:latest"
   else
-    OVN_IMAGE="localhost/ovn-daemonset-fedora:dev"
+    OVN_IMAGE="localhost/${ovn_image_repo}:dev"
   fi
 }
 
@@ -318,6 +328,7 @@ EOF
 }
 
 build_ovn_image() {
+  local build_target="${OVN_IMAGE_FAMILY}-image"
   local push_args=""
   if [ "$OCI_BIN" == "podman" ]; then
     # docker doesn't perform tls check by default only podman does, hence we need to disable it for podman.
@@ -328,7 +339,7 @@ build_ovn_image() {
     set_ovn_image
 
     # Build image
-    make -C ${DIR}/../dist/images IMAGE="${OVN_IMAGE}" OVN_REPO="${OVN_REPO}" OVN_GITREF="${OVN_GITREF}" OCI_BIN="${OCI_BIN}" fedora-image
+    make -C ${DIR}/../dist/images IMAGE="${OVN_IMAGE}" OVN_REPO="${OVN_REPO}" OVN_GITREF="${OVN_GITREF}" OCI_BIN="${OCI_BIN}" "${build_target}"
 
     # store in local registry
     if [ "$KIND_LOCAL_REGISTRY" == true ];then
@@ -875,7 +886,8 @@ align_metallb_pool_with_ip_family() {
 }
 
 install_metallb() {
-  local metallb_version=v0.15.3
+  local metallb_version=v0.16.1
+  local metallb_upstream_frr_image=quay.io/frrouting/frr:10.5.3
   mkdir -p /tmp/metallb
   local builddir
   builddir=$(mktemp -d "${METALLB_DIR}/XXXXXX")
@@ -894,21 +906,22 @@ install_metallb() {
     'kind_path = os.path.join(build_path, "kind")' \
     'kind_path = "kind"'
 
-  # MetalLB v0.15.3 still pins its in-cluster FRR speaker containers to 10.4.1.
-  # Keep the pinned upstream string for patching, but replace the actual
-  # deployed image so CI exercises the same FRR build as the rest of our BGP
-  # setup and coredump debugging.
+  # MetalLB v0.16.1 manifests reference FRR 10.5.3. CI uses
+  # FRR_DEPLOYED_IMAGE for BGP tests, so replace that exact upstream value in
+  # the MetalLB manifests. Matching the exact upstream value is intentional
+  # because if a future MetalLB release changes its FRR image, this script
+  # should fail instead of silently leaving MetalLB on an unexpected FRR version.
   replace_in_file_or_exit \
     config/frr/speaker-patch.yaml \
-    "${FRR_K8S_UPSTREAM_FRR_IMAGE}" \
+    "${metallb_upstream_frr_image}" \
     "${FRR_DEPLOYED_IMAGE}"
   replace_in_file_or_exit \
     config/manifests/metallb-frr.yaml \
-    "${FRR_K8S_UPSTREAM_FRR_IMAGE}" \
+    "${metallb_upstream_frr_image}" \
     "${FRR_DEPLOYED_IMAGE}"
   replace_in_file_or_exit \
     charts/metallb/values.yaml \
-    "tag: ${FRR_K8S_UPSTREAM_FRR_IMAGE##*:}" \
+    "tag: ${metallb_upstream_frr_image##*:}" \
     "tag: ${FRR_DEPLOYED_IMAGE##*:}"
 
   pip install -r dev-env/requirements.txt
@@ -924,6 +937,17 @@ install_metallb() {
     ip_family="ipv4"
     ipv6_network=""
   fi
+  # The dev-env BGP backend is selected with -b. MetalLB v0.16.1 can default
+  # that path to frr-k8s, which runs FRR through in-cluster frr-k8s resources
+  # instead of the standalone dev-env container named frr. The service and
+  # network-segmentation e2e setup below still connects clientnet to that frr
+  # container and relies on its external routes. Keep -b frr explicit so this
+  # Kubernetes 1.36 compatibility update only changes the MetalLB release and
+  # does not also change the BGP datapath used by those tests.
+  #
+  # TODO: Move this path to frr-k8s in a separate change after validating the
+  # service and network-segmentation e2e setup against the in-cluster frr-k8s
+  # backend.
   # Override GOBIN until https://github.com/metallb/metallb/issues/2218 is fixed.
   GOBIN="" inv dev-env -n ovn -b frr -p bgp -i "${ip_family}"
 
@@ -1505,8 +1529,8 @@ get_kubevirt_release_url() {
 
 readonly FRR_K8S_VERSION=v0.0.0-20260603082256-b43efcb206be
 readonly FRR_K8S_GIT_REF=b43efcb206be
-readonly FRR_K8S_UPSTREAM_FRR_IMAGE=quay.io/frrouting/frr:10.4.1
-readonly FRR_K8S_ALL_IN_ONE_UPSTREAM_FRR_IMAGE=quay.io/frrouting/frr:10.4.3
+readonly FRR_K8S_PATCHED_DEMO_FRR_IMAGE=quay.io/frrouting/frr:10.4.1
+readonly FRR_K8S_ALL_IN_ONE_FRR_IMAGE=quay.io/frrouting/frr:10.4.3
 readonly FRR_DEPLOYED_IMAGE=quay.io/frrouting/frr:10.6.0
 # Override to test newer FRR builds in the in-cluster frr-k8s daemonset
 # without changing the pinned frr-k8s release.
@@ -1534,24 +1558,11 @@ clone_frr() {
     sed -i 's|quay.io/frrouting/frr:10.4.3|quay.io/frrouting/frr:9.1.0|g' hack/demo/demo.sh
     git apply ../patches/*
 
-    # The upstream frr-k8s demo.sh hardcodes quay.io/frrouting/frr:9.1.0,
-    # which crashes on musl libc (Alpine) due to a race condition in
-    # pthread_setname_np during BGP keepalive thread startup
-    # (https://github.com/FRRouting/frr/issues/15699, fixed in FRR 10.1 by
-    # https://github.com/FRRouting/frr/pull/15714).
-    #
-    # Bump to 10.4.1 for upstream demo was posted here: https://github.com/metallb/frr-k8s/pull/404
-    # We bump further to 10.6.0 to include additional fixes for EVPN and coredumps:
-    # https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5874#issuecomment-3907335193
-    # https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5874#issuecomment-3898408592
-    # https://github.com/FRRouting/frr/pull/20496
-    #
-    # Note: 10.6.0 carries the bfdd coredump fix:
-    # https://github.com/FRRouting/frr/pull/19822
-    # https://github.com/ovn-kubernetes/ovn-kubernetes/issues/6299
+    # The OVN-K demo patch changes the external demo router image to 10.4.1.
+    # Replace that patched image with the FRR version configured by this script.
     replace_in_file_or_exit \
       hack/demo/demo.sh \
-      "${FRR_K8S_UPSTREAM_FRR_IMAGE}" \
+      "${FRR_K8S_PATCHED_DEMO_FRR_IMAGE}" \
       "${FRR_EXTERNAL_DEMO_IMAGE}"
 
     popd
@@ -1773,9 +1784,24 @@ install_frr_k8s() {
   sed -i 's|gcr.io/kubebuilder/kube-rbac-proxy|registry.k8s.io/kubebuilder/kube-rbac-proxy|g' \
     "${FRR_TMP_DIR}"/frr-k8s/config/all-in-one/frr-k8s.yaml
 
+  # This BGP e2e setup uses two FRR containers:
+  # 1. The external FRR test router from hack/demo/demo.sh. clone_frr()
+  #    patches that image to FRR_EXTERNAL_DEMO_IMAGE.
+  # 2. The in-cluster frr-k8s daemonset from config/all-in-one/frr-k8s.yaml.
+  #    Patch that manifest here because clone_frr() does not update it.
+  #
+  # In regular PR e2e jobs where nobody sets a custom FRR_K8S_FRR_IMAGE
+  # environment variable, FRR_EXTERNAL_DEMO_IMAGE and FRR_K8S_FRR_IMAGE both
+  # resolve to FRR_DEPLOYED_IMAGE, so both containers use the same FRR build.
+  # FRR_K8S_FRR_IMAGE remains overrideable for tests that intentionally need a
+  # different in-cluster daemonset image.
+  #
+  # Match the manifest's current upstream image exactly. If the pinned frr-k8s
+  # manifest changes its FRR image, replace_in_file_or_exit fails and this
+  # override must be reviewed before it changes what CI deploys.
   replace_in_file_or_exit \
     "${FRR_TMP_DIR}"/frr-k8s/config/all-in-one/frr-k8s.yaml \
-    "${FRR_K8S_ALL_IN_ONE_UPSTREAM_FRR_IMAGE}" \
+    "${FRR_K8S_ALL_IN_ONE_FRR_IMAGE}" \
     "${FRR_K8S_FRR_IMAGE}"
 
   if [ "${bgp_port}" -ne 0 ]; then
@@ -1797,6 +1823,9 @@ install_frr_k8s() {
 }
 
 wait_for_frr_k8s() {
+  # The pinned frr-k8s all-in-one manifest runs the webhook-serving helper as
+  # deployment/frr-k8s-statuscleaner. Wait for it before tests create
+  # FRRConfiguration resources so admission does not race the install.
   if kubectl -n frr-k8s-system get deployment frr-k8s-statuscleaner >/dev/null 2>&1; then
     kubectl wait -n frr-k8s-system deployment frr-k8s-statuscleaner --for condition=Available --timeout 2m
   fi

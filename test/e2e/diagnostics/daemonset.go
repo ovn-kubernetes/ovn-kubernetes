@@ -23,7 +23,11 @@ func composePeriodicCmd(cmd string, interval uint32) string {
 func (d *Diagnostics) composeDiagnosticsDaemonSet(name, cmd, tool string) appsv1.DaemonSet {
 	ovnImage := os.Getenv("OVN_IMAGE")
 	if ovnImage == "" {
-		ovnImage = "localhost/ovn-daemonset-fedora:dev"
+		ovnImageFamily := os.Getenv("OVN_IMAGE_FAMILY")
+		if ovnImageFamily == "" {
+			ovnImageFamily = "fedora"
+		}
+		ovnImage = fmt.Sprintf("localhost/ovn-daemonset-%s:dev", ovnImageFamily)
 	}
 	return appsv1.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{

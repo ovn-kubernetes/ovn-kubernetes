@@ -362,7 +362,7 @@ systemctl enable crio --now
 See [https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/#installing-kubeadm-kubelet-and-kubectl](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/#installing-kubeadm-kubelet-and-kubectl) for further details.
 
 ~~~
-KUBE_VERSION=v1.35
+KUBE_VERSION=v1.36
 cat <<EOF | sudo tee /etc/yum.repos.d/kubernetes.repo
 [kubernetes]
 name=Kubernetes
@@ -479,7 +479,7 @@ helm install ovn-kubernetes . \
     --set global.image.tag=latest
 ~~~
 
-> **CEL CRD note:** Several OVN-Kubernetes CRDs use CEL `x-kubernetes-validations` rules that don't install cleanly on older Kubernetes versions — the per-CRD cost budget rejects four of them on Kubernetes 1.31, and the indexed `all(i, v, …)` macro used by `vteps` and `routeadvertisements` is rejected on 1.32. Use Kubernetes 1.33 or newer (the example above pins to v1.35) and the chart's CRDs install cleanly via `helm install`.
+> **CEL CRD note:** Several OVN-Kubernetes CRDs use CEL `x-kubernetes-validations` rules that don't install cleanly on older Kubernetes versions — the per-CRD cost budget rejects four of them on Kubernetes 1.31, and the indexed `all(i, v, …)` macro used by `vteps` and `routeadvertisements` is rejected on 1.32. Use Kubernetes 1.33 or newer and the chart's CRDs install cleanly via `helm install`.
 
 The Helm chart does not remove kube-proxy. Since the `kubeadm init` command above installs kube-proxy by default, delete the kube-proxy DaemonSet:
 ~~~

@@ -17,6 +17,7 @@ import (
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	ovnkubeutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
@@ -957,150 +958,286 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 					}
 				})
 
-				DescribeTable(
-					"can perform east/west traffic between nodes on different CIDR",
+				DescribeTableSubtree("with",
 					func(netConfig *networkAttachmentConfigParams) {
-						By("validate test config")
-						cidr2nodev4 := make(map[string]*v1.Node)
-						cidr2nodev6 := make(map[string]*v1.Node)
-						netConfig.cidr = filterCIDRsAndJoin(f.ClientSet, netConfig.cidr)
-						for _, cidr := range strings.Split(netConfig.cidr, ",") {
-							c, err := getNetCIDRSubnet(cidr)
+						var (
+							networkName                                  string
+							vrfName                                      string
+							nodes                                        []*v1.Node
+							nodeToNodeSubnetV4, nodeToNodeSubnetv6       map[string]string
+							nodeToNetworkSubnetV4, nodeToNetworkSubnetV6 map[string]string
+							clusterCIDRsv4, clusterCIDRsv6               map[string]struct{}
+							ipv4, ipv6                                   bool
+						)
+
+						BeforeEach(func() {
+							By("validate test config")
+							clusterCIDRsv4 = make(map[string]struct{})
+							clusterCIDRsv6 = make(map[string]struct{})
+							netConfig.cidr = filterCIDRsAndJoin(f.ClientSet, netConfig.cidr)
+							for _, cidr := range strings.Split(netConfig.cidr, ",") {
+								c, err := getNetCIDRSubnet(cidr)
+								Expect(err).NotTo(HaveOccurred())
+								if utilnet.IsIPv4CIDRString(c) {
+									clusterCIDRsv4[c] = struct{}{}
+								} else {
+									clusterCIDRsv6[c] = struct{}{}
+								}
+							}
+
+							ipv4, ipv6 = getSupportedIPFamilies(cs)
+							if ipv4 {
+								Expect(len(clusterCIDRsv4)).To(BeNumerically(">=", 2), "need at least 2 different IPv4 CIDRs")
+							}
+							if ipv6 {
+								Expect(len(clusterCIDRsv6)).To(BeNumerically(">=", 2), "need at least 2 different IPv6 CIDRs")
+							}
+							By("creating the network with multiple CIDRs")
+							netConfig.namespace = f.Namespace.Name
+							Expect(createNetworkFn(netConfig)).To(Succeed())
+
+							By("waiting for node subnet allocation on all schedulable nodes")
+							nad, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Get(context.TODO(), netConfig.name, metav1.GetOptions{})
 							Expect(err).NotTo(HaveOccurred())
-							if utilnet.IsIPv4CIDRString(c) {
-								cidr2nodev4[c] = nil
-							} else {
-								cidr2nodev6[c] = nil
-							}
-						}
-
-						ipv4, ipv6 := getSupportedIPFamilies(cs)
-						if ipv4 {
-							Expect(len(cidr2nodev4)).To(BeNumerically(">=", 2), "need at least 2 different IPv4 CIDRs")
-						}
-						if ipv6 {
-							Expect(len(cidr2nodev6)).To(BeNumerically(">=", 2), "need at least 2 different IPv6 CIDRs")
-						}
-						By("creating the network with multiple CIDRs")
-						netConfig.namespace = f.Namespace.Name
-						Expect(createNetworkFn(netConfig)).To(Succeed())
-
-						By("ensure have 2 scheduable Nodes on different CIDR")
-						nad, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Get(context.TODO(), netConfig.name, metav1.GetOptions{})
-						Expect(err).NotTo(HaveOccurred())
-						networkName := nad.Annotations["k8s.ovn.org/network-name"]
-
-						if isDynamicUDNEnabled() {
-							nodeList, err := e2enode.GetReadySchedulableNodes(context.TODO(), cs)
-							Expect(err).NotTo(HaveOccurred())
-							for i := range nodeList.Items {
-								node := &nodeList.Items[i]
-								runUDNPod(cs, f.Namespace.Name, podConfiguration{
-									name:         fmt.Sprintf("subnet-allocator-%d", i),
-									namespace:    f.Namespace.Name,
-									containerCmd: []string{"/agnhost", "pause"},
-									nodeSelector: map[string]string{nodeHostnameKey: node.Name},
-								}, nil)
-							}
-						}
-
-						node2cidrv4 := map[string]string{}
-						node2cidrv6 := map[string]string{}
-						clientNodeName, serverNodeName := "", ""
-						Eventually(func() error {
-							nodeList, err := e2enode.GetReadySchedulableNodes(context.TODO(), cs)
-							if err != nil {
-								return err
+							networkName = nad.Annotations["k8s.ovn.org/network-name"]
+							networkID := nad.Annotations[ovntypes.OvnNetworkIDAnnotation]
+							Expect(networkID).NotTo(BeEmpty())
+							vrfName = fmt.Sprintf("%s%s%s", ovntypes.UDNVRFDevicePrefix, networkID, ovntypes.UDNVRFDeviceSuffix)
+							udnNamespace, udnName := ovnkubeutil.ParseNetworkName(networkName)
+							if udnNamespace == "" && udnName != "" && len(udnName) <= 15 {
+								vrfName = udnName
 							}
 
-							node2cidrv4 = map[string]string{}
-							node2cidrv6 = map[string]string{}
-							nodes := []*v1.Node{}
-							for i := range nodeList.Items {
-								node := &nodeList.Items[i]
-								ipnets, err := ovnkubeutil.ParseNodeHostSubnetAnnotation(node, networkName)
+							if isDynamicUDNEnabled() {
+								nodeList, err := e2enode.GetReadySchedulableNodes(context.TODO(), cs)
+								Expect(err).NotTo(HaveOccurred())
+								for i := range nodeList.Items {
+									node := &nodeList.Items[i]
+									runUDNPod(cs, f.Namespace.Name, podConfiguration{
+										name:         fmt.Sprintf("subnet-allocator-%d", i),
+										namespace:    f.Namespace.Name,
+										containerCmd: []string{"/agnhost", "pause"},
+										nodeSelector: map[string]string{nodeHostnameKey: node.Name},
+									}, nil)
+								}
+							}
+
+							Eventually(func() error {
+								nodeList, err := e2enode.GetReadySchedulableNodes(context.TODO(), cs)
 								if err != nil {
-									if ovnkubeutil.IsAnnotationNotSetError(err) {
-										continue
-									}
 									return err
 								}
-								nodes = append(nodes, node)
-								for _, ipnet := range ipnets {
-									if utilnet.IsIPv4CIDR(ipnet) {
-										node2cidrv4[node.Name] = ipnet.String()
-									} else {
-										node2cidrv6[node.Name] = ipnet.String()
+
+								nodeToNodeSubnetV4 = map[string]string{}
+								nodeToNodeSubnetv6 = map[string]string{}
+								nodeToNetworkSubnetV4 = map[string]string{}
+								nodeToNetworkSubnetV6 = map[string]string{}
+								nodes = nil
+								for i := range nodeList.Items {
+									node := &nodeList.Items[i]
+									ipnets, err := ovnkubeutil.ParseNodeHostSubnetAnnotation(node, networkName)
+									if err != nil {
+										if ovnkubeutil.IsAnnotationNotSetError(err) {
+											continue
+										}
+										return err
+									}
+									nodes = append(nodes, node)
+									for _, ipnet := range ipnets {
+										networkSubnet, err := containingNetworkSubnet(ipnet, clusterCIDRsv4, clusterCIDRsv6)
+										if err != nil {
+											return err
+										}
+										if utilnet.IsIPv4CIDR(ipnet) {
+											nodeToNodeSubnetV4[node.Name] = ipnet.String()
+											nodeToNetworkSubnetV4[node.Name] = networkSubnet
+										} else {
+											nodeToNodeSubnetv6[node.Name] = ipnet.String()
+											nodeToNetworkSubnetV6[node.Name] = networkSubnet
+										}
 									}
 								}
-							}
+								if len(nodes) != len(nodeList.Items) {
+									return fmt.Errorf("only %d/%d nodes have a node subnet allocated for network %q", len(nodes), len(nodeList.Items), networkName)
+								}
+								if ipv4 && len(nodeToNodeSubnetV4) != len(nodes) {
+									return fmt.Errorf("only %d/%d nodes have an IPv4 node subnet allocated for network %q", len(nodeToNodeSubnetV4), len(nodes), networkName)
+								}
+								if ipv6 && len(nodeToNodeSubnetv6) != len(nodes) {
+									return fmt.Errorf("only %d/%d nodes have an IPv6 node subnet allocated for network %q", len(nodeToNodeSubnetv6), len(nodes), networkName)
+								}
+								return nil
+							}, 60*time.Second, 2*time.Second).Should(Succeed())
+						})
 
-							// find a pair of nodes with different IPv4 and IPv6 CIDRs
-							clientNodeName, serverNodeName = "", ""
+						findNodePair := func(sameNetworkSubnet bool) (string, string) {
+							GinkgoHelper()
 							for i := 0; i < len(nodes)-1; i++ {
 								for j := i + 1; j < len(nodes); j++ {
 									ni, nj := nodes[i].Name, nodes[j].Name
-									if (!ipv4 || node2cidrv4[ni] != "" && node2cidrv4[nj] != "" && node2cidrv4[ni] != node2cidrv4[nj]) &&
-										(!ipv6 || node2cidrv6[ni] != "" && node2cidrv6[nj] != "" && node2cidrv6[ni] != node2cidrv6[nj]) {
-										clientNodeName, serverNodeName = ni, nj
-										return nil
+									v4Match := !ipv4 ||
+										nodeToNetworkSubnetV4[ni] != "" &&
+											nodeToNetworkSubnetV4[nj] != "" &&
+											(nodeToNetworkSubnetV4[ni] == nodeToNetworkSubnetV4[nj]) == sameNetworkSubnet
+									v6Match := !ipv6 ||
+										nodeToNetworkSubnetV6[ni] != "" &&
+											nodeToNetworkSubnetV6[nj] != "" &&
+											(nodeToNetworkSubnetV6[ni] == nodeToNetworkSubnetV6[nj]) == sameNetworkSubnet
+									if v4Match && v6Match {
+										return ni, nj
 									}
 								}
 							}
-							return fmt.Errorf("can not find a pair of nodes with different IPv4 and IPv6 CIDRs")
-						}, 30*time.Second, 2*time.Second).Should(Succeed())
-
-						Expect(clientNodeName != "" && serverNodeName != "").To(BeTrue(), "can not find a pair of nodes with different IPv4 and IPv6 CIDRs")
-						By("creating pods on nodes")
-						clientPodConfig := podConfiguration{
-							name:         "client-pod",
-							namespace:    f.Namespace.Name,
-							nodeSelector: map[string]string{nodeHostnameKey: clientNodeName},
+							relation := "different"
+							if sameNetworkSubnet {
+								relation = "the same"
+							}
+							Fail(fmt.Sprintf("can not find two nodes allocated from %s IPv4 and IPv6 network subnets", relation))
+							return "", ""
 						}
-						serverPodConfig := podConfiguration{
-							name:         "server-pod",
-							namespace:    f.Namespace.Name,
-							containerCmd: httpServerContainerCmd(podClusterNetPort),
-							nodeSelector: map[string]string{nodeHostnameKey: serverNodeName},
-						}
-						runUDNPod(cs, f.Namespace.Name, clientPodConfig, nil)
-						runUDNPod(cs, f.Namespace.Name, serverPodConfig, nil)
 
-						clientIPs, err := getPodAnnotationIPsForAttachment(cs, f.Namespace.Name, clientPodConfig.name, namespacedName(f.Namespace.Name, netConfig.name))
-						Expect(err).NotTo(HaveOccurred())
-						for _, clientIP := range clientIPs {
-							if utilnet.IsIPv4CIDR(clientIP) {
-								Expect(inRange(node2cidrv4[clientNodeName], clientIP.IP.String())).To(Succeed())
-							} else {
-								Expect(inRange(node2cidrv6[clientNodeName], clientIP.IP.String())).To(Succeed())
+						assertHostToPodConnectivity := func(clientNodeName, serverNodeName string) {
+							GinkgoHelper()
+
+							By(fmt.Sprintf("creating a primary UDN server pod on node %s", serverNodeName))
+							serverPodConfig := podConfiguration{
+								name:         "server-pod",
+								namespace:    f.Namespace.Name,
+								containerCmd: httpServerContainerCmd(podClusterNetPort),
+								nodeSelector: map[string]string{nodeHostnameKey: serverNodeName},
+							}
+							runUDNPod(cs, f.Namespace.Name, serverPodConfig, nil)
+
+							By(fmt.Sprintf("creating a host network client pod on node %s", clientNodeName))
+							hostNetPod, err := createPod(
+								f,
+								"client-pod-host",
+								clientNodeName,
+								f.Namespace.Name,
+								[]string{"sleep", "3600"},
+								nil,
+								func(pod *v1.Pod) {
+									pod.Spec.HostNetwork = true
+									pod.Spec.Containers[0].Image = images.Netshoot()
+									pod.Spec.Containers[0].SecurityContext = &v1.SecurityContext{
+										Privileged: pointer.Bool(true),
+									}
+								},
+							)
+							Expect(err).NotTo(HaveOccurred())
+
+							serverIPs, err := getPodAnnotationIPsForAttachment(
+								cs,
+								f.Namespace.Name,
+								serverPodConfig.name,
+								namespacedName(f.Namespace.Name, netConfig.name),
+							)
+							Expect(err).NotTo(HaveOccurred())
+							Expect(serverIPs).NotTo(BeEmpty())
+
+							for _, serverIP := range serverIPs {
+								By(fmt.Sprintf(
+									"checking host network pod on node %s can reach primary UDN pod %s on node %s through VRF %s",
+									clientNodeName,
+									serverIP.IP,
+									serverNodeName,
+									vrfName,
+								))
+								Eventually(func() error {
+									output, err := e2ekubectl.RunKubectl(
+										hostNetPod.Namespace,
+										"exec",
+										hostNetPod.Name,
+										"--",
+										"curl",
+										"--fail",
+										"--silent",
+										"--show-error",
+										"--connect-timeout",
+										"2",
+										"--max-time",
+										"5",
+										"--interface",
+										vrfName,
+										"http://"+net.JoinHostPort(serverIP.IP.String(), fmt.Sprintf("%d", podClusterNetPort)),
+									)
+									if err != nil {
+										return fmt.Errorf("failed to connect through VRF %s: %w; output: %s", vrfName, err, output)
+									}
+									return nil
+								}, 6*time.Minute, 6*time.Second).Should(Succeed())
 							}
 						}
 
-						serverIPs, err := getPodAnnotationIPsForAttachment(cs, f.Namespace.Name, serverPodConfig.name, namespacedName(f.Namespace.Name, netConfig.name))
-						Expect(err).NotTo(HaveOccurred())
-						for _, serverIP := range serverIPs {
-							if utilnet.IsIPv4CIDR(serverIP) {
-								Expect(inRange(node2cidrv4[serverNodeName], serverIP.IP.String())).To(Succeed())
-							} else {
-								Expect(inRange(node2cidrv6[serverNodeName], serverIP.IP.String())).To(Succeed())
-							}
-						}
+						It("can perform east/west traffic between nodes on different CIDR", func() {
+							clientNodeName, serverNodeName := findNodePair(false)
 
-						By("asserting the *client* pod can contact the server pod exposed endpoint")
-						for _, serverIP := range serverIPs {
-							Eventually(func() error {
-								return reachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP.IP.String(), podClusterNetPort)
-							}, 6*time.Minute, 6*time.Second).Should(Succeed())
-						}
+							By("creating pods on nodes")
+							clientPodConfig := podConfiguration{
+								name:         "client-pod",
+								namespace:    f.Namespace.Name,
+								nodeSelector: map[string]string{nodeHostnameKey: clientNodeName},
+							}
+							serverPodConfig := podConfiguration{
+								name:         "server-pod",
+								namespace:    f.Namespace.Name,
+								containerCmd: httpServerContainerCmd(podClusterNetPort),
+								nodeSelector: map[string]string{nodeHostnameKey: serverNodeName},
+							}
+							runUDNPod(cs, f.Namespace.Name, clientPodConfig, nil)
+							runUDNPod(cs, f.Namespace.Name, serverPodConfig, nil)
+
+							clientIPs, err := getPodAnnotationIPsForAttachment(cs, f.Namespace.Name, clientPodConfig.name, namespacedName(f.Namespace.Name, netConfig.name))
+							Expect(err).NotTo(HaveOccurred())
+							for _, clientIP := range clientIPs {
+								if utilnet.IsIPv4CIDR(clientIP) {
+									Expect(inRange(nodeToNodeSubnetV4[clientNodeName], clientIP.IP.String())).To(Succeed())
+								} else {
+									Expect(inRange(nodeToNodeSubnetv6[clientNodeName], clientIP.IP.String())).To(Succeed())
+								}
+							}
+
+							serverIPs, err := getPodAnnotationIPsForAttachment(cs, f.Namespace.Name, serverPodConfig.name, namespacedName(f.Namespace.Name, netConfig.name))
+							Expect(err).NotTo(HaveOccurred())
+							for _, serverIP := range serverIPs {
+								if utilnet.IsIPv4CIDR(serverIP) {
+									Expect(inRange(nodeToNodeSubnetV4[serverNodeName], serverIP.IP.String())).To(Succeed())
+								} else {
+									Expect(inRange(nodeToNodeSubnetv6[serverNodeName], serverIP.IP.String())).To(Succeed())
+								}
+							}
+
+							By("asserting the *client* pod can contact the server pod exposed endpoint")
+							for _, serverIP := range serverIPs {
+								Eventually(func() error {
+									return reachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP.IP.String(), podClusterNetPort)
+								}, 6*time.Minute, 6*time.Second).Should(Succeed())
+							}
+						})
+
+						It("can perform host to pod traffic via UDN VRF between nodes on different CIDR", func() {
+							clientNodeName, serverNodeName := findNodePair(false)
+							assertHostToPodConnectivity(clientNodeName, serverNodeName)
+						})
+
+						It("can perform host to pod traffic via UDN VRF between nodes on same CIDR", func() {
+							clientNodeName, serverNodeName := findNodePair(true)
+							assertHostToPodConnectivity(clientNodeName, serverNodeName)
+						})
+
+						It("can perform host to pod traffic via UDN VRF on same node", func() {
+							Expect(nodes).NotTo(BeEmpty())
+							assertHostToPodConnectivity(nodes[0].Name, nodes[0].Name)
+						})
 					},
 					Entry("L3 primary network",
 						&networkAttachmentConfigParams{
 							name:     nadName,
 							topology: "layer3",
 							// Use multiple CIDRs per IP family. The first CIDR
-							// is just big enough to allocate hostSubnets for
+							// is just big enough to allocate subnets for
 							// the first two nodes, remaining nodes will be
-							// allocated hostSubnets from the second CIDR
+							// allocated subnets from the second CIDR.
 							cidr: primaryLayer3MultiCIDRs(),
 							role: "primary",
 						},
@@ -1144,10 +1281,6 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 						e2eskipper.Skipf("need at least 3 ready schedulable nodes to run this test")
 					}
 
-					// Use multiple CIDRs per IP family. The first CIDR is just
-					// big enough to allocate hostSubnets for the first two
-					// nodes, remaining nodes will be allocated hostSubnets from
-					// the second CIDR
 					userDefinedNetworkIPv4Subnet1, userDefinedNetworkIPv4Subnet2 := primaryLayer3IPv4CIDRs()
 					userDefinedNetworkIPv6Subnet1, userDefinedNetworkIPv6Subnet2 := primaryLayer3IPv6CIDRs()
 					By("creating the initial network with one CIDR")

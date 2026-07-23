@@ -15,7 +15,8 @@ set -e
 if [ "${KUBECONFIG}" == "" ]; then
   export KUBECONFIG=${HOME}/ovn.conf
 fi
-export OVN_IMAGE=${OVN_IMAGE:-ovn-daemonset-fedora:pr}
+export OVN_IMAGE_FAMILY=${OVN_IMAGE_FAMILY:-fedora}
+export OVN_IMAGE=${OVN_IMAGE:-ovn-daemonset-${OVN_IMAGE_FAMILY}:pr}
 
 DIR=$(dirname "${BASH_SOURCE[0]}")
 

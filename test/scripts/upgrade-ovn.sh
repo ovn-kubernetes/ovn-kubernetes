@@ -5,7 +5,8 @@
 set -ex
 
 export KUBECONFIG=${KUBECONFIG:-${HOME}/ovn.conf}
-export OVN_IMAGE=${OVN_IMAGE:-ovn-daemonset-fedora:pr}
+export OVN_IMAGE_FAMILY=${OVN_IMAGE_FAMILY:-fedora}
+export OVN_IMAGE=${OVN_IMAGE:-ovn-daemonset-${OVN_IMAGE_FAMILY}:pr}
 export KIND_CLUSTER_NAME=${KIND_CLUSTER_NAME:-ovn}
 
 SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
@@ -94,7 +95,7 @@ case $(uname -m) in
   x86_64)  ARCH="amd64" ;;
   aarch64) ARCH="arm64" ;;
 esac
-K8S_VERSION="v1.35.0"
+K8S_VERSION="v1.36.2"
 E2E_VERSION=$(/usr/local/bin/e2e.test --version)
 if [[ "$E2E_VERSION" != "$K8S_VERSION" ]]; then
   echo "found version $E2E_VERSION of e2e binary, need version $K8S_VERSION; downloading"

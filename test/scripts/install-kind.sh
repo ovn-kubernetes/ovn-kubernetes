@@ -11,7 +11,7 @@ case $(uname -m) in
 esac
 
 # from https://github.com/kubernetes-sigs/kind/releases
-KIND_URL=https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-${ARCH}
+KIND_URL=https://kind.sigs.k8s.io/dl/v0.32.0/kind-linux-${ARCH}
 KIND_SHA_URL=$KIND_URL.sha256sum
 KIND_SHA="$( curl -L -s ${KIND_SHA_URL}| awk '{ print $1 }')"
 KIND_DOWNLOAD_RETRIES=5
@@ -48,7 +48,7 @@ install_kind() {
 }
 
 pushd $TMP_DIR
-K8S_VERSION="v1.35.0"
+K8S_VERSION="v1.36.2"
 
 # Install kubectl for K8S_VERSION in use
 curl -sL https://dl.k8s.io/${K8S_VERSION}/kubernetes-client-linux-${ARCH}.tar.gz | sudo tar xvz -C /usr/local/bin kubernetes/client/bin/kubectl --strip-components 3
@@ -72,7 +72,12 @@ rm helm-linux-${ARCH}.tar.gz
 install_kind
 popd # go out of $TMP_DIR
 
+# Build the Kubernetes node image until official kindest/node images are
+# available.
+# See: https://github.com/kubernetes-sigs/kind/issues/4157
+echo "Building kind node image for Kubernetes ${K8S_VERSION}..."
+kind build node-image --image kindest/node:${K8S_VERSION} ${K8S_VERSION}
+
 pushd $SCRIPT_DIR/../../contrib
 ./kind-helm.sh
 popd # go our of $SCRIPT_DIR/../../contrib
-

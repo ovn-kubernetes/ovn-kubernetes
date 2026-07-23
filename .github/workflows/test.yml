@@ -23,7 +23,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  K8S_VERSION: v1.35.0
+  K8S_VERSION: v1.36.2
   KIND_CLUSTER_NAME: ovn
   KIND_INSTALL_INGRESS: true
   KIND_ALLOW_SYSTEM_WRITES: true
@@ -65,7 +65,7 @@ jobs:
     - name: Verify
       uses: golangci/golangci-lint-action@v8.0.0
       with:
-        version: v2.5.0
+        version: v2.12.2
         working-directory: go-controller
         args: --modules-download-mode=vendor --timeout=15m0s --verbose
 
@@ -165,34 +165,42 @@ jobs:
   build-pr:
     name: Build-PR
     runs-on: ubuntu-24.04
+    env:
+      PR_IMAGE_FAMILY: fedora
+      PR_IMAGE: ovn-daemonset-fedora:pr
+      PR_IMAGE_TARGET: fedora-image
+      PR_IMAGE_ARTIFACT: test-image-pr
     steps:
-    # Create a cache for the build PR image
-    - name: Restore PR image cache
-      id: image_cache_pr
+    # These anchored steps are shared with build-pr-ubuntu below.
+    - &restore_pr_image_cache
+      name: Restore PR image cache
       uses: actions/cache@v4
       with:
         path: |
           ${{ env.CI_IMAGE_CACHE }}
-        key: ${{ github.run_id }}-image-cache-pr
+        key: ${{ github.run_id }}-image-cache-pr-${{ env.PR_IMAGE_FAMILY }}
 
-    - name: Check if PR image build is needed
+    - &check_pr_image_build
+      name: Check if PR image build is needed
       id: is_pr_image_build_needed
       continue-on-error: true
       run: |
         set -x
-        if [ -f ${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR}.gz ]; then
-            mkdir -p ${CI_DIST_IMAGES_OUTPUT}
-            cp ${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR}.gz ${CI_DIST_IMAGES_OUTPUT}/${CI_IMAGE_PR_TAR}.gz
-            gunzip ${CI_DIST_IMAGES_OUTPUT}/${CI_IMAGE_PR_TAR}.gz
+        mkdir -p "${CI_DIST_IMAGES_OUTPUT}"
+        if [ -f "${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR}.gz" ]; then
+            cp "${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR}.gz" "${CI_DIST_IMAGES_OUTPUT}/${CI_IMAGE_PR_TAR}.gz"
+            gunzip "${CI_DIST_IMAGES_OUTPUT}/${CI_IMAGE_PR_TAR}.gz"
             echo "PR_IMAGE_RESTORED=true" >> "$GITHUB_OUTPUT"
         fi
 
     # only run the following steps if the PR image was not found in the cache
-    - name: Check out code into the Go module directory - from current pr branch
+    - &checkout_pr_image_source
+      name: Check out code into the Go module directory - from current pr branch
       if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
       uses: actions/checkout@v6
 
-    - name: Set up Go
+    - &setup_pr_image_go
+      name: Set up Go
       if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
       uses: actions/setup-go@v6
       with:
@@ -217,39 +225,55 @@ jobs:
            make windows
         popd
 
-    - name: Build docker image - from current pr branch
+    - &build_pr_image
+      name: Build PR image - from current pr branch
       if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
       run: |
         pushd dist/images
-          IMAGE=ovn-daemonset-fedora:pr
-          make IMAGE=${IMAGE} \
-            OVN_REPO=${{ env.OVN_REPO }} \
-            OVN_GITREF=${{ env.OVN_GITREF }} \
-            fedora-image
-          mkdir _output
-          docker save ${IMAGE} > _output/${CI_IMAGE_PR_TAR}
+          make IMAGE="${PR_IMAGE}" \
+            OVN_REPO="${OVN_REPO}" \
+            OVN_GITREF="${OVN_GITREF}" \
+            "${PR_IMAGE_TARGET}"
+          mkdir -p _output
+          docker save "${PR_IMAGE}" -o "_output/${CI_IMAGE_PR_TAR}"
         popd
 
-    - name: Cache PR image
+    - &cache_pr_image
+      name: Cache PR image
       if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
       continue-on-error: true
       run: |
         set -x
-        if [ -f ${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR} ]; then
-            rm -f ${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR}
-        fi
-        if [ -f ${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR}.gz ]; then
-           rm -f ${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR}.gz
-        fi
-        mkdir -p ${CI_IMAGE_CACHE}/
-        cp ${CI_DIST_IMAGES_OUTPUT}/${CI_IMAGE_PR_TAR} ${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR}
-        gzip ${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR}
+        mkdir -p "${CI_IMAGE_CACHE}"
+        rm -f "${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR}" "${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR}.gz"
+        cp "${CI_DIST_IMAGES_OUTPUT}/${CI_IMAGE_PR_TAR}" "${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR}"
+        gzip -f "${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR}"
 
     # run the following if none of the previous steps failed
-    - uses: actions/upload-artifact@v7
+    - &upload_pr_image
+      name: Upload PR image
+      uses: actions/upload-artifact@v7
       with:
-        name: test-image-pr
+        name: ${{ env.PR_IMAGE_ARTIFACT }}
         path: ${{ env.CI_DIST_IMAGES_OUTPUT }}/${{ env.CI_IMAGE_PR_TAR }}
+
+  build-pr-ubuntu:
+    name: Build-PR (Ubuntu)
+    runs-on: ubuntu-24.04
+    env:
+      PR_IMAGE_FAMILY: ubuntu
+      PR_IMAGE: ovn-daemonset-ubuntu:pr
+      PR_IMAGE_TARGET: ubuntu-image
+      PR_IMAGE_ARTIFACT: test-image-pr-ubuntu
+      CI_IMAGE_PR_TAR: image-pr-ubuntu.tar
+    steps:
+    - *restore_pr_image_cache
+    - *check_pr_image_build
+    - *checkout_pr_image_source
+    - *setup_pr_image_go
+    - *build_pr_image
+    - *cache_pr_image
+    - *upload_pr_image
 
   test-pr:
     name: Test-PR
@@ -470,7 +494,7 @@ jobs:
           - {"target": "shard-conformance", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv6",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones"}
           - {"target": "shard-conformance", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones"}
           - {"target": "control-plane",     "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "dns-name-resolver": "enable-dns-name-resolver"}
-          - {"target": "control-plane",     "ha": "noHA", "gateway-mode": "local",  "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "dns-name-resolver": "enable-dns-name-resolver"}
+          - {"target": "control-plane",     "ha": "noHA", "gateway-mode": "local",  "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "dns-name-resolver": "enable-dns-name-resolver", "image_family": "ubuntu"}
           - {"target": "control-plane",     "ha": "noHA", "gateway-mode": "local",  "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones"}
           - {"target": "control-plane",     "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "2br", "ic": "ic-single-node-zones"}
           - {"target": "control-plane",     "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "2br", "ic": "ic-single-node-zones", "cni-mode": "unprivileged"}
@@ -502,12 +526,17 @@ jobs:
           - {"target": "traffic-flow-test-only", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "traffic-flow-tests": "1-24", "network-segmentation": "enable-network-segmentation"}
           - {"target": "tools", "ha": "noHA", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "SnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "network-segmentation": "enable-network-segmentation"}
           - {"target": "serial", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "ic": "ic-single-node-zones"}
-    needs: [ build-pr ]
+    needs: [ build-pr, build-pr-ubuntu ]
+    if: ${{ !cancelled() }}
     env:
-      JOB_NAME: "${{ matrix.target }}-${{ matrix.ha }}-${{ matrix.gateway-mode }}-${{ matrix.ipfamily }}-${{ matrix.disable-snat-multiple-gws }}-${{ matrix.second-bridge }}-${{ matrix.ic }}"
+      JOB_NAME: "${{ matrix.target }}-${{ matrix.ha }}-${{ matrix.gateway-mode }}-${{ matrix.ipfamily }}-${{ matrix.disable-snat-multiple-gws }}-${{ matrix.second-bridge }}-${{ matrix.ic }}-${{ matrix.image_family || 'fedora' }}"
       OVN_HYBRID_OVERLAY_ENABLE: ${{ matrix.target == 'control-plane' && (matrix.ipfamily == 'ipv4' || matrix.ipfamily == 'dualstack' ) }}
       OVN_MULTICAST_ENABLE:  "${{ matrix.target == 'control-plane' || startsWith(matrix.target, 'network-segmentation') || startsWith(matrix.target, 'bgp') }}"
       OVN_EMPTY_LB_EVENTS: "${{ matrix.target == 'control-plane' || startsWith(matrix.target, 'bgp') }}"
+      OVN_IMAGE_FAMILY: "${{ matrix.image_family || 'fedora' }}"
+      OVN_IMAGE: "${{ matrix.image_family == 'ubuntu' && 'ovn-daemonset-ubuntu:pr' || 'ovn-daemonset-fedora:pr' }}"
+      CI_E2E_IMAGE_ARTIFACT: "${{ matrix.image_family == 'ubuntu' && 'test-image-pr-ubuntu' || 'test-image-pr' }}"
+      CI_E2E_IMAGE_TAR: "${{ matrix.image_family == 'ubuntu' && 'image-pr-ubuntu.tar' || 'image-pr.tar' }}"
       OVN_HA: "${{ matrix.ha == 'HA' }}"
       OVN_DISABLE_SNAT_MULTIPLE_GWS: "${{ matrix.disable-snat-multiple-gws == 'noSnatGW' }}"
       KIND_INSTALL_METALLB: "${{ matrix.target == 'control-plane' || startsWith(matrix.target, 'network-segmentation') }}"
@@ -539,6 +568,17 @@ jobs:
       ENABLE_NO_OVERLAY_OUTBOUND_SNAT: "${{ matrix.no-overlay == 'snat-enabled' || matrix.no-overlay == 'managed' }}"
       ENABLE_NO_OVERLAY_MANAGED_ROUTING: "${{ matrix.no-overlay == 'managed' }}"
     steps:
+    - name: Verify selected image build
+      env:
+        FEDORA_BUILD_RESULT: ${{ needs.build-pr.result }}
+        UBUNTU_BUILD_RESULT: ${{ needs.build-pr-ubuntu.result }}
+      run: |
+        if [ "${OVN_IMAGE_FAMILY}" = "ubuntu" ]; then
+          test "${UBUNTU_BUILD_RESULT}" = "success"
+        else
+          test "${FEDORA_BUILD_RESULT}" = "success"
+        fi
+
     - name: Check out code into the Go module directory
       uses: actions/checkout@v6
 
@@ -632,10 +672,10 @@ jobs:
       run: |
         sudo ufw disable
 
-    - name: Download test-image-pr
+    - name: Download selected PR image
       uses: actions/download-artifact@v8
       with:
-        name: test-image-pr
+        name: ${{ env.CI_E2E_IMAGE_ARTIFACT }}
 
     - name: Disable containerd image store
       # Workaround for https://github.com/kubernetes-sigs/kind/issues/3795
@@ -653,13 +693,12 @@ jobs:
 
     - name: Load docker image
       run: |
-        docker load --input ${CI_IMAGE_PR_TAR} && rm -rf ${CI_IMAGE_PR_TAR}
+        docker load --input ${CI_E2E_IMAGE_TAR} && rm -rf ${CI_E2E_IMAGE_TAR}
         docker images || true
 
     - name: kind setup
       timeout-minutes: 30
       run: |
-        export OVN_IMAGE="ovn-daemonset-fedora:pr"
         make -C test install-kind
 
     - name: traffic-flow-tests setup
@@ -674,9 +713,6 @@ jobs:
       # get its output
       timeout-minutes: ${{ startsWith(matrix.target, 'bgp') && 190 || matrix.target == 'evpn' && 190 || matrix.target == 'control-plane' && 190 || matrix.target == 'external-gateway' && 190 || startsWith(matrix.target, 'network-segmentation') && 190 || 130 }}
       run: |
-        # used by e2e diagnostics package
-        export OVN_IMAGE="ovn-daemonset-fedora:pr"
-
         if [ "${{ matrix.target }}" == "multi-homing" ]; then
           make -C test control-plane WHAT="Multi Homing"
         elif [ "${{ matrix.target }}" == "node-ip-mac-migration" ]; then

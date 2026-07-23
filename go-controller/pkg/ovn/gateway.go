@@ -6,11 +6,10 @@ package ovn
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"strconv"
 	"strings"
-
-	"golang.org/x/exp/maps"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"

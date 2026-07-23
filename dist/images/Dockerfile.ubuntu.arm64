@@ -15,7 +15,8 @@ FROM ubuntu:26.04
 
 USER root
 
-RUN apt-get update && apt-get install -y iproute2 curl software-properties-common util-linux nftables
+# Keep socat until ovn-kubernetes#6122 removes the e2e/runtime dependency on it.
+RUN apt-get update && apt-get install -y iproute2 curl software-properties-common util-linux nftables socat
 
 # Install OVS and OVN packages.
 RUN apt-get update && apt-get install -y openvswitch-switch openvswitch-common ovn-central ovn-common ovn-host
