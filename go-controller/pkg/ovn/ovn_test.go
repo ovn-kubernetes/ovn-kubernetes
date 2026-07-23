@@ -291,7 +291,7 @@ func (o *FakeOVN) init(nadList []nettypes.NetworkAttachmentDefinition) {
 
 	o.portCache = NewPortCache(o.stopChan)
 	o.addressSetManager = addresssetmanager.NewAddressSetManager(o.watcher.PodCoreInformer(),
-		o.watcher.NamespaceInformer(), o.watcher.NodeCoreInformer(), o.nbClient, o.networkManager.Interface().GetNetworkNameForNADKey)
+		o.watcher.NamespaceInformer(), o.watcher.NodeCoreInformer(), o.nbClient, o.networkManager.Interface())
 
 	kubeOVN := &kube.KubeOVN{
 		Kube:      kube.Kube{KClient: o.fakeClient.KubeClient},

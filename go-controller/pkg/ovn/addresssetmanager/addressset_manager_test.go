@@ -147,7 +147,7 @@ var _ = ginkgo.Describe("OVN podSelectorAddressSet", func() {
 		// this is only used for "saves db transactions when IPs don't change" test
 		countingNBClient = &countingClient{Client: libovsdbNBClient}
 		addressSetManager = NewAddressSetManager(wf.PodCoreInformer(), wf.NamespaceInformer(), wf.NodeCoreInformer(), countingNBClient,
-			fakeNetworkManager.Interface().GetNetworkNameForNADKey)
+			fakeNetworkManager.Interface())
 		err = addressSetManager.Start()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	}
@@ -312,6 +312,7 @@ var _ = ginkgo.Describe("OVN podSelectorAddressSet", func() {
 	config.IPv4Mode = true
 	config.IPv6Mode = false
 	primaryNetInfo := newNetInfo("primarynet", types.Layer3Topology, types.NetworkRolePrimary, "10.128.1.0/24/27")
+	connectedPrimaryNetInfo := newNetInfo("connectedprimarynet", types.Layer3Topology, types.NetworkRolePrimary, "10.129.1.0/24/27")
 	secondaryNetInfo := newNetInfo("secondarynet", types.Layer2Topology, types.NetworkRoleSecondary, "10.128.1.0/24")
 
 	newPod := func(namespace, name, node, podIP string, netInfo util.NetInfo) *corev1.Pod {
@@ -323,6 +324,39 @@ var _ = ginkgo.Describe("OVN podSelectorAddressSet", func() {
 			return testing.NewPodWithSecondaryNADIP(namespace, name, node, "10.244.0.2", netInfo.GetNetworkName(), podIP)
 		}
 	}
+
+	ginkgo.It("updates NetworkPolicy peer IPs when PodNetwork CNC connectivity changes", func() {
+		const peerNamespaceLabel = "cnc-network-policy-peer"
+		namespace1 := *testing.NewNamespace(namespaceName1)
+		namespace2 := *testing.NewNamespace(namespaceName2)
+		namespace2.Labels[peerNamespaceLabel] = "allowed"
+		remotePodIP := "10.129.1.3"
+		remotePod := newPod(namespace2.Name, "remote-pod", nodeName, remotePodIP, connectedPrimaryNetInfo)
+
+		startAddrSetManager(initialDB, []corev1.Namespace{namespace1, namespace2}, []corev1.Pod{*remotePod})
+
+		peer := knet.NetworkPolicyPeer{
+			NamespaceSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{peerNamespaceLabel: "allowed"},
+			},
+		}
+		podSelector := &metav1.LabelSelector{}
+		_, _, _, err := addressSetManager.EnsureAddressSetForNetworkPolicy(
+			podSelector, peer.NamespaceSelector, nil, namespace1.Name, "backRef", controllerName, primaryNetInfo, true)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		peerASIDs := GetPodSelectorAddrSetDbIDs(podSelector, peer.NamespaceSelector, nil,
+			namespace1.Name, controllerName, true)
+		emptyPeerAS, _ := addressset.GetTestDbAddrSets(peerASIDs, []string{})
+		gomega.Expect(addressSetManager.nbClient).Should(libovsdbtest.HaveData([]libovsdbtest.TestData{emptyPeerAS}))
+
+		fakeNetworkManager.SetPodNetworkConnectedNetworks(primaryNetInfo.GetNetworkName(), connectedPrimaryNetInfo)
+		connectedPeerAS, _ := addressset.GetTestDbAddrSets(peerASIDs, []string{remotePodIP})
+		gomega.Eventually(addressSetManager.nbClient).Should(libovsdbtest.HaveData([]libovsdbtest.TestData{connectedPeerAS}))
+
+		fakeNetworkManager.SetPodNetworkConnectedNetworks(primaryNetInfo.GetNetworkName())
+		gomega.Eventually(addressSetManager.nbClient).Should(libovsdbtest.HaveData([]libovsdbtest.TestData{emptyPeerAS}))
+	})
 
 	for _, netInfo := range []util.NetInfo{&util.DefaultNetInfo{}, primaryNetInfo, secondaryNetInfo} {
 		netInfo := netInfo
@@ -891,7 +925,7 @@ var _ = ginkgo.Describe("OVN podSelectorAddressSet", func() {
 		err = clientSet.KubeClient.CoreV1().Nodes().Delete(context.TODO(), testNode.Name, metav1.DeleteOptions{})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		addressSetManager = NewAddressSetManager(wf.PodCoreInformer(), wf.NamespaceInformer(), wf.NodeCoreInformer(), libovsdbNBClient,
-			func(_ string) string { return "" })
+			fakeNetworkManager.Interface())
 		err = addressSetManager.Start()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		// run EnsureAddressSet again, otherwise address set won't be reconciled with no users

@@ -52,6 +52,9 @@ type nadController struct {
 	// networkRefReconcilers keyed by registration ID.
 	networkRefReconcilers      map[uint64]networkRefReconcilerRegistration
 	nextNetworkRefReconcilerID uint64
+	// podNetworkConnectReconcilers keyed by registration ID.
+	podNetworkConnectReconcilers      map[uint64]podNetworkConnectReconcilerRegistration
+	nextPodNetworkConnectReconcilerID uint64
 
 	name            string
 	stopChan        chan struct{}
@@ -64,8 +67,8 @@ type nadController struct {
 	cncLister       networkconnectlister.ClusterNetworkConnectLister
 
 	controller controller.Controller
-	// cncController tracks CNC connectivity and updates derived
-	// network activity for Dynamic UDN filtering.
+	// cncController tracks CNC connectivity for Dynamic UDN activity and
+	// PodNetwork-aware consumers such as NetworkPolicy.
 	cncController controller.Controller
 	recorder      record.EventRecorder
 
@@ -86,8 +89,15 @@ type nadController struct {
 	// cncsByNetworkID indexes CNCs by their referenced owner network IDs.
 	cncsByNetworkID map[int]sets.Set[string]
 	// cncConnectedNetworks is a symmetric adjacency map where key/value are
-	// network names connected through a CNC.
+	// network names connected through a CNC with any connectivity type. This is
+	// used to derive Dynamic UDN activity, including ServiceNetwork backends.
 	cncConnectedNetworks map[string]sets.Set[string]
+	// cncPodNetworkSelectedNetworks tracks network names selected by each CNC
+	// that enables PodNetwork connectivity.
+	cncPodNetworkSelectedNetworks map[string]sets.Set[string]
+	// cncPodNetworkConnectedNetworks is the direct, symmetric PodNetwork-only
+	// adjacency used by consumers such as NetworkPolicy.
+	cncPodNetworkConnectedNetworks map[string]sets.Set[string]
 
 	// primaryNADs holds a mapping of namespace to NAD of primary UDNs
 	primaryNADs map[string]string
@@ -127,6 +137,11 @@ type networkRefReconcilerRegistration struct {
 	r  NetworkRefReconciler
 }
 
+type podNetworkConnectReconcilerRegistration struct {
+	id uint64
+	r  PodNetworkConnectReconciler
+}
+
 func newController(
 	name string,
 	zone string,
@@ -137,41 +152,48 @@ func newController(
 	recorder record.EventRecorder,
 	tunnelKeysAllocator *id.TunnelKeysAllocator,
 	filterNADsOnNode string,
+	trackPodNetworkConnect bool,
 ) (*nadController, error) {
 	networkController := newNetworkController(name, zone, node, cm, wf)
 	c := &nadController{
-		name:                   fmt.Sprintf("[%s NAD controller]", name),
-		stopChan:               make(chan struct{}),
-		recorder:               recorder,
-		nadLister:              wf.NADInformer().Lister(),
-		nodeLister:             wf.NodeCoreInformer().Lister(),
-		networkController:      networkController,
-		reconcilers:            map[uint64]reconcilerRegistration{},
-		networkRefReconcilers:  map[uint64]networkRefReconcilerRegistration{},
-		nads:                   map[string]string{},
-		nadsByNetwork:          map[string]sets.Set[string]{},
-		dynamicFilterNADs:      map[string]bool{},
-		cncSelectedNetworks:    map[string]sets.Set[string]{},
-		cncNetworkIDs:          map[string]sets.Set[int]{},
-		cncsByNetworkID:        map[int]sets.Set[string]{},
-		cncConnectedNetworks:   map[string]sets.Set[string]{},
-		primaryNADs:            map[string]string{},
-		markedForRemoval:       map[string]time.Time{},
-		dynamicallyRemovedNADs: sets.New[string](),
+		name:                           fmt.Sprintf("[%s NAD controller]", name),
+		stopChan:                       make(chan struct{}),
+		recorder:                       recorder,
+		nadLister:                      wf.NADInformer().Lister(),
+		nodeLister:                     wf.NodeCoreInformer().Lister(),
+		networkController:              networkController,
+		reconcilers:                    map[uint64]reconcilerRegistration{},
+		networkRefReconcilers:          map[uint64]networkRefReconcilerRegistration{},
+		podNetworkConnectReconcilers:   map[uint64]podNetworkConnectReconcilerRegistration{},
+		nads:                           map[string]string{},
+		nadsByNetwork:                  map[string]sets.Set[string]{},
+		dynamicFilterNADs:              map[string]bool{},
+		cncSelectedNetworks:            map[string]sets.Set[string]{},
+		cncNetworkIDs:                  map[string]sets.Set[int]{},
+		cncsByNetworkID:                map[int]sets.Set[string]{},
+		cncConnectedNetworks:           map[string]sets.Set[string]{},
+		cncPodNetworkSelectedNetworks:  map[string]sets.Set[string]{},
+		cncPodNetworkConnectedNetworks: map[string]sets.Set[string]{},
+		primaryNADs:                    map[string]string{},
+		markedForRemoval:               map[string]time.Time{},
+		dynamicallyRemovedNADs:         sets.New[string](),
 	}
 	networkController.getNADKeysForNetwork = c.GetNADKeysForNetwork
 
-	if cm != nil && config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
-		c.podTracker = NewPodTrackerController(fmt.Sprintf("%s pod-tracker", c.name), wf, c.OnNetworkRefChange, c.GetPrimaryNADForNamespace)
-		podID := c.RegisterNADReconciler(c.podTracker.NADReconciler())
-		c.podReconcilerID = podID
-		if config.OVNKubernetesFeature.EnableEgressIP {
-			c.egressIPTracker = NewEgressIPTrackerController(fmt.Sprintf("%s egress-ip-tracker", c.name), wf, c.OnNetworkRefChange, c.GetPrimaryNADForNamespace)
-			eipID := c.RegisterNADReconciler(c.egressIPTracker.NADReconciler())
-			c.eipReconcilerID = eipID
+	if cm != nil {
+		if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
+			c.podTracker = NewPodTrackerController(fmt.Sprintf("%s pod-tracker", c.name), wf, c.OnNetworkRefChange, c.GetPrimaryNADForNamespace)
+			podID := c.RegisterNADReconciler(c.podTracker.NADReconciler())
+			c.podReconcilerID = podID
+			if config.OVNKubernetesFeature.EnableEgressIP {
+				c.egressIPTracker = NewEgressIPTrackerController(fmt.Sprintf("%s egress-ip-tracker", c.name), wf, c.OnNetworkRefChange, c.GetPrimaryNADForNamespace)
+				eipID := c.RegisterNADReconciler(c.egressIPTracker.NADReconciler())
+				c.eipReconcilerID = eipID
+			}
+			c.filterNADsOnNode = filterNADsOnNode
 		}
-		c.filterNADsOnNode = filterNADsOnNode
-		if util.IsNetworkConnectEnabled() {
+		if util.IsNetworkConnectEnabled() &&
+			(config.OVNKubernetesFeature.EnableDynamicUDNAllocation || trackPodNetworkConnect) {
 			cncInformer := wf.ClusterNetworkConnectInformer()
 			c.cncLister = cncInformer.Lister()
 			c.cncController = controller.NewController(
@@ -462,6 +484,35 @@ func (c *nadController) getNetworkAndConnectedNetworks(networkName string) []str
 	return networks
 }
 
+// GetPodNetworkConnectedNetworks returns copies of the networks directly
+// connected to networkName by CNCs that enable PodNetwork connectivity.
+func (c *nadController) GetPodNetworkConnectedNetworks(networkName string) []util.NetInfo {
+	if networkName == "" {
+		return nil
+	}
+
+	c.RLock()
+	connectedNetworkNames := c.cncPodNetworkConnectedNetworks[networkName].UnsortedList()
+	networkIDs := make(map[string]int, len(connectedNetworkNames))
+	for _, connectedNetworkName := range connectedNetworkNames {
+		networkIDs[connectedNetworkName] = c.networkIDAllocator.GetID(connectedNetworkName)
+	}
+	c.RUnlock()
+
+	sort.Strings(connectedNetworkNames)
+	connectedNetworks := make([]util.NetInfo, 0, len(connectedNetworkNames))
+	for _, connectedNetworkName := range connectedNetworkNames {
+		netInfo := c.GetNetwork(connectedNetworkName)
+		if netInfo == nil {
+			netInfo = c.GetNetworkByID(networkIDs[connectedNetworkName])
+		}
+		if netInfo != nil {
+			connectedNetworks = append(connectedNetworks, util.NewMutableNetInfo(netInfo))
+		}
+	}
+	return connectedNetworks
+}
+
 // reconcileNetworkActivity requeues NAD sync for all NADs belonging to the
 // provided networks. syncNAD recomputes current activity and updates local
 // Dynamic UDN removal state.
@@ -625,6 +676,15 @@ func (c *nadController) networkSelectionsForCNC(cnc *networkconnectv1.ClusterNet
 	return selectedNetworks, networkIDs
 }
 
+func cncEnablesConnectivity(cnc *networkconnectv1.ClusterNetworkConnect, connectivity networkconnectv1.ConnectivityType) bool {
+	for _, configuredConnectivity := range cnc.Spec.Connectivity {
+		if configuredConnectivity == connectivity {
+			return true
+		}
+	}
+	return false
+}
+
 // buildCNCConnectedNetworks returns network name -> connected peer network names
 // derived from each CNC's selected network set.
 func buildCNCConnectedNetworks(selectedNetworksByCNC map[string]sets.Set[string]) map[string]sets.Set[string] {
@@ -683,6 +743,16 @@ func (c *nadController) updateCNCConnectivityLocked() sets.Set[string] {
 	return networksToReconcile
 }
 
+// updateCNCPodNetworkConnectivityLocked refreshes the PodNetwork-only CNC
+// adjacency and returns the networks whose direct peer set changed.
+// Caller must hold nadController lock.
+func (c *nadController) updateCNCPodNetworkConnectivityLocked() sets.Set[string] {
+	connectedNetworks := buildCNCConnectedNetworks(c.cncPodNetworkSelectedNetworks)
+	networksToReconcile := changedCNCNetworks(c.cncPodNetworkConnectedNetworks, connectedNetworks)
+	c.cncPodNetworkConnectedNetworks = connectedNetworks
+	return networksToReconcile
+}
+
 // updateCNCNetworkIDsLocked updates the per-CNC owner ID cache and reverse
 // lookup used to target CNC reconciles when a NAD/network ID becomes available
 // or is removed.
@@ -728,11 +798,15 @@ func (c *nadController) syncAllCNCs() error {
 	}
 
 	selectedNetworksByCNC := map[string]sets.Set[string]{}
+	podNetworkSelectedNetworksByCNC := map[string]sets.Set[string]{}
 	networkIDsByCNC := map[string]sets.Set[int]{}
 	cncsByNetworkID := map[int]sets.Set[string]{}
 	for _, cnc := range cncs {
 		selectedNetworks, networkIDs := c.networkSelectionsForCNC(cnc)
 		selectedNetworksByCNC[cnc.Name] = selectedNetworks
+		if cncEnablesConnectivity(cnc, networkconnectv1.PodNetwork) {
+			podNetworkSelectedNetworksByCNC[cnc.Name] = selectedNetworks
+		}
 		networkIDsByCNC[cnc.Name] = networkIDs
 		for networkID := range networkIDs {
 			indexedCNCs := cncsByNetworkID[networkID]
@@ -746,12 +820,17 @@ func (c *nadController) syncAllCNCs() error {
 
 	c.Lock()
 	c.cncSelectedNetworks = selectedNetworksByCNC
+	c.cncPodNetworkSelectedNetworks = podNetworkSelectedNetworksByCNC
 	c.cncNetworkIDs = networkIDsByCNC
 	c.cncsByNetworkID = cncsByNetworkID
 	networksToReconcile := c.updateCNCConnectivityLocked()
+	podNetworksToReconcile := c.updateCNCPodNetworkConnectivityLocked()
 	c.Unlock()
 
-	c.reconcileNetworkActivity(networksToReconcile.UnsortedList())
+	if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
+		c.reconcileNetworkActivity(networksToReconcile.UnsortedList())
+	}
+	c.notifyPodNetworkConnectReconcilers(podNetworksToReconcile.UnsortedList())
 	return nil
 }
 
@@ -765,8 +844,10 @@ func (c *nadController) syncCNC(key string) error {
 
 	var selectedNetworks sets.Set[string]
 	var networkIDs sets.Set[int]
+	podNetworkEnabled := false
 	if err == nil {
 		selectedNetworks, networkIDs = c.networkSelectionsForCNC(cnc)
+		podNetworkEnabled = cncEnablesConnectivity(cnc, networkconnectv1.PodNetwork)
 	}
 
 	c.Lock()
@@ -778,11 +859,23 @@ func (c *nadController) syncCNC(key string) error {
 	} else {
 		c.cncSelectedNetworks[key] = selectedNetworks
 	}
+	if c.cncPodNetworkSelectedNetworks == nil {
+		c.cncPodNetworkSelectedNetworks = map[string]sets.Set[string]{}
+	}
+	if selectedNetworks == nil || !podNetworkEnabled {
+		delete(c.cncPodNetworkSelectedNetworks, key)
+	} else {
+		c.cncPodNetworkSelectedNetworks[key] = selectedNetworks
+	}
 	c.updateCNCNetworkIDsLocked(key, networkIDs)
 	networksToReconcile := c.updateCNCConnectivityLocked()
+	podNetworksToReconcile := c.updateCNCPodNetworkConnectivityLocked()
 	c.Unlock()
 
-	c.reconcileNetworkActivity(networksToReconcile.UnsortedList())
+	if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
+		c.reconcileNetworkActivity(networksToReconcile.UnsortedList())
+	}
+	c.notifyPodNetworkConnectReconcilers(podNetworksToReconcile.UnsortedList())
 	return nil
 }
 
@@ -852,6 +945,28 @@ func (c *nadController) DeRegisterNetworkRefReconciler(id uint64) {
 	delete(c.networkRefReconcilers, id)
 }
 
+// RegisterPodNetworkConnectReconciler registers a reconciler to receive
+// network names whose direct PodNetwork CNC peers changed.
+func (c *nadController) RegisterPodNetworkConnectReconciler(r PodNetworkConnectReconciler) uint64 {
+	c.Lock()
+	defer c.Unlock()
+	if c.podNetworkConnectReconcilers == nil {
+		c.podNetworkConnectReconcilers = map[uint64]podNetworkConnectReconcilerRegistration{}
+	}
+	c.nextPodNetworkConnectReconcilerID++
+	id := c.nextPodNetworkConnectReconcilerID
+	c.podNetworkConnectReconcilers[id] = podNetworkConnectReconcilerRegistration{id: id, r: r}
+	return id
+}
+
+// DeRegisterPodNetworkConnectReconciler removes a previously registered
+// PodNetwork CNC reconciler by ID.
+func (c *nadController) DeRegisterPodNetworkConnectReconciler(id uint64) {
+	c.Lock()
+	defer c.Unlock()
+	delete(c.podNetworkConnectReconcilers, id)
+}
+
 // notifyReconcilers enqueues the NAD key to all registered reconcilers
 // Must be called with nadController Mutex locked
 func (c *nadController) notifyReconcilers(key string) {
@@ -868,6 +983,24 @@ func (c *nadController) notifyNetworkRefReconcilers(node, networkName string) {
 	defer c.RUnlock()
 	for _, entry := range c.networkRefReconcilers {
 		entry.r.Reconcile(node, networkName)
+	}
+}
+
+func (c *nadController) notifyPodNetworkConnectReconcilers(networkNames []string) {
+	if len(networkNames) == 0 {
+		return
+	}
+
+	c.RLock()
+	reconcilers := make([]PodNetworkConnectReconciler, 0, len(c.podNetworkConnectReconcilers))
+	for _, entry := range c.podNetworkConnectReconcilers {
+		reconcilers = append(reconcilers, entry.r)
+	}
+	c.RUnlock()
+
+	sort.Strings(networkNames)
+	for _, reconciler := range reconcilers {
+		reconciler.ReconcilePodNetworkConnect(networkNames)
 	}
 }
 

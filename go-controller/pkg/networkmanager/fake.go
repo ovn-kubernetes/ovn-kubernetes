@@ -64,8 +64,12 @@ type FakeNetworkManager struct {
 	NADNetworks           map[string]util.NetInfo
 	Reconcilers           []reconcilerRegistration
 	NetworkRefReconcilers []networkRefReconcilerRegistration
-	nextID                uint64
-	nextNetworkRefID      uint64
+	// PodNetworkConnectedNetworks maps a network name to its direct CNC peers.
+	PodNetworkConnectedNetworks  map[string][]util.NetInfo
+	PodNetworkConnectReconcilers []podNetworkConnectReconcilerRegistration
+	nextID                       uint64
+	nextNetworkRefID             uint64
+	nextPodNetworkConnectID      uint64
 	// UDNNamespaces are a list of namespaces that require UDN for primary network
 	UDNNamespaces sets.Set[string]
 	// ActiveNodes tracks node activity per network for Dynamic UDN tests.
@@ -109,6 +113,60 @@ func (fnm *FakeNetworkManager) DeRegisterNetworkRefReconciler(id uint64) {
 			fnm.NetworkRefReconcilers = append(fnm.NetworkRefReconcilers[:i], fnm.NetworkRefReconcilers[i+1:]...)
 			return
 		}
+	}
+}
+
+func (fnm *FakeNetworkManager) RegisterPodNetworkConnectReconciler(r PodNetworkConnectReconciler) uint64 {
+	fnm.Lock()
+	defer fnm.Unlock()
+	fnm.nextPodNetworkConnectID++
+	id := fnm.nextPodNetworkConnectID
+	fnm.PodNetworkConnectReconcilers = append(fnm.PodNetworkConnectReconcilers,
+		podNetworkConnectReconcilerRegistration{id: id, r: r})
+	return id
+}
+
+func (fnm *FakeNetworkManager) DeRegisterPodNetworkConnectReconciler(id uint64) {
+	fnm.Lock()
+	defer fnm.Unlock()
+	for i, rec := range fnm.PodNetworkConnectReconcilers {
+		if rec.id == id {
+			fnm.PodNetworkConnectReconcilers = append(fnm.PodNetworkConnectReconcilers[:i],
+				fnm.PodNetworkConnectReconcilers[i+1:]...)
+			return
+		}
+	}
+}
+
+func (fnm *FakeNetworkManager) GetPodNetworkConnectedNetworks(networkName string) []util.NetInfo {
+	fnm.Lock()
+	defer fnm.Unlock()
+	connectedNetworks := fnm.PodNetworkConnectedNetworks[networkName]
+	result := make([]util.NetInfo, 0, len(connectedNetworks))
+	for _, netInfo := range connectedNetworks {
+		if netInfo != nil {
+			result = append(result, util.NewMutableNetInfo(netInfo))
+		}
+	}
+	return result
+}
+
+// SetPodNetworkConnectedNetworks updates direct CNC peers and notifies
+// registered test consumers.
+func (fnm *FakeNetworkManager) SetPodNetworkConnectedNetworks(networkName string, connectedNetworks ...util.NetInfo) {
+	fnm.Lock()
+	if fnm.PodNetworkConnectedNetworks == nil {
+		fnm.PodNetworkConnectedNetworks = map[string][]util.NetInfo{}
+	}
+	fnm.PodNetworkConnectedNetworks[networkName] = append([]util.NetInfo(nil), connectedNetworks...)
+	reconcilers := make([]PodNetworkConnectReconciler, 0, len(fnm.PodNetworkConnectReconcilers))
+	for _, entry := range fnm.PodNetworkConnectReconcilers {
+		reconcilers = append(reconcilers, entry.r)
+	}
+	fnm.Unlock()
+
+	for _, reconciler := range reconcilers {
+		reconciler.ReconcilePodNetworkConnect([]string{networkName})
 	}
 }
 

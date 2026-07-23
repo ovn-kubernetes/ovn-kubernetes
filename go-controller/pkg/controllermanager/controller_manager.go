@@ -313,7 +313,7 @@ func NewControllerManager(ovnClient *util.OVNClientset, wf *factory.WatchFactory
 		}
 	}
 	cm.addressSetManager = addresssetmanager.NewAddressSetManager(cm.watchFactory.PodCoreInformer(),
-		cm.watchFactory.NamespaceInformer(), cm.watchFactory.NodeCoreInformer(), cm.nbClient, cm.networkManager.Interface().GetNetworkNameForNADKey)
+		cm.watchFactory.NamespaceInformer(), cm.watchFactory.NodeCoreInformer(), cm.nbClient, cm.networkManager.Interface())
 
 	return cm, nil
 }
