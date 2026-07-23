@@ -436,6 +436,8 @@ type CNIConfig struct {
 	ConfDir string `gcfg:"conf-dir"`
 	// Plugin specifies the name of the CNI plugin
 	Plugin string `gcfg:"plugin"`
+	// CNIRequestTimeout overrides the default timeout for CNI requests when set.
+	CNIRequestTimeout time.Duration `gcfg:"cni-request-timeout"`
 }
 
 // KubernetesConfig holds Kubernetes-related parsed config file parameters and command-line overrides
@@ -2003,6 +2005,27 @@ func reconcileKubernetesAuthFields(k *KubernetesConfig, override *KubernetesConf
 	}
 }
 
+func buildCNIConfig(cli, file *config) error {
+	if err := overrideFields(&CNI, &file.CNI, &savedCNI); err != nil {
+		return err
+	}
+	if err := overrideFields(&CNI, &cli.CNI, &savedCNI); err != nil {
+		return err
+	}
+
+	if timeout, exists := os.LookupEnv("CNI_REQUEST_TIMEOUT"); exists && timeout != "" {
+		duration, err := time.ParseDuration(timeout)
+		if err != nil {
+			return fmt.Errorf("invalid CNI_REQUEST_TIMEOUT %q: %w", timeout, err)
+		}
+		if duration <= 0 {
+			return fmt.Errorf("invalid CNI_REQUEST_TIMEOUT %q: must be greater than zero", timeout)
+		}
+		CNI.CNIRequestTimeout = duration
+	}
+	return nil
+}
+
 func buildKubernetesConfig(exec kexec.Interface, cli, file *config, saPath string, defaults *Defaults) error {
 	// values for token, cacert, kubeconfig, api-server may be found in several places.
 	// Priority order (highest first): OVS config, command line options, config file,
@@ -2744,11 +2767,7 @@ func initConfigWithPath(ctx *cli.Context, exec kexec.Interface, saPath string, d
 		defaults = &Defaults{}
 	}
 
-	// Build config that needs no special processing
-	if err = overrideFields(&CNI, &cfg.CNI, &savedCNI); err != nil {
-		return "", err
-	}
-	if err = overrideFields(&CNI, &cliConfig.CNI, &savedCNI); err != nil {
+	if err = buildCNIConfig(&cliConfig, &cfg); err != nil {
 		return "", err
 	}
 

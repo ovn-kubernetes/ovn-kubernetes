@@ -318,6 +318,7 @@ var _ = Describe("Config Operations", func() {
 			gomega.Expect(IPFIX.CacheActiveTimeout).To(gomega.Equal(uint(60)))
 			gomega.Expect(CNI.ConfDir).To(gomega.Equal("/etc/cni/net.d"))
 			gomega.Expect(CNI.Plugin).To(gomega.Equal("ovn-k8s-cni-overlay"))
+			gomega.Expect(CNI.CNIRequestTimeout).To(gomega.BeZero())
 			gomega.Expect(Kubernetes.Kubeconfig).To(gomega.Equal(""))
 			gomega.Expect(Kubernetes.BootstrapKubeconfig).To(gomega.Equal(""))
 			gomega.Expect(Kubernetes.CertDir).To(gomega.Equal(""))
@@ -486,6 +487,30 @@ routing-table-id-start=2002
 		err = app.Run([]string{app.Name, "-config-file=" + cfgFile.Name()})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
+	})
+
+	It("uses CNI_REQUEST_TIMEOUT environment variable", func() {
+		GinkgoT().Setenv("CNI_REQUEST_TIMEOUT", "45s")
+
+		app.Action = func(ctx *cli.Context) error {
+			_, err := InitConfigSa(ctx, kexec.New(), tmpDir, nil)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(CNI.CNIRequestTimeout).To(gomega.Equal(45 * time.Second))
+			return nil
+		}
+		err := app.Run([]string{app.Name, "-config-file=" + cfgFile.Name()})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	})
+
+	It("rejects invalid CNI_REQUEST_TIMEOUT environment variable", func() {
+		GinkgoT().Setenv("CNI_REQUEST_TIMEOUT", "0s")
+
+		app.Action = func(ctx *cli.Context) error {
+			_, err := InitConfigSa(ctx, kexec.New(), tmpDir, nil)
+			return err
+		}
+		err := app.Run([]string{app.Name, "-config-file=" + cfgFile.Name()})
+		gomega.Expect(err).To(gomega.MatchError(`invalid CNI_REQUEST_TIMEOUT "0s": must be greater than zero`))
 	})
 
 	It("overrides defaults with config file options", func() {

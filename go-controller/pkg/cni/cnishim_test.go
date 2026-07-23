@@ -18,9 +18,36 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
+
+func TestCNIRequestTimeout(t *testing.T) {
+	require.NoError(t, config.PrepareTestConfig())
+	t.Cleanup(func() { require.NoError(t, config.PrepareTestConfig()) })
+
+	require.Equal(t, kubeletDefaultCRIOperationTimeout, cniRequestTimeout())
+	config.CNI.CNIRequestTimeout = 45 * time.Second
+	require.Equal(t, 45*time.Second, cniRequestTimeout())
+
+	for _, test := range []struct {
+		name    string
+		timeout string
+		want    time.Duration
+	}{
+		{name: "configured", timeout: "45s", want: 45 * time.Second},
+		{name: "missing", want: kubeletDefaultCRIOperationTimeout},
+		{name: "invalid", timeout: "invalid", want: kubeletDefaultCRIOperationTimeout},
+		{name: "zero", timeout: "0s", want: kubeletDefaultCRIOperationTimeout},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require.Equal(t, test.want, cniRequestTimeoutFromNetConf(&ovncnitypes.NetConf{
+				CNIRequestTimeout: test.timeout,
+			}))
+		})
+	}
+}
 
 func TestCmdAdd_PrivilegedMode(t *testing.T) {
 	// Setup: CNI server returns non-nil Result
