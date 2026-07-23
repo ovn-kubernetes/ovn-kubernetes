@@ -336,7 +336,7 @@ var _ = Describe("Node", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				config.OvnKubeNode.Mode = types.NodeModeFull
-				err = setupOVNNode(&node)
+				err = setupOVNNode(nil, &node)
 				Expect(err).NotTo(HaveOccurred())
 
 				Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
@@ -380,7 +380,7 @@ var _ = Describe("Node", func() {
 				_, err = config.InitConfig(ctx, fexec, nil)
 				Expect(err).NotTo(HaveOccurred())
 				config.Default.EncapPort = encapPort
-				err = setEncapPort(context.Background())
+				err = setEncapPort(context.Background(), nil)
 				Expect(err).NotTo(HaveOccurred())
 
 				Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
@@ -447,7 +447,7 @@ var _ = Describe("Node", func() {
 				config.Default.LFlowCacheLimit = 1000
 				config.Default.LFlowCacheLimitKb = 100000
 				config.OvnKubeNode.Mode = types.NodeModeFull
-				err = setupOVNNode(&node)
+				err = setupOVNNode(nil, &node)
 				Expect(err).NotTo(HaveOccurred())
 
 				Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
@@ -522,7 +522,7 @@ var _ = Describe("Node", func() {
 				config.Monitoring.IPFIXTargets = []config.HostPort{
 					{Host: &ipfixIP, Port: ipfixPort},
 				}
-				err = setupOVNNode(&node)
+				err = setupOVNNode(nil, &node)
 				Expect(err).NotTo(HaveOccurred())
 
 				Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
@@ -600,7 +600,7 @@ var _ = Describe("Node", func() {
 				config.IPFIX.CacheActiveTimeout = 123
 				config.IPFIX.CacheMaxFlows = 456
 				config.IPFIX.Sampling = 789
-				err = setupOVNNode(&node)
+				err = setupOVNNode(nil, &node)
 				Expect(err).NotTo(HaveOccurred())
 
 				Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
@@ -678,7 +678,7 @@ var _ = Describe("Node", func() {
 				config.IPFIX.Sampling = 0
 				Expect(err).NotTo(HaveOccurred())
 
-				err = setupOVNNode(&node)
+				err = setupOVNNode(nil, &node)
 				Expect(err).NotTo(HaveOccurred())
 
 				Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)

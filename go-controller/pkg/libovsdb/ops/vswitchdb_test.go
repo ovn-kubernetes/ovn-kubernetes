@@ -8,13 +8,64 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
+
+	"k8s.io/apimachinery/pkg/util/wait"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
 	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
+
+func TestTransactAndCheckAndWaitForVSwitchd(t *testing.T) {
+	ovsClient, cleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{OVSData: []libovsdbtest.TestData{
+		&vswitchd.OpenvSwitch{UUID: "root-ovs", NextCfg: 7, CurCfg: 7},
+	}})
+	if err != nil {
+		t.Fatalf("harness setup: %v", err)
+	}
+	t.Cleanup(cleanup.Cleanup)
+
+	applied := make(chan error, 1)
+	go func() {
+		applied <- wait.PollUntilContextTimeout(context.Background(), 10*time.Millisecond, time.Second, true,
+			func(context.Context) (bool, error) {
+				ovs, err := GetOpenvSwitch(ovsClient)
+				if err != nil || ovs.NextCfg != 8 {
+					return false, err
+				}
+				updated := &vswitchd.OpenvSwitch{UUID: ovs.UUID, CurCfg: ovs.NextCfg}
+				ops, err := ovsClient.Where(&vswitchd.OpenvSwitch{UUID: ovs.UUID}).Update(updated, &updated.CurCfg)
+				if err == nil {
+					_, err = TransactAndCheck(ovsClient, ops)
+				}
+				return err == nil, err
+			})
+	}()
+
+	ovs, err := GetOpenvSwitch(ovsClient)
+	if err != nil {
+		t.Fatalf("get Open_vSwitch: %v", err)
+	}
+	updated := &vswitchd.OpenvSwitch{UUID: ovs.UUID, ExternalIDs: map[string]string{"updated": "true"}}
+	ops, err := ovsClient.Where(&vswitchd.OpenvSwitch{UUID: updated.UUID}).Update(updated, &updated.ExternalIDs)
+	if err != nil {
+		t.Fatalf("build update operation: %v", err)
+	}
+	if err := TransactAndCheckAndWaitForVSwitchd(ovsClient, ops); err != nil {
+		t.Fatalf("transaction and wait failed: %v", err)
+	}
+	if err := <-applied; err != nil {
+		t.Fatalf("emulating ovs-vswitchd: %v", err)
+	}
+	ovs, err = GetOpenvSwitch(ovsClient)
+	if err != nil || ovs.NextCfg != 8 || ovs.CurCfg != 8 || ovs.ExternalIDs["updated"] != "true" {
+		t.Fatalf("Open_vSwitch after transaction = %+v, err=%v", ovs, err)
+	}
+}
 
 func TestGetPortBridge(t *testing.T) {
 	bridgeAUUID := buildNamedUUID()
@@ -258,6 +309,47 @@ func TestCreateOrUpdatePodPort(t *testing.T) {
 		}
 	})
 
+	t.Run("updates a provided MAC and preserves it when omitted", func(t *testing.T) {
+		existingIfaceUUID := buildNamedUUID()
+		existingPortUUID := buildNamedUUID()
+		oldMAC := "0a:58:0a:01:01:02"
+		newMAC := "0a:58:0a:01:01:03"
+		ovsClient, cleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
+			OVSData: []libovsdbtest.TestData{
+				&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{bridgeUUID}},
+				&vswitchd.Bridge{UUID: bridgeUUID, Name: "br-int", Ports: []string{existingPortUUID}},
+				&vswitchd.Port{UUID: existingPortUUID, Name: "mp0", Interfaces: []string{existingIfaceUUID}},
+				&vswitchd.Interface{UUID: existingIfaceUUID, Name: "mp0", Type: "internal", MAC: &oldMAC},
+			},
+		})
+		if err != nil {
+			t.Fatalf("harness setup: %v", err)
+		}
+		t.Cleanup(cleanup.Cleanup)
+
+		if err := CreateOrUpdatePodPort(ovsClient, "br-int", "mp0", &vswitchd.Port{}, &vswitchd.Interface{Type: "internal"}); err != nil {
+			t.Fatalf("CreateOrUpdatePodPort without MAC: %v", err)
+		}
+		got, err := GetOVSInterface(ovsClient, "mp0")
+		if err != nil {
+			t.Fatalf("GetOVSInterface: %v", err)
+		}
+		if got.MAC == nil || *got.MAC != oldMAC {
+			t.Fatalf("Interface.MAC = %v, want preserved MAC %s", got.MAC, oldMAC)
+		}
+
+		if err := CreateOrUpdatePodPort(ovsClient, "br-int", "mp0", &vswitchd.Port{}, &vswitchd.Interface{Type: "internal", MAC: &newMAC}); err != nil {
+			t.Fatalf("CreateOrUpdatePodPort with MAC: %v", err)
+		}
+		got, err = GetOVSInterface(ovsClient, "mp0")
+		if err != nil {
+			t.Fatalf("GetOVSInterface: %v", err)
+		}
+		if got.MAC == nil || *got.MAC != newMAC {
+			t.Fatalf("Interface.MAC = %v, want updated MAC %s", got.MAC, newMAC)
+		}
+	})
+
 	t.Run("updates port and removes selected interface external IDs in one transaction", func(t *testing.T) {
 		existingIfaceUUID := buildNamedUUID()
 		existingPortUUID := buildNamedUUID()
@@ -446,6 +538,31 @@ func TestCreateOrUpdatePodPort(t *testing.T) {
 			t.Errorf("vf0 owner = %q, want br-other", owner.Name)
 		}
 	})
+
+	t.Run("rejects interface already attached to a differently named port", func(t *testing.T) {
+		existingIfaceUUID := buildNamedUUID()
+		existingPortUUID := buildNamedUUID()
+		ovsClient, cleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
+			OVSData: []libovsdbtest.TestData{
+				&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{bridgeUUID}},
+				&vswitchd.Bridge{UUID: bridgeUUID, Name: "br-int", Ports: []string{existingPortUUID}},
+				&vswitchd.Port{UUID: existingPortUUID, Name: "bond0", Interfaces: []string{existingIfaceUUID}},
+				&vswitchd.Interface{UUID: existingIfaceUUID, Name: "vf0", Type: "system"},
+			},
+		})
+		if err != nil {
+			t.Fatalf("harness setup: %v", err)
+		}
+		t.Cleanup(cleanup.Cleanup)
+
+		err = CreateOrUpdatePodPort(ovsClient, "br-int", "vf0", &vswitchd.Port{}, &vswitchd.Interface{})
+		if err == nil {
+			t.Fatal("expected error when interface vf0 belongs to port bond0")
+		}
+		if _, err := GetOVSPort(ovsClient, "vf0"); !errors.Is(err, libovsdbclient.ErrNotFound) {
+			t.Fatalf("unexpected vf0 port after rejected transaction: %v", err)
+		}
+	})
 }
 
 func TestCreateOrUpdateNicBridge(t *testing.T) {
@@ -561,6 +678,32 @@ func TestCreateOrUpdateNicBridge(t *testing.T) {
 		}
 		if uplinkPort.OtherConfig["transient"] != "true" {
 			t.Errorf("uplink Port.OtherConfig = %v, want transient=true", uplinkPort.OtherConfig)
+		}
+	})
+
+	t.Run("rejects uplink interface already attached to a differently named port", func(t *testing.T) {
+		bridgeUUID := buildNamedUUID()
+		bondPortUUID := buildNamedUUID()
+		uplinkIfaceUUID := buildNamedUUID()
+		ovsClient, cleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
+			OVSData: []libovsdbtest.TestData{
+				&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{bridgeUUID}},
+				&vswitchd.Bridge{UUID: bridgeUUID, Name: "br-existing", Ports: []string{bondPortUUID}},
+				&vswitchd.Port{UUID: bondPortUUID, Name: "bond0", Interfaces: []string{uplinkIfaceUUID}},
+				&vswitchd.Interface{UUID: uplinkIfaceUUID, Name: "eth0", Type: "system"},
+			},
+		})
+		if err != nil {
+			t.Fatalf("harness setup: %v", err)
+		}
+		t.Cleanup(cleanup.Cleanup)
+
+		err = CreateOrUpdateNicBridge(ovsClient, "breth0", "eth0", "00:11:22:33:44:55")
+		if err == nil {
+			t.Fatal("expected error when interface eth0 belongs to port bond0")
+		}
+		if _, err := GetBridge(ovsClient, "breth0"); !errors.Is(err, libovsdbclient.ErrNotFound) {
+			t.Fatalf("unexpected breth0 bridge after rejected transaction: %v", err)
 		}
 	})
 }
@@ -833,6 +976,24 @@ func TestDeletePortWithInterfaces(t *testing.T) {
 			},
 		},
 		{
+			desc:      "resolves an interface name to its containing port",
+			portName:  "del-iface",
+			expectErr: false,
+			initialOvs: libovsdbtest.TestSetup{
+				OVSData: []libovsdbtest.TestData{
+					ovs.DeepCopy(), bridge.DeepCopy(),
+					&vswitchd.Port{UUID: portUUID, Name: "bond0", Interfaces: []string{ifaceUUID}},
+					&vswitchd.Interface{UUID: ifaceUUID, Name: "del-iface", Type: "system"},
+				},
+			},
+			expectedOvs: libovsdbtest.TestSetup{
+				OVSData: []libovsdbtest.TestData{
+					ovs.DeepCopy(),
+					&vswitchd.Bridge{UUID: bridgeUUID, Name: "br-int"},
+				},
+			},
+		},
+		{
 			desc:      "is a no-op when the port lives on a different bridge",
 			portName:  "del-port",
 			expectErr: false,
@@ -994,6 +1155,23 @@ func TestDeleteBridge(t *testing.T) {
 			expectedOvs: libovsdbtest.TestSetup{
 				OVSData: []libovsdbtest.TestData{
 					&vswitchd.OpenvSwitch{UUID: "root-ovs"},
+				},
+			},
+		},
+		{
+			desc:       "deletes flow sample collectors that reference the bridge",
+			bridgeName: "br-doomed",
+			initialOvs: libovsdbtest.TestSetup{
+				OVSData: []libovsdbtest.TestData{
+					ovs.DeepCopy(), otherBridge.DeepCopy(), bridge.DeepCopy(),
+					port1.DeepCopy(), port2.DeepCopy(), iface1.DeepCopy(), iface2.DeepCopy(),
+					&vswitchd.FlowSampleCollectorSet{UUID: buildNamedUUID(), ID: 42, Bridge: bridgeUUID},
+				},
+			},
+			expectedOvs: libovsdbtest.TestSetup{
+				OVSData: []libovsdbtest.TestData{
+					&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{otherBridgeUUID}},
+					otherBridge.DeepCopy(),
 				},
 			},
 		},
@@ -1173,5 +1351,155 @@ func TestRemoveOpenvSwitchExternalIDs(t *testing.T) {
 				t.Fatalf("matcher encountered error: %v", err)
 			}
 		})
+	}
+}
+
+func TestUpdateOpenvSwitchSettingsPreservesUnspecifiedKeys(t *testing.T) {
+	ovsClient, cleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{OVSData: []libovsdbtest.TestData{
+		&vswitchd.OpenvSwitch{
+			UUID:        "root-ovs",
+			ExternalIDs: map[string]string{"keep": "external", "replace": "old"},
+			OtherConfig: map[string]string{"keep": "other", "replace": "old"},
+		},
+	}})
+	if err != nil {
+		t.Fatalf("failed to set up test harness: %v", err)
+	}
+	t.Cleanup(cleanup.Cleanup)
+
+	if err := UpdateOpenvSwitchSettings(ovsClient,
+		map[string]string{"replace": "new", "add": "external"},
+		map[string]string{"replace": "new", "add": "other"}); err != nil {
+		t.Fatalf("UpdateOpenvSwitchSettings() error = %v", err)
+	}
+	ovs, err := GetOpenvSwitch(ovsClient)
+	if err != nil {
+		t.Fatalf("GetOpenvSwitch() error = %v", err)
+	}
+	for key, expected := range map[string]string{"keep": "external", "replace": "new", "add": "external"} {
+		if ovs.ExternalIDs[key] != expected {
+			t.Fatalf("external_ids[%q] = %q, want %q", key, ovs.ExternalIDs[key], expected)
+		}
+	}
+	for key, expected := range map[string]string{"keep": "other", "replace": "new", "add": "other"} {
+		if ovs.OtherConfig[key] != expected {
+			t.Fatalf("other_config[%q] = %q, want %q", key, ovs.OtherConfig[key], expected)
+		}
+	}
+}
+
+func TestCreateOrUpdateBridge(t *testing.T) {
+	ovsClient, cleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{OVSData: []libovsdbtest.TestData{
+		&vswitchd.OpenvSwitch{UUID: "root-ovs"},
+	}})
+	if err != nil {
+		t.Fatalf("failed to set up test harness: %v", err)
+	}
+	t.Cleanup(cleanup.Cleanup)
+
+	if err := CreateOrUpdateBridge(ovsClient, "br-ext", vswitchd.BridgeFailModeStandalone, 1400); err != nil {
+		t.Fatalf("CreateOrUpdateBridge() create error = %v", err)
+	}
+	bridge, err := GetBridge(ovsClient, "br-ext")
+	if err != nil {
+		t.Fatalf("GetBridge() error = %v", err)
+	}
+	if bridge.FailMode == nil || *bridge.FailMode != vswitchd.BridgeFailModeStandalone {
+		t.Fatalf("bridge fail mode = %v, want %q", bridge.FailMode, vswitchd.BridgeFailModeStandalone)
+	}
+	port, err := GetOVSPort(ovsClient, "br-ext")
+	if err != nil {
+		t.Fatalf("GetOVSPort() error = %v", err)
+	}
+	if len(port.Interfaces) != 1 {
+		t.Fatalf("bridge port interfaces = %v, want one interface", port.Interfaces)
+	}
+	iface, err := GetOVSInterface(ovsClient, "br-ext")
+	if err != nil {
+		t.Fatalf("GetOVSInterface() error = %v", err)
+	}
+	if iface.Type != "internal" || iface.MTURequest == nil || *iface.MTURequest != 1400 {
+		t.Fatalf("bridge interface = %#v, want type internal and MTU 1400", iface)
+	}
+	ovs, err := GetOpenvSwitch(ovsClient)
+	if err != nil {
+		t.Fatalf("GetOpenvSwitch() error = %v", err)
+	}
+	if len(ovs.Bridges) != 1 || ovs.Bridges[0] != bridge.UUID {
+		t.Fatalf("Open_vSwitch bridges = %v, want %q", ovs.Bridges, bridge.UUID)
+	}
+
+	if err := UpdateBridgeOtherConfig(ovsClient, "br-ext", map[string]string{"keep": "value"}); err != nil {
+		t.Fatalf("UpdateBridgeOtherConfig() error = %v", err)
+	}
+	if err := CreateOrUpdateBridge(ovsClient, "br-ext", vswitchd.BridgeFailModeSecure, 1450); err != nil {
+		t.Fatalf("CreateOrUpdateBridge() update error = %v", err)
+	}
+	bridge, err = GetBridge(ovsClient, "br-ext")
+	if err != nil {
+		t.Fatalf("GetBridge() after update error = %v", err)
+	}
+	if bridge.FailMode == nil || *bridge.FailMode != vswitchd.BridgeFailModeSecure || bridge.OtherConfig["keep"] != "value" {
+		t.Fatalf("updated bridge = %#v", bridge)
+	}
+	iface, err = GetOVSInterface(ovsClient, "br-ext")
+	if err != nil {
+		t.Fatalf("GetOVSInterface() after update error = %v", err)
+	}
+	if iface.MTURequest == nil || *iface.MTURequest != 1450 {
+		t.Fatalf("updated MTU = %v, want 1450", iface.MTURequest)
+	}
+}
+
+func TestSetBridgeFlowCollectors(t *testing.T) {
+	bridgeUUID := buildNamedUUID()
+	ovsClient, cleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{OVSData: []libovsdbtest.TestData{
+		&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{bridgeUUID}},
+		&vswitchd.Bridge{UUID: bridgeUUID, Name: "br-int"},
+	}})
+	if err != nil {
+		t.Fatalf("failed to set up test harness: %v", err)
+	}
+	t.Cleanup(cleanup.Cleanup)
+
+	agent := "ovn-k8s-mp0"
+	activeTimeout := 60
+	if err := SetBridgeFlowCollectors(ovsClient, "br-int",
+		&vswitchd.NetFlow{Targets: []string{"10.0.0.1:2055"}, ActiveTimeout: 60},
+		&vswitchd.SFlow{Targets: []string{"10.0.0.2:6343"}, Agent: &agent},
+		&vswitchd.IPFIX{Targets: []string{"10.0.0.3:4739"}, CacheActiveTimeout: &activeTimeout}); err != nil {
+		t.Fatalf("SetBridgeFlowCollectors() error = %v", err)
+	}
+	bridge, err := GetBridge(ovsClient, "br-int")
+	if err != nil {
+		t.Fatalf("GetBridge() error = %v", err)
+	}
+	if bridge.Netflow == nil || bridge.Sflow == nil || bridge.IPFIX == nil {
+		t.Fatalf("collector references were not all set: %#v", bridge)
+	}
+	for table, uuid := range map[string]string{
+		vswitchd.NetFlowTable: *bridge.Netflow,
+		vswitchd.SFlowTable:   *bridge.Sflow,
+		vswitchd.IPFIXTable:   *bridge.IPFIX,
+	} {
+		results, err := TransactAndCheck(ovsClient, []ovsdb.Operation{{
+			Op:    ovsdb.OperationSelect,
+			Table: table,
+			Where: []ovsdb.Condition{ovsdb.NewCondition("_uuid", ovsdb.ConditionEqual, ovsdb.UUID{GoUUID: uuid})},
+		}})
+		if err != nil || len(results) != 1 || len(results[0].Rows) != 1 {
+			t.Fatalf("collector %s/%s not present, results %#v, error %v", table, uuid, results, err)
+		}
+	}
+
+	if err := SetBridgeFlowCollectors(ovsClient, "br-int", nil, nil, nil); err != nil {
+		t.Fatalf("clearing collectors failed: %v", err)
+	}
+	bridge, err = GetBridge(ovsClient, "br-int")
+	if err != nil {
+		t.Fatalf("GetBridge() after clear error = %v", err)
+	}
+	if bridge.Netflow != nil || bridge.Sflow != nil || bridge.IPFIX != nil {
+		t.Fatalf("collector references were not cleared: %#v", bridge)
 	}
 }
