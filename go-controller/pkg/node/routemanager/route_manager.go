@@ -194,6 +194,11 @@ func (c *Controller) hasRouteInStore(r *netlink.Route) bool {
 	return route != nil && util.RouteEqual(r, route)
 }
 
+// ipv6DefaultRouteMetric is the metric the kernel assigns to IPv6 routes added
+// without an explicit one (IP6_RT_PRIO_USER in include/net/ip6_route.h). IPv4
+// routes default to metric 0.
+const ipv6DefaultRouteMetric = 1024
+
 func validateAndNormalizeRoute(r *netlink.Route) (*netlink.Route, error) {
 	if r == nil {
 		return nil, fmt.Errorf("nil route provided")
@@ -201,7 +206,26 @@ func validateAndNormalizeRoute(r *netlink.Route) (*netlink.Route, error) {
 	if r.Table == unix.RT_TABLE_UNSPEC {
 		r.Table = unix.RT_TABLE_MAIN
 	}
+	// The kernel assigns IPv6 routes a default metric of 1024 when none is
+	// given, so a store key derived from Priority 0 would never match the
+	// same route as reported by the kernel in events and dumps, breaking
+	// event-driven restore and making sync() re-add the route every period.
+	// Normalize the priority so the store key matches the kernel's view.
+	if r.Priority == 0 && isIPv6Route(r) {
+		r.Priority = ipv6DefaultRouteMetric
+	}
 	return r, nil
+}
+
+func isIPv6Route(r *netlink.Route) bool {
+	switch {
+	case r.Dst != nil && r.Dst.IP != nil:
+		return r.Dst.IP.To4() == nil
+	case r.Gw != nil:
+		return r.Gw.To4() == nil
+	default:
+		return r.Family == netlink.FAMILY_V6
+	}
 }
 
 func keyFromNetlink(r *netlink.Route) key {
