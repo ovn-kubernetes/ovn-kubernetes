@@ -235,6 +235,24 @@ func (_m *AddressSet) GetName() string {
 	return r0
 }
 
+// ApplyAddressChanges provides a mock function with given fields: toAdd, toRemove
+func (_m *AddressSet) ApplyAddressChanges(toAdd, toRemove []string) error {
+	ret := _m.Called(toAdd, toRemove)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ApplyAddressChanges")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func([]string, []string) error); ok {
+		r0 = rf(toAdd, toRemove)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
 // SetAddresses provides a mock function with given fields: addresses
 func (_m *AddressSet) SetAddresses(addresses []string) error {
 	ret := _m.Called(addresses)

@@ -312,8 +312,11 @@ func NewControllerManager(ovnClient *util.OVNClientset, wf *factory.WatchFactory
 			cm.routeImportManager = routeimport.New(config.Default.Zone, cm.nbClient, nil)
 		}
 	}
-	cm.addressSetManager = addresssetmanager.NewAddressSetManager(cm.watchFactory.PodCoreInformer(),
+	cm.addressSetManager, err = addresssetmanager.NewAddressSetManager(cm.watchFactory.PodCoreInformer(),
 		cm.watchFactory.NamespaceInformer(), cm.watchFactory.NodeCoreInformer(), cm.nbClient, cm.networkManager.Interface().GetNetworkNameForNADKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create address set manager: %w", err)
+	}
 
 	return cm, nil
 }
