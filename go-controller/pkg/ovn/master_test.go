@@ -800,6 +800,9 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 				err = condition(oc)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
+				if oc.isPodNetworkAdvertisedAtNode(node1.Name) {
+					gomega.Expect(ConfigureAdvertisedNetworkIsolation(nbClient)).To(gomega.Succeed())
+				}
 				startDefaultNodeController(oc)
 				gomega.Eventually(func() error {
 					_, err := libovsdbops.GetLogicalRouter(nbClient, &nbdb.LogicalRouter{
