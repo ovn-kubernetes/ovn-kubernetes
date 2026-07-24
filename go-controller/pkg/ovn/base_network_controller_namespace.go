@@ -150,6 +150,9 @@ func (bnc *BaseNetworkController) syncNamespaces(namespaces []interface{}) error
 		if !ok {
 			return fmt.Errorf("spurious object in syncNamespaces: %v", nsInterface)
 		}
+		if bnc.shouldFilterNamespace(ns.Name) {
+			continue
+		}
 		expectedNs[ns.Name] = true
 		if bnc.multicastSupport && isNamespaceMulticastEnabled(ns.Annotations) {
 			nsWithMulticast[ns.Name] = true
