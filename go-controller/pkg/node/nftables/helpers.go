@@ -13,8 +13,10 @@ import (
 )
 
 const OVNKubernetesNFTablesName = "ovn-kubernetes"
+const OVNKubernetesEgressIPNFTablesName = "ovn-kubernetes-egressip"
 
 var nftHelper knftables.Interface
+var nftEgressIPHelper knftables.Interface
 
 // SetFakeNFTablesHelper creates a fake knftables.Interface
 func SetFakeNFTablesHelper() *knftables.Fake {
@@ -45,6 +47,30 @@ func GetNFTablesHelper() (knftables.Interface, error) {
 		nftHelper = nft
 	}
 	return nftHelper, nil
+}
+
+// SetFakeEgressIPNFTablesHelper creates a fake knftables.Interface for egress IP with NetDev family
+func SetFakeEgressIPNFTablesHelper() *knftables.Fake {
+	fake := knftables.NewFake(knftables.NetDevFamily, OVNKubernetesEgressIPNFTablesName)
+	tx := fake.NewTransaction()
+	tx.Add(&knftables.Table{})
+	_ = fake.Run(context.TODO(), tx)
+
+	nftEgressIPHelper = fake
+	return fake
+}
+
+// GetEgressIPNFTablesHelper returns a knftables.Interface for egress IP with NetDev family.
+// If SetFakeEgressIPNFTablesHelper has not been called, it will create a "real" knftables.Interface
+func GetEgressIPNFTablesHelper() (knftables.Interface, error) {
+	if nftEgressIPHelper == nil {
+		nft, err := knftables.New(knftables.NetDevFamily, OVNKubernetesEgressIPNFTablesName)
+		if err != nil {
+			return nil, err
+		}
+		nftEgressIPHelper = nft
+	}
+	return nftEgressIPHelper, nil
 }
 
 // CleanupNFTables cleans up all ovn-kubernetes NFTables data, on ovnkube-node daemonset

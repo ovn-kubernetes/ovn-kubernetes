@@ -40,6 +40,7 @@ type Gateway interface {
 	Start() error
 	GetGatewayBridgeIface() string
 	GetGatewayIface() string
+	GetUplinkName() string
 	SetDefaultGatewayBridgeMAC(addr net.HardwareAddr)
 	SetDefaultPodNetworkAdvertised(bool)
 	SetDefaultBridgeGARPDropFlows(bool)
@@ -512,6 +513,14 @@ func (g *gateway) GetDefaultPodNetworkAdvertised() bool {
 		return false
 	}
 	return g.openflowManager.defaultBridge.GetNetworkConfig(types.DefaultNetworkName).Advertised.Load()
+}
+
+// GetUplinkName returns the physical uplink interface name
+func (g *gateway) GetUplinkName() string {
+	if config.IsModeDPUHost() {
+		return ""
+	}
+	return g.openflowManager.defaultBridge.GetUplinkName()
 }
 
 // SetDefaultBridgeGARPDropFlows will enable flows to drop GARPs if the openflow
