@@ -49,12 +49,11 @@ func (pbr *PolicyBasedRoutesManager) AddSameNodeIPPolicy(nodeName, mgmtPortIP st
 		return fmt.Errorf("invalid other host address(es): %v", otherHostAddrs)
 	}
 	l3Prefix := getIPCIDRPrefix(hostIfCIDR)
+	inport := pbr.netInfo.GetNetworkScopedRouterToSwitchPortName(nodeName)
+	networkScopedSwitchName := pbr.netInfo.GetNetworkScopedSwitchName(nodeName)
 	matches := sets.New[string]()
 	for _, hostIP := range append(otherHostAddrs, hostIfCIDR.IP.String()) {
-		// embed nodeName as comment so that it is easier to delete these rules later on.
-		// logical router policy doesn't support external_ids to stash metadata
-		networkScopedSwitchName := pbr.netInfo.GetNetworkScopedSwitchName(nodeName)
-		matchStr := generateNodeIPMatch(networkScopedSwitchName, l3Prefix, hostIP)
+		matchStr := generateNodeIPMatch(inport, l3Prefix, hostIP, networkScopedSwitchName)
 		matches = matches.Insert(matchStr)
 	}
 
@@ -262,8 +261,8 @@ func (pbr *PolicyBasedRoutesManager) createPolicyBasedRoutes(match, priority, ne
 	return nil
 }
 
-func generateNodeIPMatch(switchName, ipPrefix, hostIP string) string {
-	return fmt.Sprintf(`inport == "%s%s" && %s.dst == %s /* %s */`, ovntypes.RouterToSwitchPrefix, switchName, ipPrefix, hostIP, switchName)
+func generateNodeIPMatch(inport, ipPrefix, hostIP, switchName string) string {
+	return fmt.Sprintf(`inport == "%s" && %s.dst == %s /* %s */`, inport, ipPrefix, hostIP, switchName)
 }
 
 func generateHostCIDRMatch(ipPrefix, nodePrimaryCIDRPrefix, clusterPodSubnetPrefix string) string {

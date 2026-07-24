@@ -170,7 +170,7 @@ func TestAddSameNodeIPPolicy(t *testing.T) {
 				&nbdb.LogicalRouterPolicy{
 					UUID:     "node-ip-lrp-uuid",
 					Priority: nodeSubNetPrio,
-					Match:    generateNodeIPMatch(cdnL3Network.info.GetNetworkScopedSwitchName(node1Name), v4Prefix, node1HostIPv4Str),
+					Match:    generateNodeIPMatch(cdnL3Network.info.GetNetworkScopedRouterToSwitchPortName(node1Name), v4Prefix, node1HostIPv4Str, cdnL3Network.info.GetNetworkScopedSwitchName(node1Name)),
 					Action:   nbdb.LogicalRouterPolicyActionReroute,
 					Nexthops: []string{node1CDNMgntIPv4Str},
 				},
@@ -197,14 +197,14 @@ func TestAddSameNodeIPPolicy(t *testing.T) {
 				&nbdb.LogicalRouterPolicy{
 					UUID:     "node-ip-lrp-uuid",
 					Priority: nodeSubNetPrio,
-					Match:    generateNodeIPMatch(cdnL3Network.info.GetNetworkScopedSwitchName(node1Name), v4Prefix, node1HostIPv4Str),
+					Match:    generateNodeIPMatch(cdnL3Network.info.GetNetworkScopedRouterToSwitchPortName(node1Name), v4Prefix, node1HostIPv4Str, cdnL3Network.info.GetNetworkScopedSwitchName(node1Name)),
 					Action:   nbdb.LogicalRouterPolicyActionReroute,
 					Nexthops: []string{node1CDNMgntIPv4Str},
 				},
 				&nbdb.LogicalRouterPolicy{
 					UUID:     "node-ip2-lrp-uuid",
 					Priority: nodeSubNetPrio,
-					Match:    generateNodeIPMatch(cdnL3Network.info.GetNetworkScopedSwitchName(node1Name), v4Prefix, node1HostOtherAddrIPv4Str),
+					Match:    generateNodeIPMatch(cdnL3Network.info.GetNetworkScopedRouterToSwitchPortName(node1Name), v4Prefix, node1HostOtherAddrIPv4Str, cdnL3Network.info.GetNetworkScopedSwitchName(node1Name)),
 					Action:   nbdb.LogicalRouterPolicyActionReroute,
 					Nexthops: []string{node1CDNMgntIPv4Str},
 				},
@@ -245,7 +245,7 @@ func TestAddSameNodeIPPolicy(t *testing.T) {
 				&nbdb.LogicalRouterPolicy{
 					UUID:     "node-ip-lrp-uuid",
 					Priority: nodeSubNetPrio,
-					Match:    generateNodeIPMatch(cdnL3Network.info.GetNetworkScopedSwitchName(node1Name), v6Prefix, node1HostIPv6Str),
+					Match:    generateNodeIPMatch(cdnL3Network.info.GetNetworkScopedRouterToSwitchPortName(node1Name), v6Prefix, node1HostIPv6Str, cdnL3Network.info.GetNetworkScopedSwitchName(node1Name)),
 					Action:   nbdb.LogicalRouterPolicyActionReroute,
 					Nexthops: []string{node1CDNMgntIPv6Str},
 				},
@@ -278,14 +278,14 @@ func TestAddSameNodeIPPolicy(t *testing.T) {
 				&nbdb.LogicalRouterPolicy{
 					UUID:     "node-ip-lrp-v4-uuid",
 					Priority: nodeSubNetPrio,
-					Match:    generateNodeIPMatch(cdnL3Network.info.GetNetworkScopedSwitchName(node1Name), v4Prefix, node1HostIPv4Str),
+					Match:    generateNodeIPMatch(cdnL3Network.info.GetNetworkScopedRouterToSwitchPortName(node1Name), v4Prefix, node1HostIPv4Str, cdnL3Network.info.GetNetworkScopedSwitchName(node1Name)),
 					Action:   nbdb.LogicalRouterPolicyActionReroute,
 					Nexthops: []string{node1CDNMgntIPv4Str},
 				},
 				&nbdb.LogicalRouterPolicy{
 					UUID:     "node-ip-lrp-v6-uuid",
 					Priority: nodeSubNetPrio,
-					Match:    generateNodeIPMatch(cdnL3Network.info.GetNetworkScopedSwitchName(node1Name), v6Prefix, node1HostIPv6Str),
+					Match:    generateNodeIPMatch(cdnL3Network.info.GetNetworkScopedRouterToSwitchPortName(node1Name), v6Prefix, node1HostIPv6Str, cdnL3Network.info.GetNetworkScopedSwitchName(node1Name)),
 					Action:   nbdb.LogicalRouterPolicyActionReroute,
 					Nexthops: []string{node1CDNMgntIPv6Str},
 				},
@@ -323,14 +323,14 @@ func TestAddSameNodeIPPolicy(t *testing.T) {
 				&nbdb.LogicalRouterPolicy{
 					UUID:     "node-ip-lrp-v4-uuid",
 					Priority: nodeSubNetPrio,
-					Match:    generateNodeIPMatch(cdnL3Network.info.GetNetworkScopedSwitchName(node1Name), v4Prefix, node1HostIPv4Str),
+					Match:    generateNodeIPMatch(cdnL3Network.info.GetNetworkScopedRouterToSwitchPortName(node1Name), v4Prefix, node1HostIPv4Str, cdnL3Network.info.GetNetworkScopedSwitchName(node1Name)),
 					Action:   nbdb.LogicalRouterPolicyActionReroute,
 					Nexthops: []string{node1CDNMgntIPv4Str},
 				},
 				&nbdb.LogicalRouterPolicy{
 					UUID:     "node-ip-lrp-v6-uuid",
 					Priority: nodeSubNetPrio,
-					Match:    generateNodeIPMatch(udnL3Network.info.GetNetworkScopedSwitchName(node1Name), v6Prefix, node1HostIPv6Str),
+					Match:    generateNodeIPMatch(udnL3Network.info.GetNetworkScopedRouterToSwitchPortName(node1Name), v6Prefix, node1HostIPv6Str, udnL3Network.info.GetNetworkScopedSwitchName(node1Name)),
 					Action:   nbdb.LogicalRouterPolicyActionReroute,
 					Nexthops: []string{node1UDNMgntIPv6Str},
 					ExternalIDs: map[string]string{
@@ -355,7 +355,7 @@ func TestAddSameNodeIPPolicy(t *testing.T) {
 				&nbdb.LogicalRouterPolicy{
 					UUID:     "node-ip-lrp-uuid",
 					Priority: nodeSubNetPrio,
-					Match:    generateNodeIPMatch(cdnL3Network.info.GetNetworkScopedSwitchName(node1Name), v4Prefix, node1HostIPv4Str),
+					Match:    generateNodeIPMatch(cdnL3Network.info.GetNetworkScopedRouterToSwitchPortName(node1Name), v4Prefix, node1HostIPv4Str, cdnL3Network.info.GetNetworkScopedSwitchName(node1Name)),
 					Action:   nbdb.LogicalRouterPolicyActionReroute,
 					Nexthops: []string{node1CDNMgntIPv4Str},
 				})},
@@ -368,7 +368,7 @@ func TestAddSameNodeIPPolicy(t *testing.T) {
 				&nbdb.LogicalRouterPolicy{
 					UUID:     "node-ip-lrp-uuid",
 					Priority: nodeSubNetPrio,
-					Match:    generateNodeIPMatch(cdnL3Network.info.GetNetworkScopedSwitchName(node1Name), v4Prefix, node1HostIPv4Str),
+					Match:    generateNodeIPMatch(cdnL3Network.info.GetNetworkScopedRouterToSwitchPortName(node1Name), v4Prefix, node1HostIPv4Str, cdnL3Network.info.GetNetworkScopedSwitchName(node1Name)),
 					Action:   nbdb.LogicalRouterPolicyActionReroute,
 					Nexthops: []string{node1CDNMgntIPv4Str},
 				},
@@ -389,7 +389,7 @@ func TestAddSameNodeIPPolicy(t *testing.T) {
 				&nbdb.LogicalRouterPolicy{
 					UUID:     "node-ip-lrp-uuid",
 					Priority: nodeSubNetPrio,
-					Match:    generateNodeIPMatch(cdnL3Network.info.GetNetworkScopedSwitchName(node1Name), v4Prefix, node1HostIPv4Str),
+					Match:    generateNodeIPMatch(cdnL3Network.info.GetNetworkScopedRouterToSwitchPortName(node1Name), v4Prefix, node1HostIPv4Str, cdnL3Network.info.GetNetworkScopedSwitchName(node1Name)),
 					Action:   nbdb.LogicalRouterPolicyActionReroute,
 					Nexthops: []string{node1CDNMgntIPv4Str},
 				})},
@@ -402,7 +402,7 @@ func TestAddSameNodeIPPolicy(t *testing.T) {
 				&nbdb.LogicalRouterPolicy{
 					UUID:     "node-ip-lrp-uuid",
 					Priority: nodeSubNetPrio,
-					Match:    generateNodeIPMatch(cdnL3Network.info.GetNetworkScopedSwitchName(node1Name), v4Prefix, node1HostIPv4Str),
+					Match:    generateNodeIPMatch(cdnL3Network.info.GetNetworkScopedRouterToSwitchPortName(node1Name), v4Prefix, node1HostIPv4Str, cdnL3Network.info.GetNetworkScopedSwitchName(node1Name)),
 					Action:   nbdb.LogicalRouterPolicyActionReroute,
 					Nexthops: []string{node1CDNMgntIPv4Str},
 				},
@@ -430,7 +430,7 @@ func TestAddSameNodeIPPolicy(t *testing.T) {
 				&nbdb.LogicalRouterPolicy{
 					UUID:     "node-ip-lrp-uuid",
 					Priority: nodeSubNetPrio,
-					Match:    generateNodeIPMatch(cdnL3Network.info.GetNetworkScopedSwitchName(node1Name), v4Prefix, node1HostIPv4Str),
+					Match:    generateNodeIPMatch(cdnL3Network.info.GetNetworkScopedRouterToSwitchPortName(node1Name), v4Prefix, node1HostIPv4Str, cdnL3Network.info.GetNetworkScopedSwitchName(node1Name)),
 					Action:   nbdb.LogicalRouterPolicyActionReroute,
 					Nexthops: []string{node1CDNMgntIPv4Str},
 				}),
@@ -449,14 +449,14 @@ func TestAddSameNodeIPPolicy(t *testing.T) {
 				&nbdb.LogicalRouterPolicy{
 					UUID:     "node-ip-lrp-uuid",
 					Priority: nodeSubNetPrio,
-					Match:    generateNodeIPMatch(cdnL3Network.info.GetNetworkScopedSwitchName(node1Name), v4Prefix, node1HostIPv4Str),
+					Match:    generateNodeIPMatch(cdnL3Network.info.GetNetworkScopedRouterToSwitchPortName(node1Name), v4Prefix, node1HostIPv4Str, cdnL3Network.info.GetNetworkScopedSwitchName(node1Name)),
 					Action:   nbdb.LogicalRouterPolicyActionReroute,
 					Nexthops: []string{node1CDNMgntIPv4Str},
 				},
 				&nbdb.LogicalRouterPolicy{
 					UUID:     "node-ip-lrp2-uuid",
 					Priority: nodeSubNetPrio,
-					Match:    generateNodeIPMatch(udnL3Network.info.GetNetworkScopedSwitchName(node1Name), v4Prefix, node1HostIPv4Str),
+					Match:    generateNodeIPMatch(udnL3Network.info.GetNetworkScopedRouterToSwitchPortName(node1Name), v4Prefix, node1HostIPv4Str, udnL3Network.info.GetNetworkScopedSwitchName(node1Name)),
 					Action:   nbdb.LogicalRouterPolicyActionReroute,
 					Nexthops: []string{node1UDNMgntIPv4Str},
 					ExternalIDs: map[string]string{
