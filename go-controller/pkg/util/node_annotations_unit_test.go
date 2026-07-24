@@ -14,7 +14,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
@@ -966,6 +969,36 @@ func TestParseNodeManagementPortAnnotation(t *testing.T) {
 				require.NoError(t, err)
 				assert.True(t, reflect.DeepEqual(mpDetails, tc.expectedOutput))
 			}
+		})
+	}
+}
+
+func TestIsNodeAnnotationPatchRetryable(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{
+			name:     "conflict error is retryable",
+			err:      apierrors.NewConflict(schema.GroupResource{Resource: "nodes"}, "node1", fmt.Errorf("conflict")),
+			expected: true,
+		},
+		{
+			name:     "invalid error is retryable (JSON Patch test failure)",
+			err:      apierrors.NewInvalid(schema.GroupKind{Group: "", Kind: "Node"}, "node1", field.ErrorList{field.Invalid(field.NewPath("metadata"), nil, "test failed")}),
+			expected: true,
+		},
+		{
+			name:     "plain error is not retryable",
+			err:      fmt.Errorf("plain error"),
+			expected: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.expected, IsNodeAnnotationPatchRetryable(tc.err))
 		})
 	}
 }

@@ -1082,7 +1082,7 @@ func (ncc *networkClusterController) clearInitialNodeNetworkUnavailableCondition
 					condition.Reason = "RouteCreated"
 					condition.Message = "ovn-kube cleared kubelet-set NoRouteCreated"
 					condition.LastTransitionTime = metav1.Now()
-					if err = ncc.kube.UpdateNodeStatus(node); err == nil {
+					if err = ncc.kube.PatchNodeStatus(oldNode, node); err == nil {
 						cleared = true
 					}
 				}

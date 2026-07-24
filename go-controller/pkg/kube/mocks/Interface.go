@@ -145,6 +145,42 @@ func (_m *Interface) PatchNode(old *corev1.Node, new *corev1.Node) error {
 	return r0
 }
 
+// PatchNodeStatus provides a mock function with given fields: old, new
+func (_m *Interface) PatchNodeStatus(old *corev1.Node, new *corev1.Node) error {
+	ret := _m.Called(old, new)
+
+	if len(ret) == 0 {
+		panic("no return value specified for PatchNodeStatus")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(*corev1.Node, *corev1.Node) error); ok {
+		r0 = rf(old, new)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// PatchNodeStatusAnnotations provides a mock function with given fields: oldNode, newNode
+func (_m *Interface) PatchNodeStatusAnnotations(oldNode *corev1.Node, newNode *corev1.Node) error {
+	ret := _m.Called(oldNode, newNode)
+
+	if len(ret) == 0 {
+		panic("no return value specified for PatchNodeStatusAnnotations")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(*corev1.Node, *corev1.Node) error); ok {
+		r0 = rf(oldNode, newNode)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
 // PatchPodStatusAnnotations provides a mock function with given fields: oldPod, newPod
 func (_m *Interface) PatchPodStatusAnnotations(oldPod *corev1.Pod, newPod *corev1.Pod) error {
 	ret := _m.Called(oldPod, newPod)

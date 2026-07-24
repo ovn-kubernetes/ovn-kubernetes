@@ -305,6 +305,42 @@ func (_m *InterfaceOVN) PatchNode(old *apicorev1.Node, new *apicorev1.Node) erro
 	return r0
 }
 
+// PatchNodeStatus provides a mock function with given fields: old, new
+func (_m *InterfaceOVN) PatchNodeStatus(old *apicorev1.Node, new *apicorev1.Node) error {
+	ret := _m.Called(old, new)
+
+	if len(ret) == 0 {
+		panic("no return value specified for PatchNodeStatus")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(*apicorev1.Node, *apicorev1.Node) error); ok {
+		r0 = rf(old, new)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// PatchNodeStatusAnnotations provides a mock function with given fields: oldNode, newNode
+func (_m *InterfaceOVN) PatchNodeStatusAnnotations(oldNode *apicorev1.Node, newNode *apicorev1.Node) error {
+	ret := _m.Called(oldNode, newNode)
+
+	if len(ret) == 0 {
+		panic("no return value specified for PatchNodeStatusAnnotations")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(*apicorev1.Node, *apicorev1.Node) error); ok {
+		r0 = rf(oldNode, newNode)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
 // PatchPodStatusAnnotations provides a mock function with given fields: oldPod, newPod
 func (_m *InterfaceOVN) PatchPodStatusAnnotations(oldPod *apicorev1.Pod, newPod *apicorev1.Pod) error {
 	ret := _m.Called(oldPod, newPod)
