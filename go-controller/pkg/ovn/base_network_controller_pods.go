@@ -259,7 +259,7 @@ func (bnc *BaseNetworkController) deletePodLogicalPort(pod *corev1.Pod, portInfo
 
 	var allOps, ops []ovsdb.Operation
 
-	if ops, err = bnc.deletePodFromNamespace(pod.Namespace,
+	if ops, err = bnc.deletePodFromNamespacePortGroupOps(nil, pod.Namespace,
 		portUUID); err != nil {
 		return nil, fmt.Errorf("unable to delete pod %s from namespace: %w", podDesc, err)
 	}
@@ -416,6 +416,14 @@ func (bnc *BaseNetworkController) podExpectedInLogicalCache(pod *corev1.Pod) boo
 	return !util.PodWantsHostNetwork(pod) &&
 		!bnc.isNonHostSubnetSwitch(switchName) &&
 		!util.PodCompleted(pod)
+}
+
+func (bnc *BaseNetworkController) shouldEnsurePodLogicalPort(pod *corev1.Pod, nadKey string) bool {
+	if !util.PodScheduled(pod) || !bnc.podExpectedInLogicalCache(pod) {
+		return false
+	}
+	portInfo, err := bnc.logicalPortCache.get(pod, nadKey)
+	return err != nil || !portInfo.expires.IsZero()
 }
 
 func (bnc *BaseNetworkController) getExpectedSwitchName(pod *corev1.Pod) (string, error) {
@@ -730,25 +738,6 @@ func (bnc *BaseNetworkController) delLSPOps(logicalPort, switchName,
 	ops, err := libovsdbops.DeleteLogicalSwitchPortsOps(bnc.nbClient, nil, &lsw, &lsp)
 	if err != nil {
 		return nil, fmt.Errorf("error deleting logical switch port %+v from switch %+v: %w", lsp, lsw, err)
-	}
-
-	return ops, nil
-}
-
-func (bnc *BaseNetworkController) deletePodFromNamespace(ns string, portUUID string) ([]ovsdb.Operation, error) {
-	// for UDN, namespace may be not managed
-	nsInfo, nsUnlock := bnc.getNamespaceLocked(ns, true)
-	if nsInfo == nil {
-		return nil, nil
-	}
-	defer nsUnlock()
-	var ops []ovsdb.Operation
-	var err error
-
-	if nsInfo.portGroupName != "" && len(portUUID) > 0 {
-		if ops, err = libovsdbops.DeletePortsFromPortGroupOps(bnc.nbClient, ops, nsInfo.portGroupName, portUUID); err != nil {
-			return nil, err
-		}
 	}
 
 	return ops, nil
