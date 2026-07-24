@@ -1175,3 +1175,56 @@ func TestRemoveOpenvSwitchExternalIDs(t *testing.T) {
 		})
 	}
 }
+
+func TestSetPortNoFlood(t *testing.T) {
+	bridgeUUID := buildNamedUUID()
+	portUUID := buildNamedUUID()
+	ifaceUUID := buildNamedUUID()
+
+	ovs := &vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{bridgeUUID}}
+	bridge := &vswitchd.Bridge{UUID: bridgeUUID, Name: "br-int", Ports: []string{portUUID}}
+	port := &vswitchd.Port{UUID: portUUID, Name: "patch-cudn", Interfaces: []string{ifaceUUID}, OtherConfig: map[string]string{"existing-key": "keep"}}
+	iface := &vswitchd.Interface{UUID: ifaceUUID, Name: "patch-cudn", Type: "patch"}
+
+	t.Run("sets no-flood without overwriting existing OtherConfig", func(t *testing.T) {
+		ovsClient, cleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
+			OVSData: []libovsdbtest.TestData{ovs.DeepCopy(), bridge.DeepCopy(), port.DeepCopy(), iface.DeepCopy()},
+		})
+		if err != nil {
+			t.Fatalf("harness setup: %v", err)
+		}
+		t.Cleanup(cleanup.Cleanup)
+
+		if err := SetPortNoFlood(ovsClient, "patch-cudn"); err != nil {
+			t.Fatalf("SetPortNoFlood: %v", err)
+		}
+
+		gotPort, err := GetOVSPort(ovsClient, "patch-cudn")
+		if err != nil {
+			t.Fatalf("GetOVSPort: %v", err)
+		}
+		if gotPort.OtherConfig["no-flood"] != "true" {
+			t.Errorf("Port.OtherConfig[no-flood] = %q, want \"true\"", gotPort.OtherConfig["no-flood"])
+		}
+		if gotPort.OtherConfig["existing-key"] != "keep" {
+			t.Errorf("Port.OtherConfig[existing-key] = %q, want \"keep\" (was overwritten)", gotPort.OtherConfig["existing-key"])
+		}
+	})
+
+	t.Run("fails when port does not exist", func(t *testing.T) {
+		emptyBridgeUUID := buildNamedUUID()
+		emptyBridge := &vswitchd.Bridge{UUID: emptyBridgeUUID, Name: "br-empty"}
+		emptyOvs := &vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{emptyBridgeUUID}}
+		ovsClient, cleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
+			OVSData: []libovsdbtest.TestData{emptyOvs, emptyBridge},
+		})
+		if err != nil {
+			t.Fatalf("harness setup: %v", err)
+		}
+		t.Cleanup(cleanup.Cleanup)
+
+		if err := SetPortNoFlood(ovsClient, "nonexistent-port"); err == nil {
+			t.Fatalf("SetPortNoFlood should fail for nonexistent port")
+		}
+	})
+}

@@ -609,7 +609,22 @@ func (b *BridgeConfiguration) SetNetworkOfPatchPort(netName string) error {
 	if !found {
 		return fmt.Errorf("failed to find network %s configuration on bridge %s", netName, b.bridgeName)
 	}
-	return netConfig.setOfPatchPort()
+	if err := netConfig.setOfPatchPort(); err != nil {
+		return err
+	}
+
+	// Only set no-flood on the shared default bridge (breth0) where multiple
+	// CUDNs coexist and could cause ARP storms. Uplink bridges have one network
+	// each so no-flood is unnecessary and would break connectivity.
+	if netName != types.DefaultNetworkName && util.IsNetworkSegmentationSupportEnabled() {
+		if _, isSharedBridge := b.netConfig[types.DefaultNetworkName]; isSharedBridge {
+			if err := ovsops.SetPortNoFlood(b.ovsClient, netConfig.PatchPort); err != nil {
+				return fmt.Errorf("failed to set no-flood on port %s of bridge %s: %w",
+					netConfig.PatchPort, b.bridgeName, err)
+			}
+		}
+	}
+	return nil
 }
 
 func (b *BridgeConfiguration) GetInterfaceID() string {

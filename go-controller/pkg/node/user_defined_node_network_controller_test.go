@@ -32,6 +32,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	factoryMocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory/mocks"
 	kubemocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube/mocks"
+	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iprulemanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/managementport"
@@ -488,8 +489,13 @@ var _ = Describe("UserDefinedNodeNetworkController: UserDefinedPrimaryNetwork Ga
 			controller.gateway.kubeInterface = &kubeMock
 
 			By("starting UDN controller for user-defined primary network")
+			addOVSPatchPortInterface(ovsClient, "breth0", "patch-breth0_bluenet_worker1-to-br-int", 15)
 			err = controller.Start(context.Background())
 			Expect(err).NotTo(HaveOccurred())
+
+			udnPort, err := ovsops.GetOVSPort(ovsClient, "patch-breth0_bluenet_worker1-to-br-int")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(udnPort.OtherConfig).To(HaveKeyWithValue("no-flood", "true"))
 
 			By("check management interface and VRF device is created for the network")
 			vrfDeviceName := util.GetNetworkVRFName(NetInfo)
