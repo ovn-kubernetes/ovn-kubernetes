@@ -4,6 +4,7 @@
 package node
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"sync"
@@ -84,7 +85,7 @@ func (h *nodePortWatcherEventHandler) GetResourceFromInformerCache(key string) (
 // Given a *RetryFramework instance, an object to add and a boolean specifying if the function was executed from
 // iterateRetryResources, AddResource adds the specified object to the cluster according to its type and
 // returns the error, if any, yielded during object creation.
-func (h *nodePortWatcherEventHandler) AddResource(obj interface{}, _ bool) error {
+func (h *nodePortWatcherEventHandler) AddResource(_ context.Context, obj interface{}, _ bool) error {
 	switch h.objType {
 	case factory.ServiceForFakeNodePortWatcherType:
 		svc := obj.(*corev1.Service)

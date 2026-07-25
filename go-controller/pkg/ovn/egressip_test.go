@@ -6473,7 +6473,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 				if update {
 					gomega.Expect(handler.UpdateResource(&node, &node, true)).To(gomega.Succeed())
 				} else {
-					gomega.Expect(handler.AddResource(&node, true)).To(gomega.Succeed())
+					gomega.Expect(handler.AddResource(context.Background(), &node, true)).To(gomega.Succeed())
 				}
 
 				var routes []nbdb.LogicalRouterStaticRoute

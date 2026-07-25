@@ -1024,15 +1024,15 @@ func (h *defaultNetworkControllerEventHandler) IsResourceScheduled(obj interface
 // AddResource adds the specified object to the cluster according to its type and returns the error,
 // if any, yielded during object creation.
 // Given an object to add and a boolean specifying if the function was executed from iterateRetryResources
-func (h *defaultNetworkControllerEventHandler) AddResource(obj interface{}, fromRetryLoop bool) error {
+func (h *defaultNetworkControllerEventHandler) AddResource(ctx context.Context, obj interface{}, fromRetryLoop bool) error {
+
 	switch h.objType {
 	case factory.PodType:
 		pod, ok := obj.(*corev1.Pod)
 		if !ok {
 			return fmt.Errorf("could not cast %T object to *corev1.Pod", obj)
 		}
-
-		ctx := tracing.ContextWithOperation(context.Background(), tracing.OperationAdd)
+		ctx = tracing.ContextWithOperation(ctx, tracing.OperationAdd)
 		ctx = tracing.ContextWithRetryLoop(ctx, fromRetryLoop)
 		if !h.oc.isPodScheduledinLocalZone(pod) {
 			// only emit spans for pod scheduled in local zone

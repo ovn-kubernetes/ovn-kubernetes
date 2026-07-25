@@ -106,8 +106,8 @@ func (h *Layer3UserDefinedNetworkControllerEventHandler) IsResourceScheduled(obj
 // AddResource adds the specified object to the cluster according to its type and returns the error,
 // if any, yielded during object creation.
 // Given an object to add and a boolean specifying if the function was executed from iterateRetryResources
-func (h *Layer3UserDefinedNetworkControllerEventHandler) AddResource(obj interface{}, fromRetryLoop bool) error {
-	ctx := tracing.ContextWithRetryLoop(context.Background(), fromRetryLoop)
+func (h *Layer3UserDefinedNetworkControllerEventHandler) AddResource(ctx context.Context, obj interface{}, fromRetryLoop bool) error {
+	ctx = tracing.ContextWithRetryLoop(ctx, fromRetryLoop)
 	return h.oc.AddUserDefinedNetworkResourceCommon(ctx, h.objType, obj)
 }
 
