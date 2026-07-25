@@ -4,6 +4,7 @@
 package clustermanager
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 
@@ -36,7 +37,7 @@ func (h *egressIPClusterControllerEventHandler) FilterOutResource(_ interface{})
 
 // AddResource adds the specified object to the cluster according to its type and
 // returns the error, if any, yielded during object creation.
-func (h *egressIPClusterControllerEventHandler) AddResource(obj interface{}, _ bool) error {
+func (h *egressIPClusterControllerEventHandler) AddResource(_ context.Context, obj interface{}, _ bool) error {
 	switch h.objType {
 	case factory.EgressNodeType:
 		node := obj.(*corev1.Node)

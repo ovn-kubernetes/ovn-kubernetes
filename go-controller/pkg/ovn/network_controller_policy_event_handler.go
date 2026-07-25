@@ -4,6 +4,7 @@
 package ovn
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 
@@ -115,7 +116,7 @@ func (h *networkControllerPolicyEventHandler) GetResourceFromInformerCache(key s
 // AddResource adds the specified object to the cluster according to its type and returns the error,
 // if any, yielded during object creation.
 // Given an object to add and a boolean specifying if the function was executed from iterateRetryResources
-func (h *networkControllerPolicyEventHandler) AddResource(obj interface{}, _ bool) error {
+func (h *networkControllerPolicyEventHandler) AddResource(_ context.Context, obj interface{}, _ bool) error {
 	switch h.objType {
 	case factory.LocalPodSelectorType:
 		extraParameters := h.extraParameters.(*NetworkPolicyExtraParameters)

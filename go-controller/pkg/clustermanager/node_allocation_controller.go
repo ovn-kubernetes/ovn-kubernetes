@@ -249,7 +249,7 @@ func (h *nodeAllocationControllerEventHandler) FilterOutResource(_ interface{}) 
 
 // AddResource adds the specified object to the cluster according to its type and
 // returns the error, if any, yielded during object creation.
-func (h *nodeAllocationControllerEventHandler) AddResource(obj interface{}, _ bool) error {
+func (h *nodeAllocationControllerEventHandler) AddResource(_ context.Context, obj interface{}, _ bool) error {
 	var err error
 
 	switch h.objType {

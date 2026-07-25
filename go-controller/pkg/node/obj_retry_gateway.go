@@ -4,6 +4,7 @@
 package node
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 
@@ -111,7 +112,7 @@ func (h *gwEventHandler) GetResourceFromInformerCache(key string) (interface{}, 
 // the function was executed from iterateRetryResources, AddResource adds the
 // specified object to the cluster according to its type and returns the error,
 // if any, yielded during object creation.
-func (h *gwEventHandler) AddResource(obj interface{}, _ bool) error {
+func (h *gwEventHandler) AddResource(_ context.Context, obj interface{}, _ bool) error {
 	switch h.objType {
 	case factory.ServiceForGatewayType:
 		svc := obj.(*corev1.Service)
