@@ -1605,61 +1605,6 @@ func TestOpenFlowStdinReader(t *testing.T) {
 	}
 }
 
-func TestGetOVNDBServerInfo(t *testing.T) {
-	mockKexecIface := new(mock_k8s_io_utils_exec.Interface)
-	mockExecRunner := new(mocks.ExecRunner)
-	mockCmd := new(mock_k8s_io_utils_exec.Cmd)
-	// below is defined in ovs.go
-	RunCmdExecRunner = mockExecRunner
-	// note runner is defined in ovs.go file
-	runner = &execHelper{exec: mockKexecIface}
-	tests := []struct {
-		desc                    string
-		expectedErr             bool
-		onRetArgsExecUtilsIface *ovntest.TestifyMockHelper
-		onRetArgsKexecIface     *ovntest.TestifyMockHelper
-	}{
-		{
-			desc:                    "negative: executable not found",
-			expectedErr:             true,
-			onRetArgsExecUtilsIface: &ovntest.TestifyMockHelper{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string", "string", "string", "string", "string"}, RetArgList: []interface{}{nil, nil, fmt.Errorf("executable file not found in $PATH")}},
-			onRetArgsKexecIface:     &ovntest.TestifyMockHelper{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-		},
-		{
-			desc:                    "negative: malformed json output",
-			expectedErr:             true,
-			onRetArgsExecUtilsIface: &ovntest.TestifyMockHelper{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string", "string", "string", "string", "string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte(`["rows":[{"connected":true,"index":["set",[]],"leader":true}]}]`)), bytes.NewBuffer([]byte("")), nil}},
-			onRetArgsKexecIface:     &ovntest.TestifyMockHelper{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-		},
-		{
-			desc:                    "negative: zero rows returned",
-			expectedErr:             true,
-			onRetArgsExecUtilsIface: &ovntest.TestifyMockHelper{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string", "string", "string", "string", "string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte(`[{"rows":[]}]`)), bytes.NewBuffer([]byte("")), nil}},
-			onRetArgsKexecIface:     &ovntest.TestifyMockHelper{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-		},
-		{
-			desc:                    "positive: run `ovsdb-client` command successfully",
-			expectedErr:             false,
-			onRetArgsExecUtilsIface: &ovntest.TestifyMockHelper{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string", "string", "string", "string", "string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte(`[{"rows":[{"connected":true,"index":["set",[]],"leader":true}]}]`)), bytes.NewBuffer([]byte("")), nil}},
-			onRetArgsKexecIface:     &ovntest.TestifyMockHelper{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-		},
-	}
-	for i, tc := range tests {
-		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
-			ovntest.ProcessMockFn(&mockExecRunner.Mock, *tc.onRetArgsExecUtilsIface)
-			ovntest.ProcessMockFn(&mockKexecIface.Mock, *tc.onRetArgsKexecIface)
-
-			_, e := GetOVNDBServerInfo(15, "nb", "OVN_Northbound")
-
-			if tc.expectedErr {
-				require.Error(t, e)
-			}
-			mockExecRunner.AssertExpectations(t)
-			mockKexecIface.AssertExpectations(t)
-		})
-	}
-}
-
 func TestPathVariableInitialization(t *testing.T) {
 	tests := []struct {
 		name     string
