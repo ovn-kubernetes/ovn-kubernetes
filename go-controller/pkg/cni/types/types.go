@@ -84,6 +84,14 @@ type NetConf struct {
 	// network mapping in the hosts.
 	PhysicalNetworkName string `json:"physicalNetworkName,omitempty"`
 
+	// MACSecurityMode controls whether MAC spoof protection is enforced on logical
+	// switch ports attached to this network.
+	// Valid values:
+	// - `enabled` (default, preserves current behavior)
+	// - `disabled`
+	// Valid for `secondary` `layer2` or `localnet`, networks when IPAM is disabled.
+	MACSecurityMode string `json:"macSecurityMode,omitempty"`
+
 	// Transport describes the transport protocol for east-west traffic.
 	// Valid values are "no-overlay" and "evpn".
 	// When omitted, the default OVN overlay transport is used.
@@ -149,6 +157,7 @@ func (n NetConf) MarshalJSON() ([]byte, error) {
 		VLANID                int         `json:"vlanID,omitempty"`
 		AllowPersistentIPs    bool        `json:"allowPersistentIPs,omitempty"`
 		PhysicalNetworkName   string      `json:"physicalNetworkName,omitempty"`
+		MACSecurityMode       string      `json:"macSecurityMode,omitempty"`
 		Transport             string      `json:"transport,omitempty"`
 		OutboundSNAT          string      `json:"outboundSNAT,omitempty"`
 		EVPN                  *EVPNConfig `json:"evpn,omitempty"`
@@ -179,6 +188,7 @@ func (n NetConf) MarshalJSON() ([]byte, error) {
 		VLANID:                n.VLANID,
 		AllowPersistentIPs:    n.AllowPersistentIPs,
 		PhysicalNetworkName:   n.PhysicalNetworkName,
+		MACSecurityMode:       n.MACSecurityMode,
 		Transport:             n.Transport,
 		OutboundSNAT:          n.OutboundSNAT,
 		EVPN:                  n.EVPN,

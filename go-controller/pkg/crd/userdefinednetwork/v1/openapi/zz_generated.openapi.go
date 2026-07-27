@@ -38,6 +38,7 @@ func GetOpenAPIDefinitions(ref common.ReferenceCallback) map[string]common.OpenA
 		v1.Layer3Config{}.OpenAPIModelName():                              schema_pkg_crd_userdefinednetwork_v1_Layer3Config(ref),
 		v1.Layer3Subnet{}.OpenAPIModelName():                              schema_pkg_crd_userdefinednetwork_v1_Layer3Subnet(ref),
 		v1.LocalnetConfig{}.OpenAPIModelName():                            schema_pkg_crd_userdefinednetwork_v1_LocalnetConfig(ref),
+		v1.MACSecurityConfig{}.OpenAPIModelName():                         schema_pkg_crd_userdefinednetwork_v1_MACSecurityConfig(ref),
 		v1.NetworkSpec{}.OpenAPIModelName():                               schema_pkg_crd_userdefinednetwork_v1_NetworkSpec(ref),
 		v1.NoOverlayConfig{}.OpenAPIModelName():                           schema_pkg_crd_userdefinednetwork_v1_NoOverlayConfig(ref),
 		v1.UserDefinedNetwork{}.OpenAPIModelName():                        schema_pkg_crd_userdefinednetwork_v1_UserDefinedNetwork(ref),
@@ -672,12 +673,18 @@ func schema_pkg_crd_userdefinednetwork_v1_Layer2Config(ref common.ReferenceCallb
 							Ref:         ref(v1.IPAMConfig{}.OpenAPIModelName()),
 						},
 					},
+					"macSecurity": {
+						SchemaProps: spec.SchemaProps{
+							Description: "macSecurity configures MAC spoof protection on the network's logical switch ports.",
+							Ref:         ref(v1.MACSecurityConfig{}.OpenAPIModelName()),
+						},
+					},
 				},
 				Required: []string{"role"},
 			},
 		},
 		Dependencies: []string{
-			v1.IPAMConfig{}.OpenAPIModelName()},
+			v1.IPAMConfig{}.OpenAPIModelName(), v1.MACSecurityConfig{}.OpenAPIModelName()},
 	}
 }
 
@@ -844,12 +851,50 @@ func schema_pkg_crd_userdefinednetwork_v1_LocalnetConfig(ref common.ReferenceCal
 							Ref:         ref(v1.VLANConfig{}.OpenAPIModelName()),
 						},
 					},
+					"macSecurity": {
+						SchemaProps: spec.SchemaProps{
+							Description: "macSecurity configures MAC spoof protection on the network's logical switch ports.",
+							Ref:         ref(v1.MACSecurityConfig{}.OpenAPIModelName()),
+						},
+					},
 				},
 				Required: []string{"role", "physicalNetworkName"},
 			},
 		},
 		Dependencies: []string{
-			v1.IPAMConfig{}.OpenAPIModelName(), v1.VLANConfig{}.OpenAPIModelName()},
+			v1.IPAMConfig{}.OpenAPIModelName(), v1.MACSecurityConfig{}.OpenAPIModelName(), v1.VLANConfig{}.OpenAPIModelName()},
+	}
+}
+
+func schema_pkg_crd_userdefinednetwork_v1_MACSecurityConfig(ref common.ReferenceCallback) common.OpenAPIDefinition {
+	return common.OpenAPIDefinition{
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "MACSecurityConfig configures MAC spoof protection behavior.",
+				Type:        []string{"object"},
+				Properties: map[string]spec.Schema{
+					"mode": {
+						SchemaProps: spec.SchemaProps{
+							Description: "mode controls the MAC spoof protection enforcement posture. `Enabled` (default) restricts traffic to assigned addresses. `Disabled` removes all MAC spoof protection restrictions and enables unknown MAC address handling for nested virtualization and NFV use cases. Only `Disabled` requires ipam.mode to be Disabled.",
+							Default:     "",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+				},
+				Required: []string{"mode"},
+			},
+			VendorExtensible: spec.VendorExtensible{
+				Extensions: spec.Extensions{
+					"x-kubernetes-unions": []interface{}{
+						map[string]interface{}{
+							"discriminator":            "mode",
+							"fields-to-discriminateBy": map[string]interface{}{},
+						},
+					},
+				},
+			},
+		},
 	}
 }
 

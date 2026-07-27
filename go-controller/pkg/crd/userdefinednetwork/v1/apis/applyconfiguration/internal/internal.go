@@ -131,6 +131,9 @@ var schemaYAML = typed.YAMLObject(`types:
           elementType:
             scalar: string
           elementRelationship: atomic
+    - name: macSecurity
+      type:
+        namedType: com.github.ovn-kubernetes.ovn-kubernetes.go-controller.pkg.crd.userdefinednetwork.v1.MACSecurityConfig
     - name: mtu
       type:
         scalar: numeric
@@ -193,6 +196,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: ipam
       type:
         namedType: com.github.ovn-kubernetes.ovn-kubernetes.go-controller.pkg.crd.userdefinednetwork.v1.IPAMConfig
+    - name: macSecurity
+      type:
+        namedType: com.github.ovn-kubernetes.ovn-kubernetes.go-controller.pkg.crd.userdefinednetwork.v1.MACSecurityConfig
     - name: mtu
       type:
         scalar: numeric
@@ -213,6 +219,15 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: vlan
       type:
         namedType: com.github.ovn-kubernetes.ovn-kubernetes.go-controller.pkg.crd.userdefinednetwork.v1.VLANConfig
+- name: com.github.ovn-kubernetes.ovn-kubernetes.go-controller.pkg.crd.userdefinednetwork.v1.MACSecurityConfig
+  map:
+    fields:
+    - name: mode
+      type:
+        scalar: string
+      default: ""
+    unions:
+    - discriminator: mode
 - name: com.github.ovn-kubernetes.ovn-kubernetes.go-controller.pkg.crd.userdefinednetwork.v1.NetworkSpec
   map:
     fields:
