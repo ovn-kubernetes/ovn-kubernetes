@@ -331,6 +331,10 @@ const (
 	NetworkTransportNoOverlay = "no-overlay"
 	NetworkTransportEVPN      = "evpn"
 
+	// MAC security modes controls MAC spoof protection enforcement on a logical switch
+	MACSecurityModeEnabled  = "enabled"
+	MACSecurityModeDisabled = "disabled"
+
 	// NoOverlaySNATEnabled enables SNAT for outbound traffic
 	NoOverlaySNATEnabled = "enabled"
 	// NoOverlaySNATDisabled disables SNAT for outbound traffic
