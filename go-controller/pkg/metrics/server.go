@@ -51,7 +51,6 @@ type MetricServerOptions struct {
 	// Prometheus plumbing
 	Registerer prometheus.Registerer
 
-	dbIsClustered  bool
 	dbFoundViaPath bool
 }
 
@@ -117,7 +116,7 @@ func (s *MetricServer) registerMetrics() {
 	}
 	if s.opts.EnableOVNDBMetrics {
 		klog.Infof("MetricServer registers OVN DB metrics")
-		s.ovsDbProperties, s.opts.dbIsClustered, s.opts.dbFoundViaPath = RegisterOvnDBMetrics(s.registerer)
+		s.ovsDbProperties, s.opts.dbFoundViaPath = RegisterOvnDBMetrics(s.registerer)
 	}
 	if s.opts.EnableOVNControllerMetrics {
 		klog.Infof("MetricServer registers OVN Controller metrics")
@@ -167,18 +166,12 @@ func (s *MetricServer) updateOvnNorthdMetrics() {
 
 // updateOvnDBMetrics updates the OVN DB metrics
 func (s *MetricServer) updateOvnDBMetrics() {
-	if s.opts.dbIsClustered {
-		resetOvnDbClusterMetrics()
-	}
 	if s.opts.dbFoundViaPath {
 		resetOvnDbSizeMetric()
 	}
 	resetOvnDbMemoryMetrics()
 
 	for _, dbProperty := range s.ovsDbProperties {
-		if s.opts.dbIsClustered {
-			ovnDBClusterStatusMetricsUpdater(dbProperty)
-		}
 		if s.opts.dbFoundViaPath {
 			updateOvnDBSizeMetrics(dbProperty)
 		}

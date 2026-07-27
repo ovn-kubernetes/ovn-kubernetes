@@ -586,13 +586,6 @@ var (
 					mock.AnythingOfType("[]string"), "get-schema-version", mock.AnythingOfType("string"), "OVN_Southbound"},
 				RetArgList: []interface{}{bytes.NewBuffer([]byte("20.41.0")), bytes.NewBuffer([]byte("")), nil},
 			},
-			// ovs-appctl  -t /var/run/openvswitch/ovnnb_db.ctl cluster/status OVN_Northbound
-			{
-				OnCallMethodName: "RunCmd",
-				OnCallMethodArgs: []interface{}{mock.AnythingOfType("*mocks.Cmd"), mock.AnythingOfType("string"),
-					mock.AnythingOfType("[]string"), "-t", mock.AnythingOfType("string"), mock.AnythingOfType("string"), "cluster/status", "OVN_Northbound"},
-				RetArgList: []interface{}{bytes.NewBuffer([]byte("")), bytes.NewBuffer([]byte(`"cluster/status" is not a valid command`)), fmt.Errorf("server returned an error")},
-			},
 			// ovs-appctl  -t /var/run/openvswitch/ovnnb_db.ctl memory/show
 			{
 				OnCallMethodName: "RunCmd",
@@ -1010,7 +1003,7 @@ nln_changed                0.0/sec     0.000/sec        0.0000/sec   total: 230
 NXST_AGGREGATE reply (xid=0x4): packet_count=12345 byte_count=67890 flow_count=18000
 `
 
-	ovnDBMemoryShowOutput = `atoms:324341 cells:307671 monitors:2 n-weak-refs:5627 raft-connections:4 raft-log:3403 sessions:12 txn-history:100 txn-history-atoms:52811`
+	ovnDBMemoryShowOutput = `atoms:324341 cells:307671 monitors:2 n-weak-refs:5627 sessions:12 txn-history:100 txn-history-atoms:52811`
 
 	ovnControllerDumpAggregateOutput = `NXST_AGGREGATE reply (xid=0x4): packet_count=9945601440 byte_count=33370900148508 flow_count=12062`
 	ovnControllercoverageShowOutput  = `Event coverage, avg rate over last: 5 seconds, last minute, last hour,  hash=7a3e39bf:

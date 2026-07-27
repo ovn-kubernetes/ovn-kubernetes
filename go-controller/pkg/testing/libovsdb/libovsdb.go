@@ -378,15 +378,13 @@ func newOVSDBServer(sockPath string, dbModel model.ClientDBModel, schema ovsdb.D
 		return nil, err
 	}
 
-	// Populate the _Server database table
-	sid := fmt.Sprintf("%04x", cryptorand.Uint32())
+	// Populate the standard _Server metadata for this standalone test database.
 	serverData := []TestData{
 		&serverdb.Database{
 			Name:      dbModel.Name(),
 			Connected: true,
 			Leader:    true,
-			Model:     serverdb.DatabaseModelClustered,
-			Sid:       &sid,
+			Model:     serverdb.DatabaseModelStandalone,
 		},
 	}
 	if err := updateData(db, servMod, serverData, false); err != nil {
