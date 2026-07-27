@@ -105,6 +105,7 @@ type NetInfo interface {
 	GetNetworkScopedLoadBalancerName(lbName string) string
 	GetNetworkScopedLoadBalancerGroupName(lbGroupName string) string
 	GetNetworkScopedRouterToSwitchPortName(nodeName string) string
+	GetNetworkScopedSwitchToRouterPortName(nodeName string) string
 
 	// GetNetInfo is an identity method used to get the specific NetInfo
 	// implementation
@@ -569,6 +570,10 @@ func (nInfo *DefaultNetInfo) GetNetworkScopedRouterToSwitchPortName(nodeName str
 	return types.RouterToSwitchPrefix + nInfo.GetNetworkScopedSwitchName(nodeName)
 }
 
+func (nInfo *DefaultNetInfo) GetNetworkScopedSwitchToRouterPortName(nodeName string) string {
+	return types.SwitchToRouterPrefix + nInfo.GetNetworkScopedSwitchName(nodeName)
+}
+
 func (nInfo *DefaultNetInfo) canReconcile(netInfo NetInfo) bool {
 	_, ok := netInfo.(*DefaultNetInfo)
 	return ok
@@ -847,15 +852,31 @@ func (nInfo *userDefinedNetInfo) GetNetworkScopedLoadBalancerGroupName(lbGroupNa
 }
 
 // GetNetworkScopedRouterToSwitchPortName returns the port name from router to switch.
-// For Layer2 topology, this is the transit router to switch port (trtos-).
-// For Layer3 topology, this is the router to switch port (rtos-).
+// For Layer3 and pre-transit router Layer2 topologies, this is the cluster
+// router to switch port (rtos-).
+// For Layer2 topology using transit router, this is the transit router to
+// switch port (trtos-).
 // Not Applicable for Localnet topology.
 func (nInfo *userDefinedNetInfo) GetNetworkScopedRouterToSwitchPortName(nodeName string) string {
 	switchName := nInfo.GetNetworkScopedSwitchName(nodeName)
-	if nInfo.TopologyType() == types.Layer2Topology {
+	if nInfo.TopologyType() == types.Layer2Topology && config.Layer2UsesTransitRouter {
 		return types.TransitRouterToSwitchPrefix + switchName
 	}
 	return types.RouterToSwitchPrefix + switchName
+}
+
+// GetNetworkScopedSwitchToRouterPortName returns the port name from switch to router.
+// For Layer3 and pre-transit router Layer2 topologies, this is the switch port
+// to cluster router (stor-).
+// For Layer2 topology using transit router, this is the switch port to transit
+// router (stotr-).
+// Not Applicable for Localnet topology.
+func (nInfo *userDefinedNetInfo) GetNetworkScopedSwitchToRouterPortName(nodeName string) string {
+	switchName := nInfo.GetNetworkScopedSwitchName(nodeName)
+	if nInfo.TopologyType() == types.Layer2Topology && config.Layer2UsesTransitRouter {
+		return types.SwitchToTransitRouterPrefix + switchName
+	}
+	return types.SwitchToRouterPrefix + switchName
 }
 
 // getPrefix returns if the logical entities prefix for this network
@@ -2042,25 +2063,6 @@ func ParseNetworkIDFromVRFName(vrf string) int {
 	return id
 }
 
-// CanServeNamespace determines whether the given network can serve a specific namespace.
-//
-// For default and secondary networks it always returns true.
-// For primary networks, it checks if the namespace is explicitly listed in the network's
-// associated namespaces.
-func CanServeNamespace(network NetInfo, namespace string) bool {
-	// Default network handles all namespaces
-	// Secondary networks can handle pods from different namespaces
-	if !network.IsPrimaryNetwork() {
-		return true
-	}
-	for _, ns := range network.GetNADNamespaces() {
-		if ns == namespace {
-			return true
-		}
-	}
-	return false
-}
-
 // GetNetworkRole returns the role of this controller's
 // network for the given pod
 // Expected values are:
@@ -2410,4 +2412,13 @@ func CheckSubnetOverlapWithClusterSubnets(subnets []*net.IPNet, subnetsName stri
 			subnetsName, subnets)
 	}
 	return nil
+}
+
+// GetNetworkScopedSwitchToRouterPortNameFromSwitchName returns the
+// switch-to-router port name for the given switch name.
+func GetNetworkScopedSwitchToRouterPortNameFromSwitchName(switchName string) string {
+	if strings.HasSuffix(switchName, types.OVNLayer2Switch) && config.Layer2UsesTransitRouter {
+		return types.SwitchToTransitRouterPrefix + switchName
+	}
+	return types.SwitchToRouterPrefix + switchName
 }

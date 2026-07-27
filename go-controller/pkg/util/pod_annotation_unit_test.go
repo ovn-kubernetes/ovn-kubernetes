@@ -428,6 +428,89 @@ func newDummyNetInfo(namespace, networkName string) NetInfo {
 	return mutableNetInfo
 }
 
+func newPrimaryNetInfo(namespace, networkName string) NetInfo {
+	netInfo, _ := newLayer3NetConfInfo(&ovncnitypes.NetConf{
+		NetConf: cnitypes.NetConf{Name: networkName},
+		Role:    types.NetworkRolePrimary,
+	})
+	mutableNetInfo := NewMutableNetInfo(netInfo)
+	mutableNetInfo.AddNADs(GetNADName(namespace, networkName))
+	return mutableNetInfo
+}
+
+func TestSecondaryNetworkPodIPs(t *testing.T) {
+	nadResolver := func(nadKey string) string {
+		switch nadKey {
+		case "ns1/mynet":
+			return "mynet"
+		case "ns2/mynet":
+			return "mynet"
+		default:
+			return ""
+		}
+	}
+
+	tests := []struct {
+		desc        string
+		annotations map[string]string
+		netInfo     NetInfo
+		wantIPs     []net.IP
+		wantErr     bool
+	}{
+		{
+			desc: "primary network: matching NAD key returns IPs",
+			annotations: map[string]string{
+				types.OvnPodAnnotationName: `{"ns1/mynet":{"ip_addresses":["10.0.0.5/24"],"mac_address":"0a:58:0a:00:00:05"}}`,
+			},
+			netInfo: newPrimaryNetInfo("ns1", "mynet"),
+			wantIPs: []net.IP{net.ParseIP("10.0.0.5")},
+		},
+		{
+			desc: "primary network: unrelated NAD key returns no IPs",
+			annotations: map[string]string{
+				types.OvnPodAnnotationName: `{"ns1/othernet":{"ip_addresses":["10.0.0.5/24"],"mac_address":"0a:58:0a:00:00:05"}}`,
+			},
+			netInfo: newPrimaryNetInfo("ns1", "mynet"),
+			wantIPs: []net.IP{},
+		},
+		{
+			desc: "primary network: multiple matching NADs returns all IPs",
+			annotations: map[string]string{
+				types.OvnPodAnnotationName: `{"ns1/mynet":{"ip_addresses":["10.0.0.5/24"],"mac_address":"0a:58:0a:00:00:05"},"ns2/mynet":{"ip_addresses":["10.0.1.5/24"],"mac_address":"0a:58:0a:00:01:05"}}`,
+			},
+			netInfo: newPrimaryNetInfo("ns1", "mynet"),
+			wantIPs: []net.IP{net.ParseIP("10.0.0.5"), net.ParseIP("10.0.1.5")},
+		},
+		{
+			desc: "primary network: bad annotation returns error",
+			annotations: map[string]string{
+				types.OvnPodAnnotationName: `not-json`,
+			},
+			netInfo: newPrimaryNetInfo("ns1", "mynet"),
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.desc, func(t *testing.T) {
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        "test-pod",
+					Namespace:   "ns1",
+					Annotations: tc.annotations,
+				},
+			}
+			ips, err := SecondaryNetworkPodIPs(pod, tc.netInfo, nadResolver)
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.ElementsMatch(t, tc.wantIPs, ips)
+		})
+	}
+}
+
 func TestUnmarshalUDNOpenPortsAnnotation(t *testing.T) {
 	intRef := func(i int) *int {
 		return &i

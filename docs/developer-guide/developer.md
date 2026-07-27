@@ -40,6 +40,31 @@ the `types.go` has been created according to sig-apimachinery docs, the develope
 CRD along with the deep-copy methods and actual yaml files which get created in `_output/crd`
 folder and are copied over to `helm/ovn-kubernetes/crds` to then be used when creating a KIND cluster.
 
+## Generating and Updating Mocks
+
+Mocks for unit tests are auto-generated using [mockery](https://github.com/vektra/mockery)
+and configured via `go-controller/.mockery.yaml`. To regenerate all mocks:
+
+```bash
+cd go-controller/
+make mocksgen
+```
+
+### Mock file placement
+
+Mock output locations are determined by `.mockery.yaml` — it is the single
+source of truth. The default output is `pkg/testing/mocks/{{.PackagePath}}/`,
+but packages can override this with a `dir` config entry to place mocks
+elsewhere (e.g. `pkg/factory/mocks/`, `pkg/util/mocks/`).
+
+### Adding a new mock
+
+- If the package already has `all: true` in `.mockery.yaml`, new interfaces
+  in that package are picked up automatically — no config change needed.
+- Otherwise, add an entry for the new interface under the appropriate
+  package in `.mockery.yaml`, then run `make mocksgen`.
+- Do not run `mockery` manually — the config file is the source of truth.
+
 ## Level-Driven Controllers
 
 ### Background

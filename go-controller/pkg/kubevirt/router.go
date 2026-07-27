@@ -123,7 +123,8 @@ func EnsureLocalZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory, 
 
 		// Add a route for reroute ingress traffic to the VM port since
 		// the subnet is alien to ovn_cluster_router
-		outputPort := types.RouterToSwitchPrefix + pod.Spec.NodeName
+		defaultNetInfo := &util.DefaultNetInfo{}
+		outputPort := defaultNetInfo.GetNetworkScopedRouterToSwitchPortName(pod.Spec.NodeName)
 		ingressRoute := nbdb.LogicalRouterStaticRoute{
 			IPPrefix:   podAddress,
 			Nexthop:    podAddress,

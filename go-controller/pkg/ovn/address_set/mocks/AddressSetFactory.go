@@ -67,6 +67,45 @@ func (_m *AddressSetFactory) EnsureAddressSet(dbIDs *ops.DbObjectIDs) (addressse
 	return r0, r1
 }
 
+// EnsureAddressSetOps provides a mock function with given fields: dbIDs
+func (_m *AddressSetFactory) EnsureAddressSetOps(dbIDs *ops.DbObjectIDs) (addressset.AddressSet, []ovsdb.Operation, error) {
+	ret := _m.Called(dbIDs)
+
+	if len(ret) == 0 {
+		panic("no return value specified for EnsureAddressSetOps")
+	}
+
+	var r0 addressset.AddressSet
+	var r1 []ovsdb.Operation
+	var r2 error
+	if rf, ok := ret.Get(0).(func(*ops.DbObjectIDs) (addressset.AddressSet, []ovsdb.Operation, error)); ok {
+		return rf(dbIDs)
+	}
+	if rf, ok := ret.Get(0).(func(*ops.DbObjectIDs) addressset.AddressSet); ok {
+		r0 = rf(dbIDs)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(addressset.AddressSet)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(*ops.DbObjectIDs) []ovsdb.Operation); ok {
+		r1 = rf(dbIDs)
+	} else {
+		if ret.Get(1) != nil {
+			r1 = ret.Get(1).([]ovsdb.Operation)
+		}
+	}
+
+	if rf, ok := ret.Get(2).(func(*ops.DbObjectIDs) error); ok {
+		r2 = rf(dbIDs)
+	} else {
+		r2 = ret.Error(2)
+	}
+
+	return r0, r1, r2
+}
+
 // GetAddressSet provides a mock function with given fields: dbIDs
 func (_m *AddressSetFactory) GetAddressSet(dbIDs *ops.DbObjectIDs) (addressset.AddressSet, error) {
 	ret := _m.Called(dbIDs)

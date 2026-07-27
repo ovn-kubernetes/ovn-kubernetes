@@ -498,13 +498,15 @@ func (udng *UserDefinedNetworkGateway) addNetwork() error {
 			udng.GetNetworkName(), err)
 	}
 
-	if config.IsModeDPU() && udng.Uplink() != "" {
+	if config.IsModeDPU() {
 		vrfDeviceName := util.GetNetworkVRFName(udng.NetInfo)
 		if err = udng.ensureDPUVRF(); err != nil {
 			return err
 		}
-		if err = udng.reconcileUplinkGatewayVRFSlave(vrfDeviceName); err != nil {
-			return err
+		if udng.Uplink() != "" {
+			if err = udng.reconcileUplinkGatewayVRFSlave(vrfDeviceName); err != nil {
+				return err
+			}
 		}
 	} else if config.IsModeDPUHost() || config.IsModeFull() {
 		mgmtPortName := util.GetNetworkScopedK8sMgmtHostIntfName(uint(udng.GetNetworkID()))

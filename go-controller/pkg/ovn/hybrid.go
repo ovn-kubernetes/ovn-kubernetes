@@ -226,7 +226,7 @@ func (oc *DefaultNetworkController) setupHybridLRPolicySharedGw(nodeSubnets []*n
 			}
 
 			smb := &nbdb.StaticMACBinding{
-				LogicalPort:        ovntypes.RouterToSwitchPrefix + nodeName,
+				LogicalPort:        oc.GetNetworkScopedRouterToSwitchPortName(nodeName),
 				MAC:                portMac.String(),
 				IP:                 drIP.String(),
 				OverrideDynamicMAC: true,
@@ -346,7 +346,7 @@ func (oc *DefaultNetworkController) removeHybridLRPolicySharedGW(node *corev1.No
 	if node.Annotations[hotypes.HybridOverlayDRIP] != "" {
 		smb := &nbdb.StaticMACBinding{
 			IP:          node.Annotations[hotypes.HybridOverlayDRIP],
-			LogicalPort: ovntypes.RouterToSwitchPrefix + nodeName,
+			LogicalPort: oc.GetNetworkScopedRouterToSwitchPortName(nodeName),
 		}
 		err := libovsdbops.DeleteStaticMacBindings(oc.nbClient, smb)
 		if err != nil {

@@ -466,6 +466,9 @@ func initLocalGatewayNFTNATRules(cidrs ...*net.IPNet) error {
 	tx := nft.NewTransaction()
 
 	// Create main local gateway masquerade chain
+	// TODO: now that EgressIP uses nftables maps instead of iptables, this
+	// priority bump to 101 may no longer be necessary. Investigate using
+	// the standard SNATPriority (100) instead.
 	// Use priority 101 instead of defaultknftables.SNATPriority (100) to ensure
 	// iptables egress IP rules in OVN-KUBE-EGRESS-IP-MULTI-NIC chain run first
 	// this also ensure for egress-services, the

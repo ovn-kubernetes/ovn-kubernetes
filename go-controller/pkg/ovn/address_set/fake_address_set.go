@@ -98,22 +98,28 @@ func (f *FakeAddressSetFactory) NewAddressSetOps(dbIDs *libovsdbops.DbObjectIDs,
 
 // EnsureAddressSet returns set object
 func (f *FakeAddressSetFactory) EnsureAddressSet(dbIDs *libovsdbops.DbObjectIDs) (AddressSet, error) {
+	as, _, err := f.EnsureAddressSetOps(dbIDs)
+	return as, err
+}
+
+// EnsureAddressSetOps returns set object and ops
+func (f *FakeAddressSetFactory) EnsureAddressSetOps(dbIDs *libovsdbops.DbObjectIDs) (AddressSet, []ovsdb.Operation, error) {
 	if err := f.asf.validateDbIDs(dbIDs); err != nil {
-		return nil, fmt.Errorf("failed to ensure address set: %w", err)
+		return nil, nil, fmt.Errorf("failed to ensure address set: %w", err)
 	}
 	f.Lock()
 	defer f.Unlock()
 	name := getOvnAddressSetsName(dbIDs)
 	set, ok := f.sets[name]
 	if ok {
-		return set, nil
+		return set, nil, nil
 	}
 	set, err := f.newFakeAddressSets([]string{}, dbIDs, f.removeAddressSet)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	f.sets[name] = set
-	return set, nil
+	return set, nil, nil
 }
 
 // GetAddressSet returns set object

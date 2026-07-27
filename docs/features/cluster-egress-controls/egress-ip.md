@@ -233,8 +233,8 @@ And in each node an nftable chain is added in postrouting hook with priority `sr
 with a set of rules to drop marked (notice, 1009 == 0x000003f1) traffic from any pod CIDR subnet:
 ```shell
 table inet ovn-kubernetes {
-	chain ovn-kube-egress-ip {
-		comment "OVN egress IP traffic handling"
+	chain egress-ip-sec-filter {
+		comment "Egress IP on secondary interfaces filtering"
 		type filter hook postrouting priority srcnat + 1; policy accept;
 		ip saddr 10.244.0.0/16 meta mark 0x000003f1 drop comment "Drop egress IP pod traffic from 10.244.0.0/16"
 	}

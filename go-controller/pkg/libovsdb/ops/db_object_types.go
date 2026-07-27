@@ -368,6 +368,10 @@ var PortGroupCluster = newObjectIDsType(portGroup, ClusterOwnerType, []ExternalI
 	ObjectNameKey,
 })
 
+var PortGroupAdvertisedNetwork = newObjectIDsType(portGroup, AdvertisedNetworkOwnerType, []ExternalIDKey{
+	ObjectNameKey,
+})
+
 var PortGroupUDN = newObjectIDsType(portGroup, UDNIsolationOwnerType, []ExternalIDKey{
 	// name of a UDN port group
 	// currently uses:

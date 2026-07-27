@@ -189,57 +189,64 @@ func (gw *GatewayManager) cleanupStalePodSNATs(nodeName string, nodeIPs []*net.I
 	if gw.netInfo.IsUserDefinedNetwork() && gw.getNetworkNameForNADKey == nil {
 		return fmt.Errorf("missing NAD resolver for network %q", gw.netInfo.GetNetworkName())
 	}
-	// collect all the pod IPs for which we should be doing the SNAT;
-	// if DisableSNATMultipleGWs==false we consider all
-	// the SNATs stale
-	podIPsWithSNAT := sets.New[string]()
-	if config.Gateway.DisableSNATMultipleGWs {
-		pods, err := gw.watchFactory.GetAllPods()
-		if err != nil {
-			return fmt.Errorf("unable to list existing pods on node: %s, %w",
-				nodeName, err)
-		}
-		for _, pod := range pods {
-			pod := *pod
-			if !util.PodScheduled(&pod) { //if the pod is not scheduled we should not remove the nat
-				continue
-			}
-			if pod.Spec.NodeName != nodeName {
-				continue
-			}
-			if util.PodCompleted(&pod) {
-				collidingPod, err := findPodWithIPAddresses(gw.watchFactory, gw.netInfo, []net.IP{utilnet.ParseIPSloppy(pod.Status.PodIP)}, "", gw.getNetworkNameForNADKey) //even if a pod is completed we should still delete the nat if the ip is not in use anymore
-				if err != nil {
-					return fmt.Errorf("lookup for pods with same ip as %s %s failed: %w", pod.Namespace, pod.Name, err)
-				}
-				if collidingPod != nil { //if the ip is in use we should not remove the nat
-					continue
-				}
-			}
-			podIPs, err := util.GetPodIPsOfNetwork(&pod, gw.netInfo, gw.getNetworkNameForNADKey)
-			if err != nil && errors.Is(err, util.ErrNoPodIPFound) {
-				// It is possible that the pod is scheduled during this time, but the LSP add or
-				// IP Allocation has not happened and it is waiting for the WatchPods to start
-				// after WatchNodes completes (This function is called during syncNodes). So since
-				// the pod doesn't have any IPs, there is no SNAT here to keep for this pod so we skip
-				// this pod from processing and move onto the next one.
-				klog.Warningf("Unable to fetch podIPs for pod %s/%s: %v", pod.Namespace, pod.Name, err)
-				continue // no-op
-			} else if err != nil {
-				return fmt.Errorf("unable to fetch podIPs for pod %s/%s: %w", pod.Namespace, pod.Name, err)
-			}
-			for _, podIP := range podIPs {
-				podIPsWithSNAT.Insert(podIP.String())
-			}
-		}
-	}
 
 	gatewayRouter := &nbdb.LogicalRouter{
 		Name: gw.gwRouterName,
 	}
 	routerNATs, err := libovsdbops.GetRouterNATs(gw.nbClient, gatewayRouter)
-	if err != nil && errors.Is(err, libovsdbclient.ErrNotFound) {
+	if err != nil {
 		return fmt.Errorf("unable to get NAT entries for router %s on node %s: %w", gatewayRouter.Name, nodeName, err)
+	}
+	if len(routerNATs) == 0 {
+		// no nats, nothing to clean up
+		return nil
+	}
+
+	// collect all the pod IPs for which we should be doing the SNAT;
+	// if DisableSNATMultipleGWs==false we consider all
+	// the SNATs stale
+	podIPsWithSNAT := sets.New[string]()
+	if config.Gateway.DisableSNATMultipleGWs {
+		// For UDNs, only scan namespaces attached to this network.
+		// For the default network NADNamespaces is empty; GetPods("")
+		// falls back to listing all pods (ListAllByNamespace on "").
+		nadNamespaces := gw.netInfo.GetNADNamespaces()
+		if len(nadNamespaces) == 0 {
+			nadNamespaces = []string{""}
+		}
+		for _, ns := range nadNamespaces {
+			pods, err := gw.watchFactory.GetPods(ns)
+			if err != nil {
+				return fmt.Errorf("unable to list existing pods in namespace %q: %w", ns, err)
+			}
+			for _, pod := range pods {
+				if !util.PodScheduled(pod) {
+					continue
+				}
+				if pod.Spec.NodeName != nodeName {
+					continue
+				}
+				if util.PodCompleted(pod) {
+					collidingPod, err := findPodWithIPAddresses(gw.watchFactory, gw.netInfo, []net.IP{utilnet.ParseIPSloppy(pod.Status.PodIP)}, "", gw.getNetworkNameForNADKey)
+					if err != nil {
+						return fmt.Errorf("lookup for pods with same ip as %s %s failed: %w", pod.Namespace, pod.Name, err)
+					}
+					if collidingPod != nil {
+						continue
+					}
+				}
+				podIPs, err := util.GetPodIPsOfNetwork(pod, gw.netInfo, gw.getNetworkNameForNADKey)
+				if err != nil && errors.Is(err, util.ErrNoPodIPFound) {
+					klog.Warningf("Unable to fetch podIPs for pod %s/%s: %v", pod.Namespace, pod.Name, err)
+					continue
+				} else if err != nil {
+					return fmt.Errorf("unable to fetch podIPs for pod %s/%s: %w", pod.Namespace, pod.Name, err)
+				}
+				for _, podIP := range podIPs {
+					podIPsWithSNAT.Insert(podIP.String())
+				}
+			}
+		}
 	}
 
 	nodeIPset := sets.New(util.IPNetsIPToStringSlice(nodeIPs)...)
@@ -1381,67 +1388,60 @@ func deleteStaleMasqueradeResources(nbClient libovsdbclient.Client, routerName, 
 // list of nextHopIPs. If nextHopIPs is empty, then an attempt will be made to detect the stale route and MAC bindings
 func deleteStaleMasqueradeRouteAndMACBinding(nbClient libovsdbclient.Client, routerName string, nextHopIPs []net.IP) error {
 	logicalport := types.GWRouterToExtSwitchPrefix + routerName
+
+	var matchNextHop func(nexthop string) bool
 	if len(nextHopIPs) == 0 {
-		// build valid values
-		validNextHops := []net.IP{config.Gateway.MasqueradeIPs.V4DummyNextHopMasqueradeIP, config.Gateway.MasqueradeIPs.V6DummyNextHopMasqueradeIP}
-		// lookup routes for external id that dont match currently configured masquerade subnets
-		for _, validNextHop := range validNextHops {
-			staticRoutePredicate := func(item *nbdb.LogicalRouterStaticRoute) bool {
-				if item.OutputPort != nil && *item.OutputPort == logicalport &&
-					item.Nexthop != validNextHop.String() && utilnet.IPFamilyOfString(item.Nexthop) == utilnet.IPFamilyOf(validNextHop) {
-					if _, ok := item.ExternalIDs[util.OvnNodeMasqCIDR]; ok {
-						return true
-					}
-				}
-				return false
-			}
-
-			staleRoutes, err := libovsdbops.FindLogicalRouterStaticRoutesWithPredicate(nbClient, staticRoutePredicate)
-			if err != nil {
-				return fmt.Errorf("failed to search for stale masquerade routes: %w", err)
-			}
-
-			for _, staleRoute := range staleRoutes {
-				klog.Infof("Stale masquerade route found: %#v", *staleRoute)
-				// found stale routes, derive nexthop and flush the route and mac binding if it exists
-				staleNextHop := staleRoute.Nexthop
-
-				macBindingPredicate := func(item *nbdb.StaticMACBinding) bool {
-					return item.LogicalPort == logicalport && item.IP == staleNextHop &&
-						utilnet.IPFamilyOfString(item.IP) == utilnet.IPFamilyOfString(staleNextHop)
-				}
-				if err := libovsdbops.DeleteStaticMACBindingWithPredicate(nbClient, macBindingPredicate); err != nil {
-					return fmt.Errorf("failed to delete static MAC binding for logical port %s: %v", logicalport, err)
-				}
-			}
-			if err := libovsdbops.DeleteLogicalRouterStaticRoutes(nbClient, routerName, staleRoutes...); err != nil {
-				return err
-			}
+		configuredNextHops := sets.New(
+			config.Gateway.MasqueradeIPs.V4DummyNextHopMasqueradeIP.String(),
+			config.Gateway.MasqueradeIPs.V6DummyNextHopMasqueradeIP.String(),
+		)
+		matchNextHop = func(nexthop string) bool {
+			return !configuredNextHops.Has(nexthop)
 		}
-		return nil
+	} else {
+		targetNextHops := sets.New[string]()
+		for _, ip := range nextHopIPs {
+			targetNextHops.Insert(ip.String())
+		}
+		matchNextHop = func(nexthop string) bool {
+			return targetNextHops.Has(nexthop)
+		}
 	}
 
-	for _, nextHop := range nextHopIPs {
-		staticRoutePredicate := func(item *nbdb.LogicalRouterStaticRoute) bool {
-			if item.OutputPort != nil && *item.OutputPort == logicalport &&
-				item.Nexthop == nextHop.String() && utilnet.IPFamilyOfString(item.Nexthop) == utilnet.IPFamilyOf(nextHop) {
-				if _, ok := item.ExternalIDs[util.OvnNodeMasqCIDR]; ok {
-					return true
-				}
-			}
+	var staleNextHops []string
+	staticRoutePredicate := func(item *nbdb.LogicalRouterStaticRoute) bool {
+		if item.OutputPort == nil || *item.OutputPort != logicalport {
 			return false
 		}
-		if err := libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicate(nbClient, routerName, staticRoutePredicate); err != nil {
-			return fmt.Errorf("failed to delete static route from gateway router %s: %v", routerName, err)
+		if _, ok := item.ExternalIDs[util.OvnNodeMasqCIDR]; !ok {
+			return false
 		}
+		if matchNextHop(item.Nexthop) {
+			staleNextHops = append(staleNextHops, item.Nexthop)
+			return true
+		}
+		return false
+	}
 
+	var ops []ovsdb.Operation
+	ops, err := libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicateOps(nbClient, ops, routerName, staticRoutePredicate)
+	if err != nil {
+		return fmt.Errorf("failed to build ops to delete stale masquerade routes from router %s: %w", routerName, err)
+	}
+
+	for _, staleNextHop := range staleNextHops {
+		klog.Infof("Stale masquerade route found on router %s with nexthop %s", routerName, staleNextHop)
 		macBindingPredicate := func(item *nbdb.StaticMACBinding) bool {
-			return item.LogicalPort == logicalport && item.IP == nextHop.String() &&
-				utilnet.IPFamilyOfString(item.IP) == utilnet.IPFamilyOf(nextHop)
+			return item.LogicalPort == logicalport && item.IP == staleNextHop
 		}
-		if err := libovsdbops.DeleteStaticMACBindingWithPredicate(nbClient, macBindingPredicate); err != nil {
-			return fmt.Errorf("failed to delete static MAC binding for logical port %s: %v", logicalport, err)
+		ops, err = libovsdbops.DeleteStaticMACBindingWithPredicateOps(nbClient, ops, macBindingPredicate)
+		if err != nil {
+			return fmt.Errorf("failed to build ops to delete static MAC binding for logical port %s: %w", logicalport, err)
 		}
+	}
+
+	if _, err := libovsdbops.TransactAndCheck(nbClient, ops); err != nil {
+		return fmt.Errorf("failed to delete stale masquerade routes and MAC bindings from router %s: %w", routerName, err)
 	}
 	return nil
 }

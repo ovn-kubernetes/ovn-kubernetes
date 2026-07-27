@@ -254,6 +254,31 @@ func TestUplinkGatewayControllerSerializesSharedUplinkProgramming(t *testing.T) 
 	wg.Wait()
 }
 
+func TestUplinkGatewayControllerDPUHostDoesNotPublishGatewayReady(t *testing.T) {
+	prepareUplinkGatewayControllerTest(t)
+	config.OvnKubeNode.Mode = types.NodeModeDPUHost
+	const (
+		uplinkName = "uplink1"
+		nodeName   = "node-a"
+	)
+	controller, client := newUplinkGatewayControllerForTest(t, uplinkName, nodeName)
+	network := uplinkGatewayNetInfo(t, "red", uplinkName)
+	reconciled := false
+
+	if err := controller.ReconcileNetwork(network, func() error {
+		reconciled = true
+		return nil
+	}); err != nil {
+		t.Fatalf("failed to reconcile DPU-host gateway: %v", err)
+	}
+	if !reconciled {
+		t.Fatal("expected DPU-host gateway reconciliation to run")
+	}
+	if len(client.Actions()) != 0 {
+		t.Fatalf("expected DPU host not to publish GatewayReady, got actions %v", client.Actions())
+	}
+}
+
 func TestUplinkGatewayControllerRejectsMismatchedStateIdentity(t *testing.T) {
 	prepareUplinkGatewayControllerTest(t)
 	const (

@@ -277,6 +277,73 @@ var _ = ginkgo.Describe("Route Manager", func() {
 		})
 	})
 
+	ginkgo.Context("IPv6 default metric", func() {
+		v6Subnet := ovntest.MustParseIPNet("fd99::/64")
+
+		ginkgo.It("stores IPv6 routes under the kernel-assigned default metric", func() {
+			r := netlink.Route{LinkIndex: loLink.Attrs().Index, Dst: v6Subnet, Table: mainTableID, Type: unix.RTN_UNICAST}
+			gomega.Expect(addRouteViaManager(rm, testNS, r)).Should(gomega.Succeed())
+
+			var kernelRoute *netlink.Route
+			gomega.Eventually(func() *netlink.Route {
+				err := testNS.Do(func(ns.NetNS) error {
+					filter, mask := filterRouteByTable(loLink.Attrs().Index, mainTableID)
+					routes, err := netlink.RouteListFiltered(netlink.FAMILY_V6, filter, mask)
+					if err != nil {
+						return err
+					}
+					for i := range routes {
+						if routes[i].Dst != nil && routes[i].Dst.String() == v6Subnet.String() {
+							kernelRoute = &routes[i]
+							break
+						}
+					}
+					return nil
+				})
+				gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+				return kernelRoute
+			}, time.Second).ShouldNot(gomega.BeNil())
+
+			// the kernel assigns IPv6 routes a default metric of 1024
+			// (IP6_RT_PRIO_USER) when none is specified
+			gomega.Expect(kernelRoute.Priority).To(gomega.Equal(ipv6DefaultRouteMetric))
+			// the store key must match the kernel-reported route, otherwise
+			// event-driven restore never triggers for IPv6 routes and sync
+			// re-adds them every period
+			rm.Lock()
+			_, found := rm.store[keyFromNetlink(kernelRoute)]
+			rm.Unlock()
+			gomega.Expect(found).To(gomega.BeTrue(), "managed IPv6 route must be stored under the kernel-reported key")
+
+			// deleting with an unset metric must remove both the kernel route
+			// and the store entry
+			gomega.Expect(delRouteViaManager(rm, testNS, r)).Should(gomega.Succeed())
+			gomega.Eventually(func() bool {
+				found := false
+				err := testNS.Do(func(ns.NetNS) error {
+					filter, mask := filterRouteByTable(loLink.Attrs().Index, mainTableID)
+					routes, err := netlink.RouteListFiltered(netlink.FAMILY_V6, filter, mask)
+					if err != nil {
+						return err
+					}
+					for i := range routes {
+						if routes[i].Dst != nil && routes[i].Dst.String() == v6Subnet.String() {
+							found = true
+							break
+						}
+					}
+					return nil
+				})
+				gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+				return found
+			}, time.Second).Should(gomega.BeFalse())
+			rm.Lock()
+			storeLen := len(rm.store)
+			rm.Unlock()
+			gomega.Expect(storeLen).To(gomega.BeZero())
+		})
+	})
+
 	ginkgo.Context("runtime sync", func() {
 		ginkgo.It("reapplies managed route that was removed (gw IP, mtu, src IP)", func() {
 			r := netlink.Route{LinkIndex: loLink.Attrs().Index, Gw: loGWIP, Dst: loSubnet, MTU: loMTU, Src: loIP, Table: mainTableID, Type: unix.RTN_UNICAST}
@@ -360,6 +427,37 @@ var _ = ginkgo.Describe("Route Manager", func() {
 })
 
 var _ = ginkgo.Describe("Route Manager", func() {
+	ginkgo.It("normalizes unset IPv6 route metric to the kernel default", func() {
+		v6Dst := ovntest.MustParseIPNet("fd00::/64")
+		v4Dst := ovntest.MustParseIPNet("10.0.0.0/24")
+		v6GW := ovntest.MustParseIP("fd00::1")
+
+		// IPv6 route without an explicit metric gets the kernel default
+		r, err := validateAndNormalizeRoute(&netlink.Route{Dst: v6Dst})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(r.Priority).To(gomega.Equal(ipv6DefaultRouteMetric))
+
+		// an explicit metric is preserved
+		r, err = validateAndNormalizeRoute(&netlink.Route{Dst: v6Dst, Priority: 100})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(r.Priority).To(gomega.Equal(100))
+
+		// IPv4 routes keep the kernel default of 0
+		r, err = validateAndNormalizeRoute(&netlink.Route{Dst: v4Dst})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(r.Priority).To(gomega.BeZero())
+
+		// family detection falls back to the gateway for routes without Dst
+		r, err = validateAndNormalizeRoute(&netlink.Route{Gw: v6GW})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(r.Priority).To(gomega.Equal(ipv6DefaultRouteMetric))
+
+		// and to the Family field when neither Dst nor Gw is set
+		r, err = validateAndNormalizeRoute(&netlink.Route{Family: netlink.FAMILY_V6})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(r.Priority).To(gomega.Equal(ipv6DefaultRouteMetric))
+	})
+
 	ginkgo.It("partially compares expected routes with installed routes", func() {
 		values := map[string]any{
 			"int":             1,

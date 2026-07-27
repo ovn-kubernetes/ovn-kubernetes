@@ -5,6 +5,7 @@ package ops
 
 import (
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 )
@@ -45,8 +46,8 @@ func DeleteStaticMacBindings(nbClient libovsdbclient.Client, smbs ...*nbdb.Stati
 
 type staticMACBindingPredicate func(*nbdb.StaticMACBinding) bool
 
-// DeleteStaticMACBindingWithPredicate deletes a Static MAC entry for a logical port from the cache
-func DeleteStaticMACBindingWithPredicate(nbClient libovsdbclient.Client, p staticMACBindingPredicate) error {
+// DeleteStaticMACBindingWithPredicateOps returns ops to delete Static MAC entries matching the predicate
+func DeleteStaticMACBindingWithPredicateOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, p staticMACBindingPredicate) ([]ovsdb.Operation, error) {
 	found := []*nbdb.StaticMACBinding{}
 	opModel := operationModel{
 		ModelPredicate: p,
@@ -56,9 +57,15 @@ func DeleteStaticMACBindingWithPredicate(nbClient libovsdbclient.Client, p stati
 	}
 
 	m := newModelClient(nbClient)
-	err := m.Delete(opModel)
+	return m.DeleteOps(ops, opModel)
+}
+
+// DeleteStaticMACBindingWithPredicate deletes a Static MAC entry for a logical port from the cache
+func DeleteStaticMACBindingWithPredicate(nbClient libovsdbclient.Client, p staticMACBindingPredicate) error {
+	ops, err := DeleteStaticMACBindingWithPredicateOps(nbClient, nil, p)
 	if err != nil {
 		return err
 	}
-	return nil
+	_, err = TransactAndCheck(nbClient, ops)
+	return err
 }
