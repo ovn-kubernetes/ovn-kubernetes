@@ -5,8 +5,6 @@ package sampledecoder
 
 import (
 	"context"
-	"fmt"
-	"strings"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
@@ -22,7 +20,7 @@ import (
 
 const OVSDBTimeout = 10 * time.Second
 
-func NewNBClientWithConfig(ctx context.Context, cfg dbConfig) (client.Client, error) {
+func newNBClient(ctx context.Context, endpoint string) (client.Client, error) {
 	dbModel, err := nbdb.FullDatabaseModel()
 	if err != nil {
 		return nil, err
@@ -36,7 +34,7 @@ func NewNBClientWithConfig(ctx context.Context, cfg dbConfig) (client.Client, er
 		},
 	})
 
-	c, err := newClient(cfg, dbModel)
+	c, err := newClient(endpoint, dbModel)
 	if err != nil {
 		return nil, err
 	}
@@ -56,13 +54,13 @@ func NewNBClientWithConfig(ctx context.Context, cfg dbConfig) (client.Client, er
 	return c, nil
 }
 
-func NewOVSDBClientWithConfig(ctx context.Context, cfg dbConfig) (client.Client, error) {
+func newOVSDBClient(ctx context.Context, endpoint string) (client.Client, error) {
 	dbModel, err := ovsdb.ObservDatabaseModel()
 	if err != nil {
 		return nil, err
 	}
 
-	c, err := newClient(cfg, dbModel)
+	c, err := newClient(endpoint, dbModel)
 	if err != nil {
 		return nil, err
 	}
@@ -82,10 +80,8 @@ func NewOVSDBClientWithConfig(ctx context.Context, cfg dbConfig) (client.Client,
 	return c, nil
 }
 
-// newClient creates a new client object given the provided config
-// the stopCh is required to ensure the goroutine for ssl cert
-// update is not leaked
-func newClient(cfg dbConfig, dbModel model.ClientDBModel) (client.Client, error) {
+// newClient creates a client for a local OVSDB endpoint.
+func newClient(endpoint string, dbModel model.ClientDBModel) (client.Client, error) {
 	const connectTimeout = OVSDBTimeout * 2
 	const inactivityTimeout = OVSDBTimeout * 18
 	// Don't log anything from the libovsdb client by default
@@ -99,13 +95,7 @@ func newClient(cfg dbConfig, dbModel model.ClientDBModel) (client.Client, error)
 		// inactivity check on the ovsdb connection.
 		client.WithInactivityCheck(inactivityTimeout, connectTimeout, &backoff.ZeroBackOff{}),
 		client.WithLogger(&logger),
-	}
-
-	for _, endpoint := range strings.Split(cfg.address, ",") {
-		options = append(options, client.WithEndpoint(endpoint))
-	}
-	if cfg.scheme != "unix" {
-		return nil, fmt.Errorf("only unix scheme is supported for now")
+		client.WithEndpoint(endpoint),
 	}
 
 	client, err := client.NewOVSDBClient(dbModel, options...)

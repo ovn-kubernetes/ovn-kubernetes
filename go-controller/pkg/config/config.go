@@ -179,13 +179,13 @@ var (
 		UDNDeletionGracePeriod:          120 * time.Second,
 	}
 
-	// OvnNorth holds northbound OVN database client and server authentication and location details
+	// OvnNorth holds local northbound database paths and Egress IP health-check TLS settings.
 	OvnNorth = OvnAuthConfig{
 		RunDir:     "/var/run/ovn/",
 		DbLocation: "/etc/ovn/ovnnb_db.db",
 	}
 
-	// OvnSouth holds southbound OVN database client and server authentication and location details
+	// OvnSouth holds local southbound database paths.
 	OvnSouth = OvnAuthConfig{
 		RunDir:     "/var/run/ovn/",
 		DbLocation: "/etc/ovn/ovnsb_db.db",

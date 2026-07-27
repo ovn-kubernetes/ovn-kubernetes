@@ -76,43 +76,39 @@ On openshift, the token can be generated on the cluster master as follows:
 (not required if kubeconfig is given).
 
 .SH [OvnNorth]
+.PP
+OVN northbound database connections use a local Unix socket. The client
+certificate options retain their historical names but configure TLS for the
+node-to-node Egress IP gRPC health check.
 .TP
-\fBaddress\fR=
-This is the url used to access the northbound database server. The scheme may be ssl or tcp.
-When ssl is used, the certs must be provided. The host must be a host IP address, not name.
-The port, by default, is 6441. E.g., ssl:1.2.3.4:6641
+\fBclient-privkey\fR=
+Private key used by the Egress IP health-check gRPC server.
 .TP
-\fBclient-privkey\fR=/etc/openvswitch/ovnnb-privkey.pem
-.TP
-\fBclient-cert\fR=/etc/openvswitch/ovnnb-cert.pem
+\fBclient-cert\fR=
+Certificate used by the Egress IP health-check gRPC server.
 .TP
 \fBclient-cacert\fR=
-For example: /etc/openvswitch/ovnnb-ca.cert
+CA certificate used by the Egress IP health-check gRPC client.
 .TP
-\fBserver-privkey\fR=
+\fBcert-common-name\fR=
+Common name used by the Egress IP health-check gRPC client to verify the
+server certificate.
 .TP
-\fBserver-cert\fR=
+\fBrun-dir\fR=/var/run/ovn/
+Directory containing the local northbound database Unix socket.
 .TP
-\fBserver-cacert\fR=
+\fBdb-location\fR=/etc/ovn/ovnnb_db.db
+Path to the local northbound database file.
 
 .SH [OvnSouth]
+.PP
+OVN southbound database connections use a local Unix socket.
 .TP
-\fBaddress\fR=
-This is the url used to access the southbound database server. The scheme may be ssl or tcp.
-When ssl is used, the certs must be provided. The host must be a host IP address, not name.
-The port, by default, is 6442. E.g., ssl:1.2.3.4:6642
+\fBrun-dir\fR=/var/run/ovn/
+Directory containing the local southbound database Unix socket.
 .TP
-\fBclient-privkey\fR=/etc/openvswitch/ovnsb-privkey.pem
-.TP
-\fBclient-cert\fR=/etc/openvswitch/ovnsb-cert.pem
-.TP
-\fBclient-cacert\fR=/etc/openvswitch/ovnsb-ca.cert
-.TP
-\fBserver-privkey\fR=
-.TP
-\fBserver-cert\fR=
-.TP
-\fBserver-cacert\fR=
+\fBdb-location\fR=/etc/ovn/ovnsb_db.db
+Path to the local southbound database file.
 
 .SH [OvnKubeNode]
 .TP

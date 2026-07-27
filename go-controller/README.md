@@ -128,16 +128,17 @@ conf-dir=/etc/cni/net.d
 plugin=ovn-k8s-cni-overlay
 
 [ovnnorth]
-address=ssl:1.2.3.4:6641
-client-privkey=/path/to/private.key
+# These historically named fields configure Egress IP health-check TLS.
+client-privkey=/path/to/client.key
 client-cert=/path/to/client.crt
 client-cacert=/path/to/client-ca.crt
-server-privkey=/path/to/private.key
-server-cert=/path/to/server.crt
-server-cacert=path/to/server-ca.crt
+cert-common-name=egress-health-check.example.com
+run-dir=/var/run/ovn/
+db-location=/etc/ovn/ovnnb_db.db
 
 [ovnsouth]
-<same as ovn north>
+run-dir=/var/run/ovn/
+db-location=/etc/ovn/ovnsb_db.db
 ```
 
 ## Example
