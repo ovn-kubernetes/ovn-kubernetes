@@ -1141,7 +1141,15 @@ func (nInfo *userDefinedNetInfo) canReconcile(other NetInfo) bool {
 	if nInfo.OutboundSNAT() != other.OutboundSNAT() {
 		return false
 	}
-	if nInfo.NoOverlayRouting() != other.NoOverlayRouting() {
+	// NoOverlayRouting is "managed"/"unmanaged" for no-overlay networks and
+	// empty otherwise (ValidateNetConf enforces this), so two conflicting
+	// non-empty values mean the routing mode of a no-overlay network changed
+	// and the network must be recreated. An empty value on either side is
+	// tolerated instead: older versions did not render noOverlayRouting into
+	// NADs, and a strict comparison would tear down and recreate every
+	// no-overlay network on upgrade.
+	if nInfo.NoOverlayRouting() != other.NoOverlayRouting() &&
+		nInfo.NoOverlayRouting() != "" && other.NoOverlayRouting() != "" {
 		return false
 	}
 
