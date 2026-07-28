@@ -213,6 +213,16 @@ var _ = ginkgo.Describe("No-Overlay: Default network is enabled with no-overlay"
 		})
 
 		ginkgo.It("should maintain pod2pod connectivity without RouteAdvertisements", func() {
+			// the connectivity check alone would not distinguish this spec from
+			// the generic no-overlay one: first prove no BGP-learned routes are
+			// involved, so connectivity relies on the underlay routing alone
+			ginkgo.By("Verifying the client node has no BGP-learned routes")
+			bgpRoutes, err := e2epodoutput.RunHostCmd(tcpdumpPod.Namespace, tcpdumpPod.Name,
+				"ip route show proto bgp; ip -6 route show proto bgp")
+			framework.ExpectNoError(err, "Failed to list BGP routes on the client node")
+			gomega.Expect(strings.TrimSpace(bgpRoutes)).To(gomega.BeEmpty(),
+				"expected no BGP-learned routes on the client node without RouteAdvertisements")
+
 			ginkgo.By("Testing pod2pod connectivity without default-network RouteAdvertisements")
 			checkConnectivityWithoutOverlay(serverPod.Status.PodIPs, nil, clientPod, tcpdumpPod)
 		})
