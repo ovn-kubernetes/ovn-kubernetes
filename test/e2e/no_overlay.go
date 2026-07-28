@@ -14,15 +14,16 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
-	rav1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
 	raclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned"
 	apitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/kubernetes/test/e2e/framework"
@@ -204,7 +205,7 @@ var _ = ginkgo.Describe("No-Overlay: Default network is enabled with no-overlay"
 
 	ginkgo.When("unmanaged routing is enabled without RouteAdvertisements", func() {
 		ginkgo.BeforeEach(func() {
-			enabled, err := isDefaultNetworkNoOverlayUnmanagedWithoutRouteAdvertisements()
+			enabled, err := isDefaultNetworkNoOverlayUnmanagedWithoutRouteAdvertisements(f)
 			framework.ExpectNoError(err, "Failed to check default network no-overlay unmanaged state")
 			if !enabled {
 				ginkgo.Skip("Test requires unmanaged no-overlay default network without RouteAdvertisements")
@@ -409,25 +410,33 @@ func isManagedRoutingEnabled() bool {
 	return false
 }
 
-func isDefaultNetworkNoOverlayUnmanagedWithoutRouteAdvertisements() (bool, error) {
+func isDefaultNetworkNoOverlayUnmanagedWithoutRouteAdvertisements(f *framework.Framework) (bool, error) {
 	if isManagedRoutingEnabled() {
 		return false, nil
 	}
-	hasDefaultNetworkRA, err := isAnyDefaultNetworkPodNetworkRouteAdvertisementsConfigured()
+	hasDefaultNetworkRA, err := isAnyDefaultNetworkPodNetworkRouteAdvertisementsConfigured(f)
 	if err != nil {
 		return false, err
 	}
 	return !hasDefaultNetworkRA, nil
 }
 
-func isAnyDefaultNetworkPodNetworkRouteAdvertisementsConfigured() (bool, error) {
-	output, err := e2ekubectl.RunKubectl("default", "get", "routeadvertisements", "-o",
-		`go-template={{range .items}}{{range .spec.advertisements}}{{.}} {{end}}{{range .spec.networkSelectors}}{{.networkSelectionType}} {{end}}{{"\n"}}{{end}}`)
+func isAnyDefaultNetworkPodNetworkRouteAdvertisementsConfigured(f *framework.Framework) (bool, error) {
+	raClient, err := raclientset.NewForConfig(f.ClientConfig())
 	if err != nil {
 		return false, err
 	}
-	for _, line := range strings.Split(output, "\n") {
-		if strings.Contains(line, string(rav1.PodNetwork)) && strings.Contains(line, string(apitypes.DefaultNetwork)) {
+	raList, err := raClient.K8sV1().RouteAdvertisements().List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		// The RouteAdvertisements CRD is not installed when the feature is
+		// disabled: no RouteAdvertisements are configured then.
+		if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	for i := range raList.Items {
+		if util.RAAdvertisesDefaultNetwork(&raList.Items[i]) {
 			return true, nil
 		}
 	}
