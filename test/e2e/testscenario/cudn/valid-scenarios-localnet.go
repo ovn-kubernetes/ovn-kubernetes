@@ -83,4 +83,42 @@ spec:
       mtu: 9000
 `,
 	},
+	{
+		Description: "valid disabled mac-security",
+		Name:        "localnet-mac-security-disabled-success",
+		Manifest: `
+apiVersion: k8s.ovn.org/v1
+kind: ClusterUserDefinedNetwork
+metadata:
+  name: localnet-mac-security-disabled-success
+spec:
+  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
+  network:
+    topology: Localnet
+    localnet:
+      role: Secondary
+      physicalNetworkName: test
+      ipam: {mode: Disabled}
+      macSecurity: { mode: Disabled }
+`,
+	},
+	{
+		Description: "valid explicitly enabled mac-security",
+		Name:        "localnet-mac-security-explicitly-enabled-success",
+		Manifest: `
+apiVersion: k8s.ovn.org/v1
+kind: ClusterUserDefinedNetwork
+metadata:
+  name: localnet-mac-security-explicitly-enabled-success
+spec:
+  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
+  network:
+    topology: Localnet
+    localnet:
+      role: Secondary
+      physicalNetworkName: test
+      ipam: {mode: Disabled}
+      macSecurity: { mode: Enabled }
+`,
+	},
 }
