@@ -226,9 +226,14 @@ spec:
 
 The default network no-overlay controller validates that at least one
 `RouteAdvertisements` object advertises the default network pod routes and has
-`Accepted=True`. If none exists, or if the selected object is not accepted,
-OVN-Kubernetes reports an event on the default network
-`NetworkAttachmentDefinition`.
+`Accepted=True`. If matching objects exist but none are accepted,
+OVN-Kubernetes reports a warning event on the default network
+`NetworkAttachmentDefinition`. With unmanaged routing, a missing
+`RouteAdvertisements` object is not reported as an error: it is
+indistinguishable from intentionally running without RouteAdvertisements (see
+below), so OVN-Kubernetes reports a normal event for that mode instead. The
+reported event flips between the two outcomes as matching objects are created,
+accepted, or deleted.
 
 ### Unmanaged Routing Without RouteAdvertisements
 
@@ -253,11 +258,14 @@ external return routes. Each node gateway router installs routes for its local
 pod host subnet back into OVN and sends non-local pod subnet destinations to the
 external default next hop.
 
-If relevant `RouteAdvertisements` objects exist, the default network follows the
-existing no-overlay validation behavior: any accepted relevant
-`RouteAdvertisements` object is sufficient; if none are accepted,
-OVN-Kubernetes reports an event on the default network
-`NetworkAttachmentDefinition`.
+If the RouteAdvertisements feature is enabled and relevant
+`RouteAdvertisements` objects exist, the default network follows the existing
+no-overlay validation behavior: any accepted relevant `RouteAdvertisements`
+object is sufficient; if none are accepted, OVN-Kubernetes reports a warning
+event on the default network `NetworkAttachmentDefinition`. When the
+RouteAdvertisements feature is disabled, unmanaged routing is the only valid
+no-overlay configuration; any `RouteAdvertisements` objects are ignored and the
+mode is validated once at startup.
 
 ## Enable no-overlay mode on a ClusterUserDefinedNetwork
 
@@ -343,10 +351,12 @@ status:
     message: "Transport has been configured as 'no-overlay'."
 ```
 
-If no accepted `RouteAdvertisements` object advertises the CUDN pod routes, the
-condition is set to `False` with a reason such as
-`NoOverlayRouteAdvertisementsIsMissing` or
-`NoOverlayRouteAdvertisementsNotAccepted`.
+If matching `RouteAdvertisements` objects exist but none are accepted, the
+condition is set to `False` with reason
+`NoOverlayRouteAdvertisementsNotAccepted`. With managed routing, the absence of
+any matching object is reported as `False` with reason
+`NoOverlayRouteAdvertisementsIsMissing`; with unmanaged routing it means the
+CUDN runs without RouteAdvertisements (see below).
 
 For unmanaged routing without RouteAdvertisements, use unmanaged no-overlay on
 the CUDN and configure the external fabric to route pod subnet traffic to the
@@ -367,14 +377,17 @@ network:
 ```
 
 In this mode, no `RouteAdvertisements` object is required. When no
-`RouteAdvertisements` object selects the CUDN and advertises `PodNetwork`, the
-`TransportAccepted` condition is set to `True` with reason
-`NoOverlayRouteAdvertisementsNotRequired`. If relevant `RouteAdvertisements`
-objects exist, the CUDN follows the existing no-overlay validation behavior:
-any accepted relevant `RouteAdvertisements` object sets
-`TransportAccepted=True` with reason `NoOverlayTransportAccepted`; if none are
-accepted, `TransportAccepted=False` is reported with reason
-`NoOverlayRouteAdvertisementsNotAccepted`.
+`RouteAdvertisements` object selects the CUDN and advertises `PodNetwork` - or
+when the RouteAdvertisements feature is disabled - the `TransportAccepted`
+condition is set to `True` with reason
+`NoOverlayRouteAdvertisementsNotRequired`. If the RouteAdvertisements feature
+is enabled and relevant `RouteAdvertisements` objects exist, the CUDN follows
+the existing no-overlay validation behavior: any accepted relevant
+`RouteAdvertisements` object sets `TransportAccepted=True` with reason
+`NoOverlayTransportAccepted`; if none are accepted, `TransportAccepted=False`
+is reported with reason `NoOverlayRouteAdvertisementsNotAccepted`. The
+condition flips between these outcomes as matching objects are created,
+accepted, or deleted.
 
 ## Operational Notes
 
