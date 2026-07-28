@@ -64,6 +64,11 @@ func (in LocalnetConfig) OpenAPIModelName() string {
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
+func (in MACSecurityConfig) OpenAPIModelName() string {
+	return "com.github.ovn-kubernetes.ovn-kubernetes.go-controller.pkg.crd.userdefinednetwork.v1.MACSecurityConfig"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
 func (in NetworkSpec) OpenAPIModelName() string {
 	return "com.github.ovn-kubernetes.ovn-kubernetes.go-controller.pkg.crd.userdefinednetwork.v1.NetworkSpec"
 }
