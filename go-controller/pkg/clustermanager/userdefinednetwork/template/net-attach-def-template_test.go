@@ -445,6 +445,61 @@ var _ = Describe("NetAttachDefTemplate", func() {
 			  "allowPersistentIPs": true
 			}`,
 		),
+		Entry("secondary network, layer2, macSecurity mode Disabled",
+			udnv1.UserDefinedNetworkSpec{
+				Topology: udnv1.NetworkTopologyLayer2,
+				Layer2: &udnv1.Layer2Config{
+					Role:        udnv1.NetworkRoleSecondary,
+					IPAM:        &udnv1.IPAMConfig{Mode: udnv1.IPAMDisabled},
+					MACSecurity: &udnv1.MACSecurityConfig{Mode: udnv1.MACSecurityDisabled},
+				},
+			},
+			`{
+			  "cniVersion": "1.1.0",
+			  "type": "ovn-k8s-cni-overlay",
+			  "name": "mynamespace_test-net",
+			  "netAttachDefName": "mynamespace/test-net",
+			  "role": "secondary",
+			  "topology": "layer2",
+			  "macSecurityMode": "disabled"
+			}`,
+		),
+		Entry("secondary network, layer2, macSecurity mode Enabled",
+			udnv1.UserDefinedNetworkSpec{
+				Topology: udnv1.NetworkTopologyLayer2,
+				Layer2: &udnv1.Layer2Config{
+					Role:        udnv1.NetworkRoleSecondary,
+					IPAM:        &udnv1.IPAMConfig{Mode: udnv1.IPAMDisabled},
+					MACSecurity: &udnv1.MACSecurityConfig{Mode: udnv1.MACSecurityEnabled},
+				},
+			},
+			`{
+			  "cniVersion": "1.1.0",
+			  "type": "ovn-k8s-cni-overlay",
+			  "name": "mynamespace_test-net",
+			  "netAttachDefName": "mynamespace/test-net",
+			  "role": "secondary",
+			  "topology": "layer2",
+			  "macSecurityMode": "enabled"
+			}`,
+		),
+		Entry("secondary network, layer2, macSecurity unset should not render macSecurityMode for backward compatibility",
+			udnv1.UserDefinedNetworkSpec{
+				Topology: udnv1.NetworkTopologyLayer2,
+				Layer2: &udnv1.Layer2Config{
+					Role: udnv1.NetworkRoleSecondary,
+					IPAM: &udnv1.IPAMConfig{Mode: udnv1.IPAMDisabled},
+				},
+			},
+			`{
+			  "cniVersion": "1.1.0",
+			  "type": "ovn-k8s-cni-overlay",
+			  "name": "mynamespace_test-net",
+			  "netAttachDefName": "mynamespace/test-net",
+			  "role": "secondary",
+			  "topology": "layer2"
+			}`,
+		),
 	)
 
 	DescribeTable("should create CUDN NAD from spec",
@@ -611,6 +666,125 @@ var _ = Describe("NetAttachDefTemplate", func() {
 			  "mtu": 1600,
               "vlanID": 200, 
 			  "allowPersistentIPs": true
+			}`,
+		),
+		Entry("secondary network, layer2, macSecurity mode Disabled",
+			udnv1.NetworkSpec{
+				Topology: udnv1.NetworkTopologyLayer2,
+				Layer2: &udnv1.Layer2Config{
+					Role:        udnv1.NetworkRoleSecondary,
+					IPAM:        &udnv1.IPAMConfig{Mode: udnv1.IPAMDisabled},
+					MACSecurity: &udnv1.MACSecurityConfig{Mode: udnv1.MACSecurityDisabled},
+				},
+			},
+			`{
+			  "cniVersion": "1.1.0",
+			  "type": "ovn-k8s-cni-overlay",
+			  "name": "cluster_udn_test-net",
+			  "netAttachDefName": "mynamespace/test-net",
+			  "role": "secondary",
+			  "topology": "layer2",
+			  "macSecurityMode": "disabled"
+			}`,
+		),
+		Entry("secondary network, layer2, macSecurity mode Enabled",
+			udnv1.NetworkSpec{
+				Topology: udnv1.NetworkTopologyLayer2,
+				Layer2: &udnv1.Layer2Config{
+					Role:        udnv1.NetworkRoleSecondary,
+					IPAM:        &udnv1.IPAMConfig{Mode: udnv1.IPAMDisabled},
+					MACSecurity: &udnv1.MACSecurityConfig{Mode: udnv1.MACSecurityEnabled},
+				},
+			},
+			`{
+			  "cniVersion": "1.1.0",
+			  "type": "ovn-k8s-cni-overlay",
+			  "name": "cluster_udn_test-net",
+			  "netAttachDefName": "mynamespace/test-net",
+			  "role": "secondary",
+			  "topology": "layer2",
+              "macSecurityMode": "enabled"		  
+			}`,
+		),
+		Entry("secondary network, layer2, macSecurity unset should not render macSecurityMode for backward compatibility",
+			udnv1.NetworkSpec{
+				Topology: udnv1.NetworkTopologyLayer2,
+				Layer2: &udnv1.Layer2Config{
+					Role: udnv1.NetworkRoleSecondary,
+					IPAM: &udnv1.IPAMConfig{Mode: udnv1.IPAMDisabled},
+				},
+			},
+			`{
+			  "cniVersion": "1.1.0",
+			  "type": "ovn-k8s-cni-overlay",
+			  "name": "cluster_udn_test-net",
+			  "netAttachDefName": "mynamespace/test-net",
+			  "role": "secondary",
+			  "topology": "layer2"
+			}`,
+		),
+		Entry("secondary network, localnet, macSecurity mode Disabled",
+			udnv1.NetworkSpec{
+				Topology: udnv1.NetworkTopologyLocalnet,
+				Localnet: &udnv1.LocalnetConfig{
+					Role:                udnv1.NetworkRoleSecondary,
+					PhysicalNetworkName: "mylocalnet1",
+					IPAM:                &udnv1.IPAMConfig{Mode: udnv1.IPAMDisabled},
+					MACSecurity:         &udnv1.MACSecurityConfig{Mode: udnv1.MACSecurityDisabled},
+				},
+			},
+			`{
+			  "cniVersion": "1.1.0",
+			  "type": "ovn-k8s-cni-overlay",
+			  "name": "cluster_udn_test-net",
+			  "netAttachDefName": "mynamespace/test-net",
+			  "role": "secondary",
+			  "topology": "localnet",
+			  "physicalNetworkName": "mylocalnet1",
+			  "mtu": 1500,
+			  "macSecurityMode": "disabled"
+			}`,
+		),
+		Entry("secondary network, localnet, macSecurity mode Enabled",
+			udnv1.NetworkSpec{
+				Topology: udnv1.NetworkTopologyLocalnet,
+				Localnet: &udnv1.LocalnetConfig{
+					Role:                udnv1.NetworkRoleSecondary,
+					PhysicalNetworkName: "mylocalnet1",
+					IPAM:                &udnv1.IPAMConfig{Mode: udnv1.IPAMDisabled},
+					MACSecurity:         &udnv1.MACSecurityConfig{Mode: udnv1.MACSecurityEnabled},
+				},
+			},
+			`{
+			  "cniVersion": "1.1.0",
+			  "type": "ovn-k8s-cni-overlay",
+			  "name": "cluster_udn_test-net",
+			  "netAttachDefName": "mynamespace/test-net",
+			  "role": "secondary",
+			  "topology": "localnet",
+			  "physicalNetworkName": "mylocalnet1",
+			  "mtu": 1500,
+			  "macSecurityMode": "enabled"
+			}`,
+		),
+		Entry("secondary network, localnet, macSecurity unset should not render macSecurityMode for backward compatibility",
+			udnv1.NetworkSpec{
+				Topology: udnv1.NetworkTopologyLocalnet,
+				Localnet: &udnv1.LocalnetConfig{
+					Role:                udnv1.NetworkRoleSecondary,
+					PhysicalNetworkName: "mylocalnet1",
+					IPAM:                &udnv1.IPAMConfig{Mode: udnv1.IPAMDisabled},
+				},
+			},
+			`{
+			  "cniVersion": "1.1.0",
+			  "type": "ovn-k8s-cni-overlay",
+			  "name": "cluster_udn_test-net",
+			  "netAttachDefName": "mynamespace/test-net",
+			  "role": "secondary",
+			  "topology": "localnet",
+			  "physicalNetworkName": "mylocalnet1",
+			  "mtu": 1500
 			}`,
 		),
 		Entry("secondary network, localnet, when MTU is unset it should set default MTU",
