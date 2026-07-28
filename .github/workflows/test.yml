@@ -69,6 +69,25 @@ jobs:
         working-directory: go-controller
         args: --modules-download-mode=vendor --timeout=15m0s --verbose
 
+  verify-codegen:
+    name: Verify codegen
+    runs-on: ubuntu-24.04
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v6
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: 'go-controller/go.mod'
+        cache: false
+      id: go
+
+    - name: Verify generated code is up to date
+      run: |
+        cd go-controller
+        make verify-codegen
+
   build-base:
     name: Build-base
     runs-on: ubuntu-24.04

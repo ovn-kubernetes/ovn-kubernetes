@@ -74,6 +74,10 @@ modelgen: pkg/nbdb/ovn-nb.ovsschema pkg/sbdb/ovn-sb.ovsschema pkg/vswitchd/vswit
 codegen:
 	hack/update-codegen.sh
 
+.PHONY: verify-codegen
+verify-codegen:
+	@GOPATH=${GOPATH} ./hack/verify-codegen.sh || { echo "codegen verification failed! Run 'make codegen mocksgen' and commit the result"; exit 1; }
+
 .PHONY: mocksgen
 mocksgen: ${MOCKERY}
 	${MOCKERY}
