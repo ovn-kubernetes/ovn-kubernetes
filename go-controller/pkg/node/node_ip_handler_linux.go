@@ -170,7 +170,7 @@ func (c *addressManager) Run(stopChan <-chan struct{}, doneWg *sync.WaitGroup) {
 		return
 	}
 
-	if config.OvnKubeNode.Mode != types.NodeModeDPUHost {
+	if !config.IsModeDPUHost() {
 		c.addHandlerForAddrChange()
 	}
 	doneWg.Add(1)
@@ -210,7 +210,7 @@ func (c *addressManager) runInternal(stopChan <-chan struct{}, subscribe subscri
 				c.reconcileMasqueradeResources()
 				continue
 			}
-			if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
+			if config.IsModeDPUHost() {
 				if c.gatewayIfIndex != 0 && a.LinkIndex == c.gatewayIfIndex {
 					c.reconcileMasqueradeResources()
 				}
@@ -326,7 +326,7 @@ func (c *addressManager) handleNodePrimaryAddrChange() {
 // (k8s.ovn.org/host-cidrs, k8s.ovn.org/node-primary-ifaddr, k8s.ovn.org/l3-gateway-config)
 // is updated.
 func (c *addressManager) updateNodeAddressAnnotations() error {
-	if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
+	if config.IsModeDPUHost() {
 		return c.updateDPUHostAddressAnnotations()
 	}
 	return c.updateGatewayAddressAnnotations()
@@ -363,7 +363,7 @@ func (c *addressManager) updateGatewayAddressAnnotations() error {
 		return err
 	}
 
-	if config.OvnKubeNode.Mode == types.NodeModeDPU {
+	if config.IsModeDPU() {
 		// On the DPU, br-dpu has no IP of its own (the address lives on the host and is
 		// conveyed through the primary-dpu-host-addr annotation), so the bridge netlink
 		// path below would fail. Derive the addresses from the annotation, as done at
@@ -529,7 +529,7 @@ func (c *addressManager) isValidNodeIP(addr net.IP, linkIndex int) bool {
 	// Egress IP exclusions don't apply in DPUHost mode, and the address manager there
 	// has no gateway bridge (c.gatewayBridge is nil), so skip this block to avoid a nil
 	// dereference below.
-	if config.OVNKubernetesFeature.EnableEgressIP && config.OvnKubeNode.Mode != types.NodeModeDPUHost {
+	if config.OVNKubernetesFeature.EnableEgressIP && !config.IsModeDPUHost() {
 		// EIP assigned to the primary interface which selects pods with a role primary user defined network must be excluded.
 		if util.IsNetworkSegmentationSupportEnabled() && config.Gateway.Mode != config.GatewayModeDisabled {
 			// Two methods to lookup EIPs assigned to the gateway bridge. Fast path from a shared cache or slow path from node annotations.

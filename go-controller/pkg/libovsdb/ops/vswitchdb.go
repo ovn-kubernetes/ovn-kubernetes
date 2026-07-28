@@ -627,6 +627,63 @@ func DeletePortWithInterfaces(ovsClient libovsdbclient.Client, bridgeName, portN
 	return err
 }
 
+// DeleteMultiplePortsWithInterfaces deletes multiple OVS ports and their interfaces
+// from bridgeName in a single transaction. Only ports that exist and are attached
+// to that bridge are removed; missing ports or ports on another bridge are skipped.
+// Idempotent for each port name (same semantics as DeletePortWithInterfaces).
+func DeleteMultiplePortsWithInterfaces(ovsClient libovsdbclient.Client, bridgeName string, portNames ...string) error {
+	if len(portNames) == 0 {
+		return nil
+	}
+
+	bridge, err := GetBridge(ovsClient, bridgeName)
+	if err != nil {
+		if errors.Is(err, libovsdbclient.ErrNotFound) {
+			return nil
+		}
+		return fmt.Errorf("failed to get bridge %s: %w", bridgeName, err)
+	}
+
+	onBridge := make(map[string]struct{}, len(bridge.Ports))
+	for _, portUUID := range bridge.Ports {
+		onBridge[portUUID] = struct{}{}
+	}
+
+	ports := make(map[string]struct{}, len(portNames))
+	var ops []ovsdb.Operation
+	for _, name := range portNames {
+		if _, dup := ports[name]; dup {
+			continue
+		}
+		ports[name] = struct{}{}
+
+		port, err := GetOVSPort(ovsClient, name)
+		if err != nil {
+			if errors.Is(err, libovsdbclient.ErrNotFound) {
+				continue
+			}
+			return fmt.Errorf("failed to get port %s: %w", name, err)
+		}
+		if _, ok := onBridge[port.UUID]; !ok {
+			klog.Warningf("OVS port %q exists but is not attached to bridge %q; leaving it untouched", name, bridgeName)
+			continue
+		}
+		ops, err = DeletePortWithInterfacesOps(ovsClient, ops, port, bridgeName)
+		if err != nil {
+			return fmt.Errorf("failed to build delete ops for port %s: %w", name, err)
+		}
+	}
+
+	if len(ops) == 0 {
+		return nil
+	}
+
+	if _, err := TransactAndCheck(ovsClient, ops); err != nil {
+		return fmt.Errorf("failed to delete ports from bridge %s: %w", bridgeName, err)
+	}
+	return nil
+}
+
 // DeletePortWithInterfacesOps returns operations to delete an OVS port and all its interfaces.
 // This handles both the Port and Interface objects, and detaches the port from the bridge.
 func DeletePortWithInterfacesOps(ovsClient libovsdbclient.Client, ops []ovsdb.Operation, port *vswitchd.Port, bridgeName string) ([]ovsdb.Operation, error) {
