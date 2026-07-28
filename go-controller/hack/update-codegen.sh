@@ -11,7 +11,7 @@ set -o pipefail
 GOPATH=${GOPATH:-$(go env GOPATH)}
 export PATH="${GOPATH}/bin:${PATH}"
 
-crds=$(ls pkg/crd 2> /dev/null)
+crds=$(find pkg/crd -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
 if [ -z "${crds}" ]; then
   exit
 fi
