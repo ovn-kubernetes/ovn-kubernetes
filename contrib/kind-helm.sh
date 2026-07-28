@@ -694,9 +694,8 @@ if [ "$KIND_ADD_NODES" == true ]; then
     configure_kind_uplink_bridge
   fi
   configure_no_overlay_unmanaged_no_ra_static_routes
-  if [ "${ADVERTISE_DEFAULT_NETWORK}" = true ]; then
-    configure_pod_subnet_routes_on_runner_host
-  fi
+  # self-gated on needs_host_pod_subnet_routes
+  configure_pod_subnet_routes_on_runner_host
   exit 0
 fi
 
