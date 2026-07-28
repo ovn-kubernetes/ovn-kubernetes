@@ -565,7 +565,8 @@ jobs:
           - {"target": "bgp-no-overlay-dynamic", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "no-overlay": "snat-enabled"}
           - {"target": "bgp-no-overlay",      "ha": "noHA", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "no-overlay": "true"}
           - {"target": "bgp-no-overlay-unmanaged-no-ra", "ha": "noHA", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "unmanaged-no-ra", "network-segmentation": "enable-network-segmentation", "no-overlay": "true"}
-          - {"target": "bgp-no-overlay-unmanaged-no-ra", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "SnatGW",     "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "unmanaged-no-ra", "network-segmentation": "enable-network-segmentation", "no-overlay": "snat-enabled"}
+          # no routeadvertisements: covers unmanaged no-overlay with the RouteAdvertisements feature disabled
+          - {"target": "bgp-no-overlay-unmanaged-no-ra", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "SnatGW",     "second-bridge": "1br", "ic": "ic-single-node-zones", "network-segmentation": "enable-network-segmentation", "no-overlay": "snat-enabled"}
           - {"target": "bgp-loose-isolation", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "advertised-udn-isolation-mode": "loose"}
           - {"target": "evpn", "ha": "noHA", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "evpn": "enable-evpn"}
           - {"target": "traffic-flow-test-only", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "traffic-flow-tests": "1-24", "network-segmentation": "enable-network-segmentation"}
@@ -782,9 +783,12 @@ jobs:
         elif [ "${{ matrix.target }}" == "evpn" ]; then
           make -C test control-plane WHAT="EVPN"
         elif [ "${{ matrix.target }}" == "bgp-no-overlay-unmanaged-no-ra" ]; then
+          # SKIP_ROUTE_ADVERTISEMENTS_TESTS matters only on the lane that keeps the
+          # RouteAdvertisements feature enabled without advertising the default
+          # network; the unmanaged no-overlay CUDN suite is labeled
+          # Feature:NoOverlay and runs as part of Network Segmentation below
           SKIP_ROUTE_ADVERTISEMENTS_TESTS=true make -C test control-plane
           SKIP_ROUTE_ADVERTISEMENTS_TESTS=true make -C test control-plane WHAT="Network Segmentation"
-          make -C test control-plane WHAT="Network Segmentation: unmanaged no-overlay CUDN without RouteAdvertisements"
         elif [[ "${{ matrix.target }}" == bgp* ]]; then
           make -C test control-plane
         elif [ "${{ matrix.target }}" == "serial" ]; then

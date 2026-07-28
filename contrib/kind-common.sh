@@ -1850,10 +1850,14 @@ clone_frr() {
 deploy_frr_external_container() {
   echo "Deploying FRR external container ..."
   clone_frr
- 
-  pushd "$FRR_TMP_DIR" || exit 1
-  run_kubectl apply -f frr-k8s/charts/frr-k8s/charts/crds/templates/
-  popd || exit 1
+
+  # the in-cluster frr-k8s CRDs are only consumed when the RouteAdvertisements
+  # feature is enabled; the external FRR container does not need them
+  if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
+    pushd "$FRR_TMP_DIR" || exit 1
+    run_kubectl apply -f frr-k8s/charts/frr-k8s/charts/crds/templates/
+    popd || exit 1
+  fi
  
   # apply the demo which will deploy an external FRR container that the cluster
   # can peer with acting as BGP (reflector) external gateway

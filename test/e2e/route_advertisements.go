@@ -4608,7 +4608,10 @@ func routeHasGateway(route kernelRoute, nextHop string) bool {
 	return false
 }
 
-var _ = ginkgo.Describe("Network Segmentation: unmanaged no-overlay CUDN without RouteAdvertisements", feature.NetworkSegmentation, feature.RouteAdvertisements, func() {
+// Labeled Feature:NoOverlay rather than Feature:RouteAdvertisements so the
+// suite also runs on lanes where the RouteAdvertisements feature is disabled,
+// which is a supported configuration for unmanaged no-overlay networks.
+var _ = ginkgo.Describe("Network Segmentation unmanaged no-overlay CUDN without RouteAdvertisements", feature.NetworkSegmentation, feature.NoOverlay, func() {
 	const unmanagedNoRALabel = "unmanaged-no-ra-no-overlay-e2e"
 
 	f := wrappedTestFramework("unmanaged-no-ra-no-overlay-cudn")
@@ -4794,6 +4797,13 @@ var _ = ginkgo.Describe("Network Segmentation: unmanaged no-overlay CUDN without
 	})
 
 	ginkgo.It("requires matching RouteAdvertisements to be accepted when one is configured", func() {
+		if _, err := raClient.K8sV1().RouteAdvertisements().List(context.Background(), metav1.ListOptions{}); err != nil {
+			if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+				e2eskipper.Skipf("test requires the RouteAdvertisements CRD")
+			}
+			framework.ExpectNoError(err, "failed to list RouteAdvertisements")
+		}
+
 		cudnName := randomNetworkMetaName()
 		createUnmanagedNoOverlayCUDN(cudnName)
 
