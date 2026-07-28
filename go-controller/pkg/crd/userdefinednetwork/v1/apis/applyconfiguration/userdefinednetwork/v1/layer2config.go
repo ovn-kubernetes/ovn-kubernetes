@@ -61,6 +61,8 @@ type Layer2ConfigApplyConfiguration struct {
 	JoinSubnets *userdefinednetworkv1.DualStackCIDRs `json:"joinSubnets,omitempty"`
 	// IPAM section contains IPAM-related configuration for the network.
 	IPAM *IPAMConfigApplyConfiguration `json:"ipam,omitempty"`
+	// macSecurity configures MAC spoof protection on the network's logical switch ports.
+	MACSecurity *MACSecurityConfigApplyConfiguration `json:"macSecurity,omitempty"`
 }
 
 // Layer2ConfigApplyConfiguration constructs a declarative configuration of the Layer2Config type for use with
@@ -134,5 +136,13 @@ func (b *Layer2ConfigApplyConfiguration) WithJoinSubnets(value userdefinednetwor
 // If called multiple times, the IPAM field is set to the value of the last call.
 func (b *Layer2ConfigApplyConfiguration) WithIPAM(value *IPAMConfigApplyConfiguration) *Layer2ConfigApplyConfiguration {
 	b.IPAM = value
+	return b
+}
+
+// WithMACSecurity sets the MACSecurity field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the MACSecurity field is set to the value of the last call.
+func (b *Layer2ConfigApplyConfiguration) WithMACSecurity(value *MACSecurityConfigApplyConfiguration) *Layer2ConfigApplyConfiguration {
+	b.MACSecurity = value
 	return b
 }

@@ -118,6 +118,8 @@ type Layer3Subnet struct {
 // +kubebuilder:validation:XValidation:rule="!has(self.infrastructureSubnets) || !has(self.reservedSubnets) || self.infrastructureSubnets.all(infra, !self.reservedSubnets.exists(reserved, cidr(infra).containsCIDR(reserved) || cidr(reserved).containsCIDR(infra)))", message="infrastructureSubnets and reservedSubnets must not overlap"
 // +kubebuilder:validation:XValidation:rule="!has(self.infrastructureSubnets) || self.infrastructureSubnets.all(s, isCIDR(s) && cidr(s) == cidr(s).masked())", message="infrastructureSubnets must be a masked network address (no host bits set)"
 // +kubebuilder:validation:XValidation:rule="!has(self.reservedSubnets) || self.reservedSubnets.all(s, isCIDR(s) && cidr(s) == cidr(s).masked())", message="reservedSubnets must be a masked network address (no host bits set)"
+// +kubebuilder:validation:XValidation:rule="!has(self.macSecurity) || self.role == 'Secondary'", message="macSecurity.mode is only supported for Secondary networks"
+// +kubebuilder:validation:XValidation:rule="!has(self.macSecurity) || self.macSecurity.mode != 'Disabled' || (has(self.ipam) && has(self.ipam.mode) && self.ipam.mode == 'Disabled')", message="macSecurity.mode Disabled requires ipam.mode to be Disabled"
 type Layer2Config struct {
 	// Role describes the network role in the pod.
 	//
@@ -196,6 +198,10 @@ type Layer2Config struct {
 	// IPAM section contains IPAM-related configuration for the network.
 	// +optional
 	IPAM *IPAMConfig `json:"ipam,omitempty"`
+
+	// macSecurity configures MAC spoof protection on the network's logical switch ports.
+	// +optional
+	MACSecurity *MACSecurityConfig `json:"macSecurity,omitempty"`
 }
 
 // +kubebuilder:validation:XValidation:rule="!has(self.lifecycle) || self.lifecycle != 'Persistent' || !has(self.mode) || self.mode == 'Enabled'", message="lifecycle Persistent is only supported when ipam.mode is Enabled"
@@ -259,3 +265,27 @@ type IP string
 // +kubebuilder:validation:MaxItems=2
 // +kubebuilder:validation:XValidation:rule="size(self) != 2 || !isIP(self[0]) || !isIP(self[1]) || ip(self[0]).family() != ip(self[1]).family()", message="When 2 IPs are set, they must be from different IP families"
 type DualStackIPs []IP
+
+// +kubebuilder:validation:Enum=Enabled;Disabled
+type MACSecurityMode string
+
+const (
+	MACSecurityEnabled  MACSecurityMode = "Enabled"
+	MACSecurityDisabled MACSecurityMode = "Disabled"
+)
+
+// MACSecurityConfig configures MAC spoof protection behavior.
+//
+// +union
+type MACSecurityConfig struct {
+	// mode controls the MAC spoof protection enforcement posture.
+	// `Enabled` (default) restricts traffic to assigned addresses.
+	// `Disabled` removes all MAC spoof protection restrictions and enables unknown MAC address
+	// handling for nested virtualization and NFV use cases.
+	// Only `Disabled` requires ipam.mode to be Disabled.
+	//
+	// +kubebuilder:validation:Required
+	// +required
+	// +unionDiscriminator
+	Mode MACSecurityMode `json:"mode"`
+}

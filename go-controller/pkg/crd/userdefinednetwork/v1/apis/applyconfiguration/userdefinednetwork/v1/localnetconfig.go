@@ -76,6 +76,8 @@ type LocalnetConfigApplyConfiguration struct {
 	// vlan is optional, when omitted the underlying network default VLAN will be used (usually `1`).
 	// When set, OVN-Kubernetes will apply VLAN configuration to the SDN infra and to the connected pods.
 	VLAN *VLANConfigApplyConfiguration `json:"vlan,omitempty"`
+	// macSecurity configures MAC spoof protection on the network's logical switch ports.
+	MACSecurity *MACSecurityConfigApplyConfiguration `json:"macSecurity,omitempty"`
 }
 
 // LocalnetConfigApplyConfiguration constructs a declarative configuration of the LocalnetConfig type for use with
@@ -139,5 +141,13 @@ func (b *LocalnetConfigApplyConfiguration) WithMTU(value int32) *LocalnetConfigA
 // If called multiple times, the VLAN field is set to the value of the last call.
 func (b *LocalnetConfigApplyConfiguration) WithVLAN(value *VLANConfigApplyConfiguration) *LocalnetConfigApplyConfiguration {
 	b.VLAN = value
+	return b
+}
+
+// WithMACSecurity sets the MACSecurity field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the MACSecurity field is set to the value of the last call.
+func (b *LocalnetConfigApplyConfiguration) WithMACSecurity(value *MACSecurityConfigApplyConfiguration) *LocalnetConfigApplyConfiguration {
+	b.MACSecurity = value
 	return b
 }
