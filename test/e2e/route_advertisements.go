@@ -3916,21 +3916,7 @@ func ndpBroadcastNSFilter(targetIP net.IP) string {
 // routeAdvertisementsReadyFunc returns a function that checks for the
 // Accepted condition in the provided RouteAdvertisements
 func routeAdvertisementsReadyFunc(c raclientset.Clientset, name string) func() error {
-	return func() error {
-		ra, err := c.K8sV1().RouteAdvertisements().Get(context.Background(), name, metav1.GetOptions{})
-		if err != nil {
-			return err
-		}
-		conditionType := "Accepted"
-		condition := meta.FindStatusCondition(ra.Status.Conditions, conditionType)
-		if condition == nil {
-			return fmt.Errorf("no %q condition found in: %v", conditionType, ra)
-		}
-		if condition.Status != metav1.ConditionTrue {
-			return fmt.Errorf("condition %v has unexpected status %v", condition, condition.Status)
-		}
-		return nil
-	}
+	return routeAdvertisementsAcceptedConditionFunc(c, name, metav1.ConditionTrue)
 }
 
 // templateInputRouter data
@@ -4935,15 +4921,19 @@ func kindNodeVRFRouteCommand(action, vrfName, subnet, nextHop string) []string {
 	)
 }
 
+func frrRouteCommand(action, subnet, nextHop string) []string {
+	cmd := []string{"ip"}
+	if utilnet.IsIPv6CIDRString(subnet) {
+		cmd = append(cmd, "-6")
+	}
+	return append(cmd, "route", action, subnet, "via", nextHop)
+}
+
 // configureFRRRoute installs a route in the external FRR container.
 func configureFRRRoute(subnet, nextHop string) {
 	ginkgo.GinkgoHelper()
-	cmd := []string{"ip", "route", "replace", subnet, "via", nextHop}
-	delCmd := []string{"ip", "route", "del", subnet, "via", nextHop}
-	if utilnet.IsIPv6CIDRString(subnet) {
-		cmd = []string{"ip", "-6", "route", "replace", subnet, "via", nextHop}
-		delCmd = []string{"ip", "-6", "route", "del", subnet, "via", nextHop}
-	}
+	cmd := frrRouteCommand("replace", subnet, nextHop)
+	delCmd := frrRouteCommand("del", subnet, nextHop)
 	frr := infraapi.ExternalContainer{Name: routerContainerName}
 	framework.Logf("Adding unmanaged no-overlay CUDN route on external FRR: %v", cmd)
 	_, err := infraprovider.Get().ExecExternalContainerCommand(frr, cmd)
@@ -4961,9 +4951,9 @@ func configureGatewayRouterRoute(cs clientset.Interface, cudnName, nodeName, sub
 	gwRouterName := cudnGatewayRouterName(cudnName, nodeName)
 	outputPort := types.GWRouterToExtSwitchPrefix + gwRouterName
 	framework.Logf("Adding unmanaged no-overlay CUDN route on gateway router %s: %s via %s output %s", gwRouterName, subnet, nextHop, outputPort)
-	_, err := runOVNNbctlOnNode(cs, nodeName, "--if-exists", "lr-route-del", gwRouterName, subnet)
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	_, err = runOVNNbctlOnNode(cs, nodeName, "lr-route-add", gwRouterName, subnet, nextHop, outputPort)
+	_, err := runOVNNbctlOnNode(cs, nodeName,
+		"--if-exists", "lr-route-del", gwRouterName, subnet,
+		"--", "lr-route-add", gwRouterName, subnet, nextHop, outputPort)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	ginkgo.DeferCleanup(func() {
 		if _, err := runOVNNbctlOnNode(cs, nodeName, "--if-exists", "lr-route-del", gwRouterName, subnet); err != nil {
@@ -5033,8 +5023,9 @@ func configureCommonCUDNUnderlayRoutes(nodes []corev1.Node, hostSubnetsByNode ma
 	}
 }
 
-// configureLocalGatewayCUDNUnderlayRoutes installs node VRF routes for remote CUDN host subnets.
-func configureLocalGatewayCUDNUnderlayRoutes(cudnName string, nodes []corev1.Node, hostSubnetsByNode map[string][]*net.IPNet) {
+// forEachRemoteCUDNHostSubnet invokes configure for every local node and
+// remote host subnet pair, with the remote node's InternalIP as next hop.
+func forEachRemoteCUDNHostSubnet(nodes []corev1.Node, hostSubnetsByNode map[string][]*net.IPNet, configure func(localNodeName, subnet, nextHop string)) {
 	ginkgo.GinkgoHelper()
 	for _, localNode := range nodes {
 		for _, remoteNode := range nodes {
@@ -5042,22 +5033,7 @@ func configureLocalGatewayCUDNUnderlayRoutes(cudnName string, nodes []corev1.Nod
 				continue
 			}
 			for _, remoteSubnet := range hostSubnetsByNode[remoteNode.Name] {
-				configureKindNodeVRFRoute(localNode.Name, cudnName, remoteSubnet.String(), nodeInternalIPForSubnet(remoteNode, remoteSubnet.String()))
-			}
-		}
-	}
-}
-
-// configureSharedGatewayCUDNUnderlayRoutes installs gateway-router routes for remote CUDN host subnets.
-func configureSharedGatewayCUDNUnderlayRoutes(cs clientset.Interface, cudnName string, nodes []corev1.Node, hostSubnetsByNode map[string][]*net.IPNet) {
-	ginkgo.GinkgoHelper()
-	for _, localNode := range nodes {
-		for _, remoteNode := range nodes {
-			if localNode.Name == remoteNode.Name {
-				continue
-			}
-			for _, remoteSubnet := range hostSubnetsByNode[remoteNode.Name] {
-				configureGatewayRouterRoute(cs, cudnName, localNode.Name, remoteSubnet.String(), nodeInternalIPForSubnet(remoteNode, remoteSubnet.String()))
+				configure(localNode.Name, remoteSubnet.String(), nodeInternalIPForSubnet(remoteNode, remoteSubnet.String()))
 			}
 		}
 	}
@@ -5080,8 +5056,14 @@ func configureCUDNNoOverlayUnderlay(cs clientset.Interface, cudn *udnv1.ClusterU
 	configureCommonCUDNUnderlayRoutes(nodes, hostSubnetsByNode)
 	configureCUDNVRFRules(cudn, nodes)
 	if IsGatewayModeLocal(cs) {
-		configureLocalGatewayCUDNUnderlayRoutes(cudn.Name, nodes, hostSubnetsByNode)
+		// local gateway: pod egress uses the node VRF routing table
+		forEachRemoteCUDNHostSubnet(nodes, hostSubnetsByNode, func(localNodeName, subnet, nextHop string) {
+			configureKindNodeVRFRoute(localNodeName, cudn.Name, subnet, nextHop)
+		})
 	} else {
-		configureSharedGatewayCUDNUnderlayRoutes(cs, cudn.Name, nodes, hostSubnetsByNode)
+		// shared gateway: pod egress uses the CUDN gateway router
+		forEachRemoteCUDNHostSubnet(nodes, hostSubnetsByNode, func(localNodeName, subnet, nextHop string) {
+			configureGatewayRouterRoute(cs, cudn.Name, localNodeName, subnet, nextHop)
+		})
 	}
 }
