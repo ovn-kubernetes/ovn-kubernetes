@@ -11,13 +11,12 @@ import (
 	"sync"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork/notifier"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	controllerutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	ratypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
@@ -50,9 +49,6 @@ const (
 	eventReasonConfigReady   eventReason = "NoOverlayConfigurationReady"
 )
 
-// conditionTypeAccepted is the Accepted condition type for RouteAdvertisements
-const conditionTypeAccepted = "Accepted"
-
 // validationError represents different types of validation failures
 type validationError struct {
 	errorType validationErrorType
@@ -66,6 +62,7 @@ func (e *validationError) Error() string {
 
 // validationState is the outcome of a validation run, used to avoid emitting
 // duplicate events: a mode when validation passed, an error text otherwise.
+// The zero value means no validation has run yet.
 type validationState struct {
 	mode    validationMode
 	errText string
@@ -85,8 +82,9 @@ type Controller struct {
 
 	// validationLock protects validation state
 	validationLock sync.Mutex
-	// lastValidationState tracks the last validation outcome to avoid spamming events
-	lastValidationState *validationState
+	// lastValidationState tracks the last validation outcome to avoid spamming
+	// events; the zero value means no validation has run yet
+	lastValidationState validationState
 }
 
 // NewController creates a new no-overlay validation controller.
@@ -179,7 +177,7 @@ func (c *Controller) raNeedsValidation(oldRA, newRA *ratypes.RouteAdvertisements
 	}
 
 	// Check if Accepted condition changed
-	return isRAAccepted(oldRA.Status.Conditions) != isRAAccepted(newRA.Status.Conditions)
+	return notifier.IsRAAccepted(oldRA.Status.Conditions) != notifier.IsRAAccepted(newRA.Status.Conditions)
 }
 
 // runValidation runs validation and emits events if the state changed
@@ -194,7 +192,7 @@ func (c *Controller) runValidation() {
 	}
 
 	// Only emit an event if the validation outcome changed.
-	if c.lastValidationState == nil || *c.lastValidationState != currentState {
+	if c.lastValidationState != currentState {
 		if err != nil {
 			klog.Errorf("No-overlay validation failed: %v", err)
 			c.emitValidationEvent(err)
@@ -202,7 +200,7 @@ func (c *Controller) runValidation() {
 			klog.Infof("No-overlay validation passed")
 			c.emitReadyEvent(mode)
 		}
-		c.lastValidationState = &currentState
+		c.lastValidationState = currentState
 	}
 }
 
@@ -233,7 +231,7 @@ func (c *Controller) validate() (validationMode, error) {
 			continue
 		}
 
-		if isRAAccepted(ra.Status.Conditions) {
+		if notifier.IsRAAccepted(ra.Status.Conditions) {
 			klog.V(5).Infof("Found valid RouteAdvertisements %q for default network with no-overlay transport", ra.Name)
 			return validationModeRouteAdvertisements, nil
 		}
@@ -325,9 +323,4 @@ func (c *Controller) emitEvent(eventType, reason, message string) {
 		"%s",
 		message,
 	)
-}
-
-func isRAAccepted(conditions []metav1.Condition) bool {
-	condition := meta.FindStatusCondition(conditions, conditionTypeAccepted)
-	return condition != nil && condition.Status == metav1.ConditionTrue
 }

@@ -127,7 +127,7 @@ var _ = ginkgo.Describe("No-Overlay Controller", func() {
 			defer wf.Shutdown()
 
 			controller := NewController(wf, recorder)
-			gomega.Expect(controller.lastValidationState).To(gomega.BeNil())
+			gomega.Expect(controller.lastValidationState).To(gomega.Equal(validationState{}))
 		})
 	})
 
@@ -303,7 +303,7 @@ var _ = ginkgo.Describe("No-Overlay Controller", func() {
 				if getErr != nil || raObj == nil {
 					return false
 				}
-				condition := meta.FindStatusCondition(raObj.Status.Conditions, conditionTypeAccepted)
+				condition := meta.FindStatusCondition(raObj.Status.Conditions, ratypes.RouteAdvertisementsAccepted)
 				return condition != nil && condition.Status == metav1.ConditionFalse
 			}, 2*time.Second, 100*time.Millisecond).Should(gomega.BeTrue())
 
