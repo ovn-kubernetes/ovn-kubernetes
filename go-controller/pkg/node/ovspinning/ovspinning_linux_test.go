@@ -26,7 +26,9 @@ import (
 	kubeletpodresourcesv1 "k8s.io/kubelet/pkg/apis/podresources/v1"
 	"k8s.io/utils/cpuset"
 
+	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/kubelet/pkg/apis/podresources/v1"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
 
 func TestAlignCPUAffinity(t *testing.T) {
@@ -93,6 +95,14 @@ func TestAlignCPUAffinity(t *testing.T) {
 			defer mockFeatureEnableFile(t, "1")()
 			defer mockKubeletConfigFile(t, cpuset.New(tc.reservedCPUs...))()
 
+			ovsClient, ovsTestCtx, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
+				OVSData: []libovsdbtest.TestData{
+					&vswitchd.OpenvSwitch{UUID: "root-ovs"},
+				},
+			})
+			require.NoError(t, err)
+			defer ovsTestCtx.Cleanup()
+
 			var wg sync.WaitGroup
 			stopCh := make(chan struct{})
 			defer func() {
@@ -109,7 +119,7 @@ func TestAlignCPUAffinity(t *testing.T) {
 					&kubeletpodresourcesv1.AllocatableResourcesResponse{CpuIds: tc.allocatableCPUs}, nil)
 				mockClient.On("List", mock.Anything, mock.Anything).Return(
 					buildListPodResourcesResponse(tc.usedCPUs), nil)
-				Run(context.Background(), stopCh, mockClient)
+				Run(context.Background(), stopCh, mockClient, ovsClient)
 			}()
 
 			expectedUnixCPUSet := convertCPUSet(&expectedCPUs)
@@ -123,7 +133,6 @@ func TestAlignCPUAffinity(t *testing.T) {
 				expectedCPUs, err = convertUnixCPUSetToK8sCPUSet(pidSelfCPUs)
 				assert.NoError(t, err)
 				expectedUnixCPUSet = pidSelfCPUs
-
 			}
 			klog.Infof("Test CPU Affinity %s", expectedCPUs)
 
@@ -131,7 +140,7 @@ func TestAlignCPUAffinity(t *testing.T) {
 			assertPIDHasSchedAffinity(t, ovsDBPid, expectedUnixCPUSet)
 
 			// Disable the feature by making the enabler file empty
-			err := os.WriteFile(featureEnablerFile, []byte(""), 0)
+			err = os.WriteFile(featureEnablerFile, []byte(""), 0)
 			require.NoError(t, err)
 
 			// wait for the ovspinning loop to stabilize and stop running
@@ -519,5 +528,118 @@ func buildListPodResourcesResponse(usedCPUs [][]int64) *kubeletpodresourcesv1.Li
 
 	return &kubeletpodresourcesv1.ListPodResourcesResponse{
 		PodResources: podResources,
+	}
+}
+
+func TestGetPmdCPUs(t *testing.T) {
+	tests := []struct {
+		name            string
+		ovsData         []libovsdbtest.TestData
+		expectedCPUs    cpuset.CPUSet
+		expectedEnabled bool
+	}{
+		{
+			name:            "empty OVS table returns empty set, not enabled",
+			ovsData:         []libovsdbtest.TestData{},
+			expectedCPUs:    cpuset.New(),
+			expectedEnabled: false,
+		},
+		{
+			name: "dpdk not initialized returns empty set, not enabled",
+			ovsData: []libovsdbtest.TestData{
+				&vswitchd.OpenvSwitch{UUID: "root-ovs", DpdkInitialized: false,
+					OtherConfig: map[string]string{"pmd-cpu-mask": "0xc"}},
+			},
+			expectedCPUs:    cpuset.New(),
+			expectedEnabled: false,
+		},
+		{
+			name: "dpdk initialized, no pmd-cpu-mask: enabled but empty CPUs",
+			ovsData: []libovsdbtest.TestData{
+				&vswitchd.OpenvSwitch{UUID: "root-ovs", DpdkInitialized: true,
+					OtherConfig: map[string]string{}},
+			},
+			expectedCPUs:    cpuset.New(),
+			expectedEnabled: true,
+		},
+		{
+			name: "dpdk initialized, empty pmd-cpu-mask: enabled but empty CPUs",
+			ovsData: []libovsdbtest.TestData{
+				&vswitchd.OpenvSwitch{UUID: "root-ovs", DpdkInitialized: true,
+					OtherConfig: map[string]string{"pmd-cpu-mask": ""}},
+			},
+			expectedCPUs:    cpuset.New(),
+			expectedEnabled: true,
+		},
+		{
+			name: "dpdk initialized, valid mask 0xc: enabled, CPUs 2 and 3",
+			ovsData: []libovsdbtest.TestData{
+				&vswitchd.OpenvSwitch{UUID: "root-ovs", DpdkInitialized: true,
+					OtherConfig: map[string]string{"pmd-cpu-mask": "0xc"}},
+			},
+			expectedCPUs:    cpuset.New(2, 3),
+			expectedEnabled: true,
+		},
+		{
+			name: "dpdk initialized, invalid mask: enabled but empty CPUs",
+			ovsData: []libovsdbtest.TestData{
+				&vswitchd.OpenvSwitch{UUID: "root-ovs", DpdkInitialized: true,
+					OtherConfig: map[string]string{"pmd-cpu-mask": "xyz"}},
+			},
+			expectedCPUs:    cpuset.New(),
+			expectedEnabled: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ovsClient, testCtx, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
+				OVSData: tt.ovsData,
+			})
+			require.NoError(t, err)
+			defer testCtx.Cleanup()
+
+			cpus, enabled := getPmdCPUs(ovsClient)
+			assert.Equal(t, tt.expectedCPUs, cpus)
+			assert.Equal(t, tt.expectedEnabled, enabled)
+		})
+	}
+}
+
+func TestParsePmdCpuMask(t *testing.T) {
+	tests := []struct {
+		name        string
+		mask        string
+		expected    []int
+		expectError bool
+	}{
+		{name: "hex with 0x prefix", mask: "0xc", expected: []int{2, 3}},
+		{name: "hex with 0X prefix", mask: "0XC", expected: []int{2, 3}},
+		{name: "bare hex lowercase", mask: "c", expected: []int{2, 3}},
+		{name: "bare hex uppercase", mask: "C", expected: []int{2, 3}},
+		{name: "single bit", mask: "0x1", expected: []int{0}},
+		{name: "multiple bits", mask: "0x6", expected: []int{1, 2}},
+		{name: "all low byte", mask: "0xff", expected: []int{0, 1, 2, 3, 4, 5, 6, 7}},
+		{name: "zero", mask: "0x0", expected: []int{}},
+		{name: "leading zeros", mask: "0x0000000000000006", expected: []int{1, 2}},
+		{name: "empty string", mask: "", expected: []int{}},
+		{name: "whitespace only", mask: "  ", expected: []int{}},
+		{name: "with whitespace", mask: " 0xc ", expected: []int{2, 3}},
+		{name: "invalid", mask: "xyz", expectError: true},
+		{name: "CPU 64 only", mask: "0x10000000000000000", expected: []int{64}},
+		{name: "CPUs spanning 64-bit boundary", mask: "0x10000000000000003", expected: []int{0, 1, 64}},
+		{name: "CPU 128 only", mask: "0x100000000000000000000000000000000", expected: []int{128}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := parsePmdCpuMask(tt.mask)
+			if tt.expectError {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, cpuset.New(tt.expected...), result)
+		})
 	}
 }
