@@ -457,6 +457,10 @@ spec:
           value: {{ hasKey .Values.global "enableMultiNetwork" | ternary .Values.global.enableMultiNetwork false | quote }}
         - name: OVN_NETWORK_SEGMENTATION_ENABLE
           value: {{ default "" .Values.global.enableNetworkSegmentation | quote }}
+        - name: OVN_UDN_ARP_PROXY_ENABLE
+          value: {{ default "" .Values.global.enableUDNARPProxy | quote }}
+        - name: OVN_UDN_NDP_PROXY_ENABLE
+          value: {{ default "" .Values.global.enableUDNNDPProxy | quote }}
         - name: OVN_ROUTE_ADVERTISEMENTS_ENABLE
           value: {{ hasKey .Values.global "enableRouteAdvertisements" | ternary .Values.global.enableRouteAdvertisements false | quote }}
         - name: OVN_UPLINK_ENABLE
