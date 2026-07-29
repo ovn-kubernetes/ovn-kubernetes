@@ -4962,6 +4962,15 @@ func configureGatewayRouterRoute(cs clientset.Interface, cudnName, nodeName, sub
 	})
 }
 
+// udnVRFRulePriority is the priority of the IP rules the test installs to
+// steer underlay traffic for CUDN prefixes into the network VRF. It must NOT
+// be 2000 (node.UDNMasqueradeIPRulePriority): ovnkube-node owns that priority
+// and its rule manager deletes any rule there that it did not create, since
+// it only programs subnet-steering rules for advertised networks. 2500 sits
+// between the owned UDN priority and the EgressService/EgressIP rules
+// (5000/6000) and ahead of the main table lookup.
+const udnVRFRulePriority = 2500
+
 // configureUDNVRFRule installs a host IP rule for traffic to a CUDN prefix.
 func configureUDNVRFRule(nodeName, vrfName, prefix string) {
 	ginkgo.GinkgoHelper()
@@ -4970,12 +4979,12 @@ func configureUDNVRFRule(nodeName, vrfName, prefix string) {
 		ipCmd = "ip -6"
 	}
 	cmd := []string{"bash", "-c", fmt.Sprintf(
-		`table=$(ip -d link show dev %q | sed -n 's/.*vrf table \([0-9][0-9]*\).*/\1/p'); test -n "$table"; %s rule del priority 2000 to %q lookup "$table" 2>/dev/null || true; %s rule add priority 2000 to %q lookup "$table"`,
-		vrfName, ipCmd, prefix, ipCmd, prefix,
+		`table=$(ip -d link show dev %q | sed -n 's/.*vrf table \([0-9][0-9]*\).*/\1/p'); test -n "$table"; %s rule del priority %d to %q lookup "$table" 2>/dev/null || true; %s rule add priority %d to %q lookup "$table"`,
+		vrfName, ipCmd, udnVRFRulePriority, prefix, ipCmd, udnVRFRulePriority, prefix,
 	)}
 	delCmd := []string{"bash", "-c", fmt.Sprintf(
-		`table=$(ip -d link show dev %q | sed -n 's/.*vrf table \([0-9][0-9]*\).*/\1/p'); test -z "$table" || %s rule del priority 2000 to %q lookup "$table" 2>/dev/null || true`,
-		vrfName, ipCmd, prefix,
+		`table=$(ip -d link show dev %q | sed -n 's/.*vrf table \([0-9][0-9]*\).*/\1/p'); test -z "$table" || %s rule del priority %d to %q lookup "$table" 2>/dev/null || true`,
+		vrfName, ipCmd, udnVRFRulePriority, prefix,
 	)}
 	framework.Logf("Adding unmanaged no-overlay CUDN VRF rule on kind node %s: %v", nodeName, cmd)
 	_, err := infraprovider.Get().ExecK8NodeCommand(nodeName, cmd)
