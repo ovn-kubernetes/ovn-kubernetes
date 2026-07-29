@@ -535,7 +535,9 @@ func NewOVNKubeControllerWatchFactory(ovnClientset *util.OVNKubeControllerClient
 		if err != nil {
 			return nil, err
 		}
+	}
 
+	if util.IsUplinkEnabled() {
 		wf.uplinkFactory = uplinkinformerfactory.NewSharedInformerFactory(ovnClientset.UplinkClient, resyncInterval)
 		wf.uplinkStateFactory = newUplinkStateSharedInformerFactory(ovnClientset.UplinkClient, nodeName)
 		wf.informers[UplinkType], err = newQueuedInformer(eventQueueSize, UplinkType,
@@ -690,13 +692,13 @@ func (wf *WatchFactory) Start() error {
 		}
 	}
 
-	if util.IsNetworkSegmentationSupportEnabled() && wf.uplinkFactory != nil {
+	if wf.uplinkFactory != nil {
 		wf.uplinkFactory.Start(wf.stopChan)
 		if err := waitForCacheSyncWithTimeout(wf.uplinkFactory, wf.stopChan); err != nil {
 			return err
 		}
 	}
-	if util.IsNetworkSegmentationSupportEnabled() && wf.uplinkStateFactory != nil {
+	if wf.uplinkStateFactory != nil {
 		wf.uplinkStateFactory.Start(wf.stopChan)
 		if err := waitForCacheSyncWithTimeout(wf.uplinkStateFactory, wf.stopChan); err != nil {
 			return err
@@ -975,7 +977,9 @@ func NewNodeWatchFactory(ovnClientset *util.OVNNodeClientset, nodeName string) (
 		if err != nil {
 			return nil, err
 		}
+	}
 
+	if util.IsUplinkEnabled() {
 		wf.uplinkFactory = uplinkinformerfactory.NewSharedInformerFactory(ovnClientset.UplinkClient, resyncInterval)
 		wf.uplinkStateFactory = newUplinkStateSharedInformerFactory(ovnClientset.UplinkClient, nodeName)
 		wf.informers[UplinkType], err = newQueuedInformer(eventQueueSize,
@@ -1181,6 +1185,14 @@ func NewClusterManagerWatchFactory(ovnClientset *util.OVNClusterManagerClientset
 			return nil, err
 		}
 
+		// make sure namespace informer cache is initialized and synced on Start().
+		wf.iFactory.Core().V1().Namespaces().Informer()
+
+		// make sure pod informer cache is initialized and synced when Start() is called.
+		wf.iFactory.Core().V1().Pods().Informer()
+	}
+
+	if util.IsUplinkEnabled() {
 		wf.uplinkFactory = uplinkinformerfactory.NewSharedInformerFactory(ovnClientset.UplinkClient, resyncInterval)
 		wf.uplinkStateFactory = newUplinkStateSharedInformerFactory(ovnClientset.UplinkClient, "")
 		wf.informers[UplinkType], err = newQueuedInformer(eventQueueSize,
@@ -1195,12 +1207,6 @@ func NewClusterManagerWatchFactory(ovnClientset *util.OVNClusterManagerClientset
 		if err != nil {
 			return nil, err
 		}
-
-		// make sure namespace informer cache is initialized and synced on Start().
-		wf.iFactory.Core().V1().Namespaces().Informer()
-
-		// make sure pod informer cache is initialized and synced when on Start().
-		wf.iFactory.Core().V1().Pods().Informer()
 	}
 
 	// Initialize VTEP factory for EVPN support.

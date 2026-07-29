@@ -80,6 +80,9 @@ func prepareUplinkGatewayControllerTest(t *testing.T) {
 		_ = config.PrepareTestConfig()
 	})
 	config.Gateway.Mode = config.GatewayModeShared
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+	config.OVNKubernetesFeature.EnableUplink = true
 }
 
 func getUplinkGatewayCondition(

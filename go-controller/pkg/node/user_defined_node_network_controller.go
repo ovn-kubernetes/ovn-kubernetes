@@ -14,6 +14,7 @@ import (
 	"github.com/ovn-kubernetes/libovsdb/client"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	uplinklisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/listers/uplink/v1alpha1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iprulemanager"
@@ -71,9 +72,13 @@ func NewUserDefinedNodeNetworkController(
 				snnc.name, netInfo.GetNetworkName(), err)
 		}
 
+		var uplinkStateLister uplinklisters.UplinkStateLister
+		if util.IsUplinkEnabled() {
+			uplinkStateLister = snnc.watchFactory.UplinkStateInformer().Lister()
+		}
 		snnc.gateway, err = NewUserDefinedNetworkGateway(snnc.GetNetInfo(), node,
 			snnc.watchFactory.NodeCoreInformer().Lister(), snnc.Kube, vrfManager, ruleManager, defaultNetworkGateway,
-			ovsClient, snnc.watchFactory.UplinkStateInformer().Lister(), uplinkGatewayController)
+			ovsClient, uplinkStateLister, uplinkGatewayController)
 		if err != nil {
 			return nil, fmt.Errorf("error creating UDN gateway for network %s: %v", netInfo.GetNetworkName(), err)
 		}

@@ -824,6 +824,9 @@ var _ = Describe("NetAttachDefTemplate", func() {
 		config.IPv4Mode = true
 		config.IPv6Mode = false
 		config.Gateway.Mode = config.GatewayModeShared
+		config.OVNKubernetesFeature.EnableMultiNetwork = true
+		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+		config.OVNKubernetesFeature.EnableUplink = true
 		nad, err := RenderNetAttachDefManifest(cudn, "mynamespace")
 		Expect(err).NotTo(HaveOccurred())
 
@@ -831,6 +834,33 @@ var _ = Describe("NetAttachDefTemplate", func() {
 		err = json.Unmarshal([]byte(nad.Spec.Config), &netConf)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(netConf).To(HaveKeyWithValue("uplink", "br-test"))
+	})
+
+	It("should reject CUDN uplink when Uplink feature is disabled", func() {
+		cudn := &udnv1.ClusterUserDefinedNetwork{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-net", UID: "1"},
+			Spec: udnv1.ClusterUserDefinedNetworkSpec{
+				Uplinks: []string{"br-test"},
+				Network: udnv1.NetworkSpec{
+					Topology: udnv1.NetworkTopologyLayer3,
+					Layer3: &udnv1.Layer3Config{
+						Role: udnv1.NetworkRolePrimary,
+						Subnets: []udnv1.Layer3Subnet{
+							{CIDR: "192.168.100.0/16"},
+						},
+					},
+				},
+			},
+		}
+
+		config.IPv4Mode = true
+		config.IPv6Mode = false
+		config.Gateway.Mode = config.GatewayModeShared
+		config.OVNKubernetesFeature.EnableUplink = false
+		nad, err := RenderNetAttachDefManifest(cudn, "mynamespace")
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("requires the Uplink feature to be enabled"))
+		Expect(nad).To(BeNil())
 	})
 
 	Context("EVPN VID injection", func() {

@@ -240,6 +240,8 @@ ovn_network_segmentation_enable=${OVN_NETWORK_SEGMENTATION_ENABLE:=false}
 ovn_network_connect_enable=${OVN_NETWORK_CONNECT_ENABLE:=false}
 #OVN_PRE_CONF_UDN_ADDR_ENABLE - enable connecting workloads with custom network configuration to UDNs
 ovn_pre_conf_udn_addr_enable=${OVN_PRE_CONF_UDN_ADDR_ENABLE:=false}
+#OVN_UPLINK_ENABLE - enable Uplink CRD support for dynamic OVS bridge allocation
+ovn_uplink_enable=${OVN_UPLINK_ENABLE:=false}
 #OVN_ROUTE_ADVERTISEMENTS_ENABLE - enable route advertisements for ovn-kubernetes
 ovn_route_advertisements_enable=${OVN_ROUTE_ADVERTISEMENTS_ENABLE:=false}
 #OVN_EVPN_ENABLE - enable EVPN for ovn-kubernetes
@@ -1122,6 +1124,12 @@ ovnkube-controller() {
   fi
   echo "network_connect_enabled_flag=${network_connect_enabled_flag}"
 
+  uplink_enabled_flag=
+  if [[ ${ovn_uplink_enable} == "true" ]]; then
+	  uplink_enabled_flag="--enable-uplink"
+  fi
+  echo "uplink_enabled_flag=${uplink_enabled_flag}"
+
   pre_conf_udn_addr_enable_flag=
   if [[ ${ovn_pre_conf_udn_addr_enable} == "true" ]]; then
 	  pre_conf_udn_addr_enable_flag="--enable-preconfigured-udn-addresses"
@@ -1268,6 +1276,7 @@ ovnkube-controller() {
     ${multi_network_enabled_flag} \
     ${network_segmentation_enabled_flag} \
     ${network_connect_enabled_flag} \
+    ${uplink_enabled_flag} \
     ${pre_conf_udn_addr_enable_flag} \
     ${route_advertisements_enabled_flag} \
     ${evpn_enabled_flag} \
@@ -1462,6 +1471,12 @@ ovnkube-controller-with-node() {
 	  network_connect_enabled_flag="--enable-network-connect"
   fi
   echo "network_connect_enabled_flag=${network_connect_enabled_flag}"
+
+  uplink_enabled_flag=
+  if [[ ${ovn_uplink_enable} == "true" ]]; then
+	  uplink_enabled_flag="--enable-uplink"
+  fi
+  echo "uplink_enabled_flag=${uplink_enabled_flag}"
 
   pre_conf_udn_addr_enable_flag=
   if [[ ${ovn_pre_conf_udn_addr_enable} == "true" ]]; then
@@ -1780,6 +1795,7 @@ ovnkube-controller-with-node() {
     ${multi_network_enabled_flag} \
     ${network_segmentation_enabled_flag} \
     ${network_connect_enabled_flag} \
+    ${uplink_enabled_flag} \
     ${pre_conf_udn_addr_enable_flag} \
     ${route_advertisements_enabled_flag} \
     ${evpn_enabled_flag} \
@@ -1962,6 +1978,12 @@ ovn-cluster-manager() {
   fi
   echo "network_connect_enabled_flag=${network_connect_enabled_flag}"
 
+  uplink_enabled_flag=
+  if [[ ${ovn_uplink_enable} == "true" ]]; then
+	  uplink_enabled_flag="--enable-uplink"
+  fi
+  echo "uplink_enabled_flag=${uplink_enabled_flag}"
+
   pre_conf_udn_addr_enable_flag=
   if [[ ${ovn_pre_conf_udn_addr_enable} == "true" ]]; then
 	  pre_conf_udn_addr_enable_flag="--enable-preconfigured-udn-addresses"
@@ -2086,6 +2108,7 @@ ovn-cluster-manager() {
     ${multi_network_enabled_flag} \
     ${network_segmentation_enabled_flag} \
     ${network_connect_enabled_flag} \
+    ${uplink_enabled_flag} \
     ${pre_conf_udn_addr_enable_flag} \
     ${route_advertisements_enabled_flag} \
     ${evpn_enabled_flag} \
@@ -2252,6 +2275,12 @@ ovn-node() {
 	  network_connect_enabled_flag="--enable-network-connect"
   fi
   echo "network_connect_enabled_flag=${network_connect_enabled_flag}"
+
+  uplink_enabled_flag=
+  if [[ ${ovn_uplink_enable} == "true" ]]; then
+	  uplink_enabled_flag="--enable-uplink"
+  fi
+  echo "uplink_enabled_flag=${uplink_enabled_flag}"
 
   pre_conf_udn_addr_enable_flag=
   if [[ ${ovn_pre_conf_udn_addr_enable} == "true" ]]; then
@@ -2484,6 +2513,7 @@ ovn-node() {
         ${multi_network_enabled_flag} \
         ${network_segmentation_enabled_flag} \
         ${network_connect_enabled_flag} \
+    ${uplink_enabled_flag} \
         ${pre_conf_udn_addr_enable_flag} \
         ${route_advertisements_enabled_flag} \
         ${evpn_enabled_flag} \

@@ -180,6 +180,9 @@ func TestEnsureUplinkGatewayRequiresValidInterface(t *testing.T) {
 	config.IPv4Mode = false
 	config.IPv6Mode = true
 	config.Gateway.Mode = config.GatewayModeShared
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+	config.OVNKubernetesFeature.EnableUplink = true
 
 	nad := generateUplinkNAD("red", "rednad", "greenamespace",
 		types.Layer3Topology, "ae70::/60/64", types.NetworkRolePrimary, "uplink1")
@@ -418,6 +421,9 @@ func TestGetDefaultRouteDoesNotFallBackForUplinkWithoutNextHops(t *testing.T) {
 	config.IPv4Mode = true
 	config.Default.MTU = 1400
 	config.Gateway.Mode = config.GatewayModeShared
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+	config.OVNKubernetesFeature.EnableUplink = true
 	nad := generateUplinkNAD("red", "rednad", "greenamespace",
 		types.Layer3Topology, "100.128.0.0/16/24", types.NetworkRolePrimary, "uplink1")
 	netInfo, err := util.ParseNADInfo(nad)
@@ -821,6 +827,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
 		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+		config.OVNKubernetesFeature.EnableUplink = true
 		config.OvnKubeNode.MgmtPortDPResourceName = ""
 		// Use a larger masq subnet to allow OF manager to allocate IPs for UDNs.
 		config.Gateway.V6MasqueradeSubnet = "fd69::/112"
