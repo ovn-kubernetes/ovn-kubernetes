@@ -107,6 +107,51 @@ func TestNodeNeedsUpdate(t *testing.T) {
 	g.Expect(controller.nodeNeedsUpdate(remoteNode, updatedRemoteNode)).To(gomega.BeFalse())
 }
 
+func TestNetlinkHostInterfaceDiscovererRejectsUnusableMAC(t *testing.T) {
+	tests := []struct {
+		name   string
+		hwAddr net.HardwareAddr
+	}{
+		{
+			name: "no MAC",
+		},
+		{
+			name:   "all-zero MAC",
+			hwAddr: net.HardwareAddr{0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+		},
+		{
+			name:   "multicast MAC",
+			hwAddr: net.HardwareAddr{0x01, 0x00, 0x5e, 0x00, 0x00, 0x01},
+		},
+		{
+			name: "non-Ethernet hardware address",
+			hwAddr: net.HardwareAddr{
+				0x80, 0x00, 0x02, 0x08, 0xfe, 0x80, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x02, 0xc9, 0x03, 0x00, 0x0a, 0x5f, 0x21,
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			netlinkOps := utilmocks.NewNetLinkOps(t)
+			util.SetNetLinkOpMockInst(netlinkOps)
+			t.Cleanup(util.ResetNetLinkOpMockInst)
+			netlinkOps.On("LinkByName", "breth0").
+				Return(&netlink.Dummy{LinkAttrs: netlink.LinkAttrs{
+					Name:         "breth0",
+					HardwareAddr: test.hwAddr,
+				}}, nil)
+
+			_, err := netlinkHostInterfaceDiscoverer{}.Discover("breth0")
+			g.Expect(err).To(gomega.MatchError(
+				gomega.ContainSubstring("host interface breth0 has no usable MAC address")))
+			g.Expect(discoveryReason(err)).To(gomega.Equal(uplinkv1alpha1.UplinkStateReasonInvalidHostInterface))
+		})
+	}
+}
+
 func TestDefaultOVSBridgeResolverUsesOVSDB(t *testing.T) {
 	g := gomega.NewWithT(t)
 	const (

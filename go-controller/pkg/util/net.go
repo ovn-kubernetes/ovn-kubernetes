@@ -4,6 +4,7 @@
 package util
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"errors"
@@ -370,6 +371,13 @@ func ParseIPNets[T ~string](strs []T) ([]*net.IPNet, error) {
 		ipnets[i] = ipnet
 	}
 	return ipnets, nil
+}
+
+// IsUsableEthernetMAC reports whether mac can serve as a unicast interface
+// MAC, mirroring the kernel's is_valid_ether_addr: a 6-byte Ethernet address
+// that is neither all-zero nor multicast.
+func IsUsableEthernetMAC(mac net.HardwareAddr) bool {
+	return len(mac) == 6 && mac[0]&1 == 0 && !bytes.Equal(mac, make(net.HardwareAddr, 6))
 }
 
 // GenerateRandMAC generates a random unicast and locally administered MAC address.

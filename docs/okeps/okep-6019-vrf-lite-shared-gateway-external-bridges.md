@@ -414,7 +414,8 @@ discovery state:
 * `DefaultGatewayBridgeUnsupported`: the resolved bridge is the node's default shared gateway bridge, which cannot be
   selected as an `Uplink` in this OKEP.
 * `InvalidHostInterface`: the selected host interface resolves to an unsupported bridge role, such as the bridge's
-  physical uplink port instead of its host gateway interface.
+  physical uplink port instead of its host gateway interface, or the interface has no usable MAC address (missing,
+  all-zero or multicast) on the node or DPU-Host.
 * `GatewayInfoUnavailable`: OVN-Kubernetes cannot discover the gateway MAC/IP data needed for OVN configuration.
 * `WaitingForDPUHost`: DPU-side reconciliation is waiting for the DPU-Host to publish complete host-side L3 data. The
   DPU-Host-side cause is reported on the `HostDataReady` condition.
@@ -426,7 +427,7 @@ If the `Uplink` no longer selects the node, the Uplink discovery reconciler dele
 instead of retaining stale state with `Resolved=False`.
 
 In split DPU mode the `HostDataReady` condition reports host interface data discovery on the DPU-Host:
-`HostDataReady=True` with reason `HostDataDiscovered` once discovery succeeds (which guarantees a MAC and an
+`HostDataReady=True` with reason `HostDataDiscovered` once discovery succeeds (which guarantees a usable MAC and an
 address for each enabled IP family, so the DPU side can consume the data), and `HostDataReady=False` with a host-side
 discovery reason (`HostInterfaceNotFound`, `InvalidHostInterface`, `GatewayInfoUnavailable`, `NodeSelectorOverlap`)
 otherwise. Full mode does not publish this condition.
