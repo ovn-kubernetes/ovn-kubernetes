@@ -13,6 +13,32 @@ its physical uplink must already exist on the selected nodes. OVN-Kubernetes
 discovers the bridge, records node-local state in `UplinkState`, configures OVN
 bridge mappings, and programs the gateway and service flows needed by the CUDN.
 
+## Enabling the Feature
+
+Uplink support is disabled by default and must be explicitly enabled with the
+`--enable-uplink` flag. It requires both Multi-Network (`--enable-multi-network`)
+and Network Segmentation (`--enable-network-segmentation`).
+
+When deploying with Helm, set `global.enableUplink=true` in the values file or
+on the command line. When using Kind scripts, pass `--uplink-enable` to
+`kind-helm.sh`.
+
+Deployments that enable Uplink must grant the component-specific Uplink and
+UplinkState RBAC permissions defined in the shipped Helm RBAC manifests.
+Nodes require read access (`get`, `list`, `watch`) to Uplinks and UplinkStates,
+plus write access (`create`, `delete`, `patch`, `update`) to UplinkStates.
+The cluster manager requires read access to both resources, status update
+(`patch`, `update`) on Uplinks, and lifecycle management (`create`, `delete`)
+of UplinkStates. See the Helm templates
+`rbac-ovnkube-node.yaml` and `rbac-ovnkube-cluster-manager.yaml` for the
+complete rules.
+
+When Uplink is disabled, `ClusterUserDefinedNetwork` objects that specify
+`spec.uplinks` fail during CUDN reconciliation because NAD rendering rejects
+the uplink configuration with an error indicating that the feature must be
+enabled. Clusters that do not need Uplink functionality can safely run with
+Network Segmentation enabled and Uplink disabled.
+
 ## Supported Scope
 
 This feature currently supports:

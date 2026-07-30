@@ -1829,25 +1829,42 @@ func TestValidateNetConfOutboundSNAT(t *testing.T) {
 
 func TestValidateNetConfUplinkGatewayMode(t *testing.T) {
 	tests := []struct {
-		name          string
-		gatewayMode   config.GatewayMode
-		uplink        string
-		expectedError string
+		name               string
+		gatewayMode        config.GatewayMode
+		uplink             string
+		enableUplink       bool
+		enableMultiNetwork bool
+		enableSegmentation bool
+		expectedError      string
 	}{
 		{
-			name:        "uplink is accepted in shared gateway mode",
-			gatewayMode: config.GatewayModeShared,
-			uplink:      "blue-uplink",
+			name:               "uplink is accepted in shared gateway mode",
+			gatewayMode:        config.GatewayModeShared,
+			uplink:             "blue-uplink",
+			enableUplink:       true,
+			enableMultiNetwork: true,
+			enableSegmentation: true,
 		},
 		{
-			name:          "uplink is rejected in local gateway mode",
-			gatewayMode:   config.GatewayModeLocal,
-			uplink:        "blue-uplink",
-			expectedError: `uplink "blue-uplink" is supported only in shared gateway mode`,
+			name:               "uplink is rejected in local gateway mode",
+			gatewayMode:        config.GatewayModeLocal,
+			uplink:             "blue-uplink",
+			enableUplink:       true,
+			enableMultiNetwork: true,
+			enableSegmentation: true,
+			expectedError:      `uplink "blue-uplink" is supported only in shared gateway mode`,
 		},
 		{
 			name:        "local gateway mode is accepted without uplink",
 			gatewayMode: config.GatewayModeLocal,
+		},
+		{
+			name:               "uplink is rejected when feature is disabled",
+			gatewayMode:        config.GatewayModeShared,
+			uplink:             "blue-uplink",
+			enableMultiNetwork: true,
+			enableSegmentation: true,
+			expectedError:      `uplink "blue-uplink" requires the Uplink feature to be enabled`,
 		},
 	}
 
@@ -1855,7 +1872,11 @@ func TestValidateNetConfUplinkGatewayMode(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			g := gomega.NewWithT(t)
 			g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+			t.Cleanup(func() { g.Expect(config.PrepareTestConfig()).To(gomega.Succeed()) })
 			config.Gateway.Mode = test.gatewayMode
+			config.OVNKubernetesFeature.EnableUplink = test.enableUplink
+			config.OVNKubernetesFeature.EnableMultiNetwork = test.enableMultiNetwork
+			config.OVNKubernetesFeature.EnableNetworkSegmentation = test.enableSegmentation
 
 			nadName := "namespace/network"
 			netconf := &ovncnitypes.NetConf{

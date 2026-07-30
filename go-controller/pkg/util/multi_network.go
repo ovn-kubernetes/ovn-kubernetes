@@ -1629,8 +1629,13 @@ func ValidateNetConf(nadName string, netconf *ovncnitypes.NetConf) error {
 			})
 		}
 	}
-	if netconf.Uplink != "" && config.Gateway.Mode != config.GatewayModeShared {
-		return fmt.Errorf("uplink %q is supported only in shared gateway mode", netconf.Uplink)
+	if netconf.Uplink != "" {
+		if !IsUplinkEnabled() {
+			return fmt.Errorf("uplink %q requires the Uplink feature to be enabled (--enable-uplink)", netconf.Uplink)
+		}
+		if config.Gateway.Mode != config.GatewayModeShared {
+			return fmt.Errorf("uplink %q is supported only in shared gateway mode", netconf.Uplink)
+		}
 	}
 
 	if netconf.JoinSubnet != "" && netconf.Topology == types.LocalnetTopology {
@@ -1958,6 +1963,10 @@ func IsNetworkSegmentationSupportEnabled() bool {
 
 func IsNetworkConnectEnabled() bool {
 	return IsNetworkSegmentationSupportEnabled() && config.OVNKubernetesFeature.EnableNetworkConnect
+}
+
+func IsUplinkEnabled() bool {
+	return IsNetworkSegmentationSupportEnabled() && config.OVNKubernetesFeature.EnableUplink
 }
 
 func IsRouteAdvertisementsEnabled() bool {

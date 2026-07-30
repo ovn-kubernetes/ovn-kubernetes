@@ -230,6 +230,7 @@ jobs:
           export OVN_TEST_BGP_SERVER_NET_SUBNET_IPV6="fc00:f853:ccd:e797::/64"
           export ENABLE_MULTI_NET=true
           export ENABLE_NETWORK_SEGMENTATION=true
+          export ENABLE_UPLINK=true
           export ENABLE_ROUTE_ADVERTISEMENTS=true
           export ENABLE_NO_OVERLAY=true
           export DYNAMIC_UDN_ALLOCATION=true

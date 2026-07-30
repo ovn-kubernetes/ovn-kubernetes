@@ -45,6 +45,7 @@ usage() {
     echo "       [ -mne | --multi-network-enable ]"
     echo "       [ -nse | --network-segmentation-enable ]"
     echo "       [ -nce | --network-connect-enable ]"
+    echo "       [ -ule | --uplink-enable ]"
     echo "       [ -uae | --preconfigured-udn-addresses-enable ]"
     echo "       [ -rae | --route-advertisements-enable ]"
     echo "       [ -evpn | --evpn-enable ]"
@@ -88,6 +89,7 @@ usage() {
     echo "-mne | --multi-network-enable                 Enable multi networks. DEFAULT: Disabled"
     echo "-nse | --network-segmentation-enable          Enable network segmentation. DEFAULT: Disabled"
     echo "-nce | --network-connect-enable               Enable network connect (requires network segmentation). DEFAULT: Disabled"
+    echo "-ule | --uplink-enable                        Enable Uplink CRD support (requires network segmentation). DEFAULT: Disabled"
     echo "-uae | --preconfigured-udn-addresses-enable   Enable connecting workloads with preconfigured network to user-defined networks. DEFAULT: Disabled"
     echo "-rae | --route-advertisements-enable          Enable route advertisements"
     echo "-evpn | --evpn-enable                         Enable EVPN"
@@ -195,6 +197,8 @@ parse_args() {
             -nse | --network-segmentation-enable) ENABLE_NETWORK_SEGMENTATION=true
                                                   ;;
             -nce | --network-connect-enable )     ENABLE_NETWORK_CONNECT=true
+                                                  ;;
+            -ule | --uplink-enable )              ENABLE_UPLINK=true
                                                   ;;
             -uae | --preconfigured-udn-addresses-enable)    ENABLE_PRE_CONF_UDN_ADDR=true
                                                   ;;
@@ -458,6 +462,7 @@ print_params() {
      echo "ENABLE_MULTI_NET = $ENABLE_MULTI_NET"
      echo "ENABLE_NETWORK_SEGMENTATION = $ENABLE_NETWORK_SEGMENTATION"
      echo "ENABLE_NETWORK_CONNECT = $ENABLE_NETWORK_CONNECT"
+     echo "ENABLE_UPLINK = $ENABLE_UPLINK"
      echo "ENABLE_PRE_CONF_UDN_ADDR = $ENABLE_PRE_CONF_UDN_ADDR"
      echo "ENABLE_ROUTE_ADVERTISEMENTS = $ENABLE_ROUTE_ADVERTISEMENTS"
      echo "ENABLE_EVPN = $ENABLE_EVPN"
@@ -604,6 +609,7 @@ helm upgrade --install ovn-kubernetes . -f "${value_file}" ${extra_values_args} 
           --set global.enableMultiNetwork=$(if [ "${ENABLE_MULTI_NET}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableNetworkSegmentation=$(if [ "${ENABLE_NETWORK_SEGMENTATION}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableNetworkConnect=$(if [ "${ENABLE_NETWORK_CONNECT}" == "true" ]; then echo "true"; else echo "false"; fi) \
+          --set global.enableUplink=$(if [ "${ENABLE_UPLINK}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableDynamicUDNAllocation=$(if [ "${DYNAMIC_UDN_ALLOCATION}" == "true" ]; then echo "true"; else echo "false"; fi) \
           $( [ -n "$DYNAMIC_UDN_GRACE_PERIOD" ] && echo "--set global.dynamicUDNGracePeriod=$DYNAMIC_UDN_GRACE_PERIOD" ) \
           --set global.enablePreconfiguredUDNAddresses=$(if [ "${ENABLE_PRE_CONF_UDN_ADDR}" == "true" ]; then echo "true"; else echo "false"; fi) \

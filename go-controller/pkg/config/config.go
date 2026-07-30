@@ -527,6 +527,7 @@ type OVNKubernetesFeatureConfig struct {
 	EnableNetworkSegmentation       bool `gcfg:"enable-network-segmentation"`
 	EnableNetworkConnect            bool `gcfg:"enable-network-connect"`
 	EnablePreconfiguredUDNAddresses bool `gcfg:"enable-preconfigured-udn-addresses"`
+	EnableUplink                    bool `gcfg:"enable-uplink"`
 	EnableRouteAdvertisements       bool `gcfg:"enable-route-advertisements"`
 	EnableEVPN                      bool `gcfg:"enable-evpn"`
 	EnableMultiNetworkPolicy        bool `gcfg:"enable-multi-networkpolicy"`
@@ -1281,6 +1282,12 @@ var OVNK8sFeatureFlags = []cli.Flag{
 		Usage:       "Enable workloads connect to user-defined network with preconfigured addresses.",
 		Destination: &cliConfig.OVNKubernetesFeature.EnablePreconfiguredUDNAddresses,
 		Value:       OVNKubernetesFeature.EnablePreconfiguredUDNAddresses,
+	},
+	&cli.BoolFlag{
+		Name:        "enable-uplink",
+		Usage:       "Enable Uplink CRD support for dynamic OVS bridge allocation with UDN traffic.",
+		Destination: &cliConfig.OVNKubernetesFeature.EnableUplink,
+		Value:       OVNKubernetesFeature.EnableUplink,
 	},
 	&cli.BoolFlag{
 		Name:        "enable-route-advertisements",
@@ -2311,6 +2318,10 @@ func buildOVNKubernetesFeatureConfig(cli, file *config) error {
 	}
 	if OVNKubernetesFeature.EnableDynamicUDNAllocation && !OVNKubernetesFeature.EnableNetworkSegmentation {
 		return fmt.Errorf("the Dynamic UDN Allocation feature cannot be enabled without also enabling Network Segmentation")
+	}
+	if OVNKubernetesFeature.EnableUplink &&
+		(!OVNKubernetesFeature.EnableMultiNetwork || !OVNKubernetesFeature.EnableNetworkSegmentation) {
+		return fmt.Errorf("the Uplink feature requires both Multi-Network and Network Segmentation to be enabled")
 	}
 	return nil
 }

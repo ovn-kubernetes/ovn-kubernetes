@@ -212,7 +212,7 @@ func NewClusterManager(
 	if util.IsNetworkConnectEnabled() {
 		cm.networkConnectController = networkconnect.NewController(wf, ovnClient, cm.networkManager.Interface(), tunnelKeysAllocator)
 	}
-	if util.IsNetworkSegmentationSupportEnabled() {
+	if util.IsUplinkEnabled() {
 		cm.uplinkController = uplinkcontroller.NewController(
 			wf,
 			ovnClient,
@@ -310,7 +310,7 @@ func (cm *ClusterManager) Start(ctx context.Context) error {
 			return err
 		}
 	}
-	if util.IsNetworkSegmentationSupportEnabled() {
+	if cm.uplinkController != nil {
 		if err := cm.uplinkController.Start(); err != nil {
 			return err
 		}
@@ -370,7 +370,7 @@ func (cm *ClusterManager) Stop() {
 	if cm.networkConnectController != nil {
 		cm.networkConnectController.Stop()
 	}
-	if util.IsNetworkSegmentationSupportEnabled() {
+	if cm.uplinkController != nil {
 		cm.uplinkController.Stop()
 	}
 	if cm.vtepController != nil {

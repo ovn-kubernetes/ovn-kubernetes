@@ -44,6 +44,8 @@ import (
 	networkqos "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1"
 	networkqosfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/clientset/versioned/fake"
 	crdtypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
+	uplinkfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/clientset/versioned/fake"
+	udnfakeclient "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -971,6 +973,155 @@ var _ = Describe("Watch Factory Operations", func() {
 		It("does not contain NetworkQoS informer", func() {
 			config.OVNKubernetesFeature.EnableNetworkQoS = false
 			testExisting(NetworkQoSType)
+		})
+	})
+
+	Context("when Uplink is disabled but Network Segmentation is enabled", func() {
+		failOnUplinkReactor := func(client *uplinkfake.Clientset) {
+			client.PrependReactor("*", "uplinks", func(action core.Action) (bool, runtime.Object, error) {
+				Fail(fmt.Sprintf("unexpected uplink API call: %v %s", action.GetVerb(), action.GetResource().Resource))
+				return true, nil, nil
+			})
+			client.PrependWatchReactor("uplinks", func(action core.Action) (bool, watch.Interface, error) {
+				Fail(fmt.Sprintf("unexpected uplink watch: %s", action.GetResource().Resource))
+				return true, nil, nil
+			})
+			client.PrependReactor("*", "uplinkstates", func(action core.Action) (bool, runtime.Object, error) {
+				Fail(fmt.Sprintf("unexpected uplinkstate API call: %v %s", action.GetVerb(), action.GetResource().Resource))
+				return true, nil, nil
+			})
+			client.PrependWatchReactor("uplinkstates", func(action core.Action) (bool, watch.Interface, error) {
+				Fail(fmt.Sprintf("unexpected uplinkstate watch: %s", action.GetResource().Resource))
+				return true, nil, nil
+			})
+		}
+
+		disableUnrelatedFeatures := func() {
+			config.OVNKubernetesFeature.EnableAdminNetworkPolicy = false
+			config.OVNKubernetesFeature.EnableEgressIP = false
+			config.OVNKubernetesFeature.EnableEgressFirewall = false
+			config.OVNKubernetesFeature.EnableEgressQoS = false
+			config.OVNKubernetesFeature.EnableEgressService = false
+			config.OVNKubernetesFeature.EnablePersistentIPs = false
+			config.OVNKubernetesFeature.EnableNetworkQoS = false
+			config.Kubernetes.PlatformType = ""
+		}
+
+		It("OVNKubeControllerWatchFactory does not list or watch uplinks during Start", func() {
+			disableUnrelatedFeatures()
+			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+			config.OVNKubernetesFeature.EnableUplink = false
+			uplinkClient := uplinkfake.NewSimpleClientset()
+			failOnUplinkReactor(uplinkClient)
+			ovnClientset.UplinkClient = uplinkClient
+			ovnClientset.UserDefinedNetworkClient = udnfakeclient.NewSimpleClientset()
+
+			wf, err = NewOVNKubeControllerWatchFactory(ovnClientset, "test-node")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(wf.uplinkFactory).To(BeNil())
+			Expect(wf.uplinkStateFactory).To(BeNil())
+			Expect(wf.informers).NotTo(HaveKey(UplinkType))
+			Expect(wf.informers).NotTo(HaveKey(UplinkStateType))
+			Expect(wf.udnFactory).NotTo(BeNil())
+			Expect(wf.informers).To(HaveKey(UserDefinedNetworkType))
+
+			err = wf.Start()
+			Expect(err).NotTo(HaveOccurred())
+			wf.Shutdown()
+			shutdown = true
+		})
+
+		It("NewNodeWatchFactory does not list or watch uplinks during Start", func() {
+			disableUnrelatedFeatures()
+			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+			config.OVNKubernetesFeature.EnableUplink = false
+			uplinkClient := uplinkfake.NewSimpleClientset()
+			failOnUplinkReactor(uplinkClient)
+			ovnNodeClientset.UplinkClient = uplinkClient
+			ovnNodeClientset.UserDefinedNetworkClient = udnfakeclient.NewSimpleClientset()
+
+			wf, err = NewNodeWatchFactory(ovnNodeClientset, nodeName)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(wf.uplinkFactory).To(BeNil())
+			Expect(wf.uplinkStateFactory).To(BeNil())
+			Expect(wf.informers).NotTo(HaveKey(UplinkType))
+			Expect(wf.informers).NotTo(HaveKey(UplinkStateType))
+
+			err = wf.Start()
+			Expect(err).NotTo(HaveOccurred())
+			wf.Shutdown()
+			shutdown = true
+		})
+
+		It("NewClusterManagerWatchFactory does not list or watch uplinks during Start", func() {
+			disableUnrelatedFeatures()
+			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+			config.OVNKubernetesFeature.EnableUplink = false
+			uplinkClient := uplinkfake.NewSimpleClientset()
+			failOnUplinkReactor(uplinkClient)
+			ovnCMClientset.UplinkClient = uplinkClient
+			ovnCMClientset.UserDefinedNetworkClient = udnfakeclient.NewSimpleClientset()
+
+			wf, err = NewClusterManagerWatchFactory(ovnCMClientset)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(wf.uplinkFactory).To(BeNil())
+			Expect(wf.uplinkStateFactory).To(BeNil())
+			Expect(wf.informers).NotTo(HaveKey(UplinkType))
+			Expect(wf.informers).NotTo(HaveKey(UplinkStateType))
+
+			err = wf.Start()
+			Expect(err).NotTo(HaveOccurred())
+			wf.Shutdown()
+			shutdown = true
+		})
+
+		It("creates uplink informers when Uplink is enabled and starts successfully", func() {
+			disableUnrelatedFeatures()
+			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+			config.OVNKubernetesFeature.EnableUplink = true
+
+			uplinkListed := false
+			uplinkWatched := false
+			uplinkStateListed := false
+			uplinkStateWatched := false
+
+			uplinkClient := uplinkfake.NewSimpleClientset()
+			uplinkClient.PrependReactor("list", "uplinks", func(action core.Action) (bool, runtime.Object, error) {
+				uplinkListed = true
+				return false, nil, nil
+			})
+			uplinkClient.PrependWatchReactor("uplinks", func(action core.Action) (bool, watch.Interface, error) {
+				uplinkWatched = true
+				return false, nil, nil
+			})
+			uplinkClient.PrependReactor("list", "uplinkstates", func(action core.Action) (bool, runtime.Object, error) {
+				uplinkStateListed = true
+				return false, nil, nil
+			})
+			uplinkClient.PrependWatchReactor("uplinkstates", func(action core.Action) (bool, watch.Interface, error) {
+				uplinkStateWatched = true
+				return false, nil, nil
+			})
+
+			ovnClientset.UplinkClient = uplinkClient
+			ovnClientset.UserDefinedNetworkClient = udnfakeclient.NewSimpleClientset()
+			wf, err = NewOVNKubeControllerWatchFactory(ovnClientset, "test-node")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(wf.uplinkFactory).NotTo(BeNil())
+			Expect(wf.uplinkStateFactory).NotTo(BeNil())
+			Expect(wf.informers).To(HaveKey(UplinkType))
+			Expect(wf.informers).To(HaveKey(UplinkStateType))
+
+			err = wf.Start()
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(uplinkListed).To(BeTrue(), "expected uplink list request during Start()")
+			Expect(uplinkWatched).To(BeTrue(), "expected uplink watch request during Start()")
+			Expect(uplinkStateListed).To(BeTrue(), "expected uplinkstate list request during Start()")
+			Expect(uplinkStateWatched).To(BeTrue(), "expected uplinkstate watch request during Start()")
+
+			wf.Shutdown()
+			shutdown = true
 		})
 	})
 

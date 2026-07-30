@@ -226,8 +226,10 @@ func (ncm *NodeControllerManager) CleanupStaleNetworks(validNetworks ...util.Net
 	if !util.IsNetworkSegmentationSupportEnabled() {
 		return nil
 	}
-	if err := ncm.uplinkGatewayController.SyncNetworks(validNetworks...); err != nil {
-		errs = append(errs, err)
+	if ncm.uplinkGatewayController != nil {
+		if err := ncm.uplinkGatewayController.SyncNetworks(validNetworks...); err != nil {
+			errs = append(errs, err)
+		}
 	}
 
 	err := ncm.syncManagementPorts(validNetworks...)
@@ -320,7 +322,7 @@ func NewNodeControllerManager(ovnClient *util.OVNClientset, wf factory.NodeWatch
 	if util.IsNetworkSegmentationSupportEnabled() && config.OvnKubeNode.Mode != ovntypes.NodeModeDPU {
 		ncm.ruleManager = iprulemanager.NewController(config.IPv4Mode, config.IPv6Mode)
 	}
-	if util.IsNetworkSegmentationSupportEnabled() {
+	if util.IsUplinkEnabled() {
 		ncm.uplinkController = nodeuplink.NewController(name, wf, ncm.ovnNodeClient, ncm.ovsClient)
 		ncm.uplinkGatewayController = node.NewUplinkGatewayController(
 			name,
@@ -641,7 +643,7 @@ func checkForStaleOVSInternalPorts() {
 }
 
 func (ncm *NodeControllerManager) Reconcile(_ string, current, network util.NetInfo) error {
-	if !util.IsNetworkSegmentationSupportEnabled() || current != nil || network == nil || network.Uplink() == "" {
+	if ncm.uplinkGatewayController == nil || current != nil || network == nil || network.Uplink() == "" {
 		return nil
 	}
 	return ncm.uplinkGatewayController.PrepareNetwork(network)

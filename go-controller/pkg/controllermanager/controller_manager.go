@@ -289,7 +289,7 @@ func NewControllerManager(ovnClient *util.OVNClientset, wf *factory.WatchFactory
 	cm.nodeController = nodecontroller.NewNodeController(cm.watchFactory, cm.networkManager.Interface())
 
 	if util.IsRouteAdvertisementsEnabled() {
-		if util.IsNetworkSegmentationSupportEnabled() {
+		if util.IsUplinkEnabled() {
 			cm.routeImportManager = routeimport.New(config.Default.Zone, cm.nbClient, wf.UplinkStateInformer().Lister())
 		} else {
 			cm.routeImportManager = routeimport.New(config.Default.Zone, cm.nbClient, nil)

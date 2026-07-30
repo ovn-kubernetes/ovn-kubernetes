@@ -143,6 +143,8 @@ spec:
           value: {{ hasKey .Values.global "enableEVPN" | ternary .Values.global.enableEVPN false | quote }}
         - name: OVN_NETWORK_CONNECT_ENABLE
           value: {{ default "" .Values.global.enableNetworkConnect | quote }}
+        - name: OVN_UPLINK_ENABLE
+          value: {{ hasKey .Values.global "enableUplink" | ternary .Values.global.enableUplink false | quote }}
         - name: OVN_PRE_CONF_UDN_ADDR_ENABLE
           value: {{ default "" .Values.global.enablePreconfiguredUDNAddresses | quote }}
         - name: OVN_DYNAMIC_UDN_ALLOCATION

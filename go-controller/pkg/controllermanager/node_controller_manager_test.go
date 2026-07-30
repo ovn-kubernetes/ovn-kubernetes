@@ -301,6 +301,7 @@ var _ = Describe("Healthcheck tests", func() {
 			Expect(config.PrepareTestConfig()).To(Succeed())
 			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 			config.OVNKubernetesFeature.EnableMultiNetwork = true
+			config.OVNKubernetesFeature.EnableUplink = true
 			config.OvnKubeNode.Mode = types.NodeModeDPU
 
 			factoryMock := factoryMocks.NodeWatchFactory{}
@@ -328,6 +329,43 @@ var _ = Describe("Healthcheck tests", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(ncm.vrfManager).NotTo(BeNil())
 			Expect(ncm.ruleManager).To(BeNil())
+		})
+	})
+
+	Describe("CleanupStaleNetworks with Uplink disabled", func() {
+		It("does not early-return when Uplink is disabled and uplinkGatewayController is nil", func() {
+			Expect(config.PrepareTestConfig()).To(Succeed())
+			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+			config.OVNKubernetesFeature.EnableMultiNetwork = true
+			config.OVNKubernetesFeature.EnableUplink = false
+			config.OvnKubeNode.Mode = types.NodeModeDPU
+
+			factoryMock := factoryMocks.NodeWatchFactory{}
+			factoryMock.On("UserDefinedNetworkInformer").Return(nil)
+			factoryMock.On("ClusterUserDefinedNetworkInformer").Return(nil)
+			factoryMock.On("NamespaceInformer").Return(nil)
+			nadListerMock := &nadlistermocks.NetworkAttachmentDefinitionLister{}
+			nadInformerMock := &nadinformermocks.NetworkAttachmentDefinitionInformer{}
+			nadInformerMock.On("Lister").Return(nadListerMock)
+			nadInformerMock.On("Informer").Return(nil)
+			factoryMock.On("NADInformer").Return(nadInformerMock)
+			nodeInformerMock := &coreinformermocks.NodeInformer{}
+			nodeListerMock := &corelistermocks.NodeLister{}
+			nodeInformerMock.On("Lister").Return(nodeListerMock)
+			expectNodeInformer(nodeInformerMock)
+			factoryMock.On("NodeCoreInformer").Return(nodeInformerMock)
+			fakeClient := &util.OVNClientset{
+				KubeClient: fake.NewSimpleClientset(),
+			}
+
+			ncm, err := NewNodeControllerManager(fakeClient, &factoryMock, "worker1",
+				&sync.WaitGroup{}, nil, routemanager.NewController(), nil)
+			Expect(err).NotTo(HaveOccurred(), "constructing node controller manager with Uplink disabled")
+			Expect(ncm.uplinkGatewayController).To(BeNil(), "uplinkGatewayController must be nil when Uplink is disabled")
+			Expect(ncm.vrfManager).NotTo(BeNil(), "vrfManager must still be created for network segmentation")
+
+			err = ncm.CleanupStaleNetworks()
+			Expect(err).NotTo(HaveOccurred(), "cleaning up stale networks with Uplink disabled")
 		})
 	})
 

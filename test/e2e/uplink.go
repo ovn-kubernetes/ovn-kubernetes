@@ -85,7 +85,7 @@ type dpuHostAddrAnnotation struct {
 	IPv6 string `json:"ipv6"`
 }
 
-var _ = ginkgo.Describe("Network Segmentation Uplink default-VRF egress", feature.NetworkSegmentation, func() {
+var _ = ginkgo.Describe("Network Segmentation Uplink default-VRF egress", feature.NetworkSegmentation, feature.Uplink, func() {
 	f := wrappedTestFramework("uplink-default")
 	f.SkipNamespaceCreation = true
 
@@ -184,7 +184,7 @@ var _ = ginkgo.Describe("Network Segmentation Uplink default-VRF egress", featur
 	})
 })
 
-var _ = ginkgo.Describe("Network Segmentation Uplink route advertisements", feature.NetworkSegmentation, feature.RouteAdvertisements, func() {
+var _ = ginkgo.Describe("Network Segmentation Uplink route advertisements", feature.NetworkSegmentation, feature.RouteAdvertisements, feature.Uplink, func() {
 	f := wrappedTestFramework("uplink-bgp")
 	f.SkipNamespaceCreation = true
 
@@ -321,7 +321,7 @@ var _ = ginkgo.Describe("Network Segmentation Uplink route advertisements", feat
 	})
 })
 
-var _ = ginkgo.Describe("Uplink route advertisements with Dynamic UDN allocation", feature.RouteAdvertisementsDynamicUDN, func() {
+var _ = ginkgo.Describe("Uplink route advertisements with Dynamic UDN allocation", feature.RouteAdvertisementsDynamicUDN, feature.Uplink, func() {
 	f := wrappedTestFramework("uplink-dynamic-bgp")
 	f.SkipNamespaceCreation = true
 
@@ -521,7 +521,7 @@ var _ = ginkgo.Describe("Uplink route advertisements with Dynamic UDN allocation
 	})
 })
 
-var _ = ginkgo.Describe("Network Segmentation Uplink route advertisements", feature.NetworkSegmentation, feature.RouteAdvertisements, func() {
+var _ = ginkgo.Describe("Network Segmentation Uplink route advertisements", feature.NetworkSegmentation, feature.RouteAdvertisements, feature.Uplink, func() {
 	f := wrappedTestFramework("uplink-bgp")
 	f.SkipNamespaceCreation = true
 

@@ -172,6 +172,10 @@ if [ "$ENABLE_EVPN" != true ]; then
   skip_label "Feature:EVPN"
 fi
 
+if [ "$ENABLE_UPLINK" != true ]; then
+  skip_label "Feature:Uplink"
+fi
+
 if [ "$ENABLE_NO_OVERLAY" != true ]; then
   skip_label "Feature:NoOverlay"
 fi

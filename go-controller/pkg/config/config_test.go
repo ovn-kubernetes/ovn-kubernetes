@@ -241,6 +241,7 @@ enable-multi-networkpolicy=false
 enable-network-segmentation=false
 enable-network-connect=false
 enable-preconfigured-udn-addresses=false
+enable-uplink=false
 enable-route-advertisements=false
 advertised-udn-isolation-mode=strict
 enable-multi-external-gateway=false
@@ -357,6 +358,7 @@ var _ = Describe("Config Operations", func() {
 			gomega.Expect(OVNKubernetesFeature.EnableNetworkSegmentation).To(gomega.BeFalse())
 			gomega.Expect(OVNKubernetesFeature.EnableNetworkConnect).To(gomega.BeFalse())
 			gomega.Expect(OVNKubernetesFeature.EnablePreconfiguredUDNAddresses).To(gomega.BeFalse())
+			gomega.Expect(OVNKubernetesFeature.EnableUplink).To(gomega.BeFalse())
 			gomega.Expect(OVNKubernetesFeature.EnableRouteAdvertisements).To(gomega.BeFalse())
 			gomega.Expect(OVNKubernetesFeature.EnableMultiNetworkPolicy).To(gomega.BeFalse())
 			gomega.Expect(OVNKubernetesFeature.EnableMultiExternalGateway).To(gomega.BeFalse())
@@ -508,6 +510,7 @@ routing-table-id-start=2002
 			"enable-network-segmentation=true",
 			"enable-network-connect=true",
 			"enable-preconfigured-udn-addresses=true",
+			"enable-uplink=true",
 			"enable-route-advertisements=true",
 			"advertised-udn-isolation-mode=loose",
 			"enable-multi-external-gateway=true",
@@ -608,6 +611,7 @@ routing-table-id-start=2002
 			gomega.Expect(OVNKubernetesFeature.EnableNetworkSegmentation).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnableNetworkConnect).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnablePreconfiguredUDNAddresses).To(gomega.BeTrue())
+			gomega.Expect(OVNKubernetesFeature.EnableUplink).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnableRouteAdvertisements).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.AdvertisedUDNIsolationMode).To(gomega.Equal(AdvertisedUDNIsolationModeLoose))
 			gomega.Expect(OVNKubernetesFeature.EnableMultiExternalGateway).To(gomega.BeTrue())
@@ -721,6 +725,7 @@ routing-table-id-start=2002
 			gomega.Expect(OVNKubernetesFeature.EnableNetworkSegmentation).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnableNetworkConnect).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnablePreconfiguredUDNAddresses).To(gomega.BeTrue())
+			gomega.Expect(OVNKubernetesFeature.EnableUplink).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnableRouteAdvertisements).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.AdvertisedUDNIsolationMode).To(gomega.Equal(AdvertisedUDNIsolationModeLoose))
 			gomega.Expect(OVNKubernetesFeature.EnableMultiNetworkPolicy).To(gomega.BeTrue())
@@ -794,6 +799,7 @@ routing-table-id-start=2002
 			"-enable-network-segmentation=true",
 			"-enable-network-connect=true",
 			"-enable-preconfigured-udn-addresses=true",
+			"-enable-uplink=true",
 			"-enable-route-advertisements=true",
 			"-advertised-udn-isolation-mode=loose",
 			"-enable-multi-external-gateway=true",
@@ -1039,6 +1045,52 @@ enable-pprof=true
 		cliArgs := []string{
 			app.Name,
 			"-gateway-mode=adsfasdfaf",
+		}
+		err := app.Run(cliArgs)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	})
+
+	It("returns an error when uplink is enabled without network segmentation", func() {
+		app.Action = func(ctx *cli.Context) error {
+			_, err := InitConfig(ctx, kexec.New(), nil)
+			gomega.Expect(err).To(gomega.MatchError("the Uplink feature requires both Multi-Network and Network Segmentation to be enabled"))
+			return nil
+		}
+		cliArgs := []string{
+			app.Name,
+			"-enable-uplink=true",
+		}
+		err := app.Run(cliArgs)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	})
+
+	It("returns an error when uplink is enabled without multi-network", func() {
+		app.Action = func(ctx *cli.Context) error {
+			_, err := InitConfig(ctx, kexec.New(), nil)
+			gomega.Expect(err).To(gomega.MatchError("the Uplink feature requires both Multi-Network and Network Segmentation to be enabled"))
+			return nil
+		}
+		cliArgs := []string{
+			app.Name,
+			"-enable-network-segmentation=true",
+			"-enable-uplink=true",
+		}
+		err := app.Run(cliArgs)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	})
+
+	It("accepts uplink when network segmentation is also enabled", func() {
+		app.Action = func(ctx *cli.Context) error {
+			_, err := InitConfig(ctx, kexec.New(), nil)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(OVNKubernetesFeature.EnableUplink).To(gomega.BeTrue())
+			return nil
+		}
+		cliArgs := []string{
+			app.Name,
+			"-enable-multi-network=true",
+			"-enable-network-segmentation=true",
+			"-enable-uplink=true",
 		}
 		err := app.Run(cliArgs)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
