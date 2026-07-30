@@ -9,7 +9,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	utilnet "k8s.io/utils/net"
 )
 
 // generateRawConfig generates raw FRR configuration. Main purpose is to
@@ -113,7 +113,7 @@ func genDefaultVRFSection(asn uint32, neighbors []string, selected *selectedNetw
 
 	fmt.Fprintf(&buf, "router bgp %d\n", asn)
 
-	neighbors4, neighbors6 := util.SplitIPStringByIPFamily(neighbors)
+	neighbors4, neighbors6 := splitNeighborsByIPFamily(neighbors)
 	buf.WriteString(genUnicastSection(neighbors4, neighbors6))
 	buf.WriteString(genDefaultVRFEVPNSection(neighbors, selected))
 
@@ -140,13 +140,34 @@ func genNonDefaultVRFSection(vrf string, asn uint32, neighbors []string, cfg *ip
 
 	fmt.Fprintf(&buf, "router bgp %d vrf %s\n", asn, vrf)
 
-	neighbors4, neighbors6 := util.SplitIPStringByIPFamily(neighbors)
+	neighbors4, neighbors6 := splitNeighborsByIPFamily(neighbors)
 	buf.WriteString(genUnicastSection(neighbors4, neighbors6))
 	buf.WriteString(genNonDefaultVRFEVPNSection(cfg))
 
 	buf.WriteString("exit\n!\n")
 
 	return buf.String()
+}
+
+// splitNeighborsByIPFamily splits neighbor identifiers by IP family. Unnumbered
+// neighbors are identified by interface name rather than by address: FRR
+// establishes their session over an IPv4 address derived from a /30 or /31 on
+// the interface or, failing that, over the peer's IPv6 link-local address, and
+// in either case the session can carry prefixes of both families (RFC 8950),
+// so they are included in both results.
+func splitNeighborsByIPFamily(neighbors []string) (neighbors4, neighbors6 []string) {
+	for _, neighbor := range neighbors {
+		switch {
+		case utilnet.IsIPv6String(neighbor):
+			neighbors6 = append(neighbors6, neighbor)
+		case utilnet.IsIPv4String(neighbor):
+			neighbors4 = append(neighbors4, neighbor)
+		default:
+			neighbors4 = append(neighbors4, neighbor)
+			neighbors6 = append(neighbors6, neighbor)
+		}
+	}
+	return
 }
 
 // genUnicastSection generates unicast address-family sections for IPv4 and/or IPv6 neighbors.

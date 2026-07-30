@@ -143,6 +143,16 @@ in shared gateway mode.
 > previous example must correspond to the remote BGP router's configuration
 > (router ID, AS number, accept routes, etc...), and vice versa.
 
+> [!NOTE]
+> A neighbor can be defined by IP `address` or, for unnumbered BGP peering, by
+> node `interface`; one of the two must be specified. A neighbor defined by
+> address peers over a session of that address family and is only advertised
+> prefixes of the same family. FRR establishes an unnumbered session over an
+> IPv4 address derived from a /30 or /31 on the interface or, failing that,
+> over the peer's IPv6 link-local address; in either case the session can
+> carry prefixes of both IP families (RFC 8950), so OVN-Kubernetes advertises
+> prefixes of both families to interface-defined neighbors.
+
 ### Import routes from the default VRF into a CUDN
 
 Assuming we have a CUDN:

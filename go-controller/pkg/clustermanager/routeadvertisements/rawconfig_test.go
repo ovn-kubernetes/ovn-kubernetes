@@ -48,6 +48,23 @@ exit
 `,
 		},
 		{
+			name:         "unnumbered neighbor identified by interface name",
+			selected:     &selectedNetworks{},
+			vrfNeighbors: map[string][]string{"": {"enp4s0f0np0", "192.168.1.1"}},
+			vrfASNs:      map[string]uint32{"": 4200000001},
+			want: `router bgp 4200000001
+ address-family ipv4 unicast
+  neighbor 192.168.1.1 allowas-in origin
+  neighbor enp4s0f0np0 allowas-in origin
+ exit-address-family
+ address-family ipv6 unicast
+  neighbor enp4s0f0np0 allowas-in origin
+ exit-address-family
+exit
+!
+`,
+		},
+		{
 			name: "MAC-VRF without route target",
 			selected: &selectedNetworks{
 				macVRFConfigs: []*vrfConfig{

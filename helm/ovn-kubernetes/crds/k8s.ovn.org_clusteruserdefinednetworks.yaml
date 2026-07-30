@@ -626,7 +626,7 @@ spec:
                           This field must be omitted if `subnets` is unset or `ipam.mode` is `Disabled`.
                           When `physicalNetworkName` points to OVS bridge mapping of a network with reserved IP addresses
                           (which shouldn't be assigned by OVN-Kubernetes), the specified CIDRs will not be assigned. For example:
-                          Given: `subnets: "10.0.0.0/24"`, `excludeSubnets: "10.0.0.200/30", the following addresses will not be assigned
+                          Given: `subnets: "10.0.0.0/24"`, `excludeSubnets`: "10.0.0.200/30", the following addresses will not be assigned
                           to pods: `10.0.0.201`, `10.0.0.202`.
                         items:
                           maxLength: 43

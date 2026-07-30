@@ -987,6 +987,18 @@ func (c *Controller) generateFRRConfiguration(
 
 		targetRouter.Neighbors = make([]frrtypes.Neighbor, 0, len(source.Spec.BGP.Routers[i].Neighbors))
 		for _, neighbor := range source.Spec.BGP.Routers[i].Neighbors {
+			// Validate the neighbor identifier upfront, before any filtering
+			// might skip the neighbor, so that an invalid neighbor is
+			// consistently reported as a configuration error
+			key := neighborKey(neighbor)
+			if key == "" {
+				return nil, fmt.Errorf("%w: neighbor with neither address nor interface on FRRConfiguration %s/%s",
+					errConfig,
+					source.Namespace,
+					source.Name,
+				)
+			}
+
 			// Skip neighbors that are the node itself
 			if (nodeV4 != "" && neighbor.Address == nodeV4) || (nodeV6 != "" && neighbor.Address == nodeV6) {
 				continue
@@ -1009,19 +1021,31 @@ func (c *Controller) generateFRRConfiguration(
 				)
 			}
 
+			// FRR establishes an unnumbered session over an IPv4 address
+			// derived from a /30 or /31 on the interface or, failing that,
+			// over the peer's IPv6 link-local address. In either case the
+			// session can carry prefixes of both families (RFC 8950), so
+			// don't filter by family.
+			isUnnumbered := isUnnumberedNeighbor(neighbor)
 			isIPV6 := utilnet.IsIPv6String(neighbor.Address)
-			advertisePrefixes := util.MatchAllIPNetsStringFamily(isIPV6, advertisePrefixes)
-			if len(advertisePrefixes) == 0 {
+			advertisePrefixesForNeighbor := advertisePrefixes
+			if !isUnnumbered {
+				advertisePrefixesForNeighbor = util.MatchAllIPNetsStringFamily(isIPV6, advertisePrefixes)
+			}
+			if len(advertisePrefixesForNeighbor) == 0 {
 				continue
 			}
 
 			neighbor.ToAdvertise = frrtypes.Advertise{
 				Allowed: frrtypes.AllowedOutPrefixes{
 					Mode:     frrtypes.AllowRestricted,
-					Prefixes: advertisePrefixes,
+					Prefixes: advertisePrefixesForNeighbor,
 				},
 			}
-			if nextHop := dpuHostGatewayNextHops[isIPV6]; nextHop != "" {
+			if isUnnumbered {
+				neighbor.ToAdvertise.NextHop.IPv4 = dpuHostGatewayNextHops[false]
+				neighbor.ToAdvertise.NextHop.IPv6 = dpuHostGatewayNextHops[true]
+			} else if nextHop := dpuHostGatewayNextHops[isIPV6]; nextHop != "" {
 				if isIPV6 {
 					neighbor.ToAdvertise.NextHop.IPv6 = nextHop
 				} else {
@@ -1032,8 +1056,12 @@ func (c *Controller) generateFRRConfiguration(
 			// For no-overlay networks, add routes to pod subnets to the accepted routes list
 			// frr-k8s will merge the prefixes from both the generated and the base FRRConfiguration
 			if len(allNoOverlayPodSubnets) > 0 {
-				// Filter pod subnets by IP family to match the neighbor
-				filteredPodSubnets := util.MatchAllIPNetsStringFamily(isIPV6, allNoOverlayPodSubnets)
+				// Filter pod subnets by IP family to match the neighbor;
+				// unnumbered neighbors carry both families
+				filteredPodSubnets := allNoOverlayPodSubnets
+				if !isUnnumbered {
+					filteredPodSubnets = util.MatchAllIPNetsStringFamily(isIPV6, allNoOverlayPodSubnets)
+				}
 				if len(filteredPodSubnets) > 0 {
 					neighbor.ToReceive = frrtypes.Receive{
 						Allowed: frrtypes.AllowedInPrefixes{
@@ -1050,7 +1078,7 @@ func (c *Controller) generateFRRConfiguration(
 				}
 			}
 
-			vrfNeighbors[matchedVRF] = append(vrfNeighbors[matchedVRF], neighbor.Address)
+			vrfNeighbors[matchedVRF] = append(vrfNeighbors[matchedVRF], key)
 			targetRouter.Neighbors = append(targetRouter.Neighbors, neighbor)
 		}
 		if len(targetRouter.Neighbors) == 0 {
@@ -1111,7 +1139,15 @@ func (c *Controller) generateFRRConfiguration(
 				vrfASNs[""] = router.ASN
 				vrfNeighbors[""] = make([]string, 0, len(router.Neighbors))
 				for _, neighbor := range router.Neighbors {
-					vrfNeighbors[""] = append(vrfNeighbors[""], neighbor.Address)
+					key := neighborKey(neighbor)
+					if key == "" {
+						return nil, fmt.Errorf("%w: neighbor with neither address nor interface on FRRConfiguration %s/%s",
+							errConfig,
+							source.Namespace,
+							source.Name,
+						)
+					}
+					vrfNeighbors[""] = append(vrfNeighbors[""], key)
 				}
 				break
 			}
@@ -1185,14 +1221,19 @@ func (c *Controller) generateFRRConfiguration(
 			// dedup, ordered
 			// router level - injects the prefix into BGP
 			routers[defaultIdx].Prefixes = sets.List(sets.New(routers[defaultIdx].Prefixes...).Insert(vtepIPs...))
-			// neighbor level - advertise this node's VTEP IPs and accept VTEP CIDRs
+			// neighbor level - advertise this node's VTEP IPs and accept VTEP
+			// CIDRs; unnumbered neighbors carry both families
 			for i := range routers[defaultIdx].Neighbors {
 				allPrefixes := routers[defaultIdx].Prefixes
+				isUnnumbered := isUnnumberedNeighbor(routers[defaultIdx].Neighbors[i])
 				isIPV6 := utilnet.IsIPv6String(routers[defaultIdx].Neighbors[i].Address)
-				routers[defaultIdx].Neighbors[i].ToAdvertise.Allowed.Prefixes =
-					util.MatchAllIPNetsStringFamily(isIPV6, allPrefixes)
+				routers[defaultIdx].Neighbors[i].ToAdvertise.Allowed.Prefixes = allPrefixes
+				if !isUnnumbered {
+					routers[defaultIdx].Neighbors[i].ToAdvertise.Allowed.Prefixes =
+						util.MatchAllIPNetsStringFamily(isIPV6, allPrefixes)
+				}
 				for _, ps := range vtepReceiveSelectors {
-					if utilnet.IsIPv6CIDRString(ps.Prefix) == isIPV6 {
+					if isUnnumbered || utilnet.IsIPv6CIDRString(ps.Prefix) == isIPV6 {
 						routers[defaultIdx].Neighbors[i].ToReceive.Allowed.Prefixes = append(
 							routers[defaultIdx].Neighbors[i].ToReceive.Allowed.Prefixes, ps)
 					}
@@ -1225,8 +1266,13 @@ func (c *Controller) generateFRRConfiguration(
 							neighbor.Address,
 						)
 					}
+					// unnumbered neighbors carry both families
+					isUnnumbered := isUnnumberedNeighbor(neighbor)
 					isIPV6 := utilnet.IsIPv6String(neighbor.Address)
-					filteredVTEPIPs := util.MatchAllIPNetsStringFamily(isIPV6, vtepIPs)
+					filteredVTEPIPs := vtepIPs
+					if !isUnnumbered {
+						filteredVTEPIPs = util.MatchAllIPNetsStringFamily(isIPV6, vtepIPs)
+					}
 					if len(filteredVTEPIPs) == 0 {
 						continue
 					}
@@ -1238,7 +1284,7 @@ func (c *Controller) generateFRRConfiguration(
 						},
 					}
 					for _, ps := range vtepReceiveSelectors {
-						if utilnet.IsIPv6CIDRString(ps.Prefix) == isIPV6 {
+						if isUnnumbered || utilnet.IsIPv6CIDRString(ps.Prefix) == isIPV6 {
 							n.ToReceive.Allowed.Prefixes = append(n.ToReceive.Allowed.Prefixes, ps)
 						}
 					}
@@ -1878,6 +1924,22 @@ func (c *Controller) reconcileNAD(key string) error {
 	}
 
 	return nil
+}
+
+// neighborKey returns the identifier of a neighbor as used in raw FRR config:
+// the session address or, for unnumbered neighbors, the interface name.
+func neighborKey(neighbor frrtypes.Neighbor) string {
+	if neighbor.Address != "" {
+		return neighbor.Address
+	}
+	return neighbor.Interface
+}
+
+// isUnnumberedNeighbor returns whether the neighbor is unnumbered, that is
+// defined by interface rather than by address. Coherent with neighborKey, a
+// neighbor that specifies both is considered defined by address.
+func isUnnumberedNeighbor(neighbor frrtypes.Neighbor) bool {
+	return neighbor.Address == "" && neighbor.Interface != ""
 }
 
 func (c *Controller) reconcileEgressIPs(string) error {
