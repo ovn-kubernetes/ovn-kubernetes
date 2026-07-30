@@ -368,7 +368,7 @@ external_ids        : {direction=Egress, "k8s.ovn.org/id"="default-network-contr
 label               : 0
 log                 : false
 match               : "inport == @a8747502060113802905 && (( arp && arp.tpa == 10.244.2.2 ) || ( nd && nd.target == fd00:10:244:3::2 ))"
-meter               : acl-logging
+meter               : []
 name                : []
 options             : {}
 priority            : 1001
@@ -384,7 +384,7 @@ external_ids        : {direction=Ingress, "k8s.ovn.org/id"="default-network-cont
 label               : 0
 log                 : false
 match               : "outport == @a8747502060113802905 && (( arp && arp.spa == 10.244.2.2 ) || ( nd && nd.target == fd00:10:244:3::2 ))"
-meter               : acl-logging
+meter               : []
 name                : []
 options             : {}
 priority            : 1001
@@ -401,7 +401,7 @@ external_ids        : {direction=Ingress, "k8s.ovn.org/id"="default-network-cont
 label               : 0
 log                 : false
 match               : "outport == @a8747502060113802905"
-meter               : acl-logging
+meter               : []
 name                : []
 options             : {}
 priority            : 1000
@@ -417,7 +417,7 @@ external_ids        : {direction=Egress, "k8s.ovn.org/id"="default-network-contr
 label               : 0
 log                 : false
 match               : "inport == @a8747502060113802905"
-meter               : acl-logging
+meter               : []
 name                : []
 options             : {}
 priority            : 1000

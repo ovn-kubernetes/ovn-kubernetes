@@ -435,7 +435,7 @@ external_ids        : {direction=Ingress, gress-index="0", "k8s.ovn.org/id"="def
 label               : 0
 log                 : false
 match               : "outport == @a14645450421485494999 && ((ip4.src == $a14545668191619617708))"
-meter               : acl-logging
+meter               : []
 name                : "ANP:cluster-control:Ingress:0"
 options             : {}
 priority            : 26600
@@ -449,7 +449,7 @@ external_ids        : {direction=Ingress, gress-index="1", "k8s.ovn.org/id"="def
 label               : 0
 log                 : false
 match               : "outport == @a14645450421485494999 && ((ip4.src == $a6786643370959569281)) && tcp && tcp.dst==7564"
-meter               : acl-logging
+meter               : []
 name                : "ANP:cluster-control:Ingress:1"
 options             : {}
 priority            : 26599
@@ -463,7 +463,7 @@ external_ids        : {direction=Ingress, gress-index="1", "k8s.ovn.org/id"="def
 label               : 0
 log                 : false
 match               : "((ip4.src == $a6786643370959569281)) && tcp && ((ip4.dst == 10.244.1.4 && tcp.dst == 8080) || (ip4.dst == 10.244.2.8 && tcp.dst == 8080) || (ip4.dst == 10.244.2.8 && tcp.dst == 8080))"
-meter               : acl-logging
+meter               : []
 name                : "ANP:cluster-control:Ingress:1"
 options             : {}
 priority            : 26599
@@ -477,7 +477,7 @@ external_ids        : {direction=Ingress, gress-index="2", "k8s.ovn.org/id"="def
 label               : 0
 log                 : false
 match               : "outport == @a14645450421485494999 && ((ip4.src == $a13730899355151937870))"
-meter               : acl-logging
+meter               : []
 name                : "ANP:cluster-control:Ingress:2"
 options             : {}
 priority            : 26598
@@ -491,7 +491,7 @@ external_ids        : {direction=Ingress, gress-index="3", "k8s.ovn.org/id"="def
 label               : 0
 log                 : false
 match               : "outport == @a14645450421485494999 && ((ip4.src == $a764182844364804195))"
-meter               : acl-logging
+meter               : []
 name                : "ANP:cluster-control:Ingress:3"
 options             : {}
 priority            : 26597
@@ -505,7 +505,7 @@ external_ids        : {direction=Ingress, gress-index="4", "k8s.ovn.org/id"="def
 label               : 0
 log                 : false
 match               : "outport == @a14645450421485494999 && ((ip4.src == $a13814616246365836720))"
-meter               : acl-logging
+meter               : []
 name                : "ANP:cluster-control:Ingress:4"
 options             : {}
 priority            : 26596
@@ -523,7 +523,7 @@ external_ids        : {direction=Egress, gress-index="0", "k8s.ovn.org/id"="defa
 label               : 0
 log                 : false
 match               : "inport == @a14645450421485494999 && ((ip4.dst == $a13517855690389298082)) && udp && udp.dst==5353"
-meter               : acl-logging
+meter               : []
 name                : "ANP:cluster-control:Egress:0"
 options             : {apply-after-lb="true"}
 priority            : 26600
@@ -537,7 +537,7 @@ external_ids        : {direction=Egress, gress-index="1", "k8s.ovn.org/id"="defa
 label               : 0
 log                 : false
 match               : "inport == @a14645450421485494999 && ((ip4.dst == $a10706246167277696183)) && tcp && tcp.dst==6443"
-meter               : acl-logging
+meter               : []
 name                : "ANP:cluster-control:Egress:1"
 options             : {apply-after-lb="true"}
 priority            : 26599
@@ -551,7 +551,7 @@ external_ids        : {direction=Egress, gress-index="2", "k8s.ovn.org/id"="defa
 label               : 0
 log                 : false
 match               : "inport == @a14645450421485494999 && ((ip4.dst == $a18396736153283155648)) && tcp && tcp.dst=={8991,8992}"
-meter               : acl-logging
+meter               : []
 name                : "ANP:cluster-control:Egress:2"
 options             : {apply-after-lb="true"}
 priority            : 26598
@@ -565,7 +565,7 @@ external_ids        : {direction=Egress, gress-index="3", "k8s.ovn.org/id"="defa
 label               : 0
 log                 : false
 match               : "inport == @a14645450421485494999 && ((ip4.dst == $a10622494091691694581))"
-meter               : acl-logging
+meter               : []
 name                : "ANP:cluster-control:Egress:3"
 options             : {apply-after-lb="true"}
 priority            : 26597
@@ -579,7 +579,7 @@ external_ids        : {direction=Egress, gress-index="4", "k8s.ovn.org/id"="defa
 label               : 0
 log                 : false
 match               : "inport == @a14645450421485494999 && ((ip4.dst == $a5972452606168369118))"
-meter               : acl-logging
+meter               : []
 name                : "ANP:cluster-control:Egress:4"
 options             : {apply-after-lb="true"}
 priority            : 26596
@@ -593,7 +593,7 @@ external_ids        : {direction=Egress, gress-index="5", "k8s.ovn.org/id"="defa
 label               : 0
 log                 : false
 match               : "inport == @a14645450421485494999 && ((ip4.dst == $a11452480169090787059))"
-meter               : acl-logging
+meter               : []
 name                : "ANP:cluster-control:Egress:5"
 options             : {apply-after-lb="true"}
 priority            : 26595
@@ -699,7 +699,7 @@ external_ids        : {direction=Egress, gress-index="0", "k8s.ovn.org/id"="defa
 label               : 0
 log                 : false
 match               : "inport == @a9550609891683691927 && ((ip4.dst == $a17509128412806720482))"
-meter               : acl-logging
+meter               : []
 name                : "BANP:default:Egress:0"
 options             : {apply-after-lb="true"}
 priority            : 1750
@@ -713,7 +713,7 @@ external_ids        : {direction=Ingress, gress-index="0", "k8s.ovn.org/id"="def
 label               : 0
 log                 : false
 match               : "outport == @a9550609891683691927 && ((ip4.src == $a168374317940583916))"
-meter               : acl-logging
+meter               : []
 name                : "BANP:default:Ingress:0"
 options             : {}
 priority            : 1750
@@ -741,17 +741,17 @@ Sample flows created for policies look like this on
 OVN SBDB level:
 
 ```shell
-  table=4 (ls_out_acl_eval    ), priority=27600, match=(reg8[30..31] == 1 && reg0[7] == 1 && (outport == @a14645450421485494999 && ((ip4.src == $a14545668191619617708)))), action=(log(name="ANP:cluster-control:Ingress:0", severity=alert, verdict=allow, meter="acl-logging__f4523ce3-fb80-4d68-a50b-8aa6a795f895"); reg8[16] = 1; reg0[1] = 1; next;)
-  table=4 (ls_out_acl_eval    ), priority=27600, match=(reg8[30..31] == 1 && reg0[8] == 1 && (outport == @a14645450421485494999 && ((ip4.src == $a14545668191619617708)))), action=(log(name="ANP:cluster-control:Ingress:0", severity=alert, verdict=allow, meter="acl-logging__f4523ce3-fb80-4d68-a50b-8aa6a795f895"); reg8[16] = 1; next;)
-  table=4 (ls_out_acl_eval    ), priority=27599, match=(reg8[30..31] == 1 && reg0[7] == 1 && (((ip4.src == $a6786643370959569281)) && tcp && ((ip4.dst == 10.244.1.4 && tcp.dst == 8080) || (ip4.dst == 10.244.2.8 && tcp.dst == 8080) || (ip4.dst == 10.244.2.8 && tcp.dst == 8080)))), action=(log(name="ANP:cluster-control:Ingress:1", severity=alert, verdict=allow, meter="acl-logging__1b1b1409-b96a-4e6d-9776-00d88c0c7ac9"); reg8[16] = 1; reg0[1] = 1; next;)
-  table=4 (ls_out_acl_eval    ), priority=27599, match=(reg8[30..31] == 1 && reg0[7] == 1 && (outport == @a14645450421485494999 && ((ip4.src == $a6786643370959569281)) && tcp && tcp.dst==7564)), action=(log(name="ANP:cluster-control:Ingress:1", severity=alert, verdict=allow, meter="acl-logging__4117970c-c138-45b5-a6de-8e5e54efcb04"); reg8[16] = 1; reg0[1] = 1; next;)
-  table=4 (ls_out_acl_eval    ), priority=27599, match=(reg8[30..31] == 1 && reg0[8] == 1 && (((ip4.src == $a6786643370959569281)) && tcp && ((ip4.dst == 10.244.1.4 && tcp.dst == 8080) || (ip4.dst == 10.244.2.8 && tcp.dst == 8080) || (ip4.dst == 10.244.2.8 && tcp.dst == 8080)))), action=(log(name="ANP:cluster-control:Ingress:1", severity=alert, verdict=allow, meter="acl-logging__1b1b1409-b96a-4e6d-9776-00d88c0c7ac9"); reg8[16] = 1; next;)
-  table=4 (ls_out_acl_eval    ), priority=27599, match=(reg8[30..31] == 1 && reg0[8] == 1 && (outport == @a14645450421485494999 && ((ip4.src == $a6786643370959569281)) && tcp && tcp.dst==7564)), action=(log(name="ANP:cluster-control:Ingress:1", severity=alert, verdict=allow, meter="acl-logging__4117970c-c138-45b5-a6de-8e5e54efcb04"); reg8[16] = 1; next;)
-  table=4 (ls_out_acl_eval    ), priority=27598, match=(reg8[30..31] == 1 && reg0[7] == 1 && (outport == @a14645450421485494999 && ((ip4.src == $a13730899355151937870)))), action=(log(name="ANP:cluster-control:Ingress:2", severity=alert, verdict=allow, meter="acl-logging__00400c05-7225-4d64-9428-8b2a04c6c3da"); reg8[16] = 1; reg0[1] = 1; next;)
-  table=4 (ls_out_acl_eval    ), priority=27598, match=(reg8[30..31] == 1 && reg0[8] == 1 && (outport == @a14645450421485494999 && ((ip4.src == $a13730899355151937870)))), action=(log(name="ANP:cluster-control:Ingress:2", severity=alert, verdict=allow, meter="acl-logging__00400c05-7225-4d64-9428-8b2a04c6c3da"); reg8[16] = 1; next;)
-  table=4 (ls_out_acl_eval    ), priority=27597, match=(reg8[30..31] == 1 && (outport == @a14645450421485494999 && ((ip4.src == $a764182844364804195)))), action=(log(name="ANP:cluster-control:Ingress:3", severity=warning, verdict=pass, meter="acl-logging__7f5ea19b-d465-4de4-8369-bdf66fdcd7d9"); next;)
-  table=4 (ls_out_acl_eval    ), priority=27596, match=(reg8[30..31] == 1 && reg0[10] == 1 && (outport == @a14645450421485494999 && ((ip4.src == $a13814616246365836720)))), action=(log(name="ANP:cluster-control:Ingress:4", severity=alert, verdict=drop, meter="acl-logging__3e82df77-ad40-4dce-bd96-5b9e7e0b3603"); reg8[17] = 1; ct_commit { ct_mark.blocked = 1; }; next;)
-  table=4 (ls_out_acl_eval    ), priority=27596, match=(reg8[30..31] == 1 && reg0[9] == 1 && (outport == @a14645450421485494999 && ((ip4.src == $a13814616246365836720)))), action=(log(name="ANP:cluster-control:Ingress:4", severity=alert, verdict=drop, meter="acl-logging__3e82df77-ad40-4dce-bd96-5b9e7e0b3603"); reg8[17] = 1; next;)
+  table=4 (ls_out_acl_eval    ), priority=27600, match=(reg8[30..31] == 1 && reg0[7] == 1 && (outport == @a14645450421485494999 && ((ip4.src == $a14545668191619617708)))), action=(reg8[16] = 1; reg0[1] = 1; next;)
+  table=4 (ls_out_acl_eval    ), priority=27600, match=(reg8[30..31] == 1 && reg0[8] == 1 && (outport == @a14645450421485494999 && ((ip4.src == $a14545668191619617708)))), action=(reg8[16] = 1; next;)
+  table=4 (ls_out_acl_eval    ), priority=27599, match=(reg8[30..31] == 1 && reg0[7] == 1 && (((ip4.src == $a6786643370959569281)) && tcp && ((ip4.dst == 10.244.1.4 && tcp.dst == 8080) || (ip4.dst == 10.244.2.8 && tcp.dst == 8080) || (ip4.dst == 10.244.2.8 && tcp.dst == 8080)))), action=(reg8[16] = 1; reg0[1] = 1; next;)
+  table=4 (ls_out_acl_eval    ), priority=27599, match=(reg8[30..31] == 1 && reg0[7] == 1 && (outport == @a14645450421485494999 && ((ip4.src == $a6786643370959569281)) && tcp && tcp.dst==7564)), action=(reg8[16] = 1; reg0[1] = 1; next;)
+  table=4 (ls_out_acl_eval    ), priority=27599, match=(reg8[30..31] == 1 && reg0[8] == 1 && (((ip4.src == $a6786643370959569281)) && tcp && ((ip4.dst == 10.244.1.4 && tcp.dst == 8080) || (ip4.dst == 10.244.2.8 && tcp.dst == 8080) || (ip4.dst == 10.244.2.8 && tcp.dst == 8080)))), action=(reg8[16] = 1; next;)
+  table=4 (ls_out_acl_eval    ), priority=27599, match=(reg8[30..31] == 1 && reg0[8] == 1 && (outport == @a14645450421485494999 && ((ip4.src == $a6786643370959569281)) && tcp && tcp.dst==7564)), action=(reg8[16] = 1; next;)
+  table=4 (ls_out_acl_eval    ), priority=27598, match=(reg8[30..31] == 1 && reg0[7] == 1 && (outport == @a14645450421485494999 && ((ip4.src == $a13730899355151937870)))), action=(reg8[16] = 1; reg0[1] = 1; next;)
+  table=4 (ls_out_acl_eval    ), priority=27598, match=(reg8[30..31] == 1 && reg0[8] == 1 && (outport == @a14645450421485494999 && ((ip4.src == $a13730899355151937870)))), action=(reg8[16] = 1; next;)
+  table=4 (ls_out_acl_eval    ), priority=27597, match=(reg8[30..31] == 1 && (outport == @a14645450421485494999 && ((ip4.src == $a764182844364804195)))), action=(next;)
+  table=4 (ls_out_acl_eval    ), priority=27596, match=(reg8[30..31] == 1 && reg0[10] == 1 && (outport == @a14645450421485494999 && ((ip4.src == $a13814616246365836720)))), action=(reg8[17] = 1; ct_commit { ct_mark.blocked = 1; }; next;)
+  table=4 (ls_out_acl_eval    ), priority=27596, match=(reg8[30..31] == 1 && reg0[9] == 1 && (outport == @a14645450421485494999 && ((ip4.src == $a13814616246365836720)))), action=(reg8[17] = 1; next;)
   table=4 (ls_out_acl_eval    ), priority=2750 , match=(reg8[30..31] == 3 && reg0[10] == 1 && (outport == @a9550609891683691927 && ((ip4.src == $a168374317940583916)))), action=(reg8[17] = 1; ct_commit { ct_mark.blocked = 1; }; next;)
   table=4 (ls_out_acl_eval    ), priority=2750 , match=(reg8[30..31] == 3 && reg0[9] == 1 && (outport == @a9550609891683691927 && ((ip4.src == $a168374317940583916)))), action=(reg8[17] = 1; next;)
 ```
@@ -964,7 +964,7 @@ data plane side in the `ovnkube-node` pod.
 ACL logging feature can be enabled on a per policy level. You can do
 
 ```shell
-kubectl annotate anp cluster-control k8s.ovn.org/acl-logging='{ "deny": "alert", "allow": "alert", "pass" : "warning" }'
+kubectl annotate anp cluster-control k8s.ovn.org/[]='{ "deny": "alert", "allow": "alert", "pass" : "warning" }'
 ```
 
 to activate logging for the above admin network policy. In order to
@@ -974,7 +974,7 @@ ensure it was correctly applied you can do `kubectl describe anp cluster-control
 Name:         cluster-control
 Namespace:    
 Labels:       <none>
-Annotations:  k8s.ovn.org/acl-logging: { "deny": "alert", "allow": "alert", "pass" : "warning" }
+Annotations:  k8s.ovn.org/[]: { "deny": "alert", "allow": "alert", "pass" : "warning" }
 API Version:  policy.networking.k8s.io/v1alpha1
 Kind:         AdminNetworkPolicy
 ```
@@ -1000,7 +1000,7 @@ The same is applicable to debug baseline admin network policy as well
 except for the fact that there is no `pass` in BANP:
 
 ```shell
-kubectl annotate banp default k8s.ovn.org/acl-logging='{ "deny": "alert", "allow": "alert" }'
+kubectl annotate banp default k8s.ovn.org/[]='{ "deny": "alert", "allow": "alert" }'
 ```
 
 ### Ensuring NBDB objects are correctly created
@@ -1064,7 +1064,7 @@ external_ids        : {direction=Egress, gress-index="5", "k8s.ovn.org/id"="defa
 label               : 0
 log                 : false
 match               : "inport == @a14645450421485494999 && ((ip4.dst == $a11452480169090787059))"
-meter               : acl-logging
+meter               : []
 name                : "ANP:cluster-control:Egress:5"
 options             : {apply-after-lb="true"}
 priority            : 26595
@@ -1195,7 +1195,7 @@ ct_lb_mark
     reg8[30..31] = 1;
     next(18);
 18. ls_in_acl_after_lb_eval (northd.c:6552): reg8[30..31] == 1 && reg0[9] == 1 && (inport == @a14645450421485494999 && ((ip4.dst == $a11452480169090787059))), priority 27595, uuid 369e6009
-    log(name="ANP:cluster-control:Egress:5", verdict=drop, severity=alert, meter="acl-logging__924b81fd-65cc-494b-9c29-0c5287d69bb1");
+    log(name="ANP:cluster-control:Egress:5", verdict=drop, severity=alert, meter="[]__924b81fd-65cc-494b-9c29-0c5287d69bb1");
 
     LOG: ACL name=ANP:cluster-control:Egress:5, direction=IN, verdict=drop, severity=alert, packet="ct_state=new|trk,icmp,reg0=0x287,reg8=0x40000000,reg14=0x7,vlan_tci=0x0000,dl_src=0a:58:0a:f4:02:07,dl_dst=0a:58:0a:f4:02:01,nw_src=10.244.2.7,nw_dst=10.244.2.8,nw_tos=0,nw_ecn=0,nw_ttl=0,nw_frag=no,icmp_type=0,icmp_code=0"
     -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
