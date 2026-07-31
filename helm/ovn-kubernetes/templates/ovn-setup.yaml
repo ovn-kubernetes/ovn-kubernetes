@@ -61,8 +61,11 @@ metadata:
   namespace: ovn-kubernetes
 data:
   ovnkube.conf: |
-{{- if .Values.global.enableNoOverlay }}
     [default]
+{{- if .Values.global.kubeletServiceNames }}
+    kubelet-service-names = {{ .Values.global.kubeletServiceNames }}
+{{- end }}
+{{- if .Values.global.enableNoOverlay }}
     transport = no-overlay
 
     [no-overlay]

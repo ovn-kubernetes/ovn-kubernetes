@@ -53,13 +53,14 @@ const (
 // It uses nftables chain "udn-isolation" to only allow connection to primary UDN pods from kubelet.
 // It also listens to systemd events to re-apply the rules after kubelet restart as cgroup matching is used.
 type UDNHostIsolationManager struct {
-	nft               knftables.Interface
-	ipv4, ipv6        bool
-	podController     controller.Controller
-	podLister         corelisters.PodLister
-	kubeletCgroupPath string
-	nodeName          string
-	recorder          record.EventRecorder
+	nft                 knftables.Interface
+	ipv4, ipv6          bool
+	podController       controller.Controller
+	podLister           corelisters.PodLister
+	kubeletCgroupPath   string
+	kubeletServiceNames sets.Set[string]
+	nodeName            string
+	recorder            record.EventRecorder
 
 	udnPodIPsv4 *nftPodElementsSet
 	udnPodIPsv6 *nftPodElementsSet
@@ -71,19 +72,20 @@ type UDNHostIsolationManager struct {
 	udnOpenPortsICMPv6 *nftPodElementsSet
 }
 
-func NewUDNHostIsolationManager(ipv4, ipv6 bool, podInformer coreinformers.PodInformer, nodeName string, recorder record.EventRecorder) *UDNHostIsolationManager {
+func NewUDNHostIsolationManager(ipv4, ipv6 bool, podInformer coreinformers.PodInformer, nodeName string, recorder record.EventRecorder, kubeletServiceNames []string) *UDNHostIsolationManager {
 	m := &UDNHostIsolationManager{
-		podLister:          podInformer.Lister(),
-		ipv4:               ipv4,
-		ipv6:               ipv6,
-		nodeName:           nodeName,
-		recorder:           recorder,
-		udnPodIPsv4:        newNFTPodElementsSet(nftablesUDNPodIPsv4, false),
-		udnPodIPsv6:        newNFTPodElementsSet(nftablesUDNPodIPsv6, false),
-		udnOpenPortsv4:     newNFTPodElementsSet(nftablesUDNOpenPortsv4, true),
-		udnOpenPortsv6:     newNFTPodElementsSet(nftablesUDNOpenPortsv6, true),
-		udnOpenPortsICMPv4: newNFTPodElementsSet(nftablesUDNOpenPortsICMPv4, false),
-		udnOpenPortsICMPv6: newNFTPodElementsSet(nftablesUDNOpenPortsICMPv6, false),
+		podLister:           podInformer.Lister(),
+		ipv4:                ipv4,
+		ipv6:                ipv6,
+		nodeName:            nodeName,
+		recorder:            recorder,
+		kubeletServiceNames: sets.New(kubeletServiceNames...),
+		udnPodIPsv4:         newNFTPodElementsSet(nftablesUDNPodIPsv4, false),
+		udnPodIPsv6:         newNFTPodElementsSet(nftablesUDNPodIPsv6, false),
+		udnOpenPortsv4:      newNFTPodElementsSet(nftablesUDNOpenPortsv4, true),
+		udnOpenPortsv6:      newNFTPodElementsSet(nftablesUDNOpenPortsv6, true),
+		udnOpenPortsICMPv4:  newNFTPodElementsSet(nftablesUDNOpenPortsICMPv4, false),
+		udnOpenPortsICMPv6:  newNFTPodElementsSet(nftablesUDNOpenPortsICMPv6, false),
 	}
 	controllerConfig := &controller.ControllerConfig[corev1.Pod]{
 		Informer:       podInformer.Informer(),
@@ -96,6 +98,58 @@ func NewUDNHostIsolationManager(ipv4, ipv6 bool, podInformer coreinformers.PodIn
 	return m
 }
 
+func (m *UDNHostIsolationManager) isKubeletService(serviceName string) bool {
+	return m.kubeletServiceNames.Has(serviceName)
+}
+
+// decodeSystemdUnitName decodes a systemd unit name that has been escaped using
+// systemd's escaping rules (where special characters are replaced by an underscore
+// followed by their two-digit hexadecimal value, e.g., "_2d" or "_2D" for "-").
+// If an escape sequence is malformed, it is preserved in its original form.
+func decodeSystemdUnitName(escapedUnit string) string {
+	var unitName strings.Builder
+	unitName.Grow(len(escapedUnit))
+
+	for i := 0; i < len(escapedUnit); i++ {
+		if escapedUnit[i] == '_' && i+2 < len(escapedUnit) {
+			decodedByte, err := strconv.ParseUint(escapedUnit[i+1:i+3], 16, 8)
+			if err == nil {
+				unitName.WriteByte(byte(decodedByte))
+				i += 2
+				continue
+			}
+		}
+		unitName.WriteByte(escapedUnit[i])
+	}
+
+	return unitName.String()
+}
+
+func (m *UDNHostIsolationManager) findKubeletCgroupPath(cgroupRoot string) error {
+	err := filepath.WalkDir(cgroupRoot, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() && m.isKubeletService(d.Name()) {
+			cgroupPath, err := filepath.Rel(cgroupRoot, path)
+			if err != nil {
+				return err
+			}
+			m.kubeletCgroupPath = cgroupPath
+			klog.Infof("Found kubelet cgroup path: %s", m.kubeletCgroupPath)
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to find kubelet cgroup path: %w", err)
+	}
+	if m.kubeletCgroupPath == "" {
+		return fmt.Errorf("failed to find kubelet cgroup path")
+	}
+	return nil
+}
+
 // Start must be called on node setup.
 func (m *UDNHostIsolationManager) Start(ctx context.Context) error {
 	klog.Infof("Starting UDN host isolation manager")
@@ -103,19 +157,8 @@ func (m *UDNHostIsolationManager) Start(ctx context.Context) error {
 		// find kubelet cgroup path.
 		// kind cluster uses "kubelet.slice/kubelet.service", while OCP cluster uses "system.slice/kubelet.service".
 		// as long as ovn-k node is running as a privileged container, we can access the host cgroup directory.
-		err := filepath.WalkDir("/sys/fs/cgroup", func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return nil
-			}
-			if d.Name() == "kubelet.service" {
-				m.kubeletCgroupPath = strings.TrimPrefix(path, "/sys/fs/cgroup/")
-				klog.Infof("Found kubelet cgroup path: %s", m.kubeletCgroupPath)
-				return filepath.SkipAll
-			}
-			return nil
-		})
-		if err != nil || m.kubeletCgroupPath == "" {
-			return fmt.Errorf("failed to find kubelet cgroup path: %w", err)
+		if err := m.findKubeletCgroupPath("/sys/fs/cgroup"); err != nil {
+			return err
 		}
 	} else {
 		// We can't use cgroup v2 match, so m.kubeletCgroupPath will be empty.
@@ -312,6 +355,32 @@ func (m *UDNHostIsolationManager) updateKubeletCgroup() error {
 	return nil
 }
 
+func (m *UDNHostIsolationManager) handleKubeletRestartSignal(signal *dbus.Signal) error {
+	parts := strings.Split(string(signal.Path), "/")
+	if len(parts) < 6 || parts[4] != "unit" {
+		return nil
+	}
+	unitName := decodeSystemdUnitName(parts[5])
+	if !m.isKubeletService(unitName) || len(signal.Body) < 2 {
+		return nil
+	}
+	changes, ok := signal.Body[1].(map[string]dbus.Variant)
+	if !ok {
+		return nil
+	}
+	state, exists := changes["ActiveState"]
+	if !exists {
+		return nil
+	}
+	newState, ok := state.Value().(string)
+	if !ok || newState != "active" {
+		return nil
+	}
+
+	klog.Info("Kubelet restarted, re-applying isolation")
+	return m.updateKubeletCgroup()
+}
+
 // runKubeletRestartTracker listens to systemd events to re-apply the UDN host isolation rules after kubelet restart.
 // cgroupv2 match doesn't actually match cgroup paths, but rather resolves them to numeric cgroup IDs when such
 // rules are loaded into kernel, and does not automatically update them in any way afterwards.
@@ -363,26 +432,8 @@ func (m *UDNHostIsolationManager) runKubeletRestartTracker(ctx context.Context) 
 					return
 				}
 				klog.V(5).Infof("D-Bus event received: %#v", signal)
-				// Extract unit name from path
-				unitPath := signal.Path
-				parts := strings.Split(string(unitPath), "/")
-				if len(parts) < 6 || parts[4] != "unit" {
-					continue
-				}
-				escapedUnit := parts[5]
-				unitName := strings.ReplaceAll(escapedUnit, "_2e", ".")
-
-				if unitName == "kubelet.service" {
-					changes := signal.Body[1].(map[string]dbus.Variant)
-					if state, exists := changes["ActiveState"]; exists {
-						newState := state.Value().(string)
-						if newState == "active" {
-							klog.Info("Kubelet restarted, re-applying isolation")
-							if err := m.updateKubeletCgroup(); err != nil {
-								klog.Errorf("Failed to re-apply isolation: %v", err)
-							}
-						}
-					}
+				if err := m.handleKubeletRestartSignal(signal); err != nil {
+					klog.Errorf("Failed to re-apply isolation: %v", err)
 				}
 			}
 		}

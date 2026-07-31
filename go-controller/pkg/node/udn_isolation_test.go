@@ -7,7 +7,11 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
+
+	"github.com/godbus/dbus/v5"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -283,7 +287,7 @@ add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-pod-default-ips-v6 dro
 		wf, err = factory.NewNodeWatchFactory(fakeClient, "node1")
 		Expect(err).NotTo(HaveOccurred())
 
-		manager = NewUDNHostIsolationManager(true, true, wf.PodCoreInformer(), "node1", nil)
+		manager = NewUDNHostIsolationManager(true, true, wf.PodCoreInformer(), "node1", nil, config.Default.KubeletServiceNames)
 
 		err = wf.Start()
 		Expect(err).NotTo(HaveOccurred())
@@ -318,6 +322,97 @@ add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-pod-default-ips-v6 dro
 		}
 	})
 
+	Context("kubelet service discovery", func() {
+		It("matches any configured kubelet service", func() {
+			manager := &UDNHostIsolationManager{
+				kubeletServiceNames: sets.New("kubelet.service", "custom-kubelet.service"),
+			}
+
+			Expect(manager.isKubeletService("kubelet.service")).To(BeTrue())
+			Expect(manager.isKubeletService("custom-kubelet.service")).To(BeTrue())
+			Expect(manager.isKubeletService("unrelated.service")).To(BeFalse())
+		})
+
+		DescribeTable("decodes systemd unit names",
+			func(escapedUnit, expectedUnit string) {
+				Expect(decodeSystemdUnitName(escapedUnit)).To(Equal(expectedUnit))
+			},
+			Entry("hyphen and dot", "custom_2dkubelet_2eservice", "custom-kubelet.service"),
+			Entry("escaped underscore", "custom_5fkubelet.service", "custom_kubelet.service"),
+			Entry("at sign", "kubelet_40node.service", "kubelet@node.service"),
+			Entry("uppercase hex digits", "custom_2Dkubelet_2Eservice", "custom-kubelet.service"),
+			Entry("multibyte UTF-8", "kubelet_2d_e6_9c_8d_e5_8a_a1_2eservice", "kubelet-服务.service"),
+		)
+
+		It("preserves malformed systemd escape sequences", func() {
+			Expect(decodeSystemdUnitName("custom_zz_+a_2_service_")).To(Equal("custom_zz_+a_2_service_"))
+		})
+
+		It("finds a cgroup for a non-default configured service", func() {
+			cgroupRoot := GinkgoT().TempDir()
+			expectedPath := filepath.Join("system.slice", "custom-kubelet.service")
+			Expect(os.MkdirAll(filepath.Join(cgroupRoot, expectedPath), 0o755)).To(Succeed())
+			manager := &UDNHostIsolationManager{
+				kubeletServiceNames: sets.New("kubelet.service", "custom-kubelet.service"),
+			}
+
+			Expect(manager.findKubeletCgroupPath(cgroupRoot)).To(Succeed())
+			Expect(manager.kubeletCgroupPath).To(Equal(expectedPath))
+		})
+
+		It("ignores regular files named for configured services", func() {
+			cgroupRoot := GinkgoT().TempDir()
+			Expect(os.WriteFile(filepath.Join(cgroupRoot, "custom-kubelet.service"), nil, 0o644)).To(Succeed())
+			expectedPath := filepath.Join("system.slice", "kubelet.service")
+			Expect(os.MkdirAll(filepath.Join(cgroupRoot, expectedPath), 0o755)).To(Succeed())
+			manager := &UDNHostIsolationManager{
+				kubeletServiceNames: sets.New("kubelet.service", "custom-kubelet.service"),
+			}
+
+			Expect(manager.findKubeletCgroupPath(cgroupRoot)).To(Succeed())
+			Expect(manager.kubeletCgroupPath).To(Equal(expectedPath))
+		})
+
+		It("fails when no configured service has a cgroup", func() {
+			manager := &UDNHostIsolationManager{
+				kubeletServiceNames: sets.New("kubelet.service", "custom-kubelet.service"),
+			}
+
+			Expect(manager.findKubeletCgroupPath(GinkgoT().TempDir())).To(
+				MatchError("failed to find kubelet cgroup path"))
+		})
+
+		It("reapplies isolation for an active configured service signal", func() {
+			nft := nodenft.SetFakeNFTablesHelper()
+			manager := &UDNHostIsolationManager{
+				nft:                 nft,
+				ipv4:                true,
+				ipv6:                true,
+				kubeletCgroupPath:   "kubelet.slice/kubelet.service",
+				kubeletServiceNames: sets.New("custom-kubelet.service"),
+			}
+			Expect(manager.setupUDNIsolationFromHost()).To(Succeed())
+			tx := nft.NewTransaction()
+			tx.Add(&knftables.Rule{Chain: UDNIsolationChain, Rule: "counter"})
+			Expect(nft.Run(context.Background(), tx)).To(Succeed())
+			Expect(nft.Dump()).To(ContainSubstring("counter"))
+
+			signal := &dbus.Signal{
+				Path: dbus.ObjectPath("/org/freedesktop/systemd1/unit/custom_2dkubelet_2eservice"),
+				Body: []interface{}{
+					"org.freedesktop.systemd1.Unit",
+					map[string]dbus.Variant{"ActiveState": dbus.MakeVariant("inactive")},
+				},
+			}
+
+			Expect(manager.handleKubeletRestartSignal(signal)).To(Succeed())
+			Expect(nft.Dump()).To(ContainSubstring("counter"))
+			signal.Body[1] = map[string]dbus.Variant{"ActiveState": dbus.MakeVariant("active")}
+			Expect(manager.handleKubeletRestartSignal(signal)).To(Succeed())
+			Expect(nft.Dump()).To(Equal(getExpectedDump(nil, nil)))
+		})
+	})
+
 	It("correctly handles host-network and not ready pods on initial sync", func() {
 		hostNetPod := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
@@ -339,7 +434,7 @@ add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-pod-default-ips-v6 dro
 		var err error
 		wf, err = factory.NewNodeWatchFactory(fakeClient, "node1")
 		Expect(err).NotTo(HaveOccurred())
-		manager = NewUDNHostIsolationManager(true, true, wf.PodCoreInformer(), "node1", nil)
+		manager = NewUDNHostIsolationManager(true, true, wf.PodCoreInformer(), "node1", nil, config.Default.KubeletServiceNames)
 		nft = nodenft.SetFakeNFTablesHelper()
 		manager.nft = nft
 
@@ -365,7 +460,7 @@ add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-pod-default-ips-v6 dro
 		var err error
 		wf, err = factory.NewNodeWatchFactory(fakeClient, "node1")
 		Expect(err).NotTo(HaveOccurred())
-		manager = NewUDNHostIsolationManager(true, true, wf.PodCoreInformer(), "node1", nil)
+		manager = NewUDNHostIsolationManager(true, true, wf.PodCoreInformer(), "node1", nil, config.Default.KubeletServiceNames)
 		Expect(wf.Start()).To(Succeed())
 		Expect(manager.reconcilePod(notReadyPod.Namespace + "/" + notReadyPod.Name)).To(Succeed())
 	})

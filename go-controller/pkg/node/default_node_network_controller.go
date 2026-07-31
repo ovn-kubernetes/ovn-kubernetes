@@ -166,7 +166,7 @@ func newDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, sto
 	}
 	if util.IsNetworkSegmentationSupportEnabled() && (config.IsModeDPUHost() || config.IsModeFull()) {
 		c.udnHostIsolationManager = NewUDNHostIsolationManager(config.IPv4Mode, config.IPv6Mode,
-			cnnci.watchFactory.PodCoreInformer(), cnnci.name, cnnci.recorder)
+			cnnci.watchFactory.PodCoreInformer(), cnnci.name, cnnci.recorder, config.Default.KubeletServiceNames)
 	}
 	c.masqReconciler = &masqueradeReconciler{
 		routeManager: routeManager,

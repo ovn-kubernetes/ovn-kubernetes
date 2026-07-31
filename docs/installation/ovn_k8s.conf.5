@@ -19,6 +19,11 @@ MTU value used for the overlay network.
 ConntrackZone affects only the gateway nodes, This value is used to track connections
 that are initiated from the pods so that the reverse connections go back to the pods.
 This represents the conntrack zone used for the conntrack flow rules.
+.TP
+\fBkubelet-service-names\fR=kubelet.service
+Comma-separated systemd service names. Each non-empty entry is an OR candidate:
+the kubelet service matches if any candidate matches. Surrounding whitespace is
+trimmed and empty entries are ignored; configuration fails if none remain.
 .PP
 .SH [Logging]
 .TP
