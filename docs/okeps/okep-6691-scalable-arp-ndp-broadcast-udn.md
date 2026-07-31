@@ -18,11 +18,11 @@ ARP and broadcast traffic on br-ex is flooded to all UDN patch ports, costing ~1
 - Changing the shared MAC architecture.
 - OVN core changes (northd, ovn-controller, SB-DB/NB-DB schema).
 - Addressing non-ARP/NDP broadcast traffic.
-- DPU mode support (different architecture where the representor port replaces LOCAL).
+- DPU mode support.
 
 ## Introduction
 
-This is a **short-term fix** intended to be delivered quickly with limited architectural changes and complexity. Solutions that require OVN core changes (schema/northd/ovn-controller modifications), topology rework, or deeper architectural changes are deferred to a separate follow-up long-term effort.
+This is a **mid-term fix** intended to be delivered quickly with limited architectural changes and complexity. Solutions that require OVN core changes (schema/northd/ovn-controller modifications), topology rework, or deeper architectural changes are deferred to a separate follow-up long-term effort.
 
 ### Per-UDN External Topology
 
@@ -102,9 +102,16 @@ NDP follows the same three-way pattern as ARP (outbound resolution, inbound repl
 
 ### Related Work
 
-[PR #6346](https://github.com/ovn-kubernetes/ovn-kubernetes/pull/6346) independently reduces the volume of unnecessary ARP/GARP traffic on br-ex by eliminating GARP generation from UDN GRs, fixing the masquerade subnet mask to prevent O(N^2) cross-UDN ARP resolution, and adding defense-in-depth flows (priority 11/12) that drop duplicate ARP replies from UDN patches. Neither design depends on the other for correctness: CORENET-6996 reduces packet volume while this OKEP eliminates fan-out cost per packet.
+[PR #6346](https://github.com/ovn-kubernetes/ovn-kubernetes/pull/6346) independently reduces the volume of unnecessary ARP/GARP traffic on br-ex by eliminating GARP generation from UDN GRs, fixing the masquerade subnet mask to prevent O(N^2) cross-UDN ARP resolution, and adding defense-in-depth flows (priority 11/12) that drop duplicate ARP replies from UDN patches. Neither design depends on the other for correctness: PR #6346 reduces packet volume while this OKEP eliminates fan-out cost per packet.
 
-[PR #6660](https://github.com/ovn-kubernetes/ovn-kubernetes/pull/6660) adds priority-11 flows that intercept ARP requests (`arp_op=1, arp_tpa=<nodeIP>`) and IPv6 NDP NS (`nd_target=<nodeIP>`) to steer them to the default patch port and LOCAL only. This is a narrower fix targeting duplicate ARP/NA replies for the node IP. It does not address outbound ARP fan-out from UDN GRs, inbound ARP reply fan-out, or the 4,096 resubmit limit. This OKEP's priority-45 uplink flows fully supersede the priority-11 flows; both can coexist (higher priority wins) but the priority-11 flows become redundant once this OKEP lands.
+[PR #6660](https://github.com/ovn-kubernetes/ovn-kubernetes/pull/6660) is a short-term fix that introduces four layers of protection against ARP/NDP fan-out, gated by UDN support:
+
+1. **Port-level flood control:** Sets `OFPPC_NO_FLOOD` (via `ovs-ofctl mod-port`) on all non-default CUDN GR patch ports. This prevents the OVS `NORMAL` and `FLOOD` actions from implicitly delivering to CUDNs. The flag is volatile (not persisted in OVSDB) and is re-applied every ~15s via `SyncNoFlood()` in the OpenFlow sync loop, as well as on initial port creation.
+2. **Priority-12 flows:** Intercept ARP requests (`arp_op=1, arp_tpa=<nodeIP>`) and IPv6 NS (`nd_target=<nodeIP>`) and steer them to the default patch port + `NORMAL`. `NORMAL` performs FDB learning and delivers to LOCAL via a static FDB entry; `no-flood` excludes CUDNs.
+3. **Priority-11 flows:** Match broadcast ARP (`dl_dst=ff:ff:ff:ff:ff:ff`) and unsolicited NDP NA (`dl_dst=33:33:00:00:00:01`) arriving on `ofPortPhys`. Explicitly forward to all GR patches + `NORMAL`, so CUDNs still receive external GARPs and MAC-change announcements despite `no-flood`.
+4. **Table-1 FLOOD modification:** The existing table-1 `FLOOD` flows for NDP NA (type 136) and RA (type 134) are updated to prepend explicit `output:<all-CUDN-patches>` before `FLOOD`, since `FLOOD` also respects `no-flood`.
+
+PR #6660 does not address outbound ARP fan-out from UDN GRs, inbound ARP reply fan-out via the priority-10 explicit `output:all-patches` rule, or the 4096 resubmit limit for unicast traffic. This OKEP builds on PR #6660's `no-flood` foundation and supersedes all its flow-level changes: the OKEP's priority-52 and priority-45 flows intercept all uplink ARP and NDP at higher priority, superseding PR #6660's priority-12, priority-11, and table-1 modifications (which become unreachable but harmless). Both can coexist with zero changes to PR #6660 needed at merge time.
 
 ## User-Stories/Use-Cases
 
@@ -114,7 +121,7 @@ Story 1: Reliable external connectivity at scale
 **I want** ARP and NDP neighbor resolution to work reliably regardless of UDN count
 **so that** external connectivity is not broken by OVS resubmit limits.
 
-At roughly 35-50 UDNs, the current ARP/NDP flooding exceeds the OVS 4,096 resubmit limit, causing silent packet drops that break SNAT flow programming and all external connectivity for UDN workloads.
+At roughly 35-50 UDNs, the current ARP/NDP flooding exceeds the OVS 4,096 resubmit limit, causing ARP/NDP reply drops that prevent gateway MAC resolution and break external connectivity for UDN workloads.
 
 Story 2: Efficient broadcast handling at high UDN density
 
@@ -128,11 +135,12 @@ Even below the resubmit limit, every flooded ARP packet traverses all N UDN pipe
 
 ### Solution Overview
 
-Three mechanisms work together to eliminate ARP/NDP fan-out:
+Four mechanisms work together to eliminate ARP/NDP fan-out:
 
-1. **Traffic Isolation and Steering** (static flows): Prevents ARP/NDP from flooding between patch ports.
-2. **ARP Proxy** (dynamic flows): Answers UDN ARP requests locally for known neighbors.
-3. **IPv6 NDP Resolution via MAC_Binding Propagation**: Propagates the default GR's resolved bindings to UDN GRs via SB-DB.
+1. **Port-Level Flood Control** (`no-flood`): [PR #6660's](#related-work) `OFPPC_NO_FLOOD` on CUDN patch ports prevents `NORMAL` and `FLOOD` from delivering to them. This OKEP inherits and depends on it.
+2. **Traffic Steering** (8 static flows at pri-52/45): Intercepts uplink ARP and NDP above the two existing paths that bypass `no-flood`: the priority-10 explicit `output:patch1,...,patchN` (for ARP) and the priority-50 conntrack → table-1 path where PR #6660 prepends explicit `output:<all-CUDN-patches>` before `FLOOD` (for NDP NA and RA). Also steers default-patch and LOCAL ARP to the wire, this keeps them above the priority-40 ARP proxy (preventing stale probes from being short-circuited).
+3. **ARP Proxy** (dynamic flows at pri-40): Answers UDN ARP requests locally for known neighbors, turning O(N) fan-out into a single-flow lookup.
+4. **IPv6 NDP Resolution via MAC_Binding Propagation**: Propagates the default GR's resolved bindings to UDN GRs via SB-DB.
 
 The IPv4 traffic scenarios are shown separately below; IPv6 NDP is handled via [MAC_Binding propagation](#ipv6-ndp-resolution-via-mac_binding-propagation).
 
@@ -155,14 +163,19 @@ The IPv4 traffic scenarios are shown separately below; IPv6 NDP is handled via [
   └──────────────────┬───────────────────────────┘
                      │
                      ▼
-  ┌─ pri 15: Broadcast Isolation ───────────────┐
-  │  in_port=<UDN_patch>, broadcast ARP         │
-  │  → output:ofPortPhys ───────────────────────┼──▶ to physical network
-  └─────────────────────────────────────────────┘    (real ARP on wire)
+  ┌─ pri 10: Existing non-IP egress ─────────────┐
+  │  in_port=<patch>, dl_src=bridgeMAC           │
+  │  → output:NORMAL                             │
+  │                                              │
+  │  NORMAL with no-flood:                       │
+  │    ofPortPhys ───────────────────────────────┼──▶ to physical network
+  │    LOCAL (harmless — kernel ignores ARP      │    (real ARP on wire)
+  │           from own identity)                 │
+  │    default_patch (harmless — default GR      │
+  │           ignores ARP for IPs it doesn't own)│
+  └──────────────────────────────────────────────┘
 
-  ✗ NOT flooded to other UDN patches
-  ✗ NOT sent to LOCAL
-  ✗ NOT broadcast via NORMAL action
+  ✗ NOT flooded to CUDN patches (no-flood)
 ```
 
 #### Scenario 2: Inbound Unicast ARP Reply
@@ -175,16 +188,18 @@ The IPv4 traffic scenarios are shown separately below; IPv6 NDP is handled via [
        ▼
   ┌─ pri 45: Uplink ARP Steering ───────────────┐
   │  in_port=ofPortPhys, arp                    │
-  │  → output:default_patch, LOCAL              │
-  └──────────┬────────────────────┬─────────────┘
-             │                    │
-             ▼                    ▼
-        default_patch           LOCAL
-        (default GR creates     (kernel maintains its own
-         MAC_Binding in SB-DB)   table for host networking)
-              │
-             SB-DB event → proxy flow updated (pri 40)
-         → future UDN ARP answered locally
+  │  → output:default_patch, NORMAL             │
+  └──────────┬──────────────────────────┬───────┘
+             │                          │
+             ▼                          ▼
+        default_patch                 NORMAL
+        (default GR creates           (1) FDB learning: records
+         MAC_Binding in SB-DB)             src_MAC→ofPortPhys.
+              │                       (2) FDB lookup: bridgeMAC→LOCAL
+        SB-DB event →                     delivers to kernel. 
+        proxy flow updated (pri 40) →
+        future UDN ARP answered
+        locally
 
   ✗ NOT flooded via output:patch1,...,patchN (intercepted above pri 10)
   ✗ UDN patches never see inbound ARP replies
@@ -198,18 +213,19 @@ The IPv4 traffic scenarios are shown separately below; IPv6 NDP is handled via [
   broadcast ARP request (dl_dst=ff:ff:ff:ff:ff:ff)
        │
        ▼
-  ┌─ pri 45: Broadcast Isolation ───────────────┐
-  │  in_port=ofPortPhys, broadcast ARP          │
-  │  → output:default_patch, LOCAL              │
-  └──────────┬────────────────────┬─────────────┘
-             │                    │
-             ▼                    ▼
-        default_patch           LOCAL
-        (default GR learns       (kernel responds
-         MAC bindings)            for node IP,
-                                  EgressIPs, etc.)
+  ┌─ pri 45: Uplink ARP Steering ────────────────┐
+  │  in_port=ofPortPhys, arp                    │
+  │  → output:default_patch, NORMAL             │
+  └──────────┬──────────────────────────┬───────┘
+             │                          │
+             ▼                          ▼
+        default_patch                 NORMAL
+        (default GR learns            (FDB learning + broadcast
+         MAC bindings,                 flood to LOCAL only —
+         responds for node IP)         kernel responds for
+                                       node IP, EgressIPs, etc.)
 
-  ✗ NOT flooded to UDN patches (pri 45 > pri 0 NORMAL)
+  ✗ NOT flooded to UDN patches (pri 45 > pri 0 NORMAL; no-flood)
   ✗ No N duplicate ARP replies on the physical network
 ```
 
@@ -217,7 +233,7 @@ See [Bootstrap: First ARP Resolution](#bootstrap-first-arp-resolution) for the d
 
 #### IPv6 NDP
 
-The isolation flows handle NDP identically to ARP: UDN NS goes to the wire only, uplink NS and NA are steered to `default_patch` + LOCAL. However, unlike ARP, resolution cannot be answered directly on br-ex with OpenFlow (why is explained in [Pure-OpenFlow NDP Responder on br-ex](#pure-openflow-ndp-responder-on-br-ex) under Alternatives). Instead, a new component (`macBindingWatcher`) propagates the default GR's resolved IPv6 neighbors to UDN GRs via SB-DB; see [IPv6 NDP Resolution via MAC_Binding Propagation](#ipv6-ndp-resolution-via-mac_binding-propagation) for the mechanism.
+NDP traffic isolation uses the same unified steering approach as ARP: priority-52 steers all inbound NDP NAs from `ofPortPhys` above conntrack to `default_patch` + NORMAL (NORMAL delivers to LOCAL via FDB/flooding and performs MAC learning), and priority-45 steers all inbound NDP NS to the same destinations. UDN outbound NDP NS is handled by `no-flood`, it falls to the existing priority-10 `output:NORMAL` which with `no-flood` delivers to the wire without CUDN fan-out. Unlike ARP, IPv6 neighbor resolution cannot be answered directly on br-ex with OpenFlow (why is explained in [Pure-OpenFlow NDP Responder on br-ex](#pure-openflow-ndp-responder-on-br-ex) under Alternatives). Instead, a new component (`macBindingWatcher`) propagates the default GR's resolved IPv6 neighbors to UDN GRs via SB-DB; see [IPv6 NDP Resolution via MAC_Binding Propagation](#ipv6-ndp-resolution-via-mac_binding-propagation) for the mechanism.
 
 ### API Details
 
@@ -227,15 +243,14 @@ Two new flags are added:
 
 | Flag | Scope |
 |------|-------|
-| `enable-arp-proxy` | IPv4 broadcast isolation + ARP proxy flows on br-ex |
-| `enable-ndp-proxy` | IPv6 multicast isolation + MAC_Binding propagation on br-ex |
+| `enable-arp-proxy` | IPv4: priority-45 ARP steering (3 flows) + priority-40 ARP proxy (M dynamic flows) |
+| `enable-ndp-proxy` | IPv6: priority-52 NDP NA + RA steering (2 flows) + priority-45 NDP NS steering (3 flows) + macBindingWatcher |
 
 Both default to `false` and require `enable-network-segmentation` (validated at startup).
 Changing either flag requires an ovnkube-node restart, which triggers a full flow sync.
 
 **Why two separate flags rather than one:**
-- All OpenFlow rules are cleanly separable by protocol — zero shared flows between IPv4 and IPv6.
-- Each gate controls the complete pipeline for its protocol (isolation + resolution), so no dangerous partial states exist within a single gate's scope.
+The IPv4 and IPv6 solutions use fundamentally different mechanisms with different risk profiles: IPv4 uses a pure-OpenFlow ARP proxy (M local flows, data-plane only), while IPv6 uses MAC\_Binding propagation that writes N x M entries to SB-DB. If the higher-risk IPv6 path causes issues at scale, operators can disable it (falling back to PR #6660's NDP handling) without losing the IPv4 fix. The separation effort is minimal since all flows are cleanly separable by protocol (zero shared flows) and each gate controls the complete pipeline for its protocol (steering + resolution).
 
 **Why not reuse `enable-network-segmentation`:** It is already `true` in production. A separate gate allows code to be merged incrementally and flipped only when each protocol's pipeline is proven working.
 
@@ -245,19 +260,28 @@ This feature applies to both LGW and SGW gateway modes. The br-ex flow table and
 
 #### Traffic Isolation and Steering
 
-Static flows are installed to prevent ARP/NDP from flooding between patch ports. See [Complete Flow Priority Table](#complete-flow-priority-table-br-ex-table-0) for the full picture with match/action details.
+Two layers work together to prevent ARP/NDP from flooding between patch ports. See [Complete Flow Priority Table](#complete-flow-priority-table-br-ex-table-0) for the full picture with match/action details.
 
-**Priority-52 flows** steer inbound NDP NAs above conntrack. This is necessary because the existing priority-50 flow (`ipv6, dl_dst=bridgeMAC → ct(table=1)`) intercepts all unicast IPv6 before any lower-priority flow. The `dl_dst` match is omitted to catch both unicast NAs (`dl_dst=bridgeMAC`) and multicast unsolicited NAs (`dl_dst=33:33:00:00:00:01`).
+[PR #6660's `no-flood`](#related-work) on CUDN patches eliminates per-UDN broadcast isolation flows. UDN outbound ARP/NDP falls to the existing priority-10 non-IP egress flow (`in_port=<patch>, dl_src=bridgeMAC → output:NORMAL`), which with `no-flood` delivers to `ofPortPhys` (correct) plus `LOCAL` and `default_patch` (harmless — the kernel ignores ARP from its own identity, and the default GR ignores ARP for IPs it does not own).
 
-**Priority-45 flows** steer all uplink ARP/NDP NS to `default_patch` + LOCAL, and route all default-patch/LOCAL ARP and NDP NS to the wire. These flows are generated once (not per-UDN). All three source ports match ALL ARP (not just broadcast) because:
+**Priority-52 and priority-45 flows** intercept uplink ARP and NDP above the two existing paths that bypass `no-flood`:
+
+1. The priority-10 unicast flood rule (`dl_dst=bridgeMAC → output:patch1,...,patchN,NORMAL`) uses explicit `output:<port>` actions that ignore `no-flood` entirely. Without the priority-45 ARP flows, unicast ARP replies would still fan out to all N patches.
+2. The priority-50 conntrack flow (`ipv6, dl_dst=bridgeMAC → ct(table=1)`) sends unicast NDP NAs and RAs to table 1, where PR #6660's modified `FLOOD` includes explicit `output:<all-CUDN-patches>` that also bypasses `no-flood`. Without the priority-52 flows, NAs and RAs would still reach all N CUDN pipelines. Priority 52 also avoids processing NDP through a conntrack path that cannot create CT entries ([kernel bug #11797](https://bugzilla.kernel.org/show_bug.cgi?id=11797): IPv6 conntrack treats NDP packets as invalid; workaround at `bridgeflows.go:1163`).
+
+**Priority-52 NDP NA flow:** Steers all inbound NDP NAs (type 136) from `ofPortPhys` to `default_patch` + NORMAL, above conntrack. The `dl_dst` match is omitted to catch both unicast NAs (`dl_dst=bridgeMAC`) and multicast unsolicited NAs (`dl_dst=33:33:00:00:00:01`). `NORMAL` performs FDB learning and delivers to LOCAL (via static FDB entry for unicast, or flooding for multicast).
+
+**Priority-52 RA flow:** Steers all inbound Router Advertisements (type 134) from `ofPortPhys` to `default_patch` + NORMAL, above conntrack. Without this flow, unicast RAs (`dl_dst=bridgeMAC`) would fan out via the same conntrack → table-1 path as NAs. CUDN GRs do not need RAs, OVN logical routers are statically configured and have no RA-receiving capability. The only legitimate consumer is the kernel on `breth0` (reached via `NORMAL`). Multicast RAs (`dl_dst=33:33:00:00:00:01`) bypass conntrack and fall to pri-0 `NORMAL`, where `no-flood` handles them.
+
+**Priority-45 ARP flows:** Steer all inbound ARP from `ofPortPhys` to `default_patch` + NORMAL, and route all ARP from default-patch/LOCAL to the wire. The inbound flow uses `output:default_patch, NORMAL`: `default_patch` must be explicit because NORMAL's FDB lookup for unicast `dl_dst=bridgeMAC` returns only LOCAL (via the static FDB entry), not `default_patch`. LOCAL delivery is handled by NORMAL itself, FDB unicast for replies, broadcast flooding for requests. All three source ports match ALL ARP (not just broadcast) because:
 
 - External devices send unicast ARP requests for NUD probes. If only broadcast matched, these would fall to the priority-40 proxy, which would incorrectly answer for addresses it doesn't own.
 - The kernel's unicast NUD probes from LOCAL must reach the physical network for real verification.
 - OVN 25.03+ stale probes from the default GR (unicast ARP for MAC\_Binding liveness) must reach the wire, not be short-circuited by the proxy.
 
-Matching all ARP also catches replies, making a separate unicast-reply steering flow unnecessary. Priority 45 is above the ARP proxy (priority 40), ensuring uplink, LOCAL, and default-patch traffic always reaches its real destination. The default patch port is at priority 45 rather than 15 because it is the only non-UDN patch port (one per node), doesn't contribute to O(N) fan-out, and preserves pre-existing behavior. It is also the only GR that sends GARPs for NAT addresses after CORENET-6996.
+Matching all ARP also catches replies, making a separate unicast-reply steering flow unnecessary. Priority 45 is above the ARP proxy (priority 40), ensuring uplink, LOCAL, and default-patch traffic always reaches its real destination. The trailing `NORMAL` preserves FDB learning and delivers to LOCAL via the static FDB entry or broadcast flooding.
 
-**Priority-15 flows** send UDN patch broadcasts to the wire only. One flow pair (ARP + NDP NS) is generated per UDN patch port. Priority 15 is below the ARP proxy (priority 40), so known neighbors are answered locally first, and above the priority-10 flood rules. UDN ARP/NS are NOT sent to LOCAL because a UDN GR uses `arp_spa=nodeIP, dl_src=bridgeMAC` identical to the host identity. If sent to LOCAL, the kernel would see an ARP from "itself." The kernel maintains its neighbor table from real uplink traffic (priority-45 `in_port=ofPortPhys` flow). NDP NS flows match `icmp6, icmpv6_type=135` without a `dl_dst` restriction to catch both solicited-node multicast and unicast NS.
+**Priority-45 NDP NS flows:** Steer all inbound NDP NS from `ofPortPhys` to `default_patch` + NORMAL, and route all NS from default-patch/LOCAL to the wire. NDP NS flows match `icmp6, icmpv6_type=135` without a `dl_dst` restriction to catch both solicited-node multicast and unicast NS.
 
 #### ARP Proxy on br-ex
 
@@ -296,7 +320,7 @@ This constructs a valid ARP reply in-place and sends it back to the requesting p
 
 ##### Bootstrap: First ARP Resolution
 
-The first time a UDN GR needs to resolve an unknown IP (e.g., the upstream gateway), no priority-40 proxy flow exists yet, so resolution takes the same wire path already shown in [Scenario 1](#scenario-1-outbound-arp-from-udn-gr) and [Scenario 2](#scenario-2-inbound-unicast-arp-reply): the request falls through the proxy to priority-15 and reaches the wire, the gateway's reply is steered by priority-45 to `default_patch`, and the resulting `MAC_Binding` triggers the macBindingWatcher to program the proxy flow. The one point not shown in those diagrams: the requesting UDN GR does **NOT** receive this first reply directly — only the default GR does.
+The first time a UDN GR needs to resolve an unknown IP (e.g., the upstream gateway), no priority-40 proxy flow exists yet, so resolution takes the same wire path already shown in [Scenario 1](#scenario-1-outbound-arp-from-udn-gr) and [Scenario 2](#scenario-2-inbound-unicast-arp-reply): the request falls through the proxy to the existing priority-10 non-IP egress flow (`in_port=<patch>, dl_src=bridgeMAC → output:NORMAL`) and reaches the wire via `NORMAL`. With `no-flood`, `NORMAL` delivers to `ofPortPhys` (desired) plus `LOCAL` and `default_patch` (harmless). The gateway's reply is steered by priority-45 to `default_patch`, and the resulting `MAC_Binding` triggers the macBindingWatcher to program the proxy flow. The one point not shown in those diagrams: the requesting UDN GR does **NOT** receive this first reply directly, only the default GR does.
 
 **OVN buffers the original IP packet** that triggered the ARP request (for up to 10 seconds, with limits of 1000 unique destinations and 4 packets per destination). When a subsequent packet for the same destination triggers a new ARP request, the proxy answers immediately through the new installed flow. The GR creates a dynamic `MAC_Binding` in SB, and ovn-controller reinjects the buffered packets. If the proxy flow is not yet installed when the retry arrives, the ARP simply takes the bootstrap path again.
 
@@ -330,16 +354,14 @@ Unlike IPv4 where the ARP proxy constructs a reply in OpenFlow, a pure-OpenFlow 
 
 The mechanism works as follows:
 
-1. The default GR resolves an IPv6 neighbor via NDP. This creates a dynamic `MAC_Binding` entry in SB-DB.
+1. The default GR resolves an IPv6 neighbor via NDP: the neighbor's NA is steered to `default_patch` by the priority-52 flow. The default GR creates a dynamic `MAC_Binding` entry in SB-DB.
 2. The macBindingWatcher observes the default GR's `MAC_Binding` entries in SB-DB.
 3. When an IPv6 binding appears or its MAC changes, the watcher writes a `MAC_Binding` entry directly to SB-DB for each UDN GR's external port (`rtoe-GR_*`) for that `(IP, MAC)` pair with a fresh timestamp.
 4. Bidirectional UDN traffic (e.g. TCP) keeps entries alive via `MAC_CACHE_USE` (return traffic refreshes timestamp). Entries never expire while bidirectional traffic flows.
 5. Idle entries expire after 300s (without controller involvement).
-6. When UDN traffic resumes after idle: NS sent on wire → default GR re-learns → controller re-creates entries. OVN buffers the first packet.
+6. When a UDN GR needs to reach an IPv6 neighbor whose MAC_Binding has not been propagated yet (cold start before the default GR has resolved, or after an idle entry has expired): the UDN GR sends an NDP NS which reaches the wire via the existing priority-10 egress flow. The cycle repeats from step 1. OVN buffers the original packet for up to 10 seconds, which is sufficient for the propagation round-trip.
 
 **Scale:** This produces `N x M` MAC_Binding entries per node, where N is the number of UDNs and M is the number of IPv6 neighbors the default GR has resolved. M is driven by the GR's **connected route** for its external subnet. The GR's external port (`rtoe-GR_*`) is assigned the node's IP with a prefix length (e.g., `fd2e:.../64`), which creates an implicit connected route for the entire subnet. Since all cluster nodes sit on the same external subnet, the best-case M = default gateway + number of nodes. At 500 UDNs and 500 nodes, that is ~250K MAC_Binding entries per node. Every resolved binding is propagated to **all** UDN GRs regardless of which UDN triggered the resolution (the returning NA is steered to `default_patch` with no correlation to the originating UDN).
-
-**Bootstrap timing:** If a UDN GR needs to reach an IPv6 neighbor whose MAC_Binding has not been propagated yet (cold start before the default GR has resolved, or after an idle entry has expired), the UDN GR sends an NDP NS which goes to the wire (priority-15). The remote gateway's NA is steered to `default_patch` + LOCAL (priority-52). The UDN GR does NOT receive this NA directly — only the default GR does (via `default_patch`). The default GR learns the binding, the controller sees the ADD event and propagates to UDN GRs. OVN buffers the original packet for up to 10 seconds, which is sufficient for the propagation round-trip.
 
 ##### Event Handling
 
@@ -368,21 +390,24 @@ The following shows how new flows (marked with **NEW**) fit within the existing 
 
 | Pri | Match | Action | Status |
 |-----|-------|--------|--------|
-| **52** | `in_port=ofPortPhys, [matchVLAN,] icmp6, icmpv6_type=136` | `output:<default_patch>,[strip_vlan,]output:LOCAL` | **NEW** -- ALL uplink NDP NA to default GR + kernel (above conntrack) |
+| **52** | `in_port=ofPortPhys, [matchVLAN,] icmp6, icmpv6_type=136` | `output:<default_patch>,[strip_vlan,]NORMAL` | **NEW** (`enable-ndp-proxy`) -- ALL uplink NDP NA above conntrack |
+| **52** | `in_port=ofPortPhys, [matchVLAN,] icmp6, icmpv6_type=134` | `output:<default_patch>,[strip_vlan,]NORMAL` | **NEW** (`enable-ndp-proxy`) -- ALL uplink RA above conntrack (GRs don't need RAs; only kernel via NORMAL) |
 | 50 | `ip/ipv6, dl_dst=<bridgeMAC>` | `ct(zone=...,nat,table=1)` | Existing -- IP/IPv6 return traffic to conntrack |
-| **45** | `in_port=ofPortPhys, [matchVLAN,] arp` | `output:<default_patch>,[strip_vlan,]output:LOCAL` | **NEW** -- ALL uplink ARP to default GR + kernel |
-| **45** | `in_port=ofPortPhys, [matchVLAN,] icmp6, icmpv6_type=135` | `output:<default_patch>,[strip_vlan,]output:LOCAL` | **NEW** -- ALL uplink NDP NS to default GR + kernel |
-| **45** | `in_port=<default_patch>, arp` | `output:ofPortPhys` | **NEW** -- ALL default GR ARP to wire |
-| **45** | `in_port=<default_patch>, icmp6, icmpv6_type=135` | `output:ofPortPhys` | **NEW** -- Default GR NDP NS to wire |
-| **45** | `in_port=LOCAL, arp` | `[modVLANID,]output:ofPortPhys` | **NEW** -- ALL host ARP to wire |
-| **45** | `in_port=LOCAL, icmp6, icmpv6_type=135` | `[modVLANID,]output:ofPortPhys` | **NEW** -- Host NDP NS to wire |
-| **40** | `arp, arp_op=1, arp_tpa=<knownIP>` | ARP reply via `IN_PORT` | **NEW** -- ARP proxy (dynamic, per neighbor) |
-| **15** | `in_port=<UDN_patch>, dl_dst=ff:.., arp` | `output:ofPortPhys` | **NEW** -- UDN broadcast ARP to wire only |
-| **15** | `in_port=<UDN_patch>, icmp6, icmpv6_type=135` | `output:ofPortPhys` | **NEW** -- UDN NDP NS to wire only |
-| 10 | `dl_dst=<bridgeMAC>` | `output:patch1,...,patchN,NORMAL` | Existing -- Unicast flood (now harmless fallback) |
-| 10 | `in_port=<patch>, dl_src=<bridgeMAC>` | `output:NORMAL` | Existing -- OVN non-IP egress |
+| **45** | `in_port=ofPortPhys, [matchVLAN,] arp` | `output:<default_patch>,[strip_vlan,]NORMAL` | **NEW** (`enable-arp-proxy`) -- ALL uplink ARP to default GR + kernel + FDB learning |
+| **45** | `in_port=ofPortPhys, [matchVLAN,] icmp6, icmpv6_type=135` | `output:<default_patch>,[strip_vlan,]NORMAL` | **NEW** (`enable-ndp-proxy`) -- ALL uplink NDP NS to default GR + kernel |
+| **45** | `in_port=<default_patch>, arp` | `output:ofPortPhys` | **NEW** (`enable-arp-proxy`) -- ALL default GR ARP to wire |
+| **45** | `in_port=<default_patch>, icmp6, icmpv6_type=135` | `output:ofPortPhys` | **NEW** (`enable-ndp-proxy`) -- Default GR NDP NS to wire |
+| **45** | `in_port=LOCAL, arp` | `[modVLANID,]output:ofPortPhys` | **NEW** (`enable-arp-proxy`) -- ALL host ARP to wire |
+| **45** | `in_port=LOCAL, icmp6, icmpv6_type=135` | `[modVLANID,]output:ofPortPhys` | **NEW** (`enable-ndp-proxy`) -- Host NDP NS to wire |
+| **40** | `arp, arp_op=1, arp_tpa=<knownIP>` | ARP reply via `IN_PORT` | **NEW** (`enable-arp-proxy`) -- ARP proxy (dynamic, per neighbor) |
+| 12 | `[matchVLAN,] arp, arp_op=1, arp_tpa=<nodeIP>` | `output:<default_patch>,[strip_vlan,]NORMAL` | Existing (PR #6660) -- Node-IP ARP steering (unreachable when `enable-arp-proxy`) |
+| 12 | `[matchVLAN,] icmp6, icmpv6_type=135, nd_target=<nodeIP>` | `output:<default_patch>,[strip_vlan,]NORMAL` | Existing (PR #6660) -- Node-IP NDP NS steering (unreachable when `enable-ndp-proxy`) |
+| 11 | `in_port=ofPortPhys, [matchVLAN,] dl_dst=ff:ff:ff:ff:ff:ff, arp` | `output:<all-patches>,[strip_vlan,]NORMAL` | Existing (PR #6660) -- Broadcast ARP/GARP to all GRs despite `no-flood` (unreachable when `enable-arp-proxy`) |
+| 11 | `in_port=ofPortPhys, [matchVLAN,] dl_dst=33:33:00:00:00:01, icmp6, icmpv6_type=136` | `output:<all-patches>,[strip_vlan,]NORMAL` | Existing (PR #6660) -- Unsolicited NDP NA to all GRs despite `no-flood` (unreachable when `enable-ndp-proxy`) |
+| 10 | `dl_dst=<bridgeMAC>` | `output:patch1,...,patchN,NORMAL` | Existing -- Unicast flood (harmless fallback: ARP intercepted above; NDP NAs never reach here) |
+| 10 | `in_port=<patch>, dl_src=<bridgeMAC>` | `output:NORMAL` | Existing -- OVN non-IP egress (`no-flood` limits flood) |
 | 9 | `in_port=<patch>` | `drop` | Existing -- Drop bad MAC from OVN |
-| 0 | *(catch-all)* | `NORMAL` | Existing -- Default L2 forwarding |
+| 0 | *(catch-all)* | `NORMAL` | Existing -- Default L2 forwarding (`no-flood` limits flood) |
 
 ### Testing Details
 
@@ -399,9 +424,11 @@ The following shows how new flows (marked with **NEW**) fit within the existing 
 
 * **Bootstrap latency:** First ARP/NDP resolution for an unknown IP requires a wire round-trip plus MAC_Binding propagation delay before the proxy flow or UDN GR MAC_Binding is available. OVN packet buffering (up to 10 seconds) covers this window. See [Bootstrap: First ARP Resolution](#bootstrap-first-arp-resolution) for the detailed sequence and timing analysis.
 
-* **RA flood not addressed:** Router Advertisements (type 134) are not intercepted by this design. Unicast RAs (`dl_dst=bridgeMAC`) enter the priority-50 conntrack flow and reach table 1, where the [priority-14 FLOOD](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/1dec420c4abfd1fd51185184bca96fd2e7607615/go-controller/pkg/node/bridgeconfig/bridgeflows.go#L1163-L1169) sends them to all ports. Multicast RAs (`dl_dst=33:33:00:00:00:01/02`) bypass conntrack and fall to priority-0 `NORMAL`, which floods identically. Replacing the table-1 `FLOOD` with `output:LOCAL,<default_patch>` for type 134, and adding a table-0 steering flow for multicast RAs, remains a candidate for a follow-up change.
+* **FDB learning dependency:** The trailing `NORMAL` in the priority-45 and priority-52 uplink flows serves two roles: (1) FDB learning (OVS records `source_MAC → ofPortPhys`), and (2) LOCAL delivery (via the static FDB entry `bridgeMAC → LOCAL` for unicast, or broadcast flooding for broadcast/multicast). If `NORMAL` is accidentally removed, both FDB learning breaks and LOCAL stops receiving ARP/NDP (breaking the kernel's neighbor table).
 
-* **IPv6 MAC_Binding scale:** The `N x M` entry count (see [Scale](#ipv6-ndp-resolution-via-mac_binding-propagation)) has been validated in scale testing as manageable for SB-DB. If timestamp-driven write amplification becomes a concern, the controller can switch to periodic reconciliation.
+* **Volatile `no-flood` flag:** The `OFPPC_NO_FLOOD` flag set by PR #6660 is not persisted in OVSDB, it is lost when `ovs-vswitchd` restarts. PR #6660 re-applies it every ~15s via `SyncNoFlood()`. In practice this is not a risk: when OVS restarts, its flow table is also cleared, the broader OVS disruption (flow reprogramming, conntrack state loss) dominates over the `no-flood` gap. Once flows are re-synced by `SyncNoFlood()`, `no-flood` is re-applied in the same cycle.
+
+* **IPv6 MAC_Binding scale:** The `N x M` entry count (see [Scale](#ipv6-ndp-resolution-via-mac_binding-propagation)) must be validated in scale testing to confirm SB-DB can handle the load (e.g., 250K entries at 500 UDNs / 500 nodes). If timestamp-driven write amplification becomes a concern, the controller can switch to periodic reconciliation.
 
 * **Thundering herd on northd batch-deletes:** If northd batch-deletes expired entries for all 500 UDN GRs (e.g., all timestamps aligned), each UDN GR sends NS on next traffic. The neighbor receives up to 500 NS. Controller sees one ADD on the default GR → re-creates 500 entries in one batch transaction. Mitigated by northd's `mac_binding_removal_limit` option which caps deletions per sweep.
 
@@ -419,10 +446,19 @@ TBD -- not yet assigned to a release milestone.
 
 ## Backwards Compatibility
 
-The feature is behind two independent feature gates: `enable-arp-proxy` (IPv4, default `false`) and `enable-ndp-proxy` (IPv6, default `false`). When both are disabled, no isolation or proxy flows are installed and behavior is identical to the current codebase. When only one is enabled, only that protocol's flows are installed; the other protocol's behavior is unchanged. When either or both gates are enabled:
+The feature is behind two independent feature gates: `enable-arp-proxy` (IPv4, default `false`) and `enable-ndp-proxy` (IPv6, default `false`). When both are disabled, no steering or proxy flows are installed and behavior is identical to the current codebase (with PR #6660's `no-flood` and priority-12/11 flows active when `enable-network-segmentation` is true). When only one gate is enabled, only that protocol's flows are installed; the other protocol's behavior is unchanged. Every gate combination produces a clean, non-broken state:
 
-* The existing priority-10 unicast flood rule becomes a harmless fallback — all ARP and NDP traffic is intercepted by higher-priority flows before reaching it.
-* The existing priority-10 non-IP egress rule continues to handle non-ARP/NDP broadcast traffic from patch ports unchanged.
+| State | Active Flows | Behavior |
+|-------|-------------|----------|
+| + `enable-arp-proxy` | + OKEP pri-45 ARP + pri-40 proxy | ARP fully superseded; NDP via PR #6660 |
+| + `enable-ndp-proxy` | + OKEP pri-52 NA/RA + pri-45 NS + macBindingWatcher | NDP fully superseded; ARP via PR #6660 |
+| + both gates | + all OKEP flows | All PR #6660 ARP/NDP flows dead code |
+
+When either or both gates are enabled:
+
+* The existing priority-10 unicast flood rule becomes a harmless fallback — uplink ARP is intercepted at priority 45 and NDP NAs at priority 52.
+* The existing priority-10 non-IP egress rule handles UDN outbound ARP/NDP, with `no-flood` preventing CUDN delivery.
+* All PR #6660 flows (priority-12, priority-11, table-1 FLOOD modifications) are superseded by higher-priority OKEP flows. Cleanup is left as follow-up once long term fix will be in place.
 * No Kubernetes API changes (no CRD, no webhook, no schema changes).
 * No OVN schema changes (uses existing `MAC_Binding` table).
 
@@ -487,10 +523,8 @@ Watch the Linux kernel's neighbor table on breth0 via netlink. Program ARP proxy
 
 ## References
 
-* CORENET-7289: Scalable ARP/broadcast handling for UDN (this feature's epic)
-* OCPBUGS-85627: Root cause bug - ARP flooding exceeds OVS resubmit limit
-* CORENET-6996: GARP storm and masquerade ARP fixes ([PR #6346](https://github.com/ovn-kubernetes/ovn-kubernetes/pull/6346))
-* [PR #6660](https://github.com/ovn-kubernetes/ovn-kubernetes/pull/6660): ARP/NDP steering for node IPs (narrower fix superseded by this OKEP)
-* CORENET-7290: Long-term topology redesign (unique MAC per GR)
+* [PR #6346](https://github.com/ovn-kubernetes/ovn-kubernetes/pull/6346): GARP storm and masquerade ARP fixes
+* [PR #6660](https://github.com/ovn-kubernetes/ovn-kubernetes/pull/6660): Short-term ARP/NDP fan-out fix (`no-flood` + priority-12/11 steering). This OKEP's foundation — `no-flood` is inherited; flow-level changes become dead code under OKEP gates.
+* [PR #5334](https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5334): FDB learning fix — established the `output:patch,NORMAL` pattern for FDB learning on br-ex, precedent for the trailing `NORMAL` in this OKEP's priority-45/52 flows.
 * OVN commit [`58ce60d`](https://github.com/ovn-org/ovn/commit/58ce60d2f1d932b842512763c2b8fc0943e1f8e3): Background ARP/NDP stale probes (OVN 25.03+)
 * OVN commit [`33bb66c`](https://github.com/ovn-org/ovn/commit/33bb66c6c8e6e119bf9006dbe868457eecf82c9e): `mac_cache_use` flow for MAC_Binding timestamp refresh
