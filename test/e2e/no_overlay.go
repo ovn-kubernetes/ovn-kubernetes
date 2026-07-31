@@ -8,12 +8,13 @@ import (
 	"fmt"
 	"hash/fnv"
 	"net"
-	"strings"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	rav1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
 	raclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned"
 	apitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -50,7 +51,7 @@ var _ = ginkgo.Describe("No-Overlay: Default network is enabled with no-overlay"
 	var serverService *corev1.Service
 	var nodes *corev1.NodeList
 
-	ginkgo.BeforeEach(func() {
+	ginkgo.JustBeforeEach(func() {
 		var err error
 		ginkgo.By("Selecting nodes")
 		nodes, err = e2enode.GetReadySchedulableNodes(context.TODO(), f.ClientSet)
@@ -198,6 +199,21 @@ var _ = ginkgo.Describe("No-Overlay: Default network is enabled with no-overlay"
 			checkConnectivityWithoutOverlay(serverPod.Status.PodIPs, serverService.Spec.ClusterIPs, tcpdumpPod, tcpdumpPod)
 
 			framework.Logf("Pod2pod and pod2service connectivity maintained after ovnkube-node pod restart - test passed!")
+		})
+	})
+
+	ginkgo.When("unmanaged routing is enabled without RouteAdvertisements", func() {
+		ginkgo.BeforeEach(func() {
+			enabled, err := isDefaultNetworkNoOverlayUnmanagedWithoutRouteAdvertisements()
+			framework.ExpectNoError(err, "Failed to check default network no-overlay unmanaged state")
+			if !enabled {
+				ginkgo.Skip("Test requires unmanaged no-overlay default network without RouteAdvertisements")
+			}
+		})
+
+		ginkgo.It("should maintain pod2pod connectivity without RouteAdvertisements", func() {
+			ginkgo.By("Testing pod2pod connectivity without default-network RouteAdvertisements")
+			checkConnectivityWithoutOverlay(serverPod.Status.PodIPs, nil, clientPod, tcpdumpPod)
 		})
 	})
 
@@ -391,6 +407,31 @@ func isManagedRoutingEnabled() bool {
 		return true
 	}
 	return false
+}
+
+func isDefaultNetworkNoOverlayUnmanagedWithoutRouteAdvertisements() (bool, error) {
+	if isManagedRoutingEnabled() {
+		return false, nil
+	}
+	hasDefaultNetworkRA, err := isAnyDefaultNetworkPodNetworkRouteAdvertisementsConfigured()
+	if err != nil {
+		return false, err
+	}
+	return !hasDefaultNetworkRA, nil
+}
+
+func isAnyDefaultNetworkPodNetworkRouteAdvertisementsConfigured() (bool, error) {
+	output, err := e2ekubectl.RunKubectl("default", "get", "routeadvertisements", "-o",
+		`go-template={{range .items}}{{range .spec.advertisements}}{{.}} {{end}}{{range .spec.networkSelectors}}{{.networkSelectionType}} {{end}}{{"\n"}}{{end}}`)
+	if err != nil {
+		return false, err
+	}
+	for _, line := range strings.Split(output, "\n") {
+		if strings.Contains(line, string(rav1.PodNetwork)) && strings.Contains(line, string(apitypes.DefaultNetwork)) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // managedRouteAdvertisementName matches clustermanager/managedbgp.ManagedRouteAdvertisementName
