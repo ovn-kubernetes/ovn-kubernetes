@@ -1400,10 +1400,6 @@ func (c *nadController) GetPrimaryNADForNamespace(namespace string) (string, err
 	// Double-check if the namespace *requires* a primary UDN.
 	ns, err := c.namespaceLister.Get(namespace)
 	if err != nil {
-		if apierrors.IsNotFound(err) {
-			// Namespace is gone — no primary NAD by definition.
-			return "", nil
-		}
 		return "", fmt.Errorf("failed to fetch namespace %q: %w", namespace, err)
 	}
 	if _, exists := ns.Labels[types.RequiredUDNNamespaceLabel]; exists {
