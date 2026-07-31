@@ -650,8 +650,6 @@ type OvnAuthConfig struct {
 	RunDir string `gcfg:"run-dir"`
 	// DbLocation is OVN northbound/southbound database location.
 	DbLocation string `gcfg:"db-location"`
-
-	exec kexec.Interface
 }
 
 // OvsPathConfig holds OVS location details.
@@ -1964,18 +1962,6 @@ func getOVSExternalID(exec kexec.Interface, name string) string {
 	return out
 }
 
-func setOVSExternalID(exec kexec.Interface, key, value string) error {
-	out, err := runOVSVsctl(exec,
-		"set",
-		"Open_vSwitch",
-		".",
-		fmt.Sprintf("external_ids:%s=%s", key, value))
-	if err != nil {
-		return fmt.Errorf("error setting OVS external ID '%s=%s': %v\n  %q", key, value, err, out)
-	}
-	return nil
-}
-
 // reconcileKubernetesAuthFields ensures that if a config stage provides Token/TokenFile
 // or CACert/CACertData, stale value for any of these set by previous stage is cleared.
 // This is required since any combination of these fields could be set by any stage
@@ -2854,13 +2840,13 @@ func initConfigWithPath(ctx *cli.Context, exec kexec.Interface, saPath string, d
 		return "", err
 	}
 
-	tmpAuth, err := buildOvnAuth(exec, true, &cliConfig.OvnNorth, &cfg.OvnNorth)
+	tmpAuth, err := buildOvnAuth(true, &cliConfig.OvnNorth, &cfg.OvnNorth)
 	if err != nil {
 		return "", err
 	}
 	OvnNorth = *tmpAuth
 
-	tmpAuth, err = buildOvnAuth(exec, false, &cliConfig.OvnSouth, &cfg.OvnSouth)
+	tmpAuth, err = buildOvnAuth(false, &cliConfig.OvnSouth, &cfg.OvnSouth)
 	if err != nil {
 		return "", err
 	}
@@ -2942,7 +2928,7 @@ func pathExists(path string) bool {
 
 // buildOvnAuth returns an OvnAuthConfig describing how to connect to a local
 // OVN database via unix socket.
-func buildOvnAuth(exec kexec.Interface, northbound bool, cliAuth, confAuth *OvnAuthConfig) (*OvnAuthConfig, error) {
+func buildOvnAuth(northbound bool, cliAuth, confAuth *OvnAuthConfig) (*OvnAuthConfig, error) {
 	var defaultAuth *OvnAuthConfig
 	if northbound {
 		defaultAuth = &savedOvnNorth
@@ -2952,7 +2938,6 @@ func buildOvnAuth(exec kexec.Interface, northbound bool, cliAuth, confAuth *OvnA
 
 	auth := &OvnAuthConfig{
 		northbound: northbound,
-		exec:       exec,
 		RunDir:     defaultAuth.RunDir,
 		DbLocation: defaultAuth.DbLocation,
 	}
@@ -2977,16 +2962,6 @@ func (a *OvnAuthConfig) GetURL() string {
 		direction = "nb"
 	}
 	return fmt.Sprintf("unix:%s", filepath.Join(a.RunDir, fmt.Sprintf("ovn%s_db.sock", direction)))
-}
-
-// SetDBAuth tells ovn-controller where to find the local SB database via the
-// "ovn-remote" external id. For the northbound database it is a no-op since
-// no equivalent indirection is needed.
-func (a *OvnAuthConfig) SetDBAuth() error {
-	if a.northbound {
-		return nil
-	}
-	return setOVSExternalID(a.exec, "ovn-remote", "\""+a.GetURL()+"\"")
 }
 
 // ovnKubeNodeModeSupported validates the provided mode is supported by ovnkube node

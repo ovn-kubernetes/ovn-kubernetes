@@ -1488,39 +1488,6 @@ udn-allowed-default-services= ns/svc, ns1/svc1
 		err = app.Run(cliArgs)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	})
-	Describe("OvnDBAuth operations", func() {
-		It("configures client southbound DB auth to unix socket via external_ids", func() {
-			fexec := ovntest.NewFakeExec()
-			expectedURL := "unix:/var/run/ovn/ovnsb_db.sock"
-			fexec.AddFakeCmdsNoOutputNoError([]string{
-				"ovs-vsctl --timeout=15 set Open_vSwitch . external_ids:ovn-remote=\"" + expectedURL + "\"",
-			})
-
-			cli := &OvnAuthConfig{RunDir: "/var/run/ovn/"}
-			a, err := buildOvnAuth(fexec, false, cli, &OvnAuthConfig{RunDir: "/var/run/ovn/"})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(a.northbound).To(gomega.BeFalse())
-			gomega.Expect(a.GetURL()).To(gomega.Equal(expectedURL))
-
-			err = a.SetDBAuth()
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(fexec.CalledMatchesExpected()).To(gomega.BeTrue(), fexec.ErrorDesc)
-		})
-
-		It("northbound SetDBAuth is a no-op", func() {
-			fexec := ovntest.NewFakeExec()
-			cli := &OvnAuthConfig{RunDir: "/var/run/ovn/"}
-			a, err := buildOvnAuth(fexec, true, cli, &OvnAuthConfig{RunDir: "/var/run/ovn/"})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(a.northbound).To(gomega.BeTrue())
-			gomega.Expect(a.GetURL()).To(gomega.Equal("unix:/var/run/ovn/ovnnb_db.sock"))
-
-			err = a.SetDBAuth()
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(fexec.CalledMatchesExpected()).To(gomega.BeTrue(), fexec.ErrorDesc)
-		})
-	})
-
 	// This testcase factory function exists only to ensure that 'runType'
 	// and 'dir' are evaluated when this factory function is called (and
 	// the It() is created), but that the CLI arguments are evaluated only

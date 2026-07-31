@@ -7,9 +7,8 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	kexec "k8s.io/utils/exec"
@@ -181,6 +180,95 @@ func TestClearPodBandwidthWithOVSClient(t *testing.T) {
 	require.True(t, qosExists(otherQOSUUID), "expected unrelated QoS to be preserved")
 }
 
+func TestSetPodBandwidthWithOVSClient(t *testing.T) {
+	tests := []struct {
+		name              string
+		ingressBPS        int64
+		egressBPS         int64
+		expectQOS         bool
+		expectedRateKBPS  int
+		expectedBurstKBPS int
+	}{
+		{
+			name:              "ingress and egress",
+			ingressBPS:        10_000_000,
+			egressBPS:         2_000_000,
+			expectQOS:         true,
+			expectedRateKBPS:  2000,
+			expectedBurstKBPS: 200,
+		},
+		{
+			name:       "ingress only",
+			ingressBPS: 10_000_000,
+			expectQOS:  true,
+		},
+		{
+			name:              "egress only",
+			egressBPS:         2_000_000,
+			expectedRateKBPS:  2000,
+			expectedBurstKBPS: 200,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			const (
+				ovsUUID    = "00000000-0000-0000-0000-000000000001"
+				bridgeUUID = "00000000-0000-0000-0000-000000000002"
+				portUUID   = "00000000-0000-0000-0000-000000000003"
+				ifaceUUID  = "00000000-0000-0000-0000-000000000004"
+			)
+			ovsClient, cleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
+				OVSData: []libovsdbtest.TestData{
+					&vswitchd.OpenvSwitch{UUID: ovsUUID, Bridges: []string{bridgeUUID}},
+					&vswitchd.Bridge{UUID: bridgeUUID, Name: "br-int", Ports: []string{portUUID}},
+					&vswitchd.Port{UUID: portUUID, Name: "pod-port", Interfaces: []string{ifaceUUID}},
+					&vswitchd.Interface{UUID: ifaceUUID, Name: "pod-port"},
+				},
+			})
+			require.NoError(t, err)
+			t.Cleanup(cleanup.Cleanup)
+
+			require.NoError(t, setPodBandwidth(
+				ovsClient, "sandboxID", "pod-port", test.ingressBPS, test.egressBPS))
+
+			port := &vswitchd.Port{UUID: portUUID}
+			if test.expectQOS {
+				require.Eventually(t, func() bool {
+					return ovsClient.Get(context.Background(), port) == nil && port.QOS != nil
+				}, time.Second, 10*time.Millisecond)
+				require.True(t, ovsdb.IsValidUUID(*port.QOS))
+				results, err := ovsops.TransactAndCheck(ovsClient, []ovsdb.Operation{{
+					Op:    ovsdb.OperationSelect,
+					Table: vswitchd.QoSTable,
+					Where: []ovsdb.Condition{
+						ovsdb.NewCondition("_uuid", ovsdb.ConditionEqual, ovsdb.UUID{GoUUID: *port.QOS}),
+					},
+				}})
+				require.NoError(t, err)
+				require.Len(t, results, 1)
+				require.Len(t, results[0].Rows, 1)
+				qosRow := results[0].Rows[0]
+				require.Equal(t, "linux-htb", qosRow["type"])
+				otherConfig, ok := qosRow["other_config"].(ovsdb.OvsMap)
+				require.True(t, ok)
+				require.Equal(t, fmt.Sprint(test.ingressBPS), otherConfig.GoMap["max-rate"])
+				externalIDs, ok := qosRow["external_ids"].(ovsdb.OvsMap)
+				require.True(t, ok)
+				require.Equal(t, "sandboxID", externalIDs.GoMap["sandbox"])
+			} else {
+				require.NoError(t, ovsClient.Get(context.Background(), port))
+				require.Nil(t, port.QOS)
+			}
+
+			iface := &vswitchd.Interface{UUID: ifaceUUID}
+			require.NoError(t, ovsClient.Get(context.Background(), iface))
+			require.Equal(t, test.expectedRateKBPS, iface.IngressPolicingRate)
+			require.Equal(t, test.expectedBurstKBPS, iface.IngressPolicingBurst)
+		})
+	}
+}
+
 func TestSetPodBandwidth(t *testing.T) {
 	mockKexecIface := new(mock_k8s_io_utils_exec.Interface)
 	mockCmd := new(mock_k8s_io_utils_exec.Cmd)
@@ -294,7 +382,7 @@ func TestSetPodBandwidth(t *testing.T) {
 			// note runner is defined in pkg/cni/ovs.go file
 			runner = tc.runnerInstance
 
-			e := setPodBandwidth("sandboxID", "ifname", 1, tc.egressBPS)
+			e := setPodBandwidth(nil, "sandboxID", "ifname", 1, tc.egressBPS)
 
 			if tc.expectedErr {
 				require.Error(t, e)
@@ -302,253 +390,6 @@ func TestSetPodBandwidth(t *testing.T) {
 				require.NoError(t, e)
 			}
 
-			mockCmd.AssertExpectations(t)
-			mockKexecIface.AssertExpectations(t)
-		})
-	}
-}
-
-func TestGetIngressPodBandwidth(t *testing.T) {
-	mockKexecIface := new(mock_k8s_io_utils_exec.Interface)
-	mockCmd := new(mock_k8s_io_utils_exec.Cmd)
-
-	tests := []struct {
-		desc                string
-		expectedErr         bool
-		expectedNotFound    bool
-		onRetArgsKexecIface []ovntest.TestifyMockHelper
-		onRetArgsCmdList    []ovntest.TestifyMockHelper
-		runnerInstance      kexec.Interface
-		bps                 int64
-	}{
-		{
-			desc: "Positive test code path when ingressBPS is correctly set",
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-			},
-			onRetArgsCmdList: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "CombinedOutput", OnCallMethodArgType: []string{}, RetArgList: []interface{}{[]byte{1}, nil}},
-				{OnCallMethodName: "CombinedOutput", OnCallMethodArgType: []string{}, RetArgList: []interface{}{[]byte("\"10000000\""), nil}},
-			},
-			runnerInstance: mockKexecIface,
-			bps:            10000000,
-		},
-		{
-			desc: "Positive test code path when ingressBPS is not set",
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-			},
-			onRetArgsCmdList: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "CombinedOutput", OnCallMethodArgType: []string{}, RetArgList: []interface{}{nil, nil}},
-			},
-			runnerInstance:   mockKexecIface,
-			expectedNotFound: true,
-		},
-		{
-			desc: "Positive test code path when ingressBPS is not set (no max-rate)",
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-			},
-			onRetArgsCmdList: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "CombinedOutput", OnCallMethodArgType: []string{}, RetArgList: []interface{}{[]byte{1}, nil}},
-				{OnCallMethodName: "CombinedOutput", OnCallMethodArgType: []string{}, RetArgList: []interface{}{nil, nil}},
-			},
-			runnerInstance:   mockKexecIface,
-			expectedNotFound: true,
-		},
-		{
-			desc:        "Negative test code path when ovsGet 'port' returns error",
-			expectedErr: true,
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-			},
-			onRetArgsCmdList: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "CombinedOutput", OnCallMethodArgType: []string{}, RetArgList: []interface{}{nil, fmt.Errorf("mock: failed to run ovsSet")}},
-			},
-			runnerInstance: mockKexecIface,
-		},
-		{
-			desc:        "Negative test code path when ovsGet 'qos' returns error",
-			expectedErr: true,
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-			},
-			onRetArgsCmdList: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "CombinedOutput", OnCallMethodArgType: []string{}, RetArgList: []interface{}{[]byte{1}, nil}},
-				{OnCallMethodName: "CombinedOutput", OnCallMethodArgType: []string{}, RetArgList: []interface{}{nil, fmt.Errorf("mock: failed to run ovsSet")}},
-			},
-			runnerInstance: mockKexecIface,
-		},
-		{
-			desc:        "Negative test code path when max-rate value cannot be transfer to integer",
-			expectedErr: true,
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-			},
-			onRetArgsCmdList: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "CombinedOutput", OnCallMethodArgType: []string{}, RetArgList: []interface{}{[]byte{1}, nil}},
-				{OnCallMethodName: "CombinedOutput", OnCallMethodArgType: []string{}, RetArgList: []interface{}{[]byte("test"), nil}},
-			},
-			runnerInstance: mockKexecIface,
-		},
-	}
-	for i, tc := range tests {
-		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
-			if tc.onRetArgsKexecIface != nil {
-				for _, item := range tc.onRetArgsKexecIface {
-					ifaceCall := mockKexecIface.On(item.OnCallMethodName)
-					for _, arg := range item.OnCallMethodArgType {
-						ifaceCall.Arguments = append(ifaceCall.Arguments, mock.AnythingOfType(arg))
-					}
-					for _, ret := range item.RetArgList {
-						ifaceCall.ReturnArguments = append(ifaceCall.ReturnArguments, ret)
-					}
-					ifaceCall.Once()
-				}
-			}
-
-			if tc.onRetArgsCmdList != nil {
-				for _, item := range tc.onRetArgsCmdList {
-					mockCall := mockCmd.On(item.OnCallMethodName)
-					for _, arg := range item.OnCallMethodArgType {
-						mockCall.Arguments = append(mockCall.Arguments, mock.AnythingOfType(arg))
-					}
-					for _, ret := range item.RetArgList {
-						mockCall.ReturnArguments = append(mockCall.ReturnArguments, ret)
-					}
-					mockCall.Once()
-				}
-			}
-			// note runner is defined in pkg/cni/ovs.go file
-			runner = tc.runnerInstance
-			bandwidth, e := getOvsPortBandwidth("ifname", Ingress)
-			switch {
-			case tc.expectedErr:
-				require.Error(t, e)
-			case tc.expectedNotFound:
-				assert.Equal(t, e, BandwidthNotFound)
-			default:
-				require.NoError(t, e)
-				assert.Equal(t, bandwidth, tc.bps)
-			}
-			mockCmd.AssertExpectations(t)
-			mockKexecIface.AssertExpectations(t)
-		})
-	}
-}
-
-func TestGetEgressPodBandwidth(t *testing.T) {
-	mockKexecIface := new(mock_k8s_io_utils_exec.Interface)
-	mockCmd := new(mock_k8s_io_utils_exec.Cmd)
-
-	tests := []struct {
-		desc                string
-		expectedErr         bool
-		expectedNotFound    bool
-		onRetArgsKexecIface []ovntest.TestifyMockHelper
-		onRetArgsCmdList    []ovntest.TestifyMockHelper
-		runnerInstance      kexec.Interface
-		bps                 int64
-	}{
-		{
-			desc: "Positive test code path when egressBPS is correctly set",
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-			},
-			onRetArgsCmdList: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "CombinedOutput", OnCallMethodArgType: []string{}, RetArgList: []interface{}{[]byte("10000"), nil}},
-			},
-			runnerInstance: mockKexecIface,
-			bps:            10000000,
-		},
-		{
-			desc: "Positive test code path when egressBPS is not set (no ingress_policing_rate)",
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-			},
-			onRetArgsCmdList: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "CombinedOutput", OnCallMethodArgType: []string{}, RetArgList: []interface{}{nil, nil}},
-			},
-			runnerInstance:   mockKexecIface,
-			expectedNotFound: true,
-		},
-		{
-			desc: "Positive test code path when egressBPS is not set",
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-			},
-			onRetArgsCmdList: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "CombinedOutput", OnCallMethodArgType: []string{}, RetArgList: []interface{}{[]byte("0"), nil}},
-			},
-			runnerInstance:   mockKexecIface,
-			expectedNotFound: true,
-		},
-		{
-			desc:        "Negative test code path when ovsGet 'interface' returns error",
-			expectedErr: true,
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-			},
-			onRetArgsCmdList: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "CombinedOutput", OnCallMethodArgType: []string{}, RetArgList: []interface{}{nil, fmt.Errorf("mock: failed to run ovsSet")}},
-			},
-			runnerInstance: mockKexecIface,
-		},
-		{ // cannot happen
-			desc:        "Negative test code path when ingress_policing_rate cannot be transfer to integer ",
-			expectedErr: true,
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-			},
-			onRetArgsCmdList: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "CombinedOutput", OnCallMethodArgType: []string{}, RetArgList: []interface{}{[]byte("test"), nil}},
-			},
-			runnerInstance: mockKexecIface,
-		},
-	}
-	for i, tc := range tests {
-		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
-			if tc.onRetArgsKexecIface != nil {
-				for _, item := range tc.onRetArgsKexecIface {
-					ifaceCall := mockKexecIface.On(item.OnCallMethodName)
-					for _, arg := range item.OnCallMethodArgType {
-						ifaceCall.Arguments = append(ifaceCall.Arguments, mock.AnythingOfType(arg))
-					}
-					for _, ret := range item.RetArgList {
-						ifaceCall.ReturnArguments = append(ifaceCall.ReturnArguments, ret)
-					}
-					ifaceCall.Once()
-				}
-			}
-
-			if tc.onRetArgsCmdList != nil {
-				for _, item := range tc.onRetArgsCmdList {
-					mockCall := mockCmd.On(item.OnCallMethodName)
-					for _, arg := range item.OnCallMethodArgType {
-						mockCall.Arguments = append(mockCall.Arguments, mock.AnythingOfType(arg))
-					}
-					for _, ret := range item.RetArgList {
-						mockCall.ReturnArguments = append(mockCall.ReturnArguments, ret)
-					}
-					mockCall.Once()
-				}
-			}
-			// note runner is defined in pkg/cni/ovs.go file
-			runner = tc.runnerInstance
-			bandwidth, e := getOvsPortBandwidth("ifname", Egress)
-			switch {
-			case tc.expectedErr:
-				require.Error(t, e)
-			case tc.expectedNotFound:
-				assert.Equal(t, e, BandwidthNotFound)
-			default:
-				require.NoError(t, e)
-				assert.Equal(t, bandwidth, tc.bps)
-			}
 			mockCmd.AssertExpectations(t)
 			mockKexecIface.AssertExpectations(t)
 		})
