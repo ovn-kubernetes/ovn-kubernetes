@@ -775,5 +775,16 @@ add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-open-ports-icmp-v6 met
 
 			Expect(manager.setupUDNIsolationFromHost()).NotTo(Succeed())
 		})
+
+		It("keeps the kubelet rule and stays quiet when the load fails for another reason", func() {
+			manager.kubeletCgroupPath = "kubelet.slice/kubelet.service"
+			// the load fails with and without the kubelet match, so the match is not
+			// the reason and reporting the probes as unsupported would be wrong.
+			manager.nft = &nftRunFailer{Interface: fakeNFT, failures: 2}
+
+			Expect(manager.setupUDNIsolationFromHost()).NotTo(Succeed())
+			Expect(manager.kubeletCgroupPath).To(Equal("kubelet.slice/kubelet.service"), "kubelet cgroup path is kept")
+			Expect(recorder.Events).NotTo(Receive(), "no event is reported")
+		})
 	})
 })

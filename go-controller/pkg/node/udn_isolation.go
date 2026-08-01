@@ -335,9 +335,18 @@ func CleanupUDNHostIsolation() error {
 func (m *UDNHostIsolationManager) setupUDNIsolationFromHost() error {
 	err := m.nft.Run(context.TODO(), m.isolationTransaction())
 	if err != nil && m.kubeletCgroupPath != "" {
+		// Dropping the kubelet match tells us whether it was the reason the rules
+		// failed to load. Only a load that succeeds without it says the match is
+		// unsupported; if it fails either way the cause is unrelated, so keep the
+		// path and report the real error rather than a misleading one.
+		matchErr := err
+		kubeletCgroupPath := m.kubeletCgroupPath
 		m.kubeletCgroupPath = ""
-		m.reportKubeletProbesUnsupported(fmt.Sprintf("the kubelet cgroup match could not be loaded: %v", err))
-		err = m.nft.Run(context.TODO(), m.isolationTransaction())
+		if err = m.nft.Run(context.TODO(), m.isolationTransaction()); err == nil {
+			m.reportKubeletProbesUnsupported(fmt.Sprintf("the kubelet cgroup match could not be loaded: %v", matchErr))
+		} else {
+			m.kubeletCgroupPath = kubeletCgroupPath
+		}
 	}
 	if err != nil {
 		return fmt.Errorf("could not setup nftables rules for UDN from host isolation: %v", err)
