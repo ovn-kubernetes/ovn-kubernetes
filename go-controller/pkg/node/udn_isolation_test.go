@@ -241,11 +241,11 @@ add set inet ovn-kubernetes udn-pod-default-ips-v4 { type ipv4_addr ; comment "d
 add set inet ovn-kubernetes udn-pod-default-ips-v6 { type ipv6_addr ; comment "default network IPs of pods in user defined networks (IPv6)" ; }
 add rule inet ovn-kubernetes udn-isolation ip daddr . meta l4proto . th dport @udn-open-ports-v4 accept
 add rule inet ovn-kubernetes udn-isolation ip daddr @udn-open-ports-icmp-v4 meta l4proto icmp accept
-add rule inet ovn-kubernetes udn-isolation socket cgroupv2 level 2 kubelet.slice/kubelet.service ip daddr @udn-pod-default-ips-v4 accept
+add rule inet ovn-kubernetes udn-isolation socket cgroupv2 level 2 "kubelet.slice/kubelet.service" ip daddr @udn-pod-default-ips-v4 accept
 add rule inet ovn-kubernetes udn-isolation ip daddr @udn-pod-default-ips-v4 drop
 add rule inet ovn-kubernetes udn-isolation ip6 daddr . meta l4proto . th dport @udn-open-ports-v6 accept
 add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-open-ports-icmp-v6 meta l4proto icmpv6 accept
-add rule inet ovn-kubernetes udn-isolation socket cgroupv2 level 2 kubelet.slice/kubelet.service ip6 daddr @udn-pod-default-ips-v6 accept
+add rule inet ovn-kubernetes udn-isolation socket cgroupv2 level 2 "kubelet.slice/kubelet.service" ip6 daddr @udn-pod-default-ips-v6 accept
 add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-pod-default-ips-v6 drop
 `
 		for _, ip := range v4ips {
@@ -605,7 +605,7 @@ add rule inet ovn-kubernetes udn-isolation ip daddr . meta l4proto . th dport @u
 add rule inet ovn-kubernetes udn-isolation ip daddr @udn-open-ports-icmp-v4 meta l4proto icmp accept
 `
 		if kubeletCgroupPath != "" {
-			result += fmt.Sprintf("add rule inet ovn-kubernetes udn-isolation socket cgroupv2 %s %s ip daddr @udn-pod-default-ips-v4 accept\n",
+			result += fmt.Sprintf("add rule inet ovn-kubernetes udn-isolation socket cgroupv2 %s %q ip daddr @udn-pod-default-ips-v4 accept\n",
 				cgroupv2Level(kubeletCgroupPath), kubeletCgroupPath)
 		}
 		result += `add rule inet ovn-kubernetes udn-isolation ip daddr @udn-pod-default-ips-v4 drop
@@ -613,7 +613,7 @@ add rule inet ovn-kubernetes udn-isolation ip6 daddr . meta l4proto . th dport @
 add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-open-ports-icmp-v6 meta l4proto icmpv6 accept
 `
 		if kubeletCgroupPath != "" {
-			result += fmt.Sprintf("add rule inet ovn-kubernetes udn-isolation socket cgroupv2 %s %s ip6 daddr @udn-pod-default-ips-v6 accept\n",
+			result += fmt.Sprintf("add rule inet ovn-kubernetes udn-isolation socket cgroupv2 %s %q ip6 daddr @udn-pod-default-ips-v6 accept\n",
 				cgroupv2Level(kubeletCgroupPath), kubeletCgroupPath)
 		}
 		result += "add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-pod-default-ips-v6 drop\n"
@@ -732,6 +732,19 @@ add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-open-ports-icmp-v6 met
 		Entry("systemd layout", "kubelet.slice/kubelet.service", "level 2"),
 		Entry("single component", "kubelet", "level 1"),
 		Entry("nested layout", "runtime.slice/kubelet.slice/kubelet.service", "level 3"),
+	)
+
+	DescribeTable("quotes the cgroup path for the socket cgroupv2 match",
+		func(cgroupPath, expected string) {
+			Expect(quoteCgroupPath(cgroupPath)).To(Equal(expected))
+		},
+		Entry("plain path", "kubelet.slice/kubelet.service", `"kubelet.slice/kubelet.service"`),
+		// "@" starts a set reference in nft, so an unquoted template unit would be
+		// parsed as syntax rather than as a cgroup path.
+		Entry("template unit", "system.slice/kubelet@0.service", `"system.slice/kubelet@0.service"`),
+		Entry("colon in name", `system.slice/foo:bar.service`, `"system.slice/foo:bar.service"`),
+		Entry("backslash is escaped", `system.slice/foo\bar.service`, `"system.slice/foo\\bar.service"`),
+		Entry("quote cannot end the string early", `system.slice/foo".service`, `"system.slice/foo\".service"`),
 	)
 
 	Context("nftables setup", func() {

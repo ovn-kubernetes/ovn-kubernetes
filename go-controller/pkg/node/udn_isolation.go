@@ -399,6 +399,16 @@ func cgroupv2Level(cgroupPath string) string {
 	return fmt.Sprintf("level %d", strings.Count(cgroupPath, "/")+1)
 }
 
+// quoteCgroupPath renders the cgroup path as a quoted nftables string. Cgroup directory
+// names may contain characters nft would otherwise read as syntax, most importantly "@",
+// which starts a set reference. Backslashes and quotes are escaped so a path cannot
+// terminate the string early.
+func quoteCgroupPath(cgroupPath string) string {
+	escaped := strings.ReplaceAll(cgroupPath, `\`, `\\`)
+	escaped = strings.ReplaceAll(escaped, `"`, `\"`)
+	return `"` + escaped + `"`
+}
+
 func (m *UDNHostIsolationManager) addRules(tx *knftables.Transaction) {
 	if m.ipv4 {
 		tx.Add(&knftables.Rule{
@@ -420,7 +430,7 @@ func (m *UDNHostIsolationManager) addRules(tx *knftables.Transaction) {
 			tx.Add(&knftables.Rule{
 				Chain: UDNIsolationChain,
 				Rule: knftables.Concat(
-					"socket", "cgroupv2", cgroupv2Level(m.kubeletCgroupPath), m.kubeletCgroupPath,
+					"socket", "cgroupv2", cgroupv2Level(m.kubeletCgroupPath), quoteCgroupPath(m.kubeletCgroupPath),
 					"ip", "daddr", "@", nftablesUDNPodIPsv4, "accept"),
 			})
 		}
@@ -450,7 +460,7 @@ func (m *UDNHostIsolationManager) addRules(tx *knftables.Transaction) {
 			tx.Add(&knftables.Rule{
 				Chain: UDNIsolationChain,
 				Rule: knftables.Concat(
-					"socket", "cgroupv2", cgroupv2Level(m.kubeletCgroupPath), m.kubeletCgroupPath,
+					"socket", "cgroupv2", cgroupv2Level(m.kubeletCgroupPath), quoteCgroupPath(m.kubeletCgroupPath),
 					"ip6", "daddr", "@", nftablesUDNPodIPsv6, "accept"),
 			})
 		}
