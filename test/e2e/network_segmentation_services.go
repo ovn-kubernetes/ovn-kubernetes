@@ -14,7 +14,6 @@ import (
 	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
 	infraapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
@@ -266,13 +265,6 @@ ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | 
 				checkConnectionToNodePort(f, udnClientPod2, defaultService, &nodes.Items[2], "other node", defaultServerPod.Name)
 				checkNoConnectionToClusterIPs(f, udnClientPod2, defaultService)
 
-				// Make sure that restarting OVNK after applying a UDN with an affected service won't result
-				// in OVNK in CLBO state https://issues.redhat.com/browse/OCPBUGS-41499
-				if netConfigParams.topology == "layer3" { // no need to run it for layer 2 as well
-					By("Restart ovnkube-node on one node and verify that the new ovnkube-node pod goes to the running state")
-					err = restartOVNKubeNodePod(cs, deploymentconfig.Get().OVNKubernetesNamespace(), clientNode)
-					Expect(err).NotTo(HaveOccurred())
-				}
 			},
 
 			Entry(

@@ -15,7 +15,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
-func TestSharedNoOverlayNodeIPFlowUsesNATInDefaultConntrackZone(t *testing.T) {
+func TestSharedUDNEgressFlowsSupportLegacyAndV2SNAT(t *testing.T) {
 	if err := config.PrepareTestConfig(); err != nil {
 		t.Fatalf("failed to prepare test config: %v", err)
 	}
@@ -48,7 +48,6 @@ func TestSharedNoOverlayNodeIPFlowUsesNATInDefaultConntrackZone(t *testing.T) {
 				OfPortPatch: "patch-breth0_bluenet",
 				MasqCTMark:  "0x4",
 				PktMark:     "0x3",
-				Transport:   types.NetworkTransportNoOverlay,
 				V4MasqIPs: &udngenerator.MasqueradeIPs{
 					GatewayRouter:  v4GatewayMasqIP,
 					ManagementPort: v4ManagementMasqIP,
@@ -67,14 +66,22 @@ func TestSharedNoOverlayNodeIPFlowUsesNATInDefaultConntrackZone(t *testing.T) {
 	}
 
 	expectedIPv4 := fmt.Sprintf("cookie=%s, priority=99, in_port=patch-breth0_bluenet, dl_src=%s, ip, nw_src=172.18.0.3, "+
-		"actions=ct(commit, zone=%d, nat(src=172.18.0.3), exec(set_field:0x4->ct_mark)), output:eth0",
+		"actions=ct(commit, zone=%d, nat(src=0.0.0.0), exec(set_field:0x4->ct_mark)), output:eth0",
 		nodetypes.DefaultOpenFlowCookie, bridgeMAC, config.Default.ConntrackZone)
 	expectedIPv6 := fmt.Sprintf("cookie=%s, priority=99, in_port=patch-breth0_bluenet, dl_src=%s, ipv6, ipv6_src=fd00::3, "+
+		"actions=ct(commit, zone=%d, nat(src=::), exec(set_field:0x4->ct_mark)), output:eth0",
+		nodetypes.DefaultOpenFlowCookie, bridgeMAC, config.Default.ConntrackZone)
+	expectedLegacyIPv4 := fmt.Sprintf("cookie=%s, priority=100, in_port=patch-breth0_bluenet, dl_src=%s, ip, ip_src=169.254.0.11, "+
+		"actions=ct(commit, zone=%d, nat(src=172.18.0.3), exec(set_field:0x4->ct_mark)), output:eth0",
+		nodetypes.DefaultOpenFlowCookie, bridgeMAC, config.Default.ConntrackZone)
+	expectedLegacyIPv6 := fmt.Sprintf("cookie=%s, priority=100, in_port=patch-breth0_bluenet, dl_src=%s, ipv6, ipv6_src=fd69::11, "+
 		"actions=ct(commit, zone=%d, nat(src=fd00::3), exec(set_field:0x4->ct_mark)), output:eth0",
 		nodetypes.DefaultOpenFlowCookie, bridgeMAC, config.Default.ConntrackZone)
 
 	expectFlow(t, flows, expectedIPv4)
 	expectFlow(t, flows, expectedIPv6)
+	expectFlow(t, flows, expectedLegacyIPv4)
+	expectFlow(t, flows, expectedLegacyIPv6)
 }
 
 func TestUplinkBridgeServiceFlowsUseUDNMark(t *testing.T) {
