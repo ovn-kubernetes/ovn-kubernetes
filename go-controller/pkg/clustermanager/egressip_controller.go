@@ -1448,6 +1448,10 @@ func (eIPC *egressIPClusterController) isEgressIPAddrConflict(egressIP net.IP) (
 		}
 		nodeHostAddrsSet, err := util.ParseNodeHostCIDRsDropNetMask(node)
 		if err != nil {
+			if util.IsAnnotationNotSetError(err) {
+				klog.Warningf("Skipping node %s for EgressIP conflict check: %v", node.Name, err)
+				continue
+			}
 			return false, "", fmt.Errorf("failed to parse node host cidrs for node %s: %v", node.Name, err)
 		}
 		if nodeHostAddrsSet.Has(egressIP.String()) {

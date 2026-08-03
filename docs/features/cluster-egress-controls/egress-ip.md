@@ -13,6 +13,25 @@ For more info, consider looking at the following links:
 
 Always check the dependencies on the [Requirements page](../requirements.md)
 
+## Node Requirements
+
+Nodes must have the `k8s.ovn.org/host-cidrs` annotation set for EgressIP assignment.
+This annotation is automatically set during node bootstrap and contains the node's host
+network CIDR(s). Nodes missing this annotation — such as those stuck in `NodeStatusNeverUpdated`,
+orphaned by cluster autoscaler, or never properly bootstrapped — are automatically excluded
+from EgressIP allocation.
+
+This defensive behavior prevents a single misconfigured or orphaned node from causing
+cluster-wide EgressIP outages. The EgressIP controller will skip nodes without `host-cidrs`
+during the conflict-check phase and continue processing other eligible nodes.
+
+**Troubleshooting:** If an EgressIP is not assigned to an expected node, verify the node
+has the `k8s.ovn.org/host-cidrs` annotation set:
+
+```bash
+kubectl get node <node-name> -o jsonpath='{.metadata.annotations.k8s\.ovn\.org/host-cidrs}'
+```
+
 ## Example
 
 An example of EgressIP might look like this:

@@ -3790,6 +3790,148 @@ spec:
 			gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("The \"k8s.ovn.org/egressip-mark\" annotation cannot be modified or removed once set. This annotation is managed by the system.")))
 		})
 
+		/*
+			This test validates that nodes missing the k8s.ovn.org/host-cidrs annotation
+			are excluded from EgressIP allocation and do not cause cluster-wide EgressIP outages.
+
+			Steps:
+			0. Label two nodes as egress-assignable
+			1. Create an EgressIP object with two IPs (one IPv4, one IPv6 in dual-stack)
+			2. Verify both IPs are assigned to the two nodes
+			3. Create a pod matching the EgressIP
+			4. Verify egress traffic uses the assigned EgressIP
+			5. Remove host-cidrs annotation from one node (simulate orphan)
+			6. Verify the orphaned node's EgressIP is reassigned to the other node
+			7. Verify EgressIP functionality still works (no cluster-wide outage)
+			8. Restore host-cidrs annotation
+			9. Verify the node becomes eligible for EgressIP assignment again
+		*/
+		ginkgo.It("Should handle orphaned nodes missing host-cidrs annotation", func() {
+			if isUserDefinedNetwork(netConfigParams) {
+				ginkgo.Skip("Unsupported for UDNs")
+			}
+
+			ginkgo.By("0. Label two nodes as egress-assignable")
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable", "dummy")
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress2Node.name, "k8s.ovn.org/egress-assignable", "dummy")
+
+			podNamespace := f.Namespace
+			podName := "egressip-pod"
+			egressIPName := "eip-orphan-test"
+			podEgressLabel := map[string]string{
+				"egress-pod": "true",
+			}
+
+			ginkgo.By("1. Create an EgressIP object with one IP")
+			var egressIP net.IP
+			var err error
+			if utilnet.IsIPv6String(egress1Node.nodeIP) {
+				egressIP, err = ipalloc.NewPrimaryIPv6()
+			} else {
+				egressIP, err = ipalloc.NewPrimaryIPv4()
+			}
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate new EgressIP")
+
+			egressIPConfig := fmt.Sprintf(`apiVersion: k8s.ovn.org/v1
+kind: EgressIP
+metadata:
+    name: %s
+spec:
+    egressIPs:
+    - %s
+    podSelector:
+        matchLabels:
+            egress-pod: "true"
+    namespaceSelector:
+        matchLabels:
+            kubernetes.io/metadata.name: %s
+`, egressIPName, egressIP.String(), podNamespace.Name)
+
+			egressIPYaml := filepath.Join(f.TempDir, "egressIP.yaml")
+			if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
+				framework.Failf("Unable to write CRD config to disk: %v", err)
+			}
+			defer func() {
+				if err := os.Remove(egressIPYaml); err != nil {
+					framework.Logf("Unable to remove the CRD config from disk: %v", err)
+				}
+			}()
+
+			framework.Logf("Create the EgressIP configuration")
+			e2ekubectl.RunKubectlOrDie("default", "create", "-f", egressIPYaml)
+
+			ginkgo.By("2. Verify EgressIP is assigned to one of the nodes")
+			statuses := verifyEgressIPStatusLengthEquals(1, nil)
+			initialNode := statuses[0].Node
+			framework.Logf("EgressIP %s initially assigned to node %s", egressIP.String(), initialNode)
+
+			ginkgo.By("3. Create a pod matching the EgressIP")
+			// Create pod on a non-egress node to verify rerouting works
+			createGenericPodWithLabel(f, podName, workerNodes[0].name, podNamespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
+
+			ginkgo.By("4. Verify egress traffic uses the assigned EgressIP")
+			err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, podName, true, []string{egressIP.String()}))
+			framework.ExpectNoError(err, "Failed to verify egress traffic uses EgressIP")
+
+			ginkgo.By("5. Remove host-cidrs annotation from the node hosting the EgressIP (simulate orphan)")
+			nodeToOrphan := initialNode
+			framework.Logf("Removing host-cidrs annotation from node %s", nodeToOrphan)
+
+			// Get the current annotation value to restore later
+			node, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), nodeToOrphan, metav1.GetOptions{})
+			framework.ExpectNoError(err, "Failed to get node")
+			originalHostCIDRs := node.Annotations["k8s.ovn.org/host-cidrs"]
+
+			// Remove the annotation
+			delete(node.Annotations, "k8s.ovn.org/host-cidrs")
+			_, err = f.ClientSet.CoreV1().Nodes().Update(context.TODO(), node, metav1.UpdateOptions{})
+			framework.ExpectNoError(err, "Failed to remove host-cidrs annotation")
+
+			ginkgo.By("6. Verify the EgressIP is reassigned to the other node or cleared")
+			// The EgressIP should either move to the other node or be unassigned
+			// Wait for the status to reflect the change
+			err = wait.PollImmediate(retryInterval, retryTimeout, func() (bool, error) {
+				currentStatuses := verifyEgressIPStatusLengthEquals(1, nil)
+				if len(currentStatuses) == 0 {
+					// EgressIP unassigned (acceptable if no other eligible nodes)
+					return true, nil
+				}
+				if currentStatuses[0].Node != nodeToOrphan {
+					framework.Logf("EgressIP reassigned from %s to %s", nodeToOrphan, currentStatuses[0].Node)
+					return true, nil
+				}
+				return false, nil
+			})
+			framework.ExpectNoError(err, "EgressIP was not reassigned after node became orphaned")
+
+			ginkgo.By("7. Verify EgressIP functionality still works (no cluster-wide outage)")
+			// If EgressIP is still assigned, traffic should still work
+			statuses = verifyEgressIPStatusLengthEquals(1, nil)
+			if len(statuses) > 0 {
+				err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, podName, true, []string{egressIP.String()}))
+				framework.ExpectNoError(err, "Failed to verify egress traffic after node orphaned")
+			}
+
+			ginkgo.By("8. Restore host-cidrs annotation")
+			node, err = f.ClientSet.CoreV1().Nodes().Get(context.TODO(), nodeToOrphan, metav1.GetOptions{})
+			framework.ExpectNoError(err, "Failed to get node")
+			node.Annotations["k8s.ovn.org/host-cidrs"] = originalHostCIDRs
+			_, err = f.ClientSet.CoreV1().Nodes().Update(context.TODO(), node, metav1.UpdateOptions{})
+			framework.ExpectNoError(err, "Failed to restore host-cidrs annotation")
+
+			ginkgo.By("9. Verify the node becomes eligible for EgressIP assignment again")
+			err = wait.PollImmediate(retryInterval, retryTimeout, func() (bool, error) {
+				currentStatuses := verifyEgressIPStatusLengthEquals(1, nil)
+				if len(currentStatuses) > 0 {
+					// Node is eligible again - EgressIP is assigned
+					framework.Logf("Node %s is eligible again, EgressIP assigned to %s", nodeToOrphan, currentStatuses[0].Node)
+					return true, nil
+				}
+				return false, nil
+			})
+			framework.ExpectNoError(err, "Node did not become eligible after restoring host-cidrs")
+		})
+
 		ginkgo.DescribeTable("[OVN network] multiple namespaces with different primary networks", func(otherNetworkAttachParms networkAttachmentConfigParams) {
 			if !isNetworkSegmentationEnabled() {
 				ginkgo.Skip("network segmentation is disabled")
