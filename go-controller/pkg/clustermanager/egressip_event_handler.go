@@ -128,6 +128,10 @@ func (h *egressIPClusterControllerEventHandler) UpdateResource(oldObj, newObj in
 		isNewReady := h.eIPC.isEgressNodeReady(newNode)
 		isNewReachable := h.eIPC.isEgressNodeReachable(newNode)
 		isHostCIDRsAltered := util.NodeHostCIDRsAnnotationChanged(oldNode, newNode)
+		// Check if cloud egress IP config annotation changed (capacity changes on cloud platforms).
+		// Without this check, when capacity increases (e.g., from 0 to 1), the handler returns early
+		// and never re-evaluates unassigned EgressIPs, leaving them unassigned despite available capacity.
+		isCloudEgressIPConfigAltered := util.NodeCloudEgressIPConfigAnnotationChanged(oldNode, newNode)
 		h.eIPC.setNodeEgressReady(newNode.Name, isNewReady)
 		if !oldHadEgressLabel && newHasEgressLabel {
 			klog.Infof("Node: %s has been labeled, adding it for egress assignment", newNode.Name)
@@ -142,7 +146,7 @@ func (h *egressIPClusterControllerEventHandler) UpdateResource(oldObj, newObj in
 			}
 			return nil
 		}
-		if isOldReady == isNewReady && !isHostCIDRsAltered {
+		if isOldReady == isNewReady && !isHostCIDRsAltered && !isCloudEgressIPConfigAltered {
 			return nil
 		}
 		if !isNewReady {
