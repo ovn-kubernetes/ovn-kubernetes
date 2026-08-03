@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -769,9 +770,13 @@ fi
 			}).WithPolling(time.Second).WithTimeout(time.Minute).Should(Succeed())
 		}
 
-		waitVirtualMachineInstanceReadinessWith = func(vmi *kubevirtv1.VirtualMachineInstance, conditionStatus corev1.ConditionStatus) {
+		waitVirtualMachineInstanceReadinessWith = func(
+			vmi *kubevirtv1.VirtualMachineInstance,
+			conditionType kubevirtv1.VirtualMachineInstanceConditionType,
+			conditionStatus corev1.ConditionStatus,
+		) {
 			GinkgoHelper()
-			By(fmt.Sprintf("Waiting for readiness=%q at virtual machine %s", conditionStatus, vmi.Name))
+			By(fmt.Sprintf("Waiting for condition type=%q status=%q at virtual machine %s", conditionType, conditionStatus, vmi.Name))
 			Eventually(func() []kubevirtv1.VirtualMachineInstanceCondition {
 				err := crClient.Get(context.Background(), crclient.ObjectKeyFromObject(vmi), vmi)
 				Expect(err).To(SatisfyAny(
@@ -781,19 +786,19 @@ fi
 				return vmi.Status.Conditions
 			}).WithPolling(time.Second).WithTimeout(5 * time.Minute).Should(
 				ContainElement(SatisfyAll(
-					HaveField("Type", kubevirtv1.VirtualMachineInstanceReady),
+					HaveField("Type", conditionType),
 					HaveField("Status", conditionStatus),
-				)))
+				)),
+			)
 		}
 
 		waitVirtualMachineInstanceReadiness = func(vmi *kubevirtv1.VirtualMachineInstance) {
 			GinkgoHelper()
-			waitVirtualMachineInstanceReadinessWith(vmi, corev1.ConditionTrue)
+			waitVirtualMachineInstanceReadinessWith(vmi, kubevirtv1.VirtualMachineInstanceReady, corev1.ConditionTrue)
 		}
-
 		waitVirtualMachineInstanceFailed = func(vmi *kubevirtv1.VirtualMachineInstance) {
 			GinkgoHelper()
-			waitVirtualMachineInstanceReadinessWith(vmi, corev1.ConditionFalse)
+			waitVirtualMachineInstanceReadinessWith(vmi, kubevirtv1.VirtualMachineInstanceReady, corev1.ConditionFalse)
 		}
 
 		waitVirtualMachineAddresses = func(vmi *kubevirtv1.VirtualMachineInstance) {
@@ -2291,36 +2296,11 @@ ethernets:
 			Expect(removeImagesInNodes(kubevirt.FedoraWithTestToolingContainerDiskImage)).To(Succeed())
 		})
 		var (
-			ipv4CIDR             = "172.31.0.0/24"
-			ipv6CIDR             = "2010:100:200::0/60"
-			vmiIPv4              = "172.31.0.100/24"
-			vmiIPv6              = "2010:100:200::100/60"
-			vmiMAC               = "0A:58:0A:80:00:64"
-			staticIPsNetworkData = func(ips []string) (string, error) {
-				type Ethernet struct {
-					DHCP4     *bool    `json:"dhcp4,omitempty"`
-					DHCP6     *bool    `json:"dhcp6,omitempty"`
-					Addresses []string `json:"addresses,omitempty"`
-				}
-				networkData, err := yaml.Marshal(&struct {
-					Version   int                 `json:"version,omitempty"`
-					Ethernets map[string]Ethernet `json:"ethernets,omitempty"`
-				}{
-					Version: 2,
-					Ethernets: map[string]Ethernet{
-						"eth0": {
-							DHCP4:     ptr.To(false),
-							DHCP6:     ptr.To(false),
-							Addresses: ips,
-						},
-					},
-				})
-				if err != nil {
-					return "", err
-				}
-				return string(networkData), nil
-			}
-
+			ipv4CIDR = "172.31.0.0/24"
+			ipv6CIDR = "2010:100:200::0/60"
+			vmiIPv4  = "172.31.0.100/24"
+			vmiIPv6  = "2010:100:200::100/60"
+			vmiMAC   = "0A:58:0A:80:00:64"
 			userData = `#cloud-config
 password: fedora
 chpasswd: { expire: False }
@@ -2483,6 +2463,95 @@ chpasswd: { expire: False }
 			Entry("after failed live migration", liveMigrateFailed),
 		)
 	})
+
+	DescribeTable("user-defined network port-security disabled, connectivity between client (with spoofed-mac) and server should succeed",
+		func(topology udnv1.NetworkTopology) {
+			const (
+				serverIPV4   = "10.10.10.20"
+				serverCIDRv4 = serverIPV4 + "/24"
+				serverIPV6   = "2001:db8:abcd:1234::20"
+				serverCIDRv6 = serverIPV6 + "/64"
+				serverPort   = 9100
+				clientCIDRv4 = "10.10.10.10/24"
+				clientCIDRv6 = "2001:db8:abcd:1234::10/64"
+				clientIface  = "eth0"
+				spoofedMAC   = "02:00:00:fa:fb:fc"
+			)
+			serverCIDRs := filterCIDRs(clientSet, serverCIDRv4, serverCIDRv6)
+			clientCIDRs := filterCIDRs(fr.ClientSet, clientCIDRv4, clientCIDRv6)
+			serverAddrs := filterIPs(clientSet, serverIPV4, serverIPV6)
+
+			By("create test namespace")
+			fr.BaseName = "kv-port-security-test"
+			ns, err := fr.CreateNamespace(context.Background(), fr.BaseName, map[string]string{"e2e-framework": fr.BaseName})
+			Expect(err).NotTo(HaveOccurred())
+			fr.Namespace = ns
+			namespace = fr.Namespace.Name
+
+			By("create network resource")
+			cudn, networkName := kubevirt.GenerateCUDN(namespace, "netsted-virt-net", topology, udnv1.NetworkRoleSecondary, nil,
+				kubevirt.WithMACSecurityConfig(udnv1.MACSecurityConfig{Mode: udnv1.MACSecurityDisabled}))
+			createCUDN(cudn)
+
+			if topology == udnv1.NetworkTopologyLocalnet {
+				By("setting up the localnet underlay")
+				Expect(providerCtx.SetupUnderlay(fr, infraapi.Underlay{LogicalNetworkName: networkName})).To(Succeed())
+			}
+
+			By("create server pod")
+			serverPodCfg := podConfiguration{
+				name:         "server",
+				namespace:    namespace,
+				attachments:  []nadapi.NetworkSelectionElement{{Name: cudn.Name, IPRequest: serverCIDRs}},
+				containerCmd: httpServerContainerCmd(9100),
+			}
+			Expect(crClient.Create(context.Background(), generatePodSpec(serverPodCfg))).To(Succeed())
+
+			By("create client VM")
+			networkData, err := staticIPsNetworkData(clientCIDRs)
+			Expect(err).NotTo(HaveOccurred())
+			userData := `#cloud-config`
+			netSrc := kubevirtv1.NetworkSource{Multus: &kubevirtv1.MultusNetwork{NetworkName: cudn.Name}}
+			vm := fedoraWithTestToolingVM(nil, nil, nil, netSrc, userData, networkData)
+			createVirtualMachine(vm)
+
+			step := by(vm.Name, "waiting for client readiness")
+			vmi := &kubevirtv1.VirtualMachineInstance{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: vm.Name}}
+			waitVirtualMachineInstanceReadinessWith(vmi, kubevirtv1.VirtualMachineInstanceAgentConnected, corev1.ConditionTrue)
+			Expect(virtClient.LoginToFedora(vmi, "fedora", "fedora")).To(Succeed(), step)
+			By("Waiting for server readiness..")
+			Expect(e2epod.WaitForPodNameRunningInNamespace(context.Background(), clientSet, serverPodCfg.name, serverPodCfg.namespace)).To(Succeed())
+
+			connCheck := func(g Gomega) {
+				for _, addr := range serverAddrs {
+					cmd := fmt.Sprintf("curl --connect-timeout 2 %s", net.JoinHostPort(addr, strconv.Itoa(serverPort)))
+					stdout, err := virtClient.RunCommand(vmi, cmd, 5*time.Second)
+					g.Expect(err).ToNot(HaveOccurred(), stdout)
+				}
+			}
+			step = by(vmi.Name, "Check client server connectivity")
+			Eventually(connCheck).
+				WithTimeout(15*time.Second).WithPolling(3*time.Second).Should(Succeed(), step)
+
+			step = by(vmi.Name, "Change VMI MAC address (simulating MAC spoofed traffic)")
+			_, err = virtClient.RunCommand(vmi, fmt.Sprintf("ip link set dev %s address %s", clientIface, spoofedMAC), 5*time.Second)
+			Expect(err).ToNot(HaveOccurred())
+			step = by(vmi.Name, "Verify VMI new MAC address is set")
+			Eventually(func(g Gomega) {
+				g.Expect(crClient.Get(context.Background(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
+				g.Expect(vmi.Status.Interfaces).To(ContainElement(SatisfyAll(
+					HaveField("InterfaceName", clientIface),
+					HaveField("MAC", spoofedMAC),
+				)))
+			}).WithTimeout(1*time.Minute).WithPolling(1*time.Second).Should(Succeed(), step)
+
+			step = by(vmi.Name, "Check client server connectivity")
+			Consistently(connCheck).
+				WithTimeout(15*time.Second).WithPolling(3*time.Second).Should(Succeed(), step)
+		},
+		Entry("over secondary layer2", udnv1.NetworkTopologyLayer2),
+		Entry("over localnet", udnv1.NetworkTopologyLocalnet),
+	)
 
 	getIPAMClaimName := func(vmName, netName string) string {
 		return fmt.Sprintf("%s.%s", vmName, netName)
@@ -2842,3 +2911,28 @@ ethernets:
 		})
 	})
 })
+
+func staticIPsNetworkData(ips []string) (string, error) {
+	type Ethernet struct {
+		DHCP4     *bool    `json:"dhcp4,omitempty"`
+		DHCP6     *bool    `json:"dhcp6,omitempty"`
+		Addresses []string `json:"addresses,omitempty"`
+	}
+	networkData, err := yaml.Marshal(&struct {
+		Version   int                 `json:"version,omitempty"`
+		Ethernets map[string]Ethernet `json:"ethernets,omitempty"`
+	}{
+		Version: 2,
+		Ethernets: map[string]Ethernet{
+			"eth0": {
+				DHCP4:     ptr.To(false),
+				DHCP6:     ptr.To(false),
+				Addresses: ips,
+			},
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	return string(networkData), nil
+}
