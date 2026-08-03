@@ -752,9 +752,12 @@ func uplinkStateNotResolvedReason(
 		uplinkv1alpha1.UplinkStateConditionResolved,
 	)
 	if cond == nil {
-		return "ResolvedConditionMissing"
+		return hostDataFailureReason(state, "ResolvedConditionMissing")
 	}
 	if cond.Status != metav1.ConditionTrue {
+		if cond.Reason == uplinkv1alpha1.UplinkStateReasonWaitingForDPUHost {
+			return hostDataFailureReason(state, cond.Reason)
+		}
 		if cond.Reason != "" {
 			return cond.Reason
 		}
@@ -764,6 +767,20 @@ func uplinkStateNotResolvedReason(
 		return "NodeConfigMismatch"
 	}
 	return ""
+}
+
+// hostDataFailureReason surfaces the DPU-host-side root cause when the DPU
+// side is blocked on host data: the aggregate message samples only reasons,
+// and WaitingForDPUHost alone would hide why the host has not published.
+func hostDataFailureReason(state *uplinkv1alpha1.UplinkState, fallback string) string {
+	cond := meta.FindStatusCondition(
+		state.Status.Conditions,
+		uplinkv1alpha1.UplinkStateConditionHostDataReady,
+	)
+	if cond != nil && cond.Status == metav1.ConditionFalse && cond.Reason != "" {
+		return cond.Reason
+	}
+	return fallback
 }
 
 func uplinkStateResolved(state *uplinkv1alpha1.UplinkState, nodeConfig uplinkv1alpha1.UplinkNodeConfig) bool {

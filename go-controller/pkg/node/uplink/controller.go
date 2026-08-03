@@ -294,6 +294,21 @@ func (c *Controller) reconcileUplinkState(key string) error {
 		}
 	}
 
+	if config.OvnKubeNode.Mode == ovntypes.NodeModeDPUHost {
+		// Host interface discovery succeeded, which is everything the
+		// DPU-host reports: publish HostDataReady=True. Bridge resolution,
+		// validation and the Resolved condition belong to the DPU side.
+		return c.updateUplinkStateStatus(
+			state,
+			hostInterfaceName,
+			hostState,
+			"",
+			metav1.ConditionTrue,
+			uplinkv1alpha1.UplinkStateReasonHostDataDiscovered,
+			"Uplink host interface data discovered",
+		)
+	}
+
 	defaultBridgeName, err := defaultGatewayBridgeName(node)
 	if err != nil {
 		return c.updateUplinkStateStatus(
@@ -337,44 +352,6 @@ func (c *Controller) reconcileUplinkState(key string) error {
 			hostState,
 			bridgeName,
 			"Uplink DPU bridge discovery succeeded",
-		)
-	}
-
-	if config.OvnKubeNode.Mode == ovntypes.NodeModeDPUHost {
-		bridgeName := ""
-		if string(state.Status.HostInterfaceName) == hostInterfaceName && state.Status.OVSBridge != nil {
-			bridgeName = state.Status.OVSBridge.Name
-		}
-		if err := validateDefaultGatewayBridge(bridgeName, defaultBridgeName); err != nil {
-			return c.updateUplinkStateStatus(
-				state,
-				hostInterfaceName,
-				hostState,
-				"",
-				metav1.ConditionFalse,
-				discoveryReason(err),
-				err.Error(),
-			)
-		}
-		if dpuSideBridgeResolvedForHostInterface(state, hostInterfaceName) {
-			// The DPU side has resolved the OVS bridge. The DPU-host side
-			// now publishes host interface details under its field manager.
-			return c.updateResolvedUplinkStateStatus(
-				state,
-				hostInterfaceName,
-				hostState,
-				"",
-				"Uplink DPU bridge discovery succeeded",
-			)
-		}
-		return c.updateUplinkStateStatus(
-			state,
-			hostInterfaceName,
-			hostState,
-			"",
-			metav1.ConditionFalse,
-			uplinkv1alpha1.UplinkStateReasonWaitingForDPU,
-			"waiting for DPU-side bridge discovery",
 		)
 	}
 
@@ -504,6 +481,12 @@ func (c *Controller) updateResolvedUplinkStateStatus(
 	)
 }
 
+// updateUplinkStateStatus applies the status fields this reconciler writes
+// together with the condition it owns: the DPU-host reports HostDataReady,
+// while the DPU and full mode report Resolved (see statusConditionType).
+// Full mode writes every status field; the split DPU modes each write their
+// own subset and cannot write the peer's condition. Callers pass the
+// condition status, reason and message.
 func (c *Controller) updateUplinkStateStatus(
 	state *uplinkv1alpha1.UplinkState,
 	hostInterfaceName string,
@@ -513,7 +496,7 @@ func (c *Controller) updateUplinkStateStatus(
 	reason string,
 	message string,
 ) error {
-	condition := resolvedCondition(state, hostInterfaceName, status, reason, message)
+	condition := statusCondition(state, status, reason, message)
 	desiredStatus := desiredUplinkStateStatus(state, hostInterfaceName, hostState, bridgeName, condition)
 	if reflect.DeepEqual(state.Status, desiredStatus) {
 		return nil
@@ -523,7 +506,10 @@ func (c *Controller) updateUplinkStateStatus(
 		WithType(uplinkv1alpha1.UplinkTypeOVSBridge).
 		WithConditions(util.ConditionToApply(condition))
 
-	if hostInterfaceName != "" {
+	// Only the DPU-host applies hostInterfaceName: it confirms which
+	// interface the host-owned MAC/IP data belongs to, so the DPU must not
+	// bump it ahead of fresh host data on a spec change.
+	if config.OvnKubeNode.Mode != ovntypes.NodeModeDPU && hostInterfaceName != "" {
 		statusApply = statusApply.WithHostInterfaceName(
 			uplinkv1alpha1.InterfaceName(hostInterfaceName),
 		)
@@ -575,7 +561,11 @@ func desiredUplinkStateStatus(
 	}
 
 	desired.Type = uplinkv1alpha1.UplinkTypeOVSBridge
-	desired.HostInterfaceName = uplinkv1alpha1.InterfaceName(hostInterfaceName)
+	// The DPU side does not apply hostInterfaceName, so its desired status
+	// keeps whatever the DPU-host side published.
+	if config.OvnKubeNode.Mode != ovntypes.NodeModeDPU {
+		desired.HostInterfaceName = uplinkv1alpha1.InterfaceName(hostInterfaceName)
+	}
 	desired.Conditions = append([]metav1.Condition(nil), state.Status.Conditions...)
 	meta.SetStatusCondition(&desired.Conditions, condition)
 
@@ -616,16 +606,6 @@ func setUplinkStateBridgeStatus(status *uplinkv1alpha1.UplinkStateStatus, bridge
 	}
 }
 
-func dpuSideBridgeResolvedForHostInterface(state *uplinkv1alpha1.UplinkState, hostInterfaceName string) bool {
-	if state.Status.OVSBridge == nil || state.Status.OVSBridge.Name == "" {
-		return false
-	}
-	resolvedCondition := resolvedConditionForHostInterface(state, hostInterfaceName)
-	return resolvedCondition != nil &&
-		resolvedCondition.Status == metav1.ConditionTrue &&
-		resolvedCondition.Reason == uplinkv1alpha1.UplinkStateReasonResolved
-}
-
 // StatusFieldManager returns the field manager used by ovnkube-node when it
 // applies UplinkState status.
 func StatusFieldManager() string {
@@ -639,34 +619,33 @@ func StatusFieldManager() string {
 	}
 }
 
-func resolvedCondition(
+// statusConditionType returns the condition this side of the discovery
+// reconcile owns: each UplinkState condition has a single writer, so the
+// DPU-host reports on HostDataReady while the DPU (and full mode) reports on
+// Resolved.
+func statusConditionType() string {
+	if config.OvnKubeNode.Mode == ovntypes.NodeModeDPUHost {
+		return uplinkv1alpha1.UplinkStateConditionHostDataReady
+	}
+	return uplinkv1alpha1.UplinkStateConditionResolved
+}
+
+func statusCondition(
 	state *uplinkv1alpha1.UplinkState,
-	hostInterfaceName string,
 	status metav1.ConditionStatus,
 	reason string,
 	message string,
 ) metav1.Condition {
-	var existing []metav1.Condition
-	if current := resolvedConditionForHostInterface(state, hostInterfaceName); current != nil {
-		existing = []metav1.Condition{*current}
-	}
-	condition, _ := util.MergeStatusCondition(existing, metav1.Condition{
-		Type:    uplinkv1alpha1.UplinkStateConditionResolved,
+	// The stored condition of this type, which may predate a
+	// hostInterfaceName change, is read only to carry its LastTransitionTime
+	// over into the new condition; its reason and message are not reused.
+	condition, _ := util.MergeStatusCondition(state.Status.Conditions, metav1.Condition{
+		Type:    statusConditionType(),
 		Status:  status,
 		Reason:  reason,
 		Message: message,
 	})
 	return condition
-}
-
-func resolvedConditionForHostInterface(state *uplinkv1alpha1.UplinkState, hostInterfaceName string) *metav1.Condition {
-	if string(state.Status.HostInterfaceName) != hostInterfaceName {
-		return nil
-	}
-	return meta.FindStatusCondition(
-		state.Status.Conditions,
-		uplinkv1alpha1.UplinkStateConditionResolved,
-	)
 }
 
 func (c *Controller) ensureUplinkState(
@@ -751,12 +730,17 @@ func desiredUplinkState(
 	}
 	if nodeConfig != nil {
 		state.Status.Type = nodeConfig.Type
-		state.Status.HostInterfaceName = nodeConfig.HostInterfaceName
+		// The DPU side does not seed hostInterfaceName on creation either:
+		// only the DPU-host publishes it, as confirmation of which interface
+		// the host-owned MAC/IP data belongs to.
+		if config.OvnKubeNode.Mode != ovntypes.NodeModeDPU {
+			state.Status.HostInterfaceName = nodeConfig.HostInterfaceName
+		}
 	}
 	if nodeConfigErr != nil {
 		state.Status.Conditions = []metav1.Condition{
 			{
-				Type:               uplinkv1alpha1.UplinkStateConditionResolved,
+				Type:               statusConditionType(),
 				Status:             metav1.ConditionFalse,
 				Reason:             discoveryReason(nodeConfigErr),
 				Message:            nodeConfigErr.Error(),

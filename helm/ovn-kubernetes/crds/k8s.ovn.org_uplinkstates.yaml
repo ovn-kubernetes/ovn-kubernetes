@@ -24,6 +24,10 @@ spec:
     - jsonPath: .status.conditions[?(@.type=="Resolved")].status
       name: Resolved
       type: string
+    - jsonPath: .status.conditions[?(@.type=="HostDataReady")].status
+      name: HostDataReady
+      priority: 1
+      type: string
     name: v1alpha1
     schema:
       openAPIV3Schema:
