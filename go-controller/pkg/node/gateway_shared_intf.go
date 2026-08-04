@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/knftables"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
@@ -1961,6 +1962,7 @@ func cleanupSharedGateway(ovsClient libovsdbclient.Client) error {
 		if err != nil {
 			return fmt.Errorf("failed to list ovn-localnet-port ports: %w", err)
 		}
+		var ops []ovsdb.Operation
 		for _, port := range ports {
 			bridge, err := ovsops.GetPortBridge(ovsClient, port.Name)
 			if err != nil {
@@ -1969,9 +1971,13 @@ func cleanupSharedGateway(ovsClient libovsdbclient.Client) error {
 				}
 				return fmt.Errorf("failed to find bridge for port %s: %w", port.Name, err)
 			}
-			if err := ovsops.DeletePortWithInterfaces(ovsClient, bridge.Name, port.Name); err != nil {
-				return fmt.Errorf("failed to delete port %s: %w", port.Name, err)
+			ops, err = ovsops.DeletePortWithInterfacesOps(ovsClient, ops, port, bridge.Name)
+			if err != nil {
+				return fmt.Errorf("failed to build operations to delete port %s: %w", port.Name, err)
 			}
+		}
+		if err := ovsops.TransactAndCheckAndWaitForVSwitchd(ovsClient, ops); err != nil {
+			return fmt.Errorf("failed to delete ovn-localnet-port ports: %w", err)
 		}
 
 		// Get the OVS bridge name from ovn-bridge-mappings
