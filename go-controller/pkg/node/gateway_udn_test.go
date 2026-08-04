@@ -64,6 +64,75 @@ import (
 	. "github.com/onsi/gomega"
 )
 
+func TestAddNetworkSemaphoreSerializesConcurrentCalls(t *testing.T) {
+	// Drain the semaphore in case a previous test left it occupied.
+	select {
+	case <-addNetworkSemaphore:
+	default:
+	}
+
+	const workers = 5
+	entered := make(chan int, workers)
+	release := make(chan struct{})
+	var wg sync.WaitGroup
+
+	wg.Add(workers)
+	for i := range workers {
+		go func(id int) {
+			defer wg.Done()
+			addNetworkSemaphore <- struct{}{}
+			defer func() { <-addNetworkSemaphore }()
+			entered <- id
+			<-release
+		}(i)
+	}
+
+	var startOrder []int
+	for range workers {
+		id := <-entered
+		startOrder = append(startOrder, id)
+		// At this point exactly one worker holds the semaphore.
+		// If serialization were broken, multiple ids would arrive
+		// on `entered` before we send on `release`.
+		select {
+		case extra := <-entered:
+			t.Fatalf("worker %d entered while worker %d still held the semaphore", extra, id)
+		default:
+		}
+		release <- struct{}{}
+	}
+
+	wg.Wait()
+
+	if len(startOrder) != workers {
+		t.Errorf("expected %d completions, got %d", workers, len(startOrder))
+	}
+}
+
+func TestAddNetworkSemaphoreReleasedOnReturn(t *testing.T) {
+	// Drain the semaphore in case a previous test left it occupied.
+	select {
+	case <-addNetworkSemaphore:
+	default:
+	}
+
+	// Simulate two sequential acquires to confirm the semaphore is properly
+	// released after each use (mirrors the defer pattern in AddNetwork).
+	for i := 0; i < 3; i++ {
+		done := make(chan struct{})
+		go func() {
+			addNetworkSemaphore <- struct{}{}
+			defer close(done)
+			defer func() { <-addNetworkSemaphore }()
+		}()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("iteration %d: semaphore was not released from previous use", i)
+		}
+	}
+}
+
 func getCreationFakeCommands(fexec *ovntest.FakeExec, mgtPort, mgtPortMAC, netName, nodeName string, mtu int) {
 	fexec.AddFakeCmdsNoOutputNoError([]string{
 		"ovs-vsctl --timeout=15" +

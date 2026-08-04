@@ -60,6 +60,10 @@ const (
 	dpuUDNVRFRouteTableIDStart = 100000
 )
 
+// addNetworkSemaphore serializes AddNetwork calls to prevent concurrent OVS
+// port creation from overwhelming ovs-vswitchd during burst UDN provisioning.
+var addNetworkSemaphore = make(chan struct{}, 1)
+
 // UserDefinedNetworkGateway contains information
 // required to program a UDN at each node's
 // gateway.
@@ -443,6 +447,9 @@ func (udng *UserDefinedNetworkGateway) addMarkChain() error {
 // AddNetwork will be responsible to create all plumbings
 // required by this UDN on the gateway side
 func (udng *UserDefinedNetworkGateway) AddNetwork() error {
+	addNetworkSemaphore <- struct{}{}
+	defer func() { <-addNetworkSemaphore }()
+
 	var err error
 	if udng.Uplink() == "" {
 		err = udng.addNetwork()
