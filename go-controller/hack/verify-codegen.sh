@@ -6,13 +6,13 @@ set -o errexit # Nonzero exit code of any of the commands below will fail the te
 set -o nounset
 set -o pipefail
 
-HERE=$(dirname "$(readlink --canonicalize "$BASH_SOURCE")")
-ROOT=$(readlink --canonicalize "$HERE/..")
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+ROOT=$(cd "$HERE/.." && pwd -P)
 GITROOT=$(git -C "$ROOT" rev-parse --show-toplevel)
 
 cd "$ROOT"
 
-echo "Regenerating generated code (codegen + mocks) to verify it matches the committed tree"
+echo "Regenerating generated code to verify it matches the committed tree"
 ./hack/update-codegen.sh
 
 # Generated Go lives under go-controller/pkg; CRD manifests are copied to
