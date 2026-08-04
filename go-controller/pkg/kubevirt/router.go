@@ -61,10 +61,8 @@ func DeleteRoutingForMigratedPod(nbClient libovsdbclient.Client, pod *corev1.Pod
 	return DeleteRoutingForMigratedPodWithZone(nbClient, pod, "")
 }
 
-// EnsureLocalZonePodAddressesToNodeRoute adds static routes and policies to the ovn_cluster_router logical router
-// so VM traffic works as expected after live migration when the pod is running in the local/global zone.
-//
-// NOTE: IC with multiple nodes per zone is not supported
+// EnsureLocalZonePodAddressesToNodeRoute adds static routes to the ovn_cluster_router logical router
+// so VM traffic works as expected after live migration when the pod is running in the local zone.
 //
 // Following is the list of NB logical resources created:
 //
