@@ -145,7 +145,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 					By("adding a remote node")
 					testNode2, err := newNodeWithUserDefinedNetworks("test-node2", "192.168.127.202/24", netInfo)
 					Expect(err).NotTo(HaveOccurred())
-					testNode2.Annotations["k8s.ovn.org/zone-name"] = "blah"
 					nodes = append(nodes, *testNode2)
 				}
 
@@ -611,7 +610,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 
 			remoteNode, err := newNodeWithUserDefinedNetworks("remoteNode", "192.168.127.202/24", netInfo)
 			Expect(err).NotTo(HaveOccurred())
-			remoteNode.Annotations["k8s.ovn.org/zone-name"] = "other-zone" // force remote
 			remoteNode.Annotations[util.OvnTransitSwitchPortAddr] = `{"ipv4":"100.88.0.4/16"}`
 
 			remotePod := corev1.Pod{
@@ -828,7 +826,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 
 			remoteNode, err := newNodeWithUserDefinedNetworks(remoteName, "192.168.127.202/24", netInfoB)
 			Expect(err).NotTo(HaveOccurred())
-			remoteNode.Annotations["k8s.ovn.org/zone-name"] = "other-zone"
 			remoteNode.Annotations[util.OvnTransitSwitchPortAddr] = `{"ipv4":"100.88.0.4/16"}`
 
 			localPod := corev1.Pod{
@@ -909,8 +906,6 @@ var _ = Describe("Layer3 UDN Transport Mode - Interconnect", func() {
 		node2Name  = "node2"
 		udnName    = "test-udn"
 		udnNadName = "default/test-nad"
-		zone1      = node1Name
-		zone2      = "remote"
 	)
 
 	var (
@@ -947,13 +942,12 @@ var _ = Describe("Layer3 UDN Transport Mode - Interconnect", func() {
 		}
 	}
 
-	createTestNode := func(nodeName, zone string, nodeID string) *corev1.Node {
+	createTestNode := func(nodeName, nodeID string) *corev1.Node {
 		return &corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: nodeName,
 				Annotations: map[string]string{
 					"k8s.ovn.org/node-subnets":                    `{"default":"10.128.1.0/24","` + udnName + `":"192.168.1.0/24"}`,
-					"k8s.ovn.org/zone-name":                       zone,
 					"k8s.ovn.org/node-id":                         nodeID,
 					"k8s.ovn.org/node-chassis-id":                 "test-chassis-" + nodeName,
 					"k8s.ovn.org/node-transit-switch-port-ifaddr": `{"ipv4":"100.88.0.1/16"}`,
@@ -970,7 +964,7 @@ var _ = Describe("Layer3 UDN Transport Mode - Interconnect", func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(netInfo.Transport()).To(Equal(types.NetworkTransportNoOverlay))
 
-				node1 := createTestNode(node1Name, zone1, "1")
+				node1 := createTestNode(node1Name, "1")
 				clusterRouterName := netInfo.GetNetworkScopedClusterRouterName()
 				transitSwitchName := netInfo.GetNetworkScopedName(types.TransitSwitch)
 
@@ -1061,7 +1055,7 @@ var _ = Describe("Layer3 UDN Transport Mode - Interconnect", func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(netInfo.Transport()).To(Equal(types.NetworkTransportNoOverlay))
 
-				node2 := createTestNode(node2Name, zone2, "2")
+				node2 := createTestNode(node2Name, "2")
 				clusterRouterName := netInfo.GetNetworkScopedClusterRouterName()
 				transitSwitchName := netInfo.GetNetworkScopedName(types.TransitSwitch)
 
@@ -1135,7 +1129,7 @@ var _ = Describe("Layer3 UDN Transport Mode - Interconnect", func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(netInfo.Transport()).NotTo(Equal(types.NetworkTransportNoOverlay))
 
-				node1 := createTestNode(node1Name, zone1, "1")
+				node1 := createTestNode(node1Name, "1")
 				clusterRouterName := netInfo.GetNetworkScopedClusterRouterName()
 				transitSwitchName := netInfo.GetNetworkScopedName(types.TransitSwitch)
 
@@ -1851,8 +1845,6 @@ func newNodeWithUserDefinedNetworks(nodeName string, nodeIPv4CIDR string, netInf
 	nextHopIP := util.GetNodeGatewayIfAddr(nodeCIDR).IP
 	nodeCIDR.IP = nodeIP
 
-	zone := nodeName
-
 	return &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: nodeName,
@@ -1861,7 +1853,6 @@ func newNodeWithUserDefinedNetworks(nodeName string, nodeIPv4CIDR string, netInf
 				"k8s.ovn.org/node-primary-ifaddr":                           fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", nodeIPv4CIDR, ""),
 				"k8s.ovn.org/node-subnets":                                  parsedNodeSubnets,
 				util.OVNNodeHostCIDRs:                                       fmt.Sprintf("[\"%s\"]", nodeIPv4CIDR),
-				"k8s.ovn.org/zone-name":                                     zone,
 				"k8s.ovn.org/l3-gateway-config":                             fmt.Sprintf("{\"default\":{\"mode\":\"shared\",\"bridge-id\":\"breth0\",\"interface-id\":\"breth0_ovn-worker\",\"mac-address\":%q,\"ip-addresses\":[%[2]q],\"ip-address\":%[2]q,\"next-hops\":[%[3]q],\"next-hop\":%[3]q,\"node-port-enable\":\"true\",\"vlan-id\":\"0\"}}", util.IPAddrToHWAddr(nodeIP), nodeCIDR, nextHopIP),
 				util.OvnNodeChassisID:                                       chassisIDForNode(nodeName),
 				"k8s.ovn.org/network-ids":                                   fmt.Sprintf("{\"default\":\"0\",\"isolatednet\":\"%s\"}", userDefinedNetworkID),

@@ -50,7 +50,6 @@ func newNode(nodeName, nodeIPv4CIDR string) *corev1.Node {
 				"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":\"%s\"}", v4Node1Subnet),
 				util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", nodeIPv4CIDR),
 				util.OvnNodeChassisID:             chassisIDForNode(nodeName),
-				"k8s.ovn.org/zone-name":           nodeName,
 			},
 			Labels: map[string]string{
 				"k8s.ovn.org/egress-assignable": "",
@@ -76,7 +75,6 @@ func newNodeNotEgressableV4Only(nodeName, nodeIPv4 string) *corev1.Node {
 				"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":\"%s\"}", v4Node1Subnet),
 				util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", nodeIPv4),
 				util.OvnNodeChassisID:             chassisIDForNode(nodeName),
-				"k8s.ovn.org/zone-name":           nodeName,
 			},
 		},
 		Status: corev1.NodeStatus{
@@ -99,7 +97,6 @@ func newNodeNotEgressableV6Only(nodeName, nodeIPv6 string) *corev1.Node {
 				"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":\"%s\"}", v6Node1Subnet),
 				util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", nodeIPv6),
 				util.OvnNodeChassisID:             chassisIDForNode(nodeName),
-				"k8s.ovn.org/zone-name":           nodeName,
 			},
 		},
 		Status: corev1.NodeStatus{
@@ -1850,10 +1847,8 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 
 				testNode := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "node1",
-						Annotations: map[string]string{
-							util.OvnNodeZoneName: "node1",
-						},
+						Name:        "node1",
+						Annotations: map[string]string{},
 					},
 				}
 
@@ -2114,18 +2109,14 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				}
 				testNodeWithLS := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "node1",
-						Annotations: map[string]string{
-							util.OvnNodeZoneName: "node1",
-						},
+						Name:        "node1",
+						Annotations: map[string]string{},
 					},
 				}
 				testNodeWithoutLS := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "node2",
-						Annotations: map[string]string{
-							util.OvnNodeZoneName: "node2",
-						},
+						Name:        "node2",
+						Annotations: map[string]string{},
 					},
 				}
 				fakeOvn.startWithDBSetup(initialDB,
@@ -2508,9 +2499,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 		ginkgo.It("uses the controller node identity for pod locality", func() {
 			app.Action = func(*cli.Context) error {
 				localNode := newNode(node1Name, "192.168.126.202/24")
-				localNode.Annotations[util.OvnNodeZoneName] = node1Name
 				remoteNode := newNode(node2Name, "192.168.126.203/24")
-				remoteNode.Annotations[util.OvnNodeZoneName] = node2Name
 
 				fakeOvn.startWithDBSetup(initialDB,
 					&corev1.NodeList{

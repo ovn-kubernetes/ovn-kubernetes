@@ -691,7 +691,7 @@ func (oc *Layer3UserDefinedNetworkController) ReconcileNode(oldNode, newNode *co
 	syncZoneIC = syncZoneIC || nodeSubnetChange || zoneClusterChanged
 	if syncZoneIC {
 		klog.Infof("Node %s in remote zone %s needs interconnect zone sync up. Zone cluster changed: %v",
-			newNode.Name, util.GetNodeZone(newNode), zoneClusterChanged)
+			newNode.Name, newNode.Name, zoneClusterChanged)
 	}
 	return oc.addUpdateRemoteNodeEvent(newNode, syncZoneIC)
 }

@@ -111,7 +111,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 					By("adding a remote node")
 					testNode2, err := newNodeWithUserDefinedNetworks("test-node2", "192.168.127.202/24", netInfo)
 					Expect(err).NotTo(HaveOccurred())
-					testNode2.Annotations["k8s.ovn.org/zone-name"] = "blah"
 					nodes = append(nodes, *testNode2)
 				}
 				if testConfig.withRemotePod {
@@ -882,7 +881,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 
 			remoteNode, err := newNodeWithUserDefinedNetworks("remoteNode", "192.168.127.202/24", netInfo)
 			Expect(err).NotTo(HaveOccurred())
-			remoteNode.Annotations["k8s.ovn.org/zone-name"] = "other-zone" // force remote
 			remoteNode.Annotations[util.OvnTransitSwitchPortAddr] = `{"ipv4":"100.88.0.4/16"}`
 
 			remotePod := corev1.Pod{

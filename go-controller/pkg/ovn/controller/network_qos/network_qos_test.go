@@ -248,18 +248,12 @@ func tableEntrySetup() {
 	node1 := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "node1",
-			Annotations: map[string]string{
-				"k8s.ovn.org/zone-name": "node1",
-			},
 		},
 	}
 
 	node2 := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "node2",
-			Annotations: map[string]string{
-				"k8s.ovn.org/zone-name": "node2",
-			},
 		},
 	}
 

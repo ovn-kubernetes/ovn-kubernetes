@@ -381,9 +381,6 @@ func TestReconcileNodeRemoteNodeBecomesActiveTreatsAsAdd(t *testing.T) {
 	node := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "node-a",
-			Annotations: map[string]string{
-				util.OvnNodeZoneName: "node-a",
-			},
 		},
 	}
 	c.nodeLister = newNodeLister(t, node)
@@ -418,9 +415,6 @@ func TestReconcileNodeRemoteNodeBecomesInactiveDeletes(t *testing.T) {
 	oldNode := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "node-a",
-			Annotations: map[string]string{
-				util.OvnNodeZoneName: "node-a",
-			},
 		},
 	}
 
@@ -440,9 +434,6 @@ func TestReconcileNodeRemoteNodeBecomesInactiveDeletes(t *testing.T) {
 	node := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "node-a",
-			Annotations: map[string]string{
-				util.OvnNodeZoneName: "node-a",
-			},
 		},
 	}
 	c.nodeLister = newNodeLister(t, node)

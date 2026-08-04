@@ -96,7 +96,6 @@ func (n tNode) k8sNode(nodeID string) corev1.Node {
 				ovnNodePrimaryIfAddr:          fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", fmt.Sprintf("%s/24", n.NodeIP), ""),
 				util.OVNNodeEncapIPs:          fmt.Sprintf("[\"%s\"]", n.NodeIP),
 				util.OvnTransitSwitchPortAddr: `{"ipv4":"100.88.0.2/16"}`,
-				util.OvnNodeZoneName:          n.Name,
 			},
 		},
 		Status: corev1.NodeStatus{
@@ -1270,8 +1269,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 			badNode, err := fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), node1.Name, metav1.GetOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			badNode.Annotations = map[string]string{
-				util.OvnNodeID:       "3",
-				util.OvnNodeZoneName: node1.Name,
+				util.OvnNodeID: "3",
 			}
 			_, err = fakeClient.KubeClient.CoreV1().Nodes().Update(context.TODO(), badNode, metav1.UpdateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1758,7 +1756,6 @@ func TestController_syncNodes(t *testing.T) {
 					Name: "node1",
 					Annotations: map[string]string{
 						"k8s.ovn.org/node-chassis-id": chassisIDForNode(node1Name),
-						util.OvnNodeZoneName:          node1Name,
 					},
 				},
 			}

@@ -273,20 +273,20 @@ func TestNodeNeedsUpdate(t *testing.T) {
 			expected: false,
 		},
 		{
-			name: "zone annotation changed",
+			name: "legacy zone annotation change is ignored",
 			oldObj: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:        "node1",
-					Annotations: map[string]string{"k8s.ovn.org/zone-name": "zone1"},
+					Annotations: map[string]string{util.OvnNodeZoneName: "zone1"},
 				},
 			},
 			newObj: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:        "node1",
-					Annotations: map[string]string{"k8s.ovn.org/zone-name": "zone2"},
+					Annotations: map[string]string{util.OvnNodeZoneName: "zone2"},
 				},
 			},
-			expected: true,
+			expected: false,
 		},
 		{
 			name: "node subnet annotation changed",
@@ -357,7 +357,6 @@ func TestNodeNeedsUpdate(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "node1",
 					Annotations: map[string]string{
-						"k8s.ovn.org/zone-name":    "zone1",
 						"k8s.ovn.org/node-subnets": `{"default":"10.244.0.0/24"}`,
 						"k8s.ovn.org/node-id":      "1",
 					},
@@ -367,7 +366,6 @@ func TestNodeNeedsUpdate(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "node1",
 					Annotations: map[string]string{
-						"k8s.ovn.org/zone-name":    "zone1",
 						"k8s.ovn.org/node-subnets": `{"default":"10.244.0.0/24"}`,
 						"k8s.ovn.org/node-id":      "1",
 					},
@@ -411,7 +409,6 @@ func TestController_reconcileNode(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "node1",
 			Annotations: map[string]string{
-				"k8s.ovn.org/zone-name":    "zone1",
 				"k8s.ovn.org/node-subnets": `{"default":"10.244.0.0/24"}`,
 			},
 		},

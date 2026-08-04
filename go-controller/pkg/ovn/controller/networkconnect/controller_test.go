@@ -126,7 +126,6 @@ func (n testNetwork) SwitchName(nodeName string) string {
 type testNode struct {
 	name        string
 	id          int
-	zone        string
 	nodeSubnets map[string]subnetPair // networkName -> subnet pair (v4, v6)
 }
 
@@ -145,13 +144,8 @@ func setupTestConfig(v4Enabled, v6Enabled bool) {
 // createTestNode creates a test Node object
 // nodeSubnets is a map of network names to subnet pairs (v4, v6)
 // If id is 0, node ID annotation is not set (to test nodes without ID allocation)
-// If zone is empty, zone annotation is not set
 func createTestNode(n testNode) *corev1.Node {
 	annotations := map[string]string{}
-	// Only set zone annotation if zone is not empty
-	if n.zone != "" {
-		annotations[util.OvnNodeZoneName] = n.zone
-	}
 	// Only set node ID annotation if id > 0 (0 means no node ID)
 	if n.id > 0 {
 		annotations[util.OvnNodeID] = strconv.Itoa(n.id)
@@ -918,7 +912,7 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 			startBothNetworks := func() string {
 				networks := []testNetwork{redNetwork, blueNetwork}
 				nodes := []testNode{
-					{name: "node1", id: 1, zone: "node1", nodeSubnets: map[string]subnetPair{
+					{name: "node1", id: 1, nodeSubnets: map[string]subnetPair{
 						"red-network":  {"10.128.1.0/24", "fd00:10:128:1::/64"},
 						"blue-network": {"10.129.1.0/24", "fd00:10:129:1::/64"},
 					}},
@@ -1071,7 +1065,7 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 						{name: "red-network", id: 1, topologyType: ovntypes.Layer3Topology},
 					}
 					nodes := []testNode{
-						{name: "node1", id: 1, zone: "node1", nodeSubnets: map[string]subnetPair{
+						{name: "node1", id: 1, nodeSubnets: map[string]subnetPair{
 							"red-network": {"10.128.1.0/24", "fd00:10:128:1::/64"},
 						}},
 					}
@@ -1159,7 +1153,7 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 						{name: "red-network", id: 1, topologyType: ovntypes.Layer3Topology},
 					}
 					nodes := []testNode{
-						{name: "node1", id: 1, zone: "node1", nodeSubnets: map[string]subnetPair{
+						{name: "node1", id: 1, nodeSubnets: map[string]subnetPair{
 							"red-network": {"10.128.1.0/24", "fd00:10:128:1::/64"},
 						}},
 					}
@@ -1206,7 +1200,7 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 						{name: "blue-network", id: 2, topologyType: ovntypes.Layer3Topology},
 					}
 					nodes := []testNode{
-						{name: "node1", id: 1, zone: "node1", nodeSubnets: map[string]subnetPair{
+						{name: "node1", id: 1, nodeSubnets: map[string]subnetPair{
 							"red-network":  {"10.128.1.0/24", "fd00:10:128:1::/64"},
 							"blue-network": {"10.129.1.0/24", "fd00:10:129:1::/64"},
 						}},
@@ -1320,7 +1314,7 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 						{name: "blue-network", id: 2, topologyType: ovntypes.Layer3Topology},
 					}
 					nodes := []testNode{
-						{name: "node1", id: 1, zone: "node1", nodeSubnets: map[string]subnetPair{
+						{name: "node1", id: 1, nodeSubnets: map[string]subnetPair{
 							"red-network":  {"10.128.1.0/24", "fd00:10:128:1::/64"},
 							"blue-network": {"10.129.1.0/24", "fd00:10:129:1::/64"},
 						}},
@@ -1424,7 +1418,7 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 							subnets: []string{"10.132.0.0/14/23", "fd00:10:132::/48/64"}},
 					}
 					nodes := []testNode{
-						{name: "node1", id: 1, zone: "node1", nodeSubnets: map[string]subnetPair{
+						{name: "node1", id: 1, nodeSubnets: map[string]subnetPair{
 							"net1": {"10.128.1.0/24", "fd00:10:128:1::/64"}, "net2": {"10.129.1.0/24", "fd00:10:129:1::/64"}}},
 					}
 					initialDB := createInitialDBWithRouters(networks)
@@ -1524,7 +1518,7 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 							subnets: []string{"10.132.0.0/14/23", "fd00:10:132::/48/64"}},
 					}
 					nodes := []testNode{
-						{name: "node1", id: 1, zone: "node1", nodeSubnets: map[string]subnetPair{
+						{name: "node1", id: 1, nodeSubnets: map[string]subnetPair{
 							"subnet-net1": {"10.128.1.0/24", "fd00:10:128:1::/64"},
 							"subnet-net2": {"10.132.1.0/24", "fd00:10:132:1::/64"},
 						}},
@@ -1604,7 +1598,7 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 							subnets: []string{"10.132.0.0/14/23", "fd00:10:132::/48/64"}},
 					}
 					nodes := []testNode{
-						{name: "node1", id: 1, zone: "node1", nodeSubnets: map[string]subnetPair{
+						{name: "node1", id: 1, nodeSubnets: map[string]subnetPair{
 							"remove-net1": {"10.128.1.0/24", "fd00:10:128:1::/64"}, "remove-net2": {"10.129.1.0/24", "fd00:10:129:1::/64"}}},
 					}
 					initialDB := createInitialDBWithRouters(networks)
@@ -1744,7 +1738,7 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 						{name: "l2-net2", id: 2, topologyType: ovntypes.Layer2Topology, subnets: []string{"10.201.0.0/16", "fd00:10:201::/48"}},
 					}
 					nodes := []testNode{
-						{name: "node1", id: 1, zone: "node1"},
+						{name: "node1", id: 1},
 					}
 					initialDB := createInitialDBWithRouters(networks)
 					start(initialDB, nodes, map[string]testNetwork{"l2-net1": networks[0], "l2-net2": networks[1]})
@@ -2010,7 +2004,7 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 						subnets: []string{"10.128.0.0/14/23", "fd00:10:128::/48/64"}}
 					networks := []testNetwork{l2Net, l3Net}
 					nodes := []testNode{
-						{name: "node1", id: 1, zone: "node1", nodeSubnets: map[string]subnetPair{
+						{name: "node1", id: 1, nodeSubnets: map[string]subnetPair{
 							"mixed-l3": {"10.128.1.0/24", "fd00:10:128:1::/64"}}},
 					}
 					initialDB := createInitialDBWithRouters(networks)
@@ -2271,7 +2265,7 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 							subnets: []string{"10.128.0.0/14/23", "fd00:10:128::/48/64"}},
 					}
 					nodes := []testNode{
-						{name: "node1", id: 1, zone: "node1", nodeSubnets: map[string]subnetPair{
+						{name: "node1", id: 1, nodeSubnets: map[string]subnetPair{
 							"node-add-net": {"10.128.1.0/24", "fd00:10:128:1::/64"}}},
 					}
 					initialDB := createInitialDBWithRouters(networks)
@@ -2323,7 +2317,7 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 
 					// Add a new node
 					newNode := createTestNode(testNode{
-						name: "node2", id: 2, zone: "node2",
+						name: "node2", id: 2,
 						nodeSubnets: map[string]subnetPair{"node-add-net": {"10.128.2.0/24", "fd00:10:128:2::/64"}},
 					})
 					_, err = fakeClientset.KubeClient.CoreV1().Nodes().Create(
@@ -2368,9 +2362,9 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 							subnets: []string{"10.128.0.0/14/23", "fd00:10:128::/48/64"}},
 					}
 					nodes := []testNode{
-						{name: "node1", id: 1, zone: "node1", nodeSubnets: map[string]subnetPair{
+						{name: "node1", id: 1, nodeSubnets: map[string]subnetPair{
 							"node-del-net": {"10.128.1.0/24", "fd00:10:128:1::/64"}}},
-						{name: "node2", id: 2, zone: "node2", nodeSubnets: map[string]subnetPair{
+						{name: "node2", id: 2, nodeSubnets: map[string]subnetPair{
 							"node-del-net": {"10.128.2.0/24", "fd00:10:128:2::/64"}}},
 					}
 					initialDB := createInitialDBWithRouters(networks)
@@ -2475,7 +2469,7 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 					}
 					// Create node without node ID (id: 0 means no annotation)
 					nodes := []testNode{
-						{name: "node1", id: 0, zone: "node1", nodeSubnets: map[string]subnetPair{
+						{name: "node1", id: 0, nodeSubnets: map[string]subnetPair{
 							"nodeid-wait-net": {"10.128.1.0/24", "fd00:10:128:1::/64"}}},
 					}
 					initialDB := createInitialDBWithRouters(networks)
@@ -2572,7 +2566,7 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 							subnets: []string{"10.128.0.0/14/23", "fd00:10:128::/48/64"}},
 					}
 					nodes := []testNode{
-						{name: "node1", id: 1, zone: "node1", nodeSubnets: map[string]subnetPair{
+						{name: "node1", id: 1, nodeSubnets: map[string]subnetPair{
 							"zone-update-net": {"10.128.1.0/24", "fd00:10:128:1::/64"}}},
 					}
 					initialDB := createInitialDBWithRouters(networks)
@@ -2664,13 +2658,13 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 							subnets: []string{"10.128.0.0/14/23", "fd00:10:128::/48/64"}},
 					}
 					nodes := []testNode{
-						// local-node has zone annotation "local-node" which matches c.zone
-						{name: "local-node", id: 1, zone: "local-node", nodeSubnets: map[string]subnetPair{
+						// local-node matches the controller node identity.
+						{name: "local-node", id: 1, nodeSubnets: map[string]subnetPair{
 							"zone-net": {"10.128.1.0/24", "fd00:10:128:1::/64"}}},
-						// remote-node is in different zone
-						{name: "remote-node-1", id: 2, zone: "remote-zone", nodeSubnets: map[string]subnetPair{
+						// The other nodes are remote to this controller.
+						{name: "remote-node-1", id: 2, nodeSubnets: map[string]subnetPair{
 							"zone-net": {"10.128.2.0/24", "fd00:10:128:2::/64"}}},
-						{name: "remote-node-2", id: 3, zone: "remote-zone", nodeSubnets: map[string]subnetPair{
+						{name: "remote-node-2", id: 3, nodeSubnets: map[string]subnetPair{
 							"zone-net": {"10.128.3.0/24", "fd00:10:128:3::/64"}}},
 					}
 					initialDB := createInitialDBWithRouters(networks)
@@ -2784,7 +2778,7 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 							subnets: []string{"10.128.0.0/14/23", "fd00:10:128::/48/64"}},
 					}
 					nodes := []testNode{
-						{name: "node1", id: 1, zone: "node1", nodeSubnets: map[string]subnetPair{
+						{name: "node1", id: 1, nodeSubnets: map[string]subnetPair{
 							"subnet-update-net": {"10.128.1.0/24", "fd00:10:128:1::/64"}}},
 					}
 					initialDB := createInitialDBWithRouters(networks)
@@ -2871,10 +2865,10 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 						subnets:      []string{"10.128.0.0/14/23", "fd00:10:128::/48/64"},
 					}
 					nodes := []testNode{
-						{name: "node1", id: 1, zone: "node1", nodeSubnets: map[string]subnetPair{
+						{name: "node1", id: 1, nodeSubnets: map[string]subnetPair{
 							"remote-activate-net": {"10.128.1.0/24", "fd00:10:128:1::/64"},
 						}},
-						{name: "node2", id: 2, zone: "node2", nodeSubnets: map[string]subnetPair{
+						{name: "node2", id: 2, nodeSubnets: map[string]subnetPair{
 							"remote-activate-net": {"10.128.2.0/24", "fd00:10:128:2::/64"},
 						}},
 					}
@@ -2980,10 +2974,10 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 					l2Net := testNetwork{name: "net2", id: 2, topologyType: ovntypes.Layer2Topology, subnets: []string{"10.132.0.0/16", "fd00:10:132::/48"}}
 					networks := []testNetwork{l3Net, l2Net}
 					nodes := []testNode{
-						{name: "node1", id: 1, zone: "node1", nodeSubnets: map[string]subnetPair{
+						{name: "node1", id: 1, nodeSubnets: map[string]subnetPair{
 							"net1": {"10.128.1.0/24", "fd00:10:128:1::/64"},
 						}},
-						{name: "node2", id: 2, zone: "node2", nodeSubnets: map[string]subnetPair{
+						{name: "node2", id: 2, nodeSubnets: map[string]subnetPair{
 							"net1": {"10.128.2.0/24", "fd00:10:128:2::/64"},
 						}},
 					}
@@ -3100,13 +3094,13 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 						{name: "net4", id: 4, topologyType: ovntypes.Layer3Topology, subnets: []string{"10.140.0.0/14/23", "fd00:10:140::/48/64"}},
 					}
 					nodes := []testNode{
-						{name: "node1", id: 1, zone: "node1", nodeSubnets: map[string]subnetPair{
+						{name: "node1", id: 1, nodeSubnets: map[string]subnetPair{
 							"net1": {"10.128.1.0/24", "fd00:10:128:1::/64"},
 							"net2": {"10.132.1.0/24", "fd00:10:132:1::/64"},
 							"net3": {"10.136.1.0/24", "fd00:10:136:1::/64"},
 							"net4": {"10.140.1.0/24", "fd00:10:140:1::/64"},
 						}},
-						{name: "node2", id: 2, zone: "node2", nodeSubnets: map[string]subnetPair{
+						{name: "node2", id: 2, nodeSubnets: map[string]subnetPair{
 							"net1": {"10.128.2.0/24", "fd00:10:128:2::/64"},
 							"net2": {"10.132.2.0/24", "fd00:10:132:2::/64"},
 							"net3": {"10.136.2.0/24", "fd00:10:136:2::/64"},
@@ -3545,7 +3539,7 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 					// Start with only the red (L3) network
 					networks := []testNetwork{redNetwork}
 					nodes := []testNode{
-						{name: "node1", id: 1, zone: "node1", nodeSubnets: map[string]subnetPair{
+						{name: "node1", id: 1, nodeSubnets: map[string]subnetPair{
 							"red-network": {"10.128.1.0/24", "fd00:10:128:1::/64"},
 						}},
 					}
@@ -3762,7 +3756,7 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 					// Use only L3 network for simplicity
 					networks := []testNetwork{redNetwork}
 					nodes := []testNode{
-						{name: "node1", id: 1, zone: "node1", nodeSubnets: map[string]subnetPair{
+						{name: "node1", id: 1, nodeSubnets: map[string]subnetPair{
 							"red-network": {"10.128.1.0/24", "fd00:10:128:1::/64"},
 						}},
 					}

@@ -562,7 +562,7 @@ func (oc *DefaultNetworkController) ReconcileNode(oldNode, newNode *corev1.Node,
 		}
 		if syncZoneIC {
 			klog.Infof("Node %q in remote zone %q, network %q, needs interconnect zone sync up",
-				newNode.Name, util.GetNodeZone(newNode), oc.GetNetworkName())
+				newNode.Name, newNode.Name, oc.GetNetworkName())
 		}
 		// Reprovisioning the DPU, including OVS, changes the chassis system ID without changing the node.
 		// Same can happen with the non-DPU nodes in the testing environment where the node is re-provisioned

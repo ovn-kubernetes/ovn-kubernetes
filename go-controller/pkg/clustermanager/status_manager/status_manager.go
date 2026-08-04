@@ -96,9 +96,9 @@ func (m *typedStatusManager[T]) Start() error {
 	// Perform one-time startup cleanup of stale managedFields (upgrade scenario)
 	initialSync := func() error {
 		return m.withZonesRLock(func(zones sets.Set[string]) error {
-			// Run cleanup immediately with whatever zones we have (even if empty)
-			// The cleanup logic only removes empty-status managedFields from managers
-			// not in the zones set, which is safe even when zones is empty or contains UnknownZone
+			// Run cleanup immediately with whatever zones we have (even if empty).
+			// The cleanup only removes empty-status managedFields from managers
+			// that do not correspond to an existing zone.
 			return m.doStartupCleanup(zones)
 		})
 	}
@@ -198,8 +198,8 @@ func (m *typedStatusManager[T]) updateStatus(key string) error {
 	}
 
 	return m.withZonesRLock(func(zones sets.Set[string]) error {
-		if zones.Has(zone_tracker.UnknownZone) || zones.Len() == 0 {
-			// zones are not in a consistent state, wait for more information to be populated
+		if zones.Len() == 0 {
+			// Wait until at least one OVN-managed node exists.
 			return nil
 		}
 
@@ -367,14 +367,9 @@ func (sm *StatusManager) onZoneUpdate(newZones sets.Set[string]) {
 	sm.zones = newZones
 	sm.zonesLock.Unlock()
 
-	if newZones.Has(zone_tracker.UnknownZone) {
-		// no need to trigger full reconcile, since it can't figure out a final status without knowing all zones
-		return
-	}
 	for _, typedManager := range sm.typedManagers {
 		typedManager.ReconcileAll()
 	}
-	deletedZones.Delete(zone_tracker.UnknownZone) // delete the unknown zone, but proceed to cleanup for other known zones if any
 	if len(deletedZones) > 0 && config.OVNKubernetesFeature.EnableAdminNetworkPolicy {
 		klog.Infof("Zones that got deleted are %s", deletedZones.UnsortedList())
 		// there are zones that got deleted, this is expensive because we do a list from kapi server directly but

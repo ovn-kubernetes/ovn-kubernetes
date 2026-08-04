@@ -1521,7 +1521,6 @@ func nodeFor(name, ipv4, ipv6, v4subnet, v6subnet, transitIPv4, transitIPv6 stri
 				util.OvnNodeChassisID:             chassisIDForNode(name),
 
 				// Used only with IC tests
-				"k8s.ovn.org/zone-name":                       name,
 				"k8s.ovn.org/node-transit-switch-port-ifaddr": fmt.Sprintf("{\"ipv4\":\"%s/16\", \"ipv6\":\"%s/64\"}", transitIPv4, transitIPv6),
 			},
 			Labels: map[string]string{

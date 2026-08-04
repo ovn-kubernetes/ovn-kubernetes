@@ -90,7 +90,6 @@ func newEgressIPMeta(name string) metav1.ObjectMeta {
 
 type nodeInfo struct {
 	addresses     []string
-	zone          string
 	transitPortIP string
 }
 
@@ -266,7 +265,6 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 				"k8s.ovn.org/node-subnets":                    fmt.Sprintf("{\"default\":\"%s\"}", nodeSubnets[i]),
 				util.OVNNodeHostCIDRs:                         hostCIDRs,
 				"k8s.ovn.org/node-transit-switch-port-ifaddr": fmt.Sprintf("{\"ipv4\":\"%s\"}", ni.transitPortIP), // used only for ic=true test
-				"k8s.ovn.org/zone-name":                       ni.zone,
 			}
 			nodes = append(nodes, getNodeObj(fmt.Sprintf("node%d", nodeSuffix), annotations, map[string]string{}))
 			nodeSuffix = nodeSuffix + 1
@@ -295,7 +293,6 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 				"k8s.ovn.org/node-subnets":                    fmt.Sprintf("{\"default\":\"%s\"}", nodeSubnets[i]),
 				util.OVNNodeHostCIDRs:                         hostCIDRs,
 				"k8s.ovn.org/node-transit-switch-port-ifaddr": fmt.Sprintf("{\"ipv6\":\"%s\"}", ni.transitPortIP), // used only for ic=true test
-				"k8s.ovn.org/zone-name":                       ni.zone,
 			}
 			nodes = append(nodes, getNodeObj(fmt.Sprintf("node%d", nodeSuffix), annotations, map[string]string{}))
 			nodeSuffix = nodeSuffix + 1
@@ -341,7 +338,6 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 	ginkgo.Context("On node UPDATE", func() {
 		ginkgo.It("OVN network does not depend on EgressIP status for assignment", func() {
 			egressIP := "192.168.126.101"
-			zone := node1Name
 			node1IPv4OVN := "192.168.126.202/24"
 			node1IPv4TranSwitchIP := "100.88.0.2/16"
 			node1IPv4SecondaryHost1 := "10.10.10.4/24"
@@ -350,7 +346,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 
 			egressPod := *ovntest.NewPodWithLabels(eipNamespace, podName, node1Name, podV4IP, egressPodLabel)
 			egressNamespace := ovntest.NewNamespace(eipNamespace)
-			nodes := getIPv4Nodes([]nodeInfo{{node1IPv4Addresses, zone, node1IPv4TranSwitchIP}})
+			nodes := getIPv4Nodes([]nodeInfo{{node1IPv4Addresses, node1IPv4TranSwitchIP}})
 			node1 := nodes[0]
 			node1.Labels = map[string]string{
 				"k8s.ovn.org/egress-assignable": "",
@@ -546,7 +542,6 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 
 		ginkgo.It("Secondary host network does not depend on EgressIP status for assignment", func() {
 			egressIP := "10.10.10.10"
-			zone := node1Name
 			node1IPv4OVN := "192.168.126.202/24"
 			node1IPv4TranSwitchIP := "100.88.0.2/16"
 			node1IPv4SecondaryHost1 := "10.10.10.4/24"
@@ -556,7 +551,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 
 			egressPod := *ovntest.NewPodWithLabels(eipNamespace, podName, node1Name, podV4IP, egressPodLabel)
 			egressNamespace := ovntest.NewNamespace(eipNamespace)
-			nodes := getIPv4Nodes([]nodeInfo{{node1IPv4Addresses, zone, node1IPv4TranSwitchIP}})
+			nodes := getIPv4Nodes([]nodeInfo{{node1IPv4Addresses, node1IPv4TranSwitchIP}})
 			node1 := nodes[0]
 			node1.Labels = map[string]string{
 				"k8s.ovn.org/egress-assignable": "",
@@ -768,8 +763,8 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 
 					egressPod := *ovntest.NewPodWithLabels(eipNamespace, podName, node1Name, podV4IP, egressPodLabel)
 					egressNamespace := ovntest.NewNamespace(eipNamespace)
-					nodes := getIPv4Nodes([]nodeInfo{{node1IPv4Addresses, node1Name, node1IPv4TranSwitchIP},
-						{node2IPv4Addresses, node2Name, node2IPv4TranSwitchIP}})
+					nodes := getIPv4Nodes([]nodeInfo{{node1IPv4Addresses, node1IPv4TranSwitchIP},
+						{node2IPv4Addresses, node2IPv4TranSwitchIP}})
 					node1 := nodes[0]
 					node1.Labels = map[string]string{
 						"k8s.ovn.org/egress-assignable": "",
@@ -1054,8 +1049,8 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					node1IPv4Addresses := []string{node1IPv4OVN, node1IPv4SecondaryHost1, node1IPv4SecondaryHost2}
 					node2IPv4Addresses := []string{node2IPv4OVN, node2IPv4SecondaryHost1, node2IPv4SecondaryHost2}
 					node3IPv4Addresses := []string{node3IPv4OVN, node3IPv4SecondaryHost1}
-					nodes := getIPv4Nodes([]nodeInfo{{node1IPv4Addresses, node1Name, node1IPv4TranSwitchIP},
-						{node2IPv4Addresses, node2Name, node2IPv4TranSwitchIP}, {node3IPv4Addresses, node3Name, node3IPv4TranSwitchIP}})
+					nodes := getIPv4Nodes([]nodeInfo{{node1IPv4Addresses, node1IPv4TranSwitchIP},
+						{node2IPv4Addresses, node2IPv4TranSwitchIP}, {node3IPv4Addresses, node3IPv4TranSwitchIP}})
 					node1 := nodes[0]
 					node1.Labels = map[string]string{
 						"k8s.ovn.org/egress-assignable": "",
@@ -1436,8 +1431,8 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					node1IPv4Addresses := []string{node1IPv4OVN, node1IPv4SecondaryHost1, node1IPv4SecondaryHost2}
 					node2IPv4Addresses := []string{node2IPv4OVN, node2IPv4SecondaryHost1, node2IPv4SecondaryHost2}
 					node3IPv4Addresses := []string{node3IPv4OVN, node3IPv4SecondaryHost1}
-					nodes := getIPv4Nodes([]nodeInfo{{node1IPv4Addresses, node1Name, node1IPv4TranSwitchIP},
-						{node2IPv4Addresses, node2Name, node2IPv4TranSwitchIP}, {node3IPv4Addresses, node3Name, node3IPv4TranSwitchIP}})
+					nodes := getIPv4Nodes([]nodeInfo{{node1IPv4Addresses, node1IPv4TranSwitchIP},
+						{node2IPv4Addresses, node2IPv4TranSwitchIP}, {node3IPv4Addresses, node3IPv4TranSwitchIP}})
 					node1 := nodes[0]
 					node1.Labels = map[string]string{
 						"k8s.ovn.org/egress-assignable": "",
@@ -1852,8 +1847,8 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					node1IPv4Addresses := []string{node1IPv4OVN, node1IPv4SecondaryHost1, node1IPv4SecondaryHost2}
 					node2IPv4Addresses := []string{node2IPv4OVN, node2IPv4SecondaryHost1, node2IPv4SecondaryHost2}
 
-					nodes := getIPv4Nodes([]nodeInfo{{node1IPv4Addresses, node1Zone, node1IPv4TranSwitchIP},
-						{node2IPv4Addresses, node2Zone, node2IPv4TranSwitchIP}})
+					nodes := getIPv4Nodes([]nodeInfo{{node1IPv4Addresses, node1IPv4TranSwitchIP},
+						{node2IPv4Addresses, node2IPv4TranSwitchIP}})
 
 					node1 := nodes[0]
 					node1.Labels = map[string]string{
@@ -2213,8 +2208,8 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					node1IPv4Addresses := []string{node1IPv4OVN, node1IPv4SecondaryHost1, node1IPv4SecondaryHost2}
 					node2IPv4Addresses := []string{node2IPv4OVN, node2IPv4SecondaryHost1, node2IPv4SecondaryHost2}
 
-					nodes := getIPv4Nodes([]nodeInfo{{node1IPv4Addresses, node1Zone, node1IPv4TranSwitchIP},
-						{node2IPv4Addresses, node2Zone, node2IPv4TranSwitchIP}})
+					nodes := getIPv4Nodes([]nodeInfo{{node1IPv4Addresses, node1IPv4TranSwitchIP},
+						{node2IPv4Addresses, node2IPv4TranSwitchIP}})
 
 					node1 := nodes[0]
 					node1.Labels = map[string]string{
@@ -2653,7 +2648,6 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 						"k8s.ovn.org/node-primary-ifaddr":             fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", node1IPv4, ""),
 						"k8s.ovn.org/node-subnets":                    fmt.Sprintf("{\"default\":\"%s\"}", v4Node1Subnet),
 						"k8s.ovn.org/node-transit-switch-port-ifaddr": "{\"ipv4\":\"100.88.0.2/16\"}", // used only for ic=true test
-						"k8s.ovn.org/zone-name":                       node1Zone,
 						util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node1IPv4),
 					}
 					labels := map[string]string{
@@ -2664,7 +2658,6 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 						"k8s.ovn.org/node-primary-ifaddr":             fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", node2IPv4, ""),
 						"k8s.ovn.org/node-subnets":                    fmt.Sprintf("{\"default\":\"%s\"}", v4Node1Subnet),
 						"k8s.ovn.org/node-transit-switch-port-ifaddr": "{\"ipv4\":\"100.88.0.3/16\"}", // used only for ic=true test
-						"k8s.ovn.org/zone-name":                       node2Zone,                      // used only for ic=true test
 						util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node2IPv4),
 					}
 					labels = map[string]string{}
@@ -3116,8 +3109,8 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					node1IPv4Addresses := []string{node1IPv4OVN, node1IPv4SecondaryHost}
 					node2IPv4Addresses := []string{node2IPv4OVN}
 
-					nodes := getIPv4Nodes([]nodeInfo{{node1IPv4Addresses, node1Zone, node1IPv4TranSwitchIP},
-						{node2IPv4Addresses, node2Zone, node2IPv4TranSwitchIP}})
+					nodes := getIPv4Nodes([]nodeInfo{{node1IPv4Addresses, node1IPv4TranSwitchIP},
+						{node2IPv4Addresses, node2IPv4TranSwitchIP}})
 					node1 := nodes[0]
 					node1.Labels = map[string]string{
 						"k8s.ovn.org/egress-assignable": "",
@@ -3457,7 +3450,6 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					"k8s.ovn.org/node-subnets":                    fmt.Sprintf("{\"default\":\"%s\",\"%s\"}", v4Node1Subnet, v6Node1Subnet),
 					"k8s.ovn.org/node-transit-switch-port-ifaddr": "{\"ipv4\":\"100.88.0.2/16\", \"ipv6\": \"fd97::2/64\"}",
 					util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", nodeIPv4),
-					"k8s.ovn.org/zone-name":                       node1Name,
 				}
 				node := getNodeObj(node1Name, annotations, map[string]string{}) // add node to avoid errori-ing out on transit switch IP fetch
 				fakeOvn.startWithDBSetup(
@@ -3640,11 +3632,6 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 						"k8s.ovn.org/node-transit-switch-port-ifaddr": "{\"ipv4\":\"100.88.0.2/16\", \"ipv6\": \"fd97::2/64\"}", // used only for ic=true test
 						util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node1IPv4),
 					}
-					if isnode1Local {
-						annotations["k8s.ovn.org/zone-name"] = node1Name
-					} else {
-						annotations["k8s.ovn.org/zone-name"] = node2Name
-					}
 					node1 := getNodeObj(node1Name, annotations, map[string]string{}) // add node to avoid errori-ing out on transit switch IP fetch
 
 					node2IPv4 := "192.168.126.202/24"
@@ -3658,9 +3645,6 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 						util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\",\"%s\"]", node2IPv4, node2IPv6),
 					}
 
-					if !isnode2Local {
-						annotations["k8s.ovn.org/zone-name"] = node2Name
-					}
 					node2 := getNodeObj(node2Name, annotations, map[string]string{}) // add node to avoid errori-ing out on transit switch IP fetch
 					dynamicNeighRouters := "false"
 
@@ -3929,8 +3913,8 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					egressPod := *ovntest.NewPodWithLabels(eipNamespace, podName, node1Name, podV6IP, egressPodLabel)
 					egressNamespace := ovntest.NewNamespace(eipNamespace)
 					nodes := getIPv6Nodes([]nodeInfo{
-						{[]string{"0:0:0:0:0:feff:c0a8:8e0c/64"}, podZone, "100.88.0.2/16"},
-						{[]string{"0:0:0:0:0:fedf:c0a8:8e0c/64"}, node2Name, "100.88.0.3/16"},
+						{[]string{"0:0:0:0:0:feff:c0a8:8e0c/64"}, "100.88.0.2/16"},
+						{[]string{"0:0:0:0:0:fedf:c0a8:8e0c/64"}, "100.88.0.3/16"},
 					})
 					node1 := nodes[0]
 					_, node1Subnet, _ := net.ParseCIDR(v6Node1Subnet)
@@ -4776,9 +4760,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 
 					egressPod := *ovntest.NewPodWithLabels(eipNamespace, podName, node1Name, podV6IP, egressPodLabel)
 					egressNamespace := ovntest.NewNamespaceWithLabels(eipNamespace, egressPodLabel)
-					// pod lives on node 1, therefore set the zone
 					node1 := newNodeNotEgressableV6Only(node1Name, "0:0:0:0:0:feff:c0a8:8e0c/64")
-					node1.Annotations["k8s.ovn.org/zone-name"] = podZone
 					_, node1Subnet, _ := net.ParseCIDR(v6Node1Subnet)
 					_, node2Subnet, _ := net.ParseCIDR(v6Node2Subnet)
 					dynamicNeighRouters := "false"
@@ -5006,9 +4988,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 
 					egressPod := *ovntest.NewPodWithLabels(eipNamespace, podName, node1Name, podV6IP, egressPodLabel)
 					egressNamespace := ovntest.NewNamespaceWithLabels(eipNamespace, egressPodLabel)
-					// pod is host by node 1 therefore we set its zone
 					node1 := newNodeNotEgressableV6Only(node1Name, "0:0:0:0:0:fedf:c0a8:8e0c/64")
-					node1.Annotations["k8s.ovn.org/zone-name"] = podZone
 					_, node1Subnet, _ := net.ParseCIDR(v6Node1Subnet)
 					_, node2Subnet, _ := net.ParseCIDR(v6Node2Subnet)
 					dynamicNeighRouters := "false"
@@ -5255,9 +5235,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 
 					egressPod := *ovntest.NewPodWithLabels(eipNamespace, podName, node1Name, podV6IP, egressPodLabel)
 					egressNamespace := ovntest.NewNamespaceWithLabels(eipNamespace, egressPodLabel)
-					// pod is hosted by node 1 therefore we set its zone
 					node1 := newNodeNotEgressableV6Only(node1Name, "0:0:0:0:0:feff:c0a8:8e0c/64")
-					node1.Annotations["k8s.ovn.org/zone-name"] = podZone
 					_, node1Subnet, _ := net.ParseCIDR(v6Node1Subnet)
 					_, node2Subnet, _ := net.ParseCIDR(v6Node2Subnet)
 					egressIPServedPodsASv4, _ := buildEgressIPServedPodsAddressSets(nil, types.DefaultNetworkName, types.DefaultNetworkControllerName)
@@ -5581,7 +5559,6 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 						"k8s.ovn.org/node-primary-ifaddr":             fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", node1IPv4CIDR, ""),
 						"k8s.ovn.org/node-subnets":                    fmt.Sprintf("{\"default\":\"%s\"}", v4Node1Subnet),
 						"k8s.ovn.org/node-transit-switch-port-ifaddr": "{\"ipv4\":\"100.88.0.2/16\"}", // used only for ic=true test
-						"k8s.ovn.org/zone-name":                       node1Zone,                      // used only for ic=true test
 						util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node1IPv4CIDR),
 						util.OvnNodeID:                                "2",
 					}
@@ -5593,7 +5570,6 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 						"k8s.ovn.org/node-primary-ifaddr":             fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", node2IPv4CIDR, ""),
 						"k8s.ovn.org/node-subnets":                    fmt.Sprintf("{\"default\":\"%s\"}", v4Node2Subnet),
 						"k8s.ovn.org/node-transit-switch-port-ifaddr": "{\"ipv4\":\"100.88.0.3/16\"}", // used only for ic=true test
-						"k8s.ovn.org/zone-name":                       node2Zone,                      // used only for ic=true test
 						util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node2IPv4CIDR),
 						util.OvnNodeID:                                "3",
 					}
@@ -6463,7 +6439,6 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", node1IPv4CIDR, node1IPv6CIDR),
 					"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":[\"%s\", \"%s\"]}", v4Node1Subnet, v6Node1Subnet),
 					util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\",\"%s\"]", node1IPv4CIDR, node1IPv6CIDR),
-					util.OvnNodeZoneName:              node1Name,
 				}
 				node1 := getNodeObj(node1Name, annotations, map[string]string{})
 				_, node2Subnet, _ := net.ParseCIDR(v4Node2Subnet)
@@ -6471,7 +6446,6 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", node2IPv4CIDR, ""),
 					"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":\"%s\"}", v4Node1Subnet),
 					util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", node2IPv4CIDR),
-					util.OvnNodeZoneName:              node2Name,
 				}
 				node2 := getNodeObj(node2Name, annotations, map[string]string{})
 				node1Switch := &nbdb.LogicalSwitch{
@@ -6855,7 +6829,6 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					"k8s.ovn.org/l3-gateway-config":   `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"192.168.126.12/24", "next-hop":"192.168.126.1"}}`,
 					"k8s.ovn.org/node-chassis-id":     "79fdcfc4-6fe6-4cd3-8242-c0f85a4668ec",
 					util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", node1IPv4CIDR),
-					util.OvnNodeZoneName:              node1Name,
 				}
 				labels := map[string]string{
 					"k8s.ovn.org/egress-assignable": "",
@@ -7204,7 +7177,6 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					"k8s.ovn.org/l3-gateway-config":   `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"192.168.126.12/24", "next-hop":"192.168.126.1"}}`,
 					"k8s.ovn.org/node-chassis-id":     "79fdcfc4-6fe6-4cd3-8242-c0f85a4668ec",
 					util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", node1IPv4CIDR),
-					util.OvnNodeZoneName:              node1Name,
 				}
 				labels := map[string]string{
 					"k8s.ovn.org/egress-assignable": "",
@@ -7525,7 +7497,6 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 						"k8s.ovn.org/l3-gateway-config":               `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"192.168.126.12/24", "next-hop":"192.168.126.1"}}`,
 						"k8s.ovn.org/node-chassis-id":                 "79fdcfc4-6fe6-4cd3-8242-c0f85a4668ec",
 						"k8s.ovn.org/node-transit-switch-port-ifaddr": "{\"ipv4\":\"100.88.0.2/16\"}", // used only for ic=true test
-						"k8s.ovn.org/zone-name":                       node1Zone,                      // used only for ic=true test
 						util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node1IPv4CIDR),
 					}
 					labels := map[string]string{
@@ -7538,7 +7509,6 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 						"k8s.ovn.org/l3-gateway-config":               `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:50", "ip-address":"192.168.126.13/24", "next-hop":"192.168.126.1"}}`,
 						"k8s.ovn.org/node-chassis-id":                 "79fdcfc4-6fe6-4cd3-8242-c0f85a4668ec",
 						"k8s.ovn.org/node-transit-switch-port-ifaddr": "{\"ipv4\":\"100.88.0.3/16\"}", // used only for ic=true test
-						"k8s.ovn.org/zone-name":                       node2Zone,                      // used only for ic=true test
 						util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node2IPv4CIDR),
 					}
 					node2 := getNodeObj(node2Name, annotations, map[string]string{})
@@ -8164,7 +8134,6 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 							"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", nodeIPv4CIDR, nodeIPv6CIDR),
 							"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":[\"%s\", \"%s\"]}", v4Node1Subnet, v6Node1Subnet),
 							util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\",\"%s\"]", nodeIPv4CIDR, nodeIPv6CIDR),
-							util.OvnNodeZoneName:              node1Name,
 						},
 					},
 					Status: corev1.NodeStatus{
@@ -9155,7 +9124,6 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", node1IPv4CIDR, ""),
 					"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":\"%s\"}", v4Node1Subnet),
 					util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", node1IPv4CIDR),
-					util.OvnNodeZoneName:              node1Name,
 				}
 				labels := map[string]string{
 					"k8s.ovn.org/egress-assignable": "",
@@ -10329,7 +10297,6 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 							"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":\"%s\"}", v4Node1Subnet),
 							"k8s.ovn.org/l3-gateway-config":   `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"192.168.126.12/24", "next-hop":"192.168.126.1"}}`,
 							"k8s.ovn.org/node-chassis-id":     "79fdcfc4-6fe6-4cd3-8242-c0f85a4668ec",
-							util.OvnNodeZoneName:              node1Name,
 							util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", node1IPv4CIDR),
 						},
 						Labels: map[string]string{
@@ -10526,7 +10493,6 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 							"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":\"%s\"}", v4Node1Subnet),
 							"k8s.ovn.org/l3-gateway-config":   `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"192.168.126.12/24", "next-hop":"192.168.126.1"}}`,
 							"k8s.ovn.org/node-chassis-id":     "79fdcfc4-6fe6-4cd3-8242-c0f85a4668ec",
-							util.OvnNodeZoneName:              node1Name,
 							util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", node1IPv4CIDR),
 						},
 						Labels: map[string]string{
@@ -10819,7 +10785,6 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 								"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":[\"%s\", \"%s\"]}", v4Node1Subnet, v6Node1Subnet),
 								"k8s.ovn.org/l3-gateway-config":   "{\"default\":{\"mode\":\"shared\",\"bridge-id\":\"breth0\",\"interface-id\":\"breth0_ovn-worker\",\"mac-address\":\"3a:24:24:5d:85:aa\",\"ip-addresses\":[\"10.89.0.19/24\",\"fc00:f853:ccd:e793::13/64\"],\"next-hops\":[\"10.89.0.1\",\"fc00:f853:ccd:e793::1\"],\"node-port-enable\":\"true\",\"vlan-id\":\"0\"}}",
 								"k8s.ovn.org/node-chassis-id":     "79fdcfc4-6fe6-4cd3-8242-c0f85a4668ec",
-								util.OvnNodeZoneName:              node1Name,
 								util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\",\"%s\"]", node1IPv4CIDR, "fc00:f853:ccd:e793::13/64"),
 							},
 							Labels: map[string]string{
@@ -11132,8 +11097,8 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 				egressPod2 := *ovntest.NewPodWithLabels(eipNamespace, podName2, node3Name, podV4IP2, egressPodLabel)
 				egressNamespace := ovntest.NewNamespace(eipNamespace)
 
-				nodes := getIPv4Nodes([]nodeInfo{{[]string{node1IPv4CIDR}, node1Name, node1IPv4TranSwitchIP},
-					{[]string{node2IPv4CIDR}, node2Name, node2IPv4TranSwitchIPCIDR}, {[]string{node3IPv4CIDR}, node3Name, node3IPv4TranSwitchIP}})
+				nodes := getIPv4Nodes([]nodeInfo{{[]string{node1IPv4CIDR}, node1IPv4TranSwitchIP},
+					{[]string{node2IPv4CIDR}, node2IPv4TranSwitchIPCIDR}, {[]string{node3IPv4CIDR}, node3IPv4TranSwitchIP}})
 				node1 := nodes[0]
 				node1.Labels = map[string]string{
 					"k8s.ovn.org/egress-assignable": "",
@@ -11627,7 +11592,6 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 						"k8s.ovn.org/l3-gateway-config":   `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"192.168.126.12/24", "next-hop":"192.168.126.1"}}`,
 						"k8s.ovn.org/node-chassis-id":     "79fdcfc4-6fe6-4cd3-8242-c0f85a4668ec",
 						util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", node1IPv4CIDR),
-						"k8s.ovn.org/zone-name":           node1Name,
 					}
 					node1 := getNodeObj(node1Name, annotations, map[string]string{})
 					annotations = map[string]string{
@@ -11636,10 +11600,6 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 						"k8s.ovn.org/l3-gateway-config":   `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"192.168.126.51/24", "next-hop":"192.168.126.1"}}`,
 						"k8s.ovn.org/node-chassis-id":     "89fdcfc4-6fe6-4cd3-8242-c0f85a4668ec",
 						util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", node2IPv4CIDR),
-						"k8s.ovn.org/zone-name":           node2Name,
-					}
-					if isPodRemote {
-						annotations["k8s.ovn.org/zone-name"] = node2Name
 					}
 					node2 := getNodeObj(node2Name, annotations, map[string]string{})
 
@@ -12122,7 +12082,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 				egressPod2 := *ovntest.NewPodWithLabels(eipNamespace2, podName2, node2Name, podV4IP2, egressPodLabel)
 				egressNamespace2 := ovntest.NewNamespace(eipNamespace2)
 
-				nodes := getIPv4Nodes([]nodeInfo{{node1IPv4Addresses, node1Name, node1IPv4TranSwitchIP}, {node2IPv4Addresses, node2Name, node2IPv4TranSwitchIP}})
+				nodes := getIPv4Nodes([]nodeInfo{{node1IPv4Addresses, node1IPv4TranSwitchIP}, {node2IPv4Addresses, node2IPv4TranSwitchIP}})
 				gomega.Expect(nodes).To(gomega.HaveLen(2))
 				node1 := nodes[0]
 				node1.Labels = map[string]string{
@@ -14298,7 +14258,6 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 						"k8s.ovn.org/node-primary-ifaddr":             fmt.Sprintf("{%s}", addValueToIPFamilyKey(n.primaryINFIP+mask)),
 						"k8s.ovn.org/node-subnets":                    fmt.Sprintf("{\"default\":[\"%s\"]}", n.podSubnet),
 						"k8s.ovn.org/node-transit-switch-port-ifaddr": fmt.Sprintf("{%s}", addValueToIPFamilyKey(n.transitSWIP+mask)),
-						"k8s.ovn.org/zone-name":                       n.nodeName,
 						util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", n.primaryINFIP+mask),
 					}
 					return getNodeObj(n.nodeName, nodeAnnotations, map[string]string{})
@@ -14520,7 +14479,6 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					"k8s.ovn.org/node-primary-ifaddr":             fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", Node1IPv4CIDR, node1IPv6CIDR),
 					"k8s.ovn.org/node-subnets":                    fmt.Sprintf("{\"default\":[\"%s\", \"%s\"]}", v4Node1Subnet, v6Node1Subnet),
 					"k8s.ovn.org/node-transit-switch-port-ifaddr": fmt.Sprintf("{\"ipv4\":\"%s\", \"ipv6\": \"%s\"}", node1TranSwitchIPv4CIDR, node1TranSwitchIPv6CIDR),
-					"k8s.ovn.org/zone-name":                       node1Name,
 					util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\",\"%s\"]", Node1IPv4CIDR, node1IPv6CIDR),
 				}
 				node1 := getNodeObj(node1Name, nodeAnnotations, map[string]string{}) // add node to avoid error-ing out on transit switch IP fetch
@@ -14761,7 +14719,6 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					"k8s.ovn.org/node-primary-ifaddr":             fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", Node1IPv4CIDR, node1IPv6CIDR),
 					"k8s.ovn.org/node-subnets":                    fmt.Sprintf("{\"default\":[\"%s\", \"%s\"]}", v4Node1Subnet, v6Node1Subnet),
 					"k8s.ovn.org/node-transit-switch-port-ifaddr": fmt.Sprintf("{\"ipv4\":\"%s\", \"ipv6\": \"%s\"}", node1TranSwitchIPv4CIDR, node1TranSwitchIPv6CIDR),
-					"k8s.ovn.org/zone-name":                       node1Name,
 					util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\",\"%s\"]", Node1IPv4CIDR, node1IPv6CIDR),
 				}
 				node1 := getNodeObj(node1Name, nodeAnnotations, map[string]string{}) // add node to avoid error-ing out on transit switch IP fetch
@@ -14781,7 +14738,6 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					"k8s.ovn.org/node-primary-ifaddr":             fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", node2IPv4CIDR, node2IPv6CIDR),
 					"k8s.ovn.org/node-subnets":                    fmt.Sprintf("{\"default\":[\"%s\", \"%s\"]}", v4Node2Subnet, v6Node2Subnet),
 					"k8s.ovn.org/node-transit-switch-port-ifaddr": fmt.Sprintf("{\"ipv4\":\"%s\", \"ipv6\": \"%s\"}", node2TranSwitchIPv4CIDR, node2TranSwitchIPv6CIDR),
-					"k8s.ovn.org/zone-name":                       node2Name,
 					util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\",\"%s\"]", node2IPv4CIDR, node2IPv6CIDR),
 				}
 				node2 := getNodeObj(node2Name, nodeAnnotations, map[string]string{})
@@ -15242,7 +15198,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 				egressPod := ovntest.NewPodWithLabels(eipNamespace, podName, node1Name, podV4IP, egressPodLabel)
 				egressNamespace := ovntest.NewNamespace(eipNamespace)
 				egressNamespace.Labels["test"] = "dev2"
-				nodes := getIPv4Nodes([]nodeInfo{{[]string{node1IPv4CIDR}, node1Name, node1IPv4TranSwitchIP}})
+				nodes := getIPv4Nodes([]nodeInfo{{[]string{node1IPv4CIDR}, node1IPv4TranSwitchIP}})
 				node1 := nodes[0]
 				node1.Labels = map[string]string{
 					"k8s.ovn.org/egress-assignable": "",
@@ -15323,7 +15279,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 				podLabel := map[string]string{"test": "dev2"}
 				egressPod := ovntest.NewPodWithLabels(eipNamespace, podName, node1Name, podV4IP, podLabel)
 				egressNamespace := ovntest.NewNamespace(eipNamespace)
-				nodes := getIPv4Nodes([]nodeInfo{{[]string{node1IPv4CIDR}, node1Name, node1IPv4TranSwitchIP}})
+				nodes := getIPv4Nodes([]nodeInfo{{[]string{node1IPv4CIDR}, node1IPv4TranSwitchIP}})
 				node1 := nodes[0]
 				node1.Labels = map[string]string{
 					"k8s.ovn.org/egress-assignable": "",
@@ -15414,7 +15370,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 				egressPod := ovntest.NewPodWithLabels(eipNamespace, podName, node1Name, podV4IP, egressPodLabel)
 				egressNamespace := ovntest.NewNamespace(eipNamespace)
 				egressNamespace.Labels["test"] = "dev2"
-				nodes := getIPv4Nodes([]nodeInfo{{[]string{node1IPv4CIDR}, node1Name, node1IPv4TranSwitchIP}})
+				nodes := getIPv4Nodes([]nodeInfo{{[]string{node1IPv4CIDR}, node1IPv4TranSwitchIP}})
 				node1 := nodes[0]
 				node1.Labels = map[string]string{
 					"k8s.ovn.org/egress-assignable": "",
@@ -15578,9 +15534,6 @@ func getNodeObj(nodeName string, annotations, labels map[string]string) corev1.N
 	}
 	if _, ok := nodeAnnotations[util.OvnNodeChassisID]; !ok {
 		nodeAnnotations[util.OvnNodeChassisID] = uuid.NewSHA1(uuid.NameSpaceOID, []byte(nodeName)).String()
-	}
-	if _, ok := nodeAnnotations[util.OvnNodeZoneName]; !ok {
-		nodeAnnotations[util.OvnNodeZoneName] = nodeName
 	}
 	node := corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{

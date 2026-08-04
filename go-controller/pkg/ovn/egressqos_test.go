@@ -600,8 +600,8 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 			// Ensure default EgressQoS object is updated with zone success status.
 			expectEgressQoSStatusMessageEventually(fakeOVN, namespaceT.Name, false)
 
-			// The controller node is local even before its zone annotation is set.
-			_, node3Switch, err := createNodeAndLS(fakeOVN, node3Name, "")
+			// The controller node is local based on node identity.
+			_, node3Switch, err := createNodeAndLS(fakeOVN, node3Name)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			node3Switch.QOSRules = []string{qos1.UUID, qos2.UUID}
@@ -936,7 +936,7 @@ func (o *FakeOVN) InitAndRunEgressQoSController() error {
 	return o.controller.runEgressQoSController(o.egressQoSWg, 1, o.stopChan)
 }
 
-func createNodeAndLS(fakeOVN *FakeOVN, name, zone string) (*corev1.Node, *nbdb.LogicalSwitch, error) {
+func createNodeAndLS(fakeOVN *FakeOVN, name string) (*corev1.Node, *nbdb.LogicalSwitch, error) {
 	node := corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
@@ -949,10 +949,6 @@ func createNodeAndLS(fakeOVN *FakeOVN, name, zone string) (*corev1.Node, *nbdb.L
 				},
 			},
 		},
-	}
-	node.Annotations = map[string]string{}
-	if zone != "" {
-		node.Annotations["k8s.ovn.org/zone-name"] = zone
 	}
 	kapiNode, err := fakeOVN.fakeClient.KubeClient.CoreV1().Nodes().Create(context.TODO(), &node, metav1.CreateOptions{})
 	if err != nil {

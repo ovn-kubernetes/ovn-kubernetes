@@ -1011,7 +1011,6 @@ func nodeChangedForAllNetworks(oldNode, newNode *corev1.Node) bool {
 	return util.NodeL3GatewayAnnotationChanged(oldNode, newNode) ||
 		oldNode.Name != newNode.Name ||
 		util.NodeHostCIDRsAnnotationChanged(oldNode, newNode) ||
-		util.NodeZoneAnnotationChanged(oldNode, newNode) ||
 		util.NoHostSubnet(oldNode) != util.NoHostSubnet(newNode)
 }
 

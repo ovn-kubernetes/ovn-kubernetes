@@ -145,7 +145,6 @@ type DefaultNodeNetworkController struct {
 	masqReconciler *masqueradeReconciler
 
 	nodeAddress net.IP
-	sbZone      string
 }
 
 func newDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, stopChan chan struct{},
@@ -726,20 +725,6 @@ func createNodeManagementPortController(
 	return managementport.NewManagementPortController(ovsClient, node, subnets, netdevName, rep, routeManager, netInfo)
 }
 
-// getOVNSBZone returns the zone name stored in the Southbound db.
-// It returns an error if "options:name" is not set in the SB_Global row.
-func getOVNSBZone() (string, error) {
-	dbZone, stderr, err := util.RunOVNSbctl("get", "SB_Global", ".", "options:name")
-	if err != nil {
-		if strings.Contains(stderr, "ovn-sbctl: no key \"name\" in SB_Global record") {
-			return "", fmt.Errorf("OVN Southbound DB zone name is not set")
-		}
-		return "", err
-	}
-
-	return dbZone, nil
-}
-
 // Init executes the first steps to start the DefaultNodeNetworkController.
 // It is split from Start() and executed before UserDefinedNodeNetworkController (UDNNC)
 // to allow UDNNC to reference the openflow manager created in Init.
@@ -797,32 +782,7 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 		}
 	}
 
-	// Make sure that the node zone matches with the Southbound db zone.
-	// Wait for 300s before giving up
-	var sbZone string
-	var err1 error
-
-	if config.IsModeDPUHost() {
-		// There is no SBDB to connect to in DPU Host mode, so use the node name.
-		sbZone = nc.name
-	} else {
-		err = wait.PollUntilContextTimeout(ctx, 500*time.Millisecond, 300*time.Second, true, func(_ context.Context) (bool, error) {
-			sbZone, err = getOVNSBZone()
-			if err != nil {
-				err1 = fmt.Errorf("failed to get the zone name from the OVN Southbound db server, err : %w", err)
-				return false, nil
-			}
-
-			if nc.name != sbZone {
-				err1 = fmt.Errorf("node name %s does not match the Southbound zone %s", nc.name, sbZone)
-				return false, nil
-			}
-			return true, nil
-		})
-		if err != nil {
-			return fmt.Errorf("timed out waiting for the node zone %s to match the OVN Southbound db zone, err: %v, err1: %v", nc.name, err, err1)
-		}
-
+	if !config.IsModeDPUHost() {
 		for _, auth := range []config.OvnAuthConfig{config.OvnNorth, config.OvnSouth} {
 			if err := auth.SetDBAuth(); err != nil {
 				return err
@@ -904,10 +864,6 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 	}
 	nc.nodeAddress = nodeAddr
 
-	if err := util.SetNodeZone(nodeAnnotator, sbZone); err != nil {
-		return fmt.Errorf("failed to set node zone annotation for node %s: %w", nc.name, err)
-	}
-
 	// Set the node-encap-ips annotation with the configured encap IP.
 	// This encap IP is unavailable on the DPU host mode, so we don't need to set it there.
 	if config.IsModeDPU() || config.IsModeFull() {
@@ -950,8 +906,6 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 		}
 	}
 
-	nc.sbZone = sbZone
-
 	return nil
 }
 
@@ -981,10 +935,8 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 		}
 	}
 
-	// If EncapPort is not the default tell sbdb to use specified port.
-	// We set the encap port after annotating the zone name so that ovnkube-controller has come up
-	// and configured the chassis in SBDB (ovnkube-controller waits for ovnkube-node to set annotation
-	// for at least one node in the given zone)
+	// If EncapPort is not the default, tell SBDB to use the specified port.
+	// setEncapPort waits for ovn-controller to create the chassis Encap row.
 	// NOTE: ovnkube-node in DPU-host mode has no SBDB to connect to. The encap port will be handled by the
 	// ovnkube-node running in DPU mode on behalf of the host.
 	if (config.IsModeDPU() || config.IsModeFull()) && config.Default.EncapPort != config.DefaultEncapPort {
