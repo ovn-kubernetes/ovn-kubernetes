@@ -1568,13 +1568,12 @@ get_kubevirt_release_url() {
 
 readonly FRR_K8S_VERSION=v0.0.0-20260603082256-b43efcb206be
 readonly FRR_K8S_GIT_REF=b43efcb206be
-readonly FRR_K8S_PATCHED_DEMO_FRR_IMAGE=quay.io/frrouting/frr:10.4.1
-readonly FRR_K8S_ALL_IN_ONE_FRR_IMAGE=quay.io/frrouting/frr:10.4.3
+readonly FRR_K8S_OVNK_BGP_PATCH="${DIR}/frr-k8s/patches/0001-Improvements-to-the-demo.patch"
+readonly FRR_K8S_UPSTREAM_FRR_IMAGE=quay.io/frrouting/frr:10.4.3
 readonly FRR_DEPLOYED_IMAGE=quay.io/frrouting/frr:10.6.0
 # Override to test newer FRR builds in the in-cluster frr-k8s daemonset
 # without changing the pinned frr-k8s release.
 FRR_K8S_FRR_IMAGE=${FRR_K8S_FRR_IMAGE:-${FRR_DEPLOYED_IMAGE}}
-readonly FRR_EXTERNAL_DEMO_IMAGE=${FRR_DEPLOYED_IMAGE}
 readonly FRR_TMP_DIR=$(mktemp -d -u)
 
 clone_frr() {
@@ -1586,23 +1585,19 @@ clone_frr() {
     git checkout --detach "$FRR_K8S_GIT_REF"
     popd
 
-    # Download the patches
-    curl -Ls https://github.com/jcaamano/frr-k8s/archive/refs/heads/ovnk-bgp-v0.0.21.tar.gz | tar xzvf - frr-k8s-ovnk-bgp-v0.0.21/patches --strip-components 1
-
-    # Change into the cloned repo directory before applying patches
     pushd frr-k8s
-    # The OVN-K demo patch was authored before upstream bumped the demo
-    # image. Normalize that context before applying the patch; the image is
-    # bumped to FRR_EXTERNAL_DEMO_IMAGE below.
-    sed -i 's|quay.io/frrouting/frr:10.4.3|quay.io/frrouting/frr:9.1.0|g' hack/demo/demo.sh
-    git apply ../patches/*
+    if ! git apply "${FRR_K8S_OVNK_BGP_PATCH}"; then
+      echo "Failed to apply ${FRR_K8S_OVNK_BGP_PATCH} to frr-k8s ${FRR_K8S_GIT_REF}; refresh the patch." >&2
+      exit 1
+    fi
 
-    # The OVN-K demo patch changes the external demo router image to 10.4.1.
-    # Replace that patched image with the FRR version configured by this script.
+    # The local OVN-K demo patch is refreshed against FRR_K8S_GIT_REF and keeps
+    # the upstream demo image unchanged. Replace that exact pinned image with
+    # the FRR version configured by this script.
     replace_in_file_or_exit \
       hack/demo/demo.sh \
-      "${FRR_K8S_PATCHED_DEMO_FRR_IMAGE}" \
-      "${FRR_EXTERNAL_DEMO_IMAGE}"
+      "${FRR_K8S_UPSTREAM_FRR_IMAGE}" \
+      "${FRR_DEPLOYED_IMAGE}"
 
     popd
 
@@ -1621,13 +1616,11 @@ deploy_frr_external_container() {
   # apply the demo which will deploy an external FRR container that the cluster
   # can peer with acting as BGP (reflector) external gateway
   pushd "${FRR_TMP_DIR}"/frr-k8s/hack/demo || exit 1
-  # modify config template to configure neighbors as route reflector clients
-  # First check if IPv4 network already exists
+  # Add the configured BGP server network prefixes to the demo FRR config.
+  # The carried FRR-k8s patch already renders neighbors as route reflector
+  # clients.
   grep -q 'network '"${BGP_SERVER_NET_SUBNET_IPV4}" frr/frr.conf.tmpl || \
     sed -i '/address-family ipv4 unicast/a \ \ network '"${BGP_SERVER_NET_SUBNET_IPV4}"'' frr/frr.conf.tmpl
-
-  # Add route reflector client config
-  sed -i '/remote-as 64512/a \ neighbor {{ . }} route-reflector-client' frr/frr.conf.tmpl
 
   if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     # Check if IPv6 address-family section exists
@@ -1641,9 +1634,6 @@ deploy_frr_external_container() {
       # Add network to existing IPv6 section
       sed -i '/address-family ipv6 unicast/a \ \ network '"${BGP_SERVER_NET_SUBNET_IPV6}"'' frr/frr.conf.tmpl
     fi
-
-    # Add route-reflector-client for IPv6 neighbors
-    sed -i '/neighbor fc00.*remote-as 64512/a \ neighbor {{ . }} route-reflector-client' frr/frr.conf.tmpl
   fi
   if [ "${OCI_BIN}" == "podman" ]; then
     # frr-k8s' demo script prefers docker when both docker and podman are
@@ -1825,13 +1815,12 @@ install_frr_k8s() {
 
   # This BGP e2e setup uses two FRR containers:
   # 1. The external FRR test router from hack/demo/demo.sh. clone_frr()
-  #    patches that image to FRR_EXTERNAL_DEMO_IMAGE.
+  #    patches that image to FRR_DEPLOYED_IMAGE.
   # 2. The in-cluster frr-k8s daemonset from config/all-in-one/frr-k8s.yaml.
   #    Patch that manifest here because clone_frr() does not update it.
   #
   # In regular PR e2e jobs where nobody sets a custom FRR_K8S_FRR_IMAGE
-  # environment variable, FRR_EXTERNAL_DEMO_IMAGE and FRR_K8S_FRR_IMAGE both
-  # resolve to FRR_DEPLOYED_IMAGE, so both containers use the same FRR build.
+  # environment variable, both containers use FRR_DEPLOYED_IMAGE.
   # FRR_K8S_FRR_IMAGE remains overrideable for tests that intentionally need a
   # different in-cluster daemonset image.
   #
@@ -1840,7 +1829,7 @@ install_frr_k8s() {
   # override must be reviewed before it changes what CI deploys.
   replace_in_file_or_exit \
     "${FRR_TMP_DIR}"/frr-k8s/config/all-in-one/frr-k8s.yaml \
-    "${FRR_K8S_ALL_IN_ONE_FRR_IMAGE}" \
+    "${FRR_K8S_UPSTREAM_FRR_IMAGE}" \
     "${FRR_K8S_FRR_IMAGE}"
 
   if [ "${bgp_port}" -ne 0 ]; then
