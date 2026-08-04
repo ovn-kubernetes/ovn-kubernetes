@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -3147,9 +3148,12 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 	})
 
 	Context("Dynamic UDN allocation", func() {
-		const nodeHostnameKey = "kubernetes.io/hostname"
+		const (
+			nodeHostnameKey         = "kubernetes.io/hostname"
+			terminatingPodFinalizer = "k8s.ovn.org/e2e-terminating-pod"
+		)
 
-		It("should connect cross-node L3 and L2 UDN pods through CNC when dynamic UDN allocation is enabled", func() {
+		It("should connect cross-node UDN pods and retain terminating node state", func() {
 			if !isDynamicUDNEnabled() {
 				Skip("test requires DYNAMIC_UDN_ALLOCATION=true")
 			}
@@ -3170,6 +3174,11 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			var l3PodNode1, l3PodNode2, l2Pod *corev1.Pod
 
 			DeferCleanup(func() {
+				if l3PodNode1 != nil {
+					_, _ = cs.CoreV1().Pods(l3PodNode1.Namespace).Patch(
+						context.Background(), l3PodNode1.Name, types.MergePatchType,
+						[]byte(`{"metadata":{"finalizers":[]}}`), metav1.PatchOptions{})
+				}
 				deleteCNC(cncName)
 				if l3PodNode1 != nil {
 					_ = cs.CoreV1().Pods(l3PodNode1.Namespace).Delete(context.Background(), l3PodNode1.Name, metav1.DeleteOptions{})
@@ -3211,7 +3220,16 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			By(fmt.Sprintf("Creating an L3 pod on %s", node1Name))
 			l3PodNode1Config := httpServerPodConfig("blue-pod-node1", l3Namespace)
 			l3PodNode1Config.nodeSelector = map[string]string{nodeHostnameKey: node1Name}
-			l3PodNode1 = runUDNPod(cs, l3Namespace, l3PodNode1Config, nil)
+			l3PodNode1 = runUDNPod(cs, l3Namespace, l3PodNode1Config, func(pod *corev1.Pod) {
+				terminationGracePeriodSeconds := int64(60)
+				pod.Finalizers = append(pod.Finalizers, terminatingPodFinalizer)
+				pod.Spec.TerminationGracePeriodSeconds = &terminationGracePeriodSeconds
+				pod.Spec.Containers[0].Lifecycle = &corev1.Lifecycle{
+					PreStop: &corev1.LifecycleHandler{
+						Exec: &corev1.ExecAction{Command: []string{"/agnhost", "pause"}},
+					},
+				}
+			})
 
 			By(fmt.Sprintf("Creating a second L3 pod on %s", node2Name))
 			l3PodNode2Config := httpServerPodConfig("blue-pod-node2", l3Namespace)
@@ -3245,9 +3263,68 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			verifyCNCNodeOVNObjects(f, cs, cncName, l3NetworkID, node1ID, true)
 			verifyCNCNodeOVNObjects(f, cs, cncName, l3NetworkID, node2ID, true)
 
-			By(fmt.Sprintf("Deleting the L3 pod on %s to make that node inactive for the L3 UDN", node1Name))
-			Expect(deletePodWithWait(context.Background(), cs, l3PodNode1)).To(Succeed())
-			l3PodNode1 = nil
+			By(fmt.Sprintf("Deleting the final L3 pod on %s", node1Name))
+			Expect(cs.CoreV1().Pods(l3PodNode1.Namespace).Delete(
+				context.Background(), l3PodNode1.Name, metav1.DeleteOptions{})).To(Succeed())
+
+			By("Waiting for the pod to be terminating while its container still runs")
+			Eventually(func(g Gomega) {
+				pod, err := cs.CoreV1().Pods(l3PodNode1.Namespace).Get(
+					context.Background(), l3PodNode1.Name, metav1.GetOptions{})
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(pod.DeletionTimestamp).NotTo(BeNil())
+				g.Expect(pod.Status.Phase).To(Equal(corev1.PodRunning))
+				g.Expect(pod.Status.ContainerStatuses).NotTo(BeEmpty())
+				g.Expect(pod.Status.ContainerStatuses[0].State.Running).NotTo(BeNil())
+			}, 30*time.Second, time.Second).Should(Succeed())
+
+			// Force a pod tracker reconciliation while the pod is terminating. A
+			// semantically empty network-selection update must not remove the
+			// primary UDN reference while the container is still running.
+			By("Forcing pod tracker reconciliation during termination")
+			networkSelectionPatch := fmt.Sprintf(
+				`{"metadata":{"annotations":{%q:"[]"}}}`, nadapi.NetworkAttachmentAnnot)
+			_, err = cs.CoreV1().Pods(l3PodNode1.Namespace).Patch(
+				context.Background(), l3PodNode1.Name, types.MergePatchType,
+				[]byte(networkSelectionPatch), metav1.PatchOptions{})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying connectivity and node state persist during termination")
+			Consistently(func(g Gomega) {
+				pod, err := cs.CoreV1().Pods(l3PodNode1.Namespace).Get(
+					context.Background(), l3PodNode1.Name, metav1.GetOptions{})
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(pod.Status.Phase).To(Equal(corev1.PodRunning))
+				g.Expect(pod.Status.ContainerStatuses).NotTo(BeEmpty())
+				g.Expect(pod.Status.ContainerStatuses[0].State.Running).NotTo(BeNil())
+				for _, l3PodIP := range l3PodNode1IPs {
+					g.Expect(checkConnectivity(
+						l3PodNode2.Namespace, l3PodNode2.Name, l3PodIP, true)).To(BeTrue(),
+						"expected terminating pod IP %s to remain reachable", l3PodIP)
+				}
+				ports, err := findCNCNodeOVNObjects(
+					f, cs, "Logical_Router_Port", "name", cncName, l3NetworkID, node1ID)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(ports).NotTo(BeEmpty())
+				routes, err := findCNCNodeOVNObjects(
+					f, cs, "Logical_Router_Static_Route", "ip_prefix,nexthop",
+					cncName, l3NetworkID, node1ID)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(routes).NotTo(BeEmpty())
+			}, 30*time.Second, 2*time.Second).Should(Succeed())
+
+			By("Waiting for the terminating pod to reach a terminal phase")
+			Eventually(func(g Gomega) {
+				pod, err := cs.CoreV1().Pods(l3PodNode1.Namespace).Get(
+					context.Background(), l3PodNode1.Name, metav1.GetOptions{})
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(pod.Status.Phase).To(Or(
+					Equal(corev1.PodSucceeded), Equal(corev1.PodFailed)))
+			}, 2*time.Minute, 2*time.Second).Should(Succeed())
+
+			By("Verifying terminal pod cleanup removes only the inactive node state")
+			verifyCNCNodeOVNObjects(f, cs, cncName, l3NetworkID, node1ID, false)
+			verifyCNCNodeOVNObjects(f, cs, cncName, l3NetworkID, node2ID, true)
 
 			By("Verifying the remaining L3 pod is still reachable through the CNC")
 			for _, l3PodIP := range l3PodNode2IPs {
@@ -3257,9 +3334,15 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 					fmt.Sprintf("expected %s/%s to ping remaining L3 pod IP %s", l2Pod.Namespace, l2Pod.Name, l3PodIP))
 			}
 
-			By("Verifying CNC removed L3 node-specific OVN state for the inactive node only")
-			verifyCNCNodeOVNObjects(f, cs, cncName, l3NetworkID, node1ID, false)
-			verifyCNCNodeOVNObjects(f, cs, cncName, l3NetworkID, node2ID, true)
+			By("Removing the test finalizer and waiting for pod deletion")
+			_, err = cs.CoreV1().Pods(l3PodNode1.Namespace).Patch(
+				context.Background(), l3PodNode1.Name, types.MergePatchType,
+				[]byte(`{"metadata":{"finalizers":[]}}`), metav1.PatchOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(waitForPodNotFoundInNamespace(
+				context.Background(), cs, l3PodNode1.Name, l3PodNode1.Namespace,
+				l3PodNode1.UID, 30*time.Second)).To(Succeed())
+			l3PodNode1 = nil
 		})
 	})
 
