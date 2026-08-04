@@ -150,35 +150,12 @@ func NewForCluster(
 	return new(
 		"clustermanager-nad-controller",
 		"",
-		"",
 		cm,
 		wf,
 		ovnClient,
 		recorder,
 		tunnelKeysAllocator,
 		"",
-	)
-}
-
-// NewForZone builds a controller for zone manager
-func NewForZone(
-	zone string,
-	cm ControllerManager,
-	wf watchFactory,
-) (Controller, error) {
-	if zone == "" {
-		return nil, errors.New("zone manager requires a zone")
-	}
-	return new(
-		"zone-nad-controller",
-		zone,
-		"",
-		cm,
-		wf,
-		nil,
-		nil,
-		nil,
-		zone,
 	)
 }
 
@@ -190,7 +167,6 @@ func NewForNode(
 ) (Controller, error) {
 	return new(
 		"node-nad-controller",
-		"",
 		node,
 		cm,
 		wf,
@@ -206,7 +182,6 @@ func NewForNode(
 // lifecycle of their corresponding network controllers.
 func new(
 	name string,
-	zone string,
 	node string,
 	cm ControllerManager,
 	wf watchFactory,
@@ -215,7 +190,7 @@ func new(
 	tunnelKeysAllocator *id.TunnelKeysAllocator,
 	filterNADsOnNode string,
 ) (Controller, error) {
-	return newController(name, zone, node, cm, wf, ovnClient, recorder, tunnelKeysAllocator, filterNADsOnNode)
+	return newController(name, node, cm, wf, ovnClient, recorder, tunnelKeysAllocator, filterNADsOnNode)
 }
 
 // ControllerManager manages controllers. Needs to be provided in order to build
