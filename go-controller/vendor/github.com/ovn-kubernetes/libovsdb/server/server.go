@@ -136,7 +136,8 @@ func (o *OvsdbServer) Serve(protocol string, path string) error {
 		}
 
 		// TODO: Need to cleanup when connection is closed
-		go o.srv.ServeCodec(jsonrpc.NewJSONCodec(conn))
+		// Wrap in serialCodec so concurrent handler goroutines don't race on json codec writes.
+		go o.srv.ServeCodec(newSerialCodec(jsonrpc.NewJSONCodec(conn)))
 	}
 }
 
