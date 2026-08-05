@@ -23,9 +23,13 @@ var (
 	metallbLBService      = "quay.io/itssurya/dev-images:metallb-lbservice"
 	udpServerSrcIPPrinter = "quay.io/itssurya/dev-images:udp-server-srcip-printer"
 	frr                   = "quay.io/frrouting/frr:10.5.3"
-	
+	// dnsmasq 2.83; pinned by digest for CI reproducibility.
+	// TODO: mirror to a project-controlled registry (ghcr/quay) — docker.io
+	// pulls are rate-limited in CI and this is a personal repository.
+	dnsmasq = "docker.io/andyshinn/dnsmasq:2.83@sha256:e937327fede666e55ba4c2ab8e715a2ce561945363016d42f9d698d1b18ff1be"
+
 	agnHostOverride = ""
-	extraImages []string
+	extraImages     []string
 )
 
 func init() {
@@ -59,6 +63,12 @@ func AgnHost() string {
 
 func IPerf3() string {
 	return iperf3
+}
+
+// DNSMasq returns an image containing the dnsmasq DHCP server, used as the
+// external DHCP server on the underlay for DHCP-IPAM localnet tests.
+func DNSMasq() string {
+	return dnsmasq
 }
 
 func Netshoot() string {

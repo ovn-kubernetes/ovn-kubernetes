@@ -411,6 +411,7 @@ func allocatePodAnnotationWithRollback(
 		MAC:      podAnnotation.MAC,
 		TunnelID: podAnnotation.TunnelID,
 		Role:     networkRole,
+		IPAMMode: netInfo.IPAMType(),
 	}
 
 	hasIDAllocation := util.DoesNetworkRequireTunnelIDs(netInfo)

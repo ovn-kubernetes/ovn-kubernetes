@@ -239,6 +239,17 @@ func updateDeviceInfo(pr *PodRequest) error {
 		return nil
 	}
 	if util.IsPCIDeviceName(pr.CNIConf.DeviceID) {
+		// The IsVFIO answer below reads the live driver binding, which is wrong
+		// when a previous ADD crashed mid VFIO handoff. Repair first (a
+		// single stat when no handoff journal exists).
+		// Fatal on ADD and best-effort for other commands so teardown is never blocked.
+		if err := healInterruptedVFIOHandoff(pr.CNIConf.DeviceID); err != nil {
+			if pr.Command == CNIAdd {
+				return err
+			}
+			klog.Warningf("Proceeding with %s despite a failed VFIO handoff repair for device %s: %v",
+				pr.Command, pr.CNIConf.DeviceID, err)
+		}
 		// DeviceID is a PCI address
 		pr.IsVFIO = util.GetSriovnetOps().IsVfPciVfioBound(pr.CNIConf.DeviceID)
 	} else if util.IsAuxDeviceName(pr.CNIConf.DeviceID) {

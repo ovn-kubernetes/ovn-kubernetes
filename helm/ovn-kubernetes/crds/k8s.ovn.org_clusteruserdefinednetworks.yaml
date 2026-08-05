@@ -314,12 +314,17 @@ spec:
                               `Disabled` means OVN-Kubernetes will only assign MAC addresses and provide layer 2 communication, letting users
                               configure IP addresses for the pods.
                               `Disabled` is only available for Secondary networks.
+                              `DHCP` delegates IP assignment to a DHCP server reachable on the physical network; OVN-Kubernetes
+                              does not allocate addresses. Lease acquisition depends on the workload type: regular pods use the
+                              DHCP CNI plugin on the node, while KubeVirt virtual machines run a DHCP client inside the guest OS.
+                              Only supported for Localnet Secondary networks, and currently only for IPv4.
                               By disabling IPAM, any Kubernetes features that rely on selecting pods by IP will no longer function
                               (such as network policy, services, etc). Additionally, IP port security will also be disabled for interfaces attached to this network.
                               Defaults to `Enabled`.
                             enum:
                             - Enabled
                             - Disabled
+                            - DHCP
                             type: string
                         type: object
                         x-kubernetes-validations:
@@ -422,6 +427,10 @@ spec:
                         network
                       rule: '!has(self.ipam) || !has(self.ipam.mode) || self.ipam.mode
                         != ''Disabled'' || self.role == ''Secondary'''
+                    - message: DHCP ipam.mode is not supported for Layer2 topology,
+                        use Localnet topology instead
+                      rule: '!has(self.ipam) || !has(self.ipam.mode) || self.ipam.mode
+                        != ''DHCP'''
                     - message: JoinSubnets is only supported for Primary network
                       rule: '!has(self.joinSubnets) || has(self.role) && self.role
                         == ''Primary'''
@@ -623,7 +632,7 @@ spec:
                           excludeSubnets is optional. When omitted no IP address is excluded and all IP addresses specified in `subnets`
                           are subject to assignment.
                           The format should match standard CIDR notation (for example, "10.128.0.0/16").
-                          This field must be omitted if `subnets` is unset or `ipam.mode` is `Disabled`.
+                          This field must be omitted if `subnets` is unset or `ipam.mode` is `Disabled` or `DHCP`.
                           When `physicalNetworkName` points to OVS bridge mapping of a network with reserved IP addresses
                           (which shouldn't be assigned by OVN-Kubernetes), the specified CIDRs will not be assigned. For example:
                           Given: `subnets: "10.0.0.0/24"`, `excludeSubnets`: "10.0.0.200/30", the following addresses will not be assigned
@@ -640,18 +649,22 @@ spec:
                       ipam:
                         description: "ipam configurations for the network.\nipam is
                           optional. When omitted, `subnets` must be specified.\nWhen
-                          `ipam.mode` is `Disabled`, `subnets` must be omitted.\n`ipam.mode`
+                          `ipam.mode` is `Disabled` or `DHCP`, `subnets` must be omitted.\n`ipam.mode`
                           controls how much of the IP configuration will be managed
                           by OVN.\n   When `Enabled`, OVN-Kubernetes will apply IP
                           configuration to the SDN infra and assign IPs from the selected\n
                           \  subnet to the pods.\n   When `Disabled`, OVN-Kubernetes
                           only assigns MAC addresses, and provides layer2 communication,
-                          and enables users\n   to configure IP addresses on the pods.\n`ipam.lifecycle`
-                          controls IP addresses management lifecycle.\n   When set
-                          to 'Persistent', the assigned IP addresses will be persisted
-                          in `ipamclaims.k8s.cni.cncf.io` object.\n\t  Useful for
-                          VMs, IP address will be persistent after restarts and migrations.
-                          Supported when `ipam.mode` is `Enabled`."
+                          and enables users\n   to configure IP addresses on the pods.\n
+                          \  When `DHCP`, IP assignment is delegated to a DHCP server
+                          reachable on the physical network. OVN-Kubernetes\n   learns
+                          the assigned IPs but does not allocate them. Currently supported
+                          only for IPv4.\n`ipam.lifecycle` controls IP addresses management
+                          lifecycle.\n   When set to 'Persistent', the assigned IP
+                          addresses will be persisted in `ipamclaims.k8s.cni.cncf.io`
+                          object.\n\t  Useful for VMs, IP address will be persistent
+                          after restarts and migrations. Supported when `ipam.mode`
+                          is `Enabled`."
                         minProperties: 1
                         properties:
                           lifecycle:
@@ -672,12 +685,17 @@ spec:
                               `Disabled` means OVN-Kubernetes will only assign MAC addresses and provide layer 2 communication, letting users
                               configure IP addresses for the pods.
                               `Disabled` is only available for Secondary networks.
+                              `DHCP` delegates IP assignment to a DHCP server reachable on the physical network; OVN-Kubernetes
+                              does not allocate addresses. Lease acquisition depends on the workload type: regular pods use the
+                              DHCP CNI plugin on the node, while KubeVirt virtual machines run a DHCP client inside the guest OS.
+                              Only supported for Localnet Secondary networks, and currently only for IPv4.
                               By disabling IPAM, any Kubernetes features that rely on selecting pods by IP will no longer function
                               (such as network policy, services, etc). Additionally, IP port security will also be disabled for interfaces attached to this network.
                               Defaults to `Enabled`.
                             enum:
                             - Enabled
                             - Disabled
+                            - DHCP
                             type: string
                         type: object
                         x-kubernetes-validations:
@@ -731,10 +749,11 @@ spec:
                           subnets is optional. When omitted OVN-Kubernetes won't assign IP address automatically.
                           Dual-stack clusters may set 2 subnets (one for each IP family), otherwise only 1 subnet is allowed.
                           The format should match standard CIDR notation (for example, "10.128.0.0/16").
-                          This field must be omitted if `ipam.mode` is `Disabled`.
-                          When physicalNetworkName points to the OVS bridge mapping of a network that provides IPAM services
-                          (e.g., a DHCP server), ipam.mode should be set to Disabled. This turns off OVN-Kubernetes IPAM and avoids
-                          conflicts with the existing IPAM services on this localnet network.
+                          This field must be omitted if `ipam.mode` is `Disabled` or `DHCP`.
+                          When physicalNetworkName points to the OVS bridge mapping of a network that provides IPAM services,
+                          ipam.mode should be set to `Disabled` (users configure the pod IPs themselves) or `DHCP` (a DHCP
+                          server on that network assigns them). Both turn off OVN-Kubernetes IPAM and avoid conflicts with
+                          the existing IPAM services on this localnet network.
                         items:
                           maxLength: 43
                           type: string
@@ -800,6 +819,9 @@ spec:
                         and forbidden otherwise
                       rule: '!has(self.ipam) || !has(self.ipam.mode) || self.ipam.mode
                         == ''Enabled'' ? has(self.subnets) : !has(self.subnets)'
+                    - message: DHCP ipam.mode is only supported for Secondary network
+                      rule: '!has(self.ipam) || !has(self.ipam.mode) || self.ipam.mode
+                        != ''DHCP'' || self.role == ''Secondary'''
                     - message: excludeSubnets must be unset when subnets is unset
                       rule: '!has(self.excludeSubnets) || has(self.subnets)'
                     - message: MTU should be greater than or equal to 1280 when an

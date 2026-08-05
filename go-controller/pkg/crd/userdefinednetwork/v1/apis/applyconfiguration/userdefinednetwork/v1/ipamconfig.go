@@ -18,6 +18,10 @@ type IPAMConfigApplyConfiguration struct {
 	// `Disabled` means OVN-Kubernetes will only assign MAC addresses and provide layer 2 communication, letting users
 	// configure IP addresses for the pods.
 	// `Disabled` is only available for Secondary networks.
+	// `DHCP` delegates IP assignment to a DHCP server reachable on the physical network; OVN-Kubernetes
+	// does not allocate addresses. Lease acquisition depends on the workload type: regular pods use the
+	// DHCP CNI plugin on the node, while KubeVirt virtual machines run a DHCP client inside the guest OS.
+	// Only supported for Localnet Secondary networks, and currently only for IPv4.
 	// By disabling IPAM, any Kubernetes features that rely on selecting pods by IP will no longer function
 	// (such as network policy, services, etc). Additionally, IP port security will also be disabled for interfaces attached to this network.
 	// Defaults to `Enabled`.

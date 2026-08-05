@@ -503,9 +503,10 @@ func (c *Controller) onNQOSPodUpdate(oldObj, newObj interface{}) {
 	oldPodCompleted := util.PodCompleted(oldPod)
 	newPodCompleted := util.PodCompleted(newPod)
 	if labels.Equals(oldPodLabels, newPodLabels) &&
-		// check for podIP changes (in case we allocate and deallocate) or for dualstack conversion
-		// it will also catch the pod update that will come when LSPAdd and IPAM allocation are done
-		len(oldPodIPs) == len(newPodIPs) &&
+		// compare the addresses themselves, not just the count: on networks
+		// with externally assigned IPs (DHCP IPAM) a sandbox recreation can
+		// replace one lease with another, leaving the count unchanged
+		util.IsIPsEqual(oldPodIPs, newPodIPs) &&
 		oldPodCompleted == newPodCompleted {
 		return
 	}

@@ -928,6 +928,10 @@ func (bnc *BaseNetworkController) doesNetworkRequireIPAM() bool {
 	return util.DoesNetworkRequireIPAM(bnc.GetNetInfo())
 }
 
+func (bnc *BaseNetworkController) doesNetworkHaveDiscoverablePodIPs() bool {
+	return util.DoesNetworkHaveDiscoverablePodIPs(bnc.GetNetInfo())
+}
+
 func (bnc *BaseNetworkController) getPodNADKeys(pod *corev1.Pod) []string {
 	if !bnc.IsUserDefinedNetwork() {
 		return []string{types.DefaultNetworkName}

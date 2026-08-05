@@ -133,7 +133,7 @@ func (d *DNS) updateOne(dns string) (bool, error) {
 	}
 
 	changed := false
-	if !ipsEqual(res.ips, ips) {
+	if !IsIPsEqual(res.ips, ips) {
 		changed = true
 	}
 	res.ips = ips
@@ -256,26 +256,6 @@ func (d *DNS) GetNextQueryTime() (time.Time, string, bool) {
 		}
 	}
 	return minTime, dns, timeSet
-}
-
-func ipsEqual(oldips, newips []net.IP) bool {
-	if len(oldips) != len(newips) {
-		return false
-	}
-
-	for _, oldip := range oldips {
-		found := false
-		for _, newip := range newips {
-			if oldip.Equal(newip) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-	return true
 }
 
 func filterIPServers(servers []string) []string {

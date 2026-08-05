@@ -20,6 +20,7 @@ OVN-Kubernetes currently supports only two IPAM modes for localnet CUDN: `Enable
 ## Future Goals
 
 - Extend DHCP IPAM support to Layer 2 and layer 3 topologies.
+- Extend DHCP IPAM support to IPv6 (DHCPv6) and dual-stack networks — **the current mode is IPv4-only**; see the known limitation below.
 - Supporting DHCP IPAM in unprivileged ovnkube-node mode.
 - Explore an alternative model where the guest drives DHCP and OVN-Kubernetes learns the resulting IPs/MACs afterwards, rather than initiating the DORA at CNI ADD that would pave the way for other use cases such as discovering guest-assigned addresses more generally.
 
@@ -113,14 +114,14 @@ const (
 | ---------- | ------------------------------------------------------------ | ------------------------------------ | ------------- |
 | `Enabled`  | OVN-K allocates IPs from subnets (existing)                  | N/A                                  | Required      |
 | `Disabled` | No IP assignment (existing)                                  | N/A                                  | Forbidden     |
-| `DHCP`     | External DHCP; behavior selected at runtime by workload type | Pods: DHCP CNI daemon. VMs: guest OS | Forbidden     |
+| `DHCP`     | External DHCP, IPv4-only; behavior selected at runtime by workload type | Pods: DHCP CNI daemon. VMs: guest OS | Forbidden     |
 
 
 
 
 #### Field Descriptions
 
-- `DHCP`: OVN-Kubernetes delegates IP assignment to the external DHCP server and selects the lease-handling behavior at CNI ADD time based on the workload type:
+- `DHCP`: OVN-Kubernetes delegates IP assignment to the external DHCP server (**IPv4 only**) and selects the lease-handling behavior at CNI ADD time based on the workload type:
   - **Pods** (not owned by a VirtualMachineInstance): OVN-Kubernetes delegates to the DHCP CNI IPAM plugin daemon, which performs the full DHCP handshake and maintains the lease (renewals at T1/T2) for the pod's lifetime. The lease is released on CNI DEL.
   - **KubeVirt VMs** (owned by a VirtualMachineInstance): OVN-Kubernetes performs a one-shot DHCP lease acquisition during CNI ADD to discover the IP address assigned by the external DHCP server. No lease maintenance is performed; the VM runs its own DHCP client and manages the lease lifecycle. The discovered IP is reported in the CNI result for multus annotation and NBDB programming.
 
@@ -316,6 +317,20 @@ ovnkube-controller reads the DHCP-assigned IP from the pod's `k8s.ovn.org/pod-ne
 ## Risks, Known Limitations and Mitigations
 
 
+
+### Known Limitation: DHCP IPAM is currently supported only for IPv4
+
+**Currently, DHCP IPAM is supported only for IPv4.** The limitation comes from
+the DHCP machinery, not from OVN-Kubernetes: the upstream DHCP CNI plugin used
+on the pod delegation path implements DHCPv4 only, and the one-shot VM
+discovery likewise performs only a DHCPv4 exchange. Consequently
+OVN-Kubernetes treats a DHCP network as IPv4 throughout the stack (IP-based
+feature matches, address sets), and an IPv6 address acquired by a guest's own
+DHCPv6 client or via RAs is not reported to OVN-Kubernetes.
+
+**Mitigation:** none required for IPv4 deployments. DHCPv6/dual-stack is
+listed under Future Goals and would extend the same `DHCP` mode rather than
+add a new API value.
 
 ### Known Limitation: DHCP RELEASE with dnsmasq (pod delegation path)
 
