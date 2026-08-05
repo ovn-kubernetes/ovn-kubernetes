@@ -7,6 +7,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/bridgeconfig"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -85,6 +86,9 @@ func TestOpenFlowManagerCleansUnusedUplinkBridgeFlows(t *testing.T) {
 }
 
 func TestOpenFlowManagerSyncsUplinkBridgeFlows(t *testing.T) {
+	if err := config.PrepareTestConfig(); err != nil {
+		t.Fatalf("failed to prepare test config: %v", err)
+	}
 	fexec := ovntest.NewFakeExec()
 	if err := util.SetExec(fexec); err != nil {
 		t.Fatalf("failed to set fake exec: %v", err)
