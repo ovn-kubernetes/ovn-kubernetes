@@ -346,7 +346,7 @@ func (pr *PodRequest) cmdAdd(kubeAuth *KubeAPIAuth, clientset *ClientSet, ovsCli
 	return response, nil
 }
 
-func (pr *PodRequest) cmdDel(clientset *ClientSet) (*Response, error) {
+func (pr *PodRequest) cmdDel(clientset *ClientSet, ovsClient client.Client) (*Response, error) {
 	// assume success case, return an empty Result
 	response := &Response{}
 	response.Result = &current.Result{}
@@ -486,9 +486,11 @@ func (pr *PodRequest) cmdDel(clientset *ClientSet) (*Response, error) {
 	podInterfaceInfo := &PodInterfaceInfo{
 		IsDPUHostMode: config.IsModeDPUHost(),
 		NetdevName:    netdevName,
+		NetName:       pr.netName,
+		NADKey:        pr.nadKey,
 	}
 	if !config.UnprivilegedMode {
-		err := podRequestInterfaceOps.UnconfigureInterface(pr, podInterfaceInfo, clientset.podLister, pod)
+		err := podRequestInterfaceOps.UnconfigureInterface(pr, ovsClient, podInterfaceInfo, clientset.podLister, pod)
 		if err != nil {
 			return nil, err
 		}
