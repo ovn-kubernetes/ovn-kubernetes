@@ -546,13 +546,27 @@ func setUpGatewayFakeOVSCommands(fexec *ovntest.FakeExec) {
 	fexec.AddFakeCmdsNoOutputNoError([]string{
 		"ovs-ofctl -O OpenFlow13 --bundle replace-flows breth0 -",
 	})
+	// SyncNoFlood calls GetNoFloodPorts (dump-ports-desc) during syncFlows.
+	// Before any UDN is added, no ports have NO_FLOOD.
+	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+		Cmd:    "ovs-ofctl dump-ports-desc breth0",
+		Output: " 5(patch-breth0_w): addr:00:00:00:00:00:00\n     config:     0\n     state:      LIVE\n",
+	})
 }
 
 func setUpUDNOpenflowManagerFakeOVSCommands(fexec *ovntest.FakeExec) {
-	// UDN patch port
+	// UDN patch port: get ofport for flow generation
 	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 		Cmd:    "ovs-vsctl --timeout=15 get Interface patch-breth0_bluenet_worker1-to-br-int ofport",
 		Output: "15",
+	})
+	// SetPortNoFlood resolves ofport again before calling mod-port
+	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+		Cmd:    "ovs-vsctl --timeout=15 get Interface patch-breth0_bluenet_worker1-to-br-int ofport",
+		Output: "15",
+	})
+	fexec.AddFakeCmdsNoOutputNoError([]string{
+		"ovs-ofctl mod-port breth0 15 no-flood",
 	})
 }
 
@@ -1227,7 +1241,8 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 				&kubeMock, vrf, ipRulesManager, localGw, nil, nil, nil)
 			Expect(err).NotTo(HaveOccurred())
 			flowMap := udnGateway.gateway.openflowManager.defaultBridge.flowCache
-			Expect(flowMap["DEFAULT"]).To(HaveLen(50))
+			baseFlowCount := 52
+			Expect(flowMap["DEFAULT"]).To(HaveLen(baseFlowCount))
 
 			Expect(udnGateway.masqCTMark).To(Equal(udnGateway.masqCTMark))
 			var udnFlows int
@@ -1243,9 +1258,12 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			Expect(udnFlows).To(Equal(0))
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(1)) // only default network
 
+			addOVSPatchPortInterface(ovsClient, "breth0", "patch-breth0_bluenet_worker1-to-br-int", 15)
 			Expect(udnGateway.AddNetwork()).To(Succeed())
+
 			flowMap = udnGateway.gateway.openflowManager.defaultBridge.flowCache
-			Expect(flowMap["DEFAULT"]).To(HaveLen(70))                                      // 18 UDN Flows are added by default
+			udnDefaultFlows := 22
+			Expect(flowMap["DEFAULT"]).To(HaveLen(baseFlowCount + udnDefaultFlows))
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(2)) // default network + UDN network
 			defaultUdnConfig := udnGateway.openflowManager.defaultBridge.GetNetworkConfig("default")
 			bridgeUdnConfig := udnGateway.openflowManager.defaultBridge.GetNetworkConfig("bluenet")
@@ -1263,7 +1281,6 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			}
 			Expect(udnFlows).To(Equal(16))
 			addOVSPatchPortInterface(ovsClient, "breth0", "patch-breth0_worker1-to-br-int", 5)
-			addOVSPatchPortInterface(ovsClient, "breth0", "patch-breth0_bluenet_worker1-to-br-int", 15)
 			openflowManagerCheckPorts(udnGateway.openflowManager)
 
 			for _, svcCIDR := range config.Kubernetes.ServiceCIDRs {
@@ -1283,7 +1300,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			kubeMock.On("UpdateNodeStatus", cnode).Return(nil) // check if network key gets deleted from annotation
 			Expect(udnGateway.DelNetwork()).To(Succeed())
 			flowMap = udnGateway.gateway.openflowManager.defaultBridge.flowCache
-			Expect(flowMap["DEFAULT"]).To(HaveLen(50))                                      // only default network flows are present
+			Expect(flowMap["DEFAULT"]).To(HaveLen(baseFlowCount))
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(1)) // default network only
 			udnFlows = 0
 			for _, flows := range flowMap {
@@ -1463,7 +1480,8 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			udnGateway.mgmtPortController, err = managementport.NewUDNManagementPortController(udnGateway.nodeLister, udnGateway.node.Name, localSubnets, udnGateway.NetInfo)
 			Expect(err).NotTo(HaveOccurred())
 			flowMap := udnGateway.gateway.openflowManager.defaultBridge.flowCache
-			Expect(flowMap["DEFAULT"]).To(HaveLen(50))
+			baseFlowCount := 52
+			Expect(flowMap["DEFAULT"]).To(HaveLen(baseFlowCount))
 
 			Expect(udnGateway.masqCTMark).To(Equal(udnGateway.masqCTMark))
 			var udnFlows int
@@ -1483,7 +1501,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			Expect(err).To(MatchError(ContainSubstring("fake delete metadata error")))
 			By("Ensuring everything else was still cleaned up correctly")
 			flowMap = udnGateway.gateway.openflowManager.defaultBridge.flowCache
-			Expect(flowMap["DEFAULT"]).To(HaveLen(50))                                      // only default network flows are present
+			Expect(flowMap["DEFAULT"]).To(HaveLen(baseFlowCount))
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(1)) // default network only
 			udnFlows = 0
 			for _, flows := range flowMap {
@@ -1651,7 +1669,8 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 				&kubeMock, vrf, ipRulesManager, localGw, nil, nil, nil)
 			Expect(err).NotTo(HaveOccurred())
 			flowMap := udnGateway.gateway.openflowManager.defaultBridge.flowCache
-			Expect(flowMap["DEFAULT"]).To(HaveLen(50))
+			baseFlowCount := 52
+			Expect(flowMap["DEFAULT"]).To(HaveLen(baseFlowCount))
 			Expect(udnGateway.masqCTMark).To(Equal(udnGateway.masqCTMark))
 			var udnFlows int
 			for _, flows := range flowMap {
@@ -1666,9 +1685,12 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			Expect(udnFlows).To(Equal(0))
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(1)) // only default network
 
+			addOVSPatchPortInterface(ovsClient, "breth0", "patch-breth0_bluenet_worker1-to-br-int", 15)
 			Expect(udnGateway.AddNetwork()).To(Succeed())
+
 			flowMap = udnGateway.gateway.openflowManager.defaultBridge.flowCache
-			Expect(flowMap["DEFAULT"]).To(HaveLen(70))                                      // 18 UDN Flows are added by default
+			udnDefaultFlows := 22
+			Expect(flowMap["DEFAULT"]).To(HaveLen(baseFlowCount + udnDefaultFlows))
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(2)) // default network + UDN network
 			defaultUdnConfig := udnGateway.openflowManager.defaultBridge.GetNetworkConfig("default")
 			bridgeUdnConfig := udnGateway.openflowManager.defaultBridge.GetNetworkConfig("bluenet")
@@ -1686,7 +1708,6 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			}
 			Expect(udnFlows).To(Equal(16))
 			addOVSPatchPortInterface(ovsClient, "breth0", "patch-breth0_worker1-to-br-int", 5)
-			addOVSPatchPortInterface(ovsClient, "breth0", "patch-breth0_bluenet_worker1-to-br-int", 15)
 			openflowManagerCheckPorts(udnGateway.openflowManager)
 
 			for _, svcCIDR := range config.Kubernetes.ServiceCIDRs {
@@ -1706,7 +1727,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			kubeMock.On("UpdateNodeStatus", cnode).Return(nil) // check if network key gets deleted from annotation
 			Expect(udnGateway.DelNetwork()).To(Succeed())
 			flowMap = udnGateway.gateway.openflowManager.defaultBridge.flowCache
-			Expect(flowMap["DEFAULT"]).To(HaveLen(50))                                      // only default network flows are present
+			Expect(flowMap["DEFAULT"]).To(HaveLen(baseFlowCount))
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(1)) // default network only
 			udnFlows = 0
 			for _, flows := range flowMap {
@@ -1890,7 +1911,8 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 				&kubeMock, vrf, ipRulesManager, localGw, nil, nil, nil)
 			Expect(err).NotTo(HaveOccurred())
 			flowMap := udnGateway.gateway.openflowManager.defaultBridge.flowCache
-			Expect(flowMap["DEFAULT"]).To(HaveLen(50))
+			baseFlowCount := 52
+			Expect(flowMap["DEFAULT"]).To(HaveLen(baseFlowCount))
 
 			Expect(udnGateway.masqCTMark).To(Equal(udnGateway.masqCTMark))
 			var udnFlows int
@@ -1906,9 +1928,14 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			Expect(udnFlows).To(Equal(0))
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(1)) // only default network
 
+			addOVSPatchPortInterface(ovsClient, "breth0", "patch-breth0_bluenet_worker1-to-br-int", 15)
 			Expect(udnGateway.AddNetwork()).To(Succeed())
+
 			flowMap = udnGateway.gateway.openflowManager.defaultBridge.flowCache
-			Expect(flowMap["DEFAULT"]).To(HaveLen(78))                                      // 18 UDN Flows, 3 advertisedUDN flows, and 2 packet mark flows (IPv4+IPv6) are added by default (management-port ingress is no longer carved out to LOCAL)
+			udnDefaultFlows := 22
+			advertisedFlows := 3
+			packetMarkFlows := 5
+			Expect(flowMap["DEFAULT"]).To(HaveLen(baseFlowCount + udnDefaultFlows + advertisedFlows + packetMarkFlows))
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(2)) // default network + UDN network
 			defaultUdnConfig := udnGateway.openflowManager.defaultBridge.GetNetworkConfig("default")
 			bridgeUdnConfig := udnGateway.openflowManager.defaultBridge.GetNetworkConfig("bluenet")
@@ -1926,7 +1953,6 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			}
 			Expect(udnFlows).To(Equal(18))
 			addOVSPatchPortInterface(ovsClient, "breth0", "patch-breth0_worker1-to-br-int", 5)
-			addOVSPatchPortInterface(ovsClient, "breth0", "patch-breth0_bluenet_worker1-to-br-int", 15)
 			openflowManagerCheckPorts(udnGateway.openflowManager)
 
 			for _, svcCIDR := range config.Kubernetes.ServiceCIDRs {
@@ -1948,7 +1974,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			kubeMock.On("UpdateNodeStatus", cnode).Return(nil) // check if network key gets deleted from annotation
 			Expect(udnGateway.DelNetwork()).To(Succeed())
 			flowMap = udnGateway.gateway.openflowManager.defaultBridge.flowCache
-			Expect(flowMap["DEFAULT"]).To(HaveLen(50))                                      // only default network flows are present
+			Expect(flowMap["DEFAULT"]).To(HaveLen(baseFlowCount))
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(1)) // default network only
 			udnFlows = 0
 			for _, flows := range flowMap {

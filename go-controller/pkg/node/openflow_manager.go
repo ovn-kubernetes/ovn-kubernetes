@@ -477,6 +477,9 @@ func (b *openflowBridge) syncFlows() error {
 			stderr, len(flows), err)
 	}
 	b.deleteStaleGroups()
+	if err := b.SyncNoFlood(); err != nil {
+		return fmt.Errorf("failed to sync no-flood port config: %w", err)
+	}
 	return nil
 }
 
