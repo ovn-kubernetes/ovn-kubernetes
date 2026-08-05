@@ -235,6 +235,7 @@ jobs:
           export DYNAMIC_UDN_ALLOCATION=true
           make -C test control-plane WHAT="Network Segmentation Uplink route advertisements uses the Uplink interface as the targetVRF auto BGP peering path"
           make -C test control-plane WHAT="Uplink route advertisements with Dynamic UDN allocation allows node-disjoint Dynamic CUDNs to share a targetVRF auto Uplink and rejects overlap"
+          make -C test control-plane WHAT="Network Segmentation Uplink split DPU status conditions keeps one writer per condition and recovers a missing host interface"
 
       - name: Export kind logs on failure
         if: failure()
