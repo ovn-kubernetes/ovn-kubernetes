@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"syscall"
 	"time"
 
 	"github.com/vishvananda/netlink"
@@ -555,6 +556,22 @@ func (udng *UserDefinedNetworkGateway) addNetwork() error {
 		}
 	}
 
+	// Add static kernel neighbor entries for per-CUDN masquerade IPs on
+	// the gateway bridge so that the kernel never sends ARP/NS for these
+	// addresses. Without this, IPv6 NDP resolution for masquerade IPs
+	// fails because NS packets are not forwarded to CUDN patch ports
+	// (blocked by NO_FLOOD).
+	if config.IsModeFull() {
+		bridgeName := udng.openflowManager.getDefaultBridgeName()
+		if uplinkBridge != nil {
+			bridgeName = uplinkBridge.GetGatewayIface()
+		}
+		if err = addUDNMasqIPNeighbors(bridgeName, udng.v4MasqIPs, udng.v6MasqIPs); err != nil {
+			return fmt.Errorf("failed to add masquerade IP neighbor entries on %s for network %s: %w",
+				bridgeName, udng.GetNetworkName(), err)
+		}
+	}
+
 	if config.IsModeDPU() || config.IsModeFull() {
 		var mgmtIPs []*net.IPNet
 		for _, subnet := range nodeSubnets {
@@ -655,6 +672,16 @@ func (udng *UserDefinedNetworkGateway) delNetwork() error {
 			}
 		}
 	}
+	if config.IsModeFull() && udng.openflowManager != nil {
+		bridgeName := udng.openflowManager.getDefaultBridgeName()
+		if udng.Uplink() != "" && udng.gwInterfaceName != "" {
+			bridgeName = udng.gwInterfaceName
+		}
+		if err := delUDNMasqIPNeighbors(bridgeName, udng.v4MasqIPs, udng.v6MasqIPs); err != nil {
+			errs = append(errs, fmt.Errorf("failed to delete masquerade IP neighbor entries on %s for network %s: %w",
+				bridgeName, udng.GetNetworkName(), err))
+		}
+	}
 	if udng.openflowManager != nil || config.IsModeDPUHost() {
 		if err := udng.gateway.Reconcile(); err != nil {
 			errs = append(errs, fmt.Errorf("failed to reconcile default gateway for network %s, err: %v", udng.GetNetworkName(), err))
@@ -688,6 +715,64 @@ func (udng *UserDefinedNetworkGateway) delNetwork() error {
 	}
 
 	return nil
+}
+
+// addUDNMasqIPNeighbors adds permanent kernel neighbor entries for a
+// user-defined network's gateway router masquerade IPs on the given bridge
+// interface. These IPs are internal to the node and handled entirely by OVS
+// flows, so they will never respond to ARP/NS on the wire. Static entries
+// prevent the kernel from sending ARP/NS requests that would otherwise fail
+// (IPv6 NS is blocked by NO_FLOOD on CUDN patch ports).
+func addUDNMasqIPNeighbors(bridgeName string, v4MasqIPs, v6MasqIPs *udn.MasqueradeIPs) error {
+	link, err := util.LinkSetUp(bridgeName)
+	if err != nil {
+		return fmt.Errorf("unable to get link for %s: %v", bridgeName, err)
+	}
+	for _, ip := range udnMasqGatewayRouterIPs(v4MasqIPs, v6MasqIPs) {
+		mac := util.IPAddrToHWAddr(ip)
+		klog.Infof("Ensuring UDN masquerade IP neighbor entry: %s -> %s on %s", ip, mac, bridgeName)
+		if exists, err := util.LinkNeighExists(link, ip, mac); err == nil && !exists {
+			if err = util.LinkNeighDel(link, ip); err != nil {
+				klog.Warningf("Failed to remove stale neighbor entry for %s on %s: %v",
+					ip, bridgeName, err)
+			}
+			if err = util.LinkNeighSet(link, ip, mac); err != nil {
+				return fmt.Errorf("failed to add neighbor %s -> %s on %s: %v",
+					ip, mac, bridgeName, err)
+			}
+		} else if err != nil {
+			return fmt.Errorf("failed to check neighbor %s on %s: %v", ip, bridgeName, err)
+		}
+	}
+	return nil
+}
+
+// delUDNMasqIPNeighbors removes the kernel neighbor entries previously added
+// by addUDNMasqIPNeighbors.
+func delUDNMasqIPNeighbors(bridgeName string, v4MasqIPs, v6MasqIPs *udn.MasqueradeIPs) error {
+	link, err := util.LinkSetUp(bridgeName)
+	if err != nil {
+		return fmt.Errorf("unable to get link for %s: %v", bridgeName, err)
+	}
+	var errs []error
+	for _, ip := range udnMasqGatewayRouterIPs(v4MasqIPs, v6MasqIPs) {
+		if err := util.LinkNeighDel(link, ip); err != nil && !errors.Is(err, syscall.ENOENT) {
+			errs = append(errs, fmt.Errorf("failed to delete neighbor %s on %s: %v", ip, bridgeName, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// udnMasqGatewayRouterIPs returns the gateway router masquerade IPs for a UDN.
+func udnMasqGatewayRouterIPs(v4MasqIPs, v6MasqIPs *udn.MasqueradeIPs) []net.IP {
+	var ips []net.IP
+	if v4MasqIPs != nil && v4MasqIPs.GatewayRouter != nil {
+		ips = append(ips, v4MasqIPs.GatewayRouter.IP)
+	}
+	if v6MasqIPs != nil && v6MasqIPs.GatewayRouter != nil {
+		ips = append(ips, v6MasqIPs.GatewayRouter.IP)
+	}
+	return ips
 }
 
 // getLocalSubnets returns pod subnets used by the current node.
