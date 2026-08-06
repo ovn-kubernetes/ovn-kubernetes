@@ -202,13 +202,14 @@ func UpdateACLLoggingWithPredicate(nbClient libovsdbclient.Client, p func(*nbdb.
 	return UpdateACLLogging(nbClient, ACLs, aclLogging)
 }
 
+// UpdateACLLogging  updates the log settings for all the given ACLs in a single transaction.
 func UpdateACLLogging(nbClient libovsdbclient.Client, ACLs []*nbdb.ACL, aclLogging *ACLLoggingLevels) error {
 	if len(ACLs) == 0 {
 		return nil
 	}
 	for i := range ACLs {
 		log, severity := getLogSeverity(ACLs[i].Action, aclLogging)
-		libovsdbops.SetACLLogging(ACLs[i], severity, log)
+		libovsdbops.SetACLLogging(ACLs[i], severity, log, types.OvnACLLoggingMeter)
 	}
 	ops, err := libovsdbops.UpdateACLsLoggingOps(nbClient, nil, ACLs...)
 	if err != nil {

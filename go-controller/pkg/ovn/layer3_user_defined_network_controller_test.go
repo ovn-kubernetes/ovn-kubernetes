@@ -2092,8 +2092,8 @@ func expectedGRStaticRoute(uuid, ipPrefix, nextHop string, policy *nbdb.LogicalR
 	}
 }
 
+// allowAllFromMgmtPort builds the ACL that allows all traffic from the management port.
 func allowAllFromMgmtPort(aclUUID string, mgmtPortIP string, switchName string) *nbdb.ACL {
-	meterName := "acl-logging"
 	return &nbdb.ACL{
 		UUID:      aclUUID,
 		Action:    "allow-related",
@@ -2106,7 +2106,7 @@ func allowAllFromMgmtPort(aclUUID string, mgmtPortIP string, switchName string) 
 			"k8s.ovn.org/owner-type":       "NetpolNode",
 		},
 		Match:    fmt.Sprintf("ip4.src==%s", mgmtPortIP),
-		Meter:    &meterName,
+		Meter:    nil,
 		Priority: 1001,
 		Tier:     2,
 	}
