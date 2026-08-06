@@ -14,6 +14,7 @@ import (
 	"github.com/gaissmai/cidrtree"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/util/retry"
 
@@ -21,6 +22,15 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
+
+// IsNodeAnnotationPatchRetryable returns true for errors that should trigger a
+// relist-and-retry when patching node annotations via JSON Patch.
+//
+// JSON Patch "test" failures from the apiserver are surfaced as Invalid rather
+// than Conflict, so this retry path needs to handle both.
+func IsNodeAnnotationPatchRetryable(err error) bool {
+	return apierrors.IsConflict(err) || apierrors.IsInvalid(err)
+}
 
 // This handles the annotations used by the node to pass information about its local
 // network configuration to the ovnkube controller:

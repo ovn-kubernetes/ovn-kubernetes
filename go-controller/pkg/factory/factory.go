@@ -318,6 +318,22 @@ func informerObjectTrim(obj interface{}) (interface{}, error) {
 			pod.Status.Conditions[i].ObservedGeneration = 0
 		}
 	}
+	if node, ok := obj.(*corev1.Node); ok {
+		// OVN-K does not consume these node fields from informer cache.
+		node.Status.Images = nil
+		node.Status.VolumesAttached = nil
+		node.Status.VolumesInUse = nil
+		node.Status.DaemonEndpoints = corev1.NodeDaemonEndpoints{}
+		node.Status.Capacity = nil
+		node.Status.Allocatable = nil
+		node.Status.Config = nil
+		node.Status.RuntimeHandlers = nil
+		node.Status.Features = nil
+		node.Spec.Taints = nil
+		node.Spec.PodCIDRs = nil
+		node.OwnerReferences = nil
+		node.Finalizers = nil
+	}
 	return obj, nil
 }
 
