@@ -11,8 +11,10 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/vishvananda/netlink"
+	"golang.org/x/time/rate"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -97,6 +99,17 @@ type Controller struct {
 	nodeController        controllerutil.Controller
 }
 
+// discoveryRateLimiter is the default controller rate limiter with its
+// exponential backoff capped at 30s instead of 1000s: retries re-poll
+// admin-owned host and OVS state, so the cap bounds how long discovery
+// takes to notice an admin fix.
+func discoveryRateLimiter() workqueue.TypedRateLimiter[string] {
+	return workqueue.NewTypedMaxOfRateLimiter(
+		workqueue.NewTypedItemExponentialFailureRateLimiter[string](5*time.Millisecond, 30*time.Second),
+		&workqueue.TypedBucketRateLimiter[string]{Limiter: rate.NewLimiter(rate.Limit(10), 100)},
+	)
+}
+
 // NewController creates an ovnkube-node Uplink controller.
 func NewController(nodeName string, wf factory.NodeWatchFactory, ovnClient *util.OVNNodeClientset, ovsClient libovsdbclient.Client,
 ) *Controller {
@@ -111,7 +124,8 @@ func NewController(nodeName string, wf factory.NodeWatchFactory, ovnClient *util
 	}
 
 	uplinkCfg := &controllerutil.ControllerConfig[uplinkv1alpha1.Uplink]{
-		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
+		RateLimiter:    discoveryRateLimiter(),
+		MaxAttempts:    controllerutil.InfiniteAttempts,
 		Informer:       wf.UplinkInformer().Informer(),
 		Lister:         c.uplinkLister.List,
 		Reconcile:      c.reconcileUplink,
@@ -124,7 +138,8 @@ func NewController(nodeName string, wf factory.NodeWatchFactory, ovnClient *util
 	)
 
 	uplinkStateCfg := &controllerutil.ControllerConfig[uplinkv1alpha1.UplinkState]{
-		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
+		RateLimiter:    discoveryRateLimiter(),
+		MaxAttempts:    controllerutil.InfiniteAttempts,
 		Informer:       wf.UplinkStateInformer().Informer(),
 		Lister:         c.uplinkStateLister.List,
 		Reconcile:      c.reconcileUplinkState,
@@ -137,7 +152,8 @@ func NewController(nodeName string, wf factory.NodeWatchFactory, ovnClient *util
 	)
 
 	nodeCfg := &controllerutil.ControllerConfig[corev1.Node]{
-		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
+		RateLimiter:    discoveryRateLimiter(),
+		MaxAttempts:    controllerutil.InfiniteAttempts,
 		Informer:       wf.NodeCoreInformer().Informer(),
 		Lister:         c.nodeLister.List,
 		Reconcile:      c.reconcileNode,
@@ -200,7 +216,7 @@ func (c *Controller) reconcileUplink(key string) error {
 		return nil
 	}
 	if nodeConfigErr != nil {
-		return c.updateUplinkStateStatus(
+		return errors.Join(nodeConfigErr, c.updateUplinkStateStatus(
 			state,
 			string(state.Status.HostInterfaceName),
 			nil,
@@ -208,7 +224,7 @@ func (c *Controller) reconcileUplink(key string) error {
 			metav1.ConditionFalse,
 			discoveryReason(nodeConfigErr),
 			nodeConfigErr.Error(),
-		)
+		))
 	}
 	// Creation also produces an UplinkState watch event, but existing states
 	// need explicit rediscovery when the selected Uplink config changes.
@@ -250,7 +266,7 @@ func (c *Controller) reconcileUplinkState(key string) error {
 
 	nodeConfig, err := selectedNodeConfigForNode(uplink, node)
 	if err != nil {
-		return c.updateUplinkStateStatus(
+		return errors.Join(err, c.updateUplinkStateStatus(
 			state,
 			string(state.Status.HostInterfaceName),
 			nil,
@@ -258,7 +274,7 @@ func (c *Controller) reconcileUplinkState(key string) error {
 			metav1.ConditionFalse,
 			discoveryReason(err),
 			err.Error(),
-		)
+		))
 	}
 	if nodeConfig == nil {
 		return c.deleteUplinkState(state.Name)
@@ -269,7 +285,7 @@ func (c *Controller) reconcileUplinkState(key string) error {
 	if config.OvnKubeNode.Mode == ovntypes.NodeModeDPU {
 		hostState, err = hostInterfaceStateFromStatus(state, hostInterfaceName)
 		if err != nil {
-			return c.updateUplinkStateStatus(
+			return errors.Join(err, c.updateUplinkStateStatus(
 				state,
 				hostInterfaceName,
 				nil,
@@ -277,12 +293,12 @@ func (c *Controller) reconcileUplinkState(key string) error {
 				metav1.ConditionFalse,
 				uplinkv1alpha1.UplinkStateReasonWaitingForDPUHost,
 				err.Error(),
-			)
+			))
 		}
 	} else {
 		hostState, err = c.hostDiscoverer.Discover(hostInterfaceName)
 		if err != nil {
-			return c.updateUplinkStateStatus(
+			return errors.Join(err, c.updateUplinkStateStatus(
 				state,
 				hostInterfaceName,
 				nil,
@@ -290,7 +306,7 @@ func (c *Controller) reconcileUplinkState(key string) error {
 				metav1.ConditionFalse,
 				discoveryReason(err),
 				err.Error(),
-			)
+			))
 		}
 	}
 
@@ -311,7 +327,7 @@ func (c *Controller) reconcileUplinkState(key string) error {
 
 	defaultBridgeName, err := defaultGatewayBridgeName(node)
 	if err != nil {
-		return c.updateUplinkStateStatus(
+		return errors.Join(err, c.updateUplinkStateStatus(
 			state,
 			hostInterfaceName,
 			hostState,
@@ -319,13 +335,13 @@ func (c *Controller) reconcileUplinkState(key string) error {
 			metav1.ConditionFalse,
 			discoveryReason(err),
 			err.Error(),
-		)
+		))
 	}
 
 	if config.OvnKubeNode.Mode == ovntypes.NodeModeDPU {
 		bridgeName, err := c.bridgeResolver.ResolveByHostMAC(hostState.macAddress, c.nodeName)
 		if err != nil {
-			return c.updateUplinkStateStatus(
+			return errors.Join(err, c.updateUplinkStateStatus(
 				state,
 				hostInterfaceName,
 				hostState,
@@ -333,10 +349,10 @@ func (c *Controller) reconcileUplinkState(key string) error {
 				metav1.ConditionFalse,
 				discoveryReason(err),
 				err.Error(),
-			)
+			))
 		}
 		if err := c.validateBridgeUplink(bridgeName, hostInterfaceName, defaultBridgeName, false); err != nil {
-			return c.updateUplinkStateStatus(
+			return errors.Join(err, c.updateUplinkStateStatus(
 				state,
 				hostInterfaceName,
 				hostState,
@@ -344,7 +360,7 @@ func (c *Controller) reconcileUplinkState(key string) error {
 				metav1.ConditionFalse,
 				discoveryReason(err),
 				err.Error(),
-			)
+			))
 		}
 		return c.updateResolvedUplinkStateStatus(
 			state,
@@ -357,7 +373,7 @@ func (c *Controller) reconcileUplinkState(key string) error {
 
 	bridgeName, err := c.bridgeResolver.Resolve(hostInterfaceName)
 	if err != nil {
-		return c.updateUplinkStateStatus(
+		return errors.Join(err, c.updateUplinkStateStatus(
 			state,
 			hostInterfaceName,
 			hostState,
@@ -365,10 +381,10 @@ func (c *Controller) reconcileUplinkState(key string) error {
 			metav1.ConditionFalse,
 			discoveryReason(err),
 			err.Error(),
-		)
+		))
 	}
 	if err := c.validateBridgeUplink(bridgeName, hostInterfaceName, defaultBridgeName, true); err != nil {
-		return c.updateUplinkStateStatus(
+		return errors.Join(err, c.updateUplinkStateStatus(
 			state,
 			hostInterfaceName,
 			hostState,
@@ -376,7 +392,7 @@ func (c *Controller) reconcileUplinkState(key string) error {
 			metav1.ConditionFalse,
 			discoveryReason(err),
 			err.Error(),
-		)
+		))
 	}
 
 	return c.updateResolvedUplinkStateStatus(
@@ -486,7 +502,13 @@ func (c *Controller) updateResolvedUplinkStateStatus(
 // while the DPU and full mode report Resolved (see statusConditionType).
 // Full mode writes every status field; the split DPU modes each write their
 // own subset and cannot write the peer's condition. Callers pass the
-// condition status, reason and message.
+// condition status, reason and message, and on failure return their
+// underlying error joined with any write error: discovery inputs live in
+// netlink and OVSDB, which generate no Kubernetes events, so the
+// controller's rate-limited retries are what re-polls them.
+//
+// TODO: subscribe to netlink and OVSDB events and reconcile on relevant
+// changes instead of polling through retries.
 func (c *Controller) updateUplinkStateStatus(
 	state *uplinkv1alpha1.UplinkState,
 	hostInterfaceName string,

@@ -134,6 +134,7 @@ func NewController(
 
 	uplinkCfg := &controllerutil.ControllerConfig[uplinkv1alpha1.Uplink]{
 		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
+		MaxAttempts:    controllerutil.InfiniteAttempts,
 		Informer:       wf.UplinkInformer().Informer(),
 		Lister:         c.uplinkLister.List,
 		Reconcile:      c.reconcileUplink,
@@ -147,6 +148,7 @@ func NewController(
 
 	uplinkStateCfg := &controllerutil.ControllerConfig[uplinkv1alpha1.UplinkState]{
 		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
+		MaxAttempts:    controllerutil.InfiniteAttempts,
 		Informer:       wf.UplinkStateInformer().Informer(),
 		Lister:         c.uplinkStateLister.List,
 		Reconcile:      c.reconcileUplinkState,
@@ -160,6 +162,7 @@ func NewController(
 
 	cudnCfg := &controllerutil.ControllerConfig[udnv1.ClusterUserDefinedNetwork]{
 		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
+		MaxAttempts:    controllerutil.InfiniteAttempts,
 		Informer:       wf.ClusterUserDefinedNetworkInformer().Informer(),
 		Lister:         c.cudnLister.List,
 		Reconcile:      c.reconcileCUDN,
@@ -173,6 +176,7 @@ func NewController(
 
 	nodeCfg := &controllerutil.ControllerConfig[corev1.Node]{
 		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
+		MaxAttempts:    controllerutil.InfiniteAttempts,
 		Informer:       wf.NodeCoreInformer().Informer(),
 		Lister:         c.nodeLister.List,
 		Reconcile:      c.reconcileNode,
@@ -186,6 +190,7 @@ func NewController(
 
 	networkRefCfg := &controllerutil.ReconcilerConfig{
 		RateLimiter: workqueue.DefaultTypedControllerRateLimiter[string](),
+		MaxAttempts: controllerutil.InfiniteAttempts,
 		Reconcile:   c.reconcileNetworkRef,
 		Threadiness: 1,
 	}
@@ -301,13 +306,15 @@ func (c *Controller) reconcileUplink(key string) error {
 
 	selected, conflicts, validationErr := c.resolveSelectedNodeConfigs(uplink)
 	if validationErr != nil {
-		if err := c.updateStatus(uplink,
+		// The validation error is the cause to report and retry on: join it
+		// with any status write error so neither hides the other.
+		err := c.updateStatus(uplink,
 			metav1.ConditionFalse, reasonInvalidSpec,
-			"Uplink is not ready because its spec is not accepted"); err != nil {
-			return err
+			"Uplink is not ready because its spec is not accepted")
+		if err == nil {
+			c.reconcileCUDNNames(referencingCUDNs)
 		}
-		c.reconcileCUDNNames(referencingCUDNs)
-		return nil
+		return errors.Join(validationErr, err)
 	}
 
 	readyStatus, readyReason, readyMessage := c.readyCondition(
@@ -320,6 +327,7 @@ func (c *Controller) reconcileUplink(key string) error {
 		return err
 	}
 	c.reconcileCUDNNames(referencingCUDNs)
+	// A not-ready Uplink needs no retry: its inputs are all watch-driven.
 	return nil
 }
 

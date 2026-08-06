@@ -991,11 +991,14 @@ path.
 ### Uplink
 
 * If the selected host interface is missing, or the resolved OVS bridge is missing or malformed on a node, the matching
-  `UplinkState` reports `Resolved=False`. Retries continue, and local netlink/OVS change notifications or periodic resync
-  requeue the Uplink when admin-owned host or OVS state changes.
+  `UplinkState` reports `Resolved=False`. Retries continue while unresolved: discovery reports the failure in the
+  `UplinkState` and returns an error, and its controller retries with rate-limited backoff and unbounded attempts,
+  re-polling admin-owned host and OVS state, which generates no Kubernetes watch events. Once a side reports success,
+  its published data is refreshed on the next Kubernetes-triggered reconcile.
 * Per-node failures are reported on the matching `UplinkState`; `Uplink.status.conditions` reports aggregate health only.
-* If an admin deletes or changes the OVS bridge, OVN-Kubernetes does not recreate or repair the bridge. It updates status
-  and retries validation.
+* If an admin deletes or changes the OVS bridge, OVN-Kubernetes does not recreate or repair the bridge. While discovery
+  is unresolved, it updates status and retries validation. A converged `Resolved=True` status is not re-validated until
+  the next Kubernetes event or ovnkube-node restart triggers a reconcile.
 * If an admin requests deletion of a `Uplink` while one or more CUDNs reference it, OVN-Kubernetes keeps the `Uplink`
   finalizer and deletion remains pending. This prevents accidental disruption of active CUDNs. Since `spec.uplinks` is
   immutable in this OKEP, clearing the reference requires deleting or recreating the CUDN without that `Uplink`. Once no
