@@ -2,6 +2,8 @@ package netlink
 
 import (
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/vishvananda/netlink/nl"
@@ -9,12 +11,51 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Empty handle used by the netlink package methods
-var pkgHandle = &Handle{}
+// pkgOptions holds the options configured via [ConfigureHandle] for use by
+// the package-level global functions.
+var pkgOptions HandleOptions
+var oncePkgOptions sync.Once
 
+// ConfigureHandle configures the options used by the netlink package's global
+// functions like [LinkList] and [AddrList]. It does not affect any existing or
+// future [Handle] returned by [NewHandle] and friends; those need to be
+// configured explicitly and don't inherit from this configuration.
+//
+// This function is not safe to call concurrently with other global functions.
+// Invoke it from init() functions only.
+//
+// Returns an error if called more than once per process.
+func ConfigureHandle(opts HandleOptions) error {
+	called := false
+	oncePkgOptions.Do(func() {
+		pkgOptions = opts
+		called = true
+	})
+	if !called {
+		return fmt.Errorf("netlink package handle already configured")
+	}
+	return nil
+}
+
+// pkgHandle returns a socket-less Handle initialized with the package-level
+// options. It is used by global package functions; each call opens its own
+// sockets in the caller's current network namespace.
+func pkgHandle() *Handle {
+	return &Handle{options: pkgOptions}
+}
+
+// HandleOptions defines the options for creating a netlink Handle, allowing the
+// caller to customize its behaviour.
 type HandleOptions struct {
-	lookupByDump  bool
-	collectVFInfo bool
+	// DisableVFInfoCollection controls whether to fetch VF information for each
+	// link. This is an expensive operation and should be disabled if the caller
+	// does not need the VF information.
+	DisableVFInfoCollection bool
+
+	// RetryInterrupted controls whether to automatically retry dump operations a
+	// number of times if they fail with EINTR before finally returning
+	// [ErrDumpInterrupted].
+	RetryInterrupted bool
 }
 
 // Handle is a handle for the netlink requests on a
@@ -24,11 +65,16 @@ type HandleOptions struct {
 type Handle struct {
 	sockets map[int]*nl.SocketHandle
 	options HandleOptions
+
+	lookupByDump atomic.Bool
 }
 
 // DisableVFInfoCollection configures the handle to skip VF information fetching
+//
+// Deprecated: Use [NewHandleWithOptions] and set
+// [HandleOptions.DisableVFInfoCollection] instead.
 func (h *Handle) DisableVFInfoCollection() *Handle {
-	h.options.collectVFInfo = false
+	h.options.DisableVFInfoCollection = true
 	return h
 }
 
@@ -59,7 +105,8 @@ func (h *Handle) SupportsNetlinkFamily(nlFamily int) bool {
 // If no families are specified, all the families the netlink package
 // supports will be automatically added.
 func NewHandle(nlFamilies ...int) (*Handle, error) {
-	return newHandle(netns.None(), netns.None(), nlFamilies...)
+	none := netns.None()
+	return newHandle(none, none, HandleOptions{}, nlFamilies...)
 }
 
 // SetSocketTimeout sets the send and receive timeout for each socket in the
@@ -137,24 +184,36 @@ func (h *Handle) SetStrictCheck(state bool) error {
 // specified by ns. If ns=netns.None(), current network namespace
 // will be assumed
 func NewHandleAt(ns netns.NsHandle, nlFamilies ...int) (*Handle, error) {
-	return newHandle(ns, netns.None(), nlFamilies...)
+	return newHandle(ns, netns.None(), HandleOptions{}, nlFamilies...)
 }
 
 // NewHandleAtFrom works as NewHandle but allows client to specify the
 // new and the origin netns Handle.
 func NewHandleAtFrom(newNs, curNs netns.NsHandle) (*Handle, error) {
-	return newHandle(newNs, curNs)
+	return newHandle(newNs, curNs, HandleOptions{})
 }
 
-func newHandle(newNs, curNs netns.NsHandle, nlFamilies ...int) (*Handle, error) {
+// NewHandleWithOptions returns a Handle created using the specified options.
+func NewHandleWithOptions(opts HandleOptions, nlFamilies ...int) (*Handle, error) {
+	return newHandle(netns.None(), netns.None(), opts, nlFamilies...)
+}
+
+// NewHandleAtWithOptions returns a Handle created using the specified options
+// in the specified network namespace.
+func NewHandleAtWithOptions(ns netns.NsHandle, opts HandleOptions, nlFamilies ...int) (*Handle, error) {
+	return newHandle(ns, netns.None(), opts, nlFamilies...)
+}
+
+func newHandle(newNs, curNs netns.NsHandle, opts HandleOptions, nlFamilies ...int) (*Handle, error) {
 	h := &Handle{
 		sockets: map[int]*nl.SocketHandle{},
-		options: HandleOptions{collectVFInfo: true},
+		options: opts,
 	}
 	fams := nl.SupportedNlFamilies
 	if len(nlFamilies) != 0 {
 		fams = nlFamilies
 	}
+
 	for _, f := range fams {
 		s, err := nl.GetNetlinkSocketAt(newNs, curNs, f)
 		if err != nil {
@@ -188,7 +247,9 @@ func (h *Handle) Delete() {
 func (h *Handle) newNetlinkRequest(proto, flags int) *nl.NetlinkRequest {
 	// Do this so that package API still use nl package variable nextSeqNr
 	if h.sockets == nil {
-		return nl.NewNetlinkRequest(proto, flags)
+		req := nl.NewNetlinkRequest(proto, flags)
+		req.RetryInterrupted = h.options.RetryInterrupted
+		return req
 	}
 	return &nl.NetlinkRequest{
 		NlMsghdr: unix.NlMsghdr{
@@ -197,5 +258,7 @@ func (h *Handle) newNetlinkRequest(proto, flags int) *nl.NetlinkRequest {
 			Flags: unix.NLM_F_REQUEST | uint16(flags),
 		},
 		Sockets: h.sockets,
+
+		RetryInterrupted: h.options.RetryInterrupted,
 	}
 }

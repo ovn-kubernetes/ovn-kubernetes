@@ -64,18 +64,13 @@ func FouFamilyId() (int, error) {
 }
 
 func FouAdd(f Fou) error {
-	return pkgHandle.FouAdd(f)
+	return pkgHandle().FouAdd(f)
 }
 
 func (h *Handle) FouAdd(f Fou) error {
 	fam_id, err := FouFamilyId()
 	if err != nil {
 		return err
-	}
-
-	// setting ip protocol conflicts with encapsulation type GUE
-	if f.EncapType == FOU_ENCAP_GUE && f.Protocol != 0 {
-		return errors.New("GUE encapsulation doesn't specify an IP protocol")
 	}
 
 	req := h.newNetlinkRequest(fam_id, unix.NLM_F_ACK)
@@ -88,7 +83,10 @@ func (h *Handle) FouAdd(f Fou) error {
 		nl.NewRtAttr(FOU_ATTR_PORT, bp),
 		nl.NewRtAttr(FOU_ATTR_TYPE, []byte{uint8(f.EncapType)}),
 		nl.NewRtAttr(FOU_ATTR_AF, []byte{uint8(f.Family)}),
-		nl.NewRtAttr(FOU_ATTR_IPPROTO, []byte{uint8(f.Protocol)}),
+	}
+	// FOU_ATTR_IPPROTO must be omitted for GUE; kernels ≥ 6.x return ERANGE if present.
+	if f.EncapType != FOU_ENCAP_GUE {
+		attrs = append(attrs, nl.NewRtAttr(FOU_ATTR_IPPROTO, []byte{uint8(f.Protocol)}))
 	}
 	raw := []byte{FOU_CMD_ADD, 1, 0, 0}
 	for _, a := range attrs {
@@ -102,7 +100,7 @@ func (h *Handle) FouAdd(f Fou) error {
 }
 
 func FouDel(f Fou) error {
-	return pkgHandle.FouDel(f)
+	return pkgHandle().FouDel(f)
 }
 
 func (h *Handle) FouDel(f Fou) error {
@@ -139,7 +137,7 @@ func (h *Handle) FouDel(f Fou) error {
 // If the returned error is [ErrDumpInterrupted], results may be inconsistent
 // or incomplete.
 func FouList(fam int) ([]Fou, error) {
-	return pkgHandle.FouList(fam)
+	return pkgHandle().FouList(fam)
 }
 
 // If the returned error is [ErrDumpInterrupted], results may be inconsistent
