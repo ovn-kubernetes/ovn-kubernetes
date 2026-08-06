@@ -410,6 +410,9 @@ func (o *ContainerOps) DeleteNetwork(network api.Network) error {
 }
 
 func (o *ContainerOps) CreateExternalContainer(container api.ExternalContainer) (api.ExternalContainer, error) {
+	if container.Image == images.AgnHost() {
+		container.Image = images.ExternalAgnHost()
+	}
 	if valid, err := container.IsValidPreCreateContainer(); !valid {
 		return container, err
 	}
@@ -435,7 +438,7 @@ func (o *ContainerOps) CreateExternalContainer(container api.ExternalContainer) 
 	if len(container.CmdArgs) > 0 {
 		cmd = append(cmd, container.CmdArgs...)
 	} else {
-		if images.AgnHost() == container.Image {
+		if images.ExternalAgnHost() == container.Image {
 			cmd = append(cmd, "pause")
 		}
 	}

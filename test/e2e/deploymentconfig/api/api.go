@@ -22,6 +22,7 @@ type DeploymentConfig interface {
 	ExternalBridgeName() string
 	PrimaryInterfaceName() string
 	GetAgnHostContainerImage() string
+	GetExternalAgnHostContainerImage() string
 	// IsConfigurationEnabled checks whether a specific configuration flag is enabled in the deployment.
 	IsConfigurationEnabled(config Config) bool
 }
