@@ -184,6 +184,95 @@ var _ = ginkgo.Describe("Network Segmentation Uplink default-VRF egress", featur
 	})
 })
 
+var _ = ginkgo.Describe("Network Segmentation Uplink DPU VF lifecycle", feature.NetworkSegmentation, func() {
+	f := wrappedTestFramework("uplink-dpu-vf")
+	f.SkipNamespaceCreation = true
+
+	var ictx infraapi.Context
+	var ipFamilySet sets.Set[utilnet.IPFamily]
+	var testSuffix string
+
+	ginkgo.BeforeEach(func() {
+		if !isDPUUplinkE2E() {
+			e2eskipper.Skipf("test requires the simulated DPU Uplink environment")
+		}
+		if IsGatewayModeLocal(f.ClientSet) {
+			e2eskipper.Skipf("Uplink CUDN gateway plumbing is only supported in shared gateway mode")
+		}
+		ipFamilySet = sets.New(getSupportedIPFamiliesSlice(f.ClientSet)...)
+		ictx = infraprovider.Get().NewTestContext()
+		testSuffix = framework.RandomSuffix()
+	})
+
+	// Simulated VFs are veths: an attachment netdevice that is not returned to
+	// the host before the pod namespace is destroyed is lost together with its
+	// DPU-side representor peer, permanently breaking any future pod assigned
+	// the same VF. Assert the CNI DEL contract directly: after pod deletion,
+	// every VF netdevice recorded in the pod's DPU connection-details (the
+	// default network's and the primary UDN's) is present again on the host.
+	ginkgo.It("returns simulated VF netdevices to the host when the pod is deleted", func() {
+		schedulableNodes, err := e2enode.GetReadySchedulableNodes(context.Background(), f.ClientSet)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		nodes := filterNodesByLabel(schedulableNodes.Items, uplinkDPUHostNodeLabel)
+		gomega.Expect(nodes).NotTo(gomega.BeEmpty(), "test requires a DPU host node")
+		nodes = nodes[:1]
+		node := nodes[0]
+
+		nodeIfaces := collectDPUHostUplinkInterfaces(nodes)
+		bridgeName := os.Getenv(uplinkDPUExpectedBridgeEnv)
+		gomega.Expect(bridgeName).NotTo(gomega.BeEmpty(), "expected the DPU Uplink bridge name")
+
+		uplinkName := "upvf" + testSuffix
+		createUplink(f, ictx, uplinkName, nodes, nodeIfaces, "")
+		waitForUplinkStatesResolved(f, uplinkName, bridgeName, nodes)
+
+		networkName := "upvfnet" + testSuffix
+		bgpAlloc, err := allocators.AllocateBGP(f, ictx)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		namespace, err := createUplinkNamespace(f, ictx, "uplink-dpu-vf", networkName)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(createUplinkCUDN(
+			f,
+			ictx,
+			namespace,
+			networkName,
+			uplinkLayer3NetworkSpec(ipFamilySet, bgpAlloc.UDNSubnet, bgpAlloc.UDNSubnet6),
+			nil,
+			uplinkName,
+		)).To(gomega.Succeed())
+
+		pod := createUplinkNetexecPod(f, namespace.Name, "client-"+networkName, node.Name)
+
+		pod, err = f.ClientSet.CoreV1().Pods(namespace.Name).Get(context.Background(), pod.Name, metav1.GetOptions{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		connDetails := pod.Annotations["k8s.ovn.org/dpu.connection-details"]
+		gomega.Expect(connDetails).NotTo(gomega.BeEmpty(), "expected the DPU connection-details annotation on the pod")
+		var attachments map[string]struct {
+			VfNetdevName string `json:"vfNetdevName"`
+		}
+		gomega.Expect(json.Unmarshal([]byte(connDetails), &attachments)).To(gomega.Succeed())
+		gomega.Expect(attachments).To(gomega.HaveLen(2),
+			"expected connection details for the default network and the primary UDN, got: %s", connDetails)
+		netdevs := make([]string, 0, len(attachments))
+		for nadKey, attachment := range attachments {
+			gomega.Expect(attachment.VfNetdevName).NotTo(gomega.BeEmpty(),
+				"expected a VF netdevice name for NAD %s", nadKey)
+			netdevs = append(netdevs, attachment.VfNetdevName)
+		}
+
+		ginkgo.By(fmt.Sprintf("deleting the pod and expecting VF netdevices %v to return to node %s", netdevs, node.Name))
+		gomega.Expect(e2epod.DeletePodWithWait(context.Background(), f.ClientSet, pod)).To(gomega.Succeed())
+
+		for _, netdev := range netdevs {
+			gomega.Eventually(func() error {
+				_, err := infraprovider.Get().ExecK8NodeCommand(node.Name, []string{"ip", "link", "show", "dev", netdev})
+				return err
+			}).WithTimeout(uplinkShortTimeout).WithPolling(uplinkPoll).Should(gomega.Succeed(),
+				"expected simulated VF netdevice %s to be returned to the host on node %s", netdev, node.Name)
+		}
+	})
+})
+
 var _ = ginkgo.Describe("Network Segmentation Uplink route advertisements", feature.NetworkSegmentation, feature.RouteAdvertisements, func() {
 	f := wrappedTestFramework("uplink-bgp")
 	f.SkipNamespaceCreation = true
