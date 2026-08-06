@@ -198,8 +198,9 @@ var _ = Describe("Network Segmentation", func() {
 			handlePodRequest()
 
 			Expect(prInterfaceOpsStub.unconfiguredInterfaces).To(ConsistOf(&PodInterfaceInfo{
-				IsDPUHostMode: true,
-				NetdevName:    pr.CNIConf.DeviceID,
+				IsDPUHostMode:  true,
+				IsSimulatedDPU: true,
+				NetdevName:     pr.CNIConf.DeviceID,
 			}))
 		})
 
@@ -216,8 +217,9 @@ var _ = Describe("Network Segmentation", func() {
 			handlePodRequest()
 
 			Expect(prInterfaceOpsStub.unconfiguredInterfaces).To(ConsistOf(&PodInterfaceInfo{
-				IsDPUHostMode: true,
-				NetdevName:    pr.CNIConf.DeviceID,
+				IsDPUHostMode:  true,
+				IsSimulatedDPU: true,
+				NetdevName:     pr.CNIConf.DeviceID,
 			}))
 		})
 	})
@@ -360,8 +362,8 @@ var _ = Describe("Network Segmentation", func() {
 							Interfaces: []*current.Interface{
 								{Name: "host_eth0"},
 								{Name: "eth0", Sandbox: sandbox},
-								{Name: "host_ovn-udn1"},
-								{Name: "ovn-udn1", Sandbox: sandbox},
+								{Name: "host_" + primaryUDNIfName},
+								{Name: primaryUDNIfName, Sandbox: sandbox},
 							},
 							IPs: []*current.IPConfig{
 								{
@@ -415,7 +417,7 @@ var _ = Describe("Network Segmentation", func() {
 							NetName:       "tenantred",
 							NADKey:        "foo-ns/meganet",
 						}))
-					Expect(response.PrimaryUDNPodReq.IfName).To(Equal("ovn-udn1"))
+					Expect(response.PrimaryUDNPodReq.IfName).To(Equal(primaryUDNIfName))
 					Expect(response.PodIFInfo.NetName).To(Equal("default"))
 				})
 			})

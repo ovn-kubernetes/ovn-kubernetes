@@ -101,6 +101,13 @@ func IsSimulatedDPU() bool {
 	return false
 }
 
+// IsSimulatedNetdevName reports whether name matches the simulated netdevice
+// naming pattern (a trailing "<pfId>-<funcId>", e.g. "eth0-5"), the same
+// pattern SimulatedDPUOps.ResolveDeviceDetails accepts as a device ID.
+func IsSimulatedNetdevName(name string) bool {
+	return name != "" && dpusim.ReSimulationNetdevFunc.MatchString(name)
+}
+
 // ---------------------------------------------------------------------------
 // SwitchdevDPUOps - SR-IOV / switchdev hardware (NVIDIA BlueField, etc.)
 // ---------------------------------------------------------------------------
