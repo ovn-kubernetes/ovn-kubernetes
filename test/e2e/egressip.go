@@ -3149,17 +3149,33 @@ spec:
 				gomega.Expect(podCIDR).NotTo(gomega.BeEmpty(), "pod CIDR must not be empty for node %s", pod1Node.name)
 				monitorFilter := fmt.Sprintf("src net %s and dst host %s", podCIDR, targetIP)
 
+				// Create the monitor pod and wait (up to retryTimeout) until it is Running
+				// (capturing) before generating any traffic, so the capture cannot miss the
+				// EgressIP transition and stopping the capture in Step 8 cannot race the pod
+				// startup. A failure or timeout to start aborts the spec here, on the main
+				// goroutine.
 				ctx, ctxCancel := context.WithCancel(context.Background())
-				monitorOutput := ""
-				finishedMonitor := make(chan struct{})
-				go func() {
-					defer close(finishedMonitor)
-					var monitorErr error
-					monitorOutput, monitorErr = monitorTcpdumpOnNode(ctx, f, monitorPodName, egress1Node.name, secondaryIface.InfName,
-						"-n -vv -l", monitorFilter)
-					framework.ExpectNoError(monitorErr, "Failed to read monitor pod logs")
-				}()
+				// Guarantee the capture is stopped and the goroutine below is unblocked on every
+				// exit path, including an early failure before Step 8.
+				defer ctxCancel()
+				startTcpdumpMonitorPodOnNode(ctx, f, retryTimeout, monitorPodName, egress1Node.name, secondaryIface.InfName,
+					"-n -vv -l", monitorFilter)
 				framework.Logf("Traffic monitor pod started on node %s", egress1Node.name)
+
+				// Collect the captured output in the background until the capture context is
+				// cancelled in Step 8. The goroutine only reads logs (bounded by retryTimeout);
+				// its error is checked on the main goroutine after monitorWg.Wait().
+				monitorOutput := ""
+				var monitorErr error
+				var monitorWg sync.WaitGroup
+				monitorWg.Add(1)
+				go func() {
+					defer ginkgo.GinkgoRecover()
+					defer monitorWg.Done()
+					<-ctx.Done()
+					monitorOutput, monitorErr = e2ekubectl.NewKubectlCommand(f.Namespace.Name, "logs", monitorPodName).
+						WithTimeout(time.After(retryTimeout)).Exec()
+				}()
 
 				ginkgo.By(fmt.Sprintf("Step 4: Create %d pods FIRST (before EgressIP exists)", numTestPods))
 				// Pods are created before EgressIP, they will initially use normal routing (their pod IPs as source)
@@ -3324,7 +3340,8 @@ spec:
 				ginkgo.By("Step 8: Analyze traffic capture for pod IP leaks during EgressIP application")
 				// This is the critical check: did any traffic leak with pod IPs during the transition?
 				ctxCancel()
-				<-finishedMonitor
+				monitorWg.Wait()
+				framework.ExpectNoError(monitorErr, "Failed to read monitor pod logs")
 				if strings.Contains(monitorOutput, targetIP) {
 					framework.Failf("TRAFFIC LEAK DETECTED! Pod IPs were seen in traffic to %s"+
 						"This indicates traffic leaked with pod source IPs instead of egress IP %s during EgressIP application to existing pods.\ntcpdump output:\n%s",

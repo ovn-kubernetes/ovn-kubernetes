@@ -1861,12 +1861,13 @@ func firstSubnetOf(subnet string, subnetSize int) string {
 	return fmt.Sprintf("%s/%d", ipNet.IP, subnetSize)
 }
 
-// monitorTcpdumpOnNode creates a privileged host-network pod on the given node that runs
-// tcpdump on the specified interface with the provided filter. It blocks until ctx is
-// cancelled, then fetches the pod logs and deletes the monitor pod. Returns all captured
-// tcpdump output.
-func monitorTcpdumpOnNode(ctx context.Context, f *framework.Framework,
-	name, nodeName, nodeIface, options, filter string) (string, error) {
+// startTcpdumpMonitorPodOnNode creates a privileged host-network pod on the given node that
+// runs tcpdump on the specified interface with the provided filter, and waits up to
+// startupTimeout for the pod to be Running. Returning means the capture is active, so callers
+// can start generating traffic. It fails the spec if the pod cannot be created or does not
+// become Running within startupTimeout.
+func startTcpdumpMonitorPodOnNode(ctx context.Context, f *framework.Framework, startupTimeout time.Duration,
+	name, nodeName, nodeIface, options, filter string) {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -1895,15 +1896,8 @@ func monitorTcpdumpOnNode(ctx context.Context, f *framework.Framework,
 		},
 	}
 
-	createdPod, err := f.ClientSet.CoreV1().Pods(f.Namespace.Name).Create(ctx, pod, metav1.CreateOptions{})
+	_, err := f.ClientSet.CoreV1().Pods(f.Namespace.Name).Create(ctx, pod, metav1.CreateOptions{})
 	framework.ExpectNoError(err, "Failed to create traffic monitor pod")
-	err = e2epod.WaitForPodRunningInNamespace(ctx, f.ClientSet, createdPod)
-	framework.ExpectNoError(err, "Monitor pod failed to start")
-
-	<-ctx.Done()
-	logs, err := e2ekubectl.RunKubectl(f.Namespace.Name, "logs", name)
-	if err != nil {
-		return "", err
-	}
-	return logs, nil
+	err = e2epod.WaitTimeoutForPodRunningInNamespace(ctx, f.ClientSet, name, f.Namespace.Name, startupTimeout)
+	framework.ExpectNoError(err, fmt.Sprintf("traffic monitor pod %s did not become Running within %v", name, startupTimeout))
 }
