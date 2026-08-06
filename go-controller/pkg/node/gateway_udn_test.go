@@ -609,8 +609,13 @@ func openflowManagerCheckPorts(ofMgr *openflowManager) {
 	Expect(checkPorts(ofMgr.ovsClient, netConfigs, uplink, ofPortPhys)).To(Succeed())
 }
 
-func getDummyOpenflowManager() *openflowManager {
+// getDummyOpenflowManager creates a test openflow manager. Optional bridgeIPs
+// can be passed to configure gateway bridge IPs for node network route tests.
+func getDummyOpenflowManager(bridgeIPs ...*net.IPNet) *openflowManager {
 	gwBridge := bridgeconfig.TestBridgeConfig("breth0")
+	if len(bridgeIPs) > 0 {
+		gwBridge.SetIPs(bridgeIPs)
+	}
 	ofm := &openflowManager{
 		defaultBridge: newOpenflowBridge(gwBridge),
 		uplinkBridges: map[string]*openflowBridge{},
@@ -2528,6 +2533,125 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
+	})
+
+	// Verifies that node network connected subnet routes (e.g. 192.168.1.0/24 dev br-ex scope link src 192.168.1.10)
+	// are programmed in the VRF table when gateway bridge IPs are configured. These routes enable direct L2 forwarding
+	// to other nodes on the same subnet without routing through the default gateway.
+	ovntest.OnSupportedPlatformsIt("should add node network connected subnet routes to VRF table", func() {
+		config.Gateway.Interface = "eth0"
+		config.IPv4Mode = true
+		config.IPv6Mode = true
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: nodeName,
+				Annotations: map[string]string{
+					"k8s.ovn.org/node-subnets": fmt.Sprintf("{\"%s\":[\"%s\", \"%s\"]}", netName, v4NodeSubnet, v6NodeSubnet),
+				},
+			},
+		}
+		nad := ovntest.GenerateNAD(netName, "rednad", "greenamespace",
+			types.Layer3Topology, "100.128.0.0/16/24,ae70::/60/64", types.NetworkRolePrimary)
+		ovntest.AnnotateNADWithNetworkID(netID, nad)
+		netInfo, err := util.ParseNADInfo(nad)
+		Expect(err).NotTo(HaveOccurred())
+		err = testNS.Do(func(ns.NetNS) error {
+			defer GinkgoRecover()
+			ofm := getDummyOpenflowManager(ovntest.MustParseIPNets(v4NodeIP, v6NodeIP)...)
+			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, nil, nil, vrf, nil, &gateway{openflowManager: ofm}, nil, nil, nil)
+			Expect(err).NotTo(HaveOccurred())
+			mplink, err := netlink.LinkByName(mgtPort)
+			Expect(err).NotTo(HaveOccurred())
+			bridgelink, err := netlink.LinkByName("breth0")
+			Expect(err).NotTo(HaveOccurred())
+			vrfTableId := util.CalculateRouteTableID(mplink.Attrs().Index)
+			udnGateway.vrfTableId = vrfTableId
+
+			routes, err := udnGateway.computeRoutesForUDN(mplink)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify node network connected subnet routes are present for both IPv4 and IPv6.
+			// Match by scope and destination to stay resilient to route ordering changes.
+			var v4Found, v6Found bool
+			for _, route := range routes {
+				if route.Scope == netlink.SCOPE_LINK && route.Dst != nil {
+					if route.Dst.String() == "192.168.1.0/24" {
+						Expect(route.LinkIndex).To(Equal(bridgelink.Attrs().Index))
+						Expect(route.Src.Equal(ovntest.MustParseIP("192.168.1.10"))).To(BeTrue())
+						Expect(route.Table).To(Equal(vrfTableId))
+						v4Found = true
+					}
+					if route.Dst.String() == "fc00:f853:ccd:e793::/64" {
+						Expect(route.LinkIndex).To(Equal(bridgelink.Attrs().Index))
+						Expect(route.Src.Equal(ovntest.MustParseIP("fc00:f853:ccd:e793::3"))).To(BeTrue())
+						Expect(route.Table).To(Equal(vrfTableId))
+						v6Found = true
+					}
+				}
+			}
+			Expect(v4Found).To(BeTrue(), "IPv4 node network connected subnet route not found")
+			Expect(v6Found).To(BeTrue(), "IPv6 node network connected subnet route not found")
+			return nil
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
+	})
+
+	ovntest.OnSupportedPlatformsIt("should filter node subnet routes by IP family and tolerate nil bridge IPs", func() {
+		config.Gateway.Interface = "eth0"
+		node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName, Annotations: map[string]string{
+			"k8s.ovn.org/node-subnets": fmt.Sprintf("{\"%s\":[\"%s\", \"%s\"]}", netName, v4NodeSubnet, v6NodeSubnet),
+		}}}
+		for _, tc := range []struct {
+			ipv4, ipv6     bool
+			cidr           string
+			wantV4, wantV6 bool
+			injectNil      bool
+			desc           string
+		}{
+			{true, false, "100.128.0.0/16/24", true, false, false, "IPv4-only"},
+			{false, true, "ae70::/60/64", false, true, false, "IPv6-only"},
+			{true, true, "100.128.0.0/16/24,ae70::/60/64", true, true, true, "nil bridge IP tolerance"},
+		} {
+			config.IPv4Mode = tc.ipv4
+			config.IPv6Mode = tc.ipv6
+			nad := ovntest.GenerateNAD(netName, "rednad", "greenamespace",
+				types.Layer3Topology, tc.cidr, types.NetworkRolePrimary)
+			ovntest.AnnotateNADWithNetworkID(netID, nad)
+			netInfo, err := util.ParseNADInfo(nad)
+			Expect(err).NotTo(HaveOccurred())
+			err = testNS.Do(func(ns.NetNS) error {
+				defer GinkgoRecover()
+				ips := ovntest.MustParseIPNets(v4NodeIP, v6NodeIP)
+				if tc.injectNil {
+					ips = append(ips, nil)
+				}
+				ofm := getDummyOpenflowManager(ips...)
+				gw, err := NewUserDefinedNetworkGateway(netInfo, node, nil, nil, vrf, nil, &gateway{openflowManager: ofm}, nil, nil, nil)
+				Expect(err).NotTo(HaveOccurred())
+				mp, err := netlink.LinkByName(mgtPort)
+				Expect(err).NotTo(HaveOccurred())
+				gw.vrfTableId = util.CalculateRouteTableID(mp.Attrs().Index)
+				routes, err := gw.computeRoutesForUDN(mp)
+				Expect(err).NotTo(HaveOccurred())
+				var v4, v6 bool
+				for _, r := range routes {
+					if r.Scope == netlink.SCOPE_LINK && r.Dst != nil {
+						switch r.Dst.String() {
+						case "192.168.1.0/24":
+							v4 = true
+						case "fc00:f853:ccd:e793::/64":
+							v6 = true
+						}
+					}
+				}
+				Expect(v4).To(Equal(tc.wantV4), tc.desc+": IPv4 scope-link route")
+				Expect(v6).To(Equal(tc.wantV6), tc.desc+": IPv6 scope-link route")
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
+		}
 	})
 
 	ovntest.OnSupportedPlatformsIt("should set rp filter to loose mode for management port interface", func() {
