@@ -636,7 +636,7 @@ fi
 				Version: kubevirtv1.GroupVersion.Version,
 			})
 
-			if err := client.List(context.Background(), unstructuredVMIMigrations); err != nil {
+			if err := client.List(context.Background(), unstructuredVMIMigrations, crclient.InNamespace(namespace)); err != nil {
 				return nil, err
 			}
 			if len(unstructuredVMIMigrations.Items) == 0 {
@@ -684,6 +684,101 @@ fi
 			)
 		}
 
+		// listNBDBPodContainers returns the pod/container pairs to query every OVN
+		// NB database in the cluster. DB pods are labeled ovn-db-pod=true (one pod
+		// per zone with interconnect, dedicated DB pods without it), the same
+		// selection used by getOvnKubePodsForRouteInjection. The NB DB container
+		// is named "nb-ovsdb" upstream and "nbdb" on OpenShift; default to the
+		// first container otherwise.
+		listNBDBPodContainers = func() ([][2]string, error) {
+			ovnNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+			pods, err := fr.ClientSet.CoreV1().Pods(ovnNamespace).List(context.Background(), metav1.ListOptions{LabelSelector: "ovn-db-pod=true"})
+			if err != nil {
+				return nil, err
+			}
+			if len(pods.Items) == 0 {
+				return nil, fmt.Errorf("no OVN NB database pods found in namespace %s", ovnNamespace)
+			}
+			var result [][2]string
+			for _, pod := range pods.Items {
+				containerName := pod.Spec.Containers[0].Name
+				for _, container := range pod.Spec.Containers {
+					if container.Name == "nb-ovsdb" || container.Name == "nbdb" {
+						containerName = container.Name
+						break
+					}
+				}
+				result = append(result, [2]string{pod.Name, containerName})
+			}
+			return result, nil
+		}
+
+		// checkNoStaleLSPAfterFailedLiveMigration verifies OVN cleaned up after a
+		// failed live migration once the failed target pod terminates: the target
+		// pod LSP must be removed from every NB database and the source pod LSP
+		// must not be left disabled. The connectivity checks alone cannot catch a
+		// regression here: on localnet with interconnect the target pod deletion
+		// is processed by every zone, the zone owning the source LSP re-enables it
+		// (so traffic recovers) while the remaining zones fail the deletion and
+		// leak the target LSP until the network is removed.
+		checkNoStaleLSPAfterFailedLiveMigration = func(vmiName string) {
+			GinkgoHelper()
+			vmi := &kubevirtv1.VirtualMachineInstance{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: namespace,
+					Name:      vmiName,
+				},
+			}
+			var targetPod, sourcePod string
+			Eventually(func(g Gomega) {
+				g.Expect(crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
+				g.Expect(vmi.Status.MigrationState).NotTo(BeNil(), "should have a MigrationState after failed live migration")
+				targetPod = vmi.Status.MigrationState.TargetPod
+				sourcePod = vmi.Status.MigrationState.SourcePod
+				g.Expect(targetPod).NotTo(BeEmpty())
+				g.Expect(sourcePod).NotTo(BeEmpty())
+			}).WithPolling(time.Second).WithTimeout(time.Minute).Should(Succeed(), "should populate MigrationState pod names after failed live migration")
+
+			By(fmt.Sprintf("checking no stale LSP remains for failed live migration target pod %s", targetPod))
+			ovnNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+			targetLSPSuffix := fmt.Sprintf("%s_%s", namespace, targetPod)
+			sourceLSPSuffix := fmt.Sprintf("%s_%s", namespace, sourcePod)
+			Eventually(func() error {
+				dbs, err := listNBDBPodContainers()
+				if err != nil {
+					return err
+				}
+				sourceLSPFound := false
+				for _, db := range dbs {
+					stdout, stderr, err := ExecCommandInContainerWithFullOutput(fr, ovnNamespace, db[0], db[1],
+						"ovn-nbctl", "--bare", "--columns=name", "find", "logical_switch_port")
+					if err != nil {
+						return fmt.Errorf("failed listing LSPs at %s/%s: %w, stderr: %s", db[0], db[1], err, stderr)
+					}
+					for _, lsp := range strings.Fields(stdout) {
+						if strings.HasSuffix(lsp, targetLSPSuffix) {
+							return fmt.Errorf("stale LSP %q for failed live migration target pod still present at %s/%s", lsp, db[0], db[1])
+						}
+						if strings.HasSuffix(lsp, sourceLSPSuffix) {
+							sourceLSPFound = true
+							enabled, stderr, err := ExecCommandInContainerWithFullOutput(fr, ovnNamespace, db[0], db[1],
+								"ovn-nbctl", "get", "logical_switch_port", lsp, "enabled")
+							if err != nil {
+								return fmt.Errorf("failed retrieving enabled field of LSP %q at %s/%s: %w, stderr: %s", lsp, db[0], db[1], err, stderr)
+							}
+							if strings.TrimSpace(enabled) == "false" {
+								return fmt.Errorf("source pod LSP %q is disabled after failed live migration at %s/%s", lsp, db[0], db[1])
+							}
+						}
+					}
+				}
+				if !sourceLSPFound {
+					return fmt.Errorf("source pod LSP with suffix %q not found in any NB database", sourceLSPSuffix)
+				}
+				return nil
+			}).WithPolling(5 * time.Second).WithTimeout(2 * time.Minute).Should(Succeed())
+		}
+
 		liveMigrateFailed = func(vmi *kubevirtv1.VirtualMachineInstance) {
 			GinkgoHelper()
 			forceLiveMigrationFailureAnnotationName := kubevirtv1.FuncTestForceLauncherMigrationFailureAnnotation
@@ -700,6 +795,7 @@ fi
 
 			liveMigrateVirtualMachine(vmi.Name)
 			checkLiveMigrationFailed(vmi.Name)
+			checkNoStaleLSPAfterFailedLiveMigration(vmi.Name)
 		}
 
 		globalAddressesByFamily = func(isOfFamily func(string) bool, vmi *kubevirtv1.VirtualMachineInstance) func() ([]string, error) {
