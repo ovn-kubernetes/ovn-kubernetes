@@ -410,26 +410,28 @@ func (cm *ClusterManager) Reconcile(name string, old, new util.NetInfo) error {
 	return nil
 }
 
-// setTopologyType verifies if all nodes have the annotation Layer2UsesTransitRouter
-// and set it in config.Layer2UsesTransitRouter flag.
-// This way, cluster manager does not annotate nodes with tunnel IDs.
+// setTopologyType determines whether to use transit router for layer2 networks.
+// It checks for the presence of legacy per-node tunnel ID annotations: if any
+// node has tunnel IDs but no topology version annotation, there is pre-existing
+// legacy state that must be preserved until migration completes.
+// If no legacy state is found (fresh cluster or fully migrated), transit router
+// mode is enabled.
 func (cm *ClusterManager) setTopologyType() error {
-	if !config.Layer2UsesTransitRouter {
-		nodes, err := cm.client.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
-		if err != nil {
-			return fmt.Errorf("unable to get nodes from informer while setting topology type for layer2: %w", err)
-		}
-		// set it to true and check if all the nodes already have annotation
-		config.Layer2UsesTransitRouter = true
-		for _, node := range nodes.Items {
-			if !util.UDNLayer2NodeUsesTransitRouter(&node) {
-				// if at least one node doesn't have the annotation, consider none of them have Layer2UsesTransitRouter
-				config.Layer2UsesTransitRouter = false
-				return nil
-			}
-		}
-		klog.Infof("Switching to transit router for layer2 networks")
+	if config.Layer2UsesTransitRouter {
+		return nil
 	}
+	nodes, err := cm.client.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("unable to get nodes while setting topology type for layer2: %w", err)
+	}
+	for _, node := range nodes.Items {
+		if node.Annotations[types.UDNLayer2NodeGRLRPTunnelIDAnnotation] != "" && !util.UDNLayer2NodeUsesTransitRouter(&node) {
+			klog.Infof("Node %s has legacy L2 tunnel IDs without topology version annotation, keeping legacy mode", node.Name)
+			return nil
+		}
+	}
+	klog.Infof("Switching to transit router for layer2 networks")
+	config.Layer2UsesTransitRouter = true
 	return nil
 }
 
