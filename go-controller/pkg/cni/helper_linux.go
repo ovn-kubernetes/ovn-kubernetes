@@ -932,57 +932,66 @@ func (*defaultPodRequestInterfaceOps) UnconfigureInterface(pr *PodRequest, ifInf
 	if !pr.IsVFIO {
 		netns, err := ns.GetNS(pr.Netns)
 		if err != nil {
-			return fmt.Errorf("failed to get container namespace %s: %v", podDesc, err)
-		}
-		defer netns.Close()
+			// CNI Spec: DEL should succeed if the netns is already gone. For SR-IOV,
+			// still continue to host-side representor/OVS cleanup — otherwise ports
+			// go stale. The VF is already in the host netns.
+			if pr.CNIConf.DeviceID == "" {
+				klog.V(5).Infof("Failed to get container namespace %s: %v", podDesc, err)
+				return nil
+			}
+			klog.Warningf("Container namespace doesn't exist for SR-IOV pod %s DeviceID %s: %v; continuing host-side cleanup",
+				podDesc, pr.CNIConf.DeviceID, err)
+		} else {
+			defer netns.Close()
 
-		hostNS, err := ns.GetCurrentNS()
-		if err != nil {
-			return fmt.Errorf("failed to get host namespace %s: %v", podDesc, err)
-		}
-		defer hostNS.Close()
-
-		// 1. For SRIOV case, we'd need to move device from container namespace back to the host namespace
-		// 2. If it is secondary network and not dpu-host mode, then get the container interface index
-		//    so that we know the host-side interface name.
-		err = netns.Do(func(_ ns.NetNS) error {
-			// container side interface deletion
-			link, err := util.GetNetLinkOps().LinkByName(pr.IfName)
+			hostNS, err := ns.GetCurrentNS()
 			if err != nil {
-				return fmt.Errorf("failed to get container interface %s %s: %v", pr.IfName, podDesc, err)
+				return fmt.Errorf("failed to get host namespace %s: %v", podDesc, err)
 			}
-			if pr.CNIConf.DeviceID != "" {
-				// SR-IOV Case
-				err = util.GetNetLinkOps().LinkSetDown(link)
+			defer hostNS.Close()
+
+			// 1. For SRIOV case, we'd need to move device from container namespace back to the host namespace
+			// 2. If it is secondary network and not dpu-host mode, then get the container interface index
+			//    so that we know the host-side interface name.
+			err = netns.Do(func(_ ns.NetNS) error {
+				// container side interface deletion
+				link, err := util.GetNetLinkOps().LinkByName(pr.IfName)
 				if err != nil {
-					return fmt.Errorf("failed to bring down container interface %s %s: %v", pr.IfName, podDesc, err)
+					return fmt.Errorf("failed to get container interface %s %s: %v", pr.IfName, podDesc, err)
 				}
-				// rename netdevice to make sure it is unique in the host namespace:
-				// if original name of netdevice is empty, sandbox id and a '0' letter prefix is used to make up the unique name.
-				oldName := ifInfo.NetdevName
-				if oldName == "" {
-					id := fmt.Sprintf("_0%d", link.Attrs().Index)
-					oldName = pr.SandboxID[:(15-len(id))] + id
+				if pr.CNIConf.DeviceID != "" {
+					// SR-IOV Case
+					err = util.GetNetLinkOps().LinkSetDown(link)
+					if err != nil {
+						return fmt.Errorf("failed to bring down container interface %s %s: %v", pr.IfName, podDesc, err)
+					}
+					// rename netdevice to make sure it is unique in the host namespace:
+					// if original name of netdevice is empty, sandbox id and a '0' letter prefix is used to make up the unique name.
+					oldName := ifInfo.NetdevName
+					if oldName == "" {
+						id := fmt.Sprintf("_0%d", link.Attrs().Index)
+						oldName = pr.SandboxID[:(15-len(id))] + id
+					}
+					err = util.GetNetLinkOps().LinkSetName(link, oldName)
+					if err != nil {
+						return fmt.Errorf("failed to rename container interface %s to %s %s: %v",
+							pr.IfName, oldName, podDesc, err)
+					}
+					// move netdevice to host netns
+					err = util.GetNetLinkOps().LinkSetNsFd(link, int(hostNS.Fd()))
+					if err != nil {
+						return fmt.Errorf("failed to move container interface %s back to host namespace %s: %v",
+							pr.IfName, podDesc, err)
+					}
 				}
-				err = util.GetNetLinkOps().LinkSetName(link, oldName)
-				if err != nil {
-					return fmt.Errorf("failed to rename container interface %s to %s %s: %v",
-						pr.IfName, oldName, podDesc, err)
+				if isSecondary {
+					ifnameSuffix = fmt.Sprintf("_%d", link.Attrs().Index)
 				}
-				// move netdevice to host netns
-				err = util.GetNetLinkOps().LinkSetNsFd(link, int(hostNS.Fd()))
-				if err != nil {
-					return fmt.Errorf("failed to move container interface %s back to host namespace %s: %v",
-						pr.IfName, podDesc, err)
-				}
+				return nil
+			})
+			if err != nil {
+				klog.Errorf("Error in UnconfigureInterface: %v", err)
 			}
-			if isSecondary {
-				ifnameSuffix = fmt.Sprintf("_%d", link.Attrs().Index)
-			}
-			return nil
-		})
-		if err != nil {
-			klog.Errorf("Error in UnconfigureInterface: %v", err)
 		}
 	}
 
@@ -997,7 +1006,7 @@ func (*defaultPodRequestInterfaceOps) UnconfigureInterface(pr *PodRequest, ifInf
 		if pr.CNIConf.DeviceID != "" {
 			hostIfName, err = util.GetFunctionRepresentorName(pr.CNIConf.DeviceID)
 			if err != nil {
-				klog.Errorf("Failed to get the representor name for DeviceID %s for pod %s: %v",
+				return fmt.Errorf("failed to get the representor name for DeviceID %s for pod %s: %v",
 					pr.CNIConf.DeviceID, podDesc, err)
 			}
 		}
