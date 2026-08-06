@@ -143,6 +143,32 @@ func IsSimulatedDPU() bool {
 	return false
 }
 
+// parseSimulatedNetdevName extracts the PF and function indices from a
+// simulated netdevice name (a trailing "<pfId>-<funcId>", e.g. "eth0-5").
+func parseSimulatedNetdevName(name string) (pfId, funcId int, err error) {
+	matches := dpusim.ReSimulationNetdevFunc.FindStringSubmatch(name)
+	if len(matches) != 3 {
+		return 0, 0, fmt.Errorf("interface %s does not match simulated naming pattern *<pfId>-<funcId>", name)
+	}
+	pfId, err = strconv.Atoi(matches[1])
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to parse PF index from %q: %v", name, err)
+	}
+	funcId, err = strconv.Atoi(matches[2])
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to parse Function index from %q: %v", name, err)
+	}
+	return pfId, funcId, nil
+}
+
+// IsSimulatedNetdevName reports whether name is a valid simulated netdevice
+// name, the same condition SimulatedDPUOps.ResolveDeviceDetails requires of a
+// device ID.
+func IsSimulatedNetdevName(name string) bool {
+	_, _, err := parseSimulatedNetdevName(name)
+	return err == nil
+}
+
 // ---------------------------------------------------------------------------
 // SwitchdevDPUOps - SR-IOV / switchdev hardware (NVIDIA BlueField, etc.)
 // ---------------------------------------------------------------------------
@@ -512,17 +538,9 @@ func simulatedDPURepresentorIndex(iface string) int {
 }
 
 func (s *SimulatedDPUOps) ResolveDeviceDetails(deviceID string) (*NetworkDeviceDetails, error) {
-	matches := dpusim.ReSimulationNetdevFunc.FindStringSubmatch(deviceID)
-	if len(matches) != 3 {
-		return nil, fmt.Errorf("interface %s does not match simulated naming pattern *<pfId>-<funcId>", deviceID)
-	}
-	pfId, err := strconv.Atoi(matches[1])
+	pfId, funcId, err := parseSimulatedNetdevName(deviceID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse PF index from %q: %v", deviceID, err)
-	}
-	funcId, err := strconv.Atoi(matches[2])
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse Function index from %q: %v", deviceID, err)
+		return nil, err
 	}
 	klog.Infof("Device %s resolved as simulated netdev: PfId=%d, FuncId=%d", deviceID, pfId, funcId)
 	return &NetworkDeviceDetails{

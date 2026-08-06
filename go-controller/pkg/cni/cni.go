@@ -263,6 +263,8 @@ func (pr *PodRequest) cmdDel(clientset *ClientSet) (*Response, error) {
 			}
 			if dpuCD == nil {
 				if !util.IsSimulatedDPU() {
+					// a PCI VF returns to the initial network namespace when the
+					// pod namespace is removed, nothing to do
 					return response, nil
 				}
 				// A simulated device is a veth and is destroyed with the pod namespace unless it is moved back first.
@@ -333,8 +335,9 @@ func (pr *PodRequest) cmdDel(clientset *ClientSet) (*Response, error) {
 	}
 
 	podInterfaceInfo := &PodInterfaceInfo{
-		IsDPUHostMode: config.IsModeDPUHost(),
-		NetdevName:    netdevName,
+		IsDPUHostMode:  config.IsModeDPUHost(),
+		IsSimulatedDPU: util.IsSimulatedDPU(),
+		NetdevName:     netdevName,
 	}
 	if !config.UnprivilegedMode {
 		err := podRequestInterfaceOps.UnconfigureInterface(pr, podInterfaceInfo)
