@@ -151,10 +151,35 @@ func (mp *managementPortNetdev) findNetdevByDeviceID() (netlink.Link, error) {
 
 	link, err := util.GetNetLinkOps().LinkByName(netdevName)
 	if err != nil {
+		if util.GetNetLinkOps().IsLinkNotFoundError(err) {
+			// A previous instance may have renamed the netdevice to the
+			// management port name, recording the original name as the link
+			// alias (see syncMgmtPortInterface). Resolution by device ID
+			// follows renames for PCI devices but not for simulated ones, so
+			// fall back to finding the link through its alias.
+			if link := findLinkByAlias(netdevName); link != nil {
+				klog.Infof("Resolved management port device %s by alias on netdev %s", netdevName, link.Attrs().Name)
+				return link, nil
+			}
+		}
 		return nil, fmt.Errorf("device ID %s resolved to %s but LinkByName failed: %w", mp.deviceID, netdevName, err)
 	}
 
 	return link, nil
+}
+
+// findLinkByAlias returns the link whose alias matches name, or nil.
+func findLinkByAlias(name string) netlink.Link {
+	links, err := util.GetNetLinkOps().LinkList()
+	if err != nil {
+		return nil
+	}
+	for _, link := range links {
+		if attrs := link.Attrs(); attrs != nil && attrs.Alias == name {
+			return link
+		}
+	}
+	return nil
 }
 
 func (mp *managementPortNetdev) create() error {

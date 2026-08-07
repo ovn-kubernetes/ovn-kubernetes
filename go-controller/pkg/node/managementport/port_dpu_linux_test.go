@@ -293,6 +293,25 @@ var _ = Describe("Mananagement port DPU tests", func() {
 				"empty deviceID should not be confused with PCI device gone")
 		})
 
+		It("Resolves a renamed netdev through its link alias", func() {
+			// A previous instance renamed the netdev to the management port
+			// name, keeping the original name as the link alias. Name-based
+			// resolution (simulated devices) must fall back to the alias.
+			mgmtPortDpuHost := &managementPortNetdev{
+				deviceID: deviceID,
+			}
+			mockDeviceIDToNetdev(deviceID, "eth0-2")
+			renamedLink := &mocks.Link{}
+			renamedLink.On("Attrs").Return(&netlink.LinkAttrs{Name: "ovn-k8s-mp0", Alias: "eth0-2"})
+			netlinkOpsMock.On("LinkByName", "eth0-2").Return(nil, fmt.Errorf("link not found"))
+			netlinkOpsMock.On("IsLinkNotFoundError", mock.Anything).Return(true)
+			netlinkOpsMock.On("LinkList").Return([]netlink.Link{renamedLink}, nil)
+
+			link, err := mgmtPortDpuHost.findNetdevByDeviceID()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(link.Attrs().Name).To(Equal("ovn-k8s-mp0"))
+		})
+
 		It("Fails with errMgmtPortDeviceNotFound when device ID resolves to empty netdev name", func() {
 			mgmtPortDpuHost := &managementPortNetdev{
 				deviceID: deviceID,

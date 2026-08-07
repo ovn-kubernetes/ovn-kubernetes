@@ -271,6 +271,54 @@ var _ = ginkgo.Describe("Network Segmentation Uplink DPU VF lifecycle", feature.
 				"expected simulated VF netdevice %s to be returned to the host on node %s", netdev, node.Name)
 		}
 	})
+
+	// The first ovnkube-node start renames the management port VF to the
+	// canonical management port name, so a restart must resolve the device
+	// through its link alias: with name-based resolution only (simulated
+	// devices), the restarted ovnkube crashloops and the pod never becomes
+	// Ready again. No CI lane restarts ovnkube on a DPU host otherwise, which
+	// is how that regression previously went unnoticed.
+	ginkgo.It("recovers the management port device after an ovnkube-node restart", func() {
+		schedulableNodes, err := e2enode.GetReadySchedulableNodes(context.Background(), f.ClientSet)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		nodes := filterNodesByLabel(schedulableNodes.Items, uplinkDPUHostNodeLabel)
+		gomega.Expect(nodes).NotTo(gomega.BeEmpty(), "test requires a DPU host node")
+		node := nodes[0]
+
+		ovnNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+		listOnNode := metav1.ListOptions{
+			LabelSelector: "app=ovnkube-node-dpu-host",
+			FieldSelector: "spec.nodeName=" + node.Name,
+		}
+		pods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.Background(), listOnNode)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(pods.Items).To(gomega.HaveLen(1), "expected one ovnkube-node-dpu-host pod on node %s", node.Name)
+		oldPod := pods.Items[0]
+
+		ginkgo.By(fmt.Sprintf("restarting ovnkube-node pod %s on node %s", oldPod.Name, node.Name))
+		gomega.Expect(e2epod.DeletePodWithWait(context.Background(), f.ClientSet, &oldPod)).To(gomega.Succeed())
+
+		gomega.Eventually(func() error {
+			pods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.Background(), listOnNode)
+			if err != nil {
+				return err
+			}
+			if len(pods.Items) != 1 {
+				return fmt.Errorf("expected one ovnkube-node-dpu-host pod on node %s, got %d", node.Name, len(pods.Items))
+			}
+			pod := pods.Items[0]
+			if pod.UID == oldPod.UID {
+				return fmt.Errorf("pod %s not recreated yet", pod.Name)
+			}
+			for _, condition := range pod.Status.Conditions {
+				if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
+					return nil
+				}
+			}
+			return fmt.Errorf("pod %s (restarts: %d) is not ready", pod.Name, podTotalRestarts(&pod))
+		}).WithTimeout(uplinkTimeout).WithPolling(uplinkPoll).Should(gomega.Succeed(),
+			"expected the restarted ovnkube-node pod on node %s to become ready", node.Name)
+	})
 })
 
 var _ = ginkgo.Describe("Network Segmentation Uplink route advertisements", feature.NetworkSegmentation, feature.RouteAdvertisements, func() {
@@ -2107,6 +2155,15 @@ func dpuNodeNameForHostNode(hostNodeName string) (string, error) {
 		return "", fmt.Errorf("failed to derive DPU node name from host node %q", hostNodeName)
 	}
 	return strings.Replace(hostNodeName, "-host-", "-dpu-", 1), nil
+}
+
+// podTotalRestarts sums the container restart counts of a pod.
+func podTotalRestarts(pod *corev1.Pod) int {
+	restarts := 0
+	for _, containerStatus := range pod.Status.ContainerStatuses {
+		restarts += int(containerStatus.RestartCount)
+	}
+	return restarts
 }
 
 func isDPUUplinkE2E() bool {
