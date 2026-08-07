@@ -19,6 +19,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/urfave/cli/v2"
+	"github.com/vishvananda/netlink"
 
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/leaderelection"
@@ -279,8 +280,20 @@ func startOvnKube(ctx *cli.Context, cancel context.CancelFunc) error {
 		}
 	}
 
+	runMode, err := determineOvnkubeRunMode(ctx)
+	if err != nil {
+		return err
+	}
+	if runMode.node {
+		// Configure the package handle before starting any components or goroutines
+		// that may use the global netlink functions.
+		if err := netlink.ConfigureHandle(netlink.HandleOptions{DisableVFInfoCollection: true}); err != nil {
+			return fmt.Errorf("failed to configure netlink handle: %w", err)
+		}
+	}
+
 	exec := kexec.New()
-	_, err := config.InitConfig(ctx, exec, nil)
+	_, err = config.InitConfig(ctx, exec, nil)
 	if err != nil {
 		return err
 	}
@@ -309,11 +322,6 @@ func startOvnKube(ctx *cli.Context, cancel context.CancelFunc) error {
 		}
 	}
 	ovnClientset, err := util.NewOVNClientset(&config.Kubernetes)
-	if err != nil {
-		return err
-	}
-
-	runMode, err := determineOvnkubeRunMode(ctx)
 	if err != nil {
 		return err
 	}
