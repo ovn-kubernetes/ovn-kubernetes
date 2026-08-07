@@ -39,8 +39,9 @@ func NewPrimaryIPv6() (net.IP, error) {
 	return pia.AllocateNextV6()
 }
 
-// newPrimaryIPAllocator gets a Nodes primary interfaces network info, increments the 2 octet and checks if the IP is still
-// within the subnet of all the K8 nodes.
+// newPrimaryIPAllocator gets a Nodes primary interfaces network info and allocates IPs from a reserved range
+// within the same subnet. For serial test execution, IPs are allocated from .200-.254 (IPv4) or the equivalent
+// range for IPv6 to avoid conflicts with node IPs which typically use lower addresses.
 func newPrimaryIPAllocator(nodeClient v1.NodeInterface) (*primaryIPAllocator, error) {
 	ipa := &primaryIPAllocator{mu: &sync.Mutex{}, nodeClient: nodeClient}
 	nodes, err := nodeClient.List(context.TODO(), metav1.ListOptions{})
@@ -50,37 +51,52 @@ func newPrimaryIPAllocator(nodeClient v1.NodeInterface) (*primaryIPAllocator, er
 	if len(nodes.Items) == 0 {
 		return ipa, fmt.Errorf("expected at least one node but found zero")
 	}
-	// FIXME: the approach taken here to find the first node IP+mask and then to increment the second last octet wont work in
-	// all scenarios (node with /24). We should generate an EgressIP compatible with a Node providers primary network and then take care its unique globally.
 
-	// The approach here is to grab initial starting IP from first node found, increment the second last octet.
-	// Approach taken here won't work for Nodes handed /24 subnets.
+	// Reserved range for E2E test IPs to avoid conflicts with node IPs
+	const (
+		testIPv4Start = 200 // Start from .200 to avoid typical node IPs (.1-.199)
+		testIPv4End   = 254 // Last usable before .255 broadcast
+		testIPv6Start = 200 // Same for IPv6 (0xC8)
+		testIPv6End   = 255 // Last byte of reserved range (0xFF)
+	)
+
 	nodePrimaryIPs, err := util.ParseNodePrimaryIfAddr(&nodes.Items[0])
 	if err != nil {
 		return ipa, fmt.Errorf("failed to parse node primary interface address from Node object: %v", err)
 	}
 	if nodePrimaryIPs.V4.IP != nil {
-		// should be ok with /16 and /64 node primary provider subnets
-		// TODO; fixme; what about /24 subnet Nodes like GCP
-		nodePrimaryIPs.V4.IP[len(nodePrimaryIPs.V4.IP)-2]++
-		ipa.v4 = newIPAllocator(&net.IPNet{IP: nodePrimaryIPs.V4.IP, Mask: nodePrimaryIPs.V4.Net.Mask})
+		// Start from .199 so first allocation returns .200 (AllocateNextIP increments before returning)
+		startIP := make(net.IP, len(nodePrimaryIPs.V4.IP))
+		copy(startIP, nodePrimaryIPs.V4.IP)
+		startIP[len(startIP)-1] = testIPv4Start - 1
+		ipa.v4 = newIPAllocator(&net.IPNet{IP: startIP, Mask: nodePrimaryIPs.V4.Net.Mask})
 	}
 	if nodePrimaryIPs.V6.IP != nil {
-		nodePrimaryIPs.V6.IP[len(nodePrimaryIPs.V6.IP)-2]++
-		ipa.v6 = newIPAllocator(&net.IPNet{IP: nodePrimaryIPs.V6.IP, Mask: nodePrimaryIPs.V6.Net.Mask})
+		// Start from one less so first allocation returns the desired start IP
+		startIP := make(net.IP, len(nodePrimaryIPs.V6.IP))
+		copy(startIP, nodePrimaryIPs.V6.IP)
+		startIP[len(startIP)-1] = testIPv6Start - 1
+		ipa.v6 = newIPAllocator(&net.IPNet{IP: startIP, Mask: nodePrimaryIPs.V6.Net.Mask})
 	}
-	// verify the new starting base IP is within all Nodes subnets
+	// Verify the starting IP from the reserved range is within all nodes' subnets
 	if nodePrimaryIPs.V4.IP != nil {
 		ipNets, err := getNodePrimaryProviderIPs(nodes.Items, false)
 		if err != nil {
 			return ipa, err
 		}
-		nextIP, err := ipa.v4.AllocateNextIP()
-		if err != nil {
-			return ipa, err
+		// Validate both the first (.200) and last (.254) IPs of the reserved range are
+		// within all nodes' subnets so the allocator never produces out-of-subnet addresses.
+		firstIP := make(net.IP, len(nodePrimaryIPs.V4.IP))
+		copy(firstIP, nodePrimaryIPs.V4.IP)
+		firstIP[len(firstIP)-1] = testIPv4Start
+		if !isIPWithinAllSubnets(ipNets, firstIP) {
+			return ipa, fmt.Errorf("IPv4 %s from reserved test range is not within all node subnets - this may indicate /32 node subnets or incompatible network configuration", firstIP)
 		}
-		if !isIPWithinAllSubnets(ipNets, nextIP) {
-			return ipa, fmt.Errorf("IP %s is not within all Node subnets", nextIP)
+		lastIP := make(net.IP, len(nodePrimaryIPs.V4.IP))
+		copy(lastIP, nodePrimaryIPs.V4.IP)
+		lastIP[len(lastIP)-1] = testIPv4End
+		if !isIPWithinAllSubnets(ipNets, lastIP) {
+			return ipa, fmt.Errorf("IPv4 %s (end of reserved test range) is not within all node subnets - subnet may be too narrow to hold the full .%d-.%d range", lastIP, testIPv4Start, testIPv4End)
 		}
 	}
 	if nodePrimaryIPs.V6.IP != nil {
@@ -88,12 +104,18 @@ func newPrimaryIPAllocator(nodeClient v1.NodeInterface) (*primaryIPAllocator, er
 		if err != nil {
 			return ipa, err
 		}
-		nextIP, err := ipa.v6.AllocateNextIP()
-		if err != nil {
-			return ipa, err
+		// Validate both the first (::c8) and last (::ff) IPs of the reserved range.
+		firstIP := make(net.IP, len(nodePrimaryIPs.V6.IP))
+		copy(firstIP, nodePrimaryIPs.V6.IP)
+		firstIP[len(firstIP)-1] = testIPv6Start
+		if !isIPWithinAllSubnets(ipNets, firstIP) {
+			return ipa, fmt.Errorf("IPv6 %s from reserved test range is not within all node subnets - this may indicate /128 node subnets or incompatible network configuration", firstIP)
 		}
-		if !isIPWithinAllSubnets(ipNets, nextIP) {
-			return ipa, fmt.Errorf("IP %s is not within all Node subnets", nextIP)
+		lastIP := make(net.IP, len(nodePrimaryIPs.V6.IP))
+		copy(lastIP, nodePrimaryIPs.V6.IP)
+		lastIP[len(lastIP)-1] = testIPv6End
+		if !isIPWithinAllSubnets(ipNets, lastIP) {
+			return ipa, fmt.Errorf("IPv6 %s (end of reserved test range) is not within all node subnets - subnet may be too narrow to hold the full ::%.2x-::%.2x range", lastIP, testIPv6Start, testIPv6End)
 		}
 	}
 
@@ -183,6 +205,9 @@ func (pia primaryIPAllocator) AllocateNextV6() (net.IP, error) {
 
 type allocNextFn func() (net.IP, error)
 
+// allocateIP allocates the next available IP from the reserved range (.200-.254)
+// that doesn't conflict with existing node IPs. For serial execution, this provides
+// up to ~54 IPs per test run.
 func allocateIP(nodeClient v1.NodeInterface, allocateFn allocNextFn) (net.IP, error) {
 	nodeList, err := nodeClient.List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
@@ -191,11 +216,12 @@ func allocateIP(nodeClient v1.NodeInterface, allocateFn allocNextFn) (net.IP, er
 	for {
 		nextIP, err := allocateFn()
 		if err != nil {
-			return nil, fmt.Errorf("failed to allocated next IP address: %v", err)
+			return nil, fmt.Errorf("failed to allocate next IP address (reserved test range may be exhausted): %v", err)
 		}
-		firstOctet := nextIP[len(nextIP)-1]
-		// skip 0 and 1
-		if firstOctet == 0 || firstOctet == 1 {
+		lastOctet := nextIP[len(nextIP)-1]
+		// Skip reserved addresses (.0 is network, .1 typically gateway)
+		// This shouldn't happen since we start from .200, but check anyway
+		if lastOctet == 0 || lastOctet == 1 {
 			continue
 		}
 		isConflict, err := isConflictWithExistingHostIPs(nodeList.Items, nextIP)
@@ -205,6 +231,7 @@ func allocateIP(nodeClient v1.NodeInterface, allocateFn allocNextFn) (net.IP, er
 		if !isConflict {
 			return nextIP, nil
 		}
+		// IP conflicts with a node, try next one
 	}
 }
 

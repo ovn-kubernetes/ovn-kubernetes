@@ -28,6 +28,7 @@ import (
 
 	"github.com/pkg/errors"
 	v1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -404,17 +405,44 @@ func forwardIPWithIPTables(ip string) (func() error, error) {
 
 // updatesNamespace labels while preserving the required UDN label
 func updateNamespaceLabels(f *framework.Framework, namespace *v1.Namespace, labels map[string]string) {
-	// should never be nil
-	n := *namespace
-	for k, v := range labels {
-		n.Labels[k] = v
-	}
-	if _, ok := namespace.Labels[RequiredUDNNamespaceLabel]; ok {
-		n.Labels[RequiredUDNNamespaceLabel] = ""
-	}
-	_, err := f.ClientSet.CoreV1().Namespaces().Update(context.Background(), &n, metav1.UpdateOptions{})
+	// Retry on conflict errors - the namespace may be modified by other controllers
+	err := wait.ExponentialBackoff(wait.Backoff{
+		Duration: 100 * time.Millisecond,
+		Factor:   2.0,
+		Steps:    5,
+	}, func() (bool, error) {
+		// Get the latest version of the namespace
+		ns, err := f.ClientSet.CoreV1().Namespaces().Get(context.Background(), namespace.Name, metav1.GetOptions{})
+		if err != nil {
+			return false, err
+		}
+
+		// Apply the label updates
+		if ns.Labels == nil {
+			ns.Labels = make(map[string]string)
+		}
+		for k, v := range labels {
+			ns.Labels[k] = v
+		}
+		if _, ok := namespace.Labels[RequiredUDNNamespaceLabel]; ok {
+			ns.Labels[RequiredUDNNamespaceLabel] = ""
+		}
+
+		// Try to update
+		_, err = f.ClientSet.CoreV1().Namespaces().Update(context.Background(), ns, metav1.UpdateOptions{})
+		if err != nil {
+			if apierrors.IsConflict(err) {
+				// Retry on conflict
+				return false, nil
+			}
+			// Other errors should fail immediately
+			return false, err
+		}
+		return true, nil
+	})
 	framework.ExpectNoError(err, fmt.Sprintf("unable to update namespace: %s, err: %v", namespace.Name, err))
 }
+
 func getNamespace(f *framework.Framework, name string) *v1.Namespace {
 	ns, err := f.ClientSet.CoreV1().Namespaces().Get(context.Background(), name, metav1.GetOptions{})
 	framework.ExpectNoError(err, fmt.Sprintf("unable to get namespace: %s, err: %v", name, err))
