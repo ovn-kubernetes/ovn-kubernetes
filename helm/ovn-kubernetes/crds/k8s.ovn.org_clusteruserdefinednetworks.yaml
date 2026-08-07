@@ -350,6 +350,24 @@ spec:
                             IP families
                           rule: size(self) != 2 || !isCIDR(self[0]) || !isCIDR(self[1])
                             || cidr(self[0]).ip().family() != cidr(self[1]).ip().family()
+                      macSecurity:
+                        description: macSecurity configures MAC spoof protection on
+                          the network's logical switch ports.
+                        properties:
+                          mode:
+                            description: |-
+                              mode controls the MAC spoof protection enforcement posture.
+                              `Enabled` (default) restricts traffic to assigned addresses.
+                              `Disabled` removes all MAC spoof protection restrictions and enables unknown MAC address
+                              handling for nested virtualization and NFV use cases.
+                              Only `Disabled` requires ipam.mode to be Disabled.
+                            enum:
+                            - Enabled
+                            - Disabled
+                            type: string
+                        required:
+                        - mode
+                        type: object
                       mtu:
                         description: |-
                           MTU is the maximum transmission unit for a network.
@@ -480,6 +498,13 @@ spec:
                         host bits set)
                       rule: '!has(self.reservedSubnets) || self.reservedSubnets.all(s,
                         isCIDR(s) && cidr(s) == cidr(s).masked())'
+                    - message: macSecurity.mode is only supported for Secondary networks
+                      rule: '!has(self.macSecurity) || self.role == ''Secondary'''
+                    - message: macSecurity.mode Disabled requires ipam.mode to be
+                        Disabled
+                      rule: '!has(self.macSecurity) || self.macSecurity.mode != ''Disabled''
+                        || (has(self.ipam) && has(self.ipam.mode) && self.ipam.mode
+                        == ''Disabled'')'
                   layer3:
                     description: Layer3 is the Layer3 topology configuration.
                     properties:
@@ -689,6 +714,24 @@ spec:
                             is Enabled
                           rule: '!has(self.lifecycle) || self.lifecycle != ''Persistent''
                             || !has(self.mode) || self.mode == ''Enabled'''
+                      macSecurity:
+                        description: macSecurity configures MAC spoof protection on
+                          the network's logical switch ports.
+                        properties:
+                          mode:
+                            description: |-
+                              mode controls the MAC spoof protection enforcement posture.
+                              `Enabled` (default) restricts traffic to assigned addresses.
+                              `Disabled` removes all MAC spoof protection restrictions and enables unknown MAC address
+                              handling for nested virtualization and NFV use cases.
+                              Only `Disabled` requires ipam.mode to be Disabled.
+                            enum:
+                            - Enabled
+                            - Disabled
+                            type: string
+                        required:
+                        - mode
+                        type: object
                       mtu:
                         description: |-
                           mtu is the maximum transmission unit for a network.
@@ -810,6 +853,11 @@ spec:
                         IPv6 subnet is used
                       rule: '!has(self.subnets) || !has(self.mtu) || !self.subnets.exists_one(i,
                         isCIDR(i) && cidr(i).ip().family() == 6) || self.mtu >= 1280'
+                    - message: macSecurity.mode Disabled requires ipam.mode to be
+                        Disabled
+                      rule: '!has(self.macSecurity) || self.macSecurity.mode != ''Disabled''
+                        || (has(self.ipam) && has(self.ipam.mode) && self.ipam.mode
+                        == ''Disabled'')'
                   noOverlay:
                     description: |-
                       NoOverlay contains configuration for no-overlay mode.

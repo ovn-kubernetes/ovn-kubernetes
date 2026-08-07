@@ -228,6 +228,131 @@ spec:
       defaultGatewayIPs: ["2001:db9::1"]
 `,
 	},
+	{
+		Description: "mac-security mode Disabled is not allowed for Primary networks",
+		ExpectedErr: `macSecurity.mode is only supported for Secondary networks`,
+		Manifest: `
+apiVersion: k8s.ovn.org/v1
+kind: ClusterUserDefinedNetwork
+metadata:
+  name: mac-security-disasbled-layer2-primary-fail
+spec:
+  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
+  network:
+    topology: Layer2
+    layer2:
+      role: Primary
+      ipam: { mode: Disabled }
+      macSecurity: { mode: Disabled }
+`,
+	},
+	{
+		Description: "mac-security mode Enabled is not allowed for Primary networks",
+		ExpectedErr: `macSecurity.mode is only supported for Secondary networks`,
+		Manifest: `
+apiVersion: k8s.ovn.org/v1
+kind: ClusterUserDefinedNetwork
+metadata:
+  name: mac-security-enabled-layer2-primary-fail
+spec:
+  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
+  network:
+    topology: Layer2
+    layer2:
+      role: Primary
+      ipam: { mode: Disabled }
+      macSecurity: { mode: Enabled }
+`,
+	},
+	{
+		Description: "mac-security disabled requires ipam disabled",
+		ExpectedErr: `macSecurity.mode Disabled requires ipam.mode to be Disabled`,
+		Manifest: `
+apiVersion: k8s.ovn.org/v1
+kind: ClusterUserDefinedNetwork
+metadata:
+  name: mac-security-layer2-ipam-enabled-fail
+spec:
+  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
+  network:
+    topology: Layer2
+    layer2:
+      role: Secondary
+      subnets: ["192.168.1.0/24"]
+      macSecurity: { mode: Disabled }
+`,
+	},
+}
+
+var Layer2CUDNUpdatesRejected = []testscenario.UpdateCRScenario{
+	{
+		ValidateCRScenario: testscenario.ValidateCRScenario{
+			Description: "enable macSecurity after creation is rejected",
+			Name:        "mac-security-layer2-update-immutable-disable-to-enable",
+			ExpectedErr: "Layer2 is immutable",
+			Manifest: `
+apiVersion: k8s.ovn.org/v1
+kind: ClusterUserDefinedNetwork
+metadata:
+  name: mac-security-layer2-update-immutable-disable-to-enable
+spec:
+  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
+  network:
+    topology: Layer2
+    layer2:
+      role: Secondary
+      ipam: { mode: Disabled } 
+      macSecurity: { mode: Disabled }
+`,
+		},
+		InitialManifest: `
+apiVersion: k8s.ovn.org/v1
+kind: ClusterUserDefinedNetwork
+metadata:
+  name: mac-security-layer2-update-immutable-disable-to-enable
+spec:
+  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
+  network:
+    topology: Layer2
+    layer2:
+      role: Secondary
+      ipam: { mode: Disabled }
+`,
+	},
+	{
+		ValidateCRScenario: testscenario.ValidateCRScenario{
+			Description: "disable macSecurity after creation is rejected",
+			Name:        "mac-security-layer2-update-immutable-enable-to-disable",
+			ExpectedErr: "Layer2 is immutable",
+			Manifest: `
+apiVersion: k8s.ovn.org/v1
+kind: ClusterUserDefinedNetwork
+metadata:
+  name: mac-security-layer2-update-immutable-enable-to-disable
+spec:
+  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
+  network:
+    topology: Layer2
+    layer2:
+      role: Secondary
+      ipam: { mode: Disabled }
+`,
+		},
+		InitialManifest: `
+apiVersion: k8s.ovn.org/v1
+kind: ClusterUserDefinedNetwork
+metadata:
+  name: mac-security-layer2-update-immutable-enable-to-disable
+spec:
+  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
+  network:
+    topology: Layer2
+    layer2:
+      role: Secondary
+      ipam: { mode: Disabled }
+      macSecurity: { mode: Disabled }
+`,
+	},
 }
 
 var Layer2UDNInvalid = []testscenario.ValidateCRScenario{
@@ -312,6 +437,117 @@ spec:
     infrastructureSubnets: ["192.168.1.0/28"]
     ipam:
       mode: Disabled
+`,
+	},
+	{
+		Description: "mac-security mode Disabled is not supported for Primary networks",
+		ExpectedErr: `macSecurity.mode is only supported for Secondary networks`,
+		Manifest: `
+apiVersion: k8s.ovn.org/v1
+kind: UserDefinedNetwork
+metadata:
+  name: mac-security-disasbled-layer2-primary-fail
+spec:
+  topology: Layer2
+  layer2:
+    role: Primary
+    ipam: { mode: Disabled }
+    macSecurity: { mode: Disabled }
+`,
+	},
+	{
+		Description: "mac-security mode Enabled is not supported for Primary networks",
+		ExpectedErr: `macSecurity.mode is only supported for Secondary networks`,
+		Manifest: `
+apiVersion: k8s.ovn.org/v1
+kind: UserDefinedNetwork
+metadata:
+  name: mac-security-not-supported-fail
+spec:
+  topology: Layer2
+  layer2:
+    role: Primary
+    ipam: { mode: Disabled }
+    macSecurity: { mode: Enabled }
+`,
+	},
+	{
+		Description: "mac-security disabled requires ipam disabled",
+		ExpectedErr: `macSecurity.mode Disabled requires ipam.mode to be Disabled`,
+		Manifest: `
+apiVersion: k8s.ovn.org/v1
+kind: UserDefinedNetwork
+metadata:
+  name: mac-security-layer2-ipam-enabled-fail
+spec:
+  topology: Layer2
+  layer2:
+    role: Secondary
+    subnets: ["192.168.1.0/24"]
+    macSecurity: { mode: Disabled }
+`,
+	},
+}
+
+var Layer2UDNUpdatesRejected = []testscenario.UpdateCRScenario{
+	{
+		ValidateCRScenario: testscenario.ValidateCRScenario{
+			Description: "enable macSecurity after creation is rejected",
+			Name:        "mac-security-layer2-update-immutable-disable-to-enable",
+			ExpectedErr: "Layer2 is immutable",
+			Manifest: `
+apiVersion: k8s.ovn.org/v1
+kind: UserDefinedNetwork
+metadata:
+  name: mac-security-layer2-update-immutable-disable-to-enable
+spec:
+  topology: Layer2
+  layer2:
+    role: Secondary
+    ipam: { mode: Disabled } 
+    macSecurity: { mode: Disabled }
+`,
+		},
+		InitialManifest: `
+apiVersion: k8s.ovn.org/v1
+kind: UserDefinedNetwork
+metadata:
+  name: mac-security-layer2-update-immutable-disable-to-enable
+spec:
+  topology: Layer2
+  layer2:
+    role: Secondary
+    ipam: { mode: Disabled }
+`,
+	},
+	{
+		ValidateCRScenario: testscenario.ValidateCRScenario{
+			Description: "disable macSecurity after creation is rejected",
+			Name:        "mac-security-layer2-update-immutable-enable-to-disable",
+			ExpectedErr: "Layer2 is immutable",
+			Manifest: `
+apiVersion: k8s.ovn.org/v1
+kind: UserDefinedNetwork
+metadata:
+  name: mac-security-layer2-update-immutable-enable-to-disable
+spec:
+  topology: Layer2
+  layer2:
+    role: Secondary
+    ipam: { mode: Disabled }
+`,
+		},
+		InitialManifest: `
+apiVersion: k8s.ovn.org/v1
+kind: UserDefinedNetwork
+metadata:
+  name: mac-security-layer2-update-immutable-enable-to-disable
+spec:
+  topology: Layer2
+  layer2:
+    role: Secondary
+    ipam: { mode: Disabled }
+    macSecurity: { mode: Disabled }
 `,
 	},
 }

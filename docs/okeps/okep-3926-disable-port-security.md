@@ -25,7 +25,7 @@ backends.
   CNI's `macspoofchk` capability.
 - Enable unknown MAC address delivery.
 - Avoid using ARP/NDP flooding as much as possible when MAC spoof protection is disabled.
-- Support configuration through the NAD JSON config and the ClusterUserDefinedNetwork (CUDN) CRD
+- Support configuration through the NAD JSON, UserDefinedNetwork and ClusterUserDefinedNetwork (CUDN) CRDs
   API only.
 
 ## Non-Goals
@@ -43,9 +43,6 @@ backends.
   IP-level port security as a side effect.
 - MAC learning or dynamic FDB management at the OVN-Kubernetes level; OVN manages its own FDB
   natively.
-- Namespace-scoped UserDefinedNetwork (UDN) resources cannot enable this feature, as
-  disabling MAC spoof protection is a cluster-admin decision that should not be available to
-  namespace users.
 
 ## Future Goals
 
@@ -230,16 +227,14 @@ and `localnet` topologies only, requires `ipam.mode` to be `Disabled` (i.e., sub
 specified), and the network role must be `"secondary"`. Setting it on a `layer3` topology or
 with IPAM enabled results in a validation error.
 
-#### ClusterUserDefinedNetwork CRD
+#### user-defined network CRDs
 
 Add a `macSecurity` sub-struct with a `mode` enum discriminator to `Layer2Config` and
 `LocalnetConfig` in the CUDN CRD API, following the pattern established by
 [OKEP-5085](okep-5085-localnet-api.md) for extending the CUDN CRD and the discriminated
-union pattern used by `VLANConfig` and `IPAMConfig`. This field is only supported on
-ClusterUserDefinedNetwork (cluster-scoped); namespace-scoped UserDefinedNetwork resources
-cannot set this field.
+union pattern used by `VLANConfig` and `IPAMConfig`.
 
-**Layer2 example:**
+**Layer2 examples:**
 
 ```yaml
 apiVersion: k8s.ovn.org/v1
@@ -258,6 +253,22 @@ spec:
         mode: Disabled
       macSecurity:
         mode: Disabled
+```
+
+```yaml
+apiVersion: k8s.ovn.org/v1
+kind: UserDefinedNetwork
+metadata:
+  name: kubevirt-l2-net
+  namespace: blue
+spec:
+  topology: Layer2
+  layer2:
+    role: Secondary
+    ipam:
+      mode: Disabled
+    macSecurity:
+      mode: Disabled
 ```
 
 **Localnet example:**
@@ -339,14 +350,6 @@ The following CEL validations should be added:
   message: "macSecurity.mode Disabled is only supported for Secondary networks"
   ```
 
-- `macSecurity` is not allowed on namespace-scoped `UserDefinedNetwork` resources.
-  Since `UserDefinedNetworkSpec` and `ClusterUserDefinedNetworkSpec` share the same
-  `Layer2Config` type, this constraint must be enforced at the `UserDefinedNetworkSpec` level:
-  ```text
-  rule: "!has(self.layer2) || !has(self.layer2.macSecurity)"
-  message: "macSecurity is only supported on ClusterUserDefinedNetwork"
-  ```
-
 - `macSecurity.mode: Disabled` requires `ipam.mode` to be `Disabled`:
   ```text
   rule: "!has(self.macSecurity) || self.macSecurity.mode != 'Disabled' || (has(self.ipam) && has(self.ipam.mode) && self.ipam.mode == 'Disabled')"
@@ -368,7 +371,7 @@ The following CEL validations should be added:
 
 #### NAD Generation from CRD
 
-The CUDN controller that generates NADs from CRD specs must translate the
+The user-defined resource controller that generates NADs from CRD specs must translate the
 `macSecurity.mode` field to the NAD JSON config `macSecurityMode` field, following the
 same pattern used for other fields like `physicalNetworkName`, `allowPersistentIPs`, etc.
 When `macSecurity` is omitted in the CRD, the NAD should either omit `macSecurityMode`
@@ -376,10 +379,10 @@ or set it to `"Enabled"` (both are equivalent).
 
 #### Interaction with IPAM Mode
 
-| IPAM Mode  | macSecurity.mode       | MAC Port Security | Unknown Addresses | Notes                                |
-|------------|------------------------|-------------------|-------------------|--------------------------------------|
-| `Disabled` | `Enabled` (default)   | Enabled           | Disabled          | MAC-only security, no IPs assigned   |
-| `Disabled` | `Disabled`             | Disabled          | Enabled           | Full L2 flexibility, no restrictions |
+| IPAM Mode  | macSecurity.mode    | MAC Port Security | Unknown Addresses | Notes                                |
+|------------|---------------------|-------------------|-------------------|--------------------------------------|
+| `Disabled` | `Enabled` (default) | Enabled           | Disabled          | MAC-only security, no IPs assigned   |
+| `Disabled` | `Disabled`          | Disabled          | Enabled           | Full L2 flexibility, no restrictions |
 
 #### Future: Per-Attachment MAC Spoof Protection
 
@@ -465,7 +468,7 @@ When `macSecurity.mode` is `Disabled` (requires `ipam.mode: Disabled`), the LSP 
 - Verify that `allowPersistentIPs` and `macSecurity.mode: Disabled` are mutually exclusive:
   `allowPersistentIPs` requires IPAM enabled (to assign and persist IPs across live migrations),
   while `macSecurity.mode: Disabled` requires `ipam.mode: Disabled`. Validation should reject
-  a CUDN that specifies both.
+  user-defined network CRDs that specify both.
 
 ### Documentation Details
 
@@ -480,12 +483,9 @@ When `macSecurity.mode` is `Disabled` (requires `ipam.mode: Disabled`), the LSP 
    spoofing, ARP spoofing/poisoning (allowing MITM attacks on the L2 segment), and potentially
    IP spoofing attacks.
    - **Mitigation**: The feature is opt-in, per-network, restricted to secondary networks with
-     `Secondary` role only, and only available on cluster-scoped `ClusterUserDefinedNetwork`
-     resources. Namespace-scoped `UserDefinedNetwork` resources cannot enable this feature,
-     ensuring that only cluster administrators can disable MAC spoof protection. The default
-     remains secure (MAC spoof protection enabled). Administrators deploying this feature should
-     use encrypted transports on networks with MAC spoof protection disabled when sensitive
-     traffic is present.
+     `Secondary` role only. The default remains secure (MAC spoof protection is enabled). 
+     Administrators deploying this feature should use encrypted transport on networks with MAC
+     spoof protection disabled when sensitive traffic is present.
 
 2. **Broadcast storm risk with unknown addresses**: Adding `unknown` to LSP addresses means
    unicast frames for unknown MACs are delivered to all `unknown` ports, which can create
@@ -519,7 +519,7 @@ with MAC spoof protection enabled.
   preserving the current behavior of enforcing port security on all LSPs.
 - The NAD JSON config `macSecurityMode` field is additive and optional. Existing NAD
   configurations without the field continue to work identically.
-- The CRD field is an optional pointer with nil default. Existing CUDN resources are unaffected.
+- The CRD field is an optional pointer with nil default. Existing user-defined network resources are unaffected.
   UDN resources cannot use this field with `mode: Disabled`.
 - No migration or upgrade steps are required.
 

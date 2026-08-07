@@ -18,4 +18,10 @@ const (
 	// GatewayMTU can be used by LogicalRouterPort to specify the MTU for the gateway port.
 	// If set, logical flows will be added to router pipeline to check packet length.
 	GatewayMTU = "gateway_mtu"
+	// ForceFdbLookup can be used by LogicalSwitchPort. If set to true, configured
+	// MAC addresses are not installed in the L2 lookup table but are learnt and
+	// stored in the FDB table instead. Only takes effect when the port is of the
+	// default type (empty "type" column) and its "addresses" column contains
+	// "unknown".
+	ForceFdbLookup = "force_fdb_lookup"
 )

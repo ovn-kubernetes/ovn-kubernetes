@@ -176,6 +176,7 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter, uplink
 
 		netConfSpec.Role = strings.ToLower(string(cfg.Role))
 		netConfSpec.MTU = int(cfg.MTU)
+		netConfSpec.MACSecurityMode = macSecurityModeFromCRD(cfg.MACSecurity)
 		netConfSpec.AllowPersistentIPs = cfg.IPAM != nil && cfg.IPAM.Lifecycle == userdefinednetworkv1.IPAMLifecyclePersistent
 		netConfSpec.Subnets = cidrString(cfg.Subnets)
 		if util.IsPreconfiguredUDNAddressesEnabled() {
@@ -195,6 +196,7 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter, uplink
 		cfg := spec.GetLocalnet()
 		netConfSpec.Role = strings.ToLower(string(cfg.Role))
 		netConfSpec.MTU = localnetMTU(cfg.MTU)
+		netConfSpec.MACSecurityMode = macSecurityModeFromCRD(cfg.MACSecurity)
 		netConfSpec.AllowPersistentIPs = cfg.IPAM != nil && cfg.IPAM.Lifecycle == userdefinednetworkv1.IPAMLifecyclePersistent
 		netConfSpec.Subnets = cidrString(cfg.Subnets)
 		netConfSpec.ExcludeSubnets = cidrString(cfg.ExcludeSubnets)
@@ -295,6 +297,9 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter, uplink
 	if netConfSpec.Uplink != "" {
 		cniNetConf["uplink"] = netConfSpec.Uplink
 	}
+	if netConfSpec.MACSecurityMode != "" {
+		cniNetConf["macSecurityMode"] = netConfSpec.MACSecurityMode
+	}
 
 	return cniNetConf, nil
 }
@@ -310,6 +315,22 @@ func transportFromCRD(crdTransport userdefinednetworkv1.TransportOption) string 
 		return types.NetworkTransportEVPN
 	default:
 		return "" // empty string means default OVN transport; kubebuilder prevents unknown values
+	}
+}
+
+// macSecurityModeFromCRD converts the UDN API's MACSecurityConfig mode to NetConf API macSecurityMode values.
+func macSecurityModeFromCRD(macSecurity *userdefinednetworkv1.MACSecurityConfig) string {
+	if macSecurity == nil {
+		return ""
+	}
+
+	switch macSecurity.Mode {
+	case userdefinednetworkv1.MACSecurityDisabled:
+		return types.MACSecurityModeDisabled
+	case userdefinednetworkv1.MACSecurityEnabled:
+		return types.MACSecurityModeEnabled
+	default:
+		return ""
 	}
 }
 
