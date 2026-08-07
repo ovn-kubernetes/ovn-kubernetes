@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
@@ -30,6 +32,7 @@ import (
 	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	utilMocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -57,6 +60,31 @@ func (stub *podRequestInterfaceOpsStub) ConfigureInterface(pr *PodRequest, _ cli
 func (stub *podRequestInterfaceOpsStub) UnconfigureInterface(_ *PodRequest, ifInfo *PodInterfaceInfo) error {
 	stub.unconfiguredInterfaces = append(stub.unconfiguredInterfaces, ifInfo)
 	return nil
+}
+
+// dhcpPodRequestInterfaceOpsStub mimics ConfigureInterface for DHCP IPAM
+// networks: the pod-networks annotation carries no IPs at ADD time, yet the
+// real implementation still reports the host/container interface pair, which
+// the DHCP flow needs (the lease marker is recorded on the host-side
+// interface and the learned IPs reference the sandbox one).
+type dhcpPodRequestInterfaceOpsStub struct {
+	podRequestInterfaceOpsStub
+	// configuredIfInfo records what cmdAdd handed to ConfigureInterface, so
+	// specs can assert which L3 config would have been statically applied
+	configuredIfInfo *PodInterfaceInfo
+}
+
+func (stub *dhcpPodRequestInterfaceOpsStub) ConfigureInterface(pr *PodRequest, _ client.Client, _ PodInfoGetter, ifInfo *PodInterfaceInfo) ([]*current.Interface, error) {
+	stub.configuredIfInfo = ifInfo
+	return []*current.Interface{
+		{
+			Name: "host_" + pr.IfName,
+		},
+		{
+			Name:    pr.IfName,
+			Sandbox: "/var/run/netns/" + pr.PodNamespace + "_" + pr.PodName,
+		},
+	}, nil
 }
 
 // podRequestToHTTPRequest builds the *http.Request that cnishim would POST to
@@ -478,6 +506,413 @@ var _ = Describe("checkBridgeMapping", func() {
 			DeferCleanup(ovsCleanup.Cleanup)
 			Expect(checkBridgeMapping(ovsClient, ovntypes.LocalnetTopology, networkName).Error()).To(
 				Equal(`failed to find OVN bridge-mapping for network: "test-network"`))
+		})
+	})
+})
+
+// dhcpOpsStub stubs the DHCP seams the way podRequestInterfaceOpsStub stubs
+// the interface plumbing: the counters record which delegation path ran, the
+// err fields inject failures, and anything not overridden falls through to
+// the real implementation via the embedded defaultDHCPOps.
+type dhcpOpsStub struct {
+	defaultDHCPOps
+	newResult                        func() *current.Result
+	oneShotErr, addErr, delErr       error
+	oneShotCalls, addCalls, delCalls int
+}
+
+func (s *dhcpOpsStub) DoOneShot(*PodRequest) (*current.Result, error) {
+	s.oneShotCalls++
+	if s.oneShotErr != nil {
+		return nil, s.oneShotErr
+	}
+	return s.newResult(), nil
+}
+
+func (s *dhcpOpsStub) ExecAdd(*PodRequest) (*current.Result, error) {
+	s.addCalls++
+	if s.addErr != nil {
+		return nil, s.addErr
+	}
+	return s.newResult(), nil
+}
+
+func (s *dhcpOpsStub) ExecDel(*PodRequest) error {
+	s.delCalls++
+	return s.delErr
+}
+
+var _ = Describe("DHCP IPAM workload differentiation", func() {
+	const (
+		podNamespace = "foo-ns"
+		podName      = "bar-pod"
+		nadKey       = "foo-ns/localnet-nad"
+	)
+
+	var (
+		pr                 PodRequest
+		pod                *corev1.Pod
+		fakeNetworkManager *networkmanager.FakeNetworkManager
+		prInterfaceOpsStub *dhcpPodRequestInterfaceOpsStub
+		cniServer          *Server
+		wf                 factory.NodeWatchFactory
+		fexec              *testing.FakeExec
+		dhcpStub           *dhcpOpsStub
+	)
+
+	const (
+		markerSetCmd  = "ovs-vsctl --timeout=30 set interface host_net1 external_ids:dhcp-lease=true"
+		markerFindCmd = "ovs-vsctl --timeout=30 --no-heading --format=csv --data=bare --columns=name find Interface external-ids:sandbox=824bceff24af3 external_ids:pod-if-name=net1"
+		markerGetCmd  = "ovs-vsctl --timeout=30 --if-exists get interface host_net1 external_ids:dhcp-lease"
+	)
+
+	dhcpIP := func() *current.IPConfig {
+		return &current.IPConfig{
+			Address: net.IPNet{IP: net.ParseIP("10.1.192.213"), Mask: net.CIDRMask(24, 32)},
+			Gateway: net.ParseIP("10.1.192.1"),
+		}
+	}
+
+	BeforeEach(func() {
+		Expect(config.PrepareTestConfig()).To(Succeed())
+		config.IPv4Mode = true
+		config.OVNKubernetesFeature.EnableMultiNetwork = true
+
+		prInterfaceOpsStub = &dhcpPodRequestInterfaceOpsStub{}
+		podRequestInterfaceOps = prInterfaceOpsStub
+
+		// the lease marker is written to and read from OVS; every expected
+		// ovs-vsctl invocation is declared per spec
+		fexec = testing.NewFakeExec()
+		Expect(SetExec(fexec)).To(Succeed())
+
+		fakeNetworkManager = &networkmanager.FakeNetworkManager{
+			PrimaryNetworks: make(map[string]util.NetInfo),
+		}
+
+		dhcpStub = &dhcpOpsStub{newResult: func() *current.Result {
+			return &current.Result{IPs: []*current.IPConfig{dhcpIP()}}
+		}}
+		dhcpOps = dhcpStub
+
+		pr = PodRequest{
+			Command:      CNIAdd,
+			PodNamespace: podNamespace,
+			PodName:      podName,
+			SandboxID:    "824bceff24af3",
+			Netns:        "ns",
+			IfName:       "net1",
+			CNIConf: &ovncnitypes.NetConf{
+				NetConf: cnitypes.NetConf{
+					CNIVersion: "1.0.0",
+					Name:       "localnet-net",
+					Type:       "ovn-k8s-cni-overlay",
+					IPAM:       cnitypes.IPAM{Type: "dhcp"},
+				},
+				NADName:             nadKey,
+				Topology:            ovntypes.LocalnetTopology,
+				PhysicalNetworkName: "physnet",
+			},
+			netName: "localnet-net",
+			nadName: nadKey,
+		}
+		// the DHCP annotation patch verifies the request's sandbox is still
+		// current by stat-ing its netns; give the request a real file to stat
+		pr.Netns = filepath.Join(GinkgoT().TempDir(), "netns")
+		Expect(os.WriteFile(pr.Netns, nil, 0o600)).To(Succeed())
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		DeferCleanup(cancel)
+		pr.ctx = ctx
+
+		pod = &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      podName,
+				Namespace: podNamespace,
+				Annotations: map[string]string{
+					"k8s.v1.cni.cncf.io/networks": `[{"name":"localnet-nad","namespace":"foo-ns","interface":"net1"}]`,
+					"k8s.ovn.org/pod-networks":    `{"foo-ns/localnet-nad":{"mac_address":"0a:58:fd:98:00:01","role":"secondary","ipam_mode":"dhcp"}}`,
+				},
+			},
+		}
+	})
+
+	AfterEach(func() {
+		dhcpOps = &defaultDHCPOps{}
+		podRequestInterfaceOps = &defaultPodRequestInterfaceOps{}
+		ResetRunner()
+		if wf != nil {
+			wf.Shutdown()
+			wf = nil
+		}
+		cniServer = nil
+	})
+
+	startCNIServer := func(objects ...runtime.Object) {
+		fakeClient := util.GetOVNClientset(objects...).GetNodeClientset()
+		var err error
+		wf, err = factory.NewNodeWatchFactory(fakeClient, nodeName)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(wf.Start()).To(Succeed())
+
+		cniServer = getTestServer(wf, fakeClient.KubeClient, fakeNetworkManager)
+		ovsClient, ovsCleanup, err := newOVSClientWithExternalIDs(map[string]string{
+			"ovn-bridge-mappings": "physnet:br-phys",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(ovsCleanup.Cleanup)
+		cniServer.ovsClient = ovsClient
+	}
+
+	handlePodRequest := func() *Response {
+		res, err := cniServer.handleCNIRequest(podRequestToHTTPRequest(&pr))
+		Expect(err).NotTo(HaveOccurred())
+		response := &Response{}
+		Expect(json.Unmarshal(res, response)).To(Succeed())
+		return response
+	}
+
+	markPodAsVirtLauncher := func() {
+		// kubevirt sets this label on every virt-launcher (VM) pod; it is what
+		// kubevirt.IsPodOwnedByVirtualMachine keys off.
+		pod.Labels = map[string]string{"kubevirt.io": "virt-launcher"}
+	}
+
+	// expectDHCPIPsInPodNetworksAnnotation asserts that cmdAdd patched the
+	// DHCP-learned IP and gateway into the pod's pod-networks annotation entry
+	// for the NAD, so ovnkube-controller can program the LSP with it.
+	expectDHCPIPsInPodNetworksAnnotation := func() {
+		updatedPod, err := cniServer.clientSet.kclient.CoreV1().Pods(podNamespace).Get(context.Background(), podName, metav1.GetOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		podAnnotation, err := util.UnmarshalPodAnnotation(updatedPod.Annotations, nadKey)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(podAnnotation.IPs).To(HaveLen(1))
+		Expect(podAnnotation.IPs[0].String()).To(Equal("10.1.192.213/24"))
+		Expect(podAnnotation.Gateways).To(HaveLen(1))
+		Expect(podAnnotation.Gateways[0].String()).To(Equal("10.1.192.1"))
+		Expect(podAnnotation.IPAMMode).To(Equal("dhcp"), "the ipam_mode marker must be preserved")
+	}
+
+	Context("cmdAdd", func() {
+		It("delegates a regular pod to the DHCP CNI plugin daemon", func() {
+			fexec.AddFakeCmd(&testing.ExpectedCmd{Cmd: markerSetCmd})
+			startCNIServer(testing.NewNamespace(podNamespace), pod)
+
+			response := handlePodRequest()
+
+			Expect(fexec.CalledMatchesExpected()).To(BeTrue(),
+				"the lease marker must be recorded on the host-side OVS interface")
+			Expect(dhcpStub.addCalls).To(Equal(1), "regular pods must go through the DHCP plugin delegation path")
+			Expect(dhcpStub.oneShotCalls).To(BeZero(), "regular pods must not take the one-shot VM path")
+			Expect(response.Result).NotTo(BeNil())
+			Expect(response.Result.IPs).To(HaveLen(1))
+			Expect(response.Result.IPs[0].Address.IP.String()).To(Equal("10.1.192.213"))
+			expectDHCPIPsInPodNetworksAnnotation()
+		})
+
+		It("performs one-shot DHCP discovery for a KubeVirt VM pod", func() {
+			markPodAsVirtLauncher()
+			startCNIServer(testing.NewNamespace(podNamespace), pod)
+
+			response := handlePodRequest()
+
+			Expect(dhcpStub.oneShotCalls).To(Equal(1), "VM pods must take the one-shot discovery path")
+			Expect(dhcpStub.addCalls).To(BeZero(), "VM pods must not be delegated to the DHCP plugin daemon")
+			Expect(fexec.CalledMatchesExpected()).To(BeTrue(), "VM pods must not record a lease marker")
+			Expect(response.Result).NotTo(BeNil())
+			Expect(response.Result.IPs).To(HaveLen(1))
+			expectDHCPIPsInPodNetworksAnnotation()
+		})
+
+		It("overwrites previously reported DHCP IPs on a repeat ADD with a new lease", func() {
+			// the pod already carries an older DHCP-learned IP (e.g. the sandbox
+			// was recreated and the DHCP server handed out a new lease)
+			pod.Annotations["k8s.ovn.org/pod-networks"] = `{"foo-ns/localnet-nad":{"ip_addresses":["10.1.192.55/24"],"mac_address":"0a:58:fd:98:00:01","gateway_ips":["10.1.192.1"],"role":"secondary","ipam_mode":"dhcp"}}`
+			fexec.AddFakeCmd(&testing.ExpectedCmd{Cmd: markerSetCmd})
+			startCNIServer(testing.NewNamespace(podNamespace), pod)
+
+			response := handlePodRequest()
+
+			// the stale lease must not reach the interface configuration: a
+			// statically applied stale IP answers ARP for an address the DHCP
+			// server may have re-leased, and a stale gateway would become a
+			// static default route colliding with the primary network's
+			// ("failed to add gateway route to link: file exists"), failing
+			// every repeat ADD
+			Expect(prInterfaceOpsStub.configuredIfInfo.IPs).To(BeEmpty(),
+				"stale annotation IPs must not be statically applied on a DHCP network")
+			Expect(prInterfaceOpsStub.configuredIfInfo.Gateways).To(BeEmpty(),
+				"stale annotation gateways must not become static default routes")
+			// only the fresh lease is reported, not stale+new
+			Expect(response.Result.IPs).To(HaveLen(1))
+			Expect(response.Result.IPs[0].Address.IP.String()).To(Equal("10.1.192.213"))
+			expectDHCPIPsInPodNetworksAnnotation()
+		})
+
+		It("refuses to patch the annotation when the request's sandbox netns is gone", func() {
+			// the late-writer race: kubelet abandoned this request (nothing
+			// cancels the server-side ADD), tore its sandbox down and started
+			// a newer one, which already patched its fresh lease (10.1.192.99)
+			// into the annotation; the superseded request's stale lease
+			// (10.1.192.213) must not overwrite it
+			pod.Annotations["k8s.ovn.org/pod-networks"] = `{"foo-ns/localnet-nad":{"ip_addresses":["10.1.192.99/24"],"mac_address":"0a:58:fd:98:00:01","gateway_ips":["10.1.192.1"],"role":"secondary","ipam_mode":"dhcp"}}`
+			Expect(os.Remove(pr.Netns)).To(Succeed())
+			fexec.AddFakeCmd(&testing.ExpectedCmd{Cmd: markerSetCmd})
+			startCNIServer(testing.NewNamespace(podNamespace), pod)
+
+			_, err := cniServer.handleCNIRequest(podRequestToHTTPRequest(&pr))
+			Expect(err).To(MatchError(ContainSubstring("superseded")))
+
+			// the newer sandbox's lease must survive
+			updatedPod, err := cniServer.clientSet.kclient.CoreV1().Pods(podNamespace).Get(context.Background(), podName, metav1.GetOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			podAnnotation, err := util.UnmarshalPodAnnotation(updatedPod.Annotations, nadKey)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(podAnnotation.IPs).To(HaveLen(1))
+			Expect(podAnnotation.IPs[0].String()).To(Equal("10.1.192.99/24"))
+		})
+
+		It("fails the request when one-shot DHCP discovery fails", func() {
+			markPodAsVirtLauncher()
+			dhcpStub.oneShotErr = fmt.Errorf("no DHCP server responded")
+			startCNIServer(testing.NewNamespace(podNamespace), pod)
+
+			_, err := cniServer.handleCNIRequest(podRequestToHTTPRequest(&pr))
+			Expect(err).To(MatchError(ContainSubstring("VM DHCP discovery failed")))
+		})
+
+		It("is rejected in unprivileged mode", func() {
+			config.UnprivilegedMode = true
+			DeferCleanup(func() { config.UnprivilegedMode = false })
+			startCNIServer(testing.NewNamespace(podNamespace), pod)
+
+			_, err := cniServer.handleCNIRequest(podRequestToHTTPRequest(&pr))
+			Expect(err).To(MatchError(ContainSubstring("dhcp IPAM mode for localnet topology is not supported in unprivileged mode")))
+			Expect(dhcpStub.addCalls).To(BeZero())
+			Expect(dhcpStub.oneShotCalls).To(BeZero())
+		})
+
+		It("is rejected for a non-VM pod with a VFIO device", func() {
+			// a regular (non-KubeVirt) pod using a vfio-pci bound VF, e.g. a
+			// DPDK workload: no netdev exists in the pod netns, so neither
+			// DHCP path can serve it
+			pr.CNIConf.DeviceID = "0000:65:00.2"
+			fakeSriovnetOps := utilMocks.SriovnetOps{}
+			// SetSriovnetOpsInst swaps a package-global singleton: restore it
+			// so the mock (which panics on any unexpected call) cannot leak
+			// into later specs that carry a DeviceID
+			prevSriovnetOps := util.GetSriovnetOps()
+			util.SetSriovnetOpsInst(&fakeSriovnetOps)
+			DeferCleanup(func() { util.SetSriovnetOpsInst(prevSriovnetOps) })
+			fakeSriovnetOps.On("IsVfPciVfioBound", "0000:65:00.2").Return(true)
+			startCNIServer(testing.NewNamespace(podNamespace), pod)
+
+			_, err := cniServer.handleCNIRequest(podRequestToHTTPRequest(&pr))
+			Expect(err).To(MatchError(ContainSubstring("dhcp IPAM mode is not supported for VFIO device")))
+			Expect(dhcpStub.addCalls).To(BeZero(), "the DHCP plugin must not be invoked for a VFIO pod")
+			Expect(dhcpStub.oneShotCalls).To(BeZero(), "a non-VM pod must not take the one-shot VM path")
+		})
+
+		It("fails the ADD before asking the daemon when the lease marker cannot be recorded", func() {
+			// the marker is written before the lease is acquired so that a
+			// lease can never exist without the marker cmdDel keys the
+			// release off; all three bounded retries fail here
+			for i := 0; i < 3; i++ {
+				fexec.AddFakeCmd(&testing.ExpectedCmd{Cmd: markerSetCmd, Err: fmt.Errorf("ovsdb: transaction failed")})
+			}
+			startCNIServer(testing.NewNamespace(podNamespace), pod)
+
+			_, err := cniServer.handleCNIRequest(podRequestToHTTPRequest(&pr))
+			Expect(err).To(MatchError(ContainSubstring("failed to record DHCP lease marker")))
+			Expect(dhcpStub.addCalls).To(BeZero(), "no lease must be requested when its marker could not be recorded")
+			Expect(fexec.CalledMatchesExpected()).To(BeTrue())
+		})
+	})
+
+	Context("cmdDel", func() {
+		BeforeEach(func() {
+			pr.Command = CNIDel
+		})
+
+		It("releases the DHCP lease for a regular pod with a recorded marker", func() {
+			fexec.AddFakeCmd(&testing.ExpectedCmd{Cmd: markerFindCmd, Output: "host_net1"})
+			fexec.AddFakeCmd(&testing.ExpectedCmd{Cmd: markerGetCmd, Output: `"true"`})
+			startCNIServer(testing.NewNamespace(podNamespace), pod)
+
+			handlePodRequest()
+
+			Expect(dhcpStub.delCalls).To(Equal(1), "regular pods must release their daemon-managed lease")
+			Expect(prInterfaceOpsStub.unconfiguredInterfaces).To(HaveLen(1))
+			Expect(fexec.CalledMatchesExpected()).To(BeTrue())
+		})
+
+		It("does not release a lease for a KubeVirt VM pod (no marker recorded)", func() {
+			markPodAsVirtLauncher()
+			// the VM one-shot path never records a marker, so the lookup
+			// finds no interface carrying one
+			fexec.AddFakeCmd(&testing.ExpectedCmd{Cmd: markerFindCmd, Output: ""})
+			startCNIServer(testing.NewNamespace(podNamespace), pod)
+
+			handlePodRequest()
+
+			Expect(dhcpStub.delCalls).To(BeZero(), "VM pods own their lease lifecycle; no RELEASE must be sent")
+			Expect(prInterfaceOpsStub.unconfiguredInterfaces).To(HaveLen(1))
+			Expect(fexec.CalledMatchesExpected()).To(BeTrue())
+		})
+
+		It("skips the release without apiserver state when no marker exists", func() {
+			// force-deleted pod: the object is gone from the API by DEL time;
+			// the decision must come from the node-local marker alone
+			fexec.AddFakeCmd(&testing.ExpectedCmd{Cmd: markerFindCmd, Output: ""})
+			startCNIServer(testing.NewNamespace(podNamespace))
+
+			handlePodRequest()
+
+			Expect(dhcpStub.delCalls).To(BeZero(), "no marker means there is nothing to release, VM or not")
+			Expect(prInterfaceOpsStub.unconfiguredInterfaces).To(HaveLen(1))
+			Expect(fexec.CalledMatchesExpected()).To(BeTrue())
+		})
+
+		It("releases without apiserver state when the marker exists", func() {
+			// force-deleted regular pod: marker present, pod object gone
+			fexec.AddFakeCmd(&testing.ExpectedCmd{Cmd: markerFindCmd, Output: "host_net1"})
+			fexec.AddFakeCmd(&testing.ExpectedCmd{Cmd: markerGetCmd, Output: `"true"`})
+			startCNIServer(testing.NewNamespace(podNamespace))
+
+			handlePodRequest()
+
+			Expect(dhcpStub.delCalls).To(Equal(1), "a recorded lease must be released even when the pod object is gone")
+			Expect(fexec.CalledMatchesExpected()).To(BeTrue())
+		})
+
+		It("fails the DEL and keeps the lease releasable when the release itself fails", func() {
+			// the marker is found, but the daemon rejects (or never receives)
+			// the RELEASE; the DEL must fail without tearing down the port so
+			// the marker survives for kubelet's retry to key off
+			fexec.AddFakeCmd(&testing.ExpectedCmd{Cmd: markerFindCmd, Output: "host_net1"})
+			fexec.AddFakeCmd(&testing.ExpectedCmd{Cmd: markerGetCmd, Output: `"true"`})
+			dhcpStub.delErr = fmt.Errorf("dhcp daemon not responding")
+			startCNIServer(testing.NewNamespace(podNamespace), pod)
+
+			_, err := cniServer.handleCNIRequest(podRequestToHTTPRequest(&pr))
+			Expect(err).To(MatchError(ContainSubstring("failed to release the DHCP lease")))
+			Expect(dhcpStub.delCalls).To(Equal(1))
+			Expect(prInterfaceOpsStub.unconfiguredInterfaces).To(BeEmpty(),
+				"teardown must not run, or it would delete the OVS port carrying the marker")
+			Expect(fexec.CalledMatchesExpected()).To(BeTrue())
+		})
+
+		It("fails the DEL when the marker lookup itself errors instead of assuming no lease", func() {
+			// ovsdb unreachable: "couldn't check" must not be mistaken for
+			// "no lease recorded" — skipping the release here while the
+			// teardown below deletes the marker would leak the lease forever
+			fexec.AddFakeCmd(&testing.ExpectedCmd{Cmd: markerFindCmd, Err: fmt.Errorf("ovsdb connection refused")})
+			startCNIServer(testing.NewNamespace(podNamespace), pod)
+
+			_, err := cniServer.handleCNIRequest(podRequestToHTTPRequest(&pr))
+			Expect(err).To(MatchError(ContainSubstring("failed to look up the OVS interface")))
+			Expect(dhcpStub.delCalls).To(BeZero(), "no blind release may be attempted on a failed lookup")
+			Expect(prInterfaceOpsStub.unconfiguredInterfaces).To(BeEmpty())
+			Expect(fexec.CalledMatchesExpected()).To(BeTrue())
 		})
 	})
 })

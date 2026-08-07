@@ -118,6 +118,6 @@ func NewSubnetsRequiredError() *ValidationError {
 func NewSubnetsMustBeUnsetError() *ValidationError {
 	return &ValidationError{
 		Type:    ErrSubnetsMustBeUnset,
-		Message: "subnets must be unset when ipam.mode is Disabled",
+		Message: "subnets must be unset when ipam.mode is Disabled or DHCP",
 	}
 }

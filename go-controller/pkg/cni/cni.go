@@ -191,6 +191,17 @@ func (pr *PodRequest) cmdAdd(kubeAuth *KubeAPIAuth, clientset *ClientSet, ovsCli
 
 	podInterfaceInfo.SkipIPConfig = kubevirt.IsPodLiveMigratable(pod)
 
+	// On a DHCP IPAM network the annotation's L3 config only reports the
+	// previous sandbox's lease, which was released on DEL. Re-applying it on
+	// a repeat ADD would program a stale IP and a conflicting default route,
+	// failing the ADD forever. Clear it so the DHCP exchange below is the
+	// only source of addressing; the MAC is OVN-K-allocated and must stay.
+	if podNADAnnotation.IPAMMode == types.IPAMTypeDHCP {
+		podInterfaceInfo.IPs = nil
+		podInterfaceInfo.Gateways = nil
+		podInterfaceInfo.Routes = nil
+	}
+
 	response := &Response{KubeAuth: kubeAuth}
 	if !config.UnprivilegedMode {
 		if ovsClient == nil && !config.IsModeDPUHost() {
@@ -213,7 +224,69 @@ func (pr *PodRequest) cmdAdd(kubeAuth *KubeAPIAuth, clientset *ClientSet, ovsCli
 		if err != nil {
 			return nil, err
 		}
+
+		// If IPAM mode is DHCP, obtain IP configuration from an external DHCP
+		// server. The lease-handling behavior is selected by workload type:
+		//   - KubeVirt VMs: perform a one-shot DHCP discovery to learn the IP and
+		//     report it via the pod annotation only. The IP is never applied to the
+		//     interface (a VFIO VF loses it on rebind; a non-VFIO VM would start
+		//     KubeVirt's in-pod dnsmasq). The guest runs its own DHCP client.
+		//   - Regular pods: delegate to the DHCP CNI plugin daemon, which applies
+		//     the IP and maintains the lease for the pod's lifetime.
+		//
+		// In both cases the learned IPs are merged into the CNI result (multus
+		// network-status) and patched into the k8s.ovn.org/pod-networks
+		// annotation so ovnkube-controller programs the logical switch port and
+		// IP-based features (MultiNetworkPolicy, NetworkQoS) see the address.
+		if pr.CNIConf.IPAM.Type == types.IPAMTypeDHCP {
+			// DHCP IPAM runs on the node itself: full mode owns the host OVS
+			// datapath and the lease marker; DPU-host mode delegates OVS to
+			// the DPU (representor plumbed there, gated by connection-status
+			// Ready) and records the marker in a host-local file.
+			if !config.IsModeFull() && !config.IsModeDPUHost() {
+				return nil, fmt.Errorf("DHCP IPAM is not supported in ovnkube-node mode %q for pod %s/%s",
+					config.OvnKubeNode.Mode, pr.PodNamespace, pr.PodName)
+			}
+			var dhcpResult *current.Result
+			if kubevirt.IsPodOwnedByVirtualMachine(pod) {
+				dhcpResult, err = dhcpOps.DoOneShot(pr)
+				if err != nil {
+					return nil, fmt.Errorf("VM DHCP discovery failed for pod %s/%s: %v",
+						pr.PodNamespace, pr.PodName, err)
+				}
+			} else {
+				// A VFIO device exposes no netdev in the pod netns for the
+				// DORA exchange. Reject here instead of failing it in the DHCP plugin.
+				if pr.IsVFIO {
+					return nil, fmt.Errorf("dhcp IPAM mode is not supported for VFIO device %s on regular pod %s/%s: "+
+						"DHCP with VFIO is only supported for KubeVirt VM pods",
+						pr.CNIConf.DeviceID, pr.PodNamespace, pr.PodName)
+				}
+				// Record the lease marker before requesting the lease: cmdDel
+				// only releases when the marker exists, so marker-first
+				// guarantees no lease is ever left behind unreleased. If the
+				// request below fails, the stale marker just causes one
+				// harmless no-op release at teardown. Fatal on failure.
+				if err := pr.recordDHCPLeaseMarker(response.Result); err != nil {
+					return nil, fmt.Errorf("failed to record DHCP lease marker for pod %s/%s: %w",
+						pr.PodNamespace, pr.PodName, err)
+				}
+				dhcpResult, err = dhcpOps.ExecAdd(pr)
+				if err != nil {
+					return nil, fmt.Errorf("DHCP IPAM ADD failed for pod %s/%s: %v",
+						pr.PodNamespace, pr.PodName, err)
+				}
+			}
+			mergeDHCPResultIntoCNIResult(dhcpResult, response.Result)
+			if err := pr.updatePodNetworksAnnotationWithDHCPResult(clientset, dhcpResult); err != nil {
+				return nil, fmt.Errorf("failed to report DHCP IPs in pod-networks annotation for pod %s/%s: %v",
+					pr.PodNamespace, pr.PodName, err)
+			}
+		}
 	} else {
+		if pr.CNIConf.IPAM.Type == types.IPAMTypeDHCP {
+			return nil, fmt.Errorf("dhcp IPAM mode for localnet topology is not supported in unprivileged mode")
+		}
 		response.PodIFInfo = podInterfaceInfo
 	}
 	return response, nil
@@ -245,6 +318,35 @@ func (pr *PodRequest) cmdDel(clientset *ClientSet) (*Response, error) {
 		pr.nadKey = nadKey
 	} else {
 		pr.nadKey = pr.nadName
+	}
+
+	// Release the DHCP lease before the datapath teardown below removes the
+	// transmit path. Only the pod delegation path holds a daemon lease,
+	// recorded as a node-local marker at ADD time (KubeVirt VMs run their
+	// own DHCP client so no marker, no RELEASE).
+	// A failed lookup or release fails the whole DEL, keeping the
+	// marker alive so the retried DEL releases again, otherwise the lease
+	// leaks until the server-side TTL, at the cost of pod deletion blocking
+	// while the daemon is unreachable. Skipped in unprivileged mode, where
+	// DHCP IPAM is rejected at ADD.
+	if !config.UnprivilegedMode && pr.CNIConf.IPAM.Type == types.IPAMTypeDHCP {
+		markerExists, markerErr := pr.dhcpLeaseMarkerExists()
+		if markerErr != nil {
+			return nil, markerErr
+		}
+		if markerExists {
+			klog.Infof("DHCP: releasing lease for pod %s/%s iface %s netns %s container %s",
+				pr.PodNamespace, pr.PodName, pr.IfName, pr.Netns, pr.SandboxID)
+			if delErr := dhcpOps.ExecDel(pr); delErr != nil {
+				return nil, fmt.Errorf("failed to release the DHCP lease of pod %s/%s (sandbox %s, iface %s): %w",
+					pr.PodNamespace, pr.PodName, pr.SandboxID, pr.IfName, delErr)
+			}
+			// No drain wait is needed before the port teardown below and the
+			// daemon transmits the RELEASE synchronously before its RPC
+			// returns, and lease releases are best-effort.
+			klog.Infof("DHCP: released lease for pod %s/%s", pr.PodNamespace, pr.PodName)
+			pr.removeDHCPLeaseMarker()
+		}
 	}
 
 	netdevName := ""
@@ -343,6 +445,10 @@ func (pr *PodRequest) cmdDel(clientset *ClientSet) (*Response, error) {
 		}
 	} else {
 		// pass the isDPU flag and vfNetdevName back to cniShim
+		if pr.CNIConf.IPAM.Type == types.IPAMTypeDHCP {
+			klog.Warningf("DHCP lease release skipped for pod %s/%s: not supported in unprivileged mode",
+				pr.PodNamespace, pr.PodName)
+		}
 		response.Result = nil
 		response.PodIFInfo = podInterfaceInfo
 	}

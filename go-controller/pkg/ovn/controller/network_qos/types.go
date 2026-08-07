@@ -87,6 +87,18 @@ func (nqosState *networkQoSState) matchSourceSelector(pod *corev1.Pod) bool {
 
 func (nqosState *networkQoSState) configureSourcePod(ctrl *Controller, pod *corev1.Pod, addresses []string) error {
 	fullPodName := joinMetaNamespaceAndName(pod.Namespace, pod.Name)
+	// the pod's IP can change while it still matches the selector (a DHCP
+	// lease may be replaced across a sandbox recreation), delete what this pod
+	// previously contributed before adding the current addresses, or the
+	// stale IP stays in the address set until the pod is deleted
+	if val, ok := nqosState.Pods.Load(fullPodName); ok {
+		if stale := staleAddresses(val.([]string), addresses); len(stale) > 0 {
+			if err := nqosState.SrcAddrSet.DeleteAddresses(stale); err != nil {
+				return fmt.Errorf("failed to delete stale addresses {%s} from address set %s: %v",
+					strings.Join(stale, ","), nqosState.SrcAddrSet.GetName(), err)
+			}
+		}
+	}
 	if err := nqosState.SrcAddrSet.AddAddresses(addresses); err != nil {
 		return fmt.Errorf("failed to add addresses {%s} to address set %s for NetworkQoS %s/%s: %v", strings.Join(addresses, ","), nqosState.SrcAddrSet.GetName(), nqosState.namespace, nqosState.name, err)
 	}
@@ -352,12 +364,36 @@ func (dest *Destination) matchPod(podNs *corev1.Namespace, pod *corev1.Pod, qosN
 }
 
 func (dest *Destination) addPod(podNamespace, podName string, addresses []string) error {
+	fullPodName := joinMetaNamespaceAndName(podNamespace, podName)
+	// drop addresses the pod no longer holds.
+	if val, ok := dest.Pods.Load(fullPodName); ok {
+		if stale := staleAddresses(val.([]string), addresses); len(stale) > 0 {
+			if err := dest.DestAddrSet.DeleteAddresses(stale); err != nil {
+				return fmt.Errorf("failed to delete stale addresses (%s): %v", strings.Join(stale, ","), err)
+			}
+		}
+	}
 	if err := dest.DestAddrSet.AddAddresses(addresses); err != nil {
 		return err
 	}
 	// add pod to map
-	dest.Pods.Store(joinMetaNamespaceAndName(podNamespace, podName), addresses)
+	dest.Pods.Store(fullPodName, addresses)
 	return nil
+}
+
+// staleAddresses returns the entries of old that are absent from current.
+func staleAddresses(old, current []string) []string {
+	currentSet := make(map[string]struct{}, len(current))
+	for _, a := range current {
+		currentSet[a] = struct{}{}
+	}
+	var stale []string
+	for _, a := range old {
+		if _, ok := currentSet[a]; !ok {
+			stale = append(stale, a)
+		}
+	}
+	return stale
 }
 
 func (dest *Destination) removePod(fullPodName string, addresses []string) error {

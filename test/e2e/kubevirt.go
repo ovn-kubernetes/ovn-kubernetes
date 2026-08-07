@@ -48,6 +48,7 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/clientcmd"
 	e2eframework "k8s.io/kubernetes/test/e2e/framework"
+	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
@@ -56,6 +57,8 @@ import (
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	ipamclaimsv1alpha1 "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1"
+	mnpapi "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/apis/k8s.cni.cncf.io/v1beta1"
+	mnpclient "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1beta1"
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
 
@@ -2535,6 +2538,254 @@ chpasswd: { expire: False }
 			WithPolling(2*time.Second).
 			Should(Succeed(), fmt.Sprintf("IPAMClaim %s should have expected failure status", ipamClaimName))
 	}
+
+	Context("with user defined networks with DHCP IPAM localnet topology", Ordered, func() {
+		const (
+			dhcpServerIP = "172.31.100.1"
+			dhcpRange    = "172.31.100.10,172.31.100.100,255.255.255.0,12h"
+			dhcpSubnet   = "172.31.100.0/24"
+			dhcpUserData = `#cloud-config
+password: fedora
+chpasswd: { expire: False }
+`
+			// guest runs its own DHCP client on its single (localnet) interface
+			dhcpNetworkData = `version: 2
+ethernets:
+  eth0:
+    dhcp4: true`
+		)
+
+		var (
+			cudn      *udnv1.ClusterUserDefinedNetwork
+			nadKey    string
+			mnpClient mnpclient.K8sCniCncfIoV1beta1Interface
+		)
+
+		BeforeEach(func() {
+			ns, err := fr.CreateNamespace(context.TODO(), fr.BaseName, map[string]string{
+				"e2e-framework": fr.BaseName,
+			})
+			Expect(err).ToNot(HaveOccurred())
+			fr.Namespace = ns
+			namespace = fr.Namespace.Name
+
+			mnpClient, err = mnpclient.NewForConfig(fr.ClientConfig())
+			Expect(err).NotTo(HaveOccurred())
+
+			By("creating a localnet CUDN with DHCP IPAM")
+			var networkName string
+			cudn, networkName = kubevirt.GenerateCUDN(namespace, "dhcpnet",
+				udnv1.NetworkTopologyLocalnet, udnv1.NetworkRoleSecondary, udnv1.DualStackCIDRs{})
+			// GenerateCUDN defaults subnet-less networks to IPAMDisabled; DHCP
+			// delegates addressing to the external server instead
+			cudn.Spec.Network.Localnet.IPAM.Mode = udnv1.IPAMDHCP
+			createCUDN(cudn)
+			nadKey = namespace + "/" + cudn.Name
+
+			By("setting up the localnet underlay")
+			Expect(providerCtx.SetupUnderlay(fr, infraapi.Underlay{LogicalNetworkName: networkName})).To(Succeed())
+
+			By("starting a dnsmasq DHCP server on the underlay")
+			underlayNetwork, err := infraprovider.Get().GetNetwork("underlay")
+			Expect(err).NotTo(HaveOccurred(), "must get underlay network")
+			_, err = providerCtx.CreateExternalContainer(infraapi.ExternalContainer{
+				Name:       fr.Namespace.Name + "-dhcp-server",
+				Image:      images.DNSMasq(),
+				Network:    underlayNetwork,
+				Entrypoint: "sh",
+				CmdArgs: []string{"-c", fmt.Sprintf(
+					"ip addr add %s/24 dev eth0 && exec dnsmasq --no-daemon --interface=eth0 --dhcp-range=%s --log-dhcp",
+					dhcpServerIP, dhcpRange)},
+			})
+			Expect(err).NotTo(HaveOccurred(), "must create the dnsmasq container")
+		})
+
+		AfterAll(func() {
+			Expect(removeImagesInNodes(kubevirt.FedoraWithTestToolingContainerDiskImage)).To(Succeed())
+		})
+
+		// startVM boots a fedora VM attached to the DHCP CUDN. The role label
+		// is set on the VMI template so it propagates to the virt-launcher
+		// pod, which is what MultiNetworkPolicy / NetworkQoS pod selectors
+		// match.
+		startVM := func(name, role string) *kubevirtv1.VirtualMachineInstance {
+			vm := fedoraWithTestToolingVM(map[string]string{"role": role}, nil, nil,
+				kubevirtv1.NetworkSource{
+					Multus: &kubevirtv1.MultusNetwork{NetworkName: cudn.Name},
+				}, dhcpUserData, dhcpNetworkData)
+			vm.Name = name
+			createVirtualMachine(vm)
+			vmi := &kubevirtv1.VirtualMachineInstance{
+				ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: vm.Name},
+			}
+			waitVirtualMachineInstanceReadiness(vmi)
+			Expect(crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
+			return vmi
+		}
+
+		// guestDHCPAddress waits for the guest's own DHCP client to obtain a
+		// lease from dnsmasq and returns the address.
+		guestDHCPAddress := func(vmi *kubevirtv1.VirtualMachineInstance) string {
+			Eventually(func() error { return virtClient.LoginToFedora(vmi, "fedora", "fedora") }).
+				WithTimeout(3 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
+			output, err := virtClient.RunCommand(vmi, "cloud-init status --wait", 3*time.Minute)
+			Expect(err).NotTo(HaveOccurred(), output)
+			ip := ""
+			Eventually(func() string {
+				output, _ := virtClient.RunCommand(vmi,
+					"ip -4 -o addr show dev eth0 scope global | awk '{print $4}' | cut -d/ -f1", 10*time.Second)
+				ip = strings.TrimSpace(output)
+				return ip
+			}).WithTimeout(2*time.Minute).WithPolling(5*time.Second).
+				Should(HavePrefix("172.31.100."), "guest must obtain a lease from dnsmasq")
+			return ip
+		}
+
+		launcherPodFor := func(vmi *kubevirtv1.VirtualMachineInstance) *corev1.Pod {
+			pods, err := fr.ClientSet.CoreV1().Pods(namespace).List(context.TODO(), metav1.ListOptions{
+				LabelSelector: "vm.kubevirt.io/name=" + vmi.Name,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pods.Items).NotTo(BeEmpty())
+			return &pods.Items[0]
+		}
+
+		// launcherPodAnnotationIP returns the address the CNI one-shot DORA
+		// patched into the launcher pod's pod-networks annotation.
+		launcherPodAnnotationIP := func(vmi *kubevirtv1.VirtualMachineInstance) string {
+			annotation := launcherPodFor(vmi).Annotations["k8s.ovn.org/pod-networks"]
+			podNetworks := map[string]struct {
+				IPAddresses []string `json:"ip_addresses"`
+			}{}
+			Expect(json.Unmarshal([]byte(annotation), &podNetworks)).To(Succeed())
+			Expect(podNetworks).To(HaveKey(nadKey))
+			Expect(podNetworks[nadKey].IPAddresses).To(HaveLen(1))
+			ip, _, err := net.ParseCIDR(podNetworks[nadKey].IPAddresses[0])
+			Expect(err).NotTo(HaveOccurred())
+			return ip.String()
+		}
+
+		It("assigns DHCP addresses to VMs and reports them in the pod annotation", func() {
+			serverVMI := startVM("vm-server", "server")
+			clientVMI := startVM("vm-client", "client")
+
+			By("the guests obtain leases from the external DHCP server")
+			serverIP := guestDHCPAddress(serverVMI)
+			clientIP := guestDHCPAddress(clientVMI)
+
+			By("the CNI one-shot probe reported the same addresses in the pod-networks annotation")
+			Expect(launcherPodAnnotationIP(serverVMI)).To(Equal(serverIP))
+			Expect(launcherPodAnnotationIP(clientVMI)).To(Equal(clientIP))
+
+			By("the VMs can reach each other over the localnet")
+			output, err := virtClient.RunCommand(clientVMI, "ping -c 3 -W 2 "+serverIP, time.Minute)
+			Expect(err).NotTo(HaveOccurred(), output)
+		})
+
+		It("enforces MultiNetworkPolicy with pod selector peers on DHCP-assigned addresses", func() {
+			serverVMI := startVM("vm-server", "server")
+			clientVMI := startVM("vm-client", "client")
+			serverIP := guestDHCPAddress(serverVMI)
+			_ = guestDHCPAddress(clientVMI)
+
+			By("applying an ingress policy allowing only role=client peers")
+			policy := multiNetPolicy(
+				"allow-from-client",
+				nadKey,
+				metav1.LabelSelector{MatchLabels: map[string]string{"role": "server"}},
+				[]mnpapi.MultiPolicyType{mnpapi.PolicyTypeIngress},
+				[]mnpapi.MultiNetworkPolicyIngressRule{{
+					From: []mnpapi.MultiNetworkPolicyPeer{{
+						PodSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"role": "client"}},
+					}},
+				}},
+				nil,
+			)
+			Expect(createMultiNetworkPolicy(mnpClient, namespace, policy)).To(Succeed())
+
+			By("traffic from the labeled client VM is allowed")
+			Eventually(func() error {
+				_, err := virtClient.RunCommand(clientVMI, "ping -c 2 -W 2 "+serverIP, time.Minute)
+				return err
+			}).WithTimeout(2 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
+
+			By("removing the client's role label blocks its traffic (the peer address set follows the label)")
+			launcherPod := launcherPodFor(clientVMI)
+			_, err := e2ekubectl.RunKubectl(namespace, "label", "pod", launcherPod.Name, "role-")
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(func() error {
+				_, err := virtClient.RunCommand(clientVMI, "ping -c 2 -W 2 "+serverIP, time.Minute)
+				return err
+			}).WithTimeout(2 * time.Minute).WithPolling(5 * time.Second).ShouldNot(Succeed())
+
+			By("restoring the label restores connectivity")
+			_, err = e2ekubectl.RunKubectl(namespace, "label", "pod", launcherPod.Name, "role=client")
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(func() error {
+				_, err := virtClient.RunCommand(clientVMI, "ping -c 2 -W 2 "+serverIP, time.Minute)
+				return err
+			}).WithTimeout(2 * time.Minute).WithPolling(5 * time.Second).Should(Succeed())
+		})
+
+		It("applies NetworkQoS DSCP marking to VM traffic on the DHCP localnet", func() {
+			if os.Getenv("OVN_NETWORK_QOS_ENABLE") != "true" {
+				Skip("NetworkQoS feature is disabled (OVN_NETWORK_QOS_ENABLE != true)")
+			}
+			serverVMI := startVM("vm-server", "server")
+			clientVMI := startVM("vm-client", "client")
+			serverIP := guestDHCPAddress(serverVMI)
+			_ = guestDHCPAddress(clientVMI)
+
+			const dscpValue = 50
+			By("applying a NetworkQoS selecting the DHCP CUDN")
+			// GenerateCUDN labels the CUDN name=<cudn.Name>; the selector
+			// matches it
+			nqosSpec := fmt.Sprintf(`
+apiVersion: k8s.ovn.org/v1alpha1
+kind: NetworkQoS
+metadata:
+  namespace: %s
+  name: dhcp-qos
+spec:
+  networkSelectors:
+  - networkSelectionType: ClusterUserDefinedNetworks
+    clusterUserDefinedNetworkSelector:
+      networkSelector:
+        matchLabels:
+          name: %s
+  podSelector:
+    matchLabels:
+      role: client
+  priority: 100
+  egress:
+  - dscp: %d
+    classifier:
+      to:
+      - ipBlock:
+          cidr: %s
+`, namespace, cudn.Name, dscpValue, dhcpSubnet)
+			nqosYaml := "dhcp-networkqos.yaml"
+			Expect(os.WriteFile(nqosYaml, []byte(nqosSpec), 0644)).To(Succeed())
+			DeferCleanup(func() { _ = os.Remove(nqosYaml) })
+			e2ekubectl.RunKubectlOrDie(namespace, "create", "-f", nqosYaml)
+
+			By("traffic from the client VM carries the DSCP mark, verified in the server guest")
+			// fedora-with-test-tooling ships tcpdump; (ip[1] & 0xfc) >> 2 is
+			// the DSCP field, the same filter networkqos.go uses
+			tcpdumpCmd := fmt.Sprintf(
+				"sudo timeout 15 tcpdump -i eth0 -c 1 'icmp and (ip[1] & 0xfc) >> 2 == %d' >/dev/null 2>&1 && echo MARKED",
+				dscpValue)
+			Eventually(func() string {
+				go func() {
+					defer GinkgoRecover()
+					_, _ = virtClient.RunCommand(clientVMI, "ping -c 10 -i 0.5 "+serverIP, time.Minute)
+				}()
+				out, _ := virtClient.RunCommand(serverVMI, tcpdumpCmd, 30*time.Second)
+				return out
+			}).WithTimeout(3*time.Minute).WithPolling(2*time.Second).
+				Should(ContainSubstring("MARKED"), "expected DSCP-marked packets at the server VM")
+		})
+	})
 
 	Context("duplicate addresses validation", func() {
 		const networkName = "net1"
