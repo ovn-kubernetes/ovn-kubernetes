@@ -2743,7 +2743,7 @@ exit
 			expectNADAnnotations: map[string]map[string]string{"green": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
 		},
 		{
-			name:                "with dynamic UDN allocation and transit router, advertises an active layer2 network without a tunnel ID allocation",
+			name:                "with dynamic UDN allocation and transit router, advertises an active layer2 network without a tunnel ID allocation and skips inactive nodes",
 			dynamicUDN:          true,
 			layer2TransitRouter: true,
 			ra:                  &testRA{Name: "ra", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
@@ -2764,7 +2764,11 @@ exit
 			namespaces: []*testNamespace{{Name: "green"}},
 			pods:       []*testPod{{Name: "pod", Namespace: "green", Node: "node"}},
 			nodes: []*testNode{
+				// "node" runs a pod attached to the network; "node2" does not.
+				// Neither has a tunnel ID allocation, and only "node" must be
+				// advertised.
 				{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\"}"},
+				{Name: "node2", SubnetsAnnotation: "{\"default\":\"1.1.1.0/24\"}"},
 			},
 			reconcile:            "ra",
 			expectAcceptedStatus: metav1.ConditionTrue,

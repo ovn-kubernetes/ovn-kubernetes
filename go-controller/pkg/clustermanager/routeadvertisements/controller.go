@@ -807,9 +807,10 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 				selectedNetworks.networkTopology[network] == types.Layer2Topology &&
 				!c.nodeHasLayer2Allocation(nodeName, network) {
 				// Legacy layer2 topology uses the tunnel ID allocation as a
-				// signal that the network is rendered on the node. Transit-router
-				// topology intentionally has no such allocation, so NodeHasNetwork
-				// above is the available signal there.
+				// signal that the network is rendered on the node. The allocation
+				// is stored as a node annotation whose update triggers this
+				// reconcile. Transit-router topology intentionally has no such
+				// allocation, so NodeHasNetwork above is the available signal there.
 				// TODO: replace with a per-node network status once
 				// available, to know when the network is actually rendered.
 				continue
@@ -1852,8 +1853,8 @@ func nodeNeedsUpdate(oldObj, newObj *corev1.Node) bool {
 	return oldObj == nil || newObj == nil ||
 		!reflect.DeepEqual(oldObj.Labels, newObj.Labels) ||
 		util.NodeSubnetAnnotationChanged(oldObj, newObj) ||
-		// with dynamic UDN allocation, the tunnel ID allocation determines
-		// which nodes advertise a layer2 network
+		// With dynamic UDN allocation in legacy layer2 topology, the tunnel
+		// ID allocation determines which nodes advertise the network.
 		oldObj.Annotations[types.UDNLayer2NodeGRLRPTunnelIDAnnotation] != newObj.Annotations[types.UDNLayer2NodeGRLRPTunnelIDAnnotation] ||
 		oldObj.Annotations[util.OvnNodeIfAddr] != newObj.Annotations[util.OvnNodeIfAddr] ||
 		util.NodeL3GatewayAnnotationChanged(oldObj, newObj) ||
