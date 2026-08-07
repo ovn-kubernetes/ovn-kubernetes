@@ -903,6 +903,129 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
+
+		ginkgo.It("AddRemoteZoneNode rejects missing node-id even when the legacy join annotation is present", func() {
+			app.Action = func(ctx *cli.Context) error {
+				dbSetup := libovsdbtest.TestSetup{
+					NBData: initialNBDB,
+					SBData: initialSBDB,
+				}
+
+				_, err := config.InitConfig(ctx, nil, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				var libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
+				libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				err = createTransitSwitchPortBindings(libovsdbOvnSBClient, types.DefaultNetworkName, &testNode1, &testNode2, &testNode3)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				zoneICHandler := NewZoneInterconnectHandler(&util.DefaultNetInfo{}, libovsdbOvnNBClient, libovsdbOvnSBClient, nil)
+				err = zoneICHandler.createOrUpdateTransitSwitch(0)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = invokeICHandlerAddNodeFunction("global", zoneICHandler, &testNode1, &testNode2, &testNode3)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				clusterRouter, err := libovsdbops.GetLogicalRouter(libovsdbOvnNBClient, &nbdb.LogicalRouter{Name: types.OVNClusterRouter})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				routesBefore := len(clusterRouter.StaticRoutes)
+
+				remoteNodeWithoutNodeID := corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "remote-without-node-id",
+						Annotations: map[string]string{
+							ovnNodeChassisIDAnnotation:         "cb9ec8fa-b409-4ef3-9f42-d9283c47aac9",
+							ovnNodeZoneNameAnnotation:          "foo",
+							ovnNodeSubnetsAnnotation:           "{\"default\":[\"10.244.5.0/24\"]}",
+							ovnTransitSwitchPortAddrAnnotation: "{\"ipv4\":\"100.88.0.5/16\"}",
+							// Retired annotation with a valid value: if the deprecated
+							// node-id fallback is ever restored, this add would stop
+							// failing and thus catch the regression.
+							"k8s.ovn.org/node-gateway-router-lrp-ifaddr": "{\"ipv4\":\"100.64.0.5/16\"}",
+						},
+					},
+				}
+
+				err = zoneICHandler.AddRemoteZoneNode(&remoteNodeWithoutNodeID)
+				gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("failed to get node id for node - remote-without-node-id")))
+
+				clusterRouter, err = libovsdbops.GetLogicalRouter(libovsdbOvnNBClient, &nbdb.LogicalRouter{Name: types.OVNClusterRouter})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(clusterRouter.StaticRoutes).To(gomega.HaveLen(routesBefore))
+
+				remotePortName := getNetworkScopedName(types.DefaultNetworkName, types.TransitSwitchToRouterPrefix+remoteNodeWithoutNodeID.Name)
+				_, err = libovsdbops.GetLogicalSwitchPort(libovsdbOvnNBClient, &nbdb.LogicalSwitchPort{Name: remotePortName})
+				gomega.Expect(err).To(gomega.HaveOccurred())
+
+				return nil
+			}
+
+			err := app.Run([]string{
+				app.Name,
+				"-cluster-subnets=" + clusterCIDR,
+				"-init-cluster-manager",
+				"-zone-join-switch-subnets=" + joinSubnetCIDR,
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("deleteLocalNodeStaticRoutes cleans up gateway-router routes when node-id lookup fails", func() {
+			app.Action = func(ctx *cli.Context) error {
+				dbSetup := libovsdbtest.TestSetup{
+					NBData: initialNBDB,
+					SBData: initialSBDB,
+				}
+
+				_, err := config.InitConfig(ctx, nil, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				var libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
+				libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				err = createTransitSwitchPortBindings(libovsdbOvnSBClient, types.DefaultNetworkName, &testNode1, &testNode2, &testNode3)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				zoneICHandler := NewZoneInterconnectHandler(&util.DefaultNetInfo{}, libovsdbOvnNBClient, libovsdbOvnSBClient, nil)
+				err = zoneICHandler.createOrUpdateTransitSwitch(0)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = invokeICHandlerAddNodeFunction("global", zoneICHandler, &testNode1, &testNode2, &testNode3)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				nodeWithoutNodeID := testNode3.DeepCopy()
+				delete(nodeWithoutNodeID.Annotations, ovnNodeIDAnnotaton)
+				// Retired annotation with a valid value: if the deprecated node-id
+				// fallback is ever restored, this delete would stop failing and thus
+				// catch the regression.
+				nodeWithoutNodeID.Annotations["k8s.ovn.org/node-gateway-router-lrp-ifaddr"] = "{\"ipv4\":\"100.64.0.4/16\"}"
+
+				nodeTransitSwitchPortIPs, err := util.ParseNodeTransitSwitchPortAddrs(nodeWithoutNodeID)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				err = zoneICHandler.deleteLocalNodeStaticRoutes(nodeWithoutNodeID, nodeTransitSwitchPortIPs)
+				gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("failed to get the gateway router port IP addresses for node node3")))
+
+				clusterRouter, err := libovsdbops.GetLogicalRouter(libovsdbOvnNBClient, &nbdb.LogicalRouter{Name: types.OVNClusterRouter})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				nodeRoutesPredicate := func(route *nbdb.LogicalRouterStaticRoute) bool {
+					return route.ExternalIDs != nil && route.ExternalIDs["ic-node"] == testNode3.Name
+				}
+				nodeRoutes, err := libovsdbops.GetRouterLogicalRouterStaticRoutesWithPredicate(libovsdbOvnNBClient, clusterRouter, nodeRoutesPredicate)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(nodeRoutes).To(gomega.BeEmpty())
+
+				return nil
+			}
+
+			err := app.Run([]string{
+				app.Name,
+				"-cluster-subnets=" + clusterCIDR,
+				"-init-cluster-manager",
+				"-zone-join-switch-subnets=" + joinSubnetCIDR,
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
 	})
 
 	ginkgo.Context("Secondary networks", func() {

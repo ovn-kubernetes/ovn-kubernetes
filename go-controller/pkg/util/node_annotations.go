@@ -76,12 +76,6 @@ const (
 	// OvnNodeIfAddr is the CIDR form representation of primary network interface's attached IP address (i.e: 192.168.126.31/24 or 0:0:0:0:0:feff:c0a8:8e0c/64)
 	OvnNodeIfAddr = "k8s.ovn.org/node-primary-ifaddr"
 
-	// ovnNodeGRLRPAddr is the CIDR form representation of Gate Router LRP IP address to join switch (i.e: 100.64.0.5/24)
-	// DEPRECATED; use ovnNodeGRLRPAddrs moving forward
-	// FIXME(tssurya): Remove this a few months from now; needed for backwards
-	// compatbility during upgrades while updating to use the new annotation "ovnNodeGRLRPAddrs"
-	ovnNodeGRLRPAddr = "k8s.ovn.org/node-gateway-router-lrp-ifaddr"
-
 	// ovnNodeGRLRPAddrs is the CIDR form representation of Gate Router LRP IP address to join switch (i.e: 100.64.0.4/16)
 	// for all the networks keyed by the network-name and ipFamily.
 	// "k8s.ovn.org/node-gateway-router-lrp-ifaddrs": "{
@@ -125,6 +119,9 @@ const (
 	OvnTransitSwitchPortAddr = "k8s.ovn.org/node-transit-switch-port-ifaddr"
 
 	// OvnNodeID is the id (of type integer) of a node. It is set by cluster-manager.
+	// Controllers derive the gateway router join switch port address from this value
+	// so that the local and remote views of the address agree. The deprecated
+	// k8s.ovn.org/node-gateway-router-lrp-ifaddr annotation is not used as a fallback.
 	OvnNodeID = "k8s.ovn.org/node-id"
 
 	// InvalidNodeID indicates an invalid node id
@@ -696,27 +693,6 @@ func ParseNodePrimaryIfAddr(node *corev1.Node) (*ParsedNodeEgressIPConfiguration
 	return parsedEgressIPConfig, nil
 }
 
-// ParseNodeGatewayRouterLRPAddr returns the IPv4 / IPv6 values for the node's gateway router
-// DEPRECATED; kept for backwards compatibility
-func ParseNodeGatewayRouterLRPAddr(node *corev1.Node) (net.IP, error) {
-	nodeIfAddrAnnotation, ok := node.Annotations[ovnNodeGRLRPAddr]
-	if !ok {
-		return nil, newAnnotationNotSetError("%s annotation not found for node %q", ovnNodeGRLRPAddr, node.Name)
-	}
-	nodeIfAddr := PrimaryIfAddrAnnotation{}
-	if err := json.Unmarshal([]byte(nodeIfAddrAnnotation), &nodeIfAddr); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal annotation: %s for node %q, err: %v", ovnNodeGRLRPAddr, node.Name, err)
-	}
-	if nodeIfAddr.IPv4 == "" && nodeIfAddr.IPv6 == "" {
-		return nil, fmt.Errorf("node: %q does not have any IP information set", node.Name)
-	}
-	ip, _, err := net.ParseCIDR(nodeIfAddr.IPv4)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse annotation: %s for node %q, err: %v", ovnNodeGRLRPAddr, node.Name, err)
-	}
-	return ip, nil
-}
-
 // parsePrimaryIfAddrAnnotation unmarshals the IPv4 / IPv6 values in the
 // primaryIfAddrAnnotation format from the nodeAnnotation map with the
 // provided 'annotationName' as key and returns the addresses.
@@ -757,12 +733,6 @@ func convertPrimaryIfAddrAnnotationToIPNet(ifAddr PrimaryIfAddrAnnotation) ([]*n
 		ipAddrs = append(ipAddrs, &net.IPNet{IP: ip, Mask: ipNet.Mask})
 	}
 	return ipAddrs, nil
-}
-
-// ParseNodeGatewayRouterLRPAddrs returns the IPv4 and/or IPv6 addresses for the node's gateway router port
-// stored in the 'ovnNodeGRLRPAddr' annotation
-func ParseNodeGatewayRouterLRPAddrs(node *corev1.Node) ([]*net.IPNet, error) {
-	return parsePrimaryIfAddrAnnotation(node, ovnNodeGRLRPAddr)
 }
 
 // ParseNodeTransitSwitchPortAddrs returns the IPv4 and/or IPv6 addresses for the node's transit switch port

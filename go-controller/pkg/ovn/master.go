@@ -128,15 +128,9 @@ func (oc *DefaultNetworkController) nodeGatewayConfig(node *corev1.Node) (*Gatew
 
 	gwLRPIPs, err := udn.GetGWRouterIPs(node, oc.GetNetInfo())
 	if err != nil {
-		if util.IsAnnotationNotSetError(err) {
-			// FIXME(tssurya): This is present for backwards compatibility
-			// Remove me a few months from now
-			var err1 error
-			gwLRPIPs, err1 = util.ParseNodeGatewayRouterLRPAddrs(node)
-			if err1 != nil {
-				return nil, fmt.Errorf("failed to get join switch port IP address for node %s: %v/%v", node.Name, err, err1)
-			}
-		}
+		// The join address has to be derived from the node id alone so that
+		// the local and the remote view of it agree.
+		return nil, fmt.Errorf("failed to get join switch port IP address for node %s: %w", node.Name, err)
 	}
 
 	return &GatewayConfig{

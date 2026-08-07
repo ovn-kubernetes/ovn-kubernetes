@@ -488,62 +488,6 @@ func TestParseNodeManagementPortMACAddresses(t *testing.T) {
 	}
 }
 
-func TestParseNodeGatewayRouterLRPAddr(t *testing.T) {
-	tests := []struct {
-		desc        string
-		inpNode     corev1.Node
-		errExpected bool
-		expOutput   bool
-	}{
-		{
-			desc:      "Gateway router LPR IP address annotation not found for node, however, does not return error",
-			inpNode:   corev1.Node{},
-			expOutput: false,
-		},
-		{
-			desc: "success: Gateway router parse LPR IP address",
-			inpNode: corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Annotations: map[string]string{"k8s.ovn.org/node-gateway-router-lrp-ifaddr": `{"ipv4":"100.64.0.5/16"}`},
-				},
-			},
-			expOutput: true,
-		},
-		{
-			desc: "success: Gateway router parse LPR IP address dual stack",
-			inpNode: corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Annotations: map[string]string{"k8s.ovn.org/node-gateway-router-lrp-ifaddr": `{"ipv4":"100.64.0.5/16", "ipv6":"fd:98::/64"}`},
-				},
-			},
-			expOutput: true,
-		},
-		{
-			desc: "error: Gateway router parse LPR IP address error",
-			inpNode: corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Annotations: map[string]string{"k8s.ovn.org/node-gateway-router-lrp-ifaddr": `{"ipv4":"100.64.0.5"}`},
-				},
-			},
-			errExpected: true,
-		},
-	}
-
-	for i, tc := range tests {
-		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
-			cfg, e := ParseNodeGatewayRouterLRPAddr(&tc.inpNode)
-			if tc.errExpected {
-				t.Log(e)
-				require.Error(t, e)
-				assert.Nil(t, cfg)
-			}
-			if tc.expOutput {
-				assert.NotNil(t, cfg)
-			}
-		})
-	}
-}
-
 func TestSetGatewayMTUSupport(t *testing.T) {
 	mockAnnotator := new(annotatorMock.Annotator)
 

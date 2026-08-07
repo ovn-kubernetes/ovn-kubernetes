@@ -257,19 +257,7 @@ func (zic *ZoneInterconnectHandler) AddRemoteZoneNode(node *corev1.Node) error {
 	if !zic.IsUserDefinedNetwork() || (util.IsNetworkSegmentationSupportEnabled() && zic.IsPrimaryNetwork()) {
 		nodeGRPIPs, err = udn.GetGWRouterIPs(node, zic.GetNetInfo())
 		if err != nil {
-			if util.IsAnnotationNotSetError(err) {
-				// FIXME(tssurya): This is present for backwards compatibility
-				// Remove me a few months from now
-				var err1 error
-				nodeGRPIPs, err1 = util.ParseNodeGatewayRouterLRPAddrs(node)
-				if err1 != nil {
-					err1 = fmt.Errorf("failed to parse node %s Gateway router LRP Addrs annotation %w", node.Name, err1)
-					if util.IsAnnotationNotSetError(err1) {
-						return types.NewSuppressedError(err1)
-					}
-					return err1
-				}
-			}
+			return fmt.Errorf("failed to get the gateway router port IP addresses for node %s: %w", node.Name, err)
 		}
 	}
 
@@ -733,15 +721,14 @@ func (zic *ZoneInterconnectHandler) deleteLocalNodeStaticRoutes(node *corev1.Nod
 	// Clear the routes connecting to the GW Router for the default network
 	nodeGRPIPs, err := udn.GetGWRouterIPs(node, zic.GetNetInfo())
 	if err != nil {
-		if util.IsAnnotationNotSetError(err) {
-			// FIXME(tssurya): This is present for backwards compatibility
-			// Remove me a few months from now
-			var err1 error
-			nodeGRPIPs, err1 = util.ParseNodeGatewayRouterLRPAddrs(node)
-			if err1 != nil {
-				return fmt.Errorf("failed to parse node %s Gateway router LRP Addrs annotation %w", node.Name, err1)
-			}
+		// Without node-id we can't reconstruct the GR join IPs; delete by owner.
+		p := func(lrsr *nbdb.LogicalRouterStaticRoute) bool {
+			return lrsr.ExternalIDs["ic-node"] == node.Name
 		}
+		if opserr := libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicate(zic.nbClient, zic.networkClusterRouterName, p); opserr != nil {
+			return fmt.Errorf("failed to delete gateway router static routes for node %s: %w", node.Name, opserr)
+		}
+		return fmt.Errorf("failed to get the gateway router port IP addresses for node %s: %w", node.Name, err)
 	}
 
 	nodenodeGRPIPStaticRoutes := zic.getStaticRoutes(nodeGRPIPs, nodeTransitSwitchPortIPs, true)
