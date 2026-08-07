@@ -1170,3 +1170,30 @@ body:has(#__drawer:checked) {
     height: 100dvh;
   }
 }
+/* VERSION SELECTOR: Material injects .md-version into the first header topic,
+   which normally fades out on scroll when the page title takes over. Keep the
+   version control visible and clickable at all times. */
+.md-header__title--active .md-header__topic:first-child {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  transform: none !important;
+  z-index: 2;
+}
+
+.md-header__title--active .md-header__topic:first-child > .md-ellipsis {
+  max-width: 0;
+  margin: 0;
+  opacity: 0;
+  overflow: hidden;
+  padding: 0;
+}
+
+.md-version {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  font-size: 0.9rem;
+  position: relative;
+  right: 2rem;
+  z-index: 3;
+}
