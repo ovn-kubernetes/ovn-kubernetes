@@ -1497,8 +1497,9 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					&nbdb.LogicalRouterStaticRoute{
 						UUID: fmt.Sprintf("static-route-%s-%s-UUID", v4Node2Net1, v4Node2Tsp),
 						ExternalIDs: map[string]string{
-							"ic-node":                  node2.Name,
-							ovntypes.NetworkExternalID: netInfo.GetNetworkName(),
+							"ic-node":                   node2.Name,
+							ovntypes.NetworkExternalID:  netInfo.GetNetworkName(),
+							ovntypes.TopologyExternalID: ovntypes.Layer3Topology,
 						},
 						IPPrefix: v4Node2Net1,
 						Nexthop:  v4Node2Tsp,
@@ -1506,8 +1507,9 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					&nbdb.LogicalRouterStaticRoute{
 						UUID: fmt.Sprintf("static-route-%s-%s-UUID", node2UDNLogicalRouterIPv4[0], v4Node2Tsp),
 						ExternalIDs: map[string]string{
-							"ic-node":                  node2.Name,
-							ovntypes.NetworkExternalID: netInfo.GetNetworkName(),
+							"ic-node":                   node2.Name,
+							ovntypes.NetworkExternalID:  netInfo.GetNetworkName(),
+							ovntypes.TopologyExternalID: ovntypes.Layer3Topology,
 						},
 						IPPrefix: node2UDNLogicalRouterIPv4[0] + "/32",
 						Nexthop:  v4Node2Tsp,
@@ -1752,8 +1754,9 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					&nbdb.LogicalRouterStaticRoute{
 						UUID: fmt.Sprintf("static-route-%s-%s-UUID", v4Node2Net1, v4Node2Tsp),
 						ExternalIDs: map[string]string{
-							"ic-node":                  node2.Name,
-							ovntypes.NetworkExternalID: netInfo.GetNetworkName(),
+							"ic-node":                   node2.Name,
+							ovntypes.NetworkExternalID:  netInfo.GetNetworkName(),
+							ovntypes.TopologyExternalID: ovntypes.Layer3Topology,
 						},
 						IPPrefix: v4Node2Net1,
 						Nexthop:  v4Node2Tsp,
@@ -1761,8 +1764,9 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					&nbdb.LogicalRouterStaticRoute{
 						UUID: fmt.Sprintf("static-route-%s-%s-UUID", node2UDNLogicalRouterIPv4[0], v4Node2Tsp),
 						ExternalIDs: map[string]string{
-							"ic-node":                  node2.Name,
-							ovntypes.NetworkExternalID: netInfo.GetNetworkName(),
+							"ic-node":                   node2.Name,
+							ovntypes.NetworkExternalID:  netInfo.GetNetworkName(),
+							ovntypes.TopologyExternalID: ovntypes.Layer3Topology,
 						},
 						IPPrefix: node2UDNLogicalRouterIPv4[0] + "/32",
 						Nexthop:  v4Node2Tsp,
@@ -3000,8 +3004,9 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					&nbdb.LogicalRouterStaticRoute{
 						UUID: fmt.Sprintf("static-route-%s-%s-UUID", v4Node2Net1, v4Node2Tsp),
 						ExternalIDs: map[string]string{
-							"ic-node":                  node2.Name,
-							ovntypes.NetworkExternalID: netInfo.GetNetworkName(),
+							"ic-node":                   node2.Name,
+							ovntypes.NetworkExternalID:  netInfo.GetNetworkName(),
+							ovntypes.TopologyExternalID: ovntypes.Layer3Topology,
 						},
 						IPPrefix: v4Node2Net1,
 						Nexthop:  v4Node2Tsp,
@@ -3009,8 +3014,9 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					&nbdb.LogicalRouterStaticRoute{
 						UUID: fmt.Sprintf("static-route-%s-%s-UUID", node2UDNLogicalRouterIPv4[0], v4Node2Tsp),
 						ExternalIDs: map[string]string{
-							"ic-node":                  node2.Name,
-							ovntypes.NetworkExternalID: netInfo.GetNetworkName(),
+							"ic-node":                   node2.Name,
+							ovntypes.NetworkExternalID:  netInfo.GetNetworkName(),
+							ovntypes.TopologyExternalID: ovntypes.Layer3Topology,
 						},
 						IPPrefix: node2UDNLogicalRouterIPv4[0] + "/32",
 						Nexthop:  v4Node2Tsp,
