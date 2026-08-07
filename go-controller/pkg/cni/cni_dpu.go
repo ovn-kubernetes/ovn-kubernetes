@@ -49,6 +49,7 @@ func (pr *PodRequest) addDPUConnectionDetailsAnnot(k kube.Interface, podLister c
 		VfId:         fmt.Sprint(details.FuncId),
 		SandboxId:    pr.SandboxID,
 		VfNetdevName: vfNetdevName,
+		NetnsPath:    pr.Netns,
 	}
 
 	return pr.updatePodDPUConnDetailsWithRetry(k, podLister, &dpuConnDetails)

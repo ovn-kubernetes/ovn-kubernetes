@@ -60,6 +60,7 @@ type DPUConnectionDetails struct {
 	VfId         string `json:"vfId"`
 	SandboxId    string `json:"sandboxId"`
 	VfNetdevName string `json:"vfNetdevName,omitempty"`
+	NetnsPath    string `json:"netnsPath,omitempty"`
 }
 
 type DPUConnectionStatus struct {

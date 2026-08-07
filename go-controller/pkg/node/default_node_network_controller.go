@@ -880,6 +880,11 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 			return err
 		}
 		nc.cniServer = cniServer
+
+		if nc.dpuNodeLeaseManager != nil && config.IsModeDPUHost() {
+			klog.Infof("DPU recovery: registering pod interface recovery handler on DPU lease manager")
+			nc.dpuNodeLeaseManager.SetRecoveryHandler(cniServer.RecoverPodInterfaces)
+		}
 	}
 
 	nodeAnnotator := kube.NewNodeAnnotator(nc.Kube, node.Name)
