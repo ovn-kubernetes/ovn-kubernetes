@@ -1430,14 +1430,22 @@ var _ = ginkgo.Describe("BGP: When an advertised CUDN network is dynamically all
 
 var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
 	ginkgo.DescribeTableSubtree("between advertised networks", func(cudnATemplate, cudnBTemplate *udnv1.ClusterUserDefinedNetwork) {
-		const curlConnectionTimeoutCode = "28"
-		// match the whole phrase: a bare "7" is always contained in the curl
-		// error output, if only in the target address
-		const curlConnectionRefusedCode = "exit code 7"
 		const nodePortBackendLabel = "nodeport-backend"
 		const clientNodeBackend = "client-node"
 		const remoteNodeBackend = "remote-node"
 		const nodePortNodeBackend = "nodeport-node"
+
+		// The pod-to-X tests use e2epodoutput.RunHostCmdWithFullOutput(), which
+		// returns output like "exit code 28" on error, while the host-to-X tests
+		// use infraprovider.Get().ExecK8NodeCommand()), which returns output like
+		// "exit status 28" ("status" rather than "code"). We just look for just
+		// "28" (and hope there are no false positives).
+		const curlConnectionTimeoutCode = "28"
+
+		// Currently only pod-to-X tests ever expect "connection refused", so we
+		// can match the longer error string.
+		const curlConnectionRefusedCode = "exit code 7"
+		const curlConnectionAnyCode = "exit code"
 
 		f := wrappedTestFramework("bgp-network-isolation")
 		f.SkipNamespaceCreation = true
@@ -2135,7 +2143,8 @@ var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
 						}
 						nodePort := svcNodePortNetDefault.Spec.Ports[0].NodePort
 
-						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePort)) + "/hostname", curlConnectionTimeoutCode, true
+						// In some configurations this fails with "Timed out", and in others with "Connection refused"
+						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePort)) + "/hostname", curlConnectionAnyCode, true
 					}),
 				ginkgo.Entry("[ETP=Cluster] UDN pod to a different node nodeport service in default network should work",
 					func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
@@ -2231,9 +2240,9 @@ var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
 							// network B is not active on the client's node: the
 							// nodeport is unreachable for both families
 							expectErr = true
+						}
+						if expectErr {
 							expectedOutput = curlConnectionRefusedCode
-						} else if expectErr {
-							expectedOutput = curlConnectionTimeoutCode
 						}
 						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePort)) + "/hostname", expectedOutput, expectErr
 					}),
@@ -2337,7 +2346,8 @@ var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
 						nodePortA := svcNodePortETPLocalNetA.Spec.Ports[0].NodePort
 						expectErr = ipFamily == utilnet.IPv4 || IsGatewayModeLocal(f.ClientSet)
 						if expectErr {
-							expectedOutput = curlConnectionTimeoutCode
+							// In some configurations this fails with "Timed out", and in others with "Connection refused"
+							expectedOutput = curlConnectionAnyCode
 						}
 						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortA)) + "/hostname", expectedOutput, expectErr
 					}),
@@ -2366,7 +2376,8 @@ var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
 							nodeIP = nodeIPv6
 						}
 						nodePortB := svcNodePortETPLocalDefault.Spec.Ports[0].NodePort
-						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortB)) + "/hostname", curlConnectionTimeoutCode, true
+						// In some configurations this fails with "Timed out", and in others with "Connection refused"
+						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortB)) + "/hostname", curlConnectionAnyCode, true
 					}),
 				ginkgo.Entry("[ETP=LOCAL] UDN pod to a different node nodeport service in default network should work",
 					func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {

@@ -416,7 +416,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 							if isLocalGWModeEnabled() && hostNetwork {
 								// if local gateway mode the intermediary node will attempt to fragment the packet, if the DF
 								// bit is not set. However, the decision on setting DF bit is left up to the kernel, and
-								// is unpredictable. If the DF bit is set, the iptables rule that DNATs nodeport -> cluster IP
+								// is unpredictable. If the DF bit is set, the nftables rule that DNATs nodeport -> cluster IP
 								// will then attempt to route the packet, and hit our 1400 byte MTU route. This will cause:
 								// 172.18.0.2:37755->10.96.141.254:9881(udp) sk_skb_reason_drop(SKB_DROP_REASON_PKT_TOO_BIG)
 								packetSizes = []string{"small"}
@@ -1439,10 +1439,10 @@ spec:
 					// send ingress traffic from external container to egressNode where the pod lives
 					// On secondary bridges CI lane we will also created eth1 interface on each node
 					// in the cluster. In that case:
-					// (1) SGW: npclient's eth1 -> node's eth1-> node's breth1 -> iptables -> DNAT to CIP ->
+					// (1) SGW: npclient's eth1 -> node's eth1-> node's breth1 -> nftables -> DNAT to CIP ->
 					//          route to breth0 -> send to OVN -> hit GR; ETP=local will not be respected
 					//          in this case and its broken at the moment. (FIXME)
-					// (2) LGW: npclient's eth1 -> node's eth1-> node's breth1 -> iptables -> DNAT to .3 masquerade ->
+					// (2) LGW: npclient's eth1 -> node's eth1-> node's breth1 -> nftables -> DNAT to .3 masquerade ->
 					//          route to mp0 -> send to OVN -> hit switch; ETP=local will be respected
 					//          in this case and its delivered to the pod. (test works for this case)
 					if !isLocalGWModeEnabled() || serviceSpec.Name != etpLocalServiceName {
