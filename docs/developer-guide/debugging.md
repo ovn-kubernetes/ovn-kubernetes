@@ -25,7 +25,9 @@ what went wrong.
    searches all containers for the crashed binary and copies it alongside the coredump.
 
 4. **Artifacts are uploaded** to GitHub Actions and can be downloaded from the job's
-   artifacts section.
+   artifacts section. Failed E2E lanes also upload their coredumps for an isolated
+   post-processing job. That job extracts every available trace, prints them in one
+   job log, and uploads one combined trace artifact for the PR comment workflow.
 
 ### Downloading Artifacts
 
@@ -38,6 +40,26 @@ job page. Extract it to find:
 └── binaries/
     └── ovnkube                         # Matching binary
 ```
+
+### Automated Stack Trace Extraction
+
+The `contrib/coredump/extract-stacktraces.sh` script accepts either a tar archive
+of exported KIND logs or an extracted `coredumps` directory and writes stack
+traces to a local directory:
+
+```bash
+./contrib/coredump/extract-stacktraces.sh kind-logs.tar.gz stacktraces
+./contrib/coredump/extract-stacktraces.sh kind-logs/coredumps stacktraces
+```
+
+The script supports three image families: Fedora `ovn-daemonset` C binaries,
+Go binaries, and FRR daemons from the Alpine-based `quay.io/frrouting/frr`
+image. It selects GDB or Delve from the collected binary and image metadata,
+then batches coredumps that can share one debugger container. Fedora OVN traces
+install the matching runtime and debuginfo RPMs from Koji; FRR traces use the
+exact recorded image and its bundled split debug files. Docker and network
+access are required. Set `OCI_BIN` to use another Docker-compatible container
+runtime, or `GO_DEBUG_IMAGE` to override the Fedora image that provides Delve.
 
 ### Debugging with Delve
 
