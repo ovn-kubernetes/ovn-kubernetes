@@ -160,7 +160,16 @@ func (p *portClaimWatcher) AddService(svc *corev1.Service) error {
 }
 
 func (p *portClaimWatcher) UpdateService(old, new *corev1.Service) error {
-	if reflect.DeepEqual(old.Spec.ExternalIPs, new.Spec.ExternalIPs) && reflect.DeepEqual(old.Spec.Ports, new.Spec.Ports) {
+	// Check if anything changed that would affect port claims:
+	// - ExternalIPs changed
+	// - Ports changed
+	// - AllocateLoadBalancerNodePorts changed (affects whether NodePorts should be claimed)
+	oldAllocate := util.LoadBalancerServiceHasNodePortAllocation(old)
+	newAllocate := util.LoadBalancerServiceHasNodePortAllocation(new)
+
+	if reflect.DeepEqual(old.Spec.ExternalIPs, new.Spec.ExternalIPs) &&
+		reflect.DeepEqual(old.Spec.Ports, new.Spec.Ports) &&
+		oldAllocate == newAllocate {
 		return nil
 	}
 	var errors, raw_errors []error
