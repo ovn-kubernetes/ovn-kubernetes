@@ -24,8 +24,6 @@ var callbacks = map[string]readinessFunc{
 	"ovn-northd":     ovnNorthdReadiness,
 	"ovs-daemons":    ovsDaemonsReadiness,
 	"ovnkube-node":   ovnNodeReadiness,
-	"ovnnb-db-raft":  ovnNBDBRaftReadiness,
-	"ovnsb-db-raft":  ovnSBDBRaftReadiness,
 }
 
 func ovnControllerReadiness(target string) error {
@@ -160,28 +158,6 @@ func ovnNodeReadiness(_ string) error {
 	_, err := os.Stat(confFile)
 	if os.IsNotExist(err) {
 		return fmt.Errorf("OVN-Kubernetes config file %q doesn't exist", confFile)
-	}
-	return nil
-}
-
-func ovnNBDBRaftReadiness(_ string) error {
-	status, err := util.GetOVNDBServerInfo(15, "nb", "OVN_Northbound")
-	if err != nil {
-		return err
-	}
-	if !status.Connected {
-		return fmt.Errorf("ovsdb-server managing OVN_Northbound is not in contact with a majority of its cluster")
-	}
-	return nil
-}
-
-func ovnSBDBRaftReadiness(_ string) error {
-	status, err := util.GetOVNDBServerInfo(15, "sb", "OVN_Southbound")
-	if err != nil {
-		return err
-	}
-	if !status.Connected {
-		return fmt.Errorf("ovsdb-server managing OVN_Southbound is not in contact with a majority of its cluster")
 	}
 	return nil
 }

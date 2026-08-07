@@ -73,13 +73,7 @@ if [ "$PLATFORM_IPV4_SUPPORT" == false ]; then
   skip "\[IPv4\]"
 fi
 
-if [ "$OVN_HA" == false ]; then
-  # No support for these features in no-ha mode yet
-  # TODO streamline the db delete tests
-  skip "recovering from deleting db files while maintaining connectivity"
-  skip "Should validate connectivity before and after deleting all the db-pods at once in HA mode"
-else
-  skip "Should validate connectivity before and after deleting all the db-pods at once in Non-HA mode"
+if [ "$OVN_HA" == true ]; then
   skip "e2e br-int NetFlow export validation"
 fi
 

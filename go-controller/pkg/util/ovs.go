@@ -5,7 +5,6 @@ package util
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -752,62 +751,6 @@ func GetOpenFlowPorts(bridgeName string, namedPorts bool) ([]string, error) {
 // GetOvnRunDir returns the OVN's rundir.
 func GetOvnRunDir() string {
 	return runner.ovnRunDir
-}
-
-// ovsdb-server(5) says a clustered database is connected if the server
-// is in contact with a majority of its cluster.
-type OVNDBServerStatus struct {
-	Connected bool
-	Leader    bool
-	Index     int
-}
-
-// Internal structure that holds the un-marshaled json output from the
-// ovsdb-client query command. The Index can hold ["set": []] when it is
-// not populated yet, so we need to use `interface{}` type. However, we
-// don't want our callers to worry about all this and we want them to see the
-// Index as an integer and hence we use an exported OVNDBServerStatus for that
-type dbRow struct {
-	Connected bool        `json:"connected"`
-	Leader    bool        `json:"leader"`
-	Index     interface{} `json:"index"`
-}
-
-type queryResult struct {
-	Rows []dbRow `json:"rows"`
-}
-
-func GetOVNDBServerInfo(timeout int, direction, database string) (*OVNDBServerStatus, error) {
-	sockPath := fmt.Sprintf("unix:%s", filepath.Join(config.OvsPaths.RunDir, fmt.Sprintf("ovn%s_db.sock", direction)))
-	transact := fmt.Sprintf(`["_Server", {"op":"select", "table":"Database", "where":[["name", "==", "%s"]], `+
-		`"columns": ["connected", "leader", "index"]}]`, database)
-
-	stdout, stderr, err := RunOVSDBClient(fmt.Sprintf("--timeout=%d", timeout), "query", sockPath, transact)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get %q ovsdb-server status: stderr(%s), err(%v)",
-			direction, stderr, err)
-	}
-
-	var result []queryResult
-	err = json.Unmarshal([]byte(stdout), &result)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse the json output(%s) from ovsdb-client command for database %q: %v",
-			stdout, database, err)
-	}
-	if len(result) != 1 || len(result[0].Rows) != 1 {
-		return nil, fmt.Errorf("parsed json output for %q ovsdb-server has incorrect status information",
-			direction)
-	}
-	serverStatus := &OVNDBServerStatus{}
-	serverStatus.Connected = result[0].Rows[0].Connected
-	serverStatus.Leader = result[0].Rows[0].Leader
-	if index, ok := result[0].Rows[0].Index.(float64); ok {
-		serverStatus.Index = int(index)
-	} else {
-		serverStatus.Index = 0
-	}
-
-	return serverStatus, nil
 }
 
 // DetectCheckPktLengthSupport checks if OVN supports check packet length action in OVS kernel datapath

@@ -52,7 +52,6 @@ const (
 	// runs on its own zone in an interconnect environment
 	nbdbServerSock = "unix:/var/run/ovn/ovnnb_db.sock"
 	sbdbServerSock = "unix:/var/run/ovn/ovnsb_db.sock"
-	sockProtocol   = "unix"
 )
 
 const (
@@ -114,7 +113,6 @@ type PodInfo struct {
 	InterConnectZoneName string // contains interconnect zone name of the pod's hosting node.
 	NbURI                string // pod's ovn nb db uri string
 	SbURI                string // pod's ovn sb db uri string
-	SslCertKeys          string // ssl cert keys string to access ovn nbdb/sbdb
 	NbCommand            string // contains subset of nb command string to execute on ovn nbdb
 	SbCommand            string // contains subset of sb command string to execute on ovn sbdb
 }
@@ -619,8 +617,8 @@ func getOvnNamespace(coreclient *corev1client.CoreV1Client, override string) (st
 	return pods.Items[0].Namespace, nil
 }
 
-// Get the OVN Database URIs from the first container found in any pod in the ovn-kubernetes namespace with name "ovnkube-node"
-// Returns nbAddress, sbAddress, protocol == "ssl", nil
+// getDatabaseURIs finds the ovnkube container and zone, then configures access
+// to the local OVN databases.
 func getDatabaseURIs(coreclient *corev1client.CoreV1Client, restconfig *rest.Config, ovnNamespace string, podInfo *PodInfo) (*PodInfo, error) {
 	podName := podInfo.OvnKubePodName
 	var ovnContainerName string
@@ -654,46 +652,15 @@ func getDatabaseURIs(coreclient *corev1client.CoreV1Client, restconfig *rest.Con
 	if res := zoneRe.FindString(hostOutput); len(res) > 6 {
 		podInfo.InterConnectZoneName = strings.TrimSpace(res[6:])
 	}
-	re := regexp.MustCompile(`--nb-address(=| )[^\s]+`)
-	nbAddress := re.FindString(hostOutput)
-	if len(nbAddress) > 13 {
-		nbAddress = strings.Replace(
-			re.FindString(hostOutput)[13:],
-			"://",
-			":",
-			-1)
-	} else {
-		nbAddress = nbdbServerSock
-	}
-	re = regexp.MustCompile(`--sb-address(=| )[^\s]+`)
-	sbAddress := re.FindString(hostOutput)
-	if len(sbAddress) > 13 {
-		sbAddress = strings.Replace(
-			re.FindString(hostOutput)[13:],
-			"://",
-			":",
-			-1)
-	} else {
-		sbAddress = sbdbServerSock
-	}
-	re = regexp.MustCompile(`(ssl|tcp|unix)`)
-	protocol := re.FindString(nbAddress)
-
-	klog.V(5).Infof("Nb address for OVN database communication is %s", nbAddress)
-	klog.V(5).Infof("Sb address for OVN database communication is %s", sbAddress)
-	klog.V(5).Infof("Protocol for OVN database communication is %s", protocol)
+	klog.V(5).Infof("Nb address for OVN database communication is %s", nbdbServerSock)
+	klog.V(5).Infof("Sb address for OVN database communication is %s", sbdbServerSock)
 	klog.V(5).Infof("The pod %s's interconnect zone name is %s", podInfo.OvnKubePodName,
 		podInfo.InterConnectZoneName)
-	podInfo.NbURI = nbAddress
-	podInfo.SbURI = sbAddress
-	if protocol == "ssl" {
-		podInfo.SslCertKeys = "-p /ovn-cert/tls.key -c /ovn-cert/tls.crt -C /ovn-ca/ca-bundle.crt "
-	} else {
-		podInfo.SslCertKeys = " "
-	}
-	podInfo.NbCommand = podInfo.SslCertKeys + "--db " + podInfo.NbURI
+	podInfo.NbURI = nbdbServerSock
+	podInfo.SbURI = sbdbServerSock
+	podInfo.NbCommand = "--db " + podInfo.NbURI
 	klog.V(5).Infof("The nbcmd of pod %s is %s", podInfo.OvnKubePodName, podInfo.NbCommand)
-	podInfo.SbCommand = podInfo.SslCertKeys + "--db " + podInfo.SbURI
+	podInfo.SbCommand = "--db " + podInfo.SbURI
 	klog.V(5).Infof("The sbcmd of pod %s is %s", podInfo.OvnKubePodName, podInfo.SbCommand)
 
 	return podInfo, nil
@@ -1085,10 +1052,9 @@ func runOvnDetrace(coreclient *corev1client.CoreV1Client, restconfig *rest.Confi
 		return fmt.Errorf("dependencies check failed: %q", err)
 	}
 
-	cmd := fmt.Sprintf(`ovn-detrace --ovnnb=%[1]s --ovnsb=%[2]s %[3]s --ovsdb=unix:/var/run/openvswitch/db.sock`,
-		srcPodInfo.NbURI,       // 1
-		srcPodInfo.SbURI,       // 2
-		srcPodInfo.SslCertKeys, // 3
+	cmd := fmt.Sprintf(`ovn-detrace --ovnnb=%[1]s --ovnsb=%[2]s --ovsdb=unix:/var/run/openvswitch/db.sock`,
+		srcPodInfo.NbURI, // 1
+		srcPodInfo.SbURI, // 2
 	)
 	klog.V(4).Infof("ovn-detrace command from %s is %s", direction, cmd)
 

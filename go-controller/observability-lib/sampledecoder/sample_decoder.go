@@ -26,11 +26,6 @@ type SampleDecoder struct {
 	cleanupCollectors []int
 }
 
-type dbConfig struct {
-	address string
-	scheme  string
-}
-
 type Cookie struct {
 	ObsDomainID uint32
 	ObsPointID  uint32
@@ -49,11 +44,7 @@ func getEndian() binary.ByteOrder {
 // getLocalNBClient only supports connecting to nbdb via unix socket.
 // address is the path to the unix socket, e.g. "/var/run/ovn/ovnnb_db.sock"
 func getLocalNBClient(ctx context.Context, address string) (client.Client, error) {
-	config := dbConfig{
-		address: "unix:" + address,
-		scheme:  "unix",
-	}
-	libovsdbOvnNBClient, err := NewNBClientWithConfig(ctx, config)
+	libovsdbOvnNBClient, err := newNBClient(ctx, "unix:"+address)
 	if err != nil {
 		return nil, fmt.Errorf("error creating libovsdb client: %w ", err)
 	}
@@ -61,11 +52,7 @@ func getLocalNBClient(ctx context.Context, address string) (client.Client, error
 }
 
 func getLocalOVSDBClient(ctx context.Context) (client.Client, error) {
-	config := dbConfig{
-		address: "unix:/var/run/openvswitch/db.sock",
-		scheme:  "unix",
-	}
-	return NewOVSDBClientWithConfig(ctx, config)
+	return newOVSDBClient(ctx, "unix:/var/run/openvswitch/db.sock")
 }
 
 // NewSampleDecoderWithDefaultCollector creates a new SampleDecoder, initializes the OVSDB client and adds the default collector.
