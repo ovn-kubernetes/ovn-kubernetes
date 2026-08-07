@@ -1584,7 +1584,7 @@ spec:
 			ginkgo.By("7. Check the OVN DB to ensure no SNATs are added for the standby egressIP")
 			ovnKubernetesNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
 			dbPods, err := e2ekubectl.RunKubectl(ovnKubernetesNamespace, "get", "pods", "-l", "app=ovnkube-node", "--field-selector", fmt.Sprintf("spec.nodeName=%s", egress1Node.name), "-o=jsonpath='{.items..metadata.name}'")
-			dbContainerName := "nb-ovsdb"
+			dbContainerName := deploymentconfig.Get().NBDBContainerName()
 			if err != nil || len(dbPods) == 0 {
 				framework.Failf("Error: Check the OVN DB to ensure no SNATs are added for the standby egressIP, err: %v", err)
 			}
