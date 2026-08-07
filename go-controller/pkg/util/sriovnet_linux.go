@@ -135,19 +135,10 @@ func (defaultSriovnetOps) GetDevlinkPortFunctionMacAddress(netdev string) (net.H
 		return nil, fmt.Errorf("devlink port for netdev %s does not report function attributes", netdev)
 	}
 	// Drivers may report an unset function MAC as 00:00:00:00:00:00.
-	if len(port.Fn.HwAddr) == 0 || isZeroMAC(port.Fn.HwAddr) {
-		return nil, fmt.Errorf("devlink port function for netdev %s does not report a hardware address", netdev)
+	if !IsUsableEthernetMAC(port.Fn.HwAddr) {
+		return nil, fmt.Errorf("devlink port function for netdev %s does not report a usable hardware address", netdev)
 	}
 	return port.Fn.HwAddr, nil
-}
-
-func isZeroMAC(mac net.HardwareAddr) bool {
-	for _, b := range mac {
-		if b != 0 {
-			return false
-		}
-	}
-	return true
 }
 
 func (defaultSriovnetOps) GetRepresentorPortFlavour(netdev string) (sriovnet.PortFlavour, error) {
