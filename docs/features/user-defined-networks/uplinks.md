@@ -395,6 +395,15 @@ Common problems:
   `DefaultGatewayBridgeUnsupported`: the selected bridge is the cluster
   default shared gateway bridge, which cannot currently be reused as an
   Uplink.
+* `UplinkState` with `Resolved` condition status `False` and reason
+  `WaitingForDPUHost` (split DPU mode only): the DPU side is waiting for the
+  DPU-Host to publish complete host interface data. Check the `HostDataReady`
+  condition on the same `UplinkState` for the DPU-Host-side cause.
+* `UplinkState` with `HostDataReady` condition status `False` (split DPU mode
+  only): host interface data discovery failed on the DPU-Host; the reason
+  carries the cause, for example `HostInterfaceNotFound` when the selected
+  `hostInterfaceName` does not exist on the DPU-Host, or
+  `GatewayInfoUnavailable` when the interface has no IP addresses yet.
 * `UplinkState` with `GatewayReady` condition status `False` and reason
   `GatewayConfigurationPending`: the active CUDN set changed and complete
   gateway programming has not converged yet.
@@ -428,6 +437,12 @@ Common problems:
 * CUDN with `UplinksReady` condition status `False` and reason
   `UplinkUnsupportedTransport`: the CUDN uses EVPN transport, which is not
   supported with Uplinks.
+
+In split DPU mode each `UplinkState` condition has a single writer: the
+DPU-Host publishes the host interface data and the `HostDataReady` condition,
+while ovnkube-node on the DPU publishes `Resolved` and `GatewayReady`. Bridge
+reasons (`BridgeNotFound`, `BridgeUplinkNotFound`) therefore always describe
+OVS on the DPU, and `HostDataReady` reasons always describe the DPU-Host.
 
 ## References
 

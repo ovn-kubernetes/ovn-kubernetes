@@ -486,3 +486,25 @@ func TestContainsCIDR(t *testing.T) {
 		})
 	}
 }
+
+func TestIsUsableEthernetMAC(t *testing.T) {
+	tests := []struct {
+		name     string
+		mac      net.HardwareAddr
+		expected bool
+	}{
+		{name: "unicast Ethernet", mac: net.HardwareAddr{0x02, 0x42, 0xac, 0x12, 0x00, 0x03}, expected: true},
+		{name: "nil", mac: nil, expected: false},
+		{name: "all-zero", mac: net.HardwareAddr{0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, expected: false},
+		{name: "multicast", mac: net.HardwareAddr{0x01, 0x00, 0x5e, 0x00, 0x00, 0x01}, expected: false},
+		{name: "broadcast", mac: net.HardwareAddr{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}, expected: false},
+		{name: "EUI-64 length", mac: net.HardwareAddr{0x02, 0x42, 0xac, 0x12, 0x00, 0x03, 0x00, 0x01}, expected: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsUsableEthernetMAC(tt.mac); got != tt.expected {
+				t.Errorf("IsUsableEthernetMAC(%v) = %v, expected %v", tt.mac, got, tt.expected)
+			}
+		})
+	}
+}

@@ -297,6 +297,7 @@ if [ "$ENABLE_EVPN" = true ] && [[ "${WHAT}" != "${KV_LIVE_MIGRATION_TESTS}"* ]]
         -procs=3 \
         -v \
         --focus="${FOCUS:-.}" \
+        --fail-on-empty \
         --timeout="${TEST_TIMEOUT}m" \
         --flake-attempts="${FLAKE_ATTEMPTS:-2}" \
         --skip="${SKIPPED_TESTS}" \
@@ -312,6 +313,7 @@ else
   go test -test.timeout ${GO_TEST_TIMEOUT}m -v . \
           -ginkgo.v \
           -ginkgo.focus ${FOCUS:-.} \
+          -ginkgo.fail-on-empty \
           -ginkgo.timeout ${TEST_TIMEOUT}m \
           -ginkgo.flake-attempts ${FLAKE_ATTEMPTS:-2} \
           -ginkgo.skip="${SKIPPED_TESTS}" \

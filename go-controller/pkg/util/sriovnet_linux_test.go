@@ -269,13 +269,13 @@ func TestGetDevlinkPortFunctionMacAddress(t *testing.T) {
 		{
 			desc:   "fails when the hardware address is absent",
 			port:   &netlink.DevlinkPort{Fn: &netlink.DevlinkPortFn{}},
-			expErr: "does not report a hardware address",
+			expErr: "does not report a usable hardware address",
 		},
 		{
 			desc: "fails when the hardware address is all zeros",
 			// Drivers may report an unset function MAC as 00:00:00:00:00:00.
 			port:   &netlink.DevlinkPort{Fn: &netlink.DevlinkPortFn{HwAddr: ovntest.MustParseMAC("00:00:00:00:00:00")}},
-			expErr: "does not report a hardware address",
+			expErr: "does not report a usable hardware address",
 		},
 	}
 	for i, tc := range tests {
