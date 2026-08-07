@@ -200,3 +200,53 @@ func multipathRouteMatchesIfIndex(r netlink.Route, ifIdx int) bool {
 	}
 	return true
 }
+
+// resolveNextHopSelf returns the first global-unicast `via` next-hop on
+// iface for the given address family. Unlike getDefaultGatewayInterfaceByFamily,
+// it accepts any prefix — not just the default route — so multi-rack setups
+// whose gateway interface only carries a rack-scoped /11 route can still
+// derive a usable next-hop.
+//
+// IsGlobalUnicast filters out unspecified (0.0.0.0/::), loopback,
+// link-local (169.254/16, fe80::/10) and multicast, so OVN-K's own
+// service masquerade route 254.52.0.0/16 via 169.254.0.4 (and any
+// other infra-internal link-local nexthop) is correctly skipped even
+// when RouteList returns it before the rack gateway route.
+//
+// Returns (nil, nil) when the interface has no eligible via route in the
+// requested family; the caller decides whether that is a hard error.
+func resolveNextHopSelf(iface string, family int) (net.IP, error) {
+	link, err := util.GetNetLinkOps().LinkByName(iface)
+	if err != nil {
+		return nil, fmt.Errorf("looking up %q: %w", iface, err)
+	}
+	routes, err := util.GetNetLinkOps().RouteList(link, family)
+	if err != nil {
+		return nil, fmt.Errorf("listing routes on %q: %w", iface, err)
+	}
+	for _, r := range routes {
+		if r.Gw != nil && r.Gw.IsGlobalUnicast() {
+			return r.Gw, nil
+		}
+		for _, nh := range r.MultiPath {
+			if nh.Gw != nil && nh.Gw.IsGlobalUnicast() {
+				return nh.Gw, nil
+			}
+		}
+	}
+	return nil, nil
+}
+
+// resolveNextHopDefault returns the gateway IP of the system default route
+// (0.0.0.0/0 or ::/0) regardless of which interface it lives on. Returns
+// (nil, nil) when no default route exists in the requested family.
+func resolveNextHopDefault(family int) (net.IP, error) {
+	_, gw, err := getDefaultGatewayInterfaceByFamily(family, "")
+	if err != nil {
+		return nil, err
+	}
+	if len(gw) == 0 {
+		return nil, nil
+	}
+	return gw, nil
+}
