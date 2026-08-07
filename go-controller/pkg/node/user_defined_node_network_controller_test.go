@@ -540,8 +540,6 @@ var _ = Describe("UserDefinedNodeNetworkController: UserDefinedPrimaryNetwork Ga
 			Expect(v6MasqIPRule).To(BeTrue())
 
 			By("delete the network and ensure its associated VRF device is also deleted")
-			cnode := node.DeepCopy()
-			kubeMock.On("UpdateNodeStatus", cnode).Return(nil)
 			err = controller.Cleanup()
 			Expect(err).NotTo(HaveOccurred())
 			Eventually(func() error {
