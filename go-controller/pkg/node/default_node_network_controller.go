@@ -1195,6 +1195,10 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 		ovspinning.Run(ctx, stopCh, podResClient, nc.ovsClient)
 	}(nc.stopChan)
 
+	if config.IsModeDPUHost() && nc.cniServer != nil {
+		go nc.cniServer.RecoverPodInterfaces()
+	}
+
 	klog.Infof("Default node network controller initialized and ready.")
 	return nil
 }
