@@ -41,6 +41,10 @@ import (
 const kubeletDefaultCRIOperationTimeout = 2 * time.Minute
 const resourceNameAnnot = "k8s.v1.cni.cncf.io/resourceName"
 
+// primaryUDNIfName is the interface name given to the primary UDN attachment
+// inside the pod network namespace.
+const primaryUDNIfName = "ovn-udn1"
+
 // *** The Server is PRIVATE API between OVN components and may be
 // changed at any time.  It is in no way a supported interface or API. ***
 //
@@ -329,8 +333,11 @@ func (s *Server) handleCNIRequest(r *http.Request) (result []byte, err error) {
 	// check if this is a default network request for a pod with primary UDN
 	// and create a primary interface if so
 	if request.Command == CNIAdd {
-		// We don't do anything extra for CNIDel, because UnconfigureInterface already deletes all ports
-		// for a given pod from OVS, also some other cleanup are done in batch in cmdDel
+		// There is no primary UDN pod request for CNIDel: the default-network
+		// cmdDel tears down all of the pod's attachments. UnconfigureInterface
+		// deletes all the pod's OVS ports in batch and, in simulated DPU-host
+		// mode, also returns the primary UDN netdevice to the host namespace
+		// (see rescueSimulatedNetdevs).
 		primaryPodRequest, err := s.getPrimaryUDNPodRequest(request)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get primary UDN pod request: %v", err)
@@ -390,7 +397,7 @@ func (s *Server) getPrimaryUDNPodRequest(originalPodRequest *PodRequest) (*PodRe
 		PodUID:       originalPodRequest.PodUID,
 		SandboxID:    originalPodRequest.SandboxID,
 		Netns:        originalPodRequest.Netns,
-		IfName:       "ovn-udn1",
+		IfName:       primaryUDNIfName,
 		timestamp:    time.Now(),
 		ctx:          originalPodRequest.ctx,
 		CNIConf: &ovncnitypes.NetConf{

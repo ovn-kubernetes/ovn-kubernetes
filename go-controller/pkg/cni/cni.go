@@ -261,21 +261,29 @@ func (pr *PodRequest) cmdDel(clientset *ClientSet) (*Response, error) {
 						pr.PodName, pr.nadKey, err)
 				}
 			}
-			if dpuCD == nil {
+			// check if this cmdDel is meant for the current sandbox
+			staleSandbox := dpuCD != nil && dpuCD.SandboxId != pr.SandboxID
+			if staleSandbox {
+				klog.Infof("The cmdDel request for sandbox %s is not meant for the currently configured "+
+					"pod %s/%s on NAD key %s with sandbox %s.",
+					pr.SandboxID, namespace, podName, pr.nadKey, dpuCD.SandboxId)
+			}
+			if dpuCD == nil || staleSandbox {
 				if !util.IsSimulatedDPU() {
+					// a PCI VF returns to the initial network namespace when the
+					// pod namespace is removed, nothing to do
 					return response, nil
 				}
-				// A simulated device is a veth and is destroyed with the pod namespace unless it is moved back first.
-				netdevName = pr.CNIConf.DeviceID
+				// A simulated device is a veth and is destroyed with the pod
+				// namespace unless it is moved back first, so proceed to
+				// unconfigure this sandbox even without matching connection
+				// details. For a stale sandbox the annotation describes the
+				// replacement pod's devices, so the restore names must come
+				// from the link aliases instead.
+				if !staleSandbox {
+					netdevName = pr.CNIConf.DeviceID
+				}
 			} else {
-				// check if this cmdDel is meant for the current sandbox, if not, directly return
-				if dpuCD.SandboxId != pr.SandboxID {
-					klog.Infof("The cmdDel request for sandbox %s is not meant for the currently configured "+
-						"pod %s/%s on NAD key %s with sandbox %s. Ignoring this request.",
-						pr.SandboxID, namespace, podName, pr.nadKey, dpuCD.SandboxId)
-					return response, nil
-				}
-
 				netdevName = dpuCD.VfNetdevName
 				if pr.netName == types.DefaultNetworkName {
 					// if this is the default network name, remove the whole DPU connection-details annotation,
@@ -333,8 +341,9 @@ func (pr *PodRequest) cmdDel(clientset *ClientSet) (*Response, error) {
 	}
 
 	podInterfaceInfo := &PodInterfaceInfo{
-		IsDPUHostMode: config.IsModeDPUHost(),
-		NetdevName:    netdevName,
+		IsDPUHostMode:  config.IsModeDPUHost(),
+		IsSimulatedDPU: util.IsSimulatedDPU(),
+		NetdevName:     netdevName,
 	}
 	if !config.UnprivilegedMode {
 		err := podRequestInterfaceOps.UnconfigureInterface(pr, podInterfaceInfo)

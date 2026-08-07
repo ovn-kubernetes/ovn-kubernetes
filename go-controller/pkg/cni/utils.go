@@ -145,6 +145,7 @@ func PodAnnotation2PodInfo(podAnnotation map[string]string, podNADAnnotation *ut
 		Ingress:              ingress,
 		Egress:               egress,
 		IsDPUHostMode:        config.IsModeDPUHost(),
+		IsSimulatedDPU:       util.IsSimulatedDPU(),
 		PodUID:               podUID,
 		NetdevName:           netdevname,
 		NetName:              netName,
