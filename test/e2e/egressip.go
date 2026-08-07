@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"sort"
@@ -36,6 +37,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
@@ -400,6 +402,9 @@ type egressIPStatus struct {
 }
 
 type egressIP struct {
+	Metadata struct {
+		Name string `json:"name"`
+	} `json:"metadata"`
 	Status struct {
 		Items []egressIPStatus `json:"items"`
 	} `json:"status"`
@@ -3788,6 +3793,184 @@ spec:
 			_, err = e2ekubectl.RunKubectl("", "annotate", "--overwrite", "egressip", egressIPName, fmt.Sprintf("%s-", util.EgressIPMarkAnnotation))
 			gomega.Expect(err).To(gomega.HaveOccurred(), "Should fail if k8s.ovn.org/egressip-mark is being removed")
 			gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("The \"k8s.ovn.org/egressip-mark\" annotation cannot be modified or removed once set. This annotation is managed by the system.")))
+		})
+
+		ginkgo.It("Should skip orphaned nodes and assign EgressIPs to valid nodes", func() {
+			if isUserDefinedNetwork(netConfigParams) {
+				ginkgo.Skip("Unsupported for UDNs")
+			}
+
+			// Label two nodes for egress assignment
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable", "dummy")
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress2Node.name, "k8s.ovn.org/egress-assignable", "dummy")
+
+			podNamespace := f.Namespace
+			nodeToOrphan := egress1Node.name
+
+			ginkgo.By("Allocating EgressIP addresses before orphaning node")
+			var egressIP1, egressIP2 net.IP
+			var err error
+			if utilnet.IsIPv6String(egress1Node.nodeIP) {
+				egressIP1, err = ipalloc.NewPrimaryIPv6()
+				framework.ExpectNoError(err, "Failed to allocate IPv6 for EgressIP1")
+				egressIP2, err = ipalloc.NewPrimaryIPv6()
+				framework.ExpectNoError(err, "Failed to allocate IPv6 for EgressIP2")
+			} else {
+				egressIP1, err = ipalloc.NewPrimaryIPv4()
+				framework.ExpectNoError(err, "Failed to allocate IPv4 for EgressIP1")
+				egressIP2, err = ipalloc.NewPrimaryIPv4()
+				framework.ExpectNoError(err, "Failed to allocate IPv4 for EgressIP2")
+			}
+
+			ginkgo.By("Removing host-cidrs annotation from one node to simulate orphan")
+			node, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), nodeToOrphan, metav1.GetOptions{})
+			framework.ExpectNoError(err, "Failed to get node %s", nodeToOrphan)
+			originalHostCIDRs := node.Annotations[util.OVNNodeHostCIDRs]
+
+			// The node object is updated by ovnkube-node while the test runs, so
+			// every write here has to be retried on conflict.
+			setHostCIDRs := func(value string) error {
+				return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+					node, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), nodeToOrphan, metav1.GetOptions{})
+					if err != nil {
+						return err
+					}
+					if value == "" {
+						delete(node.Annotations, util.OVNNodeHostCIDRs)
+					} else {
+						node.Annotations[util.OVNNodeHostCIDRs] = value
+					}
+					_, err = f.ClientSet.CoreV1().Nodes().Update(context.TODO(), node, metav1.UpdateOptions{})
+					return err
+				})
+			}
+
+			framework.ExpectNoError(setHostCIDRs(""), "Failed to remove host-cidrs annotation from node %s", nodeToOrphan)
+
+			// Register node annotation restore immediately
+			defer func() {
+				framework.ExpectNoError(setHostCIDRs(originalHostCIDRs),
+					"Failed to restore host-cidrs annotation on node %s", nodeToOrphan)
+			}()
+
+			egressIPConfig1 := fmt.Sprintf(`apiVersion: k8s.ovn.org/v1
+kind: EgressIP
+metadata:
+    name: eip-test-1
+spec:
+    egressIPs:
+    - %s
+    podSelector:
+        matchLabels:
+            egress-pod: "true"
+    namespaceSelector:
+        matchLabels:
+            kubernetes.io/metadata.name: %s
+`, egressIP1.String(), podNamespace.Name)
+
+			egressIPConfig2 := fmt.Sprintf(`apiVersion: k8s.ovn.org/v1
+kind: EgressIP
+metadata:
+    name: eip-test-2
+spec:
+    egressIPs:
+    - %s
+    podSelector:
+        matchLabels:
+            egress-pod: "true"
+    namespaceSelector:
+        matchLabels:
+            kubernetes.io/metadata.name: %s
+`, egressIP2.String(), podNamespace.Name)
+
+			egressIPYaml1 := filepath.Join(f.TempDir(), "eip-test-1.yaml")
+			if err := os.WriteFile(egressIPYaml1, []byte(egressIPConfig1), 0644); err != nil {
+				framework.Failf("Unable to write EgressIP YAML to disk: %v", err)
+			}
+			defer func() {
+				if err := os.Remove(egressIPYaml1); err != nil {
+					framework.Logf("Unable to remove EgressIP YAML from disk: %v", err)
+				}
+			}()
+
+			egressIPYaml2 := filepath.Join(f.TempDir(), "eip-test-2.yaml")
+			if err := os.WriteFile(egressIPYaml2, []byte(egressIPConfig2), 0644); err != nil {
+				framework.Failf("Unable to write EgressIP YAML to disk: %v", err)
+			}
+			defer func() {
+				if err := os.Remove(egressIPYaml2); err != nil {
+					framework.Logf("Unable to remove EgressIP YAML from disk: %v", err)
+				}
+			}()
+
+			framework.Logf("Create the EgressIP configurations")
+			e2ekubectl.RunKubectlOrDie("default", "create", "-f", egressIPYaml1)
+			// Register cleanup immediately after creation
+			defer func() {
+				if _, err := e2ekubectl.RunKubectl("default", "delete", "egressip", "eip-test-1", "--ignore-not-found=true"); err != nil {
+					framework.Logf("Failed to delete EgressIP eip-test-1: %v", err)
+				}
+			}()
+
+			e2ekubectl.RunKubectlOrDie("default", "create", "-f", egressIPYaml2)
+			// Register cleanup immediately after creation
+			defer func() {
+				if _, err := e2ekubectl.RunKubectl("default", "delete", "egressip", "eip-test-2", "--ignore-not-found=true"); err != nil {
+					framework.Logf("Failed to delete EgressIP eip-test-2: %v", err)
+				}
+			}()
+
+			// Returns the node each of the two test EgressIPs is assigned to.
+			// An EgressIP that has no assignment yet is absent from the map.
+			assignedNodes := func() map[string]string {
+				egressIPStdout, err := e2ekubectl.RunKubectl("default", "get", "eip", "-o", "json")
+				if err != nil {
+					framework.Logf("Error getting EgressIPs: %v", err)
+					return nil
+				}
+				var egressIPList egressIPs
+				if err := json.Unmarshal([]byte(egressIPStdout), &egressIPList); err != nil {
+					framework.Logf("Error unmarshaling EgressIP list: %v", err)
+					return nil
+				}
+				assigned := map[string]string{}
+				for _, eip := range egressIPList.Items {
+					if eip.Metadata.Name != "eip-test-1" && eip.Metadata.Name != "eip-test-2" {
+						continue
+					}
+					if len(eip.Status.Items) > 0 {
+						assigned[eip.Metadata.Name] = eip.Status.Items[0].Node
+					}
+				}
+				return assigned
+			}
+
+			// The orphaned state cannot be held open for a fixed window:
+			// ovnkube-node's address manager restores host-cidrs on any netlink
+			// address event, not only on its sync ticker, and IPv6 links produce
+			// enough address activity that the annotation can come back within
+			// seconds. So assert as soon as both EgressIPs are assigned, and
+			// re-check the annotation on every poll: if it returns before the
+			// assignments land, the run has not exercised the orphaned state and
+			// must fail loudly rather than pass without testing anything.
+			ginkgo.By("Verifying both EgressIPs are assigned while one node is orphaned")
+			var assigned map[string]string
+			err = wait.PollImmediate(retryInterval, retryTimeout, func() (bool, error) {
+				orphanNode, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), nodeToOrphan, metav1.GetOptions{})
+				if err != nil {
+					return false, err
+				}
+				if _, ok := orphanNode.Annotations[util.OVNNodeHostCIDRs]; ok {
+					return false, fmt.Errorf("node %s regained its host-cidrs annotation before both EgressIPs were assigned, so the orphaned state was not exercised", nodeToOrphan)
+				}
+				assigned = assignedNodes()
+				framework.Logf("Current EgressIP assignments: %v", assigned)
+				return len(assigned) == 2, nil
+			})
+			framework.ExpectNoError(err, "Both EgressIPs should have been assigned while node %s was orphaned", nodeToOrphan)
+
+			gomega.Expect(assigned).NotTo(gomega.ContainElement(nodeToOrphan),
+				"EgressIPs must not be assigned to node %s while its host-cidrs annotation is missing", nodeToOrphan)
 		})
 
 		ginkgo.DescribeTable("[OVN network] multiple namespaces with different primary networks", func(otherNetworkAttachParms networkAttachmentConfigParams) {

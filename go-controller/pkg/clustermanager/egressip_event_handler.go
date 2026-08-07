@@ -57,7 +57,15 @@ func (h *egressIPClusterControllerEventHandler) AddResource(obj interface{}, _ b
 		nodeLabels := node.GetLabels()
 		_, hasEgressLabel := nodeLabels[nodeEgressLabel]
 		if hasEgressLabel {
-			h.eIPC.setNodeEgressAssignable(node.Name, true)
+			// A missing or unparseable host-cidrs annotation leaves the
+			// conflict check with no addresses for this node, so it cannot be
+			// considered for assignment.
+			_, err := util.ParseNodeHostCIDRsDropNetMask(node)
+			if err != nil {
+				klog.Warningf("Node %s has the egress-assignable label but no usable host-cidrs "+
+					"annotation, marking it not assignable: %v", node.Name, err)
+			}
+			h.eIPC.setNodeEgressAssignable(node.Name, err == nil)
 		}
 		isReady := h.eIPC.isEgressNodeReady(node)
 		if isReady {
@@ -119,7 +127,43 @@ func (h *egressIPClusterControllerEventHandler) UpdateResource(oldObj, newObj in
 		if !oldHadEgressLabel && !newHasEgressLabel {
 			return nil
 		}
-		h.eIPC.setNodeEgressAssignable(newNode.Name, newHasEgressLabel)
+		// A node is only assignable when it carries the egress-assignable label
+		// and its host-cidrs annotation is present and parseable. Without the
+		// addresses the conflict check has no data for this node, so any parse
+		// error makes it not assignable.
+		oldNodeIsAssignable := oldHadEgressLabel
+		if oldNodeIsAssignable {
+			_, err := util.ParseNodeHostCIDRsDropNetMask(oldNode)
+			oldNodeIsAssignable = err == nil
+		}
+
+		nodeIsAssignable := newHasEgressLabel
+		if nodeIsAssignable {
+			_, err := util.ParseNodeHostCIDRsDropNetMask(newNode)
+			if err != nil {
+				klog.Warningf("Node %s has the egress-assignable label but no usable host-cidrs "+
+					"annotation, marking it not assignable: %v", newNode.Name, err)
+			}
+			nodeIsAssignable = err == nil
+		}
+		h.eIPC.setNodeEgressAssignable(newNode.Name, nodeIsAssignable)
+
+		// setNodeEgressAssignable clears the node's allocation cache when it
+		// turns a node unassignable, on the understanding that the caller then
+		// clears that node's assignments too. Release them here to keep the
+		// cache and status.items in agreement. A node that is genuinely gone is
+		// released anyway by the readiness and reachability handling below, so
+		// this only fires for a labelled, reachable node whose annotation stopped
+		// parsing.
+		if oldNodeIsAssignable && !nodeIsAssignable && newHasEgressLabel {
+			klog.Infof("Node: %s is no longer assignable (host-cidrs annotation missing or invalid), "+
+				"deleting it from egress assignment", newNode.Name)
+			if err := h.eIPC.deleteEgressNode(newNode.Name); err != nil {
+				return fmt.Errorf("failed to delete egress assignments for node %s: %w", newNode.Name, err)
+			}
+			return nil
+		}
+
 		if oldHadEgressLabel && !newHasEgressLabel {
 			klog.Infof("Node: %s has been un-labeled, deleting it from egress assignment", newNode.Name)
 			return h.eIPC.deleteEgressNode(oldNode.Name)

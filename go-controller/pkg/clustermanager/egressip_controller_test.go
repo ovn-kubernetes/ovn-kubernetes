@@ -1392,6 +1392,225 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 
+		ginkgo.It("should assign EgressIP when one node is missing host-cidrs annotation", func() {
+			app.Action = func(*cli.Context) error {
+				config.IPv4Mode = true
+				config.IPv6Mode = true
+
+				egressIPv4 := "192.168.126.101"
+				egressIPv6 := "ae70::100"
+				node1IPv4 := "192.168.126.12/24"
+				node2IPv6 := "ae70::2/64"
+
+				node1 := corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: node1Name,
+						Labels: map[string]string{
+							"k8s.ovn.org/egress-assignable": "",
+						},
+						Annotations: map[string]string{
+							"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"\"}", node1IPv4),
+							"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":\"%s\"}", v4NodeSubnet),
+							util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", node1IPv4),
+						},
+					},
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
+							{
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
+							},
+						},
+					},
+				}
+				node2 := corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: node2Name,
+						Labels: map[string]string{
+							"k8s.ovn.org/egress-assignable": "",
+						},
+						Annotations: map[string]string{
+							"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"\", \"ipv6\": \"%s\"}", node2IPv6),
+							"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":\"%s\"}", v6NodeSubnet),
+							util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", node2IPv6),
+						},
+					},
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
+							{
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
+							},
+						},
+					},
+				}
+				// Simulates a node missing host-cidrs (e.g. orphaned by autoscaler, NodeStatusNeverUpdated):
+				// verifies it is skipped in the EgressIP conflict check without aborting assignment cluster-wide.
+				orphanNode := corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:        "orphan-node",
+						Annotations: map[string]string{},
+					},
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
+							{
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionUnknown,
+							},
+						},
+					},
+				}
+
+				eIP := egressipv1.EgressIP{
+					ObjectMeta: newEgressIPMeta(egressIPName),
+					Spec: egressipv1.EgressIPSpec{
+						EgressIPs: []string{egressIPv4, egressIPv6},
+					},
+					Status: egressipv1.EgressIPStatus{
+						Items: []egressipv1.EgressIPStatusItem{},
+					},
+				}
+
+				fakeClusterManagerOVN.start(
+					&egressipv1.EgressIPList{
+						Items: []egressipv1.EgressIP{eIP},
+					},
+					&corev1.NodeList{
+						Items: []corev1.Node{node1, node2, orphanNode},
+					})
+
+				_, err := fakeClusterManagerOVN.eIPC.WatchEgressNodes()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "WatchEgressNodes should start without error")
+				_, err = fakeClusterManagerOVN.eIPC.WatchEgressIP()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "WatchEgressIP should start without error")
+
+				gomega.Eventually(func() []egressipv1.EgressIPStatusItem {
+					eIP, err := fakeClusterManagerOVN.fakeClient.EgressIPClient.K8sV1().EgressIPs().Get(context.TODO(), egressIPName, metav1.GetOptions{})
+					if err != nil {
+						return nil
+					}
+					return eIP.Status.Items
+				}).WithTimeout(2*time.Second).Should(gomega.HaveLen(2), "Both EgressIPs should be assigned despite orphan node")
+
+				finalEIP, err := fakeClusterManagerOVN.fakeClient.EgressIPClient.K8sV1().EgressIPs().Get(context.TODO(), egressIPName, metav1.GetOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(finalEIP.Status.Items).To(gomega.HaveLen(2))
+
+				// Check both IPs assigned to valid nodes (order not guaranteed)
+				assignedNodes := make(map[string]string) // node -> IP
+				for _, item := range finalEIP.Status.Items {
+					assignedNodes[item.Node] = item.EgressIP
+				}
+				gomega.Expect(assignedNodes).To(gomega.HaveKey(node1Name))
+				gomega.Expect(assignedNodes).To(gomega.HaveKey(node2Name))
+				gomega.Expect(assignedNodes[node1Name]).To(gomega.Equal(egressIPv4))
+				gomega.Expect(assignedNodes[node2Name]).To(gomega.Equal(egressIPv6))
+				gomega.Expect(assignedNodes).NotTo(gomega.HaveKey("orphan-node"))
+
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("should not assign EgressIP to a node whose host-cidrs annotation cannot be parsed", func() {
+			app.Action = func(*cli.Context) error {
+				config.IPv4Mode = true
+
+				egressIP := "192.168.126.101"
+				node1IPv4 := "192.168.126.12/24"
+				node2IPv4 := "192.168.126.13/24"
+
+				node1 := corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: node1Name,
+						Labels: map[string]string{
+							"k8s.ovn.org/egress-assignable": "",
+						},
+						Annotations: map[string]string{
+							"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"\"}", node1IPv4),
+							"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":\"%s\"}", v4NodeSubnet),
+							util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", node1IPv4),
+						},
+					},
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
+							{
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
+							},
+						},
+					},
+				}
+				// A corrupt host-cidrs annotation leaves the conflict check
+				// without any addresses for this node, exactly like a missing
+				// one, so the node must not be an assignment candidate.
+				node2 := corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: node2Name,
+						Labels: map[string]string{
+							"k8s.ovn.org/egress-assignable": "",
+						},
+						Annotations: map[string]string{
+							"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"\"}", node2IPv4),
+							"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":\"%s\"}", v4NodeSubnet),
+							util.OVNNodeHostCIDRs:             "not-json",
+						},
+					},
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
+							{
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
+							},
+						},
+					},
+				}
+
+				eIP := egressipv1.EgressIP{
+					ObjectMeta: newEgressIPMeta(egressIPName),
+					Spec: egressipv1.EgressIPSpec{
+						EgressIPs: []string{egressIP},
+					},
+					Status: egressipv1.EgressIPStatus{
+						Items: []egressipv1.EgressIPStatusItem{},
+					},
+				}
+
+				fakeClusterManagerOVN.start(
+					&egressipv1.EgressIPList{
+						Items: []egressipv1.EgressIP{eIP},
+					},
+					&corev1.NodeList{
+						Items: []corev1.Node{node1, node2},
+					})
+
+				_, err := fakeClusterManagerOVN.eIPC.WatchEgressNodes()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "WatchEgressNodes should start without error")
+				_, err = fakeClusterManagerOVN.eIPC.WatchEgressIP()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "WatchEgressIP should start without error")
+
+				getStatusItems := func() []egressipv1.EgressIPStatusItem {
+					eIP, err := fakeClusterManagerOVN.fakeClient.EgressIPClient.K8sV1().EgressIPs().Get(context.TODO(), egressIPName, metav1.GetOptions{})
+					if err != nil {
+						return nil
+					}
+					return eIP.Status.Items
+				}
+
+				gomega.Eventually(getStatusItems).WithTimeout(2*time.Second).Should(gomega.HaveLen(1),
+					"EgressIP should be assigned to the node with a valid host-cidrs annotation")
+				gomega.Expect(getStatusItems()[0].Node).To(gomega.Equal(node1Name))
+				gomega.Consistently(getStatusItems).WithTimeout(500*time.Millisecond).ShouldNot(
+					gomega.ContainElement(gomega.HaveField("Node", node2Name)),
+					"node with an unparseable host-cidrs annotation must not be assigned an EgressIP")
+
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
 		ginkgo.It("should remove stale EgressIP setup when node label is removed while ovnkube-cluster-manager is not running and assign to newly labelled node", func() {
 			app.Action = func(*cli.Context) error {
 
