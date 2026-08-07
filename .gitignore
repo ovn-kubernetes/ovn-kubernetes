@@ -9,3 +9,5 @@ ovn-kubernetes-anp-test-report.yaml
 **/ginkgo.report
 
 .gocache
+
+__pycache__/
