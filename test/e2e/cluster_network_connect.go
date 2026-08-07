@@ -15,6 +15,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -2708,6 +2709,96 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			}
 		}
 	}
+
+	Context("NetworkPolicy", func() {
+		It("allows namespace-selected peers from a directly connected primary network", func() {
+			testID := rand.String(5)
+			cncName := generateCNCName()
+			serverNamespace := fmt.Sprintf("cnc-netpol-server-%s", testID)
+			clientNamespace := fmt.Sprintf("cnc-netpol-client-%s", testID)
+			serverUDN := "server-network"
+			clientUDN := "client-network"
+			peerLabelKey := "cnc-network-policy-peer"
+			cncLabelKey := "cnc-network-policy"
+			serverPodName := "server"
+			clientPodName := "client"
+
+			DeferCleanup(func() {
+				_ = cs.NetworkingV1().NetworkPolicies(serverNamespace).Delete(
+					context.Background(), "allow-connected-peer", metav1.DeleteOptions{})
+				deleteCNC(cncName)
+				_ = cs.CoreV1().Pods(serverNamespace).Delete(context.Background(), serverPodName, metav1.DeleteOptions{})
+				_ = cs.CoreV1().Pods(clientNamespace).Delete(context.Background(), clientPodName, metav1.DeleteOptions{})
+				deleteUDN(serverNamespace, serverUDN)
+				deleteUDN(clientNamespace, clientUDN)
+				deleteNamespace(cs, serverNamespace)
+				deleteNamespace(cs, clientNamespace)
+			})
+
+			By("creating two primary UDNs selected by the same CNC")
+			createUDNNamespaceWithName(cs, serverNamespace, map[string]string{cncLabelKey: testID})
+			createUDNNamespaceWithName(cs, clientNamespace, map[string]string{
+				cncLabelKey:  testID,
+				peerLabelKey: testID,
+			})
+			nextSubnets := newTestNetworkSubnetsAllocator()
+			v4, v6 := nextSubnets(true)
+			createLayer3PrimaryUDNWithSubnets(cs, serverNamespace, serverUDN, v4, v6)
+			v4, v6 = nextSubnets(false)
+			createLayer2PrimaryUDNWithSubnets(cs, clientNamespace, clientUDN, v4, v6)
+			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, serverNamespace, serverUDN),
+				60*time.Second, time.Second).Should(Succeed())
+			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, clientNamespace, clientUDN),
+				60*time.Second, time.Second).Should(Succeed())
+
+			runUDNPod(cs, serverNamespace, httpServerPodConfig(serverPodName, serverNamespace), nil)
+			clientPod := runUDNPod(cs, clientNamespace, httpServerPodConfig(clientPodName, clientNamespace), nil)
+			serverPodIPs := getPrimaryNetworkPodIPs(serverNamespace, serverPodName, serverUDN)
+
+			By("creating an ingress policy before the networks are connected")
+			_, err := cs.NetworkingV1().NetworkPolicies(serverNamespace).Create(context.Background(), &networkingv1.NetworkPolicy{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "allow-connected-peer",
+					Namespace: serverNamespace,
+				},
+				Spec: networkingv1.NetworkPolicySpec{
+					PodSelector: metav1.LabelSelector{},
+					PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
+					Ingress: []networkingv1.NetworkPolicyIngressRule{{
+						From: []networkingv1.NetworkPolicyPeer{{
+							NamespaceSelector: &metav1.LabelSelector{
+								MatchLabels: map[string]string{peerLabelKey: testID},
+							},
+						}},
+					}},
+				},
+			}, metav1.CreateOptions{})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("connecting the networks with PodNetwork connectivity")
+			createOrUpdateCNC(cs, cncName, nil, map[string]string{cncLabelKey: testID})
+			verifyCNCSubnetAnnotationNetworkCount(cncName, 2)
+			verifyCrossNetworkConnectivity(
+				map[string]*corev1.Pod{clientPodName: clientPod},
+				map[string][]string{serverPodName: serverPodIPs}, true)
+
+			By("removing the peer label while keeping the networks connected")
+			_, err = cs.CoreV1().Namespaces().Patch(context.Background(), clientNamespace, types.MergePatchType,
+				[]byte(fmt.Sprintf(`{"metadata":{"labels":{"%s":null}}}`, peerLabelKey)), metav1.PatchOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			verifyCrossNetworkConnectivity(
+				map[string]*corev1.Pod{clientPodName: clientPod},
+				map[string][]string{serverPodName: serverPodIPs}, false)
+
+			By("restoring the peer label")
+			_, err = cs.CoreV1().Namespaces().Patch(context.Background(), clientNamespace, types.MergePatchType,
+				[]byte(fmt.Sprintf(`{"metadata":{"labels":{"%s":"%s"}}}`, peerLabelKey, testID)), metav1.PatchOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			verifyCrossNetworkConnectivity(
+				map[string]*corev1.Pod{clientPodName: clientPod},
+				map[string][]string{serverPodName: serverPodIPs}, true)
+		})
+	})
 
 	/*
 	   This test validates end-to-end connectivity through CNC (ClusterNetworkConnect).
