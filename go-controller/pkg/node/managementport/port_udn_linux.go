@@ -349,7 +349,7 @@ func (mp *udnManagementPortNetdev) create() error {
 		return fmt.Errorf("failed to get netdev name for device %s allocated for %s network: %v", mp.deviceID, mp.GetNetworkName(), err)
 	}
 
-	link, err := util.GetNetLinkOps().LinkByName(netdevice)
+	link, err := util.LinkByNameOrAlias(netdevice)
 	if err != nil {
 		return fmt.Errorf("failed to get management port link %s for network %s: %v", netdevice, mp.GetNetworkName(), err)
 	}

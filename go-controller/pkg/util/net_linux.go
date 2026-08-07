@@ -96,6 +96,28 @@ type defaultNetLinkOps struct {
 var netLinkOps NetLinkOps = &defaultNetLinkOps{}
 
 // SetNetLinkOpMockInst method would be used by unit tests in other packages
+// LinkByNameOrAlias returns the link named name, falling back to the link
+// whose alias matches name. Callers that rename a link record its original
+// name as the alias so it can be found and renamed back later; name-based
+// resolution (e.g. simulated DPU netdevices, which have no PCI identity)
+// needs the fallback to survive such renames.
+func LinkByNameOrAlias(name string) (netlink.Link, error) {
+	link, err := GetNetLinkOps().LinkByName(name)
+	if err != nil && GetNetLinkOps().IsLinkNotFoundError(err) {
+		links, listErr := GetNetLinkOps().LinkList()
+		if listErr != nil {
+			return nil, fmt.Errorf("link %s not found and listing links failed: %v", name, listErr)
+		}
+		for _, l := range links {
+			if attrs := l.Attrs(); attrs != nil && attrs.Alias == name {
+				klog.Infof("Resolved netdevice %s by alias on link %s", name, attrs.Name)
+				return l, nil
+			}
+		}
+	}
+	return link, err
+}
+
 func SetNetLinkOpMockInst(mockInst NetLinkOps) {
 	netLinkOps = mockInst
 }

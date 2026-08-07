@@ -501,6 +501,76 @@ var _ = ginkgo.Describe("Network Segmentation Uplink DPU VF lifecycle", feature.
 				"expected simulated VF netdevice %s to be returned to the host on node %s", netdev, node.Name)
 		}
 	})
+
+	// The first ovnkube-node start renames the management port VF to the
+	// canonical management port name, so a restart must resolve the device
+	// through its link alias: with name-based resolution only (simulated
+	// devices), the restarted ovnkube crashloops and the pod never becomes
+	// Ready again. No CI lane restarts ovnkube on a DPU host otherwise, which
+	// is how that regression previously went unnoticed.
+	ginkgo.It("recovers the management port device after an ovnkube-node restart", func() {
+		schedulableNodes, err := e2enode.GetReadySchedulableNodes(context.Background(), f.ClientSet)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		nodes := filterNodesByLabel(schedulableNodes.Items, uplinkDPUHostNodeLabel)
+		gomega.Expect(nodes).NotTo(gomega.BeEmpty(), "test requires a DPU host node")
+		node := nodes[0]
+
+		// A primary UDN active on the node gives the restarted ovnkube a
+		// second management port to re-resolve besides the default network's;
+		// its netdevice was also renamed by the first instance, and a failure
+		// here takes the node controller down for all networks.
+		networkName := "updnrst" + testSuffix
+		bgpAlloc, err := allocators.AllocateBGP(f, ictx)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		namespace, err := createUplinkNamespace(f, ictx, "uplink-dpu-restart", networkName)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(createUplinkPrimaryUDN(
+			f,
+			namespace.Name,
+			networkName,
+			uplinkLayer3NetworkSpec(ipFamilySet, bgpAlloc.UDNSubnet, bgpAlloc.UDNSubnet6),
+		)).To(gomega.Succeed())
+		udnPod := createUplinkNetexecPod(f, namespace.Name, "client-"+networkName, node.Name)
+
+		ovnNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+		listOnNode := metav1.ListOptions{
+			LabelSelector: "app=ovnkube-node-dpu-host",
+			FieldSelector: "spec.nodeName=" + node.Name,
+		}
+		pods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.Background(), listOnNode)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(pods.Items).To(gomega.HaveLen(1), "expected one ovnkube-node-dpu-host pod on node %s", node.Name)
+		oldPod := pods.Items[0]
+
+		ginkgo.By(fmt.Sprintf("restarting ovnkube-node pod %s on node %s", oldPod.Name, node.Name))
+		gomega.Expect(e2epod.DeletePodWithWait(context.Background(), f.ClientSet, &oldPod)).To(gomega.Succeed())
+
+		gomega.Eventually(func() error {
+			pods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.Background(), listOnNode)
+			if err != nil {
+				return err
+			}
+			if len(pods.Items) != 1 {
+				return fmt.Errorf("expected one ovnkube-node-dpu-host pod on node %s, got %d", node.Name, len(pods.Items))
+			}
+			pod := pods.Items[0]
+			if pod.UID == oldPod.UID {
+				return fmt.Errorf("pod %s not recreated yet", pod.Name)
+			}
+			for _, condition := range pod.Status.Conditions {
+				if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
+					return nil
+				}
+			}
+			return fmt.Errorf("pod %s (restarts: %d) is not ready", pod.Name, podTotalRestarts(&pod))
+		}).WithTimeout(uplinkTimeout).WithPolling(uplinkPoll).Should(gomega.Succeed(),
+			"expected the restarted ovnkube-node pod on node %s to become ready", node.Name)
+
+		udnPod, err = f.ClientSet.CoreV1().Pods(namespace.Name).Get(context.Background(), udnPod.Name, metav1.GetOptions{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(udnPod.Status.Phase).To(gomega.Equal(corev1.PodRunning),
+			"expected the UDN pod to survive the ovnkube-node restart")
+	})
 })
 
 var _ = ginkgo.Describe("Network Segmentation Uplink route advertisements", feature.NetworkSegmentation, feature.RouteAdvertisements, func() {
@@ -2798,6 +2868,51 @@ func dpuNodeNameForHostNode(hostNodeName string) (string, error) {
 		return "", fmt.Errorf("failed to derive DPU node name from host node %q", hostNodeName)
 	}
 	return strings.Replace(hostNodeName, "-host-", "-dpu-", 1), nil
+}
+
+// createUplinkPrimaryUDN creates a namespaced primary UserDefinedNetwork with
+// the DPU resourceName annotation, so that pods in the namespace attach to it
+// through a simulated VF. The namespace teardown deletes it.
+func createUplinkPrimaryUDN(
+	f *framework.Framework,
+	namespace string,
+	name string,
+	networkSpec *udnv1.NetworkSpec,
+) error {
+	networkSpecMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(networkSpec)
+	if err != nil {
+		return fmt.Errorf("failed to convert network spec to unstructured: %w", err)
+	}
+	obj := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "k8s.ovn.org/v1",
+		"kind":       "UserDefinedNetwork",
+		"metadata": map[string]interface{}{
+			"name":      name,
+			"namespace": namespace,
+			"annotations": map[string]interface{}{
+				uplinkDPUResourceNameAnnotation: dpuUplinkResourceName(),
+			},
+		},
+		"spec": networkSpecMap,
+	}}
+	client := f.DynamicClient.Resource(udnGVR).Namespace(namespace)
+	if _, err := client.Create(context.Background(), obj, metav1.CreateOptions{}); err != nil {
+		return fmt.Errorf("failed to create UserDefinedNetwork %s/%s: %w", namespace, name, err)
+	}
+	gomega.Eventually(networkReadyFunc(client, name)).
+		WithTimeout(uplinkTimeout).
+		WithPolling(uplinkPoll).
+		Should(gomega.Succeed(), "expected UserDefinedNetwork %s/%s to become ready", namespace, name)
+	return nil
+}
+
+// podTotalRestarts sums the container restart counts of a pod.
+func podTotalRestarts(pod *corev1.Pod) int {
+	restarts := 0
+	for _, containerStatus := range pod.Status.ContainerStatuses {
+		restarts += int(containerStatus.RestartCount)
+	}
+	return restarts
 }
 
 func isDPUUplinkE2E() bool {

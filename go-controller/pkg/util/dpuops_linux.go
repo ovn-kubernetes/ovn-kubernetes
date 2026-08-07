@@ -389,25 +389,15 @@ func (s *SimulatedDPUOps) generateMACForHostToDpu(nodeName, role string, index i
 	return fmt.Sprintf("%s:%02x:%02x:%02x", dpusim.MacOUI, h[0], h[1], index&0xff)
 }
 
-// getDPURepresentor builds rep<pfId>-<funcId> and verifies the link exists.
+// getDPURepresentor builds rep<pfId>-<funcId> and verifies the link exists,
+// resolving it through its alias when it has been renamed.
 func (s *SimulatedDPUOps) getDPURepresentor(pfId, funcId string) (string, error) {
 	rep := fmt.Sprintf(dpusim.DPURepresentorFmt, pfId, funcId)
-	if _, err := GetNetLinkOps().LinkByName(rep); err == nil {
-		return rep, nil
-	}
-
-	links, err := GetNetLinkOps().LinkList()
+	link, err := LinkByNameOrAlias(rep)
 	if err != nil {
-		return "", fmt.Errorf("simulated representor %s not found and link list failed: %v", rep, err)
+		return "", fmt.Errorf("failed to resolve simulated representor %s by link name or alias: %w", rep, err)
 	}
-	for _, link := range links {
-		attrs := link.Attrs()
-		if attrs != nil && attrs.Alias == rep {
-			klog.Infof("Resolved simulated representor %s by alias on netdev %s", rep, attrs.Name)
-			return attrs.Name, nil
-		}
-	}
-	return "", fmt.Errorf("simulated representor %s not found: link name or alias not present", rep)
+	return link.Attrs().Name, nil
 }
 
 func (s *SimulatedDPUOps) GetDPUHostRepInterface(ovsClient libovsdbclient.Client, bridgeName string) (string, error) {
