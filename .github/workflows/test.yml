@@ -89,6 +89,25 @@ jobs:
         cd go-controller
         make verify-codegen
 
+  verify-mocksgen:
+    name: Verify mocksgen
+    runs-on: ubuntu-24.04
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v6
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: 'go-controller/go.mod'
+        cache: false
+      id: go
+
+    - name: Verify generated mocks are up to date
+      run: |
+        cd go-controller
+        make verify-mocksgen
+
   build-base:
     name: Build-base
     runs-on: ubuntu-24.04

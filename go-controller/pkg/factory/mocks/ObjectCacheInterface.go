@@ -9,7 +9,6 @@ import (
 	discoveryv1 "k8s.io/api/discovery/v1"
 
 	mock "github.com/stretchr/testify/mock"
-
 	v1 "k8s.io/api/core/v1"
 )
 

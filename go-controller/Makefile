@@ -76,11 +76,15 @@ codegen:
 
 .PHONY: verify-codegen
 verify-codegen:
-	@GOPATH=${GOPATH} ./hack/verify-codegen.sh || { echo "codegen verification failed! Run 'make codegen mocksgen' and commit the result"; exit 1; }
+	@GOPATH=${GOPATH} ./hack/verify-codegen.sh || { echo "codegen verification failed! Run 'make codegen' and commit the result"; exit 1; }
 
 .PHONY: mocksgen
 mocksgen: ${MOCKERY}
 	${MOCKERY}
+
+.PHONY: verify-mocksgen
+verify-mocksgen:
+	@GOPATH=${GOPATH} ./hack/verify-mocksgen.sh || { echo "mocksgen verification failed! Run 'make mocksgen' and commit the result"; exit 1; }
 
 install:
 	install -D -m 755 ${OUT_DIR}/go/bin/ovnkube ${BINDIR}/

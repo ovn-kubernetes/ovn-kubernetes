@@ -9,7 +9,6 @@ import (
 	http "net/http"
 
 	healthcheck "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube/healthcheck"
-
 	mock "github.com/stretchr/testify/mock"
 )
 
