@@ -1175,3 +1175,48 @@ func TestRemoveOpenvSwitchExternalIDs(t *testing.T) {
 		})
 	}
 }
+
+func TestRemoveOVSPortOtherConfig(t *testing.T) {
+	ifaceUUID := buildNamedUUID()
+	portUUID := buildNamedUUID()
+	bridgeUUID := buildNamedUUID()
+
+	iface := &vswitchd.Interface{UUID: ifaceUUID, Name: "veth0"}
+	port := &vswitchd.Port{UUID: portUUID, Name: "veth0", Interfaces: []string{ifaceUUID},
+		OtherConfig: map[string]string{"transient": "true", "unmanaged": "keep"}}
+	bridge := &vswitchd.Bridge{UUID: bridgeUUID, Name: "br-int", Ports: []string{portUUID}}
+	ovs := &vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{bridgeUUID}}
+
+	ovsClient, cleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
+		OVSData: []libovsdbtest.TestData{ovs, bridge, port, iface},
+	})
+	if err != nil {
+		t.Fatalf("harness setup: %v", err)
+	}
+	t.Cleanup(cleanup.Cleanup)
+
+	if err := RemoveOVSPortOtherConfig(ovsClient, "veth0", "transient"); err != nil {
+		t.Fatalf("RemoveOVSPortOtherConfig: %v", err)
+	}
+	got, err := GetOVSPort(ovsClient, "veth0")
+	if err != nil {
+		t.Fatalf("GetOVSPort: %v", err)
+	}
+	if _, ok := got.OtherConfig["transient"]; ok {
+		t.Errorf("Port.OtherConfig[transient] still present: %v", got.OtherConfig)
+	}
+	if got.OtherConfig["unmanaged"] != "keep" {
+		t.Errorf("Port.OtherConfig[unmanaged] = %q, want keep", got.OtherConfig["unmanaged"])
+	}
+
+	// missing key and missing port are no-ops
+	if err := RemoveOVSPortOtherConfig(ovsClient, "veth0", "transient"); err != nil {
+		t.Errorf("second remove: %v", err)
+	}
+	if err := RemoveOVSPortOtherConfig(ovsClient, "no-such-port", "transient"); err != nil {
+		t.Errorf("missing port: %v", err)
+	}
+	if err := RemoveOVSPortOtherConfig(ovsClient, "veth0"); err != nil {
+		t.Errorf("no keys: %v", err)
+	}
+}
