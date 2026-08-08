@@ -74,6 +74,7 @@ var _ = Describe("cni_dpu tests", func() {
 				PfId:      "0",
 				VfId:      "2",
 				SandboxId: pr.SandboxID,
+				NetnsPath: pr.Netns,
 			}
 			podLister.On("Pods", pr.PodNamespace).Return(&podNamespaceLister)
 			podNamespaceLister.On("Get", pr.PodName).Return(pod, nil)
@@ -128,6 +129,7 @@ var _ = Describe("cni_dpu tests", func() {
 				PfId:      "0",
 				VfId:      "2",
 				SandboxId: pr.SandboxID,
+				NetnsPath: pr.Netns,
 			}
 			podLister.On("Pods", pr.PodNamespace).Return(&podNamespaceLister)
 			podNamespaceLister.On("Get", pr.PodName).Return(pod, nil)
