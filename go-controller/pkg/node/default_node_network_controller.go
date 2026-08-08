@@ -875,11 +875,18 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 		if nc.dpuNodeLeaseManager != nil {
 			dpuHealth = nc.dpuNodeLeaseManager
 		}
-		cniServer, err = cni.NewCNIServer(nc.watchFactory, kclient.KClient, nc.networkManager, nc.ovsClient, dpuHealth)
+		cniServer, err = cni.NewCNIServer(nc.watchFactory, kclient.KClient, nc.networkManager, nc.ovsClient, dpuHealth, nc.name)
 		if err != nil {
 			return err
 		}
 		nc.cniServer = cniServer
+
+		if nc.dpuNodeLeaseManager != nil && config.IsModeDPUHost() {
+			klog.Infof("DPU recovery: registering pod interface recovery handler on DPU lease manager")
+			nc.dpuNodeLeaseManager.SetRecoveryHandler(func() {
+				cniServer.RecoverPodInterfaces(nc.stopChan)
+			})
+		}
 	}
 
 	nodeAnnotator := kube.NewNodeAnnotator(nc.Kube, node.Name)
@@ -1189,6 +1196,10 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 		}()
 		ovspinning.Run(ctx, stopCh, podResClient, nc.ovsClient)
 	}(nc.stopChan)
+
+	if config.IsModeDPUHost() && nc.cniServer != nil {
+		go nc.cniServer.RecoverPodInterfaces(nc.stopChan)
+	}
 
 	klog.Infof("Default node network controller initialized and ready.")
 	return nil

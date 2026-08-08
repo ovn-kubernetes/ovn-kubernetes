@@ -36,9 +36,10 @@ type Manager struct {
 	renewInterval time.Duration
 	leaseDuration time.Duration
 
-	statusMu sync.RWMutex
-	ready    bool
-	reason   string
+	statusMu        sync.RWMutex
+	ready           bool
+	reason          string
+	recoveryHandler func()
 }
 
 // NewManager builds a new Manager.
@@ -62,6 +63,15 @@ func (m *Manager) Ready() (bool, string) {
 	m.statusMu.RLock()
 	defer m.statusMu.RUnlock()
 	return m.ready, m.reason
+}
+
+// SetRecoveryHandler registers a function to be called when the DPU
+// transitions from unhealthy to healthy. This allows consumers (e.g. the CNI
+// server) to trigger pod network recovery after a DPU outage.
+func (m *Manager) SetRecoveryHandler(fn func()) {
+	m.statusMu.Lock()
+	defer m.statusMu.Unlock()
+	m.recoveryHandler = fn
 }
 
 // EnsureLease creates or updates the DPU lease.
@@ -201,16 +211,22 @@ func (m *Manager) monitorPeriod() time.Duration {
 
 func (m *Manager) setStatus(reason string, ready bool) {
 	m.statusMu.Lock()
-	defer m.statusMu.Unlock()
 
 	prevReady := m.ready
 	prevReason := m.reason
+	var handler func()
 	if prevReady != ready || prevReason != reason {
 		if ready && !prevReady && prevReason != "" {
 			klog.V(4).Infof("DPU lease %s marked healthy", m.leaseName())
+			handler = m.recoveryHandler
 		}
 		m.ready = ready
 		m.reason = reason
+	}
+	m.statusMu.Unlock()
+
+	if handler != nil {
+		go handler()
 	}
 }
 

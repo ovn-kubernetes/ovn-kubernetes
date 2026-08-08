@@ -73,6 +73,7 @@ func NewCNIServer(
 	networkManager networkmanager.Interface,
 	ovsClient client.Client,
 	dpuHealth DPUStatusProvider,
+	nodeName string,
 ) (*Server, error) {
 	var nadLister nadv1Listers.NetworkAttachmentDefinitionLister
 
@@ -106,6 +107,7 @@ func NewCNIServer(
 		networkManager: networkManager,
 		ovsClient:      ovsClient,
 		dpuHealth:      dpuHealth,
+		nodeName:       nodeName,
 	}
 
 	if len(config.Kubernetes.CAData) > 0 {

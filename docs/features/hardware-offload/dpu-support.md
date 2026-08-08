@@ -78,3 +78,19 @@ Two ovnkube-node options control this behavior:
 
 If the lease expires, the DPU host CNI server fails `ADD` requests immediately with `DPU Not Ready` and the `STATUS` command returns a CNI error with code `50` (The plugin is not available).
 This causes the container runtime to report `NetworkReady=false`, preventing new workloads from landing on the affected host until the DPU becomes healthy again.
+
+### Pod interface recovery
+
+When a DPU reboots, SR-IOV VFs disappear from the host. After the DPU is healthy again,
+ovnkube-node on the DPU host restores **default-network `eth0`** by moving the VF back into
+the pod network namespace and reconciling MAC, MTU, link state, addresses, and routes.
+Recovery is retried for five minutes at a 30s interval, then continues at a longer interval
+until the process exits or every recoverable pod succeeds.
+
+Limitations:
+
+- Pods created before this support do not store `netnsPath` in the DPU connection-details
+  annotation and cannot be recovered in place. Recreate those pods.
+- Secondary-network and User Defined Network interfaces are not recovered
+  ([#6823](https://github.com/ovn-kubernetes/ovn-kubernetes/issues/6823)).
+- VFIO, DPDK, bonding, and other cases where the application owns the netdev are not recovered.
