@@ -7,20 +7,33 @@
 package cni
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
+	"sync"
+	"time"
 
 	"github.com/containernetworking/plugins/pkg/ns"
 	"github.com/vishvananda/netlink"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+)
+
+// dpuRecoveryMu serializes recovery scans to prevent concurrent scans
+// from racing to move/configure the same VF (e.g., lease flap + startup).
+var dpuRecoveryMu sync.Mutex
+
+const (
+	dpuRecoveryRetryInterval = 30 * time.Second
+	dpuRecoveryTimeout       = 5 * time.Minute
 )
 
 // isInterfacePresentInNetns checks whether the given interface exists inside the
@@ -34,9 +47,13 @@ func isInterfacePresentInNetns(netnsPath, ifName string) (bool, error) {
 
 	var exists bool
 	err = netNS.Do(func(_ ns.NetNS) error {
-		_, linkErr := netlink.LinkByName(ifName)
+		_, linkErr := util.GetNetLinkOps().LinkByName(ifName)
 		if linkErr == nil {
 			exists = true
+			return nil
+		}
+		if !util.GetNetLinkOps().IsLinkNotFoundError(linkErr) {
+			return linkErr
 		}
 		return nil
 	})
@@ -49,17 +66,31 @@ func isInterfacePresentInNetns(netnsPath, ifName string) (bool, error) {
 // RecoverPodInterfaces scans all pods on this node that have DPU connection-details
 // and re-configures any pod whose interface has disappeared. This is intended to be
 // called when the DPU transitions from unhealthy to healthy.
-func (s *Server) RecoverPodInterfaces() {
+func (s *Server) RecoverPodInterfaces(stopCh <-chan struct{}) {
 	if !config.IsModeDPUHost() {
 		return
 	}
+
+	ctx := wait.ContextForChannel(stopCh)
+	err := wait.PollUntilContextTimeout(ctx, dpuRecoveryRetryInterval, dpuRecoveryTimeout, true, func(_ context.Context) (bool, error) {
+		failed := s.recoverPodInterfacesScan()
+		return failed == 0, nil
+	})
+	if err != nil && ctx.Err() == nil {
+		klog.Errorf("DPU recovery: timed out with pods still failing: %v", err)
+	}
+}
+
+func (s *Server) recoverPodInterfacesScan() int {
+	dpuRecoveryMu.Lock()
+	defer dpuRecoveryMu.Unlock()
 
 	klog.Infof("DPU recovery: starting pod interface recovery scan")
 
 	pods, err := s.clientSet.podLister.List(labels.Everything())
 	if err != nil {
 		klog.Errorf("DPU recovery: failed to list pods: %v", err)
-		return
+		return 1
 	}
 
 	var failed int
@@ -71,6 +102,7 @@ func (s *Server) RecoverPodInterfaces() {
 	}
 
 	klog.Infof("DPU recovery: scan complete (pods=%d, failed=%d)", len(pods), failed)
+	return failed
 }
 
 func (s *Server) recoverPodInterface(pod *corev1.Pod) error {
@@ -129,21 +161,21 @@ func (s *Server) recoverSriovInterface(pod *corev1.Pod, nadKey string, dcd util.
 		return fmt.Errorf("VfNetdevName is empty in DPU connection details")
 	}
 
-	// Verify the VF is available on the host
+	// Validate all required data before moving the VF — once moved, a failure
+	// leaves the VF inside the netns without configuration, and the next scan
+	// would see eth0 present and skip the pod.
+	podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, nadKey)
+	if err != nil {
+		return fmt.Errorf("failed to get pod annotation for NAD %s: %v", nadKey, err)
+	}
+
 	if _, err := netlink.LinkByName(vfNetdev); err != nil {
 		return fmt.Errorf("VF netdev %s not found on host (DPU may not be fully recovered): %v", vfNetdev, err)
 	}
 
-	// Move VF to pod netns
 	newNetdevName, err := safeMoveIfToNetns(vfNetdev, netNS, dcd.SandboxId)
 	if err != nil {
 		return fmt.Errorf("failed to move VF %s to netns: %v", vfNetdev, err)
-	}
-
-	// Inside the netns: rename to ifName, set MAC/IP/routes
-	podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, nadKey)
-	if err != nil {
-		return fmt.Errorf("failed to get pod annotation for NAD %s: %v", nadKey, err)
 	}
 
 	err = netNS.Do(func(_ ns.NetNS) error {

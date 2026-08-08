@@ -883,7 +883,9 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 
 		if nc.dpuNodeLeaseManager != nil && config.IsModeDPUHost() {
 			klog.Infof("DPU recovery: registering pod interface recovery handler on DPU lease manager")
-			nc.dpuNodeLeaseManager.SetRecoveryHandler(cniServer.RecoverPodInterfaces)
+			nc.dpuNodeLeaseManager.SetRecoveryHandler(func() {
+				cniServer.RecoverPodInterfaces(nc.stopChan)
+			})
 		}
 	}
 
@@ -1196,7 +1198,7 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 	}(nc.stopChan)
 
 	if config.IsModeDPUHost() && nc.cniServer != nil {
-		go nc.cniServer.RecoverPodInterfaces()
+		go nc.cniServer.RecoverPodInterfaces(nc.stopChan)
 	}
 
 	klog.Infof("Default node network controller initialized and ready.")
