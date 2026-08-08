@@ -38,6 +38,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/persistentips"
 	objretry "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/retry"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/tracing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -918,14 +919,21 @@ func (h *networkClusterControllerEventHandler) FilterOutResource(_ interface{}) 
 
 // AddResource adds the specified object to the cluster according to its type and
 // returns the error, if any, yielded during object creation.
-func (h *networkClusterControllerEventHandler) AddResource(obj interface{}, _ bool) error {
+func (h *networkClusterControllerEventHandler) AddResource(ctx context.Context, obj interface{}, _ bool) error {
 	switch h.objType {
 	case factory.PodType:
 		pod, ok := obj.(*corev1.Pod)
 		if !ok {
 			return fmt.Errorf("could not cast %T object to *corev1.Pod", obj)
 		}
-		err := h.ncc.podAllocator.Reconcile(nil, pod)
+		// check if the pod should be handled by the network cluster controller,
+		// if not, skip reconciliation and avoid emitting a span
+		if !h.ncc.podAllocator.ShouldReconcilePod(pod) {
+			return nil
+		}
+		ctx = tracing.ContextWithSpanNamePrefix(ctx, tracing.ClusterManagerNetworkControllerPodSpanPrefix)
+		ctx = tracing.ContextWithOperation(ctx, tracing.OperationAdd)
+		err := h.ncc.podAllocator.Reconcile(ctx, nil, pod)
 		if err != nil {
 			return err
 		}
@@ -951,7 +959,13 @@ func (h *networkClusterControllerEventHandler) UpdateResource(oldObj, newObj int
 		if !ok {
 			return fmt.Errorf("could not cast %T new object to *corev1.Pod", newObj)
 		}
-		err := h.ncc.podAllocator.Reconcile(old, new)
+		if !h.ncc.podAllocator.ShouldReconcilePod(new) {
+			return nil
+		}
+		ctx := context.Background()
+		ctx = tracing.ContextWithSpanNamePrefix(ctx, tracing.ClusterManagerNetworkControllerPodSpanPrefix)
+		ctx = tracing.ContextWithOperation(ctx, tracing.OperationUpdate)
+		err := h.ncc.podAllocator.Reconcile(ctx, old, new)
 		if err != nil {
 			return err
 		}
@@ -972,7 +986,13 @@ func (h *networkClusterControllerEventHandler) DeleteResource(obj, _ interface{}
 		if !ok {
 			return fmt.Errorf("could not cast %T object to *corev1.Pod", obj)
 		}
-		err := h.ncc.podAllocator.Reconcile(pod, nil)
+		if !h.ncc.podAllocator.ShouldReconcilePod(pod) {
+			return nil
+		}
+		ctx := context.Background()
+		ctx = tracing.ContextWithSpanNamePrefix(ctx, tracing.ClusterManagerNetworkControllerPodSpanPrefix)
+		ctx = tracing.ContextWithOperation(ctx, tracing.OperationDelete)
+		err := h.ncc.podAllocator.Reconcile(ctx, pod, nil)
 		if err != nil {
 			return err
 		}

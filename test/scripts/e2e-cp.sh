@@ -121,6 +121,11 @@ if [ "$OVN_NETWORK_QOS_ENABLE" != "true" ]; then
   skip "e2e NetworkQoS validation"
 fi
 
+TRACING_TESTS="Tracing"
+if [ "$ENABLE_TRACING" != "true" ] || [[ "${WHAT}" != "${TRACING_TESTS}"* ]]; then
+  skip_label "Feature:Tracing"
+fi
+
 # Only run Node IP/MAC address migration tests if they are explicitly requested
 IP_MIGRATION_TESTS="Node IP and MAC address migration"
 if [[ "${WHAT}" != "${IP_MIGRATION_TESTS}"* ]]; then

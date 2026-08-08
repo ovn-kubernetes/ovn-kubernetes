@@ -18,6 +18,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/exp/maps"
 
 	corev1 "k8s.io/api/core/v1"
@@ -28,6 +29,7 @@ import (
 
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/tracing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
@@ -2431,4 +2433,14 @@ func GetNetworkScopedSwitchToRouterPortNameFromSwitchName(switchName string) str
 		return types.SwitchToTransitRouterPrefix + switchName
 	}
 	return types.SwitchToRouterPrefix + switchName
+}
+
+// OvnNetworkSpanAttrs returns ovn.network.* span attributes derived from netInfo.
+func OvnNetworkSpanAttrs(netInfo NetInfo) []attribute.KeyValue {
+	return []attribute.KeyValue{
+		attribute.String(tracing.SpanAttrOvnNetworkName, netInfo.GetNetworkName()),
+		attribute.String(tracing.SpanAttrOvnNetworkTopology, netInfo.TopologyType()),
+		attribute.Bool(tracing.SpanAttrOvnNetworkPrimary, netInfo.IsPrimaryNetwork()),
+		attribute.Bool(tracing.SpanAttrOvnNetworkUserDefined, netInfo.IsUserDefinedNetwork()),
+	}
 }

@@ -4,6 +4,7 @@
 package retry
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"reflect"
@@ -19,6 +20,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/syncmap"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/tracing"
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
@@ -50,7 +52,7 @@ type retryObjEntry struct {
 }
 
 type EventHandler interface {
-	AddResource(obj interface{}, fromRetryLoop bool) error
+	AddResource(ctx context.Context, obj interface{}, fromRetryLoop bool) error
 	UpdateResource(oldObj, newObj interface{}, inRetryCache bool) error
 	DeleteResource(obj, cachedObj interface{}) error
 	SyncFunc([]interface{}) error
@@ -428,7 +430,7 @@ func (r *RetryFramework) resourceRetry(objKey string, now time.Time) {
 					// unscheduled resources (pods) will be retried again later we do not track these as failures, and should not retry.
 					// we should avoid queuing objects to the retry handler that are not scheduled. Thus treat this as an error.
 					klog.Errorf("%s: %v retry: cannot create object that is not scheduled %s", r.name, r.ResourceHandler.ObjType, objKey)
-				} else if err := r.ResourceHandler.AddResource(entry.newObj, true); err != nil {
+				} else if err := r.ResourceHandler.AddResource(context.Background(), entry.newObj, true); err != nil {
 					entry.timeStamp = time.Now()
 					r.increaseFailedAttemptsCounter(entry)
 					if entry.failedAttempts >= MaxFailedAttempts && !entry.infiniteRetry {
@@ -559,8 +561,8 @@ func (r *RetryFramework) WatchResourceFiltered(namespaceForFilteredHandler strin
 	handler, err := addHandlerFunc(
 		namespaceForFilteredHandler,     // filter out objects not in this namespace
 		labelSelectorForFilteredHandler, // filter out objects not matching these labels
-		cache.ResourceEventHandlerFuncs{
-			AddFunc: func(obj interface{}) {
+		cache.ResourceEventHandlerDetailedFuncs{
+			AddFunc: func(obj interface{}, isInInitialList bool) {
 				if r.ResourceHandler.FilterOutResource(obj) {
 					return
 				}
@@ -600,7 +602,11 @@ func (r *RetryFramework) WatchResourceFiltered(namespaceForFilteredHandler strin
 						r.removeDeleteFromRetryObj(retryObj)
 					}
 					start := time.Now()
-					if err := r.ResourceHandler.AddResource(obj, false); err != nil {
+					ctx := context.Background()
+					if isInInitialList {
+						ctx = tracing.ContextWithSpansDisabled(ctx)
+					}
+					if err := r.ResourceHandler.AddResource(ctx, obj, false); err != nil {
 						if !ovntypes.IsSuppressedError(err) {
 							klog.Errorf("%s: failed to create %s %s, error: %v", r.name, r.ResourceHandler.ObjType, key, err)
 							r.ResourceHandler.RecordErrorEvent(obj, "ErrorAddingResource", err)
@@ -757,7 +763,7 @@ func (r *RetryFramework) WatchResourceFiltered(namespaceForFilteredHandler strin
 							return
 						}
 					} else { // we previously deleted old object, now let's add the new one
-						if err := r.ResourceHandler.AddResource(latest, false); err != nil {
+						if err := r.ResourceHandler.AddResource(context.Background(), latest, false); err != nil {
 							retryEntry := r.initRetryObjWithAdd(latest, key)
 							r.increaseFailedAttemptsCounter(retryEntry)
 							if !ovntypes.IsSuppressedError(err) {
