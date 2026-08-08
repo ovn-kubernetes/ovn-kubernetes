@@ -26,7 +26,6 @@ import (
 	crdtypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
@@ -249,18 +248,12 @@ func tableEntrySetup() {
 	node1 := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "node1",
-			Annotations: map[string]string{
-				"k8s.ovn.org/zone-name": "node1",
-			},
 		},
 	}
 
 	node2 := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "node2",
-			Annotations: map[string]string{
-				"k8s.ovn.org/zone-name": "node2",
-			},
 		},
 	}
 
@@ -1163,7 +1156,6 @@ func eventuallySwitchHasNoQoS(switchName string, qos *nbdb.QoS) {
 }
 
 func initEnv(clientset *util.OVNClientset, initialDB *libovsdbtest.TestSetup) {
-	var nbZoneFailed bool
 	var err error
 	stopChan = make(chan struct{})
 
@@ -1181,17 +1173,6 @@ func initEnv(clientset *util.OVNClientset, initialDB *libovsdbtest.TestSetup) {
 	nbClient, nbsbCleanup, err = libovsdbtest.NewNBTestHarness(*initialDB, nil)
 	Expect(err).NotTo(HaveOccurred())
 
-	_, err = libovsdbutil.GetNBZone(nbClient)
-	if err != nil {
-		nbZoneFailed = true
-		err = createTestNBGlobal(nbClient, "global")
-		Expect(err).NotTo(HaveOccurred())
-	}
-
-	if nbZoneFailed {
-		err = deleteTestNBGlobal(nbClient)
-		Expect(err).NotTo(HaveOccurred())
-	}
 	defaultAddrsetFactory = addressset.NewFakeAddressSetFactory(defaultControllerName)
 	streamAddrsetFactory = addressset.NewFakeAddressSetFactory("stream-network-controller")
 }
@@ -1219,13 +1200,10 @@ func initNetworkQoSController(netInfo util.NetInfo, nadKeys []string, addrsetFac
 		watchFactory.NetworkQoSInformer(),
 		watchFactory.NamespaceCoreInformer(),
 		watchFactory.PodCoreInformer(),
-		watchFactory.NodeCoreInformer(),
 		watchFactory.NADInformer(),
 		networkMgr,
 		addrsetFactory,
-		func(pod *corev1.Pod) bool {
-			return pod.Spec.NodeName == "node1"
-		}, "node1")
+		"node1")
 	Expect(err).NotTo(HaveOccurred())
 	err = watchFactory.Start()
 	Expect(err).NotTo(HaveOccurred())
@@ -1246,35 +1224,4 @@ func shutdownController() {
 		close(stopChan)
 		stopChan = nil
 	}
-}
-
-func createTestNBGlobal(nbClient libovsdbclient.Client, zone string) error {
-	nbGlobal := &nbdb.NBGlobal{Name: zone}
-	ops, err := nbClient.Create(nbGlobal)
-	if err != nil {
-		return err
-	}
-
-	_, err = nbClient.Transact(context.Background(), ops...)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func deleteTestNBGlobal(nbClient libovsdbclient.Client) error {
-	p := func(_ *nbdb.NBGlobal) bool {
-		return true
-	}
-	ops, err := nbClient.WhereCache(p).Delete()
-	if err != nil {
-		return err
-	}
-	_, err = nbClient.Transact(context.Background(), ops...)
-	if err != nil {
-		return err
-	}
-
-	return nil
 }

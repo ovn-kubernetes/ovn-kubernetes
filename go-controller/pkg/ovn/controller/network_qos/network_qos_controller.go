@@ -62,16 +62,8 @@ type Controller struct {
 	eventRecorder record.EventRecorder
 	// An address set factory that creates address sets
 	addressSetFactory addressset.AddressSetFactory
-	// pass in the isPodScheduledinLocalZone util from bnc - used only to determine
-	// what zones the pods are in.
-	// isPodScheduledinLocalZone returns whether the provided pod is in a zone local to the zone controller
-	// So if pod is not scheduled yet it is considered remote. Also if we can't fetch node from kapi and determing the zone,
-	// we consider it remote - this is ok for this controller as this variable is only used to
-	// determine if we need to add pod's port to port group or not - future updates should
-	// take care of reconciling the state of the cluster
-	isPodScheduledinLocalZone func(*corev1.Pod) bool
-	// store's the name of the zone that this controller belongs to
-	zone string
+	// nodeName identifies the node whose pod ports this controller manages.
+	nodeName string
 
 	// namespace+name -> cloned value of NetworkQoS
 	nqosCache *syncmap.SyncMap[*networkQoSState]
@@ -89,11 +81,6 @@ type Controller struct {
 	nqosPodLister corev1listers.PodLister
 	nqosPodSynced cache.InformerSynced
 	nqosPodQueue  workqueue.TypedRateLimitingInterface[*eventData[*corev1.Pod]]
-	// node queue, cache, lister
-	nqosNodeLister corev1listers.NodeLister
-	nqosNodeSynced cache.InformerSynced
-	nqosNodeQueue  workqueue.TypedRateLimitingInterface[string]
-
 	// nad lister, only valid for default network controller when multi-network is enabled
 	nadLister nadlisterv1.NetworkAttachmentDefinitionLister
 	nadSynced cache.InformerSynced
@@ -139,27 +126,24 @@ func NewController(
 	nqosInformer networkqosinformer.NetworkQoSInformer,
 	namespaceInformer corev1informers.NamespaceInformer,
 	podInformer corev1informers.PodInformer,
-	nodeInformer corev1informers.NodeInformer,
 	nadInformer nadinformerv1.NetworkAttachmentDefinitionInformer,
 	networkManager networkmanager.Interface,
 	addressSetFactory addressset.AddressSetFactory,
-	isPodScheduledinLocalZone func(*corev1.Pod) bool,
-	zone string) (*Controller, error) {
+	nodeName string) (*Controller, error) {
 
 	if netInfo.IsUserDefinedNetwork() && networkManager == nil {
 		return nil, fmt.Errorf("network manager is required for network %q", netInfo.GetNetworkName())
 	}
 
 	c := &Controller{
-		controllerName:            controllerName,
-		NetInfo:                   netInfo,
-		networkManager:            networkManager,
-		nbClient:                  nbClient,
-		nqosClientSet:             nqosClient,
-		addressSetFactory:         addressSetFactory,
-		isPodScheduledinLocalZone: isPodScheduledinLocalZone,
-		zone:                      zone,
-		nqosCache:                 syncmap.NewSyncMap[*networkQoSState](),
+		controllerName:    controllerName,
+		NetInfo:           netInfo,
+		networkManager:    networkManager,
+		nbClient:          nbClient,
+		nqosClientSet:     nqosClient,
+		addressSetFactory: addressSetFactory,
+		nodeName:          nodeName,
+		nqosCache:         syncmap.NewSyncMap[*networkQoSState](),
 	}
 
 	klog.V(5).Infof("Setting up event handlers for Network QoS controller %s", controllerName)
@@ -212,19 +196,6 @@ func NewController(
 	}
 
 	klog.V(5).Info("Setting up event handlers for Nodes in Network QoS controller")
-	c.nqosNodeLister = nodeInformer.Lister()
-	c.nqosNodeSynced = nodeInformer.Informer().HasSynced
-	c.nqosNodeQueue = workqueue.NewTypedRateLimitingQueueWithConfig(
-		controllerutil.DefaultRateLimiter[string](),
-		workqueue.TypedRateLimitingQueueConfig[string]{Name: "nqosNodes"},
-	)
-	_, err = nodeInformer.Informer().AddEventHandler(factory.WithUpdateHandlingForObjReplace(cache.ResourceEventHandlerFuncs{
-		UpdateFunc: c.onNQOSNodeUpdate,
-	}))
-	if err != nil {
-		return nil, fmt.Errorf("could not add Event Handler for node Informer during network qos controller initialization, %w", err)
-	}
-
 	if nadInformer != nil {
 		c.nadLister = nadInformer.Lister()
 		c.nadSynced = nadInformer.Informer().HasSynced
@@ -242,9 +213,9 @@ func (c *Controller) Run(threadiness int, stopCh <-chan struct{}) {
 	klog.Infof("Starting controller %s", c.controllerName)
 
 	// Wait for the caches to be synced
-	klog.V(5).Info("Waiting for informer caches (networkqos,namespace,pod,node) to sync")
-	if !util.WaitForInformerCacheSyncWithTimeout(c.controllerName, stopCh, c.nqosCacheSynced, c.nqosNamespaceSynced, c.nqosPodSynced, c.nqosNodeSynced) {
-		utilruntime.HandleError(fmt.Errorf("timed out waiting for informer caches (networkqos,namespace,pod,node) to sync"))
+	klog.V(5).Info("Waiting for informer caches (networkqos,namespace,pod) to sync")
+	if !util.WaitForInformerCacheSyncWithTimeout(c.controllerName, stopCh, c.nqosCacheSynced, c.nqosNamespaceSynced, c.nqosPodSynced) {
+		utilruntime.HandleError(fmt.Errorf("timed out waiting for informer caches (networkqos,namespace,pod) to sync"))
 		return
 	}
 	if c.nadSynced != nil {
@@ -297,24 +268,12 @@ func (c *Controller) Run(threadiness int, stopCh <-chan struct{}) {
 		}()
 	}
 
-	klog.V(5).Info("Starting Node Network QoS workers")
-	for i := 0; i < threadiness; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			wait.Until(func() {
-				c.runNQOSNodeWorker(wg)
-			}, time.Second, stopCh)
-		}()
-	}
-
 	<-stopCh
 
 	klog.Infof("Shutting down controller %s", c.controllerName)
 	c.nqosQueue.ShutDown()
 	c.nqosNamespaceQueue.ShutDown()
 	c.nqosPodQueue.ShutDown()
-	c.nqosNodeQueue.ShutDown()
 	c.teardownMetricsCollector()
 	wg.Wait()
 }
@@ -335,11 +294,6 @@ func (c *Controller) runNQOSNamespaceWorker(wg *sync.WaitGroup) {
 
 func (c *Controller) runNQOSPodWorker(wg *sync.WaitGroup) {
 	for c.processNextNQOSPodWorkItem(wg) {
-	}
-}
-
-func (c *Controller) runNQOSNodeWorker(wg *sync.WaitGroup) {
-	for c.processNextNQOSNodeWorkItem(wg) {
 	}
 }
 
@@ -537,37 +491,5 @@ func (c *Controller) onNQOSPodDelete(obj interface{}) {
 	}
 	if pod != nil {
 		c.nqosPodQueue.Add(newEventData(pod, nil))
-	}
-}
-
-// onNQOSNodeUpdate queues the node for processing.
-func (c *Controller) onNQOSNodeUpdate(oldObj, newObj interface{}) {
-	oldNode, ok := oldObj.(*corev1.Node)
-	if !ok {
-		utilruntime.HandleError(fmt.Errorf("expecting Node but received %T", oldObj))
-		return
-	}
-	newNode, ok := newObj.(*corev1.Node)
-	if !ok {
-		utilruntime.HandleError(fmt.Errorf("expecting Node but received %T", newObj))
-		return
-	}
-	// don't process resync or objects that are marked for deletion
-	if oldNode.ResourceVersion == newNode.ResourceVersion ||
-		!newNode.GetDeletionTimestamp().IsZero() {
-		return
-	}
-	// node not in local zone, no need to process
-	if !c.isNodeInLocalZone(oldNode) && !c.isNodeInLocalZone(newNode) {
-		return
-	}
-	// only care about node's zone name changes
-	if !util.NodeZoneAnnotationChanged(oldNode, newNode) {
-		return
-	}
-	klog.V(4).Infof("Node %s zone changed from %s to %s", newNode.Name, oldNode.Annotations[util.OvnNodeZoneName], newNode.Annotations[util.OvnNodeZoneName])
-	key, err := cache.MetaNamespaceKeyFunc(newObj)
-	if err == nil {
-		c.nqosNodeQueue.Add(key)
 	}
 }

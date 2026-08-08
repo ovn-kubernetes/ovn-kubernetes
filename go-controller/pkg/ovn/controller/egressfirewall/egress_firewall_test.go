@@ -100,7 +100,7 @@ var _ = ginkgo.Describe("OVN test basic functions", func() {
 		nbClient, _, nbsbCleanup, err = libovsdbtest.NewNBSBTestHarness(initialDB)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		networkManager := &fakenetworkmanager.FakeNetworkManager{}
-		efController, err = NewEFController("test", "global", kubeInterface, nbClient, iFactory.NamespaceInformer().Lister(),
+		efController, err = NewEFController("test", "node1", kubeInterface, nbClient, iFactory.NamespaceInformer().Lister(),
 			iFactory.NodeCoreInformer(), iFactory.EgressFirewallInformer(), networkManager, nil, nil)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		err = iFactory.Start()

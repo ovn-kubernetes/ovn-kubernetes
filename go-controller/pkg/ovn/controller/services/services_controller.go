@@ -39,7 +39,6 @@ import (
 	globalconfig "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics/recorders"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -144,6 +143,7 @@ func NewController(client clientset.Interface,
 	networkManager networkmanager.Interface,
 	recorder record.EventRecorder,
 	netInfo util.NetInfo,
+	nodeName string,
 ) (*Controller, error) {
 	klog.V(4).Infof("Creating services controller for network=%s", netInfo.GetNetworkName())
 	state := newNetworkState(netInfo, newRepair(serviceInformer.Lister(), nbClient), NetworkOptions{})
@@ -166,13 +166,9 @@ func NewController(client clientset.Interface,
 		nodesSynced:   nodeInformer.Informer().HasSynced,
 		state:         state,
 		networkStates: syncmap.NewSyncMap[*networkState](),
+		nodeName:      nodeName,
 	}
 	c.networkStates.Store(netInfo.GetNetworkName(), state)
-	zone, err := libovsdbutil.GetNBZone(c.nbClient)
-	if err != nil {
-		return nil, fmt.Errorf("unable to get the NB Zone : err - %w", err)
-	}
-	c.zone = zone
 	return c, nil
 }
 
@@ -218,7 +214,7 @@ type Controller struct {
 	state *networkState
 	// networkStates maps each registered network to its mutable service-controller state.
 	networkStates *syncmap.SyncMap[*networkState]
-	zone          string
+	nodeName      string
 
 	// handlers stored for shutdown
 	nodeHandler     cache.ResourceEventHandlerRegistration
@@ -460,7 +456,7 @@ func (c *Controller) nodeInfosForNetwork(netInfo util.NetInfo) ([]nodeInfo, map[
 		nodeMap[node.Name] = *ni
 	}
 
-	return zoneNodeInfos(c.zone, nodeMap), nodeMap, nil
+	return localNodeInfos(c.nodeName, nodeMap), nodeMap, nil
 }
 
 func (c *Controller) nodeInfoMapForNetwork(state *networkState) map[string]nodeInfo {
@@ -474,14 +470,11 @@ func (c *Controller) nodeInfoMapForNetwork(state *networkState) map[string]nodeI
 	return nodeInfoByName
 }
 
-func zoneNodeInfos(zone string, nodeInfoByName map[string]nodeInfo) []nodeInfo {
-	out := make([]nodeInfo, 0, len(nodeInfoByName))
-	for _, node := range nodeInfoByName {
-		if node.zone == zone {
-			out = append(out, node)
-		}
+func localNodeInfos(nodeName string, nodeInfoByName map[string]nodeInfo) []nodeInfo {
+	out := make([]nodeInfo, 0, 1)
+	if node, ok := nodeInfoByName[nodeName]; ok {
+		out = append(out, node)
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].name < out[j].name })
 	return out
 }
 
@@ -869,7 +862,7 @@ func (c *Controller) syncNodeInfoMapForNetwork(state *networkState, nodeInfoByNa
 		state.nodeInfosByName[nodeName] = nodeInfo
 	}
 
-	state.nodeInfos = zoneNodeInfos(c.zone, state.nodeInfosByName)
+	state.nodeInfos = localNodeInfos(c.nodeName, state.nodeInfosByName)
 	if !state.useTemplates {
 		return
 	}
@@ -1018,7 +1011,6 @@ func nodeChangedForAllNetworks(oldNode, newNode *corev1.Node) bool {
 	return util.NodeL3GatewayAnnotationChanged(oldNode, newNode) ||
 		oldNode.Name != newNode.Name ||
 		util.NodeHostCIDRsAnnotationChanged(oldNode, newNode) ||
-		util.NodeZoneAnnotationChanged(oldNode, newNode) ||
 		util.NoHostSubnet(oldNode) != util.NoHostSubnet(newNode)
 }
 

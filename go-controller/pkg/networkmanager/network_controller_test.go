@@ -26,9 +26,7 @@ import (
 )
 
 func TestSetAdvertisements(t *testing.T) {
-	testZoneName := "testZone"
 	testNodeName := "testNode"
-	testNodeOnZoneName := "testNodeOnZone"
 	testNADName := "test/NAD"
 	testRAName := "testRA"
 	testVRFName := "testVRF"
@@ -99,14 +97,6 @@ func TestSetAdvertisements(t *testing.T) {
 			Name: testNodeName,
 		},
 	}
-	testNodeOnZone := corev1.Node{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: testNodeOnZoneName,
-			Annotations: map[string]string{
-				util.OvnNodeZoneName: testZoneName,
-			},
-		},
-	}
 	otherNode := corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "otherNode",
@@ -135,12 +125,12 @@ func TestSetAdvertisements(t *testing.T) {
 			},
 		},
 		{
-			name:    "reconciles VRF advertisements for selected node in same zone as default OVN network controller",
+			name:    "reconciles VRF advertisements for selected node of primary network controller",
 			network: primaryNetwork,
 			ra:      &podNetworkRA,
-			node:    testNodeOnZone,
+			node:    testNode,
 			expected: map[string][]string{
-				testNodeOnZoneName: {testVRFName},
+				testNodeName: {testVRFName},
 			},
 		},
 		{
@@ -227,7 +217,7 @@ func TestSetAdvertisements(t *testing.T) {
 					ReconcilableNetInfo: &util.DefaultNetInfo{},
 				},
 			}
-			nm := newNetworkController("", testZoneName, testNodeName, tcm, wf)
+			nm := newNetworkController("", testNodeName, tcm, wf)
 
 			namespace, name, err := cache.SplitMetaNamespaceKey(testNADName)
 			g.Expect(err).ToNot(gomega.HaveOccurred())
@@ -312,6 +302,43 @@ func TestSetAdvertisements(t *testing.T) {
 	}
 }
 
+func TestNetworkControllerIsNodeManaged(t *testing.T) {
+	const localNode = "local-node"
+
+	tests := []struct {
+		name       string
+		controller *networkController
+		node       *corev1.Node
+		want       bool
+	}{
+		{
+			name:       "cluster manager manages unannotated node",
+			controller: &networkController{},
+			node:       &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1"}},
+			want:       true,
+		},
+		{
+			name:       "node manager manages its own unannotated node",
+			controller: &networkController{node: localNode},
+			node:       &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: localNode}},
+			want:       true,
+		},
+		{
+			name:       "node manager ignores foreign unannotated node",
+			controller: &networkController{node: localNode},
+			node:       &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "other-node"}},
+			want:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			g.Expect(tt.controller.isNodeManaged(tt.node)).To(gomega.Equal(tt.want))
+		})
+	}
+}
+
 func TestNetworkControllerReconcilePendingNetworkRefChange(t *testing.T) {
 	g := gomega.NewWithT(t)
 	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
@@ -357,7 +384,7 @@ func TestNetworkControllerReconcilePendingNetworkRefChange(t *testing.T) {
 					ReconcilableNetInfo: &util.DefaultNetInfo{},
 				},
 			}
-			nm := newNetworkController("", "", "", tcm, nil)
+			nm := newNetworkController("", "", tcm, nil)
 			nm.nodeHasNetwork = func(_, _ string) bool { return tt.nodeHasNetwork }
 
 			networkName := netInfo.GetNetworkName()
@@ -425,7 +452,7 @@ func TestNetworkControllerClearsPendingNetworkRefOnDelete(t *testing.T) {
 			ReconcilableNetInfo: &util.DefaultNetInfo{},
 		},
 	}
-	nm := newNetworkController("", "", "", tcm, nil)
+	nm := newNetworkController("", "", tcm, nil)
 	nm.nodeHasNetwork = func(_, _ string) bool { return true }
 
 	networkName := netInfo.GetNetworkName()
@@ -496,7 +523,7 @@ func TestNetworkControllerStopsNetworkOnStartFailure(t *testing.T) {
 		},
 		raiseErrorWhenStartingController: fmt.Errorf("start failed"),
 	}
-	nm := newNetworkController("", "", "", tcm, nil)
+	nm := newNetworkController("", "", tcm, nil)
 
 	mutableNetInfo := util.NewMutableNetInfo(netInfo)
 	mutableNetInfo.SetNADs(netConf.NADName)
@@ -531,7 +558,7 @@ func TestNetworkController_ConcurrentReconciliation(t *testing.T) {
 			ReconcilableNetInfo: &util.DefaultNetInfo{},
 		},
 	}
-	nm := newNetworkController("test", "", "", tcm, wf)
+	nm := newNetworkController("test", "", tcm, wf)
 
 	err = wf.Start()
 	g.Expect(err).ToNot(gomega.HaveOccurred())
@@ -616,7 +643,7 @@ func TestNetworkController_ConcurrentReconciliationMixed(t *testing.T) {
 			ReconcilableNetInfo: &util.DefaultNetInfo{},
 		},
 	}
-	nm := newNetworkController("test", "", "", tcm, wf)
+	nm := newNetworkController("test", "", tcm, wf)
 
 	err = wf.Start()
 	g.Expect(err).ToNot(gomega.HaveOccurred())

@@ -294,7 +294,7 @@ var _ = Describe("UDN Isolation", func() {
 		config.IPv4Mode = true
 		config.IPv6Mode = false
 
-		fakeOVN := NewFakeOVN(true)
+		fakeOVN := NewFakeOVN(true, nodeName)
 
 		netInfoBefore := dummyPrimaryLayer3UserDefinedNetwork("192.168.0.0/16", "192.168.1.0/24")
 		nadBefore, err := newNetworkAttachmentDefinition(ns, nadName, *netInfoBefore.netconf())
@@ -341,7 +341,7 @@ var _ = Describe("UDN Isolation", func() {
 		config.IPv4Mode = true
 		config.IPv6Mode = false
 
-		fakeOVN := NewFakeOVN(false)
+		fakeOVN := NewFakeOVN(false, nodeName)
 
 		netInfoBefore := dummyPrimaryLayer3UserDefinedNetwork("192.168.0.0/16", "192.168.1.0/24")
 		nadBefore, err := newNetworkAttachmentDefinition(ns, nadName, *netInfoBefore.netconf())

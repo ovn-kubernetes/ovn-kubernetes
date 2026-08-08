@@ -23,7 +23,6 @@ import (
 	adminpolicybasedrouteapply "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/applyconfiguration/adminpolicybasedroute/v1"
 	adminpolicybasedrouteclient "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/clientset/versioned"
 	adminpolicybasedrouteinformer "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/informers/externalversions/adminpolicybasedroute/v1"
-	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
@@ -51,14 +50,10 @@ func NewExternalMasterController(
 	nbClient libovsdbclient.Client,
 	addressSetFactory addressset.AddressSetFactory,
 	controllerName string,
-	zoneID string,
+	nodeName string,
 ) (*ExternalGatewayMasterController, error) {
 
 	externalGWRouteInfo := NewExternalGatewayRouteInfoCache()
-	zone, err := libovsdbutil.GetNBZone(nbClient)
-	if err != nil {
-		return nil, err
-	}
 	nbCli := &northBoundClient{
 		routeLister:              apbRouteInformer.Lister(),
 		nodeLister:               nodeLister,
@@ -66,7 +61,7 @@ func NewExternalMasterController(
 		nbClient:                 nbClient,
 		addressSetFactory:        addressSetFactory,
 		controllerName:           controllerName,
-		zone:                     zone,
+		nodeName:                 nodeName,
 		externalGatewayRouteInfo: externalGWRouteInfo,
 	}
 
@@ -74,7 +69,7 @@ func NewExternalMasterController(
 		apbRoutePolicyClient:     apbRoutePolicyClient,
 		ExternalGWRouteInfoCache: externalGWRouteInfo,
 		nbClient:                 nbCli,
-		zoneID:                   zoneID,
+		zoneID:                   nodeName,
 	}
 	c.mgr = newExternalPolicyManager(
 		stopCh,

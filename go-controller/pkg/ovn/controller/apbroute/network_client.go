@@ -49,7 +49,7 @@ type northBoundClient struct {
 
 	controllerName string
 
-	zone string
+	nodeName string
 }
 
 type conntrackClient struct {
@@ -75,13 +75,9 @@ func (nb *northBoundClient) findLogicalRoutersWithPredicate(p func(item *nbdb.Lo
 	return libovsdbops.FindLogicalRoutersWithPredicate(nb.nbClient, p)
 }
 
-// When IC is enabled, isNodeInLocalZone returns whether the provided node is in a zone local to the zone controller
-func (nb *northBoundClient) isPodInLocalZone(pod *corev1.Pod) (bool, error) {
-	node, err := nb.nodeLister.Get(pod.Spec.NodeName)
-	if err != nil {
-		return false, err
-	}
-	return util.GetNodeZone(node) == nb.zone, nil
+// isPodScheduledOnLocalNode returns whether the pod is scheduled on the node managed by this controller.
+func (nb *northBoundClient) isPodScheduledOnLocalNode(pod *corev1.Pod) bool {
+	return pod.Spec.NodeName == nb.nodeName
 }
 
 // delAllHybridRoutePolicies deletes all the 501 hybrid-route-policies that
@@ -142,12 +138,8 @@ func (nb *northBoundClient) deleteGatewayIPs(podNsName ktypes.NamespacedName, to
 			deletedPod = true
 		}
 		if err == nil {
-			local, err := nb.isPodInLocalZone(pod)
-			if err != nil {
-				return err
-			}
-			if !local {
-				klog.V(4).Infof("APB will not delete exgw routes for pod %s not in the local zone %s", routeInfo.PodName, nb.zone)
+			if !nb.isPodScheduledOnLocalNode(pod) {
+				klog.V(4).Infof("APB will not delete exgw routes for pod %s not on the local node %s", routeInfo.PodName, nb.nodeName)
 				return nil
 			}
 		}
@@ -210,12 +202,8 @@ func (nb *northBoundClient) addGatewayIPs(pod *corev1.Pod, egress *gateway_info.
 // if allSNATs flag is set, then all the SNATs (including against egressIPs if any) for that pod will be deleted
 // used when disableSNATMultipleGWs=true
 func (nb *northBoundClient) deletePodSNAT(nodeName, gwRouterName string, extIPs, podIPNets []*net.IPNet) error {
-	node, err := nb.nodeLister.Get(nodeName)
-	if err != nil {
-		return err
-	}
-	if util.GetNodeZone(node) != nb.zone {
-		klog.V(4).Infof("Node %s is not in the local zone %s", nodeName, nb.zone)
+	if nodeName != nb.nodeName {
+		klog.V(4).Infof("Node %s is not the local node %s", nodeName, nb.nodeName)
 		return nil
 	}
 	nats, err := buildPodSNAT(extIPs, podIPNets)
@@ -238,12 +226,8 @@ func (nb *northBoundClient) addGWRoutesForPod(gateways []*gateway_info.GatewayIn
 	if err != nil {
 		return err
 	}
-	local, err := nb.isPodInLocalZone(pod)
-	if err != nil {
-		return err
-	}
-	if !local {
-		klog.V(4).Infof("APB will not add exgw routes for pod %s not in the local zone %s", podNsName, nb.zone)
+	if !nb.isPodScheduledOnLocalNode(pod) {
+		klog.V(4).Infof("APB will not add exgw routes for pod %s not on the local node %s", podNsName, nb.nodeName)
 		return nil
 	}
 

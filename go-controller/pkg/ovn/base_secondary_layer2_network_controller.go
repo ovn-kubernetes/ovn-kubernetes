@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net"
 
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 
@@ -18,7 +17,6 @@ import (
 	zoneinterconnect "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/zone_interconnect"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
-	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 )
 
 // method/structure shared by all layer 2 network controller, including localnet and layer2 network controllres.
@@ -36,7 +34,6 @@ func (oc *BaseLayer2UserDefinedNetworkController) stop() {
 		return
 	}
 	klog.Infof("Stop secondary %s network controller of network %s", oc.TopologyType(), oc.GetNetworkName())
-	oc.DeregisterNodeHandler()
 	close(oc.stopChan)
 	oc.stopChan = nil
 	oc.cancelableCtx.Cancel()
@@ -267,69 +264,6 @@ func (oc *BaseLayer2UserDefinedNetworkController) initializeLogicalSwitch(switch
 	}
 
 	return &logicalSwitch, nil
-}
-
-func (oc *BaseLayer2UserDefinedNetworkController) addUpdateNodeEvent(node *corev1.Node) error {
-	if oc.isLocalZoneNode(node) {
-		return oc.addUpdateLocalNodeEvent(node)
-	}
-	return oc.addUpdateRemoteNodeEvent(node)
-}
-
-func (oc *BaseLayer2UserDefinedNetworkController) addUpdateLocalNodeEvent(node *corev1.Node) error {
-	_, present := oc.localZoneNodes.LoadOrStore(node.Name, true)
-
-	if !present {
-		// process all pods so they are reconfigured as local
-		errs := oc.addAllPodsOnNode(node.Name)
-		if errs != nil {
-			err := utilerrors.Join(errs...)
-			return err
-		}
-	}
-
-	return nil
-}
-
-func (oc *BaseLayer2UserDefinedNetworkController) addUpdateRemoteNodeEvent(node *corev1.Node) error {
-	_, present := oc.localZoneNodes.Load(node.Name)
-
-	if present {
-		err := oc.deleteNodeEvent(node)
-		if err != nil {
-			return err
-		}
-
-		// process all pods so they are reconfigured as remote
-		errs := oc.addAllPodsOnNode(node.Name)
-		if errs != nil {
-			err = utilerrors.Join(errs...)
-			return err
-		}
-	}
-
-	return nil
-}
-
-func (oc *BaseLayer2UserDefinedNetworkController) deleteNodeEvent(node *corev1.Node) error {
-	oc.localZoneNodes.Delete(node.Name)
-	return nil
-}
-
-func (oc *BaseLayer2UserDefinedNetworkController) syncNodes(nodes []interface{}) error {
-	for _, tmp := range nodes {
-		node, ok := tmp.(*corev1.Node)
-		if !ok {
-			return fmt.Errorf("spurious object in syncNodes: %v", tmp)
-		}
-
-		// Add the node to the foundNodes only if it belongs to the local zone.
-		if oc.isLocalZoneNode(node) {
-			oc.localZoneNodes.Store(node.Name, true)
-		}
-	}
-
-	return nil
 }
 
 // getDenyARPAndNSOnMACVRF provides ACLs to drop ARP and NS from pods to the

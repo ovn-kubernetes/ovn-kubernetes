@@ -113,58 +113,49 @@ func (bnc *BaseNetworkController) allocatePodIPsOnSwitch(pod *corev1.Pod,
 }
 
 func (bnc *BaseNetworkController) deleteStaleLogicalSwitchPorts(expectedLogicalPorts map[string]bool) error {
-	var switchNames []string
+	var switchName string
 
-	// get all switches that Pod logical port would be reside on.
+	// Get the switch that Pod logical ports reside on.
 	topoType := bnc.TopologyType()
 	if !bnc.IsUserDefinedNetwork() || topoType == ovntypes.Layer3Topology {
-		// for default network and layer3 topology type networks, get all local zone node switches
-		nodes, err := bnc.GetLocalZoneNodes()
+		// For default network and layer3 topology type networks, get the local node switch.
+		node, err := bnc.GetLocalNode()
 		if err != nil {
-			return fmt.Errorf("failed to get nodes: %v", err)
+			return err
 		}
-
-		switchNames = make([]string, 0, len(nodes))
-		for _, n := range nodes {
-			// skip nodes that are not running ovnk (inferred from host subnets)
-			switchName := bnc.GetNetworkScopedSwitchName(n.Name)
-			if bnc.isNonHostSubnetSwitch(switchName) {
-				continue
-			}
-			switchNames = append(switchNames, switchName)
+		// Skip nodes that are not running ovnk (inferred from host subnets).
+		switchName = bnc.GetNetworkScopedSwitchName(node.Name)
+		if bnc.isNonHostSubnetSwitch(switchName) {
+			return nil
 		}
 	} else if topoType == ovntypes.Layer2Topology {
-		switchNames = []string{bnc.GetNetworkScopedSwitchName(ovntypes.OVNLayer2Switch)}
+		switchName = bnc.GetNetworkScopedSwitchName(ovntypes.OVNLayer2Switch)
 	} else if topoType == ovntypes.LocalnetTopology {
-		switchNames = []string{bnc.GetNetworkScopedSwitchName(ovntypes.OVNLocalnetSwitch)}
+		switchName = bnc.GetNetworkScopedSwitchName(ovntypes.OVNLocalnetSwitch)
 	} else {
 		return fmt.Errorf("topology type %s not supported", topoType)
 	}
 
-	return bnc.deleteStaleLogicalSwitchPortsOnSwitches(switchNames, expectedLogicalPorts)
+	return bnc.deleteStaleLogicalSwitchPortsOnSwitch(switchName, expectedLogicalPorts)
 }
 
-func (bnc *BaseNetworkController) deleteStaleLogicalSwitchPortsOnSwitches(switchNames []string,
+func (bnc *BaseNetworkController) deleteStaleLogicalSwitchPortsOnSwitch(switchName string,
 	expectedLogicalPorts map[string]bool) error {
-	var ops []ovsdb.Operation
-	var err error
-	for _, switchName := range switchNames {
-		p := func(item *nbdb.LogicalSwitchPort) bool {
-			return item.ExternalIDs["pod"] == "true" && !expectedLogicalPorts[item.Name]
-		}
-		sw := nbdb.LogicalSwitch{
-			Name: switchName,
-		}
+	p := func(item *nbdb.LogicalSwitchPort) bool {
+		return item.ExternalIDs["pod"] == "true" && !expectedLogicalPorts[item.Name]
+	}
+	sw := nbdb.LogicalSwitch{
+		Name: switchName,
+	}
 
-		ops, err = libovsdbops.DeleteLogicalSwitchPortsWithPredicateOps(bnc.nbClient, ops, &sw, p)
-		if err != nil {
-			return fmt.Errorf("could not generate ops to delete stale ports from logical switch %s (%+v)", switchName, err)
-		}
+	ops, err := libovsdbops.DeleteLogicalSwitchPortsWithPredicateOps(bnc.nbClient, nil, &sw, p)
+	if err != nil {
+		return fmt.Errorf("could not generate ops to delete stale ports from logical switch %s (%+v)", switchName, err)
 	}
 
 	_, err = libovsdbops.TransactAndCheck(bnc.nbClient, ops)
 	if err != nil {
-		return fmt.Errorf("could not remove stale logicalPorts from switches for network %s (%+v)", bnc.GetNetworkName(), err)
+		return fmt.Errorf("could not remove stale logicalPorts from switch %s for network %s (%+v)", switchName, bnc.GetNetworkName(), err)
 	}
 	return nil
 }
@@ -630,7 +621,7 @@ func (bnc *BaseNetworkController) addLogicalPortToNetwork(pod *corev1.Pod, nadKe
 
 	// On layer2 topology with interconnect, we need to add specific port config
 	if bnc.isLayer2WithInterconnectTransport() {
-		isRemotePort := !bnc.isPodScheduledinLocalZone(pod)
+		isRemotePort := !bnc.isPodScheduledOnLocalNode(pod)
 		err = bnc.zoneICHandler.AddTransitPortConfig(isRemotePort, podAnnotation, lsp)
 		if err != nil {
 			return nil, nil, nil, false, err
@@ -754,41 +745,10 @@ func (bnc *BaseNetworkController) deletePodFromNamespace(ns string, portUUID str
 	return ops, nil
 }
 
-// isPodScheduledinLocalZone returns true when the pod is scheduled on a node
-// that belongs to this controller's local zone.
-// When localZoneNodes is configured, the node set is used as the primary cache.
-// On cache miss, it falls back to the node informer to avoid stale "remote"
-// classification while node state is still converging.
-func (bnc *BaseNetworkController) isPodScheduledinLocalZone(pod *corev1.Pod) bool {
-	if bnc.localZoneNodes == nil {
-		return true
-	}
-
-	if !util.PodScheduled(pod) {
-		return false
-	}
-
-	if _, isLocalZonePod := bnc.localZoneNodes.Load(pod.Spec.NodeName); isLocalZonePod {
-		return true
-	}
-
-	if bnc.watchFactory == nil {
-		return false
-	}
-
-	// TODO(trozet): refactor this function to have proper error handling and not rely on
-	// on node controller cache anymore
-	node, err := bnc.watchFactory.GetNode(pod.Spec.NodeName)
-	if err != nil {
-		return false
-	}
-
-	// Only trust informer fallback when zone information is explicit. Missing
-	// zone annotation defaults to "local" and can misclassify remote pods.
-	if _, ok := node.Annotations[util.OvnNodeZoneName]; !ok {
-		return false
-	}
-	return bnc.isLocalZoneNode(node)
+// isPodScheduledOnLocalNode returns true when the pod is scheduled on the node
+// managed by this controller.
+func (bnc *BaseNetworkController) isPodScheduledOnLocalNode(pod *corev1.Pod) bool {
+	return util.PodScheduled(pod) && pod.Spec.NodeName == bnc.nodeName
 }
 
 // WatchPods starts the watching of the Pod resource and calls back the appropriate handler logic

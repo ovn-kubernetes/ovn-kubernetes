@@ -73,13 +73,12 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 
 	BeforeEach(func() {
 		Expect(config.PrepareTestConfig()).To(Succeed()) // reset defaults
-
 		app = cli.NewApp()
 		app.Name = "test"
 		app.Flags = config.Flags
 
 		useFakeAddressSets := false
-		fakeOvn = NewFakeOVN(useFakeAddressSets)
+		fakeOvn = NewFakeOVN(useFakeAddressSets, nodeName)
 		initialDB = libovsdbtest.TestSetup{
 			NBData: []libovsdbtest.TestData{},
 		}
@@ -112,7 +111,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 					By("adding a remote node")
 					testNode2, err := newNodeWithUserDefinedNetworks("test-node2", "192.168.127.202/24", netInfo)
 					Expect(err).NotTo(HaveOccurred())
-					testNode2.Annotations["k8s.ovn.org/zone-name"] = "blah"
 					nodes = append(nodes, *testNode2)
 				}
 				if testConfig.withRemotePod {
@@ -366,7 +364,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 				gwConfig, err := util.ParseNodeL3GatewayAnnotation(testNode)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(gwConfig.NextHops).NotTo(BeEmpty())
-				nbZone := &nbdb.NBGlobal{Name: config.Default.Zone, UUID: config.Default.Zone}
+				nbZone := &nbdb.NBGlobal{Name: nodeName, UUID: nodeName}
 
 				n := testing.NewNamespace(ns)
 				if netInfo.isPrimary {
@@ -475,7 +473,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 			const nodeIPv4CIDR = "192.168.126.202/24"
 			testNode, err := newNodeWithUserDefinedNetworks(nodeName, nodeIPv4CIDR, netInfo)
 			Expect(err).NotTo(HaveOccurred())
-			nbZone := &nbdb.NBGlobal{Name: config.Default.Zone, UUID: config.Default.Zone}
+			nbZone := &nbdb.NBGlobal{Name: nodeName, UUID: nodeName}
 
 			// Minimal initialDB: no UDN entities. init() + watchers create them.
 			initialDB.NBData = append(initialDB.NBData, nbZone)
@@ -586,7 +584,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 
 			testNode, err := newNodeWithUserDefinedNetworks(nodeName, "192.168.126.202/24", netInfo)
 			Expect(err).NotTo(HaveOccurred())
-			nbZone := &nbdb.NBGlobal{Name: config.Default.Zone, UUID: config.Default.Zone}
+			nbZone := &nbdb.NBGlobal{Name: nodeName, UUID: nodeName}
 			initialDB.NBData = append(initialDB.NBData, nbZone)
 
 			fakeOvn.startWithDBSetup(
@@ -691,7 +689,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 			gwConfig, err := util.ParseNodeL3GatewayAnnotation(testNode)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(gwConfig.NextHops).NotTo(BeEmpty())
-			nbZone := &nbdb.NBGlobal{Name: ovntypes.OvnDefaultZone, UUID: ovntypes.OvnDefaultZone}
+			nbZone := &nbdb.NBGlobal{Name: nodeName, UUID: nodeName}
 
 			n := newUDNNamespace(ns)
 			initialDB.NBData = generateUDNPostInitDB([]libovsdbtest.TestData{})
@@ -867,7 +865,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 			config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
 			config.OVNKubernetesFeature.EnableMultiNetwork = true
 			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
-			config.Default.Zone = nodeName
 			config.Gateway.V4MasqueradeSubnet = "169.254.0.0/16"
 
 			// Basic UDN setup
@@ -884,7 +881,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 
 			remoteNode, err := newNodeWithUserDefinedNetworks("remoteNode", "192.168.127.202/24", netInfo)
 			Expect(err).NotTo(HaveOccurred())
-			remoteNode.Annotations["k8s.ovn.org/zone-name"] = "other-zone" // force remote
 			remoteNode.Annotations[util.OvnTransitSwitchPortAddr] = `{"ipv4":"100.88.0.4/16"}`
 
 			remotePod := corev1.Pod{
@@ -1020,8 +1016,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 			config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
 			config.OVNKubernetesFeature.EnableMultiNetwork = true
 			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
-			config.Default.Zone = nodeName
-
 			netInfo := dummyLayer2PrimaryUserDefinedNetwork("100.200.0.0/16")
 			nsA := "namespace-a"
 			nsB := "namespace-b"
@@ -1445,7 +1439,6 @@ func setupConfig(netInfo userDefinedNetInfo, testConfig testConfiguration, gatew
 		// tests dont support dualstack yet
 		config.IPv4Mode = false
 	}
-	config.Default.Zone = nodeName
 }
 
 func notReadyMigrationInfo() *liveMigrationInfo {

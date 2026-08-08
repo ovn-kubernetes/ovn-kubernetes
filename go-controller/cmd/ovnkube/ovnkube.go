@@ -317,7 +317,6 @@ func startOvnKube(ctx *cli.Context, cancel context.CancelFunc) error {
 	if err != nil {
 		return err
 	}
-
 	eventRecorder := util.EventRecorder(ovnClientset.KubeClient)
 
 	if config.Metrics.BindAddress != "" && !combineMetricsEndpoints(runMode) {
@@ -510,6 +509,7 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 			}
 
 			controllerManager, err := controllermanager.NewControllerManager(
+				runMode.identity,
 				ovnClientset,
 				watchFactory,
 				libovsdbOvnNBClient,

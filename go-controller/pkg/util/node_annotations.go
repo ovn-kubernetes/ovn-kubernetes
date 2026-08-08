@@ -116,8 +116,9 @@ const (
 	// openshift/cloud-network-config-controller
 	cloudEgressIPConfigAnnotationKey = "cloud.network.openshift.io/egress-ipconfig"
 
-	// OvnNodeZoneName is the zone to which the node belongs to. It is set by ovnkube-node.
-	// ovnkube-node gets the node's zone from the OVN Southbound database.
+	// OvnNodeZoneName is retained only so the admission webhook can allow
+	// updates from older ovnkube-node versions during a rolling upgrade.
+	// Deprecated: new code must not write or consume this annotation.
 	OvnNodeZoneName = "k8s.ovn.org/zone-name"
 
 	// OvnTransitSwitchPortAddr is the annotation to store the node Transit switch port ips.
@@ -1165,27 +1166,6 @@ func GetNodeID(node *corev1.Node) (int, error) {
 // NodeIDAnnotationChanged returns true if the OvnNodeID in the corev1.Nodes doesn't match
 func NodeIDAnnotationChanged(oldNode, newNode *corev1.Node) bool {
 	return oldNode.Annotations[OvnNodeID] != newNode.Annotations[OvnNodeID]
-}
-
-// SetNodeZone sets the node's zone in the 'ovnNodeZoneName' node annotation.
-func SetNodeZone(nodeAnnotator kube.Annotator, zoneName string) error {
-	return nodeAnnotator.Set(OvnNodeZoneName, zoneName)
-}
-
-// GetNodeZone returns the zone of the node set in the 'ovnNodeZoneName' node annotation.
-// If the annotation is not set, it returns the 'default' zone name.
-func GetNodeZone(node *corev1.Node) string {
-	zoneName, ok := node.Annotations[OvnNodeZoneName]
-	if !ok {
-		return types.OvnDefaultZone
-	}
-
-	return zoneName
-}
-
-// NodeZoneAnnotationChanged returns true if the ovnNodeZoneName in the corev1.Nodes doesn't match
-func NodeZoneAnnotationChanged(oldNode, newNode *corev1.Node) bool {
-	return oldNode.Annotations[OvnNodeZoneName] != newNode.Annotations[OvnNodeZoneName]
 }
 
 // parseNetworkMapAnnotation parses the provided network aware annotation  which is in map format
