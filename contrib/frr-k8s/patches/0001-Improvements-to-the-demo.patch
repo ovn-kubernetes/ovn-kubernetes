@@ -1,0 +1,435 @@
+diff --git a/hack/demo/configs/main.go b/hack/demo/configs/main.go
+new file mode 100644
+index 0000000..1d268dd
+--- /dev/null
++++ b/hack/demo/configs/main.go
+@@ -0,0 +1,47 @@
++// SPDX-License-Identifier:Apache-2.0
++
++package main
++
++import (
++	"flag"
++	"html/template"
++	"os"
++)
++
++type BGPD struct {
++	FrrIPv4    string
++	FrrIPv6    string
++	SsVRF      string
++	SsFrrIPv4  string
++	SsFrrIPv6  string
++}
++
++func main() {
++	frrIPv4 := flag.String("frr-ipv4", "", "frr ipv4")
++	frrIPv6 := flag.String("frr-ipv6", "", "frr ipv6")
++	ssVRF := flag.String("ss-vrf", "", "extra session vrf")
++	ssFrrIPv4 := flag.String("ss-frr-ipv4", "", "extra session frr ipv4")
++	ssFrrIPv6 := flag.String("ss-frr-ipv6", "", "extra session frr ipv6")
++	flag.Parse()
++	data := BGPD{
++		FrrIPv4:   *frrIPv4,
++		FrrIPv6:   *frrIPv6,
++		SsVRF:     *ssVRF,
++		SsFrrIPv4: *ssFrrIPv4,
++		SsFrrIPv6: *ssFrrIPv6,
++	}
++
++	t, err := template.New("receive_all.yaml.tmpl").ParseFiles("receive_all.yaml.tmpl")
++	if err != nil {
++		panic(err)
++	}
++	f, err := os.Create("receive_all.yaml")
++	if err != nil {
++		panic(err)
++	}
++	defer f.Close()
++	err = t.Execute(f, data)
++	if err != nil {
++		panic(err)
++	}
++}
+\ No newline at end of file
+diff --git a/hack/demo/configs/receive_all.yaml.tmpl b/hack/demo/configs/receive_all.yaml.tmpl
+new file mode 100644
+index 0000000..e9510e0
+--- /dev/null
++++ b/hack/demo/configs/receive_all.yaml.tmpl
+@@ -0,0 +1,48 @@
++apiVersion: frrk8s.metallb.io/v1beta1
++kind: FRRConfiguration
++metadata:
++  name: receive-all
++  labels:
++    name: receive-all
++spec:
++  bgp:
++    routers:
++    - asn: 64512
++      neighbors:
++{{- if .FrrIPv4 }}
++      - address: {{ .FrrIPv4 }}
++        asn: 64512
++        disableMP: true
++        toReceive:
++          allowed:
++            mode: all
++{{- end }}
++{{- if .FrrIPv6 }}
++      - address: {{ .FrrIPv6 }}
++        asn: 64512
++        disableMP: true
++        toReceive:
++          allowed:
++            mode: all
++{{- end }}
++{{- if .SsVRF }}
++    - asn: 64512
++      vrf: {{ .SsVRF }}
++      neighbors:
++{{- if .SsFrrIPv4 }}
++      - address: {{ .SsFrrIPv4 }}
++        asn: 64512
++        disableMP: true
++        toReceive:
++          allowed:
++            mode: all
++{{- end }}
++{{- if .SsFrrIPv6 }}
++      - address: {{ .SsFrrIPv6 }}
++        asn: 64512
++        disableMP: true
++        toReceive:
++          allowed:
++            mode: all
++{{- end }}
++{{- end }}
+diff --git a/hack/demo/configs/templates/receive_all.yaml b/hack/demo/configs/templates/receive_all.yaml
+deleted file mode 100644
+index b57553d..0000000
+--- a/hack/demo/configs/templates/receive_all.yaml
++++ /dev/null
+@@ -1,15 +0,0 @@
+-apiVersion: frrk8s.metallb.io/v1beta1
+-kind: FRRConfiguration
+-metadata:
+-  name: receive-all
+-  namespace: frr-k8s-system
+-spec:
+-  bgp:
+-    routers:
+-    - asn: 64512
+-      neighbors:
+-      - address: NEIGHBOR_IP
+-        asn: 64512
+-        toReceive:
+-          allowed:
+-            mode: all
+diff --git a/hack/demo/demo.sh b/hack/demo/demo.sh
+index e5e7887..4be6293 100755
+--- a/hack/demo/demo.sh
++++ b/hack/demo/demo.sh
+@@ -1,32 +1,156 @@
+ #!/bin/bash
+ set -x
+ 
+-NODES=$(kubectl get nodes -o jsonpath={.items[*].status.addresses[?\(@.type==\"InternalIP\"\)].address})
+-echo $NODES
+-pushd ./frr/
+-go run . -nodes "$NODES"
+-popd
++function docker_get_br_net_by_subnet() {
++    docker network ls -f 'driver=bridge' -q | xargs docker network inspect | jq -r 'try .[] | select(any(.IPAM.Config[]; .Subnet=="'"$1"'")) | .Name'
++}
++
++function podman_get_br_net_by_subnet() {
++    podman network ls -f 'driver=bridge' -q | xargs podman network inspect | jq -r 'try .[] | select(any(.subnets[]; .subnet=="'"$1"'")) | .name'
++}
++
++CLI=docker
++CLI_BR_NET_BY_SUBNET_FN="docker_get_br_net_by_subnet"
++if ! command -v $CLI; then
++    CLI=podman
++    CLI_BR_NET_BY_SUBNET_FN="podman_get_br_net_by_subnet"
++fi
++
++echo "CLI is: $CLI"
++
++# A second (BGP) session (SS) can be configured over a vlan with extra
++# positional arguments, respectively:
++# - The controller interface for the vlan
++# - The vlan id
++# - The VRF for the session
++# - A sed expression to apply to the main BGP session IPs resulting in the
++#   second BGP session IPs
++SS_IFACE=${1}
++SS_VRF=${2}
++SS_VLAN=${3}
++SS_SED_V4=${4:-'s|111|221|g'}
++SS_SED_V6=${5:-'s|c956|ca56|g'}
++
++SS_VLAN=${SS_VLAN:-221}
++SS_VRF_REMOTE=${SS_VRF}
++SS_VRF_LOCAL=${SS_VRF}-ext
++
++NODE_IPS_V4=$(kubectl get nodes -o jsonpath='{.items[*].status.addresses[?(@.type=="InternalIP")].address}' | grep -Po '(?<=\s|^)[0-9.]+' | tr '\n' ' ')
++NODE_IPS_V6=$(kubectl get nodes -o jsonpath='{.items[*].status.addresses[?(@.type=="InternalIP")].address}' | grep -Po '(?<=\s|^)[0-9a-f]+:[0-9a-f:]+' | tr '\n' ' ')
++
++GW_IP=""
++NETWORK=""
++PREFIX=""
++function getNodeGatewayAndNetwork() {
++    IP_CMD=$1
++    NODE=$2
++    GW_IFACE=$($IP_CMD -j -d route get $NODE | jq -r '.[] | .dev')
++    GW_IP=$($IP_CMD -d -j address show $GW_IFACE | jq -r '.[] | .addr_info[0].local')
++    PREFIX=$($IP_CMD -d -j address show $GW_IFACE | jq -r '.[] | .addr_info[0].prefixlen')
++    SUBNET=$($IP_CMD -j -d route get fibmatch $NODE | jq -r '.[] | .dst')
++    NETWORK=$(eval $CLI_BR_NET_BY_SUBNET_FN $SUBNET)
++    if [ -z "$NETWORK" ]; then
++        # assume libvirt
++	    NETWORK=host
++    fi
++}
++
++for node in $NODE_IPS_V4; do
++    getNodeGatewayAndNetwork "ip" "$node"
++    GW_IP_V4=$GW_IP
++    PREFIX_V4=$PREFIX
++    break
++done
++for node in $NODE_IPS_V6; do
++    getNodeGatewayAndNetwork "ip -6" "$node"
++    GW_IP_V6=$GW_IP
++    PREFIX_V6=$PREFIX
++    break
++done
++
++FRR_CONF_ARGS+=(-nodes-ipv4 "$NODE_IPS_V4")
++FRR_CONF_ARGS+=(-nodes-ipv6 "$NODE_IPS_V6")
++
++if [ -n "$SS_IFACE" ]; then
++    [ "$NETWORK" != "host" ] && echo "EXTRA_NETWORK only supported in host network" && exit 1
++    SS_FRR_IP_V4=$(echo ${GW_IP_V4} | sed ${SS_SED_V4})
++    SS_FRR_IP_V6=$(echo ${GW_IP_V6} | sed ${SS_SED_V6})
++    SS_NODE_IPS_V4=$(echo ${NODE_IPS_V4} | sed ${SS_SED_V4})
++    SS_NODE_IPS_V6=$(echo ${NODE_IPS_V6} | sed ${SS_SED_V6})
++    FRR_CONF_ARGS+=(-ss-vrf "${SS_VRF_LOCAL}")
++    FRR_CONF_ARGS+=(-ss-nodes-ipv4 "$SS_NODE_IPS_V4")
++    FRR_CONF_ARGS+=(-ss-nodes-ipv6 "$SS_NODE_IPS_V6")
++
++    MAYBE_SUDO=
++    if (( $EUID != 0 )); then
++        echo "Not running as root, will require passwordless sudo"
++        MAYBE_SUDO="sudo -n"
++    fi
++
++    $MAYBE_SUDO ip link add ${SS_VRF_LOCAL} type vrf table ${SS_VLAN} && {
++        $MAYBE_SUDO  ip link set dev ${SS_VRF_LOCAL} up
++    } || true
++    $MAYBE_SUDO  ip link add link ${SS_IFACE} name ${SS_IFACE}.${SS_VLAN} type vlan id ${SS_VLAN} && {
++        $MAYBE_SUDO  ip link set dev ${SS_IFACE}.${SS_VLAN} master ${SS_VRF_LOCAL}
++        $MAYBE_SUDO  ip address add dev ${SS_IFACE}.${SS_VLAN} ${SS_FRR_IP_V4}/${PREFIX_V4}
++        $MAYBE_SUDO  ip link set dev ${SS_IFACE}.${SS_VLAN} up
++	[ -n "$SS_FRR_IP_V6" ] && $MAYBE_SUDO  ip -6 address add dev ${SS_IFACE}.${SS_VLAN} ${SS_FRR_IP_V6}/${PREFIX_V6}
++    } || true
++fi
++
++pushd ./frr/ && {
++  go run . "${FRR_CONF_ARGS[@]}"
++} && popd || exit 1
+ 
+ FRR_CONFIG=$(mktemp -d -t frr-XXXXXXXXXX)
+ cp frr/*.conf $FRR_CONFIG
+ cp frr/daemons $FRR_CONFIG
+-chmod a+rw $FRR_CONFIG/*
++chmod a+rwx -R $FRR_CONFIG
+ 
+-docker rm -f frr
+-docker run -d --privileged --network kind --rm --ulimit core=-1 --name frr --volume "$FRR_CONFIG":/etc/frr quay.io/frrouting/frr:10.4.3
+-
+-FRR_IP=$(docker inspect -f "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}" frr)
+-
+-echo "external FRR IP is $FRR_IP"
++$CLI rm -f frr
++$CLI run -d --privileged --network $NETWORK --rm --ulimit core=-1 --name frr --volume "$FRR_CONFIG":/etc/frr quay.io/frrouting/frr:10.4.3
+ 
++if [ "$NETWORK" != "host" ]; then
++    FRR_IP_V4=$($CLI inspect -f "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}" frr)
++    FRR_IP_V6=$($CLI inspect -f "{{range .NetworkSettings.Networks}}{{.GlobalIPv6Address}}{{end}}" frr)
++else
++    FRR_IP_V4=$GW_IP_V4
++    FRR_IP_V6=$GW_IP_V6
++fi
+ for i in configs/*.yaml; do
+-	rm $i
++    rm $i
+ done
+ 
+ cp configs/templates/*.yaml configs/
+ 
++FRR_IP=$FRR_IP_V4
++if [ -z "$FRR_IP" ]; then
++    FRR_IP=$FRR_IP_V6
++fi
++
+ for i in configs/*.yaml; do
+     sed -i "s/NEIGHBOR_IP/$FRR_IP/g" $i
+ done
+ 
++K8S_CONF_ARGS+=(-frr-ipv4 "$FRR_IP_V4")
++K8S_CONF_ARGS+=(-frr-ipv6 "$FRR_IP_V6")
++if [ -n "$SS_IFACE" ]; then
++    K8S_CONF_ARGS+=(-ss-vrf "${SS_VRF_REMOTE}")
++    K8S_CONF_ARGS+=(-ss-frr-ipv4 "$SS_FRR_IP_V4")
++    K8S_CONF_ARGS+=(-ss-frr-ipv6 "$SS_FRR_IP_V6")
++fi
++
++pushd ./configs && {
++    go run . "${K8S_CONF_ARGS[@]}"
++} && popd || exit 1
++
++echo "NETWORK is: $NETWORK"
++echo "FRR IP V4 is: $FRR_IP_V4"
++echo "FRR IP V6 is: $FRR_IP_V6"
++echo "Nodes IPs V4 are: $NODE_IPS_V4"
++echo "Nodes IPs V6 are: $NODE_IPS_V6"
++echo "Second session FRR IP V4 is: $SS_FRR_IP_V4"
++echo "Second session FRR IP V6 is: $SS_FRR_IP_V6"
++echo "Extra network Nodes IPs V4 are: $SS_NODE_IPS_V4"
++echo "Extra network Nodes IPs V6 are: $SS_NODE_IPS_V6"
+ echo "Setup is complete, demo yamls can be found in $(pwd)/configs"
+diff --git a/hack/demo/frr/frr.conf.tmpl b/hack/demo/frr/frr.conf.tmpl
+index e78bf62..f4fb33d 100644
+--- a/hack/demo/frr/frr.conf.tmpl
++++ b/hack/demo/frr/frr.conf.tmpl
+@@ -1,20 +1,73 @@
+ router bgp 64512
+  no bgp default ipv4-unicast
++ no bgp default ipv6-unicast
+  no bgp network import-check
+- 
+-{{- range $r := .NodesIP }}
++
++{{- range $r := .NodesIPv4 }}
++ neighbor {{ . }} remote-as 64512
++{{- end }}
++
++{{- range $r := .NodesIPv6 }}
+  neighbor {{ . }} remote-as 64512
+ {{- end }}
+ 
++{{- if .NodesIPv4 }}
+  address-family ipv4 unicast
++{{- range $r := .NodesIPv4 }}
++  neighbor {{ . }} route-reflector-client
++  neighbor {{ . }} activate
++  neighbor {{ . }} next-hop-self
++{{- end }}
+   network 192.168.1.0/24
+   network 192.169.1.1/32
+  exit-address-family
++{{- end }}
++
++{{- if .NodesIPv6 }}
++ address-family ipv6 unicast
++{{- range $r := .NodesIPv6 }}
++  neighbor {{ . }} route-reflector-client
++  neighbor {{ . }} activate
++  neighbor {{ . }} next-hop-self
++{{- end }}
++  network 2001:db8::/128
++ exit-address-family
++{{- end }}
++
++{{- if .SsVRF }}
++router bgp 64512 vrf {{ .SsVRF }}
++ no bgp default ipv4-unicast
++ no bgp default ipv6-unicast
++ no bgp network import-check
+ 
++{{- range $r := .SsNodesIPv4 }}
++ neighbor {{ . }} remote-as 64512
++{{- end }}
++
++{{- range $r := .SsNodesIPv6 }}
++ neighbor {{ . }} remote-as 64512
++{{- end }}
++
++{{- if .SsNodesIPv4 }}
+  address-family ipv4 unicast
+-{{- range $r := .NodesIP }}
++{{- range $r := .SsNodesIPv4 }}
++  neighbor {{ . }} route-reflector-client
+   neighbor {{ . }} activate
+-  neighbor {{ . }} next-hop-self 
++  neighbor {{ . }} next-hop-self
+ {{- end }}
++  network 192.168.1.0/24
++  network 192.169.1.1/32
+  exit-address-family
++{{- end }}
+ 
++{{- if .SsNodesIPv6 }}
++ address-family ipv6 unicast
++{{- range $r := .SsNodesIPv6 }}
++  neighbor {{ . }} route-reflector-client
++  neighbor {{ . }} activate
++  neighbor {{ . }} next-hop-self
++{{- end }}
++  network 2001:db8::/128
++ exit-address-family
++{{- end }}
++{{- end }}
+diff --git a/hack/demo/frr/main.go b/hack/demo/frr/main.go
+index 5038c8a..08b73e4 100644
+--- a/hack/demo/frr/main.go
++++ b/hack/demo/frr/main.go
+@@ -4,23 +4,39 @@ package main
+ 
+ import (
+ 	"flag"
+-	"fmt"
+ 	"html/template"
+ 	"os"
+ 	"strings"
+ )
+ 
+ type BGPD struct {
+-	NodesIP  []string
+-	Protocol string
++	NodesIPv4    []string
++	NodesIPv6    []string
++	SsVRF        string
++	SsNodesIPv4  []string
++	SsNodesIPv6  []string
++}
++
++func split(s, sep string) []string {
++	if len(s) == 0 {
++		return nil
++	}
++	return strings.Split(s, sep)
+ }
+ 
+ func main() {
+-	nodeList := flag.String("nodes", "", "nodes ip")
++	nodesIPv4 := flag.String("nodes-ipv4", "", "nodes ipv4")
++	nodesIPv6 := flag.String("nodes-ipv6", "", "nodes ipv6")
++	ssVRF := flag.String("ss-vrf", "", "second session vrf")
++	ssNodesIPv4 := flag.String("ss-nodes-ipv4", "", "second session nodes ipv4")
++	ssNodesIPv6 := flag.String("ss-nodes-ipv6", "", "second session nodes ipv6")
+ 	flag.Parse()
+-	fmt.Println(*nodeList)
+ 	data := BGPD{
+-		NodesIP: strings.Split(*nodeList, " "),
++		NodesIPv4:   split(strings.Trim(*nodesIPv4, " "), " "),
++		NodesIPv6:   split(strings.Trim(*nodesIPv6, " "), " "),
++		SsVRF:       *ssVRF,
++		SsNodesIPv4: split(strings.Trim(*ssNodesIPv4, " "), " "),
++		SsNodesIPv6: split(strings.Trim(*ssNodesIPv6, " "), " "),
+ 	}
+ 
+ 	t, err := template.New("frr.conf.tmpl").ParseFiles("frr.conf.tmpl")
