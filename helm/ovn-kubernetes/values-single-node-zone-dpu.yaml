@@ -25,6 +25,8 @@ global:
   simulateDpu: false
   # -- The DPU-side representor interface for the host's uplink (PF). Required for simulated environments where switchdev metadata is unavailable.
   dpuHostGatewayRepresentorInterface: ""
+  # -- Whether the host runs systemd. When false, the host systemd private socket is not mounted into ovnkube-node. Kubelet restarts are then not tracked, so kubelet probes to primary UDN pods are not allowed.
+  hostHasSystemd: true
   # -- This allows ovnkube-node to run without SYS_ADMIN capability, by performing interface setup in the CNI plugin
   unprivilegedMode: false
   # -- The v4 join subnet used for assigning join switch IPv4 addresses

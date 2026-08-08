@@ -323,6 +323,15 @@ true
 			<td>Optional extra gateway options</td>
 		</tr>
 		<tr>
+			<td>global.hostHasSystemd</td>
+			<td>bool</td>
+			<td><pre lang="json">
+true
+</pre>
+</td>
+			<td>Whether the host runs systemd. When false, the host systemd private socket is not mounted into ovnkube-node. Kubelet restarts are then not tracked, so kubelet probes to primary UDN pods are not allowed.</td>
+		</tr>
+		<tr>
 			<td>global.hybridOverlayNetCidr</td>
 			<td>string</td>
 			<td><pre lang="json">
