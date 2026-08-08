@@ -85,6 +85,7 @@ nav:
     - Host To NodePort Hairpin: design/host-to-node-port-hairpin-trafficflow.md
     - ExternalIPs/LoadBalancerIngress: design/external-ip-and-loadbalancer-ingress.md
     - Internal Subnets: design/ovn-kubernetes-subnets.md
+    - External Bridge (breth0) Flows: design/bridge-flows.md
     - Kubevirt VM Live Migration: features/live-migration.md
   - Getting Started:
     - Launching OVN-Kubernetes sandbox env: installation/launching-ovn-kubernetes-on-kind.md

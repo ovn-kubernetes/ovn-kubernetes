@@ -1145,6 +1145,12 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 		fexec.AddFakeCmdsNoOutputNoError([]string{
 			"ovs-ofctl -O OpenFlow13 --bundle replace-flows breth0 -",
 		})
+		if util.IsNetworkSegmentationSupportEnabled() {
+			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+				Cmd:    "ovs-ofctl dump-ports-desc breth0",
+				Output: " 5(patch-breth0_n): addr:00:00:00:00:00:00\n     config:     0\n     state:      LIVE\n",
+			})
+		}
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 			Cmd:    "ovs-ofctl show breth0",
 			Output: ovsOFOutput,

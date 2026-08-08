@@ -488,6 +488,7 @@ var _ = Describe("UserDefinedNodeNetworkController: UserDefinedPrimaryNetwork Ga
 			controller.gateway.kubeInterface = &kubeMock
 
 			By("starting UDN controller for user-defined primary network")
+			addOVSPatchPortInterface(ovsClient, "breth0", "patch-breth0_bluenet_worker1-to-br-int", 15)
 			err = controller.Start(context.Background())
 			Expect(err).NotTo(HaveOccurred())
 
