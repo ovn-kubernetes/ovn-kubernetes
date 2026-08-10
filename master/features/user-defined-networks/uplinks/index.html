@@ -4934,6 +4934,15 @@ kubectl<span class="w"> </span>get<span class="w"> </span>uplinkstate<span class
   <code>DefaultGatewayBridgeUnsupported</code>: the selected bridge is the cluster
   default shared gateway bridge, which cannot currently be reused as an
   Uplink.</li>
+<li><code>UplinkState</code> with <code>Resolved</code> condition status <code>False</code> and reason
+  <code>WaitingForDPUHost</code> (split DPU mode only): the DPU side is waiting for the
+  DPU-Host to publish complete host interface data. Check the <code>HostDataReady</code>
+  condition on the same <code>UplinkState</code> for the DPU-Host-side cause.</li>
+<li><code>UplinkState</code> with <code>HostDataReady</code> condition status <code>False</code> (split DPU mode
+  only): host interface data discovery failed on the DPU-Host; the reason
+  carries the cause, for example <code>HostInterfaceNotFound</code> when the selected
+  <code>hostInterfaceName</code> does not exist on the DPU-Host, or
+  <code>GatewayInfoUnavailable</code> when the interface has no IP addresses yet.</li>
 <li><code>UplinkState</code> with <code>GatewayReady</code> condition status <code>False</code> and reason
   <code>GatewayConfigurationPending</code>: the active CUDN set changed and complete
   gateway programming has not converged yet.</li>
@@ -4968,6 +4977,11 @@ kubectl<span class="w"> </span>get<span class="w"> </span>uplinkstate<span class
   <code>UplinkUnsupportedTransport</code>: the CUDN uses EVPN transport, which is not
   supported with Uplinks.</li>
 </ul>
+<p>In split DPU mode each <code>UplinkState</code> condition has a single writer: the
+DPU-Host publishes the host interface data and the <code>HostDataReady</code> condition,
+while ovnkube-node on the DPU publishes <code>Resolved</code> and <code>GatewayReady</code>. Bridge
+reasons (<code>BridgeNotFound</code>, <code>BridgeUplinkNotFound</code>) therefore always describe
+OVS on the DPU, and <code>HostDataReady</code> reasons always describe the DPU-Host.</p>
 <h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">¶</a></h2>
 <ul>
 <li><a href="../user-defined-networks/">User Defined Networks</a></li>

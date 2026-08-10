@@ -6005,9 +6005,11 @@ fields on the same object, including <code>ovsBridge.name</code> and DPU-side va
 stored per <code>UplinkState</code>. <code>UplinkState</code> stores only reusable per-node host gateway data and is not serialized into
 <code>k8s.ovn.org/l3-gateway-config</code> for CUDNs.</p>
 <h4 id="uplinkstate-conditions">UplinkState conditions<a class="headerlink" href="#uplinkstate-conditions" title="Permanent link">¶</a></h4>
-<p><code>UplinkState.status.conditions</code> reports two independent node-local conditions. The Uplink discovery reconciler owns
-<code>Resolved</code>, while a node-level Uplink gateway coordinator owns <code>GatewayReady</code>; a gateway programming failure does not
-overwrite successful Uplink resolution. Individual CUDN gateway reconcilers do not write <code>GatewayReady</code> directly.</p>
+<p><code>UplinkState.status.conditions</code> reports independent node-local conditions, and each condition has a single writer.
+The Uplink discovery reconciler owns <code>Resolved</code> (published by the DPU side in split DPU mode), the DPU-Host discovery
+reconciler owns <code>HostDataReady</code> (split DPU mode only), and a node-level Uplink gateway coordinator owns <code>GatewayReady</code>;
+a gateway programming failure does not overwrite successful Uplink resolution. Individual CUDN gateway reconcilers do
+not write <code>GatewayReady</code> directly.</p>
 <p>The <code>Resolved</code> condition reports host interface, gateway data, and OVS bridge discovery. Reasons describe the current
 discovery state:</p>
 <ul>
@@ -6019,16 +6021,22 @@ discovery state:</p>
 <li><code>DefaultGatewayBridgeUnsupported</code>: the resolved bridge is the node's default shared gateway bridge, which cannot be
   selected as an <code>Uplink</code> in this OKEP.</li>
 <li><code>InvalidHostInterface</code>: the selected host interface resolves to an unsupported bridge role, such as the bridge's
-  physical uplink port instead of its host gateway interface.</li>
+  physical uplink port instead of its host gateway interface, or the interface has no usable MAC address (missing,
+  all-zero or multicast) on the node or DPU-Host.</li>
 <li><code>GatewayInfoUnavailable</code>: OVN-Kubernetes cannot discover the gateway MAC/IP data needed for OVN configuration.</li>
-<li><code>WaitingForDPU</code>: DPU-Host has published host-side data but is waiting for DPU-side bridge validation.</li>
-<li><code>WaitingForDPUHost</code>: DPU-side reconciliation is waiting for the DPU-Host to publish host-side L3 data.</li>
+<li><code>WaitingForDPUHost</code>: DPU-side reconciliation is waiting for the DPU-Host to publish complete host-side L3 data. The
+  DPU-Host-side cause is reported on the <code>HostDataReady</code> condition.</li>
 <li><code>NodeSelectorOverlap</code>: more than one <code>Uplink.spec.nodeConfigs</code> entry applies to this node, so OVN-Kubernetes cannot
   select a single node config for this <code>Uplink</code>/node pair.</li>
 </ul>
 <p>When discovery is complete, <code>Resolved=True</code> with reason <code>Resolved</code>. For the other reasons above, <code>Resolved=False</code>.
 If the <code>Uplink</code> no longer selects the node, the Uplink discovery reconciler deletes the corresponding <code>UplinkState</code>
 instead of retaining stale state with <code>Resolved=False</code>.</p>
+<p>In split DPU mode the <code>HostDataReady</code> condition reports host interface data discovery on the DPU-Host:
+<code>HostDataReady=True</code> with reason <code>HostDataDiscovered</code> once discovery succeeds (which guarantees a usable MAC and an
+address for each enabled IP family, so the DPU side can consume the data), and <code>HostDataReady=False</code> with a host-side
+discovery reason (<code>HostInterfaceNotFound</code>, <code>InvalidHostInterface</code>, <code>GatewayInfoUnavailable</code>, <code>NodeSelectorOverlap</code>)
+otherwise. Full mode does not publish this condition.</p>
 <p>The <code>GatewayReady</code> condition reports aggregate gateway programming for the complete set of CUDNs active on the resolved
 Uplink path on this node. The node-level coordinator is the sole writer of this condition and serializes reconciliation
 of the shared gateway interface, bridge mappings, and OpenFlow state for the aggregate desired configuration.</p>
@@ -6272,8 +6280,8 @@ treats the route set as pending for that network rather than importing routes fr
 <li>Aggregates <code>UplinkState.status.conditions[Resolved]</code> into <code>Uplink.status.conditions[Ready]</code>. For node-scoped failures,
   the condition message includes a bounded count and sample of affected nodes and underlying reasons such as
   <code>HostInterfaceNotFound</code>, <code>BridgeNotFound</code>, <code>BridgeUplinkNotFound</code>, <code>BridgeInvalid</code>,
-  <code>DefaultGatewayBridgeUnsupported</code>, <code>InvalidHostInterface</code>, <code>GatewayInfoUnavailable</code>, <code>WaitingForDPU</code>,
-  <code>WaitingForDPUHost</code>, and <code>NodeSelectorOverlap</code>.</li>
+  <code>DefaultGatewayBridgeUnsupported</code>, <code>InvalidHostInterface</code>, <code>GatewayInfoUnavailable</code>, <code>WaitingForDPUHost</code>, and
+  <code>NodeSelectorOverlap</code>.</li>
 <li>Derives CUDN reason <code>UplinkOverlapOnNode</code> from affected <code>UplinkState</code> objects with reason <code>NodeSelectorOverlap</code>.</li>
 <li>Resolves nodes selected by a referencing active CUDN but not selected by any <code>Uplink.spec.nodeConfigs</code> entry into CUDN
   reason <code>UplinkNotFoundForNode</code>.</li>
@@ -6346,7 +6354,7 @@ reconciler is split across the two components.</p>
 <li>Determine the CUDN's effective routing domain from matching <code>RouteAdvertisements</code>. Attach the selected host interface
    to the host-side CUDN VRF only for per-CUDN VRF-Lite isolation; otherwise leave it in the default VRF.</li>
 <li>Update this node's <code>UplinkState.status</code> with <code>hostInterfaceName</code>, <code>macAddress</code>, <code>ipAddresses</code>, <code>defaultGateways</code>, and
-   host-side discovery conditions.</li>
+   the <code>HostDataReady</code> condition. The DPU-Host does not write the <code>Resolved</code> condition; the DPU side owns it.</li>
 </ol>
 <p>DPU-side reconciler:</p>
 <ol>
@@ -6355,7 +6363,8 @@ reconciler is split across the two components.</p>
 <li>Detect the DPU-side host gateway/PF representor by matching the host interface MAC to the existing representor peer
    relationship. The bridge is pre-provisioned, so the representor must already be attached to an OVS bridge on the DPU.</li>
 <li>Resolve the OVS bridge that contains the representor, validate the bridge layout, and publish <code>status.ovsBridge.name</code>
-   plus DPU-side bridge validation conditions in <code>UplinkState</code>.</li>
+   plus the <code>Resolved</code> condition in <code>UplinkState</code>. While host data is missing or incomplete, publish <code>Resolved=False</code>
+   with reason <code>WaitingForDPUHost</code>.</li>
 <li>Create or reconcile the DPU-local route-import VRF for the CUDN only when the CUDN resolves to per-CUDN VRF-Lite
    isolation. This VRF uses the same name that <code>RouteAdvertisements targetVRF: auto</code> resolves to for the CUDN.</li>
 <li>For per-CUDN VRF-Lite isolation, use the resolved bridge's <code>LOCAL</code> interface as the DPU-local FRR peering interface
@@ -6370,8 +6379,9 @@ reconciler is split across the two components.</p>
 <p>Although both DPU-Host and DPU-side reconcilers update the same <code>UplinkState</code>, updates are dependency ordered and low
 frequency. The DPU side waits for the DPU-Host to publish host-side gateway data, especially <code>status.macAddress</code>, before
 resolving and publishing DPU-local bridge data such as <code>status.ovsBridge.name</code>. Implementations should use status patches
-or server-side apply field ownership for the fields each side owns, so normal retry-on-conflict handling is sufficient
-and the object should not become a hot write target.</p>
+or server-side apply field ownership for the fields each side owns, and each status condition has a single writer
+(<code>HostDataReady</code> on the DPU-Host, <code>Resolved</code> and <code>GatewayReady</code> on the DPU), so normal retry-on-conflict handling is
+sufficient and the object cannot become a hot write target.</p>
 <p>This avoids publishing PF IDs, host PCI addresses, or DPU-local bridge names in the <code>Uplink</code> spec. The DPU-Host publishes
 the host interface MAC as the handoff point, and the DPU side uses the existing representor peer relationship to discover
 the DPU-local representor and OVS bridge.</p>
@@ -6510,11 +6520,14 @@ path.</p>
 <h3 id="uplink">Uplink<a class="headerlink" href="#uplink" title="Permanent link">¶</a></h3>
 <ul>
 <li>If the selected host interface is missing, or the resolved OVS bridge is missing or malformed on a node, the matching
-  <code>UplinkState</code> reports <code>Resolved=False</code>. Retries continue, and local netlink/OVS change notifications or periodic resync
-  requeue the Uplink when admin-owned host or OVS state changes.</li>
+  <code>UplinkState</code> reports <code>Resolved=False</code>. Retries continue while unresolved: discovery reports the failure in the
+  <code>UplinkState</code> and returns an error, and its controller retries with rate-limited backoff and unbounded attempts,
+  re-polling admin-owned host and OVS state, which generates no Kubernetes watch events. Once a side reports success,
+  its published data is refreshed on the next Kubernetes-triggered reconcile.</li>
 <li>Per-node failures are reported on the matching <code>UplinkState</code>; <code>Uplink.status.conditions</code> reports aggregate health only.</li>
-<li>If an admin deletes or changes the OVS bridge, OVN-Kubernetes does not recreate or repair the bridge. It updates status
-  and retries validation.</li>
+<li>If an admin deletes or changes the OVS bridge, OVN-Kubernetes does not recreate or repair the bridge. While discovery
+  is unresolved, it updates status and retries validation. A converged <code>Resolved=True</code> status is not re-validated until
+  the next Kubernetes event or ovnkube-node restart triggers a reconcile.</li>
 <li>If an admin requests deletion of a <code>Uplink</code> while one or more CUDNs reference it, OVN-Kubernetes keeps the <code>Uplink</code>
   finalizer and deletion remains pending. This prevents accidental disruption of active CUDNs. Since <code>spec.uplinks</code> is
   immutable in this OKEP, clearing the reference requires deleting or recreating the CUDN without that <code>Uplink</code>. Once no
