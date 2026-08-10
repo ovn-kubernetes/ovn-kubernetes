@@ -5,13 +5,13 @@
       
       
       
-        <link rel="canonical" href="https://www.ovn.org/ovn-kubernetes/master/design/ovn-kubernetes-subnets/">
+        <link rel="canonical" href="https://www.ovn.org/ovn-kubernetes/master/design/masquerade-ips/">
       
       
-        <link rel="prev" href="../external-ip-and-loadbalancer-ingress/">
+        <link rel="prev" href="../bridge-flows/">
       
       
-        <link rel="next" href="../bridge-flows/">
+        <link rel="next" href="../../features/live-migration/">
       
       
         
@@ -22,7 +22,7 @@
     
     
       
-        <title>Internal Subnets - OVN-Kubernetes</title>
+        <title>Masquerade IPs - OVN-Kubernetes</title>
       
     
     
@@ -84,6 +84,11 @@
     <label class="md-overlay" for="__drawer"></label>
     <div data-md-component="skip">
       
+        
+        <a href="#masquerade-ips" class="md-skip">
+          Skip to content
+        </a>
+      
     </div>
     <div data-md-component="announce">
       
@@ -119,7 +124,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Internal Subnets
+              Masquerade IPs
             
           </span>
         </div>
@@ -830,17 +835,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../ovn-kubernetes-subnets/" class="md-nav__link">
         
   
   
@@ -856,7 +854,6 @@
   
 
       </a>
-      
     </li>
   
 
@@ -894,10 +891,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../masquerade-ips/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Masquerade IPs
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -913,6 +937,137 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#masquerade-subnet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Masquerade Subnet
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#address-layout-within-the-subnet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Address Layout Within the Subnet
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Address Layout Within the Subnet">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#global-region-offsets-09" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Global Region (Offsets 0–9)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#udn-region-offset-11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        UDN Region (Offset 11+)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#kernel-static-neighbor-entries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kernel Static Neighbor Entries
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Kernel Static Neighbor Entries">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-they-are-needed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why They Are Needed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-fix-permanent-neighbor-entries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Fix: Permanent Neighbor Entries
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#global-vs-per-udn-neighbor-entries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Global vs Per-UDN Neighbor Entries
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -4321,6 +4476,127 @@
   
   
   
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#masquerade-subnet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Masquerade Subnet
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#address-layout-within-the-subnet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Address Layout Within the Subnet
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Address Layout Within the Subnet">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#global-region-offsets-09" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Global Region (Offsets 0–9)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#udn-region-offset-11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        UDN Region (Offset 11+)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#kernel-static-neighbor-entries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kernel Static Neighbor Entries
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Kernel Static Neighbor Entries">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-they-are-needed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why They Are Needed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-fix-permanent-neighbor-entries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Fix: Permanent Neighbor Entries
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#global-vs-per-udn-neighbor-entries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Global vs Per-UDN Neighbor Entries
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
   
 </nav>
                   </div>
@@ -4340,9 +4616,355 @@
   
 
 
-  <h1>Internal Subnets</h1>
+<h1 id="masquerade-ips">Masquerade IPs<a class="headerlink" href="#masquerade-ips" title="Permanent link">¶</a></h1>
+<h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">¶</a></h2>
+<p>OVN-Kubernetes uses <strong>masquerade IPs</strong> — synthetic node-local addresses
+that must never appear on the physical network — as intermediate SNAT
+addresses on the external bridge (<code>breth0</code>). They serve two main
+purposes:</p>
+<ol>
+<li>
+<p><strong>Network identification on the shared bridge.</strong> Multiple CUDNs can
+   have <strong>overlapping pod subnets</strong> (e.g. two UDNs both using
+   <code>10.244.0.0/16</code>). They all share the same <code>breth0</code> and the same
+   node physical IP. When return traffic arrives at the node, OVS
+   cannot distinguish which network the packet belongs to by
+   destination IP alone because the pod subnets overlap. To solve
+   this, a <strong>double-SNAT</strong> is used:</p>
+</li>
+<li>
+<p><strong>Egress (pod → wire):</strong> OVN's GR SNATs the pod source IP to the
+     UDN's unique masquerade IP (e.g. <code>169.254.0.11</code>). OVS on <code>breth0</code>
+     then SNATs the masquerade IP to the node's physical IP before
+     sending the packet on the wire. The masquerade IP is recorded in
+     conntrack alongside a per-network <code>ct_mark</code>:</p>
+<div class="highlight"><pre><span></span><code>priority=100, in_port=&lt;cudn-patch&gt;, dl_src=&lt;bridgeMAC&gt;, ip, ip_src=169.254.0.11,
+    actions=ct(commit, zone=&lt;ctZone&gt;, nat(src=&lt;nodeIP&gt;), exec(set_field:&lt;ct_mark&gt;-&gt;ct_mark)),
+            output:&lt;phys&gt;
+</code></pre></div>
+</li>
+<li>
+<p><strong>Ingress (wire → pod):</strong> OVS un-SNATs node IP → masquerade IP and
+     uses the <code>ct_mark</code> to identify the originating network, routing
+     the packet to the correct UDN patch port. OVN's GR then un-SNATs
+     masquerade IP → original pod IP.</p>
+</li>
+</ol>
+<p>The per-UDN masquerade IP is the piece that makes this work — it is
+   a unique, non-overlapping identifier for each network in conntrack.</p>
+<ol>
+<li><strong>Host-to-service traffic steering.</strong> When the host kernel itself
+   accesses a Kubernetes Service, OVS SNATs the host's source IP to a
+   masquerade IP so the reply returns through OVS (where it can be
+   un-SNATted) instead of going directly to the host (which would
+   bypass conntrack state and break the connection). Similar masquerade
+   IPs handle service hairpin and <code>externalTrafficPolicy=Local</code>
+   scenarios.</li>
+</ol>
+<p>Masquerade IPs are <strong>internal to each node</strong> and should <strong>never appear
+on the wire</strong>. Traffic to/from these IPs is handled within the OVS
+datapath across multiple flow priorities and tables on <code>breth0</code>
+(priority-500 for specific masquerade IP matching, priority-100 for UDN
+egress SNAT, priority-50 for conntrack entry, and tables 1–5 for
+ct_mark-based dispatch). See <a href="../bridge-flows/">bridge-flows.md</a> for the
+OpenFlow design.</p>
+<h2 id="masquerade-subnet">Masquerade Subnet<a class="headerlink" href="#masquerade-subnet" title="Permanent link">¶</a></h2>
+<p>The masquerade subnet is configured via two ovnkube flags:</p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Default</th>
+<th>Example for UDN-enabled clusters</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--gateway-v4-masquerade-subnet</code></td>
+<td><code>169.254.169.0/29</code> (8 addresses)</td>
+<td><code>169.254.0.0/17</code> (32768 addresses)</td>
+</tr>
+<tr>
+<td><code>--gateway-v6-masquerade-subnet</code></td>
+<td><code>fd69::/125</code> (8 addresses)</td>
+<td><code>fd69::/112</code> (65536 addresses)</td>
+</tr>
+</tbody>
+</table>
+<p>All masquerade IPs — both global (default network) and per-UDN — are
+allocated from this single subnet.</p>
+<p>The small default <code>/29</code> / <code>/125</code> contains only 8 addresses (offsets
+0–7), which is sufficient for clusters that only use the default
+network (6 of 8 slots used: the network address + 5 global IPs).
+Clusters with User Defined Networks (UDNs) <strong>must</strong> configure a larger
+subnet because the first per-UDN IP is at offset 11 — outside the
+default <code>/29</code>. Each UDN allocates 2 additional IPs. A <code>/17</code> (IPv4) or
+<code>/112</code> (IPv6) supports thousands of networks.</p>
+<p>The IPv4 range (<code>169.254.0.0/16</code>) is link-local space; the IPv6 range
+(<code>fd69::/112</code>) is within ULA space (<code>fd00::/8</code>), which <em>can</em> be routed
+within private networks. Neither range is inherently non-routable —
+they are intended strictly for node-local use and must not be advertised
+or routed off-node.</p>
+<h2 id="address-layout-within-the-subnet">Address Layout Within the Subnet<a class="headerlink" href="#address-layout-within-the-subnet" title="Permanent link">¶</a></h2>
+<p>The subnet is divided into two regions: a <strong>fixed global region</strong>
+(offsets 0–5 allocated, 6–9 reserved) for the default network, and a
+<strong>dynamic UDN region</strong> (offset 11+) for per-network masquerade IPs.</p>
+<h3 id="global-region-offsets-09">Global Region (Offsets 0–9)<a class="headerlink" href="#global-region-offsets-09" title="Permanent link">¶</a></h3>
+<p>Offsets 0–9 are reserved for global use. Offset 0 is the subnet network
+address and offsets 1–5 are currently allocated. Offsets 6–9 are
+reserved for future global IPs. Note: offsets 6–9 only exist when the
+subnet is larger than the default <code>/29</code> / <code>/125</code> (which contain only
+offsets 0–7).</p>
+<p>Using <code>169.254.0.0/17</code> as example:</p>
+<table>
+<thead>
+<tr>
+<th>Offset</th>
+<th>IPv4</th>
+<th>IPv6</th>
+<th>Role</th>
+<th>Code constant</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td><code>169.254.0.0</code></td>
+<td><code>fd69::</code></td>
+<td>Subnet network address (not usable)</td>
+<td>—</td>
+</tr>
+<tr>
+<td>1</td>
+<td><code>169.254.0.1</code></td>
+<td><code>fd69::1</code></td>
+<td><strong>OVN Masquerade</strong> — GR SNAT source for default-network service traffic. The GR rewrites pod source IPs to this before forwarding to the service backend.</td>
+<td><code>V4OVNMasqueradeIP</code></td>
+</tr>
+<tr>
+<td>2</td>
+<td><code>169.254.0.2</code></td>
+<td><code>fd69::2</code></td>
+<td><strong>Host Masquerade</strong> — host-to-service SNAT source. When the host itself accesses a ClusterIP service, OVS SNATs the host IP to this so the reply returns through OVS (not direct to the host, which would bypass un-SNAT).</td>
+<td><code>V4HostMasqueradeIP</code></td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>169.254.0.3</code></td>
+<td><code>fd69::3</code></td>
+<td><strong>Host ETP=Local Masquerade</strong> — <code>externalTrafficPolicy=Local</code> variant. Separate from .2 so that OVS can distinguish ETP=Local traffic and preserve the original client IP for the backend pod.</td>
+<td><code>V4HostETPLocalMasqueradeIP</code></td>
+</tr>
+<tr>
+<td>4</td>
+<td><code>169.254.0.4</code></td>
+<td><code>fd69::4</code></td>
+<td><strong>Dummy Next-Hop</strong> — synthetic next-hop for masquerade routing. The host routing table has a route to the masquerade subnet via this next-hop. A static ARP/ND entry maps this IP to a synthetic MAC, ensuring packets reach OVS without real ARP resolution.</td>
+<td><code>V4DummyNextHopMasqueradeIP</code></td>
+</tr>
+<tr>
+<td>5</td>
+<td><code>169.254.0.5</code></td>
+<td><code>fd69::5</code></td>
+<td><strong>OVN Service Hairpin</strong> — hairpin traffic SNAT source. When a pod sends traffic to a Service and the same pod is selected as backend, OVN SNATs to this IP to force the return path back through the load balancer.</td>
+<td><code>V4OVNServiceHairpinMasqueradeIP</code></td>
+</tr>
+<tr>
+<td>6–9</td>
+<td>—</td>
+<td>—</td>
+<td>Reserved for future global use</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<p>The global IPs are defined as fields in <code>MasqueradeIPsConfig</code>
+(<code>go-controller/pkg/config/config.go</code>) and sequentially allocated at
+startup by <code>config.AllocateV4MasqueradeIPs</code> /
+<code>config.AllocateV6MasqueradeIPs</code> in <code>go-controller/pkg/config/utils.go</code>.</p>
+<h3 id="udn-region-offset-11">UDN Region (Offset 11+)<a class="headerlink" href="#udn-region-offset-11" title="Permanent link">¶</a></h3>
+<p>When network segmentation is enabled, each UDN gets its own pair of
+masquerade IPs computed from the network's integer ID. The allocation
+base constant is 10 (<code>userDefinedNetworkMasqueradeIPBase</code>), but the
+formula <code>base + networkID*2 - 1</code> means the first real allocation
+(networkID=1) starts at offset 11. Each network consumes 2 IPs:</p>
+<div class="highlight"><pre><span></span><code>GatewayRouter  = subnet_base + 10 + (networkID × 2) - 1
+ManagementPort = subnet_base + 10 + (networkID × 2)
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Offset</th>
+<th>networkID</th>
+<th>IPv4</th>
+<th>IPv6</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>11</td>
+<td>1</td>
+<td><code>169.254.0.11</code></td>
+<td><code>fd69::b</code></td>
+<td>UDN-1 Gateway Router masquerade</td>
+</tr>
+<tr>
+<td>12</td>
+<td>1</td>
+<td><code>169.254.0.12</code></td>
+<td><code>fd69::c</code></td>
+<td>UDN-1 Management Port masquerade</td>
+</tr>
+<tr>
+<td>13</td>
+<td>2</td>
+<td><code>169.254.0.13</code></td>
+<td><code>fd69::d</code></td>
+<td>UDN-2 Gateway Router masquerade</td>
+</tr>
+<tr>
+<td>14</td>
+<td>2</td>
+<td><code>169.254.0.14</code></td>
+<td><code>fd69::e</code></td>
+<td>UDN-2 Management Port masquerade</td>
+</tr>
+<tr>
+<td>...</td>
+<td>...</td>
+<td>...</td>
+<td>...</td>
+<td>...</td>
+</tr>
+</tbody>
+</table>
+<p>Each UDN's <strong>Gateway Router</strong> masquerade IP serves the same role as the
+global <code>V4OVNMasqueradeIP</code> (.1) but scoped to that network: the UDN's
+GR SNATs pod source IPs to this address for service traffic. The
+<strong>Management Port</strong> masquerade IP is used for management port traffic
+within the UDN.</p>
+<p>The gap between offset 5 (last used global IP) and offset 11 (first UDN
+IP) provides room for future global allocations without breaking
+existing UDN deployments.</p>
+<p>Per-UDN allocation is in <code>udn.AllocateV4MasqueradeIPs</code> /
+<code>udn.AllocateV6MasqueradeIPs</code> (<code>go-controller/pkg/generator/udn/masquerade_ips.go</code>).</p>
+<h2 id="kernel-static-neighbor-entries">Kernel Static Neighbor Entries<a class="headerlink" href="#kernel-static-neighbor-entries" title="Permanent link">¶</a></h2>
+<h3 id="why-they-are-needed">Why They Are Needed<a class="headerlink" href="#why-they-are-needed" title="Permanent link">¶</a></h3>
+<p>Masquerade IPs are handled entirely within the OVS datapath. Under
+normal operation, return service traffic arriving on the physical port
+is matched by OVS flows, un-SNATted via conntrack, and dispatched to the
+correct OVN patch port — the kernel is never involved.</p>
+<p>However, in <strong>LGW + no-overlay (BGP) mode</strong>, the kernel can become
+involved in the return path. Without static neighbor entries, the kernel
+has no way to resolve the L2 address for masquerade IPs and falls back
+to ARP/NDP — which should never happen for addresses that are internal
+to the node.</p>
+<p>A concrete example is cross-node NodePort traffic with CUDN pods in
+LGW + no-overlay (BGP) mode:</p>
+<div class="highlight"><pre><span></span><code>ovn-control-plane                              ovn-worker2
+┌──────────────┐                           ┌──────────────┐
+│ CUDN pod A   │                           │              │
+│ (client)     │─── wire (node IPs) ─────▶│ NodePort svc │
+│              │                           │ (worker2 IP) │
+│ CUDN pod B   │◀── wire (node IPs) ──────│              │
+│ (backend)    │                           │              │
+└──────────────┘                           └──────────────┘
+</code></pre></div>
+<p>Detailed packet flow:</p>
+<div class="highlight"><pre><span></span><code>FORWARD (SYN):
+  ovn-control-plane (CUDN pod A, src 2013:100:200::3) →
+    OVN cluster router SNAT (pod IP → mgmt-port masq IP fd69::c) →
+    exits to kernel via management port →
+    kernel nftables MASQUERADE (fd69::c → node IP) →
+    breth0 → eth0 → wire →
+  ovn-worker2 (NodePort on worker2's node IP) →
+    eth0 → breth0 → OVS → LOCAL →
+    kernel nftables DNAT (NodePort → ClusterIP) →
+    routes back out breth0 (UDN VRF cluster IP route) →
+    enters OVN via CUDN patch port →
+    GR DNAT (ClusterIP → pod B IP 2013:100:200::4) →
+    GR SNAT (src → GR masq IP fd69::b) →
+    exits OVN via CUDN patch port → breth0 →
+    OVS priority-100 SNAT (fd69::b → worker2 node IP) →
+    breth0 → eth0 → wire →
+  ovn-control-plane →
+    eth0 → breth0 → OVS → LOCAL → kernel → mgmt port → OVN → pod B
 
-
+RETURN (SYN-ACK):
+  ovn-control-plane (pod B responds) →
+    OVN → kernel → breth0 → eth0 → wire →
+  ovn-worker2 →
+    eth0 → breth0 → OVS → LOCAL (dst is worker2's IP) →
+    kernel conntrack un-SNAT (dst: worker2 IP → fd69::b) →
+    kernel forwards to fd69::b via breth0 →
+    ** NS for fd69::b — NOBODY ANSWERS — FAILED **
+</code></pre></div>
+<p>On the return path, the kernel on <code>ovn-worker2</code> receives the packet at
+LOCAL because it is addressed to worker2's node IP — this is the normal
+LGW flow, not a leak. Conntrack reverses the priority-100 SNAT
+(worker2 IP → <code>fd69::b</code>), and the kernel must then forward to
+<code>fd69::b</code> via <code>breth0</code>. To construct the L2 frame it needs the MAC for
+<code>fd69::b</code>, triggering neighbor discovery:</p>
+<ul>
+<li><strong>IPv4</strong>: the kernel broadcasts an ARP request
+  (<code>dl_dst=ff:ff:ff:ff:ff:ff</code>) from the LOCAL port. It falls through to
+  priority-0 <code>NORMAL</code>, which floods to all non-NO_FLOOD ports — the
+  physical port and the default network patch. The ARP leaks to the
+  wire, reaches a remote node whose CUDN GR owns the masquerade IP and
+  replies. So IPv4 happens to work accidentally, but masquerade IP ARPs
+  should never appear on the wire.</li>
+<li><strong>IPv6</strong>: the kernel sends a Neighbor Solicitation using
+  solicited-node multicast (<code>dl_dst=33:33:ff:00:00:0b</code>). This also
+  falls to <code>NORMAL</code> and floods to non-NO_FLOOD ports, leaking to the
+  wire. On the remote node the NS arrives on the physical port but
+  <code>NORMAL</code> there also skips NO_FLOOD ports (CUDN patches), so no CUDN
+  GR ever sees it. The neighbor entry enters <code>FAILED</code> state,
+  black-holing return traffic.</li>
+</ul>
+<p>Static neighbor entries eliminate both problems: the kernel never sends
+ARP/NS for masquerade IPs, keeping this traffic off the wire entirely.</p>
+<h3 id="the-fix-permanent-neighbor-entries">The Fix: Permanent Neighbor Entries<a class="headerlink" href="#the-fix-permanent-neighbor-entries" title="Permanent link">¶</a></h3>
+<p>Rather than adding OpenFlow rules to forward NS to CUDN patches (which
+would be a workaround for traffic that shouldn't be on the wire in the
+first place), we add <strong>permanent kernel neighbor entries</strong> for each
+masquerade IP on <code>breth0</code>:</p>
+<div class="highlight"><pre><span></span><code>ip<span class="w"> </span>neigh<span class="w"> </span>add<span class="w"> </span><span class="m">169</span>.254.0.11<span class="w"> </span>lladdr<span class="w"> </span>0a:58:a9:fe:00:0b<span class="w"> </span>dev<span class="w"> </span>breth0<span class="w"> </span>nud<span class="w"> </span>permanent
+ip<span class="w"> </span>neigh<span class="w"> </span>add<span class="w"> </span>fd69::b<span class="w">      </span>lladdr<span class="w"> </span>0a:58:XX:XX:XX:XX<span class="w"> </span>dev<span class="w"> </span>breth0<span class="w"> </span>nud<span class="w"> </span>permanent
+</code></pre></div>
+<p>The MAC is derived using <code>util.IPAddrToHWAddr()</code>, the same synthetic MAC
+scheme used by <code>addHostMACBindings()</code> for global masquerade IPs. With
+this entry present, the kernel never sends ARP/NS for the masquerade IP.
+If traffic does reach the kernel, it constructs the L2 frame immediately
+and sends it out via <code>breth0</code> (LOCAL port in OVS), where it is matched
+by OVS flows and handled correctly.</p>
+<h3 id="global-vs-per-udn-neighbor-entries">Global vs Per-UDN Neighbor Entries<a class="headerlink" href="#global-vs-per-udn-neighbor-entries" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Scope</th>
+<th>IPs</th>
+<th>Added by</th>
+<th>Reconciled</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Global (default network)</td>
+<td><code>V4OVNMasqueradeIP</code> + <code>V4DummyNextHopMasqueradeIP</code> (and v6 equivalents — 2 per family)</td>
+<td><code>addHostMACBindings()</code> in gateway init</td>
+<td>Yes — <code>masqueradeReconciler</code> re-applies on link events</td>
+</tr>
+<tr>
+<td>Per-UDN</td>
+<td><code>V4MasqIPs.GatewayRouter</code>, <code>V6MasqIPs.GatewayRouter</code></td>
+<td><code>addUDNMasqIPNeighbors()</code> in UDN <code>addNetwork()</code></td>
+<td>Not yet — only at network add time. On <code>ovnkube-node</code> restart, <code>addNetwork()</code> re-runs for every UDN and re-creates the entries. The only uncovered gap is <code>ovs-vswitchd</code> restart (which recreates the bridge interface and wipes kernel neighbors) while <code>ovnkube-node</code> stays running. Extending <code>masqueradeReconciler</code> to cover per-UDN entries is a follow-up.</td>
+</tr>
+</tbody>
+</table>
+<p>Cleanup: per-UDN entries are removed by <code>delUDNMasqIPNeighbors()</code> when
+the network is deleted.</p>
 
 
 
