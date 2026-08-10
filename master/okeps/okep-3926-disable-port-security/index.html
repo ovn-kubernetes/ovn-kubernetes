@@ -1,0 +1,6017 @@
+<!DOCTYPE html><html lang="en" class="no-js"><head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://www.ovn.org/ovn-kubernetes/master/okeps/okep-3926-disable-port-security/">
+      
+      
+        <link rel="prev" href="../okep-6019-vrf-lite-shared-gateway-external-bridges/">
+      
+      
+        <link rel="next" href="../../blog/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../images/ovn-inside-k8s.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Disable Port Security - OVN-Kubernetes</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  <link href="../../assets/stylesheets/glightbox.min.css" rel="stylesheet"><script src="../../assets/javascripts/glightbox.min.js"></script><style id="glightbox-style">
+            html.glightbox-open { overflow: initial; height: 100%; }
+            .gslide-title { margin-top: 0px; user-select: text; }
+            .gslide-desc { color: #666; user-select: text; }
+            .gslide-image img { background: white; }
+            .gscrollbar-fixer { padding-right: 15px; }
+            .gdesc-inner { font-size: 0.75rem; }
+            body[data-md-color-scheme="slate"] .gdesc-inner { background: var(--md-default-bg-color); }
+            body[data-md-color-scheme="slate"] .gslide-title { color: var(--md-default-fg-color); }
+            body[data-md-color-scheme="slate"] .gslide-desc { color: var(--md-default-fg-color); }
+        </style></head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#okep-3926-disable-mac-spoof-protection-on-secondary-networks" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden="">
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="OVN-Kubernetes" class="md-header__button md-logo" aria-label="OVN-Kubernetes" data-md-component="logo">
+      
+  <img src="../../images/ovn-inside-k8s.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"></path></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            OVN-Kubernetes
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Disable Port Security
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="indigo" aria-label="Switch to dark mode" type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden="">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"></path></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="cyan" data-md-color-accent="indigo" aria-label="Switch to light mode" type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden="">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"></path></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required="">
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"></path></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix="">
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ovn-kubernetes/ovn-kubernetes" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+  </div>
+  <div class="md-source__repository">
+    ovn-kubernetes/ovn-kubernetes
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+    
+      
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../.." class="md-tabs__link">
+          
+  
+  
+    
+  
+  Overview
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../installation/launching-ovn-kubernetes-on-kind/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../governance/CONTRIBUTING/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Developer Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../api-reference/introduction/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  API Reference Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../features/user-defined-networks/user-defined-networks/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Features
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../troubleshooting/debugging/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Troubleshooting
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../observability/metrics/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Observability
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../okep-5085-localnet-api/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Enhancement Proposals
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../blog/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Blog
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation">
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="OVN-Kubernetes" class="md-nav__button md-logo" aria-label="OVN-Kubernetes" data-md-component="logo">
+      
+  <img src="../../images/ovn-inside-k8s.png" alt="logo">
+
+    </a>
+    OVN-Kubernetes
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ovn-kubernetes/ovn-kubernetes" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+  </div>
+  <div class="md-source__repository">
+    ovn-kubernetes/ovn-kubernetes
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix="">
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1">
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../.." class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_1" id="__nav_1_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Overview
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/topology/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Network Topology
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/gateway-modes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gateway Modes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/traffic-flows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Traffic Flows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/pod-creation-workflow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pod Creation Workflow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/service-creation-workflow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Service Creation Workflow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/service-traffic-policy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Service Traffic Policy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/host-to-node-port-hairpin-trafficflow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Host To NodePort Hairpin
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/external-ip-and-loadbalancer-ingress/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ExternalIPs/LoadBalancerIngress
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/ovn-kubernetes-subnets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Internal Subnets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/live-migration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Kubevirt VM Live Migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2">
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../installation/launching-ovn-kubernetes-on-kind/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Launching OVN-Kubernetes sandbox env
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../installation/launching-ovn-kubernetes-with-helm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Launching OVN-Kubernetes Using Helm
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../installation/launching-ovn-kubernetes-with-dpu/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Launching OVN-Kubernetes with DPU Acceleration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../installation/INSTALL.KUBEADM/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Launching OVN-Kubernetes with kubeadm
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/requirements/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Requirements
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/cli-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/example-pod-creation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploying Workloads on OVN-Kubernetes cluster
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/example-service-creation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploying Services on OVN-Kubernetes cluster
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/building-ovn-kubernetes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Setup and Building
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3">
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../governance/CONTRIBUTING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../governance/GOVERNANCE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Governance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../governance/REVIEWING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reviewing Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developer-guide/areas/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Areas
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developer-guide/developer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coding Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developer-guide/image-build/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OVN-Kubernetes Container Images
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developer-guide/documentation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Documentation Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developer-guide/local_testing_guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Testing Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ci/ci/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CI Testing Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developer-guide/debugging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Debugging
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developer-guide/release/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Release Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4">
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/introduction/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/egress-ip-api-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    EgressIP
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/egress-service-api-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    EgressService
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/egress-qos-api-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    EgressQoS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/egress-firewall-api-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    EgressFirewall
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/admin-epbr-api-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AdminPolicyBasedExternalRoutes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/userdefinednetwork-api-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    UserDefinedNetwork
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/routeadvertisements-api-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RouteAdvertisements
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/clusternetworkconnect-api-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ClusterNetworkConnect
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/vtep-api-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    VTEP
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5">
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Features
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Features
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_1">
+        
+          
+          <label class="md-nav__link" for="__nav_5_1" id="__nav_5_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Universal Connectivity
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Universal Connectivity
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/user-defined-networks/user-defined-networks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    UserDefinedNetwork
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/user-defined-networks/uplinks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Uplinks for UserDefinedNetworks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/user-defined-networks/cluster-network-connect/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connecting UserDefinedNetworks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/user-defined-networks/dynamic-udn/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dynamic UDN Node Allocation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2">
+        
+          
+          <label class="md-nav__link" for="__nav_5_2" id="__nav_5_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NetworkSecurityControls
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    NetworkSecurityControls
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/network-security-controls/admin-network-policy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AdminNetworkPolicy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/network-security-controls/network-policy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NetworkPolicy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/network-security-controls/egress-firewall/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    EgressFirewall
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3">
+        
+          
+          <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ClusterEgressControls
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    ClusterEgressControls
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/cluster-egress-controls/egress-ip/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    EgressIP
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/cluster-egress-controls/egress-service/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    EgressService
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/cluster-egress-controls/egress-qos/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    EgressQoS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/cluster-egress-controls/egress-gateway/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    EgressGateway
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_4">
+        
+          
+          <label class="md-nav__link" for="__nav_5_4" id="__nav_5_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    InfrastructureSecurityControls
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    InfrastructureSecurityControls
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/infrastructure-security-controls/node-identity/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NodeIdentity
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_5">
+        
+          
+          <label class="md-nav__link" for="__nav_5_5" id="__nav_5_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MultiNetworking
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    MultiNetworking
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/multiple-networks/multi-homing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multihoming
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/multiple-networks/multi-network-policies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MultiNetworkPolicies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/multiple-networks/multi-vtep/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MultiNetworkRails
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/multicast/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multicast
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_7">
+        
+          
+          <label class="md-nav__link" for="__nav_5_7" id="__nav_5_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NetworkQoS
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    NetworkQoS
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/network-qos/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/network-qos-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Usage Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/live-migration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Kubevirt VM Live Migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/hybrid-overlay/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HybridOverlay
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/ovs-dynamic-cpu-affinity/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OVS Dynamic CPU Affinity
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_11">
+        
+          
+          <label class="md-nav__link" for="__nav_5_11" id="__nav_5_11_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hardware Acceleration
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_11">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Hardware Acceleration
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/hardware-offload/ovs-kernel/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OVS Acceleration with kernel datapath
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/hardware-offload/ovs-doca/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OVS Acceleration with DOCA datapath
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_12">
+        
+          
+          <label class="md-nav__link" for="__nav_5_12" id="__nav_5_12_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    BGP Integration
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_12_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_12">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    BGP Integration
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/bgp-integration/route-advertisements/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Route Advertisements
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/bgp-integration/no-overlay/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    No-Overlay Mode
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/bgp-integration/evpn/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    EVPN
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6">
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Troubleshooting
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../troubleshooting/debugging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../troubleshooting/ovnkube-trace/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OVNKube Trace
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../troubleshooting/logging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Logging
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7">
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Observability
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Observability
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../observability/metrics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Metrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../observability/sdn-dashboard/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SDN Dashboard
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../observability/ovn-observability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OVN observability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" checked="">
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Enhancement Proposals
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Enhancement Proposals
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../okep-5085-localnet-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Localnet API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../okep-4380-network-qos/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Network QoS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../okep-5193-user-defined-networks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Defined Networks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../okep-5233-preconfigured-udn-addresses/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Preconfigured UDN Addresses
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../okep-5296-bgp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    BGP
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../okep-5094-layer2-transit-router/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Layer2TransitRouter
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../okep-5494-ovn-kubernetes-mcp-server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MCP for Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../okep-5552-dynamic-udn-node-allocation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dynamic UDN Node Allocation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../okep-5224-connecting-udns/okep-5224-connecting-udns/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connecting User Defined Networks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../okep-5259-no-overlay/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    No-Overlay Mode
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../okep-5088-evpn/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    EVPN
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../okep-5674-dpu-healthcheck/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DPU Healthcheck
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../okep-5377-extend-udn-to-support-multiple-cluster-subnets-in-layer3-topology/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Extend Primary UDN/CUDN to Support Multiple Cluster Subnets in Layer3 Topology
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../okep-6019-vrf-lite-shared-gateway-external-bridges/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    VRF-Lite Shared Gateway Mode with Uplinks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Disable Port Security
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Disable Port Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+      
+        <li class="md-nav__item">
+  <a href="#problem-statement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Problem Statement
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Goals
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Non-Goals
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#future-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Future Goals
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#introduction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Introduction
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Introduction">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ovn-port-security" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OVN Port Security
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-unknown-address-keyword" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The unknown Address Keyword
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-force_fdb_lookup-option" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The force_fdb_lookup Option
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#existing-port-security-behavior-with-ipam-disabled" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Existing Port Security Behavior with IPAM Disabled
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bridge-cni-parity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bridge CNI Parity
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#user-storiesuse-cases" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        User-Stories/Use-Cases
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="User-Stories/Use-Cases">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#definition-of-personas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Definition of personas
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#story-1-kubevirt-nested-virtualization-with-bridged-networking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Story 1: KubeVirt Nested Virtualization with Bridged Networking
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#story-2-network-function-virtualization-nfv" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Story 2: Network Function Virtualization (NFV)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#story-3-lab-and-test-environment-l2-flexibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Story 3: Lab and Test Environment L2 Flexibility
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#story-4-multi-vm-bridged-networking-with-unicast-reachability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Story 4: Multi-VM Bridged Networking with Unicast Reachability
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#story-5-vm-bridging-between-localnet-and-layer2-overlay-networks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Story 5: VM Bridging Between Localnet and Layer2 Overlay Networks
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#proposed-solution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Proposed Solution
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Proposed Solution">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Summary
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#api-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API Details
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="API Details">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nad-json-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NAD JSON Configuration
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#clusteruserdefinednetwork-crd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ClusterUserDefinedNetwork CRD
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#crd-field-definition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CRD Field Definition
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#crd-validation-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CRD Validation Rules
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nad-generation-from-crd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NAD Generation from CRD
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#interaction-with-ipam-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Interaction with IPAM Mode
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#future-per-attachment-mac-spoof-protection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Future: Per-Attachment MAC Spoof Protection
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#implementation-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation Details
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Implementation Details">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ovn-logical-topology" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OVN Logical Topology
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#testing-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Testing Details
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Testing Details">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#e2e-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        E2E Tests
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cross-feature-testing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cross Feature Testing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#documentation-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation Details
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#risks-known-limitations-and-mitigations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Risks, Known Limitations and Mitigations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ovn-kubernetes-version-skew" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OVN-Kubernetes Version Skew
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#backwards-compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backwards Compatibility
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alternatives" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alternatives
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Alternatives">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#alternative-1-two-separate-knobs-pr-4377-original-design" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alternative 1: Two Separate Knobs (PR #4377 Original Design)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#alternative-2-per-pod-annotation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alternative 2: Per-Pod Annotation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#alternative-3-nad-only-no-crd-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alternative 3: NAD-Only (No CRD Integration)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#alternative-4-three-valued-enum" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alternative 4: Three-Valued Enum
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#alternative-5-boolean-field" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alternative 5: Boolean Field
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#alternative-6-portsecurity-and-macspoofing-naming" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alternative 6: portSecurity and macSpoofing Naming
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        References
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9">
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../blog/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blog
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_9" id="__nav_9_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Blog
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Archive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc">
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+      
+        <li class="md-nav__item">
+  <a href="#problem-statement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Problem Statement
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Goals
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Non-Goals
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#future-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Future Goals
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#introduction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Introduction
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Introduction">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ovn-port-security" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OVN Port Security
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-unknown-address-keyword" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The unknown Address Keyword
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-force_fdb_lookup-option" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The force_fdb_lookup Option
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#existing-port-security-behavior-with-ipam-disabled" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Existing Port Security Behavior with IPAM Disabled
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bridge-cni-parity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bridge CNI Parity
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#user-storiesuse-cases" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        User-Stories/Use-Cases
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="User-Stories/Use-Cases">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#definition-of-personas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Definition of personas
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#story-1-kubevirt-nested-virtualization-with-bridged-networking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Story 1: KubeVirt Nested Virtualization with Bridged Networking
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#story-2-network-function-virtualization-nfv" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Story 2: Network Function Virtualization (NFV)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#story-3-lab-and-test-environment-l2-flexibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Story 3: Lab and Test Environment L2 Flexibility
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#story-4-multi-vm-bridged-networking-with-unicast-reachability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Story 4: Multi-VM Bridged Networking with Unicast Reachability
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#story-5-vm-bridging-between-localnet-and-layer2-overlay-networks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Story 5: VM Bridging Between Localnet and Layer2 Overlay Networks
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#proposed-solution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Proposed Solution
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Proposed Solution">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Summary
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#api-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API Details
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="API Details">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nad-json-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NAD JSON Configuration
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#clusteruserdefinednetwork-crd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ClusterUserDefinedNetwork CRD
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#crd-field-definition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CRD Field Definition
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#crd-validation-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CRD Validation Rules
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nad-generation-from-crd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NAD Generation from CRD
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#interaction-with-ipam-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Interaction with IPAM Mode
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#future-per-attachment-mac-spoof-protection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Future: Per-Attachment MAC Spoof Protection
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#implementation-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation Details
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Implementation Details">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ovn-logical-topology" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OVN Logical Topology
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#testing-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Testing Details
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Testing Details">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#e2e-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        E2E Tests
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cross-feature-testing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cross Feature Testing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#documentation-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation Details
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#risks-known-limitations-and-mitigations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Risks, Known Limitations and Mitigations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ovn-kubernetes-version-skew" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OVN-Kubernetes Version Skew
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#backwards-compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backwards Compatibility
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alternatives" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alternatives
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Alternatives">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#alternative-1-two-separate-knobs-pr-4377-original-design" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alternative 1: Two Separate Knobs (PR #4377 Original Design)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#alternative-2-per-pod-annotation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alternative 2: Per-Pod Annotation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#alternative-3-nad-only-no-crd-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alternative 3: NAD-Only (No CRD Integration)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#alternative-4-three-valued-enum" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alternative 4: Three-Valued Enum
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#alternative-5-boolean-field" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alternative 5: Boolean Field
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#alternative-6-portsecurity-and-macspoofing-naming" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alternative 6: portSecurity and macSpoofing Naming
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        References
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="okep-3926-disable-mac-spoof-protection-on-secondary-networks">OKEP-3926: Disable MAC Spoof Protection on Secondary Networks<a class="headerlink" href="#okep-3926-disable-mac-spoof-protection-on-secondary-networks" title="Permanent link">¶</a></h1>
+<ul>
+<li>Issue: <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/issues/3926">#3926</a></li>
+</ul>
+<h2 id="problem-statement">Problem Statement<a class="headerlink" href="#problem-statement" title="Permanent link">¶</a></h2>
+<p>OVN-Kubernetes enforces port security on logical switch ports as follows:</p>
+<ul>
+<li><strong>Primary network</strong>: MAC and IP anti-spoofing protection is always enabled on all ports.</li>
+<li><strong>Secondary networks</strong>: MAC anti-spoofing protection is always enabled on all ports. IP
+  anti-spoofing protection is enabled when IPAM is active and disabled when <code>ipam.mode</code> is
+  <code>Disabled</code> (since no IPs are assigned).</li>
+</ul>
+<p>There is currently no way to disable MAC-level port security on secondary networks. This
+prevents legitimate use cases where traffic from multiple MAC addresses must traverse a
+single OVN logical switch port, such as nested virtualization or NFV workloads. The bridge
+CNI already supports <code>macspoofchk</code> for secondary networks, but OVN secondary networks lack
+equivalent capability, forcing users who need this flexibility to choose alternative network
+backends.</p>
+<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">¶</a></h2>
+<ul>
+<li>Provide a per-network configuration option to disable MAC spoof protection on IPAM less OVN
+  secondary networks on layer2 and localnet topologies to achieve feature parity with the bridge
+  CNI's <code>macspoofchk</code> capability.</li>
+<li>Enable unknown MAC address delivery.</li>
+<li>Avoid using ARP/NDP flooding as much as possible when MAC spoof protection is disabled.</li>
+<li>Support configuration through the NAD JSON config and the ClusterUserDefinedNetwork (CUDN) CRD
+  API only.</li>
+</ul>
+<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">¶</a></h2>
+<ul>
+<li>Disabling MAC spoof protection on the default cluster network - or any namespace primary
+  network. The security implications of removing MAC/IP spoofing protection on the cluster's
+  primary network are too significant.</li>
+<li>Per-pod granularity for MAC spoof protection settings. The configuration knob is per-network;
+  all pods attached to a given network share the same MAC spoof protection posture.</li>
+<li>Layer3 topology support. Layer3 uses router-based forwarding where port security has different
+  semantics and the concept of "unknown L2 addresses" does not apply.</li>
+<li>Replacing or modifying the existing <code>ipam.mode: Disabled</code> behavior, which already disables
+  IP-level port security as a side effect.</li>
+<li>Replacing or modifying the existing <code>ipam.mode: Enabled</code> behavior, which already enables
+  IP-level port security as a side effect.</li>
+<li>MAC learning or dynamic FDB management at the OVN-Kubernetes level; OVN manages its own FDB
+  natively.</li>
+<li>Namespace-scoped UserDefinedNetwork (UDN) resources cannot enable this feature, as
+  disabling MAC spoof protection is a cluster-admin decision that should not be available to
+  namespace users.</li>
+</ul>
+<h2 id="future-goals">Future Goals<a class="headerlink" href="#future-goals" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>Per-attachment MAC spoof protection granularity</strong>, probably added via a new <code>WorkloadOptOut</code>
+  mode. MAC spoof protection stays enabled by default on the network, but individual pods may
+  opt out. The admin controls whether the network permits overrides; the annotation is the
+  per-pod opt-in signal. This follows the two-level model proven by OpenStack Neutron.</li>
+<li><strong>Per-pod allowed MAC addresses</strong>, probably via an <code>AllowList</code> mode. This will allow workloads
+  to declare additional permitted MAC addresses without fully disabling MAC spoof protection.</li>
+<li>Both extensions are non-breaking enum additions to the existing <code>MACSecurityConfig</code> struct.</li>
+</ul>
+<h2 id="introduction">Introduction<a class="headerlink" href="#introduction" title="Permanent link">¶</a></h2>
+<h3 id="ovn-port-security">OVN Port Security<a class="headerlink" href="#ovn-port-security" title="Permanent link">¶</a></h3>
+<p>In OVN, every <code>Logical_Switch_Port</code> has a <code>port_security</code> column. When populated, it restricts
+traffic in two ways:</p>
+<ol>
+<li><strong>Ingress (into the logical switch from the workload attached port)</strong>: Only frames whose
+   source MAC address (and optionally source IP) match the <code>port_security</code> entry are accepted.
+   All other frames are dropped.</li>
+<li><strong>Egress (from the logical switch to the workload attached port)</strong>: Only frames whose
+   destination MAC matches the <code>port_security</code> entry are delivered.</li>
+</ol>
+<p>OVN-Kubernetes currently sets <code>port_security</code> to <code>"&lt;MAC&gt; &lt;IP1&gt; &lt;IP2&gt;..."</code> for every pod's LSP,
+matching the pod's assigned MAC and IP addresses. This effectively prevents pods from sending or
+receiving traffic with any other MAC or IP identity — a sensible default for most workloads.</p>
+<p>However, this default breaks scenarios where a single pod legitimately needs to handle traffic
+with multiple MAC addresses, such as when the pod runs a hypervisor that bridges traffic from
+nested virtual machines.</p>
+<h3 id="the-unknown-address-keyword">The <code>unknown</code> Address Keyword<a class="headerlink" href="#the-unknown-address-keyword" title="Permanent link">¶</a></h3>
+<p>OVN supports an <code>unknown</code> keyword in the <code>addresses</code> column of a Logical Switch Port. When a
+logical switch processes a unicast Ethernet frame whose destination MAC address is not found in
+any port's <code>addresses</code> column, it delivers the frame to every port whose <code>addresses</code> include
+<code>unknown</code>.</p>
+<p>This mechanism is essential for nested virtualization: the hypervisor inside the pod bridges
+traffic from VMs whose MAC addresses are not known to OVN. Without <code>unknown</code>, unicast frames
+destined for those VM MAC addresses would be silently dropped by the logical switch.</p>
+<h3 id="the-force_fdb_lookup-option">The <code>force_fdb_lookup</code> Option<a class="headerlink" href="#the-force_fdb_lookup-option" title="Permanent link">¶</a></h3>
+<p>OVN 24.03 introduced the <code>force_fdb_lookup</code> option on logical switch ports. When set to <code>true</code>
+on a port with <code>unknown</code> in its addresses, OVN uses the Forwarding Database (FDB) to look up
+the destination MAC before delivering the frame, rather than flooding it to all <code>unknown</code> ports.</p>
+<p>This optimization is critical for production deployments: without it, every frame destined for a
+MAC not in OVN's address tables would be flooded to all ports marked <code>unknown</code>, creating
+significant unnecessary traffic. With FDB lookups, OVN learns where each MAC resides (via
+source MAC observation) and delivers subsequent frames directly.</p>
+<p>OVN-Kubernetes already pins to OVN version 24.03 or later, so <code>force_fdb_lookup</code> is available
+in all supported configurations.</p>
+<h3 id="existing-port-security-behavior-with-ipam-disabled">Existing Port Security Behavior with IPAM Disabled<a class="headerlink" href="#existing-port-security-behavior-with-ipam-disabled" title="Permanent link">¶</a></h3>
+<p>The <code>IPAMConfig</code> in the UDN/CUDN CRD API already documents:</p>
+<blockquote>
+<p><em>"By disabling IPAM, IP port security will also be disabled for interfaces attached to this network."</em></p>
+</blockquote>
+<p>When <code>ipam.mode</code> is set to <code>Disabled</code>, OVN-Kubernetes assigns only MAC addresses and provides
+layer 2 communication. Since no IP addresses are assigned, IP-level port security cannot be
+enforced. However, <strong>MAC-level port security remains active</strong>: the LSP still restricts traffic
+to the assigned MAC address. The feature proposed in this OKEP goes further by also disabling
+MAC-level port security and enabling <code>unknown</code> address handling.</p>
+<p><code>macSecurity.mode: Disabled</code> requires <code>ipam.mode: Disabled</code>.</p>
+<h3 id="bridge-cni-parity">Bridge CNI Parity<a class="headerlink" href="#bridge-cni-parity" title="Permanent link">¶</a></h3>
+<p>The <a href="https://www.cni.dev/plugins/current/main/bridge/">bridge CNI plugin</a> supports a
+<code>macspoofchk</code> boolean in the NAD configuration. When set to <code>false</code>, nftables/iptables rules
+that prevent MAC spoofing are not installed, allowing pods to send traffic with arbitrary source
+MAC addresses.</p>
+<p>OVN-Kubernetes secondary networks should offer equivalent functionality. Users who currently use
+the bridge CNI solely because of <code>macspoofchk</code> support should be able to migrate to OVN secondary
+networks without losing this capability.</p>
+<h2 id="user-storiesuse-cases">User-Stories/Use-Cases<a class="headerlink" href="#user-storiesuse-cases" title="Permanent link">¶</a></h2>
+<h3 id="definition-of-personas">Definition of personas<a class="headerlink" href="#definition-of-personas" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>Admin</strong> - the cluster administrator who creates and manages secondary networks.</li>
+<li><strong>User</strong> - a non-admin user who deploys workloads on secondary networks.</li>
+<li><strong>VM operator</strong> - an administrator or user running virtual machines via KubeVirt.</li>
+</ul>
+<h3 id="story-1-kubevirt-nested-virtualization-with-bridged-networking">Story 1: KubeVirt Nested Virtualization with Bridged Networking<a class="headerlink" href="#story-1-kubevirt-nested-virtualization-with-bridged-networking" title="Permanent link">¶</a></h3>
+<p>As a VM operator running <a href="https://kubevirt.io/">KubeVirt</a>, I want to disable MAC spoof
+protection on a secondary OVN layer2 network so that VMs running inside VMs can use bridged
+networking with their own MAC addresses, enabling those nested VMs to communicate directly on the
+L2 segment.</p>
+<p><strong>Example scenario:</strong> A KubeVirt VM is in turn running virtualization workloads. Without disabling
+MAC spoof protection, OVN drops the frame because the nested VM source MAC does not match the
+outer VM LSP's <code>port_security</code> entry. With MAC spoof protection disabled, the frame is accepted
+and forwarded on the logical switch.</p>
+<p>Additionally, other pods (or VMs) on the same L2 network need to send unicast traffic to the nested
+VM. Without <code>unknown</code> in the addresses column, the logical switch has no port to deliver these
+frames to, since the nested VM's MAC is not in any port's <code>addresses</code>. With <code>unknown</code> addresses and
+FDB lookups, the switch learns the association between the nested VM's MAC and the hosting pod's
+LSP, and delivers subsequent unicast frames directly.</p>
+<h3 id="story-2-network-function-virtualization-nfv">Story 2: Network Function Virtualization (NFV)<a class="headerlink" href="#story-2-network-function-virtualization-nfv" title="Permanent link">¶</a></h3>
+<p>As a network engineer deploying virtual network functions (VNFs) in Kubernetes, I want to run
+firewalls, load balancers, or routers on a secondary OVN network that need to forward traffic
+with different source and destination MAC addresses, so that the VNF can operate as a transparent
+L2 bridge or as a router performing MAC rewriting.</p>
+<p><strong>Example scenario:</strong> A pair of VMs runs keepalived for high availability on a secondary OVN
+layer2 network. The active VM owns a virtual IP and virtual MAC address (e.g., a VRRP/CARP MAC
+<code>00:00:5e:00:01:XX</code>). It sends gratuitous ARPs and responds to traffic using the virtual MAC.
+Port security would drop these frames because the virtual MAC does not match the VM pod's
+assigned MAC.</p>
+<h3 id="story-3-lab-and-test-environment-l2-flexibility">Story 3: Lab and Test Environment L2 Flexibility<a class="headerlink" href="#story-3-lab-and-test-environment-l2-flexibility" title="Permanent link">¶</a></h3>
+<p>As a developer running a test lab in Kubernetes, I want to attach pods to an OVN layer2
+secondary network without MAC restrictions so that I can test L2 protocols (LACP, STP, LLDP, or
+custom discovery protocols) that require sending and receiving frames with arbitrary MAC
+addresses.</p>
+<h3 id="story-4-multi-vm-bridged-networking-with-unicast-reachability">Story 4: Multi-VM Bridged Networking with Unicast Reachability<a class="headerlink" href="#story-4-multi-vm-bridged-networking-with-unicast-reachability" title="Permanent link">¶</a></h3>
+<p>As a VM operator, I want multiple VMs behind a single pod's OVN port to be individually
+reachable by their MAC addresses on the layer2 network, so that other workloads on the same
+network can send unicast traffic to specific VMs without flooding.</p>
+<p><strong>Example scenario:</strong> A pod runs three VMs, each with a distinct MAC address. Another pod on the
+same L2 secondary network sends a unicast frame to one of those VMs by MAC. With <code>force_fdb_lookup</code>
+enabled, OVN learns the MAC-to-port association and delivers the frame directly to the hosting
+pod's LSP, rather than flooding it to all <code>unknown</code> ports on the switch.</p>
+<h3 id="story-5-vm-bridging-between-localnet-and-layer2-overlay-networks">Story 5: VM Bridging Between Localnet and Layer2 Overlay Networks<a class="headerlink" href="#story-5-vm-bridging-between-localnet-and-layer2-overlay-networks" title="Permanent link">¶</a></h3>
+<p>As a VM operator, I want to run a VM that acts as a network bridge between an OVN localnet
+secondary network and an OVN layer2 overlay secondary network, forwarding traffic between the
+two segments. The bridging VM has interfaces on both networks and relays frames with MAC
+addresses that differ from its own assigned MACs. Without disabling MAC spoof protection, the
+relayed frames are dropped on both networks because their source MACs don't match the VM pod's
+LSP <code>port_security</code> entries.</p>
+<h2 id="proposed-solution">Proposed Solution<a class="headerlink" href="#proposed-solution" title="Permanent link">¶</a></h2>
+<h3 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">¶</a></h3>
+<p>Introduce a per-network <code>macSecurity</code> configuration sub-struct with a <code>mode</code> enum
+discriminator that, when set to <code>Disabled</code>:</p>
+<ol>
+<li>Leaves the <code>port_security</code> column empty on all LSPs attached to the network.</li>
+<li>Appends <code>unknown</code> to the <code>addresses</code> column of each LSP.</li>
+<li>Sets <code>force_fdb_lookup=true</code> in the <code>options</code> column of each LSP.</li>
+</ol>
+<p>The <code>macSecurity</code> sub-struct with a <code>mode</code> enum discriminator follows the established CRD
+pattern used by <code>VLANConfig</code> (mode + sub-struct) and <code>IPAMConfig</code> (mode + lifecycle).</p>
+<h3 id="api-details">API Details<a class="headerlink" href="#api-details" title="Permanent link">¶</a></h3>
+<h4 id="nad-json-configuration">NAD JSON Configuration<a class="headerlink" href="#nad-json-configuration" title="Permanent link">¶</a></h4>
+<p>Add one field to the <code>NetConf</code> struct:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">    </span><span class="nt">"cniVersion"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.3.1"</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ovn-k8s-cni-overlay"</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"netAttachDefName"</span><span class="p">:</span><span class="w"> </span><span class="s2">"kubevirt/nested-virt-net"</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"topology"</span><span class="p">:</span><span class="w"> </span><span class="s2">"layer2"</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"nested-virt-net"</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"macSecurityMode"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Disabled"</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>The field is optional and defaults to <code>"Enabled"</code> (MAC spoof protection enabled, preserving
+current behavior). It accepts the values <code>"Enabled"</code> and <code>"Disabled"</code>. It is valid on <code>layer2</code>
+and <code>localnet</code> topologies only, requires <code>ipam.mode</code> to be <code>Disabled</code> (i.e., subnets must not be
+specified), and the network role must be <code>"secondary"</code>. Setting it on a <code>layer3</code> topology or
+with IPAM enabled results in a validation error.</p>
+<h4 id="clusteruserdefinednetwork-crd">ClusterUserDefinedNetwork CRD<a class="headerlink" href="#clusteruserdefinednetwork-crd" title="Permanent link">¶</a></h4>
+<p>Add a <code>macSecurity</code> sub-struct with a <code>mode</code> enum discriminator to <code>Layer2Config</code> and
+<code>LocalnetConfig</code> in the CUDN CRD API, following the pattern established by
+<a href="../okep-5085-localnet-api/">OKEP-5085</a> for extending the CUDN CRD and the discriminated
+union pattern used by <code>VLANConfig</code> and <code>IPAMConfig</code>. This field is only supported on
+ClusterUserDefinedNetwork (cluster-scoped); namespace-scoped UserDefinedNetwork resources
+cannot set this field.</p>
+<p><strong>Layer2 example:</strong></p>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.ovn.org/v1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ClusterUserDefinedNetwork</span>
+<span class="nt">metadata</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">kubevirt-l2-net</span>
+<span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">namespaceSelector</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">matchLabels</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">purpose</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">kubevirt</span>
+<span class="w">  </span><span class="nt">network</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">topology</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Layer2</span>
+<span class="w">    </span><span class="nt">layer2</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">role</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Secondary</span>
+<span class="w">      </span><span class="nt">ipam</span><span class="p">:</span>
+<span class="w">        </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Disabled</span>
+<span class="w">      </span><span class="nt">macSecurity</span><span class="p">:</span>
+<span class="w">        </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Disabled</span>
+</code></pre></div>
+<p><strong>Localnet example:</strong></p>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.ovn.org/v1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ClusterUserDefinedNetwork</span>
+<span class="nt">metadata</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">provider-net</span>
+<span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">namespaceSelector</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">matchLabels</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">tenant</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">blue</span>
+<span class="w">  </span><span class="nt">network</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">topology</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Localnet</span>
+<span class="w">    </span><span class="nt">localnet</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">role</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Secondary</span>
+<span class="w">      </span><span class="nt">physicalNetworkName</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">physnet1</span>
+<span class="w">      </span><span class="nt">ipam</span><span class="p">:</span>
+<span class="w">        </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Disabled</span>
+<span class="w">      </span><span class="nt">macSecurity</span><span class="p">:</span>
+<span class="w">        </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Disabled</span>
+</code></pre></div>
+<h4 id="crd-field-definition">CRD Field Definition<a class="headerlink" href="#crd-field-definition" title="Permanent link">¶</a></h4>
+<p>New type definitions:</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// MACSecurityMode defines the MAC spoof protection enforcement mode for logical switch ports.</span>
+<span class="c1">// +kubebuilder:validation:Enum=Enabled;Disabled</span>
+<span class="kd">type</span><span class="w"> </span><span class="nx">MACSecurityMode</span><span class="w"> </span><span class="kt">string</span>
+
+<span class="kd">const</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="c1">// MACSecurityModeEnabled restricts traffic on logical switch ports to the assigned</span>
+<span class="w">    </span><span class="c1">// MAC (and IP, when IPAM is enabled) addresses. This is the default behavior.</span>
+<span class="w">    </span><span class="nx">MACSecurityModeEnabled</span><span class="w"> </span><span class="nx">MACSecurityMode</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">"Enabled"</span>
+
+<span class="w">    </span><span class="c1">// MACSecurityModeDisabled removes MAC spoof protection restrictions and enables unknown MAC</span>
+<span class="w">    </span><span class="c1">// address handling via the OVN `unknown` address keyword with `force_fdb_lookup` for</span>
+<span class="w">    </span><span class="c1">// FDB-based unicast delivery.</span>
+<span class="w">    </span><span class="nx">MACSecurityModeDisabled</span><span class="w"> </span><span class="nx">MACSecurityMode</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">"Disabled"</span>
+<span class="p">)</span>
+
+<span class="c1">// MACSecurityConfig configures MAC spoof protection behavior on logical switch ports attached</span>
+<span class="c1">// to this network.</span>
+<span class="c1">// +union</span>
+<span class="kd">type</span><span class="w"> </span><span class="nx">MACSecurityConfig</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// Mode controls the MAC spoof protection enforcement posture.</span>
+<span class="w">    </span><span class="c1">// `Enabled` (default) restricts traffic to assigned addresses.</span>
+<span class="w">    </span><span class="c1">// `Disabled` removes all MAC spoof protection restrictions and enables unknown MAC address</span>
+<span class="w">    </span><span class="c1">// handling for nested virtualization and NFV use cases.</span>
+<span class="w">    </span><span class="c1">// Only `Disabled` requires ipam.mode to be Disabled.</span>
+<span class="w">    </span><span class="c1">// +kubebuilder:default=Enabled</span>
+<span class="w">    </span><span class="c1">// +kubebuilder:validation:Required</span>
+<span class="w">    </span><span class="c1">// +required</span>
+<span class="w">    </span><span class="c1">// +unionDiscriminator</span>
+<span class="w">    </span><span class="nx">Mode</span><span class="w"> </span><span class="nx">MACSecurityMode</span><span class="w"> </span><span class="s">`json:"mode"`</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>For both <code>Layer2Config</code> and <code>LocalnetConfig</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// MACSecurity configures MAC spoof protection behavior on logical switch ports attached to this</span>
+<span class="c1">// network. When omitted, MAC spoof protection defaults to Enabled (the current default behavior).</span>
+<span class="c1">// Only applicable to Secondary role networks on ClusterUserDefinedNetwork resources.</span>
+<span class="c1">// +optional</span>
+<span class="nx">MACSecurity</span><span class="w"> </span><span class="o">*</span><span class="nx">MACSecurityConfig</span><span class="w"> </span><span class="s">`json:"macSecurity,omitempty"`</span>
+</code></pre></div>
+<h4 id="crd-validation-rules">CRD Validation Rules<a class="headerlink" href="#crd-validation-rules" title="Permanent link">¶</a></h4>
+<p>The following CEL validations should be added:</p>
+<ul>
+<li>
+<p><code>macSecurity.mode: Disabled</code> is only allowed when <code>role</code> is <code>Secondary</code>:
+  </p><div class="highlight"><pre><span></span><code>rule: "!has(self.macSecurity) || self.macSecurity.mode != 'Disabled' || self.role == 'Secondary'"
+message: "macSecurity.mode Disabled is only supported for Secondary networks"
+</code></pre></div><p></p>
+</li>
+<li>
+<p><code>macSecurity</code> is not allowed on namespace-scoped <code>UserDefinedNetwork</code> resources.
+  Since <code>UserDefinedNetworkSpec</code> and <code>ClusterUserDefinedNetworkSpec</code> share the same
+  <code>Layer2Config</code> type, this constraint must be enforced at the <code>UserDefinedNetworkSpec</code> level:
+  </p><div class="highlight"><pre><span></span><code>rule: "!has(self.layer2) || !has(self.layer2.macSecurity)"
+message: "macSecurity is only supported on ClusterUserDefinedNetwork"
+</code></pre></div><p></p>
+</li>
+<li>
+<p><code>macSecurity.mode: Disabled</code> requires <code>ipam.mode</code> to be <code>Disabled</code>:
+  </p><div class="highlight"><pre><span></span><code>rule: "!has(self.macSecurity) || self.macSecurity.mode != 'Disabled' || (has(self.ipam) &amp;&amp; has(self.ipam.mode) &amp;&amp; self.ipam.mode == 'Disabled')"
+message: "macSecurity.mode Disabled requires ipam.mode to be Disabled"
+</code></pre></div><p></p>
+</li>
+<li>
+<p><code>macSecurity.mode</code> is immutable after creation (changing MAC spoof protection on a live
+  network requires reconfiguring all existing LSPs; this can be relaxed in a future iteration):
+  </p><div class="highlight"><pre><span></span><code>rule: "!has(oldSelf.macSecurity) || (has(self.macSecurity) &amp;&amp; oldSelf.macSecurity.mode == self.macSecurity.mode)"
+message: "macSecurity.mode is immutable after creation"
+</code></pre></div><p></p>
+</li>
+</ul>
+<blockquote>
+<p><strong>Note:</strong> The existing CRD definitions already enforce full immutability at the parent
+struct level (<code>self == oldSelf</code> on <code>Layer2Config</code> and <code>LocalnetConfig</code>). The per-field
+CEL rule above provides defense-in-depth and will become the primary constraint if
+parent-level immutability is relaxed in a future iteration to allow other fields to be
+updated independently.</p>
+</blockquote>
+<h4 id="nad-generation-from-crd">NAD Generation from CRD<a class="headerlink" href="#nad-generation-from-crd" title="Permanent link">¶</a></h4>
+<p>The CUDN controller that generates NADs from CRD specs must translate the
+<code>macSecurity.mode</code> field to the NAD JSON config <code>macSecurityMode</code> field, following the
+same pattern used for other fields like <code>physicalNetworkName</code>, <code>allowPersistentIPs</code>, etc.
+When <code>macSecurity</code> is omitted in the CRD, the NAD should either omit <code>macSecurityMode</code>
+or set it to <code>"Enabled"</code> (both are equivalent).</p>
+<h4 id="interaction-with-ipam-mode">Interaction with IPAM Mode<a class="headerlink" href="#interaction-with-ipam-mode" title="Permanent link">¶</a></h4>
+<table>
+<thead>
+<tr>
+<th>IPAM Mode</th>
+<th>macSecurity.mode</th>
+<th>MAC Port Security</th>
+<th>Unknown Addresses</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Disabled</code></td>
+<td><code>Enabled</code> (default)</td>
+<td>Enabled</td>
+<td>Disabled</td>
+<td>MAC-only security, no IPs assigned</td>
+</tr>
+<tr>
+<td><code>Disabled</code></td>
+<td><code>Disabled</code></td>
+<td>Disabled</td>
+<td>Enabled</td>
+<td>Full L2 flexibility, no restrictions</td>
+</tr>
+</tbody>
+</table>
+<h4 id="future-per-attachment-mac-spoof-protection">Future: Per-Attachment MAC Spoof Protection<a class="headerlink" href="#future-per-attachment-mac-spoof-protection" title="Permanent link">¶</a></h4>
+<p>The <code>MACSecurityMode</code> enum is intentionally extensible. A future <code>WorkloadOptOut</code> mode is
+the anticipated path for per-attachment MAC spoof protection granularity, following the
+two-level model proven by OpenStack Neutron where a network-level default can be overridden
+per port.</p>
+<p>With <code>macSecurity.mode: WorkloadOptOut</code>, MAC spoof protection remains enabled by default on
+all LSPs attached to the network, but individual pods may opt out via a pod annotation (e.g.,
+<code>k8s.ovn.org/mac-security-override</code>). The annotation is only honored on networks where
+the cluster admin has explicitly set <code>WorkloadOptOut</code>; on <code>Enabled</code> or <code>Disabled</code> networks
+the annotation has no effect. This preserves the admin as the sole decision-maker: the admin
+controls whether the network permits overrides, while the annotation is just the opt-in
+signal per attachment.</p>
+<p>This mode addresses mixed-role networks where a small number of specialized pods (virtual
+routers, nested hypervisors, keepalived pairs) need MAC freedom while the remaining pods
+benefit from anti-spoofing protection. Without per-attachment granularity, the admin must
+either disable MAC spoof protection for all pods or create separate networks for different
+security postures.</p>
+<p>The same per-attachment mechanism provides the natural integration point for a future
+<code>AllowList</code> mode with per-pod <code>allowedMACs</code>. Rather than fully disabling MAC spoof protection,
+a pod annotation could declare additional MAC addresses to append to the LSP's <code>port_security</code>
+column (e.g., <code>k8s.ovn.org/allowed-addresses: '{"net": ["00:00:5e:00:01:01"]}'</code>). OVN's
+<code>port_security</code> column natively accepts multiple MAC entries per LSP, so this maps directly
+to the underlying data model.</p>
+<p>Both extensions — <code>WorkloadOptOut</code> and <code>AllowList</code> — can be added as non-breaking enum
+additions to the existing <code>MACSecurityConfig</code> struct. The initial <code>Enabled</code>/<code>Disabled</code> API
+proposed in this OKEP is forward-compatible with these future modes.</p>
+<h3 id="implementation-details">Implementation Details<a class="headerlink" href="#implementation-details" title="Permanent link">¶</a></h3>
+<h4 id="ovn-logical-topology">OVN Logical Topology<a class="headerlink" href="#ovn-logical-topology" title="Permanent link">¶</a></h4>
+<p>The following diagram illustrates how MAC spoof protection affects traffic flow:</p>
+<div class="highlight"><pre><span></span><code> Pod A (VM with MAC fa:16:3e:aa:bb:cc)
+   |
+   | veth pair
+   |
+ OVS Bridge (br-int)
+   |
+   | OVN LSP (port_security: [] if macSecurity.mode: Disabled)
+   |          (addresses: ["0a:58:...", "unknown"])
+   |          (options: {force_fdb_lookup: "true"})
+   |
+ OVN Logical Switch (L2 secondary network)
+   |
+   | OVN LSP for Pod B
+   |
+ OVS Bridge (br-int)
+   |
+ Pod B (can send unicast to fa:16:3e:aa:bb:cc via FDB)
+</code></pre></div>
+<p>When <code>macSecurity.mode</code> is <code>Enabled</code> (default), the LSP has:
+- <code>addresses: ["0a:58:c0:a8:01:03"]</code>
+- <code>port_security: ["0a:58:c0:a8:01:03"]</code>
+- No <code>unknown</code> in addresses, no <code>force_fdb_lookup</code></p>
+<p>When <code>macSecurity.mode</code> is <code>Disabled</code> (requires <code>ipam.mode: Disabled</code>), the LSP has:
+- <code>addresses: ["0a:58:c0:a8:01:03", "unknown"]</code> (MAC only, no IP — IPAM is disabled)
+- <code>port_security: []</code> (empty)
+- <code>options: {"force_fdb_lookup": "true", ...}</code></p>
+<h3 id="testing-details">Testing Details<a class="headerlink" href="#testing-details" title="Permanent link">¶</a></h3>
+<h4 id="e2e-tests">E2E Tests<a class="headerlink" href="#e2e-tests" title="Permanent link">¶</a></h4>
+<ul>
+<li>Create a secondary layer2 network with <code>macSecurity.mode: Disabled</code>.</li>
+<li>Deploy two pods on the network.</li>
+<li>From pod A, send traffic with a spoofed source MAC address.</li>
+<li>Verify pod B receives the traffic (it would be dropped without the feature).</li>
+<li>Repeat for localnet topology.</li>
+<li>Test with CUDN CRD (not just raw NAD).</li>
+</ul>
+<h4 id="cross-feature-testing">Cross Feature Testing<a class="headerlink" href="#cross-feature-testing" title="Permanent link">¶</a></h4>
+<ul>
+<li>Verify that <code>allowPersistentIPs</code> and <code>macSecurity.mode: Disabled</code> are mutually exclusive:
+  <code>allowPersistentIPs</code> requires IPAM enabled (to assign and persist IPs across live migrations),
+  while <code>macSecurity.mode: Disabled</code> requires <code>ipam.mode: Disabled</code>. Validation should reject
+  a CUDN that specifies both.</li>
+</ul>
+<h3 id="documentation-details">Documentation Details<a class="headerlink" href="#documentation-details" title="Permanent link">¶</a></h3>
+<ul>
+<li>Update <code>docs/features/multiple-networks/multi-homing.md</code> with the new configuration option
+  for layer2 and localnet topologies, including usage examples.</li>
+<li>Add this OKEP to <code>mkdocs.yml</code> under the OKEPs navigation section.</li>
+</ul>
+<h2 id="risks-known-limitations-and-mitigations">Risks, Known Limitations and Mitigations<a class="headerlink" href="#risks-known-limitations-and-mitigations" title="Permanent link">¶</a></h2>
+<ol>
+<li><strong>Security risk from disabled MAC spoof protection</strong>: Disabling MAC spoof protection allows
+   any pod on the network to send traffic with arbitrary MAC and IP addresses, enabling MAC
+   spoofing, ARP spoofing/poisoning (allowing MITM attacks on the L2 segment), and potentially
+   IP spoofing attacks.</li>
+<li>
+<p><strong>Mitigation</strong>: The feature is opt-in, per-network, restricted to secondary networks with
+     <code>Secondary</code> role only, and only available on cluster-scoped <code>ClusterUserDefinedNetwork</code>
+     resources. Namespace-scoped <code>UserDefinedNetwork</code> resources cannot enable this feature,
+     ensuring that only cluster administrators can disable MAC spoof protection. The default
+     remains secure (MAC spoof protection enabled). Administrators deploying this feature should
+     use encrypted transports on networks with MAC spoof protection disabled when sensitive
+     traffic is present.</p>
+</li>
+<li>
+<p><strong>Broadcast storm risk with unknown addresses</strong>: Adding <code>unknown</code> to LSP addresses means
+   unicast frames for unknown MACs are delivered to all <code>unknown</code> ports, which can create
+   significant traffic amplification.</p>
+</li>
+<li>
+<p><strong>Mitigation</strong>: <code>force_fdb_lookup</code> is always enabled alongside <code>unknown</code> addresses. The FDB
+     learns MAC-to-port associations from observed source MACs, so after initial discovery, frames
+     are delivered directly. OVN 24.03+, which is the minimum version used by OVN-Kubernetes,
+     supports this option.</p>
+</li>
+<li>
+<p><strong>Immutability constraint</strong>: The field is immutable after creation in the initial
+   implementation, meaning administrators cannot toggle MAC spoof protection on an existing
+   network.</p>
+</li>
+<li><strong>Mitigation</strong>: This is a deliberate simplification. Toggling MAC spoof protection on a live
+     network would require updating all existing LSPs atomically. This can be relaxed in a
+     future iteration once the reconciliation logic is proven.</li>
+</ol>
+<h2 id="ovn-kubernetes-version-skew">OVN-Kubernetes Version Skew<a class="headerlink" href="#ovn-kubernetes-version-skew" title="Permanent link">¶</a></h2>
+<p>This feature is planned for introduction in the next OVN-Kubernetes release. It requires
+OVN 24.03 or later for the <code>force_fdb_lookup</code> optimization, which is already the minimum OVN
+version supported by OVN-Kubernetes.</p>
+<p>No special version skew handling is required: the feature is a per-network configuration option.
+Controllers running older versions that do not recognize the <code>macSecurity</code> sub-struct will
+ignore the field (it defaults to <code>Enabled</code>), and existing networks will continue to function
+with MAC spoof protection enabled.</p>
+<h2 id="backwards-compatibility">Backwards Compatibility<a class="headerlink" href="#backwards-compatibility" title="Permanent link">¶</a></h2>
+<ul>
+<li>The <code>macSecurity</code> sub-struct is optional. When omitted, the default behavior is <code>Enabled</code>,
+  preserving the current behavior of enforcing port security on all LSPs.</li>
+<li>The NAD JSON config <code>macSecurityMode</code> field is additive and optional. Existing NAD
+  configurations without the field continue to work identically.</li>
+<li>The CRD field is an optional pointer with nil default. Existing CUDN resources are unaffected.
+  UDN resources cannot use this field with <code>mode: Disabled</code>.</li>
+<li>No migration or upgrade steps are required.</li>
+</ul>
+<h2 id="alternatives">Alternatives<a class="headerlink" href="#alternatives" title="Permanent link">¶</a></h2>
+<h3 id="alternative-1-two-separate-knobs-pr-4377-original-design">Alternative 1: Two Separate Knobs (PR #4377 Original Design)<a class="headerlink" href="#alternative-1-two-separate-knobs-pr-4377-original-design" title="Permanent link">¶</a></h3>
+<p>The original implementation in <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/pull/4377">PR #4377</a>
+proposed two independent boolean fields:
+- <code>disablePortSecurity</code>: controls the <code>port_security</code> column on LSPs.
+- <code>enableL2Unknown</code>: controls whether <code>unknown</code> is added to <code>addresses</code> and whether
+  <code>force_fdb_lookup</code> is set.</p>
+<p><strong>Why rejected:</strong> There is no identified use case for controlling these behaviors independently.
+If MAC spoof protection is disabled (allowing arbitrary source MACs), the network must also handle
+<code>unknown</code> destination MACs — otherwise, return traffic to spoofed MAC addresses would be dropped.
+Conversely, enabling <code>unknown</code> addresses without disabling MAC spoof protection is contradictory:
+the port would accept traffic for unknown MACs but still enforce source MAC restrictions.</p>
+<p>Two independent booleans create a 2x2 configuration matrix where two of the four states are
+invalid or nonsensical. A single consolidated knob eliminates this confusion.</p>
+<h3 id="alternative-2-per-pod-annotation">Alternative 2: Per-Pod Annotation<a class="headerlink" href="#alternative-2-per-pod-annotation" title="Permanent link">¶</a></h3>
+<p>Instead of a per-network setting, MAC spoof protection could be controlled via a per-pod
+annotation (e.g., <code>k8s.ovn.org/allow-mac-spoofing: "true"</code>).</p>
+<p><strong>Why rejected:</strong>
+- <strong>Security</strong>: Any pod (or user with pod-create access) could potentially set the annotation,
+  widening the attack surface. A per-network setting on the cluster-scoped CUDN resource
+  requires cluster-admin intervention.
+- <strong>Consistency</strong>: The bridge CNI's <code>macspoofchk</code> is per-network, and OVN-Kubernetes should
+  follow the same granularity for consistency.
+- <strong>Semantics</strong>: MAC spoof protection is a property of the network infrastructure, not of
+  individual workloads. A mixed network where some pods have MAC spoof protection and others
+  don't creates complex and hard-to-reason-about security boundaries.
+- Per-pod control could be considered as a future extension if a use case emerges.</p>
+<h3 id="alternative-3-nad-only-no-crd-integration">Alternative 3: NAD-Only (No CRD Integration)<a class="headerlink" href="#alternative-3-nad-only-no-crd-integration" title="Permanent link">¶</a></h3>
+<p>Keep the feature in the NAD JSON configuration only, without adding a field to the CUDN CRD.</p>
+<p><strong>Why rejected:</strong> The OVN-Kubernetes community is moving toward structured CRD APIs for network
+configuration. <a href="../okep-5085-localnet-api/">OKEP-5085</a> established the pattern of defining
+features in the CUDN CRD with automatic NAD generation. Adding a feature only to NADs creates
+a management gap where CUDN-managed networks cannot use the feature without manual NAD editing,
+which defeats the purpose of the CRD controller.</p>
+<h3 id="alternative-4-three-valued-enum">Alternative 4: Three-Valued Enum<a class="headerlink" href="#alternative-4-three-valued-enum" title="Permanent link">¶</a></h3>
+<p>Instead of two modes, use a three-valued enum <code>macSecurity.mode: Enabled | MACOnly | Disabled</code>:
+- <code>Enabled</code> (default): full MAC + IP port security.
+- <code>MACOnly</code>: only MAC port security, no IP restrictions.
+- <code>Disabled</code>: no port security at all.</p>
+<p><strong>Why rejected:</strong> This is over-engineering for the current use cases. The <code>MACOnly</code> option has
+no identified user demand. The <code>ipam.mode: Disabled</code> setting already handles the case where IP
+port security is not applicable (no IPs to secure). Adding a third mode increases API surface
+area and testing complexity without clear benefit. It can be added later as a non-breaking
+change (widening the enum validation set) if a use case emerges.</p>
+<h3 id="alternative-5-boolean-field">Alternative 5: Boolean Field<a class="headerlink" href="#alternative-5-boolean-field" title="Permanent link">¶</a></h3>
+<p>Use a simple boolean field <code>allowUnknownAddresses: bool</code> directly on <code>Layer2Config</code> and
+<code>LocalnetConfig</code>, defaulting to <code>false</code>.</p>
+<p><strong>Why rejected:</strong> Kubernetes API conventions discourage boolean fields because they cannot grow
+to accommodate future requirements. If a third security posture is needed later (e.g., an
+allow-list mode for VRRP/keepalived), a boolean requires either a second field (creating
+field interaction complexity) or a breaking API change. The <code>macSecurity</code> sub-struct with a
+mode enum discriminator follows the established <code>VLANConfig</code> and <code>IPAMConfig</code> patterns in the
+CRD, provides a natural extension point for future modes and per-mode parameters, and costs
+only marginally more boilerplate than a boolean.</p>
+<h3 id="alternative-6-portsecurity-and-macspoofing-naming">Alternative 6: <code>portSecurity</code> and <code>macSpoofing</code> Naming<a class="headerlink" href="#alternative-6-portsecurity-and-macspoofing-naming" title="Permanent link">¶</a></h3>
+<p>Two earlier iterations of this OKEP used different field names before settling on
+<code>macSecurity</code>:</p>
+<ol>
+<li><code>portSecurity</code> with a <code>mode</code> discriminator.</li>
+<li><code>macSpoofing</code> with a <code>mode</code> discriminator.</li>
+</ol>
+<p><strong>Why <code>portSecurity</code> was rejected:</strong> While "port security" accurately describes the OVN-level
+mechanism being configured, it is overly broad and could imply control over IP-level
+restrictions or other port-level security features beyond MAC spoofing.</p>
+<p><strong>Why <code>macSpoofing</code> was rejected:</strong> <code>macSpoofing</code> names the field after the attack the knob
+protects against rather than the security posture itself. This makes the enum values read
+ambiguously: <code>macSpoofing.mode: Enabled</code> could be misread as "spoofing is enabled" (i.e., the
+port is vulnerable) instead of its intended meaning, "spoof protection is enabled" (i.e., the
+default, secure state). <code>macSecurity.mode: Enabled</code> removes that ambiguity — it reads naturally
+as "MAC security is on," which matches the field's default value and secure-by-default posture,
+and <code>macSecurity.mode: Disabled</code> reads just as naturally as "MAC security is off." The
+<code>macSecurity</code> name still aligns with the bridge CNI's <code>macspoofchk</code> terminology that users are
+already familiar with, while removing the double-negative naming issue.</p>
+<h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">¶</a></h2>
+<ul>
+<li>Feature request issue: <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/issues/3926">#3926</a></li>
+<li>Initial implementation PR: <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/pull/4377">#4377</a></li>
+<li>OVN Northbound DB schema — Logical_Switch_Port table: <code>port_security</code>, <code>addresses</code> columns
+  and <code>force_fdb_lookup</code> option
+  (<a href="https://man7.org/linux/man-pages/man5/ovn-nb.5.html">ovn-nb man page</a>)</li>
+<li>OVN 24.03 release notes — <code>force_fdb_lookup</code> introduction:
+  <a href="https://github.com/ovn-org/ovn/blob/main/NEWS">NEWS</a></li>
+<li>Bridge CNI <code>macspoofchk</code> documentation:
+  <a href="https://www.cni.dev/plugins/current/main/bridge/">CNI plugins — bridge</a></li>
+<li>OKEP-5085 — Localnet API (CRD design pattern reference):
+  <a href="../okep-5085-localnet-api/">okep-5085-localnet-api.md</a></li>
+<li>OKEP-5193 — User Defined Networks (UDN CRD API):
+  <a href="../okep-5193-user-defined-networks/">okep-5193-user-defined-networks.md</a></li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright © OVN-Kubernetes a Series of LF Projects, LLC. For website terms of use, trademark policy and other project policies please see <a href="https://lfprojects.org/policies/">LF Projects Policies</a>.
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.indexes", "navigation.tabs", "navigation.tabs.sticky", "content.code.annotate", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": ["latest", "master"], "provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  
+<script id="init-glightbox">const lightbox = GLightbox({"touchNavigation": true, "loop": false, "zoomable": true, "draggable": true, "openEffect": "zoom", "closeEffect": "zoom", "slideEffect": "slide"});
+document$.subscribe(()=>{ lightbox.reload(); });
+</script></body></html>

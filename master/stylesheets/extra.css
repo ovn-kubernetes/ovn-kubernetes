@@ -1,0 +1,1199 @@
+:root {
+  --ok-radius: clamp(12px, 1.2vw, 16px);
+  --ok-radius-sm: clamp(8px, 1vw, 12px);
+  --ok-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ok-fast: 140ms var(--ok-ease);
+  --ok-med: 220ms var(--ok-ease);
+  --ok-slow: 520ms var(--ok-ease);
+  --ok-sidebar-base: min(12.5rem, 20vw);
+  --md-sidebar-width: var(--ok-sidebar-base);
+  --ok-content-max: min(56.25rem, 90vw);
+  --md-header-height: clamp(80px, 15vh, 140px);
+  --text-emphasis: #ffffffa6;
+}
+
+/* THEME SYSTEM: Defines distinct color palettes for Light (default) and Dark (slate) modes*/
+[data-md-color-scheme="default"] {
+  --ok-bg: radial-gradient(1200px 800px at 15% 10%, rgba(82, 108, 254, 0.16), transparent 60%),
+    radial-gradient(900px 700px at 90% 0%, rgba(64, 81, 181, 0.14), transparent 55%),
+    linear-gradient(180deg, #f6f7fb 0%, #ded6f1 100%);
+  --ok-surface: rgba(255, 255, 255, 0.78);
+  --ok-surface-2: rgba(255, 255, 255, 0.92);
+  --ok-border: rgba(0, 0, 0, 0.08);
+  --ok-sidebar-border: #a855f7;
+  --ok-sidebar-bg: rgba(255, 255, 255, 0.96);
+  --ok-sidebar-edge: rgba(168, 85, 247, 0.14);
+  --text-emphasis: #000000d1;
+  --ok-sidebar-gradient: linear-gradient(
+    to right,
+    var(--ok-sidebar-edge) 0%,
+    var(--ok-sidebar-bg) 12%,
+    var(--ok-sidebar-bg) 100%
+  );
+  --ok-sidebar-secondary-gradient: linear-gradient(
+    to left,
+    var(--ok-sidebar-edge) 0%,
+    var(--ok-sidebar-bg) 12%,
+    var(--ok-sidebar-bg) 100%
+  );
+  --ok-shadow: rgba(0, 0, 0, 0.16) 0 10px 30px;
+  --ok-shadow-sm: rgba(0, 0, 0, 0.12) 0 6px 18px;
+}
+
+[data-md-color-scheme="slate"] {
+  --ok-bg: radial-gradient(1100px 800px at 15% 10%, rgba(81, 92, 141, 0.22), transparent 60%),
+    radial-gradient(900px 700px at 90% 0%, rgba(64, 81, 181, 0.16), transparent 56%),
+    radial-gradient(900px 650px at 60% 95%, rgba(0, 212, 255, 0.08), transparent 62%),
+    linear-gradient(180deg, #1c212f 0%, #141824 100%);
+  --ok-surface: rgba(22, 24, 34, 0.72);
+  --ok-surface-2: rgba(22, 24, 34, 0.92);
+  --ok-border: rgba(255, 255, 255, 0.12);
+  --ok-sidebar-border: #05bed7;
+  --ok-sidebar-bg: rgba(22, 26, 42, 0.96);
+  --ok-sidebar-edge: rgba(82, 108, 254, 0.18);
+  --ok-sidebar-gradient: linear-gradient(
+    to right,
+    var(--ok-sidebar-edge) 0%,
+    var(--ok-sidebar-bg) 12%,
+    var(--ok-sidebar-bg) 100%
+  );
+  --ok-sidebar-secondary-gradient: linear-gradient(
+    to left,
+    var(--ok-sidebar-edge) 0%,
+    var(--ok-sidebar-bg) 12%,
+    var(--ok-sidebar-bg) 100%
+  );
+  --ok-shadow: 0 26px 90px rgba(0, 0, 0, 0.78), 0 0 0 1px rgba(255, 255, 255, 0.05) inset, 0 1px 0 rgba(255, 255, 255, 0.06) inset;
+  --ok-shadow-sm: 0 16px 58px rgba(0, 0, 0, 0.62), 0 0 0 1px rgba(255, 255, 255, 0.045) inset, 0 1px 0 rgba(255, 255, 255, 0.05) inset;
+}
+
+.md-container {
+  background: var(--ok-bg);
+}
+
+/* CONTENT STYLING: Optimizes readability with fluid line spacing, refined heading aesthetics, and precise scroll-positioning for anchor links. */
+.md-typeset {
+  line-height: 1.65;
+  /* Dividing vw by 1vw or 1rem cancels the unit, leaving a raw number */
+  line-height: clamp(1.5, calc(1.5 + (0.15vw / 1vw)), 1.65);
+}
+
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3 {
+  letter-spacing: -0.01em;
+}
+
+.md-typeset :is(h1, h2, h3, h4, h5, h6) {
+  scroll-margin-top: calc(var(--md-header-height, 3rem) + var(--md-tabs-height, 3rem) + 1rem);
+}
+
+
+.md-typeset h1 {
+  line-height: 1.3;
+  margin: 0 0 clamp(-0.25rem, 0.5vw, 0.75rem) 0;
+  color: var(--text-emphasis);
+}
+
+.md-typeset h2 {
+  font-size: 1.5625em;
+  line-height: 1.4;
+  margin: 0.65rem 0 0 0;
+}
+.md-typeset h3 {
+  font-size: 1.25em;
+  font-weight: 400;
+  letter-spacing: -.01em;
+  line-height: 1.5;
+  margin: 0 0 0 0;
+}
+
+/* ANCHOR LINKS: Styles hoverable section links with smooth transitions and a temporary "copy confirmation" tooltip for better navigation UX. */
+.md-typeset :is(h1, h2, h3, h4, h5, h6):hover .headerlink,
+.md-typeset :is(h1, h2, h3, h4, h5, h6) .headerlink:focus {
+  opacity: 1;
+}
+.md-typeset .headerlink {
+  opacity: 0.4;
+  margin-left: clamp(0.2em, 0.35em, 0.5em);
+  color: var(--md-accent-fg-color, var(--md-primary-fg-color));
+  text-decoration: none;
+  font-weight: 400;
+  cursor: pointer;
+  transition: opacity var(--ok-fast);
+}
+.md-typeset .headerlink:hover {
+  opacity: 1;
+  text-decoration: underline;
+  color: var(--md-accent-fg-color, var(--md-primary-fg-color));
+}
+.md-typeset .headerlink .ok-copy-tip {
+  position: absolute;
+  left: 50%;
+  bottom: 100%;
+  transform: translateX(-50%) translateY(clamp(-2px, -0.4vw, -4px));
+  padding: clamp(2px, 0.4vw, 4px) clamp(4px, 0.8vw, 8px);
+  font-size: clamp(0.65rem, 0.6rem + 0.15vw, 0.7rem);
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--md-default-bg-color, #fff);
+  background: var(--md-default-fg-color, #333);
+  border-radius: clamp(4px, 0.6vw, 6px);
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  animation: ok-copy-tip 1.6s var(--ok-ease) forwards;
+}
+@keyframes ok-copy-tip {
+  0%, 70% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* READING PROGRESS BAR: A thin, top-aligned bar that grows horizontally to visually track the user's scroll position. */
+#ok-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: clamp(2px, 0.3vh, 3px);
+  width: 100%;
+  transform: scaleX(0);
+  transform-origin: left;
+  z-index: 9999;
+  background: linear-gradient(90deg, var(--md-primary-fg-color), var(--md-accent-fg-color));
+  transition: transform var(--ok-fast);
+}
+
+
+/* SEARCH INPUT: A rounded, transparent input field that allows users to search the documentation. */
+.md-search__input {
+  border-radius: 999px;
+  transition: none;
+}
+.md-search__input:focus,
+.md-search__input:focus-within {
+  outline-offset: 1px;
+  transform: none;
+}
+
+/* MAIN CONTENT GRID: A fluid grid that allows the content to be displayed in a responsive manner. */
+.md-grid {
+  margin-left: auto;
+  margin-right: auto;
+  max-width: 56rem;
+}
+
+/* HEADER: A slim, frosted-glass styled bar that sits atop the content area, providing a clean, professional look. */
+.md-header {
+  height: var(--md-header-height);
+  background-image: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.18) 0%,
+    rgba(255, 255, 255, 0) 55%,
+    rgba(0, 0, 0, 0.12) 100%
+  );
+}
+[data-md-color-scheme="slate"] .md-header {
+  background-image: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.08) 0%,
+    rgba(255, 255, 255, 0) 60%,
+    rgba(82, 108, 254, 0.1) 100%
+  );
+}
+
+.md-header__button.md-logo img,
+.md-header__button.md-logo svg {
+  fill: currentcolor;
+  display: block;
+  height: clamp(1.5rem, 1.5rem + 0.5vw, 2.2rem);
+  width: auto;
+}
+
+.md-header .md-ellipsis {
+  font-size: clamp(0.875rem, 0.825rem + 0.25vw, 1.125rem);
+  position: relative;
+  left: clamp(-1.375rem, -1.5vw, -0.5rem);
+}
+
+.md-header__button.md-logo {
+  position: relative;
+  top: -2px;
+}
+
+[dir="ltr"] .md-source__icon + .md-source__repository {
+  
+  font-size: clamp(0.625rem, 0.6rem + 0.1vw, 0.6875rem);
+}
+
+/* TABS: A horizontal bar at the top of the content area that allows users to switch between different sections of the documentation. */
+nav.md-tabs {
+  background-image: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.16) 0%,
+    rgba(255, 255, 255, 0) 60%,
+    rgba(0, 0, 0, 0.1) 100%
+  );
+}
+[data-md-color-scheme="slate"] .md-tabs {
+  background-image: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.07) 0%,
+    rgba(255, 255, 255, 0) 65%,
+    rgba(82, 108, 254, 0.08) 100%
+  );
+}
+a.md-tabs__link {
+  font-size: clamp(0.7rem, 0.6rem + 0.25vw, 0.775rem);
+  font-weight: 550;
+}
+
+.md-sidebar {
+  z-index: 4;
+}
+.md-footer {
+  position: relative;
+  z-index: 3;
+}
+
+
+/* PRIMARY SIDEBAR: A vertical sidebar that contains the main navigation menu. */
+.md-sidebar--primary {
+    z-index: 10; 
+    transform: none; 
+  }
+  
+  .md-sidebar--primary:not([hidden]) {
+    width: var(--ok-sidebar-base);
+    min-width: min(8rem, 12vw);
+    max-width: 15rem;
+    transform: translateX(clamp(-20rem, 2.5% - 10vw, -5rem));
+  
+  }
+
+  .md-nav__link, 
+  .md-nav__title {
+    pointer-events: auto !important;
+    position: relative;
+  }
+
+/* PRIMARY SIDEBAR SCROLLWRAP: A scrollable container that contains the main navigation menu. */
+.md-sidebar--primary .md-sidebar__scrollwrap {
+  position: absolute;
+  box-sizing: border-box;
+  width: min(15rem, 80vw);
+  left: clamp(2.5%, 0px, 0px);
+  background: var(--ok-sidebar-gradient);
+  background-clip: padding-box;
+  border: 1px solid var(--ok-sidebar-border);
+  border-radius: var(--ok-radius);
+  box-shadow: var(--ok-shadow);
+  height: calc(100vh - var(--md-header-height, 3rem) - var(--md-tabs-height, 3rem) - 1rem);
+  max-height: calc(100vh - var(--md-header-height, 3rem) - var(--md-tabs-height, 3rem) - 1rem);
+  overflow-y: auto;
+  overflow-x: hidden;
+  transition: transform var(--ok-med), box-shadow var(--ok-med);
+}
+
+.md-sidebar--primary .md-sidebar__inner {
+  background: var(--ok-sidebar-bg);
+  border-radius: var(--ok-radius-sm);
+  margin: 0 clamp(1px, 0.2vw, 2px);
+  min-height: 100%;
+}
+
+.md-sidebar--primary .md-sidebar__scrollwrap .md-nav,
+.md-sidebar--primary .md-nav__list {
+  overflow: visible;
+}
+
+.md-nav {
+  font-weight: 400;
+  font-size: clamp(0.7rem, 0.6rem + 0.25vw, 0.75rem);
+}
+
+.md-sidebar--primary .md-sidebar__scrollwrap:hover {
+  transform: translateY(clamp(-2px, -0.2vw, -4px));
+  box-shadow: var(--ok-shadow), rgba(24, 23, 23, 0.1) 0 2px 0;
+}
+
+[data-md-color-scheme="slate"] .md-sidebar--primary .md-sidebar__scrollwrap:hover {
+  box-shadow: var(--ok-shadow), 0 0 0 1px rgba(82, 108, 254, 0.08);
+}
+
+.md-main__inner {
+  grid-template-columns: minmax(min(10rem, 15vw), 12.5rem) 1fr minmax(min(10rem, 15vw), 12.5rem);
+  margin-top: 1rem;
+}
+
+[dir="ltr"] .md-sidebar--primary:not([hidden]) ~ .md-content > .md-content__inner {
+
+  margin-left: clamp(-50px, -4vw, 0px);
+  margin-right: clamp(-40px, -4vw, 0px);
+}
+
+.md-sidebar--primary .md-sidebar__inner {
+  padding: clamp(0.5rem, 0.5rem + 0.3vw, 0.85rem) clamp(0.4rem, 0.4rem + 0.3vw, 0.7rem);
+}
+
+/* MAIN CONTENT INNER: A container that contains the main content of the documentation. */
+[dir=ltr] .md-content > .md-content__inner {  
+    margin-left: clamp(-120px, -8vw, 0px);
+    margin-right: auto;
+    text-align: justify;
+    hyphens: auto;
+    line-height: 1.8; 
+}
+
+.md-sidebar--primary .md-nav__link,
+.md-sidebar--primary .md-nav__title,
+.md-sidebar--primary .md-nav__link .md-ellipsis,
+.md-sidebar--primary .md-nav__title .md-ellipsis {
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+.md-sidebar--primary .md-nav__item {
+  min-width: 0;
+}
+
+.md-sidebar--primary .md-nav__title {
+  animation: none !important;
+  font-size: clamp(1rem, 0.9rem + 0.35vw, 1.2rem);
+  font-weight: 800;
+  color: var(--md-accent-fg-color, var(--md-primary-fg-color));
+  border-radius: var(--ok-radius-sm);
+  padding: clamp(0.35rem, 0.3rem + 0.15vw, 0.42rem) clamp(0.5rem, 0.4rem + 0.2vw, 0.6rem);
+  transition: transform var(--ok-fast), box-shadow var(--ok-fast), background-color var(--ok-fast);
+}
+
+.md-sidebar--primary .md-nav__link {
+  font-size: clamp(0.7rem, 0.6rem + 0.25vw, 0.75rem);
+  overflow: visible;
+  text-overflow: unset;
+  border-radius: var(--ok-radius-sm);
+  padding: clamp(0.35rem, 0.3rem + 0.15vw, 0.42rem) clamp(0.5rem, 0.4rem + 0.2vw, 0.6rem);
+  transition: transform var(--ok-fast), background-color var(--ok-fast), box-shadow var(--ok-fast);
+}
+.md-sidebar--primary .md-nav__list .md-nav__list .md-nav__link {
+  background-color: color-mix(in srgb, currentColor 4%, transparent);
+  box-shadow: var(--ok-shadow-sm);
+}
+.md-sidebar--primary .md-nav__link .md-ellipsis {
+  overflow: visible;
+  text-overflow: unset;
+}
+.md-sidebar--primary .md-nav__list .md-nav__list .md-nav__link:hover {
+  transform: translateX(clamp(4px, 0.5vw, 6px));
+}
+.md-sidebar--primary .md-nav__list .md-nav__list .md-nav__link:active {
+  transform: scale(0.96);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(0, 0, 0, 0.06);
+}
+[data-md-color-scheme="slate"] .md-sidebar--primary .md-nav__list .md-nav__list .md-nav__link:active {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+/* SECONDARY SIDEBAR: A vertical sidebar that contains the table of contents. */
+.md-sidebar--secondary {
+  width: var(--ok-sidebar-base);
+  min-width: min(8rem, 12vw);
+  max-width: 15rem;
+  transform: translateX(clamp(5rem, -2.5% + 10vw, 20rem));
+}
+
+/* SECONDARY SIDEBAR SCROLLWRAP: A scrollable container that contains the table of contents. */
+.md-sidebar--secondary .md-sidebar__scrollwrap {
+  position: absolute;
+  box-sizing: border-box;
+  width: min(15rem, 80vw);
+  right: clamp(2.5%, 0px, 0px);
+  left: auto;
+  background: var(--ok-sidebar-secondary-gradient);
+  background-clip: padding-box;
+  border: 1px solid var(--ok-sidebar-border);
+  border-radius: var(--ok-radius);
+  box-shadow: var(--ok-shadow);
+  height: calc(100vh - var(--md-header-height, 3rem) - var(--md-tabs-height, 3rem) - 1rem);
+  max-height: calc(100vh - var(--md-header-height, 3rem) - var(--md-tabs-height, 3rem) - 1rem);
+  overflow-y: auto;
+  overflow-x: hidden;
+  transition: transform var(--ok-med), box-shadow var(--ok-med);
+}
+
+.md-sidebar--secondary .md-sidebar__inner {
+  background: var(--ok-sidebar-bg);
+  border-radius: var(--ok-radius-sm);
+  margin: 0 clamp(1px, 0.2vw, 2px);
+  min-height: 100%;
+  padding: clamp(0.5rem, 0.5rem + 0.3vw, 0.85rem) clamp(0.4rem, 0.4rem + 0.3vw, 0.7rem);
+}
+
+.md-sidebar--secondary .md-sidebar__scrollwrap:hover {
+  transform: translateY(clamp(-2px, -0.2vw, -4px));
+  box-shadow: var(--ok-shadow), rgba(24, 23, 23, 0.1) 0 2px 0;
+}
+[data-md-color-scheme="slate"] .md-sidebar--secondary .md-sidebar__scrollwrap {
+  box-shadow: var(--ok-shadow), 0 0 0 1px rgba(82, 108, 254, 0.08);
+}
+[data-md-color-scheme="slate"] .md-sidebar--secondary .md-sidebar__scrollwrap:hover {
+  box-shadow: var(--ok-shadow), 0 0 0 1px rgba(82, 108, 254, 0.12);
+}
+
+.md-sidebar--secondary .md-nav__link {
+  font-size: clamp(0.7rem, 0.6rem + 0.25vw, 0.75rem);
+  border-radius: var(--ok-radius-sm);
+  padding: clamp(0.35rem, 0.3rem + 0.15vw, 0.42rem) clamp(0.5rem, 0.4rem + 0.2vw, 0.6rem);
+  transition: transform var(--ok-fast), background-color var(--ok-fast), box-shadow var(--ok-fast);
+  background-color: color-mix(in srgb, currentColor 4%, transparent);
+  box-shadow: var(--ok-shadow-sm);
+}
+.md-sidebar--secondary .md-nav__link:hover {
+  transform: translateX(clamp(-6px, -0.5vw, -4px));
+}
+.md-sidebar--secondary .md-nav__link:active {
+  transform: scale(0.96);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(0, 0, 0, 0.06);
+}
+[data-md-color-scheme="slate"] .md-sidebar--secondary .md-nav__link:active {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+.md-sidebar--secondary .md-nav__title {
+  animation: none !important;
+  font-size: clamp(0.75rem, 0.65rem + 0.25vw, 0.8rem);
+  font-weight: 600;
+  border-radius: var(--ok-radius-sm);
+  padding: clamp(0.4rem, 0.4rem + 0.2vw, 0.54rem) clamp(1rem, 0.4rem + 0.2vw, 0.6rem);
+}
+[data-md-color-scheme="default"] .md-sidebar--secondary .md-nav__title {
+  color: #8661c6;
+}
+[data-md-color-scheme="slate"] .md-sidebar--secondary .md-nav__title {
+  color: #00bdd6;
+}
+
+/* TABLE OF CONTENTS FLASH: A subtle animation that highlights the current section in the table of contents. */
+@keyframes ok-toc-flash {
+  from {
+    background: color-mix(in srgb, var(--md-accent-fg-color) 14%, transparent);
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--md-accent-fg-color) 16%, transparent);
+  }
+  to {
+    background: transparent;
+    box-shadow: none;
+  }
+}
+.ok-toc-flash {
+  animation: ok-toc-flash 900ms var(--ok-ease) both;
+  border-radius: var(--ok-radius-sm);
+}
+
+.md-content__inner > * {
+  animation: ok-fade-up var(--ok-slow) var(--ok-ease) both;
+}
+@keyframes ok-fade-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.md-typeset pre,
+.md-typeset .admonition,
+.md-typeset details {
+  border-radius: var(--ok-radius);
+  box-shadow: var(--ok-shadow-sm);
+  transition: transform var(--ok-med), box-shadow var(--ok-med);
+}
+.md-typeset pre:hover,
+.md-typeset .admonition:hover,
+.md-typeset details:hover {
+  transform: translateY(clamp(-2px, -0.2vw, -4px));
+  box-shadow: var(--ok-shadow);
+}
+
+/* ACCESSIBILITY: Reduced motion only (no layout breakpoints) */
+@media (prefers-reduced-motion: reduce) {
+  #ok-progress,
+  .md-content__inner > *,
+  .md-typeset .headerlink .ok-copy-tip {
+    transition: none !important;
+    animation: none !important;
+  }
+  .md-sidebar--primary .md-sidebar__scrollwrap,
+  .md-sidebar--primary .md-nav__link,
+  .md-sidebar--primary .md-nav__title,
+  .md-sidebar--secondary .md-sidebar__scrollwrap,
+  .md-sidebar--secondary .md-nav__link,
+  .md-sidebar--secondary .md-nav__title,
+  .md-typeset pre,
+  .md-typeset .admonition,
+  .md-typeset details {
+    transition: none !important;
+  }
+}
+
+img[alt="ovn-kubernetes-logo"] {
+  width: clamp(240px, 20vw, 300px);
+  display: block;
+  margin-inline: auto;
+}
+
+/* Responsive Breakpoint for Mobile, Tablet, and Small Screens */
+@media screen and (max-width: 59.9em) {
+  :root {
+    --md-header-height: 3rem;
+  }
+
+  .md-header {
+    height: auto !important; 
+    min-height: var(--md-header-height);
+    z-index: 10;
+  }
+
+  /* Ensure the hamburger menu icon is clickable and visible */
+  .md-header__button.md-icon[for="__drawer"] {
+    display: block;
+    cursor: pointer;
+    z-index: 11;
+  }
+
+  /* Primary Sidebar (The Drawer) */
+  .md-sidebar--primary {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 280px !important;
+    height: 100vh !important;
+    z-index: 100 !important;
+    transform: translateX(-100%) !important;
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.25s !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+    display: block !important;
+    background: var(--md-default-bg-color) !important;
+    overflow: visible !important;
+  }
+
+  [data-md-toggle="drawer"]:checked ~ .md-container .md-sidebar--primary {
+    transform: translateX(0) !important;
+    visibility: visible !important;
+    pointer-events: auto !important;
+    display: block !important;
+    box-shadow: var(--md-shadow-z3), 10px 0 30px rgba(0, 0, 0, 0.2) !important;
+  }
+
+  /* Scrollwrap: fill entire drawer, allow scrolling */
+  .md-sidebar--primary .md-sidebar__scrollwrap {
+    position: absolute !important;
+    top: 0 !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    width: auto !important;
+    height: auto !important;
+    max-height: none !important;
+    margin: 0 !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    transform: none !important;
+    scroll-snap-type: none !important;
+  }
+
+  .md-sidebar--primary .md-sidebar__scrollwrap:hover {
+    transform: none !important;
+    box-shadow: none !important;
+  }
+
+  .md-sidebar--primary .md-sidebar__inner {
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* Content Area - Crucial Reset */
+  [dir="ltr"] .md-content > .md-content__inner,
+  [dir="ltr"] .md-sidebar--primary:not([hidden]) ~ .md-content > .md-content__inner {
+    margin: 0 !important;
+    padding: 1rem;
+    width: 100% !important;
+    max-width: 100vw;
+    transform: none !important;
+    text-align: left; 
+  }
+
+  /* Reset grid columns to stack */
+  .md-main__inner {
+    display: block !important;
+    margin-top: 0.5rem;
+  }
+
+  /* Cleanup */
+  .md-sidebar--secondary {
+    display: none;
+  }
+
+  /* Fix for the logo/title alignment in mobile header */
+  .md-header .md-ellipsis {
+    left: 0; 
+    top: 0.1rem;
+  }
+  /* Drawer title bar */
+  .md-nav--primary .md-nav__title {
+    animation: none !important;
+    font-size: 0.8rem !important;
+    font-weight: 800 !important;
+    color: var(--md-accent-fg-color, var(--md-primary-fg-color)) !important;
+    border-radius: var(--ok-radius-sm) !important;
+    padding: 0.6rem 0.8rem !important;
+    height: 3rem !important;
+    cursor: pointer !important;
+    position: relative !important;
+    white-space: nowrap !important;
+    line-height: 1.5 !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 0.4rem !important;
+    transition: transform var(--ok-fast), box-shadow var(--ok-fast), background-color var(--ok-fast) !important;
+  }
+
+  .md-nav--primary .md-nav__title .md-nav__icon {
+    position: static !important;
+    flex-shrink: 0 !important;
+    transform: none !important;
+  }
+
+  .md-nav--primary .md-nav__title[for=__drawer] {
+    height: 3rem !important;
+    background-color: var(--md-primary-fg-color) !important;
+    color: var(--md-primary-bg-color) !important;
+    font-weight: 700 !important;
+    border-radius: 0 !important;
+    padding: 0.4rem 0.8rem !important;
+  }
+
+  .md-nav--primary .md-nav__title .md-logo {
+    display: block !important;
+    position: absolute !important;
+    left: 0.2rem !important;
+    top: 0.1rem !important;
+    margin: 0 !important;
+    padding: 0.2rem !important;
+    right: auto !important;
+  }
+
+  .md-nav__title .md-nav__button.md-logo img,
+  .md-nav__title .md-nav__button.md-logo svg {
+    fill: currentcolor;
+    display: block;
+    height: 1.4rem;
+    max-width: 100%;
+    object-fit: contain;
+    width: auto;
+    position: relative;
+    left: 7rem;
+    top: 0.5rem;
+  }
+
+  .md-nav--primary .md-nav__item,
+  .md-nav--primary .md-nav__title {
+    font-size: 0.8rem !important;
+    line-height: 1.5 !important;
+  }
+
+  .md-nav--primary .md-nav__link {
+    margin-top: 0 !important;
+    padding: 0.6rem 0.8rem !important;
+  }
+
+  .md-nav--primary .md-nav__link.md-nav__container {
+    padding: 0.6rem 0.8rem !important;
+    font-size: 0.8rem !important;
+    line-height: 1.5 !important;
+    display: flex !important;
+    align-items: center !important;
+  }
+
+  .md-nav--primary .md-nav__link.md-nav__container > .md-nav__link {
+    padding: 0 !important;
+    font-size: inherit !important;
+    line-height: inherit !important;
+  }
+
+body:has(#__drawer:checked) {
+  overflow: hidden !important;
+  overscroll-behavior: contain;
+  height: 100dvh;    
+}
+}
+
+/* Responsive Breakpoint for Large Screens */
+@media screen and (min-width: 123.0625em) {
+.md-typeset h1 {
+  font-size: 1.5rem;
+}
+}
+
+/* Responsive Breakpoint for Mid-Screen and Medium Tablet */
+@media screen and (min-width: 59.875em) and (max-width: 86.25em) {
+  :root {
+    --md-header-height: 3rem;
+  }
+
+  .md-header {
+    height: auto !important;
+    min-height: var(--md-header-height);
+    z-index: 10;
+  }
+
+  /* Force hamburger visible — theme hides it at >=76.25em */
+  .md-header__button[for="__drawer"] {
+    display: block !important;
+    cursor: pointer;
+    z-index: 11;
+  }
+
+  /* Hide logo button that theme only shows at >=76.25em */
+  .md-header__button.md-logo {
+    display: none !important;
+  }
+
+  /* Override theme's height:0 on sidebars at >=76.25em */
+  .md-sidebar {
+    height: auto !important;
+  }
+
+  /* Primary sidebar */
+  .md-sidebar--primary {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 280px !important;
+    height: 100vh !important;
+    max-width: none !important;
+    min-width: 0 !important;
+    z-index: 100 !important;
+    transform: translateX(-100%) !important;
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.25s !important;
+    visibility: visible !important;
+    display: block !important;
+    background: var(--md-default-bg-color) !important;
+    overflow: visible !important;
+  }
+
+  .md-sidebar--primary[hidden] {
+    display: block !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+    transform: translateX(-100%) !important;
+  }
+
+  /* Slide drawer in when checkbox is toggled */
+  [data-md-toggle="drawer"]:checked ~ .md-container .md-sidebar--primary,
+  [data-md-toggle="drawer"]:checked ~ .md-container .md-sidebar--primary[hidden] {
+    transform: translateX(0) !important;
+    visibility: visible !important;
+    pointer-events: auto !important;
+    display: block !important;
+    box-shadow: var(--md-shadow-z3), 10px 0 30px rgba(0, 0, 0, 0.2) !important;
+  }
+
+  /* Overlay backdrop when drawer is open */
+  .md-overlay {
+    background-color: rgba(0, 0, 0, 0.54) !important;
+    height: 0;
+    opacity: 0;
+    position: fixed !important;
+    top: 0;
+    transition: width 0ms 0.25s, height 0ms 0.25s, opacity 0.25s !important;
+    width: 0;
+    z-index: 90 !important;
+  }
+
+  [data-md-toggle="drawer"]:checked ~ .md-overlay {
+    height: 100% !important;
+    opacity: 1 !important;
+    transition: width 0ms, height 0ms, opacity 0.25s !important;
+    width: 100% !important;
+  }
+
+  /* Scrollwrap: fill entire drawer, allow scrolling */
+  .md-sidebar--primary .md-sidebar__scrollwrap {
+    position: absolute !important;
+    top: 0 !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    width: auto !important;
+    height: auto !important;
+    max-height: none !important;
+    margin: 0 !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    transform: none !important;
+    scroll-snap-type: none !important;
+  }
+
+  .md-sidebar--primary .md-sidebar__scrollwrap:hover {
+    transform: none !important;
+    box-shadow: none !important;
+  }
+
+  .md-sidebar--primary .md-sidebar__inner {
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .md-nav--primary,
+  .md-nav--primary .md-nav {
+    background-color: var(--md-default-bg-color) !important;
+    display: flex !important;
+    flex-direction: column !important;
+    height: 100% !important;
+    left: 0 !important;
+    position: absolute !important;
+    right: 0 !important;
+    top: 0 !important;
+    z-index: 1 !important;
+  }
+
+  /* Undo the theme's desktop accordion on .md-nav at >=76.25em */
+  .md-nav--primary .md-nav {
+    margin-bottom: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  .md-nav--primary .md-nav__list {
+    flex: 1 !important;
+    overflow-y: auto !important;
+  }
+
+  .md-nav--primary .md-nav__title ~ .md-nav__list {
+    background-color: var(--md-default-bg-color) !important;
+    box-shadow: 0 0.05rem 0 var(--md-default-fg-color--lightest) inset !important;
+    overflow-y: auto !important;
+    scroll-snap-type: y mandatory !important;
+    touch-action: pan-y !important;
+  }
+
+  .md-nav--primary .md-nav__item,
+  .md-nav--primary .md-nav__title {
+    font-size: 0.8rem !important;
+    line-height: 1.5 !important;
+  }
+
+  .md-nav--primary .md-nav__item {
+    border-top: 0.05rem solid var(--md-default-fg-color--lightest) !important;
+  }
+
+  .md-nav--primary .md-nav__link {
+    margin-top: 0 !important;
+    padding: 0.6rem 0.8rem !important;
+  }
+
+  /* Drawer title bar */
+  .md-nav--primary .md-nav__title {
+    animation: none !important;
+    font-size: 0.8rem !important;
+    font-weight: 800 !important;
+    color: var(--md-accent-fg-color, var(--md-primary-fg-color)) !important;
+    border-radius: var(--ok-radius-sm) !important;
+    padding: 0.6rem 0.8rem !important;
+    height: 3rem !important;
+    cursor: pointer !important;
+    position: relative !important;
+    white-space: nowrap !important;
+    line-height: 1.5 !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 0.4rem !important;
+    transition: transform var(--ok-fast), box-shadow var(--ok-fast), background-color var(--ok-fast) !important;
+  }
+
+  .md-nav--primary .md-nav__title[for=__drawer] {
+    height: 3rem !important;
+    background-color: var(--md-primary-fg-color) !important;
+    color: var(--md-primary-bg-color) !important;
+    font-weight: 700 !important;
+    border-radius: 0 !important;
+    padding: 0.4rem 0.8rem !important;
+  }
+
+  .md-nav--primary .md-nav__title .md-logo {
+    display: block !important;
+    position: absolute !important;
+    left: 0.2rem !important;
+    top: 0.1rem !important;
+    margin: 0 !important;
+    padding: 0.2rem !important;
+    right: auto !important;
+  }
+
+  .md-nav__title .md-nav__button.md-logo img,
+  .md-nav__title .md-nav__button.md-logo svg {
+    fill: currentcolor;
+    display: block;
+    height: 1.4rem;
+    max-width: 100%;
+    object-fit: contain;
+    width: auto;
+    position: relative;
+    left: 7rem;
+    top: 0.5rem;
+  }
+
+  /* Container link */
+  .md-nav--primary .md-nav__link.md-nav__container {
+    padding: 0.6rem 0.8rem !important;
+    font-size: 0.8rem !important;
+    line-height: 1.5 !important;
+    display: flex !important;
+    align-items: center !important;
+  }
+
+  .md-nav--primary .md-nav__link.md-nav__container > .md-nav__link {
+    padding: 0 !important;
+    font-size: inherit !important;
+    line-height: inherit !important;
+  }
+
+  /* Forward arrow on nav links that have sub-panels */
+  .md-nav--primary .md-nav__link .md-nav__icon {
+    flex-shrink: 0 !important;
+    font-size: 1.2rem !important;
+    height: 1.2rem !important;
+    width: 1.2rem !important;
+  }
+
+  .md-nav--primary .md-nav__link .md-nav__icon:after {
+    background-color: currentcolor !important;
+    content: "" !important;
+    display: block !important;
+    height: 100% !important;
+    mask-image: var(--md-nav-icon--next) !important;
+    -webkit-mask-image: var(--md-nav-icon--next) !important;
+    mask-position: center !important;
+    -webkit-mask-position: center !important;
+    mask-repeat: no-repeat !important;
+    -webkit-mask-repeat: no-repeat !important;
+    mask-size: contain !important;
+    -webkit-mask-size: contain !important;
+    width: 100% !important;
+    transform: none !important;
+  }
+
+  /* Content area — full-width, no sidebar offsets */
+  [dir="ltr"] .md-content > .md-content__inner,
+  [dir="ltr"] .md-sidebar--primary:not([hidden]) ~ .md-content > .md-content__inner {
+    margin: 0 !important;
+    padding: 1rem;
+    width: 100% !important;
+    max-width: 100vw;
+    transform: none !important;
+    text-align: left;
+  }
+
+  /* Stack layout to single column */
+  .md-main__inner {
+    display: block !important;
+    margin-top: 0.5rem;
+  }
+
+  /* Hide the standalone TOC sidebar (right column) */
+  .md-sidebar--secondary {
+    display: none !important;
+  }
+
+  .md-nav--primary .md-nav__link[for=__toc] {
+    display: flex !important;
+  }
+
+  .md-nav--primary .md-nav__link[for=__toc] .md-icon:after {
+    content: "" !important;
+    background-color: currentcolor !important;
+    display: block !important;
+    height: 100% !important;
+    width: 100% !important;
+    mask-image: var(--md-toc-icon) !important;
+    -webkit-mask-image: var(--md-toc-icon) !important;
+    mask-position: center !important;
+    -webkit-mask-position: center !important;
+    mask-repeat: no-repeat !important;
+    -webkit-mask-repeat: no-repeat !important;
+    mask-size: contain !important;
+    -webkit-mask-size: contain !important;
+  }
+
+  .md-nav--primary .md-nav__link[for=__toc] + .md-nav__link {
+    display: none !important;
+  }
+
+  .md-nav--primary .md-nav__link[for=__toc] ~ .md-nav {
+    display: flex !important;
+  }
+
+  .md-nav__toggle ~ .md-nav {
+    display: flex !important;
+    flex-direction: column !important;
+    opacity: 0 !important;
+    transform: translateX(100%) !important;
+    transition: transform 0.25s cubic-bezier(0.8, 0, 0.6, 1),
+                opacity 125ms 50ms !important;
+    grid-template-rows: none !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    height: 100% !important;
+    z-index: 1 !important;
+  }
+
+  .md-nav__toggle:checked ~ .md-nav {
+    opacity: 1 !important;
+    transform: translateX(0) !important;
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+                opacity 125ms 125ms !important;
+    visibility: visible !important;
+    pointer-events: auto !important;
+  }
+
+  .md-nav__toggle:checked ~ .md-nav > .md-nav__list {
+    backface-visibility: hidden !important;
+  }
+
+  .md-nav--primary .md-nav__title .md-nav__icon {
+    display: block !important;
+    height: 1.2rem !important;
+    margin: 0 !important;
+    position: static !important;
+    flex-shrink: 0 !important;
+    transform: none !important;
+    width: 1.2rem !important;
+  }
+
+  .md-nav--primary .md-nav__title .md-nav__icon:after {
+    background-color: currentcolor !important;
+    content: "" !important;
+    display: block !important;
+    height: 100% !important;
+    mask-image: var(--md-nav-icon--prev) !important;
+    -webkit-mask-image: var(--md-nav-icon--prev) !important;
+    mask-position: center !important;
+    -webkit-mask-position: center !important;
+    mask-repeat: no-repeat !important;
+    -webkit-mask-repeat: no-repeat !important;
+    mask-size: contain !important;
+    -webkit-mask-size: contain !important;
+    width: 100% !important;
+  }
+
+  /* Secondary nav (TOC) inside the drawer */
+  .md-nav--primary .md-nav--secondary .md-nav {
+    background-color: initial !important;
+    position: static !important;
+  }
+
+  [dir="ltr"] .md-nav--primary .md-nav--secondary .md-nav .md-nav__link {
+    padding-left: 1.4rem !important;
+  }
+
+  [dir="ltr"] .md-nav--primary .md-nav--secondary .md-nav .md-nav .md-nav__link {
+    padding-left: 2rem !important;
+  }
+
+  .md-nav--secondary .md-nav__title {
+    background: var(--md-default-bg-color) !important;
+    box-shadow: 0 0 0.4rem 0.4rem var(--md-default-bg-color) !important;
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 1 !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 0.4rem !important;
+    height: 3rem !important;
+    padding: 0.6rem 0.8rem !important;
+    white-space: nowrap !important;
+    line-height: 1.5 !important;
+  }
+
+  .md-nav--secondary .md-nav__title .md-nav__icon {
+    display: block !important;
+    height: 1.2rem !important;
+    width: 1.2rem !important;
+    margin: 0 !important;
+    position: static !important;
+    flex-shrink: 0 !important;
+    transform: none !important;
+  }
+
+  .md-nav--secondary .md-nav__title .md-nav__icon:after {
+    background-color: currentcolor !important;
+    content: "" !important;
+    display: block !important;
+    height: 100% !important;
+    mask-image: var(--md-nav-icon--prev) !important;
+    -webkit-mask-image: var(--md-nav-icon--prev) !important;
+    mask-position: center !important;
+    -webkit-mask-position: center !important;
+    mask-repeat: no-repeat !important;
+    -webkit-mask-repeat: no-repeat !important;
+    mask-size: contain !important;
+    -webkit-mask-size: contain !important;
+    width: 100% !important;
+  }
+
+  [dir="ltr"] .md-nav--secondary .md-nav__list {
+    padding-left: 0.6rem !important;
+  }
+
+  .md-nav--secondary .md-nav__list {
+    padding-bottom: 0.4rem !important;
+  }
+
+  /* Header logo/title alignment reset */
+  .md-header .md-ellipsis {
+    left: 0;
+    top: 0.1rem;
+  }
+
+  /* Lock body scroll when drawer is open */
+  body:has(#__drawer:checked) {
+    overflow: hidden !important;
+    overscroll-behavior: contain;
+    height: 100dvh;
+  }
+}
+/* VERSION SELECTOR: Material injects .md-version into the first header topic,
+   which normally fades out on scroll when the page title takes over. Keep the
+   version control visible and clickable at all times. */
+.md-header__title--active .md-header__topic:first-child {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  transform: none !important;
+  z-index: 2;
+}
+
+.md-header__title--active .md-header__topic:first-child > .md-ellipsis {
+  max-width: 0;
+  margin: 0;
+  opacity: 0;
+  overflow: hidden;
+  padding: 0;
+}
+
+.md-version {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  font-size: 0.9rem;
+  position: relative;
+  right: 2rem;
+  z-index: 3;
+}
