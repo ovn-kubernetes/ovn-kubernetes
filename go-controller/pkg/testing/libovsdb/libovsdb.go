@@ -475,6 +475,25 @@ func (t *TestOvsdbServer) CreateTestData(data []TestData) error {
 	return nil
 }
 
+// GetData returns all rows stored in the server database for the given tables.
+// Unlike getTestDataFromClientCache, the returned models have every column
+// populated regardless of which columns a client chose to monitor. This is
+// useful for asserting on columns that the production client does not monitor
+// (e.g. MAC_Binding datapath/timestamp).
+func (t *TestOvsdbServer) GetData(tables ...string) ([]TestData, error) {
+	data := []TestData{}
+	for _, table := range tables {
+		rows, err := t.db.List(t.dbMod.Schema.Name, table)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list table %s: %w", table, err)
+		}
+		for _, row := range rows {
+			data = append(data, row)
+		}
+	}
+	return data, nil
+}
+
 func tempOVSDBSocketFileName() string {
 	randBytes := make([]byte, 16)
 	cryptorand.Read(randBytes)

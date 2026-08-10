@@ -915,6 +915,24 @@ func (_m *NetLinkOps) NeighSet(neigh *netlink.Neigh) error {
 	return r0
 }
 
+// NeighSubscribeWithOptions provides a mock function with given fields: ch, done, options
+func (_m *NetLinkOps) NeighSubscribeWithOptions(ch chan<- netlink.NeighUpdate, done <-chan struct{}, options netlink.NeighSubscribeOptions) error {
+	ret := _m.Called(ch, done, options)
+
+	if len(ret) == 0 {
+		panic("no return value specified for NeighSubscribeWithOptions")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(chan<- netlink.NeighUpdate, <-chan struct{}, netlink.NeighSubscribeOptions) error); ok {
+		r0 = rf(ch, done, options)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
 // RouteAdd provides a mock function with given fields: route
 func (_m *NetLinkOps) RouteAdd(route *netlink.Route) error {
 	ret := _m.Called(route)
