@@ -592,7 +592,7 @@ func (c *Controller) onANPNodeDelete(obj interface{}) {
 
 func (c *Controller) GetSamplingConfig() *libovsdbops.SamplingConfig {
 	if c.observManager != nil {
-		return c.observManager.SamplingConfig()
+		return c.observManager.SamplingConfigForContext("", libovsdbops.AdminNetworkPolicySample)
 	}
 	return nil
 }

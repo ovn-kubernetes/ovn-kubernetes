@@ -536,6 +536,11 @@ func NewOVNKubeControllerWatchFactory(ovnClientset *util.OVNKubeControllerClient
 		}
 	}
 
+	if config.OVNKubernetesFeature.EnableObservability {
+		// make sure shared informer is created for a factory, so on wf.observabilityConfigFactory.Start() it is initialized and caches are synced.
+		wf.observabilityConfigFactory.K8s().V1alpha1().ObservabilityConfigs().Informer()
+	}
+
 	if config.OVNKubernetesFeature.EnableMultiNetwork {
 		wf.nadFactory = nadinformerfactory.NewSharedInformerFactory(ovnClientset.NetworkAttchDefClient, resyncInterval)
 		wf.informers[NetworkAttachmentDefinitionType], err = newQueuedInformer(eventQueueSize, NetworkAttachmentDefinitionType,
