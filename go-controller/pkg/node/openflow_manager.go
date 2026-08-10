@@ -6,9 +6,11 @@ package node
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +26,47 @@ import (
 	nodetypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
+
+// OpenflowManager defines the methods of openflowManager
+// which can be externally available.
+type OpenflowManager interface {
+	UpdateFlowCacheEntry(key string, flows []string)
+	DeleteFlowsByKey(key string)
+	RequestFlowSync()
+	GetDefaultBridgeName() string
+	Flowskeys() []string
+}
+
+// FlowManagerOps is a function-based implementation of OpenFlowManager.
+// Callers out of pkg/node/ construct it by binding the openflowManager methods.
+// Used by GetOpenflowManager in DefaultNodeNetworkController.
+type OpenflowManagerOps struct {
+	UpdateExBridgeFlowCacheEntryFn func(key string, flows []string)
+	DeleteExBridgeFlowsByKeyFn     func(key string)
+	RequestFlowSyncFn              func()
+	GetDefaultBridgeNameFn         func() string
+	FlowskeysFn                    func() []string
+}
+
+func (f *OpenflowManagerOps) UpdateFlowCacheEntry(key string, flows []string) {
+	f.UpdateExBridgeFlowCacheEntryFn(key, flows)
+}
+
+func (f *OpenflowManagerOps) DeleteFlowsByKey(key string) {
+	f.DeleteExBridgeFlowsByKeyFn(key)
+}
+
+func (f *OpenflowManagerOps) RequestFlowSync() {
+	f.RequestFlowSyncFn()
+}
+
+func (f *OpenflowManagerOps) GetDefaultBridgeName() string {
+	return f.GetDefaultBridgeNameFn()
+}
+
+func (f *OpenflowManagerOps) Flowskeys() []string {
+	return f.FlowskeysFn()
+}
 
 type openflowManager struct {
 	defaultBridge         *openflowBridge
@@ -327,6 +370,12 @@ func (b *openflowBridge) getFlowsByKey(key string) []string {
 	return b.flowCache[key]
 }
 
+func (b *openflowBridge) flowskeys() []string {
+	b.flowMutex.Lock()
+	defer b.flowMutex.Unlock()
+	return slices.Collect(maps.Keys(b.flowCache))
+}
+
 func (b *openflowBridge) updateGroupCacheEntry(key string, groups []string) {
 	b.groupMutex.Lock()
 	defer b.groupMutex.Unlock()
@@ -384,6 +433,10 @@ func (c *openflowManager) getFlowsByKey(key string) []string {
 
 func (c *openflowManager) updateGroupCacheEntry(key string, groups []string) {
 	c.defaultBridge.updateGroupCacheEntry(key, groups)
+}
+
+func (c *openflowManager) flowskeys() []string {
+	return c.defaultBridge.flowskeys()
 }
 
 func (c *openflowManager) getGroupsByKey(key string) []string {
