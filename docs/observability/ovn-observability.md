@@ -45,6 +45,8 @@ kubectl -n ovn-kubernetes exec -it <ovnkube pod> -c ovnkube-controller -- ovnkub
 Usage of ovnkube-observ:
   -add-ovs-collector
     	Add ovs collector to enable sampling. Use with caution. Make sure no one else is using observability.
+  -ovs-collector-id
+      Set the ovs collector ID to use. Use alongside with -add-ovs-collector. Default to 1.
   -enable-enrichment
     	Enrich samples with nbdb data. (default true)
   -filter-dst-ip string

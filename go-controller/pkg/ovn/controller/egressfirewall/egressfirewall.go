@@ -831,7 +831,7 @@ func (oc *EFController) addEgressFirewallRules(ef *egressFirewall, pgName string
 			libovsdbutil.LportIngress,
 		)
 
-		ops, err = oc.createEgressFirewallACLOps(ops, egressFirewallACL, pgName)
+		ops, err = oc.createEgressFirewallACLOps(ops, egressFirewallACL, ef.namespace, pgName)
 		if err != nil {
 			return err
 		}
@@ -920,9 +920,9 @@ func (oc *EFController) moveACLsToNamespacedPortGroups(existingEFNamespaces map[
 
 // createEgressFirewallACLOps uses the previously generated elements and creates the
 // acls for all node switches
-func (oc *EFController) createEgressFirewallACLOps(ops []ovsdb.Operation, egressFirewallACL *nbdb.ACL, pgName string) ([]ovsdb.Operation, error) {
+func (oc *EFController) createEgressFirewallACLOps(ops []ovsdb.Operation, egressFirewallACL *nbdb.ACL, namespace, pgName string) ([]ovsdb.Operation, error) {
 	var err error
-	ops, err = libovsdbops.CreateOrUpdateACLsOps(oc.nbClient, ops, oc.GetSamplingConfig(), egressFirewallACL)
+	ops, err = libovsdbops.CreateOrUpdateACLsOps(oc.nbClient, ops, oc.GetSamplingConfig(namespace), egressFirewallACL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create egressFirewall ACL %#v: %v", egressFirewallACL, err)
 	}
@@ -1047,9 +1047,9 @@ func (oc *EFController) getNamespacePortGroupName(namespace string) (string, err
 	return libovsdbutil.GetPortGroupName(getNamespacePortGroupDbIDs(namespace, ownerController)), nil
 }
 
-func (oc *EFController) GetSamplingConfig() *libovsdbops.SamplingConfig {
+func (oc *EFController) GetSamplingConfig(namespace string) *libovsdbops.SamplingConfig {
 	if oc.observManager != nil {
-		return oc.observManager.SamplingConfig()
+		return oc.observManager.SamplingConfigForContext(namespace, libovsdbops.EgressFirewallSample)
 	}
 	return nil
 }

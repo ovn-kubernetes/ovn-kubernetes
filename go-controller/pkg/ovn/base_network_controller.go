@@ -1230,9 +1230,9 @@ func (bnc *BaseNetworkController) setupClusterPortGroups() error {
 	return nil
 }
 
-func (bnc *BaseNetworkController) GetSamplingConfig() *libovsdbops.SamplingConfig {
+func (bnc *BaseNetworkController) GetSamplingConfig(namespace string, feature libovsdbops.SampleFeature) *libovsdbops.SamplingConfig {
 	if bnc.observManager != nil {
-		return bnc.observManager.SamplingConfig()
+		return bnc.observManager.SamplingConfigForContext(namespace, feature)
 	}
 	return nil
 }
