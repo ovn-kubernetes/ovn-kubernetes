@@ -4,17 +4,14 @@
 package observability
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
@@ -35,11 +32,13 @@ const (
 // maxCollectorID is the OVN Sample_Collector row id limit (table column id).
 const maxCollectorID = 255
 
-// DefaultObservabilityCollectorSetID is the default collector set ID used when no ObservabilityConfig is applied.
-// Used by observability-lib and tests.
-const DefaultObservabilityCollectorSetID = 1
-
 const collectorFeaturesExternalID = "sample-features"
+
+// maxCollectorsCleanupRetries bounds how many times stale-collector cleanup is retried
+// before giving up. Combined with unusedCollectorsRetryInterval (default 1 minute) this
+// allows roughly one hour for all controllers to complete their initial sync and stop
+// referencing stale collectors.
+const maxCollectorsCleanupRetries = 60
 
 // collectorConfig holds the configuration for a collector.
 // It is allowed to set different probabilities for every feature.
@@ -59,8 +58,7 @@ type applicableConfigEntry struct {
 
 type Manager struct {
 	nbClient          libovsdbclient.Client
-	sampConfig        *libovsdbops.SamplingConfig // cluster-wide default for backward compat
-	applicableConfigs []applicableConfigEntry     // all configs that apply to this node, for context resolution
+	applicableConfigs []applicableConfigEntry // all configs that apply to this node, for context resolution
 	collectorsLock    sync.RWMutex
 	// nbdb Collectors have probability. To allow different probabilities for different features,
 	// multiple nbdb Collectors will be created, one per probability.
@@ -71,10 +69,17 @@ type Manager struct {
 	// getCollectorKey() => collector.SetID
 	unusedCollectors              map[string]int
 	unusedCollectorsRetryInterval time.Duration
-	collectorsCleanupRetries      int
 	// Only maxCollectorID collectors are allowed, each should have unique ID.
 	// this set is tracking already assigned IDs.
 	takenCollectorIDs sets.Set[int]
+
+	// Stale-collector cleanup retry state. A single timer is armed at a time;
+	// cleanupLock guards all of these fields (including collectorsCleanupRetries).
+	// cleanupLock and collectorsLock are never held simultaneously.
+	cleanupLock              sync.Mutex
+	cleanupTimer             *time.Timer
+	collectorsCleanupRetries int
+	stopped                  bool
 }
 
 func NewManager(nbClient libovsdbclient.Client) *Manager {
@@ -86,15 +91,6 @@ func NewManager(nbClient libovsdbclient.Client) *Manager {
 		unusedCollectorsRetryInterval: time.Minute,
 		takenCollectorIDs:             sets.New[int](),
 	}
-}
-
-// SamplingConfig returns the cluster-wide default sampling config (from configs with no
-// Filter.Namespaces). Prefer SamplingConfigForContext when creating ACLs so namespace-scoped
-// configs are applied correctly.
-func (m *Manager) SamplingConfig() *libovsdbops.SamplingConfig {
-	m.collectorsLock.RLock()
-	defer m.collectorsLock.RUnlock()
-	return m.sampConfig
 }
 
 // SamplingConfigForContext returns the sampling config to use for an ACL in the given
@@ -120,6 +116,10 @@ func (m *Manager) SamplingConfigForContext(namespace string, feature libovsdbops
 // samples at its configured probability. Caller must hold m.collectorsLock (at least RLock).
 func (m *Manager) resolveForContextLocked(namespace string, feature libovsdbops.SampleFeature) map[libovsdbops.SampleFeature][]string {
 	var merged []string
+	// Two configs may resolve to the same collector UUID (same collectorID and
+	// probability). The UUIDs land in the Sample.Collectors OVSDB set column, which
+	// rejects duplicate members, so deduplicate while preserving order.
+	seen := sets.New[string]()
 	for _, e := range m.applicableConfigs {
 		collectors := e.featureCollectors[feature]
 		if len(collectors) == 0 {
@@ -137,7 +137,13 @@ func (m *Manager) resolveForContextLocked(namespace string, feature libovsdbops.
 			}
 		}
 		if applies {
-			merged = append(merged, collectors...)
+			for _, c := range collectors {
+				if seen.Has(c) {
+					continue
+				}
+				seen.Insert(c)
+				merged = append(merged, c)
+			}
 		}
 	}
 	if len(merged) == 0 {
@@ -153,19 +159,9 @@ func (m *Manager) Init() error {
 	if err := m.setSamplingAppIDs(); err != nil {
 		return err
 	}
-	return m.setDbCollectors()
-}
-
-// ObservabilityConfigInformer is the minimal interface needed to watch ObservabilityConfig CRs.
-// Implemented by the generated informer from the observabilityconfig clientset.
-type ObservabilityConfigInformer interface {
-	Informer() cache.SharedIndexInformer
-}
-
-// NodeGetter resolves a node by name; used to look up the local node's labels for
-// Filter.NodeSelector matching. Implemented by factory.WatchFactory.
-type NodeGetter interface {
-	GetNode(name string) (*corev1.Node, error)
+	m.collectorsLock.Lock()
+	defer m.collectorsLock.Unlock()
+	return m.retrieveDbCollectorsLocked()
 }
 
 // StartWatching watches ObservabilityConfig CRs and applies all that apply to this node.
@@ -174,113 +170,41 @@ type NodeGetter interface {
 // cannot be resolved, only configs without a Filter.NodeSelector apply.
 // Multiple configs can apply (e.g. one cluster-wide, one namespace-scoped); use SamplingConfigForContext
 // when creating ACLs so the correct config is chosen per (namespace, feature). Call after Init().
-func (m *Manager) StartWatching(informer ObservabilityConfigInformer, nodeGetter NodeGetter, nodeName string, _ <-chan struct{}) {
+//
+// The k8s watching and reconcile loop live in configReconciler (config_reconciler.go); this
+// Manager provides the apply/clear engine it drives.
+func (m *Manager) StartWatching(informer ObservabilityConfigInformer, nodeGetter NodeGetter, nodeName string, stopChan <-chan struct{}) {
 	if informer == nil {
 		return
 	}
-	applyFromStore := func() {
-		store := informer.Informer().GetStore()
-		objs := store.List()
-		nodeLabelsMap := localNodeLabels(nodeGetter, nodeName)
-		configs := allApplicableConfigs(objs, nodeLabelsMap)
-		if len(configs) == 0 {
-			m.clearConfig()
-			return
-		}
-		if err := m.applyConfigs(configs); err != nil {
-			klog.Errorf("Observability: failed to apply configs: %v", err)
-		}
-	}
-	_, err := informer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    func(_ interface{}) { applyFromStore() },
-		UpdateFunc: func(_, _ interface{}) { applyFromStore() },
-		DeleteFunc: func(_ interface{}) { applyFromStore() },
-	})
-	if err != nil {
-		klog.Errorf("Observability: failed to add ObservabilityConfig event handler: %v", err)
+	r := newConfigReconciler(m, informer, nodeGetter, nodeName)
+	if err := r.start(); err != nil {
+		klog.Errorf("Observability: failed to start ObservabilityConfig reconciler: %v", err)
 		return
 	}
-	applyFromStore()
-}
-
-// allApplicableConfigs returns all ObservabilityConfigs that apply to this node, ordered
-// for resolution: "default" first, then by name. Node labels nil means only configs
-// with no NodeSelector apply (cluster-wide).
-func allApplicableConfigs(objs []interface{}, nodeLabels map[string]string) []*observabilityconfigv1alpha1.ObservabilityConfig {
-	var candidates []*observabilityconfigv1alpha1.ObservabilityConfig
-	for _, obj := range objs {
-		cfg, ok := obj.(*observabilityconfigv1alpha1.ObservabilityConfig)
-		if !ok {
-			continue
-		}
-		if configAppliesToNode(cfg, nodeLabels) {
-			candidates = append(candidates, cfg)
-		}
-	}
-	if len(candidates) == 0 {
-		return nil
-	}
-	// Prefer "default" first, then stable order
-	slices.SortFunc(candidates, func(a, b *observabilityconfigv1alpha1.ObservabilityConfig) int {
-		if a.Name == "default" && b.Name != "default" {
-			return -1
-		}
-		if a.Name != "default" && b.Name == "default" {
-			return 1
-		}
-		if a.Name < b.Name {
-			return -1
-		}
-		if a.Name > b.Name {
-			return 1
-		}
-		return 0
-	})
-	return candidates
-}
-
-// localNodeLabels returns the labels of the local node (by name) for Filter.NodeSelector
-// matching, or nil if the node cannot be resolved.
-func localNodeLabels(nodeGetter NodeGetter, nodeName string) map[string]string {
-	if nodeGetter == nil {
-		return nil
-	}
-	node, err := nodeGetter.GetNode(nodeName)
-	if err != nil || node == nil {
-		return nil
-	}
-	return node.Labels
-}
-
-// configAppliesToNode returns true if the ObservabilityConfig applies to this node.
-// When nodeLabels is nil (local node labels could not be resolved), only configs with no
-// Filter.NodeSelector apply.
-// NodeSelector evaluation matches the pattern used in the Admin Network Policy controller
-// (pkg/ovn/controller/admin_network_policy/admin_network_policy_node.go setNodeForANP):
-// selector.Matches(labels.Set(node.Labels)).
-func configAppliesToNode(cfg *observabilityconfigv1alpha1.ObservabilityConfig, nodeLabels map[string]string) bool {
-	if cfg.Spec.Filter == nil || cfg.Spec.Filter.NodeSelector == nil {
-		return true
-	}
-	if nodeLabels == nil {
-		return false
-	}
-	selector, err := metav1.LabelSelectorAsSelector(cfg.Spec.Filter.NodeSelector)
-	if err != nil {
-		klog.Warningf("Observability: invalid NodeSelector on ObservabilityConfig %s: %v", cfg.Name, err)
-		return false
-	}
-	return selector.Matches(labels.Set(nodeLabels))
+	// Tear everything down when the stop channel closes: the reconciler (event handler +
+	// worker) and this Manager's stale-collector cleanup timer.
+	go func() {
+		<-stopChan
+		r.stop()
+		m.stopCleanupTimer()
+	}()
 }
 
 // clearConfig clears the active sampling config and applicable configs, and triggers cleanup of collectors.
 // SamplingConfig() and SamplingConfigForContext() will return nil until applicable configs are applied.
 func (m *Manager) clearConfig() {
 	m.collectorsLock.Lock()
-	m.sampConfig = nil
 	m.applicableConfigs = nil
+	// Rebuild the DB snapshot so every existing collector is marked unused, then
+	// delete them. Done under the same lock as retrieval so a concurrent reader
+	// never observes a half-cleared state.
+	staleErr := m.retrieveDbCollectorsLocked()
+	if staleErr == nil {
+		staleErr = m.deleteStaleCollectorsLocked()
+	}
 	m.collectorsLock.Unlock()
-	m.deleteStaleCollectorsWithRetry()
+	m.scheduleStaleCleanupRetry(staleErr)
 }
 
 func collectorConfigFromCR(cr *observabilityconfigv1alpha1.ObservabilityConfig) *collectorConfig {
@@ -332,7 +256,7 @@ func validateObservabilityConfig(cr *observabilityconfigv1alpha1.ObservabilityCo
 		}
 	}
 	// Namespace filter only applies to namespaced features (NetworkPolicy, EgressFirewall). Reject if any feature is cluster-scoped.
-	if cr.Spec.Filter != nil && cr.Spec.Filter.Namespaces != nil && len(*cr.Spec.Filter.Namespaces) > 0 {
+	if cr.Spec.Filter != nil && len(cr.Spec.Filter.Namespaces) > 0 {
 		for _, f := range cr.Spec.Features {
 			if _, ok := namespacedObservabilityFeatures[f.Feature]; !ok {
 				return fmt.Errorf("ObservabilityConfig %s: Filter.Namespaces can only be used with namespaced features (NetworkPolicy, EgressFirewall); feature %s is cluster-scoped", cr.Name, f.Feature)
@@ -343,61 +267,75 @@ func validateObservabilityConfig(cr *observabilityconfigv1alpha1.ObservabilityCo
 }
 
 // applyConfigs applies all given ObservabilityConfigs: ensures collectors exist for each,
-// stores them for context resolution, and sets the default cluster-wide sampConfig.
+// stores them for context resolution, and publishes the resolved set for context lookups.
+//
+// Retrieval of the current DB collectors, selection of active collectors and stale cleanup
+// all happen under a single hold of collectorsLock, so a concurrent stale-cleanup pass can
+// never delete a collector between retrieval and reuse (items 6/7/11).
+//
+// A single invalid or failing config does not abort the others, and the two failure classes
+// are treated differently:
+//   - Invalid configs are skipped with a warning and do NOT fail the reconcile: they can only
+//     be fixed by the user editing the CR, so requeuing would never converge. Surfacing these
+//     to the user via status conditions is planned as a follow-up.
+//   - Transient failures (e.g. OVSDB errors) are collected and returned joined, so the reconcile
+//     path requeues them with backoff.
+//
+// Either way the published set reflects every config that could be applied.
 func (m *Manager) applyConfigs(configs []*observabilityconfigv1alpha1.ObservabilityConfig) error {
+	m.collectorsLock.Lock()
+
+	// Retrieve current active collectors to rebuild the unused list. A failure here is
+	// retriable and leaves the previously published set untouched.
+	if err := m.retrieveDbCollectorsLocked(); err != nil {
+		m.collectorsLock.Unlock()
+		return err
+	}
+
+	var applyErrs []error
+	applicable := make([]applicableConfigEntry, 0, len(configs))
 	for _, cr := range configs {
 		if err := validateObservabilityConfig(cr); err != nil {
-			return err
+			// Non-convergent: skip and log, but don't fail the reconcile.
+			klog.Warningf("Observability: skipping invalid ObservabilityConfig %s: %v", cr.Name, err)
+			continue
 		}
-	}
-	if err := m.setSamplingAppIDs(); err != nil {
-		return err
-	}
-	if err := m.setDbCollectors(); err != nil {
-		return err
-	}
-
-	m.collectorsLock.Lock()
-	m.applicableConfigs = make([]applicableConfigEntry, 0, len(configs))
-	mergedClusterScoped := make(map[libovsdbops.SampleFeature][]string)
-
-	for _, cr := range configs {
 		conf := collectorConfigFromCR(cr)
 		featureCollectors, err := m.addCollectorLocked(conf)
 		if err != nil {
-			m.collectorsLock.Unlock()
-			return err
+			// Transient: collect so the reconcile requeues.
+			applyErrs = append(applyErrs, fmt.Errorf("ObservabilityConfig %s: %w", cr.Name, err))
+			continue
 		}
 		var namespaces []string
-		if cr.Spec.Filter != nil && cr.Spec.Filter.Namespaces != nil {
-			namespaces = *cr.Spec.Filter.Namespaces
+		if cr.Spec.Filter != nil {
+			namespaces = cr.Spec.Filter.Namespaces
 		}
-		m.applicableConfigs = append(m.applicableConfigs, applicableConfigEntry{
+		applicable = append(applicable, applicableConfigEntry{
 			namespaces:        namespaces,
 			featureCollectors: featureCollectors,
 		})
-		if len(namespaces) == 0 {
-			for f, uuids := range featureCollectors {
-				mergedClusterScoped[f] = append(mergedClusterScoped[f], uuids...)
-			}
-		}
 	}
+	// Publish the fully-built set atomically: readers never observe a partially-applied list.
+	m.applicableConfigs = applicable
+	staleErr := m.deleteStaleCollectorsLocked()
+	m.collectorsLock.Unlock()
 
-	if len(mergedClusterScoped) > 0 {
-		m.sampConfig = libovsdbops.NewSamplingConfig(mergedClusterScoped)
-	} else {
-		m.sampConfig = nil
-	}
-	m.collectorsLock.Unlock() // release before deleteStaleCollectorsWithRetry (it needs the lock)
-	m.deleteStaleCollectorsWithRetry()
-	return nil
+	m.scheduleStaleCleanupRetry(staleErr)
+	return errors.Join(applyErrs...)
 }
 
-func (m *Manager) setDbCollectors() error {
-	m.collectorsLock.Lock()
-	defer m.collectorsLock.Unlock()
+// retrieveDbCollectorsLocked rebuilds the DB collector snapshot (dbCollectors,
+// takenCollectorIDs) and marks every collector as unused until active configs claim
+// them. Only observability-owned collectors (those carrying the collectorFeaturesExternalID
+// external ID) are considered, so collectors owned by other components are never marked
+// unused nor swept by deleteStaleCollectorsLocked. Caller must hold m.collectorsLock.
+func (m *Manager) retrieveDbCollectorsLocked() error {
 	clear(m.dbCollectors)
-	collectors, err := libovsdbops.ListSampleCollectors(m.nbClient)
+	collectors, err := libovsdbops.FindSampleCollectorWithPredicate(m.nbClient, func(c *nbdb.SampleCollector) bool {
+		_, ok := c.ExternalIDs[collectorFeaturesExternalID]
+		return ok
+	})
 	if err != nil {
 		return fmt.Errorf("error getting sample collectors: %w", err)
 	}
@@ -412,28 +350,63 @@ func (m *Manager) setDbCollectors() error {
 }
 
 // Stale collectors can't be deleted until all referencing Samples are deleted.
-// Samples will be deleted asynchronously by different controllers on their init with the new Manager.
-// deleteStaleCollectorsWithRetry will retry, considering deletion should eventually succeed when all controllers
-// update their db entries to use the latest observability config.
-func (m *Manager) deleteStaleCollectorsWithRetry() {
-	if err := m.deleteStaleCollectors(); err != nil {
-		m.collectorsCleanupRetries += 1
-		// allow retries for 1 hour, hopefully it will be enough for all handler to complete initial sync
-		if m.collectorsCleanupRetries > 60 {
-			m.collectorsCleanupRetries = 0
-			klog.Errorf("Cleanup stale collectors failed after 30 retries: %v", err)
-			return
+// Samples are deleted asynchronously by different controllers as they reconcile against the
+// latest observability config, so cleanup is retried on a single timer until it succeeds.
+//
+// scheduleStaleCleanupRetry records the outcome of the most recent cleanup pass and (re)arms
+// at most one retry timer. err == nil means the last pass fully succeeded. It must be called
+// without holding collectorsLock; cleanupLock and collectorsLock are never held together.
+func (m *Manager) scheduleStaleCleanupRetry(err error) {
+	m.cleanupLock.Lock()
+	defer m.cleanupLock.Unlock()
+	// Only one pending retry timer at a time.
+	if m.cleanupTimer != nil {
+		m.cleanupTimer.Stop()
+		m.cleanupTimer = nil
+	}
+	if err == nil {
+		if m.collectorsCleanupRetries > 0 {
+			klog.Infof("Observability: stale collector cleanup succeeded after %d retries", m.collectorsCleanupRetries)
 		}
-		time.AfterFunc(m.unusedCollectorsRetryInterval, m.deleteStaleCollectorsWithRetry)
+		m.collectorsCleanupRetries = 0
 		return
 	}
-	m.collectorsCleanupRetries = 0
-	klog.Infof("Cleanup stale collectors succeeded.")
+	m.collectorsCleanupRetries++
+	// allow retries for ~1 hour, hopefully enough for all handlers to complete initial sync
+	if m.collectorsCleanupRetries > maxCollectorsCleanupRetries {
+		m.collectorsCleanupRetries = 0
+		klog.Errorf("Observability: giving up cleaning up stale collectors after %d retries: %v", maxCollectorsCleanupRetries, err)
+		return
+	}
+	if m.stopped {
+		return
+	}
+	m.cleanupTimer = time.AfterFunc(m.unusedCollectorsRetryInterval, m.retryStaleCleanup)
 }
 
-func (m *Manager) deleteStaleCollectors() error {
+// retryStaleCleanup runs one stale-collector cleanup pass and reschedules based on its
+// outcome. It is invoked from the cleanup timer.
+func (m *Manager) retryStaleCleanup() {
 	m.collectorsLock.Lock()
-	defer m.collectorsLock.Unlock()
+	err := m.deleteStaleCollectorsLocked()
+	m.collectorsLock.Unlock()
+	m.scheduleStaleCleanupRetry(err)
+}
+
+// stopCleanupTimer cancels any pending cleanup retry and prevents future ones.
+func (m *Manager) stopCleanupTimer() {
+	m.cleanupLock.Lock()
+	defer m.cleanupLock.Unlock()
+	m.stopped = true
+	if m.cleanupTimer != nil {
+		m.cleanupTimer.Stop()
+		m.cleanupTimer = nil
+	}
+}
+
+// deleteStaleCollectorsLocked deletes every collector currently marked unused, continuing
+// past individual failures and returning the last error. Caller must hold m.collectorsLock.
+func (m *Manager) deleteStaleCollectorsLocked() error {
 	var lastErr error
 	for collectorKey, collectorSetID := range m.unusedCollectors {
 		collectorUUID := m.dbCollectors[collectorKey]
@@ -562,6 +535,11 @@ func (m *Manager) addCollectorLocked(conf *collectorConfig) (map[libovsdbops.Sam
 			m.dbCollectors[collectorKey] = collectorUUID
 			m.takenCollectorIDs.Insert(collectorID)
 		} else {
+			// The collector already exists, so it is used regardless of what follows: mark it
+			// used up front. Otherwise a later failure (e.g. the metadata update below) would
+			// leave it flagged unused and the stale-cleanup sweep at the end of applyConfigs
+			// would delete a collector we still want (only to recreate it on the next retry).
+			delete(m.unusedCollectors, collectorKey)
 			// update collector's features
 			collector := &nbdb.SampleCollector{
 				UUID: collectorUUID,
@@ -569,12 +547,9 @@ func (m *Manager) addCollectorLocked(conf *collectorConfig) (map[libovsdbops.Sam
 					collectorFeaturesExternalID: collectorFeatures,
 				},
 			}
-			err := libovsdbops.UpdateSampleCollectorExternalIDs(m.nbClient, collector)
-			if err != nil {
+			if err := libovsdbops.UpdateSampleCollectorExternalIDs(m.nbClient, collector); err != nil {
 				return sampleFeaturesConfig, err
 			}
-			// collector is used, remove from unused Collectors
-			delete(m.unusedCollectors, collectorKey)
 		}
 		for _, feature := range features {
 			sampleFeaturesConfig[feature] = append(sampleFeaturesConfig[feature], collectorUUID)
