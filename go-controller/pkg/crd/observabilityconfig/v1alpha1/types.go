@@ -1,15 +1,19 @@
+// SPDX-FileCopyrightText: Copyright The OVN-Kubernetes Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 package v1alpha1
 
 import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-// ObservabilityConfig described OVN Observability configuration.
-//
 // +genclient
+// +genclient:nonNamespaced
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
-// +kubebuilder:resource:path=observabilityconfig,scope=cluster
-// +kubebuilder:singular=observabilityconfig
+// +kubebuilder:resource:path=observabilityconfigs,scope=Cluster
+// +kubebuilder::singular=observabilityconfig
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// ObservabilityConfig describes the OVN Observability API, which binds
+// observed samples to a collector ID, for a given set of features and filters.
 type ObservabilityConfig struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -19,6 +23,7 @@ type ObservabilityConfig struct {
 	// +optional
 	Status ObservabilityStatus `json:"status,omitempty"`
 }
+
 type ObservabilitySpec struct {
 	// CollectorID is the OVN Sample_Collector set_id: unique across the cluster, range 1 to 4,294,967,295 (MaxUint32).
 	// +kubebuilder:validation:Required
@@ -28,6 +33,8 @@ type ObservabilitySpec struct {
 	// Features is a list of Observability features that can generate samples and their probabilities for a given collector.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinItems=1
+	// +listType=map
+	// +listMapKey=feature
 	// +required
 	Features []FeatureConfig `json:"features"`
 
@@ -82,9 +89,10 @@ const (
 	MulticastIsolation ObservabilityFeature = "MulticastIsolation"
 )
 
-// ObservabilityConfigList contains a list of ObservabilityConfig.
-//
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+// +kubebuilder:resource:path=observabilityconfigs
+// +kubebuilder::singular=observabilityconfig
+// ObservabilityConfigList contains a list of ObservabilityConfigs.
 type ObservabilityConfigList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`

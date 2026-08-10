@@ -8,16 +8,23 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/cache"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
 	observabilityconfigv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/observabilityconfig/v1alpha1"
+	observabilityconfigfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/observabilityconfig/v1alpha1/apis/clientset/versioned/fake"
+	observabilityconfiginformerfactory "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/observabilityconfig/v1alpha1/apis/informers/externalversions"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+)
+
+const (
+	defaultObservabilityCollectorSetID = 1
 )
 
 var _ = Describe("Observability Manager", func() {
@@ -64,7 +71,7 @@ var _ = Describe("Observability Manager", func() {
 	}
 
 	defaultTestConfig := &collectorConfig{
-		collectorSetID: DefaultObservabilityCollectorSetID,
+		collectorSetID: defaultObservabilityCollectorSetID,
 		featuresProbability: map[libovsdbops.SampleFeature]int{
 			libovsdbops.EgressFirewallSample:     100,
 			libovsdbops.NetworkPolicySample:      100,
@@ -89,7 +96,12 @@ var _ = Describe("Observability Manager", func() {
 	}
 
 	createACLWithPortGroup := func(acl *nbdb.ACL) *nbdb.PortGroup {
-		ops, err := libovsdbops.CreateOrUpdateACLsOps(nbClient, nil, manager.SamplingConfig(), acl)
+		ops, err := libovsdbops.CreateOrUpdateACLsOps(
+			nbClient,
+			nil,
+			manager.SamplingConfigForContext("default-ns", libovsdbops.NetworkPolicySample),
+			acl,
+		)
 		Expect(err).NotTo(HaveOccurred())
 		pg := &nbdb.PortGroup{
 			UUID: "pg-uuid",
@@ -131,7 +143,7 @@ var _ = Describe("Observability Manager", func() {
 			&nbdb.SampleCollector{
 				UUID:        collectorUUID,
 				ID:          1,
-				SetID:       DefaultObservabilityCollectorSetID,
+				SetID:       defaultObservabilityCollectorSetID,
 				Probability: 65535,
 				ExternalIDs: map[string]string{
 					collectorFeaturesExternalID: strings.Join([]string{libovsdbops.AdminNetworkPolicySample, libovsdbops.EgressFirewallSample,
@@ -158,6 +170,46 @@ var _ = Describe("Observability Manager", func() {
 		Expect(err).NotTo(HaveOccurred())
 		// No applyConfigs: no collectors, no extra NBDB objects
 		Eventually(nbClient).Should(libovsdbtest.HaveData(samplingApps))
+	})
+
+	It("should apply an ObservabilityConfig delivered through a started informer (StartWatching)", func() {
+		var err error
+		nbClient, _, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(libovsdbtest.TestSetup{NBData: samplingApps})
+		Expect(err).NotTo(HaveOccurred())
+		manager = NewManager(nbClient)
+		Expect(manager.Init()).To(Succeed())
+
+		cr := &observabilityconfigv1alpha1.ObservabilityConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "default"},
+			Spec: observabilityconfigv1alpha1.ObservabilitySpec{
+				CollectorID: defaultObservabilityCollectorSetID,
+				Features: []observabilityconfigv1alpha1.FeatureConfig{
+					{Feature: observabilityconfigv1alpha1.NetworkPolicy, Probability: 100},
+				},
+			},
+		}
+		fakeClient := observabilityconfigfake.NewSimpleClientset(cr)
+		informerFactory := observabilityconfiginformerfactory.NewSharedInformerFactory(fakeClient, 0)
+		informer := informerFactory.K8s().V1alpha1().ObservabilityConfigs()
+		// Instantiate the shared informer before starting the factory: a SharedInformerFactory only Run()s informers that exist at Start() time.
+		sharedInformer := informer.Informer()
+
+		stopCh := make(chan struct{})
+		defer close(stopCh)
+
+		// Nothing applied before the informer is wired in.
+		Expect(manager.SamplingConfigForContext("ns", libovsdbops.NetworkPolicySample)).To(BeNil())
+
+		// Mirror production ordering: start the factory (runs the informer and syncs its cache) before handing the informer to StartWatching.
+		informerFactory.Start(stopCh)
+		Expect(cache.WaitForCacheSync(stopCh, sharedInformer.HasSynced)).To(BeTrue())
+
+		// nodeGetter is nil: the config has no Filter.NodeSelector so it applies regardless.
+		manager.StartWatching(informer, nil, "node1", stopCh)
+
+		Eventually(func() *libovsdbops.SamplingConfig {
+			return manager.SamplingConfigForContext("ns", libovsdbops.NetworkPolicySample)
+		}).ShouldNot(BeNil())
 	})
 
 	It("should reject ObservabilityConfig with collectorID < 1", func() {
@@ -292,7 +344,11 @@ var _ = Describe("Observability Manager", func() {
 		Expect(collectors).To(HaveLen(1))
 		actualCollectorUUID := collectors[0].UUID
 
-		err = createOrUpdateACLPreserveUUID(nbClient, manager.SamplingConfig(), acl)
+		err = createOrUpdateACLPreserveUUID(
+			nbClient,
+			manager.SamplingConfigForContext("", libovsdbops.NetworkPolicySample),
+			acl,
+		)
 		Expect(err).NotTo(HaveOccurred())
 		sample := &nbdb.Sample{
 			UUID:       "sample-uuid",
@@ -324,7 +380,11 @@ var _ = Describe("Observability Manager", func() {
 		acl.SampleEst = &sample.UUID
 		startManager(append(initialDB, sample, acl, pg))
 
-		err := createOrUpdateACLPreserveUUID(nbClient, manager.SamplingConfig(), acl)
+		err := createOrUpdateACLPreserveUUID(
+			nbClient,
+			manager.SamplingConfigForContext("", libovsdbops.NetworkPolicySample),
+			acl,
+		)
 		Expect(err).NotTo(HaveOccurred())
 		acl.SampleNew = nil
 		acl.SampleEst = nil
@@ -356,7 +416,11 @@ var _ = Describe("Observability Manager", func() {
 
 		// update acl Action
 		acl.Action = nbdb.ACLActionDrop
-		err = createOrUpdateACLPreserveUUID(nbClient, manager.SamplingConfig(), acl)
+		err = createOrUpdateACLPreserveUUID(
+			nbClient,
+			manager.SamplingConfigForContext("", libovsdbops.NetworkPolicySample),
+			acl,
+		)
 		Expect(err).NotTo(HaveOccurred())
 
 		// find new sampleID
@@ -388,7 +452,7 @@ var _ = Describe("Observability Manager", func() {
 
 		It("should update stale collectors", func() {
 			tweakedConfig := &collectorConfig{
-				collectorSetID: DefaultObservabilityCollectorSetID,
+				collectorSetID: defaultObservabilityCollectorSetID,
 				featuresProbability: map[libovsdbops.SampleFeature]int{
 					libovsdbops.NetworkPolicySample:      50,
 					libovsdbops.AdminNetworkPolicySample: 100,
@@ -401,7 +465,7 @@ var _ = Describe("Observability Manager", func() {
 				&nbdb.SampleCollector{
 					UUID:        collectorUUID,
 					ID:          1,
-					SetID:       DefaultObservabilityCollectorSetID,
+					SetID:       defaultObservabilityCollectorSetID,
 					Probability: 65535,
 					ExternalIDs: map[string]string{
 						collectorFeaturesExternalID: strings.Join([]string{libovsdbops.AdminNetworkPolicySample,
@@ -411,7 +475,7 @@ var _ = Describe("Observability Manager", func() {
 				&nbdb.SampleCollector{
 					UUID:        collectorUUID + "-2",
 					ID:          2,
-					SetID:       DefaultObservabilityCollectorSetID,
+					SetID:       defaultObservabilityCollectorSetID,
 					Probability: 32767,
 					ExternalIDs: map[string]string{
 						collectorFeaturesExternalID: libovsdbops.NetworkPolicySample,
@@ -422,7 +486,7 @@ var _ = Describe("Observability Manager", func() {
 		})
 		It("should cleanup stale collectors", func() {
 			tweakedConfig := &collectorConfig{
-				collectorSetID: DefaultObservabilityCollectorSetID,
+				collectorSetID: defaultObservabilityCollectorSetID,
 				featuresProbability: map[libovsdbops.SampleFeature]int{
 					libovsdbops.NetworkPolicySample: 50,
 				},
@@ -433,7 +497,7 @@ var _ = Describe("Observability Manager", func() {
 				&nbdb.SampleCollector{
 					UUID:        collectorUUID + "-2",
 					ID:          2,
-					SetID:       DefaultObservabilityCollectorSetID,
+					SetID:       defaultObservabilityCollectorSetID,
 					Probability: 32767,
 					ExternalIDs: map[string]string{
 						collectorFeaturesExternalID: libovsdbops.NetworkPolicySample,
@@ -445,7 +509,7 @@ var _ = Describe("Observability Manager", func() {
 		It("should cleanup stale collectors after samples are removed", func() {
 			// tweakedConfig doesn't have probability used by existing collector
 			tweakedConfig := &collectorConfig{
-				collectorSetID: DefaultObservabilityCollectorSetID,
+				collectorSetID: defaultObservabilityCollectorSetID,
 				featuresProbability: map[libovsdbops.SampleFeature]int{
 					libovsdbops.EgressFirewallSample: 50,
 				},
@@ -474,7 +538,7 @@ var _ = Describe("Observability Manager", func() {
 			newCollector := &nbdb.SampleCollector{
 				UUID:        collectorUUID + "-2",
 				ID:          2,
-				SetID:       DefaultObservabilityCollectorSetID,
+				SetID:       defaultObservabilityCollectorSetID,
 				Probability: 32767,
 				ExternalIDs: map[string]string{
 					collectorFeaturesExternalID: libovsdbops.EgressFirewallSample,
@@ -484,7 +548,11 @@ var _ = Describe("Observability Manager", func() {
 			expectedDB := append(testInitialDB, newCollector)
 			Consistently(nbClient).Should(libovsdbtest.HaveDataIgnoringUUIDs(expectedDB...))
 			// now imitate netpol handler initialization by updating acl sample.
-			err := createOrUpdateACLPreserveUUID(nbClient, manager.SamplingConfig(), acl)
+			err := createOrUpdateACLPreserveUUID(
+				nbClient,
+				manager.SamplingConfigForContext("", libovsdbops.NetworkPolicySample),
+				acl,
+			)
 			Expect(err).NotTo(HaveOccurred())
 			expectedDB = append(samplingApps, pg, acl, newCollector)
 			Eventually(nbClient, 2*manager.unusedCollectorsRetryInterval).Should(libovsdbtest.HaveDataIgnoringUUIDs(expectedDB...))

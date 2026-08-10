@@ -35,10 +35,6 @@ const (
 // maxCollectorID is the OVN Sample_Collector row id limit (table column id).
 const maxCollectorID = 255
 
-// DefaultObservabilityCollectorSetID is the default collector set ID used when no ObservabilityConfig is applied.
-// Used by observability-lib and tests.
-const DefaultObservabilityCollectorSetID = 1
-
 const collectorFeaturesExternalID = "sample-features"
 
 // collectorConfig holds the configuration for a collector.
@@ -59,8 +55,7 @@ type applicableConfigEntry struct {
 
 type Manager struct {
 	nbClient          libovsdbclient.Client
-	sampConfig        *libovsdbops.SamplingConfig // cluster-wide default for backward compat
-	applicableConfigs []applicableConfigEntry     // all configs that apply to this node, for context resolution
+	applicableConfigs []applicableConfigEntry // all configs that apply to this node, for context resolution
 	collectorsLock    sync.RWMutex
 	// nbdb Collectors have probability. To allow different probabilities for different features,
 	// multiple nbdb Collectors will be created, one per probability.
@@ -86,15 +81,6 @@ func NewManager(nbClient libovsdbclient.Client) *Manager {
 		unusedCollectorsRetryInterval: time.Minute,
 		takenCollectorIDs:             sets.New[int](),
 	}
-}
-
-// SamplingConfig returns the cluster-wide default sampling config (from configs with no
-// Filter.Namespaces). Prefer SamplingConfigForContext when creating ACLs so namespace-scoped
-// configs are applied correctly.
-func (m *Manager) SamplingConfig() *libovsdbops.SamplingConfig {
-	m.collectorsLock.RLock()
-	defer m.collectorsLock.RUnlock()
-	return m.sampConfig
 }
 
 // SamplingConfigForContext returns the sampling config to use for an ACL in the given
@@ -153,7 +139,7 @@ func (m *Manager) Init() error {
 	if err := m.setSamplingAppIDs(); err != nil {
 		return err
 	}
-	return m.setDbCollectors()
+	return m.retrieveDbCollectors()
 }
 
 // ObservabilityConfigInformer is the minimal interface needed to watch ObservabilityConfig CRs.
@@ -277,7 +263,6 @@ func configAppliesToNode(cfg *observabilityconfigv1alpha1.ObservabilityConfig, n
 // SamplingConfig() and SamplingConfigForContext() will return nil until applicable configs are applied.
 func (m *Manager) clearConfig() {
 	m.collectorsLock.Lock()
-	m.sampConfig = nil
 	m.applicableConfigs = nil
 	m.collectorsLock.Unlock()
 	m.deleteStaleCollectorsWithRetry()
@@ -350,16 +335,13 @@ func (m *Manager) applyConfigs(configs []*observabilityconfigv1alpha1.Observabil
 			return err
 		}
 	}
-	if err := m.setSamplingAppIDs(); err != nil {
-		return err
-	}
-	if err := m.setDbCollectors(); err != nil {
+	// Retrieve current active collectors to rebuild the unused list
+	if err := m.retrieveDbCollectors(); err != nil {
 		return err
 	}
 
 	m.collectorsLock.Lock()
 	m.applicableConfigs = make([]applicableConfigEntry, 0, len(configs))
-	mergedClusterScoped := make(map[libovsdbops.SampleFeature][]string)
 
 	for _, cr := range configs {
 		conf := collectorConfigFromCR(cr)
@@ -376,24 +358,14 @@ func (m *Manager) applyConfigs(configs []*observabilityconfigv1alpha1.Observabil
 			namespaces:        namespaces,
 			featureCollectors: featureCollectors,
 		})
-		if len(namespaces) == 0 {
-			for f, uuids := range featureCollectors {
-				mergedClusterScoped[f] = append(mergedClusterScoped[f], uuids...)
-			}
-		}
 	}
 
-	if len(mergedClusterScoped) > 0 {
-		m.sampConfig = libovsdbops.NewSamplingConfig(mergedClusterScoped)
-	} else {
-		m.sampConfig = nil
-	}
 	m.collectorsLock.Unlock() // release before deleteStaleCollectorsWithRetry (it needs the lock)
 	m.deleteStaleCollectorsWithRetry()
 	return nil
 }
 
-func (m *Manager) setDbCollectors() error {
+func (m *Manager) retrieveDbCollectors() error {
 	m.collectorsLock.Lock()
 	defer m.collectorsLock.Unlock()
 	clear(m.dbCollectors)
