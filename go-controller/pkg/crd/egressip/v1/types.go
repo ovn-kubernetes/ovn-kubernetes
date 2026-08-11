@@ -65,6 +65,12 @@ type EgressIPSpec struct {
 	// match this pod selector.
 	// +optional
 	PodSelector metav1.LabelSelector `json:"podSelector,omitempty"`
+	// NodeSelector applies the egress IP only to the egress-assignable nodes
+	// that are matched by this label selector.
+	// +kubebuilder:validation:XValidation:rule="!has(self.matchLabels) || size(self.matchLabels) <= 64",message="matchLabels must have 64 or fewer elements"
+	// +kubebuilder:validation:XValidation:rule="!has(self.matchExpressions) || size(self.matchExpressions) <= 32",message="matchExpressions must have 32 or fewer elements"
+	// +optional
+	NodeSelector *metav1.LabelSelector `json:"nodeSelector,omitempty"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

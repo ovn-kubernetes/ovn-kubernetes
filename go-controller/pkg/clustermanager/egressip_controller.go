@@ -23,6 +23,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/retry"
@@ -1052,7 +1053,7 @@ func (eIPC *egressIPClusterController) reconcileEgressIP(old, new *egressipv1.Eg
 			eIPC.deleteAllocatorEgressIPAssignments(statusToRemove)
 		}
 		if len(ipsToAssign) > 0 {
-			statusToAdd = eIPC.assignEgressIPs(name, ipsToAssign.UnsortedList())
+			statusToAdd = eIPC.assignEgressIPs(newEIP, ipsToAssign.UnsortedList())
 			statusToKeep = append(statusToKeep, statusToAdd...)
 		}
 		// Add all assignments which are to be kept to the allocator cache,
@@ -1116,7 +1117,7 @@ func (eIPC *egressIPClusterController) reconcileEgressIP(old, new *egressipv1.Eg
 		// processing the answer from the requests we make here, and update OVN
 		// accordingly when we know what the outcome is.
 		if len(ipsToAssign) > 0 {
-			statusToAdd = eIPC.assignEgressIPs(name, ipsToAssign.UnsortedList())
+			statusToAdd = eIPC.assignEgressIPs(newEIP, ipsToAssign.UnsortedList())
 			statusToKeep = append(statusToKeep, statusToAdd...)
 		}
 		// Same as above: Add all assignments which are to be kept to the
@@ -1205,7 +1206,8 @@ func (eIPC *egressIPClusterController) getCloudPrivateIPConfigMap(objs []interfa
 // the IP cannot already be assigned and reference by another EgressIP object d)
 // no two egress IPs for the same EgressIP object can be assigned to the same
 // node e) (for public clouds) the amount of egress IPs assigned to one node
-// must respect its assignment capacity. Moreover there is a soft constraint:
+// must respect its assignment capacity f) the node must match the NodeSelector
+// defined in the EgressIP spec, if specified. Moreover there is a soft constraint:
 // the assignments need to be balanced across all cluster nodes, so that no node
 // becomes a bottleneck. The balancing is achieved by sorting the nodes in
 // ascending order following their existing amount of allocations, and trying to
@@ -1213,11 +1215,41 @@ func (eIPC *egressIPClusterController) getCloudPrivateIPConfigMap(objs []interfa
 // time, this does not guarantee complete balance, but mostly complete.
 // For Egress IPs that are hosted by secondary host networks, there must be at least
 // one node that hosts the network and exposed via the nodes host-cidrs annotation.
-func (eIPC *egressIPClusterController) assignEgressIPs(name string, egressIPs []string) []egressipv1.EgressIPStatusItem {
+func (eIPC *egressIPClusterController) assignEgressIPs(eIPObj *egressipv1.EgressIP, egressIPs []string) []egressipv1.EgressIPStatusItem {
+	name := eIPObj.Name
 	eIPC.nodeAllocator.Lock()
 	defer eIPC.nodeAllocator.Unlock()
 	assignments := []egressipv1.EgressIPStatusItem{}
 	assignableNodes, existingAllocations := eIPC.getSortedEgressData()
+
+	if eIPObj.Spec.NodeSelector != nil {
+		selector, err := metav1.LabelSelectorAsSelector(eIPObj.Spec.NodeSelector)
+		if err != nil {
+			klog.Errorf("Invalid nodeSelector for EgressIP %s: %v", name, err)
+			eIPRef := corev1.ObjectReference{
+				Kind:       "EgressIP",
+				Name:       name,
+				UID:        eIPObj.UID,
+				APIVersion: "k8s.ovn.org/v1",
+			}
+			eIPC.recorder.Eventf(&eIPRef, corev1.EventTypeWarning, "InvalidNodeSelector", "Invalid nodeSelector: %v", err)
+			return assignments
+		} else if !selector.Empty() {
+			var filteredNodes []*egressNode
+			for _, eNode := range assignableNodes {
+				nodeObj, nodeErr := eIPC.watchFactory.GetNode(eNode.name)
+				if nodeErr != nil {
+					klog.Warningf("Failed to get node %s while filtering for EgressIP %s: %v", eNode.name, name, nodeErr)
+					continue
+				}
+				if selector.Matches(labels.Set(nodeObj.Labels)) {
+					filteredNodes = append(filteredNodes, eNode)
+				}
+			}
+			assignableNodes = filteredNodes
+		}
+	}
+
 	if len(assignableNodes) == 0 {
 		eIPRef := corev1.ObjectReference{
 			Kind: "EgressIP",

@@ -28,6 +28,9 @@ type EgressIPSpecApplyConfiguration struct {
 	// (in the namespace(s) already matched by the NamespaceSelector) which
 	// match this pod selector.
 	PodSelector *metav1.LabelSelectorApplyConfiguration `json:"podSelector,omitempty"`
+	// NodeSelector applies the egress IP only to the egress-assignable nodes
+	// that are matched by this label selector.
+	NodeSelector *metav1.LabelSelectorApplyConfiguration `json:"nodeSelector,omitempty"`
 }
 
 // EgressIPSpecApplyConfiguration constructs a declarative configuration of the EgressIPSpec type for use with
@@ -59,5 +62,13 @@ func (b *EgressIPSpecApplyConfiguration) WithNamespaceSelector(value *metav1.Lab
 // If called multiple times, the PodSelector field is set to the value of the last call.
 func (b *EgressIPSpecApplyConfiguration) WithPodSelector(value *metav1.LabelSelectorApplyConfiguration) *EgressIPSpecApplyConfiguration {
 	b.PodSelector = value
+	return b
+}
+
+// WithNodeSelector sets the NodeSelector field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the NodeSelector field is set to the value of the last call.
+func (b *EgressIPSpecApplyConfiguration) WithNodeSelector(value *metav1.LabelSelectorApplyConfiguration) *EgressIPSpecApplyConfiguration {
+	b.NodeSelector = value
 	return b
 }

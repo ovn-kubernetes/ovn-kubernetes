@@ -264,6 +264,12 @@ func schema_pkg_crd_egressip_v1_EgressIPSpec(ref common.ReferenceCallback) commo
 							Ref:         ref(metav1.LabelSelector{}.OpenAPIModelName()),
 						},
 					},
+					"nodeSelector": {
+						SchemaProps: spec.SchemaProps{
+							Description: "NodeSelector applies the egress IP only to the egress-assignable nodes that are matched by this label selector.",
+							Ref:         ref(metav1.LabelSelector{}.OpenAPIModelName()),
+						},
+					},
 				},
 				Required: []string{"egressIPs", "namespaceSelector"},
 			},

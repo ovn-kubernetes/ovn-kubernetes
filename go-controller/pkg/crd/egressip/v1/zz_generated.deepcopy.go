@@ -9,6 +9,7 @@
 package v1
 
 import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -83,6 +84,11 @@ func (in *EgressIPSpec) DeepCopyInto(out *EgressIPSpec) {
 	}
 	in.NamespaceSelector.DeepCopyInto(&out.NamespaceSelector)
 	in.PodSelector.DeepCopyInto(&out.PodSelector)
+	if in.NodeSelector != nil {
+		in, out := &in.NodeSelector, &out.NodeSelector
+		*out = new(metav1.LabelSelector)
+		(*in).DeepCopyInto(*out)
+	}
 	return
 }
 
