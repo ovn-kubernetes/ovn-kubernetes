@@ -18,6 +18,9 @@ var (
 	EgressService         = New("EgressService")
 	EgressFirewall        = New("EgressFirewall")
 	EgressQos             = New("EgressQos")
+	// DHCPIPAM covers localnet networks with ipam.mode=DHCP; these tests need
+	// the dhcp CNI plugin binary on the nodes (kind.sh --install-cni-plugins).
+	DHCPIPAM              = New("DHCPIPAM")
 	EVPN                  = New("EVPN")
 	ExternalGateway       = New("ExternalGateway")
 	DisablePacketMTUCheck = New("DisablePacketMTUCheck")

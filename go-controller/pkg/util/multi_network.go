@@ -71,6 +71,11 @@ type NetInfo interface {
 	Uplink() string
 	GetNodeGatewayIP(hostSubnet *net.IPNet) *net.IPNet
 	GetNodeManagementIP(hostSubnet *net.IPNet) *net.IPNet
+	// IPAMType returns the ipam.type configured in the NAD. It is "" for
+	// both the enabled and disabled IPAM modes, which are inferred from the
+	// Subnets presence instead. The only supported value for now is "dhcp"
+	// (that delegates IPAM to an external DHCP server).
+	IPAMType() string
 
 	// dynamic information, can change over time
 
@@ -735,6 +740,12 @@ func (nInfo *DefaultNetInfo) GetNodeManagementIP(hostSubnet *net.IPNet) *net.IPN
 	return GetNodeManagementIfAddr(hostSubnet)
 }
 
+// IPAMType returns the ipam.type configured in the NAD. Default network never
+// uses an external IPAM plugin, so this is always "".
+func (nInfo *DefaultNetInfo) IPAMType() string {
+	return ""
+}
+
 // userDefinedNetInfo holds the network name information for a User Defined Network if non-nil
 type userDefinedNetInfo struct {
 	mutableNetInfo
@@ -763,6 +774,12 @@ type userDefinedNetInfo struct {
 	evpn         *ovncnitypes.EVPNConfig
 	outboundSNAT string
 	uplink       string
+
+	// ipamType is the ipam.type value from the NAD config. It is "" for
+	// both the enabled and disabled IPAM modes, which are inferred from the
+	// subnets presence instead. The only supported value for now is "dhcp"
+	// (that delegates IPAM to an external DHCP server).
+	ipamType string
 }
 
 func (nInfo *userDefinedNetInfo) GetNetInfo() NetInfo {
@@ -1008,6 +1025,12 @@ func (nInfo *userDefinedNetInfo) GetNodeManagementIP(hostSubnet *net.IPNet) *net
 	return GetNodeManagementIfAddr(hostSubnet)
 }
 
+// IPAMType returns the ipam.type configured in the NAD (e.g. "dhcp" on a
+// localnet secondary network when IPAM is delegated to an external DHCP server).
+func (nInfo *userDefinedNetInfo) IPAMType() string {
+	return nInfo.ipamType
+}
+
 // IPMode returns the ipv4/ipv6 mode
 func (nInfo *userDefinedNetInfo) IPMode() (bool, bool) {
 	return nInfo.ipv4mode, nInfo.ipv6mode
@@ -1103,6 +1126,9 @@ func (nInfo *userDefinedNetInfo) canReconcile(other NetInfo) bool {
 	if nInfo.physicalNetworkName != other.PhysicalNetworkName() {
 		return false
 	}
+	if nInfo.ipamType != other.IPAMType() {
+		return false
+	}
 	if nInfo.Transport() != other.Transport() {
 		return false
 	}
@@ -1176,6 +1202,7 @@ func (nInfo *userDefinedNetInfo) copy() *userDefinedNetInfo {
 		evpn:                  nInfo.evpn,
 		outboundSNAT:          nInfo.outboundSNAT,
 		uplink:                nInfo.uplink,
+		ipamType:              nInfo.ipamType,
 	}
 	// copy mutables
 	c.mutableNetInfo.copyFrom(&nInfo.mutableNetInfo)
@@ -1314,6 +1341,7 @@ func newLocalnetNetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error
 		allowPersistentIPs:  netconf.AllowPersistentIPs,
 		physicalNetworkName: netconf.PhysicalNetworkName,
 		uplink:              netconf.Uplink,
+		ipamType:            netconf.IPAM.Type,
 		mutableNetInfo: mutableNetInfo{
 			id:      types.InvalidID,
 			nads:    sets.Set[string]{},
@@ -1321,6 +1349,11 @@ func newLocalnetNetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error
 		},
 	}
 	ni.ipv4mode, ni.ipv6mode = getIPMode(subnets)
+	// DHCP mode doesn't set any subnets to derive IP family from. We only
+	// support DHCP mode for ipv4.
+	if ni.ipamType == types.IPAMTypeDHCP {
+		ni.ipv4mode = true
+	}
 	return ni, nil
 }
 
@@ -1595,8 +1628,17 @@ func ValidateNetConf(nadName string, netconf *ovncnitypes.NetConf) error {
 		return err
 	}
 
-	if netconf.AllowPersistentIPs && netconf.Topology == types.Layer3Topology {
-		return fmt.Errorf("layer3 topology does not allow persistent IPs")
+	// Persistent IPs preserve OVN-Kubernetes-allocated addresses, so they
+	// require OVN-K IPAM with cluster-wide subnets on a non-layer3 topology.
+	// The CRD rules reject these at admission, so this covers hand-written NADs.
+	if netconf.AllowPersistentIPs {
+		if netconf.Topology == types.Layer3Topology {
+			return fmt.Errorf("layer3 topology does not allow persistent IPs")
+		}
+		if netconf.Subnets == "" {
+			return fmt.Errorf("error parsing Network Attachment Definition %s: allowPersistentIPs requires "+
+				"OVN-Kubernetes-managed IPAM (the subnets attribute must be set)", nadName)
+		}
 	}
 
 	if netconf.Role != "" && netconf.Role != types.NetworkRoleSecondary && netconf.Topology == types.LocalnetTopology {
@@ -1608,8 +1650,19 @@ func ValidateNetConf(nadName string, netconf *ovncnitypes.NetConf) error {
 		return fmt.Errorf("invalid network role value %s", netconf.Role)
 	}
 
-	if netconf.IPAM.Type != "" {
+	if netconf.IPAM.Type != "" && netconf.IPAM.Type != types.IPAMTypeDHCP {
 		return fmt.Errorf("error parsing Network Attachment Definition %s: %w", nadName, ErrorUnsupportedIPAMKey)
+	}
+	if netconf.IPAM.Type == types.IPAMTypeDHCP && netconf.Topology != types.LocalnetTopology {
+		return fmt.Errorf("error parsing Network Attachment Definition %s: ipam.type %q is only supported with localnet topology",
+			nadName, netconf.IPAM.Type)
+	}
+	// subnets enables OVN-K IPAM, which would compete with the external DHCP
+	// server for address ownership. The CUDN CEL rules already forbid this
+	// combination; enforce it here for hand-written NADs.
+	if netconf.IPAM.Type == types.IPAMTypeDHCP && netconf.Subnets != "" {
+		return fmt.Errorf("error parsing Network Attachment Definition %s: ipam.type %q cannot be used together with the subnets attribute; "+
+			"addresses are assigned by the external DHCP server", nadName, netconf.IPAM.Type)
 	}
 
 	// Validate transport if specified
@@ -1988,6 +2041,12 @@ func IsPreconfiguredUDNAddressesEnabled() bool {
 
 func DoesNetworkRequireIPAM(netInfo NetInfo) bool {
 	return !((netInfo.TopologyType() == types.Layer2Topology || netInfo.TopologyType() == types.LocalnetTopology) && len(netInfo.Subnets()) == 0)
+}
+
+// DoesNetworkHaveDiscoverablePodIPs returns true when pod IPs on this network
+// are known to ovnkube ie. allocated by its own IPAM, or DHCP-learned.
+func DoesNetworkHaveDiscoverablePodIPs(netInfo NetInfo) bool {
+	return DoesNetworkRequireIPAM(netInfo) || netInfo.IPAMType() == types.IPAMTypeDHCP
 }
 
 func DoesNetworkRequireTunnelIDs(netInfo NetInfo) bool {

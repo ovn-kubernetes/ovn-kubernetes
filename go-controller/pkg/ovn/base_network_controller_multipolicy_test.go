@@ -4,10 +4,15 @@
 package ovn
 
 import (
+	cnitypes "github.com/containernetworking/cni/pkg/types"
 	"github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/apis/k8s.cni.cncf.io/v1beta1"
 
 	netv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
+	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -284,3 +289,42 @@ func multiNetPolicyWithEgressNamespaceSelector(policyName string) *v1beta1.Multi
 		},
 	}
 }
+
+// The peer-selector gate must key off IP discoverability, not off whether
+// ovnkube allocates the IPs itself: a subnet-less DHCP network learns its
+// pod IPs from the external server via the pod-networks annotation, so
+// selector peers can resolve to address sets and must be accepted; a plain
+// IPAM-less network has no discoverable IPs and stays ipBlock-only.
+var _ = Describe("convertMultiNetPolicyToNetPolicy peer-selector gate", func() {
+	const policyName = "pol34"
+
+	newLocalnetBNC := func(ipamType string) *BaseNetworkController {
+		netInfo, err := util.NewNetInfo(&ovncnitypes.NetConf{
+			NetConf:  cnitypes.NetConf{Name: "localnet-network", IPAM: cnitypes.IPAM{Type: ipamType}},
+			Topology: ovntypes.LocalnetTopology,
+			NADName:  "ns1/nad1",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		return &BaseNetworkController{ReconcilableNetInfo: util.NewReconcilableNetInfo(netInfo)}
+	}
+
+	It("allows selector peers on a subnet-less DHCP network", func() {
+		bnc := newLocalnetBNC(ovntypes.IPAMTypeDHCP)
+		_, err := bnc.convertMultiNetPolicyToNetPolicy(multiNetPolicyWithIngressPodSelector(policyName))
+		Expect(err).NotTo(HaveOccurred())
+		_, err = bnc.convertMultiNetPolicyToNetPolicy(multiNetPolicyWithEgressNamespaceSelector(policyName))
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("still rejects selector peers on a plain IPAM-less network", func() {
+		bnc := newLocalnetBNC("")
+		_, err := bnc.convertMultiNetPolicyToNetPolicy(multiNetPolicyWithIngressPodSelector(policyName))
+		Expect(err).To(MatchError(ContainSubstring("can only have `ipBlock` peers")))
+	})
+
+	It("keeps allowing ipBlock peers on a subnet-less DHCP network", func() {
+		bnc := newLocalnetBNC(ovntypes.IPAMTypeDHCP)
+		_, err := bnc.convertMultiNetPolicyToNetPolicy(multiNetPolicyWithIngressIPBlock())
+		Expect(err).NotTo(HaveOccurred())
+	})
+})

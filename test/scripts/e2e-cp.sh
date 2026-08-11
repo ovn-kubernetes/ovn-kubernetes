@@ -129,6 +129,16 @@ if [[ "${WHAT}" != "${KV_LIVE_MIGRATION_TESTS}"* ]]; then
   skip $KV_LIVE_MIGRATION_TESTS
 fi
 
+# Only run Localnet DHCP IPAM tests if they are explicitly requested: they
+# need the dhcp CNI plugin binary on the nodes (KIND_INSTALL_PLUGINS) and
+# NetworkQoS enabled. Contains-match, not prefix: the requesting lane carries
+# this suite as a focus alternation ("Kubevirt Virtual Machines|Localnet DHCP
+# IPAM"), so the suite name is not at the start of WHAT.
+DHCP_IPAM_TESTS="Localnet DHCP IPAM"
+if [[ "${WHAT}" != *"${DHCP_IPAM_TESTS}"* ]]; then
+  skip_label "Feature:DHCPIPAM"
+fi
+
 # Only run network segmentation tests if they are explicitly requested
 NETWORK_SEGMENTATION_TESTS="Network Segmentation"
 if [[ "${WHAT}" = "${NETWORK_SEGMENTATION_TESTS}"* ]]; then

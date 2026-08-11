@@ -171,10 +171,11 @@ type LocalnetConfig struct {
 	// subnets is optional. When omitted OVN-Kubernetes won't assign IP address automatically.
 	// Dual-stack clusters may set 2 subnets (one for each IP family), otherwise only 1 subnet is allowed.
 	// The format should match standard CIDR notation (for example, "10.128.0.0/16").
-	// This field must be omitted if `ipam.mode` is `Disabled`.
-	// When physicalNetworkName points to the OVS bridge mapping of a network that provides IPAM services
-	// (e.g., a DHCP server), ipam.mode should be set to Disabled. This turns off OVN-Kubernetes IPAM and avoids
-	// conflicts with the existing IPAM services on this localnet network.
+	// This field must be omitted if `ipam.mode` is `Disabled` or `DHCP`.
+	// When physicalNetworkName points to the OVS bridge mapping of a network that provides IPAM services,
+	// ipam.mode should be set to `Disabled` (users configure the pod IPs themselves) or `DHCP` (a DHCP
+	// server on that network assigns them). Both turn off OVN-Kubernetes IPAM and avoid conflicts with
+	// the existing IPAM services on this localnet network.
 	//
 	// +optional
 	Subnets DualStackCIDRs `json:"subnets,omitempty"`
@@ -184,7 +185,7 @@ type LocalnetConfig struct {
 	// excludeSubnets is optional. When omitted no IP address is excluded and all IP addresses specified in `subnets`
 	// are subject to assignment.
 	// The format should match standard CIDR notation (for example, "10.128.0.0/16").
-	// This field must be omitted if `subnets` is unset or `ipam.mode` is `Disabled`.
+	// This field must be omitted if `subnets` is unset or `ipam.mode` is `Disabled` or `DHCP`.
 	// When `physicalNetworkName` points to OVS bridge mapping of a network with reserved IP addresses
 	// (which shouldn't be assigned by OVN-Kubernetes), the specified CIDRs will not be assigned. For example:
 	// Given: `subnets: "10.0.0.0/24"`, `excludeSubnets`: "10.0.0.200/30", the following addresses will not be assigned
@@ -198,12 +199,14 @@ type LocalnetConfig struct {
 
 	// ipam configurations for the network.
 	// ipam is optional. When omitted, `subnets` must be specified.
-	// When `ipam.mode` is `Disabled`, `subnets` must be omitted.
+	// When `ipam.mode` is `Disabled` or `DHCP`, `subnets` must be omitted.
 	// `ipam.mode` controls how much of the IP configuration will be managed by OVN.
 	//    When `Enabled`, OVN-Kubernetes will apply IP configuration to the SDN infra and assign IPs from the selected
 	//    subnet to the pods.
 	//    When `Disabled`, OVN-Kubernetes only assigns MAC addresses, and provides layer2 communication, and enables users
 	//    to configure IP addresses on the pods.
+	//    When `DHCP`, IP assignment is delegated to a DHCP server reachable on the physical network. OVN-Kubernetes
+	//    learns the assigned IPs but does not allocate them. Currently supported only for IPv4.
 	// `ipam.lifecycle` controls IP addresses management lifecycle.
 	//    When set to 'Persistent', the assigned IP addresses will be persisted in `ipamclaims.k8s.cni.cncf.io` object.
 	// 	  Useful for VMs, IP address will be persistent after restarts and migrations. Supported when `ipam.mode` is `Enabled`.

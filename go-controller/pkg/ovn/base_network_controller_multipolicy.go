@@ -137,7 +137,8 @@ func convertMultiNetPolicyToNetPolicy(mpolicy *mnpapi.MultiNetworkPolicy, allowP
 }
 
 func (bnc *BaseNetworkController) convertMultiNetPolicyToNetPolicy(mpolicy *mnpapi.MultiNetworkPolicy) (*knet.NetworkPolicy, error) {
-	allowPeerSelectors := bnc.doesNetworkRequireIPAM()
+	// selector peers only need discoverable pod IPs (own IPAM or DHCP-learned)
+	allowPeerSelectors := bnc.doesNetworkHaveDiscoverablePodIPs()
 	return convertMultiNetPolicyToNetPolicy(mpolicy, allowPeerSelectors)
 }
 

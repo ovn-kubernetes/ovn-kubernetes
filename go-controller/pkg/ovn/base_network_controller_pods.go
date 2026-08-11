@@ -961,9 +961,13 @@ func (bnc *BaseNetworkController) allocatePodAnnotationForUserDefinedNetwork(pod
 	if !bnc.allocatesPodAnnotation() {
 		podAnnotation, _ := util.UnmarshalPodAnnotation(pod.Annotations, nadKey)
 		if !util.IsValidPodAnnotation(podAnnotation) {
+			allocator := "cluster manager"
+			if bnc.IPAMType() == ovntypes.IPAMTypeDHCP {
+				allocator = "the CNI"
+			}
 			return nil, false, ovntypes.NewSuppressedError(fmt.Errorf(
-				"failed to get PodAnnotation for %s/%s/%s, cluster manager might have not allocated it yet",
-				nadKey, pod.Namespace, pod.Name))
+				"failed to get PodAnnotation for %s/%s/%s, %s might have not allocated it yet",
+				nadKey, pod.Namespace, pod.Name, allocator))
 		}
 
 		return podAnnotation, false, nil
@@ -1037,8 +1041,9 @@ func (bnc *BaseNetworkController) allocatesPodAnnotation() bool {
 		return false
 	case ovntypes.LocalnetTopology:
 		// on localnet topologies with IPAM, cluster manager allocates IPs and
-		// sets the PodAnnotation
-		return !bnc.doesNetworkRequireIPAM()
+		// sets the PodAnnotation. On DHCP IPAM the CNI writes it (the MAC at
+		// CNI ADD, the DHCP-learned IPs after the exchange).
+		return !bnc.doesNetworkRequireIPAM() && bnc.IPAMType() != ovntypes.IPAMTypeDHCP
 	}
 	return true
 }

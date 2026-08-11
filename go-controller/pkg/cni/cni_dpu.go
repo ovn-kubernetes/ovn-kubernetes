@@ -33,23 +33,22 @@ func (pr *PodRequest) updatePodDPUConnDetailsWithRetry(kube kube.Interface, podL
 	return err
 }
 
-func (pr *PodRequest) addDPUConnectionDetailsAnnot(k kube.Interface, podLister corev1listers.PodLister, vfNetdevName string) error {
+// allocateDPUConnectionDetails allocates the connection details of the request's
+// VF; ovnkube-node running on the DPU plumbs the pod's representor from them.
+func (pr *PodRequest) allocateDPUConnectionDetails(vfNetdevName string) (*util.DPUConnectionDetails, error) {
 	if pr.CNIConf.DeviceID == "" {
-		return fmt.Errorf("DeviceID must be set for Pod request with DPU")
+		return nil, fmt.Errorf("DeviceID must be set for Pod request with DPU")
 	}
-	deviceID := pr.CNIConf.DeviceID
 
-	details, err := util.GetDPUOps().ResolveDeviceDetails(deviceID)
+	details, err := util.GetDPUOps().ResolveDeviceDetails(pr.CNIConf.DeviceID)
 	if err != nil {
-		return fmt.Errorf("failed to resolve device details for %s: %v", deviceID, err)
+		return nil, fmt.Errorf("failed to resolve device details for %s: %v", pr.CNIConf.DeviceID, err)
 	}
 
-	dpuConnDetails := util.DPUConnectionDetails{
+	return &util.DPUConnectionDetails{
 		PfId:         fmt.Sprint(details.PfId),
 		VfId:         fmt.Sprint(details.FuncId),
 		SandboxId:    pr.SandboxID,
 		VfNetdevName: vfNetdevName,
-	}
-
-	return pr.updatePodDPUConnDetailsWithRetry(k, podLister, &dpuConnDetails)
+	}, nil
 }

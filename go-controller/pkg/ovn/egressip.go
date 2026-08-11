@@ -963,7 +963,7 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 			network:              ni,
 		}
 	} else if podState.egressIPName == name || podState.egressIPName == "" {
-		podIPsChanged := !podIPSliceEqual(podState.podIPs, podIPs)
+		podIPsChanged := !util.IsIPsEqual(podState.podIPs, podIPs)
 		// We do the setup only if this egressIP object is the one serving this pod OR
 		// podState.egressIPName can be empty if no re-routes were found in
 		// syncPodAssignmentCache for the existing pod, we will treat this case as a new add
@@ -2557,23 +2557,6 @@ func (e egressStatuses) hasStaleEIPStatus(potentialStatus egressipv1.EgressIPSta
 
 func (e egressStatuses) delete(deleteStatus egressipv1.EgressIPStatusItem) {
 	delete(e.statusMap, deleteStatus)
-}
-
-func podIPSliceEqual(oldIPs, newIPs []net.IP) bool {
-	if len(oldIPs) != len(newIPs) {
-		return false
-	}
-	oldIPStrings := make([]string, 0, len(oldIPs))
-	for _, podIP := range oldIPs {
-		oldIPStrings = append(oldIPStrings, podIP.String())
-	}
-	newIPStrings := make([]string, 0, len(newIPs))
-	for _, podIP := range newIPs {
-		newIPStrings = append(newIPStrings, podIP.String())
-	}
-	sort.Strings(oldIPStrings)
-	sort.Strings(newIPStrings)
-	return slices.Equal(oldIPStrings, newIPStrings)
 }
 
 // podAssignmentState keeps track of which egressIP object is serving
