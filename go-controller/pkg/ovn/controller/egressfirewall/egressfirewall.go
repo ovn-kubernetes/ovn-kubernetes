@@ -892,14 +892,18 @@ func (oc *EFController) moveACLsToNamespacedPortGroups(existingEFNamespaces map[
 			if namespace != "" && existingEFNamespaces[namespace] {
 				pgName, err := oc.getNamespacePortGroupName(namespace)
 				if err != nil {
-					klog.Warningf("Skipping egress firewall ACL move for namespace %s: %v", namespace, err)
-					continue
-				}
-				// re-attach from ClusterPortGroupNameBase to namespaced port group.
-				// port group should exist, because namespace handler will create it.
-				ops, err = libovsdbops.AddACLsToPortGroupOps(oc.nbClient, ops, pgName, acls...)
-				if err != nil {
-					return fmt.Errorf("failed to build cleanup ops: %w", err)
+					// Do not skip cluster-PG detach below. Primary NAD resolution can fail
+					// transiently (e.g. namespace not yet in the informer cache). Detach from
+					// the cluster port group anyway; normal EF reconciliation recreates ACLs
+					// on the correct namespaced port group.
+					klog.Warningf("Skipping egress firewall ACL re-attach for namespace %s; detaching from cluster port group only: %v", namespace, err)
+				} else {
+					// re-attach from ClusterPortGroupNameBase to namespaced port group.
+					// port group should exist, because namespace handler will create it.
+					ops, err = libovsdbops.AddACLsToPortGroupOps(oc.nbClient, ops, pgName, acls...)
+					if err != nil {
+						return fmt.Errorf("failed to build cleanup ops: %w", err)
+					}
 				}
 			}
 			// delete all EF ACLs from ClusterPortGroupNameBase

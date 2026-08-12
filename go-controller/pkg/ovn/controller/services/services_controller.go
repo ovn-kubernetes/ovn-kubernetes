@@ -1072,9 +1072,12 @@ func (c *Controller) skipServiceForNetwork(state *networkState, name, namespace 
 		serviceNAD, err := c.networkManager.GetPrimaryNADForNamespace(namespace)
 		if err != nil {
 			// If the namespace's primary NAD state is unknown (e.g., NAD deleted during
-			// network recreation), all controllers must skip. The correct controller
-			// will process the service once the NAD is re-established and triggers a re-sync.
-			if util.IsInvalidPrimaryNetworkError(err) {
+			// network recreation, or namespace not yet in the informer cache), all
+			// controllers must skip. The correct controller will process the service
+			// once the NAD is re-established and triggers a re-sync.
+			if util.IsInvalidPrimaryNetworkError(err) || apierrors.IsNotFound(err) {
+				klog.V(5).Infof("Skipping service %s/%s for network=%s: primary NAD unavailable: %v",
+					namespace, name, state.netInfo.GetNetworkName(), err)
 				return true
 			}
 			utilruntime.HandleError(fmt.Errorf("failed to retrieve network for service %s/%s: %w",
