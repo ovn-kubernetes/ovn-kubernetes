@@ -98,8 +98,18 @@ func (h *baseNetworkControllerEventHandler) areResourcesEqual(objType reflect.Ty
 		return false, nil
 
 	case factory.NamespaceType:
-		// force update path for Namespace resource.
-		return false, nil
+		oldNs, ok := obj1.(*corev1.Namespace)
+		if !ok {
+			return false, fmt.Errorf("could not cast obj1 of type %T to *corev1.Namespace", obj1)
+		}
+		newNs, ok := obj2.(*corev1.Namespace)
+		if !ok {
+			return false, fmt.Errorf("could not cast obj2 of type %T to *corev1.Namespace", obj2)
+		}
+		areEqual := oldNs.Annotations[util.AclLoggingAnnotation] == newNs.Annotations[util.AclLoggingAnnotation] &&
+			oldNs.Annotations[util.NsMulticastAnnotation] == newNs.Annotations[util.NsMulticastAnnotation] &&
+			reflect.DeepEqual(oldNs.Labels, newNs.Labels)
+		return areEqual, nil
 
 	case factory.MultiNetworkPolicyType:
 		mnp1, ok := obj1.(*mnpapi.MultiNetworkPolicy)
