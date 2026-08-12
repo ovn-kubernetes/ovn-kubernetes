@@ -1071,6 +1071,12 @@ func (c *Controller) skipServiceForNetwork(state *networkState, name, namespace 
 	if util.IsNetworkSegmentationSupportEnabled() {
 		serviceNAD, err := c.networkManager.GetPrimaryNADForNamespace(namespace)
 		if err != nil {
+			// If the corresponding namespace is not found in the informer cache, then we should
+			// not skip the service. The correct controller will process the service once the
+			// namespace is in the informer cache.
+			if apierrors.IsNotFound(err) {
+				return false
+			}
 			// If the namespace's primary NAD state is unknown (e.g., NAD deleted during
 			// network recreation), all controllers must skip. The correct controller
 			// will process the service once the NAD is re-established and triggers a re-sync.

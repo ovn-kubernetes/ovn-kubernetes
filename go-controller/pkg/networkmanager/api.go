@@ -79,6 +79,8 @@ type Interface interface {
 	// GetPrimaryNADForNamespace returns the full namespaced key of the
 	// primary NAD for the given namespace, if one exists.
 	// Returns default network if namespace has no primary UDN.
+	// Returns a NotFound error if the namespace is absent from the informer
+	// cache (not necessarily definitively deleted).
 	// This function is not filtered based on Dynamic UDN.
 	GetPrimaryNADForNamespace(namespace string) (string, error)
 

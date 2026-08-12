@@ -15,6 +15,7 @@ import (
 	kubevirtv1 "kubevirt.io/api/core/v1"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilnet "k8s.io/utils/net"
@@ -23,6 +24,7 @@ import (
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
@@ -504,6 +506,144 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 		retry.CheckRetryObjectEventually(key, true, bnc.retryPods)
 	})
 
+	Context("when shouldFilterNamespace does not filter a pod because the namespace is missing from the informer", func() {
+		const (
+			missingNamespace = "greenamespace"
+			podName          = "dummy"
+			localNode        = "worker1"
+		)
+
+		var (
+			bnc     *BaseUserDefinedNetworkController
+			fakeOVN *FakeOVN
+			pod     *corev1.Pod
+		)
+
+		BeforeEach(func() {
+			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+			config.OVNKubernetesFeature.EnableMultiNetwork = true
+			config.IPv4Mode = true
+			pod = &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					UID:       "dummy-pod-uid",
+					Namespace: missingNamespace,
+					Name:      podName,
+				},
+				Spec: corev1.PodSpec{
+					NodeName: localNode,
+				},
+			}
+			fakeOVN = NewFakeOVN(false, localNode)
+			fakeOVN.start(
+				&corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: localNode,
+						Annotations: map[string]string{
+							"k8s.ovn.org/network-ids": `{"bluenet": "3"}`,
+							util.OvnNodeChassisID:     chassisIDForNode(localNode),
+						},
+					},
+				},
+				pod,
+			)
+			DeferCleanup(fakeOVN.shutdown)
+			Expect(fakeOVN.NewUserDefinedNetworkController(nad)).To(Succeed())
+			controller, ok := fakeOVN.userDefinedNetworkControllers["bluenet"]
+			Expect(ok).To(BeTrue())
+			bnc = controller.bnc
+			Expect(bnc.shouldFilterNamespace(missingNamespace)).To(BeFalse())
+		})
+
+		It("ensurePod with addPort=true returns an error until the namespace is in the informer", func() {
+			err := bnc.ensurePodForUserDefinedNetwork(pod, true)
+			Expect(err).To(MatchError(ContainSubstring("failed to get primary network namespace NAD")))
+			Expect(err).To(MatchError(apierrors.IsNotFound, "IsNotFound"))
+
+			_, err = fakeOVN.fakeClient.KubeClient.CoreV1().Namespaces().Create(
+				context.Background(),
+				newUDNNamespace(missingNamespace),
+				metav1.CreateOptions{},
+			)
+			Expect(err).NotTo(HaveOccurred())
+			nadToCreate := nad.DeepCopy()
+			ovntest.AnnotateNADWithNetworkID("3", nadToCreate)
+			_, err = fakeOVN.fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nadToCreate.Namespace).Create(
+				context.Background(), nadToCreate, metav1.CreateOptions{})
+			Expect(err).NotTo(HaveOccurred())
+
+			nadKey := util.GetNADName(nad.Namespace, nad.Name)
+			nodeSubnet := ovntest.MustParseIPNet("100.128.0.0/24")
+			switchName := bnc.GetNetworkScopedSwitchName(localNode)
+			Expect(bnc.lsManager.AddOrUpdateSwitch(switchName, []*net.IPNet{nodeSubnet}, nil)).To(Succeed())
+			Expect(libovsdbops.CreateOrUpdateLogicalSwitch(fakeOVN.nbClient, &nbdb.LogicalSwitch{Name: switchName})).To(Succeed())
+
+			Eventually(func() error {
+				return bnc.ensurePodForUserDefinedNetwork(pod, true)
+			}).Should(Succeed())
+
+			updatedPod, err := fakeOVN.fakeClient.KubeClient.CoreV1().Pods(pod.Namespace).Get(
+				context.Background(), pod.Name, metav1.GetOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			podAnnotation, err := util.UnmarshalPodAnnotation(updatedPod.Annotations, nadKey)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(podAnnotation.IPs).To(HaveLen(1))
+			Expect(nodeSubnet.Contains(podAnnotation.IPs[0].IP)).To(BeTrue())
+			Expect(podAnnotation.MAC).NotTo(BeEmpty())
+			Expect(podAnnotation.Role).To(Equal(types.NetworkRolePrimary))
+
+			lspName := util.GetUserDefinedNetworkLogicalPortName(pod.Namespace, pod.Name, nadKey)
+			lsps, err := libovsdbops.FindLogicalSwitchPortWithPredicate(fakeOVN.nbClient, func(p *nbdb.LogicalSwitchPort) bool {
+				return p.Name == lspName
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(lsps).To(HaveLen(1))
+			Expect(lsps[0].Addresses).To(ConsistOf(fmt.Sprintf("%s %s", podAnnotation.MAC, podAnnotation.IPs[0].IP)))
+		})
+
+		It("removePod deletes this network's logical port while the namespace is missing", func() {
+			nadKey := util.GetNADName(nad.Namespace, nad.Name)
+			bnc.networkManager = &nadKeyNameOverlay{
+				Interface:    bnc.networkManager,
+				nadToNetwork: map[string]string{nadKey: bnc.GetNetworkName()},
+			}
+
+			annotations, err := util.MarshalPodAnnotation(nil, &util.PodAnnotation{
+				MAC:  net.HardwareAddr{0x0a, 0x58, 0x0a, 0x80, 0x00, 0x05},
+				IPs:  ovntest.MustParseIPNets("100.128.0.5/24"),
+				Role: types.NetworkRolePrimary,
+			}, nadKey)
+			Expect(err).NotTo(HaveOccurred())
+			pod.Annotations = annotations
+
+			switchName := bnc.GetNetworkScopedSwitchName(localNode)
+			lspName := util.GetUserDefinedNetworkLogicalPortName(pod.Namespace, pod.Name, nadKey)
+			ls := &nbdb.LogicalSwitch{Name: switchName}
+			lsp := &nbdb.LogicalSwitchPort{Name: lspName}
+			Expect(libovsdbops.CreateOrUpdateLogicalSwitch(fakeOVN.nbClient, ls)).To(Succeed())
+			Expect(libovsdbops.CreateOrUpdateLogicalSwitchPortsOnSwitch(fakeOVN.nbClient, ls, lsp)).To(Succeed())
+
+			lsps, err := libovsdbops.FindLogicalSwitchPortWithPredicate(fakeOVN.nbClient, func(p *nbdb.LogicalSwitchPort) bool {
+				return p.Name == lspName
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(lsps).To(HaveLen(1))
+			Expect(lsps[0]).To(Equal(lsp))
+
+			Expect(bnc.removePodForUserDefinedNetwork(pod, map[string]*lpInfo{
+				nadKey: {
+					name:          lspName,
+					uuid:          lsp.UUID,
+					logicalSwitch: switchName,
+				},
+			})).To(Succeed())
+			lsps, err = libovsdbops.FindLogicalSwitchPortWithPredicate(fakeOVN.nbClient, func(p *nbdb.LogicalSwitchPort) bool {
+				return p.Name == lspName
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(lsps).To(BeEmpty())
+		})
+	})
+
 })
 
 func TestAdvertisedSharedGatewaySNATUsesLiveAllowedExtIPSets(t *gotesting.T) {
@@ -966,3 +1106,17 @@ var _ = Describe("localnet DHCP IPAM pod lifecycle", func() {
 		Eventually(fakeOVN.nbClient).Should(libovsdbtest.HaveData(expectedSwitch, newExpectedLSP(podMAC+" "+podIP)))
 	})
 })
+
+// nadKeyNameOverlay keeps GetPrimaryNADForNamespace (and thus namespace-informer
+// NotFound) on the wrapped manager, while allowing tests to claim a NAD key.
+type nadKeyNameOverlay struct {
+	networkmanager.Interface
+	nadToNetwork map[string]string
+}
+
+func (m *nadKeyNameOverlay) GetNetworkNameForNADKey(nadKey string) string {
+	if name, ok := m.nadToNetwork[nadKey]; ok {
+		return name
+	}
+	return m.Interface.GetNetworkNameForNADKey(nadKey)
+}

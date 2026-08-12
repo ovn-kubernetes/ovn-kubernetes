@@ -17,6 +17,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	knet "k8s.io/api/networking/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -346,6 +347,9 @@ func (bnc *BaseNetworkController) shouldFilterNamespace(namespace string) bool {
 
 	nadKey, err := bnc.networkManager.GetPrimaryNADForNamespace(namespace)
 	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return false
+		}
 		return util.IsInvalidPrimaryNetworkError(err)
 	}
 	if nadKey == types.DefaultNetworkName {

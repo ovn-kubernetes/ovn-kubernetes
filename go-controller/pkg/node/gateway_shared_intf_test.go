@@ -18,6 +18,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/fake"
@@ -102,9 +103,10 @@ type mockNetworkManagerWithNamespaceNotFoundError struct {
 	networkmanager.Interface
 }
 
-func (m *mockNetworkManagerWithNamespaceNotFoundError) GetPrimaryNADForNamespace(_ string) (string, error) {
-	// Simulate namespace deletion: no primary NAD by definition.
-	return "", nil
+func (m *mockNetworkManagerWithNamespaceNotFoundError) GetPrimaryNADForNamespace(namespace string) (string, error) {
+	// Namespace absent from the informer cache (not proof of deletion).
+	return "", fmt.Errorf("failed to fetch namespace %q: %w", namespace,
+		apierrors.NewNotFound(corev1.Resource("namespaces"), namespace))
 }
 
 func (m *mockNetworkManagerWithNamespaceNotFoundError) GetActiveNetworkForNamespace(_ string) (util.NetInfo, error) {
