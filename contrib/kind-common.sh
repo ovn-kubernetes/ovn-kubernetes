@@ -1338,8 +1338,17 @@ collect_node_pod_subnet_info() {
       sleep 2
     done
     if [ -z "$subnet_json" ]; then
-      echo "error: node $node has no k8s.ovn.org/node-subnets annotation"
-      exit 1
+      # some nodes legitimately never get default-network subnets: the
+      # DPU-simulator flow deploys kind-helm.sh against the DPU-side cluster
+      # too, whose node only hosts the ovnkube components managing the host
+      # cluster and has no ovn-managed pod network of its own; the aggregate
+      # configured-routes checks in the callers still catch a total setup
+      # failure
+      echo "warning: node $node has no k8s.ovn.org/node-subnets annotation, skipping"
+      NODE_IPV4S[$node]=""
+      NODE_IPV6S[$node]=""
+      NODE_POD_SUBNETS[$node]=""
+      continue
     fi
     node_ips=$(kubectl get node "$node" -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')
     NODE_IPV4S[$node]=$(echo "$node_ips" | tr ' ' '\n' | grep -v ':' | head -n 1 || true)
