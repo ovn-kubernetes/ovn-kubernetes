@@ -6,9 +6,11 @@ package factory
 import (
 	"fmt"
 	"reflect"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	ipamclaimsapi "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1"
 	ipamclaimsapifake "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1/apis/clientset/versioned/fake"
@@ -29,6 +31,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	core "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/workqueue"
 	"k8s.io/utils/ptr"
 	anpapi "sigs.k8s.io/network-policy-api/apis/v1alpha1"
 	anpapifake "sigs.k8s.io/network-policy-api/pkg/client/clientset/versioned/fake"
@@ -54,6 +57,361 @@ import (
 func TestFactory(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Watch Factory Suite")
+}
+
+// shutdownQueueMap stops queue workers and fails if they do not exit promptly.
+func shutdownQueueMap(t *testing.T, queueMap *queueMap) {
+	t.Helper()
+	queueMap.shutdown()
+	done := make(chan struct{})
+	go func() {
+		queueMap.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("queue worker did not shut down")
+	}
+}
+
+// blockingQueueMapQueue pauses queue acceptance so tests can control shutdown ordering.
+type blockingQueueMapQueue struct {
+	workqueue.TypedInterface[types.NamespacedName]
+	addStarted     chan struct{}
+	allowAdd       chan struct{}
+	shutdownCalled chan struct{}
+	shutdownOnce   sync.Once
+}
+
+// Add blocks before forwarding the item to the underlying workqueue.
+func (q *blockingQueueMapQueue) Add(item types.NamespacedName) {
+	close(q.addStarted)
+	<-q.allowAdd
+	q.TypedInterface.Add(item)
+}
+
+// ShutDown records when shutdown reaches the underlying workqueue.
+func (q *blockingQueueMapQueue) ShutDown() {
+	q.shutdownOnce.Do(func() {
+		close(q.shutdownCalled)
+	})
+	q.TypedInterface.ShutDown()
+}
+
+// TestQueueMapCoalescesRapidUpdates verifies compatible updates collapse to the latest state.
+func TestQueueMapCoalescesRapidUpdates(t *testing.T) {
+	queueMap := newQueueMap(1, 1, &sync.WaitGroup{}, make(chan struct{}))
+	oldNamespace := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test",
+			UID:  types.UID("uid"),
+		},
+	}
+	firstNewNamespace := oldNamespace.DeepCopy()
+	firstNewNamespace.ResourceVersion = "1"
+	queueMap.enqueueEvent(oldNamespace, firstNewNamespace, NamespaceType, false, func(*event) {})
+
+	for resourceVersion := 2; resourceVersion <= 1001; resourceVersion++ {
+		newNamespace := firstNewNamespace.DeepCopy()
+		newNamespace.ResourceVersion = strconv.Itoa(resourceVersion)
+		queueMap.enqueueEvent(firstNewNamespace, newNamespace, NamespaceType, false, func(*event) {})
+		firstNewNamespace = newNamespace
+	}
+
+	if got := queueMap.queues[0].Len(); got != 1 {
+		t.Fatalf("queue length = %d, want 1", got)
+	}
+
+	key := types.NamespacedName{Name: "test"}
+	entry := queueMap.entries[key]
+	if entry == nil {
+		t.Fatal("queue map entry was not created")
+	}
+	if got := len(entry.pending); got != 1 {
+		t.Fatalf("pending event count = %d, want 1", got)
+	}
+	if got := entry.pending[0].oldObj.(*corev1.Namespace).ResourceVersion; got != "" {
+		t.Errorf("coalesced event old ResourceVersion = %q, want empty", got)
+	}
+	if got := entry.pending[0].obj.(*corev1.Namespace).ResourceVersion; got != "1001" {
+		t.Errorf("coalesced event ResourceVersion = %q, want 1001", got)
+	}
+}
+
+// TestQueueMapPreservesUIDReplacementOrdering verifies replacement events retain their order.
+func TestQueueMapPreservesUIDReplacementOrdering(t *testing.T) {
+	queueMap := newQueueMap(1, 1, &sync.WaitGroup{}, make(chan struct{}))
+	oldNamespace := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test",
+			UID:  types.UID("old-uid"),
+		},
+	}
+	newNamespace := oldNamespace.DeepCopy()
+	newNamespace.UID = types.UID("new-uid")
+
+	queueMap.enqueueEvent(nil, oldNamespace, NamespaceType, false, func(*event) {})
+	queueMap.enqueueEvent(nil, newNamespace, NamespaceType, false, func(*event) {})
+
+	entry := queueMap.entries[types.NamespacedName{Name: "test"}]
+	if entry == nil {
+		t.Fatal("queue map entry was not created")
+	}
+	if got := len(entry.pending); got != 2 {
+		t.Fatalf("pending event count = %d, want 2", got)
+	}
+	if got := entry.pending[0].obj.(*corev1.Namespace).UID; got != types.UID("old-uid") {
+		t.Errorf("first pending UID = %q, want old-uid", got)
+	}
+	if got := entry.pending[1].obj.(*corev1.Namespace).UID; got != types.UID("new-uid") {
+		t.Errorf("second pending UID = %q, want new-uid", got)
+	}
+}
+
+// TestQueueMapCoalescesUIDReplacementUpdates verifies consecutive replacements retain both UID boundaries.
+func TestQueueMapCoalescesUIDReplacementUpdates(t *testing.T) {
+	queueMap := newQueueMap(1, 1, &sync.WaitGroup{}, make(chan struct{}))
+	oldNamespace := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test",
+			UID:  types.UID("old-uid"),
+		},
+	}
+	firstReplacement := oldNamespace.DeepCopy()
+	firstReplacement.UID = types.UID("first-replacement-uid")
+	secondReplacement := firstReplacement.DeepCopy()
+	secondReplacement.UID = types.UID("second-replacement-uid")
+
+	queueMap.enqueueEvent(oldNamespace, firstReplacement, NamespaceType, false, func(*event) {})
+	queueMap.enqueueEvent(firstReplacement, secondReplacement, NamespaceType, false, func(*event) {})
+
+	entry := queueMap.entries[types.NamespacedName{Name: "test"}]
+	if entry == nil {
+		t.Fatal("queue map entry was not created")
+	}
+	if got := len(entry.pending); got != 1 {
+		t.Fatalf("pending event count = %d, want 1", got)
+	}
+	if got := entry.pending[0].oldObj.(*corev1.Namespace).UID; got != types.UID("old-uid") {
+		t.Errorf("coalesced old UID = %q, want old-uid", got)
+	}
+	if got := entry.pending[0].obj.(*corev1.Namespace).UID; got != types.UID("second-replacement-uid") {
+		t.Errorf("coalesced new UID = %q, want second-replacement-uid", got)
+	}
+}
+
+// TestQueueMapPreservesUIDReplacementBeforeDelete verifies replacement and delete callbacks survive shutdown.
+func TestQueueMapPreservesUIDReplacementBeforeDelete(t *testing.T) {
+	var wg sync.WaitGroup
+	queueMap := newQueueMap(1, 1, &wg, make(chan struct{}))
+	oldNamespace := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test",
+			UID:  types.UID("old-uid"),
+		},
+	}
+	newNamespace := oldNamespace.DeepCopy()
+	newNamespace.UID = types.UID("new-uid")
+	processed := make(chan eventType, 2)
+	shutdownStarted := make(chan struct{})
+	process := func(e *event) {
+		if e.eventType == eventTypeUpdate {
+			// Shut down while the first event is being processed so the second
+			// event cannot depend on queue.Add after queue.Done.
+			queueMap.shutdown()
+			close(shutdownStarted)
+		}
+		processed <- e.eventType
+	}
+
+	queueMap.enqueueEvent(oldNamespace, newNamespace, NamespaceType, false, process)
+	queueMap.enqueueEvent(nil, newNamespace, NamespaceType, true, process)
+
+	entry := queueMap.entries[types.NamespacedName{Name: "test"}]
+	if entry == nil {
+		t.Fatal("queue map entry was not created")
+	}
+	if got := len(entry.pending); got != 2 {
+		t.Fatalf("pending event count = %d, want 2", got)
+	}
+	if got := entry.pending[0].oldObj.(*corev1.Namespace).UID; got != types.UID("old-uid") {
+		t.Errorf("replacement old UID = %q, want old-uid", got)
+	}
+	if got := entry.pending[0].obj.(*corev1.Namespace).UID; got != types.UID("new-uid") {
+		t.Errorf("replacement new UID = %q, want new-uid", got)
+	}
+	if got := entry.pending[1].eventType; got != eventTypeDelete {
+		t.Errorf("second event type = %v, want delete", got)
+	}
+
+	queueMap.start()
+	select {
+	case <-shutdownStarted:
+	case <-time.After(time.Second):
+		t.Fatal("replacement update was not processed")
+	}
+	shutdownQueueMap(t, queueMap)
+	for i, want := range []eventType{eventTypeUpdate, eventTypeDelete} {
+		select {
+		case got := <-processed:
+			if got != want {
+				t.Errorf("processed event %d = %v, want %v", i, got, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for processed event %d (%v)", i, want)
+		}
+	}
+}
+
+// TestQueueMapSerializesEnqueueAndShutdown verifies shutdown cannot strand an accepted event.
+func TestQueueMapSerializesEnqueueAndShutdown(t *testing.T) {
+	var wg sync.WaitGroup
+	stopChan := make(chan struct{})
+	queueMap := newQueueMap(1, 1, &wg, stopChan)
+	queue := &blockingQueueMapQueue{
+		TypedInterface: queueMap.queues[0],
+		addStarted:     make(chan struct{}),
+		allowAdd:       make(chan struct{}),
+		shutdownCalled: make(chan struct{}),
+	}
+	queueMap.queues[0] = queue
+	queueMap.start()
+
+	var releaseAddOnce sync.Once
+	releaseAdd := func() {
+		releaseAddOnce.Do(func() { close(queue.allowAdd) })
+	}
+	defer func() {
+		releaseAdd()
+		shutdownQueueMap(t, queueMap)
+	}()
+
+	processed := make(chan struct{})
+	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test", UID: types.UID("uid")}}
+	enqueueDone := make(chan struct{})
+	go func() {
+		queueMap.enqueueEvent(nil, namespace, NamespaceType, false, func(*event) {
+			close(processed)
+		})
+		close(enqueueDone)
+	}()
+
+	select {
+	case <-queue.addStarted:
+	case <-time.After(time.Second):
+		t.Fatal("enqueue did not reach queue.Add")
+	}
+	close(stopChan)
+
+	shutdownDone := make(chan struct{})
+	go func() {
+		queueMap.shutdown()
+		close(shutdownDone)
+	}()
+
+	select {
+	case <-queue.shutdownCalled:
+		t.Fatal("shutdown closed the queue before the pending event was accepted")
+	case <-time.After(time.Second):
+	}
+
+	releaseAdd()
+	select {
+	case <-processed:
+	case <-time.After(time.Second):
+		t.Fatal("accepted event was not processed after concurrent shutdown")
+	}
+	select {
+	case <-enqueueDone:
+	case <-time.After(time.Second):
+		t.Fatal("enqueue did not finish after queue acceptance")
+	}
+	select {
+	case <-shutdownDone:
+	case <-time.After(time.Second):
+		t.Fatal("shutdown did not finish after queue acceptance")
+	}
+}
+
+// TestQueueMapProcessesAndShutsDown verifies queued callbacks run before workers exit.
+func TestQueueMapProcessesAndShutsDown(t *testing.T) {
+	var wg sync.WaitGroup
+	queueMap := newQueueMap(1, 1, &wg, make(chan struct{}))
+	queueMap.start()
+
+	processed := make(chan struct{})
+	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test", UID: types.UID("uid")}}
+	queueMap.enqueueEvent(nil, namespace, NamespaceType, false, func(*event) {
+		close(processed)
+	})
+
+	select {
+	case <-processed:
+	case <-time.After(time.Second):
+		t.Fatal("queued event was not processed")
+	}
+
+	shutdownQueueMap(t, queueMap)
+}
+
+// TestQueueMapCoalescesWhileEventIsProcessing verifies updates coalesce while a callback is blocked.
+func TestQueueMapCoalescesWhileEventIsProcessing(t *testing.T) {
+	var wg sync.WaitGroup
+	queueMap := newQueueMap(1, 1, &wg, make(chan struct{}))
+	queueMap.start()
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(release) })
+	processed := make(chan *event, 2)
+	process := func(e *event) {
+		if e.eventType == eventTypeAdd {
+			close(entered)
+			<-release
+		}
+		processed <- e
+	}
+
+	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test", UID: types.UID("uid")}}
+	queueMap.enqueueEvent(nil, namespace, NamespaceType, false, process)
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("queued event was not picked up by the worker")
+	}
+
+	for resourceVersion := 1; resourceVersion <= 1000; resourceVersion++ {
+		newNamespace := namespace.DeepCopy()
+		newNamespace.ResourceVersion = strconv.Itoa(resourceVersion)
+		queueMap.enqueueEvent(namespace, newNamespace, NamespaceType, false, process)
+		namespace = newNamespace
+	}
+
+	queueMap.Lock()
+	pendingEvents := len(queueMap.entries[types.NamespacedName{Name: "test"}].pending)
+	queueMap.Unlock()
+	if pendingEvents != 1 {
+		t.Fatalf("pending events while handler is blocked = %d, want 1", pendingEvents)
+	}
+
+	releaseOnce.Do(func() { close(release) })
+	select {
+	case <-processed:
+	case <-time.After(time.Second):
+		t.Fatal("initial event was not completed")
+	}
+	select {
+	case e := <-processed:
+		if got := e.obj.(*corev1.Namespace).ResourceVersion; got != "1000" {
+			t.Errorf("coalesced event ResourceVersion = %q, want 1000", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("coalesced update was not processed")
+	}
+
+	shutdownQueueMap(t, queueMap)
 }
 
 func newObjectMeta(name, namespace string) metav1.ObjectMeta {
@@ -1107,6 +1465,13 @@ var _ = Describe("Watch Factory Operations", func() {
 			pod := newPod(name, fmt.Sprintf("namespace-%d", i))
 			testPods[name] = &opTest{pod: pod}
 		}
+		waitFor := func(ot *opTest, expected int, count func(*opTest) int) {
+			Eventually(func() int {
+				ot.mu.Lock()
+				defer ot.mu.Unlock()
+				return count(ot)
+			}, 2).Should(Equal(expected))
+		}
 
 		h, c := addHandler(wf, PodType, cache.ResourceEventHandlerFuncs{
 			AddFunc: func(obj interface{}) {
@@ -1144,12 +1509,15 @@ var _ = Describe("Watch Factory Operations", func() {
 			for _, ot := range testPods {
 				pods = append(pods, ot.pod)
 				podWatch.Add(ot.pod)
+				waitFor(ot, i+1, func(ot *opTest) int { return ot.added })
 				ot.mu.Lock()
 				ot.pod.Spec.NodeName = nodeName
 				ot.mu.Unlock()
 				podWatch.Modify(ot.pod)
+				waitFor(ot, i+1, func(ot *opTest) int { return ot.updated })
 				pods = pods[:0]
 				podWatch.Delete(ot.pod)
+				waitFor(ot, i+1, func(ot *opTest) int { return ot.deleted })
 			}
 		}
 
@@ -1261,6 +1629,13 @@ var _ = Describe("Watch Factory Operations", func() {
 			node := newNode(name)
 			testNodes[name] = &opTest{node: node}
 		}
+		waitFor := func(ot *opTest, expected int, count func(*opTest) int) {
+			Eventually(func() int {
+				ot.mu.Lock()
+				defer ot.mu.Unlock()
+				return count(ot)
+			}, 2).Should(Equal(expected))
+		}
 
 		h, c := addHandler(wf, NodeType, cache.ResourceEventHandlerFuncs{
 			AddFunc: func(obj interface{}) {
@@ -1298,12 +1673,15 @@ var _ = Describe("Watch Factory Operations", func() {
 			for _, ot := range testNodes {
 				nodes = append(nodes, ot.node)
 				nodeWatch.Add(ot.node)
+				waitFor(ot, i+1, func(ot *opTest) int { return ot.added })
 				ot.mu.Lock()
 				ot.node.Status.Phase = corev1.NodeTerminated
 				ot.mu.Unlock()
 				nodeWatch.Modify(ot.node)
+				waitFor(ot, i+1, func(ot *opTest) int { return ot.updated })
 				nodes = nodes[:0]
 				nodeWatch.Delete(ot.node)
+				waitFor(ot, i+1, func(ot *opTest) int { return ot.deleted })
 			}
 		}
 
