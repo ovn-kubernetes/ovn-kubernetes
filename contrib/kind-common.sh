@@ -1452,8 +1452,10 @@ configure_no_overlay_unmanaged_no_ra_node_static_routes() {
             continue
           fi
           echo "Adding IPv6 kind-node route on $local_node for $remote_node: $subnet via $node_ipv6 $src_ipv6"
+          # no explicit dev: let the kernel derive it from the next hop, the
+          # gateway bridge is not always named breth0 (e.g. -dgb uses br-ex)
           # shellcheck disable=SC2086
-          $OCI_BIN exec "$local_node" ip -6 route replace "$subnet" via "$node_ipv6" dev breth0 $src_ipv6
+          $OCI_BIN exec "$local_node" ip -6 route replace "$subnet" via "$node_ipv6" $src_ipv6
         else
           if [ -z "$node_ipv4" ]; then
             echo "Skipping IPv4 kind-node route on $local_node for $remote_node: no IPv4 InternalIP for $subnet"
@@ -1461,7 +1463,7 @@ configure_no_overlay_unmanaged_no_ra_node_static_routes() {
           fi
           echo "Adding IPv4 kind-node route on $local_node for $remote_node: $subnet via $node_ipv4 $src_ipv4"
           # shellcheck disable=SC2086
-          $OCI_BIN exec "$local_node" ip route replace "$subnet" via "$node_ipv4" dev breth0 $src_ipv4
+          $OCI_BIN exec "$local_node" ip route replace "$subnet" via "$node_ipv4" $src_ipv4
         fi
         configured_routes=$((configured_routes + 1))
       done
