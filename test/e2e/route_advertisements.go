@@ -4783,11 +4783,8 @@ var _ = ginkgo.Describe("Network Segmentation unmanaged no-overlay CUDN without 
 	})
 
 	ginkgo.It("requires matching RouteAdvertisements to be accepted when one is configured", func() {
-		if _, err := raClient.K8sV1().RouteAdvertisements().List(context.Background(), metav1.ListOptions{}); err != nil {
-			if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
-				e2eskipper.Skipf("test requires the RouteAdvertisements CRD")
-			}
-			framework.ExpectNoError(err, "failed to list RouteAdvertisements")
+		if os.Getenv("ENABLE_ROUTE_ADVERTISEMENTS") != "true" {
+			e2eskipper.Skipf("test requires the RouteAdvertisements feature")
 		}
 
 		cudnName := randomNetworkMetaName()
@@ -4951,10 +4948,15 @@ func configureGatewayRouterRoute(cs clientset.Interface, cudnName, nodeName, sub
 	gwRouterName := cudnGatewayRouterName(cudnName, nodeName)
 	outputPort := types.GWRouterToExtSwitchPrefix + gwRouterName
 	framework.Logf("Adding unmanaged no-overlay CUDN route on gateway router %s: %s via %s output %s", gwRouterName, subnet, nextHop, outputPort)
-	_, err := runOVNNbctlOnNode(cs, nodeName,
-		"--if-exists", "lr-route-del", gwRouterName, subnet,
-		"--", "lr-route-add", gwRouterName, subnet, nextHop, outputPort)
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	// the CUDN Ready condition does not imply every node's gateway router
+	// exists yet, so retry until ovnkube-controller has created it
+	gomega.Eventually(func() error {
+		_, err := runOVNNbctlOnNode(cs, nodeName,
+			"--if-exists", "lr-route-del", gwRouterName, subnet,
+			"--", "lr-route-add", gwRouterName, subnet, nextHop, outputPort)
+		return err
+	}, 2*time.Minute, 2*time.Second).Should(gomega.Succeed(),
+		"failed to add unmanaged no-overlay CUDN route on gateway router %s", gwRouterName)
 	ginkgo.DeferCleanup(func() {
 		if _, err := runOVNNbctlOnNode(cs, nodeName, "--if-exists", "lr-route-del", gwRouterName, subnet); err != nil {
 			framework.Logf("Failed to delete unmanaged no-overlay CUDN route on gateway router %s: %v", gwRouterName, err)
