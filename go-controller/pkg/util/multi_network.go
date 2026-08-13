@@ -2115,6 +2115,18 @@ func IsRouteAdvertisementsEnabled() bool {
 	return config.OVNKubernetesFeature.EnableMultiNetwork && config.OVNKubernetesFeature.EnableRouteAdvertisements
 }
 
+// MayAdvertisePodNetworks returns true when some network can be considered
+// advertised at a node by IsPodNetworkAdvertisedAtNode: through the
+// RouteAdvertisements feature, or through no-overlay transport, which is
+// supported without that feature for the default network (via config) and for
+// CUDNs (via network segmentation). Datapath pieces shared by all advertised
+// networks must be set up under this condition.
+func MayAdvertisePodNetworks() bool {
+	return IsRouteAdvertisementsEnabled() ||
+		config.Default.Transport == types.NetworkTransportNoOverlay ||
+		IsNetworkSegmentationSupportEnabled()
+}
+
 // RASelectsDefaultNetwork returns true when the RouteAdvertisements selects
 // the default network.
 func RASelectsDefaultNetwork(ra *ratypes.RouteAdvertisements) bool {
