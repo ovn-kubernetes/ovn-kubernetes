@@ -5,6 +5,7 @@ package e2e
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"net"
@@ -215,13 +216,22 @@ var _ = ginkgo.Describe("No-Overlay: Default network is enabled with no-overlay"
 		ginkgo.It("should maintain pod2pod connectivity without RouteAdvertisements", func() {
 			// the connectivity check alone would not distinguish this spec from
 			// the generic no-overlay one: first prove no BGP-learned routes are
-			// involved, so connectivity relies on the underlay routing alone
-			ginkgo.By("Verifying the client node has no BGP-learned routes")
-			bgpRoutes, err := e2epodoutput.RunHostCmd(tcpdumpPod.Namespace, tcpdumpPod.Name,
-				"ip route show proto bgp; ip -6 route show proto bgp")
-			framework.ExpectNoError(err, "Failed to list BGP routes on the client node")
-			gomega.Expect(strings.TrimSpace(bgpRoutes)).To(gomega.BeEmpty(),
-				"expected no BGP-learned routes on the client node without RouteAdvertisements")
+			// involved, so connectivity relies on the underlay routing alone.
+			// The node may still hold BGP routes for unrelated prefixes (the
+			// RouteAdvertisements feature can be enabled cluster-wide), so only
+			// routes covering the pod IPs count.
+			ginkgo.By("Verifying no BGP-learned route on the client node covers the server pod")
+			var bgpRoutes []kernelRoute
+			for _, ipCmd := range []string{"ip", "ip -6"} {
+				out, err := e2epodoutput.RunHostCmd(tcpdumpPod.Namespace, tcpdumpPod.Name,
+					ipCmd+" --json route show proto bgp")
+				framework.ExpectNoError(err, "Failed to list BGP routes on the client node")
+				var routes []kernelRoute
+				framework.ExpectNoError(json.Unmarshal([]byte(out), &routes),
+					"Failed to parse BGP routes %q", out)
+				bgpRoutes = append(bgpRoutes, routes...)
+			}
+			expectNoRouteCoversPodIPs(bgpRoutes, serverPod.Status.PodIPs)
 
 			ginkgo.By("Testing pod2pod connectivity without default-network RouteAdvertisements")
 			checkConnectivityWithoutOverlay(serverPod.Status.PodIPs, nil, clientPod, tcpdumpPod)
@@ -405,6 +415,30 @@ func checkConnectivityWithoutOverlay(serverPodIPs []corev1.PodIP, serviceCluster
 		framework.ExpectNoError(curlErr, "curl to %s failed", destIP)
 		gomega.Expect(tcpdumpOut).To(gomega.MatchRegexp(`(?m)^[1-9][0-9]* packets captured`),
 			"Should capture unencapsulated pod traffic on the physical interface")
+	}
+}
+
+// expectNoRouteCoversPodIPs fails the test if any of the routes covers one
+// of the given pod IPs. A default route always counts as covering them.
+func expectNoRouteCoversPodIPs(routes []kernelRoute, podIPs []corev1.PodIP) {
+	ginkgo.GinkgoHelper()
+	for _, route := range routes {
+		if route.Dst == "default" {
+			framework.Failf("found a default route: %+v", route)
+		}
+		_, cidr, err := net.ParseCIDR(route.Dst)
+		if err != nil {
+			// plain host route without a mask
+			ip := net.ParseIP(route.Dst)
+			if ip == nil {
+				continue
+			}
+			cidr = util.GetIPNetFullMaskFromIP(ip)
+		}
+		for _, podIP := range podIPs {
+			gomega.Expect(cidr.Contains(net.ParseIP(podIP.IP))).To(gomega.BeFalse(),
+				"route to %s covers pod IP %s", route.Dst, podIP.IP)
+		}
 	}
 }
 
