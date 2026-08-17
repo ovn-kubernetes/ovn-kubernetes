@@ -4138,9 +4138,9 @@ OVN to route the packet towards the fake next hop.</p>
 <p>The SBDB MAC binding will look like this (one per node):
 <div class="highlight"><pre><span></span><code>_uuid               : f244faba-19ad-4b08-bffe-d0b52b270410
 datapath            : 7cc30875-0c68-4ecc-8193-a9fe3abb6cd5
-ip                  : &quot;169.254.169.4&quot;
+ip                  : "169.254.169.4"
 logical_port        : rtoe-GR_ovn-worker
-mac                 : &quot;0a:58:a9:fe:a9:04&quot;
+mac                 : "0a:58:a9:fe:a9:04"
 timestamp           : 0
 </code></pre></div></p>
 <p>Each OVN GR will then have a route table that looks like this:
@@ -4155,15 +4155,15 @@ Route Table &lt;main&gt;:
 <div class="highlight"><pre><span></span><code>[root@ovn-control-plane ~]# ovn-nbctl show GR_ovn-worker
 router 7c1323d5-f388-449f-94cb-51216194c606 (GR_ovn-worker)
     port rtoj-GR_ovn-worker
-        mac: &quot;0a:58:64:40:00:03&quot;
-        networks: [&quot;100.64.0.3/16&quot;]
+        mac: "0a:58:64:40:00:03"
+        networks: ["100.64.0.3/16"]
     port rtoe-GR_ovn-worker
-        mac: &quot;02:42:ac:12:00:02&quot;
-        networks: [&quot;172.18.0.2/16&quot;]
+        mac: "02:42:ac:12:00:02"
+        networks: ["172.18.0.2/16"]
     nat 98e32e9b-e8f1-413c-881d-cfdfd5a02d43
-        external ip: &quot;172.18.0.3&quot;
-        logical ip: &quot;10.244.0.0/16&quot;
-        type: &quot;snat&quot;
+        external ip: "172.18.0.3"
+        logical ip: "10.244.0.0/16"
+        type: "snat"
 </code></pre></div></p>
 <p>This works because the output port <code>rtoe_GR_ovn-worker</code> is configured on the route. OVN will simply lookup the MAC binding
 for 169.254.169.4, and then forward it out the rtoe_GR_ovn-worker interface, while SNAT'ing the source IP of the packet to
@@ -4174,12 +4174,12 @@ service traffic for this design. These flows handle masquerading between the hos
 take care of rewriting MAC addresses.</p>
 <h3 id="openflow-flows">OpenFlow Flows<a class="headerlink" href="#openflow-flows" title="Permanent link">&para;</a></h3>
 <p>With the new implementation comes new OpenFlow rules in the shared gateway bridge. The following flows are added and used:
-<div class="highlight"><pre><span></span><code> cookie=0xdeff105, duration=793.273s, table=0, n_packets=0, n_bytes=0, priority=500,ip,in_port=&quot;patch-breth0_ov&quot;,nw_src=172.18.0.3,nw_dst=169.254.169.2 actions=ct(commit,table=4,zone=64001,nat(dst=172.18.0.3))
+<div class="highlight"><pre><span></span><code> cookie=0xdeff105, duration=793.273s, table=0, n_packets=0, n_bytes=0, priority=500,ip,in_port="patch-breth0_ov",nw_src=172.18.0.3,nw_dst=169.254.169.2 actions=ct(commit,table=4,zone=64001,nat(dst=172.18.0.3))
  cookie=0xdeff105, duration=793.273s, table=0, n_packets=0, n_bytes=0, priority=500,ip,in_port=LOCAL,nw_dst=169.254.169.1 actions=ct(table=5,zone=64002,nat)
  cookie=0xdeff105, duration=793.273s, table=0, n_packets=0, n_bytes=0, priority=500,ip,in_port=LOCAL,nw_dst=10.96.0.0/16 actions=ct(commit,table=2,zone=64001,nat(src=169.254.169.2))
- cookie=0xdeff105, duration=793.273s, table=0, n_packets=0, n_bytes=0, priority=500,ip,in_port=&quot;patch-breth0_ov&quot;,nw_src=10.96.0.0/16,nw_dst=169.254.169.2 actions=ct(table=3,zone=64001,nat)
+ cookie=0xdeff105, duration=793.273s, table=0, n_packets=0, n_bytes=0, priority=500,ip,in_port="patch-breth0_ov",nw_src=10.96.0.0/16,nw_dst=169.254.169.2 actions=ct(table=3,zone=64001,nat)
 
- cookie=0xdeff105, duration=5.507s, table=2, n_packets=0, n_bytes=0, actions=set_field:02:42:ac:12:00:03-&gt;eth_dst,output:&quot;patch-breth0_ov&quot;
+ cookie=0xdeff105, duration=5.507s, table=2, n_packets=0, n_bytes=0, actions=set_field:02:42:ac:12:00:03-&gt;eth_dst,output:"patch-breth0_ov"
  cookie=0xdeff105, duration=5.507s, table=3, n_packets=0, n_bytes=0, actions=move:NXM_OF_ETH_DST[]-&gt;NXM_OF_ETH_SRC[],set_field:02:42:ac:12:00:03-&gt;eth_dst,LOCAL
  cookie=0xdeff105, duration=793.273s, table=4, n_packets=0, n_bytes=0, ip actions=ct(commit,table=3,zone=64002,nat(src=169.254.169.1))
  cookie=0xdeff105, duration=793.273s, table=5, n_packets=0, n_bytes=0, ip actions=ct(commit,table=2,zone=64001,nat)
@@ -4202,7 +4202,7 @@ CT Entry:
 <div class="highlight"><pre><span></span><code>cookie=0xdeff105, duration=1136.261s, table=0, n_packets=12, n_bytes=884, priority=500,ip,in_port=LOCAL,nw_dst=10.96.0.0/16 actions=ct(commit,table=2,zone=64001,nat(src=169.254.169.2))
 </code></pre></div></li>
 <li>In table 2, the destination MAC address is modified to be the MAC of the OVN GR. Note, although the source MAC is the host's, OVN does not care so this is left unmodified.
-<div class="highlight"><pre><span></span><code>cookie=0xdeff105, duration=1.486s, table=2, n_packets=12, n_bytes=884, actions=set_field:02:42:ac:12:00:03-&gt;eth_dst,output:&quot;patch-breth0_ov&quot;
+<div class="highlight"><pre><span></span><code>cookie=0xdeff105, duration=1.486s, table=2, n_packets=12, n_bytes=884, actions=set_field:02:42:ac:12:00:03-&gt;eth_dst,output:"patch-breth0_ov"
 </code></pre></div>
 CT Entry:
 <div class="highlight"><pre><span></span><code>tcp      6 114 TIME_WAIT src=172.18.0.3 dst=10.96.146.87 sport=47108 dport=80 src=10.96.146.87 dst=169.254.169.2 sport=80 dport=47108 [ASSURED] mark=0 secctx=system_u:object_r:unlabeled_t:s0 zone=64001 use=1
@@ -4220,7 +4220,7 @@ CT Entry:
 <p>The reply packet simply uses same reverse path and packets are unNAT'ed on their way back towards breth0 and eventually 
 the LOCAL host port. The OVN GR will think it is routing towards the next hop and set the dest MAC to be the MAC of
 169.254.169.4. In OpenFlow, the return packet will hit this first flow in the shared gateway bridge:
-<div class="highlight"><pre><span></span><code>cookie=0xdeff105, duration=1136.261s, table=0, n_packets=11, n_bytes=1670, priority=500,ip,in_port=&quot;patch-breth0_ov&quot;,nw_src=10.96.0.0/16,nw_dst=169.254.169.2 actions=ct(table=3,zone=64001,nat)
+<div class="highlight"><pre><span></span><code>cookie=0xdeff105, duration=1136.261s, table=0, n_packets=11, n_bytes=1670, priority=500,ip,in_port="patch-breth0_ov",nw_src=10.96.0.0/16,nw_dst=169.254.169.2 actions=ct(table=3,zone=64001,nat)
 </code></pre></div>
 This flow will unDNAT the packet, and send to table 3:
 <div class="highlight"><pre><span></span><code>cookie=0xdeff105, duration=1.486s, table=3, n_packets=11, n_bytes=1670, actions=move:NXM_OF_ETH_DST[]-&gt;NXM_OF_ETH_SRC[],set_field:02:42:ac:12:00:03-&gt;eth_dst,LOCAL
@@ -4244,7 +4244,7 @@ CT Entry:
 </code></pre></div></li>
 <li>As this packet comes back into breth0 it is treated like any other normal packet going from OVN to the external network.
 The packet is Conntracked in zone 64000, marked with 1, and sent out of the eth0 interface:
-<div class="highlight"><pre><span></span><code>cookie=0xdeff105, duration=15820.270s, table=0, n_packets=0, n_bytes=0, priority=100,ip,in_port=&quot;patch-breth0_ov&quot; actions=ct(commit,zone=64000,exec(load:0x1-&gt;NXM_NX_CT_MARK[])),output:eth0
+<div class="highlight"><pre><span></span><code>cookie=0xdeff105, duration=15820.270s, table=0, n_packets=0, n_bytes=0, priority=100,ip,in_port="patch-breth0_ov" actions=ct(commit,zone=64000,exec(load:0x1-&gt;NXM_NX_CT_MARK[])),output:eth0
 </code></pre></div>
 CT Entry:
 <div class="highlight"><pre><span></span><code>tcp      6 116 TIME_WAIT src=172.18.0.3 dst=172.18.0.4 sport=55978 dport=80 src=172.18.0.4 dst=172.18.0.3 sport=80 dport=55978 [ASSURED] mark=0 secctx=system_u:object_r:unlabeled_t:s0 zone=64000 use=1
@@ -4254,8 +4254,8 @@ CT Entry:
 <p>When the reply packet comes back into ovn-worker via the eth0 interface, the packet will be forwarded back into OVN GR 
 due to a CT match in zone 64000 with a marking of 1:
 <div class="highlight"><pre><span></span><code>cookie=0xdeff105, duration=15820.270s, table=0, n_packets=5442, n_bytes=4579489, priority=50,ip,in_port=eth0 actions=ct(table=1,zone=64000)
-cookie=0xdeff105, duration=15820.270s, table=1, n_packets=0, n_bytes=0, priority=100,ct_state=+est+trk,ct_mark=0x1,ip actions=output:&quot;patch-breth0_ov&quot;
-cookie=0xdeff105, duration=15820.270s, table=1, n_packets=0, n_bytes=0, priority=100,ct_state=+rel+trk,ct_mark=0x1,ip actions=output:&quot;patch-breth0_ov&quot;
+cookie=0xdeff105, duration=15820.270s, table=1, n_packets=0, n_bytes=0, priority=100,ct_state=+est+trk,ct_mark=0x1,ip actions=output:"patch-breth0_ov"
+cookie=0xdeff105, duration=15820.270s, table=1, n_packets=0, n_bytes=0, priority=100,ct_state=+rel+trk,ct_mark=0x1,ip actions=output:"patch-breth0_ov"
 </code></pre></div></p>
 <p>OVN GR will then handle unSNAT, unDNAT and send the packet back towards breth0 where
 the packet will be handled the same way as it was in the previous example.</p>
@@ -4285,8 +4285,8 @@ CT Entry:
 <div class="highlight"><pre><span></span><code>tcp      6 117 TIME_WAIT src=169.254.169.2 dst=169.254.169.2 sport=33316 dport=80 src=169.254.169.2 dst=172.18.0.3 sport=80 dport=33316 [ASSURED] mark=0 secctx=system_u:object_r:unlabeled_t:s0 use=1
 </code></pre></div></li>
 <li>The packet is received in br-eth0, where it hits one of two flows, depending on if the destination is the masquerade IP or a "secondary" IP:
-<div class="highlight"><pre><span></span><code>cookie=0xdeff105, duration=2877.527s, table=0, n_packets=11, n_bytes=810, priority=500,ip,in_port=&quot;patch-breth0_ov&quot;,nw_src=172.18.0.3,nw_dst=169.254.169.2 actions=ct(commit,table=4,zone=64001,nat(dst=172.18.0.3)) #primary case
-cookie=0xdeff105, duration=2877.527s, table=0, n_packets=11, n_bytes=810, priority=500,ip,in_port=&quot;patch-breth0_ov&quot;,nw_src=172.18.0.3,nw_dst=127.20.0.2 actions=ct(commit,table=4,zone=64001) # secondary case
+<div class="highlight"><pre><span></span><code>cookie=0xdeff105, duration=2877.527s, table=0, n_packets=11, n_bytes=810, priority=500,ip,in_port="patch-breth0_ov",nw_src=172.18.0.3,nw_dst=169.254.169.2 actions=ct(commit,table=4,zone=64001,nat(dst=172.18.0.3)) #primary case
+cookie=0xdeff105, duration=2877.527s, table=0, n_packets=11, n_bytes=810, priority=500,ip,in_port="patch-breth0_ov",nw_src=172.18.0.3,nw_dst=127.20.0.2 actions=ct(commit,table=4,zone=64001) # secondary case
 </code></pre></div>
 This flow detects the packet is destined for the masqueraded host IP, DNATs it if necessary back to the host, and sends to table 4.
 CT Entry:
@@ -4312,7 +4312,7 @@ This flow will unSNAT in zone 64002, and then send the packet to table 5. In tab
 <div class="highlight"><pre><span></span><code>cookie=0xdeff105, duration=2877.527s, table=5, n_packets=12, n_bytes=1736, ip actions=ct(commit,table=2,zone=64001,nat)
 </code></pre></div>
 Here the packet will be unDNAT'ed and sent towards table 2:
-<div class="highlight"><pre><span></span><code>cookie=0xdeff105, duration=5.520s, table=2, n_packets=47, n_bytes=4314, actions=set_field:02:42:ac:12:00:03-&gt;eth_dst,output:&quot;patch-breth0_ov&quot;
+<div class="highlight"><pre><span></span><code>cookie=0xdeff105, duration=5.520s, table=2, n_packets=47, n_bytes=4314, actions=set_field:02:42:ac:12:00:03-&gt;eth_dst,output:"patch-breth0_ov"
 </code></pre></div>
 Table 2 will modify the MAC accordingly and sent it back into OVN GR. OVN GR will then unSNAT, unDNAT and send the packet back to breth0 in the same fashion as the previous example.</p>
 

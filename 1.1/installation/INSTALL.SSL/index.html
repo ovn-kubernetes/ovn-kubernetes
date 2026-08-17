@@ -3779,28 +3779,28 @@ on the node where you intend to start your k8s central daemons by running:</p>
 <p>You should now restart the ovn-controller on each host with the following
 additional options.</p>
 <div class="highlight"><pre><span></span><code>/usr/share/openvswitch/scripts/ovn-ctl \
-    --ovn-controller-ssl-key=&quot;/etc/openvswitch/ovncontroller-privkey.pem&quot;  \
-    --ovn-controller-ssl-cert=&quot;/etc/openvswitch/ovncontroller-cert.pem&quot;    \
-    --ovn-controller-ssl-ca-cert=&quot;/etc/openvswitch/cacert.pem&quot; \
+    --ovn-controller-ssl-key="/etc/openvswitch/ovncontroller-privkey.pem"  \
+    --ovn-controller-ssl-cert="/etc/openvswitch/ovncontroller-cert.pem"    \
+    --ovn-controller-ssl-ca-cert="/etc/openvswitch/cacert.pem" \
     restart_controller
 </code></pre></div>
 <p>To make sure that ovn-controller restarts with the above options during system
 reboots, you should add the above options to your startup script's defaults
 file.  For e.g. on Ubuntu, if you installed ovn-controller via the package
 'ovn-host*.deb', write the following to your /etc/default/ovn-host file</p>
-<p><div class="highlight"><pre><span></span><code>OVN_CTL_OPTS=&quot;--ovn-controller-ssl-key=/etc/openvswitch/ovncontroller-privkey.pem  --ovn-controller-ssl-cert=/etc/openvswitch/ovncontroller-cert.pem --ovn-controller-ssl-ca-cert=/etc/openvswitch/cacert.pem&quot;
+<p><div class="highlight"><pre><span></span><code>OVN_CTL_OPTS="--ovn-controller-ssl-key=/etc/openvswitch/ovncontroller-privkey.pem  --ovn-controller-ssl-cert=/etc/openvswitch/ovncontroller-cert.pem --ovn-controller-ssl-ca-cert=/etc/openvswitch/cacert.pem"
 </code></pre></div>
 If you start the ovnkube utility on master with "--init-master"
 or with "--init-network-control-manager",
 you should pass the SSL certificates to it. For e.g:</p>
 <div class="highlight"><pre><span></span><code>sudo ovnkube -k8s-kubeconfig kubeconfig.yaml -loglevel=4 \
- -k8s-apiserver=&quot;http://$CENTRAL_IP:8080&quot; \
- -logfile=&quot;/var/log/ovn-kubernetes/ovnkube.log&quot; \
- -init-master=&quot;$NODE_NAME&quot; -cluster-subnets=$CLUSTER_IP_SUBNET \
+ -k8s-apiserver="http://$CENTRAL_IP:8080" \
+ -logfile="/var/log/ovn-kubernetes/ovnkube.log" \
+ -init-master="$NODE_NAME" -cluster-subnets=$CLUSTER_IP_SUBNET \
  -k8s-service-cidr=$SERVICE_IP_SUBNET \
  -nodeport \
- -nb-address=&quot;ssl:$CENTRAL_IP:6641&quot; \
- -sb-address=&quot;ssl:$CENTRAL_IP:6642&quot; \
+ -nb-address="ssl:$CENTRAL_IP:6641" \
+ -sb-address="ssl:$CENTRAL_IP:6642" \
  -nb-client-privkey /etc/openvswitch/ovncontroller-privkey.pem \
  -nb-client-cert /etc/openvswitch/ovncontroller-cert.pem \
  -nb-client-cacert /etc/openvswitch/cacert.pem \
@@ -3814,19 +3814,19 @@ you should pass the SSL certificates to it. For e.g:</p>
 there is no need to pass the SSL certificates to it as it doesn't
 connect to the OVN databases. For e.g:</p>
 <div class="highlight"><pre><span></span><code>sudo ovnkube -k8s-kubeconfig kubeconfig.yaml -loglevel=4 \
- -k8s-apiserver=&quot;http://$CENTRAL_IP:8080&quot; \
- -logfile=&quot;/var/log/ovn-kubernetes/ovnkube-cluster-manager.log&quot; \
- -init-cluster-manager=&quot;$NODE_NAME&quot; -cluster-subnets=$CLUSTER_IP_SUBNET \
+ -k8s-apiserver="http://$CENTRAL_IP:8080" \
+ -logfile="/var/log/ovn-kubernetes/ovnkube-cluster-manager.log" \
+ -init-cluster-manager="$NODE_NAME" -cluster-subnets=$CLUSTER_IP_SUBNET \
  -k8s-service-cidr=$SERVICE_IP_SUBNET
 </code></pre></div>
 <p>And when you start your ovnkube utility on nodes, you should pass the SSL
 certificates to it. For e.g:</p>
 <div class="highlight"><pre><span></span><code>sudo ovnkube -k8s-kubeconfig $HOME/kubeconfig.yaml -loglevel=4 \
-    -k8s-apiserver=&quot;http://$CENTRAL_IP:8080&quot; \
-    -init-node=&quot;$NODE_NAME&quot;  \
+    -k8s-apiserver="http://$CENTRAL_IP:8080" \
+    -init-node="$NODE_NAME"  \
     -nodeport \
-    -nb-address=&quot;ssl:$CENTRAL_IP:6641&quot; \
-    -sb-address=&quot;ssl:$CENTRAL_IP:6642&quot; -k8s-token=$TOKEN \
+    -nb-address="ssl:$CENTRAL_IP:6641" \
+    -sb-address="ssl:$CENTRAL_IP:6642" -k8s-token=$TOKEN \
     -nb-client-privkey /etc/openvswitch/ovncontroller-privkey.pem \
     -nb-client-cert /etc/openvswitch/ovncontroller-cert.pem \
     -nb-client-cacert /etc/openvswitch/cacert.pem \

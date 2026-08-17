@@ -4531,19 +4531,19 @@ The following NAD YAML describes localnet topology configuration and options:</p
 <span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tenantblue</span>
 <span class="w">  </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">blue</span>
 <span class="nt">spec</span><span class="p">:</span>
-<span class="w">    </span><span class="nt">config</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">&gt;</span><span class="err"> &#39;{</span>
-<span class="w">        </span><span class="no">&quot;cniVersion&quot;: &quot;0.3.1&quot;,</span>
-<span class="w">        </span><span class="no">&quot;type&quot;: &quot;ovn-k8s-cni-overlay&quot;</span>
-<span class="w">        </span><span class="no">&quot;netAttachDefName&quot;: &quot;blue/tenantblue&quot;,</span>
-<span class="w">        </span><span class="no">&quot;topology&quot;: &quot;localnet&quot;,</span>
-<span class="w">        </span><span class="no">&quot;name&quot;: &quot;tenantblue&quot;,#1</span>
-<span class="w">        </span><span class="no">&quot;physicalNetworkName&quot;: &quot;mylocalnet1&quot;, #2</span>
-<span class="w">        </span><span class="no">&quot;subnets&quot;: &quot;10.100.0.0/24&quot;, #3</span>
-<span class="w">        </span><span class="no">&quot;excludeSubnets&quot;: &quot;10.100.50.0/32&quot;, #4</span>
-<span class="w">        </span><span class="no">&quot;vlanID&quot;: &quot;200&quot;, #5</span>
-<span class="w">        </span><span class="no">&quot;mtu&quot;: &quot;1500&quot;, #6</span>
-<span class="w">        </span><span class="no">&quot;allowPersistentIPs&quot;: true #7</span>
-<span class="w">    </span><span class="err">}</span><span class="s">&#39;</span>
+<span class="w">    </span><span class="nt">config</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">&gt;</span><span class="err"> '{</span>
+<span class="w">        </span><span class="no">"cniVersion": "0.3.1",</span>
+<span class="w">        </span><span class="no">"type": "ovn-k8s-cni-overlay"</span>
+<span class="w">        </span><span class="no">"netAttachDefName": "blue/tenantblue",</span>
+<span class="w">        </span><span class="no">"topology": "localnet",</span>
+<span class="w">        </span><span class="no">"name": "tenantblue",#1</span>
+<span class="w">        </span><span class="no">"physicalNetworkName": "mylocalnet1", #2</span>
+<span class="w">        </span><span class="no">"subnets": "10.100.0.0/24", #3</span>
+<span class="w">        </span><span class="no">"excludeSubnets": "10.100.50.0/32", #4</span>
+<span class="w">        </span><span class="no">"vlanID": "200", #5</span>
+<span class="w">        </span><span class="no">"mtu": "1500", #6</span>
+<span class="w">        </span><span class="no">"allowPersistentIPs": true #7</span>
+<span class="w">    </span><span class="err">}</span><span class="s">'</span>
 </code></pre></div>
 1. <code>name</code>
    The underlying network name:
@@ -4742,14 +4742,14 @@ Example 1:
 <span class="w">    </span><span class="nt">matchExpressions</span><span class="p">:</span>
 <span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">kubernetes.io/metadata.name</span>
 <span class="w">      </span><span class="nt">operator</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">In</span>
-<span class="w">      </span><span class="nt">values</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;red&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;blue&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">      </span><span class="nt">values</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"red"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"blue"</span><span class="p p-Indicator">]</span>
 <span class="w">  </span><span class="nt">network</span><span class="p">:</span>
 <span class="w">    </span><span class="nt">topology</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Localnet</span>
 <span class="w">    </span><span class="nt">localnet</span><span class="p">:</span>
 <span class="w">      </span><span class="nt">role</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Secondary</span>
 <span class="w">      </span><span class="nt">physicalNetworkName</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tenantblue</span>
-<span class="w">      </span><span class="nt">subnets</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;192.168.100.0/24&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;2001:dbb::/64&quot;</span><span class="p p-Indicator">]</span>
-<span class="w">      </span><span class="nt">excludeSubnets</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;192.168.100.1/32&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;2001:dbb::0/128&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">      </span><span class="nt">subnets</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"192.168.100.0/24"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"2001:dbb::/64"</span><span class="p p-Indicator">]</span>
+<span class="w">      </span><span class="nt">excludeSubnets</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"192.168.100.1/32"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"2001:dbb::0/128"</span><span class="p p-Indicator">]</span>
 </code></pre></div>
 The above CR will make the controller create NAD in each selected namespace: "red" and "blue".
 NAD in namespace <code>blue</code>:
@@ -4761,7 +4761,7 @@ NAD in namespace <code>blue</code>:
 <span class="nt">finalizers</span><span class="p">:</span>
 <span class="w"> </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.ovn.org/user-defined-network-protection</span>
 <span class="nt">labels</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">k8s.ovn.org/user-defined-network</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;&quot;</span>
+<span class="w">  </span><span class="nt">k8s.ovn.org/user-defined-network</span><span class="p">:</span><span class="w"> </span><span class="s">""</span>
 <span class="nt">ownerReferences</span><span class="p">:</span>
 <span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.ovn.org/v1</span>
 <span class="w">  </span><span class="nt">blockOwnerDeletion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
@@ -4770,18 +4770,18 @@ NAD in namespace <code>blue</code>:
 <span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">test-net</span>
 <span class="w">  </span><span class="nt">uid</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">293098c2-0b7e-4216-a3c6-7f8362c7aa61</span>
 <span class="nt">spec</span><span class="p">:</span>
-<span class="w">    </span><span class="nt">config</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">&gt;</span><span class="err"> &#39;{</span>
-<span class="w">        </span><span class="no">&quot;cniVersion&quot;: &quot;1.0.0&quot;,</span>
-<span class="w">        </span><span class="no">&quot;type&quot;: &quot;ovn-k8s-cni-overlay&quot;</span>
-<span class="w">        </span><span class="no">&quot;netAttachDefName&quot;: &quot;blue/test-net&quot;,</span>
-<span class="w">        </span><span class="no">&quot;role&quot;: &quot;secondary&quot;,</span>
-<span class="w">        </span><span class="no">&quot;topology&quot;: &quot;localnet&quot;,</span>
-<span class="w">        </span><span class="no">&quot;name&quot;: &quot;cluster.udn.test-net&quot;,</span>
-<span class="w">        </span><span class="no">&quot;physicalNetworkName: &quot;tenantblue&quot;,</span>
-<span class="w">        </span><span class="no">&quot;mtu&quot;: 1500,</span>
-<span class="w">        </span><span class="no">&quot;subnets&quot;: &quot;192.168.100.0/24,2001:dbb::/64&quot;,</span>
-<span class="w">        </span><span class="no">&quot;excludeSubnets&quot;: &quot;192.168.100.1/32,2001:dbb::0/128&quot;</span>
-<span class="w">    </span><span class="err">}</span><span class="s">&#39;</span>
+<span class="w">    </span><span class="nt">config</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">&gt;</span><span class="err"> '{</span>
+<span class="w">        </span><span class="no">"cniVersion": "1.0.0",</span>
+<span class="w">        </span><span class="no">"type": "ovn-k8s-cni-overlay"</span>
+<span class="w">        </span><span class="no">"netAttachDefName": "blue/test-net",</span>
+<span class="w">        </span><span class="no">"role": "secondary",</span>
+<span class="w">        </span><span class="no">"topology": "localnet",</span>
+<span class="w">        </span><span class="no">"name": "cluster.udn.test-net",</span>
+<span class="w">        </span><span class="no">"physicalNetworkName: "tenantblue",</span>
+<span class="w">        </span><span class="no">"mtu": 1500,</span>
+<span class="w">        </span><span class="no">"subnets": "192.168.100.0/24,2001:dbb::/64",</span>
+<span class="w">        </span><span class="no">"excludeSubnets": "192.168.100.1/32,2001:dbb::0/128"</span>
+<span class="w">    </span><span class="err">}</span><span class="s">'</span>
 </code></pre></div></p>
 <p>Example 2 (custom MTU, VLAN and sticky IPs):
 <div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.ovn.org/v1</span>
@@ -4793,14 +4793,14 @@ NAD in namespace <code>blue</code>:
 <span class="w">    </span><span class="nt">matchExpressions</span><span class="p">:</span>
 <span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">kubernetes.io/metadata.name</span>
 <span class="w">      </span><span class="nt">operator</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">In</span>
-<span class="w">      </span><span class="nt">values</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;red&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;blue&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">      </span><span class="nt">values</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"red"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"blue"</span><span class="p p-Indicator">]</span>
 <span class="w">  </span><span class="nt">network</span><span class="p">:</span>
 <span class="w">    </span><span class="nt">topology</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Localnet</span>
 <span class="w">    </span><span class="nt">localnet</span><span class="p">:</span>
 <span class="w">      </span><span class="nt">role</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Secondary</span>
 <span class="w">      </span><span class="nt">physicalNetworkName</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tenantblue</span>
-<span class="w">      </span><span class="nt">subnets</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;192.168.0.0/16&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;2001:dbb::/64&quot;</span><span class="p p-Indicator">]</span>
-<span class="w">      </span><span class="nt">excludeSubnets</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;192.168.50.0/24&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">      </span><span class="nt">subnets</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"192.168.0.0/16"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"2001:dbb::/64"</span><span class="p p-Indicator">]</span>
+<span class="w">      </span><span class="nt">excludeSubnets</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"192.168.50.0/24"</span><span class="p p-Indicator">]</span>
 <span class="w">      </span><span class="nt">mtu</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">9000</span>
 <span class="w">      </span><span class="nt">vlan</span><span class="p">:</span>
 <span class="w">        </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Access</span>
@@ -4819,7 +4819,7 @@ NAD in namespace <code>red</code>:
 <span class="nt">finalizers</span><span class="p">:</span>
 <span class="w"> </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.ovn.org/user-defined-network-protection</span>
 <span class="nt">labels</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">k8s.ovn.org/user-defined-network</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;&quot;</span>
+<span class="w">  </span><span class="nt">k8s.ovn.org/user-defined-network</span><span class="p">:</span><span class="w"> </span><span class="s">""</span>
 <span class="nt">ownerReferences</span><span class="p">:</span>
 <span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.ovn.org/v1</span>
 <span class="w">  </span><span class="nt">blockOwnerDeletion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
@@ -4827,54 +4827,54 @@ NAD in namespace <code>red</code>:
 <span class="w">  </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ClusterUserDefinedNetwork</span>
 <span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">test-net</span>
 <span class="nt">spec</span><span class="p">:</span>
-<span class="w">    </span><span class="nt">config</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">&gt;</span><span class="err"> &#39;{</span>
-<span class="w">        </span><span class="no">&quot;cniVersion&quot;: &quot;1.0.0&quot;,</span>
-<span class="w">        </span><span class="no">&quot;type&quot;: &quot;ovn-k8s-cni-overlay&quot;</span>
-<span class="w">        </span><span class="no">&quot;netAttachDefName&quot;: &quot;blue/test-net&quot;,</span>
-<span class="w">        </span><span class="no">&quot;role&quot;: &quot;secondary&quot;,</span>
-<span class="w">        </span><span class="no">&quot;topology&quot;: &quot;localnet&quot;,</span>
-<span class="w">        </span><span class="no">&quot;name&quot;: &quot;cluster.udn.test-net&quot;,</span>
-<span class="w">        </span><span class="no">&quot;physicalNetworkName: &quot;tenantblue&quot;,</span>
-<span class="w">        </span><span class="no">&quot;subnets&quot;: &quot;192.168.0.0/16,2001:dbb::/64&quot;,</span>
-<span class="w">        </span><span class="no">&quot;allowPersistentIPs&quot;: true,</span>
-<span class="w">        </span><span class="no">&quot;excludesubnets: &quot;10.100.50.0/24&quot;,</span>
-<span class="w">        </span><span class="no">&quot;mtu&quot;: 9000,</span>
-<span class="w">        </span><span class="no">&quot;vlanID&quot;: 200</span>
-<span class="w">    </span><span class="err">}</span><span class="s">&#39;</span>
+<span class="w">    </span><span class="nt">config</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">&gt;</span><span class="err"> '{</span>
+<span class="w">        </span><span class="no">"cniVersion": "1.0.0",</span>
+<span class="w">        </span><span class="no">"type": "ovn-k8s-cni-overlay"</span>
+<span class="w">        </span><span class="no">"netAttachDefName": "blue/test-net",</span>
+<span class="w">        </span><span class="no">"role": "secondary",</span>
+<span class="w">        </span><span class="no">"topology": "localnet",</span>
+<span class="w">        </span><span class="no">"name": "cluster.udn.test-net",</span>
+<span class="w">        </span><span class="no">"physicalNetworkName: "tenantblue",</span>
+<span class="w">        </span><span class="no">"subnets": "192.168.0.0/16,2001:dbb::/64",</span>
+<span class="w">        </span><span class="no">"allowPersistentIPs": true,</span>
+<span class="w">        </span><span class="no">"excludesubnets: "10.100.50.0/24",</span>
+<span class="w">        </span><span class="no">"mtu": 9000,</span>
+<span class="w">        </span><span class="no">"vlanID": 200</span>
+<span class="w">    </span><span class="err">}</span><span class="s">'</span>
 </code></pre></div></p>
 <h3 id="implementation-details">Implementation Details<a class="headerlink" href="#implementation-details" title="Permanent link">&para;</a></h3>
 <p>The CUDN <code>spec.network.topology</code> field should be extended to accept <code>Localnet</code> string.
 And the <code>spec.network</code> struct <code>NetworkSpec</code> should have an additional field for localnet topology configuration:
-<div class="highlight"><pre><span></span><code><span class="kd">const</span><span class="w"> </span><span class="nx">NetworkTopologyLocalnet</span><span class="w"> </span><span class="nx">NetworkTopology</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">&quot;Localnet&quot;</span>
+<div class="highlight"><pre><span></span><code><span class="kd">const</span><span class="w"> </span><span class="nx">NetworkTopologyLocalnet</span><span class="w"> </span><span class="nx">NetworkTopology</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"Localnet"</span>
 
-<span class="o">...</span>
+<span class="p">...</span>
 
 <span class="c1">// NetworkSpec defines the desired state of UserDefinedNetworkSpec.</span>
 <span class="c1">// +union</span>
 <span class="kd">type</span><span class="w"> </span><span class="nx">NetworkSpec</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="c1">// Topology describes network configuration.</span>
 <span class="w">    </span><span class="c1">//</span>
-<span class="w">    </span><span class="c1">// Allowed values are &quot;Layer3&quot;, &quot;Layer2&quot; and &quot;Localnet&quot;.</span>
+<span class="w">    </span><span class="c1">// Allowed values are "Layer3", "Layer2" and "Localnet".</span>
 <span class="w">    </span><span class="c1">// Layer3 topology creates a layer 2 segment per node, each with a different subnet. Layer 3 routing is used to interconnect node subnets.</span>
 <span class="w">    </span><span class="c1">// Layer2 topology creates one logical switch shared by all nodes.</span>
-<span class="w">    </span><span class="c1">// Localnet topology attach to the nodes physical network. Enables egress to the provider&#39;s physical network. </span>
+<span class="w">    </span><span class="c1">// Localnet topology attach to the nodes physical network. Enables egress to the provider's physical network. </span>
 <span class="w">    </span><span class="c1">//</span>
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:Required</span>
 <span class="w">    </span><span class="c1">// +required</span>
 <span class="w">    </span><span class="c1">// +unionDiscriminator</span>
-<span class="w">    </span><span class="nx">Topology</span><span class="w"> </span><span class="nx">NetworkTopology</span><span class="w"> </span><span class="s">`json:&quot;topology&quot;`</span>
-<span class="w">    </span><span class="o">...</span>
+<span class="w">    </span><span class="nx">Topology</span><span class="w"> </span><span class="nx">NetworkTopology</span><span class="w"> </span><span class="s">`json:"topology"`</span>
+<span class="w">    </span><span class="p">...</span>
 <span class="w">    </span><span class="c1">// Localnet is the Localnet topology configuration.</span>
 <span class="w">    </span><span class="c1">// +optional</span>
-<span class="w">    </span><span class="nx">Localnet</span><span class="w"> </span><span class="o">*</span><span class="nx">LocalnetConfig</span><span class="w"> </span><span class="s">`json:&quot;localnet,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">Localnet</span><span class="w"> </span><span class="o">*</span><span class="nx">LocalnetConfig</span><span class="w"> </span><span class="s">`json:"localnet,omitempty"`</span>
 <span class="p">}</span>
 </code></pre></div></p>
 <p>The CUDN spec should have additional validation rule for <code>spec.network.topology</code> field:
 <div class="highlight"><pre><span></span><code><span class="c1">// ClusterUserDefinedNetworkSpec defines the desired state of ClusterUserDefinedNetwork.</span>
 <span class="kd">type</span><span class="w"> </span><span class="nx">ClusterUserDefinedNetworkSpec</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="o">...</span>
+<span class="w">    </span><span class="p">...</span>
 <span class="w">    </span><span class="c1">// +required</span>
-<span class="w">    </span><span class="nx">Network</span><span class="w"> </span><span class="nx">NetworkSpec</span><span class="w"> </span><span class="s">`json:&quot;network&quot;`</span>
+<span class="w">    </span><span class="nx">Network</span><span class="w"> </span><span class="nx">NetworkSpec</span><span class="w"> </span><span class="s">`json:"network"`</span>
 <span class="p">}</span>
 </code></pre></div></p>
 <h4 id="localnet-topology-configuration-type">Localnet topology configuration type<a class="headerlink" href="#localnet-topology-configuration-type" title="Permanent link">&para;</a></h4>
@@ -4922,32 +4922,32 @@ follows the same convention, that is having complex filed for VLAN configuration
 <span class="c1">// AccessVLANConfig describes an access VLAN configuration.</span>
 <span class="kd">type</span><span class="w"> </span><span class="nx">AccessVLANConfig</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="c1">// id is the VLAN ID (VID) to be set on the network logical switch port.</span>
-<span class="w">    </span><span class="nx">ID</span><span class="w"> </span><span class="nx">VLANID</span><span class="w"> </span><span class="s">`json:&quot;id&quot;`</span>
+<span class="w">    </span><span class="nx">ID</span><span class="w"> </span><span class="nx">VLANID</span><span class="w"> </span><span class="s">`json:"id"`</span>
 <span class="p">}</span>
 <span class="c1">// VLANConfig describes the network VLAN configuration.</span>
 <span class="c1">// +union</span>
 <span class="kd">type</span><span class="w"> </span><span class="nx">VLANConfig</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="c1">// mode describe the network VLAN mode.</span>
-<span class="w">    </span><span class="c1">// Allowed value is &quot;Access&quot;.</span>
+<span class="w">    </span><span class="c1">// Allowed value is "Access".</span>
 <span class="w">    </span><span class="c1">// Access sets the network logical switch port in access mode, according to the config.</span>
 <span class="w">    </span><span class="c1">// +required</span>
 <span class="w">    </span><span class="c1">// +unionDiscriminator</span>
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:Enum=Access</span>
-<span class="w">    </span><span class="nx">Mode</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;mode&quot;`</span><span class="w">  </span>
+<span class="w">    </span><span class="nx">Mode</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:"mode"`</span><span class="w">  </span>
 
 <span class="w">    </span><span class="c1">// Access is the access VLAN configuration </span>
 <span class="w">    </span><span class="c1">// +optional</span>
-<span class="w">    </span><span class="nx">Access</span><span class="w"> </span><span class="o">*</span><span class="nx">AccessVlanConfig</span><span class="w"> </span><span class="s">`json:&quot;access&quot;`</span>
+<span class="w">    </span><span class="nx">Access</span><span class="w"> </span><span class="o">*</span><span class="nx">AccessVlanConfig</span><span class="w"> </span><span class="s">`json:"access"`</span>
 <span class="p">}</span>
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><span class="c1">// +kubebuilder:validation:XValidation:rule=&quot;!has(self.ipam) || !has(self.ipam.mode) || self.ipam.mode == &#39;Enabled&#39; ? has(self.subnets) : !has(self.subnets)&quot;, message=&quot;Subnets is required with ipam.mode is Enabled or unset, and forbidden otherwise&quot;</span>
-<span class="c1">// +kubebuilder:validation:XValidation:rule=&quot;!has(self.excludeSubnets) || has(self.excludeSubnets) &amp;&amp; has(self.subnets)&quot;, message=&quot;excludeSubnets must be unset when subnets is unset&quot;</span>
-<span class="c1">// +kubebuilder:validation:XValidation:rule=&quot;!has(self.subnets) || !has(self.mtu) || !self.subnets.exists_one(i, isCIDR(i) &amp;&amp; cidr(i).ip().family() == 6) || self.mtu &gt;= 1280&quot;, message=&quot;MTU should be greater than or equal to 1280 when IPv6 subent is used&quot;</span>
-<span class="c1">// +kubebuilder:validation:XValidation:rule=&quot;has(self.vlan) &amp;&amp; has(self.vlan.mode) &amp;&amp; self.vlan.mode == &#39;Access&#39; ? has(self.vlan.access): !has(self.vlan.access)&quot;, message=&quot;vlan.access is required when vlan.mode is &#39;Access&#39;, and forbidden otherwise&quot;</span>
+<div class="highlight"><pre><span></span><code><span class="c1">// +kubebuilder:validation:XValidation:rule="!has(self.ipam) || !has(self.ipam.mode) || self.ipam.mode == 'Enabled' ? has(self.subnets) : !has(self.subnets)", message="Subnets is required with ipam.mode is Enabled or unset, and forbidden otherwise"</span>
+<span class="c1">// +kubebuilder:validation:XValidation:rule="!has(self.excludeSubnets) || has(self.excludeSubnets) &amp;&amp; has(self.subnets)", message="excludeSubnets must be unset when subnets is unset"</span>
+<span class="c1">// +kubebuilder:validation:XValidation:rule="!has(self.subnets) || !has(self.mtu) || !self.subnets.exists_one(i, isCIDR(i) &amp;&amp; cidr(i).ip().family() == 6) || self.mtu &gt;= 1280", message="MTU should be greater than or equal to 1280 when IPv6 subent is used"</span>
+<span class="c1">// +kubebuilder:validation:XValidation:rule="has(self.vlan) &amp;&amp; has(self.vlan.mode) &amp;&amp; self.vlan.mode == 'Access' ? has(self.vlan.access): !has(self.vlan.access)", message="vlan.access is required when vlan.mode is 'Access', and forbidden otherwise"</span>
 <span class="c1">// + ---</span>
 <span class="c1">// + TODO: enable the below validation once the following issue is resolved https://github.com/kubernetes/kubernetes/issues/130441</span>
-<span class="c1">// + kubebuilder:validation:XValidation:rule=&quot;!has(self.excludeSubnets) || self.subnets.map(s, self.excludeSubnets.map(e, cidr(s).containCIDR(e)))&quot;, message=&quot;excludeSubnets should be in range of CIDRs specified in subnets&quot;</span>
-<span class="c1">// + kubebuilder:validation:XValidation:rule=&quot;!has(self.excludeSubnets) || self.excludeSubnets.all(e, self.subnets.exists(s, cidr(s).containsCIDR(cidr(e))))&quot;,message=&quot;excludeSubnets must be subnetworks of the networks specified in the subnets field&quot;,fieldPath=&quot;.excludeSubnets&quot;</span>
+<span class="c1">// + kubebuilder:validation:XValidation:rule="!has(self.excludeSubnets) || self.subnets.map(s, self.excludeSubnets.map(e, cidr(s).containCIDR(e)))", message="excludeSubnets should be in range of CIDRs specified in subnets"</span>
+<span class="c1">// + kubebuilder:validation:XValidation:rule="!has(self.excludeSubnets) || self.excludeSubnets.all(e, self.subnets.exists(s, cidr(s).containsCIDR(cidr(e))))",message="excludeSubnets must be subnetworks of the networks specified in the subnets field",fieldPath=".excludeSubnets"</span>
 <span class="kd">type</span><span class="w"> </span><span class="nx">LocalnetConfig</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="c1">// role describes the network role in the pod, required.</span>
 <span class="w">    </span><span class="c1">// Whether the pod interface will act as primary or secondary.</span>
@@ -4955,43 +4955,43 @@ follows the same convention, that is having complex filed for VLAN configuration
 <span class="w">    </span><span class="c1">// Secondary network is only assigned to pods that use `k8s.v1.cni.cncf.io/networks` annotation to select given network.</span>
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:Enum=Secondary</span>
 <span class="w">    </span><span class="c1">// +required</span>
-<span class="w">    </span><span class="nx">Role</span><span class="w"> </span><span class="nx">NetworkRole</span><span class="w"> </span><span class="s">`json:&quot;role&quot;`</span>
+<span class="w">    </span><span class="nx">Role</span><span class="w"> </span><span class="nx">NetworkRole</span><span class="w"> </span><span class="s">`json:"role"`</span>
 
-<span class="w">    </span><span class="c1">// physicalNetworkName points to the OVS bridge-mapping&#39;s network-name configured in the nodes, required.</span>
+<span class="w">    </span><span class="c1">// physicalNetworkName points to the OVS bridge-mapping's network-name configured in the nodes, required.</span>
 <span class="w">    </span><span class="c1">// In case OVS bridge-mapping is defined by Kubernetes-nmstate with `NodeNetworkConfigurationPolicy` (NNCP),</span>
 <span class="w">    </span><span class="c1">// this field should point to the value of the NNCP spec.desiredState.ovn.bridge-mappings.</span>
 <span class="w">    </span><span class="c1">// Min length is 1, max length is 253, cannot contain `,` or `:` characters.</span>
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:MinLength=1</span>
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:MaxLength=253</span>
-<span class="w">    </span><span class="c1">// +kubebuilder:validation:XValidation:rule=&quot;self.matches(&#39;^[^,:]+$&#39;)&quot;, message=&quot;physicalNetworkName cannot contain `,` or `:` characters&quot;</span>
+<span class="w">    </span><span class="c1">// +kubebuilder:validation:XValidation:rule="self.matches('^[^,:]+$')", message="physicalNetworkName cannot contain `,` or `:` characters"</span>
 <span class="w">    </span><span class="c1">// +required</span>
-<span class="w">    </span><span class="nx">PhysicalNetworkName</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;physicalNetworkName&quot;`</span>
+<span class="w">    </span><span class="nx">PhysicalNetworkName</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:"physicalNetworkName"`</span>
 
 <span class="w">    </span><span class="c1">// subnets are used for the pod network across the cluster.</span>
 <span class="w">    </span><span class="c1">// When set, OVN-Kubernetes assign IP address of the specified CIDRs to the connected pod,</span>
 <span class="w">    </span><span class="c1">// saving manual IP assigning or relaying on external IPAM service (DHCP server).</span>
-<span class="w">    </span><span class="c1">// subnets is optional, when omitted OVN-Kubernetes won&#39;t assign IP address automatically.</span>
+<span class="w">    </span><span class="c1">// subnets is optional, when omitted OVN-Kubernetes won't assign IP address automatically.</span>
 <span class="w">    </span><span class="c1">// Dual-stack clusters may set 2 subnets (one for each IP family), otherwise only 1 subnet is allowed.</span>
-<span class="w">    </span><span class="c1">// The format should match standard CIDR notation (for example, &quot;10.128.0.0/16&quot;).</span>
+<span class="w">    </span><span class="c1">// The format should match standard CIDR notation (for example, "10.128.0.0/16").</span>
 <span class="w">    </span><span class="c1">// This field must be omitted if `ipam.mode` is `Disabled`.</span>
 <span class="w">    </span><span class="c1">// In a scenario `physicalNetworkName` points to OVS bridge mapping of a network who provide IPAM services (e.g.: DHCP server),</span>
 <span class="w">    </span><span class="c1">// `ipam.mode` should set with `Disabled, turning off OVN-Kubernetes IPAM and avoid  conflicts with the existing IPAM services on the subject network.</span>
 <span class="w">    </span><span class="c1">// +optional</span>
-<span class="w">    </span><span class="nx">Subnets</span><span class="w"> </span><span class="nx">DualStackCIDRs</span><span class="w"> </span><span class="s">`json:&quot;subnets,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">Subnets</span><span class="w"> </span><span class="nx">DualStackCIDRs</span><span class="w"> </span><span class="s">`json:"subnets,omitempty"`</span>
 
 <span class="w">    </span><span class="c1">// excludeSubnets list of CIDRs removed from the specified CIDRs in `subnets`.</span>
 <span class="w">    </span><span class="c1">// excludeSubnets is optional. When omitted no IP address is excluded and all IP address specified by `subnets` subject to be assigned.</span>
 <span class="w">    </span><span class="c1">// Each item should be in range of the specified CIDR(s) in `subnets`.</span>
 <span class="w">    </span><span class="c1">// The maximal exceptions allowed is 25.</span>
-<span class="w">    </span><span class="c1">// The format should match standard CIDR notation (for example, &quot;10.128.0.0/16&quot;).</span>
+<span class="w">    </span><span class="c1">// The format should match standard CIDR notation (for example, "10.128.0.0/16").</span>
 <span class="w">    </span><span class="c1">// This field must be omitted if `subnets` is unset or `ipam.mode` is `Disabled`.</span>
 <span class="w">    </span><span class="c1">// In a scenario `physicalNetworkName` points to OVS bridge mapping of a network who has reserved IP addresses</span>
-<span class="w">    </span><span class="c1">// that shouldn&#39;t be assigned by OVN-Kubernetes, the specified CIDRs will not be assigned. For example:</span>
-<span class="w">    </span><span class="c1">// Given: `subnets: &quot;10.0.0.0/24&quot;`, `excludeSubnets: &quot;10.0.0.200/30&quot;, the following addresses will not be assigned to pods: `10.0.0.201`, `10.0.0.202`.</span>
+<span class="w">    </span><span class="c1">// that shouldn't be assigned by OVN-Kubernetes, the specified CIDRs will not be assigned. For example:</span>
+<span class="w">    </span><span class="c1">// Given: `subnets: "10.0.0.0/24"`, `excludeSubnets: "10.0.0.200/30", the following addresses will not be assigned to pods: `10.0.0.201`, `10.0.0.202`.</span>
 <span class="w">    </span><span class="c1">// +optional</span>
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:MinItems=1</span>
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:MaxItems=25</span>
-<span class="w">    </span><span class="nx">ExcludeSubnets</span><span class="w"> </span><span class="p">[]</span><span class="nx">CIDR</span><span class="w"> </span><span class="s">`json:&quot;excludeSubnets,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">ExcludeSubnets</span><span class="w"> </span><span class="p">[]</span><span class="nx">CIDR</span><span class="w"> </span><span class="s">`json:"excludeSubnets,omitempty"`</span>
 
 <span class="w">    </span><span class="c1">// ipam configurations for the network (optional).</span>
 <span class="w">    </span><span class="c1">// IPAM is optional, when omitted, `subnets` should be specified.</span>
@@ -5000,10 +5000,10 @@ follows the same convention, that is having complex filed for VLAN configuration
 <span class="w">    </span><span class="c1">//    When `Enabled`, OVN-Kubernetes will apply IP configuration to the SDN infra and assign IPs from the selected subnet to the pods.</span>
 <span class="w">    </span><span class="c1">//    When `Disabled`, OVN-Kubernetes only assign MAC addresses and provides layer2 communication, enable users configure IP addresses to the pods.</span>
 <span class="w">    </span><span class="c1">// `ipam.lifecycle` controls IP addresses management lifecycle.</span>
-<span class="w">    </span><span class="c1">//    When set with &#39;Persistent&#39;, the assigned IP addresses will be persisted in `ipamclaims.k8s.cni.cncf.io` object.</span>
+<span class="w">    </span><span class="c1">//    When set with 'Persistent', the assigned IP addresses will be persisted in `ipamclaims.k8s.cni.cncf.io` object.</span>
 <span class="w">    </span><span class="c1">//    Useful for VMs, IP address will be persistent after restarts and migrations. Supported when `ipam.mode` is `Enabled`.</span>
 <span class="w">    </span><span class="c1">// +optional</span>
-<span class="w">    </span><span class="nx">IPAM</span><span class="w"> </span><span class="o">*</span><span class="nx">IPAMConfig</span><span class="w"> </span><span class="s">`json:&quot;ipam,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">IPAM</span><span class="w"> </span><span class="o">*</span><span class="nx">IPAMConfig</span><span class="w"> </span><span class="s">`json:"ipam,omitempty"`</span>
 
 <span class="w">    </span><span class="c1">// mtu is the maximum transmission unit for a network.</span>
 <span class="w">    </span><span class="c1">// MTU is optional, if not provided, the default MTU (1500) is used for the network.</span>
@@ -5014,17 +5014,17 @@ follows the same convention, that is having complex filed for VLAN configuration
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:Minimum=576</span>
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:Maximum=65536</span>
 <span class="w">    </span><span class="c1">// +optional</span>
-<span class="w">    </span><span class="nx">MTU</span><span class="w"> </span><span class="kt">int32</span><span class="w"> </span><span class="s">`json:&quot;mtu,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">MTU</span><span class="w"> </span><span class="kt">int32</span><span class="w"> </span><span class="s">`json:"mtu,omitempty"`</span>
 
 <span class="w">    </span><span class="c1">// vlan configuration for the network.</span>
 <span class="w">    </span><span class="c1">// vlan.mode is the VLAN mode.</span>
-<span class="w">    </span><span class="c1">//   When &quot;Access&quot; is set, OVN-Kuberentes configures the network logical switch port in access mode.</span>
+<span class="w">    </span><span class="c1">//   When "Access" is set, OVN-Kuberentes configures the network logical switch port in access mode.</span>
 <span class="w">    </span><span class="c1">// vlan.access is the access VLAN configuration. </span>
 <span class="w">    </span><span class="c1">// vlan.access.id is the VLAN ID (VID) to be set on the network logical switch port.</span>
 <span class="w">    </span><span class="c1">// vlan is optional, when omitted the underlying network default VLAN will be used (usually `1`).</span>
 <span class="w">    </span><span class="c1">// When set, OVN-Kubernetes will apply VLAN configuration to the SDN infra and to the connected pods.</span>
 <span class="w">    </span><span class="c1">// +optional</span>
-<span class="w">    </span><span class="nx">VLAN</span><span class="w"> </span><span class="nx">VLANConfig</span><span class="w"> </span><span class="s">`json:&quot;vlan,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">VLAN</span><span class="w"> </span><span class="nx">VLANConfig</span><span class="w"> </span><span class="s">`json:"vlan,omitempty"`</span>
 <span class="p">}</span>
 </code></pre></div>
 <h4 id="implementation-phases">Implementation phases<a class="headerlink" href="#implementation-phases" title="Permanent link">&para;</a></h4>

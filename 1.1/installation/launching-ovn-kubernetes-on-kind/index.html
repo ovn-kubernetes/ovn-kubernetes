@@ -4272,24 +4272,24 @@ usage: kind.sh [[[-cf |--config-file &lt;file&gt;] [-kt|keep-taint] [-ha|--ha-en
 -ifa | --ipfix-cache-active-timeout Maximum period in seconds for which an IPFIX flow record is cached and aggregated before being sent. If 0, caching is disabled. DEFAULT: 60.
 -el  | --ovn-empty-lb-events        Enable empty-lb-events generation for LB without backends. DEFAULT: Disabled
 -ii  | --install-ingress            Flag to install Ingress Components.
-                                    DEFAULT: Don&#39;t install ingress components.
+                                    DEFAULT: Don't install ingress components.
 -n4  | --no-ipv4                    Disable IPv4. DEFAULT: IPv4 Enabled.
 -i6  | --ipv6                       Enable IPv6. DEFAULT: IPv6 Disabled.
 -wk  | --num-workers                Number of worker nodes. DEFAULT: HA - 2 worker
                                     nodes and no HA - 0 worker nodes.
 -sw  | --allow-system-writes        Allow script to update system. Intended to allow
                                     github CI to be updated with IPv6 settings.
-                                    DEFAULT: Don&#39;t allow.
--gm  | --gateway-mode               Enable &#39;shared&#39; or &#39;local&#39; gateway mode.
+                                    DEFAULT: Don't allow.
+-gm  | --gateway-mode               Enable 'shared' or 'local' gateway mode.
                                     DEFAULT: shared.
 -ov  | --ovn-image                  Use the specified docker image instead of building locally. DEFAULT: local build.
 -ml  | --master-loglevel            Log level for ovnkube (master), DEFAULT: 5.
 -nl  | --node-loglevel              Log level for ovnkube (node), DEFAULT: 5
 -dbl | --dbchecker-loglevel         Log level for ovn-dbchecker (ovnkube-db), DEFAULT: 5.
--ndl | --ovn-loglevel-northd        Log config for ovn northd, DEFAULT: &#39;-vconsole:info -vfile:info&#39;.
--nbl | --ovn-loglevel-nb            Log config for northbound DB DEFAULT: &#39;-vconsole:info -vfile:info&#39;.
--sbl | --ovn-loglevel-sb            Log config for southboudn DB DEFAULT: &#39;-vconsole:info -vfile:info&#39;.
--cl  | --ovn-loglevel-controller    Log config for ovn-controller DEFAULT: &#39;-vconsole:info&#39;.
+-ndl | --ovn-loglevel-northd        Log config for ovn northd, DEFAULT: '-vconsole:info -vfile:info'.
+-nbl | --ovn-loglevel-nb            Log config for northbound DB DEFAULT: '-vconsole:info -vfile:info'.
+-sbl | --ovn-loglevel-sb            Log config for southboudn DB DEFAULT: '-vconsole:info -vfile:info'.
+-cl  | --ovn-loglevel-controller    Log config for ovn-controller DEFAULT: '-vconsole:info'.
 -ep  | --experimental-provider      Use an experimental OCI provider such as podman, instead of docker. DEFAULT: Disabled.
 -eb  | --egress-gw-separate-bridge  The external gateway traffic uses a separate bridge.
 -nqe | --network-qos-enable         Enable network QoS. DEFAULT: Disabled.
@@ -4334,7 +4334,7 @@ sudo<span class="w"> </span>setenforce<span class="w"> </span><span class="m">1<
 use IPv6, IPv6 needs to be enable in Docker on the host:</p>
 <div class="highlight"><pre><span></span><code>$ sudo vi /etc/docker/daemon.json
 {
-  &quot;ipv6&quot;: true
+  "ipv6": true
 }
 
 $ sudo systemctl reload docker
@@ -4344,8 +4344,8 @@ After the host was rebooted, Docker failed to start. To fix, change
 <code>daemon.json</code> as follows:</p>
 <div class="highlight"><pre><span></span><code>$ sudo vi /etc/docker/daemon.json
 {
-  &quot;ipv6&quot;: true,
-  &quot;fixed-cidr-v6&quot;: &quot;2001:db8:1::/64&quot;
+  "ipv6": true,
+  "fixed-cidr-v6": "2001:db8:1::/64"
 }
 
 $ sudo systemctl reload docker
@@ -4383,14 +4383,14 @@ needs to be disabled. To disable:</p>
 <p>If firewalld is enabled during a IPv6 deployment, additional nodes fail to join
 the cluster:</p>
 <div class="highlight"><pre><span></span><code>:
-Creating cluster &quot;ovn&quot; ...
+Creating cluster "ovn" ...
  ✓ Ensuring node image (kindest/node:v1.18.2) 🖼
  ✓ Preparing nodes 📦 📦 📦
  ✓ Writing configuration 📜
  ✓ Starting control-plane 🕹️
  ✓ Installing StorageClass 💾
  ✗ Joining worker nodes 🚜
-ERROR: failed to create cluster: failed to join node with kubeadm: command &quot;docker exec --privileged ovn-worker kubeadm join --config /kind/kubeadm.conf --ignore-preflight-errors=all --v=6&quot; failed with error: exit status 1
+ERROR: failed to create cluster: failed to join node with kubeadm: command "docker exec --privileged ovn-worker kubeadm join --config /kind/kubeadm.conf --ignore-preflight-errors=all --v=6" failed with error: exit status 1
 </code></pre></div>
 <p>And logs show:</p>
 <div class="highlight"><pre><span></span><code>I0430 16:40:44.590181     579 token.go:215] [discovery] Failed to request cluster-info, will try again: Get https://[2001:db8:1::242:ac11:3]:6443/api/v1/namespaces/kube-public/configmaps/cluster-info?timeout=10s: dial tcp [2001:db8:1::242:ac11:3]:6443: connect: permission denied
@@ -4436,7 +4436,7 @@ needs to be installed.</p>
 <div class="highlight"><pre><span></span><code>$ which kubectl
 /usr/bin/kubectl
 $ kubectl version --client
-Client Version: version.Info{Major:&quot;1&quot;, Minor:&quot;28&quot;, GitVersion:&quot;v1.17.3&quot;, GitCommit:&quot;06ad960bfd03b39c8310aaf92d1e7c12ce618213&quot;, GitTreeState:&quot;clean&quot;, BuildDate:&quot;2020-02-11T18:14:22Z&quot;, GoVersion:&quot;go1.13.6&quot;, Compiler:&quot;gc&quot;, Platform:&quot;linux/amd64&quot;}
+Client Version: version.Info{Major:"1", Minor:"28", GitVersion:"v1.17.3", GitCommit:"06ad960bfd03b39c8310aaf92d1e7c12ce618213", GitTreeState:"clean", BuildDate:"2020-02-11T18:14:22Z", GoVersion:"go1.13.6", Compiler:"gc", Platform:"linux/amd64"}
 sudo mv /usr/bin/kubectl /usr/bin/kubectl-v1.17.3
 sudo ln -s /usr/bin/kubectl-v1.17.3 /usr/bin/kubectl
 </code></pre></div>

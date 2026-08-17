@@ -3863,7 +3863,7 @@ A full example with MetalLB is detailed in <a href="#usage-example">Usage Exampl
                      └───▲────────────────┘
                          │
      5. packet reaches   │                      2. router policy rereoutes it
-        the external     │                         to ovn-worker&#39;s mgmt port
+        the external     │                         to ovn-worker's mgmt port
         destination with │                      ┌──────────────────┐
         src ip:          │                  ┌───┤ovn cluster router│
         172.19.0.100     │                  │   └───────────▲──────┘
@@ -3875,14 +3875,14 @@ A full example with MetalLB is detailed in <a href="#usage-example">Usage Exampl
                    ├─────▲──────┴──┴─────┬──────┤           │   ┌────────────────┐
 4. an iptables rule│     │   ovn-worker  │3.    │           │   │  ovn-worker2   │
    that SNATs to   │     │               │      │           │   │                │
-   the service&#39;s ip│     │               │      │           │   │                │
+   the service's ip│     │               │      │           │   │                │
    is hit          │     │  ┌────────┐   │      │           │   │ ┌────────────┐ │
                    │     │4.│routes +│   │      │           └───┼─┤    pod     │ │
                    │     └──┤iptables◄───┘      │               │ │ 10.244.1.6 │ │
                    │        └────────┘          │               │ └────────────┘ │
                    │                            │               │                │
                    └────────────────────────────┘               └────────────────┘
-                3. from the mgmt port it hits ovn-worker&#39;s
+                3. from the mgmt port it hits ovn-worker's
                    routes and iptables rules
 </code></pre></div>
 Notice how the packet exits <code>ovn-worker</code>'s eth1 and not breth0, as the packet goes through the host's routing table regardless of the gateway mode.</p>
@@ -3929,12 +3929,12 @@ Endpoints:                10.244.0.5:8080,10.244.2.7:8080
 </code></pre></div>
 <div class="highlight"><pre><span></span><code>$ ovn-nbctl lr-policy-list ovn_cluster_router
 Routing Policies
-      1004 inport == &quot;rtos-ovn-control-plane&quot; &amp;&amp; ip4.dst == 172.18.0.3 /* ovn-control-plane */         reroute                10.244.2.2
-      1004 inport == &quot;rtos-ovn-control-plane&quot; &amp;&amp; ip6.dst == fc00:f853:ccd:e793::3 /* ovn-control-plane */         reroute          fd00:10:244:3::2
-      1004 inport == &quot;rtos-ovn-worker&quot; &amp;&amp; ip4.dst == 172.18.0.4 /* ovn-worker */         reroute                10.244.0.2
-      1004 inport == &quot;rtos-ovn-worker&quot; &amp;&amp; ip6.dst == fc00:f853:ccd:e793::4 /* ovn-worker */         reroute          fd00:10:244:1::2
-      1004 inport == &quot;rtos-ovn-worker2&quot; &amp;&amp; ip4.dst == 172.18.0.2 /* ovn-worker2 */         reroute                10.244.1.2
-      1004 inport == &quot;rtos-ovn-worker2&quot; &amp;&amp; ip6.dst == fc00:f853:ccd:e793::2 /* ovn-worker2 */         reroute          fd00:10:244:2::2
+      1004 inport == "rtos-ovn-control-plane" &amp;&amp; ip4.dst == 172.18.0.3 /* ovn-control-plane */         reroute                10.244.2.2
+      1004 inport == "rtos-ovn-control-plane" &amp;&amp; ip6.dst == fc00:f853:ccd:e793::3 /* ovn-control-plane */         reroute          fd00:10:244:3::2
+      1004 inport == "rtos-ovn-worker" &amp;&amp; ip4.dst == 172.18.0.4 /* ovn-worker */         reroute                10.244.0.2
+      1004 inport == "rtos-ovn-worker" &amp;&amp; ip6.dst == fc00:f853:ccd:e793::4 /* ovn-worker */         reroute          fd00:10:244:1::2
+      1004 inport == "rtos-ovn-worker2" &amp;&amp; ip4.dst == 172.18.0.2 /* ovn-worker2 */         reroute                10.244.1.2
+      1004 inport == "rtos-ovn-worker2" &amp;&amp; ip6.dst == fc00:f853:ccd:e793::2 /* ovn-worker2 */         reroute          fd00:10:244:2::2
        102 ip4.src == 10.244.0.0/16 &amp;&amp; ip4.dst == 10.244.0.0/16           allow
        102 ip4.src == 10.244.0.0/16 &amp;&amp; ip4.dst == 100.64.0.0/16           allow
        102 ip4.src == 10.244.0.0/16 &amp;&amp; ip4.dst == 172.18.0.2/32           allow
@@ -3956,10 +3956,10 @@ metadata:
   name: demo-svc
   namespace: default
 spec:
-  sourceIPBy: &quot;LoadBalancerIP&quot;
+  sourceIPBy: "LoadBalancerIP"
   nodeSelector:
     matchLabels:
-      node-role.kubernetes.io/worker: &quot;&quot;
+      node-role.kubernetes.io/worker: ""
 
 $ kubectl apply -f egress-service.yaml
 egressservice.k8s.ovn.org/demo-svc created
@@ -3974,14 +3974,14 @@ Spec:
     Source IP By:                        LoadBalancerIP
     Node Selector:
       Match Labels:
-        node-role.kubernetes.io/worker:  &quot;&quot;
+        node-role.kubernetes.io/worker:  ""
 Status:
   Host:  ovn-worker2
 </code></pre></div></p>
 <p>A logical router policy is created for each endpoint to steer its egress traffic towards <code>ovn-worker2</code>'s mgmt port:
 <div class="highlight"><pre><span></span><code>$ ovn-nbctl lr-policy-list ovn_cluster_router
 Routing Policies
-       &lt;truncated 1004&#39;s and 102&#39;s&gt;
+       &lt;truncated 1004's and 102's&gt;
        101                              ip4.src == 10.244.0.5         reroute                10.244.1.2
        101                              ip4.src == 10.244.2.7         reroute                10.244.1.2
        101                        ip6.src == fd00:10:244:1::5         reroute          fd00:10:244:2::2
@@ -3995,20 +3995,20 @@ $ iptables-save
 *nat
 ...
 -A POSTROUTING -j OVN-KUBE-EGRESS-SVC
--A OVN-KUBE-EGRESS-SVC -s 10.244.0.5/32 -m comment --comment &quot;default/demo-svc&quot; -j SNAT --to-source 5.5.5.5
--A OVN-KUBE-EGRESS-SVC -s 10.244.2.7/32 -m comment --comment &quot;default/demo-svc&quot; -j SNAT --to-source 5.5.5.5
+-A OVN-KUBE-EGRESS-SVC -s 10.244.0.5/32 -m comment --comment "default/demo-svc" -j SNAT --to-source 5.5.5.5
+-A OVN-KUBE-EGRESS-SVC -s 10.244.2.7/32 -m comment --comment "default/demo-svc" -j SNAT --to-source 5.5.5.5
 ...
 
 $ ip6tables-save
 ...
 *nat
 -A POSTROUTING -j OVN-KUBE-EGRESS-SVC
--A OVN-KUBE-EGRESS-SVC -s fd00:10:244:3::7/128 -m comment --comment &quot;default/demo-svc&quot; -j SNAT --to-source 5555:5555:5555:5555:5555:5555:5555:5555
--A OVN-KUBE-EGRESS-SVC -s fd00:10:244:1::5/128 -m comment --comment &quot;default/demo-svc&quot; -j SNAT --to-source 5555:5555:5555:5555:5555:5555:5555:5555
+-A OVN-KUBE-EGRESS-SVC -s fd00:10:244:3::7/128 -m comment --comment "default/demo-svc" -j SNAT --to-source 5555:5555:5555:5555:5555:5555:5555:5555
+-A OVN-KUBE-EGRESS-SVC -s fd00:10:244:1::5/128 -m comment --comment "default/demo-svc" -j SNAT --to-source 5555:5555:5555:5555:5555:5555:5555:5555
 ...
 </code></pre></div></p>
 <p><code>ovn-worker2</code> is the only node holding the <code>egress-service.k8s.ovn.org/default-demo-svc=""</code> label:
-<div class="highlight"><pre><span></span><code>$ kubectl get nodes -l egress-service.k8s.ovn.org/default-demo-svc=&quot;&quot;
+<div class="highlight"><pre><span></span><code>$ kubectl get nodes -l egress-service.k8s.ovn.org/default-demo-svc=""
 NAME          STATUS   ROLES
 ovn-worker2   Ready    worker
 </code></pre></div></p>
@@ -4026,14 +4026,14 @@ Spec:
     Source IP By:                        LoadBalancerIP
     Node Selector:
       Match Labels:
-        node-role.kubernetes.io/worker:  &quot;&quot;
+        node-role.kubernetes.io/worker:  ""
 Status:
   Host:  ovn-worker
 </code></pre></div></p>
 <p>The reroute destination changed to <code>ovn-worker</code>'s mgmt port (10.244.1.2 -&gt; 10.244.0.2, fd00:10:244:2::2 -&gt; fd00:10:244:1::2):
 <div class="highlight"><pre><span></span><code>$ ovn-nbctl lr-policy-list ovn_cluster_router
 Routing Policies
-       &lt;truncated 1004&#39;s and 102&#39;s&gt;
+       &lt;truncated 1004's and 102's&gt;
        101                              ip4.src == 10.244.0.5         reroute                10.244.0.2
        101                              ip4.src == 10.244.2.7         reroute                10.244.0.2
        101                        ip6.src == fd00:10:244:1::5         reroute          fd00:10:244:1::2
@@ -4047,35 +4047,35 @@ $ iptables-save
 *nat
 ...
 -A POSTROUTING -j OVN-KUBE-EGRESS-SVC
--A OVN-KUBE-EGRESS-SVC -s 10.244.0.5/32 -m comment --comment &quot;default/demo-svc&quot; -j SNAT --to-source 5.5.5.5
--A OVN-KUBE-EGRESS-SVC -s 10.244.2.7/32 -m comment --comment &quot;default/demo-svc&quot; -j SNAT --to-source 5.5.5.5
+-A OVN-KUBE-EGRESS-SVC -s 10.244.0.5/32 -m comment --comment "default/demo-svc" -j SNAT --to-source 5.5.5.5
+-A OVN-KUBE-EGRESS-SVC -s 10.244.2.7/32 -m comment --comment "default/demo-svc" -j SNAT --to-source 5.5.5.5
 ...
 
 $ ip6tables-save
 ...
 *nat
 -A POSTROUTING -j OVN-KUBE-EGRESS-SVC
--A OVN-KUBE-EGRESS-SVC -s fd00:10:244:3::7/128 -m comment --comment &quot;default/demo-svc&quot; -j SNAT --to-source 5555:5555:5555:5555:5555:5555:5555:5555
--A OVN-KUBE-EGRESS-SVC -s fd00:10:244:1::5/128 -m comment --comment &quot;default/demo-svc&quot; -j SNAT --to-source 5555:5555:5555:5555:5555:5555:5555:5555
+-A OVN-KUBE-EGRESS-SVC -s fd00:10:244:3::7/128 -m comment --comment "default/demo-svc" -j SNAT --to-source 5555:5555:5555:5555:5555:5555:5555:5555
+-A OVN-KUBE-EGRESS-SVC -s fd00:10:244:1::5/128 -m comment --comment "default/demo-svc" -j SNAT --to-source 5555:5555:5555:5555:5555:5555:5555:5555
 ...
 </code></pre></div></p>
 <p>The label moved to <code>ovn-worker</code>:
-<div class="highlight"><pre><span></span><code>$ kubectl get nodes -l egress-service.k8s.ovn.org/default-demo-svc=&quot;&quot;
+<div class="highlight"><pre><span></span><code>$ kubectl get nodes -l egress-service.k8s.ovn.org/default-demo-svc=""
 NAME         STATUS   ROLES
 ovn-worker   Ready    worker
 </code></pre></div></p>
 <p>Finally, deleting the <code>EgressService</code> resource resets the cluster to the point we started from:
 <div class="highlight"><pre><span></span><code>$ kubectl delete egressservice demo-svc
-egressservice.k8s.ovn.org &quot;demo-svc&quot; deleted
+egressservice.k8s.ovn.org "demo-svc" deleted
 </code></pre></div></p>
 <div class="highlight"><pre><span></span><code>$ ovn-nbctl lr-policy-list ovn_cluster_router
 Routing Policies
-      1004 inport == &quot;rtos-ovn-control-plane&quot; &amp;&amp; ip4.dst == 172.18.0.3 /* ovn-control-plane */         reroute                10.244.2.2
-      1004 inport == &quot;rtos-ovn-control-plane&quot; &amp;&amp; ip6.dst == fc00:f853:ccd:e793::3 /* ovn-control-plane */         reroute          fd00:10:244:3::2
-      1004 inport == &quot;rtos-ovn-worker&quot; &amp;&amp; ip4.dst == 172.18.0.4 /* ovn-worker */         reroute                10.244.0.2
-      1004 inport == &quot;rtos-ovn-worker&quot; &amp;&amp; ip6.dst == fc00:f853:ccd:e793::4 /* ovn-worker */         reroute          fd00:10:244:1::2
-      1004 inport == &quot;rtos-ovn-worker2&quot; &amp;&amp; ip4.dst == 172.18.0.2 /* ovn-worker2 */         reroute                10.244.1.2
-      1004 inport == &quot;rtos-ovn-worker2&quot; &amp;&amp; ip6.dst == fc00:f853:ccd:e793::2 /* ovn-worker2 */         reroute          fd00:10:244:2::2
+      1004 inport == "rtos-ovn-control-plane" &amp;&amp; ip4.dst == 172.18.0.3 /* ovn-control-plane */         reroute                10.244.2.2
+      1004 inport == "rtos-ovn-control-plane" &amp;&amp; ip6.dst == fc00:f853:ccd:e793::3 /* ovn-control-plane */         reroute          fd00:10:244:3::2
+      1004 inport == "rtos-ovn-worker" &amp;&amp; ip4.dst == 172.18.0.4 /* ovn-worker */         reroute                10.244.0.2
+      1004 inport == "rtos-ovn-worker" &amp;&amp; ip6.dst == fc00:f853:ccd:e793::4 /* ovn-worker */         reroute          fd00:10:244:1::2
+      1004 inport == "rtos-ovn-worker2" &amp;&amp; ip4.dst == 172.18.0.2 /* ovn-worker2 */         reroute                10.244.1.2
+      1004 inport == "rtos-ovn-worker2" &amp;&amp; ip6.dst == fc00:f853:ccd:e793::2 /* ovn-worker2 */         reroute          fd00:10:244:2::2
        102 ip4.src == 10.244.0.0/16 &amp;&amp; ip4.dst == 10.244.0.0/16           allow
        102 ip4.src == 10.244.0.0/16 &amp;&amp; ip4.dst == 100.64.0.0/16           allow
        102 ip4.src == 10.244.0.0/16 &amp;&amp; ip4.dst == 172.18.0.2/32           allow
@@ -4098,7 +4098,7 @@ $ ip6tables-save | grep EGRESS
 :OVN-KUBE-EGRESS-SVC - [0:0]
 -A POSTROUTING -j OVN-KUBE-EGRESS-SVC
 </code></pre></div>
-<div class="highlight"><pre><span></span><code>$ kubectl get nodes -l egress-service.k8s.ovn.org/default-demo-svc=&quot;&quot;
+<div class="highlight"><pre><span></span><code>$ kubectl get nodes -l egress-service.k8s.ovn.org/default-demo-svc=""
 No resources found
 </code></pre></div>
 <h3 id="tbd-dealing-with-non-snated-traffic">TBD: Dealing with non SNATed traffic<a class="headerlink" href="#tbd-dealing-with-non-snated-traffic" title="Permanent link">&para;</a></h3>
@@ -4152,10 +4152,10 @@ We already assume MetalLB's <code>BGPPeers</code> are configured and the session
 <span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">example-service</span>
 <span class="w">  </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">some-namespace</span>
 <span class="nt">spec</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">sourceIPBy</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;LoadBalancerIP&quot;</span>
+<span class="w">  </span><span class="nt">sourceIPBy</span><span class="p">:</span><span class="w"> </span><span class="s">"LoadBalancerIP"</span>
 <span class="w">  </span><span class="nt">nodeSelector</span><span class="p">:</span>
 <span class="w">    </span><span class="nt">matchLabels</span><span class="p">:</span>
-<span class="w">      </span><span class="nt">node-role.kubernetes.io/worker</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;&quot;</span>
+<span class="w">      </span><span class="nt">node-role.kubernetes.io/worker</span><span class="p">:</span><span class="w"> </span><span class="s">""</span>
 </code></pre></div></p>
 </li>
 <li>
@@ -4171,7 +4171,7 @@ We create the advertisements targeting only the node that is in charge of the se
 <span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">example-pool</span>
 <span class="w">  </span><span class="nt">nodeSelector</span><span class="p">:</span>
 <span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">matchLabels</span><span class="p">:</span>
-<span class="w">      </span><span class="nt">egress-service.k8s.ovn.org/some-namespace-example-service</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;&quot;</span>
+<span class="w">      </span><span class="nt">egress-service.k8s.ovn.org/some-namespace-example-service</span><span class="p">:</span><span class="w"> </span><span class="s">""</span>
 </code></pre></div>
 While possible to create more advertisements resources for the <code>example-pool</code>, it is the user's responsibility to make sure that the pool is advertised only by advertisements targeting the node holding the <code>egress-service.k8s.ovn.org/&lt;svc-namespace&gt;-&lt;svc-name&gt;: ""</code> label - otherwise the traffic of the service will be broken.</p>
 </li>

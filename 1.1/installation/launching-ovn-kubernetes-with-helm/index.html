@@ -3765,13 +3765,13 @@ configuration onto the physical port. The logical port becomes the API for
 configuring the physical port.</p>
 <p>In addition to providing overlay network connectivity for Pods in the K8s cluster,
 OVN K8s CNI supports a plethora of advanced networking features, such as</p>
-<div class="highlight"><pre><span></span><code>- Optimized and Accelerated K8s Network Policy on Pod&#39;s traffic
+<div class="highlight"><pre><span></span><code>- Optimized and Accelerated K8s Network Policy on Pod's traffic
 - Optimized and Accelerated K8s Service Implementation (aka Load Balancers and NAT)
 - Optimized and Accelerated Policy Based Routing
 - Multi-Home Pods with an option for Secondary networks to be on a Layer-2
   Overlay (flat network), Layer-2 Underlay (VLAN-based) on private or public
   subnets.
-- Optimized and Accelerated K8s Network Policy on Pod&#39;s secondary networks
+- Optimized and Accelerated K8s Network Policy on Pod's secondary networks
 </code></pre></div>
 <p>Most of these services are distributed and implemented via a pipeline (series
 of OpenFlow tables with OpenFlow flows) on local OVS switches. These OVS
@@ -3812,15 +3812,15 @@ networking:
 <ul>
 <li>Run <code>helm install</code> with propery <code>k8sAPIServer</code> image repo and tag
 <div class="highlight"><pre><span></span><code># cd helm/ovn-kubernetes
-# helm install ovn-kubernetes . -f values-no-ic.yaml --set k8sAPIServer=&quot;https://$(kubectl get pods -n kube-system -l component=kube-apiserver -o jsonpath=&#39;{.items[0].status.hostIP}&#39;):6443&quot; --set global.image.repository=ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-ubuntu --set global.image.tag=master
+# helm install ovn-kubernetes . -f values-no-ic.yaml --set k8sAPIServer="https://$(kubectl get pods -n kube-system -l component=kube-apiserver -o jsonpath='{.items[0].status.hostIP}'):6443" --set global.image.repository=ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-ubuntu --set global.image.tag=master
 </code></pre></div></li>
 </ul>
 <h2 id="alternative-configurations">Alternative Configurations<a class="headerlink" href="#alternative-configurations" title="Permanent link">&para;</a></h2>
 <p>To deploy ovn-kubernetes in interconnect mode, use <code>-f values-single-node-zone.yaml</code> instead of <code>-f values-no-ic.yaml</code>.
 Additionally, you must set the zone annotation on each node before deploying.</p>
 <p>Here is an example of how to set the annotation in a Kind cluster:</p>
-<div class="highlight"><pre><span></span><code>for n in $(kind get nodes --name &quot;${kind_cluster_name}&quot;); do
-  kubectl label node &quot;${n}&quot; k8s.ovn.org/zone-name=${n} --overwrite
+<div class="highlight"><pre><span></span><code>for n in $(kind get nodes --name "${kind_cluster_name}"); do
+  kubectl label node "${n}" k8s.ovn.org/zone-name=${n} --overwrite
 done
 </code></pre></div>
 <p>Following section describes the meaning of the values.</p>

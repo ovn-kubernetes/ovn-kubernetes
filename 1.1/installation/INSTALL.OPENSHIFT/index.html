@@ -3662,15 +3662,15 @@ for running the pods. Here is some of how it is done.</p>
 <p><div class="highlight"><pre><span></span><code>spec:
   selector:
     matchLabels:
-      node-role.kubernetes.io/compute: &quot;true&quot;
+      node-role.kubernetes.io/compute: "true"
              or
-      node-role.kubernetes.io/control-plane: &quot;true&quot;
+      node-role.kubernetes.io/control-plane: "true"
   template:
     spec:
       nodeSelector:
-        node-role.kubernetes.io/compute: &quot;true&quot;
+        node-role.kubernetes.io/compute: "true"
              or
-        node-role.kubernetes.io/control-plane: &quot;true&quot;
+        node-role.kubernetes.io/control-plane: "true"
 </code></pre></div>
 The daemonset will start a pod on every nodes that has the desired labels.</p>
 <p>NOTE: The above labels are openshift labels created when openshift is installed.
@@ -3681,7 +3681,7 @@ As this evolves ovn specific labels will be used.</p>
     spec:
       containers:
       - name: ovnkube-master
-        image: &quot;netdev22:5000/ovn-kube:latest&quot;
+        image: "netdev22:5000/ovn-kube:latest"
 </code></pre></div>
 The image is in a docker repository that all nodes can access.</p>
 <p>NOTE: The above uses a local development docker repository, netdev22:5000</p>

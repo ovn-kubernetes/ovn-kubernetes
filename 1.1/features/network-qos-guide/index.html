@@ -3956,14 +3956,14 @@
 <span class="nt">spec</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">config</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|2</span>
 <span class="w">    </span><span class="no">{</span>
-<span class="w">            </span><span class="no">&quot;cniVersion&quot;: &quot;1.0.0&quot;,</span>
-<span class="w">            </span><span class="no">&quot;name&quot;: &quot;ovn-stream&quot;,</span>
-<span class="w">            </span><span class="no">&quot;type&quot;: &quot;ovn-k8s-cni-overlay&quot;,</span>
-<span class="w">            </span><span class="no">&quot;topology&quot;: &quot;layer3&quot;,</span>
-<span class="w">            </span><span class="no">&quot;subnets&quot;: &quot;10.245.0.0/16/24&quot;,</span>
-<span class="w">            </span><span class="no">&quot;mtu&quot;: 1300,</span>
-<span class="w">            </span><span class="no">&quot;master&quot;: &quot;eth1&quot;,</span>
-<span class="w">            </span><span class="no">&quot;netAttachDefName&quot;: &quot;default/ovn-stream&quot;</span>
+<span class="w">            </span><span class="no">"cniVersion": "1.0.0",</span>
+<span class="w">            </span><span class="no">"name": "ovn-stream",</span>
+<span class="w">            </span><span class="no">"type": "ovn-k8s-cni-overlay",</span>
+<span class="w">            </span><span class="no">"topology": "layer3",</span>
+<span class="w">            </span><span class="no">"subnets": "10.245.0.0/16/24",</span>
+<span class="w">            </span><span class="no">"mtu": 1300,</span>
+<span class="w">            </span><span class="no">"master": "eth1",</span>
+<span class="w">            </span><span class="no">"netAttachDefName": "default/ovn-stream"</span>
 <span class="w">    </span><span class="no">}</span>
 </code></pre></div>
 <em>Why the label?</em> <code>NetworkQoS</code> uses a label selector to find matching NADs. Without at least one label, the selector cannot match.</p>
@@ -4028,24 +4028,24 @@ qos-external<span class="w">   </span>NetworkQoS<span class="w"> </span>Destinat
 <span class="w">    </span><span class="nb">local</span><span class="w"> </span><span class="nv">node_name</span><span class="o">=</span><span class="si">${</span><span class="nv">2</span><span class="k">:-</span><span class="nv">ovn</span><span class="p">-worker</span><span class="si">}</span>
 <span class="w">    </span><span class="nb">local</span><span class="w"> </span><span class="nv">extra_labels</span><span class="o">=</span><span class="si">${</span><span class="nv">3</span><span class="k">:-</span><span class="si">}</span>
 
-<span class="w">    </span><span class="nv">NAMESPACE</span><span class="o">=</span><span class="k">$(</span>kubectl<span class="w"> </span>config<span class="w"> </span>view<span class="w"> </span>--minify<span class="w"> </span>--output<span class="w"> </span><span class="s1">&#39;jsonpath={..namespace}&#39;</span><span class="k">)</span>
+<span class="w">    </span><span class="nv">NAMESPACE</span><span class="o">=</span><span class="k">$(</span>kubectl<span class="w"> </span>config<span class="w"> </span>view<span class="w"> </span>--minify<span class="w"> </span>--output<span class="w"> </span><span class="s1">'jsonpath={..namespace}'</span><span class="k">)</span>
 <span class="w">    </span><span class="nv">NAMESPACE</span><span class="o">=</span><span class="si">${</span><span class="nv">NAMESPACE</span><span class="k">:-</span><span class="nv">default</span><span class="si">}</span>
 
-<span class="w">    </span><span class="k">if</span><span class="w"> </span>!<span class="w"> </span>kubectl<span class="w"> </span>get<span class="w"> </span>pod<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$pod_name</span><span class="s2">&quot;</span><span class="w"> </span>-n<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$NAMESPACE</span><span class="s2">&quot;</span><span class="w"> </span><span class="p">&amp;</span>&gt;/dev/null<span class="p">;</span><span class="w"> </span><span class="k">then</span>
-<span class="w">        </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;Creating pod </span><span class="nv">$pod_name</span><span class="s2"> in namespace </span><span class="nv">$NAMESPACE</span><span class="s2">...&quot;</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span>!<span class="w"> </span>kubectl<span class="w"> </span>get<span class="w"> </span>pod<span class="w"> </span><span class="s2">"</span><span class="nv">$pod_name</span><span class="s2">"</span><span class="w"> </span>-n<span class="w"> </span><span class="s2">"</span><span class="nv">$NAMESPACE</span><span class="s2">"</span><span class="w"> </span><span class="p">&amp;</span>&gt;/dev/null<span class="p">;</span><span class="w"> </span><span class="k">then</span>
+<span class="w">        </span><span class="nb">echo</span><span class="w"> </span><span class="s2">"Creating pod </span><span class="nv">$pod_name</span><span class="s2"> in namespace </span><span class="nv">$NAMESPACE</span><span class="s2">..."</span>
 
 <span class="w">        </span><span class="c1"># Prepare labels block</span>
-<span class="w">        </span><span class="nv">labels_block</span><span class="o">=</span><span class="s2">&quot;    name: </span><span class="nv">$pod_name</span><span class="s2">&quot;</span>
-<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="o">[[</span><span class="w"> </span>-n<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$extra_labels</span><span class="s2">&quot;</span><span class="w"> </span><span class="o">]]</span><span class="p">;</span><span class="w"> </span><span class="k">then</span>
+<span class="w">        </span><span class="nv">labels_block</span><span class="o">=</span><span class="s2">"    name: </span><span class="nv">$pod_name</span><span class="s2">"</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="o">[[</span><span class="w"> </span>-n<span class="w"> </span><span class="s2">"</span><span class="nv">$extra_labels</span><span class="s2">"</span><span class="w"> </span><span class="o">]]</span><span class="p">;</span><span class="w"> </span><span class="k">then</span>
 <span class="w">            </span><span class="c1"># Convert JSON string to YAML-compatible lines</span>
-<span class="w">            </span><span class="k">while</span><span class="w"> </span><span class="nv">IFS</span><span class="o">=</span><span class="s2">&quot;=&quot;</span><span class="w"> </span><span class="nb">read</span><span class="w"> </span>-r<span class="w"> </span>k<span class="w"> </span>v<span class="p">;</span><span class="w"> </span><span class="k">do</span>
-<span class="w">                </span><span class="nv">labels_block</span><span class="o">+=</span><span class="s2">&quot;</span>
-<span class="s2">    </span><span class="nv">$k</span><span class="s2">: </span><span class="nv">$v</span><span class="s2">&quot;</span>
-<span class="w">            </span><span class="k">done</span><span class="w"> </span>&lt;<span class="w"> </span>&lt;<span class="o">(</span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$extra_labels</span><span class="s2">&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-r<span class="w"> </span><span class="s1">&#39;to_entries|map(&quot;\(.key)=\(.value)&quot;)|.[]&#39;</span><span class="o">)</span>
+<span class="w">            </span><span class="k">while</span><span class="w"> </span><span class="nv">IFS</span><span class="o">=</span><span class="s2">"="</span><span class="w"> </span><span class="nb">read</span><span class="w"> </span>-r<span class="w"> </span>k<span class="w"> </span>v<span class="p">;</span><span class="w"> </span><span class="k">do</span>
+<span class="w">                </span><span class="nv">labels_block</span><span class="o">+=</span><span class="s2">"</span>
+<span class="s2">    </span><span class="nv">$k</span><span class="s2">: </span><span class="nv">$v</span><span class="s2">"</span>
+<span class="w">            </span><span class="k">done</span><span class="w"> </span>&lt;<span class="w"> </span>&lt;<span class="o">(</span><span class="nb">echo</span><span class="w"> </span><span class="s2">"</span><span class="nv">$extra_labels</span><span class="s2">"</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-r<span class="w"> </span><span class="s1">'to_entries|map("\(.key)=\(.value)")|.[]'</span><span class="o">)</span>
 <span class="w">        </span><span class="k">fi</span>
 
 <span class="w">        </span><span class="c1"># Generate the manifest</span>
-<span class="w">        </span>cat<span class="w"> </span><span class="s">&lt;&lt;EOF | kubectl apply -n &quot;$NAMESPACE&quot; -f -</span>
+<span class="w">        </span>cat<span class="w"> </span><span class="s">&lt;&lt;EOF | kubectl apply -n "$NAMESPACE" -f -</span>
 <span class="s">apiVersion: v1</span>
 <span class="s">kind: Pod</span>
 <span class="s">metadata:</span>
@@ -4060,34 +4060,34 @@ qos-external<span class="w">   </span>NetworkQoS<span class="w"> </span>Destinat
 <span class="s">  containers:</span>
 <span class="s">  - name: $pod_name</span>
 <span class="s">    image: ghcr.io/nicolaka/netshoot:v0.13</span>
-<span class="s">    command: [&quot;/bin/ash&quot;, &quot;-c&quot;, &quot;trap : TERM INT; sleep infinity &amp; wait&quot;]</span>
+<span class="s">    command: ["/bin/ash", "-c", "trap : TERM INT; sleep infinity &amp; wait"]</span>
 <span class="s">EOF</span>
 <span class="w">    </span><span class="k">else</span>
-<span class="w">        </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;Pod </span><span class="nv">$pod_name</span><span class="s2"> already exists.&quot;</span>
+<span class="w">        </span><span class="nb">echo</span><span class="w"> </span><span class="s2">"Pod </span><span class="nv">$pod_name</span><span class="s2"> already exists."</span>
 <span class="w">    </span><span class="k">fi</span>
 <span class="o">}</span>
 </code></pre></div>
 <div class="highlight"><pre><span></span><code>$<span class="w"> </span>create_pod<span class="w"> </span>pod0<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>create_pod<span class="w"> </span>pod1<span class="w"> </span>ovn-worker<span class="w"> </span><span class="s1">&#39;{&quot;nqos-app&quot;:&quot;bw-limited&quot;}&#39;</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>create_pod<span class="w"> </span>pod2<span class="w"> </span>ovn-worker2<span class="w"> </span><span class="s1">&#39;{&quot;foo&quot;:&quot;bar&quot;,&quot;nqos-app&quot;:&quot;bw-limited&quot;}&#39;</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>create_pod<span class="w"> </span>pod1<span class="w"> </span>ovn-worker<span class="w"> </span><span class="s1">'{"nqos-app":"bw-limited"}'</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>create_pod<span class="w"> </span>pod2<span class="w"> </span>ovn-worker2<span class="w"> </span><span class="s1">'{"foo":"bar","nqos-app":"bw-limited"}'</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span><span class="nb">echo</span><span class="w"> </span>pods<span class="w"> </span>created
 
 extract_pod_ip_from_annotation<span class="o">()</span><span class="w"> </span><span class="o">{</span>
-<span class="w">    </span><span class="nb">local</span><span class="w"> </span><span class="nv">pod_name</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$1</span><span class="s2">&quot;</span>
-<span class="w">    </span><span class="nb">local</span><span class="w"> </span><span class="nv">namespace</span><span class="o">=</span><span class="s2">&quot;</span><span class="si">${</span><span class="nv">2</span><span class="k">:-</span><span class="nv">default</span><span class="si">}</span><span class="s2">&quot;</span>
-<span class="w">    </span><span class="nb">local</span><span class="w"> </span><span class="nv">interface</span><span class="o">=</span><span class="s2">&quot;</span><span class="si">${</span><span class="nv">3</span><span class="k">:-</span><span class="nv">eth1</span><span class="si">}</span><span class="s2">&quot;</span>
+<span class="w">    </span><span class="nb">local</span><span class="w"> </span><span class="nv">pod_name</span><span class="o">=</span><span class="s2">"</span><span class="nv">$1</span><span class="s2">"</span>
+<span class="w">    </span><span class="nb">local</span><span class="w"> </span><span class="nv">namespace</span><span class="o">=</span><span class="s2">"</span><span class="si">${</span><span class="nv">2</span><span class="k">:-</span><span class="nv">default</span><span class="si">}</span><span class="s2">"</span>
+<span class="w">    </span><span class="nb">local</span><span class="w"> </span><span class="nv">interface</span><span class="o">=</span><span class="s2">"</span><span class="si">${</span><span class="nv">3</span><span class="k">:-</span><span class="nv">eth1</span><span class="si">}</span><span class="s2">"</span>
 
-<span class="w">    </span>kubectl<span class="w"> </span>get<span class="w"> </span>pod<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$pod_name</span><span class="s2">&quot;</span><span class="w"> </span>-n<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$namespace</span><span class="s2">&quot;</span><span class="w"> </span>-o<span class="w"> </span>json<span class="w"> </span><span class="p">|</span>
-<span class="w">        </span>jq<span class="w"> </span>-r<span class="w"> </span><span class="s1">&#39;.metadata.annotations[&quot;k8s.v1.cni.cncf.io/network-status&quot;]&#39;</span><span class="w"> </span><span class="p">|</span>
-<span class="w">        </span>jq<span class="w"> </span>-r<span class="w"> </span>--arg<span class="w"> </span>iface<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$interface</span><span class="s2">&quot;</span><span class="w"> </span><span class="s1">&#39;.[] | select(.interface == $iface) | .ips[0]&#39;</span>
+<span class="w">    </span>kubectl<span class="w"> </span>get<span class="w"> </span>pod<span class="w"> </span><span class="s2">"</span><span class="nv">$pod_name</span><span class="s2">"</span><span class="w"> </span>-n<span class="w"> </span><span class="s2">"</span><span class="nv">$namespace</span><span class="s2">"</span><span class="w"> </span>-o<span class="w"> </span>json<span class="w"> </span><span class="p">|</span>
+<span class="w">        </span>jq<span class="w"> </span>-r<span class="w"> </span><span class="s1">'.metadata.annotations["k8s.v1.cni.cncf.io/network-status"]'</span><span class="w"> </span><span class="p">|</span>
+<span class="w">        </span>jq<span class="w"> </span>-r<span class="w"> </span>--arg<span class="w"> </span>iface<span class="w"> </span><span class="s2">"</span><span class="nv">$interface</span><span class="s2">"</span><span class="w"> </span><span class="s1">'.[] | select(.interface == $iface) | .ips[0]'</span>
 <span class="o">}</span>
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><span class="nv">NAMESPACE</span><span class="o">=</span><span class="k">$(</span>kubectl<span class="w"> </span>config<span class="w"> </span>view<span class="w"> </span>--minify<span class="w"> </span>--output<span class="w"> </span><span class="s1">&#39;jsonpath={..namespace}&#39;</span><span class="k">)</span><span class="w"> </span><span class="p">;</span><span class="w"> </span><span class="nv">NAMESPACE</span><span class="o">=</span><span class="si">${</span><span class="nv">NAMESPACE</span><span class="k">:-</span><span class="nv">default</span><span class="si">}</span>
+<div class="highlight"><pre><span></span><code><span class="nv">NAMESPACE</span><span class="o">=</span><span class="k">$(</span>kubectl<span class="w"> </span>config<span class="w"> </span>view<span class="w"> </span>--minify<span class="w"> </span>--output<span class="w"> </span><span class="s1">'jsonpath={..namespace}'</span><span class="k">)</span><span class="w"> </span><span class="p">;</span><span class="w"> </span><span class="nv">NAMESPACE</span><span class="o">=</span><span class="si">${</span><span class="nv">NAMESPACE</span><span class="k">:-</span><span class="nv">default</span><span class="si">}</span>
 <span class="nv">DST_IP_POD0</span><span class="o">=</span><span class="k">$(</span>extract_pod_ip_from_annotation<span class="w"> </span>pod0<span class="w"> </span><span class="nv">$NAMESPACE</span><span class="w"> </span>eth1<span class="k">)</span>
 <span class="nv">DST_IP_POD1</span><span class="o">=</span><span class="k">$(</span>extract_pod_ip_from_annotation<span class="w"> </span>pod1<span class="w"> </span><span class="nv">$NAMESPACE</span><span class="w"> </span>eth1<span class="k">)</span>
 <span class="nv">DST_IP_POD2</span><span class="o">=</span><span class="k">$(</span>extract_pod_ip_from_annotation<span class="w"> </span>pod2<span class="w"> </span><span class="nv">$NAMESPACE</span><span class="w"> </span>eth1<span class="k">)</span>
 
-<span class="c1"># Let&#39;s see the NAD IP addresses of the pods created</span>
+<span class="c1"># Let's see the NAD IP addresses of the pods created</span>
 $<span class="w"> </span><span class="nb">echo</span><span class="w"> </span>pod0<span class="w"> </span>has<span class="w"> </span>ip<span class="w"> </span><span class="nv">$DST_IP_POD0</span><span class="w"> </span><span class="p">;</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span><span class="nb">echo</span><span class="w"> </span>pod1<span class="w"> </span>has<span class="w"> </span>ip<span class="w"> </span><span class="nv">$DST_IP_POD1</span><span class="w"> </span><span class="p">;</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span><span class="nb">echo</span><span class="w"> </span>pod2<span class="w"> </span>has<span class="w"> </span>ip<span class="w"> </span><span class="nv">$DST_IP_POD2</span>
@@ -4108,10 +4108,10 @@ kubectl<span class="w"> </span>-n<span class="w"> </span>default<span class="w">
 kubectl<span class="w"> </span>-n<span class="w"> </span>default<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>pod2<span class="w"> </span>--<span class="w"> </span>iperf3<span class="w"> </span>-s<span class="w"> </span>-p<span class="w"> </span><span class="m">5201</span><span class="w"> </span><span class="p">&amp;</span>
 
 <span class="c1"># 2) From pod1 → pod0  (EXPECTED ≈ line rate)</span>
-kubectl<span class="w"> </span>-n<span class="w"> </span>default<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>pod1<span class="w"> </span>--<span class="w"> </span>iperf3<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DST_IP_POD0</span><span class="s2">&quot;</span><span class="w">   </span>-p<span class="w"> </span><span class="m">5201</span><span class="w"> </span>-R<span class="w"> </span>-t<span class="w"> </span><span class="m">10</span>
+kubectl<span class="w"> </span>-n<span class="w"> </span>default<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>pod1<span class="w"> </span>--<span class="w"> </span>iperf3<span class="w"> </span>-c<span class="w"> </span><span class="s2">"</span><span class="nv">$DST_IP_POD0</span><span class="s2">"</span><span class="w">   </span>-p<span class="w"> </span><span class="m">5201</span><span class="w"> </span>-R<span class="w"> </span>-t<span class="w"> </span><span class="m">10</span>
 
 <span class="c1"># 3) From pod1 → pod2  (EXPECTED ≈ 20 Mbit/s)</span>
-kubectl<span class="w"> </span>-n<span class="w"> </span>default<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>pod1<span class="w"> </span>--<span class="w"> </span>iperf3<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DST_IP_POD2</span><span class="s2">&quot;</span><span class="w">   </span>-p<span class="w"> </span><span class="m">5201</span><span class="w"> </span>-R<span class="w"> </span>-t<span class="w"> </span><span class="m">10</span>
+kubectl<span class="w"> </span>-n<span class="w"> </span>default<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>pod1<span class="w"> </span>--<span class="w"> </span>iperf3<span class="w"> </span>-c<span class="w"> </span><span class="s2">"</span><span class="nv">$DST_IP_POD2</span><span class="s2">"</span><span class="w">   </span>-p<span class="w"> </span><span class="m">5201</span><span class="w"> </span>-R<span class="w"> </span>-t<span class="w"> </span><span class="m">10</span>
 </code></pre></div>
 <p>Sample output:</p>
 <div class="highlight"><pre><span></span><code># to pod0 (unlimited)
@@ -4136,12 +4136,12 @@ nohup<span class="w"> </span>kubectl<span class="w"> </span><span class="nb">exe
 
 sudo<span class="w"> </span>dnf<span class="w"> </span>install<span class="w"> </span>-y<span class="w"> </span>--quiet<span class="w"> </span>tcpdump<span class="w"> </span><span class="p">;</span><span class="w"> </span><span class="c1"># Install tcpdump, if needed</span>
 
-<span class="nv">IPNS</span><span class="o">=</span><span class="k">$(</span>docker<span class="w"> </span>inspect<span class="w"> </span>--format<span class="w"> </span><span class="s1">&#39;{{ .State.Pid }}&#39;</span><span class="w"> </span>ovn-worker<span class="k">)</span>
+<span class="nv">IPNS</span><span class="o">=</span><span class="k">$(</span>docker<span class="w"> </span>inspect<span class="w"> </span>--format<span class="w"> </span><span class="s1">'{{ .State.Pid }}'</span><span class="w"> </span>ovn-worker<span class="k">)</span>
 sudo<span class="w"> </span>nsenter<span class="w"> </span>-t<span class="w"> </span><span class="si">${</span><span class="nv">IPNS</span><span class="si">}</span><span class="w"> </span>-n<span class="w"> </span>tcpdump<span class="w"> </span>-envvi<span class="w"> </span>eth0<span class="w"> </span>geneve
 </code></pre></div>
 <div class="highlight"><pre><span></span><code>tcpdump: listening on eth0, link-type EN10MB (Ethernet), capture size 262144 bytes
 
-**Pod0 to Pod2**: Notice that since pod0 does not have the label to match against NetworkQoS, its TOS is 0. However, pod2&#39;s response is DSCP marked (tos 0x50), since pod2 matches the NetworkQoS criteria with the label `nqos-app: bw-limited`.
+**Pod0 to Pod2**: Notice that since pod0 does not have the label to match against NetworkQoS, its TOS is 0. However, pod2's response is DSCP marked (tos 0x50), since pod2 matches the NetworkQoS criteria with the label `nqos-app: bw-limited`.
 
 12:46:30.755551 02:42:ac:12:00:06 &gt; 02:42:ac:12:00:05, ethertype IPv4 (0x0800), length 156: (tos 0x0, ttl 64, id 26896, offset 0, flags [DF], proto UDP (17), length 142)
     172.18.0.6.38210 &gt; 172.18.0.5.geneve: [bad udp cksum 0x58bb -&gt; 0xc87d!] Geneve, Flags [C], vni 0x12, proto TEB (0x6558), options [class Open Virtual Networking (OVN) (0x102) type 0x80(C) len 8 data 00090006]

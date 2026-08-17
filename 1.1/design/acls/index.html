@@ -3704,17 +3704,17 @@ e.g. given object:</p>
 <div class="highlight"><pre><span></span><code>action              : allow
 direction           : to-lport
 external_ids        : {
-    &quot;k8s.ovn.org/id&quot;=&quot;default-network-controller:EgressFirewall:default:10000&quot;, 
-    &quot;k8s.ovn.org/name&quot;=default, 
-    &quot;k8s.ovn.org/owner-controller&quot;=default-network-controller, 
-    &quot;k8s.ovn.org/owner-type&quot;=EgressFirewall, 
-    rule-idx=&quot;0&quot;
+    "k8s.ovn.org/id"="default-network-controller:EgressFirewall:default:10000", 
+    "k8s.ovn.org/name"=default, 
+    "k8s.ovn.org/owner-controller"=default-network-controller, 
+    "k8s.ovn.org/owner-type"=EgressFirewall, 
+    rule-idx="0"
 }
 label               : 0
 log                 : false
-match               : &quot;(ip4.dst == $a5272457940446250407) &amp;&amp; ip4.src == $a4322231855293774466&quot;
+match               : "(ip4.dst == $a5272457940446250407) &amp;&amp; ip4.src == $a4322231855293774466"
 meter               : acl-logging
-name                : &quot;EF:default:10000&quot;
+name                : "EF:default:10000"
 options             : {}
 priority            : 10000
 severity            : []
@@ -3722,17 +3722,17 @@ severity            : []
 action              : allow
 direction           : to-lport
 external_ids        : {
-    &quot;k8s.ovn.org/id&quot;=&quot;default-network-controller:EgressFirewall:default:9999&quot;, 
-    &quot;k8s.ovn.org/name&quot;=default, 
-    &quot;k8s.ovn.org/owner-controller&quot;=default-network-controller, 
-    &quot;k8s.ovn.org/owner-type&quot;=EgressFirewall, 
-    rule-idx=&quot;1&quot;
+    "k8s.ovn.org/id"="default-network-controller:EgressFirewall:default:9999", 
+    "k8s.ovn.org/name"=default, 
+    "k8s.ovn.org/owner-controller"=default-network-controller, 
+    "k8s.ovn.org/owner-type"=EgressFirewall, 
+    rule-idx="1"
 }
 label               : 0
 log                 : false
-match               : &quot;(ip4.dst == 1.2.3.0/24) &amp;&amp; ip4.src == $a4322231855293774466 &amp;&amp; ((udp &amp;&amp; ( udp.dst == 55 )))&quot;
+match               : "(ip4.dst == 1.2.3.0/24) &amp;&amp; ip4.src == $a4322231855293774466 &amp;&amp; ((udp &amp;&amp; ( udp.dst == 55 )))"
 meter               : acl-logging
-name                : &quot;EF:default:9999&quot;
+name                : "EF:default:9999"
 options             : {}
 priority            : 9999
 severity            : []
@@ -3740,17 +3740,17 @@ severity            : []
 action              : drop
 direction           : to-lport
 external_ids        : {
-    &quot;k8s.ovn.org/id&quot;=&quot;default-network-controller:EgressFirewall:default:9998&quot;, 
-    &quot;k8s.ovn.org/name&quot;=default, 
-    &quot;k8s.ovn.org/owner-controller&quot;=default-network-controller, 
-    &quot;k8s.ovn.org/owner-type&quot;=EgressFirewall, 
-    rule-idx=&quot;2&quot;
+    "k8s.ovn.org/id"="default-network-controller:EgressFirewall:default:9998", 
+    "k8s.ovn.org/name"=default, 
+    "k8s.ovn.org/owner-controller"=default-network-controller, 
+    "k8s.ovn.org/owner-type"=EgressFirewall, 
+    rule-idx="2"
 }
 label               : 0
 log                 : false
-match               : &quot;(ip4.dst == 0.0.0.0/0 &amp;&amp; ip4.dst != 10.244.0.0/16) &amp;&amp; ip4.src == $a4322231855293774466&quot;
+match               : "(ip4.dst == 0.0.0.0/0 &amp;&amp; ip4.dst != 10.244.0.0/16) &amp;&amp; ip4.src == $a4322231855293774466"
 meter               : acl-logging
-name                : &quot;EF:default:9998&quot;
+name                : "EF:default:9998"
 options             : {}
 priority            : 9998
 severity            : []
@@ -3770,17 +3770,17 @@ and per-namespace ACLs with <code>ExternalIDs["owner_object_type"]="MulticastNS"
 direction           : from-lport
 external_ids        : {
   direction=Egress, 
-  &quot;k8s.ovn.org/id&quot;=&quot;default-network-controller:MulticastCluster:AllowInterNode:Ingress&quot;, 
-  &quot;k8s.ovn.org/owner-controller&quot;=default-network-controller, 
-  &quot;k8s.ovn.org/owner-type&quot;=MulticastCluster, 
+  "k8s.ovn.org/id"="default-network-controller:MulticastCluster:AllowInterNode:Ingress", 
+  "k8s.ovn.org/owner-controller"=default-network-controller, 
+  "k8s.ovn.org/owner-type"=MulticastCluster, 
   type=AllowInterNode
 }
 label               : 0
 log                 : false
-match               : &quot;inport == @clusterRtrPortGroup &amp;&amp; (ip4.mcast || mldv1 || mldv2 || (ip6.dst[120..127] == 0xff &amp;&amp; ip6.dst[116] == 1))&quot;
+match               : "inport == @clusterRtrPortGroup &amp;&amp; (ip4.mcast || mldv1 || mldv2 || (ip6.dst[120..127] == 0xff &amp;&amp; ip6.dst[116] == 1))"
 meter               : acl-logging
 name                : []
-options             : {apply-after-lb=&quot;true&quot;}
+options             : {apply-after-lb="true"}
 priority            : 1012
 severity            : []
 
@@ -3788,14 +3788,14 @@ action              : allow
 direction           : to-lport
 external_ids        : {
   direction=Ingress, 
-  &quot;k8s.ovn.org/id&quot;=&quot;default-network-controller:MulticastCluster:AllowInterNode:Ingress&quot;, 
-  &quot;k8s.ovn.org/owner-controller&quot;=default-network-controller, 
-  &quot;k8s.ovn.org/owner-type&quot;=MulticastCluster, 
+  "k8s.ovn.org/id"="default-network-controller:MulticastCluster:AllowInterNode:Ingress", 
+  "k8s.ovn.org/owner-controller"=default-network-controller, 
+  "k8s.ovn.org/owner-type"=MulticastCluster, 
   type=AllowInterNode
 }
 label               : 0
 log                 : false
-match               : &quot;outport == @clusterRtrPortGroup &amp;&amp; (ip4.mcast || mldv1 || mldv2 || (ip6.dst[120..127] == 0xff &amp;&amp; ip6.dst[116] == 1))&quot;
+match               : "outport == @clusterRtrPortGroup &amp;&amp; (ip4.mcast || mldv1 || mldv2 || (ip6.dst[120..127] == 0xff &amp;&amp; ip6.dst[116] == 1))"
 meter               : acl-logging
 name                : []
 options             : {}
@@ -3806,17 +3806,17 @@ action              : drop
 direction           : from-lport
 external_ids        : {
   direction=Egress, 
-  &quot;k8s.ovn.org/id&quot;=&quot;default-network-controller:MulticastCluster:DefaultDeny:Egress&quot;, 
-  &quot;k8s.ovn.org/owner-controller&quot;=default-network-controller, 
-  &quot;k8s.ovn.org/owner-type&quot;=MulticastCluster, 
+  "k8s.ovn.org/id"="default-network-controller:MulticastCluster:DefaultDeny:Egress", 
+  "k8s.ovn.org/owner-controller"=default-network-controller, 
+  "k8s.ovn.org/owner-type"=MulticastCluster, 
   type=DefaultDeny
 }
 label               : 0
 log                 : false
-match               : &quot;(ip4.mcast || mldv1 || mldv2 || (ip6.dst[120..127] == 0xff &amp;&amp; ip6.dst[116] == 1))&quot;
+match               : "(ip4.mcast || mldv1 || mldv2 || (ip6.dst[120..127] == 0xff &amp;&amp; ip6.dst[116] == 1))"
 meter               : acl-logging
 name                : []
-options             : {apply-after-lb=&quot;true&quot;}
+options             : {apply-after-lb="true"}
 priority            : 1011
 severity            : []
 
@@ -3824,14 +3824,14 @@ action              : drop
 direction           : to-lport
 external_ids        : {
   direction=Ingress, 
-  &quot;k8s.ovn.org/id&quot;=&quot;default-network-controller:MulticastCluster:DefaultDeny:Egress&quot;, 
-  &quot;k8s.ovn.org/owner-controller&quot;=default-network-controller, 
-  &quot;k8s.ovn.org/owner-type&quot;=MulticastCluster, 
+  "k8s.ovn.org/id"="default-network-controller:MulticastCluster:DefaultDeny:Egress", 
+  "k8s.ovn.org/owner-controller"=default-network-controller, 
+  "k8s.ovn.org/owner-type"=MulticastCluster, 
   type=DefaultDeny
 }
 label               : 0
 log                 : false
-match               : &quot;(ip4.mcast || mldv1 || mldv2 || (ip6.dst[120..127] == 0xff &amp;&amp; ip6.dst[116] == 1))&quot;
+match               : "(ip4.mcast || mldv1 || mldv2 || (ip6.dst[120..127] == 0xff &amp;&amp; ip6.dst[116] == 1))"
 meter               : acl-logging
 name                : []
 options             : {}
@@ -3842,15 +3842,15 @@ severity            : []
 <div class="highlight"><pre><span></span><code>action              : allow
 direction           : to-lport
 external_ids        : {
-    &quot;k8s.ovn.org/id&quot;=&quot;default-network-controller:MulticastNS:default:Allow_Ingress&quot;, 
-    &quot;k8s.ovn.org/name&quot;=default, 
-    &quot;k8s.ovn.org/owner-controller&quot;=default-network-controller, 
-    &quot;k8s.ovn.org/owner-type&quot;=MulticastNS, 
+    "k8s.ovn.org/id"="default-network-controller:MulticastNS:default:Allow_Ingress", 
+    "k8s.ovn.org/name"=default, 
+    "k8s.ovn.org/owner-controller"=default-network-controller, 
+    "k8s.ovn.org/owner-type"=MulticastNS, 
     direction=Ingress
 }
 label               : 0
 log                 : false
-match               : &quot;outport == @a16982411286042166782 &amp;&amp; (igmp || (ip4.src == $a4322231855293774466 &amp;&amp; ip4.mcast))&quot;
+match               : "outport == @a16982411286042166782 &amp;&amp; (igmp || (ip4.src == $a4322231855293774466 &amp;&amp; ip4.mcast))"
 meter               : acl-logging
 name                : []
 options             : {}
@@ -3860,18 +3860,18 @@ severity            : []
 action              : allow
 direction           : from-lport
 external_ids        : {
-    &quot;k8s.ovn.org/id&quot;=&quot;default-network-controller:MulticastNS:default:Allow_Egress&quot;, 
-    &quot;k8s.ovn.org/name&quot;=default, 
-    &quot;k8s.ovn.org/owner-controller&quot;=default-network-controller, 
-    &quot;k8s.ovn.org/owner-type&quot;=MulticastNS, 
+    "k8s.ovn.org/id"="default-network-controller:MulticastNS:default:Allow_Egress", 
+    "k8s.ovn.org/name"=default, 
+    "k8s.ovn.org/owner-controller"=default-network-controller, 
+    "k8s.ovn.org/owner-type"=MulticastNS, 
     tdirection=Egress
 }
 label               : 0
 log                 : false
-match               : &quot;inport == @a16982411286042166782 &amp;&amp; ip4.mcast&quot;
+match               : "inport == @a16982411286042166782 &amp;&amp; ip4.mcast"
 meter               : acl-logging
 name                : []
-options             : {apply-after-lb=&quot;true&quot;}
+options             : {apply-after-lb="true"}
 priority            : 1012
 severity            : []
 </code></pre></div></p>
@@ -3880,15 +3880,15 @@ severity            : []
 <div class="highlight"><pre><span></span><code>action              : allow-related
 direction           : to-lport
 external_ids        : {
-    ip=&quot;10.244.2.2&quot;, 
-    &quot;k8s.ovn.org/id&quot;=&quot;default-network-controller:NetpolNode:ovn-worker:10.244.2.2&quot;, 
-    &quot;k8s.ovn.org/name&quot;=ovn-worker, 
-    &quot;k8s.ovn.org/owner-controller&quot;=default-network-controller, 
-    &quot;k8s.ovn.org/owner-type&quot;=NetpolNode
+    ip="10.244.2.2", 
+    "k8s.ovn.org/id"="default-network-controller:NetpolNode:ovn-worker:10.244.2.2", 
+    "k8s.ovn.org/name"=ovn-worker, 
+    "k8s.ovn.org/owner-controller"=default-network-controller, 
+    "k8s.ovn.org/owner-type"=NetpolNode
 }
 label               : 0
 log                 : false
-match               : &quot;ip4.src==10.244.2.2&quot;
+match               : "ip4.src==10.244.2.2"
 meter               : acl-logging
 name                : []
 options             : {}
@@ -3902,14 +3902,14 @@ These IPs are assigned as src IP to the hairpinned packets.</p>
 direction           : to-lport
 external_ids        : {
     direction=Ingress, 
-    &quot;k8s.ovn.org/id&quot;=&quot;default-network-controller:NetpolDefault:allow-hairpinning:Ingress&quot;, 
-    &quot;k8s.ovn.org/name&quot;=allow-hairpinning, 
-    &quot;k8s.ovn.org/owner-controller&quot;=default-network-controller, 
-    &quot;k8s.ovn.org/owner-type&quot;=NetpolDefault
+    "k8s.ovn.org/id"="default-network-controller:NetpolDefault:allow-hairpinning:Ingress", 
+    "k8s.ovn.org/name"=allow-hairpinning, 
+    "k8s.ovn.org/owner-controller"=default-network-controller, 
+    "k8s.ovn.org/owner-type"=NetpolDefault
 }
 label               : 0
 log                 : false
-match               : &quot;ip4.src == 169.254.169.5&quot;
+match               : "ip4.src == 169.254.169.5"
 meter               : acl-logging
 name                : []
 options             : {}
@@ -3920,17 +3920,17 @@ action              : allow-related
 direction           : from-lport
 external_ids        : {
     direction=Egress, 
-    &quot;k8s.ovn.org/id&quot;=&quot;default-network-controller:NetpolDefault:allow-hairpinning:Egress&quot;, 
-    &quot;k8s.ovn.org/name&quot;=allow-hairpinning, 
-    &quot;k8s.ovn.org/owner-controller&quot;=default-network-controller, 
-    &quot;k8s.ovn.org/owner-type&quot;=NetpolDefault
+    "k8s.ovn.org/id"="default-network-controller:NetpolDefault:allow-hairpinning:Egress", 
+    "k8s.ovn.org/name"=allow-hairpinning, 
+    "k8s.ovn.org/owner-controller"=default-network-controller, 
+    "k8s.ovn.org/owner-type"=NetpolDefault
 }
 label               : 0
 log                 : false
-match               : &quot;ip4.src == 169.254.169.5&quot;
+match               : "ip4.src == 169.254.169.5"
 meter               : acl-logging
 name                : []
-options             : {apply-after-lb=&quot;true&quot;}
+options             : {apply-after-lb="true"}
 priority            : 1001
 severity            : []
 </code></pre></div>
@@ -3942,18 +3942,18 @@ There are 2 ACL types (<code>defaultDeny</code> and <code>arpAllow</code>) for e
 direction           : from-lport
 external_ids        : {
     direction=Egress, 
-    &quot;k8s.ovn.org/id&quot;=&quot;default-network-controller:NetpolNamespace:default:Egress:arpAllow&quot;, 
-    &quot;k8s.ovn.org/name&quot;=default, 
-    &quot;k8s.ovn.org/owner-controller&quot;=default-network-controller, 
-    &quot;k8s.ovn.org/owner-type&quot;=NetpolNamespace, 
+    "k8s.ovn.org/id"="default-network-controller:NetpolNamespace:default:Egress:arpAllow", 
+    "k8s.ovn.org/name"=default, 
+    "k8s.ovn.org/owner-controller"=default-network-controller, 
+    "k8s.ovn.org/owner-type"=NetpolNamespace, 
     type=arpAllow
 }
 label               : 0
 log                 : false
-match               : &quot;inport == @a16982411286042166782_egressDefaultDeny &amp;&amp; (arp || nd)&quot;
+match               : "inport == @a16982411286042166782_egressDefaultDeny &amp;&amp; (arp || nd)"
 meter               : acl-logging
-name                : &quot;NP:default:Egress&quot;
-options             : {apply-after-lb=&quot;true&quot;}
+name                : "NP:default:Egress"
+options             : {apply-after-lb="true"}
 priority            : 1001
 severity            : []
 
@@ -3961,18 +3961,18 @@ action              : drop
 direction           : from-lport
 external_ids        : {
     direction=Egress, 
-    &quot;k8s.ovn.org/id&quot;=&quot;default-network-controller:NetpolNamespace:default:Egress:defaultDeny&quot;, 
-    &quot;k8s.ovn.org/name&quot;=default, 
-    &quot;k8s.ovn.org/owner-controller&quot;=default-network-controller, 
-    &quot;k8s.ovn.org/owner-type&quot;=NetpolNamespace, 
+    "k8s.ovn.org/id"="default-network-controller:NetpolNamespace:default:Egress:defaultDeny", 
+    "k8s.ovn.org/name"=default, 
+    "k8s.ovn.org/owner-controller"=default-network-controller, 
+    "k8s.ovn.org/owner-type"=NetpolNamespace, 
     type=defaultDeny
 }
 label               : 0
 log                 : false
-match               : &quot;inport == @a16982411286042166782_egressDefaultDeny&quot;
+match               : "inport == @a16982411286042166782_egressDefaultDeny"
 meter               : acl-logging
-name                : &quot;NP:default:Egress&quot;
-options             : {apply-after-lb=&quot;true&quot;}
+name                : "NP:default:Egress"
+options             : {apply-after-lb="true"}
 priority            : 1000
 severity            : []
 </code></pre></div></p>
@@ -3982,17 +3982,17 @@ action              : allow
 direction           : to-lport
 external_ids        : {
     direction=Ingress, 
-    &quot;k8s.ovn.org/id&quot;=&quot;default-network-controller:NetpolNamespace:default:Ingress:arpAllow&quot;, 
-    &quot;k8s.ovn.org/name&quot;=default, 
-    &quot;k8s.ovn.org/owner-controller&quot;=default-network-controller, 
-    &quot;k8s.ovn.org/owner-type&quot;=NetpolNamespace, 
+    "k8s.ovn.org/id"="default-network-controller:NetpolNamespace:default:Ingress:arpAllow", 
+    "k8s.ovn.org/name"=default, 
+    "k8s.ovn.org/owner-controller"=default-network-controller, 
+    "k8s.ovn.org/owner-type"=NetpolNamespace, 
     type=arpAllow
 }
 label               : 0
 log                 : false
-match               : &quot;outport == @a16982411286042166782_ingressDefaultDeny &amp;&amp; (arp || nd)&quot;
+match               : "outport == @a16982411286042166782_ingressDefaultDeny &amp;&amp; (arp || nd)"
 meter               : acl-logging
-name                : &quot;NP:default:Ingress&quot;
+name                : "NP:default:Ingress"
 options             : {}
 priority            : 1001
 severity            : []
@@ -4001,17 +4001,17 @@ action              : drop
 direction           : to-lport
 external_ids        : {
     direction=Ingress, 
-    &quot;k8s.ovn.org/id&quot;=&quot;default-network-controller:NetpolNamespace:default:Ingress:defaultDeny&quot;, 
-    &quot;k8s.ovn.org/name&quot;=default, 
-    &quot;k8s.ovn.org/owner-controller&quot;=default-network-controller, 
-    &quot;k8s.ovn.org/owner-type&quot;=NetpolNamespace, 
+    "k8s.ovn.org/id"="default-network-controller:NetpolNamespace:default:Ingress:defaultDeny", 
+    "k8s.ovn.org/name"=default, 
+    "k8s.ovn.org/owner-controller"=default-network-controller, 
+    "k8s.ovn.org/owner-type"=NetpolNamespace, 
     type=defaultDeny
 }
 label               : 0
 log                 : false
-match               : &quot;outport == @a16982411286042166782_ingressDefaultDeny&quot;
+match               : "outport == @a16982411286042166782_ingressDefaultDeny"
 meter               : acl-logging
-name                : &quot;NP:default:Ingress&quot;
+name                : "NP:default:Ingress"
 options             : {}
 priority            : 1000
 severity            : []
@@ -4046,20 +4046,20 @@ spec:
 direction           : from-lport
 external_ids        : {
     direction=egress, 
-    gress-index=&quot;0&quot;, 
-    ip-block-index=&quot;0&quot;, 
-    &quot;k8s.ovn.org/id&quot;=&quot;default-network-controller:NetworkPolicy:default:test-policy:egress:0:-1:0&quot;, 
-    &quot;k8s.ovn.org/name&quot;=&quot;default:test-policy&quot;, 
-    &quot;k8s.ovn.org/owner-controller&quot;=default-network-controller, 
-    &quot;k8s.ovn.org/owner-type&quot;=NetworkPolicy, 
-    port-policy-index=&quot;-1&quot;
+    gress-index="0", 
+    ip-block-index="0", 
+    "k8s.ovn.org/id"="default-network-controller:NetworkPolicy:default:test-policy:egress:0:-1:0", 
+    "k8s.ovn.org/name"="default:test-policy", 
+    "k8s.ovn.org/owner-controller"=default-network-controller, 
+    "k8s.ovn.org/owner-type"=NetworkPolicy, 
+    port-policy-index="-1"
 }
 label               : 0
 log                 : false
-match               : &quot;ip4.dst == 10.244.1.5/32 &amp;&amp; inport == @a2653181086423119552&quot;
+match               : "ip4.dst == 10.244.1.5/32 &amp;&amp; inport == @a2653181086423119552"
 meter               : acl-logging
-name                : &quot;NP:default:test-policy:egress:0:-1:0&quot;
-options             : {apply-after-lb=&quot;true&quot;}
+name                : "NP:default:test-policy:egress:0:-1:0"
+options             : {apply-after-lb="true"}
 priority            : 1001
 severity            : []
 
@@ -4067,19 +4067,19 @@ action              : allow-related
 direction           : to-lport
 external_ids        : {
     direction=ingress, 
-    gress-index=&quot;0&quot;, 
-    ip-block-index=&quot;-1&quot;, 
-    &quot;k8s.ovn.org/id&quot;=&quot;default-network-controller:NetworkPolicy:default:test-policy:ingress:0:-1:-1&quot;, 
-    &quot;k8s.ovn.org/name&quot;=&quot;default:test-policy&quot;, 
-    &quot;k8s.ovn.org/owner-controller&quot;=default-network-controller, 
-    &quot;k8s.ovn.org/owner-type&quot;=NetworkPolicy, 
-    port-policy-index=&quot;-1&quot;
+    gress-index="0", 
+    ip-block-index="-1", 
+    "k8s.ovn.org/id"="default-network-controller:NetworkPolicy:default:test-policy:ingress:0:-1:-1", 
+    "k8s.ovn.org/name"="default:test-policy", 
+    "k8s.ovn.org/owner-controller"=default-network-controller, 
+    "k8s.ovn.org/owner-type"=NetworkPolicy, 
+    port-policy-index="-1"
 }
 label               : 0
 log                 : false
-match               : &quot;(ip4.src == {$a3733136965153973077} || (ip4.src == 169.254.169.5 &amp;&amp; ip4.dst == {$a3733136965153973077})) &amp;&amp; outport == @a2653181086423119552&quot;
+match               : "(ip4.src == {$a3733136965153973077} || (ip4.src == 169.254.169.5 &amp;&amp; ip4.dst == {$a3733136965153973077})) &amp;&amp; outport == @a2653181086423119552"
 meter               : acl-logging
-name                : &quot;NP:default:test-policy:ingress:0:-1:-1&quot;
+name                : "NP:default:test-policy:ingress:0:-1:-1"
 options             : {}
 priority            : 1001
 severity            : []
