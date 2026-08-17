@@ -264,7 +264,9 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 						ginkgo.By("Selecting 3 schedulable nodes")
 						nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 3)
 						gomega.Expect(err).NotTo(gomega.HaveOccurred())
-						gomega.Expect(len(nodes.Items)).To(gomega.BeNumerically(">", 2))
+						if len(nodes.Items) < 3 {
+							e2eskipper.Skipf("Test requires >= 3 Ready nodes, but there are only %v nodes", len(nodes.Items))
+						}
 
 						ginkgo.By("Selecting node for pods")
 						serverPodNodeName = nodes.Items[0].Name
@@ -977,7 +979,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 			framework.ExpectNoError(err)
 
 			if len(nodes.Items) < 3 {
-				framework.Failf(
+				e2eskipper.Skipf(
 					"Test requires >= 3 Ready nodes, but there are only %v nodes",
 					len(nodes.Items))
 			}
@@ -1161,7 +1163,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 			framework.ExpectNoError(err)
 
 			if len(nodes.Items) < 3 {
-				framework.Failf(
+				e2eskipper.Skipf(
 					"Test requires >= 3 Ready nodes, but there are only %v nodes",
 					len(nodes.Items))
 			}
@@ -1202,7 +1204,9 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 			framework.ExpectNoError(err, "must list all Nodes")
 			for _, node := range nodes.Items {
 				_, err = providerCtx.AttachNetwork(secondaryProviderNetwork, node.Name)
-				framework.ExpectNoError(err, "network %s must attach to node %s", secondaryProviderNetwork.Name, node.Name)
+				if err != nil {
+					e2eskipper.Skipf("Test requires nodes that support attaching provider networks; network %s could not attach to node %s: %v", secondaryProviderNetwork.Name(), node.Name, err)
+				}
 			}
 			serverExternalContainerPort := infraprovider.Get().GetExternalContainerPort()
 			serverExternalContainerSpec := infraapi.ExternalContainer{
@@ -2282,8 +2286,9 @@ spec:
 		ginkgo.By("Selecting 2 schedulable nodes")
 		nodeList, err := e2enode.GetBoundedReadySchedulableNodes(ctx, cs, 2)
 		framework.ExpectNoError(err)
-		gomega.Expect(len(nodeList.Items)).To(gomega.BeNumerically(">", 1),
-			"need at least 2 nodes so the client sends traffic via the physical network")
+		if len(nodeList.Items) < 2 {
+			e2eskipper.Skipf("Test requires >= 2 Ready nodes so the client sends traffic via the physical network, but there are only %v nodes", len(nodeList.Items))
+		}
 		serverNodeName := nodeList.Items[0].Name
 		clientNodeName := nodeList.Items[1].Name
 
@@ -2537,7 +2542,7 @@ var _ = ginkgo.Describe("Service Hairpin SNAT", feature.Service, func() {
 		nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 2)
 		framework.ExpectNoError(err)
 		if len(nodes.Items) < 2 {
-			framework.Failf("Test requires >= 2 Ready nodes, but there are only %v nodes", len(nodes.Items))
+			e2eskipper.Skipf("Test requires >= 2 Ready nodes, but there are only %v nodes", len(nodes.Items))
 		}
 		nodeIPs := e2enode.GetAddresses(&nodes.Items[1], v1.NodeInternalIP)
 		gomega.Expect(nodeIPs).NotTo(gomega.BeEmpty(), "second Ready node must have an InternalIP")
@@ -2652,7 +2657,7 @@ var _ = ginkgo.Describe("Load Balancer Service Tests with MetalLB", feature.Serv
 		nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 2)
 		framework.ExpectNoError(err)
 		if len(nodes.Items) < 2 {
-			framework.Failf("Test requires >= 2 Ready nodes, but there are only %v nodes", len(nodes.Items))
+			e2eskipper.Skipf("Test requires >= 2 Ready nodes, but there are only %v nodes", len(nodes.Items))
 		}
 		backendNodeName = nodes.Items[0].Name
 		nonBackendNodeName = nodes.Items[1].Name
