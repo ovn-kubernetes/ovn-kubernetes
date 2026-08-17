@@ -516,5 +516,548 @@ var _ = ginkgo.Describe("Cluster manager EndpointSlice mirror controller", func(
 			err := app.Run([]string{app.Name})
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 		})
+
+		ginkgo.It("should mirror selector-less EndpointSlices with non-Pod addresses as-is", func() {
+			app.Action = func(*cli.Context) error {
+				namespaceT := *util.NewNamespace("testns")
+				namespaceT.Labels[types.RequiredUDNNamespaceLabel] = ""
+
+				blockOwnerDeletion := true
+				manualEndpointSlice := discovery.EndpointSlice{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "manual-endpointslice",
+						Namespace: namespaceT.Name,
+						Labels: map[string]string{
+							discovery.LabelServiceName: "external-svc",
+							discovery.LabelManagedBy:   types.EndpointSliceMirroringControllerName,
+						},
+						OwnerReferences: []metav1.OwnerReference{{
+							APIVersion:         "v1",
+							Kind:               "Endpoints",
+							Name:               "external-svc",
+							UID:                "endpoints-uid",
+							BlockOwnerDeletion: &blockOwnerDeletion,
+						}},
+						ResourceVersion: "1",
+					},
+					AddressType: discovery.AddressTypeIPv4,
+					Endpoints: []discovery.Endpoint{
+						{
+							Addresses: []string{"192.168.100.50"},
+						},
+					},
+				}
+				objs := []runtime.Object{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
+							namespaceT,
+						},
+					},
+					&discovery.EndpointSliceList{
+						Items: []discovery.EndpointSlice{
+							manualEndpointSlice,
+						},
+					},
+				}
+
+				start(objs...)
+
+				nad := testing.GenerateNAD("l3-network", "l3-network", namespaceT.Name, types.Layer3Topology, "10.132.2.0/16/24", types.NetworkRolePrimary)
+				_, err := fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespaceT.Name).Create(
+					context.TODO(),
+					nad,
+					metav1.CreateOptions{})
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+				var mirroredEndpointSlices []*discovery.EndpointSlice
+				gomega.Eventually(func() error {
+					_, err := fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespaceT.Name).Get(context.TODO(), "l3-network", metav1.GetOptions{})
+					if err != nil {
+						return err
+					}
+
+					mirroredEndpointSlices, err = util.GetMirroredEndpointSlices(types.EndpointSliceMirrorControllerName, manualEndpointSlice.Name, namespaceT.Name, controller.endpointSliceLister)
+					if err != nil {
+						return err
+					}
+					if len(mirroredEndpointSlices) != 1 {
+						return fmt.Errorf("expected one mirrored EndpointSlice, got %d", len(mirroredEndpointSlices))
+					}
+					if len(mirroredEndpointSlices[0].Endpoints) != 1 {
+						return fmt.Errorf("expected one Endpoint, got %d", len(mirroredEndpointSlices[0].Endpoints))
+					}
+					if len(mirroredEndpointSlices[0].Endpoints[0].Addresses) != 1 {
+						return fmt.Errorf("expected one Address, got %d", len(mirroredEndpointSlices[0].Endpoints[0].Addresses))
+					}
+					return nil
+				}).WithTimeout(5 * time.Second).ShouldNot(gomega.HaveOccurred())
+
+				gomega.Expect(mirroredEndpointSlices[0].Endpoints[0].Addresses).To(gomega.BeEquivalentTo([]string{"192.168.100.50"}))
+				gomega.Expect(mirroredEndpointSlices[0].Labels[types.LabelUserDefinedServiceName]).To(gomega.Equal("external-svc"))
+				gomega.Expect(mirroredEndpointSlices[0].Annotations[types.UserDefinedNetworkEndpointSliceAnnotation]).To(gomega.Equal("l3-network"))
+				gomega.Expect(mirroredEndpointSlices[0].Annotations[types.SourceEndpointSliceAnnotation]).To(gomega.Equal(manualEndpointSlice.Name))
+				// Endpoints owner refs with blockOwnerDeletion must not be copied
+				gomega.Expect(mirroredEndpointSlices[0].OwnerReferences).To(gomega.BeEmpty())
+
+				return nil
+			}
+
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("should strip Endpoints ownerRefs from an existing mirror even when source ResourceVersion matches", func() {
+			app.Action = func(*cli.Context) error {
+				namespaceT := *util.NewNamespace("testns")
+				namespaceT.Labels[types.RequiredUDNNamespaceLabel] = ""
+
+				blockOwnerDeletion := true
+				manualEndpointSlice := discovery.EndpointSlice{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "manual-endpointslice",
+						Namespace: namespaceT.Name,
+						Labels: map[string]string{
+							discovery.LabelServiceName: "external-svc",
+							discovery.LabelManagedBy:   types.EndpointSliceMirroringControllerName,
+						},
+						OwnerReferences: []metav1.OwnerReference{{
+							APIVersion:         "v1",
+							Kind:               "Endpoints",
+							Name:               "external-svc",
+							UID:                "endpoints-uid",
+							BlockOwnerDeletion: &blockOwnerDeletion,
+						}},
+						ResourceVersion: "1",
+					},
+					AddressType: discovery.AddressTypeIPv4,
+					Endpoints: []discovery.Endpoint{
+						{
+							Addresses: []string{"192.168.100.50"},
+						},
+					},
+				}
+				existingMirror := testing.MirrorEndpointSlice(&manualEndpointSlice, "l3-network", true)
+				existingMirror.OwnerReferences = []metav1.OwnerReference{{
+					APIVersion:         "v1",
+					Kind:               "Endpoints",
+					Name:               "external-svc",
+					UID:                "endpoints-uid",
+					BlockOwnerDeletion: &blockOwnerDeletion,
+				}}
+				existingMirror.Annotations[types.LabelSourceEndpointSliceVersion] = manualEndpointSlice.ResourceVersion
+
+				objs := []runtime.Object{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
+							namespaceT,
+						},
+					},
+					&discovery.EndpointSliceList{
+						Items: []discovery.EndpointSlice{
+							manualEndpointSlice,
+							*existingMirror,
+						},
+					},
+				}
+
+				start(objs...)
+
+				nad := testing.GenerateNAD("l3-network", "l3-network", namespaceT.Name, types.Layer3Topology, "10.132.2.0/16/24", types.NetworkRolePrimary)
+				_, err := fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespaceT.Name).Create(
+					context.TODO(),
+					nad,
+					metav1.CreateOptions{})
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+				gomega.Eventually(func() error {
+					mirroredEndpointSlices, err := util.GetMirroredEndpointSlices(types.EndpointSliceMirrorControllerName, manualEndpointSlice.Name, namespaceT.Name, controller.endpointSliceLister)
+					if err != nil {
+						return err
+					}
+					if len(mirroredEndpointSlices) != 1 {
+						return fmt.Errorf("expected one mirrored EndpointSlice, got %d", len(mirroredEndpointSlices))
+					}
+					if len(mirroredEndpointSlices[0].OwnerReferences) != 0 {
+						return fmt.Errorf("expected Endpoints ownerRefs to be stripped, got %#v", mirroredEndpointSlices[0].OwnerReferences)
+					}
+					return nil
+				}).WithTimeout(5 * time.Second).ShouldNot(gomega.HaveOccurred())
+
+				return nil
+			}
+
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("should mirror IPv6 selector-less EndpointSlices with non-Pod addresses as-is", func() {
+			app.Action = func(*cli.Context) error {
+				config.IPv6Mode = true
+				namespaceT := *util.NewNamespace("testns-v6")
+				namespaceT.Labels[types.RequiredUDNNamespaceLabel] = ""
+
+				blockOwnerDeletion := true
+				manualEndpointSlice := discovery.EndpointSlice{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "manual-endpointslice-v6",
+						Namespace: namespaceT.Name,
+						Labels: map[string]string{
+							discovery.LabelServiceName: "external-svc-v6",
+							discovery.LabelManagedBy:   types.EndpointSliceMirroringControllerName,
+						},
+						OwnerReferences: []metav1.OwnerReference{{
+							APIVersion:         "v1",
+							Kind:               "Endpoints",
+							Name:               "external-svc-v6",
+							UID:                "endpoints-uid-v6",
+							BlockOwnerDeletion: &blockOwnerDeletion,
+						}},
+						ResourceVersion: "1",
+					},
+					AddressType: discovery.AddressTypeIPv6,
+					Endpoints: []discovery.Endpoint{
+						{
+							Addresses: []string{"2001:db8::50"},
+						},
+					},
+				}
+				objs := []runtime.Object{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
+							namespaceT,
+						},
+					},
+					&discovery.EndpointSliceList{
+						Items: []discovery.EndpointSlice{
+							manualEndpointSlice,
+						},
+					},
+				}
+
+				start(objs...)
+
+				nad := testing.GenerateNAD("l3-network", "l3-network", namespaceT.Name, types.Layer3Topology, "2014:100:200::0/60/64", types.NetworkRolePrimary)
+				_, err := fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespaceT.Name).Create(
+					context.TODO(),
+					nad,
+					metav1.CreateOptions{})
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+				var mirroredEndpointSlices []*discovery.EndpointSlice
+				gomega.Eventually(func() error {
+					_, err := fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespaceT.Name).Get(context.TODO(), "l3-network", metav1.GetOptions{})
+					if err != nil {
+						return err
+					}
+
+					mirroredEndpointSlices, err = util.GetMirroredEndpointSlices(types.EndpointSliceMirrorControllerName, manualEndpointSlice.Name, namespaceT.Name, controller.endpointSliceLister)
+					if err != nil {
+						return err
+					}
+					if len(mirroredEndpointSlices) != 1 {
+						return fmt.Errorf("expected one mirrored EndpointSlice, got %d", len(mirroredEndpointSlices))
+					}
+					if len(mirroredEndpointSlices[0].Endpoints) != 1 || len(mirroredEndpointSlices[0].Endpoints[0].Addresses) != 1 {
+						return fmt.Errorf("expected one IPv6 address on mirrored EndpointSlice")
+					}
+					return nil
+				}).WithTimeout(5 * time.Second).ShouldNot(gomega.HaveOccurred())
+
+				gomega.Expect(mirroredEndpointSlices[0].AddressType).To(gomega.Equal(discovery.AddressTypeIPv6))
+				gomega.Expect(mirroredEndpointSlices[0].Endpoints[0].Addresses).To(gomega.BeEquivalentTo([]string{"2001:db8::50"}))
+
+				return nil
+			}
+
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("should mirror mixed Pod and non-Pod endpoints from a mirroring-controller EndpointSlice", func() {
+			app.Action = func(*cli.Context) error {
+				namespaceT := *util.NewNamespace("testns")
+				namespaceT.Labels[types.RequiredUDNNamespaceLabel] = ""
+
+				pod := *testing.NewPodWithPrimaryNADIP(namespaceT.Name, "test-pod", "", "10.244.2.3", "l3-network", "10.132.2.4")
+
+				mixedEndpointSlice := discovery.EndpointSlice{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "mixed-endpointslice",
+						Namespace: namespaceT.Name,
+						Labels: map[string]string{
+							discovery.LabelServiceName: "mixed-svc",
+							discovery.LabelManagedBy:   types.EndpointSliceMirroringControllerName,
+						},
+						ResourceVersion: "1",
+					},
+					AddressType: discovery.AddressTypeIPv4,
+					Endpoints: []discovery.Endpoint{
+						{
+							Addresses: []string{"10.244.2.3"},
+							TargetRef: &corev1.ObjectReference{
+								Kind:      "Pod",
+								Namespace: namespaceT.Name,
+								Name:      pod.Name,
+							},
+						},
+						{
+							Addresses: []string{"10.0.0.25"},
+						},
+						{
+							// non-Pod TargetRef: address must pass through unchanged (not swapped for UDN IP)
+							Addresses: []string{"10.0.0.30"},
+							TargetRef: &corev1.ObjectReference{
+								Kind: "Node",
+								Name: "some-node",
+							},
+						},
+					},
+				}
+				objs := []runtime.Object{
+					&corev1.PodList{
+						Items: []corev1.Pod{
+							pod,
+						},
+					},
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
+							namespaceT,
+						},
+					},
+					&discovery.EndpointSliceList{
+						Items: []discovery.EndpointSlice{
+							mixedEndpointSlice,
+						},
+					},
+				}
+
+				start(objs...)
+
+				nad := testing.GenerateNAD("l3-network", "l3-network", namespaceT.Name, types.Layer3Topology, "10.132.2.0/16/24", types.NetworkRolePrimary)
+				_, err := fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespaceT.Name).Create(
+					context.TODO(),
+					nad,
+					metav1.CreateOptions{})
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+				var mirroredEndpointSlices []*discovery.EndpointSlice
+				gomega.Eventually(func() error {
+					_, err := fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespaceT.Name).Get(context.TODO(), "l3-network", metav1.GetOptions{})
+					if err != nil {
+						return err
+					}
+
+					mirroredEndpointSlices, err = util.GetMirroredEndpointSlices(types.EndpointSliceMirrorControllerName, mixedEndpointSlice.Name, namespaceT.Name, controller.endpointSliceLister)
+					if err != nil {
+						return err
+					}
+					if len(mirroredEndpointSlices) != 1 {
+						return fmt.Errorf("expected one mirrored EndpointSlice, got %d", len(mirroredEndpointSlices))
+					}
+					if len(mirroredEndpointSlices[0].Endpoints) != 3 {
+						return fmt.Errorf("expected three Endpoints, got %d", len(mirroredEndpointSlices[0].Endpoints))
+					}
+					return nil
+				}).WithTimeout(5 * time.Second).ShouldNot(gomega.HaveOccurred())
+
+				gomega.Expect(mirroredEndpointSlices[0].Endpoints[0].Addresses).To(gomega.BeEquivalentTo([]string{"10.132.2.4"}))
+				gomega.Expect(mirroredEndpointSlices[0].Endpoints[1].Addresses).To(gomega.BeEquivalentTo([]string{"10.0.0.25"}))
+				gomega.Expect(mirroredEndpointSlices[0].Endpoints[2].Addresses).To(gomega.BeEquivalentTo([]string{"10.0.0.30"}))
+
+				return nil
+			}
+
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("should mirror mixed IPv6 Pod and non-Pod endpoints from a mirroring-controller EndpointSlice", func() {
+			app.Action = func(*cli.Context) error {
+				config.IPv6Mode = true
+				namespaceT := *util.NewNamespace("testns-ipv6-mixed")
+				namespaceT.Labels[types.RequiredUDNNamespaceLabel] = ""
+
+				pod := *testing.NewPodWithPrimaryNADIP(namespaceT.Name, "test-pod-v6", "", "2001:db8:1::3", "l3-network", "2014:100:200::4")
+
+				mixedEndpointSliceV6 := discovery.EndpointSlice{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "mixed-endpointslice-v6",
+						Namespace: namespaceT.Name,
+						Labels: map[string]string{
+							discovery.LabelServiceName: "mixed-svc-v6",
+							discovery.LabelManagedBy:   types.EndpointSliceMirroringControllerName,
+						},
+						ResourceVersion: "1",
+					},
+					AddressType: discovery.AddressTypeIPv6,
+					Endpoints: []discovery.Endpoint{
+						{
+							Addresses: []string{"2001:db8:1::3"},
+							TargetRef: &corev1.ObjectReference{
+								Kind:      "Pod",
+								Namespace: namespaceT.Name,
+								Name:      pod.Name,
+							},
+						},
+						{
+							Addresses: []string{"2001:db8:2::25"},
+						},
+						{
+							// non-Pod TargetRef: address must pass through unchanged
+							Addresses: []string{"2001:db8:2::30"},
+							TargetRef: &corev1.ObjectReference{
+								Kind: "Node",
+								Name: "some-node-v6",
+							},
+						},
+					},
+				}
+				objs := []runtime.Object{
+					&corev1.PodList{
+						Items: []corev1.Pod{
+							pod,
+						},
+					},
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
+							namespaceT,
+						},
+					},
+					&discovery.EndpointSliceList{
+						Items: []discovery.EndpointSlice{
+							mixedEndpointSliceV6,
+						},
+					},
+				}
+
+				start(objs...)
+
+				nad := testing.GenerateNAD("l3-network", "l3-network", namespaceT.Name, types.Layer3Topology, "2014:100:200::0/60/64", types.NetworkRolePrimary)
+				_, err := fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespaceT.Name).Create(
+					context.TODO(),
+					nad,
+					metav1.CreateOptions{})
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+				var mirroredEndpointSlices []*discovery.EndpointSlice
+				gomega.Eventually(func() error {
+					_, err := fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespaceT.Name).Get(context.TODO(), "l3-network", metav1.GetOptions{})
+					if err != nil {
+						return err
+					}
+
+					mirroredEndpointSlices, err = util.GetMirroredEndpointSlices(types.EndpointSliceMirrorControllerName, mixedEndpointSliceV6.Name, namespaceT.Name, controller.endpointSliceLister)
+					if err != nil {
+						return err
+					}
+					if len(mirroredEndpointSlices) != 1 {
+						return fmt.Errorf("expected one mirrored EndpointSlice, got %d", len(mirroredEndpointSlices))
+					}
+					if len(mirroredEndpointSlices[0].Endpoints) != 3 {
+						return fmt.Errorf("expected three Endpoints, got %d", len(mirroredEndpointSlices[0].Endpoints))
+					}
+					return nil
+				}).WithTimeout(5 * time.Second).ShouldNot(gomega.HaveOccurred())
+
+				gomega.Expect(mirroredEndpointSlices[0].AddressType).To(gomega.Equal(discovery.AddressTypeIPv6))
+				gomega.Expect(mirroredEndpointSlices[0].Endpoints[0].Addresses).To(gomega.BeEquivalentTo([]string{"2014:100:200::4"}))
+				gomega.Expect(mirroredEndpointSlices[0].Endpoints[1].Addresses).To(gomega.BeEquivalentTo([]string{"2001:db8:2::25"}))
+				gomega.Expect(mirroredEndpointSlices[0].Endpoints[2].Addresses).To(gomega.BeEquivalentTo([]string{"2001:db8:2::30"}))
+
+				return nil
+			}
+
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("should delete mirrored EndpointSlice when mirroring-controller source is deleted", func() {
+			app.Action = func(*cli.Context) error {
+				namespaceT := *util.NewNamespace("testns")
+				namespaceT.Labels[types.RequiredUDNNamespaceLabel] = ""
+
+				blockOwnerDeletion := true
+				manualEndpointSlice := discovery.EndpointSlice{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "manual-endpointslice-del",
+						Namespace: namespaceT.Name,
+						Labels: map[string]string{
+							discovery.LabelServiceName: "external-svc-del",
+							discovery.LabelManagedBy:   types.EndpointSliceMirroringControllerName,
+						},
+						OwnerReferences: []metav1.OwnerReference{{
+							APIVersion:         "v1",
+							Kind:               "Endpoints",
+							Name:               "external-svc-del",
+							UID:                "endpoints-uid-del",
+							BlockOwnerDeletion: &blockOwnerDeletion,
+						}},
+						ResourceVersion: "1",
+					},
+					AddressType: discovery.AddressTypeIPv4,
+					Endpoints: []discovery.Endpoint{
+						{
+							Addresses: []string{"192.168.200.50"},
+						},
+					},
+				}
+				objs := []runtime.Object{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
+							namespaceT,
+						},
+					},
+					&discovery.EndpointSliceList{
+						Items: []discovery.EndpointSlice{
+							manualEndpointSlice,
+						},
+					},
+				}
+
+				start(objs...)
+
+				nad := testing.GenerateNAD("l3-network", "l3-network", namespaceT.Name, types.Layer3Topology, "10.132.2.0/16/24", types.NetworkRolePrimary)
+				_, err := fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespaceT.Name).Create(
+					context.TODO(),
+					nad,
+					metav1.CreateOptions{})
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+				gomega.Eventually(func() error {
+					_, err := fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespaceT.Name).Get(context.TODO(), "l3-network", metav1.GetOptions{})
+					if err != nil {
+						return err
+					}
+					mirroredEndpointSlices, err := util.GetMirroredEndpointSlices(types.EndpointSliceMirrorControllerName, manualEndpointSlice.Name, namespaceT.Name, controller.endpointSliceLister)
+					if err != nil {
+						return err
+					}
+					if len(mirroredEndpointSlices) != 1 {
+						return fmt.Errorf("expected one mirrored EndpointSlice, got %d", len(mirroredEndpointSlices))
+					}
+					return nil
+				}).WithTimeout(5 * time.Second).ShouldNot(gomega.HaveOccurred())
+
+				ginkgo.By("when the mirroring-controller source EndpointSlice is removed the mirror is cleaned up")
+				err = fakeClient.KubeClient.DiscoveryV1().EndpointSlices(namespaceT.Name).Delete(context.TODO(), manualEndpointSlice.Name, metav1.DeleteOptions{})
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+				gomega.Eventually(func() error {
+					mirroredEndpointSlices, err := util.GetMirroredEndpointSlices(types.EndpointSliceMirrorControllerName, manualEndpointSlice.Name, namespaceT.Name, controller.endpointSliceLister)
+					if err != nil {
+						return err
+					}
+					if len(mirroredEndpointSlices) != 0 {
+						return fmt.Errorf("expected no mirrored EndpointSlices, got %d", len(mirroredEndpointSlices))
+					}
+					return nil
+				}).WithTimeout(5 * time.Second).ShouldNot(gomega.HaveOccurred())
+
+				return nil
+			}
+
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		})
 	})
 })
