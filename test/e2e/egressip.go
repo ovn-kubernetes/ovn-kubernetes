@@ -212,7 +212,7 @@ func containsIPInLastEntry(data, ip string) bool {
 
 // support for agnhost image is limited to netexec command
 func isSupportedAgnhostForEIP(externalContainer infraapi.ExternalContainer) bool {
-	if externalContainer.Image != images.AgnHost() {
+	if externalContainer.Image != images.ExternalAgnHost() {
 		return false
 	}
 	if !util.SliceHasStringItem(externalContainer.CmdArgs, "netexec") {
@@ -368,7 +368,7 @@ func targetExternalContainerAndTest(externalContainer infraapi.ExternalContainer
 		// we determine the src IP based on the target image
 		// agnhost netexec will return the source IP as payload
 		switch externalContainer.Image {
-		case images.AgnHost():
+		case images.ExternalAgnHost():
 			for _, expectedIP := range verifyIPs {
 				if containsIPInLastEntry(clientStdOut, expectedIP) {
 					verifyIPs = util.RemoveItemFromSliceUnstable(verifyIPs, expectedIP)
