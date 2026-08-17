@@ -2549,6 +2549,7 @@ var _ = ginkgo.Describe("Service Hairpin SNAT", feature.Service, func() {
 		namespaceName   string
 		backendNodeName string
 		nodeIP          string
+		isDualStack     bool
 	)
 
 	f := wrappedTestFramework(svcName)
@@ -2565,6 +2566,7 @@ var _ = ginkgo.Describe("Service Hairpin SNAT", feature.Service, func() {
 		namespaceName = f.Namespace.Name
 		backendNodeName = nodes.Items[0].Name
 		nodeIP = nodeIPs[0]
+		isDualStack = isDualStackCluster(nodes)
 	})
 
 	ginkgo.It("Should ensure service hairpin traffic is SNATed to hairpin masquerade IP; Switch LB", func() {
@@ -2578,7 +2580,11 @@ var _ = ginkgo.Describe("Service Hairpin SNAT", feature.Service, func() {
 		svcIP, err = createServiceForPodsWithLabel(f, namespaceName, serviceHTTPPort, endpointHTTPPort, "ClusterIP", hairpinPodSel)
 		framework.ExpectNoError(err, fmt.Sprintf("unable to create service: service-for-pods, err: %v", err))
 
-		err = e2eendpointslice.WaitForEndpointCount(context.TODO(), f.ClientSet, namespaceName, "service-for-pods", 1)
+		expectedEndpointsNum := 1
+		if isDualStack {
+			expectedEndpointsNum = 2
+		}
+		err = e2eendpointslice.WaitForEndpointCount(context.TODO(), f.ClientSet, namespaceName, "service-for-pods", expectedEndpointsNum)
 		framework.ExpectNoError(err, fmt.Sprintf("service: service-for-pods never had an endpoint, err: %v", err))
 
 		ginkgo.By("by sending a TCP packet to service service-for-pods with type=ClusterIP in namespace " + namespaceName + " from backend pod " + backendName)
@@ -2615,7 +2621,11 @@ var _ = ginkgo.Describe("Service Hairpin SNAT", feature.Service, func() {
 		svcIP, err = createServiceForPodsWithLabel(f, namespaceName, serviceHTTPPort, hostNetPort, "NodePort", hairpinPodSel)
 		framework.ExpectNoError(err, fmt.Sprintf("unable to create service: service-for-pods, err: %v", err))
 
-		err = e2eendpointslice.WaitForEndpointCount(context.TODO(), f.ClientSet, namespaceName, "service-for-pods", 1)
+		expectedEndpointsNum := 1
+		if isDualStack {
+			expectedEndpointsNum = 2
+		}
+		err = e2eendpointslice.WaitForEndpointCount(context.TODO(), f.ClientSet, namespaceName, "service-for-pods", expectedEndpointsNum)
 		framework.ExpectNoError(err, fmt.Sprintf("service: service-for-pods never had an endpoint, err: %v", err))
 
 		svc, err := f.ClientSet.CoreV1().Services(namespaceName).Get(context.TODO(), "service-for-pods", metav1.GetOptions{})
