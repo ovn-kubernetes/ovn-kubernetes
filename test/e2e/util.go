@@ -357,12 +357,15 @@ func pokeEndpointViaPod(f *framework.Framework, namespace, podName, targetHost s
 func tryPokeEndpointViaNode(nodeName, protocol, targetHost string, localPort, targetPort uint16, request string) (string, error) {
 	ipPort := net.JoinHostPort("localhost", fmt.Sprintf("%d", localPort))
 	// we leverage the dial command from netexec, that is already supporting multiple protocols
-	curlCommand := []string{"curl", "-g", "-q", "-s", fmt.Sprintf("http://%s/dial?request=%s&protocol=%s&host=%s&port=%d&tries=1",
-		ipPort,
-		request,
-		protocol,
-		targetHost,
-		targetPort)}
+	// bound the connect and total time so a stalled probe (e.g. NodePort not yet
+	// programmed) can't block callers past their own poll deadline
+	curlCommand := []string{"curl", "-g", "-q", "-s", "--connect-timeout", "5", "--max-time", "10",
+		fmt.Sprintf("http://%s/dial?request=%s&protocol=%s&host=%s&port=%d&tries=1",
+			ipPort,
+			request,
+			protocol,
+			targetHost,
+			targetPort)}
 	res, err := infraprovider.Get().ExecK8NodeCommand(nodeName, curlCommand)
 	if err != nil {
 		return "", err

@@ -2598,7 +2598,17 @@ var _ = ginkgo.Describe("Service Hairpin SNAT", feature.Service, func() {
 
 		ginkgo.By("by sending a TCP packet to service service-for-pods with type=NodePort(" + nodeIP + ":" + fmt.Sprint(svc.Spec.Ports[0].NodePort) + ") in namespace " + namespaceName + " from node " + backendNodeName)
 
-		clientIP := pokeEndpointViaNode(backendNodeName, "http", nodeIP, hostNetPort, uint16(svc.Spec.Ports[0].NodePort), "clientip")
+		var clientIP string
+		err = wait.PollImmediate(2*time.Second, 30*time.Second, func() (bool, error) {
+			var pokeErr error
+			clientIP, pokeErr = tryPokeEndpointViaNode(backendNodeName, "http", nodeIP, hostNetPort, uint16(svc.Spec.Ports[0].NodePort), "clientip")
+			if pokeErr != nil || clientIP == "" {
+				return false, nil
+			}
+			return true, nil
+		})
+		framework.ExpectNoError(err, "timed out waiting for successful NodePort response")
+
 		clientIP, _, err = net.SplitHostPort(clientIP)
 		framework.ExpectNoError(err, "failed to parse client ip:port")
 
