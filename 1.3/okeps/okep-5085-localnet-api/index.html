@@ -5422,9 +5422,9 @@ NAD in namespace <code>red</code>:
 <h3 id="implementation-details">Implementation Details<a class="headerlink" href="#implementation-details" title="Permanent link">¶</a></h3>
 <p>The CUDN <code>spec.network.topology</code> field should be extended to accept <code>Localnet</code> string.
 And the <code>spec.network</code> struct <code>NetworkSpec</code> should have an additional field for localnet topology configuration:
-</p><div class="highlight"><pre><span></span><code><span class="kd">const</span><span class="w"> </span><span class="nx">NetworkTopologyLocalnet</span><span class="w"> </span><span class="nx">NetworkTopology</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">"Localnet"</span>
+</p><div class="highlight"><pre><span></span><code><span class="kd">const</span><span class="w"> </span><span class="nx">NetworkTopologyLocalnet</span><span class="w"> </span><span class="nx">NetworkTopology</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"Localnet"</span>
 
-<span class="o">...</span>
+<span class="p">...</span>
 
 <span class="c1">// NetworkSpec defines the desired state of UserDefinedNetworkSpec.</span>
 <span class="c1">// +union</span>
@@ -5440,7 +5440,7 @@ And the <code>spec.network</code> struct <code>NetworkSpec</code> should have an
 <span class="w">    </span><span class="c1">// +required</span>
 <span class="w">    </span><span class="c1">// +unionDiscriminator</span>
 <span class="w">    </span><span class="nx">Topology</span><span class="w"> </span><span class="nx">NetworkTopology</span><span class="w"> </span><span class="s">`json:"topology"`</span>
-<span class="w">    </span><span class="o">...</span>
+<span class="w">    </span><span class="p">...</span>
 <span class="w">    </span><span class="c1">// Localnet is the Localnet topology configuration.</span>
 <span class="w">    </span><span class="c1">// +optional</span>
 <span class="w">    </span><span class="nx">Localnet</span><span class="w"> </span><span class="o">*</span><span class="nx">LocalnetConfig</span><span class="w"> </span><span class="s">`json:"localnet,omitempty"`</span>
@@ -5449,7 +5449,7 @@ And the <code>spec.network</code> struct <code>NetworkSpec</code> should have an
 <p>The CUDN spec should have additional validation rule for <code>spec.network.topology</code> field:
 </p><div class="highlight"><pre><span></span><code><span class="c1">// ClusterUserDefinedNetworkSpec defines the desired state of ClusterUserDefinedNetwork.</span>
 <span class="kd">type</span><span class="w"> </span><span class="nx">ClusterUserDefinedNetworkSpec</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="o">...</span>
+<span class="w">    </span><span class="p">...</span>
 <span class="w">    </span><span class="c1">// +required</span>
 <span class="w">    </span><span class="nx">Network</span><span class="w"> </span><span class="nx">NetworkSpec</span><span class="w"> </span><span class="s">`json:"network"`</span>
 <span class="p">}</span>

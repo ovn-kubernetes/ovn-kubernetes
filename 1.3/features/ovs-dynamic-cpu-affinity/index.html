@@ -5157,9 +5157,9 @@ and all spawned threads are properly pinned.</p>
 <h4 id="code-flow">Code Flow<a class="headerlink" href="#code-flow" title="Permanent link">¶</a></h4>
 <div class="highlight"><pre><span></span><code><span class="c1">// Simplified flow from ovspinning_linux.go</span>
 
-<span class="kd">func</span><span class="w"> </span><span class="nx">Run</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">stopCh</span><span class="w"> </span><span class="o">&lt;-</span><span class="kd">chan</span><span class="w"> </span><span class="kd">struct</span><span class="p">{},</span><span class="w"> </span><span class="nx">podResCli</span><span class="w"> </span><span class="nx">podresourcesapi</span><span class="p">.</span><span class="nx">PodResourcesListerClient</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">Run</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">stopCh</span><span class="w"> </span><span class="o">&lt;-</span><span class="kt">chan</span><span class="w"> </span><span class="kd">struct</span><span class="p">{},</span><span class="w"> </span><span class="nx">podResCli</span><span class="w"> </span><span class="nx">podresourcesapi</span><span class="p">.</span><span class="nx">PodResourcesListerClient</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="c1">// Check if feature is enabled</span>
-<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">!</span><span class="nx">isFileNotEmpty</span><span class="p">(</span><span class="s">"/etc/openvswitch/enable_dynamic_cpu_affinity"</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="o">!</span><span class="nx">isFileNotEmpty</span><span class="p">(</span><span class="s">"/etc/openvswitch/enable_dynamic_cpu_affinity"</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">        </span><span class="k">return</span>
 <span class="w">    </span><span class="p">}</span>
 
@@ -5172,7 +5172,7 @@ and all spawned threads are properly pinned.</p>
 <span class="w">        </span><span class="nx">cpus</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">getNonPinnedCPUs</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">podResCli</span><span class="p">)</span>
 
 <span class="w">        </span><span class="c1">// Add reserved CPUs</span>
-<span class="w">        </span><span class="nx">cpus</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">cpus</span><span class="p">.</span><span class="nx">Union</span><span class="p">(</span><span class="nx">reservedCPUs</span><span class="p">)</span>
+<span class="w">        </span><span class="nx">cpus</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nx">cpus</span><span class="p">.</span><span class="nx">Union</span><span class="p">(</span><span class="nx">reservedCPUs</span><span class="p">)</span>
 
 <span class="w">        </span><span class="c1">// Set affinity on OVS processes</span>
 <span class="w">        </span><span class="nx">setOvsVSwitchdCPUAffinity</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">cpus</span><span class="p">)</span>
