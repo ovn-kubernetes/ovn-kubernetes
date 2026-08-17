@@ -205,6 +205,7 @@ nav:
     - VRF-Lite Shared Gateway Mode with Uplinks: okeps/okep-6019-vrf-lite-shared-gateway-external-bridges.md
     - Disable Port Security: okeps/okep-3926-disable-port-security.md
     - OVN Observability API: okeps/okep-5212-ovnobserv-api.md
+    - NetworkQoS for Ipamless Localnet Networks: okeps/okep-6815-network-qos-ipamless.md
   - Blog:
     - blog/index.md
     - Accelerating and Securing Kubernetes Networking with DPUs: blog/dpu-acceleration.md
