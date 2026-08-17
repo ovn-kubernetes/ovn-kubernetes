@@ -3151,7 +3151,7 @@ spec:
     direction           : to-lport
     external_ids        : {default-deny-policy-type=Ingress}
     log                 : false
-    match               : &quot;outport == @ingressDefaultDeny&quot;
+    match               : "outport == @ingressDefaultDeny"
     meter               : []
     name                : []
     priority            : 1000
@@ -3166,7 +3166,7 @@ action              : allow
 direction           : to-lport
 external_ids        : {default-deny-policy-type=Ingress}
 log                 : false
-match               : &quot;outport == @ingressDefaultDeny &amp;&amp; arp&quot;
+match               : "outport == @ingressDefaultDeny &amp;&amp; arp"
 meter               : []
 name                : []
 priority            : 1001
@@ -3350,7 +3350,7 @@ ports               : []
 <p>To bypass the ingress default deny and allow traffic from pod <code>client1</code> in Namespace <code>demo</code> as specificed in the network policy, an address set is created containing the ip address for the pod <code>client1</code>  </p>
 <p>subset of <code>ovn-nbctl find address_set</code> 
   <div class="highlight"><pre><span></span><code>_uuid               : 7dc68ee9-9628-4a6a-83f0-a92bfa0970c6
-addresses           : [&quot;10.244.2.5&quot;]
+addresses           : ["10.244.2.5"]
 external_ids        : {name=demo.allow-from-client.ingress.0_v4}
 name                : a14783882619065065142
 </code></pre></div></p>
@@ -3359,9 +3359,9 @@ name                : a14783882619065065142
   <div class="highlight"><pre><span></span><code>_uuid               : b4e57f83-8b8f-4b37-b5e5-1f82704c49c4
 action              : allow-related
 direction           : to-lport
-external_ids        : {Ingress_num=&quot;0&quot;, ipblock_cidr=&quot;false&quot;, l4Match=None, namespace=demo, policy=allow-from-client, policy_type=Ingress}
+external_ids        : {Ingress_num="0", ipblock_cidr="false", l4Match=None, namespace=demo, policy=allow-from-client, policy_type=Ingress}
 log                 : false
-match               : &quot;ip4.src == {$a14783882619065065142} &amp;&amp; outport == @a13757631697825269621&quot;
+match               : "ip4.src == {$a14783882619065065142} &amp;&amp; outport == @a13757631697825269621"
 meter               : []
 name                : []
 priority            : 1001

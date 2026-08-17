@@ -3432,10 +3432,10 @@ e620a080-c761-44d0-adb3-203bb1df6d67
   to IP pairs separated by comma.</p>
 <p>For example:
 <div class="highlight"><pre><span></span><code>$ ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:ovn-encap-ip
-&quot;10.0.0.1,10.0.0.2,10.0.0.3&quot;
+"10.0.0.1,10.0.0.2,10.0.0.3"
 
 $ ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:ovn-pf-encap-ip-mapping
-&quot;enp1s0f0:10.0.0.1,enp2s0f0:10.0.0.2,enp3s0f0:10.0.0.3&quot;
+"enp1s0f0:10.0.0.1,enp2s0f0:10.0.0.2,enp3s0f0:10.0.0.3"
 </code></pre></div>
 With above <code>external_ids:ovn-encap-ip</code> settings, OVN creates 3 tunnel ports for
 each encap-ip on remote node, that's, if remote node has 2 encap-ips in
@@ -3447,15 +3447,15 @@ below tunnel ports on the local node:
         Port ovn0-5e3e5-0
             Interface ovn0-5e3e5-0
                 type: geneve
-                options: {csum=&quot;true&quot;, key=flow, local_ip=&quot;10.0.0.1&quot;, remote_ip=&quot;10.0.0.10&quot;, tos=inherit}
+                options: {csum="true", key=flow, local_ip="10.0.0.1", remote_ip="10.0.0.10", tos=inherit}
         Port ovn0-e815c-1
             Interface ovn0-e815c-1
                 type: geneve
-                options: {csum=&quot;true&quot;, key=flow, local_ip=&quot;10.0.0.2&quot;, remote_ip=&quot;10.0.0.10&quot;, tos=inherit}
+                options: {csum="true", key=flow, local_ip="10.0.0.2", remote_ip="10.0.0.10", tos=inherit}
         Port ovn-33f2e5-0
             Interface ovn-33f2e5-0
                 type: geneve
-                options: {csum=&quot;true&quot;, key=flow, local_ip=&quot;10.0.0.3&quot;, remote_ip=&quot;10.0.0.10&quot;, tos=inherit}
+                options: {csum="true", key=flow, local_ip="10.0.0.3", remote_ip="10.0.0.10", tos=inherit}
 </code></pre></div></p>
 <p>Ovn-controller programs physical flows that create mappings between
 <in_port, out_port> and <tunnel port> according to the aforementioned data

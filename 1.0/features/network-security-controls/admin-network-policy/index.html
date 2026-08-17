@@ -3102,16 +3102,16 @@ spec:
       matchLabels:
           conformance-house: gryffindor
   ingress:
-  - name: &quot;deny-all-ingress-from-slytherin&quot;
-    action: &quot;Deny&quot;
+  - name: "deny-all-ingress-from-slytherin"
+    action: "Deny"
     from:
     - namespaces:
         namespaceSelector:
           matchLabels:
             conformance-house: slytherin
   egress:
-  - name: &quot;deny-all-egress-to-slytherin&quot;
-    action: &quot;Deny&quot;
+  - name: "deny-all-egress-to-slytherin"
+    action: "Deny"
     to:
     - namespaces:
         namespaceSelector:
@@ -3137,10 +3137,10 @@ ports               : [a22a4c3a-bb65-4b22-8bc1-13e1e8899a7b, c7e4ffe3-73df-4db5-
 <div class="highlight"><pre><span></span><code>_uuid               : 2e0f811f-e0db-41ad-b12b-4a0cf1c621ae
 action              : drop
 direction           : to-lport
-external_ids        : {direction=ANPIngress, &quot;k8s.ovn.org/id&quot;=&quot;admin-network-policy-controller:AdminNetworkPolicy:pass-example:ANPIngress:29000&quot;, &quot;k8s.ovn.org/name&quot;=pass-example, &quot;k8s.ovn.org/owner-controller&quot;=admin-network-policy-controller, &quot;k8s.ovn.org/owner-type&quot;=AdminNetworkPolicy, priority=&quot;29000&quot;}
+external_ids        : {direction=ANPIngress, "k8s.ovn.org/id"="admin-network-policy-controller:AdminNetworkPolicy:pass-example:ANPIngress:29000", "k8s.ovn.org/name"=pass-example, "k8s.ovn.org/owner-controller"=admin-network-policy-controller, "k8s.ovn.org/owner-type"=AdminNetworkPolicy, priority="29000"}
 label               : 0
 log                 : false
-match               : &quot;((ip4.src == $a10282262890368313763)) &amp;&amp; (outport == @a3052488126344707991)&quot;
+match               : "((ip4.src == $a10282262890368313763)) &amp;&amp; (outport == @a3052488126344707991)"
 meter               : acl-logging
 name                : pass-example_ANPIngress_29000
 options             : {}
@@ -3151,26 +3151,26 @@ tier                : 1
 _uuid               : 120082fa-5a70-4c72-9211-529766078278
 action              : drop
 direction           : from-lport
-external_ids        : {direction=ANPEgress, &quot;k8s.ovn.org/id&quot;=&quot;admin-network-policy-controller:AdminNetworkPolicy:pass-example:ANPEgress:29000&quot;, &quot;k8s.ovn.org/name&quot;=pass-example, &quot;k8s.ovn.org/owner-controller&quot;=admin-network-policy-controller, &quot;k8s.ovn.org/owner-type&quot;=AdminNetworkPolicy, priority=&quot;29000&quot;}
+external_ids        : {direction=ANPEgress, "k8s.ovn.org/id"="admin-network-policy-controller:AdminNetworkPolicy:pass-example:ANPEgress:29000", "k8s.ovn.org/name"=pass-example, "k8s.ovn.org/owner-controller"=admin-network-policy-controller, "k8s.ovn.org/owner-type"=AdminNetworkPolicy, priority="29000"}
 label               : 0
 log                 : false
-match               : &quot;((ip4.dst == $a16426961577074298037)) &amp;&amp; (inport == @a3052488126344707991)&quot;
+match               : "((ip4.dst == $a16426961577074298037)) &amp;&amp; (inport == @a3052488126344707991)"
 meter               : acl-logging
 name                : pass-example_ANPEgress_29000
-options             : {apply-after-lb=&quot;true&quot;}
+options             : {apply-after-lb="true"}
 priority            : 29000
 severity            : debug
 tier                : 1
 </code></pre></div>
 <p>The Address-Sets for the above AdminNetworkPolicy are:</p>
 <div class="highlight"><pre><span></span><code>_uuid               : df47aab4-ab2c-4530-bb08-2a90476af9a7
-addresses           : [&quot;10.244.0.5&quot;, &quot;10.244.1.6&quot;]
-external_ids        : {direction=ANPIngress, ip-family=v4, &quot;k8s.ovn.org/id&quot;=&quot;admin-network-policy-controller:AdminNetworkPolicy:pass-example:ANPIngress:29000:v4&quot;, &quot;k8s.ovn.org/name&quot;=pass-example, &quot;k8s.ovn.org/owner-controller&quot;=admin-network-policy-controller, &quot;k8s.ovn.org/owner-type&quot;=AdminNetworkPolicy, priority=&quot;29000&quot;}
+addresses           : ["10.244.0.5", "10.244.1.6"]
+external_ids        : {direction=ANPIngress, ip-family=v4, "k8s.ovn.org/id"="admin-network-policy-controller:AdminNetworkPolicy:pass-example:ANPIngress:29000:v4", "k8s.ovn.org/name"=pass-example, "k8s.ovn.org/owner-controller"=admin-network-policy-controller, "k8s.ovn.org/owner-type"=AdminNetworkPolicy, priority="29000"}
 name                : a10282262890368313763
 ===
 _uuid               : d797804a-9401-446e-8295-1f2eebcfa80b
-addresses           : [&quot;10.244.0.5&quot;, &quot;10.244.1.6&quot;]
-external_ids        : {direction=ANPEgress, ip-family=v4, &quot;k8s.ovn.org/id&quot;=&quot;admin-network-policy-controller:AdminNetworkPolicy:pass-example:ANPEgress:29000:v4&quot;, &quot;k8s.ovn.org/name&quot;=pass-example, &quot;k8s.ovn.org/owner-controller&quot;=admin-network-policy-controller, &quot;k8s.ovn.org/owner-type&quot;=AdminNetworkPolicy, priority=&quot;29000&quot;}
+addresses           : ["10.244.0.5", "10.244.1.6"]
+external_ids        : {direction=ANPEgress, ip-family=v4, "k8s.ovn.org/id"="admin-network-policy-controller:AdminNetworkPolicy:pass-example:ANPEgress:29000:v4", "k8s.ovn.org/name"=pass-example, "k8s.ovn.org/owner-controller"=admin-network-policy-controller, "k8s.ovn.org/owner-type"=AdminNetworkPolicy, priority="29000"}
 name                : a16426961577074298037
 </code></pre></div>
 <p>NOTE: Since priority is 10, it is 29000 in the ACL world. If we had a second rule, that rule would get 28999 as its priority. There are no default deny policies for a given ANP unlike NP.</p>
@@ -3188,16 +3188,16 @@ spec:
       matchLabels:
           conformance-house: gryffindor
   ingress:
-  - name: &quot;pass-all-ingress-from-slytherin&quot;
-    action: &quot;Pass&quot;
+  - name: "pass-all-ingress-from-slytherin"
+    action: "Pass"
     from:
     - namespaces:
         namespaceSelector:
           matchLabels:
             conformance-house: slytherin
   egress:
-  - name: &quot;pass-all-egress-to-slytherin&quot;
-    action: &quot;Pass&quot;
+  - name: "pass-all-egress-to-slytherin"
+    action: "Pass"
     to:
     - namespaces:
         namespaceSelector:
@@ -3208,10 +3208,10 @@ spec:
 <div class="highlight"><pre><span></span><code>_uuid               : 2e0f811f-e0db-41ad-b12b-4a0cf1c621ae
 action              : pass
 direction           : to-lport
-external_ids        : {direction=ANPIngress, &quot;k8s.ovn.org/id&quot;=&quot;admin-network-policy-controller:AdminNetworkPolicy:pass-example:ANPIngress:29000&quot;, &quot;k8s.ovn.org/name&quot;=pass-example, &quot;k8s.ovn.org/owner-controller&quot;=admin-network-policy-controller, &quot;k8s.ovn.org/owner-type&quot;=AdminNetworkPolicy, priority=&quot;29000&quot;}
+external_ids        : {direction=ANPIngress, "k8s.ovn.org/id"="admin-network-policy-controller:AdminNetworkPolicy:pass-example:ANPIngress:29000", "k8s.ovn.org/name"=pass-example, "k8s.ovn.org/owner-controller"=admin-network-policy-controller, "k8s.ovn.org/owner-type"=AdminNetworkPolicy, priority="29000"}
 label               : 0
 log                 : false
-match               : &quot;((ip4.src == $a10282262890368313763)) &amp;&amp; (outport == @a3052488126344707991)&quot;
+match               : "((ip4.src == $a10282262890368313763)) &amp;&amp; (outport == @a3052488126344707991)"
 meter               : acl-logging
 name                : pass-example_ANPIngress_29000
 options             : {}
@@ -3222,13 +3222,13 @@ tier                : 1
 _uuid               : 120082fa-5a70-4c72-9211-529766078278
 action              : pass
 direction           : from-lport
-external_ids        : {direction=ANPEgress, &quot;k8s.ovn.org/id&quot;=&quot;admin-network-policy-controller:AdminNetworkPolicy:pass-example:ANPEgress:29000&quot;, &quot;k8s.ovn.org/name&quot;=pass-example, &quot;k8s.ovn.org/owner-controller&quot;=admin-network-policy-controller, &quot;k8s.ovn.org/owner-type&quot;=AdminNetworkPolicy, priority=&quot;29000&quot;}
+external_ids        : {direction=ANPEgress, "k8s.ovn.org/id"="admin-network-policy-controller:AdminNetworkPolicy:pass-example:ANPEgress:29000", "k8s.ovn.org/name"=pass-example, "k8s.ovn.org/owner-controller"=admin-network-policy-controller, "k8s.ovn.org/owner-type"=AdminNetworkPolicy, priority="29000"}
 label               : 0
 log                 : false
-match               : &quot;((ip4.dst == $a16426961577074298037)) &amp;&amp; (inport == @a3052488126344707991)&quot;
+match               : "((ip4.dst == $a16426961577074298037)) &amp;&amp; (inport == @a3052488126344707991)"
 meter               : acl-logging
 name                : pass-example_ANPEgress_29000
-options             : {apply-after-lb=&quot;true&quot;}
+options             : {apply-after-lb="true"}
 priority            : 29000
 severity            : debug
 tier                : 1
@@ -3248,16 +3248,16 @@ spec:
       matchLabels:
           conformance-house: gryffindor
   ingress:
-  - name: &quot;deny-all-ingress-from-slytherin&quot;
-    action: &quot;Deny&quot;
+  - name: "deny-all-ingress-from-slytherin"
+    action: "Deny"
     from:
     - namespaces:
         namespaceSelector:
           matchLabels:
             conformance-house: slytherin
   egress:
-  - name: &quot;deny-all-egress-to-slytherin&quot;
-    action: &quot;Deny&quot;
+  - name: "deny-all-egress-to-slytherin"
+    action: "Deny"
     to:
     - namespaces:
         namespaceSelector:
@@ -3273,10 +3273,10 @@ spec:
 <div class="highlight"><pre><span></span><code>_uuid               : 436b5a0f-9616-42b5-865d-489ec1d42666
 action              : drop
 direction           : to-lport
-external_ids        : {direction=BANPIngress, &quot;k8s.ovn.org/id&quot;=&quot;admin-network-policy-controller:BaselineAdminNetworkPolicy:default:BANPIngress:1750&quot;, &quot;k8s.ovn.org/name&quot;=default, &quot;k8s.ovn.org/owner-controller&quot;=admin-network-policy-controller, &quot;k8s.ovn.org/owner-type&quot;=BaselineAdminNetworkPolicy, priority=&quot;1750&quot;}
+external_ids        : {direction=BANPIngress, "k8s.ovn.org/id"="admin-network-policy-controller:BaselineAdminNetworkPolicy:default:BANPIngress:1750", "k8s.ovn.org/name"=default, "k8s.ovn.org/owner-controller"=admin-network-policy-controller, "k8s.ovn.org/owner-type"=BaselineAdminNetworkPolicy, priority="1750"}
 label               : 0
 log                 : false
-match               : &quot;((ip4.src == $a2535546904205657311)) &amp;&amp; (outport == @a16982411286042166782)&quot;
+match               : "((ip4.src == $a2535546904205657311)) &amp;&amp; (outport == @a16982411286042166782)"
 meter               : acl-logging
 name                : default_BANPIngress_1750
 options             : {}
@@ -3287,26 +3287,26 @@ tier                : 3
 _uuid               : d42cb240-fac1-4429-a1bc-02efddda69cf
 action              : drop
 direction           : from-lport
-external_ids        : {direction=BANPEgress, &quot;k8s.ovn.org/id&quot;=&quot;admin-network-policy-controller:BaselineAdminNetworkPolicy:default:BANPEgress:1750&quot;, &quot;k8s.ovn.org/name&quot;=default, &quot;k8s.ovn.org/owner-controller&quot;=admin-network-policy-controller, &quot;k8s.ovn.org/owner-type&quot;=BaselineAdminNetworkPolicy, priority=&quot;1750&quot;}
+external_ids        : {direction=BANPEgress, "k8s.ovn.org/id"="admin-network-policy-controller:BaselineAdminNetworkPolicy:default:BANPEgress:1750", "k8s.ovn.org/name"=default, "k8s.ovn.org/owner-controller"=admin-network-policy-controller, "k8s.ovn.org/owner-type"=BaselineAdminNetworkPolicy, priority="1750"}
 label               : 0
 log                 : false
-match               : &quot;((ip4.dst == $a6430502402203365)) &amp;&amp; (inport == @a16982411286042166782)&quot;
+match               : "((ip4.dst == $a6430502402203365)) &amp;&amp; (inport == @a16982411286042166782)"
 meter               : acl-logging
 name                : default_BANPEgress_1750
-options             : {apply-after-lb=&quot;true&quot;}
+options             : {apply-after-lb="true"}
 priority            : 1750
 severity            : debug
 tier                : 3
 </code></pre></div>
 <p>The Address-Set for the above BaselineAdminNetworkPolicy is:</p>
 <div class="highlight"><pre><span></span><code>_uuid               : a3ac7d6b-9185-4099-84f8-92d28460b4c3
-addresses           : [&quot;10.244.0.5&quot;, &quot;10.244.1.6&quot;]
-external_ids        : {direction=BANPIngress, ip-family=v4, &quot;k8s.ovn.org/id&quot;=&quot;admin-network-policy-controller:BaselineAdminNetworkPolicy:default:BANPIngress:1750:v4&quot;, &quot;k8s.ovn.org/name&quot;=default, &quot;k8s.ovn.org/owner-controller&quot;=admin-network-policy-controller, &quot;k8s.ovn.org/owner-type&quot;=BaselineAdminNetworkPolicy, priority=&quot;1750&quot;}
+addresses           : ["10.244.0.5", "10.244.1.6"]
+external_ids        : {direction=BANPIngress, ip-family=v4, "k8s.ovn.org/id"="admin-network-policy-controller:BaselineAdminNetworkPolicy:default:BANPIngress:1750:v4", "k8s.ovn.org/name"=default, "k8s.ovn.org/owner-controller"=admin-network-policy-controller, "k8s.ovn.org/owner-type"=BaselineAdminNetworkPolicy, priority="1750"}
 name                : a2535546904205657311
 ===
 _uuid               : b3e08332-e6bb-4f4e-bbc4-c36f717f149a
-addresses           : [&quot;10.244.0.5&quot;, &quot;10.244.1.6&quot;]
-external_ids        : {direction=BANPEgress, ip-family=v4, &quot;k8s.ovn.org/id&quot;=&quot;admin-network-policy-controller:BaselineAdminNetworkPolicy:default:BANPEgress:1750:v4&quot;, &quot;k8s.ovn.org/name&quot;=default, &quot;k8s.ovn.org/owner-controller&quot;=admin-network-policy-controller, &quot;k8s.ovn.org/owner-type&quot;=BaselineAdminNetworkPolicy, priority=&quot;1750&quot;}
+addresses           : ["10.244.0.5", "10.244.1.6"]
+external_ids        : {direction=BANPEgress, ip-family=v4, "k8s.ovn.org/id"="admin-network-policy-controller:BaselineAdminNetworkPolicy:default:BANPEgress:1750:v4", "k8s.ovn.org/name"=default, "k8s.ovn.org/owner-controller"=admin-network-policy-controller, "k8s.ovn.org/owner-type"=BaselineAdminNetworkPolicy, priority="1750"}
 name                : a6430502402203365
 </code></pre></div>
 <p>The PortGroup for the above AdminNetworkPolicy is:</p>

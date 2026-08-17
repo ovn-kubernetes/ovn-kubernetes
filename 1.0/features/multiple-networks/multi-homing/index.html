@@ -3443,13 +3443,13 @@ network.</p>
 <span class="nt">spec</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">config</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|2</span>
 <span class="w">    </span><span class="no">{</span>
-<span class="w">            </span><span class="no">&quot;cniVersion&quot;: &quot;1.0.0&quot;,</span>
-<span class="w">            </span><span class="no">&quot;name&quot;: &quot;l3-network&quot;,</span>
-<span class="w">            </span><span class="no">&quot;type&quot;: &quot;ovn-k8s-cni-overlay&quot;,</span>
-<span class="w">            </span><span class="no">&quot;topology&quot;:&quot;layer3&quot;,</span>
-<span class="w">            </span><span class="no">&quot;subnets&quot;: &quot;10.128.0.0/16/24&quot;,</span>
-<span class="w">            </span><span class="no">&quot;mtu&quot;: 1300,</span>
-<span class="w">            </span><span class="no">&quot;netAttachDefName&quot;: &quot;ns1/l3-network&quot;</span>
+<span class="w">            </span><span class="no">"cniVersion": "1.0.0",</span>
+<span class="w">            </span><span class="no">"name": "l3-network",</span>
+<span class="w">            </span><span class="no">"type": "ovn-k8s-cni-overlay",</span>
+<span class="w">            </span><span class="no">"topology":"layer3",</span>
+<span class="w">            </span><span class="no">"subnets": "10.128.0.0/16/24",</span>
+<span class="w">            </span><span class="no">"mtu": 1300,</span>
+<span class="w">            </span><span class="no">"netAttachDefName": "ns1/l3-network"</span>
 <span class="w">    </span><span class="no">}</span>
 </code></pre></div>
 <h4 id="network-configuration-reference">Network Configuration reference<a class="headerlink" href="#network-configuration-reference" title="Permanent link">&para;</a></h4>
@@ -3480,14 +3480,14 @@ network.</p>
 <span class="nt">spec</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">config</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|2</span>
 <span class="w">    </span><span class="no">{</span>
-<span class="w">            </span><span class="no">&quot;cniVersion&quot;: &quot;1.0.0&quot;,</span>
-<span class="w">            </span><span class="no">&quot;name&quot;: &quot;l2-network&quot;,</span>
-<span class="w">            </span><span class="no">&quot;type&quot;: &quot;ovn-k8s-cni-overlay&quot;,</span>
-<span class="w">            </span><span class="no">&quot;topology&quot;:&quot;layer2&quot;,</span>
-<span class="w">            </span><span class="no">&quot;subnets&quot;: &quot;10.100.200.0/24&quot;,</span>
-<span class="w">            </span><span class="no">&quot;mtu&quot;: 1300,</span>
-<span class="w">            </span><span class="no">&quot;netAttachDefName&quot;: &quot;ns1/l2-network&quot;,</span>
-<span class="w">            </span><span class="no">&quot;excludeSubnets&quot;: &quot;10.100.200.0/29&quot;</span>
+<span class="w">            </span><span class="no">"cniVersion": "1.0.0",</span>
+<span class="w">            </span><span class="no">"name": "l2-network",</span>
+<span class="w">            </span><span class="no">"type": "ovn-k8s-cni-overlay",</span>
+<span class="w">            </span><span class="no">"topology":"layer2",</span>
+<span class="w">            </span><span class="no">"subnets": "10.100.200.0/24",</span>
+<span class="w">            </span><span class="no">"mtu": 1300,</span>
+<span class="w">            </span><span class="no">"netAttachDefName": "ns1/l2-network",</span>
+<span class="w">            </span><span class="no">"excludeSubnets": "10.100.200.0/29"</span>
 <span class="w">    </span><span class="no">}</span>
 </code></pre></div>
 <h4 id="network-configuration-reference_1">Network Configuration reference<a class="headerlink" href="#network-configuration-reference_1" title="Permanent link">&para;</a></h4>
@@ -3522,14 +3522,14 @@ network.</p>
 <span class="nt">spec</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">config</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|2</span>
 <span class="w">    </span><span class="no">{</span>
-<span class="w">            </span><span class="no">&quot;cniVersion&quot;: &quot;1.0.0&quot;,</span>
-<span class="w">            </span><span class="no">&quot;name&quot;: &quot;localnet-network&quot;,</span>
-<span class="w">            </span><span class="no">&quot;type&quot;: &quot;ovn-k8s-cni-overlay&quot;,</span>
-<span class="w">            </span><span class="no">&quot;topology&quot;:&quot;localnet&quot;,</span>
-<span class="w">            </span><span class="no">&quot;subnets&quot;: &quot;202.10.130.112/28&quot;,</span>
-<span class="w">            </span><span class="no">&quot;vlanID&quot;: 33,</span>
-<span class="w">            </span><span class="no">&quot;mtu&quot;: 1500,</span>
-<span class="w">            </span><span class="no">&quot;netAttachDefName&quot;: &quot;ns1/localnet-network&quot;</span>
+<span class="w">            </span><span class="no">"cniVersion": "1.0.0",</span>
+<span class="w">            </span><span class="no">"name": "localnet-network",</span>
+<span class="w">            </span><span class="no">"type": "ovn-k8s-cni-overlay",</span>
+<span class="w">            </span><span class="no">"topology":"localnet",</span>
+<span class="w">            </span><span class="no">"subnets": "202.10.130.112/28",</span>
+<span class="w">            </span><span class="no">"vlanID": 33,</span>
+<span class="w">            </span><span class="no">"mtu": 1500,</span>
+<span class="w">            </span><span class="no">"netAttachDefName": "ns1/localnet-network"</span>
 <span class="w">    </span><span class="no">}</span>
 </code></pre></div>
 <p>Note that in order to connect to the physical network, it is expected that
@@ -3585,16 +3585,16 @@ pod, a MAC address, and specify the pod interface name.</p>
 <span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Pod</span>
 <span class="nt">metadata</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">annotations</span><span class="p">:</span>
-<span class="w">    </span><span class="nt">k8s.v1.cni.cncf.io/networks</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;[</span>
+<span class="w">    </span><span class="nt">k8s.v1.cni.cncf.io/networks</span><span class="p">:</span><span class="w"> </span><span class="s">'[</span>
 <span class="w">      </span><span class="s">{</span>
-<span class="w">        </span><span class="s">&quot;name&quot;:</span><span class="nv"> </span><span class="s">&quot;l2-network&quot;,</span>
-<span class="w">        </span><span class="s">&quot;mac&quot;:</span><span class="nv"> </span><span class="s">&quot;02:03:04:05:06:07&quot;,</span>
-<span class="w">        </span><span class="s">&quot;interface&quot;:</span><span class="nv"> </span><span class="s">&quot;myiface1&quot;,</span>
-<span class="w">        </span><span class="s">&quot;ips&quot;:</span><span class="nv"> </span><span class="s">[</span>
-<span class="w">          </span><span class="s">&quot;192.0.2.20/24&quot;</span>
+<span class="w">        </span><span class="s">"name":</span><span class="nv"> </span><span class="s">"l2-network",</span>
+<span class="w">        </span><span class="s">"mac":</span><span class="nv"> </span><span class="s">"02:03:04:05:06:07",</span>
+<span class="w">        </span><span class="s">"interface":</span><span class="nv"> </span><span class="s">"myiface1",</span>
+<span class="w">        </span><span class="s">"ips":</span><span class="nv"> </span><span class="s">[</span>
+<span class="w">          </span><span class="s">"192.0.2.20/24"</span>
 <span class="w">        </span><span class="s">]</span>
 <span class="w">      </span><span class="s">}</span>
-<span class="w">    </span><span class="s">]&#39;</span>
+<span class="w">    </span><span class="s">]'</span>
 <span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tinypod</span>
 <span class="w">  </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ns1</span>
 <span class="nt">spec</span><span class="p">:</span>

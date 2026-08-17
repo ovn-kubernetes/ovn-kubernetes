@@ -3768,25 +3768,25 @@ eth0---&gt;|breth0|
 </ol>
 <p>The switch load-balancer on a node with local endpoints will look like this:</p>
 <div class="highlight"><pre><span></span><code>_uuid               : b3201caf-3089-4462-b96e-1406fd7c4256
-external_ids        : {&quot;k8s.ovn.org/kind&quot;=Service, &quot;k8s.ovn.org/owner&quot;=&quot;default/example-service-1&quot;}
+external_ids        : {"k8s.ovn.org/kind"=Service, "k8s.ovn.org/owner"="default/example-service-1"}
 health_check        : []
 ip_port_mappings    : {}
-name                : &quot;Service_default/example-service-1_TCP_node_switch_ovn-worker2&quot;
-options             : {event=&quot;false&quot;, reject=&quot;true&quot;, skip_snat=&quot;false&quot;}
+name                : "Service_default/example-service-1_TCP_node_switch_ovn-worker2"
+options             : {event="false", reject="true", skip_snat="false"}
 protocol            : tcp
 selection_fields    : []
-vips                : {&quot;169.254.169.3:31746&quot;=&quot;10.244.1.3:8080&quot;, &quot;172.18.0.3:31746&quot;=&quot;10.244.1.3:8080,10.244.2.3:8080&quot;}
+vips                : {"169.254.169.3:31746"="10.244.1.3:8080", "172.18.0.3:31746"="10.244.1.3:8080,10.244.2.3:8080"}
 </code></pre></div>
 <p>The switch load-balancer on a node without local endpoints will look like this:
 <div class="highlight"><pre><span></span><code>_uuid               : 42d75e10-5598-4197-a6f2-1a37094bee13
-external_ids        : {&quot;k8s.ovn.org/kind&quot;=Service, &quot;k8s.ovn.org/owner&quot;=&quot;default/example-service-1&quot;}
+external_ids        : {"k8s.ovn.org/kind"=Service, "k8s.ovn.org/owner"="default/example-service-1"}
 health_check        : []
 ip_port_mappings    : {}
-name                : &quot;Service_default/example-service-1_TCP_node_switch_ovn-worker&quot;
-options             : {event=&quot;false&quot;, reject=&quot;true&quot;, skip_snat=&quot;false&quot;}
+name                : "Service_default/example-service-1_TCP_node_switch_ovn-worker"
+options             : {event="false", reject="true", skip_snat="false"}
 protocol            : tcp
 selection_fields    : []
-vips                : {&quot;169.254.169.3:31746&quot;=&quot;&quot;, &quot;172.18.0.4:31746&quot;=&quot;10.244.1.3:8080,10.244.2.3:8080&quot;}
+vips                : {"169.254.169.3:31746"="", "172.18.0.4:31746"="10.244.1.3:8080,10.244.2.3:8080"}
 </code></pre></div></p>
 <p>Response traffic will follow the same path (backend-&gt;node switch-&gt;mp0-&gt;host-&gt;breth0-&gt;eth0).</p>
 <ol>
@@ -3907,26 +3907,26 @@ eth0---&gt;|breth0|
 <ol>
 <li>In <code>table2</code> we have a flow that forwards this to patch port that takes the traffic in OVN:</li>
 </ol>
-<div class="highlight"><pre><span></span><code>cookie=0xdeff105, duration=6.308s, table=2, n_packets=11, n_bytes=814, actions=set_field:02:42:ac:12:00:03-&gt;eth_dst,output:&quot;patch-breth0_ov&quot;
+<div class="highlight"><pre><span></span><code>cookie=0xdeff105, duration=6.308s, table=2, n_packets=11, n_bytes=814, actions=set_field:02:42:ac:12:00:03-&gt;eth_dst,output:"patch-breth0_ov"
 </code></pre></div>
 <ol>
 <li>Traffic enters the GR on the worker node and hits the load-balancer where we DNAT it correctly to the local backends.</li>
 </ol>
 <p>The GR load-balancer on a node with endpoints for the clusterIP will look like this:</p>
 <div class="highlight"><pre><span></span><code>_uuid               : 4e7ff1e3-a211-45d7-8243-54e087ca3965                                                                                                                   
-external_ids        : {&quot;k8s.ovn.org/kind&quot;=Service, &quot;k8s.ovn.org/owner&quot;=&quot;default/example-service-hello-world&quot;}                                                                
+external_ids        : {"k8s.ovn.org/kind"=Service, "k8s.ovn.org/owner"="default/example-service-hello-world"}                                                                
 health_check        : []                                                                                                                                                     
 ip_port_mappings    : {}                                                                                                                                                     
-name                : &quot;Service_default/example-service-hello-world_TCP_node_router+switch_ovn-control-plane&quot;                                                                 
-options             : {event=&quot;false&quot;, hairpin_snat_ip=&quot;169.254.169.5 fd69::5&quot;, reject=&quot;true&quot;, skip_snat=&quot;false&quot;}                                                             
+name                : "Service_default/example-service-hello-world_TCP_node_router+switch_ovn-control-plane"                                                                 
+options             : {event="false", hairpin_snat_ip="169.254.169.5 fd69::5", reject="true", skip_snat="false"}                                                             
 protocol            : tcp                                                                                                                                                    
 selection_fields    : []                                                                                                                                                     
-vips                : {&quot;10.96.115.103:80&quot;=&quot;172.19.0.3:8080&quot;, &quot;172.19.0.3:31339&quot;=&quot;172.19.0.4:8080&quot;} 
+vips                : {"10.96.115.103:80"="172.19.0.3:8080", "172.19.0.3:31339"="172.19.0.4:8080"} 
 </code></pre></div>
 <ol>
 <li>Traffic from OVN is sent back to host:</li>
 </ol>
-<div class="highlight"><pre><span></span><code>  cookie=0xdeff105, duration=839.789s, table=0, n_packets=6, n_bytes=484, priority=175,tcp,in_port=&quot;patch-breth0_ov&quot;,nw_src=172.19.0.3 actions=ct(table=4,zone=64001)
+<div class="highlight"><pre><span></span><code>  cookie=0xdeff105, duration=839.789s, table=0, n_packets=6, n_bytes=484, priority=175,tcp,in_port="patch-breth0_ov",nw_src=172.19.0.3 actions=ct(table=4,zone=64001)
   cookie=0xdeff105, duration=2334.510s, table=4, n_packets=18, n_bytes=1452, ip actions=ct(commit,table=3,zone=64002,nat(src=169.254.169.1))
   cookie=0xdeff105, duration=1.612s, table=3, n_packets=10, n_bytes=892, actions=move:NXM_OF_ETH_DST[]-&gt;NXM_OF_ETH_SRC[],set_field:02:42:ac:13:00:03-&gt;eth_dst,LOCAL
 </code></pre></div>
@@ -3957,12 +3957,12 @@ vips                : {&quot;10.96.115.103:80&quot;=&quot;172.19.0.3:8080&quot;,
 </ol>
 <div class="highlight"><pre><span></span><code> cookie=0xdeff105, duration=2334.510s, table=0, n_packets=14, n_bytes=1356, priority=500,ip,in_port=LOCAL,nw_dst=169.254.169.1 actions=ct(table=5,zone=64002,nat)
  cookie=0xdeff105, duration=2334.510s, table=5, n_packets=14, n_bytes=1356, ip actions=ct(commit,table=2,zone=64001,nat)
- cookie=0xdeff105, duration=0.365s, table=2, n_packets=33, n_bytes=2882, actions=set_field:02:42:ac:13:00:03-&gt;eth_dst,output:&quot;patch-breth0_ov&quot;
+ cookie=0xdeff105, duration=0.365s, table=2, n_packets=33, n_bytes=2882, actions=set_field:02:42:ac:13:00:03-&gt;eth_dst,output:"patch-breth0_ov"
 </code></pre></div>
 <ol>
 <li>From OVN it gets sent back to host and then back from host into breth0 and into the wire:</li>
 </ol>
-<div class="highlight"><pre><span></span><code>  cookie=0xdeff105, duration=2334.510s, table=0, n_packets=18, n_bytes=1452, priority=175,ip,in_port=&quot;patch-breth0_ov&quot;,nw_src=172.19.0.4 actions=ct(table=4,zone=64001,nat)
+<div class="highlight"><pre><span></span><code>  cookie=0xdeff105, duration=2334.510s, table=0, n_packets=18, n_bytes=1452, priority=175,ip,in_port="patch-breth0_ov",nw_src=172.19.0.4 actions=ct(table=4,zone=64001,nat)
   cookie=0xdeff105, duration=2334.510s, table=4, n_packets=18, n_bytes=1452, ip actions=ct(commit,table=3,zone=64002,nat(src=169.254.169.1))
   cookie=0xdeff105, duration=0.365s, table=3, n_packets=32, n_bytes=2808, actions=move:NXM_OF_ETH_DST[]-&gt;NXM_OF_ETH_SRC[],set_field:02:42:ac:13:00:03-&gt;eth_dst,LOCAL
   cookie=0xdeff105, duration=2334.510s, table=0, n_packets=7611, n_bytes=754388, priority=100,ip,in_port=LOCAL actions=ct(commit,zone=64000,exec(load:0x2-&gt;NXM_NX_CT_MARK[])),output:eth0
@@ -4021,27 +4021,27 @@ eth0---&gt;|breth0|
 <ol>
 <li>In <code>table2</code> we have a flow that forwards this to patch port that takes the traffic in OVN:</li>
 </ol>
-<div class="highlight"><pre><span></span><code>cookie=0xdeff105, duration=6.308s, table=2, n_packets=11, n_bytes=814, actions=set_field:02:42:ac:12:00:03-&gt;eth_dst,output:&quot;patch-breth0_ov&quot;
+<div class="highlight"><pre><span></span><code>cookie=0xdeff105, duration=6.308s, table=2, n_packets=11, n_bytes=814, actions=set_field:02:42:ac:12:00:03-&gt;eth_dst,output:"patch-breth0_ov"
 </code></pre></div>
 <ol>
 <li>Traffic enters the GR on the worker node and hits the load-balancer where we DNAT it correctly to the local backends.</li>
 </ol>
 <p>The GR load-balancer on a node with endpoints for the clusterIP will look like this:</p>
 <div class="highlight"><pre><span></span><code>_uuid               : b3201caf-3089-4462-b96e-1406fd7c4256
-external_ids        : {&quot;k8s.ovn.org/kind&quot;=Service, &quot;k8s.ovn.org/owner&quot;=&quot;default/example-service-1&quot;}
+external_ids        : {"k8s.ovn.org/kind"=Service, "k8s.ovn.org/owner"="default/example-service-1"}
 health_check        : []
 ip_port_mappings    : {}
-name                : &quot;Service_default/example-service-1_TCP_cluster&quot;
-options             : {event=&quot;false&quot;, reject=&quot;true&quot;, skip_snat=&quot;false&quot;}
+name                : "Service_default/example-service-1_TCP_cluster"
+options             : {event="false", reject="true", skip_snat="false"}
 protocol            : tcp
 selection_fields    : []
-vips                : {&quot;10.96.67.170:80&quot;=&quot;10.244.1.3:8080,10.244.2.3:8080&quot;}
+vips                : {"10.96.67.170:80"="10.244.1.3:8080,10.244.2.3:8080"}
 </code></pre></div>
 <p>Response traffic will follow the same path (backend-&gt;GR-&gt;breth0-&gt;host-&gt;breth0-&gt;eth0).</p>
 <ol>
 <li>Return traffic gets matched on the priority 500 flow in <code>table0</code> which sends it to <code>table3</code>.</li>
 </ol>
-<div class="highlight"><pre><span></span><code>cookie=0xdeff105, duration=3189.786s, table=0, n_packets=10, n_bytes=540, priority=500,ip,in_port=&quot;patch-breth0_ov&quot;,nw_src=10.96.0.0/16,nw_dst=169.254.169.2 actions=ct(table=3,zone=64001,nat)
+<div class="highlight"><pre><span></span><code>cookie=0xdeff105, duration=3189.786s, table=0, n_packets=10, n_bytes=540, priority=500,ip,in_port="patch-breth0_ov",nw_src=10.96.0.0/16,nw_dst=169.254.169.2 actions=ct(table=3,zone=64001,nat)
 </code></pre></div>
 <ol>
 <li>In <code>table3</code>, we send it to host:</li>
@@ -4060,7 +4060,7 @@ vips                : {&quot;10.96.67.170:80&quot;=&quot;10.244.1.3:8080,10.244.
 </ul>
 <h2 id="internal-traffic-policy">Internal Traffic Policy<a class="headerlink" href="#internal-traffic-policy" title="Permanent link">&para;</a></h2>
 <p>Service Internal Traffic Policy (ITP) is a feature that can be enabled on a kubernetes service type object. This feature imposes restrictions on traffic that originates internally by routing it only to endpoints that are local to the node from where the traffic originated from. Here "internal" traffic means traffic originating from pods and nodes within the cluster. See https://kubernetes.io/docs/concepts/services-networking/service-traffic-policy/ for more details.</p>
-<div class="highlight"><pre><span></span><code>NOTE1: ITP is applicable only to service of type &quot;ClusterIP&quot; meaning it has no effect on services of type NodePorts, ExternalIPs or LoadBalancers. So if
+<div class="highlight"><pre><span></span><code>NOTE1: ITP is applicable only to service of type "ClusterIP" meaning it has no effect on services of type NodePorts, ExternalIPs or LoadBalancers. So if
 InternalTrafficPolicy=Local for services of types NodePorts, ExternalIPs or LoadBalancers, then the restirction of traffic policy will apply only to the
 clusterIP serviceVIP of these service types.
 
@@ -4125,26 +4125,26 @@ networked pods or cluster networked pods. Note that host to clusterIP is conside
 </ol>
 <p>Here is a sample load balancer on <code>ovn-worker</code> node which has an endpoint:</p>
 <div class="highlight"><pre><span></span><code>_uuid               : d58c012a-7b1f-45ad-a817-a86845fde164
-external_ids        : {&quot;k8s.ovn.org/kind&quot;=Service, &quot;k8s.ovn.org/owner&quot;=&quot;surya/hello-world-2&quot;}
+external_ids        : {"k8s.ovn.org/kind"=Service, "k8s.ovn.org/owner"="surya/hello-world-2"}
 health_check        : []
 ip_port_mappings    : {}
-name                : &quot;Service_surya/hello-world-2_TCP_node_switch_ovn-worker&quot;
-options             : {event=&quot;false&quot;, reject=&quot;true&quot;, skip_snat=&quot;false&quot;}
+name                : "Service_surya/hello-world-2_TCP_node_switch_ovn-worker"
+options             : {event="false", reject="true", skip_snat="false"}
 protocol            : tcp
 selection_fields    : []
-vips                : {&quot;10.96.61.132:80&quot;=&quot;10.244.0.6:8080&quot;, &quot;172.18.0.2:31358&quot;=&quot;10.244.0.6:8080,10.244.1.3:8080&quot;, &quot;172.18.0.9:80&quot;=&quot;10.244.0.6:8080,10.244.1.3:8080&quot;}
+vips                : {"10.96.61.132:80"="10.244.0.6:8080", "172.18.0.2:31358"="10.244.0.6:8080,10.244.1.3:8080", "172.18.0.9:80"="10.244.0.6:8080,10.244.1.3:8080"}
 </code></pre></div>
 <p>Note that only endpoints for <code>ClusterIP</code> are filtered, externalIPs/nodePorts are not.</p>
 <p>Here is a sample load balancer on <code>ovn-control-plane</code> node which does not have an endpoint:</p>
 <div class="highlight"><pre><span></span><code>_uuid               : a7865d9f-43d2-4cf9-a316-fc35e8c357a8
-external_ids        : {&quot;k8s.ovn.org/kind&quot;=Service, &quot;k8s.ovn.org/owner&quot;=&quot;surya/hello-world-2&quot;}
+external_ids        : {"k8s.ovn.org/kind"=Service, "k8s.ovn.org/owner"="surya/hello-world-2"}
 health_check        : []
 ip_port_mappings    : {}
-name                : &quot;Service_surya/hello-world-2_TCP_node_switch_ovn-control-plane&quot;
-options             : {event=&quot;false&quot;, reject=&quot;true&quot;, skip_snat=&quot;false&quot;}
+name                : "Service_surya/hello-world-2_TCP_node_switch_ovn-control-plane"
+options             : {event="false", reject="true", skip_snat="false"}
 protocol            : tcp
 selection_fields    : []
-vips                : {&quot;10.96.61.132:80&quot;=&quot;&quot;, &quot;172.18.0.4:31358&quot;=&quot;10.244.0.6:8080,10.244.1.3:8080&quot;, &quot;172.18.0.9:80&quot;=&quot;10.244.0.6:8080,10.244.1.3:8080&quot;}
+vips                : {"10.96.61.132:80"="", "172.18.0.4:31358"="10.244.0.6:8080,10.244.1.3:8080", "172.18.0.9:80"="10.244.0.6:8080,10.244.1.3:8080"}
 </code></pre></div>
 <ol>
 <li>Packet is then delivered to backend pod.</li>

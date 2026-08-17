@@ -3249,13 +3249,13 @@ configuration onto the physical port. The logical port becomes the API for
 configuring the physical port.</p>
 <p>In addition to providing overlay network connectivity for Pods in the K8s cluster,
 OVN K8s CNI supports a plethora of advanced networking features, such as</p>
-<div class="highlight"><pre><span></span><code>- Optimized and Accelerated K8s Network Policy on Pod&#39;s traffic
+<div class="highlight"><pre><span></span><code>- Optimized and Accelerated K8s Network Policy on Pod's traffic
 - Optimized and Accelerated K8s Service Implementation (aka Load Balancers and NAT)
 - Optimized and Accelerated Policy Based Routing
 - Multi-Home Pods with an option for Secondary networks to be on a Layer-2
   Overlay (flat network), Layer-2 Underlay (VLAN-based) on private or public
   subnets.
-- Optimized and Accelerated K8s Network Policy on Pod&#39;s secondary networks
+- Optimized and Accelerated K8s Network Policy on Pod's secondary networks
 </code></pre></div>
 <p>Most of these services are distributed and implemented via a pipeline (series
 of OpenFlow tables with OpenFlow flows) on local OVS switches. These OVS
@@ -3274,7 +3274,7 @@ CNI features, this can be done by editing <code>tags</code> section in values.ya
 <li>
 <p>Disable IPv6 of <code>kind</code> docker network, otherwise ovnkube-node will fail to start
 <div class="highlight"><pre><span></span><code># docker network rm kind (delete `kind` network if it already exists)
-# docker network create kind -o &quot;com.docker.network.bridge.enable_ip_masquerade&quot;=&quot;true&quot; -o &quot;com.docker.network.driver.mtu&quot;=&quot;1500&quot;
+# docker network create kind -o "com.docker.network.bridge.enable_ip_masquerade"="true" -o "com.docker.network.driver.mtu"="1500"
 </code></pre></div></p>
 </li>
 <li>
@@ -3300,7 +3300,7 @@ networking:
 <li>
 <p>Run <code>helm install</code> with propery <code>k8sAPIServer</code>, <code>ovnkube-identity.replicas</code>, image repo and tag
 <div class="highlight"><pre><span></span><code># cd helm/ovn-kubernetes
-# helm install ovn-kubernetes . -f values.yaml --set k8sAPIServer=&quot;https://$(kubectl get pods -n kube-system -l component=kube-apiserver -o jsonpath=&#39;{.items[0].status.hostIP}&#39;):6443&quot; --set ovnkube-identity.replicas=$(kubectl get node -l node-role.kubernetes.io/control-plane --no-headers | wc -l) --set global.image.repository=ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-ubuntu --set global.image.tag=master
+# helm install ovn-kubernetes . -f values.yaml --set k8sAPIServer="https://$(kubectl get pods -n kube-system -l component=kube-apiserver -o jsonpath='{.items[0].status.hostIP}'):6443" --set ovnkube-identity.replicas=$(kubectl get node -l node-role.kubernetes.io/control-plane --no-headers | wc -l) --set global.image.repository=ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-ubuntu --set global.image.tag=master
 </code></pre></div></p>
 </li>
 </ul>

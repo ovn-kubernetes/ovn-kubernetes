@@ -3470,11 +3470,11 @@ ones that you supply to ovnkube:</p>
 <p>If you cannot ping between pods in 2 nodes, make sure to check whether
 you have the OVS kernel modules correctly installed by running:</p>
 <div class="highlight"><pre><span></span><code>lsmod | grep openvswitch
-lsmod | grep geneve  # Or &quot;stt&quot; if your encap type was chosen to be &quot;stt&quot;.
+lsmod | grep geneve  # Or "stt" if your encap type was chosen to be "stt".
 </code></pre></div>
 <p>If you do not see the kernel module, modprobe them</p>
 <div class="highlight"><pre><span></span><code>modprobe openvswitch
-modprobe vport-geneve  # or vport-stt for &quot;stt&quot;.
+modprobe vport-geneve  # or vport-stt for "stt".
 </code></pre></div>
 <h3 id="sanity-check-cross-host-ping">Sanity check cross host ping.<a class="headerlink" href="#sanity-check-cross-host-ping" title="Permanent link">&para;</a></h3>
 <p>Since on each host, a OVS internal device named "k8s-$NODENAME" is created

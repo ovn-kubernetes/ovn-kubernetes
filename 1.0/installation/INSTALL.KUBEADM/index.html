@@ -3386,31 +3386,31 @@
 * if2 - enp7s0 | 192.168.123.0/24</p>
 <p><code>to hypervisor</code> is libvirt's default network with full DHCP. It will be used as management access to all nodes as well as on <code>gw1</code> as the interface for outside connectivity:
 <div class="highlight"><pre><span></span><code>$ sudo virsh net-dumpxml default
-&lt;network connections=&#39;2&#39;&gt;
+&lt;network connections='2'&gt;
   &lt;name&gt;default&lt;/name&gt;
   &lt;uuid&gt;76b7e8c1-7c2c-456b-ac10-09c98c6275a5&lt;/uuid&gt;
-  &lt;forward mode=&#39;nat&#39;&gt;
+  &lt;forward mode='nat'&gt;
     &lt;nat&gt;
-      &lt;port start=&#39;1024&#39; end=&#39;65535&#39;/&gt;
+      &lt;port start='1024' end='65535'/&gt;
     &lt;/nat&gt;
   &lt;/forward&gt;
-  &lt;bridge name=&#39;virbr0&#39; stp=&#39;on&#39; delay=&#39;0&#39;/&gt;
-  &lt;mac address=&#39;52:54:00:4b:4d:f8&#39;/&gt;
-  &lt;ip address=&#39;192.168.122.1&#39; netmask=&#39;255.255.255.0&#39;&gt;
+  &lt;bridge name='virbr0' stp='on' delay='0'/&gt;
+  &lt;mac address='52:54:00:4b:4d:f8'/&gt;
+  &lt;ip address='192.168.122.1' netmask='255.255.255.0'&gt;
     &lt;dhcp&gt;
-      &lt;range start=&#39;192.168.122.2&#39; end=&#39;192.168.122.254&#39;/&gt;
+      &lt;range start='192.168.122.2' end='192.168.122.254'/&gt;
     &lt;/dhcp&gt;
   &lt;/ip&gt;
 &lt;/network&gt;
 </code></pre></div></p>
 <p>And <code>Isolated Network</code> is an isolated network. <code>gw1</code> will be the default gateway for this network, and <code>node1</code> through <code>node3</code> will have their default route go through this network:
 <div class="highlight"><pre><span></span><code>$ sudo virsh net-dumpxml ovn
-&lt;network connections=&#39;2&#39;&gt;
+&lt;network connections='2'&gt;
   &lt;name&gt;ovn&lt;/name&gt;
   &lt;uuid&gt;fecea98b-8b92-438e-a759-f6cfb366614c&lt;/uuid&gt;
-  &lt;bridge name=&#39;virbr2&#39; stp=&#39;on&#39; delay=&#39;0&#39;/&gt;
-  &lt;mac address=&#39;52:54:00:d4:f2:cc&#39;/&gt;
-  &lt;domain name=&#39;ovn&#39;/&gt;
+  &lt;bridge name='virbr2' stp='on' delay='0'/&gt;
+  &lt;mac address='52:54:00:d4:f2:cc'/&gt;
+  &lt;domain name='ovn'/&gt;
 &lt;/network&gt;
 </code></pre></div></p>
 <h3 id="gateway-setup-gw1">Gateway setup (gw1)<a class="headerlink" href="#gateway-setup-gw1" title="Permanent link">&para;</a></h3>
@@ -3426,7 +3426,7 @@ nmcli conn reload
 systemctl stop firewalld
 cat /proc/sys/net/ipv4/ip_forward
 sysctl -a | grep ip_forward
-echo &quot;net.ipv4.ip_forward=1&quot; &gt;&gt; /etc/sysctl.d/99-sysctl.conf
+echo "net.ipv4.ip_forward=1" &gt;&gt; /etc/sysctl.d/99-sysctl.conf
 sysctl --system
 yum install iptables-services -y
 yum remove firewalld -y
@@ -3459,7 +3459,7 @@ Furthermore, you  must assign IP addresses to <code>br-ex</code> and point the n
 </code></pre></div></p>
 <h4 id="disable-swap">Disable swap<a class="headerlink" href="#disable-swap" title="Permanent link">&para;</a></h4>
 <p>Make sure to disable swap. Kubelet will not run otherwise:
-<div class="highlight"><pre><span></span><code>sed -i &#39;/ swap /d&#39; /etc/fstab
+<div class="highlight"><pre><span></span><code>sed -i '/ swap /d' /etc/fstab
 reboot
 </code></pre></div></p>
 <h4 id="remove-firewalld">Remove firewalld<a class="headerlink" href="#remove-firewalld" title="Permanent link">&para;</a></h4>
@@ -3487,7 +3487,7 @@ yum install NetworkManager-ovs.x86_64 -y
 systemctl enable --now openvswitch
 </code></pre></div></p>
 <p>Alternatively, on Rocky Linux, you can also build your own RPMs directly from the SRPMs, e.g.:
-<div class="highlight"><pre><span></span><code>yum install &#39;@Development Tools&#39;
+<div class="highlight"><pre><span></span><code>yum install '@Development Tools'
 yum install desktop-file-utils libcap-ng-devel libmnl-devel numactl-devel openssl-devel python3-devel python3-pyOpenSSL python3-setuptools python3-sphinx rdma-core-devel unbound-devel -y
 rpmbuild --rebuild  http://ftp.redhat.com/pub/redhat/linux/enterprise/8Base/en/Fast-Datapath/SRPMS/openvswitch2.13-2.13.0-79.el8fdp.src.rpm
 yum install selinux-policy-devel -y
@@ -3501,7 +3501,7 @@ systemctl enable --now openvswitch
 <div class="highlight"><pre><span></span><code>BRIDGE_NAME=br-ex
 IF1=enp1s0
 IF2=enp7s0
-IP_ADDRESS=&quot;192.168.123.$(hostname | sed &#39;s/node//&#39;)/24&quot;
+IP_ADDRESS="192.168.123.$(hostname | sed 's/node//')/24"
 </code></pre></div></p>
 <p>Verify the <code>IP_ADDRESS</code> - it should be unique for every node and the last octet should be the same as the node's numeric identifier:
 <div class="highlight"><pre><span></span><code>echo $IP_ADDRESS
@@ -3524,11 +3524,11 @@ nmcli conn mod ovs-if-${BRIDGE_NAME} ipv4.route-metric 50
 
 # move the default route to br-ex
 BRIDGE_NAME=br-ex
-nmcli conn mod ovs-if-${BRIDGE_NAME} ipv4.gateway &quot;192.168.123.254&quot;
+nmcli conn mod ovs-if-${BRIDGE_NAME} ipv4.gateway "192.168.123.254"
 nmcli conn mod ${IF1} ipv4.never-default yes
 # Change DNS to 8.8.8.8
 nmcli conn mod ${IF1} ipv4.ignore-auto-dns yes
-nmcli conn mod ovs-if-${BRIDGE_NAME} ipv4.dns &quot;8.8.8.8&quot;
+nmcli conn mod ovs-if-${BRIDGE_NAME} ipv4.dns "8.8.8.8"
 </code></pre></div></p>
 <p>Now, reboot the node:
 <div class="highlight"><pre><span></span><code>reboot
@@ -3546,7 +3546,7 @@ c1aee179-b425-4b48-8648-dd8746f59add
         Port br-ex
             Interface br-ex
                 type: internal
-    ovs_version: &quot;2.13.4&quot;
+    ovs_version: "2.13.4"
 [root@node1 ~]# ip r
 default via 192.168.123.254 dev br-ex proto static metric 800 
 192.168.122.0/24 dev enp1s0 proto kernel scope link src 192.168.122.205 metric 100 
@@ -3609,9 +3609,9 @@ curl -L -o /etc/yum.repos.d/devel:kubic:libcontainers:stable:cri-o:$VERSION.repo
 yum install cri-o -y
 </code></pre></div></p>
 <p>Make sure to set 192.168.123.254 (gw1) as an insecure registry:
-<div class="highlight"><pre><span></span><code>cat &lt;&lt;&#39;EOF&#39; | tee /etc/containers/registries.conf.d/999-insecure.conf
+<div class="highlight"><pre><span></span><code>cat &lt;&lt;'EOF' | tee /etc/containers/registries.conf.d/999-insecure.conf
 [[registry]]
-location = &quot;192.168.123.254:5000&quot;
+location = "192.168.123.254:5000"
 insecure = true
 EOF
 </code></pre></div></p>
@@ -3640,7 +3640,7 @@ EOF
 
 # Set SELinux in permissive mode (effectively disabling it)
 sudo setenforce 0
-sudo sed -i &#39;s/^SELINUX=enforcing$/SELINUX=permissive/&#39; /etc/selinux/config
+sudo sed -i 's/^SELINUX=enforcing$/SELINUX=permissive/' /etc/selinux/config
 
 sudo yum install -y kubelet kubeadm kubectl --disableexcludes=kubernetes
 
@@ -3676,7 +3676,7 @@ ln -s $(which pip3) /usr/local/bin/pip
 <p>Install golang, for further details see <a href="https://golang.org/doc/install">https://golang.org/doc/install</a>:
 <div class="highlight"><pre><span></span><code>curl -L -O https://golang.org/dl/go1.17.linux-amd64.tar.gz
 rm -rf /usr/local/go &amp;&amp; tar -C /usr/local -xzf go1.17.linux-amd64.tar.gz
-echo &quot;export PATH=$PATH:/usr/local/go/bin&quot; &gt;&gt; ~/.bashrc
+echo "export PATH=$PATH:/usr/local/go/bin" &gt;&gt; ~/.bashrc
 source ~/.bashrc
 go version
 </code></pre></div></p>
@@ -3693,9 +3693,9 @@ make
 popd
 
 # Build ovn kube image
-# Find all built executables, but ignore the &#39;windows&#39; directory if it exists
+# Find all built executables, but ignore the 'windows' directory if it exists
 find ../../go-controller/_output/go/bin/ -maxdepth 1 -type f -exec cp -f {} . \;
-echo &quot;ref: $(git rev-parse  --symbolic-full-name HEAD)  commit: $(git rev-parse  HEAD)&quot; &gt; git_info
+echo "ref: $(git rev-parse  --symbolic-full-name HEAD)  commit: $(git rev-parse  HEAD)" &gt; git_info
 </code></pre></div></p>
 <p>Now, build and push the image with:
 <div class="highlight"><pre><span></span><code>OVN_IMAGE=192.168.123.254:5000/ovn-daemonset-fedora:latest
@@ -3705,11 +3705,11 @@ podman push $OVN_IMAGE
 <p>Next, run:
 <div class="highlight"><pre><span></span><code>OVN_IMAGE=192.168.123.254:5000/ovn-daemonset-fedora:latest
 MASTER_IP=192.168.123.1
-NET_CIDR=&quot;172.16.0.0/16/24&quot;
-SVC_CIDR=&quot;172.17.0.0/16&quot;
+NET_CIDR="172.16.0.0/16/24"
+SVC_CIDR="172.17.0.0/16"
 ./daemonset.sh --image=${OVN_IMAGE} \
-    --net-cidr=&quot;${NET_CIDR}&quot; --svc-cidr=&quot;${SVC_CIDR}&quot; \
-    --gateway-mode=&quot;local&quot; \
+    --net-cidr="${NET_CIDR}" --svc-cidr="${SVC_CIDR}" \
+    --gateway-mode="local" \
     --k8s-apiserver=https://${MASTER_IP}:6443
 </code></pre></div></p>
 <p>You might also have to work around an issue where br-int is added by OVN, but the necessary files in /var/run/openvswitch are not created until Open vSwitch is restarted - <a href="#issues-workarounds">see here for more details</a>. This only happens on the master, so let's pre-create <code>br-int</code> there:
@@ -3749,7 +3749,7 @@ ovn-kubernetes   ovnkube-node-xmgrj               3/3     Running   3          8
 <h3 id="verifying-the-deployment">Verifying the deployment<a class="headerlink" href="#verifying-the-deployment" title="Permanent link">&para;</a></h3>
 <p>Create a test deployment to make sure that everything works as expected:
 <div class="highlight"><pre><span></span><code>cd ~
-cat &lt;&lt;&#39;EOF&#39; &gt; fedora.yaml
+cat &lt;&lt;'EOF' &gt; fedora.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -3767,8 +3767,8 @@ spec:
         app: fedora-pod
     spec:
       tolerations:
-      - key: &quot;node-role.kubernetes.io/control-plane&quot;
-        operator: &quot;Exists&quot;
+      - key: "node-role.kubernetes.io/control-plane"
+        operator: "Exists"
       containers:
       - name: fedora
         image: fedora
@@ -3780,9 +3780,9 @@ spec:
           runAsUser: 0
           capabilities:
             add:
-              - &quot;SETFCAP&quot;
-              - &quot;CAP_NET_RAW&quot;
-              - &quot;CAP_NET_ADMIN&quot;
+              - "SETFCAP"
+              - "CAP_NET_RAW"
+              - "CAP_NET_ADMIN"
 EOF
 kubectl apply -f fedora.yaml
 </code></pre></div></p>
@@ -3853,7 +3853,7 @@ kubectl delete -f $HOME/work/src/github.com/ovn-org/ovn-kubernetes/dist/yaml/ovn
 <h2 id="kubeadm-reset-instructions">kubeadm reset instructions<a class="headerlink" href="#kubeadm-reset-instructions" title="Permanent link">&para;</a></h2>
 <p>If you must reset your master and worker nodes, the following commands can be used to reset the lab environment. Run this on each node and then ideally reboot the node right after:
 <div class="highlight"><pre><span></span><code>IF2=enp7s0
-echo &quot;y&quot; | kubeadm reset
+echo "y" | kubeadm reset
 rm -f /etc/cni/net.d/10-*
 rm -Rf ~/.kube
 rm -f /etc/openvswitch/conf.db
