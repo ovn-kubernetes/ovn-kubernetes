@@ -323,16 +323,123 @@ var _ = ginkgo.Describe("Network Segmentation Uplink default-VRF egress", featur
 			"expected the recreated UplinkState not to inherit gateway readiness from the previous lifecycle",
 		)
 	})
+
+	ginkgo.It("reprograms an active CUDN when the selected Uplink configuration changes", func() {
+		env := provisionUplinkWithActiveCUDN(f, ictx, ipFamilySet, testSuffix, "upchange")
+		node, uplinkName, networkName := env.node, env.uplinkName, env.networkName
+		hostname, ok := node.Labels[corev1.LabelHostname]
+		gomega.Expect(ok).To(gomega.BeTrue(), "expected node %s to have label %q", node.Name, corev1.LabelHostname)
+
+		state, err := getUplinkState(f, uplinkName, node.Name)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		initialUID := state.GetUID()
+		gatewayReady, err := uplinkStateCondition(state, uplinkv1alpha1.UplinkStateConditionGatewayReady)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		initialTransition := gatewayReady.LastTransitionTime
+
+		ginkgo.By("verifying egress through the initial Uplink bridge")
+		initialServer, err := ictx.CreateExternalContainer(infraapi.ExternalContainer{
+			Name:    "upchangesrva" + testSuffix,
+			Image:   images.AgnHost(),
+			CmdArgs: []string{"netexec"},
+			Network: env.uplinkNetwork,
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		initialNodeIface, ok := env.nodeIfaces[node.Name]
+		gomega.Expect(ok).To(gomega.BeTrue(), "expected initial Uplink interface for node %s", node.Name)
+		for _, family := range ipFamilySet.UnsortedList() {
+			serverIP := getFirstIPStringOfFamily(family, []string{initialServer.IPv4, initialServer.IPv6})
+			gomega.Expect(serverIP).NotTo(gomega.BeEmpty())
+			expectedSourceIP := getFirstIPStringOfFamily(family, []string{initialNodeIface.IPv4, initialNodeIface.IPv6})
+			gomega.Expect(expectedSourceIP).NotTo(gomega.BeEmpty())
+			uplinkPodToClientIPAndExpect(env.pod, serverIP, expectedSourceIP)
+		}
+
+		ginkgo.By("provisioning a replacement Uplink bridge and underlay")
+		replacementAlloc, err := allocators.AllocateBGP(f, ictx)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		replacementNetwork, replacementIfaces := setupUplinkNetwork(
+			ictx,
+			[]corev1.Node{node},
+			ipFamilySet,
+			"upchangenet"+testSuffix,
+			[]string{replacementAlloc.BGPPeerSubnet, replacementAlloc.BGPPeerSubnet6},
+		)
+		replacementBridge := uplinkBridgeName("upchangerepl" + testSuffix)
+		gomega.Expect(configureUplinkBridge(f, ictx, replacementBridge, replacementIfaces)).To(gomega.Succeed())
+		gomega.Expect(configureUplinkBridgeDefaultRoutes(
+			ictx,
+			replacementBridge,
+			replacementIfaces,
+		)).To(gomega.Succeed())
+		replacementServer, err := ictx.CreateExternalContainer(infraapi.ExternalContainer{
+			Name:    "upchangesrvb" + testSuffix,
+			Image:   images.AgnHost(),
+			CmdArgs: []string{"netexec"},
+			Network: replacementNetwork,
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		ginkgo.By("changing the selected nodeConfig without deselecting the node")
+		setUplinkNodeConfigHostInterfaceName(f, uplinkName, hostname, replacementBridge)
+		waitForUplinkStatesResolved(f, uplinkName, replacementBridge, []corev1.Node{node})
+		gomega.Eventually(func() error {
+			state, err := getUplinkState(f, uplinkName, node.Name)
+			if err != nil {
+				return err
+			}
+			if state.GetUID() != initialUID {
+				return fmt.Errorf("UplinkState %s was unexpectedly recreated", state.GetName())
+			}
+			gatewayReady, err := uplinkStateCondition(state, uplinkv1alpha1.UplinkStateConditionGatewayReady)
+			if err != nil {
+				return err
+			}
+			if gatewayReady.Status != metav1.ConditionTrue ||
+				gatewayReady.Reason != uplinkv1alpha1.UplinkStateReasonGatewayConfigured {
+				return fmt.Errorf("UplinkState %s GatewayReady is %s/%s, expected %s/%s",
+					state.GetName(),
+					gatewayReady.Status,
+					gatewayReady.Reason,
+					metav1.ConditionTrue,
+					uplinkv1alpha1.UplinkStateReasonGatewayConfigured,
+				)
+			}
+			if !gatewayReady.LastTransitionTime.After(initialTransition.Time) {
+				return fmt.Errorf("UplinkState %s GatewayReady did not transition after configuration changed",
+					state.GetName())
+			}
+			return nil
+		}).WithTimeout(uplinkTimeout).WithPolling(uplinkPoll).Should(
+			gomega.Succeed(),
+			"expected gateway readiness from programming the replacement Uplink configuration",
+		)
+		waitForCUDNUplinksReady(f, networkName)
+
+		ginkgo.By("verifying egress uses the replacement Uplink interface")
+		replacementNodeIface, ok := replacementIfaces[node.Name]
+		gomega.Expect(ok).To(gomega.BeTrue(), "expected replacement Uplink interface for node %s", node.Name)
+		for _, family := range ipFamilySet.UnsortedList() {
+			serverIP := getFirstIPStringOfFamily(family, []string{replacementServer.IPv4, replacementServer.IPv6})
+			gomega.Expect(serverIP).NotTo(gomega.BeEmpty())
+			expectedSourceIP := getFirstIPStringOfFamily(family, []string{replacementNodeIface.IPv4, replacementNodeIface.IPv6})
+			gomega.Expect(expectedSourceIP).NotTo(gomega.BeEmpty())
+			uplinkPodToClientIPAndExpect(env.pod, serverIP, expectedSourceIP)
+		}
+	})
 })
 
 // uplinkRecoveryEnv is the provisioning shared by the UplinkState recovery
 // tests: one Uplink resolved on every node, and one CUDN activated on a single
 // schedulable node with gateway readiness published for it.
 type uplinkRecoveryEnv struct {
-	node        corev1.Node
-	uplinkName  string
-	bridgeName  string
-	networkName string
+	node          corev1.Node
+	uplinkName    string
+	bridgeName    string
+	networkName   string
+	uplinkNetwork infraapi.Network
+	nodeIfaces    map[string]infraapi.NetworkInterface
+	pod           *corev1.Pod
 }
 
 func provisionUplinkWithActiveCUDN(
@@ -353,7 +460,7 @@ func provisionUplinkWithActiveCUDN(
 
 	uplinkAlloc, err := allocators.AllocateBGP(f, ictx)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	_, nodeIfaces := setupUplinkNetwork(
+	uplinkNetwork, nodeIfaces := setupUplinkNetwork(
 		ictx,
 		nodes.Items,
 		ipFamilySet,
@@ -394,7 +501,7 @@ func provisionUplinkWithActiveCUDN(
 		nil,
 		uplinkName,
 	)).To(gomega.Succeed())
-	createUplinkNetexecPod(f, namespace.Name, "client-"+networkName, node.Name)
+	pod := createUplinkNetexecPod(f, namespace.Name, "client-"+networkName, node.Name)
 	waitForUplinkStateGatewayCondition(
 		f,
 		uplinkName,
@@ -405,10 +512,13 @@ func provisionUplinkWithActiveCUDN(
 	waitForCUDNUplinksReady(f, networkName)
 
 	return uplinkRecoveryEnv{
-		node:        node,
-		uplinkName:  uplinkName,
-		bridgeName:  bridgeName,
-		networkName: networkName,
+		node:          node,
+		uplinkName:    uplinkName,
+		bridgeName:    bridgeName,
+		networkName:   networkName,
+		uplinkNetwork: uplinkNetwork,
+		nodeIfaces:    nodeIfaces,
+		pod:           pod,
 	}
 }
 
@@ -2025,6 +2135,64 @@ func setUplinkNodeConfigHostname(f *framework.Framework, uplinkName, fromHostnam
 		uplinkName,
 		fromHostname,
 		toHostname,
+	)
+}
+
+// setUplinkNodeConfigHostInterfaceName changes the interface selected for one
+// node without changing which nodes the Uplink selects.
+func setUplinkNodeConfigHostInterfaceName(
+	f *framework.Framework,
+	uplinkName, hostname, hostInterfaceName string,
+) {
+	ginkgo.GinkgoHelper()
+
+	gomega.Eventually(func() error {
+		uplink, err := f.DynamicClient.Resource(uplinkGVR).Get(context.Background(), uplinkName, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		nodeConfigs, _, err := unstructured.NestedSlice(uplink.Object, "spec", "nodeConfigs")
+		if err != nil {
+			return err
+		}
+		found := false
+		for i := range nodeConfigs {
+			nodeConfig, ok := nodeConfigs[i].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			selectedHostname, _, err := unstructured.NestedString(
+				nodeConfig,
+				"nodeSelector",
+				"matchLabels",
+				corev1.LabelHostname,
+			)
+			if err != nil {
+				return err
+			}
+			if selectedHostname != hostname {
+				continue
+			}
+			if err := unstructured.SetNestedField(nodeConfig, hostInterfaceName, "hostInterfaceName"); err != nil {
+				return err
+			}
+			nodeConfigs[i] = nodeConfig
+			found = true
+		}
+		if !found {
+			return fmt.Errorf("Uplink %s has no nodeConfig selecting hostname %q", uplinkName, hostname)
+		}
+		if err := unstructured.SetNestedSlice(uplink.Object, nodeConfigs, "spec", "nodeConfigs"); err != nil {
+			return err
+		}
+		_, err = f.DynamicClient.Resource(uplinkGVR).Update(context.Background(), uplink, metav1.UpdateOptions{})
+		return err
+	}).WithTimeout(uplinkShortTimeout).WithPolling(uplinkPoll).Should(
+		gomega.Succeed(),
+		"expected to update Uplink %q nodeConfig for hostname %q to interface %q",
+		uplinkName,
+		hostname,
+		hostInterfaceName,
 	)
 }
 
