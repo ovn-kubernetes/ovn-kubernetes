@@ -1571,7 +1571,7 @@ func getAgnHostHTTPPortBindFullCMD(port uint16) []string {
 
 // getAgnHostHTTPPortBindCMDArgs returns the aruments for /agnhost binary
 func getAgnHostHTTPPortBindCMDArgs(port uint16) []string {
-	return []string{"netexec", fmt.Sprintf("--http-port=%d", port)}
+	return []string{"netexec", fmt.Sprintf("--http-port=%d", port), "--udp-port=-1"}
 }
 
 // executeFileTemplate executes `name` template from the provided `templates`
