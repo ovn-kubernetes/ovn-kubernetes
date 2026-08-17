@@ -4303,15 +4303,15 @@ ovs-vsctl add-port br0-ovs enp4s0f0_0 -- set Interface enp4s0f0_0 type=dpdk
 <span class="nt">data</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">config.json</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
 <span class="w">    </span><span class="no">{</span>
-<span class="w">        </span><span class="no">&quot;resourceList&quot;: [</span>
+<span class="w">        </span><span class="no">"resourceList": [</span>
 <span class="w">            </span><span class="no">{</span>
-<span class="w">                </span><span class="no">&quot;resourceName&quot;: &quot;p0_vfs&quot;,</span>
-<span class="w">                </span><span class="no">&quot;resourcePrefix&quot;: &quot;nvidia.com&quot;,</span>
-<span class="w">                </span><span class="no">&quot;selectors&quot;: {</span>
-<span class="w">                    </span><span class="no">&quot;vendors&quot;: [&quot;15b3&quot;],</span>
-<span class="w">                    </span><span class="no">&quot;devices&quot;: [&quot;1014&quot;, &quot;1016&quot;, &quot;1018&quot;, &quot;101a&quot;, &quot;101c&quot;, &quot;101e&quot;],</span>
-<span class="w">                    </span><span class="no">&quot;pfNames&quot;: [&quot;p0#1-3&quot;],</span>
-<span class="w">                    </span><span class="no">&quot;isRdma&quot;: true</span>
+<span class="w">                </span><span class="no">"resourceName": "p0_vfs",</span>
+<span class="w">                </span><span class="no">"resourcePrefix": "nvidia.com",</span>
+<span class="w">                </span><span class="no">"selectors": {</span>
+<span class="w">                    </span><span class="no">"vendors": ["15b3"],</span>
+<span class="w">                    </span><span class="no">"devices": ["1014", "1016", "1018", "101a", "101c", "101e"],</span>
+<span class="w">                    </span><span class="no">"pfNames": ["p0#1-3"],</span>
+<span class="w">                    </span><span class="no">"isRdma": true</span>
 <span class="w">                  </span><span class="no">}</span>
 <span class="w">                </span><span class="no">}</span>
 <span class="w">              </span><span class="no">]</span>
@@ -4323,7 +4323,7 @@ ovs-vsctl add-port br0-ovs enp4s0f0_0 -- set Interface enp4s0f0_0 type=dpdk
 <p>Deploy multus CNI as daemonset based on https://github.com/k8snetworkplumbingwg/multus-cni/blob/master/deployments/multus-daemonset.yml</p>
 <h2 id="networkattachementdefinition">NetworkAttachementDefinition<a class="headerlink" href="#networkattachementdefinition" title="Permanent link">&para;</a></h2>
 <p>Create NetworkAttachementDefinition CRD with OVN CNI config</p>
-<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;k8s.cni.cncf.io/v1&quot;</span>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="s">"k8s.cni.cncf.io/v1"</span>
 <span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">NetworkAttachmentDefinition</span>
 <span class="nt">metadata</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ovn-primary</span>
@@ -4331,16 +4331,16 @@ ovs-vsctl add-port br0-ovs enp4s0f0_0 -- set Interface enp4s0f0_0 type=dpdk
 <span class="w">  </span><span class="nt">annotations</span><span class="p">:</span>
 <span class="w">    </span><span class="nt">k8s.v1.cni.cncf.io/resourceName</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">nvidia.com/p0_vfs</span>
 <span class="nt">spec</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">config</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;{</span>
-<span class="w">    </span><span class="s">&quot;cniVersion&quot;</span><span class="nv"> </span><span class="s">:</span><span class="nv"> </span><span class="s">&quot;0.4.0&quot;,</span>
-<span class="w">    </span><span class="s">&quot;name&quot;</span><span class="nv"> </span><span class="s">:</span><span class="nv"> </span><span class="s">&quot;ovn-primary&quot;,</span>
-<span class="w">    </span><span class="s">&quot;type&quot;</span><span class="nv"> </span><span class="s">:</span><span class="nv"> </span><span class="s">&quot;ovn-k8s-cni-overlay&quot;,</span>
-<span class="w">    </span><span class="s">&quot;logFile&quot;:</span><span class="nv"> </span><span class="s">&quot;/var/log/ovn-kubernetes/ovn-k8s-cni-overlay.log&quot;,</span>
-<span class="w">    </span><span class="s">&quot;logLevel&quot;:</span><span class="nv"> </span><span class="s">&quot;5&quot;,</span>
-<span class="w">    </span><span class="s">&quot;logfile-maxsize&quot;:</span><span class="nv"> </span><span class="s">100,</span>
-<span class="w">    </span><span class="s">&quot;logfile-maxbackups&quot;:</span><span class="nv"> </span><span class="s">5,</span>
-<span class="w">    </span><span class="s">&quot;logfile-maxage&quot;:</span><span class="nv"> </span><span class="s">5</span>
-<span class="w">    </span><span class="s">}&#39;</span>
+<span class="w">  </span><span class="nt">config</span><span class="p">:</span><span class="w"> </span><span class="s">'{</span>
+<span class="w">    </span><span class="s">"cniVersion"</span><span class="nv"> </span><span class="s">:</span><span class="nv"> </span><span class="s">"0.4.0",</span>
+<span class="w">    </span><span class="s">"name"</span><span class="nv"> </span><span class="s">:</span><span class="nv"> </span><span class="s">"ovn-primary",</span>
+<span class="w">    </span><span class="s">"type"</span><span class="nv"> </span><span class="s">:</span><span class="nv"> </span><span class="s">"ovn-k8s-cni-overlay",</span>
+<span class="w">    </span><span class="s">"logFile":</span><span class="nv"> </span><span class="s">"/var/log/ovn-kubernetes/ovn-k8s-cni-overlay.log",</span>
+<span class="w">    </span><span class="s">"logLevel":</span><span class="nv"> </span><span class="s">"5",</span>
+<span class="w">    </span><span class="s">"logfile-maxsize":</span><span class="nv"> </span><span class="s">100,</span>
+<span class="w">    </span><span class="s">"logfile-maxbackups":</span><span class="nv"> </span><span class="s">5,</span>
+<span class="w">    </span><span class="s">"logfile-maxage":</span><span class="nv"> </span><span class="s">5</span>
+<span class="w">    </span><span class="s">}'</span>
 </code></pre></div>
 <h2 id="deploy-pod-with-ovs-hardware-offload-based-on-ovs-doca">Deploy POD with OVS hardware-offload based on ovs-doca<a class="headerlink" href="#deploy-pod-with-ovs-hardware-offload-based-on-ovs-doca" title="Permanent link">&para;</a></h2>
 <p>Create POD spec and</p>
@@ -4366,16 +4366,16 @@ ovs-vsctl add-port br0-ovs enp4s0f0_0 -- set Interface enp4s0f0_0 type=dpdk
 <span class="w">        </span><span class="nt">command</span><span class="p">:</span>
 <span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/bin/sh</span>
 <span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-c</span>
-<span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&#39;trap</span><span class="nv"> </span><span class="s">:</span><span class="nv"> </span><span class="s">TERM</span><span class="nv"> </span><span class="s">INT;</span><span class="nv"> </span><span class="s">sleep</span><span class="nv"> </span><span class="s">infinity</span><span class="nv"> </span><span class="s">&amp;</span><span class="nv"> </span><span class="s">wait&#39;</span>
-<span class="w">        </span><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;nicolaka/netshoot:v0.12&quot;</span>
+<span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">'trap</span><span class="nv"> </span><span class="s">:</span><span class="nv"> </span><span class="s">TERM</span><span class="nv"> </span><span class="s">INT;</span><span class="nv"> </span><span class="s">sleep</span><span class="nv"> </span><span class="s">infinity</span><span class="nv"> </span><span class="s">&amp;</span><span class="nv"> </span><span class="s">wait'</span>
+<span class="w">        </span><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="s">"nicolaka/netshoot:v0.12"</span>
 <span class="w">        </span><span class="nt">securityContext</span><span class="p">:</span>
 <span class="w">          </span><span class="nt">capabilities</span><span class="p">:</span>
-<span class="w">            </span><span class="nt">add</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;NET_ADMIN&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">            </span><span class="nt">add</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"NET_ADMIN"</span><span class="p p-Indicator">]</span>
 <span class="w">        </span><span class="nt">resources</span><span class="p">:</span>
 <span class="w">          </span><span class="nt">requests</span><span class="p">:</span>
-<span class="w">            </span><span class="nt">nvidia.com/p0_vfs</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;1&#39;</span><span class="w">   </span><span class="c1"># ⇐ Notice the resource used here</span>
+<span class="w">            </span><span class="nt">nvidia.com/p0_vfs</span><span class="p">:</span><span class="w"> </span><span class="s">'1'</span><span class="w">   </span><span class="c1"># ⇐ Notice the resource used here</span>
 <span class="w">          </span><span class="nt">limits</span><span class="p">:</span>
-<span class="w">            </span><span class="nt">nvidia.com/p0_vfs</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;1&#39;</span>
+<span class="w">            </span><span class="nt">nvidia.com/p0_vfs</span><span class="p">:</span><span class="w"> </span><span class="s">'1'</span>
 </code></pre></div>
 <h2 id="how-to-enable-this-feature-on-an-ovn-kubernetes-cluster">How to enable this feature on an OVN-Kubernetes cluster?<a class="headerlink" href="#how-to-enable-this-feature-on-an-ovn-kubernetes-cluster" title="Permanent link">&para;</a></h2>
 <p>No special configuration or knobs need to be set on the OVN-Kubernetes side. There are no user facing API changes or changes in OVN constructs or OVS Flows as such.</p>

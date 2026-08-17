@@ -4321,15 +4321,15 @@ a default NetworkQos object in the respective namespaces with predefined values.
 +---------------------+     |         .-----.----------------------------.-----.    +--------------------+      .-------.  
                             +------&gt; ;       :     Overlay Traffic      ;       :   |NS3/Internet Gateway|     /         \ 
                                      :       ;  Various DSCP marking    :       ---&gt;|   Forward + SNAT   +---&gt;( Internet  )
-                         DSCP:11---&gt;  \     /                            \     /    |    to Underlay     |     `.       ,&#39; 
-+---------------------+     |          `---&#39;------------------------------`---&#39;     +--------------------+       `-----&#39;   
+                         DSCP:11---&gt;  \     /                            \     /    |    to Underlay     |     `.       ,' 
++---------------------+     |          `---'------------------------------`---'     +--------------------+       `-----'   
 |NS1/Pod2 (free user) +-----+                   .-------------------.                                                      
-+---------------------+                   _.---&#39;                     `----.                                                
++---------------------+                   _.---'                     `----.                                                
                                          /        Physical Underlay        \                                               
                                         (     (unaware of DSCP marking)     )                                              
-                                         `.                               ,&#39;                                               
-                                           `----.                   _.---&#39;                                                 
-                                                 `-----------------&#39;                                                                                                                                                    
+                                         `.                               ,'                                               
+                                           `----.                   _.---'                                                 
+                                                 `-----------------'                                                                                                                                                    
 </code></pre></div>
 <p>As a K8s Namespace Admin, I want to configure DSCP marking for egress east-west overlay traffic so that the
 packet marking is carried from the source overlay pod to destination overlay pod, so that on the destination pod can
@@ -4375,10 +4375,10 @@ whether NetworkQoS rules are configured correctly in OVN or not.</p>
 <code>go-controller/pkg/crd/networkqos/v1alpha1</code>. This would be a namespace-scoped CRD:</li>
 </ul>
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="p">(</span>
-<span class="w">    </span><span class="nx">networkingv1</span><span class="w"> </span><span class="s">&quot;k8s.io/api/networking/v1&quot;</span>
-<span class="w">    </span><span class="nx">metav1</span><span class="w"> </span><span class="s">&quot;k8s.io/apimachinery/pkg/apis/meta/v1&quot;</span>
+<span class="w">    </span><span class="nx">networkingv1</span><span class="w"> </span><span class="s">"k8s.io/api/networking/v1"</span>
+<span class="w">    </span><span class="nx">metav1</span><span class="w"> </span><span class="s">"k8s.io/apimachinery/pkg/apis/meta/v1"</span>
 
-<span class="w">    </span><span class="nx">crdtypes</span><span class="w"> </span><span class="s">&quot;github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types&quot;</span>
+<span class="w">    </span><span class="nx">crdtypes</span><span class="w"> </span><span class="s">"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"</span>
 <span class="p">)</span>
 
 <span class="c1">// +genclient</span>
@@ -4386,20 +4386,20 @@ whether NetworkQoS rules are configured correctly in OVN or not.</p>
 <span class="c1">// +kubebuilder:resource:path=networkqoses</span>
 <span class="c1">// +kubebuilder::singular=networkqos</span>
 <span class="c1">// +kubebuilder:object:root=true</span>
-<span class="c1">// +kubebuilder:printcolumn:name=&quot;Status&quot;,type=string,JSONPath=&quot;.status.status&quot;</span>
+<span class="c1">// +kubebuilder:printcolumn:name="Status",type=string,JSONPath=".status.status"</span>
 <span class="c1">// +kubebuilder:subresource:status</span>
 <span class="c1">// NetworkQoS is a CRD that allows the user to define a DSCP marking and metering</span>
 <span class="c1">// for pods ingress/egress traffic on its namespace to specified CIDRs,</span>
 <span class="c1">// protocol and port. Traffic belong these pods will be checked against</span>
-<span class="c1">// each Rule in the namespace&#39;s NetworkQoS, and if there is a match the traffic</span>
+<span class="c1">// each Rule in the namespace's NetworkQoS, and if there is a match the traffic</span>
 <span class="c1">// is marked with relevant DSCP value and enforcing specified policing</span>
 <span class="c1">// parameters.</span>
 <span class="kd">type</span><span class="w"> </span><span class="nx">NetworkQoS</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nx">metav1</span><span class="p">.</span><span class="nx">TypeMeta</span><span class="w">   </span><span class="s">`json:&quot;,inline&quot;`</span>
-<span class="w">    </span><span class="nx">metav1</span><span class="p">.</span><span class="nx">ObjectMeta</span><span class="w"> </span><span class="s">`json:&quot;metadata,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">metav1</span><span class="p">.</span><span class="nx">TypeMeta</span><span class="w">   </span><span class="s">`json:",inline"`</span>
+<span class="w">    </span><span class="nx">metav1</span><span class="p">.</span><span class="nx">ObjectMeta</span><span class="w"> </span><span class="s">`json:"metadata,omitempty"`</span>
 
-<span class="w">    </span><span class="nx">Spec</span><span class="w">   </span><span class="nx">Spec</span><span class="w">   </span><span class="s">`json:&quot;spec,omitempty&quot;`</span>
-<span class="w">    </span><span class="nx">Status</span><span class="w"> </span><span class="nx">Status</span><span class="w"> </span><span class="s">`json:&quot;status,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">Spec</span><span class="w">   </span><span class="nx">Spec</span><span class="w">   </span><span class="s">`json:"spec,omitempty"`</span>
+<span class="w">    </span><span class="nx">Status</span><span class="w"> </span><span class="nx">Status</span><span class="w"> </span><span class="s">`json:"status,omitempty"`</span>
 <span class="p">}</span>
 
 <span class="c1">// Spec defines the desired state of NetworkQoS</span>
@@ -4407,20 +4407,20 @@ whether NetworkQoS rules are configured correctly in OVN or not.</p>
 <span class="w">    </span><span class="c1">// networkSelector selects the networks on which the pod IPs need to be added to the source address set.</span>
 <span class="w">    </span><span class="c1">// NetworkQoS controller currently supports `NetworkAttachmentDefinitions` type only.</span>
 <span class="w">    </span><span class="c1">// +optional</span>
-<span class="w">    </span><span class="c1">// +kubebuilder:validation:XValidation:rule=&quot;self == oldSelf&quot;, message=&quot;networkSelector is immutable&quot;</span>
-<span class="w">    </span><span class="nx">NetworkSelectors</span><span class="w"> </span><span class="nx">crdtypes</span><span class="p">.</span><span class="nx">NetworkSelectors</span><span class="w"> </span><span class="s">`json:&quot;networkSelectors,omitempty&quot;`</span>
+<span class="w">    </span><span class="c1">// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="networkSelector is immutable"</span>
+<span class="w">    </span><span class="nx">NetworkSelectors</span><span class="w"> </span><span class="nx">crdtypes</span><span class="p">.</span><span class="nx">NetworkSelectors</span><span class="w"> </span><span class="s">`json:"networkSelectors,omitempty"`</span>
 
 <span class="w">    </span><span class="c1">// podSelector applies the NetworkQoS rule only to the pods in the namespace whose label</span>
 <span class="w">    </span><span class="c1">// matches this definition. This field is optional, and in case it is not set</span>
 <span class="w">    </span><span class="c1">// results in the rule being applied to all pods in the namespace.</span>
 <span class="w">    </span><span class="c1">// +optional</span>
-<span class="w">    </span><span class="nx">PodSelector</span><span class="w"> </span><span class="nx">metav1</span><span class="p">.</span><span class="nx">LabelSelector</span><span class="w"> </span><span class="s">`json:&quot;podSelector,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">PodSelector</span><span class="w"> </span><span class="nx">metav1</span><span class="p">.</span><span class="nx">LabelSelector</span><span class="w"> </span><span class="s">`json:"podSelector,omitempty"`</span>
 
-<span class="w">    </span><span class="c1">// priority is a value from 0 to 100 and represents the NetworkQoS&#39; priority.</span>
+<span class="w">    </span><span class="c1">// priority is a value from 0 to 100 and represents the NetworkQoS' priority.</span>
 <span class="w">    </span><span class="c1">// QoSes with numerically higher priority takes precedence over those with lower.</span>
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:Maximum:=100</span>
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:Minimum:=0</span>
-<span class="w">    </span><span class="nx">Priority</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="s">`json:&quot;priority&quot;`</span>
+<span class="w">    </span><span class="nx">Priority</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="s">`json:"priority"`</span>
 
 <span class="w">    </span><span class="c1">// egress a collection of Egress NetworkQoS rule objects. A total of 20 rules will</span>
 <span class="w">    </span><span class="c1">// be allowed in each NetworkQoS instance. The relative precedence of egress rules</span>
@@ -4428,32 +4428,32 @@ whether NetworkQoS rules are configured correctly in OVN or not.</p>
 <span class="w">    </span><span class="c1">// determined by the order in which the rule is written. Thus, a rule that appears</span>
 <span class="w">    </span><span class="c1">// first in the list of egress rules would take the lower precedence.</span>
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:MaxItems=20</span>
-<span class="w">    </span><span class="nx">Egress</span><span class="w"> </span><span class="p">[]</span><span class="nx">Rule</span><span class="w"> </span><span class="s">`json:&quot;egress&quot;`</span>
+<span class="w">    </span><span class="nx">Egress</span><span class="w"> </span><span class="p">[]</span><span class="nx">Rule</span><span class="w"> </span><span class="s">`json:"egress"`</span>
 <span class="p">}</span>
 
 <span class="kd">type</span><span class="w"> </span><span class="nx">Rule</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="c1">// dscp marking value for matching pods&#39; traffic.</span>
+<span class="w">    </span><span class="c1">// dscp marking value for matching pods' traffic.</span>
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:Maximum:=63</span>
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:Minimum:=0</span>
-<span class="w">    </span><span class="nx">DSCP</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="s">`json:&quot;dscp&quot;`</span>
+<span class="w">    </span><span class="nx">DSCP</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="s">`json:"dscp"`</span>
 
 <span class="w">    </span><span class="c1">// classifier The classifier on which packets should match</span>
 <span class="w">    </span><span class="c1">// to apply the NetworkQoS Rule.</span>
 <span class="w">    </span><span class="c1">// This field is optional, and in case it is not set the rule is applied</span>
 <span class="w">    </span><span class="c1">// to all egress traffic regardless of the destination.</span>
 <span class="w">    </span><span class="c1">// +optional</span>
-<span class="w">    </span><span class="nx">Classifier</span><span class="w"> </span><span class="nx">Classifier</span><span class="w"> </span><span class="s">`json:&quot;classifier&quot;`</span>
+<span class="w">    </span><span class="nx">Classifier</span><span class="w"> </span><span class="nx">Classifier</span><span class="w"> </span><span class="s">`json:"classifier"`</span>
 
 <span class="w">    </span><span class="c1">// +optional</span>
-<span class="w">    </span><span class="nx">Bandwidth</span><span class="w"> </span><span class="nx">Bandwidth</span><span class="w"> </span><span class="s">`json:&quot;bandwidth&quot;`</span>
+<span class="w">    </span><span class="nx">Bandwidth</span><span class="w"> </span><span class="nx">Bandwidth</span><span class="w"> </span><span class="s">`json:"bandwidth"`</span>
 <span class="p">}</span>
 
 <span class="kd">type</span><span class="w"> </span><span class="nx">Classifier</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="c1">// +optional</span>
-<span class="w">    </span><span class="nx">To</span><span class="w"> </span><span class="p">[]</span><span class="nx">Destination</span><span class="w"> </span><span class="s">`json:&quot;to&quot;`</span>
+<span class="w">    </span><span class="nx">To</span><span class="w"> </span><span class="p">[]</span><span class="nx">Destination</span><span class="w"> </span><span class="s">`json:"to"`</span>
 
 <span class="w">    </span><span class="c1">// +optional</span>
-<span class="w">    </span><span class="nx">Ports</span><span class="w"> </span><span class="p">[]</span><span class="o">*</span><span class="nx">Port</span><span class="w"> </span><span class="s">`json:&quot;ports&quot;`</span>
+<span class="w">    </span><span class="nx">Ports</span><span class="w"> </span><span class="p">[]</span><span class="o">*</span><span class="nx">Port</span><span class="w"> </span><span class="s">`json:"ports"`</span>
 <span class="p">}</span>
 
 <span class="c1">// Bandwidth controls the maximum of rate traffic that can be sent</span>
@@ -4464,14 +4464,14 @@ whether NetworkQoS rules are configured correctly in OVN or not.</p>
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:Minimum:=1</span>
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:Maximum:=4294967295</span>
 <span class="w">    </span><span class="c1">// +optional</span>
-<span class="w">    </span><span class="nx">Rate</span><span class="w"> </span><span class="kt">uint32</span><span class="w"> </span><span class="s">`json:&quot;rate&quot;`</span>
+<span class="w">    </span><span class="nx">Rate</span><span class="w"> </span><span class="kt">uint32</span><span class="w"> </span><span class="s">`json:"rate"`</span>
 
 <span class="w">    </span><span class="c1">// burst The value of burst rate limit in kilobits.</span>
 <span class="w">    </span><span class="c1">// This also needs rate to be specified.</span>
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:Minimum:=1</span>
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:Maximum:=4294967295</span>
 <span class="w">    </span><span class="c1">// +optional</span>
-<span class="w">    </span><span class="nx">Burst</span><span class="w"> </span><span class="kt">uint32</span><span class="w"> </span><span class="s">`json:&quot;burst&quot;`</span>
+<span class="w">    </span><span class="nx">Burst</span><span class="w"> </span><span class="kt">uint32</span><span class="w"> </span><span class="s">`json:"burst"`</span>
 <span class="p">}</span>
 
 <span class="c1">// Port specifies destination protocol and port on which NetworkQoS</span>
@@ -4480,27 +4480,27 @@ whether NetworkQoS rules are configured correctly in OVN or not.</p>
 <span class="w">    </span><span class="c1">// protocol (tcp, udp, sctp) that the traffic must match.</span>
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:Pattern=^TCP|UDP|SCTP$</span>
 <span class="w">    </span><span class="c1">// +optional</span>
-<span class="w">    </span><span class="nx">Protocol</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;protocol&quot;`</span>
+<span class="w">    </span><span class="nx">Protocol</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:"protocol"`</span>
 
 <span class="w">    </span><span class="c1">// port that the traffic must match</span>
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:Minimum:=1</span>
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:Maximum:=65535</span>
 <span class="w">    </span><span class="c1">// +optional</span>
-<span class="w">    </span><span class="nx">Port</span><span class="w"> </span><span class="o">*</span><span class="kt">int32</span><span class="w"> </span><span class="s">`json:&quot;port&quot;`</span>
+<span class="w">    </span><span class="nx">Port</span><span class="w"> </span><span class="o">*</span><span class="kt">int32</span><span class="w"> </span><span class="s">`json:"port"`</span>
 <span class="p">}</span>
 
 <span class="c1">// Destination describes a peer to apply NetworkQoS configuration for the outgoing traffic.</span>
 <span class="c1">// Only certain combinations of fields are allowed.</span>
-<span class="c1">// +kubebuilder:validation:XValidation:rule=&quot;!(has(self.ipBlock) &amp;&amp; (has(self.podSelector) || has(self.namespaceSelector)))&quot;,message=&quot;Can&#39;t specify both podSelector/namespaceSelector and ipBlock&quot;</span>
+<span class="c1">// +kubebuilder:validation:XValidation:rule="!(has(self.ipBlock) &amp;&amp; (has(self.podSelector) || has(self.namespaceSelector)))",message="Can't specify both podSelector/namespaceSelector and ipBlock"</span>
 <span class="kd">type</span><span class="w"> </span><span class="nx">Destination</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="c1">// podSelector is a label selector which selects pods. This field follows standard label</span>
 <span class="w">    </span><span class="c1">// selector semantics; if present but empty, it selects all pods.</span>
 <span class="w">    </span><span class="c1">//</span>
 <span class="w">    </span><span class="c1">// If namespaceSelector is also set, then the NetworkQoS as a whole selects</span>
 <span class="w">    </span><span class="c1">// the pods matching podSelector in the Namespaces selected by NamespaceSelector.</span>
-<span class="w">    </span><span class="c1">// Otherwise it selects the pods matching podSelector in the NetworkQoS&#39;s own namespace.</span>
+<span class="w">    </span><span class="c1">// Otherwise it selects the pods matching podSelector in the NetworkQoS's own namespace.</span>
 <span class="w">    </span><span class="c1">// +optional</span>
-<span class="w">    </span><span class="nx">PodSelector</span><span class="w"> </span><span class="o">*</span><span class="nx">metav1</span><span class="p">.</span><span class="nx">LabelSelector</span><span class="w"> </span><span class="s">`json:&quot;podSelector,omitempty&quot; protobuf:&quot;bytes,1,opt,name=podSelector&quot;`</span>
+<span class="w">    </span><span class="nx">PodSelector</span><span class="w"> </span><span class="o">*</span><span class="nx">metav1</span><span class="p">.</span><span class="nx">LabelSelector</span><span class="w"> </span><span class="s">`json:"podSelector,omitempty" protobuf:"bytes,1,opt,name=podSelector"`</span>
 
 <span class="w">    </span><span class="c1">// namespaceSelector selects namespaces using cluster-scoped labels. This field follows</span>
 <span class="w">    </span><span class="c1">// standard label selector semantics; if present but empty, it selects all namespaces.</span>
@@ -4509,19 +4509,19 @@ whether NetworkQoS rules are configured correctly in OVN or not.</p>
 <span class="w">    </span><span class="c1">// the pods matching podSelector in the namespaces selected by namespaceSelector.</span>
 <span class="w">    </span><span class="c1">// Otherwise it selects all pods in the namespaces selected by namespaceSelector.</span>
 <span class="w">    </span><span class="c1">// +optional</span>
-<span class="w">    </span><span class="nx">NamespaceSelector</span><span class="w"> </span><span class="o">*</span><span class="nx">metav1</span><span class="p">.</span><span class="nx">LabelSelector</span><span class="w"> </span><span class="s">`json:&quot;namespaceSelector,omitempty&quot; protobuf:&quot;bytes,2,opt,name=namespaceSelector&quot;`</span>
+<span class="w">    </span><span class="nx">NamespaceSelector</span><span class="w"> </span><span class="o">*</span><span class="nx">metav1</span><span class="p">.</span><span class="nx">LabelSelector</span><span class="w"> </span><span class="s">`json:"namespaceSelector,omitempty" protobuf:"bytes,2,opt,name=namespaceSelector"`</span>
 
 <span class="w">    </span><span class="c1">// ipBlock defines policy on a particular IPBlock. If this field is set then</span>
 <span class="w">    </span><span class="c1">// neither of the other fields can be.</span>
 <span class="w">    </span><span class="c1">// +optional</span>
-<span class="w">    </span><span class="nx">IPBlock</span><span class="w"> </span><span class="o">*</span><span class="nx">networkingv1</span><span class="p">.</span><span class="nx">IPBlock</span><span class="w"> </span><span class="s">`json:&quot;ipBlock,omitempty&quot; protobuf:&quot;bytes,3,rep,name=ipBlock&quot;`</span>
+<span class="w">    </span><span class="nx">IPBlock</span><span class="w"> </span><span class="o">*</span><span class="nx">networkingv1</span><span class="p">.</span><span class="nx">IPBlock</span><span class="w"> </span><span class="s">`json:"ipBlock,omitempty" protobuf:"bytes,3,rep,name=ipBlock"`</span>
 <span class="p">}</span>
 
 <span class="c1">// Status defines the observed state of NetworkQoS</span>
 <span class="kd">type</span><span class="w"> </span><span class="nx">Status</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="c1">// A concise indication of whether the NetworkQoS resource is applied with success.</span>
 <span class="w">    </span><span class="c1">// +optional</span>
-<span class="w">    </span><span class="nx">Status</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;status,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">Status</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:"status,omitempty"`</span>
 
 <span class="w">    </span><span class="c1">// An array of condition objects indicating details about status of NetworkQoS object.</span>
 <span class="w">    </span><span class="c1">// +optional</span>
@@ -4529,7 +4529,7 @@ whether NetworkQoS rules are configured correctly in OVN or not.</p>
 <span class="w">    </span><span class="c1">// +patchStrategy=merge</span>
 <span class="w">    </span><span class="c1">// +listType=map</span>
 <span class="w">    </span><span class="c1">// +listMapKey=type</span>
-<span class="w">    </span><span class="nx">Conditions</span><span class="w"> </span><span class="p">[]</span><span class="nx">metav1</span><span class="p">.</span><span class="nx">Condition</span><span class="w"> </span><span class="s">`json:&quot;conditions,omitempty&quot; patchStrategy:&quot;merge&quot; patchMergeKey:&quot;type&quot;`</span>
+<span class="w">    </span><span class="nx">Conditions</span><span class="w"> </span><span class="p">[]</span><span class="nx">metav1</span><span class="p">.</span><span class="nx">Condition</span><span class="w"> </span><span class="s">`json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`</span>
 <span class="p">}</span>
 
 <span class="c1">// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object</span>
@@ -4537,9 +4537,9 @@ whether NetworkQoS rules are configured correctly in OVN or not.</p>
 <span class="c1">// +kubebuilder::singular=networkqos</span>
 <span class="c1">// NetworkQoSList contains a list of NetworkQoS</span>
 <span class="kd">type</span><span class="w"> </span><span class="nx">NetworkQoSList</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nx">metav1</span><span class="p">.</span><span class="nx">TypeMeta</span><span class="w"> </span><span class="s">`json:&quot;,inline&quot;`</span>
-<span class="w">    </span><span class="nx">metav1</span><span class="p">.</span><span class="nx">ListMeta</span><span class="w"> </span><span class="s">`json:&quot;metadata,omitempty&quot;`</span>
-<span class="w">    </span><span class="nx">Items</span><span class="w">           </span><span class="p">[]</span><span class="nx">NetworkQoS</span><span class="w"> </span><span class="s">`json:&quot;items&quot;`</span>
+<span class="w">    </span><span class="nx">metav1</span><span class="p">.</span><span class="nx">TypeMeta</span><span class="w"> </span><span class="s">`json:",inline"`</span>
+<span class="w">    </span><span class="nx">metav1</span><span class="p">.</span><span class="nx">ListMeta</span><span class="w"> </span><span class="s">`json:"metadata,omitempty"`</span>
+<span class="w">    </span><span class="nx">Items</span><span class="w">           </span><span class="p">[]</span><span class="nx">NetworkQoS</span><span class="w"> </span><span class="s">`json:"items"`</span>
 <span class="p">}</span>
 </code></pre></div>
 <h3 id="implementation-details">Implementation Details<a class="headerlink" href="#implementation-details" title="Permanent link">&para;</a></h3>
@@ -4601,8 +4601,8 @@ is created:</p>
 <span class="w">                </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">192.168.0.0/16</span>
 </code></pre></div>
 <p>the equivalent of:</p>
-<div class="highlight"><pre><span></span><code>ovn-nbctl<span class="w"> </span>qos-add<span class="w"> </span>node1<span class="w"> </span>to-lport<span class="w"> </span><span class="m">10020</span><span class="w"> </span><span class="s2">&quot;ip4.src == &lt;games-qos-external-paid address set&gt; &amp;&amp; ip4.dst != {10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16}&quot;</span><span class="w"> </span><span class="nv">dscp</span><span class="o">=</span><span class="m">20</span>
-ovn-nbctl<span class="w"> </span>qos-add<span class="w"> </span>node1<span class="w"> </span>to-lport<span class="w"> </span><span class="m">10040</span><span class="w"> </span><span class="s2">&quot;ip4.src == &lt;games-qos-external-free address set&gt; &amp;&amp; ip4.dst != {10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16}&quot;</span><span class="w"> </span><span class="nv">dscp</span><span class="o">=</span><span class="m">11</span>
+<div class="highlight"><pre><span></span><code>ovn-nbctl<span class="w"> </span>qos-add<span class="w"> </span>node1<span class="w"> </span>to-lport<span class="w"> </span><span class="m">10020</span><span class="w"> </span><span class="s2">"ip4.src == &lt;games-qos-external-paid address set&gt; &amp;&amp; ip4.dst != {10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16}"</span><span class="w"> </span><span class="nv">dscp</span><span class="o">=</span><span class="m">20</span>
+ovn-nbctl<span class="w"> </span>qos-add<span class="w"> </span>node1<span class="w"> </span>to-lport<span class="w"> </span><span class="m">10040</span><span class="w"> </span><span class="s2">"ip4.src == &lt;games-qos-external-free address set&gt; &amp;&amp; ip4.dst != {10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16}"</span><span class="w"> </span><span class="nv">dscp</span><span class="o">=</span><span class="m">11</span>
 </code></pre></div>
 <p>will be executed. The math for the priority is as described below:</p>
 <ol>
@@ -4641,7 +4641,7 @@ results in its IPs being added to the corresponding Address Set.</p>
 <p>In the above <code>qos-external-free</code> NetworkQoS example, all the pods in games namespace with <code>user-type: free</code> label
 will have bandwidth limited to specified burst/rate towards the Internet. Such traffic will also have DSCP marking of
 11. The equivalent of:</p>
-<div class="highlight"><pre><span></span><code>ovn-nbctl<span class="w"> </span>qos-add<span class="w"> </span>node1<span class="w"> </span>to-lport<span class="w"> </span><span class="m">10040</span><span class="w"> </span><span class="s2">&quot;ip4.src == &lt;games-qos-external-free address set&gt; &amp;&amp; ip4.dst != {10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16}&quot;</span><span class="w"> </span><span class="nv">rate</span><span class="o">=</span><span class="m">20000</span><span class="w"> </span><span class="nv">burst</span><span class="o">=</span><span class="m">100</span><span class="w"> </span><span class="nv">dscp</span><span class="o">=</span><span class="m">11</span>
+<div class="highlight"><pre><span></span><code>ovn-nbctl<span class="w"> </span>qos-add<span class="w"> </span>node1<span class="w"> </span>to-lport<span class="w"> </span><span class="m">10040</span><span class="w"> </span><span class="s2">"ip4.src == &lt;games-qos-external-free address set&gt; &amp;&amp; ip4.dst != {10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16}"</span><span class="w"> </span><span class="nv">rate</span><span class="o">=</span><span class="m">20000</span><span class="w"> </span><span class="nv">burst</span><span class="o">=</span><span class="m">100</span><span class="w"> </span><span class="nv">dscp</span><span class="o">=</span><span class="m">11</span>
 </code></pre></div>
 <p>will be executed.</p>
 <p>In addition, the controller will watch nodes to decide if further updates are needed, for example:
@@ -4678,7 +4678,7 @@ Consider the following example:</p>
 </code></pre></div>
 <p>This creates a new AddressSet adding default namespace pod(s) IP associated with ovn-storage
 secondary network, using NAD. The equivalent of:</p>
-<div class="highlight"><pre><span></span><code>ovn-nbctl<span class="w"> </span>qos-add<span class="w"> </span>node1<span class="w"> </span>to-lport<span class="w"> </span><span class="m">10040</span><span class="w"> </span><span class="s2">&quot;ip4.src == &lt;games_ovn-storage_network address set&gt; &amp;&amp; ip4.dst == 0.0.0.0/0&quot;</span><span class="w"> </span><span class="nv">dscp</span><span class="o">=</span><span class="m">11</span>
+<div class="highlight"><pre><span></span><code>ovn-nbctl<span class="w"> </span>qos-add<span class="w"> </span>node1<span class="w"> </span>to-lport<span class="w"> </span><span class="m">10040</span><span class="w"> </span><span class="s2">"ip4.src == &lt;games_ovn-storage_network address set&gt; &amp;&amp; ip4.dst == 0.0.0.0/0"</span><span class="w"> </span><span class="nv">dscp</span><span class="o">=</span><span class="m">11</span>
 </code></pre></div>
 <p>will be executed.</p>
 <p>IPv6 will also be supported, given the following <code>NetworkQoS</code>:</p>

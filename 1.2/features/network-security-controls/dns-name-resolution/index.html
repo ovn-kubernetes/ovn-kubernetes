@@ -3892,7 +3892,7 @@ where ovnk is deployed.</p>
 resolver feature enabled, use the <code>--enable-dns-name-resolver</code> option in cluster-manager
 and ovnkube-controller.</p>
 <p>The following RBAC permissions should be added to cluster-manager:</p>
-<div class="highlight"><pre><span></span><code><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">apiGroups</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;network.openshift.io&quot;</span><span class="p p-Indicator">]</span>
+<div class="highlight"><pre><span></span><code><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">apiGroups</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"network.openshift.io"</span><span class="p p-Indicator">]</span>
 <span class="w">  </span><span class="nt">resources</span><span class="p">:</span>
 <span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">dnsnameresolvers</span>
 <span class="w">  </span><span class="nt">verbs</span><span class="p">:</span>
@@ -3905,7 +3905,7 @@ and ovnkube-controller.</p>
 <span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">watch</span>
 </code></pre></div>
 <p>The following RBAC permissions should be added to ovnkube-node:</p>
-<div class="highlight"><pre><span></span><code><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">apiGroups</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;network.openshift.io&quot;</span><span class="p p-Indicator">]</span>
+<div class="highlight"><pre><span></span><code><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">apiGroups</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"network.openshift.io"</span><span class="p p-Indicator">]</span>
 <span class="w">  </span><span class="nt">resources</span><span class="p">:</span>
 <span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">dnsnameresolvers</span>
 <span class="w">  </span><span class="nt">verbs</span><span class="p">:</span>

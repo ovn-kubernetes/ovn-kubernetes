@@ -3958,38 +3958,38 @@ so by running </p>
 <h2 id="start-ovn-northd">start ovn-northd<a class="headerlink" href="#start-ovn-northd" title="Permanent link">&para;</a></h2>
 <p>On any one of the masters (ideally via a daemonset with replica count as 1),
 start ovn-northd. Let the 3 master IPs be $IP1, $IP2 and $IP3.</p>
-<div class="highlight"><pre><span></span><code>IP1=&quot;$MASTER1&quot;
-IP2=&quot;$MASTER2&quot;
-IP3=&quot;$MASTER3&quot;
+<div class="highlight"><pre><span></span><code>IP1="$MASTER1"
+IP2="$MASTER2"
+IP3="$MASTER3"
 
-export ovn_nb=&quot;tcp:$IP1:6641,tcp:$IP2:6641,tcp:$IP3:6641&quot;
-export ovn_sb=&quot;tcp:$IP1:6642,tcp:$IP2:6642,tcp:$IP3:6642&quot;
+export ovn_nb="tcp:$IP1:6641,tcp:$IP2:6641,tcp:$IP3:6641"
+export ovn_sb="tcp:$IP1:6642,tcp:$IP2:6642,tcp:$IP3:6642"
 
 sudo ovn-northd -vconsole:emer -vsyslog:err -vfile:info \
-    --ovnnb-db=&quot;$ovn_nb&quot; --ovnsb-db=&quot;$ovn_sb&quot; --no-chdir \
+    --ovnnb-db="$ovn_nb" --ovnsb-db="$ovn_sb" --no-chdir \
     --log-file=/var/log/openvswitch/ovn-northd.log \
     --pidfile=/var/run/openvswitch/ovn-northd.pid --detach --monitor
 </code></pre></div>
 <h2 id="start-ovn-kube-init-node">Start 'ovn-kube -init-node'<a class="headerlink" href="#start-ovn-kube-init-node" title="Permanent link">&para;</a></h2>
 <p>On all nodes (and if needed on other masters), start ovnkube with
 '-init-node'. For e.g:</p>
-<div class="highlight"><pre><span></span><code>IP1=&quot;$MASTER1&quot;
-IP2=&quot;$MASTER2&quot;
-IP3=&quot;$MASTER3&quot;
+<div class="highlight"><pre><span></span><code>IP1="$MASTER1"
+IP2="$MASTER2"
+IP3="$MASTER3"
 
-ovn_nb=&quot;tcp:$IP1:6641,tcp:$IP2:6641,tcp:$IP3:6641&quot;
-ovn_sb=&quot;tcp:$IP1:6642,tcp:$IP2:6642,tcp:$IP3:6642&quot;
+ovn_nb="tcp:$IP1:6641,tcp:$IP2:6641,tcp:$IP3:6641"
+ovn_sb="tcp:$IP1:6642,tcp:$IP2:6642,tcp:$IP3:6642"
 
 nohup sudo ovnkube -k8s-kubeconfig $HOME/kubeconfig.yaml -loglevel=4 \
-    -logfile=&quot;/var/log/openvswitch/ovnkube.log&quot; \
-    -k8s-apiserver=&quot;http://$K8S_APISERVER_IP:8080&quot; \
-    -init-node=&quot;$NODE_NAME&quot;  \
-    -nb-address=&quot;${ovn_nb}&quot; \
-    -sb-address=&quot;${ovn_sb}&quot; \
-    -k8s-token=&quot;$TOKEN&quot; \
+    -logfile="/var/log/openvswitch/ovnkube.log" \
+    -k8s-apiserver="http://$K8S_APISERVER_IP:8080" \
+    -init-node="$NODE_NAME"  \
+    -nb-address="${ovn_nb}" \
+    -sb-address="${ovn_sb}" \
+    -k8s-token="$TOKEN" \
     -init-gateways \
     -k8s-service-cidr= \
-    -cluster-subnets=&quot;$SERVICE_IP_SUBNET&quot; 2&gt;&amp;1 &amp;
+    -cluster-subnets="$SERVICE_IP_SUBNET" 2&gt;&amp;1 &amp;
 </code></pre></div>
 
 

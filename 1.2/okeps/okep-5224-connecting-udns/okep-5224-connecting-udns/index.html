@@ -5307,9 +5307,9 @@ controller to connect the topologies of the UDNs selected by this CR.</p>
 <span class="w">            </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">yellow</span>
 <span class="w">            </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">red</span>
 <span class="w">  </span><span class="nt">connectSubnets</span><span class="p">:</span><span class="w"> </span><span class="c1"># can have at most 1 CIDR for each family type</span>
-<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">cidr</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;192.168.0.0/16&quot;</span><span class="w">  </span><span class="c1"># 65K total IPs</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">cidr</span><span class="p">:</span><span class="w"> </span><span class="s">"192.168.0.0/16"</span><span class="w">  </span><span class="c1"># 65K total IPs</span>
 <span class="w">    </span><span class="nt">networkPrefix</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">24</span><span class="w"> </span><span class="c1"># 255 IPs per layer3 network = ~100 possible nodes in your cluster</span>
-<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">cidr</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;fd01::/64&quot;</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">cidr</span><span class="p">:</span><span class="w"> </span><span class="s">"fd01::/64"</span>
 <span class="w">    </span><span class="nt">networkPrefix</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">96</span>
 <span class="w">  </span><span class="nt">connectivity</span><span class="p">:</span>
 <span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">PodNetwork</span>
@@ -5356,22 +5356,22 @@ controller to connect the topologies of the UDNs selected by this CR.</p>
 <span class="c1">// +kubebuilder:resource:path=clusternetworkconnects,scope=Cluster,shortName=cnc,singular=clusternetworkconnect</span>
 <span class="c1">// +kubebuilder:object:root=true</span>
 <span class="c1">// +kubebuilder:subresource:status</span>
-<span class="c1">// +kubebuilder:printcolumn:name=&quot;Age&quot;,type=&quot;date&quot;,JSONPath=&quot;.metadata.creationTimestamp&quot;</span>
-<span class="c1">// +kubebuilder:printcolumn:name=&quot;Status&quot;,type=string,JSONPath=&quot;.status.status&quot;</span>
+<span class="c1">// +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"</span>
+<span class="c1">// +kubebuilder:printcolumn:name="Status",type=string,JSONPath=".status.status"</span>
 <span class="kd">type</span><span class="w"> </span><span class="nx">ClusterNetworkConnect</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nx">metav1</span><span class="p">.</span><span class="nx">TypeMeta</span><span class="w">   </span><span class="s">`json:&quot;,inline&quot;`</span>
-<span class="w">    </span><span class="nx">metav1</span><span class="p">.</span><span class="nx">ObjectMeta</span><span class="w"> </span><span class="s">`json:&quot;metadata,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">metav1</span><span class="p">.</span><span class="nx">TypeMeta</span><span class="w">   </span><span class="s">`json:",inline"`</span>
+<span class="w">    </span><span class="nx">metav1</span><span class="p">.</span><span class="nx">ObjectMeta</span><span class="w"> </span><span class="s">`json:"metadata,omitempty"`</span>
 
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:Required</span>
 <span class="w">    </span><span class="c1">// +required</span>
-<span class="w">    </span><span class="nx">Spec</span><span class="w"> </span><span class="nx">ClusterNetworkConnectSpec</span><span class="w"> </span><span class="s">`json:&quot;spec&quot;`</span>
+<span class="w">    </span><span class="nx">Spec</span><span class="w"> </span><span class="nx">ClusterNetworkConnectSpec</span><span class="w"> </span><span class="s">`json:"spec"`</span>
 
 <span class="w">    </span><span class="c1">// +optional</span>
-<span class="w">    </span><span class="nx">Status</span><span class="w"> </span><span class="nx">ClusterNetworkConnectStatus</span><span class="w"> </span><span class="s">`json:&quot;status,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">Status</span><span class="w"> </span><span class="nx">ClusterNetworkConnectStatus</span><span class="w"> </span><span class="s">`json:"status,omitempty"`</span>
 <span class="p">}</span>
 
 <span class="c1">// ClusterNetworkConnectSpec defines the desired state of ClusterNetworkConnect.</span>
-<span class="c1">// +kubebuilder:validation:XValidation:rule=&quot;!self.networkSelectors.exists(i, i.networkSelectionType != &#39;ClusterUserDefinedNetworks&#39; &amp;&amp; i.networkSelectionType != &#39;PrimaryUserDefinedNetworks&#39;)&quot;,message=&quot;Only ClusterUserDefinedNetworks or PrimaryUserDefinedNetworks can be selected&quot;</span>
+<span class="c1">// +kubebuilder:validation:XValidation:rule="!self.networkSelectors.exists(i, i.networkSelectionType != 'ClusterUserDefinedNetworks' &amp;&amp; i.networkSelectionType != 'PrimaryUserDefinedNetworks')",message="Only ClusterUserDefinedNetworks or PrimaryUserDefinedNetworks can be selected"</span>
 <span class="kd">type</span><span class="w"> </span><span class="nx">ClusterNetworkConnectSpec</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="c1">// networkSelectors selects the networks to be connected together.</span>
 <span class="w">    </span><span class="c1">// This can match User Defined Networks (UDNs) and/or Cluster User Defined Networks (CUDNs).</span>
@@ -5379,7 +5379,7 @@ controller to connect the topologies of the UDNs selected by this CR.</p>
 <span class="w">    </span><span class="c1">//</span>
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:Required</span>
 <span class="w">    </span><span class="c1">// +required</span>
-<span class="w">    </span><span class="nx">NetworkSelectors</span><span class="w"> </span><span class="nx">types</span><span class="p">.</span><span class="nx">NetworkSelectors</span><span class="w"> </span><span class="s">`json:&quot;networkSelectors&quot;`</span>
+<span class="w">    </span><span class="nx">NetworkSelectors</span><span class="w"> </span><span class="nx">types</span><span class="p">.</span><span class="nx">NetworkSelectors</span><span class="w"> </span><span class="s">`json:"networkSelectors"`</span>
 
 <span class="w">    </span><span class="c1">// connectSubnets specifies the subnets used for interconnecting the selected networks.</span>
 <span class="w">    </span><span class="c1">// This creates a shared subnet space that connected networks can use to communicate.</span>
@@ -5399,37 +5399,37 @@ controller to connect the topologies of the UDNs selected by this CR.</p>
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:Required</span>
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:MinItems=1</span>
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:MaxItems=2</span>
-<span class="w">    </span><span class="c1">// +kubebuilder:validation:XValidation:rule=&quot;self == oldSelf&quot;, message=&quot;connectSubnets is immutable&quot;</span>
+<span class="w">    </span><span class="c1">// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="connectSubnets is immutable"</span>
 <span class="w">    </span><span class="c1">// +required</span>
-<span class="w">    </span><span class="c1">// +kubebuilder:validation:XValidation:rule=&quot;size(self) != 2 || !isCIDR(self[0].cidr) || !isCIDR(self[1].cidr) || cidr(self[0].cidr).ip().family() != cidr(self[1].cidr).ip().family()&quot;, message=&quot;When 2 CIDRs are set, they must be from different IP families&quot;</span>
-<span class="w">    </span><span class="nx">ConnectSubnets</span><span class="w"> </span><span class="p">[]</span><span class="nx">ConnectSubnet</span><span class="w"> </span><span class="s">`json:&quot;connectSubnets&quot;`</span>
+<span class="w">    </span><span class="c1">// +kubebuilder:validation:XValidation:rule="size(self) != 2 || !isCIDR(self[0].cidr) || !isCIDR(self[1].cidr) || cidr(self[0].cidr).ip().family() != cidr(self[1].cidr).ip().family()", message="When 2 CIDRs are set, they must be from different IP families"</span>
+<span class="w">    </span><span class="nx">ConnectSubnets</span><span class="w"> </span><span class="p">[]</span><span class="nx">ConnectSubnet</span><span class="w"> </span><span class="s">`json:"connectSubnets"`</span>
 
 <span class="w">    </span><span class="c1">// connectivity specifies which connectivity types should be enabled for the connected networks.</span>
 <span class="w">    </span><span class="c1">//</span>
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:Required</span>
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:MinItems=1</span>
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:MaxItems=2</span>
-<span class="w">    </span><span class="c1">// +kubebuilder:validation:XValidation:rule=&quot;self.all(x, self.exists_one(y, x == y))&quot;,message=&quot;connectivity cannot contain duplicate values&quot;</span>
-<span class="w">    </span><span class="nx">connectivity</span><span class="w"> </span><span class="p">[]</span><span class="nx">ConnectivityType</span><span class="w"> </span><span class="s">`json:&quot;connectivity&quot;`</span>
+<span class="w">    </span><span class="c1">// +kubebuilder:validation:XValidation:rule="self.all(x, self.exists_one(y, x == y))",message="connectivity cannot contain duplicate values"</span>
+<span class="w">    </span><span class="nx">connectivity</span><span class="w"> </span><span class="p">[]</span><span class="nx">ConnectivityType</span><span class="w"> </span><span class="s">`json:"connectivity"`</span>
 <span class="p">}</span>
 
-<span class="c1">// +kubebuilder:validation:XValidation:rule=&quot;isCIDR(self) &amp;&amp; cidr(self) == cidr(self).masked()&quot;, message=&quot;CIDR must be a valid network address&quot;</span>
+<span class="c1">// +kubebuilder:validation:XValidation:rule="isCIDR(self) &amp;&amp; cidr(self) == cidr(self).masked()", message="CIDR must be a valid network address"</span>
 <span class="c1">// +kubebuilder:validation:MaxLength=43</span>
 <span class="kd">type</span><span class="w"> </span><span class="nx">CIDR</span><span class="w"> </span><span class="kt">string</span>
 
-<span class="c1">// +kubebuilder:validation:XValidation:rule=&quot;!has(self.networkPrefix) || !isCIDR(self.cidr) || self.networkPrefix &gt; cidr(self.cidr).prefixLength()&quot;, message=&quot;networkPrefix must be smaller than CIDR subnet&quot;</span>
-<span class="c1">// +kubebuilder:validation:XValidation:rule=&quot;!has(self.networkPrefix) || !isCIDR(self.cidr) || (cidr(self.cidr).ip().family() != 4 || self.networkPrefix &lt; 32)&quot;, message=&quot;networkPrefix must &lt; 32 for ipv4 CIDR&quot;</span>
+<span class="c1">// +kubebuilder:validation:XValidation:rule="!has(self.networkPrefix) || !isCIDR(self.cidr) || self.networkPrefix &gt; cidr(self.cidr).prefixLength()", message="networkPrefix must be smaller than CIDR subnet"</span>
+<span class="c1">// +kubebuilder:validation:XValidation:rule="!has(self.networkPrefix) || !isCIDR(self.cidr) || (cidr(self.cidr).ip().family() != 4 || self.networkPrefix &lt; 32)", message="networkPrefix must &lt; 32 for ipv4 CIDR"</span>
 <span class="kd">type</span><span class="w"> </span><span class="nx">ConnectSubnet</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
 <span class="w">  </span><span class="c1">// CIDR specifies ConnectSubnet, which is split into smaller subnets for every connected network.</span>
 <span class="w">  </span><span class="c1">// This CIDR should be containing 2*((Number of L3 networks*Max Number of Nodes)+Number of L2 networks) IPs.</span>
-<span class="w">  </span><span class="c1">// Example: cidr= &quot;192.168.0.0/16&quot;, networkPrefix= 24 means that you can connect 256 Layer3 networks OR</span>
+<span class="w">  </span><span class="c1">// Example: cidr= "192.168.0.0/16", networkPrefix= 24 means that you can connect 256 Layer3 networks OR</span>
 <span class="w">  </span><span class="c1">// 255 Layer3 networks and 128 Layer2 networks</span>
 <span class="w">  </span><span class="c1">//</span>
 <span class="w">  </span><span class="c1">// CIDR also restricts the maximum number of networks that can be connected together</span>
 <span class="w">  </span><span class="c1">// based on what CIDR range is picked. So choosing a large enough CIDR for future use cases</span>
 <span class="w">  </span><span class="c1">// is important.</span>
 <span class="w">  </span><span class="c1">// +required</span>
-<span class="w">  </span><span class="nx">CIDR</span><span class="w"> </span><span class="nx">CIDR</span><span class="w"> </span><span class="s">`json:&quot;cidr&quot;`</span>
+<span class="w">  </span><span class="nx">CIDR</span><span class="w"> </span><span class="nx">CIDR</span><span class="w"> </span><span class="s">`json:"cidr"`</span>
 
 <span class="w">  </span><span class="c1">// networkPrefix specifies the prefix length for every connected network.</span>
 <span class="w">  </span><span class="c1">// This prefix length should be equal to or longer than the length of the CIDR prefix.</span>
@@ -5441,7 +5441,7 @@ controller to connect the topologies of the UDNs selected by this CR.</p>
 <span class="w">  </span><span class="c1">// A good practice is to set this to a value that ensures it contains more</span>
 <span class="w">  </span><span class="c1">// than twice the number of maximum nodes planned to be deployed in the cluster</span>
 <span class="w">  </span><span class="c1">// and how frequently nodes are created and destroyed.</span>
-<span class="w">  </span><span class="c1">// To be safe, better to set this to a value that&#39;s 4 times the maximum nodes planned</span>
+<span class="w">  </span><span class="c1">// To be safe, better to set this to a value that's 4 times the maximum nodes planned</span>
 <span class="w">  </span><span class="c1">// to be deployed in the cluster.</span>
 <span class="w">  </span><span class="c1">// Example - required values;</span>
 <span class="w">  </span><span class="c1">// if you plan to deploy 10 nodes, minimum required networkPrefix is /27 (20+ IPs)</span>
@@ -5461,7 +5461,7 @@ controller to connect the topologies of the UDNs selected by this CR.</p>
 <span class="w">  </span><span class="c1">// +kubebuilder:validation:Minimum=1</span>
 <span class="w">  </span><span class="c1">// +kubebuilder:validation:Maximum=127</span>
 <span class="w">  </span><span class="c1">// +required</span>
-<span class="w">  </span><span class="nx">NetworkPrefix</span><span class="w"> </span><span class="kt">int32</span><span class="w"> </span><span class="s">`json:&quot;networkPrefix&quot;`</span>
+<span class="w">  </span><span class="nx">NetworkPrefix</span><span class="w"> </span><span class="kt">int32</span><span class="w"> </span><span class="s">`json:"networkPrefix"`</span>
 <span class="p">}</span>
 
 <span class="c1">// ConnectivityType represents the different connectivity types that can be enabled for connected networks.</span>
@@ -5470,10 +5470,10 @@ controller to connect the topologies of the UDNs selected by this CR.</p>
 
 <span class="kd">const</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="c1">// PodNetwork enables direct pod-to-pod communication across connected networks.</span>
-<span class="w">    </span><span class="nx">PodNetwork</span><span class="w"> </span><span class="nx">ConnectivityType</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">&quot;PodNetwork&quot;</span>
+<span class="w">    </span><span class="nx">PodNetwork</span><span class="w"> </span><span class="nx">ConnectivityType</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"PodNetwork"</span>
 
 <span class="w">    </span><span class="c1">// ClusterIPServiceNetwork enables ClusterIP service access across connected networks.</span>
-<span class="w">    </span><span class="nx">ClusterIPServiceNetwork</span><span class="w"> </span><span class="nx">ConnectivityType</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">&quot;ClusterIPServiceNetwork&quot;</span>
+<span class="w">    </span><span class="nx">ClusterIPServiceNetwork</span><span class="w"> </span><span class="nx">ConnectivityType</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"ClusterIPServiceNetwork"</span>
 <span class="p">)</span>
 
 <span class="c1">// StatusType represents the status of a ClusterNetworkConnect.</span>
@@ -5482,10 +5482,10 @@ controller to connect the topologies of the UDNs selected by this CR.</p>
 
 <span class="kd">const</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="c1">// Success indicates that the ClusterNetworkConnect has been successfully applied.</span>
-<span class="w">    </span><span class="nx">Success</span><span class="w"> </span><span class="nx">StatusType</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">&quot;Success&quot;</span>
+<span class="w">    </span><span class="nx">Success</span><span class="w"> </span><span class="nx">StatusType</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"Success"</span>
 
 <span class="w">    </span><span class="c1">// Failure indicates that the ClusterNetworkConnect has failed to be applied.</span>
-<span class="w">    </span><span class="nx">Failure</span><span class="w"> </span><span class="nx">StatusType</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">&quot;Failure&quot;</span>
+<span class="w">    </span><span class="nx">Failure</span><span class="w"> </span><span class="nx">StatusType</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"Failure"</span>
 <span class="p">)</span>
 
 <span class="c1">// ClusterNetworkConnectStatus defines the observed state of ClusterNetworkConnect.</span>
@@ -5493,7 +5493,7 @@ controller to connect the topologies of the UDNs selected by this CR.</p>
 <span class="w">    </span><span class="c1">// status is a concise indication of whether the ClusterNetworkConnect</span>
 <span class="w">    </span><span class="c1">// resource is applied with success.</span>
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:Optional</span>
-<span class="w">    </span><span class="nx">Status</span><span class="w"> </span><span class="nx">StatusType</span><span class="w"> </span><span class="s">`json:&quot;status,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">Status</span><span class="w"> </span><span class="nx">StatusType</span><span class="w"> </span><span class="s">`json:"status,omitempty"`</span>
 
 <span class="w">    </span><span class="c1">// conditions is an array of condition objects indicating details about</span>
 <span class="w">    </span><span class="c1">// status of ClusterNetworkConnect object.</span>
@@ -5501,16 +5501,16 @@ controller to connect the topologies of the UDNs selected by this CR.</p>
 <span class="w">    </span><span class="c1">// +patchStrategy=merge</span>
 <span class="w">    </span><span class="c1">// +listType=map</span>
 <span class="w">    </span><span class="c1">// +listMapKey=type</span>
-<span class="w">    </span><span class="nx">Conditions</span><span class="w"> </span><span class="p">[]</span><span class="nx">metav1</span><span class="p">.</span><span class="nx">Condition</span><span class="w"> </span><span class="s">`json:&quot;conditions,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">Conditions</span><span class="w"> </span><span class="p">[]</span><span class="nx">metav1</span><span class="p">.</span><span class="nx">Condition</span><span class="w"> </span><span class="s">`json:"conditions,omitempty"`</span>
 <span class="p">}</span>
 
 <span class="c1">// ClusterNetworkConnectList contains a list of ClusterNetworkConnect.</span>
 <span class="c1">// +kubebuilder:object:root=true</span>
 <span class="c1">// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object</span>
 <span class="kd">type</span><span class="w"> </span><span class="nx">ClusterNetworkConnectList</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nx">metav1</span><span class="p">.</span><span class="nx">TypeMeta</span><span class="w"> </span><span class="s">`json:&quot;,inline&quot;`</span>
-<span class="w">    </span><span class="nx">metav1</span><span class="p">.</span><span class="nx">ListMeta</span><span class="w"> </span><span class="s">`json:&quot;metadata,omitempty&quot;`</span>
-<span class="w">    </span><span class="nx">Items</span><span class="w">           </span><span class="p">[]</span><span class="nx">ClusterNetworkConnect</span><span class="w"> </span><span class="s">`json:&quot;items&quot;`</span>
+<span class="w">    </span><span class="nx">metav1</span><span class="p">.</span><span class="nx">TypeMeta</span><span class="w"> </span><span class="s">`json:",inline"`</span>
+<span class="w">    </span><span class="nx">metav1</span><span class="p">.</span><span class="nx">ListMeta</span><span class="w"> </span><span class="s">`json:"metadata,omitempty"`</span>
+<span class="w">    </span><span class="nx">Items</span><span class="w">           </span><span class="p">[]</span><span class="nx">ClusterNetworkConnect</span><span class="w"> </span><span class="s">`json:"items"`</span>
 <span class="p">}</span>
 </code></pre></div>
 <h4 id="validation-field-checks">Validation Field Checks<a class="headerlink" href="#validation-field-checks" title="Permanent link">&para;</a></h4>
@@ -5603,133 +5603,133 @@ on validation results.</p>
 <p>When a <code>ClusterNetworkConnect</code> resource is successfully applied,
 the following conditions indicate healthy states:</p>
 <div class="highlight"><pre><span></span><code><span class="nt">status</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Success&quot;</span>
+<span class="w">  </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"Success"</span>
 <span class="w">  </span><span class="nt">conditions</span><span class="p">:</span>
-<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Accepted&quot;</span>
-<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;True&quot;</span>
-<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;ValidationSucceeded&quot;</span>
-<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;All</span><span class="nv"> </span><span class="s">validation</span><span class="nv"> </span><span class="s">checks</span><span class="nv"> </span><span class="s">passed</span><span class="nv"> </span><span class="s">successfully&quot;</span>
-<span class="w">    </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;2023-10-01T09:59:00Z&quot;</span>
-<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Ready-In-Zone-ovn-worker&quot;</span>
-<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;True&quot;</span>
-<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;OVNSetupSucceeded&quot;</span>
-<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Connect</span><span class="nv"> </span><span class="s">router</span><span class="nv"> </span><span class="s">and</span><span class="nv"> </span><span class="s">all</span><span class="nv"> </span><span class="s">ports</span><span class="nv"> </span><span class="s">created</span><span class="nv"> </span><span class="s">successfully&quot;</span>
-<span class="w">    </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;2023-10-01T10:00:00Z&quot;</span>
-<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Ready-In-Zone-ovn-worker2&quot;</span>
-<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;True&quot;</span>
-<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;OVNSetupSucceeded&quot;</span>
-<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Connect</span><span class="nv"> </span><span class="s">router</span><span class="nv"> </span><span class="s">and</span><span class="nv"> </span><span class="s">all</span><span class="nv"> </span><span class="s">ports</span><span class="nv"> </span><span class="s">created</span><span class="nv"> </span><span class="s">successfully&quot;</span>
-<span class="w">    </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;2023-10-01T10:00:00Z&quot;</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">"Accepted"</span>
+<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"True"</span>
+<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">"ValidationSucceeded"</span>
+<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">"All</span><span class="nv"> </span><span class="s">validation</span><span class="nv"> </span><span class="s">checks</span><span class="nv"> </span><span class="s">passed</span><span class="nv"> </span><span class="s">successfully"</span>
+<span class="w">    </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">"2023-10-01T09:59:00Z"</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">"Ready-In-Zone-ovn-worker"</span>
+<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"True"</span>
+<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">"OVNSetupSucceeded"</span>
+<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">"Connect</span><span class="nv"> </span><span class="s">router</span><span class="nv"> </span><span class="s">and</span><span class="nv"> </span><span class="s">all</span><span class="nv"> </span><span class="s">ports</span><span class="nv"> </span><span class="s">created</span><span class="nv"> </span><span class="s">successfully"</span>
+<span class="w">    </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">"2023-10-01T10:00:00Z"</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">"Ready-In-Zone-ovn-worker2"</span>
+<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"True"</span>
+<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">"OVNSetupSucceeded"</span>
+<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">"Connect</span><span class="nv"> </span><span class="s">router</span><span class="nv"> </span><span class="s">and</span><span class="nv"> </span><span class="s">all</span><span class="nv"> </span><span class="s">ports</span><span class="nv"> </span><span class="s">created</span><span class="nv"> </span><span class="s">successfully"</span>
+<span class="w">    </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">"2023-10-01T10:00:00Z"</span>
 </code></pre></div>
 <p><strong>Invalid Scenarios</strong></p>
 <p>When validation fails or errors occur, the following error conditions will be reported:</p>
 <p><strong>Cluster-Manager Validation Errors:</strong>
 <div class="highlight"><pre><span></span><code><span class="nt">status</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Failure&quot;</span>
+<span class="w">  </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"Failure"</span>
 <span class="w">  </span><span class="nt">conditions</span><span class="p">:</span>
-<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Accepted&quot;</span>
-<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;False&quot;</span>
-<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;ConnectSubnetExhausted&quot;</span>
-<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Insufficient</span><span class="nv"> </span><span class="s">IP</span><span class="nv"> </span><span class="s">addresses</span><span class="nv"> </span><span class="s">in</span><span class="nv"> </span><span class="s">connect</span><span class="nv"> </span><span class="s">subnet</span><span class="nv"> </span><span class="s">192.168.0.0/16.</span>
-<span class="w">    </span><span class="s">lastTransitionTime:</span><span class="nv"> </span><span class="s">&quot;</span><span class="l l-Scalar l-Scalar-Plain">2023-10-01T10:00:00Z&quot;</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">"Accepted"</span>
+<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"False"</span>
+<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">"ConnectSubnetExhausted"</span>
+<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">"Insufficient</span><span class="nv"> </span><span class="s">IP</span><span class="nv"> </span><span class="s">addresses</span><span class="nv"> </span><span class="s">in</span><span class="nv"> </span><span class="s">connect</span><span class="nv"> </span><span class="s">subnet</span><span class="nv"> </span><span class="s">192.168.0.0/16.</span>
+<span class="w">    </span><span class="s">lastTransitionTime:</span><span class="nv"> </span><span class="s">"</span><span class="l l-Scalar l-Scalar-Plain">2023-10-01T10:00:00Z"</span>
 </code></pre></div></p>
 <div class="highlight"><pre><span></span><code><span class="nt">status</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Failure&quot;</span>
+<span class="w">  </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"Failure"</span>
 <span class="w">  </span><span class="nt">conditions</span><span class="p">:</span>
-<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Accepted&quot;</span>
-<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;False&quot;</span>
-<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;OverlappingNetworkSubnets&quot;</span>
-<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Cannot</span><span class="nv"> </span><span class="s">connect</span><span class="nv"> </span><span class="s">networks</span><span class="nv"> </span><span class="s">&#39;blue-network&#39;</span><span class="nv"> </span><span class="s">and</span><span class="nv"> </span><span class="s">&#39;green-network&#39;:</span><span class="nv"> </span><span class="s">overlapping</span>
-<span class="w">    </span><span class="s">pod</span><span class="nv"> </span><span class="s">subnets</span><span class="nv"> </span><span class="s">10.1.0.0/16</span><span class="nv"> </span><span class="s">detected.&quot;</span>
-<span class="w">    </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;2023-10-01T10:00:00Z&quot;</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">"Accepted"</span>
+<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"False"</span>
+<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">"OverlappingNetworkSubnets"</span>
+<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">"Cannot</span><span class="nv"> </span><span class="s">connect</span><span class="nv"> </span><span class="s">networks</span><span class="nv"> </span><span class="s">'blue-network'</span><span class="nv"> </span><span class="s">and</span><span class="nv"> </span><span class="s">'green-network':</span><span class="nv"> </span><span class="s">overlapping</span>
+<span class="w">    </span><span class="s">pod</span><span class="nv"> </span><span class="s">subnets</span><span class="nv"> </span><span class="s">10.1.0.0/16</span><span class="nv"> </span><span class="s">detected."</span>
+<span class="w">    </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">"2023-10-01T10:00:00Z"</span>
 </code></pre></div>
 <div class="highlight"><pre><span></span><code><span class="nt">status</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Failure&quot;</span>
+<span class="w">  </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"Failure"</span>
 <span class="w">  </span><span class="nt">conditions</span><span class="p">:</span>
-<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Accepted&quot;</span>
-<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;False&quot;</span>
-<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;ConnectSubnetConflict&quot;</span>
-<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Connect</span><span class="nv"> </span><span class="s">subnet</span><span class="nv"> </span><span class="s">192.168.0.0/16</span><span class="nv"> </span><span class="s">conflicts</span><span class="nv"> </span><span class="s">with</span><span class="nv"> </span><span class="s">pod</span><span class="nv"> </span><span class="s">subnet</span><span class="nv"> </span><span class="s">192.168.1.0/24</span>
-<span class="w">    </span><span class="s">of</span><span class="nv"> </span><span class="s">network</span><span class="nv"> </span><span class="s">&#39;blue-network&#39;&quot;</span>
-<span class="w">    </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;2023-10-01T10:00:00Z&quot;</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">"Accepted"</span>
+<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"False"</span>
+<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">"ConnectSubnetConflict"</span>
+<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">"Connect</span><span class="nv"> </span><span class="s">subnet</span><span class="nv"> </span><span class="s">192.168.0.0/16</span><span class="nv"> </span><span class="s">conflicts</span><span class="nv"> </span><span class="s">with</span><span class="nv"> </span><span class="s">pod</span><span class="nv"> </span><span class="s">subnet</span><span class="nv"> </span><span class="s">192.168.1.0/24</span>
+<span class="w">    </span><span class="s">of</span><span class="nv"> </span><span class="s">network</span><span class="nv"> </span><span class="s">'blue-network'"</span>
+<span class="w">    </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">"2023-10-01T10:00:00Z"</span>
 </code></pre></div>
 <div class="highlight"><pre><span></span><code><span class="nt">status</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Failure&quot;</span>
+<span class="w">  </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"Failure"</span>
 <span class="w">  </span><span class="nt">conditions</span><span class="p">:</span>
-<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Accepted&quot;</span>
-<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;False&quot;</span>
-<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;ConnectSubnetOverlap&quot;</span>
-<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Connect</span><span class="nv"> </span><span class="s">subnet</span><span class="nv"> </span><span class="s">192.168.0.0/16</span><span class="nv"> </span><span class="s">overlaps</span><span class="nv"> </span><span class="s">with</span><span class="nv"> </span><span class="s">ClusterNetworkConnect</span>
-<span class="w">    </span><span class="s">&#39;enterprise-connect&#39;</span><span class="nv"> </span><span class="s">which</span><span class="nv"> </span><span class="s">also</span><span class="nv"> </span><span class="s">selects</span><span class="nv"> </span><span class="s">network</span><span class="nv"> </span><span class="s">&#39;blue-network&#39;.</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">"Accepted"</span>
+<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"False"</span>
+<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">"ConnectSubnetOverlap"</span>
+<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">"Connect</span><span class="nv"> </span><span class="s">subnet</span><span class="nv"> </span><span class="s">192.168.0.0/16</span><span class="nv"> </span><span class="s">overlaps</span><span class="nv"> </span><span class="s">with</span><span class="nv"> </span><span class="s">ClusterNetworkConnect</span>
+<span class="w">    </span><span class="s">'enterprise-connect'</span><span class="nv"> </span><span class="s">which</span><span class="nv"> </span><span class="s">also</span><span class="nv"> </span><span class="s">selects</span><span class="nv"> </span><span class="s">network</span><span class="nv"> </span><span class="s">'blue-network'.</span>
 <span class="w">    </span><span class="s">Each</span><span class="nv"> </span><span class="s">ClusterNetworkConnect</span><span class="nv"> </span><span class="s">selecting</span><span class="nv"> </span><span class="s">the</span><span class="nv"> </span><span class="s">same</span><span class="nv"> </span><span class="s">network</span><span class="nv"> </span><span class="s">must</span><span class="nv"> </span><span class="s">use</span><span class="nv"> </span><span class="s">non-overlapping</span>
-<span class="w">    </span><span class="s">connect</span><span class="nv"> </span><span class="s">subnets&quot;</span>
-<span class="w">    </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;2023-10-01T10:00:00Z&quot;</span>
+<span class="w">    </span><span class="s">connect</span><span class="nv"> </span><span class="s">subnets"</span>
+<span class="w">    </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">"2023-10-01T10:00:00Z"</span>
 </code></pre></div>
 <div class="highlight"><pre><span></span><code><span class="nt">status</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Failure&quot;</span>
+<span class="w">  </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"Failure"</span>
 <span class="w">  </span><span class="nt">conditions</span><span class="p">:</span>
-<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Accepted&quot;</span>
-<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;False&quot;</span>
-<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;IPFamilyMismatch&quot;</span>
-<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Cannot</span><span class="nv"> </span><span class="s">connect</span><span class="nv"> </span><span class="s">single-stack</span><span class="nv"> </span><span class="s">IPv4</span><span class="nv"> </span><span class="s">network</span><span class="nv"> </span><span class="s">&#39;ipv4-network&#39;</span><span class="nv"> </span><span class="s">with</span>
-<span class="w">    </span><span class="s">single-stack</span><span class="nv"> </span><span class="s">IPv6</span><span class="nv"> </span><span class="s">network</span><span class="nv"> </span><span class="s">&#39;ipv6-network&#39;.</span><span class="nv"> </span><span class="s">Networks</span><span class="nv"> </span><span class="s">must</span><span class="nv"> </span><span class="s">use</span><span class="nv"> </span><span class="s">the</span><span class="nv"> </span><span class="s">same</span><span class="nv"> </span><span class="s">IP</span><span class="nv"> </span><span class="s">family&quot;</span>
-<span class="w">    </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;2023-10-01T10:00:00Z&quot;</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">"Accepted"</span>
+<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"False"</span>
+<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">"IPFamilyMismatch"</span>
+<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">"Cannot</span><span class="nv"> </span><span class="s">connect</span><span class="nv"> </span><span class="s">single-stack</span><span class="nv"> </span><span class="s">IPv4</span><span class="nv"> </span><span class="s">network</span><span class="nv"> </span><span class="s">'ipv4-network'</span><span class="nv"> </span><span class="s">with</span>
+<span class="w">    </span><span class="s">single-stack</span><span class="nv"> </span><span class="s">IPv6</span><span class="nv"> </span><span class="s">network</span><span class="nv"> </span><span class="s">'ipv6-network'.</span><span class="nv"> </span><span class="s">Networks</span><span class="nv"> </span><span class="s">must</span><span class="nv"> </span><span class="s">use</span><span class="nv"> </span><span class="s">the</span><span class="nv"> </span><span class="s">same</span><span class="nv"> </span><span class="s">IP</span><span class="nv"> </span><span class="s">family"</span>
+<span class="w">    </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">"2023-10-01T10:00:00Z"</span>
 </code></pre></div>
 <div class="highlight"><pre><span></span><code><span class="nt">status</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Failure&quot;</span>
+<span class="w">  </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"Failure"</span>
 <span class="w">  </span><span class="nt">conditions</span><span class="p">:</span>
-<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Accepted&quot;</span>
-<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;False&quot;</span>
-<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;InsufficientNetworks&quot;</span>
-<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Only</span><span class="nv"> </span><span class="s">1</span><span class="nv"> </span><span class="s">network</span><span class="nv"> </span><span class="s">selected,</span><span class="nv"> </span><span class="s">minimum</span><span class="nv"> </span><span class="s">2</span><span class="nv"> </span><span class="s">networks</span><span class="nv"> </span><span class="s">required</span><span class="nv"> </span><span class="s">for</span><span class="nv"> </span><span class="s">connection&quot;</span>
-<span class="w">    </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;2023-10-01T10:00:00Z&quot;</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">"Accepted"</span>
+<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"False"</span>
+<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">"InsufficientNetworks"</span>
+<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">"Only</span><span class="nv"> </span><span class="s">1</span><span class="nv"> </span><span class="s">network</span><span class="nv"> </span><span class="s">selected,</span><span class="nv"> </span><span class="s">minimum</span><span class="nv"> </span><span class="s">2</span><span class="nv"> </span><span class="s">networks</span><span class="nv"> </span><span class="s">required</span><span class="nv"> </span><span class="s">for</span><span class="nv"> </span><span class="s">connection"</span>
+<span class="w">    </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">"2023-10-01T10:00:00Z"</span>
 </code></pre></div>
 <div class="highlight"><pre><span></span><code><span class="nt">status</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Failure&quot;</span>
+<span class="w">  </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"Failure"</span>
 <span class="w">  </span><span class="nt">conditions</span><span class="p">:</span>
-<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Accepted&quot;</span>
-<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;False&quot;</span>
-<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;UnsupportedNetworkType&quot;</span>
-<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Network</span><span class="nv"> </span><span class="s">&#39;blue-network&#39;</span><span class="nv"> </span><span class="s">has</span><span class="nv"> </span><span class="s">role</span><span class="nv"> </span><span class="s">&#39;Secondary&#39;.</span><span class="nv"> </span><span class="s">Only</span><span class="nv"> </span><span class="s">&#39;Primary&#39;</span><span class="nv"> </span><span class="s">role</span><span class="nv"> </span><span class="s">networks</span><span class="nv"> </span><span class="s">are</span><span class="nv"> </span><span class="s">supported&quot;</span>
-<span class="w">    </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;2023-10-01T10:00:00Z&quot;</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">"Accepted"</span>
+<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"False"</span>
+<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">"UnsupportedNetworkType"</span>
+<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">"Network</span><span class="nv"> </span><span class="s">'blue-network'</span><span class="nv"> </span><span class="s">has</span><span class="nv"> </span><span class="s">role</span><span class="nv"> </span><span class="s">'Secondary'.</span><span class="nv"> </span><span class="s">Only</span><span class="nv"> </span><span class="s">'Primary'</span><span class="nv"> </span><span class="s">role</span><span class="nv"> </span><span class="s">networks</span><span class="nv"> </span><span class="s">are</span><span class="nv"> </span><span class="s">supported"</span>
+<span class="w">    </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">"2023-10-01T10:00:00Z"</span>
 </code></pre></div>
 <div class="highlight"><pre><span></span><code><span class="nt">status</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Failure&quot;</span>
+<span class="w">  </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"Failure"</span>
 <span class="w">  </span><span class="nt">conditions</span><span class="p">:</span>
-<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Accepted&quot;</span>
-<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;False&quot;</span>
-<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;UnsupportedNetworkType&quot;</span>
-<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Network</span><span class="nv"> </span><span class="s">&#39;localnet-network&#39;</span><span class="nv"> </span><span class="s">has</span><span class="nv"> </span><span class="s">type</span><span class="nv"> </span><span class="s">&#39;localnet&#39;.</span><span class="nv"> </span><span class="s">Localnet</span><span class="nv"> </span><span class="s">networks</span><span class="nv"> </span><span class="s">are</span><span class="nv"> </span><span class="s">not</span><span class="nv"> </span><span class="s">supported&quot;</span>
-<span class="w">    </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;2023-10-01T10:00:00Z&quot;</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">"Accepted"</span>
+<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"False"</span>
+<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">"UnsupportedNetworkType"</span>
+<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">"Network</span><span class="nv"> </span><span class="s">'localnet-network'</span><span class="nv"> </span><span class="s">has</span><span class="nv"> </span><span class="s">type</span><span class="nv"> </span><span class="s">'localnet'.</span><span class="nv"> </span><span class="s">Localnet</span><span class="nv"> </span><span class="s">networks</span><span class="nv"> </span><span class="s">are</span><span class="nv"> </span><span class="s">not</span><span class="nv"> </span><span class="s">supported"</span>
+<span class="w">    </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">"2023-10-01T10:00:00Z"</span>
 </code></pre></div>
 <div class="highlight"><pre><span></span><code><span class="nt">status</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Failure&quot;</span>
+<span class="w">  </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"Failure"</span>
 <span class="w">  </span><span class="nt">conditions</span><span class="p">:</span>
-<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Accepted&quot;</span>
-<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;False&quot;</span>
-<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;UnsupportedNetworkType&quot;</span>
-<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Network</span><span class="nv"> </span><span class="s">connect</span><span class="nv"> </span><span class="s">feature</span><span class="nv"> </span><span class="s">is</span><span class="nv"> </span><span class="s">not</span><span class="nv"> </span><span class="s">supported</span><span class="nv"> </span><span class="s">when</span><span class="nv"> </span><span class="s">overlay</span><span class="nv"> </span><span class="s">tunneling</span><span class="nv"> </span><span class="s">is</span><span class="nv"> </span><span class="s">disabled&quot;</span>
-<span class="w">    </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;2023-10-01T10:00:00Z&quot;</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">"Accepted"</span>
+<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"False"</span>
+<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">"UnsupportedNetworkType"</span>
+<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">"Network</span><span class="nv"> </span><span class="s">connect</span><span class="nv"> </span><span class="s">feature</span><span class="nv"> </span><span class="s">is</span><span class="nv"> </span><span class="s">not</span><span class="nv"> </span><span class="s">supported</span><span class="nv"> </span><span class="s">when</span><span class="nv"> </span><span class="s">overlay</span><span class="nv"> </span><span class="s">tunneling</span><span class="nv"> </span><span class="s">is</span><span class="nv"> </span><span class="s">disabled"</span>
+<span class="w">    </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">"2023-10-01T10:00:00Z"</span>
 </code></pre></div>
 <p><strong>OVN Setup Failures: (Per Zone)</strong>
 <div class="highlight"><pre><span></span><code><span class="nt">status</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Failure&quot;</span>
+<span class="w">  </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"Failure"</span>
 <span class="w">  </span><span class="nt">conditions</span><span class="p">:</span>
-<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Accepted&quot;</span>
-<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;True&quot;</span>
-<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;ValidationSucceeded&quot;</span>
-<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;All</span><span class="nv"> </span><span class="s">validation</span><span class="nv"> </span><span class="s">checks</span><span class="nv"> </span><span class="s">passed</span><span class="nv"> </span><span class="s">successfully&quot;</span>
-<span class="w">    </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;2023-10-01T09:59:00Z&quot;</span>
-<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Ready-In-Zone-ovn-worker&quot;</span>
-<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;False&quot;</span>
-<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;OVNSetupFailed&quot;</span>
-<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Failed</span><span class="nv"> </span><span class="s">to</span><span class="nv"> </span><span class="s">create</span><span class="nv"> </span><span class="s">connect</span><span class="nv"> </span><span class="s">router</span><span class="nv"> </span><span class="s">ports:</span><span class="nv"> </span><span class="s">tunnel</span><span class="nv"> </span><span class="s">key</span><span class="nv"> </span><span class="s">allocation</span><span class="nv"> </span><span class="s">failed&quot;</span>
-<span class="w">    </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;2023-10-01T10:00:00Z&quot;</span>
-<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Ready-In-Zone-ovn-worker2&quot;</span>
-<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;False&quot;</span>
-<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;OVNSetupFailed&quot;</span>
-<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Failed</span><span class="nv"> </span><span class="s">to</span><span class="nv"> </span><span class="s">install</span><span class="nv"> </span><span class="s">routing</span><span class="nv"> </span><span class="s">policies</span><span class="nv"> </span><span class="s">for</span><span class="nv"> </span><span class="s">network</span><span class="nv"> </span><span class="s">&#39;blue-network&#39;&quot;</span>
-<span class="w">    </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;2023-10-01T10:00:00Z&quot;</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">"Accepted"</span>
+<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"True"</span>
+<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">"ValidationSucceeded"</span>
+<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">"All</span><span class="nv"> </span><span class="s">validation</span><span class="nv"> </span><span class="s">checks</span><span class="nv"> </span><span class="s">passed</span><span class="nv"> </span><span class="s">successfully"</span>
+<span class="w">    </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">"2023-10-01T09:59:00Z"</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">"Ready-In-Zone-ovn-worker"</span>
+<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"False"</span>
+<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">"OVNSetupFailed"</span>
+<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">"Failed</span><span class="nv"> </span><span class="s">to</span><span class="nv"> </span><span class="s">create</span><span class="nv"> </span><span class="s">connect</span><span class="nv"> </span><span class="s">router</span><span class="nv"> </span><span class="s">ports:</span><span class="nv"> </span><span class="s">tunnel</span><span class="nv"> </span><span class="s">key</span><span class="nv"> </span><span class="s">allocation</span><span class="nv"> </span><span class="s">failed"</span>
+<span class="w">    </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">"2023-10-01T10:00:00Z"</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">"Ready-In-Zone-ovn-worker2"</span>
+<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"False"</span>
+<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">"OVNSetupFailed"</span>
+<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">"Failed</span><span class="nv"> </span><span class="s">to</span><span class="nv"> </span><span class="s">install</span><span class="nv"> </span><span class="s">routing</span><span class="nv"> </span><span class="s">policies</span><span class="nv"> </span><span class="s">for</span><span class="nv"> </span><span class="s">network</span><span class="nv"> </span><span class="s">'blue-network'"</span>
+<span class="w">    </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">"2023-10-01T10:00:00Z"</span>
 </code></pre></div></p>
 <p><strong>Accepted Condition Reasons (from cluster-manager):</strong></p>
 <ul>
@@ -5788,49 +5788,49 @@ like this:</p>
 <div class="highlight"><pre><span></span><code><span class="l l-Scalar l-Scalar-Plain">sh-5.2# ovn-nbctl show connect-router-colored-enterprise</span>
 <span class="l l-Scalar l-Scalar-Plain">router bb053a19-99d5-4af8-a8e9-ebcab52908d8 (connect-router-colored-enterprise)</span>
 <span class="w">    </span><span class="l l-Scalar l-Scalar-Plain">port colored-enterprise-to-blue_blue-network-ovn-control-plane</span>
-<span class="w">        </span><span class="l l-Scalar l-Scalar-Plain">mac</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;0a:58:c0:80:00:01&quot;</span>
-<span class="w">        </span><span class="nt">ipv6-lla</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;fe80::858:c0ff:fe80:1&quot;</span>
-<span class="w">        </span><span class="nt">networks</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;192.168.0.1/31&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">        </span><span class="l l-Scalar l-Scalar-Plain">mac</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">"0a:58:c0:80:00:01"</span>
+<span class="w">        </span><span class="nt">ipv6-lla</span><span class="p">:</span><span class="w"> </span><span class="s">"fe80::858:c0ff:fe80:1"</span>
+<span class="w">        </span><span class="nt">networks</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"192.168.0.1/31"</span><span class="p p-Indicator">]</span>
 <span class="w w-Error">    </span><span class="l l-Scalar l-Scalar-Plain">port colored-enterprise-to-yellow_yellow-network-ovn-control-plane</span>
-<span class="w">        </span><span class="l l-Scalar l-Scalar-Plain">mac</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;0a:58:c0:80:00:03&quot;</span>
-<span class="w">        </span><span class="nt">ipv6-lla</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;fe80::858:c0ff:fe80:3&quot;</span>
-<span class="w">        </span><span class="nt">networks</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;192.168.2.3/31&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">        </span><span class="l l-Scalar l-Scalar-Plain">mac</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">"0a:58:c0:80:00:03"</span>
+<span class="w">        </span><span class="nt">ipv6-lla</span><span class="p">:</span><span class="w"> </span><span class="s">"fe80::858:c0ff:fe80:3"</span>
+<span class="w">        </span><span class="nt">networks</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"192.168.2.3/31"</span><span class="p p-Indicator">]</span>
 <span class="w">    </span><span class="l l-Scalar l-Scalar-Plain">port colored-enterprise-to-green_green-network-ovn-control-plane</span>
-<span class="w">        </span><span class="l l-Scalar l-Scalar-Plain">mac</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;0a:58:c0:80:00:05&quot;</span>
-<span class="w">        </span><span class="nt">ipv6-lla</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;fe80::858:c0ff:fe80:5&quot;</span>
-<span class="w">        </span><span class="nt">networks</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;192.168.1.5/31&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">        </span><span class="l l-Scalar l-Scalar-Plain">mac</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">"0a:58:c0:80:00:05"</span>
+<span class="w">        </span><span class="nt">ipv6-lla</span><span class="p">:</span><span class="w"> </span><span class="s">"fe80::858:c0ff:fe80:5"</span>
+<span class="w">        </span><span class="nt">networks</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"192.168.1.5/31"</span><span class="p p-Indicator">]</span>
 <span class="w">    </span><span class="l l-Scalar l-Scalar-Plain">port colored-enterprise-to-green_green-network-ovn-worker2</span>
-<span class="w">        </span><span class="l l-Scalar l-Scalar-Plain">mac</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;0a:58:c0:80:00:11&quot;</span>
-<span class="w">        </span><span class="nt">ipv6-lla</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;fe80::858:c0ff:fe80:11&quot;</span>
-<span class="w">        </span><span class="nt">networks</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;192.168.1.17/31&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">        </span><span class="l l-Scalar l-Scalar-Plain">mac</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">"0a:58:c0:80:00:11"</span>
+<span class="w">        </span><span class="nt">ipv6-lla</span><span class="p">:</span><span class="w"> </span><span class="s">"fe80::858:c0ff:fe80:11"</span>
+<span class="w">        </span><span class="nt">networks</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"192.168.1.17/31"</span><span class="p p-Indicator">]</span>
 <span class="w">    </span><span class="l l-Scalar l-Scalar-Plain">port colored-enterprise-to-blue_blue-network-ovn-worker</span>
-<span class="w">        </span><span class="l l-Scalar l-Scalar-Plain">mac</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;0a:58:c0:80:00:07&quot;</span>
-<span class="w">        </span><span class="nt">ipv6-lla</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;fe80::858:c0ff:fe80:7&quot;</span>
-<span class="w">        </span><span class="nt">networks</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;192.168.0.7/31&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">        </span><span class="l l-Scalar l-Scalar-Plain">mac</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">"0a:58:c0:80:00:07"</span>
+<span class="w">        </span><span class="nt">ipv6-lla</span><span class="p">:</span><span class="w"> </span><span class="s">"fe80::858:c0ff:fe80:7"</span>
+<span class="w">        </span><span class="nt">networks</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"192.168.0.7/31"</span><span class="p p-Indicator">]</span>
 <span class="w">    </span><span class="l l-Scalar l-Scalar-Plain">port colored-enterprise-to-blue_blue-network-ovn-worker2</span>
-<span class="w">        </span><span class="l l-Scalar l-Scalar-Plain">mac</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;0a:58:c0:80:00:0d&quot;</span>
-<span class="w">        </span><span class="nt">ipv6-lla</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;fe80::858:c0ff:fe80:d&quot;</span>
-<span class="w">        </span><span class="nt">networks</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;192.168.0.13/31&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">        </span><span class="l l-Scalar l-Scalar-Plain">mac</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">"0a:58:c0:80:00:0d"</span>
+<span class="w">        </span><span class="nt">ipv6-lla</span><span class="p">:</span><span class="w"> </span><span class="s">"fe80::858:c0ff:fe80:d"</span>
+<span class="w">        </span><span class="nt">networks</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"192.168.0.13/31"</span><span class="p p-Indicator">]</span>
 <span class="w">    </span><span class="l l-Scalar l-Scalar-Plain">port colored-enterprise-to-yellow_yellow-network-ovn-worker2</span>
-<span class="w">        </span><span class="l l-Scalar l-Scalar-Plain">mac</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;0a:58:c0:80:00:0f&quot;</span>
-<span class="w">        </span><span class="nt">ipv6-lla</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;fe80::858:c0ff:fe80:f&quot;</span>
-<span class="w">        </span><span class="nt">networks</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;192.168.2.15/31&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">        </span><span class="l l-Scalar l-Scalar-Plain">mac</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">"0a:58:c0:80:00:0f"</span>
+<span class="w">        </span><span class="nt">ipv6-lla</span><span class="p">:</span><span class="w"> </span><span class="s">"fe80::858:c0ff:fe80:f"</span>
+<span class="w">        </span><span class="nt">networks</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"192.168.2.15/31"</span><span class="p p-Indicator">]</span>
 <span class="w">    </span><span class="l l-Scalar l-Scalar-Plain">port colored-enterprise-to-yellow_yellow-network-ovn-worker</span>
-<span class="w">        </span><span class="l l-Scalar l-Scalar-Plain">mac</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;0a:58:c0:80:00:09&quot;</span>
-<span class="w">        </span><span class="nt">ipv6-lla</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;fe80::858:c0ff:fe80:9&quot;</span>
-<span class="w">        </span><span class="nt">networks</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;192.168.2.9/31&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">        </span><span class="l l-Scalar l-Scalar-Plain">mac</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">"0a:58:c0:80:00:09"</span>
+<span class="w">        </span><span class="nt">ipv6-lla</span><span class="p">:</span><span class="w"> </span><span class="s">"fe80::858:c0ff:fe80:9"</span>
+<span class="w">        </span><span class="nt">networks</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"192.168.2.9/31"</span><span class="p p-Indicator">]</span>
 <span class="w">    </span><span class="l l-Scalar l-Scalar-Plain">port colored-enterprise-to-green_green-network-ovn-worker</span>
-<span class="w">        </span><span class="l l-Scalar l-Scalar-Plain">mac</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;0a:58:c0:80:00:0b&quot;</span>
-<span class="w">        </span><span class="nt">ipv6-lla</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;fe80::858:c0ff:fe80:b&quot;</span>
-<span class="w">        </span><span class="nt">networks</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;192.168.1.11/31&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">        </span><span class="l l-Scalar l-Scalar-Plain">mac</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">"0a:58:c0:80:00:0b"</span>
+<span class="w">        </span><span class="nt">ipv6-lla</span><span class="p">:</span><span class="w"> </span><span class="s">"fe80::858:c0ff:fe80:b"</span>
+<span class="w">        </span><span class="nt">networks</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"192.168.1.11/31"</span><span class="p p-Indicator">]</span>
 </code></pre></div>
 <p>The new ports added to the <code>ovn_cluster_router</code>'s of the 3 networks:</p>
 <div class="highlight"><pre><span></span><code><span class="l l-Scalar l-Scalar-Plain">sh-5.2# ovn-nbctl show yellow_yellow.network_ovn_cluster_router</span>
 <span class="l l-Scalar l-Scalar-Plain">router 01e9f2fc-e351-4c7a-a51a-ba5f2b2fb099 (yellow_yellow.network_ovn_cluster_router)</span>
 <span class="w">    </span><span class="l l-Scalar l-Scalar-Plain">port yellow_yellow-network-ovn-worker-to-colored-enterprise</span>
-<span class="w">        </span><span class="l l-Scalar l-Scalar-Plain">mac</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;0a:58:c0:80:02:08&quot;</span>
-<span class="w">        </span><span class="nt">ipv6-lla</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;fe80::858:c0ff:fe80:8&quot;</span>
-<span class="w">        </span><span class="nt">networks</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;192.168.2.8/31&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">        </span><span class="l l-Scalar l-Scalar-Plain">mac</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">"0a:58:c0:80:02:08"</span>
+<span class="w">        </span><span class="nt">ipv6-lla</span><span class="p">:</span><span class="w"> </span><span class="s">"fe80::858:c0ff:fe80:8"</span>
+<span class="w">        </span><span class="nt">networks</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"192.168.2.8/31"</span><span class="p p-Indicator">]</span>
 <span class="nn">---</span>
 <span class="nt">_uuid               </span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">c78b105c-d2ee-4ba9-bb25-ec94dada0d15</span>
 <span class="nt">dhcp_relay          </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
@@ -5840,9 +5840,9 @@ like this:</p>
 <span class="nt">ha_chassis_group    </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
 <span class="nt">ipv6_prefix         </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
 <span class="nt">ipv6_ra_configs     </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
-<span class="nt">mac                 </span><span class="p">:</span><span class="w"> </span><span class="s">&quot;0a:58:c0:80:02:08&quot;</span>
+<span class="nt">mac                 </span><span class="p">:</span><span class="w"> </span><span class="s">"0a:58:c0:80:02:08"</span>
 <span class="nt">name                </span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">yellow_yellow-network-ovn-worker-to-colored-enterprise</span>
-<span class="nt">networks            </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;192.168.2.8/31&quot;</span><span class="p p-Indicator">]</span>
+<span class="nt">networks            </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"192.168.2.8/31"</span><span class="p p-Indicator">]</span>
 <span class="nt">options             </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
 <span class="nt">peer                </span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">colored-enterprise-to-yellow_yellow-network-ovn-worker --&gt; connects to connect-router</span>
 <span class="nt">status              </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
@@ -5850,9 +5850,9 @@ like this:</p>
 <span class="l l-Scalar l-Scalar-Plain">sh-5.2# ovn-nbctl show blue_blue.network_ovn_cluster_router</span>
 <span class="l l-Scalar l-Scalar-Plain">router 13b24c4d-f3c3-4811-98a9-98cc996be0d4 (blue_blue.network_ovn_cluster_router)</span>
 <span class="w">    </span><span class="l l-Scalar l-Scalar-Plain">port blue_blue-network-ovn-worker-to-colored-enterprise</span>
-<span class="w">        </span><span class="l l-Scalar l-Scalar-Plain">mac</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;0a:58:c0:80:00:06&quot;</span>
-<span class="w">        </span><span class="nt">ipv6-lla</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;fe80::858:c0ff:fe80:6&quot;</span>
-<span class="w">        </span><span class="nt">networks</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;192.168.0.6/31&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">        </span><span class="l l-Scalar l-Scalar-Plain">mac</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">"0a:58:c0:80:00:06"</span>
+<span class="w">        </span><span class="nt">ipv6-lla</span><span class="p">:</span><span class="w"> </span><span class="s">"fe80::858:c0ff:fe80:6"</span>
+<span class="w">        </span><span class="nt">networks</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"192.168.0.6/31"</span><span class="p p-Indicator">]</span>
 <span class="nn">---</span>
 <span class="nt">_uuid               </span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">24aabdb9-0b37-4332-965d-5d09ae0694a8</span>
 <span class="nt">dhcp_relay          </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
@@ -5862,9 +5862,9 @@ like this:</p>
 <span class="nt">ha_chassis_group    </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
 <span class="nt">ipv6_prefix         </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
 <span class="nt">ipv6_ra_configs     </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
-<span class="nt">mac                 </span><span class="p">:</span><span class="w"> </span><span class="s">&quot;0a:58:c0:80:00:06&quot;</span>
+<span class="nt">mac                 </span><span class="p">:</span><span class="w"> </span><span class="s">"0a:58:c0:80:00:06"</span>
 <span class="nt">name                </span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">blue_blue-network-ovn-worker-to-colored-enterprise</span>
-<span class="nt">networks            </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;192.168.0.6/31&quot;</span><span class="p p-Indicator">]</span>
+<span class="nt">networks            </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"192.168.0.6/31"</span><span class="p p-Indicator">]</span>
 <span class="nt">options             </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
 <span class="nt">peer                </span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">colored-enterprise-to-blue_blue-network-ovn-worker --&gt; connects to connect-router</span>
 <span class="nt">status              </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
@@ -5872,9 +5872,9 @@ like this:</p>
 <span class="l l-Scalar l-Scalar-Plain">sh-5.2# ovn-nbctl show green_green.network_ovn_cluster_router</span>
 <span class="l l-Scalar l-Scalar-Plain">router 15532710-213f-4bee-8bc1-9d500a6bc5a9 (green_green.network_ovn_cluster_router)</span>
 <span class="w">    </span><span class="l l-Scalar l-Scalar-Plain">port green_green-network-ovn-worker-to-colored-enterprise</span>
-<span class="w">        </span><span class="l l-Scalar l-Scalar-Plain">mac</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;0a:58:c0:80:01:0a&quot;</span>
-<span class="w">        </span><span class="nt">ipv6-lla</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;fe80::858:c0ff:fe80:a&quot;</span>
-<span class="w">        </span><span class="nt">networks</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;192.168.1.10/31&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">        </span><span class="l l-Scalar l-Scalar-Plain">mac</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">"0a:58:c0:80:01:0a"</span>
+<span class="w">        </span><span class="nt">ipv6-lla</span><span class="p">:</span><span class="w"> </span><span class="s">"fe80::858:c0ff:fe80:a"</span>
+<span class="w">        </span><span class="nt">networks</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"192.168.1.10/31"</span><span class="p p-Indicator">]</span>
 <span class="nn">---</span>
 <span class="nt">_uuid               </span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">99c4bff1-17c9-4d17-826c-c069f2a3cb6b</span>
 <span class="nt">dhcp_relay          </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
@@ -5884,9 +5884,9 @@ like this:</p>
 <span class="nt">ha_chassis_group    </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
 <span class="nt">ipv6_prefix         </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
 <span class="nt">ipv6_ra_configs     </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
-<span class="nt">mac                 </span><span class="p">:</span><span class="w"> </span><span class="s">&quot;0a:58:c0:80:01:0a&quot;</span>
+<span class="nt">mac                 </span><span class="p">:</span><span class="w"> </span><span class="s">"0a:58:c0:80:01:0a"</span>
 <span class="nt">name                </span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">green_green-network-ovn-worker-to-colored-enterprise</span>
-<span class="nt">networks            </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;192.168.1.10/31&quot;</span><span class="p p-Indicator">]</span>
+<span class="nt">networks            </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"192.168.1.10/31"</span><span class="p p-Indicator">]</span>
 <span class="nt">options             </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
 <span class="nt">peer                </span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">colored-enterprise-to-green_green-network-ovn-worker --&gt; connects to connect-router</span>
 <span class="nt">status              </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
@@ -5966,18 +5966,18 @@ each other we will need to add appropriate routes on the routers.</p>
 </ul>
 <div class="highlight"><pre><span></span><code><span class="l l-Scalar l-Scalar-Plain">sh-5.2# ovn-nbctl lr-policy-list green_green.network_ovn_cluster_router</span>
 <span class="l l-Scalar l-Scalar-Plain">Routing Policies</span>
-<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == &quot;rtos-green_green.network_ovn-worker&quot; &amp;&amp; ip4.dst == 103.103.0.0/16         reroute              192.168.0.11</span>
-<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == &quot;rtos-green_green.network_ovn-worker&quot; &amp;&amp; ip4.dst == 105.105.0.0/16         reroute              192.168.0.11</span>
+<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == "rtos-green_green.network_ovn-worker" &amp;&amp; ip4.dst == 103.103.0.0/16         reroute              192.168.0.11</span>
+<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == "rtos-green_green.network_ovn-worker" &amp;&amp; ip4.dst == 105.105.0.0/16         reroute              192.168.0.11</span>
 <span class="nn">---</span>
 <span class="l l-Scalar l-Scalar-Plain">sh-5.2# ovn-nbctl lr-policy-list blue_blue.network_ovn_cluster_router</span>
 <span class="l l-Scalar l-Scalar-Plain">Routing Policies</span>
-<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == &quot;rtos-blue_blue.network_ovn-worker&quot; &amp;&amp; ip4.dst == 104.104.0.0/16         reroute               192.168.0.7</span>
-<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == &quot;rtos-blue_blue.network_ovn-worker&quot; &amp;&amp; ip4.dst == 105.105.0.0/16         reroute               192.168.0.7</span>
+<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == "rtos-blue_blue.network_ovn-worker" &amp;&amp; ip4.dst == 104.104.0.0/16         reroute               192.168.0.7</span>
+<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == "rtos-blue_blue.network_ovn-worker" &amp;&amp; ip4.dst == 105.105.0.0/16         reroute               192.168.0.7</span>
 <span class="nn">---</span>
 <span class="l l-Scalar l-Scalar-Plain">sh-5.2# ovn-nbctl lr-policy-list yellow_yellow.network_ovn_cluster_router</span>
 <span class="l l-Scalar l-Scalar-Plain">Routing Policies</span>
-<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == &quot;rtos-yellow_yellow.network_ovn-worker&quot; &amp;&amp; ip4.dst == 103.103.0.0/16         reroute               192.168.0.9</span>
-<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == &quot;rtos-yellow_yellow.network_ovn-worker&quot; &amp;&amp; ip4.dst == 104.104.0.0/16         reroute               192.168.0.9</span>
+<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == "rtos-yellow_yellow.network_ovn-worker" &amp;&amp; ip4.dst == 103.103.0.0/16         reroute               192.168.0.9</span>
+<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == "rtos-yellow_yellow.network_ovn-worker" &amp;&amp; ip4.dst == 104.104.0.0/16         reroute               192.168.0.9</span>
 <span class="nn">---</span>
 <span class="l l-Scalar l-Scalar-Plain">sh-5.2# ovn-nbctl lr-route-list connect-router-colored-enterprise</span><span class="w"> </span>
 <span class="l l-Scalar l-Scalar-Plain">IPv4 Routes</span>
@@ -6011,18 +6011,18 @@ each other we will need to add appropriate routes on the routers.</p>
 </ul>
 <div class="highlight"><pre><span></span><code><span class="l l-Scalar l-Scalar-Plain">sh-5.2# ovn-nbctl lr-policy-list green_green.network_transit_router</span>
 <span class="l l-Scalar l-Scalar-Plain">Routing Policies</span>
-<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == &quot;trtos-green_green.network_ovn_layer2_switch&quot; &amp;&amp; ip4.dst == 103.103.0.0/16         reroute               192.168.0.7</span>
-<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == &quot;trtos-green_green.network_ovn_layer2_switch&quot; &amp;&amp; ip4.dst == 105.105.0.0/16         reroute               192.168.0.7</span>
+<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == "trtos-green_green.network_ovn_layer2_switch" &amp;&amp; ip4.dst == 103.103.0.0/16         reroute               192.168.0.7</span>
+<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == "trtos-green_green.network_ovn_layer2_switch" &amp;&amp; ip4.dst == 105.105.0.0/16         reroute               192.168.0.7</span>
 <span class="nn">---</span>
 <span class="l l-Scalar l-Scalar-Plain">sh-5.2# ovn-nbctl lr-policy-list blue_blue.network_transit_router</span>
 <span class="l l-Scalar l-Scalar-Plain">Routing Policies</span>
-<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == &quot;trtos-blue_blue.network_ovn_layer2_switch&quot; &amp;&amp; ip4.dst == 104.104.0.0/16         reroute              192.168.0.11</span>
-<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == &quot;trtos-blue_blue.network_ovn_layer2_switch&quot; &amp;&amp; ip4.dst == 105.105.0.0/16         reroute              192.168.0.11</span>
+<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == "trtos-blue_blue.network_ovn_layer2_switch" &amp;&amp; ip4.dst == 104.104.0.0/16         reroute              192.168.0.11</span>
+<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == "trtos-blue_blue.network_ovn_layer2_switch" &amp;&amp; ip4.dst == 105.105.0.0/16         reroute              192.168.0.11</span>
 <span class="nn">---</span>
 <span class="l l-Scalar l-Scalar-Plain">sh-5.2# ovn-nbctl lr-policy-list yellow_yellow.network_transit_router</span>
 <span class="l l-Scalar l-Scalar-Plain">Routing Policies</span>
-<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == &quot;trtos-yellow_yellow.network_ovn_layer2_switch&quot; &amp;&amp; ip4.dst == 103.103.0.0/16         reroute               192.168.0.9</span>
-<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == &quot;trtos-yellow_yellow.network_ovn_layer2_switch&quot; &amp;&amp; ip4.dst == 104.104.0.0/16         reroute               192.168.0.9</span>
+<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == "trtos-yellow_yellow.network_ovn_layer2_switch" &amp;&amp; ip4.dst == 103.103.0.0/16         reroute               192.168.0.9</span>
+<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == "trtos-yellow_yellow.network_ovn_layer2_switch" &amp;&amp; ip4.dst == 104.104.0.0/16         reroute               192.168.0.9</span>
 <span class="nn">---</span>
 <span class="l l-Scalar l-Scalar-Plain">sh-5.2# ovn-nbctl lr-route-list connect-router-colored-enterprise</span>
 <span class="l l-Scalar l-Scalar-Plain">IPv4 Routes</span>
@@ -6049,18 +6049,18 @@ each other we will need to add appropriate routes on the routers.</p>
 </ul>
 <div class="highlight"><pre><span></span><code><span class="l l-Scalar l-Scalar-Plain">sh-5.2# ovn-nbctl lr-policy-list blue_blue.network_ovn_cluster_router</span>
 <span class="l l-Scalar l-Scalar-Plain">Routing Policies</span>
-<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == &quot;rtos-blue_blue.network_ovn-worker&quot; &amp;&amp; ip4.dst == 104.104.0.0/16         reroute              192.168.0.17</span>
-<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == &quot;rtos-blue_blue.network_ovn-worker&quot; &amp;&amp; ip4.dst == 105.105.0.0/16         reroute              192.168.0.17</span>
+<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == "rtos-blue_blue.network_ovn-worker" &amp;&amp; ip4.dst == 104.104.0.0/16         reroute              192.168.0.17</span>
+<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == "rtos-blue_blue.network_ovn-worker" &amp;&amp; ip4.dst == 105.105.0.0/16         reroute              192.168.0.17</span>
 <span class="nn">---</span>
 <span class="l l-Scalar l-Scalar-Plain">sh-5.2# ovn-nbctl lr-policy-list green_green.network_ovn_cluster_router</span>
 <span class="l l-Scalar l-Scalar-Plain">Routing Policies</span>
-<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == &quot;rtos-green_green.network_ovn-worker&quot; &amp;&amp; ip4.dst == 103.103.0.0/16         reroute              192.168.0.13</span>
-<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == &quot;rtos-green_green.network_ovn-worker&quot; &amp;&amp; ip4.dst == 105.105.0.0/16         reroute              192.168.0.13</span>
+<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == "rtos-green_green.network_ovn-worker" &amp;&amp; ip4.dst == 103.103.0.0/16         reroute              192.168.0.13</span>
+<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == "rtos-green_green.network_ovn-worker" &amp;&amp; ip4.dst == 105.105.0.0/16         reroute              192.168.0.13</span>
 <span class="nn">---</span>
 <span class="l l-Scalar l-Scalar-Plain">sh-5.2# ovn-nbctl lr-policy-list yellow_yellow.network_transit_router</span>
 <span class="l l-Scalar l-Scalar-Plain">Routing Policies</span>
-<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == &quot;trtos-yellow_yellow.network_ovn_layer2_switch&quot; &amp;&amp; ip4.dst == 103.103.0.0/16         reroute              192.168.0.15</span>
-<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == &quot;trtos-yellow_yellow.network_ovn_layer2_switch&quot; &amp;&amp; ip4.dst == 104.104.0.0/16         reroute              192.168.0.15</span>
+<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == "trtos-yellow_yellow.network_ovn_layer2_switch" &amp;&amp; ip4.dst == 103.103.0.0/16         reroute              192.168.0.15</span>
+<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">9001 inport == "trtos-yellow_yellow.network_ovn_layer2_switch" &amp;&amp; ip4.dst == 104.104.0.0/16         reroute              192.168.0.15</span>
 <span class="nn">---</span>
 <span class="l l-Scalar l-Scalar-Plain">sh-5.2# ovn-nbctl lr-route-list connect-router-colored-enterprise</span>
 <span class="l l-Scalar l-Scalar-Plain">IPv4 Routes</span>
@@ -6143,7 +6143,7 @@ originating from the pod's ports.</p>
 <span class="nt">external_ids        </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
 <span class="nt">label               </span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span>
 <span class="nt">log                 </span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
-<span class="nt">match               </span><span class="p">:</span><span class="w"> </span><span class="s">&quot;ip4.dst==10.96.0.0/16&quot;</span>
+<span class="nt">match               </span><span class="p">:</span><span class="w"> </span><span class="s">"ip4.dst==10.96.0.0/16"</span>
 <span class="nt">meter               </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
 <span class="nt">name                </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
 <span class="nt">options             </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
@@ -6155,7 +6155,7 @@ originating from the pod's ports.</p>
 <span class="nn">---</span>
 <span class="l l-Scalar l-Scalar-Plain">sh-5.2# ovn-nbctl list address-set connected_udn_subnets</span>
 <span class="l l-Scalar l-Scalar-Plain">_uuid</span><span class="w">               </span><span class="p p-Indicator">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">d340f83e-0adb-4f8c-9196-1e36ddcda7e9</span>
-<span class="nt">addresses           </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;103.103.0.0/16&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;104.104.0.0/16&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;105.105.0.0/16&quot;</span><span class="p p-Indicator">]</span>
+<span class="nt">addresses           </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"103.103.0.0/16"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"104.104.0.0/16"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"105.105.0.0/16"</span><span class="p p-Indicator">]</span>
 <span class="nt">external_ids        </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
 <span class="nt">name                </span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">connected_udn_subnets</span>
 <span class="nn">---</span>
@@ -6165,7 +6165,7 @@ originating from the pod's ports.</p>
 <span class="nt">external_ids        </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
 <span class="nt">label               </span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span>
 <span class="nt">log                 </span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
-<span class="nt">match               </span><span class="p">:</span><span class="w"> </span><span class="s">&quot;ip4.src==$connected_udn_subnets</span><span class="nv"> </span><span class="s">&amp;&amp;</span><span class="nv"> </span><span class="s">ip4.dst==$connected_udn_subnets</span><span class="nv"> </span><span class="s">&amp;&amp;</span><span class="nv"> </span><span class="s">ct.new&quot;</span>
+<span class="nt">match               </span><span class="p">:</span><span class="w"> </span><span class="s">"ip4.src==$connected_udn_subnets</span><span class="nv"> </span><span class="s">&amp;&amp;</span><span class="nv"> </span><span class="s">ip4.dst==$connected_udn_subnets</span><span class="nv"> </span><span class="s">&amp;&amp;</span><span class="nv"> </span><span class="s">ct.new"</span>
 <span class="nt">meter               </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
 <span class="nt">name                </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
 <span class="nt">options             </span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
@@ -6253,14 +6253,14 @@ apply across networks since there is no need to do so.</p>
     CRD for it to be then consumed on the <code>ovnkube-controller</code> side.
     Sample:
     <div class="highlight"><pre><span></span><code><span class="nt">k8s.ovn.org/network-subnets</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span>
-<span class="nt">  layer3_&lt;network1-id&gt;</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="s">&quot;ipv4&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;192.168.0.0/24&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;ipv6&quot;</span><span class="p p-Indicator">:</span><span class="s">&quot;fd01:0:0:0::/64&quot;</span><span class="p p-Indicator">},</span>
-<span class="nt">  layer3_&lt;network2-id&gt;</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="s">&quot;ipv4&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;192.168.1.0/24&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;ipv6&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;fd01:0:0:1::/64&quot;</span><span class="p p-Indicator">},</span><span class="w"> </span>
-<span class="nt">  layer3_&lt;network5-id&gt;</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="s">&quot;ipv4&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;192.168.2.0/24&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;ipv6&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;fd01:0:0:2::/64&quot;</span><span class="p p-Indicator">},</span>
-<span class="nt">  layer3_&lt;network12-id&gt;</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="s">&quot;ipv4&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;192.168.3.0/24&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;ipv6&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;fd01:0:0:3::/64&quot;</span><span class="p p-Indicator">},</span>
-<span class="nt">  layer2_&lt;network40-id&gt;</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="s">&quot;ipv4&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;192.168.4.0/31&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;ipv6&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;fd01:0:0:4::/127&quot;</span><span class="p p-Indicator">},</span>
-<span class="nt">  layer2_&lt;network103-id&gt;</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="s">&quot;ipv4&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;192.168.4.2/31&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;ipv6&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;fd01:0:0:4::2/127&quot;</span><span class="p p-Indicator">},</span>
-<span class="nt">  layer3_&lt;network15-id&gt;</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="s">&quot;ipv4&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;192.168.5.0/24&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;ipv6&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;fd01:0:0:5::/64&quot;</span><span class="p p-Indicator">},</span>
-<span class="nt">  layer2_&lt;network2000-id&gt;</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="s">&quot;ipv4&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;192.168.4.4/31&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;ipv6&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;fd01:0:0:4::4/127&quot;</span><span class="p p-Indicator">},</span>
+<span class="nt">  layer3_&lt;network1-id&gt;</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="s">"ipv4"</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">"192.168.0.0/24"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"ipv6"</span><span class="p p-Indicator">:</span><span class="s">"fd01:0:0:0::/64"</span><span class="p p-Indicator">},</span>
+<span class="nt">  layer3_&lt;network2-id&gt;</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="s">"ipv4"</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">"192.168.1.0/24"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"ipv6"</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">"fd01:0:0:1::/64"</span><span class="p p-Indicator">},</span><span class="w"> </span>
+<span class="nt">  layer3_&lt;network5-id&gt;</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="s">"ipv4"</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">"192.168.2.0/24"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"ipv6"</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">"fd01:0:0:2::/64"</span><span class="p p-Indicator">},</span>
+<span class="nt">  layer3_&lt;network12-id&gt;</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="s">"ipv4"</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">"192.168.3.0/24"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"ipv6"</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">"fd01:0:0:3::/64"</span><span class="p p-Indicator">},</span>
+<span class="nt">  layer2_&lt;network40-id&gt;</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="s">"ipv4"</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">"192.168.4.0/31"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"ipv6"</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">"fd01:0:0:4::/127"</span><span class="p p-Indicator">},</span>
+<span class="nt">  layer2_&lt;network103-id&gt;</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="s">"ipv4"</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">"192.168.4.2/31"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"ipv6"</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">"fd01:0:0:4::2/127"</span><span class="p p-Indicator">},</span>
+<span class="nt">  layer3_&lt;network15-id&gt;</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="s">"ipv4"</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">"192.168.5.0/24"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"ipv6"</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">"fd01:0:0:5::/64"</span><span class="p p-Indicator">},</span>
+<span class="nt">  layer2_&lt;network2000-id&gt;</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="s">"ipv4"</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">"192.168.4.4/31"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"ipv6"</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">"fd01:0:0:4::4/127"</span><span class="p p-Indicator">},</span>
 <span class="w">  </span><span class="nv">...</span>
 <span class="p p-Indicator">}</span>
 </code></pre></div>
@@ -6294,7 +6294,7 @@ apply across networks since there is no need to do so.</p>
   * This value is annotated on the <code>ClusterNetworkConnect</code>
     CRD for it to be then consumed on the <code>ovnkube-controller</code> side.
     Sample:
-    <div class="highlight"><pre><span></span><code><span class="nt">k8s.ovn.org/connect-router-tunnel-key</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;50000&#39;</span>
+    <div class="highlight"><pre><span></span><code><span class="nt">k8s.ovn.org/connect-router-tunnel-key</span><span class="p">:</span><span class="w"> </span><span class="s">'50000'</span>
 </code></pre></div>
 3) Status conditions will be updated based on feedback of setup
  from the <code>ovnkube-controllers</code> in different zones.</p>

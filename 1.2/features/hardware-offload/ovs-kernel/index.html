@@ -4193,7 +4193,7 @@ below.</p>
 8
 </code></pre></div>
 <p>Create the VFs</p>
-<div class="highlight"><pre><span></span><code>echo &#39;4&#39; &gt; /sys/class/net/enp3s0f0/device/sriov_numvfs
+<div class="highlight"><pre><span></span><code>echo '4' &gt; /sys/class/net/enp3s0f0/device/sriov_numvfs
 </code></pre></div>
 <p>Verfiy the VFs are created</p>
 <div class="highlight"><pre><span></span><code>ip link show enp3s0f0
@@ -4232,12 +4232,12 @@ systemctl restart openvswitch.service
 <p>This plugin creates device plugin endpoints based on the configurations given in file <code>/etc/pcidp/config.json</code>.
 This configuration file is in json format as shown below:</p>
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;resourceList&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">    </span><span class="nt">"resourceList"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
 <span class="w">         </span><span class="p">{</span>
-<span class="w">            </span><span class="nt">&quot;resourceName&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;cx5_sriov_switchdev&quot;</span><span class="p">,</span>
-<span class="w">            </span><span class="nt">&quot;selectors&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">                </span><span class="nt">&quot;vendors&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;15b3&quot;</span><span class="p">],</span>
-<span class="w">                </span><span class="nt">&quot;devices&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;1018&quot;</span><span class="p">]</span>
+<span class="w">            </span><span class="nt">"resourceName"</span><span class="p">:</span><span class="w"> </span><span class="s2">"cx5_sriov_switchdev"</span><span class="p">,</span>
+<span class="w">            </span><span class="nt">"selectors"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="nt">"vendors"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"15b3"</span><span class="p">],</span>
+<span class="w">                </span><span class="nt">"devices"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"1018"</span><span class="p">]</span>
 <span class="w">            </span><span class="p">}</span>
 <span class="w">        </span><span class="p">}</span>
 <span class="w">    </span><span class="p">]</span>
@@ -4247,24 +4247,24 @@ This configuration file is in json format as shown below:</p>
 <h2 id="worker-node-multus-cni-configuration">Worker Node Multus CNI configuration<a class="headerlink" href="#worker-node-multus-cni-configuration" title="Permanent link">&para;</a></h2>
 <p>Multus Config
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;multus-cni-network&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;multus&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;clusterNetwork&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;default&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;defaultNetworks&quot;</span><span class="p">:[],</span>
-<span class="w">  </span><span class="nt">&quot;kubeconfig&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;/etc/kubernetes/node-kubeconfig.yaml&quot;</span>
+<span class="w">  </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"multus-cni-network"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"multus"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"clusterNetwork"</span><span class="p">:</span><span class="w"> </span><span class="s2">"default"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"defaultNetworks"</span><span class="p">:[],</span>
+<span class="w">  </span><span class="nt">"kubeconfig"</span><span class="p">:</span><span class="w"> </span><span class="s2">"/etc/kubernetes/node-kubeconfig.yaml"</span>
 <span class="p">}</span>
 </code></pre></div></p>
 <p>Deploy multus CNI as daemonset see https://github.com/intel/multus-cni</p>
 <p>Create NetworkAttachementDefinition CRD with OVN CNI config</p>
 <div class="highlight"><pre><span></span><code><span class="nt">Kubernetes Network CRD Spec</span><span class="p">:</span>
-<span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;k8s.cni.cncf.io/v1&quot;</span>
+<span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="s">"k8s.cni.cncf.io/v1"</span>
 <span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">NetworkAttachmentDefinition</span>
 <span class="nt">metadata</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
 <span class="w">  </span><span class="nt">annotations</span><span class="p">:</span>
 <span class="w">    </span><span class="nt">k8s.v1.cni.cncf.io/resourceName</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">mellanox.com/cx5_sriov_switchdev</span>
 <span class="nt">spec</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">Config</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;{&quot;cniVersion&quot;:&quot;0.3.1&quot;,&quot;name&quot;:&quot;ovn-kubernetes&quot;,&quot;type&quot;:&quot;ovn-k8s-cni-overlay&quot;,&quot;ipam&quot;:{},&quot;dns&quot;:{}}&#39;</span>
+<span class="w">  </span><span class="nt">Config</span><span class="p">:</span><span class="w"> </span><span class="s">'{"cniVersion":"0.3.1","name":"ovn-kubernetes","type":"ovn-k8s-cni-overlay","ipam":{},"dns":{}}'</span>
 </code></pre></div>
 <h2 id="deploy-pod-with-ovs-hardware-offload">Deploy POD with OVS hardware-offload<a class="headerlink" href="#deploy-pod-with-ovs-hardware-offload" title="Permanent link">&para;</a></h2>
 <p>Create POD spec and</p>
@@ -4280,9 +4280,9 @@ This configuration file is in json format as shown below:</p>
 <span class="w">    </span><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">centos/tools</span>
 <span class="w">    </span><span class="nt">resources</span><span class="p">:</span>
 <span class="w">      </span><span class="nt">requests</span><span class="p">:</span>
-<span class="w">        </span><span class="nt">mellanox.com/cx5_sriov_switchdev</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;1&#39;</span>
+<span class="w">        </span><span class="nt">mellanox.com/cx5_sriov_switchdev</span><span class="p">:</span><span class="w"> </span><span class="s">'1'</span>
 <span class="w">      </span><span class="nt">limits</span><span class="p">:</span>
-<span class="w">        </span><span class="nt">mellanox.com/cx5_sriov_switchdev</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;1&#39;</span>
+<span class="w">        </span><span class="nt">mellanox.com/cx5_sriov_switchdev</span><span class="p">:</span><span class="w"> </span><span class="s">'1'</span>
 </code></pre></div>
 <h2 id="verify-hardware-offload-is-working">Verify Hardware-Offload is working<a class="headerlink" href="#verify-hardware-offload-is-working" title="Permanent link">&para;</a></h2>
 <p>Lookup VF representor, in this example it is e5a1c8fcef0f327</p>
@@ -4361,13 +4361,13 @@ vdpa2: type network mgmtdev pci/0000:65:00.2 vendor_id 5555 max_vqs 16 max_vq_si
 <p>After a device has been created, the SR-IOV Device Plugin plugin configuration has to be modified for it
 to select and expose the vdpa device:</p>
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;resourceList&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">    </span><span class="nt">"resourceList"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
 <span class="w">         </span><span class="p">{</span>
-<span class="w">            </span><span class="nt">&quot;resourceName&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;cx6_sriov_vpda_virtio&quot;</span><span class="p">,</span>
-<span class="w">            </span><span class="nt">&quot;selectors&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">               </span><span class="nt">&quot;vendors&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;15b3&quot;</span><span class="p">],</span>
-<span class="w">               </span><span class="nt">&quot;devices&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;101e&quot;</span><span class="p">],</span>
-<span class="w">               </span><span class="nt">&quot;vdpaType&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;virtio&quot;</span>
+<span class="w">            </span><span class="nt">"resourceName"</span><span class="p">:</span><span class="w"> </span><span class="s2">"cx6_sriov_vpda_virtio"</span><span class="p">,</span>
+<span class="w">            </span><span class="nt">"selectors"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">               </span><span class="nt">"vendors"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"15b3"</span><span class="p">],</span>
+<span class="w">               </span><span class="nt">"devices"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"101e"</span><span class="p">],</span>
+<span class="w">               </span><span class="nt">"vdpaType"</span><span class="p">:</span><span class="w"> </span><span class="s2">"virtio"</span>
 <span class="w">            </span><span class="p">}</span>
 <span class="w">        </span><span class="p">}</span>
 <span class="w">    </span><span class="p">]</span>

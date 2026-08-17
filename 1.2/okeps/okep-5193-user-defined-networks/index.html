@@ -5379,15 +5379,15 @@ metadata:
 spec:
   config: |2
     {
-            &quot;cniVersion&quot;: &quot;0.3.1&quot;,
-            &quot;name&quot;: &quot;l3-network&quot;,
-            &quot;type&quot;: &quot;ovn-k8s-cni-overlay&quot;,
-            &quot;topology&quot;:&quot;layer3&quot;,
-            &quot;subnets&quot;: &quot;10.128.0.0/16/24,2600:db8::/29&quot;,
-            &quot;joinSubnets&quot;: &quot;100.65.0.0/24,fd99::/64&quot;,
-            &quot;mtu&quot;: 1400,
-            &quot;netAttachDefName&quot;: &quot;default/l3-network&quot;,
-            &quot;role&quot;: primary
+            "cniVersion": "0.3.1",
+            "name": "l3-network",
+            "type": "ovn-k8s-cni-overlay",
+            "topology":"layer3",
+            "subnets": "10.128.0.0/16/24,2600:db8::/29",
+            "joinSubnets": "100.65.0.0/24,fd99::/64",
+            "mtu": 1400,
+            "netAttachDefName": "default/l3-network",
+            "role": primary
     }
 </code></pre></div>
 <p>The NAD must be created before any pods are created for this namespace. In order to enforce this requirement, a required
@@ -5401,14 +5401,14 @@ so that a namespace cannot be updated to add/remove this label, and that it must
 <span class="nt">spec</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">matchConstraints</span><span class="p">:</span>
 <span class="w">    </span><span class="nt">resourceRules</span><span class="p">:</span>
-<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">apiGroups</span><span class="p">:</span><span class="w">   </span><span class="p p-Indicator">[</span><span class="s">&quot;&quot;</span><span class="p p-Indicator">]</span>
-<span class="w">        </span><span class="nt">apiVersions</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;v1&quot;</span><span class="p p-Indicator">]</span>
-<span class="w">        </span><span class="nt">operations</span><span class="p">:</span><span class="w">  </span><span class="p p-Indicator">[</span><span class="s">&quot;UPDATE&quot;</span><span class="p p-Indicator">]</span>
-<span class="w">        </span><span class="nt">resources</span><span class="p">:</span><span class="w">   </span><span class="p p-Indicator">[</span><span class="s">&quot;namespaces&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">apiGroups</span><span class="p">:</span><span class="w">   </span><span class="p p-Indicator">[</span><span class="s">""</span><span class="p p-Indicator">]</span>
+<span class="w">        </span><span class="nt">apiVersions</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"v1"</span><span class="p p-Indicator">]</span>
+<span class="w">        </span><span class="nt">operations</span><span class="p">:</span><span class="w">  </span><span class="p p-Indicator">[</span><span class="s">"UPDATE"</span><span class="p p-Indicator">]</span>
+<span class="w">        </span><span class="nt">resources</span><span class="p">:</span><span class="w">   </span><span class="p p-Indicator">[</span><span class="s">"namespaces"</span><span class="p p-Indicator">]</span>
 <span class="w">  </span><span class="nt">failurePolicy</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Fail</span>
 <span class="w">  </span><span class="nt">validations</span><span class="p">:</span>
-<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">expression</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;(&#39;k8s.ovn.org/primary-user-defined-network&#39;</span><span class="nv"> </span><span class="s">in</span><span class="nv"> </span><span class="s">oldObject.metadata.labels)</span><span class="nv"> </span><span class="s">==</span><span class="nv"> </span><span class="s">(&#39;k8s.ovn.org/primary-user-defined-network&#39;</span><span class="nv"> </span><span class="s">in</span><span class="nv"> </span><span class="s">object.metadata.labels)&quot;</span>
-<span class="w">      </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;The</span><span class="nv"> </span><span class="s">&#39;k8s.ovn.org/primary-user-defined-network&#39;</span><span class="nv"> </span><span class="s">label</span><span class="nv"> </span><span class="s">cannot</span><span class="nv"> </span><span class="s">be</span><span class="nv"> </span><span class="s">added/removed</span><span class="nv"> </span><span class="s">after</span><span class="nv"> </span><span class="s">the</span><span class="nv"> </span><span class="s">namespace</span><span class="nv"> </span><span class="s">was</span><span class="nv"> </span><span class="s">created&quot;</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">expression</span><span class="p">:</span><span class="w"> </span><span class="s">"('k8s.ovn.org/primary-user-defined-network'</span><span class="nv"> </span><span class="s">in</span><span class="nv"> </span><span class="s">oldObject.metadata.labels)</span><span class="nv"> </span><span class="s">==</span><span class="nv"> </span><span class="s">('k8s.ovn.org/primary-user-defined-network'</span><span class="nv"> </span><span class="s">in</span><span class="nv"> </span><span class="s">object.metadata.labels)"</span>
+<span class="w">      </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">"The</span><span class="nv"> </span><span class="s">'k8s.ovn.org/primary-user-defined-network'</span><span class="nv"> </span><span class="s">label</span><span class="nv"> </span><span class="s">cannot</span><span class="nv"> </span><span class="s">be</span><span class="nv"> </span><span class="s">added/removed</span><span class="nv"> </span><span class="s">after</span><span class="nv"> </span><span class="s">the</span><span class="nv"> </span><span class="s">namespace</span><span class="nv"> </span><span class="s">was</span><span class="nv"> </span><span class="s">created"</span>
 
 <span class="nn">---</span>
 <span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">admissionregistration.k8s.io/v1</span>
@@ -5420,10 +5420,10 @@ so that a namespace cannot be updated to add/remove this label, and that it must
 <span class="w">  </span><span class="nt">validationActions</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">Deny</span><span class="p p-Indicator">]</span>
 <span class="w">  </span><span class="nt">matchResources</span><span class="p">:</span>
 <span class="w">    </span><span class="nt">resourceRules</span><span class="p">:</span>
-<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">apiGroups</span><span class="p">:</span><span class="w">   </span><span class="p p-Indicator">[</span><span class="s">&quot;&quot;</span><span class="p p-Indicator">]</span>
-<span class="w">        </span><span class="nt">apiVersions</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;v1&quot;</span><span class="p p-Indicator">]</span>
-<span class="w">        </span><span class="nt">operations</span><span class="p">:</span><span class="w">  </span><span class="p p-Indicator">[</span><span class="s">&quot;UPDATE&quot;</span><span class="p p-Indicator">]</span>
-<span class="w">        </span><span class="nt">resources</span><span class="p">:</span><span class="w">   </span><span class="p p-Indicator">[</span><span class="s">&quot;namespaces&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">apiGroups</span><span class="p">:</span><span class="w">   </span><span class="p p-Indicator">[</span><span class="s">""</span><span class="p p-Indicator">]</span>
+<span class="w">        </span><span class="nt">apiVersions</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"v1"</span><span class="p p-Indicator">]</span>
+<span class="w">        </span><span class="nt">operations</span><span class="p">:</span><span class="w">  </span><span class="p p-Indicator">[</span><span class="s">"UPDATE"</span><span class="p p-Indicator">]</span>
+<span class="w">        </span><span class="nt">resources</span><span class="p">:</span><span class="w">   </span><span class="p p-Indicator">[</span><span class="s">"namespaces"</span><span class="p p-Indicator">]</span>
 </code></pre></div>
 <p>The following conditions regarding the namespace label are:</p>
 <ol>
@@ -5456,55 +5456,55 @@ items:
     annotations:
       k8s.ovn.org/pod-networks: |
         {
-          &quot;default&quot;: {
-            &quot;ip_addresses&quot;: [&quot;10.244.0.3/24&quot;],
-            &quot;mac_address&quot;: &quot;0a:58:0a:f4:00:03&quot;,
-            &quot;routes&quot;: [
-              {&quot;dest&quot;: &quot;10.244.0.0/16&quot;, &quot;nextHop&quot;: &quot;10.244.0.1&quot;},
-              {&quot;dest&quot;: &quot;100.64.0.0/16&quot;, &quot;nextHop&quot;: &quot;10.244.0.1&quot;}
+          "default": {
+            "ip_addresses": ["10.244.0.3/24"],
+            "mac_address": "0a:58:0a:f4:00:03",
+            "routes": [
+              {"dest": "10.244.0.0/16", "nextHop": "10.244.0.1"},
+              {"dest": "100.64.0.0/16", "nextHop": "10.244.0.1"}
             ],
-            &quot;ip_address&quot;: &quot;10.244.0.3/24&quot;,
-            &quot;role&quot;: &quot;infrastructure-locked&quot;
+            "ip_address": "10.244.0.3/24",
+            "role": "infrastructure-locked"
           },
-          &quot;udn-test/l3-primary&quot;: {
-            &quot;ip_addresses&quot;: [&quot;10.20.2.5/24&quot;],
-            &quot;mac_address&quot;: &quot;0a:58:0a:14:02:05&quot;,
-            &quot;gateway_ips&quot;: [&quot;10.20.2.1&quot;],
-            &quot;routes&quot;: [
-              {&quot;dest&quot;: &quot;10.20.0.0/16&quot;, &quot;nextHop&quot;: &quot;10.20.2.1&quot;},
-              {&quot;dest&quot;: &quot;10.96.0.0/16&quot;, &quot;nextHop&quot;: &quot;10.20.2.1&quot;},
-              {&quot;dest&quot;: &quot;100.65.0.0/16&quot;, &quot;nextHop&quot;: &quot;10.20.2.1&quot;}
+          "udn-test/l3-primary": {
+            "ip_addresses": ["10.20.2.5/24"],
+            "mac_address": "0a:58:0a:14:02:05",
+            "gateway_ips": ["10.20.2.1"],
+            "routes": [
+              {"dest": "10.20.0.0/16", "nextHop": "10.20.2.1"},
+              {"dest": "10.96.0.0/16", "nextHop": "10.20.2.1"},
+              {"dest": "100.65.0.0/16", "nextHop": "10.20.2.1"}
             ],
-            &quot;ip_address&quot;: &quot;10.20.2.5/24&quot;,
-            &quot;gateway_ip&quot;: &quot;10.20.2.1&quot;,
-            &quot;role&quot;: &quot;primary&quot;
+            "ip_address": "10.20.2.5/24",
+            "gateway_ip": "10.20.2.1",
+            "role": "primary"
           }
         }
       k8s.v1.cni.cncf.io/network-status: |-
         [{
-            &quot;name&quot;: &quot;ovn-kubernetes&quot;,
-            &quot;interface&quot;: &quot;eth0&quot;,
-            &quot;ips&quot;: [
-                &quot;10.244.0.3&quot;
+            "name": "ovn-kubernetes",
+            "interface": "eth0",
+            "ips": [
+                "10.244.0.3"
             ],
-            &quot;mac&quot;: &quot;0a:58:0a:f4:00:03&quot;,
-            &quot;dns&quot;: {}
+            "mac": "0a:58:0a:f4:00:03",
+            "dns": {}
         },{
-            &quot;name&quot;: &quot;ovn-kubernetes&quot;,
-            &quot;interface&quot;: &quot;ovn-udn1&quot;,
-            &quot;ips&quot;: [
-                &quot;10.20.2.5&quot;
+            "name": "ovn-kubernetes",
+            "interface": "ovn-udn1",
+            "ips": [
+                "10.20.2.5"
             ],
-            &quot;mac&quot;: &quot;0a:58:0a:14:02:05&quot;,
-            &quot;default&quot;: true,
-            &quot;dns&quot;: {}
+            "mac": "0a:58:0a:14:02:05",
+            "default": true,
+            "dns": {}
         }]
-    creationTimestamp: &quot;2025-04-22T18:50:50Z&quot;
+    creationTimestamp: "2025-04-22T18:50:50Z"
     labels:
       pod-name: client
     name: client
     namespace: udn-test
-    resourceVersion: &quot;2093&quot;
+    resourceVersion: "2093"
     uid: dca1ff46-1990-4e84-a0a5-7c9fdde01993
 status:
     podIP: 10.244.0.3
@@ -5756,17 +5756,17 @@ For example, when the NAD its created the condition should be placed with status
 <h4 id="namespace-scoped-crd">Namespace scoped CRD<a class="headerlink" href="#namespace-scoped-crd" title="Permanent link">&para;</a></h4>
 <p><div class="highlight"><pre><span></span><code><span class="c1">// UserDefinedNetwork describe network request for a Namespace</span>
 <span class="kd">type</span><span class="w"> </span><span class="nx">UserDefinedNetwork</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nx">metav1</span><span class="p">.</span><span class="nx">TypeMeta</span><span class="w">   </span><span class="s">`json:&quot;,inline&quot;`</span>
-<span class="w">    </span><span class="nx">metav1</span><span class="p">.</span><span class="nx">ObjectMeta</span><span class="w"> </span><span class="s">`json:&quot;metadata,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">metav1</span><span class="p">.</span><span class="nx">TypeMeta</span><span class="w">   </span><span class="s">`json:",inline"`</span>
+<span class="w">    </span><span class="nx">metav1</span><span class="p">.</span><span class="nx">ObjectMeta</span><span class="w"> </span><span class="s">`json:"metadata,omitempty"`</span>
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:Required</span>
-<span class="w">    </span><span class="c1">// +kubebuilder:validation:XValidation:rule=&quot;self == oldSelf&quot;, message=&quot;Spec is immutable&quot;</span>
-<span class="w">    </span><span class="c1">// +kubebuilder:validation:XValidation:rule=&quot; self.topology != &#39;Layer3&#39; || (self.topology == &#39;Layer3&#39; &amp;&amp; size(self.subnets) &gt; 0)&quot;, message=&quot;Subnets is required for Layer3 topology&quot;</span>
-<span class="w">    </span><span class="c1">// +kubebuilder:validation:XValidation:rule=&quot;self.topology != &#39;Localnet&#39; || (self.topology == &#39;Localnet&#39; &amp;&amp; self.role == &#39;Secondary&#39;)&quot;, message=&quot;Topology localnet is not supported for primary network&quot;</span>
-<span class="w">    </span><span class="c1">// +kubebuilder:validation:XValidation:rule=&quot;!has(self.ipamLifecycle) || (self.ipamLifecycle == &#39;Persistent&#39; &amp;&amp; (self.topology == &#39;Layer2&#39; || self.topology == &#39;Localnet&#39;))&quot;, message=&quot;ipamLifecycle is supported for Layer2 and Localnet topologies&quot;</span>
+<span class="w">    </span><span class="c1">// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="Spec is immutable"</span>
+<span class="w">    </span><span class="c1">// +kubebuilder:validation:XValidation:rule=" self.topology != 'Layer3' || (self.topology == 'Layer3' &amp;&amp; size(self.subnets) &gt; 0)", message="Subnets is required for Layer3 topology"</span>
+<span class="w">    </span><span class="c1">// +kubebuilder:validation:XValidation:rule="self.topology != 'Localnet' || (self.topology == 'Localnet' &amp;&amp; self.role == 'Secondary')", message="Topology localnet is not supported for primary network"</span>
+<span class="w">    </span><span class="c1">// +kubebuilder:validation:XValidation:rule="!has(self.ipamLifecycle) || (self.ipamLifecycle == 'Persistent' &amp;&amp; (self.topology == 'Layer2' || self.topology == 'Localnet'))", message="ipamLifecycle is supported for Layer2 and Localnet topologies"</span>
 <span class="w">    </span><span class="c1">// +required</span>
-<span class="w">    </span><span class="nx">Spec</span><span class="w"> </span><span class="nx">UserDefinedNetworkSpec</span><span class="w"> </span><span class="s">`json:&quot;spec&quot;`</span>
+<span class="w">    </span><span class="nx">Spec</span><span class="w"> </span><span class="nx">UserDefinedNetworkSpec</span><span class="w"> </span><span class="s">`json:"spec"`</span>
 <span class="w">    </span><span class="c1">// +optional</span>
-<span class="w">    </span><span class="nx">Status</span><span class="w"> </span><span class="nx">UserDefinedNetworkStatus</span><span class="w"> </span><span class="s">`json:&quot;status,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">Status</span><span class="w"> </span><span class="nx">UserDefinedNetworkStatus</span><span class="w"> </span><span class="s">`json:"status,omitempty"`</span>
 <span class="p">}</span>
 </code></pre></div>
 Suggested API validation rules:
@@ -5783,16 +5783,16 @@ Suggested API validation rules:
 <span class="kd">type</span><span class="w"> </span><span class="nx">UserDefinedNetworkSpec</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="c1">// The topological configuration for the network.</span>
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:Enum=Layer2;Layer3;Localnet</span>
-<span class="w">    </span><span class="nx">Topology</span><span class="w"> </span><span class="nx">NetworkTopology</span><span class="w"> </span><span class="s">`json:&quot;topology&quot;`</span>
+<span class="w">    </span><span class="nx">Topology</span><span class="w"> </span><span class="nx">NetworkTopology</span><span class="w"> </span><span class="s">`json:"topology"`</span>
 
 <span class="w">    </span><span class="c1">// The network role in the pod (e.g.: Primary, Secondary).</span>
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:Enum=Primary;Secondary</span>
-<span class="w">    </span><span class="nx">Role</span><span class="w"> </span><span class="nx">NetworkRole</span><span class="w"> </span><span class="s">`json:&quot;role&quot;`</span>
+<span class="w">    </span><span class="nx">Role</span><span class="w"> </span><span class="nx">NetworkRole</span><span class="w"> </span><span class="s">`json:"role"`</span>
 
 <span class="w">    </span><span class="c1">// The maximum transmission unit (MTU).</span>
 <span class="w">    </span><span class="c1">// MTU is optional, if not provided the globally configured value in OVN-Kubernetes (defaults to 1400) is used for the network.    </span>
 <span class="w">    </span><span class="c1">// +optional</span>
-<span class="w">    </span><span class="nx">MTU</span><span class="w"> </span><span class="kt">uint</span><span class="w"> </span><span class="s">`json:&quot;mtu,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">MTU</span><span class="w"> </span><span class="kt">uint</span><span class="w"> </span><span class="s">`json:"mtu,omitempty"`</span>
 
 
 <span class="w">    </span><span class="c1">// The subnet to use for the pod network across the cluster.</span>
@@ -5809,22 +5809,22 @@ Suggested API validation rules:
 <span class="w">    </span><span class="c1">// providing any host subnet mask.</span>
 <span class="w">    </span><span class="c1">// This field is required when `ipam.mode` is set to `Enabled` and is ignored otherwise.</span>
 <span class="w">    </span><span class="c1">// +optional</span>
-<span class="w">    </span><span class="nx">Subnets</span><span class="w"> </span><span class="p">[]</span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;subnets,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">Subnets</span><span class="w"> </span><span class="p">[]</span><span class="kt">string</span><span class="w"> </span><span class="s">`json:"subnets,omitempty"`</span>
 
 <span class="w">    </span><span class="c1">// A list of CIDRs.</span>
 <span class="w">    </span><span class="c1">// IP addresses are removed from the assignable IP address pool and are never passed to the pods.</span>
 <span class="w">    </span><span class="c1">// +optional</span>
-<span class="w">    </span><span class="nx">ExcludeSubnets</span><span class="w"> </span><span class="p">[]</span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;excludeSubnets,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">ExcludeSubnets</span><span class="w"> </span><span class="p">[]</span><span class="kt">string</span><span class="w"> </span><span class="s">`json:"excludeSubnets,omitempty"`</span>
 
 <span class="w">    </span><span class="c1">// Subnet used inside the OVN network topology.</span>
 <span class="w">    </span><span class="c1">// This field is ignored for non-primary networks (e.g.: Role Secondary).</span>
 <span class="w">    </span><span class="c1">// When omitted, this means no opinion and the platform is left to choose a reasonable default which is subject to change over time.    </span>
-<span class="w">    </span><span class="c1">// +kubebuilder:validation:XValidation:rule=&quot;1 &lt;= size(self) &amp;&amp; size(self) &lt;= 2&quot;, message=&quot;Unexpected number of join subnets&quot;</span>
+<span class="w">    </span><span class="c1">// +kubebuilder:validation:XValidation:rule="1 &lt;= size(self) &amp;&amp; size(self) &lt;= 2", message="Unexpected number of join subnets"</span>
 <span class="w">    </span><span class="c1">// +optional</span>
-<span class="w">    </span><span class="nx">JoinSubnets</span><span class="w"> </span><span class="p">[]</span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;joinSubnets,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">JoinSubnets</span><span class="w"> </span><span class="p">[]</span><span class="kt">string</span><span class="w"> </span><span class="s">`json:"joinSubnets,omitempty"`</span>
 
 <span class="w">    </span><span class="c1">// IPAM section contains IPAM-related configuration for the network.</span>
-<span class="w">    </span><span class="nx">IPAM</span><span class="w"> </span><span class="o">*</span><span class="nx">IPAMSpec</span><span class="w"> </span><span class="s">`json:&quot;ipam,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">IPAM</span><span class="w"> </span><span class="o">*</span><span class="nx">IPAMSpec</span><span class="w"> </span><span class="s">`json:"ipam,omitempty"`</span>
 <span class="p">}</span>
 
 <span class="kd">type</span><span class="w"> </span><span class="nx">IPAMSpec</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
@@ -5838,16 +5838,16 @@ Suggested API validation rules:
 <span class="w">    </span><span class="c1">// (such as network policy, services, etc). Additionally, IP port security will also be disabled for interfaces attached to this network.</span>
 <span class="w">    </span><span class="c1">// Defaults to `Enabled`.</span>
 <span class="w">    </span><span class="c1">// +optional</span>
-<span class="w">    </span><span class="nx">Mode</span><span class="w"> </span><span class="nx">IPAMMode</span><span class="w"> </span><span class="s">`json:&quot;mode&quot;`</span>
+<span class="w">    </span><span class="nx">Mode</span><span class="w"> </span><span class="nx">IPAMMode</span><span class="w"> </span><span class="s">`json:"mode"`</span>
 
 <span class="w">    </span><span class="c1">// Lifecycle controls IP addresses management lifecycle.</span>
 <span class="w">    </span><span class="c1">//</span>
 <span class="w">    </span><span class="c1">// The only allowed value is Persistent. When set, OVN-Kubernetes assigned IP addresses will be persisted in an</span>
 <span class="w">    </span><span class="c1">// `ipamclaims.k8s.cni.cncf.io` object. These IP addresses will be reused by other pods if requested.</span>
-<span class="w">    </span><span class="c1">// Only supported when &quot;mode&quot; is `Enabled`.</span>
+<span class="w">    </span><span class="c1">// Only supported when "mode" is `Enabled`.</span>
 <span class="w">    </span><span class="c1">//</span>
 <span class="w">    </span><span class="c1">// +optional</span>
-<span class="w">    </span><span class="nx">Lifecycle</span><span class="w"> </span><span class="nx">NetworkIPAMLifecycle</span><span class="w"> </span><span class="s">`json:&quot;lifecycle,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">Lifecycle</span><span class="w"> </span><span class="nx">NetworkIPAMLifecycle</span><span class="w"> </span><span class="s">`json:"lifecycle,omitempty"`</span>
 <span class="p">}</span>
 </code></pre></div>
 Suggested API validation rules:
@@ -5860,13 +5860,13 @@ Suggested API validation rules:
 <h4 id="cluster-scoped-crd">Cluster scoped CRD<a class="headerlink" href="#cluster-scoped-crd" title="Permanent link">&para;</a></h4>
 <div class="highlight"><pre><span></span><code><span class="c1">// ClusterUserDefinedNetwork describes shared OVN network across namespaces request.</span>
 <span class="kd">type</span><span class="w"> </span><span class="nx">ClusterUserDefinedNetwork</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nx">metav1</span><span class="p">.</span><span class="nx">TypeMeta</span><span class="w">   </span><span class="s">`json:&quot;,inline&quot;`</span>
-<span class="w">    </span><span class="nx">metav1</span><span class="p">.</span><span class="nx">ObjectMeta</span><span class="w"> </span><span class="s">`json:&quot;metadata,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">metav1</span><span class="p">.</span><span class="nx">TypeMeta</span><span class="w">   </span><span class="s">`json:",inline"`</span>
+<span class="w">    </span><span class="nx">metav1</span><span class="p">.</span><span class="nx">ObjectMeta</span><span class="w"> </span><span class="s">`json:"metadata,omitempty"`</span>
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:Required</span>
 <span class="w">    </span><span class="c1">// +required</span>
-<span class="w">    </span><span class="nx">Spec</span><span class="w"> </span><span class="nx">ClusterUserDefinedNetworkSpec</span><span class="w"> </span><span class="s">`json:&quot;spec&quot;`</span>
+<span class="w">    </span><span class="nx">Spec</span><span class="w"> </span><span class="nx">ClusterUserDefinedNetworkSpec</span><span class="w"> </span><span class="s">`json:"spec"`</span>
 <span class="w">    </span><span class="c1">// +optional</span>
-<span class="w">    </span><span class="nx">Status</span><span class="w"> </span><span class="nx">ClusterUserDefinedNetworkStatus</span><span class="w"> </span><span class="s">`json:&quot;status,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">Status</span><span class="w"> </span><span class="nx">ClusterUserDefinedNetworkStatus</span><span class="w"> </span><span class="s">`json:"status,omitempty"`</span>
 <span class="p">}</span>
 
 <span class="c1">// ClusterUserDefinedNetwork defines the desired state of ClusterUserDefinedNetwork.</span>
@@ -5874,26 +5874,26 @@ Suggested API validation rules:
 <span class="w">    </span><span class="c1">// NamespaceSelector Label selector for which namespace network should be available for.</span>
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:Required</span>
 <span class="w">    </span><span class="c1">// +required</span>
-<span class="w">    </span><span class="nx">NamespaceSelector</span><span class="w"> </span><span class="nx">metav1</span><span class="p">.</span><span class="nx">LabelSelector</span><span class="w"> </span><span class="s">`json:&quot;namespaceSelector&quot;`</span>
+<span class="w">    </span><span class="nx">NamespaceSelector</span><span class="w"> </span><span class="nx">metav1</span><span class="p">.</span><span class="nx">LabelSelector</span><span class="w"> </span><span class="s">`json:"namespaceSelector"`</span>
 
 <span class="w">    </span><span class="c1">// Template is direct specification of UserDefinedNetwork.</span>
 <span class="w">    </span><span class="c1">// +kubebuilder:validation:Required</span>
 <span class="w">    </span><span class="c1">// +required</span>
-<span class="w">    </span><span class="nx">Template</span><span class="w"> </span><span class="o">*</span><span class="nx">UserDefinedNetworkTemplateSpec</span><span class="w"> </span><span class="s">`json:&quot;template&quot;`</span>
+<span class="w">    </span><span class="nx">Template</span><span class="w"> </span><span class="o">*</span><span class="nx">UserDefinedNetworkTemplateSpec</span><span class="w"> </span><span class="s">`json:"template"`</span>
 <span class="p">}</span>
 
 <span class="c1">// UserDefinedNetworkTemplateSpec UserDefinedNetwork spec template.</span>
 <span class="kd">type</span><span class="w"> </span><span class="nx">UserDefinedNetworkTemplateSpec</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="c1">// UserDefinedNetworkSpec contains the UserDefinedNetwork specification.</span>
-<span class="w">    </span><span class="nx">Spec</span><span class="w"> </span><span class="nx">UserDefinedNetworkSpec</span><span class="w"> </span><span class="s">`json:&quot;spec,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">Spec</span><span class="w"> </span><span class="nx">UserDefinedNetworkSpec</span><span class="w"> </span><span class="s">`json:"spec,omitempty"`</span>
 <span class="p">}</span>
 
 <span class="c1">// ClusterUserDefinedNetworkStatus contains the observed status of the ClusterUserDefinedNetwork.</span>
 <span class="kd">type</span><span class="w"> </span><span class="nx">ClusterUserDefinedNetworkStatus</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="c1">// ActiveNamespaces indicates in which namespaces network is available.</span>
-<span class="w">    </span><span class="nx">ActiveNamespaces</span><span class="w"> </span><span class="p">[]</span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;activeNamespaces,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">ActiveNamespaces</span><span class="w"> </span><span class="p">[]</span><span class="kt">string</span><span class="w"> </span><span class="s">`json:"activeNamespaces,omitempty"`</span>
 
-<span class="w">    </span><span class="nx">Conditions</span><span class="w"> </span><span class="p">[]</span><span class="nx">metav1</span><span class="p">.</span><span class="nx">Condition</span><span class="w"> </span><span class="s">`json:&quot;conditions,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">Conditions</span><span class="w"> </span><span class="p">[]</span><span class="nx">metav1</span><span class="p">.</span><span class="nx">Condition</span><span class="w"> </span><span class="s">`json:"conditions,omitempty"`</span>
 <span class="p">}</span>
 </code></pre></div>
 <p>Suggested CRD short-name: <code>cudn</code></p>
@@ -5902,22 +5902,22 @@ Suggested API validation rules:
 node:</p>
 <div class="highlight"><pre><span></span><code><span class="nt">status</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">conditions</span><span class="p">:</span>
-<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;2025-05-13T18:01:05Z&quot;</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">"2025-05-13T18:01:05Z"</span>
 <span class="w">      </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">NetworkAttachmentDefinition has been created</span>
 <span class="w">      </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">NetworkAttachmentDefinitionCreated</span>
-<span class="w">      </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;True&quot;</span>
+<span class="w">      </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"True"</span>
 <span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">NetworkCreated</span>
-<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;2025-05-13T18:01:05Z&quot;</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">"2025-05-13T18:01:05Z"</span>
 <span class="w">      </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Network allocation succeeded for all synced nodes.</span>
 <span class="w">      </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">NetworkAllocationSucceeded</span>
-<span class="w">      </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;True&quot;</span>
+<span class="w">      </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"True"</span>
 <span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">NetworkAllocationSucceeded</span>
 </code></pre></div>
 <p>To be implemented condition reflecting the network readiness underlying OVN network state:
 <div class="highlight"><pre><span></span><code><span class="nt">status</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">conditions</span><span class="p">:</span>
 <span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">NetworkCreated</span>
-<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;True&quot;</span>
+<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"True"</span>
 <span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">OVNNetworkCreated</span>
 <span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">OVN network has been created</span>
 </code></pre></div></p>
@@ -5930,8 +5930,8 @@ node:</p>
 <span class="w">  </span><span class="nt">topology</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Layer2</span>
 <span class="w">  </span><span class="nt">role</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Primary</span>
 <span class="w">  </span><span class="nt">mtu</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">9000</span>
-<span class="w">  </span><span class="nt">subnets</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;10.0.0.0/24&quot;</span><span class="p p-Indicator">]</span>
-<span class="w">  </span><span class="nt">excludeSubnets</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;10.0.0.0/26&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">  </span><span class="nt">subnets</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"10.0.0.0/24"</span><span class="p p-Indicator">]</span>
+<span class="w">  </span><span class="nt">excludeSubnets</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"10.0.0.0/26"</span><span class="p p-Indicator">]</span>
 <span class="w">  </span><span class="nt">ipamLifecycle</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Persistent</span>
 </code></pre></div>
 <p>After creation:
@@ -5945,21 +5945,21 @@ node:</p>
 <span class="w">  </span><span class="nt">topology</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Layer2</span>
 <span class="w">  </span><span class="nt">role</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Primary</span>
 <span class="w">  </span><span class="nt">mtu</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">9000</span>
-<span class="w">  </span><span class="nt">subnets</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;10.0.0.0/24&quot;</span><span class="p p-Indicator">]</span>
-<span class="w">  </span><span class="nt">excludeSubnets</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;10.0.0.100/26&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">  </span><span class="nt">subnets</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"10.0.0.0/24"</span><span class="p p-Indicator">]</span>
+<span class="w">  </span><span class="nt">excludeSubnets</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"10.0.0.100/26"</span><span class="p p-Indicator">]</span>
 <span class="w">  </span><span class="nt">ipam</span><span class="p">:</span>
 <span class="w">    </span><span class="nt">lifecycle</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Persistent</span>
 <span class="nt">status</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">conditions</span><span class="p">:</span>
-<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;2025-05-13T18:01:05Z&quot;</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">"2025-05-13T18:01:05Z"</span>
 <span class="w">      </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">NetworkAttachmentDefinition has been created</span>
 <span class="w">      </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">NetworkAttachmentDefinitionCreated</span>
-<span class="w">      </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;True&quot;</span>
+<span class="w">      </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"True"</span>
 <span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">NetworkCreated</span>
-<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;2025-05-13T18:01:05Z&quot;</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">"2025-05-13T18:01:05Z"</span>
 <span class="w">      </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Network allocation succeeded for all synced nodes.</span>
 <span class="w">      </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">NetworkAllocationSucceeded</span>
-<span class="w">      </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;True&quot;</span>
+<span class="w">      </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"True"</span>
 <span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">NetworkAllocationSucceeded</span>
 </code></pre></div></p>
 <h4 id="example-cluster-scoped-network">Example - Cluster scoped network<a class="headerlink" href="#example-cluster-scoped-network" title="Permanent link">&para;</a></h4>
@@ -5972,21 +5972,21 @@ node:</p>
 <span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">kubernetes.io/metadata.name</span>
 <span class="w">      </span><span class="nt">operator</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">In</span>
 <span class="w">      </span><span class="nt">values</span><span class="p">:</span>
-<span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;mynamespace&quot;</span>
-<span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;theirnamespace&quot;</span>
+<span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">"mynamespace"</span>
+<span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">"theirnamespace"</span>
 <span class="w">  </span><span class="nt">template</span><span class="p">:</span>
 <span class="w">    </span><span class="nt">topology</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Layer2</span>
 <span class="w">    </span><span class="nt">role</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Primary</span>
 <span class="w">    </span><span class="nt">mtu</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">9000</span>
-<span class="w">    </span><span class="nt">subnets</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;10.0.0.0/24&quot;</span><span class="p p-Indicator">]</span>
-<span class="w">    </span><span class="nt">excludeSubnets</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;10.0.0.100/26&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">subnets</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"10.0.0.0/24"</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">excludeSubnets</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"10.0.0.100/26"</span><span class="p p-Indicator">]</span>
 <span class="nt">status</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">conditions</span><span class="p">:</span>
-<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;2025-05-13T19:26:13Z&quot;</span>
-<span class="w">      </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;NetworkAttachmentDefinition</span><span class="nv"> </span><span class="s">has</span><span class="nv"> </span><span class="s">been</span><span class="nv"> </span><span class="s">created</span><span class="nv"> </span><span class="s">in</span><span class="nv"> </span><span class="s">following</span><span class="nv"> </span><span class="s">namespaces:</span>
-<span class="w">      </span><span class="s">[mynamespace,</span><span class="nv"> </span><span class="s">theirnamespace]&#39;</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">lastTransitionTime</span><span class="p">:</span><span class="w"> </span><span class="s">"2025-05-13T19:26:13Z"</span>
+<span class="w">      </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">'NetworkAttachmentDefinition</span><span class="nv"> </span><span class="s">has</span><span class="nv"> </span><span class="s">been</span><span class="nv"> </span><span class="s">created</span><span class="nv"> </span><span class="s">in</span><span class="nv"> </span><span class="s">following</span><span class="nv"> </span><span class="s">namespaces:</span>
+<span class="w">      </span><span class="s">[mynamespace,</span><span class="nv"> </span><span class="s">theirnamespace]'</span>
 <span class="w">      </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">NetworkAttachmentDefinitionCreated</span>
-<span class="w">      </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;True&quot;</span>
+<span class="w">      </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"True"</span>
 <span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">NetworkCreated</span>
 </code></pre></div>
 <h4 id="tenant-use-case">Tenant Use Case<a class="headerlink" href="#tenant-use-case" title="Permanent link">&para;</a></h4>
@@ -6124,17 +6124,17 @@ Following the <a href="#example---namespace-scoped-network">example</a>, the fol
 <span class="w">    </span><span class="nt">uid</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">f45efb13-9511-48c1-95d7-44ee17c949f4</span>
 <span class="nt">spec</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">config</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">&gt;</span><span class="w">    </span>
-<span class="w">      </span><span class="no">&#39;{</span>
-<span class="w">          </span><span class="no">&quot;cniVersion&quot;:&quot;0.3.1&quot;,</span>
-<span class="w">          </span><span class="no">&quot;mtu&quot;:1500,   </span>
-<span class="w">          </span><span class="no">&quot;name&quot;:&quot;demo.network&quot;,  &lt;--- generated unique network-name</span>
-<span class="w">          </span><span class="no">&quot;netAttachDefName&quot;:&quot;demo/poc-db-network&quot;,</span>
-<span class="w">          </span><span class="no">&quot;subnets&quot;:&quot;10.0.0.0/24&quot;,</span>
-<span class="w">          </span><span class="no">&quot;topology&quot;:&quot;layer2&quot;,</span>
-<span class="w">          </span><span class="no">&quot;type&quot;:&quot;ovn-k8s-cni-overlay&quot;,</span>
-<span class="w">          </span><span class="no">&quot;role&quot;: &quot;primary&quot;,</span>
-<span class="w">          </span><span class="no">&quot;persistentIPs&quot;: &quot;true&quot;</span>
-<span class="w">      </span><span class="no">}&#39;</span>
+<span class="w">      </span><span class="no">'{</span>
+<span class="w">          </span><span class="no">"cniVersion":"0.3.1",</span>
+<span class="w">          </span><span class="no">"mtu":1500,   </span>
+<span class="w">          </span><span class="no">"name":"demo.network",  &lt;--- generated unique network-name</span>
+<span class="w">          </span><span class="no">"netAttachDefName":"demo/poc-db-network",</span>
+<span class="w">          </span><span class="no">"subnets":"10.0.0.0/24",</span>
+<span class="w">          </span><span class="no">"topology":"layer2",</span>
+<span class="w">          </span><span class="no">"type":"ovn-k8s-cni-overlay",</span>
+<span class="w">          </span><span class="no">"role": "primary",</span>
+<span class="w">          </span><span class="no">"persistentIPs": "true"</span>
+<span class="w">      </span><span class="no">}'</span>
 </code></pre></div></p>
 <p>For cluster-scoped CRDs, the NAD <code>metadata.name</code> should correspond to the request CRD <code>metadata.name</code> with an additional prefix.
 Having the prefix avoids conflicting with existing NADs who has the same <code>metadata.name</code>.
@@ -6145,7 +6145,7 @@ Following the above cluster-scope CRD <a href="#example---cluster-scoped-network
 <div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.cni.cncf.io/v1</span>
 <span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">NetworkAttachmentDefinition</span>
 <span class="nt">metadata</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">cluster-db-network          &lt;--- name starts with &quot;cluster&quot;</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">cluster-db-network          &lt;--- name starts with "cluster"</span>
 <span class="w">  </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">mynamespace</span>
 <span class="w">  </span><span class="nt">finalizers</span><span class="p">:</span>
 <span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.ovn.org/user-defined-network-protection</span>
@@ -6157,17 +6157,17 @@ Following the above cluster-scope CRD <a href="#example---cluster-scoped-network
 <span class="w">    </span><span class="nt">uid</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">f45efb13-9511-48c1-95d7-44ee17c949f4</span><span class="w"> </span>
 <span class="nt">spec</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">config</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">&gt;</span><span class="w">    </span>
-<span class="w">      </span><span class="no">&#39;{</span>
-<span class="w">          </span><span class="no">&quot;cniVersion&quot;:&quot;0.3.1&quot;,</span>
-<span class="w">          </span><span class="no">&quot;excludeSubnets&quot;:&quot;10.0.0.100/24&quot;,</span>
-<span class="w">          </span><span class="no">&quot;mtu&quot;:1500,   </span>
-<span class="w">          </span><span class="no">&quot;name&quot;:&quot;cluster.udn.db-network&quot;,   &lt;--- generated unique network-name</span>
-<span class="w">          </span><span class="no">&quot;netAttachDefName&quot;:&quot;mynamespace/db-network&quot;,</span>
-<span class="w">          </span><span class="no">&quot;subnets&quot;:&quot;10.0.0.0/24&quot;,</span>
-<span class="w">          </span><span class="no">&quot;topology&quot;:&quot;layer2&quot;,</span>
-<span class="w">          </span><span class="no">&quot;type&quot;:&quot;ovn-k8s-cni-overlay&quot;,</span>
-<span class="w">          </span><span class="no">&quot;role&quot;: &quot;primary&quot;</span>
-<span class="w">      </span><span class="no">}&#39;</span>
+<span class="w">      </span><span class="no">'{</span>
+<span class="w">          </span><span class="no">"cniVersion":"0.3.1",</span>
+<span class="w">          </span><span class="no">"excludeSubnets":"10.0.0.100/24",</span>
+<span class="w">          </span><span class="no">"mtu":1500,   </span>
+<span class="w">          </span><span class="no">"name":"cluster.udn.db-network",   &lt;--- generated unique network-name</span>
+<span class="w">          </span><span class="no">"netAttachDefName":"mynamespace/db-network",</span>
+<span class="w">          </span><span class="no">"subnets":"10.0.0.0/24",</span>
+<span class="w">          </span><span class="no">"topology":"layer2",</span>
+<span class="w">          </span><span class="no">"type":"ovn-k8s-cni-overlay",</span>
+<span class="w">          </span><span class="no">"role": "primary"</span>
+<span class="w">      </span><span class="no">}'</span>
 <span class="nn">---</span>
 <span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.cni.cncf.io/v1</span>
 <span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">NetworkAttachmentDefinition</span>
@@ -6184,17 +6184,17 @@ Following the above cluster-scope CRD <a href="#example---cluster-scoped-network
 <span class="w">    </span><span class="nt">uid</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">f45efb13-9511-48c1-95d7-44ee17c949f4</span>
 <span class="nt">spec</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">config</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">&gt;</span>
-<span class="w">    </span><span class="no">&#39;{</span>
-<span class="w">        </span><span class="no">&quot;cniVersion&quot;:&quot;0.3.1&quot;,</span>
-<span class="w">        </span><span class="no">&quot;excludeSubnets&quot;:&quot;10.0.0.100/24&quot;,</span>
-<span class="w">        </span><span class="no">&quot;mtu&quot;:1500,   </span>
-<span class="w">        </span><span class="no">&quot;name&quot;:&quot;cluster.udn.db-network&quot;,   &lt;--- same name as in other namespaces</span>
-<span class="w">        </span><span class="no">&quot;netAttachDefName&quot;:&quot;theirnamespace/db-network&quot;,</span>
-<span class="w">        </span><span class="no">&quot;subnets&quot;:&quot;10.0.0.0/24&quot;,</span>
-<span class="w">        </span><span class="no">&quot;topology&quot;:&quot;layer2&quot;,</span>
-<span class="w">        </span><span class="no">&quot;type&quot;:&quot;ovn-k8s-cni-overlay&quot;,</span>
-<span class="w">        </span><span class="no">&quot;role&quot;: &quot;primary&quot;</span>
-<span class="w">    </span><span class="no">}&#39;</span>
+<span class="w">    </span><span class="no">'{</span>
+<span class="w">        </span><span class="no">"cniVersion":"0.3.1",</span>
+<span class="w">        </span><span class="no">"excludeSubnets":"10.0.0.100/24",</span>
+<span class="w">        </span><span class="no">"mtu":1500,   </span>
+<span class="w">        </span><span class="no">"name":"cluster.udn.db-network",   &lt;--- same name as in other namespaces</span>
+<span class="w">        </span><span class="no">"netAttachDefName":"theirnamespace/db-network",</span>
+<span class="w">        </span><span class="no">"subnets":"10.0.0.0/24",</span>
+<span class="w">        </span><span class="no">"topology":"layer2",</span>
+<span class="w">        </span><span class="no">"type":"ovn-k8s-cni-overlay",</span>
+<span class="w">        </span><span class="no">"role": "primary"</span>
+<span class="w">    </span><span class="no">}'</span>
 </code></pre></div></p>
 <h5 id="validations">Validations<a class="headerlink" href="#validations" title="Permanent link">&para;</a></h5>
 <p>The controller should validate the request CRD spec and verify:
@@ -6327,7 +6327,7 @@ to the service CIDR (10.96.0.0/24):</p>
 <p>Packets that are destined to the service CIDR are SNAT'ed to the masquerade IP of the host (169.254.169.2) and then
 sent to the dispatch table 2:</p>
 <div class="highlight"><pre><span></span><code>[root@ovn-worker ~]# ovs-ofctl dump-flows breth0 table=2
- cookie=0xdeff105, duration=22266.310s, table=2, n_packets=41, n_bytes=4598, actions=mod_dl_dst:02:42:ac:12:00:03,output:&quot;patch-breth0_ov&quot;
+ cookie=0xdeff105, duration=22266.310s, table=2, n_packets=41, n_bytes=4598, actions=mod_dl_dst:02:42:ac:12:00:03,output:"patch-breth0_ov"
 </code></pre></div>
 <p>In the above flow, all packets have the dest MAC address changed to be that of the OVN GR, and then sent on the patch port
 towards the OVN GR. With multiple networks, host access to cluster IP service flows will now be modified to be on a per
@@ -6340,8 +6340,8 @@ and 10.96.0.6. The flows would look like:</p>
 <p>The above flows are now per cluster IP and will send the packet to the dispatch table while also setting unique register
 values to differentiate which OVN network these packets should be delivered to:</p>
 <div class="highlight"><pre><span></span><code>[root@ovn-worker ~]# ovs-ofctl dump-flows breth0 table=2
- cookie=0xdeff105, duration=22266.310s, table=2, n_packets=41, n_bytes=4598, reg1=0x2 actions=mod_dl_dst:02:42:ac:12:00:05,output:&quot;patch-breth0-net1&quot;
- cookie=0xdeff105, duration=22266.310s, table=2, n_packets=41, n_bytes=4598, reg1=0x3 actions=mod_dl_dst:02:42:ac:12:00:06,output:&quot;patch-breth0-net2&quot;
+ cookie=0xdeff105, duration=22266.310s, table=2, n_packets=41, n_bytes=4598, reg1=0x2 actions=mod_dl_dst:02:42:ac:12:00:05,output:"patch-breth0-net1"
+ cookie=0xdeff105, duration=22266.310s, table=2, n_packets=41, n_bytes=4598, reg1=0x3 actions=mod_dl_dst:02:42:ac:12:00:06,output:"patch-breth0-net2"
 </code></pre></div>
 <p>Furthermore, host networked pod access to services will be restricted to the network it belongs to. For more information
 see the <a href="#host-networked-pods">Host Networked Pods</a> section.</p>

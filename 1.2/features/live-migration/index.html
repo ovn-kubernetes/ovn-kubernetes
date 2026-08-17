@@ -4318,7 +4318,7 @@ disruption.</p>
 <h3 id="example-live-migrating-a-fedora-guest-image">Example: live migrating a fedora guest image<a class="headerlink" href="#example-live-migrating-a-fedora-guest-image" title="Permanent link">&para;</a></h3>
 <p>Install KubeVirt following the guide <a href="https://kubevirt.io/user-guide/operations/installation/">here</a></p>
 <p>Create a fedora virtual machine with the annotations <code>kubevirt.io/allow-pod-bridge-network-live-migration</code>:
-<div class="highlight"><pre><span></span><code>cat<span class="w"> </span><span class="s">&lt;&lt;&#39;EOF&#39; | kubectl create -f -</span>
+<div class="highlight"><pre><span></span><code>cat<span class="w"> </span><span class="s">&lt;&lt;'EOF' | kubectl create -f -</span>
 <span class="s">apiVersion: kubevirt.io/v1</span>
 <span class="s">kind: VirtualMachine</span>
 <span class="s">metadata:</span>
@@ -4330,7 +4330,7 @@ disruption.</p>
 <span class="s">      annotations:</span>
 <span class="s">        # Allow KubeVirt VMs with bridge binding to be migratable</span>
 <span class="s">        # also ovn-k will not configure network at pod, delegate it to DHCP</span>
-<span class="s">        kubevirt.io/allow-pod-bridge-network-live-migration: &quot;&quot;</span>
+<span class="s">        kubevirt.io/allow-pod-bridge-network-live-migration: ""</span>
 <span class="s">    spec:</span>
 <span class="s">      domain:</span>
 <span class="s">        devices:</span>
@@ -4461,10 +4461,10 @@ is stable. </p>
 <span class="w">       </span><span class="no">password: fedora</span>
 <span class="w">       </span><span class="no">chpasswd: { expire: False }</span>
 <span class="w">       </span><span class="no">runcmd:</span>
-<span class="w">         </span><span class="no">- nmcli c m &quot;cloud-init eth0&quot; ipv6.method dhcp</span>
-<span class="w">         </span><span class="no">- nmcli c m &quot;cloud-init eth0&quot; +ipv6.routes &quot;fe80::1&quot;</span>
-<span class="w">         </span><span class="no">- nmcli c m &quot;cloud-init eth0&quot; +ipv6.routes &quot;::/0 fe80::1&quot;</span>
-<span class="w">         </span><span class="no">- nmcli c reload &quot;cloud-init eth0&quot;</span>
+<span class="w">         </span><span class="no">- nmcli c m "cloud-init eth0" ipv6.method dhcp</span>
+<span class="w">         </span><span class="no">- nmcli c m "cloud-init eth0" +ipv6.routes "fe80::1"</span>
+<span class="w">         </span><span class="no">- nmcli c m "cloud-init eth0" +ipv6.routes "::/0 fe80::1"</span>
+<span class="w">         </span><span class="no">- nmcli c reload "cloud-init eth0"</span>
 </code></pre></div></p>
 <p>For fedora coreos this can be configured with using the following
 ignition yaml:</p>
@@ -4528,8 +4528,8 @@ policies should be reconciled (deleted).</p>
 │ output-port: rtos-node1   │   │ nexthop: 10.64.0.2         │
 │ policy: dst-ip            │   │                            │  
 └───────────────────────────┘   └────────────────────────────┘ 
-- static route: ingress traffic to VM&#39;s IP via VM&#39;s node port
-- policy: egress n/s traffic from VM&#39;s IP via gateway router ip
+- static route: ingress traffic to VM's IP via VM's node port
+- policy: egress n/s traffic from VM's IP via gateway router ip
 </code></pre></div>
 <p>When ovn-kubernetes is deployed with multiple ovn zones interconected 
 an extra static route is added to the local zone (zone where vm is running) to

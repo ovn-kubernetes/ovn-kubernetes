@@ -3909,21 +3909,21 @@
 <p>Given the command-line arguments, ovnkube-trace would inspect the cluster to determine the addresses (MAC and IP) of the source and destination and perform <code>ovn-trace</code>, <code>ovs-appctl ofproto/trace</code>, and <code>ovn-detrace</code> from/to both directions.</p>
 <div class="highlight"><pre><span></span><code>Usage of /tmp/go-build1564673416/b001/exe/ovnkube-trace:
   -addr-family string
-        Address family (ip4 or ip6) to be used for tracing (default &quot;ip4&quot;)
+        Address family (ip4 or ip6) to be used for tracing (default "ip4")
   -dst string
         dest: destination pod name
   -dst-ip string
         destination IP address (meant for tests to external targets)
   -dst-namespace string
-        k8s namespace of dest pod (default &quot;default&quot;)
+        k8s namespace of dest pod (default "default")
   -dst-port string
-        dst-port: destination port (default &quot;80&quot;)
+        dst-port: destination port (default "80")
   -dump-udn-vrf-table-ids
         Dump the VRF table ID per node for all the user defined networks
   -kubeconfig string
         absolute path to the kubeconfig file
   -loglevel string
-        loglevel: klog level (default &quot;0&quot;)
+        loglevel: klog level (default "0")
   -ovn-config-namespace string
         namespace used by ovn-config itself
   -service string
@@ -3933,7 +3933,7 @@
   -src string
         src: source pod name
   -src-namespace string
-        k8s namespace of source pod (default &quot;default&quot;)
+        k8s namespace of source pod (default "default")
   -tcp
         use tcp transport protocol
   -udp
@@ -3977,7 +3977,7 @@ I0823 21:33:18.112821 2457963 ovnkube-trace.go:1157] Log level set to: 2
 I0823 21:33:18.857705 2457963 ovnkube-trace.go:693] ovn-trace source pod to destination pod Output:
 # udp,reg14=0x3,vlan_tci=0x0000,dl_src=0a:58:0a:f4:02:03,dl_dst=0a:58:0a:f4:02:01,nw_src=10.244.2.3,nw_dst=10.244.1.6,nw_tos=0,nw_ecn=0,nw_ttl=64,nw_frag=no,tp_src=52888,tp_dst=53
 
-ingress(dp=&quot;ovn-worker2&quot;, inport=&quot;default_fedora-deployment-7d49fddf69-chmvh&quot;)
+ingress(dp="ovn-worker2", inport="default_fedora-deployment-7d49fddf69-chmvh")
 ------------------------------------------------------------------------------
  0. ls_in_check_port_sec (northd.c:8583): 1, priority 50, uuid de664d3a
     reg0[15] = check_in_port_sec();
@@ -4026,14 +4026,14 @@ ct_lb_mark /* default (use --ct to customize) */
     reg8[30..31] = 0;
     next;
 27. ls_in_l2_lkup (northd.c:9407): eth.dst == { 0a:58:a9:fe:01:01, 0a:58:0a:f4:02:01 }, priority 50, uuid b29511a2
-    outport = &quot;stor-ovn-worker2&quot;;
+    outport = "stor-ovn-worker2";
     output;
 
-egress(dp=&quot;ovn-worker2&quot;, inport=&quot;default_fedora-deployment-7d49fddf69-chmvh&quot;, outport=&quot;stor-ovn-worker2&quot;)
+egress(dp="ovn-worker2", inport="default_fedora-deployment-7d49fddf69-chmvh", outport="stor-ovn-worker2")
 ---------------------------------------------------------------------------------------------------------
- 0. ls_out_pre_acl (northd.c:5878): ip &amp;&amp; outport == &quot;stor-ovn-worker2&quot;, priority 110, uuid 8b1bef96
+ 0. ls_out_pre_acl (northd.c:5878): ip &amp;&amp; outport == "stor-ovn-worker2", priority 110, uuid 8b1bef96
     next;
- 1. ls_out_pre_lb (northd.c:5878): ip &amp;&amp; outport == &quot;stor-ovn-worker2&quot;, priority 110, uuid d7c53e71
+ 1. ls_out_pre_lb (northd.c:5878): ip &amp;&amp; outport == "stor-ovn-worker2", priority 110, uuid d7c53e71
     next;
  3. ls_out_acl_hint (northd.c:6297): !ct.new &amp;&amp; ct.est &amp;&amp; !ct.rpl &amp;&amp; ct_mark.blocked == 0, priority 4, uuid 26b08bb5
     reg0[8] = 1;
@@ -4056,11 +4056,11 @@ egress(dp=&quot;ovn-worker2&quot;, inport=&quot;default_fedora-deployment-7d49fd
     next;
 10. ls_out_apply_port_sec (northd.c:5848): 1, priority 0, uuid 12ba0dbe
     output;
-    /* output to &quot;stor-ovn-worker2&quot;, type &quot;patch&quot; */
+    /* output to "stor-ovn-worker2", type "patch" */
 
-ingress(dp=&quot;ovn_cluster_router&quot;, inport=&quot;rtos-ovn-worker2&quot;)
+ingress(dp="ovn_cluster_router", inport="rtos-ovn-worker2")
 -----------------------------------------------------------
- 0. lr_in_admission (northd.c:11790): eth.dst == { 0a:58:a9:fe:01:01, 0a:58:0a:f4:02:01 } &amp;&amp; inport == &quot;rtos-ovn-worker2&quot; &amp;&amp; is_chassis_resident(&quot;cr-rtos-ovn-worker2&quot;), priority 50, uuid e40942af
+ 0. lr_in_admission (northd.c:11790): eth.dst == { 0a:58:a9:fe:01:01, 0a:58:0a:f4:02:01 } &amp;&amp; inport == "rtos-ovn-worker2" &amp;&amp; is_chassis_resident("cr-rtos-ovn-worker2"), priority 50, uuid e40942af
     xreg0[0..47] = 0a:58:0a:f4:02:01;
     next;
  1. lr_in_lookup_neighbor (northd.c:11956): 1, priority 0, uuid 897d00f0
@@ -4077,7 +4077,7 @@ ingress(dp=&quot;ovn_cluster_router&quot;, inport=&quot;rtos-ovn-worker2&quot;)
     reg0 = 100.88.0.4;
     reg1 = 100.88.0.2;
     eth.src = 0a:58:a8:fe:00:02;
-    outport = &quot;rtots-ovn-worker2&quot;;
+    outport = "rtots-ovn-worker2";
     flags.loopback = 1;
     next;
 14. lr_in_ip_routing_ecmp (northd.c:12285): reg8[0..15] == 0, priority 150, uuid a1ea724a
@@ -4087,49 +4087,49 @@ ingress(dp=&quot;ovn_cluster_router&quot;, inport=&quot;rtos-ovn-worker2&quot;)
     next;
 16. lr_in_policy_ecmp (northd.c:12452): reg8[0..15] == 0, priority 150, uuid 3841a2fc
     next;
-17. lr_in_arp_resolve (northd.c:12665): outport == &quot;rtots-ovn-worker2&quot; &amp;&amp; reg0 == 100.88.0.4, priority 100, uuid 792c14a1
+17. lr_in_arp_resolve (northd.c:12665): outport == "rtots-ovn-worker2" &amp;&amp; reg0 == 100.88.0.4, priority 100, uuid 792c14a1
     eth.dst = 0a:58:a8:fe:00:04;
     next;
 21. lr_in_arp_request (northd.c:13083): 1, priority 0, uuid f21b210a
     output;
 
-egress(dp=&quot;ovn_cluster_router&quot;, inport=&quot;rtos-ovn-worker2&quot;, outport=&quot;rtots-ovn-worker2&quot;)
+egress(dp="ovn_cluster_router", inport="rtos-ovn-worker2", outport="rtots-ovn-worker2")
 ---------------------------------------------------------------------------------------
  0. lr_out_chk_dnat_local (northd.c:14444): 1, priority 0, uuid 2f6e84ed
     reg9[4] = 0;
     next;
- 6. lr_out_delivery (northd.c:13129): outport == &quot;rtots-ovn-worker2&quot;, priority 100, uuid 81cdee53
+ 6. lr_out_delivery (northd.c:13129): outport == "rtots-ovn-worker2", priority 100, uuid 81cdee53
     output;
-    /* output to &quot;rtots-ovn-worker2&quot;, type &quot;patch&quot; */
+    /* output to "rtots-ovn-worker2", type "patch" */
 
-ingress(dp=&quot;transit_switch&quot;, inport=&quot;tstor-ovn-worker2&quot;)
+ingress(dp="transit_switch", inport="tstor-ovn-worker2")
 --------------------------------------------------------
  0. ls_in_check_port_sec (northd.c:8583): 1, priority 50, uuid de664d3a
     reg0[15] = check_in_port_sec();
     next;
- 5. ls_in_pre_lb (northd.c:5875): ip &amp;&amp; inport == &quot;tstor-ovn-worker2&quot;, priority 110, uuid 69169a39
+ 5. ls_in_pre_lb (northd.c:5875): ip &amp;&amp; inport == "tstor-ovn-worker2", priority 110, uuid 69169a39
     next;
 27. ls_in_l2_lkup (northd.c:9329): eth.dst == 0a:58:a8:fe:00:04, priority 50, uuid da101703
-    outport = &quot;tstor-ovn-worker&quot;;
+    outport = "tstor-ovn-worker";
     output;
 
-egress(dp=&quot;transit_switch&quot;, inport=&quot;tstor-ovn-worker2&quot;, outport=&quot;tstor-ovn-worker&quot;)
+egress(dp="transit_switch", inport="tstor-ovn-worker2", outport="tstor-ovn-worker")
 -----------------------------------------------------------------------------------
  9. ls_out_check_port_sec (northd.c:5843): 1, priority 0, uuid 79358872
     reg0[15] = check_out_port_sec();
     next;
 10. ls_out_apply_port_sec (northd.c:5848): 1, priority 0, uuid 12ba0dbe
     output;
-    /* output to &quot;tstor-ovn-worker&quot;, type &quot;remote&quot; */
+    /* output to "tstor-ovn-worker", type "remote" */
 
 ovn-trace source pod to destination pod indicates success from fedora-deployment-7d49fddf69-chmvh to fedora-deployment-7d49fddf69-t4hqw
 I0823 21:33:18.858296 2457963 ovnkube-trace.go:704] Search string matched:
-output to &quot;tstor-ovn-worker&quot;
+output to "tstor-ovn-worker"
 (...)
 I0823 21:33:19.169751 2457963 ovnkube-trace.go:693] ovs-appctl ofproto/trace source pod to destination pod Output:
 Flow: udp,in_port=7,vlan_tci=0x0000,dl_src=0a:58:0a:f4:02:03,dl_dst=0a:58:0a:f4:02:01,nw_src=10.244.2.3,nw_dst=10.244.1.6,nw_tos=0,nw_ecn=0,nw_ttl=64,nw_frag=no,tp_src=12345,tp_dst=53
 
-bridge(&quot;br-int&quot;)
+bridge("br-int")
 ----------------
  0. in_port=7, priority 100, cookie 0x6c1d0b4a
     set_field:0x13-&gt;reg13
@@ -4177,7 +4177,7 @@ Replacing src/dst IP/ports to simulate NAT:
 
 Flow: recirc_id=0x12,ct_state=new|trk,ct_zone=19,eth,udp,reg0=0x5,reg11=0xb,reg12=0x6,reg13=0x13,reg14=0x3,metadata=0x3,in_port=7,vlan_tci=0x0000,dl_src=0a:58:0a:f4:02:03,dl_dst=0a:58:0a:f4:02:01,nw_src=10.244.2.3,nw_dst=10.244.1.6,nw_tos=0,nw_ecn=0,nw_ttl=64,nw_frag=no,tp_src=12345,tp_dst=53
 
-bridge(&quot;br-int&quot;)
+bridge("br-int")
 ----------------
     thaw
         Resuming from table 15
