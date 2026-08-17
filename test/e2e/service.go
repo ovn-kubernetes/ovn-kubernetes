@@ -143,8 +143,9 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 
 		ginkgo.By("creating a host-network backend pod")
 
+		httpPort := infraprovider.Get().GetK8HostPort()
 		serverPod := e2epod.NewAgnhostPod(namespace, "backend", nil, nil, []v1.ContainerPort{{ContainerPort: (int32(targetPort))}, {ContainerPort: (int32(targetPort)), Protocol: "UDP"}},
-			"netexec", fmt.Sprintf("--http-port=%d", targetPort), fmt.Sprintf("--udp-port=%d", targetPort))
+			"netexec", fmt.Sprintf("--http-port=%d", httpPort), fmt.Sprintf("--udp-port=%d", targetPort))
 		serverPod.Labels = jig.Labels
 		serverPod.Spec.HostNetwork = true
 
@@ -153,7 +154,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 
 		ginkgo.By("Connecting to the service from node " + nodeName)
 		err = wait.PollImmediate(framework.Poll, 30*time.Second, func() (bool, error) {
-			response, err := tryPokeEndpointViaNode(nodeName, "udp", service.Spec.ClusterIP, uint16(targetPort), 80, "hostname")
+			response, err := tryPokeEndpointViaNode(nodeName, "udp", service.Spec.ClusterIP, uint16(httpPort), 80, "hostname")
 			if err != nil {
 				return false, nil
 			}
@@ -689,8 +690,9 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 		ginkgo.By("Starting a UDP server listening on the additional IP")
 		// now that 2.2.2.2 exists on the node's lo interface, let's start a server listening on it
 		// we use UDP here since agnhost lets us pick the listen address only for UDP
+		httpPort := infraprovider.Get().GetK8HostPort()
 		serverPod := e2epod.NewAgnhostPod(namespace, "backend", nil, nil, []v1.ContainerPort{{ContainerPort: int32(udpHostNsPort)}, {ContainerPort: int32(udpHostNsPort), Protocol: "UDP"}},
-			"netexec", "--http-port="+fmt.Sprintf("%d", udpHostNsPort), "--udp-port="+fmt.Sprintf("%d", udpHostNsPort), "--udp-listen-addresses="+extraIP)
+			"netexec", fmt.Sprintf("--http-port=%d", httpPort), "--udp-port="+fmt.Sprintf("%d", udpHostNsPort), "--udp-listen-addresses="+extraIP)
 		serverPod.Labels = jig.Labels
 		serverPod.Spec.NodeName = nodeName
 		serverPod.Spec.HostNetwork = true
@@ -701,7 +703,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 		// Connect from host -> additional IP. This shouldn't touch OVN at all, just acting as a basic
 		// sanity check that we're actually listening on this IP
 		err = wait.PollImmediate(framework.Poll, 30*time.Second, func() (bool, error) {
-			response, err := tryPokeEndpointViaNode(nodeName, "udp", extraIP, uint16(udpHostNsPort), uint16(udpHostNsPort), "hostname")
+			response, err := tryPokeEndpointViaNode(nodeName, "udp", extraIP, uint16(httpPort), uint16(udpHostNsPort), "hostname")
 			if err != nil {
 				return false, nil
 			}
@@ -736,7 +738,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 
 		ginkgo.By("Confirming that the service is accesible via the service IP from a host-network pod")
 		err = wait.PollImmediate(framework.Poll, 30*time.Second, func() (bool, error) {
-			response, err := tryPokeEndpointViaNode(nodeName, "udp", service.Spec.ClusterIP, uint16(udpHostNsPort), 80, "hostname")
+			response, err := tryPokeEndpointViaNode(nodeName, "udp", service.Spec.ClusterIP, uint16(httpPort), 80, "hostname")
 			if err != nil {
 				return false, nil
 			}
