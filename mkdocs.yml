@@ -207,5 +207,6 @@ nav:
     - Disable Port Security: okeps/okep-3926-disable-port-security.md
     - OVN Observability API: okeps/okep-5212-ovnobserv-api.md
     - EgressIP Node Selector: okeps/okep-6800-egressip-node-selector.md
+    - NetworkQoS for Ipamless Localnet Networks: okeps/okep-6815-network-qos-ipamless.md
   - Blog:
     - OVN-Kubernetes Blog: blog/index.md
