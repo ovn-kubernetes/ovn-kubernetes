@@ -6017,12 +6017,12 @@ controller to connect the topologies of the UDNs selected by this CR.</p>
 
 <span class="kd">const</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="c1">// PodNetwork enables direct pod-to-pod communication across connected networks.</span>
-<span class="w">    </span><span class="nx">PodNetwork</span><span class="w"> </span><span class="nx">ConnectivityType</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">"PodNetwork"</span>
+<span class="w">    </span><span class="nx">PodNetwork</span><span class="w"> </span><span class="nx">ConnectivityType</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"PodNetwork"</span>
 
 <span class="w">    </span><span class="c1">// ServiceNetwork enables ClusterIP service access across connected networks.</span>
 <span class="w">    </span><span class="c1">// Note that services of type nodeports and loadbalancers are already reachable</span>
 <span class="w">      </span><span class="c1">// across networks by default.</span>
-<span class="w">    </span><span class="nx">ServiceNetwork</span><span class="w"> </span><span class="nx">ConnectivityType</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">"ServiceNetwork"</span>
+<span class="w">    </span><span class="nx">ServiceNetwork</span><span class="w"> </span><span class="nx">ConnectivityType</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"ServiceNetwork"</span>
 <span class="p">)</span>
 
 <span class="c1">// StatusType represents the status of a ClusterNetworkConnect.</span>
@@ -6031,10 +6031,10 @@ controller to connect the topologies of the UDNs selected by this CR.</p>
 
 <span class="kd">const</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="c1">// Success indicates that the ClusterNetworkConnect has been successfully applied.</span>
-<span class="w">    </span><span class="nx">Success</span><span class="w"> </span><span class="nx">StatusType</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">"Success"</span>
+<span class="w">    </span><span class="nx">Success</span><span class="w"> </span><span class="nx">StatusType</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"Success"</span>
 
 <span class="w">    </span><span class="c1">// Failure indicates that the ClusterNetworkConnect has failed to be applied.</span>
-<span class="w">    </span><span class="nx">Failure</span><span class="w"> </span><span class="nx">StatusType</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">"Failure"</span>
+<span class="w">    </span><span class="nx">Failure</span><span class="w"> </span><span class="nx">StatusType</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"Failure"</span>
 <span class="p">)</span>
 
 <span class="c1">// ClusterNetworkConnectStatus defines the observed state of ClusterNetworkConnect.</span>

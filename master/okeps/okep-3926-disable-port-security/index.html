@@ -5689,12 +5689,12 @@ cannot set this field.</p>
 <span class="kd">const</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="c1">// MACSecurityModeEnabled restricts traffic on logical switch ports to the assigned</span>
 <span class="w">    </span><span class="c1">// MAC (and IP, when IPAM is enabled) addresses. This is the default behavior.</span>
-<span class="w">    </span><span class="nx">MACSecurityModeEnabled</span><span class="w"> </span><span class="nx">MACSecurityMode</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">"Enabled"</span>
+<span class="w">    </span><span class="nx">MACSecurityModeEnabled</span><span class="w"> </span><span class="nx">MACSecurityMode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"Enabled"</span>
 
 <span class="w">    </span><span class="c1">// MACSecurityModeDisabled removes MAC spoof protection restrictions and enables unknown MAC</span>
 <span class="w">    </span><span class="c1">// address handling via the OVN `unknown` address keyword with `force_fdb_lookup` for</span>
 <span class="w">    </span><span class="c1">// FDB-based unicast delivery.</span>
-<span class="w">    </span><span class="nx">MACSecurityModeDisabled</span><span class="w"> </span><span class="nx">MACSecurityMode</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">"Disabled"</span>
+<span class="w">    </span><span class="nx">MACSecurityModeDisabled</span><span class="w"> </span><span class="nx">MACSecurityMode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"Disabled"</span>
 <span class="p">)</span>
 
 <span class="c1">// MACSecurityConfig configures MAC spoof protection behavior on logical switch ports attached</span>

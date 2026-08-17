@@ -4897,6 +4897,15 @@ metadata:
 </code></pre></div>
 <p>When one or more CUDNs reference an <code>Uplink</code>, OVN-Kubernetes keeps a finalizer
 on the <code>Uplink</code> so it cannot be deleted while still selected by a CUDN.</p>
+<p><code>UplinkState</code> objects are exclusively owned by OVN-Kubernetes and recover from
+out-of-band deletion: if an <code>UplinkState</code> is deleted directly (for example with
+<code>kubectl delete</code>), ovnkube-node recreates it without a restart, discovery
+republishes <code>Resolved=True</code>, a previously published <code>GatewayReady</code> condition is
+restored (on a brand-new <code>UplinkState</code> it still appears only once gateway
+programming has run), and the CUDN returns to <code>UplinksReady=True</code>. An <code>UplinkState</code> is not
+recreated when its <code>Uplink</code> is terminating (its <code>UplinkState</code> objects are
+deleted on purpose during teardown), no longer exists, or no longer selects the
+node.</p>
 <p>The CUDN reports a CUDN-specific <code>UplinksReady</code> condition. This condition is
 computed from the active nodes for that CUDN, not directly from aggregate
 <code>Uplink.status</code>. This matters with Dynamic UDN, where two CUDNs can reference
