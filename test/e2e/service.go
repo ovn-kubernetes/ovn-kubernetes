@@ -158,7 +158,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 			if err != nil {
 				return false, nil
 			}
-			return response == nodeName, nil
+			return hostnameMatchesNode(response, nodeName), nil
 		})
 		framework.ExpectNoError(err)
 	})
@@ -707,7 +707,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 			if err != nil {
 				return false, nil
 			}
-			return response == nodeName, nil
+			return hostnameMatchesNode(response, nodeName), nil
 		})
 		framework.ExpectNoError(err)
 
@@ -742,7 +742,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 			if err != nil {
 				return false, nil
 			}
-			return response == nodeName, nil
+			return hostnameMatchesNode(response, nodeName), nil
 		})
 		framework.ExpectNoError(err)
 
@@ -767,7 +767,8 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 			if err != nil {
 				return false, err
 			}
-			return stdout == fmt.Sprintf(`{"responses":["%s"]}`, nodeName), nil
+			return stdout == fmt.Sprintf(`{"responses":["%s"]}`, nodeName) ||
+				stdout == fmt.Sprintf(`{"responses":["%s"]}`, strings.Split(nodeName, ".")[0]), nil
 		})
 		framework.ExpectNoError(err)
 	})
@@ -3694,4 +3695,10 @@ func getServingAndReadyEndpointSliceAddresses(epSlice discoveryv1.EndpointSlice)
 		addresses.Insert(ep.Addresses[0])
 	}
 	return addresses
+}
+
+// hostnameMatchesNode matches an agnhost hostname against a node name,
+// accepting either the full node name or its short hostname.
+func hostnameMatchesNode(hostname, nodeName string) bool {
+	return hostname == nodeName || hostname == strings.Split(nodeName, ".")[0]
 }
