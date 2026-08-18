@@ -240,11 +240,11 @@ add set inet ovn-kubernetes udn-pod-default-ips-v4 { type ipv4_addr ; comment "d
 add set inet ovn-kubernetes udn-pod-default-ips-v6 { type ipv6_addr ; comment "default network IPs of pods in user defined networks (IPv6)" ; }
 add rule inet ovn-kubernetes udn-isolation ip daddr . meta l4proto . th dport @udn-open-ports-v4 accept
 add rule inet ovn-kubernetes udn-isolation ip daddr @udn-open-ports-icmp-v4 meta l4proto icmp accept
-add rule inet ovn-kubernetes udn-isolation socket cgroupv2 level 2 kubelet.slice/kubelet.service ip daddr @udn-pod-default-ips-v4 accept
+add rule inet ovn-kubernetes udn-isolation socket cgroupv2 level 2 "kubelet.slice/kubelet.service" ip daddr @udn-pod-default-ips-v4 accept
 add rule inet ovn-kubernetes udn-isolation ip daddr @udn-pod-default-ips-v4 drop
 add rule inet ovn-kubernetes udn-isolation ip6 daddr . meta l4proto . th dport @udn-open-ports-v6 accept
 add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-open-ports-icmp-v6 meta l4proto icmpv6 accept
-add rule inet ovn-kubernetes udn-isolation socket cgroupv2 level 2 kubelet.slice/kubelet.service ip6 daddr @udn-pod-default-ips-v6 accept
+add rule inet ovn-kubernetes udn-isolation socket cgroupv2 level 2 "kubelet.slice/kubelet.service" ip6 daddr @udn-pod-default-ips-v6 accept
 add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-pod-default-ips-v6 drop
 `
 		for _, ip := range v4ips {
@@ -591,16 +591,16 @@ add rule inet ovn-kubernetes udn-isolation ip daddr . meta l4proto . th dport @u
 add rule inet ovn-kubernetes udn-isolation ip daddr @udn-open-ports-icmp-v4 meta l4proto icmp accept
 `
 		if kubeletCgroupPath != "" {
-			result += fmt.Sprintf("add rule inet ovn-kubernetes udn-isolation socket cgroupv2 level 2 %s ip daddr @udn-pod-default-ips-v4 accept\n",
-				kubeletCgroupPath)
+			result += fmt.Sprintf("add rule inet ovn-kubernetes udn-isolation socket cgroupv2 %s %q ip daddr @udn-pod-default-ips-v4 accept\n",
+				cgroupv2Level(kubeletCgroupPath), kubeletCgroupPath)
 		}
 		result += `add rule inet ovn-kubernetes udn-isolation ip daddr @udn-pod-default-ips-v4 drop
 add rule inet ovn-kubernetes udn-isolation ip6 daddr . meta l4proto . th dport @udn-open-ports-v6 accept
 add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-open-ports-icmp-v6 meta l4proto icmpv6 accept
 `
 		if kubeletCgroupPath != "" {
-			result += fmt.Sprintf("add rule inet ovn-kubernetes udn-isolation socket cgroupv2 level 2 %s ip6 daddr @udn-pod-default-ips-v6 accept\n",
-				kubeletCgroupPath)
+			result += fmt.Sprintf("add rule inet ovn-kubernetes udn-isolation socket cgroupv2 %s %q ip6 daddr @udn-pod-default-ips-v6 accept\n",
+				cgroupv2Level(kubeletCgroupPath), kubeletCgroupPath)
 		}
 		result += "add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-pod-default-ips-v6 drop\n"
 		return result
@@ -657,6 +657,28 @@ add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-open-ports-icmp-v6 met
 			Expect(nodenft.MatchNFTRules(expectedDump(""), fakeNFT.Dump())).To(Succeed())
 		})
 	})
+
+	DescribeTable("derives the socket cgroupv2 match level from the cgroup path depth",
+		func(cgroupPath, expectedLevel string) {
+			Expect(cgroupv2Level(cgroupPath)).To(Equal(expectedLevel))
+		},
+		Entry("systemd layout", "kubelet.slice/kubelet.service", "level 2"),
+		Entry("single component", "kubelet", "level 1"),
+		Entry("nested layout", "runtime.slice/kubelet.slice/kubelet.service", "level 3"),
+	)
+
+	DescribeTable("quotes the cgroup path for the socket cgroupv2 match",
+		func(cgroupPath, expected string) {
+			Expect(quoteCgroupPath(cgroupPath)).To(Equal(expected))
+		},
+		Entry("plain path", "kubelet.slice/kubelet.service", `"kubelet.slice/kubelet.service"`),
+		// "@" starts a set reference in nft, so an unquoted template unit is a parse
+		// error rather than a match that never fires.
+		Entry("template unit", "system-getty.slice/getty@tty1.service", `"system-getty.slice/getty@tty1.service"`),
+		Entry("colon in name", "system.slice/foo:bar.service", `"system.slice/foo:bar.service"`),
+		Entry("backslash is escaped", `system.slice/systemd\x2dcryptsetup.slice`, `"system.slice/systemd\\x2dcryptsetup.slice"`),
+		Entry("quote cannot end the string early", `system.slice/foo".service`, `"system.slice/foo\".service"`),
+	)
 
 	It("reports unsupported kubelet probes on the node", func() {
 		manager.reportKubeletProbesUnsupported("the node uses cgroup v1")
