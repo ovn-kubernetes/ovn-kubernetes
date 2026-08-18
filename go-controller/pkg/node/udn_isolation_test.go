@@ -786,6 +786,43 @@ add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-open-ports-icmp-v6 met
 		})
 	})
 
+	DescribeTable("derives the systemd unit that owns the kubelet cgroup",
+		func(cgroupPath, expectedUnit string) {
+			unit, err := kubeletSystemdUnit(cgroupPath)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(unit).To(Equal(expectedUnit))
+		},
+		Entry("systemd layout", "kubelet.slice/kubelet.service", "kubelet.service"),
+		Entry("renamed unit", "system.slice/rke2-agent.service", "rke2-agent.service"),
+		Entry("scope", "kubelet.slice/kubelet.scope", "kubelet.scope"),
+	)
+
+	DescribeTable("reports no systemd unit for a cgroup that is not a unit",
+		func(cgroupPath string) {
+			_, err := kubeletSystemdUnit(cgroupPath)
+			Expect(err).To(MatchError(ContainSubstring("no systemd unit corresponds to cgroup")))
+		},
+		// Talos runs kubelet in a plain cgroup, with no systemd anywhere.
+		Entry("non-systemd host", "podruntime/kubelet"),
+		// an ancestor cgroup is not a unit either.
+		Entry("slice", "kubelet.slice"),
+	)
+
+	DescribeTable("decodes systemd unit names from D-Bus object paths",
+		func(escapedUnit, expectedUnit string) {
+			Expect(decodeSystemdUnitName(escapedUnit)).To(Equal(expectedUnit))
+		},
+		Entry("dot only", "kubelet_2eservice", "kubelet.service"),
+		// systemd escapes every character outside [A-Za-z0-9], so a renamed unit
+		// carries more than the dot and is not matched by decoding the dot alone.
+		Entry("hyphen and dot", "custom_2dkubelet_2eservice", "custom-kubelet.service"),
+		Entry("uppercase hex", "custom_2Dkubelet_2Eservice", "custom-kubelet.service"),
+		Entry("template unit", "getty_40tty1_2eservice", "getty@tty1.service"),
+		Entry("nothing to decode", "kubelet", "kubelet"),
+		Entry("incomplete escape is kept", "kubelet_2", "kubelet_2"),
+		Entry("invalid escape is kept", "custom_zzkubelet", "custom_zzkubelet"),
+	)
+
 	It("reports unsupported kubelet probes on the node", func() {
 		manager.reportKubeletProbesUnsupported("the node uses cgroup v1")
 
