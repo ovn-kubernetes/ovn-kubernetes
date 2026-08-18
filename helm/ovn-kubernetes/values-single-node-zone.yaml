@@ -73,6 +73,10 @@ global:
   enableMultiNetwork: false
   # -- Configure to use user defined networks (UDN) feature with ovn-kubernetes
   enableNetworkSegmentation: false
+  # -- Configure to enable IPv4 broadcast isolation and ARP proxy flows on external bridge (e.g., br-ex)
+  enableUDNARPProxy: false
+  # -- Configure to enable IPv6 multicast isolation and MAC binding propagation on UDN gateway routers
+  enableUDNNDPProxy: false  
   # -- Configure to enable cluster network connect feature with ovn-kubernetes
   enableNetworkConnect: false
   # -- Configure to enable the uplink feature with ovn-kubernetes
