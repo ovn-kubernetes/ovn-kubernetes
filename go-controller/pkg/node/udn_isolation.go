@@ -288,6 +288,30 @@ func (m *UDNHostIsolationManager) setupUDNIsolationFromHost() error {
 	return nil
 }
 
+// cgroupv2Level returns the "level" argument of the nftables socket cgroupv2 match for
+// the given cgroup path. The match compares the cgroup ancestor at that level, so the
+// level has to be the depth of the path, e.g. 2 for "kubelet.slice/kubelet.service".
+func cgroupv2Level(cgroupPath string) string {
+	return fmt.Sprintf("level %d", strings.Count(cgroupPath, "/")+1)
+}
+
+// quoteCgroupPath renders the cgroup path as a quoted nftables string. Cgroup directory
+// names may contain characters nft would otherwise read as syntax, most importantly "@",
+// which starts a set reference. Backslashes and quotes are escaped so a path cannot
+// terminate the string early.
+func quoteCgroupPath(cgroupPath string) string {
+	escaped := strings.ReplaceAll(cgroupPath, `\`, `\\`)
+	escaped = strings.ReplaceAll(escaped, `"`, `\"`)
+	return `"` + escaped + `"`
+}
+
+// kubeletCgroupMatch returns the nftables match that selects traffic originating from
+// the kubelet cgroup. Both the isolation rules and the kernel support check build the
+// match here, so what is checked is exactly what is installed.
+func kubeletCgroupMatch(cgroupPath string) []string {
+	return []string{"socket", "cgroupv2", cgroupv2Level(cgroupPath), quoteCgroupPath(cgroupPath)}
+}
+
 func (m *UDNHostIsolationManager) addRules(tx *knftables.Transaction) {
 	if m.ipv4 {
 		tx.Add(&knftables.Rule{
@@ -309,7 +333,7 @@ func (m *UDNHostIsolationManager) addRules(tx *knftables.Transaction) {
 			tx.Add(&knftables.Rule{
 				Chain: UDNIsolationChain,
 				Rule: knftables.Concat(
-					"socket", "cgroupv2", "level 2", m.kubeletCgroupPath,
+					kubeletCgroupMatch(m.kubeletCgroupPath),
 					"ip", "daddr", "@", nftablesUDNPodIPsv4, "accept"),
 			})
 		}
@@ -339,7 +363,7 @@ func (m *UDNHostIsolationManager) addRules(tx *knftables.Transaction) {
 			tx.Add(&knftables.Rule{
 				Chain: UDNIsolationChain,
 				Rule: knftables.Concat(
-					"socket", "cgroupv2", "level 2", m.kubeletCgroupPath,
+					kubeletCgroupMatch(m.kubeletCgroupPath),
 					"ip6", "daddr", "@", nftablesUDNPodIPsv6, "accept"),
 			})
 		}
