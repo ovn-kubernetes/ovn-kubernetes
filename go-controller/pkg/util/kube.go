@@ -139,9 +139,11 @@ type OVNClusterManagerClientset struct {
 }
 
 const (
-	certNamePrefix       = "ovnkube-client"
-	certCommonNamePrefix = "system:ovn-node"
-	certOrganization     = "system:ovn-nodes"
+	certNamePrefix              = "ovnkube-client"
+	certCommonNamePrefix        = "system:ovn-node"
+	certCommonNamePrefixDPUHost = "system:ovn-node-dpu-host"
+	certOrganization            = "system:ovn-nodes"
+	certOrganizationDPUHost     = "system:ovn-nodes-dpu-host"
 )
 
 var (
@@ -277,12 +279,13 @@ func newKubernetesRestConfig(conf *config.KubernetesConfig) (*rest.Config, error
 }
 
 // StartNodeCertificateManager manages the creation and rotation of the node-specific client certificate.
-// When there is no existing certificate, it will use the BootstrapKubeconfig kubeconfig to create a CSR and it will
-// wait for the certificate before returning.
+// When there is no existing certificate, it will use the BootstrapKubeconfig kubeconfig to create a CSR
+// and wait for the certificate before returning.
 func StartNodeCertificateManager(ctx context.Context, wg *sync.WaitGroup, nodeName string, conf *config.KubernetesConfig) error {
 	if nodeName == "" {
 		return fmt.Errorf("the provided node name cannot be empty")
 	}
+
 	defaultKConfig, err := newKubernetesRestConfig(conf)
 	if err != nil {
 		return fmt.Errorf("unable to create kubernetes rest config, err: %v", err)
@@ -290,10 +293,14 @@ func StartNodeCertificateManager(ctx context.Context, wg *sync.WaitGroup, nodeNa
 	defaultKConfig.AcceptContentTypes = "application/vnd.kubernetes.protobuf,application/json"
 	defaultKConfig.ContentType = "application/vnd.kubernetes.protobuf"
 
+	if conf.BootstrapKubeconfig == "" {
+		return fmt.Errorf("bootstrap kubeconfig is required for certificate manager")
+	}
 	bootstrapKConfig, err := clientcmd.BuildConfigFromFlags("", conf.BootstrapKubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to load bootstrap kubeconfig from %s, err: %v", conf.BootstrapKubeconfig, err)
 	}
+
 	// If we have a valid certificate, use that to fetch CSRs.
 	// Otherwise, use the bootstrap credentials.
 	// https://github.com/kubernetes/kubernetes/blob/068ee321bc7bfe1c2cefb87fb4d9e5deea84fbc8/cmd/kubelet/app/server.go#L953-L963
@@ -311,9 +318,18 @@ func StartNodeCertificateManager(ctx context.Context, wg *sync.WaitGroup, nodeNa
 	}
 
 	// The CSR approver only accepts CSRs created by system:ovn-node:nodeName and system:node:nodeName.
-	// If the node name in the existing ovn-node certificate is different from the current node name,
-	// remove the certificate so the CSR will be created using the bootstrap kubeconfig using system:node:nodeName user.
-	certCommonName := fmt.Sprintf("%s:%s", certCommonNamePrefix, nodeName)
+	// If the node name in the existing certificate is different from the current node name,
+	// remove the certificate so a new CSR will be created.
+	// dpu-host uses a distinct per-node common name (system:ovn-node-dpu-host:<node>) and
+	// Organization (system:ovn-nodes-dpu-host) so its identity is bound to a narrower
+	// ClusterRole and node-annotation allowlist than full-mode nodes (system:ovn-nodes).
+	cnPrefix := certCommonNamePrefix
+	certOrg := certOrganization
+	if config.IsModeDPUHost() {
+		cnPrefix = certCommonNamePrefixDPUHost
+		certOrg = certOrganizationDPUHost
+	}
+	certCommonName := fmt.Sprintf("%s:%s", cnPrefix, nodeName)
 	currentCertFromFile, err := certificateStore.Current()
 	if err == nil && currentCertFromFile.Leaf != nil {
 		if currentCertFromFile.Leaf.Subject.CommonName != certCommonName {
@@ -346,7 +362,7 @@ func StartNodeCertificateManager(ctx context.Context, wg *sync.WaitGroup, nodeNa
 		Template: &x509.CertificateRequest{
 			Subject: pkix.Name{
 				CommonName:   certCommonName,
-				Organization: []string{certOrganization},
+				Organization: []string{certOrg},
 			},
 		},
 		RequestedCertificateLifetime: &conf.CertDuration,

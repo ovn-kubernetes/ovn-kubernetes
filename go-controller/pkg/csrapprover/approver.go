@@ -30,8 +30,15 @@ import (
 
 const (
 	ControllerName = "ovnkube-csr-approver-controller"
-	NamePrefix     = "system:ovn-node"
 	MaxDuration    = time.Hour * 24 * 365
+
+	// ovnkube-node running in dpu-host mode has its own acceptance condition
+	// and RBAC group, so it can be bound to a narrower ClusterRole and a
+	// restricted node-annotation allowlist than fullmode nodes.
+	NamePrefix           = "system:ovn-node"
+	NamePrefixDPUHost    = "system:ovn-node-dpu-host"
+	OVNNodesGroup        = "system:ovn-nodes"
+	OVNNodesDPUHostGroup = "system:ovn-nodes-dpu-host"
 )
 
 // CSRAcceptanceCondition specifies conditions which CSRs are approved by csrapprover.
@@ -77,7 +84,7 @@ func InitCSRAcceptanceConditions(fileName string) (conditions []CSRAcceptanceCon
 		}
 	}
 
-	conditions = append([]CSRAcceptanceCondition{DefaultCSRAcceptanceCondition}, conditions...)
+	conditions = append([]CSRAcceptanceCondition{DefaultCSRAcceptanceCondition, DPUHostCSRAcceptanceCondition}, conditions...)
 	// initialize Sets from slices
 	for i, v := range conditions {
 		conditions[i].groupsSet = sets.New[string](v.Groups...)
@@ -90,10 +97,20 @@ func InitCSRAcceptanceConditions(fileName string) (conditions []CSRAcceptanceCon
 var (
 	DefaultCSRAcceptanceCondition = CSRAcceptanceCondition{
 		CommonNamePrefix: NamePrefix,
-		Organizations:    []string{"system:ovn-nodes"},
-		Groups:           []string{"system:nodes", "system:ovn-nodes", "system:authenticated"},
+		Organizations:    []string{OVNNodesGroup},
+		Groups:           []string{"system:nodes", OVNNodesGroup, "system:authenticated"},
 		UserPrefixes:     []string{"system:node", NamePrefix},
 		Default:          true,
+	}
+	// DPUHostCSRAcceptanceCondition accepts CSRs from ovnkube-node running in dpu-host
+	// mode. It uses its own per-node common name prefix (system:ovn-node-dpu-host) and the
+	// dpu-host Organization/group, so the resulting identity is bound to the narrower
+	// ovnkube-node-dpu-host ClusterRole instead of ovnkube-node.
+	DPUHostCSRAcceptanceCondition = CSRAcceptanceCondition{
+		CommonNamePrefix: NamePrefixDPUHost,
+		Organizations:    []string{OVNNodesDPUHostGroup},
+		Groups:           []string{"system:nodes", OVNNodesDPUHostGroup, "system:authenticated"},
+		UserPrefixes:     []string{"system:node", NamePrefixDPUHost},
 	}
 	Usages = sets.New[certificatesv1.KeyUsage](
 		certificatesv1.UsageDigitalSignature,
