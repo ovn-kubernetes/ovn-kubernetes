@@ -1279,6 +1279,7 @@ func expectedLayer2EgressEntities(netInfo util.NetInfo, gwConfig util.L3GatewayC
 		clusterRouter.Options["ct-commit-all"] = "true"
 	}
 
+	joinRoute := expectedGRStaticRoute(staticRouteUUID2, gwRouterJoinIPAddress().IP.String(), trInfo.gatewayRouterNets[0].IP.String(), nil, nil, netInfo)
 	expectedEntities := []libovsdbtest.TestData{
 		clusterRouter,
 		&nbdb.LogicalRouterPort{
@@ -1302,7 +1303,7 @@ func expectedLayer2EgressEntities(netInfo util.NetInfo, gwConfig util.L3GatewayC
 			ExternalIDs: standardNonDefaultNetworkExtIDs(netInfo),
 		},
 		expectedGRStaticRoute(staticRouteUUID1, nodeSubnet.String(), lrsrNextHop, &nbdb.LogicalRouterStaticRoutePolicySrcIP, nil, netInfo),
-		expectedGRStaticRoute(staticRouteUUID2, gwRouterJoinIPAddress().IP.String(), trInfo.gatewayRouterNets[0].IP.String(), nil, nil, netInfo),
+		joinRoute,
 		expectedLogicalRouterPolicy(routerPolicyUUID1, netInfo, nodeName, nodeIP, managementPortIP(nodeSubnet).String()),
 		masqSNAT,
 		&nbdb.GatewayChassis{UUID: gatewayChassisUUID, Name: gwChassisName, Priority: 1, ChassisName: gwConfig.ChassisID},
