@@ -49,6 +49,9 @@ const (
 	nftablesUDNPodIPsv6        = "udn-pod-default-ips-v6"
 	// name of the cgroup directory kubelet runs under when it is managed by systemd.
 	kubeletCgroupName = "kubelet.service"
+	// throwaway chain used to check kernel support for the socket cgroupv2 match. It
+	// only exists inside the checking transaction.
+	socketMatchProbeChain = "udn-isolation-socket-probe"
 )
 
 // UDNHostIsolationManager manages the host isolation for user defined networks.
@@ -127,6 +130,32 @@ func findKubeletCgroupPath(cgroupRoot string) (string, error) {
 	return cgroupPath, nil
 }
 
+// socketCgroupv2MatchSupported reports whether the kernel accepts the socket cgroupv2
+// match that lets kubelet reach primary UDN pods. The match is loaded in a throwaway
+// chain that is created and removed in a single transaction, so nothing is left behind
+// whether or not it is supported. A kernel built without CONFIG_NFT_SOCKET has no socket
+// expression at all and rejects the rule.
+// The check uses the same match the isolation rules install, so support is decided for
+// the exact rule rather than an approximation of it.
+func (m *UDNHostIsolationManager) socketCgroupv2MatchSupported(cgroupPath string) error {
+	tx := m.nft.NewTransaction()
+	tx.Add(&knftables.Chain{
+		Name:     socketMatchProbeChain,
+		Comment:  knftables.PtrTo("Transient chain, checks kernel support for the socket cgroupv2 match"),
+		Type:     knftables.PtrTo(knftables.FilterType),
+		Hook:     knftables.PtrTo(knftables.OutputHook),
+		Priority: knftables.PtrTo(knftables.FilterPriority),
+	})
+	tx.Add(&knftables.Rule{
+		Chain: socketMatchProbeChain,
+		Rule:  knftables.Concat(kubeletCgroupMatch(cgroupPath), "accept"),
+	})
+	tx.Delete(&knftables.Chain{
+		Name: socketMatchProbeChain,
+	})
+	return m.nft.Run(context.TODO(), tx)
+}
+
 // resolveKubeletCgroupPath resolves the cgroup kubelet runs under and stores it in
 // m.kubeletCgroupPath. When it cannot be resolved, kubelet probes to primary UDN pods
 // are reported as unsupported and the path is left empty, which leaves the kubelet rule
@@ -141,6 +170,12 @@ func (m *UDNHostIsolationManager) resolveKubeletCgroupPath() {
 		// kubelet is not running under a systemd-managed cgroup, which is the case on
 		// distributions that don't use systemd to run it.
 		m.reportKubeletProbesUnsupported(err.Error())
+		return
+	}
+	if err := m.socketCgroupv2MatchSupported(path); err != nil {
+		// the kernel has no socket expression, which is the case when it is built
+		// without CONFIG_NFT_SOCKET.
+		m.reportKubeletProbesUnsupported(fmt.Sprintf("the kernel does not support the nftables socket cgroupv2 match: %v", err))
 		return
 	}
 	klog.Infof("Found kubelet cgroup path: %s", path)
@@ -168,16 +203,17 @@ func (m *UDNHostIsolationManager) recordNodeWarning(reason, message string) {
 // Start must be called on node setup.
 func (m *UDNHostIsolationManager) Start(ctx context.Context) error {
 	klog.Infof("Starting UDN host isolation manager")
-	// A failure to resolve the kubelet cgroup is not fatal: host isolation is still set
-	// up, only the rule that lets kubelet reach primary UDN pods is left out.
-	m.resolveKubeletCgroupPath()
-
 	nft, err := nodenft.GetNFTablesHelper()
 	if err != nil {
 		return fmt.Errorf("failed getting nftables helper: %w", err)
 	}
-
 	m.nft = nft
+
+	// A failure to resolve the kubelet cgroup is not fatal: host isolation is still set
+	// up, only the rule that lets kubelet reach primary UDN pods is left out. The check
+	// for kernel support needs the nftables helper, so it runs after it is set.
+	m.resolveKubeletCgroupPath()
+
 	if err = m.setupUDNIsolationFromHost(); err != nil {
 		return fmt.Errorf("failed to setup UDN host isolation: %w", err)
 	}
