@@ -25,6 +25,10 @@ global:
   simulateDpu: false
   # -- The DPU-side representor interface for the host's uplink (PF). Required for simulated environments where switchdev metadata is unavailable.
   dpuHostGatewayRepresentorInterface: ""
+  # -- Whether the host runs systemd. When false, the host systemd private socket is not mounted into ovnkube-node. Kubelet restarts are then not tracked, so kubelet probes to primary UDN pods stop working after a kubelet restart, until ovnkube-node is restarted.
+  hostHasSystemd: true
+  # -- The cgroup v2 path kubelet runs under, relative to /sys/fs/cgroup, for example "podruntime/kubelet" on Talos. Used by UDN host isolation to allow kubelet probes to primary UDN pods. Every process in this cgroup is allowed to reach them, so set the cgroup of kubelet itself rather than a parent it shares with other workloads. When unset, the kubelet.service cgroup is looked up, which requires kubelet to be managed by systemd.
+  # kubeletCgroupPath: "podruntime/kubelet"
   # -- This allows ovnkube-node to run without SYS_ADMIN capability, by performing interface setup in the CNI plugin
   unprivilegedMode: false
   # -- The v4 join subnet used for assigning join switch IPv4 addresses

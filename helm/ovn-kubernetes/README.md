@@ -332,6 +332,15 @@ true
 			<td>Optional extra gateway options</td>
 		</tr>
 		<tr>
+			<td>global.hostHasSystemd</td>
+			<td>bool</td>
+			<td><pre lang="json">
+true
+</pre>
+</td>
+			<td>Whether the host runs systemd. When false, the host systemd private socket is not mounted into ovnkube-node. Kubelet restarts are then not tracked, so kubelet probes to primary UDN pods stop working after a kubelet restart, until ovnkube-node is restarted.</td>
+		</tr>
+		<tr>
 			<td>global.hybridOverlayNetCidr</td>
 			<td>string</td>
 			<td><pre lang="json">
@@ -411,6 +420,14 @@ true
 </pre>
 </td>
 			<td>A comma separated set of IPFIX collectors to export flow data</td>
+		</tr>
+		<tr>
+			<td>global.kubeletCgroupPath</td>
+			<td>string</td>
+			<td><pre lang="">
+</pre>
+</td>
+			<td>The cgroup v2 path kubelet runs under, relative to /sys/fs/cgroup, for example "podruntime/kubelet" on Talos. Used by UDN host isolation to allow kubelet probes to primary UDN pods. Every process in this cgroup is allowed to reach them, so set the cgroup of kubelet itself rather than a parent it shares with other workloads. When unset, the kubelet.service cgroup is looked up, which requires kubelet to be managed by systemd.</td>
 		</tr>
 		<tr>
 			<td>global.lFlowCacheLimit</td>
