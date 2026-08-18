@@ -31,6 +31,7 @@ import (
 	kapi "k8s.io/kubernetes/pkg/apis/core"
 	"sigs.k8s.io/knftables"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	nodenft "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -156,19 +157,40 @@ func (m *UDNHostIsolationManager) socketCgroupv2MatchSupported(cgroupPath string
 	return m.nft.Run(context.TODO(), tx)
 }
 
+// kubeletCgroupPathToUse returns the cgroup path to match kubelet traffic on, relative
+// to the cgroup root. A configured path is used as given, which is the only option on
+// hosts that do not run kubelet under systemd. Otherwise the kubelet.service cgroup is
+// looked up, which keeps hosts that do work without configuration.
+func (m *UDNHostIsolationManager) kubeletCgroupPathToUse(cgroupRoot string) (string, error) {
+	if configured := config.OvnKubeNode.KubeletCgroupPath; configured != "" {
+		info, err := os.Stat(filepath.Join(cgroupRoot, configured))
+		if err != nil {
+			return "", fmt.Errorf("configured kubelet cgroup path %q is not present under %s: %w",
+				configured, cgroupRoot, err)
+		}
+		if !info.IsDir() {
+			return "", fmt.Errorf("configured kubelet cgroup path %q under %s is not a cgroup directory",
+				configured, cgroupRoot)
+		}
+		klog.Infof("Using configured kubelet cgroup path: %s", configured)
+		return configured, nil
+	}
+	return findKubeletCgroupPath(cgroupRoot)
+}
+
 // resolveKubeletCgroupPath resolves the cgroup kubelet runs under and stores it in
 // m.kubeletCgroupPath. When it cannot be resolved, kubelet probes to primary UDN pods
 // are reported as unsupported and the path is left empty, which leaves the kubelet rule
 // out of the isolation chain. Host isolation itself is unaffected.
-func (m *UDNHostIsolationManager) resolveKubeletCgroupPath() {
+func (m *UDNHostIsolationManager) resolveKubeletCgroupPath(cgroupRoot string) {
 	if !hostUsesCgroupv2() {
 		m.reportKubeletProbesUnsupported("the node uses cgroup v1")
 		return
 	}
-	path, err := findKubeletCgroupPath(unifiedMountpoint)
+	path, err := m.kubeletCgroupPathToUse(cgroupRoot)
 	if err != nil {
 		// kubelet is not running under a systemd-managed cgroup, which is the case on
-		// distributions that don't use systemd to run it.
+		// distributions that don't use systemd to run it, and no path was configured.
 		m.reportKubeletProbesUnsupported(err.Error())
 		return
 	}
@@ -179,6 +201,7 @@ func (m *UDNHostIsolationManager) resolveKubeletCgroupPath() {
 		return
 	}
 	klog.Infof("Found kubelet cgroup path: %s", path)
+	klog.Warningf("Every process in cgroup %s is allowed to reach primary UDN pods", path)
 	m.kubeletCgroupPath = path
 }
 
@@ -212,7 +235,7 @@ func (m *UDNHostIsolationManager) Start(ctx context.Context) error {
 	// A failure to resolve the kubelet cgroup is not fatal: host isolation is still set
 	// up, only the rule that lets kubelet reach primary UDN pods is left out. The check
 	// for kernel support needs the nftables helper, so it runs after it is set.
-	m.resolveKubeletCgroupPath()
+	m.resolveKubeletCgroupPath(unifiedMountpoint)
 
 	if err = m.setupUDNIsolationFromHost(); err != nil {
 		return fmt.Errorf("failed to setup UDN host isolation: %w", err)
