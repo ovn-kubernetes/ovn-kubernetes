@@ -448,6 +448,43 @@ func (m *UDNHostIsolationManager) updateKubeletCgroup() error {
 	return nil
 }
 
+// systemdUnitSuffixes are the unit types kubelet can run as. A cgroup path that ends
+// in neither is a plain cgroup, such as a slice or an ancestor, which no single unit
+// corresponds to.
+var systemdUnitSuffixes = []string{".service", ".scope"}
+
+// kubeletSystemdUnit derives the systemd unit that owns the given kubelet cgroup path.
+// The unit is the last component of the path when it names one, e.g. "kubelet.service"
+// for "kubelet.slice/kubelet.service".
+func kubeletSystemdUnit(cgroupPath string) (string, error) {
+	unit := filepath.Base(cgroupPath)
+	for _, suffix := range systemdUnitSuffixes {
+		if strings.HasSuffix(unit, suffix) {
+			return unit, nil
+		}
+	}
+	return "", fmt.Errorf("no systemd unit corresponds to cgroup %q", cgroupPath)
+}
+
+// decodeSystemdUnitName decodes a systemd unit name taken from a D-Bus object path.
+// systemd escapes every character outside [A-Za-z0-9] as an underscore followed by two
+// hex digits, so "custom-kubelet.service" arrives as "custom_2dkubelet_2eservice".
+// Anything that is not a complete escape sequence is left as it is.
+func decodeSystemdUnitName(escapedUnit string) string {
+	var unitName strings.Builder
+	for i := 0; i < len(escapedUnit); i++ {
+		if escapedUnit[i] == '_' && i+2 < len(escapedUnit) {
+			if decoded, err := strconv.ParseUint(escapedUnit[i+1:i+3], 16, 8); err == nil {
+				unitName.WriteByte(byte(decoded))
+				i += 2
+				continue
+			}
+		}
+		unitName.WriteByte(escapedUnit[i])
+	}
+	return unitName.String()
+}
+
 // runKubeletRestartTracker listens to systemd events to re-apply the UDN host isolation rules after kubelet restart.
 // cgroupv2 match doesn't actually match cgroup paths, but rather resolves them to numeric cgroup IDs when such
 // rules are loaded into kernel, and does not automatically update them in any way afterwards.
@@ -457,6 +494,12 @@ func (m *UDNHostIsolationManager) updateKubeletCgroup() error {
 // If a new cgroup is created, you load the filtering policy for the new cgroup and then add
 // processes to that cgroup. You only have to follow the right sequence to avoid problems.
 func (m *UDNHostIsolationManager) runKubeletRestartTracker(ctx context.Context) (err error) {
+	// the tracker follows a systemd unit, so it can only be used when the kubelet
+	// cgroup belongs to one.
+	kubeletUnit, err := kubeletSystemdUnit(m.kubeletCgroupPath)
+	if err != nil {
+		return err
+	}
 
 	conn, err := dbus.Dial("unix:path=/run/systemd/private", dbus.WithContext(ctx))
 	if err != nil {
@@ -505,10 +548,9 @@ func (m *UDNHostIsolationManager) runKubeletRestartTracker(ctx context.Context) 
 				if len(parts) < 6 || parts[4] != "unit" {
 					continue
 				}
-				escapedUnit := parts[5]
-				unitName := strings.ReplaceAll(escapedUnit, "_2e", ".")
+				unitName := decodeSystemdUnitName(parts[5])
 
-				if unitName == "kubelet.service" {
+				if unitName == kubeletUnit {
 					changes := signal.Body[1].(map[string]dbus.Variant)
 					if state, exists := changes["ActiveState"]; exists {
 						newState := state.Value().(string)
