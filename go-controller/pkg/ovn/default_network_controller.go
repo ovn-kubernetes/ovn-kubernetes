@@ -46,6 +46,7 @@ import (
 	zoneic "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/zone_interconnect"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/retry"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/syncmap"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/tracing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
@@ -1023,14 +1024,21 @@ func (h *defaultNetworkControllerEventHandler) IsResourceScheduled(obj interface
 // AddResource adds the specified object to the cluster according to its type and returns the error,
 // if any, yielded during object creation.
 // Given an object to add and a boolean specifying if the function was executed from iterateRetryResources
-func (h *defaultNetworkControllerEventHandler) AddResource(obj interface{}, fromRetryLoop bool) error {
+func (h *defaultNetworkControllerEventHandler) AddResource(ctx context.Context, obj interface{}, fromRetryLoop bool) error {
+
 	switch h.objType {
 	case factory.PodType:
 		pod, ok := obj.(*corev1.Pod)
 		if !ok {
 			return fmt.Errorf("could not cast %T object to *corev1.Pod", obj)
 		}
-		return h.oc.ensurePod(nil, pod, true)
+		ctx = tracing.ContextWithOperation(ctx, tracing.OperationAdd)
+		ctx = tracing.ContextWithRetryLoop(ctx, fromRetryLoop)
+		if !h.oc.isPodScheduledinLocalZone(pod) {
+			// only emit spans for pod scheduled in local zone
+			ctx = tracing.ContextWithSpansDisabled(ctx)
+		}
+		return h.oc.ensurePod(ctx, nil, pod, true)
 
 	case factory.EgressIPType:
 		eIP := obj.(*egressipv1.EgressIP)
@@ -1113,7 +1121,14 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(oldObj, newObj int
 		oldPod := oldObj.(*corev1.Pod)
 		newPod := newObj.(*corev1.Pod)
 
-		return h.oc.ensurePod(oldPod, newPod, inRetryCache || util.PodScheduled(oldPod) != util.PodScheduled(newPod))
+		needsAdd := inRetryCache || util.PodScheduled(oldPod) != util.PodScheduled(newPod)
+		ctx := tracing.ContextWithOperation(context.Background(), tracing.OperationUpdate)
+		ctx = tracing.ContextWithRetryLoop(ctx, inRetryCache)
+		if !h.oc.isPodScheduledinLocalZone(newPod) {
+			// only emit spans for pod scheduled in local zone
+			ctx = tracing.ContextWithSpansDisabled(ctx)
+		}
+		return h.oc.ensurePod(ctx, oldPod, newPod, needsAdd)
 
 	case factory.EgressIPType:
 		oldEIP := oldObj.(*egressipv1.EgressIP)
@@ -1191,7 +1206,13 @@ func (h *defaultNetworkControllerEventHandler) DeleteResource(obj, cachedObj int
 		if cachedObj != nil {
 			portInfo = cachedObj.(*lpInfo)
 		}
-		return h.oc.removePod(pod, portInfo)
+		ctx := context.Background()
+		ctx = tracing.ContextWithOperation(ctx, tracing.OperationDelete)
+		if !h.oc.isPodScheduledinLocalZone(pod) {
+			// only emit spans for pod scheduled in local zone
+			ctx = tracing.ContextWithSpansDisabled(ctx)
+		}
+		return h.oc.removePod(ctx, pod, portInfo)
 
 	case factory.EgressIPType:
 		eIP := obj.(*egressipv1.EgressIP)

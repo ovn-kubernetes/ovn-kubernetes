@@ -350,6 +350,67 @@ func (c *handlerCalls) getDeleted() int {
 	return int(atomic.LoadInt32(&c.deleted))
 }
 
+var _ = Describe("Detailed resource event handlers", func() {
+	It("preserves initial-list status through object replacement handling", func() {
+		var (
+			addedInitialList bool
+			added            int
+			deleted          int
+		)
+		handler := WithUpdateHandlingForObjReplace(cache.ResourceEventHandlerDetailedFuncs{
+			AddFunc: func(_ interface{}, isInInitialList bool) {
+				added++
+				addedInitialList = isInInitialList
+			},
+			DeleteFunc: func(interface{}) {
+				deleted++
+			},
+		})
+
+		handler.OnAdd(newPod("initial", "default"), true)
+		Expect(added).To(Equal(1))
+		Expect(addedInitialList).To(BeTrue())
+
+		oldPod := newPod("replacement", "default")
+		newPod := oldPod.DeepCopy()
+		newPod.UID = "replacement-uid"
+		handler.OnUpdate(oldPod, newPod)
+		Expect(deleted).To(Equal(1))
+		Expect(added).To(Equal(2))
+		Expect(addedInitialList).To(BeFalse())
+	})
+
+	It("marks existing-object replay as an initial list", func() {
+		stopChan := make(chan struct{})
+		sharedInformer := cache.NewSharedIndexInformer(
+			&cache.ListWatch{},
+			&corev1.Pod{},
+			0,
+			cache.Indexers{},
+		)
+		queuedInformer, err := newQueuedInformer(1, reflect.TypeOf(&corev1.Pod{}), sharedInformer, stopChan, 1)
+		Expect(err).NotTo(HaveOccurred())
+		defer queuedInformer.shutdownWg.Wait()
+		defer close(stopChan)
+
+		isInInitialList := make(chan bool, 1)
+		queuedInformer.addHandler(
+			0,
+			1,
+			0,
+			func(interface{}) bool { return true },
+			cache.ResourceEventHandlerDetailedFuncs{
+				AddFunc: func(_ interface{}, initial bool) {
+					isInInitialList <- initial
+				},
+			},
+			[]interface{}{newPod("existing", "default")},
+		)
+
+		Eventually(isInInitialList).Should(Receive(BeTrue()))
+	})
+})
+
 var _ = Describe("Watch Factory Operations", func() {
 	var (
 		ovnClientset                        *util.OVNKubeControllerClientset

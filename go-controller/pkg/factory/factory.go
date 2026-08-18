@@ -2071,10 +2071,10 @@ func noAlternateProxySelector() func(options *metav1.ListOptions) {
 // WithUpdateHandlingForObjReplace decorates given cache.ResourceEventHandler with checking object
 // replace case in the update event. when old and new object have different UIDs, then consider it
 // as a replace and invoke delete handler for old object followed by add handler for new object.
-func WithUpdateHandlingForObjReplace(funcs cache.ResourceEventHandler) cache.ResourceEventHandlerFuncs {
-	return cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
-			funcs.OnAdd(obj, false)
+func WithUpdateHandlingForObjReplace(funcs cache.ResourceEventHandler) cache.ResourceEventHandlerDetailedFuncs {
+	return cache.ResourceEventHandlerDetailedFuncs{
+		AddFunc: func(obj interface{}, isInInitialList bool) {
+			funcs.OnAdd(obj, isInInitialList)
 		},
 		UpdateFunc: func(old, new interface{}) {
 			oldObj := old.(metav1.Object)

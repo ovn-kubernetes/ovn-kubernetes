@@ -576,7 +576,7 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 			},
 			role:         types.NetworkRolePrimary,
 			expectError:  "failed to get NAD to network mapping: unexpected primary network \"nad\" specified with a NetworkSelectionElement &{Name:nad Namespace:namespace IPRequest:[] MacRequest: InfinibandGUIDRequest: InterfaceRequest: PortMappingsRequest:[] BandwidthRequest:<nil> CNIArgs:<nil> GatewayRequest:[] IPAMClaimReference:}",
-			expectEvents: []string{"Warning ErrorAllocatingPod unexpected primary network \"nad\" specified with a NetworkSelectionElement &{Name:nad Namespace:namespace IPRequest:[] MacRequest: InfinibandGUIDRequest: InterfaceRequest: PortMappingsRequest:[] BandwidthRequest:<nil> CNIArgs:<nil> GatewayRequest:[] IPAMClaimReference:}"},
+			expectEvents: []string{"Warning ErrorAllocatingPod failed to get NAD to network mapping: unexpected primary network \"nad\" specified with a NetworkSelectionElement &{Name:nad Namespace:namespace IPRequest:[] MacRequest: InfinibandGUIDRequest: InterfaceRequest: PortMappingsRequest:[] BandwidthRequest:<nil> CNIArgs:<nil> GatewayRequest:[] IPAMClaimReference:}"},
 		},
 		{
 			name: "Pod on network with exhausted ip pool, expect event and error",
@@ -1047,7 +1047,7 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 				}
 			}
 
-			err = a.reconcile(old, new, tt.args.release)
+			err = a.reconcile(context.Background(), old, new, tt.args.release)
 			if len(tt.expectError) > 0 {
 				g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring(tt.expectError)))
 			} else if err != nil {
