@@ -547,6 +547,109 @@ k8s.ovn.org/open-default-ports: |
 which means we open up allow ACLs and nftrules to allow traffic
 to reach at those ports.
 
+#### Locating the kubelet cgroup
+
+The rule above matches traffic by the cgroup kubelet runs in, so that
+cgroup has to be known. By default ovnkube-node looks for a
+`kubelet.service` directory under `/sys/fs/cgroup`, which finds it on
+hosts where systemd runs kubelet.
+
+Hosts that do not run kubelet under systemd have no such directory. Set
+`kubelet-cgroup-path` in the `[ovnkubenode]` section, or
+`global.kubeletCgroupPath` in the helm chart, to the cgroup kubelet runs
+in, relative to `/sys/fs/cgroup`. It can be read from the running kubelet:
+
+```text
+$ cat /proc/$(pidof kubelet)/cgroup
+0::/podruntime/kubelet
+```
+
+which on that host means:
+
+```ini
+kubelet-cgroup-path = podruntime/kubelet
+```
+
+Point this at the cgroup of kubelet itself. Every process in the cgroup
+that is matched is allowed to reach primary UDN pods, so a parent cgroup
+opens that access to everything under it. On the host above, using
+`podruntime` instead would also allow the container runtime and every
+container shim it runs, not just kubelet. The cgroup root is rejected for
+the same reason.
+
+#### When kubelet probes are not supported
+
+The cgroup match cannot always be installed. When it cannot, host
+isolation is still applied and only the rule that lets kubelet through is
+left out, so ovnkube-node keeps running. The node reports a
+`UDNKubeletProbesNotSupported` event describing which of these applies:
+
+* the host uses cgroup v1, which has no cgroup v2 path to match on
+* the kubelet cgroup is not found, and no usable path is configured
+* the kernel is built without `CONFIG_NFT_SOCKET`, so it has no `socket`
+  expression and the rule cannot load
+
+`httpGet`, `tcpSocket` and `grpc` probes to primary UDN pods are dropped
+in that case. The rules drop rather than reject, so a probe times out
+instead of being refused:
+
+```text
+Readiness probe failed: Get "http://[fd00:42:0:a::4]:8080/healthz":
+context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+```
+
+which looks like a slow or unhealthy pod rather than a policy decision, so
+the event on the node is what identifies the cause. There are two ways
+around it:
+
+* use `exec` probes, which run inside the pod and do not cross the host
+  boundary
+* open the probe ports with the `open-default-ports` annotation shown
+  above
+
+#### Kubelet restarts
+
+The `socket cgroupv2` match resolves the cgroup path to a numeric cgroup
+ID when the rule is loaded, and the kernel does not update it afterward.
+If kubelet restarts and its cgroup is recreated, the ID changes and the
+rule stops matching. ovnkube-node watches systemd for kubelet restarts
+and reloads the rule.
+
+That watch needs systemd, and it needs the configured cgroup to belong to
+a unit, so it is derived from the last component of the cgroup path,
+`kubelet.service` for `kubelet.slice/kubelet.service`. On a host without
+systemd, or when the configured path does not name a unit, restarts are
+not tracked and the node reports a `UDNKubeletRestartTrackingUnavailable`
+event.
+
+Where restarts are not tracked, point `kubelet-cgroup-path` at the nearest
+ancestor cgroup that is not recreated when kubelet restarts. On the host
+above that is `podruntime` rather than `podruntime/kubelet`, which keeps
+the rule valid across restarts but also lets everything else in that
+cgroup, the container runtime and its shims, reach primary UDN pods. Weigh
+that against the alternative: leaving the leaf cgroup configured means
+probes stop working once kubelet's cgroup is recreated, until ovnkube-node
+is restarted.
+
+A rule that has gone stale can be recognised from the ruleset, because nft
+prints the cgroup ID it can no longer resolve instead of the path:
+
+```text
+socket cgroupv2 level 2 669 ip daddr @udn-pod-default-ips-v4 accept
+```
+
+For helm on such a host, both settings are needed, and neither changes a
+deployment that does run systemd:
+
+```yaml
+global:
+  noSystemd: true
+  kubeletCgroupPath: podruntime
+```
+
+`noSystemd` removes the systemd socket mount from ovnkube-node, which
+cannot be satisfied where `/run/systemd` does not exist.
+
 ### Overlapping PodIPs
 
 Two networks can have the same subnet since they are completely
