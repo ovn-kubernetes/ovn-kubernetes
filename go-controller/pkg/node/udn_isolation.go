@@ -47,6 +47,8 @@ const (
 	nftablesUDNOpenPortsICMPv6 = "udn-open-ports-icmp-v6"
 	nftablesUDNPodIPsv4        = "udn-pod-default-ips-v4"
 	nftablesUDNPodIPsv6        = "udn-pod-default-ips-v6"
+	// name of the cgroup directory kubelet runs under when it is managed by systemd.
+	kubeletCgroupName = "kubelet.service"
 )
 
 // UDNHostIsolationManager manages the host isolation for user defined networks.
@@ -96,38 +98,80 @@ func NewUDNHostIsolationManager(ipv4, ipv6 bool, podInformer coreinformers.PodIn
 	return m
 }
 
+// findKubeletCgroupPath looks for the kubelet cgroup under the given cgroup root and
+// returns it relative to that root.
+// kind cluster uses "kubelet.slice/kubelet.service", while OCP cluster uses "system.slice/kubelet.service".
+// as long as ovn-k node is running as a privileged container, we can access the host cgroup directory.
+func findKubeletCgroupPath(cgroupRoot string) (string, error) {
+	var cgroupPath string
+	err := filepath.WalkDir(cgroupRoot, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() && d.Name() == kubeletCgroupName {
+			relPath, err := filepath.Rel(cgroupRoot, path)
+			if err != nil {
+				return err
+			}
+			cgroupPath = relPath
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to walk %s: %w", cgroupRoot, err)
+	}
+	if cgroupPath == "" {
+		return "", fmt.Errorf("no %q directory found under %s", kubeletCgroupName, cgroupRoot)
+	}
+	return cgroupPath, nil
+}
+
+// resolveKubeletCgroupPath resolves the cgroup kubelet runs under and stores it in
+// m.kubeletCgroupPath. When it cannot be resolved, kubelet probes to primary UDN pods
+// are reported as unsupported and the path is left empty, which leaves the kubelet rule
+// out of the isolation chain. Host isolation itself is unaffected.
+func (m *UDNHostIsolationManager) resolveKubeletCgroupPath() {
+	if !hostUsesCgroupv2() {
+		m.reportKubeletProbesUnsupported("the node uses cgroup v1")
+		return
+	}
+	path, err := findKubeletCgroupPath(unifiedMountpoint)
+	if err != nil {
+		// kubelet is not running under a systemd-managed cgroup, which is the case on
+		// distributions that don't use systemd to run it.
+		m.reportKubeletProbesUnsupported(err.Error())
+		return
+	}
+	klog.Infof("Found kubelet cgroup path: %s", path)
+	m.kubeletCgroupPath = path
+}
+
+// reportKubeletProbesUnsupported logs and reports on the node that kubelet probes to
+// primary UDN pods won't be allowed. Host isolation itself is unaffected.
+func (m *UDNHostIsolationManager) reportKubeletProbesUnsupported(reason string) {
+	message := fmt.Sprintf("Kubelet probes to primary UDN pods are not supported on node %s: %s. "+
+		"Use the %s pod annotation to allow the probe ports from the host.",
+		m.nodeName, reason, util.UDNOpenPortsAnnotationName)
+	klog.Warning(message)
+	m.recordNodeWarning("UDNKubeletProbesNotSupported", message)
+}
+
+func (m *UDNHostIsolationManager) recordNodeWarning(reason, message string) {
+	nodeRef := &corev1.ObjectReference{
+		Kind: "Node",
+		Name: m.nodeName,
+	}
+	m.recorder.Eventf(nodeRef, kapi.EventTypeWarning, reason, "%s", message)
+}
+
 // Start must be called on node setup.
 func (m *UDNHostIsolationManager) Start(ctx context.Context) error {
 	klog.Infof("Starting UDN host isolation manager")
-	if hostUsesCgroupv2() {
-		// find kubelet cgroup path.
-		// kind cluster uses "kubelet.slice/kubelet.service", while OCP cluster uses "system.slice/kubelet.service".
-		// as long as ovn-k node is running as a privileged container, we can access the host cgroup directory.
-		err := filepath.WalkDir("/sys/fs/cgroup", func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return nil
-			}
-			if d.Name() == "kubelet.service" {
-				m.kubeletCgroupPath = strings.TrimPrefix(path, "/sys/fs/cgroup/")
-				klog.Infof("Found kubelet cgroup path: %s", m.kubeletCgroupPath)
-				return filepath.SkipAll
-			}
-			return nil
-		})
-		if err != nil || m.kubeletCgroupPath == "" {
-			return fmt.Errorf("failed to find kubelet cgroup path: %w", err)
-		}
-	} else {
-		// We can't use cgroup v2 match, so m.kubeletCgroupPath will be empty.
-		// As a side effect, all kubelet probes will fail, but host isolation will still work.
-		message := fmt.Sprintf("Kubelet probes for UDN are not supported on the node %s as it uses cgroup v1.", m.nodeName)
-		klog.Warning(message)
-		nodeRef := &corev1.ObjectReference{
-			Kind: "Node",
-			Name: m.nodeName,
-		}
-		m.recorder.Eventf(nodeRef, kapi.EventTypeWarning, "UDNKubeletProbesNotSupported", "%s", message)
-	}
+	// A failure to resolve the kubelet cgroup is not fatal: host isolation is still set
+	// up, only the rule that lets kubelet reach primary UDN pods is left out.
+	m.resolveKubeletCgroupPath()
+
 	nft, err := nodenft.GetNFTablesHelper()
 	if err != nil {
 		return fmt.Errorf("failed getting nftables helper: %w", err)
@@ -137,8 +181,17 @@ func (m *UDNHostIsolationManager) Start(ctx context.Context) error {
 	if err = m.setupUDNIsolationFromHost(); err != nil {
 		return fmt.Errorf("failed to setup UDN host isolation: %w", err)
 	}
-	if err = m.runKubeletRestartTracker(ctx); err != nil {
-		return fmt.Errorf("failed to run kubelet restart tracker: %w", err)
+	// The tracker only exists to re-resolve the kubelet cgroup match, so it is pointless
+	// without one. Not being able to run it leaves that match in place but unrefreshed,
+	// which is still better than not isolating UDN pods from the host at all.
+	if m.kubeletCgroupPath != "" {
+		if err = m.runKubeletRestartTracker(ctx); err != nil {
+			message := fmt.Sprintf("Kubelet restarts are not tracked on node %s: %v. "+
+				"Kubelet probes to primary UDN pods will stop working if kubelet is restarted.",
+				m.nodeName, err)
+			klog.Warning(message)
+			m.recordNodeWarning("UDNKubeletRestartTrackingUnavailable", message)
+		}
 	}
 	return controller.StartWithInitialSync(m.podInitialSync, m.podController)
 }

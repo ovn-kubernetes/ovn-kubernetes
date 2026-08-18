@@ -7,6 +7,8 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -14,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ktypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/knftables"
 	"sigs.k8s.io/yaml"
 
@@ -563,3 +566,104 @@ func newPodWithIPs(namespace, name string, primaryUDN bool, ips []string, openPo
 		},
 	}
 }
+
+var _ = Describe("UDN Host isolation setup", func() {
+	const nodeName = "node1"
+
+	var (
+		manager  *UDNHostIsolationManager
+		fakeNFT  *knftables.Fake
+		recorder *record.FakeRecorder
+	)
+
+	// expectedDump returns the isolation ruleset, with the kubelet rule only when a
+	// kubelet cgroup path is known.
+	expectedDump := func(kubeletCgroupPath string) string {
+		result := `add table inet ovn-kubernetes
+add chain inet ovn-kubernetes udn-isolation { type filter hook output priority 0 ; comment "Host isolation for user defined networks" ; }
+add set inet ovn-kubernetes udn-open-ports-icmp-v4 { type ipv4_addr ; comment "default network IPs of pods in user defined networks that allow ICMP (IPv4)" ; }
+add set inet ovn-kubernetes udn-open-ports-icmp-v6 { type ipv6_addr ; comment "default network IPs of pods in user defined networks that allow ICMP (IPv6)" ; }
+add set inet ovn-kubernetes udn-open-ports-v4 { type ipv4_addr . inet_proto . inet_service ; comment "default network open ports of pods in user defined networks (IPv4)" ; }
+add set inet ovn-kubernetes udn-open-ports-v6 { type ipv6_addr . inet_proto . inet_service ; comment "default network open ports of pods in user defined networks (IPv6)" ; }
+add set inet ovn-kubernetes udn-pod-default-ips-v4 { type ipv4_addr ; comment "default network IPs of pods in user defined networks (IPv4)" ; }
+add set inet ovn-kubernetes udn-pod-default-ips-v6 { type ipv6_addr ; comment "default network IPs of pods in user defined networks (IPv6)" ; }
+add rule inet ovn-kubernetes udn-isolation ip daddr . meta l4proto . th dport @udn-open-ports-v4 accept
+add rule inet ovn-kubernetes udn-isolation ip daddr @udn-open-ports-icmp-v4 meta l4proto icmp accept
+`
+		if kubeletCgroupPath != "" {
+			result += fmt.Sprintf("add rule inet ovn-kubernetes udn-isolation socket cgroupv2 level 2 %s ip daddr @udn-pod-default-ips-v4 accept\n",
+				kubeletCgroupPath)
+		}
+		result += `add rule inet ovn-kubernetes udn-isolation ip daddr @udn-pod-default-ips-v4 drop
+add rule inet ovn-kubernetes udn-isolation ip6 daddr . meta l4proto . th dport @udn-open-ports-v6 accept
+add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-open-ports-icmp-v6 meta l4proto icmpv6 accept
+`
+		if kubeletCgroupPath != "" {
+			result += fmt.Sprintf("add rule inet ovn-kubernetes udn-isolation socket cgroupv2 level 2 %s ip6 daddr @udn-pod-default-ips-v6 accept\n",
+				kubeletCgroupPath)
+		}
+		result += "add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-pod-default-ips-v6 drop\n"
+		return result
+	}
+
+	BeforeEach(func() {
+		fakeNFT = nodenft.SetFakeNFTablesHelper()
+		recorder = record.NewFakeRecorder(10)
+		manager = &UDNHostIsolationManager{
+			ipv4:     true,
+			ipv6:     true,
+			nodeName: nodeName,
+			recorder: recorder,
+			nft:      fakeNFT,
+
+			udnPodIPsv4:        newNFTPodElementsSet(nftablesUDNPodIPsv4, false),
+			udnPodIPsv6:        newNFTPodElementsSet(nftablesUDNPodIPsv6, false),
+			udnOpenPortsv4:     newNFTPodElementsSet(nftablesUDNOpenPortsv4, true),
+			udnOpenPortsv6:     newNFTPodElementsSet(nftablesUDNOpenPortsv6, true),
+			udnOpenPortsICMPv4: newNFTPodElementsSet(nftablesUDNOpenPortsICMPv4, false),
+			udnOpenPortsICMPv6: newNFTPodElementsSet(nftablesUDNOpenPortsICMPv6, false),
+		}
+	})
+
+	Context("kubelet cgroup lookup", func() {
+		It("finds the kubelet cgroup in the systemd layout", func() {
+			cgroupRoot := GinkgoT().TempDir()
+			Expect(os.MkdirAll(filepath.Join(cgroupRoot, "kubelet.slice", kubeletCgroupName), 0o755)).To(Succeed(), "create cgroup dir")
+
+			path, err := findKubeletCgroupPath(cgroupRoot)
+			Expect(err).NotTo(HaveOccurred(), "lookup succeeds")
+			Expect(path).To(Equal(filepath.Join("kubelet.slice", kubeletCgroupName)), "resolved path is relative to the cgroup root")
+		})
+
+		It("fails when kubelet does not run under a systemd-managed cgroup", func() {
+			cgroupRoot := GinkgoT().TempDir()
+			Expect(os.MkdirAll(filepath.Join(cgroupRoot, "podruntime", "kubelet"), 0o755)).To(Succeed(), "create non-systemd cgroup dir")
+
+			_, err := findKubeletCgroupPath(cgroupRoot)
+			Expect(err).To(MatchError(ContainSubstring("no \"kubelet.service\" directory found")), "reports the missing directory")
+		})
+	})
+
+	Context("nftables setup", func() {
+		It("allows kubelet to reach UDN pods when the kubelet cgroup is known", func() {
+			manager.kubeletCgroupPath = "kubelet.slice/kubelet.service"
+
+			Expect(manager.setupUDNIsolationFromHost()).To(Succeed())
+			Expect(nodenft.MatchNFTRules(expectedDump("kubelet.slice/kubelet.service"), fakeNFT.Dump())).To(Succeed())
+		})
+
+		It("still isolates UDN pods when the kubelet cgroup is unknown", func() {
+			Expect(manager.setupUDNIsolationFromHost()).To(Succeed())
+			Expect(nodenft.MatchNFTRules(expectedDump(""), fakeNFT.Dump())).To(Succeed())
+		})
+	})
+
+	It("reports unsupported kubelet probes on the node", func() {
+		manager.reportKubeletProbesUnsupported("the node uses cgroup v1")
+
+		var event string
+		Expect(recorder.Events).To(Receive(&event), "an event is recorded")
+		Expect(event).To(ContainSubstring("UDNKubeletProbesNotSupported"), "event reason")
+		Expect(event).To(ContainSubstring("the node uses cgroup v1"), "event carries the reason")
+	})
+})
