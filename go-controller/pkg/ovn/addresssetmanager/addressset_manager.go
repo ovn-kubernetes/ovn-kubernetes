@@ -29,6 +29,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/udn"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/syncmap"
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -61,6 +62,13 @@ type podSelectorAddressSet struct {
 	// network-specific fields
 	controllerName string
 	netInfo        util.NetInfo
+	// includePodNetworkCNCPeers makes NetworkPolicy selector address sets
+	// resolve pod IPs from networks directly connected through a CNC with
+	// PodNetwork connectivity.
+	includePodNetworkCNCPeers bool
+	// podNetworkCNCBackRefs tracks which users require CNC expansion because
+	// selector address sets may also be shared with non-policy users.
+	podNetworkCNCBackRefs sets.Set[string]
 
 	// legacyNetpolMode makes nil and empty PodSelectors behave differently (it shouldn't be the case,
 	// but this is a legacy behaviour that customers rely on).
@@ -101,8 +109,12 @@ type AddressSetManager struct {
 	nodeController       controller.Controller
 	addressSetReconciler controller.Reconciler
 
-	// All network controllers are getting this function from the same networkmanager, so we can share it
-	getNetworkNameForNADKey func(nadKey string) string
+	// All network controllers use the same network manager, so selector address
+	// sets can resolve both NADs and direct PodNetwork CNC peers consistently.
+	networkManager networkmanager.Interface
+	// All network controllers are getting this function from the same networkmanager, so we can share it.
+	getNetworkNameForNADKey       func(nadKey string) string
+	podNetworkConnectReconcilerID uint64
 
 	// hostNetworkNamespaceExists, hostNetworkNamespaceIPsPerNode and hostNetworkSelectingAddrSets are protected by the same lock.
 	// can only be taken after the addressSets key lock and never vice versa to avoid deadlocks.
@@ -118,7 +130,7 @@ type AddressSetManager struct {
 }
 
 func NewAddressSetManager(podInformer coreinformers.PodInformer, namespaceInformer coreinformers.NamespaceInformer,
-	nodeInformer coreinformers.NodeInformer, nbClient libovsdbclient.Client, getNetworkNameForNADKey func(nadKey string) string) *AddressSetManager {
+	nodeInformer coreinformers.NodeInformer, nbClient libovsdbclient.Client, networkManager networkmanager.Interface) *AddressSetManager {
 	m := &AddressSetManager{
 		name:                           "pod-selector-address-set-manager",
 		nbClient:                       nbClient,
@@ -129,7 +141,8 @@ func NewAddressSetManager(podInformer coreinformers.PodInformer, namespaceInform
 		podLister:                      podInformer.Lister(),
 		namespaceLister:                namespaceInformer.Lister(),
 		nodeLister:                     nodeInformer.Lister(),
-		getNetworkNameForNADKey:        getNetworkNameForNADKey,
+		networkManager:                 networkManager,
+		getNetworkNameForNADKey:        networkManager.GetNetworkNameForNADKey,
 		hostNetworkSelectingAddrSets:   sets.New[string](),
 		hostNetworkNamespaceIPsPerNode: make(map[string][]string),
 		clusterNodeIPsBackRefs:         sets.New[string](),
@@ -177,6 +190,7 @@ func NewAddressSetManager(podInformer coreinformers.PodInformer, namespaceInform
 			MaxAttempts: controller.InfiniteAttempts,
 		},
 	)
+	m.podNetworkConnectReconcilerID = networkManager.RegisterPodNetworkConnectReconciler(m)
 	return m
 }
 
@@ -187,7 +201,32 @@ func (m *AddressSetManager) Start() error {
 
 func (m *AddressSetManager) Stop() {
 	klog.Infof("Stopping %s controller", m.name)
+	if m.podNetworkConnectReconcilerID != 0 {
+		m.networkManager.DeRegisterPodNetworkConnectReconciler(m.podNetworkConnectReconcilerID)
+		m.podNetworkConnectReconcilerID = 0
+	}
 	controller.Stop(m.podController, m.nsController, m.nodeController, m.addressSetReconciler)
+}
+
+// ReconcilePodNetworkConnect implements
+// networkmanager.PodNetworkConnectReconciler. CNC changes are network-scoped,
+// so only NetworkPolicy address sets owned by affected network controllers
+// need to be refreshed.
+func (m *AddressSetManager) ReconcilePodNetworkConnect(networkNames []string) {
+	affectedNetworks := sets.New(networkNames...)
+	for _, key := range m.addressSets.GetKeys() {
+		err := m.addressSets.DoWithLock(key, func(key string) error {
+			psAddrSet, found := m.addressSets.Load(key)
+			if found && psAddrSet.includePodNetworkCNCPeers &&
+				affectedNetworks.Has(psAddrSet.netInfo.GetNetworkName()) {
+				m.addressSetReconciler.Reconcile(key)
+			}
+			return nil
+		})
+		if err != nil {
+			klog.Errorf("Failed to queue address set %s after PodNetwork CNC change: %v", key, err)
+		}
+	}
 }
 
 // initialSync will clean up all address sets that don't have ACL reference
@@ -279,7 +318,8 @@ func (m *AddressSetManager) syncClusterNodeIPsAddressSetLocked() error {
 	return nil
 }
 
-// EnsureAddressSet returns address set for requested (podSelector, namespaceSelector, namespace, nodeSelector).
+// EnsureAddressSet ensures an address set for the requested
+// (podSelector, namespaceSelector, namespace, nodeSelector), scoped to one network.
 // If namespaceSelector is nil, namespace will be used with podSelector statically.
 // podSelector should not be nil, use metav1.LabelSelector{} to match all pods.
 // namespaceSelector can only be nil when namespace is set, use metav1.LabelSelector{} to match all namespaces.
@@ -294,6 +334,21 @@ func (m *AddressSetManager) syncClusterNodeIPsAddressSetLocked() error {
 // psAddrSetHashV4, psAddrSetHashV6 may be set to empty string if address set for that ipFamily wasn't created.
 func (m *AddressSetManager) EnsureAddressSet(podSelector, namespaceSelector, nodeSelector *metav1.LabelSelector,
 	namespace, backRef, controllerName string, netInfo util.NetInfo, legacyNetpolMode bool) (addrSetKey, psAddrSetHashV4, psAddrSetHashV6 string, err error) {
+	return m.ensureAddressSet(podSelector, namespaceSelector, nodeSelector, namespace, backRef, controllerName,
+		netInfo, legacyNetpolMode, false)
+}
+
+// EnsureAddressSetForNetworkPolicy ensures a selector address set whose pod
+// IPs may come from the policy network or any network directly connected to it
+// through a CNC with PodNetwork connectivity.
+func (m *AddressSetManager) EnsureAddressSetForNetworkPolicy(podSelector, namespaceSelector, nodeSelector *metav1.LabelSelector,
+	namespace, backRef, controllerName string, netInfo util.NetInfo, legacyNetpolMode bool) (addrSetKey, psAddrSetHashV4, psAddrSetHashV6 string, err error) {
+	return m.ensureAddressSet(podSelector, namespaceSelector, nodeSelector, namespace, backRef, controllerName,
+		netInfo, legacyNetpolMode, true)
+}
+
+func (m *AddressSetManager) ensureAddressSet(podSelector, namespaceSelector, nodeSelector *metav1.LabelSelector,
+	namespace, backRef, controllerName string, netInfo util.NetInfo, legacyNetpolMode, includePodNetworkCNCPeers bool) (addrSetKey, psAddrSetHashV4, psAddrSetHashV6 string, err error) {
 	nodeSelector = normalizeNodeSelector(nodeSelector)
 	if podSelector == nil {
 		err = fmt.Errorf("pod selector is nil")
@@ -330,7 +385,7 @@ func (m *AddressSetManager) EnsureAddressSet(podSelector, namespaceSelector, nod
 	}
 	addrSetKey = getInternalKey(podSelector, namespaceSelector, nodeSelector, namespace, controllerName, legacyNetpolMode)
 
-	var found bool
+	var found, cncScopeChanged bool
 	err = m.addressSets.DoWithLock(addrSetKey, func(key string) error {
 		var psAddrSet *podSelectorAddressSet
 		psAddrSet, found = m.addressSets.Load(key)
@@ -353,15 +408,16 @@ func (m *AddressSetManager) EnsureAddressSet(podSelector, namespaceSelector, nod
 				return err
 			}
 			psAddrSet = &podSelectorAddressSet{
-				backRefs:          map[string]bool{},
-				podSelector:       podSel,
-				namespaceSelector: nsSel,
-				namespace:         namespace,
-				nodeSelector:      nodeSel,
-				addressSet:        addrSet,
-				controllerName:    controllerName,
-				netInfo:           netInfo,
-				legacyNetpolMode:  legacyNetpolMode,
+				backRefs:              map[string]bool{},
+				podSelector:           podSel,
+				namespaceSelector:     nsSel,
+				namespace:             namespace,
+				nodeSelector:          nodeSel,
+				addressSet:            addrSet,
+				controllerName:        controllerName,
+				netInfo:               netInfo,
+				legacyNetpolMode:      legacyNetpolMode,
+				podNetworkCNCBackRefs: sets.New[string](),
 				selectedNamespaces: &selectedNamespaces{
 					set: sets.New[string](),
 					// until the first reconcile, we assume all namespaces are selected to avoid missing any updates
@@ -369,6 +425,14 @@ func (m *AddressSetManager) EnsureAddressSet(podSelector, namespaceSelector, nod
 				},
 			}
 			m.addressSets.LoadOrStore(key, psAddrSet)
+		}
+		if includePodNetworkCNCPeers {
+			if psAddrSet.podNetworkCNCBackRefs == nil {
+				psAddrSet.podNetworkCNCBackRefs = sets.New[string]()
+			}
+			cncScopeChanged = found && !psAddrSet.includePodNetworkCNCPeers
+			psAddrSet.includePodNetworkCNCPeers = true
+			psAddrSet.podNetworkCNCBackRefs.Insert(backRef)
 		}
 		// psAddrSet is successfully init-ed
 		psAddrSet.backRefs[backRef] = true
@@ -378,7 +442,7 @@ func (m *AddressSetManager) EnsureAddressSet(podSelector, namespaceSelector, nod
 	if err != nil {
 		return
 	}
-	if !found {
+	if !found || cncScopeChanged {
 		// Populate a newly created address set before returning hashes to the caller.
 		// Until reconcile runs, the NB object is empty while ACLs may already reference it
 		// (e.g. on DB ID change or first ensure). This is a one-time sync on creation;
@@ -420,6 +484,7 @@ func (m *AddressSetManager) DeleteAddressSet(addrSetKey, backRef string) error {
 			return nil
 		}
 		delete(psAddrSet.backRefs, backRef)
+		psAddrSet.podNetworkCNCBackRefs.Delete(backRef)
 		if len(psAddrSet.backRefs) == 0 {
 			err := psAddrSet.addressSet.Destroy()
 			if err != nil {
@@ -429,6 +494,9 @@ func (m *AddressSetManager) DeleteAddressSet(addrSetKey, backRef string) error {
 			m.hostNetworkNamespaceLock.Lock()
 			m.hostNetworkSelectingAddrSets.Delete(key)
 			m.hostNetworkNamespaceLock.Unlock()
+		} else if psAddrSet.includePodNetworkCNCPeers && len(psAddrSet.podNetworkCNCBackRefs) == 0 {
+			psAddrSet.includePodNetworkCNCPeers = false
+			m.addressSetReconciler.Reconcile(key)
 		}
 		return nil
 	})
@@ -854,7 +922,12 @@ func (m *AddressSetManager) reconcileAddressSet(key string) error {
 			pods = filtered
 			psAddrSet.selectedNodes = selectedNodes
 		}
-		ips, err := m.getPodIPs(pods, psAddrSet.netInfo, psAddrSet.legacyNetpolMode)
+		networks := []util.NetInfo{psAddrSet.netInfo}
+		if psAddrSet.includePodNetworkCNCPeers {
+			networks = append(networks,
+				m.networkManager.GetPodNetworkConnectedNetworks(psAddrSet.netInfo.GetNetworkName())...)
+		}
+		ips, err := m.getPodIPs(pods, networks, psAddrSet.legacyNetpolMode)
 		if err != nil {
 			return fmt.Errorf("failed to get pod IPs: %v", err)
 		}
@@ -936,8 +1009,9 @@ func (m *AddressSetManager) getSelectedNodes(nodeSelector labels.Selector) (sets
 	return names, nil
 }
 
-func (m *AddressSetManager) getPodIPs(pods []*corev1.Pod, netInfo util.NetInfo, noHostNetwork bool) ([]string, error) {
+func (m *AddressSetManager) getPodIPs(pods []*corev1.Pod, networks []util.NetInfo, noHostNetwork bool) ([]string, error) {
 	ips := []string{}
+	selectedIPs := sets.New[string]()
 	for _, pod := range pods {
 		if noHostNetwork && pod.Spec.HostNetwork {
 			// skip hostNetwork pods if requested, since they are not selected in legacyNetpolMode
@@ -952,12 +1026,23 @@ func (m *AddressSetManager) getPodIPs(pods []*corev1.Pod, netInfo util.NetInfo, 
 		if util.PodCompleted(pod) {
 			continue
 		}
-		podIPs, err := util.GetPodIPsOfNetwork(pod, netInfo, m.getNetworkNameForNADKey)
-		if err != nil {
-			// not finding pod IPs on a remote pod is common until the other node wires the pod, suppress it
-			return nil, ovntypes.NewSuppressedError(err)
+		for _, netInfo := range networks {
+			if netInfo == nil {
+				continue
+			}
+			podIPs, err := util.GetPodIPsOfNetwork(pod, netInfo, m.getNetworkNameForNADKey)
+			if err != nil {
+				// not finding pod IPs on a remote pod is common until the other node wires the pod, suppress it
+				return nil, ovntypes.NewSuppressedError(err)
+			}
+			for _, podIP := range util.StringSlice(podIPs) {
+				if selectedIPs.Has(podIP) {
+					continue
+				}
+				selectedIPs.Insert(podIP)
+				ips = append(ips, podIP)
+			}
 		}
-		ips = append(ips, util.StringSlice(podIPs)...)
 	}
 	return ips, nil
 }

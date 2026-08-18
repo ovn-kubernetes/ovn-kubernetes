@@ -629,7 +629,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 		recorder = record.NewFakeRecorder(10)
 		netManager := networkmanager.Default()
 		addressSetManager := addresssetmanager.NewAddressSetManager(f.PodCoreInformer(), f.NamespaceInformer(),
-			f.NodeCoreInformer(), nbClient, netManager.Interface().GetNetworkNameForNADKey)
+			f.NodeCoreInformer(), nbClient, netManager.Interface())
 		oc, err = NewOvnController(
 			fakeClient,
 			f,
