@@ -5,6 +5,7 @@ package node
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -567,6 +568,21 @@ func newPodWithIPs(namespace, name string, primaryUDN bool, ips []string, openPo
 	}
 }
 
+// nftRunFailer fails the first `failures` calls to Run, then delegates to the wrapped
+// interface. It stands in for a kernel that rejects the socket cgroupv2 match.
+type nftRunFailer struct {
+	knftables.Interface
+	failures int
+}
+
+func (f *nftRunFailer) Run(ctx context.Context, tx *knftables.Transaction) error {
+	if f.failures > 0 {
+		f.failures--
+		return errors.New("Could not process rule: No such file or directory")
+	}
+	return f.Interface.Run(ctx, tx)
+}
+
 var _ = Describe("UDN Host isolation setup", func() {
 	const nodeName = "node1"
 
@@ -679,6 +695,19 @@ add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-open-ports-icmp-v6 met
 		Entry("backslash is escaped", `system.slice/systemd\x2dcryptsetup.slice`, `"system.slice/systemd\\x2dcryptsetup.slice"`),
 		Entry("quote cannot end the string early", `system.slice/foo".service`, `"system.slice/foo\".service"`),
 	)
+
+	Context("socket cgroupv2 kernel support", func() {
+		It("reports support and leaves nothing behind", func() {
+			Expect(manager.socketCgroupv2MatchSupported("kubelet.slice/kubelet.service")).To(Succeed(), "match is supported")
+			Expect(fakeNFT.Dump()).NotTo(ContainSubstring(socketMatchProbeChain), "probe chain is removed")
+		})
+
+		It("reports no support when the kernel rejects the match", func() {
+			manager.nft = &nftRunFailer{Interface: fakeNFT, failures: 1}
+
+			Expect(manager.socketCgroupv2MatchSupported("kubelet.slice/kubelet.service")).NotTo(Succeed(), "match is unsupported")
+		})
+	})
 
 	It("reports unsupported kubelet probes on the node", func() {
 		manager.reportKubeletProbesUnsupported("the node uses cgroup v1")
