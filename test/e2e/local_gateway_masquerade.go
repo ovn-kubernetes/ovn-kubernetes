@@ -1,21 +1,26 @@
+// SPDX-FileCopyrightText: Copyright The OVN-Kubernetes Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 package e2e
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
-	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
+	infraapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -86,7 +91,7 @@ func removeNodeSNATExcludeSubnetsAnnotation(cs clientset.Interface, nodeName str
 func getNodeAnnotation(cs clientset.Interface, nodeName, annotation string) (string, bool, error) {
 	node, err := cs.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
 	if err != nil {
-		return "", false, err
+		return "", false, fmt.Errorf("failed to get node %s: %w", nodeName, err)
 	}
 	value, ok := node.Annotations[annotation]
 	return value, ok, nil
@@ -145,7 +150,7 @@ func checkNFTablesSetDoesNotContainElement(nodeName, setName, element string) wa
 	return func() (bool, error) {
 		contains, err := containsFunc()
 		if err != nil {
-			return false, err
+			return false, fmt.Errorf("checking set %s on node %s does not contain %s: %w", setName, nodeName, element, err)
 		}
 		return !contains, nil
 	}
@@ -181,10 +186,12 @@ var _ = ginkgo.Describe("Local Gateway Pod Subnet SNAT", feature.Service, func()
 		if err != nil {
 			framework.Logf("Note: failed to remove existing SNAT exclude subnets annotation (may not exist): %v", err)
 		}
-		_ = wait.PollImmediate(retryInterval, retryTimeout, checkNFTablesSetDoesNotContainElement(
+		err = wait.PollImmediate(retryInterval, retryTimeout, checkNFTablesSetDoesNotContainElement(
 			nodeName, types.NFTMgmtPortNoSNATSubnetsV4, testSubnetV4_1))
-		_ = wait.PollImmediate(retryInterval, retryTimeout, checkNFTablesSetDoesNotContainElement(
+		framework.ExpectNoError(err, "timed out waiting for %s to be removed from %s — test environment is dirty", testSubnetV4_1, types.NFTMgmtPortNoSNATSubnetsV4)
+		err = wait.PollImmediate(retryInterval, retryTimeout, checkNFTablesSetDoesNotContainElement(
 			nodeName, types.NFTMgmtPortNoSNATSubnetsV4, testSubnetV4_2))
+		framework.ExpectNoError(err, "timed out waiting for %s to be removed from %s — test environment is dirty", testSubnetV4_2, types.NFTMgmtPortNoSNATSubnetsV4)
 	})
 
 	ginkgo.AfterEach(func() {
@@ -214,6 +221,14 @@ var _ = ginkgo.Describe("Local Gateway Pod Subnet SNAT", feature.Service, func()
 		ginkgo.By("Verifying the chain has return rule referencing mgmtport-no-snat-subnets-v4 set")
 		gomega.Expect(chainRules).To(gomega.MatchRegexp(`ip\s+daddr\s+@mgmtport-no-snat-subnets-v4\s+return`),
 			"chain should have 'ip daddr @mgmtport-no-snat-subnets-v4 return' rule")
+
+		if isIPv6Supported(cs) {
+			ginkgo.By("Verifying the chain has return rule referencing mgmtport-no-snat-subnets-v6 set")
+			gomega.Expect(chainRules).To(gomega.MatchRegexp(`ip6\s+daddr\s+@mgmtport-no-snat-subnets-v6\s+return`),
+				"chain should have 'ip6 daddr @mgmtport-no-snat-subnets-v6 return' rule")
+		} else {
+			framework.Logf("Skipping IPv6 return rule check - IPv6 not supported on this cluster")
+		}
 	})
 
 	ginkgo.It("should populate nftables sets when SNAT exclude annotation is added", func() {
@@ -230,7 +245,6 @@ var _ = ginkgo.Describe("Local Gateway Pod Subnet SNAT", feature.Service, func()
 		gomega.Expect(setElements).NotTo(gomega.ContainSubstring(testSubnetV4_2),
 			"second test subnet should not be in set initially")
 
-		// Test single IPv4 subnet
 		ginkgo.By(fmt.Sprintf("Adding single SNAT exclude subnet annotation with %s", testSubnetV4_1))
 		err = setNodeSNATExcludeSubnetsAnnotation(cs, nodeName, []string{testSubnetV4_1})
 		framework.ExpectNoError(err, "failed to set SNAT exclude subnets annotation")
@@ -255,7 +269,6 @@ var _ = ginkgo.Describe("Local Gateway Pod Subnet SNAT", feature.Service, func()
 			nodeName, types.NFTMgmtPortNoSNATSubnetsV4, testSubnetV4_1))
 		framework.ExpectNoError(err, "excluded subnet should be in mgmtport-no-snat-subnets-v4 set after annotation is added")
 
-		// Test multiple IPv4 subnets
 		ginkgo.By(fmt.Sprintf("Updating annotation to include multiple subnets: %s, %s", testSubnetV4_1, testSubnetV4_2))
 		err = setNodeSNATExcludeSubnetsAnnotation(cs, nodeName, []string{testSubnetV4_1, testSubnetV4_2})
 		framework.ExpectNoError(err, "failed to update SNAT exclude subnets annotation")
@@ -268,10 +281,8 @@ var _ = ginkgo.Describe("Local Gateway Pod Subnet SNAT", feature.Service, func()
 			nodeName, types.NFTMgmtPortNoSNATSubnetsV4, testSubnetV4_2))
 		framework.ExpectNoError(err, "second subnet should be in set")
 
-		// Test IPv6 subnet (if dual-stack)
-		ginkgo.By("Checking if IPv6 set exists (indicates dual-stack)")
-		_, ipv6Err := getNFTablesSetElements(nodeName, types.NFTMgmtPortNoSNATSubnetsV6)
-		if ipv6Err == nil {
+		ipv6Supported := isIPv6Supported(cs)
+		if ipv6Supported {
 			ginkgo.By("Verifying test IPv6 subnet is NOT in the set initially")
 			setElementsV6, err := getNFTablesSetElements(nodeName, types.NFTMgmtPortNoSNATSubnetsV6)
 			framework.ExpectNoError(err, "should be able to list IPv6 set elements")
@@ -299,10 +310,9 @@ var _ = ginkgo.Describe("Local Gateway Pod Subnet SNAT", feature.Service, func()
 			gomega.Expect(setElementsV4).To(gomega.ContainSubstring(testSubnetV4_2),
 				"second IPv4 subnet should still be in v4 set")
 		} else {
-			framework.Logf("Skipping IPv6 portion - mgmtport-no-snat-subnets-v6 set does not exist (IPv4-only cluster)")
+			framework.Logf("Skipping IPv6 portion - IPv6 not supported on this cluster")
 		}
 
-		// Test removal
 		ginkgo.By("Removing the SNAT exclude subnet annotation")
 		err = removeNodeSNATExcludeSubnetsAnnotation(cs, nodeName)
 		framework.ExpectNoError(err, "failed to remove SNAT exclude subnets annotation")
@@ -325,7 +335,7 @@ var _ = ginkgo.Describe("Local Gateway Pod Subnet SNAT", feature.Service, func()
 			nodeName, types.NFTMgmtPortNoSNATSubnetsV4, testSubnetV4_2))
 		framework.ExpectNoError(err, "second subnet should be removed from the set after annotation is removed")
 
-		if ipv6Err == nil {
+		if ipv6Supported {
 			ginkgo.By("Verifying IPv6 subnet is removed from mgmtport-no-snat-subnets-v6 set")
 			err = wait.PollImmediate(retryInterval, retryTimeout, checkNFTablesSetDoesNotContainElement(
 				nodeName, types.NFTMgmtPortNoSNATSubnetsV6, testSubnetV6))
@@ -339,7 +349,6 @@ var _ = ginkgo.Describe("Local Gateway Pod Subnet SNAT", feature.Service, func()
 			testPodName           = "snat-test-client"
 		)
 
-		// Create infrastructure provider context for external container management
 		providerCtx := infraprovider.Get().NewTestContext()
 
 		ginkgo.By("Creating external container running agnhost netexec")
@@ -377,41 +386,53 @@ var _ = ginkgo.Describe("Local Gateway Pod Subnet SNAT", feature.Service, func()
 		pod.Spec.NodeName = nodeName
 		pod, err = cs.CoreV1().Pods(f.Namespace.Name).Create(context.TODO(), pod, metav1.CreateOptions{})
 		framework.ExpectNoError(err, "failed to create test pod")
+		ginkgo.DeferCleanup(func() {
+			err := cs.CoreV1().Pods(f.Namespace.Name).Delete(context.TODO(), testPodName, metav1.DeleteOptions{})
+			framework.ExpectNoError(err, "failed to delete test pod")
+		})
 
 		err = e2epod.WaitForPodRunningInNamespace(context.TODO(), cs, pod)
 		framework.ExpectNoError(err, "test pod did not reach Running state")
 
-		// Refresh pod to get IP
 		pod, err = cs.CoreV1().Pods(f.Namespace.Name).Get(context.TODO(), testPodName, metav1.GetOptions{})
 		framework.ExpectNoError(err, "failed to get test pod")
 		podIP := pod.Status.PodIP
 		framework.Logf("Test pod IP: %s", podIP)
 
-		// Get node IP to verify we're NOT seeing it (and to set up return route)
+		// Get node IP to verify we're NOT seeing it (and to set up return route).
+		// Select the address matching the pod IP family to avoid mismatches on dual-stack clusters.
 		node, err := cs.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
 		framework.ExpectNoError(err, "failed to get node")
+		podIsIPv6 := net.ParseIP(podIP) != nil && net.ParseIP(podIP).To4() == nil
 		var nodeIP string
 		for _, addr := range node.Status.Addresses {
-			if addr.Type == "InternalIP" {
-				nodeIP = addr.Address
-				break
+			if addr.Type == corev1.NodeInternalIP {
+				addrIsIPv6 := net.ParseIP(addr.Address) != nil && net.ParseIP(addr.Address).To4() == nil
+				if addrIsIPv6 == podIsIPv6 {
+					nodeIP = addr.Address
+					break
+				}
 			}
 		}
 		framework.Logf("Node IP: %s", nodeIP)
 
-		// Add route on external container for return traffic to pod
+		// Add route on external container for return traffic to pod.
 		// Since we're bypassing SNAT, the external container will see the pod IP as source
-		// and needs to know how to route the response back via the node
+		// and needs to know how to route the response back via the node.
+		prefix := "/32"
+		if podIsIPv6 {
+			prefix = "/128"
+		}
 		ginkgo.By(fmt.Sprintf("Adding route on external container for return traffic: %s via %s", podIP, nodeIP))
 		_, err = infraprovider.Get().ExecExternalContainerCommand(externalContainer,
-			[]string{"ip", "route", "add", podIP + "/32", "via", nodeIP})
+			[]string{"ip", "route", "add", podIP + prefix, "via", nodeIP})
 		framework.ExpectNoError(err, "failed to add return route on external container")
 
 		ginkgo.By("Curling external container from pod to verify source IP")
 		// agnhost netexec /clientip returns the client IP:port, e.g., "10.244.0.5:54321"
 		curlCmd := fmt.Sprintf("curl -s --max-time 10 http://%s:%d/clientip", externalIP, port)
 
-		var sourceIP string
+		ginkgo.By("Verifying source IP is pod IP, not node IP")
 		gomega.Eventually(func() bool {
 			stdout, stderr, err := e2epod.ExecShellInPodWithFullOutput(context.TODO(), f, testPodName, curlCmd)
 			if err != nil {
@@ -419,23 +440,16 @@ var _ = ginkgo.Describe("Local Gateway Pod Subnet SNAT", feature.Service, func()
 				return false
 			}
 			framework.Logf("External container saw source: %s", stdout)
-			// Output format is "IP:port", extract just the IP
-			sourceIP = strings.Split(strings.TrimSpace(stdout), ":")[0]
-			return sourceIP != ""
-		}, 60*time.Second, 2*time.Second).Should(gomega.BeTrue(), "should be able to curl external container")
-
-		ginkgo.By("Verifying source IP is pod IP, not node IP")
-		framework.Logf("Source IP seen by external container: %s", sourceIP)
-		framework.Logf("Expected pod IP: %s", podIP)
-		framework.Logf("Should NOT be node IP: %s", nodeIP)
-
-		gomega.Expect(sourceIP).To(gomega.Equal(podIP),
+			// Output format is "IP:port" — use SplitHostPort to handle IPv6 addresses correctly
+			host, _, err := net.SplitHostPort(strings.TrimSpace(stdout))
+			if err != nil {
+				framework.Logf("Failed to parse client IP %q: %v", stdout, err)
+				return false
+			}
+			framework.Logf("Source IP: %s, expected pod IP: %s, node IP: %s", host, podIP, nodeIP)
+			return host == podIP
+		}, 60*time.Second, 2*time.Second).Should(gomega.BeTrue(),
 			fmt.Sprintf("source IP should be pod IP (%s), not node IP (%s)", podIP, nodeIP))
-		gomega.Expect(sourceIP).NotTo(gomega.Equal(nodeIP),
-			"source IP should NOT be node IP (SNAT should be bypassed)")
 
-		ginkgo.By("Cleaning up test pod")
-		err = cs.CoreV1().Pods(f.Namespace.Name).Delete(context.TODO(), testPodName, metav1.DeleteOptions{})
-		framework.ExpectNoError(err, "failed to delete test pod")
 	})
 })
