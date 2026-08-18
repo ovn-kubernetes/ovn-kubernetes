@@ -120,6 +120,9 @@ type UserDefinedNetworkGateway struct {
 	gwInterfaceName string
 	// gwInterfaceIndex holds the link index of the gateway interface for this network.
 	gwInterfaceIndex int
+	// uplinkGatewayProgrammed tracks whether delNetwork must run before this
+	// reusable gateway object can consume another resolved Uplink lifecycle.
+	uplinkGatewayProgrammed bool
 
 	// save BGP state at the start of reconciliation loop run to handle it consistently throughout the run
 	isNetworkAdvertisedToDefaultVRF bool
@@ -214,6 +217,12 @@ func (udng *UserDefinedNetworkGateway) ensureUplinkGateway() (*bridgeconfig.Brid
 	if err != nil {
 		return nil, err
 	}
+	return udng.configureResolvedUplinkGateway(resolved)
+}
+
+func (udng *UserDefinedNetworkGateway) configureResolvedUplinkGateway(
+	resolved *resolvedUplinkGateway,
+) (*bridgeconfig.BridgeConfiguration, error) {
 	udng.nextHops = resolved.defaultGateways
 
 	gwInterfaceName := uplinkGatewayInterfaceName(resolved)
@@ -454,6 +463,12 @@ func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 	if err != nil {
 		return err
 	}
+	if udng.Uplink() != "" {
+		udng.uplinkGatewayProgrammed = true
+		if err := udng.uplinkGatewayController.ActivateNetwork(udng.NetInfo, udng); err != nil {
+			return err
+		}
+	}
 
 	// Run gateway reconciliation only after initial programming and its
 	// aggregate readiness update have both succeeded.
@@ -462,6 +477,12 @@ func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 }
 
 func (udng *UserDefinedNetworkGateway) addNetwork() error {
+	return udng.addNetworkWithResolvedUplink(nil)
+}
+
+func (udng *UserDefinedNetworkGateway) addNetworkWithResolvedUplink(
+	resolved *resolvedUplinkGateway,
+) error {
 	if (config.IsModeDPU() || config.IsModeFull()) && udng.openflowManager == nil {
 		return fmt.Errorf("openflow manager has not been provided for network: %s", udng.NetInfo.GetNetworkName())
 	}
@@ -487,7 +508,12 @@ func (udng *UserDefinedNetworkGateway) addNetwork() error {
 			udng.GetNetworkName(), err)
 	}
 
-	uplinkBridge, err := udng.ensureUplinkGateway()
+	var uplinkBridge *bridgeconfig.BridgeConfiguration
+	if resolved == nil {
+		uplinkBridge, err = udng.ensureUplinkGateway()
+	} else {
+		uplinkBridge, err = udng.configureResolvedUplinkGateway(resolved)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to resolve Uplink gateway for network %s: %w",
 			udng.GetNetworkName(), err)
@@ -639,7 +665,7 @@ func (udng *UserDefinedNetworkGateway) DelNetwork() error {
 	if udng.Uplink() == "" {
 		err = udng.delNetwork()
 	} else {
-		err = udng.uplinkGatewayController.DeleteNetwork(udng.NetInfo, udng.delNetwork)
+		err = udng.uplinkGatewayController.DeleteNetwork(udng.NetInfo, udng.withdrawUplinkGateway)
 	}
 	if err != nil {
 		return err
@@ -649,6 +675,35 @@ func (udng *UserDefinedNetworkGateway) DelNetwork() error {
 	// status-update retry cannot close the channel twice.
 	close(udng.reconcile)
 	return nil
+}
+
+// withdrawUplinkGateway tears down the currently programmed UDN gateway but
+// keeps this object and its reconciliation channel reusable. This is the
+// non-terminal counterpart of DelNetwork used while an Uplink temporarily no
+// longer selects the node or is being reconfigured.
+func (udng *UserDefinedNetworkGateway) withdrawUplinkGateway() error {
+	if !udng.uplinkGatewayProgrammed {
+		return nil
+	}
+	if err := udng.delNetwork(); err != nil {
+		return err
+	}
+	udng.uplinkGatewayProgrammed = false
+	return nil
+}
+
+// reconcileUplinkGateway replaces programming from the previous Uplink
+// lifecycle with programming derived from discovery's fresh resolved status.
+// Mark the gateway as programmed before addNetwork starts so a partial add is
+// cleaned up on the next retry.
+func (udng *UserDefinedNetworkGateway) reconcileUplinkGateway(
+	resolved *resolvedUplinkGateway,
+) error {
+	if err := udng.withdrawUplinkGateway(); err != nil {
+		return err
+	}
+	udng.uplinkGatewayProgrammed = true
+	return udng.addNetworkWithResolvedUplink(resolved)
 }
 
 func (udng *UserDefinedNetworkGateway) delNetwork() error {

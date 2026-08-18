@@ -86,8 +86,8 @@ func newDiscoveryError(reason string, err error) error {
 // GatewayStateManager owns the node-local gateway cache and the GatewayReady
 // condition published from it.
 type GatewayStateManager interface {
-	RepublishGatewayCondition(uplinkName string) error
-	InvalidateGatewayState(uplinkName string)
+	ReconcileGatewayState(state *uplinkv1alpha1.UplinkState) error
+	InvalidateGatewayState(uplinkName string) error
 	DeleteGatewayState(uplinkName string)
 }
 
@@ -221,7 +221,9 @@ func (c *Controller) reconcileUplink(key string) error {
 	nodeConfig, nodeConfigErr := selectedNodeConfigForNode(uplink, node)
 	if nodeConfigErr == nil && nodeConfig == nil {
 		if c.gatewayStateManager != nil {
-			c.gatewayStateManager.InvalidateGatewayState(uplink.Name)
+			if err := c.gatewayStateManager.InvalidateGatewayState(uplink.Name); err != nil {
+				return fmt.Errorf("failed to invalidate gateway state for Uplink %s: %w", uplink.Name, err)
+			}
 		}
 		return c.deleteUplinkState(uplinkutil.StateName(uplink.Name, c.nodeName))
 	}
@@ -299,21 +301,11 @@ func (c *Controller) reconcileUplinkState(key string) error {
 	}
 	if nodeConfig == nil {
 		if c.gatewayStateManager != nil {
-			c.gatewayStateManager.InvalidateGatewayState(uplinkName)
+			if err := c.gatewayStateManager.InvalidateGatewayState(uplinkName); err != nil {
+				return fmt.Errorf("failed to invalidate gateway state for Uplink %s: %w", uplinkName, err)
+			}
 		}
 		return c.deleteUplinkState(state.Name)
-	}
-
-	// An UplinkState recreated after an out-of-band deletion lost the
-	// GatewayReady condition, and nothing republishes it until a network event
-	// runs gateway reconciliation: restore it only after confirming this
-	// Uplink still selects the node. Intentional deselection starts a new
-	// gateway lifecycle and must not restore cached readiness.
-	if c.gatewayStateManager != nil &&
-		meta.FindStatusCondition(state.Status.Conditions, uplinkv1alpha1.UplinkStateConditionGatewayReady) == nil {
-		if err := c.gatewayStateManager.RepublishGatewayCondition(uplinkName); err != nil {
-			return fmt.Errorf("failed to republish gateway condition for Uplink %s: %w", uplinkName, err)
-		}
 	}
 
 	hostInterfaceName := string(nodeConfig.HostInterfaceName)
@@ -585,50 +577,57 @@ func (c *Controller) updateUplinkStateStatus(
 ) error {
 	condition := statusCondition(state, status, reason, message)
 	desiredStatus := desiredUplinkStateStatus(state, hostInterfaceName, hostState, bridgeName, condition)
-	if reflect.DeepEqual(state.Status, desiredStatus) {
-		return nil
-	}
+	if !reflect.DeepEqual(state.Status, desiredStatus) {
+		statusApply := uplinkapply.UplinkStateStatus().
+			WithType(uplinkv1alpha1.UplinkTypeOVSBridge).
+			WithConditions(util.ConditionToApply(condition))
 
-	statusApply := uplinkapply.UplinkStateStatus().
-		WithType(uplinkv1alpha1.UplinkTypeOVSBridge).
-		WithConditions(util.ConditionToApply(condition))
-
-	// Only the DPU-host applies hostInterfaceName: it confirms which
-	// interface the host-owned MAC/IP data belongs to, so the DPU must not
-	// bump it ahead of fresh host data on a spec change.
-	if config.OvnKubeNode.Mode != ovntypes.NodeModeDPU && hostInterfaceName != "" {
-		statusApply = statusApply.WithHostInterfaceName(
-			uplinkv1alpha1.InterfaceName(hostInterfaceName),
-		)
-	}
-	if config.OvnKubeNode.Mode != ovntypes.NodeModeDPU && hostState != nil {
-		if hostState.macAddress != nil {
-			statusApply = statusApply.WithMACAddress(
-				uplinkv1alpha1.MACAddress(hostState.macAddress.String()),
+		// Only the DPU-host applies hostInterfaceName: it confirms which
+		// interface the host-owned MAC/IP data belongs to, so the DPU must not
+		// bump it ahead of fresh host data on a spec change.
+		if config.OvnKubeNode.Mode != ovntypes.NodeModeDPU && hostInterfaceName != "" {
+			statusApply = statusApply.WithHostInterfaceName(
+				uplinkv1alpha1.InterfaceName(hostInterfaceName),
 			)
 		}
-		statusApply = statusApply.WithIPAddresses(ipAddressCIDRs(hostState.ipAddresses)...)
-		statusApply = statusApply.WithDefaultGateways(ipAddresses(hostState.defaultGateways)...)
-	}
-	if config.OvnKubeNode.Mode != ovntypes.NodeModeDPUHost && bridgeName != "" {
-		statusApply = statusApply.WithOVSBridge(
-			uplinkapply.OVSBridgeStatus().WithName(bridgeName),
+		if config.OvnKubeNode.Mode != ovntypes.NodeModeDPU && hostState != nil {
+			if hostState.macAddress != nil {
+				statusApply = statusApply.WithMACAddress(
+					uplinkv1alpha1.MACAddress(hostState.macAddress.String()),
+				)
+			}
+			statusApply = statusApply.WithIPAddresses(ipAddressCIDRs(hostState.ipAddresses)...)
+			statusApply = statusApply.WithDefaultGateways(ipAddresses(hostState.defaultGateways)...)
+		}
+		if config.OvnKubeNode.Mode != ovntypes.NodeModeDPUHost && bridgeName != "" {
+			statusApply = statusApply.WithOVSBridge(
+				uplinkapply.OVSBridgeStatus().WithName(bridgeName),
+			)
+		}
+
+		_, err := c.uplinkClient.K8sV1alpha1().UplinkStates().Apply(
+			context.Background(),
+			uplinkapply.UplinkState(state.Name).WithStatus(
+				statusApply,
+			),
+			metav1.ApplyOptions{
+				FieldManager: StatusFieldManager(),
+				Force:        true,
+			},
 		)
+		if err != nil {
+			return fmt.Errorf("failed to update UplinkState %s status: %w",
+				state.Name, err)
+		}
 	}
 
-	_, err := c.uplinkClient.K8sV1alpha1().UplinkStates().Apply(
-		context.Background(),
-		uplinkapply.UplinkState(state.Name).WithStatus(
-			statusApply,
-		),
-		metav1.ApplyOptions{
-			FieldManager: StatusFieldManager(),
-			Force:        true,
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("failed to update UplinkState %s status: %w",
-			state.Name, err)
+	if c.gatewayStateManager != nil {
+		gatewayState := state.DeepCopy()
+		gatewayState.Status = desiredStatus
+		if err := c.gatewayStateManager.ReconcileGatewayState(gatewayState); err != nil {
+			return fmt.Errorf("failed to reconcile gateway state for Uplink %s: %w",
+				state.Spec.UplinkName, err)
+		}
 	}
 	return nil
 }

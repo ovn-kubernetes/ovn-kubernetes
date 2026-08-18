@@ -943,7 +943,6 @@ func TestNodeUplinkControllerDeletesUnselectedNodeState(t *testing.T) {
 		context.Background(), stateName, metav1.GetOptions{})
 	g.Expect(apierrors.IsNotFound(err)).To(gomega.BeTrue())
 	g.Expect(gatewayStateManager.invalidated).To(gomega.ConsistOf("br-blue"))
-	g.Expect(gatewayStateManager.republished).To(gomega.BeEmpty())
 }
 
 func TestNodeUplinkControllerInvalidatesUnselectedUplinkGatewayState(t *testing.T) {
@@ -1082,29 +1081,30 @@ func TestNodeUplinkControllerRecreatesDeletedState(t *testing.T) {
 }
 
 type fakeGatewayStateManager struct {
-	republished []string
+	reconciled  []string
 	invalidated []string
 	deleted     []string
 	err         error
 }
 
-func (f *fakeGatewayStateManager) RepublishGatewayCondition(uplinkName string) error {
-	f.republished = append(f.republished, uplinkName)
+func (f *fakeGatewayStateManager) ReconcileGatewayState(state *uplinkv1alpha1.UplinkState) error {
+	f.reconciled = append(f.reconciled, state.Spec.UplinkName)
 	return f.err
 }
 
-func (f *fakeGatewayStateManager) InvalidateGatewayState(uplinkName string) {
+func (f *fakeGatewayStateManager) InvalidateGatewayState(uplinkName string) error {
 	f.invalidated = append(f.invalidated, uplinkName)
+	return f.err
 }
 
 func (f *fakeGatewayStateManager) DeleteGatewayState(uplinkName string) {
 	f.deleted = append(f.deleted, uplinkName)
 }
 
-// A recreated UplinkState lost the gateway-owned GatewayReady condition, which
-// only network events republish: the reconciler must restore it via the
-// gateway publisher, and only when it is missing.
-func TestNodeUplinkControllerRepublishesGatewayCondition(t *testing.T) {
+// Discovery passes its freshly computed state to the gateway coordinator. It
+// decides whether this is deletion recovery or a configuration change without
+// waiting for the informer cache to observe the status apply.
+func TestNodeUplinkControllerReconcilesGatewayState(t *testing.T) {
 	newController := func(g gomega.Gomega, state *uplinkv1alpha1.UplinkState) (*Controller, *fakeGatewayStateManager) {
 		g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 		controller, _ := newTestController(t,
@@ -1119,15 +1119,15 @@ func TestNodeUplinkControllerRepublishesGatewayCondition(t *testing.T) {
 		return controller, publisher
 	}
 
-	t.Run("republishes when the condition is missing", func(t *testing.T) {
+	t.Run("reconciles when the condition is missing", func(t *testing.T) {
 		g := gomega.NewWithT(t)
 		controller, publisher := newController(g, newUplinkState("br-blue.node-a", "br-blue", "node-a"))
 
 		g.Expect(controller.reconcileUplinkState("br-blue.node-a")).To(gomega.Succeed())
-		g.Expect(publisher.republished).To(gomega.ConsistOf("br-blue"))
+		g.Expect(publisher.reconciled).To(gomega.ConsistOf("br-blue"))
 	})
 
-	t.Run("does not republish a present condition", func(t *testing.T) {
+	t.Run("reconciles when the condition is present", func(t *testing.T) {
 		g := gomega.NewWithT(t)
 		state := newUplinkState("br-blue.node-a", "br-blue", "node-a")
 		state.Status.Conditions = []metav1.Condition{{
@@ -1138,17 +1138,17 @@ func TestNodeUplinkControllerRepublishesGatewayCondition(t *testing.T) {
 		controller, publisher := newController(g, state)
 
 		g.Expect(controller.reconcileUplinkState("br-blue.node-a")).To(gomega.Succeed())
-		g.Expect(publisher.republished).To(gomega.BeEmpty())
+		g.Expect(publisher.reconciled).To(gomega.ConsistOf("br-blue"))
 	})
 
-	// A failed republish must fail the reconcile so it is retried.
-	t.Run("propagates a republish failure", func(t *testing.T) {
+	// A failed gateway reconcile must fail discovery so it is retried.
+	t.Run("propagates a gateway reconcile failure", func(t *testing.T) {
 		g := gomega.NewWithT(t)
 		controller, publisher := newController(g, newUplinkState("br-blue.node-a", "br-blue", "node-a"))
 		publisher.err = fmt.Errorf("apply failed")
 
 		g.Expect(controller.reconcileUplinkState("br-blue.node-a")).To(gomega.MatchError(
-			gomega.ContainSubstring("failed to republish gateway condition for Uplink br-blue")))
+			gomega.ContainSubstring("failed to reconcile gateway state for Uplink br-blue")))
 	})
 }
 
