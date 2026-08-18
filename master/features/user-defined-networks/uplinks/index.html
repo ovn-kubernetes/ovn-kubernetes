@@ -4797,10 +4797,19 @@ OVN-Kubernetes then uses that state to build the CUDN gateway configuration.</p>
 <ul>
 <li>The DPU-host ovnkube-node reads <code>hostInterfaceName</code>, discovers the host-side
   MAC address, IP addresses, and default gateways, and writes that data to
-  <code>UplinkState</code>.</li>
-<li>The DPU ovnkube-node reads the same <code>UplinkState</code>, uses the host MAC address
-  to find the DPU-local representor and OVS bridge, validates the bridge, and
-  writes <code>status.ovsBridge.name</code>.</li>
+  <code>UplinkState</code>. When the host interface is an SR-IOV function, it also
+  writes the PF index — and, for a VF, the VF index — to
+  <code>status.hostFunction</code>.</li>
+<li>The DPU ovnkube-node reads the same <code>UplinkState</code> and finds the DPU-local
+  representor and OVS bridge: with <code>status.hostFunction</code> it resolves the PF
+  or VF representor directly from the published indices, and a representor
+  resolved this way must peer with the published host MAC, the uplink's
+  identity, whenever that peer MAC is readable. Without
+  <code>status.hostFunction</code>, and when the published indices do not resolve, it
+  scans bridges for the representor whose host-side peer has the published
+  MAC address. Index resolution covers PF indices 0 and 1 on the default
+  controller; other layouts resolve through the MAC scan. It then validates
+  the bridge and writes <code>status.ovsBridge.name</code>.</li>
 <li>Once both sides have published the required data, the <code>UplinkState</code> becomes
   <code>Resolved=True</code>.</li>
 </ul>
