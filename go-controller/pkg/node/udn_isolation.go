@@ -178,25 +178,21 @@ func (m *UDNHostIsolationManager) kubeletCgroupPathToUse(cgroupRoot string) (str
 	return findKubeletCgroupPath(cgroupRoot)
 }
 
-// resolveKubeletCgroupPath resolves the cgroup kubelet runs under and stores it in
-// m.kubeletCgroupPath. When it cannot be resolved, kubelet probes to primary UDN pods
-// are reported as unsupported and the path is left empty, which leaves the kubelet rule
-// out of the isolation chain. Host isolation itself is unaffected.
-func (m *UDNHostIsolationManager) resolveKubeletCgroupPath(cgroupRoot string) {
+// setKubeletCgroupPath stores the cgroup kubelet runs under in m.kubeletCgroupPath.
+// When it cannot be resolved, kubelet probes to primary UDN pods are reported as
+// unsupported and the path is left empty, which leaves the kubelet rule out of the
+// isolation chain. Host isolation itself is unaffected.
+func (m *UDNHostIsolationManager) setKubeletCgroupPath(cgroupRoot string) {
 	if !hostUsesCgroupv2() {
 		m.reportKubeletProbesUnsupported("the node uses cgroup v1")
 		return
 	}
 	path, err := m.kubeletCgroupPathToUse(cgroupRoot)
 	if err != nil {
-		// kubelet is not running under a systemd-managed cgroup, which is the case on
-		// distributions that don't use systemd to run it, and no path was configured.
 		m.reportKubeletProbesUnsupported(err.Error())
 		return
 	}
 	if err := m.socketCgroupv2MatchSupported(path); err != nil {
-		// the kernel has no socket expression, which is the case when it is built
-		// without CONFIG_NFT_SOCKET.
 		m.reportKubeletProbesUnsupported(fmt.Sprintf("the kernel does not support the nftables socket cgroupv2 match: %v", err))
 		return
 	}
@@ -233,23 +229,27 @@ func (m *UDNHostIsolationManager) Start(ctx context.Context) error {
 	m.nft = nft
 
 	// A failure to resolve the kubelet cgroup is not fatal: host isolation is still set
-	// up, only the rule that lets kubelet reach primary UDN pods is left out. The check
-	// for kernel support needs the nftables helper, so it runs after it is set.
-	m.resolveKubeletCgroupPath(unifiedMountpoint)
+	// up, only the rule that lets kubelet reach primary UDN pods is left out.
+	m.setKubeletCgroupPath(unifiedMountpoint)
 
 	if err = m.setupUDNIsolationFromHost(); err != nil {
 		return fmt.Errorf("failed to setup UDN host isolation: %w", err)
 	}
 	// The tracker only exists to re-resolve the kubelet cgroup match, so it is pointless
-	// without one. Not being able to run it leaves that match in place but unrefreshed,
-	// which is still better than not isolating UDN pods from the host at all.
+	// without one.
 	if m.kubeletCgroupPath != "" {
-		if err = m.runKubeletRestartTracker(ctx); err != nil {
+		err = m.runKubeletRestartTracker(ctx)
+		switch {
+		case errors.Is(err, errNoSystemdUnit):
+			// expected on a host that does not run kubelet under systemd, where there
+			// is no unit to watch. The match stays in place but is not refreshed.
 			message := fmt.Sprintf("Kubelet restarts are not tracked on node %s: %v. "+
 				"Kubelet probes to primary UDN pods will stop working if kubelet is restarted.",
 				m.nodeName, err)
 			klog.Warning(message)
 			m.recordNodeWarning("UDNKubeletRestartTrackingUnavailable", message)
+		case err != nil:
+			return fmt.Errorf("failed to run kubelet restart tracker: %w", err)
 		}
 	}
 	return controller.StartWithInitialSync(m.podInitialSync, m.podController)
@@ -453,6 +453,11 @@ func (m *UDNHostIsolationManager) updateKubeletCgroup() error {
 // corresponds to.
 var systemdUnitSuffixes = []string{".service", ".scope"}
 
+// errNoSystemdUnit is returned when the kubelet cgroup does not belong to a systemd
+// unit, which is the case on a host that does not run kubelet under systemd. It is the
+// one tracker failure that is expected rather than a sign that something is wrong.
+var errNoSystemdUnit = errors.New("cgroup does not belong to a systemd unit")
+
 // kubeletSystemdUnit derives the systemd unit that owns the given kubelet cgroup path.
 // The unit is the last component of the path when it names one, e.g. "kubelet.service"
 // for "kubelet.slice/kubelet.service".
@@ -463,7 +468,7 @@ func kubeletSystemdUnit(cgroupPath string) (string, error) {
 			return unit, nil
 		}
 	}
-	return "", fmt.Errorf("no systemd unit corresponds to cgroup %q", cgroupPath)
+	return "", fmt.Errorf("%q %w", cgroupPath, errNoSystemdUnit)
 }
 
 // decodeSystemdUnitName decodes a systemd unit name taken from a D-Bus object path.
@@ -483,6 +488,35 @@ func decodeSystemdUnitName(escapedUnit string) string {
 		unitName.WriteByte(escapedUnit[i])
 	}
 	return unitName.String()
+}
+
+// handleKubeletRestartSignal re-applies the isolation rules when a signal reports the
+// kubelet unit becoming active again. The systemd private connection delivers every
+// signal rather than a filtered subset, so each field is checked before use: an
+// unexpected shape would otherwise panic the tracker goroutine.
+func (m *UDNHostIsolationManager) handleKubeletRestartSignal(signal *dbus.Signal, kubeletUnit string) {
+	parts := strings.Split(string(signal.Path), "/")
+	if len(parts) < 6 || parts[4] != "unit" {
+		return
+	}
+	if decodeSystemdUnitName(parts[5]) != kubeletUnit || len(signal.Body) < 2 {
+		return
+	}
+	changes, ok := signal.Body[1].(map[string]dbus.Variant)
+	if !ok {
+		return
+	}
+	state, exists := changes["ActiveState"]
+	if !exists {
+		return
+	}
+	if newState, ok := state.Value().(string); !ok || newState != "active" {
+		return
+	}
+	klog.Info("Kubelet restarted, re-applying isolation")
+	if err := m.updateKubeletCgroup(); err != nil {
+		klog.Errorf("Failed to re-apply isolation: %v", err)
+	}
 }
 
 // runKubeletRestartTracker listens to systemd events to re-apply the UDN host isolation rules after kubelet restart.
@@ -542,26 +576,7 @@ func (m *UDNHostIsolationManager) runKubeletRestartTracker(ctx context.Context) 
 					return
 				}
 				klog.V(5).Infof("D-Bus event received: %#v", signal)
-				// Extract unit name from path
-				unitPath := signal.Path
-				parts := strings.Split(string(unitPath), "/")
-				if len(parts) < 6 || parts[4] != "unit" {
-					continue
-				}
-				unitName := decodeSystemdUnitName(parts[5])
-
-				if unitName == kubeletUnit {
-					changes := signal.Body[1].(map[string]dbus.Variant)
-					if state, exists := changes["ActiveState"]; exists {
-						newState := state.Value().(string)
-						if newState == "active" {
-							klog.Info("Kubelet restarted, re-applying isolation")
-							if err := m.updateKubeletCgroup(); err != nil {
-								klog.Errorf("Failed to re-apply isolation: %v", err)
-							}
-						}
-					}
-				}
+				m.handleKubeletRestartSignal(signal, kubeletUnit)
 			}
 		}
 	}()
