@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/godbus/dbus/v5"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -822,6 +824,74 @@ add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-open-ports-icmp-v6 met
 		Entry("incomplete escape is kept", "kubelet_2", "kubelet_2"),
 		Entry("invalid escape is kept", "custom_zzkubelet", "custom_zzkubelet"),
 	)
+
+	Context("kubelet restart signals", func() {
+		const kubeletUnit = "kubelet.service"
+
+		propertiesChanged := func(unitPath string, body ...interface{}) *dbus.Signal {
+			return &dbus.Signal{
+				Path: dbus.ObjectPath(unitPath),
+				Name: "org.freedesktop.DBus.Properties.PropertiesChanged",
+				Body: body,
+			}
+		}
+		activeState := func(state interface{}) []interface{} {
+			return []interface{}{
+				"org.freedesktop.systemd1.Unit",
+				map[string]dbus.Variant{"ActiveState": dbus.MakeVariant(state)},
+			}
+		}
+
+		// The rules are installed for the original path, then the resolved path is
+		// changed before the signal is delivered. Re-application is therefore visible
+		// as the ruleset switching to the new path, rather than being asserted against
+		// what the setup already produced.
+		const originalPath = "kubelet.slice/kubelet.service"
+		const reresolvedPath = "kubelet.slice/kubelet-1234.service"
+
+		BeforeEach(func() {
+			manager.kubeletCgroupPath = originalPath
+			Expect(manager.setupUDNIsolationFromHost()).To(Succeed())
+			Expect(nodenft.MatchNFTRules(expectedDump(originalPath), fakeNFT.Dump())).To(Succeed(), "rules start on the original path")
+			manager.kubeletCgroupPath = reresolvedPath
+		})
+
+		It("re-applies the rules when the kubelet unit becomes active", func() {
+			signal := propertiesChanged("/org/freedesktop/systemd1/unit/kubelet_2eservice", activeState("active")...)
+
+			Expect(manager.handleKubeletRestartSignal(signal, kubeletUnit)).To(Succeed())
+			Expect(nodenft.MatchNFTRules(expectedDump(reresolvedPath), fakeNFT.Dump())).To(Succeed(), "rules are rebuilt for the re-resolved path")
+		})
+
+		It("re-applies the rules for a renamed unit", func() {
+			// systemd escapes every character outside [A-Za-z0-9], so this only matches
+			// if the object path is decoded in full rather than just "_2e".
+			signal := propertiesChanged("/org/freedesktop/systemd1/unit/rke2_2dagent_2eservice", activeState("active")...)
+
+			Expect(manager.handleKubeletRestartSignal(signal, "rke2-agent.service")).To(Succeed())
+			Expect(nodenft.MatchNFTRules(expectedDump(reresolvedPath), fakeNFT.Dump())).To(Succeed(), "renamed unit is recognised and the rules are rebuilt")
+		})
+
+		DescribeTable("ignores signals it cannot act on, without panicking",
+			func(signal *dbus.Signal) {
+				Expect(manager.handleKubeletRestartSignal(signal, kubeletUnit)).To(Succeed())
+				Expect(nodenft.MatchNFTRules(expectedDump(originalPath), fakeNFT.Dump())).To(Succeed(), "rules are left alone")
+			},
+			Entry("another unit", propertiesChanged("/org/freedesktop/systemd1/unit/sshd_2eservice", activeState("active")...)),
+			Entry("not a unit path", propertiesChanged("/org/freedesktop/systemd1/job/42", activeState("active")...)),
+			Entry("short path", propertiesChanged("/org/freedesktop", activeState("active")...)),
+			Entry("inactive state", propertiesChanged("/org/freedesktop/systemd1/unit/kubelet_2eservice", activeState("inactive")...)),
+			// the systemd private connection is not a bus and delivers every signal, so
+			// the body can be any shape at all. None of these may panic the tracker.
+			Entry("empty body", propertiesChanged("/org/freedesktop/systemd1/unit/kubelet_2eservice")),
+			Entry("body too short", propertiesChanged("/org/freedesktop/systemd1/unit/kubelet_2eservice", "org.freedesktop.systemd1.Unit")),
+			Entry("changes not a variant map", propertiesChanged("/org/freedesktop/systemd1/unit/kubelet_2eservice",
+				"org.freedesktop.systemd1.Unit", "not-a-map")),
+			Entry("no ActiveState key", propertiesChanged("/org/freedesktop/systemd1/unit/kubelet_2eservice",
+				"org.freedesktop.systemd1.Unit", map[string]dbus.Variant{"SubState": dbus.MakeVariant("running")})),
+			Entry("ActiveState not a string", propertiesChanged("/org/freedesktop/systemd1/unit/kubelet_2eservice", activeState(42)...)),
+		)
+	})
 
 	It("reports unsupported kubelet probes on the node", func() {
 		manager.reportKubeletProbesUnsupported("the node uses cgroup v1")

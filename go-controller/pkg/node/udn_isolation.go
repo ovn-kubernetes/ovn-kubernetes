@@ -485,6 +485,33 @@ func decodeSystemdUnitName(escapedUnit string) string {
 	return unitName.String()
 }
 
+// handleKubeletRestartSignal re-applies the isolation rules when a signal reports the
+// kubelet unit becoming active again. The systemd private connection delivers every
+// signal rather than a filtered subset, so each field is checked before use: an
+// unexpected shape would otherwise panic the tracker goroutine.
+func (m *UDNHostIsolationManager) handleKubeletRestartSignal(signal *dbus.Signal, kubeletUnit string) error {
+	parts := strings.Split(string(signal.Path), "/")
+	if len(parts) < 6 || parts[4] != "unit" {
+		return nil
+	}
+	if decodeSystemdUnitName(parts[5]) != kubeletUnit || len(signal.Body) < 2 {
+		return nil
+	}
+	changes, ok := signal.Body[1].(map[string]dbus.Variant)
+	if !ok {
+		return nil
+	}
+	state, exists := changes["ActiveState"]
+	if !exists {
+		return nil
+	}
+	if newState, ok := state.Value().(string); !ok || newState != "active" {
+		return nil
+	}
+	klog.Info("Kubelet restarted, re-applying isolation")
+	return m.updateKubeletCgroup()
+}
+
 // runKubeletRestartTracker listens to systemd events to re-apply the UDN host isolation rules after kubelet restart.
 // cgroupv2 match doesn't actually match cgroup paths, but rather resolves them to numeric cgroup IDs when such
 // rules are loaded into kernel, and does not automatically update them in any way afterwards.
@@ -542,25 +569,8 @@ func (m *UDNHostIsolationManager) runKubeletRestartTracker(ctx context.Context) 
 					return
 				}
 				klog.V(5).Infof("D-Bus event received: %#v", signal)
-				// Extract unit name from path
-				unitPath := signal.Path
-				parts := strings.Split(string(unitPath), "/")
-				if len(parts) < 6 || parts[4] != "unit" {
-					continue
-				}
-				unitName := decodeSystemdUnitName(parts[5])
-
-				if unitName == kubeletUnit {
-					changes := signal.Body[1].(map[string]dbus.Variant)
-					if state, exists := changes["ActiveState"]; exists {
-						newState := state.Value().(string)
-						if newState == "active" {
-							klog.Info("Kubelet restarted, re-applying isolation")
-							if err := m.updateKubeletCgroup(); err != nil {
-								klog.Errorf("Failed to re-apply isolation: %v", err)
-							}
-						}
-					}
+				if err := m.handleKubeletRestartSignal(signal, kubeletUnit); err != nil {
+					klog.Errorf("Failed to re-apply isolation: %v", err)
 				}
 			}
 		}
