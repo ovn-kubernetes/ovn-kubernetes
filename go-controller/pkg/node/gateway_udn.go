@@ -121,6 +121,9 @@ type UserDefinedNetworkGateway struct {
 	// gwInterfaceIndex holds the link index of the gateway interface for this network.
 	gwInterfaceIndex int
 
+	// nodeNetAddrs holds the gateway bridge (br-ex) IP addresses with subnet masks
+	nodeNetAddrs []*net.IPNet
+
 	// save BGP state at the start of reconciliation loop run to handle it consistently throughout the run
 	isNetworkAdvertisedToDefaultVRF bool
 	isNetworkAdvertised             bool
@@ -175,6 +178,15 @@ func NewUserDefinedNetworkGateway(netInfo util.NetInfo, node *corev1.Node, nodeL
 		gwInterfaceIndex = 0
 	}
 
+	// Retrieve gateway bridge IPs for programming node network connected subnet routes in the VRF table
+	var nodeNetAddrs []*net.IPNet
+	if gw.openflowManager != nil {
+		nodeNetAddrs = gw.openflowManager.defaultBridge.GetIPs()
+		if len(nodeNetAddrs) == 0 {
+			klog.V(4).Infof("No bridge IPs found for UDN gateway %s, node network connected subnet routes will not be programmed", netInfo.GetNetworkName())
+		}
+	}
+
 	return &UserDefinedNetworkGateway{
 		NetInfo:                 netInfo,
 		node:                    node,
@@ -195,6 +207,7 @@ func NewUserDefinedNetworkGateway(netInfo util.NetInfo, node *corev1.Node, nodeL
 		reconcile:               make(chan struct{}, 1),
 		gwInterfaceName:         gwInterfaceName,
 		gwInterfaceIndex:        gwInterfaceIndex,
+		nodeNetAddrs:            nodeNetAddrs,
 	}, nil
 }
 
@@ -907,6 +920,27 @@ func (udng *UserDefinedNetworkGateway) computeRoutesForUDN(mpLink netlink.Link) 
 		return nil, fmt.Errorf("unable to add default route for network %s, err: %v", udng.GetNetworkName(), err)
 	}
 	retVal = append(retVal, defaultRoute...)
+
+	// Add node network connected subnet route: eg. 192.168.x.0/24 dev br-ex scope link src 192.168.x.5
+	// necessary for direct L2 forwarding to nodes on the same subnet without going through the default gateway
+	for _, nodeNetAddr := range udng.nodeNetAddrs {
+		if nodeNetAddr == nil || nodeNetAddr.IP == nil || nodeNetAddr.Mask == nil {
+			continue
+		}
+		// only add routes for configured IP families
+		isV6 := utilnet.IsIPv6(nodeNetAddr.IP)
+		if (!isV6 && !config.IPv4Mode) || (isV6 && !config.IPv6Mode) {
+			continue
+		}
+		nodeSubnet := nodeNetAddr.IP.Mask(nodeNetAddr.Mask)
+		retVal = append(retVal, netlink.Route{
+			LinkIndex: udng.gwInterfaceIndex,
+			Dst:       &net.IPNet{IP: nodeSubnet, Mask: nodeNetAddr.Mask},
+			Src:       nodeNetAddr.IP,
+			Table:     udng.vrfTableId,
+			Scope:     netlink.SCOPE_LINK,
+		})
+	}
 
 	// Route3: Add MasqueradeRoute for reply traffic route: 169.254.169.12 dev ovn-k8s-mpX mtu 1400
 	// necessary for reply traffic towards UDN CNI pods to go into OVN
