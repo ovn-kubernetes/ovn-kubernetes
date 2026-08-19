@@ -66,28 +66,6 @@ func newNode(nodeName, nodeIPv4CIDR string) *corev1.Node {
 	}
 }
 
-func newNodeNotEgressableV4Only(nodeName, nodeIPv4 string) *corev1.Node {
-	return &corev1.Node{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: nodeName,
-			Annotations: map[string]string{
-				"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", nodeIPv4, ""),
-				"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":\"%s\"}", v4Node1Subnet),
-				util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", nodeIPv4),
-				util.OvnNodeChassisID:             chassisIDForNode(nodeName),
-			},
-		},
-		Status: corev1.NodeStatus{
-			Conditions: []corev1.NodeCondition{
-				{
-					Type:   corev1.NodeReady,
-					Status: corev1.ConditionTrue,
-				},
-			},
-		},
-	}
-}
-
 func newNodeNotEgressableV6Only(nodeName, nodeIPv6 string) *corev1.Node {
 	return &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
