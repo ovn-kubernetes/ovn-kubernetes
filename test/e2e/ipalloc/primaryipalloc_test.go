@@ -89,12 +89,12 @@ func TestIPAlloc(t *testing.T) {
 		{
 			desc:                     "IPv4",
 			existingPrimaryNodeIPs:   []node{{v4: network{ip: "192.168.1.1", mask: "16"}}, {v4: network{ip: "192.168.1.2", mask: "16"}}},
-			expectedFromAllocateNext: []string{"192.168.2.3", "192.168.2.4"},
+			expectedFromAllocateNext: []string{"192.168.1.200", "192.168.1.201"},
 		},
 		{
 			desc:                     "IPv6",
-			existingPrimaryNodeIPs:   []node{{v4: network{ip: "fc00:f853:ccd:e793::5", mask: "64"}}, {v4: network{ip: "fc00:f853:ccd:e793::6", mask: "64"}}},
-			expectedFromAllocateNext: []string{"fc00:f853:ccd:e793::8", "fc00:f853:ccd:e793::9"},
+			existingPrimaryNodeIPs:   []node{{v6: network{ip: "fc00:f853:ccd:e793::5", mask: "64"}}, {v6: network{ip: "fc00:f853:ccd:e793::6", mask: "64"}}},
+			expectedFromAllocateNext: []string{"fc00:f853:ccd:e793::c8", "fc00:f853:ccd:e793::c9"},
 		},
 	}
 
@@ -126,6 +126,37 @@ func TestIPAlloc(t *testing.T) {
 		})
 	}
 
+}
+
+// TestIPAllocInitError verifies that newPrimaryIPAllocator rejects subnets that
+// contain the start of the reserved range but not its end, preventing silent
+// out-of-subnet allocations at runtime.
+func TestIPAllocInitError(t *testing.T) {
+	tests := []struct {
+		desc  string
+		nodes []node
+	}{
+		{
+			// 10.0.0.192/28 covers .192-.207: contains .200 (start) but not .254 (end)
+			desc:  "IPv4: subnet contains range start but excludes range end",
+			nodes: []node{{v4: network{ip: "10.0.0.200", mask: "28"}}},
+		},
+		{
+			// fc00:f853:ccd:e793::c0/123 covers ::c0-::df: contains ::c8 (start) but not ::ff (end)
+			desc:  "IPv6: subnet contains range start but excludes range end",
+			nodes: []node{{v6: network{ip: "fc00:f853:ccd:e793::c8", mask: "123"}}},
+		},
+	}
+
+	for i, tc := range tests {
+		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
+			cs := fake.NewSimpleClientset(getNodesWithIPs(tc.nodes))
+			_, err := newPrimaryIPAllocator(cs.CoreV1().Nodes())
+			if err == nil {
+				t.Error("expected error for narrow subnet that excludes range end, got nil")
+			}
+		})
+	}
 }
 
 func getNodesWithIPs(nodesSpec []node) runtime.Object {

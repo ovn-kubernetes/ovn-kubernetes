@@ -202,12 +202,15 @@ func getLastLogLine(data string) string {
 }
 
 // checks if the given IP is found. If there are multiple lines, only consider the last line.
+// The last line is expected to be in host:port format (e.g. "172.18.0.200:38137" or "[fc00::c8]:38137").
 func containsIPInLastEntry(data, ip string) bool {
-	if strings.Contains(getLastLogLine(data), ip) {
-
-		return true
+	lastLine := getLastLogLine(data)
+	host, _, err := net.SplitHostPort(lastLine)
+	if err != nil {
+		// fallback: could not parse as host:port, check full line
+		return lastLine == ip
 	}
-	return false
+	return host == ip
 }
 
 // support for agnhost image is limited to netexec command
@@ -408,21 +411,150 @@ type egressIPs struct {
 	Items []egressIP `json:"items"`
 }
 
-var _ = ginkgo.Describe("e2e egress IP validation", feature.EgressIP, func() {
+var _ = ginkgo.Describe("e2e egress IP validation", feature.EgressIP, ginkgo.Ordered, ginkgo.ContinueOnFailure, func() {
+	// Shared constants used by both the outer BeforeAll and the inner DescribeTableSubtree.
+	const (
+		egressIPName            = "egressip"
+		targetNodeName          = "egressTargetNode-allowed"
+		deniedTargetNodeName    = "egressTargetNode-denied"
+		targetSecondaryNodeName = "egressSecondaryTargetNode-allowed"
+	)
+
+	// Shared state created once for the entire Describe block.
+	var (
+		suiteCtx                         infraapi.Context
+		isIPv6TestRun                    bool
+		primaryTargetExternalContainer   infraapi.ExternalContainer
+		primaryDeniedExternalContainer   infraapi.ExternalContainer
+		secondaryTargetExternalContainer infraapi.ExternalContainer
+	)
+
+	getNodesInternalAddresses := func(nodes *corev1.NodeList, family corev1.IPFamily) []string {
+		ips := make([]string, 0, 3)
+		for _, node := range nodes.Items {
+			ips = append(ips, e2enode.GetAddressesByTypeAndFamily(&node, corev1.NodeInternalIP, family)...)
+		}
+		return ips
+	}
+
+	isNodeInternalAddressesPresentForIPFamily := func(nodes *corev1.NodeList, ipFamily corev1.IPFamily) bool {
+		return len(getNodesInternalAddresses(nodes, ipFamily)) > 0
+	}
+
+	// Create shared external containers and secondary network once for the entire suite.
+	ginkgo.BeforeAll(func() {
+		suiteCtx = infraprovider.Get().NewTestContext()
+
+		config, err := framework.LoadConfig()
+		framework.ExpectNoError(err, "failed to load kubeconfig")
+		clientSet, err := clientset.NewForConfig(config)
+		framework.ExpectNoError(err, "failed to create kube clientset")
+
+		nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), clientSet, 3)
+		framework.ExpectNoError(err)
+		if len(nodes.Items) < 3 {
+			framework.Failf("Test requires >= 3 Ready nodes, but there are only %v nodes", len(nodes.Items))
+		}
+		// Determine IP family from the cluster itself, not from any entry's netConfigParams.
+		// On dual-stack clusters default to IPv4, matching CDN behaviour.
+		isIPv6TestRun = !isNodeInternalAddressesPresentForIPFamily(nodes, corev1.IPv4Protocol) &&
+			isNodeInternalAddressesPresentForIPFamily(nodes, corev1.IPv6Protocol)
+
+		primaryProviderNetwork, err := infraprovider.Get().PrimaryNetwork()
+		framework.ExpectNoError(err, "failed to get primary provider network")
+
+		primaryTargetExternalContainerPort := infraprovider.Get().GetExternalContainerPort()
+		primaryTargetExternalContainerSpec := infraapi.ExternalContainer{Name: targetNodeName, Image: images.AgnHost(),
+			Network: primaryProviderNetwork, CmdArgs: getAgnHostHTTPPortBindCMDArgs(primaryTargetExternalContainerPort), ExtPort: primaryTargetExternalContainerPort}
+		primaryTargetExternalContainer, err = suiteCtx.CreateExternalContainer(primaryTargetExternalContainerSpec)
+		framework.ExpectNoError(err, "failed to create external target container on primary network", primaryTargetExternalContainerSpec.String())
+
+		primaryDeniedExternalContainerPort := infraprovider.Get().GetExternalContainerPort()
+		primaryDeniedExternalContainerSpec := infraapi.ExternalContainer{Name: deniedTargetNodeName, Image: images.AgnHost(),
+			Network: primaryProviderNetwork, CmdArgs: getAgnHostHTTPPortBindCMDArgs(primaryDeniedExternalContainerPort), ExtPort: primaryDeniedExternalContainerPort}
+		primaryDeniedExternalContainer, err = suiteCtx.CreateExternalContainer(primaryDeniedExternalContainerSpec)
+		framework.ExpectNoError(err, "failed to create external denied container on primary network", primaryDeniedExternalContainer.String())
+
+		// Create a single-stack secondary network whose IP family matches the cluster.
+		// Nodes connect only to this network so OVN-Kubernetes sees a single-family
+		// secondary host interface — required for the secondary-host-EIP assignment
+		// feature to work correctly.
+		secondarySubnet := secondaryIPV4Subnet
+		if isIPv6TestRun {
+			secondarySubnet = secondaryIPV6Subnet
+		}
+		secondaryProviderNetwork, err := suiteCtx.CreateNetwork(secondaryNetworkName, secondarySubnet)
+		framework.ExpectNoError(err, "creation of network %q with subnet %s must succeed", secondaryNetworkName, secondarySubnet)
+		allNodes, err := clientSet.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
+		framework.ExpectNoError(err, "must list all Nodes")
+		for _, node := range allNodes.Items {
+			_, err = suiteCtx.AttachNetwork(secondaryProviderNetwork, node.Name)
+			framework.ExpectNoError(err, "network %s must attach to node %s", secondaryProviderNetwork.Name, node.Name)
+		}
+
+		secondaryTargetExternalContainerPort := infraprovider.Get().GetExternalContainerPort()
+		secondaryTargetExternalContainerSpec := infraapi.ExternalContainer{
+			Name:    targetSecondaryNodeName,
+			Image:   images.AgnHost(),
+			Network: secondaryProviderNetwork,
+			CmdArgs: getAgnHostHTTPPortBindCMDArgs(secondaryTargetExternalContainerPort),
+			ExtPort: secondaryTargetExternalContainerPort,
+		}
+		secondaryTargetExternalContainer, err = suiteCtx.CreateExternalContainer(secondaryTargetExternalContainerSpec)
+		framework.ExpectNoError(err, "unable to create external container %s", secondaryTargetExternalContainerSpec.Name)
+
+		// Also attach the secondary container to an opposite-family network so that
+		// it has both IPv4 and IPv6.  Nodes are intentionally NOT attached to this
+		// network — exposing a dual-stack secondary interface to OVN-Kubernetes
+		// breaks secondary-host-EIP assignment.
+		otherSecondarySubnet := secondaryIPV6Subnet
+		if isIPv6TestRun {
+			otherSecondarySubnet = secondaryIPV4Subnet
+		}
+		otherSecondaryNetwork, err := suiteCtx.CreateNetwork(secondaryNetworkName+"v6", otherSecondarySubnet)
+		framework.ExpectNoError(err, "creation of other-family secondary network must succeed")
+		otherNI, err := suiteCtx.AttachNetwork(otherSecondaryNetwork, secondaryTargetExternalContainer.Name)
+		framework.ExpectNoError(err, "other-family secondary network must attach to secondary container")
+		// Populate the missing IP family on the ExternalContainer so callers can
+		// reach the container via either IPv4 or IPv6.
+		if isIPv6TestRun {
+			secondaryTargetExternalContainer.IPv4 = otherNI.GetIPv4()
+		} else {
+			secondaryTargetExternalContainer.IPv6 = otherNI.GetIPv6()
+		}
+
+		if secondaryTargetExternalContainer.GetIPv4() == "" {
+			panic("failed to get v4 address")
+		}
+		if secondaryTargetExternalContainer.GetIPv6() == "" {
+			panic("failed to get v6 address")
+		}
+
+		if isIPv6TestRun {
+			if !primaryTargetExternalContainer.IsIPv6() || !primaryDeniedExternalContainer.IsIPv6() || !secondaryTargetExternalContainer.IsIPv6() {
+				framework.Failf("one or more external containers do not have an IPv6 address,"+
+					" target primary network %q, denied primary network %q, target secondary network %q",
+					primaryTargetExternalContainer.GetIPv6(), primaryDeniedExternalContainer.GetIPv6(), secondaryTargetExternalContainer.GetIPv6())
+			}
+		} else {
+			if !primaryTargetExternalContainer.IsIPv4() || !primaryDeniedExternalContainer.IsIPv4() || !secondaryTargetExternalContainer.IsIPv4() {
+				framework.Failf("one or more external containers do not have an IPv4 address,"+
+					" target primary network %q, denied primary network %q, target secondary network %q",
+					primaryTargetExternalContainer.GetIPv4(), primaryDeniedExternalContainer.GetIPv4(), secondaryTargetExternalContainer.GetIPv4())
+			}
+		}
+	})
+
 	ginkgo.DescribeTableSubtree("on network of type", func(netConfigParams networkAttachmentConfigParams) {
 		//FIXME: tests for CDN are designed for single stack clusters (IPv4 or IPv6) and must choose a single IP family for dual stack clusters.
 		// Remove this restriction and allow the tests to detect if an IP family support is available.
 		const (
-			clusterIPPort           uint16 = 9999
-			clusterNetworkHTTPPort  uint16 = 8080
-			egressIPName            string = "egressip"
-			egressIPName2           string = "egressip-2"
-			targetNodeName          string = "egressTargetNode-allowed"
-			deniedTargetNodeName    string = "egressTargetNode-denied"
-			targetSecondaryNodeName string = "egressSecondaryTargetNode-allowed"
-			egressIPYaml            string = "egressip.yaml"
-			egressFirewallYaml      string = "egressfirewall.yaml"
-			retryTimeout                   = 3 * retryTimeout // Boost the retryTimeout for EgressIP tests.
+			clusterIPPort          uint16 = 9999
+			clusterNetworkHTTPPort uint16 = 8080
+			egressIPName2          string = "egressip-2"
+			egressIPYaml           string = "egressip.yaml"
+			egressFirewallYaml     string = "egressfirewall.yaml"
+			retryTimeout                  = 3 * retryTimeout // Boost the retryTimeout for EgressIP tests.
 		)
 
 		podEgressLabel := map[string]string{
@@ -432,13 +564,9 @@ var _ = ginkgo.Describe("e2e egress IP validation", feature.EgressIP, func() {
 		var (
 			egress1Node, egress2Node, pod1Node, pod2Node node
 			providerCtx                                  infraapi.Context
-			primaryTargetExternalContainer               infraapi.ExternalContainer
-			primaryDeniedExternalContainer               infraapi.ExternalContainer
-			secondaryTargetExternalContainer             infraapi.ExternalContainer
 			pod1Name                                     = "e2e-egressip-pod-1"
 			pod2Name                                     = "e2e-egressip-pod-2"
 			usedEgressNodeAvailabilityHandler            egressNodeAvailabilityHandler
-			isIPv6TestRun                                bool
 		)
 
 		targetPodAndTest := func(namespace, fromName, toName, toIP string, toPort uint16) wait.ConditionFunc {
@@ -610,21 +738,6 @@ var _ = ginkgo.Describe("e2e egress IP validation", feature.EgressIP, func() {
 			return v4, v6
 		}
 
-		getNodesInternalAddresses := func(nodes *corev1.NodeList, family corev1.IPFamily) []string {
-			ips := make([]string, 0, 3)
-			for _, node := range nodes.Items {
-				ips = append(ips, e2enode.GetAddressesByTypeAndFamily(&node, corev1.NodeInternalIP, family)...)
-			}
-			return ips
-		}
-
-		isNodeInternalAddressesPresentForIPFamily := func(nodes *corev1.NodeList, ipFamily corev1.IPFamily) bool {
-			if len(getNodesInternalAddresses(nodes, ipFamily)) > 0 {
-				return true
-			}
-			return false
-		}
-
 		isNetworkSupported := func(nodes *corev1.NodeList, netConfigParams networkAttachmentConfigParams) (bool, string) {
 			// cluster default network
 			if netConfigParams.networkName == types.DefaultNetworkName {
@@ -734,12 +847,15 @@ var _ = ginkgo.Describe("e2e egress IP validation", feature.EgressIP, func() {
 			if isSupported, reason := isNetworkSupported(nodes, netConfigParams); !isSupported {
 				ginkgo.Skip(reason)
 			}
-			// tests are configured to introspect the Nodes Internal IP address family and then create an EgressIP of
-			// the same IP family. If dual stack, we default to IPv4 because the tests aren't configured to handle dual stack.
+			// Select node IPs for the current entry's IP family. On a dual-stack cluster each
+			// entry independently drives either IPv4 or IPv6 based on its netConfigParams.
 			ips := getNodeIPs(nodes, netConfigParams)
 			if len(ips) == 0 {
 				framework.Failf("expect at least one IP address")
 			}
+			// Reflect the current entry's IP family so all specs in this entry use the
+			// correct family (overrides the cluster-level value set in BeforeAll).
+			isIPv6TestRun = utilnet.IsIPv6String(ips[0])
 
 			labels := map[string]string{
 				"e2e-framework": f.BaseName,
@@ -751,7 +867,6 @@ var _ = ginkgo.Describe("e2e egress IP validation", feature.EgressIP, func() {
 			f.Namespace = namespace
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			isIPv6TestRun = utilnet.IsIPv6String(ips[0])
 			egress1Node = node{
 				name:   nodes.Items[1].Name,
 				nodeIP: ips[1],
@@ -775,67 +890,6 @@ var _ = ginkgo.Describe("e2e egress IP validation", feature.EgressIP, func() {
 				waitForNoTaint(node.Name, "node.kubernetes.io/unreachable")
 				waitForNoTaint(node.Name, "node.kubernetes.io/not-ready")
 			}
-			// Primary provider network
-			primaryProviderNetwork, err := infraprovider.Get().PrimaryNetwork()
-			framework.ExpectNoError(err, "failed to get primary provider network")
-
-			// attach containers to the primary network
-			primaryTargetExternalContainerPort := infraprovider.Get().GetExternalContainerPort()
-			primaryTargetExternalContainerSpec := infraapi.ExternalContainer{Name: targetNodeName, Image: images.AgnHost(),
-				Network: primaryProviderNetwork, CmdArgs: getAgnHostHTTPPortBindCMDArgs(primaryTargetExternalContainerPort), ExtPort: primaryTargetExternalContainerPort}
-			primaryTargetExternalContainer, err = providerCtx.CreateExternalContainer(primaryTargetExternalContainerSpec)
-			framework.ExpectNoError(err, "failed to create external target container on primary network", primaryTargetExternalContainerSpec.String())
-
-			primaryDeniedExternalContainerPort := infraprovider.Get().GetExternalContainerPort()
-			primaryDeniedExternalContainerSpec := infraapi.ExternalContainer{Name: deniedTargetNodeName, Image: images.AgnHost(),
-				Network: primaryProviderNetwork, CmdArgs: getAgnHostHTTPPortBindCMDArgs(primaryDeniedExternalContainerPort), ExtPort: primaryDeniedExternalContainerPort}
-			primaryDeniedExternalContainer, err = providerCtx.CreateExternalContainer(primaryDeniedExternalContainerSpec)
-			framework.ExpectNoError(err, "failed to create external denied container on primary network", primaryDeniedExternalContainer.String())
-
-			// Setup secondary provider network
-			secondarySubnet := secondaryIPV4Subnet
-			if isIPv6TestRun {
-				secondarySubnet = secondaryIPV6Subnet
-			}
-			// configure and add additional network to worker containers for EIP multi NIC feature
-			secondaryProviderNetwork, err := providerCtx.CreateNetwork(secondaryNetworkName, secondarySubnet)
-			framework.ExpectNoError(err, "creation of network %q with subnet %s must succeed", secondaryNetworkName, secondarySubnet)
-			nodes, err = f.ClientSet.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
-			framework.ExpectNoError(err, "must list all Nodes")
-			for _, node := range nodes.Items {
-				_, err = providerCtx.AttachNetwork(secondaryProviderNetwork, node.Name)
-				framework.ExpectNoError(err, "network %s must attach to node %s", secondaryProviderNetwork.Name, node.Name)
-			}
-			secondaryTargetExternalContainerPort := infraprovider.Get().GetExternalContainerPort()
-			secondaryTargetExternalContainerSpec := infraapi.ExternalContainer{
-				Name:    targetSecondaryNodeName,
-				Image:   images.AgnHost(),
-				Network: secondaryProviderNetwork,
-				CmdArgs: getAgnHostHTTPPortBindCMDArgs(secondaryTargetExternalContainerPort),
-				ExtPort: secondaryTargetExternalContainerPort,
-			}
-			secondaryTargetExternalContainer, err = providerCtx.CreateExternalContainer(secondaryTargetExternalContainerSpec)
-			framework.ExpectNoError(err, "unable to create external container %s", secondaryTargetExternalContainerSpec.Name)
-			if secondaryTargetExternalContainer.GetIPv4() == "" && !isIPv6TestRun {
-				panic("failed to get v4 address")
-			}
-			if secondaryTargetExternalContainer.GetIPv6() == "" && isIPv6TestRun {
-				panic("failed to get v6 address")
-			}
-
-			if isIPv6TestRun {
-				if !primaryTargetExternalContainer.IsIPv6() || !primaryDeniedExternalContainer.IsIPv6() || !secondaryTargetExternalContainer.IsIPv6() {
-					framework.Failf("one or more external containers do not have an IPv6 address,"+
-						" target primary network %q, denied primary network %q, target secondary network %q",
-						primaryTargetExternalContainer.GetIPv6(), primaryDeniedExternalContainer.GetIPv6(), secondaryTargetExternalContainer.GetIPv6())
-				}
-			} else {
-				if !primaryTargetExternalContainer.IsIPv4() || !primaryDeniedExternalContainer.IsIPv4() || !secondaryTargetExternalContainer.IsIPv4() {
-					framework.Failf("one or more external containers do not have an IPv4 address,"+
-						" target primary network %q, denied primary network %q, target secondary network %q",
-						primaryTargetExternalContainer.GetIPv4(), primaryDeniedExternalContainer.GetIPv4(), secondaryTargetExternalContainer.GetIPv4())
-				}
-			}
 			// no further network creation is required if CDN
 			if isClusterDefaultNetwork(netConfigParams) {
 				return
@@ -857,6 +911,9 @@ var _ = ginkgo.Describe("e2e egress IP validation", feature.EgressIP, func() {
 			// ensure all nodes are ready and reachable before any other cleanup;
 			// tests may have left nodes NotReady or unreachable intentionally
 			for _, node := range []string{egress1Node.name, egress2Node.name} {
+				if node == "" {
+					continue
+				}
 				setNodeReady(providerCtx, node, true)
 				setNodeReachable(node, true)
 				waitForNoTaint(node, "node.kubernetes.io/unreachable")
@@ -871,10 +928,23 @@ var _ = ginkgo.Describe("e2e egress IP validation", feature.EgressIP, func() {
 			if isSupported, reason := isNetworkSupported(nodes, netConfigParams); !isSupported {
 				ginkgo.Skip(reason)
 			}
-			e2ekubectl.RunKubectlOrDie("default", "delete", "eip", egressIPName, "--ignore-not-found=true")
-			e2ekubectl.RunKubectlOrDie("default", "delete", "eip", egressIPName2, "--ignore-not-found=true")
 			e2ekubectl.RunKubectlOrDie("default", "label", "node", egress1Node.name, "k8s.ovn.org/egress-assignable-")
 			e2ekubectl.RunKubectlOrDie("default", "label", "node", egress2Node.name, "k8s.ovn.org/egress-assignable-")
+			// Wait for the EgressIP controller to un-assign any existing EgressIPs
+			// after label removal.  With BeforeAll the secondary network persists
+			// across tests, so there is no network teardown/recreation to naturally
+			// drain stale controller state.
+			for _, eipName := range []string{egressIPName, egressIPName2} {
+				if _, getErr := e2ekubectl.RunKubectl("default", "get", "eip", eipName); getErr != nil {
+					continue // EgressIP does not exist, nothing to drain
+				}
+				err = wait.PollUntilContextTimeout(context.TODO(), retryInterval, retryTimeout, true, func(_ context.Context) (bool, error) {
+					return len(getSpecificEgressIPStatusItems(eipName)) == 0, nil
+				})
+				framework.ExpectNoError(err, "EgressIP %s status did not drain after removing egress-assignable labels", eipName)
+			}
+			e2ekubectl.RunKubectlOrDie("default", "delete", "eip", egressIPName, "--ignore-not-found=true")
+			e2ekubectl.RunKubectlOrDie("default", "delete", "eip", egressIPName2, "--ignore-not-found=true")
 		})
 		// Validate the egress IP by creating a httpd container on the kind networking
 		// (effectively seen as "outside" the cluster) and curl it from a pod in the cluster
@@ -1556,7 +1626,7 @@ spec:
 			ginkgo.By("7. Check the OVN DB to ensure no SNATs are added for the standby egressIP")
 			ovnKubernetesNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
 			dbPods, err := e2ekubectl.RunKubectl(ovnKubernetesNamespace, "get", "pods", "-l", "app=ovnkube-node", "--field-selector", fmt.Sprintf("spec.nodeName=%s", egress1Node.name), "-o=jsonpath='{.items..metadata.name}'")
-			dbContainerName := "nb-ovsdb"
+			dbContainerName := deploymentconfig.Get().NBDBContainerName()
 			if err != nil || len(dbPods) == 0 {
 				framework.Failf("Error: Check the OVN DB to ensure no SNATs are added for the standby egressIP, err: %v", err)
 			}
@@ -2903,7 +2973,14 @@ spec:
 				_, err := infraprovider.Get().ExecK8NodeCommand(egress1Node.name, []string{
 					"ip", "link", "del", vrfName,
 				})
-				return err
+				if err != nil {
+					return err
+				}
+				// Deleting the VRF releases the enslaved interface, but on IPv6
+				// the global address may be lost again.  Restore it so that the
+				// shared secondary network (created in BeforeAll) keeps a valid
+				// IPv6 address for subsequent tests.
+				return restoreLinkIPv6AddrFn()
 			})
 			_, err = infraprovider.Get().ExecK8NodeCommand(egress1Node.name, []string{"ip", "link", "set", "dev", egressInterface, "master", vrfName})
 			framework.ExpectNoError(err, "failed to enslave interface %s to VRF %s node %s", egressInterface, vrfName, egress1Node.name)
@@ -3153,6 +3230,7 @@ spec:
 				monitorOutput := ""
 				finishedMonitor := make(chan struct{})
 				go func() {
+					defer ginkgo.GinkgoRecover()
 					defer close(finishedMonitor)
 					var monitorErr error
 					monitorOutput, monitorErr = monitorTcpdumpOnNode(ctx, f, monitorPodName, egress1Node.name, secondaryIface.InfName,

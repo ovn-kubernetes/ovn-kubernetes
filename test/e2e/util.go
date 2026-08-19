@@ -1884,9 +1884,13 @@ func monitorTcpdumpOnNode(ctx context.Context, f *framework.Framework,
 	}
 
 	createdPod, err := f.ClientSet.CoreV1().Pods(f.Namespace.Name).Create(ctx, pod, metav1.CreateOptions{})
-	framework.ExpectNoError(err, "Failed to create traffic monitor pod")
+	if err != nil {
+		return "", fmt.Errorf("failed to create traffic monitor pod: %w", err)
+	}
 	err = e2epod.WaitForPodRunningInNamespace(ctx, f.ClientSet, createdPod)
-	framework.ExpectNoError(err, "Monitor pod failed to start")
+	if err != nil {
+		return "", fmt.Errorf("monitor pod failed to start: %w", err)
+	}
 
 	<-ctx.Done()
 	logs, err := e2ekubectl.RunKubectl(f.Namespace.Name, "logs", name)
