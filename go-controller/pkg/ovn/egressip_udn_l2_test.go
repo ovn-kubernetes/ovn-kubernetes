@@ -305,10 +305,9 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				iUDN, nUDN, _ := net.ParseCIDR(v4Pod1IPNode1Net1 + "/23")
 				nUDN.IP = iUDN
 				fakeOvn.controller.logicalPortCache.add(&egressPodUDNLocal, "", util.GetNADName(nad.Namespace, nad.Name), "", nil, []*net.IPNet{nUDN})
-				fakeOvn.controller.eIPC.nodeZoneState.Store(node1Name, true)
-				fakeOvn.controller.eIPC.nodeZoneState.Store(node2Name, false)
-				fakeOvn.controller.eIPC.zone = node1.Name
+				fakeOvn.controller.eIPC.nodeName = node1.Name
 				fakeOvn.controller.nodeName = node1.Name
+				gomega.Expect(fakeOvn.eIPController.SyncNodeCache()).To(gomega.Succeed())
 				err = fakeOvn.eIPController.ensureRouterPoliciesForNetwork(netInfo, &node1)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.eIPController.ensureSwitchPoliciesForNode(netInfo, node1Name)
@@ -680,12 +679,11 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				iCDN, nCDN, _ := net.ParseCIDR(podV4IP + "/23")
 				nCDN.IP = iCDN
 				fakeOvn.controller.nodeName = node1.Name
-				fakeOvn.eIPController.zone = node1.Name
+				fakeOvn.eIPController.nodeName = node1.Name
 				fakeOvn.controller.logicalPortCache.add(&egressPodCDNLocal, "", ovntypes.DefaultNetworkName, "", nil, []*net.IPNet{nCDN})
 				secConInfo, ok := fakeOvn.userDefinedNetworkControllers[networkName1]
 				gomega.Expect(ok).To(gomega.BeTrue())
-				fakeOvn.controller.eIPC.nodeZoneState.Store(node1Name, true)
-				fakeOvn.controller.eIPC.nodeZoneState.Store(node2Name, false)
+				gomega.Expect(fakeOvn.eIPController.SyncNodeCache()).To(gomega.Succeed())
 				err = fakeOvn.networkManager.Start()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				defer fakeOvn.networkManager.Stop()
@@ -1209,8 +1207,8 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				nCDN.IP = iCDN
 				fakeOvn.controller.logicalPortCache.add(&egressPodCDNLocal, "", ovntypes.DefaultNetworkName, "", nil, []*net.IPNet{nCDN})
 				fakeOvn.controller.nodeName = node1.Name
-				fakeOvn.eIPController.zone = node1.Name
-				err = fakeOvn.eIPController.SyncLocalNodeZonesCache()
+				fakeOvn.eIPController.nodeName = node1.Name
+				err = fakeOvn.eIPController.SyncNodeCache()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.networkManager.Start()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1714,10 +1712,8 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				nCDN.IP = iCDN
 				fakeOvn.controller.logicalPortCache.add(&egressPodCDN, "", ovntypes.DefaultNetworkName, "", nil, []*net.IPNet{nCDN})
 				fakeOvn.controller.nodeName = node1Name
-				fakeOvn.controller.eIPC.zone = node1Name
-				fakeOvn.controller.eIPC.nodeZoneState.Store(node1Name, true)
-				fakeOvn.controller.eIPC.nodeZoneState.Store(node2Name, false)
-				err = fakeOvn.eIPController.SyncLocalNodeZonesCache()
+				fakeOvn.controller.eIPC.nodeName = node1Name
+				err = fakeOvn.eIPController.SyncNodeCache()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.networkManager.Start()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -2090,9 +2086,8 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				nCDN.IP = iCDN
 				fakeOvn.controller.logicalPortCache.add(&egressPodCDN, "", ovntypes.DefaultNetworkName, "", nil, []*net.IPNet{nCDN})
 				fakeOvn.controller.nodeName = node1Name
-				fakeOvn.eIPController.zone = node1Name
-				fakeOvn.controller.eIPC.nodeZoneState.Store(node1Name, true)
-				fakeOvn.controller.eIPC.nodeZoneState.Store(node2Name, false)
+				fakeOvn.eIPController.nodeName = node1Name
+				gomega.Expect(fakeOvn.eIPController.SyncNodeCache()).To(gomega.Succeed())
 				// Add pod IPs to UDN cache
 				iUDN, nUDN, _ := net.ParseCIDR(v4Pod1IPNode1Net1 + "/23")
 				nUDN.IP = iUDN
@@ -2455,8 +2450,8 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				nCDN.IP = iCDN
 				fakeOvn.controller.logicalPortCache.add(&egressPodCDNLocal, "", ovntypes.DefaultNetworkName, "", nil, []*net.IPNet{nCDN})
 				fakeOvn.controller.nodeName = node1Name
-				fakeOvn.eIPController.zone = node1Name
-				err = fakeOvn.eIPController.SyncLocalNodeZonesCache()
+				fakeOvn.eIPController.nodeName = node1Name
+				err = fakeOvn.eIPController.SyncNodeCache()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.networkManager.Start()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -2833,10 +2828,10 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				nCDN.IP = iCDN
 				fakeOvn.controller.logicalPortCache.add(&egressPodCDNLocal, "", ovntypes.DefaultNetworkName, "", nil, []*net.IPNet{nCDN})
 				fakeOvn.controller.nodeName = node1Name
-				fakeOvn.eIPController.zone = node1Name
+				fakeOvn.eIPController.nodeName = node1Name
 				secConInfo, ok := fakeOvn.userDefinedNetworkControllers[networkName1]
 				gomega.Expect(ok).To(gomega.BeTrue())
-				err = fakeOvn.eIPController.SyncLocalNodeZonesCache()
+				err = fakeOvn.eIPController.SyncNodeCache()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.networkManager.Start()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
