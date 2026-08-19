@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -279,12 +280,16 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 
 		checkIperfTraffic = func(iperfLogFile string, execFn func(cmd string) (string, error), timeout time.Duration, stage string) {
 			GinkgoHelper()
+			// Keep the last observed full log around so the failure message
+			// can report the actual downtime instead of just the last line.
+			fullIperfLog := ""
 			// Check the last line eventually show traffic flowing
 			Eventually(func() (string, error) {
 				iperfLog, err := execFn("cat " + iperfLogFile)
 				if err != nil {
 					return "", err
 				}
+				fullIperfLog = iperfLog
 				// Fail fast
 				Expect(iperfLog).NotTo(ContainSubstring("iperf3: error"), stage+": "+iperfLogFile)
 				// Remove last carriage return to properly split by new line.
@@ -303,7 +308,13 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 						ContainSubstring(" sec "),
 						Not(ContainSubstring("0.00 Bytes  0.00 bits/sec")),
 					),
-					stage+": failed checking iperf3 traffic at file "+iperfLogFile,
+					func() string {
+						failureMessage := stage + ": failed checking iperf3 traffic at file " + iperfLogFile
+						if downtime := kubevirt.IperfDowntimeSummary(fullIperfLog); downtime != "" {
+							failureMessage += "\n" + downtime
+						}
+						return failureMessage + "\niperf3 log tail:\n" + kubevirt.TailLines(fullIperfLog, 150)
+					},
 				)
 		}
 
@@ -341,7 +352,10 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 				// Redirect stdio so execFn implementations that capture output
 				// do not block waiting for the background iperf3 process to
 				// exit.
-				output, err = execFn(fmt.Sprintf("nohup iperf3 -t 0 -c %[1]s -p %[2]d --pidfile %[3]s --logfile %[4]s >/dev/null 2>&1 &", address, port, iperfPidFile, iperfLogFile))
+				// --forceflush --timestamps='%s ' add a Unix epoch prefix to
+				// every interval line so checkIperfTraffic failures can
+				// report when a stall started and how long it lasted.
+				output, err = execFn(fmt.Sprintf("nohup iperf3 -t 0 --forceflush --timestamps='%%s ' -c %[1]s -p %[2]d --pidfile %[3]s --logfile %[4]s >/dev/null 2>&1 &", address, port, iperfPidFile, iperfLogFile))
 				if err != nil {
 					return fmt.Errorf("failed at starting iperf3 in background %s: %w", output, err)
 				}
@@ -397,8 +411,9 @@ fi
 				return fmt.Errorf("failed starting iperf3 server on external container: %s: %w", output, err)
 			}
 			// Start iperf3 client on the VM connecting to the external container's IPs.
-			// --timestamps='%s ' adds Unix epoch prefix so checkExternalEastWestIperfTraffic
-			// can use iperftest.LogDowntime to verify traffic resumed after migration.
+			// --timestamps='%s ' adds Unix epoch prefix so checkIperfTraffic
+			// failures can use kubevirt.IperfDowntimeSummary to report when a
+			// stall started after migration and how long it lasted.
 			polling := 15 * time.Second
 			for _, ip := range macVRFContainerIPs {
 				logFile := fmt.Sprintf("/tmp/external-east-west_%s_iperf3.log", ip)
@@ -1906,6 +1921,35 @@ ip route add %[3]s via %[4]s
 			testPodsIPs := podsMultusNetworkIPs(iperfServerTestPods, podNetworkStatusByNetConfigPredicate(namespace, cudn.Name, strings.ToLower(string(td.role))))
 
 			serverIPs, serverPort := exposeVMIperfServer(td, vmi, expectedAddreses)
+
+			// On failure collect the dataplane state (conntrack with zones,
+			// OpenFlow flows, ofproto/trace of the ingress flow, ...) needed
+			// to debug NodePort ingress disruptions after live migration,
+			// see https://github.com/ovn-kubernetes/ovn-kubernetes/issues/6581
+			// It is written to the nodes /var/log so it becomes part of the
+			// CI kind-logs artifacts. Registered with DeferCleanup so it
+			// runs before the provider context cleanup removes the external
+			// container and the iperf3 clients with it.
+			DeferCleanup(func() {
+				if !CurrentSpecReport().Failed() {
+					return
+				}
+				testDirName := strings.Trim(
+					regexp.MustCompile(`[^A-Za-z0-9._-]+`).ReplaceAllString(CurrentSpecReport().LeafNodeText, "_"),
+					"_",
+				)
+				kubevirt.CollectIngressFlakeDiagnostics(infraprovider.Get(), fr.ClientSet, kubevirt.IngressFlakeDiagnostics{
+					TestDirName: testDirName + "-" + fr.UniqueName,
+					ClientIPs:   externalContainerIPs,
+					EntryIPs:    serverIPs,
+					NodePort:    serverPort,
+					VMIPs:       expectedAddreses,
+					VMName:      vmi.Name,
+					ClientExec: func(cmd string) (string, error) {
+						return infraprovider.Get().ExecExternalContainerCommand(externalContainer, []string{"bash", "-c", cmd})
+					},
+				})
+			})
 
 			// IPv6 is not support for secondaries with IPAM so guest will
 			// have only ipv4.
