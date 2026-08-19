@@ -31,6 +31,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/controllers/evpn"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/controllers/macbinding"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iprulemanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/managementport"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/netlinkdevicemanager"
@@ -52,6 +53,9 @@ type NodeControllerManager struct {
 	stopChan      chan struct{}
 	wg            *sync.WaitGroup
 	recorder      record.EventRecorder
+
+	// libovsdb southbound client interface
+	sbClient client.Client
 
 	// management port device manager
 	mpdm *managementport.MgmtPortDeviceManager
@@ -80,6 +84,8 @@ type NodeControllerManager struct {
 	uplinkController *nodeuplink.Controller
 	// coordinates aggregate gateway programming for CUDNs using each Uplink
 	uplinkGatewayController *node.UplinkGatewayController
+	// mac binding controller for UDN ARP/NDP proxies
+	macBindingController *macbinding.MACBindingController
 }
 
 // NewNetworkController create node user-defined network controllers for the given NetInfo
@@ -268,7 +274,7 @@ func isNetworkManagerRequiredForNode() bool {
 }
 
 // NewNodeControllerManager creates a new OVN controller manager to manage all the controller for all networks
-func NewNodeControllerManager(ovnClient *util.OVNClientset, wf factory.NodeWatchFactory, name string,
+func NewNodeControllerManager(ovnClient *util.OVNClientset, wf factory.NodeWatchFactory, libovsdbOvnSBClient client.Client, name string,
 	wg *sync.WaitGroup, eventRecorder record.EventRecorder, routeManager *routemanager.Controller, ovsClient client.Client) (*NodeControllerManager, error) {
 	ncm := &NodeControllerManager{
 		name: name,
@@ -279,6 +285,7 @@ func NewNodeControllerManager(ovnClient *util.OVNClientset, wf factory.NodeWatch
 		},
 		Kube:         &kube.Kube{KClient: ovnClient.KubeClient},
 		watchFactory: wf,
+		sbClient:     libovsdbOvnSBClient,
 		stopChan:     make(chan struct{}),
 		wg:           wg,
 		recorder:     eventRecorder,
@@ -333,6 +340,29 @@ func NewNodeControllerManager(ovnClient *util.OVNClientset, wf factory.NodeWatch
 	}
 
 	return ncm, nil
+}
+
+// initNodeMacBindingController creates the controller for default network
+// must be instantiated after initDefaultNodeNetworkController
+func (ncm *NodeControllerManager) initNodeMacBindingController() error {
+	ipv4ARPProxy := config.OVNKubernetesFeature.EnableUDNARPProxy != config.UDNARPProxyDisabled && config.IPv4Mode
+	ipv4UseARPFlows := config.OVNKubernetesFeature.EnableUDNARPProxy == config.UDNARPProxyFlows && config.IPv4Mode
+	ipv6NDPProxy := config.OVNKubernetesFeature.EnableUDNNDPProxy && config.IPv6Mode
+	if ipv4ARPProxy || ipv6NDPProxy {
+		ofManager := ncm.defaultNodeNetworkController.GetOpenflowManager()
+		bridgeName := ofManager.GetDefaultBridgeName()
+		ncm.macBindingController = macbinding.NewMACBindingController(
+			ncm.sbClient,
+			ncm.networkManager.Interface(),
+			ofManager,
+			ncm.name,
+			bridgeName,
+			ipv4ARPProxy,
+			ipv4UseARPFlows,
+			ipv6NDPProxy,
+		)
+	}
+	return nil
 }
 
 // initDefaultNodeNetworkController creates the controller for default network
@@ -424,6 +454,11 @@ func (ncm *NodeControllerManager) Start(ctx context.Context, isOVNKubeController
 		return fmt.Errorf("failed to init default node network controller: %v", err)
 	}
 
+	err = ncm.initNodeMacBindingController()
+	if err != nil {
+		return fmt.Errorf("failed to init node mac binding controller: %v", err)
+	}
+
 	if ncm.networkManager != nil {
 		err = ncm.networkManager.Start()
 		if err != nil {
@@ -440,6 +475,16 @@ func (ncm *NodeControllerManager) Start(ctx context.Context, isOVNKubeController
 	err = ncm.defaultNodeNetworkController.Start(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to start default node network controller: %v", err)
+	}
+
+	if ncm.macBindingController != nil {
+		ncm.wg.Add(1)
+		go func() {
+			defer ncm.wg.Done()
+			if err := ncm.macBindingController.Run(ncm.stopChan); err != nil {
+				klog.Errorf("MAC binding controller run failed: %v", err)
+			}
+		}()
 	}
 
 	if ncm.vrfManager != nil {
@@ -643,7 +688,7 @@ func checkForStaleOVSInternalPorts() {
 	}
 }
 
-func (ncm *NodeControllerManager) Reconcile(_ string, current, network util.NetInfo) error {
+func (ncm *NodeControllerManager) Reconcile(name string, current, network util.NetInfo) error {
 	if ncm.uplinkGatewayController == nil || current != nil || network == nil || network.Uplink() == "" {
 		return nil
 	}

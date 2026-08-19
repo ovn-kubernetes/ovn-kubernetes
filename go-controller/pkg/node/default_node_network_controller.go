@@ -283,6 +283,18 @@ func (oc *DefaultNodeNetworkController) Reconcile(netInfo util.NetInfo) error {
 	return nil
 }
 
+func (oc *DefaultNodeNetworkController) GetOpenflowManager() OpenflowManager {
+	gw := oc.Gateway.(*gateway)
+	fmops := &OpenflowManagerOps{
+		UpdateExBridgeFlowCacheEntryFn: gw.openflowManager.updateFlowCacheEntry,
+		DeleteExBridgeFlowsByKeyFn:     gw.openflowManager.deleteFlowsByKey,
+		RequestFlowSyncFn:              gw.openflowManager.requestFlowSync,
+		GetDefaultBridgeNameFn:         gw.openflowManager.getDefaultBridgeName,
+		FlowskeysFn:                    gw.openflowManager.flowskeys,
+	}
+	return fmops
+}
+
 func clearOVSFlowTargets() error {
 	_, _, err := util.RunOVSVsctl(
 		"--",
