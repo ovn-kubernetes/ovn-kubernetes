@@ -1929,6 +1929,69 @@ func TestValidateNetConfUplinkGatewayMode(t *testing.T) {
 	}
 }
 
+func TestValidateNetConfNoOverlayRouting(t *testing.T) {
+	tests := []struct {
+		name             string
+		transport        string
+		noOverlayRouting string
+		expectedError    string
+	}{
+		{
+			name:             "managed routing is accepted with no-overlay transport",
+			transport:        ovntypes.NetworkTransportNoOverlay,
+			noOverlayRouting: config.NoOverlayRoutingManaged,
+		},
+		{
+			name:             "unmanaged routing is accepted with no-overlay transport",
+			transport:        ovntypes.NetworkTransportNoOverlay,
+			noOverlayRouting: config.NoOverlayRoutingUnmanaged,
+		},
+		{
+			name:             "routing is rejected without no-overlay transport",
+			noOverlayRouting: config.NoOverlayRoutingUnmanaged,
+			expectedError:    `noOverlayRouting is only valid when transport is "no-overlay"`,
+		},
+		{
+			name:             "routing is rejected with EVPN transport",
+			transport:        ovntypes.NetworkTransportEVPN,
+			noOverlayRouting: config.NoOverlayRoutingUnmanaged,
+			expectedError:    `noOverlayRouting is only valid when transport is "no-overlay"`,
+		},
+		{
+			name:             "invalid routing is rejected with no-overlay transport",
+			transport:        ovntypes.NetworkTransportNoOverlay,
+			noOverlayRouting: "external",
+			expectedError:    `invalid noOverlayRouting "external"`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			nadName := "namespace/network"
+			netconf := &ovncnitypes.NetConf{
+				NetConf: cnitypes.NetConf{
+					Name: "network",
+				},
+				NADName:          nadName,
+				Topology:         ovntypes.Layer3Topology,
+				Transport:        test.transport,
+				NoOverlayRouting: test.noOverlayRouting,
+			}
+
+			err := ValidateNetConf(nadName, netconf)
+			if test.expectedError != "" {
+				g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring(test.expectedError)))
+			} else {
+				g.Expect(err).NotTo(gomega.HaveOccurred())
+				netInfo, err := NewNetInfo(netconf)
+				g.Expect(err).NotTo(gomega.HaveOccurred())
+				g.Expect(netInfo.NoOverlayRouting()).To(gomega.Equal(test.noOverlayRouting))
+			}
+		})
+	}
+}
+
 func TestNewNetInfo(t *testing.T) {
 	type testConfig struct {
 		desc          string
@@ -2034,6 +2097,20 @@ func TestAreNetworksCompatible(t *testing.T) {
 			anotherNetwork:         &userDefinedNetInfo{transport: ""},
 			expectedResult:         true,
 			expectationDescription: "networks with no EVPN config should be compatible",
+		},
+		{
+			desc:                   "noOverlayRouting update",
+			aNetwork:               &userDefinedNetInfo{noOverlayRouting: config.NoOverlayRoutingManaged},
+			anotherNetwork:         &userDefinedNetInfo{noOverlayRouting: config.NoOverlayRoutingUnmanaged},
+			expectedResult:         false,
+			expectationDescription: "we should reconcile on noOverlayRouting updates",
+		},
+		{
+			desc:                   "network without noOverlayRouting is compatible with one that has it",
+			aNetwork:               &userDefinedNetInfo{noOverlayRouting: ""},
+			anotherNetwork:         &userDefinedNetInfo{noOverlayRouting: config.NoOverlayRoutingUnmanaged},
+			expectedResult:         true,
+			expectationDescription: "NADs rendered before noOverlayRouting existed should not trigger a network recreate on upgrade",
 		},
 	}
 

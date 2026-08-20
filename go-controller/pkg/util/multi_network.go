@@ -28,6 +28,8 @@ import (
 
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	ratypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
+	apitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
@@ -61,6 +63,7 @@ type NetInfo interface {
 	PhysicalNetworkName() string
 	Transport() string
 	OutboundSNAT() string
+	NoOverlayRouting() string
 	EVPNVTEPName() string
 	EVPNMACVRFVNI() int32
 	EVPNMACVRFRouteTarget() string
@@ -687,6 +690,11 @@ func (nInfo *DefaultNetInfo) OutboundSNAT() string {
 	return config.NoOverlay.OutboundSNAT
 }
 
+// NoOverlayRouting returns the routing mode for the default network when using no-overlay transport.
+func (nInfo *DefaultNetInfo) NoOverlayRouting() string {
+	return config.NoOverlay.Routing
+}
+
 // EVPNVTEPName returns empty as EVPN is not supported on the default network
 func (nInfo *DefaultNetInfo) EVPNVTEPName() string {
 	return ""
@@ -759,10 +767,11 @@ type userDefinedNetInfo struct {
 	defaultGatewayIPs   []net.IP
 	managementIPs       []net.IP
 
-	transport    string
-	evpn         *ovncnitypes.EVPNConfig
-	outboundSNAT string
-	uplink       string
+	transport        string
+	evpn             *ovncnitypes.EVPNConfig
+	outboundSNAT     string
+	uplink           string
+	noOverlayRouting string
 }
 
 func (nInfo *userDefinedNetInfo) GetNetInfo() NetInfo {
@@ -917,6 +926,11 @@ func (nInfo *userDefinedNetInfo) Transport() string {
 // OutboundSNAT() string returns the outbound SNAT configuration for this network when using no-overlay transport.
 func (nInfo *userDefinedNetInfo) OutboundSNAT() string {
 	return nInfo.outboundSNAT
+}
+
+// NoOverlayRouting returns the routing mode for this network when using no-overlay transport.
+func (nInfo *userDefinedNetInfo) NoOverlayRouting() string {
+	return nInfo.noOverlayRouting
 }
 
 // EVPNVTEPName returns the name of the VTEP CR for EVPN
@@ -1127,6 +1141,17 @@ func (nInfo *userDefinedNetInfo) canReconcile(other NetInfo) bool {
 	if nInfo.OutboundSNAT() != other.OutboundSNAT() {
 		return false
 	}
+	// NoOverlayRouting is "managed"/"unmanaged" for no-overlay networks and
+	// empty otherwise (ValidateNetConf enforces this), so two conflicting
+	// non-empty values mean the routing mode of a no-overlay network changed
+	// and the network must be recreated. An empty value on either side is
+	// tolerated instead: older versions did not render noOverlayRouting into
+	// NADs, and a strict comparison would tear down and recreate every
+	// no-overlay network on upgrade.
+	if nInfo.NoOverlayRouting() != other.NoOverlayRouting() &&
+		nInfo.NoOverlayRouting() != "" && other.NoOverlayRouting() != "" {
+		return false
+	}
 
 	lessCIDRNetworkEntry := func(a, b config.CIDRNetworkEntry) bool { return a.String() < b.String() }
 	if !cmp.Equal(nInfo.Subnets(), other.Subnets(), cmpopts.SortSlices(lessCIDRNetworkEntry)) {
@@ -1176,6 +1201,7 @@ func (nInfo *userDefinedNetInfo) copy() *userDefinedNetInfo {
 		evpn:                  nInfo.evpn,
 		outboundSNAT:          nInfo.outboundSNAT,
 		uplink:                nInfo.uplink,
+		noOverlayRouting:      nInfo.noOverlayRouting,
 	}
 	// copy mutables
 	c.mutableNetInfo.copyFrom(&nInfo.mutableNetInfo)
@@ -1193,15 +1219,16 @@ func newLayer3NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 		return nil, err
 	}
 	ni := &userDefinedNetInfo{
-		netName:        netconf.Name,
-		primaryNetwork: netconf.Role == types.NetworkRolePrimary,
-		topology:       types.Layer3Topology,
-		joinSubnets:    joinSubnets,
-		mtu:            netconf.MTU,
-		transport:      netconf.Transport,
-		evpn:           netconf.EVPN,
-		outboundSNAT:   netconf.OutboundSNAT,
-		uplink:         netconf.Uplink,
+		netName:          netconf.Name,
+		primaryNetwork:   netconf.Role == types.NetworkRolePrimary,
+		topology:         types.Layer3Topology,
+		joinSubnets:      joinSubnets,
+		mtu:              netconf.MTU,
+		transport:        netconf.Transport,
+		evpn:             netconf.EVPN,
+		outboundSNAT:     netconf.OutboundSNAT,
+		uplink:           netconf.Uplink,
+		noOverlayRouting: netconf.NoOverlayRouting,
 		mutableNetInfo: mutableNetInfo{
 			id:      types.InvalidID,
 			nads:    sets.Set[string]{},
@@ -1637,6 +1664,19 @@ func ValidateNetConf(nadName string, netconf *ovncnitypes.NetConf) error {
 		return fmt.Errorf("uplink %q is supported only in shared gateway mode", netconf.Uplink)
 	}
 
+	if netconf.NoOverlayRouting != "" {
+		if netconf.Transport != types.NetworkTransportNoOverlay {
+			return fmt.Errorf("noOverlayRouting is only valid when transport is %q", types.NetworkTransportNoOverlay)
+		}
+		if netconf.NoOverlayRouting != config.NoOverlayRoutingManaged &&
+			netconf.NoOverlayRouting != config.NoOverlayRoutingUnmanaged {
+			return fmt.Errorf("invalid noOverlayRouting %q: must be one of %q", netconf.NoOverlayRouting, []string{
+				config.NoOverlayRoutingManaged,
+				config.NoOverlayRoutingUnmanaged,
+			})
+		}
+	}
+
 	if netconf.JoinSubnet != "" && netconf.Topology == types.LocalnetTopology {
 		return fmt.Errorf("localnet topology does not allow specifying join-subnet as services are not supported")
 	}
@@ -1974,6 +2014,27 @@ func IsRouteAdvertisementsEnabled() bool {
 	// for now, we require multi-network to be enabled because we rely on NADs,
 	// even for the default network
 	return config.OVNKubernetesFeature.EnableMultiNetwork && config.OVNKubernetesFeature.EnableRouteAdvertisements
+}
+
+// RASelectsDefaultNetwork returns true when the RouteAdvertisements selects
+// the default network.
+func RASelectsDefaultNetwork(ra *ratypes.RouteAdvertisements) bool {
+	if ra == nil {
+		return false
+	}
+	for _, networkSelector := range ra.Spec.NetworkSelectors {
+		if networkSelector.NetworkSelectionType == apitypes.DefaultNetwork {
+			return true
+		}
+	}
+	return false
+}
+
+// RAAdvertisesDefaultNetwork returns true when the RouteAdvertisements
+// advertises the default network pod subnets, regardless of its status.
+func RAAdvertisesDefaultNetwork(ra *ratypes.RouteAdvertisements) bool {
+	return ra != nil && slices.Contains(ra.Spec.Advertisements, ratypes.PodNetwork) &&
+		RASelectsDefaultNetwork(ra)
 }
 
 func IsEVPNEnabled() bool {

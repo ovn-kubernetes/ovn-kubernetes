@@ -217,6 +217,7 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter, uplink
 		if noOverlayCfg != nil {
 			// Convert CRD SNATOption enum ("Enabled"/"Disabled") to internal format ("enabled"/"disabled")
 			netConfSpec.OutboundSNAT = strings.ToLower(string(noOverlayCfg.OutboundSNAT))
+			netConfSpec.NoOverlayRouting = noOverlayRoutingFromCRD(noOverlayCfg.Routing)
 		}
 	}
 
@@ -289,6 +290,9 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter, uplink
 	if netConfSpec.OutboundSNAT != "" {
 		cniNetConf["outboundSNAT"] = netConfSpec.OutboundSNAT
 	}
+	if netConfSpec.NoOverlayRouting != "" {
+		cniNetConf["noOverlayRouting"] = netConfSpec.NoOverlayRouting
+	}
 	if netConfSpec.EVPN != nil {
 		cniNetConf["evpn"] = netConfSpec.EVPN
 	}
@@ -310,6 +314,17 @@ func transportFromCRD(crdTransport userdefinednetworkv1.TransportOption) string 
 		return types.NetworkTransportEVPN
 	default:
 		return "" // empty string means default OVN transport; kubebuilder prevents unknown values
+	}
+}
+
+func noOverlayRoutingFromCRD(crdRouting userdefinednetworkv1.RoutingOption) string {
+	switch crdRouting {
+	case userdefinednetworkv1.RoutingManaged:
+		return config.NoOverlayRoutingManaged
+	case userdefinednetworkv1.RoutingUnmanaged:
+		return config.NoOverlayRoutingUnmanaged
+	default:
+		return ""
 	}
 }
 
