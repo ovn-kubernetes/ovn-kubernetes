@@ -1430,7 +1430,10 @@ var _ = ginkgo.Describe("Network Segmentation Uplink split DPU status conditions
 
 		macIface := "upm" + testSuffix
 		ictx.AddCleanUpFn(func() error {
-			return runNodeCommand(node.Name, "ip link del %s || true", macIface)
+			_, err := infraprovider.Get().ExecK8NodeCommand(node.Name, []string{
+				"sh", "-c", fmt.Sprintf("ip link del %s || true", macIface),
+			})
+			return err
 		})
 		createIface := fmt.Sprintf(
 			"ip link add %[1]s address %[2]s type dummy && ip addr add 192.0.2.10/24 dev %[1]s",
@@ -1439,7 +1442,8 @@ var _ = ginkgo.Describe("Network Segmentation Uplink split DPU status conditions
 			createIface += fmt.Sprintf(" && ip addr add 2001:db8:e2e::10/64 dev %s", macIface)
 		}
 		createIface += fmt.Sprintf(" && ip link set %s up", macIface)
-		gomega.Expect(runNodeCommand(node.Name, "%s", createIface)).To(gomega.Succeed())
+		_, err = infraprovider.Get().ExecK8NodeCommand(node.Name, []string{"sh", "-c", createIface})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 		macUplink := "upmac" + testSuffix
 		createUplink(f, ictx, macUplink, []corev1.Node{node}, nodeIfaces, macIface)
@@ -1519,7 +1523,7 @@ func checkUplinkStateHostFunction(state *unstructured.Unstructured, hostInterfac
 		return err
 	}
 	if !vfFound {
-		return fmt.Errorf("UplinkState %s host function for VF %s have no vfID",
+		return fmt.Errorf("UplinkState %s host function for host interface %s has no vfID",
 			state.GetName(), hostInterfaceName)
 	}
 	if pfID != expectedPF || vfID != expectedVF {
