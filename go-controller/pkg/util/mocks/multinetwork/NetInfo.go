@@ -814,6 +814,24 @@ func (_m *NetInfo) JoinSubnets() []*net.IPNet {
 	return r0
 }
 
+// MACSecurityMode provides a mock function with no fields
+func (_m *NetInfo) MACSecurityMode() string {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for MACSecurityMode")
+	}
+
+	var r0 string
+	if rf, ok := ret.Get(0).(func() string); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	return r0
+}
+
 // MTU provides a mock function with no fields
 func (_m *NetInfo) MTU() int {
 	ret := _m.Called()
