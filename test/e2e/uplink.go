@@ -826,6 +826,12 @@ var _ = ginkgo.Describe("Network Segmentation Uplink route advertisements", feat
 			"client-"+networkName,
 			schedulableNodes.Items[0].Name,
 		)
+		cudnNodes := schedulableNodes.Items
+		if isDynamicUDNEnabled() {
+			// With dynamic UDN allocation, the CUDN and its VRF only exist on
+			// nodes running workloads attached to the network.
+			cudnNodes = []corev1.Node{schedulableNodes.Items[0]}
+		}
 
 		serverNetwork, err := infraprovider.Get().GetNetwork(serverNetworkName)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -865,6 +871,8 @@ var _ = ginkgo.Describe("Network Segmentation Uplink route advertisements", feat
 					serverCIDR,
 					frrIP,
 				)
+			}
+			for _, node := range cudnNodes {
 				gomega.Eventually(func() (bool, error) {
 					return hasRouteInCUDNVRF(node, networkName, serverCIDR, frrIP)
 				}).WithTimeout(uplinkTimeout).WithPolling(uplinkPoll).Should(
