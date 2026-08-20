@@ -104,7 +104,7 @@ container is created per Kubernetes node. The CI tests run on this Kubernetes
 deployment. Therefore, KIND will need to be installed locally.
 
 Generic instructions for installing and running OVN-Kubernetes with KIND can be found at:
-[OVN-Kubernetes KIND Setup](https://ovn-kubernetes.io/installation/launching-ovn-kubernetes-on-kind/)
+[OVN-Kubernetes KIND Setup](../installation/launching-ovn-kubernetes-on-kind.md)
 
 Make sure to set the required environment variables first (see section above). Then, deploy kind:
 ```

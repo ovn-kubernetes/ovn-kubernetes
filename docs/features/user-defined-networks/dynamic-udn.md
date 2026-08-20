@@ -116,4 +116,4 @@ to do that is to schedule the speaker on the designated UDN nodes.
 ## References
 
 * User Defined Networks [feature page](user-defined-networks.md)
-* Dynamic UDN Node Allocation [enhancement](https://ovn-kubernetes.io/okeps/okep-5552-dynamic-udn-node-allocation/)
+* Dynamic UDN Node Allocation [enhancement](../../okeps/okep-5552-dynamic-udn-node-allocation.md)

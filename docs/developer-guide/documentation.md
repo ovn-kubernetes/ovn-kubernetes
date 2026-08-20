@@ -17,7 +17,7 @@ where we mandate docs include:
 
 * **Enhancement Proposals**: If you are planning to do a new feature, then start
 with an enhancement proposal a.k.a OKEP so that maintainers and other reviewers
-can get an understanding of what your goals are. See [here](https://ovn-kubernetes.io/okeps/okep-4368-template/)
+can get an understanding of what your goals are. See [here](../okeps/okep-4368-template.md)
 for more details and open a commit adding it to our `docs/okeps` folder.
 
 * **Architecture and Topology docs**: Did you change the architecture or topology?
@@ -40,7 +40,7 @@ feel free to write it. If you are unsure where this should be placed; reach out 
 
 * **Blog Posts**: Are you an end-user of OVN-Kubernetes? Is there something you wish to share with
 the community about your awesome use cases and how you used our CNI to solve your problems? We
-welcome blog post contributions from all! See [here](https://ovn-kubernetes.io/blog/) for details.
+welcome blog post contributions from all! See [here](../blog/index.md) for details.
 Open a commit adding it to our `docs/blog` folder.
 
 * **Performance Enhancements**: We love performance enhancements! Did you write a cool patch
@@ -48,7 +48,7 @@ to reduce the time it takes for iptables to sync up on startup? Think about writ
 around this! Open a commit adding it to our `docs/blog` folder.
 
 * **API Reference**: Did you introduce a new CRD? OR Did you add a watcher a new CRD? Include API
-Reference documentation changes to `docs/api-reference` folder. See [here](https://ovn-kubernetes.io/api-reference/introduction/)
+Reference documentation changes to `docs/api-reference` folder. See [here](../api-reference/introduction.md)
 for more details.
 
 ## Website Guide
@@ -80,8 +80,9 @@ workflow so the two do not overwrite each other.
 
 The versioning workflow runs on pushes to `master` or any `release-*` branch when
 docs-related paths change (`docs/**`, `mkdocs.yml`, the workflow file,
-`hack/build-docs.sh`, or `requirements.txt`). By default each run rebuilds **all**
-versions so Latest/Stable/Legacy labels and the version dropdown stay consistent.
+`hack/build-docs.sh`, `hack/docs-site-404.html`, or `requirements.txt`). By default
+each run rebuilds **all** versions so Latest/Stable/Legacy labels and the version
+dropdown stay consistent.
 
 - The nav structure (`nav:` in `mkdocs.yml`) is **per-branch**. A new page added
   on `master` does not appear in older release versions (and will not break them).
@@ -107,6 +108,80 @@ versions so Latest/Stable/Legacy labels and the version dropdown stay consistent
 - Prefer `make -C docs build-docs` over ad-hoc `mike` commands so the same
   validations run locally and in CI.
 
+### Linking between docs pages (use relative paths)
+
+Mike publishes each docs version under its own URL prefix — for example
+`/master/...`, `/1.3/...`, or the `latest` alias. A page that used to live at
+`https://ovn-kubernetes.io/design/architecture/` is now served at
+`https://ovn-kubernetes.io/master/design/architecture/` (or under the release
+you selected in the version dropdown).
+
+**Do not** link to docs pages with unversioned absolute site URLs such as
+`https://ovn-kubernetes.io/design/architecture/` or
+`https://ovn-kubernetes.io/installation/...`. Those paths no longer exist at
+the site root after versioning, so they 404. The same problem affects any
+hard-coded `https://ovn-kubernetes.io/<page>/` link that omits the version
+segment.
+
+**Going forward, link with relative Markdown paths** so MkDocs resolves the
+target within the version currently being viewed:
+
+```markdown
+<!-- Good: stays inside the current mike version -->
+See the [Architecture](../design/architecture.md) page.
+
+<!-- Bad: 404s on the versioned site -->
+See the [Architecture](https://ovn-kubernetes.io/design/architecture/) page.
+```
+
+Relative links also keep working when someone switches the version dropdown
+(for example from Master to a `release-*` docs tree), because the browser stays
+under that version’s prefix.
+
+A bare homepage link to `https://ovn-kubernetes.io/` is fine (the root still
+redirects into the default version). External sites, GitHub URLs, and other
+non-docs destinations should keep using absolute URLs as usual.
+
+**Exception: root files symlinked into `docs/governance/`.** Files such as
+`CONTRIBUTING.md`, `GOVERNANCE.md`, and `MEETINGS.md` live at the repository
+root and are symlinked under `docs/governance/` for the website. A relative
+path that is correct from `docs/governance/` (for example
+`../installation/launching-ovn-kubernetes-on-kind.md`) breaks when the same
+file is viewed on GitHub at the repo root. For those shared files, use a
+versioned absolute docs URL instead, for example
+`https://ovn-kubernetes.io/master/installation/launching-ovn-kubernetes-on-kind/`,
+so the link works both on GitHub and on the published site.
+
+When you touch docs links in a PR, prefer relative paths under `docs/` and
+avoid introducing new unversioned `ovn-kubernetes.io/<page>/` URLs.
+
+Repo files outside `docs/` that must deep-link into the published site (for
+example `README.md`) should use a versioned absolute URL under `/master/…`,
+not an unversioned path.
+
+### Root `404.html` (pre-versioning deep links)
+
+GitHub Pages serves a site-root `404.html` when a URL is missing. Mike only
+publishes version directories (`master/`, `1.3/`, …) and does not install a root
+404, so old bookmarks such as `https://ovn-kubernetes.io/design/architecture/`
+would otherwise hit GitHub’s generic 404.
+
+`hack/build-docs.sh` copies `hack/docs-site-404.html` to `404.html` on the
+`gh-pages` branch after each deploy. That page redirects unversioned paths to
+the same path under `/master/…`. Paths that already include a version or alias
+(`master`, `latest`, or `N.N`) and are still missing go to that version’s home.
+If the request is already at a version root that does not exist (so a second
+redirect would loop on itself), the page falls back to `/master/` (or `/` when
+the prefix is already `master`).
+
+Do not hand-edit `404.html` on `gh-pages`; change `hack/docs-site-404.html` on
+`master` and let the versioning workflow republish it.
+
+Shell coverage for the install helper (local/remote `gh-pages`, unchanged vs
+changed template, `PUSH=false`/`true`, push failure) and for the clean-worktree
+preflight lives in `hack/test-install-gh-pages-404.sh`
+(`make -C docs test-install-gh-pages-404`).
+
 ### Manual rebuild (workflow_dispatch)
 
 Anyone with write access can trigger a rebuild from the **Actions** tab
@@ -118,7 +193,7 @@ comma-separated list of existing branches (for example `release-1.1` or
 
 | Event | Rebuilds docs site? |
 |-------|---------------------|
-| Push to `master` / `release-*` changing `docs/**`, `mkdocs.yml`, the versioning workflow, `hack/build-docs.sh`, or `requirements.txt` | Yes (all versions) |
+| Push to `master` / `release-*` changing `docs/**`, `mkdocs.yml`, the versioning workflow, `hack/build-docs.sh`, `hack/docs-site-404.html`, or `requirements.txt` | Yes (all versions) |
 | Creating a new `release-*` branch | Yes (`create` event; labels recompute) |
 | Manual **workflow_dispatch** | Yes (`all` or the branches you list) |
 | Go-only / non-docs commits on `master` or `release-*` | No (by design) |
@@ -251,6 +326,8 @@ Push the local `gh-pages` branch only if you intend to update the remote
 make -C docs build-docs PUSH=1
 ```
 
-`hack/build-docs.sh` refuses to run while checked out on `gh-pages`, and
-refuses to continue if `extra.css` is dirty on a `release-*` branch. There
+`hack/build-docs.sh` refuses to run while checked out on `gh-pages`, refuses
+to continue if `extra.css` is dirty on a `release-*` branch, and refuses to
+run at all when any tracked file has local modifications (mike and the root
+404 install use `git checkout -f`, which would discard those changes). There
 is no interactive override.

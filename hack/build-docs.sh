@@ -73,6 +73,12 @@ die() {
 # Temporary / manual edits of gh-pages or of extra.css on release branches are
 # not allowed. The automated versioning process owns gh-pages, and release
 # branches always receive master's extra.css at build time.
+# Force-checkouts (mike deploy, root 404 install) also require a clean worktree
+# so local tracked edits are never discarded.
+
+# shellcheck source=hack/lib/require-clean-worktree.sh
+source "${ROOT_DIR}/hack/lib/require-clean-worktree.sh"
+require_clean_worktree
 
 current_branch="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
 if [[ "${current_branch}" == "gh-pages" ]]; then
@@ -97,17 +103,24 @@ fi
 command -v mike >/dev/null 2>&1 || die "mike is not installed. Run: pip install -r requirements.txt"
 command -v mkdocs >/dev/null 2>&1 || die "mkdocs is not installed. Run: pip install -r requirements.txt"
 
+SITE_404_SRC="${ROOT_DIR}/hack/docs-site-404.html"
+[[ -f "${SITE_404_SRC}" ]] || die "missing root 404 template: ${SITE_404_SRC}"
+# Cache before mike checks out other branches that may not have this file yet.
+SITE_404_CACHE="$(mktemp)"
+cp "${SITE_404_SRC}" "${SITE_404_CACHE}"
+
 # mike deploy checks out origin/* refs and would otherwise leave the repo in
 # detached HEAD. Restore the caller's starting branch/commit on exit.
 START_REF="$(git symbolic-ref -q --short HEAD 2>/dev/null || git rev-parse HEAD)"
-restore_start_ref() {
+cleanup_on_exit() {
   local ec=$?
+  rm -f "${SITE_404_CACHE}"
   if [[ -n "${START_REF}" ]] && ! git checkout -f "${START_REF}" >/dev/null 2>&1; then
     echo "WARNING: could not restore git checkout to '${START_REF}'" >&2
   fi
   exit "${ec}"
 }
-trap restore_start_ref EXIT
+trap cleanup_on_exit EXIT
 
 git fetch origin gh-pages --depth=1 2>/dev/null || true
 
@@ -125,6 +138,13 @@ elif git show master:docs/stylesheets/extra.css > /tmp/master-stylesheets/extra.
 else
   die "could not read docs/stylesheets/extra.css from origin/master (or master)"
 fi
+
+# Install GitHub Pages root 404.html after mike deploy. Mike only manages
+# version directories and versions.json; a root 404 is required so pre-versioning
+# deep links (e.g. /design/architecture/) redirect under /master/... instead
+# of showing GitHub's generic 404.
+# shellcheck source=hack/lib/install-gh-pages-404.sh
+source "${ROOT_DIR}/hack/lib/install-gh-pages-404.sh"
 
 # Collect all release-* branches, sorted by version (ascending)
 mapfile -t ALL_RELEASES < <(
@@ -260,5 +280,7 @@ if [[ "${deploy_master}" == "true" ]]; then
   # Master is the default landing page (only when deploying master / all)
   mike set-default ${MIKE_PUSH[@]+"${MIKE_PUSH[@]}"} master
 fi
+
+install_gh_pages_404
 
 echo "Docs versioning deploy complete (releases=${RELEASES}, push=${PUSH})."
