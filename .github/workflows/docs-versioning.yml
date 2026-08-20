@@ -12,6 +12,7 @@ on:
       - 'mkdocs.yml'
       - '.github/workflows/docs-versioning.yml'
       - 'hack/build-docs.sh'
+      - 'hack/docs-site-404.html'
       - 'requirements.txt'
   # Creating a new release-* ref (e.g. git push origin master:release-1.4) often
   # has no path diff, so the paths filter above would skip it. The create event

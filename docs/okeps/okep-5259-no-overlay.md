@@ -24,7 +24,7 @@ benefits:
 
 ## Terminology
 
-See [terminology](https://ovn-kubernetes.io/okeps/okep-5193-user-defined-networks/#terminology) details.
+See [terminology](okep-5193-user-defined-networks.md#terminology) details.
 
 ## Goals
 
