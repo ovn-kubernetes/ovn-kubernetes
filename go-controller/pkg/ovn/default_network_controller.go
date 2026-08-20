@@ -1028,11 +1028,11 @@ func (h *defaultNetworkControllerEventHandler) AddResource(obj interface{}, from
 
 	case factory.EgressNodeType:
 		node := obj.(*corev1.Node)
-		// Update node in zone cache; value will be true if node is local
-		// to this zone and false if its not
-		h.oc.eIPC.nodeZoneState.LockKey(node.Name)
-		h.oc.eIPC.nodeZoneState.Store(node.Name, h.oc.isLocalNode(node))
-		h.oc.eIPC.nodeZoneState.UnlockKey(node.Name)
+		// Record the node while holding the same keyed lock used by EgressIP
+		// programming.
+		h.oc.eIPC.nodeState.LockKey(node.Name)
+		h.oc.eIPC.nodeState.Store(node.Name, struct{}{})
+		h.oc.eIPC.nodeState.UnlockKey(node.Name)
 
 		shouldSyncReroute := true
 		shouldSyncEIPNode := true
@@ -1115,11 +1115,11 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(oldObj, newObj int
 	case factory.EgressNodeType:
 		oldNode := oldObj.(*corev1.Node)
 		newNode := newObj.(*corev1.Node)
-		// Update node in zone cache; value will be true if node is local
-		// to this zone and false if its not
-		h.oc.eIPC.nodeZoneState.LockKey(newNode.Name)
-		h.oc.eIPC.nodeZoneState.Store(newNode.Name, h.oc.isLocalNode(newNode))
-		h.oc.eIPC.nodeZoneState.UnlockKey(newNode.Name)
+		// Refresh node presence while holding the same keyed lock used by
+		// EgressIP programming.
+		h.oc.eIPC.nodeState.LockKey(newNode.Name)
+		h.oc.eIPC.nodeState.Store(newNode.Name, struct{}{})
+		h.oc.eIPC.nodeState.UnlockKey(newNode.Name)
 
 		_, rerouteRetryPending := h.oc.syncEIPNodeRerouteFailed.Load(newNode.Name)
 		newNodeIsLocal := h.oc.isLocalNode(newNode)
@@ -1195,10 +1195,11 @@ func (h *defaultNetworkControllerEventHandler) DeleteResource(obj, cachedObj int
 		if err != nil {
 			return err
 		}
-		// Update node in zone cache; remove the node key since node has been deleted.
-		h.oc.eIPC.nodeZoneState.LockKey(node.Name)
-		h.oc.eIPC.nodeZoneState.Delete(node.Name)
-		h.oc.eIPC.nodeZoneState.UnlockKey(node.Name)
+		// Remove the node while holding the same keyed lock used by EgressIP
+		// programming.
+		h.oc.eIPC.nodeState.LockKey(node.Name)
+		h.oc.eIPC.nodeState.Delete(node.Name)
+		h.oc.eIPC.nodeState.UnlockKey(node.Name)
 		h.oc.syncEIPNodeRerouteFailed.Delete(node.Name)
 		h.oc.syncEIPNodeFailed.Delete(node.Name)
 		return nil
