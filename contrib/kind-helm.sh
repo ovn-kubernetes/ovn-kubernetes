@@ -531,11 +531,19 @@ check_dependencies() {
   fi
 }
 
+# ensure_sysctl_min <key> <required>: raise a sysctl only when its current value is
+# below <required>.
+ensure_sysctl_min() {
+    local key="$1" required="$2" current
+    current=$(sysctl -n "$key" 2>/dev/null)
+    if [ -z "$current" ] || [ "$current" -lt "$required" ]; then
+        sudo sysctl -w "$key=$required"
+    fi
+}
+
 helm_prereqs() {
-    # increate fs.inotify.max_user_watches
-    sudo sysctl fs.inotify.max_user_watches=524288
-    # increase fs.inotify.max_user_instances
-    sudo sysctl fs.inotify.max_user_instances=512
+    ensure_sysctl_min fs.inotify.max_user_watches 524288
+    ensure_sysctl_min fs.inotify.max_user_instances 512
     if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ] ||
        [ "$OVN_UPLINK_BRIDGE" == true ]; then
       disable_bridge_netfilter
