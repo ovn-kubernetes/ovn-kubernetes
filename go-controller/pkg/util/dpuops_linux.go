@@ -143,6 +143,65 @@ func IsSimulatedDPU() bool {
 	return false
 }
 
+// FindHostRepresentorByFunction returns the DPU-side representor of the host
+// function identified by pfID, and by vfID when that function is a VF. hostMAC
+// is the function's published identity and only rejects a wrong match: the host
+// owns the MAC of its VFs and SFs, so the DPU eswitch commonly has no function
+// MAC to compare a representor against, and the indices then stand on their
+// own. nodeName is the K8s node name of the host this DPU operates on behalf
+// of.
+//
+// TODO: this lookup relies on sriovnet's deprecated
+// GetVfRepresentorDPU/GetPfRepresentorDPU, which only accept PF indices 0 and 1
+// and only match c1/legacy phys_port_name patterns: multi-host DPUs
+// (controllers other than c1) and cards with more than two PFs cannot be
+// resolved this way, and (pfID, vfID) alone is ambiguous across DPUs and
+// controllers in any case. The way out is publishing an unambiguous anchor, the
+// MAC of the backing PF, and resolving through sriovnet's port params API
+// (GetPFRepresentorPortParamsFromMAC and the Get*RepresentorFromPortParams
+// lookups), which works on any controller and PF count.
+func FindHostRepresentorByFunction(pfID int32, vfID *int32, hostMAC net.HardwareAddr,
+	nodeName string) (string, error) {
+	function := HostFunctionName(pfID, vfID)
+	var rep string
+	var err error
+	if vfID != nil {
+		rep, err = GetDPUOps().GetPortRepresentor(strconv.Itoa(int(pfID)), strconv.Itoa(int(*vfID)))
+	} else {
+		rep, err = GetDPUOps().GetPFRepresentor(strconv.Itoa(int(pfID)))
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to find representor for host function %s: %w", function, err)
+	}
+	// The representor's host-side peer MAC — the eswitch's record of the host
+	// function MAC, not the representor netdev's own address — must equal
+	// hostMAC when it is readable, or the indices resolved a function on some
+	// other SR-IOV device. Hardware that leaves representor function MACs unset
+	// reports errors or all zeroes, which offers no identity to compare.
+	peerMAC, err := GetDPUOps().GetHostPeerMACAddress(rep, nodeName)
+	switch {
+	case err != nil:
+		klog.V(2).Infof("Host function %s representor %s has no readable host peer MAC, "+
+			"skipping identity verification: %v", function, rep, err)
+	case !IsUsableEthernetMAC(peerMAC):
+		klog.V(2).Infof("Host function %s representor %s host peer MAC %s is unusable, "+
+			"skipping identity verification", function, rep, peerMAC)
+	case !bytes.Equal(peerMAC, hostMAC):
+		return "", fmt.Errorf("representor %s for host function %s peers with MAC %s, not the published host MAC %s",
+			rep, function, peerMAC, hostMAC)
+	}
+	return rep, nil
+}
+
+// HostFunctionName renders a host function as pf<N> or pf<N>vf<M> for logs and
+// error messages.
+func HostFunctionName(pfID int32, vfID *int32) string {
+	if vfID != nil {
+		return fmt.Sprintf("pf%dvf%d", pfID, *vfID)
+	}
+	return fmt.Sprintf("pf%d", pfID)
+}
+
 // ---------------------------------------------------------------------------
 // SwitchdevDPUOps - SR-IOV / switchdev hardware (NVIDIA BlueField, etc.)
 // ---------------------------------------------------------------------------

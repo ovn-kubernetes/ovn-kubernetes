@@ -10,9 +10,12 @@ import (
 	"github.com/k8snetworkplumbingwg/sriovnet"
 	"github.com/onsi/gomega"
 
+	"k8s.io/utils/ptr"
+
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	uplinkv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1"
 	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
@@ -197,6 +200,7 @@ func TestNewUnmanagedBridgeConfigurationResolvesDPUHostRepresentor(t *testing.T)
 		"physnet-blue",
 		ovntest.MustParseIPNets("172.28.0.2/24"),
 		ovntest.MustParseMAC("00:11:22:33:44:55"),
+		nil,
 	)
 	g.Expect(err).NotTo(gomega.HaveOccurred(), "the PF-backed unmanaged bridge configuration must succeed")
 	g.Expect(bridge.GetGatewayIfaceRep()).To(gomega.Equal("pfhpf0"),
@@ -204,6 +208,123 @@ func TestNewUnmanagedBridgeConfigurationResolvesDPUHostRepresentor(t *testing.T)
 	g.Expect(bridge.GetStaticFDBPort()).To(gomega.Equal("pfhpf0"),
 		"the static FDB entry must be pinned to the PF representor")
 	g.Expect(fexec.CalledMatchesExpected()).To(gomega.BeTrue(), fexec.ErrorDesc())
+}
+
+// TestNewUnmanagedBridgeConfigurationResolvesDPUHostFunctionRepresentor covers
+// the common host VF layout: the host assigns its own VF MAC, so the DPU
+// eswitch reports no function MAC for the VF representor and only the published
+// host function indices can identify it.
+func TestNewUnmanagedBridgeConfigurationResolvesDPUHostFunctionRepresentor(t *testing.T) {
+	g := gomega.NewWithT(t)
+	ovsClient, fexec, sriovOps := newDPUUnmanagedBridgeHarness(t, "br-hostvf0", nil, "pf0vf0")
+	sriovOps.On("GetVfRepresentorDPU", "0", "0").Return("pf0vf0", nil)
+	sriovOps.On("GetRepresentorPortFlavour", "eth1").
+		Return(sriovnet.PortFlavour(sriovnet.PORT_FLAVOUR_UNKNOWN), fmt.Errorf("not a representor"))
+	sriovOps.On("GetRepresentorPortFlavour", "pf0vf0").
+		Return(sriovnet.PortFlavour(sriovnet.PORT_FLAVOUR_PCI_VF), nil)
+	// The eswitch holds no function MAC for a host assigned VF MAC, so the
+	// representor offers no identity to verify against.
+	sriovOps.On("GetDevlinkPortFunctionMacAddress", "pf0vf0").
+		Return(nil, fmt.Errorf("devlink port function for netdev pf0vf0 does not report a usable hardware address"))
+
+	bridge, err := NewUnmanagedBridgeConfiguration(
+		ovsClient,
+		"br-hostvf0",
+		"enp4s0f0v0",
+		"node-a",
+		"physnet-blue",
+		ovntest.MustParseIPNets("172.28.0.2/24"),
+		ovntest.MustParseMAC("4e:68:cd:ae:2b:f5"),
+		&uplinkv1alpha1.HostFunction{PFID: 0, VFID: ptr.To(int32(0))},
+	)
+	g.Expect(err).NotTo(gomega.HaveOccurred(),
+		"an unreadable eswitch function MAC must not block gateway representor resolution")
+	g.Expect(bridge.GetGatewayIfaceRep()).To(gomega.Equal("pf0vf0"),
+		"the representor of the published host function must be selected as the gateway representor")
+	g.Expect(bridge.GetStaticFDBPort()).To(gomega.Equal("pf0vf0"),
+		"the static FDB entry must be pinned to the host function representor")
+	g.Expect(fexec.CalledMatchesExpected()).To(gomega.BeTrue(), fexec.ErrorDesc())
+}
+
+// TestDPUGatewayRepresentorFallback covers the non-happy branches of
+// dpuGatewayRepresentor: the MAC scan fallback when the host function lookup
+// fails or resolves a representor that is not on the bridge, and the combined
+// error when both resolution paths fail.
+func TestDPUGatewayRepresentorFallback(t *testing.T) {
+	hostMAC := ovntest.MustParseMAC("4e:68:cd:ae:2b:f5")
+	hostFunction := &uplinkv1alpha1.HostFunction{PFID: 0, VFID: ptr.To(int32(0))}
+
+	// The MAC scan walks the bridge ports in map order, so the eth1 probe may
+	// legitimately go unused when pf0vf0 matches first.
+	mockUplinkNotARepresentor := func(sriovOps *utilmocks.SriovnetOps) {
+		sriovOps.On("GetRepresentorPortFlavour", "eth1").
+			Return(sriovnet.PortFlavour(sriovnet.PORT_FLAVOUR_UNKNOWN), fmt.Errorf("not a representor")).
+			Maybe()
+	}
+
+	t.Run("falls back to the MAC scan when the host function lookup fails", func(t *testing.T) {
+		g := gomega.NewWithT(t)
+		ovsClient, _, sriovOps := newDPUUnmanagedBridgeHarness(t, "br-hostvf0", nil, "pf0vf0")
+		sriovOps.On("GetVfRepresentorDPU", "0", "0").
+			Return("", fmt.Errorf("failed to get VF representor"))
+		mockUplinkNotARepresentor(sriovOps)
+		sriovOps.On("GetRepresentorPortFlavour", "pf0vf0").
+			Return(sriovnet.PortFlavour(sriovnet.PORT_FLAVOUR_PCI_VF), nil)
+		sriovOps.On("GetDevlinkPortFunctionMacAddress", "pf0vf0").
+			Return(hostMAC, nil)
+
+		bridge, err := ovsops.GetBridge(ovsClient, "br-hostvf0")
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+		rep, err := dpuGatewayRepresentor(ovsClient, bridge, hostFunction, hostMAC, "node-a")
+		g.Expect(err).NotTo(gomega.HaveOccurred(),
+			"a failed host function lookup must fall back to the MAC scan")
+		g.Expect(rep).To(gomega.Equal("pf0vf0"))
+	})
+
+	t.Run("falls back to the MAC scan when the resolved representor is not on the bridge", func(t *testing.T) {
+		g := gomega.NewWithT(t)
+		ovsClient, _, sriovOps := newDPUUnmanagedBridgeHarness(t, "br-hostvf0", nil, "pf0vf0")
+		// The indices resolve a representor that is not attached to the
+		// uplink bridge, with no eswitch function MAC to veto it early.
+		sriovOps.On("GetVfRepresentorDPU", "0", "0").Return("pf9vf9", nil)
+		sriovOps.On("GetRepresentorPortFlavour", "pf9vf9").
+			Return(sriovnet.PortFlavour(sriovnet.PORT_FLAVOUR_PCI_VF), nil)
+		sriovOps.On("GetDevlinkPortFunctionMacAddress", "pf9vf9").
+			Return(nil, fmt.Errorf("no usable hardware address"))
+		mockUplinkNotARepresentor(sriovOps)
+		sriovOps.On("GetRepresentorPortFlavour", "pf0vf0").
+			Return(sriovnet.PortFlavour(sriovnet.PORT_FLAVOUR_PCI_VF), nil)
+		sriovOps.On("GetDevlinkPortFunctionMacAddress", "pf0vf0").
+			Return(hostMAC, nil)
+
+		bridge, err := ovsops.GetBridge(ovsClient, "br-hostvf0")
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+		rep, err := dpuGatewayRepresentor(ovsClient, bridge, hostFunction, hostMAC, "node-a")
+		g.Expect(err).NotTo(gomega.HaveOccurred(),
+			"a representor on another bridge must be rejected and fall back to the MAC scan")
+		g.Expect(rep).To(gomega.Equal("pf0vf0"))
+	})
+
+	t.Run("combines the errors when both resolution paths fail", func(t *testing.T) {
+		g := gomega.NewWithT(t)
+		ovsClient, _, sriovOps := newDPUUnmanagedBridgeHarness(t, "br-hostvf0", nil, "pf0vf0")
+		sriovOps.On("GetVfRepresentorDPU", "0", "0").
+			Return("", fmt.Errorf("failed to get VF representor"))
+		mockUplinkNotARepresentor(sriovOps)
+		// The only representor on the bridge peers with some other host MAC.
+		sriovOps.On("GetRepresentorPortFlavour", "pf0vf0").
+			Return(sriovnet.PortFlavour(sriovnet.PORT_FLAVOUR_PCI_VF), nil)
+		sriovOps.On("GetDevlinkPortFunctionMacAddress", "pf0vf0").
+			Return(ovntest.MustParseMAC("00:11:22:33:44:66"), nil)
+
+		bridge, err := ovsops.GetBridge(ovsClient, "br-hostvf0")
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+		_, err = dpuGatewayRepresentor(ovsClient, bridge, hostFunction, hostMAC, "node-a")
+		g.Expect(err).To(gomega.MatchError(util.ErrHostRepresentorNotFound),
+			"the MAC scan miss must stay inspectable in the combined error")
+		g.Expect(err.Error()).To(gomega.ContainSubstring("host function pf0vf0 did not resolve one either"),
+			"the combined error must carry the host function failure as well")
+	})
 }
 
 func TestNewUnmanagedBridgeConfigurationResolvesDPUHostVFRepresentor(t *testing.T) {
@@ -235,6 +356,7 @@ func TestNewUnmanagedBridgeConfigurationResolvesDPUHostVFRepresentor(t *testing.
 		"physnet-blue",
 		ovntest.MustParseIPNets("172.28.0.2/24"),
 		ovntest.MustParseMAC("00:11:22:33:44:55"),
+		nil,
 	)
 	g.Expect(err).NotTo(gomega.HaveOccurred(), "the VF-backed unmanaged bridge configuration must succeed")
 	g.Expect(bridge.GetGatewayIfaceRep()).To(gomega.Equal("pf0vf7"),
