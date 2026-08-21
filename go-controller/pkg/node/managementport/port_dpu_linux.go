@@ -149,9 +149,9 @@ func (mp *managementPortNetdev) findNetdevByDeviceID() (netlink.Link, error) {
 		return nil, fmt.Errorf("%w: device ID %s resolved to empty netdev name", errMgmtPortDeviceNotFound, mp.deviceID)
 	}
 
-	link, err := util.GetNetLinkOps().LinkByName(netdevName)
+	link, err := util.LinkByNameOrAlias(netdevName)
 	if err != nil {
-		return nil, fmt.Errorf("device ID %s resolved to %s but LinkByName failed: %w", mp.deviceID, netdevName, err)
+		return nil, fmt.Errorf("device ID %s resolved to %s but the link lookup failed: %w", mp.deviceID, netdevName, err)
 	}
 
 	return link, nil

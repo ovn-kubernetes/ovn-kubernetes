@@ -238,6 +238,8 @@ jobs:
           make -C test control-plane WHAT="Network Segmentation Uplink split DPU status conditions keeps one writer per condition and recovers a missing host interface"
           make -C test control-plane WHAT="Network Segmentation Uplink split DPU status conditions recreates an UplinkState deleted out of band"
           make -C test control-plane WHAT="Network Segmentation Uplink split DPU status conditions resolves the bridge by host function and falls back to host MAC"
+          make -C test control-plane WHAT="Network Segmentation Uplink DPU VF lifecycle returns simulated VF netdevices to the host when the pod is deleted"
+          make -C test control-plane WHAT="Network Segmentation Uplink DPU VF lifecycle recovers the management port device after an ovnkube-node restart"
 
       - name: Export kind logs on failure
         if: failure()
