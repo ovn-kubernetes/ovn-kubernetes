@@ -426,8 +426,9 @@ func (e *EgressIPController) reconcileEgressIP(old, new *egressipv1.EgressIP) (e
 				if !newNamespaceSelector.Matches(namespaceLabels) && oldNamespaceSelector.Matches(namespaceLabels) {
 					ni, err := e.networkManager.GetActiveNetworkForNamespace(namespace.Name)
 					if err != nil {
-						if util.IsInvalidPrimaryNetworkError(err) {
-							// NAD reconciler will notify us later
+						if util.IsInvalidPrimaryNetworkError(err) || apierrors.IsNotFound(err) {
+							// InvalidPrimaryNetworkError: NAD reconciler will replay.
+							// NotFound: listed namespace concurrently removed, namespace/pod handlers will catch up.
 							continue
 						}
 						return fmt.Errorf("failed to get active network for namespace %s: %w", namespace.Name, err)
@@ -443,8 +444,9 @@ func (e *EgressIPController) reconcileEgressIP(old, new *egressipv1.EgressIP) (e
 				if newNamespaceSelector.Matches(namespaceLabels) && !oldNamespaceSelector.Matches(namespaceLabels) {
 					ni, err := e.networkManager.GetActiveNetworkForNamespace(namespace.Name)
 					if err != nil {
-						if util.IsInvalidPrimaryNetworkError(err) {
-							// NAD reconciler will notify us later
+						if util.IsInvalidPrimaryNetworkError(err) || apierrors.IsNotFound(err) {
+							// InvalidPrimaryNetworkError: NAD reconciler will replay.
+							// NotFound: listed namespace concurrently removed, namespace/pod handlers will catch up.
 							continue
 						}
 						return fmt.Errorf("failed to get active network for namespace %s: %w", namespace.Name, err)
@@ -477,8 +479,9 @@ func (e *EgressIPController) reconcileEgressIP(old, new *egressipv1.EgressIP) (e
 					if !newPodSelector.Matches(podLabels) && oldPodSelector.Matches(podLabels) {
 						ni, err := e.networkManager.GetActiveNetworkForNamespace(namespace.Name)
 						if err != nil {
-							if util.IsInvalidPrimaryNetworkError(err) {
-								// NAD reconciler will notify us later
+							if util.IsInvalidPrimaryNetworkError(err) || apierrors.IsNotFound(err) {
+								// InvalidPrimaryNetworkError: NAD reconciler will replay.
+								// NotFound: listed namespace concurrently removed, namespace/pod handlers will catch up.
 								continue
 							}
 							return fmt.Errorf("failed to get active network for namespace %s: %w", namespace.Name, err)
@@ -494,8 +497,9 @@ func (e *EgressIPController) reconcileEgressIP(old, new *egressipv1.EgressIP) (e
 					if newPodSelector.Matches(podLabels) && !oldPodSelector.Matches(podLabels) {
 						ni, err := e.networkManager.GetActiveNetworkForNamespace(namespace.Name)
 						if err != nil {
-							if util.IsInvalidPrimaryNetworkError(err) {
-								// NAD reconciler will notify us later
+							if util.IsInvalidPrimaryNetworkError(err) || apierrors.IsNotFound(err) {
+								// InvalidPrimaryNetworkError: NAD reconciler will replay.
+								// NotFound: listed namespace concurrently removed, namespace/pod handlers will catch up.
 								continue
 							}
 							return fmt.Errorf("failed to get active network for namespace %s: %w", namespace.Name, err)
@@ -525,8 +529,9 @@ func (e *EgressIPController) reconcileEgressIP(old, new *egressipv1.EgressIP) (e
 				// reason to look at the pod selector.
 				ni, err := e.networkManager.GetActiveNetworkForNamespace(namespace.Name)
 				if err != nil {
-					if util.IsInvalidPrimaryNetworkError(err) {
-						// NAD reconciler will notify us later
+					if util.IsInvalidPrimaryNetworkError(err) || apierrors.IsNotFound(err) {
+						// InvalidPrimaryNetworkError: NAD reconciler will replay.
+						// NotFound: listed namespace concurrently removed, namespace/pod handlers will catch up.
 						continue
 					}
 					return fmt.Errorf("failed to get active network for namespace %s: %w", namespace.Name, err)
@@ -643,8 +648,19 @@ func (e *EgressIPController) reconcileEgressIPNamespace(old, new *corev1.Namespa
 					if util.IsInvalidPrimaryNetworkError(err) {
 						// NAD reconciler will notify us later
 						return nil
+					} else if apierrors.IsNotFound(err) {
+						prefix := namespaceName + "/"
+						for _, podKey := range e.podAssignment.GetKeys() {
+							if !strings.HasPrefix(podKey, prefix) {
+								continue
+							}
+							if ni = e.getNetworkFromPodAssignment(podKey); ni != nil {
+								break
+							}
+						}
+					} else {
+						return fmt.Errorf("failed to get active network for namespace %s: %w", namespaceName, err)
 					}
-					return fmt.Errorf("failed to get active network for namespace %s: %w", namespaceName, err)
 				}
 				if ni == nil {
 					// our node does not have this network
@@ -659,8 +675,9 @@ func (e *EgressIPController) reconcileEgressIPNamespace(old, new *corev1.Namespa
 				mark := getEgressIPPktMark(eIP.Name, eIP.Annotations)
 				ni, err := e.networkManager.GetActiveNetworkForNamespace(namespaceName)
 				if err != nil {
-					if util.IsInvalidPrimaryNetworkError(err) {
-						// NAD reconciler will notify us later
+					if util.IsInvalidPrimaryNetworkError(err) || apierrors.IsNotFound(err) {
+						// InvalidPrimaryNetworkError: NAD reconciler will replay.
+						// NotFound: listed namespace concurrently removed, namespace/pod handlers will catch up.
 						return nil
 					}
 					return fmt.Errorf("failed to get active network for namespace %s: %w", namespaceName, err)
@@ -794,7 +811,8 @@ func (e *EgressIPController) reconcileEgressIPPod(old, new *corev1.Pod) (err err
 				}
 
 				ni, err := e.networkManager.GetActiveNetworkForNamespace(namespace.Name)
-				if err != nil && !util.IsInvalidPrimaryNetworkError(err) {
+				if err != nil && !util.IsInvalidPrimaryNetworkError(err) &&
+					(!apierrors.IsNotFound(err) || (apierrors.IsNotFound(err) && !deletePath)) {
 					return fmt.Errorf("failed to get active network for namespace %s: %w", namespace.Name, err)
 				}
 				haveNetwork := ni != nil
@@ -868,7 +886,7 @@ func (e *EgressIPController) addEgressIPAssignments(name string, statusAssignmen
 	for _, namespace := range namespaces {
 		ni, err := e.networkManager.GetActiveNetworkForNamespace(namespace.Name)
 		if err != nil {
-			if util.IsInvalidPrimaryNetworkError(err) {
+			if util.IsInvalidPrimaryNetworkError(err) || apierrors.IsNotFound(err) {
 				continue
 			}
 			return fmt.Errorf("failed to get active network for namespace %s: %v", namespace.Name, err)

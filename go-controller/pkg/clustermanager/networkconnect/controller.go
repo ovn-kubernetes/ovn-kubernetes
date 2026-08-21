@@ -415,7 +415,7 @@ func (c *Controller) mustProcessCNCForNAD(nad *nadv1.NetworkAttachmentDefinition
 				for _, namespace := range namespaces {
 					nsPrimaryNetwork, err := c.networkManager.GetActiveNetworkForNamespace(namespace.Name)
 					if err != nil {
-						if util.IsInvalidPrimaryNetworkError(err) {
+						if util.IsInvalidPrimaryNetworkError(err) || apierrors.IsNotFound(err) {
 							continue
 						}
 						klog.Errorf("Failed to get active network for namespace %s: %v", namespace.Name, err)

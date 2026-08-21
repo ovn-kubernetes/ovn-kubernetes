@@ -48,11 +48,12 @@ var (
 func getPrimaryNADForNamespace(networkMgr networkmanager.Interface, namespaceName string) (nadKey string, network util.NetInfo, err error) {
 	namespacePrimaryNetwork, err := networkMgr.GetActiveNetworkForNamespace(namespaceName)
 	if err != nil {
-		if util.IsInvalidPrimaryNetworkError(err) {
-			// We intentionally ignore the invalid primary network error because
+		if util.IsInvalidPrimaryNetworkError(err) || apierrors.IsNotFound(err) {
+			// We intentionally ignore transient namespace/network state because
 			// UDN Controller hasn't created the NAD yet, OR NAD doesn't exist in a
 			// namespace that has the required UDN label. It could also be that the
-			// UDN was deleted and the NAD is also gone.
+			// UDN was deleted and the NAD is also gone. Namespace/NAD handlers will
+			// trigger reconciliation when state becomes available.
 			return "", nil, nil
 		}
 		return "", nil, err
@@ -63,7 +64,7 @@ func getPrimaryNADForNamespace(networkMgr networkmanager.Interface, namespaceNam
 	}
 	primaryNADKey, err := networkMgr.GetPrimaryNADForNamespace(namespaceName)
 	if err != nil {
-		if util.IsInvalidPrimaryNetworkError(err) {
+		if util.IsInvalidPrimaryNetworkError(err) || apierrors.IsNotFound(err) {
 			return "", nil, nil
 		}
 		return "", nil, err

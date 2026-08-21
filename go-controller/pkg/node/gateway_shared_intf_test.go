@@ -110,8 +110,8 @@ func (m *mockNetworkManagerWithNamespaceNotFoundError) GetPrimaryNADForNamespace
 }
 
 func (m *mockNetworkManagerWithNamespaceNotFoundError) GetActiveNetworkForNamespace(_ string) (util.NetInfo, error) {
-	// Namespace is gone; new GetActiveNetworkForNamespace semantics return nil, nil.
-	return nil, nil
+	return nil, fmt.Errorf("failed to get namespace %q: %w", "test-ns",
+		apierrors.NewNotFound(corev1.Resource("namespaces"), "test-ns"))
 }
 
 // mockNetworkManagerWithInvalidPrimaryNetworkError simulates UDN deletion scenario
@@ -479,6 +479,28 @@ var _ = Describe("SyncServices", func() {
 
 			verifyNFTablesRule(nft, "10.96.0.20", 80, 30091, false,
 				"nftables rule should not be created when primary network is invalid")
+		})
+	})
+
+	Context("when namespace is absent from informer cache", func() {
+		It("should skip service sync without failing startup", func() {
+			service := newService(testService, testNamespace, "10.96.0.21",
+				[]corev1.ServicePort{{
+					Name:       "http",
+					Protocol:   corev1.ProtocolTCP,
+					Port:       80,
+					TargetPort: intstr.FromInt(8080),
+					NodePort:   30094,
+				}},
+				corev1.ServiceTypeNodePort, nil, corev1.ServiceStatus{}, false, false)
+
+			npw.networkManager = &mockNetworkManagerWithNamespaceNotFoundError{}
+
+			err := npw.SyncServices([]interface{}{service})
+			Expect(err).NotTo(HaveOccurred())
+
+			verifyNFTablesRule(nft, "10.96.0.21", 80, 30094, false,
+				"nftables rule should not be created when namespace lookup returns NotFound")
 		})
 	})
 

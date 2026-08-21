@@ -3328,3 +3328,40 @@ func TestOnNetworkRefChangeNotifiesConnectedRemoteNetworkControllers(t *testing.
 		})
 	}
 }
+
+type notFoundNamespaceLister struct {
+	notFound sets.Set[string]
+}
+
+func (l *notFoundNamespaceLister) List(labels.Selector) ([]*corev1.Namespace, error) {
+	return nil, nil
+}
+
+func (l *notFoundNamespaceLister) Get(name string) (*corev1.Namespace, error) {
+	if l.notFound != nil && l.notFound.Has(name) {
+		return nil, apierrors.NewNotFound(corev1.Resource("namespaces"), name)
+	}
+	return &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   name,
+			Labels: map[string]string{types.RequiredUDNNamespaceLabel: ""},
+		},
+	}, nil
+}
+
+func TestGetActiveNetworkForNamespace_ReturnsNotFoundWhenNamespaceAbsent(t *testing.T) {
+	g := gomega.NewWithT(t)
+	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+
+	c := &nadController{
+		namespaceLister: &notFoundNamespaceLister{
+			notFound: sets.New("missing-ns"),
+		},
+	}
+
+	_, err := c.GetActiveNetworkForNamespace("missing-ns")
+	g.Expect(err).To(gomega.HaveOccurred())
+	g.Expect(apierrors.IsNotFound(err)).To(gomega.BeTrue())
+}
