@@ -23,8 +23,6 @@ import (
 	observabilityconfigv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/observabilityconfig/v1alpha1"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 // OVN SamplingApp IDs; must be < 255. Add new apps at the end.
@@ -228,12 +226,8 @@ func allApplicableConfigs(objs []interface{}, nodeLabels map[string]string) []*o
 }
 
 // nodeLabelsForZone returns the labels of the local zone node for filter matching.
-// Central mode (zone "" or OvnDefaultZone): returns nil so only configs without NodeSelector apply.
 // Interconnect mode: looks up the node in zone via nodeLister (same pattern as GetLocalZoneNodes) and returns its labels.
 func nodeLabelsForZone(nodeLister NodeLister, zone string) map[string]string {
-	if zone == "" || zone == types.OvnDefaultZone {
-		return nil
-	}
 	if nodeLister == nil {
 		return nil
 	}
@@ -242,7 +236,7 @@ func nodeLabelsForZone(nodeLister NodeLister, zone string) map[string]string {
 		return nil
 	}
 	for _, node := range nodes {
-		if util.GetNodeZone(node) == zone {
+		if node.Name == zone {
 			return node.Labels
 		}
 	}
