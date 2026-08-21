@@ -32,6 +32,7 @@ import (
 	crdtypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
@@ -1699,5 +1700,69 @@ var _ = Describe("NetworkQoS ipamless localnet source port group", func() {
 		Expect(pgPorts(qosState.SrcPortGroupName)).To(BeEmpty())
 		// Nothing bound yet since no port resolved.
 		Expect(nqosQoSes()).To(BeEmpty())
+	})
+
+	// U3: source port-group cleanup on NetworkQoS object deletion (delete-on-delete).
+	It("removes the source port group and unbinds all QoS rows when the NetworkQoS object is deleted (happy path)", func() {
+		newController("node1")
+		switchName := seedLocalnetSwitch()
+		lspUUID := seedSourceLSP(switchName)
+
+		qosState := newQoSState(nil)
+		pod := sourcePod(map[string]string{"app": "src"})
+		ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: podNs}}
+
+		// Populate the source PG and bind a QoS row to the localnet switch.
+		Expect(controller.setPodForNQOS(pod, qosState, ns, map[string]sets.Set[string]{})).To(Succeed())
+		Expect(controller.addQoSToLogicalSwitch(qosState, switchName)).To(Succeed())
+		Expect(pgPorts(qosState.SrcPortGroupName)).To(ConsistOf(lspUUID))
+		Expect(nqosQoSes()).To(HaveLen(1))
+
+		// Delete the NetworkQoS object (same OVN object name clearNetworkQos passes).
+		ovnObjectName := joinMetaNamespaceAndName(podNs, nqName, ":")
+		Expect(controller.deleteByName(ovnObjectName)).To(Succeed())
+
+		// The source port group is gone.
+		pgs, err := libovsdbops.FindPortGroupsWithPredicate(testNbClient, func(item *nbdb.PortGroup) bool {
+			return item.Name == qosState.SrcPortGroupName
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(pgs).To(BeEmpty())
+
+		// No QoS rows remain, and none are still bound to the switch.
+		Expect(nqosQoSes()).To(BeEmpty())
+		ls, lerr := libovsdbops.GetLogicalSwitch(testNbClient, &nbdb.LogicalSwitch{Name: switchName})
+		Expect(lerr).NotTo(HaveOccurred())
+		Expect(ls.QOSRules).To(BeEmpty())
+	})
+
+	It("does not attempt source port group deletion on IPAM-enabled networks (edge case, ipamless-negative)", func() {
+		// IPAM-enabled localnet (non-empty subnet) => isIPAMlessLocalnet() is false.
+		nad := ovnk8stesting.GenerateNAD(netName, nadK8sName, podNs, types.LocalnetTopology, "10.0.0.0/24", types.NetworkRoleSecondary)
+		immutable, err := util.ParseNADInfo(nad)
+		Expect(err).NotTo(HaveOccurred())
+		netInfo := &secondaryNetInfoWrapper{NetInfo: immutable}
+		ipamController := &Controller{
+			controllerName: ctrlName,
+			NetInfo:        netInfo,
+			networkManager: &networkmanager.FakeNetworkManager{NADNetworks: map[string]util.NetInfo{nadKey: netInfo}},
+			nbClient:       testNbClient,
+			nodeName:       "node1",
+		}
+		Expect(ipamController.isIPAMlessLocalnet()).To(BeFalse())
+
+		// Seed a port group carrying this NetworkQoS's owner external IDs. On an IPAM
+		// network the delete path must leave it untouched (the gate skips PG deletion).
+		pgIDs := GetNetworkQoSPortGroupDbIDs(podNs, nqName, ctrlName)
+		pg := libovsdbutil.BuildPortGroup(pgIDs, nil, nil)
+		Expect(libovsdbops.CreatePortGroup(testNbClient, pg)).To(Succeed())
+
+		ovnObjectName := joinMetaNamespaceAndName(podNs, nqName, ":")
+		Expect(ipamController.deleteByName(ovnObjectName)).To(Succeed())
+
+		// The port group still exists: cleanup did not attempt PG deletion.
+		got, gerr := libovsdbops.GetPortGroup(testNbClient, &nbdb.PortGroup{Name: pg.Name})
+		Expect(gerr).NotTo(HaveOccurred())
+		Expect(got).NotTo(BeNil())
 	})
 })
