@@ -144,6 +144,9 @@ const (
 	EndpointSliceMirrorControllerName = "endpointslice-mirror-controller.k8s.ovn.org"
 	// EndpointSliceDefaultControllerName default kubernetes EndpointSlice controller name (used as a value for the "endpointslice.kubernetes.io/managed-by" label)
 	EndpointSliceDefaultControllerName = "endpointslice-controller.k8s.io"
+	// EndpointSliceMirroringControllerName is the kube Endpoints->EndpointSlice mirroring
+	// controller name (selector-less Services with manual Endpoints).
+	EndpointSliceMirroringControllerName = "endpointslicemirroring-controller.k8s.io"
 	// SourceEndpointSliceAnnotation key used in mirrored EndpointSlice
 	// that has the value of the default EndpointSlice name
 	SourceEndpointSliceAnnotation = "k8s.ovn.org/source-endpointslice"
