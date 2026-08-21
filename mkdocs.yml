@@ -203,6 +203,8 @@ nav:
     - Extend Primary UDN/CUDN to Support Multiple Cluster Subnets in Layer3 Topology: okeps/okep-5377-extend-udn-to-support-multiple-cluster-subnets-in-layer3-topology.md
     - VRF-Lite Shared Gateway Mode with Uplinks: okeps/okep-6019-vrf-lite-shared-gateway-external-bridges.md
     - Disable Port Security: okeps/okep-3926-disable-port-security.md
+    - DHCP IPAM for Localnet: okeps/okep-6224-dhcp-ipam-localnet.md
+    - External IPAM Plugin: okeps/okep-6831-external-ipam-plugin.md
   - Blog:
     - blog/index.md
     - Accelerating and Securing Kubernetes Networking with DPUs: blog/dpu-acceleration.md
