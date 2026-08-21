@@ -1269,6 +1269,20 @@ func isLocalGWModeEnabled() bool {
 	return present && val == "local"
 }
 
+func isUDNProxyEnabled() bool {
+	valARP, presentARP := os.LookupEnv("ENABLE_UDN_ARP_PROXY")
+	valNDP, presentNDP := os.LookupEnv("ENABLE_UDN_NDP_PROXY")
+	udnARPEnabled := false
+	udnNDPEnabled := false
+	if presentARP && (valARP == "flows" || valARP == "macbindings") {
+		udnARPEnabled = true
+	}
+	if presentNDP && valNDP == "true" {
+		udnNDPEnabled = true
+	}
+	return udnARPEnabled || udnNDPEnabled
+}
+
 func isPreConfiguredUdnAddressesEnabled() bool {
 	ovnKubeNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
 	val := getTemplateContainerEnv(ovnKubeNamespace, "daemonset/ovnkube-node", getNodeContainerName(), "OVN_PRE_CONF_UDN_ADDR_ENABLE")
@@ -1891,5 +1905,46 @@ func startTcpdumpMonitorPodOnNode(f *framework.Framework, startupTimeout time.Du
 	_, err := f.ClientSet.CoreV1().Pods(f.Namespace.Name).Create(startupCtx, pod, metav1.CreateOptions{})
 	framework.ExpectNoError(err, "Failed to create traffic monitor pod")
 	err = e2epod.WaitTimeoutForPodRunningInNamespace(startupCtx, f.ClientSet, name, f.Namespace.Name, startupTimeout)
+	framework.ExpectNoError(err, fmt.Sprintf("traffic monitor pod %s did not become Running within %v", name, startupTimeout))
+}
+
+// startTcpdumpMonitorPodOnNode creates a privileged host-network pod on the given node that
+// runs tcpdump on the specified interface with the provided filter, and waits up to
+// startupTimeout for the pod to be Running. Returning means the capture is active, so callers
+// can start generating traffic. It fails the spec if the pod cannot be created or does not
+// become Running within startupTimeout.
+func startTcpdumpMonitorPodOnNode(ctx context.Context, f *framework.Framework, startupTimeout time.Duration,
+	name, nodeName, nodeIface, options, filter string) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: f.Namespace.Name,
+		},
+		Spec: corev1.PodSpec{
+			NodeSelector: map[string]string{
+				"kubernetes.io/hostname": nodeName,
+			},
+			HostNetwork: true,
+			Containers: []corev1.Container{
+				{
+					Name:  "traffic-monitor",
+					Image: images.Netshoot(),
+					Command: []string{
+						"/bin/bash",
+						"-c",
+						fmt.Sprintf("exec tcpdump -i %s %s %s", nodeIface, options, filter),
+					},
+					SecurityContext: &corev1.SecurityContext{
+						Privileged: func(b bool) *bool { return &b }(true),
+					},
+				},
+			},
+			RestartPolicy: corev1.RestartPolicyNever,
+		},
+	}
+
+	_, err := f.ClientSet.CoreV1().Pods(f.Namespace.Name).Create(ctx, pod, metav1.CreateOptions{})
+	framework.ExpectNoError(err, "Failed to create traffic monitor pod")
+	err = e2epod.WaitTimeoutForPodRunningInNamespace(ctx, f.ClientSet, name, f.Namespace.Name, startupTimeout)
 	framework.ExpectNoError(err, fmt.Sprintf("traffic monitor pod %s did not become Running within %v", name, startupTimeout))
 }

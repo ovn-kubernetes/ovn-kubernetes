@@ -65,6 +65,7 @@ type NetLinkOps interface {
 	NeighSet(neigh *netlink.Neigh) error
 	NeighDel(neigh *netlink.Neigh) error
 	NeighList(linkIndex, family int) ([]netlink.Neigh, error)
+	NeighSubscribeWithOptions(ch chan<- netlink.NeighUpdate, done <-chan struct{}, options netlink.NeighSubscribeOptions) error
 	ConntrackDeleteFilters(table netlink.ConntrackTableType, family netlink.InetFamily, filters ...netlink.CustomConntrackFilter) (uint, error)
 	LinkSetVfHardwareAddr(pfLink netlink.Link, vfIndex int, hwaddr net.HardwareAddr) error
 	RouteSubscribeWithOptions(ch chan<- netlink.RouteUpdate, done <-chan struct{}, options netlink.RouteSubscribeOptions) error
@@ -265,6 +266,10 @@ func (defaultNetLinkOps) NeighList(linkIndex, family int) ([]netlink.Neigh, erro
 
 func (defaultNetLinkOps) ConntrackDeleteFilters(table netlink.ConntrackTableType, family netlink.InetFamily, filters ...netlink.CustomConntrackFilter) (uint, error) {
 	return netlink.ConntrackDeleteFilters(table, family, filters...)
+}
+
+func (defaultNetLinkOps) NeighSubscribeWithOptions(ch chan<- netlink.NeighUpdate, done <-chan struct{}, options netlink.NeighSubscribeOptions) error {
+	return netlink.NeighSubscribeWithOptions(ch, done, options)
 }
 
 func (defaultNetLinkOps) RouteSubscribeWithOptions(ch chan<- netlink.RouteUpdate, done <-chan struct{}, options netlink.RouteSubscribeOptions) error {
@@ -1097,6 +1102,26 @@ func SetIPv6KeepAddrOnDownForInterface(ifName string) error {
 	if err != nil || stdout != setVal {
 		return fmt.Errorf("could not enable IPv6 address retention for interface %s: stdout: %v, stderr: %v, err: %v",
 			ifName, stdout, stderr, err)
+	}
+	return nil
+}
+
+func SetAcceptUnsolicitedNeighborForInterface(ifName string) error {
+	if config.IPv4Mode {
+		setVal := fmt.Sprintf("net.ipv4.conf.%s.arp_accept = 1", sysctlIfName(ifName))
+		stdout, stderr, err := RunSysctl("-w", setVal)
+		if err != nil || stdout != setVal {
+			return fmt.Errorf("could not enable accept_unsolicited_na for interface %s: stdout: %v, stderr: %v, err: %v",
+				ifName, stdout, stderr, err)
+		}
+	}
+	if config.IPv6Mode {
+		setVal := fmt.Sprintf("net.ipv6.conf.%s.accept_untracked_na = 1", sysctlIfName(ifName))
+		stdout, stderr, err := RunSysctl("-w", setVal)
+		if err != nil || stdout != setVal {
+			return fmt.Errorf("could not enable accept_untracked_na for interface %s: stdout: %v, stderr: %v, err: %v",
+				ifName, stdout, stderr, err)
+		}
 	}
 	return nil
 }

@@ -207,8 +207,18 @@ set_common_default_params() {
 
   ENABLE_MULTI_NET=${ENABLE_MULTI_NET:-false}
   ENABLE_NETWORK_SEGMENTATION=${ENABLE_NETWORK_SEGMENTATION:-false}
+  ENABLE_UDN_ARP_PROXY=${ENABLE_UDN_ARP_PROXY:-}
+  ENABLE_UDN_NDP_PROXY=${ENABLE_UDN_NDP_PROXY:-false}
   if [ "$ENABLE_NETWORK_SEGMENTATION" == true ] && [ "$ENABLE_MULTI_NET" != true ]; then
     echo "Network segmentation (UDN) requires multi-network to be enabled (-mne)"
+    exit 1
+  fi
+  if [ -n "$ENABLE_UDN_ARP_PROXY" ] && [ "$ENABLE_NETWORK_SEGMENTATION" != true ]; then
+    echo "UDN ARP Proxy requires network-segmentation (UDN) to be enabled (-nse)"
+    exit 1
+  fi
+  if [ "$ENABLE_UDN_NDP_PROXY" == true ] && [ "$ENABLE_NETWORK_SEGMENTATION" != true ]; then
+    echo "UDN NDP Proxy requires network-segmentation (UDN) to be enabled (-nse)"
     exit 1
   fi
 
