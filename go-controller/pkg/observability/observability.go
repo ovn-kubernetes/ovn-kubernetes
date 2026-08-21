@@ -23,8 +23,6 @@ import (
 	observabilityconfigv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/observabilityconfig/v1alpha1"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 // OVN SamplingApp IDs; must be < 255. Add new apps at the end.
@@ -164,26 +162,26 @@ type ObservabilityConfigInformer interface {
 	Informer() cache.SharedIndexInformer
 }
 
-// NodeLister lists nodes; used to resolve the local zone node in interconnect mode.
-// Implemented by factory.WatchFactory.
-type NodeLister interface {
-	GetNodes() ([]*corev1.Node, error)
+// NodeGetter resolves a node by name; used to look up the local node's labels for
+// Filter.NodeSelector matching. Implemented by factory.WatchFactory.
+type NodeGetter interface {
+	GetNode(name string) (*corev1.Node, error)
 }
 
 // StartWatching watches ObservabilityConfig CRs and applies all that apply to this node.
-// zone is this controller's zone (e.g. config.Default.Zone). In central mode (zone "" or types.OvnDefaultZone),
-// node selectors are not honored and only configs with no Filter.NodeSelector apply. In interconnect mode,
-// the local zone node is resolved from nodeLister and configs whose Filter.NodeSelector matches its labels apply.
+// In details: configs whose Filter.NodeSelector matches the local node labels apply;
+// configs with no Filter.NodeSelector always apply. If the local node's labels
+// cannot be resolved, only configs without a Filter.NodeSelector apply.
 // Multiple configs can apply (e.g. one cluster-wide, one namespace-scoped); use SamplingConfigForContext
 // when creating ACLs so the correct config is chosen per (namespace, feature). Call after Init().
-func (m *Manager) StartWatching(informer ObservabilityConfigInformer, nodeLister NodeLister, zone string, _ <-chan struct{}) {
+func (m *Manager) StartWatching(informer ObservabilityConfigInformer, nodeGetter NodeGetter, nodeName string, _ <-chan struct{}) {
 	if informer == nil {
 		return
 	}
 	applyFromStore := func() {
 		store := informer.Informer().GetStore()
 		objs := store.List()
-		nodeLabelsMap := nodeLabelsForZone(nodeLister, zone)
+		nodeLabelsMap := localNodeLabels(nodeGetter, nodeName)
 		configs := allApplicableConfigs(objs, nodeLabelsMap)
 		if len(configs) == 0 {
 			m.clearConfig()
@@ -241,30 +239,22 @@ func allApplicableConfigs(objs []interface{}, nodeLabels map[string]string) []*o
 	return candidates
 }
 
-// nodeLabelsForZone returns the labels of the local zone node for filter matching.
-// Central mode (zone "" or OvnDefaultZone): returns nil so only configs without NodeSelector apply.
-// Interconnect mode: looks up the node in zone via nodeLister (same pattern as GetLocalZoneNodes) and returns its labels.
-func nodeLabelsForZone(nodeLister NodeLister, zone string) map[string]string {
-	if zone == "" || zone == types.OvnDefaultZone {
+// localNodeLabels returns the labels of the local node (by name) for Filter.NodeSelector
+// matching, or nil if the node cannot be resolved.
+func localNodeLabels(nodeGetter NodeGetter, nodeName string) map[string]string {
+	if nodeGetter == nil {
 		return nil
 	}
-	if nodeLister == nil {
+	node, err := nodeGetter.GetNode(nodeName)
+	if err != nil || node == nil {
 		return nil
 	}
-	nodes, err := nodeLister.GetNodes()
-	if err != nil {
-		return nil
-	}
-	for _, node := range nodes {
-		if util.GetNodeZone(node) == zone {
-			return node.Labels
-		}
-	}
-	return nil
+	return node.Labels
 }
 
 // configAppliesToNode returns true if the ObservabilityConfig applies to this node.
-// When nodeLabels is nil (central mode), only configs with no Filter.NodeSelector apply.
+// When nodeLabels is nil (local node labels could not be resolved), only configs with no
+// Filter.NodeSelector apply.
 // NodeSelector evaluation matches the pattern used in the Admin Network Policy controller
 // (pkg/ovn/controller/admin_network_policy/admin_network_policy_node.go setNodeForANP):
 // selector.Matches(labels.Set(node.Labels)).
