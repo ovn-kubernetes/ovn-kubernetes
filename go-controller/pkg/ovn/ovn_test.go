@@ -573,7 +573,7 @@ func (o *FakeOVN) NewUserDefinedNetworkController(netattachdef *nettypes.Network
 		switch topoType {
 		case types.Layer3Topology:
 			l3Controller, err := NewLayer3UserDefinedNetworkController(cnci, mutableNetInfo, o.networkManager.Interface(), nil,
-				o.eIPController, o.portCache, o.addressSetManager, o.udnNodeController, o.controller.ServiceController())
+				o.eIPController, o.portCache, o.addressSetManager, o.udnNodeController, o.controller.ServiceController(), nil)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			if o.asf != nil { // use fake asf only when enabled
 				l3Controller.addressSetFactory = asf
@@ -582,7 +582,7 @@ func (o *FakeOVN) NewUserDefinedNetworkController(netattachdef *nettypes.Network
 			o.fullL3UDNControllers[netName] = l3Controller
 		case types.Layer2Topology:
 			l2Controller, err := NewLayer2UserDefinedNetworkController(cnci, mutableNetInfo, o.networkManager.Interface(), nil,
-				o.portCache, o.eIPController, o.addressSetManager, o.udnNodeController, o.controller.ServiceController())
+				o.portCache, o.eIPController, o.addressSetManager, o.udnNodeController, o.controller.ServiceController(), nil)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			if o.asf != nil { // use fake asf only when enabled
 				l2Controller.addressSetFactory = asf
@@ -591,7 +591,7 @@ func (o *FakeOVN) NewUserDefinedNetworkController(netattachdef *nettypes.Network
 			o.fullL2UDNControllers[netName] = l2Controller
 		case types.LocalnetTopology:
 			localnetController := NewLocalnetUserDefinedNetworkController(cnci, mutableNetInfo, o.networkManager.Interface(), o.addressSetManager,
-				o.udnNodeController)
+				o.udnNodeController, nil)
 			if o.asf != nil { // use fake asf only when enabled
 				localnetController.addressSetFactory = asf
 			}
