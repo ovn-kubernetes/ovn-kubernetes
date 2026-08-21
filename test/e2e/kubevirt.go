@@ -44,6 +44,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/clientcmd"
@@ -95,6 +96,212 @@ func newControllerRuntimeClient() (crclient.Client, error) {
 	return crclient.New(config, crclient.Options{
 		Scheme: scheme,
 	})
+}
+
+// The helpers below are package-level so suites outside the kubevirt Describe
+// (dhcp_ipam.go) can reuse them; the same-named closures inside the Describe
+// delegate here, keeping the original call sites unchanged.
+
+func composeVMI(namespace string, labels, annotations, nodeSelector map[string]string,
+	networkSource kubevirtv1.NetworkSource, cloudInitVolumeSource kubevirtv1.VolumeSource, image string) *kubevirtv1.VirtualMachineInstance {
+	return &kubevirtv1.VirtualMachineInstance{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace:    namespace,
+			GenerateName: "worker-",
+			Annotations:  annotations,
+			Labels:       labels,
+		},
+		Spec: kubevirtv1.VirtualMachineInstanceSpec{
+			NodeSelector: nodeSelector,
+			Domain: kubevirtv1.DomainSpec{
+				Resources: kubevirtv1.ResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceMemory: resource.MustParse("1024Mi"),
+					},
+				},
+				Devices: kubevirtv1.Devices{
+					Disks: []kubevirtv1.Disk{
+						{
+							DiskDevice: kubevirtv1.DiskDevice{
+								Disk: &kubevirtv1.DiskTarget{
+									Bus: kubevirtv1.DiskBusVirtio,
+								},
+							},
+							Name: "containerdisk",
+						},
+						{
+							DiskDevice: kubevirtv1.DiskDevice{
+								Disk: &kubevirtv1.DiskTarget{
+									Bus: kubevirtv1.DiskBusVirtio,
+								},
+							},
+							Name: "cloudinitdisk",
+						},
+					},
+					Interfaces: []kubevirtv1.Interface{
+						{
+							Name: "net1",
+							InterfaceBindingMethod: kubevirtv1.InterfaceBindingMethod{
+								Bridge: &kubevirtv1.InterfaceBridge{},
+							},
+						},
+					},
+					Rng: &kubevirtv1.Rng{},
+				},
+			},
+			Networks: []kubevirtv1.Network{
+				{
+					Name:          "net1",
+					NetworkSource: networkSource,
+				},
+			},
+			TerminationGracePeriodSeconds: ptr.To(int64(5)),
+			Volumes: []kubevirtv1.Volume{
+				{
+					Name: "containerdisk",
+					VolumeSource: kubevirtv1.VolumeSource{
+						ContainerDisk: &kubevirtv1.ContainerDiskSource{
+							Image: image,
+						},
+					},
+				},
+				{
+					Name:         "cloudinitdisk",
+					VolumeSource: cloudInitVolumeSource,
+				},
+			},
+		},
+	}
+}
+
+func composeVM(namespace string, vmi *kubevirtv1.VirtualMachineInstance) *kubevirtv1.VirtualMachine {
+	return &kubevirtv1.VirtualMachine{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace:    namespace,
+			GenerateName: vmi.GenerateName,
+		},
+		Spec: kubevirtv1.VirtualMachineSpec{
+			RunStrategy: ptr.To(kubevirtv1.RunStrategyAlways),
+			Template: &kubevirtv1.VirtualMachineInstanceTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: vmi.Annotations,
+					Labels:      vmi.Labels,
+				},
+				Spec: vmi.Spec,
+			},
+		},
+	}
+}
+
+func composeFedoraWithTestToolingVMI(namespace string, labels, annotations, nodeSelector map[string]string,
+	networkSource kubevirtv1.NetworkSource, userData, networkData string) *kubevirtv1.VirtualMachineInstance {
+	cloudInitVolumeSource := kubevirtv1.VolumeSource{
+		CloudInitNoCloud: &kubevirtv1.CloudInitNoCloudSource{
+			UserData:    userData,
+			NetworkData: networkData,
+		},
+	}
+	return composeVMI(namespace, labels, annotations, nodeSelector, networkSource, cloudInitVolumeSource, kubevirt.FedoraWithTestToolingContainerDiskImage)
+}
+
+func composeFedoraWithTestToolingVM(namespace string, labels, annotations, nodeSelector map[string]string,
+	networkSource kubevirtv1.NetworkSource, userData, networkData string) *kubevirtv1.VirtualMachine {
+	return composeVM(namespace, composeFedoraWithTestToolingVMI(namespace, labels, annotations, nodeSelector, networkSource, userData, networkData))
+}
+
+func createVirtualMachineWithClient(cli crclient.Client, vm *kubevirtv1.VirtualMachine) {
+	GinkgoHelper()
+	By(fmt.Sprintf("Create virtual machine %s", vm.Name))
+	vmCreationRetries := 0
+	Eventually(func() error {
+		if vmCreationRetries > 0 {
+			// retry due to unknown issue where kubevirt webhook gets stuck reading the request body
+			// https://github.com/ovn-kubernetes/ovn-kubernetes/issues/3902#issuecomment-1750257559
+			By(fmt.Sprintf("Retrying vm %s creation", vm.Name))
+		}
+		err := cli.Create(context.Background(), vm)
+		vmCreationRetries++
+		return err
+	}).WithPolling(time.Second).WithTimeout(time.Minute).Should(Succeed())
+}
+
+func waitForVMIReadinessWithClient(cli crclient.Client, vmi *kubevirtv1.VirtualMachineInstance, conditionStatus corev1.ConditionStatus) {
+	GinkgoHelper()
+	By(fmt.Sprintf("Waiting for readiness=%q at virtual machine %s", conditionStatus, vmi.Name))
+	Eventually(func() []kubevirtv1.VirtualMachineInstanceCondition {
+		err := cli.Get(context.Background(), crclient.ObjectKeyFromObject(vmi), vmi)
+		Expect(err).To(SatisfyAny(
+			WithTransform(apierrors.IsNotFound, BeTrue()),
+			Succeed(),
+		))
+		return vmi.Status.Conditions
+	}).WithPolling(time.Second).WithTimeout(5 * time.Minute).Should(
+		ContainElement(SatisfyAll(
+			HaveField("Type", kubevirtv1.VirtualMachineInstanceReady),
+			HaveField("Status", conditionStatus),
+		)))
+}
+
+func createCUDNWithClients(cli crclient.Client, dynClient dynamic.Interface, cudn *udnv1.ClusterUserDefinedNetwork) {
+	GinkgoHelper()
+	By("Creating ClusterUserDefinedNetwork")
+	Expect(cli.Create(context.Background(), cudn)).To(Succeed())
+	DeferCleanup(func() {
+		if e2eframework.TestContext.DeleteNamespace && (e2eframework.TestContext.DeleteNamespaceOnFailure || !CurrentSpecReport().Failed()) {
+			cli.Delete(context.Background(), cudn)
+		}
+	})
+	Eventually(clusterUserDefinedNetworkReadyFunc(dynClient, cudn.Name), 5*time.Second, time.Second).Should(Succeed())
+}
+
+func composeAgnhostPod(name, namespace, nodeName string, args ...string) *corev1.Pod {
+	agnHostPod := e2epod.NewAgnhostPod(namespace, name, nil, nil, nil, args...)
+	agnHostPod.Spec.NodeName = nodeName
+	return agnHostPod
+}
+
+func removeImagesInNode(node, imageURL string) error {
+	By("Removing unused images in node " + node)
+	output, err := infraprovider.Get().ExecK8NodeCommand(node, []string{
+		"crictl", "images", "-o", "json",
+	})
+	if err != nil {
+		return err
+	}
+
+	// Remove tag if exists.
+	taglessImageURL := strings.Split(imageURL, ":")[0]
+	imageID, err := images.ImageIDByImageURL(taglessImageURL, output)
+	if err != nil {
+		return err
+	}
+	if imageID != "" {
+		_, err = infraprovider.Get().ExecK8NodeCommand(node, []string{
+			"crictl", "rmi", imageID,
+		})
+		if err != nil {
+			return err
+		}
+		_, err = infraprovider.Get().ExecK8NodeCommand(node, []string{
+			"crictl", "rmi", "--prune",
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func removeImagesFromNodes(cs kubernetes.Interface, imageURL string) error {
+	nodesList, err := cs.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
+	Expect(err).NotTo(HaveOccurred())
+	for nodeIdx := range nodesList.Items {
+		err = removeImagesInNode(nodesList.Items[nodeIdx].Name, imageURL)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func init() {
@@ -540,12 +747,6 @@ fi
 			By("Skip network policy, test should be fixed after OVN bump broke them")
 		}
 
-		composeAgnhostPod = func(name, namespace, nodeName string, args ...string) *corev1.Pod {
-			agnHostPod := e2epod.NewAgnhostPod(namespace, name, nil, nil, nil, args...)
-			agnHostPod.Spec.NodeName = nodeName
-			return agnHostPod
-		}
-
 		liveMigrateVirtualMachine = func(vmName string) {
 			GinkgoHelper()
 			vmimCreationRetries := 0
@@ -739,18 +940,7 @@ fi
 
 		createVirtualMachine = func(vm *kubevirtv1.VirtualMachine) {
 			GinkgoHelper()
-			By(fmt.Sprintf("Create virtual machine %s", vm.Name))
-			vmCreationRetries := 0
-			Eventually(func() error {
-				if vmCreationRetries > 0 {
-					// retry due to unknown issue where kubevirt webhook gets stuck reading the request body
-					// https://github.com/ovn-kubernetes/ovn-kubernetes/issues/3902#issuecomment-1750257559
-					By(fmt.Sprintf("Retrying vm %s creation", vm.Name))
-				}
-				err := crClient.Create(context.Background(), vm)
-				vmCreationRetries++
-				return err
-			}).WithPolling(time.Second).WithTimeout(time.Minute).Should(Succeed())
+			createVirtualMachineWithClient(crClient, vm)
 		}
 
 		createVirtualMachineInstance = func(vmi *kubevirtv1.VirtualMachineInstance) {
@@ -771,19 +961,7 @@ fi
 
 		waitVirtualMachineInstanceReadinessWith = func(vmi *kubevirtv1.VirtualMachineInstance, conditionStatus corev1.ConditionStatus) {
 			GinkgoHelper()
-			By(fmt.Sprintf("Waiting for readiness=%q at virtual machine %s", conditionStatus, vmi.Name))
-			Eventually(func() []kubevirtv1.VirtualMachineInstanceCondition {
-				err := crClient.Get(context.Background(), crclient.ObjectKeyFromObject(vmi), vmi)
-				Expect(err).To(SatisfyAny(
-					WithTransform(apierrors.IsNotFound, BeTrue()),
-					Succeed(),
-				))
-				return vmi.Status.Conditions
-			}).WithPolling(time.Second).WithTimeout(5 * time.Minute).Should(
-				ContainElement(SatisfyAll(
-					HaveField("Type", kubevirtv1.VirtualMachineInstanceReady),
-					HaveField("Status", conditionStatus),
-				)))
+			waitForVMIReadinessWithClient(crClient, vmi, conditionStatus)
 		}
 
 		waitVirtualMachineInstanceReadiness = func(vmi *kubevirtv1.VirtualMachineInstance) {
@@ -855,108 +1033,16 @@ fi
 			return addresses
 		}
 
-		generateVMI = func(labels map[string]string, annotations map[string]string, nodeSelector map[string]string, networkSource kubevirtv1.NetworkSource, cloudInitVolumeSource kubevirtv1.VolumeSource, image string) *kubevirtv1.VirtualMachineInstance {
-			return &kubevirtv1.VirtualMachineInstance{
-				ObjectMeta: metav1.ObjectMeta{
-					Namespace:    namespace,
-					GenerateName: "worker-",
-					Annotations:  annotations,
-					Labels:       labels,
-				},
-				Spec: kubevirtv1.VirtualMachineInstanceSpec{
-					NodeSelector: nodeSelector,
-					Domain: kubevirtv1.DomainSpec{
-						Resources: kubevirtv1.ResourceRequirements{
-							Requests: corev1.ResourceList{
-								corev1.ResourceMemory: resource.MustParse("1024Mi"),
-							},
-						},
-						Devices: kubevirtv1.Devices{
-							Disks: []kubevirtv1.Disk{
-								{
-									DiskDevice: kubevirtv1.DiskDevice{
-										Disk: &kubevirtv1.DiskTarget{
-											Bus: kubevirtv1.DiskBusVirtio,
-										},
-									},
-									Name: "containerdisk",
-								},
-								{
-									DiskDevice: kubevirtv1.DiskDevice{
-										Disk: &kubevirtv1.DiskTarget{
-											Bus: kubevirtv1.DiskBusVirtio,
-										},
-									},
-									Name: "cloudinitdisk",
-								},
-							},
-							Interfaces: []kubevirtv1.Interface{
-								{
-									Name: "net1",
-									InterfaceBindingMethod: kubevirtv1.InterfaceBindingMethod{
-										Bridge: &kubevirtv1.InterfaceBridge{},
-									},
-								},
-							},
-							Rng: &kubevirtv1.Rng{},
-						},
-					},
-					Networks: []kubevirtv1.Network{
-						{
-							Name:          "net1",
-							NetworkSource: networkSource,
-						},
-					},
-					TerminationGracePeriodSeconds: ptr.To(int64(5)),
-					Volumes: []kubevirtv1.Volume{
-						{
-							Name: "containerdisk",
-							VolumeSource: kubevirtv1.VolumeSource{
-								ContainerDisk: &kubevirtv1.ContainerDiskSource{
-									Image: image,
-								},
-							},
-						},
-						{
-							Name:         "cloudinitdisk",
-							VolumeSource: cloudInitVolumeSource,
-						},
-					},
-				},
-			}
-		}
-
 		generateVM = func(vmi *kubevirtv1.VirtualMachineInstance) *kubevirtv1.VirtualMachine {
-			return &kubevirtv1.VirtualMachine{
-				ObjectMeta: metav1.ObjectMeta{
-					Namespace:    namespace,
-					GenerateName: vmi.GenerateName,
-				},
-				Spec: kubevirtv1.VirtualMachineSpec{
-					RunStrategy: ptr.To(kubevirtv1.RunStrategyAlways),
-					Template: &kubevirtv1.VirtualMachineInstanceTemplateSpec{
-						ObjectMeta: metav1.ObjectMeta{
-							Annotations: vmi.Annotations,
-							Labels:      vmi.Labels,
-						},
-						Spec: vmi.Spec,
-					},
-				},
-			}
+			return composeVM(namespace, vmi)
 		}
 
 		fedoraWithTestToolingVMI = func(labels map[string]string, annotations map[string]string, nodeSelector map[string]string, networkSource kubevirtv1.NetworkSource, userData, networkData string) *kubevirtv1.VirtualMachineInstance {
-			cloudInitVolumeSource := kubevirtv1.VolumeSource{
-				CloudInitNoCloud: &kubevirtv1.CloudInitNoCloudSource{
-					UserData:    userData,
-					NetworkData: networkData,
-				},
-			}
-			return generateVMI(labels, annotations, nodeSelector, networkSource, cloudInitVolumeSource, kubevirt.FedoraWithTestToolingContainerDiskImage)
+			return composeFedoraWithTestToolingVMI(namespace, labels, annotations, nodeSelector, networkSource, userData, networkData)
 		}
 
 		fedoraWithTestToolingVM = func(labels map[string]string, annotations map[string]string, nodeSelector map[string]string, networkSource kubevirtv1.NetworkSource, userData, networkData string) *kubevirtv1.VirtualMachine {
-			return generateVM(fedoraWithTestToolingVMI(labels, annotations, nodeSelector, networkSource, userData, networkData))
+			return composeFedoraWithTestToolingVM(namespace, labels, annotations, nodeSelector, networkSource, userData, networkData)
 		}
 
 		createVMWithStaticIP = func(vmName string, staticIPs []string) *kubevirtv1.VirtualMachine {
@@ -1228,60 +1314,13 @@ config:
 			httpServerTestPods = updatePods(httpServerTestPods)
 		}
 
-		removeImagesInNode = func(node, imageURL string) error {
-			By("Removing unused images in node " + node)
-			output, err := infraprovider.Get().ExecK8NodeCommand(node, []string{
-				"crictl", "images", "-o", "json",
-			})
-			if err != nil {
-				return err
-			}
-
-			// Remove tag if exists.
-			taglessImageURL := strings.Split(imageURL, ":")[0]
-			imageID, err := images.ImageIDByImageURL(taglessImageURL, output)
-			if err != nil {
-				return err
-			}
-			if imageID != "" {
-				_, err = infraprovider.Get().ExecK8NodeCommand(node, []string{
-					"crictl", "rmi", imageID,
-				})
-				if err != nil {
-					return err
-				}
-				_, err = infraprovider.Get().ExecK8NodeCommand(node, []string{
-					"crictl", "rmi", "--prune",
-				})
-				if err != nil {
-					return err
-				}
-			}
-			return nil
-		}
-
 		removeImagesInNodes = func(imageURL string) error {
-			nodesList, err := fr.ClientSet.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
-			Expect(err).NotTo(HaveOccurred())
-			for nodeIdx := range nodesList.Items {
-				err = removeImagesInNode(nodesList.Items[nodeIdx].Name, imageURL)
-				if err != nil {
-					return err
-				}
-			}
-			return nil
+			return removeImagesFromNodes(fr.ClientSet, imageURL)
 		}
 
 		createCUDN = func(cudn *udnv1.ClusterUserDefinedNetwork) {
 			GinkgoHelper()
-			By("Creating ClusterUserDefinedNetwork")
-			Expect(crClient.Create(context.Background(), cudn)).To(Succeed())
-			DeferCleanup(func() {
-				if e2eframework.TestContext.DeleteNamespace && (e2eframework.TestContext.DeleteNamespaceOnFailure || !CurrentSpecReport().Failed()) {
-					crClient.Delete(context.Background(), cudn)
-				}
-			})
-			Eventually(clusterUserDefinedNetworkReadyFunc(fr.DynamicClient, cudn.Name), 5*time.Second, time.Second).Should(Succeed())
+			createCUDNWithClients(crClient, fr.DynamicClient, cudn)
 		}
 
 		createRA = func(ra *rav1.RouteAdvertisements) {

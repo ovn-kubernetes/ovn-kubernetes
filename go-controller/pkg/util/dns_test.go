@@ -448,7 +448,7 @@ func TestIPsEqual(t *testing.T) {
 	}
 	for i, tc := range tests {
 		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
-			res := ipsEqual(tc.oldips, tc.newips)
+			res := IsIPsEqual(tc.oldips, tc.newips)
 			assert.Equal(t, tc.expEqual, res)
 		})
 	}

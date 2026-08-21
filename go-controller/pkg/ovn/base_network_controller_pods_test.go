@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	cnitypes "github.com/containernetworking/cni/pkg/types"
 	"github.com/onsi/gomega"
 
 	corev1 "k8s.io/api/core/v1"
@@ -15,8 +16,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 
+	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
+	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
@@ -297,6 +300,70 @@ func TestBaseNetworkController_shouldReleaseDeletedPod(t *testing.T) {
 			if got != tt.want {
 				t.Errorf("shouldReleaseDeletedPod() = %v, want %v", got, tt.want)
 			}
+		})
+	}
+}
+
+// TestBaseNetworkController_allocatesPodAnnotation pins who writes the
+// pod-networks annotation per topology/IPAM combination. The DHCP row is the
+// single-writer contract: the CNI picks the MAC and reports the DHCP-learned
+// IPs, so this controller must never allocate (nor overwrite) the entry.
+func TestBaseNetworkController_allocatesPodAnnotation(t *testing.T) {
+	tests := []struct {
+		name     string
+		netconf  *ovncnitypes.NetConf
+		expected bool
+	}{
+		{
+			name: "localnet with subnets (OVN-K IPAM): cluster manager allocates",
+			netconf: &ovncnitypes.NetConf{
+				NetConf:  cnitypes.NetConf{Name: "localnet-ipam"},
+				Topology: ovntypes.LocalnetTopology,
+				NADName:  "default/localnet-ipam",
+				Subnets:  "10.128.0.0/16",
+			},
+			expected: false,
+		},
+		{
+			name: "localnet without subnets (ipam-less): this controller allocates the MAC-only entry",
+			netconf: &ovncnitypes.NetConf{
+				NetConf:  cnitypes.NetConf{Name: "localnet-ipamless"},
+				Topology: ovntypes.LocalnetTopology,
+				NADName:  "default/localnet-ipamless",
+			},
+			expected: true,
+		},
+		{
+			name: "localnet with DHCP IPAM: the CNI is the single writer",
+			netconf: &ovncnitypes.NetConf{
+				NetConf: cnitypes.NetConf{
+					Name: "localnet-dhcp",
+					IPAM: cnitypes.IPAM{Type: ovntypes.IPAMTypeDHCP},
+				},
+				Topology: ovntypes.LocalnetTopology,
+				NADName:  "default/localnet-dhcp",
+			},
+			expected: false,
+		},
+		{
+			name: "layer2: cluster manager allocates",
+			netconf: &ovncnitypes.NetConf{
+				NetConf:  cnitypes.NetConf{Name: "l2"},
+				Topology: ovntypes.Layer2Topology,
+				NADName:  "default/l2",
+				Subnets:  "10.129.0.0/16",
+			},
+			expected: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			netInfo, err := util.NewNetInfo(tt.netconf)
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+			bnc := &BaseNetworkController{ReconcilableNetInfo: util.NewReconcilableNetInfo(netInfo)}
+
+			g.Expect(bnc.allocatesPodAnnotation()).To(gomega.Equal(tt.expected))
 		})
 	}
 }

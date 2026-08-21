@@ -96,6 +96,7 @@ func renderNADSpec(networkName, nadName string, spec SpecGetter, uplink string, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to render CNI network config: %w", err)
 	}
+
 	cniNetConfRaw, err := json.Marshal(cniNetConf)
 	if err != nil {
 		return nil, err
@@ -193,6 +194,18 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter, uplink
 		}
 	case userdefinednetworkv1.NetworkTopologyLocalnet:
 		cfg := spec.GetLocalnet()
+		if err := validateIPAM(cfg.IPAM); err != nil {
+			return nil, err
+		}
+		if ipamEnabled(cfg.IPAM) && len(cfg.Subnets) == 0 {
+			return nil, config.NewSubnetsRequiredError()
+		}
+		if !ipamEnabled(cfg.IPAM) && len(cfg.Subnets) > 0 {
+			return nil, config.NewSubnetsMustBeUnsetError()
+		}
+		if cfg.IPAM != nil && cfg.IPAM.Mode == userdefinednetworkv1.IPAMDHCP {
+			netConfSpec.IPAM.Type = types.IPAMTypeDHCP
+		}
 		netConfSpec.Role = strings.ToLower(string(cfg.Role))
 		netConfSpec.MTU = localnetMTU(cfg.MTU)
 		netConfSpec.AllowPersistentIPs = cfg.IPAM != nil && cfg.IPAM.Lifecycle == userdefinednetworkv1.IPAMLifecyclePersistent
@@ -263,6 +276,16 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter, uplink
 	}
 	if netConfSpec.PhysicalNetworkName != "" {
 		cniNetConf["physicalNetworkName"] = netConfSpec.PhysicalNetworkName
+	}
+	// The Enabled/Disabled modes never set this field as OVN-Kubernetes
+	// handles those itself, inferring them from the presence of subnets.
+	// An explicit ipam section is emitted only when addressing is
+	// delegated to another IPAM plugin, and DHCP is the only such
+	// supported mode today.
+	if netConfSpec.IPAM.Type != "" {
+		cniNetConf["ipam"] = map[string]interface{}{
+			"type": netConfSpec.IPAM.Type,
+		}
 	}
 	if len(netConfSpec.ExcludeSubnets) > 0 {
 		cniNetConf["excludeSubnets"] = netConfSpec.ExcludeSubnets
