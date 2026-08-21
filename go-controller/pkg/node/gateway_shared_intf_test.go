@@ -18,6 +18,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/fake"
@@ -102,14 +103,15 @@ type mockNetworkManagerWithNamespaceNotFoundError struct {
 	networkmanager.Interface
 }
 
-func (m *mockNetworkManagerWithNamespaceNotFoundError) GetPrimaryNADForNamespace(_ string) (string, error) {
-	// Simulate namespace deletion: no primary NAD by definition.
-	return "", nil
+func (m *mockNetworkManagerWithNamespaceNotFoundError) GetPrimaryNADForNamespace(namespace string) (string, error) {
+	// Namespace absent from the informer cache (not proof of deletion).
+	return "", fmt.Errorf("failed to fetch namespace %q: %w", namespace,
+		apierrors.NewNotFound(corev1.Resource("namespaces"), namespace))
 }
 
 func (m *mockNetworkManagerWithNamespaceNotFoundError) GetActiveNetworkForNamespace(_ string) (util.NetInfo, error) {
-	// Namespace is gone; new GetActiveNetworkForNamespace semantics return nil, nil.
-	return nil, nil
+	return nil, fmt.Errorf("failed to get namespace %q: %w", "test-ns",
+		apierrors.NewNotFound(corev1.Resource("namespaces"), "test-ns"))
 }
 
 // mockNetworkManagerWithInvalidPrimaryNetworkError simulates UDN deletion scenario
@@ -477,6 +479,28 @@ var _ = Describe("SyncServices", func() {
 
 			verifyNFTablesRule(nft, "10.96.0.20", 80, 30091, false,
 				"nftables rule should not be created when primary network is invalid")
+		})
+	})
+
+	Context("when namespace is absent from informer cache", func() {
+		It("should skip service sync without failing startup", func() {
+			service := newService(testService, testNamespace, "10.96.0.21",
+				[]corev1.ServicePort{{
+					Name:       "http",
+					Protocol:   corev1.ProtocolTCP,
+					Port:       80,
+					TargetPort: intstr.FromInt(8080),
+					NodePort:   30094,
+				}},
+				corev1.ServiceTypeNodePort, nil, corev1.ServiceStatus{}, false, false)
+
+			npw.networkManager = &mockNetworkManagerWithNamespaceNotFoundError{}
+
+			err := npw.SyncServices([]interface{}{service})
+			Expect(err).NotTo(HaveOccurred())
+
+			verifyNFTablesRule(nft, "10.96.0.21", 80, 30094, false,
+				"nftables rule should not be created when namespace lookup returns NotFound")
 		})
 	})
 

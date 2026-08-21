@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"sync"
 
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/cache"
 
@@ -68,6 +70,8 @@ type FakeNetworkManager struct {
 	nextNetworkRefID      uint64
 	// UDNNamespaces are a list of namespaces that require UDN for primary network
 	UDNNamespaces sets.Set[string]
+	// NotFoundNamespaces are namespaces absent from the informer cache for GetActiveNetworkForNamespace.
+	NotFoundNamespaces sets.Set[string]
 	// ActiveNodes tracks node activity per network for Dynamic UDN tests.
 	ActiveNodes map[string]map[string]bool
 }
@@ -131,6 +135,13 @@ func (fnm *FakeNetworkManager) Start() error { return nil }
 func (fnm *FakeNetworkManager) Stop() {}
 
 func (fnm *FakeNetworkManager) GetActiveNetworkForNamespace(namespace string) (util.NetInfo, error) {
+	fnm.Lock()
+	if fnm.NotFoundNamespaces != nil && fnm.NotFoundNamespaces.Has(namespace) {
+		fnm.Unlock()
+		return nil, fmt.Errorf("failed to fetch namespace %q: %w", namespace,
+			apierrors.NewNotFound(corev1.Resource("namespaces"), namespace))
+	}
+	fnm.Unlock()
 	network := fnm.GetActiveNetworkForNamespaceFast(namespace)
 	if network == nil {
 		return nil, util.NewInvalidPrimaryNetworkError(namespace)
@@ -141,6 +152,10 @@ func (fnm *FakeNetworkManager) GetActiveNetworkForNamespace(namespace string) (u
 func (fnm *FakeNetworkManager) GetPrimaryNADForNamespace(namespace string) (string, error) {
 	fnm.Lock()
 	defer fnm.Unlock()
+	if fnm.NotFoundNamespaces != nil && fnm.NotFoundNamespaces.Has(namespace) {
+		return "", fmt.Errorf("failed to fetch namespace %q: %w", namespace,
+			apierrors.NewNotFound(corev1.Resource("namespaces"), namespace))
+	}
 	if primaryNetwork, ok := fnm.PrimaryNetworks[namespace]; ok {
 		if primaryNetwork == nil {
 			return "", util.NewInvalidPrimaryNetworkError(namespace)

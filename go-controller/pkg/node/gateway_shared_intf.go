@@ -1253,7 +1253,7 @@ func (npw *nodePortWatcher) SyncServices(services []interface{}) error {
 			// During startup sync, avoid failing the entire processExisting loop for namespaces that
 			// require a UDN but have no primary NAD yet (or it has been deleted). Those services will
 			// be reconciled later via regular add/update events once the NAD exists.
-			if util.IsInvalidPrimaryNetworkError(err) {
+			if util.IsInvalidPrimaryNetworkError(err) || apierrors.IsNotFound(err) {
 				continue
 			}
 			errors = append(errors, err)
@@ -1446,8 +1446,9 @@ func (npw *nodePortWatcher) DeleteEndpointSlice(epSlice *discovery.EndpointSlice
 		// and allows graceful handling of deletion race conditions.
 		netInfo, err := npw.networkManager.GetActiveNetworkForNamespace(namespacedName.Namespace)
 		if err != nil {
-			// If the UDN was deleted or not processed yet, skip adding new service rules
-			if util.IsInvalidPrimaryNetworkError(err) {
+			// If the UDN was deleted, not processed yet, or namespace is absent from the informer cache,
+			// skip adding new service rules.
+			if util.IsInvalidPrimaryNetworkError(err) || apierrors.IsNotFound(err) {
 				klog.V(5).Infof("Skipping addServiceRules for %s/%s during endpoint slice delete: primary network unavailable: %v",
 					namespacedName.Namespace, namespacedName.Name, err)
 				return utilerrors.Join(errors...)
@@ -1671,7 +1672,7 @@ func (npwnft *nodePortWatcherNFTables) SyncServices(services []interface{}) erro
 			// During startup sync, avoid failing the entire processExisting loop for namespaces that
 			// require a UDN but have no primary NAD yet (or it has been deleted). Those services will
 			// be reconciled later via regular add/update events once the NAD exists.
-			if util.IsInvalidPrimaryNetworkError(err) {
+			if util.IsInvalidPrimaryNetworkError(err) || apierrors.IsNotFound(err) {
 				continue
 			}
 			errors = append(errors, err)

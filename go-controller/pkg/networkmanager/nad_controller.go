@@ -1334,6 +1334,8 @@ func (c *nadController) nadNeedsUpdate(oldNAD, newNAD *nettypes.NetworkAttachmen
 // Returns DefaultNetwork if Network Segmentation disabled or namespace does not require primary UDN.
 // Returns nil if there is no active network.
 // Returns InvalidPrimaryNetworkError if a network should be present but is not.
+// Returns a NotFound error if the namespace is absent from the informer
+// cache (not necessarily definitively deleted).
 func (c *nadController) GetActiveNetworkForNamespace(namespace string) (util.NetInfo, error) {
 	if !util.IsNetworkSegmentationSupportEnabled() {
 		return &util.DefaultNetInfo{}, nil
@@ -1342,10 +1344,6 @@ func (c *nadController) GetActiveNetworkForNamespace(namespace string) (util.Net
 	// check if required UDN label is on namespace
 	ns, err := c.namespaceLister.Get(namespace)
 	if err != nil {
-		if apierrors.IsNotFound(err) {
-			// namespace is gone, no active network for it
-			return nil, nil
-		}
 		return nil, fmt.Errorf("failed to get namespace %q: %w", namespace, err)
 	}
 	if _, exists := ns.Labels[types.RequiredUDNNamespaceLabel]; !exists {
@@ -1383,7 +1381,9 @@ func (c *nadController) GetActiveNetworkForNamespaceFast(namespace string) util.
 
 // GetPrimaryNADForNamespace returns the full namespaced key of the
 // primary NAD for the given namespace, if one exists.
-// Returns default network if namespace has no primary UDN or Network Segmentation is disabled
+// Returns default network if namespace has no primary UDN or Network Segmentation is disabled.
+// Returns a NotFound error if the namespace is absent from the informer
+// cache (not necessarily definitively deleted).
 func (c *nadController) GetPrimaryNADForNamespace(namespace string) (string, error) {
 	if !util.IsNetworkSegmentationSupportEnabled() {
 		return types.DefaultNetworkName, nil
@@ -1398,10 +1398,6 @@ func (c *nadController) GetPrimaryNADForNamespace(namespace string) (string, err
 	// Double-check if the namespace *requires* a primary UDN.
 	ns, err := c.namespaceLister.Get(namespace)
 	if err != nil {
-		if apierrors.IsNotFound(err) {
-			// Namespace is gone — no primary NAD by definition.
-			return "", nil
-		}
 		return "", fmt.Errorf("failed to fetch namespace %q: %w", namespace, err)
 	}
 	if _, exists := ns.Labels[types.RequiredUDNNamespaceLabel]; exists {

@@ -60,8 +60,10 @@ type watchFactory interface {
 type Interface interface {
 	// GetActiveNetworkForNamespace returns a copy of the primary network for
 	// the namespace if any or the default network otherwise.
-	// If the network is non-existent for a legitimate reason (namespace gone or
-	// filtered by Dynamic UDN) it returns nil NetInfo and no error.
+	// If the network is non-existent for a legitimate reason (filtered by
+	// Dynamic UDN) it returns nil NetInfo and no error.
+	// Returns a NotFound error if the namespace is absent from the informer
+	// cache (not necessarily definitively deleted).
 	// If the network is non-existent, but should exist, return InvalidPrimaryNetworkError.
 	// If unsure, use this one and not GetActiveNetworkForNamespaceFast.
 	// Note this function is filtered by Dynamic UDN, so if your caller wants NAD/Network
@@ -79,6 +81,8 @@ type Interface interface {
 	// GetPrimaryNADForNamespace returns the full namespaced key of the
 	// primary NAD for the given namespace, if one exists.
 	// Returns default network if namespace has no primary UDN.
+	// Returns a NotFound error if the namespace is absent from the informer
+	// cache (not necessarily definitively deleted).
 	// This function is not filtered based on Dynamic UDN.
 	GetPrimaryNADForNamespace(namespace string) (string, error)
 

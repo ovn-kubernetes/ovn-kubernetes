@@ -17,8 +17,10 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	utilnet "k8s.io/utils/net"
@@ -1786,6 +1788,42 @@ func TestReconcileNetworkSkipsUnregisteredNetwork(t *testing.T) {
 
 	_, ok := controller.networkStates.Load(udn.GetNetworkName())
 	g.Expect(ok).To(gomega.BeFalse())
+}
+
+// notFoundPrimaryNADNetworkManager returns a wrapped namespace NotFound from GetPrimaryNADForNamespace.
+type notFoundPrimaryNADNetworkManager struct {
+	networkmanager.Interface
+}
+
+func (m *notFoundPrimaryNADNetworkManager) GetPrimaryNADForNamespace(namespace string) (string, error) {
+	return "", fmt.Errorf("failed to fetch namespace %q: %w", namespace,
+		apierrors.NewNotFound(corev1.Resource("namespaces"), namespace))
+}
+
+func TestSkipServiceForNetwork_NotFoundSkipsWithoutHandleError(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+
+	originalHandlers := utilruntime.ErrorHandlers
+	t.Cleanup(func() { utilruntime.ErrorHandlers = originalHandlers })
+	var unexpectedErrors []error
+	utilruntime.ErrorHandlers = []utilruntime.ErrorHandler{
+		func(_ context.Context, err error, _ string, _ ...interface{}) {
+			unexpectedErrors = append(unexpectedErrors, err)
+		},
+	}
+
+	c := &Controller{
+		networkManager: &notFoundPrimaryNADNetworkManager{},
+	}
+	state := &networkState{netInfo: &util.DefaultNetInfo{}}
+
+	g.Expect(c.skipServiceForNetwork(state, "svc1", "namespace1")).To(gomega.BeTrue())
+	g.Expect(unexpectedErrors).To(gomega.BeEmpty(),
+		"NotFound must skip quietly without utilruntime.HandleError")
 }
 
 func nodeLogicalSwitch(nodeName string, lbGroups []string, namespacedServiceNames ...string) *nbdb.LogicalSwitch {
