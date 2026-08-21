@@ -55,6 +55,28 @@ func (c *Controller) isIPAMlessLocalnet() bool {
 	return c.TopologyType() == types.LocalnetTopology && !ovnkutil.DoesNetworkRequireIPAM(c.NetInfo)
 }
 
+// ipamlessSourceLSPNames returns the logical switch port names of the pod's
+// attachments to this (ipamless localnet) network, derived from the pod's own
+// network-selection annotation ("k8s.v1.cni.cncf.io/networks") rather than from
+// the controller's NADs. There is normally a single attachment per network, but
+// the pod may attach to the same network multiple times, so all matching ports
+// are returned. An empty result means the pod is not attached to this network
+// (or is not yet annotated) and the caller should skip it without retrying.
+func (c *Controller) ipamlessSourceLSPNames(pod *corev1.Pod) ([]string, error) {
+	on, networkMap, err := ovnkutil.GetUDNPodNADToNetworkMapping(pod, c.NetInfo, c.podNetworkResolver())
+	if err != nil {
+		return nil, err
+	}
+	if !on {
+		return nil, nil
+	}
+	lspNames := make([]string, 0, len(networkMap))
+	for nadKey := range networkMap {
+		lspNames = append(lspNames, ovnkutil.GetUserDefinedNetworkLogicalPortName(pod.Namespace, pod.Name, nadKey))
+	}
+	return lspNames, nil
+}
+
 func getPodAddresses(pod *corev1.Pod, networkInfo ovnkutil.NetInfo, resolver func(nadKey string) string) ([]string, error) {
 	// check annotation "k8s.ovn.org/pod-networks" before calling GetPodIPsOfNetwork,
 	// as it's no easy to check if the error is caused by missing annotation, while

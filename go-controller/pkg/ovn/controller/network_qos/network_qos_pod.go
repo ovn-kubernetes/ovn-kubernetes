@@ -64,6 +64,9 @@ func (c *Controller) isPodScheduledOnLocalNode(pod *corev1.Pod) bool {
 // - match source: add the ip to source address set, bind qos rule to the switch
 // - match dest: add the ip to the destination address set
 func (c *Controller) setPodForNQOS(pod *corev1.Pod, nqosState *networkQoSState, namespace *corev1.Namespace, addressSetMap map[string]sets.Set[string]) error {
+	if c.isIPAMlessLocalnet() {
+		return c.setPodForNQOSIPAMless(pod, nqosState, namespace, addressSetMap)
+	}
 	addresses, err := getPodAddresses(pod, c.NetInfo, c.podNetworkResolver())
 	if err == nil && len(addresses) == 0 {
 		// pod either is not attached to this network, or hasn't been annotated with addresses yet, return without retry
@@ -95,6 +98,49 @@ func (c *Controller) setPodForNQOS(pod *corev1.Pod, nqosState *networkQoSState, 
 		}
 	}
 	return reconcilePodForDestinations(nqosState, namespace, pod, addresses, addressSetMap)
+}
+
+// setPodForNQOSIPAMless is the ipamless-localnet counterpart of the source half
+// of setPodForNQOS. Source pods on ipamless localnet networks have no
+// OVN-managed IP, so they are matched by logical switch port membership in the
+// per-NetworkQoS source port group (inport == @pg) rather than by a src-IP
+// address set. Attachment is confirmed via the pod's own network-selection
+// annotation (a MAC-only attachment still counts as attached), never by IP.
+func (c *Controller) setPodForNQOSIPAMless(pod *corev1.Pod, nqosState *networkQoSState, namespace *corev1.Namespace, addressSetMap map[string]sets.Set[string]) error {
+	lspNames, err := c.ipamlessSourceLSPNames(pod)
+	if err != nil {
+		return fmt.Errorf("failed to resolve logical switch ports for pod %s/%s, network %s, err: %v", pod.Namespace, pod.Name, c.GetNetworkName(), err)
+	}
+	if len(lspNames) == 0 {
+		// pod is not attached to this network (or hasn't been annotated yet), return without retry
+		klog.V(6).Infof("Pod %s/%s is not attached to network %s, skip NetworkQoS processing", pod.Namespace, pod.Name, c.GetNetworkName())
+		return nil
+	}
+	fullPodName := joinMetaNamespaceAndName(pod.Namespace, pod.Name)
+	// is pod in this zone
+	if c.isPodScheduledOnLocalNode(pod) {
+		if matchSource := nqosState.matchSourceSelector(pod); matchSource {
+			// pod's labels match source selector
+			if err = nqosState.configureSourcePodIPAMless(c, pod, lspNames); err != nil {
+				return err
+			}
+		} else {
+			// pod's labels don't match selector, but it probably matched previously
+			if err = nqosState.removePodLSPFromSource(c, fullPodName); err != nil {
+				return err
+			}
+		}
+	} else {
+		klog.V(4).Infof("Pod %s is not scheduled in local zone, call remove to ensure it's not in source", fullPodName)
+		if err = nqosState.removePodLSPFromSource(c, fullPodName); err != nil {
+			return err
+		}
+	}
+	// Destinations on ipamless localnet are limited to ipBlock/CIDR (no
+	// pod/namespace selectors), so reconcilePodForDestinations naturally no-ops:
+	// its loop only handles selector-based destinations. Called for structural
+	// parity with the IPAM path.
+	return reconcilePodForDestinations(nqosState, namespace, pod, nil, addressSetMap)
 }
 
 func reconcilePodForDestinations(nqosState *networkQoSState, podNs *corev1.Namespace, pod *corev1.Pod, addresses []string, addressSetMap map[string]sets.Set[string]) error {

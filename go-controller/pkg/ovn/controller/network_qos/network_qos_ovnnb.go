@@ -13,10 +13,27 @@ import (
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
+
+// ensureSourcePortGroup creates the per-NetworkQoS source port group used on
+// ipamless localnet networks to match source pods via inport == @pg. Pods are
+// added/removed to it in the pod path; membership is intentionally left
+// untouched here (create-if-absent), so it is safe to call on every reconcile.
+func (c *Controller) ensureSourcePortGroup(qosState *networkQoSState) error {
+	pgIDs := GetNetworkQoSPortGroupDbIDs(qosState.namespace, qosState.name, c.controllerName)
+	pg := libovsdbutil.BuildPortGroup(pgIDs, nil, nil)
+	if c.IsUserDefinedNetwork() {
+		pg.ExternalIDs[types.NetworkExternalID] = c.GetNetworkName()
+	}
+	if err := libovsdbops.CreatePortGroup(c.nbClient, pg); err != nil {
+		return fmt.Errorf("failed to create source port group %s for NetworkQoS %s/%s: %w", pg.Name, qosState.namespace, qosState.name, err)
+	}
+	return nil
+}
 
 func (c *Controller) findLogicalSwitch(switchName string) (*nbdb.LogicalSwitch, error) {
 	if lsws, err := libovsdbops.FindLogicalSwitchesWithPredicate(c.nbClient, func(item *nbdb.LogicalSwitch) bool {
