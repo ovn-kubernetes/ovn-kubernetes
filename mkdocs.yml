@@ -207,5 +207,7 @@ nav:
     - Disable Port Security: okeps/okep-3926-disable-port-security.md
     - OVN Observability API: okeps/okep-5212-ovnobserv-api.md
     - EgressIP Node Selector: okeps/okep-6800-egressip-node-selector.md
+    - DHCP IPAM for Localnet: okeps/okep-6224-dhcp-ipam-localnet.md
+    - External IPAM Plugin: okeps/okep-6831-external-ipam-plugin.md
   - Blog:
     - OVN-Kubernetes Blog: blog/index.md
