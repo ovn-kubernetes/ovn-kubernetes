@@ -15,6 +15,9 @@
 RELEASES ?= all
 PUSH ?= 0
 
-.PHONY: build-docs
+.PHONY: build-docs test-install-gh-pages-404
 build-docs:
 	../hack/build-docs.sh $(if $(filter 1 true YES yes,$(PUSH)),--push) --releases "$(RELEASES)"
+
+test-install-gh-pages-404:
+	../hack/test-install-gh-pages-404.sh
