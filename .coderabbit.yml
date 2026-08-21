@@ -78,7 +78,7 @@ reviews:
           update). Flag PRs that mix unrelated changes in a single
           commit.
         - PR description template: "Description", "Additional Information",
-          and "How to verify it" sections must be filled — flag if empty.
+          "Release Notes", and "How to verify it" sections must be filled — flag if empty.
           "Description" must lead with the Why (the problem being solved)
           before explaining What the PR does — flag if it jumps straight
           into implementation details without motivation.
@@ -642,5 +642,24 @@ reviews:
 
           Pass only if none of those files are modified, or the PR
           author is listed in MAINTAINERS.md as a current maintainer.
+      - name: "Release Notes Section"
+        mode: "error"
+        instructions: >-
+          Every PR must include a "Release Notes" section whose
+          `release-note` fenced code block contains either a user-facing
+          release note or the single word `NONE` (both are valid entries).
+
+          Fail if the "Release Notes" section is missing, the
+          `release-note` block is absent or empty, or it still contains
+          only the template comment.
+
+          Also fail if the PR adds, changes, or removes a flag, API, or
+          user-facing behavior, or deprecates something, but the block is
+          left as `NONE` — ask the author to write a short user-facing
+          note instead.
+
+          Pass if the block contains a meaningful user-facing note, or if
+          it contains `NONE` and the PR genuinely has no user-facing
+          impact (tests, refactors, CI, internal-only changes).
 chat:
   auto_reply: true
