@@ -150,6 +150,7 @@ nav:
       - EgressService: features/cluster-egress-controls/egress-service.md
       - EgressQoS: features/cluster-egress-controls/egress-qos.md
       - EgressGateway: features/cluster-egress-controls/egress-gateway.md
+      - SNATExclusion: features/cluster-egress-controls/snat-exclusion.md
     - InfrastructureSecurityControls:
       - features/infrastructure-security-controls/index.md
       - NodeIdentity: features/infrastructure-security-controls/node-identity.md
