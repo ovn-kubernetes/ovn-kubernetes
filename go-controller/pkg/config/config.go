@@ -968,6 +968,10 @@ var CommonFlags = []cli.Flag{
 		Usage: "initialize node, requires the name that node is registered with in kubernetes cluster",
 	},
 	&cli.StringFlag{
+		Name:  "zone",
+		Usage: "DEPRECATED; no longer used and ignored. Will be removed in 2 releases.",
+	},
+	&cli.StringFlag{
 		Name:  "cleanup-node",
 		Usage: "cleanup node, requires the name that node is registered with in kubernetes cluster",
 	},
