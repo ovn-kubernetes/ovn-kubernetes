@@ -4883,7 +4883,6 @@ with other tests and they are disabled when running <code>make control-plane</co
 Instead, they must explicitly be requested with <code>make -C test control-plane WHAT="Node IP address migration"</code>.</p>
 <h3 id="github-ci-integration-through-github-actions-matrix">Github CI integration through Github Actions Matrix<a class="headerlink" href="#github-ci-integration-through-github-actions-matrix" title="Permanent link">¶</a></h3>
 <p>Each of these shards and control-plane tests can then be run in a <a href="https://docs.github.com/en/actions/learn-github-actions/managing-complex-workflows#using-a-build-matrix">Github Actions matrix</a> of:
-* HA setup (3 masters and 0 workers) and a non-HA setup (1 master and 2 workers)
 * Local Gateway Mode and Shared Gateway Mode. See:
 <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/docs/design/shared_gw_dgp.md">Enable Node-Local Services Access in Shared Gateway Mode</a>
 * IPv4 Only, IPv6 Only and Dualstack
