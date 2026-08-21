@@ -21,6 +21,7 @@ import (
 
 	networkqosv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
@@ -33,10 +34,14 @@ type networkQoSState struct {
 	name      string
 	namespace string
 
-	SrcAddrSet  addressset.AddressSet
-	Pods        sync.Map // pods name -> ips in the srcAddrSet
-	SwitchRefs  sync.Map // switch name -> list of source pods
-	PodSelector labels.Selector
+	SrcAddrSet addressset.AddressSet
+	// SrcPortGroupName is the OVN name of the per-NetworkQoS source port group,
+	// used on ipamless localnet networks to match source pods via inport == @pg
+	// instead of the src-IP address set. Empty on IPAM-enabled networks.
+	SrcPortGroupName string
+	Pods             sync.Map // pods name -> ips in the srcAddrSet (IPAM) / LSP UUIDs in the source port group (ipamless)
+	SwitchRefs       sync.Map // switch name -> list of source pods
+	PodSelector      labels.Selector
 
 	// egressRules stores the objects needed to track .Spec.Egress changes
 	EgressRules []*GressRule
@@ -51,6 +56,14 @@ func (nqosState *networkQoSState) getDbObjectIDs(controller string, ruleIndex in
 		libovsdbops.ObjectNameKey: nqosState.getObjectNameKey(),
 		libovsdbops.RuleIndex:     fmt.Sprintf("%d", ruleIndex),
 	})
+}
+
+// initSourcePortGroupName computes and stores the deterministic OVN name of this
+// NetworkQoS's source port group. Used on ipamless localnet networks, where
+// source pods are matched by port-group membership rather than src IP.
+func (nqosState *networkQoSState) initSourcePortGroupName(controllerName string) {
+	nqosState.SrcPortGroupName = libovsdbutil.GetPortGroupName(
+		GetNetworkQoSPortGroupDbIDs(nqosState.namespace, nqosState.name, controllerName))
 }
 
 func (nqosState *networkQoSState) initAddressSets(addressSetFactory addressset.AddressSetFactory, controllerName string) error {

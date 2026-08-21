@@ -35,6 +35,26 @@ func GetNetworkQoSAddrSetDbIDs(nqosNamespace, nqosName, ruleIndex, ipBlockIndex,
 		})
 }
 
+// GetNetworkQoSPortGroupDbIDs returns the DbObjectIDs of the per-NetworkQoS
+// source port group. On ipamless localnet networks the source pods have no
+// OVN-managed IP, so they are matched via inport == @pg instead of a src-IP
+// address set. There is a single source port group per NetworkQoS object,
+// keyed by namespace:name (mirroring GetNetworkQoSAddrSetDbIDs' ObjectNameKey).
+func GetNetworkQoSPortGroupDbIDs(nqosNamespace, nqosName, controller string) *libovsdbops.DbObjectIDs {
+	return libovsdbops.NewDbObjectIDs(libovsdbops.PortGroupNetworkQoS, controller,
+		map[libovsdbops.ExternalIDKey]string{
+			libovsdbops.ObjectNameKey: joinMetaNamespaceAndName(nqosNamespace, nqosName, ":"),
+		})
+}
+
+// isIPAMlessLocalnet reports whether this controller manages an ipamless
+// (no OVN-managed pod IPs) secondary localnet network. On such networks source
+// pods carry MAC-only logical switch ports, so NetworkQoS must match source pods
+// via a port group (inport == @pg) rather than a src-IP address set.
+func (c *Controller) isIPAMlessLocalnet() bool {
+	return c.TopologyType() == types.LocalnetTopology && !ovnkutil.DoesNetworkRequireIPAM(c.NetInfo)
+}
+
 func getPodAddresses(pod *corev1.Pod, networkInfo ovnkutil.NetInfo, resolver func(nadKey string) string) ([]string, error) {
 	// check annotation "k8s.ovn.org/pod-networks" before calling GetPodIPsOfNetwork,
 	// as it's no easy to check if the error is caused by missing annotation, while
@@ -55,8 +75,18 @@ func getPodAddresses(pod *corev1.Pod, networkInfo ovnkutil.NetInfo, resolver fun
 	return addresses, nil
 }
 
-func generateNetworkQoSMatch(qosState *networkQoSState, rule *GressRule, ipv4Enabled, ipv6Enabled bool) string {
-	match := addressSetToMatchString(qosState.SrcAddrSet, trafficDirSource, ipv4Enabled, ipv6Enabled)
+func generateNetworkQoSMatch(qosState *networkQoSState, rule *GressRule, ipv4Enabled, ipv6Enabled, ipamless bool) string {
+	var match string
+	if ipamless {
+		// Ipamless localnet source pods have no OVN-managed IP, so scope to the
+		// selected source pods by their logical switch port membership in the
+		// per-NetworkQoS source port group. IPMode() is (false,false) on ipamless
+		// networks, so an explicit (ip4 || ip6) qualifier is required to avoid
+		// matching ARP/ND/DHCP and breaking address acquisition.
+		match = fmt.Sprintf("inport == @%s && (ip4 || ip6)", qosState.SrcPortGroupName)
+	} else {
+		match = addressSetToMatchString(qosState.SrcAddrSet, trafficDirSource, ipv4Enabled, ipv6Enabled)
+	}
 
 	classiferMatchString := rule.Classifier.ToQosMatchString(ipv4Enabled, ipv6Enabled)
 	if classiferMatchString != "" {

@@ -382,6 +382,14 @@ var PortGroupUDN = newObjectIDsType(portGroup, UDNIsolationOwnerType, []External
 	ObjectNameKey,
 })
 
+// PortGroupNetworkQoS identifies the per-NetworkQoS source port group used to
+// match source pods on ipamless localnet networks (where pods have no
+// OVN-managed IP), via inport == @pg instead of a src-IP address set.
+var PortGroupNetworkQoS = newObjectIDsType(portGroup, NetworkQoSOwnerType, []ExternalIDKey{
+	// NetworkQoS namespace:name
+	ObjectNameKey,
+})
+
 var LogicalRouterPolicyEgressIP = newObjectIDsType(logicalRouterPolicy, EgressIPOwnerType, []ExternalIDKey{
 	// the priority of the LRP
 	PriorityKey,

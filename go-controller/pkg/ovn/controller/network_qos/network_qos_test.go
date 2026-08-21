@@ -1413,3 +1413,61 @@ var _ = Describe("NetworkQoS on a DHCP-IPAM localnet network", func() {
 		eventuallyAddressSetHasNo(dhcpAddrsetFactory, nqosNamespace, "dhcp-qos", "src", "0", dhcpControllerName, lease1)
 	})
 })
+
+// U1: pin the source fragment of the generated OVN QoS match string. On ipamless
+// localnet networks the source is matched by port group (inport == @pg) instead
+// of a src-IP address set; the IPAM-enabled path must remain byte-for-byte
+// unchanged (guards R5).
+var _ = Describe("generateNetworkQoSMatch source fragment", func() {
+	const (
+		nqNs   = "qos-ns"
+		nqName = "qos-obj"
+		ctrl   = "netwk1-controller"
+	)
+
+	// ipBlockRule builds an internal GressRule with a single ipBlock destination
+	// (and an optional tcp port), exercising the already IP-independent classifier.
+	ipBlockRule := func(cidr string, tcpPort *int32) *GressRule {
+		classifier := &Classifier{
+			Destinations: []*Destination{{IpBlock: &networkingv1.IPBlock{CIDR: cidr}}},
+		}
+		if tcpPort != nil {
+			classifier.Ports = []*nqostype.Port{{Protocol: "tcp", Port: tcpPort}}
+		}
+		return &GressRule{Priority: 10600, Dscp: 46, Classifier: classifier}
+	}
+
+	It("emits the port-group form on ipamless localnet (happy path)", func() {
+		qosState := &networkQoSState{namespace: nqNs, name: nqName}
+		qosState.initSourcePortGroupName(ctrl)
+		pgName := qosState.SrcPortGroupName
+		Expect(pgName).NotTo(BeEmpty())
+
+		// ipamless IPMode() is (false, false); the (ip4 || ip6) qualifier is hardcoded.
+		match := generateNetworkQoSMatch(qosState, ipBlockRule("0.0.0.0/0", nil), false, false, true)
+		Expect(match).To(Equal(fmt.Sprintf("inport == @%s && (ip4 || ip6) && ip4.dst == 0.0.0.0/0", pgName)))
+	})
+
+	It("keeps the port-group source form with an ipBlock dest + protocol/port (edge case)", func() {
+		qosState := &networkQoSState{namespace: nqNs, name: nqName}
+		qosState.initSourcePortGroupName(ctrl)
+		pgName := qosState.SrcPortGroupName
+
+		port := int32(2049)
+		match := generateNetworkQoSMatch(qosState, ipBlockRule("10.20.0.0/16", &port), false, false, true)
+		Expect(match).To(Equal(fmt.Sprintf("inport == @%s && (ip4 || ip6) && ip4.dst == 10.20.0.0/16 && tcp && tcp.dst == 2049", pgName)))
+	})
+
+	It("keeps the address-set source form on IPAM-enabled networks (regression, guards R5)", func() {
+		factory := addressset.NewFakeAddressSetFactory(ctrl)
+		srcAS, err := factory.EnsureAddressSet(GetNetworkQoSAddrSetDbIDs(nqNs, nqName, "src", "0", ctrl))
+		Expect(err).NotTo(HaveOccurred())
+		v4Hash, _ := srcAS.GetASHashNames()
+
+		qosState := &networkQoSState{namespace: nqNs, name: nqName, SrcAddrSet: srcAS}
+
+		// IPAM-enabled single-stack IPv4: IPMode() -> (true, false); ipamless=false.
+		match := generateNetworkQoSMatch(qosState, ipBlockRule("0.0.0.0/0", nil), true, false, false)
+		Expect(match).To(Equal(fmt.Sprintf("ip4.src == {$%s} && ip4.dst == 0.0.0.0/0", v4Hash)))
+	})
+})

@@ -45,7 +45,7 @@ func (c *Controller) addQoSToLogicalSwitch(qosState *networkQoSState, switchName
 			Bandwidth:   map[string]int{},
 			Direction:   nbdb.QoSDirectionToLport,
 			ExternalIDs: dbIDs.GetExternalIDs(),
-			Match:       generateNetworkQoSMatch(qosState, rule, ipv4Enabled, ipv6Enabled),
+			Match:       generateNetworkQoSMatch(qosState, rule, ipv4Enabled, ipv6Enabled, c.isIPAMlessLocalnet()),
 			Priority:    rule.Priority,
 		}
 		if c.IsUserDefinedNetwork() {
