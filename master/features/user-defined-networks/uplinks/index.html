@@ -5133,7 +5133,10 @@ attachment. When the active CUDN set changes, <code>GatewayReady</code> first be
 <code>False</code> with reason <code>GatewayConfigurationPending</code> and returns to <code>True</code> only
 after the complete active set converges. A gateway programming failure does not
 change discovery <code>Resolved</code>; the CUDN-specific <code>UplinksReady</code> condition reflects
-both states.</p>
+both states. In split DPU mode the host-side share of gateway programming, the
+VRF attachment of the Uplink gateway interface on the DPU-Host, is reported
+separately on the <code>HostGatewayReady</code> condition, and the CUDN <code>UplinksReady</code>
+condition requires both.</p>
 <p>The <code>Uplink</code> object reports aggregate status:</p>
 <ul>
 <li><code>Ready=True</code> means every selected node has successfully discovered a
@@ -5309,6 +5312,11 @@ kubectl<span class="w"> </span>get<span class="w"> </span>uplinkstate<span class
 <li><code>UplinkState</code> with <code>GatewayReady</code> condition status <code>False</code> and reason
   <code>UplinkConfigurationConflict</code>: the resolved Uplink bridge is already
   attached to a different VRF on this node.</li>
+<li><code>UplinkState</code> with <code>HostGatewayReady</code> condition status <code>False</code> (split DPU
+  mode only): host-side gateway programming failed on the DPU-Host, for
+  example reason <code>UplinkVRFAttachmentFailed</code> when the Uplink gateway
+  interface could not be attached to or detached from the CUDN routing
+  domain on the DPU-Host.</li>
 <li>CUDN with <code>UplinksReady</code> condition status <code>False</code> and reason
   <code>UplinkNotResolvedForNode</code>: at least one active node for the CUDN does not have
   a matching <code>UplinkState</code> with <code>Resolved=True</code>.</li>
@@ -5329,10 +5337,32 @@ kubectl<span class="w"> </span>get<span class="w"> </span>uplinkstate<span class
   supported with Uplinks.</li>
 </ul>
 <p>In split DPU mode each <code>UplinkState</code> condition has a single writer: the
-DPU-Host publishes the host interface data and the <code>HostDataReady</code> condition,
-while ovnkube-node on the DPU publishes <code>Resolved</code> and <code>GatewayReady</code>. Bridge
-reasons (<code>BridgeNotFound</code>, <code>BridgeUplinkNotFound</code>) therefore always describe
-OVS on the DPU, and <code>HostDataReady</code> reasons always describe the DPU-Host.</p>
+DPU-Host publishes the host interface data and the <code>HostDataReady</code> and
+<code>HostGatewayReady</code> conditions, while ovnkube-node on the DPU publishes
+<code>Resolved</code> and <code>GatewayReady</code>. Bridge reasons (<code>BridgeNotFound</code>,
+<code>BridgeUplinkNotFound</code>) therefore always describe OVS on the DPU, and
+<code>HostDataReady</code>/<code>HostGatewayReady</code> reasons always describe the DPU-Host.</p>
+<p>In DPU deployments, FRR peering and route import happen on the DPU:
+BGP-learned routes are not propagated to the DPU-Host's CUDN VRF.
+Host-originated traffic toward the Uplink therefore requires a default
+gateway route on the selected host interface (preserved into the CUDN VRF
+across enslavement) or a host-side FRR setup; pod traffic toward the Uplink
+is unaffected, since its routes are imported into the gateway router on the
+DPU.</p>
+<div class="highlight"><pre><span></span><code>             DPU                                DPU-Host
+ +---------------------------+      +----------------------------+
+ | FRR --- BGP peering       |      | CUDN VRF                   |
+ |          |                |      |  - no BGP-learned routes   |
+ |          v                |      |  - preserved default       |
+ | CUDN route-import VRF     |      |    gateway route           |
+ |          | imported       |      |    (or host-side FRR)      |
+ |          v                |      +-------------+--------------+
+ | CUDN gateway router (OVN) |                    |
+ +-------------+-------------+                    | host-originated
+               | pod traffic                      | traffic
+               v                                  v
+             Uplink &lt;-----------------------------+
+</code></pre></div>
 <h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">¶</a></h2>
 <ul>
 <li><a href="../user-defined-networks/">User Defined Networks</a></li>
