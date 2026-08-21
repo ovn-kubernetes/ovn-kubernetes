@@ -220,6 +220,8 @@ func TestController_reconcileClusterNetworkConnect(t *testing.T) {
 		expectCacheEntryExists bool
 		// expectCacheEntryDeleted indicates if the cache entry should be deleted (for CNC deletion tests)
 		expectCacheEntryDeleted bool
+		// notFoundNamespaces makes FakeNetworkManager return NotFound for these namespaces.
+		notFoundNamespaces []string
 	}{
 		// Primary CUDN owned NAD selection tests
 		{
@@ -632,6 +634,34 @@ func TestController_reconcileClusterNetworkConnect(t *testing.T) {
 			expectSubnetsAllocated:  false, // no subnets allocated since no networks matched
 			expectCacheEntryExists:  true,
 		},
+		{
+			name: "skips namespace when namespace is absent from informer cache (NotFound) and continues reconciliation",
+			cnc: &testCNC{
+				Name: "test-cnc",
+				NetworkSelectors: []apitypes.NetworkSelector{
+					{
+						NetworkSelectionType: apitypes.PrimaryUserDefinedNetworks,
+						PrimaryUserDefinedNetworkSelector: &apitypes.PrimaryUserDefinedNetworkSelector{
+							NamespaceSelector: metav1.LabelSelector{
+								MatchLabels: map[string]string{"requires-udn": "true"},
+							},
+						},
+					},
+				},
+			},
+			namespaces: []*testNamespace{
+				{Name: "pending-ns", Labels: map[string]string{"requires-udn": "true"}},
+			},
+			notFoundNamespaces:      []string{"pending-ns"},
+			nads:                    []*testNAD{},
+			reconcile:               "test-cnc",
+			wantErr:                 false,
+			expectSelectedNADs:      []string{},
+			expectSelectedNetworks:  []string{},
+			expectTunnelIDAllocated: true,
+			expectSubnetsAllocated:  false,
+			expectCacheEntryExists:  true,
+		},
 		// Error condition tests
 		{
 			name: "errors when more than 1 primary NAD is found for namespace",
@@ -793,6 +823,9 @@ func TestController_reconcileClusterNetworkConnect(t *testing.T) {
 					}
 					fakeNM.UDNNamespaces.Insert(ns.Name)
 				}
+			}
+			if len(tt.notFoundNamespaces) > 0 {
+				fakeNM.NotFoundNamespaces = sets.New(tt.notFoundNamespaces...)
 			}
 
 			tunnelKeysAllocator := id.NewTunnelKeyAllocator("TunnelKeys")
@@ -1273,6 +1306,8 @@ func TestMustProcessCNCForNAD(t *testing.T) {
 		cncCacheState *clusterNetworkConnectState
 		// mustProcessCNC is the expected result of mustProcessCNCForNAD
 		mustProcessCNC bool
+		// notFoundNamespaces makes FakeNetworkManager return NotFound for these namespaces.
+		notFoundNamespaces []string
 	}{
 		{
 			name: "Primary CUDN owned NAD starts matching but CNC cache doesn't exist (CNC not created yet) - should NOT process CNC",
@@ -1577,6 +1612,39 @@ func TestMustProcessCNCForNAD(t *testing.T) {
 			},
 			mustProcessCNC: false,
 		},
+		{
+			name: "Primary UDN NAD cannot match when namespace active network lookup returns NotFound",
+			cnc: &testCNC{
+				Name: "cnc1",
+				NetworkSelectors: []apitypes.NetworkSelector{
+					{
+						NetworkSelectionType: apitypes.PrimaryUserDefinedNetworks,
+						PrimaryUserDefinedNetworkSelector: &apitypes.PrimaryUserDefinedNetworkSelector{
+							NamespaceSelector: metav1.LabelSelector{
+								MatchLabels: map[string]string{"selected": "true"},
+							},
+						},
+					},
+				},
+			},
+			nad: &testNAD{
+				Name:      "udn-test",
+				Namespace: "test",
+				Network:   util.GenerateUDNNetworkName("test", "udn-test"),
+				IsUDN:     true,
+				IsPrimary: true,
+			},
+			namespaces: []testNamespace{
+				{Name: "test", Labels: map[string]string{"selected": "true"}},
+			},
+			cncCacheState: &clusterNetworkConnectState{
+				name:             "cnc1",
+				selectedNADs:     sets.New[string](),
+				selectedNetworks: sets.New[string](),
+			},
+			notFoundNamespaces: []string{"test"},
+			mustProcessCNC:     false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1633,6 +1701,9 @@ func TestMustProcessCNCForNAD(t *testing.T) {
 				netInfo, err := util.ParseNADInfo(nadObj)
 				g.Expect(err).ToNot(gomega.HaveOccurred(), "ParseNADInfo for %s failed", nadKey)
 				fakeNM.NADNetworks[nadKey] = netInfo
+			}
+			if len(tt.notFoundNamespaces) > 0 {
+				fakeNM.NotFoundNamespaces = sets.New(tt.notFoundNamespaces...)
 			}
 
 			tunnelKeysAllocator := id.NewTunnelKeyAllocator("TunnelKeys")

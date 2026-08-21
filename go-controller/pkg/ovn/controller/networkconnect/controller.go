@@ -603,9 +603,7 @@ func (c *Controller) reconcileService(key string) error {
 	// This determines which network the service belongs to.
 	networkOwnerKey, err := c.getNetworkOwnerKeyForNamespace(namespace)
 	if err != nil {
-		// Log and skip - namespace might not have a primary UDN
-		klog.V(5).Infof("Could not get network owner key for namespace %s: %v", namespace, err)
-		return nil
+		return fmt.Errorf("could not get network owner key for namespace %s: %w", namespace, err)
 	}
 	if networkOwnerKey == "" {
 		// Namespace uses default network, which we don't handle for network-connect
