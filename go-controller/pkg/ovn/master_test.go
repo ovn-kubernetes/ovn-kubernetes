@@ -1281,6 +1281,16 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 			}
 			_, err = fakeClient.KubeClient.CoreV1().Nodes().Update(context.TODO(), badNode, metav1.UpdateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			// The node controller reads from the informer cache. Wait for it to
+			// observe the intentionally incomplete annotations before starting it.
+			gomega.Eventually(func() bool {
+				cachedNode, err := f.GetNode(badNode.Name)
+				if err != nil {
+					return false
+				}
+				_, found := cachedNode.Annotations[types.NodeSubnetsAnnotation]
+				return !found
+			}).Should(gomega.BeTrue())
 
 			startDefaultNodeController(oc)
 
