@@ -78,13 +78,13 @@ func NewSampleReader(enableDecoder, logCookie, printFullPacket, addOVSCollector 
 	return r
 }
 
-func (r *SampleReader) ReadSamples(ctx context.Context) error {
+func (r *SampleReader) ReadSamples(ctx context.Context, collectorID, groupID int) error {
 	if r.enableDecoder {
 		var err error
 		// currently only local nbdb connection is supported.
 		nbdbSocketPath := "/var/run/ovn/ovnnb_db.sock"
 		if r.addOVSCollector {
-			r.decoder, err = sampledecoder.NewSampleDecoderWithDefaultCollector(ctx, nbdbSocketPath, "ovnk-debug", 123)
+			r.decoder, err = sampledecoder.NewSampleDecoderWithCollector(ctx, nbdbSocketPath, "ovnk-debug", collectorID, groupID)
 			if err != nil {
 				return fmt.Errorf("error creating decoder: %w", err)
 			}
