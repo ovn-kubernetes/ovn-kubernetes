@@ -473,6 +473,10 @@
          <lastmod>2026-08-21</lastmod>
     </url>
     <url>
+         <loc>https://www.ovn.org/ovn-kubernetes/master/okeps/okep-5212-ovnobserv-api/</loc>
+         <lastmod>2026-08-21</lastmod>
+    </url>
+    <url>
          <loc>https://www.ovn.org/ovn-kubernetes/master/okeps/okep-5233-preconfigured-udn-addresses/</loc>
          <lastmod>2026-08-21</lastmod>
     </url>

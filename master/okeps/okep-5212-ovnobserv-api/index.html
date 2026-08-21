@@ -5,13 +5,13 @@
       
       
       
-        <link rel="canonical" href="https://www.ovn.org/ovn-kubernetes/master/getting-started/building-ovn-kubernetes/">
+        <link rel="canonical" href="https://www.ovn.org/ovn-kubernetes/master/okeps/okep-5212-ovnobserv-api/">
       
       
-        <link rel="prev" href="../example-service-creation/">
+        <link rel="prev" href="../okep-3926-disable-port-security/">
       
       
-        <link rel="next" href="../../developer-guide/">
+        <link rel="next" href="../../blog/">
       
       
         
@@ -22,7 +22,7 @@
     
     
       
-        <title>Setup and Building - OVN-Kubernetes</title>
+        <title>OVN Observability API - OVN-Kubernetes</title>
       
     
     
@@ -84,6 +84,11 @@
     <label class="md-overlay" for="__drawer"></label>
     <div data-md-component="skip">
       
+        
+        <a href="#okep-5212-ovnobservability-api" class="md-skip">
+          Skip to content
+        </a>
+      
     </div>
     <div data-md-component="announce">
       
@@ -119,7 +124,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Setup and Building
+              OVN Observability API
             
           </span>
         </div>
@@ -244,13 +249,11 @@
   
   
   
-    
-  
   
     
     
-      <li class="md-tabs__item md-tabs__item--active">
-        <a href="../" class="md-tabs__link">
+      <li class="md-tabs__item">
+        <a href="../../getting-started/" class="md-tabs__link">
           
   
   
@@ -378,11 +381,13 @@
   
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
-        <a href="../../okeps/" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
           
   
   
@@ -934,8 +939,6 @@
       
   
   
-    
-  
   
   
     
@@ -969,21 +972,18 @@
     
     
       
-        
-        
-      
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked="">
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2">
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../" class="md-nav__link ">
+            <a href="../../getting-started/" class="md-nav__link ">
               
   
   
@@ -1001,13 +1001,13 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="">
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1139,7 +1139,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../configuration/" class="md-nav__link">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
         
   
   
@@ -1195,7 +1195,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../cli-guide/" class="md-nav__link">
+      <a href="../../getting-started/cli-guide/" class="md-nav__link">
         
   
   
@@ -1223,7 +1223,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../example-pod-creation/" class="md-nav__link">
+      <a href="../../getting-started/example-pod-creation/" class="md-nav__link">
         
   
   
@@ -1251,7 +1251,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../example-service-creation/" class="md-nav__link">
+      <a href="../../getting-started/example-service-creation/" class="md-nav__link">
         
   
   
@@ -1276,17 +1276,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../getting-started/building-ovn-kubernetes/" class="md-nav__link">
         
   
   
@@ -1302,7 +1295,6 @@
   
 
       </a>
-      
     </li>
   
 
@@ -3869,6 +3861,8 @@
       
   
   
+    
+  
   
   
     
@@ -3914,18 +3908,21 @@
     
     
       
+        
+        
+      
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8">
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" checked="">
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../okeps/" class="md-nav__link ">
+            <a href="../" class="md-nav__link ">
               
   
   
@@ -3943,13 +3940,13 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_8" id="__nav_8_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_8" id="__nav_8_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_8">
             <span class="md-nav__icon md-icon"></span>
             
@@ -3969,7 +3966,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5085-localnet-api/" class="md-nav__link">
+      <a href="../okep-5085-localnet-api/" class="md-nav__link">
         
   
   
@@ -3997,7 +3994,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-4380-network-qos/" class="md-nav__link">
+      <a href="../okep-4380-network-qos/" class="md-nav__link">
         
   
   
@@ -4025,7 +4022,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5193-user-defined-networks/" class="md-nav__link">
+      <a href="../okep-5193-user-defined-networks/" class="md-nav__link">
         
   
   
@@ -4053,7 +4050,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5233-preconfigured-udn-addresses/" class="md-nav__link">
+      <a href="../okep-5233-preconfigured-udn-addresses/" class="md-nav__link">
         
   
   
@@ -4081,7 +4078,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5296-bgp/" class="md-nav__link">
+      <a href="../okep-5296-bgp/" class="md-nav__link">
         
   
   
@@ -4109,7 +4106,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5094-layer2-transit-router/" class="md-nav__link">
+      <a href="../okep-5094-layer2-transit-router/" class="md-nav__link">
         
   
   
@@ -4137,7 +4134,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5494-ovn-kubernetes-mcp-server/" class="md-nav__link">
+      <a href="../okep-5494-ovn-kubernetes-mcp-server/" class="md-nav__link">
         
   
   
@@ -4165,7 +4162,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5552-dynamic-udn-node-allocation/" class="md-nav__link">
+      <a href="../okep-5552-dynamic-udn-node-allocation/" class="md-nav__link">
         
   
   
@@ -4193,7 +4190,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5224-connecting-udns/okep-5224-connecting-udns/" class="md-nav__link">
+      <a href="../okep-5224-connecting-udns/okep-5224-connecting-udns/" class="md-nav__link">
         
   
   
@@ -4221,7 +4218,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5259-no-overlay/" class="md-nav__link">
+      <a href="../okep-5259-no-overlay/" class="md-nav__link">
         
   
   
@@ -4249,7 +4246,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5088-evpn/" class="md-nav__link">
+      <a href="../okep-5088-evpn/" class="md-nav__link">
         
   
   
@@ -4277,7 +4274,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5674-dpu-healthcheck/" class="md-nav__link">
+      <a href="../okep-5674-dpu-healthcheck/" class="md-nav__link">
         
   
   
@@ -4305,7 +4302,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5377-extend-udn-to-support-multiple-cluster-subnets-in-layer3-topology/" class="md-nav__link">
+      <a href="../okep-5377-extend-udn-to-support-multiple-cluster-subnets-in-layer3-topology/" class="md-nav__link">
         
   
   
@@ -4333,7 +4330,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-6019-vrf-lite-shared-gateway-external-bridges/" class="md-nav__link">
+      <a href="../okep-6019-vrf-lite-shared-gateway-external-bridges/" class="md-nav__link">
         
   
   
@@ -4361,7 +4358,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-3926-disable-port-security/" class="md-nav__link">
+      <a href="../okep-3926-disable-port-security/" class="md-nav__link">
         
   
   
@@ -4386,10 +4383,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../okeps/okep-5212-ovnobserv-api/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OVN Observability API
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -4405,6 +4429,247 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+      
+        <li class="md-nav__item">
+  <a href="#problem-statement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Problem Statement
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Goals
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Non-Goals
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#introduction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Introduction
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#user-storiesuse-cases" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        User-Stories/Use-Cases
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#proposed-solution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Proposed Solution
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Proposed Solution">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#observability-use-case" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Observability use case
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#debuggability-use-case" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Debuggability use case
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#workflow-description" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workflow Description
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#api-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API Details
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="API Details">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#observability-filtering-for-debugging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Observability filtering for debugging
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#observabilityconfig-crd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ObservabilityConfig CRD
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#implementation-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation Details
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#testing-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Testing Details
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#documentation-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation Details
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#risks-known-limitations-and-mitigations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Risks, Known Limitations and Mitigations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ovn-kubernetes-version-skew" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OVN-Kubernetes Version Skew
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alternatives" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alternatives
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        References
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -4596,6 +4861,237 @@
   
   
   
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+      
+        <li class="md-nav__item">
+  <a href="#problem-statement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Problem Statement
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Goals
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Non-Goals
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#introduction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Introduction
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#user-storiesuse-cases" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        User-Stories/Use-Cases
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#proposed-solution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Proposed Solution
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Proposed Solution">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#observability-use-case" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Observability use case
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#debuggability-use-case" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Debuggability use case
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#workflow-description" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workflow Description
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#api-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API Details
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="API Details">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#observability-filtering-for-debugging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Observability filtering for debugging
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#observabilityconfig-crd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ObservabilityConfig CRD
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#implementation-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation Details
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#testing-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Testing Details
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#documentation-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation Details
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#risks-known-limitations-and-mitigations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Risks, Known Limitations and Mitigations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ovn-kubernetes-version-skew" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OVN-Kubernetes Version Skew
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alternatives" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alternatives
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        References
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
   
 </nav>
                   </div>
@@ -4615,9 +5111,220 @@
   
 
 
-  <h1>Setup and Building</h1>
+<h1 id="okep-5212-ovnobservability-api">OKEP-5212: OVNObservability API<a class="headerlink" href="#okep-5212-ovnobservability-api" title="Permanent link">¶</a></h1>
+<ul>
+<li>Issue: <a href="https://github.com/ovn-org/ovn-kubernetes/issues/5212">#5212</a></li>
+</ul>
+<h2 id="problem-statement">Problem Statement<a class="headerlink" href="#problem-statement" title="Permanent link">¶</a></h2>
+<p>Current functionality only allows enabling sampling for all supported features at 100% sampling rate at the same time, 
+the goal is to provide an API for more fine-grained configuration.</p>
+<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">¶</a></h2>
+<ul>
+<li>Design a CRD to configure OVN Observability for given user stories</li>
+</ul>
+<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">¶</a></h2>
+<ul>
+<li>Discuss OVN Observability feature in general</li>
+</ul>
+<h2 id="introduction">Introduction<a class="headerlink" href="#introduction" title="Permanent link">¶</a></h2>
+<p>OVN Observability is a feature that provides visibility for ovn-kubernetes-managed network by using sampling mechanism.
+That means, that network packets generate samples with user-friendly description to give more information about what 
+and why is happening in the network.
+This feature is designed to be used with the <a href="https://github.com/netobserv/network-observability-operator">netobserv-operator</a></p>
+<h2 id="user-storiesuse-cases">User-Stories/Use-Cases<a class="headerlink" href="#user-storiesuse-cases" title="Permanent link">¶</a></h2>
+<ul>
+<li>Observability: As a cluster admin, I want to enable OVN Observability integration with netobserv so that I can use network policy correlation feature.</li>
+<li>Debuggability: As a cluster admin, I want to debug a networking issue using OVN Observability feature.</li>
+</ul>
+<h2 id="proposed-solution">Proposed Solution<a class="headerlink" href="#proposed-solution" title="Permanent link">¶</a></h2>
+<p>There is a number of k8s features that can be used to configure OVN Observability right now, and some more that we expect
+to be added in the future.
+Currently supported features are:
+- NetworkPolicy
+- (Baseline)AdminNetworkPolicy
+- EgressFirewall
+- Primary UDN network isolation from the default network
+- Multicast ACLs</p>
+<p>In the future more observability features, like EgressIP and services, but also networking-specific features
+like logical port ingress/egress will be added.</p>
+<p>Every feature may set a sampling probability, that defines how often a packet will be sampled, in percent. 100% means every packet
+will be sampled, 0% means no packets will be sampled.</p>
+<p>Currently only on/off mode is supported, where on mode turns all available features with 100% probability.</p>
+<h3 id="observability-use-case">Observability use case<a class="headerlink" href="#observability-use-case" title="Permanent link">¶</a></h3>
+<p>For observability use case, a cluster admin can set a sampling probability for each feature across the whole cluster.
+As sampling configuration may affect cluster performance, not every admin may want all features enabled with 100% probability.
+We expect this type of configuration to change rarely.</p>
+<p>This configuration should be handled by ovn-kubernetes to configure sampling, and by netobserv ebpf agent to "subscribe" to
+the samples enabled by this configuration.</p>
+<h3 id="debuggability-use-case">Debuggability use case<a class="headerlink" href="#debuggability-use-case" title="Permanent link">¶</a></h3>
+<p>Debuggability is expected to be turned on during debugging sessions, and turned off after the session is finished.
+It will most likely have 100% probability for required features, and also may enable more networking-related features, like
+logical port ingress/egress for cluster admins. Debugging configuration is expected to have more granular filters to
+debug specific problems with minimal overhead. For example, per-node or per-namespace filtering may be required.</p>
+<p>Debuggability sampling may be used with or without Network Observability Operator being installed:
+- without netobserv, samples may be printed or forwarded to a file by ovnkube-observ binary, which is a part of ovnkube-node pod on every node.
+- with netobserv, samples may be displayed in a similar to observability use case way, but may need another interface to ensure
+  cluster users won't be distracted by samples generated for debugging.</p>
+<p>This configuration should be handled by ovn-kubernetes to configure sampling, and by netobserv ebpf agent OR ovnkube-observ script
+to "subscribe" to the samples enabled by this configuration.</p>
+<h3 id="workflow-description">Workflow Description<a class="headerlink" href="#workflow-description" title="Permanent link">¶</a></h3>
+<ol>
+<li>Cluster admin wants to enable OVN Observability for admin-managed features.</li>
+<li>Cluster admin created a CR with 100% probabilities for (Baseline)AdminNetworkPolicy and EgressFirewall.</li>
+<li>Messages like "Allowed by admin network policy test, direction Egress" appear on netobserv UI.</li>
+<li>Cluster admin sees CPU usage by ovnkube pods grows up 10%, and reduces the sampling probability to 50%.</li>
+<li>Still most of the flows have correct enrichment with lower overhead.</li>
+<li>Admin is happy. Until...</li>
+<li>A user from project "bigbank" reports that they can't access the internet from pod A.</li>
+<li>Cluster admin enables debugging for project "bigbank" with 100% probability for NetworkPolicies.</li>
+<li>netobserv UI or ovnkube-observ script shows a sample with &lt;<code>source pod A</code>, <code>dst_IP</code>&gt; saying "Denied by network policy in namespace bigbank, direction Egress"</li>
+<li>Admin now has to convince the user that they are missing an allow egress rule to <code>dst_IP</code> for pod A.</li>
+<li>Network policy is fixed, debugging can be turned off.</li>
+</ol>
+<h3 id="api-details">API Details<a class="headerlink" href="#api-details" title="Permanent link">¶</a></h3>
+<h4 id="observability-filtering-for-debugging">Observability filtering for debugging<a class="headerlink" href="#observability-filtering-for-debugging" title="Permanent link">¶</a></h4>
+<p>Mostly for debugging (but also can be used for observability if needed), we may need more granular filtering,
+like per-node or per-namespace filtering.</p>
+<ul>
+<li>Per-node filtering may be implemented by adding a node selector to <code>ObservabilityConfig</code>, and is easy to implement in ovn-k
+  as every node has its own ovn-k instance with OVN-IC.</li>
+<li>Per-namespace filtering can only be applied to the namespaced Observability Features, like NetworkPolicy and EgressFirewall.
+  Cluster-scoped features, like (Baseline)AdminNetworkPolicy, can only be additionally filtered based on name. Label selectors
+  can't be used, as observability module doesn't watch any objects.</li>
+</ul>
+<h4 id="observabilityconfig-crd">ObservabilityConfig CRD<a class="headerlink" href="#observabilityconfig-crd" title="Permanent link">¶</a></h4>
+<p>The CRD for this feature will be a part of ovn-kubernetes to allow using it upstream.</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// ObservabilityConfig described OVN Observability configuration.</span>
+<span class="c1">//</span>
+<span class="c1">// +genclient</span>
+<span class="c1">// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object</span>
+<span class="c1">// +kubebuilder:resource:path=observabilityconfig,scope=cluster</span>
+<span class="c1">// +kubebuilder:singular=observabilityconfig</span>
+<span class="c1">// +kubebuilder:object:root=true</span>
+<span class="c1">// +kubebuilder:subresource:status</span>
+<span class="kd">type</span><span class="w"> </span><span class="nx">ObservabilityConfig</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">metav1</span><span class="p">.</span><span class="nx">TypeMeta</span><span class="w">   </span><span class="s">`json:",inline"`</span>
+<span class="w">    </span><span class="nx">metav1</span><span class="p">.</span><span class="nx">ObjectMeta</span><span class="w"> </span><span class="s">`json:"metadata,omitempty"`</span>
+<span class="w">    </span><span class="c1">// +kubebuilder:validation:Required</span>
+<span class="w">    </span><span class="c1">// +required</span>
+<span class="w">    </span><span class="nx">Spec</span><span class="w"> </span><span class="nx">ObservabilitySpec</span><span class="w"> </span><span class="s">`json:"spec"`</span>
+<span class="w">    </span><span class="c1">// +optional</span>
+<span class="w">    </span><span class="nx">Status</span><span class="w"> </span><span class="nx">ObservabilityStatus</span><span class="w"> </span><span class="s">`json:"status,omitempty"`</span>
+<span class="p">}</span>
 
+<span class="kd">type</span><span class="w"> </span><span class="nx">ObservabilitySpec</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// CollectorID is the ID of the collector that should be unique across the cluster, and will be used to receive configured samples.</span>
+<span class="w">    </span><span class="c1">// +kubebuilder:validation:Required</span>
+<span class="w">    </span><span class="c1">// +kubebuilder:validation:Minimum=1</span>
+<span class="w">    </span><span class="c1">// +required</span>
+<span class="w">    </span><span class="nx">CollectorID</span><span class="w"> </span><span class="kt">int32</span><span class="w"> </span><span class="s">`json:"collectorID"`</span>
+<span class="w">    </span><span class="c1">// Features is a list of Observability features that can generate samples and their probabilities for a given collector.</span>
+<span class="w">    </span><span class="c1">// +kubebuilder:validation:Required</span>
+<span class="w">    </span><span class="c1">// +kubebuilder:validation:MinItems=1</span>
+<span class="w">    </span><span class="c1">// +listType=map</span>
+<span class="w">    </span><span class="c1">// +listMapKey=feature</span>
+<span class="w">    </span><span class="c1">// +required</span>
+<span class="w">    </span><span class="nx">Features</span><span class="w"> </span><span class="p">[]</span><span class="nx">FeatureConfig</span><span class="w"> </span><span class="s">`json:"features"`</span>
 
+<span class="w">    </span><span class="c1">// Filter allows to apply ObservabilityConfig in a granular manner.</span>
+<span class="w">    </span><span class="c1">// +optional</span>
+<span class="w">    </span><span class="nx">Filter</span><span class="w"> </span><span class="o">*</span><span class="nx">Filter</span><span class="w"> </span><span class="s">`json:"filter,omitempty"`</span>
+<span class="p">}</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">FeatureConfig</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// Probability is the probability of the feature being sampled in percent.</span>
+<span class="w">    </span><span class="c1">// +kubebuilder:validation:Required</span>
+<span class="w">    </span><span class="c1">// +kubebuilder:validation:Minimum=0</span>
+<span class="w">    </span><span class="c1">// +kubebuilder:validation:Maximum=100</span>
+<span class="w">    </span><span class="c1">// +required</span>
+<span class="w">    </span><span class="nx">Probability</span><span class="w"> </span><span class="kt">int32</span>
+<span class="w">    </span><span class="c1">// Feature is the Observability feature that should be sampled.</span>
+<span class="w">    </span><span class="c1">// +kubebuilder:validation:Required</span>
+<span class="w">    </span><span class="c1">// +required</span>
+<span class="w">    </span><span class="nx">Feature</span><span class="w"> </span><span class="nx">ObservabilityFeature</span>
+<span class="p">}</span>
+
+<span class="c1">// ObservabilityStatus contains the observed status of the ObservabilityConfig.</span>
+<span class="kd">type</span><span class="w"> </span><span class="nx">ObservabilityStatus</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// +listType=map</span>
+<span class="w">    </span><span class="c1">// +listMapKey=type</span>
+<span class="w">    </span><span class="nx">Conditions</span><span class="w"> </span><span class="p">[]</span><span class="nx">metav1</span><span class="p">.</span><span class="nx">Condition</span><span class="w"> </span><span class="s">`json:"conditions,omitempty"`</span>
+<span class="p">}</span>
+
+<span class="c1">// Filter allows to apply ObservabilityConfig in a granular manner.</span>
+<span class="c1">// Currently, it supports node and namespace based filtering.</span>
+<span class="c1">// If both node and namespace filters are specifies, they are logically ANDed.</span>
+<span class="c1">// +kubebuilder:validation:MinProperties=1</span>
+<span class="kd">type</span><span class="w"> </span><span class="nx">Filter</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="c1">// nodeSelector applies ObservabilityConfig only to nodes that match the selector.</span>
+<span class="w">    </span><span class="c1">// +optional</span>
+<span class="w">    </span><span class="nx">NodeSelector</span><span class="w"> </span><span class="o">*</span><span class="nx">metav1</span><span class="p">.</span><span class="nx">LabelSelector</span><span class="w"> </span><span class="s">`json:"nodeSelector,omitempty"`</span>
+<span class="w">    </span><span class="c1">// namespaces is a list of namespaces to which the ObservabilityConfig should be applied.</span>
+<span class="w">    </span><span class="c1">// It only applies to the namespaced features, currently that includes NetworkPolicy and EgressFirewall.</span>
+<span class="w">    </span><span class="c1">// +kubebuilder:validation:MinItems=1</span>
+<span class="w">    </span><span class="c1">// +optional</span>
+<span class="w">    </span><span class="nx">Namespaces</span><span class="w"> </span><span class="o">*</span><span class="p">[]</span><span class="kt">string</span><span class="w"> </span><span class="s">`json:"namespaces,omitempty"`</span>
+<span class="p">}</span>
+
+<span class="c1">// ObservabilityStatus contains the observed status of the ObservabilityConfig.</span>
+<span class="kd">type</span><span class="w"> </span><span class="nx">ObservabilityStatus</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// +listType=map</span>
+<span class="w">    </span><span class="c1">// +listMapKey=type</span>
+<span class="w">    </span><span class="nx">Conditions</span><span class="w"> </span><span class="p">[]</span><span class="nx">metav1</span><span class="p">.</span><span class="nx">Condition</span><span class="w"> </span><span class="s">`json:"conditions,omitempty"`</span>
+<span class="p">}</span>
+
+<span class="c1">// +kubebuilder:validation:Enum=NetworkPolicy;AdminNetworkPolicy;EgressFirewall;UDNIsolation;MulticastIsolation</span>
+<span class="kd">type</span><span class="w"> </span><span class="nx">ObservabilityFeature</span><span class="w"> </span><span class="kt">string</span>
+
+<span class="kd">const</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="nx">NetworkPolicy</span><span class="w">      </span><span class="nx">ObservabilityFeature</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"NetworkPolicy"</span>
+<span class="w">    </span><span class="nx">AdminNetworkPolicy</span><span class="w"> </span><span class="nx">ObservabilityFeature</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"AdminNetworkPolicy"</span>
+<span class="w">    </span><span class="nx">EgressFirewall</span><span class="w">     </span><span class="nx">ObservabilityFeature</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"EgressFirewall"</span>
+<span class="w">    </span><span class="nx">UDNIsolation</span><span class="w">       </span><span class="nx">ObservabilityFeature</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"UDNIsolation"</span>
+<span class="w">    </span><span class="nx">MulticastIsolation</span><span class="w"> </span><span class="nx">ObservabilityFeature</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"MulticastIsolation"</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>For now, we only have use cases for 2 different <code>ObservabilityConfig</code>s in a cluster, and ovn-kubernetes will likely have a
+limit for the number of CRs that will be handled.
+If 2 <code>ObservabilityConfigs</code> are using the same <code>CollectorID</code>, it is considered a misconfiguration, and only one of them
+will be applied. Since the controller will likely be single-threaded, the first-handled <code>ObservabilityConfig</code> will
+get the <code>ObservabilityStatus</code> condition <code>Applied</code> reported, and the seconds one will be rejected. This logic
+also survives an ovn-kubernetes restart with the right initialSync.</p>
+<p>For the integration with netobserv, we could use a label on <code>ObservabilityConfig</code> to signal that configured samples should be
+reflected via netobserv. For example, <code>netobserv.io/ovn-observability: "true"</code>.</p>
+<h3 id="implementation-details">Implementation Details<a class="headerlink" href="#implementation-details" title="Permanent link">¶</a></h3>
+<p>Filtering for debugging use case may be tricky as explained in "Observability filtering for debugging" section.
+But it is important to implement, as OVN implementation works in a way, where performance optimizations can only be
+applied when there is only 1 <code>ObservabilityConfig</code> for a given feature. That means, adding a second <code>ObservabilityConfig</code>
+for a feature will have a bigger performance impact than creating a new one.</p>
+<h3 id="testing-details">Testing Details<a class="headerlink" href="#testing-details" title="Permanent link">¶</a></h3>
+<ul>
+<li>unit tests for schema validation</li>
+<li>e2e downstream</li>
+<li>perf/scale testing for dataplane and control plane as a GA plan</li>
+<li>netobserv testing for correct GUI representation</li>
+</ul>
+<h3 id="documentation-details">Documentation Details<a class="headerlink" href="#documentation-details" title="Permanent link">¶</a></h3>
+<ul>
+<li>New proposed additions to ovn-kubernetes.io for end users
+to get started with this feature</li>
+<li>when you open an OKEP PR; you must also edit
+https://github.com/ovn-org/ovn-kubernetes/blob/13c333afc21e89aec3cfcaa89260f72383497707/mkdocs.yml#L135
+to include the path to your new OKEP (i.e Feature Title: okeps/<filename.md>)</filename.md></li>
+</ul>
+<h2 id="risks-known-limitations-and-mitigations">Risks, Known Limitations and Mitigations<a class="headerlink" href="#risks-known-limitations-and-mitigations" title="Permanent link">¶</a></h2>
+<p>The biggest risk of enabling observability is performance overhead.
+This will be mitigated by scale-testing and sampling percentage configuration. 
+e2e testing upstream is not possible until github runners allow using kernel 6.11</p>
+<h2 id="ovn-kubernetes-version-skew">OVN-Kubernetes Version Skew<a class="headerlink" href="#ovn-kubernetes-version-skew" title="Permanent link">¶</a></h2>
+<p>All components were designed to be backwards-compatible
+- old kernel + new OVS: we control these versions in a cluster and make sure to bump OVS version on supported kernel
+- old OVS + new OVN: OVN uses "sample" action that is available in older OVS versions
+- old OVN + new ovn-k: rolled out at the same time, no version skew is expected
+- old kernel/OVS/ovn-kubernetes + new netobserv: netobserv can detect if it's running with older kernel/OVS/ovn-kubernetes version 
+and warn when the users try to enable the feature.</p>
+<h2 id="alternatives">Alternatives<a class="headerlink" href="#alternatives" title="Permanent link">¶</a></h2>
+<h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">¶</a></h2>
 
 
 
