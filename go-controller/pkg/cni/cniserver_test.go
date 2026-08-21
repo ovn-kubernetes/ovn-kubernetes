@@ -121,7 +121,7 @@ func TestCNIServer(t *testing.T) {
 		t.Fatalf("failed to call newOVSClientWithExternalIDs: %v", err)
 	}
 	t.Cleanup(ovsCleanup.Cleanup)
-	s, err := NewCNIServer(wf, fakeClient, networkmanager.Default().Interface(), ovsClient, nil)
+	s, err := NewCNIServer(wf, fakeClient, networkmanager.Default().Interface(), ovsClient, nil, "test-node")
 	if err != nil {
 		t.Fatalf("error creating CNI server: %v", err)
 	}
@@ -350,7 +350,7 @@ func TestCNIServerStatusNotReady(t *testing.T) {
 	}
 	t.Cleanup(ovsCleanup.Cleanup)
 	dpuHealth := &fakeDPUHealth{ready: false, reason: "lease expired"}
-	s, err := NewCNIServer(wf, fakeClient, networkmanager.Default().Interface(), ovsClient, dpuHealth)
+	s, err := NewCNIServer(wf, fakeClient, networkmanager.Default().Interface(), ovsClient, dpuHealth, "test-node")
 	if err != nil {
 		t.Fatalf("error creating CNI server: %v", err)
 	}
@@ -457,7 +457,7 @@ func TestNewCNIServerRequiresOVSClientInPrivilegedMode(t *testing.T) {
 			config.OvnKubeNode.Mode = tt.mode
 			config.UnprivilegedMode = tt.unprivilegedMode
 
-			_, err := NewCNIServer(wf, fakeClient, networkmanager.Default().Interface(), nil, nil)
+			_, err := NewCNIServer(wf, fakeClient, networkmanager.Default().Interface(), nil, nil, "test-node")
 			if tt.wantErr {
 				if err == nil || !strings.Contains(err.Error(), "OVS client is required in privileged mode") {
 					t.Fatalf("expected OVS client error, got %v", err)
