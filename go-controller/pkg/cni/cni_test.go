@@ -54,7 +54,7 @@ func (stub *podRequestInterfaceOpsStub) ConfigureInterface(pr *PodRequest, _ cli
 	}
 	return nil, nil
 }
-func (stub *podRequestInterfaceOpsStub) UnconfigureInterface(_ *PodRequest, ifInfo *PodInterfaceInfo) error {
+func (stub *podRequestInterfaceOpsStub) UnconfigureInterface(_ *PodRequest, _ client.Client, ifInfo *PodInterfaceInfo) error {
 	stub.unconfiguredInterfaces = append(stub.unconfiguredInterfaces, ifInfo)
 	return nil
 }
@@ -200,6 +200,8 @@ var _ = Describe("Network Segmentation", func() {
 			Expect(prInterfaceOpsStub.unconfiguredInterfaces).To(ConsistOf(&PodInterfaceInfo{
 				IsDPUHostMode: true,
 				NetdevName:    pr.CNIConf.DeviceID,
+				NetName:       ovntypes.DefaultNetworkName,
+				NADKey:        ovntypes.DefaultNetworkName,
 			}))
 		})
 
@@ -218,6 +220,8 @@ var _ = Describe("Network Segmentation", func() {
 			Expect(prInterfaceOpsStub.unconfiguredInterfaces).To(ConsistOf(&PodInterfaceInfo{
 				IsDPUHostMode: true,
 				NetdevName:    pr.CNIConf.DeviceID,
+				NetName:       ovntypes.DefaultNetworkName,
+				NADKey:        ovntypes.DefaultNetworkName,
 			}))
 		})
 	})
