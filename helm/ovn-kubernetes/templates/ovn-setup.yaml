@@ -80,10 +80,15 @@ data:
     frr-namespace = {{ .Values.global.managedBGPFRRNamespace | default "frr-k8s-system" }}
 {{- end }}
 {{- end }}
-{{- if hasKey .Values.global "routingTableIDStart" }}
+{{- if or (hasKey .Values.global "routingTableIDStart") (hasKey .Values.global "kubeletCgroupPath") }}
 
     [ovnkubenode]
+{{- if hasKey .Values.global "routingTableIDStart" }}
     routing-table-id-start = {{ .Values.global.routingTableIDStart }}
+{{- end }}
+{{- if hasKey .Values.global "kubeletCgroupPath" }}
+    kubelet-cgroup-path = {{ .Values.global.kubeletCgroupPath }}
+{{- end }}
 {{- end }}
 
 {{- if or .Values.global.skipCallToK8s (eq (include "needNamespace" $hostNetworkNamespace) "true") }}

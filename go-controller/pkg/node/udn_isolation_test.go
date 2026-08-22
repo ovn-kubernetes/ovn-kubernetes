@@ -5,15 +5,21 @@ package node
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
+
+	"github.com/godbus/dbus/v5"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ktypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/knftables"
 	"sigs.k8s.io/yaml"
 
@@ -237,11 +243,11 @@ add set inet ovn-kubernetes udn-pod-default-ips-v4 { type ipv4_addr ; comment "d
 add set inet ovn-kubernetes udn-pod-default-ips-v6 { type ipv6_addr ; comment "default network IPs of pods in user defined networks (IPv6)" ; }
 add rule inet ovn-kubernetes udn-isolation ip daddr . meta l4proto . th dport @udn-open-ports-v4 accept
 add rule inet ovn-kubernetes udn-isolation ip daddr @udn-open-ports-icmp-v4 meta l4proto icmp accept
-add rule inet ovn-kubernetes udn-isolation socket cgroupv2 level 2 kubelet.slice/kubelet.service ip daddr @udn-pod-default-ips-v4 accept
+add rule inet ovn-kubernetes udn-isolation socket cgroupv2 level 2 "kubelet.slice/kubelet.service" ip daddr @udn-pod-default-ips-v4 accept
 add rule inet ovn-kubernetes udn-isolation ip daddr @udn-pod-default-ips-v4 drop
 add rule inet ovn-kubernetes udn-isolation ip6 daddr . meta l4proto . th dport @udn-open-ports-v6 accept
 add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-open-ports-icmp-v6 meta l4proto icmpv6 accept
-add rule inet ovn-kubernetes udn-isolation socket cgroupv2 level 2 kubelet.slice/kubelet.service ip6 daddr @udn-pod-default-ips-v6 accept
+add rule inet ovn-kubernetes udn-isolation socket cgroupv2 level 2 "kubelet.slice/kubelet.service" ip6 daddr @udn-pod-default-ips-v6 accept
 add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-pod-default-ips-v6 drop
 `
 		for _, ip := range v4ips {
@@ -563,3 +569,336 @@ func newPodWithIPs(namespace, name string, primaryUDN bool, ips []string, openPo
 		},
 	}
 }
+
+// nftRunFailer fails the first `failures` calls to Run, then delegates to the wrapped
+// interface. It stands in for a kernel that rejects the socket cgroupv2 match.
+type nftRunFailer struct {
+	knftables.Interface
+	failures int
+}
+
+func (f *nftRunFailer) Run(ctx context.Context, tx *knftables.Transaction) error {
+	if f.failures > 0 {
+		f.failures--
+		return errors.New("Could not process rule: No such file or directory")
+	}
+	return f.Interface.Run(ctx, tx)
+}
+
+var _ = Describe("UDN Host isolation setup", func() {
+	const nodeName = "node1"
+
+	var (
+		manager  *UDNHostIsolationManager
+		fakeNFT  *knftables.Fake
+		recorder *record.FakeRecorder
+	)
+
+	// expectedDump returns the isolation ruleset, with the kubelet rule only when a
+	// kubelet cgroup path is known.
+	expectedDump := func(kubeletCgroupPath string) string {
+		result := `add table inet ovn-kubernetes
+add chain inet ovn-kubernetes udn-isolation { type filter hook output priority 0 ; comment "Host isolation for user defined networks" ; }
+add set inet ovn-kubernetes udn-open-ports-icmp-v4 { type ipv4_addr ; comment "default network IPs of pods in user defined networks that allow ICMP (IPv4)" ; }
+add set inet ovn-kubernetes udn-open-ports-icmp-v6 { type ipv6_addr ; comment "default network IPs of pods in user defined networks that allow ICMP (IPv6)" ; }
+add set inet ovn-kubernetes udn-open-ports-v4 { type ipv4_addr . inet_proto . inet_service ; comment "default network open ports of pods in user defined networks (IPv4)" ; }
+add set inet ovn-kubernetes udn-open-ports-v6 { type ipv6_addr . inet_proto . inet_service ; comment "default network open ports of pods in user defined networks (IPv6)" ; }
+add set inet ovn-kubernetes udn-pod-default-ips-v4 { type ipv4_addr ; comment "default network IPs of pods in user defined networks (IPv4)" ; }
+add set inet ovn-kubernetes udn-pod-default-ips-v6 { type ipv6_addr ; comment "default network IPs of pods in user defined networks (IPv6)" ; }
+add rule inet ovn-kubernetes udn-isolation ip daddr . meta l4proto . th dport @udn-open-ports-v4 accept
+add rule inet ovn-kubernetes udn-isolation ip daddr @udn-open-ports-icmp-v4 meta l4proto icmp accept
+`
+		if kubeletCgroupPath != "" {
+			result += fmt.Sprintf("add rule inet ovn-kubernetes udn-isolation socket cgroupv2 %s %q ip daddr @udn-pod-default-ips-v4 accept\n",
+				cgroupv2Level(kubeletCgroupPath), kubeletCgroupPath)
+		}
+		result += `add rule inet ovn-kubernetes udn-isolation ip daddr @udn-pod-default-ips-v4 drop
+add rule inet ovn-kubernetes udn-isolation ip6 daddr . meta l4proto . th dport @udn-open-ports-v6 accept
+add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-open-ports-icmp-v6 meta l4proto icmpv6 accept
+`
+		if kubeletCgroupPath != "" {
+			result += fmt.Sprintf("add rule inet ovn-kubernetes udn-isolation socket cgroupv2 %s %q ip6 daddr @udn-pod-default-ips-v6 accept\n",
+				cgroupv2Level(kubeletCgroupPath), kubeletCgroupPath)
+		}
+		result += "add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-pod-default-ips-v6 drop\n"
+		return result
+	}
+
+	BeforeEach(func() {
+		fakeNFT = nodenft.SetFakeNFTablesHelper()
+		recorder = record.NewFakeRecorder(10)
+		manager = &UDNHostIsolationManager{
+			ipv4:     true,
+			ipv6:     true,
+			nodeName: nodeName,
+			recorder: recorder,
+			nft:      fakeNFT,
+
+			udnPodIPsv4:        newNFTPodElementsSet(nftablesUDNPodIPsv4, false),
+			udnPodIPsv6:        newNFTPodElementsSet(nftablesUDNPodIPsv6, false),
+			udnOpenPortsv4:     newNFTPodElementsSet(nftablesUDNOpenPortsv4, true),
+			udnOpenPortsv6:     newNFTPodElementsSet(nftablesUDNOpenPortsv6, true),
+			udnOpenPortsICMPv4: newNFTPodElementsSet(nftablesUDNOpenPortsICMPv4, false),
+			udnOpenPortsICMPv6: newNFTPodElementsSet(nftablesUDNOpenPortsICMPv6, false),
+		}
+	})
+
+	Context("kubelet cgroup lookup", func() {
+		It("finds the kubelet cgroup in the systemd layout", func() {
+			cgroupRoot := GinkgoT().TempDir()
+			Expect(os.MkdirAll(filepath.Join(cgroupRoot, "kubelet.slice", kubeletCgroupName), 0o755)).To(Succeed(), "create cgroup dir")
+
+			path, err := findKubeletCgroupPath(cgroupRoot)
+			Expect(err).NotTo(HaveOccurred(), "lookup succeeds")
+			Expect(path).To(Equal(filepath.Join("kubelet.slice", kubeletCgroupName)), "resolved path is relative to the cgroup root")
+		})
+
+		It("fails when kubelet does not run under a systemd-managed cgroup", func() {
+			cgroupRoot := GinkgoT().TempDir()
+			Expect(os.MkdirAll(filepath.Join(cgroupRoot, "podruntime", "kubelet"), 0o755)).To(Succeed(), "create non-systemd cgroup dir")
+
+			_, err := findKubeletCgroupPath(cgroupRoot)
+			Expect(err).To(MatchError(ContainSubstring("no \"kubelet.service\" directory found")), "reports the missing directory")
+		})
+	})
+
+	Context("nftables setup", func() {
+		It("allows kubelet to reach UDN pods when the kubelet cgroup is known", func() {
+			manager.kubeletCgroupPath = "kubelet.slice/kubelet.service"
+
+			Expect(manager.setupUDNIsolationFromHost()).To(Succeed())
+			Expect(nodenft.MatchNFTRules(expectedDump("kubelet.slice/kubelet.service"), fakeNFT.Dump())).To(Succeed())
+		})
+
+		It("still isolates UDN pods when the kubelet cgroup is unknown", func() {
+			Expect(manager.setupUDNIsolationFromHost()).To(Succeed())
+			Expect(nodenft.MatchNFTRules(expectedDump(""), fakeNFT.Dump())).To(Succeed())
+		})
+	})
+
+	DescribeTable("derives the socket cgroupv2 match level from the cgroup path depth",
+		func(cgroupPath, expectedLevel string) {
+			Expect(cgroupv2Level(cgroupPath)).To(Equal(expectedLevel))
+		},
+		Entry("systemd layout", "kubelet.slice/kubelet.service", "level 2"),
+		Entry("single component", "kubelet", "level 1"),
+		Entry("nested layout", "runtime.slice/kubelet.slice/kubelet.service", "level 3"),
+	)
+
+	DescribeTable("quotes the cgroup path for the socket cgroupv2 match",
+		func(cgroupPath, expected string) {
+			Expect(quoteCgroupPath(cgroupPath)).To(Equal(expected))
+		},
+		Entry("plain path", "kubelet.slice/kubelet.service", `"kubelet.slice/kubelet.service"`),
+		// "@" starts a set reference in nft, so an unquoted template unit is a parse
+		// error rather than a match that never fires.
+		Entry("template unit", "system-getty.slice/getty@tty1.service", `"system-getty.slice/getty@tty1.service"`),
+		Entry("colon in name", "system.slice/foo:bar.service", `"system.slice/foo:bar.service"`),
+		Entry("backslash is escaped", `system.slice/systemd\x2dcryptsetup.slice`, `"system.slice/systemd\\x2dcryptsetup.slice"`),
+		Entry("quote cannot end the string early", `system.slice/foo".service`, `"system.slice/foo\".service"`),
+	)
+
+	Context("configured kubelet cgroup path", func() {
+		AfterEach(func() {
+			config.OvnKubeNode.KubeletCgroupPath = ""
+		})
+
+		It("uses the configured path instead of looking one up", func() {
+			cgroupRoot := GinkgoT().TempDir()
+			Expect(os.MkdirAll(filepath.Join(cgroupRoot, "podruntime", "kubelet"), 0o755)).To(Succeed(), "create cgroup dir")
+			config.OvnKubeNode.KubeletCgroupPath = "podruntime/kubelet"
+
+			path, err := manager.kubeletCgroupPathToUse(cgroupRoot)
+			Expect(err).NotTo(HaveOccurred(), "configured path is used")
+			Expect(path).To(Equal("podruntime/kubelet"), "configured path is returned as given")
+		})
+
+		It("fails when the configured path does not exist", func() {
+			config.OvnKubeNode.KubeletCgroupPath = "podruntime/kubelet"
+
+			_, err := manager.kubeletCgroupPathToUse(GinkgoT().TempDir())
+			Expect(err).To(MatchError(ContainSubstring("configured kubelet cgroup path")), "names the configured path")
+		})
+
+		It("looks the path up when none is configured", func() {
+			cgroupRoot := GinkgoT().TempDir()
+			Expect(os.MkdirAll(filepath.Join(cgroupRoot, "kubelet.slice", kubeletCgroupName), 0o755)).To(Succeed(), "create cgroup dir")
+
+			path, err := manager.kubeletCgroupPathToUse(cgroupRoot)
+			Expect(err).NotTo(HaveOccurred(), "lookup is used")
+			Expect(path).To(Equal(filepath.Join("kubelet.slice", kubeletCgroupName)), "looked up path")
+		})
+	})
+
+	Context("degrading when the kernel rejects the match", func() {
+		BeforeEach(func() {
+			if !hostUsesCgroupv2() {
+				Skip("the resolve path only reaches the kernel check on a cgroup v2 host")
+			}
+		})
+		AfterEach(func() {
+			config.OvnKubeNode.KubeletCgroupPath = ""
+		})
+
+		It("still isolates UDN pods, without the kubelet rule, and reports it", func() {
+			cgroupRoot := GinkgoT().TempDir()
+			Expect(os.MkdirAll(filepath.Join(cgroupRoot, "podruntime", "kubelet"), 0o755)).To(Succeed(), "create cgroup dir")
+			config.OvnKubeNode.KubeletCgroupPath = "podruntime/kubelet"
+			// the kernel rejects the match, as one built without CONFIG_NFT_SOCKET does.
+			manager.nft = &nftRunFailer{Interface: fakeNFT, failures: 1}
+
+			manager.resolveKubeletCgroupPath(cgroupRoot)
+
+			Expect(manager.kubeletCgroupPath).To(BeEmpty(), "the kubelet rule is left out")
+			var event string
+			Expect(recorder.Events).To(Receive(&event), "the node is told")
+			Expect(event).To(ContainSubstring("UDNKubeletProbesNotSupported"), "event reason")
+			Expect(event).To(ContainSubstring("socket cgroupv2 match"), "event blames the kernel, not the path")
+
+			// host isolation is still set up, only the kubelet rule is missing.
+			manager.nft = fakeNFT
+			Expect(manager.setupUDNIsolationFromHost()).To(Succeed())
+			Expect(nodenft.MatchNFTRules(expectedDump(""), fakeNFT.Dump())).To(Succeed(), "UDN pods stay isolated from the host")
+		})
+
+		It("uses the configured path when the kernel accepts the match", func() {
+			cgroupRoot := GinkgoT().TempDir()
+			Expect(os.MkdirAll(filepath.Join(cgroupRoot, "podruntime", "kubelet"), 0o755)).To(Succeed(), "create cgroup dir")
+			config.OvnKubeNode.KubeletCgroupPath = "podruntime/kubelet"
+
+			manager.resolveKubeletCgroupPath(cgroupRoot)
+
+			Expect(manager.kubeletCgroupPath).To(Equal("podruntime/kubelet"), "the configured path is used")
+			Expect(recorder.Events).NotTo(Receive(), "nothing is reported")
+			Expect(manager.setupUDNIsolationFromHost()).To(Succeed())
+			Expect(nodenft.MatchNFTRules(expectedDump("podruntime/kubelet"), fakeNFT.Dump())).To(Succeed(), "kubelet rule is installed")
+		})
+	})
+
+	Context("socket cgroupv2 kernel support", func() {
+		It("reports support and leaves nothing behind", func() {
+			Expect(manager.socketCgroupv2MatchSupported("kubelet.slice/kubelet.service")).To(Succeed(), "match is supported")
+			Expect(fakeNFT.Dump()).NotTo(ContainSubstring(socketMatchProbeChain), "probe chain is removed")
+		})
+
+		It("reports no support when the kernel rejects the match", func() {
+			manager.nft = &nftRunFailer{Interface: fakeNFT, failures: 1}
+
+			Expect(manager.socketCgroupv2MatchSupported("kubelet.slice/kubelet.service")).NotTo(Succeed(), "match is unsupported")
+		})
+	})
+
+	DescribeTable("derives the systemd unit that owns the kubelet cgroup",
+		func(cgroupPath, expectedUnit string) {
+			unit, err := kubeletSystemdUnit(cgroupPath)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(unit).To(Equal(expectedUnit))
+		},
+		Entry("systemd layout", "kubelet.slice/kubelet.service", "kubelet.service"),
+		Entry("renamed unit", "system.slice/rke2-agent.service", "rke2-agent.service"),
+		Entry("scope", "kubelet.slice/kubelet.scope", "kubelet.scope"),
+	)
+
+	DescribeTable("reports no systemd unit for a cgroup that is not a unit",
+		func(cgroupPath string) {
+			_, err := kubeletSystemdUnit(cgroupPath)
+			Expect(err).To(MatchError(ContainSubstring("no systemd unit corresponds to cgroup")))
+		},
+		// Talos runs kubelet in a plain cgroup, with no systemd anywhere.
+		Entry("non-systemd host", "podruntime/kubelet"),
+		// an ancestor cgroup is not a unit either.
+		Entry("slice", "kubelet.slice"),
+	)
+
+	DescribeTable("decodes systemd unit names from D-Bus object paths",
+		func(escapedUnit, expectedUnit string) {
+			Expect(decodeSystemdUnitName(escapedUnit)).To(Equal(expectedUnit))
+		},
+		Entry("dot only", "kubelet_2eservice", "kubelet.service"),
+		// systemd escapes every character outside [A-Za-z0-9], so a renamed unit
+		// carries more than the dot and is not matched by decoding the dot alone.
+		Entry("hyphen and dot", "custom_2dkubelet_2eservice", "custom-kubelet.service"),
+		Entry("uppercase hex", "custom_2Dkubelet_2Eservice", "custom-kubelet.service"),
+		Entry("template unit", "getty_40tty1_2eservice", "getty@tty1.service"),
+		Entry("nothing to decode", "kubelet", "kubelet"),
+		Entry("incomplete escape is kept", "kubelet_2", "kubelet_2"),
+		Entry("invalid escape is kept", "custom_zzkubelet", "custom_zzkubelet"),
+	)
+
+	Context("kubelet restart signals", func() {
+		const kubeletUnit = "kubelet.service"
+
+		propertiesChanged := func(unitPath string, body ...interface{}) *dbus.Signal {
+			return &dbus.Signal{
+				Path: dbus.ObjectPath(unitPath),
+				Name: "org.freedesktop.DBus.Properties.PropertiesChanged",
+				Body: body,
+			}
+		}
+		activeState := func(state interface{}) []interface{} {
+			return []interface{}{
+				"org.freedesktop.systemd1.Unit",
+				map[string]dbus.Variant{"ActiveState": dbus.MakeVariant(state)},
+			}
+		}
+
+		// The rules are installed for the original path, then the resolved path is
+		// changed before the signal is delivered. Re-application is therefore visible
+		// as the ruleset switching to the new path, rather than being asserted against
+		// what the setup already produced.
+		const originalPath = "kubelet.slice/kubelet.service"
+		const reresolvedPath = "kubelet.slice/kubelet-1234.service"
+
+		BeforeEach(func() {
+			manager.kubeletCgroupPath = originalPath
+			Expect(manager.setupUDNIsolationFromHost()).To(Succeed())
+			Expect(nodenft.MatchNFTRules(expectedDump(originalPath), fakeNFT.Dump())).To(Succeed(), "rules start on the original path")
+			manager.kubeletCgroupPath = reresolvedPath
+		})
+
+		It("re-applies the rules when the kubelet unit becomes active", func() {
+			signal := propertiesChanged("/org/freedesktop/systemd1/unit/kubelet_2eservice", activeState("active")...)
+
+			Expect(manager.handleKubeletRestartSignal(signal, kubeletUnit)).To(Succeed())
+			Expect(nodenft.MatchNFTRules(expectedDump(reresolvedPath), fakeNFT.Dump())).To(Succeed(), "rules are rebuilt for the re-resolved path")
+		})
+
+		It("re-applies the rules for a renamed unit", func() {
+			// systemd escapes every character outside [A-Za-z0-9], so this only matches
+			// if the object path is decoded in full rather than just "_2e".
+			signal := propertiesChanged("/org/freedesktop/systemd1/unit/rke2_2dagent_2eservice", activeState("active")...)
+
+			Expect(manager.handleKubeletRestartSignal(signal, "rke2-agent.service")).To(Succeed())
+			Expect(nodenft.MatchNFTRules(expectedDump(reresolvedPath), fakeNFT.Dump())).To(Succeed(), "renamed unit is recognised and the rules are rebuilt")
+		})
+
+		DescribeTable("ignores signals it cannot act on, without panicking",
+			func(signal *dbus.Signal) {
+				Expect(manager.handleKubeletRestartSignal(signal, kubeletUnit)).To(Succeed())
+				Expect(nodenft.MatchNFTRules(expectedDump(originalPath), fakeNFT.Dump())).To(Succeed(), "rules are left alone")
+			},
+			Entry("another unit", propertiesChanged("/org/freedesktop/systemd1/unit/sshd_2eservice", activeState("active")...)),
+			Entry("not a unit path", propertiesChanged("/org/freedesktop/systemd1/job/42", activeState("active")...)),
+			Entry("short path", propertiesChanged("/org/freedesktop", activeState("active")...)),
+			Entry("inactive state", propertiesChanged("/org/freedesktop/systemd1/unit/kubelet_2eservice", activeState("inactive")...)),
+			// the systemd private connection is not a bus and delivers every signal, so
+			// the body can be any shape at all. None of these may panic the tracker.
+			Entry("empty body", propertiesChanged("/org/freedesktop/systemd1/unit/kubelet_2eservice")),
+			Entry("body too short", propertiesChanged("/org/freedesktop/systemd1/unit/kubelet_2eservice", "org.freedesktop.systemd1.Unit")),
+			Entry("changes not a variant map", propertiesChanged("/org/freedesktop/systemd1/unit/kubelet_2eservice",
+				"org.freedesktop.systemd1.Unit", "not-a-map")),
+			Entry("no ActiveState key", propertiesChanged("/org/freedesktop/systemd1/unit/kubelet_2eservice",
+				"org.freedesktop.systemd1.Unit", map[string]dbus.Variant{"SubState": dbus.MakeVariant("running")})),
+			Entry("ActiveState not a string", propertiesChanged("/org/freedesktop/systemd1/unit/kubelet_2eservice", activeState(42)...)),
+		)
+	})
+
+	It("reports unsupported kubelet probes on the node", func() {
+		manager.reportKubeletProbesUnsupported("the node uses cgroup v1")
+
+		var event string
+		Expect(recorder.Events).To(Receive(&event), "an event is recorded")
+		Expect(event).To(ContainSubstring("UDNKubeletProbesNotSupported"), "event reason")
+		Expect(event).To(ContainSubstring("the node uses cgroup v1"), "event carries the reason")
+	})
+})

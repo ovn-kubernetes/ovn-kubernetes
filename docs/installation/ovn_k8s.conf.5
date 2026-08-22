@@ -127,6 +127,20 @@ Changing this value while UserDefinedNetwork or ClusterUserDefinedNetwork VRFs
 or EgressIP assignments exist is not supported. Delete those networks and
 EgressIP assignments, and allow ovnkube-node to clean up their VRFs and route
 tables before changing this value.
+.TP
+\fBkubelet-cgroup-path\fR=
+Optional cgroup v2 path kubelet runs under, relative to /sys/fs/cgroup, for
+example "kubelet.slice/kubelet.service". UDN host isolation uses it to allow
+kubelet probes to primary UDN pods. Only used when network segmentation is
+enabled.
+Every process in this cgroup is allowed to reach primary UDN pods, so it should
+be the cgroup of kubelet itself rather than a parent cgroup it shares with other
+workloads. The cgroup root is rejected, as is any path containing a ".."
+component, so give the cgroup path directly rather than relative to another.
+If unset, the kubelet.service cgroup is looked up under /sys/fs/cgroup, which
+requires kubelet to be managed by systemd. When neither is available, kubelet
+probes to primary UDN pods are not allowed and the node reports a
+UDNKubeletProbesNotSupported event.
 
 .SH [Gateway]
 .TP
