@@ -119,6 +119,7 @@ nav:
       - CI Testing Guide: ci/ci.md
       - Debugging: developer-guide/debugging.md
       - Release Guide: developer-guide/release.md
+      - Maintenance Guide: developer-guide/maintenance.md
   - API Reference Guide:
       - api-reference/index.md
       - Introduction: api-reference/introduction.md
