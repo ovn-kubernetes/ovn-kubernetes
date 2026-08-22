@@ -13,6 +13,38 @@ For more info, consider looking at the following links:
 
 Always check the dependencies on the [Requirements page](../requirements.md)
 
+## Node Requirements
+
+The `k8s.ovn.org/host-cidrs` annotation is automatically set during node bootstrap and
+contains the node's host network CIDR(s). A node can be missing this annotation if it is
+stuck in `NodeStatusNeverUpdated`, was orphaned by the cluster autoscaler, or was never
+properly bootstrapped.
+
+Such a node is handled in two places:
+
+* **Conflict detection** skips the node. The annotation is the only source of the node's
+  host addresses, so without it there is no data to check the requested egress IP against.
+  Skipping means the check cannot prove the address is free on that node — it does not mean
+  the node has no conflicting address.
+* **Node assignability** excludes the node. A node whose `host-cidrs` annotation is missing,
+  cannot be parsed, or contains no addresses is marked not assignable even when it carries
+  the `k8s.ovn.org/egress-assignable` label, and any EgressIPs already assigned to it are
+  released so they can move to an eligible node.
+
+Together these prevent a single misconfigured or orphaned node from failing EgressIP
+assignment cluster-wide, while keeping it out of the pool of assignment candidates.
+
+**Important:** Conflict protection is not enforced for a node in this state. Restore the
+node's `host-cidrs` annotation, or remove the stale node from the cluster, before relying
+on conflict detection to catch an egress IP that collides with a host address.
+
+**Troubleshooting:** If an EgressIP is not assigned to an expected node, verify the node
+has the `k8s.ovn.org/host-cidrs` annotation set:
+
+```bash
+kubectl get node <node-name> -o jsonpath='{.metadata.annotations.k8s\.ovn\.org/host-cidrs}'
+```
+
 ## Example
 
 An example of EgressIP might look like this:

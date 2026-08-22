@@ -1448,7 +1448,14 @@ func (eIPC *egressIPClusterController) isEgressIPAddrConflict(egressIP net.IP) (
 		}
 		nodeHostAddrsSet, err := util.ParseNodeHostCIDRsDropNetMask(node)
 		if err != nil {
-			return false, "", fmt.Errorf("failed to parse node host cidrs for node %s: %v", node.Name, err)
+			// The annotation is the only source of this node's host addresses.
+			// If it is missing or unparseable there is nothing to compare the
+			// egress IP against, so skip the node rather than failing the check
+			// for every node. Such a node is also excluded from assignment, see
+			// the egress node event handler.
+			klog.Warningf("Skipping node %s for EgressIP conflict check, its host addresses are unknown: %v",
+				node.Name, err)
+			continue
 		}
 		if nodeHostAddrsSet.Has(egressIP.String()) {
 			return true, node.Name, nil
