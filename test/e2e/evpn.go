@@ -676,24 +676,69 @@ func getMACVRFAgnhostIPsFromSubnets(subnets []string) ([]string, error) {
 //   - vid: VLAN ID for the access port on the bridge (e.g., 100)
 //   - ipFamilies: Cluster IP family support (e.g., sets.New(utilnet.IPv4, utilnet.IPv6))
 //   - subnets: Subnets for the Docker network matching the CUDN (e.g., "10.100.0.0/16")
-func setupMACVRFExternalContainer(ictx infraapi.Context, container infraapi.ExternalContainer, networkName, bridgeName string, vid int, ipFamilies sets.Set[utilnet.IPFamily], subnets []string) (*evpnContainerInfo, error) {
+//   - useProxyDockerNetwork: When true, the Docker network is created without explicit subnets
+//     (Docker picks a random unused range) and the container's IPs are reassigned
+//     afterward to match the CUDN subnets. This is needed when two MAC-VRF agnhosts
+//     share the same CUDN subnet because Docker rejects overlapping subnets. The Docker
+//     bridge still forwards L2 frames regardless of IP addressing.
+func setupMACVRFExternalContainer(ictx infraapi.Context, container infraapi.ExternalContainer, networkName, bridgeName string, vid int, ipFamilies sets.Set[utilnet.IPFamily], subnets []string, useProxyDockerNetwork bool) (*evpnContainerInfo, error) {
 	// Derive container IPs from CUDN subnets
 	containerIPs, err := getMACVRFAgnhostIPsFromSubnets(subnets)
 	if err != nil {
 		return nil, fmt.Errorf("failed to derive MAC-VRF container IPs from subnets: %w", err)
 	}
 
-	ips4, ips6 := splitIPStringsByIPFamily(containerIPs)
-	if len(ips4) > 0 {
-		container.IPv4 = ips4[0]
-	}
-	if len(ips6) > 0 {
-		container.IPv6 = ips6[0]
+	if !useProxyDockerNetwork {
+		ips4, ips6 := splitIPStringsByIPFamily(containerIPs)
+		if len(ips4) > 0 {
+			container.IPv4 = ips4[0]
+		}
+		if len(ips6) > 0 {
+			container.IPv6 = ips6[0]
+		}
 	}
 
-	info, err := createEVPNExternalContainer(ictx, container, networkName, ipFamilies, subnets)
+	var info *evpnContainerInfo
+	dockerSubnets := subnets
+	if useProxyDockerNetwork {
+		dockerSubnets = nil
+	}
+	info, err = createEVPNExternalContainer(ictx, container, networkName, ipFamilies, dockerSubnets)
 	if err != nil {
 		return nil, err
+	}
+
+	// When useProxyDockerNetwork is set, the network was created without explicit
+	// subnets, this lets Docker pick a random unused range, avoiding Docker rejecting a
+	// second network with the same CUDN CIDR. Then reassign the container's IPs
+	// to match the actual CUDN subnets.
+	if useProxyDockerNetwork {
+		shellCmds := []string{
+			fmt.Sprintf("ip addr flush dev %s", info.containerInterface),
+		}
+		// CreateNetwork infers IP family from the subnets passed to it; with nil
+		// subnets it creates an IPv4-only network, which disables IPv6 on the
+		// interface. Enable it so we can add IPv6 CUDN addresses.
+		if ipFamilies.Has(utilnet.IPv6) {
+			shellCmds = append(shellCmds,
+				fmt.Sprintf("sysctl -w net.ipv6.conf.%s.disable_ipv6=0", info.containerInterface))
+		}
+		for i, subnet := range subnets {
+			_, ipNet, parseErr := net.ParseCIDR(subnet)
+			if parseErr != nil {
+				return nil, fmt.Errorf("failed to parse CUDN subnet %s: %w", subnet, parseErr)
+			}
+			prefixLen, _ := ipNet.Mask.Size()
+			addr := fmt.Sprintf("%s/%d", containerIPs[i], prefixLen)
+			shellCmds = append(shellCmds,
+				fmt.Sprintf("ip addr add %s dev %s", addr, info.containerInterface))
+		}
+		if _, err := infraprovider.Get().ExecExternalContainerCommand(container,
+			[]string{"sh", "-c", strings.Join(shellCmds, " && ")}); err != nil {
+			return nil, fmt.Errorf("failed to reassign IPs on container %s (network %s): %w", container.Name, networkName, err)
+		}
+		info.containerIPs = containerIPs
+		framework.Logf("Reassigned container %s (network %s) IPs to CUDN IPs: %v", container.Name, networkName, containerIPs)
 	}
 
 	// Move FRR's interface to bridgeName and configure as access port
@@ -1160,6 +1205,12 @@ func populateExternalContainerIPs(c *infraapi.ExternalContainer, info *evpnConta
 //
 // The macVRFContainer and ipVRFContainer pointers are mutated: after creation
 // their IPv4/IPv6 fields are populated with the discovered container IPs.
+//
+// When macVRFUseProxyDockerNetwork is true, the MAC-VRF Docker network is created
+// without explicit subnets (Docker picks a random range) and the container's
+// IPs are reassigned afterward to match the CUDN subnets. This is needed when
+// two MAC-VRF containers share the same CUDN subnet because Docker rejects
+// overlapping subnets.
 func runEVPNNetworkAndServers(
 	f *framework.Framework,
 	ictx infraapi.Context,
@@ -1175,6 +1226,7 @@ func runEVPNNetworkAndServers(
 	macVRFNetworkName string,
 	ipVRFContainer *infraapi.ExternalContainer,
 	ipVRFNetworkName string,
+	macVRFUseProxyDockerNetwork bool,
 ) error {
 	// Derive what to setup from networkSpec
 	hasMACVRF := networkSpec.EVPN != nil && networkSpec.EVPN.MACVRF != nil
@@ -1215,7 +1267,7 @@ func runEVPNNetworkAndServers(
 		}
 
 		framework.Logf("Creating MAC-VRF external container")
-		macVRFInfo, err := setupMACVRFExternalContainer(ictx, *macVRFContainer, macVRFNetworkName, bridgeName, macVRFVID, ipFamilySet, cudnSubnetsFromSpec)
+		macVRFInfo, err := setupMACVRFExternalContainer(ictx, *macVRFContainer, macVRFNetworkName, bridgeName, macVRFVID, ipFamilySet, cudnSubnetsFromSpec, macVRFUseProxyDockerNetwork)
 		if err != nil {
 			return err
 		}
