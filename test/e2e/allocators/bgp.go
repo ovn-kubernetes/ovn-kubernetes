@@ -60,8 +60,9 @@ func AllocateBGP(f *framework.Framework, cleanup infraapi.ContextCleanUp) (BGPAl
 		bgpIPVRF6 = newSubnetSpec(ipvrfSubnets6, nil)
 		bgpVTEP4 = newSubnetSpec(vtepSubnets, nil)
 		bgpVTEP6 = newSubnetSpec(vtepSubnets6, nil)
-		bgpUDN4 = newSubnetSpec(udnSubnets, nil)
-		bgpUDN6 = newSubnetSpec(udnSubnets6, nil)
+		v4Exclusions, v6Exclusions := machineNetworkExclusions()
+		bgpUDN4 = newSubnetSpec(udnSubnets, v4Exclusions)
+		bgpUDN6 = newSubnetSpec(udnSubnets6, v6Exclusions)
 	})
 
 	maxUsable := min(

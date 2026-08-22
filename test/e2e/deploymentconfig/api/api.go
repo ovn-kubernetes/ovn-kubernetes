@@ -3,6 +3,8 @@
 
 package api
 
+import "k8s.io/apimachinery/pkg/util/sets"
+
 // Config represents a deployment configuration flag queryable by E2E tests.
 // This interface replaces direct ENV variable checks, which don't work for all providers
 // (some use CRDs, ConfigMaps, or other mechanisms).
@@ -24,4 +26,5 @@ type DeploymentConfig interface {
 	GetAgnHostContainerImage() string
 	// IsConfigurationEnabled checks whether a specific configuration flag is enabled in the deployment.
 	IsConfigurationEnabled(config Config) bool
+	GetMachineNetworkSubnets() (ipv4, ipv6 sets.Set[string], err error)
 }

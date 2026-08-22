@@ -72,7 +72,11 @@ func TestMain(m *testing.M) {
 	// Upstream currently uses KinD as its preferred platform infra
 	// So TestMain is expected to run only there.
 	infraprovider.Set(infraproviderkind.New())
-	deploymentconfig.Set(deploymentkind.New())
+	cfg, err := framework.LoadConfig()
+	if err != nil {
+		panic(fmt.Sprintf("failed to load kubeconfig: %v", err))
+	}
+	deploymentconfig.Set(deploymentkind.New(cfg))
 
 	os.Exit(m.Run())
 }

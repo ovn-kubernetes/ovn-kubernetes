@@ -5,6 +5,10 @@ package allocators
 
 import (
 	"sync"
+
+	"k8s.io/kubernetes/test/e2e/framework"
+
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 )
 
 var (
@@ -14,9 +18,19 @@ var (
 
 func initSubnetSpecs() {
 	udnOnce.Do(func() {
-		udnV4 = newSubnetSpec(udnSubnets, nil)
-		udnV6 = newSubnetSpec(udnSubnets6, nil)
+		v4Exclusions, v6Exclusions := machineNetworkExclusions()
+		udnV4 = newSubnetSpec(udnSubnets, v4Exclusions)
+		udnV6 = newSubnetSpec(udnSubnets6, v6Exclusions)
 	})
+}
+
+func machineNetworkExclusions() (ipv4, ipv6 []string) {
+	v4, v6, err := deploymentconfig.Get().GetMachineNetworkSubnets()
+	if err != nil {
+		framework.Logf("Warning: failed to get machine network subnets for exclusion: %v", err)
+		return nil, nil
+	}
+	return v4.UnsortedList(), v6.UnsortedList()
 }
 
 // GetFirstUDNSubnets always allocates the first UDN IPv4 and IPv6 subnet
