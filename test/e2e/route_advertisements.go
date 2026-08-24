@@ -3667,6 +3667,9 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 				cudnAdvertisedEVPNUnmanagedRandomVTEP,
 				bumNetworkSpec,
 				bgpAlloc,
+				bgpClusterASN,
+				bgpClusterASN,
+				routerContainerName,
 			)
 			gomega.Expect(externalServers).NotTo(gomega.BeEmpty(), "MAC-VRF external agnhost container must exist for EVPN L2 test")
 			macVRFAgnhostContainer := externalServers[0]
@@ -3693,7 +3696,7 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 
 			ginkgo.By("Validation 1: Type-3 (BUM flood list) routes for each VTEP")
 			macVRFVNI := fmt.Sprintf("%d", bumNetworkSpec.EVPN.MACVRF.VNI)
-			externalFRRIP, err := getExternalFRRIP(ipFamilySet)
+			externalFRRIP, err := getExternalFRRIP(routerContainerName, ipFamilySet)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "external FRR VTEP IP")
 			// Collect VTEP IPs from the k8s.ovn.org/vteps node annotation written by the EVPN controller.
 			var nodes *corev1.NodeList
