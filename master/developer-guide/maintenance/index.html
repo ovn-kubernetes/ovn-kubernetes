@@ -3,11 +3,17 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
+        <meta name="description" content="For this repo to stay healthy, we need to make sure that we are doing regular maintenance. This includes:">
       
       
-        <link rel="canonical" href="https://www.ovn.org/ovn-kubernetes/master/governance/MEETINGS/">
+      
+        <link rel="canonical" href="https://www.ovn.org/ovn-kubernetes/master/developer-guide/maintenance/">
       
       
+        <link rel="prev" href="../release/">
+      
+      
+        <link rel="next" href="../../api-reference/">
       
       
         
@@ -18,7 +24,7 @@
     
     
       
-        <title>ovn-kubernetes Community Meetings - OVN-Kubernetes</title>
+        <title>Maintenance Guide - OVN-Kubernetes</title>
       
     
     
@@ -81,7 +87,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#ovn-kubernetes-community-meetings" class="md-skip">
+        <a href="#maintenance-documentation" class="md-skip">
           Skip to content
         </a>
       
@@ -120,7 +126,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              ovn-kubernetes Community Meetings
+              Maintenance Guide
             
           </span>
         </div>
@@ -267,11 +273,13 @@
   
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
-        <a href="../../developer-guide/" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
           
   
   
@@ -1305,6 +1313,8 @@
       
   
   
+    
+  
   
   
     
@@ -1342,18 +1352,21 @@
     
     
       
+        
+        
+      
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3">
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked="">
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../developer-guide/" class="md-nav__link ">
+            <a href="../" class="md-nav__link ">
               
   
   
@@ -1371,13 +1384,13 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1397,7 +1410,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../CONTRIBUTING/" class="md-nav__link">
+      <a href="../../governance/CONTRIBUTING/" class="md-nav__link">
         
   
   
@@ -1425,7 +1438,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../GOVERNANCE/" class="md-nav__link">
+      <a href="../../governance/GOVERNANCE/" class="md-nav__link">
         
   
   
@@ -1453,7 +1466,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../REVIEWING/" class="md-nav__link">
+      <a href="../../governance/REVIEWING/" class="md-nav__link">
         
   
   
@@ -1481,7 +1494,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../developer-guide/areas/" class="md-nav__link">
+      <a href="../areas/" class="md-nav__link">
         
   
   
@@ -1509,7 +1522,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../developer-guide/developer/" class="md-nav__link">
+      <a href="../developer/" class="md-nav__link">
         
   
   
@@ -1537,7 +1550,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../developer-guide/image-build/" class="md-nav__link">
+      <a href="../image-build/" class="md-nav__link">
         
   
   
@@ -1565,7 +1578,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../developer-guide/documentation/" class="md-nav__link">
+      <a href="../documentation/" class="md-nav__link">
         
   
   
@@ -1593,7 +1606,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../developer-guide/local_testing_guide/" class="md-nav__link">
+      <a href="../local_testing_guide/" class="md-nav__link">
         
   
   
@@ -1649,7 +1662,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../developer-guide/debugging/" class="md-nav__link">
+      <a href="../debugging/" class="md-nav__link">
         
   
   
@@ -1677,7 +1690,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../developer-guide/release/" class="md-nav__link">
+      <a href="../release/" class="md-nav__link">
         
   
   
@@ -1702,10 +1715,19 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../developer-guide/maintenance/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1721,6 +1743,7 @@
   
 
       </a>
+      
     </li>
   
 
@@ -4615,58 +4638,6 @@
     
   
   
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
-      
-        <li class="md-nav__item">
-  <a href="#information" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Information
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#meeting-time" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Meeting time
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#meeting-location" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Meeting location
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#meeting-agenda-and-minutes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Meeting agenda and minutes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
 </nav>
                   </div>
                 </div>
@@ -4685,29 +4656,55 @@
   
 
 
-<h1 id="ovn-kubernetes-community-meetings">ovn-kubernetes Community Meetings<a class="headerlink" href="#ovn-kubernetes-community-meetings" title="Permanent link">¶</a></h1>
-<h2 id="information">Information<a class="headerlink" href="#information" title="Permanent link">¶</a></h2>
-<p>All are welcome to join our meetings! If you want to discuss something with the wider community, please add your items to the agenda. If you are starting to contribute but unsure of the first steps, please feel free to reach out to us during the meetings and introduce yourself!</p>
-<h2 id="meeting-time">Meeting time<a class="headerlink" href="#meeting-time" title="Permanent link">¶</a></h2>
-<p>We meet alternate Monday's at 5:00 PM CET/CEST.
-In order to figure out when our next meeting is, please check our agenda for previous meeting history.
-The meetings last up to 1 hour.</p>
-<h2 id="meeting-location">Meeting location<a class="headerlink" href="#meeting-location" title="Permanent link">¶</a></h2>
+<h1 id="maintenance-documentation">Maintenance Documentation<a class="headerlink" href="#maintenance-documentation" title="Permanent link">¶</a></h1>
+<p>For this repo to stay healthy, we need to make sure that we are doing regular maintenance. This includes:</p>
 <ul>
-<li>Platform: CNCF Zoom</li>
-<li><a href="https://zoom-lfx.platform.linuxfoundation.org/meeting/98741709730?password=ec6c1c1d-8f40-4a3a-a13d-5e284db7ff43">Meeting Link</a></li>
-<li>MeetingID: 98741709730</li>
-<li>Meeting Passcode: Please check the Meeting Notes Top section where passcode is represented</li>
-<li><a href="https://webcal.prod.itx.linuxfoundation.org/lfx/lfUT0YkGZgOXRcnNGf">Project Community Calendar ics Link for importing</a></li>
+<li>Issue triage (No one is doing this now)<ul>
+<li>review newly created/updated issues (bugs and questions) and try to find assignees</li>
+<li>ensure issues don't get stale and eventually get fixed/answered</li>
+<li>use community meeting for sync and help</li>
 </ul>
-<h2 id="meeting-agenda-and-minutes">Meeting agenda and minutes<a class="headerlink" href="#meeting-agenda-and-minutes" title="Permanent link">¶</a></h2>
-<p><a href="https://docs.google.com/document/d/1ciZS1CajH07THAiH_9j4-6uX4HAJFEoUzwyRdjsQK1k">Meeting agenda</a>  - edit responsibly</p>
+</li>
+<li>CI flakes triage (@npinaeva)<ul>
+<li>review newly created/updated flakes and try to find assignees</li>
+<li>ensure flakes don't get stale and eventually get fixed</li>
+<li>review/find reviewers for the CI flake fixes</li>
+<li>use community meeting for sync and help</li>
+</ul>
+</li>
+<li>Release tracking and management (@tssurya)<ul>
+<li>Define target date for the next release, add Milestone and track the progress of the release</li>
+<li>Share updates on the release progress in the community meetings</li>
+<li>Track the scope of the release as we get closer to the release date and make sure we are on track to meet the release goals</li>
+<li>Cut the release and share the release notes with the community</li>
+</ul>
+</li>
+<li>Members and contributors (now also for areas) management (now is done by all maintainers)<ul>
+<li>ensure that we have the right people with the right permissions in the repo and in the org</li>
+<li>remove stale members and contributors</li>
+<li>add new members and contributors (follow the process defined in the <a href="../../governance/GOVERNANCE/#becoming-a-member">GOVERNANCE</a> file)</li>
+</ul>
+</li>
+<li>Project healthcheck (no one is doing this now)<ul>
+<li>close stale PRs and issues (we have stale label)</li>
+<li>delete stale branches</li>
+</ul>
+</li>
+<li>Facilitating the community meetings and keeping the notes up to date (@npinaeva and @tssurya)<ul>
+<li>facilitate the meetings and ensure that we are having productive discussions and that we are making progress on the topics discussed</li>
+<li>ensure that we are taking notes during the meetings and sharing them with the community</li>
+</ul>
+</li>
+</ul>
 
 
 
 
 
 
+
+  
+  
 
 
 
