@@ -105,7 +105,8 @@ const (
 	// OVNNodeHostCIDRs is used to track the different host IP addresses and subnet masks on the node
 	OVNNodeHostCIDRs = "k8s.ovn.org/host-cidrs"
 
-	// OVNNodePrimaryDPUHostAddr is used to track the primary DPU host address on the node
+	// OVNNodePrimaryDPUHostAddr tracks the primary DPU host address on the node.
+	// Its presence identifies a node whose host-side ovnkube-node runs in DPU-host mode.
 	OVNNodePrimaryDPUHostAddr = "k8s.ovn.org/primary-dpu-host-addr"
 
 	// OVNNodeSecondaryHostEgressIPs contains EgressIP addresses that aren't managed by OVN. The EIP addresses are assigned to
@@ -733,6 +734,9 @@ func convertPrimaryIfAddrAnnotationToIPNet(ifAddr PrimaryIfAddrAnnotation) ([]*n
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse IPv4 address %s, err: %w", ifAddr.IPv4, err)
 		}
+		if ip.To4() == nil {
+			return nil, fmt.Errorf("IPv4 address field contains non-IPv4 CIDR %s", ifAddr.IPv4)
+		}
 		ipAddrs = append(ipAddrs, &net.IPNet{IP: ip, Mask: ipNet.Mask})
 	}
 
@@ -740,6 +744,9 @@ func convertPrimaryIfAddrAnnotationToIPNet(ifAddr PrimaryIfAddrAnnotation) ([]*n
 		ip, ipNet, err := net.ParseCIDR(ifAddr.IPv6)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse IPv6 address %s, err: %w", ifAddr.IPv6, err)
+		}
+		if ip.To4() != nil {
+			return nil, fmt.Errorf("IPv6 address field contains non-IPv6 CIDR %s", ifAddr.IPv6)
 		}
 		ipAddrs = append(ipAddrs, &net.IPNet{IP: ip, Mask: ipNet.Mask})
 	}
@@ -1357,6 +1364,12 @@ func GetNodePrimaryDPUHostAddrAnnotation(node *corev1.Node) (*ifAddr, error) {
 	}
 	if nodeIfAddr.IPv4 == "" && nodeIfAddr.IPv6 == "" {
 		return nil, fmt.Errorf("node: %q does not have any IP information set", node.Name)
+	}
+	if _, err := convertPrimaryIfAddrAnnotationToIPNet(PrimaryIfAddrAnnotation{
+		IPv4: nodeIfAddr.IPv4,
+		IPv6: nodeIfAddr.IPv6,
+	}); err != nil {
+		return nil, fmt.Errorf("failed to parse annotation: %s for node %q, err: %w", OVNNodePrimaryDPUHostAddr, node.Name, err)
 	}
 	return nodeIfAddr, nil
 }

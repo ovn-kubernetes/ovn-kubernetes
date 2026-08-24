@@ -726,6 +726,22 @@ func createNodeManagementPortController(
 	return managementport.NewManagementPortController(ovsClient, node, subnets, netdevName, rep, routeManager, netInfo)
 }
 
+// removeStaleDPUHostAddressAnnotation clears state owned by DPU-host mode before
+// full-mode initialization continues, so consumers do not classify this node as a DPU host.
+func (nc *DefaultNodeNetworkController) removeStaleDPUHostAddressAnnotation() error {
+	if !config.IsModeFull() {
+		return nil
+	}
+
+	nodeAnnotator := kube.NewNodeAnnotator(nc.Kube, nc.name)
+	nodeAnnotator.Delete(util.OVNNodePrimaryDPUHostAddr)
+	if err := nodeAnnotator.Run(); err != nil {
+		return fmt.Errorf("failed to remove stale %s annotation from node %s: %w",
+			util.OVNNodePrimaryDPUHostAddr, nc.name, err)
+	}
+	return nil
+}
+
 // Init executes the first steps to start the DefaultNodeNetworkController.
 // It is split from Start() and executed before UserDefinedNodeNetworkController (UDNNC)
 // to allow UDNNC to reference the openflow manager created in Init.
@@ -734,6 +750,9 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 
 	if nc.name == "" {
 		return fmt.Errorf("ovnkube-node name is required")
+	}
+	if err := nc.removeStaleDPUHostAddressAnnotation(); err != nil {
+		return err
 	}
 
 	var err error

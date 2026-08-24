@@ -6,6 +6,7 @@ package routeadvertisements
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -143,6 +144,7 @@ type testNode struct {
 	Generation                int
 	Labels                    map[string]string
 	PrimaryAddressAnnotation  string
+	DPUHostAddressAnnotation  string
 	SubnetsAnnotation         string
 	TunnelIDsAnnotation       string
 	L3GatewayConfigAnnotation string
@@ -162,6 +164,9 @@ func (tn testNode) Node() *corev1.Node {
 	}
 	if tn.TunnelIDsAnnotation != "" {
 		annotations[types.UDNLayer2NodeGRLRPTunnelIDAnnotation] = tn.TunnelIDsAnnotation
+	}
+	if tn.DPUHostAddressAnnotation != "" {
+		annotations[util.OVNNodePrimaryDPUHostAddr] = tn.DPUHostAddressAnnotation
 	}
 	if tn.L3GatewayConfigAnnotation != "" {
 		annotations[util.OvnNodeL3GatewayConfig] = tn.L3GatewayConfigAnnotation
@@ -188,6 +193,45 @@ func (tn testNode) Node() *corev1.Node {
 			Annotations: annotations,
 		},
 	}
+}
+
+func TestGetDPUHostGatewayNextHopsUsesDPUHostAddressAnnotation(t *testing.T) {
+	g := gomega.NewWithT(t)
+	previousGatewayMode := config.Gateway.Mode
+	t.Cleanup(func() { config.Gateway.Mode = previousGatewayMode })
+	config.Gateway.Mode = config.GatewayModeShared
+
+	c := &Controller{}
+	selected := &selectedNetworks{networkUplinks: map[string]string{}}
+
+	nextHops, err := c.getDPUHostGatewayNextHops(&corev1.Node{}, selected, types.DefaultNetworkName)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(nextHops).To(gomega.BeNil(), "a node without the annotation is not a DPU host")
+
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+		Name:        "node",
+		Annotations: map[string]string{util.OVNNodePrimaryDPUHostAddr: "invalid"},
+	}}
+	_, err = c.getDPUHostGatewayNextHops(node, selected, types.DefaultNetworkName)
+	g.Expect(errors.Is(err, errConfig)).To(gomega.BeTrue(), "a malformed DPU-host annotation is a configuration error")
+
+	node.Annotations[util.OVNNodePrimaryDPUHostAddr] = `{"ipv4":"not-a-cidr"}`
+	_, err = c.getDPUHostGatewayNextHops(node, selected, types.DefaultNetworkName)
+	g.Expect(errors.Is(err, errConfig)).To(gomega.BeTrue(), "an invalid DPU-host CIDR is a configuration error")
+
+	for _, annotation := range []string{
+		`{"ipv4":"fd00::1/64"}`,
+		`{"ipv6":"192.0.2.1/24"}`,
+	} {
+		node.Annotations[util.OVNNodePrimaryDPUHostAddr] = annotation
+		_, err = c.getDPUHostGatewayNextHops(node, selected, types.DefaultNetworkName)
+		g.Expect(errors.Is(err, errConfig)).To(gomega.BeTrue(),
+			"a CIDR in the wrong address-family field is a configuration error: %s", annotation)
+	}
+
+	node.Annotations[util.OVNNodePrimaryDPUHostAddr] = `{"ipv4":"172.18.255.254/16"}`
+	_, err = c.getDPUHostGatewayNextHops(node, selected, types.DefaultNetworkName)
+	g.Expect(errors.Is(err, errPending)).To(gomega.BeTrue(), "a DPU host waits for its gateway state")
 }
 
 type testPod struct {
@@ -1148,7 +1192,7 @@ func TestController_reconcile(t *testing.T) {
 			nodes: []*testNode{
 				{
 					Name:                      "node",
-					Labels:                    map[string]string{types.OvnDPUHostNodeLabel: ""},
+					DPUHostAddressAnnotation:  `{"ipv4":"172.18.255.254/16"}`,
 					SubnetsAnnotation:         "{\"default\":\"1.1.0.0/24\"}",
 					L3GatewayConfigAnnotation: `{"default":{"mode":"shared","mac-address":"52:54:00:4c:e6:00","ip-addresses":["172.18.255.254/16"],"next-hops":["172.18.0.1"]}}`,
 				},
@@ -1186,7 +1230,7 @@ func TestController_reconcile(t *testing.T) {
 			nodes: []*testNode{
 				{
 					Name:                      "node",
-					Labels:                    map[string]string{types.OvnDPUHostNodeLabel: ""},
+					DPUHostAddressAnnotation:  `{"ipv4":"172.18.255.254/16","ipv6":"fc00:f853:ccd:e793::4/64"}`,
 					SubnetsAnnotation:         "{\"default\":[\"1.1.0.0/24\",\"fd01::/64\"]}",
 					L3GatewayConfigAnnotation: `{"default":{"mode":"shared","mac-address":"52:54:00:4c:e6:00","ip-addresses":["172.18.255.254/16","fc00:f853:ccd:e793::4/64"],"next-hops":["172.18.0.1","fc00:f853:ccd:e793::1"]}}`,
 				},
@@ -3412,6 +3456,18 @@ func TestUpdates(t *testing.T) {
 			name:              "reconciles all RAs on updated Node primary address annotation",
 			oldObject:         &testNode{Name: "eip", PrimaryAddressAnnotation: "old"},
 			newObject:         &testNode{Name: "eip", PrimaryAddressAnnotation: "new"},
+			expectedReconcile: []string{"ra1", "ra2", "ra3"},
+		},
+		{
+			name:              "reconciles all RAs when the Node becomes a DPU host",
+			oldObject:         &testNode{Name: "eip"},
+			newObject:         &testNode{Name: "eip", DPUHostAddressAnnotation: `{"ipv4":"172.18.255.254/16"}`},
+			expectedReconcile: []string{"ra1", "ra2", "ra3"},
+		},
+		{
+			name:              "reconciles all RAs when the Node stops being a DPU host",
+			oldObject:         &testNode{Name: "eip", DPUHostAddressAnnotation: `{"ipv4":"172.18.255.254/16"}`},
+			newObject:         &testNode{Name: "eip"},
 			expectedReconcile: []string{"ra1", "ra2", "ra3"},
 		},
 		{

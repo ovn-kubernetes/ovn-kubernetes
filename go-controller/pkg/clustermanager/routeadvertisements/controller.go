@@ -1455,8 +1455,12 @@ func (c *Controller) getDPUHostGatewayNextHops(
 	if config.Gateway.Mode != config.GatewayModeShared {
 		return nil, nil
 	}
-	if _, ok := node.Labels[types.OvnDPUHostNodeLabel]; !ok {
-		return nil, nil
+	if _, err := util.GetNodePrimaryDPUHostAddrAnnotation(node); err != nil {
+		if util.IsAnnotationNotSetError(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("%w: failed to parse primary DPU host address annotation for node %q: %w",
+			errConfig, node.Name, err)
 	}
 
 	uplinkName := selectedNetworks.networkUplinks[networkName]
@@ -1911,6 +1915,7 @@ func nodeNeedsUpdate(oldObj, newObj *corev1.Node) bool {
 		// ID allocation determines which nodes advertise the network.
 		oldObj.Annotations[types.UDNLayer2NodeGRLRPTunnelIDAnnotation] != newObj.Annotations[types.UDNLayer2NodeGRLRPTunnelIDAnnotation] ||
 		oldObj.Annotations[util.OvnNodeIfAddr] != newObj.Annotations[util.OvnNodeIfAddr] ||
+		util.NodePrimaryDPUHostAddrAnnotationChanged(oldObj, newObj) ||
 		util.NodeL3GatewayAnnotationChanged(oldObj, newObj) ||
 		util.NodeChassisIDAnnotationChanged(oldObj, newObj) ||
 		util.NodeVTEPsAnnotationChanged(oldObj, newObj)
