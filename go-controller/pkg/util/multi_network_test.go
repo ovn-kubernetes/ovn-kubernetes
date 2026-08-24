@@ -1929,6 +1929,118 @@ func TestValidateNetConfUplinkGatewayMode(t *testing.T) {
 	}
 }
 
+func TestValidateNetConfMACSecurityMode(t *testing.T) {
+	tests := []struct {
+		name               string
+		topology           string
+		role               string
+		subnets            string
+		allowPersistentIPs bool
+		macSecurityMode    string
+		expectedError      string
+	}{
+		{
+			// MAC spoof protection is enabled by default; when empty or unset, it should preserve the current behavior"
+			name:            "empty is accepted. Preserve current behaviour - enable MAC spoof protection",
+			topology:        ovntypes.Layer2Topology,
+			role:            ovntypes.NetworkRoleSecondary,
+			macSecurityMode: "",
+		},
+		{
+			// MAC spoof protection is enabled by default; when enabled it preserve the current behavior"
+			name:            "Enabled is accepted",
+			topology:        ovntypes.Layer2Topology,
+			macSecurityMode: ovntypes.MACSecurityModeEnabled,
+		},
+		{
+			name:            "Disabled on layer2 secondary network is accepted",
+			topology:        ovntypes.Layer2Topology,
+			role:            ovntypes.NetworkRoleSecondary,
+			macSecurityMode: ovntypes.MACSecurityModeDisabled,
+		},
+		{
+			name:            "Disabled on localnet secondary network is accepted",
+			topology:        ovntypes.LocalnetTopology,
+			role:            ovntypes.NetworkRoleSecondary,
+			macSecurityMode: ovntypes.MACSecurityModeDisabled,
+		},
+		{
+			name:            "invalid value is rejected",
+			topology:        ovntypes.Layer2Topology,
+			role:            ovntypes.NetworkRoleSecondary,
+			macSecurityMode: "maybe",
+			expectedError:   "invalid MAC security mode: invalid value, must be one of: [enabled disabled]",
+		},
+		{
+			name:            "Enabled, on primary network is rejected",
+			topology:        ovntypes.Layer3Topology,
+			role:            ovntypes.NetworkRolePrimary,
+			macSecurityMode: ovntypes.MACSecurityModeEnabled,
+			expectedError:   "invalid MAC security mode: only supported on secondary networks",
+		},
+		{
+			name:            "Disabled on primary network is rejected",
+			topology:        ovntypes.Layer2Topology,
+			role:            ovntypes.NetworkRolePrimary,
+			macSecurityMode: ovntypes.MACSecurityModeDisabled,
+			expectedError:   "invalid MAC security mode: only supported on secondary networks",
+		},
+		{
+			name:            "Disabled on layer3 topology is rejected",
+			topology:        ovntypes.Layer3Topology,
+			role:            ovntypes.NetworkRoleSecondary,
+			macSecurityMode: ovntypes.MACSecurityModeDisabled,
+			expectedError:   "invalid MAC security mode: unsupported topology, must be one of [layer2 localnet]",
+		},
+		{
+			name:            "Disabled when IPAM is enabled, subnets are set, is rejected",
+			topology:        ovntypes.Layer2Topology,
+			role:            ovntypes.NetworkRoleSecondary,
+			subnets:         "192.168.1.0/24",
+			macSecurityMode: ovntypes.MACSecurityModeDisabled,
+			expectedError:   "invalid MAC security mode: cannot be used when IPAM is enabled (subnets are specified)",
+		},
+		{
+			name:               "Disabled when IPAM features are set, allowPersistentIPs, is rejected",
+			topology:           ovntypes.Layer2Topology,
+			role:               ovntypes.NetworkRoleSecondary,
+			allowPersistentIPs: true,
+			macSecurityMode:    ovntypes.MACSecurityModeDisabled,
+			expectedError:      "invalid MAC security mode: cannot be used with allowPersistentIPs, which require IPAM to be enabled",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			nadName := "myns/mynetwork"
+			netconf := &ovncnitypes.NetConf{
+				NetConf: cnitypes.NetConf{
+					Name: "mynetwork",
+				},
+				NADName:            nadName,
+				Topology:           test.topology,
+				Role:               test.role,
+				Subnets:            test.subnets,
+				AllowPersistentIPs: test.allowPersistentIPs,
+				MACSecurityMode:    test.macSecurityMode,
+			}
+
+			err := ValidateNetConf(nadName, netconf)
+			if test.expectedError != "" {
+				g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring(test.expectedError)))
+			} else {
+				g.Expect(err).NotTo(gomega.HaveOccurred())
+			}
+		})
+	}
+}
+
+func TestNetInfoMACSecurityMode(t *testing.T) {
+	g := gomega.NewWithT(t)
+	g.Expect((&DefaultNetInfo{}).MACSecurityMode()).To(gomega.Equal(ovntypes.MACSecurityModeEnabled),
+		"default network should always report MAC security as enabled")
+}
+
 func TestNewNetInfo(t *testing.T) {
 	type testConfig struct {
 		desc          string
