@@ -399,7 +399,8 @@ stored per `UplinkState`. `UplinkState` stores only reusable per-node host gatew
 
 `UplinkState.status.conditions` reports independent node-local conditions, and each condition has a single writer.
 The Uplink discovery reconciler owns `Resolved` (published by the DPU side in split DPU mode), the DPU-Host discovery
-reconciler owns `HostDataReady` (split DPU mode only), and a node-level Uplink gateway coordinator owns `GatewayReady`;
+reconciler owns `HostDataReady` (split DPU mode only), a node-level Uplink gateway coordinator owns `GatewayReady`, and
+its DPU-Host counterpart owns `HostGatewayReady` (split DPU mode only);
 a gateway programming failure does not overwrite successful Uplink resolution. Individual CUDN gateway reconcilers do
 not write `GatewayReady` directly.
 
@@ -432,6 +433,14 @@ address for each enabled IP family, so the DPU side can consume the data), and `
 discovery reason (`HostInterfaceNotFound`, `InvalidHostInterface`, `GatewayInfoUnavailable`, `NodeSelectorOverlap`)
 otherwise. Full mode does not publish this condition.
 
+In split DPU mode the `HostGatewayReady` condition reports host-side gateway programming on the DPU-Host, mirroring
+`GatewayReady` on the DPU: the attachment of the selected host interface to the host-side CUDN VRF, including the
+migration of its pre-existing routes into the VRF table, for the complete set of CUDNs active on the Uplink.
+`HostGatewayReady=True` with reason `GatewayConfigured` once host-side programming succeeded for every active CUDN, and
+`HostGatewayReady=False` with the same reasons `GatewayReady` uses (e.g. `UplinkVRFAttachmentFailed` when the interface
+cannot be attached or its routes cannot be migrated) otherwise. Full mode does not publish this condition: the single
+node-level coordinator reports everything through `GatewayReady`.
+
 The `GatewayReady` condition reports aggregate gateway programming for the complete set of CUDNs active on the resolved
 Uplink path on this node. The node-level coordinator is the sole writer of this condition and serializes reconciliation
 of the shared gateway interface, bridge mappings, and OpenFlow state for the aggregate desired configuration.
@@ -461,7 +470,8 @@ The condition uses the following reasons:
 For pending or failure states, `GatewayReady=False` while `Resolved` can remain `True`. Its message contains the number of
 affected active CUDNs and a bounded sample of CUDN names and underlying reasons; full reconciliation errors remain
 available in node logs. Because the programmed gateway is shared state, cluster-manager maps the aggregate non-ready
-state into `UplinksReady=False` for every active CUDN using that Uplink/node pair. When the complete desired configuration
+state of `GatewayReady`, and of `HostGatewayReady` where present, into `UplinksReady=False` for every active CUDN using
+that Uplink/node pair. When the complete desired configuration
 succeeds again, `GatewayReady=True` with reason `GatewayConfigured`. Dynamic CUDNs using the same Uplink on disjoint nodes
 have independent `GatewayReady` conditions in their node-scoped `UplinkState` objects.
 
@@ -675,6 +685,11 @@ then reflects those routes into the CUDN gateway router. This DPU-local VRF is s
 nftables state. For `targetVRF: default` or CUDNs without matching `RouteAdvertisements`, the DPU bridge `LOCAL` interface
 remains in the default VRF and no DPU-local CUDN route-import VRF is created for that CUDN.
 
+In DPU deployments, FRR peering and route import happen on the DPU: BGP-learned routes are not propagated to the
+DPU-Host's CUDN VRF. Host-originated traffic toward the Uplink therefore requires a default gateway route on the
+selected host interface (preserved into the CUDN VRF across enslavement) or a host-side FRR setup; pod traffic toward
+the Uplink is unaffected, since its routes are imported into the gateway router on the DPU.
+
 The DPU-local FRR peering IP is not stored in `UplinkState`. For `targetVRF: auto`, it is expected to be configured on the
 resolved OVS bridge's `LOCAL` interface as local DPU state. OVNKube on the DPU enslaves that `LOCAL` interface to the
 DPU-local route-import VRF and uses that interface for FRR peering. The advertised next-hop for pod routes remains the
@@ -786,7 +801,9 @@ DPU-Host reconciler:
    gateways.
 4. Determine the CUDN's effective routing domain from matching `RouteAdvertisements`. Attach the selected host interface
    to the host-side CUDN VRF only for per-CUDN VRF-Lite isolation; otherwise leave it in the default VRF.
-5. Update this node's `UplinkState.status` with `hostInterfaceName`, `macAddress`, `ipAddresses`, `defaultGateways`, and
+5. Report the aggregate host-side gateway programming, including the VRF attachment and the migration of the interface's
+   pre-existing routes, through the `HostGatewayReady` condition.
+6. Update this node's `UplinkState.status` with `hostInterfaceName`, `macAddress`, `ipAddresses`, `defaultGateways`, and
    the `HostDataReady` condition. The DPU-Host does not write the `Resolved` condition; the DPU side owns it.
 
 DPU-side reconciler:
@@ -813,7 +830,7 @@ Although both DPU-Host and DPU-side reconcilers update the same `UplinkState`, u
 frequency. The DPU side waits for the DPU-Host to publish host-side gateway data, especially `status.macAddress`, before
 resolving and publishing DPU-local bridge data such as `status.ovsBridge.name`. Implementations should use status patches
 or server-side apply field ownership for the fields each side owns, and each status condition has a single writer
-(`HostDataReady` on the DPU-Host, `Resolved` and `GatewayReady` on the DPU), so normal retry-on-conflict handling is
+(`HostDataReady` and `HostGatewayReady` on the DPU-Host, `Resolved` and `GatewayReady` on the DPU), so normal retry-on-conflict handling is
 sufficient and the object cannot become a hot write target.
 
 This avoids publishing PF IDs, host PCI addresses, or DPU-local bridge names in the `Uplink` spec. The DPU-Host publishes

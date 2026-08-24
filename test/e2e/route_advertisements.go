@@ -4433,7 +4433,12 @@ func createRouteAdvertisements(
 		return fmt.Errorf("failed to create RouteAdvertisements: %w", err)
 	}
 	ictx.AddCleanUpFn(func() error {
-		return raClient.K8sV1().RouteAdvertisements().Delete(context.Background(), name, metav1.DeleteOptions{})
+		err := raClient.K8sV1().RouteAdvertisements().Delete(context.Background(), name, metav1.DeleteOptions{})
+		if apierrors.IsNotFound(err) {
+			// tolerate tests that delete the RouteAdvertisements themselves
+			return nil
+		}
+		return err
 	})
 	var lastReadyErr error
 	if err := wait.PollUntilContextTimeout(
@@ -4553,7 +4558,7 @@ func checkRouteInFRR(node corev1.Node, podCIDR, routerContainerName string, isIP
 	}, 30*time.Second).Should(gomega.BeTrue(), "route for %s via %s not found on %s", podCIDR, nodeIP[0], routerContainerName)
 }
 
-func hasRouteInCUDNVRF(node corev1.Node, cudnName, cidr, nextHop string) (bool, error) {
+func hasRouteInCUDNVRF(node corev1.Node, cudnName, cidr string, nextHops ...string) (bool, error) {
 	if len(cudnName) > 15 {
 		return false, fmt.Errorf("CUDN name %q is too long to be used as the Linux VRF device name", cudnName)
 	}
@@ -4572,7 +4577,7 @@ func hasRouteInCUDNVRF(node corev1.Node, cudnName, cidr, nextHop string) (bool, 
 		return false, fmt.Errorf("failed to parse routes from CUDN VRF %s on node %s: %w; output: %s", cudnName, node.Name, err, out)
 	}
 	framework.Logf("Routes in CUDN VRF %s on node %s for %s: %s", cudnName, node.Name, cidr, out)
-	return hasBGPRoute(routes, cidr, nextHop), nil
+	return hasBGPRoute(routes, cidr, nextHops...), nil
 }
 
 type kernelRoute struct {
@@ -4586,22 +4591,24 @@ type kernelRouteNexthop struct {
 	Gateway string `json:"gateway"`
 }
 
-func hasBGPRoute(routes []kernelRoute, cidr, nextHop string) bool {
+func hasBGPRoute(routes []kernelRoute, cidr string, nextHops ...string) bool {
 	for _, route := range routes {
-		if route.Dst == cidr && route.Protocol == "bgp" && routeHasGateway(route, nextHop) {
+		if route.Dst == cidr && route.Protocol == "bgp" && routeHasGateway(route, nextHops...) {
 			return true
 		}
 	}
 	return false
 }
 
-func routeHasGateway(route kernelRoute, nextHop string) bool {
-	if route.Gateway == nextHop {
-		return true
-	}
-	for _, nexthop := range route.Nexthops {
-		if nexthop.Gateway == nextHop {
+func routeHasGateway(route kernelRoute, nextHops ...string) bool {
+	for _, nextHop := range nextHops {
+		if route.Gateway == nextHop {
 			return true
+		}
+		for _, nexthop := range route.Nexthops {
+			if nexthop.Gateway == nextHop {
+				return true
+			}
 		}
 	}
 	return false

@@ -365,12 +365,12 @@ func newOVSDBServer(sockPath string, dbModel model.ClientDBModel, schema ovsdb.D
 
 	dbMod, errs := model.NewDatabaseModel(schema, dbModel)
 	if len(errs) > 0 {
-		log.Fatal(errs)
+		return nil, fmt.Errorf("failed to create database model for %s: %v", schema.Name, errs)
 	}
 
 	servMod, errs := model.NewDatabaseModel(serverSchema, serverDBModel)
 	if len(errs) > 0 {
-		log.Fatal(errs)
+		return nil, fmt.Errorf("failed to create database model for %s: %v", serverSchema.Name, errs)
 	}
 
 	s, err := server.NewOvsdbServer(db, nil, dbMod, servMod)
@@ -378,15 +378,13 @@ func newOVSDBServer(sockPath string, dbModel model.ClientDBModel, schema ovsdb.D
 		return nil, err
 	}
 
-	// Populate the _Server database table
-	sid := fmt.Sprintf("%04x", cryptorand.Uint32())
+	// Populate the standard _Server metadata for this standalone test database.
 	serverData := []TestData{
 		&serverdb.Database{
 			Name:      dbModel.Name(),
 			Connected: true,
 			Leader:    true,
-			Model:     serverdb.DatabaseModelClustered,
-			Sid:       &sid,
+			Model:     serverdb.DatabaseModelStandalone,
 		},
 	}
 	if err := updateData(db, servMod, serverData, false); err != nil {

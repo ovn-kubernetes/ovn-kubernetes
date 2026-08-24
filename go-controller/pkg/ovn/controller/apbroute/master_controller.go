@@ -23,7 +23,6 @@ import (
 	adminpolicybasedrouteapply "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/applyconfiguration/adminpolicybasedroute/v1"
 	adminpolicybasedrouteclient "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/clientset/versioned"
 	adminpolicybasedrouteinformer "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/informers/externalversions/adminpolicybasedroute/v1"
-	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
@@ -38,7 +37,7 @@ type ExternalGatewayMasterController struct {
 	nbClient                 *northBoundClient
 	ExternalGWRouteInfoCache *ExternalGatewayRouteInfoCache
 
-	zoneID string
+	nodeName string
 }
 
 func NewExternalMasterController(
@@ -51,14 +50,10 @@ func NewExternalMasterController(
 	nbClient libovsdbclient.Client,
 	addressSetFactory addressset.AddressSetFactory,
 	controllerName string,
-	zoneID string,
+	nodeName string,
 ) (*ExternalGatewayMasterController, error) {
 
 	externalGWRouteInfo := NewExternalGatewayRouteInfoCache()
-	zone, err := libovsdbutil.GetNBZone(nbClient)
-	if err != nil {
-		return nil, err
-	}
 	nbCli := &northBoundClient{
 		routeLister:              apbRouteInformer.Lister(),
 		nodeLister:               nodeLister,
@@ -66,7 +61,7 @@ func NewExternalMasterController(
 		nbClient:                 nbClient,
 		addressSetFactory:        addressSetFactory,
 		controllerName:           controllerName,
-		zone:                     zone,
+		nodeName:                 nodeName,
 		externalGatewayRouteInfo: externalGWRouteInfo,
 	}
 
@@ -74,7 +69,7 @@ func NewExternalMasterController(
 		apbRoutePolicyClient:     apbRoutePolicyClient,
 		ExternalGWRouteInfoCache: externalGWRouteInfo,
 		nbClient:                 nbCli,
-		zoneID:                   zoneID,
+		nodeName:                 nodeName,
 	}
 	c.mgr = newExternalPolicyManager(
 		stopCh,
@@ -115,7 +110,7 @@ func (c *ExternalGatewayMasterController) updateStatusAPBExternalRoute(policyNam
 	}
 
 	// get object from the informer cache. No need to get the object from the kube-apiserver, since patch
-	// doesn't check resource versions, and no one else can update status message owned by current zone.
+	// doesn't check resource versions, and no one else can update the status message owned by this node.
 	routePolicy, err := c.mgr.routeLister.Get(policyName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -126,9 +121,9 @@ func (c *ExternalGatewayMasterController) updateStatusAPBExternalRoute(policyNam
 	}
 	newMsg := fmt.Sprintf("configured external gateway IPs: %s", strings.Join(sets.List(gwIPs), ","))
 	if syncError != nil {
-		newMsg = fmt.Sprintf("%s %s: %v", c.zoneID, types.APBRouteErrorMsg, syncError.Error())
+		newMsg = fmt.Sprintf("%s %s: %v", c.nodeName, types.APBRouteErrorMsg, syncError.Error())
 	}
-	newMsg = types.GetZoneStatus(c.zoneID, newMsg)
+	newMsg = types.GetZoneStatus(c.nodeName, newMsg)
 	needsUpdate := true
 	for _, message := range routePolicy.Status.Messages {
 		if message == newMsg {
@@ -143,7 +138,7 @@ func (c *ExternalGatewayMasterController) updateStatusAPBExternalRoute(policyNam
 
 	applyOptions := metav1.ApplyOptions{
 		Force:        true,
-		FieldManager: c.zoneID,
+		FieldManager: c.nodeName,
 	}
 	applyObj := adminpolicybasedrouteapply.AdminPolicyBasedExternalRoute(policyName).
 		WithStatus(adminpolicybasedrouteapply.AdminPolicyBasedRouteStatus().

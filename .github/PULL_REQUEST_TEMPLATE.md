@@ -18,6 +18,18 @@ _If PR is about `failing-tests or flakes`, please post the related issues/tests 
 -->
 Fixes #
 
+## Release Notes
+<!--
+REQUIRED. Add a short, user-facing release note in the block below describing any
+user-visible change (new/changed/removed flags or APIs, behavior changes,
+deprecations, etc.).
+Write `NONE` if this PR has no user-facing impact (tests, refactors, CI,
+internal-only changes) — `NONE` is a valid entry.
+-->
+```release-note
+NONE
+```
+
 ## Additional Information for reviewers
 <!--
 What exactly did you change - you may also defer to information

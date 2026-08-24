@@ -124,7 +124,6 @@ configuration options when deploying. Use `./kind.sh -h` to see the latest optio
 usage: kind-helm.sh [--delete]
        [ -cf  | --config-file <file> ]
        [ -kt  | --keep-taint ]
-       [ -ha  | --ha-enabled ]
        [ -me  | --multicast-enabled ]
        [ -ho  | --hybrid-enabled ]
        [ -el  | --ovn-empty-lb-events ]
@@ -186,7 +185,6 @@ usage: kind-helm.sh [--delete]
 --disable-ovnkube-identity                    Disable per-node cert and ovnkube-identity webhook. DEFAULT: Enabled
 -dgb | --dummy-gateway-bridge                 Use a dummy instead of a real gateway bridge. DEFAULT: Disabled
 -gm  | --gateway-mode                         Configure the cluster gateway mode (local|shared). DEFAULT: shared
--ha  | --ha-enabled                           Enable high availability. DEFAULT: HA Disabled
 -n4  | --no-ipv4                              Disable IPv4. DEFAULT: IPv4 Enabled.
 -i6  | --ipv6                                 Enable IPv6. DEFAULT: IPv6 Disabled.
 -wk  | --num-workers                          Number of worker nodes. DEFAULT: 2 workers

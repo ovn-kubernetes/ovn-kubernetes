@@ -827,9 +827,24 @@ func uplinkNodeFailureMessage(failures []uplinkNodeFailure, selectedNodes int) s
 }
 
 func cudnUplinkStateGatewayNotReadyReason(state *uplinkv1alpha1.UplinkState) string {
+	if reason := cudnUplinkStateGatewayConditionNotReadyReason(
+		state, uplinkv1alpha1.UplinkStateConditionGatewayReady); reason != "" {
+		return reason
+	}
+	// In split-DPU deployments, recognizable by the DPU-host-owned
+	// HostDataReady condition, host-side gateway programming is reported
+	// separately through HostGatewayReady and must be ready as well.
+	if meta.FindStatusCondition(state.Status.Conditions, uplinkv1alpha1.UplinkStateConditionHostDataReady) != nil {
+		return cudnUplinkStateGatewayConditionNotReadyReason(
+			state, uplinkv1alpha1.UplinkStateConditionHostGatewayReady)
+	}
+	return ""
+}
+
+func cudnUplinkStateGatewayConditionNotReadyReason(state *uplinkv1alpha1.UplinkState, conditionType string) string {
 	condition := meta.FindStatusCondition(
 		state.Status.Conditions,
-		uplinkv1alpha1.UplinkStateConditionGatewayReady,
+		conditionType,
 	)
 	if condition == nil {
 		return reasonUplinksNotReady

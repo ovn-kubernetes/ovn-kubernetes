@@ -118,7 +118,12 @@ It is a recommended best practice to keep your changes as logically grouped as
 possible within individual commits. If while you're developing you prefer doing
 a number of commits that are "checkpoints" and don't represent a single logical
 change, please squash those together before asking for a review.
+
 When addressing review comments, please perform an interactive rebase and edit commits directly rather than adding new commits with messages like "Fix review comments".
+After force-pushing the changes, GitHub shows a "force-pushed" entry with a comparison link, that allows reviewers to check the incremental diff.
+Avoid mixing edited commits and a rebase within the same force-push, as that would make the incremental diff harder to read for reviewers. Push the rebased branch separately.
+
+To help reviewers, you can also add a comment including the comparison link, to make sure it persists (GitHub sometimes consolidates several diffs into a single one).
 
 ## Commit message guidelines
 

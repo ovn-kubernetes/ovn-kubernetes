@@ -35,7 +35,6 @@ var _ = ginkgo.Describe("OVN Pod Operations with network segmentation", func() {
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
-
 		app = cli.NewApp()
 		app.Name = "test"
 		app.Flags = config.Flags
@@ -43,7 +42,7 @@ var _ = ginkgo.Describe("OVN Pod Operations with network segmentation", func() {
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
 		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 
-		fakeOvn = NewFakeOVN(true)
+		fakeOvn = NewFakeOVN(true, node1Name)
 		initialDB = libovsdbtest.TestSetup{
 			NBData: []libovsdbtest.TestData{
 				&nbdb.LogicalSwitch{

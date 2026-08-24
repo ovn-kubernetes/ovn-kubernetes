@@ -1103,7 +1103,6 @@ var _ = ginkgo.Describe("test e2e inter-node connectivity between worker nodes",
 		var ciWorkerNodeDst string
 		dstPingPodName := "e2e-dst-ping-pod"
 		command := []string{"bash", "-c", "sleep 20000"}
-		// non-ha ci mode runs a named set of nodes with a prefix of ovn-worker
 		nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 2)
 		framework.ExpectNoError(err)
 		if len(nodes.Items) < 2 {

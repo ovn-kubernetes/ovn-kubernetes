@@ -26,6 +26,16 @@ func Parser() *typed.Parser {
 var parserOnce sync.Once
 var parser *typed.Parser
 var schemaYAML = typed.YAMLObject(`types:
+- name: com.github.ovn-kubernetes.ovn-kubernetes.go-controller.pkg.crd.uplink.v1alpha1.HostFunction
+  map:
+    fields:
+    - name: pfID
+      type:
+        scalar: numeric
+      default: 0
+    - name: vfID
+      type:
+        scalar: numeric
 - name: com.github.ovn-kubernetes.ovn-kubernetes.go-controller.pkg.crd.uplink.v1alpha1.OVSBridgeStatus
   map:
     fields:
@@ -126,6 +136,9 @@ var schemaYAML = typed.YAMLObject(`types:
           elementType:
             scalar: string
           elementRelationship: atomic
+    - name: hostFunction
+      type:
+        namedType: com.github.ovn-kubernetes.ovn-kubernetes.go-controller.pkg.crd.uplink.v1alpha1.HostFunction
     - name: hostInterfaceName
       type:
         scalar: string

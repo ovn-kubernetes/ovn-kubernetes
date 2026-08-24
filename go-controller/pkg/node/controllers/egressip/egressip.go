@@ -1095,7 +1095,7 @@ func (c *Controller) migrateFromAddrLabelToAnnotation() error {
 	}
 	links, err := util.GetNetLinkOps().LinkList()
 	if err != nil {
-		return fmt.Errorf("failed to ensure IP is correctly configured becase we could not list links: %v", err)
+		return fmt.Errorf("failed to ensure IP is correctly configured because we could not list links: %v", err)
 	}
 	assignedAddresses := make([]string, 0)
 	for _, link := range links {

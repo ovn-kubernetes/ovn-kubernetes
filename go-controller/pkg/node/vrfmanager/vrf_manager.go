@@ -4,6 +4,8 @@
 package vrfmanager
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sync"
@@ -11,12 +13,15 @@ import (
 
 	"github.com/containernetworking/plugins/pkg/ns"
 	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/routemanager"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 )
@@ -248,7 +253,7 @@ func (vrfm *Controller) sync(vrf vrf) error {
 			return fmt.Errorf("failed to check if %s is slave of VRF device %s, err: %v", managedSlave, vrfLink.Attrs().Name, err)
 		}
 		if !alreadyEnslaved {
-			if err = enslaveInterfaceToVRF(vrf.name, managedSlave); err != nil {
+			if err = enslaveInterfaceToVRF(vrf.name, managedSlave, vrf.table); err != nil {
 				return fmt.Errorf("failed to enslave interface %s into VRF device: %s, err: %v", managedSlave, vrf.name, err)
 			}
 		}
@@ -273,8 +278,20 @@ func newVRF(name string, table uint32, slaveInterface string, routes []netlink.R
 		name:          name,
 		table:         table,
 		managedSlaves: managedSlaves,
-		routes:        routes,
+		routes:        markOVNKRoutes(routes),
 	}
+}
+
+// markOVNKRoutes tags the routes with the OVN-Kubernetes protocol, marking
+// their ownership in the kernel: route migration across VRF enslavement
+// relies on the protocol to tell OVN-Kubernetes routes apart from
+// third-party ones, surviving restarts of this process.
+func markOVNKRoutes(routes []netlink.Route) []netlink.Route {
+	routes = slices.Clone(routes)
+	for i := range routes {
+		routes[i].Protocol = netlink.RouteProtocol(types.OVNKProtocol)
+	}
+	return routes
 }
 
 // AddVRF adds a VRF device into the node.
@@ -378,11 +395,13 @@ func (vrfm *Controller) DeleteVRFSlave(name string, slaveInterface string) error
 	if !ok {
 		return fmt.Errorf("failed to find VRF %s", name)
 	}
-	vrfDev.managedSlaves.Delete(slaveInterface)
-	if err = releaseInterfaceFromVRF(slaveInterface, vrfLink.Attrs().Index); err != nil {
+	if err = releaseInterfaceFromVRF(slaveInterface, vrfLink.Attrs().Index, vrfDev.table); err != nil {
 		return fmt.Errorf("failed to release interface %s from VRF %s, err: %v",
 			slaveInterface, name, err)
 	}
+	// Stop managing the slave only once released, so that a failed release
+	// leaves it managed and a later retry still releases it.
+	vrfDev.managedSlaves.Delete(slaveInterface)
 	return vrfm.sync(vrfDev)
 }
 
@@ -401,7 +420,7 @@ func (vrfm *Controller) AddVRFRoutes(name string, routes []netlink.Route) error 
 		return fmt.Errorf("failed to find VRF %s", name)
 	}
 
-	vrfDev.routes = append(vrfDev.routes, routes...)
+	vrfDev.routes = append(vrfDev.routes, markOVNKRoutes(routes)...)
 
 	return vrfm.sync(vrfDev)
 }
@@ -425,9 +444,16 @@ func (vrfm *Controller) DeleteVRFRoutes(name string, routes []netlink.Route) err
 		Dst       string
 		Table     int
 	}
-	deleteRoutesRequested := sets.New[route]()
+	deletedRoutes := sets.New[route]()
 	for _, r := range routes {
-		deleteRoutesRequested.Insert(route{
+		// Delete the explicitly requested kernel route even when it is not
+		// present in the tracked VRF routes, e.g. a route discovered in the
+		// kernel by its protocol after a restart. routeManager.Del also
+		// forgets a tracked route with the same key when one exists.
+		if err = vrfm.routeManager.Del(r); err != nil {
+			break
+		}
+		deletedRoutes.Insert(route{
 			LinkIndex: r.LinkIndex,
 			Dst:       r.Dst.String(),
 			Table:     r.Table,
@@ -435,20 +461,12 @@ func (vrfm *Controller) DeleteVRFRoutes(name string, routes []netlink.Route) err
 	}
 
 	vrf.routes = slices.DeleteFunc(vrf.routes, func(r netlink.Route) bool {
-		if err != nil {
-			return false
+		routeKey := route{
+			LinkIndex: r.LinkIndex,
+			Dst:       r.Dst.String(),
+			Table:     r.Table,
 		}
-		delete := deleteRoutesRequested.Has(
-			route{
-				LinkIndex: r.LinkIndex,
-				Dst:       r.Dst.String(),
-				Table:     r.Table,
-			})
-		if !delete {
-			return false
-		}
-		err = vrfm.routeManager.Del(r)
-		return err == nil
+		return deletedRoutes.Has(routeKey)
 	})
 	vrfm.vrfs[vrfLink.Attrs().Index] = vrf
 	return err
@@ -484,9 +502,10 @@ func (vrfm *Controller) repair(validVRFs sets.Set[string]) error {
 			// vrf not stale
 			continue
 		}
-		err = util.GetNetLinkOps().LinkDelete(link)
+		err = vrfm.deleteVRF(link)
 		if err != nil {
 			klog.Errorf("VRF Manager: error deleting stale VRF device %s, err: %v", name, err)
+			continue
 		}
 		delete(vrfm.vrfs, vrf.Index)
 	}
@@ -530,7 +549,38 @@ func (vrfm *Controller) DeleteVRF(name string) (err error) {
 }
 
 func (vrfm *Controller) deleteVRF(link netlink.Link) error {
-	return util.GetNetLinkOps().LinkDelete(link)
+	vrfLink, isVRF := link.(*netlink.Vrf)
+	if !isVRF {
+		return fmt.Errorf("node has another non VRF device with same name %s, refusing to delete it",
+			link.Attrs().Name)
+	}
+	// Release enslaved interfaces first so that their routes are preserved
+	// into the main table; deleting the VRF device would otherwise purge them
+	// along with the VRF routing table. Slaves and table are derived from
+	// kernel state rather than the cache, so that this also covers VRF
+	// devices the cache does not know about (e.g. a stale VRF repaired after
+	// a restart) or caches with a different, desired table id (recreation on
+	// table conflict).
+	links, err := util.GetNetLinkOps().LinkList()
+	if err != nil {
+		return fmt.Errorf("failed to list links to release slaves of VRF device %s, err: %w", vrfLink.Name, err)
+	}
+	var errs []error
+	for _, l := range links {
+		if l.Attrs().MasterIndex != vrfLink.Index {
+			continue
+		}
+		if err := releaseInterfaceFromVRF(l.Attrs().Name, vrfLink.Index, vrfLink.Table); err != nil {
+			errs = append(errs, fmt.Errorf("failed to release interface %s from VRF %s, err: %w",
+				l.Attrs().Name, vrfLink.Name, err))
+		}
+	}
+	if len(errs) > 0 {
+		// Do not delete the device while interfaces are still enslaved:
+		// deletion would purge their routes. Callers retry the deletion.
+		return utilerrors.Join(errs...)
+	}
+	return util.GetNetLinkOps().LinkDelete(vrfLink)
 }
 
 // isInterfaceSlaveOfVRF checks if a specific interface is enslaved to a VRF
@@ -545,7 +595,7 @@ func isInterfaceSlaveOfVRF(ifName string, vrfIndex int) (bool, error) {
 	return link.Attrs().MasterIndex == vrfIndex, nil
 }
 
-func enslaveInterfaceToVRF(vrfName, ifName string) error {
+func enslaveInterfaceToVRF(vrfName, ifName string, table uint32) error {
 	klog.V(5).Infof("Enslaving interface %s to VRF: %s", ifName, vrfName)
 	iface, err := util.GetNetLinkOps().LinkByName(ifName)
 	if err != nil {
@@ -555,14 +605,42 @@ func enslaveInterfaceToVRF(vrfName, ifName string) error {
 	if err != nil {
 		return fmt.Errorf("failed to retrieve VRF device %s, err: %v", vrfName, err)
 	}
+	// Changing the interface master makes the kernel purge every FIB entry
+	// referencing the interface, regenerating only local and connected routes
+	// in the VRF table. Routes installed by other agents (e.g. a DHCP default
+	// route on an Uplink interface) would be silently destroyed, so capture
+	// them first and restore them into the VRF table after enslavement.
+	routes, err := listRoutesForLink(iface, unix.RT_TABLE_MAIN)
+	if err != nil {
+		return fmt.Errorf("failed to list routes of interface %s before enslaving to VRF %s: %v", ifName, vrfName, err)
+	}
 	err = util.GetNetLinkOps().LinkSetMaster(iface, vrfLink)
 	if err != nil {
 		return fmt.Errorf("failed to enslave interface %s to VRF %s: %v", ifName, vrfName, err)
 	}
+	if restoreErr := restoreRoutesToTable(routes, table); restoreErr != nil {
+		// Without its routes the interface is not functional in the VRF, and
+		// nothing could recover them later: the captured routes are the only
+		// remaining copy once the kernel purged the originals. Undo the
+		// enslavement and put the routes back in the main table, so that the
+		// returned error surfaces the failure and the next reconcile retries
+		// the whole enslavement from a clean state.
+		if err := util.GetNetLinkOps().LinkSetNoMaster(iface); err != nil {
+			return utilerrors.Join(
+				fmt.Errorf("failed to restore routes of interface %s into VRF %s: %w", ifName, vrfName, restoreErr),
+				fmt.Errorf("failed to undo the enslavement of interface %s: %w", ifName, err))
+		}
+		if err := restoreRoutesToTable(routes, unix.RT_TABLE_MAIN); err != nil {
+			klog.Errorf("VRF Manager: failed to restore routes of interface %s back to the main table "+
+				"after undoing its enslavement: %v", ifName, err)
+		}
+		return fmt.Errorf("failed to restore routes of interface %s into VRF %s, undid the enslavement: %w",
+			ifName, vrfName, restoreErr)
+	}
 	return nil
 }
 
-func releaseInterfaceFromVRF(ifName string, vrfIndex int) error {
+func releaseInterfaceFromVRF(ifName string, vrfIndex int, table uint32) error {
 	iface, err := util.GetNetLinkOps().LinkByName(ifName)
 	if err != nil {
 		if util.GetNetLinkOps().IsLinkNotFoundError(err) {
@@ -574,5 +652,139 @@ func releaseInterfaceFromVRF(ifName string, vrfIndex int) error {
 		return nil
 	}
 	klog.V(5).Infof("Releasing interface %s from VRF", ifName)
-	return util.GetNetLinkOps().LinkSetNoMaster(iface)
+	// Releasing the interface from the VRF purges its routes from the VRF
+	// table just like enslaving purged them from the main table. Capture them
+	// and restore them into the main table; the routes that ovn-kubernetes
+	// itself programmed are skipped by their protocol.
+	routes, err := listRoutesForLink(iface, int(table))
+	if err != nil {
+		return fmt.Errorf("failed to list routes of interface %s before releasing from VRF: %v", ifName, err)
+	}
+	if err = util.GetNetLinkOps().LinkSetNoMaster(iface); err != nil {
+		return err
+	}
+	// Log-only: the release already happened, and a returned error could not
+	// be retried meaningfully since the captured routes would be gone.
+	if err = restoreRoutesToTable(routes, unix.RT_TABLE_MAIN); err != nil {
+		klog.Warningf("VRF Manager: failed to restore routes of interface %s released from VRF: %v", ifName, err)
+	}
+	return nil
+}
+
+// listRoutesForLink returns the routes of both IP families that reference the
+// given link in the given routing table.
+func listRoutesForLink(link netlink.Link, table int) ([]netlink.Route, error) {
+	// Filter by interface in code rather than with RT_FILTER_OIF: the kernel
+	// filter only compares the top-level link index, which is 0 for
+	// multipath routes (e.g. static ECMP gateway routes through the
+	// interface), whose interfaces are carried in the nexthops instead.
+	// Multipath routes spanning other interfaces as well are left out: they
+	// cannot follow the interface across routing tables.
+	filter := &netlink.Route{Table: table}
+	routes, err := util.GetNetLinkOps().RouteListFiltered(netlink.FAMILY_ALL, filter, netlink.RT_FILTER_TABLE)
+	if err != nil {
+		return nil, err
+	}
+	return util.FilterRoutesByIfIndex(routes, link.Attrs().Index), nil
+}
+
+// shouldSkipRouteMigration returns true for routes whose owner programs them
+// per routing table on its own: OVN-Kubernetes (and OVN) program their routes
+// in the tables they belong to, the kernel regenerates its routes after a
+// master change, and routing daemons (FRR/zebra and friends) install and
+// withdraw their routes in the routing domain they peer in, so a migrated
+// copy would be a stale duplicate that no one manages.
+func shouldSkipRouteMigration(route netlink.Route) bool {
+	switch int(route.Protocol) {
+	case types.OVNKProtocol, unix.RTPROT_OVN,
+		unix.RTPROT_KERNEL, unix.RTPROT_ZEBRA, unix.RTPROT_BGP, unix.RTPROT_OSPF,
+		unix.RTPROT_ISIS, unix.RTPROT_RIP, unix.RTPROT_EIGRP, unix.RTPROT_BABEL:
+		return true
+	}
+	return false
+}
+
+// restoreRoutesToTable re-adds routes into the given routing table, preserving
+// all their attributes. Routes that their owner reprograms per routing table
+// are skipped. Failures are joined and returned so that the caller can decide
+// whether they are fatal for the master change they follow.
+func restoreRoutesToTable(routes []netlink.Route, table uint32) error {
+	// Restore routes without a gateway first: a gateway route is only
+	// accepted once the route covering its gateway is in place. The covering
+	// route is usually a connected route that the kernel regenerates on its
+	// own, but e.g. a DHCP client serving an off-subnet gateway installs a
+	// host route toward it, and that one is migrated like any other.
+	routes = slices.Clone(routes)
+	slices.SortStableFunc(routes, func(a, b netlink.Route) int {
+		gatewayRoutes := func(r netlink.Route) int {
+			if len(r.Gw) > 0 {
+				return 1
+			}
+			for _, nh := range r.MultiPath {
+				if len(nh.Gw) > 0 {
+					return 1
+				}
+			}
+			return 0
+		}
+		return gatewayRoutes(a) - gatewayRoutes(b)
+	})
+	var errs []error
+	for _, route := range routes {
+		if shouldSkipRouteMigration(route) {
+			continue
+		}
+		route.Table = int(table)
+		// Keep only the configuration flags relevant to route installation:
+		// the kernel rejects requests that carry its own state flags, e.g.
+		// RTNH_F_LINKDOWN captured from a carrier-down interface. Multipath
+		// nexthops carry their own flags; copy them before masking, the
+		// captured originals are shared with the caller.
+		route.Flags &= unix.RTNH_F_ONLINK
+		if len(route.MultiPath) > 0 {
+			nexthops := make([]*netlink.NexthopInfo, 0, len(route.MultiPath))
+			for _, nexthop := range route.MultiPath {
+				nexthopCopy := *nexthop
+				nexthopCopy.Flags &= unix.RTNH_F_ONLINK
+				nexthops = append(nexthops, &nexthopCopy)
+			}
+			route.MultiPath = nexthops
+		}
+		if err := addRouteWithRetry(&route); err != nil {
+			if util.GetNetLinkOps().IsAlreadyExistsError(err) {
+				// A route with the same kernel key is already in the table
+				// and wins: nothing was added.
+				klog.V(5).Infof("VRF Manager: route %v already present in table %d, not restored", route, table)
+				continue
+			}
+			errs = append(errs, fmt.Errorf("failed to restore route %v into table %d: %w", route, table, err))
+			continue
+		}
+		klog.V(5).Infof("VRF Manager: restored route %v into table %d", route, table)
+	}
+	return utilerrors.Join(errs...)
+}
+
+const (
+	// routeRestoreTimeout bounds how long a route restore is retried while
+	// the kernel deems the route's gateway unreachable. It has to cover
+	// duplicate address detection (about a second with the default
+	// dad_transmits) plus the addrconf work queue latency, with headroom for
+	// loaded nodes.
+	routeRestoreTimeout      = 4 * time.Second
+	routeRestorePollInterval = 100 * time.Millisecond
+)
+
+// addRouteWithRetry adds the route, retrying briefly while the kernel deems
+// its gateway unreachable: IPv6 connected routes are regenerated
+// asynchronously after a master change, so a gateway route restored right
+// after it can transiently fail the kernel's reachability validation.
+func addRouteWithRetry(route *netlink.Route) error {
+	var err error
+	_ = wait.PollUntilContextTimeout(context.Background(), routeRestorePollInterval, routeRestoreTimeout, true,
+		func(context.Context) (bool, error) {
+			err = util.GetNetLinkOps().RouteAdd(route)
+			return err == nil || !(errors.Is(err, unix.EHOSTUNREACH) || errors.Is(err, unix.ENETUNREACH)), nil
+		})
+	return err
 }

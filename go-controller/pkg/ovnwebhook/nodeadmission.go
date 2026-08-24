@@ -18,7 +18,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	hotypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
@@ -48,13 +47,11 @@ var commonNodeAnnotationChecks = map[string]checkNodeAnnot{
 		return nil
 	},
 	util.OvnNodeZoneName: func(v annotationChange, nodeName string) error {
-		// it is allowed for the annotation to be set to "global" or <nodeName> initially
-		if (v.action == added || v.action == changed) &&
-			(v.value == types.OvnDefaultZone || v.value == nodeName) {
+		if (v.action == added || v.action == changed) && v.value == nodeName {
 			return nil
 		}
 
-		return fmt.Errorf("%s can only be set to %s or %s, it cannot be removed", util.OvnNodeZoneName, types.OvnDefaultZone, nodeName)
+		return fmt.Errorf("%s can only be set to %s, it cannot be removed", util.OvnNodeZoneName, nodeName)
 	},
 	util.OVNNodeEncapIPs: nil,
 	util.OVNNodeVTEPs:    nil,

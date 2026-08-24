@@ -5,7 +5,6 @@ package util
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -570,6 +569,15 @@ func RunOVNSBAppCtl(args ...string) (string, string, error) {
 	return strings.Trim(strings.TrimSpace(stdout.String()), "\""), stderr.String(), err
 }
 
+// RunOVNNorthAppCtlWithTimeout runs an 'ovs-appctl -t ovn-northd command' with a
+// --timeout so the subprocess self-terminates instead of blocking indefinitely on
+// a busy daemon.
+func RunOVNNorthAppCtlWithTimeout(timeout int, args ...string) (string, string, error) {
+	cmdArgs := []string{fmt.Sprintf("--timeout=%d", timeout)}
+	cmdArgs = append(cmdArgs, args...)
+	return RunOVNNorthAppCtl(cmdArgs...)
+}
+
 // RunOVNNorthAppCtl runs an 'ovs-appctl -t ovn-northd command'.
 // TODO: Currently no module is invoking this function, will need to consider adding an unit test when actively used
 func RunOVNNorthAppCtl(args ...string) (string, string, error) {
@@ -587,6 +595,15 @@ func RunOVNNorthAppCtl(args ...string) (string, string, error) {
 	return strings.Trim(strings.TrimSpace(stdout.String()), "\""), stderr.String(), err
 }
 
+// RunOVNControllerAppCtlWithTimeout runs an 'ovs-appctl -t ovn-controller.pid.ctl
+// command' with a --timeout so the subprocess self-terminates instead of blocking
+// indefinitely on a busy daemon.
+func RunOVNControllerAppCtlWithTimeout(timeout int, args ...string) (string, string, error) {
+	cmdArgs := []string{fmt.Sprintf("--timeout=%d", timeout)}
+	cmdArgs = append(cmdArgs, args...)
+	return RunOVNControllerAppCtl(cmdArgs...)
+}
+
 // RunOVNControllerAppCtl runs an 'ovs-appctl -t ovn-controller.pid.ctl command'.
 func RunOVNControllerAppCtl(args ...string) (string, string, error) {
 	getSocketPath := func() ([]string, error) {
@@ -601,6 +618,15 @@ func RunOVNControllerAppCtl(args ...string) (string, string, error) {
 	}
 	stdout, stderr, err := runOVNretry(runner.ovnappctlPath, nil, getSocketPath, args...)
 	return strings.Trim(strings.TrimSpace(stdout.String()), "\""), stderr.String(), err
+}
+
+// RunOvsVswitchdAppCtlWithTimeout runs an 'ovs-appctl -t ovs-vswitchd.pid.ctl command'
+// with a --timeout so the subprocess self-terminates instead of blocking indefinitely
+// on a busy daemon.
+func RunOvsVswitchdAppCtlWithTimeout(timeout int, args ...string) (string, string, error) {
+	cmdArgs := []string{fmt.Sprintf("--timeout=%d", timeout)}
+	cmdArgs = append(cmdArgs, args...)
+	return RunOvsVswitchdAppCtl(cmdArgs...)
 }
 
 // RunOvsVswitchdAppCtl runs an 'ovs-appctl -t /var/run/openvsiwthc/ovs-vswitchd.pid.ctl command'
@@ -809,62 +835,6 @@ func GetOpenFlowPorts(bridgeName string, namedPorts bool) ([]string, error) {
 // GetOvnRunDir returns the OVN's rundir.
 func GetOvnRunDir() string {
 	return runner.ovnRunDir
-}
-
-// ovsdb-server(5) says a clustered database is connected if the server
-// is in contact with a majority of its cluster.
-type OVNDBServerStatus struct {
-	Connected bool
-	Leader    bool
-	Index     int
-}
-
-// Internal structure that holds the un-marshaled json output from the
-// ovsdb-client query command. The Index can hold ["set": []] when it is
-// not populated yet, so we need to use `interface{}` type. However, we
-// don't want our callers to worry about all this and we want them to see the
-// Index as an integer and hence we use an exported OVNDBServerStatus for that
-type dbRow struct {
-	Connected bool        `json:"connected"`
-	Leader    bool        `json:"leader"`
-	Index     interface{} `json:"index"`
-}
-
-type queryResult struct {
-	Rows []dbRow `json:"rows"`
-}
-
-func GetOVNDBServerInfo(timeout int, direction, database string) (*OVNDBServerStatus, error) {
-	sockPath := fmt.Sprintf("unix:%s", filepath.Join(config.OvsPaths.RunDir, fmt.Sprintf("ovn%s_db.sock", direction)))
-	transact := fmt.Sprintf(`["_Server", {"op":"select", "table":"Database", "where":[["name", "==", "%s"]], `+
-		`"columns": ["connected", "leader", "index"]}]`, database)
-
-	stdout, stderr, err := RunOVSDBClient(fmt.Sprintf("--timeout=%d", timeout), "query", sockPath, transact)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get %q ovsdb-server status: stderr(%s), err(%v)",
-			direction, stderr, err)
-	}
-
-	var result []queryResult
-	err = json.Unmarshal([]byte(stdout), &result)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse the json output(%s) from ovsdb-client command for database %q: %v",
-			stdout, database, err)
-	}
-	if len(result) != 1 || len(result[0].Rows) != 1 {
-		return nil, fmt.Errorf("parsed json output for %q ovsdb-server has incorrect status information",
-			direction)
-	}
-	serverStatus := &OVNDBServerStatus{}
-	serverStatus.Connected = result[0].Rows[0].Connected
-	serverStatus.Leader = result[0].Rows[0].Leader
-	if index, ok := result[0].Rows[0].Index.(float64); ok {
-		serverStatus.Index = int(index)
-	} else {
-		serverStatus.Index = 0
-	}
-
-	return serverStatus, nil
 }
 
 // DetectCheckPktLengthSupport checks if OVN supports check packet length action in OVS kernel datapath

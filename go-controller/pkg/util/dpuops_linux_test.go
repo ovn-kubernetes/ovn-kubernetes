@@ -218,3 +218,106 @@ func TestSimulatedFindHostRepresentorByPeerMAC(t *testing.T) {
 	g.Expect(errors.Is(err, ErrHostRepresentorNotFound)).To(gomega.BeTrue(),
 		"a MAC derived for another node must be a clean miss")
 }
+
+func replaceFileSystemOps(t *testing.T) *utilmocks.FileSystemOps {
+	t.Helper()
+	fsOps := utilmocks.NewFileSystemOps(t)
+	orig := GetFileSystemOps()
+	SetFileSystemOps(fsOps)
+	t.Cleanup(func() {
+		SetFileSystemOps(orig)
+	})
+	return fsOps
+}
+
+func TestSwitchdevResolvePFIndex(t *testing.T) {
+	const (
+		pf1Netdev   = "enp4s0f1"
+		pf1PCI      = "0000:03:00.1"
+		vf7PCI      = "0000:03:02.3"
+		nonSriovPCI = "0000:05:00.0"
+	)
+
+	t.Run("PF netdev resolves to its PCI function number", func(t *testing.T) {
+		g := gomega.NewWithT(t)
+		fsOps := replaceFileSystemOps(t)
+		sriovOps := replaceSriovnetOps(t)
+		fsOps.On("Readlink", "/sys/class/net/"+pf1Netdev+"/device").
+			Return("../../"+pf1PCI, nil)
+		sriovOps.On("GetPfPciFromVfPci", pf1PCI).
+			Return("", fmt.Errorf("no physfn link, not a VF"))
+		fsOps.On("PathExists", "/sys/bus/pci/devices/"+pf1PCI+"/sriov_totalvfs").
+			Return(true, nil)
+
+		pfIndex, err := (&SwitchdevDPUOps{}).ResolvePFIndex(pf1Netdev)
+		g.Expect(err).NotTo(gomega.HaveOccurred(), "resolving an SR-IOV capable PF must succeed")
+		g.Expect(pfIndex).To(gomega.Equal(1), "the PF index is the PCI function number")
+	})
+
+	t.Run("VF is rejected", func(t *testing.T) {
+		g := gomega.NewWithT(t)
+		replaceFileSystemOps(t)
+		sriovOps := replaceSriovnetOps(t)
+		sriovOps.On("GetPfPciFromVfPci", vf7PCI).Return(pf1PCI, nil)
+
+		_, err := (&SwitchdevDPUOps{}).ResolvePFIndex(vf7PCI)
+		g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("virtual function")),
+			"a VF has its own VF resolution path and must not resolve as a PF")
+	})
+
+	t.Run("non SR-IOV device is rejected", func(t *testing.T) {
+		g := gomega.NewWithT(t)
+		fsOps := replaceFileSystemOps(t)
+		sriovOps := replaceSriovnetOps(t)
+		sriovOps.On("GetPfPciFromVfPci", nonSriovPCI).
+			Return("", fmt.Errorf("no physfn link, not a VF"))
+		fsOps.On("PathExists", "/sys/bus/pci/devices/"+nonSriovPCI+"/sriov_totalvfs").
+			Return(false, nil)
+
+		_, err := (&SwitchdevDPUOps{}).ResolvePFIndex(nonSriovPCI)
+		g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("not an SR-IOV capable")),
+			"a plain NIC must not be treated as a PF with a DPU representor")
+	})
+
+	t.Run("unknown netdev is rejected", func(t *testing.T) {
+		g := gomega.NewWithT(t)
+		fsOps := replaceFileSystemOps(t)
+		replaceSriovnetOps(t)
+		fsOps.On("Readlink", "/sys/class/net/nosuch0/device").
+			Return("", fmt.Errorf("no such file or directory"))
+
+		_, err := (&SwitchdevDPUOps{}).ResolvePFIndex("nosuch0")
+		g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("sysfs device link")),
+			"a netdev with no sysfs device link must not resolve as a PF")
+	})
+
+	t.Run("SR-IOV capability check failure is reported", func(t *testing.T) {
+		g := gomega.NewWithT(t)
+		fsOps := replaceFileSystemOps(t)
+		sriovOps := replaceSriovnetOps(t)
+		sriovOps.On("GetPfPciFromVfPci", pf1PCI).
+			Return("", fmt.Errorf("no physfn link, not a VF"))
+		fsOps.On("PathExists", "/sys/bus/pci/devices/"+pf1PCI+"/sriov_totalvfs").
+			Return(false, fmt.Errorf("permission denied"))
+
+		_, err := (&SwitchdevDPUOps{}).ResolvePFIndex(pf1PCI)
+		g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("SR-IOV capability")),
+			"a failed capability check must surface as an error, not as a missing PF")
+	})
+
+	t.Run("non-PCI parent device is rejected", func(t *testing.T) {
+		g := gomega.NewWithT(t)
+		fsOps := replaceFileSystemOps(t)
+		sriovOps := replaceSriovnetOps(t)
+		fsOps.On("Readlink", "/sys/class/net/virt0/device").
+			Return("../../virtio3", nil)
+		sriovOps.On("GetPfPciFromVfPci", "virtio3").
+			Return("", fmt.Errorf("no physfn link, not a VF"))
+		fsOps.On("PathExists", "/sys/bus/pci/devices/virtio3/sriov_totalvfs").
+			Return(true, nil)
+
+		_, err := (&SwitchdevDPUOps{}).ResolvePFIndex("virt0")
+		g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("failed to parse PCI address")),
+			"a parent device that is not a PCI function must not resolve as a PF")
+	})
+}

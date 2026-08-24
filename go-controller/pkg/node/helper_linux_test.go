@@ -178,7 +178,7 @@ func TestFilterRoutesByIfIndex(t *testing.T) {
 	}
 
 	for i, tc := range tcs {
-		routesFiltered := filterRoutesByIfIndex(tc.routesUnfiltered, tc.gwIfIdx)
+		routesFiltered := util.FilterRoutesByIfIndex(tc.routesUnfiltered, tc.gwIfIdx)
 		if !reflect.DeepEqual(tc.routesFiltered, routesFiltered) {
 			t.Fatalf("TestFilterRoutesByIfIndex(%d): Filtering '%v' by index '%d' should have yielded '%v' but got '%v'",
 				i, tc.routesUnfiltered, tc.gwIfIdx, tc.routesFiltered, routesFiltered)

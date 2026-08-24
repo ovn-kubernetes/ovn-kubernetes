@@ -22,6 +22,15 @@ type UplinkStateStatusApplyConfiguration struct {
 	OVSBridge *OVSBridgeStatusApplyConfiguration `json:"ovsBridge,omitempty"`
 	// MACAddress is the MAC address used for the OVN gateway interface.
 	MACAddress *uplinkv1alpha1.MACAddress `json:"macAddress,omitempty"`
+	// HostFunction identifies the PCI function (a PF, or a VF on that PF)
+	// backing the host interface. Only SR-IOV capable functions are
+	// published: they are the ones that can have a representor on a DPU,
+	// which is what this field exists to resolve. In split DPU mode the
+	// DPU-host publishes it so the DPU can resolve the interface's
+	// representor and OVS bridge directly, without scanning bridges by host
+	// MAC. Absent when the host interface has no such function or its
+	// identity cannot be resolved.
+	HostFunction *HostFunctionApplyConfiguration `json:"hostFunction,omitempty"`
 	// IPAddresses are host-side shared gateway IP addresses.
 	IPAddresses []uplinkv1alpha1.IPAddressCIDR `json:"ipAddresses,omitempty"`
 	// DefaultGateways are default route next-hop IPs discovered for the
@@ -67,6 +76,14 @@ func (b *UplinkStateStatusApplyConfiguration) WithOVSBridge(value *OVSBridgeStat
 // If called multiple times, the MACAddress field is set to the value of the last call.
 func (b *UplinkStateStatusApplyConfiguration) WithMACAddress(value uplinkv1alpha1.MACAddress) *UplinkStateStatusApplyConfiguration {
 	b.MACAddress = &value
+	return b
+}
+
+// WithHostFunction sets the HostFunction field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the HostFunction field is set to the value of the last call.
+func (b *UplinkStateStatusApplyConfiguration) WithHostFunction(value *HostFunctionApplyConfiguration) *UplinkStateStatusApplyConfiguration {
+	b.HostFunction = value
 	return b
 }
 

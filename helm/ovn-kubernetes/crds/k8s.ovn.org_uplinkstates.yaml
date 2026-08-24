@@ -151,6 +151,33 @@ spec:
                 maxItems: 2
                 type: array
                 x-kubernetes-list-type: atomic
+              hostFunction:
+                description: |-
+                  HostFunction identifies the PCI function (a PF, or a VF on that PF)
+                  backing the host interface. Only SR-IOV capable functions are
+                  published: they are the ones that can have a representor on a DPU,
+                  which is what this field exists to resolve. In split DPU mode the
+                  DPU-host publishes it so the DPU can resolve the interface's
+                  representor and OVS bridge directly, without scanning bridges by host
+                  MAC. Absent when the host interface has no such function or its
+                  identity cannot be resolved.
+                properties:
+                  pfID:
+                    description: PFID is the index of the physical function backing
+                      the host interface.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  vfID:
+                    description: |-
+                      VFID is the index of the virtual function on the physical function.
+                      Absent when the host interface is the physical function itself.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                required:
+                - pfID
+                type: object
               hostInterfaceName:
                 description: |-
                   HostInterfaceName is the host-visible Linux interface selected by

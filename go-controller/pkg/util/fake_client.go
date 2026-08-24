@@ -119,7 +119,7 @@ func GetOVNClientset(objects ...runtime.Object) *OVNClientset {
 		KubeClient:                fake.NewSimpleClientset(v1Objects...),
 		ANPClient:                 anpfake.NewSimpleClientset(anpObjects...),
 		EgressIPClient:            egressipfake.NewSimpleClientset(egressIPObjects...),
-		EgressFirewallClient:      egressfirewallfake.NewSimpleClientset(egressFirewallObjects...),
+		EgressFirewallClient:      egressfirewallfake.NewClientset(egressFirewallObjects...),
 		CloudNetworkClient:        cloudservicefake.NewSimpleClientset(cloudObjects...),
 		EgressQoSClient:           egressqosfake.NewSimpleClientset(egressQoSObjects...),
 		NetworkAttchDefClient:     nadClient,

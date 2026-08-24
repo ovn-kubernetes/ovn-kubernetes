@@ -449,15 +449,6 @@ unlimited
 			<td>Enable monitoring all data from SB DB instead of conditionally monitoring the data relevant to this node only @default true</td>
 		</tr>
 		<tr>
-			<td>global.nbPort</td>
-			<td>int</td>
-			<td><pre lang="json">
-6641
-</pre>
-</td>
-			<td>Port of north bound ovsdb</td>
-		</tr>
-		<tr>
 			<td>global.netFlowTargets</td>
 			<td>string</td>
 			<td><pre lang="json">
@@ -483,15 +474,6 @@ unlimited
 </pre>
 </td>
 			<td>OVN remote probe interval in ms  @default 100000</td>
-		</tr>
-		<tr>
-			<td>global.sbPort</td>
-			<td>int</td>
-			<td><pre lang="json">
-6642
-</pre>
-</td>
-			<td>Port of south bound ovsdb</td>
 		</tr>
 		<tr>
 			<td>global.sflowTargets</td>

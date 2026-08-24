@@ -229,7 +229,7 @@ func TestNodeAdmission_ValidateUpdate(t *testing.T) {
 			expectedErr: fmt.Errorf("user: %q is not allowed to set %s on node %q: %s cannot be changed once set", userName, util.OvnNodeChassisID, nodeName, util.OvnNodeChassisID),
 		},
 		{
-			name: "ovnkube-node can add util.OvnNodeZoneName with \"global\" value",
+			name: "ovnkube-node cannot add util.OvnNodeZoneName with a non-node-name value",
 			ctx: admission.NewContextWithRequest(context.TODO(), admission.Request{
 				AdmissionRequest: v1.AdmissionRequest{UserInfo: authenticationv1.UserInfo{
 					Username: userName,
@@ -243,9 +243,10 @@ func TestNodeAdmission_ValidateUpdate(t *testing.T) {
 			newObj: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:        nodeName,
-					Annotations: map[string]string{util.OvnNodeZoneName: "global"},
+					Annotations: map[string]string{util.OvnNodeZoneName: "old-zone"},
 				},
 			},
+			expectedErr: fmt.Errorf("user: %q is not allowed to set %s on node %q: %s can only be set to %s, it cannot be removed", userName, util.OvnNodeZoneName, nodeName, util.OvnNodeZoneName, nodeName),
 		},
 		{
 			name: "ovnkube-node can set util.OvnNodeManagementPort",
@@ -322,7 +323,7 @@ func TestNodeAdmission_ValidateUpdate(t *testing.T) {
 					Annotations: map[string]string{util.OvnNodeZoneName: "LocalInvalidZone"},
 				},
 			},
-			expectedErr: fmt.Errorf("user: %q is not allowed to set %s on node %q: %s can only be set to global or %s, it cannot be removed", userName, util.OvnNodeZoneName, nodeName, util.OvnNodeZoneName, nodeName),
+			expectedErr: fmt.Errorf("user: %q is not allowed to set %s on node %q: %s can only be set to %s, it cannot be removed", userName, util.OvnNodeZoneName, nodeName, util.OvnNodeZoneName, nodeName),
 		},
 		{
 			name: "ovnkube-node cannot change util.OvnNodeZoneName to anything else than <nodeName>",
@@ -334,7 +335,7 @@ func TestNodeAdmission_ValidateUpdate(t *testing.T) {
 			oldObj: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:        nodeName,
-					Annotations: map[string]string{util.OvnNodeZoneName: "global"},
+					Annotations: map[string]string{util.OvnNodeZoneName: nodeName},
 				},
 			},
 			newObj: &corev1.Node{
@@ -343,10 +344,10 @@ func TestNodeAdmission_ValidateUpdate(t *testing.T) {
 					Annotations: map[string]string{util.OvnNodeZoneName: nodeName + "_rougeOne"},
 				},
 			},
-			expectedErr: fmt.Errorf("user: %q is not allowed to set %s on node %q: %s can only be set to global or %s, it cannot be removed", userName, util.OvnNodeZoneName, nodeName, util.OvnNodeZoneName, nodeName),
+			expectedErr: fmt.Errorf("user: %q is not allowed to set %s on node %q: %s can only be set to %s, it cannot be removed", userName, util.OvnNodeZoneName, nodeName, util.OvnNodeZoneName, nodeName),
 		},
 		{
-			name: "ovnkube-node can change util.OvnNodeZoneName to <nodeName>",
+			name: "ovnkube-node can migrate util.OvnNodeZoneName from legacy global to <nodeName>",
 			ctx: admission.NewContextWithRequest(context.TODO(), admission.Request{
 				AdmissionRequest: v1.AdmissionRequest{UserInfo: authenticationv1.UserInfo{
 					Username: userName,
@@ -362,6 +363,32 @@ func TestNodeAdmission_ValidateUpdate(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name:        nodeName,
 					Annotations: map[string]string{util.OvnNodeZoneName: nodeName},
+				},
+			},
+		},
+		{
+			name: "ovnkube-node can update another annotation while legacy global zone is unchanged",
+			ctx: admission.NewContextWithRequest(context.TODO(), admission.Request{
+				AdmissionRequest: v1.AdmissionRequest{UserInfo: authenticationv1.UserInfo{
+					Username: userName,
+				}},
+			}),
+			oldObj: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: nodeName,
+					Annotations: map[string]string{
+						util.OvnNodeZoneName:  "global",
+						util.OVNNodeHostCIDRs: "old",
+					},
+				},
+			},
+			newObj: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: nodeName,
+					Annotations: map[string]string{
+						util.OvnNodeZoneName:  "global",
+						util.OVNNodeHostCIDRs: "new",
+					},
 				},
 			},
 		},

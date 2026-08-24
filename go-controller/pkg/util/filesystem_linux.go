@@ -17,6 +17,7 @@ var (
 
 type FileSystemOps interface {
 	Readlink(path string) (string, error)
+	PathExists(path string) (bool, error)
 }
 
 type defaultFileSystemOps struct {
@@ -34,6 +35,17 @@ func GetFileSystemOps() FileSystemOps {
 
 func (defaultFileSystemOps) Readlink(path string) (string, error) {
 	return os.Readlink(path)
+}
+
+func (defaultFileSystemOps) PathExists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
 }
 
 // GetDeviceIDFromNetdevice retrieves device ID for passed netdevice which is PCI address for regular

@@ -466,12 +466,6 @@ func nodeNeedsUpdate(oldObj, newObj *corev1.Node) bool {
 		return true
 	}
 
-	// Process if zone annotation changed (affects router port creation for l3 network connectivity
-	// since the port needs to be toggled between a remote and local port on the connect router)
-	if util.NodeZoneAnnotationChanged(oldObj, newObj) {
-		return true
-	}
-
 	// Process if node subnet annotation changed (affects static routes)
 	if util.NodeSubnetAnnotationChanged(oldObj, newObj) {
 		return true

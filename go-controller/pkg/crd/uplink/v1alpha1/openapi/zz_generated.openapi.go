@@ -27,6 +27,7 @@ func GetOpenAPIDefinitions(ref common.ReferenceCallback) map[string]common.OpenA
 		types.NetworkSelector{}.OpenAPIModelName():                     schema_go_controller_pkg_crd_types_NetworkSelector(ref),
 		types.PrimaryUserDefinedNetworkSelector{}.OpenAPIModelName():   schema_go_controller_pkg_crd_types_PrimaryUserDefinedNetworkSelector(ref),
 		types.SecondaryUserDefinedNetworkSelector{}.OpenAPIModelName(): schema_go_controller_pkg_crd_types_SecondaryUserDefinedNetworkSelector(ref),
+		v1alpha1.HostFunction{}.OpenAPIModelName():                     schema_pkg_crd_uplink_v1alpha1_HostFunction(ref),
 		v1alpha1.OVSBridgeStatus{}.OpenAPIModelName():                  schema_pkg_crd_uplink_v1alpha1_OVSBridgeStatus(ref),
 		v1alpha1.Uplink{}.OpenAPIModelName():                           schema_pkg_crd_uplink_v1alpha1_Uplink(ref),
 		v1alpha1.UplinkList{}.OpenAPIModelName():                       schema_pkg_crd_uplink_v1alpha1_UplinkList(ref),
@@ -281,6 +282,35 @@ func schema_go_controller_pkg_crd_types_SecondaryUserDefinedNetworkSelector(ref 
 		},
 		Dependencies: []string{
 			metav1.LabelSelector{}.OpenAPIModelName()},
+	}
+}
+
+func schema_pkg_crd_uplink_v1alpha1_HostFunction(ref common.ReferenceCallback) common.OpenAPIDefinition {
+	return common.OpenAPIDefinition{
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "HostFunction identifies a PCI function: a physical function by its index, or a virtual function by the PF index and its own index on that PF.",
+				Type:        []string{"object"},
+				Properties: map[string]spec.Schema{
+					"pfID": {
+						SchemaProps: spec.SchemaProps{
+							Description: "PFID is the index of the physical function backing the host interface.",
+							Default:     0,
+							Type:        []string{"integer"},
+							Format:      "int32",
+						},
+					},
+					"vfID": {
+						SchemaProps: spec.SchemaProps{
+							Description: "VFID is the index of the virtual function on the physical function. Absent when the host interface is the physical function itself.",
+							Type:        []string{"integer"},
+							Format:      "int32",
+						},
+					},
+				},
+				Required: []string{"pfID"},
+			},
+		},
 	}
 }
 
@@ -628,6 +658,12 @@ func schema_pkg_crd_uplink_v1alpha1_UplinkStateStatus(ref common.ReferenceCallba
 							Format:      "",
 						},
 					},
+					"hostFunction": {
+						SchemaProps: spec.SchemaProps{
+							Description: "HostFunction identifies the PCI function (a PF, or a VF on that PF) backing the host interface. Only SR-IOV capable functions are published: they are the ones that can have a representor on a DPU, which is what this field exists to resolve. In split DPU mode the DPU-host publishes it so the DPU can resolve the interface's representor and OVS bridge directly, without scanning bridges by host MAC. Absent when the host interface has no such function or its identity cannot be resolved.",
+							Ref:         ref(v1alpha1.HostFunction{}.OpenAPIModelName()),
+						},
+					},
 					"ipAddresses": {
 						VendorExtensible: spec.VendorExtensible{
 							Extensions: spec.Extensions{
@@ -693,7 +729,7 @@ func schema_pkg_crd_uplink_v1alpha1_UplinkStateStatus(ref common.ReferenceCallba
 			},
 		},
 		Dependencies: []string{
-			v1alpha1.OVSBridgeStatus{}.OpenAPIModelName(), metav1.Condition{}.OpenAPIModelName()},
+			v1alpha1.HostFunction{}.OpenAPIModelName(), v1alpha1.OVSBridgeStatus{}.OpenAPIModelName(), metav1.Condition{}.OpenAPIModelName()},
 	}
 }
 

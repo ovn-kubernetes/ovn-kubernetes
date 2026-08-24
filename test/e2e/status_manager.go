@@ -15,6 +15,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
 
 	v1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
@@ -65,8 +66,7 @@ spec:
 		}
 	})
 
-	ginkgo.It("Should validate the egress firewall status when adding an unknown zone", func() {
-		// add unknown node
+	ginkgo.It("Should validate the egress firewall status when adding a new node zone", func() {
 		newNode := &v1.Node{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "new-node",
@@ -76,27 +76,7 @@ spec:
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		defer func() {
 			err := f.ClientSet.CoreV1().Nodes().Delete(context.TODO(), newNode.Name, metav1.DeleteOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		}()
-		// check status not changed
-		checkEgressFirewallStatus(f.Namespace.Name, false, true, false)
-	})
-
-	ginkgo.It("Should validate the egress firewall status when adding a new zone", func() {
-		// add node with new zone
-		newNode := &v1.Node{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:        "new-node",
-				Annotations: map[string]string{"k8s.ovn.org/zone-name": "new-zone"},
-			},
-		}
-		_, err := f.ClientSet.CoreV1().Nodes().Create(context.TODO(), newNode, metav1.CreateOptions{})
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		defer func() {
-			if err != nil {
-				err := f.ClientSet.CoreV1().Nodes().Delete(context.TODO(), newNode.Name, metav1.DeleteOptions{})
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			}
+			gomega.Expect(err == nil || apierrors.IsNotFound(err)).To(gomega.BeTrue())
 		}()
 		// check status is unset
 		checkEgressFirewallStatus(f.Namespace.Name, true, false, true)

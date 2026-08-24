@@ -136,7 +136,6 @@ set_common_default_params() {
   # Feature params
   OVN_HYBRID_OVERLAY_ENABLE=${OVN_HYBRID_OVERLAY_ENABLE:-false}
   OVN_MULTICAST_ENABLE=${OVN_MULTICAST_ENABLE:-false}
-  OVN_HA=${OVN_HA:-false}
   OVN_GATEWAY_MODE=${OVN_GATEWAY_MODE:-shared}
   OVN_SECOND_BRIDGE=${OVN_SECOND_BRIDGE:-false}
   OVN_UPLINK_BRIDGE=${OVN_UPLINK_BRIDGE:-false}
@@ -198,12 +197,7 @@ set_common_default_params() {
   fi
 
   KIND_NUM_MASTER=1
-  if [ "$OVN_HA" == true ]; then
-    KIND_NUM_MASTER=3
-    KIND_NUM_WORKER=${KIND_NUM_WORKER:-0}
-  else
-    KIND_NUM_WORKER=${KIND_NUM_WORKER:-2}
-  fi
+  KIND_NUM_WORKER=${KIND_NUM_WORKER:-2}
 
   ENABLE_MULTI_NET=${ENABLE_MULTI_NET:-false}
   ENABLE_NETWORK_SEGMENTATION=${ENABLE_NETWORK_SEGMENTATION:-false}
@@ -2222,11 +2216,9 @@ create_kind_cluster() {
   KIND_CONFIG_LCL=${DIR}/kind-${KIND_CLUSTER_NAME}.yaml
 
   ovn_ip_family=${IP_FAMILY} \
-  ovn_ha=${OVN_HA} \
   net_cidr="${KIND_CIDR}" \
   svc_cidr=${SVC_CIDR} \
   dns_domain=${KIND_DNS_DOMAIN} \
-  ovn_num_master=${KIND_NUM_MASTER} \
   ovn_num_worker=${KIND_NUM_WORKER} \
   kind_num_infra=${KIND_NUM_INFRA} \
   cluster_log_level=${KIND_CLUSTER_LOGLEVEL:-4} \

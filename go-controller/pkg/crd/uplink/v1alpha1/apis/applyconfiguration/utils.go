@@ -19,6 +19,8 @@ import (
 func ForKind(kind schema.GroupVersionKind) interface{} {
 	switch kind {
 	// Group=k8s.ovn.org, Version=v1alpha1
+	case v1alpha1.SchemeGroupVersion.WithKind("HostFunction"):
+		return &uplinkv1alpha1.HostFunctionApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("OVSBridgeStatus"):
 		return &uplinkv1alpha1.OVSBridgeStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("Uplink"):

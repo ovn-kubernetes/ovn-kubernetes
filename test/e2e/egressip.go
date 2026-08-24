@@ -598,6 +598,57 @@ var _ = ginkgo.Describe("e2e egress IP validation", feature.EgressIP, func() {
 			return reflect.DeepEqual(eIPsFound, ips)
 		}
 
+		// verifyEgressIPAddrProto checks that the EgressIP address assigned on the
+		// node has IFA_PROTO set to 85 (OVN-K). Value 85 is used instead of
+		// RTPROT_OVN (84) so we do not reuse a protocol identifier owned by OVN.
+		// iproute2 renders unknown protocol numbers in hex, so protocol
+		// 85 appears as "0x55" in JSON output unless a name mapping exists in
+		// rt_addrprotos. IFA_PROTO requires Linux kernel 5.18+; on older kernels
+		// the attribute is silently ignored by the kernel and the ip CLI will not
+		// report a protocol field, so the check is skipped.
+		//
+		// Callers must only invoke this when a Linux address is expected:
+		// - secondary-host EIPs always assign the address on a host NIC
+		// - OVN-network EIPs assign the address on the gateway bridge only when
+		//   network segmentation is enabled (see canHandleBridgeEgressIP)
+		verifyEgressIPAddrProto := func(nodeName, eipAddr string) {
+			type ipAddrInfo struct {
+				Local    string `json:"local"`
+				Protocol string `json:"protocol"`
+			}
+			type ipAddrEntry struct {
+				AddrInfo []ipAddrInfo `json:"addr_info"`
+			}
+
+			// iproute2 renders unknown protocol numbers in hex (e.g. 85 -> "0x55").
+			expectedProtoHex := fmt.Sprintf("0x%x", types.IFAProtOVNK)
+
+			gomega.Eventually(func(g gomega.Gomega) {
+				output, err := infraprovider.Get().ExecK8NodeCommand(nodeName,
+					[]string{"ip", "-d", "-j", "addr", "show", "to", eipAddr})
+				g.Expect(err).NotTo(gomega.HaveOccurred(), "failed to get address info on node %s", nodeName)
+
+				var entries []ipAddrEntry
+				g.Expect(json.Unmarshal([]byte(output), &entries)).To(gomega.Succeed(), "failed to parse ip addr JSON")
+				g.Expect(entries).To(gomega.HaveLen(1), "expected a single interface entry for EgressIP %s on node %s", eipAddr, nodeName)
+
+				var ai *ipAddrInfo
+				for i, info := range entries[0].AddrInfo {
+					if info.Local == eipAddr {
+						ai = &entries[0].AddrInfo[i]
+						break
+					}
+				}
+				g.Expect(ai).NotTo(gomega.BeNil(), "EgressIP %s not found on node %s", eipAddr, nodeName)
+				if ai.Protocol == "" {
+					framework.Logf("IFA_PROTO not reported for EgressIP %s on node %s; kernel may not support IFA_PROTO (requires 5.18+), skipping check", eipAddr, nodeName)
+					return
+				}
+				g.Expect(ai.Protocol).To(gomega.Equal(expectedProtoHex),
+					"EgressIP %s on node %s should have IFA_PROTO 85/0x55 (OVN-K), got %q", eipAddr, nodeName, ai.Protocol)
+			}, 30*time.Second, 2*time.Second).Should(gomega.Succeed())
+		}
+
 		getIPVersions := func(ips ...string) (bool, bool) {
 			var v4, v6 bool
 			for _, ip := range ips {
@@ -1011,6 +1062,15 @@ spec:
 						podNamespace.Name, pod2Name, true, []string{egressIP1.String(), egressIP2.String()}))
 					framework.ExpectNoError(err, "Step 4. Check connectivity from second to an external \"node\" and verify that the IPs are both of the above, failed: %v", err)
 
+					ginkgo.By("4a. Check that the EgressIP addresses have IFA_PROTO set to OVN-K (85)")
+					// OVN-network EIPs are assigned on the gateway bridge only when
+					// network segmentation is enabled (canHandleBridgeEgressIP).
+					if isNetworkSegmentationEnabled() {
+						for _, status := range statuses {
+							verifyEgressIPAddrProto(status.Node, status.EgressIP)
+						}
+					}
+
 					ginkgo.By("5. Check connectivity from one pod to the other and verify that the connection is achieved")
 					err = wait.PollImmediate(retryInterval, retryTimeout, targetPodAndTest(f.Namespace.Name, pod1Name, pod2Name, pod2IP, clusterNetworkHTTPPort))
 					framework.ExpectNoError(err, "Step 5. Check connectivity from one pod to the other and verify that the connection is achieved, failed, err: %v", err)
@@ -1224,6 +1284,13 @@ spec:
 			ginkgo.By("6. Check connectivity from pod to an external node and verify that the srcIP is the expected egressIP")
 			err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod1Name, true, []string{egressIP1.String()}))
 			framework.ExpectNoError(err, "Step 6. Check connectivity from pod to an external node and verify that the srcIP is the expected egressIP, failed: %v", err)
+
+			ginkgo.By("6a. Check that the EgressIP address has IFA_PROTO set to OVN-K (85)")
+			// OVN-network EIPs are assigned on the gateway bridge only when
+			// network segmentation is enabled (canHandleBridgeEgressIP).
+			if isNetworkSegmentationEnabled() {
+				verifyEgressIPAddrProto(statuses[0].Node, statuses[0].EgressIP)
+			}
 
 			ginkgo.By("7. Check connectivity from pod to another node primary IP and verify that the srcIP is the expected nodeIP")
 			err = wait.PollImmediate(retryInterval, retryTimeout, targetHostNetworkContainerAndTest(hostNetPod, podNamespace.Name, pod1Name, true, []string{egress1Node.nodeIP}))
@@ -2318,6 +2385,11 @@ spec:
 			framework.ExpectNoError(err, "Step 5. Check connectivity from pod (%s/%s) to an external container attached to "+
 				"a network that is a secondary host network and verify that the src IP is the expected egressIP, failed: %v", podNamespace.Name, pod2Name, err)
 
+			ginkgo.By("5a. Check that the EgressIP addresses have IFA_PROTO set to OVN-K (85)")
+			for _, status := range statuses {
+				verifyEgressIPAddrProto(status.Node, status.EgressIP)
+			}
+
 			ginkgo.By("6. Check connectivity from one pod to the other and verify that the connection is achieved")
 			pod2IP, err := getPodIPWithRetry(f.ClientSet, isIPv6TestRun, f.Namespace.Name, pod2Name)
 			framework.ExpectNoError(err, "Step 6. Check connectivity from one pod to the other and verify that the connection "+
@@ -3038,6 +3110,9 @@ spec:
 			inf, err = infraprovider.Get().GetK8NodeNetworkInterface(status[0].Node, secondaryNetwork)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "should have network interface for network %s on instance %s", secondaryNetwork.Name(), egress1Node.name)
 
+			ginkgo.By("Verifying EgressIP address has IFA_PROTO set to OVN-K (85)")
+			verifyEgressIPAddrProto(status[0].Node, status[0].EgressIP)
+
 			ginkgo.By("Verifying neighbor table")
 			var neighborMAC string
 			gomega.Eventually(func() bool {
@@ -3149,16 +3224,12 @@ spec:
 				gomega.Expect(podCIDR).NotTo(gomega.BeEmpty(), "pod CIDR must not be empty for node %s", pod1Node.name)
 				monitorFilter := fmt.Sprintf("src net %s and dst host %s", podCIDR, targetIP)
 
-				ctx, ctxCancel := context.WithCancel(context.Background())
-				monitorOutput := ""
-				finishedMonitor := make(chan struct{})
-				go func() {
-					defer close(finishedMonitor)
-					var monitorErr error
-					monitorOutput, monitorErr = monitorTcpdumpOnNode(ctx, f, monitorPodName, egress1Node.name, secondaryIface.InfName,
-						"-n -vv -l", monitorFilter)
-					framework.ExpectNoError(monitorErr, "Failed to read monitor pod logs")
-				}()
+				// Create the monitor pod and wait (up to retryTimeout) until it is Running
+				// (capturing) before generating any traffic, so the capture cannot miss the
+				// EgressIP transition and reading the capture in Step 8 cannot race the pod
+				// startup. A failure or timeout to start aborts the spec here.
+				startTcpdumpMonitorPodOnNode(f, retryTimeout, monitorPodName, egress1Node.name, secondaryIface.InfName,
+					"-n -vv -l", monitorFilter)
 				framework.Logf("Traffic monitor pod started on node %s", egress1Node.name)
 
 				ginkgo.By(fmt.Sprintf("Step 4: Create %d pods FIRST (before EgressIP exists)", numTestPods))
@@ -3323,8 +3394,10 @@ spec:
 
 				ginkgo.By("Step 8: Analyze traffic capture for pod IP leaks during EgressIP application")
 				// This is the critical check: did any traffic leak with pod IPs during the transition?
-				ctxCancel()
-				<-finishedMonitor
+				// tcpdump keeps running; kubectl logs reads the capture so far (line-buffered via -l).
+				monitorOutput, monitorErr := e2ekubectl.NewKubectlCommand(f.Namespace.Name, "logs", monitorPodName).
+					WithTimeout(time.After(retryTimeout)).Exec()
+				framework.ExpectNoError(monitorErr, "Failed to read monitor pod logs")
 				if strings.Contains(monitorOutput, targetIP) {
 					framework.Failf("TRAFFIC LEAK DETECTED! Pod IPs were seen in traffic to %s"+
 						"This indicates traffic leaked with pod source IPs instead of egress IP %s during EgressIP application to existing pods.\ntcpdump output:\n%s",

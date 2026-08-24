@@ -226,7 +226,7 @@ jobs:
           export OVN_TEST_DPU_UPLINK_NETWORK="dpu-sim-uplink"
           export OVN_TEST_DPU_UPLINK_HOST_INTERFACE="eth0-16"
           export OVN_TEST_DPU_UPLINK_EXPECTED_BRIDGE="breth-uplink"
-          export OVN_TEST_BGP_SERVER_NET_SUBNET_IPV4="172.27.0.0/16"
+          export OVN_TEST_BGP_SERVER_NET_SUBNET_IPV4="172.29.0.0/16"
           export OVN_TEST_BGP_SERVER_NET_SUBNET_IPV6="fc00:f853:ccd:e797::/64"
           export ENABLE_MULTI_NET=true
           export ENABLE_NETWORK_SEGMENTATION=true
@@ -237,6 +237,7 @@ jobs:
           make -C test control-plane WHAT="Uplink route advertisements with Dynamic UDN allocation allows node-disjoint Dynamic CUDNs to share a targetVRF auto Uplink and rejects overlap"
           make -C test control-plane WHAT="Network Segmentation Uplink split DPU status conditions keeps one writer per condition and recovers a missing host interface"
           make -C test control-plane WHAT="Network Segmentation Uplink split DPU status conditions recreates an UplinkState deleted out of band"
+          make -C test control-plane WHAT="Network Segmentation Uplink split DPU status conditions resolves the bridge by host function and falls back to host MAC"
 
       - name: Export kind logs on failure
         if: failure()

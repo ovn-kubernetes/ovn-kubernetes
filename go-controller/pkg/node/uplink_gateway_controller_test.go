@@ -14,6 +14,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	clienttesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
@@ -437,7 +438,7 @@ func TestUplinkGatewayControllerSerializesSharedUplinkProgramming(t *testing.T) 
 	wg.Wait()
 }
 
-func TestUplinkGatewayControllerDPUHostDoesNotPublishGatewayReady(t *testing.T) {
+func TestUplinkGatewayControllerDPUHostPublishesHostGatewayReady(t *testing.T) {
 	prepareUplinkGatewayControllerTest(t)
 	config.OvnKubeNode.Mode = types.NodeModeDPUHost
 	const (
@@ -457,8 +458,24 @@ func TestUplinkGatewayControllerDPUHostDoesNotPublishGatewayReady(t *testing.T) 
 	if !reconciled {
 		t.Fatal("expected DPU-host gateway reconciliation to run")
 	}
-	if len(client.Actions()) != 0 {
-		t.Fatalf("expected DPU host not to publish GatewayReady, got actions %v", client.Actions())
+	// The DPU-host reports its side of the gateway programming through its
+	// own HostGatewayReady condition, leaving GatewayReady to the DPU.
+	actions := client.Actions()
+	if len(actions) == 0 {
+		t.Fatal("expected DPU host to publish HostGatewayReady")
+	}
+	for _, action := range actions {
+		patch, ok := action.(clienttesting.PatchAction)
+		if !ok {
+			t.Fatalf("expected only patch actions, got %v", action)
+		}
+		payload := string(patch.GetPatch())
+		if !strings.Contains(payload, uplinkv1alpha1.UplinkStateConditionHostGatewayReady) {
+			t.Fatalf("expected DPU host to publish HostGatewayReady, got %s", payload)
+		}
+		if strings.Contains(payload, `"`+uplinkv1alpha1.UplinkStateConditionGatewayReady+`"`) {
+			t.Fatalf("expected DPU host not to publish GatewayReady, got %s", payload)
+		}
 	}
 }
 

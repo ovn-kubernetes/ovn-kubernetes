@@ -9,6 +9,11 @@
 package v1alpha1
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
+func (in HostFunction) OpenAPIModelName() string {
+	return "com.github.ovn-kubernetes.ovn-kubernetes.go-controller.pkg.crd.uplink.v1alpha1.HostFunction"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
 func (in OVSBridgeStatus) OpenAPIModelName() string {
 	return "com.github.ovn-kubernetes.ovn-kubernetes.go-controller.pkg.crd.uplink.v1alpha1.OVSBridgeStatus"
 }

@@ -19,7 +19,7 @@ cd contrib
 ./kind-helm.sh -nqe -mne ;  #  --enable-network-qos --enable-multi-network
 ```
 
-Always check the dependencies on the [Requirements page](requirements.md)
+Always check the dependencies on the [Requirements page](../requirements.md)
 
 ## **2 Create a Secondary Network**
 

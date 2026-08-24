@@ -80,9 +80,8 @@ func (m *egressFirewallManager) getRelevantZones(egressFirewall *egressfirewalla
 		if !m.networkManager.NodeHasNetwork(node.Name, activeNetwork.GetNetworkName()) {
 			continue
 		}
-		nodeZone := util.GetNodeZone(node)
-		if zones.Has(nodeZone) {
-			relevantZones.Insert(nodeZone)
+		if zones.Has(node.Name) {
+			relevantZones.Insert(node.Name)
 		}
 	}
 	return relevantZones, nil

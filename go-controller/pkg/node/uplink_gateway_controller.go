@@ -28,6 +28,7 @@ import (
 
 const (
 	uplinkGatewayFieldManager      = "ovnkube-node-uplink-gateway-controller"
+	uplinkHostGatewayFieldManager  = "ovnkube-node-uplink-host-gateway-controller"
 	maxGatewayConditionExamples    = 3
 	maxGatewayConditionErrorLength = 160
 )
@@ -62,9 +63,12 @@ type UplinkGatewayController struct {
 	uplinkStateLister uplinklisters.UplinkStateLister
 	// The DPU owns GatewayReady in split-DPU deployments because it is the
 	// component that waits for OVN patch ports and programs OVS/OpenFlow.
-	// DPU-host gateway reconciliation still runs, but must not race the DPU
+	// DPU-host gateway reconciliation covers the host side, the VRF
+	// attachment of the Uplink gateway interface, and publishes it through
+	// its own HostGatewayReady condition so that it does not race the DPU
 	// for ownership of the shared condition.
-	publishStatus       bool
+	conditionType       string
+	fieldManager        string
 	mutex               sync.Mutex
 	uplinks             map[string]*uplinkGatewayState
 	uplinkByNetworkName map[string]string
@@ -76,11 +80,18 @@ func NewUplinkGatewayController(
 	uplinkClient uplinkclientset.Interface,
 	uplinkStateLister uplinklisters.UplinkStateLister,
 ) *UplinkGatewayController {
+	conditionType := uplinkv1alpha1.UplinkStateConditionGatewayReady
+	fieldManager := uplinkGatewayFieldManager
+	if config.IsModeDPUHost() {
+		conditionType = uplinkv1alpha1.UplinkStateConditionHostGatewayReady
+		fieldManager = uplinkHostGatewayFieldManager
+	}
 	return &UplinkGatewayController{
 		nodeName:            nodeName,
 		uplinkClient:        uplinkClient,
 		uplinkStateLister:   uplinkStateLister,
-		publishStatus:       !config.IsModeDPUHost(),
+		conditionType:       conditionType,
+		fieldManager:        fieldManager,
 		uplinks:             map[string]*uplinkGatewayState{},
 		uplinkByNetworkName: map[string]string{},
 	}
@@ -335,9 +346,15 @@ func (c *UplinkGatewayController) completeNetworkDelete(
 	return c.publishGatewayCondition(network.Uplink())
 }
 
-// RepublishGatewayCondition restores this controller's GatewayReady condition
-// on an UplinkState recreated after an out-of-band deletion. It only restores
-// a condition that was already published once: on a first creation the
+// ConditionType is the UplinkState condition this controller publishes:
+// GatewayReady, or HostGatewayReady on the DPU-host.
+func (c *UplinkGatewayController) ConditionType() string {
+	return c.conditionType
+}
+
+// RepublishGatewayCondition restores this controller's gateway condition on
+// an UplinkState recreated after an out-of-band deletion. It only restores a
+// condition that was already published once: on a first creation the
 // condition is published by network reconciliation.
 func (c *UplinkGatewayController) RepublishGatewayCondition(uplinkName string) error {
 	c.mutex.Lock()
@@ -369,13 +386,10 @@ func (c *UplinkGatewayController) publishGatewayConditions(uplinkNames []string)
 	return utilerrors.Join(errs...)
 }
 
-// publishGatewayCondition writes the aggregate GatewayReady condition for all
+// publishGatewayCondition writes this controller's aggregate gateway
+// condition (GatewayReady, or HostGatewayReady on the DPU-host) for all
 // active CUDNs using the node-local UplinkState.
 func (c *UplinkGatewayController) publishGatewayCondition(uplinkName string) error {
-	if !c.publishStatus {
-		return nil
-	}
-
 	c.mutex.Lock()
 	uplinkState := c.uplinks[uplinkName]
 	c.mutex.Unlock()
@@ -426,7 +440,7 @@ func (c *UplinkGatewayController) publishGatewayCondition(uplinkName string) err
 			uplinkapply.UplinkStateStatus().WithConditions(util.ConditionToApply(condition)),
 		),
 		metav1.ApplyOptions{
-			FieldManager: uplinkGatewayFieldManager,
+			FieldManager: c.fieldManager,
 			Force:        true,
 		},
 	)
@@ -452,7 +466,7 @@ func (c *UplinkGatewayController) gatewayCondition(
 	}
 	if len(uplinkState.networks) == 0 {
 		return metav1.Condition{
-			Type:    uplinkv1alpha1.UplinkStateConditionGatewayReady,
+			Type:    c.conditionType,
 			Status:  metav1.ConditionTrue,
 			Reason:  uplinkv1alpha1.UplinkStateReasonGatewayConfigured,
 			Message: "No active CUDNs require Uplink gateway programming",
@@ -485,7 +499,7 @@ func (c *UplinkGatewayController) gatewayCondition(
 	}
 	if incomplete == 0 {
 		return metav1.Condition{
-			Type:    uplinkv1alpha1.UplinkStateConditionGatewayReady,
+			Type:    c.conditionType,
 			Status:  metav1.ConditionTrue,
 			Reason:  uplinkv1alpha1.UplinkStateReasonGatewayConfigured,
 			Message: fmt.Sprintf("Uplink gateway programming succeeded for %d active CUDN(s)", len(networkNames)),
@@ -493,7 +507,7 @@ func (c *UplinkGatewayController) gatewayCondition(
 	}
 
 	return metav1.Condition{
-		Type:   uplinkv1alpha1.UplinkStateConditionGatewayReady,
+		Type:   c.conditionType,
 		Status: metav1.ConditionFalse,
 		Reason: aggregateGatewayFailureReason(failureReasons),
 		Message: fmt.Sprintf(

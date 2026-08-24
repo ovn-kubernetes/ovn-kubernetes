@@ -4,6 +4,7 @@
 package uplink
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -25,6 +26,7 @@ import (
 	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
@@ -55,6 +57,10 @@ type hostInterfaceState struct {
 	macAddress      net.HardwareAddr
 	ipAddresses     []*net.IPNet
 	defaultGateways []net.IP
+	// hostFunction identifies the SR-IOV function backing the host
+	// interface (a PF, or a VF on that PF); nil when the interface is
+	// neither or its indices cannot be resolved.
+	hostFunction *uplinkv1alpha1.HostFunction
 }
 
 type hostInterfaceDiscoverer interface {
@@ -64,6 +70,13 @@ type hostInterfaceDiscoverer interface {
 type ovsBridgeResolver interface {
 	// Resolve finds the OVS bridge for a host interface in Full mode.
 	Resolve(hostInterfaceName string) (string, error)
+	// ResolveByHostFunction finds the OVS bridge holding the representor of
+	// the host PF or VF identified by its host function in DPU mode.
+	// details must be non-nil. The resolved representor must peer with
+	// hostMAC: the published MAC is the uplink's identity, so indices that
+	// resolve a representor of some other host function are an error, not
+	// a match.
+	ResolveByHostFunction(details *uplinkv1alpha1.HostFunction, hostMAC net.HardwareAddr, nodeName string) (string, error)
 	// ResolveByHostMAC finds the OVS bridge by its host-side MAC in DPU mode.
 	ResolveByHostMAC(hostMAC net.HardwareAddr, nodeName string) (string, error)
 	// BridgeUplink returns the physical uplink port attached to an OVS bridge.
@@ -83,10 +96,13 @@ func newDiscoveryError(reason string, err error) error {
 	return &discoveryError{reason: reason, err: err}
 }
 
-// GatewayStateManager owns the node-local gateway cache and the GatewayReady
+// GatewayStateManager owns the node-local gateway cache and the gateway
 // condition published from it.
 type GatewayStateManager interface {
 	RepublishGatewayCondition(uplinkName string) error
+	// ConditionType is the UplinkState condition this manager publishes:
+	// GatewayReady, or HostGatewayReady on the DPU-host.
+	ConditionType() string
 	InvalidateGatewayState(uplinkName string)
 	DeleteGatewayState(uplinkName string)
 }
@@ -304,13 +320,16 @@ func (c *Controller) reconcileUplinkState(key string) error {
 		return c.deleteUplinkState(state.Name)
 	}
 
-	// An UplinkState recreated after an out-of-band deletion lost the
-	// GatewayReady condition, and nothing republishes it until a network event
-	// runs gateway reconciliation: restore it only after confirming this
-	// Uplink still selects the node. Intentional deselection starts a new
-	// gateway lifecycle and must not restore cached readiness.
+	// An UplinkState recreated after an out-of-band deletion lost the gateway
+	// condition this node publishes, and nothing republishes it until a
+	// network event runs gateway reconciliation: restore it only after
+	// confirming this Uplink still selects the node. Intentional deselection
+	// starts a new gateway lifecycle and must not restore cached readiness.
+	// The gate checks the manager's own condition type: on a DPU-host that is
+	// HostGatewayReady, while GatewayReady on the same UplinkState belongs to
+	// the DPU and says nothing about the host-side condition.
 	if c.gatewayStateManager != nil &&
-		meta.FindStatusCondition(state.Status.Conditions, uplinkv1alpha1.UplinkStateConditionGatewayReady) == nil {
+		meta.FindStatusCondition(state.Status.Conditions, c.gatewayStateManager.ConditionType()) == nil {
 		if err := c.gatewayStateManager.RepublishGatewayCondition(uplinkName); err != nil {
 			return fmt.Errorf("failed to republish gateway condition for Uplink %s: %w", uplinkName, err)
 		}
@@ -375,7 +394,33 @@ func (c *Controller) reconcileUplinkState(key string) error {
 	}
 
 	if config.OvnKubeNode.Mode == ovntypes.NodeModeDPU {
-		bridgeName, err := c.bridgeResolver.ResolveByHostMAC(hostState.macAddress, c.nodeName)
+		// The published host function is a hint that resolves the
+		// representor and its bridge directly; a resolved representor is
+		// verified against the published host MAC, the uplink's identity.
+		// The host MAC scan over every bridge is the authoritative path:
+		// it serves DPU-hosts that publish no host function (non-SR-IOV
+		// host interface, or an older DPU-host) and is the fallback when
+		// the hint does not resolve, so a published host function can
+		// never break an uplink the MAC scan would resolve.
+		var bridgeName string
+		// The Resolved message names the resolution method so misbehavior of
+		// one method is observable from the UplinkState alone: the methods
+		// resolve the same bridge, so nothing else distinguishes them.
+		resolvedVia := "host MAC"
+		if hostState.hostFunction != nil {
+			bridgeName, err = c.bridgeResolver.ResolveByHostFunction(
+				hostState.hostFunction, hostState.macAddress, c.nodeName)
+			if err != nil {
+				klog.Warningf("UplinkState %s: host function %s did not resolve an OVS bridge, "+
+					"falling back to the host MAC scan: %v",
+					state.Name, hostFunctionName(hostState.hostFunction), err)
+				bridgeName, err = c.bridgeResolver.ResolveByHostMAC(hostState.macAddress, c.nodeName)
+			} else {
+				resolvedVia = "host function"
+			}
+		} else {
+			bridgeName, err = c.bridgeResolver.ResolveByHostMAC(hostState.macAddress, c.nodeName)
+		}
 		if err != nil {
 			return errors.Join(err, c.updateUplinkStateStatus(
 				state,
@@ -403,7 +448,7 @@ func (c *Controller) reconcileUplinkState(key string) error {
 			hostInterfaceName,
 			hostState,
 			bridgeName,
-			"Uplink DPU bridge discovery succeeded",
+			fmt.Sprintf("Uplink DPU bridge discovery succeeded via %s", resolvedVia),
 		)
 	}
 
@@ -609,6 +654,14 @@ func (c *Controller) updateUplinkStateStatus(
 		}
 		statusApply = statusApply.WithIPAddresses(ipAddressCIDRs(hostState.ipAddresses)...)
 		statusApply = statusApply.WithDefaultGateways(ipAddresses(hostState.defaultGateways)...)
+		if hostState.hostFunction != nil {
+			hostFunctionApply := uplinkapply.HostFunction().
+				WithPFID(hostState.hostFunction.PFID)
+			if hostState.hostFunction.VFID != nil {
+				hostFunctionApply = hostFunctionApply.WithVFID(*hostState.hostFunction.VFID)
+			}
+			statusApply = statusApply.WithHostFunction(hostFunctionApply)
+		}
 	}
 	if config.OvnKubeNode.Mode != ovntypes.NodeModeDPUHost && bridgeName != "" {
 		statusApply = statusApply.WithOVSBridge(
@@ -672,12 +725,14 @@ func setUplinkStateHostStatus(status *uplinkv1alpha1.UplinkStateStatus, hostStat
 	status.MACAddress = ""
 	status.IPAddresses = nil
 	status.DefaultGateways = nil
+	status.HostFunction = nil
 	if hostState == nil {
 		return
 	}
 	if hostState.macAddress != nil {
 		status.MACAddress = uplinkv1alpha1.MACAddress(hostState.macAddress.String())
 	}
+	status.HostFunction = hostState.hostFunction.DeepCopy()
 	if ipAddresses := ipAddressCIDRs(hostState.ipAddresses); len(ipAddresses) > 0 {
 		status.IPAddresses = ipAddresses
 	}
@@ -890,6 +945,7 @@ func hostInterfaceStateFromStatus(
 		macAddress:      macAddress,
 		ipAddresses:     ipAddresses,
 		defaultGateways: defaultGateways,
+		hostFunction:    state.Status.HostFunction.DeepCopy(),
 	}, nil
 }
 
@@ -1000,7 +1056,33 @@ func (d netlinkHostInterfaceDiscoverer) Discover(hostInterfaceName string) (*hos
 		macAddress:      macAddress,
 		ipAddresses:     addrs,
 		defaultGateways: defaultGateways,
+		hostFunction:    discoverHostFunction(hostInterfaceName),
 	}, nil
+}
+
+// discoverHostFunction resolves the PF (and, for a VF, the VF) index of the
+// host interface for the DPU side to resolve its representor and OVS bridge
+// directly. It is best-effort: only the DPU-host publishes host function,
+// and only an SR-IOV function has them, so any resolution failure means the
+// DPU falls back to resolving the bridge by host MAC.
+func discoverHostFunction(hostInterfaceName string) *uplinkv1alpha1.HostFunction {
+	if config.OvnKubeNode.Mode != ovntypes.NodeModeDPUHost {
+		return nil
+	}
+	vfDetails, vfErr := util.GetDPUOps().ResolveDeviceDetails(hostInterfaceName)
+	if vfErr == nil {
+		return &uplinkv1alpha1.HostFunction{
+			PFID: int32(vfDetails.PfId),
+			VFID: ptr.To(int32(vfDetails.FuncId)),
+		}
+	}
+	pfIndex, pfErr := util.GetDPUOps().ResolvePFIndex(hostInterfaceName)
+	if pfErr == nil {
+		return &uplinkv1alpha1.HostFunction{PFID: int32(pfIndex)}
+	}
+	klog.V(5).Infof("No host function for host interface %s: not a VF (%v), not a PF (%v)",
+		hostInterfaceName, vfErr, pfErr)
+	return nil
 }
 
 func isDefaultRoute(route netlink.Route) bool {
@@ -1176,6 +1258,105 @@ func (r defaultOVSBridgeResolver) BridgeUplink(bridgeName string) (string, error
 		)
 	}
 	return uplinkName, nil
+}
+
+// ResolveByHostFunction turns published host function data into the OVS
+// bridge holding the uplink representor. The DPU-host publishes, best
+// effort, two ways to identify the backing function, and the DPU tries
+// the corresponding lookups in order:
+//
+//	published input             lookup on the DPU
+//
+//	1. hostFunction.pfID/vfID   phys_port_name match on "c1pf<P>vf<V>"
+//	   (indices)                or legacy "pf<P>vf<V>" (pfID 0/1 only)
+//
+//	2. macAddress               scan every bridge for the representor
+//	   (identity)               whose host peer MAC is macAddress
+//
+// A representor from 1 must peer with macAddress when that peer MAC is
+// readable, and its bridge comes from the OVS port-to-bridge lookup.
+// Method 2 needs no verification (the match is the identity) and yields
+// the bridge directly; the reconcile loop runs it as the fallback when 1
+// fails (see ResolveByHostMAC).
+func (r defaultOVSBridgeResolver) ResolveByHostFunction(
+	details *uplinkv1alpha1.HostFunction,
+	hostMAC net.HardwareAddr,
+	nodeName string,
+) (string, error) {
+	function := hostFunctionName(details)
+	// TODO: this lookup relies on sriovnet's deprecated
+	// GetVfRepresentorDPU/GetPfRepresentorDPU, which only accept PF
+	// indices 0 and 1 and only match c1/legacy phys_port_name patterns:
+	// multi-host DPUs (controllers other than c1) and cards with more
+	// than two PFs cannot be resolved this way, and (pfID, vfID) alone
+	// is ambiguous across DPUs and controllers in any case; such layouts
+	// take the MAC scan on every reconcile. The way out is publishing an
+	// unambiguous anchor, the MAC of the backing PF, and resolving
+	// through sriovnet's port params API
+	// (GetPFRepresentorPortParamsFromMAC and the
+	// Get*RepresentorFromPortParams lookups), which works on any
+	// controller and PF count.
+	var rep string
+	var err error
+	if details.VFID != nil {
+		rep, err = util.GetDPUOps().GetPortRepresentor(
+			fmt.Sprintf("%d", details.PFID),
+			fmt.Sprintf("%d", *details.VFID),
+		)
+	} else {
+		rep, err = util.GetDPUOps().GetPFRepresentor(fmt.Sprintf("%d", details.PFID))
+	}
+	if err != nil {
+		return "", newDiscoveryError(
+			uplinkv1alpha1.UplinkStateReasonBridgeNotFound,
+			fmt.Errorf("failed to find representor for host function %s: %w", function, err),
+		)
+	}
+	// The published MAC is the uplink's identity: indices of a host function
+	// on some other SR-IOV device could still resolve a representor here.
+	// The representor's host-side peer MAC — the eswitch's record of the
+	// host function MAC, read via devlink, not the representor netdev's own
+	// address — must therefore equal the published MAC when it is readable,
+	// or the representor is not a match. A representor with no readable
+	// peer MAC (hardware that leaves representor function MACs unset
+	// reports errors or all zeroes) offers no identity to compare, and no
+	// way to resolve by MAC at all, so the published indices stand on their
+	// own there.
+	peerMAC, err := util.GetDPUOps().GetHostPeerMACAddress(rep, nodeName)
+	switch {
+	case err != nil:
+		klog.V(2).Infof("Uplink host function %s representor %s has no readable host peer MAC, "+
+			"skipping identity verification: %v", function, rep, err)
+	case !util.IsUsableEthernetMAC(peerMAC):
+		klog.V(2).Infof("Uplink host function %s representor %s host peer MAC %s is unusable, "+
+			"skipping identity verification", function, rep, peerMAC)
+	case !bytes.Equal(peerMAC, hostMAC):
+		return "", newDiscoveryError(
+			uplinkv1alpha1.UplinkStateReasonBridgeNotFound,
+			fmt.Errorf("representor %s for host function %s peers with MAC %s, not the published host MAC %s",
+				rep, function, peerMAC, hostMAC),
+		)
+	}
+	bridgeName, err := r.bridgeForPortOrInterface(rep)
+	if err != nil {
+		return "", newDiscoveryError(
+			uplinkv1alpha1.UplinkStateReasonBridgeNotFound,
+			fmt.Errorf("failed to resolve OVS bridge for host function %s representor %s: %w",
+				function, rep, err),
+		)
+	}
+	klog.Infof("Resolved Uplink host function %s to OVS bridge %s via DPU representor %s",
+		function, bridgeName, rep)
+	return bridgeName, nil
+}
+
+// hostFunctionName renders host function as pf<N> or pf<N>vf<M> for logs
+// and error messages.
+func hostFunctionName(details *uplinkv1alpha1.HostFunction) string {
+	if details.VFID != nil {
+		return fmt.Sprintf("pf%dvf%d", details.PFID, *details.VFID)
+	}
+	return fmt.Sprintf("pf%d", details.PFID)
 }
 
 func (r defaultOVSBridgeResolver) ResolveByHostMAC(hostMAC net.HardwareAddr, nodeName string) (string, error) {

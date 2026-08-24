@@ -304,6 +304,6 @@ egressip-node-healthcheck-port=9107
 
 #### Additional details on the implementation of the gRPC probing:
 
-- If available, the session uses the [same TLS certs](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/82f167a3920c8c3cd0687ceb3e7a5ba64372be69/go-controller/pkg/ovn/healthcheck/egressip_healthcheck.go#L78) used by ovnkube to connect to the northbound OVSDB server. Conversely, an insecure gRPC session is used when no certs are specified.
+- If configured, the session uses the certificates from the `[egressip-healthcheck-tls]` configuration section. The historical `--nb-client-*` flags and `[ovnnorth]` configuration keys remain accepted for compatibility. An insecure gRPC session is used when no certificates are specified.
 - The [message used for probing](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/82f167a3920c8c3cd0687ceb3e7a5ba64372be69/go-controller/pkg/ovn/healthcheck/health.proto#L6) is the [standard service health](https://github.com/grpc/grpc/blob/master/src/proto/grpc/health/v1/health.proto) specified in gRPC.
 - [Special care was taken into consideration](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/82f167a3920c8c3cd0687ceb3e7a5ba64372be69/go-controller/pkg/ovn/healthcheck/egressip_healthcheck.go#L193-L195) to handle cases when the gRPC session bounced for normal reasons. EgressIP implementation will not declare a node unreachable under these circumstances.
