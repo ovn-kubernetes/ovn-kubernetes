@@ -182,3 +182,5 @@ Default routes and static connectivity relationships are insufficient when workl
 ## Conclusion: Toward Software-Defined Networking for the Kubernetes Platform
 
 When containers, virtual machines, and AI agents are managed by Kubernetes, the platform needs a network control plane that is declaratively composable, observable, and able to evolve continuously. We hope OVN-Kubernetes will become **“The Software Defined Network for the Kubernetes platform.”**
+
+*Posted on* *August 25, 2026* *by* *Fang YuChen*.
