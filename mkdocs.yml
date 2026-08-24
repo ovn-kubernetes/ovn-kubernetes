@@ -209,3 +209,4 @@ nav:
     - blog/index.md
     - Accelerating and Securing Kubernetes Networking with DPUs: blog/dpu-acceleration.md
     - Debugging NetworkPolicies with NetObserv: blog/netobserv.md
+    - SAIC Motor's Kubernetes-Based Multi-Tenant Networking Practice: blog/saic-practice.md

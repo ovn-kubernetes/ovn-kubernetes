@@ -15,3 +15,7 @@ Deploy OVN-Kubernetes with DPU offload for high-performance networking and per-t
 **[Debugging NetworkPolicies with NetObserv](netobserv.md)**
 
 Use OVN observability and NetObserv to understand why connections are allowed or denied by network policies.
+
+**[SAIC Motor's Kubernetes-Based Multi-Tenant Networking Practice: Building a Unified Network Foundation with OVN-Kubernetes](saic-practice.md)**
+
+Learn how SAIC Motor uses OVN-Kubernetes to build a unified multi-tenant network foundation for containers, virtual machines, and AI agents.
