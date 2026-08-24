@@ -6,11 +6,15 @@ package networkqos
 import (
 	"context"
 	"fmt"
+	"net"
+	"os"
 	"slices"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
+
+	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -109,6 +113,15 @@ var (
 	port8081      = int32(8081)
 	port9090      = int32(9090)
 )
+
+func init() {
+	// Disable WatchListClient feature gate for tests, matching
+	// cni_suite_test.go: third-party fake clientsets (the NAD informer this
+	// suite starts) don't support WatchList semantics introduced in K8s 1.35
+	// and hang waiting for bookmark events.
+	// See: https://github.com/kubernetes/kubernetes/issues/135895
+	os.Setenv("KUBE_FEATURE_WatchListClient", "false")
+}
 
 func TestNetworkQoS(t *testing.T) {
 	RegisterFailHandler(Fail)
@@ -1225,3 +1238,178 @@ func shutdownController() {
 		stopChan = nil
 	}
 }
+
+// newDHCPLocalnetNAD builds a subnet-less localnet NAD whose IPAM is handed
+// to an external DHCP server (ipam.type "dhcp")
+func newDHCPLocalnetNAD(name, namespace, nadKey string) *nadapi.NetworkAttachmentDefinition {
+	return ovnk8stesting.GenerateNADWithConfig(name, namespace, fmt.Sprintf(`{
+		"cniVersion": "1.1.0",
+		"name": "%s",
+		"type": "ovn-k8s-cni-overlay",
+		"topology": "localnet",
+		"ipam": {"type": "dhcp"},
+		"netAttachDefName": "%s",
+		"role": "secondary"
+	}`, name, nadKey))
+}
+
+var _ = Describe("NetworkQoS DHCP-IPAM helpers", func() {
+	ip := func(s string) net.IP { return net.ParseIP(s) }
+
+	// pins the pod-update filter's change detection: on networks with
+	// externally assigned IPs (DHCP IPAM) a sandbox recreation can replace
+	// one lease with another without changing the address count, and such
+	// an update must NOT be filtered out
+	DescribeTable("util.IsIPsEqual (pod-update filter) reports equal IP sets",
+		func(a, b []net.IP) {
+			Expect(util.IsIPsEqual(a, b)).To(BeTrue())
+			Expect(util.IsIPsEqual(b, a)).To(BeTrue(), "must be symmetric")
+		},
+		Entry("both empty", nil, nil),
+		Entry("identical single IP", []net.IP{ip("172.18.0.208")}, []net.IP{ip("172.18.0.208")}),
+		Entry("same addresses, different order", []net.IP{ip("172.18.0.208"), ip("fd00::5")}, []net.IP{ip("fd00::5"), ip("172.18.0.208")}),
+	)
+
+	DescribeTable("util.IsIPsEqual (pod-update filter) reports different IP sets",
+		func(a, b []net.IP) {
+			Expect(util.IsIPsEqual(a, b)).To(BeFalse())
+			Expect(util.IsIPsEqual(b, a)).To(BeFalse(), "must be symmetric")
+		},
+		Entry("same count, different IP (DHCP lease change)", []net.IP{ip("172.18.0.208")}, []net.IP{ip("172.18.0.209")}),
+		Entry("IP added", []net.IP{ip("172.18.0.208")}, []net.IP{ip("172.18.0.208"), ip("fd00::5")}),
+		Entry("IP removed", []net.IP{ip("172.18.0.208")}, nil),
+	)
+
+	DescribeTable("staleAddresses",
+		func(old, current, expectedStale []string) {
+			Expect(staleAddresses(old, current)).To(Equal(expectedStale))
+		},
+		Entry("no previous addresses", nil, []string{"172.18.0.209"}, nil),
+		Entry("unchanged", []string{"172.18.0.208"}, []string{"172.18.0.208"}, nil),
+		Entry("lease replaced", []string{"172.18.0.208"}, []string{"172.18.0.209"}, []string{"172.18.0.208"}),
+		Entry("all gone", []string{"172.18.0.208", "fd00::5"}, nil, []string{"172.18.0.208", "fd00::5"}),
+		Entry("partial overlap", []string{"172.18.0.208", "fd00::5"}, []string{"fd00::5"}, []string{"172.18.0.208"}),
+	)
+
+})
+
+// Verifies NetworkQoS end-to-end (informers → event filter → reconcile →
+// NBDB) for a subnet-less localnet network with DHCP IPAM, where pod IPs
+// appear and change via pod-networks annotation patches (what the CNI does
+// at ADD / sandbox recreation), not via ovnkube allocation.
+var _ = Describe("NetworkQoS on a DHCP-IPAM localnet network", func() {
+	It("reflects DHCP-learned pod IPs in the source address set and provisions valid QoS", func() {
+		const (
+			dhcpControllerName = "dhcpnet-network-controller"
+			dhcpNadKey         = "default/dhcpnet"
+			dhcpSwitch         = "dhcpnet_ovn_localnet_switch"
+			lease1             = "172.18.0.208"
+			lease2             = "172.18.0.209"
+		)
+
+		prevV4, prevV6 := config.IPv4Mode, config.IPv6Mode
+		config.IPv4Mode, config.IPv6Mode = true, false
+		DeferCleanup(func() { config.IPv4Mode, config.IPv6Mode = prevV4, prevV6 })
+
+		nad := newDHCPLocalnetNAD("dhcpnet", "default", dhcpNadKey)
+		nad.Labels = map[string]string{"name": "dhcpnet"}
+
+		ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+			Name: nqosNamespace, Labels: map[string]string{"app": "client"}}}
+		node1 := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+			Name: "node1", Annotations: map[string]string{"k8s.ovn.org/zone-name": "node1"}}}
+
+		// the pod starts as CNI ADD finds it: attached to the NAD with a
+		// MAC-only pod-networks entry, no lease yet
+		clientPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: nqosNamespace,
+				Name:      clientPodName,
+				Labels:    map[string]string{"app": "client"},
+				Annotations: map[string]string{
+					"k8s.ovn.org/pod-networks":    fmt.Sprintf(`{"%s":{"mac_address":"0a:58:0a:80:02:03"}}`, dhcpNadKey),
+					"k8s.v1.cni.cncf.io/networks": `[{"interface":"net1","name":"dhcpnet","namespace":"default"}]`,
+				},
+			},
+			Spec: corev1.PodSpec{NodeName: "node1"},
+		}
+
+		nqosDHCP := &nqostype.NetworkQoS{
+			ObjectMeta: metav1.ObjectMeta{Namespace: nqosNamespace, Name: "dhcp-qos"},
+			Spec: nqostype.Spec{
+				NetworkSelectors: []crdtypes.NetworkSelector{{
+					NetworkSelectionType: crdtypes.NetworkAttachmentDefinitions,
+					NetworkAttachmentDefinitionSelector: &crdtypes.NetworkAttachmentDefinitionSelector{
+						NetworkSelector: metav1.LabelSelector{MatchLabels: map[string]string{"name": "dhcpnet"}},
+					},
+				}},
+				Priority:    100,
+				PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}},
+				Egress: []nqostype.Rule{{
+					DSCP: 50,
+					Classifier: nqostype.Classifier{
+						To: []nqostype.Destination{{
+							IPBlock: &networkingv1.IPBlock{CIDR: "172.16.0.0/24"},
+						}},
+					},
+				}},
+			},
+		}
+
+		initialDB := &libovsdbtest.TestSetup{NBData: []libovsdbtest.TestData{
+			&nbdb.LogicalSwitch{Name: dhcpSwitch},
+		}}
+
+		ovnClientset := util.GetOVNClientset(ns, node1, clientPod, nqosDHCP, nad)
+		fakeKubeClient = ovnClientset.KubeClient
+		fakeNQoSClient = ovnClientset.NetworkQoSClient
+		initEnv(ovnClientset, initialDB)
+
+		dhcpAddrsetFactory := addressset.NewFakeAddressSetFactory(dhcpControllerName)
+		dhcpImmutableNadInfo, err := util.ParseNADInfo(nad)
+		Expect(err).NotTo(HaveOccurred())
+		dhcpNadInfo := util.NewMutableNetInfo(dhcpImmutableNadInfo)
+		dhcpNadInfo.AddNADs(dhcpNadKey)
+		initNetworkQoSController(dhcpNadInfo, []string{dhcpNadKey}, dhcpAddrsetFactory, dhcpControllerName)
+
+		By("keeping the source address set empty while the pod has no lease")
+		eventuallyAddressSetHasNo(dhcpAddrsetFactory, nqosNamespace, "dhcp-qos", "src", "0", dhcpControllerName, lease1)
+		// QoS rows are created and bound lazily, nothing should exist
+		// before a source pod holds a lease
+		eventuallyExpectNoQoS(dhcpControllerName, nqosNamespace, "dhcp-qos", 0)
+
+		By("adding the lease to the source address set once the CNI patches the annotation")
+		pod, err := fakeKubeClient.CoreV1().Pods(nqosNamespace).Get(context.Background(), clientPodName, metav1.GetOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		pod.Annotations["k8s.ovn.org/pod-networks"] = fmt.Sprintf(
+			`{"%s":{"ip_addresses":["%s/16"],"mac_address":"0a:58:0a:80:02:03"}}`, dhcpNadKey, lease1)
+		// the fake clientset doesn't bump ResourceVersion, but the pod update
+		// handler drops same-RV updates as resyncs
+		pod.ResourceVersion = time.Now().String()
+		_, err = fakeKubeClient.CoreV1().Pods(nqosNamespace).Update(context.Background(), pod, metav1.UpdateOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		eventuallyAddressSetHas(dhcpAddrsetFactory, nqosNamespace, "dhcp-qos", "src", "0", dhcpControllerName, lease1)
+
+		By("provisioning a valid QoS on the localnet switch despite the network having no subnets")
+		// QoS rows are bound lazily, once a source pod with addresses lands
+		// on the switch
+		qos := eventuallyExpectQoS(dhcpControllerName, nqosNamespace, "dhcp-qos", 0)
+		// before the IPMode correction for DHCP networks this match compiled
+		// to an empty string and northd would generate no flows
+		Expect(qos.Match).To(ContainSubstring("ip4.src == {$"))
+		eventuallySwitchHasQoS(dhcpSwitch, qos)
+
+		By("replacing the address on a lease change (sandbox recreation)")
+		pod, err = fakeKubeClient.CoreV1().Pods(nqosNamespace).Get(context.Background(), clientPodName, metav1.GetOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		pod.Annotations["k8s.ovn.org/pod-networks"] = fmt.Sprintf(
+			`{"%s":{"ip_addresses":["%s/16"],"mac_address":"0a:58:0a:80:02:03"}}`, dhcpNadKey, lease2)
+		pod.ResourceVersion = time.Now().String()
+		_, err = fakeKubeClient.CoreV1().Pods(nqosNamespace).Update(context.Background(), pod, metav1.UpdateOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		// the update must pass the content-compare filter (the address count
+		// is unchanged) and the stale address must be deleted, not accumulated
+		eventuallyAddressSetHas(dhcpAddrsetFactory, nqosNamespace, "dhcp-qos", "src", "0", dhcpControllerName, lease2)
+		eventuallyAddressSetHasNo(dhcpAddrsetFactory, nqosNamespace, "dhcp-qos", "src", "0", dhcpControllerName, lease1)
+	})
+})

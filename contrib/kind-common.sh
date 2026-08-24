@@ -1018,7 +1018,9 @@ install_metallb() {
 }
 
 install_plugins() {
-  git clone https://github.com/containernetworking/plugins.git
+  # pinned so CI doesn't chase upstream master; the dhcp plugin needs
+  # >= v1.6.0 (cniVersion 1.1.0 support)
+  git clone --depth 1 -b v1.9.1 https://github.com/containernetworking/plugins.git
   pushd plugins
   CGO_ENABLED=0 ./build_linux.sh
   KIND_NODES=$(kind_get_nodes)

@@ -652,6 +652,24 @@ func (_m *NetInfo) GetTunnelKeys() []int {
 	return r0
 }
 
+// IPAMType provides a mock function with no fields
+func (_m *NetInfo) IPAMType() string {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for IPAMType")
+	}
+
+	var r0 string
+	if rf, ok := ret.Get(0).(func() string); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	return r0
+}
+
 // IPMode provides a mock function with no fields
 func (_m *NetInfo) IPMode() (bool, bool) {
 	ret := _m.Called()
