@@ -2714,6 +2714,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#node-requirements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Node Requirements
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#example" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4882,6 +4893,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#node-requirements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Node Requirements
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#example" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5089,6 +5111,31 @@ East-West traffic (including pod -&gt; node IP) is excluded from Egress IP.  </p
 - <a href="https://docs.okd.io/latest/networking/ovn_kubernetes_network_provider/assigning-egress-ips-ovn.html">Assigning an egress IP address</a>
 - <a href="https://rcarrata.com/openshift/egress-ip-ovn/">Managing Egress IP in OpenShift 4 with OVN-Kubernetes</a></p>
 <p>Always check the dependencies on the <a href="../../requirements/">Requirements page</a></p>
+<h2 id="node-requirements">Node Requirements<a class="headerlink" href="#node-requirements" title="Permanent link">¶</a></h2>
+<p>The <code>k8s.ovn.org/host-cidrs</code> annotation is automatically set during node bootstrap and
+contains the node's host network CIDR(s). A node can be missing this annotation if it is
+stuck in <code>NodeStatusNeverUpdated</code>, was orphaned by the cluster autoscaler, or was never
+properly bootstrapped.</p>
+<p>Such a node is handled in two places:</p>
+<ul>
+<li><strong>Conflict detection</strong> skips the node. The annotation is the only source of the node's
+  host addresses, so without it there is no data to check the requested egress IP against.
+  Skipping means the check cannot prove the address is free on that node — it does not mean
+  the node has no conflicting address.</li>
+<li><strong>Node assignability</strong> excludes the node. A node whose <code>host-cidrs</code> annotation is missing,
+  cannot be parsed, or contains no addresses is marked not assignable even when it carries
+  the <code>k8s.ovn.org/egress-assignable</code> label, and any EgressIPs already assigned to it are
+  released so they can move to an eligible node.</li>
+</ul>
+<p>Together these prevent a single misconfigured or orphaned node from failing EgressIP
+assignment cluster-wide, while keeping it out of the pool of assignment candidates.</p>
+<p><strong>Important:</strong> Conflict protection is not enforced for a node in this state. Restore the
+node's <code>host-cidrs</code> annotation, or remove the stale node from the cluster, before relying
+on conflict detection to catch an egress IP that collides with a host address.</p>
+<p><strong>Troubleshooting:</strong> If an EgressIP is not assigned to an expected node, verify the node
+has the <code>k8s.ovn.org/host-cidrs</code> annotation set:</p>
+<div class="highlight"><pre><span></span><code>kubectl<span class="w"> </span>get<span class="w"> </span>node<span class="w"> </span>&lt;node-name&gt;<span class="w"> </span>-o<span class="w"> </span><span class="nv">jsonpath</span><span class="o">=</span><span class="s1">'{.metadata.annotations.k8s\.ovn\.org/host-cidrs}'</span>
+</code></pre></div>
 <h2 id="example">Example<a class="headerlink" href="#example" title="Permanent link">¶</a></h2>
 <p>An example of EgressIP might look like this:</p>
 <p></p><div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.ovn.org/v1</span>
