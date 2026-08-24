@@ -4,13 +4,357 @@
 package ops
 
 import (
+	"errors"
 	"fmt"
 	"net"
+	"reflect"
 	"testing"
+
+	"github.com/google/uuid"
+
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 )
+
+func TestGetRouterLogicalRouterStaticRoutesWithPredicate(t *testing.T) {
+	route1 := &nbdb.LogicalRouterStaticRoute{
+		UUID:        buildNamedUUID(),
+		IPPrefix:    "10.0.0.0/24",
+		Nexthop:     "100.64.0.2",
+		ExternalIDs: map[string]string{"owner": "node1"},
+	}
+	route2 := &nbdb.LogicalRouterStaticRoute{
+		UUID:        buildNamedUUID(),
+		IPPrefix:    "10.0.1.0/24",
+		Nexthop:     "100.64.0.3",
+		ExternalIDs: map[string]string{"owner": "node1"},
+	}
+	nonMatchingRoute := &nbdb.LogicalRouterStaticRoute{
+		UUID:        buildNamedUUID(),
+		IPPrefix:    "10.0.2.0/24",
+		Nexthop:     "100.64.0.4",
+		ExternalIDs: map[string]string{"owner": "node2"},
+	}
+	otherRouterRoute := &nbdb.LogicalRouterStaticRoute{
+		UUID:        buildNamedUUID(),
+		IPPrefix:    "10.0.3.0/24",
+		Nexthop:     "100.64.0.5",
+		ExternalIDs: map[string]string{"owner": "node1"},
+	}
+	router := &nbdb.LogicalRouter{
+		UUID:         buildNamedUUID(),
+		Name:         "router1",
+		StaticRoutes: []string{route2.UUID, nonMatchingRoute.UUID, route1.UUID},
+	}
+	otherRouter := &nbdb.LogicalRouter{
+		UUID:         buildNamedUUID(),
+		Name:         "router2",
+		StaticRoutes: []string{otherRouterRoute.UUID},
+	}
+
+	nbClient, cleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{NBData: []libovsdbtest.TestData{
+		route1,
+		route2,
+		nonMatchingRoute,
+		otherRouterRoute,
+		router,
+		otherRouter,
+	}}, nil)
+	if err != nil {
+		t.Fatalf("failed to set up test harness: %v", err)
+	}
+	t.Cleanup(cleanup.Cleanup)
+
+	tests := []struct {
+		name         string
+		predicate    logicalRouterStaticRoutePredicate
+		wantPrefixes []string
+		verifyClone  bool
+	}{
+		{
+			name: "multiple matches preserve router order",
+			predicate: func(route *nbdb.LogicalRouterStaticRoute) bool {
+				return route.ExternalIDs["owner"] == "node1"
+			},
+			wantPrefixes: []string{route2.IPPrefix, route1.IPPrefix},
+		},
+		{
+			name: "single match",
+			predicate: func(route *nbdb.LogicalRouterStaticRoute) bool {
+				return route.IPPrefix == route1.IPPrefix
+			},
+			wantPrefixes: []string{route1.IPPrefix},
+			verifyClone:  true,
+		},
+		{
+			name: "no match",
+			predicate: func(*nbdb.LogicalRouterStaticRoute) bool {
+				return false
+			},
+			wantPrefixes: []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			predicateCalls := 0
+			predicate := func(route *nbdb.LogicalRouterStaticRoute) bool {
+				predicateCalls++
+				return tt.predicate(route)
+			}
+			routes, err := GetRouterLogicalRouterStaticRoutesWithPredicate(nbClient, &nbdb.LogicalRouter{Name: router.Name}, predicate)
+			if err != nil {
+				t.Fatalf("GetRouterLogicalRouterStaticRoutesWithPredicate() error = %v", err)
+			}
+			if routes == nil {
+				t.Fatal("GetRouterLogicalRouterStaticRoutesWithPredicate() returned a nil slice")
+			}
+			if predicateCalls != len(router.StaticRoutes) {
+				t.Fatalf("GetRouterLogicalRouterStaticRoutesWithPredicate() predicate calls = %d, want %d", predicateCalls, len(router.StaticRoutes))
+			}
+
+			gotPrefixes := make([]string, 0, len(routes))
+			for _, route := range routes {
+				gotPrefixes = append(gotPrefixes, route.IPPrefix)
+			}
+			if !reflect.DeepEqual(gotPrefixes, tt.wantPrefixes) {
+				t.Fatalf("GetRouterLogicalRouterStaticRoutesWithPredicate() prefixes = %v, want %v", gotPrefixes, tt.wantPrefixes)
+			}
+
+			if tt.verifyClone {
+				routes[0].ExternalIDs["mutated"] = "true"
+				freshRoutes, err := GetRouterLogicalRouterStaticRoutesWithPredicate(nbClient, &nbdb.LogicalRouter{Name: router.Name}, tt.predicate)
+				if err != nil {
+					t.Fatalf("second GetRouterLogicalRouterStaticRoutesWithPredicate() error = %v", err)
+				}
+				if _, found := freshRoutes[0].ExternalIDs["mutated"]; found {
+					t.Fatal("mutating a returned route changed the cached route")
+				}
+			}
+		})
+	}
+}
+
+func TestGetRouterLogicalRouterStaticRoutesWithPredicateEmptyRouter(t *testing.T) {
+	unrelatedRoute := &nbdb.LogicalRouterStaticRoute{
+		UUID:     buildNamedUUID(),
+		IPPrefix: "10.0.0.0/24",
+		Nexthop:  "100.64.0.2",
+	}
+	router := &nbdb.LogicalRouter{
+		UUID: buildNamedUUID(),
+		Name: "empty-router",
+	}
+	otherRouter := &nbdb.LogicalRouter{
+		UUID:         buildNamedUUID(),
+		Name:         "other-router",
+		StaticRoutes: []string{unrelatedRoute.UUID},
+	}
+
+	nbClient, cleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{NBData: []libovsdbtest.TestData{
+		unrelatedRoute,
+		router,
+		otherRouter,
+	}}, nil)
+	if err != nil {
+		t.Fatalf("failed to set up test harness: %v", err)
+	}
+	t.Cleanup(cleanup.Cleanup)
+
+	predicateCalls := 0
+	routes, err := GetRouterLogicalRouterStaticRoutesWithPredicate(nbClient, &nbdb.LogicalRouter{Name: router.Name}, func(*nbdb.LogicalRouterStaticRoute) bool {
+		predicateCalls++
+		return true
+	})
+	if err != nil {
+		t.Fatalf("GetRouterLogicalRouterStaticRoutesWithPredicate() error = %v", err)
+	}
+	if len(routes) != 0 {
+		t.Fatalf("GetRouterLogicalRouterStaticRoutesWithPredicate() matches = %d, want 0", len(routes))
+	}
+	if routes == nil {
+		t.Fatal("GetRouterLogicalRouterStaticRoutesWithPredicate() returned a nil slice, want an empty slice")
+	}
+	if predicateCalls != 0 {
+		t.Fatalf("GetRouterLogicalRouterStaticRoutesWithPredicate() predicate calls = %d, want 0", predicateCalls)
+	}
+}
+
+func TestGetRouterLogicalRouterStaticRoutesWithPredicateReturnsErrorForMissingReferences(t *testing.T) {
+	route := &nbdb.LogicalRouterStaticRoute{
+		UUID:     buildNamedUUID(),
+		IPPrefix: "10.0.0.0/24",
+		Nexthop:  "100.64.0.2",
+	}
+	router := &nbdb.LogicalRouter{
+		UUID:         buildNamedUUID(),
+		Name:         "router-with-missing-route",
+		StaticRoutes: []string{route.UUID},
+	}
+
+	nbClient, cleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{
+		NBData: []libovsdbtest.TestData{route, router},
+	}, nil)
+	if err != nil {
+		t.Fatalf("failed to set up test harness: %v", err)
+	}
+	t.Cleanup(cleanup.Cleanup)
+
+	// Strong references prevent this state in a healthy NBDB. Inject it only in
+	// the client cache to verify that the batched lookup preserves the previous
+	// per-UUID lookup's error behavior for a stale reference.
+	cachedRouter, err := GetLogicalRouter(nbClient, &nbdb.LogicalRouter{Name: router.Name})
+	if err != nil {
+		t.Fatalf("failed to get router: %v", err)
+	}
+	cachedRouter.StaticRoutes = append([]string{uuid.NewString()}, cachedRouter.StaticRoutes...)
+	if _, err = nbClient.Cache().Table(nbdb.LogicalRouterTable).Update(cachedRouter.UUID, cachedRouter, false); err != nil {
+		t.Fatalf("failed to inject missing route reference: %v", err)
+	}
+
+	predicateCalls := 0
+	_, err = GetRouterLogicalRouterStaticRoutesWithPredicate(nbClient, &nbdb.LogicalRouter{Name: router.Name}, func(*nbdb.LogicalRouterStaticRoute) bool {
+		predicateCalls++
+		return true
+	})
+	if !errors.Is(err, libovsdbclient.ErrNotFound) {
+		t.Fatalf("GetRouterLogicalRouterStaticRoutesWithPredicate() error = %v, want %v", err, libovsdbclient.ErrNotFound)
+	}
+	if predicateCalls != 1 {
+		t.Fatalf("GetRouterLogicalRouterStaticRoutesWithPredicate() predicate calls = %d, want 1", predicateCalls)
+	}
+}
+
+func BenchmarkGetRouterLogicalRouterStaticRoutesWithPredicate(b *testing.B) {
+	const (
+		routerRouteCount      = 512
+		largeRouterRouteCount = 4096
+		unrelatedRouteCount   = 4096
+	)
+
+	tests := []struct {
+		name            string
+		routerRoutes    int
+		unrelatedRoutes int
+		matchAll        bool
+		matchNone       bool
+		wantMatches     int
+	}{
+		{
+			name:         "selective/R=512/U=0/K=1",
+			routerRoutes: routerRouteCount,
+			wantMatches:  1,
+		},
+		{
+			name:         "selective/R=4096/U=0/K=1",
+			routerRoutes: largeRouterRouteCount,
+			wantMatches:  1,
+		},
+		{
+			name:         "missing/R=512/U=0/K=0",
+			routerRoutes: routerRouteCount,
+			matchNone:    true,
+		},
+		{
+			name:         "broad/R=512/U=0/K=512",
+			routerRoutes: routerRouteCount,
+			matchAll:     true,
+			wantMatches:  routerRouteCount,
+		},
+		{
+			name:            "selective/R=512/U=4096/K=1",
+			routerRoutes:    routerRouteCount,
+			unrelatedRoutes: unrelatedRouteCount,
+			wantMatches:     1,
+		},
+		{
+			name:            "empty/R=0/U=4096/K=0",
+			unrelatedRoutes: unrelatedRouteCount,
+		},
+	}
+
+	for _, tt := range tests {
+		b.Run(tt.name, func(b *testing.B) {
+			data := make([]libovsdbtest.TestData, 0, tt.routerRoutes+tt.unrelatedRoutes+2)
+			router := &nbdb.LogicalRouter{
+				UUID: buildNamedUUID(),
+				Name: "benchmark-router",
+			}
+			otherRouter := &nbdb.LogicalRouter{
+				UUID: buildNamedUUID(),
+				Name: "other-router",
+			}
+
+			targetPrefix := ""
+			for i := 0; i < tt.routerRoutes; i++ {
+				prefix := fmt.Sprintf("10.%d.%d.0/24", i/256, i%256)
+				route := &nbdb.LogicalRouterStaticRoute{
+					UUID:     buildNamedUUID(),
+					IPPrefix: prefix,
+					Nexthop:  "100.64.0.2",
+					ExternalIDs: map[string]string{
+						"owner": "benchmark-router",
+						"route": fmt.Sprintf("route-%d", i),
+					},
+				}
+				data = append(data, route)
+				router.StaticRoutes = append(router.StaticRoutes, route.UUID)
+				targetPrefix = prefix
+			}
+			for i := 0; i < tt.unrelatedRoutes; i++ {
+				prefix := fmt.Sprintf("172.%d.%d.0/24", i/256, i%256)
+				route := &nbdb.LogicalRouterStaticRoute{
+					UUID:     buildNamedUUID(),
+					IPPrefix: prefix,
+					Nexthop:  "100.64.0.3",
+					ExternalIDs: map[string]string{
+						"owner": "other-router",
+						"route": fmt.Sprintf("route-%d", i),
+					},
+				}
+				data = append(data, route)
+				otherRouter.StaticRoutes = append(otherRouter.StaticRoutes, route.UUID)
+			}
+			data = append(data, router)
+			if tt.unrelatedRoutes > 0 {
+				data = append(data, otherRouter)
+			}
+
+			nbClient, cleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{NBData: data}, nil)
+			if err != nil {
+				b.Fatalf("failed to set up test harness: %v", err)
+			}
+			b.Cleanup(cleanup.Cleanup)
+
+			predicate := func(route *nbdb.LogicalRouterStaticRoute) bool {
+				return tt.matchAll || (!tt.matchNone && route.IPPrefix == targetPrefix)
+			}
+			routes, err := GetRouterLogicalRouterStaticRoutesWithPredicate(nbClient, &nbdb.LogicalRouter{Name: router.Name}, predicate)
+			if err != nil {
+				b.Fatalf("GetRouterLogicalRouterStaticRoutesWithPredicate() preflight error = %v", err)
+			}
+			if len(routes) != tt.wantMatches {
+				b.Fatalf("GetRouterLogicalRouterStaticRoutesWithPredicate() preflight matches = %d, want %d", len(routes), tt.wantMatches)
+			}
+			if tt.wantMatches == 1 && routes[0].IPPrefix != targetPrefix {
+				b.Fatalf("GetRouterLogicalRouterStaticRoutesWithPredicate() preflight prefix = %q, want %q", routes[0].IPPrefix, targetPrefix)
+			}
+
+			b.ReportAllocs()
+			for b.Loop() {
+				routes, err = GetRouterLogicalRouterStaticRoutesWithPredicate(nbClient, &nbdb.LogicalRouter{Name: router.Name}, predicate)
+				if err != nil {
+					b.Fatalf("GetRouterLogicalRouterStaticRoutesWithPredicate() error = %v", err)
+				}
+			}
+			if len(routes) != tt.wantMatches {
+				b.Fatalf("GetRouterLogicalRouterStaticRoutesWithPredicate() matches = %d, want %d", len(routes), tt.wantMatches)
+			}
+		})
+	}
+}
 
 func TestFindNATsUsingPredicate(t *testing.T) {
 	fakeNAT1 := &nbdb.NAT{
