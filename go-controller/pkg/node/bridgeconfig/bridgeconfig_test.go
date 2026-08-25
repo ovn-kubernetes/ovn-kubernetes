@@ -10,6 +10,8 @@ import (
 	"github.com/k8snetworkplumbingwg/sriovnet"
 	"github.com/onsi/gomega"
 
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
@@ -111,7 +113,14 @@ func TestGatewayHostOVSInterfaceResolvesSmartNICRepresentor(t *testing.T) {
 	g.Expect(fexec.CalledMatchesExpected()).To(gomega.BeTrue(), fexec.ErrorDesc())
 }
 
-func TestNewUnmanagedBridgeConfigurationResolvesDPUHostRepresentor(t *testing.T) {
+// newDPUUnmanagedBridgeHarness prepares the scaffolding shared by the
+// unmanaged bridge configuration tests: a DPU-mode node config restored on
+// cleanup, an OVSDB with one bridge holding the eth1 uplink and one
+// (Port, Interface) pair per representor name, a fake exec that answers the
+// eth1 ofport probe, and a fresh sriovnet mock installed for the test.
+func newDPUUnmanagedBridgeHarness(t *testing.T, bridgeName string, bridgeExternalIDs map[string]string,
+	repNames ...string) (libovsdbclient.Client, *ovntest.FakeExec, *utilmocks.SriovnetOps) {
+	t.Helper()
 	g := gomega.NewWithT(t)
 	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 	t.Cleanup(func() {
@@ -121,26 +130,31 @@ func TestNewUnmanagedBridgeConfigurationResolvesDPUHostRepresentor(t *testing.T)
 	config.IPv4Mode = false
 	config.OvnKubeNode.Mode = ovntypes.NodeModeDPU
 
-	bridgeUUID := "ovsbr1-uuid"
-	uplinkPortUUID := "eth1-port-uuid"
-	uplinkInterfaceUUID := "eth1-interface-uuid"
-	hostRepPortUUID := "pfhpf0-port-uuid"
-	hostRepInterfaceUUID := "pfhpf0-interface-uuid"
-	ovsClient, ovsCleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
-		OVSData: []libovsdbtest.TestData{
-			&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{bridgeUUID}},
-			&vswitchd.Bridge{
-				UUID:        bridgeUUID,
-				Name:        "ovsbr1",
-				Ports:       []string{uplinkPortUUID, hostRepPortUUID},
-				ExternalIDs: map[string]string{"bridge-uplink": "eth1"},
-			},
-			&vswitchd.Port{UUID: uplinkPortUUID, Name: "eth1", Interfaces: []string{uplinkInterfaceUUID}},
-			&vswitchd.Interface{UUID: uplinkInterfaceUUID, Name: "eth1", Type: "system"},
-			&vswitchd.Port{UUID: hostRepPortUUID, Name: "pfhpf0", Interfaces: []string{hostRepInterfaceUUID}},
-			&vswitchd.Interface{UUID: hostRepInterfaceUUID, Name: "pfhpf0", Type: "system"},
+	bridgeUUID := bridgeName + "-uuid"
+	portUUIDs := []string{"eth1-port-uuid"}
+	ovsData := []libovsdbtest.TestData{
+		&vswitchd.Port{UUID: "eth1-port-uuid", Name: "eth1", Interfaces: []string{"eth1-interface-uuid"}},
+		&vswitchd.Interface{UUID: "eth1-interface-uuid", Name: "eth1", Type: "system"},
+	}
+	for _, repName := range repNames {
+		portUUID := repName + "-port-uuid"
+		interfaceUUID := repName + "-interface-uuid"
+		portUUIDs = append(portUUIDs, portUUID)
+		ovsData = append(ovsData,
+			&vswitchd.Port{UUID: portUUID, Name: repName, Interfaces: []string{interfaceUUID}},
+			&vswitchd.Interface{UUID: interfaceUUID, Name: repName, Type: "system"},
+		)
+	}
+	ovsData = append(ovsData,
+		&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{bridgeUUID}},
+		&vswitchd.Bridge{
+			UUID:        bridgeUUID,
+			Name:        bridgeName,
+			Ports:       portUUIDs,
+			ExternalIDs: bridgeExternalIDs,
 		},
-	})
+	)
+	ovsClient, ovsCleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{OVSData: ovsData})
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	t.Cleanup(ovsCleanup.Cleanup)
 
@@ -157,6 +171,13 @@ func TestNewUnmanagedBridgeConfigurationResolvesDPUHostRepresentor(t *testing.T)
 	t.Cleanup(func() {
 		util.SetSriovnetOpsInst(origSriovOps)
 	})
+	return ovsClient, fexec, sriovOps
+}
+
+func TestNewUnmanagedBridgeConfigurationResolvesDPUHostRepresentor(t *testing.T) {
+	g := gomega.NewWithT(t)
+	ovsClient, fexec, sriovOps := newDPUUnmanagedBridgeHarness(t, "ovsbr1",
+		map[string]string{"bridge-uplink": "eth1"}, "pfhpf0")
 	// FindHostRepresentorByPeerMAC walks the bridge ports in map order and
 	// returns on the first match, so expectations for the other ports may
 	// legitimately go unused.
@@ -187,55 +208,9 @@ func TestNewUnmanagedBridgeConfigurationResolvesDPUHostRepresentor(t *testing.T)
 
 func TestNewUnmanagedBridgeConfigurationResolvesDPUHostVFRepresentor(t *testing.T) {
 	g := gomega.NewWithT(t)
-	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
-	t.Cleanup(func() {
-		_ = config.PrepareTestConfig()
-		util.ResetRunner()
-	})
-	config.IPv4Mode = false
-	config.OvnKubeNode.Mode = ovntypes.NodeModeDPU
-
-	bridgeUUID := "br-hostvf0-uuid"
-	uplinkPortUUID := "eth1-port-uuid"
-	uplinkInterfaceUUID := "eth1-interface-uuid"
-	vf0PortUUID := "pf0vf0-port-uuid"
-	vf0InterfaceUUID := "pf0vf0-interface-uuid"
-	vf7PortUUID := "pf0vf7-port-uuid"
-	vf7InterfaceUUID := "pf0vf7-interface-uuid"
-	ovsClient, ovsCleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
-		OVSData: []libovsdbtest.TestData{
-			&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{bridgeUUID}},
-			// No bridge-uplink external-id: the physical uplink must be derived
-			// by skipping the VF representors.
-			&vswitchd.Bridge{
-				UUID:  bridgeUUID,
-				Name:  "br-hostvf0",
-				Ports: []string{uplinkPortUUID, vf0PortUUID, vf7PortUUID},
-			},
-			&vswitchd.Port{UUID: uplinkPortUUID, Name: "eth1", Interfaces: []string{uplinkInterfaceUUID}},
-			&vswitchd.Interface{UUID: uplinkInterfaceUUID, Name: "eth1", Type: "system"},
-			&vswitchd.Port{UUID: vf0PortUUID, Name: "pf0vf0", Interfaces: []string{vf0InterfaceUUID}},
-			&vswitchd.Interface{UUID: vf0InterfaceUUID, Name: "pf0vf0", Type: "system"},
-			&vswitchd.Port{UUID: vf7PortUUID, Name: "pf0vf7", Interfaces: []string{vf7InterfaceUUID}},
-			&vswitchd.Interface{UUID: vf7InterfaceUUID, Name: "pf0vf7", Type: "system"},
-		},
-	})
-	g.Expect(err).NotTo(gomega.HaveOccurred())
-	t.Cleanup(ovsCleanup.Cleanup)
-
-	fexec := ovntest.NewLooseCompareFakeExec()
-	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "ovs-vsctl --timeout=15 get interface eth1 ofport",
-		Output: "7",
-	})
-	g.Expect(util.SetExec(fexec)).To(gomega.Succeed())
-
-	sriovOps := utilmocks.NewSriovnetOps(t)
-	origSriovOps := util.GetSriovnetOps()
-	util.SetSriovnetOpsInst(sriovOps)
-	t.Cleanup(func() {
-		util.SetSriovnetOpsInst(origSriovOps)
-	})
+	// No bridge-uplink external-id: the physical uplink must be derived by
+	// skipping the VF representors.
+	ovsClient, fexec, sriovOps := newDPUUnmanagedBridgeHarness(t, "br-hostvf0", nil, "pf0vf0", "pf0vf7")
 	// The walk returns on the first match (pf0vf7), so the probes of the
 	// other ports may legitimately go unused depending on map order.
 	sriovOps.On("GetRepresentorPortFlavour", "eth1").
