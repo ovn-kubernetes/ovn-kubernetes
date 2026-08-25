@@ -32,8 +32,8 @@ Kubernetes ecosystem APIs that is watched and implemented by OVN-Kubernetes
 This section contains the API Reference guide for features
 designed and implemented by OVN-Kubernetes
 
-* [EgressIP](https://ovn-kubernetes.io/api-reference/egress-ip-api-spec/)
-* [EgressService](https://ovn-kubernetes.io/api-reference/egress-service-api-spec/)
-* [EgressQoS](https://ovn-kubernetes.io/api-reference/egress-qos-api-spec/)
-* [EgressFirewall](https://ovn-kubernetes.io/api-reference/egress-firewall-api-spec/)
-* [AdminPolicyBasedExternalRoutes](https://ovn-kubernetes.io/api-reference/admin-epbr-api-spec/)
+* [EgressIP](egress-ip-api-spec.md)
+* [EgressService](egress-service-api-spec.md)
+* [EgressQoS](egress-qos-api-spec.md)
+* [EgressFirewall](egress-firewall-api-spec.md)
+* [AdminPolicyBasedExternalRoutes](admin-epbr-api-spec.md)
