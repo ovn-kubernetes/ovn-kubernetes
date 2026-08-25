@@ -50,5 +50,6 @@ func (pr *PodRequest) allocateDPUConnectionDetails(vfNetdevName string) (*util.D
 		VfId:         fmt.Sprint(details.FuncId),
 		SandboxId:    pr.SandboxID,
 		VfNetdevName: vfNetdevName,
+		NetnsPath:    pr.Netns,
 	}, nil
 }

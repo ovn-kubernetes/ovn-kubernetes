@@ -76,6 +76,7 @@ var _ = Describe("cni_dpu tests", func() {
 				VfId:         "2",
 				SandboxId:    pr.SandboxID,
 				VfNetdevName: "ens1f0v2",
+				NetnsPath:    pr.Netns,
 			}))
 		})
 

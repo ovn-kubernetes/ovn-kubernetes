@@ -840,6 +840,7 @@ var _ = Describe("DHCP IPAM workload differentiation", func() {
 				VfId:         "2",
 				SandboxId:    pr.SandboxID,
 				VfNetdevName: "ens1f0v2",
+				NetnsPath:    pr.Netns,
 			}))
 
 			By("the DHCP delegation still ran and patched the lease, keeping the entry's MAC")

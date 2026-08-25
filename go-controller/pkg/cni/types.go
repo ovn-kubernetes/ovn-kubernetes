@@ -219,4 +219,5 @@ type Server struct {
 	networkManager networkmanager.Interface
 	ovsClient      client.Client
 	dpuHealth      DPUStatusProvider
+	nodeName       string
 }
