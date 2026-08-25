@@ -6,7 +6,7 @@ OVS supports [Hardware Acceleration features](https://docs.openvswitch.org/en/la
 
 DOCA (Data Center Infrastructure-on-a-Chip Architecture) is a software stack for NVIDIA Smart NIC (ConnectX) and Data Processing Unit (BlueField) product lines. It contains a runtime and development environment, including libraries and drivers for device management and programmability, for the host (Smart NIC) or as part of the Data Processing Unit (DPU).
 
-OVS-DOCA extends traditional OVS-DPDK and OVS-Kernel data-path offload interfaces (DPIF), adds  OVS-DOCA as an additional DPIF implementation. It preserves the same interfaces as OVS-DPDK and OVS-Kernel while utilizing the DOCA Flow library. OVS-DOCA uses unique hardware offload mechanisms and application techniques to maximize performance and adds other features. OVS Acceleration with kernel datapath is documented [here](https://ovn-kubernetes.io/features/hardware-offload/ovs_acceleration/)
+OVS-DOCA extends traditional OVS-DPDK and OVS-Kernel data-path offload interfaces (DPIF), adds  OVS-DOCA as an additional DPIF implementation. It preserves the same interfaces as OVS-DPDK and OVS-Kernel while utilizing the DOCA Flow library. OVS-DOCA uses unique hardware offload mechanisms and application techniques to maximize performance and adds other features. OVS Acceleration with kernel datapath is documented [here](ovs_acceleration.md)
 
 ![ovs-datapath-offload-interfaces](../../images/ovs-datapath-offload-interfaces.png)
 
