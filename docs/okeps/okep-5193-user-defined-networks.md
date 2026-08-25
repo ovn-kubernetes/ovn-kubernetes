@@ -439,7 +439,7 @@ an error status can be reported to the CR, rather than relying on the user to ch
 
 #### API Overview
 
-Two CRDs shall be introduced. Note for the final implementation, see the [official api](https://ovn-kubernetes.io/api-reference/userdefinednetwork-api-spec/).
+Two CRDs shall be introduced. Note for the final implementation, see the [official api](../api-reference/userdefinednetwork-api-spec.md).
 - Namespace scoped CRD - represent user request for creating namespace scoped OVN network.
   - Shall be defined with `namespace` scope.
   - Targeted for cluster admin and non-admin users, enable creating OVN network in a specific namespace.

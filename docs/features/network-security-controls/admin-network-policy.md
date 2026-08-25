@@ -1123,7 +1123,7 @@ packet which is the `action` on the ACL.
 Using this method each policy rule can be debugged to
 see if constructs at OVN level are created correctly.
 An easier way is to simply run an
-[ovnkube-trace](https://ovn-kubernetes.io/troubleshooting/ovnkube-trace/).
+[ovnkube-trace](../../troubleshooting/ovnkube-trace.md).
 
 ### OVN Tracing
 
