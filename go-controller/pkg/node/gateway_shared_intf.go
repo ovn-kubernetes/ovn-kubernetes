@@ -265,9 +265,13 @@ func (npw *nodePortWatcher) syncNodePortAllowedAddresses() error {
 	}
 	hostAddresses, _ := npw.nodeIPManager.ListAddresses()
 	primaryAddresses := gatewayIPsFromIPNets(npw.gwBridge.GetIPs())
-	return SyncNodePortAllowedAddresses(hostAddresses, primaryAddresses)
+	if err := SyncNodePortAllowedAddresses(hostAddresses, primaryAddresses); err != nil {
+		return fmt.Errorf("sync NodePort allowed addresses for node port watcher: %w", err)
+	}
+	return nil
 }
 
+// gatewayIPsFromIPNets extracts IP addresses from a slice of IP networks.
 func gatewayIPsFromIPNets(addrs []*net.IPNet) []net.IP {
 	ips := make([]net.IP, 0, len(addrs))
 	for _, addr := range addrs {
@@ -1907,7 +1911,7 @@ func newNodePortWatcher(
 		networkManager: networkManager,
 	}
 	if err := npw.syncNodePortAllowedAddresses(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("initialize NodePort allowed addresses: %w", err)
 	}
 	return npw, nil
 }
