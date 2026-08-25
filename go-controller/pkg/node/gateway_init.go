@@ -509,6 +509,16 @@ func (nc *DefaultNodeNetworkController) initGatewayDPUHost() error {
 				return fmt.Errorf("unable to configure UDN nftables: %w", err)
 			}
 		}
+		hostAddresses, _ := gw.nodeIPManager.ListAddresses()
+		if err := SyncNodePortAllowedAddresses(hostAddresses, nil); err != nil {
+			return err
+		}
+		gw.nodeIPManager.AddOnAddressesChangedHandler(func() {
+			hostAddresses, _ := gw.nodeIPManager.ListAddresses()
+			if err := SyncNodePortAllowedAddresses(hostAddresses, nil); err != nil {
+				klog.Errorf("Failed to sync NodePort allowed addresses after address change: %v", err)
+			}
+		})
 		gw.nodePortWatcherNFTables = newNodePortWatcherNFTables(nc.networkManager)
 		gw.loadBalancerHealthChecker = newLoadBalancerHealthChecker(nc.name, nc.watchFactory)
 		portClaimWatcher, err := newPortClaimWatcher(nc.recorder)
