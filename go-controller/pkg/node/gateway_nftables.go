@@ -52,10 +52,14 @@ const (
 	nftablesITPServicesMapV6 = "itp-services-to-redirect-v6"
 )
 
+// nodePortAddressesRestricted reports whether NodePort traffic is limited to
+// specific local node IP addresses.
 func nodePortAddressesRestricted() bool {
 	return config.Gateway.NodePortAddresses != nil && config.Gateway.NodePortAddresses.Restricted()
 }
 
+// addNodePortAllowedAddressSets creates nftables sets that hold the local node
+// IPs allowed to receive NodePort traffic.
 func addNodePortAllowedAddressSets(tx *knftables.Transaction) {
 	tx.Add(&knftables.Set{
 		Name:    nftablesNodePortAllowedV4,
@@ -71,6 +75,8 @@ func addNodePortAllowedAddressSets(tx *knftables.Transaction) {
 	tx.Flush(&knftables.Set{Name: nftablesNodePortAllowedV6})
 }
 
+// nodePortLocalDestMatch returns the nftables destination match for NodePort
+// traffic, optionally restricted to allowed local addresses.
 func nodePortLocalDestMatch(isIPv6 bool) []string {
 	if !nodePortAddressesRestricted() {
 		return []string{"fib daddr type local"}
@@ -81,6 +87,7 @@ func nodePortLocalDestMatch(isIPv6 bool) []string {
 	return []string{"fib daddr type local", "ip daddr", "@", nftablesNodePortAllowedV4}
 }
 
+// nftConcat builds an nftables concatenation expression from string parts.
 func nftConcat(parts ...string) string {
 	args := make([]interface{}, len(parts))
 	for i, part := range parts {
@@ -99,7 +106,7 @@ func SyncNodePortAllowedAddresses(hostAddresses, primaryAddresses []net.IP) erro
 	filtered := config.Gateway.NodePortAddresses.FilterHostAddresses(hostAddresses, primaryAddresses)
 	nft, err := nodenft.GetNFTablesHelper()
 	if err != nil {
-		return err
+		return fmt.Errorf("get nftables helper for NodePort allowed addresses: %w", err)
 	}
 
 	tx := nft.NewTransaction()
@@ -115,7 +122,10 @@ func SyncNodePortAllowedAddresses(hostAddresses, primaryAddresses []net.IP) erro
 			tx.Add(&knftables.Element{Set: nftablesNodePortAllowedV4, Key: []string{ip.String()}})
 		}
 	}
-	return nft.Run(context.TODO(), tx)
+	if err := nft.Run(context.TODO(), tx); err != nil {
+		return fmt.Errorf("sync NodePort allowed addresses: %w", err)
+	}
+	return nil
 }
 
 // initGatewayNFTables initializes chains/sets/maps used for Service proxying rules.
