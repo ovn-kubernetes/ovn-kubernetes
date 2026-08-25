@@ -102,7 +102,7 @@ spec:
             "name": "tenantblue",
             "type": "ovn-k8s-cni-overlay",
             "topology":"layer3",
-            "subnets": "10.128.0.0/16/24",
+            "subnets": "10.128.0.0/16/24,10.129.0.0/16/24",
             "mtu": 1300,
             "netAttachDefName": "ns1/l3-network"
     }
@@ -113,16 +113,20 @@ spec:
 - `name` (string, required): the name of the network. This attribute is **not** namespaced.
 - `type` (string, required): "ovn-k8s-cni-overlay".
 - `topology` (string, required): "layer3".
-- `subnets` (string, required): a comma separated list of subnets. When multiple subnets
-  are provided, the user will get an IP from each subnet.
+- `subnets` (string, required): a comma-separated list of cluster subnets from
+  which per-node subnets are allocated. Each node receives one subnet per IP
+  family.
 - `mtu` (integer, optional): explicitly set MTU to the specified value. Defaults to the value chosen by the kernel.
 - `netAttachDefName` (string, required): must match `<namespace>/<net-attach-def name>`
   of the surrounding object.
 
 > [!NOTE]
-> the `subnets` attribute indicates both the subnet across the cluster, and per node.
-  The example above means you have a /16 subnet for the network, but each **node** has
-  a /24 subnet.
+> The `subnets` attribute defines the cluster subnet allocation pool for each IP
+  family. Each node receives one subnet per IP family from that pool.
+  In the example above, the IPv4 pool consists of two `/16` cluster subnets,
+  each divided into `/24` per-node subnets. Cluster subnets must not overlap,
+  and all subnets in the same IP family must use the same per-node subnet
+  prefix length.
 
 > [!NOTE]
 > routed - layer3 - topology networks **only** allow for east/west traffic.
