@@ -39,6 +39,7 @@ type SriovnetOps interface {
 	GetPfPciFromVfPci(vfPciAddress string) (string, error)
 	GetPfPciFromAux(auxDev string) (string, error)
 	GetVfRepresentorDPU(pfID, vfIndex string) (string, error)
+	GetPfRepresentorDPU(pfID string) (string, error)
 	IsVfPciVfioBound(pciAddr string) bool
 	GetRepresentorPeerMacAddress(netdev string) (net.HardwareAddr, error)
 	GetDevlinkPortFunctionMacAddress(netdev string) (net.HardwareAddr, error)
@@ -108,6 +109,11 @@ func (defaultSriovnetOps) GetPfPciFromVfPci(vfPciAddress string) (string, error)
 
 func (defaultSriovnetOps) GetPfPciFromAux(auxDev string) (string, error) {
 	return sriovnet.GetPfPciFromAux(auxDev)
+}
+
+func (defaultSriovnetOps) GetPfRepresentorDPU(pfID string) (string, error) {
+	//nolint:staticcheck // the pfID-keyed lookup is exactly what UplinkState publishes
+	return sriovnet.GetPfRepresentorDPU(pfID)
 }
 
 func (defaultSriovnetOps) GetVfRepresentorDPU(pfID, vfIndex string) (string, error) {

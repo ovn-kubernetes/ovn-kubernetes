@@ -16,13 +16,15 @@ const (
 )
 
 // Each UplinkState condition has a single writer per node: in split DPU mode
-// the DPU-host owns HostDataReady, the DPU owns Resolved, and the DPU-side
-// gateway coordinator owns GatewayReady. In full mode the discovery
-// reconciler owns Resolved and HostDataReady is not published.
+// the DPU-host owns HostDataReady and HostGatewayReady, the DPU owns Resolved,
+// and the DPU-side gateway coordinator owns GatewayReady. In full mode the
+// discovery reconciler owns Resolved and the host conditions are not
+// published.
 const (
-	UplinkStateConditionResolved      = "Resolved"
-	UplinkStateConditionGatewayReady  = "GatewayReady"
-	UplinkStateConditionHostDataReady = "HostDataReady"
+	UplinkStateConditionResolved         = "Resolved"
+	UplinkStateConditionGatewayReady     = "GatewayReady"
+	UplinkStateConditionHostDataReady    = "HostDataReady"
+	UplinkStateConditionHostGatewayReady = "HostGatewayReady"
 )
 
 const (
@@ -205,6 +207,17 @@ type UplinkStateStatus struct {
 	// +optional
 	MACAddress MACAddress `json:"macAddress,omitempty"`
 
+	// HostFunction identifies the PCI function (a PF, or a VF on that PF)
+	// backing the host interface. Only SR-IOV capable functions are
+	// published: they are the ones that can have a representor on a DPU,
+	// which is what this field exists to resolve. In split DPU mode the
+	// DPU-host publishes it so the DPU can resolve the interface's
+	// representor and OVS bridge directly, without scanning bridges by host
+	// MAC. Absent when the host interface has no such function or its
+	// identity cannot be resolved.
+	// +optional
+	HostFunction *HostFunction `json:"hostFunction,omitempty"`
+
 	// IPAddresses are host-side shared gateway IP addresses.
 	// +kubebuilder:validation:MaxItems=2
 	// +optional
@@ -226,6 +239,21 @@ type UplinkStateStatus struct {
 	// +patchStrategy=merge
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty" patchMergeKey:"type" patchStrategy:"merge"`
+}
+
+// HostFunction identifies a PCI function: a physical function by its index,
+// or a virtual function by the PF index and its own index on that PF.
+type HostFunction struct {
+	// PFID is the index of the physical function backing the host interface.
+	// +kubebuilder:validation:Minimum=0
+	// +required
+	PFID int32 `json:"pfID"`
+
+	// VFID is the index of the virtual function on the physical function.
+	// Absent when the host interface is the physical function itself.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	VFID *int32 `json:"vfID,omitempty"`
 }
 
 type OVSBridgeStatus struct {

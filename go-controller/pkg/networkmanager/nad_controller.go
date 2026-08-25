@@ -92,7 +92,7 @@ type nadController struct {
 	// primaryNADs holds a mapping of namespace to NAD of primary UDNs
 	primaryNADs map[string]string
 
-	// networkIDAllocator used by cluster-manager to allocate new IDs, zone/node mode only uses as a cache
+	// networkIDAllocator is used by cluster-manager to allocate new IDs; node mode only uses it as a cache.
 	networkIDAllocator  id.Allocator
 	tunnelKeysAllocator *id.TunnelKeysAllocator
 	nadClient           nadclientset.Interface
@@ -129,7 +129,6 @@ type networkRefReconcilerRegistration struct {
 
 func newController(
 	name string,
-	zone string,
 	node string,
 	cm ControllerManager,
 	wf watchFactory,
@@ -138,7 +137,7 @@ func newController(
 	tunnelKeysAllocator *id.TunnelKeysAllocator,
 	filterNADsOnNode string,
 ) (*nadController, error) {
-	networkController := newNetworkController(name, zone, node, cm, wf)
+	networkController := newNetworkController(name, node, cm, wf)
 	c := &nadController{
 		name:                   fmt.Sprintf("[%s NAD controller]", name),
 		stopChan:               make(chan struct{}),
@@ -200,7 +199,7 @@ func newController(
 	if err != nil {
 		return nil, fmt.Errorf("failed to allocate default network ID: %w", err)
 	}
-	if zone == "" && node == "" {
+	if node == "" {
 		// tunnelKeysAllocator must be passed for cluster manager
 		c.tunnelKeysAllocator = tunnelKeysAllocator
 	}
@@ -381,7 +380,7 @@ func (c *nadController) deleteNADFromNetworkLocked(networkName, nadKey string) {
 // Trackers invoke this callback after releasing their cache locks, so local
 // activity checks are safe here but should stay brief.
 func (c *nadController) OnNetworkRefChange(node, nadNamespacedName string, active bool) {
-	klog.V(4).Infof("%s Network change for zone controller triggered by pod/egress IP events "+
+	klog.V(4).Infof("%s Network change for node controller triggered by pod/egress IP events "+
 		"on node: %s, NAD: %s, active: %t", c.name, node, nadNamespacedName, active)
 
 	namespace, name, err := cache.SplitMetaNamespaceKey(nadNamespacedName)
@@ -493,7 +492,6 @@ func (c *nadController) filter(nad *nettypes.NetworkAttachmentDefinition) (bool,
 
 	ourNode := c.filterNADsOnNode
 
-	// We don't support multiple nodes per zone; assume zone name is node name.
 	if c.nodeHasNAD(ourNode, nad) {
 		return false, nil
 	}

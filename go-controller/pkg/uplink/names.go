@@ -27,6 +27,31 @@ func StateIdentity(state *uplinkv1alpha1.UplinkState) (uplinkName, nodeName stri
 	return state.Spec.UplinkName, state.Spec.NodeName
 }
 
+// UplinkForState finds the Uplink owning the UplinkState named stateName on
+// one of the given nodes. UplinkState names are opaque keys that cannot be
+// parsed back into an identity, so the owner is found by forward-computing
+// every candidate's state name. The boolean reports whether exactly one
+// Uplink/node pair matched.
+func UplinkForState(
+	uplinks []*uplinkv1alpha1.Uplink, nodeNames []string, stateName string,
+) (*uplinkv1alpha1.Uplink, bool) {
+	var matched *uplinkv1alpha1.Uplink
+	matches := 0
+	for _, uplink := range uplinks {
+		for _, nodeName := range nodeNames {
+			if StateName(uplink.Name, nodeName) != stateName {
+				continue
+			}
+			matched = uplink
+			matches++
+		}
+	}
+	if matches != 1 {
+		return nil, false
+	}
+	return matched, true
+}
+
 // GetState returns the UplinkState for an Uplink and node after validating that
 // the identity stored in its spec matches the requested identity.
 func GetState(

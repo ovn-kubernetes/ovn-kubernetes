@@ -24,6 +24,8 @@ var (
 	// - 172.19.0.0/16 		(XGW network)
 	// - 172.22.0.0/16 		(MetalLB client network)
 	// - 172.26.0.0/16 		(default BGP server network)
+	// - 172.28.0.0/16 		(default Uplink network)
+	// - 172.29.0.0/16 		(DPU-sim BGP server network)
 	// - 172.30.0.0/16 		(Kubernetes services)
 	// - 169.254.169.0/29 	(masquerade subnet)
 	// - fd01::/48    		(cluster default network)

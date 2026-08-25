@@ -155,10 +155,19 @@ DPU deployments split Uplink discovery across the host and DPU components:
 
 * The DPU-host ovnkube-node reads `hostInterfaceName`, discovers the host-side
   MAC address, IP addresses, and default gateways, and writes that data to
-  `UplinkState`.
-* The DPU ovnkube-node reads the same `UplinkState`, uses the host MAC address
-  to find the DPU-local representor and OVS bridge, validates the bridge, and
-  writes `status.ovsBridge.name`.
+  `UplinkState`. When the host interface is an SR-IOV function, it also
+  writes the PF index — and, for a VF, the VF index — to
+  `status.hostFunction`.
+* The DPU ovnkube-node reads the same `UplinkState` and finds the DPU-local
+  representor and OVS bridge: with `status.hostFunction` it resolves the PF
+  or VF representor directly from the published indices, and a representor
+  resolved this way must peer with the published host MAC, the uplink's
+  identity, whenever that peer MAC is readable. Without
+  `status.hostFunction`, and when the published indices do not resolve, it
+  scans bridges for the representor whose host-side peer has the published
+  MAC address. Index resolution covers PF indices 0 and 1 on the default
+  controller; other layouts resolve through the MAC scan. It then validates
+  the bridge and writes `status.ovsBridge.name`.
 * Once both sides have published the required data, the `UplinkState` becomes
   `Resolved=True`.
 
@@ -217,7 +226,10 @@ attachment. When the active CUDN set changes, `GatewayReady` first becomes
 `False` with reason `GatewayConfigurationPending` and returns to `True` only
 after the complete active set converges. A gateway programming failure does not
 change discovery `Resolved`; the CUDN-specific `UplinksReady` condition reflects
-both states.
+both states. In split DPU mode the host-side share of gateway programming, the
+VRF attachment of the Uplink gateway interface on the DPU-Host, is reported
+separately on the `HostGatewayReady` condition, and the CUDN `UplinksReady`
+condition requires both.
 
 The `Uplink` object reports aggregate status:
 
@@ -268,6 +280,16 @@ metadata:
 
 When one or more CUDNs reference an `Uplink`, OVN-Kubernetes keeps a finalizer
 on the `Uplink` so it cannot be deleted while still selected by a CUDN.
+
+`UplinkState` objects are exclusively owned by OVN-Kubernetes and recover from
+out-of-band deletion: if an `UplinkState` is deleted directly (for example with
+`kubectl delete`), ovnkube-node recreates it without a restart, discovery
+republishes `Resolved=True`, a previously published `GatewayReady` condition is
+restored (on a brand-new `UplinkState` it still appears only once gateway
+programming has run), and the CUDN returns to `UplinksReady=True`. An `UplinkState` is not
+recreated when its `Uplink` is terminating (its `UplinkState` objects are
+deleted on purpose during teardown), no longer exists, or no longer selects the
+node.
 
 The CUDN reports a CUDN-specific `UplinksReady` condition. This condition is
 computed from the active nodes for that CUDN, not directly from aggregate
@@ -419,6 +441,11 @@ Common problems:
 * `UplinkState` with `GatewayReady` condition status `False` and reason
   `UplinkConfigurationConflict`: the resolved Uplink bridge is already
   attached to a different VRF on this node.
+* `UplinkState` with `HostGatewayReady` condition status `False` (split DPU
+  mode only): host-side gateway programming failed on the DPU-Host, for
+  example reason `UplinkVRFAttachmentFailed` when the Uplink gateway
+  interface could not be attached to or detached from the CUDN routing
+  domain on the DPU-Host.
 * CUDN with `UplinksReady` condition status `False` and reason
   `UplinkNotResolvedForNode`: at least one active node for the CUDN does not have
   a matching `UplinkState` with `Resolved=True`.
@@ -439,10 +466,35 @@ Common problems:
   supported with Uplinks.
 
 In split DPU mode each `UplinkState` condition has a single writer: the
-DPU-Host publishes the host interface data and the `HostDataReady` condition,
-while ovnkube-node on the DPU publishes `Resolved` and `GatewayReady`. Bridge
-reasons (`BridgeNotFound`, `BridgeUplinkNotFound`) therefore always describe
-OVS on the DPU, and `HostDataReady` reasons always describe the DPU-Host.
+DPU-Host publishes the host interface data and the `HostDataReady` and
+`HostGatewayReady` conditions, while ovnkube-node on the DPU publishes
+`Resolved` and `GatewayReady`. Bridge reasons (`BridgeNotFound`,
+`BridgeUplinkNotFound`) therefore always describe OVS on the DPU, and
+`HostDataReady`/`HostGatewayReady` reasons always describe the DPU-Host.
+
+In DPU deployments, FRR peering and route import happen on the DPU:
+BGP-learned routes are not propagated to the DPU-Host's CUDN VRF.
+Host-originated traffic toward the Uplink therefore requires a default
+gateway route on the selected host interface (preserved into the CUDN VRF
+across enslavement) or a host-side FRR setup; pod traffic toward the Uplink
+is unaffected, since its routes are imported into the gateway router on the
+DPU.
+
+```text
+             DPU                                DPU-Host
+ +---------------------------+      +----------------------------+
+ | FRR --- BGP peering       |      | CUDN VRF                   |
+ |          |                |      |  - no BGP-learned routes   |
+ |          v                |      |  - preserved default       |
+ | CUDN route-import VRF     |      |    gateway route           |
+ |          | imported       |      |    (or host-side FRR)      |
+ |          v                |      +-------------+--------------+
+ | CUDN gateway router (OVN) |                    |
+ +-------------+-------------+                    | host-originated
+               | pod traffic                      | traffic
+               v                                  v
+             Uplink <-----------------------------+
+```
 
 ## References
 

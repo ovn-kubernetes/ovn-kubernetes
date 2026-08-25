@@ -2,22 +2,30 @@ kind/documentation:
 - changed-files:
   - any-glob-to-any-file: '**/*.md'
 
+kind/okep:
+- changed-files:
+  - any-glob-to-any-file: 'docs/okeps/**'
+
 feature/admin-network-policy:
-  - changed-files:
-    - any-glob-to-any-file:
-      - 'go-controller/pkg/ovn/controller/admin_network_policy/*'
-      - 'test/conformance/*'
-      - 'go-controller/pkg/clustermanager/admin_network_policy_manager.go'
-      - 'go-controller/pkg/ovn/admin_network_policy_test.go'
-      - 'go-controller/pkg/ovn/baseline_admin_network_policy_test.go'
+- changed-files:
+  - any-glob-to-any-file:
+    - 'go-controller/pkg/ovn/controller/admin_network_policy/*'
+    - 'go-controller/pkg/ovn/admin_network_policy_test.go'
+    - 'go-controller/pkg/ovn/baseline_admin_network_policy_test.go'
+    - 'go-controller/pkg/clustermanager/status_manager/admin_network_policy_manager.go'
+    - 'test/conformance/*'
+    - 'test/e2e/admin_network_policy.go'
         
 feature/egress-service:
 - changed-files:
   - any-glob-to-any-file:
     - 'go-controller/pkg/ovn/controller/egressservice/*'
-    - 'test/e2e/egress_services.go'
+    - 'go-controller/pkg/ovn/egressservices_test.go'
     - 'go-controller/pkg/clustermanager/egressservice/*'
     - 'go-controller/pkg/clustermanager/egressservice_cluster_test.go'
+    - 'go-controller/pkg/node/controllers/egressservice/*'
+    - 'go-controller/pkg/crd/egressservice/**'
+    - 'test/e2e/egress_services.go'
         
 feature/services&endpoints:
 - changed-files:
@@ -37,35 +45,87 @@ feature/egress-gateway:
 feature/egress-firewall:
 - changed-files:
   - any-glob-to-any-file:
-    - 'go-controller/pkg/ovn/egressfirewall.go'
+    - 'go-controller/pkg/ovn/controller/egressfirewall/*'
     - 'go-controller/pkg/ovn/egressfirewall_test.go'
-    - 'test/e2e/egressfirewall.go'
-    - 'go-controller/pkg/clustermanager/egressfirewall_manager.go'
+    - 'go-controller/pkg/clustermanager/status_manager/egressfirewall_manager.go'
+    - 'go-controller/pkg/util/egressfirewall*'
+    - 'go-controller/pkg/crd/egressfirewall/**'
+    - 'test/e2e/egress_firewall.go'
         
 feature/egress-qos:
 - changed-files:
   - any-glob-to-any-file:
     - 'go-controller/pkg/ovn/egressqos.go'
     - 'go-controller/pkg/ovn/egressqos_test.go'
+    - 'go-controller/pkg/clustermanager/status_manager/egressqos_manager.go'
+    - 'go-controller/pkg/crd/egressqos/**'
     - 'test/e2e/egressqos.go'
-    - 'go-controller/pkg/clustermanager/egressqos_manager.go'
         
 feature/egress-ip:
 - changed-files:
   - any-glob-to-any-file:
     - 'go-controller/pkg/ovn/egressip.go'
     - 'go-controller/pkg/ovn/egressip_test.go'
+    - 'go-controller/pkg/ovn/egressip_ops.go'
+    - 'go-controller/pkg/ovn/egressip_udn_*'
+    - 'go-controller/pkg/ovn/healthcheck/egressip_*'
     - 'test/e2e/egressip.go'
     - 'go-controller/pkg/clustermanager/egressip_controller.go'
     - 'go-controller/pkg/clustermanager/egressip_controller_test.go'
     - 'go-controller/pkg/clustermanager/egressip_event_handler.go'
+    - 'go-controller/pkg/node/controllers/egressip/*'
+    - 'go-controller/pkg/node/egressip/*'
+    - 'go-controller/pkg/crd/egressip/**'
+
+feature/user-defined-networks:
+- changed-files:
+  - any-glob-to-any-file:
+    - 'go-controller/pkg/ovn/*user_defined_network*'
+    - 'go-controller/pkg/ovn/udn_isolation*'
+    - 'go-controller/pkg/ovn/controller/udnenabledsvc/*'
+    - 'go-controller/pkg/clustermanager/user_defined_network*'
+    - 'go-controller/pkg/crd/userdefinednetwork/**'
+    - 'go-controller/pkg/node/gateway_udn*'
+    - 'go-controller/pkg/node/udn_isolation*'
+    - 'go-controller/pkg/node/managementport/port_udn_*'
+    - 'go-controller/pkg/cni/udn/*'
+    - 'go-controller/pkg/util/udn/*'
+    - 'go-controller/pkg/generator/udn/*'
+    - 'test/e2e/network_segmentation*'
+
+feature/network-connect:
+- changed-files:
+  - any-glob-to-any-file:
+    - 'go-controller/pkg/ovn/controller/networkconnect/*'
+    - 'go-controller/pkg/clustermanager/networkconnect/*'
+    - 'go-controller/pkg/crd/clusternetworkconnect/**'
+    - 'go-controller/pkg/util/network_connect*'
+    - 'test/e2e/cluster_network_connect*'
+
+feature/evpn:
+- changed-files:
+  - any-glob-to-any-file:
+    - 'go-controller/pkg/node/controllers/evpn/*'
+    - 'go-controller/pkg/crd/userdefinednetwork/v1/evpn.go'
+    - 'go-controller/pkg/crd/userdefinednetwork/v1/apis/applyconfiguration/userdefinednetwork/v1/evpnconfig.go'
+    - 'test/e2e/evpn.go'
+
+feature/bgp:
+- changed-files:
+  - any-glob-to-any-file:
+    - 'go-controller/pkg/clustermanager/routeadvertisements/*'
+    - 'go-controller/pkg/clustermanager/managedbgp/*'
+    - 'go-controller/pkg/clustermanager/userdefinednetwork/notifier/routeadvertisements*'
+    - 'go-controller/pkg/crd/routeadvertisements/**'
+    - 'test/e2e/route_advertisements.go'
 
 feature/kubevirt-live-migration:
 - changed-files:
   - any-glob-to-any-file:
+    - 'go-controller/pkg/kubevirt/*'
+    - 'go-controller/pkg/ovn/kubevirt_test.go'
     - 'test/e2e/kubevirt.go'
     - 'test/e2e/kubevirt/*'
-    - 'go-controller/pkg/ovn/kubevirt_test.go'
         
 # Add 'area/e2e-testing' label to any changes within 'e2e' folder or any subfolders
 area/e2e-testing:

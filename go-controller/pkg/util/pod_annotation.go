@@ -103,6 +103,26 @@ type PodAnnotation struct {
 	//     is otherwise locked for all intents and purposes.
 	// At a given time a pod can have only 1 network with role:"primary"
 	Role string
+
+	// IPAMMode describes the IPAM mode configured for this network.
+	// Empty covers the CRD's non-DHCP modes:
+	//   - "Enabled" (OVN-K assigns the IPs from the subnet)
+	//   - "Disabled" (OVN-K assigns just the MAC and leaves IP configuration to the user).
+	// "dhcp" means the workload (typically a VM) obtains its IP from an
+	// external DHCP server. This field is meant to be consumed by downstream consumers
+	// (e.g. cloud-init generators) to render the guest-side network config accordingly.
+	//
+	// "dhcp" relaxes the usual invariant that a network's annotation entry
+	// never changes once written: the entry is first written MAC-only, gains
+	// IPs once the CNI patches the DHCP lease in, and the IPs can change
+	// again on every sandbox recreation before the pod reaches Running (each
+	// repeat CNI ADD runs a fresh DHCP exchange). Consumers of this
+	// annotation must therefore handle pod UPDATE events for such entries
+	// instead of treating the first read as final. DHCP IPAM is restricted
+	// to localnet secondary networks, so the consumers affected are exactly
+	// the features that run there: the pod (logical switch port) controller,
+	// MultiNetworkPolicy and NetworkQoS.
+	IPAMMode string
 }
 
 // PodRoute describes any routes to be added to the pod's network namespace
@@ -130,6 +150,7 @@ type podAnnotation struct {
 
 	TunnelID int    `json:"tunnel_id,omitempty"`
 	Role     string `json:"role,omitempty"`
+	IPAMMode string `json:"ipam_mode,omitempty"`
 }
 
 // Internal struct used to marshal PodRoute to the pod annotation
@@ -157,6 +178,7 @@ func MarshalPodAnnotation(annotations map[string]string, podInfo *PodAnnotation,
 		TunnelID: podInfo.TunnelID,
 		MAC:      podInfo.MAC.String(),
 		Role:     podInfo.Role,
+		IPAMMode: podInfo.IPAMMode,
 	}
 
 	if len(podInfo.IPs) == 1 {
@@ -173,12 +195,18 @@ func MarshalPodAnnotation(annotations map[string]string, podInfo *PodAnnotation,
 
 	existingPa, ok := podNetworks[nadKey]
 	if ok {
-		if len(pa.IPs) != len(existingPa.IPs) {
-			return nil, ErrOverridePodIPs
-		}
-		for _, ip := range pa.IPs {
-			if !SliceHasStringItem(existingPa.IPs, ip) {
+		// DHCP entry IPs are owned by the external DHCP server, not OVN-K
+		// IPAM: the CNI fills them in after creating the entry and may
+		// replace them with a new lease on a repeat CNI_ADD, so allow the
+		// overwrite.
+		if existingPa.IPAMMode != types.IPAMTypeDHCP {
+			if len(pa.IPs) != len(existingPa.IPs) {
 				return nil, ErrOverridePodIPs
+			}
+			for _, ip := range pa.IPs {
+				if !SliceHasStringItem(existingPa.IPs, ip) {
+					return nil, ErrOverridePodIPs
+				}
 			}
 		}
 	}
@@ -238,6 +266,7 @@ func UnmarshalPodAnnotation(annotations map[string]string, nadKey string) (*PodA
 	podAnnotation := &PodAnnotation{
 		TunnelID: a.TunnelID,
 		Role:     a.Role,
+		IPAMMode: a.IPAMMode,
 	}
 	podAnnotation.MAC, err = net.ParseMAC(a.MAC)
 	if err != nil {
@@ -549,6 +578,30 @@ func GetK8sPodAllNetworkSelections(pod *corev1.Pod) ([]*nadapi.NetworkSelectionE
 		networks = []*nadapi.NetworkSelectionElement{}
 	}
 	return networks, nil
+}
+
+// GetK8sPodNetworkSelection returns the pod's NetworkSelectionElement for the
+// given indexed NAD key, deriving the index the same way GetIndexedNADKey
+// does: the n-th selection of the same NAD maps to the key nadName[/n].
+// Returns nil (and no error) when the pod has no matching selection.
+func GetK8sPodNetworkSelection(pod *corev1.Pod, nadKey string) (*nadapi.NetworkSelectionElement, error) {
+	networks, err := GetK8sPodAllNetworkSelections(pod)
+	if err != nil {
+		return nil, err
+	}
+	counts := map[string]int{}
+	for _, network := range networks {
+		nadNamespace := network.Namespace
+		if nadNamespace == "" {
+			nadNamespace = pod.Namespace
+		}
+		nadName := GetNADName(nadNamespace, network.Name)
+		if GetIndexedNADKey(nadName, counts[nadName]) == nadKey {
+			return network, nil
+		}
+		counts[nadName]++
+	}
+	return nil, nil
 }
 
 // UpdatePodAnnotationWithRetry updates the pod annotation on the pod retrying

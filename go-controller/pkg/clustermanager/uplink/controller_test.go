@@ -747,6 +747,85 @@ func TestUplinkControllerReportsCUDNUplinkTerminating(t *testing.T) {
 	))
 }
 
+func TestUplinkControllerRequiresHostGatewayReadyInSplitDPUMode(t *testing.T) {
+	// A DPU-host-owned HostDataReady condition identifies a split-DPU
+	// UplinkState: host-side gateway programming is then reported separately
+	// through HostGatewayReady and is required for CUDN uplink readiness.
+	cases := []struct {
+		name            string
+		extraConditions []metav1.Condition
+		expectedStatus  metav1.ConditionStatus
+		expectedReason  string
+	}{
+		{
+			name: "not ready while HostGatewayReady is missing",
+			extraConditions: []metav1.Condition{{
+				Type:   uplinkv1alpha1.UplinkStateConditionHostDataReady,
+				Status: metav1.ConditionTrue,
+				Reason: uplinkv1alpha1.UplinkStateReasonHostDataDiscovered,
+			}},
+			expectedStatus: metav1.ConditionFalse,
+			expectedReason: reasonUplinksNotReady,
+		},
+		{
+			name: "not ready on host-side VRF attachment failure",
+			extraConditions: []metav1.Condition{
+				{
+					Type:   uplinkv1alpha1.UplinkStateConditionHostDataReady,
+					Status: metav1.ConditionTrue,
+					Reason: uplinkv1alpha1.UplinkStateReasonHostDataDiscovered,
+				},
+				{
+					Type:   uplinkv1alpha1.UplinkStateConditionHostGatewayReady,
+					Status: metav1.ConditionFalse,
+					Reason: uplinkv1alpha1.UplinkStateReasonVRFAttachmentFailed,
+				},
+			},
+			expectedStatus: metav1.ConditionFalse,
+			expectedReason: reasonUplinkVRFAttachmentFailed,
+		},
+		{
+			name: "ready once both sides report gateway programming",
+			extraConditions: []metav1.Condition{
+				{
+					Type:   uplinkv1alpha1.UplinkStateConditionHostDataReady,
+					Status: metav1.ConditionTrue,
+					Reason: uplinkv1alpha1.UplinkStateReasonHostDataDiscovered,
+				},
+				{
+					Type:   uplinkv1alpha1.UplinkStateConditionHostGatewayReady,
+					Status: metav1.ConditionTrue,
+					Reason: uplinkv1alpha1.UplinkStateReasonGatewayConfigured,
+				},
+			},
+			expectedStatus: metav1.ConditionTrue,
+			expectedReason: reasonUplinksReady,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			setSharedGatewayMode(t)
+			state := newResolvedUplinkState("br-blue", "node-a", "br-blue")
+			state.Status.Conditions = append(state.Status.Conditions, tc.extraConditions...)
+			controller, client := newTestController(t,
+				newNode("node-a", map[string]string{"role": "blue"}),
+				newUplink("br-blue", "role", "blue", "br-blue"),
+				state,
+				newCUDN("blue", "br-blue"),
+			)
+
+			g.Expect(controller.reconcileCUDN("blue")).To(gomega.Succeed())
+
+			cond := getCUDNCondition(g, client, "blue", conditionTypeUplinksReady)
+			g.Expect(cond).To(gomega.And(
+				gomega.HaveField("Status", tc.expectedStatus),
+				gomega.HaveField("Reason", tc.expectedReason),
+			))
+		})
+	}
+}
+
 func TestUplinkControllerPropagatesCUDNUplinkStateGatewayFailure(t *testing.T) {
 	g := gomega.NewWithT(t)
 	setSharedGatewayMode(t)

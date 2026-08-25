@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -76,10 +77,26 @@ type DPUOps interface {
 	// for the underlying platform.
 	ResolveDeviceDetails(deviceID string) (*NetworkDeviceDetails, error)
 
+	// ResolvePFIndex returns the PF index of a host physical function
+	// identified by either a PCI address (e.g. "0000:03:00.0") or a netdev
+	// name. It errors when the device is a VF or is not an SR-IOV capable
+	// physical function.
+	ResolvePFIndex(deviceID string) (int, error)
+
 	// GetPortRepresentor finds the DPU-side representor (VF representor in the case of switchdev hardware)
 	// for the given PF and function indices. On simulation this follows the
 	// pattern rep<pfId>-<funcId> (e.g. "rep0-1").
 	GetPortRepresentor(pfId, funcId string) (string, error)
+
+	// GetPFRepresentor finds the DPU-side representor of the host PF with
+	// the given index (e.g. "pf0hpf" on switchdev hardware).
+	GetPFRepresentor(pfId string) (string, error)
+
+	// GetHostPeerMACAddress returns the MAC of the host-side function peered
+	// with the given DPU representor. nodeName is the K8s node name of the
+	// host this DPU operates on behalf of; simulated platforms derive the
+	// peer MAC from it.
+	GetHostPeerMACAddress(rep, nodeName string) (net.HardwareAddr, error)
 
 	// GetDeviceAddress returns an opaque, platform-specific identifier for
 	// a representor interface. On switchdev hardware this is a PCI address
@@ -263,8 +280,59 @@ func (n *SwitchdevDPUOps) ResolveDeviceDetails(deviceID string) (*NetworkDeviceD
 	return GetNetworkDeviceDetails(pciAddr)
 }
 
+func (n *SwitchdevDPUOps) ResolvePFIndex(deviceID string) (int, error) {
+	pciAddr := deviceID
+	if !IsPCIDeviceName(deviceID) {
+		var err error
+		pciAddr, err = GetDeviceIDFromNetdevice(deviceID)
+		if err != nil {
+			return -1, fmt.Errorf("failed to read sysfs device link for %s: %v", deviceID, err)
+		}
+	}
+	// A VF has a parent PF behind a physfn link; refuse it here so PF and VF
+	// resolution stay distinct.
+	if _, err := GetSriovnetOps().GetPfPciFromVfPci(pciAddr); err == nil {
+		return -1, fmt.Errorf("device %s is a virtual function, not a physical function", pciAddr)
+	}
+	// Any netdev parses to some PCI function number, so require SR-IOV
+	// capability before treating the device as a PF with a DPU representor.
+	sriovCapable, err := GetFileSystemOps().PathExists(
+		filepath.Join(sriovnet.PciSysDir, pciAddr, "sriov_totalvfs"))
+	if err != nil {
+		return -1, fmt.Errorf("failed to check SR-IOV capability of device %s: %v", pciAddr, err)
+	}
+	if !sriovCapable {
+		return -1, fmt.Errorf("device %s is not an SR-IOV capable physical function", pciAddr)
+	}
+	// The PF index is the PCI function number, the same convention sriovnet
+	// uses to derive a VF's parent PF index.
+	var domain, bus, dev, fn int
+	const pciParts = 4
+	parsed, err := fmt.Sscanf(pciAddr, "%04x:%02x:%02x.%d", &domain, &bus, &dev, &fn)
+	if err != nil || parsed != pciParts {
+		return -1, fmt.Errorf("failed to parse PCI address %s of device %s: parsed %d of %d fields: %v",
+			pciAddr, deviceID, parsed, pciParts, err)
+	}
+	return fn, nil
+}
+
 func (n *SwitchdevDPUOps) GetPortRepresentor(pfId, funcId string) (string, error) {
 	return GetSriovnetOps().GetVfRepresentorDPU(pfId, funcId)
+}
+
+func (n *SwitchdevDPUOps) GetPFRepresentor(pfId string) (string, error) {
+	return GetSriovnetOps().GetPfRepresentorDPU(pfId)
+}
+
+func (n *SwitchdevDPUOps) GetHostPeerMACAddress(rep, _ string) (net.HardwareAddr, error) {
+	flavour, err := GetSriovnetOps().GetRepresentorPortFlavour(rep)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get port flavour for representor %s: %v", rep, err)
+	}
+	if _, ok := hostFacingRepresentorFlavours[flavour]; !ok {
+		return nil, fmt.Errorf("representor %s port flavour %d has no host peer", rep, flavour)
+	}
+	return hostPeerMACAddress(rep, flavour)
 }
 
 func (n *SwitchdevDPUOps) GetDeviceAddress(repName string) (string, error) {
@@ -464,8 +532,29 @@ func (s *SimulatedDPUOps) ResolveDeviceDetails(deviceID string) (*NetworkDeviceD
 	}, nil
 }
 
+func (s *SimulatedDPUOps) ResolvePFIndex(string) (int, error) {
+	// Simulated deployments have no host PF; PF uplinks fall back to the host
+	// MAC resolution path.
+	return -1, fmt.Errorf("PF device details are not supported in simulated DPU environments")
+}
+
 func (s *SimulatedDPUOps) GetPortRepresentor(pfId, funcId string) (string, error) {
 	return s.getDPURepresentor(pfId, funcId)
+}
+
+func (s *SimulatedDPUOps) GetPFRepresentor(string) (string, error) {
+	return "", fmt.Errorf("PF representor lookup is not supported in simulated DPU environments")
+}
+
+func (s *SimulatedDPUOps) GetHostPeerMACAddress(rep, nodeName string) (net.HardwareAddr, error) {
+	if nodeName == "" {
+		return nil, fmt.Errorf("nodeName must be provided for simulated GetHostPeerMACAddress")
+	}
+	index := simulatedDPURepresentorIndex(normalizeOVSName(rep))
+	if index < 0 {
+		return nil, fmt.Errorf("interface %s is not a simulated representor", rep)
+	}
+	return net.ParseMAC(s.generateMACForHostToDpu(nodeName, "host", index))
 }
 
 func (s *SimulatedDPUOps) GetDeviceAddress(repName string) (string, error) {

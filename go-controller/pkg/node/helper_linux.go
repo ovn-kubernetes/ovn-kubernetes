@@ -100,7 +100,7 @@ func getDefaultGatewayInterfaceByFamily(family int, gwIface string) (string, net
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to get routing table in node: %w", err)
 	}
-	routes := filterRoutesByIfIndex(routeList, gwIfIdx)
+	routes := util.FilterRoutesByIfIndex(routeList, gwIfIdx)
 	// use the first valid default gateway
 	for _, r := range routes {
 		// no multipath
@@ -154,49 +154,4 @@ func getDefaultGatewayInterfaceByFamily(family int, gwIface string) (string, net
 		}
 	}
 	return "", net.IP{}, nil
-}
-
-// filterRoutesByIfIndex is a helper function that will sieve the provided routes and check
-// if they match the provided index. This used to be implemented with netlink.RT_FILTER_OIF,
-// however the problem is that this filtered out MultiPath IPv6 routes which have a LinkIndex of 0.
-// filterRoutesByIfIndex will return:
-//
-//	a) if ifidx <= 0: routesUnfiltered
-//	b) else: a filtered list of routes
-//
-// The filter works as follows:
-//
-//	i)  return routes with LinkIndex == ifIdx
-//	ii) return routes with LinkIndex == 0 and where *all* MultiPaths have LinkIndex == ifIdx
-//
-// That also means: If a MultiPath route points out different interfaces, then skip that route and
-// do not return it.
-func filterRoutesByIfIndex(routesUnfiltered []netlink.Route, ifIdx int) []netlink.Route {
-	if ifIdx <= 0 {
-		return routesUnfiltered
-	}
-	var routes []netlink.Route
-	for _, r := range routesUnfiltered {
-		if r.LinkIndex == ifIdx ||
-			multipathRouteMatchesIfIndex(r, ifIdx) {
-			routes = append(routes, r)
-		}
-	}
-	return routes
-}
-
-// multipathRouteMatchesIfIndex is a helper for filterRoutesByIfIndex.
-func multipathRouteMatchesIfIndex(r netlink.Route, ifIdx int) bool {
-	if r.LinkIndex != 0 {
-		return false
-	}
-	if len(r.MultiPath) == 0 {
-		return false
-	}
-	for _, mr := range r.MultiPath {
-		if mr.LinkIndex != ifIdx {
-			return false
-		}
-	}
-	return true
 }

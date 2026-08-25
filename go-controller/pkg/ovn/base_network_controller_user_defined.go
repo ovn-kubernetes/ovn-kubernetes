@@ -113,7 +113,9 @@ func (bsnc *BaseUserDefinedNetworkController) UpdateUserDefinedNetworkResourceCo
 		oldPod := oldObj.(*corev1.Pod)
 		newPod := newObj.(*corev1.Pod)
 
-		return bsnc.ensurePodForUserDefinedNetwork(newPod, shouldAddPort(oldPod, newPod, inRetryCache))
+		addPort := shouldAddPort(oldPod, newPod, inRetryCache) ||
+			bsnc.dhcpPodNetworkUpdated(oldPod, newPod)
+		return bsnc.ensurePodForUserDefinedNetwork(newPod, addPort)
 
 	case factory.NamespaceType:
 		oldNs, newNs := oldObj.(*corev1.Namespace), newObj.(*corev1.Namespace)
@@ -330,7 +332,7 @@ func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(pod 
 	// we need to create a logical port for all local pods
 	// we also need to create a remote logical port for remote pods on layer2
 	// topologies with interconnect
-	isLocalPod := bsnc.isPodScheduledinLocalZone(pod)
+	isLocalPod := bsnc.isPodScheduledOnLocalNode(pod)
 	requiresLogicalPort := isLocalPod || bsnc.isLayer2WithInterconnectTransport()
 
 	if requiresLogicalPort {
@@ -375,7 +377,10 @@ func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(pod 
 		}
 	}
 
-	if bsnc.doesNetworkRequireIPAM() &&
+	// Register the pod with the namespace (nsInfo + namespace port group,
+	// used by multicast and egress firewall) on any network whose pod IPs
+	// are known, including DHCP-learned ones.
+	if bsnc.doesNetworkHaveDiscoverablePodIPs() &&
 		(util.IsMultiNetworkPoliciesSupportEnabled() || (util.IsNetworkSegmentationSupportEnabled() && bsnc.IsPrimaryNetwork())) {
 		// Ensure the namespace/nsInfo exists
 		portUUID := ""
@@ -564,7 +569,7 @@ func (bsnc *BaseUserDefinedNetworkController) syncPodsForUserDefinedNetwork(pods
 			continue
 		}
 
-		isLocalPod := bsnc.isPodScheduledinLocalZone(pod)
+		isLocalPod := bsnc.isPodScheduledOnLocalNode(pod)
 		hasRemotePort := !isLocalPod || bsnc.isLayer2WithInterconnectTransport()
 
 		for nadKey := range networkMap {
@@ -1071,11 +1076,72 @@ func (bsnc *BaseUserDefinedNetworkController) enableSourceLSPFailedLiveMigration
 // hasPodLogicalPort On localnet topologies with interconnect the pod's LSP lives only on the
 // node where the pod was scheduled
 func (bsnc *BaseUserDefinedNetworkController) hasPodLogicalPort(pod *corev1.Pod) bool {
-	return pod != nil && (bsnc.isPodScheduledinLocalZone(pod) || bsnc.isLayer2WithInterconnectTransport())
+	return pod != nil && (bsnc.isPodScheduledOnLocalNode(pod) || bsnc.isLayer2WithInterconnectTransport())
 }
 
 func shouldAddPort(oldPod, newPod *corev1.Pod, inRetryCache bool) bool {
 	return inRetryCache || util.PodScheduled(oldPod) != util.PodScheduled(newPod)
+}
+
+// dhcpPodNetworkUpdated returns true when this network learns IPs from an
+// external DHCP server and this network's entries in the pod-networks
+// annotation were added or updated. ovnkube-node patches the DHCP-learned IP
+// into the annotation during CNI ADD after the port was first created, and
+// may patch it again with a different lease if the sandbox is recreated
+// before the pod reaches Running. So the port must be reprocessed to pick up
+// the IP.
+//
+// DHCP IPAM is localnet-secondary only, so the consumers of the
+// changed IP are exactly the features supported on such networks: the LSP
+// itself (addresses/port security) handled here, plus MultiNetworkPolicy and
+// NetworkQoS, which re-evaluate the pod's addresses from their own pod
+// UPDATE handlers.
+//
+// The annotation is a single blob shared by every network the pod attaches
+// to, and DHCP pods are multi-homed by construction (localnet is
+// secondary-only), so a whole-string comparison would turn every other
+// network's annotation write (at least one per network during pod bring-up)
+// into a spurious full addLogicalPort pass with a real NBDB transaction.
+// Compare only the entries belonging to this network, resolved the same way
+// removePodForUserDefinedNetwork does.
+//
+// A removed entry deliberately does NOT trigger: nothing legitimately removes
+// a DHCP entry from a live pod, and reprocessing the port without its
+// annotation would only churn (the CNI is the annotation's single writer).
+func (bsnc *BaseUserDefinedNetworkController) dhcpPodNetworkUpdated(oldPod, newPod *corev1.Pod) bool {
+	if bsnc.IPAMType() != types.IPAMTypeDHCP || oldPod == nil || newPod == nil {
+		return false
+	}
+	if oldPod.Annotations[types.OvnPodAnnotationName] == newPod.Annotations[types.OvnPodAnnotationName] {
+		return false
+	}
+	// If either annotation cannot be parsed, we cannot tell whether this
+	// network's entry changed, so return true and reprocess the port. A
+	// needless reprocess is harmless (addLogicalPort is idempotent), but
+	// skipping a real DHCP IP update would leave the port without its
+	// address forever, as no later event retries it.
+	oldNetworks, err := util.UnmarshalPodAnnotationAllNetworks(oldPod.Annotations)
+	if err != nil {
+		klog.Warningf("Failed to unmarshal pod-networks annotation of old pod %s/%s on network %s, reprocessing the port: %v",
+			oldPod.Namespace, oldPod.Name, bsnc.GetNetworkName(), err)
+		return true
+	}
+	newNetworks, err := util.UnmarshalPodAnnotationAllNetworks(newPod.Annotations)
+	if err != nil {
+		klog.Warningf("Failed to unmarshal pod-networks annotation of pod %s/%s on network %s, reprocessing the port: %v",
+			newPod.Namespace, newPod.Name, bsnc.GetNetworkName(), err)
+		return true
+	}
+	for nadKey, newEntry := range newNetworks {
+		if bsnc.networkManager.GetNetworkNameForNADKey(nadKey) != bsnc.GetNetworkName() {
+			continue
+		}
+		oldEntry, existed := oldNetworks[nadKey]
+		if !existed || !reflect.DeepEqual(oldEntry, newEntry) {
+			return true
+		}
+	}
+	return false
 }
 
 func nodesToInterfaces(nodes []*corev1.Node) []interface{} {

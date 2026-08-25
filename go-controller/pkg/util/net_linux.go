@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"os"
 	"os/exec"
 	"reflect"
 	"strings"
@@ -1091,6 +1092,13 @@ func SetRPFilterLooseModeForInterface(ifName string) error {
 
 // SetIPv6KeepAddrOnDownForInterface preserves global IPv6 addresses when an
 // interface changes state while it is attached to or detached from a VRF.
+// IsIPv6SysctlSupported reports whether the kernel exposes IPv6 sysctls: a
+// kernel with IPv6 disabled (ipv6.disable=1) has no /proc/sys/net/ipv6 tree.
+func IsIPv6SysctlSupported() bool {
+	_, err := os.Stat("/proc/sys/net/ipv6")
+	return err == nil
+}
+
 func SetIPv6KeepAddrOnDownForInterface(ifName string) error {
 	setVal := fmt.Sprintf("net.ipv6.conf.%s.keep_addr_on_down = 1", sysctlIfName(ifName))
 	stdout, stderr, err := RunSysctl("-w", setVal)
@@ -1099,4 +1107,50 @@ func SetIPv6KeepAddrOnDownForInterface(ifName string) error {
 			ifName, stdout, stderr, err)
 	}
 	return nil
+}
+
+// FilterRoutesByIfIndex sieves the provided routes to those that reference
+// the provided interface index. Filtering with netlink.RT_FILTER_OIF instead
+// would miss multipath routes, whose interfaces are carried in the nexthops
+// of Route.MultiPath while the top-level LinkIndex is 0.
+// FilterRoutesByIfIndex will return:
+//
+//	a) if ifIdx <= 0: routesUnfiltered
+//	b) else: a filtered list of routes
+//
+// The filter works as follows:
+//
+//	i)  return routes with LinkIndex == ifIdx
+//	ii) return routes with LinkIndex == 0 and where *all* MultiPaths have LinkIndex == ifIdx
+//
+// That also means: if a MultiPath route points out different interfaces,
+// then skip that route and do not return it.
+func FilterRoutesByIfIndex(routesUnfiltered []netlink.Route, ifIdx int) []netlink.Route {
+	if ifIdx <= 0 {
+		return routesUnfiltered
+	}
+	var routes []netlink.Route
+	for _, r := range routesUnfiltered {
+		if r.LinkIndex == ifIdx ||
+			multipathRouteMatchesIfIndex(r, ifIdx) {
+			routes = append(routes, r)
+		}
+	}
+	return routes
+}
+
+// multipathRouteMatchesIfIndex is a helper for FilterRoutesByIfIndex.
+func multipathRouteMatchesIfIndex(r netlink.Route, ifIdx int) bool {
+	if r.LinkIndex != 0 {
+		return false
+	}
+	if len(r.MultiPath) == 0 {
+		return false
+	}
+	for _, mr := range r.MultiPath {
+		if mr.LinkIndex != ifIdx {
+			return false
+		}
+	}
+	return true
 }

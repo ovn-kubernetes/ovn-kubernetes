@@ -69,7 +69,6 @@ export JOB_NAME=(... job name ...)
 export OVN_HYBRID_OVERLAY_ENABLE=[true|false]
 export OVN_MULTICAST_ENABLE=[true|false]
 export OVN_EMPTY_LB_EVENTS=[true|false]
-export OVN_HA=[true|false]
 export OVN_DISABLE_SNAT_MULTIPLE_GWS=[true|false]
 export OVN_GATEWAY_MODE=["local"|"shared"]
 export PLATFORM_IPV4_SUPPORT=[true|false]
@@ -80,17 +79,16 @@ export OVN_SECOND_BRIDGE=[true|false]
 
 You can refer to a recent CI run from any pull request in [https://github.com/ovn-kubernetes/ovn-kubernetes/actions](https://github.com/ovn-kubernetes/ovn-kubernetes/actions) to get a valid set of settings.
 
-As an example for the `control-plane-noHA-local-ipv4-snatGW-1br` job, the settings are at time of this writing:
+As an example for the `control-plane-local-ipv4-snatGW-1br` job, the settings are at time of this writing:
 ```
 export KIND_CLUSTER_NAME=ovn
 export KIND_INSTALL_INGRESS=true
 export KIND_ALLOW_SYSTEM_WRITES=true
 export PARALLEL=true
-export JOB_NAME=control-plane-noHA-local-ipv4-snatGW-1br
+export JOB_NAME=control-plane-local-ipv4-snatGW-1br
 export OVN_HYBRID_OVERLAY_ENABLE=true
 export OVN_MULTICAST_ENABLE=true
 export OVN_EMPTY_LB_EVENTS=true
-export OVN_HA=false
 export OVN_DISABLE_SNAT_MULTIPLE_GWS=false
 export OVN_GATEWAY_MODE="local"
 export PLATFORM_IPV4_SUPPORT=true
@@ -238,7 +236,7 @@ For example:
 ./e2e/multicast.go:	ginkgo.It("should be able to send multicast UDP traffic between nodes", func() {
 # make control-plane WHAT="should be able to send multicast UDP traffic between nodes"
 (...)
-+ go test -timeout=0 -v . -ginkgo.v -ginkgo.focus 'should\sbe\sable\sto\ssend\smulticast\sUDP\straffic\sbetween\snodes' -ginkgo.flakeAttempts 2 '-ginkgo.skip=recovering from deleting db files while maintain connectivity|Should validate connectivity before and after deleting all the db-pods at once in HA mode|Should be allowed to node local cluster-networked endpoints by nodeport services with externalTrafficPolicy=local|e2e ingress to host-networked pods traffic validation|host to host-networked pods traffic validation' -provider skeleton -kubeconfig /root/ovn.conf --num-nodes=2 --report-dir=/root/ovn-kubernetes/test/_artifacts --report-prefix=control-plane_
++ go test -timeout=0 -v . -ginkgo.v -ginkgo.focus 'should\sbe\sable\sto\ssend\smulticast\sUDP\straffic\sbetween\snodes' -ginkgo.flakeAttempts 2 '-ginkgo.skip=Should be allowed to node local cluster-networked endpoints by nodeport services with externalTrafficPolicy=local|e2e ingress to host-networked pods traffic validation|host to host-networked pods traffic validation' -provider skeleton -kubeconfig /root/ovn.conf --num-nodes=2 --report-dir=/root/ovn-kubernetes/test/_artifacts --report-prefix=control-plane_
 I0817 15:26:21.762483 1197731 test_context.go:457] Tolerating taints "node-role.kubernetes.io/control-plane" when considering if nodes are ready
 === RUN   TestE2e
 I0817 15:26:21.762635 1197731 e2e_suite_test.go:67] Saving reports to /root/ovn-kubernetes/test/_artifacts

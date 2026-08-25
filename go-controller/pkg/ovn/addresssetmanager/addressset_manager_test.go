@@ -308,6 +308,40 @@ var _ = ginkgo.Describe("OVN podSelectorAddressSet", func() {
 		// expect 2 peer address sets only
 		gomega.Eventually(addressSetManager.nbClient).Should(libovsdbtest.HaveData([]libovsdbtest.TestData{peerAS, peerASLegacy}))
 	})
+	ginkgo.It("creates the address set and tracks pod IPs for a subnet-less DHCP localnet network", func() {
+		// a DHCP-IPAM localnet network has no subnets, but its pods carry
+		// IPv4 leases reported via the pod-networks annotation so the network
+		// must report IPv4 mode or EnsureAddressSet fails with "neither IPv4
+		// nor IPv6 mode is enabled" and selector peers can never resolve
+		dhcpNetInfo, err := util.NewNetInfo(&ovncnitypes.NetConf{
+			NetConf: cnitypes.NetConf{
+				Name: "dhcpnet",
+				Type: "ovn-k8s-cni-overlay",
+				IPAM: cnitypes.IPAM{Type: "dhcp"},
+			},
+			Role:     types.NetworkRoleSecondary,
+			Topology: types.LocalnetTopology,
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		namespace1 := *testing.NewNamespace(namespaceName1)
+		pod := testing.NewPodWithSecondaryNADIP(namespace1.Name, "ns1pod1", nodeName, "10.244.0.2",
+			dhcpNetInfo.GetNetworkName(), "172.18.0.225")
+		pod.Labels = map[string]string{podLabelKey: "ns1pod1"}
+		nadKey := fmt.Sprintf("%s/%s", namespace1.Name, dhcpNetInfo.GetNetworkName())
+		fakeNetworkManager.NADNetworks[nadKey] = dhcpNetInfo
+		startAddrSetManager(initialDB, []corev1.Namespace{namespace1}, []corev1.Pod{*pod})
+
+		podSelector := &metav1.LabelSelector{}
+		_, _, _, err = addressSetManager.EnsureAddressSet(
+			podSelector, nil, nil, namespace1.Name, "backRef", controllerName, dhcpNetInfo, false)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		peerASIDs := GetPodSelectorAddrSetDbIDs(podSelector, nil, nil, namespace1.Name, controllerName, false)
+		peerAS, _ := addressset.GetTestDbAddrSets(peerASIDs, []string{"172.18.0.225"})
+		gomega.Eventually(addressSetManager.nbClient).Should(libovsdbtest.HaveData([]libovsdbtest.TestData{peerAS}))
+	})
+
 	// this is run during ginkgo tree construction, so env is not set yet
 	config.IPv4Mode = true
 	config.IPv6Mode = false

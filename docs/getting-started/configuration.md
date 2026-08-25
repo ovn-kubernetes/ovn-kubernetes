@@ -129,8 +129,6 @@ number of control-plane nodes:
 Cluster-manager uses Kubernetes lease-based leader election — only one replica
 is active at any time; the rest stand by and take over on failure.
 
-## OVN Auth Config
-
 ## Hybrid Overlay Config
 
 ## Cluster Manager Config

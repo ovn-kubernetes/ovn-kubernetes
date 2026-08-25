@@ -34,7 +34,6 @@ usage() {
     echo "usage: kind-helm.sh [--delete]"
     echo "       [ -cf  | --config-file <file> ]"
     echo "       [ -kt  | --keep-taint ]"
-    echo "       [ -ha  | --ha-enabled ]"
     echo "       [ -me  | --multicast-enabled ]"
     echo "       [ -ho  | --hybrid-enabled ]"
     echo "       [ -el  | --ovn-empty-lb-events ]"
@@ -104,7 +103,6 @@ usage() {
     echo "--disable-ovnkube-identity                    Disable per-node cert and ovnkube-identity webhook. DEFAULT: Enabled"
     echo "-dgb | --dummy-gateway-bridge                 Use a dummy instead of a real gateway bridge. DEFAULT: Disabled"
     echo "-gm  | --gateway-mode                         Configure the cluster gateway mode (local|shared). DEFAULT: shared"
-    echo "-ha  | --ha-enabled                           Enable high availability. DEFAULT: HA Disabled"
     echo "-n4  | --no-ipv4                              Disable IPv4. DEFAULT: IPv4 Enabled."
     echo "-i6  | --ipv6                                 Enable IPv6. DEFAULT: IPv6 Disabled."
     echo "-wk  | --num-workers                          Number of worker nodes. DEFAULT: 2 workers"
@@ -257,9 +255,6 @@ parse_args() {
             -n4 | --no-ipv4 )                     PLATFORM_IPV4_SUPPORT=false
                                                   ;;
             -i6 | --ipv6 )                        PLATFORM_IPV6_SUPPORT=true
-                                                  ;;
-            -ha | --ha-enabled )                  OVN_HA=true
-                                                  KIND_NUM_MASTER=3
                                                   ;;
             -wk | --num-workers )                 shift
                                                   if ! [[ "$1" =~ ^[0-9]+$ ]]; then
@@ -452,7 +447,6 @@ print_params() {
      echo "KIND_INSTALL_METALLB = $KIND_INSTALL_METALLB"
      echo "KIND_INSTALL_PLUGINS = $KIND_INSTALL_PLUGINS"
      echo "KIND_INSTALL_KUBEVIRT = $KIND_INSTALL_KUBEVIRT"
-     echo "OVN_HA = $OVN_HA"
      echo "OVN_MULTICAST_ENABLE = $OVN_MULTICAST_ENABLE"
      echo "OVN_HYBRID_OVERLAY_ENABLE = $OVN_HYBRID_OVERLAY_ENABLE"
      echo "OVN_OBSERV_ENABLE = $OVN_OBSERV_ENABLE"
@@ -537,11 +531,19 @@ check_dependencies() {
   fi
 }
 
+# ensure_sysctl_min <key> <required>: raise a sysctl only when its current value is
+# below <required>.
+ensure_sysctl_min() {
+    local key="$1" required="$2" current
+    current=$(sysctl -n "$key" 2>/dev/null)
+    if [ -z "$current" ] || [ "$current" -lt "$required" ]; then
+        sudo sysctl -w "$key=$required"
+    fi
+}
+
 helm_prereqs() {
-    # increate fs.inotify.max_user_watches
-    sudo sysctl fs.inotify.max_user_watches=524288
-    # increase fs.inotify.max_user_instances
-    sudo sysctl fs.inotify.max_user_instances=512
+    ensure_sysctl_min fs.inotify.max_user_watches 524288
+    ensure_sysctl_min fs.inotify.max_user_instances 512
     if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ] ||
        [ "$OVN_UPLINK_BRIDGE" == true ]; then
       disable_bridge_netfilter

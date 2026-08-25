@@ -88,13 +88,13 @@ func (r *SampleReader) ReadSamples(ctx context.Context) error {
 			if err != nil {
 				return fmt.Errorf("error creating decoder: %w", err)
 			}
-			defer r.decoder.Shutdown()
 		} else {
 			r.decoder, err = sampledecoder.NewSampleDecoder(ctx, nbdbSocketPath)
 			if err != nil {
 				return fmt.Errorf("error creating decoder: %w", err)
 			}
 		}
+		defer r.decoder.Shutdown()
 	}
 	var writer io.Writer
 	if r.outputFile != "" {

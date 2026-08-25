@@ -12,3 +12,4 @@ ovn-kubernetes-anp-test-report.yaml
 
 # MkDocs build output (local mkdocs build / mike deploy)
 /site/
+__pycache__/

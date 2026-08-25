@@ -143,7 +143,6 @@ conntrack-zone=64321
 cluster-subnets=10.132.0.0/14/23
 lflow-cache-limit=1000
 lflow-cache-limit-kb=100000
-zone=global
 
 [kubernetes]
 kubeconfig=/path/to/kubeconfig
@@ -193,20 +192,18 @@ conf-dir=/etc/cni/net.d22
 plugin=ovn-k8s-cni-overlay22
 
 [ovnnorth]
-client-privkey=/path/to/nb-client-private.key
-client-cert=/path/to/nb-client.crt
-client-cacert=/path/to/nb-client-ca.crt
-cert-common-name=cfg-nbcommonname
 run-dir=/custom/ovn/run/
 db-location=/custom/ovn/nb.db
 
 [ovnsouth]
-client-privkey=/path/to/sb-client-private.key
-client-cert=/path/to/sb-client.crt
-client-cacert=/path/to/sb-client-ca.crt
-cert-common-name=cfg-sbcommonname
 run-dir=/custom/ovn/run/
 db-location=/custom/ovn/sb.db
+
+[egressip-healthcheck-tls]
+client-privkey=/path/to/nb-client-private.key
+client-cert=/path/to/nb-client.crt
+client-cacert=/path/to/nb-client-ca.crt
+cert-common-name=cfg-nbcommonname
 
 [ovspaths]
 run-dir=/custom/ovs/run/
@@ -340,7 +337,6 @@ var _ = Describe("Config Operations", func() {
 			gomega.Expect(Default.ClusterSubnets).To(gomega.Equal([]CIDRNetworkEntry{
 				{ovntest.MustParseIPNet("10.128.0.0/14"), 23},
 			}))
-			gomega.Expect(Default.Zone).To(gomega.Equal("global"))
 			gomega.Expect(IPv4Mode).To(gomega.BeTrue())
 			gomega.Expect(IPv6Mode).To(gomega.BeFalse())
 			gomega.Expect(HybridOverlay.Enabled).To(gomega.BeFalse())
@@ -366,13 +362,9 @@ var _ = Describe("Config Operations", func() {
 			gomega.Expect(OVNKubernetesFeature.EnablePersistentIPs).To(gomega.BeFalse())
 			gomega.Expect(OVNKubernetesFeature.AdvertisedUDNIsolationMode).To(gomega.Equal(AdvertisedUDNIsolationModeStrict))
 
-			for _, a := range []OvnAuthConfig{OvnNorth, OvnSouth} {
-				gomega.Expect(a.PrivKey).To(gomega.Equal(""))
-				gomega.Expect(a.Cert).To(gomega.Equal(""))
-				gomega.Expect(a.CACert).To(gomega.Equal(""))
-				gomega.Expect(a.GetURL()).To(gomega.MatchRegexp("unix:/var/run/ovn/ovn[sn]b_db.sock"))
-				gomega.Expect(a.CertCommonName).To(gomega.Equal(""))
-			}
+			gomega.Expect(OvnNorth.GetURL()).To(gomega.Equal("unix:/var/run/ovn/ovnnb_db.sock"))
+			gomega.Expect(OvnSouth.GetURL()).To(gomega.Equal("unix:/var/run/ovn/ovnsb_db.sock"))
+			gomega.Expect(EgressIPHealthCheckTLS).To(gomega.Equal(EgressIPHealthCheckTLSConfig{}))
 			return nil
 		}
 		err := app.Run([]string{app.Name, "-config-file=" + cfgFile.Name()})
@@ -516,7 +508,6 @@ routing-table-id-start=2002
 			"enable-multi-external-gateway=true",
 			"enable-admin-network-policy=true",
 			"enable-persistent-ips=true",
-			"zone=foo",
 		)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -557,8 +548,6 @@ routing-table-id-start=2002
 			gomega.Expect(Default.ClusterSubnets).To(gomega.Equal([]CIDRNetworkEntry{
 				{ovntest.MustParseIPNet("10.132.0.0/14"), 23},
 			}))
-			gomega.Expect(Default.Zone).To(gomega.Equal("foo"))
-
 			gomega.Expect(Metrics.BindAddress).To(gomega.Equal("1.1.1.1:8080"))
 			gomega.Expect(Metrics.OVNMetricsBindAddress).To(gomega.Equal("1.1.1.2:8081"))
 			gomega.Expect(Metrics.ExportOVSMetrics).To(gomega.BeTrue())
@@ -574,18 +563,14 @@ routing-table-id-start=2002
 				"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
 			}))
 
-			gomega.Expect(OvnNorth.PrivKey).To(gomega.Equal("/path/to/nb-client-private.key"))
-			gomega.Expect(OvnNorth.Cert).To(gomega.Equal("/path/to/nb-client.crt"))
-			gomega.Expect(OvnNorth.CACert).To(gomega.Equal("/path/to/nb-client-ca.crt"))
-			gomega.Expect(OvnNorth.CertCommonName).To(gomega.Equal("cfg-nbcommonname"))
+			gomega.Expect(EgressIPHealthCheckTLS.PrivKey).To(gomega.Equal("/path/to/nb-client-private.key"))
+			gomega.Expect(EgressIPHealthCheckTLS.Cert).To(gomega.Equal("/path/to/nb-client.crt"))
+			gomega.Expect(EgressIPHealthCheckTLS.CACert).To(gomega.Equal("/path/to/nb-client-ca.crt"))
+			gomega.Expect(EgressIPHealthCheckTLS.CertCommonName).To(gomega.Equal("cfg-nbcommonname"))
 			gomega.Expect(OvnNorth.RunDir).To(gomega.Equal("/custom/ovn/run/"))
 			gomega.Expect(OvnNorth.DbLocation).To(gomega.Equal("/custom/ovn/nb.db"))
 			gomega.Expect(OvnNorth.GetURL()).To(gomega.Equal("unix:/custom/ovn/run/ovnnb_db.sock"))
 
-			gomega.Expect(OvnSouth.PrivKey).To(gomega.Equal("/path/to/sb-client-private.key"))
-			gomega.Expect(OvnSouth.Cert).To(gomega.Equal("/path/to/sb-client.crt"))
-			gomega.Expect(OvnSouth.CACert).To(gomega.Equal("/path/to/sb-client-ca.crt"))
-			gomega.Expect(OvnSouth.CertCommonName).To(gomega.Equal("cfg-sbcommonname"))
 			gomega.Expect(OvnSouth.RunDir).To(gomega.Equal("/custom/ovn/run/"))
 			gomega.Expect(OvnSouth.DbLocation).To(gomega.Equal("/custom/ovn/sb.db"))
 			gomega.Expect(OvnSouth.GetURL()).To(gomega.Equal("unix:/custom/ovn/run/ovnsb_db.sock"))
@@ -680,8 +665,6 @@ routing-table-id-start=2002
 			gomega.Expect(Default.ClusterSubnets).To(gomega.Equal([]CIDRNetworkEntry{
 				{ovntest.MustParseIPNet("10.130.0.0/15"), 24},
 			}))
-			gomega.Expect(Default.Zone).To(gomega.Equal("bar"))
-
 			gomega.Expect(Metrics.BindAddress).To(gomega.Equal("2.2.2.2:8080"))
 			gomega.Expect(Metrics.OVNMetricsBindAddress).To(gomega.Equal("2.2.2.3:8081"))
 			gomega.Expect(Metrics.ExportOVSMetrics).To(gomega.BeTrue())
@@ -697,15 +680,10 @@ routing-table-id-start=2002
 				"TLS_AES_256_GCM_SHA384",
 			}))
 
-			gomega.Expect(OvnNorth.PrivKey).To(gomega.Equal("/client/privkey"))
-			gomega.Expect(OvnNorth.Cert).To(gomega.Equal("/client/cert"))
-			gomega.Expect(OvnNorth.CACert).To(gomega.Equal("/client/cacert"))
-			gomega.Expect(OvnNorth.CertCommonName).To(gomega.Equal("testnbcommonname"))
-
-			gomega.Expect(OvnSouth.PrivKey).To(gomega.Equal("/path/to/sb-client-private.key"))
-			gomega.Expect(OvnSouth.Cert).To(gomega.Equal("/path/to/sb-client.crt"))
-			gomega.Expect(OvnSouth.CACert).To(gomega.Equal("/path/to/sb-client-ca.crt"))
-			gomega.Expect(OvnSouth.CertCommonName).To(gomega.Equal("cfg-sbcommonname"))
+			gomega.Expect(EgressIPHealthCheckTLS.PrivKey).To(gomega.Equal("/client/privkey"))
+			gomega.Expect(EgressIPHealthCheckTLS.Cert).To(gomega.Equal("/client/cert"))
+			gomega.Expect(EgressIPHealthCheckTLS.CACert).To(gomega.Equal("/client/cacert"))
+			gomega.Expect(EgressIPHealthCheckTLS.CertCommonName).To(gomega.Equal("testnbcommonname"))
 
 			gomega.Expect(Gateway.Mode).To(gomega.Equal(GatewayModeShared))
 			gomega.Expect(Gateway.NodeportEnable).To(gomega.BeTrue())
@@ -806,7 +784,6 @@ routing-table-id-start=2002
 			"-enable-admin-network-policy=true",
 			"-enable-persistent-ips=true",
 			"-healthz-bind-address=0.0.0.0:4321",
-			"-zone=bar",
 			"-dns-service-namespace=kube-system-2",
 			"-dns-service-name=kube-dns-2",
 			"-disable-requestedchassis=true",
@@ -816,6 +793,75 @@ routing-table-id-start=2002
 		err = app.Run(cliArgs)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	})
+
+	DescribeTable("loads Egress IP health-check TLS settings with compatibility precedence",
+		func(configData string, cliArgs []string, expected EgressIPHealthCheckTLSConfig) {
+			err := os.WriteFile(cfgFile.Name(), []byte(configData), 0o644)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			app.Action = func(ctx *cli.Context) error {
+				_, err := InitConfig(ctx, kexec.New(), nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(EgressIPHealthCheckTLS).To(gomega.Equal(expected))
+				return nil
+			}
+			args := []string{app.Name, "-config-file=" + cfgFile.Name()}
+			args = append(args, cliArgs...)
+			err = app.Run(args)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		},
+		Entry("accepts the legacy ovnnorth section", `[ovnnorth]
+client-privkey=/legacy/client.key
+client-cert=/legacy/client.crt
+client-cacert=/legacy/client-ca.crt
+cert-common-name=legacy.example.com
+`, nil, EgressIPHealthCheckTLSConfig{
+			PrivKey:        "/legacy/client.key",
+			Cert:           "/legacy/client.crt",
+			CACert:         "/legacy/client-ca.crt",
+			CertCommonName: "legacy.example.com",
+		}),
+		Entry("accepts the canonical section", `[egressip-healthcheck-tls]
+client-privkey=/canonical/client.key
+client-cert=/canonical/client.crt
+client-cacert=/canonical/client-ca.crt
+cert-common-name=canonical.example.com
+`, nil, EgressIPHealthCheckTLSConfig{
+			PrivKey:        "/canonical/client.key",
+			Cert:           "/canonical/client.crt",
+			CACert:         "/canonical/client-ca.crt",
+			CertCommonName: "canonical.example.com",
+		}),
+		Entry("lets canonical fields override legacy fields independently", `[ovnnorth]
+client-privkey=/legacy/client.key
+client-cert=/legacy/client.crt
+client-cacert=/legacy/client-ca.crt
+cert-common-name=legacy.example.com
+
+[egressip-healthcheck-tls]
+client-cert=/canonical/client.crt
+cert-common-name=canonical.example.com
+`, nil, EgressIPHealthCheckTLSConfig{
+			PrivKey:        "/legacy/client.key",
+			Cert:           "/canonical/client.crt",
+			CACert:         "/legacy/client-ca.crt",
+			CertCommonName: "canonical.example.com",
+		}),
+		Entry("lets historical CLI flags override canonical fields independently", `[egressip-healthcheck-tls]
+client-privkey=/canonical/client.key
+client-cert=/canonical/client.crt
+client-cacert=/canonical/client-ca.crt
+cert-common-name=canonical.example.com
+`, []string{
+			"--nb-client-cert=/cli/client.crt",
+			"--nb-cert-common-name=cli.example.com",
+		}, EgressIPHealthCheckTLSConfig{
+			PrivKey:        "/canonical/client.key",
+			Cert:           "/cli/client.crt",
+			CACert:         "/canonical/client-ca.crt",
+			CertCommonName: "cli.example.com",
+		}),
+	)
 
 	It("overrides config file and defaults with CLI legacy service-cluster-ip-range option", func() {
 		err := os.WriteFile(cfgFile.Name(), []byte(`[kubernetes]
@@ -1552,36 +1598,35 @@ udn-allowed-default-services= ns/svc, ns1/svc1
 		})
 	})
 
-	Describe("OvnDBAuth operations", func() {
-		It("configures client southbound DB auth to unix socket via external_ids", func() {
+	Describe("OvnDBConfig operations", func() {
+		It("configures ovn-controller to use the local southbound DB socket", func() {
 			fexec := ovntest.NewFakeExec()
 			expectedURL := "unix:/var/run/ovn/ovnsb_db.sock"
 			fexec.AddFakeCmdsNoOutputNoError([]string{
 				"ovs-vsctl --timeout=15 set Open_vSwitch . external_ids:ovn-remote=\"" + expectedURL + "\"",
 			})
 
-			cli := &OvnAuthConfig{RunDir: "/var/run/ovn/"}
-			a, err := buildOvnAuth(fexec, false, cli, &OvnAuthConfig{RunDir: "/var/run/ovn/"})
+			cli := &OvnDBConfig{RunDir: "/var/run/ovn/"}
+			a, err := buildOvnDBConfig(fexec, false, cli, &OvnDBConfig{RunDir: "/var/run/ovn/"})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			gomega.Expect(a.northbound).To(gomega.BeFalse())
 			gomega.Expect(a.GetURL()).To(gomega.Equal(expectedURL))
 
-			err = a.SetDBAuth()
+			err = a.SetOVNRemote()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			gomega.Expect(fexec.CalledMatchesExpected()).To(gomega.BeTrue(), fexec.ErrorDesc)
 		})
 
-		It("northbound SetDBAuth is a no-op", func() {
+		It("rejects configuring ovn-controller with the northbound DB", func() {
 			fexec := ovntest.NewFakeExec()
-			cli := &OvnAuthConfig{RunDir: "/var/run/ovn/"}
-			a, err := buildOvnAuth(fexec, true, cli, &OvnAuthConfig{RunDir: "/var/run/ovn/"})
+			cli := &OvnDBConfig{RunDir: "/var/run/ovn/"}
+			a, err := buildOvnDBConfig(fexec, true, cli, &OvnDBConfig{RunDir: "/var/run/ovn/"})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			gomega.Expect(a.northbound).To(gomega.BeTrue())
 			gomega.Expect(a.GetURL()).To(gomega.Equal("unix:/var/run/ovn/ovnnb_db.sock"))
 
-			err = a.SetDBAuth()
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(fexec.CalledMatchesExpected()).To(gomega.BeTrue(), fexec.ErrorDesc)
+			err = a.SetOVNRemote()
+			gomega.Expect(err).To(gomega.MatchError("cannot configure ovn-controller with the northbound database"))
 		})
 	})
 
@@ -1844,6 +1889,7 @@ udn-allowed-default-services= ns/svc, ns1/svc1
 		It("has correct default OvnNorth values", func() {
 			gomega.Expect(OvnNorth.RunDir).To(gomega.Equal("/var/run/ovn/"))
 			gomega.Expect(OvnNorth.DbLocation).To(gomega.Equal("/etc/ovn/ovnnb_db.db"))
+			gomega.Expect(OvnNorth.GetURL()).To(gomega.Equal("unix:/var/run/ovn/ovnnb_db.sock"))
 		})
 
 		It("has correct default OvnSouth values", func() {

@@ -67,11 +67,6 @@ nodes:
            value: "ingress-ready=true"
          - name: authorization-mode
            value: "AlwaysAllow"
-{%- if ovn_ha is equalto "true" %}
-{%- for _ in range(1, ovn_num_master | int) %}
- - role: worker
-{%- endfor %}
-{%- endif %}
 {%- for _ in range(ovn_num_worker | int) %}
  - role: worker
 {%- endfor %}

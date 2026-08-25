@@ -172,7 +172,7 @@ func (c *Controller) syncNode(key string) error {
 	}
 
 	// At this point the node exists and is ready.
-	if c.zone != types.OvnDefaultZone && c.isNodeInLocalZone(n) {
+	if c.isNodeInLocalZone(n) {
 		if err := c.createDefaultRouteToExternalForIC(c.nbClient, c.GetNetworkScopedClusterRouterName(),
 			c.GetNetworkScopedGWRouterName(nodeName), c.Subnets(), gatewayIPs); err != nil {
 			return err
@@ -260,5 +260,5 @@ func (c *Controller) nodeStateFor(name string) (*nodeState, error) {
 
 // isNodeInLocalZone returns whether the provided node is in a zone local to the zone controller
 func (c *Controller) isNodeInLocalZone(node *corev1.Node) bool {
-	return util.GetNodeZone(node) == c.zone
+	return node.Name == c.zone
 }

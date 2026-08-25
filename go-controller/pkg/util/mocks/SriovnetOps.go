@@ -247,6 +247,34 @@ func (_m *SriovnetOps) GetPfPciFromVfPci(vfPciAddress string) (string, error) {
 	return r0, r1
 }
 
+// GetPfRepresentorDPU provides a mock function with given fields: pfID
+func (_m *SriovnetOps) GetPfRepresentorDPU(pfID string) (string, error) {
+	ret := _m.Called(pfID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetPfRepresentorDPU")
+	}
+
+	var r0 string
+	var r1 error
+	if rf, ok := ret.Get(0).(func(string) (string, error)); ok {
+		return rf(pfID)
+	}
+	if rf, ok := ret.Get(0).(func(string) string); ok {
+		r0 = rf(pfID)
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	if rf, ok := ret.Get(1).(func(string) error); ok {
+		r1 = rf(pfID)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
 // GetPortIndexFromRepresentor provides a mock function with given fields: name
 func (_m *SriovnetOps) GetPortIndexFromRepresentor(name string) (int, error) {
 	ret := _m.Called(name)

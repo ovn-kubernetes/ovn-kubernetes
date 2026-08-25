@@ -17,6 +17,7 @@ import (
 	"k8s.io/klog/v2"
 
 	nqosv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 func (c *Controller) processNextNQOSPodWorkItem(wg *sync.WaitGroup) bool {
@@ -55,6 +56,10 @@ func (c *Controller) syncNetworkQoSPod(eventData *eventData[*corev1.Pod]) error 
 	return nil
 }
 
+func (c *Controller) isPodScheduledOnLocalNode(pod *corev1.Pod) bool {
+	return util.PodScheduled(pod) && pod.Spec.NodeName == c.nodeName
+}
+
 // setPodForNQOS will check if the pod meets source selector or dest selector
 // - match source: add the ip to source address set, bind qos rule to the switch
 // - match dest: add the ip to the destination address set
@@ -69,7 +74,7 @@ func (c *Controller) setPodForNQOS(pod *corev1.Pod, nqosState *networkQoSState, 
 	}
 	fullPodName := joinMetaNamespaceAndName(pod.Namespace, pod.Name)
 	// is pod in this zone
-	if c.isPodScheduledinLocalZone(pod) {
+	if c.isPodScheduledOnLocalNode(pod) {
 		if matchSource := nqosState.matchSourceSelector(pod); matchSource {
 			// pod's labels match source selector
 			if err = nqosState.configureSourcePod(c, pod, addresses); err == nil {

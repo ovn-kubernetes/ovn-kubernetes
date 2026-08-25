@@ -12,6 +12,34 @@ type FileSystemOps struct {
 	mock.Mock
 }
 
+// PathExists provides a mock function with given fields: path
+func (_m *FileSystemOps) PathExists(path string) (bool, error) {
+	ret := _m.Called(path)
+
+	if len(ret) == 0 {
+		panic("no return value specified for PathExists")
+	}
+
+	var r0 bool
+	var r1 error
+	if rf, ok := ret.Get(0).(func(string) (bool, error)); ok {
+		return rf(path)
+	}
+	if rf, ok := ret.Get(0).(func(string) bool); ok {
+		r0 = rf(path)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+
+	if rf, ok := ret.Get(1).(func(string) error); ok {
+		r1 = rf(path)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
 // Readlink provides a mock function with given fields: path
 func (_m *FileSystemOps) Readlink(path string) (string, error) {
 	ret := _m.Called(path)

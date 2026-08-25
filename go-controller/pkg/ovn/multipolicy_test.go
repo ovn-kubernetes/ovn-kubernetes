@@ -225,7 +225,7 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 		app.Name = "test"
 		app.Flags = config.Flags
 
-		fakeOvn = NewFakeOVN(false)
+		fakeOvn = NewFakeOVN(false, nodeName)
 
 		gomegaFormatMaxLength = format.MaxLength
 		format.MaxLength = 0

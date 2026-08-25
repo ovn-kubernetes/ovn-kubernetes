@@ -52,8 +52,6 @@ import (
 
 const (
 	ovnNodeSubnets = "k8s.ovn.org/node-subnets"
-	// ovnNodeZoneNameAnnotation is the node annotation name to store the node zone name.
-	ovnNodeZoneNameAnnotation = "k8s.ovn.org/zone-name"
 	// ovnGatewayMTUSupport annotation determines if options:gateway_mtu shall be set for a node's gateway router
 	ovnGatewayMTUSupport = "k8s.ovn.org/gateway-mtu-support"
 )
@@ -1281,16 +1279,6 @@ func getNodeContainerName() string {
 	return "ovnkube-controller"
 }
 
-// getNodeZone returns the node's zone
-func getNodeZone(node *v1.Node) (string, error) {
-	nodeZone, ok := node.Annotations[ovnNodeZoneNameAnnotation]
-	if !ok {
-		return "", fmt.Errorf("zone for the node %s not set in the annotation %s", node.Name, ovnNodeZoneNameAnnotation)
-	}
-
-	return nodeZone, nil
-}
-
 // adds route to a docker node with a full mask
 func addRouteToNode(nodeName string, ips []string, mtu int) error {
 	return routeToNode(nodeName, ips, mtu, true)
@@ -1861,12 +1849,13 @@ func firstSubnetOf(subnet string, subnetSize int) string {
 	return fmt.Sprintf("%s/%d", ipNet.IP, subnetSize)
 }
 
-// monitorTcpdumpOnNode creates a privileged host-network pod on the given node that runs
-// tcpdump on the specified interface with the provided filter. It blocks until ctx is
-// cancelled, then fetches the pod logs and deletes the monitor pod. Returns all captured
-// tcpdump output.
-func monitorTcpdumpOnNode(ctx context.Context, f *framework.Framework,
-	name, nodeName, nodeIface, options, filter string) (string, error) {
+// startTcpdumpMonitorPodOnNode creates a privileged host-network pod on the given node that
+// runs tcpdump on the specified interface with the provided filter, and waits up to
+// startupTimeout for the pod to be Running. Returning means the capture is active, so callers
+// can start generating traffic. It fails the spec if the pod cannot be created or does not
+// become Running within startupTimeout.
+func startTcpdumpMonitorPodOnNode(f *framework.Framework, startupTimeout time.Duration,
+	name, nodeName, nodeIface, options, filter string) {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -1895,15 +1884,12 @@ func monitorTcpdumpOnNode(ctx context.Context, f *framework.Framework,
 		},
 	}
 
-	createdPod, err := f.ClientSet.CoreV1().Pods(f.Namespace.Name).Create(ctx, pod, metav1.CreateOptions{})
-	framework.ExpectNoError(err, "Failed to create traffic monitor pod")
-	err = e2epod.WaitForPodRunningInNamespace(ctx, f.ClientSet, createdPod)
-	framework.ExpectNoError(err, "Monitor pod failed to start")
+	// Bound pod creation and the readiness wait by a single startupTimeout budget.
+	startupCtx, cancel := context.WithTimeout(context.Background(), startupTimeout)
+	defer cancel()
 
-	<-ctx.Done()
-	logs, err := e2ekubectl.RunKubectl(f.Namespace.Name, "logs", name)
-	if err != nil {
-		return "", err
-	}
-	return logs, nil
+	_, err := f.ClientSet.CoreV1().Pods(f.Namespace.Name).Create(startupCtx, pod, metav1.CreateOptions{})
+	framework.ExpectNoError(err, "Failed to create traffic monitor pod")
+	err = e2epod.WaitTimeoutForPodRunningInNamespace(startupCtx, f.ClientSet, name, f.Namespace.Name, startupTimeout)
+	framework.ExpectNoError(err, fmt.Sprintf("traffic monitor pod %s did not become Running within %v", name, startupTimeout))
 }

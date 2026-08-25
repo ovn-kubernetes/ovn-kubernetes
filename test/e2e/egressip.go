@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"sort"
@@ -36,6 +37,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
@@ -400,6 +402,9 @@ type egressIPStatus struct {
 }
 
 type egressIP struct {
+	Metadata struct {
+		Name string `json:"name"`
+	} `json:"metadata"`
 	Status struct {
 		Items []egressIPStatus `json:"items"`
 	} `json:"status"`
@@ -596,6 +601,57 @@ var _ = ginkgo.Describe("e2e egress IP validation", feature.EgressIP, func() {
 			sort.Strings(eIPsFound)
 			sort.Strings(ips)
 			return reflect.DeepEqual(eIPsFound, ips)
+		}
+
+		// verifyEgressIPAddrProto checks that the EgressIP address assigned on the
+		// node has IFA_PROTO set to 85 (OVN-K). Value 85 is used instead of
+		// RTPROT_OVN (84) so we do not reuse a protocol identifier owned by OVN.
+		// iproute2 renders unknown protocol numbers in hex, so protocol
+		// 85 appears as "0x55" in JSON output unless a name mapping exists in
+		// rt_addrprotos. IFA_PROTO requires Linux kernel 5.18+; on older kernels
+		// the attribute is silently ignored by the kernel and the ip CLI will not
+		// report a protocol field, so the check is skipped.
+		//
+		// Callers must only invoke this when a Linux address is expected:
+		// - secondary-host EIPs always assign the address on a host NIC
+		// - OVN-network EIPs assign the address on the gateway bridge only when
+		//   network segmentation is enabled (see canHandleBridgeEgressIP)
+		verifyEgressIPAddrProto := func(nodeName, eipAddr string) {
+			type ipAddrInfo struct {
+				Local    string `json:"local"`
+				Protocol string `json:"protocol"`
+			}
+			type ipAddrEntry struct {
+				AddrInfo []ipAddrInfo `json:"addr_info"`
+			}
+
+			// iproute2 renders unknown protocol numbers in hex (e.g. 85 -> "0x55").
+			expectedProtoHex := fmt.Sprintf("0x%x", types.IFAProtOVNK)
+
+			gomega.Eventually(func(g gomega.Gomega) {
+				output, err := infraprovider.Get().ExecK8NodeCommand(nodeName,
+					[]string{"ip", "-d", "-j", "addr", "show", "to", eipAddr})
+				g.Expect(err).NotTo(gomega.HaveOccurred(), "failed to get address info on node %s", nodeName)
+
+				var entries []ipAddrEntry
+				g.Expect(json.Unmarshal([]byte(output), &entries)).To(gomega.Succeed(), "failed to parse ip addr JSON")
+				g.Expect(entries).To(gomega.HaveLen(1), "expected a single interface entry for EgressIP %s on node %s", eipAddr, nodeName)
+
+				var ai *ipAddrInfo
+				for i, info := range entries[0].AddrInfo {
+					if info.Local == eipAddr {
+						ai = &entries[0].AddrInfo[i]
+						break
+					}
+				}
+				g.Expect(ai).NotTo(gomega.BeNil(), "EgressIP %s not found on node %s", eipAddr, nodeName)
+				if ai.Protocol == "" {
+					framework.Logf("IFA_PROTO not reported for EgressIP %s on node %s; kernel may not support IFA_PROTO (requires 5.18+), skipping check", eipAddr, nodeName)
+					return
+				}
+				g.Expect(ai.Protocol).To(gomega.Equal(expectedProtoHex),
+					"EgressIP %s on node %s should have IFA_PROTO 85/0x55 (OVN-K), got %q", eipAddr, nodeName, ai.Protocol)
+			}, 30*time.Second, 2*time.Second).Should(gomega.Succeed())
 		}
 
 		getIPVersions := func(ips ...string) (bool, bool) {
@@ -1011,6 +1067,15 @@ spec:
 						podNamespace.Name, pod2Name, true, []string{egressIP1.String(), egressIP2.String()}))
 					framework.ExpectNoError(err, "Step 4. Check connectivity from second to an external \"node\" and verify that the IPs are both of the above, failed: %v", err)
 
+					ginkgo.By("4a. Check that the EgressIP addresses have IFA_PROTO set to OVN-K (85)")
+					// OVN-network EIPs are assigned on the gateway bridge only when
+					// network segmentation is enabled (canHandleBridgeEgressIP).
+					if isNetworkSegmentationEnabled() {
+						for _, status := range statuses {
+							verifyEgressIPAddrProto(status.Node, status.EgressIP)
+						}
+					}
+
 					ginkgo.By("5. Check connectivity from one pod to the other and verify that the connection is achieved")
 					err = wait.PollImmediate(retryInterval, retryTimeout, targetPodAndTest(f.Namespace.Name, pod1Name, pod2Name, pod2IP, clusterNetworkHTTPPort))
 					framework.ExpectNoError(err, "Step 5. Check connectivity from one pod to the other and verify that the connection is achieved, failed, err: %v", err)
@@ -1224,6 +1289,13 @@ spec:
 			ginkgo.By("6. Check connectivity from pod to an external node and verify that the srcIP is the expected egressIP")
 			err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod1Name, true, []string{egressIP1.String()}))
 			framework.ExpectNoError(err, "Step 6. Check connectivity from pod to an external node and verify that the srcIP is the expected egressIP, failed: %v", err)
+
+			ginkgo.By("6a. Check that the EgressIP address has IFA_PROTO set to OVN-K (85)")
+			// OVN-network EIPs are assigned on the gateway bridge only when
+			// network segmentation is enabled (canHandleBridgeEgressIP).
+			if isNetworkSegmentationEnabled() {
+				verifyEgressIPAddrProto(statuses[0].Node, statuses[0].EgressIP)
+			}
 
 			ginkgo.By("7. Check connectivity from pod to another node primary IP and verify that the srcIP is the expected nodeIP")
 			err = wait.PollImmediate(retryInterval, retryTimeout, targetHostNetworkContainerAndTest(hostNetPod, podNamespace.Name, pod1Name, true, []string{egress1Node.nodeIP}))
@@ -2318,6 +2390,11 @@ spec:
 			framework.ExpectNoError(err, "Step 5. Check connectivity from pod (%s/%s) to an external container attached to "+
 				"a network that is a secondary host network and verify that the src IP is the expected egressIP, failed: %v", podNamespace.Name, pod2Name, err)
 
+			ginkgo.By("5a. Check that the EgressIP addresses have IFA_PROTO set to OVN-K (85)")
+			for _, status := range statuses {
+				verifyEgressIPAddrProto(status.Node, status.EgressIP)
+			}
+
 			ginkgo.By("6. Check connectivity from one pod to the other and verify that the connection is achieved")
 			pod2IP, err := getPodIPWithRetry(f.ClientSet, isIPv6TestRun, f.Namespace.Name, pod2Name)
 			framework.ExpectNoError(err, "Step 6. Check connectivity from one pod to the other and verify that the connection "+
@@ -3038,6 +3115,9 @@ spec:
 			inf, err = infraprovider.Get().GetK8NodeNetworkInterface(status[0].Node, secondaryNetwork)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "should have network interface for network %s on instance %s", secondaryNetwork.Name(), egress1Node.name)
 
+			ginkgo.By("Verifying EgressIP address has IFA_PROTO set to OVN-K (85)")
+			verifyEgressIPAddrProto(status[0].Node, status[0].EgressIP)
+
 			ginkgo.By("Verifying neighbor table")
 			var neighborMAC string
 			gomega.Eventually(func() bool {
@@ -3149,16 +3229,12 @@ spec:
 				gomega.Expect(podCIDR).NotTo(gomega.BeEmpty(), "pod CIDR must not be empty for node %s", pod1Node.name)
 				monitorFilter := fmt.Sprintf("src net %s and dst host %s", podCIDR, targetIP)
 
-				ctx, ctxCancel := context.WithCancel(context.Background())
-				monitorOutput := ""
-				finishedMonitor := make(chan struct{})
-				go func() {
-					defer close(finishedMonitor)
-					var monitorErr error
-					monitorOutput, monitorErr = monitorTcpdumpOnNode(ctx, f, monitorPodName, egress1Node.name, secondaryIface.InfName,
-						"-n -vv -l", monitorFilter)
-					framework.ExpectNoError(monitorErr, "Failed to read monitor pod logs")
-				}()
+				// Create the monitor pod and wait (up to retryTimeout) until it is Running
+				// (capturing) before generating any traffic, so the capture cannot miss the
+				// EgressIP transition and reading the capture in Step 8 cannot race the pod
+				// startup. A failure or timeout to start aborts the spec here.
+				startTcpdumpMonitorPodOnNode(f, retryTimeout, monitorPodName, egress1Node.name, secondaryIface.InfName,
+					"-n -vv -l", monitorFilter)
 				framework.Logf("Traffic monitor pod started on node %s", egress1Node.name)
 
 				ginkgo.By(fmt.Sprintf("Step 4: Create %d pods FIRST (before EgressIP exists)", numTestPods))
@@ -3323,8 +3399,10 @@ spec:
 
 				ginkgo.By("Step 8: Analyze traffic capture for pod IP leaks during EgressIP application")
 				// This is the critical check: did any traffic leak with pod IPs during the transition?
-				ctxCancel()
-				<-finishedMonitor
+				// tcpdump keeps running; kubectl logs reads the capture so far (line-buffered via -l).
+				monitorOutput, monitorErr := e2ekubectl.NewKubectlCommand(f.Namespace.Name, "logs", monitorPodName).
+					WithTimeout(time.After(retryTimeout)).Exec()
+				framework.ExpectNoError(monitorErr, "Failed to read monitor pod logs")
 				if strings.Contains(monitorOutput, targetIP) {
 					framework.Failf("TRAFFIC LEAK DETECTED! Pod IPs were seen in traffic to %s"+
 						"This indicates traffic leaked with pod source IPs instead of egress IP %s during EgressIP application to existing pods.\ntcpdump output:\n%s",
@@ -3788,6 +3866,176 @@ spec:
 			_, err = e2ekubectl.RunKubectl("", "annotate", "--overwrite", "egressip", egressIPName, fmt.Sprintf("%s-", util.EgressIPMarkAnnotation))
 			gomega.Expect(err).To(gomega.HaveOccurred(), "Should fail if k8s.ovn.org/egressip-mark is being removed")
 			gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("The \"k8s.ovn.org/egressip-mark\" annotation cannot be modified or removed once set. This annotation is managed by the system.")))
+		})
+
+		ginkgo.It("Should skip orphaned nodes and assign EgressIPs to valid nodes", func() {
+			if isUserDefinedNetwork(netConfigParams) {
+				ginkgo.Skip("Unsupported for UDNs")
+			}
+
+			// Label two nodes for egress assignment
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable", "dummy")
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress2Node.name, "k8s.ovn.org/egress-assignable", "dummy")
+
+			podNamespace := f.Namespace
+			nodeToOrphan := egress1Node.name
+
+			ginkgo.By("Allocating EgressIP addresses before orphaning node")
+			var egressIP1, egressIP2 net.IP
+			var err error
+			if utilnet.IsIPv6String(egress1Node.nodeIP) {
+				egressIP1, err = ipalloc.NewPrimaryIPv6()
+				framework.ExpectNoError(err, "Failed to allocate IPv6 for EgressIP1")
+				egressIP2, err = ipalloc.NewPrimaryIPv6()
+				framework.ExpectNoError(err, "Failed to allocate IPv6 for EgressIP2")
+			} else {
+				egressIP1, err = ipalloc.NewPrimaryIPv4()
+				framework.ExpectNoError(err, "Failed to allocate IPv4 for EgressIP1")
+				egressIP2, err = ipalloc.NewPrimaryIPv4()
+				framework.ExpectNoError(err, "Failed to allocate IPv4 for EgressIP2")
+			}
+
+			ginkgo.By("Removing host-cidrs annotation from one node to simulate orphan")
+			node, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), nodeToOrphan, metav1.GetOptions{})
+			framework.ExpectNoError(err, "Failed to get node %s", nodeToOrphan)
+			originalHostCIDRs := node.Annotations[util.OVNNodeHostCIDRs]
+
+			// The node object is updated by ovnkube-node while the test runs, so
+			// every write here has to be retried on conflict.
+			setHostCIDRs := func(value string) error {
+				return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+					node, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), nodeToOrphan, metav1.GetOptions{})
+					if err != nil {
+						return err
+					}
+					if value == "" {
+						delete(node.Annotations, util.OVNNodeHostCIDRs)
+					} else {
+						node.Annotations[util.OVNNodeHostCIDRs] = value
+					}
+					_, err = f.ClientSet.CoreV1().Nodes().Update(context.TODO(), node, metav1.UpdateOptions{})
+					return err
+				})
+			}
+
+			framework.ExpectNoError(setHostCIDRs(""), "Failed to remove host-cidrs annotation from node %s", nodeToOrphan)
+
+			// Register node annotation restore immediately
+			defer func() {
+				framework.ExpectNoError(setHostCIDRs(originalHostCIDRs),
+					"Failed to restore host-cidrs annotation on node %s", nodeToOrphan)
+			}()
+
+			egressIPConfig1 := fmt.Sprintf(`apiVersion: k8s.ovn.org/v1
+kind: EgressIP
+metadata:
+    name: eip-test-1
+spec:
+    egressIPs:
+    - %s
+    podSelector:
+        matchLabels:
+            egress-pod: "true"
+    namespaceSelector:
+        matchLabels:
+            kubernetes.io/metadata.name: %s
+`, egressIP1.String(), podNamespace.Name)
+
+			egressIPConfig2 := fmt.Sprintf(`apiVersion: k8s.ovn.org/v1
+kind: EgressIP
+metadata:
+    name: eip-test-2
+spec:
+    egressIPs:
+    - %s
+    podSelector:
+        matchLabels:
+            egress-pod: "true"
+    namespaceSelector:
+        matchLabels:
+            kubernetes.io/metadata.name: %s
+`, egressIP2.String(), podNamespace.Name)
+
+			tmpDir, err := os.MkdirTemp("", "egressip-test-")
+			if err != nil {
+				framework.Failf("Unable to create temp directory: %v", err)
+			}
+			defer os.RemoveAll(tmpDir)
+
+			egressIPYaml1 := filepath.Join(tmpDir, "eip-test-1.yaml")
+			if err := os.WriteFile(egressIPYaml1, []byte(egressIPConfig1), 0644); err != nil {
+				framework.Failf("Unable to write EgressIP YAML to disk: %v", err)
+			}
+
+			egressIPYaml2 := filepath.Join(tmpDir, "eip-test-2.yaml")
+			if err := os.WriteFile(egressIPYaml2, []byte(egressIPConfig2), 0644); err != nil {
+				framework.Failf("Unable to write EgressIP YAML to disk: %v", err)
+			}
+
+			framework.Logf("Create the EgressIP configurations")
+			e2ekubectl.RunKubectlOrDie("default", "create", "-f", egressIPYaml1)
+			providerCtx.AddCleanUpFn(func() error {
+				_, err := e2ekubectl.RunKubectl("default", "delete", "egressip", "eip-test-1", "--ignore-not-found=true")
+				return err
+			})
+
+			e2ekubectl.RunKubectlOrDie("default", "create", "-f", egressIPYaml2)
+			providerCtx.AddCleanUpFn(func() error {
+				_, err := e2ekubectl.RunKubectl("default", "delete", "egressip", "eip-test-2", "--ignore-not-found=true")
+				return err
+			})
+
+			// Returns the node each of the two test EgressIPs is assigned to.
+			// An EgressIP that has no assignment yet is absent from the map.
+			assignedNodes := func() map[string]string {
+				egressIPStdout, err := e2ekubectl.RunKubectl("default", "get", "eip", "-o", "json")
+				if err != nil {
+					framework.Logf("Error getting EgressIPs: %v", err)
+					return nil
+				}
+				var egressIPList egressIPs
+				if err := json.Unmarshal([]byte(egressIPStdout), &egressIPList); err != nil {
+					framework.Logf("Error unmarshaling EgressIP list: %v", err)
+					return nil
+				}
+				assigned := map[string]string{}
+				for _, eip := range egressIPList.Items {
+					if eip.Metadata.Name != "eip-test-1" && eip.Metadata.Name != "eip-test-2" {
+						continue
+					}
+					if len(eip.Status.Items) > 0 {
+						assigned[eip.Metadata.Name] = eip.Status.Items[0].Node
+					}
+				}
+				return assigned
+			}
+
+			// The orphaned state cannot be held open for a fixed window:
+			// ovnkube-node's address manager restores host-cidrs on any netlink
+			// address event, not only on its sync ticker, and IPv6 links produce
+			// enough address activity that the annotation can come back within
+			// seconds. So assert as soon as both EgressIPs are assigned, and
+			// re-check the annotation on every poll: if it returns before the
+			// assignments land, the run has not exercised the orphaned state and
+			// must fail loudly rather than pass without testing anything.
+			ginkgo.By("Verifying both EgressIPs are assigned while one node is orphaned")
+			var assigned map[string]string
+			err = wait.PollImmediate(retryInterval, retryTimeout, func() (bool, error) {
+				orphanNode, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), nodeToOrphan, metav1.GetOptions{})
+				if err != nil {
+					return false, err
+				}
+				if _, ok := orphanNode.Annotations[util.OVNNodeHostCIDRs]; ok {
+					return false, fmt.Errorf("node %s regained its host-cidrs annotation before both EgressIPs were assigned, so the orphaned state was not exercised", nodeToOrphan)
+				}
+				assigned = assignedNodes()
+				framework.Logf("Current EgressIP assignments: %v", assigned)
+				return len(assigned) == 2, nil
+			})
+			framework.ExpectNoError(err, "Both EgressIPs should have been assigned while node %s was orphaned", nodeToOrphan)
+
+			gomega.Expect(assigned).NotTo(gomega.ContainElement(nodeToOrphan),
+				"EgressIPs must not be assigned to node %s while its host-cidrs annotation is missing", nodeToOrphan)
 		})
 
 		ginkgo.DescribeTable("[OVN network] multiple namespaces with different primary networks", func(otherNetworkAttachParms networkAttachmentConfigParams) {

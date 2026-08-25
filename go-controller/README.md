@@ -41,7 +41,7 @@ Usage:
   -init-cluster-manager string
      initialize cluster manager that watches nodes (allocates subnet for each node from the cluster-subnets), requires the hostname as argument and doesn't connect to the OVN dbs.
   -init-ovnkube-controller string
-     initialize ovnkube-controller (which watches pods/nodes/services/policies and create OVN db resources), requires the hostname as argument.
+     initialize ovnkube-controller (which watches pods/nodes/services/policies and creates OVN db resources), requires the Kubernetes node name as argument.
   -init-node string
      initialize node, requires the name that node is registered with in kubernetes cluster
   -cleanup-node string
@@ -128,17 +128,23 @@ conf-dir=/etc/cni/net.d
 plugin=ovn-k8s-cni-overlay
 
 [ovnnorth]
-address=ssl:1.2.3.4:6641
-client-privkey=/path/to/private.key
-client-cert=/path/to/client.crt
-client-cacert=/path/to/client-ca.crt
-server-privkey=/path/to/private.key
-server-cert=/path/to/server.crt
-server-cacert=path/to/server-ca.crt
+run-dir=/var/run/ovn/
+db-location=/etc/ovn/ovnnb_db.db
 
 [ovnsouth]
-<same as ovn north>
+run-dir=/var/run/ovn/
+db-location=/etc/ovn/ovnsb_db.db
+
+[egressip-healthcheck-tls]
+client-privkey=/path/to/client.key
+client-cert=/path/to/client.crt
+client-cacert=/path/to/client-ca.crt
+cert-common-name=egress-health-check.example.com
 ```
+
+For compatibility, the Egress IP health-check TLS options are also accepted in
+the `[ovnnorth]` section. The dedicated section takes precedence when both are
+set.
 
 ## Example
 
@@ -156,7 +162,7 @@ The aforementioned ovnkube cluster manager will establish the watcher loops for 
  - nodes: as new nodes are born and init-node is called, the subnet IPAM is allocated for the respective nodes
 
 ```
-ovnkube --init-ovnkube-controller <host-name> \
+ovnkube --init-ovnkube-controller <kubernetes-node-name> \
 	--k8s-cacert <path to the cacert file> \
 	--k8s-token <token string for authentication with kube apiserver> \
 	--k8s-apiserver <url to the kube apiserver e.g. https://10.11.12.13.8443> \

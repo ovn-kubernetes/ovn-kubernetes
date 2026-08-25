@@ -574,19 +574,16 @@ func (c *Controller) uplinkNameForStateName(stateName string) (string, bool, err
 	if err != nil {
 		return "", false, fmt.Errorf("failed to list Nodes for UplinkState %s: %w", stateName, err)
 	}
-
-	var matchedUplink string
-	matches := 0
-	for _, uplink := range uplinks {
-		for _, node := range nodes {
-			if uplinkutil.StateName(uplink.Name, node.Name) != stateName {
-				continue
-			}
-			matchedUplink = uplink.Name
-			matches++
-		}
+	nodeNames := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		nodeNames = append(nodeNames, node.Name)
 	}
-	return matchedUplink, matches == 1, nil
+
+	uplink, found := uplinkutil.UplinkForState(uplinks, nodeNames, stateName)
+	if !found {
+		return "", false, nil
+	}
+	return uplink.Name, true, nil
 }
 
 // Node controllers normally remove their own UplinkStates, but the responsible
@@ -830,9 +827,24 @@ func uplinkNodeFailureMessage(failures []uplinkNodeFailure, selectedNodes int) s
 }
 
 func cudnUplinkStateGatewayNotReadyReason(state *uplinkv1alpha1.UplinkState) string {
+	if reason := cudnUplinkStateGatewayConditionNotReadyReason(
+		state, uplinkv1alpha1.UplinkStateConditionGatewayReady); reason != "" {
+		return reason
+	}
+	// In split-DPU deployments, recognizable by the DPU-host-owned
+	// HostDataReady condition, host-side gateway programming is reported
+	// separately through HostGatewayReady and must be ready as well.
+	if meta.FindStatusCondition(state.Status.Conditions, uplinkv1alpha1.UplinkStateConditionHostDataReady) != nil {
+		return cudnUplinkStateGatewayConditionNotReadyReason(
+			state, uplinkv1alpha1.UplinkStateConditionHostGatewayReady)
+	}
+	return ""
+}
+
+func cudnUplinkStateGatewayConditionNotReadyReason(state *uplinkv1alpha1.UplinkState, conditionType string) string {
 	condition := meta.FindStatusCondition(
 		state.Status.Conditions,
-		uplinkv1alpha1.UplinkStateConditionGatewayReady,
+		conditionType,
 	)
 	if condition == nil {
 		return reasonUplinksNotReady

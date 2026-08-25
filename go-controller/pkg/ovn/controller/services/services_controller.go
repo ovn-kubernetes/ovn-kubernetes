@@ -39,7 +39,6 @@ import (
 	globalconfig "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics/recorders"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -97,11 +96,11 @@ type networkState struct {
 	// repair contains per-network service repair bookkeeping.
 	repair *repair
 
-	// Per node information and template variables. The latter expand to each
-	// chassis' node IP (v4 and v6).
+	// Local node information and template variables. The latter expand to the
+	// local chassis' node IP (v4 and v6).
 	// Must be accessed only with the nodeInfo mutex taken.
 	nodeInfosByName   map[string]nodeInfo
-	nodeInfos         []nodeInfo
+	nodeInfo          *nodeInfo
 	nodeIPv4Templates *NodeIPsTemplates
 	nodeIPv6Templates *NodeIPsTemplates
 	nodeInfoRWLock    sync.RWMutex
@@ -144,6 +143,7 @@ func NewController(client clientset.Interface,
 	networkManager networkmanager.Interface,
 	recorder record.EventRecorder,
 	netInfo util.NetInfo,
+	nodeName string,
 ) (*Controller, error) {
 	klog.V(4).Infof("Creating services controller for network=%s", netInfo.GetNetworkName())
 	state := newNetworkState(netInfo, newRepair(serviceInformer.Lister(), nbClient), NetworkOptions{})
@@ -166,13 +166,9 @@ func NewController(client clientset.Interface,
 		nodesSynced:   nodeInformer.Informer().HasSynced,
 		state:         state,
 		networkStates: syncmap.NewSyncMap[*networkState](),
+		nodeName:      nodeName,
 	}
 	c.networkStates.Store(netInfo.GetNetworkName(), state)
-	zone, err := libovsdbutil.GetNBZone(c.nbClient)
-	if err != nil {
-		return nil, fmt.Errorf("unable to get the NB Zone : err - %w", err)
-	}
-	c.zone = zone
 	return c, nil
 }
 
@@ -218,7 +214,7 @@ type Controller struct {
 	state *networkState
 	// networkStates maps each registered network to its mutable service-controller state.
 	networkStates *syncmap.SyncMap[*networkState]
-	zone          string
+	nodeName      string
 
 	// handlers stored for shutdown
 	nodeHandler     cache.ResourceEventHandlerRegistration
@@ -368,14 +364,14 @@ func (c *Controller) ReconcileNetwork(netInfo util.NetInfo, opts NetworkOptions)
 			klog.V(4).Infof("Skipping services controller network reconcile for unregistered network=%s", key)
 			return nil
 		}
-		nodeInfos, _, err := c.nodeInfosForNetwork(netInfo)
+		nodeInfo, _, err := c.nodeInfosForNetwork(netInfo)
 		if err != nil {
 			return err
 		}
 		state.netInfo = netInfo
 		state.useLBGroups = opts.UseLBGroups
 		state.useTemplates = opts.UseTemplates
-		c.syncNodeInfosForNetwork(state, nodeInfos)
+		c.syncNodeInfoForNetwork(state, nodeInfo)
 		c.enqueueAllServicesForNetwork(state)
 		return nil
 	})
@@ -428,11 +424,11 @@ func (c *Controller) forEachNetworkState(f func(networkName string, state *netwo
 }
 
 func (c *Controller) bootstrapNetworkState(state *networkState, runRepair bool) error {
-	nodeInfos, nodes, err := c.nodeInfosForNetwork(state.netInfo)
+	nodeInfo, nodes, err := c.nodeInfosForNetwork(state.netInfo)
 	if err != nil {
 		return err
 	}
-	c.syncNodeInfosForNetwork(state, nodeInfos)
+	c.syncNodeInfoForNetwork(state, nodeInfo)
 
 	if runRepair {
 		state.repair.runBeforeSync(state.useTemplates, state.netInfo, nodes)
@@ -445,7 +441,7 @@ func (c *Controller) bootstrapNetworkState(state *networkState, runRepair bool) 
 	return nil
 }
 
-func (c *Controller) nodeInfosForNetwork(netInfo util.NetInfo) ([]nodeInfo, map[string]nodeInfo, error) {
+func (c *Controller) nodeInfosForNetwork(netInfo util.NetInfo) (*nodeInfo, map[string]nodeInfo, error) {
 	nodes, err := c.nodeInformer.Lister().List(labels.Everything())
 	if err != nil {
 		return nil, nil, err
@@ -460,7 +456,7 @@ func (c *Controller) nodeInfosForNetwork(netInfo util.NetInfo) ([]nodeInfo, map[
 		nodeMap[node.Name] = *ni
 	}
 
-	return zoneNodeInfos(c.zone, nodeMap), nodeMap, nil
+	return localNodeInfo(c.nodeName, nodeMap), nodeMap, nil
 }
 
 func (c *Controller) nodeInfoMapForNetwork(state *networkState) map[string]nodeInfo {
@@ -474,15 +470,11 @@ func (c *Controller) nodeInfoMapForNetwork(state *networkState) map[string]nodeI
 	return nodeInfoByName
 }
 
-func zoneNodeInfos(zone string, nodeInfoByName map[string]nodeInfo) []nodeInfo {
-	out := make([]nodeInfo, 0, len(nodeInfoByName))
-	for _, node := range nodeInfoByName {
-		if node.zone == zone {
-			out = append(out, node)
-		}
+func localNodeInfo(nodeName string, nodeInfoByName map[string]nodeInfo) *nodeInfo {
+	if nodeInfo, ok := nodeInfoByName[nodeName]; ok {
+		return &nodeInfo
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].name < out[j].name })
-	return out
+	return nil
 }
 
 func (c *Controller) enqueueAllServicesForNetwork(state *networkState) {
@@ -725,7 +717,7 @@ func (c *Controller) syncServiceForNetwork(state *networkState, key string) erro
 		metrics.MetricSyncServiceLatency.Observe(time.Since(startTime).Seconds())
 	}()
 
-	// Shared node information (state.nodeInfos, state.nodeIPv4Template, state.nodeIPv6Template)
+	// Shared node information (state.nodeInfo, state.nodeIPv4Template, state.nodeIPv6Template)
 	// needs to be accessed with the nodeInfoRWLock taken for read.
 	state.nodeInfoRWLock.RLock()
 	defer state.nodeInfoRWLock.RUnlock()
@@ -802,16 +794,21 @@ func (c *Controller) syncServiceForNetwork(state *networkState, key string) erro
 		return fmt.Errorf("service %s/%s for network=%s, %w", service.Namespace, service.Name, state.netInfo.GetNetworkName(), err)
 	}
 
+	var nodeInfos []nodeInfo
+	if state.nodeInfo != nil {
+		nodeInfos = []nodeInfo{*state.nodeInfo}
+	}
+
 	// Build the abstract LB configs for this service
-	perNodeConfigs, templateConfigs, clusterConfigs := buildServiceLBConfigs(service, endpointSlices, state.nodeInfos, state.useLBGroups, state.useTemplates, state.netInfo)
+	perNodeConfigs, templateConfigs, clusterConfigs := buildServiceLBConfigs(service, endpointSlices, nodeInfos, state.useLBGroups, state.useTemplates, state.netInfo)
 	klog.V(5).Infof("Built service %s LB cluster-wide configs for network=%s: %#v", key, state.netInfo.GetNetworkName(), clusterConfigs)
 	klog.V(5).Infof("Built service %s LB per-node configs for network=%s:  %#v", key, state.netInfo.GetNetworkName(), perNodeConfigs)
 	klog.V(5).Infof("Built service %s LB template configs for network=%s: %#v", key, state.netInfo.GetNetworkName(), templateConfigs)
 
 	// Convert the LB configs in to load-balancer objects
-	clusterLBs := buildClusterLBs(service, clusterConfigs, state.nodeInfos, state.useLBGroups, state.netInfo)
-	templateLBs := buildTemplateLBs(service, templateConfigs, state.nodeInfos, state.nodeIPv4Templates, state.nodeIPv6Templates, state.netInfo)
-	perNodeLBs := buildPerNodeLBs(service, perNodeConfigs, state.nodeInfos, state.netInfo)
+	clusterLBs := buildClusterLBs(service, clusterConfigs, nodeInfos, state.useLBGroups, state.netInfo)
+	templateLBs := buildTemplateLBs(service, templateConfigs, nodeInfos, state.nodeIPv4Templates, state.nodeIPv6Templates, state.netInfo)
+	perNodeLBs := buildPerNodeLBs(service, perNodeConfigs, nodeInfos, state.netInfo)
 	klog.V(5).Infof("Built service %s cluster-wide LB for network=%s: %#v", key, state.netInfo.GetNetworkName(), clusterLBs)
 	klog.V(5).Infof("Built service %s per-node LB for network=%s: %#v", key, state.netInfo.GetNetworkName(), perNodeLBs)
 	klog.V(5).Infof("Built service %s template LB for network=%s:  %#v", key, state.netInfo.GetNetworkName(), templateLBs)
@@ -852,10 +849,10 @@ func (c *Controller) syncServiceForNetwork(state *networkState, key string) erro
 	return nil
 }
 
-func (c *Controller) syncNodeInfosForNetwork(state *networkState, nodeInfos []nodeInfo) {
-	nodeInfoByName := make(map[string]nodeInfo, len(nodeInfos))
-	for _, nodeInfo := range nodeInfos {
-		nodeInfoByName[nodeInfo.name] = nodeInfo
+func (c *Controller) syncNodeInfoForNetwork(state *networkState, localNodeInfo *nodeInfo) {
+	nodeInfoByName := make(map[string]nodeInfo, 1)
+	if localNodeInfo != nil {
+		nodeInfoByName[localNodeInfo.name] = *localNodeInfo
 	}
 	c.syncNodeInfoMapForNetwork(state, nodeInfoByName)
 }
@@ -869,7 +866,7 @@ func (c *Controller) syncNodeInfoMapForNetwork(state *networkState, nodeInfoByNa
 		state.nodeInfosByName[nodeName] = nodeInfo
 	}
 
-	state.nodeInfos = zoneNodeInfos(c.zone, state.nodeInfosByName)
+	state.nodeInfo = localNodeInfo(c.nodeName, state.nodeInfosByName)
 	if !state.useTemplates {
 		return
 	}
@@ -878,34 +875,32 @@ func (c *Controller) syncNodeInfoMapForNetwork(state *networkState, nodeInfoByNa
 	state.nodeIPv4Templates = NewNodeIPsTemplates(corev1.IPv4Protocol)
 	state.nodeIPv6Templates = NewNodeIPsTemplates(corev1.IPv6Protocol)
 
-	for _, nodeInfo := range state.nodeInfos {
-		if nodeInfo.chassisID == "" {
-			continue
-		}
+	if state.nodeInfo != nil && state.nodeInfo.chassisID != "" {
+		nodeInfo := state.nodeInfo
+		validNodeInfo := true
 
 		if globalconfig.IPv4Mode {
 			ips, err := util.MatchIPFamily(false, nodeInfo.hostAddresses)
 			if err != nil {
 				klog.Warningf("Error while searching for IPv4 host addresses in %v for node[%s] for network=%s: %v",
 					nodeInfo.hostAddresses, nodeInfo.name, state.netInfo.GetNetworkName(), err)
-				continue
-			}
-
-			for _, ip := range ips {
-				state.nodeIPv4Templates.AddIP(nodeInfo.chassisID, ip)
+				validNodeInfo = false
+			} else {
+				for _, ip := range ips {
+					state.nodeIPv4Templates.AddIP(nodeInfo.chassisID, ip)
+				}
 			}
 		}
 
-		if globalconfig.IPv6Mode {
+		if validNodeInfo && globalconfig.IPv6Mode {
 			ips, err := util.MatchIPFamily(true, nodeInfo.hostAddresses)
 			if err != nil {
 				klog.Warningf("Error while searching for IPv6 host addresses in %v for node[%s] for network=%s: %v",
 					nodeInfo.hostAddresses, nodeInfo.name, state.netInfo.GetNetworkName(), err)
-				continue
-			}
-
-			for _, ip := range ips {
-				state.nodeIPv6Templates.AddIP(nodeInfo.chassisID, ip)
+			} else {
+				for _, ip := range ips {
+					state.nodeIPv6Templates.AddIP(nodeInfo.chassisID, ip)
+				}
 			}
 		}
 	}
@@ -922,15 +917,15 @@ func (c *Controller) syncNodeInfoMapForNetwork(state *networkState, nodeInfoByNa
 }
 
 // RequestFullSync re-syncs every service that currently exists
-func (c *Controller) RequestFullSync(nodeInfos []nodeInfo) {
-	c.requestFullSyncForNetwork(c.state, nodeInfos)
+func (c *Controller) RequestFullSync(localNodeInfo *nodeInfo) {
+	c.requestFullSyncForNetwork(c.state, localNodeInfo)
 }
 
-func (c *Controller) requestFullSyncForNetwork(state *networkState, nodeInfos []nodeInfo) {
+func (c *Controller) requestFullSyncForNetwork(state *networkState, localNodeInfo *nodeInfo) {
 	klog.Infof("Full service sync requested for network=%s", state.netInfo.GetNetworkName())
 
-	// Resync node infos and node IP templates.
-	c.syncNodeInfosForNetwork(state, nodeInfos)
+	// Resync local node information and node IP templates.
+	c.syncNodeInfoForNetwork(state, localNodeInfo)
 
 	// Resync all services unless we're processing the initial node sync (in which case
 	// the service add will happen at the next step in the services controller Run() and workers
@@ -1018,7 +1013,6 @@ func nodeChangedForAllNetworks(oldNode, newNode *corev1.Node) bool {
 	return util.NodeL3GatewayAnnotationChanged(oldNode, newNode) ||
 		oldNode.Name != newNode.Name ||
 		util.NodeHostCIDRsAnnotationChanged(oldNode, newNode) ||
-		util.NodeZoneAnnotationChanged(oldNode, newNode) ||
 		util.NoHostSubnet(oldNode) != util.NoHostSubnet(newNode)
 }
 
@@ -1258,8 +1252,8 @@ func (c *Controller) cleanupUDNEnabledServiceRoute(state *networkState, key stri
 	var ops []ovsdb.Operation
 	var err error
 	if state.netInfo.TopologyType() == types.Layer2Topology && !globalconfig.Layer2UsesTransitRouter {
-		for _, node := range state.nodeInfos {
-			if ops, err = libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicateOps(c.nbClient, ops, state.netInfo.GetNetworkScopedGWRouterName(node.name), delPredicate); err != nil {
+		if state.nodeInfo != nil {
+			if ops, err = libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicateOps(c.nbClient, ops, state.netInfo.GetNetworkScopedGWRouterName(state.nodeInfo.name), delPredicate); err != nil {
 				return err
 			}
 		}
@@ -1290,7 +1284,8 @@ func (c *Controller) configureUDNEnabledServiceRoute(state *networkState, servic
 
 	}
 	var ops []ovsdb.Operation
-	for _, nodeInfo := range state.nodeInfos {
+	if state.nodeInfo != nil {
+		nodeInfo := state.nodeInfo
 		mgmtIP, err := util.MatchFirstIPFamily(utilnet.IsIPv6String(service.Spec.ClusterIP), nodeInfo.mgmtIPs)
 		if err != nil {
 			return err

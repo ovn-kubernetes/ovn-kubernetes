@@ -4,7 +4,6 @@
 package status_manager
 
 import (
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"sync"
@@ -96,9 +95,9 @@ func (m *typedStatusManager[T]) Start() error {
 	// Perform one-time startup cleanup of stale managedFields (upgrade scenario)
 	initialSync := func() error {
 		return m.withZonesRLock(func(zones sets.Set[string]) error {
-			// Run cleanup immediately with whatever zones we have (even if empty)
-			// The cleanup logic only removes empty-status managedFields from managers
-			// not in the zones set, which is safe even when zones is empty or contains UnknownZone
+			// Run cleanup immediately with whatever zones we have (even if empty).
+			// The cleanup only removes empty-status managedFields from managers
+			// that do not correspond to an existing zone.
 			return m.doStartupCleanup(zones)
 		})
 	}
@@ -107,39 +106,6 @@ func (m *typedStatusManager[T]) Start() error {
 
 func (m *typedStatusManager[T]) Stop() {
 	controller.Stop(m.objController)
-}
-
-// isEmptyStatusManagedField checks if a managedField entry is managing only an empty status field.
-// This is the signature left by previous code that called ApplyStatus with an empty status.
-// Example: fieldsV1: {"f:status":{}}
-func isEmptyStatusManagedField(mf metav1.ManagedFieldsEntry) bool {
-	if mf.FieldsV1 == nil || mf.Subresource != "status" {
-		return false
-	}
-
-	// Parse the fieldsV1 JSON to check if it's just {"f:status":{}}
-	var fields map[string]interface{}
-	if err := json.Unmarshal(mf.FieldsV1.GetRawBytes(), &fields); err != nil {
-		return false
-	}
-
-	// Check if it only has one "f:status" key
-	if len(fields) != 1 {
-		return false
-	}
-
-	statusField, ok := fields["f:status"]
-	if !ok {
-		return false
-	}
-
-	// Check if "f:status" is empty
-	statusMap, ok := statusField.(map[string]interface{})
-	if !ok {
-		return false
-	}
-	// Empty status: {} or contains only empty nested fields
-	return len(statusMap) == 0
 }
 
 // doStartupCleanup performs a one-time cleanup of stale managedFields for all objects.
@@ -157,10 +123,14 @@ func (m *typedStatusManager[T]) doStartupCleanup(zones sets.Set[string]) error {
 	for _, obj := range objects {
 		managedFields := m.resource.getManagedFields(obj)
 
-		// Check for stale empty-status managedFields
+		// Check for stale status managedFields
 		for _, mf := range managedFields {
-			if !zones.Has(mf.Manager) && isEmptyStatusManagedField(mf) {
-				klog.V(5).Infof("StatusManager %s: cleaning up stale empty-status managedField for manager: %s", m.name, mf.Manager)
+			// Skip cluster-manager (global aggregator)
+			if mf.Manager == clusterManagerName {
+				continue
+			}
+			if !zones.Has(mf.Manager) && mf.Subresource == "status" {
+				klog.V(5).Infof("StatusManager %s: cleaning up stale status managedField for manager: %s", m.name, mf.Manager)
 				applyAsZoneController := &metav1.ApplyOptions{
 					Force:        true,
 					FieldManager: mf.Manager,
@@ -198,8 +168,8 @@ func (m *typedStatusManager[T]) updateStatus(key string) error {
 	}
 
 	return m.withZonesRLock(func(zones sets.Set[string]) error {
-		if zones.Has(zone_tracker.UnknownZone) || zones.Len() == 0 {
-			// zones are not in a consistent state, wait for more information to be populated
+		if zones.Len() == 0 {
+			// Wait until at least one OVN-managed node exists.
 			return nil
 		}
 
@@ -367,14 +337,9 @@ func (sm *StatusManager) onZoneUpdate(newZones sets.Set[string]) {
 	sm.zones = newZones
 	sm.zonesLock.Unlock()
 
-	if newZones.Has(zone_tracker.UnknownZone) {
-		// no need to trigger full reconcile, since it can't figure out a final status without knowing all zones
-		return
-	}
 	for _, typedManager := range sm.typedManagers {
 		typedManager.ReconcileAll()
 	}
-	deletedZones.Delete(zone_tracker.UnknownZone) // delete the unknown zone, but proceed to cleanup for other known zones if any
 	if len(deletedZones) > 0 && config.OVNKubernetesFeature.EnableAdminNetworkPolicy {
 		klog.Infof("Zones that got deleted are %s", deletedZones.UnsortedList())
 		// there are zones that got deleted, this is expensive because we do a list from kapi server directly but

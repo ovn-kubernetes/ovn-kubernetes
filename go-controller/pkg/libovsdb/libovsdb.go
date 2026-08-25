@@ -81,7 +81,6 @@ func newClient(endpoint string, dbModel model.ClientDBModel, opts ...client.Opti
 		// we don't time out and enter a reconnect loop. In addition it also enables
 		// inactivity check on the ovsdb connection.
 		client.WithInactivityCheck(inactivityTimeout, connectTimeout, &backoff.ZeroBackOff{}),
-		client.WithLeaderOnly(true),
 		client.WithLogger(&logger),
 		client.WithEndpoint(endpoint),
 	}

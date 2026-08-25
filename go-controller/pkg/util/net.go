@@ -421,6 +421,23 @@ func isIPNetEqual(ipn1, ipn2 *net.IPNet) bool {
 	return m1 == m2 && ipn1.IP.Equal(ipn2.IP)
 }
 
+// IsIPsEqual returns true if both IP slices contain the same addresses,
+// regardless of order.
+func IsIPsEqual(ips1, ips2 []net.IP) bool {
+	if len(ips1) != len(ips2) {
+		return false
+	}
+	s1 := make([]string, len(ips1))
+	s2 := make([]string, len(ips2))
+	for i := range ips1 {
+		s1[i] = ips1[i].String()
+		s2[i] = ips2[i].String()
+	}
+	slices.Sort(s1)
+	slices.Sort(s2)
+	return slices.Equal(s1, s2)
+}
+
 // IsIPNetsEqual returns true if both IPNet slices are equal in length and values, regardless of order.
 func IsIPNetsEqual(ipn1, ipn2 []*net.IPNet) bool {
 	if len(ipn1) != len(ipn2) {

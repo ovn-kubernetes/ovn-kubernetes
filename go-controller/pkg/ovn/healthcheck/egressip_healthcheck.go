@@ -74,7 +74,7 @@ func (ehs *egressIPHealthServer) Run(stopCh <-chan struct{}) {
 	wg := &sync.WaitGroup{}
 
 	opts := []grpc.ServerOption{}
-	cfg := &config.OvnNorth
+	cfg := &config.EgressIPHealthCheckTLS
 	if cfg.Cert == "" || cfg.PrivKey == "" {
 		klog.Warning("Health checking using insecure connection")
 	} else {
@@ -167,7 +167,7 @@ func (ehc *egressIPHealthClient) Connect(dialCtx context.Context, mgmtIPs []net.
 			return proxy.Dial(ctx, "tcp", s)
 		}),
 	}
-	cfg := &config.OvnNorth
+	cfg := &config.EgressIPHealthCheckTLS
 	if cfg.CACert == "" || cfg.CertCommonName == "" {
 		klog.Warning("Health checking using insecure connection")
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))

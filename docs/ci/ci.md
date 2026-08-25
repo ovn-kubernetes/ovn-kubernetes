@@ -99,7 +99,6 @@ Instead, they must explicitly be requested with `make -C test control-plane WHAT
 ### Github CI integration through Github Actions Matrix
 
 Each of these shards and control-plane tests can then be run in a [Github Actions matrix](https://docs.github.com/en/actions/learn-github-actions/managing-complex-workflows#using-a-build-matrix) of:
-* HA setup (3 masters and 0 workers) and a non-HA setup (1 master and 2 workers)
 * Local Gateway Mode and Shared Gateway Mode. See:
 [Enable Node-Local Services Access in Shared Gateway Mode](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/docs/design/shared_gw_dgp.md)
 * IPv4 Only, IPv6 Only and Dualstack

@@ -284,6 +284,10 @@ func AddUplinkApplyReactor(fakeClient *uplinkfake.Clientset) {
 			func(value uplinkv1alpha1.MACAddress) { uplinkState.Status.MACAddress = value }); err != nil {
 			return true, nil, err
 		}
+		if err := patchUplinkStateStatusField(patchData.Status, "hostFunction",
+			func(value *uplinkv1alpha1.HostFunction) { uplinkState.Status.HostFunction = value }); err != nil {
+			return true, nil, err
+		}
 		if err := patchUplinkStateStatusField(patchData.Status, "ipAddresses",
 			func(value []uplinkv1alpha1.IPAddressCIDR) { uplinkState.Status.IPAddresses = value }); err != nil {
 			return true, nil, err

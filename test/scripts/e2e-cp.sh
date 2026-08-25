@@ -73,16 +73,6 @@ if [ "$PLATFORM_IPV4_SUPPORT" == false ]; then
   skip "\[IPv4\]"
 fi
 
-if [ "$OVN_HA" == false ]; then
-  # No support for these features in no-ha mode yet
-  # TODO streamline the db delete tests
-  skip "recovering from deleting db files while maintaining connectivity"
-  skip "Should validate connectivity before and after deleting all the db-pods at once in HA mode"
-else
-  skip "Should validate connectivity before and after deleting all the db-pods at once in Non-HA mode"
-  skip "e2e br-int NetFlow export validation"
-fi
-
 if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
   # No support for these tests in IPv6 mode yet
   skip $IPV6_SKIPPED_TESTS
@@ -137,6 +127,16 @@ fi
 KV_LIVE_MIGRATION_TESTS="Kubevirt Virtual Machines"
 if [[ "${WHAT}" != "${KV_LIVE_MIGRATION_TESTS}"* ]]; then
   skip $KV_LIVE_MIGRATION_TESTS
+fi
+
+# Only run Localnet DHCP IPAM tests if they are explicitly requested: they
+# need the dhcp CNI plugin binary on the nodes (KIND_INSTALL_PLUGINS) and
+# NetworkQoS enabled. Contains-match, not prefix: the requesting lane carries
+# this suite as a focus alternation ("Kubevirt Virtual Machines|Localnet DHCP
+# IPAM"), so the suite name is not at the start of WHAT.
+DHCP_IPAM_TESTS="Localnet DHCP IPAM"
+if [[ "${WHAT}" != *"${DHCP_IPAM_TESTS}"* ]]; then
+  skip_label "Feature:DHCPIPAM"
 fi
 
 # Only run network segmentation tests if they are explicitly requested

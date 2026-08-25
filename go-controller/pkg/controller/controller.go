@@ -251,7 +251,11 @@ func (c *controller[T]) onUpdate(oldObjInterface, newObjInterface interface{}) {
 }
 
 func (c *controller[T]) onDelete(objInterface interface{}) {
-	key, err := cache.MetaNamespaceKeyFunc(objInterface)
+	// A deletion that the watch missed (detected later by a relist) is
+	// delivered as a DeletedFinalStateUnknown wrapper, not as the object
+	// itself. This key func handles both; the plain one errors on the
+	// wrapper, which would silently drop the deletion.
+	key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(objInterface)
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("controller %s: couldn't get key for object %+v: %v", c.name, objInterface, err))
 		return

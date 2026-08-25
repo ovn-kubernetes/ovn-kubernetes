@@ -26,11 +26,6 @@ type SampleDecoder struct {
 	cleanupCollectors []int
 }
 
-type dbConfig struct {
-	address string
-	scheme  string
-}
-
 type Cookie struct {
 	ObsDomainID uint32
 	ObsPointID  uint32
@@ -49,29 +44,21 @@ func getEndian() binary.ByteOrder {
 // getLocalNBClient only supports connecting to nbdb via unix socket.
 // address is the path to the unix socket, e.g. "/var/run/ovn/ovnnb_db.sock"
 func getLocalNBClient(ctx context.Context, address string) (client.Client, error) {
-	config := dbConfig{
-		address: "unix:" + address,
-		scheme:  "unix",
-	}
-	libovsdbOvnNBClient, err := NewNBClientWithConfig(ctx, config)
+	libovsdbOvnNBClient, err := newNBClient(ctx, "unix:"+address)
 	if err != nil {
-		return nil, fmt.Errorf("error creating libovsdb client: %w ", err)
+		return nil, fmt.Errorf("error creating libovsdb client: %w", err)
 	}
 	return libovsdbOvnNBClient, nil
 }
 
 func getLocalOVSDBClient(ctx context.Context) (client.Client, error) {
-	config := dbConfig{
-		address: "unix:/var/run/openvswitch/db.sock",
-		scheme:  "unix",
-	}
-	return NewOVSDBClientWithConfig(ctx, config)
+	return newOVSDBClient(ctx, "unix:/var/run/openvswitch/db.sock")
 }
 
 // NewSampleDecoderWithDefaultCollector creates a new SampleDecoder, initializes the OVSDB client and adds the default collector.
 // It allows to set the groupID and ownerName for the created default collector.
 // If the default collector already exists with a different owner or different groupID an error will be returned.
-// Shutdown should be called to clean up the collector from the OVSDB.
+// Shutdown should be called to clean up the collector and close the database clients.
 func NewSampleDecoderWithDefaultCollector(ctx context.Context, nbdbSocketPath string, ownerName string, groupID int) (*SampleDecoder, error) {
 	nbClient, err := getLocalNBClient(ctx, nbdbSocketPath)
 	if err != nil {
@@ -79,6 +66,7 @@ func NewSampleDecoderWithDefaultCollector(ctx context.Context, nbdbSocketPath st
 	}
 	ovsdbClient, err := getLocalOVSDBClient(ctx)
 	if err != nil {
+		nbClient.Close()
 		return nil, err
 	}
 	decoder := &SampleDecoder{
@@ -87,6 +75,7 @@ func NewSampleDecoderWithDefaultCollector(ctx context.Context, nbdbSocketPath st
 	}
 	err = decoder.AddCollector(observability.DefaultObservabilityCollectorSetID, groupID, ownerName)
 	if err != nil {
+		decoder.Shutdown()
 		return nil, err
 	}
 	decoder.cleanupCollectors = append(decoder.cleanupCollectors, observability.DefaultObservabilityCollectorSetID)
@@ -94,6 +83,7 @@ func NewSampleDecoderWithDefaultCollector(ctx context.Context, nbdbSocketPath st
 }
 
 // NewSampleDecoder creates a new SampleDecoder and initializes the OVSDB client.
+// Shutdown should be called when the decoder is no longer needed.
 func NewSampleDecoder(ctx context.Context, nbdbSocketPath string) (*SampleDecoder, error) {
 	nbClient, err := getLocalNBClient(ctx, nbdbSocketPath)
 	if err != nil {
@@ -104,12 +94,22 @@ func NewSampleDecoder(ctx context.Context, nbdbSocketPath string) (*SampleDecode
 	}, nil
 }
 
+// Shutdown removes collectors owned by the decoder and closes its database clients.
 func (d *SampleDecoder) Shutdown() {
-	for _, collectorID := range d.cleanupCollectors {
-		err := d.DeleteCollector(collectorID)
-		if err != nil {
-			fmt.Printf("Error deleting collector with ID=%d: %v", collectorID, err)
+	if d.ovsdbClient != nil {
+		for _, collectorID := range d.cleanupCollectors {
+			err := d.DeleteCollector(collectorID)
+			if err != nil {
+				fmt.Printf("Error deleting collector with ID=%d: %v", collectorID, err)
+			}
 		}
+		d.ovsdbClient.Close()
+		d.ovsdbClient = nil
+		d.cleanupCollectors = nil
+	}
+	if d.nbClient != nil {
+		d.nbClient.Close()
+		d.nbClient = nil
 	}
 }
 

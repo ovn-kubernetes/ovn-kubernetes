@@ -58,7 +58,7 @@ and more distributed.
         * runs only 1 replica, contains information local to this node
     * ovn-controller container:
         * Native OVN component
-        * Connects to SBDB running in control plane using TLS
+        * Connects to the local SBDB over a Unix socket
         * Converts SBDB logical flows into openflows
         * Write them to OVS
 * ovs-node pod

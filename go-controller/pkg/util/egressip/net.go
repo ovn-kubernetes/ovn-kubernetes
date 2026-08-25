@@ -10,11 +10,17 @@ import (
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 // GetNetlinkAddress returns a netlink address configured with specific
-// egress ip parameters
+// egress ip parameters. The address is marked with IFA_PROTO=85 (OVN-K)
+// to indicate it is managed by OVN-Kubernetes. This allows external tools
+// to identify and filter out OVN-Kubernetes-managed addresses when
+// capturing interface state.
+// Note: IFA_PROTO requires Linux kernel 5.18+; on older kernels, the
+// attribute is silently ignored.
 func GetNetlinkAddress(ip net.IP, ifindex int) *netlink.Addr {
 	return &netlink.Addr{
 		IPNet:     &net.IPNet{IP: ip, Mask: util.GetIPFullMask(ip)},
@@ -22,6 +28,7 @@ func GetNetlinkAddress(ip net.IP, ifindex int) *netlink.Addr {
 		Scope:     int(netlink.SCOPE_UNIVERSE),
 		ValidLft:  getNetlinkAddressValidLft(ip),
 		LinkIndex: ifindex,
+		Protocol:  types.IFAProtOVNK, // Mark as OVN-Kubernetes-managed for external tooling
 	}
 }
 
