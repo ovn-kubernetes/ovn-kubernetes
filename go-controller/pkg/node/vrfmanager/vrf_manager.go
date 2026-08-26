@@ -688,16 +688,30 @@ func listRoutesForLink(link netlink.Link, table int) ([]netlink.Route, error) {
 	return util.FilterRoutesByIfIndex(routes, link.Attrs().Index), nil
 }
 
-// shouldSkipRouteMigration returns true for routes whose owner programs them
-// per routing table on its own: OVN-Kubernetes (and OVN) program their routes
-// in the tables they belong to, the kernel regenerates its routes after a
-// master change, and routing daemons (FRR/zebra and friends) install and
-// withdraw their routes in the routing domain they peer in, so a migrated
-// copy would be a stale duplicate that no one manages.
+// shouldSkipRouteMigration returns true for routes that must not follow the
+// interface across routing tables. Non-unicast routes stay: the kernel
+// derives the local, broadcast, anycast and multicast entries from the
+// interface's addresses in whichever routing domain the interface currently
+// is, so a migrated copy would duplicate entries the kernel maintains itself.
+// Also skipped are routes whose owning daemon programs them per routing
+// domain on its own: OVN-Kubernetes (and OVN) program their routes in the
+// tables they belong to, and routing daemons (FRR/zebra and friends) install
+// and withdraw their routes in the routing domain they peer in, so a migrated
+// copy would be a stale duplicate that no one manages. Kernel-protocol
+// unicast routes are migrated like any other: the kernel only regenerates the
+// prefix route of an address after a master change when it installed that
+// route itself, which it does not for a noprefixroute address (NetworkManager
+// sets noprefixroute on the addresses it manages and installs the prefix
+// route on its own, tagged proto kernel, without being VRF-aware). When the
+// kernel did regenerate a route, restoring the identical captured copy is a
+// benign EEXIST skip.
 func shouldSkipRouteMigration(route netlink.Route) bool {
+	if route.Type != unix.RTN_UNICAST {
+		return true
+	}
 	switch int(route.Protocol) {
 	case types.OVNKProtocol, unix.RTPROT_OVN,
-		unix.RTPROT_KERNEL, unix.RTPROT_ZEBRA, unix.RTPROT_BGP, unix.RTPROT_OSPF,
+		unix.RTPROT_ZEBRA, unix.RTPROT_BGP, unix.RTPROT_OSPF,
 		unix.RTPROT_ISIS, unix.RTPROT_RIP, unix.RTPROT_EIGRP, unix.RTPROT_BABEL:
 		return true
 	}
@@ -767,24 +781,27 @@ func restoreRoutesToTable(routes []netlink.Route, table uint32) error {
 
 const (
 	// routeRestoreTimeout bounds how long a route restore is retried while
-	// the kernel deems the route's gateway unreachable. It has to cover
-	// duplicate address detection (about a second with the default
-	// dad_transmits) plus the addrconf work queue latency, with headroom for
-	// loaded nodes.
+	// the kernel deems the route's gateway or source address unusable. It
+	// has to cover duplicate address detection (about a second with the
+	// default dad_transmits) plus the addrconf work queue latency, with
+	// headroom for loaded nodes.
 	routeRestoreTimeout      = 4 * time.Second
 	routeRestorePollInterval = 100 * time.Millisecond
 )
 
 // addRouteWithRetry adds the route, retrying briefly while the kernel deems
-// its gateway unreachable: IPv6 connected routes are regenerated
-// asynchronously after a master change, so a gateway route restored right
-// after it can transiently fail the kernel's reachability validation.
+// its gateway unreachable (EHOSTUNREACH/ENETUNREACH) or its source address
+// invalid (EINVAL): IPv6 connected routes are regenerated asynchronously
+// after a master change and IPv6 addresses re-run duplicate address
+// detection, so a route restored right after — a gateway route, or one
+// carrying a still-tentative IPv6 source — can transiently fail the kernel's
+// validation.
 func addRouteWithRetry(route *netlink.Route) error {
 	var err error
 	_ = wait.PollUntilContextTimeout(context.Background(), routeRestorePollInterval, routeRestoreTimeout, true,
 		func(context.Context) (bool, error) {
 			err = util.GetNetLinkOps().RouteAdd(route)
-			return err == nil || !(errors.Is(err, unix.EHOSTUNREACH) || errors.Is(err, unix.ENETUNREACH)), nil
+			return err == nil || !(errors.Is(err, unix.EHOSTUNREACH) || errors.Is(err, unix.ENETUNREACH) || errors.Is(err, unix.EINVAL)), nil
 		})
 	return err
 }
