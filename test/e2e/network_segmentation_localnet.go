@@ -58,11 +58,11 @@ var _ = Describe("Network Segmentation: Localnet", feature.NetworkSegmentation, 
 
 		By("setup the localnet underlay")
 		c := networkAttachmentConfig{networkAttachmentConfigParams: networkAttachmentConfigParams{networkName: physicalNetworkName, vlanID: vlan}}
-		Expect(providerCtx.SetupUnderlay(f, infraapi.Underlay{
+		setupUnderlay(f, providerCtx, infraapi.Underlay{
 			BridgeName:         ovsBrName,
 			LogicalNetworkName: c.networkName,
 			VlanID:             c.vlanID,
-		})).To(Succeed())
+		})
 
 		By("create test namespaces")
 		_, err := f.ClientSet.CoreV1().Namespaces().Create(context.Background(), &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: nsRed}}, metav1.CreateOptions{})
@@ -159,11 +159,11 @@ var _ = Describe("Network Segmentation: Localnet", feature.NetworkSegmentation, 
 
 		By("setup the localnet underlay")
 		c := networkAttachmentConfig{networkAttachmentConfigParams: networkAttachmentConfigParams{networkName: physicalNetworkName, vlanID: vlan}}
-		Expect(providerCtx.SetupUnderlay(f, infraapi.Underlay{
+		setupUnderlay(f, providerCtx, infraapi.Underlay{
 			BridgeName:         ovsBrName,
 			LogicalNetworkName: c.networkName,
 			VlanID:             c.vlanID,
-		})).To(Succeed())
+		})
 
 		By("create test namespace")
 		namespace, err := f.CreateNamespace(context.TODO(), f.BaseName, map[string]string{

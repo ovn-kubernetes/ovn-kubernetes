@@ -88,10 +88,10 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 
 			if netConfig.topology == "localnet" {
 				By("applying ovs bridge mapping")
-				Expect(providerCtx.SetupUnderlay(f, infraapi.Underlay{
+				setupUnderlay(f, providerCtx, infraapi.Underlay{
 					LogicalNetworkName: netConfig.networkName,
 					VlanID:             netConfig.vlanID,
-				})).To(Succeed())
+				})
 			}
 
 			By("creating the attachment configuration")
@@ -314,10 +314,10 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				}
 
 				By("setting up the localnet underlay")
-				Expect(providerCtx.SetupUnderlay(f, infraapi.Underlay{
+				setupUnderlay(f, providerCtx, infraapi.Underlay{
 					BridgeName:         deploymentconfig.Get().ExternalBridgeName(),
 					LogicalNetworkName: netConfig.networkName,
-				})).To(Succeed())
+				})
 
 				nad := generateNAD(netConfig, f.ClientSet)
 				By(fmt.Sprintf("creating the attachment configuration: %v\n", nad))
@@ -827,10 +827,10 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				serverPodConfig.namespace = f.Namespace.Name
 
 				if netConfig.topology == "localnet" {
-					Expect(providerCtx.SetupUnderlay(f, infraapi.Underlay{
+					setupUnderlay(f, providerCtx, infraapi.Underlay{
 						LogicalNetworkName: netConfig.networkName,
 						VlanID:             netConfig.vlanID,
-					})).To(Succeed())
+					})
 				}
 
 				By("creating the attachment configuration")
@@ -1203,10 +1203,10 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 						})
 
 					By("setting up the localnet underlay")
-					Expect(providerCtx.SetupUnderlay(f, infraapi.Underlay{
+					setupUnderlay(f, providerCtx, infraapi.Underlay{
 						LogicalNetworkName: netConfig.networkName,
 						VlanID:             netConfig.vlanID,
-					})).To(Succeed())
+					})
 				})
 
 				BeforeEach(func() {
@@ -1366,10 +1366,10 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 
 					Context("and the service connected to the underlay is reconfigured to connect to the new VLAN-ID", func() {
 						BeforeEach(func() {
-							Expect(providerCtx.SetupUnderlay(f, infraapi.Underlay{
+							setupUnderlay(f, providerCtx, infraapi.Underlay{
 								LogicalNetworkName: netConfig.networkName,
 								VlanID:             newLocalnetVLANID,
-							})).To(Succeed(), "configuring the OVS bridge with new localnet vlan id")
+							})
 						})
 
 						It("can now communicate over a localnet secondary network from pod to the underlay service", func() {
@@ -1580,10 +1580,10 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 						})
 
 					By("setting up the localnet underlay with a trunked configuration")
-					Expect(providerCtx.SetupUnderlay(f, infraapi.Underlay{
+					setupUnderlay(f, providerCtx, infraapi.Underlay{
 						LogicalNetworkName: netConfig.networkName,
 						VlanID:             netConfig.vlanID,
-					})).To(Succeed(), "configuring the OVS bridge")
+					})
 
 					By("starting a service, connected to the underlay over a VLAN")
 					providerCtx = infraprovider.Get().NewTestContext()
@@ -1689,10 +1689,10 @@ ip a add %[4]s/24 dev %[2]s
 
 					if netConfig.topology == "localnet" {
 						By("setting up the localnet underlay")
-						Expect(providerCtx.SetupUnderlay(f, infraapi.Underlay{
+						setupUnderlay(f, providerCtx, infraapi.Underlay{
 							LogicalNetworkName: netConfig.networkName,
 							VlanID:             netConfig.vlanID,
-						})).To(Succeed())
+						})
 					}
 
 					Expect(createNads(f, nadClient, extraNamespace, netConfig)).NotTo(HaveOccurred())
@@ -2113,10 +2113,10 @@ ip a add %[4]s/24 dev %[2]s
 					netConfig := newNetworkAttachmentConfig(netConfigParams)
 
 					By("setting up the localnet underlay")
-					Expect(providerCtx.SetupUnderlay(f, infraapi.Underlay{
+					setupUnderlay(f, providerCtx, infraapi.Underlay{
 						LogicalNetworkName: netConfig.networkName,
 						VlanID:             netConfig.vlanID,
-					})).To(Succeed())
+					})
 
 					Expect(createNads(f, nadClient, extraNamespace, netConfig)).NotTo(HaveOccurred())
 
@@ -2240,10 +2240,10 @@ ip a add %[4]s/24 dev %[2]s
 					netConfig := newNetworkAttachmentConfig(netConfigParams)
 
 					By("setting up the localnet underlay")
-					Expect(providerCtx.SetupUnderlay(f, infraapi.Underlay{
+					setupUnderlay(f, providerCtx, infraapi.Underlay{
 						LogicalNetworkName: netConfig.networkName,
 						VlanID:             netConfig.vlanID,
-					})).To(Succeed())
+					})
 
 					Expect(createNads(f, nadClient, extraNamespace, netConfig)).NotTo(HaveOccurred())
 
@@ -2412,10 +2412,10 @@ ip a add %[4]s/24 dev %[2]s
 
 				if netConfig.topology == "localnet" {
 					By("setting up the localnet underlay")
-					Expect(providerCtx.SetupUnderlay(f, infraapi.Underlay{
+					setupUnderlay(f, providerCtx, infraapi.Underlay{
 						LogicalNetworkName: netConfig.networkName,
 						VlanID:             netConfig.vlanID,
-					})).To(Succeed())
+					})
 				}
 
 				By("creating the secondary network attachment definition")
