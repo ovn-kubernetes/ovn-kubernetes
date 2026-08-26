@@ -18,6 +18,7 @@ import (
 	"github.com/urfave/cli/v2"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	utilnet "k8s.io/utils/net"
@@ -6072,7 +6073,7 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 			ginkgo.Entry("interconnect enabled; node1 in remote and node2 in local zones", true, node2Name),
 		)
 
-		ginkgo.It("should delete and re-create and delete", func() {
+		ginkgo.DescribeTable("should delete and re-create and delete", func(deleteNamespaceFirst bool) {
 			app.Action = func(*cli.Context) error {
 
 				egressIP := net.ParseIP("0:0:0:0:0:feff:c0a8:8e0d")
@@ -6297,8 +6298,23 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 
 				gomega.Expect(nodes[0]).To(gomega.Equal(node2Name))
 
-				// Remove pod and ensure LRP and SNAT are removed as well
-				ginkgo.By("Deleting the completed pod should update EIPs SNATs")
+				gomega.Eventually(func() *podAssignmentState {
+					return getPodAssignmentState(&egressPod)
+				}).ShouldNot(gomega.BeNil())
+				if deleteNamespaceFirst {
+					// Simulate the namespace informer observing deletion before the pod informer.
+					// The namespace handler cannot clean this pod after it disappears from the pod
+					// informer, so the pod delete handler must use its cached assignment.
+					err = fakeOvn.controller.watchFactory.NamespaceInformer().Informer().GetStore().Delete(egressNamespace)
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					_, err = fakeOvn.controller.watchFactory.GetNamespace(egressNamespace.Name)
+					gomega.Expect(apierrors.IsNotFound(err)).To(gomega.BeTrue())
+					ginkgo.By("Deleting the pod after its namespace should update EIPs SNATs")
+				} else {
+					ginkgo.By("Deleting the pod should update EIPs SNATs")
+				}
+
+				// Remove pod and ensure LRP, SNAT, and cached assignment are removed as well.
 				err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(eipNamespace).Delete(context.TODO(), podName, metav1.DeleteOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -6348,13 +6364,19 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					egressIPServedPodsASv4,
 				}
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState2))
+				gomega.Eventually(func() *podAssignmentState {
+					return getPodAssignmentState(&egressPod)
+				}).Should(gomega.BeNil())
 
 				return nil
 			}
 
 			err := app.Run([]string{app.Name})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		})
+		},
+			ginkgo.Entry("when the namespace remains in the informer", false),
+			ginkgo.Entry("when the namespace leaves the informer first", true),
+		)
 
 	})
 	ginkgo.Context("on invalid EgressIP selectors", func() {

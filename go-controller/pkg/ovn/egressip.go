@@ -424,21 +424,8 @@ func (e *EgressIPController) reconcileEgressIP(old, new *egressipv1.EgressIP) (e
 			for _, namespace := range namespaces {
 				namespaceLabels := labels.Set(namespace.Labels)
 				if !newNamespaceSelector.Matches(namespaceLabels) && oldNamespaceSelector.Matches(namespaceLabels) {
-					ni, err := e.networkManager.GetActiveNetworkForNamespace(namespace.Name)
-					if err != nil {
-						if util.IsInvalidPrimaryNetworkError(err) || apierrors.IsNotFound(err) {
-							// InvalidPrimaryNetworkError: NAD reconciler will replay.
-							// NotFound: listed namespace concurrently removed, namespace/pod handlers will catch up.
-							continue
-						}
-						return fmt.Errorf("failed to get active network for namespace %s: %w", namespace.Name, err)
-					}
-					if ni == nil {
-						// our node does not have this network
-						continue
-					}
-					if err := e.deleteNamespaceEgressIPAssignment(ni, oldEIP.Name, oldEIP.Status.Items, namespace, oldEIP.Spec.PodSelector); err != nil {
-						return fmt.Errorf("network %s: failed to delete namespace %s egress IP config: %v", ni.GetNetworkName(), namespace.Name, err)
+					if cleanupErr := e.deleteNamespaceEgressIPAssignment(oldEIP.Name, namespace, oldEIP.Spec.PodSelector, true); cleanupErr != nil {
+						errs = append(errs, fmt.Errorf("failed to delete namespace %s egress IP config: %w", namespace.Name, cleanupErr))
 					}
 				}
 				if newNamespaceSelector.Matches(namespaceLabels) && !oldNamespaceSelector.Matches(namespaceLabels) {
@@ -477,21 +464,8 @@ func (e *EgressIPController) reconcileEgressIP(old, new *egressipv1.EgressIP) (e
 				for _, pod := range pods {
 					podLabels := labels.Set(pod.Labels)
 					if !newPodSelector.Matches(podLabels) && oldPodSelector.Matches(podLabels) {
-						ni, err := e.networkManager.GetActiveNetworkForNamespace(namespace.Name)
-						if err != nil {
-							if util.IsInvalidPrimaryNetworkError(err) || apierrors.IsNotFound(err) {
-								// InvalidPrimaryNetworkError: NAD reconciler will replay.
-								// NotFound: listed namespace concurrently removed, namespace/pod handlers will catch up.
-								continue
-							}
-							return fmt.Errorf("failed to get active network for namespace %s: %w", namespace.Name, err)
-						}
-						if ni == nil {
-							// our node does not have this network
-							continue
-						}
-						if err := e.deletePodEgressIPAssignmentsWithCleanup(ni, oldEIP.Name, oldEIP.Status.Items, pod); err != nil {
-							return fmt.Errorf("network %s: failed to delete pod %s/%s egress IP config: %v", ni.GetNetworkName(), pod.Namespace, pod.Name, err)
+						if cleanupErr := e.deletePodEgressIPAssignmentsUsingCache(oldEIP.Name, pod, true); cleanupErr != nil {
+							errs = append(errs, fmt.Errorf("failed to delete pod %s/%s egress IP config: %w", pod.Namespace, pod.Name, cleanupErr))
 						}
 					}
 					if newPodSelector.Matches(podLabels) && !oldPodSelector.Matches(podLabels) {
@@ -527,24 +501,14 @@ func (e *EgressIPController) reconcileEgressIP(old, new *egressipv1.EgressIP) (e
 				namespaceLabels := labels.Set(namespace.Labels)
 				// If the namespace does not match anymore then there's no
 				// reason to look at the pod selector.
-				ni, err := e.networkManager.GetActiveNetworkForNamespace(namespace.Name)
-				if err != nil {
-					if util.IsInvalidPrimaryNetworkError(err) || apierrors.IsNotFound(err) {
-						// InvalidPrimaryNetworkError: NAD reconciler will replay.
-						// NotFound: listed namespace concurrently removed, namespace/pod handlers will catch up.
-						continue
+				if !newNamespaceSelector.Matches(namespaceLabels) && oldNamespaceSelector.Matches(namespaceLabels) {
+					if cleanupErr := e.deleteNamespaceEgressIPAssignment(oldEIP.Name, namespace, oldEIP.Spec.PodSelector, true); cleanupErr != nil {
+						errs = append(errs, fmt.Errorf("failed to delete namespace %s egress IP config: %w", namespace.Name, cleanupErr))
 					}
-					return fmt.Errorf("failed to get active network for namespace %s: %w", namespace.Name, err)
-				}
-				if ni == nil {
-					// our node does not have this network
 					continue
 				}
-				if !newNamespaceSelector.Matches(namespaceLabels) && oldNamespaceSelector.Matches(namespaceLabels) {
-					if err := e.deleteNamespaceEgressIPAssignment(ni, oldEIP.Name, oldEIP.Status.Items, namespace, oldEIP.Spec.PodSelector); err != nil {
-						return fmt.Errorf("network %s: failed to delete namespace %s egress IP config: %v", ni.GetNetworkName(), namespace.Name, err)
-					}
-				}
+
+				podsToAdd := []*corev1.Pod{}
 				// If the namespace starts matching, look at the pods selector
 				// and pods in that namespace and perform the setup for the pods
 				// which match the new pod selector or if the podSelector is empty
@@ -557,9 +521,7 @@ func (e *EgressIPController) reconcileEgressIP(old, new *egressipv1.EgressIP) (e
 					for _, pod := range pods {
 						podLabels := labels.Set(pod.Labels)
 						if newPodSelector.Matches(podLabels) {
-							if err := e.addPodEgressIPAssignmentsWithLock(ni, newEIP.Name, newEIP.Status.Items, mark, pod); err != nil {
-								errs = append(errs, fmt.Errorf("network %s: failed to add pod %s/%s egress IP config: %v", ni.GetNetworkName(), pod.Namespace, pod.Name, err))
-							}
+							podsToAdd = append(podsToAdd, pod)
 						}
 					}
 				}
@@ -573,15 +535,34 @@ func (e *EgressIPController) reconcileEgressIP(old, new *egressipv1.EgressIP) (e
 					for _, pod := range pods {
 						podLabels := labels.Set(pod.Labels)
 						if !newPodSelector.Matches(podLabels) && oldPodSelector.Matches(podLabels) {
-							if err := e.deletePodEgressIPAssignmentsWithCleanup(ni, oldEIP.Name, oldEIP.Status.Items, pod); err != nil {
-								return fmt.Errorf("network %s: failed to delete pod %s/%s egress IP config: %v", ni.GetNetworkName(), pod.Namespace, pod.Name, err)
+							if cleanupErr := e.deletePodEgressIPAssignmentsUsingCache(oldEIP.Name, pod, true); cleanupErr != nil {
+								errs = append(errs, fmt.Errorf("failed to delete pod %s/%s egress IP config: %w", pod.Namespace, pod.Name, cleanupErr))
 							}
 						}
 						if newPodSelector.Matches(podLabels) && !oldPodSelector.Matches(podLabels) {
-							if err := e.addPodEgressIPAssignmentsWithLock(ni, newEIP.Name, newEIP.Status.Items, mark, pod); err != nil {
-								errs = append(errs, fmt.Errorf("network %s: failed to add pod %s/%s egress IP config: %v", ni.GetNetworkName(), pod.Namespace, pod.Name, err))
-							}
+							podsToAdd = append(podsToAdd, pod)
 						}
+					}
+				}
+				if len(podsToAdd) == 0 {
+					continue
+				}
+				ni, err := e.networkManager.GetActiveNetworkForNamespace(namespace.Name)
+				if err != nil {
+					if util.IsInvalidPrimaryNetworkError(err) || apierrors.IsNotFound(err) {
+						// InvalidPrimaryNetworkError: NAD reconciler will replay.
+						// NotFound: listed namespace concurrently removed, namespace/pod handlers will catch up.
+						continue
+					}
+					return fmt.Errorf("failed to get active network for namespace %s: %w", namespace.Name, err)
+				}
+				if ni == nil {
+					// our node does not have this network
+					continue
+				}
+				for _, pod := range podsToAdd {
+					if err := e.addPodEgressIPAssignmentsWithLock(ni, newEIP.Name, newEIP.Status.Items, mark, pod); err != nil {
+						errs = append(errs, fmt.Errorf("network %s: failed to add pod %s/%s egress IP config: %v", ni.GetNetworkName(), pod.Namespace, pod.Name, err))
 					}
 				}
 			}
@@ -643,32 +624,9 @@ func (e *EgressIPController) reconcileEgressIPNamespace(old, new *corev1.Namespa
 				return err
 			}
 			if namespaceSelector.Matches(oldLabels) && !namespaceSelector.Matches(newLabels) {
-				ni, err := e.networkManager.GetActiveNetworkForNamespace(namespaceName)
-				if err != nil {
-					if util.IsInvalidPrimaryNetworkError(err) {
-						// NAD reconciler will notify us later
-						return nil
-					} else if apierrors.IsNotFound(err) {
-						prefix := namespaceName + "/"
-						for _, podKey := range e.podAssignment.GetKeys() {
-							if !strings.HasPrefix(podKey, prefix) {
-								continue
-							}
-							if ni = e.getNetworkFromPodAssignment(podKey); ni != nil {
-								break
-							}
-						}
-					} else {
-						return fmt.Errorf("failed to get active network for namespace %s: %w", namespaceName, err)
-					}
-				}
-				if ni == nil {
-					// our node does not have this network
-					return nil
-				}
-				if err := e.deleteNamespaceEgressIPAssignment(ni, eIP.Name, eIP.Status.Items, oldNamespace, eIP.Spec.PodSelector); err != nil {
-					return fmt.Errorf("network %s: failed to delete namespace %q for egress IP %q: %w",
-						ni.GetNetworkName(), namespaceName, eIP.Name, err)
+				if cleanupErr := e.deleteNamespaceEgressIPAssignment(eIP.Name, oldNamespace, eIP.Spec.PodSelector, new != nil); cleanupErr != nil {
+					return fmt.Errorf("failed to delete namespace %q for egress IP %q: %w",
+						namespaceName, eIP.Name, cleanupErr)
 				}
 			}
 			if !namespaceSelector.Matches(oldLabels) && namespaceSelector.Matches(newLabels) {
@@ -743,17 +701,18 @@ func (e *EgressIPController) reconcileEgressIPPod(old, new *corev1.Pod) (err err
 				}
 				return err
 			}
+			if new == nil {
+				if cleanupErr := e.deletePodEgressIPAssignmentsUsingCache(eIP.Name, oldPod, false); cleanupErr != nil {
+					return fmt.Errorf("failed to delete pod %s/%s for egress IP %q using cached assignment: %w",
+						oldPod.Namespace, oldPod.Name, eIP.Name, cleanupErr)
+				}
+				return nil
+			}
 
 			namespace := &corev1.Namespace{}
 			if old != nil {
 				namespace, err = e.watchFactory.GetNamespace(oldPod.Namespace)
 				if err != nil {
-					// when the whole namespace gets removed, we can ignore the NotFound error here
-					// any potential configuration will get removed in reconcileEgressIPNamespace
-					if new == nil && apierrors.IsNotFound(err) {
-						klog.V(5).Infof("Namespace %s no longer exists for the deleted pod: %s", oldPod.Namespace, oldPod.Name)
-						return nil
-					}
 					return err
 				}
 			}
@@ -783,7 +742,6 @@ func (e *EgressIPController) reconcileEgressIPPod(old, new *corev1.Pod) (err err
 				// match only a subset of pods in the namespace, and we'll have to
 				// check that. If there is no podSelector: the user intends it to
 				// match all pods in the namespace.
-				mark := getEgressIPPktMark(eIP.Name, eIP.Annotations)
 				podSelector, err := metav1.LabelSelectorAsSelector(&eIP.Spec.PodSelector)
 				if err != nil {
 					return err
@@ -802,41 +760,26 @@ func (e *EgressIPController) reconcileEgressIPPod(old, new *corev1.Pod) (err err
 					if !newMatches && !oldMatches {
 						return nil
 					}
-					// Check if the pod stopped matching. If the pod was deleted,
-					// "new" will be nil, so this must account for that case.
+					// Check if the pod stopped matching.
 					deletePath = !newMatches && oldMatches
-				} else {
-					// Empty pod selector means all pods in namespace are matched.
-					deletePath = new == nil
+				}
+				if deletePath {
+					if cleanupErr := e.deletePodEgressIPAssignmentsUsingCache(eIP.Name, oldPod, true); cleanupErr != nil {
+						return fmt.Errorf("failed to delete pod %s/%s for egress IP %q using cached assignment: %w",
+							oldPod.Namespace, oldPod.Name, eIP.Name, cleanupErr)
+					}
+					return nil
 				}
 
 				ni, err := e.networkManager.GetActiveNetworkForNamespace(namespace.Name)
-				if err != nil && !util.IsInvalidPrimaryNetworkError(err) &&
-					(!apierrors.IsNotFound(err) || (apierrors.IsNotFound(err) && !deletePath)) {
+				if err != nil && !util.IsInvalidPrimaryNetworkError(err) {
 					return fmt.Errorf("failed to get active network for namespace %s: %w", namespace.Name, err)
 				}
-				haveNetwork := ni != nil
-				if !haveNetwork && deletePath && old != nil {
-					// During dynamic UDN churn, active network resolution can transiently return !ok on delete.
-					// Fall back to the pod-assignment cache network to avoid skipping stale egressIP cleanup.
-					if cachedNetwork := e.getNetworkFromPodAssignment(getPodKey(oldPod)); cachedNetwork != nil {
-						ni = cachedNetwork
-						haveNetwork = true
-						klog.V(4).Infof("Using cached network %q for egressIP delete reconciliation of pod %s/%s",
-							ni.GetNetworkName(), oldPod.Namespace, oldPod.Name)
-					}
-				}
-				if !haveNetwork {
+				if ni == nil {
 					return nil
 				}
+				mark := getEgressIPPktMark(eIP.Name, eIP.Annotations)
 				if !podSelector.Empty() {
-					if deletePath {
-						if err := e.deletePodEgressIPAssignmentsWithCleanup(ni, eIP.Name, eIP.Status.Items, oldPod); err != nil {
-							return fmt.Errorf("network %s: failed to delete pod %s/%s for egress IP %q: %w",
-								ni.GetNetworkName(), oldPod.Namespace, oldPod.Name, eIP.Name, err)
-						}
-						return nil
-					}
 					// If the pod starts matching the podSelector or continues to
 					// match: add the pod. The reason as to why we need to continue
 					// adding it if it continues to match, as opposed to once when
@@ -847,16 +790,6 @@ func (e *EgressIPController) reconcileEgressIPPod(old, new *corev1.Pod) (err err
 					if err := e.addPodEgressIPAssignmentsWithLock(ni, eIP.Name, eIP.Status.Items, mark, newPod); err != nil {
 						return fmt.Errorf("network %s: failed to add pod %s/%s for egress IP %q: %w",
 							ni.GetNetworkName(), newPod.Namespace, newPod.Name, eIP.Name, err)
-					}
-					return nil
-				}
-				// If the podSelector is empty (i.e: the EgressIP object is intended
-				// to match all pods in the namespace) and the pod has been deleted:
-				// "new" will be nil and we need to remove the setup
-				if new == nil {
-					if err := e.deletePodEgressIPAssignmentsWithCleanup(ni, eIP.Name, eIP.Status.Items, oldPod); err != nil {
-						return fmt.Errorf("network %s: failed to delete pod %s/%s for egress IP %q: %w",
-							ni.GetNetworkName(), oldPod.Namespace, oldPod.Name, eIP.Name, err)
 					}
 					return nil
 				}
@@ -1191,9 +1124,10 @@ func (e *EgressIPController) deleteEgressIPAssignments(name string, statusesToRe
 	return nil
 }
 
-func (e *EgressIPController) deleteNamespaceEgressIPAssignment(ni util.NetInfo, name string, statusAssignments []egressipv1.EgressIPStatusItem, namespace *corev1.Namespace, podSelector metav1.LabelSelector) error {
+func (e *EgressIPController) deleteNamespaceEgressIPAssignment(name string, namespace *corev1.Namespace, podSelector metav1.LabelSelector, assignStandby bool) error {
 	var pods []*corev1.Pod
 	var err error
+	var errs []error
 	selector, err := metav1.LabelSelectorAsSelector(&podSelector)
 	if err != nil {
 		return err
@@ -1210,19 +1144,41 @@ func (e *EgressIPController) deleteNamespaceEgressIPAssignment(ni util.NetInfo, 
 		}
 	}
 	for _, pod := range pods {
-		if err := e.deletePodEgressIPAssignmentsWithCleanup(ni, name, statusAssignments, pod); err != nil {
-			return fmt.Errorf("failed to delete EgressIP %s assignment for pod %s/%s attached to network %s: %v",
-				name, pod.Namespace, pod.Name, ni.GetNetworkName(), err)
+		if cleanupErr := e.deletePodEgressIPAssignmentsUsingCache(name, pod, assignStandby); cleanupErr != nil {
+			errs = append(errs, fmt.Errorf("failed to delete EgressIP %s assignment for pod %s/%s: %w",
+				name, pod.Namespace, pod.Name, cleanupErr))
 		}
 	}
-	return nil
+	return utilerrors.Join(errs...)
 }
 
-func (e *EgressIPController) deletePodEgressIPAssignmentsWithCleanup(ni util.NetInfo, name string, statusesToRemove []egressipv1.EgressIPStatusItem, pod *corev1.Pod) error {
-	e.podAssignment.LockKey(getPodKey(pod))
-	defer e.podAssignment.UnlockKey(getPodKey(pod))
-	e.deletePreviousNetworkPodEgressIPAssignments(ni, name, statusesToRemove, pod, false)
-	return e.deletePodEgressIPAssignments(ni, name, statusesToRemove, pod, true)
+// deletePodEgressIPAssignmentsUsingCache removes a pod's EgressIP configuration using the network
+// and statuses that were programmed for the pod. If assignStandby is true, a standby EgressIP may
+// be promoted for a pod that still exists.
+func (e *EgressIPController) deletePodEgressIPAssignmentsUsingCache(name string, pod *corev1.Pod, assignStandby bool) error {
+	podKey := getPodKey(pod)
+	e.podAssignment.LockKey(podKey)
+	defer e.podAssignment.UnlockKey(podKey)
+
+	podStatus, exists := e.podAssignment.Load(podKey)
+	if !exists {
+		return nil
+	}
+	if podStatus.network == nil {
+		return fmt.Errorf("pod %s has no cached network", podKey)
+	}
+
+	var statusesToRemove []egressipv1.EgressIPStatusItem
+	if podStatus.egressIPName == name {
+		statusesToRemove = make([]egressipv1.EgressIPStatusItem, 0, len(podStatus.egressStatuses.statusMap))
+		for status := range podStatus.egressStatuses.statusMap {
+			statusesToRemove = append(statusesToRemove, status)
+		}
+	}
+
+	klog.V(4).Infof("Using cached network %q and statuses for egressIP delete reconciliation of pod %s",
+		podStatus.network.GetNetworkName(), podKey)
+	return e.deletePodEgressIPAssignments(podStatus.network, name, statusesToRemove, pod, assignStandby)
 }
 
 // deletePodEgressIPAssignments *must* be called with podAssignment lock on pod
