@@ -5670,6 +5670,12 @@
 <td></td>
 <td></td>
 </tr>
+<tr>
+<td><code>vrfName</code> <em>string</em></td>
+<td>VRFName is the name of the Linux VRF device that OVN-Kubernetes creates<br>for this network on every node where the network is present. It is<br>populated for primary networks. Consumers that must name the VRF, such<br>as FRRConfiguration authors filling in the routers 'vrf' field, should<br>read this value instead of deriving it.</td>
+<td></td>
+<td>MaxLength: 15 <br></td>
+</tr>
 </tbody>
 </table>
 <h4 id="dualstackcidrs">DualStackCIDRs<a class="headerlink" href="#dualstackcidrs" title="Permanent link">¶</a></h4>
@@ -6355,6 +6361,12 @@ See: https://docs.frrouting.org/en/stable-8.5/bgp.html#evpn-l3-route-targets</p>
 <td></td>
 <td></td>
 <td></td>
+</tr>
+<tr>
+<td><code>vrfName</code> <em>string</em></td>
+<td>VRFName is the name of the Linux VRF device that OVN-Kubernetes creates<br>for this network on every node where the network is present. It is<br>populated for primary networks. Consumers that must name the VRF, such<br>as FRRConfiguration authors filling in the routers 'vrf' field, should<br>read this value instead of deriving it.</td>
+<td></td>
+<td>MaxLength: 15 <br></td>
 </tr>
 </tbody>
 </table>

@@ -5253,6 +5253,13 @@ that VRF into the OVN gateway routers for the CUDN.</p>
 their active node sets do not overlap. If more than one such CUDN becomes
 active on the same node, the Uplink bridge cannot be attached to both CUDN
 VRFs and OVN-Kubernetes reports <code>UplinkConfigurationConflict</code>.</p>
+<p>For every primary CUDN, OVN-Kubernetes publishes the name of the Linux VRF
+device it creates on every node where the network is present in the CUDN
+<code>status.vrfName</code> field. Consumers that must name the VRF explicitly, such as
+FRRConfiguration authors filling in the routers <code>vrf</code> field, should read this
+value instead of deriving it: the derivation rule (the CUDN name when it fits
+within the kernel's 15-character interface name limit, an ID-derived name
+otherwise) is an internal implementation detail that may change.</p>
 <p>Example RouteAdvertisements for VRF-Lite:</p>
 <div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.ovn.org/v1</span>
 <span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">RouteAdvertisements</span>
