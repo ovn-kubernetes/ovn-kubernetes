@@ -448,6 +448,36 @@ var _ = ginkgo.Describe("VRF manager", func() {
 			nlMock.AssertNumberOfCalls(ginkgo.GinkgoT(), "RouteAdd", 2)
 		})
 
+		ginkgo.It("treats a same-key route as equivalent only when interface, gateway and source match", func() {
+			// The main-table EEXIST log stays at V(5) only when the route
+			// already there is effectively the captured route; a same-key
+			// route differing in any forwarding attribute means the captured
+			// route is gone from every table.
+			existing := netlink.Route{
+				LinkIndex: getLinkIndex(enslaveLinkName1),
+				Dst:       ovntest.MustParseIPNet("192.168.1.0/24"),
+				Src:       net.ParseIP("192.168.1.10"),
+				Protocol:  unix.RTPROT_KERNEL,
+				Type:      unix.RTN_UNICAST,
+				Table:     unix.RT_TABLE_MAIN,
+			}
+			nlMock.On("RouteListFiltered", mock.Anything, mock.Anything, mock.Anything).Return([]netlink.Route{existing}, nil)
+
+			candidate := existing
+			gomega.Expect(equivalentRouteExists(candidate)).To(gomega.BeTrue())
+			candidate.Src = net.ParseIP("192.168.1.11")
+			gomega.Expect(equivalentRouteExists(candidate)).To(gomega.BeFalse(),
+				"a different preferred source is not the same route")
+			candidate = existing
+			candidate.LinkIndex = getLinkIndex(enslaveLinkName2)
+			gomega.Expect(equivalentRouteExists(candidate)).To(gomega.BeFalse(),
+				"a different output interface is not the same route")
+			candidate = existing
+			candidate.Gw = net.ParseIP("192.168.1.1")
+			gomega.Expect(equivalentRouteExists(candidate)).To(gomega.BeFalse(),
+				"a different gateway is not the same route")
+		})
+
 		ginkgo.It("releases enslaved interfaces before deleting a VRF, restoring their routes", func() {
 			slaveLinkIndex := getLinkIndex(enslaveLinkName1)
 			vrfTable := int(getVRFTable(vrfLinkName1))

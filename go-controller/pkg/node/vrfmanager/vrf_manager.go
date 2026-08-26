@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"slices"
 	"sync"
 	"time"
@@ -718,6 +719,46 @@ func shouldSkipRouteMigration(route netlink.Route) bool {
 	return false
 }
 
+// equivalentRouteExists reports whether the route's table holds a route with
+// the same kernel key ({dst, priority}) that is effectively the same route:
+// same output interface, same gateway or nexthops and same preferred source.
+// Such a route is the kernel's regenerated copy of an interface prefix route,
+// or one reinstalled by the route's owner, so a failure to restore the
+// captured copy over it lost nothing.
+func equivalentRouteExists(route netlink.Route) bool {
+	dstEqual := func(a, b *net.IPNet) bool {
+		if a == nil || b == nil {
+			return a == nil && b == nil
+		}
+		return a.String() == b.String()
+	}
+	routes, err := util.GetNetLinkOps().RouteListFiltered(route.Family,
+		&netlink.Route{Table: route.Table}, netlink.RT_FILTER_TABLE)
+	if err != nil {
+		klog.Warningf("VRF Manager: unable to list routes of table %d: %v", route.Table, err)
+		return false
+	}
+	for _, existing := range routes {
+		if existing.Priority != route.Priority || !dstEqual(existing.Dst, route.Dst) {
+			continue
+		}
+		if existing.LinkIndex != route.LinkIndex || !existing.Gw.Equal(route.Gw) ||
+			!existing.Src.Equal(route.Src) ||
+			len(existing.MultiPath) != len(route.MultiPath) {
+			return false
+		}
+		for i := range existing.MultiPath {
+			if existing.MultiPath[i].LinkIndex != route.MultiPath[i].LinkIndex ||
+				!existing.MultiPath[i].Gw.Equal(route.MultiPath[i].Gw) ||
+				existing.MultiPath[i].Hops != route.MultiPath[i].Hops {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
 // restoreRoutesToTable re-adds routes into the given routing table, preserving
 // all their attributes. Routes that their owner reprograms per routing table
 // are skipped. Failures are joined and returned so that the caller can decide
@@ -766,9 +807,19 @@ func restoreRoutesToTable(routes []netlink.Route, table uint32) error {
 		}
 		if err := addRouteWithRetry(&route); err != nil {
 			if util.GetNetLinkOps().IsAlreadyExistsError(err) {
-				// A route with the same kernel key is already in the table
-				// and wins: nothing was added.
-				klog.V(5).Infof("VRF Manager: route %v already present in table %d, not restored", route, table)
+				// A route with the same kernel key ({table, dst, tos, priority})
+				// is already in the table and legitimately wins: nothing was
+				// added. When the existing
+				// route is an equivalent copy -- the kernel regenerating an
+				// interface's prefix route, or the route's owner reinstalling
+				// it -- nothing was lost. Otherwise a restore into the main
+				// table leaves the captured route in no table at all, so make
+				// that visible.
+				if table == unix.RT_TABLE_MAIN && !equivalentRouteExists(route) {
+					klog.Warningf("VRF Manager: route %v not restored into the main table, a different route with the same key already exists", route)
+				} else {
+					klog.V(5).Infof("VRF Manager: route %v already present in table %d, not restored", route, table)
+				}
 				continue
 			}
 			errs = append(errs, fmt.Errorf("failed to restore route %v into table %d: %w", route, table, err))
