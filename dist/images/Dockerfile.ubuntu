@@ -36,9 +36,8 @@ USER root
 
 # Install bootstrap packages, verify the Kubernetes repo signing key
 # fingerprint, then install runtime dependencies and kubectl in one layer.
-# Keep socat until ovn-kubernetes#6122 removes the e2e/runtime dependency on it.
 RUN apt-get update && apt-get install -y \
-    ca-certificates curl gpg iproute2 software-properties-common util-linux nftables socat ndisc6 libndp-tools && \
+    ca-certificates curl gpg iproute2 software-properties-common util-linux nftables ndisc6 libndp-tools && \
     mkdir -p -m 755 /etc/apt/keyrings && \
     kubectl_apt_signing_fingerprint=DE15B14486CD377B9E876E1A234654DA9A296436 && \
     kubectl_key=/tmp/kubernetes-apt-keyring.asc && \
