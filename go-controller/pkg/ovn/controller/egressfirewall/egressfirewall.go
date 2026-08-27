@@ -6,7 +6,6 @@ package egressfirewall
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net"
 	"reflect"
@@ -246,8 +245,7 @@ func (oc *EFController) syncNAD(key string) error {
 	return nil
 }
 
-// initialSync deletes stale db entries for previous versions of Egress Firewall implementation and removes
-// stale db entries for Egress Firewalls that don't exist anymore.
+// initialSync deletes stale db entries for Egress Firewalls that don't exist anymore.
 // Egress firewall implementation had many versions, the latest one makes no difference for gateway modes, and creates
 // ACLs on namespaced port groups.
 func (oc *EFController) initialSync() error {
@@ -267,12 +265,6 @@ func (oc *EFController) initialSync() error {
 	efACLs, err := libovsdbops.FindACLsWithPredicate(oc.nbClient, aclP)
 	if err != nil {
 		return fmt.Errorf("cannot find Egress Firewall ACLs: %v", err)
-	}
-
-	// another sync to move ACLs to the right port group
-	err = oc.moveACLsToNamespacedPortGroups(existingEFNamespaces, efACLs)
-	if err != nil {
-		return err
 	}
 
 	getPGPredicate := func(acl *nbdb.ACL) func(item *nbdb.PortGroup) bool {
@@ -341,9 +333,7 @@ func (oc *EFController) initialSync() error {
 						name, strings.Join(pgNames, ","))
 				}
 				for _, pg := range foundPGs {
-					// delete stale ACLs from namespaced port group
-					// both port group and acls may not exist after moveACLsToNamespacedPortGroups,
-					// but DeleteACLsFromPortGroupOps doesn't return error in these cases
+					// DeleteACLsFromPortGroupOps does not error if the port group or ACLs are already gone.
 					ops, err = libovsdbops.DeleteACLsFromPortGroupOps(oc.nbClient, ops, pg.Name, acls...)
 					if err != nil {
 						return fmt.Errorf("failed to build cleanup ops: %w", err)
@@ -852,72 +842,6 @@ func (oc *EFController) addEgressFirewallRules(ef *egressFirewall, pgName string
 	return nil
 }
 
-// moveACLsToNamespacedPortGroups syncs db from the previous version where all ACLs were attached to the ClusterPortGroup
-// to the new version where ACLs are attached to the namespace port groups.
-func (oc *EFController) moveACLsToNamespacedPortGroups(existingEFNamespaces map[string]bool, efACLs []*nbdb.ACL) error {
-	// find stale ACLs attached to a cluster port group, and move them to namespaced port groups
-	clusterPG, err := libovsdbops.GetPortGroup(oc.nbClient, &nbdb.PortGroup{
-		Name: libovsdbutil.GetPortGroupName(libovsdbops.NewDbObjectIDs(libovsdbops.PortGroupCluster, types.DefaultNetworkControllerName,
-			map[libovsdbops.ExternalIDKey]string{
-				libovsdbops.ObjectNameKey: types.ClusterPortGroupNameBase,
-			})),
-	})
-	if err != nil {
-		if errors.Is(err, libovsdbclient.ErrNotFound) {
-			return nil
-		}
-		return fmt.Errorf("failed to get cluster port group: %w", err)
-	}
-	staleUUIDs := sets.NewString(clusterPG.ACLs...)
-
-	// move ACLs from cluster port group to per-namespace port group
-	// old acl matches on the address set, which is still valid. match change from address set to port group will be
-	// performed by the egress firewall handler.
-	staleNamespaces := map[string][]*nbdb.ACL{}
-	for _, acl := range efACLs {
-		namespace := acl.ExternalIDs[libovsdbops.ObjectNameKey.String()]
-		// no key will be treated as an empty namespace and ACLs will just be deleted
-		if staleUUIDs.Has(acl.UUID) {
-			staleNamespaces[namespace] = append(staleNamespaces[namespace], acl)
-		}
-	}
-	if len(staleNamespaces) == 0 {
-		return nil
-	}
-
-	err = batching.BatchMap[*nbdb.ACL](aclChangePGBatchSize, staleNamespaces, func(batchNsACLs map[string][]*nbdb.ACL) error {
-		var ops []ovsdb.Operation
-		var err error
-		for namespace, acls := range batchNsACLs {
-			if namespace != "" && existingEFNamespaces[namespace] {
-				pgName, err := oc.getNamespacePortGroupName(namespace)
-				if err != nil {
-					klog.Warningf("Skipping egress firewall ACL move for namespace %s: %v", namespace, err)
-					continue
-				}
-				// re-attach from ClusterPortGroupNameBase to namespaced port group.
-				// port group should exist, because namespace handler will create it.
-				ops, err = libovsdbops.AddACLsToPortGroupOps(oc.nbClient, ops, pgName, acls...)
-				if err != nil {
-					return fmt.Errorf("failed to build cleanup ops: %w", err)
-				}
-			}
-			// delete all EF ACLs from ClusterPortGroupNameBase
-			ops, err = libovsdbops.DeleteACLsFromPortGroupOps(oc.nbClient, ops,
-				clusterPG.Name, acls...)
-			if err != nil {
-				return fmt.Errorf("failed to build cleanup from ClusterPortGroup ops: %w", err)
-			}
-		}
-		_, err = libovsdbops.TransactAndCheck(oc.nbClient, ops)
-		if err != nil {
-			return fmt.Errorf("failed to clean up egress firewall ACLs: %w", err)
-		}
-		return nil
-	})
-	return err
-}
-
 // createEgressFirewallACLOps uses the previously generated elements and creates the
 // acls for all node switches
 func (oc *EFController) createEgressFirewallACLOps(ops []ovsdb.Operation, egressFirewallACL *nbdb.ACL, pgName string) ([]ovsdb.Operation, error) {
@@ -1029,22 +953,6 @@ func getNamespacePortGroupDbIDs(ns string, controller string) *libovsdbops.DbObj
 		map[libovsdbops.ExternalIDKey]string{
 			libovsdbops.ObjectNameKey: ns,
 		})
-}
-
-func (oc *EFController) getNamespacePortGroupName(namespace string) (string, error) {
-	nadKey, err := oc.networkManager.GetPrimaryNADForNamespace(namespace)
-	if err != nil {
-		return "", fmt.Errorf("failed to get primary NAD for namespace %s: %w", namespace, err)
-	}
-	networkName := types.DefaultNetworkName
-	if nadKey != types.DefaultNetworkName && nadKey != "" {
-		networkName = oc.networkManager.GetNetworkNameForNADKey(nadKey)
-		if networkName == "" {
-			return "", fmt.Errorf("failed to resolve network name for NAD %s in namespace %s", nadKey, namespace)
-		}
-	}
-	ownerController := networkName + "-network-controller"
-	return libovsdbutil.GetPortGroupName(getNamespacePortGroupDbIDs(namespace, ownerController)), nil
 }
 
 func (oc *EFController) GetSamplingConfig() *libovsdbops.SamplingConfig {

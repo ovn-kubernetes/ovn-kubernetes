@@ -352,7 +352,8 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 						t.PrimaryACLTier,
 					)
 					purgeACL.UUID = "purgeACL-UUID"
-					// no externalIDs present => dbIDs can't be built
+
+					// Leftover ACLs on the cluster port group are not migrated and stay put.
 					purgeACL2 := libovsdbops.BuildACL(
 						"purgeACL2",
 						nbdb.ACLDirectionFromLport,
@@ -362,10 +363,8 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 						t.OvnACLLoggingMeter,
 						"",
 						false,
+						purgeIDs.GetExternalIDs(),
 						nil,
-						nil,
-						// we should not be in a situation where we have ACLs without externalIDs
-						// but if we do have such lame ACLs then they will interfere with AdminNetPol logic
 						t.PrimaryACLTier,
 					)
 					purgeACL2.UUID = "purgeACL2-UUID"
@@ -395,31 +394,12 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 					)
 					updateACL.UUID = "updateACL-UUID"
 
-					// this ACL is not in the egress firewall priority range and should be untouched
-					ignoreACL := libovsdbops.BuildACL(
-						"ignoreACL",
-						nbdb.ACLDirectionFromLport,
-						t.MinimumReservedEgressFirewallPriority-1,
-						"",
-						nbdb.ACLActionDrop,
-						t.OvnACLLoggingMeter,
-						"",
-						false,
-						nil,
-						nil,
-						// we should not be in a situation where we have unknown ACL that doesn't belong to any feature
-						// but if we do have such lame ACLs then they will interfere with AdminNetPol logic
-						t.PrimaryACLTier,
-					)
-					ignoreACL.UUID = "ignoreACL-UUID"
-
-					clusterPortGroup.ACLs = []string{purgeACL.UUID, purgeACL2.UUID, updateACL.UUID, ignoreACL.UUID}
+					clusterPortGroup.ACLs = []string{purgeACL2.UUID}
 
 					dbSetup := libovsdb.TestSetup{
 						NBData: []libovsdb.TestData{
 							purgeACL,
 							purgeACL2,
-							ignoreACL,
 							updateACL,
 							nodeSwitch,
 							joinSwitch,
@@ -429,8 +409,6 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 					}
 
 					startOvn(dbSetup, []corev1.Namespace{namespace1}, []egressfirewallapi.EgressFirewall{*egressFirewall}, true)
-					// purgeACL will be deleted as its namespace doesn't exist
-					clusterPortGroup.ACLs = []string{ignoreACL.UUID, purgeACL2.UUID}
 
 					// updateACL will be updated
 					// Direction of both ACLs will be converted to
@@ -448,7 +426,6 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 
 					expectedDatabaseState := []libovsdb.TestData{
 						purgeACL2,
-						ignoreACL,
 						updateACL,
 						nodeSwitch,
 						joinSwitch,
