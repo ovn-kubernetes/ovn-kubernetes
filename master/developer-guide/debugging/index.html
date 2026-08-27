@@ -1756,6 +1756,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#automated-stack-trace-extraction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Automated Stack Trace Extraction
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#debugging-with-delve" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4827,6 +4838,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#automated-stack-trace-extraction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Automated Stack Trace Extraction
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#debugging-with-delve" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4949,7 +4971,9 @@ what went wrong.</p>
 </li>
 <li>
 <p><strong>Artifacts are uploaded</strong> to GitHub Actions and can be downloaded from the job's
-   artifacts section.</p>
+   artifacts section. Failed E2E lanes also upload their coredumps for an isolated
+   post-processing job. That job extracts every available trace, prints them in one
+   job log, and uploads one combined trace artifact for the PR comment workflow.</p>
 </li>
 </ol>
 <h3 id="downloading-artifacts">Downloading Artifacts<a class="headerlink" href="#downloading-artifacts" title="Permanent link">¶</a></h3>
@@ -4960,6 +4984,21 @@ job page. Extract it to find:</p>
 └── binaries/
     └── ovnkube                         # Matching binary
 </code></pre></div>
+<h3 id="automated-stack-trace-extraction">Automated Stack Trace Extraction<a class="headerlink" href="#automated-stack-trace-extraction" title="Permanent link">¶</a></h3>
+<p>The <code>contrib/coredump/extract-stacktraces.sh</code> script accepts either a tar archive
+of exported KIND logs or an extracted <code>coredumps</code> directory and writes stack
+traces to a local directory:</p>
+<div class="highlight"><pre><span></span><code>./contrib/coredump/extract-stacktraces.sh<span class="w"> </span>kind-logs.tar.gz<span class="w"> </span>stacktraces
+./contrib/coredump/extract-stacktraces.sh<span class="w"> </span>kind-logs/coredumps<span class="w"> </span>stacktraces
+</code></pre></div>
+<p>The script supports three image families: Fedora <code>ovn-daemonset</code> C binaries,
+Go binaries, and FRR daemons from the Alpine-based <code>quay.io/frrouting/frr</code>
+image. It selects GDB or Delve from the collected binary and image metadata,
+then batches coredumps that can share one debugger container. Fedora OVN traces
+install the matching runtime and debuginfo RPMs from Koji; FRR traces use the
+exact recorded image and its bundled split debug files. Docker and network
+access are required. Set <code>OCI_BIN</code> to use another Docker-compatible container
+runtime, or <code>GO_DEBUG_IMAGE</code> to override the Fedora image that provides Delve.</p>
 <h3 id="debugging-with-delve">Debugging with Delve<a class="headerlink" href="#debugging-with-delve" title="Permanent link">¶</a></h3>
 <p>Use the <a href="https://github.com/go-delve/delve">Delve</a> debugger for post-mortem analysis.</p>
 <ol>
