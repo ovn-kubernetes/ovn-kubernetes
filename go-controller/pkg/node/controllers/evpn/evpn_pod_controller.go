@@ -74,6 +74,9 @@ func (c *Controller) shouldDeleteNeighbors(migrationStatus *kubevirt.LiveMigrati
 	if migrationStatus == nil || !migrationStatus.IsTargetDomainReady() {
 		return false
 	}
+	if migrationStatus.SourcePod == nil {
+		return false
+	}
 	return migrationStatus.SourcePod.Spec.NodeName == c.nodeName
 }
 
@@ -87,6 +90,9 @@ func (c *Controller) shouldEnsureNeighbors(migrationStatus *kubevirt.LiveMigrati
 		return true
 	}
 	if !migrationStatus.IsTargetDomainReady() {
+		return false
+	}
+	if migrationStatus.TargetPod == nil {
 		return false
 	}
 	return migrationStatus.TargetPod.Spec.NodeName == c.nodeName

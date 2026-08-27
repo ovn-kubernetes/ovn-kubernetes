@@ -447,6 +447,35 @@ var _ = Describe("EVPN pod controller", func() {
 				}))
 			})
 
+			It("does not panic when source pod is gone after completed migration", func() {
+				// Post-migration: only target pod remains with migration-target-ready-timestamp.
+				// DiscoverLiveMigrationStatus returns {SourcePod: nil, TargetPod: pod, State: TargetDomainReady}.
+				// shouldDeleteNeighbors must handle nil SourcePod without panic.
+				targetPod := newVirtLauncherPod("virt-launcher-target", nodeName, 0, true)
+				ctrl.podLister = newFakePodLister(targetPod)
+
+				nlMock.On("NeighSet", mock.Anything).Return(nil)
+
+				Expect(ctrl.reconcilePod("test-ns/virt-launcher-target")).To(
+					Succeed(), "target-only post-migration reconciliation should succeed",
+				)
+			})
+
+			It("does not panic when source pod is gone and controller runs on different node", func() {
+				// Same post-migration scenario but controller is on a different node.
+				ctrl.nodeName = sourceNode
+
+				targetPod := newVirtLauncherPod("virt-launcher-target", nodeName, 0, true)
+				ctrl.podLister = newFakePodLister(targetPod)
+
+				Expect(ctrl.reconcilePod("test-ns/virt-launcher-target")).To(
+					Succeed(), "remote target-only post-migration reconciliation should succeed",
+				)
+
+				By("verifying remote controller does not program neighbors")
+				nlMock.AssertNotCalled(GinkgoT(), "NeighSet", mock.Anything)
+			})
+
 			It("deletes neighbors on source node after target domain is ready", func() {
 				mac, _ := net.ParseMAC("0a:58:0a:00:00:05")
 				sourceKey := "test-ns/virt-launcher-source"
