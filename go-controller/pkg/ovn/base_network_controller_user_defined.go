@@ -454,7 +454,22 @@ func (bsnc *BaseUserDefinedNetworkController) removePodForUserDefinedNetwork(pod
 	var alreadyProcessed bool
 	for nadKey, podAnnotation := range podNetworks {
 		networkName := bsnc.networkManager.GetNetworkNameForNADKey(nadKey)
-		if networkName == "" || networkName != bsnc.GetNetworkName() {
+		portInfo := portInfoMap[nadKey]
+		if networkName == "" && portInfo != nil {
+			// The NAD may have been deleted before the Pod delete event is
+			// processed. In that case use the cached switch to determine which
+			// controller owns the port. The port cache is shared by all network
+			// controllers, so the presence of a cached entry alone is not enough.
+			var expectedSwitchName string
+			expectedSwitchName, err = bsnc.getExpectedSwitchName(pod)
+			if err != nil {
+				return fmt.Errorf("failed to determine expected switch for pod %s and NAD %s: %w", podDesc, nadKey, err)
+			}
+			if portInfo.logicalSwitch == expectedSwitchName {
+				networkName = bsnc.GetNetworkName()
+			}
+		}
+		if networkName != bsnc.GetNetworkName() {
 			continue
 		}
 
@@ -478,7 +493,7 @@ func (bsnc *BaseUserDefinedNetworkController) removePodForUserDefinedNetwork(pod
 			}
 		}
 		bsnc.logicalPortCache.remove(pod, nadKey)
-		pInfo, err := bsnc.deletePodLogicalPort(pod, portInfoMap[nadKey], nadKey)
+		pInfo, err := bsnc.deletePodLogicalPort(pod, portInfo, nadKey)
 		if err != nil {
 			return err
 		}

@@ -59,6 +59,11 @@ func (h *layer2UserDefinedNetworkControllerEventHandler) FilterOutResource(obj i
 	return h.oc.FilterOutResource(h.objType, obj)
 }
 
+// FilterOutDeleteResource applies delete-specific filtering for the configured resource type.
+func (h *layer2UserDefinedNetworkControllerEventHandler) FilterOutDeleteResource(obj interface{}) bool {
+	return h.oc.FilterOutDeleteResource(h.objType, obj)
+}
+
 // AreResourcesEqual returns true if, given two objects of a known resource type, the update logic for this resource
 // type considers them equal and therefore no update is needed. It returns false when the two objects are not considered
 // equal and an update needs be executed. This is regardless of how the update is carried out (whether with a dedicated update

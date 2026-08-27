@@ -71,6 +71,12 @@ type EventHandler interface {
 	FilterOutResource(obj interface{}) bool
 }
 
+// deleteResourceFilter allows handlers to use delete-specific filtering when
+// ownership can no longer be determined from the live object state.
+type deleteResourceFilter interface {
+	FilterOutDeleteResource(obj interface{}) bool
+}
+
 // DefaultEventHandler has the default implementations for some EventHandler
 // methods, that are not required for every handler
 type DefaultEventHandler struct{}
@@ -776,7 +782,13 @@ func (r *RetryFramework) WatchResourceFiltered(namespaceForFilteredHandler strin
 				})
 			},
 			DeleteFunc: func(obj interface{}) {
-				if r.ResourceHandler.FilterOutResource(obj) {
+				var filterOut bool
+				if handler, ok := r.ResourceHandler.EventHandler.(deleteResourceFilter); ok {
+					filterOut = handler.FilterOutDeleteResource(obj)
+				} else {
+					filterOut = r.ResourceHandler.FilterOutResource(obj)
+				}
+				if filterOut {
 					return
 				}
 				r.ResourceHandler.RecordDeleteEvent(obj)
