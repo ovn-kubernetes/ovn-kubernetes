@@ -41,17 +41,13 @@ func GetBridgeName(iface string) string {
 // getBridgePortsInterfaces returns a mapping of bridge ports to their
 // resolved Interface rows.
 func getBridgePortsInterfaces(ovsClient libovsdbclient.Client, br *vswitchd.Bridge) (map[string][]*vswitchd.Interface, error) {
-	portUUIDs := map[string]struct{}{}
-	ifaceUUIDs := map[string]struct{}{}
 	portToIfaceUUIDs := map[string][]string{}
 	portsToInterfaces := make(map[string][]*vswitchd.Interface)
-	for _, portUUID := range br.Ports {
-		portUUIDs[portUUID] = struct{}{}
-	}
-	ports, err := ovsops.FindOVSPortsWithPredicate(ovsClient, func(port *vswitchd.Port) bool {
-		_, ok := portUUIDs[port.UUID]
-		return ok
-	})
+	ifaceUUIDs := []string{}
+	ctx, cancel := context.WithTimeout(context.Background(), ovntypes.OVSDBTimeout)
+	defer cancel()
+	ports := []*vswitchd.Port{}
+	err := ovsClient.WhereCacheByUUIDs(func(*vswitchd.Port) bool { return true }, br.Ports...).List(ctx, &ports)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get ports on bridge %q: %w", br.Name, err)
 	}
@@ -65,15 +61,13 @@ func getBridgePortsInterfaces(ovsClient libovsdbclient.Client, br *vswitchd.Brid
 			return nil, fmt.Errorf("failed to get port %s on bridge %q: %w", portUUID, br.Name, libovsdbclient.ErrNotFound)
 		}
 		for _, ifaceUUID := range port.Interfaces {
-			ifaceUUIDs[ifaceUUID] = struct{}{}
+			ifaceUUIDs = append(ifaceUUIDs, ifaceUUID)
 		}
 		portToIfaceUUIDs[port.Name] = port.Interfaces
 	}
 
-	ifaces, err := ovsops.FindInterfacesWithPredicate(ovsClient, func(iface *vswitchd.Interface) bool {
-		_, ok := ifaceUUIDs[iface.UUID]
-		return ok
-	})
+	ifaces := []*vswitchd.Interface{}
+	err = ovsClient.WhereCacheByUUIDs(func(*vswitchd.Interface) bool { return true }, ifaceUUIDs...).List(ctx, &ifaces)
 	if err != nil {
 		return nil, err
 	}

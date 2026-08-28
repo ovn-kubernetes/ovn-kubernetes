@@ -642,14 +642,10 @@ func DeletePortWithInterfacesOps(ovsClient libovsdbclient.Client, ops []ovsdb.Op
 
 	m := newModelClient(ovsClient)
 	if len(port.Interfaces) > 0 {
-		interfaceUUIDs := make(map[string]struct{}, len(port.Interfaces))
-		for _, ifaceUUID := range port.Interfaces {
-			interfaceUUIDs[ifaceUUID] = struct{}{}
-		}
-		interfaces, err := FindInterfacesWithPredicate(ovsClient, func(iface *vswitchd.Interface) bool {
-			_, ok := interfaceUUIDs[iface.UUID]
-			return ok
-		})
+		ctx, cancel := context.WithTimeout(context.Background(), types.OVSDBTimeout)
+		defer cancel()
+		interfaces := []*vswitchd.Interface{}
+		err := ovsClient.WhereCacheByUUIDs(func(*vswitchd.Interface) bool { return true }, port.Interfaces...).List(ctx, &interfaces)
 		if err != nil {
 			return nil, fmt.Errorf("failed to find interfaces for port %q: %w", port.Name, err)
 		}

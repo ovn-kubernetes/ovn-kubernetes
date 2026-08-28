@@ -511,18 +511,20 @@ func DeleteLogicalSwitchPortsWithPredicateOps(nbClient libovsdbclient.Client, op
 		return nil, fmt.Errorf("error retrieving logical switch %s from libovsdb cache: %w", swName, err)
 	}
 
-	var lsps []*nbdb.LogicalSwitchPort
-	for _, port := range sw.Ports {
-		lsp := &nbdb.LogicalSwitchPort{UUID: port}
-		lsp, err = GetLogicalSwitchPort(nbClient, lsp)
-		if err != nil {
-			if errors.Is(err, libovsdbclient.ErrNotFound) {
-				continue
-			}
-			return nil, fmt.Errorf("error retrieving logical switch port with UUID %s associated with logical"+
-				" switch %s from libovsdb cache: %w", port, swName, err)
-		}
-		if p(lsp) {
+	var matches []*nbdb.LogicalSwitchPort
+	ctx, cancel := context.WithTimeout(context.Background(), config.Default.OVSDBTxnTimeout)
+	defer cancel()
+	err = nbClient.WhereCacheByUUIDs(p, sw.Ports...).List(ctx, &matches)
+	if err != nil {
+		return nil, fmt.Errorf("error retrieving logical switch ports associated with logical switch %s from libovsdb cache: %w", swName, err)
+	}
+	portsByUUID := make(map[string]*nbdb.LogicalSwitchPort, len(matches))
+	for _, lsp := range matches {
+		portsByUUID[lsp.UUID] = lsp
+	}
+	lsps := make([]*nbdb.LogicalSwitchPort, 0, len(matches))
+	for _, portUUID := range sw.Ports {
+		if lsp, ok := portsByUUID[portUUID]; ok {
 			lsps = append(lsps, lsp)
 		}
 	}
