@@ -306,16 +306,11 @@ func FindALogicalRouterPoliciesWithPredicate(nbClient libovsdbclient.Client, rou
 		return nil, err
 	}
 
-	newPredicate := func(item *nbdb.LogicalRouterPolicy) bool {
-		for _, policyUUID := range router.Policies {
-			if policyUUID == item.UUID && p(item) {
-				return true
-			}
-		}
-		return false
-	}
-
-	return FindLogicalRouterPoliciesWithPredicate(nbClient, newPredicate)
+	ctx, cancel := context.WithTimeout(context.Background(), config.Default.OVSDBTxnTimeout)
+	defer cancel()
+	found := []*nbdb.LogicalRouterPolicy{}
+	err = nbClient.WhereCacheByUUIDs(p, router.Policies...).List(ctx, &found)
+	return found, err
 }
 
 // GetLogicalRouterPolicy looks up a logical router policy from the cache
@@ -1263,18 +1258,28 @@ func GetRouterNATs(nbClient libovsdbclient.Client, router *nbdb.LogicalRouter) (
 	}
 
 	nats := []*nbdb.NAT{}
-	for _, uuid := range r.Nat {
-		nat, err := GetNAT(nbClient, &nbdb.NAT{UUID: uuid})
-		if errors.Is(err, libovsdbclient.ErrNotFound) {
-			continue
-		}
-		if err != nil {
-			return nil, fmt.Errorf("failed to lookup NAT entry with uuid: %s, error: %w", uuid, err)
-		}
-		nats = append(nats, nat)
+	ctx, cancel := context.WithTimeout(context.Background(), config.Default.OVSDBTxnTimeout)
+	defer cancel()
+	err = nbClient.WhereCacheByUUIDs(func(*nbdb.NAT) bool { return true }, r.Nat...).List(ctx, &nats)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list NAT entries for router %s: %w", router.Name, err)
+	}
+	if len(nats) < 2 {
+		return nats, nil
 	}
 
-	return nats, nil
+	natsByUUID := make(map[string]*nbdb.NAT, len(nats))
+	for _, nat := range nats {
+		natsByUUID[nat.UUID] = nat
+	}
+	orderedNATs := make([]*nbdb.NAT, 0, len(nats))
+	for _, uuid := range r.Nat {
+		if nat, ok := natsByUUID[uuid]; ok {
+			orderedNATs = append(orderedNATs, nat)
+		}
+	}
+
+	return orderedNATs, nil
 }
 
 // CreateOrUpdateNATsOps creates or updates the provided NATs, adds them to
