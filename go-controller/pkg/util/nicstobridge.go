@@ -45,9 +45,9 @@ func getBridgePortsInterfaces(ovsClient libovsdbclient.Client, br *vswitchd.Brid
 	portsToInterfaces := make(map[string][]*vswitchd.Interface)
 	ifaceUUIDs := []string{}
 	ctx, cancel := context.WithTimeout(context.Background(), ovntypes.OVSDBTimeout)
-	defer cancel()
 	ports := []*vswitchd.Port{}
 	err := ovsClient.WhereCacheByUUIDs(func(*vswitchd.Port) bool { return true }, br.Ports...).List(ctx, &ports)
+	cancel()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get ports on bridge %q: %w", br.Name, err)
 	}
@@ -67,7 +67,9 @@ func getBridgePortsInterfaces(ovsClient libovsdbclient.Client, br *vswitchd.Brid
 	}
 
 	ifaces := []*vswitchd.Interface{}
+	ctx, cancel = context.WithTimeout(context.Background(), ovntypes.OVSDBTimeout)
 	err = ovsClient.WhereCacheByUUIDs(func(*vswitchd.Interface) bool { return true }, ifaceUUIDs...).List(ctx, &ifaces)
+	cancel()
 	if err != nil {
 		return nil, err
 	}
@@ -388,22 +390,43 @@ func BridgeToNic(ovsClient libovsdbclient.Client, bridge string) error {
 		return err
 	}
 	var ops []ovsdb.Operation
-	for _, portUUID := range br.Ports {
-		port := &vswitchd.Port{UUID: portUUID}
-		ctx, cancel := context.WithTimeout(context.Background(), ovntypes.OVSDBTimeout)
-		err := ovsClient.Get(ctx, port)
+	ctx, cancel := context.WithTimeout(context.Background(), ovntypes.OVSDBTimeout)
+	ports := []*vswitchd.Port{}
+	err = ovsClient.WhereCacheByUUIDs(func(*vswitchd.Port) bool { return true }, br.Ports...).List(ctx, &ports)
+	cancel()
+	if err != nil {
+		klog.Warningf("Failed to look up ports on bridge %q: %v", bridge, err)
+	}
+	portsByUUID := make(map[string]*vswitchd.Port, len(ports))
+	interfaceUUIDs := []string{}
+	for _, port := range ports {
+		portsByUUID[port.UUID] = port
+		interfaceUUIDs = append(interfaceUUIDs, port.Interfaces...)
+	}
+	interfaces := []*vswitchd.Interface{}
+	if err == nil {
+		ctx, cancel = context.WithTimeout(context.Background(), ovntypes.OVSDBTimeout)
+		err = ovsClient.WhereCacheByUUIDs(func(*vswitchd.Interface) bool { return true }, interfaceUUIDs...).List(ctx, &interfaces)
 		cancel()
 		if err != nil {
-			klog.Warningf("Failed to look up Port %s on bridge %q: %v", portUUID, bridge, err)
+			klog.Warningf("Failed to look up interfaces on bridge %q: %v", bridge, err)
+		}
+	}
+	interfacesByUUID := make(map[string]*vswitchd.Interface, len(interfaces))
+	for _, iface := range interfaces {
+		interfacesByUUID[iface.UUID] = iface
+	}
+
+	for _, portUUID := range br.Ports {
+		port, ok := portsByUUID[portUUID]
+		if !ok {
+			klog.Warningf("Failed to look up Port %s on bridge %q: %v", portUUID, bridge, libovsdbclient.ErrNotFound)
 			continue
 		}
 		for _, ifaceUUID := range port.Interfaces {
-			iface := &vswitchd.Interface{UUID: ifaceUUID}
-			ctx, cancel := context.WithTimeout(context.Background(), ovntypes.OVSDBTimeout)
-			err := ovsClient.Get(ctx, iface)
-			cancel()
-			if err != nil {
-				klog.Warningf("Failed to look up Interface %s on port %q: %v", ifaceUUID, port.Name, err)
+			iface, ok := interfacesByUUID[ifaceUUID]
+			if !ok {
+				klog.Warningf("Failed to look up Interface %s on port %q: %v", ifaceUUID, port.Name, libovsdbclient.ErrNotFound)
 				continue
 			}
 			if iface.Type != "patch" {
