@@ -42,14 +42,14 @@ jobs:
       id: pr
       env:
         GH_TOKEN: ${{ github.token }}
-        HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        HEAD_OWNER: ${{ github.event.workflow_run.head_repository.owner.login }}
+        HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
       run: |
-        pr_number=$(jq -r '.workflow_run.pull_requests[0].number // empty' "$GITHUB_EVENT_PATH")
-        if [ -z "$pr_number" ]; then
-          pr_number=$(gh api \
-            "repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/pulls" \
-            --jq 'map(select(.state == "open"))[0].number // empty')
-        fi
+        pr_number=$(gh api --method GET \
+          "repos/${GITHUB_REPOSITORY}/pulls" \
+          -f state=open \
+          -f head="${HEAD_OWNER}:${HEAD_BRANCH}" \
+          --jq '.[0].number // empty')
         echo "number=${pr_number}" >> "$GITHUB_OUTPUT"
 
     - name: Find the coredump stack trace artifact
