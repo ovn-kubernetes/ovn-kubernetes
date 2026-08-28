@@ -1093,8 +1093,9 @@ wait_for_ovn_daemonset() {
 # unless KIND_HELM_OVN_TIMEOUT is set. It will first wait for all DaemonSets to
 # complete with kubectl rollout. This command will block until all pods of the
 # DS are actually up. Next, it waits for ovnkube-control-plane pods to post
-# "Ready" when that deployment is part of the mode. Last, it will do the same
-# with all pods in the kube-system namespace.
+# "Ready" when that deployment is part of the mode. If the DNS name resolver
+# replaced the CoreDNS image, it then waits for that rollout to finish. Last,
+# it will do the same with all pods in the kube-system namespace.
 kubectl_wait_pods() {
   # IPv6 cluster seems to take a little longer to come up, so extend the wait time.
   OVN_TIMEOUT=${KIND_HELM_OVN_TIMEOUT:-300}
@@ -1133,6 +1134,14 @@ kubectl_wait_pods() {
   fi
 
   restart_dpu_sim_multus_after_ovnk
+
+  if [ "${OVN_ENABLE_DNSNAMERESOLVER:-false}" == true ]; then
+    # Avoid passing an obsolete CoreDNS pod to the fixed pod list used by the
+    # kube-system wait below while the custom image rollout is still in flight.
+    timeout=$(calculate_timeout "${endtime}")
+    echo "Waiting for the CoreDNS deployment rollout (timeout ${timeout})..."
+    kubectl -n kube-system rollout status deployment/coredns --timeout "${timeout}s"
+  fi
 
   timeout=$(calculate_timeout ${endtime})
   if ! kubectl wait -n kube-system --for=condition=ready pods --all --timeout=${timeout}s ; then
