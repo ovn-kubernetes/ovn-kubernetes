@@ -2492,6 +2492,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#expanding-a-primary-layer3-udn-with-additional-cluster-subnets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Expanding a Primary Layer3 UDN with additional cluster subnets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#inspecting-a-udn-pod" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5054,6 +5065,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#expanding-a-primary-layer3-udn-with-additional-cluster-subnets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Expanding a Primary Layer3 UDN with additional cluster subnets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#inspecting-a-udn-pod" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5366,6 +5388,44 @@ VRF tables and routes to provide networking to these networks.</p>
 <span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">cidr</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">203.203.0.0/16</span>
 <span class="w">      </span><span class="nt">hostSubnet</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">24</span>
 </code></pre></div>
+<h3 id="expanding-a-primary-layer3-udn-with-additional-cluster-subnets">Expanding a Primary Layer3 UDN with additional cluster subnets<a class="headerlink" href="#expanding-a-primary-layer3-udn-with-additional-cluster-subnets" title="Permanent link">¶</a></h3>
+<p>A Primary Layer3 UDN or CUDN can have multiple cluster subnets in each IP
+family. This allows an operator to add address space when the existing cluster
+subnet no longer has enough host subnets for additional nodes.</p>
+<p>Each node is allocated one host subnet per IP family from the configured
+cluster subnet pool.</p>
+<p>To expand the pool, append a subnet to <code>spec.layer3.subnets</code>. For example, the
+<code>blue-network</code> UDN from the previous section can be expanded with another IPv4
+cluster subnet:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.ovn.org/v1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">UserDefinedNetwork</span>
+<span class="nt">metadata</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">blue-network</span>
+<span class="w">  </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">blue</span>
+<span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">topology</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Layer3</span>
+<span class="w">  </span><span class="nt">layer3</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">role</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Primary</span>
+<span class="w">    </span><span class="nt">subnets</span><span class="p">:</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">cidr</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">103.103.0.0/16</span>
+<span class="w">      </span><span class="nt">hostSubnet</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">24</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">cidr</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">103.104.0.0/16</span>
+<span class="w">      </span><span class="nt">hostSubnet</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">24</span>
+</code></pre></div>
+<p>Existing node and pod assignments remain unchanged. The added range is
+available for nodes that do not yet have a host subnet, including newly added
+nodes.</p>
+<p>The following restrictions apply:</p>
+<ul>
+<li>Multiple cluster subnets are supported only for Primary Layer3 UDNs and
+  CUDNs.</li>
+<li>Existing subnet entries cannot be removed or modified; expansion is
+  append-only.</li>
+<li>Cluster subnets must not overlap or contain one another.</li>
+<li>All cluster subnets in the same IP family must use the same <code>hostSubnet</code>
+  value. IPv4 and IPv6 can use different values and can be expanded
+  independently.</li>
+</ul>
 <h3 id="inspecting-a-udn-pod">Inspecting a UDN Pod<a class="headerlink" href="#inspecting-a-udn-pod" title="Permanent link">¶</a></h3>
 <p>Now if you create pods on these two namespaces and try to ping one pod from
 the other pod, you will see that connection won't work.</p>
