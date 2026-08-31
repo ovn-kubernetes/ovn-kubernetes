@@ -6,7 +6,7 @@ At IIJ, we are developing a Kubernetes platform that uses OVN-Kubernetes as a de
 We currently use the platform in development and SRE environments, and we plan to build a production environment during fiscal year 2026.
 In this article, I explain why we adopted OVN-Kubernetes and how we use it today.
 
-## 1. IIJ and IKE
+## IIJ and IKE
 
 IIJ was founded in 1992 and became the first Japanese company to launch a commercial Internet service.
 Since then, we have used our expertise in networking, cloud computing, security, mobile services, and IoT to provide IT services and systems integration to approximately 16,000 corporate customers in Japan and overseas, as well as individual users.
@@ -19,7 +19,7 @@ It also integrates with IIJ's backbone network and back-office systems, providin
 
 IKE has been in operation since 2018 and now comprises multiple production clusters.
 
-## 2. Migrating VM Workloads
+## Migrating VM Workloads
 
 IIJ has built many of its services on VMware-based VMs.
 However, rising licensing costs increased the need to migrate existing VMs to another platform.
@@ -28,7 +28,7 @@ IKE emerged as a candidate destination.
 We already operate a KubeVirt-based VM platform on IKE, allowing us to apply both our operational experience with Kubernetes and the platform capabilities provided by IKE.
 Managing VMs and containers through the same Kubernetes API and operational platform also lets us choose the most suitable execution model for each workload.
 
-## 3. Network Requirements for the VM Migration
+## Network Requirements for the VM Migration
 
 Migrating VMs to IKE requires us to carry over not only compute resources but also the network requirements of the existing environment.
 
@@ -42,7 +42,7 @@ The migration platform therefore needed to provide the following capabilities:
 - Isolate networks by application or tenant
 - Connect to existing physical networks
 
-## 4. Why We Adopted OVN-Kubernetes
+## Why We Adopted OVN-Kubernetes
 
 To meet these network requirements, we adopted OVN-Kubernetes as the CNI plugin for the destination cluster.
 We named this cluster IKE VPC, short for Virtual Private Cluster.
@@ -94,7 +94,7 @@ Multus directly satisfies the requirement to connect a single VM or pod to multi
 This division of responsibilities lets us express every capability required for migrating our existing VMs as a Kubernetes resource.
 Multus provides connections to multiple networks, UDN and CUDN provide Layer 2 networking and per-tenant isolation, and CUDNs with the Localnet topology provide connections to existing physical networks.
 
-## 5. Current Validation and Adoption Status
+## Current Validation and Adoption Status
 
 We currently provide service development teams with an IKE VPC development environment.
 The teams use this environment to determine whether they can migrate existing services to IKE VPC or deliver new services on it.
@@ -109,7 +109,7 @@ These VMs connect to existing physical networks, including operations and global
 The VMs that make up the production clusters have not yet been migrated.
 We plan to migrate them incrementally, applying the configuration and operational knowledge gained from the development environment migration.
 
-## 6. Working with Upstream
+## Working with Upstream
 
 While adopting OVN-Kubernetes, we found two problems in its container image build pipeline and reported them in [Issue #5841](https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5841).
 The maintainers responded promptly, and after discussing the problems, we created a separate pull request for each fix.
@@ -125,7 +125,7 @@ Both pull requests have been merged upstream.
 At KubeCon Japan 2026, we also had the opportunity to speak with maintainers in person.
 At the project pavilion, we met not only other OVN-Kubernetes users but also attendees who were discovering the project for the first time.
 
-## 7. Production Adoption and Future Contributions
+## Production Adoption and Future Contributions
 
 IIJ plans to build a production environment using OVN-Kubernetes during fiscal year 2026.
 As the number of workloads grows, we will expand the clusters and networks incrementally.
