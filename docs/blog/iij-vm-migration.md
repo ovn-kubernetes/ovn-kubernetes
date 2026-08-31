@@ -51,7 +51,7 @@ OVN-Kubernetes lets us define networks for different purposes as Kubernetes cust
 It provides two resources for defining these networks:
 
 - **UserDefinedNetwork (UDN):** A namespace-scoped resource that creates a network confined to its namespace and isolated from other namespaces.
-- **ClusterUserDefinedNetwork (CUDN):** A cluster-scoped resource that selects multiple namespaces and attaches them to the same network.
+- **ClusterUserDefinedNetwork (CUDN):** A cluster-scoped resource whose namespace selector makes one network available to multiple namespaces, so workloads in those namespaces share it.
 
 Both UDN and CUDN support Layer 3 and Layer 2 network topologies.
 These are overlay networks contained within the cluster and require no advance configuration of the physical network.
@@ -76,7 +76,7 @@ Tenants can also choose either a Layer 2 or Layer 3 topology according to their 
 ### CUDN Is Managed by the SRE Team
 
 When a tenant network needs to connect to a particular network, the SRE team builds a router host to serve as its gateway.
-We use CUDN to attach both the router host and the tenant's namespace to the same network.
+We use CUDN to make the same network available to both the router host's namespace and the tenant's namespace.
 Only CUDN can define a network that spans multiple namespaces.
 Because CUDN is also a cluster-scoped resource, it is managed by the SRE team rather than by users.
 
@@ -92,7 +92,8 @@ Because both uses connect directly to existing physical networks, the SRE team m
 Multus directly satisfies the requirement to connect a single VM or pod to multiple networks, as in our existing VM environment.
 
 This division of responsibilities lets us express every capability required for migrating our existing VMs as a Kubernetes resource.
-Multus provides connections to multiple networks, UDN and CUDN provide Layer 2 networking and per-tenant isolation, and CUDNs with the Localnet topology provide connections to existing physical networks.
+Multus provides connections to multiple networks, UDN and CUDN provide Layer 2 and Layer 3 networking with each network isolated from the others, and CUDNs with the Localnet topology provide connections to existing physical networks.
+How tenants are separated follows from which namespaces share a network: a UDN is confined to its own namespace, while a CUDN covers the namespaces matched by its selector.
 
 ## Current Validation and Adoption Status
 
