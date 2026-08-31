@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Redirecting…</title>
+  <script>
+    (function () {
+      var path = location.pathname;
+      var suffix = location.search + location.hash;
+      // Already under a mike version or alias? Prefer that version's home for
+      // true missing pages. If we're already at the version root (e.g. an
+      // unpublished /999/), do not self-redirect — fall back to a known page.
+      var versioned = path.match(/^\/(master|latest|\d+(?:\.\d+)*)(?:\/|$)/);
+      if (versioned) {
+        var ver = versioned[1];
+        var atVersionRoot = path === "/" + ver || path === "/" + ver + "/";
+        if (atVersionRoot) {
+          location.replace((ver === "master" ? "/" : "/master/") + suffix);
+          return;
+        }
+        location.replace("/" + ver + "/" + suffix);
+        return;
+      }
+      // Pre-versioning deep link (e.g. /design/architecture/) → same path
+      // under the default docs version (master).
+      location.replace("/master" + path + suffix);
+    })();
+  </script>
+</head>
+<body>
+  <noscript>
+    <p>
+      This page was not found. Try the
+      <a href="/master/">current documentation</a>.
+    </p>
+  </noscript>
+  <p>Redirecting…</p>
+</body>
+</html>
