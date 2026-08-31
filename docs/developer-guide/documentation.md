@@ -40,12 +40,23 @@ feel free to write it. If you are unsure where this should be placed; reach out 
 
 * **Blog Posts**: Are you an end-user of OVN-Kubernetes? Is there something you wish to share with
 the community about your awesome use cases and how you used our CNI to solve your problems? We
-welcome blog post contributions from all! See [here](../blog/index.md) for details.
-Open a commit adding it to our `docs/blog` folder.
+welcome blog post contributions from all! See [here](https://ovn-kubernetes.io/blog/) for details.
+Open a commit adding your post to `docs/blog/posts/`. Each post must include
+YAML front matter with a `date` and `authors` list, for example:
+```yaml
+---
+date: 2026-03-12
+authors:
+  - githubhandle
+---
+```
+The author handle must have a matching entry in `docs/blog/.authors.yml` with
+your name, a short description, and a GitHub avatar URL. See existing entries
+for reference.
 
 * **Performance Enhancements**: We love performance enhancements! Did you write a cool patch
 to reduce the time it takes for iptables to sync up on startup? Think about writing a good blog post
-around this! Open a commit adding it to our `docs/blog` folder.
+around this! Open a commit adding it to our `docs/blog/posts/` folder.
 
 * **API Reference**: Did you introduce a new CRD? OR Did you add a watcher a new CRD? Include API
 Reference documentation changes to `docs/api-reference` folder. See [here](../api-reference/introduction.md)
