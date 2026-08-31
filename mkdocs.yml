@@ -206,6 +206,4 @@ nav:
     - Disable Port Security: okeps/okep-3926-disable-port-security.md
     - OVN Observability API: okeps/okep-5212-ovnobserv-api.md
   - Blog:
-    - blog/index.md
-    - Accelerating and Securing Kubernetes Networking with DPUs: blog/dpu-acceleration.md
-    - Debugging NetworkPolicies with NetObserv: blog/netobserv.md
+    - OVN-Kubernetes Blog: blog/index.md

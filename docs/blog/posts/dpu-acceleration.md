@@ -1,3 +1,9 @@
+---
+date: 2026-02-12
+authors:
+  - trozet
+---
+
 # Accelerating and Offloading Kubernetes Networking: Leveraging DPUs with OVN-Kubernetes
 
 ## Introduction
@@ -6,6 +12,8 @@ This blog post provides a comprehensive guide on deploying OVN-Kubernetes in an 
 This setup is crucial for high-performance networking in cloud-native applications, offloading network processing from the host CPU to the
 DPU, and providing better security for the networking control-plane. Additionally, OVN-Kubernetes brings in robust features like User Defined
 Networks (UDNs) that enable per tenant network isolation into the Kubernetes environment and integrates with the DPU solution.
+
+<!-- more -->
 
 In this guide, **offloading** means moving OVN-Kubernetes SDN control and data plane work from the host into the DPU to free host CPU and memory
 resources. Note, this is different from **OVS offloading**, where datapath processing is offloaded from kernel to hardware
@@ -20,7 +28,7 @@ In an unaccelerated+non-offloaded environment, OVN-Kubernetes behaves the same w
 Open Virtual Network (OVN), and Open vSwitch (OVS). OVN-Kubernetes listens for KAPI events, configures a logical topology in OVN,
 and then OVN translates that into OpenFlow which is programmed into the OVS datapath. Here is an overview of a typical setup:
 
-![Regular OVN-Kubernetes Worker Node](../images/ovnk-unaccelerated.svg)
+![Regular OVN-Kubernetes Worker Node](../../images/ovnk-unaccelerated.svg)
 
 ---
 
@@ -47,7 +55,7 @@ This solves the aforementioned issues by:
 
 Here is a diagram of a DPU accelerated worker node with OVN-Kubernetes:
 
-![Accelerated OVN-Kubernetes Worker Node](../images/ovnk-accelerated.svg)
+![Accelerated OVN-Kubernetes Worker Node](../../images/ovnk-accelerated.svg)
 
 ---
 
@@ -206,12 +214,12 @@ The DPU must be configured to handle networking functions for the host. The foll
 
 A version of OVN-Kubernetes at least with 1.3 is required for DPUs. At the time of this writing, 1.3 is in Alpha state. The following steps should be done from a jumphost that has Kubeconfig access to both the Host and DPU cluster.
 
-1.  Build or download the OVN-Kubernetes container images. Refer to this [image build guide](../developer-guide/image-build.md) on how to build/obtain the artifacts.
+1.  Build or download the OVN-Kubernetes container images. Refer to this [image build guide](../../developer-guide/image-build.md) on how to build/obtain the artifacts.
 2.  Upload the images to a container registry that is reachable by both clusters.
 3.  Label all Host nodes with DPU with **k8s.ovn.org/dpu-host=""**
 4.  Label all DPU nodes with **k8s.ovn.org/dpu=""**
 5.  `git clone https://github.com/ovn-kubernetes/ovn-kubernetes` to obtain the helm charts.
-6.  Follow the [upstream installation guide](../installation/launching-ovn-kubernetes-with-dpu.md) to configure the helm charts correctly and install OVN-Kubernetes to the Host and DPU.
+6.  Follow the [upstream installation guide](../../installation/launching-ovn-kubernetes-with-dpu.md) to configure the helm charts correctly and install OVN-Kubernetes to the Host and DPU.
 
 ## Install SR-IOV Device Plugin
 
@@ -393,4 +401,3 @@ Now that we have configured everything it is time to create a pod and verify tha
 
 Deploying OVN-Kubernetes in a DPU-accelerated environment provides significant performance and security benefits by offloading network processing. By carefully following the configuration steps for both the DPU and the host, and verifying the OVN-Kubernetes setup, you can establish a high-performance network foundation for your Kubernetes workloads.
 
-*Posted on* *February 12, 2026* *by* *Tim Rozet*.

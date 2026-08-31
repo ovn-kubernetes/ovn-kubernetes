@@ -530,6 +530,19 @@ a.md-tabs__link {
   }
 }
 
+/* BLOG POST PAGES: Reset aggressive sidebar/content offsets so the author
+   metadata sidebar doesn't overlap post content. The :not(:has(.md-post--excerpt))
+   excludes the blog index page (which lists excerpts) from this override. */
+.md-main__inner:has(.md-post):not(:has(.md-post--excerpt)) .md-sidebar--primary:not([hidden]) {
+  transform: none;
+}
+[dir="ltr"] .md-main__inner:has(.md-post):not(:has(.md-post--excerpt)) .md-sidebar--primary:not([hidden]) ~ .md-content > .md-content__inner,
+[dir="ltr"] .md-main__inner:has(.md-post):not(:has(.md-post--excerpt)) .md-content > .md-content__inner {
+  margin-left: auto;
+  margin-right: auto;
+  text-align: left;
+}
+
 img[alt="ovn-kubernetes-logo"] {
   width: clamp(240px, 20vw, 300px);
   display: block;

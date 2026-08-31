@@ -1,3 +1,9 @@
+---
+date: 2026-03-12
+authors:
+  - npinaeva
+---
+
 # Debugging NetworkPolicies with NetObserv
 
 Observability is a key part of any system, and Kubernetes networking is no exception.
@@ -7,12 +13,15 @@ a given connection is allowed or denied.
 
 To solve this problem, OVN-Kubernetes has introduced a new observability feature together with the NetObserv project
 that adds explicit communication between observability and networking.
+
+<!-- more -->
+
 This post will walk you through the installation steps and some examples of how to use it to understand the behavior of your network policies.
-See feature guide for more information on limitations/requirements [OVN observability](../observability/ovn-observability.md).
+See feature guide for more information on limitations/requirements [OVN observability](../../observability/ovn-observability.md).
 
 ## Install
 
-- Run kind cluster with [OVN observability](../observability/ovn-observability.md) feature enabled
+- Run kind cluster with [OVN observability](../../observability/ovn-observability.md) feature enabled
 - Install NetObserv operator in Standalone mode following the [README guide](https://github.com/netobserv/netobserv-operator/tree/main?tab=readme-ov-file#getting-started)
 - Some tweaks are required to the suggested flowCollector configuration 
 Enable NetworkEvents to see OVN observability samples in NetObserv like so:
@@ -147,7 +156,7 @@ because it is not set by default, you can configure visible columns by clicking 
 Also make sure to either put some non-zero `Refresh interval` or manually refresh when checking for the latest data.
 You should see something like this:
 
-![netobserv-anp-drop](images/netobserv-anp-drop.png)
+![netobserv-anp-drop](../images/netobserv-anp-drop.png)
 
 We didn't create any `NetworkPolicies`, but cluster admin can create cluster-wide policies using `AdminNetworkPolicy`,
 that may affect any namespace in the cluster, and without the right observability tools, it may be hard to understand
@@ -208,7 +217,7 @@ $ kubectl exec -n blue server -- curl 10.244.0.11:8080
 ```
 that was unexpected, what now? Let's check the NetObserv console again (don't forget to refresh)
 
-![netobserv-netpol-drop](images/netobserv-netpol-drop.png)
+![netobserv-netpol-drop](../images/netobserv-netpol-drop.png)
 
 it says "Dropped by network policies isolation in namespace blue, direction Egress"
 
