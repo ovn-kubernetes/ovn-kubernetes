@@ -536,8 +536,36 @@ func (g *gateway) SetDefaultBridgeGARPDropFlows(isDropped bool) {
 	g.openflowManager.setDefaultBridgeGARPDrop(isDropped)
 }
 
-// Reconcile handles triggering updates to different components of a gateway, like OFM, Services
+// Reconcile handles triggering updates to different components of a gateway, like
+// OFM and Services, in response to a change with cluster-wide reach (node IP/MAC
+// change, EgressIP, default-network advertised change, init). It resyncs every
+// service because any service's flows may be affected.
 func (g *gateway) Reconcile() error {
+	return g.reconcile(g.resyncAllServices)
+}
+
+// ReconcileNetwork rebuilds the shared bridge flows after a primary UDN is added
+// and resyncs only that network's namespaces' services. Advertised-state changes
+// must go through UserDefinedNetworkGateway.Reconcile (doReconcile), not this.
+func (g *gateway) ReconcileNetwork(netInfo util.NetInfo) error {
+	return g.reconcile(func() []error {
+		return g.resyncNetworkServices(netInfo)
+	})
+}
+
+// ReconcileNetworkRemoval refreshes the shared gateway OpenFlow/SNAT state after a
+// network's config has been removed, dropping its bridge flows. Services are not
+// resynced: a UDN namespace cannot revert to the default network (the reserved label
+// is immutable), so the removed network's services are either already gone (their own
+// delete events clean their per-service flows) or their namespace still carries the
+// label with no NAD, leaving them with no valid network to reprogram onto.
+func (g *gateway) ReconcileNetworkRemoval() error {
+	return g.reconcile(nil)
+}
+
+// reconcile refreshes the gateway's OpenFlow/SNAT state and, if syncServices is
+// non-nil, resyncs the selected services through the retry framework.
+func (g *gateway) reconcile(syncServices func() []error) error {
 	klog.Info("Reconciling gateway with updates")
 	if config.IsModeDPU() || config.IsModeFull() {
 		if g.openflowManager != nil {
@@ -560,30 +588,49 @@ func (g *gateway) Reconcile() error {
 			return err
 		}
 	}
-	// Services create OpenFlow flows as well, need to update them all
-	if g.servicesRetryFramework != nil {
-		if errs := g.addAllServices(); errs != nil {
-			err := utilerrors.Join(errs...)
-			return err
+	// Services create OpenFlow flows as well, need to resync the affected ones.
+	if g.servicesRetryFramework != nil && syncServices != nil {
+		if errs := syncServices(); errs != nil {
+			return utilerrors.Join(errs...)
 		}
 	}
 	return nil
 }
 
-func (g *gateway) addAllServices() []error {
-	errs := []error{}
+// resyncAllServices enqueues every service in the cluster for reprogramming. Used
+// for cluster-wide changes where any service's flows may be affected.
+func (g *gateway) resyncAllServices() []error {
 	svcs, err := g.watchFactory.GetServices()
 	if err != nil {
-		errs = append(errs, err)
-	} else {
-		for _, svc := range svcs {
-			svc := *svc
-			klog.V(5).Infof("Adding service %s/%s to retryServices", svc.Namespace, svc.Name)
-			err = g.servicesRetryFramework.AddRetryObjWithAddNoBackoff(&svc)
-			if err != nil {
-				err = fmt.Errorf("failed to add service %s/%s to retry framework: %w", svc.Namespace, svc.Name, err)
-				errs = append(errs, err)
-			}
+		return []error{err}
+	}
+	return g.resyncServices(svcs)
+}
+
+// resyncNetworkServices enqueues only the services in netInfo's namespaces
+// (GetNADNamespaces) for reprogramming, instead of scanning every service. A selected
+// namespace whose NAD has not landed yet recovers via its own per-service retry.
+func (g *gateway) resyncNetworkServices(netInfo util.NetInfo) []error {
+	var svcs []*corev1.Service
+	for _, namespace := range netInfo.GetNADNamespaces() {
+		nsSvcs, err := g.watchFactory.GetServicesByNamespace(namespace)
+		if err != nil {
+			return []error{err}
+		}
+		svcs = append(svcs, nsSvcs...)
+	}
+	return g.resyncServices(svcs)
+}
+
+// resyncServices adds the given services to the retry framework with no backoff and
+// requests an immediate retry.
+func (g *gateway) resyncServices(svcs []*corev1.Service) []error {
+	var errs []error
+	for _, svc := range svcs {
+		svc := *svc
+		klog.V(5).Infof("Adding service %s/%s to retryServices", svc.Namespace, svc.Name)
+		if err := g.servicesRetryFramework.AddRetryObjWithAddNoBackoff(&svc); err != nil {
+			errs = append(errs, fmt.Errorf("failed to add service %s/%s to retry framework: %w", svc.Namespace, svc.Name, err))
 		}
 	}
 	g.servicesRetryFramework.RequestRetryObjs()

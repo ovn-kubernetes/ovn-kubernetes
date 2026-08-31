@@ -1779,6 +1779,12 @@ func (wf *WatchFactory) GetServices() ([]*corev1.Service, error) {
 	return serviceLister.List(labels.Everything())
 }
 
+// GetServicesByNamespace returns all services in the given namespace
+func (wf *WatchFactory) GetServicesByNamespace(namespace string) ([]*corev1.Service, error) {
+	serviceLister := wf.informers[ServiceType].lister.(listers.ServiceLister)
+	return serviceLister.Services(namespace).List(labels.Everything())
+}
+
 func (wf *WatchFactory) GetCloudPrivateIPConfig(name string) (*ocpcloudnetworkapi.CloudPrivateIPConfig, error) {
 	cloudPrivateIPConfigLister := wf.informers[CloudPrivateIPConfigType].lister.(ocpcloudnetworklister.CloudPrivateIPConfigLister)
 	return cloudPrivateIPConfigLister.Get(name)

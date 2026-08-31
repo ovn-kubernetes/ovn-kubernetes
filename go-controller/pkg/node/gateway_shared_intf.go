@@ -1808,7 +1808,7 @@ func newGateway(
 			}
 			// Services create OpenFlow flows as well, need to update them all
 			if gw.servicesRetryFramework != nil {
-				if errs := gw.addAllServices(); len(errs) > 0 {
+				if errs := gw.resyncAllServices(); len(errs) > 0 {
 					err := utilerrors.Join(errs...)
 					klog.Errorf("Failed to sync all services after node IP change: %v", err)
 				}
