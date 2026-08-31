@@ -1,10 +1,10 @@
 # Why IIJ Chose OVN-Kubernetes for Its VM Workload Migration Platform and How We Use It Today
 
-My name is Taichi Shimotori, and I work in the SRE Promotion Department of the Network Division at Internet Initiative Japan Inc. (IIJ).
+*By Taichi Shimotori, SRE Promotion Department, Network Division, Internet Initiative Japan Inc. (IIJ)*
 
 At IIJ, we are developing a Kubernetes platform that uses OVN-Kubernetes as a destination for migrating VM workloads.
 We currently use the platform in development and SRE environments, and we plan to build a production environment during fiscal year 2026.
-In this article, I explain why we adopted OVN-Kubernetes and how we use it today.
+This article explains why IIJ adopted OVN-Kubernetes and how we use it today.
 
 ## IIJ and IKE
 
