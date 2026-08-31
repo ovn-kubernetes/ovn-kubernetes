@@ -1671,6 +1671,28 @@ become hard to maintain such code.">
 </li>
         
           <li class="md-nav__item">
+  <a href="#linking-between-docs-pages-use-relative-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Linking between docs pages (use relative paths)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#root-404html-pre-versioning-deep-links" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Root 404.html (pre-versioning deep links)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#manual-rebuild-workflow_dispatch" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4896,6 +4918,28 @@ become hard to maintain such code.">
 </li>
         
           <li class="md-nav__item">
+  <a href="#linking-between-docs-pages-use-relative-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Linking between docs pages (use relative paths)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#root-404html-pre-versioning-deep-links" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Root 404.html (pre-versioning deep links)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#manual-rebuild-workflow_dispatch" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5083,7 +5127,7 @@ where we mandate docs include:</p>
 <li>
 <p><strong>Enhancement Proposals</strong>: If you are planning to do a new feature, then start
 with an enhancement proposal a.k.a OKEP so that maintainers and other reviewers
-can get an understanding of what your goals are. See <a href="https://ovn-kubernetes.io/okeps/okep-4368-template/">here</a>
+can get an understanding of what your goals are. See <a href="../../okeps/okep-4368-template/">here</a>
 for more details and open a commit adding it to our <code>docs/okeps</code> folder.</p>
 </li>
 <li>
@@ -5111,7 +5155,7 @@ feel free to write it. If you are unsure where this should be placed; reach out 
 <li>
 <p><strong>Blog Posts</strong>: Are you an end-user of OVN-Kubernetes? Is there something you wish to share with
 the community about your awesome use cases and how you used our CNI to solve your problems? We
-welcome blog post contributions from all! See <a href="https://ovn-kubernetes.io/blog/">here</a> for details.
+welcome blog post contributions from all! See <a href="../../blog/">here</a> for details.
 Open a commit adding it to our <code>docs/blog</code> folder.</p>
 </li>
 <li>
@@ -5121,7 +5165,7 @@ around this! Open a commit adding it to our <code>docs/blog</code> folder.</p>
 </li>
 <li>
 <p><strong>API Reference</strong>: Did you introduce a new CRD? OR Did you add a watcher a new CRD? Include API
-Reference documentation changes to <code>docs/api-reference</code> folder. See <a href="https://ovn-kubernetes.io/api-reference/introduction/">here</a>
+Reference documentation changes to <code>docs/api-reference</code> folder. See <a href="../../api-reference/introduction/">here</a>
 for more details.</p>
 </li>
 </ul>
@@ -5149,8 +5193,9 @@ workflow so the two do not overwrite each other.</p>
 <h3 id="versioned-docs-how-publishing-works">Versioned docs: how publishing works<a class="headerlink" href="#versioned-docs-how-publishing-works" title="Permanent link">¶</a></h3>
 <p>The versioning workflow runs on pushes to <code>master</code> or any <code>release-*</code> branch when
 docs-related paths change (<code>docs/**</code>, <code>mkdocs.yml</code>, the workflow file,
-<code>hack/build-docs.sh</code>, or <code>requirements.txt</code>). By default each run rebuilds <strong>all</strong>
-versions so Latest/Stable/Legacy labels and the version dropdown stay consistent.</p>
+<code>hack/build-docs.sh</code>, <code>hack/docs-site-404.html</code>, or <code>requirements.txt</code>). By default
+each run rebuilds <strong>all</strong> versions so Latest/Stable/Legacy labels and the version
+dropdown stay consistent.</p>
 <ul>
 <li>The nav structure (<code>nav:</code> in <code>mkdocs.yml</code>) is <strong>per-branch</strong>. A new page added
   on <code>master</code> does not appear in older release versions (and will not break them).
@@ -5176,6 +5221,64 @@ versions so Latest/Stable/Legacy labels and the version dropdown stay consistent
 <li>Prefer <code>make -C docs build-docs</code> over ad-hoc <code>mike</code> commands so the same
   validations run locally and in CI.</li>
 </ul>
+<h3 id="linking-between-docs-pages-use-relative-paths">Linking between docs pages (use relative paths)<a class="headerlink" href="#linking-between-docs-pages-use-relative-paths" title="Permanent link">¶</a></h3>
+<p>Mike publishes each docs version under its own URL prefix — for example
+<code>/master/...</code>, <code>/1.3/...</code>, or the <code>latest</code> alias. A page that used to live at
+<code>https://ovn-kubernetes.io/design/architecture/</code> is now served at
+<code>https://ovn-kubernetes.io/master/design/architecture/</code> (or under the release
+you selected in the version dropdown).</p>
+<p><strong>Do not</strong> link to docs pages with unversioned absolute site URLs such as
+<code>https://ovn-kubernetes.io/design/architecture/</code> or
+<code>https://ovn-kubernetes.io/installation/...</code>. Those paths no longer exist at
+the site root after versioning, so they 404. The same problem affects any
+hard-coded <code>https://ovn-kubernetes.io/&lt;page&gt;/</code> link that omits the version
+segment.</p>
+<p><strong>Going forward, link with relative Markdown paths</strong> so MkDocs resolves the
+target within the version currently being viewed:</p>
+<div class="highlight"><pre><span></span><code>&lt;!-- Good: stays inside the current mike version --&gt;
+See the [<span class="nt">Architecture</span>](<span class="na">../design/architecture.md</span>) page.
+
+&lt;!-- Bad: 404s on the versioned site --&gt;
+See the [<span class="nt">Architecture</span>](<span class="na">https://ovn-kubernetes.io/design/architecture/</span>) page.
+</code></pre></div>
+<p>Relative links also keep working when someone switches the version dropdown
+(for example from Master to a <code>release-*</code> docs tree), because the browser stays
+under that version’s prefix.</p>
+<p>A bare homepage link to <code>https://ovn-kubernetes.io/</code> is fine (the root still
+redirects into the default version). External sites, GitHub URLs, and other
+non-docs destinations should keep using absolute URLs as usual.</p>
+<p><strong>Exception: root files symlinked into <code>docs/governance/</code>.</strong> Files such as
+<code>CONTRIBUTING.md</code>, <code>GOVERNANCE.md</code>, and <code>MEETINGS.md</code> live at the repository
+root and are symlinked under <code>docs/governance/</code> for the website. A relative
+path that is correct from <code>docs/governance/</code> (for example
+<code>../installation/launching-ovn-kubernetes-on-kind.md</code>) breaks when the same
+file is viewed on GitHub at the repo root. For those shared files, use a
+versioned absolute docs URL instead, for example
+<code>https://ovn-kubernetes.io/master/installation/launching-ovn-kubernetes-on-kind/</code>,
+so the link works both on GitHub and on the published site.</p>
+<p>When you touch docs links in a PR, prefer relative paths under <code>docs/</code> and
+avoid introducing new unversioned <code>ovn-kubernetes.io/&lt;page&gt;/</code> URLs.</p>
+<p>Repo files outside <code>docs/</code> that must deep-link into the published site (for
+example <code>README.md</code>) should use a versioned absolute URL under <code>/master/…</code>,
+not an unversioned path.</p>
+<h3 id="root-404html-pre-versioning-deep-links">Root <code>404.html</code> (pre-versioning deep links)<a class="headerlink" href="#root-404html-pre-versioning-deep-links" title="Permanent link">¶</a></h3>
+<p>GitHub Pages serves a site-root <code>404.html</code> when a URL is missing. Mike only
+publishes version directories (<code>master/</code>, <code>1.3/</code>, …) and does not install a root
+404, so old bookmarks such as <code>https://ovn-kubernetes.io/design/architecture/</code>
+would otherwise hit GitHub’s generic 404.</p>
+<p><code>hack/build-docs.sh</code> copies <code>hack/docs-site-404.html</code> to <code>404.html</code> on the
+<code>gh-pages</code> branch after each deploy. That page redirects unversioned paths to
+the same path under <code>/master/…</code>. Paths that already include a version or alias
+(<code>master</code>, <code>latest</code>, or <code>N.N</code>) and are still missing go to that version’s home.
+If the request is already at a version root that does not exist (so a second
+redirect would loop on itself), the page falls back to <code>/master/</code> (or <code>/</code> when
+the prefix is already <code>master</code>).</p>
+<p>Do not hand-edit <code>404.html</code> on <code>gh-pages</code>; change <code>hack/docs-site-404.html</code> on
+<code>master</code> and let the versioning workflow republish it.</p>
+<p>Shell coverage for the install helper (local/remote <code>gh-pages</code>, unchanged vs
+changed template, <code>PUSH=false</code>/<code>true</code>, push failure) and for the clean-worktree
+preflight lives in <code>hack/test-install-gh-pages-404.sh</code>
+(<code>make -C docs test-install-gh-pages-404</code>).</p>
 <h3 id="manual-rebuild-workflow_dispatch">Manual rebuild (workflow_dispatch)<a class="headerlink" href="#manual-rebuild-workflow_dispatch" title="Permanent link">¶</a></h3>
 <p>Anyone with write access can trigger a rebuild from the <strong>Actions</strong> tab
 (Publish Versioned Docs). The <code>releases</code> input defaults to <code>all</code>. Set it to a
@@ -5191,7 +5294,7 @@ comma-separated list of existing branches (for example <code>release-1.1</code> 
 </thead>
 <tbody>
 <tr>
-<td>Push to <code>master</code> / <code>release-*</code> changing <code>docs/**</code>, <code>mkdocs.yml</code>, the versioning workflow, <code>hack/build-docs.sh</code>, or <code>requirements.txt</code></td>
+<td>Push to <code>master</code> / <code>release-*</code> changing <code>docs/**</code>, <code>mkdocs.yml</code>, the versioning workflow, <code>hack/build-docs.sh</code>, <code>hack/docs-site-404.html</code>, or <code>requirements.txt</code></td>
 <td>Yes (all versions)</td>
 </tr>
 <tr>
@@ -5305,8 +5408,10 @@ mike<span class="w"> </span>serve
 (CI already does this with <code>PUSH=1</code>):</p>
 <div class="highlight"><pre><span></span><code>make<span class="w"> </span>-C<span class="w"> </span>docs<span class="w"> </span>build-docs<span class="w"> </span><span class="nv">PUSH</span><span class="o">=</span><span class="m">1</span>
 </code></pre></div>
-<p><code>hack/build-docs.sh</code> refuses to run while checked out on <code>gh-pages</code>, and
-refuses to continue if <code>extra.css</code> is dirty on a <code>release-*</code> branch. There
+<p><code>hack/build-docs.sh</code> refuses to run while checked out on <code>gh-pages</code>, refuses
+to continue if <code>extra.css</code> is dirty on a <code>release-*</code> branch, and refuses to
+run at all when any tracked file has local modifications (mike and the root
+404 install use <code>git checkout -f</code>, which would discard those changes). There
 is no interactive override.</p>
 
 

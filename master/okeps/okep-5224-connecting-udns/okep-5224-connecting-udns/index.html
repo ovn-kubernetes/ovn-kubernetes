@@ -5879,7 +5879,7 @@
 <h2 id="problem-statement">Problem Statement<a class="headerlink" href="#problem-statement" title="Permanent link">¶</a></h2>
 <p>A (C)UDN is an isolated island, however, we have users that wish to connect
 these islands together for multiple reasons. This OKEP proposes a solution
-to connect multiple <a href="https://ovn-kubernetes.io/api-reference/userdefinednetwork-api-spec/#userdefinednetwork">UserDefinedNetworks</a> or <a href="https://ovn-kubernetes.io/api-reference/userdefinednetwork-api-spec/#clusteruserdefinednetwork">ClusterUserDefinedNetworks</a>
+to connect multiple <a href="../../../api-reference/userdefinednetwork-api-spec/#userdefinednetwork">UserDefinedNetworks</a> or <a href="../../../api-reference/userdefinednetwork-api-spec/#clusteruserdefinednetwork">ClusterUserDefinedNetworks</a>
 together, better known as "Connecting (C)UDNs". This solution will ensure
 that (C)UDNs remain isolated unless an explicit request to connect them
 together has been made.</p>
@@ -6749,7 +6749,7 @@ like this:</p>
 <p>The below diagram shows the overlay part of the OVN Topology that
 OVN-Kubernetes creates for 3 UDN networks (blue, green and yellow)
 across two nodes. NOTE: The topology representation is that of the new
-upcoming Layer2 topology. See enhancement on <a href="https://ovn-kubernetes.io/okeps/okep-5094-layer2-transit-router/">new Layer2 topology</a>
+upcoming Layer2 topology. See enhancement on <a href="../../okep-5094-layer2-transit-router/">new Layer2 topology</a>
 for more details on the new design.</p>
 <p><a class="glightbox" data-type="image" data-width="auto" data-height="auto" href="../images/l2-connecting-udns-0.png" data-desc-position="bottom"><img alt="3-isolated-l2-networks" src="../images/l2-connecting-udns-0.png"></a></p>
 <p><strong>Add a new transit router between the transit routers of the networks</strong></p>
@@ -7362,7 +7362,7 @@ connect UDNs when overlay is turned off.</p>
   to optimize resource consumption on large scale clusters with 1000 nodes
   where only 10 nodes are going to host UDNs. Whatever topology we pick
   here must work for that future enhancement as changing topologies is not
-  really encouraged. See <a href="https://ovn-kubernetes.io/okeps/okep-5552-dynamic-udn-node-allocation/">Dynamic UDN Node Allocation</a> for more details.</li>
+  really encouraged. See <a href="../../okep-5552-dynamic-udn-node-allocation/">Dynamic UDN Node Allocation</a> for more details.</li>
 <li>The annotations we add to the CNC has cost of marshal and unmarshal
   at each ovnkube-controller</li>
 </ul>
@@ -7477,7 +7477,7 @@ coming from the layer2 switch -&gt; layer2 router -&gt; connect router
 cannot be load balanced.</p>
 <h2 id="dependencies">Dependencies<a class="headerlink" href="#dependencies" title="Permanent link">¶</a></h2>
 <ul>
-<li>This enhancement depends on the <a href="https://ovn-kubernetes.io/okeps/okep-5094-layer2-transit-router/">new Layer2 topology</a> changes.</li>
+<li>This enhancement depends on the <a href="../../okep-5094-layer2-transit-router/">new Layer2 topology</a> changes.</li>
 </ul>
 
 
