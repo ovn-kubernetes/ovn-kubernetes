@@ -15,7 +15,7 @@
 # ============================================================================
 # Default: catch-all for anything not matched below
 # ============================================================================
-* @ovn-kubernetes/ovn-kubernetes-members
+* @ovn-kubernetes/ovn-kubernetes-reviewers
 
 # ============================================================================
 # Virtualization (Area Maintainer: @maiqueb)

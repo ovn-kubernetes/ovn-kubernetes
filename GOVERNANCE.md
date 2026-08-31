@@ -74,10 +74,13 @@ decisions to them.
 
 To become a Maintainer you need to demonstrate the following:
 
+- be a current [Member](#members),
 - commitment to the project:
   - participate in discussions, contributions, code and documentation reviews
     for 10 months or more,
-  - perform reviews for 10 non-trivial pull requests,
+  - perform reviews for 10 non-trivial pull requests as part of the
+    `ovn-kubernetes/ovn-kubernetes-reviewers` auto-assignment reviewer pool (see
+    [Joining the auto-assignment reviewer pool](./REVIEWING.md#joining-the-auto-assignment-reviewer-pool)),
   -  contribute 15 non-trivial pull requests and have them merged,
 - ability to write quality code and/or documentation,
 - ability to collaborate with the team,
@@ -112,8 +115,9 @@ and can be rapidly returned to Maintainer status if their availability changes.
 
 Members are active contributors who have shown a commitment to the project. They
 have privileges to review and approve pull requests and are part of the
-`ovn-kubernetes/ovn-kubernetes-members` GitHub team, which makes them eligible
-for automatic PR review assignments. Because Members have write access, an
+`ovn-kubernetes/ovn-kubernetes-members` GitHub team, which grants write access.
+Automatic PR review assignment is handled through the separate
+`ovn-kubernetes/ovn-kubernetes-reviewers` team. Because Members have write access, an
 approving review from a Member counts toward the branch protection rule that
 requires at least one approval before a pull request can be merged. Members are
 not Maintainers, but they are expected to contribute to the project and
@@ -231,9 +235,11 @@ Access to the [project GitHub repository](https://github.com/ovn-kubernetes/ovn-
 is granted through the following GitHub teams:
 
 - **`ovn-kubernetes/ovn-kubernetes-admin`** — has **admin** access to the repository.
-- **`ovn-kubernetes/ovn-kubernetes-members`** — has **write** access to the repository. This team
-  also backs automatic PR review assignment (see [`CODEOWNERS`](./CODEOWNERS) and the
-  [Reviewing Guide](./REVIEWING.md)).
+- **`ovn-kubernetes/ovn-kubernetes-members`** — has **write** access to the repository, so an
+  approving review from a member counts toward the required approval.
+- **`ovn-kubernetes/ovn-kubernetes-reviewers`** — backs automatic PR review assignment: GitHub's
+  load-balanced code-review assignment routes review requests to this team (see
+  [`CODEOWNERS`](./CODEOWNERS) and the [Reviewing Guide](./REVIEWING.md)).
 
 ## Meetings
 

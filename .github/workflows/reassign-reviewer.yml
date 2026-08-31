@@ -1,0 +1,61 @@
+name: "Request Another Reviewer"
+
+# Lets anyone move a PR forward by pulling in another reviewer from the
+# ovn-kubernetes-reviewers team. Commenting `/assign-reviewer` re-requests the team,
+# so GitHub's code-review assignment (configured on the team) routes the PR to an
+# available member. The intent is that a PR keeps getting reviewed even when the
+# original assignee needs help, lacks the expertise, or is unavailable — the goal
+# is a reviewed PR, not that any one person does the review.
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  request-reviewer:
+    # React only to /assign-reviewer at the start of a human comment on a PR.
+    # Ignore Bot-authored comments so the workflow never reacts to its own
+    # confirmation/error messages.
+    if: >
+      github.event.issue.pull_request &&
+      github.event.comment.user.type != 'Bot' &&
+      startsWith(github.event.comment.body, '/assign-reviewer')
+    runs-on: ubuntu-latest
+    steps:
+      # Use the same app token the repo uses for privileged PR automation:
+      # requesting an org team as a reviewer needs more than the default
+      # GITHUB_TOKEN's org visibility.
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.OVN_KUBERNETES_MERGE_BOT }}
+          private-key: ${{ secrets.OVN_KUBERNETES_MERGE_BOT }}
+
+      - name: Request the ovn-kubernetes-reviewers team for review
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const { owner, repo } = context.repo;
+            const pull_number = context.issue.number;
+            const team = 'ovn-kubernetes-reviewers';
+            try {
+              // Re-requesting the team triggers the team's code-review assignment,
+              // which load-balances the PR onto another member from the pool.
+              await github.rest.pulls.requestReviewers({
+                owner, repo, pull_number, team_reviewers: [team],
+              });
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: pull_number,
+                body: `Requested a review from \`@${owner}/${team}\` — GitHub will ` +
+                      `route this to an available member. Set your GitHub status to ` +
+                      `"Busy" to be skipped by the assignment.`,
+              });
+            } catch (e) {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: pull_number,
+                body: `Could not request the \`${team}\` team: ${e.message}`,
+              });
+              throw e;
+            }
