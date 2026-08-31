@@ -1155,9 +1155,7 @@ func (r defaultOVSBridgeResolver) BridgeUplink(bridgeName string) (string, error
 
 	interfaceIDs := []string{}
 	for _, port := range ports {
-		for _, interfaceID := range port.Interfaces {
-			interfaceIDs = append(interfaceIDs, interfaceID)
-		}
+		interfaceIDs = append(interfaceIDs, port.Interfaces...)
 	}
 	interfaces := []*vswitchd.Interface{}
 	ctx, cancel = context.WithTimeout(context.Background(), config.Default.OVSDBTxnTimeout)

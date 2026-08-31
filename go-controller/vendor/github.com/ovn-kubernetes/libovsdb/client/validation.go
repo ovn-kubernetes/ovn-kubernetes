@@ -25,11 +25,11 @@ func init() {
 // formatValidationErrors formats validator.ValidationErrors into a detailed human-readable string
 func formatValidationErrors(modelName string, context string, validationErrs validator.ValidationErrors) string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("validation error for model %s", modelName))
+	fmt.Fprintf(&sb, "validation error for model %s", modelName)
 
 	// Append context if provided (e.g., "mutation on column X")
 	if context != "" {
-		sb.WriteString(fmt.Sprintf(": %s", context))
+		fmt.Fprintf(&sb, ": %s", context)
 	}
 
 	if len(validationErrs) > 0 {

@@ -489,6 +489,25 @@ func (r *RowCache) RowsShallow() map[string]model.Model {
 	return result
 }
 
+// RowsByUUIDsShallow returns matching rows without cloning the models.
+// Returned models are READ ONLY.
+func (r *RowCache) RowsByUUIDsShallow(uuids []string) map[string]model.Model {
+	r.mutex.RLock()
+	defer r.mutex.RUnlock()
+
+	capacity := len(uuids)
+	if capacity > len(r.cache) {
+		capacity = len(r.cache)
+	}
+	result := make(map[string]model.Model, capacity)
+	for _, uuid := range uuids {
+		if row, ok := r.cache[uuid]; ok {
+			result[uuid] = row
+		}
+	}
+	return result
+}
+
 // uuidsByConditionsAsIndexes checks possible indexes that can be built with a
 // subset of the provided conditions and returns the uuids for the models that
 // match that subset of conditions. If no conditions could be used as indexes,
@@ -1260,7 +1279,7 @@ func valueFromColumnKey(info *mapper.Info, columnKey model.ColumnKey) (any, erro
 	}
 	// if the value is a non-nil pointer of an optional, dereference
 	v := reflect.ValueOf(val)
-	if v.Kind() == reflect.Ptr && !v.IsNil() {
+	if v.Kind() == reflect.Pointer && !v.IsNil() {
 		val = v.Elem().Interface()
 	}
 	return val, err

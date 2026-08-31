@@ -60,9 +60,7 @@ func getBridgePortsInterfaces(ovsClient libovsdbclient.Client, br *vswitchd.Brid
 		if !ok {
 			return nil, fmt.Errorf("failed to get port %s on bridge %q: %w", portUUID, br.Name, libovsdbclient.ErrNotFound)
 		}
-		for _, ifaceUUID := range port.Interfaces {
-			ifaceUUIDs = append(ifaceUUIDs, ifaceUUID)
-		}
+		ifaceUUIDs = append(ifaceUUIDs, port.Interfaces...)
 		portToIfaceUUIDs[port.Name] = port.Interfaces
 	}
 
