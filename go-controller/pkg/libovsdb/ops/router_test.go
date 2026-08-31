@@ -6,11 +6,64 @@ package ops
 import (
 	"fmt"
 	"net"
+	"reflect"
 	"testing"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 )
+
+func TestGetRouterLogicalRouterStaticRoutesWithPredicate(t *testing.T) {
+	route1 := &nbdb.LogicalRouterStaticRoute{
+		UUID:        buildNamedUUID(),
+		IPPrefix:    "10.0.0.0/24",
+		Nexthop:     "100.64.0.2",
+		ExternalIDs: map[string]string{"owner": "node1"},
+	}
+	route2 := &nbdb.LogicalRouterStaticRoute{
+		UUID:        buildNamedUUID(),
+		IPPrefix:    "10.0.1.0/24",
+		Nexthop:     "100.64.0.3",
+		ExternalIDs: map[string]string{"owner": "node1"},
+	}
+	otherRouterRoute := &nbdb.LogicalRouterStaticRoute{
+		UUID:        buildNamedUUID(),
+		IPPrefix:    "10.0.2.0/24",
+		Nexthop:     "100.64.0.4",
+		ExternalIDs: map[string]string{"owner": "node1"},
+	}
+	router := &nbdb.LogicalRouter{
+		UUID:         buildNamedUUID(),
+		Name:         "router1",
+		StaticRoutes: []string{route2.UUID, route1.UUID},
+	}
+
+	nbClient, cleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{NBData: []libovsdbtest.TestData{
+		route1,
+		route2,
+		otherRouterRoute,
+		router,
+	}}, nil)
+	if err != nil {
+		t.Fatalf("failed to set up test harness: %v", err)
+	}
+	t.Cleanup(cleanup.Cleanup)
+
+	routes, err := GetRouterLogicalRouterStaticRoutesWithPredicate(nbClient, &nbdb.LogicalRouter{Name: router.Name}, func(route *nbdb.LogicalRouterStaticRoute) bool {
+		return route.ExternalIDs["owner"] == "node1"
+	})
+	if err != nil {
+		t.Fatalf("GetRouterLogicalRouterStaticRoutesWithPredicate() error = %v", err)
+	}
+
+	gotPrefixes := make([]string, 0, len(routes))
+	for _, route := range routes {
+		gotPrefixes = append(gotPrefixes, route.IPPrefix)
+	}
+	if wantPrefixes := []string{route2.IPPrefix, route1.IPPrefix}; !reflect.DeepEqual(gotPrefixes, wantPrefixes) {
+		t.Fatalf("GetRouterLogicalRouterStaticRoutesWithPredicate() prefixes = %v, want %v", gotPrefixes, wantPrefixes)
+	}
+}
 
 func TestFindNATsUsingPredicate(t *testing.T) {
 	fakeNAT1 := &nbdb.NAT{

@@ -690,32 +690,32 @@ func GetRouterLogicalRouterStaticRoutesWithPredicate(nbClient libovsdbclient.Cli
 		return nil, fmt.Errorf("failed to get router: %s, error: %w", router.Name, err)
 	}
 
-	lrsrs := []*nbdb.LogicalRouterStaticRoute{}
+	// Filter in the cache before cloning rows. The previous implementation
+	// fetched every route UUID attached to the router and cloned it before
+	// applying p. Large interconnect routers therefore cloned their whole route
+	// table for every predicate lookup, even when only one route could match.
+	routeUUIDs := sets.New(r.StaticRoutes...)
+	matches, err := FindLogicalRouterStaticRoutesWithPredicate(nbClient, func(lrsr *nbdb.LogicalRouterStaticRoute) bool {
+		return routeUUIDs.Has(lrsr.UUID) && p(lrsr)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Preserve the logical router's route ordering. Some callers retain the
+	// first matching route and remove later duplicates.
+	matchesByUUID := make(map[string]*nbdb.LogicalRouterStaticRoute, len(matches))
+	for _, route := range matches {
+		matchesByUUID[route.UUID] = route
+	}
+	lrsrs := make([]*nbdb.LogicalRouterStaticRoute, 0, len(matches))
 	for _, uuid := range r.StaticRoutes {
-		lrsr := &nbdb.LogicalRouterStaticRoute{UUID: uuid}
-		validRoute, err := routeExistsWithPredicate(nbClient, lrsr, p)
-		if err != nil {
-			return nil, err
-		}
-		if validRoute {
-			lrsrs = append(lrsrs, lrsr)
+		if route, ok := matchesByUUID[uuid]; ok {
+			lrsrs = append(lrsrs, route)
 		}
 	}
 
 	return lrsrs, nil
-}
-
-func routeExistsWithPredicate(nbClient libovsdbclient.Client, lrsr *nbdb.LogicalRouterStaticRoute, p logicalRouterStaticRoutePredicate) (bool, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), config.Default.OVSDBTxnTimeout)
-	defer cancel()
-	err := nbClient.Get(ctx, lrsr)
-	if err != nil {
-		return false, err
-	}
-	if p(lrsr) {
-		return true, nil
-	}
-	return false, nil
 }
 
 // CreateOrUpdateLogicalRouterStaticRoutesWithPredicateOps looks up a logical
