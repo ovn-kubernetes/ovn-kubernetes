@@ -135,10 +135,9 @@ Shared packages used across multiple components:
 
 ## Testing
 
-- Unit tests use Ginkgo suites (`_suite_test.go`) and live alongside the
-  code as `*_test.go` files.
-- See [`docs/developer-guide/developer.md`](../../docs/developer-guide/developer.md)
-  for mock generation and the `.mockery.yaml` config.
+- Unit tests live alongside the code as `*_test.go` files.
+- Some packages use Ginkgo suites (identified by a `_suite_test.go` file);
+  standard Go `testing.T` tests are equally acceptable and common.
 
 ## Test Helpers
 
