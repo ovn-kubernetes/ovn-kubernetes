@@ -3,33 +3,35 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
+        <meta name="description" content="At IIJ, we are developing a Kubernetes platform that uses OVN-Kubernetes as a destination for migrating VM workloads.
+We currently use the platform in development and SRE environments, and we plan to build a production environment during fiscal year 2026.
+This article explains why IIJ adopted OVN-Kubernetes and how we use it today.">
       
       
-        <link rel="canonical" href="https://www.ovn.org/ovn-kubernetes/master/blog/">
+      
+        <link rel="canonical" href="https://www.ovn.org/ovn-kubernetes/master/blog/2026/09/01/why-iij-chose-ovn-kubernetes-for-its-vm-workload-migration-platform-and-how-we-use-it-today/">
       
       
-        <link rel="prev" href="../okeps/okep-5212-ovnobserv-api/">
+        <link rel="prev" href="../../../03/12/debugging-networkpolicies-with-netobserv/">
       
-      
-        <link rel="next" href="archive/2026/">
       
       
         
       
       
-      <link rel="icon" href="../images/ovn-inside-k8s.png">
+      <link rel="icon" href="../../../../../images/ovn-inside-k8s.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
-        <title>OVN-Kubernetes Blog - OVN-Kubernetes</title>
+        <title>Why IIJ Chose OVN-Kubernetes for Its VM Workload Migration Platform and How We Use It Today - OVN-Kubernetes</title>
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../../../../../assets/stylesheets/main.ec1eaa64.min.css">
       
         
-        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../../../../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -48,15 +50,15 @@
       
     
     
-      <link rel="stylesheet" href="../stylesheets/extra.css">
+      <link rel="stylesheet" href="../../../../../stylesheets/extra.css">
     
-    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../../../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
     
     
-  <link href="../assets/stylesheets/glightbox.min.css" rel="stylesheet"><script src="../assets/javascripts/glightbox.min.js"></script><style id="glightbox-style">
+  <link href="../../../../../assets/stylesheets/glightbox.min.css" rel="stylesheet"><script src="../../../../../assets/javascripts/glightbox.min.js"></script><style id="glightbox-style">
             html.glightbox-open { overflow: initial; height: 100%; }
             .gslide-title { margin-top: 0px; user-select: text; }
             .gslide-desc { color: #666; user-select: text; }
@@ -85,7 +87,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#ovn-kubernetes-blog" class="md-skip">
+        <a href="#why-iij-chose-ovn-kubernetes-for-its-vm-workload-migration-platform-and-how-we-use-it-today" class="md-skip">
           Skip to content
         </a>
       
@@ -105,9 +107,9 @@
 
 <header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href=".." title="OVN-Kubernetes" class="md-header__button md-logo" aria-label="OVN-Kubernetes" data-md-component="logo">
+    <a href="../../../../.." title="OVN-Kubernetes" class="md-header__button md-logo" aria-label="OVN-Kubernetes" data-md-component="logo">
       
-  <img src="../images/ovn-inside-k8s.png" alt="logo">
+  <img src="../../../../../images/ovn-inside-k8s.png" alt="logo">
 
     </a>
     <label class="md-header__button md-icon" for="__drawer">
@@ -124,7 +126,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              OVN-Kubernetes Blog
+              Why IIJ Chose OVN-Kubernetes for Its VM Workload Migration Platform and How We Use It Today
             
           </span>
         </div>
@@ -231,7 +233,7 @@
     
     
       <li class="md-tabs__item">
-        <a href=".." class="md-tabs__link">
+        <a href="../../../../.." class="md-tabs__link">
           
   
   
@@ -253,7 +255,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../getting-started/" class="md-tabs__link">
+        <a href="../../../../../getting-started/" class="md-tabs__link">
           
   
   
@@ -275,7 +277,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../developer-guide/" class="md-tabs__link">
+        <a href="../../../../../developer-guide/" class="md-tabs__link">
           
   
   
@@ -297,7 +299,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../api-reference/" class="md-tabs__link">
+        <a href="../../../../../api-reference/" class="md-tabs__link">
           
   
   
@@ -319,7 +321,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../features/" class="md-tabs__link">
+        <a href="../../../../../features/" class="md-tabs__link">
           
   
   
@@ -341,7 +343,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../troubleshooting/" class="md-tabs__link">
+        <a href="../../../../../troubleshooting/" class="md-tabs__link">
           
   
   
@@ -363,7 +365,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../observability/" class="md-tabs__link">
+        <a href="../../../../../observability/" class="md-tabs__link">
           
   
   
@@ -385,7 +387,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../okeps/" class="md-tabs__link">
+        <a href="../../../../../okeps/" class="md-tabs__link">
           
   
   
@@ -409,7 +411,7 @@
     
     
       <li class="md-tabs__item md-tabs__item--active">
-        <a href="./" class="md-tabs__link">
+        <a href="../../../../" class="md-tabs__link">
           
   
   
@@ -440,7 +442,9 @@
           
             
               
-              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation">
+                
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" hidden="">
                 <div class="md-sidebar__scrollwrap">
                   <div class="md-sidebar__inner">
                     
@@ -451,9 +455,9 @@
 
 <nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href=".." title="OVN-Kubernetes" class="md-nav__button md-logo" aria-label="OVN-Kubernetes" data-md-component="logo">
+    <a href="../../../../.." title="OVN-Kubernetes" class="md-nav__button md-logo" aria-label="OVN-Kubernetes" data-md-component="logo">
       
-  <img src="../images/ovn-inside-k8s.png" alt="logo">
+  <img src="../../../../../images/ovn-inside-k8s.png" alt="logo">
 
     </a>
     OVN-Kubernetes
@@ -527,7 +531,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href=".." class="md-nav__link ">
+            <a href="../../../../.." class="md-nav__link ">
               
   
   
@@ -571,7 +575,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../design/architecture/" class="md-nav__link">
+      <a href="../../../../../design/architecture/" class="md-nav__link">
         
   
   
@@ -599,7 +603,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../design/topology/" class="md-nav__link">
+      <a href="../../../../../design/topology/" class="md-nav__link">
         
   
   
@@ -627,7 +631,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../design/gateway-modes/" class="md-nav__link">
+      <a href="../../../../../design/gateway-modes/" class="md-nav__link">
         
   
   
@@ -655,7 +659,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../design/traffic-flows/" class="md-nav__link">
+      <a href="../../../../../design/traffic-flows/" class="md-nav__link">
         
   
   
@@ -683,7 +687,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../design/pod-creation-workflow/" class="md-nav__link">
+      <a href="../../../../../design/pod-creation-workflow/" class="md-nav__link">
         
   
   
@@ -711,7 +715,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../design/service-creation-workflow/" class="md-nav__link">
+      <a href="../../../../../design/service-creation-workflow/" class="md-nav__link">
         
   
   
@@ -739,7 +743,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../design/service-traffic-policy/" class="md-nav__link">
+      <a href="../../../../../design/service-traffic-policy/" class="md-nav__link">
         
   
   
@@ -767,7 +771,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../design/host-to-node-port-hairpin-trafficflow/" class="md-nav__link">
+      <a href="../../../../../design/host-to-node-port-hairpin-trafficflow/" class="md-nav__link">
         
   
   
@@ -795,7 +799,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../design/external-ip-and-loadbalancer-ingress/" class="md-nav__link">
+      <a href="../../../../../design/external-ip-and-loadbalancer-ingress/" class="md-nav__link">
         
   
   
@@ -823,7 +827,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../design/ovn-kubernetes-subnets/" class="md-nav__link">
+      <a href="../../../../../design/ovn-kubernetes-subnets/" class="md-nav__link">
         
   
   
@@ -851,7 +855,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../design/bridge-flows/" class="md-nav__link">
+      <a href="../../../../../design/bridge-flows/" class="md-nav__link">
         
   
   
@@ -879,7 +883,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../design/masquerade-ips/" class="md-nav__link">
+      <a href="../../../../../design/masquerade-ips/" class="md-nav__link">
         
   
   
@@ -907,7 +911,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../features/live-migration/" class="md-nav__link">
+      <a href="../../../../../features/live-migration/" class="md-nav__link">
         
   
   
@@ -983,7 +987,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../getting-started/" class="md-nav__link ">
+            <a href="../../../../../getting-started/" class="md-nav__link ">
               
   
   
@@ -1027,7 +1031,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../installation/launching-ovn-kubernetes-on-kind/" class="md-nav__link">
+      <a href="../../../../../installation/launching-ovn-kubernetes-on-kind/" class="md-nav__link">
         
   
   
@@ -1055,7 +1059,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../installation/launching-ovn-kubernetes-with-helm/" class="md-nav__link">
+      <a href="../../../../../installation/launching-ovn-kubernetes-with-helm/" class="md-nav__link">
         
   
   
@@ -1083,7 +1087,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../installation/launching-ovn-kubernetes-with-dpu/" class="md-nav__link">
+      <a href="../../../../../installation/launching-ovn-kubernetes-with-dpu/" class="md-nav__link">
         
   
   
@@ -1111,7 +1115,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../installation/INSTALL.KUBEADM/" class="md-nav__link">
+      <a href="../../../../../installation/INSTALL.KUBEADM/" class="md-nav__link">
         
   
   
@@ -1139,7 +1143,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../getting-started/configuration/" class="md-nav__link">
+      <a href="../../../../../getting-started/configuration/" class="md-nav__link">
         
   
   
@@ -1167,7 +1171,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../features/requirements/" class="md-nav__link">
+      <a href="../../../../../features/requirements/" class="md-nav__link">
         
   
   
@@ -1195,7 +1199,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../getting-started/cli-guide/" class="md-nav__link">
+      <a href="../../../../../getting-started/cli-guide/" class="md-nav__link">
         
   
   
@@ -1223,7 +1227,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../getting-started/example-pod-creation/" class="md-nav__link">
+      <a href="../../../../../getting-started/example-pod-creation/" class="md-nav__link">
         
   
   
@@ -1251,7 +1255,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../getting-started/example-service-creation/" class="md-nav__link">
+      <a href="../../../../../getting-started/example-service-creation/" class="md-nav__link">
         
   
   
@@ -1279,7 +1283,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../getting-started/building-ovn-kubernetes/" class="md-nav__link">
+      <a href="../../../../../getting-started/building-ovn-kubernetes/" class="md-nav__link">
         
   
   
@@ -1359,7 +1363,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../developer-guide/" class="md-nav__link ">
+            <a href="../../../../../developer-guide/" class="md-nav__link ">
               
   
   
@@ -1403,7 +1407,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../governance/CONTRIBUTING/" class="md-nav__link">
+      <a href="../../../../../governance/CONTRIBUTING/" class="md-nav__link">
         
   
   
@@ -1431,7 +1435,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../governance/GOVERNANCE/" class="md-nav__link">
+      <a href="../../../../../governance/GOVERNANCE/" class="md-nav__link">
         
   
   
@@ -1459,7 +1463,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../governance/REVIEWING/" class="md-nav__link">
+      <a href="../../../../../governance/REVIEWING/" class="md-nav__link">
         
   
   
@@ -1487,7 +1491,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../developer-guide/areas/" class="md-nav__link">
+      <a href="../../../../../developer-guide/areas/" class="md-nav__link">
         
   
   
@@ -1515,7 +1519,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../developer-guide/developer/" class="md-nav__link">
+      <a href="../../../../../developer-guide/developer/" class="md-nav__link">
         
   
   
@@ -1543,7 +1547,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../developer-guide/image-build/" class="md-nav__link">
+      <a href="../../../../../developer-guide/image-build/" class="md-nav__link">
         
   
   
@@ -1571,7 +1575,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../developer-guide/documentation/" class="md-nav__link">
+      <a href="../../../../../developer-guide/documentation/" class="md-nav__link">
         
   
   
@@ -1599,7 +1603,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../developer-guide/local_testing_guide/" class="md-nav__link">
+      <a href="../../../../../developer-guide/local_testing_guide/" class="md-nav__link">
         
   
   
@@ -1627,7 +1631,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../ci/ci/" class="md-nav__link">
+      <a href="../../../../../ci/ci/" class="md-nav__link">
         
   
   
@@ -1655,7 +1659,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../developer-guide/debugging/" class="md-nav__link">
+      <a href="../../../../../developer-guide/debugging/" class="md-nav__link">
         
   
   
@@ -1683,7 +1687,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../developer-guide/release/" class="md-nav__link">
+      <a href="../../../../../developer-guide/release/" class="md-nav__link">
         
   
   
@@ -1711,7 +1715,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../developer-guide/maintenance/" class="md-nav__link">
+      <a href="../../../../../developer-guide/maintenance/" class="md-nav__link">
         
   
   
@@ -1787,7 +1791,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../api-reference/" class="md-nav__link ">
+            <a href="../../../../../api-reference/" class="md-nav__link ">
               
   
   
@@ -1831,7 +1835,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../api-reference/introduction/" class="md-nav__link">
+      <a href="../../../../../api-reference/introduction/" class="md-nav__link">
         
   
   
@@ -1859,7 +1863,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../api-reference/egress-ip-api-spec/" class="md-nav__link">
+      <a href="../../../../../api-reference/egress-ip-api-spec/" class="md-nav__link">
         
   
   
@@ -1887,7 +1891,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../api-reference/egress-service-api-spec/" class="md-nav__link">
+      <a href="../../../../../api-reference/egress-service-api-spec/" class="md-nav__link">
         
   
   
@@ -1915,7 +1919,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../api-reference/egress-qos-api-spec/" class="md-nav__link">
+      <a href="../../../../../api-reference/egress-qos-api-spec/" class="md-nav__link">
         
   
   
@@ -1943,7 +1947,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../api-reference/egress-firewall-api-spec/" class="md-nav__link">
+      <a href="../../../../../api-reference/egress-firewall-api-spec/" class="md-nav__link">
         
   
   
@@ -1971,7 +1975,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../api-reference/admin-epbr-api-spec/" class="md-nav__link">
+      <a href="../../../../../api-reference/admin-epbr-api-spec/" class="md-nav__link">
         
   
   
@@ -1999,7 +2003,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../api-reference/userdefinednetwork-api-spec/" class="md-nav__link">
+      <a href="../../../../../api-reference/userdefinednetwork-api-spec/" class="md-nav__link">
         
   
   
@@ -2027,7 +2031,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../api-reference/routeadvertisements-api-spec/" class="md-nav__link">
+      <a href="../../../../../api-reference/routeadvertisements-api-spec/" class="md-nav__link">
         
   
   
@@ -2055,7 +2059,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../api-reference/clusternetworkconnect-api-spec/" class="md-nav__link">
+      <a href="../../../../../api-reference/clusternetworkconnect-api-spec/" class="md-nav__link">
         
   
   
@@ -2083,7 +2087,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../api-reference/vtep-api-spec/" class="md-nav__link">
+      <a href="../../../../../api-reference/vtep-api-spec/" class="md-nav__link">
         
   
   
@@ -2163,7 +2167,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../features/" class="md-nav__link ">
+            <a href="../../../../../features/" class="md-nav__link ">
               
   
   
@@ -2236,7 +2240,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../features/user-defined-networks/" class="md-nav__link ">
+            <a href="../../../../../features/user-defined-networks/" class="md-nav__link ">
               
   
   
@@ -2280,7 +2284,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../features/user-defined-networks/user-defined-networks/" class="md-nav__link">
+      <a href="../../../../../features/user-defined-networks/user-defined-networks/" class="md-nav__link">
         
   
   
@@ -2308,7 +2312,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../features/user-defined-networks/uplinks/" class="md-nav__link">
+      <a href="../../../../../features/user-defined-networks/uplinks/" class="md-nav__link">
         
   
   
@@ -2336,7 +2340,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../features/user-defined-networks/cluster-network-connect/" class="md-nav__link">
+      <a href="../../../../../features/user-defined-networks/cluster-network-connect/" class="md-nav__link">
         
   
   
@@ -2364,7 +2368,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../features/user-defined-networks/dynamic-udn/" class="md-nav__link">
+      <a href="../../../../../features/user-defined-networks/dynamic-udn/" class="md-nav__link">
         
   
   
@@ -2427,7 +2431,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../features/network-security-controls/" class="md-nav__link ">
+            <a href="../../../../../features/network-security-controls/" class="md-nav__link ">
               
   
   
@@ -2471,7 +2475,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../features/network-security-controls/admin-network-policy/" class="md-nav__link">
+      <a href="../../../../../features/network-security-controls/admin-network-policy/" class="md-nav__link">
         
   
   
@@ -2499,7 +2503,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../features/network-security-controls/network-policy/" class="md-nav__link">
+      <a href="../../../../../features/network-security-controls/network-policy/" class="md-nav__link">
         
   
   
@@ -2527,7 +2531,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../features/network-security-controls/egress-firewall/" class="md-nav__link">
+      <a href="../../../../../features/network-security-controls/egress-firewall/" class="md-nav__link">
         
   
   
@@ -2592,7 +2596,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../features/cluster-egress-controls/" class="md-nav__link ">
+            <a href="../../../../../features/cluster-egress-controls/" class="md-nav__link ">
               
   
   
@@ -2636,7 +2640,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../features/cluster-egress-controls/egress-ip/" class="md-nav__link">
+      <a href="../../../../../features/cluster-egress-controls/egress-ip/" class="md-nav__link">
         
   
   
@@ -2664,7 +2668,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../features/cluster-egress-controls/egress-service/" class="md-nav__link">
+      <a href="../../../../../features/cluster-egress-controls/egress-service/" class="md-nav__link">
         
   
   
@@ -2692,7 +2696,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../features/cluster-egress-controls/egress-qos/" class="md-nav__link">
+      <a href="../../../../../features/cluster-egress-controls/egress-qos/" class="md-nav__link">
         
   
   
@@ -2720,7 +2724,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../features/cluster-egress-controls/egress-gateway/" class="md-nav__link">
+      <a href="../../../../../features/cluster-egress-controls/egress-gateway/" class="md-nav__link">
         
   
   
@@ -2779,7 +2783,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../features/infrastructure-security-controls/" class="md-nav__link ">
+            <a href="../../../../../features/infrastructure-security-controls/" class="md-nav__link ">
               
   
   
@@ -2823,7 +2827,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../features/infrastructure-security-controls/node-identity/" class="md-nav__link">
+      <a href="../../../../../features/infrastructure-security-controls/node-identity/" class="md-nav__link">
         
   
   
@@ -2886,7 +2890,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../features/multiple-networks/" class="md-nav__link ">
+            <a href="../../../../../features/multiple-networks/" class="md-nav__link ">
               
   
   
@@ -2930,7 +2934,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../features/multiple-networks/multi-homing/" class="md-nav__link">
+      <a href="../../../../../features/multiple-networks/multi-homing/" class="md-nav__link">
         
   
   
@@ -2958,7 +2962,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../features/multiple-networks/multi-network-policies/" class="md-nav__link">
+      <a href="../../../../../features/multiple-networks/multi-network-policies/" class="md-nav__link">
         
   
   
@@ -2986,7 +2990,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../features/multiple-networks/multi-vtep/" class="md-nav__link">
+      <a href="../../../../../features/multiple-networks/multi-vtep/" class="md-nav__link">
         
   
   
@@ -3022,7 +3026,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../features/multicast/" class="md-nav__link">
+      <a href="../../../../../features/multicast/" class="md-nav__link">
         
   
   
@@ -3075,7 +3079,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../features/network-qos/" class="md-nav__link ">
+            <a href="../../../../../features/network-qos/" class="md-nav__link ">
               
   
   
@@ -3119,7 +3123,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../features/network-qos/overview/" class="md-nav__link">
+      <a href="../../../../../features/network-qos/overview/" class="md-nav__link">
         
   
   
@@ -3147,7 +3151,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../features/network-qos/usage-guide/" class="md-nav__link">
+      <a href="../../../../../features/network-qos/usage-guide/" class="md-nav__link">
         
   
   
@@ -3183,7 +3187,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../features/live-migration/" class="md-nav__link">
+      <a href="../../../../../features/live-migration/" class="md-nav__link">
         
   
   
@@ -3211,7 +3215,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../features/hybrid-overlay/" class="md-nav__link">
+      <a href="../../../../../features/hybrid-overlay/" class="md-nav__link">
         
   
   
@@ -3239,7 +3243,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../features/ovs-dynamic-cpu-affinity/" class="md-nav__link">
+      <a href="../../../../../features/ovs-dynamic-cpu-affinity/" class="md-nav__link">
         
   
   
@@ -3292,7 +3296,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../features/hardware-offload/" class="md-nav__link ">
+            <a href="../../../../../features/hardware-offload/" class="md-nav__link ">
               
   
   
@@ -3336,7 +3340,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../features/hardware-offload/ovs-kernel/" class="md-nav__link">
+      <a href="../../../../../features/hardware-offload/ovs-kernel/" class="md-nav__link">
         
   
   
@@ -3364,7 +3368,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../features/hardware-offload/ovs-doca/" class="md-nav__link">
+      <a href="../../../../../features/hardware-offload/ovs-doca/" class="md-nav__link">
         
   
   
@@ -3427,7 +3431,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../features/bgp-integration/" class="md-nav__link ">
+            <a href="../../../../../features/bgp-integration/" class="md-nav__link ">
               
   
   
@@ -3471,7 +3475,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../features/bgp-integration/route-advertisements/" class="md-nav__link">
+      <a href="../../../../../features/bgp-integration/route-advertisements/" class="md-nav__link">
         
   
   
@@ -3499,7 +3503,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../features/bgp-integration/no-overlay/" class="md-nav__link">
+      <a href="../../../../../features/bgp-integration/no-overlay/" class="md-nav__link">
         
   
   
@@ -3527,7 +3531,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../features/bgp-integration/evpn/" class="md-nav__link">
+      <a href="../../../../../features/bgp-integration/evpn/" class="md-nav__link">
         
   
   
@@ -3597,7 +3601,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../troubleshooting/" class="md-nav__link ">
+            <a href="../../../../../troubleshooting/" class="md-nav__link ">
               
   
   
@@ -3641,7 +3645,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../troubleshooting/debugging/" class="md-nav__link">
+      <a href="../../../../../troubleshooting/debugging/" class="md-nav__link">
         
   
   
@@ -3669,7 +3673,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../troubleshooting/ovnkube-trace/" class="md-nav__link">
+      <a href="../../../../../troubleshooting/ovnkube-trace/" class="md-nav__link">
         
   
   
@@ -3697,7 +3701,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../troubleshooting/logging/" class="md-nav__link">
+      <a href="../../../../../troubleshooting/logging/" class="md-nav__link">
         
   
   
@@ -3759,7 +3763,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../observability/" class="md-nav__link ">
+            <a href="../../../../../observability/" class="md-nav__link ">
               
   
   
@@ -3803,7 +3807,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../observability/metrics/" class="md-nav__link">
+      <a href="../../../../../observability/metrics/" class="md-nav__link">
         
   
   
@@ -3831,7 +3835,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../observability/sdn-dashboard/" class="md-nav__link">
+      <a href="../../../../../observability/sdn-dashboard/" class="md-nav__link">
         
   
   
@@ -3859,7 +3863,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../observability/ovn-observability/" class="md-nav__link">
+      <a href="../../../../../observability/ovn-observability/" class="md-nav__link">
         
   
   
@@ -3947,7 +3951,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../okeps/" class="md-nav__link ">
+            <a href="../../../../../okeps/" class="md-nav__link ">
               
   
   
@@ -3991,7 +3995,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../okeps/okep-5085-localnet-api/" class="md-nav__link">
+      <a href="../../../../../okeps/okep-5085-localnet-api/" class="md-nav__link">
         
   
   
@@ -4019,7 +4023,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../okeps/okep-4380-network-qos/" class="md-nav__link">
+      <a href="../../../../../okeps/okep-4380-network-qos/" class="md-nav__link">
         
   
   
@@ -4047,7 +4051,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../okeps/okep-5193-user-defined-networks/" class="md-nav__link">
+      <a href="../../../../../okeps/okep-5193-user-defined-networks/" class="md-nav__link">
         
   
   
@@ -4075,7 +4079,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../okeps/okep-5233-preconfigured-udn-addresses/" class="md-nav__link">
+      <a href="../../../../../okeps/okep-5233-preconfigured-udn-addresses/" class="md-nav__link">
         
   
   
@@ -4103,7 +4107,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../okeps/okep-5296-bgp/" class="md-nav__link">
+      <a href="../../../../../okeps/okep-5296-bgp/" class="md-nav__link">
         
   
   
@@ -4131,7 +4135,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../okeps/okep-5094-layer2-transit-router/" class="md-nav__link">
+      <a href="../../../../../okeps/okep-5094-layer2-transit-router/" class="md-nav__link">
         
   
   
@@ -4159,7 +4163,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../okeps/okep-5494-ovn-kubernetes-mcp-server/" class="md-nav__link">
+      <a href="../../../../../okeps/okep-5494-ovn-kubernetes-mcp-server/" class="md-nav__link">
         
   
   
@@ -4187,7 +4191,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../okeps/okep-5552-dynamic-udn-node-allocation/" class="md-nav__link">
+      <a href="../../../../../okeps/okep-5552-dynamic-udn-node-allocation/" class="md-nav__link">
         
   
   
@@ -4215,7 +4219,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../okeps/okep-5224-connecting-udns/okep-5224-connecting-udns/" class="md-nav__link">
+      <a href="../../../../../okeps/okep-5224-connecting-udns/okep-5224-connecting-udns/" class="md-nav__link">
         
   
   
@@ -4243,7 +4247,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../okeps/okep-5259-no-overlay/" class="md-nav__link">
+      <a href="../../../../../okeps/okep-5259-no-overlay/" class="md-nav__link">
         
   
   
@@ -4271,7 +4275,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../okeps/okep-5088-evpn/" class="md-nav__link">
+      <a href="../../../../../okeps/okep-5088-evpn/" class="md-nav__link">
         
   
   
@@ -4299,7 +4303,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../okeps/okep-5674-dpu-healthcheck/" class="md-nav__link">
+      <a href="../../../../../okeps/okep-5674-dpu-healthcheck/" class="md-nav__link">
         
   
   
@@ -4327,7 +4331,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../okeps/okep-5377-extend-udn-to-support-multiple-cluster-subnets-in-layer3-topology/" class="md-nav__link">
+      <a href="../../../../../okeps/okep-5377-extend-udn-to-support-multiple-cluster-subnets-in-layer3-topology/" class="md-nav__link">
         
   
   
@@ -4355,7 +4359,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../okeps/okep-6019-vrf-lite-shared-gateway-external-bridges/" class="md-nav__link">
+      <a href="../../../../../okeps/okep-6019-vrf-lite-shared-gateway-external-bridges/" class="md-nav__link">
         
   
   
@@ -4383,7 +4387,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../okeps/okep-3926-disable-port-security/" class="md-nav__link">
+      <a href="../../../../../okeps/okep-3926-disable-port-security/" class="md-nav__link">
         
   
   
@@ -4411,7 +4415,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../okeps/okep-5212-ovnobserv-api/" class="md-nav__link">
+      <a href="../../../../../okeps/okep-5212-ovnobserv-api/" class="md-nav__link">
         
   
   
@@ -4474,7 +4478,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="./" class="md-nav__link md-nav__link--active">
+            <a href="../../../../" class="md-nav__link ">
               
   
   
@@ -4492,7 +4496,7 @@
             </a>
             
               
-              <label class="md-nav__link md-nav__link--active" for="__nav_9" id="__nav_9_label" tabindex="">
+              <label class="md-nav__link " for="__nav_9" id="__nav_9_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
@@ -4574,7 +4578,7 @@
   
   
     <li class="md-nav__item">
-      <a href="archive/2026/" class="md-nav__link">
+      <a href="../../../../archive/2026/" class="md-nav__link">
         
   
   
@@ -4618,6 +4622,8 @@
             
             
               
+                
+              
               <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc">
                 <div class="md-sidebar__scrollwrap">
                   <div class="md-sidebar__inner">
@@ -4637,10 +4643,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
       
         <li class="md-nav__item">
-  <a href="#why-iij-chose-ovn-kubernetes-for-its-vm-workload-migration-platform-and-how-we-use-it-today" class="md-nav__link">
+  <a href="#iij-and-ike" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Why IIJ Chose OVN-Kubernetes for Its VM Workload Migration Platform and How We Use It Today
+        IIJ and IKE
       
     </span>
   </a>
@@ -4648,10 +4654,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#debugging-networkpolicies-with-netobserv" class="md-nav__link">
+  <a href="#migrating-vm-workloads" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Debugging NetworkPolicies with NetObserv
+        Migrating VM Workloads
       
     </span>
   </a>
@@ -4659,10 +4665,104 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#accelerating-and-offloading-kubernetes-networking-leveraging-dpus-with-ovn-kubernetes" class="md-nav__link">
+  <a href="#network-requirements-for-the-vm-migration" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Accelerating and Offloading Kubernetes Networking: Leveraging DPUs with OVN-Kubernetes
+        Network Requirements for the VM Migration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-we-adopted-ovn-kubernetes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why We Adopted OVN-Kubernetes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Why We Adopted OVN-Kubernetes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#udn-is-available-to-users" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        UDN Is Available to Users
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cudn-is-managed-by-the-sre-team" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CUDN Is Managed by the SRE Team
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#localnet-is-also-managed-by-the-sre-team" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Localnet Is Also Managed by the SRE Team
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multus-is-available-to-users" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multus Is Available to Users
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#current-validation-and-adoption-status" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current Validation and Adoption Status
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#working-with-upstream" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Working with Upstream
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#production-adoption-and-future-contributions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Production Adoption and Future Contributions
       
     </span>
   </a>
@@ -4678,167 +4778,205 @@
             
           
           
-  <div class="md-content" data-md-component="content">
-    <div class="md-content__inner">
-      <header class="md-typeset">
-        <h1 id="ovn-kubernetes-blog">OVN-Kubernetes Blog<a class="headerlink" href="#ovn-kubernetes-blog" title="Permanent link">¶</a></h1>
-      </header>
-      
-        <article class="md-post md-post--excerpt">
-  <header class="md-post__header">
-    
-      <nav class="md-post__authors md-typeset">
-        
-          <span class="md-author">
-            <img src="https://raw.githubusercontent.com/cncf/people/main/images/taichi-shimotori.jpg" alt="Taichi Shimotori">
-          </span>
-        
-      </nav>
-    
-    <div class="md-post__meta md-meta">
-      <ul class="md-meta__list">
-        <li class="md-meta__item">
-          <time datetime="2026-09-01 00:00:00+00:00">September 1, 2026</time></li>
-        
-        
+  <div class="md-content md-content--post" data-md-component="content">
+    <div class="md-sidebar md-sidebar--post" data-md-component="sidebar" data-md-type="navigation">
+      <div class="md-sidebar__scrollwrap">
+        <div class="md-sidebar__inner md-post">
+          <nav class="md-nav md-nav--primary">
+            <div class="md-post__back">
+              <div class="md-nav__title md-nav__container">
+                <a href="../../../../" class="md-nav__link">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"></path></svg>
+                  <span class="md-ellipsis">
+                    Back to index
+                  </span>
+                </a>
+              </div>
+            </div>
+            
+              <div class="md-post__authors md-typeset">
+                
+                  <div class="md-profile md-post__profile">
+                    <span class="md-author md-author--long">
+                      <img src="https://raw.githubusercontent.com/cncf/people/main/images/taichi-shimotori.jpg" alt="Taichi Shimotori">
+                    </span>
+                    <span class="md-profile__description">
+                      <strong>
+                        
+                          Taichi Shimotori
+                        
+                      </strong>
+                      <br>
+                      Site Reliability Engineer at Internet Initiative Japan Inc. (IIJ).
+                    </span>
+                  </div>
+                
+              </div>
+            
+            <ul class="md-post__meta md-nav__list">
+              <li class="md-nav__item md-nav__item--section">
+                <div class="md-post__title">
+                  <span class="md-ellipsis">
+                    Metadata
+                  </span>
+                </div>
+                <nav class="md-nav">
+                  <ul class="md-nav__list">
+                    <li class="md-nav__item">
+                      <div class="md-nav__link">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 19H5V8h14m-3-7v2H8V1H6v2H5c-1.11 0-2 .89-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2h-1V1m-1 11h-5v5h5z"></path></svg>
+                        <time datetime="2026-09-01 00:00:00+00:00" class="md-ellipsis">September 1, 2026</time>
+                      </div>
+                    </li>
+                    
+                    
+                    
+                      
+                      <li class="md-nav__item">
+                        <div class="md-nav__link">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 20a8 8 0 0 0 8-8 8 8 0 0 0-8-8 8 8 0 0 0-8 8 8 8 0 0 0 8 8m0-18a10 10 0 0 1 10 10 10 10 0 0 1-10 10C6.47 22 2 17.5 2 12A10 10 0 0 1 12 2m.5 5v5.25l4.5 2.67-.75 1.23L11 13V7z"></path></svg>
+                          <span class="md-ellipsis">
+                            
+                              6 min read
+                            
+                          </span>
+                        </div>
+                      </li>
+                    
+                  </ul>
+                </nav>
+              </li>
+            </ul>
+            
+          </nav>
           
-          <li class="md-meta__item">
-            
-              6 min read
-            
-          </li>
-        
-        
-      </ul>
-      
+        </div>
+      </div>
     </div>
-  </header>
-  <div class="md-post__content md-typeset">
-    <h2 id="why-iij-chose-ovn-kubernetes-for-its-vm-workload-migration-platform-and-how-we-use-it-today"><a class="toclink" href="2026/09/01/why-iij-chose-ovn-kubernetes-for-its-vm-workload-migration-platform-and-how-we-use-it-today/">Why IIJ Chose OVN-Kubernetes for Its VM Workload Migration Platform and How We Use It Today</a></h2>
+    <article class="md-content__inner md-typeset">
+      
+        
+  
+
+
+
+  
+  
+
+
+<h1 id="why-iij-chose-ovn-kubernetes-for-its-vm-workload-migration-platform-and-how-we-use-it-today">Why IIJ Chose OVN-Kubernetes for Its VM Workload Migration Platform and How We Use It Today<a class="headerlink" href="#why-iij-chose-ovn-kubernetes-for-its-vm-workload-migration-platform-and-how-we-use-it-today" title="Permanent link">¶</a></h1>
 <p>At IIJ, we are developing a Kubernetes platform that uses OVN-Kubernetes as a destination for migrating VM workloads.
 We currently use the platform in development and SRE environments, and we plan to build a production environment during fiscal year 2026.
 This article explains why IIJ adopted OVN-Kubernetes and how we use it today.</p>
+<!-- more -->
 
-    
-      <nav class="md-post__action">
-        <a href="2026/09/01/why-iij-chose-ovn-kubernetes-for-its-vm-workload-migration-platform-and-how-we-use-it-today/">
-          Continue reading
-        </a>
-      </nav>
-    
-    
-  </div>
-</article>
-      
-        <article class="md-post md-post--excerpt">
-  <header class="md-post__header">
-    
-      <nav class="md-post__authors md-typeset">
-        
-          <span class="md-author">
-            <img src="https://github.com/npinaeva.png" alt="Nadia Pinaeva">
-          </span>
-        
-      </nav>
-    
-    <div class="md-post__meta md-meta">
-      <ul class="md-meta__list">
-        <li class="md-meta__item">
-          <time datetime="2026-03-12 00:00:00+00:00">March 12, 2026</time></li>
-        
-        
-          
-          <li class="md-meta__item">
-            
-              8 min read
-            
-          </li>
-        
-        
-      </ul>
-      
-    </div>
-  </header>
-  <div class="md-post__content md-typeset">
-    <h2 id="debugging-networkpolicies-with-netobserv"><a class="toclink" href="2026/03/12/debugging-networkpolicies-with-netobserv/">Debugging NetworkPolicies with NetObserv</a></h2>
-<p>Observability is a key part of any system, and Kubernetes networking is no exception.
-But even if you see WHAT happens in your network, you still don’t know WHY it happens. 
-Especially if you have a number of network policies in the cluster, it is always difficult to tell why exactly 
-a given connection is allowed or denied.</p>
-<p>To solve this problem, OVN-Kubernetes has introduced a new observability feature together with the NetObserv project
-that adds explicit communication between observability and networking.</p>
-
-    
-      <nav class="md-post__action">
-        <a href="2026/03/12/debugging-networkpolicies-with-netobserv/">
-          Continue reading
-        </a>
-      </nav>
-    
-    
-  </div>
-</article>
-      
-        <article class="md-post md-post--excerpt">
-  <header class="md-post__header">
-    
-      <nav class="md-post__authors md-typeset">
-        
-          <span class="md-author">
-            <img src="https://github.com/trozet.png" alt="Tim Rozet">
-          </span>
-        
-      </nav>
-    
-    <div class="md-post__meta md-meta">
-      <ul class="md-meta__list">
-        <li class="md-meta__item">
-          <time datetime="2026-02-12 00:00:00+00:00">February 12, 2026</time></li>
-        
-        
-          
-          <li class="md-meta__item">
-            
-              12 min read
-            
-          </li>
-        
-        
-      </ul>
-      
-    </div>
-  </header>
-  <div class="md-post__content md-typeset">
-    <h2 id="accelerating-and-offloading-kubernetes-networking-leveraging-dpus-with-ovn-kubernetes"><a class="toclink" href="2026/02/12/accelerating-and-offloading-kubernetes-networking-leveraging-dpus-with-ovn-kubernetes/">Accelerating and Offloading Kubernetes Networking: Leveraging DPUs with OVN-Kubernetes</a></h2>
-<h3 id="introduction"><a class="toclink" href="2026/02/12/accelerating-and-offloading-kubernetes-networking-leveraging-dpus-with-ovn-kubernetes/#introduction">Introduction</a></h3>
-<p>This blog post provides a comprehensive guide on deploying OVN-Kubernetes in an environment leveraging Data Processing Units (DPUs).
-This setup is crucial for high-performance networking in cloud-native applications, offloading network processing from the host CPU to the
-DPU, and providing better security for the networking control-plane. Additionally, OVN-Kubernetes brings in robust features like User Defined
-Networks (UDNs) that enable per tenant network isolation into the Kubernetes environment and integrates with the DPU solution.</p>
-
-    
-      <nav class="md-post__action">
-        <a href="2026/02/12/accelerating-and-offloading-kubernetes-networking-leveraging-dpus-with-ovn-kubernetes/">
-          Continue reading
-        </a>
-      </nav>
-    
-    
-  </div>
-</article>
-      
-      
-        
-          
+<h2 id="iij-and-ike">IIJ and IKE<a class="headerlink" href="#iij-and-ike" title="Permanent link">¶</a></h2>
+<p>IIJ was founded in 1992 and became the first Japanese company to launch a commercial Internet service.
+Since then, we have used our expertise in networking, cloud computing, security, mobile services, and IoT to provide IT services and systems integration to approximately 16,000 corporate customers in Japan and overseas, as well as individual users.</p>
+<p>IIJ develops and operates IKE, the IIJ Kubernetes Engine, as one of the platforms used to build and deliver these services.
+The SRE Promotion Department is responsible for IKE.</p>
+<p>IKE provides the capabilities required to use Kubernetes as an application platform in an on-premises environment, including networking, storage, observability, and sensitive information management.
+It also integrates with IIJ's backbone network and back-office systems, providing IIJ-specific capabilities to internal service development teams as part of the platform.</p>
+<p>IKE has been in operation since 2018 and now comprises multiple production clusters.</p>
+<h2 id="migrating-vm-workloads">Migrating VM Workloads<a class="headerlink" href="#migrating-vm-workloads" title="Permanent link">¶</a></h2>
+<p>IIJ has built many of its services on VMware-based VMs.
+However, rising licensing costs increased the need to migrate existing VMs to another platform.</p>
+<p>IKE emerged as a candidate destination.
+We already operate a KubeVirt-based VM platform on IKE, allowing us to apply both our operational experience with Kubernetes and the platform capabilities provided by IKE.
+Managing VMs and containers through the same Kubernetes API and operational platform also lets us choose the most suitable execution model for each workload.</p>
+<h2 id="network-requirements-for-the-vm-migration">Network Requirements for the VM Migration<a class="headerlink" href="#network-requirements-for-the-vm-migration" title="Permanent link">¶</a></h2>
+<p>Migrating VMs to IKE requires us to carry over not only compute resources but also the network requirements of the existing environment.</p>
+<p>In our conventional IKE clusters, the primary connection for workloads has been a Layer 3 pod network spanning the cluster.
+In IIJ's existing VM environment, however, a single VM connects to multiple Layer 2 networks, with separate networks for different applications and tenants.</p>
+<p>The migration platform therefore needed to provide the following capabilities:</p>
+<ul>
+<li>Connect a single VM to multiple networks</li>
+<li>Create Layer 2 networks</li>
+<li>Isolate networks by application or tenant</li>
+<li>Connect to existing physical networks</li>
+</ul>
+<h2 id="why-we-adopted-ovn-kubernetes">Why We Adopted OVN-Kubernetes<a class="headerlink" href="#why-we-adopted-ovn-kubernetes" title="Permanent link">¶</a></h2>
+<p>To meet these network requirements, we adopted OVN-Kubernetes as the CNI plugin for the destination cluster.
+We named this cluster IKE VPC, short for Virtual Private Cluster.</p>
+<p>OVN-Kubernetes lets us define networks for different purposes as Kubernetes custom resources, separately from the cluster's default pod network.
+It provides two resources for defining these networks:</p>
+<ul>
+<li><strong>UserDefinedNetwork (UDN):</strong> A namespace-scoped resource that creates a network confined to its namespace and isolated from other namespaces.</li>
+<li><strong>ClusterUserDefinedNetwork (CUDN):</strong> A cluster-scoped resource whose namespace selector makes one network available to multiple namespaces, so workloads in those namespaces share it.</li>
+</ul>
+<p>Both UDN and CUDN support Layer 3 and Layer 2 network topologies.
+These are overlay networks contained within the cluster and require no advance configuration of the physical network.</p>
+<p>CUDN also supports Localnet.
+Localnet connects VMs or pods to a physical network preconfigured on the nodes.
+However, Localnet can be specified only with CUDN, and its role must be Secondary.
+In other words, it is used as an additional interface rather than as the pod's primary network.</p>
+<p>Connecting a single VM or pod to multiple networks also requires a meta-plugin that invokes multiple CNI plugins in sequence.
+OVN-Kubernetes relies on Multus for this purpose.
+Multus is a separate project developed by the Kubernetes Network Plumbing Working Group; it is not part of OVN-Kubernetes itself.</p>
+<p>In IKE VPC, we use these components as follows.</p>
+<h3 id="udn-is-available-to-users">UDN Is Available to Users<a class="headerlink" href="#udn-is-available-to-users" title="Permanent link">¶</a></h3>
+<p>IKE is a multi-tenant platform in which users are hosted by namespace, so UDN's namespace scope directly matches our service model.
+Each tenant can define an isolated network within its own namespace.
+Tenants can also choose either a Layer 2 or Layer 3 topology according to their requirements.</p>
+<h3 id="cudn-is-managed-by-the-sre-team">CUDN Is Managed by the SRE Team<a class="headerlink" href="#cudn-is-managed-by-the-sre-team" title="Permanent link">¶</a></h3>
+<p>When a tenant network needs to connect to a particular network, the SRE team builds a router host to serve as its gateway.
+We use CUDN to make the same network available to both the router host's namespace and the tenant's namespace.
+Only CUDN can define a network that spans multiple namespaces.
+Because CUDN is also a cluster-scoped resource, it is managed by the SRE team rather than by users.</p>
+<h3 id="localnet-is-also-managed-by-the-sre-team">Localnet Is Also Managed by the SRE Team<a class="headerlink" href="#localnet-is-also-managed-by-the-sre-team" title="Permanent link">¶</a></h3>
+<p>We use Localnet for two purposes.
+The first is to connect the router host described above to a particular physical network.
+The second is to connect VMs in the SRE-only cluster described later to operations and global networks.
+Because both uses connect directly to existing physical networks, the SRE team manages their configuration.</p>
+<h3 id="multus-is-available-to-users">Multus Is Available to Users<a class="headerlink" href="#multus-is-available-to-users" title="Permanent link">¶</a></h3>
+<p>Multus directly satisfies the requirement to connect a single VM or pod to multiple networks, as in our existing VM environment.</p>
+<p>This division of responsibilities lets us express every capability required for migrating our existing VMs as a Kubernetes resource.
+Multus provides connections to multiple networks, UDN and CUDN provide Layer 2 and Layer 3 networking with each network isolated from the others, and CUDNs with the Localnet topology provide connections to existing physical networks.
+How tenants are separated follows from which namespaces share a network: a UDN is confined to its own namespace, while a CUDN covers the namespaces matched by its selector.</p>
+<h2 id="current-validation-and-adoption-status">Current Validation and Adoption Status<a class="headerlink" href="#current-validation-and-adoption-status" title="Permanent link">¶</a></h2>
+<p>We currently provide service development teams with an IKE VPC development environment.
+The teams use this environment to determine whether they can migrate existing services to IKE VPC or deliver new services on it.</p>
+<p>We collect feedback from users in the development environment to identify missing platform capabilities and unexpected defects before production adoption.</p>
+<p>The IKE platform itself also includes components that run as VMs, such as Kubernetes control plane nodes and load balancers.
+As a migration destination for these VMs, we built a separate SRE-only Kubernetes cluster that also uses OVN-Kubernetes.
+VMs that make up the user-facing development cluster and provide its platform capabilities have now completed migration and are running on the SRE-only cluster.
+These VMs connect to existing physical networks, including operations and global networks, through CUDNs with the Localnet topology managed by the SRE team.</p>
+<p>The VMs that make up the production clusters have not yet been migrated.
+We plan to migrate them incrementally, applying the configuration and operational knowledge gained from the development environment migration.</p>
+<h2 id="working-with-upstream">Working with Upstream<a class="headerlink" href="#working-with-upstream" title="Permanent link">¶</a></h2>
+<p>While adopting OVN-Kubernetes, we found two problems in its container image build pipeline and reported them in <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5841">Issue #5841</a>.
+The maintainers responded promptly, and after discussing the problems, we created a separate pull request for each fix.</p>
+<p>The first problem was an incorrect reference to the builder image.
+We corrected the reference in <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5849">Pull Request #5849</a>.</p>
+<p>The second problem was that running a multi-platform build on a single runner exhausted its disk space.
+In <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5850">Pull Request #5850</a>, we split the build across multiple runners.</p>
+<p>Both pull requests have been merged upstream.</p>
+<p>At KubeCon Japan 2026, we also had the opportunity to speak with maintainers in person.
+At the project pavilion, we met not only other OVN-Kubernetes users but also attendees who were discovering the project for the first time.</p>
+<h2 id="production-adoption-and-future-contributions">Production Adoption and Future Contributions<a class="headerlink" href="#production-adoption-and-future-contributions" title="Permanent link">¶</a></h2>
+<p>IIJ plans to build a production environment using OVN-Kubernetes during fiscal year 2026.
+As the number of workloads grows, we will expand the clusters and networks incrementally.</p>
+<p>We will report issues discovered during production operation upstream and propose code changes where appropriate.
+We also plan to improve and translate documentation and to continue contributing to the OVN-Kubernetes community.</p>
 
 
 
-<nav class="md-pagination">
+
+
+
+
   
-</nav>
-        
+  
+
+
+
+
+  
+
+
+
       
-    </div>
+    </article>
   </div>
 
           
@@ -4878,10 +5016,10 @@ Networks (UDNs) that enable per tenant network isolation into the Kubernetes env
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.indexes", "navigation.tabs", "navigation.tabs.sticky", "content.code.annotate", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": ["latest", "master"], "provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../../../..", "features": ["navigation.instant", "navigation.tracking", "navigation.indexes", "navigation.tabs", "navigation.tabs.sticky", "content.code.annotate", "content.code.copy"], "search": "../../../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": ["latest", "master"], "provider": "mike"}}</script>
     
     
-      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../../../../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   
