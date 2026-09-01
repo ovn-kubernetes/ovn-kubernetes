@@ -49,7 +49,7 @@ RUN apt-get update && apt-get install -y \
     echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v${KUBECTL_MINOR}/deb/ /" > /etc/apt/sources.list.d/kubernetes.list && \
     chmod 644 /etc/apt/sources.list.d/kubernetes.list && \
     apt-get update && apt-get install -y \
-    openvswitch-switch openvswitch-common ovn-central ovn-common ovn-host kubectl && \
+    openvswitch-switch openvswitch-common openvswitch-test ovn-central ovn-common ovn-host kubectl tcpdump && \
     rm -rf /var/lib/apt/lists/*
 
 # Built in the ovnkube-builder stage, then the binaries are copied here.
