@@ -1598,6 +1598,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#joining-the-auto-assignment-reviewer-pool" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Joining the auto-assignment reviewer pool
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#checklist" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4852,6 +4863,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#joining-the-auto-assignment-reviewer-pool" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Joining the auto-assignment reviewer pool
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#checklist" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4920,10 +4942,13 @@
 <h2 id="process">Process<a class="headerlink" href="#process" title="Permanent link">¶</a></h2>
 <ul>
 <li><strong>Reviewers for area-owned files</strong> are automatically assigned when a PR touches files listed in <code>CODEOWNERS</code>. GitHub requests reviews from the owners listed on the matching pattern lines (area maintainers and reviewers alike). Merge authority is determined separately by the merge bot based on the <code>Area Maintainer:</code> header in <code>CODEOWNERS</code>.</li>
-<li>If no area-specific pattern matches, reviewers are assigned via the load-balancing algorithm using contributors from the ovn-kubernetes/ovn-kubernetes-members team (configured in <code>CODEOWNERS</code>).</li>
+<li>Area owners listed in <code>CODEOWNERS</code> must be part of the <code>ovn-kubernetes/ovn-kubernetes-members</code> team, which grants repository write access. Without write access, GitHub ignores them as code owners — it will not assign them for review and their approving reviews will not count toward the required approval.</li>
+<li>If no area-specific pattern matches, reviewers are assigned via the load-balancing algorithm using contributors from the ovn-kubernetes/ovn-kubernetes-reviewers team (configured in <code>CODEOWNERS</code>). This load balancing — which reviewers are eligible, the routing algorithm, and how busy reviewers are handled — is configured by the Maintainers in the <code>ovn-kubernetes-reviewers</code> team's GitHub settings (the team's "Code review assignment" configuration).</li>
 <li>Area maintainers are appointed by the repo Maintainers (see <a href="../GOVERNANCE/#area-maintainers">Area Maintainers</a> in the governance docs).</li>
-<li><strong>Area maintainer merge:</strong> Area maintainers can merge PRs that <strong>only</strong> touch files within their area by commenting <code>/area-maintainer-approved</code> on the PR. The merge bot (<code>.github/workflows/area-merge.yml</code>) verifies that all changed files are within the commenter's area in <code>CODEOWNERS</code> and that all CI checks pass before merging. If CI is still running, the bot waits and merges automatically when checks go green. Area maintainers cannot use <code>/area-maintainer-approved</code> on their own PRs — the bot will reject the attempt; another area maintainer or repo maintainer must approve and merge instead. PRs touching files outside the area maintainer's scope require a committer from <code>ovn-kubernetes-committers</code> to merge.</li>
-<li>Reviewers may opt out of reviewing of any PR or the reviewing process altogether by contacting committers or setting their GitHub profile status as "busy" and removing themselves from any currently assigned PR.</li>
+<li><strong>Area maintainer merge:</strong> Area maintainers can merge PRs that <strong>only</strong> touch files within their area by commenting <code>/area-maintainer-approved</code> on the PR. The merge bot (<code>.github/workflows/area-merge.yml</code>) verifies that all changed files are within the commenter's area in <code>CODEOWNERS</code> and that all CI checks pass before merging. If CI is still running, the bot waits and merges automatically when checks go green. Area maintainers cannot use <code>/area-maintainer-approved</code> on their own PRs — the bot will reject the attempt; another area maintainer or repo maintainer must approve and merge instead. PRs touching files outside the area maintainer's scope require a committer's approval.</li>
+<li>Reviewers can temporarily pause assignment for a couple of weeks (e.g. PTO or a busy stretch) by setting their GitHub profile status to "busy", which excludes them from load-balanced assignment, and removing themselves from any currently assigned PR. For longer unavailability, give the Maintainers a heads up. To opt out of the reviewing process altogether, contact the Maintainers to be removed from the <code>ovn-kubernetes/ovn-kubernetes-reviewers</code> team.</li>
+<li><strong>Reviewers are responsible for reviewing their assigned PRs in a reasonable time.</strong> Track your assigned PRs on the <a href="https://github.com/orgs/ovn-kubernetes/projects/1/views/5">review assignment dashboard</a>.</li>
+<li><strong>Keep the review moving — the goal is a reviewed PR, not that one specific person reviews it.</strong> An assigned reviewer's responsibility is to make sure the PR actually gets reviewed, not necessarily to do the whole review alone. If you are the assignee and need help, lack the expertise for part of the change, or are unavailable, comment <code>/assign-reviewer</code> on the PR to pull in another reviewer from the <code>ovn-kubernetes/ovn-kubernetes-reviewers</code> team. The Request Another Reviewer workflow (<code>.github/workflows/reassign-reviewer.yml</code>) re-requests the team so GitHub routes the PR to an available member (mark yourself "busy" to be skipped). Don't let a PR stall waiting on a single person.</li>
 <li>Reviewers should wait for automated checks to pass before reviewing</li>
 <li>At least 1 approved review is required from a maintainer before a pull request can be merged. <strong>Exception:</strong> PRs that exclusively touch files within a single area (as defined in <code>CODEOWNERS</code>) may be merged by the designated area maintainer via <code>/area-maintainer-approved</code> without a full maintainer approval.</li>
 <li>All CI checks must pass</li>
@@ -4935,6 +4960,13 @@
 <li>Once a reviewer has approved the PR, the reviewer should add a committer for final PR approval and merge.</li>
 <li>In times of need, i.e. to fix pressing security issues or fix critical panic issues, the Maintainers may, at their discretion, merge PRs without review. They must add a comment to the PR explaining why they did so.</li>
 </ul>
+<h2 id="joining-the-auto-assignment-reviewer-pool">Joining the auto-assignment reviewer pool<a class="headerlink" href="#joining-the-auto-assignment-reviewer-pool" title="Permanent link">¶</a></h2>
+<p>Anyone is welcome to review PRs (see <a href="#the-reviewer-role">The Reviewer Role</a>). This section is specifically about joining the <code>ovn-kubernetes/ovn-kubernetes-reviewers</code> team — the pool that GitHub's load-balanced code-review assignment routes PRs to when no <code>CODEOWNERS</code> area pattern matches (see <a href="#process">Process</a>).</p>
+<p>To be added to the auto-assignment pool:</p>
+<ol>
+<li><strong>Become a Member first.</strong> Automatic assignment is only useful when the assignee's approval can count toward merge, and only Members have the write access that makes an approving review count. Follow <a href="../GOVERNANCE/#becoming-a-member">Becoming a Member</a> (proposed by a Maintainer on the developer mailing list, approved by two maintainer votes).</li>
+<li><strong>Ask to be added to the reviewers team.</strong> Raise it on the <a href="https://groups.google.com/g/ovn-kubernetes">developer mailing list</a>, in a <a href="../MEETINGS/">community meeting</a>, or in the <code>#ovn-kubernetes</code> channel on the CNCF Slack (workspace: https://cloud-native.slack.com/), tagging the Maintainers. A Maintainer then adds you to the <code>ovn-kubernetes/ovn-kubernetes-reviewers</code> GitHub team, after which GitHub starts routing load-balanced review requests to you.</li>
+</ol>
 <h2 id="checklist">Checklist<a class="headerlink" href="#checklist" title="Permanent link">¶</a></h2>
 <p>Below are a set of common questions that apply to all pull requests:</p>
 <ul>
