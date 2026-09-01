@@ -4712,10 +4712,6 @@ become hard to maintain such code.">
       
         
       
-        
-      
-        
-      
     
     
     
@@ -4774,65 +4770,27 @@ become hard to maintain such code.">
   
   
   
-    <li class="md-nav__item">
-      <a href="../../blog/dpu-acceleration/" class="md-nav__link">
+    
+    
+      
         
-  
-  
-  <span class="md-ellipsis">
+      
     
-  
-    Accelerating and Securing Kubernetes Networking with DPUs
-  
-
     
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9_2">
+        
+          
+          <label class="md-nav__link" for="__nav_9_2" id="__nav_9_2_label" tabindex="0">
             
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../blog/netobserv/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Debugging NetworkPolicies with NetObserv
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../.." class="md-nav__link">
-        
   
   
   <span class="md-ellipsis">
@@ -4846,7 +4804,53 @@ become hard to maintain such code.">
   
   
 
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_9_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Archive
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+                
+  
+  
+  
+    
+  
+  
+    <li class="md-nav__item">
+      <a href="../../blog/archive/2026/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2026
+  
+
+    
+  </span>
+  
+  
+
       </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
     </li>
   
 
@@ -5155,13 +5159,23 @@ feel free to write it. If you are unsure where this should be placed; reach out 
 <li>
 <p><strong>Blog Posts</strong>: Are you an end-user of OVN-Kubernetes? Is there something you wish to share with
 the community about your awesome use cases and how you used our CNI to solve your problems? We
-welcome blog post contributions from all! See <a href="../../blog/">here</a> for details.
-Open a commit adding it to our <code>docs/blog</code> folder.</p>
+welcome blog post contributions from all! See <a href="https://ovn-kubernetes.io/blog/">here</a> for details.
+Open a commit adding your post to <code>docs/blog/posts/</code>. Each post must include
+YAML front matter with a <code>date</code> and <code>authors</code> list, for example:
+</p><div class="highlight"><pre><span></span><code><span class="nn">---</span>
+<span class="nt">date</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2026-03-12</span>
+<span class="nt">authors</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">githubhandle</span>
+<span class="nn">---</span>
+</code></pre></div>
+The author handle must have a matching entry in <code>docs/blog/.authors.yml</code> with
+your name, a short description, and a GitHub avatar URL. See existing entries
+for reference.<p></p>
 </li>
 <li>
 <p><strong>Performance Enhancements</strong>: We love performance enhancements! Did you write a cool patch
 to reduce the time it takes for iptables to sync up on startup? Think about writing a good blog post
-around this! Open a commit adding it to our <code>docs/blog</code> folder.</p>
+around this! Open a commit adding it to our <code>docs/blog/posts/</code> folder.</p>
 </li>
 <li>
 <p><strong>API Reference</strong>: Did you introduce a new CRD? OR Did you add a watcher a new CRD? Include API

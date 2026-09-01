@@ -3,8 +3,6 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Community blog posts on OVN-Kubernetes features, integrations, and guides.">
-      
       
       
         <link rel="canonical" href="https://www.ovn.org/ovn-kubernetes/master/blog/">
@@ -13,7 +11,7 @@
         <link rel="prev" href="../okeps/okep-5212-ovnobserv-api/">
       
       
-        <link rel="next" href="dpu-acceleration/">
+        <link rel="next" href="archive/2026/">
       
       
         
@@ -24,7 +22,7 @@
     
     
       
-        <title>Blog - OVN-Kubernetes</title>
+        <title>OVN-Kubernetes Blog - OVN-Kubernetes</title>
       
     
     
@@ -87,7 +85,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#blog-posts" class="md-skip">
+        <a href="#ovn-kubernetes-blog" class="md-skip">
           Skip to content
         </a>
       
@@ -126,7 +124,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Blog
+              OVN-Kubernetes Blog
             
           </span>
         </div>
@@ -441,8 +439,6 @@
         <div class="md-main__inner md-grid">
           
             
-              
-                
               
               <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation">
                 <div class="md-sidebar__scrollwrap">
@@ -4460,10 +4456,6 @@
       
         
       
-        
-      
-        
-      
     
     
     
@@ -4525,65 +4517,27 @@
   
   
   
-    <li class="md-nav__item">
-      <a href="dpu-acceleration/" class="md-nav__link">
+    
+    
+      
         
-  
-  
-  <span class="md-ellipsis">
+      
     
-  
-    Accelerating and Securing Kubernetes Networking with DPUs
-  
-
     
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9_2">
+        
+          
+          <label class="md-nav__link" for="__nav_9_2" id="__nav_9_2_label" tabindex="0">
             
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="netobserv/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Debugging NetworkPolicies with NetObserv
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href=".." class="md-nav__link">
-        
   
   
   <span class="md-ellipsis">
@@ -4597,7 +4551,53 @@
   
   
 
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_9_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Archive
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+                
+  
+  
+  
+    
+  
+  
+    <li class="md-nav__item">
+      <a href="archive/2026/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2026
+  
+
+    
+  </span>
+  
+  
+
       </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
     </li>
   
 
@@ -4618,9 +4618,7 @@
             
             
               
-                
-              
-              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" hidden="">
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc">
                 <div class="md-sidebar__scrollwrap">
                   <div class="md-sidebar__inner">
                     
@@ -4632,6 +4630,36 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+      
+        <li class="md-nav__item">
+  <a href="#debugging-networkpolicies-with-netobserv" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Debugging NetworkPolicies with NetObserv
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#accelerating-and-offloading-kubernetes-networking-leveraging-dpus-with-ovn-kubernetes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Accelerating and Offloading Kubernetes Networking: Leveraging DPUs with OVN-Kubernetes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -4642,14 +4670,116 @@
   <div class="md-content" data-md-component="content">
     <div class="md-content__inner">
       <header class="md-typeset">
-        <h1 id="blog-posts">Blog Posts<a class="headerlink" href="#blog-posts" title="Permanent link">¶</a></h1>
-<p>Community blog posts on OVN-Kubernetes features, integrations, and guides.</p>
-<p><strong><a href="dpu-acceleration/">Accelerating and Securing Kubernetes Networking: Leveraging DPUs with OVN-Kubernetes</a></strong></p>
-<p>Deploy OVN-Kubernetes with DPU offload for high-performance networking and per-tenant isolation.</p>
-<p><strong><a href="netobserv/">Debugging NetworkPolicies with NetObserv</a></strong></p>
-<p>Use OVN observability and NetObserv to understand why connections are allowed or denied by network policies.</p>
+        <h1 id="ovn-kubernetes-blog">OVN-Kubernetes Blog<a class="headerlink" href="#ovn-kubernetes-blog" title="Permanent link">¶</a></h1>
       </header>
       
+        <article class="md-post md-post--excerpt">
+  <header class="md-post__header">
+    
+      <nav class="md-post__authors md-typeset">
+        
+          <span class="md-author">
+            <img src="https://github.com/npinaeva.png" alt="Nadia Pinaeva">
+          </span>
+        
+      </nav>
+    
+    <div class="md-post__meta md-meta">
+      <ul class="md-meta__list">
+        <li class="md-meta__item">
+          <time datetime="2026-03-12 00:00:00+00:00">March 12, 2026</time></li>
+        
+        
+          
+          <li class="md-meta__item">
+            
+              8 min read
+            
+          </li>
+        
+        
+      </ul>
+      
+    </div>
+  </header>
+  <div class="md-post__content md-typeset">
+    <h2 id="debugging-networkpolicies-with-netobserv"><a class="toclink" href="2026/03/12/debugging-networkpolicies-with-netobserv/">Debugging NetworkPolicies with NetObserv</a></h2>
+<p>Observability is a key part of any system, and Kubernetes networking is no exception.
+But even if you see WHAT happens in your network, you still don’t know WHY it happens. 
+Especially if you have a number of network policies in the cluster, it is always difficult to tell why exactly 
+a given connection is allowed or denied.</p>
+<p>To solve this problem, OVN-Kubernetes has introduced a new observability feature together with the NetObserv project
+that adds explicit communication between observability and networking.</p>
+
+    
+      <nav class="md-post__action">
+        <a href="2026/03/12/debugging-networkpolicies-with-netobserv/">
+          Continue reading
+        </a>
+      </nav>
+    
+    
+  </div>
+</article>
+      
+        <article class="md-post md-post--excerpt">
+  <header class="md-post__header">
+    
+      <nav class="md-post__authors md-typeset">
+        
+          <span class="md-author">
+            <img src="https://github.com/trozet.png" alt="Tim Rozet">
+          </span>
+        
+      </nav>
+    
+    <div class="md-post__meta md-meta">
+      <ul class="md-meta__list">
+        <li class="md-meta__item">
+          <time datetime="2026-02-12 00:00:00+00:00">February 12, 2026</time></li>
+        
+        
+          
+          <li class="md-meta__item">
+            
+              12 min read
+            
+          </li>
+        
+        
+      </ul>
+      
+    </div>
+  </header>
+  <div class="md-post__content md-typeset">
+    <h2 id="accelerating-and-offloading-kubernetes-networking-leveraging-dpus-with-ovn-kubernetes"><a class="toclink" href="2026/02/12/accelerating-and-offloading-kubernetes-networking-leveraging-dpus-with-ovn-kubernetes/">Accelerating and Offloading Kubernetes Networking: Leveraging DPUs with OVN-Kubernetes</a></h2>
+<h3 id="introduction"><a class="toclink" href="2026/02/12/accelerating-and-offloading-kubernetes-networking-leveraging-dpus-with-ovn-kubernetes/#introduction">Introduction</a></h3>
+<p>This blog post provides a comprehensive guide on deploying OVN-Kubernetes in an environment leveraging Data Processing Units (DPUs).
+This setup is crucial for high-performance networking in cloud-native applications, offloading network processing from the host CPU to the
+DPU, and providing better security for the networking control-plane. Additionally, OVN-Kubernetes brings in robust features like User Defined
+Networks (UDNs) that enable per tenant network isolation into the Kubernetes environment and integrates with the DPU solution.</p>
+
+    
+      <nav class="md-post__action">
+        <a href="2026/02/12/accelerating-and-offloading-kubernetes-networking-leveraging-dpus-with-ovn-kubernetes/">
+          Continue reading
+        </a>
+      </nav>
+    
+    
+  </div>
+</article>
+      
+      
+        
+          
+
+
+
+<nav class="md-pagination">
+  
+</nav>
+        
       
     </div>
   </div>

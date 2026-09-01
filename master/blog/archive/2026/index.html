@@ -5,31 +5,29 @@
       
       
       
-        <link rel="canonical" href="https://www.ovn.org/ovn-kubernetes/master/blog/dpu-acceleration/">
+        <link rel="canonical" href="https://www.ovn.org/ovn-kubernetes/master/blog/archive/2026/">
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../../">
       
-      
-        <link rel="next" href="../netobserv/">
       
       
         
       
       
-      <link rel="icon" href="../../images/ovn-inside-k8s.png">
+      <link rel="icon" href="../../../images/ovn-inside-k8s.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
-        <title>Accelerating and Securing Kubernetes Networking with DPUs - OVN-Kubernetes</title>
+        <title>2026 - OVN-Kubernetes</title>
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.ec1eaa64.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -48,15 +46,15 @@
       
     
     
-      <link rel="stylesheet" href="../../stylesheets/extra.css">
+      <link rel="stylesheet" href="../../../stylesheets/extra.css">
     
-    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
     
     
-  <link href="../../assets/stylesheets/glightbox.min.css" rel="stylesheet"><script src="../../assets/javascripts/glightbox.min.js"></script><style id="glightbox-style">
+  <link href="../../../assets/stylesheets/glightbox.min.css" rel="stylesheet"><script src="../../../assets/javascripts/glightbox.min.js"></script><style id="glightbox-style">
             html.glightbox-open { overflow: initial; height: 100%; }
             .gslide-title { margin-top: 0px; user-select: text; }
             .gslide-desc { color: #666; user-select: text; }
@@ -85,7 +83,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#accelerating-and-offloading-kubernetes-networking-leveraging-dpus-with-ovn-kubernetes" class="md-skip">
+        <a href="#2026" class="md-skip">
           Skip to content
         </a>
       
@@ -105,9 +103,9 @@
 
 <header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../.." title="OVN-Kubernetes" class="md-header__button md-logo" aria-label="OVN-Kubernetes" data-md-component="logo">
+    <a href="../../.." title="OVN-Kubernetes" class="md-header__button md-logo" aria-label="OVN-Kubernetes" data-md-component="logo">
       
-  <img src="../../images/ovn-inside-k8s.png" alt="logo">
+  <img src="../../../images/ovn-inside-k8s.png" alt="logo">
 
     </a>
     <label class="md-header__button md-icon" for="__drawer">
@@ -124,7 +122,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Accelerating and Securing Kubernetes Networking with DPUs
+              2026
             
           </span>
         </div>
@@ -231,7 +229,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../.." class="md-tabs__link">
+        <a href="../../.." class="md-tabs__link">
           
   
   
@@ -253,7 +251,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../getting-started/" class="md-tabs__link">
+        <a href="../../../getting-started/" class="md-tabs__link">
           
   
   
@@ -275,7 +273,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../developer-guide/" class="md-tabs__link">
+        <a href="../../../developer-guide/" class="md-tabs__link">
           
   
   
@@ -297,7 +295,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../api-reference/" class="md-tabs__link">
+        <a href="../../../api-reference/" class="md-tabs__link">
           
   
   
@@ -319,7 +317,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../features/" class="md-tabs__link">
+        <a href="../../../features/" class="md-tabs__link">
           
   
   
@@ -341,7 +339,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../troubleshooting/" class="md-tabs__link">
+        <a href="../../../troubleshooting/" class="md-tabs__link">
           
   
   
@@ -363,7 +361,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../observability/" class="md-tabs__link">
+        <a href="../../../observability/" class="md-tabs__link">
           
   
   
@@ -385,7 +383,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../okeps/" class="md-tabs__link">
+        <a href="../../../okeps/" class="md-tabs__link">
           
   
   
@@ -409,7 +407,7 @@
     
     
       <li class="md-tabs__item md-tabs__item--active">
-        <a href="../" class="md-tabs__link">
+        <a href="../../" class="md-tabs__link">
           
   
   
@@ -451,9 +449,9 @@
 
 <nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../.." title="OVN-Kubernetes" class="md-nav__button md-logo" aria-label="OVN-Kubernetes" data-md-component="logo">
+    <a href="../../.." title="OVN-Kubernetes" class="md-nav__button md-logo" aria-label="OVN-Kubernetes" data-md-component="logo">
       
-  <img src="../../images/ovn-inside-k8s.png" alt="logo">
+  <img src="../../../images/ovn-inside-k8s.png" alt="logo">
 
     </a>
     OVN-Kubernetes
@@ -527,7 +525,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../.." class="md-nav__link ">
+            <a href="../../.." class="md-nav__link ">
               
   
   
@@ -571,7 +569,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/architecture/" class="md-nav__link">
+      <a href="../../../design/architecture/" class="md-nav__link">
         
   
   
@@ -599,7 +597,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/topology/" class="md-nav__link">
+      <a href="../../../design/topology/" class="md-nav__link">
         
   
   
@@ -627,7 +625,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/gateway-modes/" class="md-nav__link">
+      <a href="../../../design/gateway-modes/" class="md-nav__link">
         
   
   
@@ -655,7 +653,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/traffic-flows/" class="md-nav__link">
+      <a href="../../../design/traffic-flows/" class="md-nav__link">
         
   
   
@@ -683,7 +681,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/pod-creation-workflow/" class="md-nav__link">
+      <a href="../../../design/pod-creation-workflow/" class="md-nav__link">
         
   
   
@@ -711,7 +709,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/service-creation-workflow/" class="md-nav__link">
+      <a href="../../../design/service-creation-workflow/" class="md-nav__link">
         
   
   
@@ -739,7 +737,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/service-traffic-policy/" class="md-nav__link">
+      <a href="../../../design/service-traffic-policy/" class="md-nav__link">
         
   
   
@@ -767,7 +765,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/host-to-node-port-hairpin-trafficflow/" class="md-nav__link">
+      <a href="../../../design/host-to-node-port-hairpin-trafficflow/" class="md-nav__link">
         
   
   
@@ -795,7 +793,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/external-ip-and-loadbalancer-ingress/" class="md-nav__link">
+      <a href="../../../design/external-ip-and-loadbalancer-ingress/" class="md-nav__link">
         
   
   
@@ -823,7 +821,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/ovn-kubernetes-subnets/" class="md-nav__link">
+      <a href="../../../design/ovn-kubernetes-subnets/" class="md-nav__link">
         
   
   
@@ -851,7 +849,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/bridge-flows/" class="md-nav__link">
+      <a href="../../../design/bridge-flows/" class="md-nav__link">
         
   
   
@@ -879,7 +877,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/masquerade-ips/" class="md-nav__link">
+      <a href="../../../design/masquerade-ips/" class="md-nav__link">
         
   
   
@@ -907,7 +905,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/live-migration/" class="md-nav__link">
+      <a href="../../../features/live-migration/" class="md-nav__link">
         
   
   
@@ -983,7 +981,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../getting-started/" class="md-nav__link ">
+            <a href="../../../getting-started/" class="md-nav__link ">
               
   
   
@@ -1027,7 +1025,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../installation/launching-ovn-kubernetes-on-kind/" class="md-nav__link">
+      <a href="../../../installation/launching-ovn-kubernetes-on-kind/" class="md-nav__link">
         
   
   
@@ -1055,7 +1053,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../installation/launching-ovn-kubernetes-with-helm/" class="md-nav__link">
+      <a href="../../../installation/launching-ovn-kubernetes-with-helm/" class="md-nav__link">
         
   
   
@@ -1083,7 +1081,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../installation/launching-ovn-kubernetes-with-dpu/" class="md-nav__link">
+      <a href="../../../installation/launching-ovn-kubernetes-with-dpu/" class="md-nav__link">
         
   
   
@@ -1111,7 +1109,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../installation/INSTALL.KUBEADM/" class="md-nav__link">
+      <a href="../../../installation/INSTALL.KUBEADM/" class="md-nav__link">
         
   
   
@@ -1139,7 +1137,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../getting-started/configuration/" class="md-nav__link">
+      <a href="../../../getting-started/configuration/" class="md-nav__link">
         
   
   
@@ -1167,7 +1165,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/requirements/" class="md-nav__link">
+      <a href="../../../features/requirements/" class="md-nav__link">
         
   
   
@@ -1195,7 +1193,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../getting-started/cli-guide/" class="md-nav__link">
+      <a href="../../../getting-started/cli-guide/" class="md-nav__link">
         
   
   
@@ -1223,7 +1221,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../getting-started/example-pod-creation/" class="md-nav__link">
+      <a href="../../../getting-started/example-pod-creation/" class="md-nav__link">
         
   
   
@@ -1251,7 +1249,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../getting-started/example-service-creation/" class="md-nav__link">
+      <a href="../../../getting-started/example-service-creation/" class="md-nav__link">
         
   
   
@@ -1279,7 +1277,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../getting-started/building-ovn-kubernetes/" class="md-nav__link">
+      <a href="../../../getting-started/building-ovn-kubernetes/" class="md-nav__link">
         
   
   
@@ -1359,7 +1357,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../developer-guide/" class="md-nav__link ">
+            <a href="../../../developer-guide/" class="md-nav__link ">
               
   
   
@@ -1403,7 +1401,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../governance/CONTRIBUTING/" class="md-nav__link">
+      <a href="../../../governance/CONTRIBUTING/" class="md-nav__link">
         
   
   
@@ -1431,7 +1429,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../governance/GOVERNANCE/" class="md-nav__link">
+      <a href="../../../governance/GOVERNANCE/" class="md-nav__link">
         
   
   
@@ -1459,7 +1457,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../governance/REVIEWING/" class="md-nav__link">
+      <a href="../../../governance/REVIEWING/" class="md-nav__link">
         
   
   
@@ -1487,7 +1485,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../developer-guide/areas/" class="md-nav__link">
+      <a href="../../../developer-guide/areas/" class="md-nav__link">
         
   
   
@@ -1515,7 +1513,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../developer-guide/developer/" class="md-nav__link">
+      <a href="../../../developer-guide/developer/" class="md-nav__link">
         
   
   
@@ -1543,7 +1541,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../developer-guide/image-build/" class="md-nav__link">
+      <a href="../../../developer-guide/image-build/" class="md-nav__link">
         
   
   
@@ -1571,7 +1569,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../developer-guide/documentation/" class="md-nav__link">
+      <a href="../../../developer-guide/documentation/" class="md-nav__link">
         
   
   
@@ -1599,7 +1597,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../developer-guide/local_testing_guide/" class="md-nav__link">
+      <a href="../../../developer-guide/local_testing_guide/" class="md-nav__link">
         
   
   
@@ -1627,7 +1625,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../ci/ci/" class="md-nav__link">
+      <a href="../../../ci/ci/" class="md-nav__link">
         
   
   
@@ -1655,7 +1653,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../developer-guide/debugging/" class="md-nav__link">
+      <a href="../../../developer-guide/debugging/" class="md-nav__link">
         
   
   
@@ -1683,7 +1681,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../developer-guide/release/" class="md-nav__link">
+      <a href="../../../developer-guide/release/" class="md-nav__link">
         
   
   
@@ -1711,7 +1709,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../developer-guide/maintenance/" class="md-nav__link">
+      <a href="../../../developer-guide/maintenance/" class="md-nav__link">
         
   
   
@@ -1787,7 +1785,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../api-reference/" class="md-nav__link ">
+            <a href="../../../api-reference/" class="md-nav__link ">
               
   
   
@@ -1831,7 +1829,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../api-reference/introduction/" class="md-nav__link">
+      <a href="../../../api-reference/introduction/" class="md-nav__link">
         
   
   
@@ -1859,7 +1857,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../api-reference/egress-ip-api-spec/" class="md-nav__link">
+      <a href="../../../api-reference/egress-ip-api-spec/" class="md-nav__link">
         
   
   
@@ -1887,7 +1885,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../api-reference/egress-service-api-spec/" class="md-nav__link">
+      <a href="../../../api-reference/egress-service-api-spec/" class="md-nav__link">
         
   
   
@@ -1915,7 +1913,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../api-reference/egress-qos-api-spec/" class="md-nav__link">
+      <a href="../../../api-reference/egress-qos-api-spec/" class="md-nav__link">
         
   
   
@@ -1943,7 +1941,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../api-reference/egress-firewall-api-spec/" class="md-nav__link">
+      <a href="../../../api-reference/egress-firewall-api-spec/" class="md-nav__link">
         
   
   
@@ -1971,7 +1969,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../api-reference/admin-epbr-api-spec/" class="md-nav__link">
+      <a href="../../../api-reference/admin-epbr-api-spec/" class="md-nav__link">
         
   
   
@@ -1999,7 +1997,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../api-reference/userdefinednetwork-api-spec/" class="md-nav__link">
+      <a href="../../../api-reference/userdefinednetwork-api-spec/" class="md-nav__link">
         
   
   
@@ -2027,7 +2025,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../api-reference/routeadvertisements-api-spec/" class="md-nav__link">
+      <a href="../../../api-reference/routeadvertisements-api-spec/" class="md-nav__link">
         
   
   
@@ -2055,7 +2053,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../api-reference/clusternetworkconnect-api-spec/" class="md-nav__link">
+      <a href="../../../api-reference/clusternetworkconnect-api-spec/" class="md-nav__link">
         
   
   
@@ -2083,7 +2081,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../api-reference/vtep-api-spec/" class="md-nav__link">
+      <a href="../../../api-reference/vtep-api-spec/" class="md-nav__link">
         
   
   
@@ -2163,7 +2161,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../features/" class="md-nav__link ">
+            <a href="../../../features/" class="md-nav__link ">
               
   
   
@@ -2236,7 +2234,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../features/user-defined-networks/" class="md-nav__link ">
+            <a href="../../../features/user-defined-networks/" class="md-nav__link ">
               
   
   
@@ -2280,7 +2278,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/user-defined-networks/user-defined-networks/" class="md-nav__link">
+      <a href="../../../features/user-defined-networks/user-defined-networks/" class="md-nav__link">
         
   
   
@@ -2308,7 +2306,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/user-defined-networks/uplinks/" class="md-nav__link">
+      <a href="../../../features/user-defined-networks/uplinks/" class="md-nav__link">
         
   
   
@@ -2336,7 +2334,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/user-defined-networks/cluster-network-connect/" class="md-nav__link">
+      <a href="../../../features/user-defined-networks/cluster-network-connect/" class="md-nav__link">
         
   
   
@@ -2364,7 +2362,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/user-defined-networks/dynamic-udn/" class="md-nav__link">
+      <a href="../../../features/user-defined-networks/dynamic-udn/" class="md-nav__link">
         
   
   
@@ -2427,7 +2425,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../features/network-security-controls/" class="md-nav__link ">
+            <a href="../../../features/network-security-controls/" class="md-nav__link ">
               
   
   
@@ -2471,7 +2469,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/network-security-controls/admin-network-policy/" class="md-nav__link">
+      <a href="../../../features/network-security-controls/admin-network-policy/" class="md-nav__link">
         
   
   
@@ -2499,7 +2497,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/network-security-controls/network-policy/" class="md-nav__link">
+      <a href="../../../features/network-security-controls/network-policy/" class="md-nav__link">
         
   
   
@@ -2527,7 +2525,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/network-security-controls/egress-firewall/" class="md-nav__link">
+      <a href="../../../features/network-security-controls/egress-firewall/" class="md-nav__link">
         
   
   
@@ -2592,7 +2590,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../features/cluster-egress-controls/" class="md-nav__link ">
+            <a href="../../../features/cluster-egress-controls/" class="md-nav__link ">
               
   
   
@@ -2636,7 +2634,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/cluster-egress-controls/egress-ip/" class="md-nav__link">
+      <a href="../../../features/cluster-egress-controls/egress-ip/" class="md-nav__link">
         
   
   
@@ -2664,7 +2662,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/cluster-egress-controls/egress-service/" class="md-nav__link">
+      <a href="../../../features/cluster-egress-controls/egress-service/" class="md-nav__link">
         
   
   
@@ -2692,7 +2690,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/cluster-egress-controls/egress-qos/" class="md-nav__link">
+      <a href="../../../features/cluster-egress-controls/egress-qos/" class="md-nav__link">
         
   
   
@@ -2720,7 +2718,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/cluster-egress-controls/egress-gateway/" class="md-nav__link">
+      <a href="../../../features/cluster-egress-controls/egress-gateway/" class="md-nav__link">
         
   
   
@@ -2779,7 +2777,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../features/infrastructure-security-controls/" class="md-nav__link ">
+            <a href="../../../features/infrastructure-security-controls/" class="md-nav__link ">
               
   
   
@@ -2823,7 +2821,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/infrastructure-security-controls/node-identity/" class="md-nav__link">
+      <a href="../../../features/infrastructure-security-controls/node-identity/" class="md-nav__link">
         
   
   
@@ -2886,7 +2884,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../features/multiple-networks/" class="md-nav__link ">
+            <a href="../../../features/multiple-networks/" class="md-nav__link ">
               
   
   
@@ -2930,7 +2928,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/multiple-networks/multi-homing/" class="md-nav__link">
+      <a href="../../../features/multiple-networks/multi-homing/" class="md-nav__link">
         
   
   
@@ -2958,7 +2956,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/multiple-networks/multi-network-policies/" class="md-nav__link">
+      <a href="../../../features/multiple-networks/multi-network-policies/" class="md-nav__link">
         
   
   
@@ -2986,7 +2984,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/multiple-networks/multi-vtep/" class="md-nav__link">
+      <a href="../../../features/multiple-networks/multi-vtep/" class="md-nav__link">
         
   
   
@@ -3022,7 +3020,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/multicast/" class="md-nav__link">
+      <a href="../../../features/multicast/" class="md-nav__link">
         
   
   
@@ -3075,7 +3073,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../features/network-qos/" class="md-nav__link ">
+            <a href="../../../features/network-qos/" class="md-nav__link ">
               
   
   
@@ -3119,7 +3117,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/network-qos/overview/" class="md-nav__link">
+      <a href="../../../features/network-qos/overview/" class="md-nav__link">
         
   
   
@@ -3147,7 +3145,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/network-qos/usage-guide/" class="md-nav__link">
+      <a href="../../../features/network-qos/usage-guide/" class="md-nav__link">
         
   
   
@@ -3183,7 +3181,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/live-migration/" class="md-nav__link">
+      <a href="../../../features/live-migration/" class="md-nav__link">
         
   
   
@@ -3211,7 +3209,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/hybrid-overlay/" class="md-nav__link">
+      <a href="../../../features/hybrid-overlay/" class="md-nav__link">
         
   
   
@@ -3239,7 +3237,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/ovs-dynamic-cpu-affinity/" class="md-nav__link">
+      <a href="../../../features/ovs-dynamic-cpu-affinity/" class="md-nav__link">
         
   
   
@@ -3292,7 +3290,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../features/hardware-offload/" class="md-nav__link ">
+            <a href="../../../features/hardware-offload/" class="md-nav__link ">
               
   
   
@@ -3336,7 +3334,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/hardware-offload/ovs-kernel/" class="md-nav__link">
+      <a href="../../../features/hardware-offload/ovs-kernel/" class="md-nav__link">
         
   
   
@@ -3364,7 +3362,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/hardware-offload/ovs-doca/" class="md-nav__link">
+      <a href="../../../features/hardware-offload/ovs-doca/" class="md-nav__link">
         
   
   
@@ -3427,7 +3425,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../features/bgp-integration/" class="md-nav__link ">
+            <a href="../../../features/bgp-integration/" class="md-nav__link ">
               
   
   
@@ -3471,7 +3469,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/bgp-integration/route-advertisements/" class="md-nav__link">
+      <a href="../../../features/bgp-integration/route-advertisements/" class="md-nav__link">
         
   
   
@@ -3499,7 +3497,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/bgp-integration/no-overlay/" class="md-nav__link">
+      <a href="../../../features/bgp-integration/no-overlay/" class="md-nav__link">
         
   
   
@@ -3527,7 +3525,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/bgp-integration/evpn/" class="md-nav__link">
+      <a href="../../../features/bgp-integration/evpn/" class="md-nav__link">
         
   
   
@@ -3597,7 +3595,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../troubleshooting/" class="md-nav__link ">
+            <a href="../../../troubleshooting/" class="md-nav__link ">
               
   
   
@@ -3641,7 +3639,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../troubleshooting/debugging/" class="md-nav__link">
+      <a href="../../../troubleshooting/debugging/" class="md-nav__link">
         
   
   
@@ -3669,7 +3667,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../troubleshooting/ovnkube-trace/" class="md-nav__link">
+      <a href="../../../troubleshooting/ovnkube-trace/" class="md-nav__link">
         
   
   
@@ -3697,7 +3695,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../troubleshooting/logging/" class="md-nav__link">
+      <a href="../../../troubleshooting/logging/" class="md-nav__link">
         
   
   
@@ -3759,7 +3757,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../observability/" class="md-nav__link ">
+            <a href="../../../observability/" class="md-nav__link ">
               
   
   
@@ -3803,7 +3801,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../observability/metrics/" class="md-nav__link">
+      <a href="../../../observability/metrics/" class="md-nav__link">
         
   
   
@@ -3831,7 +3829,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../observability/sdn-dashboard/" class="md-nav__link">
+      <a href="../../../observability/sdn-dashboard/" class="md-nav__link">
         
   
   
@@ -3859,7 +3857,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../observability/ovn-observability/" class="md-nav__link">
+      <a href="../../../observability/ovn-observability/" class="md-nav__link">
         
   
   
@@ -3947,7 +3945,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../okeps/" class="md-nav__link ">
+            <a href="../../../okeps/" class="md-nav__link ">
               
   
   
@@ -3991,7 +3989,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5085-localnet-api/" class="md-nav__link">
+      <a href="../../../okeps/okep-5085-localnet-api/" class="md-nav__link">
         
   
   
@@ -4019,7 +4017,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-4380-network-qos/" class="md-nav__link">
+      <a href="../../../okeps/okep-4380-network-qos/" class="md-nav__link">
         
   
   
@@ -4047,7 +4045,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5193-user-defined-networks/" class="md-nav__link">
+      <a href="../../../okeps/okep-5193-user-defined-networks/" class="md-nav__link">
         
   
   
@@ -4075,7 +4073,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5233-preconfigured-udn-addresses/" class="md-nav__link">
+      <a href="../../../okeps/okep-5233-preconfigured-udn-addresses/" class="md-nav__link">
         
   
   
@@ -4103,7 +4101,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5296-bgp/" class="md-nav__link">
+      <a href="../../../okeps/okep-5296-bgp/" class="md-nav__link">
         
   
   
@@ -4131,7 +4129,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5094-layer2-transit-router/" class="md-nav__link">
+      <a href="../../../okeps/okep-5094-layer2-transit-router/" class="md-nav__link">
         
   
   
@@ -4159,7 +4157,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5494-ovn-kubernetes-mcp-server/" class="md-nav__link">
+      <a href="../../../okeps/okep-5494-ovn-kubernetes-mcp-server/" class="md-nav__link">
         
   
   
@@ -4187,7 +4185,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5552-dynamic-udn-node-allocation/" class="md-nav__link">
+      <a href="../../../okeps/okep-5552-dynamic-udn-node-allocation/" class="md-nav__link">
         
   
   
@@ -4215,7 +4213,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5224-connecting-udns/okep-5224-connecting-udns/" class="md-nav__link">
+      <a href="../../../okeps/okep-5224-connecting-udns/okep-5224-connecting-udns/" class="md-nav__link">
         
   
   
@@ -4243,7 +4241,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5259-no-overlay/" class="md-nav__link">
+      <a href="../../../okeps/okep-5259-no-overlay/" class="md-nav__link">
         
   
   
@@ -4271,7 +4269,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5088-evpn/" class="md-nav__link">
+      <a href="../../../okeps/okep-5088-evpn/" class="md-nav__link">
         
   
   
@@ -4299,7 +4297,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5674-dpu-healthcheck/" class="md-nav__link">
+      <a href="../../../okeps/okep-5674-dpu-healthcheck/" class="md-nav__link">
         
   
   
@@ -4327,7 +4325,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5377-extend-udn-to-support-multiple-cluster-subnets-in-layer3-topology/" class="md-nav__link">
+      <a href="../../../okeps/okep-5377-extend-udn-to-support-multiple-cluster-subnets-in-layer3-topology/" class="md-nav__link">
         
   
   
@@ -4355,7 +4353,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-6019-vrf-lite-shared-gateway-external-bridges/" class="md-nav__link">
+      <a href="../../../okeps/okep-6019-vrf-lite-shared-gateway-external-bridges/" class="md-nav__link">
         
   
   
@@ -4383,7 +4381,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-3926-disable-port-security/" class="md-nav__link">
+      <a href="../../../okeps/okep-3926-disable-port-security/" class="md-nav__link">
         
   
   
@@ -4411,7 +4409,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5212-ovnobserv-api/" class="md-nav__link">
+      <a href="../../../okeps/okep-5212-ovnobserv-api/" class="md-nav__link">
         
   
   
@@ -4456,10 +4454,6 @@
       
         
       
-        
-      
-        
-      
     
     
     
@@ -4478,7 +4472,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../" class="md-nav__link ">
+            <a href="../../" class="md-nav__link ">
               
   
   
@@ -4523,6 +4517,66 @@
   
   
   
+    
+    
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9_2" checked="">
+        
+          
+          <label class="md-nav__link" for="__nav_9_2" id="__nav_9_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Archive
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_9_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_9_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Archive
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+                
+  
+  
+    
+  
+  
+    
+      
+    
+  
+  
     <li class="md-nav__item md-nav__item--active">
       
       <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
@@ -4538,7 +4592,7 @@
   <span class="md-ellipsis">
     
   
-    Accelerating and Securing Kubernetes Networking with DPUs
+    2026
   
 
     
@@ -4556,7 +4610,7 @@
   <span class="md-ellipsis">
     
   
-    Accelerating and Securing Kubernetes Networking with DPUs
+    2026
   
 
     
@@ -4582,10 +4636,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
       
         <li class="md-nav__item">
-  <a href="#introduction" class="md-nav__link">
+  <a href="#debugging-networkpolicies-with-netobserv" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Introduction
+        Debugging NetworkPolicies with NetObserv
       
     </span>
   </a>
@@ -4593,109 +4647,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#architecture-overview" class="md-nav__link">
+  <a href="#accelerating-and-offloading-kubernetes-networking-leveraging-dpus-with-ovn-kubernetes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Architecture Overview
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#getting-started" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Getting Started
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#limitations" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Limitations
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#ovs-offload-considerations" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        OVS Offload Considerations
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#setting-up-the-dpu-and-host" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Setting up the DPU and Host
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#deploying-ovn-kubernetes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Deploying OVN-Kubernetes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#install-sr-iov-device-plugin" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Install SR-IOV Device Plugin
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#install-multus" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Install Multus
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#validating-the-setup" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Validating the Setup
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#conclusion" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Conclusion
+        Accelerating and Offloading Kubernetes Networking: Leveraging DPUs with OVN-Kubernetes
       
     </span>
   </a>
@@ -4711,57 +4666,9 @@
 
               
             
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../netobserv/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Debugging NetworkPolicies with NetObserv
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../.." class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Archive
-  
-
-    
-  </span>
-  
-  
-
-      </a>
+          </ul>
+        </nav>
+      
     </li>
   
 
@@ -4801,10 +4708,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
       
         <li class="md-nav__item">
-  <a href="#introduction" class="md-nav__link">
+  <a href="#debugging-networkpolicies-with-netobserv" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Introduction
+        Debugging NetworkPolicies with NetObserv
       
     </span>
   </a>
@@ -4812,109 +4719,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#architecture-overview" class="md-nav__link">
+  <a href="#accelerating-and-offloading-kubernetes-networking-leveraging-dpus-with-ovn-kubernetes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Architecture Overview
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#getting-started" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Getting Started
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#limitations" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Limitations
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#ovs-offload-considerations" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        OVS Offload Considerations
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#setting-up-the-dpu-and-host" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Setting up the DPU and Host
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#deploying-ovn-kubernetes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Deploying OVN-Kubernetes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#install-sr-iov-device-plugin" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Install SR-IOV Device Plugin
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#install-multus" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Install Multus
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#validating-the-setup" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Validating the Setup
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#conclusion" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Conclusion
+        Accelerating and Offloading Kubernetes Networking: Leveraging DPUs with OVN-Kubernetes
       
     </span>
   </a>
@@ -4930,402 +4738,123 @@
             
           
           
-            <div class="md-content" data-md-component="content">
-              
-              <article class="md-content__inner md-typeset">
-                
-                  
+  <div class="md-content" data-md-component="content">
+    <div class="md-content__inner">
+      <header class="md-typeset">
+        <h1 id="2026">2026<a class="headerlink" href="#2026" title="Permanent link">¶</a></h1>
+      </header>
+      
+        <article class="md-post md-post--excerpt">
+  <header class="md-post__header">
+    
+      <nav class="md-post__authors md-typeset">
+        
+          <span class="md-author">
+            <img src="https://github.com/npinaeva.png" alt="Nadia Pinaeva">
+          </span>
+        
+      </nav>
+    
+    <div class="md-post__meta md-meta">
+      <ul class="md-meta__list">
+        <li class="md-meta__item">
+          <time datetime="2026-03-12 00:00:00+00:00">March 12, 2026</time></li>
+        
+        
+          
+          <li class="md-meta__item">
+            
+              8 min read
+            
+          </li>
+        
+        
+      </ul>
+      
+    </div>
+  </header>
+  <div class="md-post__content md-typeset">
+    <h2 id="debugging-networkpolicies-with-netobserv"><a class="toclink" href="../../2026/03/12/debugging-networkpolicies-with-netobserv/">Debugging NetworkPolicies with NetObserv</a></h2>
+<p>Observability is a key part of any system, and Kubernetes networking is no exception.
+But even if you see WHAT happens in your network, you still don’t know WHY it happens. 
+Especially if you have a number of network policies in the cluster, it is always difficult to tell why exactly 
+a given connection is allowed or denied.</p>
+<p>To solve this problem, OVN-Kubernetes has introduced a new observability feature together with the NetObserv project
+that adds explicit communication between observability and networking.</p>
 
-
-  
-  
-
-
-<h1 id="accelerating-and-offloading-kubernetes-networking-leveraging-dpus-with-ovn-kubernetes">Accelerating and Offloading Kubernetes Networking: Leveraging DPUs with OVN-Kubernetes<a class="headerlink" href="#accelerating-and-offloading-kubernetes-networking-leveraging-dpus-with-ovn-kubernetes" title="Permanent link">¶</a></h1>
-<h2 id="introduction">Introduction<a class="headerlink" href="#introduction" title="Permanent link">¶</a></h2>
+    
+      <nav class="md-post__action">
+        <a href="../../2026/03/12/debugging-networkpolicies-with-netobserv/">
+          Continue reading
+        </a>
+      </nav>
+    
+    
+  </div>
+</article>
+      
+        <article class="md-post md-post--excerpt">
+  <header class="md-post__header">
+    
+      <nav class="md-post__authors md-typeset">
+        
+          <span class="md-author">
+            <img src="https://github.com/trozet.png" alt="Tim Rozet">
+          </span>
+        
+      </nav>
+    
+    <div class="md-post__meta md-meta">
+      <ul class="md-meta__list">
+        <li class="md-meta__item">
+          <time datetime="2026-02-12 00:00:00+00:00">February 12, 2026</time></li>
+        
+        
+          
+          <li class="md-meta__item">
+            
+              12 min read
+            
+          </li>
+        
+        
+      </ul>
+      
+    </div>
+  </header>
+  <div class="md-post__content md-typeset">
+    <h2 id="accelerating-and-offloading-kubernetes-networking-leveraging-dpus-with-ovn-kubernetes"><a class="toclink" href="../../2026/02/12/accelerating-and-offloading-kubernetes-networking-leveraging-dpus-with-ovn-kubernetes/">Accelerating and Offloading Kubernetes Networking: Leveraging DPUs with OVN-Kubernetes</a></h2>
+<h3 id="introduction"><a class="toclink" href="../../2026/02/12/accelerating-and-offloading-kubernetes-networking-leveraging-dpus-with-ovn-kubernetes/#introduction">Introduction</a></h3>
 <p>This blog post provides a comprehensive guide on deploying OVN-Kubernetes in an environment leveraging Data Processing Units (DPUs).
 This setup is crucial for high-performance networking in cloud-native applications, offloading network processing from the host CPU to the
 DPU, and providing better security for the networking control-plane. Additionally, OVN-Kubernetes brings in robust features like User Defined
 Networks (UDNs) that enable per tenant network isolation into the Kubernetes environment and integrates with the DPU solution.</p>
-<p>In this guide, <strong>offloading</strong> means moving OVN-Kubernetes SDN control and data plane work from the host into the DPU to free host CPU and memory
-resources. Note, this is different from <strong>OVS offloading</strong>, where datapath processing is offloaded from kernel to hardware
-ASICs inside a DPU or SmartNIC.
-<strong>Acceleration</strong> means using hardware acceleration capabilities inside the DPU (SmartNIC/OVS offload paths) to deliver higher network
-throughput and lower latency.</p>
-<h2 id="architecture-overview">Architecture Overview<a class="headerlink" href="#architecture-overview" title="Permanent link">¶</a></h2>
-<p>Within a typical Kubernetes worker node, the CNI typically runs as a host networked pod alongside other processes in the host.
-In an unaccelerated+non-offloaded environment, OVN-Kubernetes behaves the same way, with its stack composed of OVN-Kubernetes,
-Open Virtual Network (OVN), and Open vSwitch (OVS). OVN-Kubernetes listens for KAPI events, configures a logical topology in OVN,
-and then OVN translates that into OpenFlow which is programmed into the OVS datapath. Here is an overview of a typical setup:</p>
-<p><a class="glightbox" data-type="image" data-width="auto" data-height="auto" href="../../images/ovnk-unaccelerated.svg" data-desc-position="bottom"><img alt="Regular OVN-Kubernetes Worker Node" src="../../images/ovnk-unaccelerated.svg"></a></p>
-<hr>
-<p>In this environment there are several potential issues to highlight:</p>
-<ul>
-<li>The SDN control and data planes are consuming CPU/memory resources on the host itself.</li>
-<li>The SDN control and data planes are able to be compromised if an attacker breaks out of a pod into the host namespace.</li>
-<li>Pods are attached with veth interfaces. Although fast path traffic is handled within the kernel using the OVS kernel module,
-    there are realistic throughput and latency limitations.</li>
-</ul>
-<hr>
-<p>A DPU is a system on a chip that is pluggable into the server via a PCIe slot. It provides a specialized environment with
-its own CPU, memory, storage and OS. It also includes a SmartNIC architecture that provides packet processing acceleration and offload capabilities.
-Integrating the DPU into the OVN-Kubernetes CNI provides the ability to move the SDN control and data plane down into the DPU.
-This solves the aforementioned issues by:</p>
-<ul>
-<li>Relieving the Host of resource consumption.</li>
-<li>Adding security so that if a pod breaks out on the host, it cannot access/compromise the SDN control and data plane.</li>
-<li>Pods are accelerated with Virtual Function (VF) interfaces which combined with specialized smart NIC hardware to offload
-    the OVS datapath results in best in class throughput and latency.</li>
-</ul>
-<hr>
-<p>Here is a diagram of a DPU accelerated worker node with OVN-Kubernetes:</p>
-<p><a class="glightbox" data-type="image" data-width="auto" data-height="auto" href="../../images/ovnk-accelerated.svg" data-desc-position="bottom"><img alt="Accelerated OVN-Kubernetes Worker Node" src="../../images/ovnk-accelerated.svg"></a></p>
-<hr>
-<p>In this kind of deployment the DPU is not part of the <em>Host Kubernetes Cluster</em>. This is typically referred to as an “<em>off-host-cluster</em>”
-type of deployment. OVN-Kubernetes running in the DPU is typically managed as a secondary Kubernetes cluster, but it does not have to be.
-The kubeconfig of the host cluster is provided to OVN-Kube running in the DPU in order to configure the SDN. For the purpose of this guide,
-we will treat the DPU as if it is in its own secondary Kubernetes cluster, referred to as the <em>DPU Kubernetes Cluster</em>.
-OVN-Kube on the DPU is responsible for configuring OVN and wiring up networking within the DPU, while OVN-Kube on the Host is a lightweight
-container used to plug in the network interfaces for pods in the Host.</p>
-<h2 id="getting-started">Getting Started<a class="headerlink" href="#getting-started" title="Permanent link">¶</a></h2>
-<p>Before starting the deployment, ensure the following prerequisites are met:</p>
-<ul>
-<li>A Host Kubernetes cluster with nodes equipped with compatible DPUs.</li>
-<li>A secondary DPU Kubernetes cluster that contains the DPUs.</li>
-<li>Kube-proxy should be disabled in both clusters.</li>
-<li>Familiarity with OVN-Kubernetes and general Kubernetes networking concepts.</li>
-<li>Ensure the versions of Kubernetes are compatible with the version of OVN-Kubernetes to be used in the cluster. An OVN-Kubernetes version of at least 1.3 Alpha (latest master as of Feb 2026) is required, which maps to Kubernetes 1.34 as of this writing.</li>
-</ul>
-<p>Note, for setting up Kubernetes clusters quickly for a test environment, see <a href="https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/create-cluster-kubeadm/">kubernetes.io/docs/setup/production-environment/tools/kubeadm/create-cluster-kubeadm/</a>.</p>
-<p>For this guide, we will focus on the setup using an NVIDIA BlueField-3 DPU, which has been tested to be
-compatible with OVN-Kubernetes.
-The OVN-Kubernetes DPU architecture is not specific to NVIDIA DPUs, and should be compatible with any DPU vendor.
-Currently only NVIDIA BlueField DPUs have been tested and considered supported by upstream.
-For the BlueField-3 Linux OS, ensure that it matches the version supported by the DOCA drivers. At the time of this writing,
-the current DOCA drivers for BlueField-3 are version 3.2.1, which are compatible with Ubuntu 24.04 on the DPU.
-Note, the Host Linux OS also needs DOCA software installed, but there are many different flavors and versions of Linux
-supported for 3.2.1.
-For the full list check out the <a href="https://developer.nvidia.com/doca-downloads?deployment_platform=Host-Server&amp;deployment_package=DOCA-Host&amp;target_os=Linux&amp;Architecture=x86_64&amp;Profile=doca-all">NVIDIA DOCA downloads page</a>.</p>
-<h2 id="limitations">Limitations<a class="headerlink" href="#limitations" title="Permanent link">¶</a></h2>
-<p>A pod who's network interface is provided by the OVN-Kubernetes on the DPU is considered to be "DPU accelerated".
-When using a DPU with OVN-Kubernetes, all OVN-Kubernetes networked pod interfaces on the Host must be DPU accelerated.
-There is no support for a mix of unaccelerated and accelerated workloads within the same node. However, it is possible to
-have a node with accelerated workloads with a DPU, and then another node with unaccelerated pods.
-It is also possible to have a mix of some nodes with DPU and other nodes with other types of SmartNICs.</p>
-<p>Furthermore, it is also not currently possible in OVN-Kubernetes to use more than one SmartNIC or DPU within a node.
-There are plans in future to lift these limitations.</p>
-<h2 id="ovs-offload-considerations">OVS Offload Considerations<a class="headerlink" href="#ovs-offload-considerations" title="Permanent link">¶</a></h2>
-<p>OVS provides two methods of datapath hardware offload:</p>
-<ul>
-<li><strong>Kernel Hardware Offload</strong> - Using Linux Traffic Control to configure the DPU.</li>
-<li><strong>OVS DOCA</strong> - A userspace OVS control plane that programs a fully hardware-resident datapath on the DPU using DOCA, with no kernel OVS or TC involvement.</li>
-</ul>
-<p>Either option is supported by OVN-Kubernetes, and either option may be used in this guide.</p>
-<h2 id="setting-up-the-dpu-and-host">Setting up the DPU and Host<a class="headerlink" href="#setting-up-the-dpu-and-host" title="Permanent link">¶</a></h2>
-<p>The DPU must be configured to handle networking functions for the host. The following configuration for the DPU will be done on the Host itself.</p>
-<ol>
-<li>
-<p>Install DOCA-Host drivers on Host if not already present. Note, these are required even if not using OVS DOCA in order to access the rshim interface to manage the DPU. Be sure to use at least version 3.2.1.</p>
-<ul>
-<li>Go to <a href="https://developer.nvidia.com/doca-downloads">developer.nvidia.com/doca-downloads</a>, in the “Select” form, choose <strong>Host-Server</strong> -&gt; <strong>DOCA-Host</strong> -&gt; <strong>Linux</strong> -&gt; <strong>x86_64</strong> -&gt; <strong>doca-ofed</strong> -&gt; {<em>Your-OS-Distribution</em>} -&gt; {<em>Your-OS-Version</em>} -&gt; {<em>Preferred installation type</em>}, then follow the instructions displayed below the form to install the package.</li>
-</ul>
-<p>Note: Some extra packages may be required depending on your distribution.</p>
-</li>
-<li>
-<p>Make sure that <strong>bfb-install</strong> exists after the above step.</p>
-</li>
-<li>Start <strong>rshim</strong> by running either “systemctl enable -–now rshim” or simply “rshim”.</li>
-<li>
-<p>Make sure that <code>/dev/rshim*</code> device file shows up after the above step.</p>
-</li>
-<li>
-<p>Update BFB and firmware for Mellanox Bluefield DPUs</p>
-<ul>
-<li>Go to <a href="https://developer.nvidia.com/doca-downloads">developer.nvidia.com/doca-downloads</a>, in the “Select” form, choose <strong>BlueField</strong> -&gt; <strong>BF-Bundle</strong> -&gt; <strong>Ubuntu</strong> -&gt; {<em>Version</em>} -&gt; <strong>BFB</strong>, then click “Download” to start downloading.</li>
-<li>Upload the BFB package to the Host.</li>
-<li>On the Host, follow the instructions to install the BFB package. You may provide a config file to set up a password for the <strong>ubuntu</strong> account, in the following format: “<strong>ubuntu_PASSWORD='$1……'</strong>”</li>
-<li>An encrypted password can be generated by command “<strong>openssl passwd -1</strong>”.</li>
-<li>Please power cycle (off and then on) the Host to reboot and run the newly installed software and firmware.</li>
-</ul>
-</li>
-<li>
-<p>The DPU has two modes, DPU and NIC, modes. DPU mode is required for this solution.</p>
-<ul>
-<li>Run following commands on the Host to identify the current mode or update it to enable DPU mode:</li>
-</ul>
-<div class="highlight"><pre><span></span><code>user@fedora:<span class="w"> </span>mlxconfig<span class="w"> </span>-d<span class="w"> </span>/dev/mst/&lt;device&gt;<span class="w"> </span>q<span class="w"> </span>INTERNAL_CPU_OFFLOAD_ENGINE
-ENABLED<span class="o">(</span><span class="m">0</span><span class="o">)</span>
 
-<span class="c1"># to configure BlueField 3:</span>
-user@fedora:<span class="w"> </span>mlxconfig<span class="w"> </span>-d<span class="w"> </span>/dev/mst/&lt;device&gt;<span class="w"> </span>s<span class="w"> </span><span class="nv">INTERNAL_CPU_OFFLOAD_ENGINE</span><span class="o">=</span><span class="m">0</span>
-
-<span class="c1"># to configure BlueField 2:</span>
-user@fedora:<span class="w">  </span>mlxconfig<span class="w"> </span>-d<span class="w"> </span>/dev/mst/&lt;device&gt;<span class="w"> </span>s<span class="w"> </span><span class="nv">INTERNAL_CPU_PAGE_SUPPLIER</span><span class="o">=</span><span class="m">0</span><span class="w"> </span><span class="nv">INTERNAL_CPU_ESWITCH_MANAGER</span><span class="o">=</span><span class="m">0</span><span class="w"> </span><span class="nv">INTERNAL_CPU_IB_VPORT0</span><span class="o">=</span><span class="m">0</span><span class="w"> </span><span class="nv">INTERNAL_CPU_OFFLOAD_ENGINE</span><span class="o">=</span><span class="m">0</span>
-</code></pre></div>
-</li>
-<li>
-<p>Reboot.</p>
-</li>
-<li>
-<p>Optional: At this point you may follow this guide in order to enable OVS DOCA offload support: <a href="https://docs.nvidia.com/doca/sdk/ovs-doca-hardware-acceleration/index.html">docs.nvidia.com/doca/sdk/ovs-doca-hardware-acceleration/index.html</a></p>
-</li>
-<li>
-<p>On the Host, configure the desired number of VFs, then rename the first VF device so that it can be dedicated to and referenced by OVN-Kubernetes as the OVN-Kubernetes management port:</p>
-<div class="highlight"><pre><span></span><code>user@fedora:<span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="si">${</span><span class="nv">num_of_desired_vfs</span><span class="si">}</span><span class="w"> </span>&gt;<span class="w"> </span>/sys/class/net/<span class="si">${</span><span class="nv">interface</span><span class="si">}</span>/devices/sriov_numvfs
-user@fedora:<span class="w"> </span>ip<span class="w"> </span>link<span class="w"> </span><span class="nb">set</span><span class="w"> </span>ens1f0v0<span class="w"> </span>down
-user@fedora:<span class="w"> </span>ip<span class="w"> </span>link<span class="w"> </span><span class="nb">set</span><span class="w"> </span>ens1f0v0<span class="w"> </span>name<span class="w"> </span>forOVN0
-user@fedora:<span class="w"> </span>ip<span class="w"> </span>link<span class="w"> </span><span class="nb">set</span><span class="w"> </span>forOVN0<span class="w"> </span>up
-</code></pre></div>
-</li>
-<li>
-<p>The BFB package installed earlier includes Open vSwitch (OVS). OVS will be installed as a systemd service, and the service is enabled by default. By default DPU will come up with 2 bridges, ovsbr1 and ovsbr2, regardless if the port is cabled or not. You may delete them and create your own bridges, just remember to add uplink <strong>p0/p1</strong> and x86 representor <strong>pf0hpf/pf1hpf</strong> to the new bridge. We will use a tool called minicom to get into the DPU from the host and configure OVS.</p>
-<div class="highlight"><pre><span></span><code><span class="c1">#### run minicom on x86 host to login to the DPU via rshim interface</span>
-<span class="c1"># minicom -D /dev/rshim0/console</span>
-<span class="c1">#### login to DPU</span>
-user@ubuntu:<span class="w"> </span>ovs-vsctl<span class="w"> </span>show
-c41c98ac-0159-4874-97d5-17a4d2647d70
-<span class="w">    </span>Bridge<span class="w"> </span>ovsbr2
-<span class="w">        </span>Port<span class="w"> </span>en3f1pf1sf0
-<span class="w">            </span>Interface<span class="w"> </span>en3f1pf1sf0
-<span class="w">        </span>Port<span class="w"> </span>p1
-<span class="w">            </span>Interface<span class="w"> </span>p1
-<span class="w">        </span>Port<span class="w"> </span>pf1hpf
-<span class="w">            </span>Interface<span class="w"> </span>pf1hpf
-<span class="w">        </span>Port<span class="w"> </span>ovsbr2
-<span class="w">            </span>Interface<span class="w"> </span>ovsbr2
-<span class="w">                </span>type:<span class="w"> </span>internal
-<span class="w">    </span>Bridge<span class="w"> </span>ovsbr1
-<span class="w">        </span>Port<span class="w"> </span>p0
-<span class="w">            </span>Interface<span class="w"> </span>p0
-<span class="w">        </span>Port<span class="w"> </span>ovsbr1
-<span class="w">            </span>Interface<span class="w"> </span>ovsbr1
-<span class="w">                </span>type:<span class="w"> </span>internal
-<span class="w">        </span>Port<span class="w"> </span>pf0hpf
-<span class="w">            </span>Interface<span class="w"> </span>pf0hpf
-<span class="w">        </span>Port<span class="w"> </span>en3f0pf0sf0
-<span class="w">            </span>Interface<span class="w"> </span>en3f0pf0sf0
-<span class="w">   </span>ovs_version:<span class="w"> </span><span class="s2">"3.2.1005"</span>
-user@ubuntu:<span class="w"> </span>ovs-vsctl<span class="w"> </span>del-br<span class="w"> </span>ovsbr1
-user@ubuntu:<span class="w"> </span>ovs-vsctl<span class="w"> </span>del-br<span class="w"> </span>ovsbr2
-user@ubuntu:<span class="w"> </span>ovs-vsctl<span class="w"> </span>add-br<span class="w"> </span>brp0
-user@ubuntu:<span class="w"> </span>ovs-vsctl<span class="w"> </span>add-port<span class="w"> </span>brp0<span class="w"> </span>p0
-user@ubuntu:<span class="w"> </span>ovs-vsctl<span class="w"> </span>add-port<span class="w"> </span>brp0<span class="w"> </span>pf0hpf
-</code></pre></div>
-</li>
-<li>
-<p>Now that the OVS bridge is created with the proper port configuration, we need to configure the IP address of the bridge. Typically this involves moving the IP address that was already configured on the <strong>en3f0pf0sf0</strong> interface to the <strong>brp0</strong> bridge. This IP address will be used for Geneve encapsulation (ovn-encap-ip), and therefore we must configure the OVS bridge so that OVN is aware of it. Additionally, take note of the default gateway route on the Host (10.1.65.1 in this example). We will need to configure this as well in the OVS bridge so OVN will use it as its default gateway.</p>
-<div class="highlight"><pre><span></span><code><span class="c1">#### run minicom on x86 host to login to the DPU via rshim interface</span>
-<span class="c1"># minicom -D /dev/rshim0/console</span>
-<span class="c1">#### login to DPU</span>
-user@ubuntu:<span class="w"> </span>ip<span class="w"> </span>addr<span class="w"> </span>del<span class="w"> </span><span class="m">10</span>.1.65.155/24<span class="w"> </span>dev<span class="w"> </span>en3f0pf0sf0
-user@ubuntu:<span class="w"> </span>ip<span class="w"> </span>addr<span class="w"> </span>add<span class="w"> </span><span class="m">10</span>.1.65.155/24<span class="w"> </span>dev<span class="w"> </span>brp0
-<span class="c1">#### make brp0 as the default route interface</span>
-user@ubuntu:<span class="w"> </span>ip<span class="w"> </span>r<span class="w"> </span>add<span class="w"> </span>default<span class="w"> </span>via<span class="w"> </span><span class="m">10</span>.1.65.1<span class="w"> </span>dev<span class="w"> </span>brp0
-<span class="c1">#### configure OVS</span>
-user@ubuntu:<span class="w"> </span>ovs-vsctl<span class="w"> </span><span class="nb">set</span><span class="w"> </span>Open_vSwitch<span class="w"> </span>.<span class="w"> </span>other_config:hw-offload<span class="o">=</span><span class="nb">true</span>
-user@ubuntu:<span class="w"> </span>ovs-vsctl<span class="w"> </span><span class="nb">set</span><span class="w"> </span>Open_vSwitch<span class="w"> </span>.<span class="w"> </span>external_ids:ovn-encap-ip<span class="o">=</span><span class="s2">"10.1.65.155"</span>
-user@ubuntu:<span class="w"> </span>ovs-vsctl<span class="w"> </span><span class="nb">set</span><span class="w"> </span>Open_vSwitch<span class="w"> </span>.<span class="w"> </span>external_ids:ovn-gw-interface<span class="o">=</span><span class="s2">"brp0"</span>
-user@ubuntu:<span class="w"> </span>ovs-vsctl<span class="w"> </span><span class="nb">set</span><span class="w"> </span>Open_vSwitch<span class="w"> </span>.<span class="w"> </span>external_ids:ovn-gw-nexthop<span class="o">=</span><span class="s2">"10.1.65.1"</span>
-<span class="c1">#### configure the hostname of the Host as it will appear in the Host Kubernetes Cluster</span>
-user@ubuntu:<span class="w"> </span>ovs-vsctl<span class="w"> </span><span class="nb">set</span><span class="w"> </span>Open_vSwitch<span class="w"> </span>.<span class="w"> </span>external_ids:host-k8s-nodename<span class="o">=</span><span class="s2">"host-worker-1"</span>
-</code></pre></div>
-</li>
-</ol>
-<h2 id="deploying-ovn-kubernetes">Deploying OVN-Kubernetes<a class="headerlink" href="#deploying-ovn-kubernetes" title="Permanent link">¶</a></h2>
-<p>A version of OVN-Kubernetes at least with 1.3 is required for DPUs. At the time of this writing, 1.3 is in Alpha state. The following steps should be done from a jumphost that has Kubeconfig access to both the Host and DPU cluster.</p>
-<ol>
-<li>Build or download the OVN-Kubernetes container images. Refer to this <a href="../../developer-guide/image-build/">image build guide</a> on how to build/obtain the artifacts.</li>
-<li>Upload the images to a container registry that is reachable by both clusters.</li>
-<li>Label all Host nodes with DPU with <strong>k8s.ovn.org/dpu-host=""</strong></li>
-<li>Label all DPU nodes with <strong>k8s.ovn.org/dpu=""</strong></li>
-<li><code>git clone https://github.com/ovn-kubernetes/ovn-kubernetes</code> to obtain the helm charts.</li>
-<li>Follow the <a href="../../installation/launching-ovn-kubernetes-with-dpu/">upstream installation guide</a> to configure the helm charts correctly and install OVN-Kubernetes to the Host and DPU.</li>
-</ol>
-<h2 id="install-sr-iov-device-plugin">Install SR-IOV Device Plugin<a class="headerlink" href="#install-sr-iov-device-plugin" title="Permanent link">¶</a></h2>
-<p>OVN-Kubernetes relies on SR-IOV Plugin to provision VFs for the pods. Once allocated, OVN-Kubernetes will plug the VF for the pod on the Host into the pod network namespace. Then, on the DPU side, it will plug in the VF representor into OVS. From the jumphost follow these steps and use the kubeconfig of the Host Kubernetes cluster.</p>
-<ol>
-<li><code>git clone https://github.com/k8snetworkplumbingwg/sriov-network-device-plugin</code>. Use at least tag v3.11.0.</li>
-<li>
-<p>Configure the SR-IOV resource that OVN-Kubernetes will use. Replace the content of <code>deployments/configMap.yaml</code> with:</p>
-<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">v1</span>
-<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ConfigMap</span>
-<span class="nt">metadata</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sriovdp-config</span>
-<span class="w">  </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">kube-system</span>
-<span class="nt">data</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">config.json</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
-<span class="w">    </span><span class="no">{</span>
-<span class="w">        </span><span class="no">"resourceList": [</span>
-<span class="w">           </span><span class="no">{</span>
-<span class="w">               </span><span class="no">"resourceName": "asap2_vf",</span>
-<span class="w">               </span><span class="no">"resourcePrefix": "nvidia.com",</span>
-<span class="w">               </span><span class="no">"excludeTopology": true,</span>
-<span class="w">               </span><span class="no">"selectors": {</span>
-<span class="w">                   </span><span class="no">"vendors": [ "15b3" ],</span>
-<span class="w">                   </span><span class="no">"devices": [ "101e" ],</span>
-<span class="w">                   </span><span class="no">"drivers": [ "mlx5_core" ],</span>
-<span class="w">                   </span><span class="no">"pfNames": [ "ens1f0np0#1-7" ]</span>
-<span class="w">               </span><span class="no">}</span>
-<span class="w">           </span><span class="no">}</span>
-<span class="w">        </span><span class="no">]</span>
-<span class="w">    </span><span class="no">}</span>
-</code></pre></div>
-</li>
-<li>
-<p><code>kubectl create -f deployments/configMap.yaml</code></p>
-</li>
-<li><code>kubectl create -f deployments/sriovdp-daemonset.yaml</code></li>
-</ol>
-<h2 id="install-multus">Install Multus<a class="headerlink" href="#install-multus" title="Permanent link">¶</a></h2>
-<p>Multus is needed in order to pass the VF allocated by SR-IOV Plugin to OVN-Kubernetes as the DeviceID. Furthermore, in addition to the primary network, OVN-Kubernetes supports Secondary Networks using Secondary Network Attachment Definitions (NADs) or Secondary User Defined Networks (UDNs). In simpler terms, a pod can have a VF for its default gateway interface, as well as one or more VFs for secondary networks. To leverage this capability, Multus needs to be installed. Follow these steps on the jumphost while using the Host kubeconfig.</p>
-<ol>
-<li>
-<p>Download the deployment spec for Multus. Use at least tag v4.2.3:</p>
-<div class="highlight"><pre><span></span><code>user@jumphost:<span class="w"> </span>curl<span class="w"> </span>-LO<span class="w"> </span>https://raw.githubusercontent.com/k8snetworkplumbingwg/multus-cni/master/deployments/multus-daemonset.yml
-</code></pre></div>
-</li>
-<li>
-<p>Create the Multus cni-conf file that will be used with OVN-Kubernetes:</p>
-<div class="highlight"><pre><span></span><code>user@jumphost:<span class="w"> </span>cat<span class="w"> </span>&gt;<span class="w"> </span>cni-conf.json<span class="w"> </span><span class="s">&lt;&lt; 'EOF'</span>
-<span class="s">{</span>
-<span class="s">  "name": "multus-cni-network",</span>
-<span class="s">  "type": "multus",</span>
-<span class="s">  "logLevel": "verbose",</span>
-<span class="s">  "logFile": "/var/log/multus.log",</span>
-<span class="s">  "namespaceIsolation": false,</span>
-<span class="s">  "multusNamespace": "default",</span>
-<span class="s">  "clusterNetwork": "ovn-primary",</span>
-<span class="s">  "confDir": "/etc/cni/net.d",</span>
-<span class="s">  "readinessindicatorfile": "/etc/cni/net.d/10-ovn-kubernetes.conf",</span>
-<span class="s">  "kubeconfig": "/etc/cni/net.d/multus.d/multus.kubeconfig"</span>
-<span class="s">}</span>
-<span class="s">EOF</span>
-</code></pre></div>
-</li>
-<li>
-<p>Create the configMap using the cni-conf file:</p>
-<div class="highlight"><pre><span></span><code>user@jumphost:<span class="w"> </span>kubectl<span class="w"> </span>-n<span class="w"> </span>kube-system<span class="w"> </span>delete<span class="w"> </span>configmap<span class="w"> </span>multus-cni-config<span class="w"> </span>--ignore-not-found<span class="o">=</span><span class="nb">true</span>
-user@jumphost:<span class="w"> </span>kubectl<span class="w"> </span>-n<span class="w"> </span>kube-system<span class="w"> </span>create<span class="w"> </span>configmap<span class="w"> </span>multus-cni-config<span class="w"> </span>--from-file<span class="o">=</span>cni-conf.json
-</code></pre></div>
-</li>
-<li>
-<p>Edit the <code>multus-daemonset.yml</code> previously downloaded.</p>
-<div class="highlight"><pre><span></span><code><span class="nn">...</span>
-<span class="nt">spec</span><span class="p">:</span>
-<span class="w">  </span><span class="l l-Scalar l-Scalar-Plain">...</span>
-<span class="w">  </span><span class="l l-Scalar l-Scalar-Plain">template</span><span class="p p-Indicator">:</span>
-<span class="w">    </span><span class="l l-Scalar l-Scalar-Plain">...</span>
-<span class="w">    </span><span class="l l-Scalar l-Scalar-Plain">spec</span><span class="p p-Indicator">:</span>
-<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">...</span>
-<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">containers</span><span class="p p-Indicator">:</span>
-<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">kube-multus</span>
-<span class="w">        </span><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ghcr.io/k8snetworkplumbingwg/multus-cni:snapshot</span>
-<span class="w">        </span><span class="nt">command</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"/thin_entrypoint"</span><span class="p p-Indicator">]</span>
-<span class="w">        </span><span class="nt">args</span><span class="p">:</span>
-<span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">"/tmp/multus-conf/00-multus.conf"</span><span class="w"> </span><span class="c1"># Modify multus-conf-file</span>
-<span class="w">      </span><span class="l l-Scalar l-Scalar-Plain">...</span>
-<span class="w">      </span><span class="nt">volumes</span><span class="p">:</span>
-<span class="w">        </span><span class="l l-Scalar l-Scalar-Plain">...</span>
-<span class="w">        </span><span class="l l-Scalar l-Scalar-Plain">- name</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">multus-cfg</span>
-<span class="w">          </span><span class="l l-Scalar l-Scalar-Plain">configMap</span><span class="p p-Indicator">:</span>
-<span class="w">            </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">multus-cni-config</span>
-<span class="w">            </span><span class="nt">items</span><span class="p">:</span>
-<span class="w">            </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">cni-conf.json</span>
-<span class="w">              </span><span class="nt">path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">00-multus.conf</span><span class="w"> </span><span class="c1"># Modify to 00-multus.conf</span>
-</code></pre></div>
-</li>
-<li>
-<p>Create the Multus Daemonset.</p>
-<div class="highlight"><pre><span></span><code>kubectl<span class="w"> </span>apply<span class="w"> </span>-f<span class="w"> </span>multus-daemonset.yml
-</code></pre></div>
-</li>
-</ol>
-<h2 id="validating-the-setup">Validating the Setup<a class="headerlink" href="#validating-the-setup" title="Permanent link">¶</a></h2>
-<p>Now that we have configured everything it is time to create a pod and verify that it is properly offloaded. The last step to do before we can start a pod is to create the Network Attachment Definition (NAD) so that OVN-Kubernetes will be invoked as the CNI and use VFs for the default network. Additionally, Primary or Secondary User Defined Networks (UDNs) could also be created, but for the purpose of this guide we will focus on the Cluster Default Network (CDN). Follow these steps from the jumphost with the Host kubeconfig to create the NAD and a pod to test with.</p>
-<ol>
-<li>
-<p>Configure the primary default NAD. Notice the <code>resourceName</code> annotation is set to the SR-IOV device plugin resource we previously configured:</p>
-<div class="highlight"><pre><span></span><code>cat<span class="w"> </span><span class="s">&lt;&lt;EOF | kubectl apply -f -</span>
-<span class="s">apiVersion: k8s.cni.cncf.io/v1</span>
-<span class="s">kind: NetworkAttachmentDefinition</span>
-<span class="s">metadata:</span>
-<span class="s">  annotations:</span>
-<span class="s">    k8s.v1.cni.cncf.io/resourceName: nvidia.com/asap2_vf</span>
-<span class="s">  name: ovn-primary</span>
-<span class="s">spec:</span>
-<span class="s">  config: |</span>
-<span class="s">    {</span>
-<span class="s">      "cniVersion": "1.1.0",</span>
-<span class="s">      "name": "ovn-primary",</span>
-<span class="s">      "netAttachDefName": "default/ovn-primary",</span>
-<span class="s">      "type": "ovn-k8s-cni-overlay",</span>
-<span class="s">      "logFile": "/var/log/ovn-kubernetes/ovn-k8s-cni-overlay.log",</span>
-<span class="s">      "logLevel": "5",</span>
-<span class="s">      "logfile-maxsize": 100,</span>
-<span class="s">      "logfile-maxbackups": 5,</span>
-<span class="s">      "logfile-maxage": 5</span>
-<span class="s">    }</span>
-<span class="s">EOF</span>
-</code></pre></div>
-</li>
-<li>
-<p>Create a test pod.</p>
-<div class="highlight"><pre><span></span><code>cat<span class="w"> </span><span class="s">&lt;&lt;EOF | kubectl apply -f -</span>
-<span class="s">apiVersion: v1</span>
-<span class="s">kind: Pod</span>
-<span class="s">metadata:</span>
-<span class="s">  name: testpod1</span>
-<span class="s">spec:</span>
-<span class="s">  containers:</span>
-<span class="s">  - name: web</span>
-<span class="s">    image: nicolaka/netshoot</span>
-<span class="s">    imagePullPolicy: IfNotPresent</span>
-<span class="s">    resources:</span>
-<span class="s">      requests:</span>
-<span class="s">        nvidia.com/asap2_vf: "1"</span>
-<span class="s">      limits:</span>
-<span class="s">        nvidia.com/asap2_vf: "1"</span>
-<span class="s">EOF</span>
-</code></pre></div>
-</li>
-<li>
-<p>Once the pod is in “Running” state, execute the following commands. The driver determined by ethtool for the pod’s network interface should be “mlx5_core”.</p>
-<div class="highlight"><pre><span></span><code><span class="c1"># kubectl exec -it testpod1 -- bash</span>
-<span class="c1"># ethtool -i eth0 | grep driver</span>
-driver:<span class="w"> </span>mlx5_core
-</code></pre></div>
-</li>
-<li>
-<p>Now ssh to the DPU where the pod is running to check in OVS that the pod has been assigned to a VF representor that it is attached to OVS:</p>
-<div class="highlight"><pre><span></span><code><span class="c1"># sudo ovs-vsctl list interface | grep -A 15 testpod1 | grep -E "^name" | cut -d ':' -f 2</span>
-pf0vf7
-</code></pre></div>
-</li>
-<li>
-<p>While still on the DPU, we can look at the flows installed by OVN to ensure that they are being configured correctly as offloaded:</p>
-<div class="highlight"><pre><span></span><code><span class="c1"># sudo ovs-appctl dpctl/dump-flows type=offloaded</span>
-</code></pre></div>
-</li>
-</ol>
-<h2 id="conclusion">Conclusion<a class="headerlink" href="#conclusion" title="Permanent link">¶</a></h2>
-<p>Deploying OVN-Kubernetes in a DPU-accelerated environment provides significant performance and security benefits by offloading network processing. By carefully following the configuration steps for both the DPU and the host, and verifying the OVN-Kubernetes setup, you can establish a high-performance network foundation for your Kubernetes workloads.</p>
-<p><em>Posted on</em> <em>February 12, 2026</em> <em>by</em> <em>Tim Rozet</em>.</p>
-
-
-
-
-
-
-
-
-
-
-
-
-                
-              </article>
-            </div>
+    
+      <nav class="md-post__action">
+        <a href="../../2026/02/12/accelerating-and-offloading-kubernetes-networking-leveraging-dpus-with-ovn-kubernetes/">
+          Continue reading
+        </a>
+      </nav>
+    
+    
+  </div>
+</article>
+      
+      
+        
           
+
+
+
+<nav class="md-pagination">
+  
+</nav>
+        
+      
+    </div>
+  </div>
+
           
 <script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
         </div>
@@ -5363,10 +4892,10 @@ pf0vf7
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.indexes", "navigation.tabs", "navigation.tabs.sticky", "content.code.annotate", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": ["latest", "master"], "provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.instant", "navigation.tracking", "navigation.indexes", "navigation.tabs", "navigation.tabs.sticky", "content.code.annotate", "content.code.copy"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": ["latest", "master"], "provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   
