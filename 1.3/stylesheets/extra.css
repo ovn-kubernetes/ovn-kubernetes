@@ -319,6 +319,50 @@ a.md-tabs__link {
   box-shadow: var(--ok-shadow), 0 0 0 1px rgba(82, 108, 254, 0.08);
 }
 
+/* BLOG POST SIDEBAR: Visual-only floating card for the blog plugin's
+   post metadata sidebar (.md-sidebar--post). Unlike --primary, this
+   sidebar lives INSIDE .md-content--post so we pull it left with a
+   negative margin to align with the primary sidebar card on other pages. */
+.md-sidebar--post {
+  width: min(15rem, 80vw);
+  transform: translateX(clamp(-20rem, 2.5% - 10vw, -5rem));
+}
+
+.md-sidebar--post .md-sidebar__scrollwrap {
+  box-sizing: border-box;
+  background: var(--ok-sidebar-gradient);
+  background-clip: padding-box;
+  border: 1px solid var(--ok-sidebar-border);
+  border-radius: var(--ok-radius);
+  box-shadow: var(--ok-shadow);
+  overflow-y: auto;
+  overflow-x: hidden;
+  transition: transform var(--ok-med), box-shadow var(--ok-med);
+}
+
+.md-sidebar--post .md-sidebar__inner {
+  background: var(--ok-sidebar-bg);
+  border-radius: var(--ok-radius-sm);
+  margin: 0 clamp(1px, 0.2vw, 2px);
+  padding: clamp(0.5rem, 0.5rem + 0.3vw, 0.85rem) clamp(0.4rem, 0.4rem + 0.3vw, 0.7rem);
+}
+
+.md-sidebar--post .md-sidebar__scrollwrap:hover {
+  transform: translateY(clamp(-2px, -0.2vw, -4px));
+  box-shadow: var(--ok-shadow), rgba(24, 23, 23, 0.1) 0 2px 0;
+}
+
+[data-md-color-scheme="slate"] .md-sidebar--post .md-sidebar__scrollwrap:hover {
+  box-shadow: var(--ok-shadow), 0 0 0 1px rgba(82, 108, 254, 0.08);
+}
+
+/* Blog post pages: reset the aggressive negative content margin so the
+   article text does not overlap the in-content post sidebar. The [dir]
+   attribute selector matches the specificity of the global rule. */
+[dir="ltr"] .md-content--post > .md-content__inner {
+  margin-left: 1.2rem;
+}
+
 .md-main__inner {
   grid-template-columns: minmax(min(10rem, 15vw), 12.5rem) 1fr minmax(min(10rem, 15vw), 12.5rem);
   margin-top: 1rem;
