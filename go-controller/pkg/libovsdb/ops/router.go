@@ -689,8 +689,7 @@ func GetRouterLogicalRouterStaticRoutesWithPredicate(nbClient libovsdbclient.Cli
 	}
 
 	// Filter only the router's routes in the cache before cloning rows. The
-	// previous implementation cloned every attached route before applying p,
-	// while a global cache predicate scanned routes attached to other routers.
+	// previous implementation performed one cache lookup per referenced UUID.
 	// Track every candidate seen because WhereCacheByUUIDs intentionally skips
 	// missing UUIDs, while this helper historically returned ErrNotFound.
 	foundRoutes := 0
