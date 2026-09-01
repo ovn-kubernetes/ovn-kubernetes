@@ -39,17 +39,6 @@ proposal is scoped to **localnet**; see [Non-Goals](#non-goals) and
   - protocol + port classification (TCP/UDP/SCTP + port);
   - destination matching by IP range (`ipBlock` / CIDR);
   - priority ordering across and within NetworkQoS objects.
-- Support QoS at **both** levels the use cases demand. OVN-Kubernetes
-  guarantees bandwidth policing in the OVN/OVS datapath (excess dropped within
-  the cluster). For fabric-level QoS, OVN-Kubernetes **marks** DSCP on egress
-  traffic - which on tunnel-free localnet is directly visible to the fabric -
-  but the fabric only enforces (queues/prioritizes) that marking when the
-  physical network is configured to honor and map DSCP to hardware queues; that
-  configuration is outside OVN-Kubernetes' control.
-- Preserve **identical behavior on IPAM-enabled networks**. The existing
-  IP-based address-set path remains the production-proven path for all current
-  NetworkQoS deployments - no regressions, no behavioral change, no performance
-  impact.
 
 ## Non-Goals
 
@@ -77,12 +66,6 @@ proposal is scoped to **localnet**; see [Non-Goals](#non-goals) and
 - **Changes to the NetworkQoS CRD API / schema.** Users create the same
   `NetworkQoS` resources with the same fields; only controller-internal
   behavior changes.
-- **Changes to EgressQoS.** EgressQoS is default-network-only and always has
-  IPAM.
-- **MultiNetworkPolicy changes for ipamless networks.** The same restriction
-  (only `ipBlock` peers on ipamless networks) exists for MultiNetworkPolicy and
-  is unblocked by the same underlying enabling work, but the MNP implementation
-  is a separate effort (see [Future Goals](#future-goals)).
 - **Ingress-direction QoS and traffic shaping.** NetworkQoS is egress-only and
   *polices* (drops excess) rather than *shapes* (queues) - an existing product
   constraint, not introduced here.
@@ -111,40 +94,12 @@ proposal is scoped to **localnet**; see [Non-Goals](#non-goals) and
   `k8s.ovn.org/pod-networks` annotation so the existing IP-based path applies -
   e.g. KubeVirt static-IP propagation, or the DHCP IPAM path of
   [OKEP-6224](okep-6224-dhcp-ipam-localnet.md).
-- **MultiNetworkPolicy pod/namespace selectors on ipamless networks.** The same
-  enabling mechanism lifts the current "IPAM-less networks can only have
-  `ipBlock` peers" restriction for MNP. Separate PR.
 - **Convergence with DHCP IPAM ([OKEP-6224](okep-6224-dhcp-ipam-localnet.md)).**
   DHCP-mode networks have subnets configured (for the DHCP pool), so
   `DoesNetworkRequireIPAM()` returns true and they already follow the standard
   IP-based path. A future optimization could unify the ipamless and DHCP paths.
 
 ## Introduction
-
-### QoS mechanisms in OVN-Kubernetes today
-
-OVN-Kubernetes offers three QoS mechanisms. The table summarizes their
-capabilities relative to the requirements of this OKEP.
-
-| Capability | NetworkQoS (`v1alpha1`) | EgressQoS (`v1`) | Pod Bandwidth Annotations |
-|---|---|---|---|
-| DSCP marking (0–63) | Yes | Yes | No |
-| Bandwidth policing (rate+burst) | Yes - excess dropped | No | Egress only |
-| Traffic shaping (queuing) | No | No | Ingress only (linux-htb) |
-| Destination CIDR match | Yes | Yes | No |
-| Destination pod/ns selector | Yes (IPAM-enabled only today) | No | No |
-| Protocol + port match | Yes (TCP/UDP/SCTP) | No | No |
-| Source pod selector | Yes (spec-level) | Yes (per-rule) | No |
-| Multi-network / UDN | Yes | No (default only) | Limited |
-| Multiple objects per namespace | Yes | No (one, named `default`) | N/A |
-| Priority | 0–100 (higher wins) | Array position | N/A |
-| Direction | Egress only | Egress only | Both |
-
-**NetworkQoS is the only mechanism with the expressiveness the target use cases
-need** - multi-network/UDN support, DSCP marking, bandwidth policing, and
-traffic classification by protocol/port. EgressQoS is its default-network-only
-predecessor; pod bandwidth annotations are per-interface with no traffic
-classification.
 
 ### How NetworkQoS works, and its IP dependency
 
@@ -161,15 +116,6 @@ The NetworkQoS CRD (`k8s.ovn.org/v1alpha1`) is namespace-scoped and defines:
   policing, not shaping), and an optional `classifier` matching by destination
   (`ipBlock`, `podSelector`, `namespaceSelector`) and/or by `ports` (protocol +
   port). Later rules in the list take higher precedence.
-
-Internally, the controller creates OVN address sets for source (and
-destination) pods, builds match expressions such as
-`ip4.src == {$src_as} && tcp && tcp.dst == 8080`, and attaches OVN QoS entries
-(direction `to-lport`, i.e. egress from the pod's perspective) to the network's
-logical switch. Every step depends on pod IP addresses obtained from the
-`k8s.ovn.org/pod-networks` annotation. On ipamless networks that annotation
-carries a MAC but no IPs, so the controller has nothing to match on and skips
-the pod.
 
 ### Why ipamless secondary localnet is the target topology
 
@@ -377,75 +323,16 @@ Derived from the user stories above and the driving user requests tracked in
 the upstream enhancement issue
 ([#6815](https://github.com/ovn-kubernetes/ovn-kubernetes/issues/6815)):
 
-- **R1.** Production workloads must be able to have their egress traffic
-  **marked** with a higher-priority DSCP class than staging workloads, even when
-  both share the same localnet subnet. (Preferential *forwarding* of that traffic
-  depends on the physical fabric being configured to honor the marking - outside
-  OVN-Kubernetes' control; see R5 and [Non-Goals](#non-goals).)
-- **R2.** Within a single VM, in-guest backup traffic must be able to receive
-  lower network priority than the VM's regular application traffic.
-- **R3.** QoS must be selectable by pod/VM **labels** and must support applying
-  a DSCP mark to the selected egress traffic.
-- **R4.** The solution must work on **secondary OVN localnet networks with
-  statically managed IPs (ipamless)**. Ipamless **layer2** is not a committed
-  target: it will be reused opportunistically if the localnet mechanism applies
-  with little or no additional work, otherwise pursued as a separate
-  enhancement.
-- **R5.** QoS must operate at **both** levels: the OVN/OVS datapath, where
-  OVN-Kubernetes guarantees bandwidth policing within the cluster; and the
-  physical network fabric, where OVN-Kubernetes marks DSCP on egress traffic.
-  Fabric-level enforcement of that marking depends on the physical network being
-  configured to honor and map DSCP, which is outside OVN-Kubernetes' control.
-- **R6.** The solution must work with **KubeVirt VMs on OpenShift
-  Virtualization**.
-- **R7.** **No changes to the NetworkQoS CRD API.** Requirements must be met by
-  controller-internal behavior alone. *This requirement is provisional: it may be
-  relaxed or removed depending on how outcomes are surfaced to the user (see
-  R13).*
-- **R8.** Destination matching on ipamless networks must support **IP range
-  (`ipBlock` / CIDR)** classification. Destination selection by `podSelector` /
-  `namespaceSelector` is deliberately out of scope for this proposal (see
-  [Non-Goals](#non-goals) and [Future Goals](#future-goals)), because `ipBlock`
-  is sufficient for the target use cases.
-- **R9.** Bandwidth policing (`rate` in kbps, `burst` in kilobits) must be
-  supported on ipamless networks, to enforce per-source or per-traffic-class
-  egress rate limits (Stories 2 and 3).
-- **R10.** Traffic classification by protocol (TCP/UDP/SCTP) and destination
-  port must be supported on ipamless networks, to differentiate traffic classes
-  within a workload (Story 2).
-- **R11.** Priority ordering - both across NetworkQoS objects (`priority`, 0-100)
-  and within an object's ordered `egress` rule list - must be honored on ipamless
-  networks, to resolve conflicts when multiple policies or rules match the same
-  traffic (Story 1).
-- **R12.** The solution must preserve identical behavior, performance, and OVN
-  datapath constructs for NetworkQoS on **IPAM-enabled** networks; the existing
-  IP-based address-set path must remain unchanged, with no regressions (Goal 4).
-  This guarantee applies to objects whose selected networks are all
-  IPAM-enabled. Because a single `NetworkQoS` object can select multiple networks
-  (the `networkSelectors` list, each entry a label selector), an object may
-  select **both** an IPAM-enabled and an ipamless network; for such
-  mixed-selection objects, any R13 degradation-surfacing may become observable on
-  the object. Reconciling R12's no-change guarantee with R13 for mixed-selection
-  objects is part of the R13 open question (see
-  [Deferred / Open Questions](#deferred--open-questions)).
-- **R13.** When a `NetworkQoS` configuration relies on a capability not
-  supported on the target ipamless network (notably destination `podSelector` /
-  `namespaceSelector`), the outcome must be **discoverable** to the user rather
-  than a silent no-op. This is consistent with the Problem Statement's objection
-  to silently skipped pods: because a single namespace-scoped object can select
-  multiple networks and be honored on an IPAM-enabled network while degrading on
-  an ipamless one, users need to be able to tell which semantics apply where.
-  *How* this is surfaced is an open question (see
-  [Deferred / Open Questions](#deferred--open-questions)) to be settled in the
-  Proposed Solution; this requirement fixes only that the degradation must not be
-  silent.
-- **R14.** The distinction between DSCP *marking* (which OVN-Kubernetes performs)
-  and DSCP *enforcement* (which requires the physical fabric to be configured to
-  honor the marking) must be explicit to users, so that a marked-but-unenforced
-  outcome - the expected result when the fabric is unconfigured - is not mistaken
-  for a broken feature. Marking is verifiable at the source (e.g. `tcpdump` on the
-  OVS bridge port, per Story 4); fabric enforcement is a separate, out-of-scope
-  prerequisite (see R5 and [Non-Goals](#non-goals)).
+- The solution must work on **secondary OVN localnet networks with
+statically managed IPs (ipamless)**. Ipamless **layer2** is not a committed
+target: it will be reused opportunistically if the localnet mechanism applies
+with little or no additional work, otherwise pursued as a separate
+enhancement.
+- Destination matching on ipamless networks must support **IP range
+(`ipBlock` / CIDR)** classification. Destination selection by `podSelector` /
+`namespaceSelector` is deliberately out of scope for this proposal (see
+[Non-Goals](#non-goals) and [Future Goals](#future-goals)), because `ipBlock`
+is sufficient for the target use cases.
 
 ## Proposed Solution
 
@@ -494,9 +381,7 @@ pods labeled `role: backup-target`" without manual CIDR bookkeeping).
 
 ## Deferred / Open Questions
 
-### From 2026-08-19 review
-
-- **R13 discovery mechanism for unsupported/degraded configs on ipamless networks** — Requirements (R13) (P1, product-lens / scope-guardian, confidence 75)
+- **Discovery mechanism for unsupported/degraded configs on ipamless networks**
 
   R13 requires that a `NetworkQoS` config relying on a capability unavailable on
   an ipamless network (notably destination `podSelector` / `namespaceSelector`)
