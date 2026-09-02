@@ -2797,7 +2797,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 
-		ginkgo.It("should not be able to allocate conflicting compressed IP", func() {
+		ginkgo.It("should clean stale compressed IP allocation and assign successfully", func() {
 			app.Action = func(*cli.Context) error {
 				egressIP := "::feff:c0a8:8e32"
 				node1IPv4 := ""
@@ -2860,6 +2860,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 					&egressipv1.EgressIPList{Items: []egressipv1.EgressIP{eIP}},
 				)
 
+				// Pre-populate cache with stale entries (bogus1/2/3 don't exist as EgressIP objects)
 				egressNode1 := setupNode(node1Name, []string{"0:0:0:0:0:feff:c0a8:8e0c/64"}, map[string]string{"0:0:0:0:0:feff:c0a8:8e32": "bogus1", "0:0:0:0:0:feff:c0a8:8e1e": "bogus2"})
 				egressNode2 := setupNode(node2Name, []string{"0:0:0:0:0:fedf:c0a8:8e0c/64"}, map[string]string{"0:0:0:0:0:feff:c0a8:8e23": "bogus3"})
 
@@ -2867,7 +2868,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				fakeClusterManagerOVN.eIPC.nodeAllocator.cache[egressNode2.name] = &egressNode2
 
 				assignedStatuses := fakeClusterManagerOVN.eIPC.assignEgressIPs(eIP.Name, eIP.Spec.EgressIPs)
-				gomega.Expect(assignedStatuses).To(gomega.BeEmpty())
+
+				gomega.Expect(assignedStatuses).To(gomega.HaveLen(1))
+				gomega.Expect(assignedStatuses[0].Node).To(gomega.Equal(node2Name))
+				gomega.Expect(assignedStatuses[0].EgressIP).To(gomega.Equal(egressIP))
+
 				return nil
 			}
 
