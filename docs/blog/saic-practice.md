@@ -79,9 +79,9 @@ The responsibilities in this architecture are divided as follows:
 
 We use shared gateway mode together with OVN-Kubernetes's current default [interconnect architecture](../design/architecture.md), in which each node belongs to its own zone—that is, a single-node-zone interconnect.
 
-In shared gateway mode, traffic leaving the cluster can remain in the OVN/OVS data path and reach the external network through the Gateway Router and OVS bridge. Compared with a path in which traffic first leaves OVN/OVS and then enters the host network stack, this mode is better suited to our performance goals and preserves the option of OVS hardware offload.  We have evaluated some DPU companies in ovn-kubernetes and give us promising result. We believe hardware offload is a must-have when network bandwidth reaches 100Gb/S.
+In shared gateway mode, traffic leaving the cluster can remain in the OVN/OVS data path and reach the external network through the Gateway Router and OVS bridge. Compared with a path in which traffic first leaves OVN/OVS and then enters the host network stack, this mode is better suited to our performance goals and preserves the option of OVS hardware offload.  We have evaluated some DPU companies in ovn-kubernetes and they give us promising result. We believe hardware offload is a must-have when network bandwidth reaches 100 Gb/s.
 
-Interconnect distributes the control plane and OVN databases to the nodes by zone, eliminating the dependency on a centralized set of OVN databases. The following discussions of the Layer2 Transit Router, Dynamic UDN, and cross-network connectivity all assume this deployment baseline. We also have some legacy clusters that runs ovn-kubernetes in old central mode. We plan to migrate the workloads to the new clusters if all the requirements is satisfied.
+Interconnect distributes the control plane and OVN databases to the nodes by zone, eliminating the dependency on a centralized set of OVN databases. The following discussions of the Layer2 Transit Router, Dynamic UDN, and cross-network connectivity all assume this deployment baseline. We also have some legacy clusters that run ovn-kubernetes in old central mode. We plan to migrate the workloads to the new clusters.
 
 ## Using Primary CUDNs to Create Isolated Domains for Tenant Workloads
 
@@ -169,7 +169,7 @@ At the OVN networking layer, this behavior is closely related to the virtual log
 
 ### 3. Private CUDNs
 
-A Private CUDN should explicitly express “no default external egress” in the network model. Platform administrators could then attach a NAT Gateway as needed, instead of granting egress by default and relying on policies to restrict it afterward. The community now disucess the Plexus proposal and contains this feature.
+A Private CUDN should explicitly express “no default external egress” in the network model. Platform administrators could then attach a NAT Gateway as needed, instead of granting egress by default and relying on policies to restrict it afterward. This feature is included in the Plexus proposal, which is currently under discussion within the community.
 
 ### 4. Native NAT Gateway
 
@@ -177,7 +177,7 @@ We would like a dedicated API for declaring NAT Gateways and centrally managing 
 
 ### 5. Custom Routing Tables
 
-Default routes and static connectivity relationships are insufficient when workloads need to build complex network topologies. We would like to configure custom routing tables, next hops, and policy-based routing for CUDNs through an API. This also includes in the Plexus proposal.
+Default routes and static connectivity relationships are insufficient when workloads need to build complex network topologies. We would like to configure custom routing tables, next hops, and policy-based routing for CUDNs through an API. This feature is also part of the Plexus proposal.
 
 ## Conclusion: Toward Software-Defined Networking for the Kubernetes Platform
 
