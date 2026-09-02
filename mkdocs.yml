@@ -83,16 +83,14 @@ nav:
     - index.md
     - Architecture: design/architecture.md
     - Network Topology: design/topology.md
-    - Gateway Modes: design/gateway-modes.md
-    - Traffic Flows: design/traffic-flows.md
-    - Pod Creation Workflow: design/pod-creation-workflow.md
-    - Service Creation Workflow: design/service-creation-workflow.md
     - Service Traffic Policy: design/service-traffic-policy.md
     - Host To NodePort Hairpin: design/host-to-node-port-hairpin-trafficflow.md
     - ExternalIPs/LoadBalancerIngress: design/external-ip-and-loadbalancer-ingress.md
-    - Internal Subnets: design/ovn-kubernetes-subnets.md
     - External Bridge (breth0) Flows: design/bridge-flows.md
     - Masquerade IPs: design/masquerade-ips.md
+    - ACLs: design/acls.md
+    - EgressIP Design: design/egressip.md
+    - Gateway Accelerated Interface: design/gateway-accelerated-interface-configuration.md
     - Kubevirt VM Live Migration: features/live-migration.md
   - Getting Started:
     - getting-started/index.md
@@ -100,12 +98,9 @@ nav:
     - Launching OVN-Kubernetes Using Helm: installation/launching-ovn-kubernetes-with-helm.md
     - Launching OVN-Kubernetes with DPU Acceleration: installation/launching-ovn-kubernetes-with-dpu.md
     - Launching OVN-Kubernetes with kubeadm: installation/INSTALL.KUBEADM.md
+    - Launching OVN-Kubernetes on Ubuntu: installation/INSTALL.UBUNTU.md
     - Configuration Guide: getting-started/configuration.md
     - Requirements: features/requirements.md
-    - CLI Guide: getting-started/cli-guide.md
-    - Deploying Workloads on OVN-Kubernetes cluster: getting-started/example-pod-creation.md
-    - Deploying Services on OVN-Kubernetes cluster: getting-started/example-service-creation.md
-    - Setup and Building: getting-started/building-ovn-kubernetes.md
   - Developer Guide:
       - developer-guide/index.md
       - Contributing Guide: governance/CONTRIBUTING.md
@@ -145,6 +140,7 @@ nav:
       - AdminNetworkPolicy: features/network-security-controls/admin-network-policy.md
       - NetworkPolicy: features/network-security-controls/network-policy.md
       - EgressFirewall: features/network-security-controls/egress-firewall.md
+      - DNS Name Resolution: features/network-security-controls/dns-name-resolution.md
     - ClusterEgressControls:
       - features/cluster-egress-controls/index.md
       - EgressIP: features/cluster-egress-controls/egress-ip.md
@@ -171,6 +167,9 @@ nav:
       - features/hardware-offload/index.md
       - OVS Acceleration with kernel datapath: features/hardware-offload/ovs-kernel.md
       - OVS Acceleration with DOCA datapath: features/hardware-offload/ovs-doca.md
+      - DPU Support: features/hardware-offload/dpu-support.md
+      - DPU Gateway Interface: features/hardware-offload/dpu-gateway-interface.md
+      - Derive From Management Port: features/hardware-offload/derive-from-mgmt-port.md
     - BGP Integration:
       - features/bgp-integration/index.md
       - Route Advertisements: features/bgp-integration/route-advertisements.md
@@ -181,6 +180,7 @@ nav:
     - Introduction: troubleshooting/debugging.md
     - OVNKube Trace: troubleshooting/ovnkube-trace.md
     - Logging: troubleshooting/logging.md
+    - User Defined Networks: troubleshooting/udn.md
   - Observability:
     - observability/index.md
     - Metrics: observability/metrics.md
@@ -205,5 +205,6 @@ nav:
     - VRF-Lite Shared Gateway Mode with Uplinks: okeps/okep-6019-vrf-lite-shared-gateway-external-bridges.md
     - Disable Port Security: okeps/okep-3926-disable-port-security.md
     - OVN Observability API: okeps/okep-5212-ovnobserv-api.md
+    - DHCP IPAM for Localnet: okeps/okep-6224-dhcp-ipam-localnet.md
   - Blog:
     - OVN-Kubernetes Blog: blog/index.md

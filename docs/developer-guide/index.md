@@ -51,3 +51,8 @@ Techniques for debugging OVN-Kubernetes components during development.
 **[Release Guide](release.md)**
 
 Steps to cut a new OVN-Kubernetes release.
+
+**[Maintenance Guide](maintenance.md)**
+
+Ongoing maintenance tasks for the OVN-Kubernetes project.
+
