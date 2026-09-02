@@ -2279,6 +2279,11 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 			config.IPv6Mode = false
 		})
 
+		AfterEach(func() {
+			config.IPv4Mode = false
+			config.IPv6Mode = false
+		})
+
 		const (
 			testNamespace     = "test-ns"
 			testServiceName   = "test-service"
@@ -2473,12 +2478,89 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 					expectedShouldFlush: true,
 				},
 			),
+
+			Entry("add event: TCP endpoints exist, first UDP endpoint added (TCP 1, UDP 0→1)",
+				testCase{
+					desc:     "should return true when UDP goes 0→1 even though TCP has endpoints",
+					oldSlice: nil,
+					newSlice: func() *discovery.EndpointSlice {
+						port := int32(53)
+						proto := corev1.ProtocolUDP
+						return &discovery.EndpointSlice{
+							ObjectMeta: metav1.ObjectMeta{
+								Name:      testEndpointSlice + "-udp",
+								Namespace: testNamespace,
+								UID:       "udp-slice",
+								Labels: map[string]string{
+									discovery.LabelServiceName: testServiceName,
+								},
+							},
+							Ports: []discovery.EndpointPort{
+								{Port: &port, Protocol: &proto},
+							},
+							Endpoints: []discovery.Endpoint{
+								{
+									Addresses: []string{"10.0.0.2"},
+									Conditions: discovery.EndpointConditions{
+										Ready: boolPtr(true),
+									},
+								},
+							},
+						}
+					}(),
+					otherSlices: []*discovery.EndpointSlice{
+						func() *discovery.EndpointSlice {
+							port := int32(80)
+							proto := corev1.ProtocolTCP
+							return &discovery.EndpointSlice{
+								ObjectMeta: metav1.ObjectMeta{
+									Name:      testEndpointSlice + "-tcp",
+									Namespace: testNamespace,
+									UID:       "tcp-slice",
+									Labels: map[string]string{
+										discovery.LabelServiceName: testServiceName,
+									},
+								},
+								Ports: []discovery.EndpointPort{
+									{Port: &port, Protocol: &proto},
+								},
+								Endpoints: []discovery.Endpoint{
+									{
+										Addresses: []string{"10.0.0.1"},
+										Conditions: discovery.EndpointConditions{
+											Ready: boolPtr(true),
+										},
+									},
+								},
+							}
+						}(),
+					},
+					service: &corev1.Service{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      testServiceName,
+							Namespace: testNamespace,
+						},
+						Spec: corev1.ServiceSpec{
+							Ports: []corev1.ServicePort{
+								{Port: 80, Protocol: corev1.ProtocolTCP},
+								{Port: 53, Protocol: corev1.ProtocolUDP},
+							},
+						},
+					},
+					expectedShouldFlush: true,
+				},
+			),
 		)
 	})
 
 	Describe("flushConntrackForServiceVIPs", func() {
 		BeforeEach(func() {
 			config.IPv4Mode = true
+			config.IPv6Mode = false
+		})
+
+		AfterEach(func() {
+			config.IPv4Mode = false
 			config.IPv6Mode = false
 		})
 

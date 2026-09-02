@@ -1279,12 +1279,40 @@ func (nc *DefaultNodeNetworkController) reconcileConntrackUponEndpointSliceEvent
 
 }
 
-// shouldFlushConntrackForZeroToNTransition determines if a service is transitioning from 0 to N eligible
-// endpoints and requires conntrack cleanup for service VIPs to prevent UDP blackholes.
+// countUDPEligibleEndpoints counts eligible endpoints in slices that support UDP ports.
+// It filters out slices that only have TCP/SCTP ports to avoid false negatives where
+// TCP endpoints exist but UDP endpoints don't.
+//
+// Example: Service has TCP:80 and UDP:53. TCP slice has endpoints, UDP slice is empty.
+// When first UDP endpoint arrives, we must detect UDP 0→N transition even though
+// TCP already has endpoints.
+func countUDPEligibleEndpoints(slices []*discovery.EndpointSlice, svc *corev1.Service) int {
+	var udpSlices []*discovery.EndpointSlice
+	for _, slice := range slices {
+		// Check if this slice has any UDP ports
+		hasUDP := false
+		for _, port := range slice.Ports {
+			if port.Protocol != nil && *port.Protocol == corev1.ProtocolUDP {
+				hasUDP = true
+				break
+			}
+		}
+		if hasUDP {
+			udpSlices = append(udpSlices, slice)
+		}
+	}
+	return len(util.GetEligibleEndpointAddressesFromSlices(udpSlices, svc))
+}
+
+// shouldFlushConntrackForZeroToNTransition determines if a service's UDP endpoints are
+// transitioning from 0 to N and require conntrack cleanup to prevent UDP blackholes.
+//
+// This function only considers UDP-supporting endpoint slices. If a service has both TCP
+// and UDP ports, TCP endpoints are ignored when detecting UDP 0→N transitions.
 //
 // Detection logic:
-// - Add event: eligible(other slices)==0 && eligible(new)>0
-// - Update event: eligible(other)==0 && eligible(old)==0 && eligible(new)>0
+// - Add event: udp_eligible(other slices)==0 && udp_eligible(new)>0
+// - Update event: udp_eligible(other)==0 && udp_eligible(old)==0 && udp_eligible(new)>0
 //
 // Where "other slices" = all endpoint slices for this service EXCEPT the one being added/updated.
 func (nc *DefaultNodeNetworkController) shouldFlushConntrackForZeroToNTransition(
@@ -1315,24 +1343,25 @@ func (nc *DefaultNodeNetworkController) shouldFlushConntrackForZeroToNTransition
 		otherSlices = append(otherSlices, slice)
 	}
 
-	// Count eligible endpoints in each category
-	eligibleOther := len(util.GetEligibleEndpointAddressesFromSlices(otherSlices, svc))
+	// Count UDP-specific eligible endpoints in each category
+	// This ensures we only detect UDP 0→N transitions, ignoring TCP/SCTP endpoints
+	eligibleOther := countUDPEligibleEndpoints(otherSlices, svc)
 	eligibleOld := 0
 	eligibleNew := 0
 
 	if oldEndpointSlice != nil {
-		eligibleOld = len(util.GetEligibleEndpointAddressesFromSlices([]*discovery.EndpointSlice{oldEndpointSlice}, svc))
+		eligibleOld = countUDPEligibleEndpoints([]*discovery.EndpointSlice{oldEndpointSlice}, svc)
 	}
 	if newEndpointSlice != nil {
-		eligibleNew = len(util.GetEligibleEndpointAddressesFromSlices([]*discovery.EndpointSlice{newEndpointSlice}, svc))
+		eligibleNew = countUDPEligibleEndpoints([]*discovery.EndpointSlice{newEndpointSlice}, svc)
 	}
 
-	// Detect 0→N transition
+	// Detect 0→N transition for UDP endpoints
 	if oldEndpointSlice == nil {
-		// Add event: eligible(other)==0 && eligible(new)>0
+		// Add event: udp_eligible(other)==0 && udp_eligible(new)>0
 		return eligibleOther == 0 && eligibleNew > 0, nil
 	} else if newEndpointSlice != nil {
-		// Update event: eligible(other)==0 && eligible(old)==0 && eligible(new)>0
+		// Update event: udp_eligible(other)==0 && udp_eligible(old)==0 && udp_eligible(new)>0
 		return eligibleOther == 0 && eligibleOld == 0 && eligibleNew > 0, nil
 	}
 
