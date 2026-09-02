@@ -1344,6 +1344,7 @@ func (gw *GatewayManager) addExternalSwitch(prefix, interfaceID, gatewayRouter, 
 		},
 		Networks: externalRouterPortNetworks,
 		Name:     externalRouterPort,
+		Options:  gw.macBindingSourceOptions(prefix, physNetworkName),
 	}
 	if gw.netInfo.IsUserDefinedNetwork() {
 		externalLogicalRouterPort.ExternalIDs = map[string]string{
@@ -1435,6 +1436,22 @@ func (gw *GatewayManager) addExternalSwitch(prefix, interfaceID, gatewayRouter, 
 	}
 
 	return nil
+}
+
+// macBindingSourceOptions makes the default-network gateway router port the
+// authoritative neighbor table for UDN gateway router ports on the shared
+// external L2 domain. UDNs with their own uplink must learn independently.
+func (gw *GatewayManager) macBindingSourceOptions(prefix, physNetworkName string) map[string]string {
+	if prefix != "" ||
+		!gw.netInfo.IsUserDefinedNetwork() ||
+		gw.netInfo.Uplink() != "" ||
+		physNetworkName != types.PhysicalNetworkName {
+		return nil
+	}
+
+	return map[string]string{
+		libovsdbops.MACBindingSource: types.GWRouterToExtSwitchPrefix + types.GWRouterPrefix + gw.nodeName,
+	}
 }
 
 // cleanupStaleMasqueradeData removes following from northbound database

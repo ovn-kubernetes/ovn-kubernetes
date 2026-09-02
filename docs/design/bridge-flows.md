@@ -65,13 +65,19 @@ rules handle traffic destined to the shared bridge MAC:
 
 ### ARP/NDP Behavior
 
-When CUDNs are enabled, each CUDN gateway
-router (GR) has an external interface that shares the node's physical IP.
-Without filtering, every GR replies to ARP/NDP requests for the node IP,
-creating a reply storm that floods the physical network with identical
-frames. Remote nodes passively learn redundant `MAC_Binding` entries,
-and `ovs-vswitchd` CPU scales linearly with the number of CUDNs. In
-testing, 70 CUDNs drove `ovs-vswitchd` CPU to ~400% with packet drops.
+When CUDNs are enabled, each CUDN gateway router (GR) has an external
+interface that shares the node's physical IP. Sending external ARP and NDP
+traffic to every GR creates duplicate replies and one copy of every learned
+neighbor in each GR datapath. The shared-gateway bridge instead sends neighbor
+discovery only to the default cluster network (CDN) GR. UDN GRs on the same
+physical L2 domain use the CDN GR's MAC bindings.
+
+The UDN external logical router port sets the OVN
+`mac-binding-source=<CDN-external-LRP>` option. OVN redirects the UDN GR's
+neighbor learning and lookup operations to that source port, including the
+lookup that releases a packet buffered during a cold miss. The option is not
+set for UDNs using a separate uplink because those GRs belong to a different
+L2 domain and must learn their own neighbors.
 
 #### No-Flood on CUDN Patch Ports
 
@@ -105,41 +111,42 @@ ingress port) and delivers to LOCAL via broadcast flooding (since
 NS). Because CUDN ports are no-flood, NORMAL's flood does not reach
 them. Only the default GR replies — no storm.
 
-#### Priority-11: External Broadcast ARP/NA Forwarding
+#### Priority-45/52: External ARP/NDP Steering
 
-With no-flood, broadcast ARP from external sources (e.g. a gateway router
-announcing a new MAC via GARP) would no longer reach CUDNs. Priority-11
-flows match broadcast ARP arriving on the physical port and explicitly
-forward to all GR patches so their MAC_Bindings stay current:
+When at least one CUDN patch is present, a priority-45 flow sends every ARP
+packet arriving from the physical port to the CDN GR and NORMAL. This includes
+requests, replies, and gratuitous ARP:
 
 ```text
-priority=11, table=0, in_port=<phys>, dl_dst=ff:ff:ff:ff:ff:ff, arp,
-    actions=output:<default-patch>,output:<cudn1-patch>,...,NORMAL
-priority=11, table=0, in_port=<phys>, dl_dst=33:33:00:00:00:01, icmp6, icmpv6_type=136,
-    actions=output:<default-patch>,output:<cudn1-patch>,...,NORMAL
+priority=45, table=0, in_port=<phys>, arp,
+    actions=output:<default-patch>,NORMAL
 ```
 
-The IPv6 flow matches `dl_dst=33:33:00:00:00:01` — the Ethernet multicast
-MAC for IPv6 all-nodes (`ff02::1`). This restricts to unsolicited Neighbor
-Advertisements (the IPv6 equivalent of GARP) only. Neighbor Solicitations
-are intentionally **not** matched here — NS for the node IP is already
-handled by priority-12 (which targets `nd_target=<nodeIP>` specifically),
-and NS for masquerade IPs should never appear on the wire at all (see
-[masquerade-ips.md](masquerade-ips.md#kernel-static-neighbor-entries) for
-how kernel static neighbor entries prevent this).
+Priority-52 flows perform the same steering for the IPv6 control messages
+that participate in router and neighbor discovery. The ICMPv6 type codes are:
 
-Unicast solicited NAs — i.e. an external host replying to a Neighbor
-Solicitation that the *node* sent — arrive with `dl_dst=bridgeMAC` and
-are handled by priority-50 (`dl_dst=bridgeMAC, ip6 → ct → table 1`),
-then delivered to CUDN patches via priority-14's explicit output actions.
-This is distinct from the GR's *outgoing* NA reply to an NS for the
-node IP: that exits OVN via the patch port and is handled by the
-priority-10 egress validation flow (`in_port=<patch>, dl_src=bridgeMAC
-→ NORMAL`), which sends it out the physical port.
+- Router Advertisement (RA): type 134
+- Neighbor Solicitation (NS): type 135
+- Neighbor Advertisement (NA): type 136
 
-The `in_port=<phys>` match ensures only externally-originated broadcast
-is forwarded; OVN-originated traffic from patch ports is unaffected.
-Node-IP ARPs never fall here (caught at priority-12 first).
+```text
+priority=52, table=0, in_port=<phys>, icmp6, icmpv6_type=134,
+    actions=output:<default-patch>,NORMAL
+priority=52, table=0, in_port=<phys>, icmp6, icmpv6_type=135,
+    actions=output:<default-patch>,NORMAL
+priority=52, table=0, in_port=<phys>, icmp6, icmpv6_type=136,
+    actions=output:<default-patch>,NORMAL
+```
+
+Priority 52 is above the priority-50 IPv6 conntrack rule, so both multicast
+and unicast NDP bypass the old table-1 fan-out path. ARP is not IP traffic, so
+priority 45 only needs to precede the priority-10 generic fan-out rule.
+
+NORMAL retains the gateway VLAN tag while it performs FDB learning and host
+delivery. The no-flood setting excludes CUDN patches, while the explicit
+output delivers one copy to the CDN patch. A GARP or unsolicited NA therefore
+updates the CDN binding immediately, and all shared-L2 UDN GRs consume that
+same binding without receiving a duplicate packet.
 
 #### Priority-0: Catch-All NORMAL
 
@@ -149,52 +156,30 @@ All remaining traffic falls through to the default rule:
 priority=0, table=0, actions=NORMAL
 ```
 
-Because CUDN patch ports have `no-flood`, NORMAL's flood does not reach
-them. When a CUDN sends an ARP for an external host (or any other
-broadcast/unknown-unicast), it hits priority-0, NORMAL performs an FDB
-lookup, and floods only to non-CUDN ports if the MAC is unknown. There
-is no cross-CUDN contamination through this path.
+Because CUDN patch ports have `no-flood`, NORMAL's flood does not reach them.
+When a CUDN sends an ARP for an external host, NORMAL sends it to the physical
+network. OVN records the reply against the CDN source port and releases the
+requesting UDN's buffered packet through the shared binding lookup.
 
-#### Why All Three Layers Are Required
+The priority-12, priority-45, and priority-52 table-0 flows are generated by
+`neighborDiscoverySteeringFlows()` in
+`go-controller/pkg/node/bridgeconfig/bridgeflows.go`. The priority-0 catch-all
+NORMAL rule is part of the base bridge configuration.
 
-The no-flood setting, priority-12, and priority-11 form a dependency chain
-where each compensates for the one below:
-
-1. **no-flood** prevents NORMAL from flooding to CUDNs → solves the storm.
-2. **Priority 11** is needed because no-flood also blocks legitimate
-   broadcast ARP (GARPs from external routers) → explicitly forwards
-   external broadcast to all GR patches so MAC bindings stay current.
-3. **Priority 12** is needed because priority 11 fans out ALL external
-   broadcast ARP, including node-IP ARP requests which would re-create
-   the storm → intercepts node-IP ARPs first and sends only to the
-   default patch.
-
-Removing any one breaks the design:
-
-- Without priority 12: node-IP ARPs hit priority 11 → storm returns.
-- Without priority 11: GARPs never reach CUDNs → stale MAC bindings.
-- Without no-flood: NORMAL floods everything to CUDNs → storm returns
-  (and priorities 11/12 become pointless).
-
-The priority-12 and priority-11 table-0 ARP/NDP flows above are generated by
-`arpFanoutFilterFlows()` in `go-controller/pkg/node/bridgeconfig/bridgeflows.go`.
-The priority-0 catch-all NORMAL rule is part of the base bridge configuration.
-
-#### Table-1: ICMPv6 FLOOD with CUDN Delivery
+#### Table-1: ICMPv6 FLOOD
 
 Existing table-1 flows FLOOD ICMPv6 Router Advertisements (type 134) and
 Neighbor Advertisements (type 136) because they cannot create conntrack
-entries (kernel bug). Since FLOOD also respects no-flood, CUDN patches
-are prepended as explicit outputs:
+entries (kernel bug). On the shared bridge, CUDN patches are no longer
+prepended as explicit outputs:
 
 ```text
-priority=14, table=1, icmp6, icmpv6_type=134,
-    actions=output:<cudn1-patch>,output:<cudn2-patch>,...,FLOOD
-priority=14, table=1, icmp6, icmpv6_type=136,
-    actions=output:<cudn1-patch>,output:<cudn2-patch>,...,FLOOD
+priority=14, table=1, icmp6, icmpv6_type=134, actions=FLOOD
+priority=14, table=1, icmp6, icmpv6_type=136, actions=FLOOD
 ```
 
-When no CUDNs are configured, these remain plain `actions=FLOOD`.
+A separate-uplink bridge has no CDN patch or shared binding owner, so its
+priority-14 flows retain explicit output to that bridge's UDN patches.
 
 ## Code Reference
 

@@ -25,6 +25,8 @@ env:
   DPU_SIM_REF: main
   OVN_KUBERNETES_PATH: ${{ github.workspace }}/ovn-kubernetes
   KIND_EXPERIMENTAL_PROVIDER: docker
+  OVN_REPO: https://github.com/trozet/ovn
+  OVN_GITREF: mirror_arp
 
 jobs:
   kind-dpu-offload:
@@ -44,6 +46,13 @@ jobs:
           ref: ${{ env.DPU_SIM_REF }}
           path: dpu-simulator
           persist-credentials: false
+
+      - &configure_custom_ovn
+        name: Temporarily configure custom OVN source
+        working-directory: dpu-simulator
+        run: |
+          sed -i $'/\/\/ Determine OVN_FROM/i\\\tovnGitRef = os.Getenv("OVN_GITREF")' pkg/cni/ovn_kubernetes.go
+          sed -i 's#ovnRepo := "https://github.com/ovn-org/ovn.git"#ovnRepo := os.Getenv("OVN_REPO")#' pkg/cni/ovn_kubernetes.go
 
       - name: Set up Go from dpu-simulator
         uses: actions/setup-go@v5
@@ -155,6 +164,8 @@ jobs:
           ref: ${{ env.DPU_SIM_REF }}
           path: dpu-simulator
           persist-credentials: false
+
+      - *configure_custom_ovn
 
       - name: Set up Go from dpu-simulator
         uses: actions/setup-go@v5

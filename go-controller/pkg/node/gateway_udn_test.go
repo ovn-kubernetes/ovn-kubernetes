@@ -1265,7 +1265,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			Expect(udnGateway.AddNetwork()).To(Succeed())
 
 			flowMap = udnGateway.gateway.openflowManager.defaultBridge.flowCache
-			udnDefaultFlows := 22
+			udnDefaultFlows := 24
 			Expect(flowMap["DEFAULT"]).To(HaveLen(baseFlowCount + udnDefaultFlows))
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(2)) // default network + UDN network
 			defaultUdnConfig := udnGateway.openflowManager.defaultBridge.GetNetworkConfig("default")
@@ -1690,7 +1690,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			Expect(udnGateway.AddNetwork()).To(Succeed())
 
 			flowMap = udnGateway.gateway.openflowManager.defaultBridge.flowCache
-			udnDefaultFlows := 22
+			udnDefaultFlows := 24
 			Expect(flowMap["DEFAULT"]).To(HaveLen(baseFlowCount + udnDefaultFlows))
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(2)) // default network + UDN network
 			defaultUdnConfig := udnGateway.openflowManager.defaultBridge.GetNetworkConfig("default")
@@ -1931,7 +1931,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			Expect(udnGateway.AddNetwork()).To(Succeed())
 
 			flowMap = udnGateway.gateway.openflowManager.defaultBridge.flowCache
-			udnDefaultFlows := 22
+			udnDefaultFlows := 24
 			advertisedFlows := 3
 			packetMarkFlows := 5
 			Expect(flowMap["DEFAULT"]).To(HaveLen(baseFlowCount + udnDefaultFlows + advertisedFlows + packetMarkFlows))

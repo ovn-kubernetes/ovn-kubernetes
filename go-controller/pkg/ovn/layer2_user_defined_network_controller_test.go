@@ -1189,7 +1189,7 @@ func expectedGWEntitiesLayer2(nodeName string, netInfo util.NetInfo, gwConfig ut
 	expectedEntities := append(
 		expectedGWRouterPlusNATAndStaticRoutes(nodeName, gwRouterName, netInfo, gwConfig),
 		expectedGRToTransitRouterLRPLayer2(gwRouterName, gwRouterJoinIPAddress(), netInfo, trInfo),
-		expectedGRToExternalSwitchLRP(gwRouterName, netInfo, nodePhysicalIPAddress(), udnGWSNATAddress()),
+		expectedGRToExternalSwitchLRP(gwRouterName, nodeName, netInfo, nodePhysicalIPAddress(), udnGWSNATAddress()),
 	)
 	expectedEntities = append(expectedEntities, expectedStaticMACBindings(gwRouterName, staticMACBindingIPs())...)
 	expectedEntities = append(expectedEntities, expectedExternalSwitchAndLSPs(netInfo, gwConfig, nodeName)...)

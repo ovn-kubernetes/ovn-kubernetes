@@ -18,7 +18,7 @@ type NetworkFunction struct {
 	ID          int               `ovsdb:"id"`
 	Inport      string            `ovsdb:"inport"`
 	Name        string            `ovsdb:"name"`
-	Outport     string            `ovsdb:"outport"`
+	Outport     *string           `ovsdb:"outport"`
 }
 
 func (a *NetworkFunction) GetUUID() string {
@@ -89,14 +89,33 @@ func (a *NetworkFunction) GetName() string {
 	return a.Name
 }
 
-func (a *NetworkFunction) GetOutport() string {
+func (a *NetworkFunction) GetOutport() *string {
 	return a.Outport
+}
+
+func copyNetworkFunctionOutport(a *string) *string {
+	if a == nil {
+		return nil
+	}
+	b := *a
+	return &b
+}
+
+func equalNetworkFunctionOutport(a, b *string) bool {
+	if (a == nil) != (b == nil) {
+		return false
+	}
+	if a == b {
+		return true
+	}
+	return *a == *b
 }
 
 func (a *NetworkFunction) DeepCopyInto(b *NetworkFunction) {
 	*b = *a
 	b.ExternalIDs = copyNetworkFunctionExternalIDs(a.ExternalIDs)
 	b.HealthCheck = copyNetworkFunctionHealthCheck(a.HealthCheck)
+	b.Outport = copyNetworkFunctionOutport(a.Outport)
 }
 
 func (a *NetworkFunction) DeepCopy() *NetworkFunction {
@@ -121,7 +140,7 @@ func (a *NetworkFunction) Equals(b *NetworkFunction) bool {
 		a.ID == b.ID &&
 		a.Inport == b.Inport &&
 		a.Name == b.Name &&
-		a.Outport == b.Outport
+		equalNetworkFunctionOutport(a.Outport, b.Outport)
 }
 
 func (a *NetworkFunction) EqualsModel(b model.Model) bool {

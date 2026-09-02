@@ -11,6 +11,71 @@
 #
 # So this file will change over time.
 
+####################################
+# Stage to build OVN from source    #
+####################################
+FROM ubuntu:26.04 AS ovn-builder
+
+USER root
+
+ENV PYTHONDONTWRITEBYTECODE=yes
+
+RUN apt-get update && apt-get install -y \
+    autoconf \
+    automake \
+    build-essential \
+    ca-certificates \
+    git \
+    libcap-ng-dev \
+    libnuma-dev \
+    libpcap-dev \
+    libssl-dev \
+    libtool \
+    libunbound-dev \
+    libunwind-dev \
+    pkg-config \
+    python3 \
+    python3-setuptools \
+    python3-sortedcontainers \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG OVN_REPO=https://github.com/ovn-org/ovn.git
+ARG OVN_GITREF=main
+WORKDIR /root
+RUN mkdir ovn && cd ovn && \
+    git init && \
+    git remote add origin "${OVN_REPO}" && \
+    git fetch origin "${OVN_GITREF:-main}" --depth 1 && \
+    git reset --hard FETCH_HEAD
+
+ARG OVS_REPO=https://github.com/openvswitch/ovs.git
+WORKDIR /root
+RUN OVS_GITREF="$(cd ovn && git submodule status ovs | cut -c 2- | cut -d ' ' -f 1)" && \
+    mkdir ovs && cd ovs && \
+    git init && \
+    git remote add origin "${OVS_REPO}" && \
+    git fetch origin "${OVS_GITREF}" --depth 1 && \
+    git reset --hard FETCH_HEAD
+
+WORKDIR /root/ovs
+RUN ./boot.sh && \
+    ./configure --prefix=/usr --localstatedir=/var --sysconfdir=/etc && \
+    make -j"$(nproc)"
+
+WORKDIR /root/ovn
+RUN ./boot.sh && \
+    ./configure \
+        --prefix=/usr \
+        --localstatedir=/var \
+        --sysconfdir=/etc \
+        --with-ovs-source=/root/ovs \
+        --with-ovs-build=/root/ovs && \
+    make -j"$(nproc)" && \
+    make install DESTDIR=/ovn-install
+
+############################
+# Final OVN-Kubernetes image
+############################
 FROM ubuntu:26.04
 
 USER root
@@ -19,7 +84,11 @@ USER root
 RUN apt-get update && apt-get install -y iproute2 curl software-properties-common util-linux nftables socat ndisc6 libndp-tools
 
 # Install OVS and OVN packages.
-RUN apt-get update && apt-get install -y openvswitch-switch openvswitch-common ovn-central ovn-common ovn-host
+RUN apt-get update && apt-get install -y openvswitch-switch openvswitch-common ovn-central ovn-common ovn-host libunwind8
+
+# Temporarily replace packaged OVN with the requested source build.
+COPY --from=ovn-builder /ovn-install/ /
+RUN ldconfig
 
 RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
     && install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl

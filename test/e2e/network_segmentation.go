@@ -2492,7 +2492,7 @@ spec:
 		)
 	})
 
-	It("should set NO_FLOOD on CUDN patch ports, direct node-IP ARP to default GR (p12 flow), and fan out external GARP to all GRs (p11 flow)", func() {
+	It("should steer external ARP and NDP to the default GR and share its MAC bindings with CUDN GRs", func() {
 		By("getting two nodes: a target node and a sender node")
 		nodes, err := e2enode.GetReadySchedulableNodes(context.TODO(), cs)
 		framework.ExpectNoError(err)
@@ -2561,7 +2561,31 @@ spec:
 		defaultPatchPort := ovnkubeutil.GetPatchPortName(bridgeName, targetNode.Name)
 		scopedNodeName := ovnkubeutil.GetUserDefinedNetworkPrefix(ovntypes.CUDNPrefix+cudnName) + targetNode.Name
 		cudnPatchPort := ovnkubeutil.GetPatchPortName(bridgeName, scopedNodeName)
+		cudnGR := cudnGatewayRouterName(cudnName, targetNode.Name)
+		defaultGR := ovntypes.GWRouterPrefix + targetNode.Name
+		cudnExternalLRP := ovntypes.GWRouterToExtSwitchPrefix + cudnGR
+		defaultExternalLRP := ovntypes.GWRouterToExtSwitchPrefix + defaultGR
 		framework.Logf("default patch port: %s, CUDN patch port: %s", defaultPatchPort, cudnPatchPort)
+
+		By("verifying the CUDN external router port uses the default GR MAC bindings")
+		Eventually(func() string {
+			out, _ := e2epodoutput.RunHostCmdWithRetries(ovnkPod.Namespace, ovnkPod.Name,
+				fmt.Sprintf("ovn-nbctl get Logical_Router_Port %s options:mac-binding-source", cudnExternalLRP),
+				framework.Poll, 30*time.Second)
+			return out
+		}, 60*time.Second, 5*time.Second).Should(ContainSubstring(defaultExternalLRP),
+			"CUDN external LRP %s must use %s as its MAC binding source",
+			cudnExternalLRP, defaultExternalLRP)
+
+		By("verifying OVN activated the shared MAC binding relationship")
+		Eventually(func() string {
+			out, _ := e2epodoutput.RunHostCmdWithRetries(ovnkPod.Namespace, ovnkPod.Name,
+				fmt.Sprintf("ovn-sbctl get Port_Binding %s options:mac-binding-source", cudnExternalLRP),
+				framework.Poll, 30*time.Second)
+			return out
+		}, 60*time.Second, 5*time.Second).Should(ContainSubstring(defaultExternalLRP),
+			"OVN must publish %s as the MAC binding source for %s",
+			defaultExternalLRP, cudnExternalLRP)
 
 		var defaultOfport, cudnOfport string
 		Eventually(func() error {
@@ -2648,25 +2672,25 @@ spec:
 				defaultOfport, cudnOfport, arpFlow,
 			)
 
-			By("verifying the priority-11 ARP flow forwards external broadcast ARP to all GR patch ports")
-			var fanoutFlow string
+			By("verifying the priority-45 flow steers all external ARP to the default GR")
+			var steeringFlow string
 			Eventually(func() string {
 				out, err := e2epodoutput.RunHostCmdWithRetries(ovnkPod.Namespace, ovnkPod.Name,
-					fmt.Sprintf("ovs-ofctl dump-flows %s table=0,in_port=%s,dl_dst=ff:ff:ff:ff:ff:ff,arp | grep priority=11", bridgeName, physOfport),
+					fmt.Sprintf("ovs-ofctl dump-flows %s table=0,in_port=%s,arp | grep priority=45", bridgeName, physOfport),
 					framework.Poll, 30*time.Second)
 				if err != nil {
 					return ""
 				}
-				fanoutFlow = out
+				steeringFlow = out
 				return out
 			}, 60*time.Second, 5*time.Second).Should(
 				And(
 					ContainSubstring(fmt.Sprintf("output:%s", defaultOfport)),
-					ContainSubstring(fmt.Sprintf("output:%s", cudnOfport)),
+					Not(ContainSubstring(fmt.Sprintf("output:%s", cudnOfport))),
 					ContainSubstring("NORMAL"),
 				),
-				"priority-11 ARP fanout flow must output to both default (ofport %s) and CUDN (ofport %s) patches:\n%s",
-				defaultOfport, cudnOfport, fanoutFlow,
+				"priority-45 ARP flow must output to default (ofport %s), not CUDN (ofport %s):\n%s",
+				defaultOfport, cudnOfport, steeringFlow,
 			)
 		}
 
@@ -2692,31 +2716,34 @@ spec:
 				defaultOfport, cudnOfport, nsFlow,
 			)
 
-			By("verifying the priority-11 NA flow forwards external unsolicited NA to all GR patch ports (IPv6)")
-			var naFanoutFlow string
-			Eventually(func() string {
-				out, err := e2epodoutput.RunHostCmdWithRetries(ovnkPod.Namespace, ovnkPod.Name,
-					fmt.Sprintf("ovs-ofctl dump-flows %s table=0,in_port=%s,dl_dst=33:33:00:00:00:01,icmp6,icmpv6_type=%d | grep priority=11",
-						bridgeName, physOfport, ovntypes.NeighborAdvertisementICMPType),
-					framework.Poll, 30*time.Second)
-				if err != nil {
-					return ""
-				}
-				naFanoutFlow = out
-				return out
-			}, 60*time.Second, 5*time.Second).Should(
-				And(
-					ContainSubstring(fmt.Sprintf("output:%s", defaultOfport)),
-					ContainSubstring(fmt.Sprintf("output:%s", cudnOfport)),
-					ContainSubstring("NORMAL"),
-				),
-				"priority-11 NA fanout flow must output to both default (ofport %s) and CUDN (ofport %s) patches:\n%s",
-				defaultOfport, cudnOfport, naFanoutFlow,
-			)
+			for icmpType, messageName := range map[int]string{
+				ovntypes.RouteAdvertisementICMPType:    "RA",
+				ovntypes.NeighborSolicitationICMPType:  "NS",
+				ovntypes.NeighborAdvertisementICMPType: "NA",
+			} {
+				By(fmt.Sprintf("verifying the priority-52 flow steers external %s to the default GR", messageName))
+				var steeringFlow string
+				Eventually(func() string {
+					out, err := e2epodoutput.RunHostCmdWithRetries(ovnkPod.Namespace, ovnkPod.Name,
+						fmt.Sprintf("ovs-ofctl dump-flows %s table=0,in_port=%s,icmp6,icmpv6_type=%d | grep priority=52",
+							bridgeName, physOfport, icmpType),
+						framework.Poll, 30*time.Second)
+					if err != nil {
+						return ""
+					}
+					steeringFlow = out
+					return out
+				}, 60*time.Second, 5*time.Second).Should(
+					And(
+						ContainSubstring(fmt.Sprintf("output:%s", defaultOfport)),
+						Not(ContainSubstring(fmt.Sprintf("output:%s", cudnOfport))),
+						ContainSubstring("NORMAL"),
+					),
+					"priority-52 %s flow must output to default (ofport %s), not CUDN (ofport %s):\n%s",
+					messageName, defaultOfport, cudnOfport, steeringFlow,
+				)
+			}
 		}
-
-		cudnGR := cudnGatewayRouterName(cudnName, targetNode.Name)
-		defaultGR := ovntypes.GWRouterPrefix + targetNode.Name
 
 		if hasIPv4 {
 			By("logging MAC_Bindings for sender IP before arping")
@@ -2778,12 +2805,12 @@ spec:
 				return strings.TrimSpace(out)
 			}, 10*time.Second, 2*time.Second).Should(BeEmpty(), "MAC_Bindings for %s should be cleared", senderNodeIPv4)
 
-			By("sending GARP from sender node to exercise the priority-11 fanout flow")
+			By("sending GARP from sender node to exercise the priority-45 steering flow")
 			garpCmd := fmt.Sprintf("arping -A -c 3 -w 5 -I %s %s", bridgeName, senderNodeIPv4)
 			_, err = e2epodoutput.RunHostCmdWithRetries(senderOvnkPod.Namespace, senderOvnkPod.Name, garpCmd, framework.Poll, 30*time.Second)
 			framework.ExpectNoError(err, "GARP from sender for %s failed", senderNodeIPv4)
 
-			By("verifying MAC_Bindings confirm priority-11 fanned GARP to both default and CUDN GRs")
+			By("verifying GARP updates only the shared default GR MAC binding")
 			Consistently(func(g Gomega) {
 				macBindings, err := e2epodoutput.RunHostCmdWithRetries(ovnkPod.Namespace, ovnkPod.Name,
 					fmt.Sprintf("ovn-sbctl --columns=logical_port find MAC_Binding ip=%q", senderNodeIPv4),
@@ -2792,8 +2819,8 @@ spec:
 				framework.Logf("MAC_Bindings for sender IP %s AFTER GARP:\n%s", senderNodeIPv4, macBindings)
 				g.Expect(macBindings).To(ContainSubstring(defaultGR),
 					"GARP must create a MAC_Binding on default GR %s for sender IP %s", defaultGR, senderNodeIPv4)
-				g.Expect(macBindings).To(ContainSubstring(cudnGR),
-					"GARP must create a MAC_Binding on CUDN GR %s for sender IP %s (priority-11 fanout)", cudnGR, senderNodeIPv4)
+				g.Expect(macBindings).NotTo(ContainSubstring(cudnGR),
+					"GARP must not create a duplicate MAC_Binding on CUDN GR %s for sender IP %s", cudnGR, senderNodeIPv4)
 			}, 4*time.Second, 1*time.Second).Should(Succeed())
 		}
 
@@ -2822,29 +2849,22 @@ spec:
 			framework.ExpectNoError(err, "ndisc6 NS from sender %s to target %s failed", senderNodeIPv6, targetNodeIPv6)
 			framework.Logf("ndisc6 output:\n%s", nsOut)
 
-			// TODO(OVN northd bug, https://redhat.atlassian.net/browse/FDP-4198):
-			// Unlike ARP requests, NS packets targeting the router's own
-			// IPv6 do NOT get a priority-110 exemption flow in
-			// lr_in_lookup_neighbor when always_learn_from_arp_request=false.
-			// The priority-110 flow (which hardcodes reg9[3]=1 to allow
-			// put_arp) is only generated for IPv4 addresses (n_ipv4_addrs
-			// loop in northd commit 61ccc6b). NS hits the generic
-			// priority-100 flow where reg9[3]=lookup_nd_ip()=0 (no
-			// pre-existing binding), causing the priority-100 skip
-			// condition in lr_in_learn_neighbor to fire. The GR responds
-			// with NA but never learns the sender's MAC/IP.
-			// Any MAC_Binding that appears after a longer delay is from
-			// background traffic triggering the GR's own NS resolution
-			// (via arp_request table), not from the test's ndisc6.
-			By("verifying NS does NOT immediately create a MAC_Binding (OVN northd IPv6 learning bug)")
-			Consistently(func() string {
-				macBindings, _ := e2epodoutput.RunHostCmdWithRetries(ovnkPod.Namespace, ovnkPod.Name,
-					fmt.Sprintf("ovn-sbctl --bare --columns=logical_port find MAC_Binding ip=\\\"%s\\\"", senderNodeIPv6),
+			// OVN northd generates the same priority-110 learning exemption
+			// for NS targeting a router's IPv6 address as it does for ARP.
+			// This lets put_nd create a MAC_Binding immediately even when
+			// always_learn_from_arp_request=false.
+			By("verifying MAC_Bindings confirm priority-12 directed NS to default GR only")
+			Consistently(func(g Gomega) {
+				macBindings, err := e2epodoutput.RunHostCmdWithRetries(ovnkPod.Namespace, ovnkPod.Name,
+					fmt.Sprintf("ovn-sbctl --columns=logical_port find MAC_Binding ip=\\\"%s\\\"", senderNodeIPv6),
 					framework.Poll, 30*time.Second)
-				return strings.TrimSpace(macBindings)
-			}, 2*time.Second, 1*time.Second).Should(BeEmpty(),
-				"NS must NOT create a MAC_Binding due to OVN northd bug — always_learn_from_arp_request=false "+
-					"priority-110 exemption is missing for IPv6 NS (only implemented for IPv4 ARP)")
+				g.Expect(err).NotTo(HaveOccurred(), "ovn-sbctl find MAC_Binding failed")
+				framework.Logf("MAC_Bindings for sender IPv6 %s AFTER ndisc6:\n%s", senderNodeIPv6, macBindings)
+				g.Expect(macBindings).To(ContainSubstring(defaultGR),
+					"NS must create a MAC_Binding on default GR %s for sender IPv6 %s", defaultGR, senderNodeIPv6)
+				g.Expect(macBindings).NotTo(ContainSubstring(cudnGR),
+					"node-IP NS must NOT create a MAC_Binding on CUDN GR %s for sender IPv6 %s", cudnGR, senderNodeIPv6)
+			}, 4*time.Second, 1*time.Second).Should(Succeed())
 
 			By("clearing MAC_Bindings for sender IPv6 before unsolicited NA test")
 			_, _ = e2epodoutput.RunHostCmdWithRetries(ovnkPod.Namespace, ovnkPod.Name,
@@ -2866,29 +2886,29 @@ spec:
 			// would bypass this flow and hit the priority-100 nd_na
 			// flow where reg9[3]=1, allowing put_nd to fire. This
 			// requires ndsend (not available on Fedora). We verify the
-			// priority-11 fanout via flow counter instead.
-			By("recording priority-11 NA flow counter before ndptool")
+			// priority-52 steering via flow counter instead.
+			By("recording priority-52 NA flow counter before ndptool")
 			naFlowBefore, err := e2epodoutput.RunHostCmdWithRetries(ovnkPod.Namespace, ovnkPod.Name,
-				fmt.Sprintf("ovs-ofctl dump-flows %s table=0,in_port=%s,dl_dst=33:33:00:00:00:01,icmp6,icmpv6_type=136 | grep priority=11",
+				fmt.Sprintf("ovs-ofctl dump-flows %s table=0,in_port=%s,icmp6,icmpv6_type=136 | grep priority=52",
 					bridgeName, physOfport),
 				framework.Poll, 30*time.Second)
-			framework.ExpectNoError(err, "failed to dump priority-11 NA flow")
-			framework.Logf("Priority-11 NA flow BEFORE ndptool:\n%s", naFlowBefore)
+			framework.ExpectNoError(err, "failed to dump priority-52 NA flow")
+			framework.Logf("Priority-52 NA flow BEFORE ndptool:\n%s", naFlowBefore)
 
 			By("sending unsolicited NA from sender node using ndptool (link-local source)")
 			ndptoolCmd := fmt.Sprintf("ndptool -t na -U -i %s -T %s send", bridgeName, senderNodeIPv6)
 			_, err = e2epodoutput.RunHostCmdWithRetries(senderOvnkPod.Namespace, senderOvnkPod.Name, ndptoolCmd, framework.Poll, 30*time.Second)
 			framework.ExpectNoError(err, "ndptool unsolicited NA from sender for %s failed", senderNodeIPv6)
 
-			By("verifying priority-11 NA flow counter incremented (proves fanout)")
+			By("verifying priority-52 NA flow counter incremented (proves steering)")
 			Eventually(func() string {
 				naFlowAfter, _ := e2epodoutput.RunHostCmdWithRetries(ovnkPod.Namespace, ovnkPod.Name,
-					fmt.Sprintf("ovs-ofctl dump-flows %s table=0,in_port=%s,dl_dst=33:33:00:00:00:01,icmp6,icmpv6_type=136 | grep priority=11",
+					fmt.Sprintf("ovs-ofctl dump-flows %s table=0,in_port=%s,icmp6,icmpv6_type=136 | grep priority=52",
 						bridgeName, physOfport),
 					framework.Poll, 30*time.Second)
 				return naFlowAfter
 			}, 5*time.Second, 1*time.Second).ShouldNot(Equal(naFlowBefore),
-				"priority-11 NA flow counter must increment after ndptool NA")
+				"priority-52 NA flow counter must increment after ndptool NA")
 
 			By("verifying ndptool NA with link-local source does not create MAC_Bindings for global sender IPv6")
 			Consistently(func() string {

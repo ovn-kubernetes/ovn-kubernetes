@@ -39,7 +39,11 @@ OCI_BIN ?= docker
 
 # The image of ovnkube/ovn-daemonset-ubuntu should be multi-arched before using it on arm64
 ubuntu-image: bld
-	${OCI_BIN} build -t ${UBUNTU_IMAGE} -f Dockerfile.ubuntu$(DOCKERFILE_ARCH) .
+	${OCI_BIN} build \
+		--build-arg OVN_REPO=${OVN_REPO} \
+		--build-arg OVN_GITREF=${OVN_GITSHA} \
+		-t ${UBUNTU_IMAGE} \
+		-f Dockerfile.ubuntu$(DOCKERFILE_ARCH) .
 ifeq ($(ARCH),amd64)
 ifneq ($(UBUNTU_IMAGE),$(UBUNTU_IMAGE_LATEST))
 	${OCI_BIN} tag "${UBUNTU_IMAGE}" \

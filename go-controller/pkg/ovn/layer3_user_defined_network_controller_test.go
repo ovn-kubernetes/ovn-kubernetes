@@ -1907,7 +1907,7 @@ func expectedGWEntities(nodeName string, netInfo util.NetInfo, gwConfig util.L3G
 	expectedEntities := append(
 		expectedGWRouterPlusNATAndStaticRoutes(nodeName, gwRouterName, netInfo, gwConfig),
 		expectedGRToJoinSwitchLRP(gwRouterName, gwRouterJoinIPAddress(), netInfo),
-		expectedGRToExternalSwitchLRP(gwRouterName, netInfo, nodePhysicalIPAddress(), udnGWSNATAddress()),
+		expectedGRToExternalSwitchLRP(gwRouterName, nodeName, netInfo, nodePhysicalIPAddress(), udnGWSNATAddress()),
 	)
 	expectedEntities = append(expectedEntities, expectedStaticMACBindings(gwRouterName, staticMACBindingIPs())...)
 	expectedEntities = append(expectedEntities, expectedExternalSwitchAndLSPs(netInfo, gwConfig, nodeName)...)
@@ -2002,9 +2002,12 @@ func expectedGRToJoinSwitchLRP(gatewayRouterName string, gwRouterLRPIP *net.IPNe
 	return expectedLogicalRouterPort(lrpName, netInfo, options, gwRouterLRPIP)
 }
 
-func expectedGRToExternalSwitchLRP(gatewayRouterName string, netInfo util.NetInfo, joinSwitchIPs ...*net.IPNet) *nbdb.LogicalRouterPort {
+func expectedGRToExternalSwitchLRP(gatewayRouterName, nodeName string, netInfo util.NetInfo, joinSwitchIPs ...*net.IPNet) *nbdb.LogicalRouterPort {
 	lrpName := fmt.Sprintf("%s%s", types.GWRouterToExtSwitchPrefix, gatewayRouterName)
-	return expectedLogicalRouterPort(lrpName, netInfo, nil, joinSwitchIPs...)
+	options := map[string]string{
+		libovsdbops.MACBindingSource: types.GWRouterToExtSwitchPrefix + types.GWRouterPrefix + nodeName,
+	}
+	return expectedLogicalRouterPort(lrpName, netInfo, options, joinSwitchIPs...)
 }
 
 func expectedLogicalRouterPort(lrpName string, netInfo util.NetInfo, options map[string]string, routerNetworks ...*net.IPNet) *nbdb.LogicalRouterPort {
