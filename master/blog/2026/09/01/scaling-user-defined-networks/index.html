@@ -3,17 +3,22 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="At IIJ, we are developing a Kubernetes platform that uses OVN-Kubernetes as a destination for migrating VM workloads.
-We currently use the platform in development and SRE environments, and we plan to build a production environment during fiscal year 2026.
-This article explains why IIJ adopted OVN-Kubernetes and how we use it today.">
+        <meta name="description" content="User Defined Networks (UDNs) provide isolated networks for workloads as
+an alternative to a single cluster-default network. Tenants and
+applications can use separate address spaces and topologies, with
+traffic that does not mix across networks. See the
+UDN feature page
+for the model and API.">
       
       
       
-        <link rel="canonical" href="https://www.ovn.org/ovn-kubernetes/master/blog/2026/09/01/why-iij-chose-ovn-kubernetes-for-its-vm-workload-migration-platform-and-how-we-use-it-today/">
+        <link rel="canonical" href="https://www.ovn.org/ovn-kubernetes/master/blog/2026/09/01/scaling-user-defined-networks/">
       
       
-        <link rel="prev" href="../scaling-user-defined-networks/">
+        <link rel="prev" href="../../../03/12/debugging-networkpolicies-with-netobserv/">
       
+      
+        <link rel="next" href="../why-iij-chose-ovn-kubernetes-for-its-vm-workload-migration-platform-and-how-we-use-it-today/">
       
       
         
@@ -24,7 +29,7 @@ This article explains why IIJ adopted OVN-Kubernetes and how we use it today.">
     
     
       
-        <title>Why IIJ Chose OVN-Kubernetes for Its VM Workload Migration Platform and How We Use It Today - OVN-Kubernetes</title>
+        <title>Scaling User Defined Networks - OVN-Kubernetes</title>
       
     
     
@@ -87,7 +92,7 @@ This article explains why IIJ adopted OVN-Kubernetes and how we use it today.">
     <div data-md-component="skip">
       
         
-        <a href="#why-iij-chose-ovn-kubernetes-for-its-vm-workload-migration-platform-and-how-we-use-it-today" class="md-skip">
+        <a href="#scaling-user-defined-networks" class="md-skip">
           Skip to content
         </a>
       
@@ -126,7 +131,7 @@ This article explains why IIJ adopted OVN-Kubernetes and how we use it today.">
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Why IIJ Chose OVN-Kubernetes for Its VM Workload Migration Platform and How We Use It Today
+              Scaling User Defined Networks
             
           </span>
         </div>
@@ -4643,10 +4648,10 @@ This article explains why IIJ adopted OVN-Kubernetes and how we use it today.">
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
       
         <li class="md-nav__item">
-  <a href="#iij-and-ike" class="md-nav__link">
+  <a href="#observed-behavior-at-larger-network-counts" class="md-nav__link">
     <span class="md-ellipsis">
       
-        IIJ and IKE
+        Observed behavior at larger network counts
       
     </span>
   </a>
@@ -4654,10 +4659,10 @@ This article explains why IIJ adopted OVN-Kubernetes and how we use it today.">
 </li>
       
         <li class="md-nav__item">
-  <a href="#migrating-vm-workloads" class="md-nav__link">
+  <a href="#reducing-per-network-overhead" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Migrating VM Workloads
+        Reducing per-network overhead
       
     </span>
   </a>
@@ -4665,10 +4670,10 @@ This article explains why IIJ adopted OVN-Kubernetes and how we use it today.">
 </li>
       
         <li class="md-nav__item">
-  <a href="#network-requirements-for-the-vm-migration" class="md-nav__link">
+  <a href="#platform-wide-objects" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Network Requirements for the VM Migration
+        Platform-wide objects
       
     </span>
   </a>
@@ -4676,71 +4681,10 @@ This article explains why IIJ adopted OVN-Kubernetes and how we use it today.">
 </li>
       
         <li class="md-nav__item">
-  <a href="#why-we-adopted-ovn-kubernetes" class="md-nav__link">
+  <a href="#ovn-incremental-processing" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Why We Adopted OVN-Kubernetes
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Why We Adopted OVN-Kubernetes">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#udn-is-available-to-users" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        UDN Is Available to Users
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#cudn-is-managed-by-the-sre-team" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        CUDN Is Managed by the SRE Team
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#localnet-is-also-managed-by-the-sre-team" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Localnet Is Also Managed by the SRE Team
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#multus-is-available-to-users" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Multus Is Available to Users
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#current-validation-and-adoption-status" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Current Validation and Adoption Status
+        OVN incremental processing
       
     </span>
   </a>
@@ -4748,10 +4692,10 @@ This article explains why IIJ adopted OVN-Kubernetes and how we use it today.">
 </li>
       
         <li class="md-nav__item">
-  <a href="#working-with-upstream" class="md-nav__link">
+  <a href="#dynamic-udn" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Working with Upstream
+        Dynamic UDN
       
     </span>
   </a>
@@ -4759,10 +4703,10 @@ This article explains why IIJ adopted OVN-Kubernetes and how we use it today.">
 </li>
       
         <li class="md-nav__item">
-  <a href="#production-adoption-and-future-contributions" class="md-nav__link">
+  <a href="#next-steps" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Production Adoption and Future Contributions
+        Next steps
       
     </span>
   </a>
@@ -4798,16 +4742,16 @@ This article explains why IIJ adopted OVN-Kubernetes and how we use it today.">
                 
                   <div class="md-profile md-post__profile">
                     <span class="md-author md-author--long">
-                      <img src="https://raw.githubusercontent.com/cncf/people/main/images/taichi-shimotori.jpg" alt="Taichi Shimotori">
+                      <img src="https://github.com/kyrtapz.png" alt="Patryk Diak">
                     </span>
                     <span class="md-profile__description">
                       <strong>
                         
-                          Taichi Shimotori
+                          Patryk Diak
                         
                       </strong>
                       <br>
-                      Site Reliability Engineer at Internet Initiative Japan Inc. (IIJ).
+                      Software Engineer at Red Hat.
                     </span>
                   </div>
                 
@@ -4837,7 +4781,7 @@ This article explains why IIJ adopted OVN-Kubernetes and how we use it today.">
                           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 20a8 8 0 0 0 8-8 8 8 0 0 0-8-8 8 8 0 0 0-8 8 8 8 0 0 0 8 8m0-18a10 10 0 0 1 10 10 10 10 0 0 1-10 10C6.47 22 2 17.5 2 12A10 10 0 0 1 12 2m.5 5v5.25l4.5 2.67-.75 1.23L11 13V7z"></path></svg>
                           <span class="md-ellipsis">
                             
-                              6 min read
+                              5 min read
                             
                           </span>
                         </div>
@@ -4864,100 +4808,146 @@ This article explains why IIJ adopted OVN-Kubernetes and how we use it today.">
   
 
 
-<h1 id="why-iij-chose-ovn-kubernetes-for-its-vm-workload-migration-platform-and-how-we-use-it-today">Why IIJ Chose OVN-Kubernetes for Its VM Workload Migration Platform and How We Use It Today<a class="headerlink" href="#why-iij-chose-ovn-kubernetes-for-its-vm-workload-migration-platform-and-how-we-use-it-today" title="Permanent link">¶</a></h1>
-<p>At IIJ, we are developing a Kubernetes platform that uses OVN-Kubernetes as a destination for migrating VM workloads.
-We currently use the platform in development and SRE environments, and we plan to build a production environment during fiscal year 2026.
-This article explains why IIJ adopted OVN-Kubernetes and how we use it today.</p>
+<h1 id="scaling-user-defined-networks">Scaling User Defined Networks<a class="headerlink" href="#scaling-user-defined-networks" title="Permanent link">¶</a></h1>
+<p>User Defined Networks (UDNs) provide isolated networks for workloads as
+an alternative to a single cluster-default network. Tenants and
+applications can use separate address spaces and topologies, with
+traffic that does not mix across networks. See the
+<a href="../../../../../features/user-defined-networks/user-defined-networks/">UDN feature page</a>
+for the model and API.</p>
 <!-- more -->
 
-<h2 id="iij-and-ike">IIJ and IKE<a class="headerlink" href="#iij-and-ike" title="Permanent link">¶</a></h2>
-<p>IIJ was founded in 1992 and became the first Japanese company to launch a commercial Internet service.
-Since then, we have used our expertise in networking, cloud computing, security, mobile services, and IoT to provide IT services and systems integration to approximately 16,000 corporate customers in Japan and overseas, as well as individual users.</p>
-<p>IIJ develops and operates IKE, the IIJ Kubernetes Engine, as one of the platforms used to build and deliver these services.
-The SRE Promotion Department is responsible for IKE.</p>
-<p>IKE provides the capabilities required to use Kubernetes as an application platform in an on-premises environment, including networking, storage, observability, and sensitive information management.
-It also integrates with IIJ's backbone network and back-office systems, providing IIJ-specific capabilities to internal service development teams as part of the platform.</p>
-<p>IKE has been in operation since 2018 and now comprises multiple production clusters.</p>
-<h2 id="migrating-vm-workloads">Migrating VM Workloads<a class="headerlink" href="#migrating-vm-workloads" title="Permanent link">¶</a></h2>
-<p>IIJ has built many of its services on VMware-based VMs.
-However, rising licensing costs increased the need to migrate existing VMs to another platform.</p>
-<p>IKE emerged as a candidate destination.
-We already operate a KubeVirt-based VM platform on IKE, allowing us to apply both our operational experience with Kubernetes and the platform capabilities provided by IKE.
-Managing VMs and containers through the same Kubernetes API and operational platform also lets us choose the most suitable execution model for each workload.</p>
-<h2 id="network-requirements-for-the-vm-migration">Network Requirements for the VM Migration<a class="headerlink" href="#network-requirements-for-the-vm-migration" title="Permanent link">¶</a></h2>
-<p>Migrating VMs to IKE requires us to carry over not only compute resources but also the network requirements of the existing environment.</p>
-<p>In our conventional IKE clusters, the primary connection for workloads has been a Layer 3 pod network spanning the cluster.
-In IIJ's existing VM environment, however, a single VM connects to multiple Layer 2 networks, with separate networks for different applications and tenants.</p>
-<p>The migration platform therefore needed to provide the following capabilities:</p>
+<p>That isolation has a control-plane cost. Each UDN performed much of the
+same work as the default network: watching the API, programming OVN, and
+configuring the node. At small network counts this was acceptable. At
+larger counts the same design multiplied overhead across every network,
+independent of user traffic.</p>
+<p>Recent work has focused on preserving that isolation while reducing
+per-network resource duplication, so control-plane cost scales with the
+cluster rather than with the number of UDNs.</p>
+<h2 id="observed-behavior-at-larger-network-counts">Observed behavior at larger network counts<a class="headerlink" href="#observed-behavior-at-larger-network-counts" title="Permanent link">¶</a></h2>
+<p>UDN connectivity remained correct. The cost showed up in the control
+plane:</p>
 <ul>
-<li>Connect a single VM to multiple networks</li>
-<li>Create Layer 2 networks</li>
-<li>Isolate networks by application or tenant</li>
-<li>Connect to existing physical networks</li>
+<li>Network creation took longer as the number of networks increased.</li>
+<li>Node CPU remained high with little user traffic.</li>
+<li>The API server received a large volume of node and pod updates.</li>
+<li>Multiple networks sharing the same uplink could see excess ARP
+  traffic.</li>
+<li>Pod and network latency showed up across ovnkube-controller,
+  ovnkube-node, and the control-plane components, not in a single place.</li>
 </ul>
-<h2 id="why-we-adopted-ovn-kubernetes">Why We Adopted OVN-Kubernetes<a class="headerlink" href="#why-we-adopted-ovn-kubernetes" title="Permanent link">¶</a></h2>
-<p>To meet these network requirements, we adopted OVN-Kubernetes as the CNI plugin for the destination cluster.
-We named this cluster IKE VPC, short for Virtual Private Cluster.</p>
-<p>OVN-Kubernetes lets us define networks for different purposes as Kubernetes custom resources, separately from the cluster's default pod network.
-It provides two resources for defining these networks:</p>
+<p>These effects were dominated by control-plane work that grew with the
+number of networks, not with packet rate.</p>
+<h2 id="reducing-per-network-overhead">Reducing per-network overhead<a class="headerlink" href="#reducing-per-network-overhead" title="Permanent link">¶</a></h2>
+<p>The default network was implemented as a single, cluster-wide network.
+UDN reused that structure: a controller per network, separate watches of
+nodes and pods, and separate node programming. Isolation requires
+per-network state. It does not require repeating cluster-scoped work for
+every UDN, for example parsing the same node object in each controller,
+reconciling the same host rules once per network, or starting networks
+serially while each waits to become ready.</p>
+<p>The following changes reduce that duplication:</p>
 <ul>
-<li><strong>UserDefinedNetwork (UDN):</strong> A namespace-scoped resource that creates a network confined to its namespace and isolated from other namespaces.</li>
-<li><strong>ClusterUserDefinedNetwork (CUDN):</strong> A cluster-scoped resource whose namespace selector makes one network available to multiple namespaces, so workloads in those namespaces share it.</li>
+<li>Node handling runs on a shared path instead of inside every network
+  controller (<a href="https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5832">#5832</a>).</li>
+<li>Cross-network features such as EgressIP no longer repeat the same
+  node listing and database writes for every network in a reconcile
+  loop (<a href="https://github.com/ovn-kubernetes/ovn-kubernetes/pull/6437">#6437</a>).</li>
+<li>Independent networks can start in parallel
+  (<a href="https://github.com/ovn-kubernetes/ovn-kubernetes/pull/6492">#6492</a>).</li>
 </ul>
-<p>Both UDN and CUDN support Layer 3 and Layer 2 network topologies.
-These are overlay networks contained within the cluster and require no advance configuration of the physical network.</p>
-<p>CUDN also supports Localnet.
-Localnet connects VMs or pods to a physical network preconfigured on the nodes.
-However, Localnet can be specified only with CUDN, and its role must be Secondary.
-In other words, it is used as an additional interface rather than as the pod's primary network.</p>
-<p>Connecting a single VM or pod to multiple networks also requires a meta-plugin that invokes multiple CNI plugins in sequence.
-OVN-Kubernetes relies on Multus for this purpose.
-Multus is a separate project developed by the Kubernetes Network Plumbing Working Group; it is not part of OVN-Kubernetes itself.</p>
-<p>In IKE VPC, we use these components as follows.</p>
-<h3 id="udn-is-available-to-users">UDN Is Available to Users<a class="headerlink" href="#udn-is-available-to-users" title="Permanent link">¶</a></h3>
-<p>IKE is a multi-tenant platform in which users are hosted by namespace, so UDN's namespace scope directly matches our service model.
-Each tenant can define an isolated network within its own namespace.
-Tenants can also choose either a Layer 2 or Layer 3 topology according to their requirements.</p>
-<h3 id="cudn-is-managed-by-the-sre-team">CUDN Is Managed by the SRE Team<a class="headerlink" href="#cudn-is-managed-by-the-sre-team" title="Permanent link">¶</a></h3>
-<p>When a tenant network needs to connect to a particular network, the SRE team builds a router host to serve as its gateway.
-We use CUDN to make the same network available to both the router host's namespace and the tenant's namespace.
-Only CUDN can define a network that spans multiple namespaces.
-Because CUDN is also a cluster-scoped resource, it is managed by the SRE team rather than by users.</p>
-<h3 id="localnet-is-also-managed-by-the-sre-team">Localnet Is Also Managed by the SRE Team<a class="headerlink" href="#localnet-is-also-managed-by-the-sre-team" title="Permanent link">¶</a></h3>
-<p>We use Localnet for two purposes.
-The first is to connect the router host described above to a particular physical network.
-The second is to connect VMs in the SRE-only cluster described later to operations and global networks.
-Because both uses connect directly to existing physical networks, the SRE team manages their configuration.</p>
-<h3 id="multus-is-available-to-users">Multus Is Available to Users<a class="headerlink" href="#multus-is-available-to-users" title="Permanent link">¶</a></h3>
-<p>Multus directly satisfies the requirement to connect a single VM or pod to multiple networks, as in our existing VM environment.</p>
-<p>This division of responsibilities lets us express every capability required for migrating our existing VMs as a Kubernetes resource.
-Multus provides connections to multiple networks, UDN and CUDN provide Layer 2 and Layer 3 networking with each network isolated from the others, and CUDNs with the Localnet topology provide connections to existing physical networks.
-How tenants are separated follows from which namespaces share a network: a UDN is confined to its own namespace, while a CUDN covers the namespaces matched by its selector.</p>
-<h2 id="current-validation-and-adoption-status">Current Validation and Adoption Status<a class="headerlink" href="#current-validation-and-adoption-status" title="Permanent link">¶</a></h2>
-<p>We currently provide service development teams with an IKE VPC development environment.
-The teams use this environment to determine whether they can migrate existing services to IKE VPC or deliver new services on it.</p>
-<p>We collect feedback from users in the development environment to identify missing platform capabilities and unexpected defects before production adoption.</p>
-<p>The IKE platform itself also includes components that run as VMs, such as Kubernetes control plane nodes and load balancers.
-As a migration destination for these VMs, we built a separate SRE-only Kubernetes cluster that also uses OVN-Kubernetes.
-VMs that make up the user-facing development cluster and provide its platform capabilities have now completed migration and are running on the SRE-only cluster.
-These VMs connect to existing physical networks, including operations and global networks, through CUDNs with the Localnet topology managed by the SRE team.</p>
-<p>The VMs that make up the production clusters have not yet been migrated.
-We plan to migrate them incrementally, applying the configuration and operational knowledge gained from the development environment migration.</p>
-<h2 id="working-with-upstream">Working with Upstream<a class="headerlink" href="#working-with-upstream" title="Permanent link">¶</a></h2>
-<p>While adopting OVN-Kubernetes, we found two problems in its container image build pipeline and reported them in <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5841">Issue #5841</a>.
-The maintainers responded promptly, and after discussing the problems, we created a separate pull request for each fix.</p>
-<p>The first problem was an incorrect reference to the builder image.
-We corrected the reference in <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5849">Pull Request #5849</a>.</p>
-<p>The second problem was that running a multi-platform build on a single runner exhausted its disk space.
-In <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5850">Pull Request #5850</a>, we split the build across multiple runners.</p>
-<p>Both pull requests have been merged upstream.</p>
-<p>At KubeCon Japan 2026, we also had the opportunity to speak with maintainers in person.
-At the project pavilion, we met not only other OVN-Kubernetes users but also attendees who were discovering the project for the first time.</p>
-<h2 id="production-adoption-and-future-contributions">Production Adoption and Future Contributions<a class="headerlink" href="#production-adoption-and-future-contributions" title="Permanent link">¶</a></h2>
-<p>IIJ plans to build a production environment using OVN-Kubernetes during fiscal year 2026.
-As the number of workloads grows, we will expand the clusters and networks incrementally.</p>
-<p>We will report issues discovered during production operation upstream and propose code changes where appropriate.
-We also plan to improve and translate documentation and to continue contributing to the OVN-Kubernetes community.</p>
+<p>On the node, work that grew with the number of local networks was
+reduced by using the OVS database client instead of forking commands on
+a timer (<a href="https://github.com/ovn-kubernetes/ovn-kubernetes/pull/6402">#6402</a>,
+<a href="https://github.com/ovn-kubernetes/ovn-kubernetes/pull/6677">#6677</a>),
+reconciling IP rules incrementally
+(<a href="https://github.com/ovn-kubernetes/ovn-kubernetes/pull/6640">#6640</a>),
+skipping cluster-wide pod scans that some topologies do not need
+(<a href="https://github.com/ovn-kubernetes/ovn-kubernetes/pull/6577">#6577</a>),
+and avoiding unused per-node allocations
+(<a href="https://github.com/ovn-kubernetes/ovn-kubernetes/pull/6522">#6522</a>).</p>
+<p>A burst of new networks previously produced a corresponding burst of
+node annotation updates, retries, and client-side rate limiting. Further
+batching of those updates is still in progress. The goal is to avoid
+extra API reads that consume client rate-limit budget during pod churn.</p>
+<p>Primary networks share a node IP and MAC on the gateway bridge.
+Logical isolation in OVN is not isolation on the wire: if each logical
+gateway answers ARP for the same address, the physical network sees
+duplicated replies. ARP requests for the node address are now delivered
+to the default gateway rather than to every UDN, and duplicate replies
+have been restricted
+(<a href="https://github.com/ovn-kubernetes/ovn-kubernetes/pull/6576">#6576</a>,
+<a href="https://github.com/ovn-kubernetes/ovn-kubernetes/pull/6660">#6660</a>).
+That applies whenever UDNs share the node’s physical interface, not
+only to one topology.</p>
+<p>The point of these changes is the growth rate. Adding a network still
+costs CPU and memory, but closer to that network’s own state rather
+than another full copy of cluster-wide work. Usage still
+climbs as networks are added. It no longer grows as fast and linearly.</p>
+<h2 id="platform-wide-objects">Platform-wide objects<a class="headerlink" href="#platform-wide-objects" title="Permanent link">¶</a></h2>
+<p>Improvements in OVN-Kubernetes do not automatically make a cluster
+scale. Objects that select the entire cluster still add work on every
+pod event, and that cost is independent of how cheap UDN controllers
+become.</p>
+<p>NetworkPolicy is the example that showed up here. A peer with an empty
+namespace selector matches all namespaces. Paired with an empty pod
+selector, it matches all pods in all namespaces. OVN-Kubernetes
+maintains an address set for that peer and updates it on every pod add
+and delete. A single such rule, easy to overlook, is enough to dominate
+control-plane work while UDNs are being created or while pods are
+churning.</p>
+<p>A redundant “allow from every namespace” peer next to a rule that
+already allows the same traffic is a common way to hit this. Removing
+the extra peer drops a cluster-wide address set from the pod event path
+without changing policy intent.</p>
+<p>Anything that selects all pods or all namespaces, NetworkPolicy or
+otherwise, should be treated as part of scale optimization.
+Broad selection is appropriate only when it is the intended policy.</p>
+<h2 id="ovn-incremental-processing">OVN incremental processing<a class="headerlink" href="#ovn-incremental-processing" title="Permanent link">¶</a></h2>
+<p>OVN-Kubernetes does not program OpenFlow directly. It writes the
+Northbound database. northd and ovn-controller translate that into
+logical and physical flows. With many UDNs, that path determines much of
+the time to program a new pod.</p>
+<p>Incremental processing is the expected behavior: adding a port should
+not recompute every flow. Failures of that path are not always obvious.
+CPU increases, pods remain pending, and the delay is attributed to the
+network plugin.</p>
+<p>UDNs create additional OVN objects: extra router ports
+(<a href="https://github.com/ovn-org/ovn/commit/36b9ca987d41">commit</a>), patch
+ports, and ports on other nodes
+(<a href="https://github.com/ovn-org/ovn/commit/860d5e4138ed">commit</a>). Those
+objects are where incremental processing gaps appear. A newly created
+port can be treated as a type change and trigger a full recompute
+(<a href="https://github.com/ovn-org/ovn/commit/b408eedf6d">commit</a>). northd
+can write a status field, observe its own write, and leave the
+incremental path. A port type that UDNs create in volume may never have
+been handled incrementally, even when it behaves like a VIF.</p>
+<p>OVN-Kubernetes cannot compensate for that from the Kubernetes side. OVN
+changes in this effort made incremental processing apply to the objects
+UDNs create, instead of falling back to a full recompute. Correct
+incremental processing is a dependency of UDN scale, not an optional
+optimization. Closing remaining gaps there is ongoing work with the OVN
+community.</p>
+<h2 id="dynamic-udn">Dynamic UDN<a class="headerlink" href="#dynamic-udn" title="Permanent link">¶</a></h2>
+<p>When most nodes do not need most networks, rendering every UDN on every
+node is unnecessary. <a href="../../../../../features/user-defined-networks/dynamic-udn/">Dynamic UDN</a>
+builds a UDN only on nodes that use it. It is a separate feature with
+its own tradeoff: the first pod on a new node waits for the network to
+be rendered. The work described here applies when a network <em>does</em> need
+to exist on a node.</p>
+<h2 id="next-steps">Next steps<a class="headerlink" href="#next-steps" title="Permanent link">¶</a></h2>
+<p>UDN scale is not complete. The remaining work continues to remove
+per-network copies of cluster-scoped operations.</p>
+<p>On the OVN-Kubernetes side that includes handling pod events once
+rather than fanning them out to every network, finishing the migration
+away from subprocess calls to OVS and OVN on hot paths, batching node
+annotation updates so network creation does not contend with the API,
+and reducing ARP and NDP broadcast fan-out on the shared gateway
+bridge (<a href="https://github.com/ovn-kubernetes/ovn-kubernetes/pull/6687">OKEP-6691</a>).</p>
+<p>OVN remains on the critical path. Incremental processing needs to remain
+the default behavior as these topologies evolve, rather than a path that
+falls back to a full recompute when a new object type appears.</p>
 
 
 
