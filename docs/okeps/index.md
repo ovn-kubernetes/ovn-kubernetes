@@ -67,3 +67,11 @@ VRF-Lite shared gateway mode with external bridge uplinks.
 **[Disable MAC Spoof Protection on Secondary Networks](okep-3926-disable-port-security.md)**
 
 Allow disabling port security on secondary network interfaces.
+
+**[OVN Observability API](okep-5212-ovnobserv-api.md)**
+
+API for OVN observability sampling and tracing.
+
+**[DHCP IPAM for Localnet](okep-6224-dhcp-ipam-localnet.md)**
+
+DHCP-based IPAM for localnet secondary networks.
