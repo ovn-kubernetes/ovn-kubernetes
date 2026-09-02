@@ -2522,6 +2522,45 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="KubeletHealthChecks for UDN pods">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#locating-the-kubelet-cgroup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Locating the kubelet cgroup
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#when-kubelet-probes-are-not-supported" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When kubelet probes are not supported
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#kubelet-restarts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kubelet restarts
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -5099,6 +5138,45 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="KubeletHealthChecks for UDN pods">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#locating-the-kubelet-cgroup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Locating the kubelet cgroup
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#when-kubelet-probes-are-not-supported" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When kubelet probes are not supported
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#kubelet-restarts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kubelet restarts
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -5645,6 +5723,85 @@ the UDN pod using the <code>open-default-ports</code> annotation:
 </code></pre></div>
 which means we open up allow ACLs and nftrules to allow traffic
 to reach at those ports.<p></p>
+<h4 id="locating-the-kubelet-cgroup">Locating the kubelet cgroup<a class="headerlink" href="#locating-the-kubelet-cgroup" title="Permanent link">¶</a></h4>
+<p>The rule above matches traffic by the cgroup kubelet runs in, so that
+cgroup has to be known. By default ovnkube-node looks for a
+<code>kubelet.service</code> directory under <code>/sys/fs/cgroup</code>, which finds it on
+hosts where systemd runs kubelet.</p>
+<p>Hosts that do not run kubelet under systemd have no such directory. Set
+<code>kubelet-cgroup-path</code> in the <code>[ovnkubenode]</code> section, or
+<code>global.kubeletCgroupPath</code> in the helm chart, to the cgroup kubelet runs
+in, relative to <code>/sys/fs/cgroup</code>. It can be read from the running kubelet:</p>
+<div class="highlight"><pre><span></span><code>$ cat /proc/$(pidof kubelet)/cgroup
+0::/podruntime/kubelet
+</code></pre></div>
+<p>which on that host means:</p>
+<div class="highlight"><pre><span></span><code><span class="na">kubelet-cgroup-path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">podruntime/kubelet</span>
+</code></pre></div>
+<p>Point this at the cgroup of kubelet itself. Every process in the cgroup
+that is matched is allowed to reach primary UDN pods, so a parent cgroup
+opens that access to everything under it. On the host above, using
+<code>podruntime</code> instead would also allow the container runtime and every
+container shim it runs, not just kubelet. The cgroup root is rejected for
+the same reason.</p>
+<h4 id="when-kubelet-probes-are-not-supported">When kubelet probes are not supported<a class="headerlink" href="#when-kubelet-probes-are-not-supported" title="Permanent link">¶</a></h4>
+<p>The cgroup match cannot always be installed. When it cannot, host
+isolation is still applied and only the rule that lets kubelet through is
+left out, so ovnkube-node keeps running. The node reports a
+<code>UDNKubeletProbesNotSupported</code> event describing which of these applies:</p>
+<ul>
+<li>the host uses cgroup v1, which has no cgroup v2 path to match on</li>
+<li>the kubelet cgroup is not found, and no usable path is configured</li>
+<li>the kernel is built without <code>CONFIG_NFT_SOCKET</code>, so it has no <code>socket</code>
+  expression and the rule cannot load</li>
+</ul>
+<p><code>httpGet</code>, <code>tcpSocket</code> and <code>grpc</code> probes to primary UDN pods are dropped
+in that case. The rules drop rather than reject, so a probe times out
+instead of being refused:</p>
+<div class="highlight"><pre><span></span><code>Readiness probe failed: Get "http://[fd00:42:0:a::4]:8080/healthz":
+context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+</code></pre></div>
+<p>which looks like a slow or unhealthy pod rather than a policy decision, so
+the event on the node is what identifies the cause. There are two ways
+around it:</p>
+<ul>
+<li>use <code>exec</code> probes, which run inside the pod and do not cross the host
+  boundary</li>
+<li>open the probe ports with the <code>open-default-ports</code> annotation shown
+  above</li>
+</ul>
+<h4 id="kubelet-restarts">Kubelet restarts<a class="headerlink" href="#kubelet-restarts" title="Permanent link">¶</a></h4>
+<p>The <code>socket cgroupv2</code> match resolves the cgroup path to a numeric cgroup
+ID when the rule is loaded, and the kernel does not update it afterward.
+If kubelet restarts and its cgroup is recreated, the ID changes and the
+rule stops matching. ovnkube-node watches systemd for kubelet restarts
+and reloads the rule.</p>
+<p>That watch needs systemd, and it needs the configured cgroup to belong to
+a unit, so it is derived from the last component of the cgroup path,
+<code>kubelet.service</code> for <code>kubelet.slice/kubelet.service</code>. On a host without
+systemd, or when the configured path does not name a unit, restarts are
+not tracked and the node reports a <code>UDNKubeletRestartTrackingUnavailable</code>
+event.</p>
+<p>Where restarts are not tracked, point <code>kubelet-cgroup-path</code> at the nearest
+ancestor cgroup that is not recreated when kubelet restarts. On the host
+above that is <code>podruntime</code> rather than <code>podruntime/kubelet</code>, which keeps
+the rule valid across restarts but also lets everything else in that
+cgroup, the container runtime and its shims, reach primary UDN pods. Weigh
+that against the alternative: leaving the leaf cgroup configured means
+probes stop working once kubelet's cgroup is recreated, until ovnkube-node
+is restarted.</p>
+<p>A rule that has gone stale can be recognised from the ruleset, because nft
+prints the cgroup ID it can no longer resolve instead of the path:</p>
+<div class="highlight"><pre><span></span><code>socket cgroupv2 level 2 669 ip daddr @udn-pod-default-ips-v4 accept
+</code></pre></div>
+<p>For helm on such a host, both settings are needed, and neither changes a
+deployment that does run systemd:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">global</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">noSystemd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<span class="w">  </span><span class="nt">kubeletCgroupPath</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">podruntime</span>
+</code></pre></div>
+<p><code>noSystemd</code> removes the systemd socket mount from ovnkube-node, which
+cannot be satisfied where <code>/run/systemd</code> does not exist.</p>
 <h3 id="overlapping-podips">Overlapping PodIPs<a class="headerlink" href="#overlapping-podips" title="Permanent link">¶</a></h3>
 <p>Two networks can have the same subnet since they are completely
 isolated. We use a <code>masqueradeIP</code> SNAT per UDN to avoid conntrack
