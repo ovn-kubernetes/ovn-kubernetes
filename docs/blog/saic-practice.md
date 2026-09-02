@@ -1,6 +1,6 @@
 # SAIC Motor's Kubernetes-Based Multi-Tenant Networking Practice: Building a Unified Network Foundation with OVN-Kubernetes
 
-When SAIC Motor chose Kubernetes as a unified, multi-tenant infrastructure for containers, virtual machines, and AI agents, its network had to evolve beyond basic Pod connectivity into a unified multi-tenant network foundation capable of supporting heterogeneous workloads. Through its OVN-based software-defined networking capabilities, OVN-Kubernetes provides a consistent network model for containers, KubeVirt virtual machines, and agent runtimes. This is particularly important for agents: different agents often require independent network boundaries while also needing access to model services, the internet, and internal enterprise systems.
+SAIC Motor is the Chinese largest Automobile company. When we chose Kubernetes as a unified, multi-tenant infrastructure for containers, virtual machines, and AI agents, its network had to evolve beyond basic Pod connectivity into a unified multi-tenant network foundation capable of supporting heterogeneous workloads. Through its OVN-based software-defined networking capabilities, OVN-Kubernetes provides a consistent network model for containers, KubeVirt virtual machines, and agent runtimes. This is particularly important for agents: Each tenant can have a group of agents that can communicate with each other. Different tenant's agents should be isolated in network.
 
 This article describes our practical approach to using OVN-Kubernetes and outlines the networking capabilities we would like the platform to support in the future.
 
@@ -65,12 +65,12 @@ flowchart TB
 
 ```
 
-In the diagram, solid lines represent data flows, while dashed lines represent policy or control relationships. CNC, EgressFirewall, and EgressIP all affect traffic, but they are not separate network devices that packets traverse sequentially.
+In the diagram, solid lines represent data flows, while dashed lines represent policy or control relationships.  EgressFirewall, and EgressIP all affect traffic, but they are not separate network devices that packets traverse sequentially.
 
 The responsibilities in this architecture are divided as follows:
 
-* CUDN defines the network boundary of a tenant or security domain;
-* CNC explicitly establishes connectivity between isolated domains;
+* ClusterUserDefinedNetwork (CUDN) defines the network boundary of a tenant or security domain;
+* Cluster Network Connect (CNC) explicitly establishes connectivity between isolated domains;
 * NetworkPolicy constrains workload-level ingress and egress within its policy scope;
 * EgressFirewall restricts external destinations, while EgressIP provides an identifiable source address for egress traffic;
 * Service and NodePort provide ingress abstractions, while an external IPVS load balancer selects the appropriate ingress node.
@@ -79,9 +79,9 @@ The responsibilities in this architecture are divided as follows:
 
 We use shared gateway mode together with OVN-Kubernetes's current default [interconnect architecture](../design/architecture.md), in which each node belongs to its own zone—that is, a single-node-zone interconnect.
 
-In shared gateway mode, traffic leaving the cluster can remain in the OVN/OVS data path and reach the external network through the Gateway Router and OVS bridge. Compared with a path in which traffic first leaves OVN/OVS and then enters the host network stack, this mode is better suited to our performance goals and preserves the option of OVS hardware offload.
+In shared gateway mode, traffic leaving the cluster can remain in the OVN/OVS data path and reach the external network through the Gateway Router and OVS bridge. Compared with a path in which traffic first leaves OVN/OVS and then enters the host network stack, this mode is better suited to our performance goals and preserves the option of OVS hardware offload.  We have evaluated some DPU companies in ovn-kubernetes and give us promising result. We believe hardware offload is a must-have when network bandwidth reaches 100Gb/S.
 
-Interconnect distributes the control plane and OVN databases to the nodes by zone, eliminating the dependency on a centralized set of OVN databases. The following discussions of the Layer2 Transit Router, Dynamic UDN, and cross-network connectivity all assume this deployment baseline.
+Interconnect distributes the control plane and OVN databases to the nodes by zone, eliminating the dependency on a centralized set of OVN databases. The following discussions of the Layer2 Transit Router, Dynamic UDN, and cross-network connectivity all assume this deployment baseline. We also have some legacy clusters that runs ovn-kubernetes in old central mode. We plan to migrate the workloads to the new clusters if all the requirements is satisfied.
 
 ## Using Primary CUDNs to Create Isolated Domains for Tenant Workloads
 
@@ -151,7 +151,7 @@ After Dynamic UDN Node Allocation is enabled, external traffic cannot be sent in
 
 We are still evaluating LoadBalancer Service solutions for environments with Dynamic UDN Node Allocation enabled. The key challenge is enabling different UDNs to advertise their LoadBalancer VIPs on different sets of nodes.
 
-## Features We Expect OVN-Kubernetes to Continue Developing
+## Feedback for OVN-Kubernetes community
 
 Based on our practical experience, we recommend further development in the following areas.
 
@@ -159,25 +159,25 @@ Based on our practical experience, we recommend further development in the follo
 
 The current [EVPN](../features/bgp-integration/evpn.md) implementation requires local gateway mode and uses VXLAN instead of Geneve as the transport for selected CUDNs. We would like to see EVPN extended to shared gateway mode, allowing CUDNs to span clusters or establish controlled cross-cluster connections while preserving the shared gateway data path and hardware offload capabilities, thereby enabling multi-availability-zone deployments.
 
-### 2. Reserving and Pinning IP and MAC Addresses Before Virtual Machine Creation
+### 2. Workload-Declarable Highly Available Floating VIPs
 
-Persistent IPAM allows an allocated address to be reused after a workload is recreated or migrated. However, the platform must also be able to reserve an address before a virtual machine is created and deliver it to the virtual machine as a resource that remains stable throughout its lifecycle. A declarative API should uniformly manage address reservation, conflict detection, reclamation policies, and their relationship to the virtual machine lifecycle.
+For workloads running within an L2 CUDN, a highly available Virtual IP (VIP) can be implemented by running Keepalived directly inside the workloads. Multiple workloads can participate in a VRRP group, with one instance acting as the active owner of the VIP. If the active workload becomes unavailable, the VIP can automatically fail over to another healthy workload.
 
-### 3. Workload-Declarable Highly Available Floating VIPs
+This pattern is useful for applications that require an active/standby architecture while preserving a stable service IP address, such as deploying highly available OpenVPN gateways inside a CUDN.
 
-We would like workloads to support Keepalived floating VIPs, with the platform network responsible for VIP reachability.
+At the OVN networking layer, this behavior is closely related to the virtual logical switch port mechanism. OVN supports logical switch ports of type virtual, where a virtual IP can be dynamically associated with one of several parent logical switch ports. As ownership changes, OVN can move the VIP to the corresponding child workload port.
 
-### 4. Private CUDNs
+### 3. Private CUDNs
 
-A Private CUDN should explicitly express “no default external egress” in the network model. Platform administrators could then attach a NAT Gateway as needed, instead of granting egress by default and relying on policies to restrict it afterward.
+A Private CUDN should explicitly express “no default external egress” in the network model. Platform administrators could then attach a NAT Gateway as needed, instead of granting egress by default and relying on policies to restrict it afterward. The community now disucess the Plexus proposal and contains this feature.
 
-### 5. Native NAT Gateway
+### 4. Native NAT Gateway
 
 We would like a dedicated API for declaring NAT Gateways and centrally managing SNAT, DNAT, egress IP control, failover, and bandwidth limits.
 
-### 6. Custom Routing Tables
+### 5. Custom Routing Tables
 
-Default routes and static connectivity relationships are insufficient when workloads need to build complex network topologies. We would like to configure custom routing tables, next hops, and policy-based routing for CUDNs through an API.
+Default routes and static connectivity relationships are insufficient when workloads need to build complex network topologies. We would like to configure custom routing tables, next hops, and policy-based routing for CUDNs through an API. This also includes in the Plexus proposal.
 
 ## Conclusion: Toward Software-Defined Networking for the Kubernetes Platform
 
