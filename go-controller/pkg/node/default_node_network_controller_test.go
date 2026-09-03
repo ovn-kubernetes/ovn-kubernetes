@@ -2551,6 +2551,349 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 				},
 			),
 		)
+
+		Context("IPv6-only scenarios", func() {
+			BeforeEach(func() {
+				config.IPv4Mode = false
+				config.IPv6Mode = true
+			})
+
+			AfterEach(func() {
+				config.IPv4Mode = false
+				config.IPv6Mode = false
+			})
+
+			DescribeTable("should correctly detect 0→N transitions for IPv6",
+				func(tc testCase) {
+					// Setup fake client with service and endpoint slices
+					objects := []runtime.Object{tc.service}
+					for _, slice := range tc.otherSlices {
+						objects = append(objects, slice)
+					}
+					if tc.newSlice != nil {
+						objects = append(objects, tc.newSlice)
+					}
+
+					fakeClient := fake.NewSimpleClientset(objects...)
+
+					wf, err := factory.NewNodeWatchFactory(&util.OVNNodeClientset{
+						KubeClient: fakeClient,
+					}, "test-node")
+					Expect(err).NotTo(HaveOccurred())
+					defer wf.Shutdown()
+
+					err = wf.Start()
+					Expect(err).NotTo(HaveOccurred())
+
+					nc := &DefaultNodeNetworkController{
+						BaseNodeNetworkController: BaseNodeNetworkController{
+							CommonNodeNetworkControllerInfo: CommonNodeNetworkControllerInfo{
+								watchFactory: wf,
+							},
+							ReconcilableNetInfo: &util.DefaultNetInfo{},
+						},
+					}
+
+					// Execute the function under test
+					shouldFlush, err := nc.shouldFlushConntrackForZeroToNTransition(
+						tc.oldSlice,
+						tc.newSlice,
+						k8stypes.NamespacedName{Namespace: testNamespace, Name: testServiceName},
+						tc.service,
+					)
+
+					if tc.expectError {
+						Expect(err).To(HaveOccurred())
+					} else {
+						Expect(err).NotTo(HaveOccurred())
+						Expect(shouldFlush).To(Equal(tc.expectedShouldFlush), tc.desc)
+					}
+				},
+
+				Entry("add event: fresh service, first IPv6 endpoint slice added (0→1)",
+					testCase{
+						desc:     "should return true when IPv6 service goes from 0 to 1 endpoints",
+						oldSlice: nil,
+						newSlice: func() *discovery.EndpointSlice {
+							port := int32(8080)
+							proto := corev1.ProtocolUDP
+							return &discovery.EndpointSlice{
+								ObjectMeta: metav1.ObjectMeta{
+									Name:      testEndpointSlice + "-ipv6",
+									Namespace: testNamespace,
+									UID:       "ipv6-slice",
+									Labels: map[string]string{
+										discovery.LabelServiceName: testServiceName,
+									},
+								},
+								Ports: []discovery.EndpointPort{
+									{Port: &port, Protocol: &proto},
+								},
+								Endpoints: []discovery.Endpoint{
+									{
+										Addresses: []string{"2001:db8::1"},
+										Conditions: discovery.EndpointConditions{
+											Ready: boolPtr(true),
+										},
+									},
+								},
+							}
+						}(),
+						otherSlices: []*discovery.EndpointSlice{},
+						service: &corev1.Service{
+							ObjectMeta: metav1.ObjectMeta{
+								Name:      testServiceName,
+								Namespace: testNamespace,
+							},
+							Spec: corev1.ServiceSpec{
+								Ports: []corev1.ServicePort{
+									{Port: 80, Protocol: udpProtocol},
+								},
+							},
+						},
+						expectedShouldFlush: true,
+					},
+				),
+
+				Entry("update event: empty IPv6 slice gets first endpoint (0→1)",
+					testCase{
+						desc: "should return true when IPv6 slice transitions from 0 to 1 endpoint",
+						oldSlice: func() *discovery.EndpointSlice {
+							port := int32(8080)
+							proto := corev1.ProtocolUDP
+							return &discovery.EndpointSlice{
+								ObjectMeta: metav1.ObjectMeta{
+									Name:      testEndpointSlice + "-ipv6",
+									Namespace: testNamespace,
+									UID:       "ipv6-slice",
+									Labels: map[string]string{
+										discovery.LabelServiceName: testServiceName,
+									},
+								},
+								Ports: []discovery.EndpointPort{
+									{Port: &port, Protocol: &proto},
+								},
+								Endpoints: []discovery.Endpoint{},
+							}
+						}(),
+						newSlice: func() *discovery.EndpointSlice {
+							port := int32(8080)
+							proto := corev1.ProtocolUDP
+							return &discovery.EndpointSlice{
+								ObjectMeta: metav1.ObjectMeta{
+									Name:      testEndpointSlice + "-ipv6",
+									Namespace: testNamespace,
+									UID:       "ipv6-slice",
+									Labels: map[string]string{
+										discovery.LabelServiceName: testServiceName,
+									},
+								},
+								Ports: []discovery.EndpointPort{
+									{Port: &port, Protocol: &proto},
+								},
+								Endpoints: []discovery.Endpoint{
+									{
+										Addresses: []string{"2001:db8::1"},
+										Conditions: discovery.EndpointConditions{
+											Ready: boolPtr(true),
+										},
+									},
+								},
+							}
+						}(),
+						otherSlices: []*discovery.EndpointSlice{},
+						service: &corev1.Service{
+							ObjectMeta: metav1.ObjectMeta{
+								Name:      testServiceName,
+								Namespace: testNamespace,
+							},
+							Spec: corev1.ServiceSpec{
+								Ports: []corev1.ServicePort{
+									{Port: 80, Protocol: udpProtocol},
+								},
+							},
+						},
+						expectedShouldFlush: true,
+					},
+				),
+			)
+		})
+
+		Context("Dual-stack scenarios", func() {
+			BeforeEach(func() {
+				config.IPv4Mode = true
+				config.IPv6Mode = true
+			})
+
+			AfterEach(func() {
+				config.IPv4Mode = false
+				config.IPv6Mode = false
+			})
+
+			DescribeTable("should correctly detect 0→N transitions for dual-stack",
+				func(tc testCase) {
+					// Setup fake client with service and endpoint slices
+					objects := []runtime.Object{tc.service}
+					for _, slice := range tc.otherSlices {
+						objects = append(objects, slice)
+					}
+					if tc.newSlice != nil {
+						objects = append(objects, tc.newSlice)
+					}
+
+					fakeClient := fake.NewSimpleClientset(objects...)
+
+					wf, err := factory.NewNodeWatchFactory(&util.OVNNodeClientset{
+						KubeClient: fakeClient,
+					}, "test-node")
+					Expect(err).NotTo(HaveOccurred())
+					defer wf.Shutdown()
+
+					err = wf.Start()
+					Expect(err).NotTo(HaveOccurred())
+
+					nc := &DefaultNodeNetworkController{
+						BaseNodeNetworkController: BaseNodeNetworkController{
+							CommonNodeNetworkControllerInfo: CommonNodeNetworkControllerInfo{
+								watchFactory: wf,
+							},
+							ReconcilableNetInfo: &util.DefaultNetInfo{},
+						},
+					}
+
+					// Execute the function under test
+					shouldFlush, err := nc.shouldFlushConntrackForZeroToNTransition(
+						tc.oldSlice,
+						tc.newSlice,
+						k8stypes.NamespacedName{Namespace: testNamespace, Name: testServiceName},
+						tc.service,
+					)
+
+					if tc.expectError {
+						Expect(err).To(HaveOccurred())
+					} else {
+						Expect(err).NotTo(HaveOccurred())
+						Expect(shouldFlush).To(Equal(tc.expectedShouldFlush), tc.desc)
+					}
+				},
+
+				Entry("add event: dual-stack service, first endpoint slice with both IPv4 and IPv6 (0→1)",
+					testCase{
+						desc:     "should return true when dual-stack service goes from 0 to 1 endpoint",
+						oldSlice: nil,
+						newSlice: func() *discovery.EndpointSlice {
+							port := int32(8080)
+							proto := corev1.ProtocolUDP
+							return &discovery.EndpointSlice{
+								ObjectMeta: metav1.ObjectMeta{
+									Name:      testEndpointSlice + "-dualstack",
+									Namespace: testNamespace,
+									UID:       "dualstack-slice",
+									Labels: map[string]string{
+										discovery.LabelServiceName: testServiceName,
+									},
+								},
+								Ports: []discovery.EndpointPort{
+									{Port: &port, Protocol: &proto},
+								},
+								Endpoints: []discovery.Endpoint{
+									{
+										Addresses: []string{"10.0.0.1", "2001:db8::1"},
+										Conditions: discovery.EndpointConditions{
+											Ready: boolPtr(true),
+										},
+									},
+								},
+							}
+						}(),
+						otherSlices: []*discovery.EndpointSlice{},
+						service: &corev1.Service{
+							ObjectMeta: metav1.ObjectMeta{
+								Name:      testServiceName,
+								Namespace: testNamespace,
+							},
+							Spec: corev1.ServiceSpec{
+								Ports: []corev1.ServicePort{
+									{Port: 80, Protocol: udpProtocol},
+								},
+								ClusterIPs: []string{"10.96.0.1", "fd00::1"},
+							},
+						},
+						expectedShouldFlush: true,
+					},
+				),
+
+				Entry("update event: IPv6 endpoint added to service that already has IPv4 endpoint",
+					testCase{
+						desc: "should return false when service already has IPv4 endpoints and IPv6 is added",
+						oldSlice: func() *discovery.EndpointSlice {
+							port := int32(8080)
+							proto := corev1.ProtocolUDP
+							return &discovery.EndpointSlice{
+								ObjectMeta: metav1.ObjectMeta{
+									Name:      testEndpointSlice + "-ipv4",
+									Namespace: testNamespace,
+									UID:       "ipv4-slice",
+									Labels: map[string]string{
+										discovery.LabelServiceName: testServiceName,
+									},
+								},
+								Ports: []discovery.EndpointPort{
+									{Port: &port, Protocol: &proto},
+								},
+								Endpoints: []discovery.Endpoint{
+									{
+										Addresses: []string{"10.0.0.1"},
+										Conditions: discovery.EndpointConditions{
+											Ready: boolPtr(true),
+										},
+									},
+								},
+							}
+						}(),
+						newSlice: func() *discovery.EndpointSlice {
+							port := int32(8080)
+							proto := corev1.ProtocolUDP
+							return &discovery.EndpointSlice{
+								ObjectMeta: metav1.ObjectMeta{
+									Name:      testEndpointSlice + "-ipv4",
+									Namespace: testNamespace,
+									UID:       "ipv4-slice",
+									Labels: map[string]string{
+										discovery.LabelServiceName: testServiceName,
+									},
+								},
+								Ports: []discovery.EndpointPort{
+									{Port: &port, Protocol: &proto},
+								},
+								Endpoints: []discovery.Endpoint{
+									{
+										Addresses: []string{"10.0.0.1", "2001:db8::1"},
+										Conditions: discovery.EndpointConditions{
+											Ready: boolPtr(true),
+										},
+									},
+								},
+							}
+						}(),
+						otherSlices: []*discovery.EndpointSlice{},
+						service: &corev1.Service{
+							ObjectMeta: metav1.ObjectMeta{
+								Name:      testServiceName,
+								Namespace: testNamespace,
+							},
+							Spec: corev1.ServiceSpec{
+								Ports: []corev1.ServicePort{
+									{Port: 80, Protocol: udpProtocol},
+								},
+								ClusterIPs: []string{"10.96.0.1", "fd00::1"},
+							},
+						},
+						expectedShouldFlush: false,
+					},
+				),
+			)
+		})
 	})
 
 	Describe("flushConntrackForServiceVIPs", func() {
@@ -2601,8 +2944,12 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 				svc.Spec.ExternalIPs = externalIPs
 			}
 			if lbIP != "" {
-				svc.Status.LoadBalancer.Ingress = []corev1.LoadBalancerIngress{
-					{IP: lbIP},
+				svc.Status = corev1.ServiceStatus{
+					LoadBalancer: corev1.LoadBalancerStatus{
+						Ingress: []corev1.LoadBalancerIngress{
+							{IP: lbIP},
+						},
+					},
 				}
 			}
 			return svc
@@ -2759,7 +3106,232 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 				},
 			),
 		)
+
+		Context("IPv6-only VIP flushing", func() {
+			BeforeEach(func() {
+				config.IPv4Mode = false
+				config.IPv6Mode = true
+			})
+
+			AfterEach(func() {
+				config.IPv4Mode = false
+				config.IPv6Mode = false
+			})
+
+			DescribeTable("should flush conntrack for IPv6 VIPs",
+				func(tc testCase) {
+					// Setup mock for ConntrackDeleteFilters
+					mockNetLinkOps := new(utilMocks.NetLinkOps)
+					util.SetNetLinkOpMockInst(mockNetLinkOps)
+					defer util.ResetNetLinkOpMockInst()
+
+					// Mock ConntrackDeleteFilters
+					mockNetLinkOps.On("ConntrackDeleteFilters",
+						mock.AnythingOfType("netlink.ConntrackTableType"),
+						mock.AnythingOfType("netlink.InetFamily"),
+						mock.AnythingOfType("*netlink.ConntrackFilter")).
+						Return(uint(1), nil)
+
+					// Setup fake client
+					fakeClient := fake.NewSimpleClientset(tc.service, tc.node)
+
+					wf, err := factory.NewNodeWatchFactory(&util.OVNNodeClientset{
+						KubeClient: fakeClient,
+					}, testNodeName)
+					Expect(err).NotTo(HaveOccurred())
+					defer wf.Shutdown()
+
+					err = wf.Start()
+					Expect(err).NotTo(HaveOccurred())
+
+					nc := &DefaultNodeNetworkController{
+						BaseNodeNetworkController: BaseNodeNetworkController{
+							CommonNodeNetworkControllerInfo: CommonNodeNetworkControllerInfo{
+								watchFactory: wf,
+								name:         testNodeName,
+							},
+							ReconcilableNetInfo: &util.DefaultNetInfo{},
+						},
+					}
+
+					// Execute the function under test
+					err = nc.flushConntrackForServiceVIPs(tc.service)
+					Expect(err).NotTo(HaveOccurred())
+
+					// Verify the number of ConntrackDeleteFilters calls
+					mockNetLinkOps.AssertNumberOfCalls(GinkgoT(), "ConntrackDeleteFilters", tc.expectedConntrackCalls)
+				},
+
+				Entry("IPv6 ClusterIP service only",
+					testCase{
+						desc:                   "should flush conntrack for IPv6 ClusterIP",
+						service:                makeServiceWithVIPs(corev1.ServiceTypeClusterIP, "fd00::1", nil, "", 0),
+						node:                   makeNode("2001:db8::10"),
+						expectedConntrackCalls: 1,
+					},
+				),
+
+				Entry("IPv6 NodePort service",
+					testCase{
+						desc:                   "should flush conntrack for IPv6 ClusterIP and node IPs",
+						service:                makeServiceWithVIPs(corev1.ServiceTypeNodePort, "fd00::1", nil, "", 30080),
+						node:                   makeNode("2001:db8::10", "2001:db8::11"),
+						expectedConntrackCalls: 3,
+					},
+				),
+
+				Entry("IPv6 LoadBalancer service",
+					testCase{
+						desc:                   "should flush conntrack for IPv6 ClusterIP and LB IP",
+						service:                makeServiceWithVIPs(corev1.ServiceTypeLoadBalancer, "fd00::1", nil, "2001:db8:1b::1", 30080),
+						node:                   makeNode("2001:db8::10"),
+						expectedConntrackCalls: 3,
+					},
+				),
+			)
+		})
+
+		Context("Dual-stack VIP flushing", func() {
+			BeforeEach(func() {
+				config.IPv4Mode = true
+				config.IPv6Mode = true
+			})
+
+			AfterEach(func() {
+				config.IPv4Mode = false
+				config.IPv6Mode = false
+			})
+
+			DescribeTable("should flush conntrack for dual-stack VIPs",
+				func(tc testCase) {
+					// Setup mock for ConntrackDeleteFilters
+					mockNetLinkOps := new(utilMocks.NetLinkOps)
+					util.SetNetLinkOpMockInst(mockNetLinkOps)
+					defer util.ResetNetLinkOpMockInst()
+
+					// Mock ConntrackDeleteFilters
+					mockNetLinkOps.On("ConntrackDeleteFilters",
+						mock.AnythingOfType("netlink.ConntrackTableType"),
+						mock.AnythingOfType("netlink.InetFamily"),
+						mock.AnythingOfType("*netlink.ConntrackFilter")).
+						Return(uint(1), nil)
+
+					// Setup fake client
+					fakeClient := fake.NewSimpleClientset(tc.service, tc.node)
+
+					wf, err := factory.NewNodeWatchFactory(&util.OVNNodeClientset{
+						KubeClient: fakeClient,
+					}, testNodeName)
+					Expect(err).NotTo(HaveOccurred())
+					defer wf.Shutdown()
+
+					err = wf.Start()
+					Expect(err).NotTo(HaveOccurred())
+
+					nc := &DefaultNodeNetworkController{
+						BaseNodeNetworkController: BaseNodeNetworkController{
+							CommonNodeNetworkControllerInfo: CommonNodeNetworkControllerInfo{
+								watchFactory: wf,
+								name:         testNodeName,
+							},
+							ReconcilableNetInfo: &util.DefaultNetInfo{},
+						},
+					}
+
+					// Execute the function under test
+					err = nc.flushConntrackForServiceVIPs(tc.service)
+					Expect(err).NotTo(HaveOccurred())
+
+					// Verify the number of ConntrackDeleteFilters calls
+					mockNetLinkOps.AssertNumberOfCalls(GinkgoT(), "ConntrackDeleteFilters", tc.expectedConntrackCalls)
+				},
+
+				Entry("Dual-stack ClusterIP service",
+					testCase{
+						desc: "should flush conntrack for both IPv4 and IPv6 ClusterIPs",
+						service: func() *corev1.Service {
+							svc := &corev1.Service{
+								ObjectMeta: metav1.ObjectMeta{
+									Name:      testServiceName,
+									Namespace: testNamespace,
+								},
+								Spec: corev1.ServiceSpec{
+									Type:       corev1.ServiceTypeClusterIP,
+									ClusterIP:  "10.96.0.1",
+									ClusterIPs: []string{"10.96.0.1", "fd00::1"},
+									Ports: []corev1.ServicePort{
+										{Port: 80, Protocol: udpProtocol},
+									},
+								},
+							}
+							return svc
+						}(),
+						node:                   makeNode("192.168.1.10", "2001:db8::10"),
+						expectedConntrackCalls: 2,
+					},
+				),
+
+				Entry("Dual-stack NodePort service",
+					testCase{
+						desc: "should flush conntrack for both IPv4 and IPv6 ClusterIPs and node IPs",
+						service: func() *corev1.Service {
+							svc := &corev1.Service{
+								ObjectMeta: metav1.ObjectMeta{
+									Name:      testServiceName,
+									Namespace: testNamespace,
+								},
+								Spec: corev1.ServiceSpec{
+									Type:       corev1.ServiceTypeNodePort,
+									ClusterIP:  "10.96.0.1",
+									ClusterIPs: []string{"10.96.0.1", "fd00::1"},
+									Ports: []corev1.ServicePort{
+										{Port: 80, Protocol: udpProtocol, NodePort: 30080},
+									},
+								},
+							}
+							return svc
+						}(),
+						node:                   makeNode("192.168.1.10", "2001:db8::10"),
+						expectedConntrackCalls: 4,
+					},
+				),
+
+				Entry("Dual-stack LoadBalancer service with dual-stack ingress IPs",
+					testCase{
+						desc: "should flush conntrack for all dual-stack VIPs including LB ingress",
+						service: func() *corev1.Service {
+							svc := &corev1.Service{
+								ObjectMeta: metav1.ObjectMeta{
+									Name:      testServiceName,
+									Namespace: testNamespace,
+								},
+								Spec: corev1.ServiceSpec{
+									Type:       corev1.ServiceTypeLoadBalancer,
+									ClusterIP:  "10.96.0.1",
+									ClusterIPs: []string{"10.96.0.1", "fd00::1"},
+									Ports: []corev1.ServicePort{
+										{Port: 80, Protocol: udpProtocol, NodePort: 30080},
+									},
+								},
+								Status: corev1.ServiceStatus{
+									LoadBalancer: corev1.LoadBalancerStatus{
+										Ingress: []corev1.LoadBalancerIngress{
+											{IP: "203.0.113.10"},
+											{IP: "2001:db8:1b::1"},
+										},
+									},
+								},
+							}
+							return svc
+						}(),
+						node:                   makeNode("192.168.1.10", "2001:db8::10"),
+						expectedConntrackCalls: 6,
+					},
+				),
+			)
+		})
 	})
+
 
 	Describe("advertised UDN isolation nftables", func() {
 		const nodeName = "my-node"
