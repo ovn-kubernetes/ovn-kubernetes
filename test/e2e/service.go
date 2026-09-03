@@ -973,6 +973,12 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 			cs := f.ClientSet
 			ns := f.Namespace.Name
 
+			// This test verifies kernel conntrack flushing which only applies in local gateway mode.
+			// In shared gateway mode, traffic stays in OVS datapath and uses OVS conntrack.
+			if !IsGatewayModeLocal(cs) {
+				e2eskipper.Skipf("Test requires local gateway mode (kernel conntrack), skipping in shared gateway mode")
+			}
+
 			nodes, err := e2enode.GetBoundedReadySchedulableNodes(ctx, cs, 2)
 			framework.ExpectNoError(err)
 			if len(nodes.Items) < 2 {
