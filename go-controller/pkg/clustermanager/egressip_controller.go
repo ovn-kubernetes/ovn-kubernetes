@@ -546,12 +546,16 @@ func (eIPC *egressIPClusterController) initEgressNodeReachability(objs []interfa
 	// with existing assignments from EgressIP statuses. This prevents duplicate IP
 	// assignments when two EgressIPs have the same IP in their specs but only one has
 	// it assigned in status (e.g., after control-plane restart or during initial sync).
+	// However, validate each assignment before adding to cache to prevent stale entries
+	// from causing errors after controller restart.
 	egressIPs, err := eIPC.kube.GetEgressIPs()
 	if err != nil {
 		return fmt.Errorf("unable to list EgressIPs, err: %v", err)
 	}
 	for _, egressIP := range egressIPs {
-		eIPC.ensureAllocatorEgressIPAssignments(egressIP)
+		if err := eIPC.ensureAllocatorEgressIPAssignments(egressIP); err != nil {
+			klog.Errorf("Failed to ensure EgressIP %s assignments during init: %v", egressIP.Name, err)
+		}
 	}
 
 	go eIPC.checkEgressNodesReachability()
@@ -1905,11 +1909,49 @@ func generateStatusPatchOp(statusItems []egressipv1.EgressIPStatusItem) jsonPatc
 
 // ensureAllocatorEgressIPAssignments adds EgressIP assignments to the allocator cache
 // if the EgressIP has status items. This is critical to prevent duplicate IP assignments
-// during restart when EgressIPs are processed in arbitrary order.
-func (eIPC *egressIPClusterController) ensureAllocatorEgressIPAssignments(egressIP *egressipv1.EgressIP) {
-	if len(egressIP.Status.Items) > 0 {
-		eIPC.addAllocatorEgressIPAssignments(egressIP.Name, egressIP.Status.Items)
+// during restart when EgressIPs are processed in arbitrary order. Validates that assigned
+// nodes exist and are ready before adding to cache, preventing stale entries from blocking
+// future allocations after controller restart.
+func (eIPC *egressIPClusterController) ensureAllocatorEgressIPAssignments(egressIP *egressipv1.EgressIP) error {
+	if len(egressIP.Status.Items) == 0 {
+		return nil
 	}
+
+	// Validate each status item before adding to cache
+	validAssignments := make([]egressipv1.EgressIPStatusItem, 0, len(egressIP.Status.Items))
+	for _, status := range egressIP.Status.Items {
+		// Verify node exists
+		node, err := eIPC.watchFactory.GetNode(status.Node)
+		if err != nil {
+			klog.Warningf("EgressIP %s has assignment to non-existent node %s for IP %s, skipping",
+				egressIP.Name, status.Node, status.EgressIP)
+			continue
+		}
+
+		// Verify node is ready (on non-cloud platforms)
+		if !util.PlatformTypeIsEgressIPCloudProvider() && !eIPC.isEgressNodeReady(node) {
+			klog.Warningf("EgressIP %s has assignment to unready node %s for IP %s, skipping",
+				egressIP.Name, status.Node, status.EgressIP)
+			continue
+		}
+
+		// Node is valid, keep this assignment
+		validAssignments = append(validAssignments, status)
+	}
+
+	// Add only valid assignments to cache
+	if len(validAssignments) > 0 {
+		eIPC.addAllocatorEgressIPAssignments(egressIP.Name, validAssignments)
+	}
+
+	// Log if we filtered out any invalid assignments
+	if len(validAssignments) < len(egressIP.Status.Items) {
+		klog.Infof("EgressIP %s: filtered %d invalid assignments (total: %d), added %d valid",
+			egressIP.Name, len(egressIP.Status.Items)-len(validAssignments),
+			len(egressIP.Status.Items), len(validAssignments))
+	}
+
+	return nil
 }
 
 // syncEgressIPMarkAllocator iterates over all existing EgressIPs. It builds a mark cache of existing marks stored on each
