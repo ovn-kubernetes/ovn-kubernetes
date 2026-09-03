@@ -821,10 +821,37 @@ func (eIPC *egressIPClusterController) addEgressNode(nodeName string) error {
 // cleanAllocationsForNodeLocked removes all EgressIP allocations for a node without
 // removing the node from the cache. Used when a node loses the egress-assignable label
 // but may gain it again (graceful cleanup). Must be called with nodeAllocator.Lock held.
+// This performs defensive cleanup by scanning ALL nodes and removing entries that match
+// IPs that were allocated to the target node, handling race conditions where allocations
+// may have been moved to other nodes before the lock was acquired.
 func (eIPC *egressIPClusterController) cleanAllocationsForNodeLocked(nodeName string) {
 	if eNode, exists := eIPC.nodeAllocator.cache[nodeName]; exists {
+		// Collect all IPs currently allocated to this node before clearing
+		// This allows us to defensively clean entries from other nodes that may
+		// reference the same IPs (handling race conditions)
+		ipsToClean := make([]string, 0)
+		for ip := range eNode.allocations {
+			ipsToClean = append(ipsToClean, ip)
+		}
+
 		// Clear all allocations for this node
 		eNode.allocations = make(map[string]string)
+
+		// Defensive cleanup: scan ALL nodes and remove entries that match the IPs
+		// that were on this node. This handles cases where allocations may have been
+		// moved to other nodes before the lock was acquired (race conditions).
+		for currentNodeName, currentNode := range eIPC.nodeAllocator.cache {
+			if currentNodeName == nodeName {
+				continue // Skip the target node, we already cleared it
+			}
+			for _, ipToClean := range ipsToClean {
+				if _, exists := currentNode.allocations[ipToClean]; exists {
+					klog.V(5).Infof("Defensive cleanup: removing allocation for IP %s from node %s (was also on %s)",
+						ipToClean, currentNodeName, nodeName)
+					delete(currentNode.allocations, ipToClean)
+				}
+			}
+		}
 	}
 }
 
