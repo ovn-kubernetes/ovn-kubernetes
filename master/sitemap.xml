@@ -337,6 +337,10 @@
          <lastmod>2026-09-03</lastmod>
     </url>
     <url>
+         <loc>https://www.ovn.org/ovn-kubernetes/master/features/user-defined-networks/dhcp-ipam-localnet/</loc>
+         <lastmod>2026-09-03</lastmod>
+    </url>
+    <url>
          <loc>https://www.ovn.org/ovn-kubernetes/master/features/user-defined-networks/dynamic-udn/</loc>
          <lastmod>2026-09-03</lastmod>
     </url>

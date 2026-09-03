@@ -2228,6 +2228,8 @@
       
         
       
+        
+      
     
     
     
@@ -2703,6 +2705,34 @@
     
   
     Dynamic UDN Node Allocation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dhcp-ipam-localnet/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DHCP IPAM for Localnet Networks
   
 
     
@@ -5418,6 +5448,9 @@ reacts to it by creating NADs under the hood. The ovnkube-controller watches for
 the NADs and creates the required OVN logical constructs in the OVN database.
 The ovnkube-node also adds the required gateway plumbing such as openflows and
 VRF tables and routes to provide networking to these networks.</p>
+<p>Localnet secondary networks also support delegating IP assignment to an
+external DHCP server instead of an OVN-Kubernetes-managed pool. See the
+<a href="../dhcp-ipam-localnet/">DHCP IPAM for Localnet Networks</a> page for details.</p>
 <h3 id="creating-userdefinednetworks">Creating UserDefinedNetworks<a class="headerlink" href="#creating-userdefinednetworks" title="Permanent link">¶</a></h3>
 <p>Now that we understand what a UDN is, let's get handson!</p>
 <p>Let's create two namespaces <code>blue</code> and <code>green</code>:</p>

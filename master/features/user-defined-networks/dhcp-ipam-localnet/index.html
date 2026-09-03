@@ -3,35 +3,33 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="For this repo to stay healthy, we need to make sure that we are doing regular maintenance. This includes:">
       
       
-      
-        <link rel="canonical" href="https://www.ovn.org/ovn-kubernetes/master/developer-guide/maintenance/">
-      
-      
-        <link rel="prev" href="../release/">
+        <link rel="canonical" href="https://www.ovn.org/ovn-kubernetes/master/features/user-defined-networks/dhcp-ipam-localnet/">
       
       
-        <link rel="next" href="../../api-reference/">
+        <link rel="prev" href="../dynamic-udn/">
+      
+      
+        <link rel="next" href="../../network-security-controls/">
       
       
         
       
       
-      <link rel="icon" href="../../images/ovn-inside-k8s.png">
+      <link rel="icon" href="../../../images/ovn-inside-k8s.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
-        <title>Maintenance Guide - OVN-Kubernetes</title>
+        <title>DHCP IPAM for Localnet Networks - OVN-Kubernetes</title>
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.ec1eaa64.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -50,15 +48,15 @@
       
     
     
-      <link rel="stylesheet" href="../../stylesheets/extra.css">
+      <link rel="stylesheet" href="../../../stylesheets/extra.css">
     
-    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
     
     
-  <link href="../../assets/stylesheets/glightbox.min.css" rel="stylesheet"><script src="../../assets/javascripts/glightbox.min.js"></script><style id="glightbox-style">
+  <link href="../../../assets/stylesheets/glightbox.min.css" rel="stylesheet"><script src="../../../assets/javascripts/glightbox.min.js"></script><style id="glightbox-style">
             html.glightbox-open { overflow: initial; height: 100%; }
             .gslide-title { margin-top: 0px; user-select: text; }
             .gslide-desc { color: #666; user-select: text; }
@@ -87,7 +85,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#maintenance-documentation" class="md-skip">
+        <a href="#dhcp-ipam-for-localnet-networks" class="md-skip">
           Skip to content
         </a>
       
@@ -107,9 +105,9 @@
 
 <header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../.." title="OVN-Kubernetes" class="md-header__button md-logo" aria-label="OVN-Kubernetes" data-md-component="logo">
+    <a href="../../.." title="OVN-Kubernetes" class="md-header__button md-logo" aria-label="OVN-Kubernetes" data-md-component="logo">
       
-  <img src="../../images/ovn-inside-k8s.png" alt="logo">
+  <img src="../../../images/ovn-inside-k8s.png" alt="logo">
 
     </a>
     <label class="md-header__button md-icon" for="__drawer">
@@ -126,7 +124,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Maintenance Guide
+              DHCP IPAM for Localnet Networks
             
           </span>
         </div>
@@ -233,7 +231,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../.." class="md-tabs__link">
+        <a href="../../.." class="md-tabs__link">
           
   
   
@@ -255,7 +253,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../getting-started/" class="md-tabs__link">
+        <a href="../../../getting-started/" class="md-tabs__link">
           
   
   
@@ -273,13 +271,11 @@
   
   
   
-    
-  
   
     
     
-      <li class="md-tabs__item md-tabs__item--active">
-        <a href="../" class="md-tabs__link">
+      <li class="md-tabs__item">
+        <a href="../../../developer-guide/" class="md-tabs__link">
           
   
   
@@ -301,7 +297,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../api-reference/" class="md-tabs__link">
+        <a href="../../../api-reference/" class="md-tabs__link">
           
   
   
@@ -319,11 +315,13 @@
   
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
-        <a href="../../features/" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../../" class="md-tabs__link">
           
   
   
@@ -345,7 +343,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../troubleshooting/" class="md-tabs__link">
+        <a href="../../../troubleshooting/" class="md-tabs__link">
           
   
   
@@ -367,7 +365,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../observability/" class="md-tabs__link">
+        <a href="../../../observability/" class="md-tabs__link">
           
   
   
@@ -389,7 +387,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../okeps/" class="md-tabs__link">
+        <a href="../../../okeps/" class="md-tabs__link">
           
   
   
@@ -411,7 +409,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../blog/" class="md-tabs__link">
+        <a href="../../../blog/" class="md-tabs__link">
           
   
   
@@ -453,9 +451,9 @@
 
 <nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../.." title="OVN-Kubernetes" class="md-nav__button md-logo" aria-label="OVN-Kubernetes" data-md-component="logo">
+    <a href="../../.." title="OVN-Kubernetes" class="md-nav__button md-logo" aria-label="OVN-Kubernetes" data-md-component="logo">
       
-  <img src="../../images/ovn-inside-k8s.png" alt="logo">
+  <img src="../../../images/ovn-inside-k8s.png" alt="logo">
 
     </a>
     OVN-Kubernetes
@@ -529,7 +527,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../.." class="md-nav__link ">
+            <a href="../../.." class="md-nav__link ">
               
   
   
@@ -573,7 +571,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/architecture/" class="md-nav__link">
+      <a href="../../../design/architecture/" class="md-nav__link">
         
   
   
@@ -601,7 +599,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/topology/" class="md-nav__link">
+      <a href="../../../design/topology/" class="md-nav__link">
         
   
   
@@ -629,7 +627,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/gateway-modes/" class="md-nav__link">
+      <a href="../../../design/gateway-modes/" class="md-nav__link">
         
   
   
@@ -657,7 +655,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/traffic-flows/" class="md-nav__link">
+      <a href="../../../design/traffic-flows/" class="md-nav__link">
         
   
   
@@ -685,7 +683,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/pod-creation-workflow/" class="md-nav__link">
+      <a href="../../../design/pod-creation-workflow/" class="md-nav__link">
         
   
   
@@ -713,7 +711,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/service-creation-workflow/" class="md-nav__link">
+      <a href="../../../design/service-creation-workflow/" class="md-nav__link">
         
   
   
@@ -741,7 +739,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/service-traffic-policy/" class="md-nav__link">
+      <a href="../../../design/service-traffic-policy/" class="md-nav__link">
         
   
   
@@ -769,7 +767,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/host-to-node-port-hairpin-trafficflow/" class="md-nav__link">
+      <a href="../../../design/host-to-node-port-hairpin-trafficflow/" class="md-nav__link">
         
   
   
@@ -797,7 +795,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/external-ip-and-loadbalancer-ingress/" class="md-nav__link">
+      <a href="../../../design/external-ip-and-loadbalancer-ingress/" class="md-nav__link">
         
   
   
@@ -825,7 +823,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/ovn-kubernetes-subnets/" class="md-nav__link">
+      <a href="../../../design/ovn-kubernetes-subnets/" class="md-nav__link">
         
   
   
@@ -853,7 +851,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/bridge-flows/" class="md-nav__link">
+      <a href="../../../design/bridge-flows/" class="md-nav__link">
         
   
   
@@ -881,7 +879,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/masquerade-ips/" class="md-nav__link">
+      <a href="../../../design/masquerade-ips/" class="md-nav__link">
         
   
   
@@ -909,7 +907,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/live-migration/" class="md-nav__link">
+      <a href="../../live-migration/" class="md-nav__link">
         
   
   
@@ -985,7 +983,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../getting-started/" class="md-nav__link ">
+            <a href="../../../getting-started/" class="md-nav__link ">
               
   
   
@@ -1029,7 +1027,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../installation/launching-ovn-kubernetes-on-kind/" class="md-nav__link">
+      <a href="../../../installation/launching-ovn-kubernetes-on-kind/" class="md-nav__link">
         
   
   
@@ -1057,7 +1055,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../installation/launching-ovn-kubernetes-with-helm/" class="md-nav__link">
+      <a href="../../../installation/launching-ovn-kubernetes-with-helm/" class="md-nav__link">
         
   
   
@@ -1085,7 +1083,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../installation/launching-ovn-kubernetes-with-dpu/" class="md-nav__link">
+      <a href="../../../installation/launching-ovn-kubernetes-with-dpu/" class="md-nav__link">
         
   
   
@@ -1113,7 +1111,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../installation/INSTALL.KUBEADM/" class="md-nav__link">
+      <a href="../../../installation/INSTALL.KUBEADM/" class="md-nav__link">
         
   
   
@@ -1141,7 +1139,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../getting-started/configuration/" class="md-nav__link">
+      <a href="../../../getting-started/configuration/" class="md-nav__link">
         
   
   
@@ -1169,7 +1167,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/requirements/" class="md-nav__link">
+      <a href="../../requirements/" class="md-nav__link">
         
   
   
@@ -1197,7 +1195,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../getting-started/cli-guide/" class="md-nav__link">
+      <a href="../../../getting-started/cli-guide/" class="md-nav__link">
         
   
   
@@ -1225,7 +1223,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../getting-started/example-pod-creation/" class="md-nav__link">
+      <a href="../../../getting-started/example-pod-creation/" class="md-nav__link">
         
   
   
@@ -1253,7 +1251,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../getting-started/example-service-creation/" class="md-nav__link">
+      <a href="../../../getting-started/example-service-creation/" class="md-nav__link">
         
   
   
@@ -1281,7 +1279,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../getting-started/building-ovn-kubernetes/" class="md-nav__link">
+      <a href="../../../getting-started/building-ovn-kubernetes/" class="md-nav__link">
         
   
   
@@ -1289,6 +1287,810 @@
     
   
     Setup and Building
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3">
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../developer-guide/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Guide
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../governance/CONTRIBUTING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../governance/GOVERNANCE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Governance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../governance/REVIEWING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reviewing Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../developer-guide/areas/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Areas
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../developer-guide/developer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coding Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../developer-guide/image-build/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OVN-Kubernetes Container Images
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../developer-guide/documentation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Documentation Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../developer-guide/local_testing_guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Testing Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../ci/ci/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CI Testing Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../developer-guide/debugging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Debugging
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../developer-guide/release/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Release Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../developer-guide/maintenance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Maintenance Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4">
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../api-reference/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference Guide
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/introduction/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/egress-ip-api-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    EgressIP
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/egress-service-api-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    EgressService
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/egress-qos-api-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    EgressQoS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/egress-firewall-api-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    EgressFirewall
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/admin-epbr-api-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AdminPolicyBasedExternalRoutes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/userdefinednetwork-api-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    UserDefinedNetwork
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/routeadvertisements-api-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RouteAdvertisements
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/clusternetworkconnect-api-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ClusterNetworkConnect
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/vtep-api-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    VTEP
   
 
     
@@ -1362,18 +2164,18 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked="">
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked="">
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../" class="md-nav__link ">
+            <a href="../../" class="md-nav__link ">
               
   
   
   <span class="md-ellipsis">
     
   
-    Developer Guide
+    Features
   
 
     
@@ -1384,18 +2186,95 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
-          <label class="md-nav__title" for="__nav_3">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
   
-    Developer Guide
+    Features
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix="">
+            
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2" checked="">
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Universal Connectivity
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_2" id="__nav_5_2_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Universal Connectivity
   
 
           </label>
@@ -1410,14 +2289,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../governance/CONTRIBUTING/" class="md-nav__link">
+      <a href="../user-defined-networks/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Contributing Guide
+    UserDefinedNetwork
   
 
     
@@ -1438,14 +2317,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../governance/GOVERNANCE/" class="md-nav__link">
+      <a href="../uplinks/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Governance
+    Uplinks for UserDefinedNetworks
   
 
     
@@ -1466,14 +2345,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../governance/REVIEWING/" class="md-nav__link">
+      <a href="../cluster-network-connect/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Reviewing Guide
+    Connecting UserDefinedNetworks
   
 
     
@@ -1494,210 +2373,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../areas/" class="md-nav__link">
+      <a href="../dynamic-udn/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Project Areas
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../developer/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Coding Guide
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../image-build/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    OVN-Kubernetes Container Images
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../documentation/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Documentation Guide
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../local_testing_guide/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Local Testing Guide
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../ci/ci/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    CI Testing Guide
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../debugging/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Debugging
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../release/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Release Guide
+    Dynamic UDN Node Allocation
   
 
     
@@ -1727,691 +2410,25 @@
         
       
       
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DHCP IPAM for Localnet Networks
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
       <a href="./" class="md-nav__link md-nav__link--active">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Maintenance Guide
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-      
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    
-    
-      
-        
-          
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-    
-    
-    
-      
-      
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4">
-        
-          
-          <div class="md-nav__link md-nav__container">
-            <a href="../../api-reference/" class="md-nav__link ">
-              
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    API Reference Guide
-  
-
-    
-  </span>
-  
-  
-
-            </a>
-            
-              
-              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
-                <span class="md-nav__icon md-icon"></span>
-              </label>
-            
-          </div>
-        
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4">
-            <span class="md-nav__icon md-icon"></span>
-            
-  
-    API Reference Guide
-  
-
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix="">
-            
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../api-reference/introduction/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Introduction
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../api-reference/egress-ip-api-spec/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    EgressIP
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../api-reference/egress-service-api-spec/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    EgressService
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../api-reference/egress-qos-api-spec/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    EgressQoS
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../api-reference/egress-firewall-api-spec/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    EgressFirewall
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../api-reference/admin-epbr-api-spec/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    AdminPolicyBasedExternalRoutes
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../api-reference/userdefinednetwork-api-spec/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    UserDefinedNetwork
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../api-reference/routeadvertisements-api-spec/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    RouteAdvertisements
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../api-reference/clusternetworkconnect-api-spec/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    ClusterNetworkConnect
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../api-reference/vtep-api-spec/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    VTEP
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    
-    
-      
-        
-          
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-    
-    
-    
-      
-      
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5">
-        
-          
-          <div class="md-nav__link md-nav__container">
-            <a href="../../features/" class="md-nav__link ">
-              
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Features
-  
-
-    
-  </span>
-  
-  
-
-            </a>
-            
-              
-              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
-                <span class="md-nav__icon md-icon"></span>
-              </label>
-            
-          </div>
-        
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_5">
-            <span class="md-nav__icon md-icon"></span>
-            
-  
-    Features
-  
-
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix="">
-            
-              
-            
-              
-                
-  
-  
-  
-  
-    
-    
-      
-        
-          
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-        
-      
-    
-    
-    
-      
-      
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2">
-        
-          
-          <div class="md-nav__link md-nav__container">
-            <a href="../../features/user-defined-networks/" class="md-nav__link ">
-              
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Universal Connectivity
-  
-
-    
-  </span>
-  
-  
-
-            </a>
-            
-              
-              <label class="md-nav__link " for="__nav_5_2" id="__nav_5_2_label" tabindex="0">
-                <span class="md-nav__icon md-icon"></span>
-              </label>
-            
-          </div>
-        
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_2_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_5_2">
-            <span class="md-nav__icon md-icon"></span>
-            
-  
-    Universal Connectivity
-  
-
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix="">
-            
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../features/user-defined-networks/user-defined-networks/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    UserDefinedNetwork
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../features/user-defined-networks/uplinks/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Uplinks for UserDefinedNetworks
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../features/user-defined-networks/cluster-network-connect/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Connecting UserDefinedNetworks
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../features/user-defined-networks/dynamic-udn/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Dynamic UDN Node Allocation
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../features/user-defined-networks/dhcp-ipam-localnet/" class="md-nav__link">
         
   
   
@@ -2427,6 +2444,103 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+      
+        <li class="md-nav__item">
+  <a href="#introduction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Introduction
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#enabling-the-feature" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Enabling the Feature
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#supported-scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported Scope
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#api-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Troubleshooting
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#known-limitations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Known Limitations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        References
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2474,7 +2588,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../features/network-security-controls/" class="md-nav__link ">
+            <a href="../../network-security-controls/" class="md-nav__link ">
               
   
   
@@ -2518,7 +2632,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/network-security-controls/admin-network-policy/" class="md-nav__link">
+      <a href="../../network-security-controls/admin-network-policy/" class="md-nav__link">
         
   
   
@@ -2546,7 +2660,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/network-security-controls/network-policy/" class="md-nav__link">
+      <a href="../../network-security-controls/network-policy/" class="md-nav__link">
         
   
   
@@ -2574,7 +2688,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/network-security-controls/egress-firewall/" class="md-nav__link">
+      <a href="../../network-security-controls/egress-firewall/" class="md-nav__link">
         
   
   
@@ -2639,7 +2753,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../features/cluster-egress-controls/" class="md-nav__link ">
+            <a href="../../cluster-egress-controls/" class="md-nav__link ">
               
   
   
@@ -2683,7 +2797,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/cluster-egress-controls/egress-ip/" class="md-nav__link">
+      <a href="../../cluster-egress-controls/egress-ip/" class="md-nav__link">
         
   
   
@@ -2711,7 +2825,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/cluster-egress-controls/egress-service/" class="md-nav__link">
+      <a href="../../cluster-egress-controls/egress-service/" class="md-nav__link">
         
   
   
@@ -2739,7 +2853,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/cluster-egress-controls/egress-qos/" class="md-nav__link">
+      <a href="../../cluster-egress-controls/egress-qos/" class="md-nav__link">
         
   
   
@@ -2767,7 +2881,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/cluster-egress-controls/egress-gateway/" class="md-nav__link">
+      <a href="../../cluster-egress-controls/egress-gateway/" class="md-nav__link">
         
   
   
@@ -2826,7 +2940,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../features/infrastructure-security-controls/" class="md-nav__link ">
+            <a href="../../infrastructure-security-controls/" class="md-nav__link ">
               
   
   
@@ -2870,7 +2984,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/infrastructure-security-controls/node-identity/" class="md-nav__link">
+      <a href="../../infrastructure-security-controls/node-identity/" class="md-nav__link">
         
   
   
@@ -2933,7 +3047,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../features/multiple-networks/" class="md-nav__link ">
+            <a href="../../multiple-networks/" class="md-nav__link ">
               
   
   
@@ -2977,7 +3091,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/multiple-networks/multi-homing/" class="md-nav__link">
+      <a href="../../multiple-networks/multi-homing/" class="md-nav__link">
         
   
   
@@ -3005,7 +3119,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/multiple-networks/multi-network-policies/" class="md-nav__link">
+      <a href="../../multiple-networks/multi-network-policies/" class="md-nav__link">
         
   
   
@@ -3033,7 +3147,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/multiple-networks/multi-vtep/" class="md-nav__link">
+      <a href="../../multiple-networks/multi-vtep/" class="md-nav__link">
         
   
   
@@ -3069,7 +3183,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/multicast/" class="md-nav__link">
+      <a href="../../multicast/" class="md-nav__link">
         
   
   
@@ -3122,7 +3236,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../features/network-qos/" class="md-nav__link ">
+            <a href="../../network-qos/" class="md-nav__link ">
               
   
   
@@ -3166,7 +3280,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/network-qos/overview/" class="md-nav__link">
+      <a href="../../network-qos/overview/" class="md-nav__link">
         
   
   
@@ -3194,7 +3308,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/network-qos/usage-guide/" class="md-nav__link">
+      <a href="../../network-qos/usage-guide/" class="md-nav__link">
         
   
   
@@ -3230,7 +3344,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/live-migration/" class="md-nav__link">
+      <a href="../../live-migration/" class="md-nav__link">
         
   
   
@@ -3258,7 +3372,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/hybrid-overlay/" class="md-nav__link">
+      <a href="../../hybrid-overlay/" class="md-nav__link">
         
   
   
@@ -3286,7 +3400,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/ovs-dynamic-cpu-affinity/" class="md-nav__link">
+      <a href="../../ovs-dynamic-cpu-affinity/" class="md-nav__link">
         
   
   
@@ -3339,7 +3453,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../features/hardware-offload/" class="md-nav__link ">
+            <a href="../../hardware-offload/" class="md-nav__link ">
               
   
   
@@ -3383,7 +3497,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/hardware-offload/ovs-kernel/" class="md-nav__link">
+      <a href="../../hardware-offload/ovs-kernel/" class="md-nav__link">
         
   
   
@@ -3411,7 +3525,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/hardware-offload/ovs-doca/" class="md-nav__link">
+      <a href="../../hardware-offload/ovs-doca/" class="md-nav__link">
         
   
   
@@ -3474,7 +3588,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../features/bgp-integration/" class="md-nav__link ">
+            <a href="../../bgp-integration/" class="md-nav__link ">
               
   
   
@@ -3518,7 +3632,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/bgp-integration/route-advertisements/" class="md-nav__link">
+      <a href="../../bgp-integration/route-advertisements/" class="md-nav__link">
         
   
   
@@ -3546,7 +3660,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/bgp-integration/no-overlay/" class="md-nav__link">
+      <a href="../../bgp-integration/no-overlay/" class="md-nav__link">
         
   
   
@@ -3574,7 +3688,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../features/bgp-integration/evpn/" class="md-nav__link">
+      <a href="../../bgp-integration/evpn/" class="md-nav__link">
         
   
   
@@ -3644,7 +3758,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../troubleshooting/" class="md-nav__link ">
+            <a href="../../../troubleshooting/" class="md-nav__link ">
               
   
   
@@ -3688,7 +3802,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../troubleshooting/debugging/" class="md-nav__link">
+      <a href="../../../troubleshooting/debugging/" class="md-nav__link">
         
   
   
@@ -3716,7 +3830,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../troubleshooting/ovnkube-trace/" class="md-nav__link">
+      <a href="../../../troubleshooting/ovnkube-trace/" class="md-nav__link">
         
   
   
@@ -3744,7 +3858,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../troubleshooting/logging/" class="md-nav__link">
+      <a href="../../../troubleshooting/logging/" class="md-nav__link">
         
   
   
@@ -3806,7 +3920,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../observability/" class="md-nav__link ">
+            <a href="../../../observability/" class="md-nav__link ">
               
   
   
@@ -3850,7 +3964,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../observability/metrics/" class="md-nav__link">
+      <a href="../../../observability/metrics/" class="md-nav__link">
         
   
   
@@ -3878,7 +3992,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../observability/sdn-dashboard/" class="md-nav__link">
+      <a href="../../../observability/sdn-dashboard/" class="md-nav__link">
         
   
   
@@ -3906,7 +4020,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../observability/ovn-observability/" class="md-nav__link">
+      <a href="../../../observability/ovn-observability/" class="md-nav__link">
         
   
   
@@ -3994,7 +4108,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../okeps/" class="md-nav__link ">
+            <a href="../../../okeps/" class="md-nav__link ">
               
   
   
@@ -4038,7 +4152,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5085-localnet-api/" class="md-nav__link">
+      <a href="../../../okeps/okep-5085-localnet-api/" class="md-nav__link">
         
   
   
@@ -4066,7 +4180,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-4380-network-qos/" class="md-nav__link">
+      <a href="../../../okeps/okep-4380-network-qos/" class="md-nav__link">
         
   
   
@@ -4094,7 +4208,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5193-user-defined-networks/" class="md-nav__link">
+      <a href="../../../okeps/okep-5193-user-defined-networks/" class="md-nav__link">
         
   
   
@@ -4122,7 +4236,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5233-preconfigured-udn-addresses/" class="md-nav__link">
+      <a href="../../../okeps/okep-5233-preconfigured-udn-addresses/" class="md-nav__link">
         
   
   
@@ -4150,7 +4264,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5296-bgp/" class="md-nav__link">
+      <a href="../../../okeps/okep-5296-bgp/" class="md-nav__link">
         
   
   
@@ -4178,7 +4292,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5094-layer2-transit-router/" class="md-nav__link">
+      <a href="../../../okeps/okep-5094-layer2-transit-router/" class="md-nav__link">
         
   
   
@@ -4206,7 +4320,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5494-ovn-kubernetes-mcp-server/" class="md-nav__link">
+      <a href="../../../okeps/okep-5494-ovn-kubernetes-mcp-server/" class="md-nav__link">
         
   
   
@@ -4234,7 +4348,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5552-dynamic-udn-node-allocation/" class="md-nav__link">
+      <a href="../../../okeps/okep-5552-dynamic-udn-node-allocation/" class="md-nav__link">
         
   
   
@@ -4262,7 +4376,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5224-connecting-udns/okep-5224-connecting-udns/" class="md-nav__link">
+      <a href="../../../okeps/okep-5224-connecting-udns/okep-5224-connecting-udns/" class="md-nav__link">
         
   
   
@@ -4290,7 +4404,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5259-no-overlay/" class="md-nav__link">
+      <a href="../../../okeps/okep-5259-no-overlay/" class="md-nav__link">
         
   
   
@@ -4318,7 +4432,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5088-evpn/" class="md-nav__link">
+      <a href="../../../okeps/okep-5088-evpn/" class="md-nav__link">
         
   
   
@@ -4346,7 +4460,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5674-dpu-healthcheck/" class="md-nav__link">
+      <a href="../../../okeps/okep-5674-dpu-healthcheck/" class="md-nav__link">
         
   
   
@@ -4374,7 +4488,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5377-extend-udn-to-support-multiple-cluster-subnets-in-layer3-topology/" class="md-nav__link">
+      <a href="../../../okeps/okep-5377-extend-udn-to-support-multiple-cluster-subnets-in-layer3-topology/" class="md-nav__link">
         
   
   
@@ -4402,7 +4516,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-6019-vrf-lite-shared-gateway-external-bridges/" class="md-nav__link">
+      <a href="../../../okeps/okep-6019-vrf-lite-shared-gateway-external-bridges/" class="md-nav__link">
         
   
   
@@ -4430,7 +4544,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-3926-disable-port-security/" class="md-nav__link">
+      <a href="../../../okeps/okep-3926-disable-port-security/" class="md-nav__link">
         
   
   
@@ -4458,7 +4572,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../okeps/okep-5212-ovnobserv-api/" class="md-nav__link">
+      <a href="../../../okeps/okep-5212-ovnobserv-api/" class="md-nav__link">
         
   
   
@@ -4516,7 +4630,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../blog/" class="md-nav__link ">
+            <a href="../../../blog/" class="md-nav__link ">
               
   
   
@@ -4616,7 +4730,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../blog/archive/2026/" class="md-nav__link">
+      <a href="../../../blog/archive/2026/" class="md-nav__link">
         
   
   
@@ -4672,6 +4786,91 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+      
+        <li class="md-nav__item">
+  <a href="#introduction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Introduction
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#enabling-the-feature" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Enabling the Feature
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#supported-scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported Scope
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#api-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Troubleshooting
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#known-limitations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Known Limitations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        References
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -4690,45 +4889,195 @@
   
 
 
-<h1 id="maintenance-documentation">Maintenance Documentation<a class="headerlink" href="#maintenance-documentation" title="Permanent link">¶</a></h1>
-<p>For this repo to stay healthy, we need to make sure that we are doing regular maintenance. This includes:</p>
+<h1 id="dhcp-ipam-for-localnet-networks">DHCP IPAM for Localnet Networks<a class="headerlink" href="#dhcp-ipam-for-localnet-networks" title="Permanent link">¶</a></h1>
+<h2 id="introduction">Introduction<a class="headerlink" href="#introduction" title="Permanent link">¶</a></h2>
+<p>A <a href="../user-defined-networks/#ovn-kubernetes-implementation-details"><code>Localnet</code> network</a>
+attaches pods and VMs directly to a physical network in the provider's
+infrastructure. For IP addressing on such a network, <code>Localnet</code> offers three
+IPAM modes:</p>
 <ul>
-<li>Issue triage (No one is doing this now)<ul>
-<li>review newly created/updated issues (bugs and questions) and try to find assignees</li>
-<li>ensure issues don't get stale and eventually get fixed/answered</li>
-<li>use community meeting for sync and help</li>
+<li><code>Enabled</code>: OVN-Kubernetes allocates addresses from a statically configured
+  <code>subnets</code> pool.</li>
+<li><code>Disabled</code>: addressing is left entirely to the workload.</li>
+<li><code>DHCP</code>: IP assignment is delegated to an external DHCP server managing the
+  physical network, and OVN-Kubernetes learns the assigned addresses instead
+  of allocating them itself.</li>
 </ul>
-</li>
-<li>CI flakes triage (@npinaeva)<ul>
-<li>review newly created/updated flakes and try to find assignees</li>
-<li>ensure flakes don't get stale and eventually get fixed</li>
-<li>review/find reviewers for the CI flake fixes</li>
-<li>use community meeting for sync and help</li>
+<p>This document covers the <code>DHCP</code> mode.</p>
+<p>Lease handling depends on the workload type, selected automatically by
+OVN-Kubernetes:</p>
+<ul>
+<li><strong>Pods</strong> use the standard <a href="https://www.cni.dev/plugins/current/ipam/dhcp/">DHCP CNI IPAM plugin</a>
+  on the node, which acquires the lease and maintains it (renewals for the
+  pod's lifetime, and a release attempt on pod deletion).</li>
+<li><strong>KubeVirt VMs</strong> (including VFIO passthrough) run a DHCP client inside the
+  guest OS, which owns the lease. OVN-Kubernetes only discovers and reports
+  the initial IP so that features relying on the pod IP keep working.</li>
 </ul>
-</li>
-<li>Release tracking and management (@tssurya)<ul>
-<li>Define target date for the next release, add Milestone and track the progress of the release</li>
-<li>Share updates on the release progress in the community meetings</li>
-<li>Track the scope of the release as we get closer to the release date and make sure we are on track to meet the release goals</li>
-<li>Cut the release and share the release notes with the community</li>
+<h2 id="enabling-the-feature">Enabling the Feature<a class="headerlink" href="#enabling-the-feature" title="Permanent link">¶</a></h2>
+<p><code>DHCP</code> IPAM mode does not have its own feature flag. It is available whenever
+<code>Localnet</code> secondary networks are, i.e. with <code>--enable-multi-network</code> set. No
+additional flag is required.</p>
+<p>For the pod delegation path, the DHCP CNI IPAM plugin must be present on the
+node:</p>
+<ul>
+<li><code>/opt/cni/bin/dhcp</code> and a running <code>/opt/cni/bin/dhcp daemon</code> on every node
+  that will host pods on a <code>DHCP</code> IPAM localnet network.</li>
+<li><code>ovnkube-node</code> must have <code>/opt/cni/bin</code> and <code>/run/cni</code> mounted in from the
+  host, so it can exec the <code>dhcp</code> plugin binary and reach the daemon's RPC
+  socket.</li>
 </ul>
-</li>
-<li>Members and contributors (now also for areas) management (now is done by all maintainers)<ul>
-<li>ensure that we have the right people with the right permissions in the repo and in the org</li>
-<li>remove stale members and contributors</li>
-<li>add new members and contributors (follow the process defined in the <a href="../../governance/GOVERNANCE/#becoming-a-member">GOVERNANCE</a> file)</li>
+<p>KubeVirt VMs do not need the DHCP CNI plugin installed as the one-shot
+discovery is performed by OVN-Kubernetes itself.</p>
+<h2 id="supported-scope">Supported Scope<a class="headerlink" href="#supported-scope" title="Permanent link">¶</a></h2>
+<p>This feature currently supports:</p>
+<ul>
+<li><code>Localnet</code> topology, <code>Secondary</code> role networks (the only role <code>Localnet</code>
+  supports).</li>
+<li>IPv4 only.</li>
+<li>Regular pods, delegated to the DHCP CNI plugin daemon.</li>
+<li>KubeVirt VMs, including VFIO passthrough, <code>l2bridge</code>, and <code>managedTap</code>
+  bindings, via one-shot DHCP discovery.</li>
+<li>Features that rely on the pod IP, such as <a href="../../multiple-networks/multi-network-policies/">MultiNetworkPolicy</a>
+  and <a href="../../network-qos/overview/">NetworkQoS</a>.</li>
+<li>KubeVirt VM cold migration (stopping a VM and starting it on another node).</li>
 </ul>
-</li>
-<li>Project healthcheck (no one is doing this now)<ul>
-<li>close stale PRs and issues (we have stale label)</li>
-<li>delete stale branches</li>
+<p>This feature does not currently support:</p>
+<ul>
+<li><code>Layer2</code> topology.</li>
+<li>KubeVirt VM live migration.</li>
+<li>IPv6 or dual-stack — the upstream DHCP CNI plugin and the one-shot VM
+  discovery both speak DHCPv4 only.</li>
+<li>Combining <code>DHCP</code> mode with <code>subnets</code> — <code>subnets</code> must be omitted when
+  <code>ipam.mode</code> is <code>DHCP</code>.</li>
 </ul>
-</li>
-<li>Facilitating the community meetings and keeping the notes up to date (@npinaeva and @tssurya)<ul>
-<li>facilitate the meetings and ensure that we are having productive discussions and that we are making progress on the topics discussed</li>
-<li>ensure that we are taking notes during the meetings and sharing them with the community</li>
+<h2 id="api-overview">API Overview<a class="headerlink" href="#api-overview" title="Permanent link">¶</a></h2>
+<p>Set <code>spec.network.localnet.ipam.mode</code> to <code>DHCP</code> on a <code>Secondary</code> role
+<code>Localnet</code> CUDN:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.ovn.org/v1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ClusterUserDefinedNetwork</span>
+<span class="nt">metadata</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">localnet-dhcp-ipam</span>
+<span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">namespaceSelector</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">matchLabels</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">localnet</span><span class="p">:</span><span class="w"> </span><span class="s">"true"</span>
+<span class="w">  </span><span class="nt">network</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">topology</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Localnet</span>
+<span class="w">    </span><span class="nt">localnet</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">role</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Secondary</span>
+<span class="w">      </span><span class="nt">physicalNetworkName</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">physnet</span>
+<span class="w">      </span><span class="nt">ipam</span><span class="p">:</span>
+<span class="w">        </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DHCP</span>
+</code></pre></div>
+<p>The CUDN controller renders a <code>NetworkAttachmentDefinition</code> in every selected
+namespace. With <code>ipam.mode: DHCP</code>, the generated NAD config carries an
+explicit <code>ipam</code> section selecting DHCP addressing. The same NAD serves both
+workload types: pods are delegated to the DHCP CNI plugin, while KubeVirt VMs
+go through the one-shot discovery described above:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.cni.cncf.io/v1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">NetworkAttachmentDefinition</span>
+<span class="nt">metadata</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">localnet-dhcp-ipam</span>
+<span class="w">  </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">test-localnet-dhcp-ipam</span>
+<span class="w">  </span><span class="nt">labels</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">k8s.ovn.org/user-defined-network</span><span class="p">:</span><span class="w"> </span><span class="s">""</span>
+<span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">config</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<span class="w">    </span><span class="no">{</span>
+<span class="w">      </span><span class="no">"cniVersion": "1.1.0",</span>
+<span class="w">      </span><span class="no">"type": "ovn-k8s-cni-overlay",</span>
+<span class="w">      </span><span class="no">"name": "cluster_udn_localnet-dhcp-ipam",</span>
+<span class="w">      </span><span class="no">"netAttachDefName": "test-localnet-dhcp-ipam/localnet-dhcp-ipam",</span>
+<span class="w">      </span><span class="no">"topology": "localnet",</span>
+<span class="w">      </span><span class="no">"role": "secondary",</span>
+<span class="w">      </span><span class="no">"physicalNetworkName": "physnet",</span>
+<span class="w">      </span><span class="no">"ipam": { "type": "dhcp" }</span>
+<span class="w">    </span><span class="no">}</span>
+</code></pre></div>
+<p>Attach a pod or VM to the network the same way as any other secondary UDN, via
+the <code>k8s.v1.cni.cncf.io/networks</code> annotation (or the KubeVirt equivalent for
+VMs). No further per-pod configuration is required: ovnkube-node detects
+<code>ipam.type: "dhcp"</code> in the NAD config automatically on CNI ADD.</p>
+<h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">¶</a></h2>
+<p>Check the DHCP-learned IP recorded on the pod. The entry for the <code>DHCP</code>
+network carries an additional <code>ipam_mode: "dhcp"</code> field marking the address as
+externally assigned rather than allocated by OVN-Kubernetes:</p>
+<div class="highlight"><pre><span></span><code>kubectl<span class="w"> </span>get<span class="w"> </span>pod<span class="w"> </span>test-localnet-pod<span class="w"> </span>-n<span class="w"> </span>test-localnet-dhcp-ipam<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-o<span class="w"> </span><span class="nv">jsonpath</span><span class="o">=</span><span class="s1">'{.metadata.annotations.k8s\.ovn\.org/pod-networks}'</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">"default"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"ip_addresses"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"10.192.89.6/26"</span><span class="p">],</span>
+<span class="w">    </span><span class="nt">"mac_address"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0a:58:0a:c0:59:06"</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"gateway_ips"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"10.192.89.1"</span><span class="p">],</span>
+<span class="w">    </span><span class="nt">"role"</span><span class="p">:</span><span class="w"> </span><span class="s2">"primary"</span>
+<span class="w">  </span><span class="p">},</span>
+<span class="w">  </span><span class="nt">"test-localnet-dhcp-ipam/localnet-dhcp-ipam"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"ip_addresses"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"172.18.0.242/16"</span><span class="p">],</span>
+<span class="w">    </span><span class="nt">"mac_address"</span><span class="p">:</span><span class="w"> </span><span class="s2">"7e:b3:9b:ea:06:bd"</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"gateway_ips"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"172.18.0.5"</span><span class="p">],</span>
+<span class="w">    </span><span class="nt">"role"</span><span class="p">:</span><span class="w"> </span><span class="s2">"secondary"</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"ipam_mode"</span><span class="p">:</span><span class="w"> </span><span class="s2">"dhcp"</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>The multus <code>k8s.v1.cni.cncf.io/network-status</code> annotation reports the same IP
+along with the pod interface the network was attached on:</p>
+<div class="highlight"><pre><span></span><code><span class="p">[</span>
+<span class="w">    </span><span class="p">{</span>
+<span class="w">        </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"test-localnet-dhcp-ipam/localnet-dhcp-ipam"</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"interface"</span><span class="p">:</span><span class="w"> </span><span class="s2">"net1"</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"ips"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">            </span><span class="s2">"172.18.0.242"</span>
+<span class="w">        </span><span class="p">],</span>
+<span class="w">        </span><span class="nt">"mac"</span><span class="p">:</span><span class="w"> </span><span class="s2">"7e:b3:9b:ea:06:bd"</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"dns"</span><span class="p">:</span><span class="w"> </span><span class="p">{}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">]</span>
+</code></pre></div>
+<p>For regular pods, the DHCP-assigned IP is also configured directly on that
+interface by the OVN-Kubernetes CNI and can be confirmed from inside the pod:</p>
+<div class="highlight"><pre><span></span><code>kubectl<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>test-localnet-pod<span class="w"> </span>-n<span class="w"> </span>test-localnet-dhcp-ipam<span class="w"> </span>--<span class="w"> </span>ip<span class="w"> </span>-4<span class="w"> </span>addr<span class="w"> </span>show<span class="w"> </span>net1
+</code></pre></div>
+<div class="highlight"><pre><span></span><code>3: net1@if52142: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc noqueue state UP group default qlen 1000
+    link/ether 7e:b3:9b:ea:06:bd brd ff:ff:ff:ff:ff:ff link-netnsid 0
+    inet 172.18.0.242/16 brd 172.18.255.255 scope global net1
+       valid_lft forever preferred_lft forever
+</code></pre></div>
+<p>For KubeVirt VMs the annotation is populated the same way, and the guest's
+own DHCP client configures the IP inside the VM.</p>
+<p>Common problems:</p>
+<ul>
+<li>The pod is stuck in <code>ContainerCreating</code> and the CNI ADD fails for the
+  network: check that the <code>dhcp daemon</code> is running on the node and that its
+  socket (<code>/run/cni/dhcp.sock</code>) is mounted into <code>ovnkube-node</code> — for the pod
+  path, ovnkube-node must be able to exec <code>/opt/cni/bin/dhcp</code> and reach the
+  daemon.</li>
+<li>CNI ADD times out waiting for a lease: verify a DHCP server is actually
+  reachable on the physical network mapped by <code>physicalNetworkName</code>, e.g. run
+  a DHCP client or <code>tcpdump</code> port 67/68 on the mapped bridge on that node.</li>
+<li>The pod comes up but the annotation entry is missing <code>ipam_mode: "dhcp"</code>:
+  the NAD in the pod's namespace does not carry <code>ipam: {"type": "dhcp"}</code> —
+  confirm the CUDN has <code>ipam.mode: DHCP</code> and the NAD was re-rendered.</li>
 </ul>
-</li>
+<h2 id="known-limitations">Known Limitations<a class="headerlink" href="#known-limitations" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>DHCP RELEASE with dnsmasq (pod path).</strong> The upstream DHCP CNI plugin
+  sends RELEASE packets from source IP <code>0.0.0.0</code> instead of the client's
+  assigned IP, which <code>dnsmasq</code> drops. The lease simply expires naturally on
+  the server side instead of being released early.</li>
+<li><strong>Lease loss on DHCP daemon restart (pod path).</strong> The DHCP CNI daemon
+  keeps leases in memory only; a daemon restart loses all active leases and
+  no further renewals happen for pods relying on it. As a mitigation,
+  configure the DHCP server with static MAC-to-IP reservations, and restart
+  affected pods to trigger a fresh DORA that re-registers with the running
+  daemon.</li>
+</ul>
+<h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">¶</a></h2>
+<ul>
+<li><a href="../user-defined-networks/">User Defined Networks</a></li>
+<li><a href="../../../okeps/okep-6224-dhcp-ipam-localnet/">DHCP IPAM for Localnet Networks enhancement</a></li>
 </ul>
 
 
@@ -4736,9 +5085,6 @@
 
 
 
-
-  
-  
 
 
 
@@ -4786,10 +5132,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.indexes", "navigation.tabs", "navigation.tabs.sticky", "content.code.annotate", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": ["latest", "master"], "provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.instant", "navigation.tracking", "navigation.indexes", "navigation.tabs", "navigation.tabs.sticky", "content.code.annotate", "content.code.copy"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": ["latest", "master"], "provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   
