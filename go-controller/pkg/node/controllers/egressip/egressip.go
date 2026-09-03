@@ -54,9 +54,8 @@ import (
 )
 
 const (
-	rulePriority       = 6000 // the priority of the ip routing rules created by the controller. Egress Service priority is 5000.
-	ruleFwMarkPriority = 5999 // the priority of the ip routing rules for LGW mode when we want to skip processing eip ip rules because dst is a node ip.
-	maxRetries         = 15
+	rulePriority = 6000 // the priority of the ip routing rules created by the controller. Egress Service priority is 5000.
+	maxRetries   = 15
 )
 
 var (
@@ -266,7 +265,7 @@ func (c *Controller) Run(stopCh <-chan struct{}, wg *sync.WaitGroup, threads int
 	// For LGW mode, set up ip rules and sysctl for reverse path filtering
 	if ovnconfig.Gateway.Mode == ovnconfig.GatewayModeLocal {
 		if c.v4 {
-			if err = c.ruleManager.Add(getNodeIPFwMarkIPRule(netlink.FAMILY_V4)); err != nil {
+			if err = c.ruleManager.AddNodeIPFwMarkRule(netlink.FAMILY_V4); err != nil {
 				return fmt.Errorf("failed to create IPv4 rule for node IPs: %v", err)
 			}
 			stdout, _, err := util.RunSysctl("-w", "net.ipv4.conf.all.src_valid_mark=1")
@@ -275,7 +274,7 @@ func (c *Controller) Run(stopCh <-chan struct{}, wg *sync.WaitGroup, threads int
 			}
 		}
 		if c.v6 {
-			if err = c.ruleManager.Add(getNodeIPFwMarkIPRule(netlink.FAMILY_V6)); err != nil {
+			if err = c.ruleManager.AddNodeIPFwMarkRule(netlink.FAMILY_V6); err != nil {
 				return fmt.Errorf("failed to create IPv6 rule for node IPs: %v", err)
 			}
 		}
@@ -1519,15 +1518,6 @@ func isValidIP(ipStr string) bool {
 		return false
 	}
 	return len(ip) > 0
-}
-
-func getNodeIPFwMarkIPRule(ipFamily int) iprulemanager.IPRule {
-	return iprulemanager.IPRule{
-		Priority: ruleFwMarkPriority,
-		Mark:     types.EgressIPConnmarkMark,
-		Table:    254, // main
-		Family:   ipFamily,
-	}
 }
 
 func isVRFSlaveDevice(link netlink.Link) bool {

@@ -28,3 +28,6 @@ func (f *FakeControllerWithError) DeleteWithMetadata(_ string) error {
 func (f *FakeControllerWithError) OwnPriority(_ int) error {
 	return nil
 }
+func (f *FakeControllerWithError) AddNodeIPFwMarkRule(_ int) error {
+	return nil
+}

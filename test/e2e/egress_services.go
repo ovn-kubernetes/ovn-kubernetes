@@ -1157,6 +1157,94 @@ metadata:
 		ginkgo.Entry("ipv6 pods", v1.IPv6Protocol, true),
 	)
 
+	ginkgo.DescribeTable("[LGW] Should validate egress service backend pods on the egress host retain ClusterIP connectivity",
+		func(protocol v1.IPFamily) {
+			if !IsGatewayModeLocal(f.ClientSet) {
+				ginkgo.Skip("only applicable in Local Gateway Mode")
+			}
+			skipIfProtoNotAvailableFn(protocol, externalContainer)
+
+			egressNode := nodes[0].Name
+
+			ginkgo.By("Getting the Kubernetes API server ClusterIP")
+			apiClusterIP := getApiAddress()
+
+			nonEgressNode := nodes[1].Name
+
+			ginkgo.By("Creating a backend pod for the EgressService on the egress node")
+			_, err := createGenericPodWithLabel(f, "egress-pod", egressNode, f.Namespace.Name, command, podsLabels)
+			framework.ExpectNoError(err, "failed to create egress backend pod")
+
+			ginkgo.By("Creating a backend pod for the EgressService on a non-egress node")
+			_, err = createGenericPodWithLabel(f, "non-egress-pod", nonEgressNode, f.Namespace.Name, command, podsLabels)
+			framework.ExpectNoError(err, "failed to create non-egress backend pod")
+
+			ginkgo.By("Setting up custom routing table with blackhole on nodes")
+			setBlackholeRoutingTableOnNodes(providerCtx, nodes, externalContainer, blackholeRoutingTable, protocol == v1.IPv4Protocol)
+
+			ginkgo.By("Creating an EgressService with custom network pinned to the first node")
+			egressServiceConfig := `
+apiVersion: k8s.ovn.org/v1
+kind: EgressService
+metadata:
+  name: ` + serviceName + `
+  namespace: ` + f.Namespace.Name + `
+spec:
+  sourceIPBy: "LoadBalancerIP"
+  network: "` + blackholeRoutingTable + `"
+  nodeSelector:
+    matchLabels:
+      kubernetes.io/hostname: ` + egressNode + `
+`
+			if err := os.WriteFile(egressServiceYAML, []byte(egressServiceConfig), 0644); err != nil {
+				framework.Failf("Unable to write CRD config to disk: %v", err)
+			}
+			defer func() {
+				if err := os.Remove(egressServiceYAML); err != nil {
+					framework.Logf("Unable to remove the CRD config from disk: %v", err)
+				}
+			}()
+			e2ekubectl.RunKubectlOrDie(f.Namespace.Name, "create", "-f", egressServiceYAML)
+			createLBServiceWithIngressIP(f.ClientSet, f.Namespace.Name, serviceName, protocol, podsLabels, podHTTPPort)
+
+			ginkgo.By("Waiting for the first node to be selected as egress host")
+			egressHost, _, _ := getEgressSVCHost(f.ClientSet, f.Namespace.Name, serviceName)
+			gomega.Expect(egressHost.Name).To(gomega.Equal(egressNode), "expected first node to be egress host")
+
+			// The EgressService has network: "100" which creates source-based ip rules at priority 5000
+			// that route egress pod traffic through routing table 100 (blackholed). Without the fwmark
+			// bypass rule at priority 4999, ClusterIP traffic from backend pods on the egress host is
+			// intercepted by those source-based rules and misrouted through the blackholed network.
+			ginkgo.By("Verifying the egress backend pod on the egress host can reach the Kubernetes API ClusterIP")
+			curlCmd := fmt.Sprintf("curl -k -s -o /dev/null -w %%{http_code} --max-time 2 --connect-timeout 2 https://%s", net.JoinHostPort(apiClusterIP, "443"))
+			checkAPIReachableFromPod := func(podName string) func() error {
+				return func() error {
+					out, err := e2epodoutput.RunHostCmd(f.Namespace.Name, podName, curlCmd)
+					if err != nil {
+						return fmt.Errorf("curl failed: %w", err)
+					}
+					if out == "000" {
+						return fmt.Errorf("no response from API server ClusterIP %s (connection failed)", apiClusterIP)
+					}
+					return nil
+				}
+			}
+
+			ginkgo.By("Verifying the backend pod on the non-egress node can reach the Kubernetes API ClusterIP")
+			gomega.Eventually(checkAPIReachableFromPod("non-egress-pod"), 5*time.Second, 500*time.Millisecond).ShouldNot(gomega.HaveOccurred(),
+				"egress backend pod on non-egress node should reach k8s API ClusterIP")
+			gomega.Consistently(checkAPIReachableFromPod("non-egress-pod"), 2*time.Second, 400*time.Millisecond).ShouldNot(gomega.HaveOccurred(),
+				"egress backend pod on non-egress node should consistently reach k8s API ClusterIP")
+
+			gomega.Eventually(checkAPIReachableFromPod("egress-pod"), 5*time.Second, 500*time.Millisecond).ShouldNot(gomega.HaveOccurred(),
+				"egress backend pod on egress host should reach k8s API ClusterIP")
+			gomega.Consistently(checkAPIReachableFromPod("egress-pod"), 2*time.Second, 400*time.Millisecond).ShouldNot(gomega.HaveOccurred(),
+				"egress backend pod on egress host should consistently reach k8s API ClusterIP")
+		},
+		ginkgo.Entry("ipv4 pods", v1.IPv4Protocol),
+		ginkgo.Entry("ipv6 pods", v1.IPv6Protocol),
+	)
+
 	ginkgo.Describe("Multiple Networks, external clients sharing ip", func() {
 		/*
 			Here we test the scenario in which we have two different networks (net1,net2), each having
