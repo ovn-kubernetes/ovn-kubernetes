@@ -23,13 +23,13 @@ can use the same IP address ranges for pods, expanding deployment scenarios.
 
 See the [enhancement] for more details.
 
-[enhancement]: https://ovn-kubernetes.io/okeps/okep-5193-user-defined-networks/
+[enhancement]: ../../okeps/okep-5193-user-defined-networks.md
 
 ### User-Stories/Use-Cases
 
 See the [user-stories] defined in the enhancement.
 
-[user-stories]: https://ovn-kubernetes.io/okeps/okep-5193-user-defined-networks/#user-storiesuse-cases
+[user-stories]: ../../okeps/okep-5193-user-defined-networks.md#user-storiesuse-cases
 
 The two main user stories are:
 
@@ -93,7 +93,7 @@ will not be considered for UDN creation.
 
 See the [api-specification-docs] for information on each of the fields
 
-[api-specification-docs]: https://ovn-kubernetes.io/api-reference/userdefinednetwork-api-spec/
+[api-specification-docs]: ../../api-reference/userdefinednetwork-api-spec.md
 
 ### OVN-Kubernetes Implementation Details
 

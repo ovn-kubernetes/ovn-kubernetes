@@ -9,8 +9,8 @@ together, better known as "Connecting (C)UDNs". This solution will ensure
 that (C)UDNs remain isolated unless an explicit request to connect them
 together has been made.
 
-[UserDefinedNetworks]: https://ovn-kubernetes.io/api-reference/userdefinednetwork-api-spec/#userdefinednetwork
-[ClusterUserDefinedNetworks]: https://ovn-kubernetes.io/api-reference/userdefinednetwork-api-spec/#clusteruserdefinednetwork
+[UserDefinedNetworks]: ../../api-reference/userdefinednetwork-api-spec.md#userdefinednetwork
+[ClusterUserDefinedNetworks]: ../../api-reference/userdefinednetwork-api-spec.md#clusteruserdefinednetwork
 
 ### User Personas:
 
@@ -1587,7 +1587,7 @@ connect UDNs when overlay is turned off.
 
 ![blue-green-yellow-l3-connect-scale](images/l3-connecting-udns-scale.png)
 
-[Dynamic UDN Node Allocation]: https://ovn-kubernetes.io/okeps/okep-5552-dynamic-udn-node-allocation/
+[Dynamic UDN Node Allocation]: ../okep-5552-dynamic-udn-node-allocation.md
 
 ## OVN Kubernetes Version Skew
 
@@ -1719,4 +1719,4 @@ cannot be load balanced.
 
 * This enhancement depends on the [new Layer2 topology] changes.
 
-[new Layer2 topology]: https://ovn-kubernetes.io/okeps/okep-5094-layer2-transit-router/
+[new Layer2 topology]: ../okep-5094-layer2-transit-router.md

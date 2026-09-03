@@ -17,7 +17,7 @@ where we mandate docs include:
 
 * **Enhancement Proposals**: If you are planning to do a new feature, then start
 with an enhancement proposal a.k.a OKEP so that maintainers and other reviewers
-can get an understanding of what your goals are. See [here](https://ovn-kubernetes.io/okeps/okep-4368-template/)
+can get an understanding of what your goals are. See [here](../okeps/okep-4368-template.md)
 for more details and open a commit adding it to our `docs/okeps` folder.
 
 * **Architecture and Topology docs**: Did you change the architecture or topology?
@@ -48,7 +48,7 @@ to reduce the time it takes for iptables to sync up on startup? Think about writ
 around this! Open a commit adding it to our `docs/blog` folder.
 
 * **API Reference**: Did you introduce a new CRD? OR Did you add a watcher a new CRD? Include API
-Reference documentation changes to `docs/api-reference` folder. See [here](https://ovn-kubernetes.io/api-reference/introduction/)
+Reference documentation changes to `docs/api-reference` folder. See [here](../api-reference/introduction.md)
 for more details.
 
 ## Website Guide
