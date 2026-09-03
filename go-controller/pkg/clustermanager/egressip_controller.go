@@ -1046,6 +1046,18 @@ func (eIPC *egressIPClusterController) reconcileEgressIP(old, new *egressipv1.Eg
 	statusToAdd := make([]egressipv1.EgressIPStatusItem, 0, len(ipsToAssign))
 	statusToKeep := make([]egressipv1.EgressIPStatusItem, 0, len(validStatus))
 	for status := range validStatus {
+		// Check if node is still available before keeping assignment
+		node, err := eIPC.watchFactory.GetNode(status.Node)
+		if err != nil || (!util.PlatformTypeIsEgressIPCloudProvider() && !eIPC.isEgressNodeReady(node)) {
+			klog.Infof("EgressIP %s has assignment to unavailable node %s for IP %s, "+
+				"cleaning cache before reassignment",
+				name, status.Node, status.EgressIP)
+
+			// Clean cache to prevent reusing failed node
+			eIPC.deleteAllAllocatorEgressIPAssignments(name, status.EgressIP)
+			ipsToRemove.Insert(status.EgressIP)
+			continue
+		}
 		statusToKeep = append(statusToKeep, status)
 		ipsToAssign.Delete(status.EgressIP)
 	}
