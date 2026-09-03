@@ -20,6 +20,22 @@ Project governance structure, roles, and decision-making process.
 
 Guidelines and expectations for reviewing pull requests.
 
+**[Maintainers](../governance/MAINTAINERS.md)**
+
+Current maintainers and emeritus maintainers of the project.
+
+**[Community Meetings](../governance/MEETINGS.md)**
+
+Meeting schedule, location, and agenda for community meetings.
+
+**[Code of Conduct](../governance/CODE_OF_CONDUCT.md)**
+
+Community standards and enforcement guidelines.
+
+**[Security Policy](../governance/SECURITY.md)**
+
+How to report vulnerabilities and security update process.
+
 **[Project Areas](areas.md)**
 
 Component ownership areas and their maintainers.
@@ -51,3 +67,7 @@ Techniques for debugging OVN-Kubernetes components during development.
 **[Release Guide](release.md)**
 
 Steps to cut a new OVN-Kubernetes release.
+
+**[Maintenance Guide](maintenance.md)**
+
+Ongoing maintenance tasks and dependency management.

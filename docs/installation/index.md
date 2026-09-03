@@ -23,3 +23,7 @@ Install OVN-Kubernetes with hardware offload to SmartNICs and DPUs.
 **[Launching OVN-Kubernetes with kubeadm](INSTALL.KUBEADM.md)**
 
 Set up OVN-Kubernetes as the CNI plugin on a kubeadm-managed cluster.
+
+**[Installing OVS and OVN on Ubuntu](INSTALL.UBUNTU.md)**
+
+Step-by-step guide for installing OVS and OVN packages on Ubuntu.

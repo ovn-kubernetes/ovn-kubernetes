@@ -47,3 +47,15 @@ How external IPs and LoadBalancer ingress addresses are handled.
 **[Internal Subnets](ovn-kubernetes-subnets.md)**
 
 Subnet allocation for join, transit, and masquerade networks.
+
+**[ACLs](acls.md)**
+
+OVN ACLs used by ovn-kubernetes, their IDs, priorities, and directions.
+
+**[EgressIP](egressip.md)**
+
+EgressIP mechanism for pods to use a predictable source IP for egress traffic.
+
+**[Gateway Accelerated Interface](gateway-accelerated-interface-configuration.md)**
+
+Using switchdev VF/SF as gateway interfaces for hardware-accelerated external traffic.

@@ -8,6 +8,10 @@ hide:
 
 OVN-Kubernetes Enhancement Proposals (OKEPs) describe design and implementation plans for new features.
 
+**[OKEP Template](okep-4368-template.md)**
+
+Template and instructions for writing new OKEPs.
+
 **[Localnet API](okep-5085-localnet-api.md)**
 
 Native API for connecting pods directly to external physical networks.
@@ -67,3 +71,15 @@ VRF-Lite shared gateway mode with external bridge uplinks.
 **[Disable MAC Spoof Protection on Secondary Networks](okep-3926-disable-port-security.md)**
 
 Allow disabling port security on secondary network interfaces.
+
+**[OVN Observability API](okep-5212-ovnobserv-api.md)**
+
+API for observing OVN networking events and packet flows.
+
+**[DHCP IPAM for Localnet Networks](okep-6224-dhcp-ipam-localnet.md)**
+
+DHCP IPAM mode for localnet CUDNs delegating IP assignment to external DHCP.
+
+**[Connecting UDNs Discarded Alternatives](okep-5224-connecting-udns/discarded-alternatives.md)**
+
+Discarded network topology proposals for connecting Layer3-type UDN networks.
