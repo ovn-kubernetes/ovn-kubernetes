@@ -1,4 +1,8 @@
+# Maintainers
+
 The current Maintainers Group for the ovn-kubernetes Project consists of:
+
+## Current Maintainers
 
 | Name | Employer | Responsibilities |
 | ---- | -------- | ---------------- |
@@ -12,7 +16,7 @@ The current Maintainers Group for the ovn-kubernetes Project consists of:
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for general contribution guidelines.
 See [GOVERNANCE.md](./GOVERNANCE.md) for governance guidelines and maintainer responsibilities.
 
-Emeritus Maintainers
+## Emeritus Maintainers
 
 | Name | Employer | Responsibilities |
 | ---- | -------- | ---------------- |
