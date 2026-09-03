@@ -22,4 +22,4 @@ Restrict which external destinations pods in a namespace can reach.
 
 **[DNS Name Resolution](dns-name-resolution.md)**
 
-DNS-based matching for network policy and egress firewall rules.
+DNS-based matching for EgressFirewall rules.
