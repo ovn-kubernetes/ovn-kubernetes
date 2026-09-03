@@ -1999,6 +1999,7 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 						CommonNodeNetworkControllerInfo: CommonNodeNetworkControllerInfo{
 							watchFactory: wf,
 						},
+						ReconcilableNetInfo: &util.DefaultNetInfo{},
 					},
 				}
 
