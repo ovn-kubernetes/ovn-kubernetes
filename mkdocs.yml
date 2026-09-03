@@ -207,4 +207,3 @@ nav:
     - OVN Observability API: okeps/okep-5212-ovnobserv-api.md
   - Blog:
     - OVN-Kubernetes Blog: blog/index.md
-    - SAIC Motor's Kubernetes-Based Multi-Tenant Networking Practice: blog/saic-practice.md

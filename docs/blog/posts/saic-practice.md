@@ -1,3 +1,9 @@
+---
+date: 2026-09-03
+authors:
+  - fangyuchen
+---
+
 # SAIC Motor's Kubernetes-Based Multi-Tenant Networking Practice: Building a Unified Network Foundation with OVN-Kubernetes
 
 SAIC Motor is a Chinese automobile company. When we chose Kubernetes as a unified, multi-tenant infrastructure for containers, virtual machines, and AI agents, its network had to evolve beyond basic Pod connectivity into a unified multi-tenant network foundation capable of supporting heterogeneous workloads. Through its OVN-based software-defined networking capabilities, OVN-Kubernetes provides a consistent network model for containers, KubeVirt virtual machines, and agent runtimes. This is particularly important for agents: each tenant can have a group of agents that communicate with one another, while agents belonging to different tenants remain isolated at the network layer.
@@ -9,6 +15,8 @@ Today, SAIC Motor operates two generations of Kubernetes clusters:
 
 This blog post outlines our journey toward designing and building the new fleet, including the architectural decisions and capabilities we are evaluating along the way.
 Looking ahead, once the required feature set has been fully implemented and validated, we plan to gradually migrate workloads from the existing fleet to the new architecture.
+
+<!-- more -->
 
 ## Overall Design: Layering Isolation, Connectivity, and North-South Traffic Governance
 
@@ -83,7 +91,7 @@ The responsibilities in this architecture are divided as follows:
 
 ## Deployment Baseline: Shared Gateway and Single-Node-Zone Interconnect
 
-We use shared gateway mode together with OVN-Kubernetes's current default [interconnect architecture](../design/architecture.md), in which each node belongs to its own zone—that is, a single-node-zone interconnect.
+We use shared gateway mode together with OVN-Kubernetes's current default [interconnect architecture](../../design/architecture.md), in which each node belongs to its own zone—that is, a single-node-zone interconnect.
 
 In shared gateway mode, traffic leaving the cluster can remain in the OVN/OVS data path and reach the external network through the Gateway Router and OVS bridge. Compared with a path in which traffic first leaves OVN/OVS and then enters the host network stack, this mode is better suited to our performance goals and preserves the option of OVS hardware offload. We have evaluated several DPU hardware solutions with OVN-Kubernetes, and they have delivered promising results. We believe hardware offload is a must-have when network bandwidth reaches 100 Gb/s.
 
@@ -91,25 +99,25 @@ Interconnect keeps the Kubernetes control-plane components on control-plane node
 
 ## Using Primary CUDNs to Create Isolated Domains for Tenant Workloads
 
-We use [ClusterUserDefinedNetwork](../features/user-defined-networks/user-defined-networks.md) to create cluster-scoped primary networks, selecting multiple namespaces from the same tenant, business domain, or security domain into a single CUDN. For workloads in these namespaces, the Primary CUDN is the default network rather than merely an additional network interface.
+We use [ClusterUserDefinedNetwork](../../features/user-defined-networks/user-defined-networks.md) to create cluster-scoped primary networks, selecting multiple namespaces from the same tenant, business domain, or security domain into a single CUDN. For workloads in these namespaces, the Primary CUDN is the default network rather than merely an additional network interface.
 
 Compared with relying solely on NetworkPolicy for isolation within a shared cluster network, CUDN first establishes default isolation at the network topology layer. Workloads in different CUDNs do not become connected by default as the number of namespaces grows or when policies are inadvertently omitted. NetworkPolicy then expresses finer-grained access rules within each isolated domain.
 
 ## Selecting Layer2 for Primary CUDNs and Enabling the Layer2 Transit Router
 
-Our current CUDNs use the Layer2 topology with the [Layer2 Transit Router](../okeps/okep-5094-layer2-transit-router.md) enabled. We made this choice for the following reasons.
+Our current CUDNs use the Layer2 topology with the [Layer2 Transit Router](../../okeps/okep-5094-layer2-transit-router.md) enabled. We made this choice for the following reasons.
 
 First, Layer2 provides consistent Layer 2 network semantics across nodes for workloads in the same CUDN. For virtual machines, persistent IPAM can preserve addresses during migration and provide a more stable default gateway identity.
 
 Second, the Layer2 Transit Router introduces a network-level transit router for Primary Layer2 UDNs. It is designed to provide a stable default gateway for virtual machines and eliminate the previous Layer2 EgressIP implementation's dependency on external gateway addresses and special routing policies.
 
-Third, Layer2 can reduce address consumption for CUDN interconnections. After [ClusterNetworkConnect](../features/user-defined-networks/cluster-network-connect.md) allocates an address range to each Layer3 network, it must also allocate a `/31` or `/127` point-to-point subnet to every node. Each Layer2 network requires only one `/31` or `/127`, regardless of the number of nodes.
+Third, Layer2 can reduce address consumption for CUDN interconnections. After [ClusterNetworkConnect](../../features/user-defined-networks/cluster-network-connect.md) allocates an address range to each Layer3 network, it must also allocate a `/31` or `/127` point-to-point subnet to every node. Each Layer2 network requires only one `/31` or `/127`, regardless of the number of nodes.
 
 ## Reducing UDN Scaling Costs with Dynamic UDN Node Allocation
 
 By default, every UDN is rendered on every node. Even if a node has never run workloads belonging to a particular tenant, OVN-Kubernetes still creates OVN and host-side state for that network. As the number of CUDNs increases, this “number of networks multiplied by number of nodes” model gradually becomes a burden on both the control plane and the data plane.
 
-We enable [Dynamic UDN Node Allocation](../features/user-defined-networks/dynamic-udn.md) so that a CUDN is rendered only on nodes that actually use it. A node becomes active for a UDN in any of the following situations:
+We enable [Dynamic UDN Node Allocation](../../features/user-defined-networks/dynamic-udn.md) so that a CUDN is rendered only on nodes that actually use it. A node becomes active for a UDN in any of the following situations:
 
 * A workload is scheduled to the node and attached to the CUDN;
 * The node is assigned as an EgressIP node for the UDN;
@@ -119,7 +127,7 @@ This capability reduces unnecessary per-node network objects and address allocat
 
 ## Establishing Controlled Connectivity with ClusterNetworkConnect
 
-The value of CUDNs lies in their default isolation, but a platform cannot consist solely of disconnected network islands. Workloads need access to model services, tool services, knowledge bases, and shared platform components. We therefore use [ClusterNetworkConnect](../features/user-defined-networks/cluster-network-connect.md) to explicitly connect different CUDNs.
+The value of CUDNs lies in their default isolation, but a platform cannot consist solely of disconnected network islands. Workloads need access to model services, tool services, knowledge bases, and shared platform components. We therefore use [ClusterNetworkConnect](../../features/user-defined-networks/cluster-network-connect.md) to explicitly connect different CUDNs.
 
 Our current connections enable both:
 
@@ -132,7 +140,7 @@ The interconnection address ranges specified by `connectSubnets` must be planned
 
 ## Using NetworkPolicy as a “Security Group” Within a CUDN
 
-Within each CUDN, we use Kubernetes [NetworkPolicy](../features/network-security-controls/network-policy.md) to manage east-west access among workloads, tool services, and platform components.
+Within each CUDN, we use Kubernetes [NetworkPolicy](../../features/network-security-controls/network-policy.md) to manage east-west access among workloads, tool services, and platform components.
 
 When a NetworkPolicy includes egress rules, it also provides workload-level control over outbound connections before namespace-level EgressFirewall rules are applied.
 
@@ -145,9 +153,9 @@ We treat the responsibilities of CUDN and NetworkPolicy separately:
 
 Network egress involves two distinct questions: **where traffic may go** and **which identity it uses when leaving the cluster**. We use EgressFirewall and EgressIP to address these questions separately.
 
-[EgressFirewall](../features/network-security-controls/egress-firewall.md) restricts the external CIDRs and ports that workloads in a namespace may access. Our current policies primarily use IP address ranges; we have not enabled DNS name rules.
+[EgressFirewall](../../features/network-security-controls/egress-firewall.md) restricts the external CIDRs and ports that workloads in a namespace may access. Our current policies primarily use IP address ranges; we have not enabled DNS name rules.
 
-[EgressIP](../features/cluster-egress-controls/egress-ip.md) assigns stable, identifiable egress source addresses to different tenants or workload security domains. External firewalls, partner systems, and audit platforms can allowlist these addresses and associate external access with a specific tenant instead of seeing only arbitrary node egress addresses.
+[EgressIP](../../features/cluster-egress-controls/egress-ip.md) assigns stable, identifiable egress source addresses to different tenants or workload security domains. External firewalls, partner systems, and audit platforms can allowlist these addresses and associate external access with a specific tenant instead of seeing only arbitrary node egress addresses.
 
 ## Current Ingress Approach: Service with NodePort
 
@@ -163,7 +171,7 @@ Based on our practical experience, we recommend further development in the follo
 
 ### 1. VXLAN/EVPN-Based Multi-Cluster Networking in Shared Gateway Mode
 
-The current [EVPN](../features/bgp-integration/evpn.md) implementation requires local gateway mode and uses VXLAN instead of Geneve as the transport for selected CUDNs. We would like to see EVPN extended to shared gateway mode, allowing CUDNs to span clusters or establish controlled cross-cluster connections while preserving the shared gateway data path and hardware offload capabilities, thereby enabling multi-availability-zone deployments.
+The current [EVPN](../../features/bgp-integration/evpn.md) implementation requires local gateway mode and uses VXLAN instead of Geneve as the transport for selected CUDNs. We would like to see EVPN extended to shared gateway mode, allowing CUDNs to span clusters or establish controlled cross-cluster connections while preserving the shared gateway data path and hardware offload capabilities, thereby enabling multi-availability-zone deployments.
 
 ### 2. Workload-Declarable Highly Available Floating VIPs
 
@@ -188,5 +196,3 @@ Default routes and static connectivity relationships are insufficient when workl
 ## Conclusion: Toward Software-Defined Networking for the Kubernetes Platform
 
 When containers, virtual machines, and AI agents are managed by Kubernetes, the platform needs a network control plane that is declaratively composable, observable, and able to evolve continuously. We hope OVN-Kubernetes will become **“The Software Defined Network for the Kubernetes platform.”**
-
-*Posted on* *August 25, 2026* *by* *Fang YuChen*.
