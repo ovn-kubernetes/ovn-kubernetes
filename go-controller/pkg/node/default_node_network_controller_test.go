@@ -3332,7 +3332,6 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 		})
 	})
 
-
 	Describe("advertised UDN isolation nftables", func() {
 		const nodeName = "my-node"
 
