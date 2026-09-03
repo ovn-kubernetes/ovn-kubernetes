@@ -4691,9 +4691,9 @@ then isolated natively.</li>
 <li><strong>Overlapping Pod IPs</strong>: UDNs allow the creation of multiple networks within a cluster that
 can use the same IP address ranges for pods, expanding deployment scenarios.</li>
 </ul>
-<p>See the <a href="https://ovn-kubernetes.io/okeps/okep-5193-user-defined-networks/">enhancement</a> for more details.</p>
+<p>See the <a href="../../../okeps/okep-5193-user-defined-networks/">enhancement</a> for more details.</p>
 <h3 id="user-storiesuse-cases">User-Stories/Use-Cases<a class="headerlink" href="#user-storiesuse-cases" title="Permanent link">¶</a></h3>
-<p>See the <a href="https://ovn-kubernetes.io/okeps/okep-5193-user-defined-networks/#user-storiesuse-cases">user-stories</a> defined in the enhancement.</p>
+<p>See the <a href="../../../okeps/okep-5193-user-defined-networks/#user-storiesuse-cases">user-stories</a> defined in the enhancement.</p>
 <p>The two main user stories are:</p>
 <h4 id="native-namespace-isolation-using-networks">Native Namespace Isolation using Networks<a class="headerlink" href="#native-namespace-isolation-using-networks" title="Permanent link">¶</a></h4>
 <p><a class="glightbox" data-type="image" data-width="auto" data-height="auto" href="../images/native-namespace-isolation.png" data-desc-position="bottom"><img alt="namespace-isolation" src="../images/native-namespace-isolation.png"></a>
@@ -4755,7 +4755,7 @@ same network that is then isolated from other networks.</p>
 labeled with <code>k8s.ovn.org/primary-user-defined-network</code> at the time of its
 creation. This label cannot be updated later, and if absent, the namespace
 will not be considered for UDN creation.</p>
-<p>See the <a href="https://ovn-kubernetes.io/api-reference/userdefinednetwork-api-spec/">api-specification-docs</a> for information on each of the fields</p>
+<p>See the <a href="../../../api-reference/userdefinednetwork-api-spec/">api-specification-docs</a> for information on each of the fields</p>
 <h3 id="ovn-kubernetes-implementation-details">OVN-Kubernetes Implementation Details<a class="headerlink" href="#ovn-kubernetes-implementation-details" title="Permanent link">¶</a></h3>
 <p><code>UserDefinedNetworks</code> is an opinionated implementation
 of multi-networking in Kubernetes. There are two types of
