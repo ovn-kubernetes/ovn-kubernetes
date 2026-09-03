@@ -2005,6 +2005,230 @@ func TestConfigureOVS_getPfEncapIpWithError(t *testing.T) {
 	}
 }
 
+// TestUnconfigureInterfaceStaleDelGuard verifies the SR-IOV DEL path when the
+// container netns is already gone. IsVFIO is false with an invalid Netns so
+// ns.GetNS(pr.Netns) fails and UnconfigureInterface takes the "netns gone,
+// continue host-side cleanup" branch (the SDN-4623 behavior) rather than
+// returning early. On the host side it reads external_ids:sandbox and only
+// deletes the VF representor if the OVS port still belongs to THIS sandbox:
+//   - owned by this sandbox: validate and delete the representor.
+//   - owned by a different (live) sandbox, gone, or unreadable: skip only the
+//     representor deletion, so a stale DEL / reused DeviceID stays idempotent
+//     and never tears down a running pod's networking.
+//
+// In every case the guard skips only the representor deletion; the rest of the
+// DEL cleanup (conntrack) still runs, which each subcase asserts. ovsClient is
+// nil to drive the shell (shim/legacy) fallback paths.
+func TestUnconfigureInterfaceStaleDelGuard(t *testing.T) {
+	// Only the sriovnet and netlink globals are stubbed; both are restored so
+	// later tests keep the real instances.
+	origSriovnetOps := util.GetSriovnetOps()
+	origNetLinkOps := util.GetNetLinkOps()
+	t.Cleanup(func() {
+		util.SetSriovnetOpsInst(origSriovnetOps)
+		util.SetNetLinkOpMockInst(origNetLinkOps)
+	})
+	mockSriovnetOps := new(util_mocks.SriovnetOps)
+	util.SetSriovnetOpsInst(mockSriovnetOps)
+
+	const (
+		deviceID     = "0000:c5:03.1"
+		uplink       = "enp1s0f0"
+		vfRep        = "enp1s0f0_1"
+		vfIndex      = 1
+		sandboxID    = "live-sandbox-0123456789"
+		podNs        = "ns-foo"
+		podName      = "pod-bar"
+		secondaryNet = "bluenet"
+	)
+	nadKey := podNs + "/" + secondaryNet
+
+	// GetFunctionRepresentorName(deviceID) for a PCI device resolves the
+	// (possibly reused) DeviceID to the representor currently on the host.
+	sriovRepMocks := []ovntest.TestifyMockHelper{
+		{OnCallMethodName: "GetUplinkRepresentor", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{uplink, nil}},
+		{OnCallMethodName: "GetVfIndexByPciAddress", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{vfIndex, nil}},
+		{OnCallMethodName: "GetVfRepresentor", OnCallMethodArgType: []string{"string", "int"}, RetArgList: []interface{}{vfRep, nil}},
+	}
+
+	tests := []struct {
+		desc         string
+		ownerSandbox string
+		ownerErr     error
+		expectDelete bool
+	}{
+		{
+			desc:         "representor owned by this sandbox is validated and deleted",
+			ownerSandbox: sandboxID,
+			expectDelete: true,
+		},
+		{
+			desc:         "representor owned by a different live sandbox (reused DeviceID)",
+			ownerSandbox: "other-live-sandbox-98765",
+		},
+		{
+			desc:         "representor no longer present in OVS",
+			ownerSandbox: "",
+		},
+		{
+			desc:     "owner sandbox cannot be read (fail closed, stays idempotent)",
+			ownerErr: fmt.Errorf("ovs-vsctl: connection refused"),
+		},
+	}
+
+	for i, tc := range tests {
+		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
+			ovntest.ProcessMockFnList(&mockSriovnetOps.Mock, sriovRepMocks)
+
+			mockNetLinkOps := new(util_mocks.NetLinkOps)
+			util.SetNetLinkOpMockInst(mockNetLinkOps)
+
+			// deletePodConntrack must run on every DEL, including guard skips, so
+			// a conntrack delete is always expected. This proves the guard skips
+			// only the representor deletion and cleanup continues (not an early
+			// return).
+			ovntest.ProcessMockFnList(&mockNetLinkOps.Mock, []ovntest.TestifyMockHelper{
+				{OnCallMethodName: "ConntrackDeleteFilters", OnCallMethodArgType: []string{"netlink.ConntrackTableType", "netlink.InetFamily", "*netlink.ConntrackFilter"}, RetArgList: []interface{}{uint(1), nil}},
+			})
+
+			execMock := ovntest.NewFakeExec()
+			require.NoError(t, util.SetExec(execMock))
+			require.NoError(t, SetExec(execMock))
+
+			// Ownership read (shell fallback of getIfaceOwnerSandbox). For the
+			// skip cases this is the only OVS command allowed; any extra command
+			// means the guard failed to skip and FakeExec fails the test.
+			execMock.AddFakeCmd(&ovntest.ExpectedCmd{
+				Cmd:    genOVSGetCmd("Interface", vfRep, "external_ids", "sandbox"),
+				Output: tc.ownerSandbox,
+				Err:    tc.ownerErr,
+			})
+
+			if tc.expectDelete {
+				// Ownership matches: ValidateOVSInterfaceConfiguration reads the
+				// interface metadata (matching iface-id/NAD), then the representor
+				// is removed from br-int.
+				ifaceID := util.GetUDNIfaceId(podNs, podName, nadKey)
+				execMock.AddFakeCmd(&ovntest.ExpectedCmd{
+					Cmd:    genOVSFindCmd("30", "Interface", "external_ids", "name="+vfRep),
+					Output: fmt.Sprintf("iface-id=%s %s=%s sandbox=%s", ifaceID, ovntypes.NADExternalID, nadKey, sandboxID),
+				})
+				execMock.AddFakeCmd(&ovntest.ExpectedCmd{
+					Cmd: fmt.Sprintf("ovs-vsctl --timeout=30 del-port br-int %s", vfRep),
+				})
+				// deletePort looks up the host link; "not found" keeps it on the
+				// OVS-only path (no LinkSetDown / LinkDelete).
+				ovntest.ProcessMockFnList(&mockNetLinkOps.Mock, []ovntest.TestifyMockHelper{
+					{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"},
+						RetArgList: []interface{}{nil, fmt.Errorf("link not found")}},
+				})
+			}
+
+			// IsVFIO is false and Netns is invalid so ns.GetNS(pr.Netns) fails;
+			// with a non-empty DeviceID cleanup continues to the host side.
+			pr := &PodRequest{
+				PodNamespace: podNs,
+				PodName:      podName,
+				SandboxID:    sandboxID,
+				Netns:        "/proc/nonexistent/ns/net",
+				IfName:       "net1",
+				CNIConf:      &ovncnitypes.NetConf{DeviceID: deviceID},
+				netName:      secondaryNet,
+				nadName:      nadKey,
+				nadKey:       nadKey,
+			}
+			// PrevResult gives deletePodConntrack a pod IP to flush so the
+			// deferred conntrack cleanup actually runs on this DEL.
+			pr.CNIConf.PrevResult = &current.Result{
+				CNIVersion: "1.0.0",
+				IPs:        []*current.IPConfig{{Address: net.IPNet{IP: net.ParseIP("10.0.0.5"), Mask: net.CIDRMask(24, 32)}}},
+			}
+
+			ifInfo := &PodInterfaceInfo{
+				NetName: secondaryNet,
+				NADKey:  nadKey,
+			}
+
+			ops := &defaultPodRequestInterfaceOps{}
+			require.NoError(t, ops.UnconfigureInterface(pr, nil, ifInfo, nil, nil))
+			require.True(t, execMock.CalledMatchesExpected(), execMock.ErrorDesc)
+
+			mockSriovnetOps.AssertExpectations(t)
+			mockNetLinkOps.AssertExpectations(t)
+		})
+	}
+}
+
+// TestUnconfigureInterfaceDefaultNetworkDeletesBySandbox covers the default
+// network DEL path (netName == default), where interfaces are removed by
+// sandbox membership rather than by a DeviceID-resolved name. With network
+// segmentation this final teardown removes both the default network and the
+// primary UDN interface, then clears their QoS. Deleting by sandbox is
+// inherently safe against a stale DEL / reused DeviceID: a reclaimed port
+// carries a different sandbox and never shows up in the list, so no ownership
+// guard is needed on this path. ovsClient is nil to exercise the shell path.
+func TestUnconfigureInterfaceDefaultNetworkDeletesBySandbox(t *testing.T) {
+	// IsVFIO skips the container-namespace block; deletePort still calls
+	// LinkByName, stubbed to "not found" so it takes the OVS-only path (no
+	// LinkDelete). The netlink global is restored so later tests are unaffected.
+	origNetLinkOps := util.GetNetLinkOps()
+	t.Cleanup(func() { util.SetNetLinkOpMockInst(origNetLinkOps) })
+	mockNetLinkOps := new(util_mocks.NetLinkOps)
+	util.SetNetLinkOpMockInst(mockNetLinkOps)
+
+	const (
+		sandboxID = "live-sandbox-0123456789"
+		podNs     = "ns-foo"
+		podName   = "pod-bar"
+		defPort   = "def-port"
+		udnPort   = "udn-port"
+	)
+
+	// One LinkByName per listed port; "not found" makes deletePort skip the
+	// netlink teardown and only remove the OVS port.
+	ovntest.ProcessMockFnList(&mockNetLinkOps.Mock, []ovntest.TestifyMockHelper{
+		{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"},
+			RetArgList: []interface{}{nil, fmt.Errorf("link not found")}, CallTimes: 2},
+	})
+
+	execMock := ovntest.NewFakeExec()
+	require.NoError(t, util.SetExec(execMock))
+	require.NoError(t, SetExec(execMock))
+
+	// The list returns two sandbox ports (default + primary UDN); both are
+	// deleted and their QoS cleared. No per-DeviceID ownership read happens.
+	execMock.AddFakeCmd(&ovntest.ExpectedCmd{
+		Cmd:    genOVSFindCmd("30", "interface", "name", "external-ids:sandbox="+sandboxID),
+		Output: defPort + "\n" + udnPort,
+	})
+	execMock.AddFakeCmd(&ovntest.ExpectedCmd{Cmd: fmt.Sprintf("ovs-vsctl --timeout=30 del-port br-int %s", defPort)})
+	execMock.AddFakeCmd(&ovntest.ExpectedCmd{Cmd: fmt.Sprintf("ovs-vsctl --timeout=30 del-port br-int %s", udnPort)})
+	execMock.AddFakeCmd(&ovntest.ExpectedCmd{Cmd: fmt.Sprintf("ovs-vsctl --timeout=30 --if-exists clear port %s qos", defPort)})
+	execMock.AddFakeCmd(&ovntest.ExpectedCmd{Cmd: fmt.Sprintf("ovs-vsctl --timeout=30 --if-exists clear port %s qos", udnPort)})
+	execMock.AddFakeCmd(&ovntest.ExpectedCmd{
+		Cmd:    genOVSFindCmd("30", "qos", "_uuid", "external-ids:sandbox="+sandboxID),
+		Output: "",
+	})
+
+	pr := &PodRequest{
+		PodNamespace: podNs,
+		PodName:      podName,
+		SandboxID:    sandboxID,
+		IfName:       "eth0",
+		CNIConf:      &ovncnitypes.NetConf{},
+		IsVFIO:       true,
+		netName:      ovntypes.DefaultNetworkName,
+		nadName:      ovntypes.DefaultNetworkName,
+		nadKey:       ovntypes.DefaultNetworkName,
+	}
+	ifInfo := &PodInterfaceInfo{NetName: ovntypes.DefaultNetworkName, NADKey: ovntypes.DefaultNetworkName}
+
+	ops := &defaultPodRequestInterfaceOps{}
+	require.NoError(t, ops.UnconfigureInterface(pr, nil, ifInfo, nil, nil))
+	require.True(t, execMock.CalledMatchesExpected(), execMock.ErrorDesc)
+	mockNetLinkOps.AssertExpectations(t)
+}
+
 func TestSetupIngressFilter(t *testing.T) {
 	nft := knftables.NewFake(knftables.NetDevFamily, "ingress_filter")
 
