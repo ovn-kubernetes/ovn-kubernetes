@@ -947,8 +947,10 @@ func (eIPC *egressIPClusterController) deleteAllocatorEgressIPAssignmentIfExists
 func (eIPC *egressIPClusterController) deleteAllAllocatorEgressIPAssignments(name, egressIP string) {
 	eIPC.nodeAllocator.Lock()
 	defer eIPC.nodeAllocator.Unlock()
-	for _, eNode := range eIPC.nodeAllocator.cache {
+	for nodeName, eNode := range eIPC.nodeAllocator.cache {
 		if egressIPName, exists := eNode.allocations[egressIP]; exists && egressIPName == name {
+			klog.V(5).Infof("Deleting egress IP allocation from cache - node: %s, EIP name: %s, IP: %s",
+				nodeName, name, egressIP)
 			delete(eNode.allocations, egressIP)
 		}
 	}
@@ -1345,17 +1347,61 @@ func (eIPC *egressIPClusterController) assignEgressIPs(name string, egressIPs []
 				})
 				continue
 			} else {
-				eIPC.recorder.Eventf(
-					&corev1.ObjectReference{
-						Kind: "EgressIP",
-						Name: name,
-					},
-					corev1.EventTypeWarning,
-					"UnsupportedRequest",
-					"IP: %q for EgressIP: %s is already allocated for EgressIP: %s on %s", egressIP, name, status.Name, status.Node,
-				)
-				klog.Errorf("IP: %q for EgressIP: %s is already allocated for EgressIP: %s on %s", egressIP, name, status.Name, status.Node)
-				continue
+				// IP is allocated to a DIFFERENT EgressIP - could be stale if that
+				// EgressIP was deleted but cleanup raced with this assignment.
+				// Verify if the old EgressIP still exists before failing.
+				klog.V(5).Infof("IP: %q for EgressIP: %s appears allocated to EgressIP: %s on %s, verifying",
+					egressIP, name, status.Name, status.Node)
+
+				_, err := eIPC.kube.GetEgressIP(status.Name)
+				isDeleted := apierrors.IsNotFound(err)
+
+				if isDeleted {
+					// Old EgressIP doesn't exist - stale cache entry!
+					// This can happen during rapid delete+create cycles (e.g., during upgrade)
+					// when deletion cleanup hasn't completed before new EgressIP is assigned.
+					klog.Warningf("Detected stale cache entry: IP %q allocated to non-existent "+
+						"EgressIP %s, cleaning and retrying assignment for EgressIP %s",
+						egressIP, status.Name, name)
+
+					// Clean stale entry immediately (we already hold lock)
+					for nodeName, eNode := range eIPC.nodeAllocator.cache {
+						if egressIPName, exists := eNode.allocations[egressIP]; exists && egressIPName == status.Name {
+							klog.V(5).Infof("Deleting stale allocation - node: %s, IP: %s", nodeName, egressIP)
+							delete(eNode.allocations, egressIP)
+						}
+					}
+
+					// Refresh existingAllocations after cleanup
+					_, existingAllocations = eIPC.getSortedEgressData()
+
+					// Check if cleanup succeeded
+					if _, stillExists := existingAllocations[eIP.String()]; !stillExists {
+						klog.Infof("Successfully cleaned stale entry for IP %q, proceeding with assignment", egressIP)
+						// Fall through to normal assignment logic below
+					} else {
+						klog.Errorf("Failed to clean stale entry for IP %q, skipping assignment", egressIP)
+						continue
+					}
+				} else if err != nil {
+					// Unexpected error checking old EgressIP
+					klog.Errorf("Error verifying old EgressIP %s for IP %q: %v, skipping assignment",
+						status.Name, egressIP, err)
+					continue
+				} else {
+					// Old EgressIP still exists - genuine conflict!
+					eIPC.recorder.Eventf(
+						&corev1.ObjectReference{
+							Kind: "EgressIP",
+							Name: name,
+						},
+						corev1.EventTypeWarning,
+						"UnsupportedRequest",
+						"IP: %q for EgressIP: %s is already allocated for EgressIP: %s on %s", egressIP, name, status.Name, status.Node,
+					)
+					klog.Errorf("IP: %q for EgressIP: %s is already allocated for EgressIP: %s on %s", egressIP, name, status.Name, status.Node)
+					continue
+				}
 			}
 		}
 		// Egress IP for secondary host networks is only available on baremetal environments
@@ -1606,6 +1652,100 @@ func (eIPC *egressIPClusterController) reconcileCloudPrivateIPConfig(old, new *o
 	}
 	if new != nil {
 		newCloudPrivateIPConfig = new
+		// We should only proceed to setting things up for objects where the new
+		// object has the same .spec.node and .status.node, and assignment
+		// condition being true. However, if assignment FAILED, we must clean
+		// the cache to prevent retry storms.
+		if len(newCloudPrivateIPConfig.Status.Conditions) > 0 {
+			cond := newCloudPrivateIPConfig.Status.Conditions[0]
+
+			// Check for assignment failure (e.g., PrivateIpAddressLimitExceeded)
+			if ocpcloudnetworkapi.CloudPrivateIPConfigConditionType(cond.Type) == ocpcloudnetworkapi.Assigned &&
+				corev1.ConditionStatus(cond.Status) == corev1.ConditionFalse {
+
+				// Extract EgressIP name from owner annotation
+				egressIPName, exists := newCloudPrivateIPConfig.Annotations[util.OVNEgressIPOwnerRefLabel]
+				if exists {
+					klog.Warningf("CloudPrivateIPConfig %s failed assignment on node %s: %s (reason: %s), "+
+						"cleaning cache to prevent retry storm for EgressIP %s",
+						newCloudPrivateIPConfig.Name, newCloudPrivateIPConfig.Spec.Node,
+						cond.Message, cond.Reason, egressIPName)
+
+					egressIPString := cloudPrivateIPConfigNameToIPString(newCloudPrivateIPConfig.Name)
+					// Clean stale cache entry to prevent retrying same failed node
+					eIPC.deleteAllAllocatorEgressIPAssignments(egressIPName, egressIPString)
+
+					// Trigger reallocation to a different node
+					egressIP, err := eIPC.kube.GetEgressIP(egressIPName)
+					if err != nil {
+						return fmt.Errorf("failed to get EgressIP %s for reallocation: %w", egressIPName, err)
+					}
+					if err := eIPC.reconcileEgressIP(nil, egressIP); err != nil {
+						return fmt.Errorf("failed to reconcile EgressIP %s after CPIC failure: %w", egressIPName, err)
+					}
+				} else {
+					klog.Warningf("CloudPrivateIPConfig %s failed but missing EgressIP owner annotation", newCloudPrivateIPConfig.Name)
+				}
+				return nil
+			}
+
+			// Handle spec/status node mismatch that can occur during upgrade.
+			// Mismatch happens when an EgressIP is deleted and recreated with the same IP
+			// while CloudPrivateIPConfig persists in cloud with stale node assignment.
+			// The cloud provider shows successful assignment (status=True) on a different
+			// node than requested (spec.node != status.node).
+			// Resolution: Accept cloud reality (status.node) and sync cache accordingly.
+			if ocpcloudnetworkapi.CloudPrivateIPConfigConditionType(cond.Type) == ocpcloudnetworkapi.Assigned &&
+				corev1.ConditionStatus(cond.Status) == corev1.ConditionTrue &&
+				newCloudPrivateIPConfig.Spec.Node != "" &&
+				newCloudPrivateIPConfig.Status.Node != "" &&
+				newCloudPrivateIPConfig.Spec.Node != newCloudPrivateIPConfig.Status.Node {
+
+				egressIPName, exists := newCloudPrivateIPConfig.Annotations[util.OVNEgressIPOwnerRefLabel]
+				if !exists {
+					// No owner annotation - log warning but don't retry
+					klog.Warningf("CloudPrivateIPConfig %s has spec/status node mismatch "+
+						"(spec=%s, status=%s) but missing EgressIP owner annotation",
+						newCloudPrivateIPConfig.Name,
+						newCloudPrivateIPConfig.Spec.Node,
+						newCloudPrivateIPConfig.Status.Node)
+					return nil
+				}
+
+				klog.Warningf("CloudPrivateIPConfig %s spec/status node mismatch detected: "+
+					"spec.node=%s but status.node=%s (status=True) for EgressIP %s. "+
+					"Accepting cloud reality and syncing cache to status.node.",
+					newCloudPrivateIPConfig.Name,
+					newCloudPrivateIPConfig.Spec.Node,
+					newCloudPrivateIPConfig.Status.Node,
+					egressIPName)
+
+				egressIPString := cloudPrivateIPConfigNameToIPString(newCloudPrivateIPConfig.Name)
+				// Strategy: Accept cloud reality (status.node) to minimize disruption
+				// Clean cache entry on spec.node (where we THOUGHT it should be)
+				eIPC.deleteAllAllocatorEgressIPAssignments(egressIPName, egressIPString)
+
+				// Trigger reconciliation to sync cache to actual cloud state (status.node)
+				egressIP, err := eIPC.kube.GetEgressIP(egressIPName)
+				if err != nil {
+					if apierrors.IsNotFound(err) {
+						// EgressIP was deleted - this is expected during cleanup
+						klog.Infof("EgressIP %s not found during spec/status mismatch reconciliation, likely deleted", egressIPName)
+						return nil
+					}
+					return fmt.Errorf("failed to get EgressIP %s for spec/status mismatch reconciliation: %w", egressIPName, err)
+				}
+
+				// Reconcile to update cache to match reality
+				if err := eIPC.reconcileEgressIP(nil, egressIP); err != nil {
+					return fmt.Errorf("failed to reconcile EgressIP %s after spec/status node mismatch: %w", egressIPName, err)
+				}
+
+				// Return nil to skip normal processing (we've handled it)
+				return nil
+			}
+		}
+
 		// We should only proceed to setting things up for objects where the new
 		// object has the same .spec.node and .status.node, and assignment
 		// condition being true. This is how the cloud-network-config-controller
