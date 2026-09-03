@@ -146,7 +146,6 @@ nav:
       - EgressIP: features/cluster-egress-controls/egress-ip.md
       - EgressService: features/cluster-egress-controls/egress-service.md
       - EgressQoS: features/cluster-egress-controls/egress-qos.md
-      - EgressGateway: features/cluster-egress-controls/egress-gateway.md
     - InfrastructureSecurityControls:
       - features/infrastructure-security-controls/index.md
       - NodeIdentity: features/infrastructure-security-controls/node-identity.md
@@ -179,7 +178,6 @@ nav:
     - troubleshooting/index.md
     - Introduction: troubleshooting/debugging.md
     - OVNKube Trace: troubleshooting/ovnkube-trace.md
-    - Logging: troubleshooting/logging.md
     - User Defined Networks: troubleshooting/udn.md
   - Observability:
     - observability/index.md
