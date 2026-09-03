@@ -4637,6 +4637,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
       
         <li class="md-nav__item">
+  <a href="#saic-motors-kubernetes-based-multi-tenant-networking-practice-building-a-unified-network-foundation-with-ovn-kubernetes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SAIC Motor's Kubernetes-Based Multi-Tenant Networking Practice: Building a Unified Network Foundation with OVN-Kubernetes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#why-iij-chose-ovn-kubernetes-for-its-vm-workload-migration-platform-and-how-we-use-it-today" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4694,6 +4705,57 @@
       <header class="md-typeset">
         <h1 id="ovn-kubernetes-blog">OVN-Kubernetes Blog<a class="headerlink" href="#ovn-kubernetes-blog" title="Permanent link">¶</a></h1>
       </header>
+      
+        <article class="md-post md-post--excerpt">
+  <header class="md-post__header">
+    
+      <nav class="md-post__authors md-typeset">
+        
+          <span class="md-author">
+            <img src="https://github.com/fangyuchen86.png" alt="Fang YuChen">
+          </span>
+        
+      </nav>
+    
+    <div class="md-post__meta md-meta">
+      <ul class="md-meta__list">
+        <li class="md-meta__item">
+          <time datetime="2026-09-03 00:00:00+00:00">September 3, 2026</time></li>
+        
+        
+          
+          <li class="md-meta__item">
+            
+              8 min read
+            
+          </li>
+        
+        
+      </ul>
+      
+    </div>
+  </header>
+  <div class="md-post__content md-typeset">
+    <h2 id="saic-motors-kubernetes-based-multi-tenant-networking-practice-building-a-unified-network-foundation-with-ovn-kubernetes"><a class="toclink" href="2026/09/03/saic-motors-kubernetes-based-multi-tenant-networking-practice-building-a-unified-network-foundation-with-ovn-kubernetes/">SAIC Motor's Kubernetes-Based Multi-Tenant Networking Practice: Building a Unified Network Foundation with OVN-Kubernetes</a></h2>
+<p>SAIC Motor is a Chinese automobile company. When we chose Kubernetes as a unified, multi-tenant infrastructure for containers, virtual machines, and AI agents, its network had to evolve beyond basic Pod connectivity into a unified multi-tenant network foundation capable of supporting heterogeneous workloads. Through its OVN-based software-defined networking capabilities, OVN-Kubernetes provides a consistent network model for containers, KubeVirt virtual machines, and agent runtimes. This is particularly important for agents: each tenant can have a group of agents that communicate with one another, while agents belonging to different tenants remain isolated at the network layer.</p>
+<p>Today, SAIC Motor operates two generations of Kubernetes clusters:</p>
+<ol>
+<li>The existing fleet, which runs OVN-Kubernetes in central mode and relies on an in-house multi-tenant networking solution built on capabilities that have since been deprecated upstream.</li>
+<li>The new AI agent fleet, which runs OVN-Kubernetes in interconnect mode and is currently being evaluated as the foundation for our next-generation multi-tenant infrastructure.</li>
+</ol>
+<p>This blog post outlines our journey toward designing and building the new fleet, including the architectural decisions and capabilities we are evaluating along the way.
+Looking ahead, once the required feature set has been fully implemented and validated, we plan to gradually migrate workloads from the existing fleet to the new architecture.</p>
+
+    
+      <nav class="md-post__action">
+        <a href="2026/09/03/saic-motors-kubernetes-based-multi-tenant-networking-practice-building-a-unified-network-foundation-with-ovn-kubernetes/">
+          Continue reading
+        </a>
+      </nav>
+    
+    
+  </div>
+</article>
       
         <article class="md-post md-post--excerpt">
   <header class="md-post__header">
