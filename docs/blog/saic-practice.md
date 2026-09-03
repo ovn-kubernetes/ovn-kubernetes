@@ -1,8 +1,14 @@
 # SAIC Motor's Kubernetes-Based Multi-Tenant Networking Practice: Building a Unified Network Foundation with OVN-Kubernetes
 
-SAIC Motor is the Chinese largest Automobile company. When we chose Kubernetes as a unified, multi-tenant infrastructure for containers, virtual machines, and AI agents, its network had to evolve beyond basic Pod connectivity into a unified multi-tenant network foundation capable of supporting heterogeneous workloads. Through its OVN-based software-defined networking capabilities, OVN-Kubernetes provides a consistent network model for containers, KubeVirt virtual machines, and agent runtimes. This is particularly important for agents: Each tenant can have a group of agents that can communicate with each other. Different tenant's agents should be isolated in network.
+SAIC Motor is a Chinese automobile company. When we chose Kubernetes as a unified, multi-tenant infrastructure for containers, virtual machines, and AI agents, its network had to evolve beyond basic Pod connectivity into a unified multi-tenant network foundation capable of supporting heterogeneous workloads. Through its OVN-based software-defined networking capabilities, OVN-Kubernetes provides a consistent network model for containers, KubeVirt virtual machines, and agent runtimes. This is particularly important for agents: each tenant can have a group of agents that communicate with one another, while agents belonging to different tenants remain isolated at the network layer.
 
-This article describes our practical approach to using OVN-Kubernetes and outlines the networking capabilities we would like the platform to support in the future.
+Today, SAIC Motor operates two generations of Kubernetes clusters:
+
+1. The existing fleet, which runs OVN-Kubernetes in central mode and relies on an in-house multi-tenant networking solution built on capabilities that have since been deprecated upstream.
+2. The new AI agent fleet, which runs OVN-Kubernetes in interconnect mode and is currently being evaluated as the foundation for our next-generation multi-tenant infrastructure.
+
+This blog post outlines our journey toward designing and building the new fleet, including the architectural decisions and capabilities we are evaluating along the way.
+Looking ahead, once the required feature set has been fully implemented and validated, we plan to gradually migrate workloads from the existing fleet to the new architecture.
 
 ## Overall Design: Layering Isolation, Connectivity, and North-South Traffic Governance
 
@@ -79,9 +85,9 @@ The responsibilities in this architecture are divided as follows:
 
 We use shared gateway mode together with OVN-Kubernetes's current default [interconnect architecture](../design/architecture.md), in which each node belongs to its own zone—that is, a single-node-zone interconnect.
 
-In shared gateway mode, traffic leaving the cluster can remain in the OVN/OVS data path and reach the external network through the Gateway Router and OVS bridge. Compared with a path in which traffic first leaves OVN/OVS and then enters the host network stack, this mode is better suited to our performance goals and preserves the option of OVS hardware offload.  We have evaluated some DPU companies in ovn-kubernetes and they give us promising result. We believe hardware offload is a must-have when network bandwidth reaches 100 Gb/s.
+In shared gateway mode, traffic leaving the cluster can remain in the OVN/OVS data path and reach the external network through the Gateway Router and OVS bridge. Compared with a path in which traffic first leaves OVN/OVS and then enters the host network stack, this mode is better suited to our performance goals and preserves the option of OVS hardware offload. We have evaluated several DPU hardware solutions with OVN-Kubernetes, and they have delivered promising results. We believe hardware offload is a must-have when network bandwidth reaches 100 Gb/s.
 
-Interconnect distributes the control plane and OVN databases to the nodes by zone, eliminating the dependency on a centralized set of OVN databases. The following discussions of the Layer2 Transit Router, Dynamic UDN, and cross-network connectivity all assume this deployment baseline. We also have some legacy clusters that run ovn-kubernetes in old central mode. We plan to migrate the workloads to the new clusters.
+Interconnect keeps the Kubernetes control-plane components on control-plane nodes while running OVN databases, `northd`, and node-local controllers per zone, eliminating the dependency on a centralized set of OVN databases. The following discussions of the Layer2 Transit Router, Dynamic UDN, and cross-network connectivity all assume this deployment baseline.
 
 ## Using Primary CUDNs to Create Isolated Domains for Tenant Workloads
 
@@ -169,7 +175,7 @@ At the OVN networking layer, this behavior is closely related to the virtual log
 
 ### 3. Private CUDNs
 
-A Private CUDN should explicitly express “no default external egress” in the network model. Platform administrators could then attach a NAT Gateway as needed, instead of granting egress by default and relying on policies to restrict it afterward. This feature is included in the Plexus proposal, which is currently under discussion within the community.
+A Private CUDN should explicitly express “no default external egress” in the network model. Platform administrators could then attach a NAT Gateway as needed, instead of granting egress by default and relying on policies to restrict it afterward. This feature is included in the [Plexus proposal](https://github.com/ovn-kubernetes/ovn-kubernetes/pull/6649), which is currently under discussion within the community.
 
 ### 4. Native NAT Gateway
 
