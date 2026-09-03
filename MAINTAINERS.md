@@ -1,8 +1,8 @@
 # Maintainers
 
-The current Maintainers Group for the ovn-kubernetes Project consists of:
-
 ## Current Maintainers
+
+The current Maintainers Group for the ovn-kubernetes Project consists of:
 
 | Name | Employer | Responsibilities |
 | ---- | -------- | ---------------- |
@@ -12,6 +12,8 @@ The current Maintainers Group for the ovn-kubernetes Project consists of:
 | [Patryk Diak](https://github.com/kyrtapz)   | Red Hat | All things ovnkube |
 | [Surya Seetharaman](https://github.com/tssurya)   | Red Hat | All things ovnkube |
 | [Tim Rozet](https://github.com/trozet)   | NVIDIA | All things ovnkube |
+
+## Related Resources
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for general contribution guidelines.
 See [GOVERNANCE.md](./GOVERNANCE.md) for governance guidelines and maintainer responsibilities.

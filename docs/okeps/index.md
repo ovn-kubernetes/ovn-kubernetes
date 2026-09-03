@@ -44,6 +44,10 @@ On-demand subnet allocation for UDN nodes as pods are scheduled.
 
 Controlled inter-UDN connectivity via ClusterNetworkConnect.
 
+**[Connecting UDNs Discarded Alternatives](okep-5224-connecting-udns/discarded-alternatives.md)**
+
+Discarded network topology proposals for connecting Layer3-type UDN networks.
+
 **[No-Overlay Mode](okep-5259-no-overlay.md)**
 
 Direct pod routing using BGP-learned routes without encapsulation.
