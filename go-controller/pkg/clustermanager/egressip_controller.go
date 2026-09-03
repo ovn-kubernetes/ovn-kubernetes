@@ -915,6 +915,19 @@ func (eIPC *egressIPClusterController) deleteAllocatorEgressIPAssignmentIfExists
 	return ""
 }
 
+// deleteAllAllocatorEgressIPAssignments performs defensive cleanup of all allocations for an EgressIP
+// by iterating through all nodes in the cache and removing any allocation that matches the given
+// EgressIP name and IP address. This ensures stale cache entries are cleaned up completely.
+func (eIPC *egressIPClusterController) deleteAllAllocatorEgressIPAssignments(name, egressIP string) {
+	eIPC.nodeAllocator.Lock()
+	defer eIPC.nodeAllocator.Unlock()
+	for _, eNode := range eIPC.nodeAllocator.cache {
+		if egressIPName, exists := eNode.allocations[egressIP]; exists && egressIPName == name {
+			delete(eNode.allocations, egressIP)
+		}
+	}
+}
+
 // addAllocatorEgressIPAssignments adds the allocation to the cache, so that
 // they are tracked during the life-cycle of the cluster-manager controller.
 func (eIPC *egressIPClusterController) addAllocatorEgressIPAssignments(name string, statusAssignments []egressipv1.EgressIPStatusItem) {
@@ -967,6 +980,13 @@ func (eIPC *egressIPClusterController) reconcileEgressIP(old, new *egressipv1.Eg
 		}
 	} else {
 		eIPC.deallocMark(name)
+		// When processing deletion (new == nil), ensure complete cache cleanup
+		// to prevent stale entries from blocking EgressIP reassignments.
+		if old != nil {
+			for _, egressIP := range old.Spec.EgressIPs {
+				eIPC.deleteAllAllocatorEgressIPAssignments(name, egressIP)
+			}
+		}
 	}
 
 	// Validate the spec and use only the valid egress IPs when performing any
