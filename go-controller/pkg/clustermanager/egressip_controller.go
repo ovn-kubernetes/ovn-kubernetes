@@ -814,15 +814,34 @@ func (eIPC *egressIPClusterController) addEgressNode(nodeName string) error {
 	return nil
 }
 
+// cleanAllocationsForNodeLocked removes all EgressIP allocations for a node without
+// removing the node from the cache. Used when a node loses the egress-assignable label
+// but may gain it again (graceful cleanup). Must be called with nodeAllocator.Lock held.
+func (eIPC *egressIPClusterController) cleanAllocationsForNodeLocked(nodeName string) {
+	if eNode, exists := eIPC.nodeAllocator.cache[nodeName]; exists {
+		// Clear all allocations for this node
+		eNode.allocations = make(map[string]string)
+	}
+}
+
+// deleteNodeForEgressLocked removes a node from the allocator cache and disconnects
+// its health client. Performs complete cleanup including allocations. Must be called
+// with nodeAllocator.Lock held to ensure atomicity with cache modifications.
+func (eIPC *egressIPClusterController) deleteNodeForEgressLocked(nodeName string) {
+	if eNode, exists := eIPC.nodeAllocator.cache[nodeName]; exists {
+		// Disconnect health client
+		eNode.healthClient.Disconnect()
+		// Remove node from cache (implicit cleanup of allocations)
+	}
+	delete(eIPC.nodeAllocator.cache, nodeName)
+}
+
 // deleteNodeForEgress remove the default allow logical router policies for the
 // node and removes the node from the allocator cache.
 func (eIPC *egressIPClusterController) deleteNodeForEgress(node *corev1.Node) {
 	eIPC.nodeAllocator.Lock()
-	if eNode, exists := eIPC.nodeAllocator.cache[node.Name]; exists {
-		eNode.healthClient.Disconnect()
-	}
-	delete(eIPC.nodeAllocator.cache, node.Name)
-	eIPC.nodeAllocator.Unlock()
+	defer eIPC.nodeAllocator.Unlock()
+	eIPC.deleteNodeForEgressLocked(node.Name)
 }
 
 func (eIPC *egressIPClusterController) deleteEgressNode(nodeName string) error {
@@ -830,7 +849,10 @@ func (eIPC *egressIPClusterController) deleteEgressNode(nodeName string) error {
 	klog.V(5).Infof("Egress node: %s about to be removed", nodeName)
 	// Since the node has been labelled as "not usable" for egress IP
 	// assignments we need to find all egress IPs which have an assignment to
-	// it, and move them elsewhere.
+	// it, and move them elsewhere. First, clean all allocations from the cache.
+	eIPC.nodeAllocator.Lock()
+	eIPC.cleanAllocationsForNodeLocked(nodeName)
+	eIPC.nodeAllocator.Unlock()
 	egressIPs, err := eIPC.kube.GetEgressIPs()
 	if err != nil {
 		return fmt.Errorf("unable to list EgressIPs, err: %v", err)
