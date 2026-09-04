@@ -35,7 +35,6 @@ import (
 	utilnet "k8s.io/utils/net"
 	"sigs.k8s.io/knftables"
 
-	ovnconfig "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	eipv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
 	egressipinformer "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/informers/externalversions/egressip/v1"
@@ -46,6 +45,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/linkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftelementmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/routemanager"
+	nodetypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/syncmap"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
@@ -54,9 +54,8 @@ import (
 )
 
 const (
-	rulePriority       = 6000 // the priority of the ip routing rules created by the controller. Egress Service priority is 5000.
-	ruleFwMarkPriority = 5999 // the priority of the ip routing rules for LGW mode when we want to skip processing eip ip rules because dst is a node ip.
-	maxRetries         = 15
+	rulePriority = 6000 // the priority of the ip routing rules created by the controller. Egress Service priority is 5000.
+	maxRetries   = 15
 )
 
 var (
@@ -137,7 +136,7 @@ type Controller struct {
 
 	routeManager      *routemanager.Controller
 	linkManager       *linkmanager.Controller
-	ruleManager       *iprulemanager.Controller
+	ruleManager       iprulemanager.Interface
 	nftElementManager *nftelementmanager.Controller
 	kube              kube.Interface
 	nodeName          string
@@ -147,7 +146,8 @@ type Controller struct {
 
 func NewController(k kube.Interface, eIPInformer egressipinformer.EgressIPInformer, nodeInformer cache.SharedIndexInformer,
 	namespaceInformer coreinformers.NamespaceInformer, podInformer coreinformers.PodInformer, getActiveNetworkForNamespaceFn getActiveNetworkForNamespaceFn,
-	routeManager *routemanager.Controller, v4, v6 bool, nodeName string, linkManager *linkmanager.Controller) (*Controller, error) {
+	routeManager *routemanager.Controller, v4, v6 bool, nodeName string, linkManager *linkmanager.Controller,
+	ruleManager iprulemanager.Interface) (*Controller, error) {
 
 	c := &Controller{
 		eIPLister:   eIPInformer.Lister(),
@@ -175,7 +175,7 @@ func NewController(k kube.Interface, eIPInformer egressipinformer.EgressIPInform
 		referencedObjects:            map[string]*referencedObjects{},
 		routeManager:                 routeManager,
 		linkManager:                  linkManager,
-		ruleManager:                  iprulemanager.NewController(v4, v6),
+		ruleManager:                  ruleManager,
 		nftElementManager:            nftelementmanager.NewController(),
 		kube:                         k,
 		nodeName:                     nodeName,
@@ -246,39 +246,20 @@ func (c *Controller) Run(stopCh <-chan struct{}, wg *sync.WaitGroup, threads int
 		wg.Done()
 	}()
 
-	wg.Add(1)
-	go func() {
-		c.ruleManager.Run(stopCh, 5*time.Minute)
-		wg.Done()
-	}()
-
 	// Tell rule manager that we want to fully own all rules at a particular priority.
 	// Any rules created with this priority that we do not recognize will be removed.
 	if err := c.ruleManager.OwnPriority(rulePriority); err != nil {
 		return fmt.Errorf("failed to own priority %d for IP rules: %v", rulePriority, err)
 	}
+	// EgressIP used priority 5999 for the fwmark bypass rule before it moved to
+	// 4999. Own the old, now-reserved priority so upgrades remove the stale rule.
+	if err := c.ruleManager.OwnPriority(nodetypes.LegacyFwMarkBypassPriority); err != nil {
+		klog.Warningf("Failed to clean up legacy fwmark bypass rules: %v", err)
+	}
 
 	// Initialize nftables chains, maps, and rules for EgressIP SNAT and secondary interface drop
 	if err := c.initNFTables(); err != nil {
 		return fmt.Errorf("failed to initialize nftables for EgressIP: %w", err)
-	}
-
-	// For LGW mode, set up ip rules and sysctl for reverse path filtering
-	if ovnconfig.Gateway.Mode == ovnconfig.GatewayModeLocal {
-		if c.v4 {
-			if err = c.ruleManager.Add(getNodeIPFwMarkIPRule(netlink.FAMILY_V4)); err != nil {
-				return fmt.Errorf("failed to create IPv4 rule for node IPs: %v", err)
-			}
-			stdout, _, err := util.RunSysctl("-w", "net.ipv4.conf.all.src_valid_mark=1")
-			if err != nil || stdout != "net.ipv4.conf.all.src_valid_mark = 1" {
-				return fmt.Errorf("failed to set sysctl net.ipv4.conf.all.src_valid_mark to 1")
-			}
-		}
-		if c.v6 {
-			if err = c.ruleManager.Add(getNodeIPFwMarkIPRule(netlink.FAMILY_V6)); err != nil {
-				return fmt.Errorf("failed to create IPv6 rule for node IPs: %v", err)
-			}
-		}
 	}
 
 	err = wait.PollUntilContextTimeout(wait.ContextForChannel(stopCh), 1*time.Second, 10*time.Second, true,
@@ -1519,15 +1500,6 @@ func isValidIP(ipStr string) bool {
 		return false
 	}
 	return len(ip) > 0
-}
-
-func getNodeIPFwMarkIPRule(ipFamily int) iprulemanager.IPRule {
-	return iprulemanager.IPRule{
-		Priority: ruleFwMarkPriority,
-		Mark:     types.EgressIPConnmarkMark,
-		Table:    254, // main
-		Family:   ipFamily,
-	}
 }
 
 func isVRFSlaveDevice(link netlink.Link) bool {

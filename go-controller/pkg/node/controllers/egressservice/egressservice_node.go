@@ -1061,6 +1061,7 @@ func (c *Controller) shouldConfigureEgressSVC(svc *corev1.Service, svcHost strin
 		len(svc.Status.LoadBalancer.Ingress) > 0
 }
 
+// TODO: Refactor EgressService to use the common IP rule manager shared with EgressIP.
 // Create ip rule with the given fields.
 func createIPRule(family string, priority int32, src, table string) error {
 	prio := fmt.Sprintf("%d", priority)
