@@ -80,7 +80,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.3.0"
+          value: "1.4.0"
         - name: OVNKUBE_NODE_MODE
           value: "dpu"
         - name: OVN_LOGLEVEL_NB
@@ -145,7 +145,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.3.0"
+          value: "1.4.0"
         - name: OVNKUBE_NODE_MODE
           value: "dpu"
         - name: OVN_LOGLEVEL_SB
@@ -200,7 +200,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.3.0"
+          value: "1.4.0"
         - name: OVNKUBE_NODE_MODE
           value: "dpu"
         - name: OVN_LOGLEVEL_NORTHD
@@ -290,7 +290,7 @@ spec:
         - name: OVN_EGRESSSERVICE_ENABLE
           value: {{ default "" .Values.global.enableEgressService | quote }}
         - name: OVN_DAEMONSET_VERSION
-          value: "1.3.0"
+          value: "1.4.0"
         - name: OVNKUBE_LOGLEVEL
           value: {{ default 4 .Values.ovnkubeNodeLogLevel | quote }}
         - name: OVNKUBE_LOGFILE_MAXSIZE
@@ -480,7 +480,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.3.0"
+          value: "1.4.0"
         - name: OVNKUBE_NODE_MODE
           value: "dpu"
         - name: OVN_LOGLEVEL_CONTROLLER
@@ -516,7 +516,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.3.0"
+          value: "1.4.0"
         - name: OVNKUBE_NODE_MODE
           value: "dpu"
         # end of container
