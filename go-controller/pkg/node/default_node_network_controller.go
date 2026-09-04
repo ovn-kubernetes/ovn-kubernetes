@@ -21,6 +21,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
@@ -1191,11 +1192,17 @@ func (nc *DefaultNodeNetworkController) startEgressIPHealthCheckingServer(mgmtPo
 
 func (nc *DefaultNodeNetworkController) reconcileConntrackUponEndpointSliceEvents(oldEndpointSlice, newEndpointSlice *discovery.EndpointSlice) error {
 	var errors []error
-	if oldEndpointSlice == nil {
-		// nothing to do upon an add event
+
+	// Determine which endpoint slice to use for service lookup
+	epSlice := newEndpointSlice
+	if epSlice == nil {
+		epSlice = oldEndpointSlice // Fall back to old if new is nil (DELETE event)
+	}
+	if epSlice == nil {
 		return nil
 	}
-	namespacedName, err := util.ServiceNamespacedNameFromEndpointSlice(oldEndpointSlice)
+
+	namespacedName, err := util.ServiceNamespacedNameFromEndpointSlice(epSlice)
 	if err != nil {
 		return fmt.Errorf("cannot reconcile conntrack: %v", err)
 	}
@@ -1203,12 +1210,29 @@ func (nc *DefaultNodeNetworkController) reconcileConntrackUponEndpointSliceEvent
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			klog.V(5).Infof("Service %s/%s not found (might have been deleted) when reconciling conntrack for endpointslice %s",
-				namespacedName.Namespace, namespacedName.Name, oldEndpointSlice.Name)
+				namespacedName.Namespace, namespacedName.Name, epSlice.Name)
 			// service is not found, likely deleted, flushing service conntrack entries will be handled at service reconciliation. No-op here.
 			return nil
 		}
 		return fmt.Errorf("error while retrieving service for endpointslice %s/%s when reconciling conntrack: %v",
-			oldEndpointSlice.Namespace, oldEndpointSlice.Name, err)
+			epSlice.Namespace, epSlice.Name, err)
+	}
+
+	// Handle 0→N endpoint transition: flush stale conntrack entries for service VIPs.
+	// This prevents UDP blackholes when clients send packets before endpoints are available.
+	// See https://github.com/kubernetes/kubernetes/issues/108523#issuecomment-1074044415
+	if shouldFlush, err := nc.shouldFlushConntrackForZeroToNTransition(oldEndpointSlice, newEndpointSlice, namespacedName, svc); err != nil {
+		errors = append(errors, err)
+	} else if shouldFlush {
+		if err := nc.flushConntrackForServiceVIPs(svc); err != nil {
+			errors = append(errors, err)
+		}
+	}
+
+	// Existing logic: flush conntrack for removed endpoint IPs (update/delete events)
+	if oldEndpointSlice == nil {
+		// Add event was already handled above
+		return utilerrors.Join(errors...)
 	}
 	for _, oldPort := range oldEndpointSlice.Ports {
 		if *oldPort.Protocol != corev1.ProtocolUDP { // flush conntrack only for UDP
@@ -1254,6 +1278,173 @@ func (nc *DefaultNodeNetworkController) reconcileConntrackUponEndpointSliceEvent
 	return utilerrors.Join(errors...)
 
 }
+
+// countUDPEligibleEndpoints counts eligible endpoints in slices that support UDP ports.
+// It filters out slices that only have TCP/SCTP ports to avoid false negatives where
+// TCP endpoints exist but UDP endpoints don't.
+//
+// Example: Service has TCP:80 and UDP:53. TCP slice has endpoints, UDP slice is empty.
+// When first UDP endpoint arrives, we must detect UDP 0→N transition even though
+// TCP already has endpoints.
+func countUDPEligibleEndpoints(slices []*discovery.EndpointSlice, svc *corev1.Service) int {
+	var udpSlices []*discovery.EndpointSlice
+	for _, slice := range slices {
+		// Check if this slice has any UDP ports
+		hasUDP := false
+		for _, port := range slice.Ports {
+			if port.Protocol != nil && *port.Protocol == corev1.ProtocolUDP {
+				hasUDP = true
+				break
+			}
+		}
+		if hasUDP {
+			udpSlices = append(udpSlices, slice)
+		}
+	}
+	return len(util.GetEligibleEndpointAddressesFromSlices(udpSlices, svc))
+}
+
+// shouldFlushConntrackForZeroToNTransition determines if a service's UDP endpoints are
+// transitioning from 0 to N and require conntrack cleanup to prevent UDP blackholes.
+//
+// This function only considers UDP-supporting endpoint slices. If a service has both TCP
+// and UDP ports, TCP endpoints are ignored when detecting UDP 0→N transitions.
+//
+// Detection logic:
+// - Add event: udp_eligible(other slices)==0 && udp_eligible(new)>0
+// - Update event: udp_eligible(other)==0 && udp_eligible(old)==0 && udp_eligible(new)>0
+//
+// Where "other slices" = all endpoint slices for this service EXCEPT the one being added/updated.
+func (nc *DefaultNodeNetworkController) shouldFlushConntrackForZeroToNTransition(
+	oldEndpointSlice, newEndpointSlice *discovery.EndpointSlice,
+	namespacedName k8stypes.NamespacedName,
+	svc *corev1.Service,
+) (bool, error) {
+	// No-op if both slices are nil (shouldn't happen)
+	if oldEndpointSlice == nil && newEndpointSlice == nil {
+		return false, nil
+	}
+
+	// Get all endpoint slices for this service
+	allSlices, err := nc.watchFactory.GetServiceEndpointSlices(namespacedName.Namespace, namespacedName.Name, nc.GetNetworkName())
+	if err != nil && !apierrors.IsNotFound(err) {
+		return false, fmt.Errorf("failed to get endpoint slices for service %s/%s: %v",
+			namespacedName.Namespace, namespacedName.Name, err)
+	}
+
+	// Collect "other" slices (excluding the old/new slice being processed)
+	var otherSlices []*discovery.EndpointSlice
+	for _, slice := range allSlices {
+		// Exclude the slice(s) involved in this event
+		if (oldEndpointSlice != nil && slice.UID == oldEndpointSlice.UID) ||
+			(newEndpointSlice != nil && slice.UID == newEndpointSlice.UID) {
+			continue
+		}
+		otherSlices = append(otherSlices, slice)
+	}
+
+	// Count UDP-specific eligible endpoints in each category
+	// This ensures we only detect UDP 0→N transitions, ignoring TCP/SCTP endpoints
+	eligibleOther := countUDPEligibleEndpoints(otherSlices, svc)
+	eligibleOld := 0
+	eligibleNew := 0
+
+	if oldEndpointSlice != nil {
+		eligibleOld = countUDPEligibleEndpoints([]*discovery.EndpointSlice{oldEndpointSlice}, svc)
+	}
+	if newEndpointSlice != nil {
+		eligibleNew = countUDPEligibleEndpoints([]*discovery.EndpointSlice{newEndpointSlice}, svc)
+	}
+
+	// Detect 0→N transition for UDP endpoints
+	if oldEndpointSlice == nil {
+		// Add event: udp_eligible(other)==0 && udp_eligible(new)>0
+		return eligibleOther == 0 && eligibleNew > 0, nil
+	} else if newEndpointSlice != nil {
+		// Update event: udp_eligible(other)==0 && udp_eligible(old)==0 && udp_eligible(new)>0
+		return eligibleOther == 0 && eligibleOld == 0 && eligibleNew > 0, nil
+	}
+
+	return false, nil
+}
+
+// flushConntrackForServiceVIPs deletes conntrack entries for all VIPs of a UDP service.
+// This clears stale blackhole entries created when clients sent packets before endpoints existed.
+//
+// Flushes conntrack for:
+// - ClusterIPs (all IPs in service.Spec.ClusterIPs)
+// - External and LoadBalancer IPs (ExternalIPs + LoadBalancer ingress IPs)
+// - NodePorts (all node IPs on this node)
+func (nc *DefaultNodeNetworkController) flushConntrackForServiceVIPs(svc *corev1.Service) error {
+	var errors []error
+	var deletedCount uint
+
+	klog.V(5).Infof("Service %s/%s transitioned 0→N endpoints, flushing UDP conntrack for VIPs", svc.Namespace, svc.Name)
+
+	// Flush conntrack for ClusterIPs
+	for _, vip := range util.GetClusterIPs(svc) {
+		for _, port := range svc.Spec.Ports {
+			if port.Protocol != corev1.ProtocolUDP {
+				continue
+			}
+			deleted, err := util.DeleteConntrackServicePort(vip, port.Port, port.Protocol, netlink.ConntrackOrigDstIP, nil)
+			if err != nil {
+				errors = append(errors, fmt.Errorf("failed to delete conntrack for ClusterIP %s:%d: %v", vip, port.Port, err))
+			} else {
+				deletedCount += deleted
+			}
+		}
+	}
+
+	// Flush conntrack for External and LoadBalancer IPs
+	for _, vip := range util.GetExternalAndLBIPs(svc) {
+		for _, port := range svc.Spec.Ports {
+			if port.Protocol != corev1.ProtocolUDP {
+				continue
+			}
+			deleted, err := util.DeleteConntrackServicePort(vip, port.Port, port.Protocol, netlink.ConntrackOrigDstIP, nil)
+			if err != nil {
+				errors = append(errors, fmt.Errorf("failed to delete conntrack for ExternalIP %s:%d: %v", vip, port.Port, err))
+			} else {
+				deletedCount += deleted
+			}
+		}
+	}
+
+	// Flush conntrack for NodePorts
+	if util.ServiceTypeHasNodePort(svc) {
+		node, err := nc.watchFactory.GetNode(nc.name)
+		if err != nil {
+			errors = append(errors, fmt.Errorf("failed to get node for NodePort conntrack cleanup: %v", err))
+		} else {
+			nodeIPv4, nodeIPv6, err := util.GetNodeAddresses(config.IPv4Mode, config.IPv6Mode, node)
+			if err != nil {
+				errors = append(errors, fmt.Errorf("failed to get node addresses for NodePort conntrack cleanup: %v", err))
+			} else {
+				for _, nodeIP := range append(nodeIPv4, nodeIPv6...) {
+					for _, port := range svc.Spec.Ports {
+						if port.Protocol != corev1.ProtocolUDP || port.NodePort == 0 {
+							continue
+						}
+						deleted, err := util.DeleteConntrackServicePort(nodeIP.String(), port.NodePort, port.Protocol, netlink.ConntrackOrigDstIP, nil)
+						if err != nil {
+							errors = append(errors, fmt.Errorf("failed to delete conntrack for NodePort %s:%d: %v", nodeIP.String(), port.NodePort, err))
+						} else {
+							deletedCount += deleted
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if deletedCount > 0 {
+		klog.Infof("Deleted %d UDP conntrack entries for service %s/%s VIPs", deletedCount, svc.Namespace, svc.Name)
+	}
+
+	return utilerrors.Join(errors...)
+}
+
 func (nc *DefaultNodeNetworkController) WatchEndpointSlices() error {
 	if util.IsNetworkSegmentationSupportEnabled() {
 		// Filter out objects without the default serviceName label to exclude mirrored EndpointSlices
