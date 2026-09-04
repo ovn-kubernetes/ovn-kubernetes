@@ -261,7 +261,7 @@ func initController(namespaces []corev1.Namespace, pods []corev1.Pod, egressIPs 
 		return &util.DefaultNetInfo{}, nil
 	}
 	c, err := NewController(&ovnkube.Kube{KClient: kubeClient}, watchFactory.EgressIPInformer(), watchFactory.NodeInformer(), watchFactory.NamespaceInformer(),
-		watchFactory.PodCoreInformer(), getActiveNetForNsFn, rm, v4, v6, node1Name, linkManager)
+		watchFactory.PodCoreInformer(), getActiveNetForNsFn, rm, v4, v6, node1Name, linkManager, iprulemanager.NewController(v4, v6))
 	if err != nil {
 		return nil, nil, err
 	}
