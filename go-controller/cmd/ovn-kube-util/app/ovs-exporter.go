@@ -54,6 +54,9 @@ var OvsExporterCommand = cli.Command{
 			EnableOVSMetrics: true,
 			OnFatalError:     cancel,
 			OVSDBClient:      ovsClient,
+			// CollectionInterval left unset: the standalone exporter uses the
+			// default (defaultCollectionInterval) since it does not parse the
+			// full metrics config.
 		}
 
 		_ = metrics.StartMetricsServer(opts, innerCtx.Done(), wg)

@@ -23,3 +23,7 @@ Expose User Defined Networks to external physical networks via uplink interfaces
 **[Dynamic UDN Node Allocation](dynamic-udn.md)**
 
 Allocate subnets to nodes on demand as pods are scheduled onto them.
+
+**[DHCP IPAM for Localnet Networks](dhcp-ipam-localnet.md)**
+
+Delegate IP assignment on Localnet networks to an external DHCP server.

@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"runtime/debug"
-	"strconv"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -27,43 +26,16 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
-const (
-	// metricsScrapeBudgetFallback bounds metric collection when Prometheus does not
-	// advertise its scrape timeout. Kept below the typical 10s scrape_timeout so the
-	// handler still returns in time to serve the last known values (up stays 1).
-	metricsScrapeBudgetFallback = 8 * time.Second
-
-	// metricsScrapeBudgetSlack is subtracted from the advertised scrape timeout to
-	// leave promhttp room to serialize and write the response before Prometheus'
-	// deadline; without it a cached write can lose the race and flap up to 0.
-	metricsScrapeBudgetSlack = 500 * time.Millisecond
-)
-
-// scrapeBudget returns how long metric collection may run before the handler gives
-// up and serves the last known values. It honors Prometheus'
-// X-Prometheus-Scrape-Timeout-Seconds header (minus slack) when present, otherwise
-// falls back to metricsScrapeBudgetFallback.
-func scrapeBudget(r *http.Request) time.Duration {
-	if v := r.Header.Get("X-Prometheus-Scrape-Timeout-Seconds"); v != "" {
-		if secs, err := strconv.ParseFloat(v, 64); err == nil && secs > 0 {
-			// Honor the advertised deadline minus slack, never the larger fallback.
-			// If that leaves no room, use the full advertised value rather than skip
-			// collection entirely.
-			advertised := time.Duration(secs * float64(time.Second))
-			if budget := advertised - metricsScrapeBudgetSlack; budget > 0 {
-				return budget
-			}
-			return advertised
-		}
-	}
-	// No header, or an unparseable/non-positive one: fall back.
-	return metricsScrapeBudgetFallback
-}
-
 // MetricServerOptions defines the configuration options for the new MetricServer
 type MetricServerOptions struct {
 	// Server configuration
 	BindAddress string
+
+	// CollectionInterval is how often the background loop extracts OVS/OVN metric
+	// values into the registry. Scrapes only serialize the registry, so scrape
+	// latency is independent of extraction latency. Non-positive falls back to
+	// defaultCollectionInterval.
+	CollectionInterval time.Duration
 
 	// TLS configuration
 	CertFile        string
@@ -120,13 +92,12 @@ func NewMetricServer(opts MetricServerOptions) *MetricServer {
 	tg := prometheus.ToTransactionalGatherer(server.registerer.(prometheus.Gatherer))
 	metricsHandler := promhttp.HandlerForTransactional(tg, promhttp.HandlerOpts{})
 
+	// The scrape path only serializes the registry. Metric values are refreshed
+	// out of band by runCollectionLoop, so scrape latency is independent of how
+	// expensive extraction is.
 	server.mux.Handle("/metrics", promhttp.InstrumentMetricHandler(
 		server.registerer,
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Update metrics in the registry before emitting them.
-			server.handleMetrics(r)
-			metricsHandler.ServeHTTP(w, r)
-		}),
+		metricsHandler,
 	))
 
 	if opts.EnablePprof {
@@ -155,7 +126,7 @@ func (s *MetricServer) registerMetrics() {
 	}
 	if s.opts.EnableOVNControllerMetrics {
 		klog.Infof("MetricServer registers OVN Controller metrics")
-		RegisterOvnControllerMetrics(s.opts.OVSDBClient, s.registerer)
+		RegisterOvnControllerMetrics(s.registerer)
 	}
 	if s.opts.EnableOVNNorthdMetrics {
 		klog.Infof("MetricServer registers OVN Northd metrics")
@@ -189,6 +160,7 @@ func (s *MetricServer) updateOvnControllerMetrics() {
 		klog.Errorf("Setting ovn controller config metrics failed: %s", err.Error())
 	}
 
+	updateOvnControllerIntegrationBridgeMetrics(s.opts.OVSDBClient)
 	coverageShowMetricsUpdate(ovnController)
 	stopwatchShowMetricsUpdate(ovnController)
 	updateSBDBConnectionMetric(func(args ...string) (string, string, error) {
@@ -199,17 +171,13 @@ func (s *MetricServer) updateOvnControllerMetrics() {
 
 // updateOvnNorthdMetrics updates the OVN Northd metrics
 func (s *MetricServer) updateOvnNorthdMetrics() {
+	updateOvnNorthdStatusMetrics()
 	coverageShowMetricsUpdate(ovnNorthd)
 	stopwatchShowMetricsUpdate(ovnNorthd)
 }
 
 // updateOvnDBMetrics updates the OVN DB metrics
 func (s *MetricServer) updateOvnDBMetrics() {
-	if s.opts.dbFoundViaPath {
-		resetOvnDbSizeMetric()
-	}
-	resetOvnDbMemoryMetrics()
-
 	for _, dbProperty := range s.ovsDbProperties {
 		if s.opts.dbFoundViaPath {
 			updateOvnDBSizeMetrics(dbProperty)
@@ -218,48 +186,74 @@ func (s *MetricServer) updateOvnDBMetrics() {
 	}
 }
 
-// handleMetrics refreshes the OVS/OVN metrics before they are emitted. Collection
-// execs ovs-appctl/ovn-appctl subprocesses (each bounded by metricsAppctlTimeout)
-// in a separate goroutine under a scrape budget: if the daemons are slow and it
-// overruns, the handler returns and promhttp serves the last known values, keeping
-// the scrape under Prometheus' scrape_timeout (up stays 1). The goroutine keeps
-// running to refresh the registry for the next scrape.
-func (s *MetricServer) handleMetrics(r *http.Request) {
-	klog.V(5).Infof("MetricServer starts to handle metrics request from %s", r.RemoteAddr)
-
-	ctx, cancel := context.WithTimeout(r.Context(), scrapeBudget(r))
-	defer cancel()
-
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		// Nothing recovers this detached goroutine, so recover here: a panic in a
-		// metric path must only fail this scrape, not crash ovnkube-node.
-		defer func() {
-			if r := recover(); r != nil {
-				klog.Errorf("MetricServer recovered from panic during metric collection: %v\n%s", r, debug.Stack())
-			}
-		}()
-
-		if s.opts.EnableOVSMetrics {
-			s.updateOvsMetrics()
-		}
-		if s.opts.EnableOVNDBMetrics {
-			s.updateOvnDBMetrics()
-		}
-		if s.opts.EnableOVNControllerMetrics {
-			s.updateOvnControllerMetrics()
-		}
-		if s.opts.EnableOVNNorthdMetrics {
-			s.updateOvnNorthdMetrics()
+// collect refreshes all enabled OVS/OVN metric values in the registry. It execs
+// ovs-appctl/ovn-appctl subprocesses (each bounded by metricsAppctlTimeout) and
+// queries OVSDB. It runs off the scrape path, driven by runCollectionLoop, so a
+// slow daemon never blocks a scrape. A panic in any metric path only fails the
+// current cycle rather than crashing the process.
+func (s *MetricServer) collect() {
+	defer func() {
+		if r := recover(); r != nil {
+			klog.Errorf("MetricServer recovered from panic during metric collection: %v\n%s", r, debug.Stack())
 		}
 	}()
 
-	select {
-	case <-done:
-	case <-ctx.Done():
-		klog.Errorf("MetricServer metric collection exceeded the scrape budget for request from %s; "+
-			"serving last known values (%v)", r.RemoteAddr, ctx.Err())
+	if s.opts.EnableOVSMetrics {
+		s.updateOvsMetrics()
+	}
+	if s.opts.EnableOVNDBMetrics {
+		s.updateOvnDBMetrics()
+	}
+	if s.opts.EnableOVNControllerMetrics {
+		s.updateOvnControllerMetrics()
+	}
+	if s.opts.EnableOVNNorthdMetrics {
+		s.updateOvnNorthdMetrics()
+	}
+}
+
+// resolveCollectionInterval clamps a non-positive configured interval to
+// defaultCollectionInterval so a missing or invalid flag still ticks.
+func resolveCollectionInterval(d time.Duration) time.Duration {
+	if d <= 0 {
+		return defaultCollectionInterval
+	}
+	return d
+}
+
+// runCollectionLoop refreshes the registry once synchronously (so the first
+// scrape has data) and then on every CollectionInterval tick until stopChan is
+// closed. A plain ticker loop serializes cycles: an over-running collect just
+// delays the next one, so cycles never overlap and no locking is needed.
+// Each collect runs in a goroutine so shutdown can proceed without waiting for
+// a stalled extraction operation to finish.
+func (s *MetricServer) runCollectionLoop(stopChan <-chan struct{}) {
+	interval := resolveCollectionInterval(s.opts.CollectionInterval)
+	klog.Infof("MetricServer collection loop running every %s", interval)
+
+	s.collect()
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			collectDone := make(chan struct{})
+			go func() {
+				defer close(collectDone)
+				s.collect()
+			}()
+			// Wait for this cycle to complete or shutdown to signal. If shutdown
+			// signals while collection is in-flight, we exit immediately without
+			// waiting; the in-flight goroutine finishes asynchronously.
+			select {
+			case <-collectDone:
+			case <-stopChan:
+				return
+			}
+		case <-stopChan:
+			return
+		}
 	}
 }
 

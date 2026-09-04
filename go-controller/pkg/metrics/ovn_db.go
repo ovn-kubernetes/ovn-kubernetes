@@ -56,10 +56,6 @@ func updateOvnDBSizeMetrics(dbProps *util.OvsDbProperties) {
 	}
 }
 
-func resetOvnDbSizeMetric() {
-	metricDBSize.Reset()
-}
-
 // isOvnDBFoundViaPath attempts to find the OVN DBs, return false if not found.
 func isOvnDBFoundViaPath(dbProperties []*util.OvsDbProperties) bool {
 	enabled := true
@@ -113,11 +109,6 @@ func updateOvnDBMemoryMetrics(dbProperties *util.OvsDbProperties) {
 			}
 		}
 	}
-}
-
-func resetOvnDbMemoryMetrics() {
-	metricOVNDBMonitor.Reset()
-	metricOVNDBSessions.Reset()
 }
 
 var (

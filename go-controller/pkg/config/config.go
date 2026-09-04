@@ -482,6 +482,11 @@ type KubernetesConfig struct {
 	DNSServiceName      string `gcfg:"dns-service-name"`
 }
 
+// DefaultMetricsCollectionInterval is the default interval, in seconds, at which
+// OVS/OVN metric values are extracted into the registry when
+// MetricsConfig.CollectionInterval is unset or non-positive.
+const DefaultMetricsCollectionInterval = 30 * time.Second
+
 // MetricsConfig holds Prometheus metrics-related parameters.
 type MetricsConfig struct {
 	BindAddress           string `gcfg:"bind-address"`
@@ -494,6 +499,10 @@ type MetricsConfig struct {
 	// configuration duration and optionally, its application to all nodes
 	EnableConfigDuration bool `gcfg:"enable-config-duration"`
 	EnableScaleMetrics   bool `gcfg:"enable-scale-metrics"`
+	// CollectionInterval is how often (in seconds) OVS/OVN metric values are
+	// extracted into the registry, independent of Prometheus scrapes. A
+	// non-positive value uses DefaultMetricsCollectionInterval.
+	CollectionInterval int `gcfg:"collection-interval"`
 }
 
 // TLSConfig holds TLS-related configuration parameters.
@@ -1578,6 +1587,13 @@ var MetricsFlags = []cli.Flag{
 		Name:        "metrics-enable-scale",
 		Usage:       "Enables metrics related to scaling",
 		Destination: &cliConfig.Metrics.EnableScaleMetrics,
+	},
+	&cli.IntFlag{
+		Name: "metrics-collection-interval",
+		Usage: fmt.Sprintf("Interval in seconds at which OVS/OVN metric values are extracted "+
+			"into the registry, independent of Prometheus scrapes. Non-positive uses the "+
+			"default (%fs).", DefaultMetricsCollectionInterval.Seconds()),
+		Destination: &cliConfig.Metrics.CollectionInterval,
 	},
 }
 

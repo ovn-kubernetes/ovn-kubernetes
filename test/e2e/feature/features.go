@@ -40,6 +40,7 @@ var (
 	Unidle                        = New("Unidle")
 	NetworkQos                    = New("NetworkQos")
 	NetworkConnect                = New("NetworkConnect")
+	Metrics                       = New("Metrics")
 )
 
 func New(name string) ginkgo.Labels {

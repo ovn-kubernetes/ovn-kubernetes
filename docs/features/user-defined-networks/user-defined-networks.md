@@ -202,6 +202,10 @@ the NADs and creates the required OVN logical constructs in the OVN database.
 The ovnkube-node also adds the required gateway plumbing such as openflows and
 VRF tables and routes to provide networking to these networks.
 
+Localnet secondary networks also support delegating IP assignment to an
+external DHCP server instead of an OVN-Kubernetes-managed pool. See the
+[DHCP IPAM for Localnet Networks](dhcp-ipam-localnet.md) page for details.
+
 ### Creating UserDefinedNetworks
 
 Now that we understand what a UDN is, let's get handson!

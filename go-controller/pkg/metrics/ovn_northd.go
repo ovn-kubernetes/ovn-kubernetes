@@ -24,6 +24,56 @@ var (
 	ovnNorthdOvsLibVersion string
 )
 
+var metricOvnNorthdStatus = prometheus.NewGauge(prometheus.GaugeOpts{
+	Namespace: types.MetricOvnNamespace,
+	Subsystem: types.MetricOvnSubsystemNorthd,
+	Name:      "status",
+	Help:      "Specifies whether this instance of ovn-northd is standby(0) or active(1) or paused(2).",
+})
+
+var metricOvnNorthdNbConnectionStatus = prometheus.NewGauge(prometheus.GaugeOpts{
+	Namespace: types.MetricOvnNamespace,
+	Subsystem: types.MetricOvnSubsystemNorthd,
+	Name:      "nb_connection_status",
+	Help:      "Specifies nb-connection-status of ovn-northd, not connected(0) or connected(1).",
+})
+
+var metricOvnNorthdSbConnectionStatus = prometheus.NewGauge(prometheus.GaugeOpts{
+	Namespace: types.MetricOvnNamespace,
+	Subsystem: types.MetricOvnSubsystemNorthd,
+	Name:      "sb_connection_status",
+	Help:      "Specifies sb-connection-status of ovn-northd, not connected(0) or connected(1).",
+})
+
+func getOvnNorthdStatusInfo() float64 {
+	stdout, stderr, err := util.RunOVNNorthAppCtlWithTimeout(metricsAppctlTimeout, "status")
+	if err != nil {
+		klog.Errorf("Failed to get ovn-northd status stderr(%s) :(%v)", stderr, err)
+		return -1
+	}
+	northdStatusMap := map[string]float64{
+		"standby": 0,
+		"active":  1,
+		"paused":  2,
+	}
+	if strings.HasPrefix(stdout, "Status:") {
+		output := strings.TrimSpace(strings.Split(stdout, ":")[1])
+		if value, ok := northdStatusMap[output]; ok {
+			return value
+		}
+	}
+	return -1
+}
+
+// updateOvnNorthdStatusMetrics refreshes the ovn-northd status and connection
+// metrics by exec-ing ovn-appctl. Called from the background collection loop so
+// these appctls never run on the scrape path.
+func updateOvnNorthdStatusMetrics() {
+	metricOvnNorthdStatus.Set(getOvnNorthdStatusInfo())
+	metricOvnNorthdNbConnectionStatus.Set(getOvnNorthdConnectionStatusInfo(nbConnectionStatus))
+	metricOvnNorthdSbConnectionStatus.Set(getOvnNorthdConnectionStatusInfo(sbConnectionStatus))
+}
+
 func getOvnNorthdVersionInfo() {
 	stdout, _, err := util.RunOVNNorthAppCtl("version")
 	if err != nil {
@@ -131,53 +181,9 @@ func RegisterOvnNorthdMetrics(ovnRegistry prometheus.Registerer) {
 		},
 		func() float64 { return 1 },
 	))
-	ovnRegistry.MustRegister(prometheus.NewGaugeFunc(
-		prometheus.GaugeOpts{
-			Namespace: types.MetricOvnNamespace,
-			Subsystem: types.MetricOvnSubsystemNorthd,
-			Name:      "status",
-			Help:      "Specifies whether this instance of ovn-northd is standby(0) or active(1) or paused(2).",
-		}, func() float64 {
-			stdout, stderr, err := util.RunOVNNorthAppCtlWithTimeout(metricsAppctlTimeout, "status")
-			if err != nil {
-				klog.Errorf("Failed to get ovn-northd status "+
-					"stderr(%s) :(%v)", stderr, err)
-				return -1
-			}
-			northdStatusMap := map[string]float64{
-				"standby": 0,
-				"active":  1,
-				"paused":  2,
-			}
-			if strings.HasPrefix(stdout, "Status:") {
-				output := strings.TrimSpace(strings.Split(stdout, ":")[1])
-				if value, ok := northdStatusMap[output]; ok {
-					return value
-				}
-			}
-			return -1
-		},
-	))
-	ovnRegistry.MustRegister(prometheus.NewGaugeFunc(
-		prometheus.GaugeOpts{
-			Namespace: types.MetricOvnNamespace,
-			Subsystem: types.MetricOvnSubsystemNorthd,
-			Name:      "nb_connection_status",
-			Help:      "Specifies nb-connection-status of ovn-northd, not connected(0) or connected(1).",
-		}, func() float64 {
-			return getOvnNorthdConnectionStatusInfo(nbConnectionStatus)
-		},
-	))
-	ovnRegistry.MustRegister(prometheus.NewGaugeFunc(
-		prometheus.GaugeOpts{
-			Namespace: types.MetricOvnNamespace,
-			Subsystem: types.MetricOvnSubsystemNorthd,
-			Name:      "sb_connection_status",
-			Help:      "Specifies sb-connection-status of ovn-northd, not connected(0) or connected(1).",
-		}, func() float64 {
-			return getOvnNorthdConnectionStatusInfo(sbConnectionStatus)
-		},
-	))
+	ovnRegistry.MustRegister(metricOvnNorthdStatus)
+	ovnRegistry.MustRegister(metricOvnNorthdNbConnectionStatus)
+	ovnRegistry.MustRegister(metricOvnNorthdSbConnectionStatus)
 
 	// Register the ovn-northd coverage/show metrics with prometheus
 	componentCoverageShowMetricsMap[ovnNorthd] = ovnNorthdCoverageShowMetricsMap

@@ -140,6 +140,7 @@ nav:
       - Uplinks for UserDefinedNetworks: features/user-defined-networks/uplinks.md
       - Connecting UserDefinedNetworks: features/user-defined-networks/cluster-network-connect.md
       - Dynamic UDN Node Allocation: features/user-defined-networks/dynamic-udn.md
+      - DHCP IPAM for Localnet Networks: features/user-defined-networks/dhcp-ipam-localnet.md
     - NetworkSecurityControls:
       - features/network-security-controls/index.md
       - AdminNetworkPolicy: features/network-security-controls/admin-network-policy.md

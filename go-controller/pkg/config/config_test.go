@@ -673,6 +673,7 @@ routing-table-id-start=2002
 			gomega.Expect(Metrics.NodeServerCert).To(gomega.Equal("/tls/nodecert"))
 			gomega.Expect(Metrics.EnableConfigDuration).To(gomega.BeTrue())
 			gomega.Expect(Metrics.EnableScaleMetrics).To(gomega.BeTrue())
+			gomega.Expect(Metrics.CollectionInterval).To(gomega.Equal(15))
 
 			gomega.Expect(TLS.MinVersion).To(gomega.Equal("VersionTLS13"))
 			gomega.Expect(TLS.ParseCipherSuites()).To(gomega.Equal([]string{
@@ -768,6 +769,7 @@ routing-table-id-start=2002
 			"-metrics-enable-pprof=false",
 			"-ofctrl-wait-before-clear=5000",
 			"-metrics-enable-config-duration=true",
+			"-metrics-collection-interval=15",
 			"-tls-min-version=VersionTLS13",
 			"-tls-cipher-suites=TLS_AES_128_GCM_SHA256,TLS_AES_256_GCM_SHA384",
 			"-egressip-reachability-total-timeout=5",

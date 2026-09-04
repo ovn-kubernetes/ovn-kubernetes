@@ -31,6 +31,10 @@ const (
 
 	metricsUpdateInterval = 5 * time.Minute
 
+	// defaultCollectionInterval is how often the background loop refreshes OVS/OVN
+	// metric values when MetricServerOptions.CollectionInterval is unset.
+	defaultCollectionInterval = config.DefaultMetricsCollectionInterval
+
 	// metricsAppctlTimeout (seconds) bounds every ovs-appctl/ovn-appctl subprocess on
 	// the scrape path via --timeout=N. A saturated daemon (e.g. ovn-controller) would
 	// otherwise block the call and pin the scrape past Prometheus' scrape_timeout,
@@ -452,6 +456,14 @@ func StartMetricsServer(opts MetricServerOptions, stopChan <-chan struct{}, wg *
 		defer wg.Done()
 		klog.Infof("Metrics Server starts to run ...")
 		metricsServer.Run(stopChan)
+	}()
+
+	// Extraction runs out of band from scraping: the loop refreshes the registry
+	// on its own interval and the scrape handler only serializes it.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		metricsServer.runCollectionLoop(stopChan)
 	}()
 
 	return metricsServer
