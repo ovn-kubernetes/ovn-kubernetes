@@ -46,11 +46,17 @@ func (h *egressIPClusterControllerEventHandler) AddResource(obj interface{}, _ b
 			return nil
 		}
 
-		// Initialize the allocator on every update,
+		// Initialize the allocator on every add,
 		// ovnkube-node/cloud-network-config-controller will make sure to
 		// annotate the node with the egressIPConfig, but that might have
 		// happened after we processed the ADD for that object, hence keep
 		// retrying for all UPDATEs.
+		// NOTE(tssurya): It is not clear why the allocator cache was initialized
+		// for all the nodes in the cluster for every add and update node events,
+		// and why it wasn't done only for egress assignable nodes. However given
+		// we are now using node selectors logic, it is easier to track all nodes in
+		// cache then have cache churn whenever label changes happen. Number of cluster
+		// nodes can't exceed a few thousand at max anyways.
 		if err := h.eIPC.initEgressIPAllocator(node); err != nil {
 			klog.Warningf("Egress node initialization error: %v", err)
 		}
@@ -60,33 +66,59 @@ func (h *egressIPClusterControllerEventHandler) AddResource(obj interface{}, _ b
 		}
 		isReachable := h.eIPC.isEgressNodeReachable(node)
 		if isReachable && isReady {
-			// Check if this node matches at least one EgressIP's
-			// egressNodeSelector before marking it reachable or
-			// attempting assignment — mirrors the original
-			// hasEgressLabel legacy check.
-			selectors := h.eIPC.compileEgressNodeSelectors()
-			nodeLabels := labels.Set(node.GetLabels())
-			matchesSelector := false
-			for _, sel := range selectors {
-				if sel.Matches(nodeLabels) {
-					matchesSelector = true
-					break
-				}
+			// Node health (reachability and host-CIDRs availability) is an
+			// intrinsic, node-local property and must be recorded
+			// unconditionally — independent of whether any EgressIP object
+			// currently exists or selects this node.
+			//
+			// Before egressNodeSelector was introduced the equivalent gate
+			// was `isEgressAssignable(node)`, which checked only the
+			// node's own k8s.ovn.org/egress-assignable label and therefore
+			// required no knowledge of EgressIP objects.  When
+			// egressNodeSelector replaced that check with
+			// compileEgressNodeSelectors() (which reads live EgressIP
+			// objects), a chicken-and-egg ordering hazard was introduced:
+			// if a node is added before any EgressIP exists,
+			// compileEgressNodeSelectors returns empty, the node is never
+			// marked reachable/hasUsableHostCIDRs, and EIPs created later
+			// find zero usable nodes even though the node is healthy.
+			//
+			// The alternative — retroactively activating cached nodes from
+			// reconcileEgressIP when a new EIP is created — would require
+			// duplicating node-health logic in the EIP reconciliation path
+			// and introduce a second place that must stay in sync with the
+			// node event handler; that is worse.
+			//
+			// The selector filter is already applied by getSortedEgressData
+			// at assignment time, so gating the health flags here would be
+			// double-gating and must not be done.
+			h.eIPC.setNodeEgressReachable(node.Name, true)
+			// A node is only usable for egress IP assignment when its
+			// host-cidrs annotation is present, parseable, and non-empty.
+			// Without addresses the conflict check has no data for this node.
+			hostCIDRs, err := util.ParseNodeHostCIDRsDropNetMask(node)
+			nodeHasUsableHostCIDRs := err == nil && hostCIDRs.Len() > 0
+			if err != nil {
+				klog.Warningf("Node %s has unusable host-cidrs: %v", node.Name, err)
+			} else if hostCIDRs.Len() == 0 {
+				klog.Warningf("Node %s has empty host-cidrs annotation", node.Name)
 			}
-			if matchesSelector {
-				h.eIPC.setNodeEgressReachable(node.Name, true)
-				// A node is only usable for egress IP assignment when its
-				// host-cidrs annotation is present, parseable, and non-empty.
-				// Without addresses the conflict check has no data for this node.
-				hostCIDRs, err := util.ParseNodeHostCIDRsDropNetMask(node)
-				nodeHasUsableHostCIDRs := err == nil && hostCIDRs.Len() > 0
-				if err != nil {
-					klog.Warningf("Node %s has unusable host-cidrs: %v", node.Name, err)
-				} else if hostCIDRs.Len() == 0 {
-					klog.Warningf("Node %s has empty host-cidrs annotation", node.Name)
+			h.eIPC.setNodeHasUsableHostCIDRs(node.Name, nodeHasUsableHostCIDRs)
+			// Only wake up the EIP reconciler if this node can satisfy at
+			// least one EgressIP's selector.  Calling addEgressNode for
+			// every healthy node would cause unnecessary reconciliation
+			// churn for nodes that no EIP will ever use.
+			if nodeHasUsableHostCIDRs {
+				selectors := h.eIPC.compileEgressNodeSelectors()
+				nodeLabels := labels.Set(node.GetLabels())
+				matchesSelector := false
+				for _, sel := range selectors {
+					if sel.Matches(nodeLabels) {
+						matchesSelector = true
+						break
+					}
 				}
-				h.eIPC.setNodeHasUsableHostCIDRs(node.Name, nodeHasUsableHostCIDRs)
-				if nodeHasUsableHostCIDRs {
+				if matchesSelector {
 					if err := h.eIPC.addEgressNode(node.Name); err != nil {
 						return err
 					}
@@ -128,6 +160,12 @@ func (h *egressIPClusterControllerEventHandler) UpdateResource(oldObj, newObj in
 		// annotate the node with the egressIPConfig, but that might have
 		// happened after we processed the ADD for that object, hence keep
 		// retrying for all UPDATEs.
+		// NOTE(tssurya): It is not clear why the allocator cache was initialized
+		// for all the nodes in the cluster for every add and update node events,
+		// and why it wasn't done only for egress assignable nodes. However given
+		// we are now using node selectors logic, it is easier to track all nodes in
+		// cache then have cache churn whenever label changes happen. Number of cluster
+		// nodes can't exceed a few thousand at max anyways.
 		if err := h.eIPC.initEgressIPAllocator(newNode); err != nil {
 			klog.Warningf("Egress node initialization error: %v", err)
 		}
@@ -150,9 +188,30 @@ func (h *egressIPClusterControllerEventHandler) UpdateResource(oldObj, newObj in
 				break
 			}
 		}
-		// If the node didn't and still doesn't match any EgressIP selector,
-		// skip — no need to track ready/reachable for irrelevant nodes.
+		// If the node didn't and still doesn't match any EgressIP selector
+		// there are no EIP assignments to reconcile. However, health flags
+		// must still be kept up-to-date: a node that is not-ready or
+		// unreachable today may recover later, and an EIP could be created
+		// at any point. Stale flags would cause getSortedEgressData to
+		// silently exclude an otherwise healthy node — same ordering hazard
+		// that was fixed in AddResource. EIP reconciliation (addEgressNode /
+		// deleteEgressNode) is correctly skipped; the selector filter is
+		// applied by getSortedEgressData at assignment time.
 		if !oldMatchesSelector && !newMatchesSelector {
+			isNewReady := h.eIPC.isEgressNodeReady(newNode)
+			h.eIPC.setNodeEgressReady(newNode.Name, isNewReady)
+			isNewReachable := h.eIPC.isEgressNodeReachable(newNode)
+			if isNewReady && isNewReachable {
+				h.eIPC.setNodeEgressReachable(newNode.Name, true)
+				hostCIDRs, err := util.ParseNodeHostCIDRsDropNetMask(newNode)
+				nodeHasUsableHostCIDRs := err == nil && hostCIDRs.Len() > 0
+				if err != nil {
+					klog.Warningf("Node %s has unusable host-cidrs: %v", newNode.Name, err)
+				} else if hostCIDRs.Len() == 0 {
+					klog.Warningf("Node %s has empty host-cidrs annotation", newNode.Name)
+				}
+				h.eIPC.setNodeHasUsableHostCIDRs(newNode.Name, nodeHasUsableHostCIDRs)
+			}
 			return nil
 		}
 
