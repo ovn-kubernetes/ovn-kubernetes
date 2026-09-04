@@ -143,8 +143,9 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 
 		ginkgo.By("creating a host-network backend pod")
 
+		httpPort := infraprovider.Get().GetK8HostPort()
 		serverPod := e2epod.NewAgnhostPod(namespace, "backend", nil, nil, []v1.ContainerPort{{ContainerPort: (int32(targetPort))}, {ContainerPort: (int32(targetPort)), Protocol: "UDP"}},
-			"netexec", fmt.Sprintf("--http-port=%d", targetPort), fmt.Sprintf("--udp-port=%d", targetPort))
+			"netexec", fmt.Sprintf("--http-port=%d", httpPort), fmt.Sprintf("--udp-port=%d", targetPort))
 		serverPod.Labels = jig.Labels
 		serverPod.Spec.HostNetwork = true
 
@@ -153,11 +154,11 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 
 		ginkgo.By("Connecting to the service from node " + nodeName)
 		err = wait.PollImmediate(framework.Poll, 30*time.Second, func() (bool, error) {
-			response, err := tryPokeEndpointViaNode(nodeName, "udp", service.Spec.ClusterIP, uint16(targetPort), 80, "hostname")
+			response, err := tryPokeEndpointViaNode(nodeName, "udp", service.Spec.ClusterIP, uint16(httpPort), 80, "hostname")
 			if err != nil {
 				return false, nil
 			}
-			return response == nodeName, nil
+			return hostnameMatchesNode(response, nodeName), nil
 		})
 		framework.ExpectNoError(err)
 	})
@@ -263,7 +264,9 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 						ginkgo.By("Selecting 3 schedulable nodes")
 						nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 3)
 						gomega.Expect(err).NotTo(gomega.HaveOccurred())
-						gomega.Expect(len(nodes.Items)).To(gomega.BeNumerically(">", 2))
+						if len(nodes.Items) < 3 {
+							e2eskipper.Skipf("Test requires >= 3 Ready nodes, but there are only %v nodes", len(nodes.Items))
+						}
 
 						ginkgo.By("Selecting node for pods")
 						serverPodNodeName = nodes.Items[0].Name
@@ -391,6 +394,10 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 							}
 							return err
 						}, 60*time.Second, 1*time.Second).Should(gomega.Succeed())
+
+						ginkgo.By("Waiting for endpoint to be created")
+						err = e2eendpointslice.WaitForEndpointPods(context.TODO(), f.ClientSet, f.Namespace.Name, echoServiceName, serverPod.Name)
+						framework.ExpectNoError(err, "failed to wait for endpoint pod %s", serverPod.Name)
 					})
 
 					// Run queries against the service both with a small (10 bytes + overhead for echo service) and
@@ -689,8 +696,9 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 		ginkgo.By("Starting a UDP server listening on the additional IP")
 		// now that 2.2.2.2 exists on the node's lo interface, let's start a server listening on it
 		// we use UDP here since agnhost lets us pick the listen address only for UDP
+		httpPort := infraprovider.Get().GetK8HostPort()
 		serverPod := e2epod.NewAgnhostPod(namespace, "backend", nil, nil, []v1.ContainerPort{{ContainerPort: int32(udpHostNsPort)}, {ContainerPort: int32(udpHostNsPort), Protocol: "UDP"}},
-			"netexec", "--http-port="+fmt.Sprintf("%d", udpHostNsPort), "--udp-port="+fmt.Sprintf("%d", udpHostNsPort), "--udp-listen-addresses="+extraIP)
+			"netexec", fmt.Sprintf("--http-port=%d", httpPort), "--udp-port="+fmt.Sprintf("%d", udpHostNsPort), "--udp-listen-addresses="+extraIP)
 		serverPod.Labels = jig.Labels
 		serverPod.Spec.NodeName = nodeName
 		serverPod.Spec.HostNetwork = true
@@ -701,11 +709,11 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 		// Connect from host -> additional IP. This shouldn't touch OVN at all, just acting as a basic
 		// sanity check that we're actually listening on this IP
 		err = wait.PollImmediate(framework.Poll, 30*time.Second, func() (bool, error) {
-			response, err := tryPokeEndpointViaNode(nodeName, "udp", extraIP, uint16(udpHostNsPort), uint16(udpHostNsPort), "hostname")
+			response, err := tryPokeEndpointViaNode(nodeName, "udp", extraIP, uint16(httpPort), uint16(udpHostNsPort), "hostname")
 			if err != nil {
 				return false, nil
 			}
-			return response == nodeName, nil
+			return hostnameMatchesNode(response, nodeName), nil
 		})
 		framework.ExpectNoError(err)
 
@@ -736,11 +744,11 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 
 		ginkgo.By("Confirming that the service is accesible via the service IP from a host-network pod")
 		err = wait.PollImmediate(framework.Poll, 30*time.Second, func() (bool, error) {
-			response, err := tryPokeEndpointViaNode(nodeName, "udp", service.Spec.ClusterIP, uint16(udpHostNsPort), 80, "hostname")
+			response, err := tryPokeEndpointViaNode(nodeName, "udp", service.Spec.ClusterIP, uint16(httpPort), 80, "hostname")
 			if err != nil {
 				return false, nil
 			}
-			return response == nodeName, nil
+			return hostnameMatchesNode(response, nodeName), nil
 		})
 		framework.ExpectNoError(err)
 
@@ -765,7 +773,8 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 			if err != nil {
 				return false, err
 			}
-			return stdout == fmt.Sprintf(`{"responses":["%s"]}`, nodeName), nil
+			return stdout == fmt.Sprintf(`{"responses":["%s"]}`, nodeName) ||
+				stdout == fmt.Sprintf(`{"responses":["%s"]}`, strings.Split(nodeName, ".")[0]), nil
 		})
 		framework.ExpectNoError(err)
 	})
@@ -970,7 +979,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 			framework.ExpectNoError(err)
 
 			if len(nodes.Items) < 3 {
-				framework.Failf(
+				e2eskipper.Skipf(
 					"Test requires >= 3 Ready nodes, but there are only %v nodes",
 					len(nodes.Items))
 			}
@@ -1154,7 +1163,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 			framework.ExpectNoError(err)
 
 			if len(nodes.Items) < 3 {
-				framework.Failf(
+				e2eskipper.Skipf(
 					"Test requires >= 3 Ready nodes, but there are only %v nodes",
 					len(nodes.Items))
 			}
@@ -1195,7 +1204,9 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 			framework.ExpectNoError(err, "must list all Nodes")
 			for _, node := range nodes.Items {
 				_, err = providerCtx.AttachNetwork(secondaryProviderNetwork, node.Name)
-				framework.ExpectNoError(err, "network %s must attach to node %s", secondaryProviderNetwork.Name, node.Name)
+				if err != nil {
+					e2eskipper.Skipf("Test requires nodes that support attaching provider networks; network %s could not attach to node %s: %v", secondaryProviderNetwork.Name(), node.Name, err)
+				}
 			}
 			serverExternalContainerPort := infraprovider.Get().GetExternalContainerPort()
 			serverExternalContainerSpec := infraapi.ExternalContainer{
@@ -2275,8 +2286,9 @@ spec:
 		ginkgo.By("Selecting 2 schedulable nodes")
 		nodeList, err := e2enode.GetBoundedReadySchedulableNodes(ctx, cs, 2)
 		framework.ExpectNoError(err)
-		gomega.Expect(len(nodeList.Items)).To(gomega.BeNumerically(">", 1),
-			"need at least 2 nodes so the client sends traffic via the physical network")
+		if len(nodeList.Items) < 2 {
+			e2eskipper.Skipf("Test requires >= 2 Ready nodes so the client sends traffic via the physical network, but there are only %v nodes", len(nodeList.Items))
+		}
 		serverNodeName := nodeList.Items[0].Name
 		clientNodeName := nodeList.Items[1].Name
 
@@ -2530,12 +2542,13 @@ var _ = ginkgo.Describe("Service Hairpin SNAT", feature.Service, func() {
 		nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 2)
 		framework.ExpectNoError(err)
 		if len(nodes.Items) < 2 {
-			framework.Failf("Test requires >= 2 Ready nodes, but there are only %v nodes", len(nodes.Items))
+			e2eskipper.Skipf("Test requires >= 2 Ready nodes, but there are only %v nodes", len(nodes.Items))
 		}
-		ips := e2enode.CollectAddresses(nodes, v1.NodeInternalIP)
+		nodeIPs := e2enode.GetAddresses(&nodes.Items[1], v1.NodeInternalIP)
+		gomega.Expect(nodeIPs).NotTo(gomega.BeEmpty(), "second Ready node must have an InternalIP")
 		namespaceName = f.Namespace.Name
 		backendNodeName = nodes.Items[0].Name
-		nodeIP = ips[1]
+		nodeIP = nodeIPs[0]
 	})
 
 	ginkgo.It("Should ensure service hairpin traffic is SNATed to hairpin masquerade IP; Switch LB", func() {
@@ -2549,7 +2562,11 @@ var _ = ginkgo.Describe("Service Hairpin SNAT", feature.Service, func() {
 		svcIP, err = createServiceForPodsWithLabel(f, namespaceName, serviceHTTPPort, endpointHTTPPort, "ClusterIP", hairpinPodSel)
 		framework.ExpectNoError(err, fmt.Sprintf("unable to create service: service-for-pods, err: %v", err))
 
-		err = e2eendpointslice.WaitForEndpointCount(context.TODO(), f.ClientSet, namespaceName, "service-for-pods", 1)
+		svc, err := f.ClientSet.CoreV1().Services(namespaceName).Get(context.TODO(), "service-for-pods", metav1.GetOptions{})
+		framework.ExpectNoError(err, "failed to fetch service: service-for-pods")
+		// one backend pod -> one endpoint address per service IP family
+		numBackendPods := 1
+		err = e2eendpointslice.WaitForEndpointCount(context.TODO(), f.ClientSet, namespaceName, "service-for-pods", numBackendPods*len(svc.Spec.IPFamilies))
 		framework.ExpectNoError(err, fmt.Sprintf("service: service-for-pods never had an endpoint, err: %v", err))
 
 		ginkgo.By("by sending a TCP packet to service service-for-pods with type=ClusterIP in namespace " + namespaceName + " from backend pod " + backendName)
@@ -2586,15 +2603,27 @@ var _ = ginkgo.Describe("Service Hairpin SNAT", feature.Service, func() {
 		svcIP, err = createServiceForPodsWithLabel(f, namespaceName, serviceHTTPPort, hostNetPort, "NodePort", hairpinPodSel)
 		framework.ExpectNoError(err, fmt.Sprintf("unable to create service: service-for-pods, err: %v", err))
 
-		err = e2eendpointslice.WaitForEndpointCount(context.TODO(), f.ClientSet, namespaceName, "service-for-pods", 1)
-		framework.ExpectNoError(err, fmt.Sprintf("service: service-for-pods never had an endpoint, err: %v", err))
-
 		svc, err := f.ClientSet.CoreV1().Services(namespaceName).Get(context.TODO(), "service-for-pods", metav1.GetOptions{})
 		framework.ExpectNoError(err, "failed to fetch service: service-for-pods")
 
+		// one backend pod -> one endpoint address per service IP family
+		numBackendPods := 1
+		err = e2eendpointslice.WaitForEndpointCount(context.TODO(), f.ClientSet, namespaceName, "service-for-pods", numBackendPods*len(svc.Spec.IPFamilies))
+		framework.ExpectNoError(err, fmt.Sprintf("service: service-for-pods never had an endpoint, err: %v", err))
+
 		ginkgo.By("by sending a TCP packet to service service-for-pods with type=NodePort(" + nodeIP + ":" + fmt.Sprint(svc.Spec.Ports[0].NodePort) + ") in namespace " + namespaceName + " from node " + backendNodeName)
 
-		clientIP := pokeEndpointViaNode(backendNodeName, "http", nodeIP, hostNetPort, uint16(svc.Spec.Ports[0].NodePort), "clientip")
+		var clientIP string
+		err = wait.PollImmediate(2*time.Second, 30*time.Second, func() (bool, error) {
+			var pokeErr error
+			clientIP, pokeErr = tryPokeEndpointViaNode(backendNodeName, "http", nodeIP, hostNetPort, uint16(svc.Spec.Ports[0].NodePort), "clientip")
+			if pokeErr != nil || clientIP == "" {
+				return false, nil
+			}
+			return true, nil
+		})
+		framework.ExpectNoError(err, "timed out waiting for successful NodePort response")
+
 		clientIP, _, err = net.SplitHostPort(clientIP)
 		framework.ExpectNoError(err, "failed to parse client ip:port")
 
@@ -2634,7 +2663,7 @@ var _ = ginkgo.Describe("Load Balancer Service Tests with MetalLB", feature.Serv
 		nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 2)
 		framework.ExpectNoError(err)
 		if len(nodes.Items) < 2 {
-			framework.Failf("Test requires >= 2 Ready nodes, but there are only %v nodes", len(nodes.Items))
+			e2eskipper.Skipf("Test requires >= 2 Ready nodes, but there are only %v nodes", len(nodes.Items))
 		}
 		backendNodeName = nodes.Items[0].Name
 		nonBackendNodeName = nodes.Items[1].Name
@@ -3692,4 +3721,10 @@ func getServingAndReadyEndpointSliceAddresses(epSlice discoveryv1.EndpointSlice)
 		addresses.Insert(ep.Addresses[0])
 	}
 	return addresses
+}
+
+// hostnameMatchesNode matches an agnhost hostname against a node name,
+// accepting either the full node name or its short hostname.
+func hostnameMatchesNode(hostname, nodeName string) bool {
+	return hostname == nodeName || hostname == strings.Split(nodeName, ".")[0]
 }
