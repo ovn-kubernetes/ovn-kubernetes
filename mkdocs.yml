@@ -206,5 +206,6 @@ nav:
     - VRF-Lite Shared Gateway Mode with Uplinks: okeps/okep-6019-vrf-lite-shared-gateway-external-bridges.md
     - Disable Port Security: okeps/okep-3926-disable-port-security.md
     - OVN Observability API: okeps/okep-5212-ovnobserv-api.md
+    - EgressIP Node Selector: okeps/okep-6800-egressip-node-selector.md
   - Blog:
     - OVN-Kubernetes Blog: blog/index.md
