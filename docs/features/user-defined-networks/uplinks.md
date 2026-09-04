@@ -329,6 +329,27 @@ deployments, the DPU-local bridge interface is attached to the CUDN VRF on the
 DPU side. FRR peers in that VRF, and ovnkube reflects the routes learned in
 that VRF into the OVN gateway routers for the CUDN.
 
+On enslavement and release, OVN-Kubernetes migrates the interface's eligible
+unicast routes into and out of the VRF routing table. This includes the
+kernel-protocol prefix routes of `noprefixroute` addresses (for example on
+NetworkManager-managed interfaces) and excludes routes that OVN-Kubernetes or
+routing daemons such as FRR program per routing domain themselves. The
+migration is one-shot: an agent that keeps reconciling its routes only into
+the main table, such as NetworkManager on a lease renewal, leaves the migrated
+copy stale until the next enslavement.
+
+```text
+             OVN-Kubernetes           kernel              main-table agent
+ enslave     capture main routes ---> purges iface routes
+             restore into VRF
+ (running)                                                updates main only:
+                                                          VRF copy now stale
+ release     capture VRF routes ----> purges iface routes
+             restore into main
+ re-enslave  capture main routes ---> purges iface routes
+             restore into VRF: copy fresh again
+```
+
 Multiple Dynamic CUDNs may use the same Uplink with `targetVRF: auto` when
 their active node sets do not overlap. If more than one such CUDN becomes
 active on the same node, the Uplink bridge cannot be attached to both CUDN

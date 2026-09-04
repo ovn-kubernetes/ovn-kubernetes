@@ -447,23 +447,14 @@ var _ = ginkgo.Describe("Network Segmentation Uplink route advertisements", feat
 		testSuffix = framework.RandomSuffix()
 	})
 
+	// The NetworkManager addressing shape is not exercised here: on full-mode
+	// clusters the route-preservation table covers both addressing shapes.
 	ginkgo.It("uses the Uplink interface as the targetVRF auto BGP peering path", func() {
+		if isDPUUplinkE2E() {
+			e2eskipper.Skipf("full-mode Uplink bridge provisioning; the split DPU mode variant covers DPU")
+		}
 		nodes, err := f.ClientSet.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-		if isDPUUplinkE2E() {
-			schedulableNodes, err := e2enode.GetReadySchedulableNodes(context.Background(), f.ClientSet)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(schedulableNodes.Items).NotTo(gomega.BeEmpty())
-			runDPUUplinkVRFLiteRouteAdvertisements(
-				f,
-				ictx,
-				schedulableNodes.Items,
-				ipFamilySet,
-				testSuffix,
-			)
-			return
-		}
 
 		schedulableNodes, err := e2enode.GetBoundedReadySchedulableNodes(context.Background(), f.ClientSet, 2)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -566,7 +557,38 @@ var _ = ginkgo.Describe("Network Segmentation Uplink route advertisements", feat
 		}
 	})
 
-	ginkgo.It("preserves pre-existing Uplink interface routes across VRF enslavement and release", func(ctx ginkgo.SpecContext) {
+	// Both addressing shapes of the host-side Uplink VF are covered:
+	// kernel-owned, and NetworkManager-style (noprefixroute addresses with
+	// userspace-installed proto kernel prefix routes), which the VF has when
+	// NetworkManager manages it.
+	ginkgo.DescribeTable("uses the Uplink interface as the targetVRF auto BGP peering path in split DPU mode", func(ctx ginkgo.SpecContext, nmStyleAddressing bool) {
+		if !isDPUUplinkE2E() {
+			e2eskipper.Skipf("requires a split DPU deployment")
+		}
+		schedulableNodes, err := e2enode.GetReadySchedulableNodes(ctx, f.ClientSet)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(schedulableNodes.Items).NotTo(gomega.BeEmpty())
+		runDPUUplinkVRFLiteRouteAdvertisements(
+			f,
+			ictx,
+			schedulableNodes.Items,
+			ipFamilySet,
+			testSuffix,
+			nmStyleAddressing,
+		)
+	},
+		ginkgo.Entry("with kernel-owned interface addressing", false),
+		ginkgo.Entry("with NetworkManager-style interface addressing", true),
+	)
+
+	// The two addressing shapes cover both route-preservation regimes: with
+	// kernel-owned addressing the kernel regenerates the interface prefix
+	// routes in the target table itself and the migration tolerates them,
+	// while with NetworkManager-style addressing (noprefixroute, prefix
+	// routes installed from userspace as proto kernel) only the migration
+	// can carry the prefix routes across, and the default routes depend on
+	// them for their gateway resolution.
+	ginkgo.DescribeTable("preserves pre-existing Uplink interface routes across VRF enslavement and release", func(ctx ginkgo.SpecContext, nmStyleAddressing bool) {
 		if isDPUUplinkE2E() {
 			e2eskipper.Skipf("preserved-route Uplink e2e uses regular KIND bridge provisioning")
 		}
@@ -602,6 +624,20 @@ var _ = ginkgo.Describe("Network Segmentation Uplink route advertisements", feat
 		bridgeName := uplinkBridgeName("uppre" + testSuffix)
 		gomega.Expect(configureUplinkBridge(f, ictx, bridgeName, nodeIfaces)).To(gomega.Succeed())
 
+		nodeNames := make([]string, 0, len(nodeIfaces))
+		for nodeName := range nodeIfaces {
+			nodeNames = append(nodeNames, nodeName)
+		}
+
+		if nmStyleAddressing {
+			ginkgo.By("reshaping the Uplink bridge addressing to NetworkManager form")
+			bridgeByNode := make(map[string]string, len(nodeIfaces))
+			for nodeName := range nodeIfaces {
+				bridgeByNode[nodeName] = bridgeName
+			}
+			gomega.Expect(configureUplinkNMStyleAddressing(ictx, bridgeByNode)).To(gomega.Succeed())
+		}
+
 		server := infraapi.ExternalContainer{Name: serverName}
 		frr := infraapi.ExternalContainer{Name: networkName + "-frr"}
 		serverNetwork, err := infraprovider.Get().GetNetwork(serverNetworkName)
@@ -628,16 +664,23 @@ var _ = ginkgo.Describe("Network Segmentation Uplink route advertisements", feat
 			return "0.0.0.0/0"
 		}
 
+		prefixCIDRFor := func(iface infraapi.NetworkInterface, family utilnet.IPFamily) string {
+			ip, prefix := iface.IPv4, iface.IPv4Prefix
+			if family == utilnet.IPv6 {
+				ip, prefix = iface.IPv6, iface.IPv6Prefix
+			}
+			gomega.Expect(ip).NotTo(gomega.BeEmpty())
+			_, ipNet, err := net.ParseCIDR(ip + "/" + prefix)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			return ipNet.String()
+		}
+
 		ginkgo.By("serving a prefix from the BGP server without advertising it and installing default routes on the Uplink bridge")
 		// Serve the preserved prefix from the BGP server without advertising
 		// it over BGP, and install a default route through the FRR peer on
 		// the Uplink bridge before any enslavement. The default route is the
 		// state another agent (e.g. a DHCP client) would have configured on
 		// the interface, and the only path toward the preserved prefix.
-		nodeNames := make([]string, 0, len(nodeIfaces))
-		for nodeName := range nodeIfaces {
-			nodeNames = append(nodeNames, nodeName)
-		}
 		for _, family := range ipFamilySet.UnsortedList() {
 			preservedCIDR, preservedIP, frrIP := preservedFor(family)
 			serverIP := getFirstIPStringOfFamily(family, []string{serverIface.IPv4, serverIface.IPv6})
@@ -727,6 +770,27 @@ var _ = ginkgo.Describe("Network Segmentation Uplink route advertisements", feat
 			}
 		}
 
+		ginkgo.By("waiting for the interface prefix routes to be present in the CUDN VRF")
+		// With kernel-owned addressing the kernel regenerates the prefix
+		// routes in the VRF table itself; with NetworkManager-style
+		// addressing only the migration can put them there. Either way the
+		// default routes above depend on them for their gateway resolution.
+		for _, family := range ipFamilySet.UnsortedList() {
+			for _, node := range schedulableNodes.Items {
+				node := node
+				prefixCIDR := prefixCIDRFor(nodeIfaces[node.Name], family)
+				gomega.Eventually(func() error {
+					return uplinkKernelRouteShownIn(node.Name, "vrf "+networkName, prefixCIDR)
+				}).WithTimeout(uplinkTimeout).WithPolling(uplinkPoll).Should(
+					gomega.Succeed(),
+					"expected prefix route %s in CUDN VRF %s on node %s",
+					prefixCIDR,
+					networkName,
+					node.Name,
+				)
+			}
+		}
+
 		ginkgo.By("verifying VRF connectivity through the preserved default routes")
 		// Host traffic in the CUDN VRF rides the preserved default route:
 		// nothing advertises the preserved prefix over BGP, matching a
@@ -790,9 +854,21 @@ var _ = ginkgo.Describe("Network Segmentation Uplink route advertisements", feat
 					frrIP,
 					node.Name,
 				)
+				prefixCIDR := prefixCIDRFor(nodeIfaces[node.Name], family)
+				gomega.Eventually(func() error {
+					return uplinkKernelRouteShownIn(node.Name, "", prefixCIDR)
+				}).WithTimeout(uplinkTimeout).WithPolling(uplinkPoll).Should(
+					gomega.Succeed(),
+					"expected prefix route %s back in the main table on node %s",
+					prefixCIDR,
+					node.Name,
+				)
 			}
 		}
-	})
+	},
+		ginkgo.Entry("with kernel-owned interface addressing", false),
+		ginkgo.Entry("with NetworkManager-style interface addressing", true),
+	)
 })
 
 var _ = ginkgo.Describe("Uplink route advertisements with Dynamic UDN allocation", feature.RouteAdvertisementsDynamicUDN, feature.Uplink, func() {
@@ -1646,6 +1722,7 @@ func runDPUUplinkVRFLiteRouteAdvertisements(
 	schedulableNodes []corev1.Node,
 	ipFamilySet sets.Set[utilnet.IPFamily],
 	testSuffix string,
+	nmStyleAddressing bool,
 ) {
 	ginkgo.GinkgoHelper()
 
@@ -1660,6 +1737,20 @@ func runDPUUplinkVRFLiteRouteAdvertisements(
 	dpuHostNodes := filterNodesByLabel(schedulableNodes, uplinkDPUHostNodeLabel)
 	gomega.Expect(dpuHostNodes).NotTo(gomega.BeEmpty(), "expected at least one ready schedulable DPU host node")
 	nodeIfaces := collectDPUHostUplinkInterfaces(dpuHostNodes)
+
+	if nmStyleAddressing {
+		// The host-side Uplink VF can be managed by NetworkManager, which
+		// sets noprefixroute on the addresses it manages and installs their
+		// prefix routes itself, tagged proto kernel: reshape the host
+		// interface the same way, so that the enslavement must migrate those
+		// routes into the host-side CUDN VRF for the gateway programming to
+		// succeed.
+		hostInterfaceByNode := make(map[string]string, len(dpuHostNodes))
+		for _, node := range dpuHostNodes {
+			hostInterfaceByNode[node.Name] = nodeIfaces[node.Name].InfName
+		}
+		gomega.Expect(configureUplinkNMStyleAddressing(ictx, hostInterfaceByNode)).To(gomega.Succeed())
+	}
 
 	// Install a route on each DPU-host Uplink interface before any
 	// enslavement, standing in for routing state another agent (e.g. a DHCP
@@ -1766,6 +1857,26 @@ func runDPUUplinkVRFLiteRouteAdvertisements(
 			vrfName,
 			node.Name,
 		)
+	}
+
+	// The host interface's prefix routes are present in the host-side CUDN
+	// VRF for every enabled IP family: with kernel-owned addressing the
+	// kernel regenerates them there itself, while with NetworkManager-style
+	// noprefixroute addressing only the migration can put them there.
+	for _, family := range ipFamilySet.UnsortedList() {
+		for _, node := range dpuHostNodes {
+			node := node
+			prefixCIDR := nodeInterfacePrefixCIDR(node.Name, nodeIfaces[node.Name].InfName, family)
+			gomega.Eventually(func() error {
+				return uplinkKernelRouteShownIn(node.Name, "vrf "+vrfName, prefixCIDR)
+			}).WithTimeout(uplinkTimeout).WithPolling(uplinkPoll).Should(
+				gomega.Succeed(),
+				"expected prefix route %s in host-side CUDN VRF %s on node %s",
+				prefixCIDR,
+				vrfName,
+				node.Name,
+			)
+		}
 	}
 
 	pod := pods[0]
@@ -2234,21 +2345,131 @@ func configureUplinkStaticRoute(
 	return nil
 }
 
+// configureUplinkNMStyleAddressing reshapes the interfaces' global addresses
+// into NetworkManager form: noprefixroute addresses whose proto kernel prefix
+// routes the kernel does not regenerate across master changes. Cleanup hands
+// the prefix routes back to the kernel. Exotic routes (expires, linkdown,
+// ECMP) fail the reshape loudly.
+func configureUplinkNMStyleAddressing(ictx infraapi.Context, devByNode map[string]string) error {
+	ginkgo.GinkgoHelper()
+
+	// One script, both directions: the noprefixroute flag marks ownership,
+	// so forward reshapes unflagged addresses and cleanup undoes flagged
+	// ones. The OVN-Kubernetes masquerade addresses (169.254.0.0/17,
+	// fd69::/112) and their routes are excluded: ovnkube owns them.
+	reshape := func(nodeName, devName, flag, addrFilter, replayTolerance string) error {
+		return execNodeCommand(nodeName, `
+set -e
+dev=%[1]s
+# Snapshot the routes the address changes below purge; masquerade routes
+# stay out (replaying one can EEXIST against another interface's twin).
+v4routes=$(ip -4 route show table all dev $dev | grep -Ev 'table local|169\.254\.' || true)
+# v6 risks only the kernel prefix routes (see the flag change below).
+v6routes=$(ip -6 route show table all dev $dev proto kernel | grep -Ev '^fe80|table local|fd69:' || true)
+# v4 flags cannot change in place: delete and re-add, purging v4 routes.
+for addr in $(ip -o -4 addr show dev $dev scope global | grep -Ev ' 169\.254\.' | %[3]s | awk '{print $4}'); do
+	ip addr del $addr dev $dev
+	ip addr add $addr dev $dev%[2]s
+done
+# v6 flags change in place: only the address's own prefix route is lost.
+for addr in $(ip -o -6 addr show dev $dev scope global | grep -Ev ' fd69:' | %[3]s | awk '{print $4}'); do
+	ip addr change $addr dev $dev%[2]s
+done
+# The dev-filtered capture omits the dev token: re-state it.
+replay4() { while read -r route; do if [ -n "$route" ]; then ip -4 route replace $route dev $dev%[4]s; fi; done; }
+# Gateway-less routes first: the gateway routes resolve against them.
+echo "$v4routes" | grep -v via | replay4
+echo "$v4routes" | grep via | replay4
+# iproute2 omits the filtered proto from the capture: re-state it.
+echo "$v6routes" | while read -r route; do
+	if [ -n "$route" ]; then ip -6 route replace $route proto kernel dev $dev%[4]s; fi
+done`,
+			devName,
+			flag,
+			addrFilter,
+			replayTolerance,
+		)
+	}
+	// Registered before touching any node so a partial reshape still gets
+	// undone; replay is best-effort, ovnkube may be tearing down concurrently.
+	ictx.AddCleanUpFn(func() error {
+		var errs []error
+		for nodeName, devName := range devByNode {
+			if err := reshape(nodeName, devName, "", "grep noprefixroute", " || true"); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		return errors.Join(errs...)
+	})
+	for nodeName, devName := range devByNode {
+		if err := reshape(nodeName, devName, " noprefixroute", "grep -v noprefixroute", ""); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// uplinkKernelRouteShownIn returns nil when a proto kernel route toward the
+// given CIDR is present in the given routing table on the node. The CIDR
+// selects the address family.
+func uplinkKernelRouteShownIn(nodeName, tableSelector, cidr string) error {
+	return uplinkRouteMatchShownIn(nodeName, tableSelector, cidr, "proto kernel")
+}
+
+// nodeInterfacePrefixCIDR returns the network prefix of the first global
+// address of the given family on the node's interface.
+func nodeInterfacePrefixCIDR(nodeName, devName string, family utilnet.IPFamily) string {
+	ginkgo.GinkgoHelper()
+
+	familyFlag := "-4"
+	if family == utilnet.IPv6 {
+		familyFlag = "-6"
+	}
+	// Replicates the relevant fields of the json output of "ip -j addr show".
+	type addrInfo struct {
+		Local     string `json:"local"`
+		PrefixLen int    `json:"prefixlen"`
+	}
+	type ipAddrJSON struct {
+		AddrInfo []addrInfo `json:"addr_info"`
+	}
+
+	out, err := infraprovider.Get().ExecK8NodeCommand(nodeName, []string{
+		"ip", "-j", familyFlag, "addr", "show", "dev", devName, "scope", "global",
+	})
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	var parsed []ipAddrJSON
+	gomega.Expect(json.Unmarshal([]byte(out), &parsed)).To(gomega.Succeed(),
+		"failed to parse ip -j output for %s on node %s", devName, nodeName)
+	gomega.Expect(parsed).NotTo(gomega.BeEmpty())
+	gomega.Expect(parsed[0].AddrInfo).NotTo(gomega.BeEmpty(),
+		"expected a global %s address on %s of node %s", family, devName, nodeName)
+
+	_, ipNet, err := net.ParseCIDR(
+		fmt.Sprintf("%s/%d", parsed[0].AddrInfo[0].Local, parsed[0].AddrInfo[0].PrefixLen))
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	return ipNet.String()
+}
+
 // uplinkRouteShownIn returns nil when the given route is present in the given
 // routing table on the node. tableSelector is an `ip route show` scope
 // selector such as "vrf <name>", or empty for the main table.
 func uplinkRouteShownIn(nodeName, tableSelector, cidr, via string) error {
+	return uplinkRouteMatchShownIn(nodeName, tableSelector, cidr, "via "+via)
+}
+
+func uplinkRouteMatchShownIn(nodeName, tableSelector, routeSelector, matchSelector string) error {
 	family := ""
-	if utilnet.IsIPv6CIDRString(cidr) {
+	if utilnet.IsIPv6CIDRString(routeSelector) {
 		family = "-6 "
 	}
 	return execNodeCommand(
 		nodeName,
-		"ip %sroute show %s %s via %s | grep -q .",
+		"ip %sroute show %s %s %s | grep -q .",
 		family,
 		tableSelector,
-		cidr,
-		via,
+		routeSelector,
+		matchSelector,
 	)
 }
 
