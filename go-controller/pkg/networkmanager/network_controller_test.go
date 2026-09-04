@@ -494,7 +494,7 @@ func TestNetworkControllerClearsPendingNetworkRefOnDelete(t *testing.T) {
 	g.Expect(followupCalls).To(gomega.Equal(0))
 }
 
-func TestNetworkControllerStopsNetworkOnStartFailure(t *testing.T) {
+func TestNetworkControllerCleansStoppedNetworkAfterStartFailureAndDeletion(t *testing.T) {
 	g := gomega.NewWithT(t)
 	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 	t.Cleanup(func() {
@@ -533,12 +533,198 @@ func TestNetworkControllerStopsNetworkOnStartFailure(t *testing.T) {
 	err = nm.syncNetwork(networkName)
 	g.Expect(err).To(gomega.HaveOccurred())
 	g.Expect(err.Error()).To(gomega.ContainSubstring("failed to start network"))
+	failedState := nm.getNetworkState(networkName)
+	g.Expect(failedState.controller).ToNot(gomega.BeNil())
+	g.Expect(failedState.startFailed).To(gomega.BeTrue())
+
+	nm.setNetwork(networkName, nil)
+	g.Expect(nm.syncNetwork(networkName)).To(gomega.Succeed())
+	g.Expect(nm.getNetworkState(networkName).controller).To(gomega.BeNil())
 
 	tcm.Lock()
 	defer tcm.Unlock()
 	expectedNetworkKey := testNetworkKey(netInfo)
 	g.Expect(tcm.started).To(gomega.Equal([]string{expectedNetworkKey}))
 	g.Expect(tcm.stopped).To(gomega.Equal([]string{expectedNetworkKey}))
+	g.Expect(tcm.cleaned).To(gomega.Equal([]string{expectedNetworkKey}))
+}
+
+func TestNetworkControllerRetriesStartFailureWithoutTerminalCleanup(t *testing.T) {
+	g := gomega.NewWithT(t)
+	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+	t.Cleanup(func() {
+		g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+	})
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	config.OVNKubernetesFeature.EnableRouteAdvertisements = false
+
+	netConf := &ovncnitypes.NetConf{
+		NetConf: cnitypes.NetConf{
+			Name: "udn-net",
+			Type: "ovn-k8s-cni-overlay",
+		},
+		Topology: types.Layer3Topology,
+		Role:     types.NetworkRolePrimary,
+		NADName:  "ns1/primary",
+		Subnets:  "10.128.0.0/14",
+	}
+	netInfo, err := util.NewNetInfo(netConf)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	startErr := fmt.Errorf("start failed")
+	tcm := &testControllerManager{
+		controllers: map[string]NetworkController{},
+		defaultNetwork: &testNetworkController{
+			ReconcilableNetInfo: &util.DefaultNetInfo{},
+		},
+		raiseErrorWhenStartingController: startErr,
+	}
+	nm := newNetworkController("", "", tcm, nil)
+
+	mutableNetInfo := util.NewMutableNetInfo(netInfo)
+	mutableNetInfo.SetNADs(netConf.NADName)
+	networkName := mutableNetInfo.GetNetworkName()
+	nm.setNetwork(networkName, mutableNetInfo)
+
+	g.Expect(nm.syncNetwork(networkName)).To(gomega.MatchError(gomega.ContainSubstring("failed to start network")))
+
+	tcm.Lock()
+	tcm.raiseErrorWhenStartingController = nil
+	tcm.Unlock()
+	g.Expect(nm.syncNetwork(networkName)).To(gomega.Succeed())
+
+	state := nm.getNetworkState(networkName)
+	g.Expect(state.controller).ToNot(gomega.BeNil())
+	g.Expect(state.startFailed).To(gomega.BeFalse())
+	tcm.Lock()
+	defer tcm.Unlock()
+	expectedNetworkKey := testNetworkKey(netInfo)
+	g.Expect(tcm.started).To(gomega.Equal([]string{expectedNetworkKey, expectedNetworkKey}))
+	g.Expect(tcm.stopped).To(gomega.Equal([]string{expectedNetworkKey}))
+	g.Expect(tcm.cleaned).To(gomega.BeEmpty())
+}
+
+func TestNetworkControllerCleansFailedStartBeforeIncompatibleReplacement(t *testing.T) {
+	g := gomega.NewWithT(t)
+	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+	t.Cleanup(func() {
+		g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+	})
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+	config.OVNKubernetesFeature.EnableRouteAdvertisements = false
+	config.OVNKubernetesFeature.EnableUplink = true
+
+	netConf := &ovncnitypes.NetConf{
+		NetConf: cnitypes.NetConf{
+			Name: "udn-net",
+			Type: "ovn-k8s-cni-overlay",
+		},
+		Topology: types.Layer3Topology,
+		Role:     types.NetworkRolePrimary,
+		NADName:  "ns1/primary",
+		Subnets:  "10.128.0.0/14",
+		Uplink:   "uplink-a",
+	}
+	netInfo, err := util.NewNetInfo(netConf)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	startErr := fmt.Errorf("start failed")
+	tcm := &testControllerManager{
+		controllers: map[string]NetworkController{},
+		defaultNetwork: &testNetworkController{
+			ReconcilableNetInfo: &util.DefaultNetInfo{},
+		},
+		raiseErrorWhenStartingController: startErr,
+	}
+	nm := newNetworkController("", "", tcm, nil)
+
+	mutableNetInfo := util.NewMutableNetInfo(netInfo)
+	mutableNetInfo.SetNADs(netConf.NADName)
+	networkName := mutableNetInfo.GetNetworkName()
+	nm.setNetwork(networkName, mutableNetInfo)
+	g.Expect(nm.syncNetwork(networkName)).To(gomega.MatchError(gomega.ContainSubstring("failed to start network")))
+
+	replacementConf := *netConf
+	replacementConf.Uplink = "uplink-b"
+	replacementInfo, err := util.NewNetInfo(&replacementConf)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(util.AreNetworksCompatible(netInfo, replacementInfo)).To(gomega.BeFalse())
+	replacement := util.NewMutableNetInfo(replacementInfo)
+	replacement.SetNADs(replacementConf.NADName)
+	nm.setNetwork(networkName, replacement)
+
+	tcm.Lock()
+	tcm.raiseErrorWhenStartingController = nil
+	tcm.Unlock()
+	g.Expect(nm.syncNetwork(networkName)).To(gomega.Succeed())
+
+	tcm.Lock()
+	defer tcm.Unlock()
+	g.Expect(tcm.started).To(gomega.HaveLen(2))
+	g.Expect(tcm.stopped).To(gomega.HaveLen(1))
+	g.Expect(tcm.cleaned).To(gomega.HaveLen(1))
+}
+
+func TestNetworkControllerFinishesTerminalCleanupBeforeFailedStartRecreation(t *testing.T) {
+	g := gomega.NewWithT(t)
+	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+	t.Cleanup(func() {
+		g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+	})
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	config.OVNKubernetesFeature.EnableRouteAdvertisements = false
+
+	netConf := &ovncnitypes.NetConf{
+		NetConf: cnitypes.NetConf{
+			Name: "udn-net",
+			Type: "ovn-k8s-cni-overlay",
+		},
+		Topology: types.Layer3Topology,
+		Role:     types.NetworkRolePrimary,
+		NADName:  "ns1/primary",
+		Subnets:  "10.128.0.0/14",
+	}
+	netInfo, err := util.NewNetInfo(netConf)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	mutableNetInfo := util.NewMutableNetInfo(netInfo)
+	mutableNetInfo.SetNADs(netConf.NADName)
+
+	startErr := fmt.Errorf("start failed")
+	cleanupErr := fmt.Errorf("cleanup failed")
+	tcm := &testControllerManager{
+		controllers: map[string]NetworkController{},
+		defaultNetwork: &testNetworkController{
+			ReconcilableNetInfo: &util.DefaultNetInfo{},
+		},
+		raiseErrorWhenStartingController: startErr,
+	}
+	nm := newNetworkController("", "", tcm, nil)
+	networkName := mutableNetInfo.GetNetworkName()
+	nm.setNetwork(networkName, mutableNetInfo)
+	g.Expect(nm.syncNetwork(networkName)).To(gomega.MatchError(gomega.ContainSubstring("failed to start network")))
+
+	nm.setNetwork(networkName, nil)
+	tcm.Lock()
+	tcm.raiseErrorWhenCleaningController = cleanupErr
+	tcm.Unlock()
+	g.Expect(nm.syncNetwork(networkName)).To(gomega.MatchError(gomega.ContainSubstring("cleanup failed")))
+
+	nm.setNetwork(networkName, mutableNetInfo)
+	tcm.Lock()
+	tcm.raiseErrorWhenStartingController = nil
+	tcm.raiseErrorWhenCleaningController = nil
+	tcm.Unlock()
+	g.Expect(nm.syncNetwork(networkName)).To(gomega.Succeed())
+
+	state := nm.getNetworkState(networkName)
+	g.Expect(state.controller).ToNot(gomega.BeNil())
+	g.Expect(state.startFailed).To(gomega.BeFalse())
+	tcm.Lock()
+	defer tcm.Unlock()
+	g.Expect(tcm.started).To(gomega.HaveLen(2))
+	g.Expect(tcm.stopped).To(gomega.HaveLen(1))
+	g.Expect(tcm.cleaned).To(gomega.HaveLen(2))
 }
 
 // TestNetworkController_ConcurrentReconciliation validates that the networkReconciler

@@ -105,6 +105,10 @@ func newNetworkController(name, node string, cm ControllerManager, wf watchFacto
 type networkControllerState struct {
 	controller         NetworkController
 	stoppedAndDeleting bool
+	// startFailed retains a stopped controller whose Cleanup method still owns
+	// any resources left by Start. A retry may replace it without terminal
+	// cleanup, while deletion must keep retrying that cleanup.
+	startFailed bool
 }
 
 type networkController struct {
@@ -171,6 +175,9 @@ func (c *networkController) Stop() {
 		if networkControllerState.controller.GetNetworkName() == types.DefaultNetworkName {
 			// we don't own the lifecycle of the default network, so don't stop
 			// it
+			continue
+		}
+		if networkControllerState.stoppedAndDeleting || networkControllerState.startFailed {
 			continue
 		}
 		networkControllerState.controller.Stop()
@@ -250,24 +257,24 @@ func (c *networkController) getNetworkState(network string) *networkControllerSt
 	return state
 }
 
-func (c *networkController) getReconcilableNetworkState(network string) (ReconcilableNetworkController, bool) {
+func (c *networkController) getReconcilableNetworkState(network string) (ReconcilableNetworkController, bool, bool) {
 	if network == types.DefaultNetworkName {
-		return c.cm.GetDefaultNetworkController(), false
+		return c.cm.GetDefaultNetworkController(), false, false
 	}
 	c.RLock()
 	defer c.RUnlock()
 	state := c.networkControllers[network]
 	if state == nil {
-		return nil, false
+		return nil, false, false
 	}
-	return state.controller, state.stoppedAndDeleting
+	return state.controller, state.stoppedAndDeleting, state.startFailed
 }
 
 func (c *networkController) getControllerForNotify(networkName string) (NetworkController, bool) {
 	c.RLock()
 	defer c.RUnlock()
 	state := c.networkControllers[networkName]
-	if state == nil || state.controller == nil || state.stoppedAndDeleting {
+	if state == nil || state.controller == nil || state.stoppedAndDeleting || state.startFailed {
 		return nil, false
 	}
 	return state.controller, true
@@ -408,14 +415,22 @@ func (c *networkController) syncNetwork(network string) error {
 		klog.V(4).Infof("%s: finished syncing network %s, took %v", c.name, network, time.Since(startTime))
 	}()
 
-	have, stoppedAndDeleting := c.getReconcilableNetworkState(network)
+	have, stoppedAndDeleting, startFailed := c.getReconcilableNetworkState(network)
 	want := c.getNetwork(network)
-
 	compatible := util.AreNetworksCompatible(have, want)
+	retryingFailedStart := startFailed && !stoppedAndDeleting && want != nil && compatible
+	if retryingFailedStart {
+		// The stopped controller remains the cleanup owner until a replacement
+		// successfully adopts its compatible programming. It is not a running
+		// controller whose configuration can be reconciled in place.
+		have = nil
+		stoppedAndDeleting = false
+		compatible = false
+	}
 
 	// we will dispose of the old network if deletion is in progress or if
 	// non-reconcilable configuration changed
-	dispose := stoppedAndDeleting || !compatible
+	dispose := !retryingFailedStart && (startFailed || stoppedAndDeleting || !compatible)
 	if dispose {
 		err := c.deleteNetwork(network)
 		if err != nil {
@@ -457,10 +472,10 @@ func (c *networkController) ensureNetwork(network util.MutableNetInfo) error {
 	}
 
 	networkName := network.GetNetworkName()
-	reconcilable, _ := c.getReconcilableNetworkState(networkName)
+	reconcilable, _, startFailed := c.getReconcilableNetworkState(networkName)
 
 	// this might just be an update of reconcilable network configuration
-	if reconcilable != nil {
+	if reconcilable != nil && !startFailed {
 		err := reconcilable.Reconcile(network)
 		if err != nil {
 			return fmt.Errorf("failed to reconcile controller for network %s: %w", networkName, err)
@@ -478,10 +493,13 @@ func (c *networkController) ensureNetwork(network util.MutableNetInfo) error {
 		}
 		return fmt.Errorf("failed to create network %s: %w", networkName, err)
 	}
-
 	err = nc.Start(context.Background())
 	if err != nil {
 		nc.Stop()
+		c.setNetworkState(networkName, &networkControllerState{
+			controller:  nc,
+			startFailed: true,
+		})
 		return fmt.Errorf("failed to start network %s: %w", networkName, err)
 	}
 	c.setNetworkState(network.GetNetworkName(), &networkControllerState{controller: nc})
@@ -500,10 +518,11 @@ func (c *networkController) deleteNetwork(network string) error {
 	}
 	ctrl := have.controller
 	alreadyStopping := have.stoppedAndDeleting
+	startFailed := have.startFailed
 	have.stoppedAndDeleting = true
 	c.Unlock()
 
-	if !alreadyStopping {
+	if !alreadyStopping && !startFailed {
 		ctrl.Stop()
 	}
 

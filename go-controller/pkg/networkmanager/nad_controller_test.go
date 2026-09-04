@@ -212,7 +212,7 @@ func (tnc *testNetworkController) Cleanup() error {
 	defer tnc.tcm.Unlock()
 	fmt.Printf("cleaning up network: %s\n", testNetworkKey(tnc))
 	tnc.tcm.cleaned = append(tnc.tcm.cleaned, testNetworkKey(tnc))
-	return nil
+	return tnc.tcm.raiseErrorWhenCleaningController
 }
 
 func (tnc *testNetworkController) Reconcile(netInfo util.NetInfo) error {
@@ -367,6 +367,7 @@ type testControllerManager struct {
 
 	raiseErrorWhenCreatingController error
 	raiseErrorWhenStartingController error
+	raiseErrorWhenCleaningController error
 
 	valid []util.NetInfo
 }
