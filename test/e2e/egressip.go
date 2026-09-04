@@ -1006,7 +1006,7 @@ var _ = ginkgo.Describe("e2e egress IP validation", feature.EgressIP, func() {
 		   0. Set two nodes as available for egress
 		   1. Create an EgressIP object with two egress IPs defined
 		   2. Check that the status is of length two and both are assigned to different nodes
-		   3. Create two pods matching the EgressIP: one running on each of the egress nodes
+		   3. Create two pods matching the EgressIP: pod1 on a non-egress node and pod2 on an egress node
 		   4. Check connectivity from both to an external "node" and verify that the IPs are both of the above
 		   5. Check connectivity from one pod to the other and verify that the connection is achieved
 		   6. Check connectivity from both pods to the api-server (running hostNetwork:true) and verifying that the connection is achieved
@@ -1091,7 +1091,7 @@ spec:
 						framework.Failf("Step 2. Check that the status is of length two and both are assigned to different nodess, failed, err: both egress IPs have been assigned to the same node")
 					}
 
-					ginkgo.By("3. Create two pods matching the EgressIP: one running on each of the egress nodes")
+					ginkgo.By("3. Create two pods matching the EgressIP: pod1 on a non-egress node and pod2 on an egress node")
 					_, err = createGenericPodWithLabel(f, pod1Name, pod1Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
 					framework.ExpectNoError(err, "failed to create pod %s/%s", f.Namespace.Name, pod1Name)
 					_, err = createGenericPodWithLabel(f, pod2Name, pod2Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
@@ -1108,10 +1108,23 @@ spec:
 						return true, nil
 					})
 					framework.ExpectNoError(err, "Step 3. Create two pods matching the EgressIP: one running on each of the egress nodes, failed, err: %v", err)
-					var pod2IP string
+					var pod1IP, pod2IP string
 					if isClusterDefaultNetwork(netConfigParams) {
-						pod2IP = getPodAddress(pod2Name, f.Namespace.Name)
+						pod1IPNet, err := getPodIPWithRetry(f.ClientSet, isIPv6TestRun, f.Namespace.Name, pod1Name)
+						framework.ExpectNoError(err, "Step 3. failed to get pod1 IP, err: %v", err)
+						pod1IP = pod1IPNet.String()
+						pod2IPNet, err := getPodIPWithRetry(f.ClientSet, isIPv6TestRun, f.Namespace.Name, pod2Name)
+						framework.ExpectNoError(err, "Step 3. failed to get pod2 IP, err: %v", err)
+						pod2IP = pod2IPNet.String()
 					} else {
+						pod1IP, err = getPodAnnotationIPsForAttachmentByIndex(
+							f.ClientSet,
+							f.Namespace.Name,
+							pod1Name,
+							namespacedName(f.Namespace.Name, netConfigParams.name),
+							0,
+						)
+						framework.ExpectNoError(err, "Step 3. Create two UDN pods matching the EgressIP: one running on each of the egress nodes, failed, err: %v", err)
 						pod2IP, err = getPodAnnotationIPsForAttachmentByIndex(
 							f.ClientSet,
 							f.Namespace.Name,
@@ -1139,9 +1152,13 @@ spec:
 						}
 					}
 
-					ginkgo.By("5. Check connectivity from one pod to the other and verify that the connection is achieved")
+					ginkgo.By("5. Check connectivity from non-egress node pod to egress node pod and verify that the connection is achieved")
 					err = wait.PollImmediate(retryInterval, retryTimeout, targetPodAndTest(f.Namespace.Name, pod1Name, pod2Name, pod2IP, clusterNetworkHTTPPort))
-					framework.ExpectNoError(err, "Step 5. Check connectivity from one pod to the other and verify that the connection is achieved, failed, err: %v", err)
+					framework.ExpectNoError(err, "Step 5. Check connectivity from non-egress node pod to egress node pod, failed, err: %v", err)
+
+					ginkgo.By("5. Check connectivity from egress node pod to non-egress node pod and verify that the connection is achieved")
+					err = wait.PollImmediate(retryInterval, retryTimeout, targetPodAndTest(f.Namespace.Name, pod2Name, pod1Name, pod1IP, clusterNetworkHTTPPort))
+					framework.ExpectNoError(err, "Step 5. Check connectivity from egress node pod to non-egress node pod, failed, err: %v", err)
 
 					ginkgo.By("6. Check connectivity from both pods to the api-server (running hostNetwork:true) and verifying that the connection is achieved")
 					// CDN exposes either IPv4 and/or IPv6 API endpoint depending on cluster configuration. The network which we are testing may not support this IP family. Skip if unsupported.
