@@ -31,14 +31,34 @@ func getPodResourceInfo(pod *corev1.Pod, resourceName string) (*types.ResourceIn
 	return entry, nil
 }
 
-// GetPodPrimaryUDNDeviceID gets last deviceId of the specified resources allocated for the given Pod
-func GetPodPrimaryUDNDeviceID(pod *corev1.Pod, resourceName string) (string, error) {
+// GetPodPrimaryUDNDeviceID gets the last deviceId of the specified resources
+// allocated for the given Pod, skipping excludedDeviceID: the device already
+// consumed by another attachment of the same pod (the default network in DPU
+// mode), whose position in the allocation list is not deterministic. Devices
+// that multus handed to other NADs from the same pool are not visible here,
+// so only collisions with the default network are prevented.
+func GetPodPrimaryUDNDeviceID(pod *corev1.Pod, resourceName, excludedDeviceID string) (string, error) {
 	entry, err := getPodResourceInfo(pod, resourceName)
 	if err != nil {
 		return "", err
 	}
-	if len(entry.DeviceIDs) == 0 {
-		return "", fmt.Errorf("no device IDs found for pod %s/%s, resource %s", pod.Namespace, pod.Name, resourceName)
+	deviceID := pickDeviceID(entry.DeviceIDs, excludedDeviceID)
+	if deviceID == "" {
+		return "", fmt.Errorf("no available device IDs found for pod %s/%s, resource %s (allocated: %v, excluded: %q)",
+			pod.Namespace, pod.Name, resourceName, entry.DeviceIDs, excludedDeviceID)
 	}
-	return entry.DeviceIDs[len(entry.DeviceIDs)-1], nil
+	klog.V(4).Infof("Picked device ID %s for the primary UDN of pod %s/%s (allocated: %v, excluded: %q)",
+		deviceID, pod.Namespace, pod.Name, entry.DeviceIDs, excludedDeviceID)
+	return deviceID, nil
+}
+
+// pickDeviceID returns the last device ID that differs from excludedDeviceID,
+// or "" if there is none.
+func pickDeviceID(deviceIDs []string, excludedDeviceID string) string {
+	for i := len(deviceIDs) - 1; i >= 0; i-- {
+		if deviceIDs[i] != excludedDeviceID {
+			return deviceIDs[i]
+		}
+	}
+	return ""
 }

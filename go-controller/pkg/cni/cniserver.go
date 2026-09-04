@@ -427,7 +427,8 @@ func (s *Server) getPrimaryUDNPodRequest(originalPodRequest *PodRequest) (*PodRe
 		if err != nil {
 			return nil, fmt.Errorf("failed to get pod %s/%s: %v", podNamespace, podName, err)
 		}
-		deviceID, err := udn.GetPodPrimaryUDNDeviceID(pod, resourceName)
+		// exclude the device the default network already consumed
+		deviceID, err := udn.GetPodPrimaryUDNDeviceID(pod, resourceName, originalPodRequest.CNIConf.DeviceID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get primary UDN device ID for pod %s/%s resource %s: %v",
 				pod.Namespace, pod.Name, resourceName, err)
