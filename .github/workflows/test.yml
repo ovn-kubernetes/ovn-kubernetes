@@ -373,6 +373,104 @@ jobs:
         gover
         GO111MODULE=off goveralls -coverprofile=gover.coverprofile -service=github
 
+  ssh-infra-provider:
+    name: ssh-infra-provider
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    needs: [ build-pr ]
+    env:
+      JOB_NAME: ssh-infra-provider
+      PLATFORM_IPV4_SUPPORT: "true"
+      PLATFORM_IPV6_SUPPORT: "false"
+      OVN_GATEWAY_MODE: shared
+      OVN_IMAGE: ovn-daemonset-fedora:pr
+      OVN_TEST_SSH_HOST: 127.0.0.1
+      OVN_TEST_SSH_USER: runner
+      OVN_TEST_SSH_KEY: /home/runner/.ssh/id_ed25519
+    steps:
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v6
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: 'go-controller/go.mod'
+        cache: false
+      id: go
+
+    - name: Set up environment
+      run: |
+        export GOPATH=$(go env GOPATH)
+        echo "GOPATH=$GOPATH" >> $GITHUB_ENV
+        echo "$GOPATH/bin" >> $GITHUB_PATH
+
+    - name: Run infra provider unit tests
+      working-directory: test/e2e
+      run: go test -race ./infraprovider/...
+
+    - name: Free up disk space
+      uses: ./.github/actions/free-disk-space
+
+    - name: Set up SSH to localhost
+      run: |
+        set -euxo pipefail
+        mkdir -p ~/.ssh
+        chmod 700 ~/.ssh
+        ssh-keygen -t ed25519 -N "" -f "${OVN_TEST_SSH_KEY}"
+        chmod 600 "${OVN_TEST_SSH_KEY}"
+        cat "${OVN_TEST_SSH_KEY}.pub" >> ~/.ssh/authorized_keys
+        chmod 600 ~/.ssh/authorized_keys
+        sudo apt-get update
+        sudo apt-get install -y openssh-server
+        sudo systemctl enable --now ssh
+        ssh-keyscan -H 127.0.0.1 >> ~/.ssh/known_hosts
+        chmod 644 ~/.ssh/known_hosts
+        echo "OVN_TEST_SSH_KNOWN_HOSTS=${HOME}/.ssh/known_hosts" >> $GITHUB_ENV
+        ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new "${OVN_TEST_SSH_USER}@${OVN_TEST_SSH_HOST}" true
+
+    - name: Download test-image-pr
+      uses: actions/download-artifact@v8
+      with:
+        name: test-image-pr
+
+    - name: Disable containerd image store
+      run: |
+        sudo mkdir -p /etc/docker
+        [ -s "/etc/docker/daemon.json" ] && {
+          cat "/etc/docker/daemon.json" | jq '. + {"features":{"containerd-snapshotter": false}}' | sudo tee /etc/docker/daemon.$$
+        } || {
+          echo '{"features":{"containerd-snapshotter": false}}' | sudo tee /etc/docker/daemon.$$
+        }
+        sudo mv -f /etc/docker/daemon.$$ /etc/docker/daemon.json
+        sudo systemctl restart docker
+
+    - name: Load docker image
+      run: |
+        docker load --input ${CI_IMAGE_PR_TAR} && rm -rf ${CI_IMAGE_PR_TAR}
+        docker images || true
+
+    - name: kind setup
+      timeout-minutes: 30
+      run: make -C test install-kind
+
+    - name: Run focused e2e through the ssh provider
+      timeout-minutes: 20
+      env:
+        OVN_TEST_INFRA_PROVIDER: ssh
+      run: make -C test control-plane WHAT="Pod to external server PMTUD.*TCP"
+
+    - name: Export kind logs
+      if: always()
+      run: ./contrib/export-kind-logs.sh
+
+    - name: Upload kind logs
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}
+        path: /tmp/kind/logs
+
   ovn-upgrade-e2e:
     name: Upgrade OVN from Base to PR branch based image
     if: github.event_name != 'schedule'
