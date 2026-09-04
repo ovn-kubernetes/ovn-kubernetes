@@ -386,10 +386,12 @@ echo "Using BGP_SERVER_NET_SUBNET_IPV4=${BGP_SERVER_NET_SUBNET_IPV4}"
 cleanup_bgp_artifacts "${KIND_EXPERIMENTAL_PROVIDER}"
 
 pushd "${DPU_SIM_PATH}"
+# shellcheck disable=SC2086
 ./bin/dpu-sim \
   --config "${DPU_SIM_CONFIG}" \
   --ovn-kubernetes-path "${OVN_KUBERNETES_PATH}" \
-  --ovnk-mode values-only
+  --ovnk-mode values-only \
+  ${DPU_SIM_EXTRA_ARGS:-}
 
 install_ovnk_host
 

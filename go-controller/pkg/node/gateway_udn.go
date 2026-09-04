@@ -53,6 +53,10 @@ const (
 	// waitForPatchPortTimeout is the maximum time we wait for a UDN's patch
 	// port to be created by OVN.
 	waitForPatchPortTimeout = 30 * time.Second
+	// uplinkGatewayRepollInterval paces how often a network missing the
+	// Uplink default gateways it derives its default routes from re-checks
+	// the UplinkState for them (see UserDefinedNetworkGateway.run).
+	uplinkGatewayRepollInterval = 30 * time.Second
 	// UDNMasqueradeIPRulePriority the priority of the ip routing rules created for masquerade IP address
 	// allocated for every user defined network.
 	UDNMasqueradeIPRulePriority = 2000
@@ -457,7 +461,7 @@ func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 
 	// Run gateway reconciliation only after initial programming and its
 	// aggregate readiness update have both succeeded.
-	udng.run()
+	udng.run(udng.wantsMissingUplinkDefaultGateways(udng.nextHops))
 	return nil
 }
 
@@ -1072,7 +1076,7 @@ func (udng *UserDefinedNetworkGateway) getDefaultRouteExceptIfVRFLite() ([]netli
 	// If the network is advertised on a non default VRF then we should only consider routes received from external BGP
 	// device and not send any traffic based on default route similar to one present in default VRF. This is more important
 	// for VRF-Lite usecase where we need traffic to leave from vlan device instead of default gateway interface.
-	if udng.isNetworkAdvertised && !udng.isNetworkAdvertisedToDefaultVRF {
+	if udng.isAdvertisedToNonDefaultVRF() {
 		return nil, nil
 	}
 	return udng.getDefaultRoute()
@@ -1203,9 +1207,36 @@ func generateIPRuleForUDNSubnet(udnIP *net.IPNet, isIPv6 bool, vrfTableId uint) 
 	}
 }
 
-func (udng *UserDefinedNetworkGateway) run() {
+// run starts the gateway reconcile loop. For Uplink networks the loop also
+// re-polls the UplinkState on a fixed interval while the network misses
+// needed default gateways or its last reconcile failed, and reconciles once
+// the published gateways differ from the programmed next hops.
+func (udng *UserDefinedNetworkGateway) run(repollUplinkGateways bool) {
 	go func() {
-		for range udng.reconcile {
+		var repoll <-chan time.Time
+		if repollUplinkGateways {
+			repoll = time.After(uplinkGatewayRepollInterval)
+		}
+		retryFailedReconcile := false
+		for {
+			select {
+			case _, open := <-udng.reconcile:
+				if !open {
+					return
+				}
+			case <-repoll:
+				if !retryFailedReconcile {
+					changed, err := udng.uplinkDefaultGatewaysChanged()
+					if err != nil || !changed {
+						// An unreadable UplinkState is re-checked later
+						// rather than reconciled: the network may be getting
+						// deleted, and its teardown closes the reconcile
+						// channel, which ends the loop.
+						repoll = time.After(uplinkGatewayRepollInterval)
+						continue
+					}
+				}
+			}
 			reconcile := udng.doReconcile
 			if udng.Uplink() != "" {
 				reconcile = func() error {
@@ -1231,8 +1262,85 @@ func (udng *UserDefinedNetworkGateway) run() {
 			if err != nil {
 				klog.Errorf("Failed to reconcile gateway for network %s: %v", udng.GetNetworkName(), err)
 			}
+			repoll = nil
+			if udng.Uplink() != "" {
+				// A failed reconcile is retried on the same interval: this
+				// loop has no other trigger to pick up where it left off.
+				retryFailedReconcile = err != nil
+				missing, missingErr := udng.missingUplinkDefaultGateways()
+				if missing && missingErr == nil {
+					klog.V(5).Infof("Network %s derives its default routes from Uplink default gateways that "+
+						"are not discovered yet, re-polling", udng.GetNetworkName())
+				}
+				if retryFailedReconcile || missingErr != nil || missing {
+					repoll = time.After(uplinkGatewayRepollInterval)
+				}
+			}
 		}
 	}()
+}
+
+// uplinkDefaultGatewaysChanged reports whether the UplinkState publishes a
+// different default gateway set than the network last programmed its next
+// hops from.
+func (udng *UserDefinedNetworkGateway) uplinkDefaultGatewaysChanged() (bool, error) {
+	if udng.Uplink() == "" {
+		return false, nil
+	}
+	resolved, err := udng.resolveUplinkGateway(config.IsModeDPU() || config.IsModeFull())
+	if err != nil {
+		return false, err
+	}
+	return !util.IsIPsEqual(udng.nextHops, resolved.defaultGateways), nil
+}
+
+// missingUplinkDefaultGateways reports whether the network derives default
+// routes from Uplink default gateways that the UplinkState has not published
+// yet.
+func (udng *UserDefinedNetworkGateway) missingUplinkDefaultGateways() (bool, error) {
+	if udng.Uplink() == "" {
+		return false, nil
+	}
+	resolved, err := udng.resolveUplinkGateway(config.IsModeDPU() || config.IsModeFull())
+	if err != nil {
+		return false, err
+	}
+	return udng.wantsMissingUplinkDefaultGateways(resolved.defaultGateways), nil
+}
+
+// wantsMissingUplinkDefaultGateways reports whether one of the network's IP
+// families derives its default route from an Uplink default gateway (see
+// getDefaultRouteExceptIfVRFLite) that is missing from gateways.
+func (udng *UserDefinedNetworkGateway) wantsMissingUplinkDefaultGateways(gateways []net.IP) bool {
+	if udng.Uplink() == "" {
+		return false
+	}
+	if udng.isAdvertisedToNonDefaultVRF() {
+		return false
+	}
+	hasV4, hasV6 := udng.IPMode()
+	return missingGatewayFamilies(gateways, hasV4, hasV6) != ""
+}
+
+// missingGatewayFamilies names the requested IP families ("IPv4", "IPv6" or
+// "IPv4/IPv6") that have no default gateway in gateways, or "" if none.
+func missingGatewayFamilies(gateways []net.IP, wantV4, wantV6 bool) string {
+	for _, gateway := range gateways {
+		if utilnet.IsIPv6(gateway) {
+			wantV6 = false
+		} else {
+			wantV4 = false
+		}
+	}
+	switch {
+	case wantV4 && wantV6:
+		return "IPv4/IPv6"
+	case wantV4:
+		return "IPv4"
+	case wantV6:
+		return "IPv6"
+	}
+	return ""
 }
 
 // Reconcile signals doReconcile for advertised-state updates (VRF, isolation,
@@ -1257,6 +1365,29 @@ func (udng *UserDefinedNetworkGateway) doReconcile() error {
 	}
 
 	udng.updateAdvertisementStatus()
+
+	// The default routes programmed below follow the advertisement status,
+	// so refresh the Uplink next hops from the current UplinkState: the
+	// gateways may have changed since the network was added, e.g. discovered
+	// after the network came up without them, or newly needed by a network
+	// that just stopped being advertised outside the default VRF.
+	if udng.Uplink() != "" {
+		resolved, err := udng.resolveUplinkGateway(config.IsModeDPU() || config.IsModeFull())
+		if err != nil {
+			return err
+		}
+		// Route programming below only adds routes, so on a gateway change
+		// the managed default routes derived from the previous next hops
+		// must be removed first.
+		if (config.IsModeDPUHost() || config.IsModeFull()) &&
+			!util.IsIPsEqual(udng.nextHops, resolved.defaultGateways) {
+			if err := udng.removeManagedDefaultRoutesFromVRF(); err != nil {
+				return fmt.Errorf("failed to remove the stale default routes of network %s: %w",
+					udng.GetNetworkName(), err)
+			}
+		}
+		udng.nextHops = resolved.defaultGateways
+	}
 
 	if config.IsModeDPU() || config.IsModeFull() {
 		// update bridge configuration
@@ -1341,10 +1472,15 @@ func (udng *UserDefinedNetworkGateway) ensureDPUVRF() error {
 	return nil
 }
 
+// isAdvertisedToNonDefaultVRF reports whether the network is advertised into
+// a non-default VRF (VRF-Lite), where BGP-imported routes drive its external
+// reachability instead of the shared gateway default route.
+func (udng *UserDefinedNetworkGateway) isAdvertisedToNonDefaultVRF() bool {
+	return udng.isNetworkAdvertised && !udng.isNetworkAdvertisedToDefaultVRF
+}
+
 func (udng *UserDefinedNetworkGateway) shouldEnslaveUplinkGatewayToVRF() bool {
-	return udng.Uplink() != "" &&
-		udng.isNetworkAdvertised &&
-		!udng.isNetworkAdvertisedToDefaultVRF
+	return udng.Uplink() != "" && udng.isAdvertisedToNonDefaultVRF()
 }
 
 func (udng *UserDefinedNetworkGateway) reconcileUplinkGatewayVRFSlave(vrfDeviceName string) error {
@@ -1438,7 +1574,7 @@ func (udng *UserDefinedNetworkGateway) updateUDNVRFIPRoute() error {
 	vrfName := util.GetNetworkVRFName(udng.NetInfo)
 
 	switch {
-	case udng.isNetworkAdvertised && !udng.isNetworkAdvertisedToDefaultVRF:
+	case udng.isAdvertisedToNonDefaultVRF():
 		// Remove default route for networks advertised to non-default VRF
 		if err := udng.removeManagedDefaultRoutesFromVRF(); err != nil {
 			return fmt.Errorf("failed to remove default route from VRF %s for network %s: %v",

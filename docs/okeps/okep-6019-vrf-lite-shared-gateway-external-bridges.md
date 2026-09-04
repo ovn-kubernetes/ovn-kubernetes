@@ -381,9 +381,16 @@ moving the common gateway fields under `ovsBridge`.
   IDs or host PCI addresses.
 * `ipAddresses`: host-side shared gateway IP addresses discovered from the selected host interface.
 * `defaultGateways`: default route next-hop IPs discovered from host routing for the selected host interface, when
-  present. This maps to `next-hops` in the existing `l3-gateway-config` shape when internal compatibility requires it. If
-  no default route exists, this field can be empty; egress can still work for destinations covered by BGP-learned routes
-  imported by OVN-Kubernetes. When `RouteAdvertisements targetVRF: auto` resolves the CUDN to per-CUDN VRF-Lite
+  present. Discovery reads the host interface's routes from the routing table they live in: the VRF's table when the
+  interface is enslaved to a VRF, the main table otherwise. This maps to `next-hops` in the existing `l3-gateway-config`
+  shape when internal compatibility requires it. If no default route exists, this field can be empty; the Uplink still
+  resolves, no condition degrades, and egress can still work for destinations covered by BGP-learned routes imported by
+  OVN-Kubernetes — an empty field is the visible signal that no default route was discovered, and platform monitoring
+  can alert on it where one is expected. Because host route changes generate no watch events, discovery keeps
+  re-polling the host routes on a fixed interval while any IP family the host interface has an address for is missing
+  its default gateway — quietly, since an uplink can legitimately stay in that state — and publishes the default
+  gateways as soon as they appear; the per-network gateway reconcile loops then pick them up and add the default routes
+  for the networks that derive them from this field. When `RouteAdvertisements targetVRF: auto` resolves the CUDN to per-CUDN VRF-Lite
   isolation, OVN-Kubernetes does not install the discovered default gateway as the CUDN VRF default route; BGP-imported
   routes drive external reachability for that isolated VRF. For `targetVRF: default` or no matching `RouteAdvertisements`,
   normal shared gateway default-route behavior remains.
@@ -1012,11 +1019,16 @@ path.
   `UplinkState` reports `Resolved=False`. Retries continue while unresolved: discovery reports the failure in the
   `UplinkState` and returns an error, and its controller retries with rate-limited backoff and unbounded attempts,
   re-polling admin-owned host and OVS state, which generates no Kubernetes watch events. Once a side reports success,
-  its published data is refreshed on the next Kubernetes-triggered reconcile.
+  its published data is refreshed on the next Kubernetes-triggered reconcile, with one exception: while the discovered
+  `status.defaultGateways` is missing a default gateway for one of the host interface's address families, the
+  netlink-discovering side publishes success and schedules its own delayed rediscovery, so a default route added later
+  on the host is picked up without a Kubernetes event.
 * Per-node failures are reported on the matching `UplinkState`; `Uplink.status.conditions` reports aggregate health only.
 * If an admin deletes or changes the OVS bridge, OVN-Kubernetes does not recreate or repair the bridge. While discovery
   is unresolved, it updates status and retries validation. A converged `Resolved=True` status is not re-validated until
-  the next Kubernetes event or ovnkube-node restart triggers a reconcile.
+  the next Kubernetes event or ovnkube-node restart triggers a reconcile, except while `status.defaultGateways` is
+  missing a default gateway for one of the host interface's address families, when discovery keeps re-polling the host
+  routes on a fixed interval.
 * If an admin requests deletion of a `Uplink` while one or more CUDNs reference it, OVN-Kubernetes keeps the `Uplink`
   finalizer and deletion remains pending. This prevents accidental disruption of active CUDNs. Since `spec.uplinks` is
   immutable in this OKEP, clearing the reference requires deleting or recreating the CUDN without that `Uplink`. Once no

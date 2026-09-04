@@ -225,6 +225,127 @@ var _ = ginkgo.Describe("Network Segmentation Uplink default-VRF egress", featur
 			"expected VRF device %s on node %s", vrfName, longNamePod.Spec.NodeName)
 	})
 
+	ginkgo.It("runs a CUDN without Uplink default gateways and adds its default routes when they appear", func(ctx ginkgo.SpecContext) {
+		nodes, err := f.ClientSet.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		schedulableNodes, err := e2enode.GetBoundedReadySchedulableNodes(ctx, f.ClientSet, 2)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(len(schedulableNodes.Items)).To(gomega.BeNumerically(">=", 2),
+			"the east-west check needs pods on two different nodes")
+
+		uplinkAlloc, err := allocators.AllocateBGP(f, ictx)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		uplinkNetwork, nodeIfaces := setupUplinkNetwork(
+			ictx,
+			nodes.Items,
+			ipFamilySet,
+			"upnet"+testSuffix,
+			[]string{uplinkAlloc.BGPPeerSubnet, uplinkAlloc.BGPPeerSubnet6},
+		)
+
+		// Provision the Uplink bridge WITHOUT its default routes: discovery
+		// must still resolve the Uplink and publish no default gateways.
+		bridgeName := uplinkBridgeName("upgw" + testSuffix)
+		gomega.Expect(configureUplinkBridge(f, ictx, bridgeName, nodeIfaces)).To(gomega.Succeed())
+
+		uplinkName := "uplink" + testSuffix
+		createUplink(f, ictx, uplinkName, nodes.Items, nodeIfaces, bridgeName)
+		waitForUplinkStatesResolved(f, uplinkName, bridgeName, nodes.Items)
+		waitForUplinkStatesNoDefaultGateways(f, uplinkName, nodes.Items)
+
+		serverName := "upsrv" + testSuffix
+		server, err := ictx.CreateExternalContainer(infraapi.ExternalContainer{
+			Name:    serverName,
+			Image:   images.AgnHost(),
+			CmdArgs: []string{"netexec"},
+			Network: uplinkNetwork,
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		networkName := "upgw" + testSuffix
+		bgpAlloc, err := allocators.AllocateBGP(f, ictx)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		networkSpec := uplinkLayer3NetworkSpec(ipFamilySet, bgpAlloc.UDNSubnet, bgpAlloc.UDNSubnet6)
+		namespace, err := createUplinkNamespace(
+			f,
+			ictx,
+			"uplink-default",
+			networkName,
+		)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(createUplinkCUDN(
+			f,
+			ictx,
+			namespace,
+			networkName,
+			networkSpec,
+			nil,
+			uplinkName,
+		)).To(gomega.Succeed())
+
+		// The network must come up and carry east-west traffic even without
+		// the default gateways: only the default route is missing.
+		clientPod := createUplinkNetexecPod(
+			f,
+			namespace.Name,
+			"client-"+networkName,
+			schedulableNodes.Items[0].Name,
+		)
+		serverPod := createUplinkNetexecPod(
+			f,
+			namespace.Name,
+			"server-"+networkName,
+			schedulableNodes.Items[1].Name,
+		)
+		for _, family := range ipFamilySet.UnsortedList() {
+			serverPodIP, err := getPodAnnotationIPsForAttachmentByIPFamily(
+				f.ClientSet,
+				namespace.Name,
+				serverPod.Name,
+				namespacedName(namespace.Name, networkName),
+				family,
+			)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(serverPodIP).NotTo(gomega.BeEmpty())
+			uplinkPodToHostnameAndExpect(clientPod, serverPodIP, serverPod.Name)
+		}
+
+		// A default gateway is not required: an uplink without one is valid
+		// (BGP-imported routes can drive external reachability), so no
+		// condition degrades. Its absence is visible only as the empty
+		// status.defaultGateways field.
+		for _, pod := range []*corev1.Pod{clientPod, serverPod} {
+			waitForUplinkStateGatewayCondition(
+				f,
+				uplinkName,
+				pod.Spec.NodeName,
+				metav1.ConditionTrue,
+				uplinkv1alpha1.UplinkStateReasonGatewayConfigured,
+			)
+		}
+		waitForCUDNUplinksReady(f, networkName)
+
+		// Restore the default routes: discovery re-polls and publishes the
+		// gateways, and the per-network gateway reconcile loops pick them up
+		// and add the networks' default routes.
+		gomega.Expect(configureUplinkBridgeDefaultRoutes(
+			ictx,
+			bridgeName,
+			nodeIfaces,
+		)).To(gomega.Succeed())
+		waitForUplinkStatesDefaultGateways(f, uplinkName, nodes.Items, ipFamilySet)
+
+		for _, family := range ipFamilySet.UnsortedList() {
+			serverIP := getFirstIPStringOfFamily(family, []string{server.IPv4, server.IPv6})
+			gomega.Expect(serverIP).NotTo(gomega.BeEmpty())
+			nodeIface, ok := nodeIfaces[clientPod.Spec.NodeName]
+			gomega.Expect(ok).To(gomega.BeTrue(), "expected Uplink interface for node %s", clientPod.Spec.NodeName)
+			expectedSourceIP := getFirstIPStringOfFamily(family, []string{nodeIface.IPv4, nodeIface.IPv6})
+			gomega.Expect(expectedSourceIP).NotTo(gomega.BeEmpty())
+			uplinkPodToClientIPAndExpect(clientPod, serverIP, expectedSourceIP)
+		}
+	})
+
 	ginkgo.It("recreates an UplinkState deleted out of band", func() {
 		env := provisionUplinkWithActiveCUDN(f, ictx, ipFamilySet, testSuffix, "updel")
 		node, uplinkName, bridgeName, networkName := env.node, env.uplinkName, env.bridgeName, env.networkName
@@ -766,6 +887,12 @@ var _ = ginkgo.Describe("Network Segmentation Uplink route advertisements", feat
 			"expected preserved default route to remain in CUDN VRF %s",
 			networkName,
 		)
+
+		ginkgo.By("verifying discovery still publishes the default gateways from the VRF routing table")
+		// Rediscovery after enslavement reads the interface's routes from
+		// the CUDN VRF's routing table, where the preserved default routes
+		// now live: the published default gateways must not be dropped.
+		waitForUplinkStatesDefaultGateways(f, uplinkName, schedulableNodes.Items, ipFamilySet)
 
 		ginkgo.By("deleting the RouteAdvertisements and waiting for the routes to return to the main table")
 		// Deleting the RouteAdvertisements moves the network back to the
@@ -1333,7 +1460,8 @@ var _ = ginkgo.Describe("Network Segmentation Uplink split DPU status conditions
 
 		ginkgo.By("creating the host interface and waiting for host discovery to recover")
 		ictx.AddCleanUpFn(func() error {
-			return runNodeCommand(node.Name, "ip link del %s || true", missingIface)
+			_, err := execNodeCommand(node.Name, "ip link del %s || true", missingIface)
+			return err
 		})
 		createIface := fmt.Sprintf(
 			"ip link add %[1]s type dummy && ip addr add 192.0.2.1/24 dev %[1]s", missingIface)
@@ -1341,7 +1469,7 @@ var _ = ginkgo.Describe("Network Segmentation Uplink split DPU status conditions
 			createIface += fmt.Sprintf(" && ip addr add 2001:db8:e2e::1/64 dev %s", missingIface)
 		}
 		createIface += fmt.Sprintf(" && ip link set %s up", missingIface)
-		gomega.Expect(runNodeCommand(node.Name, "%s", createIface)).To(gomega.Succeed())
+		gomega.Expect(execNodeCommand(node.Name, "%s", createIface)).Error().To(gomega.Succeed())
 
 		gomega.Eventually(func() error {
 			state, err := getUplinkState(f, missingUplink, node.Name)
@@ -1381,7 +1509,7 @@ var _ = ginkgo.Describe("Network Segmentation Uplink split DPU status conditions
 		// macAddress would keep feeding the DPU's bridge matching. Link
 		// deletion generates no Kubernetes events and a successful side does
 		// not retry, so force a reconcile with a node label change.
-		gomega.Expect(runNodeCommand(node.Name, "ip link del %s", missingIface)).To(gomega.Succeed())
+		gomega.Expect(execNodeCommand(node.Name, "ip link del %s", missingIface)).Error().To(gomega.Succeed())
 		pokeLabel := "e2e.k8s.ovn.org/uplink-poke"
 		e2enode.AddOrUpdateLabelOnNode(f.ClientSet, node.Name, pokeLabel, testSuffix)
 		ginkgo.DeferCleanup(e2enode.RemoveLabelOffNode, f.ClientSet, node.Name, pokeLabel)
@@ -1523,7 +1651,8 @@ var _ = ginkgo.Describe("Network Segmentation Uplink split DPU status conditions
 
 		macIface := "upm" + testSuffix
 		ictx.AddCleanUpFn(func() error {
-			return runNodeCommand(node.Name, "ip link del %s || true", macIface)
+			_, err := execNodeCommand(node.Name, "ip link del %s || true", macIface)
+			return err
 		})
 		createIface := fmt.Sprintf(
 			"ip link add %[1]s address %[2]s type dummy && ip addr add 192.0.2.10/24 dev %[1]s",
@@ -1532,7 +1661,7 @@ var _ = ginkgo.Describe("Network Segmentation Uplink split DPU status conditions
 			createIface += fmt.Sprintf(" && ip addr add 2001:db8:e2e::10/64 dev %s", macIface)
 		}
 		createIface += fmt.Sprintf(" && ip link set %s up", macIface)
-		gomega.Expect(runNodeCommand(node.Name, "%s", createIface)).To(gomega.Succeed())
+		gomega.Expect(execNodeCommand(node.Name, "%s", createIface)).Error().To(gomega.Succeed())
 
 		macUplink := "upmac" + testSuffix
 		createUplink(f, ictx, macUplink, []corev1.Node{node}, nodeIfaces, macIface)
@@ -1545,7 +1674,185 @@ var _ = ginkgo.Describe("Network Segmentation Uplink split DPU status conditions
 			"a non SR-IOV host interface must resolve by MAC, without host function")
 		gomega.Expect(checkUplinkStateResolvedVia(state, "host MAC")).To(gomega.Succeed())
 	})
+
+	ginkgo.It("runs a CUDN without Uplink default gateways and publishes them when they appear", func(ctx ginkgo.SpecContext) {
+		schedulableNodes, err := e2enode.GetReadySchedulableNodes(ctx, f.ClientSet)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		dpuHostNodes := filterNodesByLabel(schedulableNodes.Items, uplinkDPUHostNodeLabel)
+		gomega.Expect(dpuHostNodes).NotTo(gomega.BeEmpty(), "expected at least one ready schedulable DPU host node")
+		nodeIfaces := collectDPUHostUplinkInterfaces(dpuHostNodes)
+
+		ginkgo.By("ensuring the host interfaces carry no default routes")
+		// The DPU simulator provisions the host interfaces with addresses
+		// but no default routes; the removal only normalizes environments
+		// that do provision them.
+		for _, node := range dpuHostNodes {
+			gomega.Expect(removeNodeInterfaceDefaultRoutes(ictx, node.Name, nodeIfaces[node.Name].InfName)).
+				To(gomega.Succeed())
+		}
+
+		ginkgo.By("resolving an Uplink that discovers no default gateways")
+		uplinkName := "upgw" + testSuffix
+		createUplink(f, ictx, uplinkName, dpuHostNodes, nodeIfaces, "")
+		waitForUplinkStatesResolved(f, uplinkName, os.Getenv(uplinkDPUExpectedBridgeEnv), dpuHostNodes)
+		waitForUplinkStatesNoDefaultGateways(f, uplinkName, dpuHostNodes)
+
+		ginkgo.By("running a CUDN on the Uplink with no degraded condition")
+		// A default gateway is not required: no condition degrades, and its
+		// absence is visible only as the empty status.defaultGateways field.
+		networkName := "upgw" + testSuffix
+		bgpAlloc, err := allocators.AllocateBGP(f, ictx)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		networkSpec := uplinkLayer3NetworkSpec(ipFamilySet, bgpAlloc.UDNSubnet, bgpAlloc.UDNSubnet6)
+		namespace, err := createUplinkNamespace(f, ictx, "uplink-conditions", networkName)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(createUplinkCUDN(
+			f,
+			ictx,
+			namespace,
+			networkName,
+			networkSpec,
+			nil,
+			uplinkName,
+		)).To(gomega.Succeed())
+		node := dpuHostNodes[0]
+		createUplinkNetexecPod(f, namespace.Name, "client-"+networkName, node.Name)
+		waitForUplinkStateGatewayCondition(f, uplinkName, node.Name,
+			metav1.ConditionTrue, uplinkv1alpha1.UplinkStateReasonGatewayConfigured)
+		waitForUplinkStateConditionOfType(f, uplinkName, node.Name,
+			uplinkv1alpha1.UplinkStateConditionHostGatewayReady,
+			metav1.ConditionTrue, uplinkv1alpha1.UplinkStateReasonGatewayConfigured)
+		waitForCUDNUplinksReady(f, networkName)
+
+		ginkgo.By("adding default routes and waiting for the gateways to be published")
+		for _, node := range dpuHostNodes {
+			nodeFamilies, err := addNodeInterfaceDefaultRoutes(ictx, node.Name, nodeIfaces[node.Name].InfName)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(nodeFamilies.UnsortedList()).NotTo(gomega.BeEmpty(),
+				"expected the host interface of node %s to carry addresses to derive default gateways from", node.Name)
+			waitForUplinkStatesDefaultGateways(f, uplinkName, []corev1.Node{node}, nodeFamilies)
+		}
+	})
 })
+
+// removeNodeInterfaceDefaultRoutes removes the default routes of the node
+// interface, if any, registering a cleanup that restores them.
+func removeNodeInterfaceDefaultRoutes(ictx infraapi.Context, nodeName, ifName string) error {
+	// Registered before the first removal so that a later failure still
+	// restores the routes already removed.
+	var restoreCommands []string
+	ictx.AddCleanUpFn(func() error {
+		var errs []error
+		for _, restoreCommand := range restoreCommands {
+			if _, err := execNodeCommand(nodeName, "%s", restoreCommand); err != nil {
+				errs = append(errs, fmt.Errorf("failed to restore default route on %s/%s: %w", nodeName, ifName, err))
+			}
+		}
+		return errors.Join(errs...)
+	})
+	for _, ipCmd := range []string{"ip", "ip -6"} {
+		out, err := execNodeCommand(nodeName, "%s route show default dev %s", ipCmd, ifName)
+		if err != nil {
+			return fmt.Errorf("failed to list default routes on %s/%s: %w", nodeName, ifName, err)
+		}
+		for _, route := range strings.Split(strings.TrimSpace(out), "\n") {
+			route = strings.TrimSpace(route)
+			if route == "" {
+				continue
+			}
+			restoreCommands = append(restoreCommands,
+				fmt.Sprintf("%s route replace %s dev %s", ipCmd, route, ifName))
+			if _, err := execNodeCommand(nodeName, "%s route del %s dev %s", ipCmd, route, ifName); err != nil {
+				return fmt.Errorf("failed to remove default route %q on %s/%s: %w",
+					route, nodeName, ifName, err)
+			}
+		}
+	}
+	return nil
+}
+
+// addNodeInterfaceDefaultRoutes installs a default route on the node
+// interface for each IP family it has a global address for, using the first
+// usable IP of the address's subnet as the gateway, and returns those
+// families. A cleanup removing the routes is registered.
+func addNodeInterfaceDefaultRoutes(
+	ictx infraapi.Context,
+	nodeName, ifName string,
+) (sets.Set[utilnet.IPFamily], error) {
+	out, err := execNodeCommand(nodeName, "ip -j addr show dev %s", ifName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list addresses of %s/%s: %w", nodeName, ifName, err)
+	}
+	var links []struct {
+		AddrInfo []struct {
+			Family    string `json:"family"`
+			Local     string `json:"local"`
+			PrefixLen int    `json:"prefixlen"`
+			Scope     string `json:"scope"`
+		} `json:"addr_info"`
+	}
+	if err := json.Unmarshal([]byte(out), &links); err != nil {
+		return nil, fmt.Errorf("failed to parse addresses of %s/%s: %w", nodeName, ifName, err)
+	}
+
+	families := sets.New[utilnet.IPFamily]()
+	// Registered before the first addition so that a later failure still
+	// removes the routes already added.
+	var deleteCommands []string
+	ictx.AddCleanUpFn(func() error {
+		var errs []error
+		for _, deleteCommand := range deleteCommands {
+			if _, err := execNodeCommand(nodeName, "%s", deleteCommand); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		return errors.Join(errs...)
+	})
+	for _, link := range links {
+		for _, addr := range link.AddrInfo {
+			family, ipCmd := utilnet.IPv4, "ip"
+			if addr.Family == "inet6" {
+				family, ipCmd = utilnet.IPv6, "ip -6"
+			}
+			if addr.Scope != "global" || families.Has(family) {
+				continue
+			}
+			// Use the first usable IP of the subnet as the gateway, or the
+			// next one when the interface holds the first usable IP itself.
+			// firstUsableIP does not apply here: it rejects the self-IP case
+			// that this caller supports.
+			ip, ipNet, err := net.ParseCIDR(fmt.Sprintf("%s/%d", addr.Local, addr.PrefixLen))
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse %s/%d on %s/%s: %w",
+					addr.Local, addr.PrefixLen, nodeName, ifName, err)
+			}
+			if ipv4 := ip.To4(); ipv4 != nil {
+				ip = ipv4
+				ipNet.IP = ipNet.IP.To4()
+			}
+			gatewayIP := append(net.IP(nil), ipNet.IP...)
+			incrementUplinkIP(gatewayIP)
+			if gatewayIP.Equal(ip) {
+				incrementUplinkIP(gatewayIP)
+			}
+			if !ipNet.Contains(gatewayIP) {
+				return nil, fmt.Errorf("failed to derive a gateway from %s/%d on %s/%s",
+					addr.Local, addr.PrefixLen, nodeName, ifName)
+			}
+			gateway := gatewayIP.String()
+			if _, err := execNodeCommand(nodeName,
+				"%s route replace default via %s dev %s metric 50000", ipCmd, gateway, ifName); err != nil {
+				return nil, fmt.Errorf("failed to add default route via %s on %s/%s: %w",
+					gateway, nodeName, ifName, err)
+			}
+			deleteCommands = append(deleteCommands,
+				fmt.Sprintf("%s route del default via %s dev %s metric 50000 2>/dev/null || true",
+					ipCmd, gateway, ifName))
+			families.Insert(family)
+		}
+	}
+	return families, nil
+}
 
 func uplinkStateCondition(state *unstructured.Unstructured, conditionType string) (*metav1.Condition, error) {
 	conditions, err := getConditions(state)
@@ -1977,7 +2284,7 @@ func configureUplinkBridge(
 				continue
 			}
 			if iface, ok := nodeIfaces[nodeName]; ok {
-				if err := runNodeCommand(
+				if _, err := execNodeCommand(
 					nodeName,
 					"if ip link show dev %[1]s >/dev/null 2>&1 && "+
 						"ip link show dev %[2]s >/dev/null 2>&1; then "+
@@ -2033,7 +2340,7 @@ func configureUplinkBridge(
 		); err != nil {
 			return cleanupOnError(err)
 		}
-		if err := runNodeCommand(
+		if _, err := execNodeCommand(
 			nodeName,
 			"ip link set dev %[1]s up; "+
 				"for addr in $(ip -o -4 addr show dev %[2]s scope global | awk '{print $4}'); do "+
@@ -2071,7 +2378,7 @@ func configureUplinkBridgeDefaultRoutes(
 			)
 		}
 		if ipv4Gateway != "" {
-			if err := runNodeCommand(
+			if _, err := execNodeCommand(
 				nodeName,
 				"ip route replace default via %s dev %s metric 50000",
 				ipv4Gateway,
@@ -2079,7 +2386,7 @@ func configureUplinkBridgeDefaultRoutes(
 			); err != nil {
 				return err
 			}
-			if err := runNodeCommand(
+			if _, err := execNodeCommand(
 				nodeName,
 				"ip route show default via %s dev %s metric 50000 | grep -q .",
 				ipv4Gateway,
@@ -2105,7 +2412,7 @@ func configureUplinkBridgeDefaultRoutes(
 			)
 		}
 		if ipv6Gateway != "" {
-			if err := runNodeCommand(
+			if _, err := execNodeCommand(
 				nodeName,
 				"ip -6 route replace default via %s dev %s metric 50000",
 				ipv6Gateway,
@@ -2113,7 +2420,7 @@ func configureUplinkBridgeDefaultRoutes(
 			); err != nil {
 				return err
 			}
-			if err := runNodeCommand(
+			if _, err := execNodeCommand(
 				nodeName,
 				"ip -6 route show default via %s dev %s metric 50000 | grep -q .",
 				ipv6Gateway,
@@ -2141,7 +2448,7 @@ func configureUplinkBridgeDefaultRoutes(
 				errs = append(errs, err)
 			}
 			if ipv4Gateway != "" {
-				if err := runNodeCommand(
+				if _, err := execNodeCommand(
 					nodeName,
 					"ip route del default via %s dev %s metric 50000 2>/dev/null || true",
 					ipv4Gateway,
@@ -2159,7 +2466,7 @@ func configureUplinkBridgeDefaultRoutes(
 				errs = append(errs, err)
 			}
 			if ipv6Gateway != "" {
-				if err := runNodeCommand(
+				if _, err := execNodeCommand(
 					nodeName,
 					"ip -6 route del default via %s dev %s metric 50000 2>/dev/null || true",
 					ipv6Gateway,
@@ -2202,7 +2509,7 @@ func configureUplinkStaticRoute(
 		// the installed route from taking priority over the node's own
 		// default route on its management interface, which would cut the
 		// node off. For more specific prefixes it is inherited harmlessly.
-		if err := execNodeCommand(
+		if _, err := execNodeCommand(
 			nodeName,
 			"ip %sroute replace %s via %s dev %s %smetric 50000",
 			family,
@@ -2219,7 +2526,7 @@ func configureUplinkStaticRoute(
 		for _, nodeName := range nodeNames {
 			// The route may sit in the main table or may already be gone with
 			// the bridge or the VRF, so deletion is best effort.
-			if err := execNodeCommand(
+			if _, err := execNodeCommand(
 				nodeName,
 				"ip %sroute del %s via %s 2>/dev/null || true",
 				family,
@@ -2242,7 +2549,7 @@ func uplinkRouteShownIn(nodeName, tableSelector, cidr, via string) error {
 	if utilnet.IsIPv6CIDRString(cidr) {
 		family = "-6 "
 	}
-	return execNodeCommand(
+	_, err := execNodeCommand(
 		nodeName,
 		"ip %sroute show %s %s via %s | grep -q .",
 		family,
@@ -2250,6 +2557,7 @@ func uplinkRouteShownIn(nodeName, tableSelector, cidr, via string) error {
 		cidr,
 		via,
 	)
+	return err
 }
 
 // uplinkHostVRFTCPProbe returns nil when a TCP connection from the node's
@@ -2259,13 +2567,14 @@ func uplinkRouteShownIn(nodeName, tableSelector, cidr, via string) error {
 // through the OVN gateway router instead, which derives its routes from
 // UplinkState and route import rather than from this table.
 func uplinkHostVRFTCPProbe(nodeName, vrfName, ip string, port int) error {
-	return execNodeCommand(
+	_, err := execNodeCommand(
 		nodeName,
 		"timeout 3 ip vrf exec %s bash -c 'exec 3<>/dev/tcp/%s/%d'",
 		vrfName,
 		ip,
 		port,
 	)
+	return err
 }
 
 func interfaceGateway(gateway, ip, prefix string) (string, error) {
@@ -2331,18 +2640,11 @@ func runOVSCommand(pod corev1.Pod, format string, args ...any) error {
 	return err
 }
 
-func runNodeCommand(nodeName, format string, args ...any) error {
-	ginkgo.GinkgoHelper()
-	cmd := fmt.Sprintf(format, args...)
-	_, err := ForContainer(nodeName).Exec("sh", "-c", cmd)
-	return err
-}
-
 // execNodeCommand runs a shell command on the node through the
-// provider-agnostic node exec API.
-func execNodeCommand(nodeName, format string, args ...any) error {
-	_, err := infraprovider.Get().ExecK8NodeCommand(nodeName, []string{"sh", "-c", fmt.Sprintf(format, args...)})
-	return err
+// provider-agnostic node exec API, returning the command output.
+func execNodeCommand(nodeName, format string, args ...any) (string, error) {
+	ginkgo.GinkgoHelper()
+	return infraprovider.Get().ExecK8NodeCommand(nodeName, []string{"sh", "-c", fmt.Sprintf(format, args...)})
 }
 
 func createUplink(
@@ -2506,6 +2808,48 @@ func waitForUplinkStatesDefaultGateways(
 		}).WithTimeout(uplinkTimeout).WithPolling(uplinkPoll).Should(
 			gomega.Succeed(),
 			"expected UplinkState for uplink %q on node %q to publish default gateways",
+			uplinkName,
+			node.Name,
+		)
+	}
+}
+
+// waitForUplinkStatesNoDefaultGateways verifies that the UplinkStates keep
+// publishing no default gateways: the host interfaces have no default route,
+// and discovery must report that truthfully rather than invent one.
+func waitForUplinkStatesNoDefaultGateways(
+	f *framework.Framework,
+	uplinkName string,
+	nodes []corev1.Node,
+) {
+	ginkgo.GinkgoHelper()
+
+	for _, node := range nodes {
+		node := node
+		gomega.Consistently(func() error {
+			state, err := getUplinkState(f, uplinkName, node.Name)
+			if err != nil {
+				return err
+			}
+			defaultGateways, _, err := unstructured.NestedStringSlice(
+				state.Object,
+				"status",
+				"defaultGateways",
+			)
+			if err != nil {
+				return err
+			}
+			if len(defaultGateways) > 0 {
+				return fmt.Errorf(
+					"UplinkState %s unexpectedly published default gateways %v",
+					state.GetName(),
+					defaultGateways,
+				)
+			}
+			return nil
+		}).WithTimeout(uplinkConditionStableWindow).WithPolling(uplinkPoll).Should(
+			gomega.Succeed(),
+			"expected UplinkState for uplink %q on node %q to publish no default gateways",
 			uplinkName,
 			node.Name,
 		)
