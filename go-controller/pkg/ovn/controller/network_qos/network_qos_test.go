@@ -19,6 +19,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 
@@ -30,6 +32,7 @@ import (
 	crdtypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
@@ -1411,5 +1414,488 @@ var _ = Describe("NetworkQoS on a DHCP-IPAM localnet network", func() {
 		// is unchanged) and the stale address must be deleted, not accumulated
 		eventuallyAddressSetHas(dhcpAddrsetFactory, nqosNamespace, "dhcp-qos", "src", "0", dhcpControllerName, lease2)
 		eventuallyAddressSetHasNo(dhcpAddrsetFactory, nqosNamespace, "dhcp-qos", "src", "0", dhcpControllerName, lease1)
+	})
+})
+
+// U1: pin the source fragment of the generated OVN QoS match string. On ipamless
+// localnet networks the source is matched by port group (inport == @pg) instead
+// of a src-IP address set; the IPAM-enabled path must remain byte-for-byte
+// unchanged (guards R5).
+var _ = Describe("generateNetworkQoSMatch source fragment", func() {
+	const (
+		nqNs   = "qos-ns"
+		nqName = "qos-obj"
+		ctrl   = "netwk1-controller"
+	)
+
+	// ipBlockRule builds an internal GressRule with a single ipBlock destination
+	// (and an optional tcp port), exercising the already IP-independent classifier.
+	ipBlockRule := func(cidr string, tcpPort *int32) *GressRule {
+		classifier := &Classifier{
+			Destinations: []*Destination{{IpBlock: &networkingv1.IPBlock{CIDR: cidr}}},
+		}
+		if tcpPort != nil {
+			classifier.Ports = []*nqostype.Port{{Protocol: "tcp", Port: tcpPort}}
+		}
+		return &GressRule{Priority: 10600, Dscp: 46, Classifier: classifier}
+	}
+
+	It("emits the port-group form on ipamless localnet (happy path)", func() {
+		qosState := &networkQoSState{namespace: nqNs, name: nqName}
+		qosState.initSourcePortGroupName(ctrl)
+		pgName := qosState.SrcPortGroupName
+		Expect(pgName).NotTo(BeEmpty())
+
+		// ipamless IPMode() is (false, false); the (ip4 || ip6) qualifier is hardcoded.
+		match := generateNetworkQoSMatch(qosState, ipBlockRule("0.0.0.0/0", nil), false, false, true)
+		Expect(match).To(Equal(fmt.Sprintf("inport == @%s && (ip4 || ip6) && ip4.dst == 0.0.0.0/0", pgName)))
+	})
+
+	It("keeps the port-group source form with an ipBlock dest + protocol/port (edge case)", func() {
+		qosState := &networkQoSState{namespace: nqNs, name: nqName}
+		qosState.initSourcePortGroupName(ctrl)
+		pgName := qosState.SrcPortGroupName
+
+		port := int32(2049)
+		match := generateNetworkQoSMatch(qosState, ipBlockRule("10.20.0.0/16", &port), false, false, true)
+		Expect(match).To(Equal(fmt.Sprintf("inport == @%s && (ip4 || ip6) && ip4.dst == 10.20.0.0/16 && tcp && tcp.dst == 2049", pgName)))
+	})
+
+	It("keeps the address-set source form on IPAM-enabled networks (regression, guards R5)", func() {
+		factory := addressset.NewFakeAddressSetFactory(ctrl)
+		srcAS, err := factory.EnsureAddressSet(GetNetworkQoSAddrSetDbIDs(nqNs, nqName, "src", "0", ctrl))
+		Expect(err).NotTo(HaveOccurred())
+		v4Hash, _ := srcAS.GetASHashNames()
+
+		qosState := &networkQoSState{namespace: nqNs, name: nqName, SrcAddrSet: srcAS}
+
+		// IPAM-enabled single-stack IPv4: IPMode() -> (true, false); ipamless=false.
+		match := generateNetworkQoSMatch(qosState, ipBlockRule("0.0.0.0/0", nil), true, false, false)
+		Expect(match).To(Equal(fmt.Sprintf("ip4.src == {$%s} && ip4.dst == 0.0.0.0/0", v4Hash)))
+	})
+})
+
+// U2: source port-group lifecycle in the pod path on ipamless localnet networks.
+// Source pods there have no OVN-managed IP, so they are matched by logical switch
+// port membership in a per-NetworkQoS source port group (inport == @pg) rather
+// than by a src-IP address set. These specs exercise the NB-facing helpers with a
+// hand-built Controller literal + a dedicated libovsdb NB harness, deliberately
+// avoiding the full watchFactory path (which flakes in the sandbox on NAD-informer
+// cache-sync).
+var _ = Describe("NetworkQoS ipamless localnet source port group", func() {
+	const (
+		podNs      = "qos-ns"
+		nqName     = "qos-obj"
+		ctrlName   = "localnet1-controller"
+		netName    = "localnet1"
+		nadK8sName = "localnad"
+		srcPodName = "src-pod"
+	)
+
+	var (
+		testNbClient libovsdbclient.Client
+		cleanup      *libovsdbtest.Context
+		controller   *Controller
+		nadKey       = util.GetNADName(podNs, nadK8sName)
+	)
+
+	// newController builds a minimal ipamless-localnet controller. controllerNode
+	// is the node this controller manages; a source pod is treated as scheduled
+	// locally when its Spec.NodeName matches (see isPodScheduledOnLocalNode). The
+	// test source pods live on "node1", so pass "node1" for local and any other
+	// value for a remote-node pod.
+	newController := func(controllerNode string) {
+		nad := ovnk8stesting.GenerateNAD(netName, nadK8sName, podNs, types.LocalnetTopology, "", types.NetworkRoleSecondary)
+		immutable, err := util.ParseNADInfo(nad)
+		Expect(err).NotTo(HaveOccurred())
+		netInfo := &secondaryNetInfoWrapper{NetInfo: immutable}
+		fnm := &networkmanager.FakeNetworkManager{
+			NADNetworks: map[string]util.NetInfo{nadKey: netInfo},
+		}
+		controller = &Controller{
+			controllerName: ctrlName,
+			NetInfo:        netInfo,
+			networkManager: fnm,
+			nbClient:       testNbClient,
+			nodeName:       controllerNode,
+		}
+		// sanity: the controller must classify itself as ipamless localnet.
+		Expect(controller.isIPAMlessLocalnet()).To(BeTrue())
+	}
+
+	// sourcePod builds a source pod attached to the ipamless localnet network via
+	// the network-selection annotation only (MAC-only style: no pod-networks IP
+	// annotation). labels drive source-selector matching.
+	sourcePod := func(labels map[string]string) *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: podNs,
+				Name:      srcPodName,
+				Labels:    labels,
+				Annotations: map[string]string{
+					"k8s.v1.cni.cncf.io/networks": nadKey,
+				},
+			},
+			Spec: corev1.PodSpec{NodeName: "node1"},
+		}
+	}
+
+	// newQoSState builds a networkQoSState with a single ipBlock egress rule and
+	// the source port group name initialised + ensured in the NB DB.
+	newQoSState := func(podSelector labels.Selector) *networkQoSState {
+		qosState := &networkQoSState{
+			namespace:   podNs,
+			name:        nqName,
+			PodSelector: podSelector,
+			EgressRules: []*GressRule{{
+				Priority: 10600,
+				Dscp:     46,
+				Classifier: &Classifier{
+					Destinations: []*Destination{{IpBlock: &networkingv1.IPBlock{CIDR: "0.0.0.0/0"}}},
+				},
+			}},
+		}
+		qosState.initSourcePortGroupName(ctrlName)
+		Expect(controller.ensureSourcePortGroup(qosState)).To(Succeed())
+		return qosState
+	}
+
+	// seedLocalnetSwitch creates the localnet switch the QoS binds to.
+	seedLocalnetSwitch := func() string {
+		switchName := controller.getLogicalSwitchName("node1")
+		Expect(switchName).NotTo(BeEmpty())
+		Expect(libovsdbops.CreateOrUpdateLogicalSwitch(testNbClient, &nbdb.LogicalSwitch{Name: switchName})).To(Succeed())
+		return switchName
+	}
+
+	// seedSourceLSP creates the source pod's logical switch port on the localnet
+	// switch and returns its UUID.
+	seedSourceLSP := func(switchName string) string {
+		lspName := util.GetUserDefinedNetworkLogicalPortName(podNs, srcPodName, nadKey)
+		Expect(libovsdbops.CreateOrUpdateLogicalSwitchPortsOnSwitch(testNbClient,
+			&nbdb.LogicalSwitch{Name: switchName},
+			&nbdb.LogicalSwitchPort{Name: lspName})).To(Succeed())
+		lsp, err := libovsdbops.GetLogicalSwitchPort(testNbClient, &nbdb.LogicalSwitchPort{Name: lspName})
+		Expect(err).NotTo(HaveOccurred())
+		return lsp.UUID
+	}
+
+	pgPorts := func(pgName string) []string {
+		pg, err := libovsdbops.GetPortGroup(testNbClient, &nbdb.PortGroup{Name: pgName})
+		Expect(err).NotTo(HaveOccurred())
+		return pg.Ports
+	}
+
+	nqosQoSes := func() []*nbdb.QoS {
+		qoses, err := libovsdbops.FindQoSesWithPredicate(testNbClient, func(qos *nbdb.QoS) bool {
+			return qos.ExternalIDs[libovsdbops.OwnerControllerKey.String()] == ctrlName &&
+				qos.ExternalIDs[libovsdbops.OwnerTypeKey.String()] == string(libovsdbops.NetworkQoSOwnerType)
+		})
+		Expect(err).NotTo(HaveOccurred())
+		return qoses
+	}
+
+	BeforeEach(func() {
+		var err error
+		testNbClient, cleanup, err = libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{}, nil)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	AfterEach(func() {
+		if cleanup != nil {
+			cleanup.Cleanup()
+			cleanup = nil
+		}
+	})
+
+	It("adds the source pod's LSP to the port group and binds QoS to the localnet switch (happy path + integration)", func() {
+		newController("node1")
+		switchName := seedLocalnetSwitch()
+		lspUUID := seedSourceLSP(switchName)
+
+		qosState := newQoSState(nil) // nil selector => matches all pods in namespace
+		pod := sourcePod(map[string]string{"app": "src"})
+		ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: podNs}}
+
+		Expect(controller.setPodForNQOS(pod, qosState, ns, map[string]sets.Set[string]{})).To(Succeed())
+
+		// LSP UUID landed in the source port group.
+		Expect(pgPorts(qosState.SrcPortGroupName)).To(ConsistOf(lspUUID))
+
+		// A QoS row was created, bound to the localnet switch, matching via the PG.
+		qoses := nqosQoSes()
+		Expect(qoses).To(HaveLen(1))
+		Expect(qoses[0].Match).To(ContainSubstring(fmt.Sprintf("inport == @%s", qosState.SrcPortGroupName)))
+
+		ls, err := libovsdbops.GetLogicalSwitch(testNbClient, &nbdb.LogicalSwitch{Name: switchName})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ls.QOSRules).To(ConsistOf(qoses[0].UUID))
+	})
+
+	It("does not add the LSP when the pod is not scheduled in the local zone (edge case)", func() {
+		newController("node2") // remote node
+		switchName := seedLocalnetSwitch()
+		_ = seedSourceLSP(switchName)
+
+		qosState := newQoSState(nil)
+		pod := sourcePod(map[string]string{"app": "src"})
+		ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: podNs}}
+
+		Expect(controller.setPodForNQOS(pod, qosState, ns, map[string]sets.Set[string]{})).To(Succeed())
+
+		Expect(pgPorts(qosState.SrcPortGroupName)).To(BeEmpty())
+	})
+
+	It("removes the LSP when the pod no longer matches the source selector (edge case)", func() {
+		newController("node1")
+		switchName := seedLocalnetSwitch()
+		lspUUID := seedSourceLSP(switchName)
+
+		selector, err := metav1.LabelSelectorAsSelector(&metav1.LabelSelector{MatchLabels: map[string]string{"app": "src"}})
+		Expect(err).NotTo(HaveOccurred())
+		qosState := newQoSState(selector)
+		ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: podNs}}
+
+		// First: a matching pod gets its LSP added.
+		Expect(controller.setPodForNQOS(sourcePod(map[string]string{"app": "src"}), qosState, ns, map[string]sets.Set[string]{})).To(Succeed())
+		Expect(pgPorts(qosState.SrcPortGroupName)).To(ConsistOf(lspUUID))
+
+		// Then: the same pod loses the source label -> LSP removed from the PG.
+		Expect(controller.setPodForNQOS(sourcePod(map[string]string{"app": "other"}), qosState, ns, map[string]sets.Set[string]{})).To(Succeed())
+		Expect(pgPorts(qosState.SrcPortGroupName)).To(BeEmpty())
+	})
+
+	It("treats a MAC-only annotated pod as attached and skips a pod not attached to this network (edge case)", func() {
+		newController("node1")
+
+		// MAC-only style (no pod-networks IP annotation) is still attached.
+		lspNames, err := controller.ipamlessSourceLSPNames(sourcePod(map[string]string{"app": "src"}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(lspNames).To(ConsistOf(util.GetUserDefinedNetworkLogicalPortName(podNs, srcPodName, nadKey)))
+
+		// No network-selection annotation for this network -> not attached, skipped.
+		unattached := sourcePod(map[string]string{"app": "src"})
+		unattached.Annotations = nil
+		lspNames, err = controller.ipamlessSourceLSPNames(unattached)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(lspNames).To(BeEmpty())
+
+		// setPodForNQOS on the unattached pod is a no-op (no PG, no QoS) with no error.
+		qosState := newQoSState(nil)
+		ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: podNs}}
+		Expect(controller.setPodForNQOS(unattached, qosState, ns, map[string]sets.Set[string]{})).To(Succeed())
+		Expect(pgPorts(qosState.SrcPortGroupName)).To(BeEmpty())
+		Expect(nqosQoSes()).To(BeEmpty())
+	})
+
+	It("skips and waits when the LSP is not yet in the NB DB (ErrNotFound, edge case)", func() {
+		newController("node1")
+		_ = seedLocalnetSwitch() // switch exists, but the LSP does not
+
+		qosState := newQoSState(nil)
+		lspNames := []string{util.GetUserDefinedNetworkLogicalPortName(podNs, srcPodName, nadKey)}
+
+		// ErrNotFound on the LSP lookup must be a soft skip, not a hard failure.
+		Expect(qosState.configureSourcePodIPAMless(controller, sourcePod(map[string]string{"app": "src"}), lspNames)).To(Succeed())
+		Expect(pgPorts(qosState.SrcPortGroupName)).To(BeEmpty())
+		// Nothing bound yet since no port resolved.
+		Expect(nqosQoSes()).To(BeEmpty())
+	})
+
+	// U3: source port-group cleanup on NetworkQoS object deletion (delete-on-delete).
+	It("removes the source port group and unbinds all QoS rows when the NetworkQoS object is deleted (happy path)", func() {
+		newController("node1")
+		switchName := seedLocalnetSwitch()
+		lspUUID := seedSourceLSP(switchName)
+
+		qosState := newQoSState(nil)
+		pod := sourcePod(map[string]string{"app": "src"})
+		ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: podNs}}
+
+		// Populate the source PG and bind a QoS row to the localnet switch.
+		Expect(controller.setPodForNQOS(pod, qosState, ns, map[string]sets.Set[string]{})).To(Succeed())
+		Expect(controller.addQoSToLogicalSwitch(qosState, switchName)).To(Succeed())
+		Expect(pgPorts(qosState.SrcPortGroupName)).To(ConsistOf(lspUUID))
+		Expect(nqosQoSes()).To(HaveLen(1))
+
+		// Delete the NetworkQoS object (same OVN object name clearNetworkQos passes).
+		ovnObjectName := joinMetaNamespaceAndName(podNs, nqName, ":")
+		Expect(controller.deleteByName(ovnObjectName)).To(Succeed())
+
+		// The source port group is gone.
+		pgs, err := libovsdbops.FindPortGroupsWithPredicate(testNbClient, func(item *nbdb.PortGroup) bool {
+			return item.Name == qosState.SrcPortGroupName
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(pgs).To(BeEmpty())
+
+		// No QoS rows remain, and none are still bound to the switch.
+		Expect(nqosQoSes()).To(BeEmpty())
+		ls, lerr := libovsdbops.GetLogicalSwitch(testNbClient, &nbdb.LogicalSwitch{Name: switchName})
+		Expect(lerr).NotTo(HaveOccurred())
+		Expect(ls.QOSRules).To(BeEmpty())
+	})
+
+	It("does not attempt source port group deletion on IPAM-enabled networks (edge case, ipamless-negative)", func() {
+		// IPAM-enabled localnet (non-empty subnet) => isIPAMlessLocalnet() is false.
+		nad := ovnk8stesting.GenerateNAD(netName, nadK8sName, podNs, types.LocalnetTopology, "10.0.0.0/24", types.NetworkRoleSecondary)
+		immutable, err := util.ParseNADInfo(nad)
+		Expect(err).NotTo(HaveOccurred())
+		netInfo := &secondaryNetInfoWrapper{NetInfo: immutable}
+		ipamController := &Controller{
+			controllerName: ctrlName,
+			NetInfo:        netInfo,
+			networkManager: &networkmanager.FakeNetworkManager{NADNetworks: map[string]util.NetInfo{nadKey: netInfo}},
+			nbClient:       testNbClient,
+			nodeName:       "node1",
+		}
+		Expect(ipamController.isIPAMlessLocalnet()).To(BeFalse())
+
+		// Seed a port group carrying this NetworkQoS's owner external IDs. On an IPAM
+		// network the delete path must leave it untouched (the gate skips PG deletion).
+		pgIDs := GetNetworkQoSPortGroupDbIDs(podNs, nqName, ctrlName)
+		pg := libovsdbutil.BuildPortGroup(pgIDs, nil, nil)
+		Expect(libovsdbops.CreatePortGroup(testNbClient, pg)).To(Succeed())
+
+		ovnObjectName := joinMetaNamespaceAndName(podNs, nqName, ":")
+		Expect(ipamController.deleteByName(ovnObjectName)).To(Succeed())
+
+		// The port group still exists: cleanup did not attempt PG deletion.
+		got, gerr := libovsdbops.GetPortGroup(testNbClient, &nbdb.PortGroup{Name: pg.Name})
+		Expect(gerr).NotTo(HaveOccurred())
+		Expect(got).NotTo(BeNil())
+	})
+
+	// U4: end-to-end NB DB-shape contract for an ipamless localnet NetworkQoS.
+	// These specs lock the *complete* persisted nbdb.QoS row (match, direction,
+	// DSCP action, bandwidth rate/burst) plus source port group membership and
+	// switch binding - the earlier U2/U3 specs only assert individual facets.
+	It("locks the full NB QoS row shape for a complete ipamless object: PG match, to-lport, DSCP, bandwidth, PG membership (happy path)", func() {
+		newController("node1")
+		switchName := seedLocalnetSwitch()
+		lspUUID := seedSourceLSP(switchName)
+
+		rate := 10000
+		burst := 8000
+		tcpPort := int32(8080)
+		qosState := &networkQoSState{
+			namespace: podNs,
+			name:      nqName,
+			EgressRules: []*GressRule{{
+				Priority: 10600,
+				Dscp:     46,
+				Rate:     &rate,
+				Burst:    &burst,
+				Classifier: &Classifier{
+					Destinations: []*Destination{{IpBlock: &networkingv1.IPBlock{CIDR: "10.20.0.0/16"}}},
+					Ports:        []*nqostype.Port{{Protocol: "tcp", Port: &tcpPort}},
+				},
+			}},
+		}
+		qosState.initSourcePortGroupName(ctrlName)
+		Expect(controller.ensureSourcePortGroup(qosState)).To(Succeed())
+
+		pod := sourcePod(map[string]string{"app": "src"})
+		ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: podNs}}
+		// setPodForNQOS adds the LSP to the source PG and (first pod on the switch)
+		// binds the QoS row to the localnet switch.
+		Expect(controller.setPodForNQOS(pod, qosState, ns, map[string]sets.Set[string]{})).To(Succeed())
+
+		qoses := nqosQoSes()
+		Expect(qoses).To(HaveLen(1))
+		qos := qoses[0]
+
+		// Full match: PG source form + (ip4 || ip6) qualifier + ipBlock dest + tcp port.
+		Expect(qos.Match).To(Equal(fmt.Sprintf(
+			"inport == @%s && (ip4 || ip6) && ip4.dst == 10.20.0.0/16 && tcp && tcp.dst == 8080",
+			qosState.SrcPortGroupName)))
+		Expect(qos.Direction).To(Equal(nbdb.QoSDirectionToLport))
+		Expect(qos.Priority).To(Equal(10600))
+		Expect(qos.Action).To(HaveKeyWithValue(nbdb.QoSActionDSCP, 46))
+		Expect(qos.Bandwidth).To(HaveKeyWithValue(nbdb.QoSBandwidthRate, rate))
+		Expect(qos.Bandwidth).To(HaveKeyWithValue(nbdb.QoSBandwidthBurst, burst))
+
+		// Source PG holds the pod's LSP; the switch references exactly this QoS row.
+		Expect(pgPorts(qosState.SrcPortGroupName)).To(ConsistOf(lspUUID))
+		ls, err := libovsdbops.GetLogicalSwitch(testNbClient, &nbdb.LogicalSwitch{Name: switchName})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ls.QOSRules).To(ConsistOf(qos.UUID))
+	})
+
+	It("persists the PG source form with the (ip4 || ip6) qualifier and no bandwidth when the rule omits it (edge case)", func() {
+		newController("node1")
+		switchName := seedLocalnetSwitch()
+		_ = seedSourceLSP(switchName)
+
+		// No Rate/Burst on the rule => Bandwidth must round-trip empty; DSCP-only.
+		qosState := newQoSState(nil)
+		pod := sourcePod(map[string]string{"app": "src"})
+		ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: podNs}}
+		Expect(controller.setPodForNQOS(pod, qosState, ns, map[string]sets.Set[string]{})).To(Succeed())
+
+		qoses := nqosQoSes()
+		Expect(qoses).To(HaveLen(1))
+		qos := qoses[0]
+
+		// The hardcoded (ip4 || ip6) qualifier survives the round-trip; the source
+		// stays a port group, never an address set (IPMode() is (false,false)).
+		Expect(qos.Match).To(Equal(fmt.Sprintf(
+			"inport == @%s && (ip4 || ip6) && ip4.dst == 0.0.0.0/0", qosState.SrcPortGroupName)))
+		Expect(qos.Match).NotTo(ContainSubstring(".src == {$"))
+		Expect(qos.Direction).To(Equal(nbdb.QoSDirectionToLport))
+		Expect(qos.Action).To(HaveKeyWithValue(nbdb.QoSActionDSCP, 46))
+		Expect(qos.Bandwidth).To(BeEmpty())
+	})
+
+	It("persists the address-set source form on an IPAM-enabled localnet network, not a port group (regression, guards R5)", func() {
+		// IPAM-enabled localnet (non-empty subnet) => isIPAMlessLocalnet() is false,
+		// so the source must still be matched by a src-IP address set.
+		nad := ovnk8stesting.GenerateNAD(netName, nadK8sName, podNs, types.LocalnetTopology, "10.0.0.0/24", types.NetworkRoleSecondary)
+		immutable, err := util.ParseNADInfo(nad)
+		Expect(err).NotTo(HaveOccurred())
+		netInfo := &secondaryNetInfoWrapper{NetInfo: immutable}
+		factory := addressset.NewFakeAddressSetFactory(ctrlName)
+		ipamController := &Controller{
+			controllerName:    ctrlName,
+			NetInfo:           netInfo,
+			networkManager:    &networkmanager.FakeNetworkManager{NADNetworks: map[string]util.NetInfo{nadKey: netInfo}},
+			nbClient:          testNbClient,
+			addressSetFactory: factory,
+			nodeName:          "node1",
+		}
+		Expect(ipamController.isIPAMlessLocalnet()).To(BeFalse())
+
+		srcAS, err := factory.EnsureAddressSet(GetNetworkQoSAddrSetDbIDs(podNs, nqName, "src", "0", ctrlName))
+		Expect(err).NotTo(HaveOccurred())
+		v4Hash, _ := srcAS.GetASHashNames()
+
+		qosState := &networkQoSState{
+			namespace:  podNs,
+			name:       nqName,
+			SrcAddrSet: srcAS,
+			EgressRules: []*GressRule{{
+				Priority: 10600,
+				Dscp:     46,
+				Classifier: &Classifier{
+					Destinations: []*Destination{{IpBlock: &networkingv1.IPBlock{CIDR: "0.0.0.0/0"}}},
+				},
+			}},
+		}
+
+		switchName := ipamController.getLogicalSwitchName("node1")
+		Expect(switchName).NotTo(BeEmpty())
+		Expect(libovsdbops.CreateOrUpdateLogicalSwitch(testNbClient, &nbdb.LogicalSwitch{Name: switchName})).To(Succeed())
+
+		Expect(ipamController.addQoSToLogicalSwitch(qosState, switchName)).To(Succeed())
+
+		qoses := nqosQoSes()
+		Expect(qoses).To(HaveLen(1))
+		qos := qoses[0]
+
+		// Single-stack IPv4 IPAM => src address-set match, never a port group form.
+		Expect(qos.Match).To(Equal(fmt.Sprintf("ip4.src == {$%s} && ip4.dst == 0.0.0.0/0", v4Hash)))
+		Expect(qos.Match).NotTo(ContainSubstring("inport == @"))
+		Expect(qos.Direction).To(Equal(nbdb.QoSDirectionToLport))
+		Expect(qos.Action).To(HaveKeyWithValue(nbdb.QoSActionDSCP, 46))
 	})
 })

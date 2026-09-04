@@ -161,6 +161,16 @@ func (c *Controller) ensureNetworkQos(nqos *networkqosapi.NetworkQoS) error {
 	if err := desiredNQOSState.initAddressSets(c.addressSetFactory, c.controllerName); err != nil {
 		return err
 	}
+	if c.isIPAMlessLocalnet() {
+		// On ipamless localnet networks source pods have no OVN-managed IP, so
+		// they are matched via membership in a per-NetworkQoS source port group
+		// (inport == @pg) instead of a src-IP address set. Ensure the port group
+		// exists before resyncing pods populates it.
+		desiredNQOSState.initSourcePortGroupName(c.controllerName)
+		if err := c.ensureSourcePortGroup(desiredNQOSState); err != nil {
+			return fmt.Errorf("failed to ensure source port group for NetworkQoS %s/%s: %w", nqos.Namespace, nqos.Name, err)
+		}
+	}
 	if err := c.resyncPods(desiredNQOSState); err != nil {
 		return fmt.Errorf("failed to resync pods: %w", err)
 	}

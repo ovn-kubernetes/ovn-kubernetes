@@ -4,6 +4,7 @@
 package networkqos
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
 	corev1 "k8s.io/api/core/v1"
 	knet "k8s.io/api/networking/v1"
@@ -21,6 +24,8 @@ import (
 
 	networkqosv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
@@ -33,10 +38,14 @@ type networkQoSState struct {
 	name      string
 	namespace string
 
-	SrcAddrSet  addressset.AddressSet
-	Pods        sync.Map // pods name -> ips in the srcAddrSet
-	SwitchRefs  sync.Map // switch name -> list of source pods
-	PodSelector labels.Selector
+	SrcAddrSet addressset.AddressSet
+	// SrcPortGroupName is the OVN name of the per-NetworkQoS source port group,
+	// used on ipamless localnet networks to match source pods via inport == @pg
+	// instead of the src-IP address set. Empty on IPAM-enabled networks.
+	SrcPortGroupName string
+	Pods             sync.Map // pods name -> ips in the srcAddrSet (IPAM) / LSP UUIDs in the source port group (ipamless)
+	SwitchRefs       sync.Map // switch name -> list of source pods
+	PodSelector      labels.Selector
 
 	// egressRules stores the objects needed to track .Spec.Egress changes
 	EgressRules []*GressRule
@@ -51,6 +60,14 @@ func (nqosState *networkQoSState) getDbObjectIDs(controller string, ruleIndex in
 		libovsdbops.ObjectNameKey: nqosState.getObjectNameKey(),
 		libovsdbops.RuleIndex:     fmt.Sprintf("%d", ruleIndex),
 	})
+}
+
+// initSourcePortGroupName computes and stores the deterministic OVN name of this
+// NetworkQoS's source port group. Used on ipamless localnet networks, where
+// source pods are matched by port-group membership rather than src IP.
+func (nqosState *networkQoSState) initSourcePortGroupName(controllerName string) {
+	nqosState.SrcPortGroupName = libovsdbutil.GetPortGroupName(
+		GetNetworkQoSPortGroupDbIDs(nqosState.namespace, nqosState.name, controllerName))
 }
 
 func (nqosState *networkQoSState) initAddressSets(addressSetFactory addressset.AddressSetFactory, controllerName string) error {
@@ -104,6 +121,62 @@ func (nqosState *networkQoSState) configureSourcePod(ctrl *Controller, pod *core
 	}
 	nqosState.Pods.Store(fullPodName, addresses)
 	klog.V(4).Infof("Successfully added address (%s) of pod %s to address set %s", strings.Join(addresses, ","), fullPodName, nqosState.SrcAddrSet.GetName())
+	return nqosState.bindQoSToPodSwitch(ctrl, pod, fullPodName)
+}
+
+// configureSourcePodIPAMless is the ipamless-localnet counterpart of
+// configureSourcePod. Source pods on ipamless localnet networks have no
+// OVN-managed IP, so they are matched by logical switch port membership in the
+// per-NetworkQoS source port group (inport == @pg) rather than by a src-IP
+// address set. It resolves each of the pod's logical switch ports (there is
+// usually one per network attachment) to its UUID, adds the resolved ports to
+// the source port group, and binds the QoS rules to the pod's localnet switch.
+//
+// When a port's LSP is not yet present in the NB DB (the pod is annotated but
+// its LSP has not been created yet), that port is skipped and will be
+// reconciled on a later pod update event, mirroring the AdminNetworkPolicy
+// subject-recompute behaviour. If none of the ports are resolvable yet the call
+// is a no-op (no port group membership, no switch binding) and returns nil so
+// the reconcile is retried later without surfacing an error.
+func (nqosState *networkQoSState) configureSourcePodIPAMless(ctrl *Controller, pod *corev1.Pod, lspNames []string) error {
+	fullPodName := joinMetaNamespaceAndName(pod.Namespace, pod.Name)
+	lspUUIDs := make([]string, 0, len(lspNames))
+	for _, lspName := range lspNames {
+		lsp, err := libovsdbops.GetLogicalSwitchPort(ctrl.nbClient, &nbdb.LogicalSwitchPort{Name: lspName})
+		if err != nil {
+			if errors.Is(err, libovsdbclient.ErrNotFound) {
+				// The pod is annotated but its LSP has not been created yet.
+				// Skip and wait: the later pod update event (once the LSP lands)
+				// will reconcile it.
+				klog.V(5).Infof("NetworkQoS %s/%s: logical switch port %s for source pod %s not found yet, will reconcile on next pod event", nqosState.namespace, nqosState.name, lspName, fullPodName)
+				continue
+			}
+			return fmt.Errorf("failed to look up logical switch port %s for NetworkQoS %s/%s: %w", lspName, nqosState.namespace, nqosState.name, err)
+		}
+		lspUUIDs = append(lspUUIDs, lsp.UUID)
+	}
+	if len(lspUUIDs) == 0 {
+		// Nothing resolvable yet; skip without error so it is retried on the
+		// next pod event.
+		return nil
+	}
+	ops, err := libovsdbops.AddPortsToPortGroupOps(ctrl.nbClient, nil, nqosState.SrcPortGroupName, lspUUIDs...)
+	if err != nil {
+		return fmt.Errorf("failed to build ops to add source pod %s ports to port group %s (NetworkQoS %s/%s): %w", fullPodName, nqosState.SrcPortGroupName, nqosState.namespace, nqosState.name, err)
+	}
+	if _, err := libovsdbops.TransactAndCheck(ctrl.nbClient, ops); err != nil {
+		return fmt.Errorf("failed to add source pod %s ports to port group %s (NetworkQoS %s/%s): %w", fullPodName, nqosState.SrcPortGroupName, nqosState.namespace, nqosState.name, err)
+	}
+	nqosState.Pods.Store(fullPodName, lspUUIDs)
+	klog.V(4).Infof("Successfully added logical switch port(s) %v of pod %s to source port group %s", lspUUIDs, fullPodName, nqosState.SrcPortGroupName)
+	return nqosState.bindQoSToPodSwitch(ctrl, pod, fullPodName)
+}
+
+// bindQoSToPodSwitch resolves the logical switch for the pod and, if the QoS
+// rules are not already bound to it, binds them, tracking the pod under the
+// switch's SwitchRefs entry. Shared by the IPAM (address-set) and ipamless
+// (port-group) source paths.
+func (nqosState *networkQoSState) bindQoSToPodSwitch(ctrl *Controller, pod *corev1.Pod, fullPodName string) error {
 	// get switch name
 	switchName := ctrl.getLogicalSwitchName(pod.Spec.NodeName)
 	if switchName == "" {
@@ -140,6 +213,26 @@ func (nqosState *networkQoSState) removePodFromSource(ctrl *Controller, fullPodN
 	if len(addresses) > 0 {
 		if err := nqosState.SrcAddrSet.DeleteAddresses(addresses); err != nil {
 			return fmt.Errorf("failed to delete addresses (%s) from address set %s: %v", strings.Join(addresses, ","), nqosState.SrcAddrSet.GetName(), err)
+		}
+	}
+	nqosState.Pods.Delete(fullPodName)
+	return nqosState.removeZeroQoSNodes(ctrl, fullPodName)
+}
+
+// removePodLSPFromSource is the ipamless-localnet counterpart of
+// removePodFromSource: it removes the pod's logical switch port(s) from the
+// per-NetworkQoS source port group (rather than deleting src IPs from an address
+// set) and then unbinds the QoS from any switch that no longer has source pods.
+func (nqosState *networkQoSState) removePodLSPFromSource(ctrl *Controller, fullPodName string) error {
+	if val, ok := nqosState.Pods.Load(fullPodName); ok {
+		if lspUUIDs := val.([]string); len(lspUUIDs) > 0 {
+			ops, err := libovsdbops.DeletePortsFromPortGroupOps(ctrl.nbClient, nil, nqosState.SrcPortGroupName, lspUUIDs...)
+			if err != nil {
+				return fmt.Errorf("failed to build ops to remove pod %s ports from port group %s: %w", fullPodName, nqosState.SrcPortGroupName, err)
+			}
+			if _, err := libovsdbops.TransactAndCheck(ctrl.nbClient, ops); err != nil {
+				return fmt.Errorf("failed to remove pod %s ports from port group %s: %w", fullPodName, nqosState.SrcPortGroupName, err)
+			}
 		}
 	}
 	nqosState.Pods.Delete(fullPodName)

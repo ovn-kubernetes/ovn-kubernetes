@@ -13,10 +13,27 @@ import (
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
+
+// ensureSourcePortGroup creates the per-NetworkQoS source port group used on
+// ipamless localnet networks to match source pods via inport == @pg. Pods are
+// added/removed to it in the pod path; membership is intentionally left
+// untouched here (create-if-absent), so it is safe to call on every reconcile.
+func (c *Controller) ensureSourcePortGroup(qosState *networkQoSState) error {
+	pgIDs := GetNetworkQoSPortGroupDbIDs(qosState.namespace, qosState.name, c.controllerName)
+	pg := libovsdbutil.BuildPortGroup(pgIDs, nil, nil)
+	if c.IsUserDefinedNetwork() {
+		pg.ExternalIDs[types.NetworkExternalID] = c.GetNetworkName()
+	}
+	if err := libovsdbops.CreatePortGroup(c.nbClient, pg); err != nil {
+		return fmt.Errorf("failed to create source port group %s for NetworkQoS %s/%s: %w", pg.Name, qosState.namespace, qosState.name, err)
+	}
+	return nil
+}
 
 func (c *Controller) findLogicalSwitch(switchName string) (*nbdb.LogicalSwitch, error) {
 	if lsws, err := libovsdbops.FindLogicalSwitchesWithPredicate(c.nbClient, func(item *nbdb.LogicalSwitch) bool {
@@ -45,7 +62,7 @@ func (c *Controller) addQoSToLogicalSwitch(qosState *networkQoSState, switchName
 			Bandwidth:   map[string]int{},
 			Direction:   nbdb.QoSDirectionToLport,
 			ExternalIDs: dbIDs.GetExternalIDs(),
-			Match:       generateNetworkQoSMatch(qosState, rule, ipv4Enabled, ipv6Enabled),
+			Match:       generateNetworkQoSMatch(qosState, rule, ipv4Enabled, ipv6Enabled, c.isIPAMlessLocalnet()),
 			Priority:    rule.Priority,
 		}
 		if c.IsUserDefinedNetwork() {
@@ -192,6 +209,34 @@ func (c *Controller) deleteByName(ovnObjectName string) error {
 	// remove address sets
 	if err = c.deleteAddressSet(ovnObjectName); err != nil {
 		return fmt.Errorf("error cleaning up address sets for %s: %w", ovnObjectName, err)
+	}
+	// On ipamless localnet the source is matched by a per-NetworkQoS port group
+	// instead of a src-IP address set; remove it on delete. Sequenced after the
+	// QoS-row removal above so no QoS row transiently references a deleted port
+	// group. IPAM-enabled networks never create one, so this is skipped for them.
+	if c.isIPAMlessLocalnet() {
+		if err = c.deleteSourcePortGroup(ovnObjectName); err != nil {
+			return fmt.Errorf("error cleaning up source port group for %s: %w", ovnObjectName, err)
+		}
+	}
+	return nil
+}
+
+// deleteSourcePortGroup deletes the per-NetworkQoS source port group owned by this
+// object (matched by owner external IDs, mirroring deleteAddressSet). Used only on
+// ipamless localnet networks. Exhaustive stale/orphan PG GC (rename/restart) is out
+// of scope for the PoC.
+func (c *Controller) deleteSourcePortGroup(qosName string) error {
+	delOps, err := libovsdbops.DeletePortGroupsWithPredicateOps(c.nbClient, nil, func(item *nbdb.PortGroup) bool {
+		return item.ExternalIDs[libovsdbops.OwnerControllerKey.String()] == c.controllerName &&
+			item.ExternalIDs[libovsdbops.OwnerTypeKey.String()] == string(libovsdbops.NetworkQoSOwnerType) &&
+			item.ExternalIDs[libovsdbops.ObjectNameKey.String()] == qosName
+	})
+	if err != nil {
+		return fmt.Errorf("failed to get ops to delete source port group: %w", err)
+	}
+	if _, err := libovsdbops.TransactAndCheck(c.nbClient, delOps); err != nil {
+		return fmt.Errorf("failed to execute ops to delete source port group, err: %w", err)
 	}
 	return nil
 }
