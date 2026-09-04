@@ -50,11 +50,15 @@ type KubeAPIAuth struct {
 type PodInterfaceInfo struct {
 	util.PodAnnotation
 
-	MTU                  int    `json:"mtu"`
-	RoutableMTU          int    `json:"routable-mtu"`
-	Ingress              int64  `json:"ingress"`
-	Egress               int64  `json:"egress"`
-	IsDPUHostMode        bool   `json:"is-dpu-host-mode"`
+	MTU           int   `json:"mtu"`
+	RoutableMTU   int   `json:"routable-mtu"`
+	Ingress       int64 `json:"ingress"`
+	Egress        int64 `json:"egress"`
+	IsDPUHostMode bool  `json:"is-dpu-host-mode"`
+	// IsSimulatedDPU is true when the DPU devices are simulated (veths).
+	// Resolved where the ovn-kubernetes config is initialized and carried here
+	// so that the CNI shim can honor it in unprivileged mode.
+	IsSimulatedDPU       bool   `json:"is-simulated-dpu,omitempty"`
 	SkipIPConfig         bool   `json:"skip-ip-config"`
 	PodUID               string `json:"pod-uid"`
 	NetdevName           string `json:"vf-netdev-name"`
