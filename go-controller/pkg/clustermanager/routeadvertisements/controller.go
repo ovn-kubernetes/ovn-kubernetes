@@ -534,8 +534,12 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 		if networkSet.Has(networkName) {
 			continue
 		}
-		if !network.IsDefault() && !network.IsPrimaryNetwork() {
-			return nil, nil, fmt.Errorf("%w: selected network %q is not the default nor a primary network", errConfig, networkName)
+		// Allow secondary user-defined networks to be advertised, not just
+		// primary ones. IsUserDefinedNetwork() covers both primary and secondary
+		// UDNs; the topology check below still restricts to Layer2/Layer3
+		// (excluding localnet).
+		if !network.IsDefault() && !network.IsUserDefinedNetwork() {
+			return nil, nil, fmt.Errorf("%w: selected network %q is not the default nor a user-defined network", errConfig, networkName)
 		}
 		if network.TopologyType() != types.Layer3Topology && network.TopologyType() != types.Layer2Topology {
 			return nil, nil, fmt.Errorf("%w: selected network %q has unsupported topology %q", errConfig, networkName, network.TopologyType())
@@ -1894,8 +1898,11 @@ func nadNeedsUpdate(oldObj, newObj *nadtypes.NetworkAttachmentDefinition) bool {
 		if err != nil {
 			return true
 		}
+		// Treat secondary UDN NADs as advertisement-eligible too, matching the
+		// gate in generateFRRConfigurations. IsUserDefinedNetwork() covers both
+		// primary and secondary UDNs.
 		return network.IsDefault() ||
-			(network.IsPrimaryNetwork() && (network.TopologyType() == types.Layer3Topology || network.TopologyType() == types.Layer2Topology))
+			(network.IsUserDefinedNetwork() && (network.TopologyType() == types.Layer3Topology || network.TopologyType() == types.Layer2Topology))
 	}
 	// ignore if we don't support this NAD
 	if !nadSupported(oldObj) && !nadSupported(newObj) {
