@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,6 +18,7 @@ import (
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	uplinkv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/udn"
 	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/egressip"
@@ -24,6 +26,7 @@ import (
 	nodeutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
 
 // BridgeUDNConfiguration holds the patchport and ctMark
@@ -303,9 +306,12 @@ func (b *BridgeConfiguration) setDPUHostGatewayConfiguration(nodeName string) er
 
 // NewUnmanagedBridgeConfiguration creates a bridge configuration for an
 // existing OVS bridge. The caller is responsible for provisioning the bridge
-// and moving gateway IPs/MACs onto the selected host interface.
+// and moving gateway IPs/MACs onto the selected host interface. hostFunction,
+// when known, identifies the host PCI function that macAddress belongs to and
+// is what a DPU resolves its gateway representor from.
 func NewUnmanagedBridgeConfiguration(ovsClient libovsdbclient.Client, bridgeName, hostInterfaceName, nodeName,
-	physicalNetworkName string, gwIPs []*net.IPNet, macAddress net.HardwareAddr) (*BridgeConfiguration, error) {
+	physicalNetworkName string, gwIPs []*net.IPNet, macAddress net.HardwareAddr,
+	hostFunction *uplinkv1alpha1.HostFunction) (*BridgeConfiguration, error) {
 	bridge, err := ovsops.GetBridge(ovsClient, bridgeName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find OVS bridge %s: %w", bridgeName, err)
@@ -330,10 +336,7 @@ func NewUnmanagedBridgeConfiguration(ovsClient libovsdbclient.Client, bridgeName
 	if gwIface == "" || config.IsModeDPU() {
 		gwIface = bridgeName
 		if config.IsModeDPU() {
-			// Uplink host interfaces may be backed by a VF or SF, not just a
-			// PF, so select the representor by its host peer MAC rather than
-			// assuming the bridge holds a single PF representor.
-			gwIfaceRep, err = util.GetDPUOps().FindHostRepresentorByPeerMAC(ovsClient, bridge, macAddress, nodeName)
+			gwIfaceRep, err = dpuGatewayRepresentor(ovsClient, bridge, hostFunction, macAddress, nodeName)
 			if err != nil {
 				return nil, err
 			}
@@ -781,6 +784,59 @@ func bridgedGatewayNodeSetup(ovsClient libovsdbclient.Client, nodeName, bridgeNa
 
 func getRepresentor(intfName string) (string, error) {
 	return util.GetNetdeviceRepresentorName(intfName)
+}
+
+// dpuGatewayRepresentor selects the DPU-side representor that carries the
+// gateway MAC on bridge. Uplink host interfaces may be backed by a VF or SF,
+// not just a PF, so the bridge cannot be assumed to hold a single PF
+// representor. The host function published by the DPU-host is the primary key:
+// the host owns the MAC of its VFs and SFs, so the DPU eswitch usually reports
+// no function MAC for the matching representor and a scan by host MAC cannot
+// find it. That scan stays as the fallback for uplinks whose host function
+// could not be published.
+func dpuGatewayRepresentor(ovsClient libovsdbclient.Client, bridge *vswitchd.Bridge,
+	hostFunction *uplinkv1alpha1.HostFunction, macAddress net.HardwareAddr,
+	nodeName string) (string, error) {
+	var functionErr error
+	if hostFunction != nil {
+		rep, err := util.FindHostRepresentorByFunction(hostFunction.PFID, hostFunction.VFID, macAddress, nodeName)
+		if err == nil {
+			err = representorOnBridge(ovsClient, bridge, rep)
+		}
+		if err == nil {
+			klog.Infof("Bridge %s: host function %s resolved gateway representor %s", bridge.Name,
+				util.HostFunctionName(hostFunction.PFID, hostFunction.VFID), rep)
+			return rep, nil
+		}
+		functionErr = err
+		klog.Warningf("Bridge %s: host function %s did not resolve a gateway representor, "+
+			"falling back to the host MAC scan: %v",
+			bridge.Name, util.HostFunctionName(hostFunction.PFID, hostFunction.VFID), err)
+	}
+
+	rep, err := util.GetDPUOps().FindHostRepresentorByPeerMAC(ovsClient, bridge, macAddress, nodeName)
+	if err != nil && functionErr != nil {
+		return "", fmt.Errorf("%w; host function %s did not resolve one either: %w", err,
+			util.HostFunctionName(hostFunction.PFID, hostFunction.VFID), functionErr)
+	}
+	return rep, err
+}
+
+// representorOnBridge errors unless rep is attached to bridge, either as a
+// port of its own or as an interface of another port (e.g. a bond member),
+// the same membership the uplink discovery accepts when it resolves the
+// bridge from the representor.
+func representorOnBridge(ovsClient libovsdbclient.Client, bridge *vswitchd.Bridge, rep string) error {
+	ports, err := ovsops.FindPortsForPortOrInterface(ovsClient, rep)
+	if err != nil {
+		return fmt.Errorf("failed to look up representor %s: %w", rep, err)
+	}
+	for _, port := range ports {
+		if slices.Contains(bridge.Ports, port.UUID) {
+			return nil
+		}
+	}
+	return fmt.Errorf("representor %s is not attached to OVS bridge %s", rep, bridge.Name)
 }
 
 func gatewayHostOVSInterface(bridgeName, gwIface string) (string, error) {

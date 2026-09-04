@@ -204,6 +204,9 @@ type resolvedUplinkGateway struct {
 	macAddress        net.HardwareAddr
 	ipAddresses       []*net.IPNet
 	defaultGateways   []net.IP
+	// hostFunction identifies the host PCI function backing the host
+	// interface; nil when the DPU-host could not resolve it.
+	hostFunction *uplinkv1alpha1.HostFunction
 }
 
 func (udng *UserDefinedNetworkGateway) ensureUplinkGateway() (*bridgeconfig.BridgeConfiguration, error) {
@@ -253,6 +256,7 @@ func (udng *UserDefinedNetworkGateway) ensureUplinkGateway() (*bridgeconfig.Brid
 		physicalNetworkName(udng.NetInfo),
 		resolved.ipAddresses,
 		resolved.macAddress,
+		resolved.hostFunction,
 	)
 	if err != nil {
 		return nil, newUplinkGatewayError(
@@ -382,6 +386,7 @@ func parseResolvedUplinkGateway(state *uplinkv1alpha1.UplinkState) (*resolvedUpl
 		macAddress:        macAddress,
 		ipAddresses:       ipAddresses,
 		defaultGateways:   defaultGateways,
+		hostFunction:      state.Status.HostFunction.DeepCopy(),
 	}, nil
 }
 
