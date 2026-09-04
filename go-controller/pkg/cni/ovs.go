@@ -163,12 +163,12 @@ func ofctlExec(args ...string) (string, error) {
 }
 
 // checkCancelSandbox checks that this sandbox is still valid for the current
-// instance of the pod in the apiserver. Sandbox requests and pod instances
+// instance of the Pod known to the node. Sandbox requests and Pod instances
 // have a 1:1 relationship determined by pod UID. If we detect that the pod
 // has changed either UID or MAC terminate this sandbox request early instead
 // of waiting for OVN to set up flows that will never exist.
 func checkCancelSandbox(mac string, getter PodInfoGetter, namespace, name, nadKey, initialPodUID string) error {
-	// Not all node CNI modes may have access to kube api, those will pass nil as getter.
+	// Not all node CNI modes have a Pod information source.
 	if getter == nil {
 		return nil
 	}

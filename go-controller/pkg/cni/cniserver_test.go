@@ -8,6 +8,7 @@ package cni
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,7 +18,9 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
 	current "github.com/containernetworking/cni/pkg/types/100"
@@ -27,6 +30,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 	utiltesting "k8s.io/client-go/util/testing"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
@@ -63,6 +67,28 @@ func makeCNIArgs(namespace, name string) string {
 	return fmt.Sprintf("K8S_POD_NAMESPACE=%s;K8S_POD_NAME=%s", namespace, name)
 }
 
+type notifyingPodLister struct {
+	corev1listers.PodLister
+	onGet func()
+}
+
+func (l notifyingPodLister) Pods(namespace string) corev1listers.PodNamespaceLister {
+	return notifyingPodNamespaceLister{
+		PodNamespaceLister: l.PodLister.Pods(namespace),
+		onGet:              l.onGet,
+	}
+}
+
+type notifyingPodNamespaceLister struct {
+	corev1listers.PodNamespaceLister
+	onGet func()
+}
+
+func (l notifyingPodNamespaceLister) Get(name string) (*corev1.Pod, error) {
+	l.onGet()
+	return l.PodNamespaceLister.Get(name)
+}
+
 const (
 	sandboxID    string = "adsfadsfasfdasdfasf"
 	namespace    string = "awesome-namespace"
@@ -93,7 +119,7 @@ func TestCNIServer(t *testing.T) {
 		},
 		Spec: corev1.PodSpec{NodeName: nodeName},
 	}
-	fakeClient := fake.NewSimpleClientset(podObj)
+	fakeClient := fake.NewSimpleClientset()
 	err = config.PrepareTestConfig()
 	if err != nil {
 		t.Fatalf("failed to prepare test config: %v", err)
@@ -138,6 +164,42 @@ func TestCNIServer(t *testing.T) {
 		},
 	}
 
+	// A disconnected CNI shim must cancel server-side processing rather than
+	// leave it running until the two-minute operation timeout.
+	canceledAdd := &Request{
+		Env: map[string]string{
+			"CNI_COMMAND":     string(CNIAdd),
+			"CNI_CONTAINERID": sandboxID,
+			"CNI_NETNS":       "/path/to/something",
+			"CNI_ARGS":        makeCNIArgs(namespace, name+"-canceled"),
+		},
+		Config: []byte(cniConfig),
+	}
+	canceledAddBody, err := json.Marshal(canceledAdd)
+	if err != nil {
+		t.Fatalf("failed to marshal canceled CNI ADD request: %v", err)
+	}
+	requestCtx, cancelRequest := context.WithCancel(context.Background())
+	httpRequest, err := http.NewRequestWithContext(
+		requestCtx, http.MethodPost, "http://dummy/", bytes.NewReader(canceledAddBody))
+	if err != nil {
+		t.Fatalf("failed to create canceled CNI ADD request: %v", err)
+	}
+	cancelRequest()
+	requestDone := make(chan error, 1)
+	go func() {
+		_, requestErr := s.handleCNIRequest(httpRequest)
+		requestDone <- requestErr
+	}()
+	select {
+	case requestErr := <-requestDone:
+		if requestErr == nil || !strings.Contains(requestErr.Error(), "canceled while waiting for annotations") {
+			t.Fatalf("expected request cancellation error, got %v", requestErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("CNI server did not stop after its request context was canceled")
+	}
+
 	// Build the expected Result that getCNIResult would return for the pod
 	// annotation above + the podRequestInterfaceOps.
 	expectedIP, expectedNet, _ := net.ParseCIDR("10.0.0.2/24")
@@ -150,6 +212,67 @@ func TestCNIServer(t *testing.T) {
 			Interface: current.Int(1),
 			Address:   net.IPNet{IP: expectedIP, Mask: expectedNet.Mask},
 		}},
+	}
+
+	// Start ADD before the Pod is available. Once ADD has read the local cache,
+	// create the annotated Pod and let the fake watch deliver it to the informer.
+	// This exercises the cache-only polling path used when Pod creation and CNI
+	// ADD race on a real node.
+	fakeClient.ClearActions()
+	podCacheRead := make(chan struct{})
+	var podCacheReadOnce sync.Once
+	s.clientSet.podLister = notifyingPodLister{
+		PodLister: s.clientSet.podLister,
+		onGet: func() {
+			podCacheReadOnce.Do(func() { close(podCacheRead) })
+		},
+	}
+	podCreated := make(chan error, 1)
+	go func() {
+		var cacheReadErr error
+		select {
+		case <-podCacheRead:
+		case <-time.After(time.Second):
+			cacheReadErr = fmt.Errorf("CNI ADD did not read the Pod informer cache")
+		}
+		_, createErr := fakeClient.CoreV1().Pods(namespace).Create(
+			context.Background(), podObj, metav1.CreateOptions{})
+		if cacheReadErr != nil {
+			podCreated <- cacheReadErr
+			return
+		}
+		podCreated <- createErr
+	}()
+
+	delayedAdd := &Request{
+		Env: map[string]string{
+			"CNI_COMMAND":     string(CNIAdd),
+			"CNI_CONTAINERID": sandboxID,
+			"CNI_NETNS":       "/path/to/something",
+			"CNI_ARGS":        makeCNIArgs(namespace, name),
+		},
+		Config: []byte(cniConfig),
+	}
+	body, code := clientDoCNI(t, client, delayedAdd)
+	if err := <-podCreated; err != nil {
+		t.Fatalf("failed to make Pod visible to the informer: %v", err)
+	}
+	if code != http.StatusOK {
+		t.Fatalf("expected delayed ADD status %v but got %v: %s",
+			http.StatusOK, code, string(body))
+	}
+	response := &Response{}
+	if err := json.Unmarshal(body, response); err != nil {
+		t.Fatalf("failed to unmarshal delayed ADD response %q: %v", body, err)
+	}
+	if !reflect.DeepEqual(response.Result, expectedResult) {
+		t.Fatalf("expected delayed ADD result %v but got %v",
+			expectedResult, response.Result)
+	}
+	for _, action := range fakeClient.Actions() {
+		if action.GetVerb() == "get" && action.GetResource().Resource == "pods" {
+			t.Fatalf("CNI ADD unexpectedly issued a Pod GET: %#v", action)
+		}
 	}
 
 	type testcase struct {

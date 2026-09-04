@@ -11,11 +11,13 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
+
+const podAnnotationPollInterval = 200 * time.Millisecond
 
 // wait on a certain pod annotation related condition
 // return error to abort the retry attempt
@@ -58,70 +60,84 @@ func isDPUReady(annotCondFn podAnnotWaitCond, nadKey string) podAnnotWaitCond {
 	}
 }
 
-// getPod tries to read a Pod object from the informer cache, or if the pod
-// doesn't exist there, the apiserver. If neither a list or a kube client is
-// given, returns no pod and no error
+// getPod reads a Pod object from the local informer cache. The CNI server is
+// started only after this informer has synced, so bypassing it on a cache miss
+// would amplify API load precisely when the watch is lagging.
 func (c *ClientSet) getPod(namespace, name string) (*corev1.Pod, error) {
-	var pod *corev1.Pod
-	var err error
-
-	pod, err = c.podLister.Pods(namespace).Get(name)
-	if err != nil && !apierrors.IsNotFound(err) {
-		return nil, err
-	}
-
-	if pod == nil {
-		// If the pod wasn't in our local cache, ask for it directly
-		pod, err = c.kclient.CoreV1().Pods(namespace).Get(context.TODO(), name, metav1.GetOptions{})
-		if err != nil {
-			// unlike the lister, the typed client returns a non-nil empty
-			// Pod alongside the error; return nil explicitly so callers
-			// that tolerate IsNotFound (cmdDel of a force-deleted pod)
-			// can rely on pod != nil
-			return nil, err
-		}
-	}
-	return pod, nil
+	return c.podLister.Pods(namespace).Get(name)
 }
 
-// GetPodAnnotations obtains the pod UID and annotation from the cache or apiserver
+// GetPodWithAnnotations obtains the Pod UID and annotations from the local
+// informer cache. It polls only that cache while waiting, avoiding a live
+// apiserver GET when informer delivery is delayed.
 func GetPodWithAnnotations(ctx context.Context, getter PodInfoGetter,
 	namespace, name, nadName string, annotCond podAnnotWaitCond) (*corev1.Pod, map[string]string, *util.PodAnnotation, error) {
-	var notFoundCount uint
+	return getPodWithAnnotations(ctx, getter, namespace, name, nadName, "", false, annotCond)
+}
 
-	for {
-		select {
-		case <-ctx.Done():
+// getPodWithAnnotations optionally validates expectedPodUID when the Pod is
+// found. podAlreadyObserved distinguishes an initial informer cache miss from
+// deletion of a Pod that this CNI ADD previously observed.
+func getPodWithAnnotations(ctx context.Context, getter PodInfoGetter,
+	namespace, name, nadName, expectedPodUID string, podAlreadyObserved bool,
+	annotCond podAnnotWaitCond) (*corev1.Pod, map[string]string, *util.PodAnnotation, error) {
+	var pod *corev1.Pod
+	var podNADAnnotation *util.PodAnnotation
+	podUID := expectedPodUID
+	podObserved := podAlreadyObserved
+
+	getReadyPod := func() (*corev1.Pod, *util.PodAnnotation, bool, error) {
+		pod, err := getter.getPod(namespace, name)
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				if podObserved {
+					return nil, nil, false, fmt.Errorf("pod %s/%s with UID %s was deleted while waiting for annotations",
+						namespace, name, podUID)
+				}
+				return nil, nil, false, nil
+			}
+			return nil, nil, false, fmt.Errorf("failed to get pod for annotations: %v", err)
+		}
+		if pod == nil {
+			if podObserved {
+				return nil, nil, false, fmt.Errorf("pod %s/%s with UID %s was deleted while waiting for annotations",
+					namespace, name, podUID)
+			}
+			return nil, nil, false, nil
+		}
+		if podUID != "" && string(pod.UID) != podUID {
+			// A runtime identifies a static pod by its config hash, which does
+			// not match the API UID of its mirror Pod. Accept that mismatch only
+			// on the initial observation, then pin subsequent reads to the mirror.
+			if podObserved || !IsStaticPod(pod) {
+				return nil, nil, false, fmt.Errorf("pod %s/%s with UID %s was replaced by UID %s while waiting for annotations",
+					namespace, name, podUID, pod.UID)
+			}
+		}
+		podUID = string(pod.UID)
+		podObserved = true
+		annotation, ready, err := annotCond(pod, nadName)
+		return pod, annotation, ready, err
+	}
+
+	err := wait.PollUntilContextCancel(ctx, podAnnotationPollInterval, true,
+		func(context.Context) (bool, error) {
+			var ready bool
+			var err error
+			pod, podNADAnnotation, ready, err = getReadyPod()
+			return ready, err
+		})
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			detail := "timed out"
-			if ctx.Err() == context.Canceled {
+			if errors.Is(err, context.Canceled) {
 				detail = "canceled while"
 			}
-			return nil, nil, nil, fmt.Errorf("%s waiting for annotations: %w", detail, ctx.Err())
-		default:
-			pod, err := getter.getPod(namespace, name)
-			if err != nil {
-				if !apierrors.IsNotFound(err) {
-					return nil, nil, nil, fmt.Errorf("failed to get pod for annotations: %v", err)
-				}
-				// Allow up to 1 second for pod to be found
-				notFoundCount++
-				if notFoundCount >= 5 {
-					return nil, nil, nil, fmt.Errorf("timed out waiting for pod after 1s: %v", err)
-				}
-				// drop through to try again
-			} else if pod != nil {
-				podNADAnnotation, ready, err := annotCond(pod, nadName)
-				if err != nil {
-					return nil, nil, nil, err
-				} else if ready {
-					return pod, pod.Annotations, podNADAnnotation, nil
-				}
-			}
-
-			// try again later
-			time.Sleep(200 * time.Millisecond)
+			return nil, nil, nil, fmt.Errorf("%s waiting for annotations: %w", detail, err)
 		}
+		return nil, nil, nil, err
 	}
+	return pod, pod.Annotations, podNADAnnotation, nil
 }
 
 // PodAnnotation2PodInfo creates PodInterfaceInfo from Pod annotations and additional attributes
