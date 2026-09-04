@@ -45,6 +45,9 @@ get_crd_version() {
     networkqos)
       echo "v1alpha1"
       ;;
+    observabilityconfig)
+      echo "v1alpha1"
+      ;;
     *)
       echo "v1"
       ;;
