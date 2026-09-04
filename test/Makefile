@@ -4,6 +4,28 @@
 E2E_REPORT_DIR:=$(CURDIR)/_artifacts
 JOB_NAME?="$@"
 
+# CRD integration tests — run against a real kube-apiserver + etcd (envtest).
+# setup-envtest downloads the required binaries on first run and caches them in
+# ENVTEST_ASSETS_DIR.  No Kind cluster is needed.
+#
+# Long-term goal: tests from testscenario/ (CRD validation, CEL rules,
+# defaulting) that do not require a full Kind cluster will migrate here.
+#
+# Usage:
+#   make test-crd
+#   make test-crd ENVTEST_K8S_VERSION=1.37.0   # override k8s version
+ENVTEST_ASSETS_DIR ?= $(CURDIR)/_artifacts/envtest-bin
+# Keep in sync with K8S_VERSION in .github/workflows/test.yml
+ENVTEST_K8S_VERSION ?= 1.36.2
+
+.PHONY: test-crd
+test-crd:
+	mkdir -p $(ENVTEST_ASSETS_DIR)
+	cd crd-integration && \
+	KUBEBUILDER_ASSETS="$$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest \
+	    use $(ENVTEST_K8S_VERSION) --bin-dir $(abspath $(ENVTEST_ASSETS_DIR)) -p path)" \
+	go test -count=1 -v ./...
+
 # Make no assumptions about network, so run all tests. If on IPv4 or
 # IPv6 only network, set appropriately to skip related tests.
 PLATFORM_IPV4_SUPPORT?=false

@@ -264,6 +264,13 @@ func schema_pkg_crd_egressip_v1_EgressIPSpec(ref common.ReferenceCallback) commo
 							Ref:         ref(metav1.LabelSelector{}.OpenAPIModelName()),
 						},
 					},
+					"egressNodeSelector": {
+						SchemaProps: spec.SchemaProps{
+							Description: "EgressNodeSelector limits the pool of nodes that can host this EgressIP. Only nodes whose labels match this selector are eligible for assignment. This field is optional. When not specified by the user, the CRD default is applied: {matchExpressions: [{key: k8s.ovn.org/egress-assignable, operator: Exists}]}. An empty selector ({}) matches all nodes — use with caution as it expands the eligible pool and health-check set to the entire cluster. This field restricts only where the IPs in this EgressIP object are placed; it does not reserve the matched nodes for exclusive use. Other EgressIP objects can still consume capacity on the same nodes.",
+							Default:     map[string]interface{}{},
+							Ref:         ref(metav1.LabelSelector{}.OpenAPIModelName()),
+						},
+					},
 				},
 				Required: []string{"egressIPs", "namespaceSelector"},
 			},

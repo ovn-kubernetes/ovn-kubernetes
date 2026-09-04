@@ -65,6 +65,21 @@ type EgressIPSpec struct {
 	// match this pod selector.
 	// +optional
 	PodSelector metav1.LabelSelector `json:"podSelector,omitempty"`
+
+	// EgressNodeSelector limits the pool of nodes that can host this
+	// EgressIP. Only nodes whose labels match this selector are eligible
+	// for assignment.
+	// This field is optional. When not specified by the user, the CRD
+	// default is applied: {matchExpressions: [{key:
+	// k8s.ovn.org/egress-assignable, operator: Exists}]}.
+	// An empty selector ({}) matches all nodes — use with caution as it
+	// expands the eligible pool and health-check set to the entire cluster.
+	// This field restricts only where the IPs in this EgressIP object are
+	// placed; it does not reserve the matched nodes for exclusive use.
+	// Other EgressIP objects can still consume capacity on the same nodes.
+	// +kubebuilder:default={matchExpressions: {{key: "k8s.ovn.org/egress-assignable", operator: "Exists"}}}
+	// +optional
+	EgressNodeSelector metav1.LabelSelector `json:"egressNodeSelector,omitempty"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

@@ -28,6 +28,18 @@ type EgressIPSpecApplyConfiguration struct {
 	// (in the namespace(s) already matched by the NamespaceSelector) which
 	// match this pod selector.
 	PodSelector *metav1.LabelSelectorApplyConfiguration `json:"podSelector,omitempty"`
+	// EgressNodeSelector limits the pool of nodes that can host this
+	// EgressIP. Only nodes whose labels match this selector are eligible
+	// for assignment.
+	// This field is optional. When not specified by the user, the CRD
+	// default is applied: {matchExpressions: [{key:
+	// k8s.ovn.org/egress-assignable, operator: Exists}]}.
+	// An empty selector ({}) matches all nodes — use with caution as it
+	// expands the eligible pool and health-check set to the entire cluster.
+	// This field restricts only where the IPs in this EgressIP object are
+	// placed; it does not reserve the matched nodes for exclusive use.
+	// Other EgressIP objects can still consume capacity on the same nodes.
+	EgressNodeSelector *metav1.LabelSelectorApplyConfiguration `json:"egressNodeSelector,omitempty"`
 }
 
 // EgressIPSpecApplyConfiguration constructs a declarative configuration of the EgressIPSpec type for use with
@@ -59,5 +71,13 @@ func (b *EgressIPSpecApplyConfiguration) WithNamespaceSelector(value *metav1.Lab
 // If called multiple times, the PodSelector field is set to the value of the last call.
 func (b *EgressIPSpecApplyConfiguration) WithPodSelector(value *metav1.LabelSelectorApplyConfiguration) *EgressIPSpecApplyConfiguration {
 	b.PodSelector = value
+	return b
+}
+
+// WithEgressNodeSelector sets the EgressNodeSelector field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the EgressNodeSelector field is set to the value of the last call.
+func (b *EgressIPSpecApplyConfiguration) WithEgressNodeSelector(value *metav1.LabelSelectorApplyConfiguration) *EgressIPSpecApplyConfiguration {
+	b.EgressNodeSelector = value
 	return b
 }

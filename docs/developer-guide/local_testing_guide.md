@@ -211,6 +211,61 @@ Ginkgo ran 1 suite in 38.489055861s
 Test Suite Passed
 ~~~
 
+## CRD Integration Tests
+
+CRD integration tests live in `test/crd-integration/` and run against a real
+kube-apiserver + etcd started by [envtest](https://pkg.go.dev/sigs.k8s.io/controller-runtime/pkg/envtest).
+They verify CRD admission behaviour — defaulting, validation, and CEL rules —
+without requiring a full Kind cluster.
+
+The tests are the intended future home for scenarios currently living in
+`test/e2e/testscenario/` that do not need live pod networking.
+
+### Prerequisites
+
+No cluster is needed.  `setup-envtest` downloads the required kube-apiserver
+and etcd binaries automatically on the first run.
+
+Go 1.26+ must be on `$PATH` (same requirement as the rest of the project).
+
+### Running the CRD integration tests
+
+```bash
+$ cd $REPO/test
+$ make test-crd
+```
+
+To pin a specific Kubernetes API version for the embedded API server:
+
+```bash
+$ make test-crd ENVTEST_K8S_VERSION=1.37.0
+```
+
+The default version tracks `K8S_VERSION` in
+[`.github/workflows/test.yml`](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/.github/workflows/test.yml)
+and `k8s.io/api` in `go-controller/go.mod` (currently `1.36.2`).
+
+### Running a single CRD integration test
+
+`go test -run` matches against the Go test function name (`TestEgressIPCRDIntegration`),
+not the Ginkgo `It` description.  Use Ginkgo's `--focus` flag after `--` to
+filter by description:
+
+```bash
+$ cd $REPO/test/crd-integration
+$ KUBEBUILDER_ASSETS="$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest \
+    use 1.36.2 --bin-dir /tmp/envtest-bin -p path)" \
+  go test -v ./egressip/... -- --focus "fills in the egress-assignable default"
+```
+
+### Adding new CRD integration tests
+
+Place new test files under `test/crd-integration/<crd-name>/`.  Each
+subdirectory should contain a `suite_test.go` (Ginkgo bootstrap) and one or
+more `*_test.go` files.  The `BeforeSuite` in `suite_test.go` points
+`envtest.Environment.CRDDirectoryPaths` at `helm/ovn-kubernetes/crds/` so all
+committed CRD manifests are loaded automatically.
+
 ### Running a control-plane test
 
 All local tests are defined as `control-plane` tests. To run a single `control-plane` test, target the `control-plane`

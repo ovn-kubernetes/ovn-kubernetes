@@ -83,6 +83,7 @@ func (in *EgressIPSpec) DeepCopyInto(out *EgressIPSpec) {
 	}
 	in.NamespaceSelector.DeepCopyInto(&out.NamespaceSelector)
 	in.PodSelector.DeepCopyInto(&out.PodSelector)
+	in.EgressNodeSelector.DeepCopyInto(&out.EgressNodeSelector)
 	return
 }
 
