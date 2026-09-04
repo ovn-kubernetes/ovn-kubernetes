@@ -1772,7 +1772,7 @@ func runDPUUplinkVRFLiteRouteAdvertisements(
 	serverNetwork, err := infraprovider.Get().GetNetwork(bgpExternalNetworkName)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	serverIface, err := infraprovider.Get().GetExternalContainerNetworkInterface(
-		infraapi.ExternalContainer{Name: serverContainerName},
+		infraapi.ExternalContainer{Name: bgpExternalServerContainerName},
 		serverNetwork,
 	)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())

@@ -76,14 +76,16 @@ cleanup_bgp_artifacts() {
     return
   fi
 
-  if "${provider}" ps -a --format '{{.Names}}' | grep -Eq '^bgpserver$'; then
-    "${provider}" rm -f bgpserver
+  # Only remove the dpu-sim-named BGP scaffolding; a coexisting kind cluster
+  # owns its own trio (bgpnet/bgpserver/frr) which must be left alone.
+  if "${provider}" ps -a --format '{{.Names}}' | grep -Fxq -- "${BGP_SERVER_NAME}"; then
+    "${provider}" rm -f "${BGP_SERVER_NAME}"
   fi
-  if "${provider}" ps -a --format '{{.Names}}' | grep -Eq '^frr$'; then
-    "${provider}" rm -f frr
+  if "${provider}" ps -a --format '{{.Names}}' | grep -Fxq -- "${FRR_CONTAINER_NAME}"; then
+    "${provider}" rm -f "${FRR_CONTAINER_NAME}"
   fi
-  if "${provider}" network ls --format '{{.Name}}' | grep -Eq '^bgpnet$'; then
-    "${provider}" network rm bgpnet || true
+  if "${provider}" network ls --format '{{.Name}}' | grep -Fxq -- "${BGP_NET_NAME}"; then
+    "${provider}" network rm "${BGP_NET_NAME}" || true
   fi
 }
 
@@ -92,10 +94,44 @@ KIND_EXPERIMENTAL_PROVIDER=$(resolve_kind_provider)
 export KIND_EXPERIMENTAL_PROVIDER
 KIND_HELM_OVN_TIMEOUT=${KIND_HELM_OVN_TIMEOUT:-900}
 export KIND_HELM_OVN_TIMEOUT
+# The BGP scaffolding values below reach kind-helm.sh as explicit CLI
+# arguments (see install_ovnk_dpu), not exported environment variables, so
+# the deploy path cannot silently fall back to the kind defaults.
 BGP_SERVER_NET_SUBNET_IPV4=${BGP_SERVER_NET_SUBNET_IPV4:-172.29.0.0/16}
 BGP_SERVER_NET_SUBNET_IPV6=${BGP_SERVER_NET_SUBNET_IPV6:-fc00:f853:ccd:e797::/64}
-export BGP_SERVER_NET_SUBNET_IPV4
-export BGP_SERVER_NET_SUBNET_IPV6
+# dpu-sim-specific names for the external BGP scaffolding, so that these
+# clusters can coexist with a regular kind cluster owning the default
+# bgpnet/bgpserver/frr trio on the same machine. The subnets above must stay
+# distinct from the kind defaults for the same reason: docker refuses
+# overlapping subnets on coexisting networks.
+#
+#                  kind docker network (172.18.0.0/16)
+#  --------------------------------------------------------------------
+#     ovn-* nodes                            dpu-sim-* nodes
+#         | BGP                                  | BGP
+#     +-------+                           +-------------+
+#     |  frr  |                           | dpu-sim-frr |     external BGP
+#     +-------+                           +-------------+     routers
+#         | bgpnet                               | dpu-sim-bgpnet
+#         | 172.26.0.0/16                        | 172.29.0.0/16
+#  +-----------+                     +--------------------+
+#  | bgpserver |                     | dpu-sim-bgpserver  |   external servers
+#  |  :18080   |                     |      :18081        |   (agnhost), behind
+#  +-----------+                     +--------------------+   advertised routes
+BGP_NET_NAME=${BGP_NET_NAME:-dpu-sim-bgpnet}
+BGP_SERVER_NAME=${BGP_SERVER_NAME:-dpu-sim-bgpserver}
+FRR_CONTAINER_NAME=${FRR_CONTAINER_NAME:-dpu-sim-frr}
+# The BGP server publishes a host port; use a dpu-sim-specific one so it does
+# not collide with the kind default (18080) when both servers run.
+BGP_SERVER_HOST_PORT=${BGP_SERVER_HOST_PORT:-18081}
+BGP_HELM_ARGS=(
+  --bgp-net-name "${BGP_NET_NAME}"
+  --bgp-server-name "${BGP_SERVER_NAME}"
+  --frr-container-name "${FRR_CONTAINER_NAME}"
+  --bgp-server-net-subnet-ipv4 "${BGP_SERVER_NET_SUBNET_IPV4}"
+  --bgp-server-net-subnet-ipv6 "${BGP_SERVER_NET_SUBNET_IPV6}"
+  --bgp-server-host-port "${BGP_SERVER_HOST_PORT}"
+)
 DPU_SIM_UPLINK_ENABLE=${DPU_SIM_UPLINK_ENABLE:-true}
 DPU_SIM_UPLINK_NETWORK=${DPU_SIM_UPLINK_NETWORK:-dpu-sim-uplink}
 DPU_SIM_UPLINK_SUBNET=${DPU_SIM_UPLINK_SUBNET:-172.31.0.0/24}
@@ -180,7 +216,8 @@ EOF
     --no-overlay-enable \
     --advertise-default-network \
     --extra-values "${HOST_VALUES}" \
-    --extra-values "${HOST_NO_OVERLAY_VALUES}"
+    --extra-values "${HOST_NO_OVERLAY_VALUES}" \
+    "${BGP_HELM_ARGS[@]}"
   popd
 }
 
@@ -206,7 +243,8 @@ install_ovnk_dpu() {
     --extra-values "${DPU_VALUES}" \
     --frr-k8s-host-kubeconfig "${FRR_K8S_HOST_KUBECONFIG}" \
     --frr-k8s-remote-kubeconfig "${FRR_K8S_REMOTE_KUBECONFIG}" \
-    --frr-k8s-remote-node-map "${FRR_K8S_REMOTE_NODE_MAP}"
+    --frr-k8s-remote-node-map "${FRR_K8S_REMOTE_NODE_MAP}" \
+    "${BGP_HELM_ARGS[@]}"
   popd
 }
 
@@ -266,7 +304,7 @@ replace_host_with_dpu_node() {
 configure_external_frr_uplink_peer() {
   local peer_ip=$1
 
-  "${KIND_EXPERIMENTAL_PROVIDER}" exec frr vtysh \
+  "${KIND_EXPERIMENTAL_PROVIDER}" exec "${FRR_CONTAINER_NAME}" vtysh \
     -c "configure terminal" \
     -c "router bgp 64512" \
     -c "neighbor ${peer_ip} remote-as 64512" \
@@ -291,7 +329,7 @@ configure_dpu_sim_uplink_bridge() {
   echo "Configuring reserved DPU Uplink bridge ${DPU_SIM_UPLINK_BRIDGE}"
   if "${KIND_EXPERIMENTAL_PROVIDER}" network inspect "${DPU_SIM_UPLINK_NETWORK}" \
     >/dev/null 2>&1; then
-    for container in frr $("${KIND_EXPERIMENTAL_PROVIDER}" ps \
+    for container in "${FRR_CONTAINER_NAME}" $("${KIND_EXPERIMENTAL_PROVIDER}" ps \
       --format '{{.Names}}' | grep "^${DPU_CLUSTER}-worker"); do
       "${KIND_EXPERIMENTAL_PROVIDER}" network disconnect -f \
         "${DPU_SIM_UPLINK_NETWORK}" "${container}" >/dev/null 2>&1 || true
@@ -303,7 +341,7 @@ configure_dpu_sim_uplink_bridge() {
     --subnet="${DPU_SIM_UPLINK_SUBNET}" \
     --driver bridge \
     "${DPU_SIM_UPLINK_NETWORK}"
-  "${KIND_EXPERIMENTAL_PROVIDER}" network connect "${DPU_SIM_UPLINK_NETWORK}" frr
+  "${KIND_EXPERIMENTAL_PROVIDER}" network connect "${DPU_SIM_UPLINK_NETWORK}" "${FRR_CONTAINER_NAME}"
 
   local ordinal=0
   local host_node dpu_node host_pid dpu_pid host_mac dpu_mac host_ip dpu_ip
@@ -382,6 +420,10 @@ fi
 echo "Using KIND_EXPERIMENTAL_PROVIDER=${KIND_EXPERIMENTAL_PROVIDER}"
 echo "Using KIND_HELM_OVN_TIMEOUT=${KIND_HELM_OVN_TIMEOUT}"
 echo "Using BGP_SERVER_NET_SUBNET_IPV4=${BGP_SERVER_NET_SUBNET_IPV4}"
+echo "Using BGP_NET_NAME=${BGP_NET_NAME}"
+echo "Using BGP_SERVER_NAME=${BGP_SERVER_NAME}"
+echo "Using FRR_CONTAINER_NAME=${FRR_CONTAINER_NAME}"
+echo "Using BGP_SERVER_HOST_PORT=${BGP_SERVER_HOST_PORT}"
 
 cleanup_bgp_artifacts "${KIND_EXPERIMENTAL_PROVIDER}"
 
@@ -405,3 +447,10 @@ install_ovnk_dpu
 wait_for_ovn
 configure_dpu_sim_uplink_bridge
 popd
+
+echo "BGP e2e environment:"
+echo "  OVN_TEST_BGP_ROUTER_CONTAINER=${FRR_CONTAINER_NAME}"
+echo "  OVN_TEST_BGP_SERVER_CONTAINER=${BGP_SERVER_NAME}"
+echo "  OVN_TEST_BGP_SERVER_NETWORK=${BGP_NET_NAME}"
+echo "  OVN_TEST_BGP_SERVER_NET_SUBNET_IPV4=${BGP_SERVER_NET_SUBNET_IPV4}"
+echo "  OVN_TEST_BGP_SERVER_NET_SUBNET_IPV6=${BGP_SERVER_NET_SUBNET_IPV6}"

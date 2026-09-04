@@ -228,6 +228,9 @@ jobs:
           export OVN_TEST_DPU_UPLINK_EXPECTED_BRIDGE="breth-uplink"
           export OVN_TEST_BGP_SERVER_NET_SUBNET_IPV4="172.29.0.0/16"
           export OVN_TEST_BGP_SERVER_NET_SUBNET_IPV6="fc00:f853:ccd:e797::/64"
+          export OVN_TEST_BGP_ROUTER_CONTAINER="dpu-sim-frr"
+          export OVN_TEST_BGP_SERVER_CONTAINER="dpu-sim-bgpserver"
+          export OVN_TEST_BGP_SERVER_NETWORK="dpu-sim-bgpnet"
           export ENABLE_MULTI_NET=true
           export ENABLE_NETWORK_SEGMENTATION=true
           export ENABLE_ROUTE_ADVERTISEMENTS=true

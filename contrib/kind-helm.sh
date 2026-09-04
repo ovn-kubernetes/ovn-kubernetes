@@ -68,6 +68,12 @@ usage() {
     echo "       [ --frr-k8s-remote-kubeconfig <file> ]"
     echo "       [ --frr-k8s-host-kubeconfig <file> ]"
     echo "       [ --frr-k8s-remote-node-map <host=dpu[,host=dpu...]> ]"
+    echo "       [ --bgp-net-name <name> ]"
+    echo "       [ --bgp-server-name <name> ]"
+    echo "       [ --frr-container-name <name> ]"
+    echo "       [ --bgp-server-net-subnet-ipv4 <subnet> ]"
+    echo "       [ --bgp-server-net-subnet-ipv6 <subnet> ]"
+    echo "       [ --bgp-server-host-port <port> ]"
     echo "       [ --enable-coredumps ]"
     echo "       [ -ub | --uplink-bridge ]"
     echo "       [ -h ]"
@@ -153,6 +159,12 @@ usage() {
     echo "--frr-k8s-remote-kubeconfig                   Kubeconfig used by DPU-cluster FRR-K8S pods to watch the host cluster API."
     echo "--frr-k8s-host-kubeconfig                     Kubeconfig used by this script to write FRR-K8S resources to the host cluster API."
     echo "--frr-k8s-remote-node-map                     Comma-separated host-node=dpu-node pairs for remote FRR-K8S node-name mapping."
+    echo "--bgp-net-name                                Name of the docker network hosting the external BGP server. DEFAULT: bgpnet"
+    echo "--bgp-server-name                             Name of the external BGP server container. DEFAULT: bgpserver"
+    echo "--frr-container-name                          Name of the external FRR router container. DEFAULT: frr"
+    echo "--bgp-server-net-subnet-ipv4                  IPv4 subnet of the external BGP server network. DEFAULT: 172.26.0.0/16"
+    echo "--bgp-server-net-subnet-ipv6                  IPv6 subnet of the external BGP server network. DEFAULT: fc00:f853:ccd:e796::/64"
+    echo "--bgp-server-host-port                        Host port published by the external BGP server container. DEFAULT: 18080"
     echo "-nokvipam | --opt-out-kv-ipam                 Skip installing the KubeVirt IPAM controller (requires --install-kubevirt)."
     echo ""
 
@@ -161,8 +173,7 @@ usage() {
 parse_args() {
     while [ "$1" != "" ]; do
         case $1 in
-            --delete )                            delete
-                                                  exit
+            --delete )                            KIND_DELETE=true
                                                   ;;
             -cf | --config-file )                 shift
                                                   if test ! -f "$1"; then
@@ -427,6 +438,54 @@ parse_args() {
                                                   fi
                                                   FRR_K8S_REMOTE_NODE_MAP=$1
                                                   ;;
+            --bgp-net-name )                      shift
+                                                  if [[ -z "${1:-}" || "${1:-}" == -* ]]; then
+                                                    echo "Missing value for --bgp-net-name" >&2
+                                                    usage
+                                                    exit 1
+                                                  fi
+                                                  BGP_NET_NAME=$1
+                                                  ;;
+            --bgp-server-name )                   shift
+                                                  if [[ -z "${1:-}" || "${1:-}" == -* ]]; then
+                                                    echo "Missing value for --bgp-server-name" >&2
+                                                    usage
+                                                    exit 1
+                                                  fi
+                                                  BGP_SERVER_NAME=$1
+                                                  ;;
+            --frr-container-name )                shift
+                                                  if [[ -z "${1:-}" || "${1:-}" == -* ]]; then
+                                                    echo "Missing value for --frr-container-name" >&2
+                                                    usage
+                                                    exit 1
+                                                  fi
+                                                  FRR_CONTAINER_NAME=$1
+                                                  ;;
+            --bgp-server-net-subnet-ipv4 )        shift
+                                                  if [[ -z "${1:-}" || "${1:-}" == -* ]]; then
+                                                    echo "Missing value for --bgp-server-net-subnet-ipv4" >&2
+                                                    usage
+                                                    exit 1
+                                                  fi
+                                                  BGP_SERVER_NET_SUBNET_IPV4=$1
+                                                  ;;
+            --bgp-server-net-subnet-ipv6 )        shift
+                                                  if [[ -z "${1:-}" || "${1:-}" == -* ]]; then
+                                                    echo "Missing value for --bgp-server-net-subnet-ipv6" >&2
+                                                    usage
+                                                    exit 1
+                                                  fi
+                                                  BGP_SERVER_NET_SUBNET_IPV6=$1
+                                                  ;;
+            --bgp-server-host-port )              shift
+                                                  if ! [[ "${1:-}" =~ ^[0-9]+$ ]]; then
+                                                    echo "Invalid bgp-server-host-port: ${1:-}" >&2
+                                                    usage
+                                                    exit 1
+                                                  fi
+                                                  BGP_SERVER_HOST_PORT=$1
+                                                  ;;
             -nokvipam | --opt-out-kv-ipam )       KIND_OPT_OUT_KUBEVIRT_IPAM=true
                                                   ;;
             * )                                   usage
@@ -459,6 +518,12 @@ print_params() {
      echo "ENABLE_UPLINK = $ENABLE_UPLINK"
      echo "ENABLE_PRE_CONF_UDN_ADDR = $ENABLE_PRE_CONF_UDN_ADDR"
      echo "ENABLE_ROUTE_ADVERTISEMENTS = $ENABLE_ROUTE_ADVERTISEMENTS"
+     echo "BGP_NET_NAME = $BGP_NET_NAME"
+     echo "BGP_SERVER_NAME = $BGP_SERVER_NAME"
+     echo "FRR_CONTAINER_NAME = $FRR_CONTAINER_NAME"
+     echo "BGP_SERVER_NET_SUBNET_IPV4 = $BGP_SERVER_NET_SUBNET_IPV4"
+     echo "BGP_SERVER_NET_SUBNET_IPV6 = $BGP_SERVER_NET_SUBNET_IPV6"
+     echo "BGP_SERVER_HOST_PORT = $BGP_SERVER_HOST_PORT"
      echo "ENABLE_EVPN = $ENABLE_EVPN"
      echo "ADVERTISE_DEFAULT_NETWORK = $ADVERTISE_DEFAULT_NETWORK"
      echo "ADVERTISED_UDN_ISOLATION_MODE = $ADVERTISED_UDN_ISOLATION_MODE"
@@ -672,6 +737,13 @@ install_online_ovn_kubernetes_crds() {
 check_dependencies
 parse_args "$@"
 set_default_params
+# --delete runs only after all arguments are parsed and defaults are set, so
+# that name flags (e.g. --frr-container-name) select which BGP scaffolding to
+# tear down.
+if [ "${KIND_DELETE:-false}" == true ]; then
+  delete
+  exit
+fi
 if [ "${DPU_MODE}" == "dpu" ] && [ "${ENABLE_ROUTE_ADVERTISEMENTS}" == true ]; then
   if [[ -z "${FRR_K8S_REMOTE_KUBECONFIG:-}" || -z "${FRR_K8S_REMOTE_NODE_MAP:-}" ]]; then
     echo "DPU mode with route advertisements requires --frr-k8s-remote-kubeconfig and --frr-k8s-remote-node-map" >&2
