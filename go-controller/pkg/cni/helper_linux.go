@@ -317,7 +317,7 @@ func setupInterface(netns ns.NetNS, containerID, ifName string, ifInfo *PodInter
 		// set host interface name now for default network as it is already known; otherwise for secondary network,
 		// host interface will be renamed later.
 		if ifInfo.NetName == types.DefaultNetworkName {
-			hostIface.Name = containerID[:15]
+			hostIface.Name = containerID[:types.MaxInterfaceNameLength]
 		} else {
 			hostIface.Name = ""
 		}

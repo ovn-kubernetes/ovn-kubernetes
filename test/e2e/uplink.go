@@ -22,6 +22,7 @@ import (
 	uplinkv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1"
 	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/allocators"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
@@ -3190,10 +3191,7 @@ func ipv6LinkLocalFromMAC(mac string) string {
 	if err != nil || len(hw) != 6 {
 		return ""
 	}
-	return net.IP{
-		0xfe, 0x80, 0, 0, 0, 0, 0, 0,
-		hw[0] ^ 0x02, hw[1], hw[2], 0xff, 0xfe, hw[3], hw[4], hw[5],
-	}.String()
+	return util.HWAddrToIPv6LLA(hw).String()
 }
 
 func hasRouteInDefaultVRF(node corev1.Node, cidr string, nextHops ...string) (bool, error) {
