@@ -12,7 +12,86 @@ import (
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
+
+func TestOpenFlowManagerLocalnetPortEvents(t *testing.T) {
+	ofm := &openflowManager{
+		defaultBridge:    newOpenflowBridge(bridgeconfig.TestDefaultBridgeConfig()),
+		uplinkBridges:    map[string]*openflowBridge{},
+		localnetPortChan: make(chan struct{}, 1),
+	}
+
+	assertNotified := func(want bool) {
+		t.Helper()
+		select {
+		case <-ofm.localnetPortChan:
+			if !want {
+				t.Fatal("unexpected localnet port notification")
+			}
+		default:
+			if want {
+				t.Fatal("expected localnet port notification")
+			}
+		}
+	}
+
+	gatewayPort := &vswitchd.Port{
+		ExternalIDs: map[string]string{"ovn-localnet-port": "breth0_node"},
+	}
+	ofm.handleLocalnetPortEvent(vswitchd.PortTable, nil, gatewayPort)
+	assertNotified(false)
+
+	localnetPort := &vswitchd.Port{
+		ExternalIDs: map[string]string{"ovn-localnet-port": "blue_ovn_localnet_port"},
+	}
+	ofm.handleLocalnetPortEvent(vswitchd.PortTable, nil, localnetPort)
+	assertNotified(true)
+
+	// Updates that don't change whether the row is a localnet topology port
+	// must not trigger flow regeneration, for example statistics updates.
+	ofm.handleLocalnetPortEvent(vswitchd.PortTable, localnetPort, &vswitchd.Port{
+		ExternalIDs: map[string]string{"ovn-localnet-port": "blue_ovn_localnet_port"},
+		Statistics:  map[string]int{"rx_packets": 1},
+	})
+	assertNotified(false)
+
+	ofm.handleLocalnetPortEvent(vswitchd.BridgeTable,
+		&vswitchd.Bridge{Name: "br-int", Ports: []string{"port-1"}},
+		&vswitchd.Bridge{Name: "br-int", Ports: []string{"port-1", "port-2"}})
+	assertNotified(false)
+
+	ofm.handleLocalnetPortEvent(vswitchd.BridgeTable,
+		&vswitchd.Bridge{Name: "breth0", Ports: []string{"port-1"}},
+		&vswitchd.Bridge{Name: "breth0", Ports: []string{"port-1"}})
+	assertNotified(false)
+
+	ofm.handleLocalnetPortEvent(vswitchd.BridgeTable,
+		&vswitchd.Bridge{Name: "breth0", Ports: []string{"port-1"}},
+		&vswitchd.Bridge{Name: "breth0", Ports: []string{"port-1", "localnet-port"}})
+	assertNotified(true)
+}
+
+func TestStringListsEqual(t *testing.T) {
+	tests := []struct {
+		name string
+		a    []string
+		b    []string
+		want bool
+	}{
+		{name: "same order", a: []string{"flow-a", "flow-b"}, b: []string{"flow-a", "flow-b"}, want: true},
+		{name: "different order", a: []string{"flow-a", "flow-b"}, b: []string{"flow-b", "flow-a"}, want: true},
+		{name: "different flow", a: []string{"flow-a", "flow-b"}, b: []string{"flow-a", "flow-c"}, want: false},
+		{name: "different duplicate count", a: []string{"flow-a", "flow-a"}, b: []string{"flow-a", "flow-b"}, want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := stringListsEqual(test.a, test.b); got != test.want {
+				t.Fatalf("stringListsEqual() = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
 
 func TestOpenFlowManagerDeletesGroupCacheWithFlowCache(t *testing.T) {
 	ofm := &openflowManager{
