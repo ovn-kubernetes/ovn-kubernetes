@@ -175,9 +175,11 @@ func newExplicitConditional(table string, cache *cache.TableCache, matchAll bool
 // predicateConditional is a Conditional that calls a provided function pointer
 // to match on models.
 type predicateConditional struct {
-	tableName string
-	predicate any
-	cache     *cache.TableCache
+	tableName      string
+	predicate      any
+	cache          *cache.TableCache
+	candidateUUIDs []string
+	limitToUUIDs   bool
 }
 
 // matches returns the result of the execution of the predicate
@@ -191,8 +193,15 @@ func (c *predicateConditional) Matches() (map[string]model.Model, error) {
 	found := map[string]model.Model{}
 	// run the predicate on a shallow copy of the models for speed and only
 	// clone the matches
-	for u, m := range tableCache.RowsShallow() {
-		ret := reflect.ValueOf(c.predicate).Call([]reflect.Value{reflect.ValueOf(m)})
+	var rows map[string]model.Model
+	if c.limitToUUIDs {
+		rows = tableCache.RowsByUUIDsShallow(c.candidateUUIDs)
+	} else {
+		rows = tableCache.RowsShallow()
+	}
+	predicate := reflect.ValueOf(c.predicate)
+	for u, m := range rows {
+		ret := predicate.Call([]reflect.Value{reflect.ValueOf(m)})
 		if ret[0].Bool() {
 			found[u] = model.Clone(m)
 		}
@@ -220,6 +229,19 @@ func newPredicateConditional(table string, cache *cache.TableCache, predicate an
 		tableName: table,
 		predicate: predicate,
 		cache:     cache,
+	}, nil
+}
+
+// newPredicateConditionalByUUIDs creates a UUID-limited predicate condition.
+func newPredicateConditionalByUUIDs(table string, cache *cache.TableCache, predicate any, uuids []string) (Conditional, error) {
+	candidateUUIDs := make([]string, len(uuids))
+	copy(candidateUUIDs, uuids)
+	return &predicateConditional{
+		tableName:      table,
+		predicate:      predicate,
+		cache:          cache,
+		candidateUUIDs: candidateUUIDs,
+		limitToUUIDs:   true,
 	}, nil
 }
 

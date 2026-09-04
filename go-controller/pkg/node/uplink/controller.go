@@ -1142,14 +1142,10 @@ func (r defaultOVSBridgeResolver) BridgeUplink(bridgeName string) (string, error
 		)
 	}
 
-	bridgePortIDs := make(map[string]struct{}, len(bridge.Ports))
-	for _, portID := range bridge.Ports {
-		bridgePortIDs[portID] = struct{}{}
-	}
-	ports, err := libovsdbops.FindOVSPortsWithPredicate(r.ovsClient, func(port *vswitchd.Port) bool {
-		_, ok := bridgePortIDs[port.UUID]
-		return ok
-	})
+	ctx, cancel := context.WithTimeout(context.Background(), config.Default.OVSDBTxnTimeout)
+	ports := []*vswitchd.Port{}
+	err = r.ovsClient.WhereCacheByUUIDs(func(*vswitchd.Port) bool { return true }, bridge.Ports...).List(ctx, &ports)
+	cancel()
 	if err != nil {
 		return "", newDiscoveryError(
 			uplinkv1alpha1.UplinkStateReasonBridgeUplinkNotFound,
@@ -1157,16 +1153,14 @@ func (r defaultOVSBridgeResolver) BridgeUplink(bridgeName string) (string, error
 		)
 	}
 
-	interfaceIDs := map[string]struct{}{}
+	interfaceIDs := []string{}
 	for _, port := range ports {
-		for _, interfaceID := range port.Interfaces {
-			interfaceIDs[interfaceID] = struct{}{}
-		}
+		interfaceIDs = append(interfaceIDs, port.Interfaces...)
 	}
-	interfaces, err := ovsops.FindInterfacesWithPredicate(r.ovsClient, func(iface *vswitchd.Interface) bool {
-		_, ok := interfaceIDs[iface.UUID]
-		return ok
-	})
+	interfaces := []*vswitchd.Interface{}
+	ctx, cancel = context.WithTimeout(context.Background(), config.Default.OVSDBTxnTimeout)
+	err = r.ovsClient.WhereCacheByUUIDs(func(*vswitchd.Interface) bool { return true }, interfaceIDs...).List(ctx, &interfaces)
+	cancel()
 	if err != nil {
 		return "", newDiscoveryError(
 			uplinkv1alpha1.UplinkStateReasonBridgeUplinkNotFound,
