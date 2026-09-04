@@ -2036,10 +2036,13 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 
 			Entry("old endpointslice is nil",
 				reconcileConntrackTestCase{
-					desc:                   "should not delete any conntrack entries when old endpoint is nil",
-					service:                makeService([]servicePortConfig{{name: "", port: testServicePort1, targetPort: testEndpointPort1, protocol: udpProtocol}}),
-					oldEndpointSlice:       nil,
-					newEndpointSlice:       &discovery.EndpointSlice{},
+					desc:             "should not delete any conntrack entries when old endpoint is nil",
+					service:          makeService([]servicePortConfig{{name: "", port: testServicePort1, targetPort: testEndpointPort1, protocol: udpProtocol}}),
+					oldEndpointSlice: nil,
+					newEndpointSlice: makeEndpointSlice(
+						[]endpointPortConfig{{name: nil, port: testEndpointPort1, protocol: udpProtocol}},
+						[]string{},
+					),
 					expectedConntrackCalls: 0,
 				},
 			),

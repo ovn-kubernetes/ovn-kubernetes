@@ -1005,14 +1005,16 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 			clientPod := e2epod.NewAgnhostPod(ns, podClient, nil, nil, nil)
 			nodeSelection := e2epod.NodeSelection{Name: clientNodeName}
 			e2epod.SetNodeSelection(&clientPod.Spec, nodeSelection)
-			// Send a few UDP packets to create conntrack entry (blackhole state)
-			cmd := fmt.Sprintf("for i in 1 2 3; do echo test | nc -u -w1 %s %d; done; sleep infinity", serviceIP, udpPort)
+			// Send UDP packets continuously to ensure conntrack entry gets created (blackhole state)
+			// Send more packets over a longer period to handle environments where conntrack
+			// entries might take longer to establish
+			cmd := fmt.Sprintf("for i in $(seq 1 20); do echo test | nc -u -w1 %s %d 2>/dev/null || true; sleep 0.5; done; sleep infinity", serviceIP, udpPort)
 			clientPod.Spec.Containers[0].Command = []string{"/bin/sh", "-c", cmd}
 			clientPod.Spec.Containers[0].Name = podClient
 			e2epod.NewPodClient(f).CreateSync(ctx, clientPod)
 
-			// Wait a moment for UDP packets to be sent
-			time.Sleep(2 * time.Second)
+			// Wait longer for UDP packets to be sent and conntrack entry to be created
+			time.Sleep(5 * time.Second)
 
 			ginkgo.By("Checking kernel conntrack for blackhole entry")
 			ovnNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
