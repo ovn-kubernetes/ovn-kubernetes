@@ -56,8 +56,14 @@ func GetGWRouterIPv6(node *corev1.Node, netInfo util.NetInfo) (net.IP, error) {
 // TODO this can be moved to netInfo to avoid instantiating the same IPGenerator
 func GetGWRouterIPs(node *corev1.Node, netInfo util.NetInfo) ([]*net.IPNet, error) {
 	var gwRouterAddrs []*net.IPNet
-	// we allocate join subnets for L3/L2 primary user defined networks or default network
-	if !(netInfo.IsDefault() || (util.IsNetworkSegmentationSupportEnabled() && netInfo.IsPrimaryNetwork())) {
+	// We allocate join subnets for L3/L2 primary user defined networks or the
+	// default network. A BGP-advertised secondary UDN also needs a gateway-router
+	// join IP so that its per-network Gateway Router can attach to a join switch
+	// and give it a north-south datapath. A plain (non-advertised) secondary
+	// stays east/west-only and keeps returning an empty result.
+	if !(netInfo.IsDefault() ||
+		(util.IsNetworkSegmentationSupportEnabled() &&
+			(netInfo.IsPrimaryNetwork() || isAdvertisedSecondaryUDN(netInfo, node)))) {
 		return gwRouterAddrs, nil
 	}
 	// Allocate the IP address(es) for the node Gateway router port connecting
@@ -82,6 +88,16 @@ func GetGWRouterIPs(node *corev1.Node, netInfo util.NetInfo) ([]*net.IPNet, erro
 		gwRouterAddrs = append(gwRouterAddrs, gwRouterAddr)
 	}
 	return gwRouterAddrs, nil
+}
+
+// isAdvertisedSecondaryUDN reports whether netInfo is a SECONDARY user-defined
+// network that is BGP-advertised at the given node. Secondary-UDN north-south
+// plumbing keys off this same advertisement signal.
+func isAdvertisedSecondaryUDN(netInfo util.NetInfo, node *corev1.Node) bool {
+	return node != nil &&
+		netInfo.IsUserDefinedNetwork() &&
+		!netInfo.IsPrimaryNetwork() &&
+		util.IsPodNetworkAdvertisedAtNode(netInfo, node.Name)
 }
 
 func getGWRouterIP(subnet string, nodeID int) (*net.IPNet, error) {

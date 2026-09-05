@@ -33,6 +33,16 @@ type UserDefinedNodeNetworkController struct {
 	gateway *UserDefinedNetworkGateway
 	// management port device manager
 	mpdm *managementport.MgmtPortDeviceManager
+
+	// Dependencies retained so the node-side gateway can be constructed lazily
+	// if a secondary network transitions to advertised at runtime (see
+	// Reconcile). At construction time the gateway is only built for primary
+	// networks and secondary networks that are already advertised; a secondary
+	// CUDN created before its RouteAdvertisements has no gateway yet.
+	vrfManager              *vrfmanager.Controller
+	ruleManager             *iprulemanager.Controller
+	defaultNetworkGateway   Gateway
+	uplinkGatewayController *UplinkGatewayController
 }
 
 // NewUserDefinedNodeNetworkController creates a new OVN controller for creating logical network
@@ -63,27 +73,61 @@ func NewUserDefinedNodeNetworkController(
 			networkManager:                  networkManager,
 			ovsClient:                       ovsClient,
 		},
-		mpdm: mpdm,
+		mpdm:                    mpdm,
+		vrfManager:              vrfManager,
+		ruleManager:             ruleManager,
+		defaultNetworkGateway:   defaultNetworkGateway,
+		uplinkGatewayController: uplinkGatewayController,
 	}
-	if util.IsNetworkSegmentationSupportEnabled() && snnc.IsPrimaryNetwork() {
-		node, err := snnc.watchFactory.GetNode(snnc.name)
-		if err != nil {
-			return nil, fmt.Errorf("error retrieving node %s while creating node network controller for network %s: %v",
-				snnc.name, netInfo.GetNetworkName(), err)
-		}
-
-		var uplinkStateLister uplinklisters.UplinkStateLister
-		if util.IsUplinkEnabled() {
-			uplinkStateLister = snnc.watchFactory.UplinkStateInformer().Lister()
-		}
-		snnc.gateway, err = NewUserDefinedNetworkGateway(snnc.GetNetInfo(), node,
-			snnc.watchFactory.NodeCoreInformer().Lister(), snnc.Kube, vrfManager, ruleManager, defaultNetworkGateway,
-			ovsClient, uplinkStateLister, uplinkGatewayController)
-		if err != nil {
-			return nil, fmt.Errorf("error creating UDN gateway for network %s: %v", netInfo.GetNetworkName(), err)
+	if util.IsNetworkSegmentationSupportEnabled() &&
+		(snnc.IsPrimaryNetwork() || isAdvertisedSecondaryUDNAtNode(snnc.GetNetInfo(), snnc.name)) {
+		if err := snnc.buildGateway(); err != nil {
+			return nil, err
 		}
 	}
 	return snnc, nil
+}
+
+// buildGateway constructs the node-side UDN gateway for this network and stores
+// it on nc.gateway. It is used both at construction time (for primary networks
+// and secondary networks that are already advertised) and lazily from Reconcile
+// when a secondary network transitions to advertised at runtime. It does not
+// program the datapath; the caller must invoke nc.gateway.AddNetwork().
+func (nc *UserDefinedNodeNetworkController) buildGateway() error {
+	node, err := nc.watchFactory.GetNode(nc.name)
+	if err != nil {
+		return fmt.Errorf("error retrieving node %s while creating node network controller for network %s: %v",
+			nc.name, nc.GetNetworkName(), err)
+	}
+
+	var uplinkStateLister uplinklisters.UplinkStateLister
+	if util.IsUplinkEnabled() {
+		uplinkStateLister = nc.watchFactory.UplinkStateInformer().Lister()
+	}
+	gateway, err := NewUserDefinedNetworkGateway(nc.GetNetInfo(), node,
+		nc.watchFactory.NodeCoreInformer().Lister(), nc.Kube, nc.vrfManager, nc.ruleManager, nc.defaultNetworkGateway,
+		nc.ovsClient, uplinkStateLister, nc.uplinkGatewayController)
+	if err != nil {
+		return fmt.Errorf("error creating UDN gateway for network %s: %v", nc.GetNetworkName(), err)
+	}
+	nc.gateway = gateway
+	return nil
+}
+
+// isAdvertisedSecondaryUDNAtNode reports whether netInfo is a SECONDARY
+// user-defined network that is BGP-advertised at the given node.
+//
+// The node-side UDN gateway (management port, per-network VRF/ip-rules, br-ex
+// OpenFlow, advertised UDN isolation) is provisioned for primary UDNs and, when
+// this predicate holds, for advertised secondary UDNs so they get a north-south
+// datapath. A plain (non-advertised) secondary UDN stays east/west-only and
+// unchanged. This depends on the OVN-side datapath (join subnet, management
+// port, NAT) being present for the network.
+func isAdvertisedSecondaryUDNAtNode(netInfo util.NetInfo, nodeName string) bool {
+	return netInfo != nil &&
+		netInfo.IsUserDefinedNetwork() &&
+		!netInfo.IsPrimaryNetwork() &&
+		util.IsPodNetworkAdvertisedAtNode(netInfo, nodeName)
 }
 
 // Start starts the default controller; handles all events and creates all needed logical entities
@@ -98,7 +142,8 @@ func (nc *UserDefinedNodeNetworkController) Start(_ context.Context) error {
 		}
 		nc.podHandler = handler
 	}
-	if util.IsNetworkSegmentationSupportEnabled() && nc.IsPrimaryNetwork() {
+	if util.IsNetworkSegmentationSupportEnabled() &&
+		(nc.IsPrimaryNetwork() || isAdvertisedSecondaryUDNAtNode(nc.GetNetInfo(), nc.name)) {
 		if err := nc.gateway.AddNetwork(); err != nil {
 			return fmt.Errorf("failed to add network to node gateway for network %s at node %s: %w",
 				nc.GetNetworkName(), nc.name, err)
@@ -133,7 +178,8 @@ func (nc *UserDefinedNodeNetworkController) Cleanup() error {
 			errors = append(errors, fmt.Errorf("deleting network gateway for network %s failed: %v", nc.GetNetworkName(), err))
 		}
 	}
-	if nc.mpdm != nil && util.IsNetworkSegmentationSupportEnabled() && nc.IsPrimaryNetwork() {
+	if nc.mpdm != nil && util.IsNetworkSegmentationSupportEnabled() &&
+		(nc.IsPrimaryNetwork() || isAdvertisedSecondaryUDNAtNode(nc.GetNetInfo(), nc.name)) {
 		if err = nc.mpdm.ReleaseDeviceIDForNetwork(nc.GetNetworkName()); err != nil {
 			errors = append(errors, fmt.Errorf("deleting device ID for network %s failed: %v", nc.GetNetworkName(), err))
 		}
@@ -177,7 +223,33 @@ func (nc *UserDefinedNodeNetworkController) Reconcile(netInfo util.NetInfo) erro
 	}
 
 	if reconcilePodNetwork {
-		if nc.gateway != nil {
+		nowNeedsGateway := util.IsNetworkSegmentationSupportEnabled() &&
+			(nc.IsPrimaryNetwork() || isAdvertisedSecondaryUDNAtNode(netInfo, nc.name))
+		switch {
+		case nc.gateway == nil && nowNeedsGateway:
+			// The network became advertised at runtime (e.g. a secondary CUDN
+			// created before its RouteAdvertisements). The gateway was not built
+			// at construction time, so build it now and program the node-side
+			// datapath (management port, VRF/ip-rules, breth0 OpenFlow). Without
+			// this the NBDB topology exists but there is no north-south datapath.
+			if err := nc.buildGateway(); err != nil {
+				return fmt.Errorf("failed to build node gateway for newly advertised network %s: %w",
+					nc.GetNetworkName(), err)
+			}
+			if err := nc.gateway.AddNetwork(); err != nil {
+				nc.gateway = nil
+				return fmt.Errorf("failed to add newly advertised network %s to node gateway at node %s: %w",
+					nc.GetNetworkName(), nc.name, err)
+			}
+		case nc.gateway != nil && !nowNeedsGateway && !nc.IsPrimaryNetwork():
+			// A secondary network stopped being advertised; tear down the
+			// node-side datapath that buildGateway/AddNetwork installed.
+			if err := nc.gateway.DelNetwork(); err != nil {
+				return fmt.Errorf("failed to remove de-advertised network %s from node gateway: %w",
+					nc.GetNetworkName(), err)
+			}
+			nc.gateway = nil
+		case nc.gateway != nil:
 			nc.gateway.Reconcile()
 		}
 	}

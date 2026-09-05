@@ -2067,6 +2067,20 @@ func AllowsPersistentIPs(netInfo NetInfo) bool {
 	}
 }
 
+// IsPodNetworkAdvertised returns true if the pod network is advertised on any
+// node. For networks with NoOverlay or EVPN transport this always returns true
+// as those networks should always be advertised. This is the network-wide
+// counterpart of IsPodNetworkAdvertisedAtNode, for decisions about per-network
+// (rather than per-node) topology such as the join switch.
+func IsPodNetworkAdvertised(netInfo NetInfo) bool {
+	switch netInfo.Transport() {
+	case types.NetworkTransportNoOverlay, types.NetworkTransportEVPN:
+		return true
+	default:
+		return len(netInfo.GetPodNetworkAdvertisedVRFs()) > 0
+	}
+}
+
 // IsPodNetworkAdvertisedAtNode returns true if the pod network is advertised at
 // the given node. For networks with NoOverlay or EVPN transport this always
 // returns true as those networks should always be advertised.

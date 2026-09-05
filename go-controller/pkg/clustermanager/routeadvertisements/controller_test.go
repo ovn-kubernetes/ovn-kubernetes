@@ -1294,13 +1294,41 @@ func TestController_reconcile(t *testing.T) {
 			},
 		},
 		{
-			name: "fails to reconcile a secondary network",
+			// A secondary CUDN is advertised just like a primary one. This only
+			// generates FRRConfiguration; north-south forwarding also needs the
+			// per-network Gateway Router datapath.
+			name: "reconciles a secondary network",
 			ra:   &testRA{Name: "ra", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
-			nads: []*testNAD{
-				{Name: "red", Namespace: "red", Network: "red", IsSecondary: true, Labels: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.1.1.0/24"}},
+						}},
+					},
+				},
 			},
+			nads: []*testNAD{
+				{Name: "red", Namespace: "red", Network: util.GenerateCUDNNetworkName("red"), Topology: "layer3", Subnet: "1.2.0.0/16", IsSecondary: true, Labels: map[string]string{"selected": "true"}},
+			},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\", \"cluster_udn_red\":\"1.2.0.0/24\"}"}},
 			reconcile:            "ra",
-			expectAcceptedStatus: metav1.ConditionFalse,
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.2.0.0/24"}, Imports: []string{"red"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.2.0.0/24"}},
+						}},
+						{ASN: 1, VRF: "red", Imports: []string{"default"}},
+					}},
+			},
+			expectNADAnnotations: map[string]map[string]string{"red": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
 		},
 		{
 			name: "fails to reconcile an non-cluster UDN",
@@ -3383,8 +3411,11 @@ func TestUpdates(t *testing.T) {
 			newObject: &testNAD{Name: "net", Namespace: "net", OwnUpdate: true, Labels: map[string]string{"select": "2"}, Annotations: map[string]string{types.OvnRouteAdvertisementsKey: "[\"ra2\"]"}},
 		},
 		{
-			name:      "does not reconcile a new unsupported (secondary) NAD",
-			newObject: &testNAD{Name: "net", Namespace: "net", Network: "net", IsSecondary: true, Topology: "layer3", Labels: map[string]string{"select": "2"}},
+			// Secondary L2/L3 UDN NADs are advertisement-eligible, so a new one
+			// enqueues the RAs.
+			name:              "reconciles a new supported secondary NAD",
+			newObject:         &testNAD{Name: "net", Namespace: "net", Network: "net", IsSecondary: true, Topology: "layer3", Labels: map[string]string{"select": "2"}},
+			expectedReconcile: []string{"ra1", "ra2", "ra3"},
 		},
 		{
 			name:              "reconciles all RAs that advertise EIPs on new EIP with status",
