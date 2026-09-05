@@ -420,7 +420,7 @@ func (o *ContainerOps) CreateExternalContainer(container api.ExternalContainer) 
 	if exists {
 		return container, fmt.Errorf("external container %s already exists", container.Name)
 	}
-	cmd := []string{"run", "-itd", "--privileged", "--name", container.Name, "--network", container.Network.Name(), "--hostname", container.Name}
+	cmd := []string{"run", "-itd", "--init", "--privileged", "--name", container.Name, "--network", container.Network.Name(), "--hostname", container.Name}
 	if container.IPv4 != "" {
 		cmd = append(cmd, "--ip", container.IPv4)
 	}
