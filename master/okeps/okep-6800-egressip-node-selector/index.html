@@ -5,13 +5,13 @@
       
       
       
-        <link rel="canonical" href="https://www.ovn.org/ovn-kubernetes/master/okeps/okep-3926-disable-port-security/">
+        <link rel="canonical" href="https://www.ovn.org/ovn-kubernetes/master/okeps/okep-6800-egressip-node-selector/">
       
       
-        <link rel="prev" href="../okep-6019-vrf-lite-shared-gateway-external-bridges/">
+        <link rel="prev" href="../okep-5212-ovnobserv-api/">
       
       
-        <link rel="next" href="../okep-5212-ovnobserv-api/">
+        <link rel="next" href="../../blog/">
       
       
         
@@ -22,7 +22,7 @@
     
     
       
-        <title>Disable Port Security - OVN-Kubernetes</title>
+        <title>EgressIP Node Selector - OVN-Kubernetes</title>
       
     
     
@@ -85,7 +85,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#okep-3926-disable-mac-spoof-protection-on-secondary-networks" class="md-skip">
+        <a href="#okep-6800-egressip-node-selector" class="md-skip">
           Skip to content
         </a>
       
@@ -124,7 +124,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Disable Port Security
+              EgressIP Node Selector
             
           </span>
         </div>
@@ -4417,6 +4417,62 @@
                 
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../okep-3926-disable-port-security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Disable Port Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../okep-5212-ovnobserv-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OVN Observability API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
     
   
   
@@ -4436,7 +4492,7 @@
   <span class="md-ellipsis">
     
   
-    Disable Port Security
+    EgressIP Node Selector
   
 
     
@@ -4454,7 +4510,7 @@
   <span class="md-ellipsis">
     
   
-    Disable Port Security
+    EgressIP Node Selector
   
 
     
@@ -4513,17 +4569,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#future-goals" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Future Goals
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#introduction" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4536,10 +4581,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#ovn-port-security" class="md-nav__link">
+  <a href="#background" class="md-nav__link">
     <span class="md-ellipsis">
       
-        OVN Port Security
+        Background
       
     </span>
   </a>
@@ -4547,43 +4592,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#the-unknown-address-keyword" class="md-nav__link">
+  <a href="#problem" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The unknown Address Keyword
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#the-force_fdb_lookup-option" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        The force_fdb_lookup Option
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#existing-port-security-behavior-with-ipam-disabled" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Existing Port Security Behavior with IPAM Disabled
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#bridge-cni-parity" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bridge CNI Parity
+        Problem
       
     </span>
   </a>
@@ -4608,10 +4620,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#definition-of-personas" class="md-nav__link">
+  <a href="#story-1-zone-based-compliance-driven-placement" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Definition of personas
+        Story 1: Zone-Based / Compliance-Driven Placement
       
     </span>
   </a>
@@ -4619,10 +4631,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#story-1-kubevirt-nested-virtualization-with-bridged-networking" class="md-nav__link">
+  <a href="#story-2-multi-tenant-egress-node-pools" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Story 1: KubeVirt Nested Virtualization with Bridged Networking
+        Story 2: Multi-Tenant Egress Node Pools
       
     </span>
   </a>
@@ -4630,10 +4642,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#story-2-network-function-virtualization-nfv" class="md-nav__link">
+  <a href="#story-3-controlled-maintenance-drain" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Story 2: Network Function Virtualization (NFV)
+        Story 3: Controlled Maintenance Drain
       
     </span>
   </a>
@@ -4641,10 +4653,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#story-3-lab-and-test-environment-l2-flexibility" class="md-nav__link">
+  <a href="#story-4-infrastructure-level-ip-to-vm-mapping-eg-openstack-upi" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Story 3: Lab and Test Environment L2 Flexibility
+        Story 4: Infrastructure-Level IP-to-VM Mapping (eg. OpenStack UPI)
       
     </span>
   </a>
@@ -4652,21 +4664,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#story-4-multi-vm-bridged-networking-with-unicast-reachability" class="md-nav__link">
+  <a href="#ecosystem-precedent" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Story 4: Multi-VM Bridged Networking with Unicast Reachability
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#story-5-vm-bridging-between-localnet-and-layer2-overlay-networks" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Story 5: VM Bridging Between Localnet and Layer2 Overlay Networks
+        Ecosystem Precedent
       
     </span>
   </a>
@@ -4691,17 +4692,6 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#summary" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Summary
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#api-details" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4714,10 +4704,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#nad-json-configuration" class="md-nav__link">
+  <a href="#crd-change" class="md-nav__link">
     <span class="md-ellipsis">
       
-        NAD JSON Configuration
+        CRD Change
       
     </span>
   </a>
@@ -4725,10 +4715,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#clusteruserdefinednetwork-crd" class="md-nav__link">
+  <a href="#example-yaml" class="md-nav__link">
     <span class="md-ellipsis">
       
-        ClusterUserDefinedNetwork CRD
+        Example YAML
       
     </span>
   </a>
@@ -4736,10 +4726,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#crd-field-definition" class="md-nav__link">
+  <a href="#backwards-compatibility-of-api" class="md-nav__link">
     <span class="md-ellipsis">
       
-        CRD Field Definition
+        Backwards Compatibility of API
       
     </span>
   </a>
@@ -4747,10 +4737,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#crd-validation-rules" class="md-nav__link">
+  <a href="#mutability" class="md-nav__link">
     <span class="md-ellipsis">
       
-        CRD Validation Rules
+        Mutability
       
     </span>
   </a>
@@ -4758,32 +4748,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#nad-generation-from-crd" class="md-nav__link">
+  <a href="#validation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        NAD Generation from CRD
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#interaction-with-ipam-mode" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Interaction with IPAM Mode
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#future-per-attachment-mac-spoof-protection" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Future: Per-Attachment MAC Spoof Protection
+        Validation
       
     </span>
   </a>
@@ -4808,10 +4776,87 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#ovn-logical-topology" class="md-nav__link">
+  <a href="#component-ovnkube-cluster-manager-egressipclustercontroller" class="md-nav__link">
     <span class="md-ellipsis">
       
-        OVN Logical Topology
+        Component: ovnkube-cluster-manager (egressIPClusterController)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#component-ovnkube-controller" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Component: ovnkube-controller
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#component-ovnkube-node" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Component: ovnkube-node
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gateway-modes-lgwsgw" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gateway Modes (lgw/sgw)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cloud-environment-cloudprivateipconfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cloud Environment (CloudPrivateIPConfig)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#interaction-with-egressip-multinic-secondary-host-networks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Interaction with EgressIP MultiNIC (Secondary Host Networks)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#user-defined-networks-udn" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        User Defined Networks (UDN)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#health-check-membership-reconciliation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Health-Check Membership Reconciliation
       
     </span>
   </a>
@@ -4836,6 +4881,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#unit-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unit Tests
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#e2e-tests" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4847,10 +4903,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#cross-feature-testing" class="md-nav__link">
+  <a href="#cross-feature-interaction-tests" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Cross Feature Testing
+        Cross-Feature Interaction Tests
       
     </span>
   </a>
@@ -4879,6 +4935,67 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#performance-and-scale" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance and Scale
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Performance and Scale">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#assignment-overhead" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Assignment Overhead
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#watch-overhead" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Watch Overhead
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ovn-db-impact" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OVN DB Impact
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#memory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#risks-known-limitations-and-mitigations" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4886,6 +5003,56 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Risks, Known Limitations and Mitigations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#risk-overly-restrictive-selectors-leading-to-unassigned-egressips" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Risk: Overly restrictive selectors leading to unassigned EgressIPs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#risk-label-race-during-node-label-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Risk: Label race during node label changes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#risk-increased-reconciliation-frequency-with-many-egressips" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Risk: Increased reconciliation frequency with many EgressIPs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#limitation-per-object-node-selector-not-per-ip" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limitation: Per-object node selector, not per-IP
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -4912,6 +5079,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#upgrade-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Upgrade Behavior
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#alternatives" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4924,10 +5102,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#alternative-1-two-separate-knobs-pr-4377-original-design" class="md-nav__link">
+  <a href="#alternative-1-use-a-separate-crd-egressippool-to-define-node-pools" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Alternative 1: Two Separate Knobs (PR #4377 Original Design)
+        Alternative 1: Use a separate CRD (EgressIPPool) to define node pools
       
     </span>
   </a>
@@ -4935,10 +5113,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#alternative-2-per-pod-annotation" class="md-nav__link">
+  <a href="#alternative-2-extend-the-k8sovnorgegress-assignable-label-to-be-per-egressip" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Alternative 2: Per-Pod Annotation
+        Alternative 2: Extend the k8s.ovn.org/egress-assignable label to be per-EgressIP
       
     </span>
   </a>
@@ -4946,10 +5124,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#alternative-3-nad-only-no-crd-integration" class="md-nav__link">
+  <a href="#alternative-3-and-semantics-egressnodeselector-intersected-with-egress-assignable" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Alternative 3: NAD-Only (No CRD Integration)
+        Alternative 3: AND semantics (egressNodeSelector intersected with egress-assignable)
       
     </span>
   </a>
@@ -4957,32 +5135,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#alternative-4-three-valued-enum" class="md-nav__link">
+  <a href="#alternative-4-if-set-use-selector-else-fall-back-to-label-no-defaulting" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Alternative 4: Three-Valued Enum
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#alternative-5-boolean-field" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Alternative 5: Boolean Field
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#alternative-6-portsecurity-and-macspoofing-naming" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Alternative 6: portSecurity and macSpoofing Naming
+        Alternative 4: "If set, use selector; else fall back to label" (no defaulting)
       
     </span>
   </a>
@@ -5009,62 +5165,6 @@
   
 </nav>
       
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../okep-5212-ovnobserv-api/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    OVN Observability API
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../okep-6800-egressip-node-selector/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    EgressIP Node Selector
-  
-
-    
-  </span>
-  
-  
-
-      </a>
     </li>
   
 
@@ -5303,17 +5403,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#future-goals" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Future Goals
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#introduction" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5326,10 +5415,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#ovn-port-security" class="md-nav__link">
+  <a href="#background" class="md-nav__link">
     <span class="md-ellipsis">
       
-        OVN Port Security
+        Background
       
     </span>
   </a>
@@ -5337,43 +5426,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#the-unknown-address-keyword" class="md-nav__link">
+  <a href="#problem" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The unknown Address Keyword
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#the-force_fdb_lookup-option" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        The force_fdb_lookup Option
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#existing-port-security-behavior-with-ipam-disabled" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Existing Port Security Behavior with IPAM Disabled
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#bridge-cni-parity" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bridge CNI Parity
+        Problem
       
     </span>
   </a>
@@ -5398,10 +5454,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#definition-of-personas" class="md-nav__link">
+  <a href="#story-1-zone-based-compliance-driven-placement" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Definition of personas
+        Story 1: Zone-Based / Compliance-Driven Placement
       
     </span>
   </a>
@@ -5409,10 +5465,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#story-1-kubevirt-nested-virtualization-with-bridged-networking" class="md-nav__link">
+  <a href="#story-2-multi-tenant-egress-node-pools" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Story 1: KubeVirt Nested Virtualization with Bridged Networking
+        Story 2: Multi-Tenant Egress Node Pools
       
     </span>
   </a>
@@ -5420,10 +5476,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#story-2-network-function-virtualization-nfv" class="md-nav__link">
+  <a href="#story-3-controlled-maintenance-drain" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Story 2: Network Function Virtualization (NFV)
+        Story 3: Controlled Maintenance Drain
       
     </span>
   </a>
@@ -5431,10 +5487,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#story-3-lab-and-test-environment-l2-flexibility" class="md-nav__link">
+  <a href="#story-4-infrastructure-level-ip-to-vm-mapping-eg-openstack-upi" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Story 3: Lab and Test Environment L2 Flexibility
+        Story 4: Infrastructure-Level IP-to-VM Mapping (eg. OpenStack UPI)
       
     </span>
   </a>
@@ -5442,21 +5498,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#story-4-multi-vm-bridged-networking-with-unicast-reachability" class="md-nav__link">
+  <a href="#ecosystem-precedent" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Story 4: Multi-VM Bridged Networking with Unicast Reachability
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#story-5-vm-bridging-between-localnet-and-layer2-overlay-networks" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Story 5: VM Bridging Between Localnet and Layer2 Overlay Networks
+        Ecosystem Precedent
       
     </span>
   </a>
@@ -5481,17 +5526,6 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#summary" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Summary
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#api-details" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5504,10 +5538,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#nad-json-configuration" class="md-nav__link">
+  <a href="#crd-change" class="md-nav__link">
     <span class="md-ellipsis">
       
-        NAD JSON Configuration
+        CRD Change
       
     </span>
   </a>
@@ -5515,10 +5549,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#clusteruserdefinednetwork-crd" class="md-nav__link">
+  <a href="#example-yaml" class="md-nav__link">
     <span class="md-ellipsis">
       
-        ClusterUserDefinedNetwork CRD
+        Example YAML
       
     </span>
   </a>
@@ -5526,10 +5560,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#crd-field-definition" class="md-nav__link">
+  <a href="#backwards-compatibility-of-api" class="md-nav__link">
     <span class="md-ellipsis">
       
-        CRD Field Definition
+        Backwards Compatibility of API
       
     </span>
   </a>
@@ -5537,10 +5571,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#crd-validation-rules" class="md-nav__link">
+  <a href="#mutability" class="md-nav__link">
     <span class="md-ellipsis">
       
-        CRD Validation Rules
+        Mutability
       
     </span>
   </a>
@@ -5548,32 +5582,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#nad-generation-from-crd" class="md-nav__link">
+  <a href="#validation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        NAD Generation from CRD
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#interaction-with-ipam-mode" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Interaction with IPAM Mode
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#future-per-attachment-mac-spoof-protection" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Future: Per-Attachment MAC Spoof Protection
+        Validation
       
     </span>
   </a>
@@ -5598,10 +5610,87 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#ovn-logical-topology" class="md-nav__link">
+  <a href="#component-ovnkube-cluster-manager-egressipclustercontroller" class="md-nav__link">
     <span class="md-ellipsis">
       
-        OVN Logical Topology
+        Component: ovnkube-cluster-manager (egressIPClusterController)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#component-ovnkube-controller" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Component: ovnkube-controller
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#component-ovnkube-node" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Component: ovnkube-node
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gateway-modes-lgwsgw" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gateway Modes (lgw/sgw)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cloud-environment-cloudprivateipconfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cloud Environment (CloudPrivateIPConfig)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#interaction-with-egressip-multinic-secondary-host-networks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Interaction with EgressIP MultiNIC (Secondary Host Networks)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#user-defined-networks-udn" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        User Defined Networks (UDN)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#health-check-membership-reconciliation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Health-Check Membership Reconciliation
       
     </span>
   </a>
@@ -5626,6 +5715,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#unit-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unit Tests
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#e2e-tests" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5637,10 +5737,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#cross-feature-testing" class="md-nav__link">
+  <a href="#cross-feature-interaction-tests" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Cross Feature Testing
+        Cross-Feature Interaction Tests
       
     </span>
   </a>
@@ -5669,6 +5769,67 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#performance-and-scale" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance and Scale
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Performance and Scale">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#assignment-overhead" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Assignment Overhead
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#watch-overhead" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Watch Overhead
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ovn-db-impact" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OVN DB Impact
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#memory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#risks-known-limitations-and-mitigations" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5676,6 +5837,56 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Risks, Known Limitations and Mitigations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#risk-overly-restrictive-selectors-leading-to-unassigned-egressips" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Risk: Overly restrictive selectors leading to unassigned EgressIPs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#risk-label-race-during-node-label-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Risk: Label race during node label changes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#risk-increased-reconciliation-frequency-with-many-egressips" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Risk: Increased reconciliation frequency with many EgressIPs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#limitation-per-object-node-selector-not-per-ip" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limitation: Per-object node selector, not per-IP
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -5702,6 +5913,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#upgrade-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Upgrade Behavior
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#alternatives" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5714,10 +5936,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#alternative-1-two-separate-knobs-pr-4377-original-design" class="md-nav__link">
+  <a href="#alternative-1-use-a-separate-crd-egressippool-to-define-node-pools" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Alternative 1: Two Separate Knobs (PR #4377 Original Design)
+        Alternative 1: Use a separate CRD (EgressIPPool) to define node pools
       
     </span>
   </a>
@@ -5725,10 +5947,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#alternative-2-per-pod-annotation" class="md-nav__link">
+  <a href="#alternative-2-extend-the-k8sovnorgegress-assignable-label-to-be-per-egressip" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Alternative 2: Per-Pod Annotation
+        Alternative 2: Extend the k8s.ovn.org/egress-assignable label to be per-EgressIP
       
     </span>
   </a>
@@ -5736,10 +5958,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#alternative-3-nad-only-no-crd-integration" class="md-nav__link">
+  <a href="#alternative-3-and-semantics-egressnodeselector-intersected-with-egress-assignable" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Alternative 3: NAD-Only (No CRD Integration)
+        Alternative 3: AND semantics (egressNodeSelector intersected with egress-assignable)
       
     </span>
   </a>
@@ -5747,32 +5969,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#alternative-4-three-valued-enum" class="md-nav__link">
+  <a href="#alternative-4-if-set-use-selector-else-fall-back-to-label-no-defaulting" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Alternative 4: Three-Valued Enum
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#alternative-5-boolean-field" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Alternative 5: Boolean Field
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#alternative-6-portsecurity-and-macspoofing-naming" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Alternative 6: portSecurity and macSpoofing Naming
+        Alternative 4: "If set, use selector; else fall back to label" (no defaulting)
       
     </span>
   </a>
@@ -5815,571 +6015,793 @@
   
 
 
-<h1 id="okep-3926-disable-mac-spoof-protection-on-secondary-networks">OKEP-3926: Disable MAC Spoof Protection on Secondary Networks<a class="headerlink" href="#okep-3926-disable-mac-spoof-protection-on-secondary-networks" title="Permanent link">¶</a></h1>
+<h1 id="okep-6800-egressip-node-selector">OKEP-6800: EgressIP Node Selector<a class="headerlink" href="#okep-6800-egressip-node-selector" title="Permanent link">¶</a></h1>
 <ul>
-<li>Issue: <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/issues/3926">#3926</a></li>
+<li>Issue: <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/issues/6800">#6800</a></li>
 </ul>
 <h2 id="problem-statement">Problem Statement<a class="headerlink" href="#problem-statement" title="Permanent link">¶</a></h2>
-<p>OVN-Kubernetes enforces port security on logical switch ports as follows:</p>
-<ul>
-<li><strong>Primary network</strong>: MAC and IP anti-spoofing protection is always enabled on all ports.</li>
-<li><strong>Secondary networks</strong>: MAC anti-spoofing protection is always enabled on all ports. IP
-  anti-spoofing protection is enabled when IPAM is active and disabled when <code>ipam.mode</code> is
-  <code>Disabled</code> (since no IPs are assigned).</li>
-</ul>
-<p>There is currently no way to disable MAC-level port security on secondary networks. This
-prevents legitimate use cases where traffic from multiple MAC addresses must traverse a
-single OVN logical switch port, such as nested virtualization or NFV workloads. The bridge
-CNI already supports <code>macspoofchk</code> for secondary networks, but OVN secondary networks lack
-equivalent capability, forcing users who need this flexibility to choose alternative network
-backends.</p>
+<p>Cluster administrators managing multi-tenant or compliance-sensitive
+environments cannot control which specific pool of egress-assignable nodes
+hosts a particular EgressIP. Today, all nodes labeled with
+<code>k8s.ovn.org/egress-assignable</code> form a single, flat pool shared by every
+EgressIP object, forcing operators into coarse workarounds (dedicated clusters,
+complex label choreography, or manual IP subnet partitioning) to satisfy
+topology, regulatory, or zone-based placement requirements.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">¶</a></h2>
 <ul>
-<li>Provide a per-network configuration option to disable MAC spoof protection on IPAM less OVN
-  secondary networks on layer2 and localnet topologies to achieve feature parity with the bridge
-  CNI's <code>macspoofchk</code> capability.</li>
-<li>Enable unknown MAC address delivery.</li>
-<li>Avoid using ARP/NDP flooding as much as possible when MAC spoof protection is disabled.</li>
-<li>Support configuration through the NAD JSON config and the ClusterUserDefinedNetwork (CUDN) CRD
-  API only.</li>
+<li>Allow EgressIP objects to specify a node selector that restricts which
+  nodes are eligible to host that specific EgressIP. This exposes the
+  currently hardcoded <code>k8s.ovn.org/egress-assignable</code> label as a
+  configurable, per-object <code>egressNodeSelector</code> field with a CRD default
+  that preserves the existing label-based behavior.</li>
+<li>Maintain backwards compatibility for the EgressIP assignment path:
+  EgressIP objects that omit the field automatically receive a default
+  selector matching <code>k8s.ovn.org/egress-assignable</code>, so assignment
+  behavior is unchanged.</li>
+<li>Update the health-check probe target set so it is driven by the union
+  of <code>egressNodeSelector</code> matches across all EgressIP objects, rather
+  than unconditionally probing all nodes with the
+  <code>k8s.ovn.org/egress-assignable</code> label (see Health-Check Membership
+  Reconciliation).</li>
+<li>Reuse existing Kubernetes label selector semantics
+  (<code>metav1.LabelSelector</code>) for consistency with broader Kubernetes
+  ecosystem patterns.</li>
+<li>Support failover: if a node matching the selector becomes unavailable
+  or unreachable, the EgressIP is reassigned to another node that matches
+  the selector (not any arbitrary node).</li>
+<li>Ensure the feature works on both bare-metal and cloud environments
+  (CloudPrivateIPConfig flow).</li>
 </ul>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">¶</a></h2>
 <ul>
-<li>Disabling MAC spoof protection on the default cluster network - or any namespace primary
-  network. The security implications of removing MAC/IP spoofing protection on the cluster's
-  primary network are too significant.</li>
-<li>Per-pod granularity for MAC spoof protection settings. The configuration knob is per-network;
-  all pods attached to a given network share the same MAC spoof protection posture.</li>
-<li>Layer3 topology support. Layer3 uses router-based forwarding where port security has different
-  semantics and the concept of "unknown L2 addresses" does not apply.</li>
-<li>Replacing or modifying the existing <code>ipam.mode: Disabled</code> behavior, which already disables
-  IP-level port security as a side effect.</li>
-<li>Replacing or modifying the existing <code>ipam.mode: Enabled</code> behavior, which already enables
-  IP-level port security as a side effect.</li>
-<li>MAC learning or dynamic FDB management at the OVN-Kubernetes level; OVN manages its own FDB
-  natively.</li>
-<li>Namespace-scoped UserDefinedNetwork (UDN) resources cannot enable this feature, as
-  disabling MAC spoof protection is a cluster-admin decision that should not be available to
-  namespace users.</li>
-</ul>
-<h2 id="future-goals">Future Goals<a class="headerlink" href="#future-goals" title="Permanent link">¶</a></h2>
-<ul>
-<li><strong>Per-attachment MAC spoof protection granularity</strong>, probably added via a new <code>WorkloadOptOut</code>
-  mode. MAC spoof protection stays enabled by default on the network, but individual pods may
-  opt out. The admin controls whether the network permits overrides; the annotation is the
-  per-pod opt-in signal. This follows the two-level model proven by OpenStack Neutron.</li>
-<li><strong>Per-pod allowed MAC addresses</strong>, probably via an <code>AllowList</code> mode. This will allow workloads
-  to declare additional permitted MAC addresses without fully disabling MAC spoof protection.</li>
-<li>Both extensions are non-breaking enum additions to the existing <code>MACSecurityConfig</code> struct.</li>
+<li>Supporting node affinity with <code>requiredDuringScheduling</code> /
+  <code>preferredDuringScheduling</code> semantics. This OKEP implements hard
+  requirement semantics only (matching nodes must satisfy the selector).
+  This includes topology-aware scheduling (e.g., preferring nodes in the
+  same zone as the majority of selected pods) — operators can already
+  achieve zone-aware placement by using <code>egressNodeSelector</code> with
+  per-zone labels.</li>
+<li>Changing the EgressIP datapath or SNAT behavior. This is purely a
+  control-plane assignment optimization.</li>
+<li>Modifying the health-check/reachability probing mechanism itself
+  (GRPC/connection-based probe logic). The underlying probe
+  implementation is unchanged; only the set of nodes targeted by probes
+  changes (see Goals).</li>
+<li>Deprecating or removing the <code>k8s.ovn.org/egress-assignable</code> label.
+  The label remains the default selector value: EgressIP objects that omit
+  <code>egressNodeSelector</code> receive a CRD default that matches this label,
+  preserving current behavior. Users who prefer the label-based workflow
+  can continue using it indefinitely.</li>
+<li>Per-IP node selectors within a single EgressIP object is a non-goal. The
+  <code>egressNodeSelector</code> applies to all IPs in the object. Splitting IPs
+  into separate EgressIP objects with different selectors is not
+  equivalent: it sacrifices the anti-co-location guarantee (IPs from
+  separate objects can land on the same node), and if both objects
+  select the same namespace/pods only one is active while the other
+  remains passive. Adding true per-IP selectors would require one of:
+  (a) a new <code>egressIPConfigs</code> list that pairs each IP with its own
+  selector (duplicating IPs between <code>egressIPs</code> and the new field),
+  (b) converting <code>egressIPs</code> from <code>[]string</code> to a list of structs
+  (breaking API change), or (c) making <code>egressNodeSelector</code> itself a
+  struct that maps individual IPs to selectors — which adds unnecessary
+  complexity to a field that should remain a simple <code>LabelSelector</code>.
+  None of these are justified without a concrete use case.</li>
 </ul>
 <h2 id="introduction">Introduction<a class="headerlink" href="#introduction" title="Permanent link">¶</a></h2>
-<h3 id="ovn-port-security">OVN Port Security<a class="headerlink" href="#ovn-port-security" title="Permanent link">¶</a></h3>
-<p>In OVN, every <code>Logical_Switch_Port</code> has a <code>port_security</code> column. When populated, it restricts
-traffic in two ways:</p>
-<ol>
-<li><strong>Ingress (into the logical switch from the workload attached port)</strong>: Only frames whose
-   source MAC address (and optionally source IP) match the <code>port_security</code> entry are accepted.
-   All other frames are dropped.</li>
-<li><strong>Egress (from the logical switch to the workload attached port)</strong>: Only frames whose
-   destination MAC matches the <code>port_security</code> entry are delivered.</li>
-</ol>
-<p>OVN-Kubernetes currently sets <code>port_security</code> to <code>"&lt;MAC&gt; &lt;IP1&gt; &lt;IP2&gt;..."</code> for every pod's LSP,
-matching the pod's assigned MAC and IP addresses. This effectively prevents pods from sending or
-receiving traffic with any other MAC or IP identity — a sensible default for most workloads.</p>
-<p>However, this default breaks scenarios where a single pod legitimately needs to handle traffic
-with multiple MAC addresses, such as when the pod runs a hypervisor that bridges traffic from
-nested virtual machines.</p>
-<h3 id="the-unknown-address-keyword">The <code>unknown</code> Address Keyword<a class="headerlink" href="#the-unknown-address-keyword" title="Permanent link">¶</a></h3>
-<p>OVN supports an <code>unknown</code> keyword in the <code>addresses</code> column of a Logical Switch Port. When a
-logical switch processes a unicast Ethernet frame whose destination MAC address is not found in
-any port's <code>addresses</code> column, it delivers the frame to every port whose <code>addresses</code> include
-<code>unknown</code>.</p>
-<p>This mechanism is essential for nested virtualization: the hypervisor inside the pod bridges
-traffic from VMs whose MAC addresses are not known to OVN. Without <code>unknown</code>, unicast frames
-destined for those VM MAC addresses would be silently dropped by the logical switch.</p>
-<h3 id="the-force_fdb_lookup-option">The <code>force_fdb_lookup</code> Option<a class="headerlink" href="#the-force_fdb_lookup-option" title="Permanent link">¶</a></h3>
-<p>OVN 24.03 introduced the <code>force_fdb_lookup</code> option on logical switch ports. When set to <code>true</code>
-on a port with <code>unknown</code> in its addresses, OVN uses the Forwarding Database (FDB) to look up
-the destination MAC before delivering the frame, rather than flooding it to all <code>unknown</code> ports.</p>
-<p>This optimization is critical for production deployments: without it, every frame destined for a
-MAC not in OVN's address tables would be flooded to all ports marked <code>unknown</code>, creating
-significant unnecessary traffic. With FDB lookups, OVN learns where each MAC resides (via
-source MAC observation) and delivers subsequent frames directly.</p>
-<p>OVN-Kubernetes already pins to OVN version 24.03 or later, so <code>force_fdb_lookup</code> is available
-in all supported configurations.</p>
-<h3 id="existing-port-security-behavior-with-ipam-disabled">Existing Port Security Behavior with IPAM Disabled<a class="headerlink" href="#existing-port-security-behavior-with-ipam-disabled" title="Permanent link">¶</a></h3>
-<p>The <code>IPAMConfig</code> in the UDN/CUDN CRD API already documents:</p>
-<blockquote>
-<p><em>"By disabling IPAM, IP port security will also be disabled for interfaces attached to this network."</em></p>
-</blockquote>
-<p>When <code>ipam.mode</code> is set to <code>Disabled</code>, OVN-Kubernetes assigns only MAC addresses and provides
-layer 2 communication. Since no IP addresses are assigned, IP-level port security cannot be
-enforced. However, <strong>MAC-level port security remains active</strong>: the LSP still restricts traffic
-to the assigned MAC address. The feature proposed in this OKEP goes further by also disabling
-MAC-level port security and enabling <code>unknown</code> address handling.</p>
-<p><code>macSecurity.mode: Disabled</code> requires <code>ipam.mode: Disabled</code>.</p>
-<h3 id="bridge-cni-parity">Bridge CNI Parity<a class="headerlink" href="#bridge-cni-parity" title="Permanent link">¶</a></h3>
-<p>The <a href="https://www.cni.dev/plugins/current/main/bridge/">bridge CNI plugin</a> supports a
-<code>macspoofchk</code> boolean in the NAD configuration. When set to <code>false</code>, nftables/iptables rules
-that prevent MAC spoofing are not installed, allowing pods to send traffic with arbitrary source
-MAC addresses.</p>
-<p>OVN-Kubernetes secondary networks should offer equivalent functionality. Users who currently use
-the bridge CNI solely because of <code>macspoofchk</code> support should be able to migrate to OVN secondary
-networks without losing this capability.</p>
+<h3 id="background">Background<a class="headerlink" href="#background" title="Permanent link">¶</a></h3>
+<p>OVN-Kubernetes provides the EgressIP feature to assign stable source IPs
+to egress traffic from selected pods/namespaces. The cluster administrator
+labels nodes with <code>k8s.ovn.org/egress-assignable</code> to designate them as
+candidates for hosting EgressIPs. The <code>egressIPClusterController</code> in
+ovnkube-cluster-manager then assigns each requested IP to one of the
+assignable, ready, and reachable nodes, balancing allocations across the
+pool.</p>
+<h3 id="problem">Problem<a class="headerlink" href="#problem" title="Permanent link">¶</a></h3>
+<p>In production environments, the flat node pool model is insufficient for
+operators who need per-EgressIP control over node placement. The use
+cases below describe the specific scenarios where this gap causes pain.</p>
 <h2 id="user-storiesuse-cases">User-Stories/Use-Cases<a class="headerlink" href="#user-storiesuse-cases" title="Permanent link">¶</a></h2>
-<h3 id="definition-of-personas">Definition of personas<a class="headerlink" href="#definition-of-personas" title="Permanent link">¶</a></h3>
+<h3 id="story-1-zone-based-compliance-driven-placement">Story 1: Zone-Based / Compliance-Driven Placement<a class="headerlink" href="#story-1-zone-based-compliance-driven-placement" title="Permanent link">¶</a></h3>
+<p>As a cluster administrator operating nodes in multiple operational zones
+(e.g., DMZ vs internal, audited vs general), I want to ensure EgressIPs
+are only assigned to nodes in the appropriate zone, so that traffic
+placement respects network topology and compliance boundaries without
+requiring a separate cluster. Multiple nodes may share the same subnet
+and all pass the existing subnet-membership check, but only a subset
+has the right connectivity, firewall rules, or audit status.</p>
+<p>Example 1: Nodes in the DMZ are labeled <code>network-zone=dmz</code>. The EgressIP
+for internet-facing pods specifies <code>egressNodeSelector: {matchLabels:
+{network-zone: dmz}}</code>, ensuring IPs are only hosted on nodes with
+external connectivity.</p>
+<p>Example 2: As a security officer, I want EgressIPs for regulated
+workloads to stay within an audited boundary. Nodes in the PCI-DSS
+segment are labeled <code>compliance-zone=pci</code>. The EgressIP for regulated
+workloads specifies <code>egressNodeSelector: {matchLabels: {compliance-zone: pci}}</code>,
+ensuring egress traffic stays within the audited segment.</p>
+<h3 id="story-2-multi-tenant-egress-node-pools">Story 2: Multi-Tenant Egress Node Pools<a class="headerlink" href="#story-2-multi-tenant-egress-node-pools" title="Permanent link">¶</a></h3>
+<p>As a platform operator running a multi-tenant cluster, I want each
+tenant's EgressIP to be assigned only to nodes dedicated to that tenant's
+egress traffic, so that tenants cannot exhaust each other's egress
+capacity and external firewalls can be configured per-tenant by using
+disjoint EgressIP objects that select tenant namespaces and disjoint
+node selectors for each tenant on those objects.</p>
+<p>Example: A cluster has 6 worker nodes split between two tenants —
+staging and production. Nodes 1–3 are labeled <code>egress-pool=staging</code>,
+nodes 4–6 are labeled <code>egress-pool=production</code>. Each tenant's
+namespaces are labeled accordingly (<code>tenant: staging</code> and
+<code>tenant: production</code>).</p>
+<p>Staging EgressIP:
+</p><div class="highlight"><pre><span></span><code><span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">egressIPs</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"10.0.1.10"</span><span class="p p-Indicator">]</span>
+<span class="w">  </span><span class="nt">namespaceSelector</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">matchLabels</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">tenant</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">staging</span>
+<span class="w">  </span><span class="nt">egressNodeSelector</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">matchLabels</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">egress-pool</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">staging</span>
+</code></pre></div><p></p>
+<p>Production EgressIP:
+</p><div class="highlight"><pre><span></span><code><span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">egressIPs</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"10.0.2.10"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"10.0.2.11"</span><span class="p p-Indicator">]</span>
+<span class="w">  </span><span class="nt">namespaceSelector</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">matchLabels</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">tenant</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">production</span>
+<span class="w">  </span><span class="nt">egressNodeSelector</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">matchLabels</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">egress-pool</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">production</span>
+</code></pre></div><p></p>
+<p>Staging IPs land only on nodes 1–3, production IPs land only on nodes
+4–6. Neither tenant can consume the other's egress node capacity.</p>
+<h3 id="story-3-controlled-maintenance-drain">Story 3: Controlled Maintenance Drain<a class="headerlink" href="#story-3-controlled-maintenance-drain" title="Permanent link">¶</a></h3>
+<p>As a cluster administrator preparing to put egress nodes into
+maintenance across different maintenance windows, I want to exclude
+specific nodes from a particular EgressIP's candidate pool in a single
+operation, so that IPs move directly to the remaining
+eligible nodes without intermediate hops. Today, removing the
+<code>egress-assignable</code> label from node A causes its IPs to move to node B —
+but if node B is also scheduled for maintenance, those IPs hop again
+from B to C. I need a way to express "these IPs should only live on
+nodes C and D" so that draining A and B happens in one step.</p>
+<h3 id="story-4-infrastructure-level-ip-to-vm-mapping-eg-openstack-upi">Story 4: Infrastructure-Level IP-to-VM Mapping (eg. OpenStack UPI)<a class="headerlink" href="#story-4-infrastructure-level-ip-to-vm-mapping-eg-openstack-upi" title="Permanent link">¶</a></h3>
+<p>On platforms without the cloud-network-config-controller (CNCC) — such
+as OpenStack deployed via Baremetal UPI (platform=None) — the
+infrastructure team manually pre-configures which EgressIPs are allowed
+on each VM's port using OpenStack
+<a href="https://docs.openstack.org/neutron/2026.1/admin/intro-os-networking.html">allowed-address-pairs</a>.
+OVN-Kubernetes is unaware of these static mappings. It assigns EgressIPs
+based on the node's primary interface subnet, the <code>egress-assignable</code>
+label, and node readiness/reachability. When all worker nodes share the
+same subnet, OVN-Kubernetes treats them as interchangeable — but the
+infrastructure only allows specific IPs on specific VMs.</p>
+<p>On cloud IPI platforms (AWS, OpenStack IPI, etc.), CNCC dynamically
+configures the cloud to accept whatever IP OVN-Kubernetes assigns via
+CloudPrivateIPConfig. But on UPI platforms without CNCC, the
+allowed-address-pairs are static: the cloud anti-spoofing mechanism
+drops traffic sourced from IPs not in the VM's port configuration, so
+an IP assigned to the wrong VM is silently black-holed.</p>
+<p>Example: An OpenStack UPI cluster has 3 worker nodes (VMs) on subnet
+192.168.0.0/24. All 3 are marked egress-assignable. The operator needs
+6 EgressIPs, 2 per node, pre-configured in each VM's
+allowed-address-pairs:</p>
+<div class="highlight"><pre><span></span><code>                    OVN-Kubernetes Cluster (OpenStack UPI, no CNCC)
+              All workers labeled: k8s.ovn.org/egress-assignable: ""
+
+           worker-0          worker-1          worker-2
+         ┌───────────┐     ┌───────────┐     ┌───────────┐
+EgressIP │ .212      │     │ .213 ← ❌ │     │ .215 ← ❌ │
+assigned │ .218 ← ❌ │     │ .214      │     │ .219      │
+         └─────┬─────┘     └─────┬─────┘     └─────┬─────┘
+               │                 │                  │
+─ ─ ─ ─ ─ ─ ─ ┼ ─ ─ ─ ─ ─ ─ ─ ┼ ─ ─ ─ ─ ─ ─ ─ ─┼─ ─ ─ ─ ─ ─ ─
+               │  OpenStack Infrastructure         │
+         ┌─────┴─────┐     ┌─────┴─────┐     ┌─────┴─────┐
+         │ VM w0     │     │ VM w1     │     │ VM w2     │
+         │ .10       │     │ .11       │     │ .12       │
+         │ AAP:      │     │ AAP:      │     │ AAP:      │
+         │ .212,.213 │     │ .214,.215 │     │ .218,.219 │
+         └───────────┘     └───────────┘     └───────────┘
+
+AAP = allowed-address-pairs (pre-configured by infra team)
+
+Problem: .218 (belongs on w2) lands on worker-0 → ❌ black-holed
+         .213 (belongs on w0) lands on worker-1 → ❌ black-holed
+         .215 (belongs on w1) lands on worker-2 → ❌ black-holed
+</code></pre></div>
+<p>Each EgressIP is pre-configured in exactly one VM's
+allowed-address-pairs. All 3 workers share the same subnet
+(192.168.0.0/24), so OVN-Kubernetes' primary interface subnet check
+passes for every node. Without CNCC, there is no
+<code>cloud.network.openshift.io/egress-ipconfig</code> annotation — capacity is
+treated as unlimited. The IP-to-VM mapping is completely invisible to
+OVN-Kubernetes.</p>
+<p><strong>Without egressNodeSelector</strong>: The <code>egress-assignable</code> label is a single
+global flag shared by all EgressIP objects — it cannot express
+per-object affinity. All 3 workers look identical to OVN-Kubernetes.
+The controller freely distributes the 6 IPs across them without
+respecting the static IP-to-VM mapping.There is no way to
+express "these IPs on this node, those IPs on that node" with a single
+boolean label.</p>
+<p><strong>With egressNodeSelector</strong>: Each worker gets a pool label (e.g.,
+<code>eip-pool: w0</code>, <code>eip-pool: w1</code>, <code>eip-pool: w2</code>). Each EgressIP object
+targets its corresponding worker:
+<code>egressNodeSelector: {matchLabels: {eip-pool: "w0"}}</code> for .212/.213,
+<code>{eip-pool: "w1"}</code> for .214/.215, and <code>{eip-pool: "w2"}</code> for
+.218/.219. Every IP lands only on the VM where the infrastructure has
+pre-configured it.</p>
+<h3 id="ecosystem-precedent">Ecosystem Precedent<a class="headerlink" href="#ecosystem-precedent" title="Permanent link">¶</a></h3>
 <ul>
-<li><strong>Admin</strong> - the cluster administrator who creates and manages secondary networks.</li>
-<li><strong>User</strong> - a non-admin user who deploys workloads on secondary networks.</li>
-<li><strong>VM operator</strong> - an administrator or user running virtual machines via KubeVirt.</li>
+<li>
+<p><strong>EgressService (OVN-Kubernetes)</strong>: Already has a <code>nodeSelector</code> field
+  (<code>EgressServiceSpec.NodeSelector</code>) that limits which nodes can host the
+  service's egress traffic. This OKEP proposes the same pattern for
+  EgressIP.</p>
+</li>
+<li>
+<p><strong>CiliumEgressGatewayPolicy (Cilium)</strong>: Uses <code>egressGateway.nodeSelector</code>
+  to designate which node acts as the egress gateway for a policy. The
+  pattern of pairing a node selector with an egress IP is well-established
+  in the CNI ecosystem.</p>
+</li>
+<li>
+<p><strong>Kubernetes Scheduling</strong>: The <code>nodeSelector</code> / <code>nodeAffinity</code> pattern
+  is the standard Kubernetes mechanism for constraining workloads to
+  specific nodes.</p>
+</li>
 </ul>
-<h3 id="story-1-kubevirt-nested-virtualization-with-bridged-networking">Story 1: KubeVirt Nested Virtualization with Bridged Networking<a class="headerlink" href="#story-1-kubevirt-nested-virtualization-with-bridged-networking" title="Permanent link">¶</a></h3>
-<p>As a VM operator running <a href="https://kubevirt.io/">KubeVirt</a>, I want to disable MAC spoof
-protection on a secondary OVN layer2 network so that VMs running inside VMs can use bridged
-networking with their own MAC addresses, enabling those nested VMs to communicate directly on the
-L2 segment.</p>
-<p><strong>Example scenario:</strong> A KubeVirt VM is in turn running virtualization workloads. Without disabling
-MAC spoof protection, OVN drops the frame because the nested VM source MAC does not match the
-outer VM LSP's <code>port_security</code> entry. With MAC spoof protection disabled, the frame is accepted
-and forwarded on the logical switch.</p>
-<p>Additionally, other pods (or VMs) on the same L2 network need to send unicast traffic to the nested
-VM. Without <code>unknown</code> in the addresses column, the logical switch has no port to deliver these
-frames to, since the nested VM's MAC is not in any port's <code>addresses</code>. With <code>unknown</code> addresses and
-FDB lookups, the switch learns the association between the nested VM's MAC and the hosting pod's
-LSP, and delivers subsequent unicast frames directly.</p>
-<h3 id="story-2-network-function-virtualization-nfv">Story 2: Network Function Virtualization (NFV)<a class="headerlink" href="#story-2-network-function-virtualization-nfv" title="Permanent link">¶</a></h3>
-<p>As a network engineer deploying virtual network functions (VNFs) in Kubernetes, I want to run
-firewalls, load balancers, or routers on a secondary OVN network that need to forward traffic
-with different source and destination MAC addresses, so that the VNF can operate as a transparent
-L2 bridge or as a router performing MAC rewriting.</p>
-<p><strong>Example scenario:</strong> A pair of VMs runs keepalived for high availability on a secondary OVN
-layer2 network. The active VM owns a virtual IP and virtual MAC address (e.g., a VRRP/CARP MAC
-<code>00:00:5e:00:01:XX</code>). It sends gratuitous ARPs and responds to traffic using the virtual MAC.
-Port security would drop these frames because the virtual MAC does not match the VM pod's
-assigned MAC.</p>
-<h3 id="story-3-lab-and-test-environment-l2-flexibility">Story 3: Lab and Test Environment L2 Flexibility<a class="headerlink" href="#story-3-lab-and-test-environment-l2-flexibility" title="Permanent link">¶</a></h3>
-<p>As a developer running a test lab in Kubernetes, I want to attach pods to an OVN layer2
-secondary network without MAC restrictions so that I can test L2 protocols (LACP, STP, LLDP, or
-custom discovery protocols) that require sending and receiving frames with arbitrary MAC
-addresses.</p>
-<h3 id="story-4-multi-vm-bridged-networking-with-unicast-reachability">Story 4: Multi-VM Bridged Networking with Unicast Reachability<a class="headerlink" href="#story-4-multi-vm-bridged-networking-with-unicast-reachability" title="Permanent link">¶</a></h3>
-<p>As a VM operator, I want multiple VMs behind a single pod's OVN port to be individually
-reachable by their MAC addresses on the layer2 network, so that other workloads on the same
-network can send unicast traffic to specific VMs without flooding.</p>
-<p><strong>Example scenario:</strong> A pod runs three VMs, each with a distinct MAC address. Another pod on the
-same L2 secondary network sends a unicast frame to one of those VMs by MAC. With <code>force_fdb_lookup</code>
-enabled, OVN learns the MAC-to-port association and delivers the frame directly to the hosting
-pod's LSP, rather than flooding it to all <code>unknown</code> ports on the switch.</p>
-<h3 id="story-5-vm-bridging-between-localnet-and-layer2-overlay-networks">Story 5: VM Bridging Between Localnet and Layer2 Overlay Networks<a class="headerlink" href="#story-5-vm-bridging-between-localnet-and-layer2-overlay-networks" title="Permanent link">¶</a></h3>
-<p>As a VM operator, I want to run a VM that acts as a network bridge between an OVN localnet
-secondary network and an OVN layer2 overlay secondary network, forwarding traffic between the
-two segments. The bridging VM has interfaces on both networks and relays frames with MAC
-addresses that differ from its own assigned MACs. Without disabling MAC spoof protection, the
-relayed frames are dropped on both networks because their source MACs don't match the VM pod's
-LSP <code>port_security</code> entries.</p>
 <h2 id="proposed-solution">Proposed Solution<a class="headerlink" href="#proposed-solution" title="Permanent link">¶</a></h2>
-<h3 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">¶</a></h3>
-<p>Introduce a per-network <code>macSecurity</code> configuration sub-struct with a <code>mode</code> enum
-discriminator that, when set to <code>Disabled</code>:</p>
-<ol>
-<li>Leaves the <code>port_security</code> column empty on all LSPs attached to the network.</li>
-<li>Appends <code>unknown</code> to the <code>addresses</code> column of each LSP.</li>
-<li>Sets <code>force_fdb_lookup=true</code> in the <code>options</code> column of each LSP.</li>
-</ol>
-<p>The <code>macSecurity</code> sub-struct with a <code>mode</code> enum discriminator follows the established CRD
-pattern used by <code>VLANConfig</code> (mode + sub-struct) and <code>IPAMConfig</code> (mode + lifecycle).</p>
-<h3 id="api-details">API Details<a class="headerlink" href="#api-details" title="Permanent link">¶</a></h3>
-<h4 id="nad-json-configuration">NAD JSON Configuration<a class="headerlink" href="#nad-json-configuration" title="Permanent link">¶</a></h4>
-<p>Add one field to the <code>NetConf</code> struct:</p>
-<div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">    </span><span class="nt">"cniVersion"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.3.1"</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ovn-k8s-cni-overlay"</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">"netAttachDefName"</span><span class="p">:</span><span class="w"> </span><span class="s2">"kubevirt/nested-virt-net"</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">"topology"</span><span class="p">:</span><span class="w"> </span><span class="s2">"layer2"</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"nested-virt-net"</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">"macSecurityMode"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Disabled"</span>
-<span class="p">}</span>
-</code></pre></div>
-<p>The field is optional and defaults to <code>"Enabled"</code> (MAC spoof protection enabled, preserving
-current behavior). It accepts the values <code>"Enabled"</code> and <code>"Disabled"</code>. It is valid on <code>layer2</code>
-and <code>localnet</code> topologies only, requires <code>ipam.mode</code> to be <code>Disabled</code> (i.e., subnets must not be
-specified), and the network role must be <code>"secondary"</code>. Setting it on a <code>layer3</code> topology or
-with IPAM enabled results in a validation error.</p>
-<h4 id="clusteruserdefinednetwork-crd">ClusterUserDefinedNetwork CRD<a class="headerlink" href="#clusteruserdefinednetwork-crd" title="Permanent link">¶</a></h4>
-<p>Add a <code>macSecurity</code> sub-struct with a <code>mode</code> enum discriminator to <code>Layer2Config</code> and
-<code>LocalnetConfig</code> in the CUDN CRD API, following the pattern established by
-<a href="../okep-5085-localnet-api/">OKEP-5085</a> for extending the CUDN CRD and the discriminated
-union pattern used by <code>VLANConfig</code> and <code>IPAMConfig</code>. This field is only supported on
-ClusterUserDefinedNetwork (cluster-scoped); namespace-scoped UserDefinedNetwork resources
-cannot set this field.</p>
-<p><strong>Layer2 example:</strong></p>
-<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.ovn.org/v1</span>
-<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ClusterUserDefinedNetwork</span>
-<span class="nt">metadata</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">kubevirt-l2-net</span>
-<span class="nt">spec</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">namespaceSelector</span><span class="p">:</span>
-<span class="w">    </span><span class="nt">matchLabels</span><span class="p">:</span>
-<span class="w">      </span><span class="nt">purpose</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">kubevirt</span>
-<span class="w">  </span><span class="nt">network</span><span class="p">:</span>
-<span class="w">    </span><span class="nt">topology</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Layer2</span>
-<span class="w">    </span><span class="nt">layer2</span><span class="p">:</span>
-<span class="w">      </span><span class="nt">role</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Secondary</span>
-<span class="w">      </span><span class="nt">ipam</span><span class="p">:</span>
-<span class="w">        </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Disabled</span>
-<span class="w">      </span><span class="nt">macSecurity</span><span class="p">:</span>
-<span class="w">        </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Disabled</span>
-</code></pre></div>
-<p><strong>Localnet example:</strong></p>
-<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.ovn.org/v1</span>
-<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ClusterUserDefinedNetwork</span>
-<span class="nt">metadata</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">provider-net</span>
-<span class="nt">spec</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">namespaceSelector</span><span class="p">:</span>
-<span class="w">    </span><span class="nt">matchLabels</span><span class="p">:</span>
-<span class="w">      </span><span class="nt">tenant</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">blue</span>
-<span class="w">  </span><span class="nt">network</span><span class="p">:</span>
-<span class="w">    </span><span class="nt">topology</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Localnet</span>
-<span class="w">    </span><span class="nt">localnet</span><span class="p">:</span>
-<span class="w">      </span><span class="nt">role</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Secondary</span>
-<span class="w">      </span><span class="nt">physicalNetworkName</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">physnet1</span>
-<span class="w">      </span><span class="nt">ipam</span><span class="p">:</span>
-<span class="w">        </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Disabled</span>
-<span class="w">      </span><span class="nt">macSecurity</span><span class="p">:</span>
-<span class="w">        </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Disabled</span>
-</code></pre></div>
-<h4 id="crd-field-definition">CRD Field Definition<a class="headerlink" href="#crd-field-definition" title="Permanent link">¶</a></h4>
-<p>New type definitions:</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// MACSecurityMode defines the MAC spoof protection enforcement mode for logical switch ports.</span>
-<span class="c1">// +kubebuilder:validation:Enum=Enabled;Disabled</span>
-<span class="kd">type</span><span class="w"> </span><span class="nx">MACSecurityMode</span><span class="w"> </span><span class="kt">string</span>
-
-<span class="kd">const</span><span class="w"> </span><span class="p">(</span>
-<span class="w">    </span><span class="c1">// MACSecurityModeEnabled restricts traffic on logical switch ports to the assigned</span>
-<span class="w">    </span><span class="c1">// MAC (and IP, when IPAM is enabled) addresses. This is the default behavior.</span>
-<span class="w">    </span><span class="nx">MACSecurityModeEnabled</span><span class="w"> </span><span class="nx">MACSecurityMode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"Enabled"</span>
-
-<span class="w">    </span><span class="c1">// MACSecurityModeDisabled removes MAC spoof protection restrictions and enables unknown MAC</span>
-<span class="w">    </span><span class="c1">// address handling via the OVN `unknown` address keyword with `force_fdb_lookup` for</span>
-<span class="w">    </span><span class="c1">// FDB-based unicast delivery.</span>
-<span class="w">    </span><span class="nx">MACSecurityModeDisabled</span><span class="w"> </span><span class="nx">MACSecurityMode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"Disabled"</span>
-<span class="p">)</span>
-
-<span class="c1">// MACSecurityConfig configures MAC spoof protection behavior on logical switch ports attached</span>
-<span class="c1">// to this network.</span>
-<span class="c1">// +union</span>
-<span class="kd">type</span><span class="w"> </span><span class="nx">MACSecurityConfig</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="c1">// Mode controls the MAC spoof protection enforcement posture.</span>
-<span class="w">    </span><span class="c1">// `Enabled` (default) restricts traffic to assigned addresses.</span>
-<span class="w">    </span><span class="c1">// `Disabled` removes all MAC spoof protection restrictions and enables unknown MAC address</span>
-<span class="w">    </span><span class="c1">// handling for nested virtualization and NFV use cases.</span>
-<span class="w">    </span><span class="c1">// Only `Disabled` requires ipam.mode to be Disabled.</span>
-<span class="w">    </span><span class="c1">// +kubebuilder:default=Enabled</span>
-<span class="w">    </span><span class="c1">// +kubebuilder:validation:Required</span>
-<span class="w">    </span><span class="c1">// +required</span>
-<span class="w">    </span><span class="c1">// +unionDiscriminator</span>
-<span class="w">    </span><span class="nx">Mode</span><span class="w"> </span><span class="nx">MACSecurityMode</span><span class="w"> </span><span class="s">`json:"mode"`</span>
-<span class="p">}</span>
-</code></pre></div>
-<p>For both <code>Layer2Config</code> and <code>LocalnetConfig</code>:</p>
-<div class="highlight"><pre><span></span><code><span class="c1">// MACSecurity configures MAC spoof protection behavior on logical switch ports attached to this</span>
-<span class="c1">// network. When omitted, MAC spoof protection defaults to Enabled (the current default behavior).</span>
-<span class="c1">// Only applicable to Secondary role networks on ClusterUserDefinedNetwork resources.</span>
-<span class="c1">// +optional</span>
-<span class="nx">MACSecurity</span><span class="w"> </span><span class="o">*</span><span class="nx">MACSecurityConfig</span><span class="w"> </span><span class="s">`json:"macSecurity,omitempty"`</span>
-</code></pre></div>
-<h4 id="crd-validation-rules">CRD Validation Rules<a class="headerlink" href="#crd-validation-rules" title="Permanent link">¶</a></h4>
-<p>The following CEL validations should be added:</p>
+<p>Add an <code>egressNodeSelector</code> field to <code>EgressIPSpec</code> with a CRD default
+that matches the existing <code>k8s.ovn.org/egress-assignable</code> label. This
+makes the currently hardcoded node selection mechanism visible and
+configurable on each EgressIP object:</p>
 <ul>
-<li>
-<p><code>macSecurity.mode: Disabled</code> is only allowed when <code>role</code> is <code>Secondary</code>:
-  </p><div class="highlight"><pre><span></span><code>rule: "!has(self.macSecurity) || self.macSecurity.mode != 'Disabled' || self.role == 'Secondary'"
-message: "macSecurity.mode Disabled is only supported for Secondary networks"
-</code></pre></div><p></p>
-</li>
-<li>
-<p><code>macSecurity</code> is not allowed on namespace-scoped <code>UserDefinedNetwork</code> resources.
-  Since <code>UserDefinedNetworkSpec</code> and <code>ClusterUserDefinedNetworkSpec</code> share the same
-  <code>Layer2Config</code> type, this constraint must be enforced at the <code>UserDefinedNetworkSpec</code> level:
-  </p><div class="highlight"><pre><span></span><code>rule: "!has(self.layer2) || !has(self.layer2.macSecurity)"
-message: "macSecurity is only supported on ClusterUserDefinedNetwork"
-</code></pre></div><p></p>
-</li>
-<li>
-<p><code>macSecurity.mode: Disabled</code> requires <code>ipam.mode</code> to be <code>Disabled</code>:
-  </p><div class="highlight"><pre><span></span><code>rule: "!has(self.macSecurity) || self.macSecurity.mode != 'Disabled' || (has(self.ipam) &amp;&amp; has(self.ipam.mode) &amp;&amp; self.ipam.mode == 'Disabled')"
-message: "macSecurity.mode Disabled requires ipam.mode to be Disabled"
-</code></pre></div><p></p>
-</li>
-<li>
-<p><code>macSecurity.mode</code> is immutable after creation (changing MAC spoof protection on a live
-  network requires reconfiguring all existing LSPs; this can be relaxed in a future iteration):
-  </p><div class="highlight"><pre><span></span><code>rule: "!has(oldSelf.macSecurity) || (has(self.macSecurity) &amp;&amp; oldSelf.macSecurity.mode == self.macSecurity.mode)"
-message: "macSecurity.mode is immutable after creation"
-</code></pre></div><p></p>
-</li>
+<li><strong>Field omitted</strong>: The CRD default is applied automatically by the API
+  server — the selector becomes
+  <code>{matchExpressions: [{key: k8s.ovn.org/egress-assignable, operator: Exists}]}</code>,
+  preserving today's behavior without any code-level fallback.</li>
+<li><strong>Field set by the user</strong>: The user's value is used as-is. For example,
+  <code>{matchLabels: {egress-pool: tenant-a}}</code> limits assignment to nodes
+  in that pool. An empty selector (<code>{}</code>) matches all nodes, which also
+  means the health-check probe set expands to every node in the cluster
+  — a cost to consider at scale and not a recommended setting for admins.</li>
 </ul>
-<blockquote>
-<p><strong>Note:</strong> The existing CRD definitions already enforce full immutability at the parent
-struct level (<code>self == oldSelf</code> on <code>Layer2Config</code> and <code>LocalnetConfig</code>). The per-field
-CEL rule above provides defense-in-depth and will become the primary constraint if
-parent-level immutability is relaxed in a future iteration to allow other fields to be
-updated independently.</p>
-</blockquote>
-<h4 id="nad-generation-from-crd">NAD Generation from CRD<a class="headerlink" href="#nad-generation-from-crd" title="Permanent link">¶</a></h4>
-<p>The CUDN controller that generates NADs from CRD specs must translate the
-<code>macSecurity.mode</code> field to the NAD JSON config <code>macSecurityMode</code> field, following the
-same pattern used for other fields like <code>physicalNetworkName</code>, <code>allowPersistentIPs</code>, etc.
-When <code>macSecurity</code> is omitted in the CRD, the NAD should either omit <code>macSecurityMode</code>
-or set it to <code>"Enabled"</code> (both are equivalent).</p>
-<h4 id="interaction-with-ipam-mode">Interaction with IPAM Mode<a class="headerlink" href="#interaction-with-ipam-mode" title="Permanent link">¶</a></h4>
-<table>
-<thead>
-<tr>
-<th>IPAM Mode</th>
-<th>macSecurity.mode</th>
-<th>MAC Port Security</th>
-<th>Unknown Addresses</th>
-<th>Notes</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>Disabled</code></td>
-<td><code>Enabled</code> (default)</td>
-<td>Enabled</td>
-<td>Disabled</td>
-<td>MAC-only security, no IPs assigned</td>
-</tr>
-<tr>
-<td><code>Disabled</code></td>
-<td><code>Disabled</code></td>
-<td>Disabled</td>
-<td>Enabled</td>
-<td>Full L2 flexibility, no restrictions</td>
-</tr>
-</tbody>
-</table>
-<h4 id="future-per-attachment-mac-spoof-protection">Future: Per-Attachment MAC Spoof Protection<a class="headerlink" href="#future-per-attachment-mac-spoof-protection" title="Permanent link">¶</a></h4>
-<p>The <code>MACSecurityMode</code> enum is intentionally extensible. A future <code>WorkloadOptOut</code> mode is
-the anticipated path for per-attachment MAC spoof protection granularity, following the
-two-level model proven by OpenStack Neutron where a network-level default can be overridden
-per port.</p>
-<p>With <code>macSecurity.mode: WorkloadOptOut</code>, MAC spoof protection remains enabled by default on
-all LSPs attached to the network, but individual pods may opt out via a pod annotation (e.g.,
-<code>k8s.ovn.org/mac-security-override</code>). The annotation is only honored on networks where
-the cluster admin has explicitly set <code>WorkloadOptOut</code>; on <code>Enabled</code> or <code>Disabled</code> networks
-the annotation has no effect. This preserves the admin as the sole decision-maker: the admin
-controls whether the network permits overrides, while the annotation is just the opt-in
-signal per attachment.</p>
-<p>This mode addresses mixed-role networks where a small number of specialized pods (virtual
-routers, nested hypervisors, keepalived pairs) need MAC freedom while the remaining pods
-benefit from anti-spoofing protection. Without per-attachment granularity, the admin must
-either disable MAC spoof protection for all pods or create separate networks for different
-security postures.</p>
-<p>The same per-attachment mechanism provides the natural integration point for a future
-<code>AllowList</code> mode with per-pod <code>allowedMACs</code>. Rather than fully disabling MAC spoof protection,
-a pod annotation could declare additional MAC addresses to append to the LSP's <code>port_security</code>
-column (e.g., <code>k8s.ovn.org/allowed-addresses: '{"net": ["00:00:5e:00:01:01"]}'</code>). OVN's
-<code>port_security</code> column natively accepts multiple MAC entries per LSP, so this maps directly
-to the underlying data model.</p>
-<p>Both extensions — <code>WorkloadOptOut</code> and <code>AllowList</code> — can be added as non-breaking enum
-additions to the existing <code>MACSecurityConfig</code> struct. The initial <code>Enabled</code>/<code>Disabled</code> API
-proposed in this OKEP is forward-compatible with these future modes.</p>
-<h3 id="implementation-details">Implementation Details<a class="headerlink" href="#implementation-details" title="Permanent link">¶</a></h3>
-<h4 id="ovn-logical-topology">OVN Logical Topology<a class="headerlink" href="#ovn-logical-topology" title="Permanent link">¶</a></h4>
-<p>The following diagram illustrates how MAC spoof protection affects traffic flow:</p>
-<div class="highlight"><pre><span></span><code> Pod A (VM with MAC fa:16:3e:aa:bb:cc)
-   |
-   | veth pair
-   |
- OVS Bridge (br-int)
-   |
-   | OVN LSP (port_security: [] if macSecurity.mode: Disabled)
-   |          (addresses: ["0a:58:...", "unknown"])
-   |          (options: {force_fdb_lookup: "true"})
-   |
- OVN Logical Switch (L2 secondary network)
-   |
-   | OVN LSP for Pod B
-   |
- OVS Bridge (br-int)
-   |
- Pod B (can send unicast to fa:16:3e:aa:bb:cc via FDB)
+<p>Because the API server applies the default on reads (including for
+existing objects stored before the schema change), the controller sees a
+populated selector on every EgressIP object and always uses it — there is
+no branching between "selector set" and "legacy fallback" paths.</p>
+<p>One caveat of this approach is that users now have two ways to achieve
+the same outcome: they can either label nodes with
+<code>k8s.ovn.org/egress-assignable</code> (relying on the default selector) or set
+a custom <code>egressNodeSelector</code> on each EgressIP object. Both are valid
+workflows and can coexist in the same cluster.</p>
+<h3 id="api-details">API Details<a class="headerlink" href="#api-details" title="Permanent link">¶</a></h3>
+<h4 id="crd-change">CRD Change<a class="headerlink" href="#crd-change" title="Permanent link">¶</a></h4>
+<div class="highlight"><pre><span></span><code><span class="c1">// EgressIPSpec is a desired state description of EgressIP.</span>
+<span class="kd">type</span><span class="w"> </span><span class="nx">EgressIPSpec</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// EgressIPs is the list of egress IP addresses requested. Can be IPv4 and/or IPv6.</span>
+<span class="w">    </span><span class="c1">// This field is mandatory.</span>
+<span class="w">    </span><span class="c1">// +listType=atomic</span>
+<span class="w">    </span><span class="nx">EgressIPs</span><span class="w"> </span><span class="p">[]</span><span class="kt">string</span><span class="w"> </span><span class="s">`json:"egressIPs"`</span>
+
+<span class="w">    </span><span class="c1">// NamespaceSelector applies the egress IP only to the namespace(s) whose label</span>
+<span class="w">    </span><span class="c1">// matches this definition. This field is mandatory.</span>
+<span class="w">    </span><span class="nx">NamespaceSelector</span><span class="w"> </span><span class="nx">metav1</span><span class="p">.</span><span class="nx">LabelSelector</span><span class="w"> </span><span class="s">`json:"namespaceSelector"`</span>
+
+<span class="w">    </span><span class="c1">// PodSelector applies the egress IP only to the pods whose label</span>
+<span class="w">    </span><span class="c1">// matches this definition. This field is optional, and in case it is not set:</span>
+<span class="w">    </span><span class="c1">// results in the egress IP being applied to all pods in the namespace(s)</span>
+<span class="w">    </span><span class="c1">// matched by the NamespaceSelector.</span>
+<span class="w">    </span><span class="c1">// +optional</span>
+<span class="w">    </span><span class="nx">PodSelector</span><span class="w"> </span><span class="nx">metav1</span><span class="p">.</span><span class="nx">LabelSelector</span><span class="w"> </span><span class="s">`json:"podSelector,omitempty"`</span>
+
+<span class="w">    </span><span class="c1">// EgressNodeSelector limits the pool of nodes that can host this</span>
+<span class="w">    </span><span class="c1">// EgressIP. Only nodes whose labels match this selector are eligible</span>
+<span class="w">    </span><span class="c1">// for assignment.</span>
+<span class="w">    </span><span class="c1">// This field is optional. When not specified by the user, the CRD</span>
+<span class="w">    </span><span class="c1">// default is applied: {matchExpressions: [{key:</span>
+<span class="w">    </span><span class="c1">// k8s.ovn.org/egress-assignable, operator: Exists}]}.</span>
+<span class="w">    </span><span class="c1">// An empty selector ({}) matches all nodes — use with caution as it</span>
+<span class="w">    </span><span class="c1">// expands the eligible pool and health-check set to the entire cluster.</span>
+<span class="w">    </span><span class="c1">// This field restricts only where the IPs in this EgressIP object are</span>
+<span class="w">    </span><span class="c1">// placed; it does not reserve the matched nodes for exclusive use.</span>
+<span class="w">    </span><span class="c1">// Other EgressIP objects can still consume capacity on the same nodes.</span>
+<span class="w">    </span><span class="c1">// +kubebuilder:default={"matchExpressions":[{"key":"k8s.ovn.org/egress-assignable","operator":"Exists"}]}</span>
+<span class="w">    </span><span class="c1">// +optional</span>
+<span class="w">    </span><span class="nx">EgressNodeSelector</span><span class="w"> </span><span class="o">*</span><span class="nx">metav1</span><span class="p">.</span><span class="nx">LabelSelector</span><span class="w"> </span><span class="s">`json:"egressNodeSelector,omitempty"`</span>
+<span class="p">}</span>
 </code></pre></div>
-<p>When <code>macSecurity.mode</code> is <code>Enabled</code> (default), the LSP has:
-- <code>addresses: ["0a:58:c0:a8:01:03"]</code>
-- <code>port_security: ["0a:58:c0:a8:01:03"]</code>
-- No <code>unknown</code> in addresses, no <code>force_fdb_lookup</code></p>
-<p>When <code>macSecurity.mode</code> is <code>Disabled</code> (requires <code>ipam.mode: Disabled</code>), the LSP has:
-- <code>addresses: ["0a:58:c0:a8:01:03", "unknown"]</code> (MAC only, no IP — IPAM is disabled)
-- <code>port_security: []</code> (empty)
-- <code>options: {"force_fdb_lookup": "true", ...}</code></p>
+<p><code>EgressNodeSelector</code> is a pointer (<code>*metav1.LabelSelector</code>) rather than a value type for two reasons.
+First, <code>encoding/json</code>'s <code>omitempty</code> tag has no effect on structs — a zero-value struct is never
+omitted. Without a pointer, typed Go clients would always serialize this field as
+<code>egressNodeSelector: {}</code>, preventing the CRD default from ever being applied (the field is never
+absent in the submitted object). A nil pointer is correctly omitted by <code>omitempty</code>, allowing the
+CRD default to be injected at admission. Second, <code>metav1.LabelSelector</code> has no required fields,
+so <code>{}</code> is a valid user choice meaning "match all nodes" per
+<a href="https://github.com/kubernetes/community/blob/main/contributors/devel/sig-architecture/api-conventions.md#serialization-of-optionalrequired-fields">Kubernetes API conventions</a>
+— a pointer is the only way to distinguish <code>nil</code> (unset, apply default) from <code>{}</code> (explicitly
+match all nodes).</p>
+<h4 id="example-yaml">Example YAML<a class="headerlink" href="#example-yaml" title="Permanent link">¶</a></h4>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.ovn.org/v1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">EgressIP</span>
+<span class="nt">metadata</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">egressip-tenant-a</span>
+<span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">egressIPs</span><span class="p">:</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">192.168.50.10</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">192.168.50.11</span>
+<span class="w">  </span><span class="nt">namespaceSelector</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">matchLabels</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">tenant</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">a</span>
+<span class="w">  </span><span class="nt">egressNodeSelector</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">matchLabels</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">egress-pool</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tenant-a</span>
+</code></pre></div>
+<p>This ensures that <code>192.168.50.10</code> and <code>192.168.50.11</code> are only assigned
+to nodes with the <code>egress-pool=tenant-a</code> label. Because the user
+explicitly set <code>egressNodeSelector</code>, the CRD default
+(<code>k8s.ovn.org/egress-assignable</code>) is overridden — the label is not
+required on these nodes.</p>
+<h4 id="backwards-compatibility-of-api">Backwards Compatibility of API<a class="headerlink" href="#backwards-compatibility-of-api" title="Permanent link">¶</a></h4>
+<p>The field is <code>optional</code> with a CRD <code>default</code>. When a user omits
+<code>egressNodeSelector</code>, the API server injects the default value
+(<code>{matchExpressions: [{key: k8s.ovn.org/egress-assignable, operator: Exists}]}</code>)
+at admission time and on reads from storage. This means:</p>
+<ul>
+<li><strong>Existing objects</strong> (created before the schema change): the default is
+  applied transparently on read, so the controller sees the selector
+  without any object migration.</li>
+<li><strong>New objects without the field</strong>: the default is applied automatically —
+  no client changes needed.</li>
+<li><strong>New objects with a custom selector</strong>: the user's value is used as-is.</li>
+</ul>
+<h4 id="mutability">Mutability<a class="headerlink" href="#mutability" title="Permanent link">¶</a></h4>
+<p>The <code>egressNodeSelector</code> field is mutable. Updating it triggers re-evaluation
+of current assignments: IPs assigned to nodes that no longer match the
+new selector are reassigned to nodes that do. This is consistent with
+how the existing <code>egressIPs</code>, <code>namespaceSelector</code>, and <code>podSelector</code>
+fields are all mutable and trigger reconciliation on update.</p>
+<h4 id="validation">Validation<a class="headerlink" href="#validation" title="Permanent link">¶</a></h4>
+<p>No additional CEL validation rules are needed beyond what
+<code>metav1.LabelSelector</code> already provides. The field follows standard
+Kubernetes label selector semantics including <code>matchLabels</code> and
+<code>matchExpressions</code>.</p>
+<h3 id="implementation-details">Implementation Details<a class="headerlink" href="#implementation-details" title="Permanent link">¶</a></h3>
+<h4 id="component-ovnkube-cluster-manager-egressipclustercontroller">Component: ovnkube-cluster-manager (<code>egressIPClusterController</code>)<a class="headerlink" href="#component-ovnkube-cluster-manager-egressipclustercontroller" title="Permanent link">¶</a></h4>
+<p>The primary change is in the <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/blob/d70ad38dc12ee50b9a90d53deb8c32097025b545/go-controller/pkg/clustermanager/egressip_controller.go#L1216"><code>assignEgressIPs</code></a> function in
+<code>go-controller/pkg/clustermanager/egressip_controller.go</code>.</p>
+<p><strong>Current behavior</strong> (simplified):
+1. <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/blob/d70ad38dc12ee50b9a90d53deb8c32097025b545/go-controller/pkg/clustermanager/egressip_controller.go#L520"><code>getSortedEgressData()</code></a> returns all nodes where
+   <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/blob/d70ad38dc12ee50b9a90d53deb8c32097025b545/go-controller/pkg/clustermanager/egressip_controller.go#L524"><code>isEgressAssignable</code></a> <code>&amp;&amp; isReady &amp;&amp; isReachable</code>.
+2. <code>assignEgressIPs()</code> iterates these nodes, checking subnet membership
+   and capacity, and assigns the first available node.</p>
+<p><strong>New behavior</strong>:
+1. When evaluating an EgressIP, the controller compiles <code>egressNodeSelector</code>
+   into a label selector and builds the candidate pool from all nodes whose
+   labels match the selector and that are infrastructure-ready, ready, and
+   reachable. In production, CRD defaulting ensures <code>egressNodeSelector</code> is
+   always populated; unit tests must set the field explicitly since they bypass
+   the API server.
+2. The hardcoded <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/blob/d70ad38dc12ee50b9a90d53deb8c32097025b545/go-controller/pkg/clustermanager/egressip_controller.go#L113"><code>isEgressAssignable</code></a> boolean (which matched the
+   <code>k8s.ovn.org/egress-assignable</code> label) is fully removed and replaced by two
+   separate concerns: per-EgressIP selector matching (via <code>egressNodeSelector</code>)
+   and a node infrastructure-readiness check (host CIDRs parseable). For
+   objects that kept the default selector, behavior is identical; for objects
+   with a custom selector, only the custom labels matter.
+3. If the candidate pool is empty, the controller emits a <code>NoMatchingNodeFound</code>
+   event and logs the selector for diagnostics.
+4. Proceed with the existing assignment logic (subnet, capacity,
+   anti-co-location) on the candidate pool.</p>
+<p><strong>Reconciliation trigger on node label changes:</strong></p>
+<p>The existing <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/blob/d70ad38dc12ee50b9a90d53deb8c32097025b545/go-controller/pkg/clustermanager/egressip_event_handler.go#L98"><code>egressIPClusterControllerEventHandler</code></a> in
+<code>go-controller/pkg/clustermanager/egressip_event_handler.go</code> already
+watches node label changes. When a node's labels change, we must
+re-evaluate all EgressIP assignments that have an <code>egressNodeSelector</code> to
+determine if:
+- A previously ineligible node is now eligible (attempt assignment of
+  any currently unassigned EgressIPs — valid existing assignments are
+  not moved).
+- A previously eligible node is no longer eligible (trigger reassignment
+  of its EgressIPs to other eligible nodes).</p>
+<p>This is handled by extending the existing node update handler to compile all
+EgressIP selectors and check whether the updated node matches any of them,
+replacing the old hardcoded <code>k8s.ovn.org/egress-assignable</code> check. The
+health-check path uses the same mechanism to probe only nodes that match at
+least one EgressIP's selector.</p>
+<p><strong>Reconciliation trigger on egressNodeSelector spec change:</strong></p>
+<p>When the EgressIP object's <code>egressNodeSelector</code> field is updated, the existing
+EgressIP watch handler (<a href="https://github.com/ovn-kubernetes/ovn-kubernetes/blob/d70ad38dc12ee50b9a90d53deb8c32097025b545/go-controller/pkg/clustermanager/egressip_controller.go#L931"><code>reconcileEgressIP</code></a>) fires because the spec
+changed. The reconciliation logic re-runs <code>assignEgressIPs</code> with the new
+selector, invalidating any current assignments to nodes that no longer
+match and reassigning those IPs to nodes that do.</p>
+<p><strong>Validation in <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/blob/d70ad38dc12ee50b9a90d53deb8c32097025b545/go-controller/pkg/clustermanager/egressip_controller.go#L1855"><code>ensureAllocatorEgressIPAssignments</code></a>:</strong></p>
+<p>The <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/blob/d70ad38dc12ee50b9a90d53deb8c32097025b545/go-controller/pkg/clustermanager/egressip_controller.go#L1855"><code>ensureAllocatorEgressIPAssignments</code></a> function (called during sync)
+validates that current assignments are still valid. The existing
+<a href="https://github.com/ovn-kubernetes/ovn-kubernetes/blob/d70ad38dc12ee50b9a90d53deb8c32097025b545/go-controller/pkg/clustermanager/egressip_controller.go#L1490"><code>isEgressAssignable</code> check</a>
+in the validation path must be <strong>replaced</strong> (not supplemented) with a
+selector match against the EgressIP's <code>egressNodeSelector</code>. If the old
+label-only check is retained alongside the selector, custom selectors
+that target unlabeled nodes would have their assignments invalidated on
+every sync — causing an infinite reassign loop. The readiness,
+reachability, subnet, and network checks remain unchanged.</p>
+<p><strong>Node reboot / unavailability:</strong></p>
+<p>No change to existing behavior. When a node becomes unreachable (reboot,
+network partition), the existing reachability checker marks it
+unreachable and triggers reassignment to another eligible node. The
+egressNodeSelector filter is applied during reassignment — the IP moves to
+another node that is both reachable AND matches the selector. If no
+such node exists, the IP remains unassigned until one becomes available.
+This is identical to how EgressIPs behave today when no reachable
+egress-assignable node exists.</p>
+<p><strong>Multiple EgressIP objects with the same egressNodeSelector:</strong></p>
+<p>This is fully supported. Multiple EgressIP objects can specify the same
+(or overlapping) egressNodeSelectors. The existing load-balancing logic (sort
+by allocation count) distributes IPs across the shared node pool. Each
+EgressIP object's IPs are independently anti-co-located (no two IPs
+from the same object on one node), but IPs from different objects can
+share a node — this is existing behavior and is unchanged.</p>
+<h4 id="component-ovnkube-controller">Component: ovnkube-controller<a class="headerlink" href="#component-ovnkube-controller" title="Permanent link">¶</a></h4>
+<p>No changes required. The ovnkube-controller reads the EgressIP status
+(assigned node + IP) and programs OVN logical router policies and NAT
+rules accordingly. The datapath is unchanged — only the assignment
+decision in cluster-manager is affected.</p>
+<h4 id="component-ovnkube-node">Component: ovnkube-node<a class="headerlink" href="#component-ovnkube-node" title="Permanent link">¶</a></h4>
+<p>No changes required. ovnkube-node handles the local plumbing (adding the
+EgressIP to an interface, configuring ARP/NDP) based on what the
+cluster-manager assigns. The node doesn't need to know why it was
+selected.</p>
+<h4 id="gateway-modes-lgwsgw">Gateway Modes (lgw/sgw)<a class="headerlink" href="#gateway-modes-lgwsgw" title="Permanent link">¶</a></h4>
+<p>This feature does not touch the gateway datapath. It only affects the
+control-plane assignment decision. Both local gateway and shared gateway
+modes are unaffected — the EgressIP datapath flows remain the same
+regardless of how the node was selected.</p>
+<h4 id="cloud-environment-cloudprivateipconfig">Cloud Environment (CloudPrivateIPConfig)<a class="headerlink" href="#cloud-environment-cloudprivateipconfig" title="Permanent link">¶</a></h4>
+<p>On cloud platforms, EgressIP assignment creates <code>CloudPrivateIPConfig</code>
+objects. The node selector filtering happens before the
+<code>CloudPrivateIPConfig</code> is created, so the cloud workflow is unchanged
+— it just receives a different (filtered) set of candidate nodes.</p>
+<h4 id="interaction-with-egressip-multinic-secondary-host-networks">Interaction with EgressIP MultiNIC (Secondary Host Networks)<a class="headerlink" href="#interaction-with-egressip-multinic-secondary-host-networks" title="Permanent link">¶</a></h4>
+<p>The existing secondary host network filtering in <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/blob/d70ad38dc12ee50b9a90d53deb8c32097025b545/go-controller/pkg/clustermanager/egressip_controller.go#L1216"><code>assignEgressIPs</code></a>
+(which restricts nodes to those hosting the IP's network via MultiNIC)
+is applied after the egressNodeSelector filter. The intersection of both
+filters determines the final candidate set.</p>
+<h4 id="user-defined-networks-udn">User Defined Networks (UDN)<a class="headerlink" href="#user-defined-networks-udn" title="Permanent link">¶</a></h4>
+<p>EgressIP with egressNodeSelector works identically across all network types —
+the default cluster network and User Defined Networks. The egressNodeSelector
+is evaluated purely at the control-plane level during node assignment
+in the cluster-manager. The per-network ovnkube-controllers that program
+the OVN logical router policies and NAT rules for EgressIP on each
+network are unaffected — they read the assigned node from the EgressIP
+status and program flows regardless of how that node was chosen. No
+per-network or per-topology changes are needed. This applies equally
+whether the cluster uses BGP-advertised EgressIPs or not.</p>
+<p>When <a href="../../features/user-defined-networks/dynamic-udn/">Dynamic UDN Node Allocation</a>
+is enabled, EgressIP assignment is one of the activity triggers that
+causes a UDN to be rendered on a node. If <code>egressNodeSelector</code> directs
+an EgressIP to a node where the UDN is not yet rendered, dynamic UDN
+will start rendering the network on that node. Conversely, if an
+EgressIP is reassigned away from a node (due to a selector change or
+node relabel), and that node has no remaining pods or EgressIP
+assignments for the UDN, dynamic UDN will tear down the network after
+the configured grace period (<code>--udn-deletion-grace-period</code>, default
+120s). Administrators should be aware of this interaction when
+combining <code>egressNodeSelector</code> with dynamic UDN — directing EgressIPs
+to nodes that don't already run the UDN incurs a network rendering
+delay before the datapath is ready.</p>
+<h4 id="health-check-membership-reconciliation">Health-Check Membership Reconciliation<a class="headerlink" href="#health-check-membership-reconciliation" title="Permanent link">¶</a></h4>
+<p>Today, <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/blob/d70ad38dc12ee50b9a90d53deb8c32097025b545/go-controller/pkg/clustermanager/egressip_controller.go#L641"><code>checkEgressNodesReachabilityIterate</code></a> probes every node where
+<a href="https://github.com/ovn-kubernetes/ovn-kubernetes/blob/d70ad38dc12ee50b9a90d53deb8c32097025b545/go-controller/pkg/clustermanager/egressip_controller.go#L645"><code>isEgressAssignable &amp;&amp; isReady</code></a>. With selectors, the probe target set is the
+union of all <code>egressNodeSelector</code> matches across all EgressIP objects. On each
+health-check tick (~5 s), all EgressIP selectors are compiled fresh and each
+node's labels are checked against them. Only nodes matching at least one
+EgressIP's selector are probed. This avoids maintaining a cached probe set
+that would need invalidation on every EgressIP CRUD event and node label
+change.</p>
+<p>For EgressIP objects using the default selector (matching
+<code>k8s.ovn.org/egress-assignable</code>), the probe set is identical to today's
+behavior.</p>
+<p><strong>Startup ordering</strong>: When a new EgressIP is created with a custom
+selector matching nodes that are not already in the probe set, those
+nodes have no reachability status yet. The assignment logic requires
+<code>isReachable</code>, so the first assignment may be delayed by up to one probe
+interval while the prober catches up. This is a one-time delay per
+newly targeted node.</p>
+<p><strong>Behavioral change from today</strong>: Labeling a node as <code>egress-assignable</code>
+no longer unconditionally enables health-check probes on that node.
+Probes are driven by actual EgressIP selector matches. This scopes
+health-check traffic to nodes genuinely in use, but means that
+pre-labeling nodes "just in case" no longer warms up their reachability
+status in advance.</p>
 <h3 id="testing-details">Testing Details<a class="headerlink" href="#testing-details" title="Permanent link">¶</a></h3>
+<h4 id="unit-tests">Unit Tests<a class="headerlink" href="#unit-tests" title="Permanent link">¶</a></h4>
+<ul>
+<li><code>egressip_controller_test.go</code>:</li>
+<li>Test assignment with egressNodeSelector matching a subset of nodes.</li>
+<li>Test assignment when no nodes match the egressNodeSelector (expect
+    unassigned status and warning event).</li>
+<li>Test that a matching node losing the label triggers reassignment.</li>
+<li>Test that a new node gaining a matching label triggers assignment
+    of previously unassigned EgressIPs (valid assignments do not move).</li>
+<li>Test that omitting egressNodeSelector results in the CRD default
+    (matching <code>k8s.ovn.org/egress-assignable</code>) being applied — only
+    labeled nodes are eligible, identical to current behavior.</li>
+<li>Test egressNodeSelector with <code>matchExpressions</code> (NotIn, Exists, DoesNotExist).</li>
+<li>Test that updating egressNodeSelector in a way that still matches the
+    currently assigned node does not trigger reassignment (no unnecessary
+    churn).</li>
+<li>Test interaction with cloud provider path (CloudPrivateIPConfig
+    created for filtered node only).</li>
+<li>Test interaction with secondary host network filtering (both
+    filters applied).</li>
+</ul>
 <h4 id="e2e-tests">E2E Tests<a class="headerlink" href="#e2e-tests" title="Permanent link">¶</a></h4>
 <ul>
-<li>Create a secondary layer2 network with <code>macSecurity.mode: Disabled</code>.</li>
-<li>Deploy two pods on the network.</li>
-<li>From pod A, send traffic with a spoofed source MAC address.</li>
-<li>Verify pod B receives the traffic (it would be dropped without the feature).</li>
-<li>Repeat for localnet topology.</li>
-<li>Test with CUDN CRD (not just raw NAD).</li>
+<li>Create EgressIP with egressNodeSelector, verify assignment only to matching
+  nodes.</li>
+<li>Remove matching label from assigned node, verify IP migrates to another
+  matching node.</li>
+<li>Add matching label to a new node, verify load balancing considers it.</li>
+<li>Verify egress traffic uses the correct source IP when egressNodeSelector
+  restricts the assignment.</li>
+<li>Verify that multiple EgressIP objects with different egressNodeSelectors
+  correctly partition across different node pools.</li>
+<li>Update the EgressIP's egressNodeSelector to match a different set of nodes,
+  verify IPs are reassigned to the new matching nodes.</li>
+<li>Update a node's labels so it no longer matches the egressNodeSelector while
+  simultaneously updating the EgressIP's egressNodeSelector to match different
+  nodes — verify correct convergence without IP duplication or loss.</li>
 </ul>
-<h4 id="cross-feature-testing">Cross Feature Testing<a class="headerlink" href="#cross-feature-testing" title="Permanent link">¶</a></h4>
+<h4 id="cross-feature-interaction-tests">Cross-Feature Interaction Tests<a class="headerlink" href="#cross-feature-interaction-tests" title="Permanent link">¶</a></h4>
 <ul>
-<li>Verify that <code>allowPersistentIPs</code> and <code>macSecurity.mode: Disabled</code> are mutually exclusive:
-  <code>allowPersistentIPs</code> requires IPAM enabled (to assign and persist IPs across live migrations),
-  while <code>macSecurity.mode: Disabled</code> requires <code>ipam.mode: Disabled</code>. Validation should reject
-  a CUDN that specifies both.</li>
+<li>EgressIP with egressNodeSelector + dual-stack / IPv6: verify that
+  egressNodeSelector filtering works correctly for IPv4, IPv6, and
+  dual-stack EgressIP assignments. The selector logic is IP-family
+  agnostic, but E2E coverage should confirm no regressions.</li>
+<li>EgressIP with egressNodeSelector + UDN: verify EgressIP works correctly for
+  pods on User Defined Networks when egressNodeSelector is specified. Since the
+  egressNodeSelector only affects control-plane assignment and not the datapath,
+  the same behavior applies to all network types (default cluster network
+  and User Defined Networks alike).</li>
+<li>EgressIP with egressNodeSelector + Dynamic UDN: verify that assigning an
+  EgressIP to a node where the UDN is not yet rendered triggers network
+  rendering and that the datapath becomes functional after rendering completes.
+  Run EgressIP E2E tests with <code>--enable-dynamic-udn-allocation</code> enabled.</li>
 </ul>
 <h3 id="documentation-details">Documentation Details<a class="headerlink" href="#documentation-details" title="Permanent link">¶</a></h3>
 <ul>
-<li>Update <code>docs/features/multiple-networks/multi-homing.md</code> with the new configuration option
-  for layer2 and localnet topologies, including usage examples.</li>
-<li>Add this OKEP to <code>mkdocs.yml</code> under the OKEPs navigation section.</li>
+<li>Update <code>docs/features/cluster-egress-controls/egress-ip.md</code> with:</li>
+<li>New <code>egressNodeSelector</code> field documentation.</li>
+<li>Example YAML showing usage.</li>
+<li>Explanation that omitting the field defaults to matching
+    <code>k8s.ovn.org/egress-assignable</code>, and custom selectors override it.</li>
+<li>Troubleshooting section for when no nodes match the selector.</li>
+<li>Best practices section covering:<ul>
+<li>Avoid frequent changes to <code>egressNodeSelector</code> or node labels in
+  production; there is a race window during label changes where the
+  cached node state may be stale, potentially causing brief EgressIP
+  reassignment churn. Plan node label schemes upfront and perform
+  label changes during a maintenance window.</li>
+<li>An empty selector (<code>{}</code>) matches all nodes, expanding the eligible
+  pool and health-check probe set to the entire cluster — use with
+  caution at scale.</li>
 </ul>
+</li>
+<li>Update the EgressIP API reference in <code>docs/api-reference/egress-ip-api-spec.md</code>.</li>
+<li>Update <code>mkdocs.yml</code> to include this OKEP under Enhancement Proposals.</li>
+</ul>
+<h2 id="performance-and-scale">Performance and Scale<a class="headerlink" href="#performance-and-scale" title="Permanent link">¶</a></h2>
+<h3 id="assignment-overhead">Assignment Overhead<a class="headerlink" href="#assignment-overhead" title="Permanent link">¶</a></h3>
+<p>The egressNodeSelector filtering adds one <code>metav1.LabelSelectorAsSelector()</code>
+conversion per <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/blob/d70ad38dc12ee50b9a90d53deb8c32097025b545/go-controller/pkg/clustermanager/egressip_controller.go#L1216"><code>assignEgressIPs</code></a> call (cached per reconciliation, not per
+node) and one <code>selector.Matches()</code> call per candidate node. At 500
+candidate nodes, this is 500 label set comparisons per EgressIP
+reconciliation — negligible compared to the existing node iteration and
+network lookups.</p>
+<h3 id="watch-overhead">Watch Overhead<a class="headerlink" href="#watch-overhead" title="Permanent link">¶</a></h3>
+<p>No new watches are added. The existing node watch already triggers
+EgressIP reconciliation on label changes. The only additional work is
+iterating EgressIP objects to check which ones have egressNodeSelectors
+affected by the label change. With N EgressIP objects and M node
+changes, this adds O(N) selector evaluations per node update.</p>
+<p>At scale (1000 EgressIP objects, 500 nodes), a single node label change
+triggers at most 1000 selector evaluations — each is a simple map
+lookup (for <code>matchLabels</code>) and is cheap relative to the existing node
+iteration and network lookups in the assignment path.</p>
+<h3 id="ovn-db-impact">OVN DB Impact<a class="headerlink" href="#ovn-db-impact" title="Permanent link">¶</a></h3>
+<p>Zero additional OVN DB objects. This feature operates entirely in the
+cluster-manager's assignment logic before any OVN DB mutations occur.</p>
+<h3 id="memory">Memory<a class="headerlink" href="#memory" title="Permanent link">¶</a></h3>
+<p>The <code>egressNodeSelector</code> is stored as part of the EgressIP spec (already in the
+informer cache). No additional caching is needed. The compiled
+<code>labels.Selector</code> is created per-reconciliation and garbage collected
+immediately.</p>
 <h2 id="risks-known-limitations-and-mitigations">Risks, Known Limitations and Mitigations<a class="headerlink" href="#risks-known-limitations-and-mitigations" title="Permanent link">¶</a></h2>
-<ol>
-<li><strong>Security risk from disabled MAC spoof protection</strong>: Disabling MAC spoof protection allows
-   any pod on the network to send traffic with arbitrary MAC and IP addresses, enabling MAC
-   spoofing, ARP spoofing/poisoning (allowing MITM attacks on the L2 segment), and potentially
-   IP spoofing attacks.</li>
-<li>
-<p><strong>Mitigation</strong>: The feature is opt-in, per-network, restricted to secondary networks with
-     <code>Secondary</code> role only, and only available on cluster-scoped <code>ClusterUserDefinedNetwork</code>
-     resources. Namespace-scoped <code>UserDefinedNetwork</code> resources cannot enable this feature,
-     ensuring that only cluster administrators can disable MAC spoof protection. The default
-     remains secure (MAC spoof protection enabled). Administrators deploying this feature should
-     use encrypted transports on networks with MAC spoof protection disabled when sensitive
-     traffic is present.</p>
-</li>
-<li>
-<p><strong>Broadcast storm risk with unknown addresses</strong>: Adding <code>unknown</code> to LSP addresses means
-   unicast frames for unknown MACs are delivered to all <code>unknown</code> ports, which can create
-   significant traffic amplification.</p>
-</li>
-<li>
-<p><strong>Mitigation</strong>: <code>force_fdb_lookup</code> is always enabled alongside <code>unknown</code> addresses. The FDB
-     learns MAC-to-port associations from observed source MACs, so after initial discovery, frames
-     are delivered directly. OVN 24.03+, which is the minimum version used by OVN-Kubernetes,
-     supports this option.</p>
-</li>
-<li>
-<p><strong>Immutability constraint</strong>: The field is immutable after creation in the initial
-   implementation, meaning administrators cannot toggle MAC spoof protection on an existing
-   network.</p>
-</li>
-<li><strong>Mitigation</strong>: This is a deliberate simplification. Toggling MAC spoof protection on a live
-     network would require updating all existing LSPs atomically. This can be relaxed in a
-     future iteration once the reconciliation logic is proven.</li>
-</ol>
+<h3 id="risk-overly-restrictive-selectors-leading-to-unassigned-egressips">Risk: Overly restrictive selectors leading to unassigned EgressIPs<a class="headerlink" href="#risk-overly-restrictive-selectors-leading-to-unassigned-egressips" title="Permanent link">¶</a></h3>
+<p>If the egressNodeSelector is too restrictive (matches zero nodes, or all
+matching nodes are unreachable), the EgressIP remains unassigned.
+Additionally, because the controller never co-locates two IPs from the
+same EgressIP object on the same node, an egressNodeSelector that matches
+fewer nodes than the number of requested IPs will leave the excess IPs
+unassigned. For example, an EgressIP with 3 IPs and an egressNodeSelector
+matching only 2 nodes will assign 2 IPs (one per node) and leave the
+3rd unassigned — even if both nodes are healthy.</p>
+<p><strong>Mitigation</strong>: Emit distinct Kubernetes events on the EgressIP object:
+one for "no nodes match the egressNodeSelector" (selector
+misconfiguration) and another for "matching nodes exist but are all
+unavailable" (transient issue). Since <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/blob/d70ad38dc12ee50b9a90d53deb8c32097025b545/go-controller/pkg/clustermanager/egressip_controller.go#L520"><code>getSortedEgressData()</code></a> pre-filters
+unreachable/not-ready nodes, the implementation should check the
+unfiltered cache against the egressNodeSelector to distinguish between these
+two cases.</p>
+<h3 id="risk-label-race-during-node-label-changes">Risk: Label race during node label changes<a class="headerlink" href="#risk-label-race-during-node-label-changes" title="Permanent link">¶</a></h3>
+<p>If an operator changes node labels while the controller is mid-assignment,
+there's a window where the cached node labels are stale.</p>
+<p><strong>Mitigation</strong>: The existing mutex-protected assignment logic serializes
+access. Label changes trigger re-evaluation via the node event handler,
+which will correct any stale assignments in the next reconciliation cycle.
+This is the same pattern used for the <code>k8s.ovn.org/egress-assignable</code>
+label today.</p>
+<h3 id="risk-increased-reconciliation-frequency-with-many-egressips">Risk: Increased reconciliation frequency with many EgressIPs<a class="headerlink" href="#risk-increased-reconciliation-frequency-with-many-egressips" title="Permanent link">¶</a></h3>
+<p>If many EgressIP objects have egressNodeSelectors referencing the same labels,
+a single label change on one node could trigger re-evaluation of many
+EgressIP objects.</p>
+<p><strong>Mitigation</strong>: The re-evaluation only checks selector matches (cheap
+operation). Actual reassignment only occurs if the current assignment is
+invalidated. In the common case (label change doesn't affect existing
+assignments), the reconciliation short-circuits.</p>
+<h3 id="limitation-per-object-node-selector-not-per-ip">Limitation: Per-object node selector, not per-IP<a class="headerlink" href="#limitation-per-object-node-selector-not-per-ip" title="Permanent link">¶</a></h3>
+<p>All IPs within a single EgressIP object share the same egressNodeSelector. If
+different IPs need different node pools, separate EgressIP objects must be
+created (see Non-Goals for rationale). This is consistent with the existing
+per-object semantics for namespace/pod selectors.</p>
 <h2 id="ovn-kubernetes-version-skew">OVN-Kubernetes Version Skew<a class="headerlink" href="#ovn-kubernetes-version-skew" title="Permanent link">¶</a></h2>
-<p>This feature is planned for introduction in the next OVN-Kubernetes release. It requires
-OVN 24.03 or later for the <code>force_fdb_lookup</code> optimization, which is already the minimum OVN
-version supported by OVN-Kubernetes.</p>
-<p>No special version skew handling is required: the feature is a per-network configuration option.
-Controllers running older versions that do not recognize the <code>macSecurity</code> sub-struct will
-ignore the field (it defaults to <code>Enabled</code>), and existing networks will continue to function
-with MAC spoof protection enabled.</p>
+<p>This feature targets the next minor release (v1.5.0). The expected
+upgrade order is: CRD schema first, then controller rollout. This is the
+standard OVN-Kubernetes upgrade sequence (Helm/manifests apply CRDs
+before controller pods restart).</p>
+<p>During a rolling upgrade:</p>
+<ul>
+<li><strong>Old cluster-manager, new CRD</strong>: The old cluster-manager does not
+  understand the <code>egressNodeSelector</code> field and continues to use the
+  hardcoded <code>k8s.ovn.org/egress-assignable</code> label check. Because the CRD
+  default for <code>egressNodeSelector</code> matches that same label, the effective
+  behavior is unchanged for existing objects. However, if a user creates
+  an EgressIP with a custom <code>egressNodeSelector</code> during this window, the
+  old cluster-manager will ignore the selector and assign the EgressIP to
+  any labeled node — potentially outside the requested pool. The custom
+  selector is enforced once the new cluster-manager is running, which
+  triggers a reconciliation and corrects any mis-assignments. Operators
+  should avoid creating EgressIP objects with custom selectors until the
+  upgrade is complete.</li>
+<li><strong>New cluster-manager, old CRD</strong> (abnormal order): This is a general
+  concern for any new CRD field, not specific to <code>egressNodeSelector</code>.
+  If the controller is rolled before the CRD schema is updated, the new
+  field has no <code>default</code> and existing objects will not have it populated.
+  As with any new field, the controller should handle a nil value
+  defensively. The standard OVN-Kubernetes upgrade sequence (CRDs first,
+  then controller) avoids this scenario.</li>
+<li><strong>New cluster-manager, new CRD</strong> (normal post-upgrade): The controller
+  reads <code>egressNodeSelector</code> from every object (always present due to CRD
+  defaulting) and uses it as the sole candidate filter. Objects with the
+  default selector behave identically to the old label-based path.
+  Objects with custom selectors are handled by the new code path.</li>
+</ul>
 <h2 id="backwards-compatibility">Backwards Compatibility<a class="headerlink" href="#backwards-compatibility" title="Permanent link">¶</a></h2>
 <ul>
-<li>The <code>macSecurity</code> sub-struct is optional. When omitted, the default behavior is <code>Enabled</code>,
-  preserving the current behavior of enforcing port security on all LSPs.</li>
-<li>The NAD JSON config <code>macSecurityMode</code> field is additive and optional. Existing NAD
-  configurations without the field continue to work identically.</li>
-<li>The CRD field is an optional pointer with nil default. Existing CUDN resources are unaffected.
-  UDN resources cannot use this field with <code>mode: Disabled</code>.</li>
-<li>No migration or upgrade steps are required.</li>
+<li>The <code>egressNodeSelector</code> field has a CRD default that matches
+  <code>k8s.ovn.org/egress-assignable</code>. Existing EgressIP objects that omit
+  the field automatically receive this default on read, so their
+  behavior is unchanged.</li>
+<li>No datapath changes. Existing E2E tests continue to pass without
+  modification.</li>
+<li>The CRD schema change is additive (new optional field with a default)
+  and does not require a new API version.</li>
+<li>Existing E2E tests that create EgressIP objects without <code>egressNodeSelector</code>
+  validate that the current behavior is preserved.</li>
 </ul>
-<h2 id="alternatives">Alternatives<a class="headerlink" href="#alternatives" title="Permanent link">¶</a></h2>
-<h3 id="alternative-1-two-separate-knobs-pr-4377-original-design">Alternative 1: Two Separate Knobs (PR #4377 Original Design)<a class="headerlink" href="#alternative-1-two-separate-knobs-pr-4377-original-design" title="Permanent link">¶</a></h3>
-<p>The original implementation in <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/pull/4377">PR #4377</a>
-proposed two independent boolean fields:
-- <code>disablePortSecurity</code>: controls the <code>port_security</code> column on LSPs.
-- <code>enableL2Unknown</code>: controls whether <code>unknown</code> is added to <code>addresses</code> and whether
-  <code>force_fdb_lookup</code> is set.</p>
-<p><strong>Why rejected:</strong> There is no identified use case for controlling these behaviors independently.
-If MAC spoof protection is disabled (allowing arbitrary source MACs), the network must also handle
-<code>unknown</code> destination MACs — otherwise, return traffic to spoofed MAC addresses would be dropped.
-Conversely, enabling <code>unknown</code> addresses without disabling MAC spoof protection is contradictory:
-the port would accept traffic for unknown MACs but still enforce source MAC restrictions.</p>
-<p>Two independent booleans create a 2x2 configuration matrix where two of the four states are
-invalid or nonsensical. A single consolidated knob eliminates this confusion.</p>
-<h3 id="alternative-2-per-pod-annotation">Alternative 2: Per-Pod Annotation<a class="headerlink" href="#alternative-2-per-pod-annotation" title="Permanent link">¶</a></h3>
-<p>Instead of a per-network setting, MAC spoof protection could be controlled via a per-pod
-annotation (e.g., <code>k8s.ovn.org/allow-mac-spoofing: "true"</code>).</p>
-<p><strong>Why rejected:</strong>
-- <strong>Security</strong>: Any pod (or user with pod-create access) could potentially set the annotation,
-  widening the attack surface. A per-network setting on the cluster-scoped CUDN resource
-  requires cluster-admin intervention.
-- <strong>Consistency</strong>: The bridge CNI's <code>macspoofchk</code> is per-network, and OVN-Kubernetes should
-  follow the same granularity for consistency.
-- <strong>Semantics</strong>: MAC spoof protection is a property of the network infrastructure, not of
-  individual workloads. A mixed network where some pods have MAC spoof protection and others
-  don't creates complex and hard-to-reason-about security boundaries.
-- Per-pod control could be considered as a future extension if a use case emerges.</p>
-<h3 id="alternative-3-nad-only-no-crd-integration">Alternative 3: NAD-Only (No CRD Integration)<a class="headerlink" href="#alternative-3-nad-only-no-crd-integration" title="Permanent link">¶</a></h3>
-<p>Keep the feature in the NAD JSON configuration only, without adding a field to the CUDN CRD.</p>
-<p><strong>Why rejected:</strong> The OVN-Kubernetes community is moving toward structured CRD APIs for network
-configuration. <a href="../okep-5085-localnet-api/">OKEP-5085</a> established the pattern of defining
-features in the CUDN CRD with automatic NAD generation. Adding a feature only to NADs creates
-a management gap where CUDN-managed networks cannot use the feature without manual NAD editing,
-which defeats the purpose of the CRD controller.</p>
-<h3 id="alternative-4-three-valued-enum">Alternative 4: Three-Valued Enum<a class="headerlink" href="#alternative-4-three-valued-enum" title="Permanent link">¶</a></h3>
-<p>Instead of two modes, use a three-valued enum <code>macSecurity.mode: Enabled | MACOnly | Disabled</code>:
-- <code>Enabled</code> (default): full MAC + IP port security.
-- <code>MACOnly</code>: only MAC port security, no IP restrictions.
-- <code>Disabled</code>: no port security at all.</p>
-<p><strong>Why rejected:</strong> This is over-engineering for the current use cases. The <code>MACOnly</code> option has
-no identified user demand. The <code>ipam.mode: Disabled</code> setting already handles the case where IP
-port security is not applicable (no IPs to secure). Adding a third mode increases API surface
-area and testing complexity without clear benefit. It can be added later as a non-breaking
-change (widening the enum validation set) if a use case emerges.</p>
-<h3 id="alternative-5-boolean-field">Alternative 5: Boolean Field<a class="headerlink" href="#alternative-5-boolean-field" title="Permanent link">¶</a></h3>
-<p>Use a simple boolean field <code>allowUnknownAddresses: bool</code> directly on <code>Layer2Config</code> and
-<code>LocalnetConfig</code>, defaulting to <code>false</code>.</p>
-<p><strong>Why rejected:</strong> Kubernetes API conventions discourage boolean fields because they cannot grow
-to accommodate future requirements. If a third security posture is needed later (e.g., an
-allow-list mode for VRRP/keepalived), a boolean requires either a second field (creating
-field interaction complexity) or a breaking API change. The <code>macSecurity</code> sub-struct with a
-mode enum discriminator follows the established <code>VLANConfig</code> and <code>IPAMConfig</code> patterns in the
-CRD, provides a natural extension point for future modes and per-mode parameters, and costs
-only marginally more boilerplate than a boolean.</p>
-<h3 id="alternative-6-portsecurity-and-macspoofing-naming">Alternative 6: <code>portSecurity</code> and <code>macSpoofing</code> Naming<a class="headerlink" href="#alternative-6-portsecurity-and-macspoofing-naming" title="Permanent link">¶</a></h3>
-<p>Two earlier iterations of this OKEP used different field names before settling on
-<code>macSecurity</code>:</p>
+<h2 id="upgrade-behavior">Upgrade Behavior<a class="headerlink" href="#upgrade-behavior" title="Permanent link">¶</a></h2>
+<p>CRD defaulting handles the transition transparently:</p>
 <ol>
-<li><code>portSecurity</code> with a <code>mode</code> discriminator.</li>
-<li><code>macSpoofing</code> with a <code>mode</code> discriminator.</li>
+<li>The updated CRD schema adds the <code>egressNodeSelector</code> field with a
+   <code>default</code> of <code>{matchExpressions: [{key: k8s.ovn.org/egress-assignable,
+   operator: Exists}]}</code>.</li>
+<li>Existing EgressIP objects stored without the field automatically
+   receive the default on read — no object migration is required.</li>
+<li>The new controller replaces the hardcoded <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/blob/d70ad38dc12ee50b9a90d53deb8c32097025b545/go-controller/pkg/clustermanager/egressip_controller.go#L113"><code>isEgressAssignable</code></a> check
+   with a selector evaluation. Because every object now has a selector
+   (either user-set or the default), the single code path covers both
+   existing and new EgressIPs.</li>
+<li>Users who prefer the label-based workflow need not change anything.
+   Users who want per-object selectors set <code>egressNodeSelector</code>
+   explicitly, overriding the default.</li>
 </ol>
-<p><strong>Why <code>portSecurity</code> was rejected:</strong> While "port security" accurately describes the OVN-level
-mechanism being configured, it is overly broad and could imply control over IP-level
-restrictions or other port-level security features beyond MAC spoofing.</p>
-<p><strong>Why <code>macSpoofing</code> was rejected:</strong> <code>macSpoofing</code> names the field after the attack the knob
-protects against rather than the security posture itself. This makes the enum values read
-ambiguously: <code>macSpoofing.mode: Enabled</code> could be misread as "spoofing is enabled" (i.e., the
-port is vulnerable) instead of its intended meaning, "spoof protection is enabled" (i.e., the
-default, secure state). <code>macSecurity.mode: Enabled</code> removes that ambiguity — it reads naturally
-as "MAC security is on," which matches the field's default value and secure-by-default posture,
-and <code>macSecurity.mode: Disabled</code> reads just as naturally as "MAC security is off." The
-<code>macSecurity</code> name still aligns with the bridge CNI's <code>macspoofchk</code> terminology that users are
-already familiar with, while removing the double-negative naming issue.</p>
+<h2 id="alternatives">Alternatives<a class="headerlink" href="#alternatives" title="Permanent link">¶</a></h2>
+<h3 id="alternative-1-use-a-separate-crd-egressippool-to-define-node-pools">Alternative 1: Use a separate CRD (EgressIPPool) to define node pools<a class="headerlink" href="#alternative-1-use-a-separate-crd-egressippool-to-define-node-pools" title="Permanent link">¶</a></h3>
+<p>Instead of adding an egressNodeSelector to EgressIP directly, create a new
+<code>EgressIPPool</code> CRD that defines a pool of nodes (via a node selector) and
+a set of IP addresses. EgressIP objects would reference a pool instead of
+specifying an egressNodeSelector inline.</p>
+<p><strong>Pros:</strong>
+- Separates concerns: pool definition vs. IP-to-pod binding.
+- Allows reuse of the same pool across multiple EgressIP objects without
+  repeating the selector.
+- Could support IP capacity management at the pool level.</p>
+<p><strong>Cons:</strong>
+- Introduces a new CRD, adding API surface area and operational
+  complexity.
+- Requires two objects to achieve what one object can do with an inline
+  field.
+- Increases coupling — deleting a pool could orphan EgressIP objects.
+- The <code>EgressService</code> CRD already established the inline <code>nodeSelector</code>
+  pattern in OVN-Kubernetes. Deviating from this creates inconsistency.</p>
+<p><strong>Decision</strong>: Rejected. The inline egressNodeSelector is simpler, consistent
+with EgressService, consistent with Cilium's approach, and sufficient for
+the use cases. A pool abstraction can be layered on top in the future if
+demand materializes.</p>
+<h3 id="alternative-2-extend-the-k8sovnorgegress-assignable-label-to-be-per-egressip">Alternative 2: Extend the <code>k8s.ovn.org/egress-assignable</code> label to be per-EgressIP<a class="headerlink" href="#alternative-2-extend-the-k8sovnorgegress-assignable-label-to-be-per-egressip" title="Permanent link">¶</a></h3>
+<p>Instead of a selector on the EgressIP object, use per-EgressIP labels on
+nodes: <code>k8s.ovn.org/egress-assignable-&lt;egressip-name&gt;=""</code>.</p>
+<p><strong>Pros:</strong>
+- No CRD change needed.
+- Simple to understand: label the node for the specific EgressIP.</p>
+<p><strong>Cons:</strong>
+- Violates the principle that the CRD declaratively expresses intent.
+  The user must coordinate labels across two objects (EgressIP + nodes).
+- Doesn't scale — with hundreds of EgressIP objects, nodes accumulate
+  hundreds of labels.
+- Label names are limited to 63 characters for the key, and EgressIP
+  names can vary, making this error-prone.
+- No ecosystem precedent for this pattern.</p>
+<p><strong>Decision</strong>: Rejected. The inline egressNodeSelector is declarative, scalable,
+and follows Kubernetes conventions.</p>
+<h3 id="alternative-3-and-semantics-egressnodeselector-intersected-with-egress-assignable">Alternative 3: AND semantics (<code>egressNodeSelector</code> intersected with <code>egress-assignable</code>)<a class="headerlink" href="#alternative-3-and-semantics-egressnodeselector-intersected-with-egress-assignable" title="Permanent link">¶</a></h3>
+<p>Require both the <code>k8s.ovn.org/egress-assignable</code> label AND the
+<code>egressNodeSelector</code> to match for a node to be eligible.</p>
+<p><strong>Pros:</strong>
+- Simple to implement — filter by label first, then by selector.
+- The label acts as a cluster-admin veto (only node-edit privilege
+  holders can opt a node into egress duty).</p>
+<p><strong>Cons:</strong>
+- Operators must forever maintain both the label and the selector,
+  doubling configuration burden.
+- The selector alone already provides the same RBAC-like veto: only
+  someone who can label nodes can make them eligible. Adding the label
+  as a hard prerequisite is redundant.
+- Users who want custom selectors still need to label nodes, defeating
+  the purpose of per-object selectors.</p>
+<p><strong>Decision</strong>: Rejected. CRD defaulting achieves backwards compatibility
+without an intersection — the default selector matches the label, and
+custom selectors fully replace it.</p>
+<h3 id="alternative-4-if-set-use-selector-else-fall-back-to-label-no-defaulting">Alternative 4: "If set, use selector; else fall back to label" (no defaulting)<a class="headerlink" href="#alternative-4-if-set-use-selector-else-fall-back-to-label-no-defaulting" title="Permanent link">¶</a></h3>
+<p>Use a pointer field (<code>*metav1.LabelSelector</code>) with <code>omitempty</code>. When
+nil, the controller falls back to the hardcoded
+<code>k8s.ovn.org/egress-assignable</code> label check. When set (even to <code>{}</code>),
+the selector takes full ownership and the label is ignored. This
+enables a phased deprecation of the label.</p>
+<p><strong>Pros:</strong>
+- Provides a path to eventually deprecate the
+  <code>k8s.ovn.org/egress-assignable</code> label entirely.
+- The nil vs empty distinction gives fine-grained control: nil = legacy,
+  <code>{}</code> = all nodes, <code>{matchLabels: ...}</code> = custom pool.</p>
+<p><strong>Cons:</strong>
+- Requires branching logic in the controller ("is nil? use label; else
+  use selector"), increasing code complexity.
+- Requires a multi-phase migration plan (introduce field, deprecate
+  label, remove label) spanning several releases.
+- Breaking the label is risky for a heavily used feature (60%+ of
+  OpenShift clusters use EgressIP) and requires coordination with
+  external components like CNCC.
+- Adding a required field later (to finish the deprecation) is itself
+  a breaking API change.</p>
+<p><strong>Decision</strong>: Rejected in favor of CRD defaulting, which avoids the
+entire deprecation and migration story while providing the same
+per-object selector functionality.</p>
 <h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">¶</a></h2>
 <ul>
-<li>Feature request issue: <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/issues/3926">#3926</a></li>
-<li>Initial implementation PR: <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/pull/4377">#4377</a></li>
-<li>OVN Northbound DB schema — Logical_Switch_Port table: <code>port_security</code>, <code>addresses</code> columns
-  and <code>force_fdb_lookup</code> option
-  (<a href="https://man7.org/linux/man-pages/man5/ovn-nb.5.html">ovn-nb man page</a>)</li>
-<li>OVN 24.03 release notes — <code>force_fdb_lookup</code> introduction:
-  <a href="https://github.com/ovn-org/ovn/blob/main/NEWS">NEWS</a></li>
-<li>Bridge CNI <code>macspoofchk</code> documentation:
-  <a href="https://www.cni.dev/plugins/current/main/bridge/">CNI plugins — bridge</a></li>
-<li>OKEP-5085 — Localnet API (CRD design pattern reference):
-  <a href="../okep-5085-localnet-api/">okep-5085-localnet-api.md</a></li>
-<li>OKEP-5193 — User Defined Networks (UDN CRD API):
-  <a href="../okep-5193-user-defined-networks/">okep-5193-user-defined-networks.md</a></li>
+<li><a href="https://github.com/ovn-kubernetes/ovn-kubernetes/pull/6791">PoC Implementation (PR #6791)</a> — proof-of-concept implementation</li>
+<li><a href="https://github.com/ovn-kubernetes/ovn-kubernetes/blob/d70ad38dc12ee50b9a90d53deb8c32097025b545/go-controller/pkg/crd/egressip/v1/types.go">EgressIP types.go</a> — current EgressIP CRD definition</li>
+<li><a href="https://github.com/ovn-kubernetes/ovn-kubernetes/blob/d70ad38dc12ee50b9a90d53deb8c32097025b545/go-controller/pkg/crd/egressservice/v1/types.go">EgressService types.go</a> — EgressService with existing <code>nodeSelector</code> pattern</li>
+<li><a href="https://github.com/ovn-kubernetes/ovn-kubernetes/blob/d70ad38dc12ee50b9a90d53deb8c32097025b545/go-controller/pkg/clustermanager/egressip_controller.go">egressip_controller.go</a> — cluster-manager EgressIP assignment logic</li>
+<li><a href="https://docs.cilium.io/en/stable/network/egress-gateway/egress-gateway/">Cilium Egress Gateway Policy</a> — Cilium's <code>egressGateway.nodeSelector</code> approach</li>
+<li><a href="https://docs.redhat.com/en/documentation/openshift_container_platform/4.21/html/ovn-kubernetes_network_plugin/configuring-egress-ips-ovn">OpenShift EgressIP documentation</a> — current EgressIP documentation</li>
+<li><a href="https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#label-selectors">Kubernetes Label Selectors</a> — standard label selector semantics</li>
 </ul>
 
 
