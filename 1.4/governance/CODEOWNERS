@@ -1,0 +1,51 @@
+# CODEOWNERS - Area Maintainers for ovn-kubernetes
+#
+# Each line is a file pattern followed by one or more owners (GitHub usernames
+# or team slugs). When a PR modifies files matching a pattern, GitHub will
+# automatically request reviews from the listed owners.
+#
+# Order matters: the LAST matching pattern takes precedence.
+# See https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+#
+# To add a new area:
+#   1. Add a section below with the file patterns and area maintainer(s)
+#   2. Optionally create a GitHub team in the ovn-kubernetes org
+#   3. Use individual @usernames or @org/team-slug
+
+# ============================================================================
+# Default: catch-all for anything not matched below
+# ============================================================================
+* @ovn-kubernetes/ovn-kubernetes-reviewers
+
+# ============================================================================
+# Virtualization (Area Maintainer: @maiqueb)
+# ============================================================================
+# E2E tests
+/test/e2e/kubevirt.go @maiqueb @qinqon @ormergi
+/test/e2e/kubevirt/ @maiqueb @qinqon @ormergi
+/test/e2e/multihoming.go @maiqueb @qinqon @ormergi
+/test/e2e/multihoming_utils.go @maiqueb @qinqon @ormergi
+/test/e2e/multihoming_external_router_utils.go @maiqueb @qinqon @ormergi
+/test/e2e/network_segmentation_localnet.go @maiqueb @qinqon @ormergi
+/test/e2e/localnet-underlay.go @maiqueb @qinqon @ormergi
+/test/e2e/network_segmentation_preconfigured_layer2.go @maiqueb @qinqon @ormergi
+/test/e2e/testscenario/cudn/valid-scenarios-localnet.go @maiqueb @qinqon @ormergi
+/test/e2e/testscenario/cudn/invalid-scenarios-localnet-vlan.go @maiqueb @qinqon @ormergi
+/test/e2e/testscenario/cudn/invalid-scenarios-localnet-subnets.go @maiqueb @qinqon @ormergi
+/test/e2e/testscenario/cudn/invalid-scenarios-localnet-role.go @maiqueb @qinqon @ormergi
+/test/e2e/testscenario/cudn/invalid-scenarios-localnet-phynetname.go @maiqueb @qinqon @ormergi
+/test/e2e/testscenario/cudn/invalid-scenarios-localnet-mtu.go @maiqueb @qinqon @ormergi
+# Unit tests
+/go-controller/pkg/ovn/kubevirt_test.go @maiqueb @qinqon @ormergi
+/go-controller/pkg/ovn/multihoming_test.go @maiqueb @qinqon @ormergi
+/go-controller/pkg/ovn/multipolicy_test.go @maiqueb @qinqon @ormergi
+/go-controller/pkg/ovn/layer2_user_defined_network_controller_test.go @maiqueb @qinqon @ormergi
+/go-controller/pkg/util/multi_network_test.go @maiqueb @qinqon @ormergi
+# Production code
+/go-controller/pkg/kubevirt/ @maiqueb @qinqon @ormergi
+/go-controller/pkg/util/arp.go @maiqueb @qinqon @ormergi
+/go-controller/pkg/util/ndp/ @maiqueb @qinqon @ormergi
+# Docs
+/docs/features/live-migration.md @maiqueb @qinqon @ormergi
+/docs/features/multiple-networks/multi-homing.md @maiqueb @qinqon @ormergi
+/docs/features/multiple-networks/multi-network-policies.md @maiqueb @qinqon @ormergi
