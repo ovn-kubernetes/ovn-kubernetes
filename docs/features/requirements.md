@@ -10,6 +10,10 @@ supported versions.
 | 1.1                    | 25.03       | 1.0.1+     | v4.1.3 | 0.4.0    | 1.33 |
 | 1.0                    | 24.03       | -          | v4.1.0 | 0.4.0    | 1.29 |
 
+The multus versions above are the baseline for regular deployments. DPU and
+DPU-host need multus >= v4.3.1 for primary UDN support; see
+[DPU and DPU-host (SR-IOV device IDs)](#dpu-and-dpu-host-sr-iov-device-ids).
+
 OVN should work with any supported OVS release, extra requirements for OVS version may be specified per-feature
 
 - [OVN releases](https://www.ovn.org/en/releases/all_releases/)
@@ -57,6 +61,17 @@ OVN version newer than v24.03.2
 - Linux Kernel 5.7.0 or above
 - Open vSwitch 2.13 or above
 - iproute >= 4.12
+
+## DPU and DPU-host (SR-IOV device IDs)
+
+DPU and DPU-host setups need v4.3.1 for primary UDN (pUDN) support: the pUDN
+VF is selected by device ID, so multus and OVN-Kubernetes must agree on
+device-ID ordering. v4.3.1 sorts device IDs per container, matching the
+vendored multus; older releases order them differently and can point the pUDN
+at a VF already used by the default network. Regular (non-DPU) deployments are
+unaffected.
+
+- multus-CNI >= v4.3.1 (for pUDN)
 
 ## DPU healthcheck support
 
