@@ -18,8 +18,13 @@ Each new release of OVN-Kubernetes is defined with a "version" that represents t
 
 ## Release Planning
 
-* OVN-Kubernetes projects uses [milestones](https://github.com/ovn-kubernetes/ovn-kubernetes/milestones) to track our release planning
-* All PRs and Issues must be tagged with the correct milestone so that it get's included in the release planning
+* OVN-Kubernetes uses [milestones](https://github.com/ovn-kubernetes/ovn-kubernetes/milestones) to track release planning
+* All feature PRs and OKEPs **must** be tagged with the milestone corresponding to their target release before merging,
+  so that they are included in release planning and release notes generation
+* Bug fix PRs should also be tagged with the milestone of the release they target
+* If you are unsure which release a feature or fix will land in, tag it under the
+  [Unplanned Backlog](https://github.com/ovn-kubernetes/ovn-kubernetes/milestone/9) milestone — a maintainer
+  will triage and assign it to the correct release
 * Please check our [roadmap](https://github.com/orgs/ovn-kubernetes/projects/5/views/4) for more details on our release tracking process
 
 ## Release Cadence
@@ -42,6 +47,25 @@ Each new release of OVN-Kubernetes is defined with a "version" that represents t
 * Branch will be cut on the day of release once the release PR merges.
 * CI-CD for the release branch will be added to the [GitHub Workflow](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/.github/workflows/test.yml#L6).
 
+### Release Notes
+
+* Every PR must include a `release-note` fenced code block in its description (enforced by CodeRabbit).
+  The block must contain either a short user-facing description of the change or the single word `NONE`
+  if the PR has no user-facing impact (e.g. tests, refactors, CI-only changes):
+  ````
+  ```release-note
+  Added support for X feature in Y component.
+  ```
+  ````
+  or for non-user-facing changes:
+  ````
+  ```release-note
+  NONE
+  ```
+  ````
+* Release notes are generated from the `release-note` blocks of all PRs merged into a release. Any PR with
+  a meaningful (non-`NONE`) `release-note` block will be included in the release notes.
+
 ## BackPort Request
 
 * If a PR needs to be backported to an older release that should be requested
@@ -52,5 +76,6 @@ Each new release of OVN-Kubernetes is defined with a "version" that represents t
 
 * [v1.0.0](https://github.com/ovn-kubernetes/ovn-kubernetes/tree/release-1.0) - [release-notes](https://github.com/ovn-kubernetes/ovn-kubernetes/releases/tag/v1.0.0) - not maintained anymore.
 * [v1.1.0](https://github.com/ovn-kubernetes/ovn-kubernetes/tree/release-1.1) - [release-notes](https://github.com/ovn-kubernetes/ovn-kubernetes/releases/tag/v1.1.0) - not maintained anymore.
-* [v1.2.0](https://github.com/ovn-kubernetes/ovn-kubernetes/tree/release-1.2) - [release-notes](https://github.com/ovn-kubernetes/ovn-kubernetes/releases/tag/v1.2.0) - actively maintained
+* [v1.2.0](https://github.com/ovn-kubernetes/ovn-kubernetes/tree/release-1.2) - [release-notes](https://github.com/ovn-kubernetes/ovn-kubernetes/releases/tag/v1.2.0) - not maintained anymore.
 * [v1.3.0](https://github.com/ovn-kubernetes/ovn-kubernetes/tree/release-1.3) - [release-notes](https://github.com/ovn-kubernetes/ovn-kubernetes/releases/tag/v1.3.0) - actively maintained
+* [v1.4.0](https://github.com/ovn-kubernetes/ovn-kubernetes/tree/release-1.4) - [release-notes](https://github.com/ovn-kubernetes/ovn-kubernetes/releases/tag/v1.4.0) - actively maintained

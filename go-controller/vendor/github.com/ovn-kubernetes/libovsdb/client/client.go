@@ -604,6 +604,13 @@ func (o *ovsdbClient) DisconnectNotify() chan struct{} {
 	return o.disconnect
 }
 
+// isShutdown returns true if the client is in the process of shutting down
+func (o *ovsdbClient) isShutdown() bool {
+	o.shutdownMutex.Lock()
+	defer o.shutdownMutex.Unlock()
+	return o.shutdown
+}
+
 // RFC 7047 : Section 4.1.6 : Echo
 func (o *ovsdbClient) echo(args []any, reply *[]any) error {
 	*reply = args
@@ -836,7 +843,7 @@ func (o *ovsdbClient) transact(ctx context.Context, dbName string, skipChWrite b
 	}
 
 	args := ovsdb.NewTransactArgs(dbName, operation...)
-	if o.rpcClient == nil {
+	if o.rpcClient == nil || o.isShutdown() {
 		return nil, ErrNotConnected
 	}
 	dbgLogger := logger.WithValues("database", dbName).V(4)
@@ -877,7 +884,7 @@ func (o *ovsdbClient) MonitorCancel(ctx context.Context, cookie MonitorCookie) e
 	args := ovsdb.NewMonitorCancelArgs(cookie)
 	o.rpcMutex.Lock()
 	defer o.rpcMutex.Unlock()
-	if o.rpcClient == nil {
+	if o.rpcClient == nil || o.isShutdown() {
 		return ErrNotConnected
 	}
 	err := o.rpcClient.CallWithContext(ctx, "monitor_cancel", args, &reply)
@@ -932,7 +939,7 @@ func (o *ovsdbClient) monitor(ctx context.Context, cookie MonitorCookie, reconne
 		o.rpcMutex.RLock()
 		defer o.rpcMutex.RUnlock()
 	}
-	if o.rpcClient == nil {
+	if o.rpcClient == nil || o.isShutdown() {
 		return ErrNotConnected
 	}
 	if len(monitor.Errors) != 0 {
@@ -1088,7 +1095,7 @@ func (o *ovsdbClient) Echo(ctx context.Context) error {
 	var reply []any
 	o.rpcMutex.RLock()
 	defer o.rpcMutex.RUnlock()
-	if o.rpcClient == nil {
+	if o.rpcClient == nil || o.isShutdown() {
 		return ErrNotConnected
 	}
 	err := o.rpcClient.CallWithContext(ctx, "echo", args, &reply)
@@ -1244,14 +1251,15 @@ func (o *ovsdbClient) handleDisconnectNotification() {
 	<-o.rpcClient.DisconnectNotify()
 	// close the stopCh, which will stop the cache event processor
 	close(o.stopCh)
-	if o.trafficSeen != nil {
-		close(o.trafficSeen)
-	}
 	o.metrics.numDisconnects.Inc()
 	// wait for client related handlers to shutdown
 	o.handlerShutdown.Wait()
 	o.rpcMutex.Lock()
-	if o.options.reconnect && !o.shutdown {
+	// trafficSeen may still have senders from transactions that hold rpcMutex
+	// for reading. stopCh also stops the inactivity handler, so trafficSeen
+	// must remain open until those transactions have completed.
+	o.trafficSeen = nil
+	if o.options.reconnect && !o.isShutdown() {
 		o.rpcClient = nil
 		o.rpcMutex.Unlock()
 		suppressionCounter := 1
@@ -1447,6 +1455,11 @@ func (o *ovsdbClient) WhereCache(predicate any) ConditionalAPI {
 	return o.primaryDB().api.WhereCache(predicate)
 }
 
+// WhereCacheByUUIDs implements the API interface's WhereCacheByUUIDs function
+func (o *ovsdbClient) WhereCacheByUUIDs(predicate any, uuids ...string) ConditionalAPI {
+	return o.primaryDB().api.WhereCacheByUUIDs(predicate, uuids...)
+}
+
 // Select implements the API interface's Select function
 func (o *ovsdbClient) Select(m model.Model, fields ...any) ([]ovsdb.Operation, error) {
 	return o.primaryDB().api.Select(m, fields...)
@@ -1463,7 +1476,7 @@ func (o *ovsdbClient) GetSelectResultsByIndex(ops []ovsdb.Operation, results []o
 
 	// Validate target parameter
 	slicePtr := reflect.ValueOf(target)
-	if slicePtr.Type().Kind() != reflect.Ptr || slicePtr.IsNil() {
+	if slicePtr.Type().Kind() != reflect.Pointer || slicePtr.IsNil() {
 		return &ErrWrongType{slicePtr.Type(), "target must be a non-nil pointer to a slice of models"}
 	}
 
@@ -1474,7 +1487,7 @@ func (o *ovsdbClient) GetSelectResultsByIndex(ops []ovsdb.Operation, results []o
 
 	// GetSelectResultsByIndex only accepts a pointer to a slice of pointers to models
 	modelType := sliceVal.Type().Elem()
-	if modelType.Kind() != reflect.Ptr {
+	if modelType.Kind() != reflect.Pointer {
 		return &ErrWrongType{slicePtr.Type(), "target must be a pointer to a slice of model pointers"}
 	}
 	modelType = modelType.Elem()

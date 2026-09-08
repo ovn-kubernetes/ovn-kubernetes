@@ -21,7 +21,7 @@ type OvsSet struct {
 func NewOvsSet(obj any) (OvsSet, error) {
 	ovsSet := make([]any, 0)
 	var v reflect.Value
-	if reflect.TypeOf(obj).Kind() == reflect.Ptr {
+	if reflect.TypeOf(obj).Kind() == reflect.Pointer {
 		v = reflect.ValueOf(obj).Elem()
 		if v.Kind() == reflect.Invalid {
 			// must be a nil pointer, so just return an empty set

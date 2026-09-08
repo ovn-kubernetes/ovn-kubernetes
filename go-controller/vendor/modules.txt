@@ -106,7 +106,7 @@ github.com/fsnotify/fsnotify/internal
 # github.com/fxamacker/cbor/v2 v2.9.0
 ## explicit; go 1.20
 github.com/fxamacker/cbor/v2
-# github.com/gabriel-vasile/mimetype v1.4.10
+# github.com/gabriel-vasile/mimetype v1.4.13
 ## explicit; go 1.21
 github.com/gabriel-vasile/mimetype
 github.com/gabriel-vasile/mimetype/internal/charset
@@ -184,8 +184,8 @@ github.com/go-playground/locales/currency
 # github.com/go-playground/universal-translator v0.18.1
 ## explicit; go 1.18
 github.com/go-playground/universal-translator
-# github.com/go-playground/validator/v10 v10.28.0
-## explicit; go 1.24.0
+# github.com/go-playground/validator/v10 v10.30.3
+## explicit; go 1.25.0
 github.com/go-playground/validator/v10
 # github.com/go-task/slim-sprig/v3 v3.0.0
 ## explicit; go 1.20
@@ -448,8 +448,8 @@ github.com/openshift/custom-resource-status/conditions/v1
 # github.com/ovn-kubernetes/dpu-simulator/lib/dpusim v0.0.0-20260507161134-3aec48e5cb25
 ## explicit; go 1.25.0
 github.com/ovn-kubernetes/dpu-simulator/lib/dpusim
-# github.com/ovn-kubernetes/libovsdb v0.8.2-0.20260302130604-c07ce22366ac
-## explicit; go 1.24.0
+# github.com/ovn-kubernetes/libovsdb v0.8.2-0.20260901152929-6acd868996b9
+## explicit; go 1.25.0
 github.com/ovn-kubernetes/libovsdb/cache
 github.com/ovn-kubernetes/libovsdb/client
 github.com/ovn-kubernetes/libovsdb/database

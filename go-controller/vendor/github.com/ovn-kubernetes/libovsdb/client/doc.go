@@ -48,7 +48,7 @@ Some API functions (Create() and Get()), can be run directly. Others, require us
 a ConditionalAPI. The ConditionalAPI injects RFC7047 Conditions into ovsdb Operations as well as
 uses the Conditions to search the internal cache.
 
-The ConditionalAPI is created using the Where(), WhereCache() and WhereAll() functions.
+The ConditionalAPI is created using the Where(), WhereCache(), WhereCacheByUUIDs() and WhereAll() functions.
 
 Where() accepts a Model (pointer to a struct with ovs tags) and a number of Condition instances.
 Conditions must refer to fields of the provided Model (via pointer to fields). Example:
@@ -109,6 +109,16 @@ Server side operations can be executed using WhereCache() conditions but it's no
 cache element, an operation will be created matching on the "_uuid" column. The number of operations can be
 quite large depending on the cache size and the provided function. Most likely there is a way to express the
 same condition using Where() or WhereAll() which will be more efficient.
+
+WhereCacheByUUIDs() applies a WhereCache()-style predicate only to the supplied cached UUIDs. Use it when
+the candidate UUIDs are already known to avoid scanning unrelated rows. Missing UUIDs are ignored, duplicate
+UUIDs are evaluated once, and an empty UUID list matches no rows.
+
+	lsList := &[]LogicalSwitch{}
+	err := ovs.WhereCacheByUUIDs(
+	func(ls *LogicalSwitch) bool {
+		return strings.HasPrefix(ls.Name, "ext_")
+	}, candidateUUIDs...).List(context.Background(), lsList)
 
 # Get
 
