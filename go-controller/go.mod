@@ -55,7 +55,7 @@ require (
 	google.golang.org/grpc v1.84.0
 	google.golang.org/grpc/security/advancedtls v0.0.0-20240425232638-1e8b9b7fc655
 	gopkg.in/gcfg.v1 v1.2.3
-	gopkg.in/k8snetworkplumbingwg/multus-cni.v4 v4.2.5-0.20260316195000-6eb8514eef3c
+	gopkg.in/k8snetworkplumbingwg/multus-cni.v4 v4.3.1
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	k8s.io/api v0.36.2
 	k8s.io/apimachinery v0.36.2
