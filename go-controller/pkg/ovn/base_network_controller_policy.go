@@ -918,7 +918,7 @@ func (bnc *BaseNetworkController) removeRecordedPolicyPorts(np *networkPolicy, p
 // latest selector, zone, NAD, and logical-port state. The recorded snapshot is
 // advanced after each successful OVN transaction so a partial failure is safe
 // to retry.
-func (bnc *BaseNetworkController) reconcileLocalPodForNetworkPolicy(np *networkPolicy, pod *corev1.Pod, selected bool) error {
+func (bnc *BaseNetworkController) reconcileLocalPodForNetworkPolicy(np *networkPolicy, pod *corev1.Pod, selected, requirePorts bool) error {
 	np.RLock()
 	defer np.RUnlock()
 	if np.deleted {
@@ -967,7 +967,10 @@ func (bnc *BaseNetworkController) reconcileLocalPodForNetworkPolicy(np *networkP
 		}
 	}
 
-	return utilerrors.Join(changes.resolutionErrors...)
+	if requirePorts {
+		return utilerrors.Join(changes.resolutionErrors...)
+	}
+	return nil
 }
 
 func (bnc *BaseNetworkController) addNetworkPolicyToNamespaceIndex(np *networkPolicy) {
@@ -1024,6 +1027,13 @@ func (bnc *BaseNetworkController) getNetworkPolicyKeysForNamespace(namespace str
 }
 
 func (bnc *BaseNetworkController) reconcilePodNetworkPolicyMembership(pod *corev1.Pod) error {
+	return bnc.reconcilePodNetworkPolicyMembershipWithPortCheck(pod, true)
+}
+
+// During old-pod teardown the replacement's ports may not exist yet. Apply
+// safe membership changes, but leave unresolved ports for replacement setup;
+// making them a teardown error would prevent that setup from ever running.
+func (bnc *BaseNetworkController) reconcilePodNetworkPolicyMembershipWithPortCheck(pod *corev1.Pod, requirePorts bool) error {
 	if bnc.networkPolicies == nil {
 		return nil
 	}
@@ -1043,7 +1053,7 @@ func (bnc *BaseNetworkController) reconcilePodNetworkPolicyMembership(pod *corev
 		}
 
 		selected := localPodSelector.Matches(labels.Set(pod.Labels))
-		if err := bnc.reconcileLocalPodForNetworkPolicy(np, pod, selected); err != nil {
+		if err := bnc.reconcileLocalPodForNetworkPolicy(np, pod, selected, requirePorts); err != nil {
 			errs = append(errs, fmt.Errorf("failed to reconcile pod %s/%s with network policy %s: %w", pod.Namespace, pod.Name, npKey, err))
 		}
 	}
@@ -1061,7 +1071,7 @@ func (bnc *BaseNetworkController) deletePodNetworkPolicyMembership(pod *corev1.P
 		if !ok || np == nil {
 			continue
 		}
-		if err := bnc.reconcileLocalPodForNetworkPolicy(np, pod, false); err != nil {
+		if err := bnc.reconcileLocalPodForNetworkPolicy(np, pod, false, false); err != nil {
 			errs = append(errs, fmt.Errorf("failed to delete pod %s/%s from network policy %s: %w", pod.Namespace, pod.Name, npKey, err))
 		}
 	}

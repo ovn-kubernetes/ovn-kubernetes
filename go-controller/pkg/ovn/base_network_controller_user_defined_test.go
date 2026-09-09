@@ -507,7 +507,7 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 		Expect(errors.Is(err, libovsdbclient.ErrNotFound)).To(BeTrue())
 	})
 
-	It("expires cache-only applied state when a same-name replacement has no LSP", func() {
+	DescribeTable("expires cache-only applied state when a same-name replacement has no LSP", func(withPolicy bool) {
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
 		nad := ovntest.GenerateNAD(deleteTestNetworkName, deleteTestNADName, deleteTestNADNamespace,
 			types.Layer2Topology, "100.128.0.0/16", types.NetworkRoleSecondary)
@@ -536,6 +536,16 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 			deleteTestNetworkName, "deleted-port-UUID", ovntest.MustParseMAC("0a:58:64:80:00:03"),
 			ovntest.MustParseIPNets("100.128.0.3/16"))
 		Expect(controller.bnc.shouldEnsurePodForUserDefinedNetwork(currentPod)).To(BeFalse())
+		if withPolicy {
+			policy := getPortNetworkPolicy("replacement-policy", currentPod.Namespace, "role", "selected", 80)
+			policy.Spec.PodSelector = metav1.LabelSelector{}
+			np := NewNetworkPolicy(policy)
+			selector, err := metav1.LabelSelectorAsSelector(&policy.Spec.PodSelector)
+			Expect(err).NotTo(HaveOccurred())
+			np.localPodSelector = selector
+			controller.bnc.networkPolicies.Store(np.getKey(), np)
+			controller.bnc.addNetworkPolicyToNamespaceIndex(np)
+		}
 
 		Expect(controller.bnc.removePodForUserDefinedNetwork(deletedPod, map[string]*lpInfo{
 			deleteTestNADKey: stalePortInfo,
@@ -546,7 +556,14 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 		Expect(cachedPortInfo.uuid).To(Equal(stalePortInfo.uuid))
 		Expect(cachedPortInfo.expires.IsZero()).To(BeFalse())
 		Expect(controller.bnc.shouldEnsurePodForUserDefinedNetwork(currentPod)).To(BeTrue())
-	})
+		if withPolicy {
+			// Normal replacement setup must still retry until its port is available.
+			Expect(controller.bnc.reconcilePodNetworkPolicyMembership(currentPod)).NotTo(Succeed())
+		}
+	},
+		Entry("without a selecting policy", false),
+		Entry("with a selecting policy", true),
+	)
 
 	It("preserves a newer cache entry when a stale delete snapshot has no LSP", func() {
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
