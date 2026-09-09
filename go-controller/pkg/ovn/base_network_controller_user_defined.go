@@ -515,14 +515,19 @@ func (bsnc *BaseUserDefinedNetworkController) ReconcilePod(ctx context.Context, 
 	}
 	policyReconciled, err := bsnc.ensurePodForUserDefinedNetwork(ctx, newPod, addPort, eventReason)
 	if err != nil {
-		return nil, fmt.Errorf("failed to ensure pod %s/%s on network %s: %w",
+		err = fmt.Errorf("failed to ensure pod %s/%s on network %s: %w",
 			newPod.Namespace, newPod.Name, bsnc.GetNetworkName(), err)
-	}
-	if !policyReconciled {
-		if err := bsnc.reconcileNetworkPolicyPortGroups(newPod); err != nil {
-			return nil, fmt.Errorf("failed to reconcile policy membership for pod %s/%s on network %s: %w",
+	} else if !policyReconciled {
+		if err = bsnc.reconcileNetworkPolicyPortGroups(newPod); err != nil {
+			err = fmt.Errorf("failed to reconcile policy membership for pod %s/%s on network %s: %w",
 				newPod.Namespace, newPod.Name, bsnc.GetNetworkName(), err)
 		}
+	}
+	if err != nil {
+		if addPort {
+			bsnc.logicalPortCache.markPodForReconcile(newPod, bsnc.GetNetworkName())
+		}
+		return nil, err
 	}
 	bsnc.finishPodReconcile(newPod)
 	return bsnc.getDesiredPortInfoForUserDefinedNetwork(newPod, desiredPortNADs), nil
@@ -774,7 +779,7 @@ func (bsnc *BaseUserDefinedNetworkController) shouldEnsurePodForUserDefinedNetwo
 	for _, nadKey := range nadKeys {
 		portInfo, err := bsnc.logicalPortCache.get(pod, nadKey)
 		// Ignore cache entries written by other network controllers.
-		if err != nil || !portInfo.expires.IsZero() || portInfo.appliedNetworkName != bsnc.GetNetworkName() {
+		if err != nil || !portInfo.expires.IsZero() || portInfo.needsReconcile || portInfo.appliedNetworkName != bsnc.GetNetworkName() {
 			return true
 		}
 		if bsnc.dhcpPodNetworkOutOfSync(pod, nadKey, portInfo) {

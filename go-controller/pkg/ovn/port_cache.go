@@ -37,6 +37,9 @@ type lpInfo struct {
 	mac                net.HardwareAddr
 	// Open-port annotation committed with the default-network port or its ACLs.
 	udnOpenPorts string
+	// needsReconcile keeps a partially programmed port eligible for setup
+	// retries without losing the addresses and UUID needed for teardown.
+	needsReconcile bool
 	// expires, if non-nil, indicates that this object is scheduled to be
 	// removed at the given time
 	expires time.Time
@@ -163,6 +166,18 @@ func (c *PortCache) updateUDNOpenPorts(pod *corev1.Pod, annotation string) error
 	}
 	info.udnOpenPorts = annotation
 	return nil
+}
+
+// markPodForReconcile retains partial port state while forcing setup to run
+// again. A subsequent successful add replaces the entry and clears the flag.
+func (c *PortCache) markPodForReconcile(pod *corev1.Pod, networkName string) {
+	c.Lock()
+	defer c.Unlock()
+	for _, info := range c.cache[pod.Namespace+"/"+pod.Name] {
+		if info.appliedNetworkName == networkName {
+			info.needsReconcile = true
+		}
+	}
 }
 
 // invalidatePodForNetwork forgets this controller's applied port observations

@@ -133,14 +133,19 @@ func (oc *DefaultNetworkController) ReconcilePod(ctx context.Context, oldPod, ne
 	addPort := oldPod == nil || oc.shouldEnsurePodLogicalPort(newPod, ovntypes.DefaultNetworkName)
 	policyReconciled, err := oc.ensurePod(ctx, newPod, addPort)
 	if err != nil {
-		return nil, fmt.Errorf("failed to ensure pod %s/%s on network %s: %w",
+		err = fmt.Errorf("failed to ensure pod %s/%s on network %s: %w",
 			newPod.Namespace, newPod.Name, oc.GetNetworkName(), err)
-	}
-	if !policyReconciled {
-		if err := oc.reconcileNetworkPolicyPortGroups(newPod); err != nil {
-			return nil, fmt.Errorf("failed to reconcile policy membership for pod %s/%s on network %s: %w",
+	} else if !policyReconciled {
+		if err = oc.reconcileNetworkPolicyPortGroups(newPod); err != nil {
+			err = fmt.Errorf("failed to reconcile policy membership for pod %s/%s on network %s: %w",
 				newPod.Namespace, newPod.Name, oc.GetNetworkName(), err)
 		}
+	}
+	if err != nil {
+		if addPort {
+			oc.logicalPortCache.markPodForReconcile(newPod, ovntypes.DefaultNetworkName)
+		}
+		return nil, err
 	}
 	// A pod may remain relevant to this handler without owning an LSP on this
 	// controller's node. Retire any local applied snapshot only after remote/no-host-subnet
