@@ -29,6 +29,11 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
 
+// bridgeMappingsMutex protects the read-modify-write of the shared
+// ovn-bridge-mappings external ID. UDN gateways reconcile independently, so
+// different networks may add mappings concurrently.
+var bridgeMappingsMutex sync.Mutex
+
 // BridgeUDNConfiguration holds the patchport and ctMark
 // information for a given network
 type BridgeUDNConfiguration struct {
@@ -739,6 +744,9 @@ func bridgedGatewayNodeSetup(ovsClient libovsdbclient.Client, nodeName, bridgeNa
 	if err != nil {
 		return "", err
 	}
+
+	bridgeMappingsMutex.Lock()
+	defer bridgeMappingsMutex.Unlock()
 
 	// ovn-bridge-mappings maps a physical network name to a local ovs bridge
 	// that provides connectivity to that network. It is in the form of physnet1:br1,physnet2:br2.

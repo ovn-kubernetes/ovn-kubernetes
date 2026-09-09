@@ -5,6 +5,7 @@ package node
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -39,6 +40,7 @@ import (
 	rafakeclient "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned/fake"
 	uplinkv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1"
 	uplinkfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/clientset/versioned/fake"
+	uplinkinformerfactory "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/informers/externalversions"
 	uplinklisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/listers/uplink/v1alpha1"
 	udnfakeclient "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
@@ -412,6 +414,230 @@ func TestUplinkVRFAttachmentFailureReason(t *testing.T) {
 	if got != uplinkv1alpha1.UplinkStateReasonVRFAttachmentFailed {
 		t.Fatalf("expected VRF attachment failure reason, got %q", got)
 	}
+}
+
+func resolvedGatewayUplinkState(uplinkName, nodeName string) *uplinkv1alpha1.UplinkState {
+	return &uplinkv1alpha1.UplinkState{
+		ObjectMeta: metav1.ObjectMeta{Name: uplinkutil.StateName(uplinkName, nodeName)},
+		Spec: uplinkv1alpha1.UplinkStateSpec{
+			UplinkName: uplinkName,
+			NodeName:   nodeName,
+		},
+		Status: uplinkv1alpha1.UplinkStateStatus{
+			Type:              uplinkv1alpha1.UplinkTypeOVSBridge,
+			HostInterfaceName: "eth0",
+			OVSBridge:         &uplinkv1alpha1.OVSBridgeStatus{Name: "breth0"},
+			MACAddress:        "02:42:ac:12:00:02",
+			IPAddresses:       []uplinkv1alpha1.IPAddressCIDR{"192.0.2.10/24"},
+			DefaultGateways:   []uplinkv1alpha1.IPAddress{"192.0.2.1"},
+			Conditions: []metav1.Condition{{
+				Type:   uplinkv1alpha1.UplinkStateConditionResolved,
+				Status: metav1.ConditionTrue,
+			}},
+		},
+	}
+}
+
+func newUplinkGatewayReconcileHarness(
+	t *testing.T,
+	state *uplinkv1alpha1.UplinkState,
+) (*UserDefinedNetworkGateway, *utilmocks.NetLinkOps, *v1mocks.NodeLister) {
+	t.Helper()
+	const (
+		uplinkName = "uplink1"
+		nodeName   = "node-a"
+		networkID  = "3"
+	)
+
+	nad := generateUplinkNAD("red", "red-nad", "test", types.Layer3Topology,
+		"100.128.0.0/16/24", types.NetworkRolePrimary, uplinkName)
+	ovntest.AnnotateNADWithNetworkID(networkID, nad)
+	netInfo, err := util.ParseNADInfo(nad)
+	if err != nil {
+		t.Fatalf("failed to parse Uplink network: %v", err)
+	}
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: nodeName,
+			Annotations: map[string]string{
+				types.NodeSubnetsAnnotation: `{"red":["100.128.0.0/24"]}`,
+			},
+		},
+	}
+
+	netlinkOps := utilmocks.NewNetLinkOps(t)
+	originalNetlinkOps := util.GetNetLinkOps()
+	util.SetNetLinkOpMockInst(netlinkOps)
+	t.Cleanup(func() { util.SetNetLinkOpMockInst(originalNetlinkOps) })
+	netlinkOps.On("LinkByName", "breth0").Return(
+		&netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "breth0", Index: 1}}, nil,
+	).Once()
+
+	uplinkClient := uplinkfake.NewSimpleClientset(state)
+	informerFactory := uplinkinformerfactory.NewSharedInformerFactory(uplinkClient, 0)
+	uplinkStateInformer := informerFactory.K8s().V1alpha1().UplinkStates()
+	_ = uplinkStateInformer.Informer()
+	nodeLister := v1mocks.NewNodeLister(t)
+	defaultGateway := &gateway{openflowManager: getDummyOpenflowManager()}
+	udnGateway, err := NewUserDefinedNetworkGateway(
+		netInfo,
+		node,
+		nodeLister,
+		nil,
+		vrfmanager.NewController(nil),
+		nil,
+		defaultGateway,
+		nil,
+		uplinkStateInformer,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("failed to create Uplink gateway: %v", err)
+	}
+
+	informerStop := make(chan struct{})
+	informerFactory.Start(informerStop)
+	if !cache.WaitForCacheSync(informerStop, uplinkStateInformer.Informer().HasSynced) {
+		close(informerStop)
+		t.Fatal("failed to sync UplinkState informer")
+	}
+	t.Cleanup(func() {
+		udnGateway.Stop()
+		close(informerStop)
+	})
+	return udnGateway, netlinkOps, nodeLister
+}
+
+func expectMissingGatewayVRF(
+	netlinkOps *utilmocks.NetLinkOps,
+	udnGateway *UserDefinedNetworkGateway,
+) {
+	notFoundErr := errors.New("link not found")
+	netlinkOps.On("LinkByName", util.GetNetworkVRFName(udnGateway.NetInfo)).
+		Return(nil, notFoundErr).Once()
+	netlinkOps.On("IsLinkNotFoundError", notFoundErr).Return(true).Once()
+}
+
+func TestUserDefinedNetworkGatewayReconcilesUplinkConfiguration(t *testing.T) {
+	if err := config.PrepareTestConfig(); err != nil {
+		t.Fatalf("failed to prepare test config: %v", err)
+	}
+	t.Cleanup(func() { _ = config.PrepareTestConfig() })
+	config.OvnKubeNode.Mode = types.NodeModeDPU
+	config.Gateway.Mode = config.GatewayModeShared
+	config.Gateway.V4MasqueradeSubnet = "169.254.0.0/17"
+	config.IPv4Mode = true
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+	config.OVNKubernetesFeature.EnableUplink = true
+
+	t.Run("unresolved state unconfigures existing programming", func(t *testing.T) {
+		state := resolvedGatewayUplinkState("uplink1", "node-a")
+		state.Status.Conditions[0].Status = metav1.ConditionFalse
+		udnGateway, netlinkOps, _ := newUplinkGatewayReconcileHarness(t, state)
+		udnGateway.uplinkGatewayCleanupRequired = true
+		udnGateway.uplinkFingerprint = uplinkGatewayFingerprint{bridgeName: "old-bridge"}
+		expectMissingGatewayVRF(netlinkOps, udnGateway)
+
+		err := udnGateway.reconcileUplinkConfiguration()
+		if err == nil || uplinkGatewayFailureReason(err) !=
+			uplinkv1alpha1.UplinkStateReasonGatewayConfigurationPending {
+			t.Fatalf("unexpected unresolved result: %v", err)
+		}
+		if udnGateway.uplinkGatewayCleanupRequired {
+			t.Fatal("unresolved UplinkState retained old gateway programming")
+		}
+		if udnGateway.uplinkFingerprint != (uplinkGatewayFingerprint{}) {
+			t.Fatalf("unresolved UplinkState retained fingerprint: %#v",
+				udnGateway.uplinkFingerprint)
+		}
+	})
+
+	t.Run("unconfiguration failure retains cleanup ownership", func(t *testing.T) {
+		state := resolvedGatewayUplinkState("uplink1", "node-a")
+		state.Status.Conditions[0].Status = metav1.ConditionFalse
+		udnGateway, netlinkOps, _ := newUplinkGatewayReconcileHarness(t, state)
+		current := uplinkGatewayFingerprint{bridgeName: "old-bridge"}
+		udnGateway.uplinkGatewayCleanupRequired = true
+		udnGateway.uplinkFingerprint = current
+		withdrawErr := errors.New("failed to remove old programming")
+		netlinkOps.On("LinkByName", util.GetNetworkVRFName(udnGateway.NetInfo)).
+			Return(nil, withdrawErr).Once()
+		netlinkOps.On("IsLinkNotFoundError", withdrawErr).Return(false).Once()
+
+		err := udnGateway.reconcileUplinkConfiguration()
+		if err == nil || !strings.Contains(err.Error(), withdrawErr.Error()) ||
+			uplinkGatewayFailureReason(err) !=
+				uplinkv1alpha1.UplinkStateReasonGatewayProgrammingFailed {
+			t.Fatalf("unexpected unconfiguration failure: %v", err)
+		}
+		if !udnGateway.uplinkGatewayCleanupRequired || udnGateway.uplinkFingerprint != current {
+			t.Fatal("failed withdrawal released ownership of old programming")
+		}
+	})
+
+	t.Run("unchanged configuration preserves programming", func(t *testing.T) {
+		state := resolvedGatewayUplinkState("uplink1", "node-a")
+		udnGateway, _, _ := newUplinkGatewayReconcileHarness(t, state)
+		resolved, err := udnGateway.resolveUplinkGateway(true)
+		if err != nil {
+			t.Fatalf("failed to resolve test UplinkState: %v", err)
+		}
+		current := resolvedUplinkGatewayFingerprint(resolved)
+		udnGateway.uplinkGatewayCleanupRequired = true
+		udnGateway.uplinkFingerprint = current
+
+		if err := udnGateway.reconcileUplinkConfiguration(); err != nil {
+			t.Fatalf("unchanged configuration failed: %v", err)
+		}
+		if !udnGateway.uplinkGatewayCleanupRequired || udnGateway.uplinkFingerprint != current {
+			t.Fatal("unchanged configuration disturbed gateway programming")
+		}
+	})
+
+	t.Run("changed configuration unconfigures before replacement", func(t *testing.T) {
+		state := resolvedGatewayUplinkState("uplink1", "node-a")
+		oldState := state.DeepCopy()
+		oldState.Status.IPAddresses = []uplinkv1alpha1.IPAddressCIDR{"192.0.2.9/24"}
+		oldResolved, err := resolvedUplinkGatewayFromState(
+			oldState, "uplink1", "node-a", true)
+		if err != nil {
+			t.Fatalf("failed to resolve old UplinkState: %v", err)
+		}
+		udnGateway, netlinkOps, nodeLister := newUplinkGatewayReconcileHarness(t, state)
+		udnGateway.uplinkGatewayCleanupRequired = true
+		udnGateway.uplinkFingerprint = resolvedUplinkGatewayFingerprint(oldResolved)
+		expectMissingGatewayVRF(netlinkOps, udnGateway)
+		addErr := errors.New("management port lookup failed")
+		nodeLister.On("Get", "node-a").Return(nil, addErr).Once()
+
+		err = udnGateway.reconcileUplinkConfiguration()
+		if err == nil || !strings.Contains(err.Error(), addErr.Error()) {
+			t.Fatalf("replacement did not reach gateway programming: %v", err)
+		}
+		if !udnGateway.uplinkGatewayCleanupRequired {
+			t.Fatal("partial replacement was not retained for retry cleanup")
+		}
+		if udnGateway.uplinkFingerprint != (uplinkGatewayFingerprint{}) {
+			t.Fatalf("failed replacement recorded a new fingerprint: %#v",
+				udnGateway.uplinkFingerprint)
+		}
+	})
+
+	t.Run("resolved state starts initial programming", func(t *testing.T) {
+		state := resolvedGatewayUplinkState("uplink1", "node-a")
+		udnGateway, _, nodeLister := newUplinkGatewayReconcileHarness(t, state)
+		addErr := errors.New("management port lookup failed")
+		nodeLister.On("Get", "node-a").Return(nil, addErr).Once()
+
+		err := udnGateway.reconcileUplinkConfiguration()
+		if err == nil || !strings.Contains(err.Error(), addErr.Error()) {
+			t.Fatalf("initial reconciliation did not reach gateway programming: %v", err)
+		}
+		if !udnGateway.uplinkGatewayCleanupRequired {
+			t.Fatal("partial initial programming was not retained for retry cleanup")
+		}
+	})
 }
 
 func TestGetDefaultRouteDoesNotFallBackForUplinkWithoutNextHops(t *testing.T) {
@@ -2481,8 +2707,9 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			ofm := getDummyOpenflowManager()
 			_, uplinkStateLister := newGatewayUplinkStateAndLister("uplink1", node.Name)
 			udnGateway, err := NewUserDefinedNetworkGateway(mutableNetInfo, node, nil, nil, vrf, nil,
-				&gateway{openflowManager: ofm}, nil, uplinkStateLister, nil)
+				&gateway{openflowManager: ofm}, nil, nil, nil)
 			Expect(err).NotTo(HaveOccurred())
+			udnGateway.uplinkStateLister = uplinkStateLister
 			uplinkLink := ovntest.AddLink("ovsbr1")
 			udnGateway.gwInterfaceName = uplinkLink.Attrs().Name
 			mplink, err := netlink.LinkByName(mgtPort)
