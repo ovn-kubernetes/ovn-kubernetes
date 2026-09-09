@@ -296,17 +296,15 @@ func (bsnc *BaseUserDefinedNetworkController) releaseStaleCachedPodIPsForReplace
 		return nil
 	}
 
-	completedDeletedPod := deletedPod.DeepCopy()
-	completedDeletedPod.Status.Phase = corev1.PodSucceeded
-	shouldRelease, err := bsnc.shouldReleaseDeletedPod(
-		completedDeletedPod, stalePortInfo.logicalSwitch, nadKey, staleIPs)
+	shouldRelease, err := bsnc.shouldReleaseDeletedPodWithOwnershipCheck(
+		deletedPod, stalePortInfo.logicalSwitch, nadKey, staleIPs, true)
 	if err != nil {
 		return fmt.Errorf("failed to determine whether stale replacement IPs can be released for NAD %s: %w", nadKey, err)
 	}
 	if shouldRelease {
 		staleIPInfo := cloneLPInfo(stalePortInfo)
 		staleIPInfo.ips = staleIPs
-		if err := bsnc.releasePodIPs(staleIPInfo); err != nil {
+		if err := bsnc.releasePodIPsOnce(deletedPod, nadKey, staleIPInfo); err != nil {
 			return fmt.Errorf("failed to release stale replacement IPs for NAD %s: %w", nadKey, err)
 		}
 	}
@@ -334,7 +332,16 @@ func (bsnc *BaseUserDefinedNetworkController) GetPodState(pod *corev1.Pod) inter
 	return nil
 }
 
-func (bsnc *BaseUserDefinedNetworkController) ReconcilePod(oldPod, newPod *corev1.Pod, cachedState interface{}, forceAdd bool) error {
+func (bsnc *BaseUserDefinedNetworkController) ReconcilePod(oldPod, newPod *corev1.Pod, cachedState interface{}, forceAdd bool) (err error) {
+	defer func() {
+		if err == nil {
+			pod := newPod
+			if pod == nil {
+				pod = oldPod
+			}
+			bsnc.forgetPodIPReleases(pod)
+		}
+	}()
 	if newPod == nil {
 		if oldPod == nil {
 			return fmt.Errorf("pod delete reconcile for network %s is missing pod", bsnc.GetNetworkName())
@@ -1041,15 +1048,9 @@ func (bsnc *BaseUserDefinedNetworkController) removePodForUserDefinedNetwork(pod
 			}
 		}
 		removePortInfoFromCache(nadKey, portInfoMap[nadKey])
-		podForLogicalPortDelete := pod
-		if replacementPod != nil && !util.PodCompleted(pod) {
-			// shouldReleaseDeletedPod skips its collision lookup for a running
-			// delete object. A replacement makes that shortcut unsafe, so use a
-			// completed copy to force the normal informer-backed collision check.
-			podForLogicalPortDelete = pod.DeepCopy()
-			podForLogicalPortDelete.Status.Phase = corev1.PodSucceeded
-		}
-		pInfo, err := bsnc.deletePodLogicalPort(podForLogicalPortDelete, portInfoMap[nadKey], nadKey)
+		// A replacement may already own these addresses. Apply the ownership
+		// guards explicitly without changing the old pod's lifecycle state.
+		pInfo, err := bsnc.deletePodLogicalPortWithOwnershipCheck(pod, portInfoMap[nadKey], nadKey, replacementPod != nil)
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -1072,7 +1073,7 @@ func (bsnc *BaseUserDefinedNetworkController) removePodForUserDefinedNetwork(pod
 		// while it is now on another pod
 		klog.Infof("Attempting to release IPs for pod: %s/%s, ips: %s network %s", pod.Namespace, pod.Name,
 			util.JoinIPNetIPs(pInfo.ips, " "), bsnc.GetNetworkName())
-		if err = bsnc.releasePodIPs(pInfo); err != nil {
+		if err = bsnc.releasePodIPsOnce(pod, nadKey, pInfo); err != nil {
 			errs = append(errs, err)
 			continue
 		}

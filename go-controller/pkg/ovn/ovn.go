@@ -107,7 +107,16 @@ func (oc *DefaultNetworkController) GetPodState(pod *corev1.Pod) interface{} {
 	return nil
 }
 
-func (oc *DefaultNetworkController) ReconcilePod(oldPod, newPod *corev1.Pod, cachedState interface{}, forceAdd bool) error {
+func (oc *DefaultNetworkController) ReconcilePod(oldPod, newPod *corev1.Pod, cachedState interface{}, forceAdd bool) (err error) {
+	defer func() {
+		if err == nil {
+			pod := newPod
+			if pod == nil {
+				pod = oldPod
+			}
+			oc.forgetPodIPReleases(pod)
+		}
+	}()
 	if newPod == nil {
 		if oldPod == nil {
 			return fmt.Errorf("pod delete reconcile for network %s is missing pod", oc.GetNetworkName())
@@ -301,7 +310,7 @@ func (oc *DefaultNetworkController) removeRemoteZonePod(pod *corev1.Pod) error {
 			}
 			switchName, zoneContainsPodSubnet := kubevirt.ZoneContainsPodSubnet(oc.lsManager, ips)
 			if zoneContainsPodSubnet {
-				if err := oc.lsManager.ReleaseIPs(switchName, ips); err != nil {
+				if err := oc.releasePodIPsOnce(pod, ovntypes.DefaultNetworkName, &lpInfo{logicalSwitch: switchName, ips: ips}); err != nil {
 					return err
 				}
 			}
