@@ -28,8 +28,8 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `cidrSelector` _string_ | cidrSelector is the CIDR range to allow/deny traffic to. If this is set, dnsName and nodeSelector must be unset. |  |  |
-| `dnsName` _string_ | dnsName is the domain name to allow/deny traffic to. If this is set, cidrSelector and nodeSelector must be unset. |  | Pattern: `^([A-Za-z0-9-]+\.)*[A-Za-z0-9-]+\.?$` <br /> |
-| `nodeSelector` _[LabelSelector](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#labelselector-v1-meta)_ | nodeSelector will allow/deny traffic to the Kubernetes node IP of selected nodes. If this is set,<br />cidrSelector and DNSName must be unset. |  |  |
+| `dnsName` _string_ | dnsName is the domain name to allow/deny traffic to. If this is set, cidrSelector and nodeSelector must be unset.<br />For a wildcard DNS name, the '*' will match only one label. Additionally, only a single '*' can be<br />used at the beginning of the wildcard DNS name. For example, '*.example.com' will match 'sub1.example.com'<br />but won't match 'sub2.sub1.example.com'. |  | Pattern: `^(\*\.)?([A-Za-z0-9-]+\.)*[A-Za-z0-9-]+\.?$` <br /> |
+| `nodeSelector` _[LabelSelector](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#labelselector-v1-meta)_ | nodeSelector will allow/deny traffic to the Kubernetes node IP of selected nodes. If this is set,<br />cidrSelector and DNSName must be unset. |  | Optional: \{\} <br /> |
 
 
 #### EgressFirewallPort
@@ -45,7 +45,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `protocol` _string_ | protocol (tcp, udp, sctp) that the traffic must match. |  | Pattern: `^TCP|UDP|SCTP$` <br /> |
+| `protocol` _string_ | protocol (tcp, udp, sctp) that the traffic must match. |  | Pattern: `^TCP\|UDP\|SCTP$` <br /> |
 | `port` _integer_ | port that the traffic must match |  | Maximum: 65535 <br />Minimum: 1 <br /> |
 
 
@@ -62,8 +62,8 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `type` _[EgressFirewallRuleType](#egressfirewallruletype)_ | type marks this as an "Allow" or "Deny" rule |  | Pattern: `^Allow|Deny$` <br /> |
-| `ports` _[EgressFirewallPort](#egressfirewallport) array_ | ports specify what ports and protocols the rule applies to |  |  |
+| `type` _[EgressFirewallRuleType](#egressfirewallruletype)_ | type marks this as an "Allow" or "Deny" rule |  | Pattern: `^Allow\|Deny$` <br /> |
+| `ports` _[EgressFirewallPort](#egressfirewallport) array_ | ports specify what ports and protocols the rule applies to |  | Optional: \{\} <br /> |
 | `to` _[EgressFirewallDestination](#egressfirewalldestination)_ | to is the target that traffic is allowed/denied to |  | MaxProperties: 1 <br />MinProperties: 1 <br /> |
 
 
@@ -79,6 +79,10 @@ _Validation:_
 _Appears in:_
 - [EgressFirewallRule](#egressfirewallrule)
 
+| Field | Description |
+| --- | --- |
+| `Allow` |  |
+| `Deny` |  |
 
 
 #### EgressFirewallSpec
@@ -110,7 +114,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `status` _string_ |  |  |  |
-| `messages` _string array_ |  |  |  |
+| `status` _string_ |  |  | Optional: \{\} <br /> |
+| `messages` _string array_ |  |  | Optional: \{\} <br /> |
 
 

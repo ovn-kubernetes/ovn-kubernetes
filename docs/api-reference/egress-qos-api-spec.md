@@ -50,8 +50,8 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `dscp` _integer_ | DSCP marking value for matching pods' traffic. |  | Maximum: 63 <br />Minimum: 0 <br /> |
-| `dstCIDR` _string_ | DstCIDR specifies the destination's CIDR. Only traffic heading<br />to this CIDR will be marked with the DSCP value.<br />This field is optional, and in case it is not set the rule is applied<br />to all egress traffic regardless of the destination. |  | Format: cidr <br /> |
-| `podSelector` _[LabelSelector](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#labelselector-v1-meta)_ | PodSelector applies the QoS rule only to the pods in the namespace whose label<br />matches this definition. This field is optional, and in case it is not set<br />results in the rule being applied to all pods in the namespace. |  |  |
+| `dstCIDR` _string_ | DstCIDR specifies the destination's CIDR. Only traffic heading<br />to this CIDR will be marked with the DSCP value.<br />This field is optional, and in case it is not set the rule is applied<br />to all egress traffic regardless of the destination. |  | Format: cidr <br />Optional: \{\} <br /> |
+| `podSelector` _[LabelSelector](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#labelselector-v1-meta)_ | PodSelector applies the QoS rule only to the pods in the namespace whose label<br />matches this definition. This field is optional, and in case it is not set<br />results in the rule being applied to all pods in the namespace. |  | Optional: \{\} <br /> |
 
 
 #### EgressQoSSpec
@@ -83,7 +83,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `status` _string_ | A concise indication of whether the EgressQoS resource is applied with success. |  |  |
-| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#condition-v1-meta) array_ | An array of condition objects indicating details about status of EgressQoS object. |  |  |
+| `status` _string_ | A concise indication of whether the EgressQoS resource is applied with success. |  | Optional: \{\} <br /> |
+| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#condition-v1-meta) array_ | An array of condition objects indicating details about status of EgressQoS object. |  | Optional: \{\} <br /> |
 
 

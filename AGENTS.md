@@ -99,3 +99,12 @@ leaves the cluster:
 To determine which mode a cluster is using, check the `k8s.ovn.org/l3-gateway-config`
 annotation on any node — the `mode` field will be `"local"` or `"shared"`.
 Shared gateway is the default.
+
+## Docs
+### API Reference
+```bash
+make -C docs/ generate-api-reference  # Generating API reference docs
+```
+Should be created when new CRD is introduced, or updated upon CRD changes.
+
+

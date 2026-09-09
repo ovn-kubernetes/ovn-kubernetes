@@ -41,3 +41,9 @@ designed and implemented by OVN-Kubernetes
 * [RouteAdvertisements](routeadvertisements-api-spec.md)
 * [VTEP](vtep-api-spec.md)
 * [ClusterNetworkConnect](clusternetworkconnect-api-spec.md)
+
+## Updating API reference docs
+Update the API reference docs by running the following make target:
+```bash
+$ make -C docs/ generate-api-reference
+```

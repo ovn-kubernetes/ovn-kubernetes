@@ -44,8 +44,8 @@ _Appears in:_
 | `apiVersion` _string_ | `k8s.ovn.org/v1` | | |
 | `kind` _string_ | `VTEP` | | |
 | `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
-| `spec` _[VTEPSpec](#vtepspec)_ | Spec defines the desired VTEP configuration. |  | Required: \{\} <br /> |
-| `status` _[VTEPStatus](#vtepstatus)_ | Status contains the observed state of the VTEP. |  |  |
+| `spec` _[VTEPSpec](#vtepspec)_ | Spec defines the desired VTEP configuration. |  | Required: \{\} <br />Required: \{\} <br /> |
+| `status` _[VTEPStatus](#vtepstatus)_ | Status contains the observed state of the VTEP. |  | Optional: \{\} <br /> |
 
 
 #### VTEPList
@@ -97,8 +97,8 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `cidrs` _[CIDR](#cidr) array_ | CIDRs is the list of IP ranges from which VTEP IPs are discovered (unmanaged mode) or allocated (managed mode).<br />Multiple CIDRs may be specified to expand capacity over time without recreating the VTEP.<br />Each entry must be a valid network address in CIDR notation (for example, "100.64.0.0/24" or "fd00:100::/64").<br />Each node receives at most one IP per address family from the CIDRs listed here.<br />In managed mode, CIDRs are consumed sequentially: IPs are allocated from the first CIDR until it is<br />exhausted, then from the next, and so on.<br />In managed mode, CIDRs are append-only: existing entries cannot be removed, reordered, or shrunk to a<br />smaller mask; they can only be expanded to a wider mask, and new entries may be appended.<br />In unmanaged mode, if multiple IPs on a node match the configured CIDRs, or if the match is otherwise<br />ambiguous, the VTEP will be placed into a failed status.<br />In unmanaged mode, CIDRs may be freely added, removed, reordered, or resized.<br />Caution: removing or modifying CIDRs in unmanaged mode that are actively in use may cause traffic disruption;<br />no downtime guarantees are provided for such operations. |  | MaxItems: 20 <br />MaxLength: 43 <br />MinItems: 1 <br />Required: \{\} <br /> |
-| `mode` _[VTEPMode](#vtepmode)_ | Mode specifies how VTEP IPs are managed.<br />"Managed" means OVN-Kubernetes allocates and assigns VTEP IPs per node automatically.<br />"Unmanaged" means an external provider handles IP assignment; OVN-Kubernetes discovers existing IPs on nodes.<br />Defaults to "Managed". | Managed | Enum: [Managed Unmanaged] <br /> |
+| `cidrs` _[CIDR](#cidr) array_ | CIDRs is the list of IP ranges from which VTEP IPs are discovered (unmanaged mode) or allocated (managed mode).<br />Multiple CIDRs may be specified to expand capacity over time without recreating the VTEP.<br />Each entry must be a valid network address in CIDR notation (for example, "100.64.0.0/24" or "fd00:100::/64").<br />Each node receives at most one IP per address family from the CIDRs listed here.<br />In managed mode, CIDRs are consumed sequentially: IPs are allocated from the first CIDR until it is<br />exhausted, then from the next, and so on.<br />In managed mode, CIDRs are append-only: existing entries cannot be removed, reordered, or shrunk to a<br />smaller mask; they can only be expanded to a wider mask, and new entries may be appended.<br />In unmanaged mode, if multiple IPs on a node match the configured CIDRs, or if the match is otherwise<br />ambiguous, the VTEP will be placed into a failed status.<br />In unmanaged mode, CIDRs may be freely added, removed, reordered, or resized.<br />Caution: removing or modifying CIDRs in unmanaged mode that are actively in use may cause traffic disruption;<br />no downtime guarantees are provided for such operations. |  | MaxItems: 20 <br />MaxLength: 43 <br />MinItems: 1 <br />Required: \{\} <br />Required: \{\} <br /> |
+| `mode` _[VTEPMode](#vtepmode)_ | Mode specifies how VTEP IPs are managed.<br />"Managed" means OVN-Kubernetes allocates and assigns VTEP IPs per node automatically.<br />"Unmanaged" means an external provider handles IP assignment; OVN-Kubernetes discovers existing IPs on nodes.<br />Defaults to "Managed". | Managed | Enum: [Managed Unmanaged] <br />Optional: \{\} <br /> |
 
 
 #### VTEPStatus
@@ -114,6 +114,6 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#condition-v1-meta) array_ | Conditions slice of condition objects indicating details about VTEP status. |  |  |
+| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#condition-v1-meta) array_ | Conditions slice of condition objects indicating details about VTEP status. |  | Optional: \{\} <br /> |
 
 

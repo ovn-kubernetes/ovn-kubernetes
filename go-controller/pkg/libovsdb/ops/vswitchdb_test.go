@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
+	"sort"
 	"testing"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
@@ -108,6 +110,85 @@ func TestGetPortBridge(t *testing.T) {
 			}
 			if got.Name != tt.expectName {
 				t.Fatalf("expected bridge %q, got %q", tt.expectName, got.Name)
+			}
+		})
+	}
+}
+
+func TestFindPortsForPortOrInterface(t *testing.T) {
+	bridgeUUID := buildNamedUUID()
+	ownPortUUID := buildNamedUUID()
+	ownInterfaceUUID := buildNamedUUID()
+	bondPortUUID := buildNamedUUID()
+	bondMemberInterfaceUUID := buildNamedUUID()
+	otherInterfaceUUID := buildNamedUUID()
+
+	ovs := &vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{bridgeUUID}}
+	ownPort := &vswitchd.Port{UUID: ownPortUUID, Name: "pf0vf0", Interfaces: []string{ownInterfaceUUID}}
+	ownInterface := &vswitchd.Interface{UUID: ownInterfaceUUID, Name: "pf0vf0"}
+	// pf0vf0 enslaved in a bond: the Interface keeps its name under a Port
+	// named differently.
+	bondPort := &vswitchd.Port{UUID: bondPortUUID, Name: "bond0",
+		Interfaces: []string{bondMemberInterfaceUUID, otherInterfaceUUID}}
+	bondMemberInterface := &vswitchd.Interface{UUID: bondMemberInterfaceUUID, Name: "pf0vf0"}
+	otherInterface := &vswitchd.Interface{UUID: otherInterfaceUUID, Name: "eth7"}
+
+	tests := []struct {
+		desc            string
+		name            string
+		expectPortNames []string
+		initialOvs      libovsdbtest.TestSetup
+	}{
+		{
+			desc:            "finds the port named after the interface",
+			name:            "pf0vf0",
+			expectPortNames: []string{"pf0vf0"},
+			initialOvs: libovsdbtest.TestSetup{OVSData: []libovsdbtest.TestData{
+				ovs.DeepCopy(),
+				&vswitchd.Bridge{UUID: bridgeUUID, Name: "br-x", Ports: []string{ownPortUUID}},
+				ownPort.DeepCopy(), ownInterface.DeepCopy(),
+			}},
+		},
+		{
+			desc:            "finds the port holding the interface as a member",
+			name:            "pf0vf0",
+			expectPortNames: []string{"bond0"},
+			initialOvs: libovsdbtest.TestSetup{OVSData: []libovsdbtest.TestData{
+				ovs.DeepCopy(),
+				&vswitchd.Bridge{UUID: bridgeUUID, Name: "br-x", Ports: []string{bondPortUUID}},
+				bondPort.DeepCopy(), bondMemberInterface.DeepCopy(), otherInterface.DeepCopy(),
+			}},
+		},
+		{
+			desc:            "returns no ports for an unknown name",
+			name:            "no-such-netdev",
+			expectPortNames: []string{},
+			initialOvs: libovsdbtest.TestSetup{OVSData: []libovsdbtest.TestData{
+				ovs.DeepCopy(),
+				&vswitchd.Bridge{UUID: bridgeUUID, Name: "br-x", Ports: []string{ownPortUUID}},
+				ownPort.DeepCopy(), ownInterface.DeepCopy(),
+			}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			ovsClient, cleanup, err := libovsdbtest.NewOVSTestHarness(tt.initialOvs)
+			if err != nil {
+				t.Fatalf("test: %q failed to set up harness: %v", tt.desc, err)
+			}
+			t.Cleanup(cleanup.Cleanup)
+
+			ports, err := FindPortsForPortOrInterface(ovsClient, tt.name)
+			if err != nil {
+				t.Fatalf("FindPortsForPortOrInterface() error = %v", err)
+			}
+			portNames := make([]string, 0, len(ports))
+			for _, port := range ports {
+				portNames = append(portNames, port.Name)
+			}
+			sort.Strings(portNames)
+			if !reflect.DeepEqual(portNames, tt.expectPortNames) {
+				t.Fatalf("expected ports %v, got %v", tt.expectPortNames, portNames)
 			}
 		})
 	}

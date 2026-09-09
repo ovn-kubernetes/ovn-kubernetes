@@ -117,6 +117,22 @@ Routing Policies
         95             ip4.src == 10.128.1.3 && pkt.mark == 0           allow               pkt_mark=50006
 ```
 
+North-south next-hop selection then uses the Gateway Router routing table
+(typically its default route toward the node default gateway on `br-ex`).
+Static routes that exist in the host's **main routing table** for the
+**primary node network** (the interface configured as the node's primary
+network, usually `br-ex`) are not consulted.
+
+For example, if the node default gateway is `192.168.1.1` on the primary node
+network and the host main table also contains `192.168.2.0/24 via 192.168.1.2`,
+EgressIP traffic sourced from an address on that primary interface still leaves
+via `192.168.1.1`. It does not follow the host static route via `192.168.1.2`.
+
+This is true in both shared gateway mode and local gateway mode
+(`routingViaHost=true`). Primary-network EgressIP still follows the shared
+gateway path through the Gateway Router rather than the host kernel, so
+those main-table routes never apply.
+
 ### EgressIP IP is assigned to a secondary host interface
 Note that this is unsupported for user defined networks.
 Lets now imagine the Egress IP(s) mentioned previously, are not hosted by the OVN primary network and is hosted
@@ -339,3 +355,13 @@ egressip-node-healthcheck-port=9107
 - If configured, the session uses the certificates from the `[egressip-healthcheck-tls]` configuration section. The historical `--nb-client-*` flags and `[ovnnorth]` configuration keys remain accepted for compatibility. An insecure gRPC session is used when no certificates are specified.
 - The [message used for probing](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/82f167a3920c8c3cd0687ceb3e7a5ba64372be69/go-controller/pkg/ovn/healthcheck/health.proto#L6) is the [standard service health](https://github.com/grpc/grpc/blob/master/src/proto/grpc/health/v1/health.proto) specified in gRPC.
 - [Special care was taken into consideration](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/82f167a3920c8c3cd0687ceb3e7a5ba64372be69/go-controller/pkg/ovn/healthcheck/egressip_healthcheck.go#L193-L195) to handle cases when the gRPC session bounced for normal reasons. EgressIP implementation will not declare a node unreachable under these circumstances.
+
+## Known Limitations
+
+- Layer 2 networks and localnet are not supported.
+- EgressIP on the **primary node network** (the interface configured as the
+  node's network, typically `br-ex`) does not honor static routes that exist in
+  the host's **main routing table** for that network. Next-hop selection uses
+  the OVN Gateway Router default route. Enabling local gateway mode
+  (`routingViaHost=true`) does not send this traffic through the host kernel, so
+  those main-table routes still do not apply.

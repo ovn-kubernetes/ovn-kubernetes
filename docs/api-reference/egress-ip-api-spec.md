@@ -27,7 +27,7 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `egressIPs` _string array_ | EgressIPs is the list of egress IP addresses requested. Can be IPv4 and/or IPv6.<br />This field is mandatory. |  |  |
 | `namespaceSelector` _[LabelSelector](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#labelselector-v1-meta)_ | NamespaceSelector applies the egress IP only to the namespace(s) whose label<br />matches this definition. This field is mandatory. |  |  |
-| `podSelector` _[LabelSelector](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#labelselector-v1-meta)_ | PodSelector applies the egress IP only to the pods whose label<br />matches this definition. This field is optional, and in case it is not set:<br />results in the egress IP being applied to all pods in the namespace(s)<br />matched by the NamespaceSelector. In case it is set: is intersected with<br />the NamespaceSelector, thus applying the egress IP to the pods<br />(in the namespace(s) already matched by the NamespaceSelector) which<br />match this pod selector. |  |  |
+| `podSelector` _[LabelSelector](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#labelselector-v1-meta)_ | PodSelector applies the egress IP only to the pods whose label<br />matches this definition. This field is optional, and in case it is not set:<br />results in the egress IP being applied to all pods in the namespace(s)<br />matched by the NamespaceSelector. In case it is set: is intersected with<br />the NamespaceSelector, thus applying the egress IP to the pods<br />(in the namespace(s) already matched by the NamespaceSelector) which<br />match this pod selector. |  | Optional: \{\} <br /> |
 
 
 #### EgressIPStatus

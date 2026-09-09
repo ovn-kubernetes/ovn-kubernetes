@@ -51,8 +51,8 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `sourceIPBy` _[SourceIPMode](#sourceipmode)_ | Determines the source IP of egress traffic originating from the pods backing the LoadBalancer Service.<br />When `LoadBalancerIP` the source IP is set to its LoadBalancer ingress IP.<br />When `Network` the source IP is set according to the interface of the Network,<br />leveraging the masquerade rules that are already in place.<br />Typically these rules specify SNAT to the IP of the outgoing interface,<br />which means the packet will typically leave with the IP of the node. |  | Enum: [LoadBalancerIP Network] <br /> |
-| `nodeSelector` _[LabelSelector](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#labelselector-v1-meta)_ | Allows limiting the nodes that can be selected to handle the service's traffic when sourceIPBy=LoadBalancerIP.<br />When present only a node whose labels match the specified selectors can be selected<br />for handling the service's traffic.<br />When it is not specified any node in the cluster can be chosen to manage the service's traffic. |  |  |
-| `network` _string_ | The network which this service should send egress and corresponding ingress replies to.<br />This is typically implemented as VRF mapping, representing a numeric id or string name<br />of a routing table which by omission uses the default host routing. |  |  |
+| `nodeSelector` _[LabelSelector](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#labelselector-v1-meta)_ | Allows limiting the nodes that can be selected to handle the service's traffic when sourceIPBy=LoadBalancerIP.<br />When present only a node whose labels match the specified selectors can be selected<br />for handling the service's traffic.<br />When it is not specified any node in the cluster can be chosen to manage the service's traffic. |  | Optional: \{\} <br /> |
+| `network` _string_ | The network which this service should send egress and corresponding ingress replies to.<br />This is typically implemented as VRF mapping, representing a numeric id or string name<br />of a routing table which by omission uses the default host routing. |  | Optional: \{\} <br /> |
 
 
 #### EgressServiceStatus
@@ -83,5 +83,9 @@ _Validation:_
 _Appears in:_
 - [EgressServiceSpec](#egressservicespec)
 
+| Field | Description |
+| --- | --- |
+| `LoadBalancerIP` | SourceIPLoadBalancer sets the source according to the LoadBalancer's ingress IP.<br /> |
+| `Network` | SourceIPNetwork sets the source according to the IP of the outgoing interface of the Network.<br /> |
 
 

@@ -59,8 +59,11 @@ to reduce the time it takes for iptables to sync up on startup? Think about writ
 around this! Open a commit adding it to our `docs/blog/posts/` folder.
 
 * **API Reference**: Did you introduce a new CRD? OR Did you add a watcher a new CRD? Include API
-Reference documentation changes to `docs/api-reference` folder. See [here](../api-reference/introduction.md)
-for more details.
+Reference documentation changes to `docs/api-reference` folder. 
+```bash
+make -C docs/ generate-api-reference
+```
+See [here](../api-reference/introduction.md) for more details.
 
 ## Website Guide
 
