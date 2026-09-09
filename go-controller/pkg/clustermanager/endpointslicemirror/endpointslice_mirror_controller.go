@@ -70,7 +70,7 @@ func (c *Controller) getDefaultEndpointSliceKey(endpointSlice *v1.EndpointSlice)
 		}.String()
 	}
 
-	if isManagedByDefault(endpointSlice) {
+	if isSourceEndpointSlice(endpointSlice) {
 		key, err := cache.MetaNamespaceKeyFunc(endpointSlice)
 		if err != nil {
 			utilruntime.HandleError(fmt.Errorf("couldn't get key for object %+v: %v", endpointSlice, err))
@@ -79,7 +79,7 @@ func (c *Controller) getDefaultEndpointSliceKey(endpointSlice *v1.EndpointSlice)
 		return key
 	}
 
-	// the EndpointSlice is not managed by either of the controllers
+	// the EndpointSlice is not a source slice we mirror from
 	return ""
 }
 
@@ -312,9 +312,11 @@ func (c *Controller) syncDefaultEndpointSlice(ctx context.Context, key string) e
 	}
 
 	if mirroredEndpointSlice != nil {
-		// nothing to do if we already reconciled this exact EndpointSlice
+		// nothing to do if we already reconciled this exact EndpointSlice and
+		// owner refs are already filtered (upgrade path for older mirrors).
 		if mirroredResourceVersion, ok := mirroredEndpointSlice.Annotations[types.LabelSourceEndpointSliceVersion]; ok {
-			if mirroredResourceVersion == defaultEndpointSlice.ResourceVersion {
+			if mirroredResourceVersion == defaultEndpointSlice.ResourceVersion &&
+				reflect.DeepEqual(mirroredEndpointSlice.OwnerReferences, mirrorOwnerReferences(defaultEndpointSlice)) {
 				return nil
 			}
 		}
@@ -362,10 +364,35 @@ func (c *Controller) isManagedByController(endpointSlice *v1.EndpointSlice) bool
 	return c.name == endpointSlice.Labels[v1.LabelManagedBy]
 }
 
-// isManagedByController determines if the provided endpointSlice is managed by the default EndpointSlice
-// controller by checking the "endpointslice.kubernetes.io/managed-by" label value.
-func isManagedByDefault(endpointSlice *v1.EndpointSlice) bool {
-	return types.EndpointSliceDefaultControllerName == endpointSlice.Labels[v1.LabelManagedBy]
+// isSourceEndpointSlice determines if the provided EndpointSlice should be mirrored for a primary UDN.
+// Source slices are those created by the default EndpointSlice controller (selector-based Services)
+// or the Endpoints mirroring controller (selector-less Services with manual Endpoints).
+func isSourceEndpointSlice(endpointSlice *v1.EndpointSlice) bool {
+	managedBy := endpointSlice.Labels[v1.LabelManagedBy]
+	return managedBy == types.EndpointSliceDefaultControllerName ||
+		managedBy == types.EndpointSliceMirroringControllerName
+}
+
+// mirrorOwnerReferences returns OwnerReferences suitable for a mirrored EndpointSlice.
+// Selector-based source slices are typically owned by a Service and those refs are kept.
+// Selector-less slices from the Endpoints mirroring controller are owned by Endpoints with
+// blockOwnerDeletion=true; the cluster-manager SA cannot set finalizers on Endpoints, so
+// those owner refs must not be copied (mirrors are cleaned up when the source slice is deleted).
+func mirrorOwnerReferences(source *v1.EndpointSlice) []metav1.OwnerReference {
+	if len(source.OwnerReferences) == 0 {
+		return nil
+	}
+	out := make([]metav1.OwnerReference, 0, len(source.OwnerReferences))
+	for _, ref := range source.OwnerReferences {
+		if ref.Kind == "Endpoints" && (ref.APIVersion == "v1" || ref.APIVersion == "") {
+			continue
+		}
+		out = append(out, ref)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // getPodIP retrieves the IP address of a specified Pod within a given namespace and network.
@@ -418,11 +445,12 @@ func (c *Controller) mirrorEndpointSlice(mirroredEndpointSlice, defaultEndpointS
 	if currentMirror == nil {
 		currentMirror = &v1.EndpointSlice{
 			ObjectMeta: metav1.ObjectMeta{
-				Namespace:       defaultEndpointSlice.Namespace,
-				OwnerReferences: defaultEndpointSlice.OwnerReferences,
+				Namespace: defaultEndpointSlice.Namespace,
 			},
 		}
 	}
+	// Always reconcile owner refs so Endpoints refs are dropped on create and update.
+	currentMirror.OwnerReferences = mirrorOwnerReferences(defaultEndpointSlice)
 	if currentMirror.Labels == nil {
 		currentMirror.Labels = map[string]string{}
 	}
@@ -451,15 +479,16 @@ func (c *Controller) mirrorEndpointSlice(mirroredEndpointSlice, defaultEndpointS
 	currentMirror.Endpoints = make([]v1.Endpoint, len(defaultEndpointSlice.Endpoints))
 	isIPv6 := defaultEndpointSlice.AddressType == v1.AddressTypeIPv6
 	for i, endpoint := range defaultEndpointSlice.Endpoints {
+		newEp := endpoint.DeepCopy()
 		if endpoint.TargetRef != nil && endpoint.TargetRef.Kind == "Pod" {
 			podIP, err := c.getPodIP(endpoint.TargetRef.Name, endpoint.TargetRef.Namespace, nadKey, isIPv6)
 			if err != nil {
 				return nil, fmt.Errorf("failed to determine the Pod IP of: %s/%s: %v", endpoint.TargetRef.Namespace, endpoint.TargetRef.Name, err)
 			}
-			newEp := endpoint.DeepCopy()
 			newEp.Addresses = []string{podIP}
-			currentMirror.Endpoints[i] = *newEp
 		}
+		// Non-Pod endpoints (manual Endpoints / external or node IPs) keep their addresses as-is.
+		currentMirror.Endpoints[i] = *newEp
 	}
 	return currentMirror, nil
 }

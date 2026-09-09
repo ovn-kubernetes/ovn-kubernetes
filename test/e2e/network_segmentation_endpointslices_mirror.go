@@ -183,6 +183,130 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", feature.Networ
 		DescribeTableSubtree("created using",
 			func(createNetworkFn func(c networkAttachmentConfigParams) error) {
 				DescribeTable(
+					"mirrors EndpointSlices for selector-less Services with manual Endpoints",
+					func(
+						netConfig networkAttachmentConfigParams,
+					) {
+						By("creating the network")
+						netConfig.namespace = f.Namespace.Name
+						Expect(createNetworkFn(netConfig)).To(Succeed())
+
+						nodes, err := cs.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
+						framework.ExpectNoError(err, "Failed listing nodes %v", err)
+						Expect(nodes.Items).NotTo(BeEmpty(), "expected at least one node")
+						hostSubnets, err := util.ParseNodePrimaryIfAddr(&nodes.Items[0])
+						framework.ExpectNoError(err, "Failed parsing nodes host CIDR %v", err)
+
+						var manualAddresses []v1.EndpointAddress
+						var expectedIPs []string
+						if len(hostSubnets.V4.IP) > 0 {
+							ip := hostSubnets.V4.IP.String()
+							manualAddresses = append(manualAddresses, v1.EndpointAddress{IP: ip})
+							expectedIPs = append(expectedIPs, ip)
+						}
+						if len(hostSubnets.V6.IP) > 0 {
+							ip := hostSubnets.V6.IP.String()
+							manualAddresses = append(manualAddresses, v1.EndpointAddress{IP: ip})
+							expectedIPs = append(expectedIPs, ip)
+						}
+						Expect(manualAddresses).NotTo(BeEmpty(), "expected node to have at least one primary address")
+
+						By("creating a selector-less service")
+						svc := &v1.Service{
+							ObjectMeta: metav1.ObjectMeta{
+								Name:      "manual-endpoint-service",
+								Namespace: f.Namespace.Name,
+							},
+							Spec: v1.ServiceSpec{
+								Ports: []v1.ServicePort{{
+									Port:     80,
+									Protocol: v1.ProtocolTCP,
+								}},
+							},
+						}
+						familyPolicy := v1.IPFamilyPolicyPreferDualStack
+						svc.Spec.IPFamilyPolicy = &familyPolicy
+						_, err = cs.CoreV1().Services(f.Namespace.Name).Create(context.Background(), svc, metav1.CreateOptions{})
+						framework.ExpectNoError(err, "Failed creating selector-less service %v", err)
+
+						By("creating manual Endpoints pointing at node IP(s)")
+						_, err = cs.CoreV1().Endpoints(f.Namespace.Name).Create(context.Background(),
+							&v1.Endpoints{
+								ObjectMeta: metav1.ObjectMeta{Name: svc.Name},
+								Subsets: []v1.EndpointSubset{{
+									Addresses: manualAddresses,
+									Ports: []v1.EndpointPort{{
+										Port:     80,
+										Protocol: v1.ProtocolTCP,
+									}},
+								}},
+							},
+							metav1.CreateOptions{},
+						)
+						framework.ExpectNoError(err, "Failed creating manual Endpoints %v", err)
+
+						By("asserting the mirrored EndpointSlice exists and preserves the manual endpoint IP(s)")
+						Eventually(func() error {
+							return validateMirroredManualEndpointSlice(cs, f.Namespace.Name, svc.Name, expectedIPs)
+						}, 2*time.Minute, 6*time.Second).Should(Succeed())
+
+						By("deleting the manual Endpoints and verifying mirror cleanup")
+						err = cs.CoreV1().Endpoints(f.Namespace.Name).Delete(
+							context.Background(), svc.Name, metav1.DeleteOptions{})
+						framework.ExpectNoError(err, "Failed deleting manual Endpoints %v", err)
+
+						Eventually(func() error {
+							esList, err := cs.DiscoveryV1().EndpointSlices(f.Namespace.Name).List(
+								context.TODO(), metav1.ListOptions{
+									LabelSelector: fmt.Sprintf("k8s.ovn.org/service-name=%s", svc.Name),
+								})
+							if err != nil {
+								return err
+							}
+							if len(esList.Items) != 0 {
+								return fmt.Errorf("expected mirrored EndpointSlices to be cleaned up, got %d", len(esList.Items))
+							}
+							return nil
+						}, 2*time.Minute, 6*time.Second).Should(Succeed())
+					},
+					Entry(
+						"L2 primary UDN",
+						networkAttachmentConfigParams{
+							name:     nadName,
+							topology: "layer2",
+							cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							role:     "primary",
+						},
+					),
+					Entry(
+						"L3 primary UDN",
+						networkAttachmentConfigParams{
+							name:     nadName,
+							topology: "layer3",
+							cidr:     primaryLayer3MultiCIDRs(),
+							role:     "primary",
+						},
+					),
+				)
+			},
+			Entry("NetworkAttachmentDefinitions", func(c networkAttachmentConfigParams) error {
+				netConfig := newNetworkAttachmentConfig(c)
+				nad := generateNAD(netConfig, f.ClientSet)
+				_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(context.Background(), nad, metav1.CreateOptions{})
+				return err
+			}),
+			Entry("UserDefinedNetwork", func(c networkAttachmentConfigParams) error {
+				udnManifest := generateUserDefinedNetworkManifest(&c, f.ClientSet)
+				cleanup, err := createManifest(f.Namespace.Name, udnManifest)
+				DeferCleanup(cleanup)
+				Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, f.Namespace.Name, c.name), 5*time.Second, time.Second).Should(Succeed())
+				return err
+			}),
+		)
+
+		DescribeTableSubtree("created using",
+			func(createNetworkFn func(c networkAttachmentConfigParams) error) {
+				DescribeTable(
 					"does not mirror EndpointSlices in namespaces not using user defined primary networks",
 					func(
 						netConfig networkAttachmentConfigParams,
@@ -304,6 +428,31 @@ func validateMirroredEndpointSlices(cs clientset.Interface, namespace, svcName, 
 			if err := inAnyConfiguredSubnet(subnet, endpoint.Addresses[0]); err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+func validateMirroredManualEndpointSlice(cs clientset.Interface, namespace, svcName string, expectedIPs []string) error {
+	esList, err := cs.DiscoveryV1().EndpointSlices(namespace).List(context.TODO(), metav1.ListOptions{LabelSelector: fmt.Sprintf("%s=%s", "k8s.ovn.org/service-name", svcName)})
+	if err != nil {
+		return err
+	}
+	if len(esList.Items) == 0 {
+		return fmt.Errorf("expected at least one mirrored EndpointSlice for service %s", svcName)
+	}
+
+	found := make(map[string]bool, len(expectedIPs))
+	for _, endpointSlice := range esList.Items {
+		for _, endpoint := range endpointSlice.Endpoints {
+			for _, address := range endpoint.Addresses {
+				found[address] = true
+			}
+		}
+	}
+	for _, expectedIP := range expectedIPs {
+		if !found[expectedIP] {
+			return fmt.Errorf("expected mirrored EndpointSlice to contain manual endpoint IP %s", expectedIP)
 		}
 	}
 	return nil
