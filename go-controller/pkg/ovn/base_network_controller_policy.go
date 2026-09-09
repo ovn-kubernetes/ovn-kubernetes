@@ -1299,13 +1299,10 @@ func (bnc *BaseNetworkController) buildNetworkPolicyACLs(np *networkPolicy, aclL
 // It only uses Namespace and Name from given network policy
 func (bnc *BaseNetworkController) deleteNetworkPolicy(policy *knet.NetworkPolicy) error {
 	npKey := getPolicyKey(policy)
-	klog.Infof("Deleting network policy %s", npKey)
-	if config.Metrics.EnableScaleMetrics {
-		start := time.Now()
-		defer func() {
-			duration := time.Since(start)
-			metrics.RecordNetpolEvent("delete", duration)
-		}()
+	recordMetrics := !bnc.IsUserDefinedNetwork() && config.Metrics.EnableScaleMetrics
+	var start time.Time
+	if recordMetrics {
+		start = time.Now()
 	}
 	// First lock and update namespace
 	nsInfo, nsUnlock := bnc.getNamespaceLocked(policy.Namespace, false)
@@ -1319,6 +1316,12 @@ func (bnc *BaseNetworkController) deleteNetworkPolicy(policy *knet.NetworkPolicy
 		np, ok := bnc.networkPolicies.Load(npKey)
 		if !ok {
 			return nil
+		}
+		if recordMetrics {
+			defer func() {
+				duration := time.Since(start)
+				metrics.RecordNetpolEvent("delete", duration)
+			}()
 		}
 		if err := bnc.cleanupNetworkPolicy(np); err != nil {
 			return fmt.Errorf("deleting policy %s failed: %v", npKey, err)
