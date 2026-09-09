@@ -4922,7 +4922,7 @@
 <td><code>podSelector</code> <em><a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#labelselector-v1-meta">LabelSelector</a></em></td>
 <td>PodSelector applies the egress IP only to the pods whose label<br>matches this definition. This field is optional, and in case it is not set:<br>results in the egress IP being applied to all pods in the namespace(s)<br>matched by the NamespaceSelector. In case it is set: is intersected with<br>the NamespaceSelector, thus applying the egress IP to the pods<br>(in the namespace(s) already matched by the NamespaceSelector) which<br>match this pod selector.</td>
 <td></td>
-<td></td>
+<td>Optional: {} <br></td>
 </tr>
 </tbody>
 </table>

@@ -5025,13 +5025,13 @@ network than the main one.</p>
 <td><code>nodeSelector</code> <em><a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#labelselector-v1-meta">LabelSelector</a></em></td>
 <td>Allows limiting the nodes that can be selected to handle the service's traffic when sourceIPBy=LoadBalancerIP.<br>When present only a node whose labels match the specified selectors can be selected<br>for handling the service's traffic.<br>When it is not specified any node in the cluster can be chosen to manage the service's traffic.</td>
 <td></td>
-<td></td>
+<td>Optional: {} <br></td>
 </tr>
 <tr>
 <td><code>network</code> <em>string</em></td>
 <td>The network which this service should send egress and corresponding ingress replies to.<br>This is typically implemented as VRF mapping, representing a numeric id or string name<br>of a routing table which by omission uses the default host routing.</td>
 <td></td>
-<td></td>
+<td>Optional: {} <br></td>
 </tr>
 </tbody>
 </table>
@@ -5063,6 +5063,24 @@ network than the main one.</p>
 - Enum: [LoadBalancerIP Network]</p>
 <p><em>Appears in:</em>
 - <a href="#egressservicespec">EgressServiceSpec</a></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>LoadBalancerIP</code></td>
+<td>SourceIPLoadBalancer sets the source according to the LoadBalancer's ingress IP.<br></td>
+</tr>
+<tr>
+<td><code>Network</code></td>
+<td>SourceIPNetwork sets the source according to the IP of the outgoing interface of the Network.<br></td>
+</tr>
+</tbody>
+</table>
 
 
 

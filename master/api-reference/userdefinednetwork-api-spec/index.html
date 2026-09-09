@@ -5589,7 +5589,7 @@
 <td><code>id</code> <em>integer</em></td>
 <td>id is the VLAN ID (VID) to be set for the network.<br>id should be higher than 0 and lower than 4095.</td>
 <td></td>
-<td>Maximum: 4094 <br>Minimum: 1 <br></td>
+<td>Maximum: 4094 <br>Minimum: 1 <br>Required: {} <br></td>
 </tr>
 </tbody>
 </table>
@@ -5638,13 +5638,13 @@
 <td><code>spec</code> <em><a href="#clusteruserdefinednetworkspec">ClusterUserDefinedNetworkSpec</a></em></td>
 <td></td>
 <td></td>
-<td>Required: {} <br></td>
+<td>Required: {} <br>Required: {} <br></td>
 </tr>
 <tr>
 <td><code>status</code> <em><a href="#clusteruserdefinednetworkstatus">ClusterUserDefinedNetworkStatus</a></em></td>
 <td></td>
 <td></td>
-<td></td>
+<td>Optional: {} <br></td>
 </tr>
 </tbody>
 </table>
@@ -5704,13 +5704,19 @@
 <td><code>namespaceSelector</code> <em><a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#labelselector-v1-meta">LabelSelector</a></em></td>
 <td>NamespaceSelector Label selector for which namespace network should be available for.</td>
 <td></td>
-<td>Required: {} <br></td>
+<td>Required: {} <br>Required: {} <br></td>
+</tr>
+<tr>
+<td><code>uplinks</code> <em>string array</em></td>
+<td>Uplinks references Uplink resources used for this network's external<br>traffic. Currently, one Uplink is supported. When omitted, existing gateway<br>behavior is preserved.</td>
+<td></td>
+<td>MaxItems: 1 <br>MinItems: 1 <br>items:MaxLength: 253 <br>items:MinLength: 1 <br>items:Pattern: <code>^[a-z0-9]([-a-z0-9]*[a-z0-9])?$</code> <br>Optional: {} <br></td>
 </tr>
 <tr>
 <td><code>network</code> <em><a href="#networkspec">NetworkSpec</a></em></td>
 <td>Network is the user-defined-network spec</td>
 <td></td>
-<td>Required: {} <br></td>
+<td>Required: {} <br>Required: {} <br></td>
 </tr>
 </tbody>
 </table>
@@ -5732,13 +5738,13 @@
 <td><code>conditions</code> <em><a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#condition-v1-meta">Condition</a> array</em></td>
 <td>Conditions slice of condition objects indicating details about ClusterUserDefineNetwork status.</td>
 <td></td>
-<td></td>
+<td>Optional: {} <br></td>
 </tr>
 <tr>
 <td><code>vrfName</code> <em>string</em></td>
 <td>VRFName is the name of the Linux VRF device that OVN-Kubernetes creates<br>for this network on every node where the network is present. It is<br>populated for primary networks. Consumers that must name the VRF, such<br>as FRRConfiguration authors filling in the routers 'vrf' field, should<br>read this value instead of deriving it.</td>
 <td></td>
-<td>MaxLength: 15 <br></td>
+<td>MaxLength: 15 <br>Optional: {} <br></td>
 </tr>
 </tbody>
 </table>
@@ -5777,19 +5783,19 @@
 <td><code>vtep</code> <em>string</em></td>
 <td>VTEP is the name of the VTEP CR that defines VTEP IPs for EVPN.</td>
 <td></td>
-<td>MinLength: 1 <br>Required: {} <br></td>
+<td>MinLength: 1 <br>Required: {} <br>Required: {} <br></td>
 </tr>
 <tr>
 <td><code>macVRF</code> <em><a href="#vrfconfig">VRFConfig</a></em></td>
 <td>MACVRF contains the MAC-VRF configuration for Layer 2 EVPN.<br>This field is required for Layer2 topology and forbidden for Layer3 topology.</td>
 <td></td>
-<td></td>
+<td>Optional: {} <br></td>
 </tr>
 <tr>
 <td><code>ipVRF</code> <em><a href="#vrfconfig">VRFConfig</a></em></td>
 <td>IPVRF contains the IP-VRF configuration for Layer 3 EVPN.<br>This field is required for Layer3 topology and optional for Layer2 topology.</td>
 <td></td>
-<td></td>
+<td>Optional: {} <br></td>
 </tr>
 </tbody>
 </table>
@@ -5817,13 +5823,13 @@
 <td><code>mode</code> <em><a href="#ipammode">IPAMMode</a></em></td>
 <td>Mode controls how much of the IP configuration will be managed by OVN.<br><code>Enabled</code> means OVN-Kubernetes will apply IP configuration to the SDN infrastructure and it will also assign IPs<br>from the selected subnet to the individual pods.<br><code>DHCP</code> delegates IP assignment to a DHCP server reachable on the physical network; OVN-Kubernetes<br>does not allocate addresses. Lease acquisition depends on the workload type: regular pods use the<br>DHCP CNI plugin on the node, while KubeVirt virtual machines run a DHCP client inside the guest OS.<br>Only supported for Localnet Secondary networks, and currently only for IPv4.<br><code>Disabled</code> means OVN-Kubernetes will only assign MAC addresses and provide layer 2 communication, letting users<br>configure IP addresses for the pods.<br><code>Disabled</code> is only available for Secondary networks.<br>By disabling IPAM, any Kubernetes features that rely on selecting pods by IP will no longer function<br>(such as network policy, services, etc). Additionally, IP port security will also be disabled for interfaces attached to this network.<br>Defaults to <code>Enabled</code>.</td>
 <td></td>
-<td>Enum: [Enabled Disabled DHCP] <br></td>
+<td>Enum: [Enabled Disabled DHCP] <br>Optional: {} <br></td>
 </tr>
 <tr>
 <td><code>lifecycle</code> <em><a href="#networkipamlifecycle">NetworkIPAMLifecycle</a></em></td>
 <td>Lifecycle controls IP addresses management lifecycle.<br>The only allowed value is Persistent. When set, the IP addresses assigned by OVN-Kubernetes will be persisted in an<br><code>ipamclaims.k8s.cni.cncf.io</code> object. These IP addresses will be reused by other pods if requested.<br>Only supported when mode is <code>Enabled</code>.</td>
 <td></td>
-<td>Enum: [Persistent] <br></td>
+<td>Enum: [Persistent] <br>Optional: {} <br></td>
 </tr>
 </tbody>
 </table>
@@ -5873,49 +5879,49 @@
 <td><code>role</code> <em><a href="#networkrole">NetworkRole</a></em></td>
 <td>Role describes the network role in the pod.<br>Allowed value is "Secondary".<br>Secondary network is only assigned to pods that use <code>k8s.v1.cni.cncf.io/networks</code> annotation to select given network.</td>
 <td></td>
-<td>Enum: [Primary Secondary] <br>Required: {} <br></td>
+<td>Enum: [Primary Secondary] <br>Required: {} <br>Required: {} <br></td>
 </tr>
 <tr>
 <td><code>mtu</code> <em>integer</em></td>
 <td>MTU is the maximum transmission unit for a network.<br>MTU is optional, if not provided, the globally configured value in OVN-Kubernetes (defaults to 1400) is used for the network.</td>
 <td></td>
-<td>Maximum: 65536 <br>Minimum: 576 <br></td>
+<td>Maximum: 65536 <br>Minimum: 576 <br>Optional: {} <br></td>
 </tr>
 <tr>
 <td><code>subnets</code> <em><a href="#dualstackcidrs">DualStackCIDRs</a></em></td>
 <td>Subnets are used for the pod network across the cluster.<br>Dual-stack clusters may set 2 subnets (one for each IP family), otherwise only 1 subnet is allowed.<br>The format should match standard CIDR notation (for example, "10.128.0.0/16").<br>This field must be omitted if <code>ipam.mode</code> is <code>Disabled</code>.</td>
 <td></td>
-<td>MaxItems: 2 <br>MaxLength: 43 <br>MinItems: 1 <br></td>
+<td>MaxItems: 2 <br>MaxLength: 43 <br>MinItems: 1 <br>Optional: {} <br></td>
 </tr>
 <tr>
 <td><code>reservedSubnets</code> <em><a href="#cidr">CIDR</a> array</em></td>
 <td>reservedSubnets specifies a list of CIDRs reserved for static IP assignment, excluded from automatic allocation.<br>reservedSubnets is optional. When omitted, all IP addresses in <code>subnets</code> are available for automatic assignment.<br>IPs from these ranges can still be requested through static IP assignment.<br>Each item should be in range of the specified CIDR(s) in <code>subnets</code>.<br>The maximum number of entries allowed is 25.<br>The format should match standard CIDR notation (for example, "10.128.0.0/16").<br>This field must be omitted if <code>subnets</code> is unset or <code>ipam.mode</code> is <code>Disabled</code>.</td>
 <td></td>
-<td>MaxItems: 25 <br>MaxLength: 43 <br>MinItems: 1 <br></td>
+<td>MaxItems: 25 <br>MaxLength: 43 <br>MinItems: 1 <br>Optional: {} <br></td>
 </tr>
 <tr>
 <td><code>infrastructureSubnets</code> <em><a href="#cidr">CIDR</a> array</em></td>
 <td>infrastructureSubnets specifies a list of internal CIDR ranges that OVN-Kubernetes will reserve for internal network infrastructure.<br>Any IP addresses within these ranges cannot be assigned to workloads.<br>When omitted, OVN-Kubernetes will automatically allocate IP addresses from <code>subnets</code> for its infrastructure needs.<br>When there are not enough available IPs in the provided infrastructureSubnets, OVN-Kubernetes will automatically allocate IP addresses from subnets for its infrastructure needs.<br>When <code>reservedSubnets</code> is also specified the CIDRs cannot overlap.<br>When <code>defaultGatewayIPs</code> is also specified, the default gateway IPs must belong to one of the infrastructure subnet CIDRs.<br>Each item should be in range of the specified CIDR(s) in <code>subnets</code>.<br>The maximum number of entries allowed is 4.<br>The format should match standard CIDR notation (for example, "10.128.0.0/16").<br>This field must be omitted if <code>subnets</code> is unset or <code>ipam.mode</code> is <code>Disabled</code>.</td>
 <td></td>
-<td>MaxItems: 4 <br>MaxLength: 43 <br>MinItems: 1 <br></td>
+<td>MaxItems: 4 <br>MaxLength: 43 <br>MinItems: 1 <br>Optional: {} <br></td>
 </tr>
 <tr>
 <td><code>defaultGatewayIPs</code> <em><a href="#dualstackips">DualStackIPs</a></em></td>
 <td>defaultGatewayIPs specifies the default gateway IP used in the internal OVN topology.<br>Dual-stack clusters may set 2 IPs (one for each IP family), otherwise only 1 IP is allowed.<br>This field is only allowed for "Primary" network.<br>It is not recommended to set this field without explicit need and understanding of the OVN network topology.<br>When omitted, an IP from the subnets field is used.</td>
 <td></td>
-<td>MaxItems: 2 <br>MinItems: 1 <br></td>
+<td>MaxItems: 2 <br>MinItems: 1 <br>Optional: {} <br></td>
 </tr>
 <tr>
 <td><code>joinSubnets</code> <em><a href="#dualstackcidrs">DualStackCIDRs</a></em></td>
 <td>JoinSubnets are used inside the OVN network topology.<br>Dual-stack clusters may set 2 subnets (one for each IP family), otherwise only 1 subnet is allowed.<br>This field is only allowed for "Primary" network.<br>It is not recommended to set this field without explicit need and understanding of the OVN network topology.<br>When omitted, the platform will choose a reasonable default which is subject to change over time.</td>
 <td></td>
-<td>MaxItems: 2 <br>MaxLength: 43 <br>MinItems: 1 <br></td>
+<td>MaxItems: 2 <br>MaxLength: 43 <br>MinItems: 1 <br>Optional: {} <br></td>
 </tr>
 <tr>
 <td><code>ipam</code> <em><a href="#ipamconfig">IPAMConfig</a></em></td>
 <td>IPAM section contains IPAM-related configuration for the network.</td>
 <td></td>
-<td>MinProperties: 1 <br></td>
+<td>MinProperties: 1 <br>Optional: {} <br></td>
 </tr>
 </tbody>
 </table>
@@ -5937,25 +5943,25 @@
 <td><code>role</code> <em><a href="#networkrole">NetworkRole</a></em></td>
 <td>Role describes the network role in the pod.<br>Allowed values are "Primary" and "Secondary".<br>Primary network is automatically assigned to every pod created in the same namespace.<br>Secondary network is only assigned to pods that use <code>k8s.v1.cni.cncf.io/networks</code> annotation to select given network.</td>
 <td></td>
-<td>Enum: [Primary Secondary] <br>Required: {} <br></td>
+<td>Enum: [Primary Secondary] <br>Required: {} <br>Required: {} <br></td>
 </tr>
 <tr>
 <td><code>mtu</code> <em>integer</em></td>
 <td>MTU is the maximum transmission unit for a network.<br>MTU is optional, if not provided, the globally configured value in OVN-Kubernetes (defaults to 1400) is used for the network.</td>
 <td></td>
-<td>Maximum: 65536 <br>Minimum: 576 <br></td>
+<td>Maximum: 65536 <br>Minimum: 576 <br>Optional: {} <br></td>
 </tr>
 <tr>
 <td><code>subnets</code> <em><a href="#layer3subnet">Layer3Subnet</a> array</em></td>
-<td>Subnets are used for the pod network across the cluster.<br>Dual-stack clusters may set 2 subnets (one for each IP family), otherwise only 1 subnet is allowed.<br>Given subnet is split into smaller subnets for every node.</td>
+<td>Subnets are used for the pod network across the cluster.<br>Each IP family can have multiple subnets.<br>For each IP family, every node allocates a smaller subnet from the provided subnets.</td>
 <td></td>
-<td>MaxItems: 2 <br>MinItems: 1 <br></td>
+<td>MaxItems: 400 <br>MinItems: 1 <br>Required: {} <br></td>
 </tr>
 <tr>
 <td><code>joinSubnets</code> <em><a href="#dualstackcidrs">DualStackCIDRs</a></em></td>
 <td>JoinSubnets are used inside the OVN network topology.<br>Dual-stack clusters may set 2 subnets (one for each IP family), otherwise only 1 subnet is allowed.<br>This field is only allowed for "Primary" network.<br>It is not recommended to set this field without explicit need and understanding of the OVN network topology.<br>When omitted, the platform will choose a reasonable default which is subject to change over time.</td>
 <td></td>
-<td>MaxItems: 2 <br>MaxLength: 43 <br>MinItems: 1 <br></td>
+<td>MaxItems: 2 <br>MaxLength: 43 <br>MinItems: 1 <br>Optional: {} <br></td>
 </tr>
 </tbody>
 </table>
@@ -5976,13 +5982,13 @@
 <td><code>cidr</code> <em><a href="#cidr">CIDR</a></em></td>
 <td>CIDR specifies L3Subnet, which is split into smaller subnets for every node.</td>
 <td></td>
-<td>MaxLength: 43 <br></td>
+<td>MaxLength: 43 <br>Required: {} <br></td>
 </tr>
 <tr>
 <td><code>hostSubnet</code> <em>integer</em></td>
 <td>HostSubnet specifies the subnet size for every node.<br>When not set, it will be assigned automatically.</td>
 <td></td>
-<td>Maximum: 127 <br>Minimum: 1 <br></td>
+<td>Maximum: 127 <br>Minimum: 1 <br>Optional: {} <br></td>
 </tr>
 </tbody>
 </table>
@@ -6003,43 +6009,43 @@
 <td><code>role</code> <em><a href="#networkrole">NetworkRole</a></em></td>
 <td>role describes the network role in the pod, required.<br>Controls whether the pod interface will act as primary or secondary.<br>Localnet topology supports <code>Secondary</code> only.<br>The network will be assigned to pods that have the <code>k8s.v1.cni.cncf.io/networks</code> annotation in place pointing<br>to subject.</td>
 <td></td>
-<td>Enum: [Secondary] <br></td>
+<td>Enum: [Secondary] <br>Required: {} <br></td>
 </tr>
 <tr>
 <td><code>physicalNetworkName</code> <em>string</em></td>
 <td>physicalNetworkName points to the OVS bridge-mapping's network-name configured in the nodes, required.<br>Min length is 1, max length is 253, cannot contain <code>,</code> or <code>:</code> characters.<br>In case OVS bridge-mapping is defined by Kubernetes-nmstate with <code>NodeNetworkConfigurationPolicy</code> (NNCP),<br>this field should point to the NNCP <code>spec.desiredState.ovn.bridge-mappings</code> item's <code>localnet</code> value.</td>
 <td></td>
-<td>MaxLength: 253 <br>MinLength: 1 <br></td>
+<td>MaxLength: 253 <br>MinLength: 1 <br>Required: {} <br></td>
 </tr>
 <tr>
 <td><code>subnets</code> <em><a href="#dualstackcidrs">DualStackCIDRs</a></em></td>
 <td>subnets is a list of subnets used for pods in this localnet network across the cluster.<br>The list may be either 1 IPv4 subnet, 1 IPv6 subnet, or 1 of each IP family.<br>When set, OVN-Kubernetes assigns an IP address from the specified CIDRs to the connected pod,<br>eliminating the need for manual IP assignment or reliance on an external IPAM service (e.g., a DHCP server).<br>subnets is optional. When omitted OVN-Kubernetes won't assign IP address automatically.<br>Dual-stack clusters may set 2 subnets (one for each IP family), otherwise only 1 subnet is allowed.<br>The format should match standard CIDR notation (for example, "10.128.0.0/16").<br>This field must be omitted if <code>ipam.mode</code> is <code>Disabled</code> or <code>DHCP</code>.<br>When physicalNetworkName points to the OVS bridge mapping of a network that provides IPAM services,<br>ipam.mode should be set to <code>Disabled</code> (users configure the pod IPs themselves) or <code>DHCP</code> (a DHCP<br>server on that network assigns them). Both turn off OVN-Kubernetes IPAM and avoid conflicts with<br>the existing IPAM services on this localnet network.</td>
 <td></td>
-<td>MaxItems: 2 <br>MaxLength: 43 <br>MinItems: 1 <br></td>
+<td>MaxItems: 2 <br>MaxLength: 43 <br>MinItems: 1 <br>Optional: {} <br></td>
 </tr>
 <tr>
 <td><code>excludeSubnets</code> <em><a href="#cidr">CIDR</a> array</em></td>
 <td>excludeSubnets is a list of CIDRs to be removed from the specified CIDRs in <code>subnets</code>.<br>The CIDRs in this list must be in range of at least one subnet specified in <code>subnets</code>.<br>excludeSubnets is optional. When omitted no IP address is excluded and all IP addresses specified in <code>subnets</code><br>are subject to assignment.<br>The format should match standard CIDR notation (for example, "10.128.0.0/16").<br>This field must be omitted if <code>subnets</code> is unset or <code>ipam.mode</code> is <code>Disabled</code> or <code>DHCP</code>.<br>When <code>physicalNetworkName</code> points to OVS bridge mapping of a network with reserved IP addresses<br>(which shouldn't be assigned by OVN-Kubernetes), the specified CIDRs will not be assigned. For example:<br>Given: <code>subnets: "10.0.0.0/24"</code>, <code>excludeSubnets</code>: "10.0.0.200/30", the following addresses will not be assigned<br>to pods: <code>10.0.0.201</code>, <code>10.0.0.202</code>.</td>
 <td></td>
-<td>MaxItems: 25 <br>MaxLength: 43 <br>MinItems: 1 <br></td>
+<td>MaxItems: 25 <br>MaxLength: 43 <br>MinItems: 1 <br>Optional: {} <br></td>
 </tr>
 <tr>
 <td><code>ipam</code> <em><a href="#ipamconfig">IPAMConfig</a></em></td>
 <td>ipam configurations for the network.<br>ipam is optional. When omitted, <code>subnets</code> must be specified.<br>When <code>ipam.mode</code> is <code>Disabled</code> or <code>DHCP</code>, <code>subnets</code> must be omitted.<br><code>ipam.mode</code> controls how much of the IP configuration will be managed by OVN.<br>   When <code>Enabled</code>, OVN-Kubernetes will apply IP configuration to the SDN infra and assign IPs from the selected<br>   subnet to the pods.<br>   When <code>Disabled</code>, OVN-Kubernetes only assigns MAC addresses, and provides layer2 communication, and enables users<br>   to configure IP addresses on the pods.<br>   When <code>DHCP</code>, IP assignment is delegated to a DHCP server reachable on the physical network. OVN-Kubernetes<br>   learns the assigned IPs but does not allocate them. Currently supported only for IPv4.<br><code>ipam.lifecycle</code> controls IP addresses management lifecycle.<br>   When set to 'Persistent', the assigned IP addresses will be persisted in <code>ipamclaims.k8s.cni.cncf.io</code> object.<br>   Useful for VMs, IP address will be persistent after restarts and migrations. Supported when <code>ipam.mode</code> is <code>Enabled</code>.</td>
 <td></td>
-<td>MinProperties: 1 <br></td>
+<td>MinProperties: 1 <br>Optional: {} <br></td>
 </tr>
 <tr>
 <td><code>mtu</code> <em>integer</em></td>
 <td>mtu is the maximum transmission unit for a network.<br>mtu is optional. When omitted, the configured value in OVN-Kubernetes (defaults to 1500 for localnet topology)<br>is used for the network.<br>Minimum value for IPv4 subnet is 576, and for IPv6 subnet is 1280.<br>Maximum value is 65536.<br>In a scenario <code>physicalNetworkName</code> points to OVS bridge mapping of a network configured with certain MTU settings,<br>this field enables configuring the same MTU on pod interface, having the pod MTU aligned with the network MTU.<br>Misaligned MTU across the stack (e.g.: pod has MTU X, node NIC has MTU Y), could result in network disruptions<br>and bad performance.</td>
 <td></td>
-<td>Maximum: 65536 <br>Minimum: 576 <br></td>
+<td>Maximum: 65536 <br>Minimum: 576 <br>Optional: {} <br></td>
 </tr>
 <tr>
 <td><code>vlan</code> <em><a href="#vlanconfig">VLANConfig</a></em></td>
 <td>vlan configuration for the network.<br>vlan.mode is the VLAN mode.<br>  When "Access" is set, OVN-Kubernetes configures the network logical switch port in access mode.<br>vlan.access is the access VLAN configuration.<br>vlan.access.id is the VLAN ID (VID) to be set on the network logical switch port.<br>vlan is optional, when omitted the underlying network default VLAN will be used (usually <code>1</code>).<br>When set, OVN-Kubernetes will apply VLAN configuration to the SDN infra and to the connected pods.</td>
 <td></td>
-<td></td>
+<td>Optional: {} <br></td>
 </tr>
 </tbody>
 </table>
@@ -6105,43 +6111,43 @@
 <td><code>topology</code> <em><a href="#networktopology">NetworkTopology</a></em></td>
 <td>Topology describes network configuration.<br>Allowed values are "Layer3", "Layer2" and "Localnet".<br>Layer3 topology creates a layer 2 segment per node, each with a different subnet. Layer 3 routing is used to interconnect node subnets.<br>Layer2 topology creates one logical switch shared by all nodes.<br>Localnet topology is based on layer 2 topology, but also allows connecting to an existent (configured) physical network to provide north-south traffic to the workloads.</td>
 <td></td>
-<td>Enum: [Layer2 Layer3 Localnet] <br>Required: {} <br></td>
+<td>Enum: [Layer2 Layer3 Localnet] <br>Required: {} <br>Required: {} <br></td>
 </tr>
 <tr>
 <td><code>layer3</code> <em><a href="#layer3config">Layer3Config</a></em></td>
 <td>Layer3 is the Layer3 topology configuration.</td>
 <td></td>
-<td></td>
+<td>Optional: {} <br></td>
 </tr>
 <tr>
 <td><code>layer2</code> <em><a href="#layer2config">Layer2Config</a></em></td>
 <td>Layer2 is the Layer2 topology configuration.</td>
 <td></td>
-<td></td>
+<td>Optional: {} <br></td>
 </tr>
 <tr>
 <td><code>localnet</code> <em><a href="#localnetconfig">LocalnetConfig</a></em></td>
 <td>Localnet is the Localnet topology configuration.</td>
 <td></td>
-<td></td>
+<td>Optional: {} <br></td>
 </tr>
 <tr>
 <td><code>transport</code> <em><a href="#transportoption">TransportOption</a></em></td>
-<td>Transport describes the transport technology for pod-to-pod traffic.<br>Allowed values are "NoOverlay" and "EVPN".<br>- "NoOverlay": The network operates in no-overlay mode.<br>- "EVPN": The network uses EVPN transport.<br>When omitted, the network uses the default OVN overlay transport (e.g. Geneve, VXLAN) as configured by ovn-encap-type.</td>
+<td>Transport describes the transport technology for pod-to-pod traffic.<br>Allowed values are "NoOverlay" and "EVPN".<br>- "NoOverlay": The network operates in no-overlay mode.<br>- "EVPN": The network uses EVPN transport.<br>When omitted, the network uses the default OVN overlay transport (e.g. Geneve, VXLAN)<br>as configured by ovn-encap-type.</td>
 <td></td>
-<td>Enum: [NoOverlay EVPN] <br></td>
+<td>Enum: [NoOverlay EVPN] <br>Optional: {} <br></td>
 </tr>
 <tr>
 <td><code>noOverlay</code> <em><a href="#nooverlayconfig">NoOverlayConfig</a></em></td>
 <td>NoOverlay contains configuration for no-overlay mode.<br>This is only allowed when Transport is "NoOverlay".</td>
 <td></td>
-<td></td>
+<td>Optional: {} <br></td>
 </tr>
 <tr>
 <td><code>evpn</code> <em><a href="#evpnconfig">EVPNConfig</a></em></td>
 <td>EVPN contains configuration for EVPN mode.<br>This is only allowed when Transport is "EVPN".</td>
 <td></td>
-<td></td>
+<td>Optional: {} <br></td>
 </tr>
 </tbody>
 </table>
@@ -6190,13 +6196,13 @@
 <td><code>outboundSNAT</code> <em><a href="#snatoption">SNATOption</a></em></td>
 <td>OutboundSNAT defines the SNAT behavior for outbound traffic from pods.</td>
 <td></td>
-<td>Enum: [Enabled Disabled] <br></td>
+<td>Enum: [Enabled Disabled] <br>Required: {} <br></td>
 </tr>
 <tr>
 <td><code>routing</code> <em><a href="#routingoption">RoutingOption</a></em></td>
 <td>Routing specifies whether the pod network routing is managed by OVN-Kubernetes or users.</td>
 <td></td>
-<td>Enum: [Managed Unmanaged] <br></td>
+<td>Enum: [Managed Unmanaged] <br>Required: {} <br></td>
 </tr>
 </tbody>
 </table>
@@ -6324,13 +6330,13 @@ See: https://docs.frrouting.org/en/stable-8.5/bgp.html#evpn-l3-route-targets</p>
 <td><code>spec</code> <em><a href="#userdefinednetworkspec">UserDefinedNetworkSpec</a></em></td>
 <td></td>
 <td></td>
-<td>Required: {} <br></td>
+<td>Required: {} <br>Required: {} <br></td>
 </tr>
 <tr>
 <td><code>status</code> <em><a href="#userdefinednetworkstatus">UserDefinedNetworkStatus</a></em></td>
 <td></td>
 <td></td>
-<td></td>
+<td>Optional: {} <br></td>
 </tr>
 </tbody>
 </table>
@@ -6390,19 +6396,19 @@ See: https://docs.frrouting.org/en/stable-8.5/bgp.html#evpn-l3-route-targets</p>
 <td><code>topology</code> <em><a href="#networktopology">NetworkTopology</a></em></td>
 <td>Topology describes network configuration.<br>Allowed values are "Layer3", "Layer2".<br>Layer3 topology creates a layer 2 segment per node, each with a different subnet. Layer 3 routing is used to interconnect node subnets.<br>Layer2 topology creates one logical switch shared by all nodes.</td>
 <td></td>
-<td>Enum: [Layer2 Layer3] <br>Required: {} <br></td>
+<td>Enum: [Layer2 Layer3] <br>Required: {} <br>Required: {} <br></td>
 </tr>
 <tr>
 <td><code>layer3</code> <em><a href="#layer3config">Layer3Config</a></em></td>
 <td>Layer3 is the Layer3 topology configuration.</td>
 <td></td>
-<td></td>
+<td>Optional: {} <br></td>
 </tr>
 <tr>
 <td><code>layer2</code> <em><a href="#layer2config">Layer2Config</a></em></td>
 <td>Layer2 is the Layer2 topology configuration.</td>
 <td></td>
-<td></td>
+<td>Optional: {} <br></td>
 </tr>
 </tbody>
 </table>
@@ -6430,7 +6436,7 @@ See: https://docs.frrouting.org/en/stable-8.5/bgp.html#evpn-l3-route-targets</p>
 <td><code>vrfName</code> <em>string</em></td>
 <td>VRFName is the name of the Linux VRF device that OVN-Kubernetes creates<br>for this network on every node where the network is present. It is<br>populated for primary networks. Consumers that must name the VRF, such<br>as FRRConfiguration authors filling in the routers 'vrf' field, should<br>read this value instead of deriving it.</td>
 <td></td>
-<td>MaxLength: 15 <br></td>
+<td>MaxLength: 15 <br>Optional: {} <br></td>
 </tr>
 </tbody>
 </table>
@@ -6452,13 +6458,13 @@ See: https://docs.frrouting.org/en/stable-8.5/bgp.html#evpn-l3-route-targets</p>
 <td><code>mode</code> <em><a href="#vlanmode">VLANMode</a></em></td>
 <td>mode describe the network VLAN mode.<br>Allowed value is "Access".<br>Access sets the network logical switch port in access mode, according to the config.</td>
 <td></td>
-<td>Enum: [Access] <br></td>
+<td>Enum: [Access] <br>Required: {} <br></td>
 </tr>
 <tr>
 <td><code>access</code> <em><a href="#accessvlanconfig">AccessVLANConfig</a></em></td>
 <td>Access is the access VLAN configuration</td>
 <td></td>
-<td></td>
+<td>Optional: {} <br></td>
 </tr>
 </tbody>
 </table>
@@ -6500,13 +6506,13 @@ See: https://docs.frrouting.org/en/stable-8.5/bgp.html#evpn-l3-route-targets</p>
 <td><code>vni</code> <em>integer</em></td>
 <td>VNI is the Virtual Network Identifier for this VRF.<br>VNI is a 24-bit field in the VXLAN header (RFC 7348), allowing values from 1 to 16777215.<br>but in the future this could be having different limit for other dataplane implementations.<br>Must be unique across all EVPN configurations in the cluster.</td>
 <td></td>
-<td>Maximum: 1.6777215e+07 <br>Minimum: 1 <br>Required: {} <br></td>
+<td>Maximum: 1.6777215e+07 <br>Minimum: 1 <br>Required: {} <br>Required: {} <br></td>
 </tr>
 <tr>
 <td><code>routeTarget</code> <em><a href="#routetargetstring">RouteTargetString</a></em></td>
 <td>RouteTarget is the import/export route target for this VRF.<br>If not specified, it will be auto-generated as "<as (autonomous="" system)="">:<vni (virtual="" network="" identifier)="">".<br>Auto-generation will use 2-byte AS if VNI &gt; 65535, since 4-byte AS/IPv4 only allows 2-byte local admin.<br>Follows FRR EVPN L3 Route-Target format (A.B.C.D:MN|EF:OPQR|GHJK:MN|<em>:OPQR|</em>:MN):<br>  - EF:OPQR   = 2-byte AS (1-65535) : local admin (4 bytes, 1-4294967295)<br>  - GHJK:MN   = 4-byte AS (65536-4294967295) : local admin (2 bytes, 1-65535)<br>  - A.B.C.D:MN = IPv4 address : local admin (2 bytes, 1-65535)<br>  - <em>:OPQR    = wildcard AS : local admin (4 bytes, 1-4294967295) - for import matching<br>  - </em>:MN      = wildcard AS : local admin (2 bytes, 1-65535) - for import matching<br>The 6-byte value constraint (RFC 4360) means AS size + local admin size = 6 bytes.</vni></as></td>
 <td></td>
-<td>MaxLength: 21 <br></td>
+<td>MaxLength: 21 <br>Optional: {} <br></td>
 </tr>
 </tbody>
 </table>

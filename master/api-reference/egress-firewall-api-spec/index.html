@@ -4983,15 +4983,15 @@
 </tr>
 <tr>
 <td><code>dnsName</code> <em>string</em></td>
-<td>dnsName is the domain name to allow/deny traffic to. If this is set, cidrSelector and nodeSelector must be unset.</td>
+<td>dnsName is the domain name to allow/deny traffic to. If this is set, cidrSelector and nodeSelector must be unset.<br>For a wildcard DNS name, the '<em>' will match only one label. Additionally, only a single '</em>' can be<br>used at the beginning of the wildcard DNS name. For example, '*.example.com' will match 'sub1.example.com'<br>but won't match 'sub2.sub1.example.com'.</td>
 <td></td>
-<td>Pattern: <code>^([A-Za-z0-9-]+\.)*[A-Za-z0-9-]+\.?$</code> <br></td>
+<td>Pattern: <code>^(\*\.)?([A-Za-z0-9-]+\.)*[A-Za-z0-9-]+\.?$</code> <br></td>
 </tr>
 <tr>
 <td><code>nodeSelector</code> <em><a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#labelselector-v1-meta">LabelSelector</a></em></td>
 <td>nodeSelector will allow/deny traffic to the Kubernetes node IP of selected nodes. If this is set,<br>cidrSelector and DNSName must be unset.</td>
 <td></td>
-<td></td>
+<td>Optional: {} <br></td>
 </tr>
 </tbody>
 </table>
@@ -5013,7 +5013,7 @@
 <td><code>protocol</code> <em>string</em></td>
 <td>protocol (tcp, udp, sctp) that the traffic must match.</td>
 <td></td>
-<td>Pattern: <code>^TCP|UDP|SCTP$</code> <br></td>
+<td>Pattern: <code>^TCP\|UDP\|SCTP$</code> <br></td>
 </tr>
 <tr>
 <td><code>port</code> <em>integer</em></td>
@@ -5041,13 +5041,13 @@
 <td><code>type</code> <em><a href="#egressfirewallruletype">EgressFirewallRuleType</a></em></td>
 <td>type marks this as an "Allow" or "Deny" rule</td>
 <td></td>
-<td>Pattern: <code>^Allow|Deny$</code> <br></td>
+<td>Pattern: <code>^Allow\|Deny$</code> <br></td>
 </tr>
 <tr>
 <td><code>ports</code> <em><a href="#egressfirewallport">EgressFirewallPort</a> array</em></td>
 <td>ports specify what ports and protocols the rule applies to</td>
 <td></td>
-<td></td>
+<td>Optional: {} <br></td>
 </tr>
 <tr>
 <td><code>to</code> <em><a href="#egressfirewalldestination">EgressFirewallDestination</a></em></td>
@@ -5064,6 +5064,24 @@
 - Pattern: <code>^Allow|Deny$</code></p>
 <p><em>Appears in:</em>
 - <a href="#egressfirewallrule">EgressFirewallRule</a></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Allow</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>Deny</code></td>
+<td></td>
+</tr>
+</tbody>
+</table>
 <h4 id="egressfirewallspec">EgressFirewallSpec<a class="headerlink" href="#egressfirewallspec" title="Permanent link">¶</a></h4>
 <p>EgressFirewallSpec is a desired state description of EgressFirewall.</p>
 <p><em>Appears in:</em>
@@ -5103,13 +5121,13 @@
 <td><code>status</code> <em>string</em></td>
 <td></td>
 <td></td>
-<td></td>
+<td>Optional: {} <br></td>
 </tr>
 <tr>
 <td><code>messages</code> <em>string array</em></td>
 <td></td>
 <td></td>
-<td></td>
+<td>Optional: {} <br></td>
 </tr>
 </tbody>
 </table>

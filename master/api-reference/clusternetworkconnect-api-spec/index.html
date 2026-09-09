@@ -5084,13 +5084,13 @@ and/or Cluster User Defined Networks together.</p>
 <td><code>spec</code> <em><a href="#clusternetworkconnectspec">ClusterNetworkConnectSpec</a></em></td>
 <td></td>
 <td></td>
-<td>Required: {} <br></td>
+<td>Required: {} <br>Required: {} <br></td>
 </tr>
 <tr>
 <td><code>status</code> <em><a href="#clusternetworkconnectstatus">ClusterNetworkConnectStatus</a></em></td>
 <td></td>
 <td></td>
-<td></td>
+<td>Optional: {} <br></td>
 </tr>
 </tbody>
 </table>
@@ -5150,13 +5150,13 @@ and/or Cluster User Defined Networks together.</p>
 <td><code>networkSelectors</code> <em><a href="#networkselectors">NetworkSelectors</a></em></td>
 <td>networkSelectors selects the networks to be connected together.<br>This can match User Defined Networks (UDNs) and/or Cluster User Defined Networks (CUDNs).<br>Only ClusterUserDefinedNetworkSelector and PrimaryUserDefinedNetworkSelector can be selected.</td>
 <td></td>
-<td>Required: {} <br></td>
+<td>Required: {} <br>Required: {} <br></td>
 </tr>
 <tr>
 <td><code>connectSubnets</code> <em><a href="#connectsubnet">ConnectSubnet</a> array</em></td>
 <td>connectSubnets specifies the subnets used for interconnecting the selected networks.<br>This creates a shared subnet space that connected networks can use to communicate.<br>Can have at most 1 CIDR for each IP family (IPv4 and IPv6).<br>Must not overlap with:<br> any of the pod subnets used by the selected networks.<br> any of the transit subnets used by the selected networks.<br> any of the service CIDR range used in the cluster.<br> any of the join subnet of the selected networks to be connected.<br> any of the masquerade subnet range used in the cluster.<br> any of the node subnets chosen by the platform.<br> any of other connect subnets for other ClusterNetworkConnects that might be selecting same networks.<br>Does not have a default value for the above reason so<br>that user takes care in setting non-overlapping subnets.</td>
 <td></td>
-<td>MaxItems: 2 <br>MinItems: 1 <br>Required: {} <br></td>
+<td>MaxItems: 2 <br>MinItems: 1 <br>Required: {} <br>Required: {} <br></td>
 </tr>
 <tr>
 <td><code>connectivity</code> <em><a href="#connectivitytype">ConnectivityType</a> array</em></td>
@@ -5211,13 +5211,13 @@ and/or Cluster User Defined Networks together.</p>
 <td><code>cidr</code> <em><a href="#cidr">CIDR</a></em></td>
 <td>CIDR specifies ConnectSubnet, which is split into smaller subnets for every connected network.<br>This CIDR should be containing 2<em>((Number of L3 networks</em>Max Number of Nodes)+Number of L2 networks) IPs.<br>Example: cidr= "192.168.0.0/16", networkPrefix=24 and if the cluster has 128 nodes that means that you can<br>connect 256 layer3 networks and 0 layer2 networks OR 255 layer3 networks and 128 layer2 networks.<br>CIDR also restricts the maximum number of networks that can be connected together<br>based on what CIDR range is picked. So choosing a large enough CIDR for future use cases<br>is important.<br>The largest CIDR that can be used for this field is /16 (65536 IPs) because OVN<br>has a limit of 32K(2^15) tunnel keys per router. So we will only ever have 32K /31 or /127 slices<br>which is 2^16 IPs.<br>Having a CIDR greater than /16 will not be utilized fully for the same reason.</td>
 <td></td>
-<td>MaxLength: 43 <br></td>
+<td>MaxLength: 43 <br>Required: {} <br></td>
 </tr>
 <tr>
 <td><code>networkPrefix</code> <em>integer</em></td>
-<td>NetworkPrefix specifies the prefix length for every connected network.<br>This prefix length should be equal to or longer than the length of the CIDR prefix.<br>For example, if the CIDR is 10.0.0.0/16 and the networkPrefix is 24,<br>then the connect subnet for each connected layer3 network will be 10.0.0.0/24, 10.0.1.0/24, 10.0.2.0/24 etc.<br>For layer2 networks we will allocate the next available /networkPrefix range<br>that is then split into /31 or /127 slices for each layer2 network<br>A good practice is to set this to a value that ensures it contains more<br>than twice the number of maximum nodes planned to be deployed in the cluster.<br>Each node gets a /31 subnet for the layer3 networks, hence networkPrefix should<br>contain enough IPs for 4 times the maximum nodes planned<br>Example - recommended values:<br>if you plan to deploy 10 nodes, set the networkPrefix to /26 (40+ IPs)<br>if you plan to deploy 100 nodes, set the networkPrefix to /23 (400+ IPs)<br>if you plan to deploy 1000 nodes, set the networkPrefix to /20 (4000+ IPs)<br>if you plan to deploy 5000 nodes, set the networkPrefix to /17 (20000+ IPs)<br>This field restricts the maximum number of nodes that can be deployed in the cluster<br>and hence its good to plan this value carefully along with the CIDR.</td>
+<td>NetworkPrefix specifies the prefix length for every connected network.<br>This prefix length should be strictly longer than the length of the CIDR prefix.<br>For example, if the CIDR is 10.0.0.0/16 and the networkPrefix is 24,<br>then the connect subnet for each connected layer3 network will be 10.0.0.0/24, 10.0.1.0/24, 10.0.2.0/24 etc.<br>For layer2 networks we will allocate the next available /networkPrefix range<br>that is then split into /31 or /127 slices for each layer2 network<br>A good practice is to set this to a value that ensures it contains more<br>than twice the number of maximum nodes planned to be deployed in the cluster.<br>Each node gets a /31 subnet for the layer3 networks, hence networkPrefix should<br>contain enough IPs for 4 times the maximum nodes planned<br>Example - recommended values:<br>if you plan to deploy 10 nodes, set the networkPrefix to /26 (40+ IPs)<br>if you plan to deploy 100 nodes, set the networkPrefix to /23 (400+ IPs)<br>if you plan to deploy 1000 nodes, set the networkPrefix to /20 (4000+ IPs)<br>if you plan to deploy 5000 nodes, set the networkPrefix to /17 (20000+ IPs)<br>This field restricts the maximum number of nodes that can be deployed in the cluster<br>and hence its good to plan this value carefully along with the CIDR.</td>
 <td></td>
-<td>Maximum: 127 <br>Minimum: 1 <br></td>
+<td>Maximum: 127 <br>Minimum: 1 <br>Required: {} <br></td>
 </tr>
 </tbody>
 </table>
