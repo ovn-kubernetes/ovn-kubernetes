@@ -4725,10 +4725,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#clusteruserdefinednetwork-crd" class="md-nav__link">
+  <a href="#user-defined-network-crds" class="md-nav__link">
     <span class="md-ellipsis">
       
-        ClusterUserDefinedNetwork CRD
+        user-defined network CRDs
       
     </span>
   </a>
@@ -5515,10 +5515,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#clusteruserdefinednetwork-crd" class="md-nav__link">
+  <a href="#user-defined-network-crds" class="md-nav__link">
     <span class="md-ellipsis">
       
-        ClusterUserDefinedNetwork CRD
+        user-defined network CRDs
       
     </span>
   </a>
@@ -5840,8 +5840,8 @@ backends.</p>
   CNI's <code>macspoofchk</code> capability.</li>
 <li>Enable unknown MAC address delivery.</li>
 <li>Avoid using ARP/NDP flooding as much as possible when MAC spoof protection is disabled.</li>
-<li>Support configuration through the NAD JSON config and the ClusterUserDefinedNetwork (CUDN) CRD
-  API only.</li>
+<li>Support configuration through the NAD JSON, UserDefinedNetwork (UDN) and
+  ClusterUserDefinedNetwork (CUDN) CRD APIs only.</li>
 </ul>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">¶</a></h2>
 <ul>
@@ -5858,9 +5858,6 @@ backends.</p>
   IP-level port security as a side effect.</li>
 <li>MAC learning or dynamic FDB management at the OVN-Kubernetes level; OVN manages its own FDB
   natively.</li>
-<li>Namespace-scoped UserDefinedNetwork (UDN) resources cannot enable this feature, as
-  disabling MAC spoof protection is a cluster-admin decision that should not be available to
-  namespace users.</li>
 </ul>
 <h2 id="future-goals">Future Goals<a class="headerlink" href="#future-goals" title="Permanent link">¶</a></h2>
 <ul>
@@ -6005,14 +6002,13 @@ current behavior). It accepts the values <code>"Enabled"</code> and <code>"Disab
 and <code>localnet</code> topologies only, requires <code>ipam.mode</code> to be <code>Disabled</code> (i.e., subnets must not be
 specified), and the network role must be <code>"secondary"</code>. Setting it on a <code>layer3</code> topology or
 with IPAM enabled results in a validation error.</p>
-<h4 id="clusteruserdefinednetwork-crd">ClusterUserDefinedNetwork CRD<a class="headerlink" href="#clusteruserdefinednetwork-crd" title="Permanent link">¶</a></h4>
-<p>Add a <code>macSecurity</code> sub-struct with a <code>mode</code> enum discriminator to <code>Layer2Config</code> and
-<code>LocalnetConfig</code> in the CUDN CRD API, following the pattern established by
+<h4 id="user-defined-network-crds">user-defined network CRDs<a class="headerlink" href="#user-defined-network-crds" title="Permanent link">¶</a></h4>
+<p>Add a <code>macSecurity</code> sub-struct with a <code>mode</code> enum discriminator to <code>Layer2Config</code> in both
+the UserDefinedNetwork and ClusterUserDefinedNetwork CRD APIs, and to <code>LocalnetConfig</code>
+in the CUDN CRD API. Localnet topology remains CUDN-only. This follows the pattern established by
 <a href="../okep-5085-localnet-api/">OKEP-5085</a> for extending the CUDN CRD and the discriminated
-union pattern used by <code>VLANConfig</code> and <code>IPAMConfig</code>. This field is only supported on
-ClusterUserDefinedNetwork (cluster-scoped); namespace-scoped UserDefinedNetwork resources
-cannot set this field.</p>
-<p><strong>Layer2 example:</strong></p>
+union pattern used by <code>VLANConfig</code> and <code>IPAMConfig</code>.</p>
+<p><strong>Layer2 examples:</strong></p>
 <div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.ovn.org/v1</span>
 <span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ClusterUserDefinedNetwork</span>
 <span class="nt">metadata</span><span class="p">:</span>
@@ -6029,6 +6025,20 @@ cannot set this field.</p>
 <span class="w">        </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Disabled</span>
 <span class="w">      </span><span class="nt">macSecurity</span><span class="p">:</span>
 <span class="w">        </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Disabled</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.ovn.org/v1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">UserDefinedNetwork</span>
+<span class="nt">metadata</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">kubevirt-l2-net</span>
+<span class="w">  </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">blue</span>
+<span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">topology</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Layer2</span>
+<span class="w">  </span><span class="nt">layer2</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">role</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Secondary</span>
+<span class="w">    </span><span class="nt">ipam</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Disabled</span>
+<span class="w">    </span><span class="nt">macSecurity</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Disabled</span>
 </code></pre></div>
 <p><strong>Localnet example:</strong></p>
 <div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.ovn.org/v1</span>
@@ -6085,25 +6095,19 @@ cannot set this field.</p>
 <p>For both <code>Layer2Config</code> and <code>LocalnetConfig</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="c1">// MACSecurity configures MAC spoof protection behavior on logical switch ports attached to this</span>
 <span class="c1">// network. When omitted, MAC spoof protection defaults to Enabled (the current default behavior).</span>
-<span class="c1">// Only applicable to Secondary role networks on ClusterUserDefinedNetwork resources.</span>
+<span class="c1">// Only applicable to Secondary role networks on UserDefinedNetwork and</span>
+<span class="c1">// ClusterUserDefinedNetwork resources, for their supported topologies.</span>
 <span class="c1">// +optional</span>
 <span class="nx">MACSecurity</span><span class="w"> </span><span class="o">*</span><span class="nx">MACSecurityConfig</span><span class="w"> </span><span class="s">`json:"macSecurity,omitempty"`</span>
 </code></pre></div>
 <h4 id="crd-validation-rules">CRD Validation Rules<a class="headerlink" href="#crd-validation-rules" title="Permanent link">¶</a></h4>
-<p>The following CEL validations should be added:</p>
+<p>The following CEL validations should be added for both UDN and CUDN resources, for their
+supported topologies:</p>
 <ul>
 <li>
 <p><code>macSecurity.mode: Disabled</code> is only allowed when <code>role</code> is <code>Secondary</code>:
   </p><div class="highlight"><pre><span></span><code>rule: "!has(self.macSecurity) || self.macSecurity.mode != 'Disabled' || self.role == 'Secondary'"
 message: "macSecurity.mode Disabled is only supported for Secondary networks"
-</code></pre></div><p></p>
-</li>
-<li>
-<p><code>macSecurity</code> is not allowed on namespace-scoped <code>UserDefinedNetwork</code> resources.
-  Since <code>UserDefinedNetworkSpec</code> and <code>ClusterUserDefinedNetworkSpec</code> share the same
-  <code>Layer2Config</code> type, this constraint must be enforced at the <code>UserDefinedNetworkSpec</code> level:
-  </p><div class="highlight"><pre><span></span><code>rule: "!has(self.layer2) || !has(self.layer2.macSecurity)"
-message: "macSecurity is only supported on ClusterUserDefinedNetwork"
 </code></pre></div><p></p>
 </li>
 <li>
@@ -6128,7 +6132,7 @@ parent-level immutability is relaxed in a future iteration to allow other fields
 updated independently.</p>
 </blockquote>
 <h4 id="nad-generation-from-crd">NAD Generation from CRD<a class="headerlink" href="#nad-generation-from-crd" title="Permanent link">¶</a></h4>
-<p>The CUDN controller that generates NADs from CRD specs must translate the
+<p>The user-defined resource controller that generates NADs from CRD specs must translate the
 <code>macSecurity.mode</code> field to the NAD JSON config <code>macSecurityMode</code> field, following the
 same pattern used for other fields like <code>physicalNetworkName</code>, <code>allowPersistentIPs</code>, etc.
 When <code>macSecurity</code> is omitted in the CRD, the NAD should either omit <code>macSecurityMode</code>
@@ -6224,14 +6228,15 @@ proposed in this OKEP is forward-compatible with these future modes.</p>
 <li>From pod A, send traffic with a spoofed source MAC address.</li>
 <li>Verify pod B receives the traffic (it would be dropped without the feature).</li>
 <li>Repeat for localnet topology.</li>
-<li>Test with CUDN CRD (not just raw NAD).</li>
+<li>Test with both UserDefinedNetwork and ClusterUserDefinedNetwork CRDs for layer2,
+  and ClusterUserDefinedNetwork for localnet (not just raw NAD).</li>
 </ul>
 <h4 id="cross-feature-testing">Cross Feature Testing<a class="headerlink" href="#cross-feature-testing" title="Permanent link">¶</a></h4>
 <ul>
 <li>Verify that <code>allowPersistentIPs</code> and <code>macSecurity.mode: Disabled</code> are mutually exclusive:
   <code>allowPersistentIPs</code> requires IPAM enabled (to assign and persist IPs across live migrations),
   while <code>macSecurity.mode: Disabled</code> requires <code>ipam.mode: Disabled</code>. Validation should reject
-  a CUDN that specifies both.</li>
+  user-defined network CRDs that specify both.</li>
 </ul>
 <h3 id="documentation-details">Documentation Details<a class="headerlink" href="#documentation-details" title="Permanent link">¶</a></h3>
 <ul>
@@ -6247,12 +6252,9 @@ proposed in this OKEP is forward-compatible with these future modes.</p>
    IP spoofing attacks.</li>
 <li>
 <p><strong>Mitigation</strong>: The feature is opt-in, per-network, restricted to secondary networks with
-     <code>Secondary</code> role only, and only available on cluster-scoped <code>ClusterUserDefinedNetwork</code>
-     resources. Namespace-scoped <code>UserDefinedNetwork</code> resources cannot enable this feature,
-     ensuring that only cluster administrators can disable MAC spoof protection. The default
-     remains secure (MAC spoof protection enabled). Administrators deploying this feature should
-     use encrypted transports on networks with MAC spoof protection disabled when sensitive
-     traffic is present.</p>
+     <code>Secondary</code> role only. The default remains secure (MAC spoof protection is enabled). 
+     Administrators deploying this feature should use encrypted transport on networks with MAC
+     spoof protection disabled when sensitive traffic is present.</p>
 </li>
 <li>
 <p><strong>Broadcast storm risk with unknown addresses</strong>: Adding <code>unknown</code> to LSP addresses means
@@ -6288,8 +6290,9 @@ with MAC spoof protection enabled.</p>
   preserving the current behavior of enforcing port security on all LSPs.</li>
 <li>The NAD JSON config <code>macSecurityMode</code> field is additive and optional. Existing NAD
   configurations without the field continue to work identically.</li>
-<li>The CRD field is an optional pointer with nil default. Existing CUDN resources are unaffected.
-  UDN resources cannot use this field with <code>mode: Disabled</code>.</li>
+<li>The CRD field is an optional pointer with nil default. Existing UserDefinedNetwork and
+  ClusterUserDefinedNetwork resources are unaffected. Both resources can opt in to
+  <code>mode: Disabled</code> on supported secondary networks with <code>ipam.mode: Disabled</code>.</li>
 <li>No migration or upgrade steps are required.</li>
 </ul>
 <h2 id="alternatives">Alternatives<a class="headerlink" href="#alternatives" title="Permanent link">¶</a></h2>
@@ -6311,8 +6314,8 @@ invalid or nonsensical. A single consolidated knob eliminates this confusion.</p
 annotation (e.g., <code>k8s.ovn.org/allow-mac-spoofing: "true"</code>).</p>
 <p><strong>Why rejected:</strong>
 - <strong>Security</strong>: Any pod (or user with pod-create access) could potentially set the annotation,
-  widening the attack surface. A per-network setting on the cluster-scoped CUDN resource
-  requires cluster-admin intervention.
+  widening the attack surface. A per-network setting requires permission to configure the
+  namespace-scoped UDN or cluster-scoped CUDN resource, rather than just pod-create access.
 - <strong>Consistency</strong>: The bridge CNI's <code>macspoofchk</code> is per-network, and OVN-Kubernetes should
   follow the same granularity for consistency.
 - <strong>Semantics</strong>: MAC spoof protection is a property of the network infrastructure, not of
@@ -6320,11 +6323,11 @@ annotation (e.g., <code>k8s.ovn.org/allow-mac-spoofing: "true"</code>).</p>
   don't creates complex and hard-to-reason-about security boundaries.
 - Per-pod control could be considered as a future extension if a use case emerges.</p>
 <h3 id="alternative-3-nad-only-no-crd-integration">Alternative 3: NAD-Only (No CRD Integration)<a class="headerlink" href="#alternative-3-nad-only-no-crd-integration" title="Permanent link">¶</a></h3>
-<p>Keep the feature in the NAD JSON configuration only, without adding a field to the CUDN CRD.</p>
+<p>Keep the feature in the NAD JSON configuration only, without adding a field to the UDN or CUDN CRDs.</p>
 <p><strong>Why rejected:</strong> The OVN-Kubernetes community is moving toward structured CRD APIs for network
 configuration. <a href="../okep-5085-localnet-api/">OKEP-5085</a> established the pattern of defining
 features in the CUDN CRD with automatic NAD generation. Adding a feature only to NADs creates
-a management gap where CUDN-managed networks cannot use the feature without manual NAD editing,
+a management gap where UDN- or CUDN-managed networks cannot use the feature without manual NAD editing,
 which defeats the purpose of the CRD controller.</p>
 <h3 id="alternative-4-three-valued-enum">Alternative 4: Three-Valued Enum<a class="headerlink" href="#alternative-4-three-valued-enum" title="Permanent link">¶</a></h3>
 <p>Instead of two modes, use a three-valued enum <code>macSecurity.mode: Enabled | MACOnly | Disabled</code>:
