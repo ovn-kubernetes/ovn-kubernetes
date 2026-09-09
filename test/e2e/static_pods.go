@@ -14,6 +14,7 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
 
 	v1 "k8s.io/api/core/v1"
@@ -112,7 +113,7 @@ spec:
     - name: web 
       image: %s
       command: ["/bin/bash", "-c", "trap : TERM INT; sleep infinity & wait"]
-`, f.Namespace.Name, images.AgnHost())
+`, f.Namespace.Name, deploymentconfig.Get().GetImage(images.Agnhost))
 		createStaticPod(nodeName, staticPodYaml)
 		err = waitForPodRunningInNamespaceTimeout(f.ClientSet, podName, f.Namespace.Name, time.Second*60)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())

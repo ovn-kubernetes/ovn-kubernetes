@@ -14,6 +14,13 @@ const (
 	L3UDNMultiSubnetConfig Config = "L3UDNMultiSubnet"
 )
 
+type ImageID int
+
+type ImageConfig struct {
+	ImageID  ImageID
+	PullSpec string
+}
+
 // DeploymentConfig offers visibility into the configuration OVN-Kubernetes environment for e2e test cases. This includes all host or node level config.
 // Remove when OVN-Kubernetes exposes its config via an API.
 type DeploymentConfig interface {
@@ -21,8 +28,15 @@ type DeploymentConfig interface {
 	FRRK8sNamespace() string
 	ExternalBridgeName() string
 	PrimaryInterfaceName() string
-	GetAgnHostContainerImage() string
 	// IsConfigurationEnabled checks whether a specific configuration flag is enabled in the deployment.
 	IsConfigurationEnabled(config Config) bool
 	NBDBContainerName() string
+	// GetImage returns the pull spec for a given image ID.
+	GetImage(imageID ImageID) string
+	// AddImage registers images that are needed by a test suite. Call after
+	// checking if the configuration is enabled so that only images for enabled
+	// test suites are included.
+	AddImage(imageID ...ImageID)
+	// GetRequiredImages returns the set of images needed for the current test run.
+	GetRequiredImages() []ImageConfig
 }
