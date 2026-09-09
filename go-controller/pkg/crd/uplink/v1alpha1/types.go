@@ -30,6 +30,7 @@ const (
 const (
 	UplinkStateReasonResolved                        = "Resolved"
 	UplinkStateReasonGatewayConfigured               = "GatewayConfigured"
+	UplinkStateReasonNoActiveCUDNs                   = "NoActiveCUDNs"
 	UplinkStateReasonHostDataDiscovered              = "HostDataDiscovered"
 	UplinkStateReasonHostInterfaceNotFound           = "HostInterfaceNotFound"
 	UplinkStateReasonBridgeNotFound                  = "BridgeNotFound"
@@ -40,7 +41,6 @@ const (
 	UplinkStateReasonGatewayInfoUnavailable          = "GatewayInfoUnavailable"
 	UplinkStateReasonWaitingForDPUHost               = "WaitingForDPUHost"
 	UplinkStateReasonNodeSelectorOverlap             = "NodeSelectorOverlap"
-	UplinkStateReasonGatewayConfigurationPending     = "GatewayConfigurationPending"
 	UplinkStateReasonVRFAttachmentFailed             = "UplinkVRFAttachmentFailed"
 	UplinkStateReasonBridgeMappingFailed             = "UplinkBridgeMappingFailed"
 	UplinkStateReasonGatewayProgrammingFailed        = "UplinkGatewayProgrammingFailed"

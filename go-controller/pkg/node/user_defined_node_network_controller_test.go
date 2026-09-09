@@ -544,6 +544,7 @@ var _ = Describe("UserDefinedNodeNetworkController: UserDefinedPrimaryNetwork Ga
 			Expect(v6MasqIPRule).To(BeTrue())
 
 			By("delete the network and ensure its associated VRF device is also deleted")
+			controller.Stop()
 			err = controller.Cleanup()
 			Expect(err).NotTo(HaveOccurred())
 			Eventually(func() error {

@@ -12,8 +12,10 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"time"
 
 	nadfake "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/fake"
+	"github.com/stretchr/testify/mock"
 	"github.com/vishvananda/netlink"
 
 	corev1 "k8s.io/api/core/v1"
@@ -41,6 +43,75 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
+
+func TestMasqueradeLinkOperationsAreSerialized(t *testing.T) {
+	if err := config.PrepareTestConfig(); err != nil {
+		t.Fatalf("failed to prepare test config: %v", err)
+	}
+	t.Cleanup(func() { _ = config.PrepareTestConfig() })
+	config.IPv4Mode = false
+	config.IPv6Mode = false
+
+	netlinkMock := new(utilMocks.NetLinkOps)
+	originalNetlinkOps := util.GetNetLinkOps()
+	util.SetNetLinkOpMockInst(netlinkMock)
+	t.Cleanup(func() { util.SetNetLinkOpMockInst(originalNetlinkOps) })
+
+	firstLink := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "br-a", Index: 1}}
+	secondLink := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "br-b", Index: 2}}
+	firstEntered := make(chan struct{})
+	secondEntered := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	netlinkMock.On("LinkByName", "br-a").
+		Run(func(mock.Arguments) {
+			close(firstEntered)
+			<-releaseFirst
+		}).
+		Return(firstLink, nil).
+		Once()
+	netlinkMock.On("LinkSetUp", firstLink).Return(nil).Once()
+	netlinkMock.On("LinkByName", "br-b").
+		Run(func(mock.Arguments) { close(secondEntered) }).
+		Return(secondLink, nil).
+		Once()
+	netlinkMock.On("LinkSetUp", secondLink).Return(nil).Once()
+
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- setNodeMasqueradeIPOnExtBridge("br-a") }()
+	<-firstEntered
+
+	secondStarted := make(chan struct{})
+	secondDone := make(chan error, 1)
+	go func() {
+		close(secondStarted)
+		secondDone <- addHostMACBindings("br-b")
+	}()
+	<-secondStarted
+	enteredConcurrently := false
+	select {
+	case <-secondEntered:
+		enteredConcurrently = true
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releaseFirst)
+	if err := <-firstDone; err != nil {
+		t.Fatalf("masquerade address operation failed: %v", err)
+	}
+	if !enteredConcurrently {
+		select {
+		case <-secondEntered:
+		case <-time.After(time.Second):
+			t.Fatal("masquerade neighbor operation did not run")
+		}
+	}
+	if err := <-secondDone; err != nil {
+		t.Fatalf("masquerade neighbor operation failed: %v", err)
+	}
+	if enteredConcurrently {
+		t.Fatal("masquerade address and neighbor operations ran concurrently")
+	}
+	netlinkMock.AssertExpectations(t)
+}
 
 func TestHostNetworkServiceOpenFlowsUsesGroupForMultipleHostNetworkTargetPorts(t *testing.T) {
 	if err := config.PrepareTestConfig(); err != nil {
