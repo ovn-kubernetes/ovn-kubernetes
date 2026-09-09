@@ -121,7 +121,7 @@ func newAgnhostPod(namespace, name string, command ...string) *v1.Pod {
 			Containers: []v1.Container{
 				{
 					Name:    name,
-					Image:   images.AgnHost(),
+					Image:   images.AgnHost().PullSpec,
 					Command: command,
 				},
 			},
@@ -142,7 +142,7 @@ func newLatestAgnhostPod(namespace, name string, command ...string) *v1.Pod {
 			Containers: []v1.Container{
 				{
 					Name:    name,
-					Image:   images.AgnHost(),
+					Image:   images.AgnHost().PullSpec,
 					Command: command,
 				},
 			},
@@ -164,7 +164,7 @@ func newAgnhostPodOnNode(name, nodeName string, labels map[string]string, comman
 			Containers: []v1.Container{
 				{
 					Name:    name,
-					Image:   images.AgnHost(),
+					Image:   images.AgnHost().PullSpec,
 					Command: command,
 				},
 			},
@@ -1914,7 +1914,7 @@ func startTcpdumpMonitorPodOnNode(f *framework.Framework, startupTimeout time.Du
 			Containers: []corev1.Container{
 				{
 					Name:  "traffic-monitor",
-					Image: images.Netshoot(),
+					Image: images.Netshoot().PullSpec,
 					Command: []string{
 						"/bin/bash",
 						"-c",

@@ -435,7 +435,7 @@ func (o *ContainerOps) CreateExternalContainer(container api.ExternalContainer) 
 	if len(container.CmdArgs) > 0 {
 		cmd = append(cmd, container.CmdArgs...)
 	} else {
-		if images.AgnHost() == container.Image {
+		if images.AgnHost().PullSpec == container.Image {
 			cmd = append(cmd, "pause")
 		}
 	}

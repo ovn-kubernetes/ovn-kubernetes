@@ -1272,7 +1272,7 @@ config:
 					if nse != nil {
 						pod.Annotations = networkSelectionElements(*nse)
 					}
-					pod.Spec.Containers[0].Image = images.Netshoot()
+					pod.Spec.Containers[0].Image = images.Netshoot().PullSpec
 					pod.Spec.Containers[0].Args = []string{iperfServerScript + "\n sleep infinity"}
 				})
 				if err != nil {
@@ -1415,7 +1415,7 @@ config:
 			By("Create external container to run the iperf3 clients")
 			externalContainer := infraapi.ExternalContainer{
 				Name:    namespace + "-iperf",
-				Image:   images.Netshoot(),
+				Image:   images.Netshoot().PullSpec,
 				CmdArgs: []string{"sleep", "infinity"},
 				ExtPort: infraprovider.Get().GetExternalContainerPort(),
 			}
@@ -1522,7 +1522,7 @@ config:
 			staticIPv4, staticIPv6  string
 			staticMAC               = "02:00:00:00:00:01"
 			externalMACVRFContainer = infraapi.ExternalContainer{
-				Image:   images.Netshoot(),
+				Image:   images.Netshoot().PullSpec,
 				CmdArgs: []string{"sleep", "infinity"},
 			}
 
@@ -1784,7 +1784,7 @@ write_files:
 
 				externalContainer = infraapi.ExternalContainer{
 					Name:    namespace + "-iperf",
-					Image:   images.Netshoot(),
+					Image:   images.Netshoot().PullSpec,
 					CmdArgs: []string{"sleep", "infinity"},
 					ExtPort: infraprovider.Get().GetExternalContainerPort(),
 				}
@@ -1862,7 +1862,7 @@ write_files:
 				externalContainerPort := infraprovider.Get().GetExternalContainerPort()
 				externalContainer = infraapi.ExternalContainer{
 					Name:    externalContainerName,
-					Image:   images.Netshoot(),
+					Image:   images.Netshoot().PullSpec,
 					CmdArgs: []string{"sleep", "infinity"},
 					ExtPort: externalContainerPort,
 				}

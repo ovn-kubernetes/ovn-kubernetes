@@ -71,7 +71,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", feature.Networ
 						if isHostNetwork {
 							port = infraprovider.Get().GetK8HostPort()
 						}
-						deployment := e2edeployment.NewDeployment("test-deployment", replicas, map[string]string{"app": "test"}, "agnhost", images.AgnHost(), appsv1.RollingUpdateDeploymentStrategyType)
+						deployment := e2edeployment.NewDeployment("test-deployment", replicas, map[string]string{"app": "test"}, "agnhost", images.AgnHost().PullSpec, appsv1.RollingUpdateDeploymentStrategyType)
 						deployment.Namespace = f.Namespace.Name
 						deployment.Spec.Template.Spec.HostNetwork = isHostNetwork
 						deployment.Spec.Template.Spec.Containers[0].Command = getAgnHostHTTPPortBindFullCMD(port)
@@ -202,7 +202,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", feature.Networ
 
 						replicas := int32(3)
 						By("creating the deployment")
-						deployment := e2edeployment.NewDeployment("test-deployment", replicas, map[string]string{"app": "test"}, "agnhost", images.AgnHost(), appsv1.RollingUpdateDeploymentStrategyType)
+						deployment := e2edeployment.NewDeployment("test-deployment", replicas, map[string]string{"app": "test"}, "agnhost", images.AgnHost().PullSpec, appsv1.RollingUpdateDeploymentStrategyType)
 						deployment.Namespace = defaultNetNamespace.Name
 						deployment.Spec.Template.Spec.Containers[0].Command = getAgnHostHTTPPortBindFullCMD(80)
 
