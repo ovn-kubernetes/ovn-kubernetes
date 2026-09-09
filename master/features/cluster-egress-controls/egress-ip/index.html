@@ -2932,6 +2932,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#known-limitations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Known Limitations
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5145,6 +5156,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#known-limitations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Known Limitations
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5260,6 +5282,19 @@ instead a logical router policy is attached to the egress nodes OVN gateway rout
 Routing<span class="w"> </span>Policies
 <span class="w">        </span><span class="m">95</span><span class="w">             </span>ip4.src<span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="m">10</span>.128.1.3<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>pkt.mark<span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="m">0</span><span class="w">           </span>allow<span class="w">               </span><span class="nv">pkt_mark</span><span class="o">=</span><span class="m">50006</span>
 </code></pre></div><p></p>
+<p>North-south next-hop selection then uses the Gateway Router routing table
+(typically its default route toward the node default gateway on <code>br-ex</code>).
+Static routes that exist in the host's <strong>main routing table</strong> for the
+<strong>primary node network</strong> (the interface configured as the node's primary
+network, usually <code>br-ex</code>) are not consulted.</p>
+<p>For example, if the node default gateway is <code>192.168.1.1</code> on the primary node
+network and the host main table also contains <code>192.168.2.0/24 via 192.168.1.2</code>,
+EgressIP traffic sourced from an address on that primary interface still leaves
+via <code>192.168.1.1</code>. It does not follow the host static route via <code>192.168.1.2</code>.</p>
+<p>This is true in both shared gateway mode and local gateway mode
+(<code>routingViaHost=true</code>). Primary-network EgressIP still follows the shared
+gateway path through the Gateway Router rather than the host kernel, so
+those main-table routes never apply.</p>
 <h3 id="egressip-ip-is-assigned-to-a-secondary-host-interface">EgressIP IP is assigned to a secondary host interface<a class="headerlink" href="#egressip-ip-is-assigned-to-a-secondary-host-interface" title="Permanent link">¶</a></h3>
 <p>Note that this is unsupported for user defined networks.
 Lets now imagine the Egress IP(s) mentioned previously, are not hosted by the OVN primary network and is hosted
@@ -5438,6 +5473,16 @@ egressip-node-healthcheck-port=9107
 <li>If configured, the session uses the certificates from the <code>[egressip-healthcheck-tls]</code> configuration section. The historical <code>--nb-client-*</code> flags and <code>[ovnnorth]</code> configuration keys remain accepted for compatibility. An insecure gRPC session is used when no certificates are specified.</li>
 <li>The <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/blob/82f167a3920c8c3cd0687ceb3e7a5ba64372be69/go-controller/pkg/ovn/healthcheck/health.proto#L6">message used for probing</a> is the <a href="https://github.com/grpc/grpc/blob/master/src/proto/grpc/health/v1/health.proto">standard service health</a> specified in gRPC.</li>
 <li><a href="https://github.com/ovn-kubernetes/ovn-kubernetes/blob/82f167a3920c8c3cd0687ceb3e7a5ba64372be69/go-controller/pkg/ovn/healthcheck/egressip_healthcheck.go#L193-L195">Special care was taken into consideration</a> to handle cases when the gRPC session bounced for normal reasons. EgressIP implementation will not declare a node unreachable under these circumstances.</li>
+</ul>
+<h2 id="known-limitations">Known Limitations<a class="headerlink" href="#known-limitations" title="Permanent link">¶</a></h2>
+<ul>
+<li>Layer 2 networks and localnet are not supported.</li>
+<li>EgressIP on the <strong>primary node network</strong> (the interface configured as the
+  node's network, typically <code>br-ex</code>) does not honor static routes that exist in
+  the host's <strong>main routing table</strong> for that network. Next-hop selection uses
+  the OVN Gateway Router default route. Enabling local gateway mode
+  (<code>routingViaHost=true</code>) does not send this traffic through the host kernel, so
+  those main-table routes still do not apply.</li>
 </ul>
 
 
