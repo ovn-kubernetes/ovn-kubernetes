@@ -178,6 +178,11 @@ type BaseNetworkController struct {
 	releasedPodsBeforeStartup  map[string]sets.Set[string]
 	releasedPodsOnStartupMutex sync.Mutex
 
+	// IP releases completed during an unfinished pod reconcile. Keep these
+	// receipts until the entire reconcile succeeds, not just LSP teardown.
+	podIPReleasesMutex sync.Mutex
+	podIPReleases      map[string]sets.Set[string]
+
 	// IP addresses of OVN Cluster logical router port ("GwRouterToJoinSwitchPrefix + OVNClusterRouter")
 	// connecting to the join switch
 	ovnClusterLRPToJoinIfAddrs []*net.IPNet
