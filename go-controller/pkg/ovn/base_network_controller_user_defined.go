@@ -90,7 +90,7 @@ func (bsnc *BaseUserDefinedNetworkController) getReplacementPod(pod *corev1.Pod)
 // pods.
 func (bsnc *BaseUserDefinedNetworkController) reconcilePodNetworkPolicyMembershipAfterDelete(pod, replacementPod *corev1.Pod) error {
 	if replacementPod != nil {
-		return bsnc.reconcilePodNetworkPolicyMembership(replacementPod)
+		return bsnc.reconcilePodNetworkPolicyMembershipWithPortCheck(replacementPod, false)
 	}
 	return bsnc.deletePodNetworkPolicyMembership(pod)
 }
