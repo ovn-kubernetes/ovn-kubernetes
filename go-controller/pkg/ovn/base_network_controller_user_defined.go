@@ -478,10 +478,14 @@ func (bsnc *BaseUserDefinedNetworkController) ReconcilePod(ctx context.Context, 
 	if oldPod != nil {
 		eventReason = "ErrorUpdatingResource"
 	}
-	if err := bsnc.ensurePodForUserDefinedNetwork(ctx, newPod, addPort, eventReason); err != nil {
-		return nil, err
+	err = bsnc.ensurePodForUserDefinedNetwork(ctx, newPod, addPort, eventReason)
+	if err == nil {
+		err = bsnc.reconcileNetworkPolicyPortGroups(newPod)
 	}
-	if err := bsnc.reconcileNetworkPolicyPortGroups(newPod); err != nil {
+	if err != nil {
+		if addPort {
+			bsnc.logicalPortCache.markPodForReconcile(newPod, bsnc.GetNetworkName())
+		}
 		return nil, err
 	}
 	bsnc.finishPodReconcile(newPod)
@@ -734,7 +738,7 @@ func (bsnc *BaseUserDefinedNetworkController) shouldEnsurePodForUserDefinedNetwo
 	for _, nadKey := range nadKeys {
 		portInfo, err := bsnc.logicalPortCache.get(pod, nadKey)
 		// Ignore cache entries written by other network controllers.
-		if err != nil || !portInfo.expires.IsZero() || portInfo.appliedNetworkName != bsnc.GetNetworkName() {
+		if err != nil || !portInfo.expires.IsZero() || portInfo.needsReconcile || portInfo.appliedNetworkName != bsnc.GetNetworkName() {
 			return true
 		}
 		if bsnc.dhcpPodNetworkOutOfSync(pod, nadKey, portInfo) {
