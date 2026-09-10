@@ -38,6 +38,11 @@ type PodAnnotationAllocator struct {
 	macRegistry          mac.Register
 }
 
+// ErrIPAllocatedByOther identifies an allocation conflict known to belong to
+// another pod attachment. It remains an ErrAllocated for general callers, but
+// must not be accepted as this pod's existing reservation.
+var ErrIPAllocatedByOther = fmt.Errorf("IP is allocated to another pod attachment: %w", ip.ErrAllocated)
+
 type AllocatorOption func(*PodAnnotationAllocator)
 
 func NewPodAnnotationAllocator(
@@ -783,6 +788,13 @@ func AddRoutesGatewayIP(
 // in scenarios where IPs may already be legitimately allocated.
 // Returns false if the error is not ErrAllocated or if none of the skip conditions are met. True otherwise.
 func shouldSkipAllocateIPsError(err error, networkAllocated bool, ipamClaim *ipamclaimsapi.IPAMClaim, requireIPAMReservation bool) bool {
+	// An owner-aware allocator may know that the address belongs to another
+	// attachment. Unlike an ordinary ErrAllocated, that conflict must never be
+	// treated as this pod's existing reservation.
+	if errors.Is(err, ErrIPAllocatedByOther) {
+		return false
+	}
+
 	// Only skip if it's an "already allocated" error
 	if !ip.IsErrAllocated(err) || requireIPAMReservation {
 		return false

@@ -216,6 +216,10 @@ func (oc *DefaultNetworkController) deleteLogicalPort(pod *corev1.Pod, portInfo 
 	}
 
 	if !shouldRelease {
+		// Successful teardown ends this attachment's ownership even when a
+		// different pod still owns the allocator reservation.
+		oc.forgetPodIPAllocation(pInfo.logicalSwitch, pInfo.ips,
+			podAttachment{uid: pod.UID, nadKey: types.DefaultNetworkName})
 		return nil
 	}
 
