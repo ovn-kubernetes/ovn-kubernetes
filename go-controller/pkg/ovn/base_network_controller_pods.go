@@ -643,10 +643,16 @@ func (bnc *BaseNetworkController) addLogicalPortToNetwork(pod *corev1.Pod, nadKe
 	// it for the default network as well. If at all possible, keep them
 	// functionally equivalent going forward.
 	var annotationUpdated bool
+	// A successful release receipt means this attachment no longer owns the
+	// annotation's old IPs. Require IPAM to reserve them again before the receipt
+	// can be retired; ErrAllocated may now refer to a different pod.
+	requireIPAMReservation := bnc.wasPodIPReleased(pod, nadKey)
 	if bnc.IsUserDefinedNetwork() {
-		podAnnotation, annotationUpdated, err = bnc.allocatePodAnnotationForUserDefinedNetwork(pod, existingLSP, nadKey, network, networkRole)
+		podAnnotation, annotationUpdated, err = bnc.allocatePodAnnotationForUserDefinedNetwork(
+			pod, existingLSP, nadKey, network, networkRole, requireIPAMReservation)
 	} else {
-		podAnnotation, annotationUpdated, err = bnc.allocatePodAnnotation(pod, existingLSP, podDesc, nadKey, network, networkRole)
+		podAnnotation, annotationUpdated, err = bnc.allocatePodAnnotation(
+			pod, existingLSP, podDesc, nadKey, network, networkRole, requireIPAMReservation)
 	}
 
 	if err != nil {
@@ -845,7 +851,7 @@ func calculateStaticMAC(podDesc string, mac string) (net.HardwareAddr, error) {
 
 // allocatePodAnnotation and update the corresponding pod annotation.
 func (bnc *BaseNetworkController) allocatePodAnnotation(pod *corev1.Pod, existingLSP *nbdb.LogicalSwitchPort, podDesc,
-	nadKey string, network *nadapi.NetworkSelectionElement, networkRole string) (*util.PodAnnotation, bool, error) {
+	nadKey string, network *nadapi.NetworkSelectionElement, networkRole string, requireIPAMReservation bool) (*util.PodAnnotation, bool, error) {
 	var releaseIPs bool
 	var podMac net.HardwareAddr
 	var podIfAddrs []*net.IPNet
@@ -892,7 +898,8 @@ func (bnc *BaseNetworkController) allocatePodAnnotation(pod *corev1.Pod, existin
 						return podAnnotation, false, nil
 					}
 				}
-				if err = bnc.lsManager.AllocateIPs(switchName, podIfAddrs); err != nil && !ipallocator.IsErrAllocated(err) {
+				if err = bnc.lsManager.AllocateIPs(switchName, podIfAddrs); err != nil &&
+					(!ipallocator.IsErrAllocated(err) || requireIPAMReservation) {
 					return nil, false, fmt.Errorf("unable to ensure IPs allocated for already annotated pod: %s, IPs: %s, error: %v",
 						podDesc, util.JoinIPNetIPs(podIfAddrs, " "), err)
 				}
@@ -923,7 +930,8 @@ func (bnc *BaseNetworkController) allocatePodAnnotation(pod *corev1.Pod, existin
 	if len(podIfAddrs) == 0 {
 		needsNewMacOrIPAllocation = true
 	} else if bnc.doesNetworkRequireIPAM() {
-		if err = bnc.lsManager.AllocateIPs(switchName, podIfAddrs); err != nil && !ipallocator.IsErrAllocated(err) {
+		if err = bnc.lsManager.AllocateIPs(switchName, podIfAddrs); err != nil &&
+			(!ipallocator.IsErrAllocated(err) || requireIPAMReservation) {
 			klog.Warningf("Unable to allocate IPs %s found on existing OVN port: %s, for pod %s on switch: %s"+
 				" error: %v", util.JoinIPNetIPs(podIfAddrs, " "), bnc.GetLogicalPortName(pod, nadKey), podDesc, switchName, err)
 
@@ -1001,7 +1009,7 @@ func (bnc *BaseNetworkController) allocatePodAnnotation(pod *corev1.Pod, existin
 // allocatePodAnnotationForUserDefinedNetwork and update the corresponding pod
 // annotation.
 func (bnc *BaseNetworkController) allocatePodAnnotationForUserDefinedNetwork(pod *corev1.Pod, lsp *nbdb.LogicalSwitchPort,
-	nadKey string, network *nadapi.NetworkSelectionElement, networkRole string) (*util.PodAnnotation, bool, error) {
+	nadKey string, network *nadapi.NetworkSelectionElement, networkRole string, requireIPAMReservation bool) (*util.PodAnnotation, bool, error) {
 	switchName, err := bnc.getExpectedSwitchName(pod)
 	if err != nil {
 		return nil, false, err
@@ -1059,6 +1067,7 @@ func (bnc *BaseNetworkController) allocatePodAnnotationForUserDefinedNetwork(pod
 		nadKey,
 		network,
 		reallocate,
+		requireIPAMReservation,
 		networkRole,
 	)
 
