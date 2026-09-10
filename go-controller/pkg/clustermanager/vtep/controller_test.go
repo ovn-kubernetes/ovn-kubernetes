@@ -21,8 +21,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ktesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/workqueue"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	controllerutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	vtepv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
 	vtepfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/clientset/versioned/fake"
@@ -103,6 +105,24 @@ func newNodeWithVTEPAnnotation(name string, vtepIPs map[string][]string) *corev1
 	}
 }
 
+// countStatusWrites returns the number of status-subresource writes recorded by
+// the fake clientset. updateStatusCondition is the only code path that writes
+// the status subresource (via ApplyStatus, recorded as a "patch" with
+// subresource "status"). Filtering on the subresource isolates these from both
+// the test's own condition-polling get calls and the finalizer Apply in
+// ensureFinalizer (a "patch" on the main resource, subresource ""), which can
+// fire more than once per VTEP while the lister cache lags and is unrelated to
+// the status convergence we want to test.
+func countStatusWrites(client *vtepfake.Clientset) int {
+	count := 0
+	for _, action := range client.Actions() {
+		if action.GetVerb() == "patch" && action.GetSubresource() == "status" {
+			count++
+		}
+	}
+	return count
+}
+
 func getVTEPCondition(client *vtepfake.Clientset, vtepName, conditionType string) (*metav1.Condition, error) {
 	vtep, err := client.K8sV1().VTEPs().Get(context.Background(), vtepName, metav1.GetOptions{})
 	if err != nil {
@@ -120,7 +140,14 @@ var _ = ginkgo.Describe("VTEP Controller", func() {
 		fakeRecorder  *record.FakeRecorder
 	)
 
-	start := func(objects ...runtime.Object) {
+	// startWithReconcile builds and starts the controller. When reconcile is
+	// non-nil it replaces the VTEP sub-controller's reconcile func, letting a
+	// test wrap controller.reconcileVTEP with an invocation counter to assert
+	// the cross-VTEP re-queue loop converges instead of spinning forever. The
+	// config mirrors the one built in NewController; only Reconcile differs. It
+	// is swapped before controller.Start() so no reconcile is missed; the
+	// sub-controller built in NewController is discarded unstarted.
+	startWithReconcile := func(reconcile func(key string) error, objects ...runtime.Object) {
 		vtepObjects := []runtime.Object{}
 		otherObjects := []runtime.Object{}
 		for _, obj := range objects {
@@ -145,11 +172,29 @@ var _ = ginkgo.Describe("VTEP Controller", func() {
 
 		controller = NewController(wf, fakeClientset, fakeRecorder)
 
+		if reconcile != nil {
+			controller.vtepController = controllerutil.NewController(
+				"clustermanager-vtep-controller",
+				&controllerutil.ControllerConfig[vtepv1.VTEP]{
+					RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
+					Informer:       wf.VTEPInformer().Informer(),
+					Lister:         wf.VTEPInformer().Lister().List,
+					Reconcile:      reconcile,
+					ObjNeedsUpdate: vtepNeedsUpdate,
+					Threadiness:    1,
+				},
+			)
+		}
+
 		err = wf.Start()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 		err = controller.Start()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	}
+
+	start := func(objects ...runtime.Object) {
+		startWithReconcile(nil, objects...)
 	}
 
 	markVTEPForDeletion := func(name string) {
@@ -354,9 +399,39 @@ var _ = ginkgo.Describe("VTEP Controller", func() {
 		})
 
 		ginkgo.It("converges without infinite re-queue loop when VTEPs overlap", func() {
+			// Overlapping VTEPs re-queue each other in validateCIDRsAcrossVTEPs,
+			// so this test asserts two convergence properties once both settle:
+			//
+			//  1. Reconciles stop. The number of reconciles is the direct signal
+			//     for loop termination: an infinite ping-pong would keep the
+			//     counter climbing forever. We wrap reconcileVTEP with an
+			//     invocation counter for this - counting reconciles rather than
+			//     status writes is what actually catches the loop, because once
+			//     Accepted=False/CIDROverlap is set, updateStatusCondition skips
+			//     the API write, so a no-op re-queue loop would spin without
+			//     producing any status writes to observe.
+			//
+			//  2. Status writes stop. This guards against redundant ApplyStatus
+			//     calls (API spam) while the two VTEPs re-queue each other. We
+			//     count only status-subresource writes (via countStatusWrites)
+			//     so the test's own condition-polling get calls and the finalizer
+			//     Apply in ensureFinalizer (which can fire more than once per
+			//     VTEP while the lister cache lags) don't skew the total.
+			//
+			// Neither count is deterministic: with no nodes present, a VTEP that
+			// reconciles before the other is visible in the lister briefly writes
+			// Accepted=True before flipping to False once the overlap is seen. So
+			// we first wait for both counts to quiesce (two consecutive equal
+			// readings) before asserting they stay constant. A genuine re-queue
+			// loop would never quiesce, so the Eventually would time out.
+			var reconcileCount atomic.Int64
+
 			vtepA := newVTEP("vtep-a", vtepv1.VTEPModeUnmanaged, "10.0.0.0/16")
 			vtepB := newVTEP("vtep-b", vtepv1.VTEPModeUnmanaged, "10.0.1.0/24")
-			start(vtepA, vtepB)
+			startWithReconcile(func(key string) error {
+				reconcileCount.Add(1)
+				return controller.reconcileVTEP(key)
+			}, vtepA, vtepB)
 
 			gomega.Eventually(func() (*metav1.Condition, error) {
 				return getVTEPCondition(fakeVTEP, "vtep-a", conditionTypeAccepted)
@@ -366,15 +441,30 @@ var _ = ginkgo.Describe("VTEP Controller", func() {
 				return getVTEPCondition(fakeVTEP, "vtep-b", conditionTypeAccepted)
 			}).WithTimeout(5 * time.Second).Should(gomega.HaveField("Status", metav1.ConditionFalse))
 
-			// After both VTEPs settle, the API action count must stabilize.
-			// An infinite re-queue ping-pong would cause repeated reconciles;
-			// while updateStatusCondition guards against redundant writes, the
-			// re-queue guard in validateCIDRsAcrossVTEPs is what actually
-			// prevents the loop. This verifies no further API calls are made.
-			settled := len(fakeVTEP.Actions())
+			var reconcileSettled int64
+			var statusSettled int
+			gomega.Eventually(func() bool {
+				reconciles := reconcileCount.Load()
+				statuses := countStatusWrites(fakeVTEP)
+				if reconciles > reconcileSettled || statuses > statusSettled {
+					// Log each burst so a run that fails to quiesce leaves a
+					// trail showing the counts still climbing.
+					fmt.Fprintf(ginkgo.GinkgoWriter, "not yet settled: reconciles %d -> %d, status writes %d -> %d\n",
+						reconcileSettled, reconciles, statusSettled, statuses)
+				}
+				stable := reconciles == reconcileSettled && statuses == statusSettled
+				reconcileSettled = reconciles
+				statusSettled = statuses
+				return stable
+			}).WithTimeout(5 * time.Second).WithPolling(500 * time.Millisecond).Should(gomega.BeTrue())
+
+			gomega.Consistently(func() int64 {
+				return reconcileCount.Load()
+			}).WithTimeout(3 * time.Second).Should(gomega.Equal(reconcileSettled))
+
 			gomega.Consistently(func() int {
-				return len(fakeVTEP.Actions())
-			}).WithTimeout(2 * time.Second).Should(gomega.Equal(settled))
+				return countStatusWrites(fakeVTEP)
+			}).WithTimeout(3 * time.Second).Should(gomega.Equal(statusSettled))
 		})
 
 		ginkgo.It("emits a CIDROverlap warning event when VTEPs overlap", func() {
