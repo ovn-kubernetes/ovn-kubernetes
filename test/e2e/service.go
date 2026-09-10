@@ -994,7 +994,6 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 				e2eskipper.Skipf("Test requires >= 2 Ready nodes, but there are only %v nodes", len(nodes.Items))
 			}
 
-			clientNodeName := nodes.Items[0].Name
 			backendNodeName := nodes.Items[1].Name
 
 			ginkgo.By("Creating a UDP NodePort service with one initial endpoint")
@@ -1023,25 +1022,34 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 			err = e2eendpointslice.WaitForEndpointCount(ctx, cs, ns, serviceName, 1)
 			framework.ExpectNoError(err, "failed to wait for initial endpoint for service %s", serviceName)
 
-			ginkgo.By("Creating client pod to generate UDP traffic to NodePort service with endpoint")
-			clientPod := e2epod.NewAgnhostPod(ns, podClient, nil, nil, nil)
-			clientNodeSelection := e2epod.NodeSelection{Name: clientNodeName}
-			e2epod.SetNodeSelection(&clientPod.Spec, clientNodeSelection)
-			// Send UDP packets to NodePort to create kernel conntrack entries (NAT entries for node IP:port → pod IP)
-			cmd := fmt.Sprintf("for i in $(seq 1 20); do echo test | nc -u -w1 %s %d 2>/dev/null || true; sleep 0.5; done; sleep infinity", nodeIP, nodePort)
-			clientPod.Spec.Containers[0].Command = []string{"/bin/sh", "-c", cmd}
-			clientPod.Spec.Containers[0].Name = podClient
-			e2epod.NewPodClient(f).CreateSync(ctx, clientPod)
+			ginkgo.By("Creating external container to send UDP traffic from outside the cluster")
+			primaryProviderNetwork, err := infraprovider.Get().PrimaryNetwork()
+			framework.ExpectNoError(err, "failed to get primary network")
+			externalContainer := infraapi.ExternalContainer{
+				Name:    "udp-conntrack-client",
+				Image:   images.AgnHost(),
+				Network: primaryProviderNetwork,
+			}
+			externalContainer, err = providerCtx.CreateExternalContainer(externalContainer)
+			framework.ExpectNoError(err, "external container %s must be created", externalContainer.Name)
 
-			// Wait for UDP packets to be sent and conntrack entries to be created
-			time.Sleep(5 * time.Second)
+			ginkgo.By("Sending UDP packets from external container to NodePort to create kernel conntrack entries")
+			// Send multiple UDP packets to establish kernel conntrack entries
+			// External traffic to NodePort goes through host kernel networking (iptables/nftables DNAT)
+			for i := 0; i < 20; i++ {
+				sendCmd := fmt.Sprintf("echo test | nc -u -w1 %s %d 2>/dev/null || true", nodeIP, nodePort)
+				_, _ = infraprovider.Get().ExecExternalContainerCommand(externalContainer, []string{"/bin/sh", "-c", sendCmd})
+				time.Sleep(500 * time.Millisecond)
+			}
 
 			ovnNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+			// Check conntrack on the node receiving the NodePort traffic
+			targetNodeName := nodes.Items[0].Name
 			ovsPodName, err := e2ekubectl.RunKubectl(ovnNamespace,
 				"get", "pods", "--selector=app=ovs-node",
-				"--field-selector", fmt.Sprintf("spec.nodeName=%s", clientNodeName),
+				"--field-selector", fmt.Sprintf("spec.nodeName=%s", targetNodeName),
 				"-o", "jsonpath={.items[0].metadata.name}")
-			framework.ExpectNoError(err, "failed to get ovs-node pod on client node")
+			framework.ExpectNoError(err, "failed to get ovs-node pod on target node %s", targetNodeName)
 
 			// Verify conntrack entry exists (NAT entry for node IP:port → backend IP)
 			// NodePort traffic creates kernel conntrack entries via DNAT
@@ -1090,10 +1098,11 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 			framework.Logf("Confirmed stale kernel conntrack entries were flushed for NodePort %d", nodePort)
 
 			ginkgo.By("Verifying UDP connectivity works after conntrack flush (no blackhole)")
-			// Verify that UDP traffic reaches the new backend (proving stale conntrack didn't cause blackhole)
+			// Verify that UDP traffic from external container reaches the new backend
+			// This proves that stale conntrack didn't cause a blackhole
 			testCmd := fmt.Sprintf("echo hostname | nc -u -w2 %s %d", nodeIP, nodePort)
 			gomega.Eventually(func() string {
-				output, _ := e2epodoutput.RunHostCmd(ns, podClient, testCmd)
+				output, _ := infraprovider.Get().ExecExternalContainerCommand(externalContainer, []string{"/bin/sh", "-c", testCmd})
 				return output
 			}, 30*time.Second, 2*time.Second).Should(gomega.ContainSubstring(podBackend),
 				"Expected UDP traffic to reach new backend pod after conntrack flush (no blackhole)")
