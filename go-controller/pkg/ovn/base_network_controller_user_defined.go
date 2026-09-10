@@ -386,7 +386,6 @@ func (bsnc *BaseUserDefinedNetworkController) podPortsForReconcile(pod *corev1.P
 
 func (bsnc *BaseUserDefinedNetworkController) finishPodReconcile(pod *corev1.Pod) {
 	bsnc.incompletePodPorts.Delete(podIPReleaseKey(pod))
-	bsnc.forgetPodIPReleases(pod)
 }
 
 func (bsnc *BaseUserDefinedNetworkController) rememberIncompletePodPorts(pod *corev1.Pod, applied map[string]*lpInfo) {
@@ -427,6 +426,11 @@ func (bsnc *BaseUserDefinedNetworkController) ReconcilePod(oldPod, newPod *corev
 			return nil, err
 		}
 		bsnc.finishPodReconcile(oldPod)
+		// A successful whole-pod deletion ends this UID's allocation
+		// lifecycle. Successful updates may leave detached NAD annotations
+		// behind, so their release receipts must survive until the NAD is
+		// either reacquired or the pod is deleted.
+		bsnc.forgetPodIPReleases(oldPod)
 		return nil, nil
 	}
 

@@ -400,8 +400,9 @@ func (bnc *BaseNetworkController) wasPodIPReleased(pod *corev1.Pod, nadKey strin
 	return bnc.podIPReleases[podIPReleaseKey(pod)].Has(nadKey)
 }
 
-// forgetPodIPReleases retires progress after successful reconciliation. Passing
-// a NAD only retires that receipt when a new allocation is acquired for it.
+// forgetPodIPReleases retires release receipts. Passing a NAD only retires that
+// receipt when a new allocation is acquired for it; passing no NADs retires the
+// pod UID's remaining receipts after its allocation lifecycle has ended.
 func (bnc *BaseNetworkController) forgetPodIPReleases(pod *corev1.Pod, nadKeys ...string) {
 	bnc.podIPReleasesMutex.Lock()
 	defer bnc.podIPReleasesMutex.Unlock()
