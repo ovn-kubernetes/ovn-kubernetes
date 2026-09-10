@@ -580,6 +580,23 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 			},
 		},
 		{
+			// An owner-aware allocator can distinguish this pod's existing
+			// reservation from an address allocated to another pod. Never
+			// accept the latter just because this pod still has an annotation.
+			name: "expect error, annotated, IP allocated to another owner",
+			ipam: true,
+			podAnnotation: &util.PodAnnotation{
+				IPs: ovntest.MustParseIPNets("192.168.0.3/24"),
+				MAC: util.IPAddrToHWAddr(ovntest.MustParseIPNets("192.168.0.3/24")[0].IP),
+			},
+			args: args{
+				ipAllocator: &ipAllocatorStub{
+					allocateIPsError: ErrIPAllocatedByOther,
+				},
+			},
+			wantErr: true,
+		},
+		{
 			// Once the caller has released this attachment's IPs, ErrAllocated
 			// may identify another owner and must no longer be ignored merely
 			// because the stale annotation is still present.

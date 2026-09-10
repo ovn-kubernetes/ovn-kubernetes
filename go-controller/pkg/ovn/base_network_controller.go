@@ -187,6 +187,12 @@ type BaseNetworkController struct {
 	// receipts until the entire reconcile succeeds, not just LSP teardown.
 	podIPReleasesMutex sync.Mutex
 	podIPReleases      map[string]sets.Set[string]
+	// podIPAllocations records the owner of allocations made by this controller
+	// before that ownership is necessarily visible in the pod informer. The
+	// reservation and this record are updated under the same lock so stale pod
+	// cleanup cannot release, or reuse, an in-flight allocation.
+	podIPAllocationsMutex sync.Mutex
+	podIPAllocations      map[podIPAllocationKey]sets.Set[podAttachment]
 
 	// IP addresses of OVN Cluster logical router port ("GwRouterToJoinSwitchPrefix + OVNClusterRouter")
 	// connecting to the join switch

@@ -292,6 +292,8 @@ func (bsnc *BaseUserDefinedNetworkController) releaseStaleCachedPodIPsForReplace
 		staleIPs = append(staleIPs, staleIP)
 	}
 	if len(staleIPs) == 0 {
+		bsnc.forgetPodIPAllocation(stalePortInfo.logicalSwitch, stalePortInfo.ips,
+			podAttachment{uid: deletedPod.UID, nadKey: nadKey})
 		bsnc.forgetPodReleasedBeforeStartup(string(deletedPod.UID), nadKey)
 		return nil
 	}
@@ -308,6 +310,11 @@ func (bsnc *BaseUserDefinedNetworkController) releaseStaleCachedPodIPsForReplace
 			return fmt.Errorf("failed to release stale replacement IPs for NAD %s: %w", nadKey, err)
 		}
 	}
+	// Retire the old attachment's claims only after every required IPAM
+	// release has succeeded. This also drops claims for addresses retained by
+	// the replacement-owned LSP.
+	bsnc.forgetPodIPAllocation(stalePortInfo.logicalSwitch, stalePortInfo.ips,
+		podAttachment{uid: deletedPod.UID, nadKey: nadKey})
 	bsnc.forgetPodReleasedBeforeStartup(string(deletedPod.UID), nadKey)
 	return nil
 }
@@ -426,11 +433,6 @@ func (bsnc *BaseUserDefinedNetworkController) ReconcilePod(oldPod, newPod *corev
 			return nil, err
 		}
 		bsnc.finishPodReconcile(oldPod)
-		// A successful whole-pod deletion ends this UID's allocation
-		// lifecycle. Successful updates may leave detached NAD annotations
-		// behind, so their release receipts must survive until the NAD is
-		// either reacquired or the pod is deleted.
-		bsnc.forgetPodIPReleases(oldPod)
 		return nil, nil
 	}
 
@@ -476,6 +478,19 @@ func (bsnc *BaseUserDefinedNetworkController) ReconcilePod(oldPod, newPod *corev
 	}
 	bsnc.finishPodReconcile(newPod)
 	return bsnc.getDesiredPortInfoForUserDefinedNetwork(newPod, desiredPortNADs), nil
+}
+
+// PodLifecyclePending reports whether release receipts still tie this network
+// to the pod incarnation after its live attachment has been removed.
+func (bsnc *BaseUserDefinedNetworkController) PodLifecyclePending(pod *corev1.Pod) bool {
+	return bsnc.hasPodIPReleases(pod)
+}
+
+// PodLifecycleComplete retires release receipts only when the shared pod
+// controller has finished the pod incarnation, rather than when a live pod
+// merely leaves this network.
+func (bsnc *BaseUserDefinedNetworkController) PodLifecycleComplete(pod *corev1.Pod) {
+	bsnc.forgetPodIPReleases(pod)
 }
 
 // desiredPodPortNADs returns the desired LSP keys in this zone. Network
@@ -571,14 +586,19 @@ func (bsnc *BaseUserDefinedNetworkController) removeStalePodPortsForUserDefinedN
 		if !bsnc.allocatesPodAnnotation() {
 			continue
 		}
-		if pInfo == nil || len(pInfo.ips) == 0 || !shouldRelease {
+		if pInfo == nil || len(pInfo.ips) == 0 {
 			bsnc.forgetPodReleasedBeforeStartup(string(pod.UID), nadKey)
 			continue
 		}
-		if err := bsnc.releasePodIPsOnce(pod, nadKey, pInfo); err != nil {
-			errs = append(errs, fmt.Errorf("failed to release stale pod IPs for %s/%s NAD key %s: %w",
-				pod.Namespace, pod.Name, nadKey, err))
-			continue
+		if shouldRelease {
+			if err := bsnc.releasePodIPsOnce(pod, nadKey, pInfo); err != nil {
+				errs = append(errs, fmt.Errorf("failed to release stale pod IPs for %s/%s NAD key %s: %w",
+					pod.Namespace, pod.Name, nadKey, err))
+				continue
+			}
+		} else {
+			bsnc.forgetPodIPAllocation(pInfo.logicalSwitch, pInfo.ips,
+				podAttachment{uid: pod.UID, nadKey: nadKey})
 		}
 		bsnc.forgetPodReleasedBeforeStartup(string(pod.UID), nadKey)
 	}
@@ -1279,7 +1299,7 @@ func (bsnc *BaseUserDefinedNetworkController) removePodForUserDefinedNetwork(pod
 		}
 
 		// do not release IP address unless we have validated no other pod is using it
-		if pInfo == nil || len(pInfo.ips) == 0 || !shouldRelease {
+		if pInfo == nil || len(pInfo.ips) == 0 {
 			bsnc.forgetPodReleasedBeforeStartup(string(pod.UID), nadKey)
 			continue
 		}
@@ -1288,11 +1308,18 @@ func (bsnc *BaseUserDefinedNetworkController) removePodForUserDefinedNetwork(pod
 		// the IP of the pod needs to be released. Otherwise we could have a completed pod failed to be removed
 		// and we dont know if the IP was released or not, and subsequently could accidentally release the IP
 		// while it is now on another pod
-		klog.Infof("Attempting to release IPs for pod: %s/%s, ips: %s network %s", pod.Namespace, pod.Name,
-			util.JoinIPNetIPs(pInfo.ips, " "), bsnc.GetNetworkName())
-		if err = bsnc.releasePodIPsOnce(pod, nadKey, pInfo); err != nil {
-			errs = append(errs, err)
-			continue
+		if shouldRelease {
+			klog.Infof("Attempting to release IPs for pod: %s/%s, ips: %s network %s", pod.Namespace, pod.Name,
+				util.JoinIPNetIPs(pInfo.ips, " "), bsnc.GetNetworkName())
+			if err = bsnc.releasePodIPsOnce(pod, nadKey, pInfo); err != nil {
+				errs = append(errs, err)
+				continue
+			}
+		} else {
+			// Teardown succeeded, but another attachment owns the reservation.
+			// Retire only this pod attachment's stale startup claim.
+			bsnc.forgetPodIPAllocation(pInfo.logicalSwitch, pInfo.ips,
+				podAttachment{uid: pod.UID, nadKey: nadKey})
 		}
 
 		bsnc.forgetPodReleasedBeforeStartup(string(pod.UID), nadKey)

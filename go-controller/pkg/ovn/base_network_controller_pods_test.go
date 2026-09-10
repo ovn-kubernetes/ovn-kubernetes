@@ -11,6 +11,7 @@ import (
 	"time"
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
+	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	"github.com/onsi/gomega"
 
 	corev1 "k8s.io/api/core/v1"
@@ -47,6 +48,54 @@ func TestBaseNetworkController_GetLocalNode(t *testing.T) {
 	bnc.nodeName = "missing-node"
 	_, err = bnc.GetLocalNode()
 	g.Expect(apierrors.IsNotFound(err)).To(gomega.BeTrue())
+}
+
+func TestFindPodWithIPAddressesIgnoresOnlyTargetAttachment(t *testing.T) {
+	g := gomega.NewWithT(t)
+	const (
+		networkName = "blue"
+		nadA        = "namespace/nad-a"
+		nadB        = "namespace/nad-b"
+	)
+	netInfo, err := util.NewNetInfo(&ovncnitypes.NetConf{
+		NetConf:  cnitypes.NetConf{Name: networkName},
+		Topology: ovntypes.Layer3Topology,
+		Role:     ovntypes.NetworkRoleSecondary,
+	})
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	pod := ovntest.NewPod("namespace", "pod", "node1", "")
+	pod.UID = "pod-uid"
+	pod.Annotations = map[string]string{nadapi.NetworkAttachmentAnnot: nadB}
+	sharedIP := ovntest.MustParseIPNets("10.128.0.3/24")
+	for _, nadKey := range []string{nadA, nadB} {
+		pod.Annotations, err = util.MarshalPodAnnotation(pod.Annotations, &util.PodAnnotation{
+			IPs: sharedIP,
+			MAC: ovntest.MustParseMAC("0a:58:0a:80:00:03"),
+		}, nadKey)
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+	}
+
+	clientSet := util.GetOVNClientset(pod).GetOVNKubeControllerClientset()
+	watchFactory, err := factory.NewOVNKubeControllerWatchFactory(clientSet, "node1")
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(watchFactory.Start()).To(gomega.Succeed())
+	t.Cleanup(watchFactory.Shutdown)
+	resolver := func(string) string { return networkName }
+
+	// nadA is stale and no longer selected, but nadB on the same pod now owns
+	// the address. Ignoring the entire UID would miss this collision.
+	collidingPod, err := findPodWithIPAddresses(
+		watchFactory, netInfo, []net.IP{sharedIP[0].IP}, "node1", resolver, &podAttachment{uid: pod.UID, nadKey: nadA})
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(collidingPod).NotTo(gomega.BeNil())
+	g.Expect(collidingPod.UID).To(gomega.Equal(pod.UID))
+
+	// Ignoring the selected owner itself must not make its stale, unselected
+	// annotation look like a separate allocation.
+	collidingPod, err = findPodWithIPAddresses(
+		watchFactory, netInfo, []net.IP{sharedIP[0].IP}, "node1", resolver, &podAttachment{uid: pod.UID, nadKey: nadB})
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(collidingPod).To(gomega.BeNil())
 }
 
 func TestBaseNetworkController_trackPodsReleasedBeforeStartup(t *testing.T) {
@@ -262,7 +311,8 @@ func TestBaseNetworkController_trackPodsReleasedBeforeStartup(t *testing.T) {
 			g := gomega.NewWithT(t)
 			bnc := &BaseNetworkController{}
 
-			bnc.trackPodsReleasedBeforeStartup(tt.podAnnotations)
+			bnc.trackPodsReleasedBeforeStartupWithAppliedState(tt.podAnnotations,
+				func(*corev1.Pod, string, *util.PodAnnotation) (bool, error) { return false, nil })
 
 			g.Expect(bnc.releasedPodsBeforeStartup).To(gomega.Equal(tt.expected))
 		})
