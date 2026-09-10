@@ -7,8 +7,29 @@ import (
 	"errors"
 	"fmt"
 
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 )
+
+// PodUIDMismatchError indicates that an annotation update targets a pod that
+// has been replaced. Callers must not retry the update against the new UID.
+type PodUIDMismatchError struct {
+	Namespace   string
+	Name        string
+	ExpectedUID k8stypes.UID
+	ActualUID   k8stypes.UID
+}
+
+func (e *PodUIDMismatchError) Error() string {
+	return fmt.Sprintf("pod %s/%s was replaced while updating annotations: expected UID %q, found %q",
+		e.Namespace, e.Name, e.ExpectedUID, e.ActualUID)
+}
+
+// IsPodUIDMismatchError reports whether err wraps a PodUIDMismatchError.
+func IsPodUIDMismatchError(err error) bool {
+	var mismatch *PodUIDMismatchError
+	return errors.As(err, &mismatch)
+}
 
 type SuppressedError struct {
 	Inner error
