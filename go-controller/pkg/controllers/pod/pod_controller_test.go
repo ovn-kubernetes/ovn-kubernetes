@@ -52,6 +52,11 @@ type fakePodHandler struct {
 	relatedErr        error
 	relatedCalls      int
 	relatedKeys       []string
+
+	lifecyclePending       bool
+	lifecyclePendingCalls  int
+	lifecycleCompleteCalls int
+	lastLifecyclePod       *corev1.Pod
 }
 
 func (f *fakePodHandler) GetNetworkName() string {
@@ -126,6 +131,17 @@ func (f *fakePodHandler) RelatedPodKeys(_ *corev1.Pod) ([]string, error) {
 
 func (f *fakePodHandler) RecordPodError(pod *corev1.Pod, reason string, err error) {
 	f.recordedErrors = append(f.recordedErrors, reason+":"+string(pod.UID)+":"+err.Error())
+}
+
+func (f *fakePodHandler) PodLifecyclePending(pod *corev1.Pod) bool {
+	f.lifecyclePendingCalls++
+	f.lastLifecyclePod = pod
+	return f.lifecyclePending
+}
+
+func (f *fakePodHandler) PodLifecycleComplete(pod *corev1.Pod) {
+	f.lifecycleCompleteCalls++
+	f.lastLifecyclePod = pod
 }
 
 func newPod(namespace, name, uid string) *corev1.Pod {
@@ -418,6 +434,42 @@ func TestBootstrapDeleteBeforeFirstAttemptUsesLatestDeleteObject(t *testing.T) {
 	}
 	if handler.lastDeletePod == nil || handler.lastDeletePod.Status.Phase != corev1.PodSucceeded {
 		t.Fatalf("expected teardown to use latest delete object, got %#v", handler.lastDeletePod)
+	}
+}
+
+func TestBootstrapKeepsListedUIDAcrossRapidSameNameDeletes(t *testing.T) {
+	listedPod := newPod("ns", "pod", "listed-with-durable-state")
+	replacementPod := newPod("ns", "pod", "replacement-without-state")
+	c := newPodControllerForTest(t, listedPod)
+	handler := &fakePodHandler{
+		netName:      "net-a",
+		syncStarted:  make(chan struct{}),
+		syncContinue: make(chan struct{}),
+	}
+
+	registerErr := make(chan error, 1)
+	go func() {
+		_, err := c.RegisterNetworkController(handler)
+		registerErr <- err
+	}()
+	<-handler.syncStarted
+	// SyncPods may have retained durable state for listedPod. Preserve that
+	// generation even if a same-name replacement is also deleted before the
+	// initial per-pod reconcile gets to run.
+	c.rememberDeletedPod(listedPod)
+	c.refreshLastSeen(replacementPod)
+	c.rememberDeletedPod(replacementPod)
+	c.podLister = newPodLister(t)
+	close(handler.syncContinue)
+	if err := <-registerErr; err != nil {
+		t.Fatalf("unexpected register error: %v", err)
+	}
+
+	if err := c.reconcilePod("ns/pod|net-a"); err != nil {
+		t.Fatalf("unexpected reconcile error: %v", err)
+	}
+	if got := handler.events; len(got) == 0 || got[0] != "delete:"+string(listedPod.UID) {
+		t.Fatalf("expected the listed UID to be cleaned up, got %#v", got)
 	}
 }
 
@@ -772,6 +824,56 @@ func TestReconcilePodDeleteClearsEntry(t *testing.T) {
 	}
 	if entry := c.entryForTest(handler.netName, "ns/pod"); entry != nil {
 		t.Fatal("expected entry to be cleared")
+	}
+}
+
+func TestLiveNetworkDetachRetainsLifecycleUntilPodDeletion(t *testing.T) {
+	pod := newPod("ns", "pod", "uid")
+	c := newPodControllerForTest(t, pod)
+	handler := &fakePodHandler{
+		netName:          "net-a",
+		expect:           map[string]bool{"ns/pod": false},
+		lifecyclePending: true,
+	}
+	c.markApplied(handler.netName, "ns/pod", pod, "old-state")
+
+	// A live pod leaving this network tears down its dataplane state, but the
+	// handler still owns retry bookkeeping that must survive until pod deletion.
+	if err := c.reconcilePodForNetwork(handler, "ns/pod", handler.netName); err != nil {
+		t.Fatalf("unexpected live-detach reconcile error: %v", err)
+	}
+	entry := c.entryForTest(handler.netName, "ns/pod")
+	if entry == nil || !entry.teardownComplete || entry.lastSeen == nil || entry.lastSeen.UID != pod.UID {
+		t.Fatalf("expected completed teardown state to remain for the pod lifecycle, got %#v", entry)
+	}
+	if handler.deleteCalls != 1 || handler.lifecyclePendingCalls != 1 || handler.lifecycleCompleteCalls != 0 {
+		t.Fatalf("unexpected live-detach calls: deletes=%d pending=%d complete=%d",
+			handler.deleteCalls, handler.lifecyclePendingCalls, handler.lifecycleCompleteCalls)
+	}
+
+	// Reconciliation while the pod remains detached must not replay teardown.
+	if err := c.reconcilePodForNetwork(handler, "ns/pod", handler.netName); err != nil {
+		t.Fatalf("unexpected detached-pod retry error: %v", err)
+	}
+	if handler.deleteCalls != 1 {
+		t.Fatalf("completed live teardown was replayed, got %d delete calls", handler.deleteCalls)
+	}
+
+	// Once the pod itself disappears, retire the handler bookkeeping without
+	// replaying the already successful network teardown.
+	c.podLister = newPodLister(t)
+	if err := c.reconcilePodForNetwork(handler, "ns/pod", handler.netName); err != nil {
+		t.Fatalf("unexpected pod-delete reconcile error: %v", err)
+	}
+	if handler.deleteCalls != 1 || handler.lifecycleCompleteCalls != 1 {
+		t.Fatalf("unexpected pod-delete calls: deletes=%d complete=%d",
+			handler.deleteCalls, handler.lifecycleCompleteCalls)
+	}
+	if handler.lastLifecyclePod == nil || handler.lastLifecyclePod.UID != pod.UID {
+		t.Fatalf("expected lifecycle completion for UID %s, got %#v", pod.UID, handler.lastLifecyclePod)
+	}
+	if entry := c.entryForTest(handler.netName, "ns/pod"); entry != nil {
+		t.Fatalf("expected completed pod lifecycle to clear the entry, got %#v", entry)
 	}
 }
 
