@@ -53,7 +53,7 @@ make mocksgen
 ### Mock file placement
 
 Mock output locations are determined by `.mockery.yaml` — it is the single
-source of truth. The default output is `pkg/testing/mocks/{{.PackagePath}}/`,
+source of truth. The default output is `pkg/testing/mocks/{{ '{{' }}.PackagePath{{ '}}' }}/`,
 but packages can override this with a `dir` config entry to place mocks
 elsewhere (e.g. `pkg/factory/mocks/`, `pkg/util/mocks/`).
 
