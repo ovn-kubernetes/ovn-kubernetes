@@ -24,6 +24,9 @@ const (
 	podAnnotationCacheWaitTimeout  = 500 * time.Millisecond
 )
 
+// ErrPodReplaced indicates that the informer observed a different pod UID.
+var ErrPodReplaced = errors.New("pod was replaced")
+
 // AllocateToPodWithRollbackFunc is a function used to allocate a resource to a
 // pod that depends on the current state of the pod, and possibly updating it.
 // To be used with UpdatePodWithAllocationOrRollback. Implementations can return
@@ -71,6 +74,9 @@ func UpdatePodWithRetryOrRollback(podLister listers.PodLister, kube kube.Interfa
 		}
 		if err != nil {
 			return err
+		}
+		if pod.UID != "" && oldPod.UID != pod.UID {
+			return fmt.Errorf("%w: expected UID %q, found %q", ErrPodReplaced, pod.UID, oldPod.UID)
 		}
 
 		// Informer cache should not be mutated, so copy the object

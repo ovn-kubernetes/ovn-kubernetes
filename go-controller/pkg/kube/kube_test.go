@@ -281,6 +281,37 @@ var _ = Describe("Kube", func() {
 			Expect(patchOps[1].Path).To(Equal("/metadata/annotations/ovn"))
 			Expect(patchOps[1].Value).To(Equal("new"))
 		})
+
+		DescribeTable("does not patch a same-name replacement pod", func(annotationKey string) {
+			oldPod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace:       "default",
+					Name:            "my-pod",
+					UID:             "old-uid",
+					ResourceVersion: "7",
+					Annotations:     map[string]string{"ovn": "old"},
+				},
+			}
+			replacementPod := oldPod.DeepCopy()
+			replacementPod.UID = "replacement-uid"
+			replacementPod.ResourceVersion = "8"
+			_, err := kube.KClient.CoreV1().Pods("default").Create(
+				context.TODO(), replacementPod, metav1.CreateOptions{})
+			Expect(err).ToNot(HaveOccurred(), "creating the replacement pod should succeed")
+
+			newPod := oldPod.DeepCopy()
+			newPod.Annotations[annotationKey] = "new"
+			err = kube.PatchPodStatusAnnotations(oldPod, newPod)
+			Expect(err).To(HaveOccurred(), "the UID guard must reject the old pod's annotation patch")
+
+			pod, err := kube.KClient.CoreV1().Pods("default").Get(
+				context.TODO(), "my-pod", metav1.GetOptions{})
+			Expect(err).ToNot(HaveOccurred(), "reading the replacement pod should succeed")
+			Expect(pod).To(Equal(replacementPod), "the rejected patch must leave the replacement unchanged")
+		},
+			Entry("when updating an existing annotation", "ovn"),
+			Entry("when adding a new annotation", "new-annotation"),
+		)
 	})
 
 	Describe("PatchNodeStatusAnnotations", func() {
