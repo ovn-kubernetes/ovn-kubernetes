@@ -68,6 +68,10 @@ type podEntry struct {
 	// A late old-UID tombstone must replace a listed same-name replacement while
 	// the network is still initializing.
 	lastSeenDeleted bool
+	// bootstrap is the pod passed to SyncPods. Keep it separate from informer
+	// tombstones because SyncPods may retain durable state for this UID while
+	// rapid same-name replacements are created and deleted.
+	bootstrap *corev1.Pod
 	// state is the handler state returned by the last successful reconcile.
 	state interface{}
 	// A successful teardown must not be replayed if only related-pod
@@ -77,11 +81,17 @@ type podEntry struct {
 	lastErr string
 }
 
-// podEntryUID returns the UID the entry tracks, preferring the last
-// successfully applied pod and falling back to the last seen one.
+// podEntryUID returns the next UID the entry must reconcile, preferring applied
+// state, a delete tombstone, the bootstrap snapshot, and finally lastSeen.
 func podEntryUID(entry *podEntry) apitypes.UID {
 	if entry.applied != nil {
 		return entry.applied.UID
+	}
+	if entry.lastSeenDeleted && entry.lastSeen != nil {
+		return entry.lastSeen.UID
+	}
+	if entry.bootstrap != nil {
+		return entry.bootstrap.UID
 	}
 	if entry.lastSeen != nil {
 		return entry.lastSeen.UID
@@ -562,7 +572,7 @@ func (c *Controller) reconcilePodForNetwork(ctx context.Context, handler Network
 		return c.teardown(ctx, handler, podKey, netName, nil, observationSequence)
 	}
 
-	if uid := c.entryUID(netName, podKey); uid != "" && uid != pod.UID {
+	for uid := c.entryUID(netName, podKey); uid != "" && uid != pod.UID; uid = c.entryUID(netName, podKey) {
 		// The pod was recreated under the same name; tear the old instance
 		// down before evaluating the replacement. In particular, an error while
 		// deciding replacement eligibility must never overwrite the only old-UID
@@ -613,8 +623,7 @@ func (c *Controller) reconcilePodForNetwork(ctx context.Context, handler Network
 }
 
 // teardown reconciles the pod as absent using the entry's best available pod
-// object, or fallbackPod when no entry exists. On success it requeues related
-// pods and clears the entry.
+// object, or fallbackPod when no entry exists.
 func (c *Controller) teardown(ctx context.Context, handler NetworkHandler, podKey, netName string, fallbackPod *corev1.Pod, observationSequence uint64) error {
 	if fallbackPod != nil {
 		c.rememberTeardownFallback(netName, podKey, fallbackPod, observationSequence)
@@ -640,8 +649,14 @@ func (c *Controller) teardown(ctx context.Context, handler NetworkHandler, podKe
 			c.recordPodError(handler, netName, podKey, deletePod, "ErrorDeletingResource", err)
 			return err
 		}
+		if c.finishTeardown(netName, podKey, deletePod) {
+			c.ReconcileNetwork(podKey, netName)
+		}
+		return nil
 	}
-	c.deleteEntry(netName, podKey)
+	if c.finishTeardown(netName, podKey, nil) {
+		c.ReconcileNetwork(podKey, netName)
+	}
 	return nil
 }
 
@@ -718,6 +733,7 @@ func (c *Controller) seedBootstrapEntries(netName string, pods []*corev1.Pod, se
 			continue
 		}
 		entry := c.ensureEntryLocked(netName, podKey)
+		entry.bootstrap = pod
 		// Any delete observation captured while this network was initializing
 		// wins over the listed object, even when its UID differs. It is the old
 		// incarnation that must be deleted before the listed replacement.
@@ -780,6 +796,7 @@ func (c *Controller) markSeen(netName, podKey string, pod *corev1.Pod, sequence 
 	defer c.stateMu.Unlock()
 	entry := c.ensureEntryLocked(netName, podKey)
 	c.observeLastSeenLocked(entry, pod, sequence, false)
+	entry.teardownComplete = false
 	c.clearTerminalPodProcessedLocked(netName, podKey)
 	return entry.applied, entry.state
 }
@@ -797,6 +814,9 @@ func (c *Controller) markApplied(netName, podKey string, pod *corev1.Pod, state 
 		entry.lastSeenDeleted = false
 	}
 	entry.state = state
+	if entry.bootstrap != nil && entry.bootstrap.UID == pod.UID {
+		entry.bootstrap = nil
+	}
 	entry.teardownComplete = false
 	entry.lastErr = ""
 	c.clearTerminalPodProcessedLocked(netName, podKey)
@@ -813,6 +833,15 @@ func (c *Controller) teardownPod(netName, podKey string) (*corev1.Pod, interface
 		return nil, nil
 	}
 	if entry.applied == nil {
+		if entry.lastSeenDeleted && entry.lastSeen != nil {
+			return entry.lastSeen, nil
+		}
+		if entry.bootstrap != nil {
+			if entry.lastSeen != nil && entry.lastSeen.UID == entry.bootstrap.UID {
+				return entry.lastSeen, nil
+			}
+			return entry.bootstrap, nil
+		}
 		return entry.lastSeen, nil
 	}
 	if entry.lastSeen != nil && entry.lastSeen.UID == entry.applied.UID {
@@ -821,18 +850,49 @@ func (c *Controller) teardownPod(netName, podKey string) (*corev1.Pod, interface
 	return entry.applied, entry.state
 }
 
-func (c *Controller) deleteEntry(netName, podKey string) {
+// finishTeardown advances past one pod generation. It returns true when
+// another tracked generation remains and needs another reconcile.
+func (c *Controller) finishTeardown(netName, podKey string, pod *corev1.Pod) bool {
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
-	c.clearTerminalPodProcessedLocked(netName, podKey)
 	pods := c.entries[netName]
 	if pods == nil {
-		return
+		return false
+	}
+	entry := pods[podKey]
+	if entry == nil {
+		return false
+	}
+	if pod == nil {
+		c.clearTerminalPodProcessedLocked(netName, podKey)
+		delete(pods, podKey)
+		if len(pods) == 0 {
+			delete(c.entries, netName)
+		}
+		return false
+	}
+
+	if entry.applied != nil && entry.applied.UID == pod.UID {
+		entry.applied = nil
+		entry.state = nil
+	}
+	if entry.lastSeen != nil && entry.lastSeen.UID == pod.UID {
+		entry.lastSeen = nil
+		entry.lastSeenDeleted = false
+	}
+	if entry.bootstrap != nil && entry.bootstrap.UID == pod.UID {
+		entry.bootstrap = nil
+	}
+	entry.teardownComplete = false
+	c.clearTerminalPodProcessedLocked(netName, podKey)
+	if podEntryUID(entry) != "" {
+		return true
 	}
 	delete(pods, podKey)
 	if len(pods) == 0 {
 		delete(c.entries, netName)
 	}
+	return false
 }
 
 func (c *Controller) terminalPodProcessed(netName, podKey string, uid apitypes.UID) bool {
@@ -933,12 +993,10 @@ func (c *Controller) rememberDeletedPod(pod *corev1.Pod) {
 			entry.lastSeen = pod
 			entry.lastSeenSequence = sequence
 			entry.lastSeenDeleted = true
-		case sequence >= entry.lastSeenSequence:
-			// Multiple rapid same-name generations can produce more than one
-			// tombstone. Retain the latest explicitly observed deletion.
-			entry.lastSeen = pod
-			entry.lastSeenSequence = sequence
-			entry.lastSeenDeleted = true
+		default:
+			// Keep the first deleted generation: it is the one most likely to own
+			// durable state. The independently recorded bootstrap pod is reconciled
+			// after it when the generations differ.
 		}
 	}
 	c.stateMu.Unlock()
