@@ -363,19 +363,33 @@ jobs:
         GO111MODULE=off goveralls -coverprofile=gover.coverprofile -service=github
 
   ovn-upgrade-e2e:
-    name: Upgrade OVN from Base to PR branch based image
+    name: Upgrade OVN from Base to PR branch based image (${{ matrix.gateway-mode }}, ${{ matrix.upgrade-order }})
     if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 180
     needs:
       - build-base
       - build-pr
     strategy:
       fail-fast: false
       matrix:
-        gateway-mode: [local, shared]
+        # Each leg upgrades in two stages with e2e after each. first-stage /
+        # second-stage are UPGRADE_STAGE values for test/scripts/upgrade-ovn.sh.
+        include:
+          - gateway-mode: local
+            upgrade-order: nodes-first
+            first-stage: nodes-first
+            second-stage: control-plane-last
+          - gateway-mode: shared
+            upgrade-order: nodes-first
+            first-stage: nodes-first
+            second-stage: control-plane-last
+          - gateway-mode: shared
+            upgrade-order: control-plane-first
+            first-stage: control-plane-first
+            second-stage: nodes-last
     env:
-      JOB_NAME: "Upgrade-Tests-${{ matrix.gateway-mode }}"
+      JOB_NAME: "Upgrade-Tests-${{ matrix.gateway-mode }}-${{ matrix.upgrade-order }}"
       PLATFORM_IPV4_SUPPORT: "true"
       PLATFORM_IPV6_SUPPORT: "false"
       KIND_IPV4_SUPPORT: "true"
@@ -476,14 +490,27 @@ jobs:
       run: |
         docker load --input ${CI_IMAGE_PR_TAR} && rm -rf ${CI_IMAGE_PR_TAR}
 
-    - name: ovn upgrade
+    # Stage 1 upgrades one side only (nodes-first keeps the OLD
+    # cluster-manager running; control-plane-first keeps the OLD nodes
+    # running) and e2e tests that version skew. Stage 2 finishes the upgrade
+    # and e2e runs again on the fully upgraded cluster.
+    - name: ovn upgrade stage 1 (${{ matrix.first-stage }})
       run: |
         export OVN_IMAGE="ovn-daemonset-fedora:pr"
-        make -C test upgrade-ovn
+        UPGRADE_STAGE=${{ matrix.first-stage }} make -C test upgrade-ovn
 
-    - name: Run E2E shard-conformance
+    - name: Run E2E shard-conformance after ${{ matrix.first-stage }}
       run: |
-        make -C test shard-conformance
+        JOB_NAME="${JOB_NAME}-${{ matrix.first-stage }}" make -C test shard-conformance
+
+    - name: ovn upgrade stage 2 (${{ matrix.second-stage }})
+      run: |
+        export OVN_IMAGE="ovn-daemonset-fedora:pr"
+        UPGRADE_STAGE=${{ matrix.second-stage }} make -C test upgrade-ovn
+
+    - name: Run E2E shard-conformance after ${{ matrix.second-stage }}
+      run: |
+        JOB_NAME="${JOB_NAME}-${{ matrix.second-stage }}" make -C test shard-conformance
 
     - name: Export kind logs
       if: always()
