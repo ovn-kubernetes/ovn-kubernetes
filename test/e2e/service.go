@@ -1065,11 +1065,9 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 
 			// Verify stale conntrack entries were created (should happen immediately after sending packets)
 			// We check right away to minimize time for natural conntrack expiry
-			var conntrackOutput string
 			gomega.Eventually(func() bool {
 				output, _ := e2ekubectl.RunKubectl(ovnNamespace, "exec", ovsPodName, "-c", "ovs-daemons", "--",
 					"bash", "-c", checkConntrackCmd)
-				conntrackOutput = output
 				return strings.Contains(output, fmt.Sprintf("dport=%d", nodePort))
 			}, 10*time.Second, 1*time.Second).Should(gomega.BeTrue(),
 				"Expected stale kernel conntrack entries to be created for NodePort %d with 0 endpoints", nodePort)
