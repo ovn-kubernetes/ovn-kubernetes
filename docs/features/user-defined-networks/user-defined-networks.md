@@ -71,6 +71,47 @@ existing CRs in the cluster.
 
 Always check the dependencies on the [Requirements page](../requirements.md)
 
+### Primary Layer2 upgrade prerequisite
+
+Primary Layer2 networks must have completed migration from the legacy topology
+before upgrading to this version. The legacy topology connects the pod switch
+directly to each node's gateway router. The current Geneve topology places a
+transit router between the pod switch and the gateway routers, providing a
+stable gateway MAC and IPv6 link-local address across nodes.
+
+Automatic migration support was introduced in **v1.2.0** and is also present in
+**v1.3.0 and v1.4.0**. If a deployment still uses the legacy topology, first use
+one of these migration-capable releases to complete the transition before
+upgrading to this version.
+
+Installing a migration-capable release alone does not complete the transition.
+Its controller selects the new topology at startup only after local primary
+Layer2 workload logical switch ports are absent from the OVN Northbound database
+and cluster-manager has allocated the network tunnel keys. Workload removal
+after startup does not rerun that selection; the controller must restart while
+those conditions hold. Verify that network reconciliation has completed on all
+participating nodes and that any surviving VMs use the stable network gateway
+MAC and IPv6 link-local address rather than the old node-specific gateway
+identities. See the
+[Layer2 transit-router design](../../okeps/okep-5094-layer2-transit-router.md#rolling-upgrade-and-traffic-disruption)
+for the transition details.
+
+Controller startup now selects the current topology unconditionally; it no
+longer defers conversion based on existing workloads or tunnel-key readiness.
+Upgrading with an unmigrated topology is unsupported: reconciliation can remove
+the old gateway router and move management-port SNAT while workloads are still
+using them, disrupting existing connections. Complete migration on an
+intermediate release rather than relying on this version to perform a safe
+transition.
+
+The node annotation `k8s.ovn.org/layer2-topology-version: "2.0"` is still published
+for compatibility with older peers during rolling upgrades. The annotation
+records topology selection, not successful completion of all network
+reconciliation. Setting it manually does not migrate an existing network.
+
+This prerequisite concerns legacy primary Layer2 deployments. Secondary Layer2
+networks and the current EVPN topology retain their existing behavior.
+
 ## Performance/Scale Optimizations for UDN
 
 UDN scale is currently constrained to a couple of hundred UDNs when every UDN is

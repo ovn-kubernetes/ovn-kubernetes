@@ -269,8 +269,9 @@ var (
 		ASNumber: 64512, // Default AS number
 	}
 
-	// Layer2UsesTransitRouter indicated whether the layer2 primary networks will use transit router.
-	// It is a per-node setting and is also reflected in the node annotations.
+	// Layer2UsesTransitRouter selects the current primary Layer2 topology.
+	// Both controller managers enable it at startup. It is retained temporarily
+	// while legacy topology branches are removed.
 	Layer2UsesTransitRouter bool
 )
 
