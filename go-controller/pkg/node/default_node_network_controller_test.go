@@ -2836,7 +2836,7 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 
 				Entry("add event: IPv6 endpoint slice added to dual-stack service that already has IPv4 endpoint",
 					testCase{
-						desc:     "should return false with current implementation (does not track per-family transitions)",
+						desc:     "should return true when IPv6 goes from 0 to 1 endpoint (per-family transition)",
 						oldSlice: nil,
 						newSlice: func() *discovery.EndpointSlice {
 							port := int32(8080)
@@ -2904,7 +2904,7 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 								ClusterIPs: []string{"10.96.0.1", "fd00::1"},
 							},
 						},
-						expectedShouldFlush: false,
+						expectedShouldFlush: true,
 					},
 				),
 			)

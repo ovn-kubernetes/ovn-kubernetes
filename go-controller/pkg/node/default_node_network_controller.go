@@ -1332,7 +1332,16 @@ func (nc *DefaultNodeNetworkController) shouldFlushConntrackForZeroToNTransition
 			namespacedName.Namespace, namespacedName.Name, err)
 	}
 
-	// Collect "other" slices (excluding the old/new slice being processed)
+	// Determine the address type of the event
+	// For dual-stack services, each address family needs to be evaluated independently
+	var eventAddressType discovery.AddressType
+	if newEndpointSlice != nil {
+		eventAddressType = newEndpointSlice.AddressType
+	} else if oldEndpointSlice != nil {
+		eventAddressType = oldEndpointSlice.AddressType
+	}
+
+	// Collect "other" slices of the same address family (excluding the old/new slice being processed)
 	var otherSlices []*discovery.EndpointSlice
 	for _, slice := range allSlices {
 		// Exclude the slice(s) involved in this event
@@ -1340,11 +1349,15 @@ func (nc *DefaultNodeNetworkController) shouldFlushConntrackForZeroToNTransition
 			(newEndpointSlice != nil && slice.UID == newEndpointSlice.UID) {
 			continue
 		}
-		otherSlices = append(otherSlices, slice)
+		// Only consider slices of the same address family
+		if slice.AddressType == eventAddressType {
+			otherSlices = append(otherSlices, slice)
+		}
 	}
 
 	// Count UDP-specific eligible endpoints in each category
 	// This ensures we only detect UDP 0→N transitions, ignoring TCP/SCTP endpoints
+	// and evaluating per address family for dual-stack services
 	eligibleOther := countUDPEligibleEndpoints(otherSlices, svc)
 	eligibleOld := 0
 	eligibleNew := 0
@@ -1356,7 +1369,7 @@ func (nc *DefaultNodeNetworkController) shouldFlushConntrackForZeroToNTransition
 		eligibleNew = countUDPEligibleEndpoints([]*discovery.EndpointSlice{newEndpointSlice}, svc)
 	}
 
-	// Detect 0→N transition for UDP endpoints
+	// Detect 0→N transition for UDP endpoints of this address family
 	if oldEndpointSlice == nil {
 		// Add event: udp_eligible(other)==0 && udp_eligible(new)>0
 		return eligibleOther == 0 && eligibleNew > 0, nil
