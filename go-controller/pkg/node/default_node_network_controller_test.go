@@ -2308,8 +2308,8 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 			expectError         bool
 		}
 
-		// Helper to create EndpointSlice with UID
-		makeEndpointSliceWithUID := func(uid string, addresses []string) *discovery.EndpointSlice {
+		// Helper to create EndpointSlice with UID and AddressType
+		makeEndpointSliceWithUID := func(uid string, addresses []string, addressType discovery.AddressType) *discovery.EndpointSlice {
 			port := int32(8080)
 			proto := corev1.ProtocolUDP
 			return &discovery.EndpointSlice{
@@ -2321,6 +2321,7 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 						discovery.LabelServiceName: testServiceName,
 					},
 				},
+				AddressType: addressType,
 				Ports: []discovery.EndpointPort{
 					{Port: &port, Protocol: &proto},
 				},
@@ -2401,7 +2402,7 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 				testCase{
 					desc:                "should return true when service goes from 0 to 1 endpoints",
 					oldSlice:            nil,
-					newSlice:            makeEndpointSliceWithUID("new", []string{"10.0.0.1"}),
+					newSlice:            makeEndpointSliceWithUID("new", []string{"10.0.0.1"}, discovery.AddressTypeIPv4),
 					otherSlices:         []*discovery.EndpointSlice{},
 					service:             makeUDPService(),
 					expectedShouldFlush: true,
@@ -2412,9 +2413,9 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 				testCase{
 					desc:     "should return false when service already has endpoints",
 					oldSlice: nil,
-					newSlice: makeEndpointSliceWithUID("new", []string{"10.0.0.2"}),
+					newSlice: makeEndpointSliceWithUID("new", []string{"10.0.0.2"}, discovery.AddressTypeIPv4),
 					otherSlices: []*discovery.EndpointSlice{
-						makeEndpointSliceWithUID("existing", []string{"10.0.0.1"}),
+						makeEndpointSliceWithUID("existing", []string{"10.0.0.1"}, discovery.AddressTypeIPv4),
 					},
 					service:             makeUDPService(),
 					expectedShouldFlush: false,
@@ -2425,9 +2426,9 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 				testCase{
 					desc:     "should return false when new slice has no endpoints",
 					oldSlice: nil,
-					newSlice: makeEndpointSliceWithUID("new", []string{}),
+					newSlice: makeEndpointSliceWithUID("new", []string{}, discovery.AddressTypeIPv4),
 					otherSlices: []*discovery.EndpointSlice{
-						makeEndpointSliceWithUID("empty", []string{}),
+						makeEndpointSliceWithUID("empty", []string{}, discovery.AddressTypeIPv4),
 					},
 					service:             makeUDPService(),
 					expectedShouldFlush: false,
@@ -2437,8 +2438,8 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 			Entry("update event: empty slice gets first endpoint (0→1)",
 				testCase{
 					desc:                "should return true when slice transitions from 0 to 1 endpoint",
-					oldSlice:            makeEndpointSliceWithUID("slice1", []string{}),
-					newSlice:            makeEndpointSliceWithUID("slice1", []string{"10.0.0.1"}),
+					oldSlice:            makeEndpointSliceWithUID("slice1", []string{}, discovery.AddressTypeIPv4),
+					newSlice:            makeEndpointSliceWithUID("slice1", []string{"10.0.0.1"}, discovery.AddressTypeIPv4),
 					otherSlices:         []*discovery.EndpointSlice{},
 					service:             makeUDPService(),
 					expectedShouldFlush: true,
@@ -2448,8 +2449,8 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 			Entry("update event: slice with endpoints gets more endpoints (1→2)",
 				testCase{
 					desc:                "should return false when slice already had endpoints",
-					oldSlice:            makeEndpointSliceWithUID("slice1", []string{"10.0.0.1"}),
-					newSlice:            makeEndpointSliceWithUID("slice1", []string{"10.0.0.1", "10.0.0.2"}),
+					oldSlice:            makeEndpointSliceWithUID("slice1", []string{"10.0.0.1"}, discovery.AddressTypeIPv4),
+					newSlice:            makeEndpointSliceWithUID("slice1", []string{"10.0.0.1", "10.0.0.2"}, discovery.AddressTypeIPv4),
 					otherSlices:         []*discovery.EndpointSlice{},
 					service:             makeUDPService(),
 					expectedShouldFlush: false,
@@ -2459,10 +2460,10 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 			Entry("update event: one slice is empty, another has endpoints, empty one gets endpoint",
 				testCase{
 					desc:     "should return false when other slice already has endpoints",
-					oldSlice: makeEndpointSliceWithUID("slice1", []string{}),
-					newSlice: makeEndpointSliceWithUID("slice1", []string{"10.0.0.2"}),
+					oldSlice: makeEndpointSliceWithUID("slice1", []string{}, discovery.AddressTypeIPv4),
+					newSlice: makeEndpointSliceWithUID("slice1", []string{"10.0.0.2"}, discovery.AddressTypeIPv4),
 					otherSlices: []*discovery.EndpointSlice{
-						makeEndpointSliceWithUID("slice2", []string{"10.0.0.1"}),
+						makeEndpointSliceWithUID("slice2", []string{"10.0.0.1"}, discovery.AddressTypeIPv4),
 					},
 					service:             makeUDPService(),
 					expectedShouldFlush: false,
@@ -2472,11 +2473,11 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 			Entry("update event: multiple empty slices, one gets endpoint (0→1)",
 				testCase{
 					desc:     "should return true when all slices were empty",
-					oldSlice: makeEndpointSliceWithUID("slice1", []string{}),
-					newSlice: makeEndpointSliceWithUID("slice1", []string{"10.0.0.1"}),
+					oldSlice: makeEndpointSliceWithUID("slice1", []string{}, discovery.AddressTypeIPv4),
+					newSlice: makeEndpointSliceWithUID("slice1", []string{"10.0.0.1"}, discovery.AddressTypeIPv4),
 					otherSlices: []*discovery.EndpointSlice{
-						makeEndpointSliceWithUID("slice2", []string{}),
-						makeEndpointSliceWithUID("slice3", []string{}),
+						makeEndpointSliceWithUID("slice2", []string{}, discovery.AddressTypeIPv4),
+						makeEndpointSliceWithUID("slice3", []string{}, discovery.AddressTypeIPv4),
 					},
 					service:             makeUDPService(),
 					expectedShouldFlush: true,
@@ -2499,6 +2500,7 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 									discovery.LabelServiceName: testServiceName,
 								},
 							},
+							AddressType: discovery.AddressTypeIPv4,
 							Ports: []discovery.EndpointPort{
 								{Port: &port, Protocol: &proto},
 							},
@@ -2525,6 +2527,7 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 										discovery.LabelServiceName: testServiceName,
 									},
 								},
+								AddressType: discovery.AddressTypeIPv4,
 								Ports: []discovery.EndpointPort{
 									{Port: &port, Protocol: &proto},
 								},
@@ -2630,6 +2633,7 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 										discovery.LabelServiceName: testServiceName,
 									},
 								},
+								AddressType: discovery.AddressTypeIPv6,
 								Ports: []discovery.EndpointPort{
 									{Port: &port, Protocol: &proto},
 								},
@@ -2674,6 +2678,7 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 										discovery.LabelServiceName: testServiceName,
 									},
 								},
+								AddressType: discovery.AddressTypeIPv6,
 								Ports: []discovery.EndpointPort{
 									{Port: &port, Protocol: &proto},
 								},
@@ -2692,6 +2697,7 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 										discovery.LabelServiceName: testServiceName,
 									},
 								},
+								AddressType: discovery.AddressTypeIPv6,
 								Ports: []discovery.EndpointPort{
 									{Port: &port, Protocol: &proto},
 								},
@@ -2781,28 +2787,29 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 					}
 				},
 
-				Entry("add event: dual-stack service, first endpoint slice with both IPv4 and IPv6 (0→1)",
+				Entry("add event: dual-stack service, first IPv4 endpoint slice added (0→1)",
 					testCase{
-						desc:     "should return true when dual-stack service goes from 0 to 1 endpoint",
+						desc:     "should return true when dual-stack service gets first IPv4 endpoint",
 						oldSlice: nil,
 						newSlice: func() *discovery.EndpointSlice {
 							port := int32(8080)
 							proto := corev1.ProtocolUDP
 							return &discovery.EndpointSlice{
 								ObjectMeta: metav1.ObjectMeta{
-									Name:      testEndpointSlice + "-dualstack",
+									Name:      testEndpointSlice + "-ipv4",
 									Namespace: testNamespace,
-									UID:       "dualstack-slice",
+									UID:       "ipv4-slice",
 									Labels: map[string]string{
 										discovery.LabelServiceName: testServiceName,
 									},
 								},
+								AddressType: discovery.AddressTypeIPv4,
 								Ports: []discovery.EndpointPort{
 									{Port: &port, Protocol: &proto},
 								},
 								Endpoints: []discovery.Endpoint{
 									{
-										Addresses: []string{"10.0.0.1", "2001:db8::1"},
+										Addresses: []string{"10.0.0.1"},
 										Conditions: discovery.EndpointConditions{
 											Ready: boolPtr(true),
 										},
@@ -2827,52 +2834,29 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 					},
 				),
 
-				Entry("update event: IPv6 endpoint added to service that already has IPv4 endpoint",
+				Entry("add event: IPv6 endpoint slice added to dual-stack service that already has IPv4 endpoint",
 					testCase{
-						desc: "should return false when service already has IPv4 endpoints and IPv6 is added",
-						oldSlice: func() *discovery.EndpointSlice {
-							port := int32(8080)
-							proto := corev1.ProtocolUDP
-							return &discovery.EndpointSlice{
-								ObjectMeta: metav1.ObjectMeta{
-									Name:      testEndpointSlice + "-ipv4",
-									Namespace: testNamespace,
-									UID:       "ipv4-slice",
-									Labels: map[string]string{
-										discovery.LabelServiceName: testServiceName,
-									},
-								},
-								Ports: []discovery.EndpointPort{
-									{Port: &port, Protocol: &proto},
-								},
-								Endpoints: []discovery.Endpoint{
-									{
-										Addresses: []string{"10.0.0.1"},
-										Conditions: discovery.EndpointConditions{
-											Ready: boolPtr(true),
-										},
-									},
-								},
-							}
-						}(),
+						desc: "should return false with current implementation (does not track per-family transitions)",
+						oldSlice: nil,
 						newSlice: func() *discovery.EndpointSlice {
 							port := int32(8080)
 							proto := corev1.ProtocolUDP
 							return &discovery.EndpointSlice{
 								ObjectMeta: metav1.ObjectMeta{
-									Name:      testEndpointSlice + "-ipv4",
+									Name:      testEndpointSlice + "-ipv6",
 									Namespace: testNamespace,
-									UID:       "ipv4-slice",
+									UID:       "ipv6-slice",
 									Labels: map[string]string{
 										discovery.LabelServiceName: testServiceName,
 									},
 								},
+								AddressType: discovery.AddressTypeIPv6,
 								Ports: []discovery.EndpointPort{
 									{Port: &port, Protocol: &proto},
 								},
 								Endpoints: []discovery.Endpoint{
 									{
-										Addresses: []string{"10.0.0.1", "2001:db8::1"},
+										Addresses: []string{"2001:db8::1"},
 										Conditions: discovery.EndpointConditions{
 											Ready: boolPtr(true),
 										},
@@ -2880,7 +2864,34 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 								},
 							}
 						}(),
-						otherSlices: []*discovery.EndpointSlice{},
+						otherSlices: []*discovery.EndpointSlice{
+							func() *discovery.EndpointSlice {
+								port := int32(8080)
+								proto := corev1.ProtocolUDP
+								return &discovery.EndpointSlice{
+									ObjectMeta: metav1.ObjectMeta{
+										Name:      testEndpointSlice + "-ipv4",
+										Namespace: testNamespace,
+										UID:       "ipv4-slice",
+										Labels: map[string]string{
+											discovery.LabelServiceName: testServiceName,
+										},
+									},
+									AddressType: discovery.AddressTypeIPv4,
+									Ports: []discovery.EndpointPort{
+										{Port: &port, Protocol: &proto},
+									},
+									Endpoints: []discovery.Endpoint{
+										{
+											Addresses: []string{"10.0.0.1"},
+											Conditions: discovery.EndpointConditions{
+												Ready: boolPtr(true),
+											},
+										},
+									},
+								}
+							}(),
+						},
 						service: &corev1.Service{
 							ObjectMeta: metav1.ObjectMeta{
 								Name:      testServiceName,
@@ -2980,7 +2991,7 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 				ObjectMeta: metav1.ObjectMeta{
 					Name: testNodeName,
 					Annotations: map[string]string{
-						"k8s.ovn.org/host-cidrs": string(cidrsJSON),
+						util.OVNNodeHostCIDRs: string(cidrsJSON),
 					},
 				},
 				Status: corev1.NodeStatus{

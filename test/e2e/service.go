@@ -996,31 +996,32 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 
 			backendNodeName := nodes.Items[1].Name
 
-			ginkgo.By("Creating a UDP NodePort service with one initial endpoint")
+			ginkgo.By("Creating a UDP NodePort service with NO initial endpoints and dual-stack support")
 			udpJig := e2eservice.NewTestJig(cs, ns, serviceName)
+			ipFamilyPolicy := v1.IPFamilyPolicyPreferDualStack
 			udpService, err := udpJig.CreateUDPService(ctx, func(svc *v1.Service) {
 				svc.Spec.Type = v1.ServiceTypeNodePort
+				svc.Spec.IPFamilyPolicy = &ipFamilyPolicy
 				svc.Spec.Ports = []v1.ServicePort{
 					{Port: udpPort, Name: "udp", Protocol: v1.ProtocolUDP, TargetPort: intstr.FromInt32(udpPort)},
 				}
 			})
 			framework.ExpectNoError(err)
 
-			// Use the Node IP for testing (NodePort traffic goes through kernel conntrack)
-			nodeIP := nodes.Items[0].Status.Addresses[0].Address
 			nodePort := udpService.Spec.Ports[0].NodePort
-			framework.Logf("Created UDP NodePort service %s, node IP %s, node port %d", serviceName, nodeIP, nodePort)
+			framework.Logf("Created UDP NodePort service %s with %d IP families, node port %d",
+				serviceName, len(udpService.Spec.ClusterIPs), nodePort)
 
-			ginkgo.By("Creating initial backend pod")
-			initialBackendPod := e2epod.NewAgnhostPod(ns, "initial-backend", nil, nil, nil, "netexec", fmt.Sprintf("--udp-port=%d", udpPort))
-			initialBackendPod.Labels = udpJig.Labels
+			ginkgo.By("Creating backend pod WITHOUT service labels (not yet an endpoint)")
+			backendPod := e2epod.NewAgnhostPod(ns, podBackend, nil, nil, nil, "netexec", fmt.Sprintf("--udp-port=%d", udpPort))
+			// Intentionally do NOT set udpJig.Labels yet - we'll add them later to trigger 0→1 transition
 			nodeSelection := e2epod.NodeSelection{Name: backendNodeName}
-			e2epod.SetNodeSelection(&initialBackendPod.Spec, nodeSelection)
-			e2epod.NewPodClient(f).CreateSync(ctx, initialBackendPod)
+			e2epod.SetNodeSelection(&backendPod.Spec, nodeSelection)
+			createdPod := e2epod.NewPodClient(f).CreateSync(ctx, backendPod)
 
-			ginkgo.By("Waiting for initial endpoint to be ready")
-			err = e2eendpointslice.WaitForEndpointCount(ctx, cs, ns, serviceName, 1)
-			framework.ExpectNoError(err, "failed to wait for initial endpoint for service %s", serviceName)
+			ginkgo.By("Verifying service has 0 endpoints initially")
+			err = e2eendpointslice.WaitForEndpointCount(ctx, cs, ns, serviceName, 0)
+			framework.ExpectNoError(err, "service should have 0 endpoints before labeling pod")
 
 			ginkgo.By("Creating external container to send UDP traffic from outside the cluster")
 			primaryProviderNetwork, err := infraprovider.Get().PrimaryNetwork()
@@ -1034,7 +1035,6 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 			framework.ExpectNoError(err, "external container %s must be created", externalContainer.Name)
 
 			ovnNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
-			// Check conntrack on the node receiving the NodePort traffic
 			targetNodeName := nodes.Items[0].Name
 			ovsPodName, err := e2ekubectl.RunKubectl(ovnNamespace,
 				"get", "pods", "--selector=app=ovs-node",
@@ -1042,81 +1042,77 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 				"-o", "jsonpath={.items[0].metadata.name}")
 			framework.ExpectNoError(err, "failed to get ovs-node pod on target node %s", targetNodeName)
 
-			ginkgo.By("Sending UDP packets from external container to NodePort to create kernel conntrack entries")
-			// Send multiple UDP packets to establish kernel conntrack entries
-			// External traffic to NodePort goes through host kernel networking (iptables/nftables DNAT)
-			checkConntrackCmd := fmt.Sprintf("chroot /host conntrack -L -p udp --dport %d 2>/dev/null || true", nodePort)
-			for i := 0; i < 20; i++ {
-				sendCmd := fmt.Sprintf("echo test | nc -u -w1 %s %d 2>/dev/null || true", nodeIP, nodePort)
-				_, _ = infraprovider.Get().ExecExternalContainerCommand(externalContainer, []string{"/bin/sh", "-c", sendCmd})
-				time.Sleep(500 * time.Millisecond)
-			}
-
-			// Check if kernel conntrack entries are being created in this environment
-			// Some environments (like Kind) may not create kernel conntrack entries for NodePort traffic
-			// due to different networking setup. If conntrack isn't working, skip this test.
-			var conntrackOutput string
-			for i := 0; i < 5; i++ {
-				conntrackOutput, _ = e2ekubectl.RunKubectl(ovnNamespace, "exec", ovsPodName, "-c", "ovs-daemons", "--",
-					"bash", "-c", checkConntrackCmd)
-				if strings.Contains(conntrackOutput, fmt.Sprintf("dport=%d", nodePort)) {
-					break
+			// Get all node IPs (IPv4 and IPv6 if dual-stack) for testing
+			var nodeIPs []string
+			for _, addr := range nodes.Items[0].Status.Addresses {
+				if addr.Type == v1.NodeInternalIP {
+					nodeIPs = append(nodeIPs, addr.Address)
 				}
-				time.Sleep(2 * time.Second)
+			}
+			framework.Logf("Testing with node IPs: %v", nodeIPs)
+
+			checkConntrackCmd := fmt.Sprintf("chroot /host conntrack -L -p udp --dport %d 2>/dev/null || true", nodePort)
+
+			ginkgo.By("Sending UDP packets to NodePort with 0 endpoints to create stale conntrack entries")
+			// Send packets when service has NO endpoints - these create the problematic stale entries
+			for _, nodeIP := range nodeIPs {
+				for i := 0; i < 5; i++ {
+					sendCmd := fmt.Sprintf("echo test | nc -u -w1 %s %d 2>/dev/null || true", nodeIP, nodePort)
+					_, _ = infraprovider.Get().ExecExternalContainerCommand(externalContainer, []string{"/bin/sh", "-c", sendCmd})
+					time.Sleep(100 * time.Millisecond)
+				}
 			}
 
-			if !strings.Contains(conntrackOutput, fmt.Sprintf("dport=%d", nodePort)) {
-				e2eskipper.Skipf("Kernel conntrack entries not created for NodePort traffic in this environment (Kind/CI limitation). " +
-					"The conntrack flushing logic is verified by unit tests.")
-			}
+			// Verify stale conntrack entries were created (should happen immediately after sending packets)
+			// We check right away to minimize time for natural conntrack expiry
+			var conntrackOutput string
+			gomega.Eventually(func() bool {
+				output, _ := e2ekubectl.RunKubectl(ovnNamespace, "exec", ovsPodName, "-c", "ovs-daemons", "--",
+					"bash", "-c", checkConntrackCmd)
+				conntrackOutput = output
+				return strings.Contains(output, fmt.Sprintf("dport=%d", nodePort))
+			}, 10*time.Second, 1*time.Second).Should(gomega.BeTrue(),
+				"Expected stale kernel conntrack entries to be created for NodePort %d with 0 endpoints", nodePort)
 
-			framework.Logf("Confirmed kernel conntrack entry exists for NodePort %d with active endpoint", nodePort)
+			framework.Logf("Confirmed stale conntrack entries exist for NodePort %d with 0 endpoints (blackhole state)", nodePort)
 
-			ginkgo.By("Deleting the backend pod to create stale conntrack entry (simulating the blackhole scenario)")
-			err = e2epod.NewPodClient(f).Delete(ctx, initialBackendPod.Name, metav1.DeleteOptions{})
-			framework.ExpectNoError(err, "failed to delete initial backend pod")
+			ginkgo.By("Adding service labels to pod to trigger 0→1 endpoint transition")
+			// This is the critical moment - adding labels makes the pod an endpoint, triggering 0→N transition
+			createdPod.Labels = udpJig.Labels
+			_, err = cs.CoreV1().Pods(ns).Update(ctx, createdPod, metav1.UpdateOptions{})
+			framework.ExpectNoError(err, "failed to update pod labels")
 
-			ginkgo.By("Waiting for endpoint count to reach 0")
-			err = e2eendpointslice.WaitForEndpointCount(ctx, cs, ns, serviceName, 0)
-			framework.ExpectNoError(err, "failed to wait for endpoints to be removed for service %s", serviceName)
-
-			// Stale conntrack entry should still exist (this is the blackhole state)
-			framework.Logf("Service now has 0 endpoints, stale conntrack entries may cause UDP blackhole")
-
-			ginkgo.By("Adding new backend pod (0→1 endpoint transition to trigger conntrack flush)")
-			newBackendPod := e2epod.NewAgnhostPod(ns, podBackend, nil, nil, nil, "netexec", fmt.Sprintf("--udp-port=%d", udpPort))
-			newBackendPod.Labels = udpJig.Labels
-			backendNodeSelection := e2epod.NodeSelection{Name: backendNodeName}
-			e2epod.SetNodeSelection(&newBackendPod.Spec, backendNodeSelection)
-			e2epod.NewPodClient(f).CreateSync(ctx, newBackendPod)
-
-			ginkgo.By("Waiting for new endpoint to be ready")
+			ginkgo.By("Waiting for endpoint to be ready after labeling")
 			err = e2eendpointslice.WaitForEndpointCount(ctx, cs, ns, serviceName, 1)
-			framework.ExpectNoError(err, "failed to wait for new endpoint for service %s", serviceName)
+			framework.ExpectNoError(err, "failed to wait for endpoint after adding labels")
 
 			ginkgo.By("Verifying stale kernel conntrack entries were flushed after 0→N transition")
-			// The fix should flush stale conntrack when endpoints are added after service had 0 endpoints.
-			// This prevents the UDP blackhole caused by stale entries pointing to the old backend.
+			// The fix should flush stale conntrack immediately when endpoints transition 0→N.
+			// Use a short timeout (10s) to ensure flush happens quickly, well before UDP conntrack timeout (30-180s)
 			gomega.Eventually(func() string {
 				output, _ := e2ekubectl.RunKubectl(ovnNamespace, "exec", ovsPodName, "-c", "ovs-daemons", "--",
 					"bash", "-c", checkConntrackCmd)
 				return output
-			}, 30*time.Second, 2*time.Second).Should(gomega.BeEmpty(),
-				"Expected stale kernel conntrack entries for NodePort %d to be flushed after 0→N transition", nodePort)
+			}, 10*time.Second, 1*time.Second).Should(gomega.BeEmpty(),
+				"Expected stale kernel conntrack entries for NodePort %d to be flushed within 10s after 0→N transition", nodePort)
 
 			framework.Logf("Confirmed stale kernel conntrack entries were flushed for NodePort %d", nodePort)
 
-			ginkgo.By("Verifying UDP connectivity works after conntrack flush (no blackhole)")
-			// Verify that UDP traffic from external container reaches the new backend
-			// This proves that stale conntrack didn't cause a blackhole
-			testCmd := fmt.Sprintf("echo hostname | nc -u -w2 %s %d", nodeIP, nodePort)
-			gomega.Eventually(func() string {
-				output, _ := infraprovider.Get().ExecExternalContainerCommand(externalContainer, []string{"/bin/sh", "-c", testCmd})
-				return output
-			}, 30*time.Second, 2*time.Second).Should(gomega.ContainSubstring(podBackend),
-				"Expected UDP traffic to reach new backend pod after conntrack flush (no blackhole)")
+			ginkgo.By("Verifying UDP connectivity works after conntrack flush for all IP families (no blackhole)")
+			// Verify that UDP traffic from external container reaches the backend for ALL node IPs
+			// This proves that stale conntrack didn't cause a blackhole for any IP family
+			for _, nodeIP := range nodeIPs {
+				testCmd := fmt.Sprintf("echo hostname | nc -u -w2 %s %d", nodeIP, nodePort)
+				gomega.Eventually(func() string {
+					output, _ := infraprovider.Get().ExecExternalContainerCommand(externalContainer, []string{"/bin/sh", "-c", testCmd})
+					return output
+				}, 30*time.Second, 2*time.Second).Should(gomega.ContainSubstring(podBackend),
+					"Expected UDP traffic to reach backend pod via node IP %s after conntrack flush (no blackhole)", nodeIP)
+				framework.Logf("Confirmed UDP connectivity works to %s:%d", nodeIP, nodePort)
+			}
 
-			framework.Logf("Confirmed UDP connectivity works to NodePort %d after 0→N transition (blackhole avoided)", nodePort)
+			framework.Logf("Confirmed UDP connectivity works to NodePort %d for all %d IP families after 0→N transition (blackhole avoided)",
+				nodePort, len(nodeIPs))
 		})
 
 		ginkgo.It("should listen on each host addresses", func() {
