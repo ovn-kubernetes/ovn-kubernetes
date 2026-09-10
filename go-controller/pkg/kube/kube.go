@@ -16,6 +16,7 @@ import (
 	ocpcloudnetworkclientset "github.com/openshift/client-go/cloudnetwork/clientset/versioned"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -34,6 +35,7 @@ import (
 	egressqosclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1/apis/clientset/versioned"
 	egressserviceclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/clientset/versioned"
 	networkqosclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/clientset/versioned"
+	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
 // InterfaceOVN represents the exported methods for dealing with getting/setting
@@ -135,7 +137,9 @@ func escapeJSONPatchPathKey(key string) string {
 // PatchPodStatusAnnotations patches only pod annotations through the status
 // subresource using compare-and-retry semantics on the old pod state.
 //
-// There are two concurrency cases to handle:
+// The patch always includes a pod UID test so a same-name replacement can
+// never receive annotations computed for the old pod. There are also two
+// annotation concurrency cases to handle:
 //  1. The annotation key already exists on the old pod. In that case we can use a
 //     narrow JSON patch "test" on that specific key so we only retry if another
 //     writer changed the same annotation.
@@ -176,6 +180,13 @@ func (k *Kube) PatchPodStatusAnnotations(oldPod, newPod *corev1.Pod) error {
 	}
 
 	ops := []jsonPatchOp{}
+	if oldPod.UID != "" {
+		ops = append(ops, jsonPatchOp{
+			Op:    "test",
+			Path:  "/metadata/uid",
+			Value: string(oldPod.UID),
+		})
+	}
 	requiresResourceVersionGuard := false
 	if len(oldPod.Annotations) == 0 {
 		ops = append(ops, jsonPatchOp{
@@ -243,6 +254,21 @@ func (k *Kube) PatchPodStatusAnnotations(oldPod, newPod *corev1.Pod) error {
 	)
 	if err != nil {
 		klog.Errorf("Error in patching annotations on pod %s: %v", podDesc, err)
+		if oldPod.UID != "" && (apierrors.IsInvalid(err) || apierrors.IsConflict(err)) {
+			// A failed JSON Patch test does not identify which precondition failed.
+			// Confirm replacement against the API, since the informer may still
+			// contain the old pod. Unconfirmed failures keep their retry semantics.
+			currentPod, getErr := k.KClient.CoreV1().Pods(oldPod.Namespace).Get(context.TODO(), oldPod.Name, metav1.GetOptions{})
+			if apierrors.IsNotFound(getErr) {
+				return getErr
+			}
+			if getErr == nil && currentPod.UID != oldPod.UID {
+				return &ovntypes.PodUIDMismatchError{
+					Namespace: oldPod.Namespace, Name: oldPod.Name,
+					ExpectedUID: oldPod.UID, ActualUID: currentPod.UID,
+				}
+			}
+		}
 	}
 	return err
 }

@@ -14,6 +14,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
 // AllocateToPodWithRollbackFunc is a function used to allocate a resource to a
@@ -44,6 +45,12 @@ func UpdatePodWithRetryOrRollback(podLister listers.PodLister, kube kube.Interfa
 		oldPod, err := podLister.Pods(pod.Namespace).Get(pod.Name)
 		if err != nil {
 			return err
+		}
+		if pod.UID != "" && oldPod.UID != pod.UID {
+			return &types.PodUIDMismatchError{
+				Namespace: pod.Namespace, Name: pod.Name,
+				ExpectedUID: pod.UID, ActualUID: oldPod.UID,
+			}
 		}
 
 		// Informer cache should not be mutated, so copy the object

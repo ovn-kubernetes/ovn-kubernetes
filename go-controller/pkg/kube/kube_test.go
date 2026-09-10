@@ -248,6 +248,35 @@ var _ = Describe("Kube", func() {
 			Expect(patchOps[1].Path).To(Equal("/metadata/annotations/ovn"))
 			Expect(patchOps[1].Value).To(Equal("new"))
 		})
+
+		It("does not patch a same-name replacement pod", func() {
+			oldPod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace:       "default",
+					Name:            "my-pod",
+					UID:             "old-uid",
+					ResourceVersion: "7",
+					Annotations:     map[string]string{"ovn": "old"},
+				},
+			}
+			replacementPod := oldPod.DeepCopy()
+			replacementPod.UID = "replacement-uid"
+			replacementPod.ResourceVersion = "8"
+			_, err := kube.KClient.CoreV1().Pods("default").Create(
+				context.TODO(), replacementPod, metav1.CreateOptions{})
+			Expect(err).ToNot(HaveOccurred())
+
+			newPod := oldPod.DeepCopy()
+			newPod.Annotations["ovn"] = "new"
+			err = kube.PatchPodStatusAnnotations(oldPod, newPod)
+			Expect(err).To(HaveOccurred())
+
+			pod, err := kube.KClient.CoreV1().Pods("default").Get(
+				context.TODO(), "my-pod", metav1.GetOptions{})
+			Expect(err).ToNot(HaveOccurred())
+			Expect(pod.UID).To(Equal(replacementPod.UID))
+			Expect(pod.Annotations).To(HaveKeyWithValue("ovn", "old"))
+		})
 	})
 
 	Describe("PatchNodeStatusAnnotations", func() {
