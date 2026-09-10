@@ -949,6 +949,81 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 		Expect(bnc.wasPodIPReleased(pod, deleteTestNADKey)).To(BeFalse())
 	})
 
+	DescribeTable("keeps detached NAD release receipts until their allocation lifecycle ends", func(deletePod bool) {
+		config.OVNKubernetesFeature.EnableMultiNetwork = true
+		alternateNADName := "blue-nad"
+		alternateNADKey := deleteTestNADNamespace + "/" + alternateNADName
+		nadA := ovntest.GenerateNAD(deleteTestNetworkName, deleteTestNADName, deleteTestNADNamespace,
+			types.Layer3Topology, "100.128.0.0/16", types.NetworkRoleSecondary)
+		nadB := ovntest.GenerateNAD(deleteTestNetworkName, alternateNADName, deleteTestNADNamespace,
+			types.Layer3Topology, "100.128.0.0/16", types.NetworkRoleSecondary)
+		ovntest.AnnotateNADWithNetworkID("3", nadA)
+		ovntest.AnnotateNADWithNetworkID("3", nadB)
+
+		pod := ovntest.NewPod(deleteTestNADNamespace, deleteTestPodName, deleteTestNodeName, "100.128.0.3")
+		pod.UID = "pod-uid"
+		setSecondaryPodNetworkForNADWithIP(pod, deleteTestNADKey, "100.128.0.3/16")
+		pod.Annotations[nadapi.NetworkAttachmentAnnot] = deleteTestNADKey + "," + alternateNADKey
+		addSecondaryPodNetworkAnnotationForNADWithIP(pod, alternateNADKey, "100.128.0.4/16")
+
+		detachedPod := pod.DeepCopy()
+		detachedPod.Annotations[nadapi.NetworkAttachmentAnnot] = alternateNADKey
+
+		otherPod := ovntest.NewPod(deleteTestNADNamespace, "pod-b", deleteTestNodeName, "100.128.0.3")
+		otherPod.UID = "other-pod-uid"
+		setSecondaryPodNetworkForNADWithIP(otherPod, deleteTestNADKey, "100.128.0.3/16")
+
+		switchName := util.GetUserDefinedNetworkPrefix(deleteTestNetworkName) + deleteTestNodeName
+		fakeOVN := NewFakeOVN(false, deleteTestNodeName)
+		fakeOVN.startWithDBSetup(
+			libovsdbtest.TestSetup{NBData: []libovsdbtest.TestData{&nbdb.LogicalSwitch{Name: switchName}}},
+			pod,
+			otherPod,
+			newDeleteTestNode(),
+			&nadapi.NetworkAttachmentDefinitionList{Items: []nadapi.NetworkAttachmentDefinition{*nadA, *nadB}},
+		)
+		DeferCleanup(fakeOVN.shutdown)
+		Expect(fakeOVN.NewUserDefinedNetworkController(nadA)).To(Succeed())
+		bnc := fakeOVN.userDefinedNetworkControllers[deleteTestNetworkName].bnc
+		Expect(bnc.lsManager.AddOrUpdateSwitch(switchName,
+			ovntest.MustParseIPNets("100.128.0.0/16"), nil)).To(Succeed())
+
+		state, err := bnc.ReconcilePod(nil, pod, nil)
+		Expect(err).NotTo(HaveOccurred())
+		state, err = bnc.ReconcilePod(pod, detachedPod, state)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(bnc.wasPodIPReleased(pod, deleteTestNADKey)).To(BeTrue(),
+			"successful reconciliation must retain the receipt for the detached NAD")
+
+		_, err = bnc.ReconcilePod(nil, otherPod, nil)
+		Expect(err).NotTo(HaveOccurred(), "another pod should be able to reserve the released IP")
+
+		if deletePod {
+			_, err = bnc.ReconcilePod(detachedPod, nil, state)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(bnc.lsManager.AllocateIPs(switchName,
+				ovntest.MustParseIPNets("100.128.0.3/16"))).To(MatchError(ipallocator.ErrAllocated),
+				"deleting the original pod must not release the other pod's allocation")
+			Expect(bnc.wasPodIPReleased(pod, deleteTestNADKey)).To(BeFalse(),
+				"successful pod deletion should retire all remaining receipts for its UID")
+			return
+		}
+
+		_, err = bnc.ReconcilePod(detachedPod, pod, state)
+		Expect(err).To(HaveOccurred())
+		Expect(ipallocator.IsErrAllocated(err)).To(BeTrue())
+		_, err = libovsdbops.GetLogicalSwitchPort(fakeOVN.nbClient, &nbdb.LogicalSwitchPort{
+			Name: bnc.GetLogicalPortName(pod, deleteTestNADKey),
+		})
+		Expect(errors.Is(err, libovsdbclient.ErrNotFound)).To(BeTrue(),
+			"reattachment must not create a second LSP with the other pod's IP")
+		Expect(bnc.wasPodIPReleased(pod, deleteTestNADKey)).To(BeTrue(),
+			"failed reacquisition must retain the detached NAD receipt")
+	},
+		Entry("when the detached NAD is selected again", false),
+		Entry("when the original pod is deleted", true),
+	)
+
 	DescribeTable("releases stale Layer3 IPAM state without deleting a replacement-owned LSP",
 		func(replacementIP string, expectReleased bool) {
 			config.OVNKubernetesFeature.EnableMultiNetwork = true
