@@ -2836,7 +2836,7 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 
 				Entry("add event: IPv6 endpoint slice added to dual-stack service that already has IPv4 endpoint",
 					testCase{
-						desc: "should return false with current implementation (does not track per-family transitions)",
+						desc:     "should return false with current implementation (does not track per-family transitions)",
 						oldSlice: nil,
 						newSlice: func() *discovery.EndpointSlice {
 							port := int32(8080)
