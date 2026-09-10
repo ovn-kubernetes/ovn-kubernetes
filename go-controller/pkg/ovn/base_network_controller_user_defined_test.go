@@ -659,6 +659,61 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 		Entry("but preserves it when the replacement uses the same IP", "100.128.0.3", false),
 	)
 
+	It("does not reuse a released annotated IP after another pod reserves it", func() {
+		config.OVNKubernetesFeature.EnableMultiNetwork = true
+		nad := ovntest.GenerateNAD(deleteTestNetworkName, deleteTestNADName, deleteTestNADNamespace,
+			types.Layer3Topology, "100.128.0.0/16", types.NetworkRoleSecondary)
+		ovntest.AnnotateNADWithNetworkID("3", nad)
+		pod := ovntest.NewPod(deleteTestNADNamespace, deleteTestPodName, deleteTestNodeName, "100.128.0.3")
+		pod.UID = "pod-uid"
+		setSecondaryPodNetwork(pod)
+
+		switchName := util.GetUserDefinedNetworkPrefix(deleteTestNetworkName) + deleteTestNodeName
+		fakeOVN := NewFakeOVN(false, deleteTestNodeName)
+		fakeOVN.startWithDBSetup(
+			libovsdbtest.TestSetup{NBData: []libovsdbtest.TestData{&nbdb.LogicalSwitch{Name: switchName}}},
+			pod,
+			newNode(deleteTestNodeName, "192.0.2.10/24"),
+			&nadapi.NetworkAttachmentDefinitionList{Items: []nadapi.NetworkAttachmentDefinition{*nad}},
+		)
+		DeferCleanup(fakeOVN.shutdown)
+		Expect(fakeOVN.NewUserDefinedNetworkController(nad)).To(Succeed())
+		bnc := fakeOVN.userDefinedNetworkControllers[deleteTestNetworkName].bnc
+		Expect(bnc.lsManager.AddOrUpdateSwitch(switchName,
+			ovntest.MustParseIPNets("100.128.0.0/16"), nil)).To(Succeed())
+		on, networkMap, err := bnc.podNetworkSelectionForUserDefinedNetwork(pod)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(on).To(BeTrue())
+		network := networkMap[deleteTestNADKey]
+		Expect(network).NotTo(BeNil())
+
+		oldIPs := ovntest.MustParseIPNets("100.128.0.3/16")
+		// Model a detach whose IPAM release succeeded before later cleanup
+		// failed. A different pod then reserves the old IP while this same
+		// UID/NAD is selected again and still carries its stale annotation.
+		Expect(bnc.lsManager.AllocateIPs(switchName, oldIPs)).To(Succeed())
+		Expect(bnc.releasePodIPsOnce(pod, deleteTestNADKey, &lpInfo{
+			logicalSwitch: switchName,
+			ips:           oldIPs,
+		})).To(Succeed())
+		Expect(bnc.lsManager.AllocateIPs(switchName, oldIPs)).To(Succeed())
+
+		ops, _, _, _, err := bnc.addLogicalPortToNetwork(pod, deleteTestNADKey, network, nil)
+		Expect(err).To(HaveOccurred())
+		Expect(ipallocator.IsErrAllocated(err)).To(BeTrue())
+		Expect(ops).To(BeEmpty(), "the conflicting IP must not be programmed on a second port")
+		Expect(bnc.wasPodIPReleased(pod, deleteTestNADKey)).To(BeTrue(), "failed reacquisition must retain the release receipt")
+
+		// Once the old IP is genuinely available, the retry reserves it,
+		// prepares the port, and starts a fresh release lifecycle.
+		Expect(bnc.lsManager.ReleaseIPs(switchName, oldIPs)).To(Succeed())
+		ops, lsp, _, _, err := bnc.addLogicalPortToNetwork(pod, deleteTestNADKey, network, nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ops).NotTo(BeEmpty())
+		Expect(lsp.Addresses).To(ConsistOf("0a:58:64:80:00:03 100.128.0.3"))
+		Expect(bnc.wasPodIPReleased(pod, deleteTestNADKey)).To(BeFalse())
+	})
+
 	DescribeTable("releases stale Layer3 IPAM state without deleting a replacement-owned LSP",
 		func(replacementIP string, expectReleased bool) {
 			config.OVNKubernetesFeature.EnableMultiNetwork = true
