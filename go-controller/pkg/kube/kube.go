@@ -135,7 +135,9 @@ func escapeJSONPatchPathKey(key string) string {
 // PatchPodStatusAnnotations patches only pod annotations through the status
 // subresource using compare-and-retry semantics on the old pod state.
 //
-// There are two concurrency cases to handle:
+// The patch always includes a pod UID test so a same-name replacement can
+// never receive annotations computed for the old pod. There are also two
+// annotation concurrency cases to handle:
 //  1. The annotation key already exists on the old pod. In that case we can use a
 //     narrow JSON patch "test" on that specific key so we only retry if another
 //     writer changed the same annotation.
@@ -176,6 +178,13 @@ func (k *Kube) PatchPodStatusAnnotations(oldPod, newPod *corev1.Pod) error {
 	}
 
 	ops := []jsonPatchOp{}
+	if oldPod.UID != "" {
+		ops = append(ops, jsonPatchOp{
+			Op:    "test",
+			Path:  "/metadata/uid",
+			Value: string(oldPod.UID),
+		})
+	}
 	requiresResourceVersionGuard := false
 	if len(oldPod.Annotations) == 0 {
 		ops = append(ops, jsonPatchOp{
