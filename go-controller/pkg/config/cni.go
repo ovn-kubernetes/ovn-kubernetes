@@ -41,6 +41,9 @@ func WriteCNIConfig() error {
 		LogFileMaxBackups: Logging.LogFileMaxBackups,
 		LogFileMaxAge:     Logging.LogFileMaxAge,
 	}
+	if CNI.CNIRequestTimeout > 0 {
+		netConf.CNIRequestTimeout = CNI.CNIRequestTimeout.String()
+	}
 
 	newBytes, err := json.Marshal(netConf)
 	if err != nil {
