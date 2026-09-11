@@ -5291,10 +5291,10 @@ network, usually <code>br-ex</code>) are not consulted.</p>
 network and the host main table also contains <code>192.168.2.0/24 via 192.168.1.2</code>,
 EgressIP traffic sourced from an address on that primary interface still leaves
 via <code>192.168.1.1</code>. It does not follow the host static route via <code>192.168.1.2</code>.</p>
-<p>This is true in both shared gateway mode and local gateway mode
-(<code>routingViaHost=true</code>). Primary-network EgressIP still follows the shared
-gateway path through the Gateway Router rather than the host kernel, so
-those main-table routes never apply.</p>
+<p><strong>Note:</strong> this applies in both shared gateway mode and local gateway mode.
+Primary-network EgressIP still follows the shared gateway path through the
+Gateway Router rather than the host kernel, so those main-table routes
+never apply. This is a known design limitation.</p>
 <h3 id="egressip-ip-is-assigned-to-a-secondary-host-interface">EgressIP IP is assigned to a secondary host interface<a class="headerlink" href="#egressip-ip-is-assigned-to-a-secondary-host-interface" title="Permanent link">¶</a></h3>
 <p>Note that this is unsupported for user defined networks.
 Lets now imagine the Egress IP(s) mentioned previously, are not hosted by the OVN primary network and is hosted
@@ -5477,12 +5477,13 @@ egressip-node-healthcheck-port=9107
 <h2 id="known-limitations">Known Limitations<a class="headerlink" href="#known-limitations" title="Permanent link">¶</a></h2>
 <ul>
 <li>Layer 2 networks and localnet are not supported.</li>
-<li>EgressIP on the <strong>primary node network</strong> (the interface configured as the
-  node's network, typically <code>br-ex</code>) does not honor static routes that exist in
-  the host's <strong>main routing table</strong> for that network. Next-hop selection uses
-  the OVN Gateway Router default route. Enabling local gateway mode
-  (<code>routingViaHost=true</code>) does not send this traffic through the host kernel, so
-  those main-table routes still do not apply.</li>
+<li><strong>Note:</strong> EgressIP on the <strong>primary node network</strong> (the interface configured as
+  the node's network, typically <code>br-ex</code>) does not honor static routes that exist
+  in the host's <strong>main routing table</strong> for that network. Next-hop selection uses
+  the OVN Gateway Router default route. This applies in both shared gateway mode
+  and local gateway mode. Local gateway mode does not send this traffic through
+  the host kernel, so those main-table routes still do not apply. This is a
+  known design limitation.</li>
 </ul>
 
 
