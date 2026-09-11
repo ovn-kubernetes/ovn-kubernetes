@@ -1689,7 +1689,7 @@ write_files:
 		var (
 			containerNetwork = func(td testData) (infraapi.Network, error) {
 				if td.ingress == "routed" {
-					return infraprovider.Get().GetNetwork("bgpnet")
+					return infraprovider.Get().GetNetwork(bgpExternalNetworkName)
 				}
 				return infraprovider.Get().PrimaryNetwork()
 			}
@@ -1891,7 +1891,7 @@ write_files:
 
 			if td.ingress == "routed" && td.evpn == nil {
 				// pre=created test dependency and therefore we dont delete
-				frrExternalContainer := infraapi.ExternalContainer{Name: "frr"}
+				frrExternalContainer := infraapi.ExternalContainer{Name: routerContainerName}
 				frrNetwork, err := containerNetwork(td)
 				Expect(err).NotTo(HaveOccurred())
 				frrExternalContainerInterface, err := infraprovider.Get().GetExternalContainerNetworkInterface(frrExternalContainer, frrNetwork)

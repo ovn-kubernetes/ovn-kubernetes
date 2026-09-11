@@ -108,11 +108,11 @@ configure_dpu_sim_frr_gateway_peers() {
     echo "DPU simulator gateway network does not exist: ${DPU_SIM_GATEWAY_NETWORK}" >&2
     exit 1
   fi
-  if [ -z "$(dpu_sim_container_network_ipv4 frr "${DPU_SIM_GATEWAY_NETWORK}")" ]; then
-    $OCI_BIN network connect "${DPU_SIM_GATEWAY_NETWORK}" frr
+  if [ -z "$(dpu_sim_container_network_ipv4 "${FRR_CONTAINER_NAME}" "${DPU_SIM_GATEWAY_NETWORK}")" ]; then
+    $OCI_BIN network connect "${DPU_SIM_GATEWAY_NETWORK}" "${FRR_CONTAINER_NAME}"
   fi
 
-  DPU_SIM_FRR_IPV4=$(dpu_sim_container_network_ipv4 frr "${DPU_SIM_GATEWAY_NETWORK}")
+  DPU_SIM_FRR_IPV4=$(dpu_sim_container_network_ipv4 "${FRR_CONTAINER_NAME}" "${DPU_SIM_GATEWAY_NETWORK}")
   if [ -z "${DPU_SIM_FRR_IPV4}" ]; then
     echo "Failed to determine external FRR IP on ${DPU_SIM_GATEWAY_NETWORK}" >&2
     exit 1
@@ -134,7 +134,7 @@ configure_dpu_sim_frr_gateway_peers() {
   done
 
   local attempts=0 daemon_status
-  while ! daemon_status=$($OCI_BIN exec frr vtysh -c "show daemons" 2>&1); do
+  while ! daemon_status=$($OCI_BIN exec "${FRR_CONTAINER_NAME}" vtysh -c "show daemons" 2>&1); do
     if (( ++attempts > 30 )); then
       echo "error: FRR daemons did not become ready after 30 attempts"
       echo "last daemon status: $daemon_status"
@@ -153,7 +153,7 @@ configure_dpu_sim_frr_gateway_peers() {
     vtysh_cmds+=(-c "neighbor ${node_ip} route-reflector-client")
   done
   vtysh_cmds+=(-c "exit-address-family" -c "end" -c "write memory")
-  $OCI_BIN exec frr vtysh "${vtysh_cmds[@]}"
+  $OCI_BIN exec "${FRR_CONTAINER_NAME}" vtysh "${vtysh_cmds[@]}"
 }
 
 configure_dpu_sim_frr_receive_config() {
@@ -166,7 +166,7 @@ configure_dpu_sim_frr_receive_config() {
     return
   fi
 
-  DPU_SIM_FRR_IPV4=${DPU_SIM_FRR_IPV4:-$(dpu_sim_container_network_ipv4 frr "${DPU_SIM_GATEWAY_NETWORK}")}
+  DPU_SIM_FRR_IPV4=${DPU_SIM_FRR_IPV4:-$(dpu_sim_container_network_ipv4 "${FRR_CONTAINER_NAME}" "${DPU_SIM_GATEWAY_NETWORK}")}
   if [ -z "${DPU_SIM_FRR_IPV4}" ]; then
     echo "Failed to determine external FRR IP on ${DPU_SIM_GATEWAY_NETWORK}" >&2
     exit 1
