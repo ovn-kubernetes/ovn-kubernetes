@@ -272,6 +272,79 @@ func TestEnsureUplinkGatewayRequiresValidInterface(t *testing.T) {
 	}
 }
 
+func TestWantsMissingUplinkDefaultGateways(t *testing.T) {
+	if err := config.PrepareTestConfig(); err != nil {
+		t.Fatalf("failed to prepare test config: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = config.PrepareTestConfig()
+	})
+	config.IPv4Mode = true
+	config.IPv6Mode = true
+	config.Gateway.Mode = config.GatewayModeShared
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+	config.OVNKubernetesFeature.EnableUplink = true
+
+	nad := generateUplinkNAD("red", "rednad", "greenamespace",
+		types.Layer3Topology, "10.200.0.0/16/24,ae70::/60/64", types.NetworkRolePrimary, "uplink1")
+	netInfo, err := util.ParseNADInfo(nad)
+	if err != nil {
+		t.Fatalf("failed to parse NAD: %v", err)
+	}
+
+	tests := []struct {
+		name                   string
+		defaultGateways        []net.IP
+		advertised             bool
+		advertisedToDefaultVRF bool
+		want                   bool
+	}{
+		{
+			name: "gateways discovered for both families",
+			defaultGateways: []net.IP{
+				ovntest.MustParseIP("192.0.2.1"),
+				ovntest.MustParseIP("ae70::1"),
+			},
+		},
+		{
+			name:            "gateway of one family only",
+			defaultGateways: []net.IP{ovntest.MustParseIP("192.0.2.1")},
+			want:            true,
+		},
+		{
+			name: "no gateways",
+			want: true,
+		},
+		{
+			name:       "no gateways, network advertised outside the default VRF",
+			advertised: true,
+		},
+		{
+			name:                   "no gateways, network advertised to the default VRF",
+			advertised:             true,
+			advertisedToDefaultVRF: true,
+			want:                   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			udng := &UserDefinedNetworkGateway{
+				NetInfo:                         netInfo,
+				node:                            &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}},
+				isNetworkAdvertised:             tt.advertised,
+				isNetworkAdvertisedToDefaultVRF: tt.advertisedToDefaultVRF,
+			}
+
+			if got := udng.wantsMissingUplinkDefaultGateways(tt.defaultGateways); got != tt.want {
+				t.Fatalf("wantsMissingUplinkDefaultGateways(%v) = %v, expected %v",
+					tt.defaultGateways, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestUplinkGatewayInterfaceName(t *testing.T) {
 	tests := []struct {
 		name     string

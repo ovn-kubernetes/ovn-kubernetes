@@ -13,6 +13,7 @@ import (
 	"github.com/k8snetworkplumbingwg/sriovnet"
 	"github.com/onsi/gomega"
 	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -960,6 +961,255 @@ func TestNodeUplinkControllerRejectsBridgeUplinkAsHostInterface(t *testing.T) {
 		gomega.HaveField("Status", metav1.ConditionFalse),
 		gomega.HaveField("Reason", uplinkv1alpha1.UplinkStateReasonInvalidHostInterface),
 	)))
+}
+
+func TestNodeUplinkControllerRepollsWhileDefaultGatewaysMissing(t *testing.T) {
+	hostState := &hostInterfaceState{
+		macAddress:  net.HardwareAddr{0x02, 0x42, 0xac, 0x12, 0x00, 0x02},
+		ipAddresses: []*net.IPNet{ovntest.MustParseIPNet("192.0.2.10/24")},
+	}
+
+	// Discovery without default gateways publishes success — networks that
+	// import their routes over BGP run without a default gateway — and
+	// schedules a delayed rediscovery (not an error, to keep the logs
+	// quiet) that keeps re-polling the host routes until a gateway appears.
+	t.Run("full mode", func(t *testing.T) {
+		g := gomega.NewWithT(t)
+		g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+		config.OvnKubeNode.Mode = ovntypes.NodeModeFull
+
+		controller, client := newTestController(t,
+			fakeHostDiscoverer{state: hostState},
+			fakeBridgeResolver{bridgeName: "br-blue", bridgeUplink: "eth0"},
+			newNode("node-a", map[string]string{"role": "blue"}),
+			newUplink("br-blue", "role", "blue", "breth0"),
+			newUplinkState("br-blue.node-a", "br-blue", "node-a"),
+		)
+
+		g.Expect(controller.reconcileUplinkState("br-blue.node-a")).To(gomega.Succeed())
+
+		state := getUplinkState(g, client, "br-blue.node-a")
+		g.Expect(state.Status.MACAddress).To(gomega.Equal(uplinkv1alpha1.MACAddress("02:42:ac:12:00:02")))
+		g.Expect(state.Status.IPAddresses).To(gomega.Equal([]uplinkv1alpha1.IPAddressCIDR{"192.0.2.10/24"}))
+		g.Expect(state.Status.DefaultGateways).To(gomega.BeEmpty())
+		g.Expect(state.Status.OVSBridge.Name).To(gomega.Equal("br-blue"))
+		g.Expect(state.Status.Conditions).To(gomega.ContainElement(gomega.And(
+			gomega.HaveField("Type", uplinkv1alpha1.UplinkStateConditionResolved),
+			gomega.HaveField("Status", metav1.ConditionTrue),
+			gomega.HaveField("Reason", uplinkv1alpha1.UplinkStateReasonResolved),
+		)))
+	})
+
+	t.Run("DPU-host mode", func(t *testing.T) {
+		g := gomega.NewWithT(t)
+		g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+		config.OvnKubeNode.Mode = ovntypes.NodeModeDPUHost
+
+		controller, client := newTestController(t,
+			fakeHostDiscoverer{state: hostState},
+			failingBridgeResolver{t: t},
+			newNode("node-a", map[string]string{"role": "blue"}),
+			newUplink("br-blue", "role", "blue", "breth0"),
+			newUplinkState("br-blue.node-a", "br-blue", "node-a"),
+		)
+
+		g.Expect(controller.reconcileUplinkState("br-blue.node-a")).To(gomega.Succeed())
+
+		state := getUplinkState(g, client, "br-blue.node-a")
+		g.Expect(state.Status.MACAddress).To(gomega.Equal(uplinkv1alpha1.MACAddress("02:42:ac:12:00:02")))
+		g.Expect(state.Status.IPAddresses).To(gomega.Equal([]uplinkv1alpha1.IPAddressCIDR{"192.0.2.10/24"}))
+		g.Expect(state.Status.DefaultGateways).To(gomega.BeEmpty())
+		g.Expect(state.Status.Conditions).To(gomega.ContainElement(gomega.And(
+			gomega.HaveField("Type", uplinkv1alpha1.UplinkStateConditionHostDataReady),
+			gomega.HaveField("Status", metav1.ConditionTrue),
+			gomega.HaveField("Reason", uplinkv1alpha1.UplinkStateReasonHostDataDiscovered),
+		)))
+	})
+
+	// A family with an address but no gateway keeps re-polling even when
+	// the other family's gateway is present.
+	t.Run("dual stack with one missing family", func(t *testing.T) {
+		g := gomega.NewWithT(t)
+		g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+		config.OvnKubeNode.Mode = ovntypes.NodeModeFull
+
+		controller, client := newTestController(t,
+			fakeHostDiscoverer{state: &hostInterfaceState{
+				macAddress: net.HardwareAddr{0x02, 0x42, 0xac, 0x12, 0x00, 0x02},
+				ipAddresses: []*net.IPNet{
+					ovntest.MustParseIPNet("192.0.2.10/24"),
+					ovntest.MustParseIPNet("2001:db8::10/64"),
+				},
+				defaultGateways: []net.IP{ovntest.MustParseIP("192.0.2.1")},
+			}},
+			fakeBridgeResolver{bridgeName: "br-blue", bridgeUplink: "eth0"},
+			newNode("node-a", map[string]string{"role": "blue"}),
+			newUplink("br-blue", "role", "blue", "breth0"),
+			newUplinkState("br-blue.node-a", "br-blue", "node-a"),
+		)
+
+		g.Expect(controller.reconcileUplinkState("br-blue.node-a")).To(gomega.Succeed())
+
+		state := getUplinkState(g, client, "br-blue.node-a")
+		g.Expect(state.Status.DefaultGateways).To(gomega.Equal([]uplinkv1alpha1.IPAddress{"192.0.2.1"}))
+		g.Expect(state.Status.Conditions).To(gomega.ContainElement(gomega.And(
+			gomega.HaveField("Type", uplinkv1alpha1.UplinkStateConditionResolved),
+			gomega.HaveField("Status", metav1.ConditionTrue),
+			gomega.HaveField("Reason", uplinkv1alpha1.UplinkStateReasonResolved),
+		)))
+	})
+
+	// The DPU does not poll the host: its host data comes from the
+	// UplinkState and its reconciles are driven by status updates.
+	t.Run("DPU mode resolves without host data", func(t *testing.T) {
+		g := gomega.NewWithT(t)
+		g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+		config.OvnKubeNode.Mode = ovntypes.NodeModeDPU
+
+		state := newHostResolvedUplinkState("br-blue.node-a", "br-blue", "node-a", "breth0")
+		state.Status.DefaultGateways = nil
+
+		controller, client := newTestController(t,
+			fakeHostDiscoverer{err: fmt.Errorf("must not inspect host interface")},
+			fakeBridgeResolver{bridgeName: "br-blue", bridgeUplink: "p0"},
+			newNode("node-a", map[string]string{"role": "blue"}),
+			newUplink("br-blue", "role", "blue", "breth0"),
+			state,
+		)
+
+		g.Expect(controller.reconcileUplinkState("br-blue.node-a")).To(gomega.Succeed())
+
+		state = getUplinkState(g, client, "br-blue.node-a")
+		g.Expect(state.Status.Conditions).To(gomega.ContainElement(gomega.And(
+			gomega.HaveField("Type", uplinkv1alpha1.UplinkStateConditionResolved),
+			gomega.HaveField("Status", metav1.ConditionTrue),
+			gomega.HaveField("Reason", uplinkv1alpha1.UplinkStateReasonResolved),
+		)))
+	})
+}
+
+func TestHostInterfaceRoutes(t *testing.T) {
+	mainTableRoutes := []netlink.Route{{Gw: ovntest.MustParseIP("192.0.2.1")}}
+	vrfTableRoutes := []netlink.Route{{Gw: ovntest.MustParseIP("192.0.2.254"), Table: 1005}}
+
+	t.Run("standalone interface uses the main table", func(t *testing.T) {
+		g := gomega.NewWithT(t)
+		netlinkOps := utilmocks.NewNetLinkOps(t)
+		util.SetNetLinkOpMockInst(netlinkOps)
+		t.Cleanup(util.ResetNetLinkOpMockInst)
+
+		link := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "enp3s0v0", Index: 7}}
+		netlinkOps.On("RouteListFiltered",
+			netlink.FAMILY_ALL,
+			&netlink.Route{Table: unix.RT_TABLE_MAIN},
+			uint64(netlink.RT_FILTER_TABLE),
+		).Return(mainTableRoutes, nil)
+
+		routes, err := hostInterfaceRoutes(link)
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+		g.Expect(routes).To(gomega.Equal(mainTableRoutes))
+	})
+
+	t.Run("VRF-enslaved interface uses the VRF table", func(t *testing.T) {
+		g := gomega.NewWithT(t)
+		netlinkOps := utilmocks.NewNetLinkOps(t)
+		util.SetNetLinkOpMockInst(netlinkOps)
+		t.Cleanup(util.ResetNetLinkOpMockInst)
+
+		link := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "enp3s0v0", Index: 7, MasterIndex: 9}}
+		netlinkOps.On("LinkByIndex", 9).Return(&netlink.Vrf{
+			LinkAttrs: netlink.LinkAttrs{Name: "mp1005", Index: 9},
+			Table:     1005,
+		}, nil)
+		netlinkOps.On("RouteListFiltered",
+			netlink.FAMILY_ALL,
+			&netlink.Route{Table: 1005},
+			uint64(netlink.RT_FILTER_TABLE),
+		).Return(vrfTableRoutes, nil)
+
+		routes, err := hostInterfaceRoutes(link)
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+		g.Expect(routes).To(gomega.Equal(vrfTableRoutes))
+	})
+
+	t.Run("non-VRF master falls back to the main table", func(t *testing.T) {
+		g := gomega.NewWithT(t)
+		netlinkOps := utilmocks.NewNetLinkOps(t)
+		util.SetNetLinkOpMockInst(netlinkOps)
+		t.Cleanup(util.ResetNetLinkOpMockInst)
+
+		link := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "enp3s0v0", Index: 7, MasterIndex: 9}}
+		netlinkOps.On("LinkByIndex", 9).Return(&netlink.Bond{
+			LinkAttrs: netlink.LinkAttrs{Name: "bond0", Index: 9},
+		}, nil)
+		netlinkOps.On("RouteListFiltered",
+			netlink.FAMILY_ALL,
+			&netlink.Route{Table: unix.RT_TABLE_MAIN},
+			uint64(netlink.RT_FILTER_TABLE),
+		).Return(mainTableRoutes, nil)
+
+		routes, err := hostInterfaceRoutes(link)
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+		g.Expect(routes).To(gomega.Equal(mainTableRoutes))
+	})
+}
+
+func TestDefaultGatewaysForLink(t *testing.T) {
+	tests := []struct {
+		name     string
+		routes   []netlink.Route
+		expected []net.IP
+	}{
+		{
+			name: "single path default route on the link",
+			routes: []netlink.Route{
+				{LinkIndex: 6, Gw: net.ParseIP("192.0.2.1")},
+			},
+			expected: []net.IP{net.ParseIP("192.0.2.1")},
+		},
+		{
+			name: "single path default route on another link",
+			routes: []netlink.Route{
+				{LinkIndex: 7, Gw: net.ParseIP("192.0.2.1")},
+			},
+			expected: []net.IP{},
+		},
+		{
+			name: "non-default route on the link",
+			routes: []netlink.Route{
+				{LinkIndex: 6, Gw: net.ParseIP("192.0.2.1"), Dst: ovntest.MustParseIPNet("198.51.100.0/24")},
+			},
+			expected: []net.IP{},
+		},
+		{
+			name: "multipath default route mixing links",
+			routes: []netlink.Route{
+				{
+					MultiPath: []*netlink.NexthopInfo{
+						{LinkIndex: 6, Gw: net.ParseIP("192.0.2.1")},
+						{LinkIndex: 7, Gw: net.ParseIP("192.0.2.2")},
+						{LinkIndex: 6, Gw: net.ParseIP("192.0.2.3")},
+					},
+				},
+			},
+			expected: []net.IP{net.ParseIP("192.0.2.1"), net.ParseIP("192.0.2.3")},
+		},
+		{
+			name: "gatewayless routes",
+			routes: []netlink.Route{
+				{LinkIndex: 6},
+				{MultiPath: []*netlink.NexthopInfo{{LinkIndex: 6}}},
+			},
+			expected: []net.IP{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			g.Expect(defaultGatewaysForLink(tt.routes, 6)).To(gomega.Equal(tt.expected))
+		})
+	}
 }
 
 func TestNodeUplinkControllerRetriesWhileUnresolved(t *testing.T) {
