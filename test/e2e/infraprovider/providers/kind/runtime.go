@@ -9,18 +9,18 @@ import (
 	"strings"
 )
 
-type containerRuntime string
+type ContainerRuntime string
 
-func (ce containerRuntime) String() string {
+func (ce ContainerRuntime) String() string {
 	return string(ce)
 }
 
 const (
-	docker containerRuntime = "docker"
-	podman containerRuntime = "podman"
+	docker ContainerRuntime = "docker"
+	podman ContainerRuntime = "podman"
 )
 
-var engine containerRuntime
+var engine ContainerRuntime
 
 func init() {
 	if cr, found := os.LookupEnv("CONTAINER_RUNTIME"); found {
@@ -37,7 +37,7 @@ func init() {
 	}
 }
 
-func getContainerRuntime() containerRuntime {
+func GetContainerRuntime() ContainerRuntime {
 	if engine.String() == "" {
 		panic("container engine is not set")
 	}
