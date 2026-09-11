@@ -299,6 +299,24 @@ the same `Uplink` but be active on different nodes.
 For a CUDN that does not set `spec.uplinks`, `UplinksReady=True` and existing
 gateway behavior is preserved.
 
+### Gateway Lifecycle and Configuration Changes
+
+OVN-Kubernetes keeps gateway programming for active CUDNs synchronized with
+the resolved Uplink configuration. If the selected host interface, OVS bridge,
+MAC address, IP addresses, or default gateways change, `GatewayReady` becomes
+`False` with reason `GatewayConfigurationPending` while each active CUDN is
+reprogrammed. It returns to `True` only after all of those gateways use the new
+configuration. A failed reconfiguration remains visible through
+`GatewayReady=False` and is retried without reporting the incomplete active set
+as ready.
+
+If an Uplink stops selecting a node, ovnkube-node withdraws the active CUDN
+gateway programming before deleting the node's `UplinkState`. Selecting the
+node again creates a fresh lifecycle and programs the gateways from newly
+resolved state. By contrast, recreating an `UplinkState` with an unchanged
+resolved configuration restores its readiness condition without disrupting
+working gateway programming.
+
 ## Dynamic UDN
 
 With Dynamic UDN enabled, OVN-Kubernetes delays Uplink gateway programming on a

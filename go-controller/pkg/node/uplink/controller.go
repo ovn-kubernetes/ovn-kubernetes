@@ -95,17 +95,6 @@ func newDiscoveryError(reason string, err error) error {
 	return &discoveryError{reason: reason, err: err}
 }
 
-// GatewayStateManager owns the node-local gateway cache and the gateway
-// condition published from it.
-type GatewayStateManager interface {
-	RepublishGatewayCondition(uplinkName string) error
-	// ConditionType is the UplinkState condition this manager publishes:
-	// GatewayReady, or HostGatewayReady on the DPU-host.
-	ConditionType() string
-	InvalidateGatewayState(uplinkName string)
-	DeleteGatewayState(uplinkName string)
-}
-
 // Controller publishes UplinkState discovery status for this node.
 type Controller struct {
 	nodeName string
@@ -115,9 +104,8 @@ type Controller struct {
 	uplinkStateLister uplinklisters.UplinkStateLister
 	nodeLister        corelisters.NodeLister
 
-	hostDiscoverer      hostInterfaceDiscoverer
-	bridgeResolver      ovsBridgeResolver
-	gatewayStateManager GatewayStateManager
+	hostDiscoverer hostInterfaceDiscoverer
+	bridgeResolver ovsBridgeResolver
 
 	uplinkController      controllerutil.Controller
 	uplinkStateController controllerutil.Controller
@@ -135,19 +123,16 @@ func discoveryRateLimiter() workqueue.TypedRateLimiter[string] {
 	)
 }
 
-// NewController creates an ovnkube-node Uplink controller.
-func NewController(nodeName string, wf factory.NodeWatchFactory, ovnClient *util.OVNNodeClientset, ovsClient libovsdbclient.Client,
-	gatewayStateManager GatewayStateManager,
-) *Controller {
+// NewController creates the ovnkube-node Uplink discovery controller.
+func NewController(nodeName string, wf factory.NodeWatchFactory, ovnClient *util.OVNNodeClientset, ovsClient libovsdbclient.Client) *Controller {
 	c := &Controller{
-		nodeName:            nodeName,
-		uplinkClient:        ovnClient.UplinkClient,
-		uplinkLister:        wf.UplinkInformer().Lister(),
-		uplinkStateLister:   wf.UplinkStateInformer().Lister(),
-		nodeLister:          wf.NodeCoreInformer().Lister(),
-		hostDiscoverer:      netlinkHostInterfaceDiscoverer{},
-		bridgeResolver:      defaultOVSBridgeResolver{ovsClient: ovsClient},
-		gatewayStateManager: gatewayStateManager,
+		nodeName:          nodeName,
+		uplinkClient:      ovnClient.UplinkClient,
+		uplinkLister:      wf.UplinkInformer().Lister(),
+		uplinkStateLister: wf.UplinkStateInformer().Lister(),
+		nodeLister:        wf.NodeCoreInformer().Lister(),
+		hostDiscoverer:    netlinkHostInterfaceDiscoverer{},
+		bridgeResolver:    defaultOVSBridgeResolver{ovsClient: ovsClient},
 	}
 
 	uplinkCfg := &controllerutil.ControllerConfig[uplinkv1alpha1.Uplink]{
@@ -220,9 +205,6 @@ func (c *Controller) reconcileUplink(key string) error {
 	uplink, err := c.uplinkLister.Get(key)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			if c.gatewayStateManager != nil {
-				c.gatewayStateManager.DeleteGatewayState(key)
-			}
 			return c.deleteUplinkState(uplinkutil.StateName(key, c.nodeName))
 		}
 		return fmt.Errorf("failed to get Uplink %s: %w", key, err)
@@ -234,10 +216,8 @@ func (c *Controller) reconcileUplink(key string) error {
 	}
 
 	nodeConfig, nodeConfigErr := selectedNodeConfigForNode(uplink, node)
+	inputsCurrent := c.gatewayStateInputsCurrent(uplink, node)
 	if nodeConfigErr == nil && nodeConfig == nil {
-		if c.gatewayStateManager != nil {
-			c.gatewayStateManager.InvalidateGatewayState(uplink.Name)
-		}
 		return c.deleteUplinkState(uplinkutil.StateName(uplink.Name, c.nodeName))
 	}
 
@@ -257,6 +237,7 @@ func (c *Controller) reconcileUplink(key string) error {
 			metav1.ConditionFalse,
 			discoveryReason(nodeConfigErr),
 			nodeConfigErr.Error(),
+			inputsCurrent,
 		))
 	}
 	// Creation also produces an UplinkState watch event, but existing states
@@ -287,9 +268,6 @@ func (c *Controller) reconcileUplinkState(key string) error {
 	uplink, err := c.uplinkLister.Get(uplinkName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			if c.gatewayStateManager != nil {
-				c.gatewayStateManager.DeleteGatewayState(uplinkName)
-			}
 			return nil
 		}
 		return fmt.Errorf("failed to get Uplink %s: %w", uplinkName, err)
@@ -299,6 +277,7 @@ func (c *Controller) reconcileUplinkState(key string) error {
 	if err != nil {
 		return fmt.Errorf("failed to get local node %s: %w", c.nodeName, err)
 	}
+	inputsCurrent := c.gatewayStateInputsCurrent(uplink, node)
 
 	nodeConfig, err := selectedNodeConfigForNode(uplink, node)
 	if err != nil {
@@ -310,28 +289,11 @@ func (c *Controller) reconcileUplinkState(key string) error {
 			metav1.ConditionFalse,
 			discoveryReason(err),
 			err.Error(),
+			inputsCurrent,
 		))
 	}
 	if nodeConfig == nil {
-		if c.gatewayStateManager != nil {
-			c.gatewayStateManager.InvalidateGatewayState(uplinkName)
-		}
 		return c.deleteUplinkState(state.Name)
-	}
-
-	// An UplinkState recreated after an out-of-band deletion lost the gateway
-	// condition this node publishes, and nothing republishes it until a
-	// network event runs gateway reconciliation: restore it only after
-	// confirming this Uplink still selects the node. Intentional deselection
-	// starts a new gateway lifecycle and must not restore cached readiness.
-	// The gate checks the manager's own condition type: on a DPU-host that is
-	// HostGatewayReady, while GatewayReady on the same UplinkState belongs to
-	// the DPU and says nothing about the host-side condition.
-	if c.gatewayStateManager != nil &&
-		meta.FindStatusCondition(state.Status.Conditions, c.gatewayStateManager.ConditionType()) == nil {
-		if err := c.gatewayStateManager.RepublishGatewayCondition(uplinkName); err != nil {
-			return fmt.Errorf("failed to republish gateway condition for Uplink %s: %w", uplinkName, err)
-		}
 	}
 
 	hostInterfaceName := string(nodeConfig.HostInterfaceName)
@@ -347,6 +309,7 @@ func (c *Controller) reconcileUplinkState(key string) error {
 				metav1.ConditionFalse,
 				uplinkv1alpha1.UplinkStateReasonWaitingForDPUHost,
 				err.Error(),
+				inputsCurrent,
 			))
 		}
 	} else {
@@ -360,6 +323,7 @@ func (c *Controller) reconcileUplinkState(key string) error {
 				metav1.ConditionFalse,
 				discoveryReason(err),
 				err.Error(),
+				inputsCurrent,
 			))
 		}
 	}
@@ -376,6 +340,7 @@ func (c *Controller) reconcileUplinkState(key string) error {
 			metav1.ConditionTrue,
 			uplinkv1alpha1.UplinkStateReasonHostDataDiscovered,
 			"Uplink host interface data discovered",
+			inputsCurrent,
 		)
 	}
 
@@ -389,6 +354,7 @@ func (c *Controller) reconcileUplinkState(key string) error {
 			metav1.ConditionFalse,
 			discoveryReason(err),
 			err.Error(),
+			inputsCurrent,
 		))
 	}
 
@@ -429,6 +395,7 @@ func (c *Controller) reconcileUplinkState(key string) error {
 				metav1.ConditionFalse,
 				discoveryReason(err),
 				err.Error(),
+				inputsCurrent,
 			))
 		}
 		if err := c.validateBridgeUplink(bridgeName, hostInterfaceName, defaultBridgeName, false); err != nil {
@@ -440,6 +407,7 @@ func (c *Controller) reconcileUplinkState(key string) error {
 				metav1.ConditionFalse,
 				discoveryReason(err),
 				err.Error(),
+				inputsCurrent,
 			))
 		}
 		return c.updateResolvedUplinkStateStatus(
@@ -448,6 +416,7 @@ func (c *Controller) reconcileUplinkState(key string) error {
 			hostState,
 			bridgeName,
 			fmt.Sprintf("Uplink DPU bridge discovery succeeded via %s", resolvedVia),
+			inputsCurrent,
 		)
 	}
 
@@ -461,6 +430,7 @@ func (c *Controller) reconcileUplinkState(key string) error {
 			metav1.ConditionFalse,
 			discoveryReason(err),
 			err.Error(),
+			inputsCurrent,
 		))
 	}
 	if err := c.validateBridgeUplink(bridgeName, hostInterfaceName, defaultBridgeName, true); err != nil {
@@ -472,6 +442,7 @@ func (c *Controller) reconcileUplinkState(key string) error {
 			metav1.ConditionFalse,
 			discoveryReason(err),
 			err.Error(),
+			inputsCurrent,
 		))
 	}
 
@@ -481,6 +452,7 @@ func (c *Controller) reconcileUplinkState(key string) error {
 		hostState,
 		bridgeName,
 		"Uplink discovery succeeded",
+		inputsCurrent,
 	)
 }
 
@@ -499,9 +471,6 @@ func (c *Controller) reconcileOwnerOfDeletedUplinkState(key string) error {
 	// The cluster-manager finalizer flow deletes the UplinkStates of a
 	// terminating Uplink before releasing it; don't recreate them.
 	if !uplink.DeletionTimestamp.IsZero() {
-		if c.gatewayStateManager != nil {
-			c.gatewayStateManager.DeleteGatewayState(uplink.Name)
-		}
 		return nil
 	}
 	klog.Infof("UplinkState %s was deleted, reconciling Uplink %s to recreate it", key, uplink.Name)
@@ -528,6 +497,28 @@ func selectedNodeConfigForNode(
 		)
 	}
 	return selected, nil
+}
+
+// gatewayStateInputsCurrent snapshots the API-owned inputs used by discovery.
+// Callers recheck the returned callback before publishing discovery status.
+// This prevents a slow reconcile from applying results computed before an
+// Uplink spec or node selector change.
+func (c *Controller) gatewayStateInputsCurrent(
+	uplink *uplinkv1alpha1.Uplink,
+	node *corev1.Node,
+) func() bool {
+	expectedUplink := uplink.DeepCopy()
+	expectedNode := node.DeepCopy()
+	return func() bool {
+		currentUplink, err := c.uplinkLister.Get(expectedUplink.Name)
+		if err != nil || currentUplink.UID != expectedUplink.UID ||
+			uplinkNeedsUpdate(expectedUplink, currentUplink) {
+			return false
+		}
+		currentNode, err := c.nodeLister.Get(expectedNode.Name)
+		return err == nil && currentNode.UID == expectedNode.UID &&
+			!c.nodeNeedsUpdate(expectedNode, currentNode)
+	}
 }
 
 func defaultGatewayBridgeName(node *corev1.Node) (string, error) {
@@ -594,6 +585,7 @@ func (c *Controller) updateResolvedUplinkStateStatus(
 	hostState *hostInterfaceState,
 	bridgeName string,
 	message string,
+	isCurrent func() bool,
 ) error {
 	return c.updateUplinkStateStatus(
 		state,
@@ -603,6 +595,7 @@ func (c *Controller) updateResolvedUplinkStateStatus(
 		metav1.ConditionTrue,
 		uplinkv1alpha1.UplinkStateReasonResolved,
 		message,
+		isCurrent,
 	)
 }
 
@@ -626,62 +619,66 @@ func (c *Controller) updateUplinkStateStatus(
 	status metav1.ConditionStatus,
 	reason string,
 	message string,
+	isCurrent func() bool,
 ) error {
-	condition := statusCondition(state, status, reason, message)
-	desiredStatus := desiredUplinkStateStatus(state, hostInterfaceName, hostState, bridgeName, condition)
-	if reflect.DeepEqual(state.Status, desiredStatus) {
+	if isCurrent != nil && !isCurrent() {
 		return nil
 	}
 
-	statusApply := uplinkapply.UplinkStateStatus().
-		WithType(uplinkv1alpha1.UplinkTypeOVSBridge).
-		WithConditions(util.ConditionToApply(condition))
+	condition := statusCondition(state, status, reason, message)
+	desiredStatus := desiredUplinkStateStatus(state, hostInterfaceName, hostState, bridgeName, condition)
+	if !reflect.DeepEqual(state.Status, desiredStatus) {
+		statusApply := uplinkapply.UplinkStateStatus().
+			WithType(uplinkv1alpha1.UplinkTypeOVSBridge).
+			WithConditions(util.ConditionToApply(condition))
 
-	// Only the DPU-host applies hostInterfaceName: it confirms which
-	// interface the host-owned MAC/IP data belongs to, so the DPU must not
-	// bump it ahead of fresh host data on a spec change.
-	if config.OvnKubeNode.Mode != ovntypes.NodeModeDPU && hostInterfaceName != "" {
-		statusApply = statusApply.WithHostInterfaceName(
-			uplinkv1alpha1.InterfaceName(hostInterfaceName),
-		)
-	}
-	if config.OvnKubeNode.Mode != ovntypes.NodeModeDPU && hostState != nil {
-		if hostState.macAddress != nil {
-			statusApply = statusApply.WithMACAddress(
-				uplinkv1alpha1.MACAddress(hostState.macAddress.String()),
+		// Only the DPU-host applies hostInterfaceName: it confirms which
+		// interface the host-owned MAC/IP data belongs to, so the DPU must not
+		// bump it ahead of fresh host data on a spec change.
+		if config.OvnKubeNode.Mode != ovntypes.NodeModeDPU && hostInterfaceName != "" {
+			statusApply = statusApply.WithHostInterfaceName(
+				uplinkv1alpha1.InterfaceName(hostInterfaceName),
 			)
 		}
-		statusApply = statusApply.WithIPAddresses(ipAddressCIDRs(hostState.ipAddresses)...)
-		statusApply = statusApply.WithDefaultGateways(ipAddresses(hostState.defaultGateways)...)
-		if hostState.hostFunction != nil {
-			hostFunctionApply := uplinkapply.HostFunction().
-				WithPFID(hostState.hostFunction.PFID)
-			if hostState.hostFunction.VFID != nil {
-				hostFunctionApply = hostFunctionApply.WithVFID(*hostState.hostFunction.VFID)
+		if config.OvnKubeNode.Mode != ovntypes.NodeModeDPU && hostState != nil {
+			if hostState.macAddress != nil {
+				statusApply = statusApply.WithMACAddress(
+					uplinkv1alpha1.MACAddress(hostState.macAddress.String()),
+				)
 			}
-			statusApply = statusApply.WithHostFunction(hostFunctionApply)
+			statusApply = statusApply.WithIPAddresses(ipAddressCIDRs(hostState.ipAddresses)...)
+			statusApply = statusApply.WithDefaultGateways(ipAddresses(hostState.defaultGateways)...)
+			if hostState.hostFunction != nil {
+				hostFunctionApply := uplinkapply.HostFunction().
+					WithPFID(hostState.hostFunction.PFID)
+				if hostState.hostFunction.VFID != nil {
+					hostFunctionApply = hostFunctionApply.WithVFID(*hostState.hostFunction.VFID)
+				}
+				statusApply = statusApply.WithHostFunction(hostFunctionApply)
+			}
+		}
+		if config.OvnKubeNode.Mode != ovntypes.NodeModeDPUHost && bridgeName != "" {
+			statusApply = statusApply.WithOVSBridge(
+				uplinkapply.OVSBridgeStatus().WithName(bridgeName),
+			)
+		}
+
+		_, err := c.uplinkClient.K8sV1alpha1().UplinkStates().Apply(
+			context.Background(),
+			uplinkapply.UplinkState(state.Name).WithStatus(
+				statusApply,
+			),
+			metav1.ApplyOptions{
+				FieldManager: StatusFieldManager(),
+				Force:        true,
+			},
+		)
+		if err != nil {
+			return fmt.Errorf("failed to update UplinkState %s status: %w",
+				state.Name, err)
 		}
 	}
-	if config.OvnKubeNode.Mode != ovntypes.NodeModeDPUHost && bridgeName != "" {
-		statusApply = statusApply.WithOVSBridge(
-			uplinkapply.OVSBridgeStatus().WithName(bridgeName),
-		)
-	}
 
-	_, err := c.uplinkClient.K8sV1alpha1().UplinkStates().Apply(
-		context.Background(),
-		uplinkapply.UplinkState(state.Name).WithStatus(
-			statusApply,
-		),
-		metav1.ApplyOptions{
-			FieldManager: StatusFieldManager(),
-			Force:        true,
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("failed to update UplinkState %s status: %w",
-			state.Name, err)
-	}
 	return nil
 }
 

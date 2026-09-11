@@ -14,7 +14,7 @@ import (
 	"github.com/ovn-kubernetes/libovsdb/client"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
-	uplinklisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/listers/uplink/v1alpha1"
+	uplinkinformers "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/informers/externalversions/uplink/v1alpha1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iprulemanager"
@@ -47,7 +47,7 @@ func NewUserDefinedNodeNetworkController(
 	mpdm *managementport.MgmtPortDeviceManager,
 	defaultNetworkGateway Gateway,
 	ovsClient client.Client,
-	uplinkGatewayController *UplinkGatewayController,
+	uplinkStateGatewayStatusController *UplinkStateGatewayStatusController,
 ) (*UserDefinedNodeNetworkController, error) {
 	if netInfo.Uplink() != "" && config.Gateway.Mode != config.GatewayModeShared {
 		return nil, fmt.Errorf("uplink %q for network %s is supported only in shared gateway mode",
@@ -72,13 +72,13 @@ func NewUserDefinedNodeNetworkController(
 				snnc.name, netInfo.GetNetworkName(), err)
 		}
 
-		var uplinkStateLister uplinklisters.UplinkStateLister
+		var uplinkStateInformer uplinkinformers.UplinkStateInformer
 		if util.IsUplinkEnabled() {
-			uplinkStateLister = snnc.watchFactory.UplinkStateInformer().Lister()
+			uplinkStateInformer = snnc.watchFactory.UplinkStateInformer()
 		}
 		snnc.gateway, err = NewUserDefinedNetworkGateway(snnc.GetNetInfo(), node,
 			snnc.watchFactory.NodeCoreInformer().Lister(), snnc.Kube, vrfManager, ruleManager, defaultNetworkGateway,
-			ovsClient, uplinkStateLister, uplinkGatewayController)
+			ovsClient, uplinkStateInformer, uplinkStateGatewayStatusController)
 		if err != nil {
 			return nil, fmt.Errorf("error creating UDN gateway for network %s: %v", netInfo.GetNetworkName(), err)
 		}
@@ -116,6 +116,9 @@ func (nc *UserDefinedNodeNetworkController) Stop() {
 	klog.Infof("Stopping UDN node network controller for network %s", nc.GetNetworkName())
 	close(nc.stopChan)
 	nc.stopChan = nil
+	if nc.gateway != nil {
+		nc.gateway.Stop()
+	}
 	nc.wg.Wait()
 
 	if nc.podHandler != nil {
@@ -164,13 +167,6 @@ func (nc *UserDefinedNodeNetworkController) shouldReconcileNetworkChange(old, ne
 // 2. OpenFlows on br-ex bridge to forward traffic to correct ofports
 func (nc *UserDefinedNodeNetworkController) Reconcile(netInfo util.NetInfo) error {
 	reconcilePodNetwork := nc.shouldReconcileNetworkChange(nc.ReconcilableNetInfo, netInfo)
-	if reconcilePodNetwork && nc.gateway != nil && nc.Uplink() != "" {
-		if err := nc.gateway.uplinkGatewayController.PrepareNetwork(netInfo); err != nil {
-			return fmt.Errorf("failed to prepare Uplink gateway reconciliation for network %s: %w",
-				nc.GetNetworkName(), err)
-		}
-	}
-
 	err := util.ReconcileNetInfo(nc.ReconcilableNetInfo, netInfo)
 	if err != nil {
 		klog.Errorf("Failed to reconcile network information for network %s: %v", nc.GetNetworkName(), err)
