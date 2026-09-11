@@ -45,6 +45,10 @@ func UpdatePodWithRetryOrRollback(podLister listers.PodLister, kube kube.Interfa
 		if err != nil {
 			return err
 		}
+		if pod.UID != "" && oldPod.UID != pod.UID {
+			return fmt.Errorf("pod %s/%s was replaced while updating annotations: expected UID %q, found %q",
+				pod.Namespace, pod.Name, pod.UID, oldPod.UID)
+		}
 
 		// Informer cache should not be mutated, so copy the object
 		currentPod := oldPod.DeepCopy()
