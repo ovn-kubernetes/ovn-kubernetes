@@ -7,8 +7,9 @@ with OVN-Kubernetes enabling the integration into different BGP user
 environments. The extent of the Route Advertisements feature and corresponding
 API allows importing routes from BGP peers on the provider network into OVN pod
 networks as well as exporting pod network and egress IP routes to BGP peers on
-the provider network. Both default pod network as well as primary Layer 3 and
-Layer 2 cluster-user-defined networks (CUDNs) are supported.
+the provider network. The default pod network, primary Layer 3 and Layer 2
+cluster-user-defined networks (CUDNs), and secondary Layer 3 CUDNs are
+supported.
 
 > [!NOTE]
 > For purposes of this documentation, the external, physical network of the
@@ -326,6 +327,72 @@ spec:
         matchLabels:
           advertise: true
 ```
+
+### Export routes to a secondary CUDN
+
+Secondary CUDNs are normally east/west-only: their pods are isolated within the
+cluster and are not reachable from the provider network. Advertising a secondary
+Layer 3 CUDN over BGP gives its pods a north-south datapath, so external peers on
+the provider network can reach the pod IPs directly, the same way they can for
+the default network or a primary CUDN.
+
+Assuming a secondary Layer 3 CUDN:
+
+```yaml
+apiVersion: k8s.ovn.org/v1
+kind: ClusterUserDefinedNetwork
+metadata:
+  name: secondarynet
+  labels:
+    advertise: "true"
+spec:
+  namespaceSelector:
+    matchLabels:
+      network: secondarynet
+  network:
+    topology: Layer3
+    layer3:
+      role: Secondary
+      subnets:
+      - cidr: "10.150.0.0/16"
+        hostSubnet: 24
+```
+
+It is advertised with the same `RouteAdvertisements` API used for primary CUDNs;
+the only difference is that the selected network has `role: Secondary`:
+
+```yaml
+apiVersion: k8s.ovn.org/v1
+kind: RouteAdvertisements
+metadata:
+  name: secondarynet
+spec:
+  targetVRF: default
+  advertisements:
+  - PodNetwork
+  nodeSelector: {}
+  frrConfigurationSelector:
+    matchLabels:
+      use-for-advertisements: default
+  networkSelectors:
+  - networkSelectionType: ClusterUserDefinedNetworks
+    clusterUserDefinedNetworkSelector:
+      networkSelector:
+        matchLabels:
+          advertise: true
+```
+
+OVN-Kubernetes builds the north-south gateway topology (gateway router, join
+switch and egress SNATs) for the advertised secondary network on each selected
+node and advertises its per-node host subnets, just as it does for a primary
+network. The [CUDN isolation](#cudn-isolation) guarantees are unchanged: a
+secondary network that is not advertised stays east/west-only, and traffic
+between different advertised networks is still governed by the isolation rules
+described below.
+
+> [!NOTE]
+> North-south advertisement of secondary networks is currently supported for
+> Layer 3 topologies only.
 
 ### Import and export routes to a CUDN over the network VRF (VRF-Lite)
 

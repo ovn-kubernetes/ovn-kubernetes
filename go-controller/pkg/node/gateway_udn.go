@@ -65,7 +65,8 @@ const (
 // UserDefinedNetworkGateway contains information
 // required to program a UDN at each node's
 // gateway.
-// NOTE: Currently invoked only for primary networks.
+// NOTE: Invoked for primary networks and for BGP-advertised secondary
+// networks — see isAdvertisedSecondaryUDNAtNode.
 type UserDefinedNetworkGateway struct {
 	// network information
 	util.NetInfo

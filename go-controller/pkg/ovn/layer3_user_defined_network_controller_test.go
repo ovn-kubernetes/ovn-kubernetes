@@ -588,6 +588,273 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 		Expect(app.Run([]string{app.Name})).To(Succeed())
 	})
 
+	// A BGP-advertised SECONDARY Layer3 UDN must get the same north-south gateway
+	// topology as a primary: a Gateway Router attached to the join switch, an OVN
+	// management port and egress SNATs. Without the advertisement gate a secondary
+	// gets no GR at all.
+	It("advertised secondary Layer 3 UDN: controller creates a gateway router, join switch, mgmt port and egress SNAT", func() {
+		config.OVNKubernetesFeature.EnableMultiNetwork = true
+		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+		netInfo := dummySecondaryLayer3UserDefinedNetwork("192.168.0.0/16", "192.168.1.0/24")
+		app.Action = func(*cli.Context) error {
+			netConf := netInfo.netconf()
+			networkConfig, err := util.NewNetInfo(netConf)
+			Expect(err).NotTo(HaveOccurred())
+
+			nad, err := newNetworkAttachmentDefinition(ns, nadName, *netConf)
+			Expect(err).NotTo(HaveOccurred())
+
+			const nodeIPv4CIDR = "192.168.126.202/24"
+			testNode, err := newNodeWithUserDefinedNetworks(nodeName, nodeIPv4CIDR, netInfo)
+			Expect(err).NotTo(HaveOccurred())
+
+			fakeOvn.startWithDBSetup(
+				initialDB,
+				&corev1.NamespaceList{Items: []corev1.Namespace{*newUDNNamespace(ns)}},
+				&corev1.NodeList{Items: []corev1.Node{*testNode}},
+				&corev1.PodList{Items: []corev1.Pod{}},
+				&nadapi.NetworkAttachmentDefinitionList{Items: []nadapi.NetworkAttachmentDefinition{*nad}},
+			)
+
+			fexec := util.GetExec().(*testing.FakeExec)
+			fexec.AddFakeCmdsNoOutputNoError([]string{
+				"ovn-nbctl --timeout=15 --columns=_uuid list Load_Balancer_Group",
+			})
+
+			Expect(fakeOvn.controller.WatchNamespaces()).To(Succeed())
+			Expect(fakeOvn.controller.WatchPods()).To(Succeed())
+
+			l3Controller, ok := fakeOvn.fullL3UDNControllers[userDefinedNetworkName]
+			Expect(ok).To(BeTrue())
+
+			// Mark the secondary network as BGP-advertised on this node BEFORE init()
+			// so the (widened) mgmt-port and GR gates admit it during node sync.
+			mutableNetInfo := util.NewMutableNetInfo(l3Controller.GetNetInfo())
+			mutableNetInfo.SetNetworkID(2)
+			mutableNetInfo.SetPodNetworkAdvertisedVRFs(map[string][]string{nodeName: {"vrf"}})
+			Expect(util.ReconcileNetInfo(l3Controller.ReconcilableNetInfo, mutableNetInfo)).To(Succeed())
+
+			// Advertised networks require the global isolation resources to exist.
+			Expect(ConfigureAdvertisedNetworkIsolation(fakeOvn.nbClient)).To(Succeed())
+
+			Expect(l3Controller.init()).To(Succeed())
+			Expect(l3Controller.RegisterNodeHandler()).To(Succeed())
+			Expect(l3Controller.WatchNamespaces()).To(Succeed())
+			Expect(l3Controller.waitForLocalZoneNodeLogicalSwitches()).To(Succeed())
+			Expect(l3Controller.WatchPods()).To(Succeed())
+
+			gwRouterName := networkConfig.GetNetworkScopedGWRouterName(nodeName)
+			joinSwitchName := networkConfig.GetNetworkScopedJoinSwitchName()
+			mgmtPortName := networkConfig.GetNetworkScopedK8sMgmtIntfName(nodeName)
+
+			By("creating the per-network join switch")
+			Eventually(func(g Gomega) {
+				switches, err := libovsdbops.FindLogicalSwitchesWithPredicate(fakeOvn.nbClient, func(ls *nbdb.LogicalSwitch) bool {
+					return ls.Name == joinSwitchName
+				})
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(switches).NotTo(BeEmpty(), "join switch %q should exist", joinSwitchName)
+			}).WithTimeout(10 * time.Second).Should(Succeed())
+
+			By("creating the per-node gateway router attached to the join switch")
+			Eventually(func(g Gomega) {
+				routers, err := libovsdbops.FindLogicalRoutersWithPredicate(fakeOvn.nbClient, func(lr *nbdb.LogicalRouter) bool {
+					return lr.Name == gwRouterName
+				})
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(routers).NotTo(BeEmpty(), "gateway router %q should exist for advertised secondary", gwRouterName)
+			}).WithTimeout(10 * time.Second).Should(Succeed())
+
+			By("creating the OVN management port LSP on the node switch")
+			Eventually(func(g Gomega) {
+				ports, err := libovsdbops.FindLogicalSwitchPortWithPredicate(fakeOvn.nbClient, func(lsp *nbdb.LogicalSwitchPort) bool {
+					return lsp.Name == mgmtPortName
+				})
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(ports).NotTo(BeEmpty(), "management port %q should exist", mgmtPortName)
+			}).WithTimeout(10 * time.Second).Should(Succeed())
+
+			By("creating egress SNAT(s) on the gateway router for the cluster subnet")
+			Eventually(func(g Gomega) {
+				lr, err := libovsdbops.GetLogicalRouter(fakeOvn.nbClient, &nbdb.LogicalRouter{Name: gwRouterName})
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(lr.Nat).NotTo(BeEmpty(), "gateway router %q should have NAT entries", gwRouterName)
+				foundClusterSubnetSNAT := false
+				for _, natUUID := range lr.Nat {
+					nat, err := libovsdbops.GetNAT(fakeOvn.nbClient, &nbdb.NAT{UUID: natUUID})
+					if err != nil {
+						continue
+					}
+					if nat.Type == nbdb.NATTypeSNAT && nat.LogicalIP == netInfo.clustersubnets {
+						foundClusterSubnetSNAT = true
+						break
+					}
+				}
+				g.Expect(foundClusterSubnetSNAT).To(BeTrue(),
+					"an egress SNAT with logical IP %q should exist on %q", netInfo.clustersubnets, gwRouterName)
+			}).WithTimeout(10 * time.Second).Should(Succeed())
+
+			return nil
+		}
+		Expect(app.Run([]string{app.Name})).To(Succeed())
+	})
+
+	// Negative control: a SECONDARY Layer3 UDN that is NOT advertised must NOT get a
+	// gateway router (it remains east/west-only). Guards against the widened gates
+	// accidentally admitting non-advertised secondaries.
+	It("non-advertised secondary Layer 3 UDN: controller creates NO gateway router", func() {
+		config.OVNKubernetesFeature.EnableMultiNetwork = true
+		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+		netInfo := dummySecondaryLayer3UserDefinedNetwork("192.168.0.0/16", "192.168.1.0/24")
+		app.Action = func(*cli.Context) error {
+			netConf := netInfo.netconf()
+			networkConfig, err := util.NewNetInfo(netConf)
+			Expect(err).NotTo(HaveOccurred())
+
+			nad, err := newNetworkAttachmentDefinition(ns, nadName, *netConf)
+			Expect(err).NotTo(HaveOccurred())
+
+			const nodeIPv4CIDR = "192.168.126.202/24"
+			testNode, err := newNodeWithUserDefinedNetworks(nodeName, nodeIPv4CIDR, netInfo)
+			Expect(err).NotTo(HaveOccurred())
+
+			fakeOvn.startWithDBSetup(
+				initialDB,
+				&corev1.NamespaceList{Items: []corev1.Namespace{*newUDNNamespace(ns)}},
+				&corev1.NodeList{Items: []corev1.Node{*testNode}},
+				&corev1.PodList{Items: []corev1.Pod{}},
+				&nadapi.NetworkAttachmentDefinitionList{Items: []nadapi.NetworkAttachmentDefinition{*nad}},
+			)
+
+			fexec := util.GetExec().(*testing.FakeExec)
+			fexec.AddFakeCmdsNoOutputNoError([]string{
+				"ovn-nbctl --timeout=15 --columns=_uuid list Load_Balancer_Group",
+			})
+
+			Expect(fakeOvn.controller.WatchNamespaces()).To(Succeed())
+			Expect(fakeOvn.controller.WatchPods()).To(Succeed())
+
+			l3Controller, ok := fakeOvn.fullL3UDNControllers[userDefinedNetworkName]
+			Expect(ok).To(BeTrue())
+			// Give it a network ID but do NOT advertise it.
+			mutableNetInfo := util.NewMutableNetInfo(l3Controller.GetNetInfo())
+			mutableNetInfo.SetNetworkID(2)
+			Expect(util.ReconcileNetInfo(l3Controller.ReconcilableNetInfo, mutableNetInfo)).To(Succeed())
+
+			Expect(l3Controller.init()).To(Succeed())
+			Expect(l3Controller.RegisterNodeHandler()).To(Succeed())
+			Expect(l3Controller.WatchNamespaces()).To(Succeed())
+			Expect(l3Controller.waitForLocalZoneNodeLogicalSwitches()).To(Succeed())
+			Expect(l3Controller.WatchPods()).To(Succeed())
+
+			gwRouterName := networkConfig.GetNetworkScopedGWRouterName(nodeName)
+			Consistently(func(g Gomega) {
+				routers, err := libovsdbops.FindLogicalRoutersWithPredicate(fakeOvn.nbClient, func(lr *nbdb.LogicalRouter) bool {
+					return lr.Name == gwRouterName
+				})
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(routers).To(BeEmpty(), "no gateway router should exist for a non-advertised secondary")
+			}).WithTimeout(2 * time.Second).Should(Succeed())
+			return nil
+		}
+		Expect(app.Run([]string{app.Name})).To(Succeed())
+	})
+
+	// A secondary UDN can become advertised AFTER its controller's init() has
+	// already run (e.g. the RouteAdvertisements is created after the CUDN). init()
+	// is not re-run, so the north-south topology must be driven from Reconcile():
+	// starting from a non-advertised secondary (no gateway router), Reconcile with
+	// an advertised netInfo must create the join switch and the gateway router.
+	It("secondary Layer 3 UDN advertised after init: Reconcile creates the join switch and gateway router", func() {
+		config.OVNKubernetesFeature.EnableMultiNetwork = true
+		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+		netInfo := dummySecondaryLayer3UserDefinedNetwork("192.168.0.0/16", "192.168.1.0/24")
+		app.Action = func(*cli.Context) error {
+			netConf := netInfo.netconf()
+			networkConfig, err := util.NewNetInfo(netConf)
+			Expect(err).NotTo(HaveOccurred())
+
+			nad, err := newNetworkAttachmentDefinition(ns, nadName, *netConf)
+			Expect(err).NotTo(HaveOccurred())
+
+			const nodeIPv4CIDR = "192.168.126.202/24"
+			testNode, err := newNodeWithUserDefinedNetworks(nodeName, nodeIPv4CIDR, netInfo)
+			Expect(err).NotTo(HaveOccurred())
+
+			fakeOvn.startWithDBSetup(
+				initialDB,
+				&corev1.NamespaceList{Items: []corev1.Namespace{*newUDNNamespace(ns)}},
+				&corev1.NodeList{Items: []corev1.Node{*testNode}},
+				&corev1.PodList{Items: []corev1.Pod{}},
+				&nadapi.NetworkAttachmentDefinitionList{Items: []nadapi.NetworkAttachmentDefinition{*nad}},
+			)
+
+			fexec := util.GetExec().(*testing.FakeExec)
+			fexec.AddFakeCmdsNoOutputNoError([]string{
+				"ovn-nbctl --timeout=15 --columns=_uuid list Load_Balancer_Group",
+			})
+
+			Expect(fakeOvn.controller.WatchNamespaces()).To(Succeed())
+			Expect(fakeOvn.controller.WatchPods()).To(Succeed())
+
+			l3Controller, ok := fakeOvn.fullL3UDNControllers[userDefinedNetworkName]
+			Expect(ok).To(BeTrue())
+
+			// Global isolation resources are required once the network becomes
+			// advertised (during the reconcile-driven node sync below).
+			Expect(ConfigureAdvertisedNetworkIsolation(fakeOvn.nbClient)).To(Succeed())
+
+			// init() the controller while the secondary is NOT advertised.
+			mutableNetInfo := util.NewMutableNetInfo(l3Controller.GetNetInfo())
+			mutableNetInfo.SetNetworkID(2)
+			Expect(util.ReconcileNetInfo(l3Controller.ReconcilableNetInfo, mutableNetInfo)).To(Succeed())
+
+			Expect(l3Controller.init()).To(Succeed())
+			Expect(l3Controller.RegisterNodeHandler()).To(Succeed())
+			Expect(l3Controller.WatchNamespaces()).To(Succeed())
+			Expect(l3Controller.waitForLocalZoneNodeLogicalSwitches()).To(Succeed())
+			Expect(l3Controller.WatchPods()).To(Succeed())
+
+			gwRouterName := networkConfig.GetNetworkScopedGWRouterName(nodeName)
+			joinSwitchName := networkConfig.GetNetworkScopedJoinSwitchName()
+
+			By("not creating a gateway router while the secondary is not advertised")
+			Consistently(func(g Gomega) {
+				routers, err := libovsdbops.FindLogicalRoutersWithPredicate(fakeOvn.nbClient, func(lr *nbdb.LogicalRouter) bool {
+					return lr.Name == gwRouterName
+				})
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(routers).To(BeEmpty(), "no gateway router should exist before advertisement")
+			}).WithTimeout(2 * time.Second).Should(Succeed())
+
+			By("advertising the secondary after init() and reconciling")
+			advertised := util.NewMutableNetInfo(l3Controller.GetNetInfo())
+			advertised.SetPodNetworkAdvertisedVRFs(map[string][]string{nodeName: {"vrf"}})
+			Expect(l3Controller.Reconcile(advertised)).To(Succeed())
+
+			By("creating the per-network join switch via Reconcile")
+			Eventually(func(g Gomega) {
+				switches, err := libovsdbops.FindLogicalSwitchesWithPredicate(fakeOvn.nbClient, func(ls *nbdb.LogicalSwitch) bool {
+					return ls.Name == joinSwitchName
+				})
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(switches).NotTo(BeEmpty(), "join switch %q should be created by Reconcile", joinSwitchName)
+			}).WithTimeout(10 * time.Second).Should(Succeed())
+
+			By("creating the per-node gateway router via the reconcile-driven node sync")
+			Eventually(func(g Gomega) {
+				routers, err := libovsdbops.FindLogicalRoutersWithPredicate(fakeOvn.nbClient, func(lr *nbdb.LogicalRouter) bool {
+					return lr.Name == gwRouterName
+				})
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(routers).NotTo(BeEmpty(), "gateway router %q should exist after advertisement", gwRouterName)
+			}).WithTimeout(10 * time.Second).Should(Succeed())
+
+			return nil
+		}
+		Expect(app.Run([]string{app.Name})).To(Succeed())
+	})
+
 	Describe("Dynamic UDN allocation with remote node", func() {
 		It("activates a remote node when a NAD becomes active and cleans it up when inactive", func() {
 			Expect(config.PrepareTestConfig()).To(Succeed())

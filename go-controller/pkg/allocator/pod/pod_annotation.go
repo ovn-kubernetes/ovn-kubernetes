@@ -611,6 +611,17 @@ func hairpinMasqueradeIPToRoute(isIPv6 bool, gatewayIP net.IP) util.PodRoute {
 	}
 }
 
+// isAdvertisedSecondaryUDN reports whether netinfo is a secondary user-defined
+// network whose pod network is advertised (north-south) at the given node. A
+// secondary network is given a north-south gateway (installed via source-based
+// routing) exactly when it is being advertised.
+func isAdvertisedSecondaryUDN(netinfo util.NetInfo, node *corev1.Node) bool {
+	if node == nil || !netinfo.IsUserDefinedNetwork() || netinfo.IsPrimaryNetwork() {
+		return false
+	}
+	return util.IsPodNetworkAdvertisedAtNode(netinfo, node.Name)
+}
+
 // addRoutesGatewayIP updates the provided pod annotation for the provided pod
 // with the gateways derived from the allocated IPs
 func AddRoutesGatewayIP(
@@ -695,7 +706,20 @@ func AddRoutesGatewayIP(
 						})
 					}
 				}
-				if !util.IsNetworkSegmentationSupportEnabled() || !netinfo.IsPrimaryNetwork() {
+				if !util.IsNetworkSegmentationSupportEnabled() {
+					continue
+				}
+				if !netinfo.IsPrimaryNetwork() {
+					// An advertised secondary UDN gets a north-south gateway too,
+					// but the CNI installs it via source-based routing
+					// (PodAnnotation.NorthSouthSourceRouting) so it does not
+					// compete with the primary network's main-table default.
+					if !isAdvertisedSecondaryUDN(netinfo, node) {
+						continue
+					}
+					podAnnotation.Routes = append(podAnnotation.Routes, serviceCIDRToRoute(isIPv6, gatewayIPnet.IP)...)
+					podAnnotation.Gateways = append(podAnnotation.Gateways, gatewayIPnet.IP)
+					podAnnotation.NorthSouthSourceRouting = true
 					continue
 				}
 				// Ensure default service network traffic always goes to OVN

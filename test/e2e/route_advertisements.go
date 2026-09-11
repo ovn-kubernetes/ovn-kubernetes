@@ -20,6 +20,7 @@ import (
 	"time"
 
 	iputils "github.com/containernetworking/plugins/pkg/ip"
+	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	rav1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
@@ -1262,6 +1263,185 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 			},
 		),
 	)
+	ginkgo.It("provides north-south reachability to a pod on an advertised secondary Layer3 CUDN, while a non-advertised secondary stays unreachable", func() {
+		udnClient, err := udnclientset.NewForConfig(f.ClientConfig())
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		raClient, err := raclientset.NewForConfig(f.ClientConfig())
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		// Use a dedicated namespace WITHOUT the primary-UDN requirement label:
+		// this test only attaches secondary networks, and pods keep the default
+		// cluster network as their primary. A primary-UDN-required namespace
+		// would instead keep the pods Pending until a primary UDN exists.
+		secNs, err := f.CreateNamespace(context.TODO(), "bgp-secondary-udn", map[string]string{"e2e-framework": f.BaseName})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		nsName := secNs.Name
+
+		namespaceSelector := metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{
+			Key:      "kubernetes.io/metadata.name",
+			Operator: metav1.LabelSelectorOpIn,
+			Values:   []string{nsName},
+		}}}
+
+		// createSecondaryCUDN creates a secondary Layer3 CUDN selecting the test
+		// namespace and carrying labelKey so a RouteAdvertisements can select it.
+		// Secondary networks are east/west-only unless advertised.
+		createSecondaryCUDN := func(labelKey string, subnets []udnv1.Layer3Subnet) *udnv1.ClusterUserDefinedNetwork {
+			cudn := &udnv1.ClusterUserDefinedNetwork{
+				ObjectMeta: metav1.ObjectMeta{
+					GenerateName: labelKey + "-",
+					Labels:       map[string]string{labelKey: ""},
+				},
+				Spec: udnv1.ClusterUserDefinedNetworkSpec{
+					NamespaceSelector: namespaceSelector,
+					Network: udnv1.NetworkSpec{
+						Topology: udnv1.NetworkTopologyLayer3,
+						Layer3: &udnv1.Layer3Config{
+							Role:    udnv1.NetworkRoleSecondary,
+							Subnets: filterL3Subnets(f.ClientSet, subnets),
+						},
+					},
+				},
+			}
+			cudn, err := udnClient.K8sV1().ClusterUserDefinedNetworks().Create(context.Background(), cudn, metav1.CreateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			ginkgo.DeferCleanup(func() {
+				udnClient.K8sV1().ClusterUserDefinedNetworks().Delete(context.TODO(), cudn.Name, metav1.DeleteOptions{})
+			})
+			gomega.Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudn.Name), 5*time.Second, time.Second).Should(gomega.Succeed())
+			return cudn
+		}
+
+		// Secondary Layer3 networks allow at most one CIDR per IP family, so
+		// unlike the primary-network tests we cannot reuse the multi-subnet
+		// cudnLayer3Subnets* helpers. Use a single CIDR per family per network;
+		// filterL3Subnets keeps only the cluster's families.
+		advertisedSubnets := []udnv1.Layer3Subnet{
+			{CIDR: "103.203.0.0/16", HostSubnet: 24},
+			{CIDR: "2014:100:210::0/60", HostSubnet: 64},
+		}
+		nonAdvertisedSubnets := []udnv1.Layer3Subnet{
+			{CIDR: "102.202.0.0/16", HostSubnet: 24},
+			{CIDR: "2013:100:210::0/60", HostSubnet: 64},
+		}
+
+		ginkgo.By("creating an advertised and a non-advertised secondary Layer3 CUDN")
+		advertisedLabel := "bgp-secondary-adv"
+		advertisedCUDN := createSecondaryCUDN(advertisedLabel, advertisedSubnets)
+		nonAdvertisedCUDN := createSecondaryCUDN("bgp-secondary-noadv", nonAdvertisedSubnets)
+
+		ginkgo.By("advertising only the first secondary CUDN with a RouteAdvertisements")
+		ra := &rav1.RouteAdvertisements{
+			ObjectMeta: metav1.ObjectMeta{Name: "bgp-secondary-ra"},
+			Spec: rav1.RouteAdvertisementsSpec{
+				NetworkSelectors: apitypes.NetworkSelectors{
+					apitypes.NetworkSelector{
+						NetworkSelectionType: apitypes.ClusterUserDefinedNetworks,
+						ClusterUserDefinedNetworkSelector: &apitypes.ClusterUserDefinedNetworkSelector{
+							NetworkSelector: metav1.LabelSelector{MatchLabels: map[string]string{advertisedLabel: ""}},
+						},
+					},
+				},
+				NodeSelector:             metav1.LabelSelector{},
+				FRRConfigurationSelector: metav1.LabelSelector{},
+				Advertisements:           []rav1.AdvertisementType{rav1.PodNetwork},
+			},
+		}
+		ra, err = raClient.K8sV1().RouteAdvertisements().Create(context.TODO(), ra, metav1.CreateOptions{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		ginkgo.DeferCleanup(func() { raClient.K8sV1().RouteAdvertisements().Delete(context.TODO(), ra.Name, metav1.DeleteOptions{}) })
+		gomega.Eventually(func() string {
+			ra, err := raClient.K8sV1().RouteAdvertisements().Get(context.TODO(), ra.Name, metav1.GetOptions{})
+			if err != nil {
+				return ""
+			}
+			condition := meta.FindStatusCondition(ra.Status.Conditions, "Accepted")
+			if condition == nil {
+				return ""
+			}
+			return condition.Reason
+		}, 30*time.Second, time.Second).Should(gomega.Equal("Accepted"))
+
+		// createServerPod runs an agnhost netexec server attached to the given
+		// secondary CUDN's NAD via the Multus networks annotation.
+		node := nodes.Items[1]
+		createServerPod := func(name, cudnName string) *corev1.Pod {
+			cfg := podConfiguration{
+				name:         name,
+				namespace:    nsName,
+				nodeSelector: map[string]string{"kubernetes.io/hostname": node.Name},
+				containerCmd: httpServerContainerCmd(netexecPort),
+				attachments:  []nadapi.NetworkSelectionElement{{Name: cudnName}},
+			}
+			pod, err := f.ClientSet.CoreV1().Pods(nsName).Create(context.Background(), generatePodSpec(cfg), metav1.CreateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Eventually(func() corev1.PodPhase {
+				p, err := f.ClientSet.CoreV1().Pods(nsName).Get(context.Background(), pod.Name, metav1.GetOptions{})
+				if err != nil {
+					return corev1.PodFailed
+				}
+				return p.Status.Phase
+			}, 2*time.Minute, 6*time.Second).Should(gomega.Equal(corev1.PodRunning))
+			return pod
+		}
+
+		ginkgo.By("running a server pod on each secondary network")
+		advertisedPod := createServerPod("secondary-adv-server", advertisedCUDN.Name)
+		nonAdvertisedPod := createServerPod("secondary-noadv-server", nonAdvertisedCUDN.Name)
+		// Delete pods before the CUDNs (LIFO order) so NAD deletion is not blocked.
+		ginkgo.DeferCleanup(func() {
+			gomega.Expect(f.ClientSet.CoreV1().Pods(nsName).DeleteCollection(context.Background(), metav1.DeleteOptions{}, metav1.ListOptions{})).To(gomega.Succeed())
+		})
+
+		netexecPortStr := fmt.Sprintf("%d", netexecPort)
+		// The external FRR router image ships busybox wget (no curl), so use
+		// wget to probe HTTP reachability from outside the cluster.
+		httpGetFromFRR := func(podIP string) (string, error) {
+			return infraprovider.Get().ExecExternalContainerCommand(
+				infraapi.ExternalContainer{Name: routerContainerName},
+				[]string{"wget", "-q", "-T", "5", "-O", "-", fmt.Sprintf("http://%s/hostname", net.JoinHostPort(podIP, netexecPortStr))},
+			)
+		}
+
+		for _, serverContainerIP := range serverContainerIPs {
+			family := utilnet.IPFamilyOfString(serverContainerIP)
+
+			advertisedPodIP, err := getPodAnnotationIPsForAttachmentByIPFamily(
+				f.ClientSet, nsName, advertisedPod.Name, namespacedName(nsName, advertisedCUDN.Name), family)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(advertisedPodIP).NotTo(gomega.BeEmpty())
+
+			ginkgo.By(fmt.Sprintf("ensuring the advertised secondary pod subnet (%s) is learned by the external FRR router", family))
+			checkL3NodePodRoute(node, serverContainerIP, routerContainerName, types.CUDNPrefix+advertisedCUDN.Name)
+
+			ginkgo.By(fmt.Sprintf("ensuring the external FRR router can reach the advertised secondary pod %s over HTTP", advertisedPodIP))
+			gomega.Eventually(func(g gomega.Gomega) {
+				out, err := httpGetFromFRR(advertisedPodIP)
+				g.Expect(err).NotTo(gomega.HaveOccurred())
+				g.Expect(strings.TrimSpace(out)).To(gomega.Equal(advertisedPod.Name))
+			}, 60*time.Second, 2*time.Second).Should(gomega.Succeed())
+
+			ginkgo.By(fmt.Sprintf("ensuring the external FRR router can ping the advertised secondary pod %s", advertisedPodIP))
+			gomega.Eventually(func(g gomega.Gomega) {
+				_, err := infraprovider.Get().ExecExternalContainerCommand(
+					infraapi.ExternalContainer{Name: routerContainerName},
+					[]string{"ping", "-c", "3", "-W", "2", advertisedPodIP},
+				)
+				g.Expect(err).NotTo(gomega.HaveOccurred())
+			}, 60*time.Second, 2*time.Second).Should(gomega.Succeed())
+
+			nonAdvertisedPodIP, err := getPodAnnotationIPsForAttachmentByIPFamily(
+				f.ClientSet, nsName, nonAdvertisedPod.Name, namespacedName(nsName, nonAdvertisedCUDN.Name), family)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(nonAdvertisedPodIP).NotTo(gomega.BeEmpty())
+
+			ginkgo.By(fmt.Sprintf("ensuring the external FRR router cannot reach the non-advertised secondary pod %s", nonAdvertisedPodIP))
+			gomega.Consistently(func(g gomega.Gomega) {
+				_, err := httpGetFromFRR(nonAdvertisedPodIP)
+				g.Expect(err).To(gomega.HaveOccurred())
+			}, 5*time.Second, 500*time.Millisecond).Should(gomega.Succeed())
+		}
+	})
 })
 
 // With dynamic UDN allocation, a network only exists on nodes that run

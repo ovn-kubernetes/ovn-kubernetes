@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/containernetworking/plugins/pkg/ns"
@@ -175,7 +176,106 @@ var _ = Describe("UserDefinedNodeNetworkController", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(controller.gateway).To(BeNil())
 	})
+	// An ADVERTISED secondary UDN must reach the node-side gateway path, unlike a
+	// plain secondary which stays east/west-only (the case above). The gateway
+	// object is created; here Start() still fails at management port creation
+	// because the mock does not set it up, which confirms the gate opened.
+	ovntest.OnSupportedPlatformsIt("ensure UDNGateway is invoked for ADVERTISED secondary UDNs", func() {
+		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+		config.OVNKubernetesFeature.EnableMultiNetwork = true
+		factoryMock := factoryMocks.NodeWatchFactory{}
+		nodeList := []*corev1.Node{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "worker1",
+					Annotations: map[string]string{
+						"k8s.ovn.org/network-ids": `{"bluenet": "3"}`,
+					},
+				},
+			},
+		}
+		cnnci := CommonNodeNetworkControllerInfo{name: "worker1", watchFactory: &factoryMock}
+		factoryMock.On("GetNode", "worker1").Return(nodeList[0], nil)
+		factoryMock.On("GetNodes").Return(nodeList, nil)
+		nodeInformer := coreinformermocks.NodeInformer{}
+		factoryMock.On("NodeCoreInformer").Return(&nodeInformer)
+		nodeLister := v1mocks.NodeLister{}
+		nodeInformer.On("Lister").Return(&nodeLister)
+		uplinkFactory := uplinkinformerfactory.NewSharedInformerFactory(
+			uplinkfake.NewSimpleClientset(),
+			time.Second,
+		)
+		factoryMock.On("UplinkStateInformer").Return(uplinkFactory.K8s().V1alpha1().UplinkStates())
+		secondaryNAD := ovntest.GenerateNAD("bluenet", "rednad", "greenamespace",
+			types.Layer3Topology, "100.128.0.0/16", types.NetworkRoleSecondary)
+		ovntest.AnnotateNADWithNetworkID(networkID, secondaryNAD)
+		parsedNetInfo, err := util.ParseNADInfo(secondaryNAD)
+		Expect(err).NotTo(HaveOccurred())
+		// Mark the secondary network as BGP-advertised at this node, which is
+		// what opens the node-side gateway gate for a secondary UDN.
+		NetInfo := util.NewMutableNetInfo(parsedNetInfo)
+		NetInfo.SetPodNetworkAdvertisedVRFs(map[string][]string{"worker1": {parsedNetInfo.GetNetworkName()}})
+		getCreationFakeCommands(fexec, "ovn-k8s-mp3", mgtPortMAC, NetInfo.GetNetworkName(), "worker1", NetInfo.MTU())
+		ofm := getDummyOpenflowManager()
+		controller, err := NewUserDefinedNodeNetworkController(
+			&cnnci,
+			NetInfo,
+			nil,
+			nil,
+			nil,
+			nil,
+			&gateway{openflowManager: ofm},
+			nil,
+			nil,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(controller.gateway).To(Not(BeNil()))
+		err = controller.Start(context.Background())
+		Expect(err).To(HaveOccurred()) // management port is not set up by the mock
+		Expect(err.Error()).To(ContainSubstring("could not create management port"), err.Error())
+	})
 })
+
+// TestIsAdvertisedSecondaryUDNAtNode validates the core decision logic that
+// gates the node-side UDN gateway for an advertised secondary UDN. It is a plain
+// Go test on purpose: unlike the ginkgo specs above it does not touch the OVS
+// mock filesystem, so it runs in unprivileged environments where the
+// OVS-dependent BeforeEach cannot.
+func TestIsAdvertisedSecondaryUDNAtNode(t *testing.T) {
+	g := NewWithT(t)
+	g.Expect(config.PrepareTestConfig()).To(Succeed())
+	const nodeName = "worker1"
+
+	mkNet := func(role string) util.NetInfo {
+		nad := ovntest.GenerateNAD("bluenet", "rednad", "greenamespace",
+			types.Layer3Topology, "100.128.0.0/16", role)
+		ovntest.AnnotateNADWithNetworkID("3", nad)
+		ni, err := util.ParseNADInfo(nad)
+		g.Expect(err).NotTo(HaveOccurred())
+		return ni
+	}
+	advertisedAt := func(ni util.NetInfo, node string) util.NetInfo {
+		m := util.NewMutableNetInfo(ni)
+		m.SetPodNetworkAdvertisedVRFs(map[string][]string{node: {ni.GetNetworkName()}})
+		return m
+	}
+
+	primary := mkNet(types.NetworkRolePrimary)
+	secondary := mkNet(types.NetworkRoleSecondary)
+
+	g.Expect(isAdvertisedSecondaryUDNAtNode(nil, nodeName)).To(BeFalse(),
+		"nil netInfo must not open the gate")
+	g.Expect(isAdvertisedSecondaryUDNAtNode(primary, nodeName)).To(BeFalse(),
+		"a primary UDN is not a secondary")
+	g.Expect(isAdvertisedSecondaryUDNAtNode(advertisedAt(primary, nodeName), nodeName)).To(BeFalse(),
+		"an advertised primary is served by the existing primary path, not this predicate")
+	g.Expect(isAdvertisedSecondaryUDNAtNode(secondary, nodeName)).To(BeFalse(),
+		"a non-advertised secondary stays east/west-only")
+	g.Expect(isAdvertisedSecondaryUDNAtNode(advertisedAt(secondary, nodeName), nodeName)).To(BeTrue(),
+		"an advertised secondary opens the node-side gateway gate")
+	g.Expect(isAdvertisedSecondaryUDNAtNode(advertisedAt(secondary, nodeName), "otherNode")).To(BeFalse(),
+		"a secondary advertised on a different node must not open the gate here")
+}
 
 var _ = Describe("UserDefinedNodeNetworkController: UserDefinedPrimaryNetwork Gateway functionality", func() {
 	var (

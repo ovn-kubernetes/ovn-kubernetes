@@ -205,6 +205,17 @@ func setupNetwork(link netlink.Link, ifInfo *PodInterfaceInfo) error {
 			return fmt.Errorf("failed to add IP addr %s to %s: %v", ip, link.Attrs().Name, err)
 		}
 	}
+
+	// An advertised secondary UDN's gateway and routes must not land in the main
+	// table, where they would compete with the pod's primary-owned default route.
+	// Install them into a dedicated per-interface table selected by `ip rule from
+	// <podIP>` so that only traffic sourced from the secondary IP (egress and
+	// ingress replies) uses the secondary gateway — symmetrically, and without
+	// touching primary traffic.
+	if ifInfo.NorthSouthSourceRouting {
+		return setupSourceBasedRouting(link, ifInfo)
+	}
+
 	for _, gw := range ifInfo.Gateways {
 		if err := addRoute(nil, gw, link, ifInfo.RoutableMTU, 0); err != nil {
 			return fmt.Errorf("failed to add gateway route to link '%s': %v", link.Attrs().Name, err)
@@ -300,6 +311,59 @@ func setupNetwork(link netlink.Link, ifInfo *PodInterfaceInfo) error {
 			if err := addRoute(route.Dest, route.NextHop, link, ifInfo.RoutableMTU, iptableNum); err != nil {
 				return fmt.Errorf("failed to add pod route %v nexthop %v via %v table %v: %v", route.Dest, route.NextHop, link.Attrs().Name, iptableNum, err)
 			}
+		}
+	}
+
+	return nil
+}
+
+// setupSourceBasedRouting installs ifInfo's gateway and routes into a dedicated
+// per-interface routing table, selected by a source rule `ip rule from <podIP>
+// lookup <table>`. See the NorthSouthSourceRouting comment in setupNetwork and
+// PodAnnotation for why a secondary UDN's north-south gateway must be kept out
+// of the main table.
+func setupSourceBasedRouting(link netlink.Link, ifInfo *PodInterfaceInfo) error {
+	// per-interface table number, matching the ECMP path convention above
+	table := 100 + link.Attrs().Index
+	linkName := link.Attrs().Name
+
+	// Loose reverse-path filtering so replies routed via the source-routed
+	// table are not dropped by the RP check.
+	if err := setSysctl(fmt.Sprintf("/proc/sys/net/ipv4/conf/%s/rp_filter", linkName), 2); err != nil {
+		return fmt.Errorf("failed to set rp_filter for %s: %v", linkName, err)
+	}
+
+	for _, podIP := range ifInfo.IPs {
+		// ip rule from <podIP> lookup <table>
+		rule := netlink.NewRule()
+		rule.Src = util.GetIPNetFullMaskFromIP(podIP.IP)
+		rule.Table = table
+		if err := util.GetNetLinkOps().RuleAdd(rule); err != nil {
+			return fmt.Errorf("failed to add source-routing rule for %s to table %d: %v", podIP.IP, table, err)
+		}
+		// on-link route so the gateway (on this interface's subnet) is
+		// reachable within the dedicated table
+		if err := util.GetNetLinkOps().RouteAdd(&netlink.Route{
+			LinkIndex: link.Attrs().Index,
+			Scope:     netlink.SCOPE_LINK,
+			Dst:       util.IPsToNetworkIPs(podIP)[0],
+			Table:     table,
+		}); err != nil {
+			return fmt.Errorf("failed to add link-scope route for %s to table %d: %v", podIP.IP, table, err)
+		}
+	}
+
+	// default route(s) via the secondary gateway, in the dedicated table only
+	for _, gw := range ifInfo.Gateways {
+		if err := addRoute(nil, gw, link, ifInfo.RoutableMTU, table); err != nil {
+			return fmt.Errorf("failed to add source-routed default via %s to table %d: %v", gw, table, err)
+		}
+	}
+
+	// additional routes (e.g. service CIDR) also go to the dedicated table
+	for _, route := range ifInfo.Routes {
+		if err := addRoute(route.Dest, route.NextHop, link, ifInfo.RoutableMTU, table); err != nil {
+			return fmt.Errorf("failed to add source-routed route %v via %v to table %d: %v", route.Dest, route.NextHop, table, err)
 		}
 	}
 
