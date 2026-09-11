@@ -102,11 +102,11 @@ var _ = Describe("Network Segmentation: integration", feature.NetworkSegmentatio
 		By("creating an EgressIP object selected by the primary UDN namespace and pod label")
 		var egressIP string
 		if isIPv4Supported(cs) {
-			egressIPv4, allocErr := ipalloc.NewPrimaryIPv4()
+			egressIPv4, allocErr := ipalloc.NewPrimaryIPv4(nodeSubnetCIDR(&nodes.Items[0], false))
 			Expect(allocErr).NotTo(HaveOccurred())
 			egressIP = egressIPv4.String()
 		} else {
-			egressIPv6, allocErr := ipalloc.NewPrimaryIPv6()
+			egressIPv6, allocErr := ipalloc.NewPrimaryIPv6(nodeSubnetCIDR(&nodes.Items[0], true))
 			Expect(allocErr).NotTo(HaveOccurred())
 			egressIP = egressIPv6.String()
 		}

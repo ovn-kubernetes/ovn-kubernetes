@@ -49,3 +49,7 @@ func (k kind) IsConfigurationEnabled(config api.Config) bool {
 		return false
 	}
 }
+
+func (k kind) NBDBContainerName() string {
+	return "nb-ovsdb"
+}

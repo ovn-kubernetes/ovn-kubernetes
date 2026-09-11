@@ -24,4 +24,5 @@ type DeploymentConfig interface {
 	GetAgnHostContainerImage() string
 	// IsConfigurationEnabled checks whether a specific configuration flag is enabled in the deployment.
 	IsConfigurationEnabled(config Config) bool
+	NBDBContainerName() string
 }

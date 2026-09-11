@@ -1054,12 +1054,12 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 					nodeIPs[node.Name] = make(map[int]string)
 				}
 				if IsIPv6Cluster(f.ClientSet) {
-					newIPIP, err := ipalloc.NewPrimaryIPv6()
+					newIPIP, err := ipalloc.NewPrimaryIPv6(nodeSubnetCIDR(&node, true))
 					framework.ExpectNoError(err, "must get new primary provider IPv4")
 					newIP = newIPIP.String()
 					nodeIPs[node.Name][6] = newIP
 				} else {
-					newIPIP, err := ipalloc.NewPrimaryIPv4()
+					newIPIP, err := ipalloc.NewPrimaryIPv4(nodeSubnetCIDR(&node, false))
 					framework.ExpectNoError(err, "must get new primary provider IPv4")
 					nodeIPs[node.Name][4] = newIPIP.String()
 				}
@@ -3377,11 +3377,13 @@ spec:
 		ginkgo.By("Create an EgressIP object with one egress IP defined")
 		// Assign the egress IP without conflicting with any node IP,
 		// the kind subnet is /16 or /64 so the following should be fine.
+		nonBackendNode, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), nonBackendNodeName, metav1.GetOptions{})
+		framework.ExpectNoError(err, "must get non-backend node object")
 		var egressIP1 net.IP
 		if utilnet.IsIPv6String(svcLoadBalancerIP) {
-			egressIP1, err = ipalloc.NewPrimaryIPv6()
+			egressIP1, err = ipalloc.NewPrimaryIPv6(nodeSubnetCIDR(nonBackendNode, true))
 		} else {
-			egressIP1, err = ipalloc.NewPrimaryIPv4()
+			egressIP1, err = ipalloc.NewPrimaryIPv4(nodeSubnetCIDR(nonBackendNode, false))
 		}
 		framework.ExpectNoError(err, "must allocate new Node IP for EgressIP IP")
 		var egressIPConfig = `apiVersion: k8s.ovn.org/v1

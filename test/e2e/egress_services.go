@@ -420,9 +420,9 @@ spec:
 			ginkgo.By("By setting a secondary IP on non-egress node acting as \"another node\"")
 			var otherDstIP net.IP
 			if protocol == v1.IPv6Protocol {
-				otherDstIP, err = ipalloc.NewPrimaryIPv6()
+				otherDstIP, err = ipalloc.NewPrimaryIPv6(nodeSubnetCIDR(&dstNode, true))
 			} else {
-				otherDstIP, err = ipalloc.NewPrimaryIPv4()
+				otherDstIP, err = ipalloc.NewPrimaryIPv4(nodeSubnetCIDR(&dstNode, false))
 			}
 			framework.ExpectNoError(err, "failed to allocate secondary node IP")
 			otherDst := otherDstIP.String()
@@ -761,9 +761,9 @@ spec:
 			// allocate EIP IP
 			var egressIP net.IP
 			if IsIPv6Cluster(f.ClientSet) {
-				egressIP, err = ipalloc.NewPrimaryIPv6()
+				egressIP, err = ipalloc.NewPrimaryIPv6(nodeSubnetCIDR(&eipNode, true))
 			} else {
-				egressIP, err = ipalloc.NewPrimaryIPv4()
+				egressIP, err = ipalloc.NewPrimaryIPv4(nodeSubnetCIDR(&eipNode, false))
 			}
 			framework.ExpectNoError(err, "must allocate new primary network IP address")
 			egressIPYaml := "egressip.yaml"
