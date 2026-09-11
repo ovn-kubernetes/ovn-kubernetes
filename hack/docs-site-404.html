@@ -5,6 +5,20 @@
   <title>Redirecting…</title>
   <script>
     (function () {
+      function safeRedirect(url) {
+        url = url.replace(/^\/\/+/, '/');
+        try {
+          var parsed = new URL(url, location.origin);
+          if (parsed.origin !== location.origin) {
+            location.replace('/master/');
+            return;
+          }
+        } catch (e) {
+          location.replace('/master/');
+          return;
+        }
+        location.replace(url);
+      }
       var path = location.pathname;
       var suffix = location.search + location.hash;
       // Already under a mike version or alias? Prefer that version's home for
@@ -15,15 +29,15 @@
         var ver = versioned[1];
         var atVersionRoot = path === "/" + ver || path === "/" + ver + "/";
         if (atVersionRoot) {
-          location.replace((ver === "master" ? "/" : "/master/") + suffix);
+          safeRedirect((ver === "master" ? "/" : "/master/") + suffix);
           return;
         }
-        location.replace("/" + ver + "/" + suffix);
+        safeRedirect("/" + ver + "/" + suffix);
         return;
       }
       // Pre-versioning deep link (e.g. /design/architecture/) → same path
       // under the default docs version (master).
-      location.replace("/master" + path + suffix);
+      safeRedirect("/master" + path + suffix);
     })();
   </script>
 </head>

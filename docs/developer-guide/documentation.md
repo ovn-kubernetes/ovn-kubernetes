@@ -191,6 +191,19 @@ the prefix is already `master`).
 Do not hand-edit `404.html` on `gh-pages`; change `hack/docs-site-404.html` on
 `master` and let the versioning workflow republish it.
 
+**Redirect validation (`safeRedirect` helper):** All `location.replace()` calls
+in the 404 page go through a `safeRedirect()` function that enforces two
+invariants before redirecting:
+
+1. **Leading-slash normalization** — multiple leading slashes are collapsed to
+   one (`//…` → `/…`) so the browser never interprets the URL as a
+   protocol-relative redirect (e.g. `//evil.com`).
+2. **Origin check** — the URL is parsed with the `URL` API against the current
+   origin; if the resolved origin differs the redirect falls back to `/master/`.
+
+Every redirect target is an origin-relative path by construction, so these
+checks are defense-in-depth rather than a fix for an exploitable bug.
+
 Shell coverage for the install helper (local/remote `gh-pages`, unchanged vs
 changed template, `PUSH=false`/`true`, push failure) and for the clean-worktree
 preflight lives in `hack/test-install-gh-pages-404.sh`
