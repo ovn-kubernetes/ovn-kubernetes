@@ -791,6 +791,15 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 	bridgeMacAddress := b.macAddress.String()
 	ofPortHost := b.ofPortHost
 	bridgeIPs := b.ips
+	hasLocalnetPatchPort := false
+	if _, hasDefaultNetwork := b.netConfig[types.DefaultNetworkName]; hasDefaultNetwork &&
+		(config.Gateway.Mode == config.GatewayModeShared || config.Gateway.Mode == config.GatewayModeLocal) {
+		var err error
+		hasLocalnetPatchPort, err = b.hasLocalnetPatchPort()
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	var dftFlows []string
 
@@ -893,9 +902,8 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 							nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, bridgeMacAddress, protoPrefixV4,
 							config.Default.ConntrackZone, netConfig.MasqCTMark, ofPortPhys))
 
-					// Allow (a) OVN->host traffic on the same node
-					// (b) host->host traffic on the same node
-					if config.Gateway.Mode == config.GatewayModeShared || config.Gateway.Mode == config.GatewayModeLocal {
+					// Allow OVN and host traffic to reach a localnet endpoint on this bridge.
+					if hasLocalnetPatchPort {
 						dftFlows = append(dftFlows, hostNetworkNormalActionFlows(netConfig, bridgeMacAddress, hostSubnets, false)...)
 					}
 				} else {
@@ -1010,9 +1018,8 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 							nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, bridgeMacAddress, protoPrefixV6,
 							config.Default.ConntrackZone, netConfig.MasqCTMark, ofPortPhys))
 
-					// Allow (a) OVN->host traffic on the same node
-					// (b) host->host traffic on the same node
-					if config.Gateway.Mode == config.GatewayModeShared || config.Gateway.Mode == config.GatewayModeLocal {
+					// Allow OVN and host traffic to reach a localnet endpoint on this bridge.
+					if hasLocalnetPatchPort {
 						dftFlows = append(dftFlows, hostNetworkNormalActionFlows(netConfig, bridgeMacAddress, hostSubnets, true)...)
 					}
 				} else {
