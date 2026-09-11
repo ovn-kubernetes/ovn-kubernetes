@@ -47,6 +47,7 @@ plugins:
   - awesome-pages
   - mike
   - mermaid2
+  - macros
   - blog:
       # NOTE: configuration options can be found at
       # https://squidfunk.github.io/mkdocs-material/setup/setting-up-a-blog/
@@ -59,6 +60,14 @@ plugins:
       loop: false
       zoomable: true
       draggable: true
+  - redirects:
+      redirect_maps: {}
+  - minify:
+      minify_html: true
+  - git-revision-date-localized:
+      enable_creation_date: true
+      type: date
+      fallback_to_build_date: true
 markdown_extensions:
   - admonition
   - meta
@@ -73,9 +82,19 @@ markdown_extensions:
         - name: mermaid
           class: mermaid
           format: !!python/name:mermaid2.fence_mermaid_custom
+  - pymdownx.tabbed:
+      alternate_style: true
   - pymdownx.snippets:
       base_path: site-src
       check_paths: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.keys
+  - pymdownx.magiclink:
+      repo_url_shorthand: true
+      user: ovn-kubernetes
+      repo: ovn-kubernetes
+  - pymdownx.mark
   - toc:
       permalink: true
 nav:
