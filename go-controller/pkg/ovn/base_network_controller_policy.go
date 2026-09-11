@@ -1188,7 +1188,7 @@ func (bnc *BaseNetworkController) setupGressPolicy(np *networkPolicy, gp *gressP
 // if addNetworkPolicy fails, create or delete operation can be retried
 func (bnc *BaseNetworkController) addNetworkPolicy(policy *knet.NetworkPolicy) error {
 	klog.Infof("Adding network policy %s for network %s", getPolicyKey(policy), bnc.GetNetworkName())
-	if !bnc.IsUserDefinedNetwork() && config.Metrics.EnableScaleMetrics {
+	if bnc.networkPolicyMetricsEnabled() {
 		start := time.Now()
 		defer func() {
 			duration := time.Since(start)
@@ -1295,17 +1295,18 @@ func (bnc *BaseNetworkController) buildNetworkPolicyACLs(np *networkPolicy, aclL
 	return acls
 }
 
+// NetworkPolicy metrics are recorded for the default and primary UDN controllers.
+func (bnc *BaseNetworkController) networkPolicyMetricsEnabled() bool {
+	return config.Metrics.EnableScaleMetrics && (bnc.IsDefault() || bnc.IsPrimaryNetwork())
+}
+
 // deleteNetworkPolicy removes a network policy
 // It only uses Namespace and Name from given network policy
 func (bnc *BaseNetworkController) deleteNetworkPolicy(policy *knet.NetworkPolicy) error {
 	npKey := getPolicyKey(policy)
-	klog.Infof("Deleting network policy %s", npKey)
-	if config.Metrics.EnableScaleMetrics {
-		start := time.Now()
-		defer func() {
-			duration := time.Since(start)
-			metrics.RecordNetpolEvent("delete", duration)
-		}()
+	var start time.Time
+	if bnc.networkPolicyMetricsEnabled() {
+		start = time.Now()
 	}
 	// First lock and update namespace
 	nsInfo, nsUnlock := bnc.getNamespaceLocked(policy.Namespace, false)
@@ -1319,6 +1320,12 @@ func (bnc *BaseNetworkController) deleteNetworkPolicy(policy *knet.NetworkPolicy
 		np, ok := bnc.networkPolicies.Load(npKey)
 		if !ok {
 			return nil
+		}
+		if bnc.networkPolicyMetricsEnabled() {
+			defer func() {
+				duration := time.Since(start)
+				metrics.RecordNetpolEvent("delete", duration)
+			}()
 		}
 		if err := bnc.cleanupNetworkPolicy(np); err != nil {
 			return fmt.Errorf("deleting policy %s failed: %v", npKey, err)
