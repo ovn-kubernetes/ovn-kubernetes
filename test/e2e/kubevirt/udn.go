@@ -20,7 +20,13 @@ import (
 // Returns:
 // - A pointer to the created ClusterUserDefinedNetwork object.
 // - A string representation of the CUDN's network name.
-func GenerateCUDN(namespace, name string, topology udnv1.NetworkTopology, role udnv1.NetworkRole, subnets udnv1.DualStackCIDRs) (*udnv1.ClusterUserDefinedNetwork, string) {
+func GenerateCUDN(
+	namespace, name string,
+	topology udnv1.NetworkTopology,
+	role udnv1.NetworkRole,
+	subnets udnv1.DualStackCIDRs,
+	opts ...CUDNOpt,
+) (*udnv1.ClusterUserDefinedNetwork, string) {
 	cudn := &udnv1.ClusterUserDefinedNetwork{
 		ObjectMeta: metav1.ObjectMeta{
 			// Generate a unique name for the CUDN by combining the namespace and name and add
@@ -67,5 +73,22 @@ func GenerateCUDN(namespace, name string, topology udnv1.NetworkTopology, role u
 		}
 	}
 
+	for _, opt := range opts {
+		opt(cudn)
+	}
+
 	return cudn, networkName
+}
+
+type CUDNOpt func(*udnv1.ClusterUserDefinedNetwork)
+
+func WithMACSecurityConfig(macSec udnv1.MACSecurityConfig) CUDNOpt {
+	return func(cudn *udnv1.ClusterUserDefinedNetwork) {
+		switch cudn.Spec.Network.GetTopology() {
+		case udnv1.NetworkTopologyLayer2:
+			cudn.Spec.Network.Layer2.MACSecurity = &macSec
+		case udnv1.NetworkTopologyLocalnet:
+			cudn.Spec.Network.Localnet.MACSecurity = &macSec
+		}
+	}
 }
