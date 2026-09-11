@@ -548,6 +548,33 @@ func setEncapPort(ctx context.Context) error {
 	return nil
 }
 
+// ovnRemoteReconcileInterval is how often ovn-controller's southbound
+// connection is checked.
+const ovnRemoteReconcileInterval = 60 * time.Second
+
+// reconcileOVNRemote re-asserts external_ids:ovn-remote when ovn-controller has
+// lost its connection to the local southbound database.
+//
+// SetOVNRemote() only runs from Init(), so if ovn-remote is cleared underneath a
+// running ovn-controller nothing restores it. The node's dataplane then freezes:
+// CNI ADD fails and pods become unreachable from nodes that join later, while
+// kubelet still reports every container as healthy.
+func (nc *DefaultNodeNetworkController) reconcileOVNRemote() {
+	status, _, err := util.RunOVNControllerAppCtl("connection-status")
+	if err != nil {
+		klog.Errorf("Could not get ovn-controller connection status: %v", err)
+		return
+	}
+	if strings.HasPrefix(status, "connected") {
+		return
+	}
+	klog.Warningf("ovn-controller is not connected to the southbound database (status %q), "+
+		"re-asserting ovn-remote", status)
+	if err := config.OvnSouth.SetOVNRemote(); err != nil {
+		klog.Errorf("Unable to re-configure the local OVN Southbound database endpoint: %v", err)
+	}
+}
+
 func isOVNControllerReady(ovsClient client.Client) (bool, error) {
 	// check node's connection status
 	ret, _, err := util.RunOVNControllerAppCtl("connection-status")
@@ -1141,6 +1168,15 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 		}()
 		ovspinning.Run(ctx, stopCh, podResClient, nc.ovsClient)
 	}(nc.stopChan)
+
+	// See reconcileOVNRemote.
+	if config.IsModeDPU() || config.IsModeFull() {
+		nc.wg.Add(1)
+		go func(stopCh <-chan struct{}) {
+			defer nc.wg.Done()
+			wait.Until(nc.reconcileOVNRemote, ovnRemoteReconcileInterval, stopCh)
+		}(nc.stopChan)
+	}
 
 	klog.Infof("Default node network controller initialized and ready.")
 	return nil
