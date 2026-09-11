@@ -26,6 +26,8 @@ import (
 	"k8s.io/kubernetes/test/e2e/framework"
 )
 
+const ProviderName = "kind"
+
 type kind struct {
 	engine   *container.Engine
 	HostPort *portalloc.PortAllocator
@@ -44,7 +46,7 @@ func New() api.Provider {
 }
 
 func (k *kind) Name() string {
-	return "kind"
+	return ProviderName
 }
 
 func (k *kind) PrimaryNetwork() (api.Network, error) {

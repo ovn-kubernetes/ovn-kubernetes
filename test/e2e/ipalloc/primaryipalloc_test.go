@@ -92,16 +92,27 @@ func TestIPAlloc(t *testing.T) {
 			expectedFromAllocateNext: []string{"192.168.2.3", "192.168.2.4"},
 		},
 		{
+			// The bump leaves the subnet here, so allocation starts at a Node IP and steps over the Nodes.
+			desc: "IPv4 /24",
+			existingPrimaryNodeIPs: []node{
+				{v4: network{ip: "192.168.104.1", mask: "24"}},
+				{v4: network{ip: "192.168.104.3", mask: "24"}},
+				{v4: network{ip: "192.168.104.4", mask: "24"}},
+				{v4: network{ip: "192.168.104.5", mask: "24"}},
+			},
+			expectedFromAllocateNext: []string{"192.168.104.6", "192.168.104.7"},
+		},
+		{
 			desc:                     "IPv6",
-			existingPrimaryNodeIPs:   []node{{v4: network{ip: "fc00:f853:ccd:e793::5", mask: "64"}}, {v4: network{ip: "fc00:f853:ccd:e793::6", mask: "64"}}},
-			expectedFromAllocateNext: []string{"fc00:f853:ccd:e793::8", "fc00:f853:ccd:e793::9"},
+			existingPrimaryNodeIPs:   []node{{v6: network{ip: "fc00:f853:ccd:e793::5", mask: "64"}}, {v6: network{ip: "fc00:f853:ccd:e793::6", mask: "64"}}},
+			expectedFromAllocateNext: []string{"fc00:f853:ccd:e793::107", "fc00:f853:ccd:e793::108"},
 		},
 	}
 
 	for i, tc := range tests {
 		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
 			cs := fake.NewSimpleClientset(getNodesWithIPs(tc.existingPrimaryNodeIPs))
-			pipa, err := newPrimaryIPAllocator(cs.CoreV1().Nodes())
+			pipa, err := newPrimaryIPAllocator(cs.CoreV1().Nodes(), "")
 			if err != nil {
 				t.Error(err)
 				return
@@ -126,6 +137,130 @@ func TestIPAlloc(t *testing.T) {
 		})
 	}
 
+}
+
+var disjointRoutedNodes = []node{
+	{v4: network{ip: "10.1.253.3", mask: "31"}},
+	{v4: network{ip: "10.1.253.5", mask: "31"}},
+	{v4: network{ip: "10.1.1.1", mask: "31"}},
+}
+
+func TestRoutedNodesLeaveNothingToAllocate(t *testing.T) {
+	cs := fake.NewSimpleClientset(getNodesWithIPs(disjointRoutedNodes))
+	_, err := newPrimaryIPAllocator(cs.CoreV1().Nodes(), "")
+	if !IsNoRangeError(err) {
+		t.Errorf("expected no range to be derivable from disjoint Node subnets, but found %v", err)
+	}
+}
+
+func TestUnreadableNodeIsAFault(t *testing.T) {
+	cs := fake.NewSimpleClientset(&corev1.NodeList{Items: []corev1.Node{
+		getNodeObj("node0", map[string]string{}, map[string]string{})}})
+	_, err := newPrimaryIPAllocator(cs.CoreV1().Nodes(), "")
+	if err == nil || IsNoRangeError(err) {
+		t.Errorf("expected an unannotated Node to fail the run, but found %v", err)
+	}
+}
+
+func TestPoolReplacesNodeSubnets(t *testing.T) {
+	cs := fake.NewSimpleClientset(getNodesWithIPs(disjointRoutedNodes))
+	pipa, err := newPrimaryIPAllocator(cs.CoreV1().Nodes(), "10.100.0.0/24, fd00:10:100::/64")
+	if err != nil {
+		t.Fatalf("failed to allocate from a pool: %v", err)
+	}
+	for _, tc := range []struct {
+		allocate allocNextFn
+		expected string
+	}{
+		{allocate: pipa.AllocateNextV4, expected: "10.100.0.2"},
+		{allocate: pipa.AllocateNextV6, expected: "fd00:10:100::2"},
+	} {
+		nextIP, err := tc.allocate()
+		if err != nil {
+			t.Fatalf("failed to allocate next address: %v", err)
+		}
+		if expectedIP := net.ParseIP(tc.expected); !nextIP.Equal(expectedIP) {
+			t.Errorf("expected IP %q, but found %q", expectedIP, nextIP)
+		}
+	}
+}
+
+func TestPoolIsRejected(t *testing.T) {
+	for _, pool := range []string{"10.100.0/24", "10.100.0.0/24,", "10.100.0.0/31", "10.100.0.0/24,10.101.0.0/24", "fd00:10:100::/64,fd00:10:101::/64"} {
+		t.Run(pool, func(t *testing.T) {
+			cs := fake.NewSimpleClientset(getNodesWithIPs(disjointRoutedNodes))
+			_, err := newPrimaryIPAllocator(cs.CoreV1().Nodes(), pool)
+			if err == nil {
+				t.Errorf("expected pool %q to be rejected", pool)
+			}
+			if IsNoRangeError(err) {
+				t.Errorf("expected pool %q to fail the run, but it skips the specs: %v", pool, err)
+			}
+		})
+	}
+}
+
+func TestAllocationStaysInRange(t *testing.T) {
+	cs := fake.NewSimpleClientset(getNodesWithIPs(disjointRoutedNodes))
+	pipa, err := newPrimaryIPAllocator(cs.CoreV1().Nodes(), "10.100.0.0/25")
+	if err != nil {
+		t.Fatalf("failed to allocate from a pool: %v", err)
+	}
+	pool := &net.IPNet{IP: net.ParseIP("10.100.0.0"), Mask: net.CIDRMask(25, 32)}
+	var got int
+	for range 200 {
+		nextIP, err := pipa.AllocateNextV4()
+		if err != nil {
+			if got != 125 {
+				t.Errorf("allocated %d addresses from %s, want 125", got, pool)
+			}
+			return
+		}
+		got++
+		if !pool.Contains(nextIP) {
+			t.Fatalf("allocated %s from outside pool %s", nextIP, pool)
+		}
+	}
+	t.Errorf("expected allocation from %s to run out", pool)
+}
+
+func TestPoolDoesNotAllocateBroadcast(t *testing.T) {
+	cs := fake.NewSimpleClientset(getNodesWithIPs(disjointRoutedNodes))
+	pipa, err := newPrimaryIPAllocator(cs.CoreV1().Nodes(), "10.100.0.0/30")
+	if err != nil {
+		t.Fatalf("failed to allocate from a pool: %v", err)
+	}
+	got, err := pipa.AllocateNextV4()
+	if err != nil {
+		t.Fatalf("expected one address from 10.100.0.0/30: %v", err)
+	}
+	if !got.Equal(net.ParseIP("10.100.0.2")) {
+		t.Errorf("expected 10.100.0.2, got %s", got)
+	}
+	if _, err := pipa.AllocateNextV4(); err == nil {
+		t.Error("expected 10.100.0.0/30 to refuse its broadcast address")
+	}
+}
+
+func TestIPv6WhenIPv4HasNoRange(t *testing.T) {
+	cs := fake.NewSimpleClientset(getNodesWithIPs([]node{
+		{v4: network{ip: "10.1.253.3", mask: "31"}, v6: network{ip: "fc00:f853:ccd:e793::5", mask: "64"}},
+		{v4: network{ip: "10.1.253.5", mask: "31"}, v6: network{ip: "fc00:f853:ccd:e793::6", mask: "64"}},
+	}))
+	pipa, err := newPrimaryIPAllocator(cs.CoreV1().Nodes(), "")
+	if err != nil {
+		t.Fatalf("expected IPv6 to still initialise: %v", err)
+	}
+	if pipa.v4 != nil {
+		t.Error("expected no IPv4 range from disjoint /31s")
+	}
+	got, err := pipa.AllocateNextV6()
+	if err != nil {
+		t.Fatalf("failed to allocate IPv6: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected an IPv6 address")
+	}
 }
 
 func getNodesWithIPs(nodesSpec []node) runtime.Object {

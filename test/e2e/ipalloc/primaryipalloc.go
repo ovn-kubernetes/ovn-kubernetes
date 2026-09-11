@@ -5,12 +5,16 @@ package ipalloc
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"github.com/onsi/ginkgo/v2"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	v1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"net"
+	"os"
+	"strings"
 	"sync"
 )
 
@@ -22,27 +26,53 @@ type primaryIPAllocator struct {
 	nodeClient v1.NodeInterface
 }
 
-var pia *primaryIPAllocator
+// PrimaryIPPoolEnvVar names a CIDR, or a comma separated pair for dual stack, to allocate from
+// where no range can be derived from the Node subnets.
+const PrimaryIPPoolEnvVar = "OVN_TEST_PRIMARY_IP_POOL"
+
+// errNoRange marks the Node subnets yielding nothing to allocate from, which is a fact about how
+// the cluster is addressed. Every other error here is a fault in it and has to fail the run.
+var errNoRange = errors.New("no range")
+
+func IsNoRangeError(err error) bool {
+	return errors.Is(err, errNoRange)
+}
+
+// pia holds no range until initialised, so a run that never initialises it, as the DPU uplink
+// lane does not, skips those specs instead of dereferencing nothing.
+var pia = &primaryIPAllocator{mu: &sync.Mutex{}}
 
 // InitPrimaryIPAllocator must be called to init IP allocator(s). Callers must be synchronise.
 func InitPrimaryIPAllocator(nodeClient v1.NodeInterface) error {
 	var err error
-	pia, err = newPrimaryIPAllocator(nodeClient)
+	pia, err = newPrimaryIPAllocator(nodeClient, os.Getenv(PrimaryIPPoolEnvVar))
 	return err
 }
 
 func NewPrimaryIPv4() (net.IP, error) {
+	skipWithoutRange(pia.v4, "IPv4")
 	return pia.AllocateNextV4()
 }
 
 func NewPrimaryIPv6() (net.IP, error) {
+	skipWithoutRange(pia.v6, "IPv6")
 	return pia.AllocateNextV6()
 }
 
-// newPrimaryIPAllocator gets a Nodes primary interfaces network info, increments the 2 octet and checks if the IP is still
+func skipWithoutRange(allocator *ipAllocator, family string) {
+	if allocator == nil {
+		ginkgo.Skip(fmt.Sprintf("this run has no %s range to allocate from; give %s one to run this spec",
+			family, PrimaryIPPoolEnvVar), 2)
+	}
+}
+
+// newPrimaryIPAllocator gets the Nodes primary interface network info and picks a starting IP that stays
 // within the subnet of all the K8 nodes.
-func newPrimaryIPAllocator(nodeClient v1.NodeInterface) (*primaryIPAllocator, error) {
+func newPrimaryIPAllocator(nodeClient v1.NodeInterface, pool string) (*primaryIPAllocator, error) {
 	ipa := &primaryIPAllocator{mu: &sync.Mutex{}, nodeClient: nodeClient}
+	if pool != "" {
+		return ipa, ipa.setPool(pool)
+	}
 	nodes, err := nodeClient.List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
 		return ipa, fmt.Errorf("failed to get a list of node(s): %v", err)
@@ -50,54 +80,85 @@ func newPrimaryIPAllocator(nodeClient v1.NodeInterface) (*primaryIPAllocator, er
 	if len(nodes.Items) == 0 {
 		return ipa, fmt.Errorf("expected at least one node but found zero")
 	}
-	// FIXME: the approach taken here to find the first node IP+mask and then to increment the second last octet wont work in
-	// all scenarios (node with /24). We should generate an EgressIP compatible with a Node providers primary network and then take care its unique globally.
-
-	// The approach here is to grab initial starting IP from first node found, increment the second last octet.
-	// Approach taken here won't work for Nodes handed /24 subnets.
 	nodePrimaryIPs, err := util.ParseNodePrimaryIfAddr(&nodes.Items[0])
 	if err != nil {
 		return ipa, fmt.Errorf("failed to parse node primary interface address from Node object: %v", err)
 	}
+	var rangeErrs []error
 	if nodePrimaryIPs.V4.IP != nil {
-		// should be ok with /16 and /64 node primary provider subnets
-		// TODO; fixme; what about /24 subnet Nodes like GCP
-		nodePrimaryIPs.V4.IP[len(nodePrimaryIPs.V4.IP)-2]++
-		ipa.v4 = newIPAllocator(&net.IPNet{IP: nodePrimaryIPs.V4.IP, Mask: nodePrimaryIPs.V4.Net.Mask})
-	}
-	if nodePrimaryIPs.V6.IP != nil {
-		nodePrimaryIPs.V6.IP[len(nodePrimaryIPs.V6.IP)-2]++
-		ipa.v6 = newIPAllocator(&net.IPNet{IP: nodePrimaryIPs.V6.IP, Mask: nodePrimaryIPs.V6.Net.Mask})
-	}
-	// verify the new starting base IP is within all Nodes subnets
-	if nodePrimaryIPs.V4.IP != nil {
-		ipNets, err := getNodePrimaryProviderIPs(nodes.Items, false)
-		if err != nil {
-			return ipa, err
-		}
-		nextIP, err := ipa.v4.AllocateNextIP()
-		if err != nil {
-			return ipa, err
-		}
-		if !isIPWithinAllSubnets(ipNets, nextIP) {
-			return ipa, fmt.Errorf("IP %s is not within all Node subnets", nextIP)
+		if ipa.v4, err = deriveRange(nodes.Items, &nodePrimaryIPs.V4, false); err != nil {
+			if !IsNoRangeError(err) {
+				return ipa, err
+			}
+			rangeErrs = append(rangeErrs, err)
 		}
 	}
 	if nodePrimaryIPs.V6.IP != nil {
-		ipNets, err := getNodePrimaryProviderIPs(nodes.Items, true)
-		if err != nil {
-			return ipa, err
-		}
-		nextIP, err := ipa.v6.AllocateNextIP()
-		if err != nil {
-			return ipa, err
-		}
-		if !isIPWithinAllSubnets(ipNets, nextIP) {
-			return ipa, fmt.Errorf("IP %s is not within all Node subnets", nextIP)
+		if ipa.v6, err = deriveRange(nodes.Items, &nodePrimaryIPs.V6, true); err != nil {
+			if !IsNoRangeError(err) {
+				return ipa, err
+			}
+			rangeErrs = append(rangeErrs, err)
 		}
 	}
-
+	if ipa.v4 == nil && ipa.v6 == nil {
+		return ipa, errors.Join(rangeErrs...)
+	}
 	return ipa, nil
+}
+
+// deriveRange picks a range out of the Node subnets, and proves the choice by taking an address.
+// Bumping the second last octet clears the Node addresses where the subnet is wide enough for
+// the bump; where it is not, a /24, allocation starts at a Node IP and relies on allocateIP
+// stepping over the addresses the Nodes hold.
+func deriveRange(nodes []corev1.Node, primary *util.ParsedIFAddr, isIPv6 bool) (*ipAllocator, error) {
+	ipNets, err := getNodePrimaryProviderIPs(nodes, isIPv6)
+	if err != nil {
+		return nil, err
+	}
+	start := append(net.IP(nil), primary.IP...)
+	bumped := append(net.IP(nil), primary.IP...)
+	bumped[len(bumped)-2]++
+	if isIPWithinAllSubnets(ipNets, bumped) {
+		start = bumped
+	}
+	allocator := newIPAllocator(&net.IPNet{IP: start, Mask: primary.Net.Mask})
+	nextIP, err := allocator.AllocateNextIP()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", errNoRange, err)
+	}
+	if !isIPWithinAllSubnets(ipNets, nextIP) {
+		return nil, fmt.Errorf("%w: IP %s is not within all Node subnets", errNoRange, nextIP)
+	}
+	return allocator, nil
+}
+
+// setPool allocates from the given CIDRs, which it deliberately does not check against the Node
+// subnets: a pool exists precisely because it lies outside them.
+func (pia *primaryIPAllocator) setPool(pool string) error {
+	for _, entry := range strings.Split(pool, ",") {
+		ip, ipNet, err := net.ParseCIDR(strings.TrimSpace(entry))
+		if err != nil {
+			return fmt.Errorf("failed to parse %s entry %q: %v", PrimaryIPPoolEnvVar, entry, err)
+		}
+		// allocateIP skips last-octet 0 and 1, and IPv4 broadcast, so narrower than this hands out none.
+		if ones, bits := ipNet.Mask.Size(); bits-ones < 2 {
+			return fmt.Errorf("%s entry %q is too small to allocate from", PrimaryIPPoolEnvVar, entry)
+		}
+		allocator := newIPAllocator(&net.IPNet{IP: ip, Mask: ipNet.Mask})
+		if ip.To4() != nil {
+			if pia.v4 != nil {
+				return fmt.Errorf("%s names IPv4 twice", PrimaryIPPoolEnvVar)
+			}
+			pia.v4 = allocator
+		} else {
+			if pia.v6 != nil {
+				return fmt.Errorf("%s names IPv6 twice", PrimaryIPPoolEnvVar)
+			}
+			pia.v6 = allocator
+		}
+	}
+	return nil
 }
 
 func getNodePrimaryProviderIPs(nodes []corev1.Node, isIPv6 bool) ([]*net.IPNet, error) {
