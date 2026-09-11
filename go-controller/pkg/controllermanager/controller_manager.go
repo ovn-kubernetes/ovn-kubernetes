@@ -6,13 +6,11 @@ package controllermanager
 import (
 	"context"
 	"fmt"
-	"slices"
 	"sync"
 	"time"
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
@@ -371,6 +369,7 @@ func (cm *ControllerManager) initDefaultNetworkController(observManager *observa
 // Start the ovnkube controller
 func (cm *ControllerManager) Start(ctx context.Context) error {
 	klog.Info("Starting the ovnkube controller")
+	config.Layer2UsesTransitRouter = true
 
 	// Configure metrics early so workqueue provider is set before any workqueues are created
 	cm.configureMetrics(cm.stopChan)
@@ -380,8 +379,8 @@ func (cm *ControllerManager) Start(ctx context.Context) error {
 		return err
 	}
 
-	if err = cm.setTopologyType(); err != nil {
-		return fmt.Errorf("failed to set layer2 topology type: %w", err)
+	if err = cm.setUDNLayer2NodeUsesTransitRouter(); err != nil {
+		return err
 	}
 
 	cm.configureSvcTemplateSupport()
@@ -504,85 +503,15 @@ func (cm *ControllerManager) Reconcile(_ string, _, _ util.NetInfo) error {
 	return nil
 }
 
-func (cm *ControllerManager) setTopologyType() error {
+func (cm *ControllerManager) setUDNLayer2NodeUsesTransitRouter() error {
+	// Older peers still use this annotation to determine how to connect to this node.
 	node, err := cm.watchFactory.GetNode(cm.nodeName)
 	if err != nil {
-		return fmt.Errorf("unable to get controller node %s from informer while setting topology type for layer2: %w", cm.nodeName, err)
+		return fmt.Errorf("unable to get controller node %s from informer while annotating layer2 topology: %w", cm.nodeName, err)
 	}
-	config.Layer2UsesTransitRouter = node.Annotations[util.Layer2TopologyVersion] == util.TransitRouterTopoVersion
-	if config.Layer2UsesTransitRouter {
-		// The controller node is already using the new topology, no need to do anything extra.
+	if util.UDNLayer2NodeUsesTransitRouter(node) {
 		return nil
 	}
-
-	// Transit router is not used yet, check if we can switch to the new topology now.
-	// Find all primary layer2 switches and check if they have any running pods.
-	layer2Switches, err := libovsdbops.FindLogicalSwitchesWithPredicate(cm.nbClient, func(ls *nbdb.LogicalSwitch) bool {
-		return ls.ExternalIDs[ovntypes.TopologyExternalID] == ovntypes.Layer2Topology &&
-			ls.ExternalIDs[ovntypes.NetworkRoleExternalID] == ovntypes.NetworkRolePrimary
-	})
-	if err != nil {
-		return fmt.Errorf("failed to find layer2 switches: %w", err)
-	}
-	for _, sw := range layer2Switches {
-		hasRunningPods, err := cm.hasLocalPodsOnSwitch(sw)
-		if err != nil {
-			return fmt.Errorf("failed to check if there are running pods on switch %s: %w", sw.Name, err)
-		}
-		if hasRunningPods {
-			klog.Infof("Network %s has running pods, not switching to transit router topology yet", sw.Name)
-			return nil
-		}
-	}
-	// we checked all layer2 switches and none of them has running pods
-	// now make sure that cluster manager has upgraded and is assigning tunnel keys, otherwise new topology won't work
-
-	// no layer2 switches means there are no layer2 networks (already handled, new ones are fine), so we won't find tunnel-keys annotations
-	if len(layer2Switches) != 0 {
-		existingNADs, err := cm.kube.NADClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("").List(context.TODO(), metav1.ListOptions{})
-		if err != nil {
-			return fmt.Errorf("failed to list existing NADs: %w", err)
-		}
-		clusterManagerReady := false
-		for _, nad := range existingNADs.Items {
-			if nad.Annotations[ovntypes.OvnNetworkTunnelKeysAnnotation] != "" {
-				clusterManagerReady = true
-				break
-			}
-		}
-		if !clusterManagerReady {
-			klog.Infof("Cluster manager is not ready to assign tunnel keys yet, not switching to transit router topology yet")
-			return nil
-		}
-	}
-
-	klog.Infof("Switching to transit router for layer2 networks")
-	config.Layer2UsesTransitRouter = true
-	return cm.setUDNLayer2NodeUsesTransitRouter()
-}
-
-func (cm *ControllerManager) hasLocalPodsOnSwitch(sw *nbdb.LogicalSwitch) (bool, error) {
-	if len(sw.Ports) == 0 {
-		return false, nil
-	}
-
-	ports, err := libovsdbops.FindLogicalSwitchPortWithPredicate(
-		cm.nbClient,
-		func(lsp *nbdb.LogicalSwitchPort) bool {
-			return lsp.Type == "" &&
-				lsp.ExternalIDs["pod"] == "true" &&
-				slices.Contains(sw.Ports, lsp.UUID)
-		})
-	if err != nil {
-		return false, err
-	}
-	if len(ports) > 0 {
-		return true, nil
-	}
-	return false, nil
-}
-
-func (cm *ControllerManager) setUDNLayer2NodeUsesTransitRouter() error {
 	if err := cm.kube.SetAnnotationsOnNode(cm.nodeName, map[string]interface{}{
 		util.Layer2TopologyVersion: util.TransitRouterTopoVersion}); err != nil {
 		return fmt.Errorf("failed to set annotation %s on node %s: %w", util.Layer2TopologyVersion, cm.nodeName, err)

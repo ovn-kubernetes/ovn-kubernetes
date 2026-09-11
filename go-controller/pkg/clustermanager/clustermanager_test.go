@@ -1765,10 +1765,9 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 		})
 	})
 
-	ginkgo.Context("Layer2 topology type detection", func() {
+	ginkgo.Context("Layer2 topology startup", func() {
 		type topoTestEntry struct {
 			nodeAnnotations []map[string]string
-			expectedTransit bool
 		}
 
 		ginkgo.DescribeTable("sets Layer2UsesTransitRouter on Start",
@@ -1804,10 +1803,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					defer clusterManager.Stop()
 
-					gomega.Expect(config.Layer2UsesTransitRouter).To(
-						gomega.Equal(entry.expectedTransit),
-						"Layer2UsesTransitRouter mismatch",
-					)
+					gomega.Expect(config.Layer2UsesTransitRouter).To(gomega.BeTrue())
 
 					return nil
 				}
@@ -1822,13 +1818,11 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 						{util.Layer2TopologyVersion: util.TransitRouterTopoVersion},
 						{util.Layer2TopologyVersion: util.TransitRouterTopoVersion},
 					},
-					expectedTransit: true,
 				},
 			),
 			ginkgo.Entry("no nodes, no legacy state",
 				topoTestEntry{
 					nodeAnnotations: []map[string]string{},
-					expectedTransit: true,
 				},
 			),
 			ginkgo.Entry("nodes without any L2 annotations (fresh cluster)",
@@ -1837,25 +1831,22 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 						{},
 						{},
 					},
-					expectedTransit: true,
 				},
 			),
-			ginkgo.Entry("node has legacy tunnel IDs without topology version (upgrade, not migrated)",
+			ginkgo.Entry("legacy tunnel IDs do not select the old topology",
 				topoTestEntry{
 					nodeAnnotations: []map[string]string{
 						{ovntypes.UDNLayer2NodeGRLRPTunnelIDAnnotation: `{"blue":"7"}`},
 						{ovntypes.UDNLayer2NodeGRLRPTunnelIDAnnotation: `{"blue":"8"}`},
 					},
-					expectedTransit: false,
 				},
 			),
-			ginkgo.Entry("mixed: one node migrated, one still has legacy tunnel IDs",
+			ginkgo.Entry("annotations do not select mixed-topology operation",
 				topoTestEntry{
 					nodeAnnotations: []map[string]string{
 						{util.Layer2TopologyVersion: util.TransitRouterTopoVersion},
 						{ovntypes.UDNLayer2NodeGRLRPTunnelIDAnnotation: `{"blue":"7"}`},
 					},
-					expectedTransit: false,
 				},
 			),
 			ginkgo.Entry("node has both legacy tunnel IDs and topology version (migration complete)",
@@ -1866,7 +1857,6 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 							ovntypes.UDNLayer2NodeGRLRPTunnelIDAnnotation: `{"blue":"7"}`,
 						},
 					},
-					expectedTransit: true,
 				},
 			),
 			ginkgo.Entry("fully migrated node plus new unannotated node",
@@ -1878,7 +1868,6 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 						},
 						{},
 					},
-					expectedTransit: true,
 				},
 			),
 		)
