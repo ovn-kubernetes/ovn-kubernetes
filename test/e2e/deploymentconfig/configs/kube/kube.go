@@ -149,7 +149,7 @@ type gateway struct {
 }
 
 // gatewayOrSkip skips rather than fails, because a cluster that keeps its uplink off OVS metadata
-// is one the spec cannot run on, not one OVN-K is broken on.
+// is one the spec cannot run on, not one OVN-Kubernetes is broken on.
 func gatewayOrSkip() gateway {
 	discovered, err := gatewayBridge()
 	if err != nil {
@@ -159,9 +159,9 @@ func gatewayOrSkip() gateway {
 	return discovered
 }
 
-// discoverGateway reads the uplink OVN-K recorded on the bridge it put it on, rather than looking
-// for a physical interface, which on a node running pods is every pod's veth as well. One node is
-// asked, since the suite keeps a single answer for the whole cluster.
+// discoverGateway reads the uplink OVN-Kubernetes recorded on the bridge it put it on, rather
+// than looking for a physical interface, which on a node running pods is every pod's veth as
+// well. One node is asked, since the suite keeps a single answer for the whole cluster.
 func discoverGateway() (gateway, error) {
 	pod, err := runningPod(kube{}.OVNKubernetesNamespace(), "app=ovnkube-node")
 	if err != nil {

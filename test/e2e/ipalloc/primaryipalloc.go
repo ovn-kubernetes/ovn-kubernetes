@@ -137,7 +137,7 @@ func deriveRange(nodes []corev1.Node, primary *util.ParsedIFAddr, isIPv6 bool) (
 // subnets: a pool exists precisely because it lies outside them.
 func (pia *primaryIPAllocator) setPool(pool string) error {
 	for _, entry := range strings.Split(pool, ",") {
-		ip, ipNet, err := net.ParseCIDR(strings.TrimSpace(entry))
+		_, ipNet, err := net.ParseCIDR(strings.TrimSpace(entry))
 		if err != nil {
 			return fmt.Errorf("failed to parse %s entry %q: %v", PrimaryIPPoolEnvVar, entry, err)
 		}
@@ -145,8 +145,8 @@ func (pia *primaryIPAllocator) setPool(pool string) error {
 		if ones, bits := ipNet.Mask.Size(); bits-ones < 2 {
 			return fmt.Errorf("%s entry %q is too small to allocate from", PrimaryIPPoolEnvVar, entry)
 		}
-		allocator := newIPAllocator(&net.IPNet{IP: ip, Mask: ipNet.Mask})
-		if ip.To4() != nil {
+		allocator := newIPAllocator(ipNet)
+		if ipNet.IP.To4() != nil {
 			if pia.v4 != nil {
 				return fmt.Errorf("%s names IPv4 twice", PrimaryIPPoolEnvVar)
 			}

@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
@@ -57,6 +58,7 @@ type kube struct {
 	engine         *container.Engine
 	primaryNetwork string
 	hostPort       *portalloc.PortAllocator
+	nodeShellMu    sync.Mutex
 	nodeShells     map[string]*corev1.Pod
 }
 
@@ -126,6 +128,8 @@ func (k *kube) PreloadImages(_ []string) {
 }
 
 func (k *kube) deleteNodeShells() error {
+	k.nodeShellMu.Lock()
+	defer k.nodeShellMu.Unlock()
 	if len(k.nodeShells) == 0 {
 		return nil
 	}
@@ -149,9 +153,9 @@ func (k *kube) PrimaryNetwork() (api.Network, error) {
 	return k.containerEngine().GetNetwork(k.primaryNetwork)
 }
 
-// GetK8NodeNetworkInterface takes the address OVN-K publishes for its own uplink, rather than
-// choosing among the addresses a Node carries, where an egress IP and an API VIP are
-// indistinguishable from the Node's own.
+// GetK8NodeNetworkInterface takes the address OVN-Kubernetes publishes for its own uplink,
+// rather than choosing among the addresses a Node carries, where an egress IP and an API VIP
+// are indistinguishable from the Node's own.
 func (k *kube) GetK8NodeNetworkInterface(instance string, network api.Network) (api.NetworkInterface, error) {
 	if network.Name() != k.primaryNetwork {
 		return api.NetworkInterface{}, skip("GetK8NodeNetworkInterface",
@@ -255,8 +259,10 @@ func (k *kube) ExecK8NodeCommand(nodeName string, cmd []string) (string, error) 
 }
 
 // nodeShell returns a running shell pod on nodeName, one per node for the whole run. It lives in
-// the OVN-K namespace because a privileged host-network pod is already admitted there.
+// the OVN-Kubernetes namespace because a privileged host-network pod is already admitted there.
 func (k *kube) nodeShell(nodeName string) (*corev1.Pod, error) {
+	k.nodeShellMu.Lock()
+	defer k.nodeShellMu.Unlock()
 	client, err := framework.LoadClientset()
 	if err != nil {
 		return nil, err

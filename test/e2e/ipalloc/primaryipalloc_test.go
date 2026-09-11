@@ -164,7 +164,7 @@ func TestUnreadableNodeIsAFault(t *testing.T) {
 
 func TestPoolReplacesNodeSubnets(t *testing.T) {
 	cs := fake.NewSimpleClientset(getNodesWithIPs(disjointRoutedNodes))
-	pipa, err := newPrimaryIPAllocator(cs.CoreV1().Nodes(), "10.100.0.0/24, fd00:10:100::/64")
+	pipa, err := newPrimaryIPAllocator(cs.CoreV1().Nodes(), "10.100.0.100/24, fd00:10:100::100/64")
 	if err != nil {
 		t.Fatalf("failed to allocate from a pool: %v", err)
 	}

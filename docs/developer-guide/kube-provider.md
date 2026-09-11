@@ -35,22 +35,22 @@ everything skipped, which looks like a passing run.
 
 ## If your cluster is not laid out like upstream
 
-The suite reads where OVN-K lives from the cluster rather than asking you: the namespace from the
-`app=ovnkube-node` pods, and the gateway bridge and its uplink from OVS on one of those nodes.
+The suite reads where OVN-Kubernetes lives from the cluster rather than asking you: the namespace
+from the `app=ovnkube-node` pods, and the gateway bridge and its uplink from OVS on one of those nodes.
 Set a variable when what it reads is wrong, or when your cluster has more than one answer.
 
 | Variable | If you leave it unset | What it is |
 | --- | --- | --- |
-| `OVN_TEST_OVNK_NAMESPACE` | namespace of the `app=ovnkube-node` pods | Namespace OVN-K runs in |
+| `OVN_TEST_OVNK_NAMESPACE` | namespace of the `app=ovnkube-node` pods | Namespace OVN-Kubernetes runs in |
 | `OVN_TEST_FRRK8S_NAMESPACE` | namespace of the `app=frr-k8s` pods, or `frr-k8s-system` if there are none | Namespace FRR-K8s runs in |
-| `OVN_TEST_EXTERNAL_BRIDGE` | the bridge OVN-K recorded an uplink on | OVS gateway bridge |
-| `OVN_TEST_PRIMARY_INTERFACE` | the uplink recorded on that bridge | Uplink OVN-K owns |
+| `OVN_TEST_EXTERNAL_BRIDGE` | the bridge OVN-Kubernetes recorded an uplink on | OVS gateway bridge |
+| `OVN_TEST_PRIMARY_INTERFACE` | the uplink recorded on that bridge | Uplink OVN-Kubernetes owns |
 | `OVN_TEST_PRIMARY_IP_POOL` | derived from the Node subnets | CIDR to allocate test addresses from |
 
-The bridge and the uplink are read together, from the `bridge-uplink` external-id that OVN-K
-writes on the bridge it moved the uplink onto. That is the same thing OVN-K reads back to find
+The bridge and the uplink are read together, from the `bridge-uplink` external-id that OVN-Kubernetes
+writes on the bridge it moved the uplink onto. That is the same thing OVN-Kubernetes reads back to find
 its own uplink. If no bridge carries it, which happens when the bridge was provisioned before
-OVN-K rather than by it, or if more than one does, the specs that need the uplink skip and name
+OVN-Kubernetes rather than by it, or if more than one does, the specs that need the uplink skip and name
 both variables. They skip rather than guess because several of them run `ip addr add` against this
 name, and a wrong name means they configure nothing and fail later for no visible reason.
 
@@ -58,7 +58,7 @@ Both are one value for the whole cluster. Uplink-dependent specs may use any sch
 clusters whose Nodes use different bridge-uplink pairs are unsupported.
 
 Naming the namespace also narrows where the suite looks for those pods, so it is the way to pick
-between two OVN-K installs on one cluster.
+between two OVN-Kubernetes installs on one cluster.
 
 ### When your Nodes do not share a subnet
 
@@ -76,9 +76,8 @@ and free for the suite to use:
 - `10.100.0.0/24,fd00:10:100::/64` for dual stack, one entry per family
 
 Specs asking for a family you did not give will skip. Allocation starts at the first usable
-address after the one you write: last-octet `0` and `1` are skipped, and so is the IPv4
-broadcast, so `10.100.0.0/24` begins at `10.100.0.2`. It stops at the end of the CIDR, so
-`10.100.0.128/24` uses the top half of that `/24`. Every parallel Ginkgo process starts from
+address after the network address: last-octet `0` and `1` are skipped, and so is the IPv4
+broadcast, so `10.100.0.0/24` begins at `10.100.0.2`. Every parallel Ginkgo process starts from
 the same address, so run a single process.
 
 ## Specs that need a container outside the cluster
@@ -122,7 +121,7 @@ which case it hit:
 - something you have not configured yet names the variable that would enable it
 
 If the run fails in `BeforeSuite` with `k8s.ovn.org/node-primary-ifaddr annotation not found`,
-OVN-K is not healthy on the cluster and no focus will get past it. Check the CNI, not the
+OVN-Kubernetes is not healthy on the cluster and no focus will get past it. Check the CNI, not the
 provider.
 
 ## Before you widen the focus
