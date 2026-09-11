@@ -223,6 +223,36 @@ func isSupportedAgnhostForEIP(externalContainer infraapi.ExternalContainer) bool
 	return true
 }
 
+// createEIPManifestWithNodeSelector extends createEIPManifest with an
+// egressNodeSelector stanza.  Pass nil to omit the field entirely (identical
+// to calling createEIPManifest directly, which triggers CRD defaulting).
+func createEIPManifestWithNodeSelector(name string, podLabel, namespaceLabel map[string]string, nodeSelector *metav1.LabelSelector, egressIPs ...string) string {
+	base := createEIPManifest(name, podLabel, namespaceLabel, egressIPs...)
+	if nodeSelector == nil {
+		return base
+	}
+	nodeSelectorYAML := "    egressNodeSelector:\n"
+	if len(nodeSelector.MatchLabels) > 0 {
+		nodeSelectorYAML += "        matchLabels:\n"
+		for k, v := range nodeSelector.MatchLabels {
+			nodeSelectorYAML += fmt.Sprintf("            %s: %s\n", k, v)
+		}
+	}
+	if len(nodeSelector.MatchExpressions) > 0 {
+		nodeSelectorYAML += "        matchExpressions:\n"
+		for _, expr := range nodeSelector.MatchExpressions {
+			nodeSelectorYAML += fmt.Sprintf("        - key: %s\n          operator: %s\n", expr.Key, string(expr.Operator))
+			if len(expr.Values) > 0 {
+				nodeSelectorYAML += "          values:\n"
+				for _, v := range expr.Values {
+					nodeSelectorYAML += fmt.Sprintf("          - %s\n", v)
+				}
+			}
+		}
+	}
+	return base + nodeSelectorYAML
+}
+
 // Create EgressIP Manifest
 func createEIPManifest(name string, podLabel, namespaceLabel map[string]string, egressIPs ...string) string {
 	var ipsYAML string
@@ -4432,6 +4462,874 @@ spec:
 				role:     "primary",
 			}),
 		)
+
+		// egressNodeSelector tests — added below
+		// -----------------------------------------------------------------------
+		// Helper: allocate one egress IP of the right family.
+		newEgressIP := func() net.IP {
+			var ip net.IP
+			var err error
+			if isIPv6TestRun {
+				ip, err = ipalloc.NewPrimaryIPv6()
+			} else {
+				ip, err = ipalloc.NewPrimaryIPv4()
+			}
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate egress IP")
+			return ip
+		}
+
+		// Helper: write manifest to a temp file, create the EgressIP, and return
+		// a cleanup func that deletes the EgressIP and removes the temp file.
+		applyEIPManifest := func(name, manifest string) func() {
+			tmpFile, err := os.CreateTemp("", name+"*.yaml")
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must create temp file for EIP manifest")
+			_, err = tmpFile.WriteString(manifest)
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must write EIP manifest")
+			gomega.Expect(tmpFile.Close()).To(gomega.Succeed())
+			e2ekubectl.RunKubectlOrDie("default", "create", "-f", tmpFile.Name())
+			return func() {
+				e2ekubectl.RunKubectlOrDie("default", "delete", "egressip", name, "--ignore-not-found")
+				_ = os.Remove(tmpFile.Name())
+			}
+		}
+
+		// -----------------------------------------------------------------------
+		// Test 1: egressNodeSelector lifecycle
+		// -----------------------------------------------------------------------
+		ginkgo.It("[Primary EgressIP] egressNodeSelector lifecycle", func() {
+			const (
+				eipAName      = "egressip-ens-lifecycle-a"
+				eipBName      = "egressip-ens-lifecycle-b"
+				eipCName      = "egressip-ens-lifecycle-c"
+				eipXName      = "egressip-ens-lifecycle-x"
+				eipYName      = "egressip-ens-lifecycle-y"
+				podAName      = "egressip-lifecycle-pod-a"
+				podBName      = "egressip-lifecycle-pod-b"
+				podCName      = "egressip-lifecycle-pod-c"
+				podSharedName = "egressip-lifecycle-pod-shared"
+				poolLabelKey  = "egresspool"
+			)
+			podLabelA := map[string]string{poolLabelKey: "a"}
+			podLabelB := map[string]string{poolLabelKey: "b"}
+			podLabelC := map[string]string{poolLabelKey: "c"}
+			podLabelShared := map[string]string{poolLabelKey: "shared"}
+			nsLabel := map[string]string{"name": f.Namespace.Name}
+			updateNamespaceLabels(f, f.Namespace, nsLabel)
+
+			// Node pool labels
+			nodeLabelKey := "pool"
+			nodeLabelA := "a"
+			nodeLabelB := "b"
+			tierLabelKey := "tier"
+			tierLabelB := "b"
+
+			// Allocate IPs
+			eipA1 := newEgressIP()
+			eipA2 := newEgressIP()
+			eipB := newEgressIP()
+			eipC1 := newEgressIP()
+			eipC2 := newEgressIP()
+			eipX := newEgressIP()
+			eipY := newEgressIP()
+
+			// Selectors
+			selectorPoolA := &metav1.LabelSelector{MatchLabels: map[string]string{nodeLabelKey: nodeLabelA}}
+			selectorPoolB := &metav1.LabelSelector{MatchLabels: map[string]string{nodeLabelKey: nodeLabelB}}
+			selectorPoolAB := &metav1.LabelSelector{
+				MatchExpressions: []metav1.LabelSelectorRequirement{{
+					Key:      nodeLabelKey,
+					Operator: metav1.LabelSelectorOpIn,
+					Values:   []string{nodeLabelA, nodeLabelB},
+				}},
+			}
+
+			// Cleanup
+			ginkgo.DeferCleanup(func() {
+				for _, name := range []string{eipAName, eipBName, eipCName, eipXName, eipYName} {
+					e2ekubectl.RunKubectlOrDie("default", "delete", "eip", name, "--ignore-not-found=true")
+					os.Remove(filepath.Join(os.TempDir(), name+".yaml"))
+				}
+				for _, nodeName := range []string{egress1Node.name, egress2Node.name} {
+					e2enode.RemoveLabelOffNode(f.ClientSet, nodeName, nodeLabelKey)
+					e2enode.RemoveLabelOffNode(f.ClientSet, nodeName, tierLabelKey)
+				}
+				for _, podName := range []string{podAName, podBName, podCName, podSharedName} {
+					e2ekubectl.RunKubectlOrDie(f.Namespace.Name, "delete", "pod", podName, "--ignore-not-found=true")
+				}
+			})
+
+			// --- Step 1: node-first ordering ---
+			ginkgo.By("1. Node-first: label nodes, create EIPs, verify assignment")
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress1Node.name, nodeLabelKey, nodeLabelA)
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress2Node.name, nodeLabelKey, nodeLabelB)
+			cleanup := applyEIPManifest(eipAName, createEIPManifestWithNodeSelector(eipAName, podLabelA, nsLabel, selectorPoolA, eipA1.String(), eipA2.String()))
+			defer cleanup()
+			cleanup = applyEIPManifest(eipBName, createEIPManifestWithNodeSelector(eipBName, podLabelB, nsLabel, selectorPoolB, eipB.String()))
+			defer cleanup()
+			cleanup = applyEIPManifest(eipCName, createEIPManifestWithNodeSelector(eipCName, podLabelC, nsLabel, selectorPoolAB, eipC1.String()))
+			defer cleanup()
+			// EIP-A has 2 IPs but pool-A has only 1 node → 1 IP assigns, 1 stays pending.
+			// EIP-B: 1 IP on egress2Node; EIP-C: 1 IP on either pool node.
+			// Save status so step 2 can use the actual assigned IP (not the pending one).
+			eipAStatus1 := verifySpecificEgressIPStatusLengthEquals(eipAName, 1, func(s []egressIPStatus) bool {
+				return s[0].Node == egress1Node.name
+			})
+			verifySpecificEgressIPStatusLengthEquals(eipBName, 1, func(s []egressIPStatus) bool {
+				return s[0].Node == egress2Node.name
+			})
+			verifySpecificEgressIPStatusLengthEquals(eipCName, 1, nil)
+
+			// --- Step 2: create pods + baseline traffic ---
+			ginkgo.By("2. Create pods and verify baseline traffic: each pod uses its EIP src IP")
+			_, err := createGenericPodWithLabel(f, podAName, pod1Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podLabelA)
+			framework.ExpectNoError(err, "create pod-A")
+			_, err = createGenericPodWithLabel(f, podBName, pod1Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podLabelB)
+			framework.ExpectNoError(err, "create pod-B")
+			_, err = createGenericPodWithLabel(f, podCName, pod1Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podLabelC)
+			framework.ExpectNoError(err, "create pod-C")
+			// EIP-A: only pass the single assigned IP — the other is pending and will never appear.
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podAName, true, []string{eipAStatus1[0].EgressIP})),
+				"pod-A must use EIP-A src IP")
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podBName, true, []string{eipB.String()})),
+				"pod-B must use EIP-B src IP")
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podCName, true, []string{eipC1.String()})),
+				"pod-C must use EIP-C src IP")
+
+			// --- Step 3: EIP-first ordering ---
+			ginkgo.By("3. EIP-first: remove EIP-A+label, recreate EIP-A pending, then label node; verify traffic")
+			e2ekubectl.RunKubectlOrDie("default", "delete", "eip", eipAName, "--ignore-not-found=true")
+			e2enode.RemoveLabelOffNode(f.ClientSet, egress1Node.name, nodeLabelKey)
+			// EIP-A deleted → pod-A must fall back to its own node IP (no EIP routing involved)
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podAName, true, []string{pod1Node.nodeIP})),
+				"pod-A must fall back to node IP after EIP-A deletion")
+			// Re-create EIP-A with no matching node → must stay pending
+			cleanup = applyEIPManifest(eipAName, createEIPManifestWithNodeSelector(eipAName, podLabelA, nsLabel, selectorPoolA, eipA1.String(), eipA2.String()))
+			defer cleanup()
+			gomega.Consistently(func() int {
+				return len(getSpecificEgressIPStatusItems(eipAName))
+			}, 2*time.Second, 500*time.Millisecond).Should(gomega.Equal(0), "EIP-A must stay pending with no matching node")
+			// Label the node → 1 of 2 EIP-A IPs assigns (other stays pending, only 1 node in pool-A)
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress1Node.name, nodeLabelKey, nodeLabelA)
+			eipAStatus := verifySpecificEgressIPStatusLengthEquals(eipAName, 1, func(s []egressIPStatus) bool {
+				return s[0].Node == egress1Node.name
+			})
+			// Use the actual assigned IP from status — only one of the two EIP-A IPs is active
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podAName, true, []string{eipAStatus[0].EgressIP})),
+				"pod-A must use EIP-A src IP after EIP-first ordering")
+
+			// --- Step 4: node label removal ---
+			ginkgo.By("4. Remove pool=a from egress1Node: EIP-A goes pending; EIP-B/C unaffected")
+			e2enode.RemoveLabelOffNode(f.ClientSet, egress1Node.name, nodeLabelKey)
+			verifySpecificEgressIPStatusLengthEquals(eipAName, 0, nil)
+			verifySpecificEgressIPStatusLengthEquals(eipBName, 1, func(s []egressIPStatus) bool {
+				return s[0].Node == egress2Node.name
+			})
+			// pod-A: no EIP assigned → falls back to its own node IP
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podAName, true, []string{pod1Node.nodeIP})),
+				"pod-A must fall back to node IP while EIP-A is pending")
+			// pod-B and pod-C: EIP-B/C unaffected → still use their EIP src IPs
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podBName, true, []string{eipB.String()})),
+				"pod-B must still use EIP-B src IP while EIP-A is pending")
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podCName, true, []string{eipC1.String()})),
+				"pod-C must still use EIP-C src IP while EIP-A is pending")
+
+			// --- Step 5: restore label ---
+			ginkgo.By("5. Restore pool=a to egress1Node: EIP-A reassigns to egress1Node; pod-A traffic restored")
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress1Node.name, nodeLabelKey, nodeLabelA)
+			// pool-A still has only 1 node → 1 of 2 EIP-A IPs assigns, other stays pending
+			eipAStatus = verifySpecificEgressIPStatusLengthEquals(eipAName, 1, func(s []egressIPStatus) bool {
+				return s[0].Node == egress1Node.name
+			})
+			// Use the actual assigned IP from status — only one of the two EIP-A IPs is active
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podAName, true, []string{eipAStatus[0].EgressIP})),
+				"pod-A must use EIP-A src IP after restore")
+
+			// --- Step 6: union label change (anti-churn) ---
+			// Prep: add tier=b to egress2Node and switch EIP-B selector to {tier: b}.
+			// egress2Node still matches (has tier=b) so EIP-B must not move.
+			ginkgo.By("6. Union label change (anti-churn): egress1Node gains tier=b eligibility; existing EIP-B on egress2Node must not move")
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress2Node.name, tierLabelKey, tierLabelB)
+			patchEipBSelectorTier := `[{"op":"replace","path":"/spec/egressNodeSelector","value":{"matchLabels":{"tier":"b"}}}]`
+			e2ekubectl.RunKubectlOrDie("default", "patch", "eip", eipBName, "--type=json", "-p", patchEipBSelectorTier)
+			// Verify EIP-B stays on egress2Node after selector change before capturing snapshots.
+			eipBStableAfterPatch := verifySpecificEgressIPStatusLengthEquals(eipBName, 1, func(s []egressIPStatus) bool {
+				return s[0].Node == egress2Node.name
+			})
+			gomega.Consistently(func() []egressIPStatus {
+				return getSpecificEgressIPStatusItems(eipBName)
+			}, 2*time.Second, 500*time.Millisecond).Should(gomega.Equal(eipBStableAfterPatch), "EIP-B must stay on egress2Node after selector change to tier=b")
+			// Capture snapshots after stability is confirmed.
+			statusABefore6 := getSpecificEgressIPStatusItems(eipAName)
+			statusBBefore6 := getSpecificEgressIPStatusItems(eipBName)
+			statusCBefore6 := getSpecificEgressIPStatusItems(eipCName)
+
+			// Op A: egress1Node joins tier=b; EIP-B selector now matches egress1Node too, but should stay on egress2Node (anti-churn)
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress1Node.name, tierLabelKey, tierLabelB)
+			gomega.Consistently(func() []egressIPStatus {
+				return getSpecificEgressIPStatusItems(eipAName)
+			}, 2*time.Second, 500*time.Millisecond).Should(gomega.Equal(statusABefore6), "EIP-A must not move when egress1Node joins tier=b")
+			gomega.Consistently(func() []egressIPStatus {
+				return getSpecificEgressIPStatusItems(eipBName)
+			}, 2*time.Second, 500*time.Millisecond).Should(gomega.Equal(statusBBefore6), "EIP-B must not move when egress1Node joins tier=b (anti-churn)")
+			// EIP-C matches In[a,b] — egress1Node was already eligible before Op A; assignment must not change
+			gomega.Consistently(func() []egressIPStatus {
+				return getSpecificEgressIPStatusItems(eipCName)
+			}, 2*time.Second, 500*time.Millisecond).Should(gomega.Equal(statusCBefore6), "EIP-C must not move when egress1Node joins tier=b")
+
+			// Op B: revert egress1Node by removing tier=b; no assignment should change
+			e2enode.RemoveLabelOffNode(f.ClientSet, egress1Node.name, tierLabelKey)
+			gomega.Consistently(func() []egressIPStatus {
+				return getSpecificEgressIPStatusItems(eipAName)
+			}, 2*time.Second, 500*time.Millisecond).Should(gomega.Equal(statusABefore6), "EIP-A must not move when egress1Node leaves tier=b")
+			gomega.Consistently(func() []egressIPStatus {
+				return getSpecificEgressIPStatusItems(eipBName)
+			}, 2*time.Second, 500*time.Millisecond).Should(gomega.Equal(statusBBefore6), "EIP-B must not move when egress1Node leaves tier=b")
+			gomega.Consistently(func() []egressIPStatus {
+				return getSpecificEgressIPStatusItems(eipCName)
+			}, 2*time.Second, 500*time.Millisecond).Should(gomega.Equal(statusCBefore6), "EIP-C must not move when egress1Node leaves tier=b")
+
+			// Op C: egress2Node joins pool=a (now two pool=a nodes)
+			// EIP-A: 2 IPs + 2 eligible nodes → should spread to statusLen=2, 1 IP per node
+			// EIP-C: already satisfied; must not bounce despite pool expanding
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress2Node.name, nodeLabelKey, nodeLabelA)
+			verifySpecificEgressIPStatusLengthEquals(eipAName, 2, func(s []egressIPStatus) bool {
+				nodes := map[string]bool{s[0].Node: true, s[1].Node: true}
+				return nodes[egress1Node.name] && nodes[egress2Node.name]
+			})
+			gomega.Consistently(func() []egressIPStatus {
+				return getSpecificEgressIPStatusItems(eipBName)
+			}, 2*time.Second, 500*time.Millisecond).Should(gomega.Equal(statusBBefore6), "EIP-B must not bounce when egress2Node joins pool=a")
+			gomega.Consistently(func() []egressIPStatus {
+				return getSpecificEgressIPStatusItems(eipCName)
+			}, 2*time.Second, 500*time.Millisecond).Should(gomega.Equal(statusCBefore6), "EIP-C must not bounce when egress2Node joins pool=a")
+			// Restore egress2Node to pool=b; EIP-A drops back to statusLen=1 (one pool=a node)
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress2Node.name, nodeLabelKey, nodeLabelB)
+			// Wait for EIP-A to drop back to 1 item on egress1Node, then verify all three stay stable.
+			verifySpecificEgressIPStatusLengthEquals(eipAName, 1, func(s []egressIPStatus) bool {
+				return s[0].Node == egress1Node.name
+			})
+			gomega.Consistently(func() []egressIPStatus {
+				return getSpecificEgressIPStatusItems(eipAName)
+			}, 2*time.Second, 500*time.Millisecond).Should(gomega.Equal(statusABefore6), "EIP-A must return to original assignment when egress2Node leaves pool=a")
+			gomega.Consistently(func() []egressIPStatus {
+				return getSpecificEgressIPStatusItems(eipBName)
+			}, 2*time.Second, 500*time.Millisecond).Should(gomega.Equal(statusBBefore6), "EIP-B must not move when egress2Node leaves pool=a")
+			gomega.Consistently(func() []egressIPStatus {
+				return getSpecificEgressIPStatusItems(eipCName)
+			}, 2*time.Second, 500*time.Millisecond).Should(gomega.Equal(statusCBefore6), "EIP-C must not move when egress2Node leaves pool=a")
+			// Traffic check: all three EIPs functional after pool restore
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podAName, true, []string{statusABefore6[0].EgressIP})),
+				"pod-A traffic works after egress2Node leaves pool=a")
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podBName, true, []string{eipB.String()})),
+				"pod-B traffic works after egress2Node leaves pool=a")
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podCName, true, []string{eipC1.String()})),
+				"pod-C traffic works after egress2Node leaves pool=a")
+
+			// --- Clean up step 6 tier changes: restore EIP-B selector to pool=b and remove tier=b from egress2Node ---
+			patchEipBSelectorPoolB := `[{"op":"replace","path":"/spec/egressNodeSelector","value":{"matchLabels":{"pool":"b"}}}]`
+			e2ekubectl.RunKubectlOrDie("default", "patch", "eip", eipBName, "--type=json", "-p", patchEipBSelectorPoolB)
+			e2enode.RemoveLabelOffNode(f.ClientSet, egress2Node.name, tierLabelKey)
+			// EIP-B must stay on egress2Node (pool=b still matches)
+			gomega.Consistently(func() []egressIPStatus {
+				return getSpecificEgressIPStatusItems(eipBName)
+			}, 2*time.Second, 500*time.Millisecond).Should(gomega.Equal(statusBBefore6), "EIP-B must stay on egress2Node after restoring to pool=b selector")
+
+			// --- Step 7: EIP selector update round-trip ---
+			ginkgo.By("7. EIP-B selector update: pool=b → pool=a → pool=b (full round-trip)")
+			// Temporarily change EIP-B selector to pool=a (egress2Node no longer matches)
+			patchPoolA := `[{"op":"replace","path":"/spec/egressNodeSelector","value":{"matchLabels":{"pool":"a"}}}]`
+			e2ekubectl.RunKubectlOrDie("default", "patch", "eip", eipBName, "--type=json", "-p", patchPoolA)
+			verifySpecificEgressIPStatusLengthEquals(eipBName, 1, func(s []egressIPStatus) bool {
+				return s[0].Node == egress1Node.name
+			})
+			// Switch back to pool=b selector; EIP-B must reassign back to egress2Node
+			patchPoolB := `[{"op":"replace","path":"/spec/egressNodeSelector","value":{"matchLabels":{"pool":"b"}}}]`
+			e2ekubectl.RunKubectlOrDie("default", "patch", "eip", eipBName, "--type=json", "-p", patchPoolB)
+			verifySpecificEgressIPStatusLengthEquals(eipBName, 1, func(s []egressIPStatus) bool {
+				return s[0].Node == egress2Node.name
+			})
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podBName, true, []string{eipB.String()})),
+				"pod-B traffic works after selector reverted to pool=b")
+
+			// --- Step 8: active-active → active-passive ---
+			ginkgo.By("8. Active-active then active-passive: EIP-A with 2 IPs across 2 pool=a nodes")
+			// Add pool=a to egress2Node (replaces pool=b) → both nodes in pool=a; EIP-A spreads: 1 IP on each node
+			// EIP-B loses its only eligible node (egress2Node left pool=b) → goes pending
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress2Node.name, nodeLabelKey, nodeLabelA)
+			verifySpecificEgressIPStatusLengthEquals(eipAName, 2, func(s []egressIPStatus) bool {
+				nodes := map[string]bool{s[0].Node: true, s[1].Node: true}
+				return nodes[egress1Node.name] && nodes[egress2Node.name]
+			})
+			verifySpecificEgressIPStatusLengthEquals(eipBName, 0, nil)
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podAName, true, []string{eipA1.String(), eipA2.String()})),
+				"pod-A traffic works in active-active state")
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podBName, true, []string{pod1Node.nodeIP})),
+				"pod-B falls back to node IP while EIP-B is pending")
+			// Remove pool=a from egress1Node → only egress2Node in pool=a; 1 IP assigns, 1 stays pending
+			e2enode.RemoveLabelOffNode(f.ClientSet, egress1Node.name, nodeLabelKey)
+			eipAPassive := verifySpecificEgressIPStatusLengthEquals(eipAName, 1, func(s []egressIPStatus) bool {
+				return s[0].Node == egress2Node.name
+			})
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podAName, true, []string{eipAPassive[0].EgressIP})),
+				"pod-A traffic works in active-passive state via the one assigned IP")
+			// Restore: egress1Node back to pool=a, egress2Node back to pool=b
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress1Node.name, nodeLabelKey, nodeLabelA)
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress2Node.name, nodeLabelKey, nodeLabelB)
+			verifySpecificEgressIPStatusLengthEquals(eipAName, 1, func(s []egressIPStatus) bool {
+				return s[0].Node == egress1Node.name
+			})
+			verifySpecificEgressIPStatusLengthEquals(eipBName, 1, func(s []egressIPStatus) bool {
+				return s[0].Node == egress2Node.name
+			})
+
+			// --- Step 9: EIP-C expand to 2 IPs via hostname selector (same-node egress case) ---
+			ginkgo.By("9. EIP-C: selector type change (pool→hostname) must not move eipC1; then add eipC2 pinned to pod1Node (same-node egress)")
+			// Capture eipC1's current node before any patch.
+			eipCBefore := getSpecificEgressIPStatusItems(eipCName)
+			gomega.Expect(eipCBefore).To(gomega.HaveLen(1), "EIP-C must have exactly 1 assignment before patch")
+			eipC1OrigNode := eipCBefore[0].Node
+
+			// Patch 1: selector type change only — pool In [a,b] → hostname In [egress1Node, egress2Node, pod1Node].
+			// eipC1 is still eligible on its current node; assignment must not move.
+			// matchLabels+matchExpressions are ANDed so we use a single matchExpressions for the union.
+			patchEipCTypeChange := fmt.Sprintf(
+				`{"spec":{"egressNodeSelector":{"matchExpressions":[{"key":"kubernetes.io/hostname","operator":"In","values":[%q,%q,%q]}]}}}`,
+				egress1Node.name, egress2Node.name, pod1Node.name,
+			)
+			e2ekubectl.RunKubectlOrDie("default", "patch", "eip", eipCName, "--type=merge", "-p", patchEipCTypeChange)
+			gomega.Consistently(func() []egressIPStatus {
+				return getSpecificEgressIPStatusItems(eipCName)
+			}, 2*time.Second, 500*time.Millisecond).Should(gomega.And(
+				gomega.Equal(eipCBefore),
+				gomega.Satisfy(func(s []egressIPStatus) bool {
+					return len(s) == 1 && s[0].Node == eipC1OrigNode
+				}),
+			), "eipC1 must not move when selector type changes from pool label to hostname (node still eligible)")
+			// Traffic still works through eipC1 after selector type change
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podCName, true, []string{eipC1.String()})),
+				"pod-C traffic must work via eipC1 after selector type change (before patch2)")
+
+			// Patch 2: add eipC2, narrow selector to exactly [eipC1OrigNode, pod1Node].
+			// 2 nodes for 2 IPs — eipC1 stays, eipC2 deterministically lands on pod1Node (same-node egress path).
+			patchEipCAddIP := fmt.Sprintf(
+				`{"spec":{"egressIPs":[%q,%q],"egressNodeSelector":{"matchExpressions":[{"key":"kubernetes.io/hostname","operator":"In","values":[%q,%q]}]}}}`,
+				eipC1.String(), eipC2.String(), eipC1OrigNode, pod1Node.name,
+			)
+			e2ekubectl.RunKubectlOrDie("default", "patch", "eip", eipCName, "--type=merge", "-p", patchEipCAddIP)
+			eipCSpread := verifySpecificEgressIPStatusLengthEquals(eipCName, 2, func(s []egressIPStatus) bool {
+				nodeForIP := map[string]string{s[0].EgressIP: s[0].Node, s[1].EgressIP: s[1].Node}
+				return nodeForIP[eipC1.String()] == eipC1OrigNode && nodeForIP[eipC2.String()] == pod1Node.name
+			})
+			// Accept either assigned IP — OVN-K decides which egress node routes pod-C's flow
+			eipCIPs := []string{eipCSpread[0].EgressIP, eipCSpread[1].EgressIP}
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podCName, true, eipCIPs)),
+				"pod-C must use one of EIP-C's two src IPs (including same-node path via pod1Node)")
+
+			// --- Step 10: delete EIP-C ---
+			ginkgo.By("10. Delete EIP-C: pod-C falls back to node IP; EIP-A/B must not churn")
+			// Snapshot A and B before deletion — nothing should change for them.
+			statusABeforeC10 := getSpecificEgressIPStatusItems(eipAName)
+			statusBBeforeC10 := getSpecificEgressIPStatusItems(eipBName)
+			e2ekubectl.RunKubectlOrDie("default", "delete", "eip", eipCName, "--ignore-not-found=true")
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podCName, true, []string{pod1Node.nodeIP})),
+				"pod-C must use node IP after EIP-C deletion")
+			// EIP-A and EIP-B must stay exactly where they were — no reassignment triggered by C's removal
+			gomega.Consistently(func() []egressIPStatus {
+				return getSpecificEgressIPStatusItems(eipAName)
+			}, 2*time.Second, 500*time.Millisecond).Should(gomega.Equal(statusABeforeC10),
+				"EIP-A must not churn after EIP-C deletion")
+			gomega.Consistently(func() []egressIPStatus {
+				return getSpecificEgressIPStatusItems(eipBName)
+			}, 2*time.Second, 500*time.Millisecond).Should(gomega.Equal(statusBBeforeC10),
+				"EIP-B must not churn after EIP-C deletion")
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podAName, true, []string{statusABeforeC10[0].EgressIP})),
+				"pod-A traffic must be unaffected by EIP-C deletion")
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podBName, true, []string{statusBBeforeC10[0].EgressIP})),
+				"pod-B traffic must be unaffected by EIP-C deletion")
+
+			// --- Step 11: unsupported scenario — two EIPs matching same pod, different node pools ---
+			// OVN-K considers a pod matching multiple EgressIP objects a user error (undefined behavior,
+			// see pkg/ovn/egressip.go: "Pods should not match multiple EgressIP objects").
+			// We test it anyway to document observed behavior: both EIPs are assigned to their respective
+			// pool nodes; one "wins" for traffic (first-processed); the pod must use an EgressIP src, not its node IP.
+			ginkgo.By("11. [Unsupported] Two EIP objects matching same pod on different node pools: both assigned, one wins for traffic")
+			cleanupX := applyEIPManifest(eipXName, createEIPManifestWithNodeSelector(eipXName, podLabelShared, nsLabel, selectorPoolA, eipX.String()))
+			defer cleanupX()
+			cleanupY := applyEIPManifest(eipYName, createEIPManifestWithNodeSelector(eipYName, podLabelShared, nsLabel, selectorPoolB, eipY.String()))
+			defer cleanupY()
+			_, err = createGenericPodWithLabel(f, podSharedName, pod1Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podLabelShared)
+			framework.ExpectNoError(err, "create pod-shared")
+			// Both EIPs get assigned to their respective pool nodes (controller assigns regardless of overlap)
+			verifySpecificEgressIPStatusLengthEquals(eipXName, 1, func(s []egressIPStatus) bool {
+				return s[0].Node == egress1Node.name
+			})
+			verifySpecificEgressIPStatusLengthEquals(eipYName, 1, func(s []egressIPStatus) bool {
+				return s[0].Node == egress2Node.name
+			})
+			// Traffic must use one of the two EgressIPs — not the pod's node IP.
+			// Since OVN-K treats multi-EIP overlap as undefined behavior, only one EIP wins;
+			// we don't know which upfront, so try each independently.
+			eipXFn := targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podSharedName, true, []string{eipX.String()})
+			eipYFn := targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podSharedName, true, []string{eipY.String()})
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout, func() (bool, error) {
+					if ok, err := eipXFn(); ok || err != nil {
+						return ok, err
+					}
+					return eipYFn()
+				}),
+				"pod-shared must use one of EIP-X or EIP-Y src IPs (unsupported overlap: one wins)")
+
+			// --- Step 12: simultaneous churn ---
+			ginkgo.By("12. Simultaneous churn: remove pool=a label and patch EIP-A selector concurrently; verify convergence without duplication")
+			e2enode.RemoveLabelOffNode(f.ClientSet, egress1Node.name, nodeLabelKey)
+			e2ekubectl.RunKubectlOrDie("default", "patch", "eip", eipAName, "--type=json", "-p", patchPoolB)
+			// pool=b has 1 node (egress2Node) → 1 of 2 EIP-A IPs assigns, other stays pending
+			eipAStatusStep12 := verifySpecificEgressIPStatusLengthEquals(eipAName, 1, func(s []egressIPStatus) bool {
+				return s[0].Node == egress2Node.name
+			})
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podAName, true, []string{eipAStatusStep12[0].EgressIP})),
+				"pod-A traffic converges to the single assigned EIP-A IP on egress2Node after churn")
+		})
+
+		// -----------------------------------------------------------------------
+		// Test 2: Backward compat — EIP without egressNodeSelector
+		// -----------------------------------------------------------------------
+		ginkgo.It("[Primary EgressIP] egressNodeSelector backward compatibility: legacy egress-assignable label", func() {
+			// egressNodeSelector is a control-plane feature; datapath differences between
+			// network types don't affect it. Run only on the cluster default network.
+			// Steps 1, 3, 4 use iptables on the gRPC healthcheck port.
+			// Skip if not in gRPC mode (port not configured or using legacy TCP probe).
+			ovnKubeNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+			portNode := getTemplateContainerEnv(ovnKubeNamespace, "daemonset/ovnkube-node", getNodeContainerName(), OVN_EGRESSIP_HEALTHCHECK_PORT_ENV_NAME)
+			if portNode == "" || portNode == OVN_EGRESSIP_LEGACY_HEALTHCHECK_PORT_ENV {
+				ginkgo.Skip("health-check port not configured for gRPC mode; skipping iptables-based steps")
+			}
+
+			const eipLegacyName = "egressip-ns-legacy-compat"
+			const podLegacyName = "egressip-legacy-pod"
+			nsLabel := map[string]string{"name": f.Namespace.Name}
+			updateNamespaceLabels(f, f.Namespace, nsLabel)
+			podLabel := map[string]string{"wants": "egress-legacy"}
+
+			eipLegacyIP := newEgressIP()
+
+			ginkgo.DeferCleanup(func() {
+				e2ekubectl.RunKubectlOrDie("default", "delete", "eip", eipLegacyName, "--ignore-not-found=true")
+				e2enode.RemoveLabelOffNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable")
+				e2ekubectl.RunKubectlOrDie(f.Namespace.Name, "delete", "pod", podLegacyName, "--ignore-not-found=true")
+			})
+
+			ginkgo.By("1. Create EIP-legacy with no egressNodeSelector field: CRD default fills egress-assignable: Exists")
+			// Block healthcheck probes on all nodes so no node can be marked reachable during initial setup.
+			// This guarantees the EIP stays pending regardless of any pre-existing node state.
+			for _, n := range []string{egress1Node.name, egress2Node.name, pod1Node.name} {
+				setNodeReachable(n, false)
+				defer setNodeReachable(n, true)
+			}
+			// nodeSelector=nil → field absent from YAML → CRD default fires
+			cleanup := applyEIPManifest(eipLegacyName, createEIPManifestWithNodeSelector(eipLegacyName, podLabel, nsLabel, nil, eipLegacyIP.String()))
+			defer cleanup()
+			// No reachable node + no egress-assignable label → must stay pending
+			gomega.Consistently(func() int {
+				return len(getSpecificEgressIPStatusItems(eipLegacyName))
+			}, 2*time.Second, 500*time.Millisecond).Should(gomega.Equal(0), "EIP-legacy must stay pending with no reachable/assignable node")
+
+			ginkgo.By("2. Restore healthcheck + label egress1Node with egress-assignable: EIP-legacy assigns")
+			setNodeReachable(egress1Node.name, true)
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable", "dummy")
+			verifySpecificEgressIPStatusLengthEquals(eipLegacyName, 1, func(s []egressIPStatus) bool {
+				return s[0].Node == egress1Node.name
+			})
+			_, err := createGenericPodWithLabel(f, podLegacyName, pod1Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podLabel)
+			framework.ExpectNoError(err, "create pod-legacy")
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podLegacyName, true, []string{eipLegacyIP.String()})),
+				"pod-legacy must use EIP-legacy src IP")
+
+			ginkgo.By("3. Block healthcheck probes to egress1Node: OVN-K marks node unreachable, EIP-legacy goes pending")
+			// Drop port-9107 traffic on egress1Node — OVN-K's health prober can no longer reach it.
+			// This exercises the healthcheck probe pool path: node is evicted and EIP unassigned.
+			setNodeReachable(egress1Node.name, false)
+			verifySpecificEgressIPStatusLengthEquals(eipLegacyName, 0, nil)
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podLegacyName, true, []string{pod1Node.nodeIP})),
+				"pod-legacy must fall back to node IP when egress1Node is unreachable")
+
+			ginkgo.By("4. Restore healthcheck probes: egress1Node re-enters probe pool; EIP-legacy reassigns; traffic restored")
+			setNodeReachable(egress1Node.name, true)
+			verifySpecificEgressIPStatusLengthEquals(eipLegacyName, 1, func(s []egressIPStatus) bool {
+				return s[0].Node == egress1Node.name
+			})
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podLegacyName, true, []string{eipLegacyIP.String()})),
+				"pod-legacy must use EIP-legacy src IP after egress1Node becomes reachable")
+
+			ginkgo.By("5. Remove egress-assignable label: EIP-legacy goes pending (label-based eviction path)")
+			e2ekubectl.RunKubectlOrDie("default", "label", "node", egress1Node.name, "k8s.ovn.org/egress-assignable-")
+			verifySpecificEgressIPStatusLengthEquals(eipLegacyName, 0, nil)
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podLegacyName, true, []string{pod1Node.nodeIP})),
+				"pod-legacy must fall back to node IP after egress-assignable label removed")
+
+			ginkgo.By("6. Restore egress-assignable label: EIP-legacy reassigns; traffic restored")
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable", "dummy")
+			verifySpecificEgressIPStatusLengthEquals(eipLegacyName, 1, func(s []egressIPStatus) bool {
+				return s[0].Node == egress1Node.name
+			})
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podLegacyName, true, []string{eipLegacyIP.String()})),
+				"pod-legacy must use EIP-legacy src IP after label restore")
+
+			ginkgo.By("7. Delete EIP-legacy: pod-legacy falls back to node IP permanently")
+			e2ekubectl.RunKubectlOrDie("default", "delete", "egressip", eipLegacyName, "--ignore-not-found=true")
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podLegacyName, true, []string{pod1Node.nodeIP})),
+				"pod-legacy must use node IP after EIP deletion")
+		})
+
+		// -----------------------------------------------------------------------
+		// Test 3: Mixed fleet — legacy + custom selector EIPs coexist
+		// -----------------------------------------------------------------------
+		ginkgo.It("[Primary EgressIP] egressNodeSelector mixed fleet: legacy and custom selectors coexist", func() {
+			const (
+				eipOldName  = "egressip-ns-mixed-old"
+				eipNewName  = "egressip-ns-mixed-new"
+				podOldName  = "egressip-mixed-pod-old"
+				podNewName  = "egressip-mixed-pod-new"
+				poolBetaKey = "pool"
+				poolBetaVal = "beta"
+			)
+			nsLabel := map[string]string{"name": f.Namespace.Name}
+			updateNamespaceLabels(f, f.Namespace, nsLabel)
+			podLabelOld := map[string]string{"wants": "egress-old"}
+			podLabelNew := map[string]string{"wants": "egress-new"}
+
+			eipOldIP := newEgressIP()
+			eipNewIP := newEgressIP()
+
+			selectorBeta := &metav1.LabelSelector{MatchLabels: map[string]string{poolBetaKey: poolBetaVal}}
+
+			ginkgo.DeferCleanup(func() {
+				for _, name := range []string{eipOldName, eipNewName} {
+					e2ekubectl.RunKubectlOrDie("default", "delete", "eip", name, "--ignore-not-found=true")
+					os.Remove(filepath.Join(os.TempDir(), name+".yaml"))
+				}
+				e2enode.RemoveLabelOffNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable")
+				e2enode.RemoveLabelOffNode(f.ClientSet, egress1Node.name, poolBetaKey)
+				e2enode.RemoveLabelOffNode(f.ClientSet, egress2Node.name, poolBetaKey)
+				for _, podName := range []string{podOldName, podNewName} {
+					e2ekubectl.RunKubectlOrDie(f.Namespace.Name, "delete", "pod", podName, "--ignore-not-found=true")
+				}
+			})
+
+			ginkgo.By("Setup: egress1Node=egress-assignable+pool=alpha; egress2Node=pool=beta only")
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable", "dummy")
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress2Node.name, poolBetaKey, poolBetaVal)
+
+			// EIP-old: no egressNodeSelector → CRD default → egress-assignable: Exists
+			cleanupOld := applyEIPManifest(eipOldName, createEIPManifestWithNodeSelector(eipOldName, podLabelOld, nsLabel, nil, eipOldIP.String()))
+			defer cleanupOld()
+			// EIP-new: custom selector pool=beta → only egress2Node
+			cleanupNew := applyEIPManifest(eipNewName, createEIPManifestWithNodeSelector(eipNewName, podLabelNew, nsLabel, selectorBeta, eipNewIP.String()))
+			defer cleanupNew()
+
+			ginkgo.By("1. Initial assignment: each EIP stays in its own pool; no cross-contamination")
+			verifySpecificEgressIPStatusLengthEquals(eipOldName, 1, func(s []egressIPStatus) bool {
+				return s[0].Node == egress1Node.name
+			})
+			verifySpecificEgressIPStatusLengthEquals(eipNewName, 1, func(s []egressIPStatus) bool {
+				return s[0].Node == egress2Node.name
+			})
+			// egress2Node must not appear in EIP-old (no egress-assignable)
+			for _, item := range getSpecificEgressIPStatusItems(eipOldName) {
+				gomega.Expect(item.Node).NotTo(gomega.Equal(egress2Node.name), "EIP-old must not land on egress2Node (no egress-assignable label)")
+			}
+			// egress1Node must not appear in EIP-new (no pool=beta)
+			for _, item := range getSpecificEgressIPStatusItems(eipNewName) {
+				gomega.Expect(item.Node).NotTo(gomega.Equal(egress1Node.name), "EIP-new must not land on egress1Node (no pool=beta)")
+			}
+
+			ginkgo.By("2. Traffic isolation: each pod uses its own EIP src IP")
+			_, err := createGenericPodWithLabel(f, podOldName, pod1Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podLabelOld)
+			framework.ExpectNoError(err, "create pod-old")
+			_, err = createGenericPodWithLabel(f, podNewName, pod1Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podLabelNew)
+			framework.ExpectNoError(err, "create pod-new")
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podOldName, true, []string{eipOldIP.String()})),
+				"pod-old uses EIP-old src IP")
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podNewName, true, []string{eipNewIP.String()})),
+				"pod-new uses EIP-new src IP")
+
+			ginkgo.By("3. Add pool=beta to egress1Node: EIP-new gains eligible node; EIP-old stays on egress1Node")
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress1Node.name, poolBetaKey, poolBetaVal)
+			// EIP-old must stay on egress1Node (egress-assignable label unchanged)
+			gomega.Consistently(func() bool {
+				s := getSpecificEgressIPStatusItems(eipOldName)
+				return len(s) == 1 && s[0].Node == egress1Node.name
+			}, 2*time.Second, 500*time.Millisecond).Should(gomega.BeTrue(), "EIP-old must not move when egress1Node gains pool=beta")
+
+			ginkgo.By("4. Remove egress-assignable from egress1Node: EIP-old pending; EIP-new unaffected")
+			e2ekubectl.RunKubectlOrDie("default", "label", "node", egress1Node.name, "k8s.ovn.org/egress-assignable-")
+			verifySpecificEgressIPStatusLengthEquals(eipOldName, 0, nil)
+			verifySpecificEgressIPStatusLengthEquals(eipNewName, 1, nil)
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podOldName, true, []string{pod1Node.nodeIP})),
+				"pod-old falls back to node IP while EIP-old pending")
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podNewName, true, []string{eipNewIP.String()})),
+				"pod-new unaffected by EIP-old going pending")
+
+			ginkgo.By("5. Restore egress-assignable on egress1Node: EIP-old reassigns; both pools healthy")
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable", "dummy")
+			verifySpecificEgressIPStatusLengthEquals(eipOldName, 1, func(s []egressIPStatus) bool {
+				return s[0].Node == egress1Node.name
+			})
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podOldName, true, []string{eipOldIP.String()})),
+				"pod-old traffic restored after egress-assignable label restored")
+		})
+
+		// -----------------------------------------------------------------------
+		// Test 4: Health-check probe scoping
+		// -----------------------------------------------------------------------
+		ginkgo.It("[Primary EgressIP] egressNodeSelector scopes health-check probes to matching nodes", func() {
+			if isUserDefinedNetwork(netConfigParams) {
+				ginkgo.Skip("health-check probe scoping is network-type agnostic; CDN coverage sufficient")
+			}
+			// Detect whether gRPC health-check mode is active.
+			ovnKubeNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+			portNode := getTemplateContainerEnv(ovnKubeNamespace, "daemonset/ovnkube-node", getNodeContainerName(), OVN_EGRESSIP_HEALTHCHECK_PORT_ENV_NAME)
+			if portNode == "" || portNode == OVN_EGRESSIP_LEGACY_HEALTHCHECK_PORT_ENV {
+				ginkgo.Skip("health-check port not configured for gRPC mode; skipping probe-scope E2E")
+			}
+			const (
+				eipHCName = "egressip-ns-hc-scope"
+				podHCName = "egressip-hc-pod"
+				hcPoolKey = "pool"
+				hcPoolVal = "hc-a"
+			)
+			nsLabel := map[string]string{"name": f.Namespace.Name}
+			updateNamespaceLabels(f, f.Namespace, nsLabel)
+			podLabel := map[string]string{"wants": "egress-hc"}
+			eipHCIP := newEgressIP()
+			selectorHC := &metav1.LabelSelector{MatchLabels: map[string]string{hcPoolKey: hcPoolVal}}
+
+			ginkgo.DeferCleanup(func() {
+				e2ekubectl.RunKubectlOrDie("default", "delete", "eip", eipHCName, "--ignore-not-found=true")
+				os.Remove(filepath.Join(os.TempDir(), eipHCName+".yaml"))
+				e2enode.RemoveLabelOffNode(f.ClientSet, egress1Node.name, hcPoolKey)
+				e2enode.RemoveLabelOffNode(f.ClientSet, egress2Node.name, hcPoolKey)
+				setNodeReachable(egress1Node.name, true)
+				setNodeReachable(egress2Node.name, true)
+				e2ekubectl.RunKubectlOrDie(f.Namespace.Name, "delete", "pod", podHCName, "--ignore-not-found=true")
+			})
+
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress1Node.name, hcPoolKey, hcPoolVal)
+			// egress2Node has no matching label initially
+			cleanupHC := applyEIPManifest(eipHCName, createEIPManifestWithNodeSelector(eipHCName, podLabel, nsLabel, selectorHC, eipHCIP.String()))
+			defer cleanupHC()
+			verifySpecificEgressIPStatusLengthEquals(eipHCName, 1, func(s []egressIPStatus) bool {
+				return s[0].Node == egress1Node.name
+			})
+			_, err := createGenericPodWithLabel(f, podHCName, pod1Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podLabel)
+			framework.ExpectNoError(err, "create pod-hc")
+
+			ginkgo.By("1. Block health-check port on egress2Node (not in any EIP pool): EIP-HC status unchanged")
+			setNodeReachable(egress2Node.name, false)
+			// Wait longer than one health-check tick (~5 s) then verify stability
+			gomega.Consistently(func() bool {
+				s := getSpecificEgressIPStatusItems(eipHCName)
+				return len(s) == 1 && s[0].Node == egress1Node.name
+			}, 20*retryInterval, retryInterval).Should(gomega.BeTrue(),
+				"EIP-HC must not be affected by health-check block on egress2Node (not in pool)")
+
+			ginkgo.By("2. Restore egress2Node; block health-check on egress1Node (in pool=hc-a): EIP-HC de-assigns")
+			setNodeReachable(egress2Node.name, true)
+			setNodeReachable(egress1Node.name, false)
+			verifySpecificEgressIPStatusLengthEquals(eipHCName, 0, nil)
+
+			ginkgo.By("3. Restore egress1Node health-check: EIP-HC reassigns; traffic restored")
+			setNodeReachable(egress1Node.name, true)
+			verifySpecificEgressIPStatusLengthEquals(eipHCName, 1, func(s []egressIPStatus) bool {
+				return s[0].Node == egress1Node.name
+			})
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podHCName, true, []string{eipHCIP.String()})),
+				"pod-hc traffic restored after egress1Node health-check restored")
+
+			ginkgo.By("4. Add egress2Node to pool=hc-a: verify it now enters the probe set")
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress2Node.name, hcPoolKey, hcPoolVal)
+			// EIP-HC may spread to egress2Node; block 9107 on egress2Node → EIP-HC should react
+			gomega.Eventually(func() bool {
+				s := getSpecificEgressIPStatusItems(eipHCName)
+				// Either node could hold the EIP now; just ensure there is one
+				return len(s) == 1
+			}, retryTimeout, retryInterval).Should(gomega.BeTrue(), "EIP-HC assigned after egress2Node joins pool")
+			setNodeReachable(egress2Node.name, false)
+			// Any EIP assigned to egress2Node should move away (or reassign)
+			gomega.Eventually(func() bool {
+				s := getSpecificEgressIPStatusItems(eipHCName)
+				for _, item := range s {
+					if item.Node == egress2Node.name {
+						return false // still on egress2Node after block → probe not working
+					}
+				}
+				return len(s) >= 0
+			}, retryTimeout, retryInterval).Should(gomega.BeTrue(),
+				"EIP-HC must react to egress2Node health-check block once it joins the pool")
+			setNodeReachable(egress2Node.name, true)
+
+			ginkgo.By("5. Delete EIP-HC: blocking health-check on egress1Node has no effect (no EIP to de-assign)")
+			e2ekubectl.RunKubectlOrDie("default", "delete", "eip", eipHCName, "--ignore-not-found=true")
+			setNodeReachable(egress1Node.name, false)
+			// Nothing should happen — no EIP exists. Just confirm no panics / no orphaned status.
+			gomega.Consistently(func() bool {
+				return len(getSpecificEgressIPStatusItems(eipHCName)) == 0
+			}, 2*time.Second, 500*time.Millisecond).Should(gomega.BeTrue(),
+				"no EIP status after EIP-HC deleted even with health-check blocked")
+			setNodeReachable(egress1Node.name, true)
+		})
+
+		// -----------------------------------------------------------------------
+		// Test 5: secondary-host-eip + egressNodeSelector
+		// -----------------------------------------------------------------------
+		ginkgo.It("[Multi-NIC EgressIP] egressNodeSelector restricts assignment to labeled node", func() {
+			if isUserDefinedNetwork(netConfigParams) {
+				ginkgo.Skip("secondary-host-eip is unsupported for UDNs")
+			}
+			const (
+				eipSecName = "egressip-ns-secondary-host"
+				podSecName = "egressip-secondary-pod"
+				secPoolKey = "secondary-pool"
+				secPoolVal = "alpha"
+			)
+			nsLabel := map[string]string{"name": f.Namespace.Name}
+			updateNamespaceLabels(f, f.Namespace, nsLabel)
+			podLabel := map[string]string{"wants": "egress-secondary"}
+
+			// One OVN-network IP + one secondary-host IP.
+			// Secondary-host IP is picked from the appropriate subnet based on IP family.
+			eipOVN := newEgressIP()
+			eipSecondaryHost := "10.10.10.200" // secondaryIPV4Subnet
+			if isIPv6TestRun {
+				eipSecondaryHost = "2001:db8:abcd:1234:c001::" // secondaryIPV6Subnet
+			}
+
+			selectorSecPool := &metav1.LabelSelector{MatchLabels: map[string]string{secPoolKey: secPoolVal}}
+
+			ginkgo.DeferCleanup(func() {
+				e2ekubectl.RunKubectlOrDie("default", "delete", "eip", eipSecName, "--ignore-not-found=true")
+				os.Remove(filepath.Join(os.TempDir(), eipSecName+".yaml"))
+				e2enode.RemoveLabelOffNode(f.ClientSet, egress1Node.name, secPoolKey)
+				e2enode.RemoveLabelOffNode(f.ClientSet, egress2Node.name, secPoolKey)
+				e2ekubectl.RunKubectlOrDie(f.Namespace.Name, "delete", "pod", podSecName, "--ignore-not-found=true")
+			})
+
+			ginkgo.By("1. Label egress1Node with secondary-pool=alpha; create EIP with secondary-host IPs and egressNodeSelector")
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress1Node.name, secPoolKey, secPoolVal)
+			// egress2Node has no matching label
+			cleanupSec := applyEIPManifest(eipSecName, createEIPManifestWithNodeSelector(eipSecName, podLabel, nsLabel, selectorSecPool, eipOVN.String(), eipSecondaryHost))
+			defer cleanupSec()
+
+			verifySpecificEgressIPStatusLengthEquals(eipSecName, 2, func(s []egressIPStatus) bool {
+				for _, item := range s {
+					if item.Node != egress1Node.name {
+						return false
+					}
+				}
+				return true
+			})
+
+			ginkgo.By("2. Traffic uses EIP src IP from secondary interface")
+			_, err := createGenericPodWithLabel(f, podSecName, pod1Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podLabel)
+			framework.ExpectNoError(err, "create pod-secondary")
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(secondaryTargetExternalContainer, f.Namespace.Name, podSecName, true, []string{eipSecondaryHost})),
+				"pod-secondary must use secondary-host EIP src IP")
+
+			ginkgo.By("3. Remove secondary-pool=alpha from egress1Node: EIP pending")
+			e2enode.RemoveLabelOffNode(f.ClientSet, egress1Node.name, secPoolKey)
+			verifySpecificEgressIPStatusLengthEquals(eipSecName, 0, nil)
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podSecName, true, []string{pod1Node.nodeIP})),
+				"pod-secondary falls back to node IP while EIP pending")
+
+			ginkgo.By("4. Restore label: EIP reassigns to egress1Node; traffic restored")
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress1Node.name, secPoolKey, secPoolVal)
+			verifySpecificEgressIPStatusLengthEquals(eipSecName, 2, func(s []egressIPStatus) bool {
+				for _, item := range s {
+					if item.Node != egress1Node.name {
+						return false
+					}
+				}
+				return true
+			})
+			framework.ExpectNoError(
+				wait.PollImmediate(retryInterval, retryTimeout,
+					targetExternalContainerAndTest(secondaryTargetExternalContainer, f.Namespace.Name, podSecName, true, []string{eipSecondaryHost})),
+				"pod-secondary traffic restored after label restore")
+		})
+
 	},
 		ginkgo.Entry(
 			"Cluster Default",

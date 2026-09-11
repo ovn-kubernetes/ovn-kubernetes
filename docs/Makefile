@@ -26,9 +26,15 @@ test-install-gh-pages-404:
 
 CRD_REF_DOCS_VERSION ?= v0.3.0
 
+# go install honors GOBIN when set, otherwise falls back to $GOPATH/bin.
+GO_BIN_DIR := $(shell go env GOBIN)
+ifeq ($(GO_BIN_DIR),)
+GO_BIN_DIR := $(shell go env GOPATH)/bin
+endif
+
 .PHONY: crd-ref-docs
 crd-ref-docs:
-	@test -s $$(go env GOBIN)/crd-ref-docs && $$(go env GOBIN)/crd-ref-docs --version | grep ${CRD_REF_DOCS_VERSION} || \
+	@test -s $(GO_BIN_DIR)/crd-ref-docs && $(GO_BIN_DIR)/crd-ref-docs --version | grep ${CRD_REF_DOCS_VERSION} || \
  	$$(go env GOROOT)/bin/go install -v github.com/elastic/crd-ref-docs@${CRD_REF_DOCS_VERSION}
 
 .PHONY: generate-api-reference
@@ -47,7 +53,7 @@ generate-api-reference: crd-ref-docs
 	for src in "$${!api_ref_docs[@]}"; do \
 		out="$${api_ref_docs[$$src]}"; \
 		echo "Generating docs/api-reference/$$out from go-controller/pkg/crd/$$src"; \
-		$$(go env GOBIN)/crd-ref-docs --source-path ../go-controller/pkg/crd/$$src \
+		$(GO_BIN_DIR)/crd-ref-docs --source-path ../go-controller/pkg/crd/$$src \
 			--config=../crd-docs-config.yaml \
 			--renderer=markdown \
 			--output-path=./api-reference/$$out \

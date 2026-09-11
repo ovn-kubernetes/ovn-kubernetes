@@ -62,6 +62,67 @@ spec:
                   type: string
                 type: array
                 x-kubernetes-list-type: atomic
+              egressNodeSelector:
+                default:
+                  matchExpressions:
+                  - key: k8s.ovn.org/egress-assignable
+                    operator: Exists
+                description: |-
+                  EgressNodeSelector limits the pool of nodes that can host this
+                  EgressIP. Only nodes whose labels match this selector are eligible
+                  for assignment.
+                  This field is optional. When not specified by the user, the CRD
+                  default is applied: {matchExpressions: [{key:
+                  k8s.ovn.org/egress-assignable, operator: Exists}]}.
+                  An empty selector ({}) matches all nodes — use with caution as it
+                  expands the eligible pool and health-check set to the entire cluster.
+                  This field restricts only where the IPs in this EgressIP object are
+                  placed; it does not reserve the matched nodes for exclusive use.
+                  Other EgressIP objects can still consume capacity on the same nodes.
+                properties:
+                  matchExpressions:
+                    description: matchExpressions is a list of label selector requirements.
+                      The requirements are ANDed.
+                    items:
+                      description: |-
+                        A label selector requirement is a selector that contains values, a key, and an operator that
+                        relates the key and values.
+                      properties:
+                        key:
+                          description: key is the label key that the selector applies
+                            to.
+                          type: string
+                        operator:
+                          description: |-
+                            operator represents a key's relationship to a set of values.
+                            Valid operators are In, NotIn, Exists and DoesNotExist.
+                          type: string
+                        values:
+                          description: |-
+                            values is an array of string values. If the operator is In or NotIn,
+                            the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                            the values array must be empty. This array is replaced during a strategic
+                            merge patch.
+                          items:
+                            type: string
+                          type: array
+                          x-kubernetes-list-type: atomic
+                      required:
+                      - key
+                      - operator
+                      type: object
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  matchLabels:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                      map is equivalent to an element of matchExpressions, whose key field is "key", the
+                      operator is "In", and the values array contains only "value". The requirements are ANDed.
+                    type: object
+                type: object
+                x-kubernetes-map-type: atomic
               namespaceSelector:
                 description: |-
                   NamespaceSelector applies the egress IP only to the namespace(s) whose label

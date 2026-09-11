@@ -362,6 +362,27 @@ jobs:
         gover
         GO111MODULE=off goveralls -coverprofile=gover.coverprofile -service=github
 
+  crd-integration:
+    name: CRD Integration Tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v6
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: 'test/crd-integration/go.mod'
+        cache: false
+
+    - name: Run CRD integration tests
+      run: |
+        set -x
+        pushd test
+        make test-crd
+        popd
+
   ovn-upgrade-e2e:
     name: Upgrade OVN from Base to PR branch based image
     if: github.event_name != 'schedule'
