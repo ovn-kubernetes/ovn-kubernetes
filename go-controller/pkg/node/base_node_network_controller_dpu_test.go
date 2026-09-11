@@ -186,7 +186,7 @@ var _ = Describe("Node DPU tests", func() {
 		apbExternalRouteClient := adminpolicybasedrouteclient.NewSimpleClientset()
 		factoryMock = factorymocks.NodeWatchFactory{}
 		cnnci := newCommonNodeNetworkControllerInfo(nil, &kubeMock, apbExternalRouteClient, &factoryMock, nil, "", routeManager)
-		dnnc = newDefaultNodeNetworkController(cnnci, nil, nil, routeManager, nil, nil)
+		dnnc = newDefaultNodeNetworkController(cnnci, nil, nil, routeManager, nil, nil, nil)
 
 		podInformer = coreinformermocks.PodInformer{}
 		podNamespaceLister = v1mocks.PodNamespaceLister{}

@@ -29,6 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/kubectl/pkg/util/podutils"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
@@ -1157,6 +1158,116 @@ metadata:
 		ginkgo.Entry("ipv6 pods", v1.IPv6Protocol, true),
 	)
 
+	ginkgo.DescribeTable("[LGW] Should validate egress service backend pods on the egress host retain ClusterIP connectivity",
+		func(ctx ginkgo.SpecContext, protocol v1.IPFamily) {
+			if !IsGatewayModeLocal(f.ClientSet) {
+				ginkgo.Skip("only applicable in Local Gateway Mode")
+			}
+			if protocol == v1.IPv4Protocol && !externalContainer.IsIPv4() {
+				ginkgo.Skip("skipped because external container does not have an IPv4 address")
+			}
+			if protocol == v1.IPv6Protocol && !externalContainer.IsIPv6() {
+				ginkgo.Skip("skipped because external container does not have an IPv6 address")
+			}
+
+			egressNode := ""
+			// Do not use the control-plane node: in kind the Kubernetes API ClusterIP
+			// resolves to a process local to that node, so the priority-0 local rule
+			// bypasses the EgressService source-based routing rule under test.
+			for _, node := range nodes {
+				if _, isControlPlane := node.Labels["node-role.kubernetes.io/control-plane"]; !isControlPlane {
+					egressNode = node.Name
+					break
+				}
+			}
+			gomega.Expect(egressNode).NotTo(gomega.BeEmpty(), "test requires a worker node for the EgressService host")
+
+			ginkgo.By("Blackholing the custom routing table on the egress node")
+			setBlackholeDefaultRouteOnRoutingTable(providerCtx, egressNode, blackholeRoutingTable, protocol)
+
+			ginkgo.By("Getting the Kubernetes API server ClusterIP for the tested address family")
+			apiCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			kubernetesService, err := f.ClientSet.CoreV1().Services(metav1.NamespaceDefault).Get(
+				apiCtx, "kubernetes", metav1.GetOptions{})
+			cancel()
+			framework.ExpectNoError(err, "failed to get the Kubernetes API service")
+			ipFamily := utilnet.IPv4
+			if protocol == v1.IPv6Protocol {
+				ipFamily = utilnet.IPv6
+			}
+			apiClusterIP := getFirstIPStringOfFamily(ipFamily, kubernetesService.Spec.ClusterIPs)
+			if apiClusterIP == "" {
+				ginkgo.Skip(fmt.Sprintf("Kubernetes API service has no %s ClusterIP", protocol))
+			}
+
+			ginkgo.By("Creating a backend pod for the EgressService on the egress node")
+			egressPod, err := createGenericPodWithLabel(f, "egress-pod", egressNode, f.Namespace.Name, command, podsLabels,
+				func(pod *v1.Pod) {
+					pod.Spec.Containers[0].ReadinessProbe = &v1.Probe{
+						ProbeHandler: v1.ProbeHandler{
+							Exec: &v1.ExecAction{Command: []string{
+								"curl", "-sk", "--connect-timeout", "2",
+								fmt.Sprintf("https://%s/version", net.JoinHostPort(apiClusterIP, "443")),
+							}},
+						},
+						TimeoutSeconds:   3,
+						PeriodSeconds:    1,
+						FailureThreshold: 1,
+					}
+				})
+			framework.ExpectNoError(err, "failed to create egress backend pod")
+
+			ginkgo.By("Creating an EgressService with custom network pinned to the backend pod's node")
+			egressServiceConfig := `
+apiVersion: k8s.ovn.org/v1
+kind: EgressService
+metadata:
+  name: ` + serviceName + `
+  namespace: ` + f.Namespace.Name + `
+spec:
+  sourceIPBy: "LoadBalancerIP"
+  network: "` + blackholeRoutingTable + `"
+  nodeSelector:
+    matchLabels:
+      kubernetes.io/hostname: ` + egressNode + `
+`
+			if err := os.WriteFile(egressServiceYAML, []byte(egressServiceConfig), 0644); err != nil {
+				framework.Failf("Unable to write CRD config to disk: %v", err)
+			}
+			defer func() {
+				if err := os.Remove(egressServiceYAML); err != nil {
+					framework.Logf("Unable to remove the CRD config from disk: %v", err)
+				}
+			}()
+			e2ekubectl.RunKubectlOrDie(f.Namespace.Name, "create", "-f", egressServiceYAML)
+			createLBServiceWithIngressIP(f.ClientSet, f.Namespace.Name, serviceName, protocol, podsLabels, podHTTPPort)
+
+			ginkgo.By("Waiting for the backend pod's node to be selected as egress host")
+			egressHost, _, _ := getEgressSVCHost(f.ClientSet, f.Namespace.Name, serviceName)
+			gomega.Expect(egressHost.Name).To(gomega.Equal(egressNode), "expected first node to be egress host")
+
+			podIsReady := func() bool {
+				apiCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+				defer cancel()
+				pod, err := f.ClientSet.CoreV1().Pods(f.Namespace.Name).Get(apiCtx, egressPod.Name, metav1.GetOptions{})
+				if err != nil {
+					return false
+				}
+				return podutils.IsPodReady(pod)
+			}
+
+			ginkgo.By("Waiting for the backend pod to be ready")
+			gomega.Eventually(podIsReady, 10*time.Second, 500*time.Millisecond).Should(gomega.BeTrue(),
+				"egress backend pod should become ready while reaching the Kubernetes API ClusterIP")
+
+			ginkgo.By("Verifying the backend pod remains ready after becoming an EgressService endpoint")
+			gomega.Consistently(podIsReady, 5*time.Second, 500*time.Millisecond).Should(gomega.BeTrue(),
+				"egress backend pod should remain ready while reaching the Kubernetes API ClusterIP")
+		},
+		ginkgo.Entry("ipv4 pods", v1.IPv4Protocol),
+		ginkgo.Entry("ipv6 pods", v1.IPv6Protocol),
+	)
+
 	ginkgo.Describe("Multiple Networks, external clients sharing ip", func() {
 		/*
 			Here we test the scenario in which we have two different networks (net1,net2), each having
@@ -1633,6 +1744,26 @@ func setBlackholeRoutingTableOnNodes(providerCtx infraapi.Context, nodes []v1.No
 	}
 }
 
+func setBlackholeDefaultRouteOnRoutingTable(providerCtx infraapi.Context, nodeName, table string, protocol v1.IPFamily) {
+	family := "-4"
+	if protocol == v1.IPv6Protocol {
+		family = "-6"
+	}
+
+	out, err := infraprovider.Get().ExecK8NodeCommand(nodeName,
+		[]string{"ip", family, "route", "replace", "blackhole", "default", "table", table})
+	framework.ExpectNoError(err, "failed to set blackhole default route in table %s on node %s, out: %s", table, nodeName, out)
+
+	providerCtx.AddCleanUpFn(func() error {
+		out, err := infraprovider.Get().ExecK8NodeCommand(nodeName,
+			[]string{"ip", family, "route", "del", "blackhole", "default", "table", table})
+		if err != nil && !strings.Contains(err.Error(), "RTNETLINK answers: No such process") {
+			return fmt.Errorf("failed to remove blackhole default route from table %s on node %s: stdout %q, err: %w", table, nodeName, out, err)
+		}
+		return nil
+	})
+}
+
 // Sets the regular+blackhole routes on the nodes to the external container.
 func setBlackholeRoutesOnRoutingTable(providerCtx infraapi.Context, nodeName, ip, table string) {
 	type route struct {
@@ -1655,9 +1786,9 @@ func setBlackholeRoutesOnRoutingTable(providerCtx infraapi.Context, nodeName, ip
 	isAlreadyDeletedFn := func(s string) bool { return strings.Contains(s, doesNotExistMsg) }
 
 	providerCtx.AddCleanUpFn(func() error {
-		out, err = infraprovider.Get().ExecK8NodeCommand(nodeName, []string{"ip", "route", "del", "blackhole", ip, "table", table})
+		out, err = infraprovider.Get().ExecK8NodeCommand(nodeName, []string{"ip", "route", "del", ip, "dev", routeTo.Dev, "table", table})
 		if err != nil && !isAlreadyDeletedFn(err.Error()) {
-			return fmt.Errorf("failed to remove black hole route in table 100: stdout %q, err: %q", out, err)
+			return fmt.Errorf("failed to remove route to %s from table %s on node %s: stdout %q, err: %q", ip, table, nodeName, out, err)
 		}
 		return nil
 	})
@@ -1666,7 +1797,7 @@ func setBlackholeRoutesOnRoutingTable(providerCtx infraapi.Context, nodeName, ip
 	providerCtx.AddCleanUpFn(func() error {
 		out, err = infraprovider.Get().ExecK8NodeCommand(nodeName, []string{"ip", "route", "del", "blackhole", ip, "table", table})
 		if err != nil && !isAlreadyDeletedFn(err.Error()) {
-			return fmt.Errorf("failed to remove black hole route in table 50: stdout %q, err: %q", out, err)
+			return fmt.Errorf("failed to remove blackhole route to %s from table %s on node %s: stdout %q, err: %q", ip, table, nodeName, out, err)
 		}
 		return nil
 	})
