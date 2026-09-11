@@ -1090,8 +1090,6 @@ func SetRPFilterLooseModeForInterface(ifName string) error {
 	return nil
 }
 
-// SetIPv6KeepAddrOnDownForInterface preserves global IPv6 addresses when an
-// interface changes state while it is attached to or detached from a VRF.
 // IsIPv6SysctlSupported reports whether the kernel exposes IPv6 sysctls: a
 // kernel with IPv6 disabled (ipv6.disable=1) has no /proc/sys/net/ipv6 tree.
 func IsIPv6SysctlSupported() bool {
@@ -1099,6 +1097,8 @@ func IsIPv6SysctlSupported() bool {
 	return err == nil
 }
 
+// SetIPv6KeepAddrOnDownForInterface preserves global IPv6 addresses when an
+// interface changes state while it is attached to or detached from a VRF.
 func SetIPv6KeepAddrOnDownForInterface(ifName string) error {
 	setVal := fmt.Sprintf("net.ipv6.conf.%s.keep_addr_on_down = 1", sysctlIfName(ifName))
 	stdout, stderr, err := RunSysctl("-w", setVal)
