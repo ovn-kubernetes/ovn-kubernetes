@@ -11,7 +11,6 @@ import (
 	"reflect"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -53,17 +52,6 @@ type Controller struct {
 	cudnController controllerutil.Controller
 	nodeController controllerutil.Controller
 	eventRecorder  record.EventRecorder
-
-	// cudnVTEPIndex tracks which VTEP each EVPN-enabled CUDN references
-	// (cudnName → vtepName). Populated on CUDN create, consulted on CUDN
-	// delete so we can re-queue only the specific VTEP instead of scanning
-	// all VTEPs for every single CUDN deletion (since onDelete simply requeues
-	// we don't even get to evaluate whether it was an EVPN-enabled CUDN or not).
-	// Currently only accessed from cudnController, but protected by a mutex
-	// since vtepController and cudnController run on separate goroutines and
-	// future work may require cross-controller access.
-	cudnVTEPIndexMu sync.RWMutex
-	cudnVTEPIndex   map[string]string
 }
 
 // NewController creates a new VTEP controller.
@@ -79,7 +67,6 @@ func NewController(
 		cudnLister:    wf.ClusterUserDefinedNetworkInformer().Lister(),
 		nodeLister:    wf.NodeCoreInformer().Lister(),
 		eventRecorder: recorder,
-		cudnVTEPIndex: make(map[string]string),
 	}
 
 	vtepCfg := &controllerutil.ControllerConfig[vtepv1.VTEP]{
@@ -102,6 +89,7 @@ func NewController(
 		Lister:         cudnLister.List,
 		Reconcile:      c.reconcileCUDN,
 		ObjNeedsUpdate: cudnNeedsUpdate,
+		OnDelete:       c.onCUDNDeleted,
 		Threadiness:    1,
 	}
 	c.cudnController = controllerutil.NewController(
@@ -470,56 +458,63 @@ func (c *Controller) handleManagedModeNotSupported(vtep *vtepv1.VTEP) error {
 		"Managed VTEP mode is not yet implemented; only Unmanaged mode is currently supported")
 }
 
-// reconcileCUDN handles CUDN create and delete events relevant to VTEP
-// management. On create, it populates the reverse index and re-queues the
-// referenced VTEP so validations like IPv6 rejection can fire. On delete,
-// it re-queues the VTEP to allow finalizer removal and re-evaluation of
-// EVPN-specific constraints (e.g. clearing IPv6NotSupported when no EVPN
-// CUDNs reference the VTEP any longer).
+// reconcileCUDN handles CUDN create events relevant to VTEP management. It
+// re-queues the referenced VTEP so validations like IPv6 rejection can fire.
+// Deletions are not handled here (the object is already gone from the lister
+// by the time the key is reconciled, so we couldn't tell which VTEP to
+// re-queue); onCUDNDeleted handles them from the informer's delete handler
+// where the deleted object is still available.
 func (c *Controller) reconcileCUDN(key string) error {
-	cudnName := key
-	cudn, err := c.cudnLister.Get(cudnName)
+	cudn, err := c.cudnLister.Get(key)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			c.cudnVTEPIndexMu.Lock()
-			vtepName, ok := c.cudnVTEPIndex[cudnName]
-			if ok {
-				delete(c.cudnVTEPIndex, cudnName)
-			}
-			c.cudnVTEPIndexMu.Unlock()
-			if !ok {
-				return nil
-			}
-			// Re-queue the VTEP so reconcileVTEP can re-evaluate whether
-			// the finalizer can be removed now that this CUDN is gone,
-			// or if the VTEP had Accepted=False due to IPv6 CIDRs
-			// referenced by this EVPN CUDN, it can recover.
-			klog.V(5).Infof("CUDN %s deleted, re-queuing VTEP %s", cudnName, vtepName)
-			c.vtepController.Reconcile(vtepName)
+			// Handled by onCUDNDeleted, which has the deleted object.
 			return nil
 		}
-		return fmt.Errorf("failed to get CUDN %s: %w", cudnName, err)
+		return fmt.Errorf("failed to get CUDN %s: %w", key, err)
 	}
 
 	if cudn.Spec.Network.EVPN != nil && cudn.Spec.Network.EVPN.VTEP != "" {
-		vtepName := cudn.Spec.Network.EVPN.VTEP
-		c.cudnVTEPIndexMu.Lock()
-		_, alreadyIndexed := c.cudnVTEPIndex[cudnName]
-		c.cudnVTEPIndex[cudnName] = vtepName
-		c.cudnVTEPIndexMu.Unlock()
-		if !alreadyIndexed {
-			// fresh create event
-			klog.V(5).Infof("Indexed CUDN %s -> VTEP %s, re-queuing VTEP", cudnName, vtepName)
-			c.vtepController.Reconcile(vtepName)
-		}
+		klog.V(5).Infof("EVPN CUDN %s created, re-queuing VTEP %s", key, cudn.Spec.Network.EVPN.VTEP)
+		c.vtepController.Reconcile(cudn.Spec.Network.EVPN.VTEP)
 	}
 	return nil
 }
 
-// cudnNeedsUpdate determines if a CUDN event is relevant for VTEP finalizer
-// management. We allow creates of EVPN-enabled CUDNs through so reconcileCUDN
-// can populate the reverse index (cudnName → vtepName). The spec is immutable
-// so updates never matter. Deletions bypass ObjNeedsUpdate entirely.
+// onCUDNDeleted runs synchronously from the CUDN informer's delete handler with
+// the deleted object in hand, so it can read EVPN.VTEP directly and re-queue
+// exactly that VTEP.
+//
+// A CUDN deletion changes the set of CUDNs referencing the VTEP, which two VTEP
+// behaviours depend on (both evaluated via getCUDNsReferencingVTEP in
+// reconcileVTEP):
+//   - finalizer removal: if the VTEP is being deleted but was blocked because
+//     this was the last CUDN referencing it, deletion can now be unblocked
+//     (handleVTEPDeletion).
+//   - IPv6-for-EVPN recovery: if the VTEP has an IPv6 CIDR and was set
+//     Accepted=False/EVPNIPv6NotSupported because this was the last EVPN CUDN
+//     referencing it, it can now recover to Accepted=True
+//     (validateNoIPv6VTEPsForEVPN).
+//
+// Only EVPN CUDNs with a VTEP set can ever reference a VTEP (see
+// cudnReferencesVTEP), so non-EVPN deletions cannot affect either behaviour and
+// are ignored here.
+//
+// Handling deletes here (rather than in reconcileCUDN) avoids relying on
+// remembered state: the decision is made from the deleted object itself, so it
+// cannot be lost if a CUDN's create and delete coalesce in the workqueue.
+func (c *Controller) onCUDNDeleted(cudn *udnv1.ClusterUserDefinedNetwork) {
+	if cudn.Spec.Network.EVPN == nil || cudn.Spec.Network.EVPN.VTEP == "" {
+		return
+	}
+	klog.V(5).Infof("EVPN CUDN %s deleted, re-queuing VTEP %s", cudn.Name, cudn.Spec.Network.EVPN.VTEP)
+	c.vtepController.Reconcile(cudn.Spec.Network.EVPN.VTEP)
+}
+
+// cudnNeedsUpdate determines if a CUDN event is relevant for VTEP management.
+// We allow creates of EVPN-enabled CUDNs through so reconcileCUDN can re-queue
+// the referenced VTEP. The spec is immutable so updates never matter.
+// Deletions bypass ObjNeedsUpdate entirely and are handled by onCUDNDeleted.
 func cudnNeedsUpdate(oldObj, newObj *udnv1.ClusterUserDefinedNetwork) bool {
 	if oldObj == nil && newObj != nil {
 		return newObj.Spec.Network.EVPN != nil
