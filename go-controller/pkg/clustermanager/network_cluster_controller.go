@@ -18,6 +18,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/client-go/kubernetes"
 	cache "k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/retry"
@@ -51,8 +52,11 @@ type NetworkStatusReporter func(networkName string, fieldManager string, conditi
 type networkClusterController struct {
 	watchFactory *factory.WatchFactory
 	kube         kube.InterfaceOVN
-	stopChan     chan struct{}
-	wg           *sync.WaitGroup
+	// nodeClient is used only for the rare live apiserver node read in the node
+	// allocator; normal reads go through the informer/lister.
+	nodeClient kubernetes.Interface
+	stopChan   chan struct{}
+	wg         *sync.WaitGroup
 
 	nodeReconciler *sharednode.NodeController
 
@@ -206,6 +210,7 @@ func newNetworkClusterController(
 		ReconcilableNetInfo: util.NewReconcilableNetInfo(netInfo),
 		watchFactory:        wf,
 		kube:                kube,
+		nodeClient:          ovnClient.KubeClient,
 		stopChan:            make(chan struct{}),
 		wg:                  wg,
 		recorder:            recorder,
@@ -434,7 +439,7 @@ func (ncc *networkClusterController) init() error {
 	}
 
 	if ncc.hasNodeAllocation() {
-		ncc.nodeAllocator = node.NewNodeAllocator(networkID, ncc.GetNetInfo(), ncc.watchFactory.NodeCoreInformer().Lister(), ncc.kube, ncc.tunnelIDAllocator)
+		ncc.nodeAllocator = node.NewNodeAllocator(networkID, ncc.GetNetInfo(), ncc.watchFactory.NodeCoreInformer().Lister(), ncc.kube, ncc.nodeClient, ncc.tunnelIDAllocator)
 		err := ncc.nodeAllocator.Init()
 		if err != nil {
 			return fmt.Errorf("failed to initialize host subnet ip allocator: %w", err)
