@@ -3,22 +3,27 @@ name: "Area Maintainer Merge"
 on:
   issue_comment:
     types: [created]
+  pull_request_review:
+    types: [submitted]
   check_suite:
     types: [completed]
 
 jobs:
   area-merge:
-    # Only react to /area-maintainer-approved at the start of a comment, and
-    # never to comments authored by bots. Comments posted by this workflow use
-    # a GitHub App token, so (unlike the default GITHUB_TOKEN) they DO trigger
-    # new issue_comment events — matching the command anywhere in any comment
-    # body previously caused the bot to react to its own status/error messages
-    # in an infinite loop.
+    # Only react to /area-maintainer-approved at the start of a comment or a
+    # PR review body, and never to comments authored by bots. Comments posted
+    # by this workflow use a GitHub App token, so (unlike the default
+    # GITHUB_TOKEN) they DO trigger new issue_comment events — matching the
+    # command anywhere in any comment body previously caused the bot to react
+    # to its own status/error messages in an infinite loop.
     if: >
       (github.event_name == 'issue_comment' &&
        github.event.issue.pull_request &&
        github.event.comment.user.type != 'Bot' &&
        startsWith(github.event.comment.body, '/area-maintainer-approved')) ||
+      (github.event_name == 'pull_request_review' &&
+       github.event.review.user.type != 'Bot' &&
+       startsWith(github.event.review.body, '/area-maintainer-approved')) ||
       github.event_name == 'check_suite'
     runs-on: ubuntu-latest
     steps:
