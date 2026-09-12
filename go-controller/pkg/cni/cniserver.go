@@ -272,8 +272,11 @@ func (s *Server) handleCNIRequest(r *http.Request) (result []byte, err error) {
 	if err := json.Unmarshal(b, &cr); err != nil {
 		return nil, err
 	}
-	// Match the Kubelet default CRI operation timeout of 2m.
-	ctx, cancel := context.WithTimeout(context.Background(), kubeletDefaultCRIOperationTimeout)
+	// containerd terminates the CNI shim when its sandbox request is canceled,
+	// which closes the connection and cancels r.Context(). CRI-O may keep CNI
+	// setup running under an independent timeout, so cmdAdd also detects Pod
+	// deletion and replacement explicitly.
+	ctx, cancel := context.WithTimeout(r.Context(), kubeletDefaultCRIOperationTimeout)
 	defer cancel()
 
 	cmd, ok := cr.Env["CNI_COMMAND"]

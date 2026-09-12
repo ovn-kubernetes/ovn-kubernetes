@@ -217,6 +217,39 @@ var _ = Describe("Kube", func() {
 			Expect(patchOps[2].Path).To(Equal("/metadata/annotations/ovn"))
 		})
 
+		It("guards the annotation map instead of resourceVersion when adding a key", func() {
+			var patchOps []jsonPatchOp
+			kube.KClient.(*fake.Clientset).Fake.PrependReactor("patch", "pods", func(action ktesting.Action) (bool, runtime.Object, error) {
+				patchAction := action.(ktesting.PatchAction)
+				Expect(patchAction.GetSubresource()).To(Equal("status"))
+				Expect(json.Unmarshal(patchAction.GetPatch(), &patchOps)).To(Succeed())
+				return true, &corev1.Pod{}, nil
+			})
+
+			oldPod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace:       "default",
+					Name:            "my-pod",
+					ResourceVersion: "11",
+					Annotations:     map[string]string{"existing": "value"},
+				},
+			}
+			newPod := oldPod.DeepCopy()
+			newPod.Annotations["ovn"] = "new-value"
+
+			err := kube.PatchPodStatusAnnotations(oldPod, newPod)
+			Expect(err).ToNot(HaveOccurred())
+
+			Expect(patchOps).To(HaveLen(2))
+			Expect(patchOps[0].Op).To(Equal("test"))
+			Expect(patchOps[0].Path).To(Equal("/metadata/annotations"))
+			Expect(patchOps[0].Value).To(Equal(map[string]interface{}{
+				"existing": "value",
+			}))
+			Expect(patchOps[1].Op).To(Equal("add"))
+			Expect(patchOps[1].Path).To(Equal("/metadata/annotations/ovn"))
+		})
+
 		It("uses a per-key guard when updating an existing annotation key", func() {
 			var patchOps []jsonPatchOp
 			kube.KClient.(*fake.Clientset).Fake.PrependReactor("patch", "pods", func(action ktesting.Action) (bool, runtime.Object, error) {

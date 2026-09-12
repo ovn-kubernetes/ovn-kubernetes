@@ -185,8 +185,8 @@ var _ = Describe("CNI Utils tests", func() {
 			Expect(err).To(HaveOccurred())
 		})
 
-		It("Retries Until pod annotation condition is met", func() {
-			ctx, cancelFunc := context.WithTimeout(context.Background(), 400*time.Millisecond)
+		It("rechecks the annotation condition while polling", func() {
+			ctx, cancelFunc := context.WithTimeout(context.Background(), time.Second)
 			defer cancelFunc()
 
 			calledOnce := false
@@ -221,28 +221,173 @@ var _ = Describe("CNI Utils tests", func() {
 			Expect(err.Error()).To(ContainSubstring("failed to list pods"))
 		})
 
-		It("Tries kube client if PodLister can't find the pod", func() {
+		It("polls the informer cache without querying the API", func() {
 			ctx, cancelFunc := context.WithTimeout(context.Background(), 1*time.Second)
 			defer cancelFunc()
 
-			calledOnce := false
 			cond := func(*corev1.Pod, string) (*util.PodAnnotation, bool, error) {
-				if calledOnce {
-					return nil, true, nil
-				}
-				calledOnce = true
+				return nil, true, nil
+			}
+
+			clientset := newFakeClientSet(pod, &podNamespaceLister)
+			podNamespaceLister.On("Get", podName).Return(
+				nil, apierrors.NewNotFound(corev1.Resource("pod"), podName)).Once()
+			podNamespaceLister.On("Get", podName).Return(pod, nil)
+
+			_, _, _, err := GetPodWithAnnotations(
+				ctx,
+				clientset,
+				namespace,
+				podName,
+				ovntypes.DefaultNetworkName,
+				cond,
+			)
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(clientset.kclient.(*fake.Clientset).Actions()).To(BeEmpty())
+		})
+
+		It("waits for the initial Pod while validating the runtime UID", func() {
+			ctx, cancelFunc := context.WithTimeout(context.Background(), time.Second)
+			defer cancelFunc()
+
+			cond := func(*corev1.Pod, string) (*util.PodAnnotation, bool, error) {
+				return nil, true, nil
+			}
+
+			clientset := newFakeClientSet(pod, &podNamespaceLister)
+			podNamespaceLister.On("Get", podName).Return(
+				nil, apierrors.NewNotFound(corev1.Resource("pod"), podName)).Once()
+			podNamespaceLister.On("Get", podName).Return(pod, nil)
+
+			gotPod, _, _, err := getPodWithAnnotations(
+				ctx,
+				clientset,
+				namespace,
+				podName,
+				ovntypes.DefaultNetworkName,
+				string(pod.UID),
+				false,
+				cond,
+			)
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(gotPod.UID).To(Equal(pod.UID))
+			Expect(clientset.kclient.(*fake.Clientset).Actions()).To(BeEmpty())
+		})
+
+		It("rejects a different Pod UID on the initial observation", func() {
+			ctx, cancelFunc := context.WithTimeout(context.Background(), time.Second)
+			defer cancelFunc()
+
+			cond := func(*corev1.Pod, string) (*util.PodAnnotation, bool, error) {
+				return nil, true, nil
+			}
+
+			clientset := newFakeClientSet(pod, &podNamespaceLister)
+			podNamespaceLister.On("Get", podName).Return(pod, nil)
+
+			_, _, _, err := getPodWithAnnotations(
+				ctx,
+				clientset,
+				namespace,
+				podName,
+				ovntypes.DefaultNetworkName,
+				"previous-pod",
+				false,
+				cond,
+			)
+
+			Expect(err).To(MatchError(ContainSubstring("was replaced by UID some-pod")))
+			Expect(clientset.kclient.(*fake.Clientset).Actions()).To(BeEmpty())
+		})
+
+		It("accepts a static Pod config hash on the initial observation", func() {
+			ctx, cancelFunc := context.WithTimeout(context.Background(), time.Second)
+			defer cancelFunc()
+
+			cond := func(*corev1.Pod, string) (*util.PodAnnotation, bool, error) {
+				return nil, true, nil
+			}
+
+			pod.Annotations[ConfigSourceAnnotationKey] = "file"
+			clientset := newFakeClientSet(pod, &podNamespaceLister)
+			podNamespaceLister.On("Get", podName).Return(pod, nil)
+
+			gotPod, _, _, err := getPodWithAnnotations(
+				ctx,
+				clientset,
+				namespace,
+				podName,
+				ovntypes.DefaultNetworkName,
+				"static-pod-config-hash",
+				false,
+				cond,
+			)
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(gotPod.UID).To(Equal(pod.UID))
+			Expect(clientset.kclient.(*fake.Clientset).Actions()).To(BeEmpty())
+		})
+
+		It("stops polling when an observed Pod is deleted", func() {
+			ctx, cancelFunc := context.WithTimeout(context.Background(), time.Second)
+			defer cancelFunc()
+
+			cond := func(*corev1.Pod, string) (*util.PodAnnotation, bool, error) {
 				return nil, false, nil
 			}
 
 			clientset := newFakeClientSet(pod, &podNamespaceLister)
+			podNamespaceLister.On("Get", podName).Return(pod, nil).Once()
+			podNamespaceLister.On("Get", podName).Return(
+				nil, apierrors.NewNotFound(corev1.Resource("pod"), podName))
 
-			podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(nil, apierrors.NewNotFound(corev1.Resource("pod"), podName))
-			_, _, _, err := GetPodWithAnnotations(ctx, clientset, namespace, podName, ovntypes.DefaultNetworkName, cond)
-			Expect(err).ToNot(HaveOccurred())
+			_, _, _, err := getPodWithAnnotations(
+				ctx,
+				clientset,
+				namespace,
+				podName,
+				ovntypes.DefaultNetworkName,
+				string(pod.UID),
+				true,
+				cond,
+			)
+
+			Expect(err).To(MatchError(ContainSubstring("was deleted while waiting for annotations")))
+			Expect(clientset.kclient.(*fake.Clientset).Actions()).To(BeEmpty())
 		})
 
-		It("Returns an error if PodLister and kube client can't find the pod", func() {
-			ctx, cancelFunc := context.WithTimeout(context.Background(), 1*time.Second)
+		It("stops polling when an observed Pod is replaced", func() {
+			ctx, cancelFunc := context.WithTimeout(context.Background(), time.Second)
+			defer cancelFunc()
+
+			cond := func(*corev1.Pod, string) (*util.PodAnnotation, bool, error) {
+				return nil, false, nil
+			}
+
+			replacementPod := pod.DeepCopy()
+			replacementPod.UID = types.UID("replacement-pod")
+			clientset := newFakeClientSet(replacementPod, &podNamespaceLister)
+			podNamespaceLister.On("Get", podName).Return(replacementPod, nil)
+
+			_, _, _, err := getPodWithAnnotations(
+				ctx,
+				clientset,
+				namespace,
+				podName,
+				ovntypes.DefaultNetworkName,
+				string(pod.UID),
+				true,
+				cond,
+			)
+
+			Expect(err).To(MatchError(ContainSubstring("was replaced by UID replacement-pod")))
+			Expect(clientset.kclient.(*fake.Clientset).Actions()).To(BeEmpty())
+		})
+
+		It("waits until the context expires if the informer does not have the pod", func() {
+			ctx, cancelFunc := context.WithTimeout(context.Background(), 20*time.Millisecond)
 			defer cancelFunc()
 
 			cond := func(*corev1.Pod, string) (*util.PodAnnotation, bool, error) {
@@ -254,7 +399,8 @@ var _ = Describe("CNI Utils tests", func() {
 			podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(nil, apierrors.NewNotFound(corev1.Resource("pod"), podName))
 			_, _, _, err := GetPodWithAnnotations(ctx, clientset, namespace, podName, ovntypes.DefaultNetworkName, cond)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("timed out waiting for pod after 1s"))
+			Expect(err.Error()).To(ContainSubstring("timed out waiting for annotations"))
+			Expect(clientset.kclient.(*fake.Clientset).Actions()).To(BeEmpty())
 		})
 	})
 
