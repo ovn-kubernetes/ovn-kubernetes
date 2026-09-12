@@ -594,7 +594,10 @@ func getExistingIfaceMeta(ovsClient client.Client, name string) (string, string,
 		return existing.ExternalIDs["iface-id"], nadKey, true, nil
 	}
 	extIds, err := ovsFind("Interface", "external_ids", "name="+name)
-	if err != nil || len(extIds) != 1 {
+	if err != nil {
+		return "", "", false, err
+	}
+	if len(extIds) != 1 {
 		return "", "", false, nil
 	}
 	nadKey := util.GetExternalIDValByKey(extIds[0], types.NADExternalID)
@@ -602,6 +605,43 @@ func getExistingIfaceMeta(ovsClient client.Client, name string) (string, string,
 		nadKey = types.DefaultNetworkName
 	}
 	return util.GetExternalIDValByKey(extIds[0], "iface-id"), nadKey, true, nil
+}
+
+// getIfaceOwnerSandbox returns the sandbox (external_ids:sandbox) that currently
+// owns the OVS Interface named name, or "" if the Interface does not exist. It
+// prefers the libovsdb client (ovnkube-node privileged mode) and falls back to
+// ovsGet for the shim/legacy path.
+func getIfaceOwnerSandbox(ovsClient client.Client, name string) (string, error) {
+	if ovsClient != nil {
+		existing, err := ovsops.GetOVSInterface(ovsClient, name)
+		if err != nil {
+			if errors.Is(err, client.ErrNotFound) {
+				return "", nil
+			}
+			return "", err
+		}
+		return existing.ExternalIDs["sandbox"], nil
+	}
+	return ovsGet("Interface", name, "external_ids", "sandbox")
+}
+
+// ValidateOVSInterfaceConfiguration checks if the OVS port is configured correctly
+func ValidateOVSInterfaceConfiguration(ovsClient client.Client, namespace, podName, hostIfaceName string, ifInfo *PodInterfaceInfo) error {
+	ifaceID := util.GetIfaceId(namespace, podName)
+	if ifInfo.NetName != types.DefaultNetworkName { // UDN network
+		ifaceID = util.GetUDNIfaceId(namespace, podName, ifInfo.NADKey)
+	}
+	if existingIfaceID, existingNADKey, exists, err := getExistingIfaceMeta(ovsClient, hostIfaceName); err != nil {
+		return fmt.Errorf("failed to get OVS metadata for interface %s: %v", hostIfaceName, err)
+	} else if exists {
+		if existingIfaceID != ifaceID {
+			return fmt.Errorf("OVS port %s was added for iface-id (%s), now readding it for (%s)", hostIfaceName, existingIfaceID, ifaceID)
+		}
+		if existingNADKey != ifInfo.NADKey {
+			return fmt.Errorf("OVS port %s was added for NAD key (%s), expect (%s)", hostIfaceName, existingNADKey, ifInfo.NADKey)
+		}
+	}
+	return nil
 }
 
 // addOrUpdatePodPort creates or updates the OVS port and its single backing
@@ -705,15 +745,9 @@ func ConfigureOVS(ctx context.Context, ovsClient client.Client, namespace, podNa
 	}
 
 	// if the specified port was created for other Pod/NAD, return error
-	if existingIfaceID, existingNADKey, exists, err := getExistingIfaceMeta(ovsClient, hostIfaceName); err != nil {
+	err = ValidateOVSInterfaceConfiguration(ovsClient, namespace, podName, hostIfaceName, ifInfo)
+	if err != nil {
 		return err
-	} else if exists {
-		if existingIfaceID != ifaceID {
-			return fmt.Errorf("OVS port %s was added for iface-id (%s), now readding it for (%s)", hostIfaceName, existingIfaceID, ifaceID)
-		}
-		if existingNADKey != ifInfo.NADKey {
-			return fmt.Errorf("OVS port %s was added for NAD (%s), expect (%s)", hostIfaceName, existingNADKey, ifInfo.NADKey)
-		}
 	}
 
 	// Add the new sandbox's OVS port, tag the port as transient so stale
@@ -834,7 +868,7 @@ func ConfigureOVS(ctx context.Context, ovsClient client.Client, namespace, podNa
 
 type PodRequestInterfaceOps interface {
 	ConfigureInterface(pr *PodRequest, ovsClient client.Client, getter PodInfoGetter, ifInfo *PodInterfaceInfo) ([]*current.Interface, error)
-	UnconfigureInterface(pr *PodRequest, ifInfo *PodInterfaceInfo, podLister corev1listers.PodLister, pod *corev1.Pod) error
+	UnconfigureInterface(pr *PodRequest, ovsClient client.Client, ifInfo *PodInterfaceInfo, podLister corev1listers.PodLister, pod *corev1.Pod) error
 }
 
 type defaultPodRequestInterfaceOps struct{}
@@ -915,7 +949,7 @@ func (*defaultPodRequestInterfaceOps) ConfigureInterface(pr *PodRequest, ovsClie
 	return []*current.Interface{hostIface, contIface}, nil
 }
 
-func (*defaultPodRequestInterfaceOps) UnconfigureInterface(pr *PodRequest, ifInfo *PodInterfaceInfo, podLister corev1listers.PodLister, pod *corev1.Pod) error {
+func (*defaultPodRequestInterfaceOps) UnconfigureInterface(pr *PodRequest, ovsClient client.Client, ifInfo *PodInterfaceInfo, podLister corev1listers.PodLister, pod *corev1.Pod) error {
 	podDesc := fmt.Sprintf("for pod %s/%s NAD %s", pr.PodNamespace, pr.PodName, pr.nadName)
 	klog.V(5).Infof("Tear down interface (%+v) %s", *pr, podDesc)
 	if ifInfo.IsDPUHostMode {
@@ -936,100 +970,134 @@ func (*defaultPodRequestInterfaceOps) UnconfigureInterface(pr *PodRequest, ifInf
 	if !pr.IsVFIO {
 		netns, err := ns.GetNS(pr.Netns)
 		if err != nil {
-			return fmt.Errorf("failed to get container namespace %s: %v", podDesc, err)
-		}
-		defer netns.Close()
+			// CNI Spec: DEL should succeed if the netns is already gone. For SR-IOV,
+			// still continue to host-side representor/OVS cleanup — otherwise ports
+			// go stale. The VF is already in the host netns.
+			if pr.CNIConf.DeviceID == "" {
+				klog.V(5).Infof("Failed to get container namespace %s: %v", podDesc, err)
+				return nil
+			}
+			klog.Warningf("Container namespace doesn't exist for SR-IOV pod %s DeviceID %s: %v; continuing host-side cleanup",
+				podDesc, pr.CNIConf.DeviceID, err)
+		} else {
+			defer netns.Close()
 
-		hostNS, err := ns.GetCurrentNS()
-		if err != nil {
-			return fmt.Errorf("failed to get host namespace %s: %v", podDesc, err)
-		}
-		defer hostNS.Close()
-
-		// 1. For SRIOV case, we'd need to move device from container namespace back to the host namespace
-		// 2. If it is secondary network and not dpu-host mode, then get the container interface index
-		//    so that we know the host-side interface name.
-		err = netns.Do(func(_ ns.NetNS) error {
-			// container side interface deletion
-			link, err := util.GetNetLinkOps().LinkByName(pr.IfName)
+			hostNS, err := ns.GetCurrentNS()
 			if err != nil {
-				return fmt.Errorf("failed to get container interface %s %s: %v", pr.IfName, podDesc, err)
+				return fmt.Errorf("failed to get host namespace %s: %v", podDesc, err)
 			}
-			if pr.CNIConf.DeviceID != "" {
-				// SR-IOV Case
-				err = util.GetNetLinkOps().LinkSetDown(link)
+			defer hostNS.Close()
+
+			// 1. For SRIOV case, we'd need to move device from container namespace back to the host namespace
+			// 2. If it is secondary network and not dpu-host mode, then get the container interface index
+			//    so that we know the host-side interface name.
+			err = netns.Do(func(_ ns.NetNS) error {
+				// container side interface deletion
+				link, err := util.GetNetLinkOps().LinkByName(pr.IfName)
 				if err != nil {
-					return fmt.Errorf("failed to bring down container interface %s %s: %v", pr.IfName, podDesc, err)
+					return fmt.Errorf("failed to get container interface %s %s: %v", pr.IfName, podDesc, err)
 				}
-				// rename netdevice to make sure it is unique in the host namespace:
-				// if original name of netdevice is empty, sandbox id and a '0' letter prefix is used to make up the unique name.
-				oldName := ifInfo.NetdevName
-				if oldName == "" {
-					id := fmt.Sprintf("_0%d", link.Attrs().Index)
-					oldName = pr.SandboxID[:(15-len(id))] + id
+				if pr.CNIConf.DeviceID != "" {
+					// SR-IOV Case
+					err = util.GetNetLinkOps().LinkSetDown(link)
+					if err != nil {
+						return fmt.Errorf("failed to bring down container interface %s %s: %v", pr.IfName, podDesc, err)
+					}
+					// rename netdevice to make sure it is unique in the host namespace:
+					// if original name of netdevice is empty, sandbox id and a '0' letter prefix is used to make up the unique name.
+					oldName := ifInfo.NetdevName
+					if oldName == "" {
+						id := fmt.Sprintf("_0%d", link.Attrs().Index)
+						oldName = pr.SandboxID[:(15-len(id))] + id
+					}
+					err = util.GetNetLinkOps().LinkSetName(link, oldName)
+					if err != nil {
+						return fmt.Errorf("failed to rename container interface %s to %s %s: %v",
+							pr.IfName, oldName, podDesc, err)
+					}
+					// move netdevice to host netns
+					err = util.GetNetLinkOps().LinkSetNsFd(link, int(hostNS.Fd()))
+					if err != nil {
+						return fmt.Errorf("failed to move container interface %s back to host namespace %s: %v",
+							pr.IfName, podDesc, err)
+					}
 				}
-				err = util.GetNetLinkOps().LinkSetName(link, oldName)
-				if err != nil {
-					return fmt.Errorf("failed to rename container interface %s to %s %s: %v",
-						pr.IfName, oldName, podDesc, err)
+				if isSecondary {
+					ifnameSuffix = fmt.Sprintf("_%d", link.Attrs().Index)
 				}
-				// move netdevice to host netns
-				err = util.GetNetLinkOps().LinkSetNsFd(link, int(hostNS.Fd()))
-				if err != nil {
-					return fmt.Errorf("failed to move container interface %s back to host namespace %s: %v",
-						pr.IfName, podDesc, err)
-				}
+				return nil
+			})
+			if err != nil {
+				klog.Errorf("Error in UnconfigureInterface: %v", err)
 			}
-			if isSecondary {
-				ifnameSuffix = fmt.Sprintf("_%d", link.Attrs().Index)
-			}
-			return nil
-		})
-		if err != nil {
-			klog.Errorf("Error in UnconfigureInterface: %v", err)
 		}
 	}
 
 	if !ifInfo.IsDPUHostMode {
+		// Conntrack cleanup is best-effort and independent of the representor/OVS
+		// teardown. Defer it so it runs on every DEL (including guard skips and
+		// error returns) yet still executes after any port deletion, avoiding a
+		// flush-before-remove race.
+		defer pr.deletePodConntrack(podLister, pod)
 		var err error
 		// host side interface deletion
-		var hostIfName string
-		if !util.IsNetworkSegmentationSupportEnabled() || isSecondary {
-			// this is a secondary network (not primary) or segmentation is not enabled
-			hostIfName = pr.SandboxID[:(15-len(ifnameSuffix))] + ifnameSuffix
-		}
-		if pr.CNIConf.DeviceID != "" {
-			hostIfName, err = util.GetFunctionRepresentorName(pr.CNIConf.DeviceID)
-			if err != nil {
-				klog.Errorf("Failed to get the representor name for DeviceID %s for pod %s: %v",
-					pr.CNIConf.DeviceID, podDesc, err)
+		if isSecondary {
+			// Secondary network: tear down just this one interface (by its host
+			// name, or its VF representor when SR-IOV).
+			var hostIfName string
+			if pr.CNIConf.DeviceID == "" {
+				hostIfName = pr.SandboxID[:(15-len(ifnameSuffix))] + ifnameSuffix
+			} else {
+				hostIfName, err = util.GetFunctionRepresentorName(pr.CNIConf.DeviceID)
+				if err != nil {
+					return fmt.Errorf("failed to get the representor name for DeviceID %s for pod %s: %v",
+						pr.CNIConf.DeviceID, podDesc, err)
+				}
+				// A stale DEL (reused VF DeviceID) can resolve to a representor now owned
+				// by a newer, live sandbox of the same pod. Only delete it if it still
+				// belongs to THIS sandbox; fail closed if ownership can't be verified so
+				// we never tear down a live pod's port (DEL stays idempotent, kubelet retries).
+				ownerSandbox, gerr := getIfaceOwnerSandbox(ovsClient, hostIfName)
+				if gerr != nil {
+					klog.Warningf("Skipping cleanup of representor %s for pod %s: failed to read OVS owner sandbox: %v",
+						hostIfName, podDesc, gerr)
+					return nil
+				}
+				if ownerSandbox == "" || ownerSandbox != pr.SandboxID {
+					klog.Warningf("Skipping cleanup of representor %s for pod %s: OVS port owned by sandbox %s, not %s (stale DEL / reused DeviceID)",
+						hostIfName, podDesc, ownerSandbox, pr.SandboxID)
+					return nil
+				}
+				// if the specified port was created for other Pod/NAD (same sandbox, different
+				// network), skip cleanup so we don't tear down another network's interface.
+				if err := ValidateOVSInterfaceConfiguration(ovsClient, pr.PodNamespace, pr.PodName, hostIfName, ifInfo); err != nil {
+					klog.Errorf("Error in ValidateOVSInterfaceConfiguration: %v", err)
+					return nil
+				}
 			}
-		}
-		portList, err := ovsFind("interface", "name", "external-ids:sandbox="+pr.SandboxID)
-		if err != nil {
-			return fmt.Errorf("failed to list interfaces in OVS during delete for sandbox: %s, err: %w",
-				pr.SandboxID, err)
-		}
-		// hostIfName is not empty if using device ID, a secondary network, or segmentation not enabled
-		// delete the port in traditional fashion
-		if hostIfName != "" {
 			pr.deletePort(hostIfName, pr.PodNamespace, pr.PodName)
 		} else {
-			// this is a primary interface deletion and segmentation is enabled, delete all ports
-			// delete happens in reverse order for attached networks, so this is the final deletion
-			// In other words we dont have to worry about accidentally deleting a secondary network interface at
-			// this point.
+			// Default network DEL, whether or not network segmentation is enabled.
+			// When it is enabled this is the sandbox's final teardown, so it removes
+			// the interfaces of both the default network and the primary UDN network.
+			portList, err := ovsFind("interface", "name", "external-ids:sandbox="+pr.SandboxID)
+			if err != nil {
+				return fmt.Errorf("failed to list interfaces in OVS during delete for sandbox: %s, err: %w",
+					pr.SandboxID, err)
+			}
+
+			// Secondary networks are torn down first (reverse order), so by now no
+			// secondary interface remains in portList and we won't delete one here.
 			if len(portList) > 1 {
 				klog.V(5).Infof("Removing multiple interfaces for primary network segmentation (%+v) %s: %s",
 					*pr, podDesc, strings.Join(portList, ","))
 			}
 			pr.deletePorts(portList, pr.PodNamespace, pr.PodName)
+			err = clearPodBandwidthForPorts(portList, pr.SandboxID)
+			if err != nil {
+				klog.Errorf("Failed to clearPodBandwidth sandbox %v %s: %v", pr.SandboxID, podDesc, err)
+			}
 		}
-		err = clearPodBandwidthForPorts(portList, pr.SandboxID)
-		if err != nil {
-			klog.Errorf("Failed to clearPodBandwidth sandbox %v %s: %v", pr.SandboxID, podDesc, err)
-		}
-		pr.deletePodConntrack(podLister, pod)
 	}
 	return nil
 }
