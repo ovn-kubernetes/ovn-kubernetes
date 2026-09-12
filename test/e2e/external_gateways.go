@@ -649,7 +649,7 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 				updateAPBExternalRouteCRWithStaticHop(defaultPolicyName, f.Namespace.Name, false, addresses.gatewayIPs[0])
 
 				podConnEntriesWithMACLabelsSet = 1 // we still have the conntrack entry for the remaining gateway
-				totalPodConnEntries = 3            // 4-1
+				totalPodConnEntries = 2            // remaining hop: 1 labeled + 1 unlabeled zone copy
 
 				gomega.Eventually(func() int {
 					n := pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, macAddressGW)
@@ -664,7 +664,7 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 				ginkgo.By("Check if conntrack entries for ECMP routes are removed for the deleted external gateway if traffic is UDP")
 
 				podConnEntriesWithMACLabelsSet = 0 // we don't have any remaining gateways left
-				totalPodConnEntries = 2            // 4-2
+				totalPodConnEntries = 0            // labeled and unlabeled copies of both hops are deleted
 
 				gomega.Eventually(func() int {
 					n := pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, macAddressGW)
@@ -734,7 +734,7 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 				ginkgo.By("Check if conntrack entries for ECMP routes are removed for the deleted external gateway if traffic is UDP")
 
 				podConnEntriesWithMACLabelsSet = 1 // we still have the conntrack entry for the remaining gateway
-				totalPodConnEntries = 3            // 4-1
+				totalPodConnEntries = 2            // remaining hop: 1 labeled + 1 unlabeled zone copy
 
 				gomega.Eventually(func() int {
 					n := pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, macAddressGW)
@@ -751,7 +751,7 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 				ginkgo.By("Check if conntrack entries for ECMP routes are removed for the deleted external gateway if traffic is UDP")
 
 				podConnEntriesWithMACLabelsSet = 0 //we don't have any remaining gateways left
-				totalPodConnEntries = 2
+				totalPodConnEntries = 0            // labeled and unlabeled copies of both hops are deleted
 				gomega.Eventually(func() int {
 					n := pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, macAddressGW)
 					klog.Infof("Number of entries with macAddressGW %s:%d", macAddressGW, n)
