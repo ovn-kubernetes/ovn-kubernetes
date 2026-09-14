@@ -15,6 +15,9 @@ import (
 
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	utilwait "k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/klog/v2"
+
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 )
 
 // Start the Server's local HTTP server on a root-owned Unix domain socket.
@@ -22,6 +25,16 @@ import (
 // request to the Server's HTTP server, and should return the response bytes,
 // or an error when the operation has completed.
 func (s *Server) Start(rundir string) error {
+	// One-shot upgrade cleanup: pod ports created by older versions still
+	// carry other_config:transient=true and would be scrubbed by the next
+	// ovsdb-server restart (--delete-transient-ports). Best-effort — a
+	// failure must not keep the CNI server from starting.
+	if !config.IsModeDPUHost() {
+		if err := ClearPodPortsLegacyTransient(s.ovsClient); err != nil {
+			klog.Warningf("Failed to clear legacy transient markers from pod ports: %v", err)
+		}
+	}
+
 	socketPath := filepath.Join(rundir, serverSocketName)
 
 	// For security reasons the socket must be accessible only to root.
