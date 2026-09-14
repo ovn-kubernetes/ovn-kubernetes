@@ -93,6 +93,7 @@ nav:
     - Internal Subnets: design/ovn-kubernetes-subnets.md
     - External Bridge (breth0) Flows: design/bridge-flows.md
     - Masquerade IPs: design/masquerade-ips.md
+    - Upgrades: design/upgrades.md
     - Kubevirt VM Live Migration: features/live-migration.md
   - Getting Started:
     - getting-started/index.md
