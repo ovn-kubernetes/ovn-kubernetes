@@ -4,12 +4,16 @@
 package node
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/client-go/kubernetes"
 	listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
@@ -34,7 +38,11 @@ import (
 //     Only for the default or layer3 networks.
 //   - stores the network id in each node's annotation.
 type NodeAllocator struct {
-	kube       kube.Interface
+	kube kube.Interface
+	// nodeClient is used only for the rare live apiserver read needed to reconcile
+	// against current server state before releasing subnets; all normal node reads
+	// go through nodeLister.
+	nodeClient kubernetes.Interface
 	nodeLister listers.NodeLister
 	// idAllocator of IDs within the network
 	idAllocator                  id.Allocator
@@ -50,9 +58,10 @@ type NodeAllocator struct {
 	nodeSubnets []*net.IPNet
 }
 
-func NewNodeAllocator(networkID int, netInfo util.NetInfo, nodeLister listers.NodeLister, kube kube.Interface, tunnelIDAllocator id.Allocator) *NodeAllocator {
+func NewNodeAllocator(networkID int, netInfo util.NetInfo, nodeLister listers.NodeLister, kube kube.Interface, nodeClient kubernetes.Interface, tunnelIDAllocator id.Allocator) *NodeAllocator {
 	na := &NodeAllocator{
 		kube:                         kube,
+		nodeClient:                   nodeClient,
 		nodeLister:                   nodeLister,
 		networkID:                    networkID,
 		netInfo:                      netInfo,
@@ -417,8 +426,23 @@ func (na *NodeAllocator) syncNodeNetworkAnnotations(node *corev1.Node) error {
 		err = na.updateNodeNetworkAnnotationsWithRetry(node.Name, updatedSubnetsMap, networkID, newTunnelID)
 
 		if err != nil {
-			if errR := na.clusterSubnetAllocator.ReleaseNetworks(node.Name, allocatedSubnets...); errR != nil {
-				klog.Warningf("Error releasing node %s subnets: %v", node.Name, errR)
+			// Before releasing, read the node from the apiserver and keep
+			// any subnets already recorded in its host-subnet annotation.
+			// Lagging informer cache may not have latest annotations (e.g. from the previous run of the same handler)
+			releaseSubnets := allocatedSubnets
+			if na.nodeClient != nil {
+				if latestNode, getErr := na.nodeClient.CoreV1().Nodes().Get(context.TODO(), node.Name, metav1.GetOptions{}); getErr == nil {
+					if persisted, parseErr := util.ParseNodeHostSubnetAnnotation(latestNode, networkName); parseErr == nil {
+						releaseSubnets = subnetsNotPersisted(allocatedSubnets, persisted)
+					}
+				} else {
+					klog.Warningf("Failed to read node %s before releasing subnets on annotation update failure: %v", node.Name, getErr)
+				}
+			}
+			if len(releaseSubnets) > 0 {
+				if errR := na.clusterSubnetAllocator.ReleaseNetworks(node.Name, releaseSubnets...); errR != nil {
+					klog.Warningf("Error releasing node %s subnets: %v", node.Name, errR)
+				}
 			}
 			if newTunnelID != types.NoTunnelID {
 				na.idAllocator.ReleaseID(networkName + "_" + node.Name)
@@ -531,6 +555,23 @@ func (na *NodeAllocator) Sync(nodes []interface{}) error {
 	}
 
 	return nil
+}
+
+// subnetsNotPersisted returns the subnets in allocated that are not present in
+// persisted (compared by CIDR string). Used to avoid releasing a subnet that a
+// prior reconcile already wrote to the node's host-subnet annotation.
+func subnetsNotPersisted(allocated, persisted []*net.IPNet) []*net.IPNet {
+	persistedSet := sets.New[string]()
+	for _, s := range persisted {
+		persistedSet.Insert(s.String())
+	}
+	out := make([]*net.IPNet, 0, len(allocated))
+	for _, s := range allocated {
+		if !persistedSet.Has(s.String()) {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // updateNodeNetworkAnnotationsWithRetry will update the node's subnet annotation and network id annotation
