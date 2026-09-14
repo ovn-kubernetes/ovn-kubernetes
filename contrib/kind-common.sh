@@ -70,7 +70,8 @@ set_common_default_params() {
   KIND_CREATE=${KIND_CREATE:-true}
   KIND_IMAGE=${KIND_IMAGE:-kindest/node}
   KIND_CLUSTER_NAME=${KIND_CLUSTER_NAME:-ovn}
-  K8S_VERSION=${K8S_VERSION:-v1.36.1}
+  K8S_VERSION=${K8S_VERSION:-v1.36.2}
+  KIND_BUILD_NODE_IMAGE=${KIND_BUILD_NODE_IMAGE:-auto}
   KIND_SETTLE_DURATION=${KIND_SETTLE_DURATION:-30}
   KIND_CONFIG=${KIND_CONFIG:-${DIR}/kind.yaml.j2}
   KIND_LOCAL_REGISTRY=${KIND_LOCAL_REGISTRY:-false}
@@ -2250,6 +2251,31 @@ delete() {
   kind delete cluster --name "${KIND_CLUSTER_NAME:-ovn}"
 }
 
+ensure_kind_node_image() {
+  local image="${KIND_IMAGE}:${K8S_VERSION}"
+
+  if "${OCI_BIN}" image inspect "${image}" >/dev/null 2>&1; then
+    echo "Using local kind node image ${image}"
+    return
+  fi
+
+  if "${OCI_BIN}" pull "${image}"; then
+    echo "Pulled kind node image ${image}"
+    return
+  fi
+
+  if [[ "${KIND_BUILD_NODE_IMAGE}" == true || "${KIND_BUILD_NODE_IMAGE}" == auto ]] && [[ "${KIND_IMAGE}" == kindest/node ]]; then
+    echo "Kind node image ${image} is not available locally or from the registry. Building it locally."
+    kind build node-image --image "${image}" "${K8S_VERSION}"
+    return
+  fi
+
+  echo "Failed to find or pull kind node image ${image}."
+  echo "Use a published image, or build it locally with:"
+  echo "  kind build node-image --image ${image} ${K8S_VERSION}"
+  exit 1
+}
+
 create_kind_cluster() {
   # Output of the jinjanate command
   KIND_CONFIG_LCL=${DIR}/kind-${KIND_CLUSTER_NAME}.yaml
@@ -2271,6 +2297,8 @@ create_kind_cluster() {
   if [[ "${KIND_LOCAL_REGISTRY}" == true ]]; then
     create_local_registry
   fi
+
+  ensure_kind_node_image
 
   kind create cluster --name "${KIND_CLUSTER_NAME}" --kubeconfig "${KUBECONFIG}" --image "${KIND_IMAGE}":"${K8S_VERSION}" --config=${KIND_CONFIG_LCL} --retain
 
