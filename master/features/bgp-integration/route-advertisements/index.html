@@ -1531,6 +1531,15 @@
 </a>
 </li>
 <li class="md-nav__item">
+<a class="md-nav__link" href="#local-kind-demo">
+<span class="md-ellipsis">
+      
+        Local kind demo
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
 <a class="md-nav__link" href="#user-facing-api-changes">
 <span class="md-ellipsis">
       
@@ -2351,6 +2360,15 @@
 </a>
 </li>
 <li class="md-nav__item">
+<a class="md-nav__link" href="#local-kind-demo">
+<span class="md-ellipsis">
+      
+        Local kind demo
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
 <a class="md-nav__link" href="#user-facing-api-changes">
 <span class="md-ellipsis">
       
@@ -2726,6 +2744,35 @@ by this feature.</p>
 configuration. Please use the <code>Feature Config</code> option
 <code>enable-route-advertisements</code> under <code>OVNKubernetesFeatureConfig</code> config to
 enable it.</p>
+<h2 id="local-kind-demo">Local kind demo<a class="headerlink" href="#local-kind-demo" title="Permanent link">¶</a></h2>
+<p>A local kind cluster can enable route advertisements with
+<code>contrib/kind.sh -mne -rae</code>.
+For FRR-k8s development, apply the patches in
+<code>contrib/frr-k8s/patches</code> to an FRR-k8s checkout and run the patched
+<code>hack/demo/demo.sh</code> script from that checkout.</p>
+<p>Without arguments, the demo configures the main BGP session only. It discovers
+the kind node <code>InternalIP</code> addresses and the external FRR peer address for each
+available IP family. In a dual-stack cluster, the rendered FRR and Kubernetes
+configuration includes both IPv4 and IPv6 peers.</p>
+<p>To add a second BGP session over a VLAN, pass the positional arguments in this
+order:</p>
+<div class="highlight"><pre><span></span><code>$<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>hack/demo<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>./demo.sh<span class="w"> </span>&lt;second-session-interface&gt;<span class="w"> </span>&lt;second-session-vrf&gt;<span class="w"> </span><span class="o">[</span>&lt;second-session-vlan&gt;<span class="w"> </span><span class="o">[</span>&lt;ipv4-sed&gt;<span class="w"> </span><span class="o">[</span>&lt;ipv6-sed&gt;<span class="o">]]]</span>
+</code></pre></div>
+<ul>
+<li><code>&lt;second-session-interface&gt;</code>: VLAN-capable host interface used as the VLAN
+  parent. If omitted, no second BGP session is configured.</li>
+<li><code>&lt;second-session-vrf&gt;</code>: VRF used by the node-side FRR-k8s session. The demo
+  creates the external FRR peer VRF as <code>&lt;second-session-vrf&gt;-ext</code>.</li>
+<li><code>&lt;second-session-vlan&gt;</code>: VLAN ID for the second session. Default: <code>221</code>.</li>
+<li><code>&lt;ipv4-sed&gt;</code>: sed expression applied to the main IPv4 BGP session IPs to
+  derive the second-session IPv4 addresses. Default: <code>s|111|221|g</code>.</li>
+<li><code>&lt;ipv6-sed&gt;</code>: sed expression applied to the main IPv6 BGP session IPs to
+  derive the second-session IPv6 addresses. Default: <code>s|c956|ca56|g</code>.</li>
+</ul>
+<p>Because the values are positional, pass the VLAN ID explicitly when overriding
+only the sed expressions. Second-session mode is supported only with host
+networking; it also requires passwordless <code>sudo</code> when the demo is not run as
+root, and a VLAN-capable interface connected to the second-session network.</p>
 <h2 id="user-facing-api-changes">User-facing API Changes<a class="headerlink" href="#user-facing-api-changes" title="Permanent link">¶</a></h2>
 <p>A new OVN-Kubernetes API is introduced for this feature:
 <a href="../../../api-reference/routeadvertisements-api-spec/"><code>RouteAdvertisements</code></a>.</p>
