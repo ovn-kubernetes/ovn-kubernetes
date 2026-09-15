@@ -14,6 +14,8 @@ const (
 	L3UDNMultiSubnetConfig Config = "L3UDNMultiSubnet"
 	// UDNARPNDPFloodDisabled indicates wheter disabling UDN ARP/NDP flood setting is set true
 	UDNARPNDPFloodDisabled Config = "UDNARPNDPFloodDisabled"
+	// ObservabilityConfig indicates whether OVN observability (sampling) is enabled
+	ObservabilityConfig Config = "Observability"
 )
 
 type ImageID int
