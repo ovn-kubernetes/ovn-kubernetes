@@ -61,7 +61,14 @@ func DeleteRoutingForMigratedPod(nbClient libovsdbclient.Client, pod *corev1.Pod
 	return DeleteRoutingForMigratedPodWithZone(nbClient, pod, "")
 }
 
-// EnsureLocalZonePodAddressesToNodeRoute adds static routes to the ovn_cluster_router logical router
+// EnsureDefaultNetworkForLocalMigratablePod reconciles default-network routing
+// for a local live-migratable pod.
+func EnsureDefaultNetworkForLocalMigratablePod(watchFactory *factory.WatchFactory, nbClient libovsdbclient.Client,
+	lsManager *logicalswitchmanager.LogicalSwitchManager, pod *corev1.Pod, clusterSubnets []config.CIDRNetworkEntry) error {
+	return ensureLocalZonePodAddressesToNodeRoute(watchFactory, nbClient, lsManager, pod, types.DefaultNetworkName, clusterSubnets)
+}
+
+// ensureLocalZonePodAddressesToNodeRoute adds static routes to the ovn_cluster_router logical router
 // so VM traffic works as expected after live migration when the pod is running in the local zone.
 //
 // Following is the list of NB logical resources created:
@@ -69,7 +76,7 @@ func DeleteRoutingForMigratedPod(nbClient libovsdbclient.Client, pod *corev1.Pod
 //   - static route with cluster wide CIDR as src-ip prefix and nexthop GR; it has less
 //     priority than route to use overlay in case of pod to pod communication
 //   - static route with VM ip as dst-ip prefix and output port the LRP pointing to the VM's node switch
-func EnsureLocalZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory, nbClient libovsdbclient.Client,
+func ensureLocalZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory, nbClient libovsdbclient.Client,
 	lsManager *logicalswitchmanager.LogicalSwitchManager, pod *corev1.Pod, nadKey string, clusterSubnets []config.CIDRNetworkEntry) error {
 	vmReady, err := virtualMachineReady(watchFactory, pod)
 	if err != nil {
