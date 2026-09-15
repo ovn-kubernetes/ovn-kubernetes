@@ -381,12 +381,24 @@ moving the common gateway fields under `ovsBridge`.
   IDs or host PCI addresses.
 * `ipAddresses`: host-side shared gateway IP addresses discovered from the selected host interface.
 * `defaultGateways`: default route next-hop IPs discovered from host routing for the selected host interface, when
-  present. This maps to `next-hops` in the existing `l3-gateway-config` shape when internal compatibility requires it. If
-  no default route exists, this field can be empty; egress can still work for destinations covered by BGP-learned routes
-  imported by OVN-Kubernetes. When `RouteAdvertisements targetVRF: auto` resolves the CUDN to per-CUDN VRF-Lite
-  isolation, OVN-Kubernetes does not install the discovered default gateway as the CUDN VRF default route; BGP-imported
-  routes drive external reachability for that isolated VRF. For `targetVRF: default` or no matching `RouteAdvertisements`,
-  normal shared gateway default-route behavior remains.
+  present. Discovery reads the host interface's routes from the routing table they live in: the VRF's table when the
+  interface is enslaved to a VRF, the main table otherwise. This maps to `next-hops` in the existing `l3-gateway-config`
+  shape when internal compatibility requires it. If no default route exists, this field can be empty; the Uplink still
+  resolves, no condition degrades, and egress can still work for destinations covered by BGP-learned routes imported by
+  OVN-Kubernetes. Platform monitoring can alert on an empty field where a default gateway is expected. Host route
+  changes generate netlink events, but those events do not currently enqueue Uplink discovery. Discovery therefore
+  polls the host routes at a fixed interval while any addressed IP family lacks a default gateway, publishing newly
+  discovered gateways for use as default route next hops on the OVN gateway router. With VRF-Lite (`targetVRF: auto`),
+  the selected host interface's existing static and DHCP routes, including defaults, are preserved in the CUDN VRF
+  and discovery reads them there. Discovery selects the lowest-metric
+  defaults per IP family through the selected interface and, among their next hops, keeps only the ones with the
+  highest weight, since neither `UplinkState` nor OVN static routes can express weights. It publishes the distinct
+  gateways in deterministic order, up to 256 total across both families per node and Uplink.
+  More than 256 fails discovery with `GatewayInfoUnavailable` and retries, rather than publishing a subset. The API
+  bound accommodates 128 next hops per family; see the [feature documentation](../features/user-defined-networks/uplinks.md)
+  for its rationale. Polling stops once each addressed family has a gateway; subsequent route changes need another
+  reconciliation trigger until
+  [event-driven discovery](https://github.com/ovn-kubernetes/ovn-kubernetes/issues/6784) is implemented.
 
 In DPU deployments, the DPU-Host initializes the top-level status with host-side L3 data. The DPU side patches DPU-local
 fields on the same object, including `ovsBridge.name` and DPU-side validation state.
@@ -647,13 +659,11 @@ CUDN and node:
 
 This decision is level driven. Changes to `RouteAdvertisements`, selected FRR configuration, CUDN labels, node labels, or
 network activation can move an Uplink-backed CUDN between the default routing domain and per-CUDN VRF-Lite isolation.
-OVN-Kubernetes owns only the VRF membership it creates for the selected Uplink interface; it does not create routes,
-delete admin-owned routes, or move bridge/IP/MTU/VLAN configuration owned by the administrator.
+OVN-Kubernetes manages the selected Uplink interface's VRF membership and preserves its static and DHCP routes across
+VRF attachment. Bridge, IP, MTU, and VLAN configuration remain the administrator's responsibility.
 
-For per-CUDN VRF-Lite isolation, OVN-Kubernetes omits or removes the normal shared gateway default route from the UDN VRF
-so egress follows BGP-imported routes instead of falling back to a default route from another routing domain. For the
-default routing domain, or when no matching `RouteAdvertisements` selects the CUDN, the UDN VRF keeps the normal shared
-gateway default route and service route behavior.
+For VRF-Lite, existing default routes through the selected host interface are preserved in the CUDN VRF. The OVN
+gateway router uses the discovered default gateways alongside imported BGP routes for pod egress.
 
 Expected usage with VRF-Lite + shared gateway:
 
@@ -685,10 +695,10 @@ then reflects those routes into the CUDN gateway router. This DPU-local VRF is s
 nftables state. For `targetVRF: default` or CUDNs without matching `RouteAdvertisements`, the DPU bridge `LOCAL` interface
 remains in the default VRF and no DPU-local CUDN route-import VRF is created for that CUDN.
 
-In DPU deployments, FRR peering and route import happen on the DPU: BGP-learned routes are not propagated to the
-DPU-Host's CUDN VRF. Host-originated traffic toward the Uplink therefore requires a default gateway route on the
-selected host interface (preserved into the CUDN VRF across enslavement) or a host-side FRR setup; pod traffic toward
-the Uplink is unaffected, since its routes are imported into the gateway router on the DPU.
+In DPU deployments, FRR peering and route import happen on the DPU. Host traffic to off-subnet destinations needs a
+suitable route in the host CUDN VRF, such as a preserved static or default route. A host BGP speaker can also learn
+routes from FRR on the DPU; configuring it is outside this proposal. Pod traffic follows the discovered default
+gateways and imported BGP routes in the OVN gateway router on the DPU.
 
 The DPU-local FRR peering IP is not stored in `UplinkState`. For `targetVRF: auto`, it is expected to be configured on the
 resolved OVS bridge's `LOCAL` interface as local DPU state. OVNKube on the DPU enslaves that `LOCAL` interface to the
@@ -1012,11 +1022,16 @@ path.
   `UplinkState` reports `Resolved=False`. Retries continue while unresolved: discovery reports the failure in the
   `UplinkState` and returns an error, and its controller retries with rate-limited backoff and unbounded attempts,
   re-polling admin-owned host and OVS state, which generates no Kubernetes watch events. Once a side reports success,
-  its published data is refreshed on the next Kubernetes-triggered reconcile.
+  its published data is refreshed on the next Kubernetes-triggered reconcile, with one exception: while the discovered
+  `status.defaultGateways` is missing a default gateway for one of the host interface's address families, the
+  netlink-discovering side publishes success and schedules its own delayed rediscovery, so a default route added later
+  on the host is picked up without a Kubernetes event.
 * Per-node failures are reported on the matching `UplinkState`; `Uplink.status.conditions` reports aggregate health only.
 * If an admin deletes or changes the OVS bridge, OVN-Kubernetes does not recreate or repair the bridge. While discovery
   is unresolved, it updates status and retries validation. A converged `Resolved=True` status is not re-validated until
-  the next Kubernetes event or ovnkube-node restart triggers a reconcile.
+  the next Kubernetes event or ovnkube-node restart triggers a reconcile, except while `status.defaultGateways` is
+  missing a default gateway for one of the host interface's address families, when discovery keeps re-polling the host
+  routes on a fixed interval.
 * If an admin requests deletion of a `Uplink` while one or more CUDNs reference it, OVN-Kubernetes keeps the `Uplink`
   finalizer and deletion remains pending. This prevents accidental disruption of active CUDNs. Since `spec.uplinks` is
   immutable in this OKEP, clearing the reference requires deleting or recreating the CUDN without that `Uplink`. Once no

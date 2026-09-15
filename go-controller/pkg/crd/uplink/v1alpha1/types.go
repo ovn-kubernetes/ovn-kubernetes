@@ -224,9 +224,14 @@ type UplinkStateStatus struct {
 	// +listType=atomic
 	IPAddresses []IPAddressCIDR `json:"ipAddresses,omitempty"`
 
-	// DefaultGateways are default route next-hop IPs discovered for the
-	// selected host interface.
-	// +kubebuilder:validation:MaxItems=2
+	// DefaultGateways are distinct next-hop IPs from the selected host interface's
+	// lowest-metric default routes per IP family. Among those next hops only the
+	// ones with the highest weight are published; weights themselves are not
+	// represented, so lighter next hops of an unequal-weight multipath route are
+	// omitted rather than programmed as equal-cost paths.
+	// The limit is 256 total across both IP families per node and Uplink; it is
+	// an API bound, not a guarantee of dataplane or hardware offload capacity.
+	// +kubebuilder:validation:MaxItems=256
 	// +optional
 	// +listType=atomic
 	DefaultGateways []IPAddress `json:"defaultGateways,omitempty"`

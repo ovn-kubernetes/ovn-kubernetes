@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 	"golang.org/x/time/rate"
 
 	corev1 "k8s.io/api/core/v1"
@@ -25,6 +26,7 @@ import (
 	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
+	utilnet "k8s.io/utils/net"
 	"k8s.io/utils/ptr"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
@@ -50,6 +52,16 @@ const (
 	dpuFieldManager      = "ovnkube-node-uplink-controller-dpu"
 	dpuHostFieldManager  = "ovnkube-node-uplink-controller-dpu-host"
 	ovsIntegrationBridge = "br-int"
+
+	// missingDefaultGatewayRepollInterval paces the rediscovery of an
+	// UplinkState whose host interface is missing a default gateway route
+	// for one of its address families (see repollMissingDefaultGateways).
+	missingDefaultGatewayRepollInterval = 30 * time.Second
+
+	// maxDefaultGateways matches the status.defaultGateways CRD bound: room
+	// for 128 next hops per family. Overflow fails discovery instead of
+	// publishing an arbitrary subset. See the Uplink feature documentation.
+	maxDefaultGateways = 256
 )
 
 type hostInterfaceState struct {
@@ -368,6 +380,7 @@ func (c *Controller) reconcileUplinkState(key string) error {
 		// Host interface discovery succeeded, which is everything the
 		// DPU-host reports: publish HostDataReady=True. Bridge resolution,
 		// validation and the Resolved condition belong to the DPU side.
+		c.repollMissingDefaultGateways(state.Name, hostInterfaceName, hostState)
 		return c.updateUplinkStateStatus(
 			state,
 			hostInterfaceName,
@@ -475,6 +488,7 @@ func (c *Controller) reconcileUplinkState(key string) error {
 		))
 	}
 
+	c.repollMissingDefaultGateways(state.Name, hostInterfaceName, hostState)
 	return c.updateResolvedUplinkStateStatus(
 		state,
 		hostInterfaceName,
@@ -482,6 +496,57 @@ func (c *Controller) reconcileUplinkState(key string) error {
 		bridgeName,
 		"Uplink discovery succeeded",
 	)
+}
+
+// repollMissingDefaultGateways schedules a delayed rediscovery while an IP
+// family the host interface has an address for is missing its default
+// gateway: netlink route events do not currently enqueue Uplink discovery.
+// Quiet by design —
+// an uplink without a default gateway is valid, so this is not an error and
+// no condition degrades; the empty status.defaultGateways field is the
+// signal. Only the netlink-discovering side re-polls: the DPU reads host
+// data from the UplinkState and is reconciled by its status updates.
+func (c *Controller) repollMissingDefaultGateways(
+	stateName, hostInterfaceName string,
+	hostState *hostInterfaceState,
+) {
+	missing := missingDefaultGatewayFamilies(hostState)
+	if missing == "" {
+		return
+	}
+	klog.V(5).Infof("UplinkState %s: no %s default gateway route found for host interface %s, re-polling",
+		stateName, missing, hostInterfaceName)
+	c.uplinkStateController.ReconcileAfter(stateName, missingDefaultGatewayRepollInterval)
+}
+
+// missingDefaultGatewayFamilies names the IP families ("IPv4", "IPv6" or
+// "IPv4/IPv6") the host interface has an address but no default gateway for,
+// or "" if none.
+func missingDefaultGatewayFamilies(hostState *hostInterfaceState) string {
+	wantV4, wantV6 := false, false
+	for _, ipAddress := range hostState.ipAddresses {
+		if utilnet.IsIPv6CIDR(ipAddress) {
+			wantV6 = true
+		} else {
+			wantV4 = true
+		}
+	}
+	for _, gateway := range hostState.defaultGateways {
+		if utilnet.IsIPv6(gateway) {
+			wantV6 = false
+		} else {
+			wantV4 = false
+		}
+	}
+	switch {
+	case wantV4 && wantV6:
+		return "IPv4/IPv6"
+	case wantV4:
+		return "IPv4"
+	case wantV6:
+		return "IPv6"
+	}
+	return ""
 }
 
 // reconcileOwnerOfDeletedUplinkState reacts to an UplinkState deletion: the deletion
@@ -1036,7 +1101,7 @@ func (d netlinkHostInterfaceDiscoverer) Discover(hostInterfaceName string) (*hos
 				hostInterfaceName, err),
 		)
 	}
-	routes, err := util.GetNetLinkOps().RouteList(link, netlink.FAMILY_ALL)
+	routes, err := hostInterfaceRoutes(link)
 	if err != nil {
 		return nil, newDiscoveryError(
 			uplinkv1alpha1.UplinkStateReasonGatewayInfoUnavailable,
@@ -1044,12 +1109,13 @@ func (d netlinkHostInterfaceDiscoverer) Discover(hostInterfaceName string) (*hos
 		)
 	}
 
-	defaultGateways := make([]net.IP, 0, len(routes))
-	for _, route := range routes {
-		if !isDefaultRoute(route) || route.Gw == nil {
-			continue
-		}
-		defaultGateways = append(defaultGateways, route.Gw)
+	defaultGateways := defaultGatewaysForLink(routes, link.Attrs().Index)
+	if len(defaultGateways) > maxDefaultGateways {
+		return nil, newDiscoveryError(
+			uplinkv1alpha1.UplinkStateReasonGatewayInfoUnavailable,
+			fmt.Errorf("host interface %s has %d distinct default gateway next hops, exceeding the UplinkState limit of %d",
+				hostInterfaceName, len(defaultGateways), maxDefaultGateways),
+		)
 	}
 	return &hostInterfaceState{
 		macAddress:      macAddress,
@@ -1082,6 +1148,93 @@ func discoverHostFunction(hostInterfaceName string) *uplinkv1alpha1.HostFunction
 	klog.V(5).Infof("No host function for host interface %s: not a VF (%v), not a PF (%v)",
 		hostInterfaceName, vfErr, pfErr)
 	return nil
+}
+
+// hostInterfaceRoutes lists the routes of the table that holds the host
+// interface's routes: the VRF's routing table when the interface is enslaved
+// to a VRF, since it keeps its routes there, the default route included, and
+// the main table otherwise. The dump filters by table only and leaves
+// matching the interface to the caller: a multipath route carries an output
+// interface and gateway per nexthop and none at the route level, so an OIF
+// filter drops it entirely.
+func hostInterfaceRoutes(link netlink.Link) ([]netlink.Route, error) {
+	table := unix.RT_TABLE_MAIN
+	if masterIndex := link.Attrs().MasterIndex; masterIndex != 0 {
+		master, err := util.GetNetLinkOps().LinkByIndex(masterIndex)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get master device of %s: %w",
+				link.Attrs().Name, err)
+		}
+		if vrf, ok := master.(*netlink.Vrf); ok {
+			table = int(vrf.Table)
+		}
+	}
+	return util.GetNetLinkOps().RouteListFiltered(
+		netlink.FAMILY_ALL,
+		&netlink.Route{Table: table},
+		netlink.RT_FILTER_TABLE,
+	)
+}
+
+// defaultGatewaysForLink returns the distinct gateways of the default routes
+// that leave through the link, per IP family: only the lowest-metric routes
+// count, and among their next hops only the ones with the highest weight.
+// UplinkState and the programmed routes carry no weights, so the lighter next
+// hops of an unequal-weight multipath route are dropped rather than promoted
+// to equal-cost paths.
+func defaultGatewaysForLink(routes []netlink.Route, linkIndex int) []net.IP {
+	type gatewayCandidates struct {
+		metric   int
+		nextHops []*netlink.NexthopInfo
+	}
+	defaults := make(map[bool]gatewayCandidates)
+	addNextHop := func(nextHop *netlink.NexthopInfo, metric int) {
+		if nextHop.LinkIndex != linkIndex || nextHop.Gw == nil {
+			return
+		}
+		isV6 := nextHop.Gw.To4() == nil
+		current, found := defaults[isV6]
+		if !found || metric < current.metric {
+			current = gatewayCandidates{metric: metric}
+		}
+		if metric == current.metric {
+			current.nextHops = append(current.nextHops, nextHop)
+			defaults[isV6] = current
+		}
+	}
+	for _, route := range routes {
+		if !isDefaultRoute(route) {
+			continue
+		}
+		if route.LinkIndex == linkIndex && route.Gw != nil {
+			addNextHop(&netlink.NexthopInfo{LinkIndex: route.LinkIndex, Gw: route.Gw}, route.Priority)
+			continue
+		}
+		// TODO: Resolve next-hop IDs (nhid) when routes omit gateway IPs.
+		for _, nexthop := range route.MultiPath {
+			addNextHop(nexthop, route.Priority)
+		}
+	}
+
+	gateways := make([]net.IP, 0, len(routes))
+	seen := make(map[string]bool)
+	for _, isV6 := range []bool{false, true} {
+		nextHops := defaults[isV6].nextHops
+		// netlink reports a next hop's weight minus one as Hops.
+		maxHops := 0
+		for _, nextHop := range nextHops {
+			maxHops = max(maxHops, nextHop.Hops)
+		}
+		for _, nextHop := range nextHops {
+			if nextHop.Hops != maxHops || seen[nextHop.Gw.String()] {
+				continue
+			}
+			seen[nextHop.Gw.String()] = true
+			gateways = append(gateways, nextHop.Gw)
+		}
+	}
+	sort.Slice(gateways, func(i, j int) bool { return gateways[i].String() < gateways[j].String() })
+	return gateways
 }
 
 func isDefaultRoute(route netlink.Route) bool {

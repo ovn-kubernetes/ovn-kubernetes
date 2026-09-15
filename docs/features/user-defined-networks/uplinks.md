@@ -131,7 +131,10 @@ For non-DPU deployments, the administrator provisions the OVS bridge before the
 
 * An internal interface named by `hostInterfaceName`.
 * One physical uplink port that reaches the external network.
-* The expected IP addresses and default gateways on the internal interface.
+* The expected IP addresses on the internal interface. Default gateways are
+  optional: an uplink without them is valid, and discovery polls for missing
+  gateways (see the default gateway discussion under DPU
+  Deployments, which applies to regular deployments as well).
 * Link state up on the bridge, internal interface, and physical uplink.
 * MTU configured consistently on the physical NIC, bridge, and bridge ports.
 
@@ -179,6 +182,65 @@ to the host uplink path.
 The same MTU requirement applies in DPU deployments. The host-side interface,
 DPU representor, DPU OVS bridge, and physical uplink must be configured
 consistently by the platform.
+
+Host-originated traffic towards the uplink (host services, node processes)
+follows the host routing tables. On-link destinations are reachable with no
+extra configuration; only when such traffic must reach destinations beyond
+the uplink subnet does it need a suitable host route, such as a specific
+static route or a default route on the host interface.
+Alternatively, a BGP speaker on the host can learn those routes from FRR on
+the DPU; setting that up is outside the scope of OVN-Kubernetes.
+Pod-to-uplink traffic is forwarded by the OVN gateway router on the DPU
+without a host routing lookup. The gateway router uses the discovered default
+gateways and, for advertised networks, imported FRR-learned routes. Programming
+the discovered defaults still depends on host route discovery; the packets
+themselves do not traverse host routing. An `UplinkState` with an empty
+`status.defaultGateways` reports that no default gateway route was discovered
+on the host interface; discovery keeps re-polling the host routes (in the
+interface's VRF routing table when it is enslaved to a VRF) while an addressed
+IP family lacks a gateway, and publishes newly discovered default gateways.
+Discovery selects the lowest-metric defaults per IP family through the selected
+host interface, including embedded multipath next hops. When those next hops
+carry unequal weights, only the heaviest ones are kept: neither `UplinkState`
+nor the programmed routes can express weights, so the lighter paths are omitted
+rather than promoted to equal-cost paths. It publishes the distinct gateways in
+deterministic order, up to 256 total across both IP families per node and
+Uplink. Each network on the uplink installs the published gateways for its
+configured IP families as ECMP default routes on its OVN gateway router.
+
+With VRF-Lite (`targetVRF: auto`), OVN-Kubernetes moves the selected host
+interface into the CUDN VRF and preserves its existing static and DHCP routes,
+including default routes. Discovery reads those defaults from the CUDN VRF
+and publishes the gateways for use by the OVN gateway router.
+
+An uplink without a default gateway is valid, so no condition degrades when
+one is missing. Platform monitoring can alert on an empty
+`status.defaultGateways` where a default gateway is expected.
+
+Polling stops once every addressed family has a gateway; later changes need
+another reconciliation trigger ([#6784](https://github.com/ovn-kubernetes/ovn-kubernetes/issues/6784)).
+The API limit of 256 gateways accommodates 128 per family, twice
+[Cumulus Linux's default of 64 BGP multipaths](https://docs.nvidia.com/networking-ethernet-software/cumulus-linux-518/Layer-3/Border-Gateway-Protocol-BGP/Optional-BGP-Configuration/),
+and discovery reports `GatewayInfoUnavailable` if the limit is exceeded.
+
+The two traffic paths toward the uplink:
+
+```mermaid
+flowchart TB
+    host["host process<br/>(off-subnet destination)"] -->|"host routing tables:<br/>static or BGP-learned routes"| uplink["physical uplink"]
+    pod["pod"] -->|OVN datapath| gr["OVN gateway router (DPU)"]
+    gr -->|"discovered default gateways and<br/>FRR-learned routes (advertised networks)"| uplink
+```
+
+Default gateway discovery for a VRF-Lite Uplink:
+
+```mermaid
+flowchart LR
+    poll["discovery reads the interface's<br/>routes in the CUDN VRF"] -->|no default route| empty["status.defaultGateways: []<br/>no condition degrades"]
+    empty -->|re-poll| poll
+    poll -->|default route present| pub["status.defaultGateways<br/>published"]
+    pub --> gr["default routes on the<br/>OVN gateway router"]
+```
 
 ## UplinkState and Conditions
 
@@ -503,11 +565,13 @@ DPU-Host publishes the host interface data and the `HostDataReady` and
 
 In DPU deployments, FRR peering and route import happen on the DPU:
 BGP-learned routes are not propagated to the DPU-Host's CUDN VRF.
-Host-originated traffic toward the Uplink therefore requires a default
-gateway route on the selected host interface (preserved into the CUDN VRF
-across enslavement) or a host-side FRR setup; pod traffic toward the Uplink
-is unaffected, since its routes are imported into the gateway router on the
-DPU.
+Host-originated traffic toward destinations beyond the host interface's
+subnet therefore requires a suitable host route: a static route, a default
+route preserved into the CUDN VRF across enslavement, or a route learned by a
+separately configured host BGP speaker. On-link host traffic uses the connected
+subnet route. Pod traffic uses the DPU gateway router, whose routes come from
+the published default gateways and, for advertised networks, imported BGP
+routes.
 
 ```text
              DPU                                DPU-Host

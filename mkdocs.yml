@@ -129,6 +129,7 @@ nav:
       - EgressFirewall: api-reference/egress-firewall-api-spec.md
       - AdminPolicyBasedExternalRoutes: api-reference/admin-epbr-api-spec.md
       - UserDefinedNetwork: api-reference/userdefinednetwork-api-spec.md
+      - Uplink and UplinkState: api-reference/uplink-api-spec.md
       - RouteAdvertisements: api-reference/routeadvertisements-api-spec.md
       - ClusterNetworkConnect: api-reference/clusternetworkconnect-api-spec.md
       - VTEP: api-reference/vtep-api-spec.md

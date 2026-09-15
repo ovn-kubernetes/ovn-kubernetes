@@ -539,6 +539,32 @@ var _ = ginkgo.Describe("VRF manager", func() {
 			nlMock.AssertCalled(ginkgo.GinkgoT(), "RouteReplace", &taggedRoute)
 		})
 
+		ginkgo.It("replaces a tracked route with the same key instead of accumulating it", func() {
+			enslaveLinkMock1.On("Attrs").Return(&netlink.LinkAttrs{Name: enslaveLinkName1, MasterIndex: getLinkIndex(vrfLinkName1), Index: getLinkIndex(enslaveLinkName1)}, nil)
+			nlMock.On("RouteListFiltered", mock.Anything, mock.Anything, mock.Anything).Return(nil, nil)
+			nlMock.On("RouteReplace", mock.Anything).Return(nil)
+			defaultVia := func(gateway string) netlink.Route {
+				return netlink.Route{
+					LinkIndex: getLinkIndex(enslaveLinkName1),
+					Dst:       ovntest.MustParseIPNet("0.0.0.0/0"),
+					Gw:        net.ParseIP(gateway),
+					Table:     int(getVRFTable(vrfLinkName1)),
+				}
+			}
+			err := c.AddVRF(vrfLinkName1, enslaveLinkName1, getVRFTable(vrfLinkName1), []netlink.Route{defaultVia("192.168.1.1")})
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+
+			// Route manager keys by destination, table and metric: the
+			// default via the new gateway replaces the tracked one, and
+			// re-adding it leaves a single entry.
+			for range 2 {
+				gomega.Expect(c.AddVRFRoutes(vrfLinkName1, []netlink.Route{defaultVia("192.168.1.2")})).To(gomega.Succeed())
+			}
+			replacement := defaultVia("192.168.1.2")
+			replacement.Protocol = netlink.RouteProtocol(types.OVNKProtocol)
+			gomega.Expect(c.vrfs[getLinkIndex(vrfLinkName1)].routes).To(gomega.ConsistOf(replacement))
+		})
+
 		ginkgo.It("does not delete a VRF whose slave release failed", func() {
 			slaveLinkIndex := getLinkIndex(enslaveLinkName1)
 			enslaveLinkMock1.On("Attrs").Return(&netlink.LinkAttrs{Name: enslaveLinkName1, MasterIndex: getLinkIndex(vrfLinkName1), Index: slaveLinkIndex}, nil)

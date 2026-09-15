@@ -174,6 +174,11 @@ func (c *UplinkGatewayController) ReconcileNetwork(network util.NetInfo, reconci
 	reconcileErr := reconcile()
 	uplinkState.operationMutex.Unlock()
 
+	if errors.Is(reconcileErr, errUplinkReconcileStopped) {
+		// Nothing was programmed: leave the network pending rather than
+		// reporting a result for a reconcile that never ran.
+		return reconcileErr
+	}
 	statusErr := c.completeNetworkReconcile(network, generation, reconcileErr)
 	return utilerrors.Join(reconcileErr, statusErr)
 }

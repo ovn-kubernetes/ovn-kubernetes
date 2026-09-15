@@ -881,27 +881,39 @@ func getExternalContainerInterfaceIPsOnNetwork(containerName, networkName string
 // getExternalContainerInterfaceIPs returns IPv4 and IPv6 addresses configured
 // on the given interface inside the given external container. This is useful
 // for manually-configured interfaces like VLAN interfaces.
+// ipAddrInfo and ipAddrJSON replicate the relevant fields of the JSON output
+// of "ip -j addr show": one ipAddrJSON per link, one ipAddrInfo per address.
+type ipAddrInfo struct {
+	Family    string `json:"family"`
+	Local     string `json:"local"`
+	PrefixLen int    `json:"prefixlen"`
+	Scope     string `json:"scope"`
+}
+
+type ipAddrJSON struct {
+	AddrInfo []ipAddrInfo `json:"addr_info"`
+}
+
+// parseIPAddrJSON decodes the output of "ip -j addr show".
+func parseIPAddrJSON(out string) ([]ipAddrJSON, error) {
+	var parsed []ipAddrJSON
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		return nil, fmt.Errorf("failed to parse ip -j addr output: %w", err)
+	}
+	return parsed, nil
+}
+
 func getExternalContainerInterfaceIPs(containerName, ifaceName string) ([]string, []string, error) {
 	container := infraapi.ExternalContainer{Name: containerName}
-
-	// Replicates the relevant fields from the json output by "ip -j addr show"
-	type addrInfo struct {
-		Family string `json:"family"`
-		Local  string `json:"local"`
-		Scope  string `json:"scope"`
-	}
-	type ipAddrJSON struct {
-		AddrInfo []addrInfo `json:"addr_info"`
-	}
 
 	out, err := infraprovider.Get().ExecExternalContainerCommand(
 		container, []string{"ip", "-j", "addr", "show", "dev", ifaceName})
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to exec on container %q: %w", containerName, err)
 	}
-	var parsed []ipAddrJSON
-	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
-		return nil, nil, fmt.Errorf("failed to parse ip -j output: %w", err)
+	parsed, err := parseIPAddrJSON(out)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	var v4, v6 []string
