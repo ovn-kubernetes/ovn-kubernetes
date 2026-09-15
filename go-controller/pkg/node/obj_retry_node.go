@@ -343,9 +343,12 @@ func (h *nodeEventHandler) DeleteResource(obj, _ interface{}) error {
 		return h.nc.reconcileConntrackUponEndpointSliceEvents(endpointslice, nil)
 
 	case factory.NodeType:
-		h.nc.deleteNode(obj.(*corev1.Node))
-		if config.IsModeDPUHost() || config.IsModeFull() {
-			_ = managementport.UpdateNoSNATSubnetsSets(obj.(*corev1.Node), func(_ *corev1.Node) ([]string, error) {
+		node := obj.(*corev1.Node)
+		h.nc.deleteNode(node)
+		// Only clear the no-SNAT nftables sets when the LOCAL node is deleted.
+		// Remote node deletions must not touch local nftables state.
+		if node.Name == h.nc.name && (config.IsModeDPUHost() || config.IsModeFull()) {
+			_ = managementport.UpdateNoSNATSubnetsSets(node, func(_ *corev1.Node) ([]string, error) {
 				return []string{}, nil
 			})
 		}

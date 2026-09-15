@@ -440,13 +440,30 @@ var _ = ginkgo.Describe("Local Gateway Pod Subnet SNAT", feature.Service, func()
 
 			pod, err = cs.CoreV1().Pods(f.Namespace.Name).Get(context.Background(), testPodName, metav1.GetOptions{})
 			framework.ExpectNoError(err, "failed to get test pod")
-			podIP := pod.Status.PodIP
+
+			// Select the pod IP matching the tested address family.
+			// On dual-stack clusters Status.PodIP is always the default (IPv4) family,
+			// so we must select from PodIPs to get the correct IPv6 address.
+			var podIP string
+			for _, pip := range pod.Status.PodIPs {
+				addr := net.ParseIP(pip.IP)
+				if addr == nil {
+					continue
+				}
+				if isIPv6 == (addr.To4() == nil) {
+					podIP = pip.IP
+					break
+				}
+			}
+			if podIP == "" {
+				e2eskipper.Skipf("Pod has no %s address", protocol)
+			}
 			framework.Logf("Test pod IP: %s", podIP)
 
 			// Select node IP matching the pod IP family to avoid mismatches on dual-stack clusters.
 			node, err := cs.CoreV1().Nodes().Get(context.Background(), nodeName, metav1.GetOptions{})
 			framework.ExpectNoError(err, "failed to get node")
-			podIsIPv6 := net.ParseIP(podIP) != nil && net.ParseIP(podIP).To4() == nil
+			podIsIPv6 := isIPv6
 			var nodeIP string
 			for _, addr := range node.Status.Addresses {
 				if addr.Type == corev1.NodeInternalIP {
