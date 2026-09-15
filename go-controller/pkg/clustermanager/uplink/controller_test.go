@@ -768,6 +768,23 @@ func TestUplinkControllerRequiresHostGatewayReadyInSplitDPUMode(t *testing.T) {
 			expectedReason: reasonUplinksNotReady,
 		},
 		{
+			name: "not ready while no host-side CUDN has reported programming",
+			extraConditions: []metav1.Condition{
+				{
+					Type:   uplinkv1alpha1.UplinkStateConditionHostDataReady,
+					Status: metav1.ConditionTrue,
+					Reason: uplinkv1alpha1.UplinkStateReasonHostDataDiscovered,
+				},
+				{
+					Type:   uplinkv1alpha1.UplinkStateConditionHostGatewayReady,
+					Status: metav1.ConditionTrue,
+					Reason: uplinkv1alpha1.UplinkStateReasonNoActiveCUDNs,
+				},
+			},
+			expectedStatus: metav1.ConditionFalse,
+			expectedReason: reasonNoActiveCUDNs,
+		},
+		{
 			name: "not ready on host-side VRF attachment failure",
 			extraConditions: []metav1.Condition{
 				{
@@ -873,18 +890,15 @@ func TestUplinkControllerReportsCUDNGatewayProgrammingPending(t *testing.T) {
 	))
 }
 
-func TestUplinkControllerPropagatesCUDNGatewayConfigurationPending(t *testing.T) {
+func TestUplinkControllerWaitsForFirstCUDNGatewayResult(t *testing.T) {
 	g := gomega.NewWithT(t)
 	setSharedGatewayMode(t)
+	state := newResolvedUplinkState("br-blue", "node-a", "br-blue")
+	state.Status.Conditions[1].Reason = uplinkv1alpha1.UplinkStateReasonNoActiveCUDNs
 	controller, client := newTestController(t,
 		newNode("node-a", map[string]string{"role": "blue"}),
 		newUplink("br-blue", "role", "blue", "br-blue"),
-		newGatewayFailedUplinkState(
-			"br-blue",
-			"node-a",
-			"br-blue",
-			uplinkv1alpha1.UplinkStateReasonGatewayConfigurationPending,
-		),
+		state,
 		newCUDN("blue", "br-blue"),
 	)
 
@@ -893,8 +907,8 @@ func TestUplinkControllerPropagatesCUDNGatewayConfigurationPending(t *testing.T)
 	cond := getCUDNCondition(g, client, "blue", conditionTypeUplinksReady)
 	g.Expect(cond).To(gomega.And(
 		gomega.HaveField("Status", metav1.ConditionFalse),
-		gomega.HaveField("Reason", reasonGatewayConfigurationPending),
-		gomega.HaveField("Message", gomega.ContainSubstring("br-blue/node-a=GatewayConfigurationPending")),
+		gomega.HaveField("Reason", reasonNoActiveCUDNs),
+		gomega.HaveField("Message", gomega.ContainSubstring("br-blue/node-a=NoActiveCUDNs")),
 	))
 }
 

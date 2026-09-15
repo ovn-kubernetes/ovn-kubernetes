@@ -546,7 +546,8 @@ func (g *gateway) Reconcile() error {
 
 // ReconcileNetwork rebuilds the shared bridge flows after a primary UDN is added
 // and resyncs only that network's namespaces' services. Advertised-state changes
-// must go through UserDefinedNetworkGateway.Reconcile (doReconcile), not this.
+// must go through UserDefinedNetworkGateway.Reconcile (reconcileAdvertisedState),
+// not this.
 func (g *gateway) ReconcileNetwork(netInfo util.NetInfo) error {
 	return g.reconcile(func() []error {
 		return g.resyncNetworkServices(netInfo)

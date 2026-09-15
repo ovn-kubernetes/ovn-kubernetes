@@ -64,7 +64,7 @@ const (
 	reasonUplinkNotFoundForNode          = "UplinkNotFoundForNode"
 	reasonUplinkNotResolvedForNode       = "UplinkNotResolvedForNode"
 	reasonUplinkTerminating              = "UplinkTerminating"
-	reasonGatewayConfigurationPending    = "GatewayConfigurationPending"
+	reasonNoActiveCUDNs                  = "NoActiveCUDNs"
 	reasonUplinkVRFAttachmentFailed      = "UplinkVRFAttachmentFailed"
 	reasonUplinkBridgeMappingFailed      = "UplinkBridgeMappingFailed"
 	reasonUplinkGatewayProgrammingFailed = "UplinkGatewayProgrammingFailed"
@@ -850,11 +850,12 @@ func cudnUplinkStateGatewayConditionNotReadyReason(state *uplinkv1alpha1.UplinkS
 		return reasonUplinksNotReady
 	}
 	if condition.Status == metav1.ConditionTrue {
+		if condition.Reason == uplinkv1alpha1.UplinkStateReasonNoActiveCUDNs {
+			return reasonNoActiveCUDNs
+		}
 		return ""
 	}
 	switch condition.Reason {
-	case uplinkv1alpha1.UplinkStateReasonGatewayConfigurationPending:
-		return reasonGatewayConfigurationPending
 	case uplinkv1alpha1.UplinkStateReasonVRFAttachmentFailed:
 		return reasonUplinkVRFAttachmentFailed
 	case uplinkv1alpha1.UplinkStateReasonBridgeMappingFailed:

@@ -219,17 +219,18 @@ status:
 ```
 
 The `Resolved` condition reports node-local host interface and OVS bridge
-discovery. The `GatewayReady` condition reports aggregate gateway programming
-for every CUDN active on this Uplink and node. This includes bridge mappings,
+discovery. The `GatewayReady` condition reports aggregate results from CUDN
+gateway programming on this Uplink and node. This includes bridge mappings,
 physical patch ports, per-network bridge configuration, OpenFlow, and VRF
-attachment. When the active CUDN set changes, `GatewayReady` first becomes
-`False` with reason `GatewayConfigurationPending` and returns to `True` only
-after the complete active set converges. A gateway programming failure does not
-change discovery `Resolved`; the CUDN-specific `UplinksReady` condition reflects
-both states. In split DPU mode the host-side share of gateway programming, the
-VRF attachment of the Uplink gateway interface on the DPU-Host, is reported
-separately on the `HostGatewayReady` condition, and the CUDN `UplinksReady`
-condition requires both.
+attachment. With no reported CUDNs, `GatewayReady=True` with reason
+`NoActiveCUDNs`. A successful CUDN result changes the reason to
+`GatewayConfigured`; a reported programming failure changes the condition to
+`False` with a reason that identifies the failing operation. A gateway
+programming failure does not change discovery `Resolved`; the CUDN-specific
+`UplinksReady` condition reflects both states. In split DPU mode the host-side
+share of gateway programming, the VRF attachment of the Uplink gateway
+interface on the DPU-Host, is reported separately on the `HostGatewayReady`
+condition, and the CUDN `UplinksReady` condition requires both.
 
 The `Uplink` object reports aggregate status:
 
@@ -284,12 +285,11 @@ on the `Uplink` so it cannot be deleted while still selected by a CUDN.
 `UplinkState` objects are exclusively owned by OVN-Kubernetes and recover from
 out-of-band deletion: if an `UplinkState` is deleted directly (for example with
 `kubectl delete`), ovnkube-node recreates it without a restart, discovery
-republishes `Resolved=True`, a previously published `GatewayReady` condition is
-restored (on a brand-new `UplinkState` it still appears only once gateway
-programming has run), and the CUDN returns to `UplinksReady=True`. An `UplinkState` is not
-recreated when its `Uplink` is terminating (its `UplinkState` objects are
-deleted on purpose during teardown), no longer exists, or no longer selects the
-node.
+republishes `Resolved=True`, and each active CUDN reports its gateway result
+against the recreated object's UID and configuration. The CUDN returns to
+`UplinksReady=True` after that report. An `UplinkState` is not recreated when
+its `Uplink` is terminating (its `UplinkState` objects are deleted on purpose
+during teardown), no longer exists, or no longer selects the node.
 
 The CUDN reports a CUDN-specific `UplinksReady` condition. This condition is
 computed from the active nodes for that CUDN, not directly from aggregate
@@ -298,6 +298,31 @@ the same `Uplink` but be active on different nodes.
 
 For a CUDN that does not set `spec.uplinks`, `UplinksReady=True` and existing
 gateway behavior is preserved.
+
+### Gateway Lifecycle and Configuration Changes
+
+OVN-Kubernetes keeps gateway programming for active CUDNs synchronized with
+the resolved Uplink configuration. If the selected host interface, OVS bridge,
+MAC address, IP addresses, or default gateways change, each active CUDN is
+reprogrammed and reports its result for that exact UplinkState object and input
+configuration. Results from a deleted, recreated, or subsequently changed
+UplinkState are discarded. A failed current reconfiguration is visible through
+`GatewayReady=False` and is retried.
+
+`GatewayReady` is an Uplink/node aggregate rather than per-CUDN status. When no
+CUDN has reported programming, `NoActiveCUDNs` keeps a newly active CUDN's
+`UplinksReady` condition false until its first result arrives. If other CUDNs
+already report successful programming on the same Uplink and node, adding one
+more CUDN does not temporarily change the shared condition to false. A later
+failure from that CUDN changes the aggregate condition to false. Precise
+in-progress readiness for each CUDN would require per-CUDN, per-node status.
+
+If an Uplink stops selecting a node, ovnkube-node withdraws the active CUDN
+gateway programming before deleting the node's `UplinkState`. Selecting the
+node again creates a fresh lifecycle and programs the gateways from newly
+resolved state. By contrast, recreating an `UplinkState` with an unchanged
+resolved configuration restores its readiness condition without disrupting
+working gateway programming.
 
 ## Dynamic UDN
 
@@ -455,9 +480,10 @@ Common problems:
   carries the cause, for example `HostInterfaceNotFound` when the selected
   `hostInterfaceName` does not exist on the DPU-Host, or
   `GatewayInfoUnavailable` when the interface has no IP addresses yet.
-* `UplinkState` with `GatewayReady` condition status `False` and reason
-  `GatewayConfigurationPending`: the active CUDN set changed and complete
-  gateway programming has not converged yet.
+* `UplinkState` with `GatewayReady` condition status `True` and reason
+  `NoActiveCUDNs`: no active CUDN gateway has reported programming on this
+  Uplink and node. An active CUDN waits for its first result before reporting
+  `UplinksReady=True`.
 * `UplinkState` with `GatewayReady` condition status `False` and reason
   `UplinkBridgeMappingFailed`: OVN-Kubernetes could not configure the CUDN
   bridge mappings or discover a physical patch port on the resolved OVS bridge.

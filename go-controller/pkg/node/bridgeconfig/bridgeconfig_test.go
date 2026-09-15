@@ -4,8 +4,12 @@
 package bridgeconfig
 
 import (
+	"context"
 	"fmt"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/k8snetworkplumbingwg/sriovnet"
 	"github.com/onsi/gomega"
@@ -24,6 +28,102 @@ import (
 	utilmocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
+
+type blockingListOVSClient struct {
+	libovsdbclient.Client
+	listEntered  chan int32
+	releaseFirst chan struct{}
+	listCalls    atomic.Int32
+}
+
+func (c *blockingListOVSClient) List(ctx context.Context, result interface{}) error {
+	call := c.listCalls.Add(1)
+	c.listEntered <- call
+	if call == 1 {
+		<-c.releaseFirst
+	}
+	return c.Client.List(ctx, result)
+}
+
+func TestBridgedGatewayNodeSetupSerializesBridgeMappingUpdates(t *testing.T) {
+	g := gomega.NewWithT(t)
+	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+	t.Cleanup(func() { _ = config.PrepareTestConfig() })
+	config.IPv4Mode = false
+	config.IPv6Mode = false
+
+	ovsClient, cleanup, err := libovsdbtest.NewOVSTestHarness(
+		libovsdbtest.TestSetup{OVSData: []libovsdbtest.TestData{
+			&vswitchd.OpenvSwitch{UUID: "root-ovs"},
+		}},
+	)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	t.Cleanup(cleanup.Cleanup)
+
+	client := &blockingListOVSClient{
+		Client:       ovsClient,
+		listEntered:  make(chan int32, 2),
+		releaseFirst: make(chan struct{}),
+	}
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := bridgedGatewayNodeSetup(client, "node-a", "br-a", "phys-a")
+		firstDone <- err
+	}()
+	if call := <-client.listEntered; call != 1 {
+		t.Fatalf("expected first bridge-mapping read, got call %d", call)
+	}
+
+	secondStarted := make(chan struct{})
+	secondDone := make(chan error, 1)
+	go func() {
+		close(secondStarted)
+		_, err := bridgedGatewayNodeSetup(client, "node-a", "br-b", "phys-b")
+		secondDone <- err
+	}()
+	<-secondStarted
+	enteredConcurrently := false
+	select {
+	case <-client.listEntered:
+		enteredConcurrently = true
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(client.releaseFirst)
+	if err := <-firstDone; err != nil {
+		t.Fatalf("first bridge-mapping update failed: %v", err)
+	}
+	if !enteredConcurrently {
+		select {
+		case call := <-client.listEntered:
+			if call != 2 {
+				t.Fatalf("expected second bridge-mapping read, got call %d", call)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("second bridge-mapping update did not run")
+		}
+	}
+	if err := <-secondDone; err != nil {
+		t.Fatalf("second bridge-mapping update failed: %v", err)
+	}
+	if enteredConcurrently {
+		t.Fatal("bridge-mapping read-modify-write operations ran concurrently")
+	}
+
+	ovs, err := ovsops.GetOpenvSwitch(ovsClient)
+	if err != nil {
+		t.Fatalf("failed to read bridge mappings: %v", err)
+	}
+	mappings := map[string]string{}
+	for _, mapping := range strings.Split(ovs.ExternalIDs["ovn-bridge-mappings"], ",") {
+		parts := strings.SplitN(mapping, ":", 2)
+		if len(parts) == 2 {
+			mappings[parts[0]] = parts[1]
+		}
+	}
+	if mappings["phys-a"] != "br-a" || mappings["phys-b"] != "br-b" {
+		t.Fatalf("concurrent updates lost a bridge mapping: %#v", mappings)
+	}
+}
 
 func TestGetStaticFDBPort(t *testing.T) {
 	tests := []struct {

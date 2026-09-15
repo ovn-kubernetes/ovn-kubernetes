@@ -5,6 +5,7 @@ package node
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -39,6 +40,8 @@ import (
 	rafakeclient "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned/fake"
 	uplinkv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1"
 	uplinkfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/clientset/versioned/fake"
+	uplinkinformerfactory "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/informers/externalversions"
+	uplinkinformers "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/informers/externalversions/uplink/v1alpha1"
 	uplinklisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/listers/uplink/v1alpha1"
 	udnfakeclient "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
@@ -172,7 +175,7 @@ func TestConfigureUplinkGatewayRPFilter(t *testing.T) {
 	}
 }
 
-func TestEnsureUplinkGatewayRequiresValidInterface(t *testing.T) {
+func TestConfigureResolvedUplinkGatewayRequiresValidInterface(t *testing.T) {
 	if err := config.PrepareTestConfig(); err != nil {
 		t.Fatalf("failed to prepare test config: %v", err)
 	}
@@ -233,30 +236,13 @@ func TestEnsureUplinkGatewayRequiresValidInterface(t *testing.T) {
 				netlinkOps.On("LinkByName", tt.interfaceName).Return(link, nil).Once()
 			}
 
-			indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
-			state := &uplinkv1alpha1.UplinkState{
-				ObjectMeta: metav1.ObjectMeta{Name: uplinkutil.StateName("uplink1", "node-a")},
-				Spec: uplinkv1alpha1.UplinkStateSpec{
-					UplinkName: "uplink1",
-					NodeName:   "node-a",
-				},
-				Status: uplinkv1alpha1.UplinkStateStatus{
-					Type:              uplinkv1alpha1.UplinkTypeOVSBridge,
-					HostInterfaceName: uplinkv1alpha1.InterfaceName(tt.interfaceName),
-					MACAddress:        "02:42:ac:12:00:02",
-					IPAddresses:       []uplinkv1alpha1.IPAddressCIDR{"ae70::10/64"},
-				},
-			}
-			if err := indexer.Add(state); err != nil {
-				t.Fatalf("failed to add UplinkState: %v", err)
-			}
 			udng := &UserDefinedNetworkGateway{
-				NetInfo:           netInfo,
-				node:              &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}},
-				uplinkStateLister: uplinklisters.NewUplinkStateLister(indexer),
+				NetInfo: netInfo,
 			}
 
-			_, err := udng.ensureUplinkGateway()
+			_, err := udng.configureResolvedUplinkGateway(&resolvedUplinkGateway{
+				hostInterfaceName: tt.interfaceName,
+			})
 			if tt.wantErr == "" {
 				if err != nil {
 					t.Fatalf("expected no error, got %v", err)
@@ -411,6 +397,275 @@ func TestUplinkVRFAttachmentFailureReason(t *testing.T) {
 	got := uplinkVRFAttachmentFailureReason(fmt.Errorf("netlink failed"))
 	if got != uplinkv1alpha1.UplinkStateReasonVRFAttachmentFailed {
 		t.Fatalf("expected VRF attachment failure reason, got %q", got)
+	}
+}
+
+func resolvedGatewayUplinkState(uplinkName, nodeName string) *uplinkv1alpha1.UplinkState {
+	return &uplinkv1alpha1.UplinkState{
+		ObjectMeta: metav1.ObjectMeta{Name: uplinkutil.StateName(uplinkName, nodeName)},
+		Spec: uplinkv1alpha1.UplinkStateSpec{
+			UplinkName: uplinkName,
+			NodeName:   nodeName,
+		},
+		Status: uplinkv1alpha1.UplinkStateStatus{
+			Type:              uplinkv1alpha1.UplinkTypeOVSBridge,
+			HostInterfaceName: "eth0",
+			OVSBridge:         &uplinkv1alpha1.OVSBridgeStatus{Name: "breth0"},
+			MACAddress:        "02:42:ac:12:00:02",
+			IPAddresses:       []uplinkv1alpha1.IPAddressCIDR{"192.0.2.10/24"},
+			DefaultGateways:   []uplinkv1alpha1.IPAddress{"192.0.2.1"},
+			Conditions: []metav1.Condition{{
+				Type:   uplinkv1alpha1.UplinkStateConditionResolved,
+				Status: metav1.ConditionTrue,
+			}},
+		},
+	}
+}
+
+func newUplinkGatewayReconcileHarness(
+	t *testing.T,
+	state *uplinkv1alpha1.UplinkState,
+) (*UserDefinedNetworkGateway, *utilmocks.NetLinkOps, *v1mocks.NodeLister) {
+	t.Helper()
+	const (
+		uplinkName = "uplink1"
+		nodeName   = "node-a"
+		networkID  = "3"
+	)
+
+	nad := generateUplinkNAD("red", "red-nad", "test", types.Layer3Topology,
+		"100.128.0.0/16/24", types.NetworkRolePrimary, uplinkName)
+	ovntest.AnnotateNADWithNetworkID(networkID, nad)
+	netInfo, err := util.ParseNADInfo(nad)
+	if err != nil {
+		t.Fatalf("failed to parse Uplink network: %v", err)
+	}
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: nodeName,
+			Annotations: map[string]string{
+				types.NodeSubnetsAnnotation: `{"red":["100.128.0.0/24"]}`,
+			},
+		},
+	}
+
+	netlinkOps := utilmocks.NewNetLinkOps(t)
+	originalNetlinkOps := util.GetNetLinkOps()
+	util.SetNetLinkOpMockInst(netlinkOps)
+	t.Cleanup(func() { util.SetNetLinkOpMockInst(originalNetlinkOps) })
+	netlinkOps.On("LinkByName", "breth0").Return(
+		&netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "breth0", Index: 1}}, nil,
+	).Once()
+
+	uplinkClient := uplinkfake.NewSimpleClientset(state)
+	informerFactory := uplinkinformerfactory.NewSharedInformerFactory(uplinkClient, 0)
+	uplinkStateInformer := informerFactory.K8s().V1alpha1().UplinkStates()
+	_ = uplinkStateInformer.Informer()
+	statusController := NewUplinkStateGatewayStatusController(
+		nodeName,
+		uplinkClient,
+		uplinkStateInformer,
+	)
+	t.Cleanup(statusController.Stop)
+	nodeLister := v1mocks.NewNodeLister(t)
+	defaultGateway := &gateway{openflowManager: getDummyOpenflowManager()}
+	udnGateway, err := NewUserDefinedNetworkGateway(
+		netInfo,
+		node,
+		nodeLister,
+		nil,
+		vrfmanager.NewController(nil),
+		nil,
+		defaultGateway,
+		nil,
+		uplinkStateInformer,
+		statusController,
+	)
+	if err != nil {
+		t.Fatalf("failed to create Uplink gateway: %v", err)
+	}
+
+	informerStop := make(chan struct{})
+	informerFactory.Start(informerStop)
+	if !cache.WaitForCacheSync(informerStop, uplinkStateInformer.Informer().HasSynced) {
+		close(informerStop)
+		t.Fatal("failed to sync UplinkState informer")
+	}
+	t.Cleanup(func() {
+		udnGateway.Stop()
+		close(informerStop)
+	})
+	return udnGateway, netlinkOps, nodeLister
+}
+
+func expectMissingGatewayVRF(
+	netlinkOps *utilmocks.NetLinkOps,
+	udnGateway *UserDefinedNetworkGateway,
+) {
+	notFoundErr := errors.New("link not found")
+	netlinkOps.On("LinkByName", util.GetNetworkVRFName(udnGateway.NetInfo)).
+		Return(nil, notFoundErr).Once()
+	netlinkOps.On("IsLinkNotFoundError", notFoundErr).Return(true).Once()
+}
+
+func TestUserDefinedNetworkGatewayReconcilesUplinkConfiguration(t *testing.T) {
+	if err := config.PrepareTestConfig(); err != nil {
+		t.Fatalf("failed to prepare test config: %v", err)
+	}
+	t.Cleanup(func() { _ = config.PrepareTestConfig() })
+	config.OvnKubeNode.Mode = types.NodeModeDPU
+	config.Gateway.Mode = config.GatewayModeShared
+	config.Gateway.V4MasqueradeSubnet = "169.254.0.0/17"
+	config.IPv4Mode = true
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+	config.OVNKubernetesFeature.EnableUplink = true
+
+	t.Run("unresolved state unconfigures existing programming", func(t *testing.T) {
+		state := resolvedGatewayUplinkState("uplink1", "node-a")
+		state.Status.Conditions[0].Status = metav1.ConditionFalse
+		udnGateway, netlinkOps, _ := newUplinkGatewayReconcileHarness(t, state)
+		udnGateway.uplinkGatewayCleanupRequired = true
+		udnGateway.uplinkFingerprint = uplinkGatewayFingerprint{bridgeName: "old-bridge"}
+		expectMissingGatewayVRF(netlinkOps, udnGateway)
+
+		_, observedFingerprint, err :=
+			udnGateway.reconcileUplinkConfiguration()
+		if err == nil || uplinkGatewayFailureReason(err) !=
+			uplinkv1alpha1.UplinkStateReasonGatewayProgrammingFailed {
+			t.Fatalf("unexpected unresolved result: %v", err)
+		}
+		if udnGateway.uplinkGatewayCleanupRequired {
+			t.Fatal("unresolved UplinkState retained old gateway programming")
+		}
+		if udnGateway.uplinkFingerprint != (uplinkGatewayFingerprint{}) {
+			t.Fatalf("unresolved UplinkState retained fingerprint: %#v",
+				udnGateway.uplinkFingerprint)
+		}
+		if observedFingerprint != uplinkGatewayFingerprintFromState(state) {
+			t.Fatal("unresolved UplinkState did not produce a status fingerprint")
+		}
+	})
+
+	t.Run("unconfiguration failure retains cleanup ownership", func(t *testing.T) {
+		state := resolvedGatewayUplinkState("uplink1", "node-a")
+		state.Status.Conditions[0].Status = metav1.ConditionFalse
+		udnGateway, netlinkOps, _ := newUplinkGatewayReconcileHarness(t, state)
+		current := uplinkGatewayFingerprint{bridgeName: "old-bridge"}
+		udnGateway.uplinkGatewayCleanupRequired = true
+		udnGateway.uplinkFingerprint = current
+		withdrawErr := errors.New("failed to remove old programming")
+		netlinkOps.On("LinkByName", util.GetNetworkVRFName(udnGateway.NetInfo)).
+			Return(nil, withdrawErr).Once()
+		netlinkOps.On("IsLinkNotFoundError", withdrawErr).Return(false).Once()
+
+		_, _, err := udnGateway.reconcileUplinkConfiguration()
+		if err == nil || !strings.Contains(err.Error(), withdrawErr.Error()) ||
+			uplinkGatewayFailureReason(err) !=
+				uplinkv1alpha1.UplinkStateReasonGatewayProgrammingFailed {
+			t.Fatalf("unexpected unconfiguration failure: %v", err)
+		}
+		if !udnGateway.uplinkGatewayCleanupRequired || udnGateway.uplinkFingerprint != current {
+			t.Fatal("failed withdrawal released ownership of old programming")
+		}
+	})
+
+	t.Run("unchanged configuration preserves programming", func(t *testing.T) {
+		state := resolvedGatewayUplinkState("uplink1", "node-a")
+		udnGateway, _, _ := newUplinkGatewayReconcileHarness(t, state)
+		current := uplinkGatewayFingerprintFromState(state)
+		udnGateway.uplinkGatewayCleanupRequired = true
+		udnGateway.uplinkFingerprint = current
+
+		if _, _, err := udnGateway.reconcileUplinkConfiguration(); err != nil {
+			t.Fatalf("unchanged configuration failed: %v", err)
+		}
+		if !udnGateway.uplinkGatewayCleanupRequired || udnGateway.uplinkFingerprint != current {
+			t.Fatal("unchanged configuration disturbed gateway programming")
+		}
+	})
+
+	t.Run("changed configuration unconfigures before replacement", func(t *testing.T) {
+		state := resolvedGatewayUplinkState("uplink1", "node-a")
+		oldState := state.DeepCopy()
+		oldState.Status.IPAddresses = []uplinkv1alpha1.IPAddressCIDR{"192.0.2.9/24"}
+		udnGateway, netlinkOps, nodeLister := newUplinkGatewayReconcileHarness(t, state)
+		udnGateway.uplinkGatewayCleanupRequired = true
+		udnGateway.uplinkFingerprint = uplinkGatewayFingerprintFromState(oldState)
+		expectMissingGatewayVRF(netlinkOps, udnGateway)
+		addErr := errors.New("management port lookup failed")
+		nodeLister.On("Get", "node-a").Return(nil, addErr).Once()
+
+		_, _, err := udnGateway.reconcileUplinkConfiguration()
+		if err == nil || !strings.Contains(err.Error(), addErr.Error()) {
+			t.Fatalf("replacement did not reach gateway programming: %v", err)
+		}
+		if !udnGateway.uplinkGatewayCleanupRequired {
+			t.Fatal("partial replacement was not retained for retry cleanup")
+		}
+		if udnGateway.uplinkFingerprint != (uplinkGatewayFingerprint{}) {
+			t.Fatalf("failed replacement recorded a new fingerprint: %#v",
+				udnGateway.uplinkFingerprint)
+		}
+	})
+
+	t.Run("resolved state starts initial programming", func(t *testing.T) {
+		state := resolvedGatewayUplinkState("uplink1", "node-a")
+		udnGateway, _, nodeLister := newUplinkGatewayReconcileHarness(t, state)
+		addErr := errors.New("management port lookup failed")
+		nodeLister.On("Get", "node-a").Return(nil, addErr).Once()
+
+		_, observedFingerprint, err :=
+			udnGateway.reconcileUplinkConfiguration()
+		if err == nil || !strings.Contains(err.Error(), addErr.Error()) {
+			t.Fatalf("initial reconciliation did not reach gateway programming: %v", err)
+		}
+		if !udnGateway.uplinkGatewayCleanupRequired {
+			t.Fatal("partial initial programming was not retained for retry cleanup")
+		}
+		if udnGateway.uplinkFingerprint != (uplinkGatewayFingerprint{}) {
+			t.Fatalf("failed programming stored fingerprint: %#v",
+				udnGateway.uplinkFingerprint)
+		}
+		if observedFingerprint != uplinkGatewayFingerprintFromState(state) {
+			t.Fatal("failed programming did not produce a status fingerprint")
+		}
+	})
+}
+
+func TestNewUserDefinedNetworkGatewayRequiresUplinkDependencies(t *testing.T) {
+	if err := config.PrepareTestConfig(); err != nil {
+		t.Fatalf("failed to prepare test config: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = config.PrepareTestConfig()
+	})
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+	config.OVNKubernetesFeature.EnableUplink = true
+	config.Gateway.Mode = config.GatewayModeShared
+
+	nad := generateUplinkNAD("red", "rednad", "greenamespace",
+		types.Layer3Topology, "100.128.0.0/16/24", types.NetworkRolePrimary, "uplink1")
+	netInfo, err := util.ParseNADInfo(nad)
+	if err != nil {
+		t.Fatalf("failed to parse NAD: %v", err)
+	}
+
+	_, err = NewUserDefinedNetworkGateway(
+		netInfo, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+	)
+	if err == nil || !strings.Contains(err.Error(), "UplinkState informer has not been provided") {
+		t.Fatalf("expected missing UplinkState informer error, got %v", err)
+	}
+
+	uplinkStateInformer, statusController := newGatewayUplinkDependencies("node-a")
+	t.Cleanup(statusController.Stop)
+	_, err = NewUserDefinedNetworkGateway(
+		netInfo, nil, nil, nil, nil, nil, nil, nil, uplinkStateInformer, nil,
+	)
+	if err == nil || !strings.Contains(err.Error(), "UplinkState gateway status controller has not been provided") {
+		t.Fatalf("expected missing UplinkState gateway status controller error, got %v", err)
 	}
 }
 
@@ -714,6 +969,19 @@ func newGatewayUplinkStateAndLister(
 	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
 	Expect(indexer.Add(state)).To(Succeed())
 	return state, uplinklisters.NewUplinkStateLister(indexer)
+}
+
+func newGatewayUplinkDependencies(
+	nodeName string,
+) (uplinkinformers.UplinkStateInformer, *UplinkStateGatewayStatusController) {
+	uplinkClient := uplinkfake.NewSimpleClientset()
+	informerFactory := uplinkinformerfactory.NewSharedInformerFactory(uplinkClient, 0)
+	uplinkStateInformer := informerFactory.K8s().V1alpha1().UplinkStates()
+	return uplinkStateInformer, NewUplinkStateGatewayStatusController(
+		nodeName,
+		uplinkClient,
+		uplinkStateInformer,
+	)
 }
 
 func noOverlayLayer3NetInfo(t *testing.T) util.NetInfo {
@@ -1262,7 +1530,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(1)) // only default network
 
 			addOVSPatchPortInterface(ovsClient, "breth0", "patch-breth0_bluenet_worker1-to-br-int", 15)
-			Expect(udnGateway.AddNetwork()).To(Succeed())
+			Expect(udnGateway.Start()).To(Succeed())
 
 			flowMap = udnGateway.gateway.openflowManager.defaultBridge.flowCache
 			udnDefaultFlows := 22
@@ -1299,7 +1567,8 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			removeOVSPatchPortInterface(ovsClient, "breth0", "patch-breth0_bluenet_worker1-to-br-int")
 			openflowManagerCheckPorts(udnGateway.openflowManager)
 
-			Expect(udnGateway.DelNetwork()).To(Succeed())
+			udnGateway.Stop()
+			Expect(udnGateway.Cleanup()).To(Succeed())
 			flowMap = udnGateway.gateway.openflowManager.defaultBridge.flowCache
 			Expect(flowMap["DEFAULT"]).To(HaveLen(baseFlowCount))
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(1)) // default network only
@@ -1498,7 +1767,8 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			Expect(udnFlows).To(Equal(0))
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(1)) // only default network
 			By("Deleting the gateway network with injected error")
-			err = udnGateway.DelNetwork()
+			udnGateway.Stop()
+			err = udnGateway.Cleanup()
 			Expect(err).To(MatchError(ContainSubstring("fake delete metadata error")))
 			By("Ensuring everything else was still cleaned up correctly")
 			flowMap = udnGateway.gateway.openflowManager.defaultBridge.flowCache
@@ -1687,7 +1957,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(1)) // only default network
 
 			addOVSPatchPortInterface(ovsClient, "breth0", "patch-breth0_bluenet_worker1-to-br-int", 15)
-			Expect(udnGateway.AddNetwork()).To(Succeed())
+			Expect(udnGateway.Start()).To(Succeed())
 
 			flowMap = udnGateway.gateway.openflowManager.defaultBridge.flowCache
 			udnDefaultFlows := 22
@@ -1724,7 +1994,8 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			removeOVSPatchPortInterface(ovsClient, "breth0", "patch-breth0_bluenet_worker1-to-br-int")
 			openflowManagerCheckPorts(udnGateway.openflowManager)
 
-			Expect(udnGateway.DelNetwork()).To(Succeed())
+			udnGateway.Stop()
+			Expect(udnGateway.Cleanup()).To(Succeed())
 			flowMap = udnGateway.gateway.openflowManager.defaultBridge.flowCache
 			Expect(flowMap["DEFAULT"]).To(HaveLen(baseFlowCount))
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(1)) // default network only
@@ -1928,7 +2199,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(1)) // only default network
 
 			addOVSPatchPortInterface(ovsClient, "breth0", "patch-breth0_bluenet_worker1-to-br-int", 15)
-			Expect(udnGateway.AddNetwork()).To(Succeed())
+			Expect(udnGateway.Start()).To(Succeed())
 
 			flowMap = udnGateway.gateway.openflowManager.defaultBridge.flowCache
 			udnDefaultFlows := 22
@@ -1969,7 +2240,8 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			removeOVSPatchPortInterface(ovsClient, "breth0", "patch-breth0_bluenet_worker1-to-br-int")
 			openflowManagerCheckPorts(udnGateway.openflowManager)
 
-			Expect(udnGateway.DelNetwork()).To(Succeed())
+			udnGateway.Stop()
+			Expect(udnGateway.Cleanup()).To(Succeed())
 			flowMap = udnGateway.gateway.openflowManager.defaultBridge.flowCache
 			Expect(flowMap["DEFAULT"]).To(HaveLen(baseFlowCount))
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(1)) // default network only
@@ -2261,7 +2533,10 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 			ofm := getDummyOpenflowManager()
-			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, nil, nil, vrf, nil, &gateway{openflowManager: ofm}, nil, nil, nil)
+			uplinkStateInformer, statusController := newGatewayUplinkDependencies(node.Name)
+			DeferCleanup(statusController.Stop)
+			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, nil, nil, vrf, nil,
+				&gateway{openflowManager: ofm}, nil, uplinkStateInformer, statusController)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(udnGateway.ensureDPUVRF()).To(Succeed())
 
@@ -2346,7 +2621,10 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 			ofm := getDummyOpenflowManager()
-			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, nil, nil, vrf, nil, &gateway{openflowManager: ofm}, nil, nil, nil)
+			uplinkStateInformer, statusController := newGatewayUplinkDependencies(node.Name)
+			DeferCleanup(statusController.Stop)
+			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, nil, nil, vrf, nil,
+				&gateway{openflowManager: ofm}, nil, uplinkStateInformer, statusController)
 			Expect(err).NotTo(HaveOccurred())
 			mplink, err := netlink.LinkByName(mgtPort)
 			Expect(err).NotTo(HaveOccurred())
@@ -2406,7 +2684,10 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 			ofm := getDummyOpenflowManager()
-			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, nil, nil, vrf, nil, &gateway{openflowManager: ofm}, nil, nil, nil)
+			uplinkStateInformer, statusController := newGatewayUplinkDependencies(node.Name)
+			DeferCleanup(statusController.Stop)
+			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, nil, nil, vrf, nil,
+				&gateway{openflowManager: ofm}, nil, uplinkStateInformer, statusController)
 			Expect(err).NotTo(HaveOccurred())
 			mplink, err := netlink.LinkByName(mgtPort)
 			Expect(err).NotTo(HaveOccurred())
@@ -2480,9 +2761,12 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			defer GinkgoRecover()
 			ofm := getDummyOpenflowManager()
 			_, uplinkStateLister := newGatewayUplinkStateAndLister("uplink1", node.Name)
+			uplinkStateInformer, statusController := newGatewayUplinkDependencies(node.Name)
+			DeferCleanup(statusController.Stop)
 			udnGateway, err := NewUserDefinedNetworkGateway(mutableNetInfo, node, nil, nil, vrf, nil,
-				&gateway{openflowManager: ofm}, nil, uplinkStateLister, nil)
+				&gateway{openflowManager: ofm}, nil, uplinkStateInformer, statusController)
 			Expect(err).NotTo(HaveOccurred())
+			udnGateway.uplinkStateLister = uplinkStateLister
 			uplinkLink := ovntest.AddLink("ovsbr1")
 			udnGateway.gwInterfaceName = uplinkLink.Attrs().Name
 			mplink, err := netlink.LinkByName(mgtPort)
