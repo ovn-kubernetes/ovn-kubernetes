@@ -55,7 +55,8 @@ make test           # Run unit tests
 ```
 
 E2E tests run via CI on Kind clusters. See `test/e2e/` for Ginkgo test suites.
-To run E2E locally, first set up a Kind cluster using `contrib/kind.sh`, then run the tests.
+To run E2E locally, first set up a Kind cluster using `contrib/kind.sh` (the default), then run the tests.
+To run them against an existing cluster instead, see `docs/developer-guide/kube-provider.md`.
 See `docs/developer-guide/local_testing_guide.md` for more details.
 
 ## Key Conventions
