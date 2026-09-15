@@ -139,6 +139,17 @@ func setupLogging(conf *ovncnitypes.NetConf) {
 	}
 }
 
+func cniRequestTimeoutFromNetConf(conf *ovncnitypes.NetConf) time.Duration {
+	if conf != nil && conf.CNIRequestTimeout != "" {
+		timeout, err := time.ParseDuration(conf.CNIRequestTimeout)
+		if err == nil && timeout > 0 {
+			return timeout
+		}
+		klog.Warningf("Invalid CNI request timeout %q; using default %s", conf.CNIRequestTimeout, kubeletDefaultCRIOperationTimeout)
+	}
+	return kubeletDefaultCRIOperationTimeout
+}
+
 // report the CNI request processing time to CNI server. This is used for the cni_request_duration_seconds metrics
 func (p *Plugin) postMetrics(startTime time.Time, cmd command, err error) {
 	elapsedTime := time.Since(startTime).Seconds()
@@ -248,7 +259,7 @@ func (p *Plugin) CmdAdd(args *skel.CmdArgs) error {
 		// plugging an interface into Pod is on the Shim.
 
 		// Use the IPAM details from ovnkube-node to configure the pod interface
-		ctx, cancel := context.WithTimeout(context.Background(), kubeletDefaultCRIOperationTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), cniRequestTimeoutFromNetConf(conf))
 		defer cancel()
 		pr, err := cniRequestToPodRequest(req, ctx)
 		if err != nil {
@@ -327,7 +338,7 @@ func (p *Plugin) CmdDel(args *skel.CmdArgs) error {
 
 	// if Result is nil, then ovnkube-node is running in unprivileged mode so unconfigure the Interface from here.
 	if response.Result == nil {
-		ctx, cancel := context.WithTimeout(context.Background(), kubeletDefaultCRIOperationTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), cniRequestTimeoutFromNetConf(conf))
 		defer cancel()
 		pr, err = cniRequestToPodRequest(req, ctx)
 		if err != nil {

@@ -118,6 +118,8 @@ type NetConf struct {
 	// LogFileMaxAge represents the maximum number
 	// of days to retain old log files
 	LogFileMaxAge int `json:"logfile-maxage"`
+	// CNIRequestTimeout overrides the default timeout used by the CNI shim.
+	CNIRequestTimeout string `json:"cniRequestTimeout,omitempty"`
 	// Runtime arguments passed by the NPWG implementation (e.g. multus)
 	RuntimeConfig struct {
 		// see https://github.com/k8snetworkplumbingwg/device-info-spec
@@ -159,6 +161,7 @@ func (n NetConf) MarshalJSON() ([]byte, error) {
 		LogFileMaxSize        int         `json:"logfile-maxsize"`
 		LogFileMaxBackups     int         `json:"logfile-maxbackups"`
 		LogFileMaxAge         int         `json:"logfile-maxage"`
+		CNIRequestTimeout     string      `json:"cniRequestTimeout,omitempty"`
 		RuntimeConfig         struct {
 			CNIDeviceInfoFile string `json:"CNIDeviceInfoFile,omitempty"`
 		} `json:"runtimeConfig,omitempty"`
@@ -189,6 +192,7 @@ func (n NetConf) MarshalJSON() ([]byte, error) {
 		LogFileMaxSize:        n.LogFileMaxSize,
 		LogFileMaxBackups:     n.LogFileMaxBackups,
 		LogFileMaxAge:         n.LogFileMaxAge,
+		CNIRequestTimeout:     n.CNIRequestTimeout,
 		RuntimeConfig:         n.RuntimeConfig,
 	})
 }
