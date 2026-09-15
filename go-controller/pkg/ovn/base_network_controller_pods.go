@@ -597,6 +597,18 @@ func (bnc *BaseNetworkController) addLogicalPortToNetwork(pod *corev1.Pod, nadKe
 		addresses[0] = addresses[0] + " " + podIfAddr.IP.String()
 	}
 
+	macSecurityDisabled := bnc.MACSecurityMode() == ovntypes.MACSecurityModeDisabled
+	if macSecurityDisabled {
+		// steer frames destined to unknown MAC addresses to this port (e.g. nested VMs behind this port).
+		addresses = append(addresses, "unknown")
+		// force_fdb_lookup take effect for default port type (represented by empty string),
+		// and "addresses" contains "unknown"
+		if lsp.Type == "" {
+			// avoid flooding frames destined to unknown MAC address to ports who set with "unknown" address.
+			lsp.Options[libovsdbops.ForceFdbLookup] = "true"
+		}
+	}
+
 	// Skip address configuration if LSP is disabled since it will install
 	// l2 look up flows that harms some topologies
 	if lsp.Enabled == nil || *lsp.Enabled {
@@ -617,6 +629,10 @@ func (bnc *BaseNetworkController) addLogicalPortToNetwork(pod *corev1.Pod, nadKe
 
 	// CNI depends on the flows from port security, delay setting it until end
 	lsp.PortSecurity = addresses
+	if macSecurityDisabled {
+		// drop MAC/IP addresses restriction on this port.
+		lsp.PortSecurity = nil
+	}
 	customFields = append(customFields, libovsdbops.LogicalSwitchPortPortSecurity)
 
 	// On layer2 topology with interconnect, we need to add specific port config
