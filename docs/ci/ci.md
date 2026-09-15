@@ -109,6 +109,53 @@ To reduce the explosion of tests being run in CI, the test cases run are limited
 using an `exclude:` statement in 
 [ovn-kubernetes/.github/workflows/test.yml](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/.github/workflows/test.yml).
 
+# CRD Integration Tests
+
+Tests from
+[`test/crd-integration/`](https://github.com/ovn-kubernetes/ovn-kubernetes/tree/master/test/crd-integration)
+run against a real kube-apiserver + etcd started by
+[envtest](https://pkg.go.dev/sigs.k8s.io/controller-runtime/pkg/envtest).
+No Kind cluster or container runtime is required.  Because they are
+lightweight, they run as a step in the `Test-PR` unit-test job rather than in a
+dedicated lane.
+
+## What belongs here
+
+These tests are the intended home for **CRD admission behaviour** that can
+be verified without live pod networking:
+
+- **Defaulting** — fields with `+kubebuilder:default` markers are filled in
+  correctly when absent from a user's YAML
+- **Validation** — `+kubebuilder:validation` constraints reject invalid objects
+- **CEL rules** — `+kubebuilder:validation:XValidation` expressions behave as
+  specified
+
+Do **not** add these to `test/e2e/` or `test/e2e/testscenario/`.  The E2E
+suite requires a full Kind cluster; CRD admission tests do not.  Adding them
+to the E2E suite makes them slower, harder to run locally, and harder to
+iterate on.
+
+## Adding a new CRD integration test
+
+All CRDs share a single Ginkgo suite. `test/crd-integration/suite_test.go` is
+the one bootstrap: its `BeforeSuite` starts `envtest.Environment` pointing at
+`helm/ovn-kubernetes/crds/` (so every committed CRD is installed) and registers
+the CRD schemes the suite exercises.
+
+1. Register the CRD's types in the scheme in `suite_test.go`, e.g.
+   `utilruntime.Must(egressipv1.AddToScheme(scheme))`.
+2. Add a `test/crd-integration/<feature>_test.go` with `Describe`/`It` blocks
+   for the cases you want to cover.
+3. Run locally with `make test-crd` from the `test/` directory (see the
+   [Local Testing Guide](../developer-guide/local_testing_guide.md#crd-integration-tests)).
+
+## Migrating from testscenario
+
+Tests currently living in
+[`test/e2e/testscenario/`](https://github.com/ovn-kubernetes/ovn-kubernetes/tree/master/test/e2e/testscenario)
+that only exercise CRD schema behaviour (not traffic) should be migrated to
+`test/crd-integration/` over time.
+
 # Conformance Tests
 
 We have a conformance test suit that can be invoked using the `make conformance` command.
