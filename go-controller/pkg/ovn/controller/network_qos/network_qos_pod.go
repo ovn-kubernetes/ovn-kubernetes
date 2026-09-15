@@ -122,6 +122,10 @@ func reconcilePodForDestinations(nqosState *networkQoSState, podNs *corev1.Names
 }
 
 func (c *Controller) getNetworkQosForPodChange(eventData *eventData[*corev1.Pod]) (sets.Set[string], error) {
+	nqoses, err := c.getAllNetworkQoSes()
+	if err != nil || len(nqoses) == 0 {
+		return nil, err
+	}
 	var pod *corev1.Pod
 	if eventData.new != nil {
 		pod = eventData.new
@@ -131,10 +135,6 @@ func (c *Controller) getNetworkQosForPodChange(eventData *eventData[*corev1.Pod]
 	podNs, err := c.nqosNamespaceLister.Get(pod.Namespace)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get namespace %s: %v", pod.Namespace, err)
-	}
-	nqoses, err := c.getAllNetworkQoSes()
-	if err != nil {
-		return nil, err
 	}
 	affectedNetworkQoSes := sets.Set[string]{}
 	for _, nqos := range nqoses {

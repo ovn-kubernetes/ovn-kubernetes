@@ -350,6 +350,9 @@ func (c *Controller) onNQOSDelete(obj interface{}) {
 
 // onNQOSNamespaceAdd queues the namespace for processing.
 func (c *Controller) onNQOSNamespaceAdd(obj interface{}) {
+	if !c.hasNetworkQoS() {
+		return
+	}
 	ns, ok := obj.(*corev1.Namespace)
 	if !ok {
 		utilruntime.HandleError(fmt.Errorf("expecting Namespace but received %T", obj))
@@ -364,6 +367,9 @@ func (c *Controller) onNQOSNamespaceAdd(obj interface{}) {
 
 // onNQOSNamespaceUpdate queues the namespace for processing.
 func (c *Controller) onNQOSNamespaceUpdate(oldObj, newObj interface{}) {
+	if !c.hasNetworkQoS() {
+		return
+	}
 	oldNamespace, ok := oldObj.(*corev1.Namespace)
 	if !ok {
 		utilruntime.HandleError(fmt.Errorf("expecting Namespace but received %T", oldObj))
@@ -393,6 +399,9 @@ func (c *Controller) onNQOSNamespaceUpdate(oldObj, newObj interface{}) {
 
 // onNQOSNamespaceDelete queues the namespace for processing.
 func (c *Controller) onNQOSNamespaceDelete(obj interface{}) {
+	if !c.hasNetworkQoS() {
+		return
+	}
 	ns, ok := obj.(*corev1.Namespace)
 	if !ok {
 		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
@@ -413,6 +422,9 @@ func (c *Controller) onNQOSNamespaceDelete(obj interface{}) {
 
 // onNQOSPodAdd queues the pod for processing.
 func (c *Controller) onNQOSPodAdd(obj interface{}) {
+	if !c.hasNetworkQoS() {
+		return
+	}
 	pod, ok := obj.(*corev1.Pod)
 	if !ok {
 		utilruntime.HandleError(fmt.Errorf("expecting Pod but received %T", obj))
@@ -427,6 +439,9 @@ func (c *Controller) onNQOSPodAdd(obj interface{}) {
 
 // onNQOSPodUpdate queues the pod for processing.
 func (c *Controller) onNQOSPodUpdate(oldObj, newObj interface{}) {
+	if !c.hasNetworkQoS() {
+		return
+	}
 	oldPod, ok := oldObj.(*corev1.Pod)
 	if !ok {
 		utilruntime.HandleError(fmt.Errorf("expecting Pod but received %T", oldObj))
@@ -477,6 +492,9 @@ func (c *Controller) podNetworkResolver() func(nadKey string) string {
 
 // onNQOSPodDelete queues the pod for processing.
 func (c *Controller) onNQOSPodDelete(obj interface{}) {
+	if !c.hasNetworkQoS() {
+		return
+	}
 	pod, ok := obj.(*corev1.Pod)
 	if !ok {
 		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
