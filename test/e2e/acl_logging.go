@@ -1203,6 +1203,106 @@ func setANPACLLogSeverity(anpName, desiredDenyLogLevel, desiredAllowLogLevel, de
 	return nil
 }
 
+// Namespace handler stability under rapid non-OVN annotation updates (e.g. ArgoCD reconciliation loops).
+var _ = Describe("Namespace handler stability under annotation spam", feature.NetworkPolicy, func() {
+	const (
+		namespacePrefix     = "ns-annot-spam"
+		denyAllPolicyName   = "default-deny-all"
+		initialDenySeverity = "alert"
+		updatedDenySeverity = "warning"
+		egressDenySuffix    = "Egress"
+		annotationSpamCount = 50
+		apiRequestTimeout   = 30 * time.Second
+	)
+
+	fr := wrappedTestFramework(namespacePrefix)
+
+	var (
+		nsName string
+		pods   []v1.Pod
+	)
+
+	BeforeEach(func() {
+		nsName = fr.Namespace.Name
+		pods = nil
+
+		By("creating a deny-all NetworkPolicy")
+		_, err := makeDenyAllPolicy(fr, nsName, denyAllPolicyName)
+		Expect(err).NotTo(HaveOccurred(),
+			fmt.Sprintf("failed to create NetworkPolicy %q in namespace %q", denyAllPolicyName, nsName))
+
+		By("setting initial ACL logging annotation")
+		Expect(setNamespaceACLLogSeverity(fr, nsName, initialDenySeverity, initialDenySeverity, aclRemoveOptionDelete)).To(Succeed(),
+			fmt.Sprintf("failed to set initial ACL logging severity=%s for namespace %s", initialDenySeverity, nsName))
+
+		By("creating two pods")
+		cmd := []string{"/bin/bash", "-c", "/agnhost netexec --http-port 8000"}
+		for i := 0; i < 2; i++ {
+			pod := newAgnhostPod(nsName, fmt.Sprintf("pod%d", i+1), cmd...)
+			ctx, cancel := context.WithTimeout(context.Background(), framework.PodStartTimeout)
+			pod = e2epod.NewPodClient(fr).CreateSync(ctx, pod)
+			cancel()
+			Expect(waitForACLLoggingPod(fr, nsName, pod.GetName())).To(Succeed(),
+				fmt.Sprintf("pod %q in namespace %q did not become ready for ACL logging", pod.GetName(), nsName))
+			pods = append(pods, *pod)
+		}
+	})
+
+	It("should still process OVN annotation changes after rapid non-OVN annotation spam", func() {
+		clientPod := pods[0]
+		targetPod := pods[1]
+		policyNameRegex := fmt.Sprintf("NP:%s:%s", nsName, egressDenySuffix)
+
+		By("confirming initial ACL logging is active")
+		for _, podIP := range targetPod.Status.PodIPs {
+			Expect(pokePod(fr, clientPod.GetName(), podIP.IP)).To(HaveOccurred(),
+				fmt.Sprintf("traffic to %s should be blocked by deny-all policy", podIP.IP))
+		}
+		Eventually(func() (bool, error) {
+			return assertACLLogs(clientPod.Spec.NodeName, policyNameRegex, "drop", initialDenySeverity)
+		}, maxPokeRetries*pokeInterval, pokeInterval).Should(BeTrue(),
+			fmt.Sprintf("ACL logs should show severity=%s for policy %s", initialDenySeverity, policyNameRegex))
+
+		By(fmt.Sprintf("spamming namespace with %d non-OVN annotation updates", annotationSpamCount))
+		for i := 0; i < annotationSpamCount; i++ {
+			err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+				getCtx, getCancel := context.WithTimeout(context.Background(), apiRequestTimeout)
+				ns, err := fr.ClientSet.CoreV1().Namespaces().Get(getCtx, nsName, metav1.GetOptions{})
+				getCancel()
+				if err != nil {
+					return fmt.Errorf("failed to get namespace %s: %w", nsName, err)
+				}
+				if ns.Annotations == nil {
+					ns.Annotations = map[string]string{}
+				}
+				ns.Annotations["argocd.argoproj.io/managed-by"] = fmt.Sprintf("revision-%d", i)
+				updateCtx, updateCancel := context.WithTimeout(context.Background(), apiRequestTimeout)
+				_, err = fr.ClientSet.CoreV1().Namespaces().Update(updateCtx, ns, metav1.UpdateOptions{})
+				updateCancel()
+				if err != nil {
+					return fmt.Errorf("failed to update namespace %s annotations: %w", nsName, err)
+				}
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("namespace annotation spam iteration %d failed", i))
+		}
+
+		By("updating ACL logging annotation to a new severity level after the spam")
+		Expect(setNamespaceACLLogSeverity(fr, nsName, updatedDenySeverity, updatedDenySeverity, aclRemoveOptionDelete)).To(Succeed(),
+			fmt.Sprintf("failed to set ACL log severity to %s after annotation spam", updatedDenySeverity))
+
+		By("verifying ACL logs reflect the updated severity — confirms handler fired on OVN annotation change")
+		Eventually(func() (bool, error) {
+			for _, podIP := range targetPod.Status.PodIPs {
+				Expect(pokePod(fr, clientPod.GetName(), podIP.IP)).To(HaveOccurred(),
+					fmt.Sprintf("traffic to %s should still be blocked by deny-all policy", podIP.IP))
+			}
+			return assertACLLogs(clientPod.Spec.NodeName, policyNameRegex, "drop", updatedDenySeverity)
+		}, maxPokeRetries*pokeInterval, pokeInterval).Should(BeTrue(),
+			fmt.Sprintf("ACL logs should show updated severity=%s for policy %s after annotation spam", updatedDenySeverity, policyNameRegex))
+	})
+})
+
 // setBANPACLLogSeverity updates BANP with the deny and allow annotations, e.g. k8s.ovn.org/acl-logging={ "deny": "%s", "allow": "%s" }.
 func setBANPACLLogSeverity(desiredDenyLogLevel, desiredAllowLogLevel string) error {
 	_, err := e2ekubectl.RunKubectl("default", "annotate", "banp", "default",
