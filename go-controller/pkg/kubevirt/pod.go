@@ -46,6 +46,7 @@ type DefaultGatewayReconciler struct {
 	watchFactory  *factory.WatchFactory
 	netInfo       util.NetInfo
 	interfaceName string
+	broadcastGARP func(string, util.GARP) error
 	// getNetworkNameForNADKey resolves NAD keys to network names for UDNs.
 	getNetworkNameForNADKey func(nadKey string) string
 }
@@ -56,6 +57,7 @@ func NewDefaultGatewayReconciler(watchFactory *factory.WatchFactory, netInfo uti
 		watchFactory:            watchFactory,
 		netInfo:                 netInfo,
 		interfaceName:           interfaceName,
+		broadcastGARP:           util.BroadcastGARP,
 		getNetworkNameForNADKey: getNetworkNameForNADKey,
 	}
 }
@@ -636,22 +638,91 @@ func DiscoverLiveMigrationStatus(podLister listersv1.PodLister, pod *corev1.Pod)
 	return &status, nil
 }
 
+func (r *DefaultGatewayReconciler) reconcileIPv4GatewayForMigratablePod(pod *corev1.Pod) error {
+	if !config.IPv4Mode {
+		return nil
+	}
+	status, err := DiscoverLiveMigrationStatus(r.watchFactory.PodCoreInformer().Lister(), pod)
+	if err != nil {
+		return fmt.Errorf("failed discovering live migration status for pod %s/%s: %w", pod.Namespace, pod.Name, err)
+	}
+	if status == nil || !status.IsTargetDomainReady() || status.TargetPod.Name != pod.Name || status.TargetPod.UID != pod.UID {
+		return nil
+	}
+	if err := r.ReconcileIPv4AfterLiveMigration(status); err != nil {
+		return fmt.Errorf("failed reconciling IPv4 gateway after live migration for pod %s/%s: %w", pod.Namespace, pod.Name, err)
+	}
+	return nil
+}
+
 // ReconcileIPv4AfterLiveMigration sends a GARP after live migration to update
 // the default gateway MAC address to the node where the VM is now running.
 func (r *DefaultGatewayReconciler) ReconcileIPv4AfterLiveMigration(liveMigrationStatus *LiveMigrationStatus) error {
 	if liveMigrationStatus.State != LiveMigrationTargetDomainReady {
 		return nil
 	}
+	if r.netInfo.IsDefault() {
+		targetPod := liveMigrationStatus.TargetPod
+		if !IsPodLiveMigratable(targetPod) || util.PodWantsHostNetwork(targetPod) {
+			return nil
+		}
+	}
+	gateways, err := r.ipv4Gateways(liveMigrationStatus.TargetPod)
+	if err != nil {
+		return err
+	}
+	for _, gateway := range gateways {
+		garp, err := util.NewGARP(gateway.ip, &gateway.mac)
+		if err != nil {
+			return fmt.Errorf("failed to create GARP for gateway IP %s: %w", gateway.ip, err)
+		}
+		if err := r.broadcastGARP(r.interfaceName, garp); err != nil {
+			return fmt.Errorf("failed broadcasting GARP for gateway %s: %w", gateway.ip, err)
+		}
+	}
+	return nil
+}
+
+type ipv4Gateway struct {
+	ip  net.IP
+	mac net.HardwareAddr
+}
+
+func (r *DefaultGatewayReconciler) ipv4Gateways(targetPod *corev1.Pod) ([]ipv4Gateway, error) {
+	var gateways []ipv4Gateway
+	if r.netInfo.IsDefault() {
+		podAnnotation, err := util.UnmarshalPodAnnotation(targetPod.Annotations, ovntypes.DefaultNetworkName)
+		if err != nil {
+			return nil, err
+		}
+		if podAnnotation.Role == ovntypes.NetworkRoleInfrastructure {
+			return nil, nil
+		}
+		// The proxy MAC works on every node, including the subnet owner.
+		// If ARP later restores the owner's LRP MAC, the next migration
+		// refreshes the mapping again.
+		gwMAC, err := net.ParseMAC(ARPProxyMAC)
+		if err != nil {
+			return nil, err
+		}
+		for _, gateway := range podAnnotation.Gateways {
+			if gateway.To4() != nil {
+				gateways = append(gateways, ipv4Gateway{ip: gateway, mac: gwMAC})
+			}
+		}
+		return gateways, nil
+	}
+
 	var gwMAC net.HardwareAddr
 	if !config.Layer2UsesTransitRouter {
-		targetNode, err := r.watchFactory.GetNode(liveMigrationStatus.TargetPod.Spec.NodeName)
+		targetNode, err := r.watchFactory.GetNode(targetPod.Spec.NodeName)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		lrpJoinAddress, err := udn.GetGWRouterIPv4(targetNode, r.netInfo)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		gwMAC = util.IPAddrToHWAddr(lrpJoinAddress)
@@ -664,15 +735,9 @@ func (r *DefaultGatewayReconciler) ReconcileIPv4AfterLiveMigration(liveMigration
 		if config.Layer2UsesTransitRouter {
 			gwMAC = util.IPAddrToHWAddr(gwIP)
 		}
-		garp, err := util.NewGARP(gwIP, &gwMAC)
-		if err != nil {
-			return fmt.Errorf("failed to create GARP for gateway IP %s: %w", gwIP, err)
-		}
-		if err := util.BroadcastGARP(r.interfaceName, garp); err != nil {
-			return err
-		}
+		gateways = append(gateways, ipv4Gateway{ip: gwIP, mac: gwMAC})
 	}
-	return nil
+	return gateways, nil
 }
 
 // ReconcileIPv6AfterLiveMigration updates the VM's IPv6 default gateway path:
