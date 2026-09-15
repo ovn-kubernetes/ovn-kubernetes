@@ -15,6 +15,7 @@ import (
 	"github.com/containernetworking/plugins/pkg/ip"
 	"github.com/coreos/go-iptables/iptables"
 	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 
 	corev1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
@@ -43,6 +44,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/controllers/egressip"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/controllers/egressservice"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/dpulease"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iprulemanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/linkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/managementport"
 	nodenft "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftables"
@@ -127,6 +129,7 @@ type DefaultNodeNetworkController struct {
 	healthzServer *proxierHealthUpdater
 	routeManager  *routemanager.Controller
 	linkManager   *linkmanager.Controller
+	ruleManager   iprulemanager.Interface
 
 	// retry framework for endpoint slices, used for the removal of stale conntrack entries for services
 	retryEndpointSlices *retry.RetryFramework
@@ -148,7 +151,8 @@ type DefaultNodeNetworkController struct {
 }
 
 func newDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, stopChan chan struct{},
-	wg *sync.WaitGroup, routeManager *routemanager.Controller, networkManager networkmanager.Interface, ovsClient client.Client) *DefaultNodeNetworkController {
+	wg *sync.WaitGroup, routeManager *routemanager.Controller, ruleManager iprulemanager.Interface,
+	networkManager networkmanager.Interface, ovsClient client.Client) *DefaultNodeNetworkController {
 
 	c := &DefaultNodeNetworkController{
 		BaseNodeNetworkController: BaseNodeNetworkController{
@@ -160,6 +164,7 @@ func newDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, sto
 			ovsClient:                       ovsClient,
 		},
 		routeManager: routeManager,
+		ruleManager:  ruleManager,
 	}
 	if util.IsNetworkSegmentationSupportEnabled() && (config.IsModeDPUHost() || config.IsModeFull()) {
 		c.udnHostIsolationManager = NewUDNHostIsolationManager(config.IPv4Mode, config.IPv6Mode,
@@ -189,7 +194,8 @@ func NewDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, net
 	var err error
 	stopChan := make(chan struct{})
 	wg := &sync.WaitGroup{}
-	nc := newDefaultNodeNetworkController(cnnci, stopChan, wg, cnnci.routeManager, networkManager, ovsClient)
+	ruleManager := iprulemanager.NewController(config.IPv4Mode, config.IPv6Mode)
+	nc := newDefaultNodeNetworkController(cnnci, stopChan, wg, cnnci.routeManager, ruleManager, networkManager, ovsClient)
 
 	if len(config.Kubernetes.HealthzBindAddress) != 0 {
 		klog.Infof("Enable node proxy healthz server on %s", config.Kubernetes.HealthzBindAddress)
@@ -1092,6 +1098,17 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 		}
 	}
 
+	if config.OVNKubernetesFeature.EnableEgressIP || config.OVNKubernetesFeature.EnableEgressService {
+		if err := setupNodeSNATMarkRoutingRules(nc.ruleManager); err != nil {
+			return err
+		}
+		nc.wg.Add(1)
+		go func() {
+			defer nc.wg.Done()
+			nc.ruleManager.Run(nc.stopChan, 5*time.Minute)
+		}()
+	}
+
 	// configure NFT/IPT rules for egressService
 	if config.OVNKubernetesFeature.EnableEgressService && (config.IsModeDPUHost() || config.IsModeFull()) {
 		wf := nc.watchFactory.(*factory.WatchFactory)
@@ -1113,7 +1130,7 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 	if config.OVNKubernetesFeature.EnableEgressIP && !util.PlatformTypeIsEgressIPCloudProvider() {
 		c, err := egressip.NewController(nc.Kube, nc.watchFactory.EgressIPInformer(), nc.watchFactory.NodeInformer(),
 			nc.watchFactory.NamespaceInformer(), nc.watchFactory.PodCoreInformer(), nc.networkManager.GetActiveNetworkForNamespace,
-			nc.routeManager, config.IPv4Mode, config.IPv6Mode, nc.name, nc.linkManager)
+			nc.routeManager, config.IPv4Mode, config.IPv6Mode, nc.name, nc.linkManager, nc.ruleManager)
 		if err != nil {
 			return fmt.Errorf("failed to create egress IP controller: %v", err)
 		}
@@ -1143,6 +1160,35 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 	}(nc.stopChan)
 
 	klog.Infof("Default node network controller initialized and ready.")
+	return nil
+}
+
+func setupNodeSNATMarkRoutingRules(ruleManager iprulemanager.Interface) error {
+	newIPRule := func(ipFamily int) iprulemanager.IPRule {
+		return iprulemanager.IPRule{
+			Priority: nodetypes.FwMarkBypassPriority,
+			Mark:     nodetypes.OvnKubeNodeSNATMarkValue,
+			Table:    unix.RT_TABLE_MAIN,
+			Family:   ipFamily,
+		}
+	}
+	if config.IPv4Mode {
+		if err := ruleManager.Add(newIPRule(netlink.FAMILY_V4)); err != nil {
+			return fmt.Errorf("failed to create IPv4 fwmark bypass rule: %w", err)
+		}
+		stdout, _, err := util.RunSysctl("-w", "net.ipv4.conf.all.src_valid_mark=1")
+		if err != nil {
+			return fmt.Errorf("failed to set sysctl net.ipv4.conf.all.src_valid_mark to 1: %w", err)
+		}
+		if stdout != "net.ipv4.conf.all.src_valid_mark = 1" {
+			return fmt.Errorf("failed to set sysctl net.ipv4.conf.all.src_valid_mark to 1")
+		}
+	}
+	if config.IPv6Mode {
+		if err := ruleManager.Add(newIPRule(netlink.FAMILY_V6)); err != nil {
+			return fmt.Errorf("failed to create IPv6 fwmark bypass rule: %w", err)
+		}
+	}
 	return nil
 }
 
