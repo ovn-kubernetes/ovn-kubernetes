@@ -425,6 +425,15 @@ func setupSriovInterface(netns ns.NetNS, containerID, ifName string, ifInfo *Pod
 				if err != nil {
 					return err
 				}
+				if ifInfo.IsDPUHostMode && ifInfo.IsSimulatedDPU {
+					// Record the original netdevice name as the link alias: it
+					// survives both the rename and netns moves, so CNI DEL can
+					// restore the name even when the Pod object and its
+					// annotations are already gone (see returnSimulatedNetdevsToHost).
+					if err := util.GetNetLinkOps().LinkSetAlias(link, netdevice); err != nil {
+						return err
+					}
+				}
 				err = util.GetNetLinkOps().LinkSetHardwareAddr(link, ifInfo.MAC)
 				if err != nil {
 					return err
@@ -915,6 +924,84 @@ func (*defaultPodRequestInterfaceOps) ConfigureInterface(pr *PodRequest, ovsClie
 	return []*current.Interface{hostIface, contIface}, nil
 }
 
+// returnNetdevToHost renames a container netdevice back to oldName and moves
+// it to the host network namespace. Must be called from within the container
+// network namespace.
+func returnNetdevToHost(link netlink.Link, oldName string, hostNS ns.NetNS) error {
+	name := link.Attrs().Name
+	if err := util.GetNetLinkOps().LinkSetDown(link); err != nil {
+		return fmt.Errorf("failed to bring down container interface %s: %v", name, err)
+	}
+	if name != oldName {
+		if err := util.GetNetLinkOps().LinkSetName(link, oldName); err != nil {
+			return fmt.Errorf("failed to rename container interface %s to %s: %v", name, oldName, err)
+		}
+	}
+	if err := util.GetNetLinkOps().LinkSetNsFd(link, int(hostNS.Fd())); err != nil {
+		return fmt.Errorf("failed to move container interface %s back to host namespace: %v", oldName, err)
+	}
+	return nil
+}
+
+// returnSimulatedNetdevsToHost returns any simulated netdevices still present in the
+// pod network namespace to the host during CNI DEL of the default network.
+//
+// The runtime only issues a DEL for the default network: the primary UDN
+// attachment shares the sandbox and no separate DEL ever comes for it, so
+// without this it would be destroyed together with the namespace. A simulated
+// device is a veth: losing the pod-side end also destroys the DPU-side
+// representor peer, permanently breaking any future pod assigned the same VF.
+//
+// A link is recognized as a simulated netdevice when its name is the primary
+// UDN interface name, or its name or alias matches the simulated netdevice
+// naming pattern. The restore name is taken from the link alias recorded at
+// setup time, or from the link name itself when that already matches the
+// pattern: a device stranded under its original name by an ADD that failed
+// after moving it into the namespace but before renaming and aliasing it. A
+// link whose original name cannot be determined is left in place, since the
+// simulated allocator resolves devices strictly by name and could never find
+// it again anyway. Renaming before the move keeps retries idempotent: a link
+// already renamed by an interrupted run is recognized again through its name
+// or alias.
+func returnSimulatedNetdevsToHost(netns, hostNS ns.NetNS) error {
+	return netns.Do(func(_ ns.NetNS) error {
+		links, err := util.GetNetLinkOps().LinkList()
+		if err != nil {
+			return fmt.Errorf("failed to list container interfaces: %v", err)
+		}
+		var errs []error
+		for _, link := range links {
+			attrs := link.Attrs()
+			if attrs == nil {
+				continue
+			}
+			name, alias := attrs.Name, attrs.Alias
+			isCandidate := name == primaryUDNIfName ||
+				util.IsSimulatedNetdevName(name) ||
+				util.IsSimulatedNetdevName(alias)
+			if !isCandidate {
+				continue
+			}
+			var oldName string
+			switch {
+			case util.IsSimulatedNetdevName(alias):
+				oldName = alias
+			case util.IsSimulatedNetdevName(name):
+				oldName = name
+			default:
+				klog.Warningf("Cannot determine the original name of simulated netdevice %s, leaving it in the container namespace", name)
+				continue
+			}
+			if err := returnNetdevToHost(link, oldName, hostNS); err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			klog.Infof("Returned simulated netdevice %s to host namespace", oldName)
+		}
+		return errors.Join(errs...)
+	})
+}
+
 func (*defaultPodRequestInterfaceOps) UnconfigureInterface(pr *PodRequest, ifInfo *PodInterfaceInfo, podLister corev1listers.PodLister, pod *corev1.Pod) error {
 	podDesc := fmt.Sprintf("for pod %s/%s NAD %s", pr.PodNamespace, pr.PodName, pr.nadName)
 	klog.V(5).Infof("Tear down interface (%+v) %s", *pr, podDesc)
@@ -957,27 +1044,21 @@ func (*defaultPodRequestInterfaceOps) UnconfigureInterface(pr *PodRequest, ifInf
 			}
 			if pr.CNIConf.DeviceID != "" {
 				// SR-IOV Case
-				err = util.GetNetLinkOps().LinkSetDown(link)
-				if err != nil {
-					return fmt.Errorf("failed to bring down container interface %s %s: %v", pr.IfName, podDesc, err)
-				}
-				// rename netdevice to make sure it is unique in the host namespace:
-				// if original name of netdevice is empty, sandbox id and a '0' letter prefix is used to make up the unique name.
+				// rename the netdevice back to its original name to make sure
+				// it is unique in the host namespace. If the original name is
+				// unknown, fall back to the link alias recorded at setup time
+				// (simulated DPU devices only), then to a unique placeholder
+				// derived from the sandbox id and the link index.
 				oldName := ifInfo.NetdevName
+				if oldName == "" && ifInfo.IsSimulatedDPU && util.IsSimulatedNetdevName(link.Attrs().Alias) {
+					oldName = link.Attrs().Alias
+				}
 				if oldName == "" {
 					id := fmt.Sprintf("_0%d", link.Attrs().Index)
 					oldName = pr.SandboxID[:(15-len(id))] + id
 				}
-				err = util.GetNetLinkOps().LinkSetName(link, oldName)
-				if err != nil {
-					return fmt.Errorf("failed to rename container interface %s to %s %s: %v",
-						pr.IfName, oldName, podDesc, err)
-				}
-				// move netdevice to host netns
-				err = util.GetNetLinkOps().LinkSetNsFd(link, int(hostNS.Fd()))
-				if err != nil {
-					return fmt.Errorf("failed to move container interface %s back to host namespace %s: %v",
-						pr.IfName, podDesc, err)
+				if err := returnNetdevToHost(link, oldName, hostNS); err != nil {
+					return fmt.Errorf("%v %s", err, podDesc)
 				}
 			}
 			if isSecondary {
@@ -987,6 +1068,17 @@ func (*defaultPodRequestInterfaceOps) UnconfigureInterface(pr *PodRequest, ifInf
 		})
 		if err != nil {
 			klog.Errorf("Error in UnconfigureInterface: %v", err)
+		}
+
+		if ifInfo.IsDPUHostMode && ifInfo.IsSimulatedDPU && !isSecondary {
+			// Return any simulated netdevices left in the sandbox (the primary
+			// UDN attachment in particular, which gets no DEL of its own) to
+			// the host before the namespace is destroyed. Propagate errors so
+			// that the runtime retries the DEL rather than proceeding with the
+			// namespace teardown.
+			if err := returnSimulatedNetdevsToHost(netns, hostNS); err != nil {
+				return fmt.Errorf("failed to return simulated netdevices to host namespace %s: %v", podDesc, err)
+			}
 		}
 	}
 
