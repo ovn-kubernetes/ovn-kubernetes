@@ -87,6 +87,18 @@ type ControllerConfig[T any] struct {
 	// ObjNeedsUpdate tells if object should be reconciled.
 	// May be called with oldObj = nil on Add, won't be called on Delete.
 	ObjNeedsUpdate func(oldObj, newObj *T) bool
+	// OnDelete, if non-nil, is invoked synchronously from the informer's delete
+	// handler with the last-known object (unwrapped from a
+	// cache.DeletedFinalStateUnknown tombstone when the delete was missed and
+	// detected on relist). It runs in informer-delivery order, before the
+	// object's key is enqueued for Reconcile. This is the only place a consumer
+	// can observe a deleted object's content: Reconcile receives just a key, by
+	// which point the object is gone from the lister. Use it to react to a
+	// deletion whose effect depends on the deleted object's own fields (e.g. to
+	// re-queue a related object identified only by a field on the deleted one).
+	// It must be fast and non-blocking since it runs on the informer's handler
+	// goroutine. Optional; nil preserves existing behavior.
+	OnDelete func(obj *T)
 }
 
 // controller has the basic functionality, and may have some wrappers to provide
@@ -251,6 +263,16 @@ func (c *controller[T]) onUpdate(oldObjInterface, newObjInterface interface{}) {
 }
 
 func (c *controller[T]) onDelete(objInterface interface{}) {
+	if c.config.OnDelete != nil {
+		// OnDelete is an auxiliary, best-effort hook. If the object can't be
+		// extracted (deletedObj logged and returned nil), we intentionally do
+		// not return: enqueueing the key below is the primary, level-driven
+		// behavior and must still run so the deletion gets reconciled.
+		if obj := c.deletedObj(objInterface); obj != nil {
+			c.config.OnDelete(obj)
+		}
+	}
+
 	// A deletion that the watch missed (detected later by a relist) is
 	// delivered as a DeletedFinalStateUnknown wrapper, not as the object
 	// itself. This key func handles both; the plain one errors on the
@@ -261,6 +283,28 @@ func (c *controller[T]) onDelete(objInterface interface{}) {
 		return
 	}
 	c.queue.Add(key)
+}
+
+// deletedObj extracts the typed object from a delete event, unwrapping a
+// cache.DeletedFinalStateUnknown tombstone (delivered when a delete was missed
+// and detected later on relist) to its last-known object. It logs and returns
+// nil if the (unwrapped) object is not of the expected type.
+func (c *controller[T]) deletedObj(objInterface interface{}) *T {
+	obj := objInterface
+	if tombstone, isTombstone := objInterface.(cache.DeletedFinalStateUnknown); isTombstone {
+		obj = tombstone.Obj
+	}
+	typed, ok := obj.(*T)
+	if !ok {
+		// Log and return nil rather than making this fatal: onDelete treats a
+		// nil result as "skip the OnDelete hook" but still enqueues the key so
+		// the deletion gets reconciled. This branch is defense-in-depth; a
+		// correctly-wired typed informer only ever delivers *T (or a tombstone
+		// wrapping *T).
+		utilruntime.HandleError(fmt.Errorf("controller %s: OnDelete received unexpected type %T", c.name, obj))
+		return nil
+	}
+	return typed
 }
 
 // processNextQueueItem returns false when the queue is shutdown and the
