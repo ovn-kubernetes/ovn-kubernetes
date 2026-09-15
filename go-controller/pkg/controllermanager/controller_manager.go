@@ -23,6 +23,7 @@ import (
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	nodecontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/node"
+	podcontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/pod"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
@@ -68,6 +69,7 @@ type ControllerManager struct {
 	networkManager     networkmanager.Controller
 	routeImportManager routeimport.Controller
 	nodeController     *nodecontroller.NodeController
+	podController      *podcontroller.Controller
 	serviceController  *svccontroller.Controller
 
 	// eIPController programs OVN to support EgressIP
@@ -84,21 +86,21 @@ func (cm *ControllerManager) NewNetworkController(nInfo util.NetInfo) (networkma
 	switch topoType {
 	case ovntypes.Layer3Topology:
 		oc, err := ovn.NewLayer3UserDefinedNetworkController(cnci, nInfo, cm.networkManager.Interface(), cm.routeImportManager,
-			cm.eIPController, cm.portCache, cm.addressSetManager, cm.nodeController, cm.serviceController)
+			cm.eIPController, cm.portCache, cm.addressSetManager, cm.nodeController, cm.podController, cm.serviceController)
 		if err != nil {
 			return nil, err
 		}
 		return oc, nil
 	case ovntypes.Layer2Topology:
 		oc, err := ovn.NewLayer2UserDefinedNetworkController(cnci, nInfo, cm.networkManager.Interface(), cm.routeImportManager,
-			cm.portCache, cm.eIPController, cm.addressSetManager, cm.nodeController, cm.serviceController)
+			cm.portCache, cm.eIPController, cm.addressSetManager, cm.nodeController, cm.podController, cm.serviceController)
 		if err != nil {
 			return nil, err
 		}
 		return oc, nil
 	case ovntypes.LocalnetTopology:
 		oc := ovn.NewLocalnetUserDefinedNetworkController(cnci, nInfo, cm.networkManager.Interface(), cm.addressSetManager,
-			cm.nodeController)
+			cm.nodeController, cm.podController)
 		return oc, nil
 	}
 	return nil, fmt.Errorf("topology type %s not supported", topoType)
@@ -115,12 +117,12 @@ func (cm *ControllerManager) newDummyNetworkController(topoType, netName, role s
 	switch topoType {
 	case ovntypes.Layer3Topology:
 		return ovn.NewLayer3UserDefinedNetworkController(cnci, netInfo, cm.networkManager.Interface(), cm.routeImportManager,
-			cm.eIPController, cm.portCache, cm.addressSetManager, nil, nil)
+			cm.eIPController, cm.portCache, cm.addressSetManager, nil, nil, nil)
 	case ovntypes.Layer2Topology:
 		return ovn.NewLayer2UserDefinedNetworkController(cnci, netInfo, cm.networkManager.Interface(), cm.routeImportManager,
-			cm.portCache, cm.eIPController, cm.addressSetManager, nil, nil)
+			cm.portCache, cm.eIPController, cm.addressSetManager, nil, nil, nil)
 	case ovntypes.LocalnetTopology:
-		return ovn.NewLocalnetUserDefinedNetworkController(cnci, netInfo, cm.networkManager.Interface(), cm.addressSetManager, nil), nil
+		return ovn.NewLocalnetUserDefinedNetworkController(cnci, netInfo, cm.networkManager.Interface(), cm.addressSetManager, nil, nil), nil
 	}
 	return nil, fmt.Errorf("topology type %s not supported", topoType)
 }
@@ -284,6 +286,7 @@ func NewControllerManager(nodeName string, ovnClient *util.OVNClientset, wf *fac
 		}
 	}
 	cm.nodeController = nodecontroller.NewNodeController(cm.watchFactory, cm.networkManager.Interface(), cm.nodeName)
+	cm.podController = podcontroller.NewPodController(cm.watchFactory)
 
 	if util.IsRouteAdvertisementsEnabled() {
 		if util.IsUplinkEnabled() {
@@ -356,7 +359,7 @@ func (cm *ControllerManager) newCommonNetworkControllerInfo(wf *factory.WatchFac
 // initDefaultNetworkController creates the controller for default network
 func (cm *ControllerManager) initDefaultNetworkController(observManager *observability.Manager) error {
 	cnci := cm.newCommonNetworkControllerInfo(cm.watchFactory)
-	defaultController, err := ovn.NewDefaultNetworkController(cnci, observManager, cm.networkManager.Interface(), cm.routeImportManager, cm.eIPController, cm.portCache, cm.addressSetManager, cm.nodeController)
+	defaultController, err := ovn.NewDefaultNetworkController(cnci, observManager, cm.networkManager.Interface(), cm.routeImportManager, cm.eIPController, cm.portCache, cm.addressSetManager, cm.nodeController, cm.podController)
 	if err != nil {
 		return err
 	}
@@ -487,6 +490,9 @@ func (cm *ControllerManager) Stop() {
 	if cm.networkManager != nil {
 		if cm.nodeController != nil {
 			cm.nodeController.Stop()
+		}
+		if cm.podController != nil {
+			cm.podController.Stop()
 		}
 		cm.networkManager.Stop()
 	}

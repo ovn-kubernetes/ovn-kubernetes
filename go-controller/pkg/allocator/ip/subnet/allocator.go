@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"reflect"
 	"sync"
 
 	iputils "github.com/containernetworking/plugins/pkg/ip"
@@ -57,6 +56,7 @@ var ErrSubnetNotFound = errors.New("subnet not found")
 // allocations (v4 and v6) as well as the IPAM allocator instances for each
 // of the managed subnets
 type subnetInfo struct {
+	config  SubnetConfig
 	subnets []*net.IPNet
 	// ipams holds continuous IP allocators for dynamic IP allocation within the managed subnets.
 	ipams []ipallocator.ContinuousAllocator
@@ -105,12 +105,70 @@ func NewAllocator() *allocator {
 	}
 }
 
+func cloneSubnetConfig(config SubnetConfig) SubnetConfig {
+	return SubnetConfig{
+		Name:            config.Name,
+		Subnets:         cloneIPNets(config.Subnets),
+		ReservedSubnets: cloneIPNets(config.ReservedSubnets),
+		ExcludeSubnets:  cloneIPNets(config.ExcludeSubnets),
+	}
+}
+
+func cloneIPNets(ipNets []*net.IPNet) []*net.IPNet {
+	if len(ipNets) == 0 {
+		return nil
+	}
+	clonedIPNets := make([]*net.IPNet, len(ipNets))
+	for i, ipNet := range ipNets {
+		if ipNet == nil {
+			continue
+		}
+		clonedIPNets[i] = &net.IPNet{
+			IP:   append(net.IP(nil), ipNet.IP...),
+			Mask: append(net.IPMask(nil), ipNet.Mask...),
+		}
+	}
+	return clonedIPNets
+}
+
+func subnetConfigsEqual(a, b SubnetConfig) bool {
+	return a.Name == b.Name &&
+		ipNetsEqual(a.Subnets, b.Subnets) &&
+		ipNetsEqual(a.ReservedSubnets, b.ReservedSubnets) &&
+		ipNetsEqual(a.ExcludeSubnets, b.ExcludeSubnets)
+}
+
+func ipNetsEqual(a, b []*net.IPNet) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !ipNetEqual(a[i], b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func ipNetEqual(a, b *net.IPNet) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.String() == b.String()
+}
+
 // AddOrUpdateSubnet set to the allocator for IPAM management, or update it.
 func (allocator *allocator) AddOrUpdateSubnet(config SubnetConfig) error {
 	allocator.Lock()
 	defer allocator.Unlock()
-	if subnetInfo, ok := allocator.cache[config.Name]; ok && !reflect.DeepEqual(subnetInfo.subnets, config.Subnets) {
-		klog.Warningf("Replacing subnets %v with %v for %s", util.StringSlice(subnetInfo.subnets), util.StringSlice(config.Subnets), config.Name)
+	config = cloneSubnetConfig(config)
+	if subnetInfo, ok := allocator.cache[config.Name]; ok {
+		if subnetConfigsEqual(subnetInfo.config, config) {
+			return nil
+		}
+		if !ipNetsEqual(subnetInfo.subnets, config.Subnets) {
+			klog.Warningf("Replacing subnets %v with %v for %s", util.StringSlice(subnetInfo.subnets), util.StringSlice(config.Subnets), config.Name)
+		}
 	}
 	var ipams []ipallocator.ContinuousAllocator
 
@@ -164,6 +222,7 @@ func (allocator *allocator) AddOrUpdateSubnet(config SubnetConfig) error {
 		}
 	}
 	allocator.cache[config.Name] = subnetInfo{
+		config:      config,
 		subnets:     config.Subnets,
 		ipams:       ipams,
 		staticIPAMs: staticIPAMs,

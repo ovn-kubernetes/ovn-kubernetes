@@ -47,6 +47,7 @@ func TestUpdatePodWithAllocationOrRollback(t *testing.T) {
 		getPodErr        bool
 		allocateErr      bool
 		updatePodErr     bool
+		podReplaced      bool
 		expectAllocation bool
 		expectRollback   bool
 		expectUpdate     bool
@@ -85,6 +86,11 @@ func TestUpdatePodWithAllocationOrRollback(t *testing.T) {
 			updatePodErr:     true,
 			expectErr:        true,
 		},
+		{
+			name:        "pod was replaced before allocation",
+			podReplaced: true,
+			expectErr:   true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -101,6 +107,11 @@ func TestUpdatePodWithAllocationOrRollback(t *testing.T) {
 			}
 
 			pod := &corev1.Pod{}
+			requestedPod := pod.DeepCopy()
+			if tt.podReplaced {
+				requestedPod.UID = "old-uid"
+				pod.UID = "replacement-uid"
+			}
 
 			var allocated bool
 			allocate := func(pod *corev1.Pod) (*corev1.Pod, func(), error) {
@@ -126,7 +137,7 @@ func TestUpdatePodWithAllocationOrRollback(t *testing.T) {
 				kubeMock.On("PatchPodStatusAnnotations", pod, mock.AnythingOfType("*v1.Pod")).Return(nil)
 			}
 
-			err := UpdatePodWithRetryOrRollback(podListerMock, kubeMock, &corev1.Pod{}, allocate)
+			err := UpdatePodWithRetryOrRollback(podListerMock, kubeMock, requestedPod, allocate)
 
 			if (err != nil) != tt.expectErr {
 				t.Errorf("UpdatePodWithAllocationOrRollback() error = %v, expectErr %v", err, tt.expectErr)
