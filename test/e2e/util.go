@@ -1614,9 +1614,12 @@ func getAgnHostHTTPPortBindFullCMD(port uint16) []string {
 	return append([]string{"/agnhost"}, getAgnHostHTTPPortBindCMDArgs(port)...)
 }
 
-// getAgnHostHTTPPortBindCMDArgs returns the aruments for /agnhost binary
+// getAgnHostHTTPPortBindCMDArgs returns the arguments for /agnhost binary.
+// Both --http-port and --udp-port are set to the same value so that
+// host-networked containers each bind a distinct UDP port (agnhost defaults
+// UDP to 8081, which collides when multiple containers share the host network).
 func getAgnHostHTTPPortBindCMDArgs(port uint16) []string {
-	return []string{"netexec", fmt.Sprintf("--http-port=%d", port), "--udp-port=-1"}
+	return []string{"netexec", fmt.Sprintf("--http-port=%d", port), fmt.Sprintf("--udp-port=%d", port)}
 }
 
 // executeFileTemplate executes `name` template from the provided `templates`
