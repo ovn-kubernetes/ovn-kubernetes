@@ -526,7 +526,15 @@ func (c *networkController) gatherNetwork(network util.MutableNetInfo, current u
 }
 
 func (c *networkController) setAdvertisements(network util.MutableNetInfo, current util.NetInfo) error {
-	if !network.IsDefault() && !network.IsPrimaryNetwork() {
+	// Propagate advertised VRFs for the default network and any user-defined
+	// network (primary or secondary) into the running network controller's
+	// netInfo. A BGP-advertised secondary UDN needs this: without it the RA is
+	// accepted and FRRConfigurations are generated (cluster-manager RA
+	// controller, a separate path), but the zone controller's
+	// IsPodNetworkAdvertisedAtNode stays false, so the
+	// GR/join-switch/mgmt-port/SNAT datapath gates never fire. (IsPrimaryNetwork
+	// is a subset of IsUserDefinedNetwork.)
+	if !network.IsDefault() && !network.IsUserDefinedNetwork() {
 		return nil
 	}
 	if !c.hasRouteAdvertisements() {

@@ -585,6 +585,17 @@ func (oc *Layer3UserDefinedNetworkController) waitForLocalZoneNodeLogicalSwitche
 }
 
 func (oc *Layer3UserDefinedNetworkController) Reconcile(netInfo util.NetInfo) error {
+	// A secondary UDN can become advertised after this controller's init() has
+	// already run (e.g. the RouteAdvertisements is created after the CUDN), in
+	// which case init() is not re-run. Re-drive the advertised-network topology
+	// setup here so the join switch and cluster port groups exist before the
+	// per-node gateway sync that this reconcile triggers depends on them. The
+	// advertised state is read from the incoming netInfo, since oc's NetInfo is
+	// only updated inside BaseNetworkController.reconcile below.
+	clusterRouter := &nbdb.LogicalRouter{Name: oc.GetNetworkScopedClusterRouterName()}
+	if err := oc.ensureJoinSwitchAndClusterPortGroups(clusterRouter, util.IsPodNetworkAdvertised(netInfo)); err != nil {
+		return err
+	}
 	if err := oc.BaseNetworkController.reconcile(
 		netInfo,
 		func(node string) {
@@ -595,6 +606,36 @@ func (oc *Layer3UserDefinedNetworkController) Reconcile(netInfo util.NetInfo) er
 		return err
 	}
 	return oc.ReconcileServiceNetwork()
+}
+
+// ensureJoinSwitchAndClusterPortGroups creates the join switch (and the
+// cluster-router LRP toward it) and the cluster port groups that a per-network
+// Gateway Router depends on for a north-south datapath. It is created for
+// primary networks and for advertised secondary networks; a plain
+// (non-advertised) secondary keeps neither. The operation is idempotent, so it
+// is driven both from init() at startup and from Reconcile() when a secondary
+// UDN becomes advertised after the controller has already started.
+//
+// NewJoinSwitch is network-generic (network-scoped names + UDN external IDs) and
+// only needs the cluster router's name; ovnClusterLRPToJoinIfAddrs is populated
+// unconditionally by gatherJoinSwitchIPs() during init(), so it is valid here
+// for secondaries too. The ACLs that reference the cluster port groups (network
+// policy, default deny) are still added only for primary networks, so for an
+// advertised secondary the port groups stay inert membership-only.
+func (oc *Layer3UserDefinedNetworkController) ensureJoinSwitchAndClusterPortGroups(clusterRouter *nbdb.LogicalRouter, advertised bool) error {
+	if !util.IsNetworkSegmentationSupportEnabled() {
+		return nil
+	}
+	if !oc.IsPrimaryNetwork() && !(oc.IsUserDefinedNetwork() && advertised) {
+		return nil
+	}
+	if err := oc.gatewayTopologyFactory.NewJoinSwitch(clusterRouter, oc.GetNetInfo(), oc.ovnClusterLRPToJoinIfAddrs); err != nil {
+		return fmt.Errorf("failed to create join switch for network %q: %w", oc.GetNetworkName(), err)
+	}
+	if err := oc.setupClusterPortGroups(); err != nil {
+		return fmt.Errorf("failed to create cluster port groups for network %q: %w", oc.GetNetworkName(), err)
+	}
+	return nil
 }
 
 func (oc *Layer3UserDefinedNetworkController) RegisterNodeHandler() error {
@@ -732,16 +773,14 @@ func (oc *Layer3UserDefinedNetworkController) init() (err error) {
 		return fmt.Errorf("failed to create OVN cluster router for network %q: %v", oc.GetNetworkName(), err)
 	}
 
-	// Only configure join switch, GR, cluster port groups and multicast default policies for user defined primary networks.
+	// Configure the join switch and cluster port groups for primary networks and
+	// advertised secondary networks (see ensureJoinSwitchAndClusterPortGroups).
+	if err := oc.ensureJoinSwitchAndClusterPortGroups(clusterRouter, util.IsPodNetworkAdvertised(oc.GetNetInfo())); err != nil {
+		return err
+	}
+
+	// Multicast default policies remain primary-only.
 	if util.IsNetworkSegmentationSupportEnabled() && oc.IsPrimaryNetwork() {
-		if err := oc.gatewayTopologyFactory.NewJoinSwitch(clusterRouter, oc.GetNetInfo(), oc.ovnClusterLRPToJoinIfAddrs); err != nil {
-			return fmt.Errorf("failed to create join switch for network %q: %v", oc.GetNetworkName(), err)
-		}
-
-		if err := oc.setupClusterPortGroups(); err != nil {
-			return fmt.Errorf("failed to create cluster port groups for network %q: %w", oc.GetNetworkName(), err)
-		}
-
 		if err := oc.syncDefaultMulticastPolicies(); err != nil {
 			return fmt.Errorf("failed to sync default multicast policies for network %q: %w", oc.GetNetworkName(), err)
 		}
@@ -842,7 +881,13 @@ func (oc *Layer3UserDefinedNetworkController) addUpdateLocalNodeEvent(node *core
 		}
 	}
 
-	if util.IsNetworkSegmentationSupportEnabled() && oc.IsPrimaryNetwork() {
+	// Sync the OVN-side (nbdb) management port for primary networks and for
+	// secondary networks advertised at this node. This creates the k8s-mgmt LSP
+	// on the node switch (+ local-gateway src-IP route) and is a prerequisite for
+	// the node-side gateway and gateway config (SyncGateway).
+	if util.IsNetworkSegmentationSupportEnabled() &&
+		(oc.IsPrimaryNetwork() ||
+			(oc.IsUserDefinedNetwork() && util.IsPodNetworkAdvertisedAtNode(oc.GetNetInfo(), node.Name))) {
 		if nSyncs.syncMgmtPort {
 			hostSubnets, err := util.ParseNodeHostSubnetAnnotation(node, oc.GetNetworkName())
 			if err != nil {
@@ -866,7 +911,14 @@ func (oc *Layer3UserDefinedNetworkController) addUpdateLocalNodeEvent(node *core
 		errs = append(errs, errors...)
 	}
 
-	if util.IsNetworkSegmentationSupportEnabled() && oc.IsPrimaryNetwork() {
+	// Sync the per-network Gateway Router (SyncGateway: GR, join LRP, SNAT,
+	// external switch, static routes) for primary networks and for secondary
+	// networks advertised at this node. This attaches a GR to the join switch
+	// using the join IP and OVN management port, giving the network its
+	// north-south datapath.
+	if util.IsNetworkSegmentationSupportEnabled() &&
+		(oc.IsPrimaryNetwork() ||
+			(oc.IsUserDefinedNetwork() && util.IsPodNetworkAdvertisedAtNode(oc.GetNetInfo(), node.Name))) {
 		if nSyncs.syncGw {
 			gwManager := oc.gatewayManagerForNode(node.Name)
 			oc.gatewayManagers.Store(node.Name, gwManager)
