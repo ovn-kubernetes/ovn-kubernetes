@@ -5621,7 +5621,7 @@ sudo mv /usr/bin/kubectl /usr/bin/kubectl-v1.17.3
 sudo ln -s /usr/bin/kubectl-v1.17.3 /usr/bin/kubectl
 </code></pre></div>
 <p>Download and install latest version of <code>kubectl</code>:</p>
-<div class="highlight"><pre><span></span><code>$ K8S_VERSION=v1.36.2
+<div class="highlight"><pre><span></span><code>$ K8S_VERSION=v1.36.4
 $ curl -LO https://storage.googleapis.com/kubernetes-release/release/$K8S_VERSION/bin/linux/amd64/kubectl
 $ chmod +x kubectl
 $ sudo mv kubectl /usr/bin/kubectl-$K8S_VERSION
@@ -5661,7 +5661,7 @@ $ cd ../dist/images/
 $ make fedora-image
 
 $ cd ../../contrib/
-$ PLATFORM_IPV4_SUPPORT=true PLATFORM_IPV6_SUPPORT=true K8S_VERSION=v1.36.2 ./kind.sh
+$ PLATFORM_IPV4_SUPPORT=true PLATFORM_IPV6_SUPPORT=true K8S_VERSION=v1.36.4 ./kind.sh
 </code></pre></div>
 <p>Once <code>kind.sh</code> completes, setup kube config file:</p>
 <div class="highlight"><pre><span></span><code>$ cp ~/ovn.conf ~/.kube/config
@@ -5676,7 +5676,7 @@ $ KUBECONFIG=~/ovn.conf
 <p>In order to use an image/tag other than the default hardcoded in kind.sh, specify
 one (or both of) the following variables:</p>
 <div class="highlight"><pre><span></span><code>$ cd ../../contrib/
-$ KIND_IMAGE=example.com/kindest/node K8S_VERSION=v1.36.2 ./kind.sh
+$ KIND_IMAGE=example.com/kindest/node K8S_VERSION=v1.36.4 ./kind.sh
 </code></pre></div>
 <h3 id="using-kind-local-registry-to-deploy-non-ovn-k-containers">Using kind local registry to deploy non ovn-k containers<a class="headerlink" href="#using-kind-local-registry-to-deploy-non-ovn-k-containers" title="Permanent link">¶</a></h3>
 <p>A local registry can be made available to the cluster if started with:

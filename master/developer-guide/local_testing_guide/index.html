@@ -5013,7 +5013,7 @@ $ PATH=/home/$USER/src/golang/go1-12-1/go/bin:$GOPATH/src/k8s.io/kubernetes/_out
 <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/.github/workflows/test.yml">ovn-kubernetes/.github/workflows/test.yml</a>)
 and set the environmental variable <code>K8S_VERSION</code> to the same value. Also make sure to export a GOPATH which points to
 your go directory with <code>export GOPATH=(...)</code>.</p>
-<div class="highlight"><pre><span></span><code>K8S_VERSION=v1.36.2
+<div class="highlight"><pre><span></span><code>K8S_VERSION=v1.36.4
 git clone --single-branch --branch $K8S_VERSION https://github.com/kubernetes/kubernetes.git $GOPATH/src/k8s.io/kubernetes/
 pushd $GOPATH/src/k8s.io/kubernetes/
 make WHAT="test/e2e/e2e.test vendor/github.com/onsi/ginkgo/ginkgo cmd/kubectl"
