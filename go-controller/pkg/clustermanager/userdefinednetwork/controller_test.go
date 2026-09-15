@@ -2700,6 +2700,7 @@ var _ = Describe("User Defined Network Controller", func() {
 		AfterEach(func() {
 			if c != nil {
 				c.Shutdown()
+				c = nil
 			}
 		})
 
@@ -2817,6 +2818,7 @@ var _ = Describe("User Defined Network Controller", func() {
 		AfterEach(func() {
 			if c != nil {
 				c.Shutdown()
+				c = nil
 			}
 		})
 
