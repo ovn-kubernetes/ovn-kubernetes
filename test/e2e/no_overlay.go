@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"hash/fnv"
 	"net"
-	"strings"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
@@ -110,7 +110,7 @@ var _ = ginkgo.Describe("No-Overlay: Default network is enabled with no-overlay"
 			map[string]string{},
 			func(p *corev1.Pod) {
 				p.Spec.HostNetwork = true
-				p.Spec.Containers[0].Image = images.Netshoot()
+				p.Spec.Containers[0].Image = images.Netshoot().PullSpec
 				p.Spec.Containers[0].SecurityContext = &corev1.SecurityContext{
 					Capabilities: &corev1.Capabilities{
 						Add: []corev1.Capability{"NET_RAW", "NET_ADMIN"},

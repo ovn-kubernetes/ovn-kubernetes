@@ -112,7 +112,7 @@ spec:
     - name: web 
       image: %s
       command: ["/bin/bash", "-c", "trap : TERM INT; sleep infinity & wait"]
-`, f.Namespace.Name, images.AgnHost())
+`, f.Namespace.Name, images.AgnHost().PullSpec)
 		createStaticPod(nodeName, staticPodYaml)
 		err = waitForPodRunningInNamespaceTimeout(f.ClientSet, podName, f.Namespace.Name, time.Second*60)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())

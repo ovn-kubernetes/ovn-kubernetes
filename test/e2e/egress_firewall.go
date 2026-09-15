@@ -270,7 +270,7 @@ func egressFirewallPolicyValidationTests(useUDN bool, udnTopology string) {
 				externalContainer1Port := infraprovider.Get().GetExternalContainerPort()
 				externalContainer1Spec := infraapi.ExternalContainer{
 					Name:    externalContainerName1,
-					Image:   images.AgnHost(),
+					Image:   images.AgnHost().PullSpec,
 					Network: primaryProviderNetwork,
 					CmdArgs: []string{"netexec", fmt.Sprintf("--http-port=%d", externalContainer1Port)},
 					ExtPort: externalContainer1Port,
@@ -282,7 +282,7 @@ func egressFirewallPolicyValidationTests(useUDN bool, udnTopology string) {
 				externalContainer2Port := infraprovider.Get().GetExternalContainerPort()
 				externalContainer2Spec := infraapi.ExternalContainer{
 					Name:    externalContainerName2,
-					Image:   images.AgnHost(),
+					Image:   images.AgnHost().PullSpec,
 					Network: primaryProviderNetwork,
 					CmdArgs: []string{"netexec", fmt.Sprintf("--http-port=%d", externalContainer2Port)},
 					ExtPort: externalContainer2Port,

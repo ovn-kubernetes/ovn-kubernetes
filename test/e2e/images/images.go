@@ -6,7 +6,10 @@ package images
 import (
 	"os"
 
+	imageutils "k8s.io/kubernetes/test/utils/image"
+
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig/api"
 )
 
 var (
@@ -29,7 +32,7 @@ var (
 	dnsmasq = "docker.io/andyshinn/dnsmasq:2.83@sha256:e937327fede666e55ba4c2ab8e715a2ce561945363016d42f9d698d1b18ff1be"
 
 	agnHostOverride = ""
-	extraImages     []string
+	extraImages     []api.ImageConfig
 )
 
 func init() {
@@ -54,58 +57,80 @@ func init() {
 	}
 }
 
-func AgnHost() string {
+func AgnHost() api.ImageConfig {
+	agnHost := deploymentconfig.Get().GetAgnHostContainerImage()
 	if agnHostOverride != "" {
-		return agnHostOverride
+		agnHost.PullSpec = agnHostOverride
 	}
-	return deploymentconfig.Get().GetAgnHostContainerImage()
+	return agnHost
 }
 
-func IPerf3() string {
-	return iperf3
+func IPerf3() api.ImageConfig {
+	return api.ImageConfig{
+		ImageID:  int(imageutils.None),
+		PullSpec: iperf3,
+	}
 }
 
 // DNSMasq returns an image containing the dnsmasq DHCP server, used as the
 // external DHCP server on the underlay for DHCP-IPAM localnet tests.
-func DNSMasq() string {
-	return dnsmasq
+func DNSMasq() api.ImageConfig {
+	return api.ImageConfig{
+		ImageID:  int(imageutils.None),
+		PullSpec: dnsmasq,
+	}
 }
 
-func Netshoot() string {
-	return netshoot
+func Netshoot() api.ImageConfig {
+	return api.ImageConfig{
+		ImageID:  int(imageutils.None),
+		PullSpec: netshoot,
+	}
 }
 
-func Nginx() string {
-	return nginx
+func Nginx() api.ImageConfig {
+	return api.ImageConfig{
+		ImageID:  int(imageutils.None),
+		PullSpec: nginx,
+	}
 }
 
-func MetalLBLBService() string {
-	return metallbLBService
+func MetalLBLBService() api.ImageConfig {
+	return api.ImageConfig{
+		ImageID:  int(imageutils.None),
+		PullSpec: metallbLBService,
+	}
 }
 
-func UDPServerSrcIPPrinter() string {
-	return udpServerSrcIPPrinter
+func UDPServerSrcIPPrinter() api.ImageConfig {
+	return api.ImageConfig{
+		ImageID:  int(imageutils.None),
+		PullSpec: udpServerSrcIPPrinter,
+	}
 }
 
-func FRR() string {
-	return frr
+func FRR() api.ImageConfig {
+	return api.ImageConfig{
+		ImageID:  int(imageutils.None),
+		PullSpec: frr,
+	}
 }
 
 // Add registers images that are needed by a test suite. Call from init()
 // functions after checking any relevant feature gates or environment
 // variables so that only images for enabled test suites are included.
-func Add(imgs ...string) {
+func Add(imgs ...api.ImageConfig) {
 	extraImages = append(extraImages, imgs...)
 }
 
 // Required returns the deduplicated set of images needed for the current
 // test run. agnhost is always included because it is used by most e2e tests.
-func Required() []string {
+func Required() []api.ImageConfig {
 	agnHost := AgnHost()
-	seen := map[string]struct{}{
+	seen := map[api.ImageConfig]struct{}{
 		agnHost: {},
 	}
-	out := []string{agnHost}
+	out := []api.ImageConfig{agnHost}
 	for _, img := range extraImages {
 		if _, ok := seen[img]; !ok {
 			seen[img] = struct{}{}

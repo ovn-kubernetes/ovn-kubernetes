@@ -1218,7 +1218,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					externalContainerName := f.Namespace.Name + "-web-server"
 					serviceContainerSpec := infraapi.ExternalContainer{
 						Name:       externalContainerName,
-						Image:      images.AgnHost(),
+						Image:      images.AgnHost().PullSpec,
 						Network:    underlayNetwork,
 						Entrypoint: "bash",
 						CmdArgs:    []string{"-c", fmt.Sprintf("ip a add %s/24 dev eth0 && ./agnhost netexec --http-port=%d", underlayServiceIP, servicePort)},
@@ -1595,7 +1595,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					externalContainerName := f.Namespace.Name + "-web-server"
 					serviceContainerSpec := infraapi.ExternalContainer{
 						Name:       externalContainerName,
-						Image:      images.AgnHost(),
+						Image:      images.AgnHost().PullSpec,
 						Network:    underlayNetwork,
 						Entrypoint: "bash",
 						ExtPort:    servicePort,

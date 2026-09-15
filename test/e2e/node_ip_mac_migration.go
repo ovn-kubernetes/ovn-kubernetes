@@ -134,7 +134,7 @@ spec:
 		primaryProviderNetwork, err := infraprovider.Get().PrimaryNetwork()
 		framework.ExpectNoError(err, "failed to get primary network")
 		externalContainerPort := infraprovider.Get().GetExternalContainerPort()
-		externalContainer = infraapi.ExternalContainer{Name: externalContainerName, Image: images.AgnHost(), Network: primaryProviderNetwork,
+		externalContainer = infraapi.ExternalContainer{Name: externalContainerName, Image: images.AgnHost().PullSpec, Network: primaryProviderNetwork,
 			CmdArgs: getAgnHostHTTPPortBindCMDArgs(externalContainerPort), ExtPort: externalContainerPort}
 		externalContainer, err = providerCtx.CreateExternalContainer(externalContainer)
 		framework.ExpectNoError(err, "failed to create external container")

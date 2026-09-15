@@ -94,7 +94,7 @@ ethernets:
 		runDHCPServer := func(namespace string, network infraapi.Network) error {
 			_, err := providerCtx.CreateExternalContainer(infraapi.ExternalContainer{
 				Name:       namespace + "-dhcp-server",
-				Image:      images.DNSMasq(),
+				Image:      images.DNSMasq().PullSpec,
 				Network:    network,
 				Entrypoint: "sh",
 				CmdArgs: []string{"-c", fmt.Sprintf(

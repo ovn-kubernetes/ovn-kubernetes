@@ -1121,7 +1121,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 								nil,
 								func(pod *v1.Pod) {
 									pod.Spec.HostNetwork = true
-									pod.Spec.Containers[0].Image = images.Netshoot()
+									pod.Spec.Containers[0].Image = images.Netshoot().PullSpec
 									pod.Spec.Containers[0].SecurityContext = &v1.SecurityContext{
 										Privileged: pointer.Bool(true),
 									}
@@ -2140,7 +2140,7 @@ spec:
 			externalContainerPort := infraprovider.Get().GetExternalContainerPort()
 			externalContainerSpec := infraapi.ExternalContainer{
 				Name:    externalContainerName,
-				Image:   images.AgnHost(),
+				Image:   images.AgnHost().PullSpec,
 				Network: providerPrimaryNetwork,
 				CmdArgs: httpServerContainerCmd(uint16(externalContainerPort)),
 				ExtPort: externalContainerPort,

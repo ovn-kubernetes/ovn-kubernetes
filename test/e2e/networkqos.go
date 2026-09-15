@@ -121,7 +121,7 @@ var _ = ginkgo.Describe("e2e NetworkQoS validation", feature.NetworkQos, func() 
 		framework.ExpectNoError(err, "Error creating Namespace %v: %v", dstPodNamespace, err)
 
 		_, err = createPod(f, srcPodName, nodes.Items[0].Name, f.Namespace.Name, []string{"bash", "-c", "sleep infinity"}, map[string]string{"component": "nqos-test-src"}, func(p *corev1.Pod) {
-			p.Spec.Containers[0].Image = images.Netshoot()
+			p.Spec.Containers[0].Image = images.Netshoot().PullSpec
 		})
 		framework.ExpectNoError(err)
 		dstNode = nodes.Items[1].Name
@@ -135,7 +135,7 @@ var _ = ginkgo.Describe("e2e NetworkQoS validation", feature.NetworkQos, func() 
 			dscpValue := 50
 			// dest pod without protocol and port
 			dstPod1, err := createPod(f, dstPod1Name, dstNode, dstPodNamespace, []string{"bash", "-c", "sleep infinity"}, map[string]string{"component": "nqos-test-dst"}, func(p *corev1.Pod) {
-				p.Spec.Containers[0].Image = images.Netshoot()
+				p.Spec.Containers[0].Image = images.Netshoot().PullSpec
 			})
 			framework.ExpectNoError(err)
 			gomega.Eventually(func() error {
@@ -147,7 +147,7 @@ var _ = ginkgo.Describe("e2e NetworkQoS validation", feature.NetworkQos, func() 
 
 			// dest pod covered by tcp without port rule
 			dstPod2, err := createPod(f, dstPod2Name, dstNode, dstPodNamespace, []string{"bash", "-c", "nc -l -p 9090; sleep infinity"}, map[string]string{"component": "nqos-test-tcp"}, func(p *corev1.Pod) {
-				p.Spec.Containers[0].Image = images.Netshoot()
+				p.Spec.Containers[0].Image = images.Netshoot().PullSpec
 			})
 			framework.ExpectNoError(err)
 			gomega.Eventually(func() error {
@@ -159,7 +159,7 @@ var _ = ginkgo.Describe("e2e NetworkQoS validation", feature.NetworkQos, func() 
 
 			// dest pod covered by tcp with port rule
 			dstPod3, err := createPod(f, dstPod3Name, dstNode, dstPodNamespace, []string{"bash", "-c", "python3 -m http.server 80; sleep infinity"}, map[string]string{"component": "nqos-test-web"}, func(p *corev1.Pod) {
-				p.Spec.Containers[0].Image = images.Netshoot()
+				p.Spec.Containers[0].Image = images.Netshoot().PullSpec
 			})
 			framework.ExpectNoError(err)
 			gomega.Eventually(func() error {
@@ -171,7 +171,7 @@ var _ = ginkgo.Describe("e2e NetworkQoS validation", feature.NetworkQos, func() 
 
 			// dest pod not covered by networkqos
 			dstPod4, err := createPod(f, dstPod4Name, dstNode, dstPodNamespace, []string{"bash", "-c", "sleep infinity"}, nil, func(p *corev1.Pod) {
-				p.Spec.Containers[0].Image = images.Netshoot()
+				p.Spec.Containers[0].Image = images.Netshoot().PullSpec
 			})
 			framework.ExpectNoError(err)
 			gomega.Eventually(func() error {
@@ -263,7 +263,7 @@ spec:
 			// dest pod to test traffic without protocol and port
 			dstPod1, err := createPod(f, dstPod1Name, dstNode, dstPodNamespace, []string{"bash", "-c", "sleep infinity"}, nil, func(p *corev1.Pod) {
 				p.Spec.HostNetwork = true
-				p.Spec.Containers[0].Image = images.Netshoot()
+				p.Spec.Containers[0].Image = images.Netshoot().PullSpec
 			})
 			framework.ExpectNoError(err)
 			gomega.Eventually(func() error {
@@ -276,7 +276,7 @@ spec:
 			// dest pod to test traffic with tcp protocol but no port
 			dstPod2, err := createPod(f, dstPod2Name, dstNode, dstPodNamespace, []string{"bash", "-c", "nc -l -p 9090; sleep infinity"}, nil, func(p *corev1.Pod) {
 				p.Spec.HostNetwork = true
-				p.Spec.Containers[0].Image = images.Netshoot()
+				p.Spec.Containers[0].Image = images.Netshoot().PullSpec
 			})
 			framework.ExpectNoError(err)
 			gomega.Eventually(func() error {
@@ -289,7 +289,7 @@ spec:
 			// dest pod to test traffic with tcp protocol and port
 			dstPod3, err := createPod(f, dstPod3Name, dstNode, dstPodNamespace, []string{"bash", "-c", "python3 -m http.server 80; sleep infinity"}, nil, func(p *corev1.Pod) {
 				p.Spec.HostNetwork = true
-				p.Spec.Containers[0].Image = images.Netshoot()
+				p.Spec.Containers[0].Image = images.Netshoot().PullSpec
 			})
 			framework.ExpectNoError(err)
 			gomega.Eventually(func() error {
@@ -301,7 +301,7 @@ spec:
 
 			// dest pod not covered by networkqos
 			dstPod4, err := createPod(f, dstPod4Name, dstNode, dstPodNamespace, []string{"bash", "-c", "sleep infinity"}, nil, func(p *corev1.Pod) {
-				p.Spec.Containers[0].Image = images.Netshoot()
+				p.Spec.Containers[0].Image = images.Netshoot().PullSpec
 			})
 			framework.ExpectNoError(err)
 			gomega.Eventually(func() error {
@@ -386,7 +386,7 @@ spec:
 			rate := 10000
 			// dest pod 1 for test without protocol & port
 			dstPod1, err := createPod(f, dstPod1Name, dstNode, dstPodNamespace, []string{"bash", "-c", "iperf3 -s"}, map[string]string{"component": "nqos-test-dst"}, func(p *corev1.Pod) {
-				p.Spec.Containers[0].Image = images.Netshoot()
+				p.Spec.Containers[0].Image = images.Netshoot().PullSpec
 			})
 			framework.ExpectNoError(err)
 			gomega.Eventually(func() error {
@@ -397,7 +397,7 @@ spec:
 			dstPod1IPv4, dstPod1IPv6 = getPodAddresses(dstPod1)
 			// dest pod 2 for test without protocol & port
 			dstPod2, err := createPod(f, dstPod2Name, dstNode, dstPodNamespace, []string{"bash", "-c", "iperf3 -s"}, map[string]string{"component": "nqos-test-dst"}, func(p *corev1.Pod) {
-				p.Spec.Containers[0].Image = images.Netshoot()
+				p.Spec.Containers[0].Image = images.Netshoot().PullSpec
 			})
 			framework.ExpectNoError(err)
 			gomega.Eventually(func() error {
@@ -461,7 +461,7 @@ spec:
 			rate := 5000
 			// dest pod for test with protocol
 			dstPod1, err := createPod(f, dstPod1Name, dstNode, dstPodNamespace, []string{"bash", "-c", "iperf3 -s"}, map[string]string{"component": "nqos-test-tcp"}, func(p *corev1.Pod) {
-				p.Spec.Containers[0].Image = images.Netshoot()
+				p.Spec.Containers[0].Image = images.Netshoot().PullSpec
 			})
 			framework.ExpectNoError(err)
 			gomega.Eventually(func() error {
@@ -525,7 +525,7 @@ spec:
 			rate := 5000
 			// dest pod for test with protocol and port
 			dstPod1, err := createPod(f, dstPod1Name, dstNode, dstPodNamespace, []string{"bash", "-c", "iperf3 -s -p 80"}, map[string]string{"component": "nqos-test-proto-and-port"}, func(p *corev1.Pod) {
-				p.Spec.Containers[0].Image = images.Netshoot()
+				p.Spec.Containers[0].Image = images.Netshoot().PullSpec
 			})
 			framework.ExpectNoError(err)
 			gomega.Eventually(func() error {

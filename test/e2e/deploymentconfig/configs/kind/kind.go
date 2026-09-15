@@ -35,8 +35,11 @@ func (k kind) PrimaryInterfaceName() string {
 	return "eth0"
 }
 
-func (k kind) GetAgnHostContainerImage() string {
-	return image.GetE2EImage(image.Agnhost)
+func (k kind) GetAgnHostContainerImage() api.ImageConfig {
+	return api.ImageConfig{
+		ImageID:  int(image.Agnhost),
+		PullSpec: image.GetE2EImage(image.Agnhost),
+	}
 }
 
 func (k kind) IsConfigurationEnabled(config api.Config) bool {
