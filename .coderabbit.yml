@@ -10,9 +10,9 @@ reviews:
   # Place the summary in the walkthrough comment instead of editing the PR description
   # which is pretty invasive
   high_level_summary_in_walkthrough: true
-  poem: true
+  poem: false
   review_status: true
-  collapse_walkthrough: false
+  collapse_walkthrough: true
   slop_detection:
     enabled: true
     label: "coderabbit/ai-slop"

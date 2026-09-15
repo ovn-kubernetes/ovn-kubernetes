@@ -1515,35 +1515,54 @@ func TestPodRequest_deletePodConntrackLiveMigration(t *testing.T) {
 	srcNetworks := `{"default":{"ip_addresses":["10.244.1.4/24"]},"` + udnNAD + `":{"ip_addresses":["10.100.200.5/24","fd10:0:2b:f000::5/64"]}}`
 	tgtNetworks := `{"default":{"ip_addresses":["10.244.2.20/24"]},"` + udnNAD + `":{"ip_addresses":["10.100.200.5/24","fd10:0:2b:f000::5/64"]}}`
 
-	t.Run("live migration in progress: flushes only the released IP, keeps the preserved dual-stack UDN IPs", func(t *testing.T) {
-		mockNetLinkOps := new(util_mocks.NetLinkOps)
-		util.SetNetLinkOpMockInst(mockNetLinkOps)
-		// Only the released default-network IPv4 address is flushed; no
-		// IPv6 flush at all since the only IPv6 address is preserved.
-		mockNetLinkOps.On("ConntrackDeleteFilters", netlink.ConntrackTableType(netlink.ConntrackTable), netlink.InetFamily(netlink.FAMILY_V4), mock.Anything).
-			Return(uint(1), nil).Once()
+	for _, tc := range []struct {
+		name                 string
+		withBridgeAnnotation bool
+	}{
+		{name: "with legacy bridge migration annotation", withBridgeAnnotation: true},
+		{name: "without legacy bridge migration annotation (primary UDN l2bridge)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := virtPod(srcName, srcNetworks)
+			target := virtPod(tgtName, tgtNetworks)
+			if !tc.withBridgeAnnotation {
+				delete(source.Annotations, kubevirtv1.AllowPodBridgeNetworkLiveMigrationAnnotation)
+				delete(target.Annotations, kubevirtv1.AllowPodBridgeNetworkLiveMigrationAnnotation)
+			}
 
-		lister := newLister(virtPod(srcName, srcNetworks), virtPod(tgtName, tgtNetworks))
-		newPodRequest(t).deletePodConntrack(lister, virtPod(srcName, srcNetworks))
+			t.Run("live migration in progress: flushes only the released IP, keeps the preserved dual-stack UDN IPs", func(t *testing.T) {
+				mockNetLinkOps := new(util_mocks.NetLinkOps)
+				util.SetNetLinkOpMockInst(mockNetLinkOps)
+				t.Cleanup(util.ResetNetLinkOpMockInst)
+				// Only the released default-network IPv4 address is flushed; no
+				// IPv6 flush at all since the only IPv6 address is preserved.
+				mockNetLinkOps.On("ConntrackDeleteFilters", netlink.ConntrackTableType(netlink.ConntrackTable), netlink.InetFamily(netlink.FAMILY_V4), mock.Anything).
+					Return(uint(1), nil).Once()
 
-		mockNetLinkOps.AssertExpectations(t)
-		mockNetLinkOps.AssertNumberOfCalls(t, "ConntrackDeleteFilters", 1)
-	})
+				lister := newLister(source, target)
+				newPodRequest(t).deletePodConntrack(lister, source)
 
-	t.Run("no other living VM pod: flushes all the IPs", func(t *testing.T) {
-		mockNetLinkOps := new(util_mocks.NetLinkOps)
-		util.SetNetLinkOpMockInst(mockNetLinkOps)
-		mockNetLinkOps.On("ConntrackDeleteFilters", netlink.ConntrackTableType(netlink.ConntrackTable), netlink.InetFamily(netlink.FAMILY_V4), mock.Anything).
-			Return(uint(1), nil).Twice()
-		mockNetLinkOps.On("ConntrackDeleteFilters", netlink.ConntrackTableType(netlink.ConntrackTable), netlink.InetFamily(netlink.FAMILY_V6), mock.Anything).
-			Return(uint(1), nil).Once()
+				mockNetLinkOps.AssertExpectations(t)
+				mockNetLinkOps.AssertNumberOfCalls(t, "ConntrackDeleteFilters", 1)
+			})
 
-		lister := newLister(virtPod(srcName, srcNetworks))
-		newPodRequest(t).deletePodConntrack(lister, virtPod(srcName, srcNetworks))
+			t.Run("no other living VM pod: flushes all the IPs", func(t *testing.T) {
+				mockNetLinkOps := new(util_mocks.NetLinkOps)
+				util.SetNetLinkOpMockInst(mockNetLinkOps)
+				t.Cleanup(util.ResetNetLinkOpMockInst)
+				mockNetLinkOps.On("ConntrackDeleteFilters", netlink.ConntrackTableType(netlink.ConntrackTable), netlink.InetFamily(netlink.FAMILY_V4), mock.Anything).
+					Return(uint(1), nil).Twice()
+				mockNetLinkOps.On("ConntrackDeleteFilters", netlink.ConntrackTableType(netlink.ConntrackTable), netlink.InetFamily(netlink.FAMILY_V6), mock.Anything).
+					Return(uint(1), nil).Once()
 
-		mockNetLinkOps.AssertExpectations(t)
-		mockNetLinkOps.AssertNumberOfCalls(t, "ConntrackDeleteFilters", 3)
-	})
+				lister := newLister(source)
+				newPodRequest(t).deletePodConntrack(lister, source)
+
+				mockNetLinkOps.AssertExpectations(t)
+				mockNetLinkOps.AssertNumberOfCalls(t, "ConntrackDeleteFilters", 3)
+			})
+		})
+	}
 }
 
 func TestConfigureOVS(t *testing.T) {

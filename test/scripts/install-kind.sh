@@ -11,7 +11,7 @@ case $(uname -m) in
 esac
 
 # from https://github.com/kubernetes-sigs/kind/releases
-KIND_URL=https://kind.sigs.k8s.io/dl/v0.32.0/kind-linux-${ARCH}
+KIND_URL=https://kind.sigs.k8s.io/dl/v0.33.0/kind-linux-${ARCH}
 KIND_SHA_URL=$KIND_URL.sha256sum
 KIND_SHA="$( curl -L -s ${KIND_SHA_URL}| awk '{ print $1 }')"
 KIND_DOWNLOAD_RETRIES=5
@@ -48,7 +48,7 @@ install_kind() {
 }
 
 pushd $TMP_DIR
-K8S_VERSION="v1.36.2"
+K8S_VERSION="v1.36.4"
 
 # Install kubectl for K8S_VERSION in use
 curl -sL https://dl.k8s.io/${K8S_VERSION}/kubernetes-client-linux-${ARCH}.tar.gz | sudo tar xvz -C /usr/local/bin kubernetes/client/bin/kubectl --strip-components 3
@@ -72,11 +72,13 @@ rm helm-linux-${ARCH}.tar.gz
 install_kind
 popd # go out of $TMP_DIR
 
-# Build the Kubernetes node image until official kindest/node images are
-# available.
-# See: https://github.com/kubernetes-sigs/kind/issues/4157
-echo "Building kind node image for Kubernetes ${K8S_VERSION}..."
-kind build node-image --image kindest/node:${K8S_VERSION} ${K8S_VERSION}
+# The cluster runs the official kindest/node image for K8S_VERSION, pulled
+# by kind-helm.sh. If a future Kubernetes bump lands before its kindest/node
+# image exists and the node image has to be built here again with
+# "kind build node-image", wrap the build in a retry loop: kind fetches the
+# server tarball and pulls the control-plane images itself with at most one
+# retry, so a single connection reset fails the whole kind setup.
+# See https://github.com/ovn-kubernetes/ovn-kubernetes/issues/6929
 
 pushd $SCRIPT_DIR/../../contrib
 ./kind-helm.sh

@@ -1099,9 +1099,11 @@ func (pr *PodRequest) deletePodConntrack(podLister corev1listers.PodLister, pod 
 // registration in pkg/factory/factory.go NewNodeWatchFactory).
 func (pr *PodRequest) migrationPreservedIPs(podLister corev1listers.PodLister, pod *corev1.Pod) sets.Set[string] {
 	preservedIPs := sets.New[string]()
-	if podLister == nil || pod == nil || !kubevirt.IsPodLiveMigratable(pod) {
+	if podLister == nil || pod == nil {
 		return preservedIPs
 	}
+	// DiscoverLiveMigrationStatus already filters non-VM pods. Primary UDN
+	// binding plugins can migrate without the legacy pod-bridge annotation.
 	status, err := kubevirt.DiscoverLiveMigrationStatus(podLister, pod)
 	if err != nil {
 		klog.Warningf("Failed to discover live migration status for pod %s/%s: %v", pr.PodNamespace, pr.PodName, err)

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	cnitypes "github.com/containernetworking/cni/pkg/types"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/format"
@@ -26,6 +27,7 @@ import (
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
+	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
@@ -57,6 +59,38 @@ func getFakeBaseController(netInfo util.NetInfo) *BaseNetworkController {
 		ReconcilableNetInfo: util.NewReconcilableNetInfo(netInfo),
 	}
 }
+
+var _ = ginkgo.Describe("network policy scale metrics", func() {
+	ginkgo.It("uses the shared scale-metrics gate", func() {
+		savedEnableScaleMetrics := config.Metrics.EnableScaleMetrics
+		ginkgo.DeferCleanup(func() {
+			config.Metrics.EnableScaleMetrics = savedEnableScaleMetrics
+		})
+
+		config.Metrics.EnableScaleMetrics = true
+		primaryNetInfo, err := util.NewNetInfo(&ovncnitypes.NetConf{
+			NetConf:  cnitypes.NetConf{Name: "primary-udn"},
+			Role:     types.NetworkRolePrimary,
+			Topology: types.Layer3Topology,
+			NADName:  "ns/primary-udn",
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		secondaryNetInfo, err := util.NewNetInfo(&ovncnitypes.NetConf{
+			NetConf:  cnitypes.NetConf{Name: "secondary-udn"},
+			Role:     types.NetworkRoleSecondary,
+			Topology: types.Layer3Topology,
+			NADName:  "ns/secondary-udn",
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		gomega.Expect(getFakeBaseController(&util.DefaultNetInfo{}).networkPolicyMetricsEnabled()).To(gomega.BeTrue())
+		gomega.Expect(getFakeBaseController(primaryNetInfo).networkPolicyMetricsEnabled()).To(gomega.BeTrue())
+		gomega.Expect(getFakeBaseController(secondaryNetInfo).networkPolicyMetricsEnabled()).To(gomega.BeFalse())
+
+		config.Metrics.EnableScaleMetrics = false
+		gomega.Expect(getFakeBaseController(primaryNetInfo).networkPolicyMetricsEnabled()).To(gomega.BeFalse())
+	})
+})
 
 // getDefaultDenyData builds namespace-owned port groups, considering the same ports are selected for ingress
 // and egress

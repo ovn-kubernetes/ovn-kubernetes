@@ -70,7 +70,7 @@ set_common_default_params() {
   KIND_CREATE=${KIND_CREATE:-true}
   KIND_IMAGE=${KIND_IMAGE:-kindest/node}
   KIND_CLUSTER_NAME=${KIND_CLUSTER_NAME:-ovn}
-  K8S_VERSION=${K8S_VERSION:-v1.36.1}
+  K8S_VERSION=${K8S_VERSION:-v1.36.4}
   KIND_SETTLE_DURATION=${KIND_SETTLE_DURATION:-30}
   KIND_CONFIG=${KIND_CONFIG:-${DIR}/kind.yaml.j2}
   KIND_LOCAL_REGISTRY=${KIND_LOCAL_REGISTRY:-false}
@@ -1095,7 +1095,8 @@ wait_for_ovn_daemonset() {
 # DS are actually up. Next, it waits for ovnkube-control-plane pods to post
 # "Ready" when that deployment is part of the mode. If the DNS name resolver
 # replaced the CoreDNS image, it then waits for that rollout to finish. Last,
-# it will do the same with all pods in the kube-system namespace.
+# it waits for every non-terminating pod in the kube-system namespace to be
+# Ready.
 kubectl_wait_pods() {
   # IPv6 cluster seems to take a little longer to come up, so extend the wait time.
   OVN_TIMEOUT=${KIND_HELM_OVN_TIMEOUT:-300}
@@ -1136,19 +1137,44 @@ kubectl_wait_pods() {
   restart_dpu_sim_multus_after_ovnk
 
   if [ "${OVN_ENABLE_DNSNAMERESOLVER:-false}" == true ]; then
-    # Avoid passing an obsolete CoreDNS pod to the fixed pod list used by the
-    # kube-system wait below while the custom image rollout is still in flight.
+    # Make sure the custom CoreDNS image rollout completed before checking the
+    # kube-system pods, so the check below covers the new replicas.
     timeout=$(calculate_timeout "${endtime}")
     echo "Waiting for the CoreDNS deployment rollout (timeout ${timeout})..."
     kubectl -n kube-system rollout status deployment/coredns --timeout "${timeout}s"
   fi
 
-  timeout=$(calculate_timeout ${endtime})
-  if ! kubectl wait -n kube-system --for=condition=ready pods --all --timeout=${timeout}s ; then
+  if ! kubectl_wait_namespace_pods_ready kube-system ${endtime}; then
     echo "some pods in the system are not running"
     kubectl get pods -A -o wide || true
     exit 1
   fi
+}
+
+# kubectl_wait_namespace_pods_ready waits until every non-terminating pod in the
+# namespace is Ready, giving up at the absolute endtime (in $SECONDS, see
+# calculate_timeout). `kubectl wait --all` is not used because it resolves the
+# pod list once and keeps waiting for a pod deleted mid-wait (e.g. a terminating
+# CoreDNS replica) until its timeout expires; instead the current pods are
+# checked once per poll.
+kubectl_wait_namespace_pods_ready() {
+  local namespace=$1
+  local endtime=$2
+  local pods
+
+  echo "Waiting for pods in ${namespace} to become ready (timeout $(calculate_timeout ${endtime}))..."
+  while true; do
+    pods=$(kubectl get pods -n ${namespace} -o go-template \
+      --template='{{range .items}}{{if not .metadata.deletionTimestamp}}{{.metadata.name}} {{end}}{{end}}')
+    if [ -n "${pods}" ] && \
+      kubectl wait -n ${namespace} --for=condition=ready --timeout=0 pod ${pods} >/dev/null 2>&1; then
+      return 0
+    fi
+    if [ $(( endtime - SECONDS )) -le 0 ]; then
+      return 1
+    fi
+    sleep 2
+  done
 }
 
 # calculate_timeout takes an absolute endtime in seconds (based on bash script runtime, see
@@ -1568,13 +1594,12 @@ get_kubevirt_release_url() {
 
 readonly FRR_K8S_VERSION=v0.0.0-20260603082256-b43efcb206be
 readonly FRR_K8S_GIT_REF=b43efcb206be
-readonly FRR_K8S_PATCHED_DEMO_FRR_IMAGE=quay.io/frrouting/frr:10.4.1
-readonly FRR_K8S_ALL_IN_ONE_FRR_IMAGE=quay.io/frrouting/frr:10.4.3
+readonly FRR_K8S_OVNK_BGP_PATCH="${DIR}/frr-k8s/patches/0001-Improvements-to-the-demo.patch"
+readonly FRR_K8S_UPSTREAM_FRR_IMAGE=quay.io/frrouting/frr:10.4.3
 readonly FRR_DEPLOYED_IMAGE=quay.io/frrouting/frr:10.6.0
 # Override to test newer FRR builds in the in-cluster frr-k8s daemonset
 # without changing the pinned frr-k8s release.
 FRR_K8S_FRR_IMAGE=${FRR_K8S_FRR_IMAGE:-${FRR_DEPLOYED_IMAGE}}
-readonly FRR_EXTERNAL_DEMO_IMAGE=${FRR_DEPLOYED_IMAGE}
 readonly FRR_TMP_DIR=$(mktemp -d -u)
 
 clone_frr() {
@@ -1586,23 +1611,19 @@ clone_frr() {
     git checkout --detach "$FRR_K8S_GIT_REF"
     popd
 
-    # Download the patches
-    curl -Ls https://github.com/jcaamano/frr-k8s/archive/refs/heads/ovnk-bgp-v0.0.21.tar.gz | tar xzvf - frr-k8s-ovnk-bgp-v0.0.21/patches --strip-components 1
-
-    # Change into the cloned repo directory before applying patches
     pushd frr-k8s
-    # The OVN-K demo patch was authored before upstream bumped the demo
-    # image. Normalize that context before applying the patch; the image is
-    # bumped to FRR_EXTERNAL_DEMO_IMAGE below.
-    sed -i 's|quay.io/frrouting/frr:10.4.3|quay.io/frrouting/frr:9.1.0|g' hack/demo/demo.sh
-    git apply ../patches/*
+    if ! git apply "${FRR_K8S_OVNK_BGP_PATCH}"; then
+      echo "Failed to apply ${FRR_K8S_OVNK_BGP_PATCH} to frr-k8s ${FRR_K8S_GIT_REF}; refresh the patch." >&2
+      exit 1
+    fi
 
-    # The OVN-K demo patch changes the external demo router image to 10.4.1.
-    # Replace that patched image with the FRR version configured by this script.
+    # The local OVN-K demo patch is refreshed against FRR_K8S_GIT_REF and keeps
+    # the upstream demo image unchanged. Replace that exact pinned image with
+    # the FRR version configured by this script.
     replace_in_file_or_exit \
       hack/demo/demo.sh \
-      "${FRR_K8S_PATCHED_DEMO_FRR_IMAGE}" \
-      "${FRR_EXTERNAL_DEMO_IMAGE}"
+      "${FRR_K8S_UPSTREAM_FRR_IMAGE}" \
+      "${FRR_DEPLOYED_IMAGE}"
 
     popd
 
@@ -1621,13 +1642,11 @@ deploy_frr_external_container() {
   # apply the demo which will deploy an external FRR container that the cluster
   # can peer with acting as BGP (reflector) external gateway
   pushd "${FRR_TMP_DIR}"/frr-k8s/hack/demo || exit 1
-  # modify config template to configure neighbors as route reflector clients
-  # First check if IPv4 network already exists
+  # Add the configured BGP server network prefixes to the demo FRR config.
+  # The carried FRR-k8s patch already renders neighbors as route reflector
+  # clients.
   grep -q 'network '"${BGP_SERVER_NET_SUBNET_IPV4}" frr/frr.conf.tmpl || \
     sed -i '/address-family ipv4 unicast/a \ \ network '"${BGP_SERVER_NET_SUBNET_IPV4}"'' frr/frr.conf.tmpl
-
-  # Add route reflector client config
-  sed -i '/remote-as 64512/a \ neighbor {{ . }} route-reflector-client' frr/frr.conf.tmpl
 
   if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     # Check if IPv6 address-family section exists
@@ -1641,9 +1660,6 @@ deploy_frr_external_container() {
       # Add network to existing IPv6 section
       sed -i '/address-family ipv6 unicast/a \ \ network '"${BGP_SERVER_NET_SUBNET_IPV6}"'' frr/frr.conf.tmpl
     fi
-
-    # Add route-reflector-client for IPv6 neighbors
-    sed -i '/neighbor fc00.*remote-as 64512/a \ neighbor {{ . }} route-reflector-client' frr/frr.conf.tmpl
   fi
   if [ "${OCI_BIN}" == "podman" ]; then
     # frr-k8s' demo script prefers docker when both docker and podman are
@@ -1825,13 +1841,12 @@ install_frr_k8s() {
 
   # This BGP e2e setup uses two FRR containers:
   # 1. The external FRR test router from hack/demo/demo.sh. clone_frr()
-  #    patches that image to FRR_EXTERNAL_DEMO_IMAGE.
+  #    patches that image to FRR_DEPLOYED_IMAGE.
   # 2. The in-cluster frr-k8s daemonset from config/all-in-one/frr-k8s.yaml.
   #    Patch that manifest here because clone_frr() does not update it.
   #
   # In regular PR e2e jobs where nobody sets a custom FRR_K8S_FRR_IMAGE
-  # environment variable, FRR_EXTERNAL_DEMO_IMAGE and FRR_K8S_FRR_IMAGE both
-  # resolve to FRR_DEPLOYED_IMAGE, so both containers use the same FRR build.
+  # environment variable, both containers use FRR_DEPLOYED_IMAGE.
   # FRR_K8S_FRR_IMAGE remains overrideable for tests that intentionally need a
   # different in-cluster daemonset image.
   #
@@ -1840,7 +1855,7 @@ install_frr_k8s() {
   # override must be reviewed before it changes what CI deploys.
   replace_in_file_or_exit \
     "${FRR_TMP_DIR}"/frr-k8s/config/all-in-one/frr-k8s.yaml \
-    "${FRR_K8S_ALL_IN_ONE_FRR_IMAGE}" \
+    "${FRR_K8S_UPSTREAM_FRR_IMAGE}" \
     "${FRR_K8S_FRR_IMAGE}"
 
   if [ "${bgp_port}" -ne 0 ]; then
