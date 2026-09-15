@@ -340,7 +340,7 @@ func (c *Controller) onNQOSUpdate(oldObj, newObj any) {
 
 // onNQOSDelete queues the NQOS for processing.
 func (c *Controller) onNQOSDelete(obj interface{}) {
-	key, err := cache.MetaNamespaceKeyFunc(obj)
+	key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("couldn't get key for object %+v: %v", obj, err))
 		return

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -133,6 +134,16 @@ func (c *Controller) getNetworkQosForPodChange(eventData *eventData[*corev1.Pod]
 		pod = eventData.old
 	}
 	podNs, err := c.nqosNamespaceLister.Get(pod.Namespace)
+	if apierrors.IsNotFound(err) {
+		// Namespace deletion can overtake queued Pod events. Its old labels
+		// are unavailable, so resync policies to remove stale source and
+		// destination addresses without guessing which selectors matched.
+		affected := sets.New[string]()
+		for _, nqos := range nqoses {
+			affected.Insert(joinMetaNamespaceAndName(nqos.Namespace, nqos.Name))
+		}
+		return affected, nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get namespace %s: %v", pod.Namespace, err)
 	}
