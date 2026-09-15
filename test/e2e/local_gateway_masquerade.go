@@ -56,7 +56,7 @@ func setNodeAnnotation(cs clientset.Interface, nodeName, annotationKey string, s
 		return fmt.Errorf("failed to marshal patch: %w", err)
 	}
 
-	_, err = cs.CoreV1().Nodes().Patch(context.TODO(), nodeName, k8stypes.MergePatchType, patchData, metav1.PatchOptions{})
+	_, err = cs.CoreV1().Nodes().Patch(context.Background(), nodeName, k8stypes.MergePatchType, patchData, metav1.PatchOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to patch node %s: %w", nodeName, err)
 	}
@@ -75,6 +75,7 @@ func removeNodeSNATExcludeSubnetsAnnotation(cs clientset.Interface, nodeName str
 		Metadata: map[string]interface{}{
 			"annotations": map[string]*string{
 				util.OvnNodeSNATExcludeSubnets: nil,
+				util.OvnNodeDontSNATSubnets:    nil,
 			},
 		},
 	}
@@ -84,7 +85,7 @@ func removeNodeSNATExcludeSubnetsAnnotation(cs clientset.Interface, nodeName str
 		return fmt.Errorf("failed to marshal patch: %w", err)
 	}
 
-	_, err = cs.CoreV1().Nodes().Patch(context.TODO(), nodeName, k8stypes.MergePatchType, patchData, metav1.PatchOptions{})
+	_, err = cs.CoreV1().Nodes().Patch(context.Background(), nodeName, k8stypes.MergePatchType, patchData, metav1.PatchOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to patch node %s: %w", nodeName, err)
 	}
@@ -93,7 +94,7 @@ func removeNodeSNATExcludeSubnetsAnnotation(cs clientset.Interface, nodeName str
 }
 
 func getNodeAnnotation(cs clientset.Interface, nodeName, annotation string) (string, bool, error) {
-	node, err := cs.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
+	node, err := cs.CoreV1().Nodes().Get(context.Background(), nodeName, metav1.GetOptions{})
 	if err != nil {
 		return "", false, fmt.Errorf("failed to get node %s: %w", nodeName, err)
 	}
@@ -165,7 +166,7 @@ var _ = ginkgo.Describe("Local Gateway Pod Subnet SNAT", feature.Service, func()
 			e2eskipper.Skipf("Skipping test - not in local gateway mode")
 		}
 
-		node, err := e2enode.GetRandomReadySchedulableNode(context.TODO(), cs)
+		node, err := e2enode.GetRandomReadySchedulableNode(context.Background(), cs)
 		framework.ExpectNoError(err, "failed to get a schedulable node")
 		nodeName = node.Name
 
@@ -193,6 +194,11 @@ var _ = ginkgo.Describe("Local Gateway Pod Subnet SNAT", feature.Service, func()
 		}
 	})
 
+	// TODO: add a traffic-level ingress SNAT test for shared gateway mode.
+	// In shared GW, the pod's TCP response is SNATed by OVN GR independently
+	// of the mgmtport-snat chain, requiring OVN LRP configuration to make
+	// a full round-trip test work. The structural tests (nftables rules and
+	// sets populated) cover shared GW regression in the meantime.
 	ginkgo.It("should have return rules for no-snat-subnets in ovn-kube-pod-subnet-masq chain", func() {
 		ginkgo.By("Verifying the ovn-kube-pod-subnet-masq chain exists")
 		var chainRules string
@@ -374,161 +380,150 @@ var _ = ginkgo.Describe("Local Gateway Pod Subnet SNAT", feature.Service, func()
 		framework.ExpectNoError(err, "subnet from deprecated annotation should be in the nftables set")
 	})
 
-	ginkgo.It("should preserve pod source IP when destination is in SNAT exclude list", func() {
-		const (
-			externalContainerName = "snat-test-server"
-			testPodName           = "snat-test-client"
-		)
+	ginkgo.DescribeTable("should preserve pod source IP when destination is in SNAT exclude list",
+		func(protocol corev1.IPFamily) {
+			const (
+				externalContainerName = "snat-test-server"
+				testPodName           = "snat-test-client"
+			)
+			if protocol == corev1.IPv4Protocol && !isIPv4Supported(cs) {
+				e2eskipper.Skipf("Skipping IPv4 test - IPv4 not supported on this cluster")
+			}
+			if protocol == corev1.IPv6Protocol && !isIPv6Supported(cs) {
+				e2eskipper.Skipf("Skipping IPv6 test - IPv6 not supported on this cluster")
+			}
 
-		if !isIPv4Supported(cs) {
-			e2eskipper.Skipf("Skipping source IP preservation test - IPv4 not supported on this cluster")
-		}
+			isIPv6 := protocol == corev1.IPv6Protocol
+			prefix, noSNATSet, ipRouteCmd := "/32", types.NFTMgmtPortNoSNATSubnetsV4, "ip"
+			if isIPv6 {
+				prefix, noSNATSet, ipRouteCmd = "/128", types.NFTMgmtPortNoSNATSubnetsV6, "ip -6"
+			}
 
-		providerCtx := infraprovider.Get().NewTestContext()
+			providerCtx := infraprovider.Get().NewTestContext()
 
-		ginkgo.By("Creating external container running agnhost netexec")
-		primaryNetwork, err := infraprovider.Get().PrimaryNetwork()
-		framework.ExpectNoError(err, "failed to get primary network")
-		port := infraprovider.Get().GetExternalContainerPort()
+			ginkgo.By("Creating external container running agnhost netexec")
+			primaryNetwork, err := infraprovider.Get().PrimaryNetwork()
+			framework.ExpectNoError(err, "failed to get primary network")
+			port := infraprovider.Get().GetExternalContainerPort()
 
-		externalContainer := infraapi.ExternalContainer{
-			Name:    externalContainerName,
-			Image:   images.AgnHost(),
-			Network: primaryNetwork,
-			CmdArgs: []string{"netexec", fmt.Sprintf("--http-port=%d", port)},
-			ExtPort: port,
-		}
-		externalContainer, err = providerCtx.CreateExternalContainer(externalContainer)
-		framework.ExpectNoError(err, "failed to create external container")
-		framework.Logf("External container created with IPv4: %s, port: %d", externalContainer.GetIPv4(), port)
+			externalContainer := infraapi.ExternalContainer{
+				Name:    externalContainerName,
+				Image:   images.AgnHost(),
+				Network: primaryNetwork,
+				CmdArgs: []string{"netexec", fmt.Sprintf("--http-port=%d", port)},
+				ExtPort: port,
+			}
+			externalContainer, err = providerCtx.CreateExternalContainer(externalContainer)
+			framework.ExpectNoError(err, "failed to create external container")
 
-		externalIP := externalContainer.GetIPv4()
-		if externalIP == "" {
-			e2eskipper.Skipf("External container has no IPv4 address")
-		}
+			externalIP := externalContainer.GetIPv4()
+			if isIPv6 {
+				externalIP = externalContainer.GetIPv6()
+			}
+			if externalIP == "" {
+				e2eskipper.Skipf("External container has no %s address", protocol)
+			}
+			framework.Logf("External container IP: %s, port: %d", externalIP, port)
 
-		ginkgo.By("Creating test pod on the same node")
-		pod := e2epod.NewAgnhostPod(f.Namespace.Name, testPodName, nil, nil, nil)
-		pod.Spec.NodeName = nodeName
-		pod, err = cs.CoreV1().Pods(f.Namespace.Name).Create(context.TODO(), pod, metav1.CreateOptions{})
-		framework.ExpectNoError(err, "failed to create test pod")
-		ginkgo.DeferCleanup(func() {
-			err := cs.CoreV1().Pods(f.Namespace.Name).Delete(context.TODO(), testPodName, metav1.DeleteOptions{})
-			framework.ExpectNoError(err, "failed to delete test pod")
-		})
+			ginkgo.By("Creating test pod on the same node")
+			pod := e2epod.NewAgnhostPod(f.Namespace.Name, testPodName, nil, nil, nil)
+			pod.Spec.NodeName = nodeName
+			pod, err = cs.CoreV1().Pods(f.Namespace.Name).Create(context.Background(), pod, metav1.CreateOptions{})
+			framework.ExpectNoError(err, "failed to create test pod")
+			ginkgo.DeferCleanup(func() {
+				err := cs.CoreV1().Pods(f.Namespace.Name).Delete(context.Background(), testPodName, metav1.DeleteOptions{})
+				framework.ExpectNoError(err, "failed to delete test pod")
+			})
 
-		err = e2epod.WaitForPodRunningInNamespace(context.TODO(), cs, pod)
-		framework.ExpectNoError(err, "test pod did not reach Running state")
+			err = e2epod.WaitForPodRunningInNamespace(context.Background(), cs, pod)
+			framework.ExpectNoError(err, "test pod did not reach Running state")
 
-		pod, err = cs.CoreV1().Pods(f.Namespace.Name).Get(context.TODO(), testPodName, metav1.GetOptions{})
-		framework.ExpectNoError(err, "failed to get test pod")
-		podIP := pod.Status.PodIP
-		framework.Logf("Test pod IP: %s", podIP)
+			pod, err = cs.CoreV1().Pods(f.Namespace.Name).Get(context.Background(), testPodName, metav1.GetOptions{})
+			framework.ExpectNoError(err, "failed to get test pod")
+			podIP := pod.Status.PodIP
+			framework.Logf("Test pod IP: %s", podIP)
 
-		// Get node IP to verify we're NOT seeing it (and to set up return route).
-		// Select the address matching the pod IP family to avoid mismatches on dual-stack clusters.
-		node, err := cs.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
-		framework.ExpectNoError(err, "failed to get node")
-		podIsIPv6 := net.ParseIP(podIP) != nil && net.ParseIP(podIP).To4() == nil
-		var nodeIP string
-		for _, addr := range node.Status.Addresses {
-			if addr.Type == corev1.NodeInternalIP {
-				addrIsIPv6 := net.ParseIP(addr.Address) != nil && net.ParseIP(addr.Address).To4() == nil
-				if addrIsIPv6 == podIsIPv6 {
-					nodeIP = addr.Address
-					break
+			// Select node IP matching the pod IP family to avoid mismatches on dual-stack clusters.
+			node, err := cs.CoreV1().Nodes().Get(context.Background(), nodeName, metav1.GetOptions{})
+			framework.ExpectNoError(err, "failed to get node")
+			podIsIPv6 := net.ParseIP(podIP) != nil && net.ParseIP(podIP).To4() == nil
+			var nodeIP string
+			for _, addr := range node.Status.Addresses {
+				if addr.Type == corev1.NodeInternalIP {
+					addrIsIPv6 := net.ParseIP(addr.Address) != nil && net.ParseIP(addr.Address).To4() == nil
+					if addrIsIPv6 == podIsIPv6 {
+						nodeIP = addr.Address
+						break
+					}
 				}
 			}
-		}
-		framework.Logf("Node IP: %s", nodeIP)
+			framework.Logf("Node IP: %s", nodeIP)
 
-		curlCmd := fmt.Sprintf("curl -s --max-time 10 http://%s:%d/clientip", externalIP, port)
-
-		ginkgo.By("Verifying baseline connectivity from pod to external container before applying annotation")
-		gomega.Eventually(func() bool {
-			stdout, stderr, err := e2epod.ExecShellInPodWithFullOutput(context.TODO(), f, testPodName, curlCmd)
-			if err != nil {
-				framework.Logf("baseline curl failed: %v, stderr: %s", err, stderr)
-				return false
+			// IPv6 addresses need brackets in URLs.
+			curlTarget := externalIP
+			if isIPv6 {
+				curlTarget = fmt.Sprintf("[%s]", externalIP)
 			}
-			framework.Logf("baseline connectivity ok, response: %s", stdout)
-			return true
-		}, 60*time.Second, 2*time.Second).Should(gomega.BeTrue(), "pod should be able to reach external container before annotation is set")
+			curlCmd := fmt.Sprintf("curl -s --max-time 10 http://%s:%d/clientip", curlTarget, port)
 
-		ginkgo.By(fmt.Sprintf("Adding external container IP %s/32 to SNAT exclude annotation", externalIP))
-		err = setNodeSNATExcludeSubnetsAnnotation(cs, nodeName, []string{externalIP + "/32"})
-		framework.ExpectNoError(err, "failed to set SNAT exclude subnets annotation")
+			ginkgo.By("Verifying baseline connectivity from pod to external container before applying annotation")
+			gomega.Eventually(func() bool {
+				stdout, stderr, err := e2epod.ExecShellInPodWithFullOutput(context.Background(), f, testPodName, curlCmd)
+				if err != nil {
+					framework.Logf("baseline curl failed: %v, stderr: %s", err, stderr)
+					return false
+				}
+				framework.Logf("baseline connectivity ok, response: %s", stdout)
+				return true
+			}, 60*time.Second, 2*time.Second).Should(gomega.BeTrue(), "pod should be able to reach external container before annotation is set")
 
-		ginkgo.By("Waiting for nftables set to be updated")
-		err = wait.PollUntilContextTimeout(context.Background(), retryInterval, retryTimeout, true, checkNFTablesSetContainsElement(
-			nodeName, types.NFTMgmtPortNoSNATSubnetsV4, externalIP))
-		framework.ExpectNoError(err, "external container IP should be in mgmtport-no-snat-subnets-v4 set")
+			ginkgo.By(fmt.Sprintf("Adding external container IP %s%s to SNAT exclude annotation", externalIP, prefix))
+			err = setNodeSNATExcludeSubnetsAnnotation(cs, nodeName, []string{externalIP + prefix})
+			framework.ExpectNoError(err, "failed to set SNAT exclude subnets annotation")
 
-		// Add route on external container for return traffic to pod.
-		// Since we're bypassing SNAT, the external container will see the pod IP as source
-		// and needs to know how to route the response back via the node.
-		prefix := "/32"
-		if podIsIPv6 {
-			prefix = "/128"
-		}
-		ginkgo.By(fmt.Sprintf("Adding route on external container for return traffic: %s via %s", podIP, nodeIP))
-		_, err = infraprovider.Get().ExecExternalContainerCommand(externalContainer,
-			[]string{"ip", "route", "add", podIP + prefix, "via", nodeIP})
-		framework.ExpectNoError(err, "failed to add return route on external container")
+			ginkgo.By("Waiting for nftables set to be updated")
+			err = wait.PollUntilContextTimeout(context.Background(), retryInterval, retryTimeout, true,
+				checkNFTablesSetContainsElement(nodeName, noSNATSet, externalIP))
+			framework.ExpectNoError(err, "external container IP should be in %s set", noSNATSet)
 
-		ginkgo.By("Verifying source IP is pod IP, not node IP")
-		gomega.Eventually(func() bool {
-			stdout, stderr, err := e2epod.ExecShellInPodWithFullOutput(context.TODO(), f, testPodName, curlCmd)
-			if err != nil {
-				framework.Logf("curl failed: %v, stderr: %s", err, stderr)
-				return false
+			// Since we're bypassing SNAT, the external container will see the pod IP as source
+			// and needs a route back via the node.
+			podPrefix := "/32"
+			if podIsIPv6 {
+				podPrefix = "/128"
 			}
-			framework.Logf("External container saw source: %s", stdout)
-			// Output format is "IP:port" — use SplitHostPort to handle IPv6 addresses correctly
-			host, _, err := net.SplitHostPort(strings.TrimSpace(stdout))
-			if err != nil {
-				framework.Logf("Failed to parse client IP %q: %v", stdout, err)
-				return false
-			}
-			framework.Logf("Source IP: %s, expected pod IP: %s, node IP: %s", host, podIP, nodeIP)
-			return host == podIP
-		}, 60*time.Second, 2*time.Second).Should(gomega.BeTrue(),
-			fmt.Sprintf("source IP should be pod IP (%s), not node IP (%s)", podIP, nodeIP))
-	})
-})
+			ginkgo.By(fmt.Sprintf("Adding route on external container for return traffic: %s via %s", podIP, nodeIP))
+			_, err = infraprovider.Get().ExecExternalContainerCommand(externalContainer,
+				[]string{"sh", "-c", fmt.Sprintf("%s route add %s via %s", ipRouteCmd, podIP+podPrefix, nodeIP)})
+			framework.ExpectNoError(err, "failed to add return route on external container")
 
-// SNATExcludeIngressTraffic tests that the node SNAT exclusion annotation preserves the source IP
-// of ingress traffic in both shared and local gateway modes.
-var _ = ginkgo.Describe("Pod Subnet SNAT Ingress Exclusion", feature.Service, func() {
-	const (
-		retryInterval = 1 * time.Second
-		retryTimeout  = 60 * time.Second
+			ginkgo.By("Verifying source IP is pod IP, not node IP")
+			gomega.Eventually(func() bool {
+				stdout, stderr, err := e2epod.ExecShellInPodWithFullOutput(context.Background(), f, testPodName, curlCmd)
+				if err != nil {
+					framework.Logf("curl failed: %v, stderr: %s", err, stderr)
+					return false
+				}
+				framework.Logf("External container saw source: %s", stdout)
+				// Output format is "IP:port" — use SplitHostPort to handle IPv6 addresses correctly
+				host, _, err := net.SplitHostPort(strings.TrimSpace(stdout))
+				if err != nil {
+					framework.Logf("Failed to parse client IP %q: %v", stdout, err)
+					return false
+				}
+				framework.Logf("Source IP: %s, expected pod IP: %s, node IP: %s", host, podIP, nodeIP)
+				return host == podIP
+			}, 60*time.Second, 2*time.Second).Should(gomega.BeTrue(),
+				fmt.Sprintf("source IP should be pod IP (%s), not node IP (%s)", podIP, nodeIP))
+		},
+		ginkgo.Entry("ipv4", corev1.IPv4Protocol),
+		ginkgo.Entry("ipv6", corev1.IPv6Protocol),
 	)
 
-	f := wrappedTestFramework("snat-ingress-excl")
-	var cs clientset.Interface
-	var nodeName string
-
-	ginkgo.BeforeEach(func() {
-		cs = f.ClientSet
-		node, err := e2enode.GetRandomReadySchedulableNode(context.TODO(), cs)
-		framework.ExpectNoError(err, "failed to get a schedulable node")
-		nodeName = node.Name
-		err = removeNodeSNATExcludeSubnetsAnnotation(cs, nodeName)
-		if err != nil {
-			framework.Logf("Note: failed to remove existing SNAT exclude subnets annotation: %v", err)
-		}
-	})
-
-	ginkgo.AfterEach(func() {
-		if nodeName != "" {
-			err := removeNodeSNATExcludeSubnetsAnnotation(cs, nodeName)
-			if err != nil {
-				framework.Logf("Warning: failed to remove SNAT exclude subnets annotation: %v", err)
-			}
-		}
-	})
-
+	// In local GW mode the same annotation bypasses both ingress SNAT (mgmtport-snat) and
+	// egress SNAT (ovn-kube-pod-subnet-masq), so the TCP response from the pod can reach
+	// the external container without being re-SNATed. This symmetry does not hold in shared
+	// GW mode where the OVN GR SNATs the response path, so the test is local-GW-only.
 	ginkgo.It("should preserve external source IP in ingress traffic when source is in SNAT exclude list", func() {
 		const (
 			externalContainerName = "snat-ingress-test-client"
@@ -565,22 +560,22 @@ var _ = ginkgo.Describe("Pod Subnet SNAT Ingress Exclusion", feature.Service, fu
 		ginkgo.By("Creating server pod running agnhost netexec")
 		serverPod := e2epod.NewAgnhostPod(f.Namespace.Name, serverPodName, nil, nil, nil, "netexec", fmt.Sprintf("--http-port=%d", port))
 		serverPod.Spec.NodeName = nodeName
-		serverPod, err = cs.CoreV1().Pods(f.Namespace.Name).Create(context.TODO(), serverPod, metav1.CreateOptions{})
+		serverPod, err = cs.CoreV1().Pods(f.Namespace.Name).Create(context.Background(), serverPod, metav1.CreateOptions{})
 		framework.ExpectNoError(err, "failed to create server pod")
 		ginkgo.DeferCleanup(func() {
-			err := cs.CoreV1().Pods(f.Namespace.Name).Delete(context.TODO(), serverPodName, metav1.DeleteOptions{})
+			err := cs.CoreV1().Pods(f.Namespace.Name).Delete(context.Background(), serverPodName, metav1.DeleteOptions{})
 			framework.ExpectNoError(err, "failed to delete server pod")
 		})
 
-		err = e2epod.WaitForPodRunningInNamespace(context.TODO(), cs, serverPod)
+		err = e2epod.WaitForPodRunningInNamespace(context.Background(), cs, serverPod)
 		framework.ExpectNoError(err, "server pod did not reach Running state")
 
-		serverPod, err = cs.CoreV1().Pods(f.Namespace.Name).Get(context.TODO(), serverPodName, metav1.GetOptions{})
+		serverPod, err = cs.CoreV1().Pods(f.Namespace.Name).Get(context.Background(), serverPodName, metav1.GetOptions{})
 		framework.ExpectNoError(err, "failed to get server pod")
 		podIP := serverPod.Status.PodIP
 		framework.Logf("Server pod IP: %s", podIP)
 
-		node, err := cs.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
+		node, err := cs.CoreV1().Nodes().Get(context.Background(), nodeName, metav1.GetOptions{})
 		framework.ExpectNoError(err, "failed to get node")
 		var nodeIP string
 		for _, addr := range node.Status.Addresses {
@@ -641,3 +636,4 @@ var _ = ginkgo.Describe("Pod Subnet SNAT Ingress Exclusion", feature.Service, fu
 			fmt.Sprintf("pod should see external container IP (%s) as source, not mgmt port IP", externalIP))
 	})
 })
+

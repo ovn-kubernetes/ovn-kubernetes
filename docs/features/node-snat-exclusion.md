@@ -2,9 +2,11 @@
 
 ## Introduction
 
-By default, OVN-Kubernetes masquerades (SNATs) pod traffic to the node's IP address as it
-crosses the management port (`ovn-k8s-mp0`). This is correct for most workloads, but some
-applications require the original source IP to be preserved for traffic involving specific
+By default, OVN-Kubernetes masquerades (SNATs) pod traffic to the node's IP address in
+certain traffic paths. In local gateway mode, pod egress traffic is masqueraded by nftables
+before leaving the node. On both gateway modes, traffic entering OVN via the management port
+(`ovn-k8s-mp0`) is SNATed to the management port IP. This is correct for most workloads, but
+some applications require the original source IP to be preserved for traffic involving specific
 subnets.
 
 OVN-Kubernetes supports a per-node annotation that lets cluster administrators specify subnets
