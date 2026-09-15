@@ -725,7 +725,14 @@ fi
 			polling := 6 * time.Second
 			timeout := 2 * time.Minute
 			step := by(vmName, stage+": Check iperf3 traffic from the external container is not broken")
-			checkNorthSouthIngressIperfTraffic(externalContainer, serverAddresses, serverPort, timeout, step)
+			for _, address := range serverAddresses {
+				// IPv6 gateway reconciliation is separate from the IPv4 GARP fix.
+				trafficTimeout := timeout
+				if net.ParseIP(address).To4() != nil {
+					trafficTimeout = 2 * time.Second
+				}
+				checkNorthSouthIngressIperfTraffic(externalContainer, []string{address}, serverPort, trafficTimeout, step)
+			}
 
 			stage = by(vmName, stage+": Check e/w tcp traffic")
 			checkEastWestTraffic(vmi, httpServerTestPodsDefaultNetworkIPs(), stage)
@@ -1213,6 +1220,32 @@ config:
 					}
 				}
 				liveMigrateAndCheck(vm.Name, td.mode, externalContainer, serverAddresses, serverPort, "after live migration to node owning the subnet")
+
+				if isIPv4Supported(fr.ClientSet) {
+					by(vm.Name, "Re-resolve the IPv4 gateway on its subnet owner before leaving again")
+					ctx, cancel := context.WithTimeout(context.Background(), e2eframework.SingleCallTimeout)
+					homeNode, err := fr.ClientSet.CoreV1().Nodes().Get(ctx, originalNode, metav1.GetOptions{})
+					cancel()
+					Expect(err).NotTo(HaveOccurred())
+					subnets, err := util.ParseNodeHostSubnetAnnotation(homeNode, "default")
+					Expect(err).NotTo(HaveOccurred())
+					subnet, err := util.MatchFirstIPNetFamily(false, subnets)
+					Expect(err).NotTo(HaveOccurred())
+					gateway := util.GetNodeGatewayIfAddr(subnet).IP
+					output, err := virtClient.RunCommand(vmi, fmt.Sprintf("ip -4 neigh flush to %s dev eth0 && ping -4 -c 1 -W 2 %s", gateway, gateway), 5*time.Second)
+					Expect(err).NotTo(HaveOccurred(), output)
+					Eventually(func() (string, error) {
+						return virtClient.RunCommand(vmi, fmt.Sprintf("ip -4 neigh show to %s dev eth0", gateway), 5*time.Second)
+					}).WithTimeout(10 * time.Second).WithPolling(time.Second).Should(ContainSubstring(util.IPAddrToHWAddr(gateway).String()))
+				}
+
+				by(vm.Name, "Live migrate away from the subnet owner again")
+				for _, selectedNode := range selectedNodes {
+					if selectedNode.Name != originalNode {
+						e2enode.AddOrUpdateLabelOnNode(fr.ClientSet, selectedNode.Name, namespace, "true")
+					}
+				}
+				liveMigrateAndCheck(vm.Name, td.mode, externalContainer, serverAddresses, serverPort, "after leaving the subnet owner again")
 			}
 		}
 

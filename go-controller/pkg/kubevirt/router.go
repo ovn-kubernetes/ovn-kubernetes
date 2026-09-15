@@ -62,10 +62,15 @@ func DeleteRoutingForMigratedPod(nbClient libovsdbclient.Client, pod *corev1.Pod
 }
 
 // EnsureDefaultNetworkForLocalMigratablePod reconciles default-network routing
-// for a local live-migratable pod.
+// for a local live-migratable pod and refreshes its IPv4 gateway neighbor entry
+// when the migration target is ready.
 func EnsureDefaultNetworkForLocalMigratablePod(watchFactory *factory.WatchFactory, nbClient libovsdbclient.Client,
 	lsManager *logicalswitchmanager.LogicalSwitchManager, pod *corev1.Pod, clusterSubnets []config.CIDRNetworkEntry) error {
-	return ensureLocalZonePodAddressesToNodeRoute(watchFactory, nbClient, lsManager, pod, types.DefaultNetworkName, clusterSubnets)
+	if err := ensureLocalZonePodAddressesToNodeRoute(watchFactory, nbClient, lsManager, pod, types.DefaultNetworkName, clusterSubnets); err != nil {
+		return fmt.Errorf("failed ensuring local-zone migration routes for pod %s/%s: %w", pod.Namespace, pod.Name, err)
+	}
+	r := NewDefaultGatewayReconciler(watchFactory, &util.DefaultNetInfo{}, types.K8sMgmtIntfName, nil)
+	return r.reconcileIPv4GatewayForMigratablePod(pod)
 }
 
 // ensureLocalZonePodAddressesToNodeRoute adds static routes to the ovn_cluster_router logical router

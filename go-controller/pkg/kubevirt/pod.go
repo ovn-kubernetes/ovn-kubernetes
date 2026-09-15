@@ -638,11 +638,34 @@ func DiscoverLiveMigrationStatus(podLister listersv1.PodLister, pod *corev1.Pod)
 	return &status, nil
 }
 
+func (r *DefaultGatewayReconciler) reconcileIPv4GatewayForMigratablePod(pod *corev1.Pod) error {
+	if !config.IPv4Mode {
+		return nil
+	}
+	status, err := DiscoverLiveMigrationStatus(r.watchFactory.PodCoreInformer().Lister(), pod)
+	if err != nil {
+		return fmt.Errorf("failed discovering live migration status for pod %s/%s: %w", pod.Namespace, pod.Name, err)
+	}
+	if status == nil || !status.IsTargetDomainReady() || status.TargetPod.Name != pod.Name || status.TargetPod.UID != pod.UID {
+		return nil
+	}
+	if err := r.ReconcileIPv4AfterLiveMigration(status); err != nil {
+		return fmt.Errorf("failed reconciling IPv4 gateway after live migration for pod %s/%s: %w", pod.Namespace, pod.Name, err)
+	}
+	return nil
+}
+
 // ReconcileIPv4AfterLiveMigration sends a GARP after live migration to update
 // the default gateway MAC address to the node where the VM is now running.
 func (r *DefaultGatewayReconciler) ReconcileIPv4AfterLiveMigration(liveMigrationStatus *LiveMigrationStatus) error {
 	if liveMigrationStatus.State != LiveMigrationTargetDomainReady {
 		return nil
+	}
+	if r.netInfo.IsDefault() {
+		targetPod := liveMigrationStatus.TargetPod
+		if !IsPodLiveMigratable(targetPod) || util.PodWantsHostNetwork(targetPod) {
+			return nil
+		}
 	}
 	gateways, err := r.ipv4Gateways(liveMigrationStatus.TargetPod)
 	if err != nil {
@@ -667,6 +690,29 @@ type ipv4Gateway struct {
 
 func (r *DefaultGatewayReconciler) ipv4Gateways(targetPod *corev1.Pod) ([]ipv4Gateway, error) {
 	var gateways []ipv4Gateway
+	if r.netInfo.IsDefault() {
+		podAnnotation, err := util.UnmarshalPodAnnotation(targetPod.Annotations, ovntypes.DefaultNetworkName)
+		if err != nil {
+			return nil, err
+		}
+		if podAnnotation.Role == ovntypes.NetworkRoleInfrastructure {
+			return nil, nil
+		}
+		// The proxy MAC works on every node, including the subnet owner.
+		// If ARP later restores the owner's LRP MAC, the next migration
+		// refreshes the mapping again.
+		gwMAC, err := net.ParseMAC(ARPProxyMAC)
+		if err != nil {
+			return nil, err
+		}
+		for _, gateway := range podAnnotation.Gateways {
+			if gateway.To4() != nil {
+				gateways = append(gateways, ipv4Gateway{ip: gateway, mac: gwMAC})
+			}
+		}
+		return gateways, nil
+	}
+
 	var gwMAC net.HardwareAddr
 	if !config.Layer2UsesTransitRouter {
 		targetNode, err := r.watchFactory.GetNode(targetPod.Spec.NodeName)
