@@ -189,6 +189,11 @@ func (bnc *BaseNetworkController) lookupPortUUIDAndSwitchName(logicalPort string
 
 func (bnc *BaseNetworkController) deletePodLogicalPort(pod *corev1.Pod, portInfo *lpInfo,
 	nadKey string) (*lpInfo, error) {
+	return bnc.deletePodLogicalPortWithOwnershipCheck(pod, portInfo, nadKey, false)
+}
+
+func (bnc *BaseNetworkController) deletePodLogicalPortWithOwnershipCheck(pod *corev1.Pod, portInfo *lpInfo,
+	nadKey string, checkOwnership bool) (*lpInfo, error) {
 	var portUUID, switchName, logicalPort string
 	var podIfAddrs []*net.IPNet
 
@@ -243,7 +248,7 @@ func (bnc *BaseNetworkController) deletePodLogicalPort(pod *corev1.Pod, portInfo
 	// For L2/localnet, cluster-manager allocates IPs centrally.
 	shouldRelease := false
 	if bnc.allocatesPodAnnotation() {
-		shouldRelease, err = bnc.shouldReleaseDeletedPod(pod, switchName, nadKey, podIfAddrs)
+		shouldRelease, err = bnc.shouldReleaseDeletedPodWithOwnershipCheck(pod, switchName, nadKey, podIfAddrs, checkOwnership)
 		if err != nil {
 			return nil, fmt.Errorf("unable to determine if ip should be released: %v", err)
 		}
@@ -1134,6 +1139,10 @@ func (bnc *BaseNetworkController) allocatesPodAnnotation() bool {
 }
 
 func (bnc *BaseNetworkController) shouldReleaseDeletedPod(pod *corev1.Pod, switchName, nadKey string, podIfAddrs []*net.IPNet) (bool, error) {
+	return bnc.shouldReleaseDeletedPodWithOwnershipCheck(pod, switchName, nadKey, podIfAddrs, false)
+}
+
+func (bnc *BaseNetworkController) shouldReleaseDeletedPodWithOwnershipCheck(pod *corev1.Pod, switchName, nadKey string, podIfAddrs []*net.IPNet, checkOwnership bool) (bool, error) {
 	if bnc.wasPodIPReleased(pod, nadKey) {
 		return false, nil
 	}
@@ -1156,8 +1165,8 @@ func (bnc *BaseNetworkController) shouldReleaseDeletedPod(pod *corev1.Pod, switc
 	}
 	// Until its first release, an ordinary running pod still owns its IPs.
 	// Retries are protected by the receipt above, without a cluster-wide scan.
-	// Completed pods still need the existing collision guards.
-	if !util.PodCompleted(pod) {
+	// Replacements and completed pods still need the existing collision guards.
+	if !util.PodCompleted(pod) && !checkOwnership {
 		return true, nil
 	}
 
