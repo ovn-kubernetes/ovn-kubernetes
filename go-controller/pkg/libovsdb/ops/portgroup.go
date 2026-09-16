@@ -11,6 +11,7 @@ import (
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
 type portGroupPredicate func(group *nbdb.PortGroup) bool
@@ -98,6 +99,9 @@ func GetPortGroup(nbClient libovsdbclient.Client, pg *nbdb.PortGroup) (*nbdb.Por
 	return found[0], nil
 }
 
+// AddPortsToPortGroupOps adds ports to an existing port group and guards its UUID
+// in the transaction. If the group is deleted or replaced before execution, the
+// entire transaction fails. An empty ports list is a no-op.
 func AddPortsToPortGroupOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, name string, ports ...string) ([]ovsdb.Operation, error) {
 	if len(ports) == 0 {
 		return ops, nil
@@ -116,7 +120,22 @@ func AddPortsToPortGroupOps(nbClient libovsdbclient.Client, ops []ovsdb.Operatio
 	}
 
 	m := newModelClient(nbClient)
-	return m.CreateOrUpdateOps(ops, opModel)
+	ops, err := m.CreateOrUpdateOps(ops, opModel)
+	if err != nil {
+		return nil, err
+	}
+
+	// A mutation of a deleted row succeeds with a zero count. Guard the UUID
+	// resolved above in the same transaction so neither deletion nor same-name
+	// replacement can silently drop required membership. Fail immediately and
+	// let the caller retry from current state instead of waiting in OVSDB.
+	guard := &nbdb.PortGroup{UUID: pg.UUID}
+	timeout := types.OVSDBWaitTimeout
+	guardOps, err := nbClient.Where(guard).Wait(ovsdb.WaitConditionEqual, &timeout, guard, &guard.UUID)
+	if err != nil {
+		return nil, err
+	}
+	return append(ops, guardOps...), nil
 }
 
 // AddPortsToPortGroup adds the provided ports to the provided port group

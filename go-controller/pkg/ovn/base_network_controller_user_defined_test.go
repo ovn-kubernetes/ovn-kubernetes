@@ -21,6 +21,8 @@ import (
 	utilnet "k8s.io/utils/net"
 	"k8s.io/utils/ptr"
 
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
@@ -554,12 +556,13 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 			Expect(bnc.shouldFilterNamespace(missingNamespace)).To(BeFalse())
 		})
 
-		It("ensurePod with addPort=true returns an error until the namespace is in the informer", func() {
+		DescribeTable("initializes and cleans up a namespace when its UDN pod arrives first", func(namespaceReadyDuringRetry bool) {
+			config.OVNKubernetesFeature.EnableEgressFirewall = true
 			err := bnc.ensurePodForUserDefinedNetwork(pod, true)
 			Expect(err).To(MatchError(ContainSubstring("failed to get primary network namespace NAD")))
 			Expect(err).To(MatchError(apierrors.IsNotFound, "IsNotFound"))
 
-			_, err = fakeOVN.fakeClient.KubeClient.CoreV1().Namespaces().Create(
+			namespace, err := fakeOVN.fakeClient.KubeClient.CoreV1().Namespaces().Create(
 				context.Background(),
 				newUDNNamespace(missingNamespace),
 				metav1.CreateOptions{},
@@ -577,9 +580,50 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 			Expect(bnc.lsManager.AddOrUpdateSwitch(switchName, []*net.IPNet{nodeSubnet}, nil)).To(Succeed())
 			Expect(libovsdbops.CreateOrUpdateLogicalSwitch(fakeOVN.nbClient, &nbdb.LogicalSwitch{Name: switchName})).To(Succeed())
 
-			Eventually(func() error {
-				return bnc.ensurePodForUserDefinedNetwork(pod, true)
-			}).Should(Succeed())
+			Eventually(func() (string, error) {
+				return bnc.networkManager.GetPrimaryNADForNamespace(missingNamespace)
+			}).WithTimeout(5 * time.Second).Should(Equal(nadKey))
+			pgName := bnc.getNamespacePortGroupName(missingNamespace)
+			Expect(bnc.namespaces).NotTo(HaveKey(missingNamespace), "pod setup must not initialize namespace state")
+			lspName := util.GetUserDefinedNetworkLogicalPortName(pod.Namespace, pod.Name, nadKey)
+			initializeNamespace := func() {
+				Expect(bnc.AddNamespaceForUserDefinedNetwork(namespace)).To(Succeed())
+				Eventually(func() error {
+					_, err := libovsdbops.GetPortGroup(fakeOVN.nbClient, &nbdb.PortGroup{Name: pgName})
+					return err
+				}).WithTimeout(5 * time.Second).Should(Succeed())
+			}
+			if namespaceReadyDuringRetry {
+				// Run the namespace handler only after the pod's first lookup has
+				// observed the missing group. The same pod setup call must recover.
+				bnc.nbClient = &namespacePortGroupLookupClient{
+					Client: fakeOVN.nbClient, afterFirstLookup: initializeNamespace,
+				}
+			} else {
+				Expect(bnc.ensurePodForUserDefinedNetwork(pod, true)).To(MatchError(ContainSubstring("failed to add pod port")))
+				_, err = libovsdbops.GetPortGroup(fakeOVN.nbClient, &nbdb.PortGroup{Name: pgName})
+				Expect(err).To(MatchError(libovsdbclient.ErrNotFound))
+				Expect(bnc.namespaces).NotTo(HaveKey(missingNamespace))
+				_, err = libovsdbops.GetLogicalSwitchPort(fakeOVN.nbClient, &nbdb.LogicalSwitchPort{Name: lspName})
+				Expect(err).To(MatchError(libovsdbclient.ErrNotFound), "failed membership must not commit the pod port")
+				Eventually(func() bool {
+					currentPod, err := fakeOVN.watcher.GetPod(pod.Namespace, pod.Name)
+					if err != nil {
+						return false
+					}
+					annotation, err := util.UnmarshalPodAnnotation(currentPod.Annotations, nadKey)
+					return err == nil && util.IsValidPodAnnotation(annotation)
+				}).WithTimeout(5 * time.Second).Should(BeTrue())
+				initializeNamespace()
+			}
+
+			Expect(bnc.ensurePodForUserDefinedNetwork(pod, true)).To(Succeed())
+			bnc.nbClient = fakeOVN.nbClient
+			nsInfo, unlock := bnc.getNamespaceLocked(missingNamespace, true)
+			Expect(nsInfo).NotTo(BeNil())
+			initializedPGName := nsInfo.portGroupName
+			unlock()
+			Expect(initializedPGName).To(Equal(pgName))
 
 			updatedPod, err := fakeOVN.fakeClient.KubeClient.CoreV1().Pods(pod.Namespace).Get(
 				context.Background(), pod.Name, metav1.GetOptions{})
@@ -591,14 +635,31 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 			Expect(podAnnotation.MAC).NotTo(BeEmpty())
 			Expect(podAnnotation.Role).To(Equal(types.NetworkRolePrimary))
 
-			lspName := util.GetUserDefinedNetworkLogicalPortName(pod.Namespace, pod.Name, nadKey)
 			lsps, err := libovsdbops.FindLogicalSwitchPortWithPredicate(fakeOVN.nbClient, func(p *nbdb.LogicalSwitchPort) bool {
 				return p.Name == lspName
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(lsps).To(HaveLen(1))
 			Expect(lsps[0].Addresses).To(ConsistOf(fmt.Sprintf("%s %s", podAnnotation.MAC, podAnnotation.IPs[0].IP)))
-		})
+			Eventually(func() (*nbdb.PortGroup, error) {
+				return libovsdbops.GetPortGroup(fakeOVN.nbClient, &nbdb.PortGroup{Name: pgName})
+			}).WithTimeout(5 * time.Second).Should(HaveField("Ports", ConsistOf(lsps[0].UUID)))
+
+			By("letting namespace teardown remove the group before pod cleanup")
+			Expect(bnc.deleteNamespaceForUserDefinedNetwork(namespace)).To(Succeed())
+			Expect(bnc.namespaces).NotTo(HaveKey(missingNamespace))
+			Eventually(func() error {
+				_, err := libovsdbops.GetPortGroup(fakeOVN.nbClient, &nbdb.PortGroup{Name: pgName})
+				return err
+			}).WithTimeout(5 * time.Second).Should(MatchError(libovsdbclient.ErrNotFound))
+			Expect(bnc.removePodForUserDefinedNetwork(updatedPod, nil)).To(Succeed())
+			Eventually(fakeOVN.nbClient).WithTimeout(5 * time.Second).Should(libovsdbtest.HaveDataIgnoringUUIDs(
+				&nbdb.LogicalSwitch{Name: switchName},
+			))
+		},
+			Entry("namespace becomes ready within the local retry", true),
+			Entry("missing namespace handler falls back to a later pod retry", false),
+		)
 
 		It("removePod deletes this network's logical port while the namespace is missing", func() {
 			nadKey := util.GetNADName(nad.Namespace, nad.Name)
