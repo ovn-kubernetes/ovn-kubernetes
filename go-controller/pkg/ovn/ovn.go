@@ -98,6 +98,14 @@ func (oc *DefaultNetworkController) recordPodEvent(reason string, addErr error, 
 	}
 }
 
+// reconcilePod is the pod reconciliation entry point for the default network.
+// It centralizes the add/update decision while the implementation still
+// delegates to the legacy ensure path.
+func (oc *DefaultNetworkController) reconcilePod(oldPod, pod *corev1.Pod, inRetryCache bool) error {
+	addPort := oldPod == nil || inRetryCache || util.PodScheduled(oldPod) != util.PodScheduled(pod)
+	return oc.ensurePod(oldPod, pod, addPort)
+}
+
 // ensurePod tries to set up a pod. It returns nil on success and error on failure; failure
 // indicates the pod set up should be retried later.
 func (oc *DefaultNetworkController) ensurePod(oldPod, pod *corev1.Pod, addPort bool) error {
@@ -154,6 +162,12 @@ func (oc *DefaultNetworkController) ensureLocalZonePod(oldPod, pod *corev1.Pod, 
 		}
 	}
 
+	if !util.PodWantsHostNetwork(pod) && !addPort {
+		if err := oc.reconcilePodNetworkPolicyMembership(pod); err != nil {
+			return fmt.Errorf("failed to reconcile network policy membership for pod %s/%s: %w", pod.Namespace, pod.Name, err)
+		}
+	}
+
 	if kubevirt.IsPodLiveMigratable(pod) {
 		v4Subnets, v6Subnets := util.GetClusterSubnetsWithHostPrefix()
 		return kubevirt.EnsureLocalZonePodAddressesToNodeRoute(oc.watchFactory, oc.nbClient, oc.lsManager, pod, ovntypes.DefaultNetworkName, append(v4Subnets, v6Subnets...))
@@ -171,6 +185,12 @@ func (oc *DefaultNetworkController) ensureRemoteZonePod(_, pod *corev1.Pod) erro
 		return kubevirt.EnsureRemoteZonePodAddressesToNodeRoute(oc.watchFactory, oc.nbClient, pod)
 	}
 	return nil
+}
+
+// deletePod is the pod delete entry point for the default network. It currently
+// delegates to the legacy remove path.
+func (oc *DefaultNetworkController) deletePod(pod *corev1.Pod, portInfo *lpInfo) error {
+	return oc.removePod(pod, portInfo)
 }
 
 // removePod tried to tear down a pod. It returns nil on success and error on failure;
@@ -203,8 +223,6 @@ func (oc *DefaultNetworkController) removePod(pod *corev1.Pod, portInfo *lpInfo)
 // removeLocalZonePod tries to tear down a local zone pod. It returns nil on success and error on failure;
 // failure indicates the pod tear down should be retried later.
 func (oc *DefaultNetworkController) removeLocalZonePod(pod *corev1.Pod, portInfo *lpInfo) error {
-	oc.logicalPortCache.remove(pod, ovntypes.DefaultNetworkName)
-
 	if config.Metrics.EnableScaleMetrics {
 		start := time.Now()
 		defer func() {
@@ -215,9 +233,15 @@ func (oc *DefaultNetworkController) removeLocalZonePod(pod *corev1.Pod, portInfo
 	if util.PodWantsHostNetwork(pod) {
 		return nil
 	}
+	defer oc.logicalPortCache.remove(pod, ovntypes.DefaultNetworkName)
+
 	if err := oc.deleteLogicalPort(pod, portInfo); err != nil {
 		return fmt.Errorf("deleteLogicalPort failed for pod %s: %w",
 			getPodNamespacedName(pod), err)
+	}
+
+	if err := oc.deletePodNetworkPolicyMembership(pod); err != nil {
+		return fmt.Errorf("failed to delete network policy membership for pod %s/%s: %w", pod.Namespace, pod.Name, err)
 	}
 
 	return nil
