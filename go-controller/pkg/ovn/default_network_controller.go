@@ -1015,7 +1015,7 @@ func (h *defaultNetworkControllerEventHandler) AddResource(ctx context.Context, 
 		if !ok {
 			return fmt.Errorf("could not cast %T object to *corev1.Pod", obj)
 		}
-		return h.oc.reconcilePod(ctx, nil, pod, false)
+		return h.oc.reconcilePod(ctx, pod)
 
 	case factory.EgressIPType:
 		eIP := obj.(*egressipv1.EgressIP)
@@ -1095,10 +1095,9 @@ func (h *defaultNetworkControllerEventHandler) AddResource(ctx context.Context, 
 func (h *defaultNetworkControllerEventHandler) UpdateResource(ctx context.Context, oldObj, newObj interface{}, inRetryCache bool) error {
 	switch h.objType {
 	case factory.PodType:
-		oldPod := oldObj.(*corev1.Pod)
 		newPod := newObj.(*corev1.Pod)
 
-		return h.oc.reconcilePod(ctx, oldPod, newPod, inRetryCache)
+		return h.oc.reconcilePod(ctx, newPod)
 
 	case factory.EgressIPType:
 		oldEIP := oldObj.(*egressipv1.EgressIP)
