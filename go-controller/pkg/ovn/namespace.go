@@ -12,28 +12,9 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
-	"github.com/ovn-kubernetes/libovsdb/ovsdb"
-
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 )
-
-// addLocalPodToNamespace returns the ops needed to add pod's IP to the
-// namespace's address set and port group.
-func (oc *DefaultNetworkController) addLocalPodToNamespace(ns string, portUUID string) ([]ovsdb.Operation, error) {
-	nsInfo, nsUnlock, err := oc.ensureNamespaceLocked(ns, true, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to ensure namespace locked: %v", err)
-	}
-
-	defer nsUnlock()
-
-	ops, err := oc.addLocalPodToNamespaceLocked(nsInfo, portUUID)
-	if err != nil {
-		return nil, err
-	}
-	return ops, nil
-}
 
 func isNamespaceMulticastEnabled(annotations map[string]string) bool {
 	return annotations[util.NsMulticastAnnotation] == "true"
