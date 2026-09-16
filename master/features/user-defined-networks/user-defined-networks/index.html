@@ -2424,6 +2424,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="How to enable this feature on an OVN-Kubernetes cluster?">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#primary-layer2-upgrade-prerequisite" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Primary Layer2 upgrade prerequisite
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -5098,6 +5115,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="How to enable this feature on an OVN-Kubernetes cluster?">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#primary-layer2-upgrade-prerequisite" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Primary Layer2 upgrade prerequisite
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -5369,6 +5403,40 @@ underlying implementation detail and reuse the user-defined network
 controllers. Note that changing the feature configuration does not remove
 existing CRs in the cluster.</p>
 <p>Always check the dependencies on the <a href="../../requirements/">Requirements page</a></p>
+<h3 id="primary-layer2-upgrade-prerequisite">Primary Layer2 upgrade prerequisite<a class="headerlink" href="#primary-layer2-upgrade-prerequisite" title="Permanent link">¶</a></h3>
+<p>Primary Layer2 networks must have completed migration from the legacy topology
+before upgrading to this version. The legacy topology connects the pod switch
+directly to each node's gateway router. The current Geneve topology places a
+transit router between the pod switch and the gateway routers, providing a
+stable gateway MAC and IPv6 link-local address across nodes.</p>
+<p>Automatic migration support was introduced in <strong>v1.2.0</strong> and is also present in
+<strong>v1.3.0 and v1.4.0</strong>. If a deployment still uses the legacy topology, first use
+one of these migration-capable releases to complete the transition before
+upgrading to this version.</p>
+<p>Installing a migration-capable release alone does not complete the transition.
+Its controller selects the new topology at startup only after local primary
+Layer2 workload logical switch ports are absent from the OVN Northbound database
+and cluster-manager has allocated the network tunnel keys. Workload removal
+after startup does not rerun that selection; the controller must restart while
+those conditions hold. Verify that network reconciliation has completed on all
+participating nodes and that any surviving VMs use the stable network gateway
+MAC and IPv6 link-local address rather than the old node-specific gateway
+identities. See the
+<a href="../../../okeps/okep-5094-layer2-transit-router/#rolling-upgrade-and-traffic-disruption">Layer2 transit-router design</a>
+for the transition details.</p>
+<p>Controller startup now selects the current topology unconditionally; it no
+longer defers conversion based on existing workloads or tunnel-key readiness.
+Upgrading with an unmigrated topology is unsupported: reconciliation can remove
+the old gateway router and move management-port SNAT while workloads are still
+using them, disrupting existing connections. Complete migration on an
+intermediate release rather than relying on this version to perform a safe
+transition.</p>
+<p>The node annotation <code>k8s.ovn.org/layer2-topology-version: "2.0"</code> is still published
+for compatibility with older peers during rolling upgrades. The annotation
+records topology selection, not successful completion of all network
+reconciliation. Setting it manually does not migrate an existing network.</p>
+<p>This prerequisite concerns legacy primary Layer2 deployments. Secondary Layer2
+networks and the current EVPN topology retain their existing behavior.</p>
 <h2 id="performancescale-optimizations-for-udn">Performance/Scale Optimizations for UDN<a class="headerlink" href="#performancescale-optimizations-for-udn" title="Permanent link">¶</a></h2>
 <p>UDN scale is currently constrained to a couple of hundred UDNs when every UDN is
 rendered on every node in the cluster. If you need to scale beyond that, use the
