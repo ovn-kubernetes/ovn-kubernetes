@@ -976,7 +976,9 @@ func (gw *GatewayManager) updateGWRouterNAT(nodeName string, gwConfig *GatewayCo
 	var nat *nbdb.NAT
 	// DisableSNATMultipleGWs is only applicable to cluster default network and not to user defined networks.
 	// For user defined networks, we always add SNAT rules regardless of whether the network is advertised or not.
-	if !config.Gateway.DisableSNATMultipleGWs || gw.netInfo.IsPrimaryNetwork() {
+	// This covers both primary and advertised secondary UDNs: SyncGateway only runs for a secondary once it is
+	// advertised at the node, so non-advertised secondaries never reach here.
+	if !config.Gateway.DisableSNATMultipleGWs || gw.netInfo.IsUserDefinedNetwork() {
 		var v4UUID, v6UUID string
 		var err error
 		snatExemptionNeeded := util.IsNoOverlaySNATExemptionNeeded(gw.netInfo)
@@ -1837,7 +1839,23 @@ func (gw *GatewayManager) SyncGateway(
 }
 
 func physNetName(netInfo util.NetInfo) string {
-	if netInfo.IsDefault() || (netInfo.IsPrimaryNetwork() && netInfo.Uplink() == "") {
+	// The default network and a primary UDN that shares the host uplink
+	// (Uplink == "") both attach their GR external switch to the SHARED physical
+	// network "physnet", which the node gateway maps to the shared uplink bridge
+	// (physnet:breth0). Only a UDN with its own dedicated uplink (localnet
+	// topology, Uplink != "") gets a per-network physnet name.
+	//
+	// A BGP-advertised SECONDARY UDN is north-south over the SAME shared uplink,
+	// so it must likewise use "physnet" and share the existing breth0 patch port.
+	// Without this it falls through to GetNetworkName() (e.g.
+	// "cluster_udn_<net>"), for which no ovn-bridge-mappings entry exists on the
+	// shared uplink, so ovn-controller never programs the br-int<->breth0 patch
+	// port and the node-side gateway readiness wait (setNetworkOfPatchPort)
+	// deadlocks until timeout, crashing ovnkube-controller.
+	sharesUplink := netInfo.Uplink() == "" &&
+		(netInfo.IsPrimaryNetwork() ||
+			(netInfo.IsUserDefinedNetwork() && util.IsPodNetworkAdvertised(netInfo)))
+	if netInfo.IsDefault() || sharesUplink {
 		return types.PhysicalNetworkName
 	}
 	return netInfo.GetNetworkName()

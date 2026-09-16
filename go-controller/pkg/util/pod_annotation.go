@@ -123,6 +123,18 @@ type PodAnnotation struct {
 	// the features that run there: the pod (logical switch port) controller,
 	// MultiNetworkPolicy and NetworkQoS.
 	IPAMMode string
+
+	// NorthSouthSourceRouting requests that the CNI install this interface's
+	// gateway and routes into a per-interface, source-based routing table
+	// (ip rule `from <podIP> lookup <table>`) instead of the main table.
+	//
+	// A pod has a single main-table default route, owned by its PRIMARY network.
+	// To give a SECONDARY network real north-south connectivity we must not add a
+	// competing main-table default; source-based routing makes traffic sourced
+	// from the secondary IP (egress and ingress replies) use the secondary
+	// gateway symmetrically, while primary-sourced traffic is untouched. Set only
+	// for advertised secondary UDNs (see AddRoutesGatewayIP).
+	NorthSouthSourceRouting bool
 }
 
 // PodRoute describes any routes to be added to the pod's network namespace
@@ -151,6 +163,9 @@ type podAnnotation struct {
 	TunnelID int    `json:"tunnel_id,omitempty"`
 	Role     string `json:"role,omitempty"`
 	IPAMMode string `json:"ipam_mode,omitempty"`
+
+	// See PodAnnotation.NorthSouthSourceRouting.
+	NorthSouthSourceRouting bool `json:"ns_source_routing,omitempty"`
 }
 
 // Internal struct used to marshal PodRoute to the pod annotation
@@ -175,10 +190,11 @@ func MarshalPodAnnotation(annotations map[string]string, podInfo *PodAnnotation,
 		return nil, err
 	}
 	pa := podAnnotation{
-		TunnelID: podInfo.TunnelID,
-		MAC:      podInfo.MAC.String(),
-		Role:     podInfo.Role,
-		IPAMMode: podInfo.IPAMMode,
+		TunnelID:                podInfo.TunnelID,
+		MAC:                     podInfo.MAC.String(),
+		Role:                    podInfo.Role,
+		IPAMMode:                podInfo.IPAMMode,
+		NorthSouthSourceRouting: podInfo.NorthSouthSourceRouting,
 	}
 
 	if len(podInfo.IPs) == 1 {
@@ -264,9 +280,10 @@ func UnmarshalPodAnnotation(annotations map[string]string, nadKey string) (*PodA
 	a := &tempA
 
 	podAnnotation := &PodAnnotation{
-		TunnelID: a.TunnelID,
-		Role:     a.Role,
-		IPAMMode: a.IPAMMode,
+		TunnelID:                a.TunnelID,
+		Role:                    a.Role,
+		IPAMMode:                a.IPAMMode,
+		NorthSouthSourceRouting: a.NorthSouthSourceRouting,
 	}
 	podAnnotation.MAC, err = net.ParseMAC(a.MAC)
 	if err != nil {

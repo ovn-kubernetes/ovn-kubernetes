@@ -1093,6 +1093,35 @@ func TestIsPrimaryNetwork(t *testing.T) {
 	}
 }
 
+// TestIsPodNetworkAdvertised covers the network-wide advertised predicate used
+// to decide per-network topology such as the join switch.
+func TestIsPodNetworkAdvertised(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	base, err := NewNetInfo(&ovncnitypes.NetConf{
+		NetConf:  cnitypes.NetConf{Name: "l3-network"},
+		Topology: ovntypes.Layer3Topology,
+		Role:     ovntypes.NetworkRoleSecondary,
+	})
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	// Not advertised anywhere.
+	g.Expect(IsPodNetworkAdvertised(base)).To(gomega.BeFalse(),
+		"a network with no advertisement VRFs is not advertised")
+
+	// Advertised on at least one node.
+	advertised := NewMutableNetInfo(base)
+	advertised.SetPodNetworkAdvertisedVRFs(map[string][]string{"worker1": {"l3-network"}})
+	g.Expect(IsPodNetworkAdvertised(advertised)).To(gomega.BeTrue(),
+		"a network advertised on any node is advertised network-wide")
+
+	// Consistency with the per-node predicate.
+	g.Expect(IsPodNetworkAdvertisedAtNode(advertised, "worker1")).To(gomega.BeTrue())
+	g.Expect(IsPodNetworkAdvertisedAtNode(advertised, "worker2")).To(gomega.BeFalse())
+	g.Expect(IsPodNetworkAdvertised(advertised)).To(gomega.BeTrue(),
+		"network-wide advertised is true even if a specific other node is not")
+}
+
 func TestIsDefault(t *testing.T) {
 	type testConfig struct {
 		desc               string
