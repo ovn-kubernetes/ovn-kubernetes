@@ -1312,7 +1312,7 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedData...))
 
 				pod.Labels = map[string]string{labelName: "does-not-match"}
-				gomega.Expect(fakeOvn.controller.ensureLocalZonePod(pod, false)).To(gomega.Succeed())
+				gomega.Expect(fakeOvn.controller.ensureLocalZonePod(pod, false, false)).To(gomega.Succeed())
 
 				expectedData = getUpdatedInitialDB([]testPod{nPodTest})
 				expectedData = append(expectedData, getDefaultDenyData(newNetpolDataParams(networkPolicy))...)
@@ -1489,7 +1489,7 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 				// Cache expiration is a retryable observation, not evidence that this
 				// selected pod should be removed from policy port groups.
 				fakeOvn.controller.logicalPortCache.remove(pod, types.DefaultNetworkName)
-				err = fakeOvn.controller.ensureLocalZonePod(pod, false)
+				err = fakeOvn.controller.ensureLocalZonePod(pod, false, false)
 				gomega.Expect(err).To(gomega.HaveOccurred())
 				gomega.Expect(err.Error()).To(gomega.ContainSubstring("scheduled for removal"))
 				gomega.Expect(np.getLocalPortsForPod(pod)).To(gomega.Equal(expectedMembership))
@@ -1555,7 +1555,7 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 				}
 
 				// Reconcile must replace the stale record and reassert PG membership.
-				gomega.Expect(fakeOvn.controller.ensureLocalZonePod(pod, false)).To(gomega.Succeed())
+				gomega.Expect(fakeOvn.controller.ensureLocalZonePod(pod, false, false)).To(gomega.Succeed())
 				loadedPortUUID, loaded = np.localPods.Load(nPodTest.portName)
 				gomega.Expect(loaded).To(gomega.BeTrue())
 				gomega.Expect(loadedPortUUID.(string)).To(gomega.Equal(freshPortUUID))
