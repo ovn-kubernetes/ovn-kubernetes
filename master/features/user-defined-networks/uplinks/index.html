@@ -2451,6 +2451,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="UplinkState and Conditions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#gateway-lifecycle-and-configuration-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gateway Lifecycle and Configuration Changes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -4952,6 +4969,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="UplinkState and Conditions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#gateway-lifecycle-and-configuration-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gateway Lifecycle and Configuration Changes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -5220,17 +5254,18 @@ OVN-Kubernetes to create the identity and initial status in one API operation.</
 <span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">GatewayConfigured</span>
 </code></pre></div>
 <p>The <code>Resolved</code> condition reports node-local host interface and OVS bridge
-discovery. The <code>GatewayReady</code> condition reports aggregate gateway programming
-for every CUDN active on this Uplink and node. This includes bridge mappings,
+discovery. The <code>GatewayReady</code> condition reports aggregate results from CUDN
+gateway programming on this Uplink and node. This includes bridge mappings,
 physical patch ports, per-network bridge configuration, OpenFlow, and VRF
-attachment. When the active CUDN set changes, <code>GatewayReady</code> first becomes
-<code>False</code> with reason <code>GatewayConfigurationPending</code> and returns to <code>True</code> only
-after the complete active set converges. A gateway programming failure does not
-change discovery <code>Resolved</code>; the CUDN-specific <code>UplinksReady</code> condition reflects
-both states. In split DPU mode the host-side share of gateway programming, the
-VRF attachment of the Uplink gateway interface on the DPU-Host, is reported
-separately on the <code>HostGatewayReady</code> condition, and the CUDN <code>UplinksReady</code>
-condition requires both.</p>
+attachment. With no reported CUDNs, <code>GatewayReady=True</code> with reason
+<code>NoActiveCUDNs</code>. A successful CUDN result changes the reason to
+<code>GatewayConfigured</code>; a reported programming failure changes the condition to
+<code>False</code> with a reason that identifies the failing operation. A gateway
+programming failure does not change discovery <code>Resolved</code>; the CUDN-specific
+<code>UplinksReady</code> condition reflects both states. In split DPU mode the host-side
+share of gateway programming, the VRF attachment of the Uplink gateway
+interface on the DPU-Host, is reported separately on the <code>HostGatewayReady</code>
+condition, and the CUDN <code>UplinksReady</code> condition requires both.</p>
 <p>The <code>Uplink</code> object reports aggregate status:</p>
 <ul>
 <li><code>Ready=True</code> means every selected node has successfully discovered a
@@ -5279,18 +5314,38 @@ on the <code>Uplink</code> so it cannot be deleted while still selected by a CUD
 <p><code>UplinkState</code> objects are exclusively owned by OVN-Kubernetes and recover from
 out-of-band deletion: if an <code>UplinkState</code> is deleted directly (for example with
 <code>kubectl delete</code>), ovnkube-node recreates it without a restart, discovery
-republishes <code>Resolved=True</code>, a previously published <code>GatewayReady</code> condition is
-restored (on a brand-new <code>UplinkState</code> it still appears only once gateway
-programming has run), and the CUDN returns to <code>UplinksReady=True</code>. An <code>UplinkState</code> is not
-recreated when its <code>Uplink</code> is terminating (its <code>UplinkState</code> objects are
-deleted on purpose during teardown), no longer exists, or no longer selects the
-node.</p>
+republishes <code>Resolved=True</code>, and each active CUDN reports its gateway result
+against the recreated object's UID and configuration. The CUDN returns to
+<code>UplinksReady=True</code> after that report. An <code>UplinkState</code> is not recreated when
+its <code>Uplink</code> is terminating (its <code>UplinkState</code> objects are deleted on purpose
+during teardown), no longer exists, or no longer selects the node.</p>
 <p>The CUDN reports a CUDN-specific <code>UplinksReady</code> condition. This condition is
 computed from the active nodes for that CUDN, not directly from aggregate
 <code>Uplink.status</code>. This matters with Dynamic UDN, where two CUDNs can reference
 the same <code>Uplink</code> but be active on different nodes.</p>
 <p>For a CUDN that does not set <code>spec.uplinks</code>, <code>UplinksReady=True</code> and existing
 gateway behavior is preserved.</p>
+<h3 id="gateway-lifecycle-and-configuration-changes">Gateway Lifecycle and Configuration Changes<a class="headerlink" href="#gateway-lifecycle-and-configuration-changes" title="Permanent link">¶</a></h3>
+<p>OVN-Kubernetes keeps gateway programming for active CUDNs synchronized with
+the resolved Uplink configuration. If the selected host interface, OVS bridge,
+MAC address, IP addresses, or default gateways change, each active CUDN is
+reprogrammed and reports its result for that exact UplinkState object and input
+configuration. Results from a deleted, recreated, or subsequently changed
+UplinkState are discarded. A failed current reconfiguration is visible through
+<code>GatewayReady=False</code> and is retried.</p>
+<p><code>GatewayReady</code> is an Uplink/node aggregate rather than per-CUDN status. When no
+CUDN has reported programming, <code>NoActiveCUDNs</code> keeps a newly active CUDN's
+<code>UplinksReady</code> condition false until its first result arrives. If other CUDNs
+already report successful programming on the same Uplink and node, adding one
+more CUDN does not temporarily change the shared condition to false. A later
+failure from that CUDN changes the aggregate condition to false. Precise
+in-progress readiness for each CUDN would require per-CUDN, per-node status.</p>
+<p>If an Uplink stops selecting a node, ovnkube-node withdraws the active CUDN
+gateway programming before deleting the node's <code>UplinkState</code>. Selecting the
+node again creates a fresh lifecycle and programs the gateways from newly
+resolved state. By contrast, recreating an <code>UplinkState</code> with an unchanged
+resolved configuration restores its readiness condition without disrupting
+working gateway programming.</p>
 <h2 id="dynamic-udn">Dynamic UDN<a class="headerlink" href="#dynamic-udn" title="Permanent link">¶</a></h2>
 <p>With Dynamic UDN enabled, OVN-Kubernetes delays Uplink gateway programming on a
 node until the CUDN becomes active on that node. Inactive nodes do not block the
@@ -5416,9 +5471,10 @@ kubectl<span class="w"> </span>get<span class="w"> </span>uplinkstate<span class
   carries the cause, for example <code>HostInterfaceNotFound</code> when the selected
   <code>hostInterfaceName</code> does not exist on the DPU-Host, or
   <code>GatewayInfoUnavailable</code> when the interface has no IP addresses yet.</li>
-<li><code>UplinkState</code> with <code>GatewayReady</code> condition status <code>False</code> and reason
-  <code>GatewayConfigurationPending</code>: the active CUDN set changed and complete
-  gateway programming has not converged yet.</li>
+<li><code>UplinkState</code> with <code>GatewayReady</code> condition status <code>True</code> and reason
+  <code>NoActiveCUDNs</code>: no active CUDN gateway has reported programming on this
+  Uplink and node. An active CUDN waits for its first result before reporting
+  <code>UplinksReady=True</code>.</li>
 <li><code>UplinkState</code> with <code>GatewayReady</code> condition status <code>False</code> and reason
   <code>UplinkBridgeMappingFailed</code>: OVN-Kubernetes could not configure the CUDN
   bridge mappings or discover a physical patch port on the resolved OVS bridge.</li>
