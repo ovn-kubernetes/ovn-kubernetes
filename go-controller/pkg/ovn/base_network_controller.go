@@ -934,7 +934,12 @@ func (bnc *BaseNetworkController) getPodNADKeys(pod *corev1.Pod) ([]string, erro
 	if !bnc.IsUserDefinedNetwork() {
 		return []string{types.DefaultNetworkName}, nil
 	}
-	return util.PodNADKeys(pod, bnc.GetNetInfo(), bnc.networkManager.GetNetworkNameForNADKey)
+	nadKeys, err := util.PodNADKeys(pod, bnc.GetNetInfo(), bnc.networkManager.GetNetworkNameForNADKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve NAD keys for pod %s/%s on network %s: %w",
+			pod.Namespace, pod.Name, bnc.GetNetworkName(), err)
+	}
+	return nadKeys, nil
 }
 
 func (bnc *BaseNetworkController) getClusterPortGroupDbIDs(base string) *libovsdbops.DbObjectIDs {

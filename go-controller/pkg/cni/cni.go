@@ -4,6 +4,7 @@
 package cni
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -335,6 +336,12 @@ func (pr *PodRequest) cmdDel(clientset *ClientSet) (*Response, error) {
 			return nil, fmt.Errorf("failed to get pod %s/%s: %w", pr.PodNamespace, pr.PodName, err)
 		}
 	}
+	// The request owns the old sandbox and device. A same-name replacement
+	// must not supply its network selection or device annotations for cleanup.
+	replacedSandbox := config.IsModeDPUHost() && pod != nil && pr.PodUID != "" && string(pod.UID) != pr.PodUID
+	if replacedSandbox {
+		pod = nil
+	}
 
 	if pod != nil && pr.netName != types.DefaultNetworkName {
 		nadKey, err := GetCNINADKey(pod, pr.IfName, pr.nadName)
@@ -371,6 +378,7 @@ func (pr *PodRequest) cmdDel(clientset *ClientSet) (*Response, error) {
 	}
 
 	netdevName := ""
+	var annotationErr error
 	if pr.CNIConf.DeviceID != "" {
 		if config.IsModeDPUHost() {
 			var dpuCD *util.DPUConnectionDetails
@@ -384,23 +392,24 @@ func (pr *PodRequest) cmdDel(clientset *ClientSet) (*Response, error) {
 						pr.PodName, pr.nadKey, err)
 				}
 			}
+			if dpuCD != nil && dpuCD.SandboxId != pr.SandboxID {
+				// A replacement sandbox's device name is not a cleanup target.
+				// UnconfigureInterface can recover the old name from its netns.
+				replacedSandbox = true
+				dpuCD = nil
+				pod = nil
+			}
 			if dpuCD == nil {
-				if !util.IsSimulatedDPU() {
+				if !util.IsSimulatedDPU() && !replacedSandbox {
 					// a PCI VF returns to the initial network namespace when the
 					// pod namespace is removed, nothing to do
 					return response, nil
 				}
 				// A simulated device is a veth and is destroyed with the pod namespace unless it is moved back first.
-				netdevName = pr.CNIConf.DeviceID
-			} else {
-				// check if this cmdDel is meant for the current sandbox, if not, directly return
-				if dpuCD.SandboxId != pr.SandboxID {
-					klog.Infof("The cmdDel request for sandbox %s is not meant for the currently configured "+
-						"pod %s/%s on NAD key %s with sandbox %s. Ignoring this request.",
-						pr.SandboxID, namespace, podName, pr.nadKey, dpuCD.SandboxId)
-					return response, nil
+				if util.IsSimulatedDPU() {
+					netdevName = pr.CNIConf.DeviceID
 				}
-
+			} else {
 				netdevName = dpuCD.VfNetdevName
 				if pr.netName == types.DefaultNetworkName {
 					// if this is the default network name, remove the whole DPU connection-details annotation,
@@ -423,7 +432,7 @@ func (pr *PodRequest) cmdDel(clientset *ClientSet) (*Response, error) {
 				}
 				// not an error if pod has already been deleted
 				if err != nil && !apierrors.IsNotFound(err) {
-					return nil, fmt.Errorf("failed to cleanup the DPU connection details annotation for NAD key %s: %v", pr.nadKey, err)
+					annotationErr = fmt.Errorf("failed to cleanup the DPU connection details annotation for NAD key %s: %w", pr.nadKey, err)
 				}
 			}
 		} else {
@@ -464,9 +473,9 @@ func (pr *PodRequest) cmdDel(clientset *ClientSet) (*Response, error) {
 		NetdevName:     netdevName,
 	}
 	if !config.UnprivilegedMode {
-		err := podRequestInterfaceOps.UnconfigureInterface(pr, podInterfaceInfo, clientset.podLister, pod)
-		if err != nil {
-			return nil, err
+		cleanupErr := podRequestInterfaceOps.UnconfigureInterface(pr, podInterfaceInfo, clientset.podLister, pod)
+		if combinedErr := errors.Join(annotationErr, cleanupErr); combinedErr != nil {
+			return nil, combinedErr
 		}
 	} else {
 		// pass the isDPU flag and vfNetdevName back to cniShim
@@ -476,6 +485,12 @@ func (pr *PodRequest) cmdDel(clientset *ClientSet) (*Response, error) {
 		}
 		response.Result = nil
 		response.PodIFInfo = podInterfaceInfo
+		// Returning an HTTP error here would prevent the shim from restoring
+		// the interface. Carry the error through the successful response and
+		// let the shim report it after it has attempted local cleanup.
+		if annotationErr != nil {
+			response.CleanupError = annotationErr.Error()
+		}
 	}
 	return response, nil
 }

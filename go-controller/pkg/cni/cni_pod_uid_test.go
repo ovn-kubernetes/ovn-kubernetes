@@ -27,25 +27,32 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
+// TestCmdDelDPUPodUIDMismatch preserves replacement pods while cleaning up the original sandbox.
 func TestCmdDelDPUPodUIDMismatch(t *testing.T) {
 	podResource := schema.GroupResource{Resource: "pods"}
 	invalidErr := apierrors.NewInvalid(schema.GroupKind{Kind: "Pod"}, "pod",
 		field.ErrorList{field.Invalid(field.NewPath("metadata"), nil, "test failed")})
 	forbiddenErr := apierrors.NewForbidden(podResource, "pod", errors.New("forbidden"))
+	cleanupErr := errors.New("failed to restore old interface")
 
 	for _, secondary := range []bool{false, true} {
 		for _, unprivileged := range []bool{false, true} {
 			for _, tc := range []struct {
 				name            string
+				initialReplaced bool
+				missingUID      bool
 				listerReplaced  bool
 				replacedOnRetry bool
 				listerDeleted   bool
 				patchReplaced   bool
 				apiDeleted      bool
 				patchErr        error
+				cleanupErr      error
 				wantErr         bool
 			}{
 				{name: "successful cleanup"},
+				{name: "replacement on initial lookup", initialReplaced: true},
+				{name: "replacement sandbox without request UID", initialReplaced: true, missingUID: true},
 				{name: "replacement before update", listerReplaced: true},
 				{name: "replacement during patch with stale informer", patchReplaced: true, wantErr: true},
 				{name: "informer observes replacement on retry", patchReplaced: true, replacedOnRetry: true},
@@ -55,6 +62,8 @@ func TestCmdDelDPUPodUIDMismatch(t *testing.T) {
 				{name: "same UID invalid", patchErr: invalidErr, wantErr: true},
 				{name: "same UID conflict", patchErr: apierrors.NewConflict(podResource, "pod", errors.New("conflict")), wantErr: true},
 				{name: "unrelated error", patchErr: forbiddenErr, wantErr: true},
+				{name: "interface cleanup error", cleanupErr: cleanupErr},
+				{name: "annotation and interface cleanup errors", patchErr: forbiddenErr, cleanupErr: cleanupErr, wantErr: true},
 			} {
 				t.Run(fmt.Sprintf("secondary=%t/unprivileged=%t/%s", secondary, unprivileged, tc.name), func(t *testing.T) {
 					require.NoError(t, config.PrepareTestConfig())
@@ -62,7 +71,7 @@ func TestCmdDelDPUPodUIDMismatch(t *testing.T) {
 					config.OvnKubeNode.Mode = ovntypes.NodeModeDPUHost
 					config.UnprivilegedMode = unprivileged
 					originalOps := podRequestInterfaceOps
-					stub := &podRequestInterfaceOpsStub{}
+					stub := &podRequestInterfaceOpsStub{unconfigureErr: tc.cleanupErr}
 					podRequestInterfaceOps = stub
 					t.Cleanup(func() { podRequestInterfaceOps = originalOps })
 
@@ -74,6 +83,9 @@ func TestCmdDelDPUPodUIDMismatch(t *testing.T) {
 					}
 					if secondary {
 						pr.netName, pr.nadName, pr.IfName = "secondary", "namespace/secondary", "net1"
+					}
+					if tc.missingUID {
+						pr.PodUID = ""
 					}
 					oldPod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
 						Namespace: pr.PodNamespace, Name: pr.PodName, UID: "old-uid", ResourceVersion: "1",
@@ -96,7 +108,7 @@ func TestCmdDelDPUPodUIDMismatch(t *testing.T) {
 					client := fake.NewSimpleClientset()
 					if !tc.apiDeleted {
 						apiPod := oldPod
-						if tc.listerReplaced {
+						if tc.listerReplaced || tc.initialReplaced {
 							apiPod = replacement
 						}
 						require.NoError(t, client.Tracker().Add(apiPod))
@@ -104,9 +116,14 @@ func TestCmdDelDPUPodUIDMismatch(t *testing.T) {
 					podLister := &v1mocks.PodLister{}
 					namespaceLister := &v1mocks.PodNamespaceLister{}
 					podLister.On("Pods", pr.PodNamespace).Return(namespaceLister)
-					// cmdDel first captures the old sandbox's connection details.
-					namespaceLister.On("Get", pr.PodName).Return(oldPod, nil).Once()
+					if tc.initialReplaced {
+						namespaceLister.On("Get", pr.PodName).Return(replacement, nil).Once()
+					} else {
+						namespaceLister.On("Get", pr.PodName).Return(oldPod, nil).Once()
+					}
 					switch {
+					case tc.initialReplaced:
+						// No annotation update may look up or change the replacement.
 					case tc.listerReplaced:
 						namespaceLister.On("Get", pr.PodName).Return(replacement, nil)
 					case tc.listerDeleted:
@@ -137,27 +154,44 @@ func TestCmdDelDPUPodUIDMismatch(t *testing.T) {
 					})
 
 					response, err := pr.cmdDel(&ClientSet{kclient: client, podLister: podLister})
-					if tc.wantErr {
+					if (tc.wantErr || tc.cleanupErr != nil) && !unprivileged {
 						require.Error(t, err)
+						if tc.cleanupErr != nil {
+							require.ErrorIs(t, err, tc.cleanupErr)
+						}
+						if tc.patchErr != nil {
+							require.ErrorIs(t, err, tc.patchErr)
+						}
 						if tc.patchReplaced {
 							require.ErrorContains(t, err, "is invalid", "a stale informer cannot classify replacement")
 						}
 						require.Nil(t, response)
-						require.Empty(t, stub.unconfiguredInterfaces)
 					} else {
 						require.NoError(t, err)
 						require.NotNil(t, response)
-						wantInfo := &PodInterfaceInfo{IsDPUHostMode: true, NetdevName: "old-vf"}
 						if unprivileged {
 							require.Nil(t, response.Result)
-							require.Equal(t, wantInfo, response.PodIFInfo)
-							require.Empty(t, stub.unconfiguredInterfaces)
+							if tc.wantErr {
+								require.Contains(t, response.CleanupError, "failed to cleanup the DPU connection details annotation")
+							} else {
+								require.Empty(t, response.CleanupError)
+							}
 						} else {
 							require.NotNil(t, response.Result)
-							require.Equal(t, []*PodInterfaceInfo{wantInfo}, stub.unconfiguredInterfaces)
 						}
 					}
-					if tc.listerReplaced || tc.listerDeleted {
+					wantInfo := &PodInterfaceInfo{IsDPUHostMode: true, NetdevName: "old-vf"}
+					if tc.initialReplaced {
+						wantInfo.NetdevName = "" // Recover the old device name from the request's netns.
+					}
+					if unprivileged {
+						require.Equal(t, wantInfo, response.PodIFInfo)
+						require.Empty(t, stub.unconfiguredInterfaces)
+					} else {
+						require.Equal(t, []*PodInterfaceInfo{wantInfo}, stub.unconfiguredInterfaces)
+					}
+					require.Equal(t, "0000:05:00.4", pr.CNIConf.DeviceID, "cleanup must retain the request's original device")
+					if tc.listerReplaced || tc.listerDeleted || tc.initialReplaced {
 						require.Zero(t, patchCalls)
 					} else {
 						require.Positive(t, patchCalls)
@@ -168,7 +202,7 @@ func TestCmdDelDPUPodUIDMismatch(t *testing.T) {
 							require.Equal(t, 1, patchCalls, "a stale informer must not cause the same patch to be repeated")
 						}
 					}
-					if tc.listerReplaced || tc.patchReplaced {
+					if tc.listerReplaced || tc.patchReplaced || tc.initialReplaced {
 						got, getErr := client.Tracker().Get(corev1.SchemeGroupVersion.WithResource("pods"), pr.PodNamespace, pr.PodName)
 						require.NoError(t, getErr)
 						require.Equal(t, replacement, got, "replacement annotations must be untouched")
@@ -181,6 +215,7 @@ func TestCmdDelDPUPodUIDMismatch(t *testing.T) {
 	}
 }
 
+// TestUpdatePodDPUConnDetailsRejectsReplacement prevents annotation writes to a replacement pod.
 func TestUpdatePodDPUConnDetailsRejectsReplacement(t *testing.T) {
 	for _, deleting := range []bool{false, true} {
 		t.Run(fmt.Sprintf("deleting=%t", deleting), func(t *testing.T) {

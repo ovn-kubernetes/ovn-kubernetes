@@ -6,6 +6,8 @@ package cni
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"testing"
@@ -298,6 +300,41 @@ func TestCmdDel_UnprivilegedMode(t *testing.T) {
 			t.Fatalf("no unconfigured interfaces found")
 		}
 	})
+}
+
+// TestCmdDelUnprivilegedCleanupErrors reports failures only after attempting interface cleanup.
+func TestCmdDelUnprivilegedCleanupErrors(t *testing.T) {
+	cleanupErr := errors.New("interface cleanup failed")
+	for _, annotationError := range []string{"", "annotation cleanup failed"} {
+		for _, interfaceError := range []error{nil, cleanupErr} {
+			t.Run(annotationError+"/"+fmt.Sprint(interfaceError), func(t *testing.T) {
+				withCNIEnv(t, func() {
+					originalOps := podRequestInterfaceOps
+					stub := &podRequestInterfaceOpsStub{unconfigureErr: interfaceError}
+					podRequestInterfaceOps = stub
+					t.Cleanup(func() { podRequestInterfaceOps = originalOps })
+					info := &PodInterfaceInfo{IsDPUHostMode: true, NetdevName: "old-vf"}
+					body, err := json.Marshal(&Response{PodIFInfo: info, CleanupError: annotationError})
+					require.NoError(t, err)
+					plugin := &Plugin{doCNIFunc: func(string, interface{}) ([]byte, error) { return body, nil }}
+					err = plugin.CmdDel(&skel.CmdArgs{
+						StdinData:   []byte(`{"cniVersion":"1.1.0","name":"mynet","type":"ovn-k8s-cni-overlay"}`),
+						ContainerID: "old-sandbox", Netns: "/var/run/netns/old", IfName: "eth0",
+					})
+					require.Equal(t, []*PodInterfaceInfo{info}, stub.unconfiguredInterfaces)
+					if annotationError != "" {
+						require.ErrorContains(t, err, annotationError)
+					}
+					if interfaceError != nil {
+						require.ErrorIs(t, err, interfaceError)
+					}
+					if annotationError == "" && interfaceError == nil {
+						require.NoError(t, err)
+					}
+				})
+			})
+		}
+	}
 }
 
 func TestCmdGC(t *testing.T) {
