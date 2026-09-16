@@ -99,11 +99,34 @@ func (oc *DefaultNetworkController) recordPodEvent(reason string, addErr error, 
 	}
 }
 
-// reconcilePod coordinates logical port setup and policy membership for the
-// existing pod event/retry framework.
-func (oc *DefaultNetworkController) reconcilePod(ctx context.Context, oldPod, pod *corev1.Pod, inRetryCache bool) error {
-	addPort := oldPod == nil || inRetryCache || util.PodScheduled(oldPod) != util.PodScheduled(pod)
-	if err := oc.ensurePod(ctx, oldPod, pod, addPort); err != nil {
+type podReconcileState string
+
+const (
+	podReconcilePresent podReconcileState = "present"
+	podReconcileDeleted podReconcileState = "deleted"
+)
+
+func (oc *DefaultNetworkController) reconcilePodState(ctx context.Context, state podReconcileState, pod *corev1.Pod, portInfo *lpInfo) error {
+	switch state {
+	case podReconcilePresent:
+		return oc.reconcilePresentPod(ctx, pod)
+	case podReconcileDeleted:
+		return oc.reconcileDeletedPod(ctx, pod, portInfo)
+	default:
+		return fmt.Errorf("unsupported pod reconcile state %q for pod %s/%s", state, pod.Namespace, pod.Name)
+	}
+}
+
+// reconcilePod is the current add/update entry point for the default network.
+func (oc *DefaultNetworkController) reconcilePod(ctx context.Context, pod *corev1.Pod) error {
+	return oc.reconcilePodState(ctx, podReconcilePresent, pod, nil)
+}
+
+// reconcilePresentPod computes the add/update decision from current controller
+// state while the implementation still delegates to the legacy ensure path.
+func (oc *DefaultNetworkController) reconcilePresentPod(ctx context.Context, pod *corev1.Pod) error {
+	addPort := oc.shouldEnsurePodLogicalPort(pod, ovntypes.DefaultNetworkName)
+	if err := oc.ensurePod(ctx, pod, addPort); err != nil {
 		return err
 	}
 	return oc.reconcileNetworkPolicyPortGroups(pod)
@@ -111,7 +134,7 @@ func (oc *DefaultNetworkController) reconcilePod(ctx context.Context, oldPod, po
 
 // ensurePod tries to set up a pod. It returns nil on success and error on failure; failure
 // indicates the pod set up should be retried later.
-func (oc *DefaultNetworkController) ensurePod(ctx context.Context, oldPod, pod *corev1.Pod, addPort bool) error {
+func (oc *DefaultNetworkController) ensurePod(ctx context.Context, pod *corev1.Pod, addPort bool) error {
 	// Try unscheduled pods later
 	if !util.PodScheduled(pod) {
 		return nil
@@ -119,16 +142,16 @@ func (oc *DefaultNetworkController) ensurePod(ctx context.Context, oldPod, pod *
 
 	if oc.isPodScheduledOnLocalNode(pod) {
 		klog.V(5).Infof("Ensuring zone local for Pod %s/%s in node %s", pod.Namespace, pod.Name, pod.Spec.NodeName)
-		return oc.ensureLocalZonePod(ctx, oldPod, pod, addPort)
+		return oc.ensureLocalZonePod(ctx, pod, addPort)
 	}
 
 	klog.V(5).Infof("Ensuring zone remote for Pod %s/%s in node %s", pod.Namespace, pod.Name, pod.Spec.NodeName)
-	return oc.ensureRemoteZonePod(ctx, oldPod, pod)
+	return oc.ensureRemoteZonePod(ctx, pod)
 }
 
 // ensureLocalZonePod tries to set up a local zone pod. It returns nil on success and error on failure; failure
 // indicates the pod set up should be retried later.
-func (oc *DefaultNetworkController) ensureLocalZonePod(ctx context.Context, oldPod, pod *corev1.Pod, addPort bool) error {
+func (oc *DefaultNetworkController) ensureLocalZonePod(ctx context.Context, pod *corev1.Pod, addPort bool) error {
 	if config.Metrics.EnableScaleMetrics {
 		start := time.Now()
 		defer func() {
@@ -147,10 +170,9 @@ func (oc *DefaultNetworkController) ensureLocalZonePod(ctx context.Context, oldP
 		}
 	}
 
-	// update open ports for UDN pods on pod update.
-	if util.IsNetworkSegmentationSupportEnabled() && !util.PodWantsHostNetwork(pod) && !addPort &&
-		pod != nil && oldPod != nil &&
-		pod.Annotations[util.UDNOpenPortsAnnotationName] != oldPod.Annotations[util.UDNOpenPortsAnnotationName] {
+	// Reconcile open ports for UDN pods from current pod state on every
+	// non-add pass.
+	if util.IsNetworkSegmentationSupportEnabled() && !util.PodWantsHostNetwork(pod) && !addPort {
 		networkRole, err := oc.GetNetworkRole(pod)
 		if err != nil {
 			return err
@@ -177,16 +199,21 @@ func (oc *DefaultNetworkController) ensureLocalZonePod(ctx context.Context, oldP
 //   - For live-migratable VMs, ensures remote-zone pod-to-node routes
 //
 // It returns nil on success and error on failure; failure indicates the pod set up should be retried later.
-func (oc *DefaultNetworkController) ensureRemoteZonePod(_ context.Context, _, pod *corev1.Pod) error {
+func (oc *DefaultNetworkController) ensureRemoteZonePod(_ context.Context, pod *corev1.Pod) error {
 	if kubevirt.IsPodLiveMigratable(pod) {
 		return kubevirt.EnsureRemoteZonePodAddressesToNodeRoute(oc.watchFactory, oc.nbClient, pod)
 	}
 	return nil
 }
 
-// deletePod is the pod delete entry point for the default network. It currently
-// delegates to the legacy remove path.
+// deletePod is the current delete entry point for the default network.
 func (oc *DefaultNetworkController) deletePod(ctx context.Context, pod *corev1.Pod, portInfo *lpInfo) error {
+	return oc.reconcilePodState(ctx, podReconcileDeleted, pod, portInfo)
+}
+
+// reconcileDeletedPod uses the delete event object as the desired-absent
+// context while cleanup still depends on legacy remove helpers.
+func (oc *DefaultNetworkController) reconcileDeletedPod(ctx context.Context, pod *corev1.Pod, portInfo *lpInfo) error {
 	return oc.removePod(ctx, pod, portInfo)
 }
 
