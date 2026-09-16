@@ -9,6 +9,7 @@ import (
 	"net"
 	"reflect"
 	"testing"
+	"time"
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/id"
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	sharednode "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/node"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
@@ -690,11 +692,18 @@ func TestController_CleanupNodeRemovesUDNAnnotations(t *testing.T) {
 	fakeClient := fake.NewClientset(node)
 	kube := &kube.Kube{KClient: fakeClient}
 
+	batcher := NewNodeAnnotationBatcher(kube)
+	if err := controller.Start(batcher.Reconciler()); err != nil {
+		t.Fatal(err)
+	}
+	defer controller.Stop(batcher.Reconciler())
+
 	na := &NodeAllocator{
 		nodeLister:             newFakeNodeLister([]*corev1.Node{node}),
 		kube:                   kube,
 		netInfo:                netInfo,
 		clusterSubnetAllocator: NewSubnetAllocator(),
+		batcher:                batcher,
 	}
 	_, subnetCIDR, err := net.ParseCIDR("10.1.0.0/16")
 	if err != nil {
@@ -711,6 +720,9 @@ func TestController_CleanupNodeRemovesUDNAnnotations(t *testing.T) {
 		t.Fatalf("CleanupNode failed: %v", err)
 	}
 
+	if !testing.Short() {
+		time.Sleep(500 * time.Millisecond)
+	}
 	updatedNode, err := fakeClient.CoreV1().Nodes().Get(context.TODO(), node.Name, metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -770,12 +782,19 @@ func TestController_CleanupNodeReleasesTunnelIDs(t *testing.T) {
 	fakeClient := fake.NewClientset(node)
 	kube := &kube.Kube{KClient: fakeClient}
 
+	batcher := NewNodeAnnotationBatcher(kube)
+	if err := controller.Start(batcher.Reconciler()); err != nil {
+		t.Fatal(err)
+	}
+	defer controller.Stop(batcher.Reconciler())
+
 	na := &NodeAllocator{
 		nodeLister:             newFakeNodeLister([]*corev1.Node{node}),
 		kube:                   kube,
 		netInfo:                netInfo,
 		clusterSubnetAllocator: NewSubnetAllocator(),
 		idAllocator:            id.NewIDAllocator("tunnel-ids", 1024),
+		batcher:                batcher,
 	}
 	if err := na.idAllocator.ReserveID(networkName+"_"+node.Name, 42); err != nil {
 		t.Fatal(err)
@@ -790,6 +809,7 @@ func TestController_CleanupNodeReleasesTunnelIDs(t *testing.T) {
 		t.Fatalf("CleanupNode failed: %v", err)
 	}
 
+	time.Sleep(500 * time.Millisecond)
 	updatedNode, err := fakeClient.CoreV1().Nodes().Get(context.TODO(), node.Name, metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -856,12 +876,19 @@ func TestCleanupNode_TransitRouterMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	batcher := NewNodeAnnotationBatcher(kube)
+	if err := controller.Start(batcher.Reconciler()); err != nil {
+		t.Fatal(err)
+	}
+	defer controller.Stop(batcher.Reconciler())
+
 	na := &NodeAllocator{
 		nodeLister:             newFakeNodeLister([]*corev1.Node{node}),
 		kube:                   kube,
 		netInfo:                netInfo,
 		clusterSubnetAllocator: NewSubnetAllocator(),
 		idAllocator:            idAlloc,
+		batcher:                batcher,
 	}
 
 	// Verify HasNodeTunnelIDAllocation returns false in transit router mode
@@ -872,6 +899,10 @@ func TestCleanupNode_TransitRouterMigration(t *testing.T) {
 	// CleanupNode should remove the stale tunnel ID annotation
 	if err := na.CleanupNode(node.Name, node); err != nil {
 		t.Fatalf("CleanupNode failed: %v", err)
+	}
+
+	if !testing.Short() {
+		time.Sleep(500 * time.Millisecond)
 	}
 
 	// Verify annotation was removed
@@ -957,6 +988,12 @@ func TestSyncNodeNetworkAnnotations_TunnelID(t *testing.T) {
 				t.Fatal(err)
 			}
 
+			batcher := NewNodeAnnotationBatcher(kube)
+			if err := controller.Start(batcher.Reconciler()); err != nil {
+				t.Fatal(err)
+			}
+			defer controller.Stop(batcher.Reconciler())
+
 			na := &NodeAllocator{
 				nodeLister:             newFakeNodeLister([]*corev1.Node{node1}),
 				kube:                   kube,
@@ -964,6 +1001,7 @@ func TestSyncNodeNetworkAnnotations_TunnelID(t *testing.T) {
 				networkID:              1,
 				clusterSubnetAllocator: NewSubnetAllocator(),
 				idAllocator:            idAlloc,
+				batcher:                batcher,
 			}
 
 			// Set the topology mode directly (setTopologyType is now in ClusterManager)
@@ -978,6 +1016,10 @@ func TestSyncNodeNetworkAnnotations_TunnelID(t *testing.T) {
 			// Sync node annotations
 			if err := na.syncNodeNetworkAnnotations(node1); err != nil {
 				t.Fatalf("syncNodeNetworkAnnotations failed: %v", err)
+			}
+
+			if !testing.Short() {
+				time.Sleep(500 * time.Millisecond)
 			}
 
 			// Verify tunnel ID annotation
