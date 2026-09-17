@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes"
@@ -38,6 +39,9 @@ func machineNetworkExclusions() (ipv4, ipv6 []string) {
 		framework.Logf("Warning: failed to get machine network subnets for exclusion: %v", err)
 		return nil, nil
 	}
+	infraV4, infraV6 := infraprovider.InfrastructureNetworkExclusions()
+	v4 = v4.Union(infraV4)
+	v6 = v6.Union(infraV6)
 	return v4.UnsortedList(), v6.UnsortedList()
 }
 
