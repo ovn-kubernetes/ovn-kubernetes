@@ -274,7 +274,7 @@ func (bnc *BaseNetworkController) deletePodLogicalPortWithOwnershipCheck(pod *co
 
 	var allOps, ops []ovsdb.Operation
 
-	if ops, err = bnc.deletePodFromNamespacePortGroupOps(nil, pod.Namespace,
+	if ops, err = bnc.deletePodFromNamespace(pod.Namespace,
 		portUUID); err != nil {
 		return nil, false, fmt.Errorf("unable to delete pod %s from namespace: %w", podDesc, err)
 	}
@@ -1135,6 +1135,36 @@ func (bnc *BaseNetworkController) delLSPOps(logicalPort, switchName,
 		return nil, fmt.Errorf("error deleting logical switch port %+v from switch %+v: %w", lsp, lsw, err)
 	}
 
+	return ops, nil
+}
+
+func (bnc *BaseNetworkController) addPodToNamespacePortGroupOps(ops []ovsdb.Operation, ns, portUUID string) ([]ovsdb.Operation, error) {
+	if !bnc.needNamespacedPortGroup() || portUUID == "" {
+		return ops, nil
+	}
+
+	// Namespace handling owns group lifetime. A pod that outlives namespace
+	// teardown must not recreate the group; missing dependencies are retried.
+	pgName := bnc.getNamespacePortGroupName(ns)
+	ops, err := libovsdbops.AddPortsToPortGroupOps(bnc.nbClient, ops, pgName, portUUID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to add pod port %s to namespace port group %s: %w", portUUID, pgName, err)
+	}
+	return ops, nil
+}
+
+func (bnc *BaseNetworkController) deletePodFromNamespace(ns string, portUUID string) ([]ovsdb.Operation, error) {
+	if !bnc.needNamespacedPortGroup() || portUUID == "" {
+		return nil, nil
+	}
+
+	pgName := bnc.getNamespacePortGroupName(ns)
+	// Namespace teardown may have already deleted the group, so missing groups
+	// must not prevent pod cleanup.
+	ops, err := libovsdbops.DeletePortsFromPortGroupOps(bnc.nbClient, nil, pgName, portUUID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to delete pod port %s from namespace port group %s: %w", portUUID, pgName, err)
+	}
 	return ops, nil
 }
 

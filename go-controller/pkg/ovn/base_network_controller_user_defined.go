@@ -1013,9 +1013,8 @@ func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(pod 
 		}
 	}
 
-	// Register the pod with the namespace (nsInfo + namespace port group,
-	// used by multicast and egress firewall) on any network whose pod IPs
-	// are known, including DHCP-learned ones.
+	// Add membership to the namespace-owned port group, used by multicast and
+	// egress firewall, on networks with known (including DHCP-learned) pod IPs.
 	unlockNamespacePortGroup := func() {}
 	if bsnc.doesNetworkHaveDiscoverablePodIPs() &&
 		(util.IsMultiNetworkPoliciesSupportEnabled() || (util.IsNetworkSegmentationSupportEnabled() && bsnc.IsPrimaryNetwork())) {
