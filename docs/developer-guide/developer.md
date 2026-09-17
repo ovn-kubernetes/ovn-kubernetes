@@ -2,6 +2,32 @@
 
 This file aims to have information that is useful to the people contributing to this repo.
 
+## Queued informer event handling
+
+The watch factory dispatches queued informer callbacks through a key-deduplicated work queue.
+Each event is keyed by its `types.NamespacedName` and assigned to one worker queue, so events
+for the same object are processed serially while unrelated objects can be processed in parallel.
+
+### Coalescing and ordering
+
+Intermediate updates for the same object UID may be coalesced to the latest object state. A
+handler must therefore reconcile from the object it receives rather than depending on every
+intermediate update. Add and delete events that cancel before delivery can also be removed from
+the pending list.
+
+UID replacement is treated specially. Consecutive replacement updates retain the original old
+UID and the latest new UID, allowing the update callback to emit the required delete/add
+transition. A replacement update followed by a delete remains two pending events so that both
+callbacks are delivered in order.
+
+### Shutdown behavior
+
+A work queue contains one token per object key, while the queue-map entry may contain several
+pending callbacks for that key. A worker drains the complete pending list before completing the
+work-queue item, and removes the entry only after all callbacks have been processed. Shutting
+down an informer stops its queues and waits for workers, so callbacks already accepted by the
+queue are not stranded during shutdown.
+
 ## Generating ovsdb bindings using modelgen
 
 In order to generate the latest NBDB and SBDB bindings, we have a tool called `modelgen`
