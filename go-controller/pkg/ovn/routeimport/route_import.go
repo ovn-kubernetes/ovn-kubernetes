@@ -441,18 +441,21 @@ func (c *controller) getBGPRoutes(table int, ignoreSubnets []*net.IPNet, routeLi
 		Protocol: unix.RTPROT_BGP,
 		Table:    table,
 	}
-	nlroutes, err := c.netlink.RouteListFiltered(netlink.FAMILY_ALL, filter, netlink.RT_FILTER_PROTOCOL|netlink.RT_FILTER_TABLE)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list BGP routes: %w", err)
-	}
-
 	routes := sets.New[route]()
-	for _, nlroute := range nlroutes {
+	// Convert routes as they arrive instead of retaining a second, much larger
+	// representation of the complete routing table during reconciliation.
+	err := c.netlink.RouteListFilteredIter(netlink.FAMILY_ALL, filter, netlink.RT_FILTER_PROTOCOL|netlink.RT_FILTER_TABLE, func(nlroute netlink.Route) bool {
 		if util.IsContainedInAnyCIDR(nlroute.Dst, ignoreSubnets...) {
 			c.log.V(5).Info("Ignore BGP route", "table", table, "route", stringer{nlroute})
-			continue
+			return true
 		}
 		routes.Insert(routesFromNetlinkRoute(&nlroute, routeLinkIndex)...)
+		return true
+	})
+	if err != nil {
+		// An interrupted dump is not an authoritative snapshot: applying its
+		// partial result could withdraw valid OVN routes.
+		return nil, fmt.Errorf("failed to list BGP routes: %w", err)
 	}
 
 	c.log.V(5).Info("Listed BGP routes", "table", table, "routes", stringer{routes}, "took", time.Since(start))
