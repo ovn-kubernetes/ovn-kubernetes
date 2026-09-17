@@ -1030,18 +1030,14 @@ func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(ctx 
 
 	// Add membership to the namespace-owned port group, used by multicast and
 	// egress firewall, on networks with known (including DHCP-learned) pod IPs.
-	unlockNamespacePortGroup := func() {}
 	if bsnc.doesNetworkHaveDiscoverablePodIPs() &&
 		(util.IsMultiNetworkPoliciesSupportEnabled() || (util.IsNetworkSegmentationSupportEnabled() && bsnc.IsPrimaryNetwork())) {
-		unlockNamespacePortGroup = bsnc.lockNamespacePortGroup(pod.Namespace)
-
 		portUUID := ""
 		if lsp != nil {
 			portUUID = lsp.UUID
 		}
 		ops, err = bsnc.addPodToNamespacePortGroupOps(ops, pod.Namespace, portUUID)
 		if err != nil {
-			unlockNamespacePortGroup()
 			return err
 		}
 	}
@@ -1054,7 +1050,6 @@ func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(ctx 
 
 	transactStart := time.Now()
 	err = bsnc.transactPodLogicalPort(pod, nadKey, switchName, lsp, podAnnotation, ops)
-	unlockNamespacePortGroup()
 	libovsdbExecuteTime = time.Since(transactStart)
 	if err != nil {
 		return err
