@@ -14,8 +14,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 
-	"github.com/ovn-kubernetes/libovsdb/ovsdb"
-
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
@@ -26,8 +24,8 @@ import (
 )
 
 // namespacePortGroupLocks serializes create/mutate/delete transactions for one
-// namespace port group. The OVSDB model client lookup+insert path is not atomic
-// across concurrent pod workers that all discover a missing port group.
+// namespace port group. Pod membership still guards the observed row UUID in
+// OVSDB, since this lock does not guarantee that the client cache is current.
 var namespacePortGroupLocks = syncmap.NewSyncMap[struct{}]()
 
 // namespaceInfo contains information related to a Namespace. Use oc.getNamespaceLocked()
@@ -397,32 +395,4 @@ func (bnc *BaseNetworkController) lockNamespacePortGroup(ns string) func() {
 	return func() {
 		namespacePortGroupLocks.UnlockKey(key)
 	}
-}
-
-func (bnc *BaseNetworkController) addPodToNamespacePortGroupOps(ops []ovsdb.Operation, ns, portUUID string) ([]ovsdb.Operation, error) {
-	if !bnc.needNamespacedPortGroup() || portUUID == "" {
-		return ops, nil
-	}
-
-	pgIDs := getNamespacePortGroupDbIDs(ns, bnc.controllerName)
-	pg := libovsdbutil.BuildPortGroup(pgIDs, []*nbdb.LogicalSwitchPort{{UUID: portUUID}}, nil)
-	ops, err := libovsdbops.CreateOrAddPortsToPortGroupOps(bnc.nbClient, ops, pg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to add pod port %s to namespace port group %s: %w", portUUID, pg.Name, err)
-	}
-	return ops, nil
-}
-
-func (bnc *BaseNetworkController) deletePodFromNamespacePortGroupOps(ops []ovsdb.Operation, ns, portUUID string) ([]ovsdb.Operation, error) {
-	if !bnc.needNamespacedPortGroup() || portUUID == "" {
-		return ops, nil
-	}
-
-	pgName := bnc.getNamespacePortGroupName(ns)
-	// Missing namespace port groups are a no-op for unmanaged namespaces.
-	ops, err := libovsdbops.DeletePortsFromPortGroupOps(bnc.nbClient, ops, pgName, portUUID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to delete pod port %s from namespace port group %s: %w", portUUID, pgName, err)
-	}
-	return ops, nil
 }
