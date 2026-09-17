@@ -426,6 +426,55 @@ func targetExternalContainerAndTest(externalContainer infraapi.ExternalContainer
 	}
 }
 
+// targetExternalContainerOrBGPServerAndTest returns a poll ConditionFunc verifying that a pod with NO
+// EgressIP applied egresses with its default (non-EIP) source IP.
+//
+// When the default network is NOT advertised - or no-overlay outbound SNAT is enabled - the
+// pod's traffic is SNAT'd to its node IP by the gateway router, so we verify the node IP
+// against the plain external container on the primary (kind) network.
+//
+// When the default network IS advertised over BGP and outbound SNAT is not enabled, the
+// cluster-subnet SNAT is scoped to node-destined traffic only (see GetNetworkScopedClusterSubnetSNATMatch),
+// so a pod without an EIP egresses with its POD IP. The plain external container is not a BGP
+// peer and has no return route to pod IPs - for IPv6 the pod subnet is advertised with a
+// link-local next-hop usable only by the directly connected FRR router - so instead we target
+// the BGP server behind FRR (which learns the pod routes) and verify the pod IP there.
+func targetExternalContainerOrBGPServerAndTest(f *framework.Framework, externalContainer infraapi.ExternalContainer,
+	podNamespace, podName, nodeIP string) wait.ConditionFunc {
+	if !isDefaultNetworkAdvertised(defaultNetworkRouteAdvertisementName()) || isNoOverlayOutboundSNATEnabled(f) {
+		return targetExternalContainerAndTest(externalContainer, podNamespace, podName, true, []string{nodeIP})
+	}
+	isV6 := utilnet.IsIPv6String(nodeIP)
+	podV4IP, podV6IP, err := podIPsForDefaultNetwork(f.ClientSet, podNamespace, podName)
+	framework.ExpectNoError(err, "must get pod IPs for %s/%s", podNamespace, podName)
+	podIP := podV4IP
+	if isV6 {
+		podIP = podV6IP
+	}
+	gomega.Expect(podIP).NotTo(gomega.BeEmpty(), "pod %s/%s must have an IP for the tested family", podNamespace, podName)
+	return targetExternalContainerAndTest(bgpServerAgnhostContainer(f), podNamespace, podName, true, []string{podIP})
+}
+
+// bgpServerAgnhostContainer returns an ExternalContainer handle for the agnhost netexec BGP
+// server (reachable from pod IPs over BGP), populated so it can be used with
+// targetExternalContainerAndTest.
+func bgpServerAgnhostContainer(f *framework.Framework) infraapi.ExternalContainer {
+	c := infraapi.ExternalContainer{
+		Name:    bgpExternalServerContainerName,
+		Image:   images.AgnHost(),
+		CmdArgs: []string{"netexec"},
+		ExtPort: netexecPort,
+	}
+	for _, ip := range getBGPServerContainerIPs(f) {
+		if utilnet.IsIPv6String(ip) {
+			c.IPv6 = ip
+		} else {
+			c.IPv4 = ip
+		}
+	}
+	return c
+}
+
 func removeSliceElement(s []string, i int) []string {
 	s[i] = s[len(s)-1]
 	return s[:len(s)-1]
@@ -4692,7 +4741,7 @@ spec:
 			// EIP-A deleted → pod-A must fall back to its own node IP (no EIP routing involved)
 			framework.ExpectNoError(
 				wait.PollUntilContextTimeout(context.Background(), retryInterval, retryTimeout, true,
-					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podAName, true, []string{pod1Node.nodeIP}).WithContext()),
+					targetExternalContainerOrBGPServerAndTest(f, primaryTargetExternalContainer, f.Namespace.Name, podAName, pod1Node.nodeIP).WithContext()),
 				"pod-A must fall back to node IP after EIP-A deletion")
 			// Re-create EIP-A with no matching node → must stay pending
 			cleanup = applyEIPManifest(eipAName, createEIPManifestWithNodeSelector(eipAName, podLabelA, nsLabel, selectorPoolA, eipA1.String(), eipA2.String()))
@@ -4725,7 +4774,7 @@ spec:
 			// pod-A: no EIP assigned → falls back to its own node IP
 			framework.ExpectNoError(
 				wait.PollUntilContextTimeout(context.Background(), retryInterval, retryTimeout, true,
-					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podAName, true, []string{pod1Node.nodeIP}).WithContext()),
+					targetExternalContainerOrBGPServerAndTest(f, primaryTargetExternalContainer, f.Namespace.Name, podAName, pod1Node.nodeIP).WithContext()),
 				"pod-A must fall back to node IP while EIP-A is pending")
 			// pod-B and pod-C: EIP-B/C unaffected → still use their EIP src IPs
 			framework.ExpectNoError(
@@ -4881,7 +4930,7 @@ spec:
 				"pod-A traffic works in active-active state")
 			framework.ExpectNoError(
 				wait.PollUntilContextTimeout(context.Background(), retryInterval, retryTimeout, true,
-					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podBName, true, []string{pod1Node.nodeIP}).WithContext()),
+					targetExternalContainerOrBGPServerAndTest(f, primaryTargetExternalContainer, f.Namespace.Name, podBName, pod1Node.nodeIP).WithContext()),
 				"pod-B falls back to node IP while EIP-B is pending")
 			// Remove pool=a from egress1Node → only egress2Node in pool=a; 1 IP assigns, 1 stays pending
 			e2enode.RemoveLabelOffNode(f.ClientSet, egress1Node.name, nodeLabelKey)
@@ -4964,7 +5013,7 @@ spec:
 			e2ekubectl.RunKubectlOrDie("default", "delete", "eip", eipCName, "--ignore-not-found=true")
 			framework.ExpectNoError(
 				wait.PollUntilContextTimeout(context.Background(), retryInterval, retryTimeout, true,
-					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podCName, true, []string{pod1Node.nodeIP}).WithContext()),
+					targetExternalContainerOrBGPServerAndTest(f, primaryTargetExternalContainer, f.Namespace.Name, podCName, pod1Node.nodeIP).WithContext()),
 				"pod-C must use node IP after EIP-C deletion")
 			// EIP-A and EIP-B must stay exactly where they were — no reassignment triggered by C's removal
 			gomega.Consistently(func() []egressIPStatus {
@@ -5109,7 +5158,7 @@ spec:
 			verifySpecificEgressIPStatusLengthEquals(eipLegacyName, 0, nil)
 			framework.ExpectNoError(
 				wait.PollUntilContextTimeout(context.Background(), retryInterval, retryTimeout, true,
-					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podLegacyName, true, []string{pod1Node.nodeIP}).WithContext()),
+					targetExternalContainerOrBGPServerAndTest(f, primaryTargetExternalContainer, f.Namespace.Name, podLegacyName, pod1Node.nodeIP).WithContext()),
 				"pod-legacy must fall back to node IP when egress1Node is unreachable")
 
 			ginkgo.By("4. Restore healthcheck probes: egress1Node re-enters probe pool; EIP-legacy reassigns; traffic restored")
@@ -5127,7 +5176,7 @@ spec:
 			verifySpecificEgressIPStatusLengthEquals(eipLegacyName, 0, nil)
 			framework.ExpectNoError(
 				wait.PollUntilContextTimeout(context.Background(), retryInterval, retryTimeout, true,
-					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podLegacyName, true, []string{pod1Node.nodeIP}).WithContext()),
+					targetExternalContainerOrBGPServerAndTest(f, primaryTargetExternalContainer, f.Namespace.Name, podLegacyName, pod1Node.nodeIP).WithContext()),
 				"pod-legacy must fall back to node IP after egress-assignable label removed")
 
 			ginkgo.By("6. Restore egress-assignable label: EIP-legacy reassigns; traffic restored")
@@ -5144,7 +5193,7 @@ spec:
 			e2ekubectl.RunKubectlOrDie("default", "delete", "egressip", eipLegacyName, "--ignore-not-found=true")
 			framework.ExpectNoError(
 				wait.PollUntilContextTimeout(context.Background(), retryInterval, retryTimeout, true,
-					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podLegacyName, true, []string{pod1Node.nodeIP}).WithContext()),
+					targetExternalContainerOrBGPServerAndTest(f, primaryTargetExternalContainer, f.Namespace.Name, podLegacyName, pod1Node.nodeIP).WithContext()),
 				"pod-legacy must use node IP after EIP deletion")
 		})
 
@@ -5238,7 +5287,7 @@ spec:
 			verifySpecificEgressIPStatusLengthEquals(eipNewName, 1, nil)
 			framework.ExpectNoError(
 				wait.PollUntilContextTimeout(context.Background(), retryInterval, retryTimeout, true,
-					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podOldName, true, []string{pod1Node.nodeIP}).WithContext()),
+					targetExternalContainerOrBGPServerAndTest(f, primaryTargetExternalContainer, f.Namespace.Name, podOldName, pod1Node.nodeIP).WithContext()),
 				"pod-old falls back to node IP while EIP-old pending")
 			framework.ExpectNoError(
 				wait.PollUntilContextTimeout(context.Background(), retryInterval, retryTimeout, true,
@@ -5528,7 +5577,7 @@ spec:
 			verifySpecificEgressIPStatusLengthEquals(eipSecName, 0, nil)
 			framework.ExpectNoError(
 				wait.PollUntilContextTimeout(context.Background(), retryInterval, retryTimeout, true,
-					targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, podSecName, true, []string{pod1Node.nodeIP}).WithContext()),
+					targetExternalContainerOrBGPServerAndTest(f, primaryTargetExternalContainer, f.Namespace.Name, podSecName, pod1Node.nodeIP).WithContext()),
 				"pod-secondary falls back to node IP while both EIPs pending")
 
 			ginkgo.By("5. Label egress1Node again: exactly one IP becomes assignable (a node hosts one IP per EIP)")
