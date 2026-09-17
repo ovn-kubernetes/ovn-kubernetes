@@ -392,24 +392,20 @@ func (c *controller) syncNetwork(network string) error {
 	var errs []error
 	var ops []ovsdb.Operation
 
-	p := func(new, db *nbdb.LogicalRouterStaticRoute) bool {
-		return db.ExternalIDs[controllerExternalIDKey] == controllerName && db.IPPrefix == new.IPPrefix && db.Nexthop == new.Nexthop
-	}
+	newRoutes := make([]*nbdb.LogicalRouterStaticRoute, 0, len(adds))
 	for add := range adds {
-		lrsr := &nbdb.LogicalRouterStaticRoute{
-			UUID:        uuids[add],
+		newRoutes = append(newRoutes, &nbdb.LogicalRouterStaticRoute{
 			IPPrefix:    add.dst,
 			Nexthop:     add.gw,
 			OutputPort:  &outport,
 			ExternalIDs: map[string]string{controllerExternalIDKey: controllerName},
-		}
-		p := func(db *nbdb.LogicalRouterStaticRoute) bool { return p(lrsr, db) }
-		ops, err = nbdbops.CreateOrReplaceLogicalRouterStaticRouteWithPredicateOps(c.nbClient, ops, router, lrsr, p)
-		if err != nil {
-			err := fmt.Errorf("failed to add routes on router %s: %w", router, err)
-			errs = append(errs, err)
-			continue
-		}
+		})
+	}
+	// The difference already identifies missing routes. Batch their creation to
+	// avoid per-route cache lookups that deep-copy the router and its StaticRoutes.
+	ops, err = nbdbops.CreateLogicalRouterStaticRoutesOps(c.nbClient, ops, router, newRoutes...)
+	if err != nil {
+		return fmt.Errorf("failed to add routes on router %s: %w", router, err)
 	}
 
 	lrsrs := make([]*nbdb.LogicalRouterStaticRoute, 0, len(deletes))

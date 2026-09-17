@@ -765,6 +765,34 @@ func CreateOrUpdateLogicalRouterStaticRoutesWithPredicateOps(nbClient libovsdbcl
 	return m.CreateOrUpdateOps(ops, opModels...)
 }
 
+// CreateLogicalRouterStaticRoutesOps creates new static routes and attaches them
+// to the named router with one mutation. The caller is responsible for ensuring
+// the routes do not already exist on the router.
+func CreateLogicalRouterStaticRoutesOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation,
+	routerName string, routes ...*nbdb.LogicalRouterStaticRoute) ([]ovsdb.Operation, error) {
+	if len(routes) == 0 {
+		return ops, nil
+	}
+	router := &nbdb.LogicalRouter{Name: routerName}
+	opModels := make([]operationModel, 0, len(routes)+1)
+	for _, route := range routes {
+		if route.UUID != "" {
+			return nil, fmt.Errorf("new static route must not have a UUID")
+		}
+		opModels = append(opModels, operationModel{
+			Model:   route,
+			DoAfter: func() { router.StaticRoutes = append(router.StaticRoutes, route.UUID) },
+		})
+	}
+	opModels = append(opModels, operationModel{
+		Model:            router,
+		OnModelMutations: []interface{}{&router.StaticRoutes},
+		ErrNotFound:      true,
+	})
+	m := newModelClient(nbClient)
+	return m.CreateOrUpdateOps(ops, opModels...)
+}
+
 // PolicyEqualPredicate determines if two static routes have the same routing policy (dst-ip or src-ip)
 // If policy is nil, OVN considers that as dst-ip
 func PolicyEqualPredicate(p1, p2 *nbdb.LogicalRouterStaticRoutePolicy) bool {
