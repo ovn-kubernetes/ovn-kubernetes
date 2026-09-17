@@ -313,12 +313,9 @@ func (oc *DefaultNetworkController) addLogicalPortWithAnnotation(pod *corev1.Pod
 		}
 	}
 
-	// Ensure pod-owned namespace port group membership before pod setup succeeds.
-	unlockNamespacePortGroup := oc.lockNamespacePortGroup(pod.Namespace)
-
+	// Ensure namespace port group membership before pod setup succeeds.
 	ops, err = oc.addPodToNamespacePortGroupOps(ops, pod.Namespace, lsp.UUID)
 	if err != nil {
-		unlockNamespacePortGroup()
 		return nil, err
 	}
 
@@ -328,7 +325,6 @@ func (oc *DefaultNetworkController) addLogicalPortWithAnnotation(pod *corev1.Pod
 		// AdminPolicyBasedExternalRoute controller.
 		snatOps, err := oc.AddPodSNATOps(pod.Spec.NodeName, podAnnotation.IPs)
 		if err != nil {
-			unlockNamespacePortGroup()
 			return nil, err
 		}
 		ops = append(ops, snatOps...)
@@ -342,7 +338,6 @@ func (oc *DefaultNetworkController) addLogicalPortWithAnnotation(pod *corev1.Pod
 
 	transactStart := time.Now()
 	_, err = libovsdbops.TransactAndCheckAndSetUUIDs(oc.nbClient, lsp, ops)
-	unlockNamespacePortGroup()
 	libovsdbExecuteTime = time.Since(transactStart)
 	if err != nil {
 		return nil, fmt.Errorf("error transacting operations %+v: %v", ops, err)
