@@ -9,9 +9,7 @@ import (
 	net "net"
 
 	mock "github.com/stretchr/testify/mock"
-
 	netlink "github.com/vishvananda/netlink"
-
 	nl "github.com/vishvananda/netlink/nl"
 )
 
