@@ -9,7 +9,9 @@ import (
 	net "net"
 
 	mock "github.com/stretchr/testify/mock"
+
 	netlink "github.com/vishvananda/netlink"
+
 	nl "github.com/vishvananda/netlink/nl"
 )
 
@@ -1009,6 +1011,24 @@ func (_m *NetLinkOps) RouteListFiltered(family int, filter *netlink.Route, filte
 	}
 
 	return r0, r1
+}
+
+// RouteListFilteredIter provides a mock function with given fields: family, filter, filterMask, f
+func (_m *NetLinkOps) RouteListFilteredIter(family int, filter *netlink.Route, filterMask uint64, f func(netlink.Route) bool) error {
+	ret := _m.Called(family, filter, filterMask, f)
+
+	if len(ret) == 0 {
+		panic("no return value specified for RouteListFilteredIter")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(int, *netlink.Route, uint64, func(netlink.Route) bool) error); ok {
+		r0 = rf(family, filter, filterMask, f)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
 }
 
 // RouteReplace provides a mock function with given fields: route
