@@ -88,7 +88,13 @@ func init() {
 }
 
 func (c *Controller) teardownMetricsCollector() {
-	prometheus.Unregister(nqosCount)
+	// Collectors are shared by all network controllers. Remove only the
+	// stopped controller's series, after its workers have stopped recording.
+	nqosCount.DeleteLabelValues(c.controllerName)
+	nqosReconcileDuration.DeleteLabelValues(c.controllerName)
+	nqosPodReconcileDuration.DeleteLabelValues(c.controllerName)
+	nqosNamespaceReconcileDuration.DeleteLabelValues(c.controllerName)
+	nqosStatusPatchDuration.DeleteLabelValues(c.controllerName)
 }
 
 // records the number of networkqos.
