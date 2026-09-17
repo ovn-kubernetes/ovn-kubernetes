@@ -376,7 +376,7 @@ func (c *controller) syncNetwork(network string) error {
 	router := info.GetNetworkScopedGWRouterName(c.node)
 	// we set the outport incase our IPv6 next hops are link local addresses
 	outport := types.GWRouterToExtSwitchPrefix + router
-	actual, uuids, err := c.getOVNRoutes(router)
+	actual, uuids, snapshot, err := c.getOVNRoutes(router)
 	if err != nil {
 		return fmt.Errorf("failed to get routes from OVN: %w", err)
 	}
@@ -392,24 +392,20 @@ func (c *controller) syncNetwork(network string) error {
 	var errs []error
 	var ops []ovsdb.Operation
 
-	p := func(new, db *nbdb.LogicalRouterStaticRoute) bool {
-		return db.ExternalIDs[controllerExternalIDKey] == controllerName && db.IPPrefix == new.IPPrefix && db.Nexthop == new.Nexthop
-	}
+	newRoutes := make([]*nbdb.LogicalRouterStaticRoute, 0, len(adds))
 	for add := range adds {
-		lrsr := &nbdb.LogicalRouterStaticRoute{
-			UUID:        uuids[add],
+		newRoutes = append(newRoutes, &nbdb.LogicalRouterStaticRoute{
 			IPPrefix:    add.dst,
 			Nexthop:     add.gw,
 			OutputPort:  &outport,
 			ExternalIDs: map[string]string{controllerExternalIDKey: controllerName},
-		}
-		p := func(db *nbdb.LogicalRouterStaticRoute) bool { return p(lrsr, db) }
-		ops, err = nbdbops.CreateOrReplaceLogicalRouterStaticRouteWithPredicateOps(c.nbClient, ops, router, lrsr, p)
-		if err != nil {
-			err := fmt.Errorf("failed to add routes on router %s: %w", router, err)
-			errs = append(errs, err)
-			continue
-		}
+		})
+	}
+	// The difference already identifies missing routes. Avoid rescanning and
+	// cloning the router for every addition; validate the snapshot at commit.
+	ops, err = nbdbops.CreateLogicalRouterStaticRoutesOps(c.nbClient, ops, snapshot, newRoutes...)
+	if err != nil {
+		return fmt.Errorf("failed to add routes on router %s: %w", router, err)
 	}
 
 	lrsrs := make([]*nbdb.LogicalRouterStaticRoute, 0, len(deletes))
@@ -508,17 +504,18 @@ func (c *controller) getRouteLinkIndexFilter(network util.NetInfo) (int, error) 
 	return link.Attrs().Index, nil
 }
 
-func (c *controller) getOVNRoutes(router string) (sets.Set[route], map[route]string, error) {
+func (c *controller) getOVNRoutes(router string) (sets.Set[route], map[route]string, *nbdb.LogicalRouter, error) {
 	start := time.Now()
-	lr := &nbdb.LogicalRouter{
-		Name: router,
+	lr, err := nbdbops.GetLogicalRouter(c.nbClient, &nbdb.LogicalRouter{Name: router})
+	if err != nil {
+		return nil, nil, nil, err
 	}
 	p := func(lrsr *nbdb.LogicalRouterStaticRoute) bool {
 		return lrsr.ExternalIDs[controllerExternalIDKey] == controllerName
 	}
 	lrsrs, err := nbdbops.GetRouterLogicalRouterStaticRoutesWithPredicate(c.nbClient, lr, p)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get routes from router %s: %w", router, err)
+		return nil, nil, nil, fmt.Errorf("failed to get routes from router %s: %w", router, err)
 	}
 	uuids := make(map[route]string, len(lrsrs))
 	routes := make(sets.Set[route], len(lrsrs))
@@ -528,7 +525,7 @@ func (c *controller) getOVNRoutes(router string) (sets.Set[route], map[route]str
 		uuids[r] = lrsr.UUID
 	}
 	c.log.V(5).Info("Listed OVN routes", "router", router, "routes", stringer{routes}, "took", time.Since(start))
-	return routes, uuids, nil
+	return routes, uuids, lr, nil
 }
 
 func (c *controller) getNetwork(network string) util.NetInfo {
