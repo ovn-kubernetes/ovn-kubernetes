@@ -10,8 +10,9 @@ import (
 
 func TestNetConfMarshalJSONIncludesOutboundSNAT(t *testing.T) {
 	netConf := NetConf{
-		Transport:    "no-overlay",
-		OutboundSNAT: "enabled",
+		Transport:         "no-overlay",
+		OutboundSNAT:      "enabled",
+		CNIRequestTimeout: "45s",
 	}
 
 	rawNetConf, err := json.Marshal(netConf)
@@ -20,8 +21,9 @@ func TestNetConfMarshalJSONIncludesOutboundSNAT(t *testing.T) {
 	}
 
 	var parsedNetConf struct {
-		Transport    string `json:"transport"`
-		OutboundSNAT string `json:"outboundSNAT"`
+		Transport         string `json:"transport"`
+		OutboundSNAT      string `json:"outboundSNAT"`
+		CNIRequestTimeout string `json:"cniRequestTimeout"`
 	}
 	if err := json.Unmarshal(rawNetConf, &parsedNetConf); err != nil {
 		t.Fatalf("failed to unmarshal NetConf: %v", err)
@@ -32,5 +34,8 @@ func TestNetConfMarshalJSONIncludesOutboundSNAT(t *testing.T) {
 	}
 	if parsedNetConf.OutboundSNAT != netConf.OutboundSNAT {
 		t.Fatalf("expected outboundSNAT %q, got %q", netConf.OutboundSNAT, parsedNetConf.OutboundSNAT)
+	}
+	if parsedNetConf.CNIRequestTimeout != netConf.CNIRequestTimeout {
+		t.Fatalf("expected CNI request timeout %q, got %q", netConf.CNIRequestTimeout, parsedNetConf.CNIRequestTimeout)
 	}
 }
