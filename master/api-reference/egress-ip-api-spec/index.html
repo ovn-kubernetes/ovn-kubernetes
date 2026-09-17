@@ -4924,6 +4924,12 @@
 <td></td>
 <td>Optional: {} <br></td>
 </tr>
+<tr>
+<td><code>egressNodeSelector</code> <em><a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#labelselector-v1-meta">LabelSelector</a></em></td>
+<td>EgressNodeSelector limits the pool of nodes that can host the<br>EgressIPs in this object; it applies to all EgressIPs in this object.<br>Only nodes whose labels match this selector are eligible for assignment.<br>This field is optional. When not specified by the user, the CRD<br>default is applied: {matchExpressions: [{key:<br>k8s.ovn.org/egress-assignable, operator: Exists}]}.<br>An empty selector ({}) matches all nodes in the cluster including<br>control plane nodes — use with caution as it expands the eligible<br>node pool and health-check set to the entire cluster.<br>This field restricts only where the IPs in this EgressIP object are<br>placed; it does not reserve the matched nodes for exclusive use.<br>Other EgressIP objects can still consume capacity on the same nodes.</td>
+<td>{ matchExpressions:[map[key:k8s.ovn.org/egress-assignable operator:Exists]] }</td>
+<td>Optional: {} <br></td>
+</tr>
 </tbody>
 </table>
 <h4 id="egressipstatus">EgressIPStatus<a class="headerlink" href="#egressipstatus" title="Permanent link">¶</a></h4>

@@ -1762,6 +1762,67 @@ creating a pull request.">
   
 </li>
         
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#crd-integration-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CRD Integration Tests
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="CRD Integration Tests">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#prerequisites" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prerequisites
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#running-the-crd-integration-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running the CRD integration tests
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#running-a-single-crd-integration-test" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running a single CRD integration test
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#adding-new-crd-integration-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adding new CRD integration tests
+      
+    </span>
+  </a>
+  
+</li>
+        
           <li class="md-nav__item">
   <a href="#running-a-control-plane-test" class="md-nav__link">
     <span class="md-ellipsis">
@@ -4953,6 +5014,67 @@ creating a pull request.">
   
 </li>
         
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#crd-integration-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CRD Integration Tests
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="CRD Integration Tests">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#prerequisites" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prerequisites
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#running-the-crd-integration-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running the CRD integration tests
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#running-a-single-crd-integration-test" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running a single CRD integration test
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#adding-new-crd-integration-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adding new CRD integration tests
+      
+    </span>
+  </a>
+  
+</li>
+        
           <li class="md-nav__item">
   <a href="#running-a-control-plane-test" class="md-nav__link">
     <span class="md-ellipsis">
@@ -5158,6 +5280,46 @@ SUCCESS! -- 1 Passed | 0 Failed | 0 Flaked | 0 Pending | 5666 Skipped
 Ginkgo ran 1 suite in 38.489055861s
 Test Suite Passed
 </code></pre></div><p></p>
+<h2 id="crd-integration-tests">CRD Integration Tests<a class="headerlink" href="#crd-integration-tests" title="Permanent link">¶</a></h2>
+<p>CRD integration tests live in <code>test/crd-integration/</code> and run against a real
+kube-apiserver + etcd started by <a href="https://pkg.go.dev/sigs.k8s.io/controller-runtime/pkg/envtest">envtest</a>.
+They verify CRD admission behaviour — defaulting, validation, and CEL rules —
+without requiring a full Kind cluster.</p>
+<p>The tests are the intended future home for scenarios currently living in
+<code>test/e2e/testscenario/</code> that do not need live pod networking. This migration
+is tracked in
+<a href="https://github.com/ovn-kubernetes/ovn-kubernetes/issues/6932">ovn-kubernetes#6932</a>.</p>
+<h3 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">¶</a></h3>
+<p>No cluster is needed.  <code>setup-envtest</code> downloads the required kube-apiserver
+and etcd binaries automatically on the first run.</p>
+<p>Go 1.26+ must be on <code>$PATH</code> (same requirement as the rest of the project).</p>
+<h3 id="running-the-crd-integration-tests">Running the CRD integration tests<a class="headerlink" href="#running-the-crd-integration-tests" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="nb">cd</span><span class="w"> </span><span class="nv">$REPO</span>/test
+make<span class="w"> </span>test-crd
+</code></pre></div>
+<p>To pin a specific Kubernetes API version for the embedded API server:</p>
+<div class="highlight"><pre><span></span><code>make<span class="w"> </span>test-crd<span class="w"> </span><span class="nv">ENVTEST_K8S_VERSION</span><span class="o">=</span><span class="m">1</span>.37.0
+</code></pre></div>
+<h3 id="running-a-single-crd-integration-test">Running a single CRD integration test<a class="headerlink" href="#running-a-single-crd-integration-test" title="Permanent link">¶</a></h3>
+<p><code>go test -run</code> matches against the Go test function name (<code>TestCRDIntegration</code>),
+not the Ginkgo <code>It</code> description.  Use Ginkgo's <code>--focus</code> flag after <code>--</code> to
+filter by description:</p>
+<div class="highlight"><pre><span></span><code><span class="nb">cd</span><span class="w"> </span><span class="nv">$REPO</span>/test/crd-integration
+<span class="nv">KUBEBUILDER_ASSETS</span><span class="o">=</span><span class="s2">"</span><span class="k">$(</span>go<span class="w"> </span>tool<span class="w"> </span>setup-envtest<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>use<span class="w"> </span><span class="m">1</span>.36.2<span class="w"> </span>--bin-dir<span class="w"> </span>/tmp/envtest-bin<span class="w"> </span>-p<span class="w"> </span>path<span class="k">)</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>go<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-v<span class="w"> </span>./...<span class="w"> </span>--<span class="w"> </span>--focus<span class="w"> </span><span class="s2">"fills in the egress-assignable default"</span>
+</code></pre></div>
+<h3 id="adding-new-crd-integration-tests">Adding new CRD integration tests<a class="headerlink" href="#adding-new-crd-integration-tests" title="Permanent link">¶</a></h3>
+<p>All CRDs share a single Ginkgo suite. <code>suite_test.go</code> is the one bootstrap: its
+<code>BeforeSuite</code> points <code>envtest.Environment.CRDDirectoryPaths</code> at
+<code>helm/ovn-kubernetes/crds/</code> so every committed CRD manifest is loaded
+automatically, and it registers the CRD schemes the suite exercises.</p>
+<ol>
+<li>Register its types in the scheme in <code>suite_test.go</code>, e.g.
+   <code>utilruntime.Must(egressipv1.AddToScheme(scheme))</code>.</li>
+<li>Add a <code>test/crd-integration/&lt;feature&gt;_test.go</code> with a top-level Ginkgo
+   <code>Describe</code> for that CRD.</li>
+</ol>
 <h3 id="running-a-control-plane-test">Running a control-plane test<a class="headerlink" href="#running-a-control-plane-test" title="Permanent link">¶</a></h3>
 <p>All local tests are defined as <code>control-plane</code> tests. To run a single <code>control-plane</code> test, target the <code>control-plane</code>
 action and append the <code>WHAT=&lt;test name&gt;</code> parameter, as follows:</p>

@@ -5015,6 +5015,32 @@ Instead, they must explicitly be requested with <code>make -C test control-plane
 <p>To reduce the explosion of tests being run in CI, the test cases run are limited
 using an <code>exclude:</code> statement in 
 <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/.github/workflows/test.yml">ovn-kubernetes/.github/workflows/test.yml</a>.</p>
+<h1 id="crd-integration-tests">CRD Integration Tests<a class="headerlink" href="#crd-integration-tests" title="Permanent link">¶</a></h1>
+<p>Tests from
+<a href="https://github.com/ovn-kubernetes/ovn-kubernetes/tree/master/test/crd-integration"><code>test/crd-integration/</code></a>
+verify <strong>CRD admission behaviour</strong> against a real kube-apiserver via
+<a href="https://pkg.go.dev/sigs.k8s.io/controller-runtime/pkg/envtest">envtest</a>, with
+no Kind cluster required.  Because they are lightweight, they run as a step in
+the <code>Test-PR</code> unit-test job rather than in a dedicated lane.  See the
+<a href="../../developer-guide/local_testing_guide/#crd-integration-tests">Local Testing Guide</a>
+for prerequisites, how to run them, and how to add new tests.</p>
+<h2 id="what-belongs-here">What belongs here<a class="headerlink" href="#what-belongs-here" title="Permanent link">¶</a></h2>
+<p>These tests are the intended home for <strong>CRD admission behaviour</strong> that can
+be verified without live pod networking:</p>
+<ul>
+<li><strong>Defaulting</strong> — fields with <code>+kubebuilder:default</code> markers are filled in
+  correctly when absent from a user's YAML</li>
+<li><strong>Validation</strong> — <code>+kubebuilder:validation</code> constraints reject invalid objects</li>
+<li><strong>CEL rules</strong> — <code>+kubebuilder:validation:XValidation</code> expressions behave as
+  specified</li>
+</ul>
+<p>Do <strong>not</strong> add these to <code>test/e2e/</code> or <code>test/e2e/testscenario/</code>.  The E2E
+suite requires a full Kind cluster; CRD admission tests do not.  Adding them
+to the E2E suite makes them slower, harder to run locally, and harder to
+iterate on.  Schema-only tests currently in
+<a href="https://github.com/ovn-kubernetes/ovn-kubernetes/tree/master/test/e2e/testscenario"><code>test/e2e/testscenario/</code></a>
+should be migrated here over time (tracked in
+<a href="https://github.com/ovn-kubernetes/ovn-kubernetes/issues/6932">ovn-kubernetes#6932</a>).</p>
 <h1 id="conformance-tests">Conformance Tests<a class="headerlink" href="#conformance-tests" title="Permanent link">¶</a></h1>
 <p>We have a conformance test suit that can be invoked using the <code>make conformance</code> command.
 Currently we run the <code>TestNetworkPolicyV2Conformance</code> tests there. The actual tests are
