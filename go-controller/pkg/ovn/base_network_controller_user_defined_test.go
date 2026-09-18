@@ -555,6 +555,7 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 		})
 
 		It("ensurePod with addPort=true returns an error until the namespace is in the informer", func() {
+			config.OVNKubernetesFeature.EnableEgressFirewall = true
 			err := bnc.ensurePodForUserDefinedNetwork(pod, true)
 			Expect(err).To(MatchError(ContainSubstring("failed to get primary network namespace NAD")))
 			Expect(err).To(MatchError(apierrors.IsNotFound, "IsNotFound"))
@@ -576,6 +577,16 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 			switchName := bnc.GetNetworkScopedSwitchName(localNode)
 			Expect(bnc.lsManager.AddOrUpdateSwitch(switchName, []*net.IPNet{nodeSubnet}, nil)).To(Succeed())
 			Expect(libovsdbops.CreateOrUpdateLogicalSwitch(fakeOVN.nbClient, &nbdb.LogicalSwitch{Name: switchName})).To(Succeed())
+
+			// Seeing the namespace is not enough: its handler must create the
+			// group before pod programming can succeed. Keep retrying meanwhile.
+			Eventually(func() error {
+				return bnc.ensurePodForUserDefinedNetwork(pod, true)
+			}).Should(MatchError(ContainSubstring("failed to add pod port")))
+			_, err = libovsdbops.GetPortGroup(fakeOVN.nbClient,
+				&nbdb.PortGroup{Name: bnc.getNamespacePortGroupName(missingNamespace)})
+			Expect(err).To(HaveOccurred())
+			Expect(bnc.WatchNamespaces()).To(Succeed())
 
 			Eventually(func() error {
 				return bnc.ensurePodForUserDefinedNetwork(pod, true)
