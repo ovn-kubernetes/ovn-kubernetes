@@ -510,14 +510,20 @@ func Test_controller_syncNetwork(t *testing.T) {
 
 			switch {
 			case tt.link == nil || tt.link.Type() != "vrf" || tt.routesErr:
-				nlmock.On("RouteListFiltered", mock.Anything, mock.Anything, mock.Anything).Return(nil, testError)
+				nlmock.On("RouteListFilteredIter", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(testError)
 			default:
 				vrf := tt.link.(*netlink.Vrf)
 				matchFilter := func(r *netlink.Route) bool {
 					return r != nil && r.Equal(netlink.Route{Protocol: unix.RTPROT_BGP, Table: int(vrf.Table)})
 				}
-				nlmock.On("RouteListFiltered", netlink.FAMILY_ALL, mock.MatchedBy(matchFilter), netlink.RT_FILTER_PROTOCOL|netlink.RT_FILTER_TABLE).
-					Return(tt.routes, nil)
+				nlmock.On("RouteListFilteredIter", netlink.FAMILY_ALL, mock.MatchedBy(matchFilter), netlink.RT_FILTER_PROTOCOL|netlink.RT_FILTER_TABLE, mock.Anything).
+					Run(func(args mock.Arguments) {
+						for _, route := range tt.routes {
+							if !args.Get(3).(func(netlink.Route) bool)(route) {
+								break
+							}
+						}
+					}).Return(nil)
 			}
 
 			client, ctx, err := libovsdb.NewNBTestHarness(libovsdb.TestSetup{NBData: tt.initial}, nil)

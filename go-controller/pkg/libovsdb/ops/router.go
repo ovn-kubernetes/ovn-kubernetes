@@ -765,6 +765,46 @@ func CreateOrUpdateLogicalRouterStaticRoutesWithPredicateOps(nbClient libovsdbcl
 	return m.CreateOrUpdateOps(ops, opModels...)
 }
 
+// CreateLogicalRouterStaticRoutesOps creates routes already known to be absent
+// from a router snapshot, and attaches them with one router mutation. The caller
+// must serialize reconciliation for this router and derive the additions from
+// the supplied snapshot. A changed route-reference set aborts the transaction
+// so the caller can recompute rather than creating duplicates from stale state.
+func CreateLogicalRouterStaticRoutesOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation,
+	router *nbdb.LogicalRouter, routes ...*nbdb.LogicalRouterStaticRoute) ([]ovsdb.Operation, error) {
+	if len(routes) == 0 {
+		return ops, nil
+	}
+	if router.UUID == "" {
+		return nil, fmt.Errorf("router snapshot must have a UUID")
+	}
+	timeout := 0
+	guard, err := nbClient.Where(&nbdb.LogicalRouter{UUID: router.UUID}).Wait(
+		ovsdb.WaitConditionEqual, &timeout, router, &router.StaticRoutes)
+	if err != nil {
+		return nil, err
+	}
+	ops = append(ops, guard...)
+	mutation := &nbdb.LogicalRouter{UUID: router.UUID}
+	opModels := make([]operationModel, 0, len(routes)+1)
+	for _, route := range routes {
+		if route.UUID != "" {
+			return nil, fmt.Errorf("new static route must not have a UUID")
+		}
+		opModels = append(opModels, operationModel{
+			Model:   route,
+			DoAfter: func() { mutation.StaticRoutes = append(mutation.StaticRoutes, route.UUID) },
+		})
+	}
+	opModels = append(opModels, operationModel{
+		Model:            mutation,
+		OnModelMutations: []interface{}{&mutation.StaticRoutes},
+		ErrNotFound:      true,
+	})
+	m := newModelClient(nbClient)
+	return m.CreateOrUpdateOps(ops, opModels...)
+}
+
 // PolicyEqualPredicate determines if two static routes have the same routing policy (dst-ip or src-ip)
 // If policy is nil, OVN considers that as dst-ip
 func PolicyEqualPredicate(p1, p2 *nbdb.LogicalRouterStaticRoutePolicy) bool {
