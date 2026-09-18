@@ -22,6 +22,7 @@ import (
 	uplinkv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1"
 	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/allocators"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
@@ -367,6 +368,7 @@ var _ = ginkgo.Describe("Network Segmentation Uplink default-VRF egress", featur
 		gomega.Expect(err).NotTo(gomega.HaveOccurred(),
 			"expected to get UplinkState for Uplink %s on node %s", uplinkName, node.Name)
 		initialUID := state.GetUID()
+		expectSingleUplinkLocalnetPort(f, node.Name, networkName, env.bridgeName)
 
 		ginkgo.By("verifying egress through the initial Uplink bridge")
 		initialServer, err := ictx.CreateExternalContainer(infraapi.ExternalContainer{
@@ -421,6 +423,7 @@ var _ = ginkgo.Describe("Network Segmentation Uplink default-VRF egress", featur
 		ginkgo.By("changing the selected nodeConfig without deselecting the node")
 		setUplinkNodeConfigHostInterfaceName(f, uplinkName, hostname, replacementBridge)
 		waitForUplinkStatesResolved(f, uplinkName, replacementBridge, []corev1.Node{node})
+		expectSingleUplinkLocalnetPort(f, node.Name, networkName, replacementBridge)
 
 		ginkgo.By("verifying egress uses the replacement Uplink interface")
 		replacementNodeIface, ok := replacementIfaces[node.Name]
@@ -2636,6 +2639,52 @@ func incrementUplinkIP(ip net.IP) {
 	}
 }
 
+// expectSingleUplinkLocalnetPort asserts that the CUDN's external switch on
+// nodeName carries exactly one localnet port and OVS exactly one br-int patch
+// port for the network, both belonging to bridgeName. Both names embed the
+// bridge, so a bridge change must replace them: ovn-controller forwards
+// through a single localnet port per datapath, and a leftover from the
+// previous bridge keeps egress on a patch port that the replacement bridge's
+// flows do not handle.
+func expectSingleUplinkLocalnetPort(f *framework.Framework, nodeName, cudnName, bridgeName string) {
+	ginkgo.GinkgoHelper()
+
+	ovsPods, err := uplinkOVSPodsByNode(f)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "expected to list ovnkube-node pods")
+	ovsPod, ok := ovsPods[nodeName]
+	gomega.Expect(ok).To(gomega.BeTrue(), "expected an ovnkube-node pod on node %s", nodeName)
+
+	networkName := ovntypes.CUDNPrefix + cudnName
+	scopedNode := util.GetUserDefinedNetworkPrefix(networkName) + nodeName
+	expectedLocalnet := util.GetExtPortName(bridgeName, scopedNode)
+	expectedPatch := util.GetPatchPortName(bridgeName, scopedNode)
+
+	gomega.Eventually(func() error {
+		out, err := e2epodoutput.RunHostCmd(ovsPod.Namespace, ovsPod.Name, fmt.Sprintf(
+			"ovn-nbctl --timeout=15 --bare --columns=name find logical_switch_port type=localnet options:network_name=%s",
+			networkName))
+		if err != nil {
+			return err
+		}
+		if got := strings.Fields(out); len(got) != 1 || got[0] != expectedLocalnet {
+			return fmt.Errorf("network %s on node %s has localnet ports %v, expected exactly [%s]",
+				networkName, nodeName, got, expectedLocalnet)
+		}
+		out, err = e2epodoutput.RunHostCmd(ovsPod.Namespace, ovsPod.Name, fmt.Sprintf(
+			"ovs-vsctl --timeout=15 --bare --columns=name find interface type=patch | grep -F -- '_%s%s' || true",
+			scopedNode, ovntypes.PatchPortSuffix))
+		if err != nil {
+			return err
+		}
+		if got := strings.Fields(out); len(got) != 1 || got[0] != expectedPatch {
+			return fmt.Errorf("network %s on node %s has br-int patch ports %v, expected exactly [%s]",
+				networkName, nodeName, got, expectedPatch)
+		}
+		return nil
+	}).WithTimeout(uplinkShortTimeout).WithPolling(uplinkPoll).Should(gomega.Succeed(),
+		"expected a single localnet port and patch port for network %s on bridge %s", networkName, bridgeName)
+}
+
 func uplinkOVSPodsByNode(f *framework.Framework) (map[string]corev1.Pod, error) {
 	pods, err := f.ClientSet.CoreV1().Pods(deploymentconfig.Get().OVNKubernetesNamespace()).List(
 		context.Background(),
@@ -3094,8 +3143,8 @@ func waitForCUDNUplinksCondition(
 			if condition.Status == expectedStatus && condition.Reason == expectedReason {
 				return nil
 			}
-			return fmt.Errorf("CUDN %s UplinksReady condition is %s/%s, expected %s/%s",
-				cudnName, condition.Status, condition.Reason, expectedStatus, expectedReason)
+			return fmt.Errorf("CUDN %s UplinksReady condition is %s/%s (%s), expected %s/%s",
+				cudnName, condition.Status, condition.Reason, condition.Message, expectedStatus, expectedReason)
 		}
 		return fmt.Errorf("CUDN %s has no UplinksReady condition", cudnName)
 	}).WithTimeout(uplinkTimeout).WithPolling(uplinkPoll).Should(gomega.Succeed())
