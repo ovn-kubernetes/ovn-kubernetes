@@ -226,6 +226,49 @@ var _ = Describe("Level-driven controller", func() {
 			return keys
 		}).Should(BeEquivalentTo(sets.New(pod1Key, pod2Key)))
 	})
+	It("invokes OnDelete with the deleted object", func() {
+		namespace := util.NewNamespace(namespace1Name)
+		pod := &corev1.Pod{
+			ObjectMeta: util.NewObjectMeta("pod1", namespace.Name),
+		}
+		config := getDefaultConfig()
+		// Record namespace by name to prove OnDelete receives the actual
+		// object (not just a key).
+		deleted := sync.Map{}
+		config.OnDelete = func(obj *corev1.Pod) {
+			deleted.Store(obj.Name, obj.Namespace)
+		}
+		startController(config, nil, namespace, pod)
+		checkReconcileCounter(1)
+
+		err := fakeClient.KubeClient.CoreV1().Pods(namespace.Name).Delete(context.TODO(), pod.Name, metav1.DeleteOptions{})
+		Expect(err).NotTo(HaveOccurred())
+
+		Eventually(func() bool {
+			ns, ok := deleted.Load("pod1")
+			return ok && ns == namespace.Name
+		}).Should(BeTrue(), "OnDelete should be called with the deleted pod object")
+	})
+})
+
+var _ = Describe("Level-driven controller deletedObj", func() {
+	c := &controller[corev1.Pod]{name: "test"}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod1", Namespace: "ns1"}}
+
+	It("returns the object for a plain delete", func() {
+		Expect(c.deletedObj(pod)).To(BeIdenticalTo(pod))
+	})
+	It("unwraps a DeletedFinalStateUnknown tombstone", func() {
+		tombstone := cache.DeletedFinalStateUnknown{Key: "ns1/pod1", Obj: pod}
+		Expect(c.deletedObj(tombstone)).To(BeIdenticalTo(pod))
+	})
+	It("returns nil for an unexpected type", func() {
+		Expect(c.deletedObj("not-a-pod")).To(BeNil())
+	})
+	It("returns nil for a tombstone wrapping an unexpected type", func() {
+		tombstone := cache.DeletedFinalStateUnknown{Key: "ns1/pod1", Obj: "not-a-pod"}
+		Expect(c.deletedObj(tombstone)).To(BeNil())
+	})
 })
 
 var _ = Describe("Level-driven controllers with shared initialSync", func() {
