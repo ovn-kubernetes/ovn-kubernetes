@@ -239,6 +239,114 @@ Then verify the first merge deploy:
 If Pages is still set to **GitHub Actions**, the workflow can succeed while the
 public site does not update — fix the Source setting above.
 
+## Markdown extensions and plugins
+
+The docs site enables several MkDocs plugins and pymdownx Markdown extensions
+beyond basic Markdown. Use them to make documentation clearer and more
+interactive.
+
+### Tabbed content (`pymdownx.tabbed`)
+
+Show alternatives (e.g. `kubectl` vs `oc`, IPv4 vs IPv6) side-by-side:
+
+```markdown
+=== "kubectl"
+
+    ```bash
+    kubectl get pods -A
+    ```
+
+=== "oc"
+
+    ```bash
+    oc get pods -A
+    ```
+```
+
+### Task lists (`pymdownx.tasklist`)
+
+Render GitHub-style checklists:
+
+```markdown
+- [x] Create the CRD types
+- [x] Run `make codegen`
+- [ ] Add feature documentation
+```
+
+### Keyboard shortcuts (`pymdownx.keys`)
+
+Render keyboard keys with the `++` syntax:
+
+```markdown
+Press ++ctrl+c++ to copy, ++ctrl+v++ to paste.
+```
+
+### Magic links (`pymdownx.magiclink`)
+
+GitHub references are auto-linked. No Markdown link syntax needed:
+
+```markdown
+See #1234 for details.          <!-- links to issue/PR 1234 -->
+Fixed by @username in abc123.   <!-- links to user and commit -->
+```
+
+The config sets `user: ovn-kubernetes` and `repo: ovn-kubernetes` so
+bare `#1234` references resolve to this repository.
+
+### Text highlighting (`pymdownx.mark`)
+
+Highlight important text with double equals:
+
+```markdown
+This is ==highlighted text== in a sentence.
+```
+
+### Macros (`mkdocs-macros-plugin`) and Jinja2 escaping
+
+The macros plugin enables Jinja2 templating in Markdown. It processes
+**all** content, including fenced code blocks.
+
+{% raw %}
+**Escaping rule:** If your docs contain literal `{{ }}` syntax (Go templates,
+Helm charts, Docker inspect commands, etc.), you **must** escape it so the
+macros plugin does not try to evaluate it:
+
+```markdown
+<!-- Raw Go template (will break the build): -->
+The default output is `pkg/testing/mocks/{{.PackagePath}}/`
+
+<!-- Escaped (correct): -->
+The default output is `pkg/testing/mocks/{{ '{{' }}.PackagePath{{ '}}' }}/`
+```
+
+The `{{ '{{' }}` expression outputs a literal `{{` and `{{ '}}' }}` outputs
+a literal `}}`. This applies anywhere `{{ }}` appears in docs — inline code,
+fenced code blocks, or prose.
+{% endraw %}
+
+### Page revision dates (`git-revision-date-localized`)
+
+Each page automatically shows a "Last updated" date at the bottom, pulled
+from git history. No author action is needed. The plugin falls back to the
+build date when full git history is unavailable (e.g. CI shallow clones).
+
+### Redirects (`mkdocs-redirects`)
+
+When a page is moved or renamed, add an entry to the `redirect_maps` in
+`mkdocs.yml` so old URLs do not 404:
+
+```yaml
+plugins:
+  - redirects:
+      redirect_maps:
+        'old/path.md': 'new/path.md'
+```
+
+### HTML minification (`mkdocs-minify-plugin`)
+
+The built site HTML is automatically minified for faster page loads. No
+author action is needed.
+
 ## How to test your documentation changes?
 
 ### Option 1) Build and view docs with a PR
