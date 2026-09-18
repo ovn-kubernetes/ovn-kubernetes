@@ -5,6 +5,7 @@ package util
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/mock"
@@ -17,6 +18,7 @@ import (
 
 	kubemocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube/mocks"
 	v1mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/client-go/listers/core/v1"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
 func TestIsPodAnnotationUpdateRetryable(t *testing.T) {
@@ -39,6 +41,9 @@ func TestIsPodAnnotationUpdateRetryable(t *testing.T) {
 	if IsPodAnnotationUpdateRetryable(errors.New("plain error")) {
 		t.Fatal("expected plain error to not be retryable")
 	}
+	if IsPodAnnotationUpdateRetryable(fmt.Errorf("wrapped: %w", &types.PodUIDMismatchError{})) {
+		t.Fatal("expected UID mismatch to not be retryable")
+	}
 }
 
 func TestUpdatePodWithAllocationOrRollback(t *testing.T) {
@@ -48,6 +53,8 @@ func TestUpdatePodWithAllocationOrRollback(t *testing.T) {
 		getPodErr        bool
 		allocateErr      bool
 		updatePodErr     bool
+		patchPodReplaced bool
+		podReplaced      bool
 		expectAllocation bool
 		expectRollback   bool
 		expectUpdate     bool
@@ -86,6 +93,19 @@ func TestUpdatePodWithAllocationOrRollback(t *testing.T) {
 			updatePodErr:     true,
 			expectErr:        true,
 		},
+		{
+			name:        "pod was replaced before allocation",
+			podReplaced: true,
+			expectErr:   true,
+		},
+		{
+			name:             "pod was replaced before patch",
+			patchPodReplaced: true,
+			allocateRollback: true,
+			expectAllocation: true,
+			expectRollback:   true,
+			expectErr:        true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -102,6 +122,11 @@ func TestUpdatePodWithAllocationOrRollback(t *testing.T) {
 			}
 
 			pod := &corev1.Pod{}
+			requestedPod := pod.DeepCopy()
+			if tt.podReplaced {
+				requestedPod.UID = "old-uid"
+				pod.UID = "replacement-uid"
+			}
 
 			var allocated bool
 			allocate := func(pod *corev1.Pod) (*corev1.Pod, func(), error) {
@@ -121,16 +146,21 @@ func TestUpdatePodWithAllocationOrRollback(t *testing.T) {
 				podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(pod, nil)
 			}
 
-			if tt.updatePodErr {
+			if tt.patchPodReplaced {
+				kubeMock.On("PatchPodStatusAnnotations", pod, mock.AnythingOfType("*v1.Pod")).Return(&types.PodUIDMismatchError{}).Once()
+			} else if tt.updatePodErr {
 				kubeMock.On("PatchPodStatusAnnotations", pod, mock.AnythingOfType("*v1.Pod")).Return(errors.New("Update pod error"))
 			} else if tt.expectUpdate {
 				kubeMock.On("PatchPodStatusAnnotations", pod, mock.AnythingOfType("*v1.Pod")).Return(nil)
 			}
 
-			err := UpdatePodWithRetryOrRollback(podListerMock, kubeMock, &corev1.Pod{}, allocate)
+			err := UpdatePodWithRetryOrRollback(podListerMock, kubeMock, requestedPod, allocate)
 
 			if (err != nil) != tt.expectErr {
 				t.Errorf("UpdatePodWithAllocationOrRollback() error = %v, expectErr %v", err, tt.expectErr)
+			}
+			if types.IsPodUIDMismatchError(err) != (tt.podReplaced || tt.patchPodReplaced) {
+				t.Errorf("unexpected UID mismatch classification: %v", err)
 			}
 
 			if allocated != tt.expectAllocation {
@@ -140,6 +170,7 @@ func TestUpdatePodWithAllocationOrRollback(t *testing.T) {
 			if rollbackDone != tt.expectRollback {
 				t.Errorf("UpdatePodWithAllocationOrRollback() rollbackDone = %v, expectRollback %v", rollbackDone, tt.expectRollback)
 			}
+			kubeMock.AssertExpectations(t)
 		})
 	}
 }
