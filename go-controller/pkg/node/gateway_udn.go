@@ -1313,29 +1313,45 @@ func (udng *UserDefinedNetworkGateway) getDefaultRoute() ([]netlink.Route, error
 	}
 
 	var retVal []netlink.Route
-	var defaultAnyCIDR *net.IPNet
+	gateways := map[bool][]*netlink.NexthopInfo{}
+	seen := make(map[string]bool)
 	hasV4Subnet, hasV6Subnet := udng.IPMode()
-	if udng.Uplink() != "" {
-		if len(udng.nextHops) == 0 {
-			return nil, nil
-		}
-	}
 	for _, nextHop := range udng.nextHops {
 		isV6 := utilnet.IsIPv6(nextHop)
-		if (isV6 && !hasV6Subnet) || (!isV6 && !hasV4Subnet) {
+		if (isV6 && !hasV6Subnet) || (!isV6 && !hasV4Subnet) || seen[nextHop.String()] {
 			continue
 		}
-		_, defaultAnyCIDR, _ = net.ParseCIDR("0.0.0.0/0")
-		if isV6 {
-			_, defaultAnyCIDR, _ = net.ParseCIDR("::/0")
+		seen[nextHop.String()] = true
+		gateways[isV6] = append(gateways[isV6], &netlink.NexthopInfo{
+			LinkIndex: udng.gwInterfaceIndex,
+			Gw:        nextHop,
+		})
+	}
+	for _, isV6 := range []bool{false, true} {
+		nextHops := gateways[isV6]
+		if len(nextHops) == 0 {
+			continue
 		}
-		retVal = append(retVal, netlink.Route{
+		prefix := "0.0.0.0/0"
+		if isV6 {
+			prefix = "::/0"
+		}
+		_, defaultAnyCIDR, _ := net.ParseCIDR(prefix)
+		route := netlink.Route{
 			LinkIndex: udng.gwInterfaceIndex,
 			Dst:       defaultAnyCIDR,
 			MTU:       networkMTU,
-			Gw:        nextHop,
+			Gw:        nextHops[0].Gw,
 			Table:     udng.vrfTableId,
-		})
+		}
+		if len(nextHops) > 1 {
+			// Route manager owns one route per prefix/table/metric. Separate
+			// routes with different gateways would overwrite each other.
+			route.LinkIndex = 0
+			route.Gw = nil
+			route.MultiPath = nextHops
+		}
+		retVal = append(retVal, route)
 	}
 	return retVal, nil
 }
@@ -1765,13 +1781,21 @@ func (udng *UserDefinedNetworkGateway) removeManagedDefaultRoutesFromVRF() error
 	}
 	var managedDefaultRoutes []netlink.Route
 	for _, route := range routes {
-		if int(route.Protocol) != types.OVNKProtocol || len(route.Gw) == 0 || route.Dst != nil && route.Dst.IP != nil && !route.Dst.IP.IsUnspecified() {
+		if int(route.Protocol) != types.OVNKProtocol || len(route.Gw) == 0 && len(route.MultiPath) == 0 {
 			continue
 		}
-		// The kernel reports a default route with a nil destination; the
-		// tracked routes carry the explicit any CIDR of their family.
+		if route.Dst != nil {
+			ones, bits := route.Dst.Mask.Size()
+			if bits == 0 || ones != 0 {
+				continue
+			}
+		}
+		// netlink reports a default route with the zero address and a zero
+		// mask (or no destination at all); the tracked routes carry the
+		// canonical any CIDR of their family, so normalize to it.
 		_, anyCIDR, _ := net.ParseCIDR("0.0.0.0/0")
-		if utilnet.IsIPv6(route.Gw) {
+		if route.Family == netlink.FAMILY_V6 || utilnet.IsIPv6(route.Gw) ||
+			len(route.MultiPath) > 0 && utilnet.IsIPv6(route.MultiPath[0].Gw) {
 			_, anyCIDR, _ = net.ParseCIDR("::/0")
 		}
 		route.Dst = anyCIDR

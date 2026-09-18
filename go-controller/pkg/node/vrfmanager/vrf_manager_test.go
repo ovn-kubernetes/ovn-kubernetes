@@ -113,6 +113,9 @@ var _ = ginkgo.Describe("VRF manager", func() {
 		nlMock.On("LinkByName", vrfLinkName1).Return(buildVRF(vrfLinkName1), nil)
 		nlMock.On("LinkByName", enslaveLinkName1).Return(enslaveLinkMock1, nil)
 		nlMock.On("LinkByName", enslaveLinkName2).Return(enslaveLinkMock2, nil)
+		// A nil error is never a not-found error: the specific expectation
+		// is registered first so it wins over the catch-all below.
+		nlMock.On("IsLinkNotFoundError", nil).Return(false)
 		nlMock.On("IsLinkNotFoundError", mock.Anything).Return(true)
 		nlMock.On("LinkAdd", mock.Anything).Return(nil)
 		nlMock.On("LinkSetUp", mock.Anything).Return(nil)
@@ -503,8 +506,6 @@ var _ = ginkgo.Describe("VRF manager", func() {
 			err := c.AddVRF(vrfLinkName1, enslaveLinkName1, getVRFTable(vrfLinkName1), nil)
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 
-			// exercise deleteVRF directly: the mocked IsLinkNotFoundError
-			// catch-all makes DeleteVRF return before reaching it
 			err = c.deleteVRF(buildVRF(vrfLinkName1))
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 			nlMock.AssertCalled(ginkgo.GinkgoT(), "LinkSetNoMaster", enslaveLinkMock1)
@@ -537,6 +538,88 @@ var _ = ginkgo.Describe("VRF manager", func() {
 			gomega.Expect(cached.routes).To(gomega.ConsistOf(taggedRoute))
 			taggedRoute.Priority = 0
 			nlMock.AssertCalled(ginkgo.GinkgoT(), "RouteReplace", &taggedRoute)
+		})
+
+		ginkgo.It("replaces a tracked route with the same key instead of accumulating it", func() {
+			enslaveLinkMock1.On("Attrs").Return(&netlink.LinkAttrs{Name: enslaveLinkName1, MasterIndex: getLinkIndex(vrfLinkName1), Index: getLinkIndex(enslaveLinkName1)}, nil)
+			nlMock.On("RouteListFiltered", mock.Anything, mock.Anything, mock.Anything).Return(nil, nil)
+			nlMock.On("RouteReplace", mock.Anything).Return(nil)
+			defaultVia := func(gateway string) netlink.Route {
+				return netlink.Route{
+					LinkIndex: getLinkIndex(enslaveLinkName1),
+					Dst:       ovntest.MustParseIPNet("0.0.0.0/0"),
+					Gw:        net.ParseIP(gateway),
+					Table:     int(getVRFTable(vrfLinkName1)),
+				}
+			}
+			err := c.AddVRF(vrfLinkName1, enslaveLinkName1, getVRFTable(vrfLinkName1), []netlink.Route{defaultVia("192.168.1.1")})
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+
+			// Route manager keys by destination, table and metric: the
+			// default via the new gateway replaces the tracked one, and
+			// re-adding it leaves a single entry.
+			for range 2 {
+				gomega.Expect(c.AddVRFRoutes(vrfLinkName1, []netlink.Route{defaultVia("192.168.1.2")})).To(gomega.Succeed())
+			}
+			replacement := defaultVia("192.168.1.2")
+			replacement.Protocol = netlink.RouteProtocol(types.OVNKProtocol)
+			gomega.Expect(c.vrfs[getLinkIndex(vrfLinkName1)].routes).To(gomega.ConsistOf(replacement))
+		})
+
+		ginkgo.It("keeps the cache intact when syncing a replaced route fails", func() {
+			enslaveLinkMock1.On("Attrs").Return(&netlink.LinkAttrs{Name: enslaveLinkName1, MasterIndex: getLinkIndex(vrfLinkName1), Index: getLinkIndex(enslaveLinkName1)}, nil)
+			nlMock.On("RouteListFiltered", mock.Anything, mock.Anything, mock.Anything).Return(nil, nil)
+			defaultVia := func(gateway string) netlink.Route {
+				return netlink.Route{
+					LinkIndex: getLinkIndex(enslaveLinkName1),
+					Dst:       ovntest.MustParseIPNet("0.0.0.0/0"),
+					Gw:        net.ParseIP(gateway),
+					Table:     int(getVRFTable(vrfLinkName1)),
+				}
+			}
+			// Specific expectations are registered first so they win over
+			// the catch-all below.
+			nlMock.On("RouteReplace", mock.MatchedBy(func(r *netlink.Route) bool {
+				return r.Gw.Equal(net.ParseIP("192.168.1.2"))
+			})).Return(fmt.Errorf("replace rejected"))
+			nlMock.On("RouteReplace", mock.Anything).Return(nil)
+			err := c.AddVRF(vrfLinkName1, enslaveLinkName1, getVRFTable(vrfLinkName1), []netlink.Route{defaultVia("192.168.1.1")})
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+			gomega.Expect(c.vrfs[getLinkIndex(vrfLinkName1)].routes).To(gomega.HaveLen(1))
+
+			gomega.Expect(c.AddVRFRoutes(vrfLinkName1, []netlink.Route{defaultVia("192.168.1.2")})).NotTo(gomega.Succeed())
+			// Only a successful sync writes the entry back.
+			previous := defaultVia("192.168.1.1")
+			previous.Protocol = netlink.RouteProtocol(types.OVNKProtocol)
+			gomega.Expect(c.vrfs[getLinkIndex(vrfLinkName1)].routes).To(gomega.ConsistOf(previous))
+		})
+
+		ginkgo.It("keeps the unreachable default tracked when deleting an ECMP default", func() {
+			vrfTable := int(getVRFTable(vrfLinkName1))
+			enslaveLinkMock1.On("Attrs").Return(&netlink.LinkAttrs{Name: enslaveLinkName1, MasterIndex: getLinkIndex(vrfLinkName1), Index: getLinkIndex(enslaveLinkName1)}, nil)
+			nlMock.On("RouteListFiltered", mock.Anything, mock.Anything, mock.Anything).Return(nil, nil)
+			nlMock.On("RouteReplace", mock.Anything).Return(nil)
+			nlMock.On("RouteDel", mock.Anything).Return(nil)
+			// Both routes have no link index of their own and the same
+			// destination and table.
+			unreachable := netlink.Route{
+				Dst: ovntest.MustParseIPNet("0.0.0.0/0"), Table: vrfTable,
+				Priority: 4278198272, Type: unix.RTN_UNREACHABLE,
+			}
+			ecmp := netlink.Route{
+				Dst: ovntest.MustParseIPNet("0.0.0.0/0"), Table: vrfTable,
+				MultiPath: []*netlink.NexthopInfo{
+					{LinkIndex: getLinkIndex(enslaveLinkName1), Gw: net.ParseIP("192.168.1.1")},
+					{LinkIndex: getLinkIndex(enslaveLinkName1), Gw: net.ParseIP("192.168.1.2")},
+				},
+			}
+			err := c.AddVRF(vrfLinkName1, enslaveLinkName1, getVRFTable(vrfLinkName1), []netlink.Route{unreachable, ecmp})
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+
+			gomega.Expect(c.DeleteVRFRoutes(vrfLinkName1, []netlink.Route{ecmp})).To(gomega.Succeed())
+			tracked := unreachable
+			tracked.Protocol = netlink.RouteProtocol(types.OVNKProtocol)
+			gomega.Expect(c.vrfs[getLinkIndex(vrfLinkName1)].routes).To(gomega.ConsistOf(tracked))
 		})
 
 		ginkgo.It("does not delete a VRF whose slave release failed", func() {
@@ -633,10 +716,13 @@ var _ = ginkgo.Describe("VRF manager", func() {
 		})
 
 		ginkgo.It("delete VRF", func() {
+			nlMock.On("LinkList").Return([]netlink.Link{buildVRF(vrfLinkName2)}, nil)
 			err := c.AddVRF(vrfLinkName2, "", getVRFTable(vrfLinkName2), nil)
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 			err = c.DeleteVRF(vrfLinkName2)
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+			nlMock.AssertCalled(ginkgo.GinkgoT(), "LinkDelete", buildVRF(vrfLinkName2))
+			gomega.Expect(c.vrfs).NotTo(gomega.HaveKey(getLinkIndex(vrfLinkName2)))
 		})
 
 		ginkgo.It("deletes requested VRF routes that are not tracked in the cache", func() {

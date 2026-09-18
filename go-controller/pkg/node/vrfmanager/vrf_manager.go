@@ -421,9 +421,24 @@ func (vrfm *Controller) AddVRFRoutes(name string, routes []netlink.Route) error 
 		return fmt.Errorf("failed to find VRF %s", name)
 	}
 
-	vrfDev.routes = append(vrfDev.routes, markOVNKRoutes(routes)...)
+	// Route manager keys routes by destination, table and metric: a new
+	// route replaces the tracked one with the same key in the kernel, so
+	// the cache follows.
+	tracked := slices.Clone(vrfDev.routes)
+	for _, route := range routes {
+		tracked = slices.DeleteFunc(tracked, func(t netlink.Route) bool {
+			return sameRouteKey(t, route)
+		})
+	}
+	vrfDev.routes = append(tracked, markOVNKRoutes(routes)...)
 
 	return vrfm.sync(vrfDev)
+}
+
+// sameRouteKey reports whether two routes share the key route manager
+// replaces by: destination, table and metric.
+func sameRouteKey(a, b netlink.Route) bool {
+	return a.Dst.String() == b.Dst.String() && a.Table == b.Table && a.Priority == b.Priority
 }
 
 // DeleteVRFRoutes deletes a set of routes from a VRF
@@ -440,10 +455,23 @@ func (vrfm *Controller) DeleteVRFRoutes(name string, routes []netlink.Route) err
 	if !ok {
 		return fmt.Errorf("failed to find VRF %s", name)
 	}
+	// Every CUDN VRF table holds an unreachable default route (see
+	// computeRoutesForUDN) that must outlive the managed default routes.
+	// It has no link index, and neither has an ECMP default, so the key
+	// records whether a route is unreachable to keep the two apart.
 	type route struct {
-		LinkIndex int
-		Dst       string
-		Table     int
+		LinkIndex   int
+		Dst         string
+		Table       int
+		Unreachable bool
+	}
+	keyOf := func(r netlink.Route) route {
+		return route{
+			LinkIndex:   r.LinkIndex,
+			Dst:         r.Dst.String(),
+			Table:       r.Table,
+			Unreachable: r.Type == unix.RTN_UNREACHABLE,
+		}
 	}
 	deletedRoutes := sets.New[route]()
 	for _, r := range routes {
@@ -454,20 +482,11 @@ func (vrfm *Controller) DeleteVRFRoutes(name string, routes []netlink.Route) err
 		if err = vrfm.routeManager.Del(r); err != nil {
 			break
 		}
-		deletedRoutes.Insert(route{
-			LinkIndex: r.LinkIndex,
-			Dst:       r.Dst.String(),
-			Table:     r.Table,
-		})
+		deletedRoutes.Insert(keyOf(r))
 	}
 
 	vrf.routes = slices.DeleteFunc(vrf.routes, func(r netlink.Route) bool {
-		routeKey := route{
-			LinkIndex: r.LinkIndex,
-			Dst:       r.Dst.String(),
-			Table:     r.Table,
-		}
-		return deletedRoutes.Has(routeKey)
+		return deletedRoutes.Has(keyOf(r))
 	})
 	vrfm.vrfs[vrfLink.Attrs().Index] = vrf
 	return err
