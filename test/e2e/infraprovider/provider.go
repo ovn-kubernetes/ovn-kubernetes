@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/kubernetes/test/e2e/framework"
 )
 
@@ -24,6 +25,16 @@ func Get() api.Provider {
 		panic("infra provider not set")
 	}
 	return infraProvider
+}
+
+// InfrastructureNetworkExclusions returns infrastructure network CIDRs that
+// should be excluded from test subnet allocations. Returns empty slices when
+// the provider is not set (e.g. during test listing without cluster access).
+func InfrastructureNetworkExclusions() (ipv4, ipv6 sets.Set[string]) {
+	if infraProvider == nil {
+		return nil, nil
+	}
+	return infraProvider.InfrastructureNetworkExclusions()
 }
 
 // IsKind returns true if cluster provider is KinD
