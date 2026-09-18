@@ -6,6 +6,7 @@ package cni
 import (
 	"fmt"
 
+	corev1 "k8s.io/api/core/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
@@ -14,12 +15,8 @@ import (
 
 // updatePodDPUConnDetailsWithRetry update the pod annotation with the given connection details for the NAD in
 // the PodRequest. If the dpuConnDetails argument is nil, delete the NAD's DPU connection details annotation instead.
-func (pr *PodRequest) updatePodDPUConnDetailsWithRetry(kube kube.Interface, podLister corev1listers.PodLister, dpuConnDetails *util.DPUConnectionDetails) error {
-	pod, err := podLister.Pods(pr.PodNamespace).Get(pr.PodName)
-	if err != nil {
-		return err
-	}
-	err = util.UpdatePodDPUConnDetailsWithRetry(
+func (pr *PodRequest) updatePodDPUConnDetailsWithRetry(kube kube.Interface, podLister corev1listers.PodLister, pod *corev1.Pod, dpuConnDetails *util.DPUConnectionDetails) error {
+	err := util.UpdatePodDPUConnDetailsWithRetry(
 		podLister,
 		kube,
 		pod,
