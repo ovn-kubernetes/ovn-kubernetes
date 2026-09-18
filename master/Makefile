@@ -49,6 +49,7 @@ generate-api-reference: crd-ref-docs
 		[egressqos]=egress-qos-api-spec.md \
 		[egressservice]=egress-service-api-spec.md \
 		[routeadvertisements]=routeadvertisements-api-spec.md \
+		[uplink]=uplink-api-spec.md \
 		[userdefinednetwork]=userdefinednetwork-api-spec.md \
 		[vtep]=vtep-api-spec.md \
 	); \
