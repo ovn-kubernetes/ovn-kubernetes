@@ -420,6 +420,16 @@ func (c *Controller) getLogicalSwitchName(nodeName string) string {
 	}
 }
 
+// hasNetworkQoS checks desired policy state, including policies that have not
+// reconciled yet. Events skipped while the informer is empty are covered by
+// resyncPods when the first policy reconciles. Do not use nqosCache here: a pod
+// change during the first reconciliation must still enqueue work.
+func (c *Controller) hasNetworkQoS() bool {
+	nqoses, err := c.getAllNetworkQoSes()
+	// Preserve event processing on lookup errors so workers can retry.
+	return err != nil || len(nqoses) != 0
+}
+
 func (c *Controller) getAllNetworkQoSes() ([]*networkqosapi.NetworkQoS, error) {
 	nqoses, err := c.nqosLister.List(labels.Everything())
 	if err != nil {

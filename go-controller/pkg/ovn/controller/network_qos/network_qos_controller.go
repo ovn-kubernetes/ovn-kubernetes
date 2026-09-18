@@ -340,7 +340,7 @@ func (c *Controller) onNQOSUpdate(oldObj, newObj any) {
 
 // onNQOSDelete queues the NQOS for processing.
 func (c *Controller) onNQOSDelete(obj interface{}) {
-	key, err := cache.MetaNamespaceKeyFunc(obj)
+	key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("couldn't get key for object %+v: %v", obj, err))
 		return
@@ -350,6 +350,9 @@ func (c *Controller) onNQOSDelete(obj interface{}) {
 
 // onNQOSNamespaceAdd queues the namespace for processing.
 func (c *Controller) onNQOSNamespaceAdd(obj interface{}) {
+	if !c.hasNetworkQoS() {
+		return
+	}
 	ns, ok := obj.(*corev1.Namespace)
 	if !ok {
 		utilruntime.HandleError(fmt.Errorf("expecting Namespace but received %T", obj))
@@ -364,6 +367,9 @@ func (c *Controller) onNQOSNamespaceAdd(obj interface{}) {
 
 // onNQOSNamespaceUpdate queues the namespace for processing.
 func (c *Controller) onNQOSNamespaceUpdate(oldObj, newObj interface{}) {
+	if !c.hasNetworkQoS() {
+		return
+	}
 	oldNamespace, ok := oldObj.(*corev1.Namespace)
 	if !ok {
 		utilruntime.HandleError(fmt.Errorf("expecting Namespace but received %T", oldObj))
@@ -393,6 +399,9 @@ func (c *Controller) onNQOSNamespaceUpdate(oldObj, newObj interface{}) {
 
 // onNQOSNamespaceDelete queues the namespace for processing.
 func (c *Controller) onNQOSNamespaceDelete(obj interface{}) {
+	if !c.hasNetworkQoS() {
+		return
+	}
 	ns, ok := obj.(*corev1.Namespace)
 	if !ok {
 		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
@@ -413,6 +422,9 @@ func (c *Controller) onNQOSNamespaceDelete(obj interface{}) {
 
 // onNQOSPodAdd queues the pod for processing.
 func (c *Controller) onNQOSPodAdd(obj interface{}) {
+	if !c.hasNetworkQoS() {
+		return
+	}
 	pod, ok := obj.(*corev1.Pod)
 	if !ok {
 		utilruntime.HandleError(fmt.Errorf("expecting Pod but received %T", obj))
@@ -422,11 +434,18 @@ func (c *Controller) onNQOSPodAdd(obj interface{}) {
 		utilruntime.HandleError(fmt.Errorf("empty pod"))
 		return
 	}
+	// Policy reconciliation excludes host-network Pods from address sets.
+	if pod.Spec.HostNetwork {
+		return
+	}
 	c.nqosPodQueue.Add(newEventData(nil, pod))
 }
 
 // onNQOSPodUpdate queues the pod for processing.
 func (c *Controller) onNQOSPodUpdate(oldObj, newObj interface{}) {
+	if !c.hasNetworkQoS() {
+		return
+	}
 	oldPod, ok := oldObj.(*corev1.Pod)
 	if !ok {
 		utilruntime.HandleError(fmt.Errorf("expecting Pod but received %T", oldObj))
@@ -439,6 +458,9 @@ func (c *Controller) onNQOSPodUpdate(oldObj, newObj interface{}) {
 	}
 	if oldPod == nil || newPod == nil {
 		utilruntime.HandleError(fmt.Errorf("empty pod"))
+		return
+	}
+	if oldPod.Spec.HostNetwork && newPod.Spec.HostNetwork {
 		return
 	}
 	// don't process resync or objects that are marked for deletion
@@ -477,6 +499,9 @@ func (c *Controller) podNetworkResolver() func(nadKey string) string {
 
 // onNQOSPodDelete queues the pod for processing.
 func (c *Controller) onNQOSPodDelete(obj interface{}) {
+	if !c.hasNetworkQoS() {
+		return
+	}
 	pod, ok := obj.(*corev1.Pod)
 	if !ok {
 		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
@@ -490,7 +515,7 @@ func (c *Controller) onNQOSPodDelete(obj interface{}) {
 			return
 		}
 	}
-	if pod != nil {
+	if pod != nil && !pod.Spec.HostNetwork {
 		c.nqosPodQueue.Add(newEventData(pod, nil))
 	}
 }
