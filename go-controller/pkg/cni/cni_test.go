@@ -1025,7 +1025,7 @@ var _ = Describe("updateDHCPAndDPUAnnotations pod identity guard", func() {
 		pr := &PodRequest{PodNamespace: podNamespace, PodName: podName, PodUID: "uid-a", nadKey: nadKey, Netns: newTestNetns()}
 
 		err := pr.updateDHCPAndDPUAnnotations(cs, kubecli, stalePod, newDHCPEntry(), nil)
-		Expect(err).To(MatchError(ContainSubstring("was replaced while staging CNI annotations")))
+		Expect(err).To(MatchError(ContainSubstring("was replaced while updating annotations")))
 
 		got, err := cs.kclient.CoreV1().Pods(podNamespace).Get(context.Background(), podName, metav1.GetOptions{})
 		Expect(err).NotTo(HaveOccurred())
