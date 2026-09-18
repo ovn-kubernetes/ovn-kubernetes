@@ -156,7 +156,7 @@ func (oc *DefaultNetworkController) ensureLocalZonePod(oldPod, pod *corev1.Pod, 
 
 	if kubevirt.IsPodLiveMigratable(pod) {
 		v4Subnets, v6Subnets := util.GetClusterSubnetsWithHostPrefix()
-		return kubevirt.EnsureLocalZonePodAddressesToNodeRoute(oc.watchFactory, oc.nbClient, oc.lsManager, pod, ovntypes.DefaultNetworkName, append(v4Subnets, v6Subnets...))
+		return kubevirt.EnsureDefaultNetworkForLocalMigratablePod(oc.watchFactory, oc.nbClient, oc.lsManager, pod, append(v4Subnets, v6Subnets...))
 	}
 
 	return nil
