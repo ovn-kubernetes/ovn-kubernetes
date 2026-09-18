@@ -1,11 +1,17 @@
 name: "Request Another Reviewer"
 
 # Lets anyone move a PR forward by pulling in another reviewer from the
-# ovn-kubernetes-reviewers team. Commenting `/assign-reviewer` re-requests the team,
-# so GitHub's code-review assignment (configured on the team) routes the PR to an
-# available member. The intent is that a PR keeps getting reviewed even when the
-# original assignee needs help, lacks the expertise, or is unavailable — the goal
-# is a reviewed PR, not that any one person does the review.
+# ovn-kubernetes-reviewers-copy team. Commenting `/assign-reviewer` requests the
+# team, so GitHub's code-review assignment (configured on the team) routes the PR
+# to an available member. The intent is that a PR keeps getting reviewed even when
+# the original assignee needs help, lacks the expertise, or is unavailable — the
+# goal is a reviewed PR, not that any one person does the review.
+#
+# ovn-kubernetes-reviewers-copy mirrors the ovn-kubernetes-reviewers membership.
+# ovn-kubernetes-reviewers itself is the CODEOWNERS default owner, so GitHub
+# requests it on every PR and locks that request; requesting a team that is
+# already requested is a silent no-op, which made re-requests impossible.
+# Using a separate team keeps its requests unlocked and re-requestable.
 
 on:
   issue_comment:
@@ -33,7 +39,7 @@ jobs:
           client-id: ${{ vars.OVN_KUBERNETES_MERGE_BOT }}
           private-key: ${{ secrets.OVN_KUBERNETES_MERGE_BOT }}
 
-      - name: Request the ovn-kubernetes-reviewers team for review
+      - name: Request the ovn-kubernetes-reviewers-copy team for review
         uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
         env:
           COMMENT_BODY: ${{ github.event.comment.body }}
@@ -49,42 +55,19 @@ jobs:
 
             const { owner, repo } = context.repo;
             const pull_number = context.issue.number;
-            const team = 'ovn-kubernetes-reviewers';
-
-            const requestedUsers = async () => {
-              const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number });
-              return {
-                users: new Set(pr.requested_reviewers.map(u => u.login)),
-                teamPending: pr.requested_teams.some(t => t.slug === team),
-              };
-            };
+            const team = 'ovn-kubernetes-reviewers-copy';
 
             try {
-              const before = await requestedUsers();
-              // Requesting a team that is already a requested reviewer is a
-              // silent no-op for GitHub and skips the code-review assignment.
-              // Drop the stale team request first so the re-request always
-              // triggers the assignment.
-              if (before.teamPending) {
-                await github.rest.pulls.removeRequestedReviewers({
-                  owner, repo, pull_number, reviewers: [], team_reviewers: [team],
-                });
-              }
-              // Re-requesting the team triggers the team's code-review assignment,
-              // which load-balances the PR onto another member from the pool.
+              // Requesting the team triggers its code-review assignment, which
+              // load-balances the PR onto a member from the pool.
               await github.rest.pulls.requestReviewers({
                 owner, repo, pull_number, team_reviewers: [team],
               });
-
-              const after = await requestedUsers();
-              const assigned = [...after.users].filter(u => !before.users.has(u));
-              const body = assigned.length > 0
-                ? `Requested a review from \`@${owner}/${team}\` — GitHub routed this ` +
-                  `to ${assigned.map(u => `@${u}`).join(', ')}.`
-                : `Requested a review from \`@${owner}/${team}\`, but GitHub did not ` +
-                  `assign a new member.`;
               await github.rest.issues.createComment({
-                owner, repo, issue_number: pull_number, body,
+                owner, repo, issue_number: pull_number,
+                body: `Requested a review from \`@${owner}/${team}\` — GitHub will ` +
+                      `route this to an available member. If it lands on someone who ` +
+                      `is already assigned, comment \`/assign-reviewer\` again.`,
               });
             } catch (e) {
               await github.rest.issues.createComment({
