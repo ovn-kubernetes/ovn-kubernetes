@@ -17,6 +17,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
 const (
@@ -71,6 +72,12 @@ func UpdatePodWithRetryOrRollback(podLister listers.PodLister, kube kube.Interfa
 		}
 		if err != nil {
 			return err
+		}
+		if pod.UID != "" && oldPod.UID != pod.UID {
+			return &types.PodUIDMismatchError{
+				Namespace: pod.Namespace, Name: pod.Name,
+				ExpectedUID: pod.UID, ActualUID: oldPod.UID,
+			}
 		}
 
 		// Informer cache should not be mutated, so copy the object
