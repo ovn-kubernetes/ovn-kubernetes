@@ -1327,6 +1327,12 @@ func GetNetworkScopedClusterSubnetSNATMatch(nbClient libovsdbclient.Client, netI
 // addExternalSwitch creates a switch connected to the external bridge and connects it to
 // the gateway router
 func (gw *GatewayManager) addExternalSwitch(prefix, interfaceID, gatewayRouter, macAddress, physNetworkName string, ipAddresses []*net.IPNet, vlanID *uint) error {
+	// The stale localnet port cleanup below removes every localnet port not
+	// named interfaceID: an empty ID would drop the switch's only one and
+	// insert a nameless port in its place.
+	if interfaceID == "" {
+		return fmt.Errorf("failed to add external switch %s%s: empty interface ID", prefix, gw.extSwitchName)
+	}
 	// Create the GR port that connects to external_switch with mac address of
 	// external interface and that IP address. In the case of `local` gateway
 	// mode, whenever ovnkube-node container restarts a new br-local bridge will
@@ -1428,10 +1434,27 @@ func (gw *GatewayManager) addExternalSwitch(prefix, interfaceID, gatewayRouter, 
 		sw.ExternalIDs = util.GenerateExternalIDsForSwitchOrRouter(gw.netInfo)
 	}
 
-	err = libovsdbops.CreateOrUpdateLogicalSwitchPortsAndSwitch(gw.nbClient, &sw, &externalLogicalSwitchPort, &externalLogicalSwitchPortToRouter)
+	// gatewayInit creates exactly one localnet port per external switch. Its
+	// name embeds the bridge name, so a bridge change (Uplink nodeConfig) yields
+	// a new port name on the same switch. ovn-controller forwards through the
+	// first localnet port it bound, so a leftover old port keeps egress on its
+	// patch port. Delete it in the same transaction.
+	ops, err := libovsdbops.DeleteLogicalSwitchPortsWithPredicateOps(gw.nbClient, nil, &sw,
+		func(lsp *nbdb.LogicalSwitchPort) bool {
+			return lsp.Type == "localnet" && lsp.Name != interfaceID
+		})
 	if err != nil {
-		return fmt.Errorf("failed to create logical switch ports %+v, %+v, and switch %s: %v",
-			externalLogicalSwitchPort, externalLogicalSwitchPortToRouter, externalSwitch, err)
+		return fmt.Errorf("failed to build ops removing the stale localnet port from switch %s: %w", externalSwitch, err)
+	}
+	ops, err = libovsdbops.CreateOrUpdateLogicalSwitchPortsAndSwitchOps(gw.nbClient, ops, &sw,
+		&externalLogicalSwitchPort, &externalLogicalSwitchPortToRouter)
+	if err != nil {
+		return fmt.Errorf("failed to build ops creating localnet port %s and router port %s on switch %s: %w",
+			interfaceID, externalSwitchPortToRouter, externalSwitch, err)
+	}
+	if _, err = libovsdbops.TransactAndCheck(gw.nbClient, ops); err != nil {
+		return fmt.Errorf("failed to replace localnet port %s and update router port %s on switch %s: %w",
+			interfaceID, externalSwitchPortToRouter, externalSwitch, err)
 	}
 
 	return nil
