@@ -135,3 +135,7 @@ func (k *kind) GetRequiredImages() []api.ImageConfig {
 	}
 	return imageConfigs
 }
+
+func (k *kind) OVNControllerLogPath() string {
+	return "/var/log/openvswitch/ovn-controller.log"
+}

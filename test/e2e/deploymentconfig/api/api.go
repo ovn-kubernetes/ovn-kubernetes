@@ -52,4 +52,7 @@ type DeploymentConfig interface {
 	AddRequiredImage(imageID ...ImageID)
 	// GetRequiredImages returns the set of images needed for the current test run.
 	GetRequiredImages() []ImageConfig
+	// OVNControllerLogPath returns the host filesystem path of the ovn-controller log
+	// on cluster nodes (used by e2e to grep ACL audit lines).
+	OVNControllerLogPath() string
 }
