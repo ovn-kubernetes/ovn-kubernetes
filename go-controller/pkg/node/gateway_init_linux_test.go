@@ -98,6 +98,7 @@ add chain inet ovn-kubernetes ovn-kube-local-gw-masq { type nat hook postrouting
 add rule inet ovn-kubernetes ovn-kube-local-gw-masq ip saddr 169.254.169.1 masquerade
 add rule inet ovn-kubernetes ovn-kube-local-gw-masq jump ovn-kube-pod-subnet-masq
 add chain inet ovn-kubernetes ovn-kube-pod-subnet-masq
+add rule inet ovn-kubernetes ovn-kube-pod-subnet-masq ip daddr @mgmtport-no-snat-subnets-v4 return
 add rule inet ovn-kubernetes ovn-kube-pod-subnet-masq ip saddr 10.1.1.0/24 masquerade
 `
 
