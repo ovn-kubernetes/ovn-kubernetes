@@ -108,9 +108,14 @@ type queueMap struct {
 }
 
 type queueMapEntry struct {
-	queue    uint32
-	refcount int32
+	queue uint32
+	// The high bit records a pending delete; the remaining bits count
+	// in-flight events. Keep the entry eight bytes: these exist per object
+	// in every active internal informer slot.
+	refcount uint32
 }
+
+const queueEntryDeleted uint32 = 1 << 31
 
 type internalInformer struct {
 	sync.RWMutex
@@ -318,7 +323,7 @@ func (qm *queueMap) getQueueMapEntry(oType reflect.Type, obj interface{}) (ktype
 
 	entry, ok := qm.entries[namespacedName]
 	if ok {
-		if atomic.AddInt32(&entry.refcount, 1) == 1 {
+		if atomic.AddUint32(&entry.refcount, 1)&^queueEntryDeleted == 1 {
 			// Entry is unused because add/update operations completed
 			// but we haven't seen a delete yet. Assign new queue to
 			// ensure queue balance.
@@ -345,18 +350,38 @@ func (qm *queueMap) releaseQueueMapEntry(key ktypes.NamespacedName, entry *queue
 		return
 	}
 
-	// To reduce lock contention don't bother grabbing the lock for
-	// add/update operations which are quite frequent. We'll eventually
-	// get a delete for the object and remove it from the queue map.
-	if !del {
-		atomic.AddInt32(&entry.refcount, -1)
+	if del {
+		atomic.OrUint32(&entry.refcount, queueEntryDeleted)
+	}
+	// Keep the frequent add/update path lock-free unless a delete was seen.
+	if atomic.AddUint32(&entry.refcount, ^uint32(0)) != queueEntryDeleted {
 		return
 	}
 
 	qm.Lock()
 	defer qm.Unlock()
-	if atomic.AddInt32(&entry.refcount, -1) <= 0 {
+	// A new event may have acquired this entry before we obtained the lock.
+	if qm.entries[key] == entry && atomic.LoadUint32(&entry.refcount) == queueEntryDeleted {
 		delete(qm.entries, key)
+	}
+}
+
+// forgetDeletedObject handles deletes even when a slot has no subscribers.
+// Skipping notification must not leave its historical name-to-queue mapping.
+func (qm *queueMap) forgetDeletedObject(oType reflect.Type, obj interface{}) {
+	meta, err := getObjectMeta(oType, obj)
+	if err != nil {
+		klog.Errorf("Object has no meta: %v", err)
+		return
+	}
+	key := ktypes.NamespacedName{Namespace: meta.Namespace, Name: meta.Name}
+	qm.Lock()
+	defer qm.Unlock()
+	if entry := qm.entries[key]; entry != nil {
+		atomic.OrUint32(&entry.refcount, queueEntryDeleted)
+		if atomic.LoadUint32(&entry.refcount) == queueEntryDeleted {
+			delete(qm.entries, key)
+		}
 	}
 }
 
@@ -443,6 +468,7 @@ func (i *informer) newFederatedQueuedHandler(internalInformerIndex int) cache.Re
 			}
 			// do not enqueue events to internal informer that has no handlers for better performance
 			if atomic.LoadUint32(&intInf.hasHandlers) == hasNoHandler {
+				intInf.queueMap.forgetDeletedObject(i.oType, realObj)
 				return
 			}
 			intInf.queueMap.enqueueEvent(nil, realObj, i.oType, true, func(e *event) {
