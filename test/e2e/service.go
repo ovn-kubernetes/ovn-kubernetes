@@ -1005,7 +1005,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 			primaryProviderNetwork, err := infraprovider.Get().PrimaryNetwork()
 			framework.ExpectNoError(err, "failed to get primary network")
 			externalContainerPort := infraprovider.Get().GetExternalContainerPort()
-			externalContainer := infraapi.ExternalContainer{Name: clientContainerName, Image: images.AgnHost(), Network: primaryProviderNetwork,
+			externalContainer := infraapi.ExternalContainer{Name: clientContainerName, Image: deploymentconfig.Get().GetImage(images.Agnhost), Network: primaryProviderNetwork,
 				CmdArgs: getAgnHostHTTPPortBindCMDArgs(externalContainerPort), ExtPort: externalContainerPort}
 			externalContainer, err = providerCtx.CreateExternalContainer(externalContainer)
 			framework.ExpectNoError(err, "external container %s must be created", externalContainer.Name)
@@ -1211,7 +1211,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 			serverExternalContainerPort := infraprovider.Get().GetExternalContainerPort()
 			serverExternalContainerSpec := infraapi.ExternalContainer{
 				Name:    targetSecondaryContainerName,
-				Image:   images.AgnHost(),
+				Image:   deploymentconfig.Get().GetImage(images.Agnhost),
 				Network: secondaryProviderNetwork,
 				CmdArgs: getAgnHostHTTPPortBindCMDArgs(serverExternalContainerPort),
 				ExtPort: serverExternalContainerPort,
@@ -1530,7 +1530,7 @@ spec:
 			framework.ExpectNoError(err)
 
 			ginkgo.By("Creating an external client")
-			externalContainer := infraapi.ExternalContainer{Name: clientContainerName, Image: images.AgnHost(), Network: primaryProviderNetwork,
+			externalContainer := infraapi.ExternalContainer{Name: clientContainerName, Image: deploymentconfig.Get().GetImage(images.Agnhost), Network: primaryProviderNetwork,
 				CmdArgs: []string{"pause"}, ExtPort: infraprovider.Get().GetExternalContainerPort()}
 			externalContainer, err = providerCtx.CreateExternalContainer(externalContainer)
 			framework.ExpectNoError(err, "failed to create external container", externalContainer)
@@ -2634,7 +2634,7 @@ var _ = ginkgo.Describe("Service Hairpin SNAT", feature.Service, func() {
 
 func init() {
 	if os.Getenv("KIND_INSTALL_METALLB") == "true" {
-		images.Add(images.Nginx(), images.MetalLBLBService(), images.UDPServerSrcIPPrinter())
+		images.Add(images.Nginx, images.MetalLBLBService, images.UDPServerSrcIPPrinter)
 	}
 }
 
@@ -2702,14 +2702,14 @@ spec:
            claimName: dynamic-claim
       initContainers:
       - name: get-big-file
-        image: ` + images.MetalLBLBService() + `
+        image: ` + deploymentconfig.Get().GetImage(images.MetalLBLBService) + `
         command: ['sh', '-c', "dd if=/dev/zero of=/usr/share/nginx/html/big.iso  bs=1024 count=0 seek=102400"]
         volumeMounts:
         - name: data
           mountPath: "/usr/share/nginx/html"
       containers:
       - name: nginx
-        image: ` + images.Nginx() + `
+        image: ` + deploymentconfig.Get().GetImage(images.Nginx) + `
         volumeMounts:
         - name: data
           mountPath: "/usr/share/nginx/html"
@@ -2717,13 +2717,13 @@ spec:
         - name: http
           containerPort: 80
       - name: agnhost
-        image: ` + images.AgnHost() + `
+        image: ` + deploymentconfig.Get().GetImage(images.Agnhost) + `
         command: ["/agnhost", "netexec", "--http-port=10000"]
         ports:
         - name: agnhost
           containerPort: 10000
       - name: udp-server
-        image: ` + images.UDPServerSrcIPPrinter() + `
+        image: ` + deploymentconfig.Get().GetImage(images.UDPServerSrcIPPrinter) + `
         imagePullPolicy: Always
         ports:
         - containerPort: 10001

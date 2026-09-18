@@ -163,7 +163,7 @@ var _ = ginkgo.Describe("Network Segmentation Uplink default-VRF egress", featur
 		serverName := "upsrv" + testSuffix
 		server, err := ictx.CreateExternalContainer(infraapi.ExternalContainer{
 			Name:    serverName,
-			Image:   images.AgnHost(),
+			Image:   deploymentconfig.Get().GetImage(images.Agnhost),
 			CmdArgs: []string{"netexec"},
 			Network: uplinkNetwork,
 		})
@@ -371,7 +371,7 @@ var _ = ginkgo.Describe("Network Segmentation Uplink default-VRF egress", featur
 		ginkgo.By("verifying egress through the initial Uplink bridge")
 		initialServer, err := ictx.CreateExternalContainer(infraapi.ExternalContainer{
 			Name:    "upchangesrva" + testSuffix,
-			Image:   images.AgnHost(),
+			Image:   deploymentconfig.Get().GetImage(images.Agnhost),
 			CmdArgs: []string{"netexec"},
 			Network: env.uplinkNetwork,
 		})
@@ -411,7 +411,7 @@ var _ = ginkgo.Describe("Network Segmentation Uplink default-VRF egress", featur
 			replacementBridge)
 		replacementServer, err := ictx.CreateExternalContainer(infraapi.ExternalContainer{
 			Name:    "upchangesrvb" + testSuffix,
-			Image:   images.AgnHost(),
+			Image:   deploymentconfig.Get().GetImage(images.Agnhost),
 			CmdArgs: []string{"netexec"},
 			Network: replacementNetwork,
 		})
@@ -1353,13 +1353,13 @@ var _ = ginkgo.Describe("Network Segmentation Uplink route advertisements", feat
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		primaryClient, err := ictx.CreateExternalContainer(infraapi.ExternalContainer{
 			Name:    "upclient" + testSuffix,
-			Image:   images.AgnHost(),
+			Image:   deploymentconfig.Get().GetImage(images.Agnhost),
 			Network: primaryNetwork,
 		})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		peerClient, err := ictx.CreateExternalContainer(infraapi.ExternalContainer{
 			Name:    "uppeer" + testSuffix,
-			Image:   images.AgnHost(),
+			Image:   deploymentconfig.Get().GetImage(images.Agnhost),
 			Network: peerNetwork,
 		})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())

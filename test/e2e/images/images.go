@@ -6,10 +6,13 @@ package images
 import (
 	"os"
 
-	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
+	imageutils "k8s.io/kubernetes/test/utils/image"
+
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig/api"
 )
 
 var (
+	agnHost = imageutils.GetE2EImage(imageutils.Agnhost)
 	// We limit the set of images used by e2e to reduce duplication and to allow us to provide offline mirroring of images
 	// for customers and restricted test environments.
 	// Ideally, every image used in e2e must be part of this package.
@@ -28,12 +31,25 @@ var (
 	// pulls are rate-limited in CI and this is a personal repository.
 	dnsmasq = "docker.io/andyshinn/dnsmasq:2.83@sha256:e937327fede666e55ba4c2ab8e715a2ce561945363016d42f9d698d1b18ff1be"
 
-	agnHostOverride = ""
-	extraImages     []string
+	extraImageIDs []api.ImageID
+	imageConfigs  map[api.ImageID]string
+)
+
+const (
+	Agnhost api.ImageID = iota
+	IPerf3
+	Netshoot
+	Nginx
+	MetalLBLBService
+	UDPServerSrcIPPrinter
+	FRR
+	Dnsmasq
 )
 
 func init() {
-	agnHostOverride = os.Getenv("AGNHOST_IMAGE")
+	if agnHostOverride := os.Getenv("AGNHOST_IMAGE"); agnHostOverride != "" {
+		agnHost = agnHostOverride
+	}
 	if iperf3Override := os.Getenv("IPERF3_IMAGE"); iperf3Override != "" {
 		iperf3 = iperf3Override
 	}
@@ -52,65 +68,50 @@ func init() {
 	if frrOverride := os.Getenv("FRR_IMAGE"); frrOverride != "" {
 		frr = frrOverride
 	}
-}
 
-func AgnHost() string {
-	if agnHostOverride != "" {
-		return agnHostOverride
+	imageConfigs = map[api.ImageID]string{
+		Agnhost:               agnHost,
+		IPerf3:                iperf3,
+		Netshoot:              netshoot,
+		Nginx:                 nginx,
+		MetalLBLBService:      metallbLBService,
+		UDPServerSrcIPPrinter: udpServerSrcIPPrinter,
+		FRR:                   frr,
+		Dnsmasq:               dnsmasq,
 	}
-	return deploymentconfig.Get().GetAgnHostContainerImage()
-}
-
-func IPerf3() string {
-	return iperf3
-}
-
-// DNSMasq returns an image containing the dnsmasq DHCP server, used as the
-// external DHCP server on the underlay for DHCP-IPAM localnet tests.
-func DNSMasq() string {
-	return dnsmasq
-}
-
-func Netshoot() string {
-	return netshoot
-}
-
-func Nginx() string {
-	return nginx
-}
-
-func MetalLBLBService() string {
-	return metallbLBService
-}
-
-func UDPServerSrcIPPrinter() string {
-	return udpServerSrcIPPrinter
-}
-
-func FRR() string {
-	return frr
 }
 
 // Add registers images that are needed by a test suite. Call from init()
 // functions after checking any relevant feature gates or environment
 // variables so that only images for enabled test suites are included.
-func Add(imgs ...string) {
-	extraImages = append(extraImages, imgs...)
+func Add(imgs ...api.ImageID) {
+	extraImageIDs = append(extraImageIDs, imgs...)
 }
 
 // Required returns the deduplicated set of images needed for the current
 // test run. agnhost is always included because it is used by most e2e tests.
-func Required() []string {
-	agnHost := AgnHost()
-	seen := map[string]struct{}{
+func RequiredImages() []api.ImageConfig {
+	agnHost := api.ImageConfig{
+		ImageID:  Agnhost,
+		PullSpec: imageConfigs[Agnhost],
+	}
+	seen := map[api.ImageConfig]struct{}{
 		agnHost: {},
 	}
-	out := []string{agnHost}
-	for _, img := range extraImages {
+	out := []api.ImageConfig{agnHost}
+	for _, imgID := range extraImageIDs {
+		img := api.ImageConfig{
+			ImageID:  imgID,
+			PullSpec: imageConfigs[imgID],
+		}
 		if _, ok := seen[img]; !ok {
 			seen[img] = struct{}{}
 			out = append(out, img)
 		}
 	}
 	return out
+}
+
+func GetImageConfigs() map[api.ImageID]string {
+	return imageConfigs
 }

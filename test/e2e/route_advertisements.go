@@ -76,7 +76,7 @@ var (
 
 func init() {
 	if os.Getenv("ENABLE_ROUTE_ADVERTISEMENTS") == "true" {
-		images.Add(images.FRR())
+		images.Add(images.FRR)
 	}
 }
 
@@ -2642,13 +2642,13 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 
 			macVRFContainer := infraapi.ExternalContainer{
 				Name:    networkName + "-macvrf-agnhost",
-				Image:   images.AgnHost(),
+				Image:   deploymentconfig.Get().GetImage(images.Agnhost),
 				CmdArgs: []string{"netexec", fmt.Sprintf("--http-port=%d", agnhostHTTPPort)},
 			}
 			macVRFNetworkName := macVRFContainer.Name
 			ipVRFContainer := infraapi.ExternalContainer{
 				Name:    networkName + "-ipvrf-agnhost",
-				Image:   images.AgnHost(),
+				Image:   deploymentconfig.Get().GetImage(images.Agnhost),
 				CmdArgs: []string{"netexec", fmt.Sprintf("--http-port=%d", agnhostHTTPPort)},
 			}
 			ipVRFNetworkName := ipVRFContainer.Name
@@ -3848,7 +3848,7 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 					RestartPolicy: corev1.RestartPolicyNever,
 					Containers: []corev1.Container{{
 						Name:            "tcpdump",
-						Image:           images.Netshoot(),
+						Image:           deploymentconfig.Get().GetImage(images.Netshoot),
 						Command:         []string{"sleep", "3600"},
 						SecurityContext: &corev1.SecurityContext{Privileged: ptr.To(true)},
 					}},
@@ -4259,7 +4259,7 @@ func runBGPNetworkAndServerWithFRRVRF(
 	ictx.AddCleanUpFn(func() error { return os.RemoveAll(frrConfig) })
 	frr := infraapi.ExternalContainer{
 		Name:        networkName + "-frr",
-		Image:       images.FRR(),
+		Image:       deploymentconfig.Get().GetImage(images.FRR),
 		Network:     bgpPeerNetwork,
 		RuntimeArgs: []string{"--volume", frrConfig + ":" + filepath.Join(filepath.FromSlash("/"), "etc", "frr")},
 	}
@@ -4284,7 +4284,7 @@ func runBGPNetworkAndServerWithFRRVRF(
 	// run server container
 	server := infraapi.ExternalContainer{
 		Name:    serverName,
-		Image:   images.AgnHost(),
+		Image:   deploymentconfig.Get().GetImage(images.Agnhost),
 		CmdArgs: []string{"netexec"},
 		Network: serverNetwork,
 	}

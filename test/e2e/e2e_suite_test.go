@@ -14,7 +14,6 @@ import (
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/diagnostics"
-	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/ipalloc"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/label"
@@ -46,7 +45,7 @@ var _ = ginkgo.BeforeSuite(func() {
 
 	// Preload e2e test images into the cluster to avoid runtime pull
 	// failures and timeouts during test execution.
-	infraprovider.Get().PreloadImages(images.Required())
+	infraprovider.Get().PreloadImages(deploymentconfig.Get().GetRequiredImages())
 
 	_, err := framework.LoadClientset()
 	framework.ExpectNoError(err)
