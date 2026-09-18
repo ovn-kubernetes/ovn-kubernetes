@@ -21,6 +21,7 @@ import (
 	utilnet "k8s.io/utils/net"
 	"k8s.io/utils/ptr"
 
+	ipallocator "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/ip"
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
@@ -48,6 +49,56 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 	BeforeEach(func() {
 		// Restore global default values before each testcase
 		Expect(config.PrepareTestConfig()).To(Succeed())
+	})
+
+	It("does not reuse a released annotated IP after another pod reserves it", func() {
+		config.OVNKubernetesFeature.EnableMultiNetwork = true
+		const networkName, namespace, nadName, nodeName = "bluenet", "greenamespace", "rednad", "node-a"
+		const nadKey = namespace + "/" + nadName
+		nad := ovntest.GenerateNAD(networkName, nadName, namespace,
+			types.Layer3Topology, "100.128.0.0/16", types.NetworkRoleSecondary)
+		ovntest.AnnotateNADWithNetworkID("3", nad)
+		pod := ovntest.NewPod(namespace, "pod-a", nodeName, "100.128.0.3")
+		pod.UID = "pod-uid"
+		oldIPs := ovntest.MustParseIPNets("100.128.0.3/16")
+		var err error
+		pod.Annotations, err = util.MarshalPodAnnotation(map[string]string{nettypes.NetworkAttachmentAnnot: nadKey},
+			&util.PodAnnotation{
+				MAC: ovntest.MustParseMAC("0a:58:64:80:00:03"), IPs: oldIPs, Role: types.NetworkRoleSecondary,
+			}, nadKey)
+		Expect(err).NotTo(HaveOccurred())
+
+		switchName := util.GetUserDefinedNetworkPrefix(networkName) + nodeName
+		fakeOVN := NewFakeOVN(false, nodeName)
+		fakeOVN.startWithDBSetup(
+			libovsdbtest.TestSetup{NBData: []libovsdbtest.TestData{&nbdb.LogicalSwitch{Name: switchName}}},
+			pod, newNode(nodeName, "192.0.2.10/24"),
+			&nettypes.NetworkAttachmentDefinitionList{Items: []nettypes.NetworkAttachmentDefinition{*nad}},
+		)
+		DeferCleanup(fakeOVN.shutdown)
+		Expect(fakeOVN.NewUserDefinedNetworkController(nad)).To(Succeed())
+		bnc := fakeOVN.userDefinedNetworkControllers[networkName].bnc
+		Expect(bnc.lsManager.AddOrUpdateSwitch(switchName,
+			ovntest.MustParseIPNets("100.128.0.0/16"), nil)).To(Succeed())
+		network := &nettypes.NetworkSelectionElement{Name: nadName, Namespace: namespace}
+
+		// An unfinished cleanup released this attachment's IP, and a different
+		// pod reserved it before the original attachment tried to return.
+		Expect(bnc.lsManager.AllocateIPs(switchName, oldIPs)).To(Succeed())
+		Expect(bnc.releasePodIPsOnce(pod, nadKey, &lpInfo{logicalSwitch: switchName, ips: oldIPs})).To(Succeed())
+		Expect(bnc.lsManager.AllocateIPs(switchName, oldIPs)).To(Succeed())
+		ops, _, _, _, err := bnc.addLogicalPortToNetwork(pod, nadKey, network, nil)
+		Expect(err).To(HaveOccurred())
+		Expect(ipallocator.IsErrAllocated(err)).To(BeTrue())
+		Expect(ops).To(BeEmpty())
+		Expect(bnc.wasPodIPReleased(pod, nadKey)).To(BeTrue())
+
+		Expect(bnc.lsManager.ReleaseIPs(switchName, oldIPs)).To(Succeed())
+		ops, lsp, _, _, err := bnc.addLogicalPortToNetwork(pod, nadKey, network, nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ops).NotTo(BeEmpty())
+		Expect(lsp.Addresses).To(ConsistOf("0a:58:64:80:00:03 100.128.0.3"))
+		Expect(bnc.wasPodIPReleased(pod, nadKey)).To(BeFalse())
 	})
 
 	type dhcpTest struct {
