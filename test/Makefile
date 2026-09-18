@@ -44,6 +44,10 @@ install-kind:
 upgrade-ovn:
 	./scripts/upgrade-ovn.sh
 
+.PHONY: staged-upgrade-ovn
+staged-upgrade-ovn:
+	./scripts/staged-upgrade-ovn.sh
+
 .PHONY: shard-%
 shard-%:
 	E2E_REPORT_DIR=$(E2E_REPORT_DIR) \
