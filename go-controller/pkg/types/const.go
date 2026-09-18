@@ -64,6 +64,7 @@ const (
 	PatchPortPrefix            = "patch-"
 	PatchPortSuffix            = "-to-br-int"
 	MACVRFPortPrefix           = "macvrf-"
+	MACBindingScopePrefix      = "mac-binding-scope-"
 
 	// types.OVNLayer2Switch is the name of layer2 topology switch
 	OVNLayer2Switch = "ovn_layer2_switch"

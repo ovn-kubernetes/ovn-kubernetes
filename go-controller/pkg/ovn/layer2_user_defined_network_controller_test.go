@@ -433,7 +433,11 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 
 				err = fullUDNController.Cleanup()
 				Expect(err).NotTo(HaveOccurred())
-				Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(generateUDNPostInitDB([]libovsdbtest.TestData{nbZone})))
+				postCleanupDB := []libovsdbtest.TestData{nbZone}
+				if netInfo.isPrimary {
+					postCleanupDB = append(postCleanupDB, expectedMACBindingScope(nodeName))
+				}
+				Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(generateUDNPostInitDB(postCleanupDB)))
 
 				return nil
 			}
@@ -539,7 +543,8 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 			)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(dummyController.Cleanup()).To(Succeed())
-			Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(generateUDNPostInitDB([]libovsdbtest.TestData{nbZone})))
+			postCleanupDB := []libovsdbtest.TestData{nbZone, expectedMACBindingScope(nodeName)}
+			Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(generateUDNPostInitDB(postCleanupDB)))
 			return nil
 		}
 		Expect(app.Run([]string{app.Name})).To(Succeed())
@@ -1186,11 +1191,13 @@ func getTestTransitRouterInfoWithNodeID(netInfo util.NetInfo, nodeID string) *tr
 func expectedGWEntitiesLayer2(nodeName string, netInfo util.NetInfo, gwConfig util.L3GatewayConfig) []libovsdbtest.TestData {
 	gwRouterName := fmt.Sprintf("GR_%s_%s", netInfo.GetNetworkName(), nodeName)
 	trInfo := getTestTransitRouterInfo(netInfo)
+	macBindingScope := expectedMACBindingScope(nodeName)
 	expectedEntities := append(
 		expectedGWRouterPlusNATAndStaticRoutes(nodeName, gwRouterName, netInfo, gwConfig),
 		expectedGRToTransitRouterLRPLayer2(gwRouterName, gwRouterJoinIPAddress(), netInfo, trInfo),
-		expectedGRToExternalSwitchLRP(gwRouterName, netInfo, nodePhysicalIPAddress(), udnGWSNATAddress()),
+		expectedGRToExternalSwitchLRP(gwRouterName, macBindingScope.UUID, netInfo, nodePhysicalIPAddress(), udnGWSNATAddress()),
 	)
+	expectedEntities = append(expectedEntities, macBindingScope)
 	expectedEntities = append(expectedEntities, expectedStaticMACBindings(gwRouterName, staticMACBindingIPs())...)
 	expectedEntities = append(expectedEntities, expectedExternalSwitchAndLSPs(netInfo, gwConfig, nodeName)...)
 	return expectedEntities

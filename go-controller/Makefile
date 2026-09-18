@@ -25,7 +25,8 @@ else
 CONTAINER_RUNTIME?=docker
 endif
 CONTAINER_RUNNABLE ?= $(shell $(CONTAINER_RUNTIME) -v > /dev/null 2>&1; echo $$?)
-OVN_SCHEMA_VERSION ?= v26.03.1
+OVN_SCHEMA_REPO ?= https://raw.githubusercontent.com/trozet/ovn
+OVN_SCHEMA_VERSION ?= 2b3b906b4e230037ca70598f3bcdac73df337504
 OVS_VERSION ?= v2.17.0
 ifeq ($(NOROOT),TRUE)
 C_ARGS = -e NOROOT=TRUE
@@ -144,10 +145,10 @@ verify-third-party-licenses:
 	@GOPATH=${GOPATH} ./hack/verify-third-party-licenses.sh || { echo "third-party license verification failed!"; exit 1; }
 
 pkg/nbdb/ovn-nb.ovsschema:
-	curl -sSL https://raw.githubusercontent.com/ovn-org/ovn/$(OVN_SCHEMA_VERSION)/ovn-nb.ovsschema -o $@
+	curl -sSL $(OVN_SCHEMA_REPO)/$(OVN_SCHEMA_VERSION)/ovn-nb.ovsschema -o $@
 
 pkg/sbdb/ovn-sb.ovsschema:
-	curl -sSL https://raw.githubusercontent.com/ovn-org/ovn/$(OVN_SCHEMA_VERSION)/ovn-sb.ovsschema -o $@
+	curl -sSL $(OVN_SCHEMA_REPO)/$(OVN_SCHEMA_VERSION)/ovn-sb.ovsschema -o $@
 
 pkg/vswitchd/vswitch.ovsschema:
 	curl -sSL https://raw.githubusercontent.com/openvswitch/ovs/${OVS_VERSION}/vswitchd/vswitch.ovsschema -o $@

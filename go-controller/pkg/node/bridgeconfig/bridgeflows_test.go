@@ -260,7 +260,7 @@ func TestLocalNoOverlayServiceHairpinUsesUDNGatewayMasqueradeIP(t *testing.T) {
 	expectFlow(t, flows, expectedIPv6Table5)
 }
 
-func TestArpFanoutFilterFlowsIncludeVLAN(t *testing.T) {
+func TestNeighborDiscoverySteeringFlowsIncludeVLAN(t *testing.T) {
 	if err := config.PrepareTestConfig(); err != nil {
 		t.Fatalf("failed to prepare test config: %v", err)
 	}
@@ -312,27 +312,34 @@ func TestArpFanoutFilterFlowsIncludeVLAN(t *testing.T) {
 		t.Fatalf("failed to render bridge flows: %v", err)
 	}
 
-	expectedIPv4 := fmt.Sprintf("cookie=%s, priority=12, table=0, dl_vlan=100, arp, arp_op=1, arp_tpa=172.18.0.3, "+
+	expectedNodeIPv4 := fmt.Sprintf("cookie=%s, priority=12, table=0, dl_vlan=100, arp, arp_op=1, arp_tpa=172.18.0.3, "+
 		"actions=output:patch-breth0_ov,NORMAL",
 		nodetypes.DefaultOpenFlowCookie)
-	expectedIPv6 := fmt.Sprintf("cookie=%s, priority=12, table=0, dl_vlan=100, icmp6, icmpv6_type=%d, nd_target=fd00::3, "+
+	expectedNodeIPv6 := fmt.Sprintf("cookie=%s, priority=12, table=0, dl_vlan=100, icmp6, icmpv6_type=%d, nd_target=fd00::3, "+
 		"actions=output:patch-breth0_ov,NORMAL",
 		nodetypes.DefaultOpenFlowCookie, types.NeighborSolicitationICMPType)
+	expectedARP := fmt.Sprintf("cookie=%s, priority=45, table=0, in_port=eth0, dl_vlan=100, arp, "+
+		"actions=output:patch-breth0_ov,NORMAL",
+		nodetypes.DefaultOpenFlowCookie)
 
-	expectFlow(t, flows, expectedIPv4)
-	expectFlow(t, flows, expectedIPv6)
-	// Priority-11 flows forward external broadcast ARP/NA to all GR patches.
-	// Action output order is non-deterministic (map iteration), so we use
-	// substring matching instead of exact flow comparison.
-	expectFlowContainingAll(t, flows,
-		fmt.Sprintf("cookie=%s", nodetypes.DefaultOpenFlowCookie),
-		"priority=11", "in_port=eth0", "dl_vlan=100", "dl_dst=ff:ff:ff:ff:ff:ff", "arp",
-		"actions=", "output:patch-breth0_bluenet", "output:patch-breth0_ov", "NORMAL")
-	expectFlowContainingAll(t, flows,
-		fmt.Sprintf("cookie=%s", nodetypes.DefaultOpenFlowCookie),
-		"priority=11", "in_port=eth0", "dl_vlan=100", "dl_dst=33:33:00:00:00:01",
-		fmt.Sprintf("icmpv6_type=%d", types.NeighborAdvertisementICMPType),
-		"actions=", "output:patch-breth0_bluenet", "output:patch-breth0_ov", "NORMAL")
+	expectFlow(t, flows, expectedNodeIPv4)
+	expectFlow(t, flows, expectedNodeIPv6)
+	expectFlow(t, flows, expectedARP)
+	for _, icmpType := range []int{
+		types.RouteAdvertisementICMPType,
+		types.NeighborSolicitationICMPType,
+		types.NeighborAdvertisementICMPType,
+	} {
+		expectedNDP := fmt.Sprintf("cookie=%s, priority=52, table=0, in_port=eth0, dl_vlan=100, icmp6, icmpv6_type=%d, "+
+			"actions=output:patch-breth0_ov,NORMAL",
+			nodetypes.DefaultOpenFlowCookie, icmpType)
+		expectFlow(t, flows, expectedNDP)
+	}
+	for _, icmpType := range []int{types.RouteAdvertisementICMPType, types.NeighborAdvertisementICMPType} {
+		expectedFlood := fmt.Sprintf("cookie=%s, priority=14, table=1,icmp6,icmpv6_type=%d actions=FLOOD",
+			nodetypes.DefaultOpenFlowCookie, icmpType)
+		expectFlow(t, flows, expectedFlood)
+	}
 }
 
 func mustParseMAC(t *testing.T, value string) net.HardwareAddr {
@@ -362,23 +369,6 @@ func expectFlow(t *testing.T, flows []string, expected string) {
 		}
 	}
 	t.Fatalf("expected flow not found:\n%s\n\nall flows:\n%v", expected, flows)
-}
-
-func expectFlowContainingAll(t *testing.T, flows []string, substrings ...string) {
-	t.Helper()
-	for _, flow := range flows {
-		allFound := true
-		for _, s := range substrings {
-			if !strings.Contains(flow, s) {
-				allFound = false
-				break
-			}
-		}
-		if allFound {
-			return
-		}
-	}
-	t.Fatalf("no flow contains all substrings %v\n\nall flows:\n%v", substrings, flows)
 }
 
 func expectNoFlow(t *testing.T, flows []string, unexpectedSubstring string) {

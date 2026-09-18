@@ -366,6 +366,9 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 
 				defaultNetExpectations := emptyDefaultClusterNetworkNodeSwitch(podInfo.nodeName)
 				defaultNetExpectations = append(defaultNetExpectations, generateUDNPostInitDB([]libovsdbtest.TestData{})...)
+				if netInfo.isPrimary {
+					defaultNetExpectations = append(defaultNetExpectations, expectedMACBindingScope(podInfo.nodeName))
+				}
 				gwConfig, err := util.ParseNodeL3GatewayAnnotation(testNode)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(gwConfig.NextHops).NotTo(BeEmpty())
@@ -504,6 +507,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 
 			// Post-cleanup DB: default net node switch + global entities (Copp, meters) as in Layer2 test.
 			defaultNetExpectations := generateUDNPostInitDB(emptyDefaultClusterNetworkNodeSwitch(nodeName))
+			defaultNetExpectations = append(defaultNetExpectations, expectedMACBindingScope(nodeName))
 
 			// Minimal initialDB: default net node switch, no UDN entities. The UDN controller's Start()
 			// runs init() which creates cluster router and join switch; then node sync creates per-node entities.
@@ -1903,12 +1907,14 @@ func emptyDefaultClusterNetworkNodeSwitch(nodeName string) []libovsdbtest.TestDa
 
 func expectedGWEntities(nodeName string, netInfo util.NetInfo, gwConfig util.L3GatewayConfig) []libovsdbtest.TestData {
 	gwRouterName := fmt.Sprintf("GR_%s_%s", netInfo.GetNetworkName(), nodeName)
+	macBindingScope := expectedMACBindingScope(nodeName)
 
 	expectedEntities := append(
 		expectedGWRouterPlusNATAndStaticRoutes(nodeName, gwRouterName, netInfo, gwConfig),
 		expectedGRToJoinSwitchLRP(gwRouterName, gwRouterJoinIPAddress(), netInfo),
-		expectedGRToExternalSwitchLRP(gwRouterName, netInfo, nodePhysicalIPAddress(), udnGWSNATAddress()),
+		expectedGRToExternalSwitchLRP(gwRouterName, macBindingScope.UUID, netInfo, nodePhysicalIPAddress(), udnGWSNATAddress()),
 	)
+	expectedEntities = append(expectedEntities, macBindingScope)
 	expectedEntities = append(expectedEntities, expectedStaticMACBindings(gwRouterName, staticMACBindingIPs())...)
 	expectedEntities = append(expectedEntities, expectedExternalSwitchAndLSPs(netInfo, gwConfig, nodeName)...)
 	expectedEntities = append(expectedEntities, expectedJoinSwitchAndLSPs(netInfo, nodeName)...)
@@ -2002,9 +2008,11 @@ func expectedGRToJoinSwitchLRP(gatewayRouterName string, gwRouterLRPIP *net.IPNe
 	return expectedLogicalRouterPort(lrpName, netInfo, options, gwRouterLRPIP)
 }
 
-func expectedGRToExternalSwitchLRP(gatewayRouterName string, netInfo util.NetInfo, joinSwitchIPs ...*net.IPNet) *nbdb.LogicalRouterPort {
+func expectedGRToExternalSwitchLRP(gatewayRouterName, macBindingScopeUUID string, netInfo util.NetInfo, joinSwitchIPs ...*net.IPNet) *nbdb.LogicalRouterPort {
 	lrpName := fmt.Sprintf("%s%s", types.GWRouterToExtSwitchPrefix, gatewayRouterName)
-	return expectedLogicalRouterPort(lrpName, netInfo, nil, joinSwitchIPs...)
+	lrp := expectedLogicalRouterPort(lrpName, netInfo, nil, joinSwitchIPs...)
+	lrp.MACBindingScope = ptr.To(macBindingScopeUUID)
+	return lrp
 }
 
 func expectedLogicalRouterPort(lrpName string, netInfo util.NetInfo, options map[string]string, routerNetworks ...*net.IPNet) *nbdb.LogicalRouterPort {

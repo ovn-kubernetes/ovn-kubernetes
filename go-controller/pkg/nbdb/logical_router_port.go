@@ -12,20 +12,21 @@ const LogicalRouterPortTable = "Logical_Router_Port"
 
 // LogicalRouterPort defines an object in Logical_Router_Port table
 type LogicalRouterPort struct {
-	UUID           string            `ovsdb:"_uuid"`
-	DhcpRelay      *string           `ovsdb:"dhcp_relay"`
-	Enabled        *bool             `ovsdb:"enabled"`
-	ExternalIDs    map[string]string `ovsdb:"external_ids"`
-	GatewayChassis []string          `ovsdb:"gateway_chassis"`
-	HaChassisGroup *string           `ovsdb:"ha_chassis_group"`
-	Ipv6Prefix     []string          `ovsdb:"ipv6_prefix"`
-	Ipv6RaConfigs  map[string]string `ovsdb:"ipv6_ra_configs"`
-	MAC            string            `ovsdb:"mac"`
-	Name           string            `ovsdb:"name"`
-	Networks       []string          `ovsdb:"networks"`
-	Options        map[string]string `ovsdb:"options"`
-	Peer           *string           `ovsdb:"peer"`
-	Status         map[string]string `ovsdb:"status"`
+	UUID            string            `ovsdb:"_uuid"`
+	DhcpRelay       *string           `ovsdb:"dhcp_relay"`
+	Enabled         *bool             `ovsdb:"enabled"`
+	ExternalIDs     map[string]string `ovsdb:"external_ids"`
+	GatewayChassis  []string          `ovsdb:"gateway_chassis"`
+	HaChassisGroup  *string           `ovsdb:"ha_chassis_group"`
+	Ipv6Prefix      []string          `ovsdb:"ipv6_prefix"`
+	Ipv6RaConfigs   map[string]string `ovsdb:"ipv6_ra_configs"`
+	MAC             string            `ovsdb:"mac"`
+	MACBindingScope *string           `ovsdb:"mac_binding_scope"`
+	Name            string            `ovsdb:"name"`
+	Networks        []string          `ovsdb:"networks"`
+	Options         map[string]string `ovsdb:"options"`
+	Peer            *string           `ovsdb:"peer"`
+	Status          map[string]string `ovsdb:"status"`
 }
 
 func (a *LogicalRouterPort) GetUUID() string {
@@ -218,6 +219,28 @@ func (a *LogicalRouterPort) GetMAC() string {
 	return a.MAC
 }
 
+func (a *LogicalRouterPort) GetMACBindingScope() *string {
+	return a.MACBindingScope
+}
+
+func copyLogicalRouterPortMACBindingScope(a *string) *string {
+	if a == nil {
+		return nil
+	}
+	b := *a
+	return &b
+}
+
+func equalLogicalRouterPortMACBindingScope(a, b *string) bool {
+	if (a == nil) != (b == nil) {
+		return false
+	}
+	if a == b {
+		return true
+	}
+	return *a == *b
+}
+
 func (a *LogicalRouterPort) GetName() string {
 	return a.Name
 }
@@ -341,6 +364,7 @@ func (a *LogicalRouterPort) DeepCopyInto(b *LogicalRouterPort) {
 	b.HaChassisGroup = copyLogicalRouterPortHaChassisGroup(a.HaChassisGroup)
 	b.Ipv6Prefix = copyLogicalRouterPortIpv6Prefix(a.Ipv6Prefix)
 	b.Ipv6RaConfigs = copyLogicalRouterPortIpv6RaConfigs(a.Ipv6RaConfigs)
+	b.MACBindingScope = copyLogicalRouterPortMACBindingScope(a.MACBindingScope)
 	b.Networks = copyLogicalRouterPortNetworks(a.Networks)
 	b.Options = copyLogicalRouterPortOptions(a.Options)
 	b.Peer = copyLogicalRouterPortPeer(a.Peer)
@@ -372,6 +396,7 @@ func (a *LogicalRouterPort) Equals(b *LogicalRouterPort) bool {
 		equalLogicalRouterPortIpv6Prefix(a.Ipv6Prefix, b.Ipv6Prefix) &&
 		equalLogicalRouterPortIpv6RaConfigs(a.Ipv6RaConfigs, b.Ipv6RaConfigs) &&
 		a.MAC == b.MAC &&
+		equalLogicalRouterPortMACBindingScope(a.MACBindingScope, b.MACBindingScope) &&
 		a.Name == b.Name &&
 		equalLogicalRouterPortNetworks(a.Networks, b.Networks) &&
 		equalLogicalRouterPortOptions(a.Options, b.Options) &&

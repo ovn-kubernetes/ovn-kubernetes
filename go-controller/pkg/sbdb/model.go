@@ -43,6 +43,7 @@ func FullDatabaseModel() (model.ClientDBModel, error) {
 		"Logical_DP_Group":       &LogicalDPGroup{},
 		"Logical_Flow":           &LogicalFlow{},
 		"MAC_Binding":            &MACBinding{},
+		"MAC_Binding_Scope":      &MACBindingScope{},
 		"Meter":                  &Meter{},
 		"Meter_Band":             &MeterBand{},
 		"Mirror":                 &Mirror{},
@@ -54,13 +55,14 @@ func FullDatabaseModel() (model.ClientDBModel, error) {
 		"SB_Global":              &SBGlobal{},
 		"SSL":                    &SSL{},
 		"Service_Monitor":        &ServiceMonitor{},
+		"Shared_MAC_Binding":     &SharedMACBinding{},
 		"Static_MAC_Binding":     &StaticMACBinding{},
 	})
 }
 
 var schema = `{
   "name": "OVN_Southbound",
-  "version": "21.8.0",
+  "version": "21.14.0",
   "tables": {
     "ACL_ID": {
       "columns": {
@@ -89,6 +91,18 @@ var schema = `{
         },
         "name": {
           "type": "string"
+        },
+        "options": {
+          "type": {
+            "key": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            },
+            "min": 0,
+            "max": "unlimited"
+          }
         }
       },
       "indexes": [
@@ -1386,7 +1400,7 @@ var schema = `{
             "key": {
               "type": "integer",
               "minInteger": 0,
-              "maxInteger": 33
+              "maxInteger": 34
             }
           }
         },
@@ -1432,6 +1446,70 @@ var schema = `{
         [
           "logical_port",
           "ip"
+        ]
+      ],
+      "isRoot": true
+    },
+    "MAC_Binding_Scope": {
+      "columns": {
+        "always_learn_from_arp_request": {
+          "type": {
+            "key": {
+              "type": "boolean"
+            },
+            "min": 0,
+            "max": 1
+          }
+        },
+        "binding_key": {
+          "type": {
+            "key": {
+              "type": "integer",
+              "minInteger": 1,
+              "maxInteger": 16777215
+            }
+          }
+        },
+        "disable_garp_rarp": {
+          "type": {
+            "key": {
+              "type": "boolean"
+            },
+            "min": 0,
+            "max": 1
+          }
+        },
+        "external_ids": {
+          "type": {
+            "key": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            },
+            "min": 0,
+            "max": "unlimited"
+          }
+        },
+        "mac_binding_age_threshold": {
+          "type": {
+            "key": {
+              "type": "string"
+            },
+            "min": 0,
+            "max": 1
+          }
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "indexes": [
+        [
+          "name"
+        ],
+        [
+          "binding_key"
         ]
       ],
       "isRoot": true
@@ -1712,6 +1790,17 @@ var schema = `{
             "max": "unlimited"
           }
         },
+        "mac_binding_scope": {
+          "type": {
+            "key": {
+              "type": "uuid",
+              "refTable": "MAC_Binding_Scope",
+              "refType": "weak"
+            },
+            "min": 0,
+            "max": 1
+          }
+        },
         "mirror_port": {
           "type": {
             "key": {
@@ -1949,6 +2038,9 @@ var schema = `{
         "nb_cfg": {
           "type": "integer"
         },
+        "nb_cfg_timestamp": {
+          "type": "integer"
+        },
         "options": {
           "type": {
             "key": {
@@ -2131,6 +2223,35 @@ var schema = `{
           "ip",
           "port",
           "protocol"
+        ]
+      ],
+      "isRoot": true
+    },
+    "Shared_MAC_Binding": {
+      "columns": {
+        "ip": {
+          "type": "string"
+        },
+        "mac": {
+          "type": "string"
+        },
+        "scope": {
+          "type": {
+            "key": {
+              "type": "uuid",
+              "refTable": "MAC_Binding_Scope",
+              "refType": "strong"
+            }
+          }
+        },
+        "timestamp": {
+          "type": "integer"
+        }
+      },
+      "indexes": [
+        [
+          "scope",
+          "ip"
         ]
       ],
       "isRoot": true

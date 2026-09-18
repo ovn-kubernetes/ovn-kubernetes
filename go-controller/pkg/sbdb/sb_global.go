@@ -12,13 +12,14 @@ const SBGlobalTable = "SB_Global"
 
 // SBGlobal defines an object in SB_Global table
 type SBGlobal struct {
-	UUID        string            `ovsdb:"_uuid"`
-	Connections []string          `ovsdb:"connections"`
-	ExternalIDs map[string]string `ovsdb:"external_ids"`
-	Ipsec       bool              `ovsdb:"ipsec"`
-	NbCfg       int               `ovsdb:"nb_cfg"`
-	Options     map[string]string `ovsdb:"options"`
-	SSL         *string           `ovsdb:"ssl"`
+	UUID           string            `ovsdb:"_uuid"`
+	Connections    []string          `ovsdb:"connections"`
+	ExternalIDs    map[string]string `ovsdb:"external_ids"`
+	Ipsec          bool              `ovsdb:"ipsec"`
+	NbCfg          int               `ovsdb:"nb_cfg"`
+	NbCfgTimestamp int               `ovsdb:"nb_cfg_timestamp"`
+	Options        map[string]string `ovsdb:"options"`
+	SSL            *string           `ovsdb:"ssl"`
 }
 
 func (a *SBGlobal) GetUUID() string {
@@ -89,6 +90,10 @@ func (a *SBGlobal) GetIpsec() bool {
 
 func (a *SBGlobal) GetNbCfg() int {
 	return a.NbCfg
+}
+
+func (a *SBGlobal) GetNbCfgTimestamp() int {
+	return a.NbCfgTimestamp
 }
 
 func (a *SBGlobal) GetOptions() map[string]string {
@@ -172,6 +177,7 @@ func (a *SBGlobal) Equals(b *SBGlobal) bool {
 		equalSBGlobalExternalIDs(a.ExternalIDs, b.ExternalIDs) &&
 		a.Ipsec == b.Ipsec &&
 		a.NbCfg == b.NbCfg &&
+		a.NbCfgTimestamp == b.NbCfgTimestamp &&
 		equalSBGlobalOptions(a.Options, b.Options) &&
 		equalSBGlobalSSL(a.SSL, b.SSL)
 }

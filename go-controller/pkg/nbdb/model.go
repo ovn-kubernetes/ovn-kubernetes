@@ -39,6 +39,7 @@ func FullDatabaseModel() (model.ClientDBModel, error) {
 		"Logical_Switch":                   &LogicalSwitch{},
 		"Logical_Switch_Port":              &LogicalSwitchPort{},
 		"Logical_Switch_Port_Health_Check": &LogicalSwitchPortHealthCheck{},
+		"MAC_Binding_Scope":                &MACBindingScope{},
 		"Meter":                            &Meter{},
 		"Meter_Band":                       &MeterBand{},
 		"Mirror":                           &Mirror{},
@@ -60,7 +61,7 @@ func FullDatabaseModel() (model.ClientDBModel, error) {
 
 var schema = `{
   "name": "OVN_Northbound",
-  "version": "7.18.0",
+  "version": "7.20.0",
   "tables": {
     "ACL": {
       "columns": {
@@ -252,6 +253,18 @@ var schema = `{
         },
         "name": {
           "type": "string"
+        },
+        "options": {
+          "type": {
+            "key": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            },
+            "min": 0,
+            "max": "unlimited"
+          }
         }
       },
       "indexes": [
@@ -1230,6 +1243,17 @@ var schema = `{
         "mac": {
           "type": "string"
         },
+        "mac_binding_scope": {
+          "type": {
+            "key": {
+              "type": "uuid",
+              "refTable": "MAC_Binding_Scope",
+              "refType": "weak"
+            },
+            "min": 0,
+            "max": 1
+          }
+        },
         "name": {
           "type": "string"
         },
@@ -1739,6 +1763,58 @@ var schema = `{
         }
       }
     },
+    "MAC_Binding_Scope": {
+      "columns": {
+        "always_learn_from_arp_request": {
+          "type": {
+            "key": {
+              "type": "boolean"
+            },
+            "min": 0,
+            "max": 1
+          }
+        },
+        "disable_garp_rarp": {
+          "type": {
+            "key": {
+              "type": "boolean"
+            },
+            "min": 0,
+            "max": 1
+          }
+        },
+        "external_ids": {
+          "type": {
+            "key": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            },
+            "min": 0,
+            "max": "unlimited"
+          }
+        },
+        "mac_binding_age_threshold": {
+          "type": {
+            "key": {
+              "type": "string"
+            },
+            "min": 0,
+            "max": 1
+          }
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "indexes": [
+        [
+          "name"
+        ]
+      ],
+      "isRoot": true
+    },
     "Meter": {
       "columns": {
         "bands": {
@@ -2186,7 +2262,7 @@ var schema = `{
               "refTable": "Logical_Switch_Port",
               "refType": "strong"
             },
-            "min": 1,
+            "min": 0,
             "max": 1
           }
         }
@@ -2244,7 +2320,13 @@ var schema = `{
           "type": {
             "key": {
               "type": "string",
-              "enum": "inline"
+              "enum": [
+                "set",
+                [
+                  "inline",
+                  "vtap"
+                ]
+              ]
             }
           }
         },
