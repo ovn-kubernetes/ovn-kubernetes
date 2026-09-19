@@ -1237,7 +1237,7 @@ func TestUDNUplinkStateControllerRetriesUntilSuccess(t *testing.T) {
 	udnGateway, err := NewUserDefinedNetworkGateway(
 		network,
 		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}},
-		nil,
+		emptyNodeInformer(),
 		nil,
 		nil,
 		nil,
