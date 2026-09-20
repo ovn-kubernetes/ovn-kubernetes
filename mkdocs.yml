@@ -61,6 +61,8 @@ plugins:
       draggable: true
 markdown_extensions:
   - admonition
+  - attr_list
+  - md_in_html
   - meta
   - pymdownx.emoji:
       emoji_index: !!python/name:material.extensions.emoji.twemoji

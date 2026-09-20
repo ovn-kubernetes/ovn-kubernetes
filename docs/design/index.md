@@ -1,6 +1,7 @@
 ---
 title: Overview
 hide:
+  - navigation
   - toc
 ---
 
@@ -8,42 +9,136 @@ hide:
 
 Architecture, design decisions, and traffic flows in OVN-Kubernetes.
 
-**[Architecture](architecture.md)**
+<div class="landing-grid" markdown>
+
+<div class="landing-card" markdown>
+
+### Architecture
 
 Components, pods, and containers that make up an OVN-Kubernetes deployment.
 
-**[Network Topology](topology.md)**
+[Read more](architecture.md){ .landing-btn }
+
+</div>
+
+<div class="landing-card" markdown>
+
+### Network Topology
 
 Logical switches, routers, and how they map to the physical cluster.
 
-**[Gateway Modes](gateway-modes.md)**
+[Read more](topology.md){ .landing-btn }
+
+</div>
+
+<div class="landing-card" markdown>
+
+### Gateway Modes
 
 Local vs shared gateway modes and how they affect traffic paths.
 
-**[Traffic Flows](traffic-flows.md)**
+[Read more](gateway-modes.md){ .landing-btn }
+
+</div>
+
+<div class="landing-card" markdown>
+
+### Traffic Flows
 
 End-to-end packet paths for pod-to-pod, pod-to-service, and external traffic.
 
-**[Pod Creation Workflow](pod-creation-workflow.md)**
+[Read more](traffic-flows.md){ .landing-btn }
+
+</div>
+
+<div class="landing-card" markdown>
+
+### Pod Creation Workflow
 
 What happens in OVN when a new pod is scheduled on a node.
 
-**[Service Creation Workflow](service-creation-workflow.md)**
+[Read more](pod-creation-workflow.md){ .landing-btn }
+
+</div>
+
+<div class="landing-card" markdown>
+
+### Service Creation Workflow
 
 How Kubernetes Services are translated into OVN load balancers.
 
-**[Service Traffic Policy](service-traffic-policy.md)**
+[Read more](service-creation-workflow.md){ .landing-btn }
+
+</div>
+
+<div class="landing-card" markdown>
+
+### Service Traffic Policy
 
 Internal and external traffic policy behavior for OVN-backed services.
 
-**[Host To NodePort Hairpin](host-to-node-port-hairpin-trafficflow.md)**
+[Read more](service-traffic-policy.md){ .landing-btn }
+
+</div>
+
+<div class="landing-card" markdown>
+
+### Host To NodePort Hairpin
 
 Traffic flow when a node accesses its own NodePort service.
 
-**[ExternalIPs / LoadBalancerIngress](external-ip-and-loadbalancer-ingress.md)**
+[Read more](host-to-node-port-hairpin-trafficflow.md){ .landing-btn }
+
+</div>
+
+<div class="landing-card" markdown>
+
+### ExternalIPs / LoadBalancerIngress
 
 How external IPs and LoadBalancer ingress addresses are handled.
 
-**[Internal Subnets](ovn-kubernetes-subnets.md)**
+[Read more](external-ip-and-loadbalancer-ingress.md){ .landing-btn }
+
+</div>
+
+<div class="landing-card" markdown>
+
+### Internal Subnets
 
 Subnet allocation for join, transit, and masquerade networks.
+
+[Read more](ovn-kubernetes-subnets.md){ .landing-btn }
+
+</div>
+
+<div class="landing-card" markdown>
+
+### External Bridge Flows
+
+OpenFlow rules on the breth0 bridge and how traffic is steered.
+
+[Read more](bridge-flows.md){ .landing-btn }
+
+</div>
+
+<div class="landing-card" markdown>
+
+### Masquerade IPs
+
+How masquerade IPs are used for return traffic and SNAT in OVN-Kubernetes.
+
+[Read more](masquerade-ips.md){ .landing-btn }
+
+</div>
+
+<div class="landing-card" markdown>
+
+### KubeVirt VM Live Migration
+
+Networking considerations when live-migrating VMs under KubeVirt.
+
+[Read more](../features/live-migration.md){ .landing-btn }
+
+</div>
+
+</div>
