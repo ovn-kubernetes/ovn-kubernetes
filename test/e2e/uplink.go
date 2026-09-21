@@ -22,6 +22,7 @@ import (
 	uplinkv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1"
 	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	ovnkubeutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/allocators"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
@@ -1888,6 +1889,7 @@ var _ = ginkgo.Describe("Network Segmentation Uplink split DPU management port",
 		namespace := setupUplinkLayer3CUDN(f, ictx, ipFamilySet, networkName, uplinkName)
 		pod := createUplinkNetexecPod(f, namespace.Name, "client-"+networkName, node.Name)
 		waitForCUDNUplinksReady(f, networkName)
+		vrfName := waitForCUDNVRFName(f, networkName)
 
 		podIPs := make([]string, 0, ipFamilySet.Len())
 		for _, family := range ipFamilySet.UnsortedList() {
@@ -1904,6 +1906,12 @@ var _ = ginkgo.Describe("Network Segmentation Uplink split DPU management port",
 			podIPs = append(podIPs, podIP)
 		}
 
+		// TRIAL ONLY: the baseline wait is shortened from uplinkTimeout. The
+		// probe it waits on either works within seconds or not at all, and the
+		// last run spent four minutes proving a probe that could never work.
+		// Put uplinkTimeout back when the forced failure at the end of this
+		// spec is removed.
+		const trialBaselineConnectivityTimeout = 30 * time.Second
 		// TRIAL ONLY: the final connectivity wait is shortened from uplinkTimeout
 		// so that the trial does not spend minutes proving traffic is broken.
 		// Put uplinkTimeout back when the forced failure at the end of this spec
@@ -1922,114 +1930,186 @@ var _ = ginkgo.Describe("Network Segmentation Uplink split DPU management port",
 			framework.Logf("MGMTPORT-E2E: DPU br-int state %s:\n%s", when, listing)
 		}
 
+		// TRIAL ONLY: the raw annotation is logged so that a key that does not
+		// match reads as such instead of as a management port the node never
+		// reserved.
+		logMgmtPortAnnotation := func(when string) {
+			annotation, err := mgmtPortAnnotationForNode(f.ClientSet, node.Name)
+			framework.Logf("MGMTPORT-E2E: %s of node %s %s: err=%s value=%s",
+				uplinkMgmtPortAnnotation, node.Name, when, trialOneLine(err), trialOneLine(annotation))
+		}
+
+		// The verdict rests on the node reaching the pod from inside the VRF of
+		// the CUDN: the routes of the network live in that table only, and the
+		// ip rule that would send a main table lookup there is added only for a
+		// network advertised to the default VRF, which this one is not. Asking
+		// the pod which client address it saw turns the probe from reachability
+		// into proof of traversal: the node's kernel picks the management port
+		// address of the network as the source only when the packet leaves over
+		// ovn-k8s-mp<id> of that network.
+		mgmtPortProbe := func() error {
+			return nodeVRFReachesUDNPodViaMgmtPort(f.ClientSet, node.Name, vrfName, networkName, podIPs)
+		}
+		// TRIAL ONLY: the opposite direction is run too and only logged, so
+		// that a single run says which of the two is viable on dpu-sim. It
+		// needs no VRF context and it reaches the host over the same management
+		// port, so it is the fallback if `ip vrf exec` turns out unusable there.
+		logPodToMgmtPortProbe := func(when string) {
+			err := udnPodReachesNodeMgmtPort(f.ClientSet, pod, node.Name, networkName)
+			framework.Logf("MGMTPORT-E2E: secondary probe from pod %s to the management port of node %s %s: "+
+				"kind=%s err=%s", pod.Name, node.Name, when, trialProbeKind(err), trialOneLine(err))
+		}
+
 		// TRIAL ONLY: the baseline is recorded rather than asserted so that the
 		// spec always runs on to the verdict at the end.
 		ginkgo.By("verifying the node reaches the pod through the management port of the CUDN")
-		baselineWait, baselineErr := trialPollUntilNoError(uplinkTimeout, uplinkPoll, func() error {
-			return nodeReachesUDNPod(node.Name, podIPs)
-		})
-		framework.Logf("MGMTPORT-E2E: baseline connectivity from node %s to pod %s took %s: err=%s",
-			node.Name, pod.Name, baselineWait, trialOneLine(baselineErr))
-
-		staleDevice, err := mgmtPortDeviceForNetwork(f.ClientSet, node.Name, networkName)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		gomega.Expect(staleDevice).NotTo(gomega.BeEmpty(),
-			"expected node %s to publish a management port device for network %s", node.Name, networkName)
+		baselineWait, baselineErr := trialPollUntilNoError(trialBaselineConnectivityTimeout, uplinkPoll, mgmtPortProbe)
+		framework.Logf("MGMTPORT-E2E: baseline connectivity from node %s in VRF %s to pod %s took %s: kind=%s err=%s",
+			node.Name, vrfName, pod.Name, baselineWait, trialProbeKind(baselineErr), trialOneLine(baselineErr))
+		logPodToMgmtPortProbe("at the baseline")
+		logMgmtPortAnnotation("before the fault")
 
 		// Only the reconcile of the management port controller may repair the
 		// representor: an ovnkube that restarts on the DPU replumbs it from the
 		// annotation while it syncs, which would keep the connectivity check
 		// below green no matter what the controller does.
-		dpuOVNKubeID, err := dpuOVNKubeContainerID(node.Name)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		//
+		// TRIAL ONLY: a lookup that fails is recorded and folded into the
+		// restart verdict below rather than asserted.
+		dpuOVNKubeID, staleDPUOVNKubeIDErr := dpuOVNKubeContainerID(node.Name)
+		framework.Logf("MGMTPORT-E2E: ovnkube on the DPU of node %s runs in container %q: err=%s",
+			node.Name, dpuOVNKubeID, trialOneLine(staleDPUOVNKubeIDErr))
 
-		framework.Logf("MGMTPORT-E2E: node %s publishes management port device %q for network %s, "+
-			"ovnkube on its DPU runs in container %q", node.Name, staleDevice, networkName, dpuOVNKubeID)
-		logDPUBrIntState("before hiding device " + staleDevice)
+		// TRIAL ONLY: every step from here to the verdict records its outcome
+		// instead of asserting, so that nothing aborts the spec before the
+		// verdict prints. The sequence runs in a function so that a step whose
+		// successor is meaningless without it returns rather than nests.
+		var (
+			staleDevice    string
+			staleDeviceErr error
+			hideErr        error
+			restartErr     error
+			freshDevice    string
+			redrawWait     time.Duration
+			redrawErr      error
+			restoreErr     error
+			finalWait      time.Duration
+			finalErr       error
+		)
+		func() {
+			staleDevice, staleDeviceErr = mgmtPortDeviceForNetwork(f.ClientSet, node.Name, networkName)
+			framework.Logf("MGMTPORT-E2E: node %s publishes management port device %q for network %s: err=%s",
+				node.Name, staleDevice, networkName, trialOneLine(staleDeviceErr))
+			if staleDeviceErr != nil || staleDevice == "" {
+				return
+			}
 
-		ginkgo.By("hiding the reserved device so that plumbing it fails")
-		ictx.AddCleanUpFn(func() error {
-			_, err := execNodeCommand(node.Name, "%s", restoreMgmtPortDeviceCmd(staleDevice))
-			return err
-		})
-		hideOutput, err := execNodeCommand(node.Name, "%s", hideMgmtPortDeviceCmd(staleDevice))
-		framework.Logf("MGMTPORT-E2E: hiding device %s on node %s: err=%s output=%q",
-			staleDevice, node.Name, trialOneLine(err), hideOutput)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred(),
-			"expected to hide management port device %s on node %s", staleDevice, node.Name)
-		netdevs, netdevsErr := execNodeCommand(node.Name, "ip -o link show")
-		framework.Logf("MGMTPORT-E2E: netdev layout on node %s right after hiding %s (err=%s):\n%s",
-			node.Name, staleDevice, trialOneLine(netdevsErr), netdevs)
-
-		// The restart has to beat the device plugin of the simulator. It keeps
-		// a device healthy while a netdev of that name exists or a pod holds
-		// it, and the hidden one has neither once the pod holding it is gone,
-		// which drops it from the capacity of the node a few seconds later.
-		// ovnkube-node asks for every device of the pool, so the replacement
-		// pod is unschedulable for as long as the hidden one is missing.
-		ginkgo.By("restarting ovnkube-node so that the CUDN plumbs the hidden device again")
-		gomega.Expect(restartOVNKubeNodePod(
-			f.ClientSet,
-			deploymentconfig.Get().OVNKubernetesNamespace(),
-			node.Name,
-		)).To(gomega.Succeed())
-
-		// TRIAL ONLY: the redraw is recorded rather than asserted, so that a
-		// device that never moves is reported as an inconclusive run instead of
-		// aborting the spec before it reaches its verdict.
-		ginkgo.By("waiting for the host to reserve another device for the management port")
-		freshDevice := ""
-		redrawWait, redrawErr := trialPollUntilNoError(uplinkTimeout, uplinkPoll, func() error {
-			device, err := mgmtPortDeviceForNetwork(f.ClientSet, node.Name, networkName)
-			if err != nil {
+			// Registered before the fault is injected, so that a hide that
+			// half-applies is still undone.
+			ictx.AddCleanUpFn(func() error {
+				_, err := execNodeCommand(node.Name, "%s", restoreMgmtPortDeviceCmd(staleDevice))
 				return err
+			})
+			logDPUBrIntState("before hiding device " + staleDevice)
+
+			ginkgo.By("hiding the reserved device so that plumbing it fails")
+			var hideOutput string
+			hideOutput, hideErr = execNodeCommand(node.Name, "%s", hideMgmtPortDeviceCmd(staleDevice))
+			framework.Logf("MGMTPORT-E2E: hiding device %s on node %s: err=%s output=%q",
+				staleDevice, node.Name, trialOneLine(hideErr), hideOutput)
+			if hideErr != nil {
+				return
 			}
-			if device == "" || device == staleDevice {
-				return fmt.Errorf("node %s still publishes management port device %q for network %s",
-					node.Name, device, networkName)
+			netdevs, netdevsErr := execNodeCommand(node.Name, "ip -o link show")
+			framework.Logf("MGMTPORT-E2E: netdev layout on node %s right after hiding %s (err=%s):\n%s",
+				node.Name, staleDevice, trialOneLine(netdevsErr), netdevs)
+
+			// The restart has to beat the device plugin of the simulator. It keeps
+			// a device healthy while a netdev of that name exists or a pod holds
+			// it, and the hidden one has neither once the pod holding it is gone,
+			// which drops it from the capacity of the node a few seconds later.
+			// ovnkube-node asks for every device of the pool, so the replacement
+			// pod is unschedulable for as long as the hidden one is missing.
+			ginkgo.By("restarting ovnkube-node so that the CUDN plumbs the hidden device again")
+			restartErr = restartOVNKubeNodePod(
+				f.ClientSet,
+				deploymentconfig.Get().OVNKubernetesNamespace(),
+				node.Name,
+			)
+			framework.Logf("MGMTPORT-E2E: restarting ovnkube-node on node %s: err=%s",
+				node.Name, trialOneLine(restartErr))
+			if restartErr != nil {
+				return
 			}
-			freshDevice = device
-			return nil
-		})
-		framework.Logf("MGMTPORT-E2E: management port device of network %s on node %s went from %q to %q "+
-			"in %s: err=%s",
-			networkName, node.Name, staleDevice, freshDevice, redrawWait, trialOneLine(redrawErr))
 
-		ginkgo.By("giving the hidden device its name back")
-		restoreOutput, err := execNodeCommand(node.Name, "%s", restoreMgmtPortDeviceCmd(staleDevice))
-		framework.Logf("MGMTPORT-E2E: restoring device %s on node %s: err=%s output=%q",
-			staleDevice, node.Name, trialOneLine(err), restoreOutput)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred(),
-			"expected to restore management port device %s on node %s", staleDevice, node.Name)
+			// TRIAL ONLY: the redraw is recorded rather than asserted, so that a
+			// device that never moves is reported as an inconclusive run instead of
+			// aborting the spec before it reaches its verdict.
+			ginkgo.By("waiting for the host to reserve another device for the management port")
+			redrawWait, redrawErr = trialPollUntilNoError(uplinkTimeout, uplinkPoll, func() error {
+				device, err := mgmtPortDeviceForNetwork(f.ClientSet, node.Name, networkName)
+				if err != nil {
+					return err
+				}
+				if device == "" || device == staleDevice {
+					return fmt.Errorf("node %s still publishes management port device %q for network %s",
+						node.Name, device, networkName)
+				}
+				freshDevice = device
+				return nil
+			})
+			framework.Logf("MGMTPORT-E2E: management port device of network %s on node %s went from %q to %q "+
+				"in %s: err=%s",
+				networkName, node.Name, staleDevice, freshDevice, redrawWait, trialOneLine(redrawErr))
+			logMgmtPortAnnotation("after the redraw")
 
-		logDPUBrIntState("after the redraw to device " + freshDevice)
+			// TRIAL ONLY: a restore that fails is recorded rather than
+			// asserted. The deferred cleanup repeats it anyway.
+			ginkgo.By("giving the hidden device its name back")
+			var restoreOutput string
+			restoreOutput, restoreErr = execNodeCommand(node.Name, "%s", restoreMgmtPortDeviceCmd(staleDevice))
+			framework.Logf("MGMTPORT-E2E: restoring device %s on node %s: err=%s output=%q",
+				staleDevice, node.Name, trialOneLine(restoreErr), restoreOutput)
 
-		// TRIAL ONLY: the final connectivity is recorded rather than asserted,
-		// and waited for over trialFinalConnectivityTimeout rather than
-		// uplinkTimeout.
-		ginkgo.By("verifying the node reaches the pod through the representor of the new device")
-		finalWait, finalErr := trialPollUntilNoError(trialFinalConnectivityTimeout, uplinkPoll, func() error {
-			return nodeReachesUDNPod(node.Name, podIPs)
-		})
-		framework.Logf("MGMTPORT-E2E: final connectivity from node %s to pod %s took %s: err=%s",
-			node.Name, pod.Name, finalWait, trialOneLine(finalErr))
-		logDPUBrIntState("after the final connectivity check")
+			logDPUBrIntState("after the redraw to device " + freshDevice)
+
+			// TRIAL ONLY: the final connectivity is recorded rather than asserted,
+			// and waited for over trialFinalConnectivityTimeout rather than
+			// uplinkTimeout.
+			ginkgo.By("verifying the node reaches the pod through the representor of the new device")
+			finalWait, finalErr = trialPollUntilNoError(trialFinalConnectivityTimeout, uplinkPoll, mgmtPortProbe)
+			framework.Logf("MGMTPORT-E2E: final connectivity from node %s in VRF %s to pod %s took %s: "+
+				"kind=%s err=%s",
+				node.Name, vrfName, pod.Name, finalWait, trialProbeKind(finalErr), trialOneLine(finalErr))
+			logPodToMgmtPortProbe("after the redraw")
+			logDPUBrIntState("after the final connectivity check")
+		}()
 
 		// TRIAL ONLY: a restart of ovnkube on the DPU is recorded rather than
 		// asserted. A lookup that fails cannot prove the DPU kept the same
 		// ovnkube either, so it counts as a restart and makes the run
-		// inconclusive.
+		// inconclusive, on either side of the fault.
 		freshDPUOVNKubeID, dpuOVNKubeIDErr := dpuOVNKubeContainerID(node.Name)
 		framework.Logf("MGMTPORT-E2E: ovnkube on the DPU of node %s runs in container %q, ran in %q: err=%s",
 			node.Name, freshDPUOVNKubeID, dpuOVNKubeID, trialOneLine(dpuOVNKubeIDErr))
-		dpuRestarted := dpuOVNKubeIDErr != nil || freshDPUOVNKubeID != dpuOVNKubeID
+		dpuRestarted := staleDPUOVNKubeIDErr != nil || dpuOVNKubeIDErr != nil || freshDPUOVNKubeID != dpuOVNKubeID
 
+		// The most upstream failure wins: every later step is meaningless once
+		// an earlier one did not happen.
 		outcome := ""
 		switch {
 		case baselineErr != nil:
 			outcome = "INCONCLUSIVE-NO-BASELINE"
+		case staleDeviceErr != nil || staleDevice == "":
+			outcome = "INCONCLUSIVE-NO-DEVICE"
+		case hideErr != nil:
+			outcome = "INCONCLUSIVE-FAULT-NOT-INJECTED"
+		case restartErr != nil:
+			outcome = "INCONCLUSIVE-RESTART-FAILED"
 		case redrawErr != nil:
 			outcome = "INCONCLUSIVE-DEVICE-NOT-MOVED"
+		case restoreErr != nil:
+			outcome = "INCONCLUSIVE-DEVICE-NOT-RESTORED"
 		case dpuRestarted:
 			outcome = "INCONCLUSIVE-DPU-RESTARTED"
 		case finalErr != nil:
@@ -2037,10 +2117,14 @@ var _ = ginkgo.Describe("Network Segmentation Uplink split DPU management port",
 		default:
 			outcome = "UNEXPECTED-TRAFFIC-OK"
 		}
-		verdict := fmt.Sprintf("MGMTPORT-E2E-VERDICT: %s node=%s network=%s device=%q->%q "+
-			"dpuOVNKubeContainer=%q->%q baseline=%s redraw=%s final=%s",
-			outcome, node.Name, networkName, staleDevice, freshDevice, dpuOVNKubeID, freshDPUOVNKubeID,
-			trialOneLine(baselineErr), trialOneLine(redrawErr), trialOneLine(finalErr))
+		verdict := fmt.Sprintf("MGMTPORT-E2E-VERDICT: %s node=%s network=%s vrf=%s device=%q->%q "+
+			"dpuOVNKubeContainer=%q->%q baseline=%s/%s device=%s hide=%s restart=%s redraw=%s restore=%s "+
+			"final=%s/%s",
+			outcome, node.Name, networkName, vrfName, staleDevice, freshDevice, dpuOVNKubeID, freshDPUOVNKubeID,
+			trialProbeKind(baselineErr), trialOneLine(baselineErr),
+			trialOneLine(staleDeviceErr), trialOneLine(hideErr), trialOneLine(restartErr),
+			trialOneLine(redrawErr), trialOneLine(restoreErr),
+			trialProbeKind(finalErr), trialOneLine(finalErr))
 		framework.Logf("%s", verdict)
 
 		// TRIAL ONLY - THIS MUST BE REMOVED BEFORE THIS TEST MERGES.
@@ -3673,16 +3757,35 @@ func execNodeCommand(nodeName, format string, args ...any) (string, error) {
 	return infraprovider.Get().ExecK8NodeCommand(nodeName, []string{"sh", "-c", fmt.Sprintf(format, args...)})
 }
 
-// mgmtPortDeviceForNetwork returns the device the node reserved for the
-// management port of networkName, empty when it reserved none.
-func mgmtPortDeviceForNetwork(k8sClient kubernetes.Interface, nodeName, networkName string) (string, error) {
+// mgmtPortAnnotationForNode returns the raw k8s.ovn.org/node-mgmt-port
+// annotation of the node, and an error when the node carries none.
+func mgmtPortAnnotationForNode(k8sClient kubernetes.Interface, nodeName string) (string, error) {
 	node, err := k8sClient.CoreV1().Nodes().Get(context.Background(), nodeName, metav1.GetOptions{})
 	if err != nil {
 		return "", err
 	}
 	annotation, ok := node.Annotations[uplinkMgmtPortAnnotation]
 	if !ok {
-		return "", nil
+		return "", fmt.Errorf("node %s carries no %s annotation", nodeName, uplinkMgmtPortAnnotation)
+	}
+	return annotation, nil
+}
+
+// mgmtPortDeviceForNetwork returns the device the node reserved for the
+// management port of the CUDN cudnName. The k8s.ovn.org/node-mgmt-port
+// annotation is keyed by the OVN network name, which for a CUDN is the CUDN
+// name behind the cluster_udn_ prefix and not the bare name, the same key
+// dpuBrIntMgmtPortState looks the DPU side up by, so the prefix is added here
+// rather than at the call sites.
+//
+// A node that carries no annotation at all and a node whose annotation holds
+// no entry for this network are reported apart, and the raw annotation travels
+// with the second, so that a key that does not match reads as such instead of
+// as a management port the node never reserved.
+func mgmtPortDeviceForNetwork(k8sClient kubernetes.Interface, nodeName, cudnName string) (string, error) {
+	annotation, err := mgmtPortAnnotationForNode(k8sClient, nodeName)
+	if err != nil {
+		return "", err
 	}
 	devices := map[string]struct {
 		DeviceID string `json:"DeviceId"`
@@ -3690,17 +3793,141 @@ func mgmtPortDeviceForNetwork(k8sClient kubernetes.Interface, nodeName, networkN
 	if err := json.Unmarshal([]byte(annotation), &devices); err != nil {
 		return "", fmt.Errorf("failed to parse %s of node %s: %w", uplinkMgmtPortAnnotation, nodeName, err)
 	}
-	return devices[networkName].DeviceID, nil
+	networkName := ovntypes.CUDNPrefix + cudnName
+	device, ok := devices[networkName]
+	if !ok {
+		return "", fmt.Errorf("node %s reserved no management port device for network %s, %s is %s",
+			nodeName, networkName, uplinkMgmtPortAnnotation, annotation)
+	}
+	return device.DeviceID, nil
 }
 
-// nodeReachesUDNPod reaches the pod on the addresses of its primary network,
-// which leaves the node through the management port of that network.
-func nodeReachesUDNPod(nodeName string, podIPs []string) error {
+// errUDNProbeToolUnavailable marks a probe that could not run at all, as
+// opposed to one whose traffic did not flow. `ip vrf exec` needs an iproute2
+// built with BPF support and a cgroup2 hierarchy it can write the command into,
+// and the curl it wraps has to exist on the node; none of that is proven on the
+// dpu-sim node image. A probe that fails for one of those reasons is a gap in
+// the node image, not the signal a management port trial is after.
+var errUDNProbeToolUnavailable = errors.New("the node cannot run a probe in a VRF context")
+
+// udnVRFProbeToolCheck reports whether the node can run the VRF probe at all,
+// by running the probe's own command line with a payload that touches no
+// network. It covers both halves of the tooling the probe needs: `ip vrf exec`
+// itself, and the curl it wraps.
+func udnVRFProbeToolCheck(nodeName, vrfName string) error {
+	out, err := execNodeCommand(nodeName, "ip vrf exec %s curl --version", vrfName)
+	if err != nil {
+		return fmt.Errorf("%w: node %s, VRF %s: %v: %s", errUDNProbeToolUnavailable, nodeName, vrfName, err, out)
+	}
+	return nil
+}
+
+// udnNodeMgmtPortAddrs returns the addresses of the node's management port on
+// the primary network of the CUDN cudnName, keyed by whether the address is
+// IPv6. The k8s.ovn.org/node-subnets annotation is keyed by the OVN network
+// name, so the CUDN prefix is added here as well.
+func udnNodeMgmtPortAddrs(k8sClient kubernetes.Interface, nodeName, cudnName string) (map[bool]string, error) {
+	node, err := k8sClient.CoreV1().Nodes().Get(context.Background(), nodeName, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	networkName := ovntypes.CUDNPrefix + cudnName
+	subnets, err := ovnkubeutil.ParseNodeHostSubnetAnnotation(node, networkName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read the subnets of network %s on node %s: %w", networkName, nodeName, err)
+	}
+	addrs := map[bool]string{}
+	for _, subnet := range subnets {
+		mgmtPortAddr := ovnkubeutil.GetNodeManagementIfAddr(subnet)
+		if mgmtPortAddr == nil {
+			return nil, fmt.Errorf("failed to derive the management port address of node %s on network %s from subnet %s",
+				nodeName, networkName, subnet)
+		}
+		addrs[utilnet.IsIPv6CIDR(subnet)] = mgmtPortAddr.IP.String()
+	}
+	return addrs, nil
+}
+
+// nodeVRFReachesUDNPodViaMgmtPort reaches the pod on the addresses of its
+// primary network from the node's network context of the VRF of that network,
+// and requires the client address the pod reports back to be the node's
+// management port address on the network.
+//
+// The VRF context is what makes the probe possible at all: the connected route
+// of the node's subnet on the network and the route toward its pod subnets live
+// in the VRF routing table, and the ip rule that would send a main table lookup
+// there is installed only for a network advertised to the default VRF. The
+// client address is what makes it evidence: the kernel picks the management
+// port address as the source only when the packet leaves over ovn-k8s-mp<id>
+// of that network, so an equal address proves the management port carried it
+// rather than that the pod was reachable by some other path.
+func nodeVRFReachesUDNPodViaMgmtPort(
+	k8sClient kubernetes.Interface,
+	nodeName, vrfName, cudnName string,
+	podIPs []string,
+) error {
+	mgmtPortAddrs, err := udnNodeMgmtPortAddrs(k8sClient, nodeName, cudnName)
+	if err != nil {
+		return err
+	}
 	for _, podIP := range podIPs {
+		mgmtPortAddr, ok := mgmtPortAddrs[utilnet.IsIPv6String(podIP)]
+		if !ok {
+			return fmt.Errorf("node %s has no management port address on network %s of the family of pod address %s",
+				nodeName, cudnName, podIP)
+		}
 		target := net.JoinHostPort(podIP, strconv.Itoa(netexecPort))
-		out, err := execNodeCommand(nodeName, "curl --max-time 2 -s http://%s/clientip", target)
+		out, err := execNodeCommand(nodeName, "ip vrf exec %s curl --max-time 2 -s http://%s/clientip",
+			vrfName, target)
 		if err != nil {
-			return fmt.Errorf("node %s failed to reach pod at %s: %v: %s", nodeName, target, err, out)
+			if toolErr := udnVRFProbeToolCheck(nodeName, vrfName); toolErr != nil {
+				return toolErr
+			}
+			return fmt.Errorf("node %s failed to reach pod at %s in VRF %s: %v: %s",
+				nodeName, target, vrfName, err, out)
+		}
+		clientIP, _, err := net.SplitHostPort(strings.TrimSpace(out))
+		if err != nil {
+			return fmt.Errorf("node %s got %q from the pod at %s instead of a client address: %v",
+				nodeName, strings.TrimSpace(out), target, err)
+		}
+		if clientIP != mgmtPortAddr {
+			return fmt.Errorf("the pod at %s saw node %s as %s, expected its management port address %s on network %s",
+				target, nodeName, clientIP, mgmtPortAddr, cudnName)
+		}
+	}
+	return nil
+}
+
+// udnPodReachesNodeMgmtPort reaches the node's management port addresses on the
+// primary network of the pod from inside the pod. It is the opposite direction
+// of nodeVRFReachesUDNPodViaMgmtPort over the same port and needs no VRF
+// context on the node, because the management port address is only reachable
+// through the management port itself.
+//
+// The host side of user defined network isolation does not stand in the way:
+// UDNHostIsolationManager hooks its chain on OUTPUT, so it never sees traffic
+// arriving from a pod, and the set it drops on holds the default network
+// addresses of primary UDN pods, which is neither the destination here nor the
+// destination of the reply.
+func udnPodReachesNodeMgmtPort(k8sClient kubernetes.Interface, pod *corev1.Pod, nodeName, cudnName string) error {
+	mgmtPortAddrs, err := udnNodeMgmtPortAddrs(k8sClient, nodeName, cudnName)
+	if err != nil {
+		return err
+	}
+	if len(mgmtPortAddrs) == 0 {
+		return fmt.Errorf("node %s has no management port address on network %s", nodeName, cudnName)
+	}
+	for isIPv6, mgmtPortAddr := range mgmtPortAddrs {
+		ping := ipv4PingCommand
+		if isIPv6 {
+			ping = ipv6PingCommand
+		}
+		out, err := e2epodoutput.RunHostCmd(pod.Namespace, pod.Name,
+			fmt.Sprintf("%s -c 1 -W 2 %s", ping, mgmtPortAddr))
+		if err != nil {
+			return fmt.Errorf("pod %s/%s failed to reach the management port address %s of node %s on network %s: %v: %s",
+				pod.Namespace, pod.Name, mgmtPortAddr, nodeName, cudnName, err, out)
 		}
 	}
 	return nil
@@ -4858,6 +5085,24 @@ func trialPollUntilNoError(timeout, poll time.Duration, check func() error) (tim
 // management port spec.
 func trialOneLine(value any) string {
 	return strings.Join(strings.Fields(fmt.Sprint(value)), " ")
+}
+
+// trialProbeKind labels a probe result so that a probe the node could not run
+// at all never reads like one whose traffic did not flow. The first is a gap in
+// the node image and says nothing about the management port; the second is the
+// signal this trial is after.
+//
+// TRIAL ONLY: remove together with the forced failure of the split DPU
+// management port spec.
+func trialProbeKind(err error) string {
+	switch {
+	case err == nil:
+		return "OK"
+	case errors.Is(err, errUDNProbeToolUnavailable):
+		return "TOOLING-UNAVAILABLE"
+	default:
+		return "TRAFFIC-FAILED"
+	}
 }
 
 func dpuNodeNameForHostNode(hostNodeName string) (string, error) {

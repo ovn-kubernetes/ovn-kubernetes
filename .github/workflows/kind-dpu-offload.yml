@@ -28,6 +28,12 @@ env:
 
 jobs:
   kind-dpu-offload:
+    # TEMPORARY TRIAL NARROWING - DO NOT MERGE.
+    # This job only runs the traffic flow tests; it does not run any e2e spec.
+    # The trial run only cares about the "Network Segmentation Uplink split DPU
+    # management port" spec, which runs in kind-dpu-no-overlay, so this whole
+    # job (cluster deploy included) is dead weight. Revert before merging.
+    if: false
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
@@ -209,11 +215,17 @@ jobs:
         working-directory: ovn-kubernetes
         run: ./contrib/kind-dpu-sim-no-overlay.sh
 
+      # TEMPORARY TRIAL NARROWING - DO NOT MERGE.
+      # The traffic flow tests (and the venv that only exists to serve them)
+      # are unrelated to the Uplink spec under trial. Revert before merging.
       - name: TFT Python venv
+        if: false
         working-directory: dpu-simulator
         run: ./bin/dpu-sim tft venv --config "${DPU_SIM_CONFIG}"
 
+      # TEMPORARY TRIAL NARROWING - DO NOT MERGE. See above.
       - name: Run traffic flow tests
+        if: false
         working-directory: dpu-simulator
         run: ./bin/dpu-sim tft run --check --config "${DPU_SIM_CONFIG}"
 
@@ -241,7 +253,13 @@ jobs:
           export ENABLE_UPLINK=true
           export ENABLE_NO_OVERLAY=true
           export DYNAMIC_UDN_ALLOCATION=true
-          make -C test control-plane WHAT="Uplink"
+          # TEMPORARY TRIAL NARROWING - DO NOT MERGE.
+          # Normally WHAT="Uplink", which selects every Feature:Uplink spec by
+          # label. e2e-cp.sh keeps any text after a "Network Segmentation "
+          # prefix as a narrower Ginkgo focus, so this runs only the one spec
+          # this branch is a negative control for. Restore WHAT="Uplink" before
+          # merging.
+          make -C test control-plane WHAT="Network Segmentation Uplink split DPU management port follows the management port device of an active CUDN to another device"
 
       - name: Export kind logs on failure
         if: failure()
