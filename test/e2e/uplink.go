@@ -41,6 +41,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
@@ -49,6 +50,7 @@ import (
 	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
 	e2eservice "k8s.io/kubernetes/test/e2e/framework/service"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
+	testutils "k8s.io/kubernetes/test/utils"
 	utilnet "k8s.io/utils/net"
 )
 
@@ -1906,12 +1908,12 @@ var _ = ginkgo.Describe("Network Segmentation Uplink split DPU management port",
 			podIPs = append(podIPs, podIP)
 		}
 
-		// TRIAL ONLY: the baseline wait is shortened from uplinkTimeout. The
-		// probe it waits on either works within seconds or not at all, and the
-		// last run spent four minutes proving a probe that could never work.
-		// Put uplinkTimeout back when the forced failure at the end of this
-		// spec is removed.
-		const trialBaselineConnectivityTimeout = 30 * time.Second
+		// TRIAL ONLY: the baseline wait is shortened from uplinkTimeout, though
+		// not as far as the 30s it was: a warm cluster answers the probe in
+		// tens of milliseconds, but the first spec after a deploy took longer
+		// than 30s to answer it at all. Put uplinkTimeout back when the forced
+		// failure at the end of this spec is removed.
+		const trialBaselineConnectivityTimeout = 90 * time.Second
 		// TRIAL ONLY: the final connectivity wait is shortened from uplinkTimeout
 		// so that the trial does not spend minutes proving traffic is broken.
 		// Put uplinkTimeout back when the forced failure at the end of this spec
@@ -1985,22 +1987,25 @@ var _ = ginkgo.Describe("Network Segmentation Uplink split DPU management port",
 		// verdict prints. The sequence runs in a function so that a step whose
 		// successor is meaningless without it returns rather than nests.
 		var (
-			staleDevice    string
-			staleDeviceErr error
-			hideErr        error
-			restartErr     error
-			freshDevice    string
-			redrawWait     time.Duration
-			redrawErr      error
-			restoreErr     error
-			finalWait      time.Duration
-			finalErr       error
+			staleDevice string
+			freshDevice string
+			redrawWait  time.Duration
+			finalWait   time.Duration
+
+			deviceStep  trialStep
+			hideStep    trialStep
+			restartStep trialStep
+			redrawStep  trialStep
+			restoreStep trialStep
+			finalStep   trialStep
 		)
 		func() {
-			staleDevice, staleDeviceErr = mgmtPortDeviceForNetwork(f.ClientSet, node.Name, networkName)
+			var err error
+			staleDevice, err = mgmtPortDeviceForNetwork(f.ClientSet, node.Name, networkName)
+			deviceStep.record(err)
 			framework.Logf("MGMTPORT-E2E: node %s publishes management port device %q for network %s: err=%s",
-				node.Name, staleDevice, networkName, trialOneLine(staleDeviceErr))
-			if staleDeviceErr != nil || staleDevice == "" {
+				node.Name, staleDevice, networkName, trialOneLine(err))
+			if err != nil || staleDevice == "" {
 				return
 			}
 
@@ -2014,10 +2019,11 @@ var _ = ginkgo.Describe("Network Segmentation Uplink split DPU management port",
 
 			ginkgo.By("hiding the reserved device so that plumbing it fails")
 			var hideOutput string
-			hideOutput, hideErr = execNodeCommand(node.Name, "%s", hideMgmtPortDeviceCmd(staleDevice))
+			hideOutput, err = execNodeCommand(node.Name, "%s", hideMgmtPortDeviceCmd(staleDevice))
+			hideStep.record(err)
 			framework.Logf("MGMTPORT-E2E: hiding device %s on node %s: err=%s output=%q",
-				staleDevice, node.Name, trialOneLine(hideErr), hideOutput)
-			if hideErr != nil {
+				staleDevice, node.Name, trialOneLine(err), hideOutput)
+			if err != nil {
 				return
 			}
 			netdevs, netdevsErr := execNodeCommand(node.Name, "ip -o link show")
@@ -2031,14 +2037,15 @@ var _ = ginkgo.Describe("Network Segmentation Uplink split DPU management port",
 			// ovnkube-node asks for every device of the pool, so the replacement
 			// pod is unschedulable for as long as the hidden one is missing.
 			ginkgo.By("restarting ovnkube-node so that the CUDN plumbs the hidden device again")
-			restartErr = restartOVNKubeNodePod(
+			err = restartUplinkOVNKubeNodePod(
 				f.ClientSet,
 				deploymentconfig.Get().OVNKubernetesNamespace(),
 				node.Name,
 			)
+			restartStep.record(err)
 			framework.Logf("MGMTPORT-E2E: restarting ovnkube-node on node %s: err=%s",
-				node.Name, trialOneLine(restartErr))
-			if restartErr != nil {
+				node.Name, trialOneLine(err))
+			if err != nil {
 				return
 			}
 
@@ -2046,7 +2053,7 @@ var _ = ginkgo.Describe("Network Segmentation Uplink split DPU management port",
 			// device that never moves is reported as an inconclusive run instead of
 			// aborting the spec before it reaches its verdict.
 			ginkgo.By("waiting for the host to reserve another device for the management port")
-			redrawWait, redrawErr = trialPollUntilNoError(uplinkTimeout, uplinkPoll, func() error {
+			redrawWait, err = trialPollUntilNoError(uplinkTimeout, uplinkPoll, func() error {
 				device, err := mgmtPortDeviceForNetwork(f.ClientSet, node.Name, networkName)
 				if err != nil {
 					return err
@@ -2058,18 +2065,20 @@ var _ = ginkgo.Describe("Network Segmentation Uplink split DPU management port",
 				freshDevice = device
 				return nil
 			})
+			redrawStep.record(err)
 			framework.Logf("MGMTPORT-E2E: management port device of network %s on node %s went from %q to %q "+
 				"in %s: err=%s",
-				networkName, node.Name, staleDevice, freshDevice, redrawWait, trialOneLine(redrawErr))
+				networkName, node.Name, staleDevice, freshDevice, redrawWait, trialOneLine(err))
 			logMgmtPortAnnotation("after the redraw")
 
 			// TRIAL ONLY: a restore that fails is recorded rather than
 			// asserted. The deferred cleanup repeats it anyway.
 			ginkgo.By("giving the hidden device its name back")
 			var restoreOutput string
-			restoreOutput, restoreErr = execNodeCommand(node.Name, "%s", restoreMgmtPortDeviceCmd(staleDevice))
+			restoreOutput, err = execNodeCommand(node.Name, "%s", restoreMgmtPortDeviceCmd(staleDevice))
+			restoreStep.record(err)
 			framework.Logf("MGMTPORT-E2E: restoring device %s on node %s: err=%s output=%q",
-				staleDevice, node.Name, trialOneLine(restoreErr), restoreOutput)
+				staleDevice, node.Name, trialOneLine(err), restoreOutput)
 
 			logDPUBrIntState("after the redraw to device " + freshDevice)
 
@@ -2077,10 +2086,11 @@ var _ = ginkgo.Describe("Network Segmentation Uplink split DPU management port",
 			// and waited for over trialFinalConnectivityTimeout rather than
 			// uplinkTimeout.
 			ginkgo.By("verifying the node reaches the pod through the representor of the new device")
-			finalWait, finalErr = trialPollUntilNoError(trialFinalConnectivityTimeout, uplinkPoll, mgmtPortProbe)
+			finalWait, err = trialPollUntilNoError(trialFinalConnectivityTimeout, uplinkPoll, mgmtPortProbe)
+			finalStep.record(err)
 			framework.Logf("MGMTPORT-E2E: final connectivity from node %s in VRF %s to pod %s took %s: "+
 				"kind=%s err=%s",
-				node.Name, vrfName, pod.Name, finalWait, trialProbeKind(finalErr), trialOneLine(finalErr))
+				node.Name, vrfName, pod.Name, finalWait, trialProbeKind(err), trialOneLine(err))
 			logPodToMgmtPortProbe("after the redraw")
 			logDPUBrIntState("after the final connectivity check")
 		}()
@@ -2100,31 +2110,30 @@ var _ = ginkgo.Describe("Network Segmentation Uplink split DPU management port",
 		switch {
 		case baselineErr != nil:
 			outcome = "INCONCLUSIVE-NO-BASELINE"
-		case staleDeviceErr != nil || staleDevice == "":
+		case deviceStep.err != nil || staleDevice == "":
 			outcome = "INCONCLUSIVE-NO-DEVICE"
-		case hideErr != nil:
+		case hideStep.err != nil:
 			outcome = "INCONCLUSIVE-FAULT-NOT-INJECTED"
-		case restartErr != nil:
+		case restartStep.err != nil:
 			outcome = "INCONCLUSIVE-RESTART-FAILED"
-		case redrawErr != nil:
+		case redrawStep.err != nil:
 			outcome = "INCONCLUSIVE-DEVICE-NOT-MOVED"
-		case restoreErr != nil:
+		case restoreStep.err != nil:
 			outcome = "INCONCLUSIVE-DEVICE-NOT-RESTORED"
 		case dpuRestarted:
 			outcome = "INCONCLUSIVE-DPU-RESTARTED"
-		case finalErr != nil:
+		case finalStep.err != nil:
 			outcome = "EXPECTED-TRAFFIC-BROKEN"
 		default:
 			outcome = "UNEXPECTED-TRAFFIC-OK"
 		}
 		verdict := fmt.Sprintf("MGMTPORT-E2E-VERDICT: %s node=%s network=%s vrf=%s device=%q->%q "+
 			"dpuOVNKubeContainer=%q->%q baseline=%s/%s device=%s hide=%s restart=%s redraw=%s restore=%s "+
-			"final=%s/%s",
+			"final=%s",
 			outcome, node.Name, networkName, vrfName, staleDevice, freshDevice, dpuOVNKubeID, freshDPUOVNKubeID,
 			trialProbeKind(baselineErr), trialOneLine(baselineErr),
-			trialOneLine(staleDeviceErr), trialOneLine(hideErr), trialOneLine(restartErr),
-			trialOneLine(redrawErr), trialOneLine(restoreErr),
-			trialProbeKind(finalErr), trialOneLine(finalErr))
+			deviceStep, hideStep, restartStep, redrawStep, restoreStep,
+			finalStep.probeString())
 		framework.Logf("%s", verdict)
 
 		// TRIAL ONLY - THIS MUST BE REMOVED BEFORE THIS TEST MERGES.
@@ -3757,6 +3766,55 @@ func execNodeCommand(nodeName, format string, args ...any) (string, error) {
 	return infraprovider.Get().ExecK8NodeCommand(nodeName, []string{"sh", "-c", fmt.Sprintf(format, args...)})
 }
 
+// uplinkOVNKubeNodeSelector selects the ovnkube-node pods of any lane. On a
+// DPU host lane ovnkube-node runs from a DaemonSet of its own, whose pods
+// carry app=ovnkube-node-dpu-host, so the app=ovnkube-node that
+// restartOVNKubeNodePod selects on matches nothing there.
+const uplinkOVNKubeNodeSelector = "app in (ovnkube-node,ovnkube-node-dpu-host)"
+
+// restartUplinkOVNKubeNodePod restarts the ovnkube-node pod of the node and
+// waits for its replacement to run, on a DPU host lane as well as on a regular
+// one. It is restartOVNKubeNodePod over uplinkOVNKubeNodeSelector.
+func restartUplinkOVNKubeNodePod(k8sClient kubernetes.Interface, namespace, nodeName string) error {
+	listOptions := metav1.ListOptions{
+		LabelSelector: uplinkOVNKubeNodeSelector,
+		FieldSelector: "spec.nodeName=" + nodeName,
+	}
+	pods, err := k8sClient.CoreV1().Pods(namespace).List(context.Background(), listOptions)
+	if err != nil {
+		return fmt.Errorf("failed to list the ovnkube-node pods of node %s: %w", nodeName, err)
+	}
+	if len(pods.Items) == 0 {
+		return fmt.Errorf("no pod matching %q runs on node %s", uplinkOVNKubeNodeSelector, nodeName)
+	}
+	for i := range pods.Items {
+		pod := pods.Items[i]
+		if err := deletePodWithWait(context.Background(), k8sClient, &pod); err != nil {
+			return fmt.Errorf("failed to delete the ovnkube-node pod %s of node %s: %w", pod.Name, nodeName, err)
+		}
+	}
+
+	framework.Logf("waiting for node %s to run an ovnkube-node pod again", nodeName)
+	return wait.Poll(uplinkPoll, uplinkTimeout, func() (bool, error) {
+		pods, err := k8sClient.CoreV1().Pods(namespace).List(context.Background(), listOptions)
+		if err != nil {
+			return false, fmt.Errorf("failed to list the ovnkube-node pods of node %s: %w", nodeName, err)
+		}
+		if len(pods.Items) == 0 {
+			framework.Logf("node %s runs no ovnkube-node pod yet", nodeName)
+			return false, nil
+		}
+		for i := range pods.Items {
+			pod := pods.Items[i]
+			if ready, err := testutils.PodRunningReady(&pod); !ready {
+				framework.Logf("ovnkube-node pod %s of node %s is not ready yet: %v", pod.Name, nodeName, err)
+				return false, nil
+			}
+		}
+		return true, nil
+	})
+}
+
 // mgmtPortAnnotationForNode returns the raw k8s.ovn.org/node-mgmt-port
 // annotation of the node, and an error when the node carries none.
 func mgmtPortAnnotationForNode(k8sClient kubernetes.Interface, nodeName string) (string, error) {
@@ -5085,6 +5143,39 @@ func trialPollUntilNoError(timeout, poll time.Duration, check func() error) (tim
 // management port spec.
 func trialOneLine(value any) string {
 	return strings.Join(strings.Fields(fmt.Sprint(value)), " ")
+}
+
+// trialStep records the outcome of one step of a fault sequence, together with
+// whether the step ran at all. A sequence that returns early leaves every step
+// behind it at its zero value, and a bare error prints that as <nil>, which
+// reads like a step that ran and succeeded.
+//
+// TRIAL ONLY: remove together with the forced failure of the split DPU
+// management port spec.
+type trialStep struct {
+	ran bool
+	err error
+}
+
+func (s *trialStep) record(err error) {
+	s.ran, s.err = true, err
+}
+
+// String renders the step for a verdict line, as not-run until it has run.
+func (s trialStep) String() string {
+	if !s.ran {
+		return "not-run"
+	}
+	return trialOneLine(s.err)
+}
+
+// probeString renders a step that ran a connectivity probe, which carries the
+// kind of its failure on top of the failure itself.
+func (s trialStep) probeString() string {
+	if !s.ran {
+		return "not-run"
+	}
+	return trialProbeKind(s.err) + "/" + trialOneLine(s.err)
 }
 
 // trialProbeKind labels a probe result so that a probe the node could not run
