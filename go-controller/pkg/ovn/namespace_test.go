@@ -7,12 +7,15 @@ import (
 	"context"
 	"net"
 	"sync"
+	"testing"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
@@ -25,6 +28,7 @@ import (
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 func newUDNNamespaceWithLabels(namespace string, additionalLabels map[string]string) *corev1.Namespace {
@@ -54,6 +58,81 @@ func getStaleNamespaceAddrSetDbIDs(namespaceName, controller string) *libovsdbop
 
 func buildStaleNamespaceAddressSets(namespace string, ips []string) (*nbdb.AddressSet, *nbdb.AddressSet) {
 	return addressset.GetTestDbAddrSets(getStaleNamespaceAddrSetDbIDs(namespace, "default-network-controller"), ips)
+}
+
+func TestNamespacePortGroupLifecycle(t *testing.T) {
+	g := gomega.NewWithT(t)
+	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+	t.Cleanup(func() { _ = config.PrepareTestConfig() })
+	config.OVNKubernetesFeature.EnableEgressFirewall = true
+	udn, err := util.ParseNADInfo(ovntest.GenerateNAD("blue", "nad", "namespace",
+		ovntypes.Layer3Topology, "100.128.0.0/16", ovntypes.NetworkRolePrimary))
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	for _, netInfo := range []util.NetInfo{&util.DefaultNetInfo{}, udn} {
+		for _, beforeBuild := range []bool{true, false} {
+			phase := "delete-before-transaction"
+			if beforeBuild {
+				phase = "delete-before-operation-build"
+			}
+			t.Run(netInfo.GetNetworkName()+"/"+phase, func(t *testing.T) {
+				g := gomega.NewWithT(t)
+				nbClient, cleanup, err := libovsdb.NewNBTestHarness(libovsdb.TestSetup{}, nil)
+				g.Expect(err).NotTo(gomega.HaveOccurred())
+				t.Cleanup(cleanup.Cleanup)
+				bnc := &BaseNetworkController{
+					ReconcilableNetInfo: util.NewReconcilableNetInfo(netInfo),
+					controllerName:      getNetworkControllerName(netInfo.GetNetworkName()),
+					namespaces:          map[string]*namespaceInfo{},
+				}
+				bnc.nbClient = nbClient
+				namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "namespace"}}
+				_, unlock, err := bnc.ensureNamespaceLockedCommon(namespace.Name, false, namespace,
+					func(*namespaceInfo, *corev1.Namespace) error { return nil })
+				g.Expect(err).NotTo(gomega.HaveOccurred())
+				unlock()
+
+				deleteNamespace := func() {
+					nsInfo, err := bnc.deleteNamespaceLocked(namespace.Name)
+					g.Expect(err).NotTo(gomega.HaveOccurred())
+					g.Expect(nsInfo).NotTo(gomega.BeNil())
+					nsInfo.Unlock()
+					g.Eventually(func() error {
+						_, err := libovsdbops.GetPortGroup(nbClient,
+							&nbdb.PortGroup{Name: bnc.getNamespacePortGroupName(namespace.Name)})
+						return err
+					}).Should(gomega.MatchError(libovsdbclient.ErrNotFound))
+				}
+				if beforeBuild {
+					deleteNamespace()
+				}
+				port := &nbdb.LogicalSwitchPort{Name: "pod", UUID: "new-pod-port"}
+				sw := &nbdb.LogicalSwitch{Name: "node", Ports: []string{port.UUID}}
+				ops, err := nbClient.Create(port)
+				g.Expect(err).NotTo(gomega.HaveOccurred())
+				switchOps, err := nbClient.Create(sw)
+				g.Expect(err).NotTo(gomega.HaveOccurred())
+				ops = append(ops, switchOps...)
+				ops, err = bnc.addPodToNamespacePortGroupOps(ops, namespace.Name, port.UUID)
+				if beforeBuild {
+					g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring(libovsdbclient.ErrNotFound.Error())))
+				} else {
+					g.Expect(err).NotTo(gomega.HaveOccurred())
+					deleteNamespace()
+					_, err = libovsdbops.TransactAndCheck(nbClient, ops)
+					g.Expect(err).To(gomega.HaveOccurred())
+				}
+
+				// Pod cleanup must tolerate the already-deleted dependency, while
+				// neither the pod port nor an orphan namespace group may remain.
+				ops, err = bnc.deletePodFromNamespace(namespace.Name, port.UUID)
+				g.Expect(err).NotTo(gomega.HaveOccurred())
+				_, err = libovsdbops.TransactAndCheck(nbClient, ops)
+				g.Expect(err).NotTo(gomega.HaveOccurred())
+				g.Eventually(nbClient).Should(libovsdb.HaveData())
+			})
+		}
+	}
 }
 
 var _ = ginkgo.Describe("OVN Namespace Operations", func() {
@@ -145,7 +224,7 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 			)
 			podMAC := ovntest.MustParseMAC(tP.podMAC)
 			podIPNets := []*net.IPNet{ovntest.MustParseIPNet(tP.podIP + "/24")}
-			fakeOvn.controller.logicalPortCache.add(tPod, tP.nodeName, ovntypes.DefaultNetworkName, fakeUUID, podMAC, podIPNets)
+			fakeOvn.controller.logicalPortCache.add(tPod, tP.nodeName, ovntypes.DefaultNetworkName, ovntypes.DefaultNetworkName, fakeUUID, podMAC, podIPNets)
 			err := fakeOvn.controller.WatchNamespaces()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
