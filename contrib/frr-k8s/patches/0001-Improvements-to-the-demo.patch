@@ -1,6 +1,6 @@
 diff --git a/hack/demo/configs/main.go b/hack/demo/configs/main.go
 new file mode 100644
-index 0000000..1d268dd
+index 0000000..c2fe76c
 --- /dev/null
 +++ b/hack/demo/configs/main.go
 @@ -0,0 +1,47 @@
@@ -127,10 +127,10 @@ index b57553d..0000000
 -          allowed:
 -            mode: all
 diff --git a/hack/demo/demo.sh b/hack/demo/demo.sh
-index e5e7887..4be6293 100755
+index e5e7887..270d662 100755
 --- a/hack/demo/demo.sh
 +++ b/hack/demo/demo.sh
-@@ -1,32 +1,175 @@
+@@ -1,32 +1,179 @@
  #!/bin/bash
  set -x
  
@@ -146,6 +146,10 @@ index e5e7887..4be6293 100755
 +function podman_get_br_net_by_subnet() {
 +    podman network ls -f 'driver=bridge' -q | xargs podman network inspect | jq -r 'try .[] | select(any(.subnets[]; .subnet=="'"$1"'")) | .name'
 +}
++
++# Name of the external FRR container, overridable so that multiple demo
++# instances can coexist on one host.
++FRR_CONTAINER_NAME=${FRR_CONTAINER_NAME:-frr}
 +
 +CLI=docker
 +CLI_BR_NET_BY_SUBNET_FN="docker_get_br_net_by_subnet"
@@ -271,12 +275,12 @@ index e5e7887..4be6293 100755
 -FRR_IP=$(docker inspect -f "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}" frr)
 -
 -echo "external FRR IP is $FRR_IP"
-+$CLI rm -f frr
-+$CLI run -d --privileged --network $NETWORK --rm --ulimit core=-1 --name frr --volume "$FRR_CONFIG":/etc/frr quay.io/frrouting/frr:10.4.3
++$CLI rm -f "$FRR_CONTAINER_NAME"
++$CLI run -d --privileged --network $NETWORK --rm --ulimit core=-1 --name "$FRR_CONTAINER_NAME" --volume "$FRR_CONFIG":/etc/frr quay.io/frrouting/frr:10.4.3
  
 +if [ "$NETWORK" != "host" ]; then
-+    FRR_IP_V4=$($CLI inspect -f "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}" frr)
-+    FRR_IP_V6=$($CLI inspect -f "{{range .NetworkSettings.Networks}}{{.GlobalIPv6Address}}{{end}}" frr)
++    FRR_IP_V4=$($CLI inspect -f "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}" "$FRR_CONTAINER_NAME")
++    FRR_IP_V6=$($CLI inspect -f "{{range .NetworkSettings.Networks}}{{.GlobalIPv6Address}}{{end}}" "$FRR_CONTAINER_NAME")
 +else
 +    FRR_IP_V4=$GW_IP_V4
 +    FRR_IP_V6=$GW_IP_V6
@@ -285,11 +289,9 @@ index e5e7887..4be6293 100755
 -	rm $i
 +    rm $i
  done
--
-+
+ 
  cp configs/templates/*.yaml configs/
--
-+
+ 
 +FRR_IP=$FRR_IP_V4
 +if [ -z "$FRR_IP" ]; then
 +    FRR_IP=$FRR_IP_V6
@@ -404,7 +406,7 @@ index e78bf62..f4fb33d 100644
 +{{- end }}
 +{{- end }}
 diff --git a/hack/demo/frr/main.go b/hack/demo/frr/main.go
-index 5038c8a..08b73e4 100644
+index 5038c8a..4bd83ff 100644
 --- a/hack/demo/frr/main.go
 +++ b/hack/demo/frr/main.go
 @@ -4,23 +4,39 @@ package main

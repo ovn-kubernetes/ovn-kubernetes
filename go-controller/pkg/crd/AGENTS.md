@@ -90,11 +90,12 @@ guides. Project-specific additions:
   `<name>-api-spec.md` file documenting its spec/status fields. New CRDs
   must also be added to `mkdocs.yml` under "API Reference Guide" and to
   `docs/api-reference/introduction.md`.
-- **Validation tests** — CRD schema changes must include validation tests
-  that verify field constraints (CEL rules, enums, required fields, max items,
-  etc.) are enforced by the API server. Prefer using
-  [`envtest`](https://pkg.go.dev/sigs.k8s.io/controller-runtime/pkg/envtest)
-  which spins up a real API server and etcd locally, giving accurate CRD
-  validation without a full cluster. Existing e2e tests in `test/e2e/` can
-  also be used but `envtest` is preferred for new validation tests going
-  forward.
+- **Validation tests** — any new or changed CRD API field must add or update
+  CRD integration tests in [`test/crd-integration/`](../../../test/crd-integration/),
+  which verify field constraints (defaulting, CEL rules, enums, required fields,
+  max items, admission, etc.) are enforced by the API server. These run against
+  [`envtest`](https://pkg.go.dev/sigs.k8s.io/controller-runtime/pkg/envtest) —
+  a real API server and etcd started locally, giving accurate CRD validation
+  without a full cluster. Run them with `make test-crd` from `test/`. Prefer
+  these over e2e tests in `test/e2e/` for schema validation that needs no live
+  pod networking.

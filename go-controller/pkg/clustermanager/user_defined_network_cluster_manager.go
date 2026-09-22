@@ -186,7 +186,7 @@ func (sncm *userDefinedNetworkClusterManager) newDummyNetworkController(topoType
 		sncm.nodeReconciler,
 	)
 	if nc.hasNodeAllocation() {
-		nc.nodeAllocator = node.NewNodeAllocator(ovntypes.InvalidID, nc.GetNetInfo(), nc.watchFactory.NodeCoreInformer().Lister(), nc.kube, nil)
+		nc.nodeAllocator = node.NewNodeAllocator(ovntypes.InvalidID, nc.GetNetInfo(), nc.watchFactory.NodeCoreInformer().Lister(), nc.kube, nc.nodeClient, nil)
 	}
 	return nc, nil
 }

@@ -11,6 +11,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
@@ -141,4 +142,70 @@ func TestUpdatePodWithAllocationOrRollback(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestUpdatePodWaitsForInformerBeforeRetry(t *testing.T) {
+	podListerMock := &v1mocks.PodLister{}
+	podNamespaceLister := &v1mocks.PodNamespaceLister{}
+	kubeMock := &kubemocks.Interface{}
+	podListerMock.On("Pods", "test-ns").Return(podNamespaceLister)
+
+	podV1 := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Namespace:       "test-ns",
+		Name:            "test-pod",
+		ResourceVersion: "1",
+	}}
+	podV2 := podV1.DeepCopy()
+	podV2.ResourceVersion = "2"
+	podNamespaceLister.On("Get", "test-pod").Return(podV1, nil).Once()
+	podNamespaceLister.On("Get", "test-pod").Return(podV2, nil).Once()
+
+	conflictErr := apierrors.NewConflict(
+		schema.GroupResource{Resource: "pods"},
+		podV1.Name,
+		errors.New("annotation changed"),
+	)
+	kubeMock.On("PatchPodStatusAnnotations", podV1, mock.AnythingOfType("*v1.Pod")).
+		Return(conflictErr).Once()
+	kubeMock.On("PatchPodStatusAnnotations", podV2, mock.AnythingOfType("*v1.Pod")).
+		Return(nil).Once()
+
+	allocate := func(pod *corev1.Pod) (*corev1.Pod, func(), error) {
+		return pod, nil, nil
+	}
+	err := UpdatePodWithRetryOrRollback(podListerMock, kubeMock, podV1, allocate)
+	if err != nil {
+		t.Fatalf("expected cache-advanced retry to succeed: %v", err)
+	}
+	kubeMock.AssertExpectations(t)
+}
+
+func TestUpdatePodDoesNotRepeatPatchFromStaleInformer(t *testing.T) {
+	podListerMock := &v1mocks.PodLister{}
+	podNamespaceLister := &v1mocks.PodNamespaceLister{}
+	kubeMock := &kubemocks.Interface{}
+	podListerMock.On("Pods", "test-ns").Return(podNamespaceLister)
+
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Namespace:       "test-ns",
+		Name:            "test-pod",
+		ResourceVersion: "1",
+	}}
+	podNamespaceLister.On("Get", "test-pod").Return(pod, nil)
+	conflictErr := apierrors.NewConflict(
+		schema.GroupResource{Resource: "pods"},
+		pod.Name,
+		errors.New("annotation changed"),
+	)
+	kubeMock.On("PatchPodStatusAnnotations", pod, mock.AnythingOfType("*v1.Pod")).
+		Return(conflictErr).Once()
+
+	allocate := func(pod *corev1.Pod) (*corev1.Pod, func(), error) {
+		return pod, nil, nil
+	}
+	err := UpdatePodWithRetryOrRollback(podListerMock, kubeMock, pod, allocate)
+	if !apierrors.IsConflict(err) {
+		t.Fatalf("expected the original conflict, got %v", err)
+	}
+	kubeMock.AssertNumberOfCalls(t, "PatchPodStatusAnnotations", 1)
 }

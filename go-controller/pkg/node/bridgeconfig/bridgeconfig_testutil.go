@@ -13,7 +13,10 @@ import (
 
 	net2 "k8s.io/utils/net"
 
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	nodetypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
@@ -30,6 +33,18 @@ func TestDefaultBridgeConfig() *BridgeConfiguration {
 			types.DefaultNetworkName: defaultNetConfig,
 		},
 	}
+}
+
+// TestDefaultBridgeConfigWithOVSClient returns a default bridge test
+// configuration backed by the provided OVSDB client and gateway addresses.
+func TestDefaultBridgeConfigWithOVSClient(ovsClient libovsdbclient.Client, ips []*net.IPNet, mac net.HardwareAddr) *BridgeConfiguration {
+	bridge := TestDefaultBridgeConfig()
+	bridge.ovsClient = ovsClient
+	bridge.ips = ips
+	bridge.macAddress = mac
+	bridge.ofPortHost = nodetypes.OvsLocalPort
+	bridge.netConfig[types.DefaultNetworkName].MasqCTMark = nodetypes.CtMarkOVN
+	return bridge
 }
 
 func TestBridgeConfig(brName string) *BridgeConfiguration {

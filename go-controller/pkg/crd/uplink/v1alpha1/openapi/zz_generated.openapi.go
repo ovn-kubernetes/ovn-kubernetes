@@ -690,7 +690,7 @@ func schema_pkg_crd_uplink_v1alpha1_UplinkStateStatus(ref common.ReferenceCallba
 							},
 						},
 						SchemaProps: spec.SchemaProps{
-							Description: "DefaultGateways are default route next-hop IPs discovered for the selected host interface.",
+							Description: "DefaultGateways are distinct next-hop IPs from the selected host interface's lowest-metric default routes per IP family. Among those next hops only the ones with the highest weight are published; weights themselves are not represented, so lighter next hops of an unequal-weight multipath route are omitted rather than programmed as equal-cost paths. The limit is 256 total across both IP families per node and Uplink; it is an API bound, not a guarantee of dataplane or hardware offload capacity.",
 							Type:        []string{"array"},
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{

@@ -381,12 +381,24 @@ moving the common gateway fields under `ovsBridge`.
   IDs or host PCI addresses.
 * `ipAddresses`: host-side shared gateway IP addresses discovered from the selected host interface.
 * `defaultGateways`: default route next-hop IPs discovered from host routing for the selected host interface, when
-  present. This maps to `next-hops` in the existing `l3-gateway-config` shape when internal compatibility requires it. If
-  no default route exists, this field can be empty; egress can still work for destinations covered by BGP-learned routes
-  imported by OVN-Kubernetes. When `RouteAdvertisements targetVRF: auto` resolves the CUDN to per-CUDN VRF-Lite
-  isolation, OVN-Kubernetes does not install the discovered default gateway as the CUDN VRF default route; BGP-imported
-  routes drive external reachability for that isolated VRF. For `targetVRF: default` or no matching `RouteAdvertisements`,
-  normal shared gateway default-route behavior remains.
+  present. Discovery reads the host interface's routes from the routing table they live in: the VRF's table when the
+  interface is enslaved to a VRF, the main table otherwise. This maps to `next-hops` in the existing `l3-gateway-config`
+  shape when internal compatibility requires it. If no default route exists, this field can be empty; the Uplink still
+  resolves, no condition degrades, and egress can still work for destinations covered by BGP-learned routes imported by
+  OVN-Kubernetes. Platform monitoring can alert on an empty field where a default gateway is expected. Host route
+  changes generate netlink events, but those events do not currently enqueue Uplink discovery. Discovery therefore
+  polls the host routes at a fixed interval while any addressed IP family lacks a default gateway, publishing newly
+  discovered gateways for use as default route next hops on the OVN gateway router. With VRF-Lite (`targetVRF: auto`),
+  the selected host interface's existing static and DHCP routes, including defaults, are preserved in the CUDN VRF
+  and discovery reads them there. Discovery selects the lowest-metric
+  defaults per IP family through the selected interface and, among their next hops, keeps only the ones with the
+  highest weight, since neither `UplinkState` nor OVN static routes can express weights. It publishes the distinct
+  gateways in deterministic order, up to 256 total across both families per node and Uplink.
+  More than 256 fails discovery with `GatewayInfoUnavailable` and retries, rather than publishing a subset. The API
+  bound accommodates 128 next hops per family; see the [feature documentation](../features/user-defined-networks/uplinks.md)
+  for its rationale. Polling stops once each addressed family has a gateway; subsequent route changes need another
+  reconciliation trigger until
+  [event-driven discovery](https://github.com/ovn-kubernetes/ovn-kubernetes/issues/6784) is implemented.
 
 In DPU deployments, the DPU-Host initializes the top-level status with host-side L3 data. The DPU side patches DPU-local
 fields on the same object, including `ovsBridge.name` and DPU-side validation state.
@@ -399,8 +411,8 @@ stored per `UplinkState`. `UplinkState` stores only reusable per-node host gatew
 
 `UplinkState.status.conditions` reports independent node-local conditions, and each condition has a single writer.
 The Uplink discovery reconciler owns `Resolved` (published by the DPU side in split DPU mode), the DPU-Host discovery
-reconciler owns `HostDataReady` (split DPU mode only), a node-level Uplink gateway coordinator owns `GatewayReady`, and
-its DPU-Host counterpart owns `HostGatewayReady` (split DPU mode only);
+reconciler owns `HostDataReady` (split DPU mode only), the node-level UplinkState gateway status controller owns
+`GatewayReady`, and its DPU-Host counterpart owns `HostGatewayReady` (split DPU mode only);
 a gateway programming failure does not overwrite successful Uplink resolution. Individual CUDN gateway reconcilers do
 not write `GatewayReady` directly.
 
@@ -435,44 +447,43 @@ otherwise. Full mode does not publish this condition.
 
 In split DPU mode the `HostGatewayReady` condition reports host-side gateway programming on the DPU-Host, mirroring
 `GatewayReady` on the DPU: the attachment of the selected host interface to the host-side CUDN VRF, including the
-migration of its pre-existing routes into the VRF table, for the complete set of CUDNs active on the Uplink.
-`HostGatewayReady=True` with reason `GatewayConfigured` once host-side programming succeeded for every active CUDN, and
-`HostGatewayReady=False` with the same reasons `GatewayReady` uses (e.g. `UplinkVRFAttachmentFailed` when the interface
-cannot be attached or its routes cannot be migrated) otherwise. Full mode does not publish this condition: the single
-node-level coordinator reports everything through `GatewayReady`.
+migration of its pre-existing routes into the VRF table. `HostGatewayReady=True` with reason `GatewayConfigured` once
+the reported host-side programming has succeeded, and `HostGatewayReady=False` with the same reasons `GatewayReady`
+uses (e.g. `UplinkVRFAttachmentFailed` when the interface cannot be attached or its routes cannot be migrated)
+otherwise. Full mode does not publish this condition: the node reports everything through `GatewayReady`.
 
-The `GatewayReady` condition reports aggregate gateway programming for the complete set of CUDNs active on the resolved
-Uplink path on this node. The node-level coordinator is the sole writer of this condition and serializes reconciliation
-of the shared gateway interface, bridge mappings, and OpenFlow state for the aggregate desired configuration.
+The `GatewayReady` condition reports aggregate results from CUDN gateway programming on the resolved Uplink path on
+this node. The node-level status controller is the sole writer of this condition and batches result updates. Each CUDN
+controller owns and serializes its own gateway reconciliation.
 
 When a CUDN becomes active on an Uplink that is already in use, OVN-Kubernetes reuses the existing OVS bridge and gateway
 interface. It adds that CUDN's bridge mapping, waits for `ovn-controller` to realize the corresponding physical patch
-port, adds the per-network bridge configuration, and reconciles the required gateway OpenFlow. The coordinator must not
-interpret a previous aggregate `GatewayReady=True` as covering the newly active CUDN. It first reports
-`GatewayReady=False` with reason `GatewayConfigurationPending` for the changed active set and reports `True` again only
-after all required programming for the complete new set has succeeded.
+port, adds the per-network bridge configuration, and reconciles the required gateway OpenFlow. With no reported CUDNs,
+`GatewayReady=True` with reason `NoActiveCUDNs`; cluster-manager treats that reason as not ready for an active CUDN until
+its first result arrives. If other CUDNs already report success on the same Uplink and node, adding another CUDN does
+not temporarily make the shared condition false. Precise in-progress readiness for each CUDN would require per-CUDN,
+per-node status.
 
 The condition uses the following reasons:
 
 * `GatewayConfigured`: required bridge mappings, physical patch ports, per-network bridge configuration, OpenFlow, and
-  VRF attachment programming succeeded for every active CUDN using this Uplink on the node.
-* `GatewayConfigurationPending`: the active CUDN set changed and its complete desired gateway configuration has not yet
-  converged.
+  VRF attachment programming succeeded for the CUDNs that reported against the current UplinkState inputs.
+* `NoActiveCUDNs`: no active CUDN gateway has reported programming on this Uplink and node.
 * `UplinkVRFAttachmentFailed`: OVN-Kubernetes could not attach or detach the resolved gateway interface for the effective
   routing domain required by the active CUDN set.
-* `UplinkBridgeMappingFailed`: OVN-Kubernetes could not reconcile the complete desired CUDN bridge-mapping set or discover
-  a corresponding physical patch port on the resolved OVS bridge.
+* `UplinkBridgeMappingFailed`: OVN-Kubernetes could not reconcile a CUDN bridge mapping or discover a corresponding
+  physical patch port on the resolved OVS bridge.
 * `UplinkGatewayProgrammingFailed`: OVN-Kubernetes could not reconcile the per-network bridge configuration or gateway
-  OpenFlow for the complete active CUDN set.
+  OpenFlow for a reported active CUDN.
 * `UplinkConfigurationConflict`: multiple CUDNs active on this node require incompatible use of the same resolved
   gateway interface, such as attaching it to distinct per-CUDN VRFs.
 
-For pending or failure states, `GatewayReady=False` while `Resolved` can remain `True`. Its message contains the number of
-affected active CUDNs and a bounded sample of CUDN names and underlying reasons; full reconciliation errors remain
-available in node logs. Because the programmed gateway is shared state, cluster-manager maps the aggregate non-ready
-state of `GatewayReady`, and of `HostGatewayReady` where present, into `UplinksReady=False` for every active CUDN using
-that Uplink/node pair. When the complete desired configuration
-succeeds again, `GatewayReady=True` with reason `GatewayConfigured`. Dynamic CUDNs using the same Uplink on disjoint nodes
+For failure states, `GatewayReady=False` while `Resolved` can remain `True`. Its message contains the number of affected
+reported CUDNs and a bounded sample of CUDN names and underlying reasons; full reconciliation errors remain available
+in node logs. Because the programmed gateway is shared state, cluster-manager maps the aggregate non-ready state of
+`GatewayReady`, and of `HostGatewayReady` where present, into `UplinksReady=False` for every active CUDN using that
+Uplink/node pair. When the reported configuration succeeds again, `GatewayReady=True` with reason
+`GatewayConfigured`. Dynamic CUDNs using the same Uplink on disjoint nodes
 have independent `GatewayReady` conditions in their node-scoped `UplinkState` objects.
 
 VLAN configuration is not part of the `Uplink` or `UplinkState` API. When the selected host interface in Full mode, or
@@ -534,12 +545,12 @@ spec:
   `UplinkNotFoundForNode`.
 * If the matching `UplinkState` does not have `Resolved=True` for a node where the CUDN/UDN is active, set reason
   `UplinkNotResolvedForNode`.
-* If the active CUDN set changed and aggregate gateway programming has not yet converged, set reason
-  `GatewayConfigurationPending`.
+* If no active CUDN gateway has reported programming on an Uplink and node, publish `GatewayReady=True` with reason
+  `NoActiveCUDNs`; an active CUDN treats that reason as not ready until its first result arrives.
 * If OVN-Kubernetes cannot attach or detach the selected host interface according to the CUDN's effective routing domain,
   set reason `UplinkVRFAttachmentFailed`.
-* If OVN-Kubernetes cannot configure the complete desired bridge-mapping set or discover a corresponding physical patch
-  port on the resolved OVS bridge, set reason `UplinkBridgeMappingFailed`.
+* If OVN-Kubernetes cannot configure a required bridge mapping or discover a corresponding physical patch port on the
+  resolved OVS bridge, set reason `UplinkBridgeMappingFailed`.
 * If OVN-Kubernetes cannot reconcile the required per-network bridge configuration or gateway OpenFlow, set reason
   `UplinkGatewayProgrammingFailed`.
 * For Dynamic UDN, if a node is selected by both the CUDN and `Uplink` but the UDN is not active on that node,
@@ -551,12 +562,13 @@ These reasons are surfaced through a dedicated CUDN condition rather than overlo
 
 * `type: UplinksReady`
 * `status: True` when the CUDN does not set `spec.uplinks`, or when all required uplinks for every active node for the
-  CUDN/UDN have usable referenced Uplink state and the node-level aggregate gateway programming includes this CUDN and
-  has succeeded.
-* `status: False` when one or more required uplinks are missing, unsupported, unresolved on an active node, or cannot be
-  programmed for the complete active CUDN set. The condition uses the reasons listed above, including
+  CUDN/UDN have usable referenced Uplink state and the node-level aggregate gateway condition reports success rather
+  than `NoActiveCUDNs`.
+* `status: False` when one or more required uplinks are missing, unsupported, unresolved on an active node, have no
+  reported active CUDN gateways, or have a reported programming failure. The condition uses the reasons listed above,
+  including
   `UplinkUnsupportedGatewayMode`, `UplinkUnsupportedTransport`, `UplinkNotFound`, `UplinkOverlapOnNode`,
-  `UplinkNotFoundForNode`, `UplinkNotResolvedForNode`, `GatewayConfigurationPending`,
+  `UplinkNotFoundForNode`, `UplinkNotResolvedForNode`, `NoActiveCUDNs`,
   `UplinkVRFAttachmentFailed`, `UplinkBridgeMappingFailed`, `UplinkGatewayProgrammingFailed`, and
   `UplinkConfigurationConflict`.
 
@@ -647,13 +659,11 @@ CUDN and node:
 
 This decision is level driven. Changes to `RouteAdvertisements`, selected FRR configuration, CUDN labels, node labels, or
 network activation can move an Uplink-backed CUDN between the default routing domain and per-CUDN VRF-Lite isolation.
-OVN-Kubernetes owns only the VRF membership it creates for the selected Uplink interface; it does not create routes,
-delete admin-owned routes, or move bridge/IP/MTU/VLAN configuration owned by the administrator.
+OVN-Kubernetes manages the selected Uplink interface's VRF membership and preserves its static and DHCP routes across
+VRF attachment. Bridge, IP, MTU, and VLAN configuration remain the administrator's responsibility.
 
-For per-CUDN VRF-Lite isolation, OVN-Kubernetes omits or removes the normal shared gateway default route from the UDN VRF
-so egress follows BGP-imported routes instead of falling back to a default route from another routing domain. For the
-default routing domain, or when no matching `RouteAdvertisements` selects the CUDN, the UDN VRF keeps the normal shared
-gateway default route and service route behavior.
+For VRF-Lite, existing default routes through the selected host interface are preserved in the CUDN VRF. The OVN
+gateway router uses the discovered default gateways alongside imported BGP routes for pod egress.
 
 Expected usage with VRF-Lite + shared gateway:
 
@@ -685,10 +695,10 @@ then reflects those routes into the CUDN gateway router. This DPU-local VRF is s
 nftables state. For `targetVRF: default` or CUDNs without matching `RouteAdvertisements`, the DPU bridge `LOCAL` interface
 remains in the default VRF and no DPU-local CUDN route-import VRF is created for that CUDN.
 
-In DPU deployments, FRR peering and route import happen on the DPU: BGP-learned routes are not propagated to the
-DPU-Host's CUDN VRF. Host-originated traffic toward the Uplink therefore requires a default gateway route on the
-selected host interface (preserved into the CUDN VRF across enslavement) or a host-side FRR setup; pod traffic toward
-the Uplink is unaffected, since its routes are imported into the gateway router on the DPU.
+In DPU deployments, FRR peering and route import happen on the DPU. Host traffic to off-subnet destinations needs a
+suitable route in the host CUDN VRF, such as a preserved static or default route. A host BGP speaker can also learn
+routes from FRR on the DPU; configuring it is outside this proposal. Pod traffic follows the discovered default
+gateways and imported BGP routes in the OVN gateway router on the DPU.
 
 The DPU-local FRR peering IP is not stored in `UplinkState`. For `targetVRF: auto`, it is expected to be configured on the
 resolved OVS bridge's `LOCAL` interface as local DPU state. OVNKube on the DPU enslaves that `LOCAL` interface to the
@@ -755,38 +765,35 @@ cover interface, address, route, and link-state changes; OVSDB or equivalent OVS
 VLAN tag, and bridge-layout changes. Normal retry handling remains required for transient failures, with a periodic
 resync as a fallback so admin-side network changes are eventually reflected even if an event is missed.
 
-#### Node Uplink gateway coordination (OVNKube-Node Full mode)
+#### Node Uplink gateway reconciliation (OVNKube-Node Full mode)
 
-For each local Uplink, a node-level gateway coordinator builds one desired configuration from every CUDN with
-`spec.uplinks` that is active on the node. Individual CUDN gateway reconcilers contribute their per-network desired state
-and request reconciliation, but do not independently write the shared `GatewayReady` condition. The coordinator consumes
-the referenced `UplinkState`, serializes updates to shared bridge state, and performs the following reconciliation:
+Each active CUDN gateway controller watches its referenced local `UplinkState` and owns its dataplane reconciliation.
+The controller serializes UplinkState events, RouteAdvertisements updates, initial setup, and cleanup for that CUDN.
+Shared components such as bridge and OpenFlow configuration provide their own cross-CUDN synchronization.
 
-1. Require the referenced local `UplinkState` to have `Resolved=True` and use its resolved host interface, bridge,
-   and gateway data.
-2. Determine every active CUDN's effective routing domain from matching `RouteAdvertisements` and detect incompatible use
-   of the shared gateway interface before applying new configuration.
-3. If the active set resolves to a per-CUDN VRF, attach the selected host interface to that CUDN VRF. If the active set
-   resolves to the default VRF, remove any OVN-Kubernetes-owned CUDN VRF attachment for that interface and leave it in the
-   default VRF. OVN-Kubernetes does not create/delete the bridge, remove bridge ports, move IP addresses, or alter
-   admin-owned VLAN/MTU/route configuration.
-4. Reconcile the complete set of OVS bridge mappings using each active CUDN's normalized network name and the resolved OVS
-   bridge name. A newly active CUDN adds another mapping to the existing bridge; it does not reprovision the bridge.
-5. Wait for `ovn-controller` to create the physical patch port corresponding to each active CUDN's OVN localnet topology,
-   then add that CUDN's per-network bridge configuration. The control-plane CUDN controller creates the gateway router and
-   external-switch topology; the node-side coordinator verifies its local physical realization.
-6. Reconcile OpenFlow on the resolved bridge for the complete active set, including per-UDN service, masquerade, and
-   return-path flows for services reachable through that Uplink.
-7. Configure each OVN gateway router external port to use the discovered VLAN tag when the host-facing gateway interface
-   is tagged in OVS.
-8. Set `GatewayReady=True` with reason `GatewayConfigured` only after every active CUDN's bridge mapping, physical patch
-   port, per-network bridge configuration, required VRF attachment, and gateway OpenFlow have converged. Otherwise report
-   the aggregate pending, failure, or conflict reason without changing `Resolved`.
+For each reconciliation, the CUDN gateway controller:
 
-The node-level gateway coordinator does not own `Resolved` or the `UplinkState` lifecycle. Changes to `Resolved`, CUDN
-activity, RouteAdvertisements, or a network's advertised VRF requeue the affected Uplink's aggregate gateway
-reconciliation. Those changes can require attaching or detaching the selected Uplink interface, adding or removing the
-normal default route from the UDN VRF, updating service route steering, and refreshing route-import filtering.
+1. Reads one `UplinkState` snapshot, requires `Resolved=True`, and resolves its host interface, bridge, MAC, addresses,
+   gateways, and host function.
+2. Compares those consumed inputs with the successfully programmed fingerprint. An unchanged fingerprint preserves the
+   dataplane; a changed or invalid configuration withdraws the old programming before replacement or retry.
+3. Attaches the gateway interface to the CUDN VRF when required, or leaves it in the default VRF for shared/default
+   routing-domain use. OVN-Kubernetes does not create/delete the admin bridge, remove its admin ports, move its IP
+   addresses, or alter admin-owned VLAN/MTU configuration.
+4. Adds the CUDN bridge mapping, waits for its physical patch port, adds its per-network bridge configuration, and
+   reconciles gateway OpenFlow and route-advertisement-dependent state.
+5. Reports one success or failure result with the UplinkState UID observed before the operation and the input
+   fingerprint on which the operation was based.
+
+The UplinkState gateway status controller is the sole writer of `GatewayReady` (or `HostGatewayReady` on the DPU-Host).
+It accepts a result only if the current informer object has the reported UID and the same discovery-owned inputs, then
+batches accepted per-CUDN results into the shared condition. This prevents an operation for a deleted, recreated, or
+superseded UplinkState from publishing a late result. It does not publish an intermediate Pending condition.
+
+The status controller does not own `Resolved` or serialize dataplane operations. UplinkState changes requeue each
+affected CUDN directly; RouteAdvertisements changes requeue that CUDN's gateway reconciliation. Those changes can
+require attaching or detaching the selected Uplink interface, adding or removing the normal default route from the UDN
+VRF, updating service route steering, and refreshing route-import filtering.
 
 #### DPU reconciliation split
 
@@ -1012,11 +1019,16 @@ path.
   `UplinkState` reports `Resolved=False`. Retries continue while unresolved: discovery reports the failure in the
   `UplinkState` and returns an error, and its controller retries with rate-limited backoff and unbounded attempts,
   re-polling admin-owned host and OVS state, which generates no Kubernetes watch events. Once a side reports success,
-  its published data is refreshed on the next Kubernetes-triggered reconcile.
+  its published data is refreshed on the next Kubernetes-triggered reconcile, with one exception: while the discovered
+  `status.defaultGateways` is missing a default gateway for one of the host interface's address families, the
+  netlink-discovering side publishes success and schedules its own delayed rediscovery, so a default route added later
+  on the host is picked up without a Kubernetes event.
 * Per-node failures are reported on the matching `UplinkState`; `Uplink.status.conditions` reports aggregate health only.
 * If an admin deletes or changes the OVS bridge, OVN-Kubernetes does not recreate or repair the bridge. While discovery
   is unresolved, it updates status and retries validation. A converged `Resolved=True` status is not re-validated until
-  the next Kubernetes event or ovnkube-node restart triggers a reconcile.
+  the next Kubernetes event or ovnkube-node restart triggers a reconcile, except while `status.defaultGateways` is
+  missing a default gateway for one of the host interface's address families, when discovery keeps re-polling the host
+  routes on a fixed interval.
 * If an admin requests deletion of a `Uplink` while one or more CUDNs reference it, OVN-Kubernetes keeps the `Uplink`
   finalizer and deletion remains pending. This prevents accidental disruption of active CUDNs. Since `spec.uplinks` is
   immutable in this OKEP, clearing the reference requires deleting or recreating the CUDN without that `Uplink`. Once no
@@ -1049,8 +1061,9 @@ path.
   * `UplinkState` status ownership and aggregation into `Uplink.status.conditions`.
   * independent `UplinkState` resolution (`Resolved`) and gateway-programming (`GatewayReady`) condition ownership and
     CUDN status propagation.
-  * aggregate `GatewayReady` remaining false while a newly active CUDN's mapping, patch port, per-network bridge
-    configuration, or OpenFlow has not converged, and becoming true only when every active CUDN is ready.
+  * `GatewayReady=True/NoActiveCUDNs` keeping the first active CUDN not ready until its gateway result is reported.
+  * current UID and UplinkState input checks rejecting late results from deleted, recreated, or superseded objects.
+  * aggregate gateway failures for mapping, patch-port, per-network bridge configuration, OpenFlow, and VRF operations.
   * CUDN validation for `spec.uplinks`.
   * CUDN external gateway data is derived from `UplinkState` without mutating the
     `k8s.ovn.org/l3-gateway-config` node annotation.

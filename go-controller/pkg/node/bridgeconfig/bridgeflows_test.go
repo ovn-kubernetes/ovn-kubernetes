@@ -9,11 +9,205 @@ import (
 	"strings"
 	"testing"
 
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	udngenerator "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/udn"
 	nodetypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/types"
+	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
+
+func newBridgeFlowTestOVSClient(t *testing.T, bridgeName string) libovsdbclient.Client {
+	t.Helper()
+	bridgeUUID := bridgeName + "-uuid"
+	ovsClient, ovsCleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
+		OVSData: []libovsdbtest.TestData{
+			&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{bridgeUUID}},
+			&vswitchd.Bridge{UUID: bridgeUUID, Name: bridgeName},
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to create OVS test harness: %v", err)
+	}
+	t.Cleanup(ovsCleanup.Cleanup)
+	return ovsClient
+}
+
+func TestHostNetworkNormalActionFlowsRequireLocalnetPort(t *testing.T) {
+	if err := config.PrepareTestConfig(); err != nil {
+		t.Fatalf("failed to prepare test config: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = config.PrepareTestConfig()
+	})
+	tests := []struct {
+		name                   string
+		gatewayMode            config.GatewayMode
+		ipv4Mode               bool
+		ipv6Mode               bool
+		localnetBridge         string
+		expectedPriority102Cnt int
+	}{
+		{
+			name:                   "shared gateway IPv4 without localnet topology port",
+			gatewayMode:            config.GatewayModeShared,
+			ipv4Mode:               true,
+			expectedPriority102Cnt: 0,
+		},
+		{
+			name:                   "shared gateway IPv4 with localnet topology port",
+			gatewayMode:            config.GatewayModeShared,
+			ipv4Mode:               true,
+			localnetBridge:         "br0",
+			expectedPriority102Cnt: 2,
+		},
+		{
+			name:                   "shared gateway IPv6 without localnet topology port",
+			gatewayMode:            config.GatewayModeShared,
+			ipv6Mode:               true,
+			expectedPriority102Cnt: 0,
+		},
+		{
+			name:                   "shared gateway IPv6 with localnet topology port",
+			gatewayMode:            config.GatewayModeShared,
+			ipv6Mode:               true,
+			localnetBridge:         "br0",
+			expectedPriority102Cnt: 6,
+		},
+		{
+			name:                   "local gateway IPv4 without localnet topology port",
+			gatewayMode:            config.GatewayModeLocal,
+			ipv4Mode:               true,
+			expectedPriority102Cnt: 0,
+		},
+		{
+			name:                   "local gateway IPv4 with localnet topology port",
+			gatewayMode:            config.GatewayModeLocal,
+			ipv4Mode:               true,
+			localnetBridge:         "br0",
+			expectedPriority102Cnt: 1,
+		},
+		{
+			name:                   "local gateway IPv6 without localnet topology port",
+			gatewayMode:            config.GatewayModeLocal,
+			ipv6Mode:               true,
+			expectedPriority102Cnt: 0,
+		},
+		{
+			name:                   "local gateway IPv6 with localnet topology port",
+			gatewayMode:            config.GatewayModeLocal,
+			ipv6Mode:               true,
+			localnetBridge:         "br0",
+			expectedPriority102Cnt: 3,
+		},
+		{
+			name:                   "localnet topology port on another bridge does not enable flows",
+			gatewayMode:            config.GatewayModeShared,
+			ipv4Mode:               true,
+			localnetBridge:         "br-other",
+			expectedPriority102Cnt: 0,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			config.Gateway.Mode = test.gatewayMode
+			config.IPv4Mode = test.ipv4Mode
+			config.IPv6Mode = test.ipv6Mode
+
+			br0Ports := []string{"gateway-port-uuid", "cudn-gateway-port-uuid"}
+			rootBridges := []string{"br0-uuid"}
+			ovsData := []libovsdbtest.TestData{
+				&vswitchd.Port{
+					UUID:        "gateway-port-uuid",
+					Name:        "patch-br0_node-to-br-int",
+					Interfaces:  []string{"gateway-interface-uuid"},
+					ExternalIDs: map[string]string{"ovn-localnet-port": "br0_node"},
+				},
+				&vswitchd.Interface{UUID: "gateway-interface-uuid", Name: "patch-br0_node-to-br-int", Type: "patch"},
+				&vswitchd.Port{
+					UUID:        "cudn-gateway-port-uuid",
+					Name:        "patch-br0_blue_node-to-br-int",
+					Interfaces:  []string{"cudn-gateway-interface-uuid"},
+					ExternalIDs: map[string]string{"ovn-localnet-port": "br0_blue_node"},
+				},
+				&vswitchd.Interface{UUID: "cudn-gateway-interface-uuid", Name: "patch-br0_blue_node-to-br-int", Type: "patch"},
+			}
+
+			if test.localnetBridge != "" {
+				localnetPort := &vswitchd.Port{
+					UUID:        "localnet-port-uuid",
+					Name:        "patch-blue_ovn_localnet_port-to-br-int",
+					Interfaces:  []string{"localnet-interface-uuid"},
+					ExternalIDs: map[string]string{"ovn-localnet-port": "blue_ovn_localnet_port"},
+				}
+				ovsData = append(ovsData, localnetPort,
+					&vswitchd.Interface{UUID: "localnet-interface-uuid", Name: localnetPort.Name, Type: "patch"})
+				if test.localnetBridge == "br0" {
+					br0Ports = append(br0Ports, localnetPort.UUID)
+				} else {
+					rootBridges = append(rootBridges, "br-other-uuid")
+					ovsData = append(ovsData, &vswitchd.Bridge{
+						UUID:  "br-other-uuid",
+						Name:  "br-other",
+						Ports: []string{localnetPort.UUID},
+					})
+				}
+			}
+
+			ovsData = append(ovsData,
+				&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: rootBridges},
+				&vswitchd.Bridge{UUID: "br0-uuid", Name: "br0", Ports: br0Ports},
+			)
+			ovsClient, ovsCleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{OVSData: ovsData})
+			if err != nil {
+				t.Fatalf("failed to create OVS test harness: %v", err)
+			}
+			t.Cleanup(ovsCleanup.Cleanup)
+
+			var bridgeIPs, hostSubnets []*net.IPNet
+			if test.ipv4Mode {
+				bridgeIPs = append(bridgeIPs, mustParseIPNet(t, "10.1.253.253/16"))
+				hostSubnets = append(hostSubnets, mustParseIPNet(t, "10.1.0.0/16"))
+			}
+			if test.ipv6Mode {
+				bridgeIPs = append(bridgeIPs, mustParseIPNet(t, "fd00::253/64"))
+				hostSubnets = append(hostSubnets, mustParseIPNet(t, "fd00::/64"))
+			}
+			bridge := &BridgeConfiguration{
+				ovsClient:  ovsClient,
+				bridgeName: "br0",
+				ofPortPhys: "ens8",
+				ofPortHost: nodetypes.OvsLocalPort,
+				ips:        bridgeIPs,
+				macAddress: mustParseMAC(t, "48:b0:2d:00:00:04"),
+				netConfig: map[string]*BridgeUDNConfiguration{
+					types.DefaultNetworkName: {
+						OfPortPatch: "patch-br0_node-to-br-int",
+						MasqCTMark:  nodetypes.CtMarkOVN,
+					},
+				},
+			}
+
+			flows, err := bridge.commonFlows(hostSubnets)
+			if err != nil {
+				t.Fatalf("failed to render bridge flows: %v", err)
+			}
+			priority102Cnt := 0
+			for _, flow := range flows {
+				if strings.Contains(flow, "priority=102") {
+					priority102Cnt++
+				}
+			}
+			if priority102Cnt != test.expectedPriority102Cnt {
+				t.Fatalf("expected %d priority-102 flows, got %d: %v",
+					test.expectedPriority102Cnt, priority102Cnt, flows)
+			}
+		})
+	}
+}
 
 func TestSharedNoOverlayNodeIPFlowUsesNATInDefaultConntrackZone(t *testing.T) {
 	if err := config.PrepareTestConfig(); err != nil {
@@ -35,6 +229,8 @@ func TestSharedNoOverlayNodeIPFlowUsesNATInDefaultConntrackZone(t *testing.T) {
 	v6ManagementMasqIP := mustParseIPNet(t, "fd69::12/128")
 
 	bridge := &BridgeConfiguration{
+		ovsClient:  newBridgeFlowTestOVSClient(t, "breth0"),
+		bridgeName: "breth0",
 		ofPortPhys: "eth0",
 		ofPortHost: nodetypes.OvsLocalPort,
 		ips:        []*net.IPNet{v4NodeIP, v6NodeIP},
@@ -198,6 +394,8 @@ func TestLocalNoOverlayServiceHairpinUsesUDNGatewayMasqueradeIP(t *testing.T) {
 	v6ManagementMasqIP := mustParseIPNet(t, "fd69::12/128")
 
 	bridge := &BridgeConfiguration{
+		ovsClient:  newBridgeFlowTestOVSClient(t, "breth0"),
+		bridgeName: "breth0",
 		ofPortHost: nodetypes.OvsLocalPort,
 		ips:        []*net.IPNet{v4NodeIP, v6NodeIP},
 		macAddress: bridgeMAC,
@@ -283,6 +481,8 @@ func TestArpFanoutFilterFlowsIncludeVLAN(t *testing.T) {
 	v6ManagementMasqIP := mustParseIPNet(t, "fd69::12/128")
 
 	bridge := &BridgeConfiguration{
+		ovsClient:  newBridgeFlowTestOVSClient(t, "breth0"),
+		bridgeName: "breth0",
 		ofPortPhys: "eth0",
 		ofPortHost: nodetypes.OvsLocalPort,
 		ips:        []*net.IPNet{v4NodeIP, v6NodeIP},

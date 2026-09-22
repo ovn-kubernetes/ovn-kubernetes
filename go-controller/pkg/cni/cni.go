@@ -88,29 +88,6 @@ func (pr *PodRequest) String() string {
 	return fmt.Sprintf("[%s/%s %s network %s NAD %s NAD key %s]", pr.PodNamespace, pr.PodName, pr.SandboxID, pr.netName, pr.nadName, pr.nadKey)
 }
 
-// checkOrUpdatePodUID validates the given pod UID against the request's existing
-// pod UID. If the existing UID is empty the runtime did not support passing UIDs
-// and the best we can do is use the given UID for the duration of the request.
-// But if the existing UID is valid and does not match the given UID then the
-// sandbox request is for a different pod instance and should be terminated.
-// Static pod UID is a hash of the pod itself that does not match
-// the UID of the mirror kubelet creates on the api /server.
-// We will use the UID of the mirror.
-// The hash is annotated in the mirror pod (kubernetes.io/config.hash)
-// and we could match against it, but let's avoid that for now as it is not
-// a published standard.
-func (pr *PodRequest) checkOrUpdatePodUID(pod *corev1.Pod) error {
-	if pr.PodUID == "" || IsStaticPod(pod) {
-		// Runtime didn't pass UID, or the pod is a static pod, use the one we got from the pod object
-		pr.PodUID = string(pod.UID)
-	} else if string(pod.UID) != pr.PodUID {
-		// Exit early if the pod was deleted and recreated already
-		return fmt.Errorf("pod deleted before sandbox %v operation began. Request Pod UID %s is different from "+
-			"the Pod UID (%s) retrieved from the informer/API", pr.Command, pr.PodUID, pod.UID)
-	}
-	return nil
-}
-
 func (pr *PodRequest) cmdAdd(kubeAuth *KubeAPIAuth, clientset *ClientSet, ovsClient client.Client) (*Response, error) {
 	namespace := pr.PodNamespace
 	podName := pr.PodName
@@ -120,7 +97,7 @@ func (pr *PodRequest) cmdAdd(kubeAuth *KubeAPIAuth, clientset *ClientSet, ovsCli
 
 	kubecli := &kube.Kube{KClient: clientset.kclient}
 
-	pod, _, _, err := GetPodWithAnnotations(pr.ctx, clientset, namespace, podName, "",
+	pod, _, _, err := getPodWithAnnotations(pr.ctx, clientset, namespace, podName, "", pr.PodUID, false,
 		func(*corev1.Pod, string) (*util.PodAnnotation, bool, error) {
 			return nil, true, nil
 		},
@@ -129,12 +106,10 @@ func (pr *PodRequest) cmdAdd(kubeAuth *KubeAPIAuth, clientset *ClientSet, ovsCli
 		return nil, fmt.Errorf("failed to get pod %s/%s: %v", namespace, podName, err)
 	}
 
-	// The lookup above is by namespace/name, so a same-name recreation would
-	// return the new pod. Verify the fetched pod against the runtime's UID
-	// before anything is staged or written for it.
-	if err = pr.checkOrUpdatePodUID(pod); err != nil {
-		return nil, err
-	}
+	// The runtime may omit the UID, and for static pods it passes a config hash
+	// rather than the mirror Pod UID. Pin the rest of ADD to the Pod instance
+	// that the UID-aware lookup above accepted.
+	pr.PodUID = string(pod.UID)
 
 	// nadKey is only set for default network and primary UDN
 	if pr.nadKey == "" {
@@ -222,13 +197,10 @@ func (pr *PodRequest) cmdAdd(kubeAuth *KubeAPIAuth, clientset *ClientSet, ovsCli
 
 	// Get the IP address and MAC address of the pod
 	// for DPU, ensure connection-details is present
-	pod, annotations, podNADAnnotation, err := GetPodWithAnnotations(pr.ctx, clientset, namespace, podName, pr.nadKey, annotCondFn)
+	pod, annotations, podNADAnnotation, err := getPodWithAnnotations(
+		pr.ctx, clientset, namespace, podName, pr.nadKey, pr.PodUID, true, annotCondFn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get pod annotation: %v", err)
-	}
-
-	if err = pr.checkOrUpdatePodUID(pod); err != nil {
-		return nil, err
 	}
 
 	podInterfaceInfo, err := pr.buildPodInterfaceInfo(annotations, podNADAnnotation, netdevName)
@@ -506,8 +478,8 @@ func (pr *PodRequest) cmdDel(clientset *ClientSet) (*Response, error) {
 
 // getCNIResult get result from pod interface info.
 // PodInfoGetter is used to check if sandbox is still valid for the current
-// instance of the pod in the apiserver, see checkCancelSandbox for more info.
-// If kube api is not available from the CNI, pass nil to skip this check.
+// instance of the Pod, see checkCancelSandbox for more info. If Pod information
+// is not available from the CNI, pass nil to skip this check.
 func getCNIResult(pr *PodRequest, ovsClient client.Client, getter PodInfoGetter, podInterfaceInfo *PodInterfaceInfo) (*current.Result, error) {
 	interfacesArray, err := podRequestInterfaceOps.ConfigureInterface(pr, ovsClient, getter, podInterfaceInfo)
 	if err != nil {

@@ -139,8 +139,13 @@ spec:
                 x-kubernetes-list-type: map
               defaultGateways:
                 description: |-
-                  DefaultGateways are default route next-hop IPs discovered for the
-                  selected host interface.
+                  DefaultGateways are distinct next-hop IPs from the selected host interface's
+                  lowest-metric default routes per IP family. Among those next hops only the
+                  ones with the highest weight are published; weights themselves are not
+                  represented, so lighter next hops of an unequal-weight multipath route are
+                  omitted rather than programmed as equal-cost paths.
+                  The limit is 256 total across both IP families per node and Uplink; it is
+                  an API bound, not a guarantee of dataplane or hardware offload capacity.
                 items:
                   description: IPAddress is an IP address.
                   maxLength: 64
@@ -148,7 +153,7 @@ spec:
                   x-kubernetes-validations:
                   - message: must be a valid IP address
                     rule: isIP(self)
-                maxItems: 2
+                maxItems: 256
                 type: array
                 x-kubernetes-list-type: atomic
               hostFunction:

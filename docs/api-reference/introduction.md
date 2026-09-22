@@ -38,6 +38,7 @@ designed and implemented by OVN-Kubernetes
 * [EgressFirewall](egress-firewall-api-spec.md)
 * [AdminPolicyBasedExternalRoutes](admin-epbr-api-spec.md)
 * [UserDefinedNetwork](userdefinednetwork-api-spec.md)
+* [Uplink and UplinkState](uplink-api-spec.md)
 * [RouteAdvertisements](routeadvertisements-api-spec.md)
 * [VTEP](vtep-api-spec.md)
 * [ClusterNetworkConnect](clusternetworkconnect-api-spec.md)

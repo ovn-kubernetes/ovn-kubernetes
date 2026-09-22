@@ -14,8 +14,10 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 	listersv1 "k8s.io/client-go/listers/core/v1"
+	k8stesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/id"
@@ -1013,6 +1015,103 @@ func TestSyncNodeNetworkAnnotations_TunnelID(t *testing.T) {
 				if allocatorID != types.InvalidID {
 					t.Fatalf("tunnel ID should not be allocated in the allocator, got %d", allocatorID)
 				}
+			}
+		})
+	}
+}
+
+// TestSyncNodeNetworkAnnotations_ReleaseOnPatchFailure verifies that when the
+// annotation patch fails, a subnet already persisted on the node (as seen via a
+// live apiserver read) is NOT released back to the allocator, while a subnet that
+// was not persisted still is.
+func TestSyncNodeNetworkAnnotations_ReleaseOnPatchFailure(t *testing.T) {
+	const subnetCIDR = "10.1.0.0/24"
+
+	tests := []struct {
+		name              string
+		persistedOnServer bool
+		wantReleased      bool
+	}{
+		{
+			name:              "subnet persisted on server is not released",
+			persistedOnServer: true,
+			wantReleased:      false,
+		},
+		{
+			name:              "subnet not persisted on server is released",
+			persistedOnServer: false,
+			wantReleased:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := config.PrepareTestConfig(); err != nil {
+				t.Fatal(err)
+			}
+			ranges, err := rangesFromStrings([]string{"10.1.0.0/16"}, []int{24})
+			if err != nil {
+				t.Fatal(err)
+			}
+			config.Default.ClusterSubnets = ranges
+
+			netInfo, err := util.NewNetInfo(&ovncnitypes.NetConf{
+				NetConf: cnitypes.NetConf{Name: types.DefaultNetworkName},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			networkName := netInfo.GetNetworkName()
+
+			// The node handed to the reconcile (from the informer cache) has no
+			// host-subnet annotation, so a fresh subnet gets allocated.
+			listerNode := &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        "node1",
+					Annotations: map[string]string{},
+				},
+			}
+
+			// The server copy optionally already has that same subnet persisted,
+			// simulating a prior reconcile that succeeded on the apiserver.
+			serverNode := listerNode.DeepCopy()
+			if tt.persistedOnServer {
+				anno, err := util.UpdateNodeHostSubnetAnnotation(serverNode.Annotations, []*net.IPNet{ovntest.MustParseIPNet(subnetCIDR)}, networkName)
+				if err != nil {
+					t.Fatal(err)
+				}
+				serverNode.Annotations = anno
+			}
+
+			fakeClient := fake.NewClientset(serverNode)
+			// Force the annotation patch to fail so the release path runs.
+			fakeClient.PrependReactor("patch", "nodes", func(k8stesting.Action) (bool, runtime.Object, error) {
+				return true, nil, fmt.Errorf("injected patch failure")
+			})
+			kubeIface := &kube.Kube{KClient: fakeClient}
+
+			na := &NodeAllocator{
+				nodeLister:             newFakeNodeLister([]*corev1.Node{listerNode}),
+				kube:                   kubeIface,
+				nodeClient:             fakeClient,
+				netInfo:                netInfo,
+				networkID:              types.DefaultNetworkID,
+				clusterSubnetAllocator: NewSubnetAllocator(),
+			}
+			if err := na.Init(); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := na.syncNodeNetworkAnnotations(listerNode); err == nil {
+				t.Fatal("expected syncNodeNetworkAnnotations to fail due to injected patch failure")
+			}
+
+			v4used, _ := na.clusterSubnetAllocator.Usage()
+			if tt.wantReleased && v4used != 0 {
+				t.Fatalf("expected subnet to be released, got %d allocated", v4used)
+			}
+			if !tt.wantReleased && v4used != 1 {
+				t.Fatalf("expected subnet to remain allocated, got %d allocated", v4used)
 			}
 		})
 	}

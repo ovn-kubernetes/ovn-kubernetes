@@ -141,10 +141,11 @@ func escapeJSONPatchPathKey(key string) string {
 //     writer changed the same annotation.
 //  2. The annotation key does not exist on the old pod. In that case a per-key
 //     "test" cannot protect us because two stale writers could both issue an
-//     unconditional "add" and the last one would win. For that create case we add
-//     a resourceVersion guard so only one writer based on that pod snapshot can
-//     create the missing key; losers will retry from the latest pod state and
-//     recompute a merged annotation value.
+//     unconditional "add" and the last one would win. If the annotations map
+//     exists, compare that map instead of the Pod resourceVersion. This ignores
+//     unrelated kubelet status updates while still detecting annotation writers.
+//     If the map itself is absent, use a resourceVersion guard because JSON Patch
+//     cannot test a missing parent before creating it.
 //
 // Real informer/API pods always have a resourceVersion. If a synthetic caller
 // passes an object without one, we skip that extra guard and fall back to the
@@ -177,6 +178,7 @@ func (k *Kube) PatchPodStatusAnnotations(oldPod, newPod *corev1.Pod) error {
 
 	ops := []jsonPatchOp{}
 	requiresResourceVersionGuard := false
+	requiresAnnotationsGuard := false
 	if len(oldPod.Annotations) == 0 {
 		ops = append(ops, jsonPatchOp{
 			Op:    "add",
@@ -196,7 +198,11 @@ func (k *Kube) PatchPodStatusAnnotations(oldPod, newPod *corev1.Pod) error {
 				Value: oldValue,
 			})
 		} else if newOK {
-			requiresResourceVersionGuard = true
+			if len(oldPod.Annotations) == 0 {
+				requiresResourceVersionGuard = true
+			} else {
+				requiresAnnotationsGuard = true
+			}
 		}
 		switch {
 		case newOK && oldOK:
@@ -218,7 +224,13 @@ func (k *Kube) PatchPodStatusAnnotations(oldPod, newPod *corev1.Pod) error {
 			})
 		}
 	}
-	if requiresResourceVersionGuard && oldPod.ResourceVersion != "" {
+	if requiresAnnotationsGuard {
+		ops = append([]jsonPatchOp{{
+			Op:    "test",
+			Path:  "/metadata/annotations",
+			Value: oldPod.Annotations,
+		}}, ops...)
+	} else if requiresResourceVersionGuard && oldPod.ResourceVersion != "" {
 		ops = append([]jsonPatchOp{{
 			Op:    "test",
 			Path:  "/metadata/resourceVersion",

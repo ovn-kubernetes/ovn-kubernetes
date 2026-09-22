@@ -49,6 +49,11 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
 
+// masqueradeLinkMutex protects check-then-update operations for the shared
+// masquerade addresses and neighbors. Independent UDN workers may ensure the
+// same Uplink interface concurrently.
+var masqueradeLinkMutex sync.Mutex
+
 const (
 	protoPrefixV4 = "ip"
 	protoPrefixV6 = "ipv6"
@@ -2054,6 +2059,9 @@ func addMasqueradeRoute(routeManager *routemanager.Controller, netIfaceName, nod
 }
 
 func setNodeMasqueradeIPOnExtBridge(extBridgeName string) error {
+	masqueradeLinkMutex.Lock()
+	defer masqueradeLinkMutex.Unlock()
+
 	extBridge, err := util.LinkSetUp(extBridgeName)
 	if err != nil {
 		return err
@@ -2207,6 +2215,9 @@ func (r *masqueradeReconciler) ensure() error {
 }
 
 func addHostMACBindings(bridgeName string) error {
+	masqueradeLinkMutex.Lock()
+	defer masqueradeLinkMutex.Unlock()
+
 	// Add a neighbour entry on the K8s node to map dummy next-hop masquerade
 	// addresses with MACs. This is required because these addresses do not
 	// exist on the network and will not respond to an ARP/ND, so to route them

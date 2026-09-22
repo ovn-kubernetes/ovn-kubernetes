@@ -124,6 +124,10 @@ reviews:
           break users — flag removals, type changes, or new required fields.
         - Any API change must include API reference doc update.
         - New API must be added to the API reference index page.
+        - New or changed CRD API fields must include corresponding CRD
+          integration tests under test/crd-integration/ — flag new/changed
+          API fields that lack tests validating their defaulting, validation
+          (CEL/kubebuilder markers), and admission behavior.
         - CEL validation: flag missing CEL rules where needed, unanchored
           regex, missing enums, absent dual-stack guards, incomplete
           cross-field rules.
@@ -231,6 +235,10 @@ reviews:
           Context/When/It blocks.
         - Flag duplicate tests — new tests covering scenarios already
           tested (implicitly or explicitly) elsewhere in the suite.
+        - Flag pure CRD schema validation (defaulting, kubebuilder/CEL
+          validation, admission) added here that needs no live pod
+          networking — these belong in test/crd-integration/ instead,
+          which runs against envtest without a full cluster.
         - Flag test helpers duplicated across files — shared helpers
           belong in test/e2e/util.go or a dedicated utils file.
         - Adding or refactoring tests must not lose coverage for

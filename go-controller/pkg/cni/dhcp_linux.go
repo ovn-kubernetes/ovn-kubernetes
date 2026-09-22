@@ -406,8 +406,8 @@ func (pr *PodRequest) updateDHCPAndDPUAnnotations(clientset *ClientSet, kubecli 
 	// would stamp this request's annotations onto it and the new pod's own ADD
 	// would then reuse this stale MAC instead of minting its own. Guard each
 	// attempt by comparing the fetched pod's UID against the UID the runtime
-	// sent with this request (pr.PodUID, anchored by checkOrUpdatePodUID in
-	// cmdAdd): a mismatch means the wrong pod instance, so fail the ADD
+	// established by the initial UID-aware lookup in cmdAdd: a mismatch means
+	// the wrong pod instance, so fail the ADD
 	// without writing rather than retry.
 	updateFn := func(pod *corev1.Pod) (*corev1.Pod, func(), error) {
 		if pr.PodUID != "" && string(pod.UID) != pr.PodUID {

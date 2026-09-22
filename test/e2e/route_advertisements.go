@@ -60,11 +60,18 @@ import (
 )
 
 const (
-	serverContainerName    = "bgpserver"
-	routerContainerName    = "frr"
-	echoClientPodName      = "echo-client-pod"
-	bgpExternalNetworkName = "bgpnet"
-	netexecPort            = 8080
+	echoClientPodName = "echo-client-pod"
+	netexecPort       = 8080
+)
+
+// Names of the external BGP scaffolding deployed by contrib/kind.sh or
+// contrib/kind-helm.sh. Overridable so that suites can run against clusters
+// whose scaffolding uses non-default names (e.g. the dpu-sim environment,
+// which coexists with a regular kind cluster on the same machine).
+var (
+	bgpExternalServerContainerName = envOrDefault("OVN_TEST_BGP_SERVER_CONTAINER", "bgpserver")
+	routerContainerName            = envOrDefault("OVN_TEST_BGP_ROUTER_CONTAINER", "frr")
+	bgpExternalNetworkName         = envOrDefault("OVN_TEST_BGP_SERVER_NETWORK", "bgpnet")
 )
 
 func init() {
@@ -140,7 +147,7 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 			bgpNetwork, err := infraprovider.Get().GetNetwork(bgpExternalNetworkName)
 			framework.ExpectNoError(err, "network %s must be available and precreated before test run", bgpExternalNetworkName)
 			externalServerV4CIDR, externalServerV6CIDR, err := bgpNetwork.IPv4IPv6Subnets()
-			framework.ExpectNoError(err, "must get bgpnet subnets")
+			framework.ExpectNoError(err, "must get %s subnets", bgpExternalNetworkName)
 			framework.Logf("the network cidrs to be imported are v4=%s and v6=%s", externalServerV4CIDR, externalServerV6CIDR)
 			for _, node := range nodes.Items {
 				if isIPv4Supported(f.ClientSet) {
@@ -259,7 +266,7 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 			bgpNetwork, err := infraprovider.Get().GetNetwork(bgpExternalNetworkName)
 			framework.ExpectNoError(err, "network %s must be available and precreated before test run", bgpExternalNetworkName)
 			externalServerV4CIDR, externalServerV6CIDR, err := bgpNetwork.IPv4IPv6Subnets()
-			framework.ExpectNoError(err, "must get bgpnet subnets")
+			framework.ExpectNoError(err, "must get %s subnets", bgpExternalNetworkName)
 			framework.Logf("the network cidrs to be imported are v4=%s and v6=%s", externalServerV4CIDR, externalServerV6CIDR)
 			for _, node := range nodes.Items {
 				if isIPv4Supported(f.ClientSet) {
@@ -787,10 +794,10 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 		serverContainerIPs = []string{}
 
 		bgpNetwork, err := infraprovider.Get().GetNetwork(bgpExternalNetworkName) // pre-created network
-		framework.ExpectNoError(err, "must get bgpnet network")
-		bgpServer := infraapi.ExternalContainer{Name: serverContainerName}
+		framework.ExpectNoError(err, "must get %s network", bgpExternalNetworkName)
+		bgpServer := infraapi.ExternalContainer{Name: bgpExternalServerContainerName}
 		networkInterface, err := infraprovider.Get().GetExternalContainerNetworkInterface(bgpServer, bgpNetwork)
-		framework.ExpectNoError(err, "container %s attached to network %s must contain network info", serverContainerName, bgpExternalNetworkName)
+		framework.ExpectNoError(err, "container %s attached to network %s must contain network info", bgpExternalServerContainerName, bgpExternalNetworkName)
 		if isIPv4Supported(f.ClientSet) && len(networkInterface.IPv4) > 0 {
 			serverContainerIPs = append(serverContainerIPs, networkInterface.IPv4)
 		}
@@ -3222,7 +3229,7 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 						bgpServerNetwork, err := infraprovider.Get().GetNetwork(bgpExternalNetworkName)
 						gomega.Expect(err).NotTo(gomega.HaveOccurred())
 						iface, err := infraprovider.Get().GetExternalContainerNetworkInterface(
-							infraapi.ExternalContainer{Name: serverContainerName},
+							infraapi.ExternalContainer{Name: bgpExternalServerContainerName},
 							bgpServerNetwork,
 						)
 						gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -3250,7 +3257,7 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 						gomega.Expect(err).NotTo(gomega.HaveOccurred())
 						gomega.Expect(podIP).ToNot(gomega.BeEmpty())
 						// using the external server setup for the default network
-						testContainerToClientIPNOK(serverContainerName, podIP)
+						testContainerToClientIPNOK(bgpExternalServerContainerName, podIP)
 					},
 					ginkgo.Entry("When the network is IPv4", utilnet.IPv4),
 					ginkgo.Entry("When the network is IPv6", utilnet.IPv6),
@@ -4580,10 +4587,10 @@ func createRouteAdvertisements(
 // getBGPServerContainerIPs retrieves the IP addresses of the BGP server container.
 func getBGPServerContainerIPs(f *framework.Framework) (serverContainerIPs []string) {
 	bgpNetwork, err := infraprovider.Get().GetNetwork(bgpExternalNetworkName) // pre-created network
-	framework.ExpectNoError(err, "must get bgpnet network")
-	bgpServer := infraapi.ExternalContainer{Name: serverContainerName}
+	framework.ExpectNoError(err, "must get %s network", bgpExternalNetworkName)
+	bgpServer := infraapi.ExternalContainer{Name: bgpExternalServerContainerName}
 	networkInterface, err := infraprovider.Get().GetExternalContainerNetworkInterface(bgpServer, bgpNetwork)
-	framework.ExpectNoError(err, "container %s attached to network %s must contain network info", serverContainerName, bgpExternalNetworkName)
+	framework.ExpectNoError(err, "container %s attached to network %s must contain network info", bgpExternalServerContainerName, bgpExternalNetworkName)
 	if isIPv4Supported(f.ClientSet) && len(networkInterface.IPv4) > 0 {
 		serverContainerIPs = append(serverContainerIPs, networkInterface.IPv4)
 	}

@@ -4,15 +4,256 @@
 package node
 
 import (
+	"context"
 	"errors"
+	"net"
+	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/ovn-kubernetes/libovsdb/model"
+	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/bridgeconfig"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
+	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
+
+func TestOpenFlowManagerLocalnetPortEvents(t *testing.T) {
+	ofm := &openflowManager{
+		defaultBridge:    newOpenflowBridge(bridgeconfig.TestDefaultBridgeConfig()),
+		uplinkBridges:    map[string]*openflowBridge{},
+		localnetPortChan: make(chan struct{}, 1),
+	}
+
+	assertNotified := func(want bool) {
+		t.Helper()
+		select {
+		case <-ofm.localnetPortChan:
+			if !want {
+				t.Fatal("unexpected localnet port notification")
+			}
+		default:
+			if want {
+				t.Fatal("expected localnet port notification")
+			}
+		}
+	}
+
+	gatewayPort := &vswitchd.Port{
+		ExternalIDs: map[string]string{"ovn-localnet-port": "breth0_node"},
+	}
+	ofm.handleLocalnetPortEvent(vswitchd.PortTable, nil, gatewayPort)
+	assertNotified(false)
+
+	localnetPort := &vswitchd.Port{
+		ExternalIDs: map[string]string{"ovn-localnet-port": "blue_ovn_localnet_port"},
+	}
+	ofm.handleLocalnetPortEvent(vswitchd.PortTable, nil, localnetPort)
+	assertNotified(true)
+
+	// Updates that don't change whether the row is a localnet topology port
+	// must not trigger flow regeneration, for example statistics updates.
+	ofm.handleLocalnetPortEvent(vswitchd.PortTable, localnetPort, &vswitchd.Port{
+		ExternalIDs: map[string]string{"ovn-localnet-port": "blue_ovn_localnet_port"},
+		Statistics:  map[string]int{"rx_packets": 1},
+	})
+	assertNotified(false)
+
+	ofm.handleLocalnetPortEvent(vswitchd.BridgeTable,
+		&vswitchd.Bridge{Name: "br-int", Ports: []string{"port-1"}},
+		&vswitchd.Bridge{Name: "br-int", Ports: []string{"port-1", "port-2"}})
+	assertNotified(false)
+
+	ofm.handleLocalnetPortEvent(vswitchd.BridgeTable,
+		&vswitchd.Bridge{Name: "breth0", Ports: []string{"port-1"}},
+		&vswitchd.Bridge{Name: "breth0", Ports: []string{"port-1"}})
+	assertNotified(false)
+
+	ofm.handleLocalnetPortEvent(vswitchd.BridgeTable,
+		&vswitchd.Bridge{Name: "breth0", Ports: []string{"port-1"}},
+		&vswitchd.Bridge{Name: "breth0", Ports: []string{"port-1", "localnet-port"}})
+	assertNotified(true)
+}
+
+func TestOpenFlowManagerLocalnetPortFlowLifecycle(t *testing.T) {
+	if err := config.PrepareTestConfig(); err != nil {
+		t.Fatalf("failed to prepare test config: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = config.PrepareTestConfig()
+	})
+	config.IPv4Mode = true
+	config.IPv6Mode = false
+	config.Gateway.Mode = config.GatewayModeShared
+
+	const (
+		bridgeName       = "breth0"
+		bridgeUUID       = "breth0-uuid"
+		localnetPortName = "patch-blue_ovn_localnet_port-to-br-int"
+		localnetPortUUID = "localnet-port-uuid"
+	)
+	ovsClient, ovsCleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
+		OVSData: []libovsdbtest.TestData{
+			&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{bridgeUUID}},
+			&vswitchd.Bridge{UUID: bridgeUUID, Name: bridgeName},
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to create OVS test harness: %v", err)
+	}
+	t.Cleanup(ovsCleanup.Cleanup)
+
+	_, bridgeIPNet, err := net.ParseCIDR("10.1.253.253/16")
+	if err != nil {
+		t.Fatalf("failed to parse bridge IP: %v", err)
+	}
+	bridgeIPNet.IP = net.ParseIP("10.1.253.253")
+	bridgeMAC, err := net.ParseMAC("48:b0:2d:00:00:04")
+	if err != nil {
+		t.Fatalf("failed to parse bridge MAC: %v", err)
+	}
+	bridge := bridgeconfig.TestDefaultBridgeConfigWithOVSClient(
+		ovsClient, []*net.IPNet{bridgeIPNet}, bridgeMAC)
+	ofManager, err := newGatewayOpenFlowManager(bridge, nil, ovsClient)
+	if err != nil {
+		t.Fatalf("failed to create OpenFlow manager: %v", err)
+	}
+
+	_, hostSubnet, err := net.ParseCIDR("10.1.0.0/16")
+	if err != nil {
+		t.Fatalf("failed to parse host subnet: %v", err)
+	}
+	if err := ofManager.updateBridgeFlowCache(nil, []*net.IPNet{hostSubnet}); err != nil {
+		t.Fatalf("failed to initialize bridge flow cache: %v", err)
+	}
+
+	countPriority102Flows := func() int {
+		count := 0
+		for _, flow := range ofManager.getFlowsByKey("DEFAULT") {
+			if strings.Contains(flow, "priority=102") {
+				count++
+			}
+		}
+		return count
+	}
+	if count := countPriority102Flows(); count != 0 {
+		t.Fatalf("expected no priority-102 flows before adding a localnet port, got %d", count)
+	}
+
+	fexec := ovntest.NewFakeExec()
+	fexec.AddRepeatedFakeCmd(&ovntest.ExpectedCmd{
+		Cmd: "ovs-ofctl -O OpenFlow13 --bundle replace-flows breth0 -",
+	}, 3)
+	if err := util.SetExec(fexec); err != nil {
+		t.Fatalf("failed to set fake exec: %v", err)
+	}
+	t.Cleanup(util.ResetRunner)
+
+	stopChan := make(chan struct{})
+	var doneWg sync.WaitGroup
+	ofManager.Run(stopChan, &doneWg)
+	stopped := false
+	t.Cleanup(func() {
+		if !stopped {
+			close(stopChan)
+			doneWg.Wait()
+		}
+	})
+
+	localnetInterface := &vswitchd.Interface{
+		UUID: "localnet-interface-uuid",
+		Name: localnetPortName,
+		Type: "patch",
+	}
+	interfaceOps, err := ovsClient.Create(localnetInterface)
+	if err != nil {
+		t.Fatalf("failed to create localnet interface operations: %v", err)
+	}
+	localnetPort := &vswitchd.Port{
+		UUID:        localnetPortUUID,
+		Name:        localnetPortName,
+		Interfaces:  []string{localnetInterface.UUID},
+		ExternalIDs: map[string]string{"ovn-localnet-port": "blue_ovn_localnet_port"},
+	}
+	portOps, err := ovsClient.Create(localnetPort)
+	if err != nil {
+		t.Fatalf("failed to create localnet port operations: %v", err)
+	}
+	ovsBridge := &vswitchd.Bridge{Name: bridgeName}
+	if err := ovsClient.Get(context.Background(), ovsBridge); err != nil {
+		t.Fatalf("failed to get gateway bridge: %v", err)
+	}
+	bridgeOps, err := ovsClient.Where(ovsBridge).Mutate(ovsBridge, model.Mutation{
+		Field:   &ovsBridge.Ports,
+		Mutator: ovsdb.MutateOperationInsert,
+		Value:   []string{localnetPort.UUID},
+	})
+	if err != nil {
+		t.Fatalf("failed to create bridge mutation operations: %v", err)
+	}
+	ovsOperations := append(interfaceOps, portOps...)
+	ovsOperations = append(ovsOperations, bridgeOps...)
+	if _, err := ops.TransactAndCheck(ovsClient, ovsOperations); err != nil {
+		t.Fatalf("failed to add localnet port to gateway bridge: %v", err)
+	}
+
+	waitForCondition := func(description string, condition func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(3 * time.Second)
+		for time.Now().Before(deadline) {
+			if condition() {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatalf("timed out waiting for %s", description)
+	}
+	waitForCondition("localnet flows to be installed", func() bool {
+		return countPriority102Flows() == 2 && fexec.CalledMatchesExpectedAtLeastN(1)
+	})
+
+	if err := ops.DeletePortWithInterfaces(ovsClient, bridgeName, localnetPortName); err != nil {
+		t.Fatalf("failed to remove localnet port from gateway bridge: %v", err)
+	}
+	waitForCondition("localnet flows to be removed", func() bool {
+		return countPriority102Flows() == 0 && fexec.CalledMatchesExpectedAtLeastN(2)
+	})
+
+	close(stopChan)
+	doneWg.Wait()
+	stopped = true
+	if !fexec.CalledMatchesExpected() {
+		t.Fatal(fexec.ErrorDesc())
+	}
+}
+
+func TestStringListsEqual(t *testing.T) {
+	tests := []struct {
+		name string
+		a    []string
+		b    []string
+		want bool
+	}{
+		{name: "same order", a: []string{"flow-a", "flow-b"}, b: []string{"flow-a", "flow-b"}, want: true},
+		{name: "different order", a: []string{"flow-a", "flow-b"}, b: []string{"flow-b", "flow-a"}, want: true},
+		{name: "different flow", a: []string{"flow-a", "flow-b"}, b: []string{"flow-a", "flow-c"}, want: false},
+		{name: "different duplicate count", a: []string{"flow-a", "flow-a"}, b: []string{"flow-a", "flow-b"}, want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := stringListsEqual(test.a, test.b); got != test.want {
+				t.Fatalf("stringListsEqual() = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
 
 func TestOpenFlowManagerDeletesGroupCacheWithFlowCache(t *testing.T) {
 	ofm := &openflowManager{

@@ -28,18 +28,21 @@ import (
 
 	"github.com/pkg/errors"
 	v1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2eendpointslice "k8s.io/kubernetes/test/e2e/framework/endpointslice"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	testutils "k8s.io/kubernetes/test/utils"
+	"k8s.io/kubernetes/test/utils/image"
 	kexec "k8s.io/utils/exec"
 	utilnet "k8s.io/utils/net"
 )
@@ -404,17 +407,27 @@ func forwardIPWithIPTables(ip string) (func() error, error) {
 
 // updatesNamespace labels while preserving the required UDN label
 func updateNamespaceLabels(f *framework.Framework, namespace *v1.Namespace, labels map[string]string) {
-	// should never be nil
-	n := *namespace
-	for k, v := range labels {
-		n.Labels[k] = v
-	}
-	if _, ok := namespace.Labels[RequiredUDNNamespaceLabel]; ok {
-		n.Labels[RequiredUDNNamespaceLabel] = ""
-	}
-	_, err := f.ClientSet.CoreV1().Namespaces().Update(context.Background(), &n, metav1.UpdateOptions{})
+	// Retry on conflict errors - the namespace may be modified by other controllers
+	err := retry.OnError(retry.DefaultRetry, apierrors.IsConflict, func() error {
+		// Get the latest version of the namespace
+		ns, err := f.ClientSet.CoreV1().Namespaces().Get(context.Background(), namespace.Name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		for k, v := range labels {
+			ns.Labels[k] = v
+		}
+		if _, ok := namespace.Labels[RequiredUDNNamespaceLabel]; ok {
+			ns.Labels[RequiredUDNNamespaceLabel] = ""
+		}
+
+		// Try to update
+		_, err = f.ClientSet.CoreV1().Namespaces().Update(context.Background(), ns, metav1.UpdateOptions{})
+		return err
+	})
 	framework.ExpectNoError(err, fmt.Sprintf("unable to update namespace: %s, err: %v", namespace.Name, err))
 }
+
 func getNamespace(f *framework.Framework, name string) *v1.Namespace {
 	ns, err := f.ClientSet.CoreV1().Namespaces().Get(context.Background(), name, metav1.GetOptions{})
 	framework.ExpectNoError(err, fmt.Sprintf("unable to get namespace: %s, err: %v", name, err))
@@ -445,7 +458,7 @@ func createPod(f *framework.Framework, podName, nodeSelector, namespace string, 
 			Containers: []v1.Container{
 				{
 					Name:    contName,
-					Image:   images.AgnHost(),
+					Image:   image.GetE2EImage(image.Agnhost),
 					Command: command,
 				},
 			},
