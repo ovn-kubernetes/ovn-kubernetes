@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"hash/fnv"
 	"net"
-	"strings"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
@@ -35,7 +35,7 @@ import (
 
 func init() {
 	if os.Getenv("ENABLE_NO_OVERLAY") == "true" {
-		images.Add(images.Netshoot())
+		images.AddDeferred(images.Netshoot)
 	}
 }
 

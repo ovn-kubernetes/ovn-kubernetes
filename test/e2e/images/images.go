@@ -18,7 +18,6 @@ var (
 	// pre-approve new images.
 	// FIXME: iperf3 image should not be retrieved from a users repo and should not have latest tag
 	iperf3                = "quay.io/sronanrh/iperf:latest"
-	netshoot              = "ghcr.io/nicolaka/netshoot:v0.13"
 	nginx                 = "nginx:1"
 	metallbLBService      = "quay.io/itssurya/dev-images:metallb-lbservice"
 	udpServerSrcIPPrinter = "quay.io/itssurya/dev-images:udp-server-srcip-printer"
@@ -28,8 +27,10 @@ var (
 	// pulls are rate-limited in CI and this is a personal repository.
 	dnsmasq = "docker.io/andyshinn/dnsmasq:2.83@sha256:e937327fede666e55ba4c2ab8e715a2ce561945363016d42f9d698d1b18ff1be"
 
-	agnHostOverride = ""
-	extraImages     []string
+	agnHostOverride  = ""
+	netshootOverride = ""
+	extraImages      []string
+	deferredImages   []func() string
 )
 
 func init() {
@@ -37,9 +38,7 @@ func init() {
 	if iperf3Override := os.Getenv("IPERF3_IMAGE"); iperf3Override != "" {
 		iperf3 = iperf3Override
 	}
-	if netshootOverride := os.Getenv("NETSHOOT_IMAGE"); netshootOverride != "" {
-		netshoot = netshootOverride
-	}
+	netshootOverride = os.Getenv("NETSHOOT_IMAGE")
 	if nginxOverride := os.Getenv("NGINX_IMAGE"); nginxOverride != "" {
 		nginx = nginxOverride
 	}
@@ -72,7 +71,14 @@ func DNSMasq() string {
 }
 
 func Netshoot() string {
-	return netshoot
+	if netshootOverride != "" {
+		return netshootOverride
+	}
+	return deploymentconfig.Get().GetNetshootContainerImage()
+}
+
+func FedoraContainerDisk() string {
+	return deploymentconfig.Get().GetFedoraContainerDiskImage()
 }
 
 func Nginx() string {
@@ -98,6 +104,12 @@ func Add(imgs ...string) {
 	extraImages = append(extraImages, imgs...)
 }
 
+// AddDeferred registers provider-dependent images without resolving them before
+// the deployment config is initialized. Required resolves them before preloading.
+func AddDeferred(imgs ...func() string) {
+	deferredImages = append(deferredImages, imgs...)
+}
+
 // Required returns the deduplicated set of images needed for the current
 // test run. agnhost is always included because it is used by most e2e tests.
 func Required() []string {
@@ -106,7 +118,11 @@ func Required() []string {
 		agnHost: {},
 	}
 	out := []string{agnHost}
-	for _, img := range extraImages {
+	allImages := append([]string{}, extraImages...)
+	for _, image := range deferredImages {
+		allImages = append(allImages, image())
+	}
+	for _, img := range allImages {
 		if _, ok := seen[img]; !ok {
 			seen[img] = struct{}{}
 			out = append(out, img)

@@ -39,6 +39,14 @@ func (k kind) GetAgnHostContainerImage() string {
 	return image.GetE2EImage(image.Agnhost)
 }
 
+func (k kind) GetFedoraContainerDiskImage() string {
+	return "quay.io/kubevirtci/fedora-with-test-tooling:v20250416-e37573e"
+}
+
+func (k kind) GetNetshootContainerImage() string {
+	return "ghcr.io/nicolaka/netshoot:v0.13"
+}
+
 func (k kind) IsConfigurationEnabled(config api.Config) bool {
 	switch config {
 	case api.L3UDNMultiSubnetConfig:
