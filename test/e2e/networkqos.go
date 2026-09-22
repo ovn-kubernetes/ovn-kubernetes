@@ -29,7 +29,7 @@ import (
 
 func init() {
 	if os.Getenv("OVN_NETWORK_QOS_ENABLE") == "true" {
-		images.Add(images.Netshoot())
+		images.AddDeferred(images.Netshoot)
 	}
 }
 
