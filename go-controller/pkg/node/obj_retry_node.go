@@ -154,8 +154,9 @@ func (h *nodeEventHandler) GetResourceFromInformerCache(key string) (interface{}
 func (h *nodeEventHandler) AddResource(obj interface{}, _ bool) error {
 	switch h.objType {
 	case factory.EndpointSliceForStaleConntrackRemovalType:
-		// no action needed upon add event
-		return nil
+		// Handle add events to detect 0→N endpoint transitions and flush stale conntrack entries
+		epSlice := obj.(*discovery.EndpointSlice)
+		return h.nc.reconcileConntrackUponEndpointSliceEvents(nil, epSlice)
 
 	case factory.NodeType:
 		node := obj.(*corev1.Node)
