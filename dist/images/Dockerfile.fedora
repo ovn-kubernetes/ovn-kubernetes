@@ -17,22 +17,6 @@ ARG OVN_KUBERNETES_DIR=.
 ARG FEDORA_BASE_IMAGE=quay.io/fedora/fedora:43
 
 #############################################
-# Stage to build OVN Kubernetes from Source #
-#############################################
-
-FROM --platform=${BUILDPLATFORM} ${BUILDER_IMAGE} AS ovnkube-builder
-
-ARG TARGETOS
-ARG TARGETARCH
-
-WORKDIR /workspace
-RUN dnf install --best --refresh -y make git
-COPY ${OVN_KUBERNETES_DIR} ovn-kubernetes
-RUN cd ovn-kubernetes/dist/images && \
-    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} make bld
-
-
-#############################################
 # Stage to get OVN and OVS RPMs from source #
 #############################################
 FROM ${FEDORA_BASE_IMAGE} AS ovnbuilder
@@ -129,6 +113,45 @@ COPY --from=ovnbuilder /root/ovs/rpm/rpmbuild/RPMS/x86_64/*.rpm /
 FROM ${FEDORA_BASE_IMAGE} AS koji
 
 COPY --from=kojidownloader /*.rpm /
+
+#############################################################
+# Stage to prepare OVN Kubernetes Sources (OVN from source) #
+#############################################################
+FROM --platform=${BUILDPLATFORM} ${BUILDER_IMAGE} AS ovnkube-prepare-source
+WORKDIR /workspace
+RUN dnf install --best --refresh -y make git
+COPY ${OVN_KUBERNETES_DIR} ovn-kubernetes
+WORKDIR /workspace/ovn-kubernetes/go-controller
+# Get a working version of libovsdb (for modelgen).
+RUN GO111MODULE=on go install \
+    github.com/ovn-kubernetes/libovsdb/cmd/modelgen@$( \
+    go list -mod=mod -m -f '{{ .Version }}' \
+    github.com/ovn-kubernetes/libovsdb \
+)
+# Regenerate models based on the actual OVN NB/SB schema.
+COPY --from=ovnbuilder /root/ovn/ovn-nb.ovsschema pkg/nbdb/ovn-nb.ovsschema
+COPY --from=ovnbuilder /root/ovn/ovn-sb.ovsschema pkg/sbdb/ovn-sb.ovsschema
+RUN go generate ./pkg/nbdb && go generate ./pkg/sbdb
+
+###########################################################
+# Stage to prepare OVN Kubernetes Sources (OVN from koji) #
+###########################################################
+FROM --platform=${BUILDPLATFORM} ${BUILDER_IMAGE} AS ovnkube-prepare-koji
+WORKDIR /workspace
+RUN dnf install --best --refresh -y make git
+COPY ${OVN_KUBERNETES_DIR} ovn-kubernetes
+
+#############################################
+# Stage to build OVN Kubernetes from Source #
+#############################################
+FROM --platform=${BUILDPLATFORM} ovnkube-prepare-${OVN_FROM} AS ovnkube-builder
+
+ARG TARGETOS
+ARG TARGETARCH
+
+WORKDIR /workspace
+RUN cd ovn-kubernetes/dist/images && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} make bld
 
 #################################
 # Stage to build ovn-kubernetes #
