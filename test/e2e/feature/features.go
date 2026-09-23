@@ -36,8 +36,12 @@ var (
 	PersistentIPs         = New("PersistentIPs")
 	NodeIPMACMigration    = New("NodeIPMACMigration")
 	NoOverlay             = New("NoOverlay")
-	OVSCPUPin             = New("OVSCPUPin")
-	RouteAdvertisements   = New("RouteAdvertisements")
+	// NoOverlayDefaultNetwork covers the subset of no-overlay specs that need
+	// the cluster default network itself to be configured with no-overlay
+	// transport (transport=no-overlay in ovnkube.conf).
+	NoOverlayDefaultNetwork = New("NoOverlayDefaultNetwork")
+	OVSCPUPin               = New("OVSCPUPin")
+	RouteAdvertisements     = New("RouteAdvertisements")
 	// RouteAdvertisementsDynamicUDN covers RouteAdvertisements behavior that
 	// is specific to dynamic UDN allocation; these tests require clusters
 	// with both route advertisements and dynamic UDN allocation enabled.

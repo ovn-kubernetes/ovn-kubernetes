@@ -676,7 +676,7 @@ jobs:
           # restarting ovn-k pods (day-2 reconfiguration), which would disrupt any concurrently running test jobs.
           # Dedicated no-overlay jobs are therefore required to cover feature combinations that may interact with
           # no-overlay (e.g. BGP route advertisements, network-segmentation) where implementations are not strictly orthogonal.
-          - {"target": "bgp-managed", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "managed", "no-overlay": "managed"}
+          - {"target": "bgp-managed", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "managed", "network-segmentation": "enable-network-segmentation", "no-overlay": "managed"}
           - {"target": "bgp-no-overlay-dynamic", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "no-overlay": "snat-enabled"}
           - {"target": "bgp-no-overlay", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "no-overlay": "true"}
           - {"target": "bgp-loose-isolation", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "advertised-udn-isolation-mode": "loose"}
@@ -900,6 +900,10 @@ jobs:
         elif [ "${{ matrix.target }}" == "serial" ] || [ "${{ matrix.target }}" == "bgp-managed" ]; then
           # Run the Serial suite with the environment's compatibility filters.
           make -C test control-plane WHAT=Serial
+          if [ "${{ matrix.target }}" == "bgp-managed" ]; then
+            # JOB_NAME keeps this run's JUnit report from overwriting the Serial one.
+            JOB_NAME="control-plane-no-overlay" make -C test control-plane WHAT="No-Overlay:"
+          fi
         elif [ "${{ matrix.target }}" == "tools" ]; then
           make -C go-controller build
           make -C test tools

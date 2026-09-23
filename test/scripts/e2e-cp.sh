@@ -199,7 +199,18 @@ if [ "$ENABLE_EVPN" != true ]; then
   skip_label "Feature:EVPN"
 fi
 
+# Only the specs covering the cluster default network need it deployed with
+# transport=no-overlay. The rest of the Feature:NoOverlay specs drive
+# ClusterUserDefinedNetworks, which request no-overlay on their own CR
+# regardless of the default network's transport, so they stay selectable here
+# and are gated by their other feature labels instead.
 if [ "$ENABLE_NO_OVERLAY" != true ]; then
+  skip_label "Feature:NoOverlayDefaultNetwork"
+fi
+
+# NoOverlay is supported with strict advertised-UDN isolation mode only;
+# skip the no-overlay specs in loose lanes.
+if [ "$ADVERTISED_UDN_ISOLATION_MODE" == "loose" ]; then
   skip_label "Feature:NoOverlay"
 fi
 
