@@ -4,6 +4,7 @@
 package cni
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -182,7 +183,7 @@ func (pr *PodRequest) cmdAdd(kubeAuth *KubeAPIAuth, clientset *ClientSet, ovsCli
 			return nil, err
 		}
 	} else if dpuConnDetails != nil {
-		if err := pr.updatePodDPUConnDetailsWithRetry(kubecli, clientset.podLister, dpuConnDetails); err != nil {
+		if err := pr.updatePodDPUConnDetailsWithRetry(kubecli, clientset.podLister, pod, dpuConnDetails); err != nil {
 			return nil, fmt.Errorf("failed to update the DPU connection details annotation of pod %s/%s: %w",
 				pr.PodNamespace, pr.PodName, err)
 		}
@@ -416,10 +417,11 @@ func (pr *PodRequest) cmdDel(clientset *ClientSet) (*Response, error) {
 					)
 				} else {
 					// Delete the DPU connection-details annotation for this NAD
-					err = pr.updatePodDPUConnDetailsWithRetry(&kube.Kube{KClient: clientset.kclient}, clientset.podLister, nil)
+					err = pr.updatePodDPUConnDetailsWithRetry(&kube.Kube{KClient: clientset.kclient}, clientset.podLister, pod, nil)
 				}
-				// not an error if pod has already been deleted
-				if err != nil && !apierrors.IsNotFound(err) {
+				// A deleted or replaced pod needs no annotation cleanup, but its
+				// original sandbox's VF must still be returned to the host.
+				if err != nil && !apierrors.IsNotFound(err) && !errors.Is(err, util.ErrPodReplaced) {
 					return nil, fmt.Errorf("failed to cleanup the DPU connection details annotation for NAD key %s: %v", pr.nadKey, err)
 				}
 			}

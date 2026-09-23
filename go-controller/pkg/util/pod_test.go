@@ -5,6 +5,7 @@ package util
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/mock"
@@ -39,6 +40,9 @@ func TestIsPodAnnotationUpdateRetryable(t *testing.T) {
 	if IsPodAnnotationUpdateRetryable(errors.New("plain error")) {
 		t.Fatal("expected plain error to not be retryable")
 	}
+	if IsPodAnnotationUpdateRetryable(fmt.Errorf("wrapped: %w", ErrPodReplaced)) {
+		t.Fatal("expected UID mismatch to not be retryable")
+	}
 }
 
 func TestUpdatePodWithAllocationOrRollback(t *testing.T) {
@@ -48,6 +52,8 @@ func TestUpdatePodWithAllocationOrRollback(t *testing.T) {
 		getPodErr        bool
 		allocateErr      bool
 		updatePodErr     bool
+		replacedOnRetry  bool
+		podReplaced      bool
 		expectAllocation bool
 		expectRollback   bool
 		expectUpdate     bool
@@ -86,6 +92,19 @@ func TestUpdatePodWithAllocationOrRollback(t *testing.T) {
 			updatePodErr:     true,
 			expectErr:        true,
 		},
+		{
+			name:        "pod was replaced before allocation",
+			podReplaced: true,
+			expectErr:   true,
+		},
+		{
+			name:             "informer observes replacement after failed patch",
+			replacedOnRetry:  true,
+			allocateRollback: true,
+			expectAllocation: true,
+			expectRollback:   true,
+			expectErr:        true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -102,6 +121,12 @@ func TestUpdatePodWithAllocationOrRollback(t *testing.T) {
 			}
 
 			pod := &corev1.Pod{}
+			pod.UID = "old-uid"
+			pod.ResourceVersion = "1"
+			requestedPod := pod.DeepCopy()
+			if tt.podReplaced {
+				pod.UID = "replacement-uid"
+			}
 
 			var allocated bool
 			allocate := func(pod *corev1.Pod) (*corev1.Pod, func(), error) {
@@ -117,20 +142,33 @@ func TestUpdatePodWithAllocationOrRollback(t *testing.T) {
 
 			if tt.getPodErr {
 				podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(nil, errors.New("Get pod error"))
+			} else if tt.replacedOnRetry {
+				podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(pod, nil).Once()
+				replacement := pod.DeepCopy()
+				replacement.UID = "replacement-uid"
+				replacement.ResourceVersion = "2"
+				podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(replacement, nil).Once()
 			} else {
 				podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(pod, nil)
 			}
 
-			if tt.updatePodErr {
+			if tt.replacedOnRetry {
+				patchErr := apierrors.NewInvalid(schema.GroupKind{Kind: "Pod"}, pod.Name,
+					field.ErrorList{field.Invalid(field.NewPath("metadata", "uid"), pod.UID, "test failed")})
+				kubeMock.On("PatchPodStatusAnnotations", pod, mock.AnythingOfType("*v1.Pod")).Return(patchErr).Once()
+			} else if tt.updatePodErr {
 				kubeMock.On("PatchPodStatusAnnotations", pod, mock.AnythingOfType("*v1.Pod")).Return(errors.New("Update pod error"))
 			} else if tt.expectUpdate {
 				kubeMock.On("PatchPodStatusAnnotations", pod, mock.AnythingOfType("*v1.Pod")).Return(nil)
 			}
 
-			err := UpdatePodWithRetryOrRollback(podListerMock, kubeMock, &corev1.Pod{}, allocate)
+			err := UpdatePodWithRetryOrRollback(podListerMock, kubeMock, requestedPod, allocate)
 
 			if (err != nil) != tt.expectErr {
 				t.Errorf("UpdatePodWithAllocationOrRollback() error = %v, expectErr %v", err, tt.expectErr)
+			}
+			if errors.Is(err, ErrPodReplaced) != (tt.podReplaced || tt.replacedOnRetry) {
+				t.Errorf("unexpected UID mismatch classification: %v", err)
 			}
 
 			if allocated != tt.expectAllocation {
@@ -140,6 +178,8 @@ func TestUpdatePodWithAllocationOrRollback(t *testing.T) {
 			if rollbackDone != tt.expectRollback {
 				t.Errorf("UpdatePodWithAllocationOrRollback() rollbackDone = %v, expectRollback %v", rollbackDone, tt.expectRollback)
 			}
+			kubeMock.AssertExpectations(t)
+			podNamespaceLister.AssertExpectations(t)
 		})
 	}
 }
