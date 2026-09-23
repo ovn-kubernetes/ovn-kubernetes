@@ -167,7 +167,11 @@ func (zic *ZoneInterconnectHandler) createOrUpdateTransitSwitch(networkID int) e
 		Name:        zic.networkTransitSwitchName,
 		ExternalIDs: externalIDs,
 	}
-	zic.addTransitSwitchConfig(ts, BaseTransitSwitchTunnelKey+networkID)
+	// TEST ONLY, DO NOT MERGE: shift the derived transit switch key by one so
+	// that upgraded and non-upgraded nodes disagree on the datapath key. The
+	// staged upgrade e2e must fail on cross-node traffic in the nodes-first
+	// stage; if it passes, the lane is not exercising the skew.
+	zic.addTransitSwitchConfig(ts, BaseTransitSwitchTunnelKey+networkID+1)
 	// Create transit switch if it doesn't exist
 	if err := libovsdbops.CreateOrUpdateLogicalSwitch(zic.nbClient, ts); err != nil {
 		return fmt.Errorf("failed to create/update transit switch %s: %w", zic.networkTransitSwitchName, err)

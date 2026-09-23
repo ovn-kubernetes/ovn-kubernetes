@@ -188,7 +188,8 @@ func (oc *BaseLayer2UserDefinedNetworkController) initializeLogicalSwitch(switch
 	var acls []*nbdb.ACL
 	switch {
 	case oc.isLayer2WithInterconnectTransport():
-		tunnelKey := zoneinterconnect.BaseTransitSwitchTunnelKey + oc.GetNetworkID()
+		// TEST ONLY, DO NOT MERGE: see zone_ic_handler.go, same deliberate skew.
+		tunnelKey := zoneinterconnect.BaseTransitSwitchTunnelKey + oc.GetNetworkID() + 1
 		if config.Layer2UsesTransitRouter && oc.IsPrimaryNetwork() {
 			if len(oc.GetTunnelKeys()) != 2 {
 				return nil, fmt.Errorf("layer2 network %s with transit router enabled requires exactly 2 tunnel keys, got: %v", oc.GetNetworkName(), oc.GetTunnelKeys())
