@@ -392,24 +392,20 @@ func (c *controller) syncNetwork(network string) error {
 	var errs []error
 	var ops []ovsdb.Operation
 
-	p := func(new, db *nbdb.LogicalRouterStaticRoute) bool {
-		return db.ExternalIDs[controllerExternalIDKey] == controllerName && db.IPPrefix == new.IPPrefix && db.Nexthop == new.Nexthop
-	}
+	newRoutes := make([]*nbdb.LogicalRouterStaticRoute, 0, len(adds))
 	for add := range adds {
-		lrsr := &nbdb.LogicalRouterStaticRoute{
-			UUID:        uuids[add],
+		newRoutes = append(newRoutes, &nbdb.LogicalRouterStaticRoute{
 			IPPrefix:    add.dst,
 			Nexthop:     add.gw,
 			OutputPort:  &outport,
 			ExternalIDs: map[string]string{controllerExternalIDKey: controllerName},
-		}
-		p := func(db *nbdb.LogicalRouterStaticRoute) bool { return p(lrsr, db) }
-		ops, err = nbdbops.CreateOrReplaceLogicalRouterStaticRouteWithPredicateOps(c.nbClient, ops, router, lrsr, p)
-		if err != nil {
-			err := fmt.Errorf("failed to add routes on router %s: %w", router, err)
-			errs = append(errs, err)
-			continue
-		}
+		})
+	}
+	// The difference already identifies missing routes. Batch their creation to
+	// avoid per-route cache lookups that deep-copy the router and its StaticRoutes.
+	ops, err = nbdbops.CreateLogicalRouterStaticRoutesOps(c.nbClient, ops, router, newRoutes...)
+	if err != nil {
+		return fmt.Errorf("failed to add routes on router %s: %w", router, err)
 	}
 
 	lrsrs := make([]*nbdb.LogicalRouterStaticRoute, 0, len(deletes))
@@ -441,18 +437,21 @@ func (c *controller) getBGPRoutes(table int, ignoreSubnets []*net.IPNet, routeLi
 		Protocol: unix.RTPROT_BGP,
 		Table:    table,
 	}
-	nlroutes, err := c.netlink.RouteListFiltered(netlink.FAMILY_ALL, filter, netlink.RT_FILTER_PROTOCOL|netlink.RT_FILTER_TABLE)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list BGP routes: %w", err)
-	}
-
 	routes := sets.New[route]()
-	for _, nlroute := range nlroutes {
+	// Convert routes as they arrive instead of retaining a second, much larger
+	// representation of the complete routing table during reconciliation.
+	err := c.netlink.RouteListFilteredIter(netlink.FAMILY_ALL, filter, netlink.RT_FILTER_PROTOCOL|netlink.RT_FILTER_TABLE, func(nlroute netlink.Route) bool {
 		if util.IsContainedInAnyCIDR(nlroute.Dst, ignoreSubnets...) {
 			c.log.V(5).Info("Ignore BGP route", "table", table, "route", stringer{nlroute})
-			continue
+			return true
 		}
 		routes.Insert(routesFromNetlinkRoute(&nlroute, routeLinkIndex)...)
+		return true
+	})
+	if err != nil {
+		// An interrupted dump is not an authoritative snapshot: applying its
+		// partial result could withdraw valid OVN routes.
+		return nil, fmt.Errorf("failed to list BGP routes: %w", err)
 	}
 
 	c.log.V(5).Info("Listed BGP routes", "table", table, "routes", stringer{routes}, "took", time.Since(start))
