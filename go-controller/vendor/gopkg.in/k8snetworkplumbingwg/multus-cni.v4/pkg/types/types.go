@@ -101,7 +101,7 @@ type BandwidthEntry struct {
 type DelegateNetConf struct {
 	Conf                  types.NetConf
 	ConfList              types.NetConfList
-	CNINetworkConfigList  libcni.NetworkConfigList
+	CNINetworkConfigList  libcni.NetworkConfigList `json:"-"` // only used internal housekeeping
 	Name                  string
 	IfnameRequest         string          `json:"ifnameRequest,omitempty"`
 	MacRequest            string          `json:"macRequest,omitempty"`
@@ -179,14 +179,16 @@ type ResourceInfo struct {
 	DeviceIDs []string
 }
 
-// SortDeviceIDs sorts DeviceIDs in each ResourceInfo in place so that device
-// order is deterministic across GetPodResourceMap callers (e.g. Multus and OVN-Kubernetes).
-func SortDeviceIDs(resourceMap map[string]*ResourceInfo) {
-	for _, rInfo := range resourceMap {
-		if rInfo.DeviceIDs != nil {
-			sort.Strings(rInfo.DeviceIDs)
-		}
+// CopyAndSortDeviceIDs returns a sorted copy of ids. Callers use this to
+// stabilize order within one container's allocation without mutating kubelet
+// state or reordering devices across containers.
+func CopyAndSortDeviceIDs(ids []string) []string {
+	if ids == nil {
+		return nil
 	}
+	out := append([]string(nil), ids...)
+	sort.Strings(out)
+	return out
 }
 
 // ResourceClient provides a kubelet Pod resource handle
