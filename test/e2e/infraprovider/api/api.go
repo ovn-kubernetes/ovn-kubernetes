@@ -11,6 +11,10 @@ import (
 	"k8s.io/kubernetes/test/e2e/framework"
 )
 
+// CapabilitySetupUnderlay is the infra-provider capability for localnet underlay
+// wiring via SetupUnderlay.
+const CapabilitySetupUnderlay = "SetupUnderlay"
+
 // Provider represents the infrastructure provider
 type Provider interface {
 	ExternalContainerProvider
