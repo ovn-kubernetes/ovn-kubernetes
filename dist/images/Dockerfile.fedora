@@ -83,7 +83,7 @@ RUN git log -n 1
 # Stage to download OVN RPMs from koji #
 ########################################
 FROM ${FEDORA_BASE_IMAGE} AS kojidownloader
-ARG ovnver=ovn-26.03.1-50.fc44
+ARG ovnver=ovn-26.03.2-122.fc44
 
 USER root
 
