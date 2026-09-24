@@ -175,18 +175,23 @@ func (oc *DefaultNetworkController) ensureRemoteZonePod(_, pod *corev1.Pod) erro
 
 // removePod tried to tear down a pod. It returns nil on success and error on failure;
 // failure indicates the pod tear down should be retried later.
-func (oc *DefaultNetworkController) removePod(pod *corev1.Pod, portInfo *lpInfo) error {
+func (oc *DefaultNetworkController) removePod(pod *corev1.Pod, portInfo *lpInfo) (err error) {
+	defer func() {
+		if err == nil {
+			oc.forgetPodIPReleases(pod)
+		}
+	}()
 	if oc.isPodScheduledOnLocalNode(pod) {
-		if err := oc.removeLocalZonePod(pod, portInfo); err != nil {
+		if err = oc.removeLocalZonePod(pod, portInfo); err != nil {
 			return err
 		}
 	} else {
-		if err := oc.removeRemoteZonePod(pod); err != nil {
+		if err = oc.removeRemoteZonePod(pod); err != nil {
 			return err
 		}
 	}
 
-	err := kubevirt.CleanUpLiveMigratablePod(oc.nbClient, oc.watchFactory, pod)
+	err = kubevirt.CleanUpLiveMigratablePod(oc.nbClient, oc.watchFactory, pod)
 	if err != nil {
 		return err
 	}
@@ -250,7 +255,7 @@ func (oc *DefaultNetworkController) removeRemoteZonePod(pod *corev1.Pod) error {
 			}
 			switchName, zoneContainsPodSubnet := kubevirt.ZoneContainsPodSubnet(oc.lsManager, ips)
 			if zoneContainsPodSubnet {
-				if err := oc.lsManager.ReleaseIPs(switchName, ips); err != nil {
+				if err := oc.releasePodIPsOnce(pod, ovntypes.DefaultNetworkName, &lpInfo{logicalSwitch: switchName, ips: ips}); err != nil {
 					return err
 				}
 			}
