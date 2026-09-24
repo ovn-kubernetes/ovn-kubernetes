@@ -330,6 +330,63 @@ var _ = AfterEach(func() {
 })
 
 var _ = Describe("NetworkQoS Controller", func() {
+	It("reconciles existing pods when the first policy is created and recreated", func() {
+		const policyName = "first-policy"
+		ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: nqosNamespace}}
+		destNS := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+			Name: "remote-destinations", Labels: map[string]string{"qos": "destination"},
+		}}
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "existing-source", Namespace: ns.Name,
+				Annotations: map[string]string{
+					"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":["10.128.0.3/24"],"mac_address":"0a:58:0a:80:00:03"}}`,
+				},
+			},
+			Spec: corev1.PodSpec{NodeName: "node1"},
+		}
+		destPod := pod.DeepCopy()
+		destPod.Name, destPod.Namespace, destPod.Spec.NodeName = "existing-destination", destNS.Name, "node2"
+		destPod.Annotations["k8s.ovn.org/pod-networks"] = `{"default":{"ip_addresses":["10.128.1.3/24"],"mac_address":"0a:58:0a:80:01:03"}}`
+		clientset := util.GetOVNClientset(ns, destNS, pod, destPod)
+		fakeKubeClient, fakeNQoSClient = clientset.KubeClient, clientset.NetworkQoSClient
+		initEnv(clientset, &libovsdbtest.TestSetup{NBData: []libovsdbtest.TestData{
+			&nbdb.LogicalSwitch{Name: "node1"},
+		}})
+		controller := initNetworkQoSController(&util.DefaultNetInfo{}, nil, defaultAddrsetFactory, defaultControllerName)
+		Expect(controller.hasNetworkQoS()).To(BeFalse())
+		Expect(controller.nqosPodLister.Pods(ns.Name).Get(pod.Name)).Error().NotTo(HaveOccurred())
+		Expect(controller.nqosPodLister.Pods(destNS.Name).Get(destPod.Name)).Error().NotTo(HaveOccurred())
+
+		policy := &nqostype.NetworkQoS{
+			ObjectMeta: metav1.ObjectMeta{Name: policyName, Namespace: ns.Name},
+			Spec: nqostype.Spec{
+				Priority: 100,
+				Egress: []nqostype.Rule{{
+					DSCP: 50,
+					Classifier: nqostype.Classifier{To: []nqostype.Destination{{
+						NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"qos": "destination"}},
+						PodSelector:       &metav1.LabelSelector{},
+					}}},
+				}},
+			},
+		}
+		for attempt := 0; attempt < 2; attempt++ {
+			By("creating a policy after source and remote destination pods already exist")
+			_, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(ns.Name).Create(context.Background(), policy.DeepCopy(), metav1.CreateOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			eventuallyAddressSetHas(defaultAddrsetFactory, ns.Name, policyName, "src", "0", defaultControllerName, "10.128.0.3")
+			eventuallyAddressSetHas(defaultAddrsetFactory, ns.Name, policyName, "0", "0", defaultControllerName, "10.128.1.3")
+			qos := eventuallyExpectQoS(defaultControllerName, ns.Name, policyName, 0)
+			eventuallySwitchHasQoS("node1", qos)
+
+			By("cleaning up the last policy while pod and namespace events are gated")
+			Expect(fakeNQoSClient.K8sV1alpha1().NetworkQoSes(ns.Name).Delete(context.Background(), policyName, metav1.DeleteOptions{})).To(Succeed())
+			Eventually(controller.hasNetworkQoS).Should(BeFalse())
+			eventuallyExpectNoQoS(defaultControllerName, ns.Name, policyName, 0)
+			eventuallySwitchHasNoQoS("node1", qos)
+		}
+	})
 
 	DescribeTable("When starting controller with NetworkQoS, Pod and Node objects",
 		func() {
