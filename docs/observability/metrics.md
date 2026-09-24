@@ -1,18 +1,23 @@
 # Metrics
-## OVN-Kubernetes control plane
-This includes a description of a selective set of metrics.
-### Configuration duration recorder
-#### Setup
-Enabled by default with the `kind.sh` (in directory `$ROOT/contrib`) [Kind](https://kind.sigs.k8s.io/) setup script.
-Disabled by default for the ovnkube binary and enabled with flag `--metrics-enable-config-duration`.
-#### High-level description
-This set of metrics gives a result for the upper bound duration which means, it has taken at most this amount of seconds to apply the configuration to all nodes. It does not represent the exact accurate time to apply only this configuration.
-Measurement accuracy can be impacted by other parallel processing that might be occurring while the measurement is in progress therefore, the accuracy of the measurements should only indicate upper bound duration to roll out configuration changes.
-#### Metrics
-| Name | Prometheus type | Description  |
-|--|--|--|
-|ovnkube_master_network_programming_duration_seconds | Histogram | The duration to apply network configuration for a kind (e.g. pod, service, networkpolicy). Configuration includes add, update and delete events for kinds. This includes OVN-Kubernetes master and OVN duration.
-|ovnkube_master_network_programming_ovn_duration_seconds| Histogram  | The duration for OVN to apply network configuration for a kind (e.g. pod, service, networkpolicy).
+
+OVN-Kubernetes exports Prometheus metrics for its own components and for the
+OVN and Open vSwitch services that provide the network data plane. Metrics are
+documented by component:
+
+- [OVN-Kubernetes control plane](metrics/ovnkube-control-plane.md) covers
+  `ovnkube_clustermanager_*` metrics.
+- [OVN-Kubernetes node](metrics/ovnkube-node.md) covers
+  `ovnkube_controller_*`, `ovnkube_node_*`, and libovsdb client metrics.
+- [OVN](metrics/ovn.md) covers `ovn_controller_*`, `ovn_northd_*`, and
+  `ovn_db_*` metrics.
+- [Open vSwitch](metrics/ovs.md) covers `ovs_*` metrics.
+
+The catalogs list metrics registered by OVN-Kubernetes source code. A metric
+may be absent when its component, feature, or metrics option is disabled.
+
+OVN and OVS coverage metrics are exported as Prometheus gauges even when the
+underlying daemon value is cumulative. A daemon restart can reset these
+values.
 
 ## Change log
 This list is to help notify if there are additions, changes or removals to metrics. Latest changes are at the top of this list.
