@@ -29,7 +29,9 @@ import (
 	utilnet "k8s.io/utils/net"
 	"k8s.io/utils/ptr"
 
+	libovsdbcache "github.com/ovn-kubernetes/libovsdb/cache"
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+	libovsdbmodel "github.com/ovn-kubernetes/libovsdb/model"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	controllerutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
@@ -118,6 +120,8 @@ type Controller struct {
 
 	hostDiscoverer hostInterfaceDiscoverer
 	bridgeResolver ovsBridgeResolver
+	// ovsClient is nil where the node has no OVS (DPU host).
+	ovsClient libovsdbclient.Client
 
 	uplinkController      controllerutil.Controller
 	uplinkStateController controllerutil.Controller
@@ -145,6 +149,7 @@ func NewController(nodeName string, wf factory.NodeWatchFactory, ovnClient *util
 		nodeLister:        wf.NodeCoreInformer().Lister(),
 		hostDiscoverer:    netlinkHostInterfaceDiscoverer{},
 		bridgeResolver:    defaultOVSBridgeResolver{ovsClient: ovsClient},
+		ovsClient:         ovsClient,
 	}
 
 	uplinkCfg := &controllerutil.ControllerConfig[uplinkv1alpha1.Uplink]{
@@ -201,8 +206,60 @@ func (c *Controller) Start() error {
 	if err != nil {
 		return err
 	}
+	if c.ovsClient != nil {
+		c.registerOVSBridgeEventHandler()
+	}
 	klog.Infof("OVN-Kubernetes node Uplink controller started")
 	return nil
+}
+
+// registerOVSBridgeEventHandler re-runs discovery when an OVS bridge is added
+// or deleted: discovery has no other notification of OVSDB changes, and an
+// admin may delete or recreate an Uplink bridge at any time.
+func (c *Controller) registerOVSBridgeEventHandler() {
+	c.ovsClient.Cache().AddEventHandler(&libovsdbcache.EventHandlerFuncs{
+		AddFunc: func(table string, row libovsdbmodel.Model) {
+			c.handleOVSBridgeEvent(table, nil, row)
+		},
+		DeleteFunc: func(table string, row libovsdbmodel.Model) {
+			c.handleOVSBridgeEvent(table, row, nil)
+		},
+	})
+}
+
+func (c *Controller) handleOVSBridgeEvent(table string, old, new libovsdbmodel.Model) {
+	if table != vswitchd.BridgeTable {
+		return
+	}
+	deleted, _ := old.(*vswitchd.Bridge)
+	added, _ := new.(*vswitchd.Bridge)
+	for _, stateName := range c.uplinkStatesAffectedByBridge(deleted, added) {
+		c.uplinkStateController.Reconcile(stateName)
+	}
+}
+
+// uplinkStatesAffectedByBridge returns this node's UplinkStates whose
+// discovery may change: the ones resolved to a deleted bridge, and the
+// unresolved ones when a bridge is added.
+func (c *Controller) uplinkStatesAffectedByBridge(deleted, added *vswitchd.Bridge) []string {
+	states, err := c.uplinkStateLister.List(labels.Everything())
+	if err != nil {
+		klog.Errorf("Failed to list UplinkStates after an OVS bridge change: %v", err)
+		return nil
+	}
+	var affected []string
+	for _, state := range states {
+		if _, nodeName := uplinkutil.StateIdentity(state); nodeName != c.nodeName {
+			continue
+		}
+		switch {
+		case deleted != nil && state.Status.OVSBridge != nil && state.Status.OVSBridge.Name == deleted.Name:
+			affected = append(affected, state.Name)
+		case added != nil && !meta.IsStatusConditionTrue(state.Status.Conditions, uplinkv1alpha1.UplinkStateConditionResolved):
+			affected = append(affected, state.Name)
+		}
+	}
+	return affected
 }
 
 func (c *Controller) Stop() {

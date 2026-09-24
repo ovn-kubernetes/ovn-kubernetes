@@ -2132,6 +2132,43 @@ func newUplink(name string, selectorKey string, selectorValue string, hostInterf
 	}
 }
 
+func TestOVSBridgeEventsRediscoverAffectedUplinkStates(t *testing.T) {
+	g := gomega.NewWithT(t)
+	resolved := newHostResolvedUplinkState("blue.node-a", "blue", "node-a", "eth1")
+	resolved.Status.OVSBridge = &uplinkv1alpha1.OVSBridgeStatus{Name: "brblue"}
+	resolved.Status.Conditions = append(resolved.Status.Conditions, metav1.Condition{
+		Type:   uplinkv1alpha1.UplinkStateConditionResolved,
+		Status: metav1.ConditionTrue,
+		Reason: uplinkv1alpha1.UplinkStateReasonResolved,
+	})
+	unresolved := newUplinkState("red.node-a", "red", "node-a")
+	unresolved.Status.Conditions = []metav1.Condition{{
+		Type:   uplinkv1alpha1.UplinkStateConditionResolved,
+		Status: metav1.ConditionFalse,
+		Reason: uplinkv1alpha1.UplinkStateReasonHostInterfaceNotFound,
+	}}
+	remote := newHostResolvedUplinkState("blue.node-b", "blue", "node-b", "eth1")
+	remote.Status.OVSBridge = &uplinkv1alpha1.OVSBridgeStatus{Name: "brblue"}
+	controller, _ := newTestController(t, nil, nil, resolved, unresolved, remote)
+	reconciler := controller.uplinkStateController.(*controllerutil.FakeController)
+
+	// Deleting the resolved bridge rediscovers only the state resolved to it on this node.
+	controller.handleOVSBridgeEvent(vswitchd.BridgeTable, &vswitchd.Bridge{Name: "brblue"}, nil)
+	g.Expect(reconciler.Reconciles).To(gomega.ConsistOf("Reconcile:blue.node-a"))
+
+	// Deleting an unrelated bridge changes nothing.
+	controller.handleOVSBridgeEvent(vswitchd.BridgeTable, &vswitchd.Bridge{Name: "brother"}, nil)
+	g.Expect(reconciler.Reconciles).To(gomega.HaveLen(1))
+
+	// Adding a bridge gives the unresolved state another chance.
+	controller.handleOVSBridgeEvent(vswitchd.BridgeTable, nil, &vswitchd.Bridge{Name: "brred"})
+	g.Expect(reconciler.Reconciles).To(gomega.ConsistOf("Reconcile:blue.node-a", "Reconcile:red.node-a"))
+
+	// Other tables are ignored.
+	controller.handleOVSBridgeEvent(vswitchd.PortTable, &vswitchd.Port{Name: "brblue"}, nil)
+	g.Expect(reconciler.Reconciles).To(gomega.HaveLen(2))
+}
+
 func newUplinkState(name, uplinkName, nodeName string) *uplinkv1alpha1.UplinkState {
 	return &uplinkv1alpha1.UplinkState{
 		ObjectMeta: metav1.ObjectMeta{
