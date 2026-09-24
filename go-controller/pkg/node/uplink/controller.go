@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"net"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/vishvananda/netlink"
@@ -23,6 +25,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/apimachinery/pkg/util/sets"
 	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
@@ -40,6 +43,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	nodeutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/util"
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	uplinkutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/uplink"
@@ -63,6 +67,12 @@ const (
 	// publishing an arbitrary subset. See the Uplink feature documentation.
 	maxDefaultGateways = 256
 )
+
+// routeSettleDelay is how long rediscovery waits after a default route event,
+// and how long a family's published gateways survive a dump without them:
+// moving an interface across VRF tables purges and restores its routes in a
+// burst, and a dump inside that burst would publish a transient gateway list.
+var routeSettleDelay = 2 * time.Second
 
 type hostInterfaceState struct {
 	macAddress      net.HardwareAddr
@@ -122,6 +132,15 @@ type Controller struct {
 	uplinkController      controllerutil.Controller
 	uplinkStateController controllerutil.Controller
 	nodeController        controllerutil.Controller
+
+	// routeManager delivers the kernel route events that drive rediscovery;
+	// nil where host routes are not discovered (DPU mode, tests).
+	routeManager *routemanager.Controller
+
+	// withdrawalsMutex guards pendingWithdrawals: for each UplinkState whose
+	// dumps lost every gateway of a family, when the first such dump ran.
+	withdrawalsMutex   sync.Mutex
+	pendingWithdrawals map[string]time.Time
 }
 
 // discoveryRateLimiter is the default controller rate limiter with its
@@ -136,9 +155,11 @@ func discoveryRateLimiter() workqueue.TypedRateLimiter[string] {
 }
 
 // NewController creates the ovnkube-node Uplink discovery controller.
-func NewController(nodeName string, wf factory.NodeWatchFactory, ovnClient *util.OVNNodeClientset, ovsClient libovsdbclient.Client) *Controller {
+func NewController(nodeName string, wf factory.NodeWatchFactory, ovnClient *util.OVNNodeClientset, ovsClient libovsdbclient.Client,
+	routeManager *routemanager.Controller) *Controller {
 	c := &Controller{
 		nodeName:          nodeName,
+		routeManager:      routeManager,
 		uplinkClient:      ovnClient.UplinkClient,
 		uplinkLister:      wf.UplinkInformer().Lister(),
 		uplinkStateLister: wf.UplinkStateInformer().Lister(),
@@ -193,6 +214,13 @@ func NewController(nodeName string, wf factory.NodeWatchFactory, ovnClient *util
 }
 
 func (c *Controller) Start() error {
+	// Only the side that reads host routes needs to hear about them. Register
+	// before the first discovery runs, so a route change racing it is not
+	// missed.
+	if c.routeManager != nil && (config.IsModeFull() || config.IsModeDPUHost()) {
+		c.routeManager.AddOnRouteUpdateHandler(c.onRouteUpdate)
+		c.routeManager.AddOnRouteEventsLostHandler(c.uplinkStateController.ReconcileAll)
+	}
 	err := controllerutil.Start(
 		c.uplinkController,
 		c.uplinkStateController,
@@ -211,6 +239,38 @@ func (c *Controller) Stop() {
 		c.uplinkStateController,
 		c.nodeController,
 	)
+}
+
+// onRouteUpdate rediscovers this node's UplinkStates once a default route
+// changed in any routing table, so a gateway that appears, changes or is
+// withdrawn after discovery converged is published within seconds. Default
+// route changes are rare, so every one of them rediscovers all of the node's
+// UplinkStates rather than mapping the route to one; the workqueue coalesces
+// a burst into one delayed rediscovery per UplinkState.
+func (c *Controller) onRouteUpdate(event netlink.RouteUpdate) {
+	if !isDefaultRouteChange(event) {
+		return
+	}
+	klog.V(5).Infof("Default route change %v, rediscovering Uplinks once routes settle", event.Route)
+	states, err := c.uplinkStateLister.List(labels.Everything())
+	if err != nil {
+		klog.Errorf("Failed to list UplinkStates on a default route change: %v", err)
+		return
+	}
+	for _, state := range states {
+		if _, nodeName := uplinkutil.StateIdentity(state); nodeName == c.nodeName {
+			c.uplinkStateController.ReconcileAfter(state.Name, routeSettleDelay)
+		}
+	}
+}
+
+// isDefaultRouteChange reports whether a route event can change a discovered
+// default gateway: a unicast default route not installed by ovnkube itself
+// (its managed defaults derive from the published gateways).
+func isDefaultRouteChange(event netlink.RouteUpdate) bool {
+	return isDefaultRoute(event.Route) &&
+		event.Route.Type == unix.RTN_UNICAST &&
+		int(event.Route.Protocol) != ovntypes.OVNKProtocol
 }
 
 func (c *Controller) reconcileUplink(key string) error {
@@ -331,6 +391,7 @@ func (c *Controller) reconcileUplinkState(key string) error {
 				err.Error(),
 			))
 		}
+		hostState.defaultGateways = c.confirmWithdrawnDefaultGateways(state, hostState.defaultGateways)
 	}
 
 	if config.OvnKubeNode.Mode == ovntypes.NodeModeDPUHost {
@@ -455,10 +516,58 @@ func (c *Controller) reconcileUplinkState(key string) error {
 	)
 }
 
+// confirmWithdrawnDefaultGateways keeps the published gateways of a family
+// whose gateways the dumps no longer have until routeSettleDelay has passed
+// since the first such dump: moving the interface across VRF tables purges
+// and restores its routes, and a dump inside that window is empty although
+// no gateway went away.
+func (c *Controller) confirmWithdrawnDefaultGateways(state *uplinkv1alpha1.UplinkState, discovered []net.IP) []net.IP {
+	c.withdrawalsMutex.Lock()
+	defer c.withdrawalsMutex.Unlock()
+	discoveredFamilies := sets.New[utilnet.IPFamily]()
+	for _, gateway := range discovered {
+		discoveredFamilies.Insert(utilnet.IPFamilyOf(gateway))
+	}
+	var kept []net.IP
+	for _, published := range state.Status.DefaultGateways {
+		if gateway := net.ParseIP(string(published)); gateway != nil && !discoveredFamilies.Has(utilnet.IPFamilyOf(gateway)) {
+			kept = append(kept, gateway)
+		}
+	}
+	if len(kept) == 0 {
+		delete(c.pendingWithdrawals, state.Name)
+		return discovered
+	}
+	firstMiss, pending := c.pendingWithdrawals[state.Name]
+	if pending && time.Since(firstMiss) >= routeSettleDelay {
+		delete(c.pendingWithdrawals, state.Name)
+		return discovered
+	}
+	if !pending {
+		firstMiss = time.Now()
+		if c.pendingWithdrawals == nil {
+			c.pendingWithdrawals = map[string]time.Time{}
+		}
+		c.pendingWithdrawals[state.Name] = firstMiss
+		klog.V(4).Infof("UplinkState %s: default gateways %v missing from the host routes, confirming before withdrawing them",
+			state.Name, kept)
+	}
+	c.uplinkStateController.ReconcileAfter(state.Name, routeSettleDelay-time.Since(firstMiss))
+	gateways := append(slices.Clone(discovered), kept...)
+	sort.Slice(gateways, func(i, j int) bool { return gateways[i].String() < gateways[j].String() })
+	return gateways
+}
+
+func (c *Controller) forgetPendingWithdrawal(stateName string) {
+	c.withdrawalsMutex.Lock()
+	defer c.withdrawalsMutex.Unlock()
+	delete(c.pendingWithdrawals, stateName)
+}
+
 // repollMissingDefaultGateways schedules a delayed rediscovery while an IP
 // family the host interface has an address for is missing its default
-// gateway: netlink route events do not currently enqueue Uplink discovery.
-// Quiet by design —
+// gateway, as a fallback for a discovery that ran inside a route transition
+// and for default routes discovery cannot resolve. Quiet by design —
 // an uplink without a default gateway is valid, so this is not an error and
 // no condition degrades; the empty status.defaultGateways field is the
 // signal. Only the netlink-discovering side re-polls: the DPU reads host
@@ -510,6 +619,7 @@ func missingDefaultGatewayFamilies(hostState *hostInterfaceState) string {
 // generates no event on the Uplink that owns it, so reconcile that Uplink
 // here to recreate the UplinkState.
 func (c *Controller) reconcileOwnerOfDeletedUplinkState(key string) error {
+	c.forgetPendingWithdrawal(key)
 	uplinks, err := c.uplinkLister.List(labels.Everything())
 	if err != nil {
 		return fmt.Errorf("failed to list Uplinks: %w", err)
@@ -635,8 +745,9 @@ func (c *Controller) updateResolvedUplinkStateStatus(
 // netlink and OVSDB, which generate no Kubernetes events, so the
 // controller's rate-limited retries are what re-polls them.
 //
-// TODO: subscribe to netlink and OVSDB events and reconcile on relevant
-// changes instead of polling through retries.
+// TODO: subscribe to netlink link and address events and to OVSDB changes
+// and reconcile on them instead of polling through retries; route events
+// are already followed.
 func (c *Controller) updateUplinkStateStatus(
 	state *uplinkv1alpha1.UplinkState,
 	hostInterfaceName string,
@@ -912,6 +1023,7 @@ func desiredUplinkState(
 }
 
 func (c *Controller) deleteUplinkState(name string) error {
+	c.forgetPendingWithdrawal(name)
 	err := c.uplinkClient.K8sV1alpha1().UplinkStates().Delete(
 		context.Background(),
 		name,
@@ -1055,7 +1167,7 @@ func (d netlinkHostInterfaceDiscoverer) Discover(hostInterfaceName string) (*hos
 				hostInterfaceName, err),
 		)
 	}
-	routes, err := hostInterfaceRoutes(link)
+	routes, err := settledHostInterfaceRoutes(link)
 	if err != nil {
 		return nil, newDiscoveryError(
 			uplinkv1alpha1.UplinkStateReasonGatewayInfoUnavailable,
@@ -1104,13 +1216,39 @@ func discoverHostFunction(hostInterfaceName string) *uplinkv1alpha1.HostFunction
 	return nil
 }
 
+// settledHostInterfaceRoutes dumps the host interface's routes and repeats
+// the dump once if the interface changed master meanwhile. Enslaving the
+// interface to a VRF, or releasing it, purges its routes from one table
+// before restoring them in the other, so a dump that samples the FIB inside
+// that window misses the default route: publishing the resulting empty
+// gateway list would remove the programmed defaults until the next poll.
+func settledHostInterfaceRoutes(link netlink.Link) ([]netlink.Route, error) {
+	routes, err := hostInterfaceRoutes(link)
+	if err != nil {
+		return nil, err
+	}
+	current, err := util.GetNetLinkOps().LinkByName(link.Attrs().Name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to re-read %s after listing its routes: %w",
+			link.Attrs().Name, err)
+	}
+	if current.Attrs().MasterIndex == link.Attrs().MasterIndex {
+		return routes, nil
+	}
+	klog.V(4).Infof("Host interface %s changed master from %d to %d while listing its routes, listing again",
+		link.Attrs().Name, link.Attrs().MasterIndex, current.Attrs().MasterIndex)
+	return hostInterfaceRoutes(current)
+}
+
 // hostInterfaceRoutes lists the routes of the table that holds the host
 // interface's routes: the VRF's routing table when the interface is enslaved
 // to a VRF, since it keeps its routes there, the default route included, and
 // the main table otherwise. The dump filters by table only and leaves
 // matching the interface to the caller: a multipath route carries an output
 // interface and gateway per nexthop and none at the route level, so an OIF
-// filter drops it entirely.
+// filter drops it entirely. The strict dump has the kernel apply the table
+// filter: this runs every re-poll interval while an uplink lacks a gateway,
+// and must not deserialize the whole FIB each time.
 func hostInterfaceRoutes(link netlink.Link) ([]netlink.Route, error) {
 	table := unix.RT_TABLE_MAIN
 	if masterIndex := link.Attrs().MasterIndex; masterIndex != 0 {
@@ -1123,7 +1261,7 @@ func hostInterfaceRoutes(link netlink.Link) ([]netlink.Route, error) {
 			table = int(vrf.Table)
 		}
 	}
-	return util.GetNetLinkOps().RouteListFiltered(
+	return util.GetNetLinkOps().RouteListFilteredStrict(
 		netlink.FAMILY_ALL,
 		&netlink.Route{Table: table},
 		netlink.RT_FILTER_TABLE,
@@ -1157,14 +1295,25 @@ func defaultGatewaysForLink(routes []netlink.Route, linkIndex int) []net.IP {
 		}
 	}
 	for _, route := range routes {
-		if !isDefaultRoute(route) {
+		// ovnkube installs its own default in the network VRF table, marked
+		// with its protocol: that route is derived from the published
+		// gateways and must never be read back as one of them.
+		if !isDefaultRoute(route) || int(route.Protocol) == ovntypes.OVNKProtocol {
 			continue
 		}
 		if route.LinkIndex == linkIndex && route.Gw != nil {
 			addNextHop(&netlink.NexthopInfo{LinkIndex: route.LinkIndex, Gw: route.Gw}, route.Priority)
 			continue
 		}
-		// TODO: Resolve next-hop IDs (nhid) when routes omit gateway IPs.
+		// A route through a nexthop object (net.ipv4.nexthop_compat_mode=0,
+		// FRR on kernels >= 5.3) carries neither gateway nor interface
+		// inline, so it cannot be matched against the link here.
+		// TODO: resolve route.NHID through netlink NexthopList.
+		if route.NHID != 0 && route.Gw == nil && len(route.MultiPath) == 0 {
+			klog.V(4).Infof("Uplink gateway discovery skips default route via nexthop object %d (metric %d): "+
+				"nexthop-object routes are not resolved", route.NHID, route.Priority)
+			continue
+		}
 		for _, nexthop := range route.MultiPath {
 			addNextHop(nexthop, route.Priority)
 		}

@@ -966,6 +966,91 @@ func TestNodeUplinkControllerRejectsBridgeUplinkAsHostInterface(t *testing.T) {
 	)))
 }
 
+func TestNodeUplinkControllerRediscoversOnDefaultRouteChanges(t *testing.T) {
+	g := gomega.NewWithT(t)
+	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+	config.OvnKubeNode.Mode = ovntypes.NodeModeFull
+
+	controller, _ := newTestController(t,
+		fakeHostDiscoverer{err: fmt.Errorf("must not discover")},
+		fakeBridgeResolver{bridgeName: "br-blue", bridgeUplink: "eth0"},
+		newUplinkState("br-blue.node-a", "br-blue", "node-a"),
+		newUplinkState("br-blue.node-b", "br-blue", "node-b"),
+	)
+	fake := controller.uplinkStateController.(*controllerutil.FakeController)
+
+	// Non-default, unreachable and ovnkube-managed default routes do not
+	// change a discovered gateway.
+	controller.onRouteUpdate(netlink.RouteUpdate{Route: netlink.Route{
+		Dst: ovntest.MustParseIPNet("10.0.0.0/8"), Gw: net.ParseIP("192.0.2.1"), Type: unix.RTN_UNICAST}})
+	controller.onRouteUpdate(netlink.RouteUpdate{Route: netlink.Route{
+		Dst: ovntest.MustParseIPNet("0.0.0.0/0"), Type: unix.RTN_UNREACHABLE, Table: 1005}})
+	controller.onRouteUpdate(netlink.RouteUpdate{Route: netlink.Route{
+		Dst: ovntest.MustParseIPNet("0.0.0.0/0"), Gw: net.ParseIP("192.0.2.1"), Type: unix.RTN_UNICAST,
+		Protocol: ovntypes.OVNKProtocol, Table: 1005}})
+	g.Expect(fake.Reconciles).To(gomega.BeEmpty())
+
+	// A default route change in any table schedules a delayed rediscovery
+	// of this node's UplinkStates only.
+	controller.onRouteUpdate(netlink.RouteUpdate{Route: netlink.Route{
+		Dst: ovntest.MustParseIPNet("::/0"), Gw: net.ParseIP("2001:db8::1"), Type: unix.RTN_UNICAST, Table: 1005}})
+	g.Expect(fake.Reconciles).To(gomega.ConsistOf("After:br-blue.node-a"))
+}
+
+// A family whose gateways vanish from one dump keeps them published until a
+// rediscovery after the routes settled confirms the withdrawal.
+func TestNodeUplinkControllerConfirmsDefaultGatewayWithdrawal(t *testing.T) {
+	g := gomega.NewWithT(t)
+	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+	config.OvnKubeNode.Mode = ovntypes.NodeModeFull
+
+	state := newUplinkState("br-blue.node-a", "br-blue", "node-a")
+	state.Status.DefaultGateways = []uplinkv1alpha1.IPAddress{"192.0.2.1", "2001:db8::1"}
+	discoverer := &copyingHostDiscoverer{state: &hostInterfaceState{
+		macAddress: net.HardwareAddr{0x02, 0x42, 0xac, 0x12, 0x00, 0x02},
+		ipAddresses: []*net.IPNet{
+			ovntest.MustParseIPNet("192.0.2.10/24"),
+			ovntest.MustParseIPNet("2001:db8::10/64"),
+		},
+		defaultGateways: []net.IP{ovntest.MustParseIP("192.0.2.1")},
+	}}
+	controller, client := newTestController(t,
+		discoverer,
+		fakeBridgeResolver{bridgeName: "br-blue", bridgeUplink: "eth0"},
+		newNode("node-a", map[string]string{"role": "blue"}),
+		newUplink("br-blue", "role", "blue", "breth0"),
+		state,
+	)
+	fake := controller.uplinkStateController.(*controllerutil.FakeController)
+
+	// Dumps without the IPv6 gateway inside the settle delay keep it and
+	// schedule the confirming rediscovery.
+	for range 2 {
+		g.Expect(controller.reconcileUplinkState("br-blue.node-a")).To(gomega.Succeed())
+		published := getUplinkState(g, client, "br-blue.node-a")
+		g.Expect(published.Status.DefaultGateways).To(gomega.Equal([]uplinkv1alpha1.IPAddress{"192.0.2.1", "2001:db8::1"}))
+	}
+	g.Expect(fake.Reconciles).To(gomega.ConsistOf("After:br-blue.node-a", "After:br-blue.node-a"))
+
+	// A dump without it once the delay has passed withdraws it.
+	routeSettleDelay = 0
+	t.Cleanup(func() { routeSettleDelay = 2 * time.Second })
+	g.Expect(controller.reconcileUplinkState("br-blue.node-a")).To(gomega.Succeed())
+	published := getUplinkState(g, client, "br-blue.node-a")
+	g.Expect(published.Status.DefaultGateways).To(gomega.Equal([]uplinkv1alpha1.IPAddress{"192.0.2.1"}))
+}
+
+// copyingHostDiscoverer returns a fresh copy per call, as discovery does.
+type copyingHostDiscoverer struct {
+	state *hostInterfaceState
+}
+
+func (d *copyingHostDiscoverer) Discover(string) (*hostInterfaceState, error) {
+	state := *d.state
+	state.defaultGateways = slices.Clone(d.state.defaultGateways)
+	return &state, nil
+}
+
 func TestNodeUplinkControllerRepollsWhileDefaultGatewaysMissing(t *testing.T) {
 	hostState := &hostInterfaceState{
 		macAddress:  net.HardwareAddr{0x02, 0x42, 0xac, 0x12, 0x00, 0x02},
@@ -1110,7 +1195,7 @@ func TestHostInterfaceRoutes(t *testing.T) {
 		t.Cleanup(util.ResetNetLinkOpMockInst)
 
 		link := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "enp3s0v0", Index: 7}}
-		netlinkOps.On("RouteListFiltered",
+		netlinkOps.On("RouteListFilteredStrict",
 			netlink.FAMILY_ALL,
 			&netlink.Route{Table: unix.RT_TABLE_MAIN},
 			uint64(netlink.RT_FILTER_TABLE),
@@ -1132,7 +1217,7 @@ func TestHostInterfaceRoutes(t *testing.T) {
 			LinkAttrs: netlink.LinkAttrs{Name: "mp1005", Index: 9},
 			Table:     1005,
 		}, nil)
-		netlinkOps.On("RouteListFiltered",
+		netlinkOps.On("RouteListFilteredStrict",
 			netlink.FAMILY_ALL,
 			&netlink.Route{Table: 1005},
 			uint64(netlink.RT_FILTER_TABLE),
@@ -1153,7 +1238,7 @@ func TestHostInterfaceRoutes(t *testing.T) {
 		netlinkOps.On("LinkByIndex", 9).Return(&netlink.Bond{
 			LinkAttrs: netlink.LinkAttrs{Name: "bond0", Index: 9},
 		}, nil)
-		netlinkOps.On("RouteListFiltered",
+		netlinkOps.On("RouteListFilteredStrict",
 			netlink.FAMILY_ALL,
 			&netlink.Route{Table: unix.RT_TABLE_MAIN},
 			uint64(netlink.RT_FILTER_TABLE),
@@ -1162,6 +1247,58 @@ func TestHostInterfaceRoutes(t *testing.T) {
 		routes, err := hostInterfaceRoutes(link)
 		g.Expect(err).NotTo(gomega.HaveOccurred())
 		g.Expect(routes).To(gomega.Equal(mainTableRoutes))
+	})
+}
+
+func TestSettledHostInterfaceRoutes(t *testing.T) {
+	const vrfIndex, vrfTable = 9, 1005
+	vrf := &netlink.Vrf{LinkAttrs: netlink.LinkAttrs{Name: "mp1005", Index: vrfIndex}, Table: vrfTable}
+	standalone := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "enp3s0v0", Index: 7}}
+	enslaved := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "enp3s0v0", Index: 7, MasterIndex: vrfIndex}}
+	defaultRoute := []netlink.Route{{LinkIndex: 7, Gw: ovntest.MustParseIP("192.0.2.1")}}
+	tableFilter := func(table int) *netlink.Route { return &netlink.Route{Table: table} }
+
+	for _, tt := range []struct {
+		name           string
+		before, after  netlink.Link
+		emptiedTable   int
+		restoringTable int
+	}{
+		{"enslaved to the VRF during the dump", standalone, enslaved, unix.RT_TABLE_MAIN, vrfTable},
+		{"released from the VRF during the dump", enslaved, standalone, vrfTable, unix.RT_TABLE_MAIN},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			netlinkOps := utilmocks.NewNetLinkOps(t)
+			util.SetNetLinkOpMockInst(netlinkOps)
+			t.Cleanup(util.ResetNetLinkOpMockInst)
+			netlinkOps.On("LinkByIndex", vrfIndex).Return(vrf, nil)
+			// The routes were purged from the first table and not yet
+			// restored in the second one when the first dump ran.
+			netlinkOps.On("RouteListFilteredStrict", netlink.FAMILY_ALL,
+				tableFilter(tt.emptiedTable), uint64(netlink.RT_FILTER_TABLE)).Return([]netlink.Route{}, nil).Once()
+			netlinkOps.On("LinkByName", "enp3s0v0").Return(tt.after, nil).Once()
+			netlinkOps.On("RouteListFilteredStrict", netlink.FAMILY_ALL,
+				tableFilter(tt.restoringTable), uint64(netlink.RT_FILTER_TABLE)).Return(defaultRoute, nil).Once()
+
+			routes, err := settledHostInterfaceRoutes(tt.before)
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+			g.Expect(routes).To(gomega.Equal(defaultRoute))
+		})
+	}
+
+	t.Run("unchanged master keeps the first dump", func(t *testing.T) {
+		g := gomega.NewWithT(t)
+		netlinkOps := utilmocks.NewNetLinkOps(t)
+		util.SetNetLinkOpMockInst(netlinkOps)
+		t.Cleanup(util.ResetNetLinkOpMockInst)
+		netlinkOps.On("RouteListFilteredStrict", netlink.FAMILY_ALL,
+			tableFilter(unix.RT_TABLE_MAIN), uint64(netlink.RT_FILTER_TABLE)).Return(defaultRoute, nil).Once()
+		netlinkOps.On("LinkByName", "enp3s0v0").Return(standalone, nil).Once()
+
+		routes, err := settledHostInterfaceRoutes(standalone)
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+		g.Expect(routes).To(gomega.Equal(defaultRoute))
 	})
 }
 
@@ -1212,6 +1349,24 @@ func TestDefaultGatewaysForLink(t *testing.T) {
 				{MultiPath: []*netlink.NexthopInfo{{LinkIndex: 6}}},
 			},
 			expected: []net.IP{},
+		},
+		{
+			name: "nexthop object default routes are not resolved",
+			routes: []netlink.Route{
+				{NHID: 12},
+				{NHID: 13, Priority: 100},
+				{LinkIndex: 6, Gw: net.ParseIP("192.0.2.1"), NHID: 14},
+			},
+			expected: ovntest.MustParseIPs("192.0.2.1"),
+		},
+		{
+			name: "ovnkube-managed default routes are not host gateways",
+			routes: []netlink.Route{
+				{LinkIndex: 6, Gw: net.ParseIP("192.0.2.1"), Protocol: ovntypes.OVNKProtocol},
+				{LinkIndex: 6, Gw: net.ParseIP("2001:db8::1"), Protocol: ovntypes.OVNKProtocol},
+				{LinkIndex: 6, Gw: net.ParseIP("192.0.2.2"), Protocol: unix.RTPROT_STATIC},
+			},
+			expected: ovntest.MustParseIPs("192.0.2.2"),
 		},
 		{
 			name: "lowest metric per family with equal-metric ties",
@@ -1329,7 +1484,7 @@ func TestNodeUplinkControllerPublishesHeaviestGatewayWeights(t *testing.T) {
 			netlinkOps.On("AddrList", link, netlink.FAMILY_ALL).Return([]netlink.Addr{
 				{IPNet: ovntest.MustParseIPNet("192.0.2.10/24")},
 			}, nil)
-			netlinkOps.On("RouteListFiltered", netlink.FAMILY_ALL,
+			netlinkOps.On("RouteListFilteredStrict", netlink.FAMILY_ALL,
 				&netlink.Route{Table: unix.RT_TABLE_MAIN}, netlink.RT_FILTER_TABLE).Return([]netlink.Route{
 				{MultiPath: []*netlink.NexthopInfo{
 					{LinkIndex: 7, Gw: net.ParseIP("192.0.2.1"), Hops: 3},
@@ -1396,7 +1551,7 @@ func TestNetlinkHostInterfaceDiscovererDefaultGatewayLimit(t *testing.T) {
 			}
 			// Duplicate next hops from separate routes must not consume slots.
 			routes = append(routes, routes...)
-			netlinkOps.On("RouteListFiltered", netlink.FAMILY_ALL,
+			netlinkOps.On("RouteListFilteredStrict", netlink.FAMILY_ALL,
 				&netlink.Route{Table: unix.RT_TABLE_MAIN}, netlink.RT_FILTER_TABLE).Return(routes, nil)
 
 			state, err := netlinkHostInterfaceDiscoverer{}.Discover("breth0")

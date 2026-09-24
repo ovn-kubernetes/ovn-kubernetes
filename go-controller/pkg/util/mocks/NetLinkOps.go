@@ -1011,6 +1011,36 @@ func (_m *NetLinkOps) RouteListFiltered(family int, filter *netlink.Route, filte
 	return r0, r1
 }
 
+// RouteListFilteredStrict provides a mock function with given fields: family, filter, filterMask
+func (_m *NetLinkOps) RouteListFilteredStrict(family int, filter *netlink.Route, filterMask uint64) ([]netlink.Route, error) {
+	ret := _m.Called(family, filter, filterMask)
+
+	if len(ret) == 0 {
+		panic("no return value specified for RouteListFilteredStrict")
+	}
+
+	var r0 []netlink.Route
+	var r1 error
+	if rf, ok := ret.Get(0).(func(int, *netlink.Route, uint64) ([]netlink.Route, error)); ok {
+		return rf(family, filter, filterMask)
+	}
+	if rf, ok := ret.Get(0).(func(int, *netlink.Route, uint64) []netlink.Route); ok {
+		r0 = rf(family, filter, filterMask)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]netlink.Route)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(int, *netlink.Route, uint64) error); ok {
+		r1 = rf(family, filter, filterMask)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
 // RouteReplace provides a mock function with given fields: route
 func (_m *NetLinkOps) RouteReplace(route *netlink.Route) error {
 	ret := _m.Called(route)
