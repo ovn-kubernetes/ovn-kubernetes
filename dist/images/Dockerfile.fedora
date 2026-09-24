@@ -14,7 +14,7 @@
 ARG OVN_FROM=koji
 ARG BUILDER_IMAGE
 ARG OVN_KUBERNETES_DIR=.
-ARG FEDORA_BASE_IMAGE=quay.io/fedora/fedora:43
+ARG FEDORA_BASE_IMAGE=quay.io/fedora/fedora:44
 
 #############################################
 # Stage to get OVN and OVS RPMs from source #
@@ -83,7 +83,7 @@ RUN git log -n 1
 # Stage to download OVN RPMs from koji #
 ########################################
 FROM ${FEDORA_BASE_IMAGE} AS kojidownloader
-ARG ovnver=ovn-26.03.1-50.fc43
+ARG ovnver=ovn-26.03.1-50.fc44
 
 USER root
 
