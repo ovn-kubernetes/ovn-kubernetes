@@ -190,6 +190,7 @@ type networkAttachmentConfigParams struct {
 	role                string
 	mtu                 int
 	physicalNetworkName string
+	disableMACSecurity  bool
 }
 
 type networkAttachmentConfig struct {
