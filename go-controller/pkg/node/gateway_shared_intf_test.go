@@ -532,6 +532,27 @@ var _ = Describe("SyncServices", func() {
 	})
 
 	Context("when namespace has invalid primary network", func() {
+		It("should treat service add as a no-op", func() {
+			service := newService(testService, testNamespace, "10.96.0.19",
+				[]corev1.ServicePort{{
+					Name:       "http",
+					Protocol:   corev1.ProtocolTCP,
+					Port:       80,
+					TargetPort: intstr.FromInt(8080),
+					NodePort:   30090,
+				}},
+				corev1.ServiceTypeNodePort, nil, corev1.ServiceStatus{}, false, false)
+
+			invalidNetworkManager := &mockNetworkManagerWithInvalidPrimaryNetworkSkip{}
+			npw.networkManager = invalidNetworkManager
+			npwnft := newNodePortWatcherNFTables(invalidNetworkManager)
+
+			Expect(npw.AddService(service)).To(Succeed())
+			Expect(npwnft.AddService(service)).To(Succeed())
+			verifyNFTablesRule(nft, "10.96.0.19", 80, 30090, false,
+				"nftables rule should not be created when primary network is invalid")
+		})
+
 		It("should skip service sync without failing startup", func() {
 			service := newService(testService, testNamespace, "10.96.0.20",
 				[]corev1.ServicePort{{
