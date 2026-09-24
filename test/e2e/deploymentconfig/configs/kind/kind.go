@@ -4,6 +4,8 @@
 package kind
 
 import (
+	"os"
+
 	"k8s.io/kubernetes/test/utils/image"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig/api"
@@ -45,6 +47,8 @@ func (k kind) IsConfigurationEnabled(config api.Config) bool {
 		// Currently enabled by default for Kind cluster. Could use
 		// an ENV variable check instead if we need variability later.
 		return true
+	case api.ObservabilityConfig:
+		return os.Getenv("OVN_OBSERV_ENABLE") == "true"
 	default:
 		return false
 	}
