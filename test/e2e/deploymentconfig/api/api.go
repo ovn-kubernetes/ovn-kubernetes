@@ -12,6 +12,8 @@ type Config string
 const (
 	// L3UDNMultiSubnetConfig indicates whether L3 User Defined Network multi-subnet support is enabled
 	L3UDNMultiSubnetConfig Config = "L3UDNMultiSubnet"
+	// PreconfiguredUDNAddressesConfig indicates support for user-requested UDN IPs and MACs.
+	PreconfiguredUDNAddressesConfig Config = "PreconfiguredUDNAddresses"
 )
 
 // DeploymentConfig offers visibility into the configuration OVN-Kubernetes environment for e2e test cases. This includes all host or node level config.

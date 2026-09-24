@@ -4,8 +4,11 @@
 package kind
 
 import (
+	"strings"
+
 	"k8s.io/kubernetes/test/utils/image"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig/api"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
 )
@@ -45,6 +48,10 @@ func (k kind) IsConfigurationEnabled(config api.Config) bool {
 		// Currently enabled by default for Kind cluster. Could use
 		// an ENV variable check instead if we need variability later.
 		return true
+	case api.PreconfiguredUDNAddressesConfig:
+		value := deploymentconfig.GetTemplateContainerEnv(k.OVNKubernetesNamespace(), "daemonset/ovnkube-node",
+			"ovnkube-controller", "OVN_PRE_CONF_UDN_ADDR_ENABLE")
+		return strings.TrimSpace(value) == "true"
 	default:
 		return false
 	}
