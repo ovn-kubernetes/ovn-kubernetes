@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/engine/container/network"
@@ -435,7 +436,7 @@ func (o *ContainerOps) CreateExternalContainer(container api.ExternalContainer) 
 	if len(container.CmdArgs) > 0 {
 		cmd = append(cmd, container.CmdArgs...)
 	} else {
-		if images.AgnHost() == container.Image {
+		if deploymentconfig.Get().GetImage(images.Agnhost) == container.Image {
 			cmd = append(cmd, "pause")
 		}
 	}

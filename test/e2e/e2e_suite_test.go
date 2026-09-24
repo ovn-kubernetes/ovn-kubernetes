@@ -46,7 +46,7 @@ var _ = ginkgo.BeforeSuite(func() {
 
 	// Preload e2e test images into the cluster to avoid runtime pull
 	// failures and timeouts during test execution.
-	infraprovider.Get().PreloadImages(images.Required())
+	infraprovider.Get().PreloadImages(deploymentconfig.Get().GetRequiredImages())
 
 	_, err := framework.LoadClientset()
 	framework.ExpectNoError(err)
@@ -73,6 +73,20 @@ func TestMain(m *testing.M) {
 	// So TestMain is expected to run only there.
 	infraprovider.Set(infraproviderkind.New())
 	deploymentconfig.Set(deploymentkind.New())
+	if os.Getenv("OVN_NETWORK_QOS_ENABLE") == "true" ||
+		os.Getenv("ENABLE_NO_OVERLAY") == "true" ||
+		os.Getenv("KIND_INSTALL_KUBEVIRT") == "true" {
+		deploymentconfig.Get().AddImage(images.Netshoot)
+	}
+	if os.Getenv("OVN_ENABLE_EX_GW_NETWORK_BRIDGE") == "true" {
+		deploymentconfig.Get().AddImage(images.IPerf3)
+	}
+	if os.Getenv("ENABLE_ROUTE_ADVERTISEMENTS") == "true" {
+		deploymentconfig.Get().AddImage(images.FRR)
+	}
+	if os.Getenv("KIND_INSTALL_METALLB") == "true" {
+		deploymentconfig.Get().AddImage(images.Nginx, images.MetalLBLBService, images.UDPServerSrcIPPrinter)
+	}
 
 	os.Exit(m.Run())
 }
