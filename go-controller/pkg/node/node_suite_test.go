@@ -27,6 +27,11 @@ func TestNodeSuite(t *testing.T) {
 		t.Fatalf("Failed to disable WatchListClient feature gate: %v", err)
 	}
 	RegisterFailHandler(Fail)
+	// Specs delete the Node object their controller runs on behalf of; keep
+	// that from terminating the test binary.
+	ownNodeDeletedExit = func(nodeName string) {
+		GinkgoWriter.Printf("ovnkube-node would exit: node %q was deleted\n", nodeName)
+	}
 	util.SetFakeIPTablesHelpers()
 	nodenft.SetFakeNFTablesHelper()
 	util.SetSupportsIPv6InterfaceForwarding(false)

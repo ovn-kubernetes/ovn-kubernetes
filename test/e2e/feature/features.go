@@ -24,6 +24,11 @@ var (
 	EVPN                  = New("EVPN")
 	ExternalGateway       = New("ExternalGateway")
 	DisablePacketMTUCheck = New("DisablePacketMTUCheck")
+	// DPU covers specs that need the dpu-simulator two-cluster layout together
+	// with the Uplink e2e environment (OVN_TEST_DPU_UPLINK_*), and that disrupt
+	// a host node (e.g. delete and re-register it). They run in the dpu-sim
+	// no-overlay lane after the Uplink specs, via WHAT="DPU".
+	DPU                   = New("DPU")
 	VirtualMachineSupport = New("VirtualMachineSupport")
 	Interconnect          = New("Interconnect")
 	Multicast             = New("Multicast")
