@@ -61,7 +61,21 @@ func DeleteRoutingForMigratedPod(nbClient libovsdbclient.Client, pod *corev1.Pod
 	return DeleteRoutingForMigratedPodWithZone(nbClient, pod, "")
 }
 
-// EnsureLocalZonePodAddressesToNodeRoute adds static routes to the ovn_cluster_router logical router
+// EnsureDefaultNetworkForLocalMigratablePod reconciles default-network routing
+// for a local live-migratable pod and refreshes its IPv4 gateway neighbor entry
+// when the migration target is ready.
+func EnsureDefaultNetworkForLocalMigratablePod(watchFactory *factory.WatchFactory, nbClient libovsdbclient.Client,
+	lsManager *logicalswitchmanager.LogicalSwitchManager, pod *corev1.Pod, clusterSubnets []config.CIDRNetworkEntry) error {
+	if err := ensureLocalZonePodAddressesToNodeRoute(watchFactory, nbClient, lsManager, pod, types.DefaultNetworkName, clusterSubnets); err != nil {
+		return fmt.Errorf("failed ensuring local-zone migration routes for pod %s/%s: %w", pod.Namespace, pod.Name, err)
+	}
+	if config.IPv4Mode {
+		return reconcileIPv4GatewayForMigratablePod(watchFactory, pod)
+	}
+	return nil
+}
+
+// ensureLocalZonePodAddressesToNodeRoute adds static routes to the ovn_cluster_router logical router
 // so VM traffic works as expected after live migration when the pod is running in the local zone.
 //
 // Following is the list of NB logical resources created:
@@ -69,7 +83,7 @@ func DeleteRoutingForMigratedPod(nbClient libovsdbclient.Client, pod *corev1.Pod
 //   - static route with cluster wide CIDR as src-ip prefix and nexthop GR; it has less
 //     priority than route to use overlay in case of pod to pod communication
 //   - static route with VM ip as dst-ip prefix and output port the LRP pointing to the VM's node switch
-func EnsureLocalZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory, nbClient libovsdbclient.Client,
+func ensureLocalZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory, nbClient libovsdbclient.Client,
 	lsManager *logicalswitchmanager.LogicalSwitchManager, pod *corev1.Pod, nadKey string, clusterSubnets []config.CIDRNetworkEntry) error {
 	vmReady, err := virtualMachineReady(watchFactory, pod)
 	if err != nil {
@@ -140,6 +154,21 @@ func EnsureLocalZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory, 
 		}); err != nil {
 			return fmt.Errorf("failed adding static route: %v", err)
 		}
+	}
+	return nil
+}
+
+func reconcileIPv4GatewayForMigratablePod(watchFactory *factory.WatchFactory, pod *corev1.Pod) error {
+	status, err := DiscoverLiveMigrationStatus(watchFactory.PodCoreInformer().Lister(), pod)
+	if err != nil {
+		return fmt.Errorf("failed discovering live migration status for pod %s/%s: %w", pod.Namespace, pod.Name, err)
+	}
+	if status == nil || !status.IsTarget(pod) {
+		return nil
+	}
+	r := NewClusterDefaultNetworkGatewayReconciler(types.K8sMgmtIntfName)
+	if err := r.ReconcileIPv4AfterLiveMigration(status); err != nil {
+		return fmt.Errorf("failed reconciling IPv4 gateway after live migration for pod %s/%s: %w", pod.Namespace, pod.Name, err)
 	}
 	return nil
 }
