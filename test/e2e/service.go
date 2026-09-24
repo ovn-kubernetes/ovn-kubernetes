@@ -1054,12 +1054,12 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 					nodeIPs[node.Name] = make(map[int]string)
 				}
 				if IsIPv6Cluster(f.ClientSet) {
-					newIPIP, err := ipalloc.NewPrimaryIPv6()
+					newIPIP, err := ipalloc.NewPrimaryIPv6(nodeEgressSubnetCIDR(&node, true))
 					framework.ExpectNoError(err, "must get new primary provider IPv4")
 					newIP = newIPIP.String()
 					nodeIPs[node.Name][6] = newIP
 				} else {
-					newIPIP, err := ipalloc.NewPrimaryIPv4()
+					newIPIP, err := ipalloc.NewPrimaryIPv4(nodeEgressSubnetCIDR(&node, false))
 					framework.ExpectNoError(err, "must get new primary provider IPv4")
 					nodeIPs[node.Name][4] = newIPIP.String()
 				}
@@ -3271,7 +3271,7 @@ spec:
 			framework.Failf("could not get expected srcIP!, target pod logs:\n%q", targetPodLogs)
 		}
 	})
-	ginkgo.It("Should ensure load balancer service works when ETP=local and backend pods are also egressIP served pods", func() {
+	ginkgo.It("Should ensure load balancer service works when ETP=local and backend pods are also egressIP served pods", func(ctx ginkgo.SpecContext) {
 		// TEST LOGIC: This test uses metaLB BGP for advertising routes towards 1 KIND ovnk cluster node
 		// (node where the service backend pods live) as potential candidate to reach the load balancer service (192.168.10.0 service VIP).
 		// There is also a FRR router that sits in front of the KIND cluster through which traffic flows to the service VIP.
@@ -3377,11 +3377,13 @@ spec:
 		ginkgo.By("Create an EgressIP object with one egress IP defined")
 		// Assign the egress IP without conflicting with any node IP,
 		// the kind subnet is /16 or /64 so the following should be fine.
+		nonBackendNode, err := f.ClientSet.CoreV1().Nodes().Get(ctx, nonBackendNodeName, metav1.GetOptions{})
+		framework.ExpectNoError(err, "must get non-backend node object")
 		var egressIP1 net.IP
 		if utilnet.IsIPv6String(svcLoadBalancerIP) {
-			egressIP1, err = ipalloc.NewPrimaryIPv6()
+			egressIP1, err = ipalloc.NewPrimaryIPv6(nodeEgressSubnetCIDR(nonBackendNode, true))
 		} else {
-			egressIP1, err = ipalloc.NewPrimaryIPv4()
+			egressIP1, err = ipalloc.NewPrimaryIPv4(nodeEgressSubnetCIDR(nonBackendNode, false))
 		}
 		framework.ExpectNoError(err, "must allocate new Node IP for EgressIP IP")
 		var egressIPConfig = `apiVersion: k8s.ovn.org/v1
