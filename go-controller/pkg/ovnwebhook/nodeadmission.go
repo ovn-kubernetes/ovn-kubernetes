@@ -36,6 +36,7 @@ var commonNodeAnnotationChecks = map[string]checkNodeAnnot{
 	util.OvnNodeGatewayMtuSupport:          nil,
 	util.OvnNodeManagementPort:             nil,
 	util.OvnNodeDontSNATSubnets:            nil,
+	util.OvnNodeSNATExcludeSubnets:         nil,
 	util.OVNNodePrimaryDPUHostAddr:         nil,
 	util.OvnNodeChassisID: func(v annotationChange, _ string) error {
 		if v.action == removed {
