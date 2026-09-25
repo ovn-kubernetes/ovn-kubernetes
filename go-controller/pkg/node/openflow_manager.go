@@ -58,7 +58,7 @@ type openflowManager struct {
 	uplinkBridges         map[string]*openflowBridge
 	// reconcileUplinkSource, if set, is invoked with a network name whenever an
 	// uplink group's designated source (defaultNetwork) changes. Must be non-blocking
-	// and must not call back into the openflow manager (it is invoked under uplinkBridgesMu).
+	// and must not call back into the openflow manager.
 	reconcileUplinkSource func(string)
 	staticFlowsMu         sync.Mutex
 	staticFlowsSet        bool
@@ -563,8 +563,12 @@ func (c *openflowManager) GetMacBindingSourceForUplinks() map[string]string {
 	uplinkBNs := make(map[string]string, len(c.uplinkBridges))
 	for _, uplinkBridge := range c.uplinkBridges {
 		sourceNetworkName := uplinkBridge.GetSourceNetworkConfigName()
-		uplinkName := uplinkBridge.GetNetworkConfig(sourceNetworkName).UplinkName
-		uplinkBNs[uplinkName] = sourceNetworkName
+		netConfig := uplinkBridge.GetNetworkConfig(sourceNetworkName)
+		if netConfig == nil {
+			// the bridge has no network configured, so it has no uplink source
+			continue
+		}
+		uplinkBNs[netConfig.UplinkName] = sourceNetworkName
 	}
 	return uplinkBNs
 }
