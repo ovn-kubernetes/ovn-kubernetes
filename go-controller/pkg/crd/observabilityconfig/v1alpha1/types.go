@@ -24,10 +24,18 @@ type ObservabilityConfig struct {
 }
 
 // ObservabilitySpec defines the desired state of ObservabilityConfig.
+// +kubebuilder:validation:XValidation:rule="!has(self.filter) || !has(self.filter.namespaces) || size(self.filter.namespaces) == 0 || self.features.all(f, f.feature == 'NetworkPolicy' || f.feature == 'EgressFirewall')",message="filter.namespaces can only be used with namespaced features (NetworkPolicy, EgressFirewall)"
 type ObservabilitySpec struct {
-	// CollectorID is the OVN Sample_Collector set_id: unique across the cluster, range 1 to 4,294,967,295 (MaxUint32).
+	// CollectorID is the OVN Sample_Collector set_id used to bind samples to a collector on
+	// the consumer side (e.g. ovnkube-observ's -ovs-collector-id). The same collectorID may be
+	// shared across multiple ObservabilityConfigs - typically to target different nodes - so a
+	// consumer can pull the aggregated sample stream from every node using a single ID. Within a
+	// single node, the same collectorID must map to a single probability for a given feature: avoid
+	// two configs that apply to the same node and feature with the same collectorID but different
+	// probabilities.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=4294967295
 	// +required
 	CollectorID int64 `json:"collectorID"`
 	// Features is a list of Observability features that can generate samples and their probabilities for a given collector.
@@ -68,6 +76,9 @@ type Filter struct {
 	// namespaces is a list of namespaces to which the ObservabilityConfig should be applied.
 	// It only applies to the namespaced features, currently that includes NetworkPolicy and EgressFirewall.
 	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=100
+	// +kubebuilder:validation:items:MaxLength=63
+	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	// +optional
 	// +listType=set
 	Namespaces []string `json:"namespaces,omitempty"`

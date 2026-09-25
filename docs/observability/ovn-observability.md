@@ -45,7 +45,7 @@ kubectl -n ovn-kubernetes exec -it <ovnkube pod> -c ovnkube-controller -- ovnkub
 Usage of ovnkube-observ:
   -add-ovs-collector
     	Add OVS collector to enable sampling.
-  -ovs-collector-id
+  -ovs-collector-id int
       Set a unique OVS collector ID to use. Use with -add-ovs-collector. (default 1)
   -enable-enrichment
     	Enrich samples with nbdb data. (default true)
@@ -98,6 +98,12 @@ src=10.129.2.2, dst=10.129.2.5
 ### User-facing API
 
 The `ObservabilityConfig` CRD allows you to bind observed samples to a configured collector ID, for a given set of features and filters. `ObservabilityConfig` is cluster-scoped; multiple resources may be created, each binding its own set of features to a `collectorID`. See [OKEP-5212](../okeps/okep-5212-ovnobserv-api.md) for more details, and the [API reference](../api-reference/observabilityconfig-api-spec.md) for the full field reference and validation rules.
+
+#### Sharing a collectorID across nodes
+
+A `collectorID` is resolved per node: each node applies only the `ObservabilityConfig` resources that match it (via `filter.nodeSelector`), and turns the `collectorID` into a collector on that node's `br-int` (collector IDs are unique per bridge). The same `collectorID` may therefore be reused across several `ObservabilityConfig` resources - a common pattern is one resource per node group, all sharing a single `collectorID` - so that a consumer (for example NetObserv, or `ovnkube-observ -ovs-collector-id <id>`) can pull the aggregated sample stream from every node using that one ID.
+
+The only per-node/feature constraint is consistency: on a given node and a given feature, a `collectorID` must map to a single probability. Avoid configuring two resources that both apply to the same node and feature with the same `collectorID` but different probabilities, as they would resolve to conflicting collectors on that node's bridge.
 
 The following example samples all `NetworkPolicy` traffic and 10% of `EgressFirewall` traffic, restricted to the `frontend` and `backend` namespaces on nodes labelled `observability=enabled`:
 

@@ -10,7 +10,13 @@ package v1alpha1
 //
 // ObservabilitySpec defines the desired state of ObservabilityConfig.
 type ObservabilitySpecApplyConfiguration struct {
-	// CollectorID is the OVN Sample_Collector set_id: unique across the cluster, range 1 to 4,294,967,295 (MaxUint32).
+	// CollectorID is the OVN Sample_Collector set_id used to bind samples to a collector on
+	// the consumer side (e.g. ovnkube-observ's -ovs-collector-id). The same collectorID may be
+	// shared across multiple ObservabilityConfigs - typically to target different nodes - so a
+	// consumer can pull the aggregated sample stream from every node using a single ID. Within a
+	// single node, the same collectorID must map to a single probability for a given feature: avoid
+	// two configs that apply to the same node and feature with the same collectorID but different
+	// probabilities.
 	CollectorID *int64 `json:"collectorID,omitempty"`
 	// Features is a list of Observability features that can generate samples and their probabilities for a given collector.
 	Features []FeatureConfigApplyConfiguration `json:"features,omitempty"`
