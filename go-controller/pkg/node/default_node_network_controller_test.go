@@ -15,6 +15,7 @@ import (
 	"github.com/containernetworking/plugins/pkg/ns"
 	"github.com/containernetworking/plugins/pkg/testutils"
 	nadfake "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/fake"
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/mock"
 	"github.com/urfave/cli/v2"
 	"github.com/vishvananda/netlink"
@@ -2306,3 +2307,63 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 func strPtr(s string) *string {
 	return &s
 }
+
+var _ = Describe("reconcileOVNRemote", func() {
+	const (
+		pid       = "4242"
+		appctlCmd = "ovn-appctl -t /var/run/ovn/ovn-controller." + pid + ".ctl connection-status"
+		vsctlSet  = `ovs-vsctl --timeout=15 set Open_vSwitch . external_ids:ovn-remote="unix:/var/run/ovn/ovnsb_db.sock"`
+	)
+
+	var (
+		fexec  *ovntest.FakeExec
+		nc     *DefaultNodeNetworkController
+		origFs afero.Fs
+	)
+
+	BeforeEach(func() {
+		origFs = util.AppFs
+		util.AppFs = afero.NewMemMapFs()
+		Expect(afero.WriteFile(util.AppFs, "/var/run/ovn/ovn-controller.pid", []byte(pid+"\n"), 0o644)).To(Succeed())
+		Expect(config.PrepareTestConfig()).To(Succeed())
+		fexec = ovntest.NewFakeExec()
+		nc = &DefaultNodeNetworkController{}
+	})
+
+	AfterEach(func() {
+		util.AppFs = origFs
+	})
+
+	// run wires up the fake exec and config, then invokes reconcileOVNRemote.
+	run := func() {
+		app := cli.NewApp()
+		app.Name = "test"
+		app.Flags = config.Flags
+		app.Action = func(ctx *cli.Context) error {
+			defer GinkgoRecover()
+			Expect(util.SetExec(fexec)).To(Succeed())
+			_, err := config.InitConfig(ctx, fexec, nil)
+			Expect(err).NotTo(HaveOccurred())
+			nc.reconcileOVNRemote()
+			return nil
+		}
+		Expect(app.Run([]string{app.Name})).To(Succeed())
+		Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
+	}
+
+	It("does nothing while ovn-controller is connected", func() {
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{Cmd: appctlCmd, Output: "connected"})
+		run()
+	})
+
+	It("re-asserts ovn-remote when ovn-controller is disconnected", func() {
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{Cmd: appctlCmd, Output: "not connected"})
+		fexec.AddFakeCmdsNoOutputNoError([]string{vsctlSet})
+		run()
+	})
+
+	It("does not write ovn-remote when the status check fails", func() {
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{Cmd: appctlCmd, Err: fmt.Errorf("appctl boom")})
+		run()
+	})
+})
