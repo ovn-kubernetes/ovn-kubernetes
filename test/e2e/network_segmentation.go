@@ -2493,6 +2493,9 @@ spec:
 	})
 
 	It("should set NO_FLOOD on CUDN patch ports, direct node-IP ARP to default GR (p12 flow), and fan out external GARP to all GRs (p11 flow)", func() {
+		if isUDNARPNDPFloodDisabled() {
+			ginkgo.Skip("requires disabling DISABLE_UDN_ARP_NDP_FLOOD")
+		}
 		By("getting two nodes: a target node and a sender node")
 		nodes, err := e2enode.GetReadySchedulableNodes(context.TODO(), cs)
 		framework.ExpectNoError(err)

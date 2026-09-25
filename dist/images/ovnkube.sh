@@ -236,6 +236,8 @@ ovn_egressservice_enable=${OVN_EGRESSSERVICE_ENABLE:-false}
 ovn_multi_network_enable=${OVN_MULTI_NETWORK_ENABLE:-false}
 #OVN_NETWORK_SEGMENTATION_ENABLE - enable user defined primary networks for ovn-kubernetes
 ovn_network_segmentation_enable=${OVN_NETWORK_SEGMENTATION_ENABLE:=false}
+#OVN_DISABLE_UDN_ARP_NDP_FLOOD - disable UDN ARP/NDP flood for ovn-kubernetes
+ovn_disable_udn_arp_ndp_flood=${OVN_DISABLE_UDN_ARP_NDP_FLOOD:=false}
 #OVN_NETWORK_CONNECT_ENABLE - enable network connect for ovn-kubernetes
 ovn_network_connect_enable=${OVN_NETWORK_CONNECT_ENABLE:=false}
 #OVN_UPLINK_ENABLE - enable uplink for ovn-kubernetes
@@ -1120,6 +1122,12 @@ ovnkube-controller() {
   fi
   echo "network_segmentation_enabled_flag=${network_segmentation_enabled_flag}"
 
+  disable_udn_arp_ndp_flood_flag=
+  if [[ ${ovn_disable_udn_arp_ndp_flood} == "true" ]]; then
+	  disable_udn_arp_ndp_flood_flag="--disable-udn-arp-ndp-flood"
+  fi
+  echo "disable_udn_arp_ndp_flood_flag=${disable_udn_arp_ndp_flood_flag}"
+
   network_connect_enabled_flag=
   if [[ ${ovn_network_connect_enable} == "true" ]]; then
 	  network_connect_enabled_flag="--enable-network-connect"
@@ -1274,6 +1282,7 @@ ovnkube-controller() {
     ${multicast_enabled_flag} \
     ${multi_network_enabled_flag} \
     ${network_segmentation_enabled_flag} \
+    ${disable_udn_arp_ndp_flood_flag} \
     ${network_connect_enabled_flag} \
     ${uplink_enabled_flag} \
     ${pre_conf_udn_addr_enable_flag} \
@@ -1464,6 +1473,12 @@ ovnkube-controller-with-node() {
 	  network_segmentation_enabled_flag="--enable-multi-network --enable-network-segmentation"
   fi
   echo "network_segmentation_enabled_flag=${network_segmentation_enabled_flag}"
+
+  disable_udn_arp_ndp_flood_flag=
+  if [[ ${ovn_disable_udn_arp_ndp_flood} == "true" ]]; then
+	  disable_udn_arp_ndp_flood_flag="--disable-udn-arp-ndp-flood"
+  fi
+  echo "disable_udn_arp_ndp_flood_flag=${disable_udn_arp_ndp_flood_flag}"
 
   network_connect_enabled_flag=
   if [[ ${ovn_network_connect_enable} == "true" ]]; then
@@ -1790,6 +1805,7 @@ ovnkube-controller-with-node() {
     ${multicast_enabled_flag} \
     ${multi_network_enabled_flag} \
     ${network_segmentation_enabled_flag} \
+    ${disable_udn_arp_ndp_flood_flag} \
     ${network_connect_enabled_flag} \
     ${uplink_enabled_flag} \
     ${pre_conf_udn_addr_enable_flag} \

@@ -283,6 +283,17 @@ func (oc *DefaultNodeNetworkController) Reconcile(netInfo util.NetInfo) error {
 	return nil
 }
 
+func (oc *DefaultNodeNetworkController) GetOpenflowManager() (OpenflowManager, error) {
+	gw, ok := oc.Gateway.(*gateway)
+	if !ok || gw == nil || gw.openflowManager == nil {
+		return nil, fmt.Errorf("openflow manager is not available for node %s", oc.name)
+	}
+	fmops := &OpenflowManagerOps{
+		GetMacBindingSourceForUplinksFn: gw.openflowManager.GetMacBindingSourceForUplinks,
+	}
+	return fmops, nil
+}
+
 func clearOVSFlowTargets() error {
 	_, _, err := util.RunOVSVsctl(
 		"--",
