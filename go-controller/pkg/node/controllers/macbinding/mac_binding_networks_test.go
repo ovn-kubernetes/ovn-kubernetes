@@ -165,7 +165,7 @@ func TestReconcileNetworks(t *testing.T) {
 		{
 			name:               "full reconcile mirrors the designated uplink source onto the other member",
 			primaryNetworks:    map[string]util.NetInfo{"nsA": cudnA, "nsB": cudnB},
-			uplinkSources:      map[string]string{"uplinkA": portA},
+			uplinkSources:      map[string]string{"uplinkA": cudnA.GetNetworkName()},
 			sbPorts:            []string{cdnPort, portA, portB},
 			reconcileKey:       "",
 			wantMbEnqueued:     []string{portB},
@@ -181,7 +181,7 @@ func TestReconcileNetworks(t *testing.T) {
 			// relocated as a follower under the new one.
 			name:               "full reconcile relocates followers when the uplink source is re-designated",
 			primaryNetworks:    map[string]util.NetInfo{"nsA": cudnA, "nsB": cudnB},
-			uplinkSources:      map[string]string{"uplinkA": portB}, // portB newly designated
+			uplinkSources:      map[string]string{"uplinkA": cudnB.GetNetworkName()}, // portB newly designated
 			sbPorts:            []string{cdnPort, portA, portB},
 			preFollowers:       map[string][]string{cdnPort: {}, portA: {portB}},
 			reconcileKey:       "",

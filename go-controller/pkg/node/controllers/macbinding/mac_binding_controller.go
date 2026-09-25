@@ -119,6 +119,7 @@ type MACBindingController struct {
 
 type uplinkSourceProvider interface {
 	GetMacBindingSourceForUplinks() map[string]string
+	RegisterUplinkCallback(func(string))
 }
 
 // NewMACBindingController creates a new MACBindingController.
@@ -140,6 +141,9 @@ func NewMACBindingController(
 		cdnGatewayPort:       util.GetNetworkScopedGWRouterExtPortName(types.DefaultNetworkName, nodeName),
 		followers:            map[string]sets.Set[string]{},
 		nodeIPs:              map[string]map[string]string{},
+	}
+	if c.uplinkSourceProvider != nil {
+		c.uplinkSourceProvider.RegisterUplinkCallback(c.ReconcileUplinkSource)
 	}
 
 	c.dynamicMacBindingReconciler = controller.NewReconciler(
@@ -242,10 +246,6 @@ func (c *MACBindingController) repair(knownPorts sets.Set[string]) {
 // ReconcileUplinkSource is called by the uplinkSourceProvider to report that
 // network has become the designated source for its uplink group.
 func (c *MACBindingController) ReconcileUplinkSource(network string) {
-	port := util.GetNetworkScopedGWRouterExtPortName(network, c.nodeName)
-	if c.tracksSource(port) {
-		return
-	}
 	// reset the cache with an empty map to refetch
 	c.invalidateBindingSourceForUplinks()
 	c.enqueueNetwork(network)
@@ -354,15 +354,6 @@ func (c *MACBindingController) enqueueNodeIPs(uplink string) {
 }
 
 // --- locked state accessors ---------------------------------------------
-
-// tracksSource reports whether source is a designated source, i.e. it is present
-// in the follower map, even if it has no followers yet.
-func (c *MACBindingController) tracksSource(source string) bool {
-	c.RLock()
-	defer c.RUnlock()
-	_, ok := c.followers[source]
-	return ok
-}
 
 // tracksSourceWithFollowers reports whether source is a designated source that
 // currently has at least one follower to mirror MAC bindings onto.
@@ -500,6 +491,9 @@ func (c *MACBindingController) getMacBindingSourceForUplinks() map[string]string
 	macBindingSourceForUplinks := c.uplinkSourceProvider.GetMacBindingSourceForUplinks()
 	if macBindingSourceForUplinks == nil {
 		macBindingSourceForUplinks = map[string]string{}
+	}
+	for uplinkName, udnName := range macBindingSourceForUplinks {
+		macBindingSourceForUplinks[uplinkName] = util.GetNetworkScopedGWRouterExtPortName(udnName, c.nodeName)
 	}
 	macBindingSourceForUplinks[""] = c.cdnGatewayPort
 	c.macBindingSourceForUplinks.CompareAndSwap(macBindingSourceForUplinksPtr, &macBindingSourceForUplinks)
