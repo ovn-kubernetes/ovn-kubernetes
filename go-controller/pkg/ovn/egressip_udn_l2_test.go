@@ -20,6 +20,7 @@ import (
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	egressipv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/udn"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/udnenabledsvc"
@@ -27,6 +28,48 @@ import (
 	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+)
+
+var _ = ginkgo.DescribeTable("Layer2 EgressIP gateway next hop uses the GR transit IP regardless of topology annotation",
+	func(isIPv6, annotated bool, expectedTransitIP, expectedJoinIP string) {
+		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+		ginkgo.DeferCleanup(func() {
+			gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+		})
+		config.IPv4Mode, config.IPv6Mode = true, true
+		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+		config.OVNKubernetesFeature.EnableMultiNetwork = true
+		config.Layer2UsesTransitRouter = true
+		netInfo, err := util.NewNetInfo(&ovncnitypes.NetConf{
+			NetConf:       cnitypes.NetConf{Name: "network1"},
+			Role:          ovntypes.NetworkRolePrimary,
+			Topology:      ovntypes.Layer2Topology,
+			Subnets:       "10.128.0.0/16,fd10::/64",
+			JoinSubnet:    "100.65.0.0/16,fd98::/64",
+			TransitSubnet: "100.88.0.0/16,fd97::/64",
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		node := getNodeObj("node1", map[string]string{util.OvnNodeID: "1"}, nil)
+		if annotated {
+			node.Annotations[util.Layer2TopologyVersion] = util.TransitRouterTopoVersion
+		}
+
+		joinIPs, err := udn.GetGWRouterIPs(&node, netInfo)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		joinIP, err := util.MatchFirstIPNetFamily(isIPv6, joinIPs)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(joinIP.IP.String()).To(gomega.Equal(expectedJoinIP))
+
+		controller := &EgressIPController{}
+		nextHop, err := controller.getGatewayNextHop(netInfo, &node, isIPv6)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(nextHop.String()).To(gomega.Equal(expectedTransitIP))
+		gomega.Expect(nextHop.Equal(joinIP.IP)).To(gomega.BeFalse(), "must not fall back to the legacy GR join IP")
+	},
+	ginkgo.Entry("IPv4 without annotation", false, false, "100.88.0.3", "100.65.0.1"),
+	ginkgo.Entry("IPv6 without annotation", true, false, "fd97::3", "fd98::1"),
+	ginkgo.Entry("IPv4 with annotation", false, true, "100.88.0.3", "100.65.0.1"),
+	ginkgo.Entry("IPv6 with annotation", true, true, "fd97::3", "fd98::1"),
 )
 
 var _ = ginkgo.Describe("EgressIP Operations for user defined network with topology L2", func() {

@@ -98,11 +98,11 @@ for the transition details.
 
 Controller startup now selects the current topology unconditionally; it no
 longer defers conversion based on existing workloads or tunnel-key readiness.
-Upgrading with an unmigrated topology is unsupported: reconciliation can remove
-the old gateway router and move management-port SNAT while workloads are still
-using them, disrupting existing connections. Complete migration on an
-intermediate release rather than relying on this version to perform a safe
-transition.
+Upgrading with an unmigrated topology is unsupported. The conversion and
+mixed-topology compatibility code has been removed, including temporary upgrade
+ports and EgressIP next-hop conversion. Complete migration and cleanup of its
+temporary topology on an intermediate release; this version cannot finish that
+transition or maintain connectivity to legacy nodes.
 
 The node annotation `k8s.ovn.org/layer2-topology-version: "2.0"` is still published
 for compatibility with older peers during rolling upgrades. The annotation
