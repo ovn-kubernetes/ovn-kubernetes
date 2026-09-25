@@ -644,6 +644,13 @@ type GatewayConfig struct {
 	// the source IP of the NAT will be a shared Node IP address. If unset, the value will be determined by sysctl lookup
 	// for the kernel's ephemeral range: net.ipv4.ip_local_port_range. Format is "<min port>-<max port>".
 	EphemeralPortRange string `gcfg:"ephemeral-port-range"`
+
+	// DisableUDNARPNDPFlood might provide better scale capabilities with large
+	// number of UDNs. Instead of flooding ARP/NDP traffic from the gateway to
+	// the UDNs which might overload vswitchd or even drop packets, only CDN or
+	// UDN in an uplink group will get the traffic, OVNK will mirror the
+	// resulting mac binding entries to the UDNs.
+	DisableUDNARPNDPFlood bool `gcfg:"disable-udn-arp-ndp-flood"`
 }
 
 // EgressIPHealthCheckTLSConfig holds TLS settings for the Egress IP gRPC
@@ -1805,6 +1812,14 @@ var OVNGatewayFlags = []cli.Flag{
 		Name:        "gateway-local",
 		Usage:       "DEPRECATED; use --gateway-mode instead",
 		Destination: &gatewayLocal,
+	},
+	&cli.BoolFlag{
+		Name: "disable-udn-arp-ndp-flood",
+		Usage: "This option might provide better scale capabilities with large number of UDNs. Instead of flooding " +
+			"ARP/NDP traffic from the gateway to the UDNs which might overload vswitchd or even drop packets, only CDN " +
+			"or UDN in an uplink group will get the traffic, OVNK will mirror the resulting mac binding entries to the UDNs.",
+		Destination: &cliConfig.Gateway.DisableUDNARPNDPFlood,
+		Value:       Gateway.DisableUDNARPNDPFlood,
 	},
 }
 
