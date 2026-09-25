@@ -144,7 +144,7 @@ Even below the resubmit limit, every ARP packet traverses all N UDN pipelines un
 
 Two mechanisms work together to eliminate ARP/NDP fan-out:
 
-1. **Traffic Steering** (4 priority-52 flows per external-ingress port): Intercepts inbound **unicast** ARP and NDP addressed to the shared MAC (`dl_dst=<bridgeMAC>`) from external-ingress ports above the existing paths that bypass `no-flood` (priority-10 and 50 flows), and redirects it to `default_patch` + `NORMAL`, so only the CDN GR and the kernel (via LOCAL) see it. Broadcast and multicast ARP/NDP fall through to the priority-0 catch-all `NORMAL` flow, which floods to the source GR and LOCAL (`no-flood` excludes CUDN patches). An **external-ingress port** is any OVS port on the bridge that carries inbound ARP/NDP from outside OVN's GR pipeline: `ofPortPhys` (physical uplink) and secondary localnet UDN patch ports. When `enable-scalable-arp-ndp` is enabled, existing ARP/NDP fan-out flows (priority-10/11/12, table-1 priority-14) are not rendered.
+1. **Traffic Steering** (4 priority-52 flows per external-ingress port): Intercepts inbound **unicast** ARP and NDP addressed to the shared MAC (`dl_dst=<bridgeMAC>`) from external-ingress ports above the existing paths that bypass `no-flood` (priority-10 and 50 flows), and redirects it to `default_patch` + `NORMAL`, so only the CDN GR and the kernel (via LOCAL) see it. Broadcast and multicast ARP/NDP fall through to the priority-0 catch-all `NORMAL` flow, which floods to the source GR and LOCAL (`no-flood` excludes CUDN patches). An **external-ingress port** is any OVS port on the bridge that carries inbound ARP/NDP from outside OVN's GR pipeline: `ofPortPhys` (physical uplink) and secondary localnet UDN patch ports. When `disable-udn-arp-ndp-flood` is True, existing ARP/NDP fan-out flows (priority-10/11/12, table-1 priority-14) are not rendered.
 2. **MAC_Binding Propagation** (for both IPv4 and IPv6): A new component propagates the CDN GR's resolved neighbor bindings to every UDN GR via direct SB-DB writes.
 
 **Generalizing when Uplink feature is enabled:** The above describes the scenario when [Uplink](okep-6019-vrf-lite-shared-gateway-external-bridges.md) is not enabled, i.e. with the CDN GR as source (from where the MAC bindings are copied from) and every UDN GR as a follower (that gets a copy of the MAC bindings). More generally, networks that share a physical OVS bridge form a **group**, with one GR designated as the **source** and every other GR on that bridge acting as a **follower**. A UDN can instead be attached to a separate OVS bridge via the `Uplink` CRD ([OKEP-6019](okep-6019-vrf-lite-shared-gateway-external-bridges.md)); no CDN GR exists on that bridge, so the `openflow manager` designates one of its UDN GRs as the source, and the remaining UDN GRs on that same `Uplink` are followers. Both mechanisms above apply identically to any group, substituting "source GR" for "CDN GR" and "follower GR" for "UDN GR". How the uplink source is first chosen and later replaced is covered under **Source designation** and **Lifecycle Hooks** below. Secondary localnet UDNs cannot currently use Uplinks (blocked by CRD validation), so the external-ingress set on Uplink bridges covers only the physical port.
@@ -242,7 +242,7 @@ One new flag is added:
 
 | Flag | Scope |
 |------|-------|
-| `enable-scalable-arp-ndp` | IPv4 + IPv6: priority-52 unicast ARP/NDP steering (4 flows per external-ingress port) + catch-all `NORMAL` for broadcast/multicast + MAC\_Binding propagation for both protocols |
+| `disable-udn-arp-ndp-flood` | IPv4 + IPv6: priority-52 unicast ARP/NDP steering (4 flows per external-ingress port) + catch-all `NORMAL` for broadcast/multicast + MAC\_Binding propagation for both protocols |
 
 Defaults to `false` and requires `enable-network-segmentation` (validated at startup).
 Changing the flag requires an ovnkube-node restart, which triggers a full flow sync.
@@ -267,7 +267,7 @@ See [Complete Flow Priority Table](#complete-flow-priority-table-br-ex-table-0) 
 
 Broadcast and multicast ARP/NDP (GARP, node-IP ARP requests, solicited-node multicast NS, unsolicited multicast NA, multicast RA) do not match priority 52. With the fan-out flows not rendered, they fall to the catch-all `NORMAL` flood, which reaches the source GR and LOCAL while `no-flood` excludes CUDN patches, no explicit `output:default_patch` is required for flooded frames.
 
-NDP flows must be above the priority-50 conntrack flow to bypass a conntrack path that cannot create CT entries for NDP; ARP is unified at the same priority to simplify the pipeline. When `enable-scalable-arp-ndp` is enabled, the existing priority-10 `dl_dst=bridgeMAC` fan-out, priority-11 GARP/NA fan-out, priority-12 node-IP steering, and table-1 priority-14 RA/NA fan-out are **not rendered**.
+NDP flows must be above the priority-50 conntrack flow to bypass a conntrack path that cannot create CT entries for NDP; ARP is unified at the same priority to simplify the pipeline. When `disable-udn-arp-ndp-flood` is True, the existing priority-10 `dl_dst=bridgeMAC` fan-out, priority-11 GARP/NA fan-out, priority-12 node-IP steering, and table-1 priority-14 RA/NA fan-out are **not rendered**.
 
 **Priority-52 NDP NA flow:** Steers inbound unicast Neighbor Advertisements (type 136, `dl_dst=<bridgeMAC>`) from each external-ingress port to `default_patch` + NORMAL, above conntrack. Multicast unsolicited NAs (`dl_dst=33:33:00:00:00:01`) miss this flow and fall to catch-all `NORMAL`. `NORMAL` on the unicast path performs FDB learning and delivers to LOCAL via the static FDB entry.
 
@@ -365,29 +365,29 @@ OVN requires a fix that skips probing inactive entries. Without this fix, at 500
 
 #### Complete Flow Priority Table (br-ex Table 0)
 
-The following shows the complete flow priority structure when `enable-scalable-arp-ndp` is enabled. Only the relevant priority range (9-52) is shown; flows at priorities 99-700 are unchanged and omitted.
+The following shows the complete flow priority structure when `disable-udn-arp-ndp-flood` is True. Only the relevant priority range (9-52) is shown; flows at priorities 99-700 are unchanged and omitted.
 
 **Note:** This table is titled for `br-ex`, but the same priority structure is installed on every bridge, including `Uplink`-backed bridges. `default_patch` is bridge-specific: on `br-ex` it is the CDN GR's patch port; on an uplink bridge it is that bridge's designated source UDN GR's patch port.
 `<ext-ingress>` is expanded per-port at flow generation time; one flow set per discovered external-ingress port.
 
 | Pri | Match | Action | Status |
 |-----|-------|--------|--------|
-| **52** | `in_port=<ext-ingress>, [matchVLAN,] dl_dst=<bridgeMAC>, arp` | `output:<default_patch>,NORMAL` | **NEW** (`enable-scalable-arp-ndp`) -- Deliver unicast ARP addressed to the shared MAC to the source GR; NORMAL delivers to LOCAL and performs FDB learning |
-| **52** | `in_port=<ext-ingress>, [matchVLAN,] dl_dst=<bridgeMAC>, icmp6, icmpv6_type=136` | `output:<default_patch>,NORMAL` | **NEW** (`enable-scalable-arp-ndp`) -- Deliver unicast NA to the source GR and LOCAL, above conntrack |
-| **52** | `in_port=<ext-ingress>, [matchVLAN,] dl_dst=<bridgeMAC>, icmp6, icmpv6_type=134` | `output:<default_patch>,NORMAL` | **NEW** (`enable-scalable-arp-ndp`) -- Deliver unicast RA to the source GR and LOCAL, above conntrack |
-| **52** | `in_port=<ext-ingress>, [matchVLAN,] dl_dst=<bridgeMAC>, icmp6, icmpv6_type=135` | `output:<default_patch>,NORMAL` | **NEW** (`enable-scalable-arp-ndp`) -- Deliver unicast NS to the source GR and LOCAL, above conntrack |
+| **52** | `in_port=<ext-ingress>, [matchVLAN,] dl_dst=<bridgeMAC>, arp` | `output:<default_patch>,NORMAL` | **NEW** (`disable-udn-arp-ndp-flood`) -- Deliver unicast ARP addressed to the shared MAC to the source GR; NORMAL delivers to LOCAL and performs FDB learning |
+| **52** | `in_port=<ext-ingress>, [matchVLAN,] dl_dst=<bridgeMAC>, icmp6, icmpv6_type=136` | `output:<default_patch>,NORMAL` | **NEW** (`disable-udn-arp-ndp-flood`) -- Deliver unicast NA to the source GR and LOCAL, above conntrack |
+| **52** | `in_port=<ext-ingress>, [matchVLAN,] dl_dst=<bridgeMAC>, icmp6, icmpv6_type=134` | `output:<default_patch>,NORMAL` | **NEW** (`disable-udn-arp-ndp-flood`) -- Deliver unicast RA to the source GR and LOCAL, above conntrack |
+| **52** | `in_port=<ext-ingress>, [matchVLAN,] dl_dst=<bridgeMAC>, icmp6, icmpv6_type=135` | `output:<default_patch>,NORMAL` | **NEW** (`disable-udn-arp-ndp-flood`) -- Deliver unicast NS to the source GR and LOCAL, above conntrack |
 | 50 | `ip/ipv6, dl_dst=<bridgeMAC>` | `ct(zone=...,nat,table=1)` | Existing -- Send remaining IPv4/IPv6 return traffic through conntrack |
 | 10 | `in_port=<GR-patch>, dl_src=<bridgeMAC>` | `output:NORMAL` | Existing -- Forward valid non-IP traffic from a GR (`no-flood` limits flood) |
 | 9 | `in_port=<GR-patch>` | `drop` | Existing -- Drop GR-patch traffic with an invalid source MAC |
 | 0 | *(catch-all)* | `NORMAL` | Existing -- Handle broadcast/multicast ARP/NDP and ordinary L2 forwarding (`no-flood` limits flood) |
 
-When `enable-scalable-arp-ndp` is **disabled**, the current codebase flows are rendered unchanged (priority-10/11/12 fan-out flows, table-1 priority-14 RA/NA flows). When **enabled**, those flows are not rendered: unicast ARP/NDP to the shared MAC is handled by the priority-52 per-external-ingress-port steering, and broadcast/multicast ARP/NDP falls to the catch-all `NORMAL` flood.
+When `disable-udn-arp-ndp-flood` is **False**, the current codebase flows are rendered unchanged (priority-10/11/12 fan-out flows, table-1 priority-14 RA/NA flows). When `disable-udn-arp-ndp-flood` is **True**, those flows are not rendered: unicast ARP/NDP to the shared MAC is handled by the priority-52 per-external-ingress-port steering, and broadcast/multicast ARP/NDP falls to the catch-all `NORMAL` flood.
 
 ### Testing Details
 
 * E2E tests for multi-UDN external connectivity (IPv4 and IPv6) and MAC\_Binding propagation across UDN gateway routers for both protocols.
 * North-south scale validation (e.g. 70 UDNs) checking pod-to-external-destination connectivity.
-* Regression coverage: existing e2e suites (EgressIP, Services, NetworkPolicy on UDN) run with `enable-scalable-arp-ndp` enabled.
+* Regression coverage: existing e2e suites (EgressIP, Services, NetworkPolicy on UDN) run with `disable-udn-arp-ndp-flood` is True.
 
 ### Documentation Details
 
@@ -421,12 +421,12 @@ TBD -- not yet assigned to a release milestone.
 
 ## Backwards Compatibility
 
-The feature is behind a single feature gate, `enable-scalable-arp-ndp` (default `false`). When disabled, no steering flows are installed, the `MAC Binding Controller` is not started, and behavior is identical to the current codebase for both IPv4 and IPv6.
+The feature is behind a single feature gate, `disable-udn-arp-ndp-flood` (default `False`). When disabled, no steering flows are installed, the `MAC Binding Controller` is not started, and behavior is identical to the current codebase for both IPv4 and IPv6.
 
 | State | Active Flows | Behavior |
 |-------|-------------|----------|
-| `enable-scalable-arp-ndp=false` | Current codebase flows only | Unchanged from today: ARP/NDP fan-out to all UDN patches |
-| `enable-scalable-arp-ndp=true` | OKEP pri-52 ARP/NDP per external-ingress port + `MAC Binding Controller` (both protocols) | New ARP and NDP flows in effect; existing ARP/NDP fan-out flows not rendered |
+| `disable-udn-arp-ndp-flood=false` | Current codebase flows only | Unchanged from today: ARP/NDP fan-out to all UDN patches |
+| `disable-udn-arp-ndp-flood=true` | OKEP pri-52 ARP/NDP per external-ingress port + `MAC Binding Controller` (both protocols) | New ARP and NDP flows in effect; existing ARP/NDP fan-out flows not rendered |
 
 When the gate is enabled:
 
