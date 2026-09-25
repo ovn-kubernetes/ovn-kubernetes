@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net"
 	"slices"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -122,12 +124,12 @@ func IsLocalnetTopologyPort(port *vswitchd.Port) bool {
 		strings.HasSuffix(logicalPort, "_"+types.OVNLocalnetPort))
 }
 
-// hasLocalnetPatchPort returns true when this bridge contains an OVN patch port
-// for a localnet topology.
-func (b *BridgeConfiguration) hasLocalnetPatchPort() (bool, error) {
+// localnetPatchPortNames returns the names of the OVN patch ports for localnet
+// topologies on this bridge.
+func (b *BridgeConfiguration) localnetPatchPortNames() ([]string, error) {
 	bridge, err := ovsops.GetBridge(b.ovsClient, b.bridgeName)
 	if err != nil {
-		return false, fmt.Errorf("failed to find OVS bridge %s: %w", b.bridgeName, err)
+		return nil, fmt.Errorf("failed to find OVS bridge %s: %w", b.bridgeName, err)
 	}
 	bridgePortIDs := make(map[string]struct{}, len(bridge.Ports))
 	for _, portID := range bridge.Ports {
@@ -141,9 +143,24 @@ func (b *BridgeConfiguration) hasLocalnetPatchPort() (bool, error) {
 		return IsLocalnetTopologyPort(port)
 	})
 	if err != nil {
-		return false, fmt.Errorf("failed to list localnet ports on OVS bridge %s: %w", b.bridgeName, err)
+		return nil, fmt.Errorf("failed to list localnet ports on OVS bridge %s: %w", b.bridgeName, err)
 	}
-	return len(ports) > 0, nil
+	names := make([]string, 0, len(ports))
+	for _, port := range ports {
+		names = append(names, port.Name)
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+// ofPortOf returns the ofport of the named OVS interface as a string, or "" if
+// the interface does not exist yet or has no valid ofport assigned.
+func (b *BridgeConfiguration) ofPortOf(name string) string {
+	iface, err := ovsops.GetOVSInterface(b.ovsClient, name)
+	if err != nil || iface.Ofport == nil || *iface.Ofport <= 0 {
+		return ""
+	}
+	return strconv.Itoa(*iface.Ofport)
 }
 
 func NewBridgeConfiguration(ovsClient libovsdbclient.Client, intfName, nodeName,

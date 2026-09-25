@@ -28,11 +28,46 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
 
+// OpenflowManager defines the methods of openflowManager
+// which can be externally available.
+type OpenflowManager interface {
+	GetMacBindingSourceForUplinks() map[string]string
+	RegisterUplinkCallback(func(string))
+}
+
+// FlowManagerOps is a function-based implementation of OpenFlowManager.
+// Callers out of pkg/node/ construct it by binding the openflowManager methods.
+// Used by GetOpenflowManager in DefaultNodeNetworkController.
+type OpenflowManagerOps struct {
+	GetMacBindingSourceForUplinksFn func() map[string]string
+	RegisterUplinkCallbackFn        func(func(string))
+}
+
+func (f *OpenflowManagerOps) GetMacBindingSourceForUplinks() map[string]string {
+	return f.GetMacBindingSourceForUplinksFn()
+}
+
+func (f *OpenflowManagerOps) RegisterUplinkCallback(fn func(string)) {
+	f.RegisterUplinkCallbackFn(fn)
+}
+
+type uplinkBridgesNetworks struct {
+	bridgeName     string
+	defaultNetwork string
+	bridgeNetworks map[string]struct{}
+}
+
 type openflowManager struct {
 	defaultBridge         *openflowBridge
 	externalGatewayBridge *openflowBridge
 	uplinkBridgesMu       sync.Mutex
 	uplinkBridges         map[string]*openflowBridge
+	// uplinkBridgeNetworks record bridges and their associated network names, accessed with uplinkBridgesMu.
+	uplinkBridgeNetworks map[string]uplinkBridgesNetworks
+	// reconcileUplinkSource, if set, is invoked with a network name whenever an
+	// uplink group's designated source (defaultNetwork) changes. Must be non-blocking
+	// and must not call back into the openflow manager (it is invoked under uplinkBridgesMu).
+	reconcileUplinkSource func(string)
 	staticFlowsMu         sync.Mutex
 	staticFlowsSet        bool
 	staticFlowHostIPs     []net.IP
@@ -152,6 +187,56 @@ func (c *openflowManager) addNetworkToDefaultBridgeSet(nInfo util.NetInfo, nodeS
 	return nil
 }
 
+func (c *openflowManager) notifyUplinkBridgeNetworksChange(networkName string) {
+	if c.reconcileUplinkSource != nil {
+		c.reconcileUplinkSource(networkName)
+	}
+}
+
+func (c *openflowManager) addUplinkBridgeNetworks(bridgeName, networkName string) {
+	uplinkBridgeNetworks, exists := c.uplinkBridgeNetworks[bridgeName]
+	if !exists {
+		c.uplinkBridgeNetworks[bridgeName] = uplinkBridgesNetworks{
+			bridgeName:     bridgeName,
+			defaultNetwork: networkName,
+			bridgeNetworks: map[string]struct{}{networkName: {}},
+		}
+		c.notifyUplinkBridgeNetworksChange(networkName)
+		return
+	}
+	_, found := uplinkBridgeNetworks.bridgeNetworks[networkName]
+	if !found {
+		uplinkBridgeNetworks.bridgeNetworks[networkName] = struct{}{}
+	}
+}
+
+func (c *openflowManager) delUplinkBridgeNetworks(bridgeName, networkName string) {
+	uplinkBridgeNetworks, exists := c.uplinkBridgeNetworks[bridgeName]
+	if !exists {
+		return
+	}
+
+	_, found := uplinkBridgeNetworks.bridgeNetworks[networkName]
+	if found {
+		delete(uplinkBridgeNetworks.bridgeNetworks, networkName)
+		oldDefault := uplinkBridgeNetworks.defaultNetwork
+		if uplinkBridgeNetworks.defaultNetwork == networkName {
+			for name := range uplinkBridgeNetworks.bridgeNetworks {
+				uplinkBridgeNetworks.defaultNetwork = name
+				break
+			}
+		}
+		if len(uplinkBridgeNetworks.bridgeNetworks) == 0 {
+			delete(c.uplinkBridgeNetworks, bridgeName)
+			return
+		}
+		c.uplinkBridgeNetworks[bridgeName] = uplinkBridgeNetworks
+		if uplinkBridgeNetworks.defaultNetwork != oldDefault {
+			c.notifyUplinkBridgeNetworksChange(uplinkBridgeNetworks.defaultNetwork)
+		}
+	}
+}
+
 func (c *openflowManager) addNetworkToUplinkBridge(bridgeName string, bridge *bridgeconfig.BridgeConfiguration,
 	nInfo util.NetInfo, nodeSubnets, mgmtIPs []*net.IPNet, masqCTMark, pktMark uint,
 	v6MasqIPs, v4MasqIPs *udn.MasqueradeIPs) error {
@@ -163,6 +248,7 @@ func (c *openflowManager) addNetworkToUplinkBridge(bridgeName string, bridge *br
 		uplinkBridge = newOpenflowBridge(bridge)
 		c.uplinkBridges[bridgeName] = uplinkBridge
 	}
+	c.addUplinkBridgeNetworks(bridgeName, nInfo.GetNetworkName())
 	return uplinkBridge.AddNetworkConfig(nInfo, nodeSubnets, mgmtIPs, masqCTMark, pktMark, v6MasqIPs, v4MasqIPs)
 }
 
@@ -189,6 +275,7 @@ func (c *openflowManager) delNetworkFromUplinkBridge(nInfo util.NetInfo, bridgeN
 	if !found {
 		return nil
 	}
+	c.delUplinkBridgeNetworks(bridgeName, nInfo.GetNetworkName())
 	bridge.DelNetworkConfig(nInfo)
 	if bridge.HasNetworkConfigs() {
 		return nil
@@ -475,6 +562,22 @@ func (c *openflowManager) syncFlowsSkippingUplinkBridges(skippedUplinkBridges ma
 	})
 }
 
+func (c *openflowManager) RegisterUplinkCallback(fn func(string)) {
+	c.uplinkBridgesMu.Lock()
+	defer c.uplinkBridgesMu.Unlock()
+	c.reconcileUplinkSource = fn
+}
+
+func (c *openflowManager) GetMacBindingSourceForUplinks() map[string]string {
+	c.uplinkBridgesMu.Lock()
+	defer c.uplinkBridgesMu.Unlock()
+	uplinkBNs := make(map[string]string, len(c.uplinkBridgeNetworks))
+	for bridgeName, uplinkBridgeNetworks := range c.uplinkBridgeNetworks {
+		uplinkBNs[bridgeName] = uplinkBridgeNetworks.defaultNetwork
+	}
+	return uplinkBNs
+}
+
 func (b *openflowBridge) syncFlows() error {
 	b.syncMutex.Lock()
 	defer b.syncMutex.Unlock()
@@ -599,11 +702,12 @@ func newGatewayOpenFlowManager(gwBridge, exGWBridge *bridgeconfig.BridgeConfigur
 	}
 	// add health check function to check default OpenFlow flows are on the shared gateway bridge
 	ofm := &openflowManager{
-		defaultBridge:    newOpenflowBridge(gwBridge),
-		uplinkBridges:    map[string]*openflowBridge{},
-		localnetPortChan: make(chan struct{}, 1),
-		flowChan:         make(chan struct{}, 1),
-		ovsClient:        ovsClient,
+		defaultBridge:        newOpenflowBridge(gwBridge),
+		uplinkBridges:        map[string]*openflowBridge{},
+		uplinkBridgeNetworks: map[string]uplinkBridgesNetworks{},
+		localnetPortChan:     make(chan struct{}, 1),
+		flowChan:             make(chan struct{}, 1),
+		ovsClient:            ovsClient,
 	}
 	if exGWBridge != nil {
 		ofm.externalGatewayBridge = newOpenflowBridge(exGWBridge)
@@ -830,8 +934,11 @@ func (c *openflowManager) updateBridgeFlowCacheLocked(hostIPs []net.IP, hostSubn
 		c.updateExBridgeFlowCacheEntry("NORMAL", []string{fmt.Sprintf("table=0,priority=0,actions=%s\n", util.NormalAction)})
 		c.updateExBridgeFlowCacheEntry("DEFAULT", exGWBridgeDftFlows)
 	}
-	err = c.forEachUplinkBridge(func(_ string, bridge *openflowBridge) error {
-		uplinkBridgeDftFlows, err := bridge.UplinkBridgeFlows(hostSubnets)
+	// An uplink bridge has no default network, so ARP/NDP steering targets the
+	// same source network the MAC binding controller mirrors bindings from.
+	uplinkSources := c.GetMacBindingSourceForUplinks()
+	err = c.forEachUplinkBridge(func(bridgeName string, bridge *openflowBridge) error {
+		uplinkBridgeDftFlows, err := bridge.UplinkBridgeFlows(hostSubnets, uplinkSources[bridgeName])
 		if err != nil {
 			return err
 		}
