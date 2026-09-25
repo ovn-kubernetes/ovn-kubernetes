@@ -49,17 +49,23 @@ type collectorConfig struct {
 	featuresProbability map[libovsdbops.SampleFeature]int
 }
 
-// applicableConfigEntry holds one ObservabilityConfig that applies to this node and its
-// resolved feature->collector UUIDs. namespaces is from Filter.Namespaces (nil or empty = cluster-scoped).
-type applicableConfigEntry struct {
-	namespaces        []string // nil or empty = applies to all namespaces
-	featureCollectors map[libovsdbops.SampleFeature][]string
+// featureResolution captures, for a single feature, the collectors that apply cluster-wide
+// (from configs with no Filter.Namespaces) and the per-namespace collectors (from
+// namespace-scoped configs). Collector identity is a UUID; storing sets both deduplicates
+// automatically (the same collector may be declared by several configs) and lets an
+// ObservabilityConfig change be diffed directly for targeted resync (see resync.go).
+type featureResolution struct {
+	cluster sets.Set[string]            // collectors applied to every namespace
+	perNS   map[string]sets.Set[string] // namespace -> collectors applied only there
 }
 
 type Manager struct {
-	nbClient          libovsdbclient.Client
-	applicableConfigs []applicableConfigEntry // all configs that apply to this node, for context resolution
-	collectorsLock    sync.RWMutex
+	nbClient libovsdbclient.Client
+	// resolution is the published per-feature collector assignment for this node, rebuilt
+	// on every applyConfigs/clearConfig. It is both what SamplingConfigForContext resolves
+	// against and the basis for computing resync deltas. nil means nothing applies.
+	resolution     map[libovsdbops.SampleFeature]*featureResolution
+	collectorsLock sync.RWMutex
 	// nbdb Collectors have probability. To allow different probabilities for different features,
 	// multiple nbdb Collectors will be created, one per probability.
 	// getCollectorKey() => collector.UUID
@@ -80,6 +86,20 @@ type Manager struct {
 	cleanupTimer             *time.Timer
 	collectorsCleanupRetries int
 	stopped                  bool
+
+	// resyncHandlers lets the controller that owns a feature's sampled ACLs (network policy,
+	// egress firewall, ANP/BANP, ...) be notified when a config change alters the collectors
+	// resolved for that feature, so it can re-apply only the affected ACLs. Each feature is owned
+	// by exactly one controller, so there is a single handler per feature. Guarded by
+	// resyncHandlersLock, which is never held together with collectorsLock.
+	resyncHandlersLock sync.RWMutex
+	resyncHandlers     map[libovsdbops.SampleFeature]SamplingResyncHandler
+	// pendingResync buffers the resync scope for a feature whose handler was not yet registered
+	// when a config change was dispatched. Controllers register their handlers only after their
+	// initial sync completes (see RegisterResyncHandler), so a config change during that window
+	// would otherwise be dropped by dispatchResync and leave those ACLs with stale collectors. The
+	// buffered scope is replayed when the handler registers. Guarded by resyncHandlersLock.
+	pendingResync map[libovsdbops.SampleFeature]resyncScope
 }
 
 func NewManager(nbClient libovsdbclient.Client) *Manager {
@@ -90,6 +110,8 @@ func NewManager(nbClient libovsdbclient.Client) *Manager {
 		unusedCollectors:              make(map[string]int),
 		unusedCollectorsRetryInterval: time.Minute,
 		takenCollectorIDs:             sets.New[int](),
+		resyncHandlers:                make(map[libovsdbops.SampleFeature]SamplingResyncHandler),
+		pendingResync:                 make(map[libovsdbops.SampleFeature]resyncScope),
 	}
 }
 
@@ -109,47 +131,22 @@ func (m *Manager) SamplingConfigForContext(namespace string, feature libovsdbops
 	return libovsdbops.NewSamplingConfig(fc)
 }
 
-// resolveForContextLocked returns a featureCollectors map that merges all configs
-// that apply to (namespace, feature). Both namespace-scoped configs (Filter.Namespaces
-// containing namespace) and cluster-scoped configs (no Filter.Namespaces) apply;
-// the ACL's Sample will reference all matching collectors so each collector receives
-// samples at its configured probability. Caller must hold m.collectorsLock (at least RLock).
+// resolveForContextLocked returns a featureCollectors map for (namespace, feature):
+// the feature's cluster-wide collectors (from configs with no Filter.Namespaces) merged
+// with the collectors scoped to this namespace. Collector UUIDs land in the
+// Sample.Collectors OVSDB set column, so storing them as sets deduplicates naturally;
+// the result is sorted for a deterministic Sample.Collectors. Returns nil if nothing
+// applies. Caller must hold m.collectorsLock (at least RLock).
 func (m *Manager) resolveForContextLocked(namespace string, feature libovsdbops.SampleFeature) map[libovsdbops.SampleFeature][]string {
-	var merged []string
-	// Two configs may resolve to the same collector UUID (same collectorID and
-	// probability). The UUIDs land in the Sample.Collectors OVSDB set column, which
-	// rejects duplicate members, so deduplicate while preserving order.
-	seen := sets.New[string]()
-	for _, e := range m.applicableConfigs {
-		collectors := e.featureCollectors[feature]
-		if len(collectors) == 0 {
-			continue
-		}
-		applies := false
-		if len(e.namespaces) == 0 {
-			applies = true
-		} else {
-			for _, ns := range e.namespaces {
-				if ns == namespace {
-					applies = true
-					break
-				}
-			}
-		}
-		if applies {
-			for _, c := range collectors {
-				if seen.Has(c) {
-					continue
-				}
-				seen.Insert(c)
-				merged = append(merged, c)
-			}
-		}
-	}
-	if len(merged) == 0 {
+	fr := m.resolution[feature]
+	if fr == nil {
 		return nil
 	}
-	return map[libovsdbops.SampleFeature][]string{feature: merged}
+	merged := fr.cluster.Union(fr.perNS[namespace])
+	if merged.Len() == 0 {
+		return nil
+	}
+	return map[libovsdbops.SampleFeature][]string{feature: sets.List(merged)}
 }
 
 // Init sets up sampling app IDs and loads existing collector state from the DB.
@@ -191,11 +188,15 @@ func (m *Manager) StartWatching(informer ObservabilityConfigInformer, nodeGetter
 	}()
 }
 
-// clearConfig clears the active sampling config and applicable configs, and triggers cleanup of collectors.
-// SamplingConfig() and SamplingConfigForContext() will return nil until applicable configs are applied.
+// clearConfig clears the published resolution and triggers cleanup of collectors.
+// SamplingConfig() and SamplingConfigForContext() will return nil until configs are applied
+// again. Any feature that had collectors is dispatched for resync so its ACLs drop the
+// now-removed Sample references.
 func (m *Manager) clearConfig() {
 	m.collectorsLock.Lock()
-	m.applicableConfigs = nil
+	oldResolution := m.resolution
+	m.resolution = nil
+	delta := diffResolutions(oldResolution, nil)
 	// Rebuild the DB snapshot so every existing collector is marked unused, then
 	// delete them. Done under the same lock as retrieval so a concurrent reader
 	// never observes a half-cleared state.
@@ -204,6 +205,7 @@ func (m *Manager) clearConfig() {
 		staleErr = m.deleteStaleCollectorsLocked()
 	}
 	m.collectorsLock.Unlock()
+	m.dispatchResync(delta)
 	m.scheduleStaleCleanupRetry(staleErr)
 }
 
@@ -293,7 +295,7 @@ func (m *Manager) applyConfigs(configs []*observabilityconfigv1alpha1.Observabil
 	}
 
 	var applyErrs []error
-	applicable := make([]applicableConfigEntry, 0, len(configs))
+	newResolution := make(map[libovsdbops.SampleFeature]*featureResolution)
 	for _, cr := range configs {
 		if err := validateObservabilityConfig(cr); err != nil {
 			// Non-convergent: skip and log, but don't fail the reconcile.
@@ -311,16 +313,18 @@ func (m *Manager) applyConfigs(configs []*observabilityconfigv1alpha1.Observabil
 		if cr.Spec.Filter != nil {
 			namespaces = cr.Spec.Filter.Namespaces
 		}
-		applicable = append(applicable, applicableConfigEntry{
-			namespaces:        namespaces,
-			featureCollectors: featureCollectors,
-		})
+		addToResolution(newResolution, namespaces, featureCollectors)
 	}
-	// Publish the fully-built set atomically: readers never observe a partially-applied list.
-	m.applicableConfigs = applicable
+	// Publish the fully-built resolution atomically: readers never observe a partially-applied
+	// state. Diff against the previous resolution so only features whose collectors actually
+	// changed get their ACLs resynced.
+	oldResolution := m.resolution
+	m.resolution = newResolution
+	delta := diffResolutions(oldResolution, newResolution)
 	staleErr := m.deleteStaleCollectorsLocked()
 	m.collectorsLock.Unlock()
 
+	m.dispatchResync(delta)
 	m.scheduleStaleCleanupRetry(staleErr)
 	return errors.Join(applyErrs...)
 }
