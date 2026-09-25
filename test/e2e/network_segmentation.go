@@ -2822,29 +2822,18 @@ spec:
 			framework.ExpectNoError(err, "ndisc6 NS from sender %s to target %s failed", senderNodeIPv6, targetNodeIPv6)
 			framework.Logf("ndisc6 output:\n%s", nsOut)
 
-			// TODO(OVN northd bug, https://redhat.atlassian.net/browse/FDP-4198):
-			// Unlike ARP requests, NS packets targeting the router's own
-			// IPv6 do NOT get a priority-110 exemption flow in
-			// lr_in_lookup_neighbor when always_learn_from_arp_request=false.
-			// The priority-110 flow (which hardcodes reg9[3]=1 to allow
-			// put_arp) is only generated for IPv4 addresses (n_ipv4_addrs
-			// loop in northd commit 61ccc6b). NS hits the generic
-			// priority-100 flow where reg9[3]=lookup_nd_ip()=0 (no
-			// pre-existing binding), causing the priority-100 skip
-			// condition in lr_in_learn_neighbor to fire. The GR responds
-			// with NA but never learns the sender's MAC/IP.
-			// Any MAC_Binding that appears after a longer delay is from
-			// background traffic triggering the GR's own NS resolution
-			// (via arp_request table), not from the test's ndisc6.
-			By("verifying NS does NOT immediately create a MAC_Binding (OVN northd IPv6 learning bug)")
-			Consistently(func() string {
-				macBindings, _ := e2epodoutput.RunHostCmdWithRetries(ovnkPod.Namespace, ovnkPod.Name,
-					fmt.Sprintf("ovn-sbctl --bare --columns=logical_port find MAC_Binding ip=\\\"%s\\\"", senderNodeIPv6),
+			By("verifying MAC_Bindings confirm priority-12 directed NS to default GR only")
+			Consistently(func(g Gomega) {
+				macBindings, err := e2epodoutput.RunHostCmdWithRetries(ovnkPod.Namespace, ovnkPod.Name,
+					fmt.Sprintf("ovn-sbctl --columns=logical_port find MAC_Binding ip=\\\"%s\\\"", senderNodeIPv6),
 					framework.Poll, 30*time.Second)
-				return strings.TrimSpace(macBindings)
-			}, 2*time.Second, 1*time.Second).Should(BeEmpty(),
-				"NS must NOT create a MAC_Binding due to OVN northd bug — always_learn_from_arp_request=false "+
-					"priority-110 exemption is missing for IPv6 NS (only implemented for IPv4 ARP)")
+				g.Expect(err).NotTo(HaveOccurred(), "ovn-sbctl find MAC_Binding failed")
+				framework.Logf("MAC_Bindings for sender IP %s AFTER arping:\n%s", senderNodeIPv6, macBindings)
+				g.Expect(macBindings).To(ContainSubstring(defaultGR),
+					"NS must create a MAC_Binding on default GR %s for sender IP %s", defaultGR, senderNodeIPv6)
+				g.Expect(macBindings).NotTo(ContainSubstring(cudnGR),
+					"node-IP NS must NOT create a MAC_Binding on CUDN GR %s for sender IP %s", cudnGR, senderNodeIPv6)
+			}, 4*time.Second, 1*time.Second).Should(Succeed())
 
 			By("clearing MAC_Bindings for sender IPv6 before unsolicited NA test")
 			_, _ = e2epodoutput.RunHostCmdWithRetries(ovnkPod.Namespace, ovnkPod.Name,
