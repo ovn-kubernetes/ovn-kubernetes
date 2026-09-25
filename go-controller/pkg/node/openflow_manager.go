@@ -28,11 +28,36 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
 
+// OpenflowManager defines the methods of openflowManager
+// which can be externally available.
+type OpenflowManager interface {
+	GetMacBindingSourceForUplinks() map[string]string
+}
+
+// FlowManagerOps is a function-based implementation of OpenFlowManager.
+// Callers out of pkg/node/ construct it by binding the openflowManager methods.
+// Used by GetOpenflowManager in DefaultNodeNetworkController.
+type OpenflowManagerOps struct {
+	GetMacBindingSourceForUplinksFn func() map[string]string
+}
+
+func (f *OpenflowManagerOps) GetMacBindingSourceForUplinks() map[string]string {
+	return f.GetMacBindingSourceForUplinksFn()
+}
+
+type uplinkBridgesNetworks struct {
+	bridgeName     string
+	defaultNetwork string
+	bridgeNetworks map[string]struct{}
+}
+
 type openflowManager struct {
 	defaultBridge         *openflowBridge
 	externalGatewayBridge *openflowBridge
 	uplinkBridgesMu       sync.Mutex
 	uplinkBridges         map[string]*openflowBridge
+	// uplinkBridgeNetworks record bridges and their associated network names, accessed with uplinkBridgesMu.
+	uplinkBridgeNetworks  map[string]uplinkBridgesNetworks
 	staticFlowsMu         sync.Mutex
 	staticFlowsSet        bool
 	staticFlowHostIPs     []net.IP
@@ -152,6 +177,45 @@ func (c *openflowManager) addNetworkToDefaultBridgeSet(nInfo util.NetInfo, nodeS
 	return nil
 }
 
+func (c *openflowManager) addUplinkBridgeNetworks(bridgeName, networkName string) {
+	uplinkBridgeNetworks, exists := c.uplinkBridgeNetworks[bridgeName]
+	if !exists {
+		c.uplinkBridgeNetworks[bridgeName] = uplinkBridgesNetworks{
+			bridgeName:     bridgeName,
+			defaultNetwork: networkName,
+			bridgeNetworks: map[string]struct{}{networkName: {}},
+		}
+		return
+	}
+	_, found := uplinkBridgeNetworks.bridgeNetworks[networkName]
+	if !found {
+		uplinkBridgeNetworks.bridgeNetworks[networkName] = struct{}{}
+	}
+}
+
+func (c *openflowManager) delUplinkBridgeNetworks(bridgeName, networkName string) {
+	uplinkBridgeNetworks, exists := c.uplinkBridgeNetworks[bridgeName]
+	if !exists {
+		return
+	}
+
+	_, found := uplinkBridgeNetworks.bridgeNetworks[networkName]
+	if found {
+		delete(uplinkBridgeNetworks.bridgeNetworks, networkName)
+		if uplinkBridgeNetworks.defaultNetwork == networkName {
+			for name := range uplinkBridgeNetworks.bridgeNetworks {
+				uplinkBridgeNetworks.defaultNetwork = name
+				break
+			}
+		}
+		if len(uplinkBridgeNetworks.bridgeNetworks) == 0 {
+			delete(c.uplinkBridgeNetworks, bridgeName)
+			return
+		}
+		c.uplinkBridgeNetworks[bridgeName] = uplinkBridgeNetworks
+	}
+}
+
 func (c *openflowManager) addNetworkToUplinkBridge(bridgeName string, bridge *bridgeconfig.BridgeConfiguration,
 	nInfo util.NetInfo, nodeSubnets, mgmtIPs []*net.IPNet, masqCTMark, pktMark uint,
 	v6MasqIPs, v4MasqIPs *udn.MasqueradeIPs) error {
@@ -163,6 +227,7 @@ func (c *openflowManager) addNetworkToUplinkBridge(bridgeName string, bridge *br
 		uplinkBridge = newOpenflowBridge(bridge)
 		c.uplinkBridges[bridgeName] = uplinkBridge
 	}
+	c.addUplinkBridgeNetworks(bridgeName, nInfo.GetNetworkName())
 	return uplinkBridge.AddNetworkConfig(nInfo, nodeSubnets, mgmtIPs, masqCTMark, pktMark, v6MasqIPs, v4MasqIPs)
 }
 
@@ -189,6 +254,7 @@ func (c *openflowManager) delNetworkFromUplinkBridge(nInfo util.NetInfo, bridgeN
 	if !found {
 		return nil
 	}
+	c.delUplinkBridgeNetworks(bridgeName, nInfo.GetNetworkName())
 	bridge.DelNetworkConfig(nInfo)
 	if bridge.HasNetworkConfigs() {
 		return nil
@@ -473,6 +539,16 @@ func (c *openflowManager) syncFlowsSkippingUplinkBridges(skippedUplinkBridges ma
 		}
 		return nil
 	})
+}
+
+func (c *openflowManager) GetMacBindingSourceForUplinks() map[string]string {
+	c.uplinkBridgesMu.Lock()
+	defer c.uplinkBridgesMu.Unlock()
+	uplinkBNs := make(map[string]string, len(c.uplinkBridgeNetworks))
+	for bridgeName, uplinkBridgeNetworks := range c.uplinkBridgeNetworks {
+		uplinkBNs[bridgeName] = uplinkBridgeNetworks.defaultNetwork
+	}
+	return uplinkBNs
 }
 
 func (b *openflowBridge) syncFlows() error {
