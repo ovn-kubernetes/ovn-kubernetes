@@ -1315,6 +1315,12 @@ func isNetworkSegmentationEnabled() bool {
 	return present && val == "true"
 }
 
+func isUDNARPNDPFloodDisabled() bool {
+	val, present := os.LookupEnv("DISABLE_UDN_ARP_NDP_FLOOD")
+	udnARPNDPFloodDisabled := present && val == "true"
+	return udnARPNDPFloodDisabled
+}
+
 func isICMPNetworkPolicyBypassEnabled() bool {
 	ovnKubeNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
 	val := getTemplateContainerEnv(ovnKubeNamespace, "daemonset/ovnkube-node", getNodeContainerName(), "OVN_ALLOW_ICMP_NETPOL")
