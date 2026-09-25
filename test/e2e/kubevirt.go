@@ -260,6 +260,104 @@ func composeAgnhostPod(name, namespace, nodeName string, args ...string) *corev1
 	return agnHostPod
 }
 
+// iperf3Provider optionally prepares traffic endpoints for a downstream runtime.
+// Providers that do not implement it retain the upstream image and commands.
+type iperf3Provider interface {
+	// ConfigureIPerf3Pod customizes the server pod template before creation.
+	// It receives the complete pod and runs after all test configuration.
+	// Changes are submitted directly; providers must preserve the test's pod
+	// identity, placement and network attachment. The first container must
+	// remain the iperf3 server.
+	ConfigureIPerf3Pod(*corev1.Pod) error
+	// PrepareIPerf3Container creates and prepares a primary-network client via
+	// the supplied context, preserving its cleanup registration. The returned
+	// container must include IPv4 and IPv6 addresses for the available families.
+	PrepareIPerf3Container(infraapi.Context, infraapi.ExternalContainer) (infraapi.ExternalContainer, error)
+}
+
+func sanitizeNodeName(nodeName string) string {
+	return strings.ReplaceAll(nodeName, ".", "-")
+}
+
+func composeIPerfServerPod(namespace, nodeName, script string, nse *nadapi.NetworkSelectionElement) (*corev1.Pod, error) {
+	name := "testpod-" + sanitizeNodeName(nodeName)
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+		Spec: corev1.PodSpec{
+			NodeName:      nodeName,
+			RestartPolicy: corev1.RestartPolicyNever,
+			Containers: []corev1.Container{{
+				Name: name + "-container", Image: images.Netshoot(),
+				Command: []string{"bash", "-c"},
+				Args:    []string{script + "\n sleep infinity"},
+			}},
+		},
+	}
+	if nse != nil {
+		pod.Annotations = networkSelectionElements(*nse)
+	}
+	if provider, ok := infraprovider.Get().(iperf3Provider); ok {
+		if err := provider.ConfigureIPerf3Pod(pod); err != nil {
+			return nil, err
+		}
+	}
+	if len(pod.Spec.Containers) == 0 {
+		return nil, fmt.Errorf("iperf3 pod configuration removed the server container")
+	}
+	return pod, nil
+}
+
+func nextIPs(idx int, subnets []string) ([]string, error) {
+	var ips []string
+	for _, subnet := range subnets {
+		ip, ipNet, err := net.ParseCIDR(subnet)
+		if err != nil {
+			return nil, err
+		}
+		for range idx {
+			ip = iputils.NextIP(ip)
+		}
+		ipNet.IP = ip
+		ips = append(ips, ipNet.String())
+	}
+	return ips, nil
+}
+
+func createIperfServerPods(cs kubernetes.Interface, namespace string, nodes []corev1.Node, udnName string, role udnv1.NetworkRole, staticSubnets []string, script string) ([]*corev1.Pod, error) {
+	var pods []*corev1.Pod
+	for i, node := range nodes {
+		var nse *nadapi.NetworkSelectionElement
+		if role != udnv1.NetworkRolePrimary {
+			staticIPs, err := nextIPs(i, staticSubnets)
+			if err != nil {
+				return nil, err
+			}
+			nse = &nadapi.NetworkSelectionElement{Name: udnName, IPRequest: staticIPs}
+		}
+		pod, err := composeIPerfServerPod(namespace, node.Name, script, nse)
+		if err != nil {
+			return nil, err
+		}
+		pod, err = cs.CoreV1().Pods(namespace).Create(context.Background(), pod, metav1.CreateOptions{})
+		if err != nil {
+			return nil, err
+		}
+		pods = append(pods, pod)
+	}
+	return pods, nil
+}
+
+func waitForIPerfServerPodsReady(cs kubernetes.Interface, pods []*corev1.Pod) error {
+	for _, pod := range pods {
+		if err := e2epod.WaitTimeoutForPodReadyInNamespace(context.Background(), cs, pod.Name, pod.Namespace, 4*time.Minute); err != nil {
+			logs, _ := e2epod.GetPodLogs(context.Background(), cs, pod.Namespace, pod.Name, pod.Spec.Containers[0].Name)
+			e2eframework.Logf("iperf3 preparation logs for %s/%s:\n%s", pod.Namespace, pod.Name, logs)
+			return fmt.Errorf("iperf3 endpoint %s/%s did not become ready: %w", pod.Namespace, pod.Name, err)
+		}
+	}
+	return nil
+}
+
 func removeImagesInNode(node, imageURL string) error {
 	By("Removing unused images in node " + node)
 	output, err := infraprovider.Get().ExecK8NodeCommand(node, []string{
@@ -1220,10 +1318,6 @@ config:
 			g.Expect(pod.Status.PodIP).NotTo(BeEmpty(), "pod %s has no valid IP address yet", pod.Name)
 		}
 
-		sanitizeNodeName = func(nodeName string) string {
-			return strings.ReplaceAll(nodeName, ".", "-")
-		}
-
 		createHTTPServerPods = func(annotations map[string]string) []*corev1.Pod {
 			var pods []*corev1.Pod
 			for _, selectedNode := range selectedNodes {
@@ -1236,51 +1330,6 @@ config:
 				pods = append(pods, e2epod.NewPodClient(fr).CreateSync(context.TODO(), pod))
 			}
 			return pods
-		}
-
-		nextIPs = func(idx int, subnets []string) ([]string, error) {
-			var ips []string
-			for _, subnet := range subnets {
-				ip, ipNet, err := net.ParseCIDR(subnet)
-				if err != nil {
-					return nil, err
-				}
-				for range idx {
-					ip = iputils.NextIP(ip)
-				}
-				ipNet.IP = ip
-				ips = append(ips, ipNet.String())
-			}
-			return ips, nil
-		}
-
-		createIperfServerPods = func(nodes []corev1.Node, udnName string, role udnv1.NetworkRole, staticSubnets []string) ([]*corev1.Pod, error) {
-			var pods []*corev1.Pod
-			for i, node := range nodes {
-				var nse *nadapi.NetworkSelectionElement
-				if role != udnv1.NetworkRolePrimary {
-					staticIPs, err := nextIPs(i, staticSubnets)
-					if err != nil {
-						return nil, err
-					}
-					nse = &nadapi.NetworkSelectionElement{
-						Name:      udnName,
-						IPRequest: staticIPs,
-					}
-				}
-				pod, err := createPod(fr, "testpod-"+sanitizeNodeName(node.Name), node.Name, namespace, []string{"bash", "-c"}, map[string]string{}, func(pod *corev1.Pod) {
-					if nse != nil {
-						pod.Annotations = networkSelectionElements(*nse)
-					}
-					pod.Spec.Containers[0].Image = images.Netshoot()
-					pod.Spec.Containers[0].Args = []string{iperfServerScript + "\n sleep infinity"}
-				})
-				if err != nil {
-					return nil, err
-				}
-				pods = append(pods, pod)
-			}
-			return pods, nil
 		}
 
 		waitForPodsCondition = func(pods []*corev1.Pod, conditionFn func(g Gomega, pod *corev1.Pod)) {
@@ -1312,10 +1361,6 @@ config:
 			httpServerTestPods = createHTTPServerPods(annotations)
 			waitForPodsCondition(httpServerTestPods, conditionFn)
 			httpServerTestPods = updatePods(httpServerTestPods)
-		}
-
-		removeImagesInNodes = func(imageURL string) error {
-			return removeImagesFromNodes(fr.ClientSet, imageURL)
 		}
 
 		createCUDN = func(cudn *udnv1.ClusterUserDefinedNetwork) {
@@ -1365,7 +1410,7 @@ config:
 		Expect(err).NotTo(HaveOccurred())
 	})
 
-	Context("with default pod network", Ordered, func() {
+	Context("with default pod network", func() {
 		BeforeEach(func() {
 			ns, err := fr.CreateNamespace(context.TODO(), fr.BaseName, map[string]string{
 				"e2e-framework": fr.BaseName,
@@ -1392,10 +1437,6 @@ config:
 			for _, node := range selectedNodes {
 				e2enode.RemoveLabelOffNode(fr.ClientSet, node.Name, namespace)
 			}
-		})
-
-		AfterAll(func() {
-			Expect(removeImagesInNodes(kubevirt.FedoraWithTestToolingContainerDiskImage)).To(Succeed())
 		})
 
 		DescribeTable("when live migration", func(td liveMigrationTestData) {
@@ -1499,10 +1540,7 @@ config:
 			}),
 		)
 	})
-	Context("with user defined networks and persistent ips configured", Ordered, func() {
-		AfterAll(func() {
-			Expect(removeImagesInNodes(kubevirt.FedoraWithTestToolingContainerDiskImage)).To(Succeed())
-		})
+	Context("with user defined networks and persistent ips configured", func() {
 		type testCommand struct {
 			description string
 			cmd         func()
@@ -1854,8 +1892,10 @@ write_files:
 			selectedNodes = workerNodeList.Items
 			Expect(selectedNodes).NotTo(BeEmpty())
 
-			iperfServerTestPods, err = createIperfServerPods(selectedNodes, cudn.Name, td.role, []string{})
+			iperfServerTestPods, err = createIperfServerPods(fr.ClientSet, namespace, selectedNodes, cudn.Name, td.role, []string{}, iperfServerScript)
 			Expect(err).NotTo(HaveOccurred())
+			Expect(waitForIPerfServerPodsReady(fr.ClientSet, iperfServerTestPods)).To(Succeed())
+			iperfServerTestPods = updatePods(iperfServerTestPods)
 
 			if td.role == udnv1.NetworkRolePrimary && td.evpn == nil {
 				externalContainerName := namespace + "-iperf"
@@ -1869,7 +1909,11 @@ write_files:
 				providerNetwork, err := containerNetwork(td)
 				Expect(err).ShouldNot(HaveOccurred(), "primary network must be available to attach containers")
 				externalContainer.Network = providerNetwork
-				externalContainer, err = providerCtx.CreateExternalContainer(externalContainer)
+				if provider, ok := infraprovider.Get().(iperf3Provider); ok {
+					externalContainer, err = provider.PrepareIPerf3Container(providerCtx, externalContainer)
+				} else {
+					externalContainer, err = providerCtx.CreateExternalContainer(externalContainer)
+				}
 				Expect(err).ShouldNot(HaveOccurred(), "creation of external container is test dependency")
 			} else if td.role == udnv1.NetworkRolePrimary && td.evpn != nil {
 				// Containers were set up by runEVPNNetworkAndServers; collect MAC-VRF IPs.
@@ -2207,7 +2251,7 @@ ip route add %[3]s via %[4]s
 			}),
 		)
 	})
-	Context("with kubevirt VM using layer2 UDPN", Ordered, func() {
+	Context("with kubevirt VM using layer2 UDPN", func() {
 		var (
 			cidrIPv4   = "172.31.0.0/24"
 			cidrIPv6   = "2010:100:200::/60"
@@ -2224,9 +2268,6 @@ ip route add %[3]s via %[4]s
 				return strings.Split(output, " | "), nil
 			}
 		)
-		AfterAll(func() {
-			Expect(removeImagesInNodes(kubevirt.FedoraWithTestToolingContainerDiskImage)).To(Succeed())
-		})
 		BeforeEach(func() {
 			ns, err := fr.CreateNamespace(context.TODO(), fr.BaseName, map[string]string{
 				"e2e-framework":           fr.BaseName,
@@ -2318,7 +2359,7 @@ ethernets:
 			}
 		})
 	})
-	Context("with user defined networks with ipamless localnet topology", Ordered, func() {
+	Context("with user defined networks with ipamless localnet topology", func() {
 		BeforeEach(func() {
 			ns, err := fr.CreateNamespace(context.TODO(), fr.BaseName, map[string]string{
 				"e2e-framework": fr.BaseName,
@@ -2326,9 +2367,6 @@ ethernets:
 			Expect(err).ToNot(HaveOccurred())
 			fr.Namespace = ns
 			namespace = fr.Namespace.Name
-		})
-		AfterAll(func() {
-			Expect(removeImagesInNodes(kubevirt.FedoraWithTestToolingContainerDiskImage)).To(Succeed())
 		})
 		var (
 			ipv4CIDR             = "172.31.0.0/24"
@@ -2424,8 +2462,10 @@ chpasswd: { expire: False }
 			selectedNodes = workerNodeList.Items
 			Expect(selectedNodes).NotTo(BeEmpty())
 
-			iperfServerTestPods, err = createIperfServerPods(selectedNodes, cudn.Name, cudn.Spec.Network.Localnet.Role, filterCIDRs(fr.ClientSet, ipv4CIDR, ipv6CIDR))
+			iperfServerTestPods, err = createIperfServerPods(fr.ClientSet, namespace, selectedNodes, cudn.Name, cudn.Spec.Network.Localnet.Role, filterCIDRs(fr.ClientSet, ipv4CIDR, ipv6CIDR), iperfServerScript)
 			Expect(err).NotTo(HaveOccurred())
+			Expect(waitForIPerfServerPodsReady(fr.ClientSet, iperfServerTestPods)).To(Succeed())
+			iperfServerTestPods = updatePods(iperfServerTestPods)
 
 			filteredCIDRs := filterCIDRs(fr.ClientSet, vmiIPv4, vmiIPv6)
 			networkData, err := staticIPsNetworkData(filteredCIDRs)
