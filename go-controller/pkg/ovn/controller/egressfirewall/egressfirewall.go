@@ -113,6 +113,11 @@ type cacheEntry struct {
 	subnets           []*net.IPNet
 	efResourceVersion string
 	logHash           string
+	// sampledCollectors records the observability collectors resolved for this namespace's egress
+	// firewall ACLs. It follows the same mechanism as logHash: recomputed on every sync and diffed
+	// in entriesEqual, so an ObservabilityConfig change re-applies Sample.Collectors without invalidating
+	// the entry.
+	sampledCollectors []string
 }
 
 type EFController struct {
@@ -219,6 +224,30 @@ func NewEFController(
 // Reconcile queues the key to the egress firewall controller
 func (oc *EFController) Reconcile(key string) {
 	oc.controller.Reconcile(key)
+}
+
+// ResyncSampling re-enqueues this network's egress firewalls so their ACLs' Sample.Collectors are
+// re-applied after an ObservabilityConfig change. A nil namespaces set means every namespace with
+// an egress firewall; otherwise only the listed namespaces are refreshed. The actual re-apply is
+// gated by the sampling diff in entriesEqual (sampledCollectors); re-enqueuing is only the trigger,
+// since the change originates from a different resource and does not produce EgressFirewall events.
+func (oc *EFController) ResyncSampling(_ libovsdbops.SampleFeature, namespaces sets.Set[string]) error {
+	var targets []string
+	if namespaces == nil {
+		efs, err := oc.efLister.List(labels.Everything())
+		if err != nil {
+			return fmt.Errorf("failed to list egress firewalls for observability resync: %w", err)
+		}
+		for _, ef := range efs {
+			targets = append(targets, ef.Namespace)
+		}
+	} else {
+		targets = namespaces.UnsortedList()
+	}
+	for _, namespace := range targets {
+		oc.Reconcile(namespace + "/" + egressFirewallName)
+	}
+	return nil
 }
 
 func (oc *EFController) syncNAD(key string) error {
@@ -357,6 +386,11 @@ func (oc *EFController) initialSync() error {
 
 func (oc *EFController) Start() (err error) {
 	klog.Infof("Starting EgressFirewall controller")
+	if oc.observManager != nil {
+		// Be notified when an ObservabilityConfig change alters the collectors resolved for
+		// EgressFirewall, so the affected namespaces' ACLs get their Sample.Collectors re-applied.
+		oc.observManager.RegisterResyncHandler(libovsdbops.EgressFirewallSample, oc)
+	}
 	oc.nadReconcilerID = oc.networkManager.RegisterNADReconciler(oc.nadReconciler)
 	defer func() {
 		if err != nil {
@@ -427,6 +461,7 @@ func (oc *EFController) sync(key string) (updateErr error) {
 				subnets:           subnetsForNetInfo(activeNetwork),
 				efResourceVersion: ef.ResourceVersion,
 				logHash:           aclLogHash(aclLoggingLevels),
+				sampledCollectors: oc.GetSamplingConfig(namespace).Collectors(libovsdbops.EgressFirewallSample),
 			}
 		}
 	}
@@ -545,7 +580,8 @@ func entriesEqual(a, b *cacheEntry) bool {
 		return a.pgName == b.pgName &&
 			util.IsIPNetsEqual(a.subnets, b.subnets) &&
 			a.efResourceVersion == b.efResourceVersion &&
-			a.logHash == b.logHash
+			a.logHash == b.logHash &&
+			slices.Equal(a.sampledCollectors, b.sampledCollectors)
 	}
 }
 
