@@ -93,8 +93,8 @@ func TestIPAlloc(t *testing.T) {
 		},
 		{
 			desc:                     "IPv6",
-			existingPrimaryNodeIPs:   []node{{v4: network{ip: "fc00:f853:ccd:e793::5", mask: "64"}}, {v4: network{ip: "fc00:f853:ccd:e793::6", mask: "64"}}},
-			expectedFromAllocateNext: []string{"fc00:f853:ccd:e793::8", "fc00:f853:ccd:e793::9"},
+			existingPrimaryNodeIPs:   []node{{v6: network{ip: "fc00:f853:ccd:e793::5", mask: "64"}}, {v6: network{ip: "fc00:f853:ccd:e793::6", mask: "64"}}},
+			expectedFromAllocateNext: []string{"fc00:f853:ccd:e793::107", "fc00:f853:ccd:e793::108"},
 		},
 	}
 
