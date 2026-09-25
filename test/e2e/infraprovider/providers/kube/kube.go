@@ -4,21 +4,26 @@
 package kube
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/engine/container"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/engine/portalloc"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/engine/runner"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/engine/testcontext"
 	"golang.org/x/sync/singleflight"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
@@ -27,20 +32,57 @@ import (
 
 const ProviderName = "kube"
 
-const ovnKubeNodeLabel = "app in (ovnkube-node,ovnkube-node-dpu,ovnkube-node-dpu-host)"
+const (
+	ovnKubeNodeLabel        = "app in (ovnkube-node,ovnkube-node-dpu,ovnkube-node-dpu-host)"
+	containerHostEnvVar     = "OVN_TEST_CONTAINER_HOST"
+	primaryNetworkEnvVar    = "OVN_TEST_PRIMARY_NETWORK"
+	containerHostUserEnvVar = "OVN_TEST_CONTAINER_HOST_USER"
+	containerHostPortEnvVar = "OVN_TEST_CONTAINER_HOST_PORT"
+	containerHostKeyEnvVar  = "OVN_TEST_CONTAINER_HOST_KEY"
+	containerRuntimeEnvVar  = "CONTAINER_RUNTIME"
+)
 
 type kube struct {
-	hostPort      *portalloc.PortAllocator
-	nodeShellsMu  sync.Mutex
-	nodeShells    map[string]*corev1.Pod
-	nodeShellCall singleflight.Group
+	engine         *container.Engine
+	primaryNetwork string
+	hostPort       *portalloc.PortAllocator
+	nodeShellsMu   sync.Mutex
+	nodeShells     map[string]*corev1.Pod
+	nodeShellCall  singleflight.Group
 }
 
 func New() api.Provider {
 	return &kube{
-		hostPort:   portalloc.New(1024, 65535),
-		nodeShells: map[string]*corev1.Pod{},
+		engine:         newContainerEngine(),
+		primaryNetwork: os.Getenv(primaryNetworkEnvVar),
+		hostPort:       portalloc.New(1024, 65535),
+		nodeShells:     map[string]*corev1.Pod{},
 	}
+}
+
+func newContainerEngine() *container.Engine {
+	host := os.Getenv(containerHostEnvVar)
+	if host == "" {
+		return nil
+	}
+	if os.Getenv(primaryNetworkEnvVar) == "" {
+		klog.Fatalf("%s is set, so %s must also be set", containerHostEnvVar, primaryNetworkEnvVar)
+	}
+	sshRunner, err := runner.NewSSHRunner(host,
+		cmp.Or(os.Getenv(containerHostUserEnvVar), "root"),
+		cmp.Or(os.Getenv(containerHostPortEnvVar), "22"),
+		os.Getenv(containerHostKeyEnvVar))
+	if err != nil {
+		klog.Fatalf("cannot use container host %q: %v", host, err)
+	}
+	return container.NewEngine(cmp.Or(os.Getenv(containerRuntimeEnvVar), "docker"), sshRunner)
+}
+
+func (k *kube) containerEngine() *container.Engine {
+	if k.engine == nil {
+		ginkgo.Skip("set OVN_TEST_CONTAINER_HOST to run this spec", 2)
+	}
+	return k.engine
 }
 
 func skip(op, why string) error {
@@ -85,7 +127,7 @@ func (k *kube) deleteNodeShells() error {
 }
 
 func (k *kube) PrimaryNetwork() (api.Network, error) {
-	return nil, skip("PrimaryNetwork", "the kube API does not expose infrastructure networks")
+	return k.containerEngine().GetNetwork(k.primaryNetwork)
 }
 
 func (k *kube) GetK8NodeNetworkInterface(string, api.Network) (api.NetworkInterface, error) {
@@ -236,67 +278,105 @@ func (k *kube) StartNode(string) error {
 }
 
 func (k *kube) ListNetworks() ([]string, error) {
-	return nil, skip("ListNetworks", "the kube API does not expose infrastructure networks")
+	return k.containerEngine().ListNetworks()
 }
 
-func (k *kube) GetNetwork(string) (api.Network, error) {
-	return nil, skip("GetNetwork", "the kube API does not expose infrastructure networks")
+func (k *kube) GetNetwork(name string) (api.Network, error) {
+	return k.containerEngine().GetNetwork(name)
 }
 
-func (k *kube) GetExternalContainerNetworkInterface(api.ExternalContainer, api.Network) (api.NetworkInterface, error) {
-	return api.NetworkInterface{}, skip("GetExternalContainerNetworkInterface", "the kube API does not manage external containers")
+func (k *kube) GetExternalContainerNetworkInterface(external api.ExternalContainer, network api.Network) (api.NetworkInterface, error) {
+	return k.containerEngine().GetExternalContainerNetworkInterface(external, network)
 }
 
-func (k *kube) ExecExternalContainerCommand(api.ExternalContainer, []string) (string, error) {
-	return "", skip("ExecExternalContainerCommand", "the kube API does not manage external containers")
+func (k *kube) ExecExternalContainerCommand(external api.ExternalContainer, cmd []string) (string, error) {
+	return k.containerEngine().ExecExternalContainerCommand(external, cmd)
 }
 
-func (k *kube) GetExternalContainerLogs(api.ExternalContainer) (string, error) {
-	return "", skip("GetExternalContainerLogs", "the kube API does not manage external containers")
+func (k *kube) GetExternalContainerLogs(external api.ExternalContainer) (string, error) {
+	return k.containerEngine().GetExternalContainerLogs(external)
 }
 
 func (k *kube) GetExternalContainerPort() uint16 {
-	ginkgo.Skip("kube provider does not manage external containers", 2)
-	return 0
+	return k.containerEngine().GetExternalContainerPort()
 }
 
 func (k *kube) ExternalContainerPrimaryInterfaceName() string {
-	ginkgo.Skip("kube provider does not manage external containers", 2)
-	return ""
+	return k.containerEngine().ExternalContainerPrimaryInterfaceName()
 }
 
 func (k *kube) NewTestContext() api.Context {
 	context := &testcontext.TestContext{}
 	ginkgo.DeferCleanup(context.CleanUp)
-	return &contextKube{TestContext: context}
+	var engine *container.Engine
+	if k.engine != nil {
+		engine = k.engine.WithTestContext(context)
+	}
+	return &contextKube{TestContext: context, engine: engine}
 }
 
 type contextKube struct {
 	*testcontext.TestContext
+	engine *container.Engine
 }
 
-func (c *contextKube) CreateNetwork(string, ...string) (api.Network, error) {
-	return nil, skip("CreateNetwork", "the kube API does not manage infrastructure networks")
+func (c *contextKube) containerEngine() *container.Engine {
+	if c.engine == nil {
+		ginkgo.Skip("set OVN_TEST_CONTAINER_HOST to run this spec", 2)
+	}
+	return c.engine
 }
 
-func (c *contextKube) DeleteNetwork(api.Network) error {
-	return skip("DeleteNetwork", "the kube API does not manage infrastructure networks")
+func (c *contextKube) CreateNetwork(name string, subnets ...string) (api.Network, error) {
+	return c.containerEngine().CreateNetwork(name, subnets...)
 }
 
-func (c *contextKube) CreateExternalContainer(api.ExternalContainer) (api.ExternalContainer, error) {
-	return api.ExternalContainer{}, skip("CreateExternalContainer", "the kube API does not manage external containers")
+func (c *contextKube) DeleteNetwork(network api.Network) error {
+	return c.containerEngine().DeleteNetwork(network)
 }
 
-func (c *contextKube) DeleteExternalContainer(api.ExternalContainer) error {
-	return skip("DeleteExternalContainer", "the kube API does not manage external containers")
+func (c *contextKube) CreateExternalContainer(external api.ExternalContainer) (api.ExternalContainer, error) {
+	return c.containerEngine().CreateExternalContainer(external)
 }
 
-func (c *contextKube) AttachNetwork(api.Network, string) (api.NetworkInterface, error) {
-	return api.NetworkInterface{}, skip("AttachNetwork", "the kube API does not manage infrastructure networks")
+func (c *contextKube) DeleteExternalContainer(external api.ExternalContainer) error {
+	return c.containerEngine().DeleteExternalContainer(external)
 }
 
-func (c *contextKube) DetachNetwork(api.Network, string) error {
-	return skip("DetachNetwork", "the kube API does not manage infrastructure networks")
+func (c *contextKube) AttachNetwork(network api.Network, instance string) (api.NetworkInterface, error) {
+	node, err := isNode(instance)
+	if err != nil {
+		return api.NetworkInterface{}, err
+	}
+	if node {
+		return api.NetworkInterface{}, skip("AttachNetwork", "the provider does not own Node interfaces")
+	}
+	return c.containerEngine().AttachNetwork(network, instance)
+}
+
+func (c *contextKube) DetachNetwork(network api.Network, instance string) error {
+	node, err := isNode(instance)
+	if err != nil {
+		return err
+	}
+	if node {
+		return skip("DetachNetwork", "the provider does not own Node interfaces")
+	}
+	return c.containerEngine().DetachNetwork(network, instance)
+}
+
+func isNode(name string) (bool, error) {
+	client, err := framework.LoadClientset()
+	if err != nil {
+		return false, err
+	}
+	ctx, cancel := apiCallContext()
+	defer cancel()
+	_, err = client.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 func (c *contextKube) SetupUnderlay(*framework.Framework, api.Underlay) error {
