@@ -20,7 +20,9 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/label"
 
 	deploymentkind "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig/configs/kind"
+	deploymentkube "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig/configs/kube"
 	infraproviderkind "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/providers/kind"
+	infraproviderkube "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/providers/kube"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
@@ -29,6 +31,8 @@ import (
 )
 
 // https://github.com/kubernetes/kubernetes/blob/v1.16.4/test/e2e/e2e_test.go#L62
+
+const infraProviderEnvVar = "OVN_TEST_INFRA_PROVIDER"
 
 // handleFlags sets up all flags and parses the command line.
 func handleFlags() {
@@ -68,11 +72,17 @@ func TestMain(m *testing.M) {
 	handleFlags()
 	ProcessTestContextAndSetupLogging()
 
-	// Set up infrastructure provider and deployment config
-	// Upstream currently uses KinD as its preferred platform infra
-	// So TestMain is expected to run only there.
-	infraprovider.Set(infraproviderkind.New())
-	deploymentconfig.Set(deploymentkind.New())
+	switch provider := os.Getenv(infraProviderEnvVar); provider {
+	case "", infraproviderkind.ProviderName:
+		infraprovider.Set(infraproviderkind.New())
+		deploymentconfig.Set(deploymentkind.New())
+	case infraproviderkube.ProviderName:
+		infraprovider.Set(infraproviderkube.New())
+		deploymentconfig.Set(deploymentkube.New())
+	default:
+		klog.Fatalf("unsupported %s=%q, want %q or %q", infraProviderEnvVar, provider,
+			infraproviderkind.ProviderName, infraproviderkube.ProviderName)
+	}
 
 	os.Exit(m.Run())
 }
