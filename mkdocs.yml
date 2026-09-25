@@ -227,5 +227,6 @@ nav:
     - Disable Port Security: okeps/okep-3926-disable-port-security.md
     - OVN Observability API: okeps/okep-5212-ovnobserv-api.md
     - EgressIP Node Selector: okeps/okep-6800-egressip-node-selector.md
+    - Increase the MaxNetworks Limit: okeps/okep-6943-increase-max-networks-limit.md
   - Blog:
     - OVN-Kubernetes Blog: blog/index.md
