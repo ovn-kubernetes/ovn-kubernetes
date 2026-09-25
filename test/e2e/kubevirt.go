@@ -38,10 +38,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/dynamic"
@@ -747,16 +745,17 @@ fi
 			By("Skip network policy, test should be fixed after OVN bump broke them")
 		}
 
-		liveMigrateVirtualMachine = func(vmName string) {
+		liveMigrateVirtualMachine = func(vmName string) *kubevirtv1.VirtualMachineInstanceMigration {
 			GinkgoHelper()
 			vmimCreationRetries := 0
+			var vmim *kubevirtv1.VirtualMachineInstanceMigration
 			Eventually(func() error {
 				if vmimCreationRetries > 0 {
 					// retry due to unknown issue where kubevirt webhook gets stuck reading the request body
 					// https://github.com/ovn-kubernetes/ovn-kubernetes/issues/3902#issuecomment-1750257559
 					By(fmt.Sprintf("Retrying vmim %s creation", vmName))
 				}
-				vmim := &kubevirtv1.VirtualMachineInstanceMigration{
+				vmim = &kubevirtv1.VirtualMachineInstanceMigration{
 					ObjectMeta: metav1.ObjectMeta{
 						Namespace:    namespace,
 						GenerateName: vmName,
@@ -769,6 +768,7 @@ fi
 				vmimCreationRetries++
 				return err
 			}).WithPolling(time.Second).WithTimeout(time.Minute).Should(Succeed())
+			return vmim
 		}
 
 		checkLiveMigrationSucceeded = func(vmName string, migrationMode kubevirtv1.MigrationMode) {
@@ -829,59 +829,17 @@ fi
 			checkLiveMigrationSucceeded(vmi.Name, kubevirtv1.MigrationPreCopy)
 		}
 
-		vmiMigrations = func(client crclient.Client) ([]kubevirtv1.VirtualMachineInstanceMigration, error) {
-			unstructuredVMIMigrations := &unstructured.UnstructuredList{}
-			unstructuredVMIMigrations.SetGroupVersionKind(schema.GroupVersionKind{
-				Group:   kubevirtv1.GroupVersion.Group,
-				Kind:    "VirtualMachineInstanceMigrationList",
-				Version: kubevirtv1.GroupVersion.Version,
-			})
-
-			if err := client.List(context.Background(), unstructuredVMIMigrations); err != nil {
-				return nil, err
-			}
-			if len(unstructuredVMIMigrations.Items) == 0 {
-				return nil, fmt.Errorf("empty migration list")
-			}
-
-			var migrations []kubevirtv1.VirtualMachineInstanceMigration
-			for i := range unstructuredVMIMigrations.Items {
-				var vmiMigration kubevirtv1.VirtualMachineInstanceMigration
-				if err := runtime.DefaultUnstructuredConverter.FromUnstructured(
-					unstructuredVMIMigrations.Items[i].Object,
-					&vmiMigration,
-				); err != nil {
-					return nil, err
-				}
-				migrations = append(migrations, vmiMigration)
-			}
-
-			return migrations, nil
-		}
-
-		checkLiveMigrationFailed = func(vmName string) {
+		checkLiveMigrationFailed = func(migration *kubevirtv1.VirtualMachineInstanceMigration) {
 			GinkgoHelper()
-			By("checking the VM live-migrated failed to migrate")
-			vmi := &kubevirtv1.VirtualMachineInstance{
-				ObjectMeta: metav1.ObjectMeta{
-					Namespace: namespace,
-					Name:      vmName,
-				},
-			}
-			err := crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)
-			Expect(err).NotTo(HaveOccurred(), "should success retrieving vmi")
-
-			Eventually(func() (kubevirtv1.VirtualMachineInstanceMigrationPhase, error) {
-				migrations, err := vmiMigrations(crClient)
-				if err != nil {
-					return kubevirtv1.MigrationPhaseUnset, err
-				}
-				if len(migrations) > 1 {
-					return kubevirtv1.MigrationPhaseUnset, fmt.Errorf("expected one migration, got %d", len(migrations))
-				}
-				return migrations[0].Status.Phase, nil
-			}).WithPolling(time.Second).WithTimeout(5 * time.Minute).Should(
-				Equal(kubevirtv1.MigrationFailed),
+			By(fmt.Sprintf("checking migration %s/%s failed", migration.Namespace, migration.Name))
+			Eventually(func(g Gomega) {
+				current := &kubevirtv1.VirtualMachineInstanceMigration{}
+				g.Expect(crClient.Get(context.Background(), crclient.ObjectKeyFromObject(migration), current)).To(Succeed())
+				g.Expect(current.UID).To(Equal(migration.UID), "migration object should not be replaced")
+				g.Expect(current.Status.Phase).To(Equal(kubevirtv1.MigrationFailed))
+			}).WithPolling(time.Second).WithTimeout(5*time.Minute).Should(
+				Succeed(),
+				"migration %s/%s for VMI %s should fail", migration.Namespace, migration.Name, migration.Spec.VMIName,
 			)
 		}
 
@@ -899,8 +857,8 @@ fi
 				return err
 			}).WithPolling(time.Second).WithTimeout(time.Minute).Should(Succeed())
 
-			liveMigrateVirtualMachine(vmi.Name)
-			checkLiveMigrationFailed(vmi.Name)
+			migration := liveMigrateVirtualMachine(vmi.Name)
+			checkLiveMigrationFailed(migration)
 		}
 
 		globalAddressesByFamily = func(isOfFamily func(string) bool, vmi *kubevirtv1.VirtualMachineInstance) func() ([]string, error) {
