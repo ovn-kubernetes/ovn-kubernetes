@@ -6,12 +6,16 @@ package kube
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
+	"strconv"
 	"sync"
 
 	"github.com/onsi/ginkgo/v2"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/engine/container"
@@ -27,6 +31,7 @@ import (
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
+	utilnet "k8s.io/utils/net"
 	"k8s.io/utils/ptr"
 )
 
@@ -130,8 +135,85 @@ func (k *kube) PrimaryNetwork() (api.Network, error) {
 	return k.containerEngine().GetNetwork(k.primaryNetwork)
 }
 
-func (k *kube) GetK8NodeNetworkInterface(string, api.Network) (api.NetworkInterface, error) {
-	return api.NetworkInterface{}, skip("GetK8NodeNetworkInterface", "the kube API does not expose host interfaces")
+func (k *kube) GetK8NodeNetworkInterface(nodeName string, network api.Network) (api.NetworkInterface, error) {
+	if network.Name() != k.primaryNetwork {
+		return api.NetworkInterface{}, skip("GetK8NodeNetworkInterface", "the provider does not attach networks to Nodes")
+	}
+	client, err := framework.LoadClientset()
+	if err != nil {
+		return api.NetworkInterface{}, err
+	}
+	ctx, cancel := apiCallContext()
+	node, err := client.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+	cancel()
+	if err != nil {
+		return api.NetworkInterface{}, err
+	}
+	primary, err := util.ParseNodePrimaryIfAddr(node)
+	if util.IsAnnotationNotSetError(err) {
+		return api.NetworkInterface{}, skip("GetK8NodeNetworkInterface", "OVN-Kubernetes has not published the Node uplink address")
+	}
+	if err != nil {
+		return api.NetworkInterface{}, err
+	}
+	v4Subnet, v6Subnet, err := network.IPv4IPv6Subnets()
+	if err != nil {
+		return api.NetworkInterface{}, err
+	}
+	inf := api.NetworkInterface{}
+	if subnetHolds(v4Subnet, primary.V4.IP) {
+		inf.IPv4, inf.IPv4Prefix = primary.V4.IP.String(), prefixOf(primary.V4.Net)
+	}
+	if subnetHolds(v6Subnet, primary.V6.IP) {
+		inf.IPv6, inf.IPv6Prefix = primary.V6.IP.String(), prefixOf(primary.V6.Net)
+	}
+	if inf.IPv4 == "" && inf.IPv6 == "" {
+		return api.NetworkInterface{}, fmt.Errorf("node %s is not on network %s", nodeName, network.Name())
+	}
+	inf.InfName, inf.MAC, err = k.nodeLinkHolding(nodeName, cmp.Or(inf.IPv4, inf.IPv6))
+	return inf, err
+}
+
+func prefixOf(subnet *net.IPNet) string {
+	ones, _ := subnet.Mask.Size()
+	return strconv.Itoa(ones)
+}
+
+func subnetHolds(subnet string, ip net.IP) bool {
+	_, network, err := utilnet.ParseCIDRSloppy(subnet)
+	return err == nil && network.Contains(ip)
+}
+
+func (k *kube) nodeLinkHolding(nodeName, address string) (string, string, error) {
+	out, err := k.ExecK8NodeCommand(nodeName, []string{"ip", "-j", "addr", "show"})
+	if err != nil {
+		return "", "", err
+	}
+	var links []struct {
+		Name     string `json:"ifname"`
+		MAC      string `json:"address"`
+		AddrInfo []struct {
+			Local string `json:"local"`
+		} `json:"addr_info"`
+	}
+	if err := json.Unmarshal([]byte(out), &links); err != nil {
+		return "", "", fmt.Errorf("read interfaces on node %s: %w", nodeName, err)
+	}
+	want := net.ParseIP(address)
+	var names []string
+	var name, mac string
+	for _, link := range links {
+		for _, address := range link.AddrInfo {
+			if net.ParseIP(address.Local).Equal(want) {
+				names = append(names, link.Name)
+				name, mac = link.Name, link.MAC
+			}
+		}
+	}
+	if len(names) != 1 {
+		return "", "", fmt.Errorf("found node address %s on interfaces %v", want, names)
+	}
+	return name, mac, nil
 }
 
 func (k *kube) ExecK8NodeCommand(nodeName string, cmd []string) (string, error) {
