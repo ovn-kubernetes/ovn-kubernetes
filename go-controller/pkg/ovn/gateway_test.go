@@ -17,6 +17,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilnet "k8s.io/utils/net"
+	"k8s.io/utils/ptr"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
@@ -237,10 +238,13 @@ func generateGatewayInitExpectedNBWithPodNetworkAdvertised(testData []libovsdbte
 		networks = append(networks, ip.String())
 		physicalIPs = append(physicalIPs, ip.IP.String())
 	}
+	macBindingScope := expectedMACBindingScope(nodeName)
+	testData = append(testData, macBindingScope)
 	testData = append(testData, &nbdb.LogicalRouterPort{
-		UUID: externalRouterPort + "-UUID",
-		Name: externalRouterPort,
-		MAC:  l3GatewayConfig.MACAddress.String(),
+		UUID:            externalRouterPort + "-UUID",
+		Name:            externalRouterPort,
+		MAC:             l3GatewayConfig.MACAddress.String(),
+		MACBindingScope: ptr.To(macBindingScope.UUID),
 		ExternalIDs: map[string]string{
 			"gateway-physical-ip": "yes",
 		},

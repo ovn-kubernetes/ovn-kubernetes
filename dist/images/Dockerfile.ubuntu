@@ -15,6 +15,8 @@ ARG BUILDER_IMAGE
 ARG OVN_KUBERNETES_DIR=.
 ARG KUBECTL_MINOR=1.35
 ARG UBUNTU_BASE_IMAGE=ubuntu:26.04
+ARG OVN_REPO=https://github.com/ovn-org/ovn.git
+ARG OVN_GITREF=main
 
 FROM --platform=${BUILDPLATFORM} ${BUILDER_IMAGE} AS ovnkube-builder
 
@@ -28,6 +30,71 @@ COPY ${OVN_KUBERNETES_DIR} ovn-kubernetes
 RUN cd ovn-kubernetes/dist/images && \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} make bld
 
+####################################
+# Stage to build OVN from source    #
+####################################
+FROM ${UBUNTU_BASE_IMAGE} AS ovn-builder
+
+USER root
+
+ENV PYTHONDONTWRITEBYTECODE=yes
+
+RUN apt-get update && apt-get install -y \
+    autoconf \
+    automake \
+    build-essential \
+    ca-certificates \
+    git \
+    libcap-ng-dev \
+    libnuma-dev \
+    libpcap-dev \
+    libssl-dev \
+    libtool \
+    libunbound-dev \
+    libunwind-dev \
+    pkg-config \
+    python3 \
+    python3-setuptools \
+    python3-sortedcontainers \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG OVN_REPO
+ARG OVN_GITREF
+WORKDIR /root
+RUN mkdir ovn && cd ovn && \
+    git init && \
+    git remote add origin "${OVN_REPO}" && \
+    git fetch origin "${OVN_GITREF:-main}" --depth 1 && \
+    git reset --hard FETCH_HEAD
+
+ARG OVS_REPO=https://github.com/openvswitch/ovs.git
+WORKDIR /root
+RUN OVS_GITREF="$(cd ovn && git submodule status ovs | cut -c 2- | cut -d ' ' -f 1)" && \
+    mkdir ovs && cd ovs && \
+    git init && \
+    git remote add origin "${OVS_REPO}" && \
+    git fetch origin "${OVS_GITREF}" --depth 1 && \
+    git reset --hard FETCH_HEAD
+
+WORKDIR /root/ovs
+RUN ./boot.sh && \
+    ./configure --prefix=/usr --localstatedir=/var --sysconfdir=/etc && \
+    make -j"$(nproc)"
+
+WORKDIR /root/ovn
+RUN ./boot.sh && \
+    ./configure \
+        --prefix=/usr \
+        --localstatedir=/var \
+        --sysconfdir=/etc \
+        --with-ovs-source=/root/ovs \
+        --with-ovs-build=/root/ovs && \
+    make -j"$(nproc)" && \
+    make install DESTDIR=/ovn-install
+
+############################
+# Final OVN-Kubernetes image
+############################
 FROM ${UBUNTU_BASE_IMAGE}
 
 ARG KUBECTL_MINOR
@@ -49,8 +116,12 @@ RUN apt-get update && apt-get install -y \
     echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v${KUBECTL_MINOR}/deb/ /" > /etc/apt/sources.list.d/kubernetes.list && \
     chmod 644 /etc/apt/sources.list.d/kubernetes.list && \
     apt-get update && apt-get install -y \
-    openvswitch-switch openvswitch-common openvswitch-test ovn-central ovn-common ovn-host kubectl tcpdump && \
+    libunwind8 openvswitch-switch openvswitch-common openvswitch-test ovn-central ovn-common ovn-host kubectl tcpdump && \
     rm -rf /var/lib/apt/lists/*
+
+# Temporarily replace packaged OVN with the requested source build.
+COPY --from=ovn-builder /ovn-install/ /
+RUN ldconfig
 
 # Built in the ovnkube-builder stage, then the binaries are copied here.
 # put things where they are in the pkg

@@ -1337,8 +1337,13 @@ func (gw *GatewayManager) addExternalSwitch(prefix, interfaceID, gatewayRouter, 
 	for _, ip := range ipAddresses {
 		externalRouterPortNetworks = append(externalRouterPortNetworks, ip.String())
 	}
+	macBindingScope, err := gw.ensureMACBindingScope(prefix, physNetworkName)
+	if err != nil {
+		return err
+	}
 	externalLogicalRouterPort := nbdb.LogicalRouterPort{
-		MAC: macAddress,
+		MAC:             macAddress,
+		MACBindingScope: macBindingScope,
 		ExternalIDs: map[string]string{
 			"gateway-physical-ip": "yes",
 		},
@@ -1353,10 +1358,10 @@ func (gw *GatewayManager) addExternalSwitch(prefix, interfaceID, gatewayRouter, 
 	}
 	logicalRouter := nbdb.LogicalRouter{Name: gatewayRouter}
 
-	err := libovsdbops.CreateOrUpdateLogicalRouterPort(gw.nbClient, &logicalRouter,
+	err = libovsdbops.CreateOrUpdateLogicalRouterPort(gw.nbClient, &logicalRouter,
 		&externalLogicalRouterPort, nil, &externalLogicalRouterPort.MAC,
 		&externalLogicalRouterPort.Networks, &externalLogicalRouterPort.ExternalIDs,
-		&externalLogicalRouterPort.Options)
+		&externalLogicalRouterPort.MACBindingScope, &externalLogicalRouterPort.Options)
 	if err != nil {
 		return fmt.Errorf("failed to add logical router port %+v to router %s: %v", externalLogicalRouterPort, gatewayRouter, err)
 	}
@@ -1435,6 +1440,37 @@ func (gw *GatewayManager) addExternalSwitch(prefix, interfaceID, gatewayRouter, 
 	}
 
 	return nil
+}
+
+// usesSharedMACBindingScope returns true for gateway router ports that share
+// the node's default external L2 domain. Separate uplinks and egress gateway
+// ports must learn their own neighbors.
+func (gw *GatewayManager) usesSharedMACBindingScope(prefix, physNetworkName string) bool {
+	return prefix == "" &&
+		gw.netInfo.Uplink() == "" &&
+		physNetworkName == types.PhysicalNetworkName
+}
+
+// ensureMACBindingScope creates the per-node scope shared by gateway router
+// ports on the default external L2 domain and returns its UUID.
+func (gw *GatewayManager) ensureMACBindingScope(prefix, physNetworkName string) (*string, error) {
+	if !gw.usesSharedMACBindingScope(prefix, physNetworkName) {
+		return nil, nil
+	}
+
+	scope := &nbdb.MACBindingScope{
+		Name:                      types.MACBindingScopePrefix + gw.nodeName,
+		AlwaysLearnFromArpRequest: ptr.To(false),
+		DisableGarpRarp:           ptr.To(false),
+		MACBindingAgeThreshold:    ptr.To(types.GRMACBindingAgeThreshold),
+		ExternalIDs: map[string]string{
+			types.NodeExternalID: gw.nodeName,
+		},
+	}
+	if err := libovsdbops.CreateOrUpdateMACBindingScope(gw.nbClient, scope); err != nil {
+		return nil, fmt.Errorf("failed to create MAC binding scope %s: %w", scope.Name, err)
+	}
+	return &scope.UUID, nil
 }
 
 // cleanupStaleMasqueradeData removes following from northbound database

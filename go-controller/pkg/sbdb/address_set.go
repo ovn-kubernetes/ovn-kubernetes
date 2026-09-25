@@ -12,9 +12,10 @@ const AddressSetTable = "Address_Set"
 
 // AddressSet defines an object in Address_Set table
 type AddressSet struct {
-	UUID      string   `ovsdb:"_uuid"`
-	Addresses []string `ovsdb:"addresses"`
-	Name      string   `ovsdb:"name"`
+	UUID      string            `ovsdb:"_uuid"`
+	Addresses []string          `ovsdb:"addresses"`
+	Name      string            `ovsdb:"name"`
+	Options   map[string]string `ovsdb:"options"`
 }
 
 func (a *AddressSet) GetUUID() string {
@@ -53,9 +54,40 @@ func (a *AddressSet) GetName() string {
 	return a.Name
 }
 
+func (a *AddressSet) GetOptions() map[string]string {
+	return a.Options
+}
+
+func copyAddressSetOptions(a map[string]string) map[string]string {
+	if a == nil {
+		return nil
+	}
+	b := make(map[string]string, len(a))
+	for k, v := range a {
+		b[k] = v
+	}
+	return b
+}
+
+func equalAddressSetOptions(a, b map[string]string) bool {
+	if (a == nil) != (b == nil) {
+		return false
+	}
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if w, ok := b[k]; !ok || v != w {
+			return false
+		}
+	}
+	return true
+}
+
 func (a *AddressSet) DeepCopyInto(b *AddressSet) {
 	*b = *a
 	b.Addresses = copyAddressSetAddresses(a.Addresses)
+	b.Options = copyAddressSetOptions(a.Options)
 }
 
 func (a *AddressSet) DeepCopy() *AddressSet {
@@ -76,7 +108,8 @@ func (a *AddressSet) CloneModel() model.Model {
 func (a *AddressSet) Equals(b *AddressSet) bool {
 	return a.UUID == b.UUID &&
 		equalAddressSetAddresses(a.Addresses, b.Addresses) &&
-		a.Name == b.Name
+		a.Name == b.Name &&
+		equalAddressSetOptions(a.Options, b.Options)
 }
 
 func (a *AddressSet) EqualsModel(b model.Model) bool {

@@ -10,6 +10,25 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 )
 
+// CreateOrUpdateMACBindingScope creates or updates a shared MAC binding scope.
+func CreateOrUpdateMACBindingScope(nbClient libovsdbclient.Client, scope *nbdb.MACBindingScope) error {
+	opModel := operationModel{
+		Model: scope,
+		OnModelUpdates: []interface{}{
+			&scope.AlwaysLearnFromArpRequest,
+			&scope.DisableGarpRarp,
+			&scope.ExternalIDs,
+			&scope.MACBindingAgeThreshold,
+		},
+		ErrNotFound: false,
+		BulkOp:      false,
+	}
+
+	m := newModelClient(nbClient)
+	_, err := m.CreateOrUpdate(opModel)
+	return err
+}
+
 // CreateOrUpdateStaticMacBinding creates or updates the provided static mac binding
 func CreateOrUpdateStaticMacBinding(nbClient libovsdbclient.Client, smbs ...*nbdb.StaticMACBinding) error {
 	opModels := make([]operationModel, len(smbs))

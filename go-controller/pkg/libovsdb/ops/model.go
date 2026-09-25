@@ -63,6 +63,8 @@ func getUUID(model model.Model) string {
 		return t.UUID
 	case *nbdb.StaticMACBinding:
 		return t.UUID
+	case *nbdb.MACBindingScope:
+		return t.UUID
 	case *sbdb.Chassis:
 		return t.UUID
 	case *sbdb.ChassisPrivate:
@@ -140,6 +142,8 @@ func setUUID(model model.Model, uuid string) {
 	case *nbdb.SamplingApp:
 		t.UUID = uuid
 	case *nbdb.StaticMACBinding:
+		t.UUID = uuid
+	case *nbdb.MACBindingScope:
 		t.UUID = uuid
 	case *sbdb.Chassis:
 		t.UUID = uuid
@@ -285,6 +289,11 @@ func copyIndexes(model model.Model) model.Model {
 			LogicalPort: t.LogicalPort,
 			IP:          t.IP,
 		}
+	case *nbdb.MACBindingScope:
+		return &nbdb.MACBindingScope{
+			UUID: t.UUID,
+			Name: t.Name,
+		}
 	case *sbdb.Chassis:
 		return &sbdb.Chassis{
 			UUID: t.UUID,
@@ -393,6 +402,8 @@ func getListFromModel(model model.Model) interface{} {
 		return &[]*nbdb.SamplingApp{}
 	case *nbdb.StaticMACBinding:
 		return &[]*nbdb.StaticMACBinding{}
+	case *nbdb.MACBindingScope:
+		return &[]*nbdb.MACBindingScope{}
 	case *sbdb.Chassis:
 		return &[]*sbdb.Chassis{}
 	case *sbdb.ChassisPrivate:
