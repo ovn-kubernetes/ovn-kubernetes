@@ -128,6 +128,26 @@ func TestIPAlloc(t *testing.T) {
 
 }
 
+func TestNoSharedRange(t *testing.T) {
+	cs := fake.NewSimpleClientset(getNodesWithIPs([]node{
+		{v4: network{ip: "10.1.253.3", mask: "31"}},
+		{v4: network{ip: "10.1.253.5", mask: "31"}},
+	}))
+	if _, err := newPrimaryIPAllocator(cs.CoreV1().Nodes()); !IsNoRangeError(err) {
+		t.Fatalf("newPrimaryIPAllocator() error = %v, want no-range error", err)
+	}
+}
+
+func TestInvalidNodeIsNotNoRange(t *testing.T) {
+	cs := fake.NewSimpleClientset(&corev1.NodeList{Items: []corev1.Node{
+		getNodeObj("node0", nil, nil),
+	}})
+	_, err := newPrimaryIPAllocator(cs.CoreV1().Nodes())
+	if err == nil || IsNoRangeError(err) {
+		t.Fatalf("newPrimaryIPAllocator() error = %v, want configuration error", err)
+	}
+}
+
 func getNodesWithIPs(nodesSpec []node) runtime.Object {
 	nodeObjs := make([]corev1.Node, 0, len(nodesSpec))
 	getIPMaskFn := func(ip, mask string) string {

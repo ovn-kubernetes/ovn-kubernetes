@@ -60,7 +60,11 @@ var _ = ginkgo.BeforeSuite(func() {
 	framework.ExpectNoError(err, "k8 clientset is required to list nodes")
 	if os.Getenv(uplinkDPUGatewayNetworkEnv) == "" {
 		err = ipalloc.InitPrimaryIPAllocator(client.CoreV1().Nodes())
-		framework.ExpectNoError(err, "failed to initialize node primary IP allocator")
+		if ipalloc.IsNoRangeError(err) && infraprovider.Get().Name() == infraproviderkube.ProviderName {
+			framework.Logf("Primary IP allocation is unavailable; dependent specs will skip: %v", err)
+		} else {
+			framework.ExpectNoError(err, "failed to initialize node primary IP allocator")
+		}
 	} else {
 		framework.Logf("Skipping primary IP allocator initialization for DPU Uplink e2e")
 	}
