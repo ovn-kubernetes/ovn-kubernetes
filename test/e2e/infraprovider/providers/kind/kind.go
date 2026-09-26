@@ -6,7 +6,6 @@ package kind
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -17,7 +16,6 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/engine/container"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/engine/portalloc"
-	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/engine/runner"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/engine/testcontext"
 
 	corev1 "k8s.io/api/core/v1"
@@ -27,19 +25,21 @@ import (
 )
 
 type kind struct {
-	engine   *container.Engine
-	HostPort *portalloc.PortAllocator
+	containerRuntime ContainerRuntime
+	engine           *container.Engine
+	cmdRunner        api.Runner
+	HostPort         *portalloc.PortAllocator
 }
 
-func New() api.Provider {
+func New(ce ContainerRuntime, cmdRunner api.Runner) api.Provider {
 	if !infraprovider.IsKind() {
 		panic("Cluster provider must be KinD type")
 	}
-	ce := getContainerRuntime()
-	cmdRunner := runner.NewDirectRunner()
 	kind := &kind{
-		engine:   container.NewEngine(ce.String(), cmdRunner),
-		HostPort: portalloc.New(1024, 65535)}
+		containerRuntime: ce,
+		cmdRunner:        cmdRunner,
+		engine:           container.NewEngine(ce.String(), cmdRunner),
+		HostPort:         portalloc.New(1024, 65535)}
 	return kind
 }
 
@@ -104,10 +104,10 @@ func (k *kind) PreloadImages(imgs []string) {
 	pullBackoff := wait.Backoff{Duration: 5 * time.Second, Factor: 2, Steps: 5}
 	for _, img := range imgs {
 		framework.Logf("Preloading image %s into KIND cluster %s", img, clusterName)
-		var out []byte
+		var out string
 		err := wait.ExponentialBackoff(pullBackoff, func() (bool, error) {
 			var pullErr error
-			out, pullErr = exec.Command(engine.String(), "pull", img).CombinedOutput()
+			out, pullErr = k.cmdRunner.Run(k.containerRuntime.String(), "pull", img)
 			if pullErr != nil {
 				framework.Logf("Retrying pull for image %s: %v (%s)", img, pullErr, out)
 				return false, nil
@@ -118,16 +118,18 @@ func (k *kind) PreloadImages(imgs []string) {
 			framework.Logf("Warning: failed to pull image %s after retries: %v (%s)", img, err, out)
 			continue
 		}
-		if engine == podman {
-			os.Remove("/tmp/image.tar")
-			out, err = exec.Command(engine.String(), "save", "-o", "/tmp/image.tar", img).CombinedOutput()
+		if k.containerRuntime == podman {
+			if _, err := k.cmdRunner.Run("rm", "-f", "/tmp/image.tar"); err != nil {
+				framework.Logf("Warning: failed to remove stale image archive /tmp/image.tar: %v", err)
+			}
+			out, err = k.cmdRunner.Run(k.containerRuntime.String(), "save", "-o", "/tmp/image.tar", img)
 			if err != nil {
 				framework.Logf("Warning: failed to save image %s: %v (%s)", img, err, out)
 				continue
 			}
-			out, err = exec.Command("kind", "load", "image-archive", "/tmp/image.tar", "--name", clusterName).CombinedOutput()
+			out, err = k.cmdRunner.Run("kind", "load", "image-archive", "/tmp/image.tar", "--name", clusterName)
 		} else {
-			out, err = exec.Command("kind", "load", "docker-image", img, "--name", clusterName).CombinedOutput()
+			out, err = k.cmdRunner.Run("kind", "load", "docker-image", img, "--name", clusterName)
 		}
 		if err != nil {
 			framework.Logf("Warning: failed to load image %s into KIND cluster %s: %v (%s)", img, clusterName, err, out)
@@ -138,6 +140,9 @@ func (k *kind) PreloadImages(imgs []string) {
 }
 
 func kindClusterName() string {
+	// Use exec.Command() directly (not cmdRunner) to read the local kubeconfig.
+	// This works for both local execution (upstream) and remote KIND clusters (vendor),
+	// since kubeconfig is always local while container operations run on the KIND host.
 	currentCtx, err := exec.Command("kubectl", "config", "current-context").CombinedOutput()
 	if err != nil {
 		return ""
