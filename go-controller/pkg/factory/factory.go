@@ -213,12 +213,13 @@ const (
 )
 
 var (
-	// Use a larger queue for incoming events to avoid bottlenecks
-	// due to handlers being slow.
+	// Retained for compatibility with the queued informer constructor. The
+	// queueMap uses key-deduplicated work queues rather than a fixed-size event
+	// channel, so this value no longer bounds or blocks event delivery.
 	eventQueueSize uint32 = 100
 )
 
-// Override default event queue configuration.  Used only for tests.
+// Override the legacy event queue configuration. Used only for tests.
 func SetEventQueueSize(newEventQueueSize uint32) {
 	eventQueueSize = newEventQueueSize
 }
