@@ -33,6 +33,14 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 )
 
+func init() {
+	// Disable VF collection for package-level link operations; it is costly on PFs
+	// with many VFs and unnecessary.
+	if err := netlink.ConfigureHandle(netlink.HandleOptions{DisableVFInfoCollection: true}); err != nil {
+		panic(fmt.Sprintf("failed to configure netlink package handle: %v", err))
+	}
+}
+
 type NetLinkOps interface {
 	LinkList() ([]netlink.Link, error)
 	LinkByName(ifaceName string) (netlink.Link, error)

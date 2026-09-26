@@ -541,7 +541,7 @@ github.com/u-root/uio/uio
 # github.com/urfave/cli/v2 v2.27.2
 ## explicit; go 1.18
 github.com/urfave/cli/v2
-# github.com/vishvananda/netlink v1.3.2-0.20260320193013-72a8cd7e0a73
+# github.com/vishvananda/netlink v1.3.2-0.20260831221819-dcee5577542a
 ## explicit; go 1.23
 github.com/vishvananda/netlink
 github.com/vishvananda/netlink/nl
