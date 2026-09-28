@@ -13412,23 +13412,9 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					},
 					&nbdb.LogicalRouterPolicy{
 						Priority:    types.DefaultNoRereoutePriority,
-						Match:       "ip4.src == 10.128.0.0/14 && ip4.dst == 10.132.0.0/14",
-						Action:      nbdb.LogicalRouterPolicyActionAllow,
-						UUID:        "no-reroute-ipv4-2-UUID",
-						ExternalIDs: getEgressIPLRPNoReRoutePodToPodDbIDs(IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
-					},
-					&nbdb.LogicalRouterPolicy{
-						Priority:    types.DefaultNoRereoutePriority,
-						Match:       "ip4.src == 10.132.0.0/14 && ip4.dst == 10.128.0.0/14",
-						Action:      nbdb.LogicalRouterPolicyActionAllow,
-						UUID:        "no-reroute-ipv4-3-UUID",
-						ExternalIDs: getEgressIPLRPNoReRoutePodToPodDbIDs(IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
-					},
-					&nbdb.LogicalRouterPolicy{
-						Priority:    types.DefaultNoRereoutePriority,
 						Match:       "ip4.src == 10.132.0.0/14 && ip4.dst == 10.132.0.0/14",
 						Action:      nbdb.LogicalRouterPolicyActionAllow,
-						UUID:        "no-reroute-ipv4-4-UUID",
+						UUID:        "no-reroute-ipv4-2-UUID",
 						ExternalIDs: getEgressIPLRPNoReRoutePodToPodDbIDs(IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
 					},
 					&nbdb.LogicalRouterPolicy{
@@ -13440,23 +13426,9 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					},
 					&nbdb.LogicalRouterPolicy{
 						Priority:    types.DefaultNoRereoutePriority,
-						Match:       "ip6.src == fd69::1/64 && ip6.dst == fd70::1/64",
-						Action:      nbdb.LogicalRouterPolicyActionAllow,
-						UUID:        "no-reroute-ipv6-2-UUID",
-						ExternalIDs: getEgressIPLRPNoReRoutePodToPodDbIDs(IPFamilyValueV6, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
-					},
-					&nbdb.LogicalRouterPolicy{
-						Priority:    types.DefaultNoRereoutePriority,
-						Match:       "ip6.src == fd70::1/64 && ip6.dst == fd69::1/64",
-						Action:      nbdb.LogicalRouterPolicyActionAllow,
-						UUID:        "no-reroute-ipv6-3-UUID",
-						ExternalIDs: getEgressIPLRPNoReRoutePodToPodDbIDs(IPFamilyValueV6, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
-					},
-					&nbdb.LogicalRouterPolicy{
-						Priority:    types.DefaultNoRereoutePriority,
 						Match:       "ip6.src == fd70::1/64 && ip6.dst == fd70::1/64",
 						Action:      nbdb.LogicalRouterPolicyActionAllow,
-						UUID:        "no-reroute-ipv6-4-UUID",
+						UUID:        "no-reroute-ipv6-2-UUID",
 						ExternalIDs: getEgressIPLRPNoReRoutePodToPodDbIDs(IPFamilyValueV6, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
 					},
 					&nbdb.LogicalRouterPolicy{
@@ -13490,11 +13462,9 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 					&nbdb.LogicalRouter{
 						Name: types.OVNClusterRouter,
 						UUID: types.OVNClusterRouter + "-UUID",
-						Policies: []string{"no-reroute-ipv4-1-UUID", "no-reroute-ipv4-2-UUID", "no-reroute-ipv4-3-UUID", "no-reroute-ipv4-4-UUID",
-							"no-reroute-service-ipv4-1-UUID", "no-reroute-service-ipv4-2-UUID",
-							"no-reroute-ipv6-1-UUID", "no-reroute-ipv6-2-UUID", "no-reroute-ipv6-3-UUID", "no-reroute-ipv6-4-UUID",
-							"no-reroute-service-ipv6-1-UUID", "no-reroute-service-ipv6-2-UUID",
-							"default-v4-no-reroute-node-UUID", "default-v6-no-reroute-node-UUID", "default-no-reroute-reply-traffic"},
+						Policies: []string{"no-reroute-ipv4-1-UUID", "no-reroute-ipv4-2-UUID", "no-reroute-service-ipv4-1-UUID",
+							"no-reroute-ipv6-1-UUID", "no-reroute-ipv6-2-UUID", "no-reroute-service-ipv4-2-UUID", "no-reroute-service-ipv6-1-UUID",
+							"no-reroute-service-ipv6-2-UUID", "default-v4-no-reroute-node-UUID", "default-v6-no-reroute-node-UUID", "default-no-reroute-reply-traffic"},
 					},
 					&nbdb.LogicalRouter{
 						Name:  types.GWRouterPrefix + node1.Name,
