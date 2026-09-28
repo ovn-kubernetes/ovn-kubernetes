@@ -4,6 +4,7 @@
 package pod
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -80,7 +81,7 @@ type persistentIPsStub struct {
 	datastore map[string]ipamclaimsapi.IPAMClaim
 }
 
-func (c *persistentIPsStub) Reconcile(_ *ipamclaimsapi.IPAMClaim, newIPAMClaim *ipamclaimsapi.IPAMClaim, _ persistentips.IPReleaser) error {
+func (c *persistentIPsStub) Reconcile(_ context.Context, _ *ipamclaimsapi.IPAMClaim, newIPAMClaim *ipamclaimsapi.IPAMClaim, _ persistentips.IPReleaser) error {
 	c.datastore[ipamClaimKey(newIPAMClaim.Namespace, newIPAMClaim.Name)] = *newIPAMClaim
 	return nil
 }
@@ -166,6 +167,7 @@ func Test_allocatePodAnnotationReturnsUpdatedPod(t *testing.T) {
 	}
 
 	updatedPod, podAnnotation, err := allocatePodAnnotation(
+		context.Background(),
 		corelisters.NewPodLister(podIndexer),
 		&kube.Kube{KClient: fake.NewSimpleClientset(pod.DeepCopy())},
 		&ipAllocatorStub{nextIPs: ovntest.MustParseIPNets("10.128.0.3/24")},
@@ -235,6 +237,7 @@ func Test_allocatePodAnnotationWithTunnelIDReturnsUpdatedPod(t *testing.T) {
 	g.Expect(podIndexer.Add(pod)).To(gomega.Succeed())
 
 	updatedPod, podAnnotation, err := allocatePodAnnotationWithTunnelID(
+		context.Background(),
 		corelisters.NewPodLister(podIndexer),
 		&kube.Kube{KClient: fake.NewSimpleClientset(pod.DeepCopy())},
 		nil,
@@ -1451,6 +1454,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 			}
 
 			pod, podAnnotation, rollback, err := allocatePodAnnotationWithRollback(
+				context.Background(),
 				tt.args.ipAllocator,
 				tt.args.idAllocator,
 				tt.netInfo,

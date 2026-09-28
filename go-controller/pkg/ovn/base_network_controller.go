@@ -4,6 +4,7 @@
 package ovn
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -188,7 +189,7 @@ type BaseNetworkController struct {
 	nqosController *nqoscontroller.Controller
 }
 
-func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed func(string)) error {
+func (oc *BaseNetworkController) reconcile(_ context.Context, netInfo util.NetInfo, setNodeFailed func(string)) error {
 	// gather some information first
 	reconcileLocalNode := false
 	subnetsChanged := clusterSubnetsChanged(oc, netInfo)

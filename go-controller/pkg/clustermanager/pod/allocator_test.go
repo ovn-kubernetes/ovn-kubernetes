@@ -879,6 +879,7 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 			var allocated bool
 			kubeMock.On(
 				"PatchPodStatusAnnotations",
+				mock.Anything,
 				mock.AnythingOfType(fmt.Sprintf("%T", &corev1.Pod{})),
 				mock.AnythingOfType(fmt.Sprintf("%T", &corev1.Pod{})),
 			).Run(
@@ -889,6 +890,7 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 
 			kubeMock.On(
 				"UpdateIPAMClaimIPs",
+				mock.Anything,
 				mock.AnythingOfType(fmt.Sprintf("%T", &ipamclaimsapi.IPAMClaim{})),
 			).Return(nil)
 
@@ -1047,7 +1049,7 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 				}
 			}
 
-			err = a.reconcile(old, new, tt.args.release)
+			err = a.reconcile(context.Background(), old, new, tt.args.release)
 			if len(tt.expectError) > 0 {
 				g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring(tt.expectError)))
 			} else if err != nil {
@@ -1132,7 +1134,7 @@ func TestSyncReservesPlatformTunnelIDs(t *testing.T) {
 				idAllocator: idAlloc,
 			}
 
-			g.Expect(allocator.Sync(nil)).To(gomega.Succeed())
+			g.Expect(allocator.Sync(context.Background(), nil)).To(gomega.Succeed())
 
 			nextID, err := idAlloc.AllocateID("test-pod")
 			g.Expect(err).ToNot(gomega.HaveOccurred())

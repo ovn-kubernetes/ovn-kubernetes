@@ -4,6 +4,7 @@
 package evpn
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -98,7 +99,7 @@ func (c *Controller) shouldEnsureNeighbors(migrationStatus *kubevirt.LiveMigrati
 	return migrationStatus.TargetPod.Spec.NodeName == c.nodeName
 }
 
-func (c *Controller) reconcilePod(key string) error {
+func (c *Controller) reconcilePod(_ context.Context, key string) error {
 	namespace, name, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
 		return err
