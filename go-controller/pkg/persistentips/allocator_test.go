@@ -77,11 +77,11 @@ var _ = Describe("Persistent IP allocator operations", func() {
 		})
 
 		It("nothing to do when reconciling nil IPAMClaims", func() {
-			Expect(ipamClaimsReconciler.Reconcile(nil, nil, namedAllocator)).To(Succeed())
+			Expect(ipamClaimsReconciler.Reconcile(context.Background(), nil, nil, namedAllocator)).To(Succeed())
 		})
 
 		DescribeTable("reconciling IPAMClaims is successful when provided with", func(oldIPAMClaim, newIPAMClaim *ipamclaimsapi.IPAMClaim) {
-			Expect(ipamClaimsReconciler.Reconcile(oldIPAMClaim, newIPAMClaim, namedAllocator)).To(Succeed())
+			Expect(ipamClaimsReconciler.Reconcile(context.Background(), oldIPAMClaim, newIPAMClaim, namedAllocator)).To(Succeed())
 			updatedIPAMClaim, err := ovnkapiclient.IPAMClaimsClient.K8sV1alpha1().IPAMClaims(namespace).Get(context.Background(), claimName, metav1.GetOptions{})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(updatedIPAMClaim.Status.IPs).To(ConsistOf(newIPAMClaim.Status.IPs))
@@ -151,6 +151,7 @@ var _ = Describe("Persistent IP allocator operations", func() {
 		It("the IPAMClaim is *not* updated", func() {
 			originalNonEmptyClaim := originalClaims[0]
 			Expect(ipamClaimsReconciler.Reconcile(
+				context.Background(),
 				originalNonEmptyClaim,
 				ipamClaimWithIPs(namespace, claimName, networkName, originalIPAMClaimIP, "fd10::2/64"),
 				namedAllocator,
@@ -223,6 +224,7 @@ var _ = Describe("Persistent IP allocator operations", func() {
 
 			Expect(
 				ipamClaimsReconciler.Reconcile(
+					context.Background(),
 					ipamClaimWithIPs(namespace, claimName, networkName, initialIPs...),
 					nil,
 					namedAllocator,

@@ -634,7 +634,7 @@ func TestNodeAllocator_CleanupNodeWithoutNodeObject(t *testing.T) {
 		},
 	}
 
-	if err := na.CleanupNode(node.Name, nil); err != nil {
+	if err := na.CleanupNode(context.Background(), node.Name, nil); err != nil {
 		t.Fatalf("CleanupNode failed: %v", err)
 	}
 
@@ -709,7 +709,7 @@ func TestController_CleanupNodeRemovesUDNAnnotations(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := na.CleanupNode(node.Name, node); err != nil {
+	if err := na.CleanupNode(context.Background(), node.Name, node); err != nil {
 		t.Fatalf("CleanupNode failed: %v", err)
 	}
 
@@ -788,7 +788,7 @@ func TestController_CleanupNodeReleasesTunnelIDs(t *testing.T) {
 		t.Fatal("HasNodeTunnelIDAllocation should return true in legacy topology")
 	}
 
-	if err := na.CleanupNode(node.Name, node); err != nil {
+	if err := na.CleanupNode(context.Background(), node.Name, node); err != nil {
 		t.Fatalf("CleanupNode failed: %v", err)
 	}
 
@@ -872,7 +872,7 @@ func TestCleanupNode_TransitRouterMigration(t *testing.T) {
 	}
 
 	// CleanupNode should remove the stale tunnel ID annotation
-	if err := na.CleanupNode(node.Name, node); err != nil {
+	if err := na.CleanupNode(context.Background(), node.Name, node); err != nil {
 		t.Fatalf("CleanupNode failed: %v", err)
 	}
 
@@ -978,7 +978,7 @@ func TestSyncNodeNetworkAnnotations_TunnelID(t *testing.T) {
 			}
 
 			// Sync node annotations
-			if err := na.syncNodeNetworkAnnotations(node1); err != nil {
+			if err := na.syncNodeNetworkAnnotations(context.Background(), node1); err != nil {
 				t.Fatalf("syncNodeNetworkAnnotations failed: %v", err)
 			}
 
@@ -1102,7 +1102,7 @@ func TestSyncNodeNetworkAnnotations_ReleaseOnPatchFailure(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if err := na.syncNodeNetworkAnnotations(listerNode); err == nil {
+			if err := na.syncNodeNetworkAnnotations(context.Background(), listerNode); err == nil {
 				t.Fatal("expected syncNodeNetworkAnnotations to fail due to injected patch failure")
 			}
 

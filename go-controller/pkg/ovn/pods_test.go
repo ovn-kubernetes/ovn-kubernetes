@@ -979,7 +979,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 						Namespace: namespaceT.Name,
 					},
 				}
-				err = fakeOvn.controller.ensurePod(nil, podObj, true) // this fails since pod doesn't exist to set annotations
+				err = fakeOvn.controller.ensurePod(context.Background(), nil, podObj, true) // this fails since pod doesn't exist to set annotations
 				gomega.Expect(err).To(gomega.HaveOccurred())
 
 				key, err := retry.GetResourceKey(podObj)

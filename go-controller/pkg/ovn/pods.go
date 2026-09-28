@@ -4,6 +4,7 @@
 package ovn
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -30,7 +31,7 @@ import (
 	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 )
 
-func (oc *DefaultNetworkController) syncPods(pods []interface{}) error {
+func (oc *DefaultNetworkController) syncPods(ctx context.Context, pods []interface{}) error {
 	annotatedLocalPods := map[*corev1.Pod]map[string]*util.PodAnnotation{}
 	var allHostSubnets []*net.IPNet
 
@@ -134,7 +135,7 @@ func (oc *DefaultNetworkController) syncPods(pods []interface{}) error {
 				}
 			}
 			if syncPodAnnotations {
-				err = oc.updatePodAnnotationWithRetry(pod, annotations, types.DefaultNetworkName)
+				err = oc.updatePodAnnotationWithRetry(ctx, pod, annotations, types.DefaultNetworkName)
 				if err != nil {
 					return fmt.Errorf("failed to set annotation on pod %s: %v", pod.Name, err)
 				}
@@ -234,7 +235,7 @@ func (oc *DefaultNetworkController) deleteLogicalPort(pod *corev1.Pod, portInfo 
 	return oc.releasePodIPs(pInfo)
 }
 
-func (oc *DefaultNetworkController) addLogicalPort(pod *corev1.Pod) (err error) {
+func (oc *DefaultNetworkController) addLogicalPort(ctx context.Context, pod *corev1.Pod) (err error) {
 	// If a node does node have an assigned hostsubnet don't wait for the logical switch to appear
 	switchName := pod.Spec.NodeName
 	if oc.lsManager.IsNonHostSubnetSwitch(switchName) {
@@ -269,7 +270,7 @@ func (oc *DefaultNetworkController) addLogicalPort(pod *corev1.Pod) (err error) 
 	}()
 
 	nadKey := types.DefaultNetworkName
-	ops, lsp, podAnnotation, newlyCreatedPort, err = oc.addLogicalPortToNetwork(pod, nadKey, network, nil)
+	ops, lsp, podAnnotation, newlyCreatedPort, err = oc.addLogicalPortToNetwork(ctx, pod, nadKey, network, nil)
 	if err != nil {
 		return err
 	}

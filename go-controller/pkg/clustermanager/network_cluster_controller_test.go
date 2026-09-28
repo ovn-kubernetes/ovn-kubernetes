@@ -69,7 +69,7 @@ func TestHandleNetworkRefChangeUpdatesStatusAndMetrics(t *testing.T) {
 	ncc := &networkClusterController{
 		ReconcilableNetInfo: util.NewReconcilableNetInfo(netInfo),
 		nodeReconciler:      nodeController,
-		statusReporter: func(networkName, _ string, condition *metav1.Condition, _ ...*util.EventDetails) error {
+		statusReporter: func(_ context.Context, networkName, _ string, condition *metav1.Condition, _ ...*util.EventDetails) error {
 			gotNetwork = networkName
 			if condition != nil {
 				gotCondStatus = string(condition.Status)
@@ -412,7 +412,7 @@ func TestReconcileNodeCleansUpOnNoHostSubnetTransition(t *testing.T) {
 	)
 	g.Expect(ncc.init()).To(gomega.Succeed())
 
-	g.Expect(ncc.ReconcileNode(oldNode, newNode, nil, nil)).To(gomega.Succeed())
+	g.Expect(ncc.ReconcileNode(context.Background(), oldNode, newNode, nil, nil)).To(gomega.Succeed())
 
 	updatedNode, err := fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), newNode.Name, metav1.GetOptions{})
 	g.Expect(err).ToNot(gomega.HaveOccurred())
@@ -475,7 +475,7 @@ func TestReconcileNodeMarksNodeSyncFailedOnCleanupError(t *testing.T) {
 	)
 	g.Expect(ncc.init()).To(gomega.Succeed())
 
-	err = ncc.ReconcileNode(nil, node, nil, nil)
+	err = ncc.ReconcileNode(context.Background(), nil, node, nil, nil)
 	g.Expect(err).To(gomega.HaveOccurred())
 	_, failed := ncc.nodeSyncFailed.Load(node.Name)
 	g.Expect(failed).To(gomega.BeTrue())
