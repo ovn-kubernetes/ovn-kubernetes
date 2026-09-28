@@ -249,7 +249,7 @@ var _ = Describe("Node DPU tests", func() {
 			podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(&pod, nil)
 
 			// call addRepPort()
-			err := dnnc.addRepPort(&pod, &scd, ifInfo, clientset)
+			err := dnnc.addRepPort(context.Background(), &pod, &scd, ifInfo, clientset)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("failed to get VF representor"))
 			Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc())
@@ -261,7 +261,7 @@ var _ = Describe("Node DPU tests", func() {
 			podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(&pod, nil)
 
 			// call addRepPort()
-			err := dnnc.addRepPort(&pod, &scd, ifInfo, clientset)
+			err := dnnc.addRepPort(context.Background(), &pod, &scd, ifInfo, clientset)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("could not find PCI Address"))
 			Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc())
@@ -295,7 +295,7 @@ var _ = Describe("Node DPU tests", func() {
 			podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(&pod, nil)
 
 			// call addRepPort()
-			err := dnnc.addRepPort(&pod, &scd, ifInfo, clientset)
+			err := dnnc.addRepPort(context.Background(), &pod, &scd, ifInfo, clientset)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("failed to run ovs command"))
 			Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc())
@@ -332,7 +332,7 @@ var _ = Describe("Node DPU tests", func() {
 			netlinkOpsMock.On("LinkSetDown", vfLink).Return(nil)
 			podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(&pod, nil)
 
-			err = dnnc.addRepPort(&pod, &scd, ifInfo, clientset)
+			err = dnnc.addRepPort(context.Background(), &pod, &scd, ifInfo, clientset)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("was added for iface-id"))
 			Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc())
@@ -392,9 +392,9 @@ var _ = Describe("Node DPU tests", func() {
 				podInformer.On("Lister").Return(&podLister)
 				podLister.On("Pods", mock.AnythingOfType("string")).Return(&podNamespaceLister)
 				podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(&pod, nil)
-				kubeMock.On("PatchPodStatusAnnotations", &pod, cpod).Return(nil)
+				kubeMock.On("PatchPodStatusAnnotations", mock.Anything, &pod, cpod).Return(nil)
 
-				err = dnnc.addRepPort(&pod, &scd, ifInfo, clientset)
+				err = dnnc.addRepPort(context.Background(), &pod, &scd, ifInfo, clientset)
 				Expect(err).ToNot(HaveOccurred())
 				Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc())
 			})
@@ -415,9 +415,9 @@ var _ = Describe("Node DPU tests", func() {
 				podInformer.On("Lister").Return(&podLister)
 				podLister.On("Pods", mock.AnythingOfType("string")).Return(&podNamespaceLister)
 				podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(&pod, nil)
-				kubeMock.On("PatchPodStatusAnnotations", &pod, cpod).Return(fmt.Errorf("failed to set pod annotations"))
+				kubeMock.On("PatchPodStatusAnnotations", mock.Anything, &pod, cpod).Return(fmt.Errorf("failed to set pod annotations"))
 
-				err = dnnc.addRepPort(&pod, &scd, ifInfo, clientset)
+				err = dnnc.addRepPort(context.Background(), &pod, &scd, ifInfo, clientset)
 				Expect(err).To(HaveOccurred())
 				Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc())
 			})
@@ -454,7 +454,7 @@ var _ = Describe("Node DPU tests", func() {
 			Expect(err).ToNot(HaveOccurred())
 			defer ovsCleanup.Cleanup()
 			dnnc.ovsClient = ovsClient
-			err = dnnc.delRepPort(&pod, &scd, vfRep, types.DefaultNetworkName)
+			err = dnnc.delRepPort(context.Background(), &pod, &scd, vfRep, types.DefaultNetworkName)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc())
 		})
@@ -473,7 +473,7 @@ var _ = Describe("Node DPU tests", func() {
 			Expect(err).ToNot(HaveOccurred())
 			defer ovsCleanup.Cleanup()
 			dnnc.ovsClient = ovsClient
-			err = dnnc.delRepPort(&pod, &scd, vfRep, types.DefaultNetworkName)
+			err = dnnc.delRepPort(context.Background(), &pod, &scd, vfRep, types.DefaultNetworkName)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc())
 		})
@@ -495,7 +495,7 @@ var _ = Describe("Node DPU tests", func() {
 			Expect(err).ToNot(HaveOccurred())
 			defer ovsCleanup.Cleanup()
 			dnnc.ovsClient = &failOnceClient{Client: ovsClient}
-			err = dnnc.delRepPort(&pod, &scd, vfRep, types.DefaultNetworkName)
+			err = dnnc.delRepPort(context.Background(), &pod, &scd, vfRep, types.DefaultNetworkName)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc())
 		})

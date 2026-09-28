@@ -4,6 +4,7 @@
 package kubevirt
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"sort"
@@ -114,7 +115,7 @@ func findPodAnnotation(client *factory.WatchFactory, pod *corev1.Pod, nadKey str
 // during live migration and copies them to the target VM pod so IP addresses
 // follow the VM. This must happen before creating the LSP to ensure the target
 // VM pod LSP Address field is configured correctly.
-func EnsurePodAnnotationForVM(watchFactory *factory.WatchFactory, kube *kube.KubeOVN, pod *corev1.Pod, nadKey string) (*util.PodAnnotation, error) {
+func EnsurePodAnnotationForVM(ctx context.Context, watchFactory *factory.WatchFactory, kube *kube.KubeOVN, pod *corev1.Pod, nadKey string) (*util.PodAnnotation, error) {
 	if !IsPodLiveMigratable(pod) {
 		return nil, nil
 	}
@@ -146,7 +147,7 @@ func EnsurePodAnnotationForVM(watchFactory *factory.WatchFactory, kube *kube.Kub
 				return err
 			}
 		}
-		return kube.PatchPodStatusAnnotations(pod, modifiedPod)
+		return kube.PatchPodStatusAnnotations(ctx, pod, modifiedPod)
 	})
 	if resultErr != nil {
 		return nil, fmt.Errorf("failed to update labels and annotations on pod %s/%s: %v", pod.Namespace, pod.Name, resultErr)

@@ -1127,7 +1127,7 @@ func (c *Controller) migrateFromAddrLabelToAnnotation() error {
 			nodeToUpdate.Annotations = map[string]string{}
 		}
 		nodeToUpdate.Annotations[util.OVNNodeSecondaryHostEgressIPs] = string(patch)
-		return c.kube.PatchNodeStatusAnnotations(node, nodeToUpdate)
+		return c.kube.PatchNodeStatusAnnotations(context.TODO(), node, nodeToUpdate)
 	})
 }
 
@@ -1163,7 +1163,7 @@ func (c *Controller) addIPToAnnotation(ip string) error {
 			nodeToUpdate.Annotations = map[string]string{}
 		}
 		nodeToUpdate.Annotations[util.OVNNodeSecondaryHostEgressIPs] = string(patch)
-		return c.kube.PatchNodeStatusAnnotations(node, nodeToUpdate)
+		return c.kube.PatchNodeStatusAnnotations(context.TODO(), node, nodeToUpdate)
 	})
 }
 
@@ -1199,7 +1199,7 @@ func (c *Controller) deleteIPFromAnnotation(ip string) error {
 			nodeToUpdate.Annotations = map[string]string{}
 		}
 		nodeToUpdate.Annotations[util.OVNNodeSecondaryHostEgressIPs] = string(patch)
-		return c.kube.PatchNodeStatusAnnotations(node, nodeToUpdate)
+		return c.kube.PatchNodeStatusAnnotations(context.TODO(), node, nodeToUpdate)
 	})
 }
 
