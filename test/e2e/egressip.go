@@ -399,6 +399,83 @@ func removeSliceElement(s []string, i int) []string {
 	return s[:len(s)-1]
 }
 
+// clusterNetworkCIDRs returns the clusterNetwork CIDRs of the given IP family that the cluster
+// is configured with, as read from the ovn-config configmap.
+func clusterNetworkCIDRs(f *framework.Framework, isIPv6 bool) ([]*net.IPNet, error) {
+	cm, err := f.ClientSet.CoreV1().ConfigMaps(deploymentconfig.Get().OVNKubernetesNamespace()).Get(
+		context.TODO(), "ovn-config", metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	var cidrs []*net.IPNet
+	// every entry is of the form CIDR[/hostSubnetLength], i.e: "10.243.0.0/23/24,10.244.0.0/16"
+	for _, entry := range strings.Split(cm.Data["net_cidr"], ",") {
+		fields := strings.Split(strings.TrimSpace(entry), "/")
+		if len(fields) < 2 {
+			continue
+		}
+		_, cidr, err := net.ParseCIDR(fields[0] + "/" + fields[1])
+		if err != nil {
+			return nil, err
+		}
+		if utilnet.IsIPv6CIDR(cidr) == isIPv6 {
+			cidrs = append(cidrs, cidr)
+		}
+	}
+	return cidrs, nil
+}
+
+// nodeClusterNetworkCIDR returns the clusterNetwork CIDR which contains the node subnet of the
+// given node.
+func nodeClusterNetworkCIDR(nodeName string, cidrs []*net.IPNet, isIPv6 bool) (*net.IPNet, error) {
+	v4NodeSubnet, v6NodeSubnet, err := getNodePodCIDRs(nodeName, types.DefaultNetworkName)
+	if err != nil {
+		return nil, err
+	}
+	nodeSubnet := v4NodeSubnet
+	if isIPv6 {
+		nodeSubnet = v6NodeSubnet
+	}
+	nodeSubnetIP, _, err := net.ParseCIDR(nodeSubnet)
+	if err != nil {
+		return nil, err
+	}
+	for _, cidr := range cidrs {
+		if cidr.Contains(nodeSubnetIP) {
+			return cidr, nil
+		}
+	}
+	return nil, fmt.Errorf("node %s subnet %s is not within any clusterNetwork CIDR", nodeName, nodeSubnet)
+}
+
+// nodeInOtherClusterNetworkCIDR returns the first candidate node whose node subnet belongs to a
+// different clusterNetwork CIDR than the node subnet of refNode. It returns nil when the cluster
+// is configured with a single clusterNetwork CIDR of this IP family or when no candidate
+// qualifies.
+func nodeInOtherClusterNetworkCIDR(f *framework.Framework, refNode node, candidates []node, isIPv6 bool) (*node, error) {
+	cidrs, err := clusterNetworkCIDRs(f, isIPv6)
+	if err != nil {
+		return nil, err
+	}
+	if len(cidrs) < 2 {
+		return nil, nil
+	}
+	refNodeCIDR, err := nodeClusterNetworkCIDR(refNode.name, cidrs, isIPv6)
+	if err != nil {
+		return nil, err
+	}
+	for _, candidate := range candidates {
+		candidateCIDR, err := nodeClusterNetworkCIDR(candidate.name, cidrs, isIPv6)
+		if err != nil {
+			return nil, err
+		}
+		if candidateCIDR.String() != refNodeCIDR.String() {
+			return &candidate, nil
+		}
+	}
+	return nil, nil
+}
+
 // checkForDuplicateMAC performs arping (IPv4) or ndisc6 (IPv6) checks to detect duplicate MAC address responses
 // after egress IP migration. Returns error immediately if old node MAC is detected responding.
 func checkForDuplicateMAC(externalContainer infraapi.ExternalContainer, interfaceName, egressIP, oldMAC, expectedMAC string, isIPv6 bool, maxChecks int, checkInterval time.Duration) error {
@@ -1093,6 +1170,20 @@ spec:
 					statuses := verifyEgressIPStatusLengthEquals(2, nil)
 					if statuses[0].Node == statuses[1].Node {
 						framework.Failf("Step 2. Check that the status is of length two and both are assigned to different nodess, failed, err: both egress IPs have been assigned to the same node")
+					}
+
+					// On a cluster with more than one clusterNetwork CIDR, pick the egress node whose node
+					// subnet is in a different CIDR than the node subnet of pod1's node, so that step 5
+					// covers pod to pod traffic across clusterNetwork CIDRs. Without the no-reroute
+					// policies for that traffic, it is rerouted to the gateway router and lost.
+					if isClusterDefaultNetwork(netConfigParams) {
+						otherCIDRNode, err := nodeInOtherClusterNetworkCIDR(f, pod1Node, []node{egress1Node, egress2Node}, isIPv6TestRun)
+						if err != nil {
+							framework.Logf("Unable to determine the clusterNetwork CIDR of the nodes, keeping node %s for pod2: %v", pod2Node.name, err)
+						} else if otherCIDRNode != nil {
+							framework.Logf("Using egress node %s for pod2: its node subnet is in a different clusterNetwork CIDR than the one of node %s", otherCIDRNode.name, pod1Node.name)
+							pod2Node = *otherCIDRNode
+						}
 					}
 
 					ginkgo.By("3. Create two pods matching the EgressIP: pod1 on a non-egress node and pod2 on an egress node")
