@@ -2586,14 +2586,14 @@ runcmd:
 			Expect(virtClient.LoginToFedora(vmi, "fedora", "fedora")).To(Succeed(), step)
 
 			By("creating server pods")
-			// When iperf server pod run on same node as the VM, connectivity breaks on post migration.
-			// This is due OVN, where dangling FDB entry steer traffic toward the migration source LSP instead
-			// of underlay although the port is disabled / addressless. Ref: https://redhat.atlassian.net/browse/FDP-4420
-			// TODO: remove below node filtering once the bug is resolved.
-			// Filter out the VM node to avoid having the VM and server pod run on the same node.
-			nodes, err := fr.ClientSet.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{LabelSelector: labels.FormatLabels(map[string]string{"node-role.kubernetes.io/worker": ""})})
+			nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.Background(), fr.ClientSet, 3)
 			Expect(err).NotTo(HaveOccurred())
 			var testNodes []corev1.Node
+			// Exclude the VM's source node: an iperf server on that node loses connectivity after migration
+			// because a stale OVN FDB entry directs traffic to the disabled/addressless source LSP instead
+			// of the underlay. A defect in the iperf3 downtime detector can make this persistent failure
+			// appear intermittent. Ref: https://redhat.atlassian.net/browse/FDP-4420
+			// TODO: remove this node filtering once the OVN bug is resolved.
 			for _, node := range nodes.Items {
 				if node.Name != vmi.Status.NodeName {
 					testNodes = append(testNodes, node)
@@ -2616,8 +2616,8 @@ runcmd:
 			checkEastWestIperfTraffic(vmi, serverIPsByName, step)
 
 			by(vmi.Name, "simulate client VM live-migration failure")
-			// delete the VMIM object used for the successful migration, to relax liveMigrateFailed() errors due to multiple VMIM objects existence
-			// TODO: change liveMigrateFailed() to not fail when there are multiple VMIM objects
+			// Delete the successful migration's VMIM because liveMigrateFailed() expects exactly one migration.
+			// TODO: remove this cleanup once the helper fix in https://github.com/ovn-kubernetes/ovn-kubernetes/pull/6981 is incorporated.
 			Expect(crClient.DeleteAllOf(context.Background(), &kubevirtv1.VirtualMachineInstanceMigration{}, &crclient.DeleteAllOfOptions{
 				ListOptions: crclient.ListOptions{Namespace: vmi.Namespace},
 			})).To(Succeed())
