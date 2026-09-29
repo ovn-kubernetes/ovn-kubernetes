@@ -5154,7 +5154,7 @@ docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </
 <span class="w">  </span>--platform<span class="w"> </span>linux/amd64<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-v<span class="w"> </span><span class="s2">"</span><span class="k">$(</span><span class="nb">pwd</span><span class="k">)</span><span class="s2">:/coredumps:ro"</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--name<span class="w"> </span>ovn-debug<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>quay.io/fedora/fedora:43<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>quay.io/fedora/fedora:44<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>bash
 </code></pre></div>
 <ol>
@@ -5168,12 +5168,12 @@ docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </
 <div class="highlight"><pre><span></span><code><span class="c1"># Replace ovn-northd with your binary name (ovn-controller, etc.)</span>
 strings<span class="w"> </span>/coredumps/binaries/ovn-northd<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>-E<span class="w"> </span><span class="s1">'{"type":"rpm".*ovn'</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>head<span class="w"> </span>-1
 </code></pre></div>
-<p>Example output: <code>{"type":"rpm","name":"ovn","version":"26.03.1-50.fc43"...}</code></p>
+<p>Example output: <code>{"type":"rpm","name":"ovn","version":"26.03.2-122.fc44"...}</code></p>
 <ol>
 <li><strong>Download and install OVN packages from koji</strong>:</li>
 </ol>
 <div class="highlight"><pre><span></span><code><span class="c1"># Download the exact build (replace version as needed)</span>
-koji<span class="w"> </span>download-build<span class="w"> </span>ovn-26.03.1-50.fc43<span class="w"> </span>--arch<span class="o">=</span>x86_64
+koji<span class="w"> </span>download-build<span class="w"> </span>ovn-26.03.2-122.fc44<span class="w"> </span>--arch<span class="o">=</span>x86_64
 
 <span class="c1"># Install with dependency resolution</span>
 dnf<span class="w"> </span>install<span class="w"> </span>-y<span class="w"> </span>./ovn-*.rpm
@@ -5182,7 +5182,7 @@ dnf<span class="w"> </span>install<span class="w"> </span>-y<span class="w"> </s
 <li><strong>Download and install debuginfo packages</strong>:</li>
 </ol>
 <div class="highlight"><pre><span></span><code><span class="c1"># Download all debuginfo packages for this OVN build</span>
-koji<span class="w"> </span>download-build<span class="w"> </span>ovn-26.03.1-50.fc43<span class="w"> </span>--debuginfo<span class="w"> </span>--arch<span class="o">=</span>x86_64
+koji<span class="w"> </span>download-build<span class="w"> </span>ovn-26.03.2-122.fc44<span class="w"> </span>--debuginfo<span class="w"> </span>--arch<span class="o">=</span>x86_64
 
 <span class="c1"># Install all debuginfo packages (important: install ALL of them)</span>
 dnf<span class="w"> </span>install<span class="w"> </span>-y<span class="w"> </span>./ovn-debuginfo-*.rpm<span class="w"> </span><span class="se">\</span>
