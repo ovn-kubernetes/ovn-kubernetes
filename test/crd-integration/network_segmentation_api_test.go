@@ -6,8 +6,8 @@ package crdintegration
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
-	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
+	"k8s.io/apimachinery/pkg/types"
+	controllerruntimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/crd-integration/testscenario"
 	testscenariocudn "github.com/ovn-kubernetes/ovn-kubernetes/test/crd-integration/testscenario/cudn"
@@ -20,11 +20,14 @@ var _ = Describe("Network Segmentation: API validations", feature.NetworkSegment
 			DeferCleanup(func() {
 				cleanupValidateCRsTest(scenarios)
 			})
+
 			for _, s := range scenarios {
 				By(s.Description)
-				_, stderr, err := runKubectlInputWithFullOutput("", s.Manifest, "apply", "-f", "-")
+				obj, err := testscenario.ValidateScenarioToObject(s)
+				Expect(err).ToNot(HaveOccurred(), "must convert scenario to kubernetes object")
+				err = k8sClient.Create(ctx, obj)
 				Expect(err).To(HaveOccurred(), "should fail to create invalid CR")
-				Expect(stderr).To(ContainSubstring(s.ExpectedErr))
+				Expect(err.Error()).To(ContainSubstring(s.ExpectedErr))
 			}
 		},
 		Entry("ClusterUserDefinedNetwork, mismatch topology and config", testscenariocudn.MismatchTopologyConfig),
@@ -40,6 +43,31 @@ var _ = Describe("Network Segmentation: API validations", feature.NetworkSegment
 		Entry("ClusterUserDefinedNetwork, layer3, multi-subnets", testscenariocudn.Layer3InvalidSubnets),
 	)
 
+	DescribeTable("api-server should reject invalid CRs",
+		func(updateScenarios []testscenario.UpdateCRScenario) {
+			DeferCleanup(func() {
+				cleanupUpdateCRScenario(updateScenarios)
+			})
+			for _, s := range updateScenarios {
+				By(s.Description + ": parsing objects")
+				initObject, updateObject, err := testscenario.UpdateCRScenarioToObject(s)
+				Expect(err).ToNot(HaveOccurred(), "must convert scenario to kubernetes object")
+				By(s.Description + ": creating initial CR")
+				err = k8sClient.Create(ctx, initObject)
+				Expect(err).NotTo(HaveOccurred(), "should create valid CR successfully")
+				By(s.Description + ": applying update to CR should fail")
+				// resource version must get set on update, therefore retrieve the newly created object and update the spec
+				err = k8sClient.Get(ctx, types.NamespacedName{Namespace: initObject.GetNamespace(), Name: initObject.GetName()}, initObject)
+				Expect(err).NotTo(HaveOccurred(), "should get valid CR from KAPI server")
+				updateObject.SetResourceVersion(initObject.GetResourceVersion())
+				err = k8sClient.Update(ctx, updateObject)
+				Expect(err).To(HaveOccurred(), "should fail to update CR")
+				Expect(err.Error()).To(ContainSubstring(s.ExpectedErr))
+			}
+		},
+		Entry("ClusterUserDefinedNetwork, layer3, multi-subnets", testscenariocudn.Later3InvalidSubnetsUpdate),
+	)
+
 	DescribeTable("api-server should accept valid CRs",
 		func(scenarios []testscenario.ValidateCRScenario) {
 			DeferCleanup(func() {
@@ -47,7 +75,9 @@ var _ = Describe("Network Segmentation: API validations", feature.NetworkSegment
 			})
 			for _, s := range scenarios {
 				By(s.Description)
-				_, err := e2ekubectl.RunKubectlInput("", s.Manifest, "apply", "-f", "-")
+				obj, err := testscenario.ValidateScenarioToObject(s)
+				Expect(err).ToNot(HaveOccurred(), "must convert scenario to kubernetes object")
+				err = k8sClient.Create(ctx, obj)
 				Expect(err).NotTo(HaveOccurred(), "should create valid CR successfully")
 			}
 		},
@@ -58,26 +88,54 @@ var _ = Describe("Network Segmentation: API validations", feature.NetworkSegment
 		Entry("ClusterUserDefinedNetwork, no-overlay, valid", testscenariocudn.NoOverlayValid),
 		Entry("ClusterUserDefinedNetwork, layer3, multi-subnets", testscenariocudn.Layer3ValidSubnets),
 	)
+
+	DescribeTable("api-server should accept valid CRs",
+		func(updateScenarios []testscenario.UpdateCRScenario) {
+			DeferCleanup(func() {
+				cleanupUpdateCRScenario(updateScenarios)
+			})
+			for _, s := range updateScenarios {
+				By(s.Description + ": parsing objects")
+				initObject, updateObject, err := testscenario.UpdateCRScenarioToObject(s)
+				Expect(err).ToNot(HaveOccurred(), "must convert scenario to kubernetes object")
+				By(s.Description + ": creating initial CR")
+				err = k8sClient.Create(ctx, initObject)
+				Expect(err).NotTo(HaveOccurred(), "should create valid CR successfully")
+				By(s.Description + ": applying update to CR should succeed")
+				// resource version must get set on update, therefore retrieve the newly created object and update the spec
+				err = k8sClient.Get(ctx, types.NamespacedName{Namespace: initObject.GetNamespace(), Name: initObject.GetName()}, initObject)
+				Expect(err).NotTo(HaveOccurred(), "should get valid CR from KAPI server")
+				updateObject.SetResourceVersion(initObject.GetResourceVersion())
+				err = k8sClient.Update(ctx, updateObject)
+				Expect(err).To(BeNil(), "should not fail to update CR")
+			}
+		},
+		Entry("ClusterUserDefinedNetwork, layer3, multi-subnets", testscenariocudn.Layer3ValidSubnetsUpdates),
+	)
 })
 
-// runKubectlInputWithFullOutput is a convenience wrapper over kubectlBuilder that takes input to stdin
-// It will also return the command's stderr.
-func runKubectlInputWithFullOutput(namespace string, data string, args ...string) (string, string, error) {
-	return e2ekubectl.NewKubectlCommand(namespace, args...).WithStdinData(data).ExecWithFullOutput()
-}
-
 func cleanupValidateCRsTest(scenarios []testscenario.ValidateCRScenario) {
-	for _, s := range scenarios {
-		e2ekubectl.RunKubectlInput("", s.Manifest, "delete", "--ignore-not-found", "-f", "-")
+	objs, err := testscenario.ValidateScenariosToObjects(scenarios)
+	Expect(err).NotTo(HaveOccurred(), "must convert manifest to object")
+	for _, o := range objs {
+		err = k8sClient.Delete(ctx, o)
+		err = controllerruntimeclient.IgnoreNotFound(err)
+		Expect(err).NotTo(HaveOccurred(), "expected the object to be deleted")
 	}
 	// Verify each named resource is gone individually — a global "no resources found"
 	// check is not parallel-safe since other concurrent tests may have live CUDNs.
-	for _, s := range scenarios {
-		if s.Name == "" {
-			continue
-		}
-		stdout, _, err := e2ekubectl.RunKubectlWithFullOutput("", "get", "clusteruserdefinednetwork", s.Name, "--ignore-not-found")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(stdout).To(BeEmpty(), "ClusterUserDefinedNetwork %q should have been deleted", s.Name)
+	for _, o := range objs {
+		err = k8sClient.Get(ctx, types.NamespacedName{Namespace: o.GetNamespace(), Name: o.GetName()}, o)
+		// ignore the scenario where the object isn't found. We expect the object to not be present
+		err = controllerruntimeclient.IgnoreNotFound(err)
+		Expect(err).NotTo(HaveOccurred(), "expected the object to be deleted")
 	}
+}
+
+func cleanupUpdateCRScenario(updateScenarios []testscenario.UpdateCRScenario) {
+	scenarios := make([]testscenario.ValidateCRScenario, 0, len(updateScenarios))
+	for _, updateScenario := range updateScenarios {
+		scenarios = append(scenarios, updateScenario.ValidateCRScenario)
+	}
+	cleanupValidateCRsTest(scenarios)
 }
