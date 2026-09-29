@@ -2648,7 +2648,7 @@ spec:
 				defaultOfport, cudnOfport, arpFlow,
 			)
 
-			By("verifying the priority-11 ARP flow forwards external broadcast ARP to all GR patch ports")
+			By("verifying the priority-11 ARP flow delivers external broadcast ARP via NORMAL and fans out to UDN GR patch ports")
 			var fanoutFlow string
 			Eventually(func() string {
 				out, err := e2epodoutput.RunHostCmdWithRetries(ovnkPod.Namespace, ovnkPod.Name,
@@ -2661,12 +2661,11 @@ spec:
 				return out
 			}, 60*time.Second, 5*time.Second).Should(
 				And(
-					ContainSubstring(fmt.Sprintf("output:%s", defaultOfport)),
+					ContainSubstring("actions=NORMAL,"),
 					ContainSubstring(fmt.Sprintf("output:%s", cudnOfport)),
-					ContainSubstring("NORMAL"),
 				),
-				"priority-11 ARP fanout flow must output to both default (ofport %s) and CUDN (ofport %s) patches:\n%s",
-				defaultOfport, cudnOfport, fanoutFlow,
+				"priority-11 ARP fanout flow must deliver through NORMAL to the default network before outputting to the CUDN patch (ofport %s):\n%s",
+				cudnOfport, fanoutFlow,
 			)
 		}
 
@@ -2692,7 +2691,7 @@ spec:
 				defaultOfport, cudnOfport, nsFlow,
 			)
 
-			By("verifying the priority-11 NA flow forwards external unsolicited NA to all GR patch ports (IPv6)")
+			By("verifying the priority-11 NA flow delivers external unsolicited NA via NORMAL and fans out to UDN GR patch ports (IPv6)")
 			var naFanoutFlow string
 			Eventually(func() string {
 				out, err := e2epodoutput.RunHostCmdWithRetries(ovnkPod.Namespace, ovnkPod.Name,
@@ -2706,12 +2705,11 @@ spec:
 				return out
 			}, 60*time.Second, 5*time.Second).Should(
 				And(
-					ContainSubstring(fmt.Sprintf("output:%s", defaultOfport)),
+					ContainSubstring("actions=NORMAL,"),
 					ContainSubstring(fmt.Sprintf("output:%s", cudnOfport)),
-					ContainSubstring("NORMAL"),
 				),
-				"priority-11 NA fanout flow must output to both default (ofport %s) and CUDN (ofport %s) patches:\n%s",
-				defaultOfport, cudnOfport, naFanoutFlow,
+				"priority-11 NA fanout flow must deliver through NORMAL to the default network before outputting to the CUDN patch (ofport %s):\n%s",
+				cudnOfport, naFanoutFlow,
 			)
 		}
 
