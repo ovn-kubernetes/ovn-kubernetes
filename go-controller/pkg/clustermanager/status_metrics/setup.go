@@ -35,4 +35,10 @@ func RegisterConfiguredRollers(m *Manager) {
 			m.NetworkManager(),
 		))
 	}
+	if config.OVNKubernetesFeature.EnableMultiExternalGateway {
+		m.RegisterRoller(NewAPBExternalRouteRoller(
+			m.WatchFactory().APBRouteInformer().Lister(),
+			m.OVNClient().AdminPolicyRouteClient,
+		))
+	}
 }
