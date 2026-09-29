@@ -4,10 +4,13 @@
 package dnsnameresolver
 
 import (
+	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/klog/v2"
@@ -17,6 +20,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -148,6 +152,7 @@ func (e *EgressDNS) Update(dnsName string) (bool, error) {
 	return e.dns.Update(dnsName)
 }
 
+// updateEntryForName refreshes the address set for a DNS entry using its latest resolved IPs.
 func (e *EgressDNS) updateEntryForName(dnsName string) error {
 	e.lock.Lock()
 	defer e.lock.Unlock()
@@ -173,8 +178,30 @@ func (e *EgressDNS) updateEntryForName(dnsName string) error {
 			ipsNoClusterSubnet = append(ipsNoClusterSubnet, ip)
 		}
 	}
-	if err := e.dnsEntries[dnsName].dnsAddressSet.SetAddresses(util.StringSlice(ipsNoClusterSubnet)); err != nil {
-		return fmt.Errorf("cannot add IPs from EgressFirewall AddressSet %s: %v", dnsName, err)
+	if err := e.updateAddressSet(dnsName, util.StringSlice(ipsNoClusterSubnet)); err != nil {
+		return fmt.Errorf("cannot add IPs from EgressFirewall AddressSet %s: %w", dnsName, err)
+	}
+	return nil
+}
+
+// updateAddressSet updates the cached OVN address set and repairs it if OVN removed it.
+func (e *EgressDNS) updateAddressSet(dnsName string, addresses []string) error {
+	dnsEntry := e.dnsEntries[dnsName]
+	if err := dnsEntry.dnsAddressSet.SetAddresses(addresses); err == nil {
+		return nil
+	} else if !errors.Is(err, libovsdbclient.ErrNotFound) {
+		return fmt.Errorf("failed to update existing address set for DNS name %s: %w", dnsName, err)
+	}
+
+	asIndex := GetEgressFirewallDNSAddrSetDbIDs(dnsName, e.controllerName)
+	dnsAddressSet, err := e.addressSetFactory.EnsureAddressSet(asIndex)
+	if err != nil {
+		return fmt.Errorf("failed to recreate address set for DNS name %s: %w", dnsName, err)
+	}
+
+	dnsEntry.dnsAddressSet = dnsAddressSet
+	if err := dnsEntry.dnsAddressSet.SetAddresses(addresses); err != nil {
+		return fmt.Errorf("failed to update recreated address set for DNS name %s: %w", dnsName, err)
 	}
 	return nil
 }
@@ -273,12 +300,57 @@ func (e *EgressDNS) Shutdown() {
 	close(e.stopChan)
 }
 
-// DeleteStaleAddrSets deletes all the address sets related to EgressFirewall DNS rules which are not
-// referenced by any acl.
+// aclMatchReferencesAddressSet reports whether an ACL match contains the
+// complete OVN address-set identifier as a token.
+func aclMatchReferencesAddressSet(match, addressSetName string) bool {
+	for _, token := range strings.FieldsFunc(match, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		if token == addressSetName {
+			return true
+		}
+	}
+	return false
+}
+
+// DeleteStaleAddrSets deletes unreferenced EgressFirewall DNS address sets and
+// forgets resolver entries that no longer have an ACL reference.
 func (e *EgressDNS) DeleteStaleAddrSets(nbClient libovsdbclient.Client) error {
 	e.lock.Lock()
 	defer e.lock.Unlock()
 
 	predicateIDs := libovsdbops.NewDbObjectIDs(libovsdbops.AddressSetEgressFirewallDNS, e.controllerName, nil)
-	return libovsdbutil.DeleteAddrSetsWithoutACLRef(predicateIDs, nbClient)
+	if err := libovsdbutil.DeleteAddrSetsWithoutACLRef(predicateIDs, nbClient); err != nil {
+		return err
+	}
+
+	// Keep entries whose address-set hashes are still referenced by an ACL,
+	// even when their database rows are missing so the refresh path can repair
+	// them. Drop unreferenced entries so a removed policy cannot be resurrected
+	// by a later DNS refresh.
+	referencedDNSNames := make(map[string]struct{})
+	_, err := libovsdbops.FindACLsWithPredicate(nbClient, func(acl *nbdb.ACL) bool {
+		for dnsName, dnsEntry := range e.dnsEntries {
+			v4HashName, v6HashName := dnsEntry.dnsAddressSet.GetASHashNames()
+			if (v4HashName != "" && aclMatchReferencesAddressSet(acl.Match, v4HashName)) ||
+				(v6HashName != "" && aclMatchReferencesAddressSet(acl.Match, v6HashName)) {
+				referencedDNSNames[dnsName] = struct{}{}
+			}
+		}
+		return false
+	})
+	if err != nil {
+		return fmt.Errorf("failed to find ACLs referencing DNS address sets: %w", err)
+	}
+
+	for dnsName := range e.dnsEntries {
+		if _, ok := referencedDNSNames[dnsName]; ok {
+			continue
+		}
+		delete(e.dnsEntries, dnsName)
+		if e.dns != nil {
+			go e.deleteFromDNS(dnsName)
+		}
+	}
+	return nil
 }

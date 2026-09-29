@@ -16,7 +16,12 @@ import (
 
 	utilnet "k8s.io/utils/net"
 
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set/mocks"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
@@ -89,6 +94,303 @@ func generateRR(dnsName, ip, nextQueryTime string) dns.RR {
 		rr, _ = dns.NewRR(dnsName + ".        " + nextQueryTime + "     IN      A       " + ip)
 	}
 	return rr
+}
+
+// TestUpdateAddressSetRecreatesMissingAddressSet verifies replacement of a stale address set handle.
+func TestUpdateAddressSetRecreatesMissingAddressSet(t *testing.T) {
+	const dnsName = "www.test.com"
+	addresses := []string{"192.0.2.10"}
+	staleAddressSet := new(mocks.AddressSet)
+	recreatedAddressSet := new(mocks.AddressSet)
+	factory := new(mocks.AddressSetFactory)
+	expectedDBIDs := GetEgressFirewallDNSAddrSetDbIDs(dnsName, DefaultNetworkControllerName)
+
+	staleAddressSet.On("SetAddresses", addresses).
+		Return(fmt.Errorf("address set was removed: %w", libovsdbclient.ErrNotFound)).Once()
+	factory.On("EnsureAddressSet", mock.MatchedBy(func(dbIDs *libovsdbops.DbObjectIDs) bool {
+		return dbIDs.String() == expectedDBIDs.String()
+	})).Return(recreatedAddressSet, nil).Once()
+	recreatedAddressSet.On("SetAddresses", addresses).Return(nil).Once()
+
+	resolver := &EgressDNS{
+		dnsEntries: map[string]*dnsEntry{
+			dnsName: {
+				dnsAddressSet: staleAddressSet,
+			},
+		},
+		addressSetFactory: factory,
+		controllerName:    DefaultNetworkControllerName,
+	}
+
+	require.NoError(t, resolver.updateAddressSet(dnsName, addresses),
+		"failed to recreate address set for DNS name %s", dnsName)
+	assert.Same(t, recreatedAddressSet, resolver.dnsEntries[dnsName].dnsAddressSet,
+		"recreated address set was not stored for DNS name %s", dnsName)
+
+	staleAddressSet.AssertExpectations(t)
+	recreatedAddressSet.AssertExpectations(t)
+	factory.AssertExpectations(t)
+}
+
+// TestUpdateAddressSetDoesNotRecreateOnUnexpectedError verifies that only a
+// missing address set triggers recreation.
+func TestUpdateAddressSetDoesNotRecreateOnUnexpectedError(t *testing.T) {
+	const dnsName = "www.test.com"
+	addresses := []string{"192.0.2.10"}
+	staleAddressSet := new(mocks.AddressSet)
+	factory := new(mocks.AddressSetFactory)
+
+	staleAddressSet.On("SetAddresses", addresses).Return(fmt.Errorf("update failed")).Once()
+
+	resolver := &EgressDNS{
+		dnsEntries: map[string]*dnsEntry{
+			dnsName: {
+				dnsAddressSet: staleAddressSet,
+			},
+		},
+		addressSetFactory: factory,
+		controllerName:    DefaultNetworkControllerName,
+	}
+
+	require.Error(t, resolver.updateAddressSet(dnsName, addresses),
+		"unexpected address-set update errors must be returned")
+	factory.AssertNotCalled(t, "EnsureAddressSet", mock.Anything)
+	staleAddressSet.AssertExpectations(t)
+}
+
+// TestACLMatchReferencesAddressSet verifies address-set references are matched
+// as complete ACL tokens rather than arbitrary substrings.
+func TestACLMatchReferencesAddressSet(t *testing.T) {
+	tests := []struct {
+		name          string
+		match         string
+		addressSet    string
+		expectedMatch bool
+	}{
+		{
+			name:          "exact reference",
+			match:         "ip4.dst == $a123",
+			addressSet:    "a123",
+			expectedMatch: true,
+		},
+		{
+			name:          "reference in set",
+			match:         "ip4.dst == {$a123, $a456}",
+			addressSet:    "a123",
+			expectedMatch: true,
+		},
+		{
+			name:          "hash prefix is not a reference",
+			match:         "ip4.dst == $a1234",
+			addressSet:    "a123",
+			expectedMatch: false,
+		},
+		{
+			name:          "hash embedded in another token is not a reference",
+			match:         "ip4.dst == $xa123",
+			addressSet:    "a123",
+			expectedMatch: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.expectedMatch, aclMatchReferencesAddressSet(tc.match, tc.addressSet),
+				"ACL match %q must identify address set %q correctly", tc.match, tc.addressSet)
+		})
+	}
+}
+
+// TestUpdateEntryForNameRecreatesMissingAddressSet verifies the recovery path against a real
+// libovsdb client for IPv4-only, IPv6-only, and dual-stack address sets.
+func TestUpdateEntryForNameRecreatesMissingAddressSet(t *testing.T) {
+	const dnsName = "www.test.com"
+	tests := []struct {
+		name              string
+		ipv4Mode          bool
+		ipv6Mode          bool
+		ipv4Address       string
+		ipv6Address       string
+		deleteIPv6Address bool
+	}{
+		{
+			name:        "IPv4-only address set",
+			ipv4Mode:    true,
+			ipv4Address: "192.0.2.10",
+		},
+		{
+			name:              "IPv6-only address set",
+			ipv6Mode:          true,
+			ipv6Address:       "2001:db8::10",
+			deleteIPv6Address: true,
+		},
+		{
+			name:              "dual-stack address set with missing IPv6 row",
+			ipv4Mode:          true,
+			ipv6Mode:          true,
+			ipv4Address:       "192.0.2.10",
+			ipv6Address:       "2001:db8::10",
+			deleteIPv6Address: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			oldDNSOps := util.GetDNSLibOps()
+			require.NoError(t, config.PrepareTestConfig())
+			config.IPv4Mode = tc.ipv4Mode
+			config.IPv6Mode = tc.ipv6Mode
+			dnsServer := "192.0.2.53"
+			dnsServerAddress := "192.0.2.53:53"
+			if tc.ipv6Mode && !tc.ipv4Mode {
+				dnsServer = "2001:db8::53"
+				dnsServerAddress = "[2001:db8::53]:53"
+			}
+			t.Cleanup(func() {
+				util.SetDNSLibOpsMockInst(oldDNSOps)
+				if err := config.PrepareTestConfig(); err != nil {
+					t.Errorf("failed to restore test config: %v", err)
+				}
+			})
+
+			mockDnsOps := new(util_mocks.DNSOps)
+			util.SetDNSLibOpsMockInst(mockDnsOps)
+			mockDnsOps.On("ClientConfigFromFile", mock.AnythingOfType("string")).
+				Return(&dns.ClientConfig{Servers: []string{dnsServer}, Port: "53"}, nil).Once()
+			if tc.ipv4Address != "" {
+				mockDnsOps.On("Fqdn", dnsName).Return(dnsName + ".").Once()
+				mockDnsOps.On("SetQuestion", mock.AnythingOfType("*dns.Msg"), dnsName+".", uint16(dns.TypeA)).
+					Return(&dns.Msg{}).Once()
+				mockDnsOps.On("Exchange", mock.AnythingOfType("*dns.Client"), mock.AnythingOfType("*dns.Msg"), dnsServerAddress).
+					Return(&dns.Msg{Answer: []dns.RR{generateRR(dnsName, tc.ipv4Address, "30")}}, time.Second, nil).Once()
+			}
+			if tc.ipv6Address != "" {
+				mockDnsOps.On("Fqdn", dnsName).Return(dnsName + ".").Once()
+				mockDnsOps.On("SetQuestion", mock.AnythingOfType("*dns.Msg"), dnsName+".", uint16(dns.TypeAAAA)).
+					Return(&dns.Msg{}).Once()
+				mockDnsOps.On("Exchange", mock.AnythingOfType("*dns.Client"), mock.AnythingOfType("*dns.Msg"), dnsServerAddress).
+					Return(&dns.Msg{Answer: []dns.RR{generateRR(dnsName, tc.ipv6Address, "30")}}, time.Second, nil).Once()
+			}
+
+			dnsInfo, err := util.NewDNS("/etc/resolv.conf")
+			require.NoError(t, err, "failed to create DNS resolver for %s", tc.name)
+			require.NoError(t, dnsInfo.Add(dnsName), "failed to resolve DNS name for %s", tc.name)
+			mockDnsOps.AssertExpectations(t)
+
+			nbClient, _, cleanup, err := libovsdbtest.NewNBSBTestHarness(libovsdbtest.TestSetup{})
+			require.NoError(t, err, "failed to create libovsdb test harness for %s", tc.name)
+			t.Cleanup(cleanup.Cleanup)
+
+			factory := addressset.NewOvnAddressSetFactory(nbClient, tc.ipv4Mode, tc.ipv6Mode)
+			dbIDs := GetEgressFirewallDNSAddrSetDbIDs(dnsName, DefaultNetworkControllerName)
+			initialAddresses := []string{}
+			if tc.ipv4Address != "" {
+				initialAddresses = append(initialAddresses, tc.ipv4Address)
+			}
+			if tc.ipv6Address != "" {
+				initialAddresses = append(initialAddresses, tc.ipv6Address)
+			}
+			staleAddressSet, err := factory.NewAddressSet(dbIDs, initialAddresses)
+			require.NoError(t, err, "failed to create initial address set for %s", tc.name)
+
+			if tc.deleteIPv6Address {
+				_, ipv6HashName := addressset.GetHashNamesForAS(dbIDs)
+				require.NoError(t, libovsdbops.DeleteAddressSets(nbClient, &nbdb.AddressSet{Name: ipv6HashName}),
+					"failed to delete IPv6 address set for %s", tc.name)
+			} else {
+				require.NoError(t, staleAddressSet.Destroy(), "failed to delete address set for %s", tc.name)
+			}
+
+			resolver := &EgressDNS{
+				dns:               dnsInfo,
+				dnsEntries:        map[string]*dnsEntry{dnsName: {dnsAddressSet: staleAddressSet}},
+				addressSetFactory: factory,
+				controllerName:    DefaultNetworkControllerName,
+			}
+			require.NoError(t, resolver.updateEntryForName(dnsName),
+				"failed to update DNS entry for %s", tc.name)
+
+			recreatedAddressSet, err := factory.GetAddressSet(dbIDs)
+			require.NoError(t, err, "failed to retrieve recovered address set for %s", tc.name)
+			addresses, ipv6Addresses := recreatedAddressSet.GetAddresses()
+			expectedIPv4 := []string{}
+			if tc.ipv4Address != "" {
+				expectedIPv4 = append(expectedIPv4, tc.ipv4Address)
+			}
+			expectedIPv6 := []string{}
+			if tc.ipv6Address != "" {
+				expectedIPv6 = append(expectedIPv6, net.ParseIP(tc.ipv6Address).String())
+			}
+			assert.ElementsMatch(t, expectedIPv4, addresses,
+				"recovered IPv4 addresses for %s", tc.name)
+			assert.ElementsMatch(t, expectedIPv6, ipv6Addresses,
+				"recovered IPv6 addresses for %s", tc.name)
+		})
+	}
+}
+
+// TestDeleteStaleAddrSetsKeepsReferencedMissingEntries verifies missing rows
+// remain recoverable while unreferenced resolver entries are forgotten.
+func TestDeleteStaleAddrSetsKeepsReferencedMissingEntries(t *testing.T) {
+	staleDNSName := "stale.test.com"
+	activeDNSName := "active.test.com"
+	staleDBIDs := GetEgressFirewallDNSAddrSetDbIDs(staleDNSName, DefaultNetworkControllerName)
+	activeDBIDs := GetEgressFirewallDNSAddrSetDbIDs(activeDNSName, DefaultNetworkControllerName)
+	staleDBAddressSet, _ := addressset.GetTestDbAddrSets(staleDBIDs, nil)
+	activeDBAddressSet, _ := addressset.GetTestDbAddrSets(activeDBIDs, nil)
+	activeV4HashName := activeDBAddressSet.Name
+	aclDBIDs := libovsdbops.NewDbObjectIDs(libovsdbops.ACLEgressFirewall, DefaultNetworkControllerName,
+		map[libovsdbops.ExternalIDKey]string{
+			libovsdbops.ObjectNameKey: "test",
+			libovsdbops.RuleIndex:     "0",
+		})
+	acl := libovsdbutil.BuildACLWithDefaultTier(aclDBIDs, 1000, activeV4HashName, nbdb.ACLActionAllow,
+		nil, libovsdbutil.LportIngress)
+	acl.UUID = "uactive-acl"
+	portGroup := &nbdb.PortGroup{
+		UUID: "uactive-port-group",
+		ACLs: []string{acl.UUID},
+	}
+	nbClient, _, cleanup, err := libovsdbtest.NewNBSBTestHarness(libovsdbtest.TestSetup{
+		NBData: []libovsdbtest.TestData{staleDBAddressSet, activeDBAddressSet, acl, portGroup},
+	})
+	require.NoError(t, err)
+	t.Cleanup(cleanup.Cleanup)
+
+	factory := addressset.NewOvnAddressSetFactory(nbClient, true, false)
+	staleAddressSet, err := factory.GetAddressSet(staleDBIDs)
+	require.NoError(t, err)
+	activeAddressSet, err := factory.GetAddressSet(activeDBIDs)
+	require.NoError(t, err)
+	require.NoError(t, activeAddressSet.Destroy())
+
+	resolver := &EgressDNS{
+		dns: &util.DNS{},
+		dnsEntries: map[string]*dnsEntry{
+			staleDNSName: {
+				namespaces:    map[string]struct{}{"namespace": {}},
+				dnsAddressSet: staleAddressSet,
+			},
+			activeDNSName: {
+				namespaces:    map[string]struct{}{"namespace": {}},
+				dnsAddressSet: activeAddressSet,
+			},
+		},
+		addressSetFactory: factory,
+		controllerName:    DefaultNetworkControllerName,
+		deleted:           make(chan string, 1),
+	}
+
+	require.NoError(t, resolver.DeleteStaleAddrSets(nbClient))
+	_, staleEntryExists := resolver.dnsEntries[staleDNSName]
+	_, activeEntryExists := resolver.dnsEntries[activeDNSName]
+	assert.False(t, staleEntryExists, "unreferenced DNS entry should be removed")
+	assert.True(t, activeEntryExists, "referenced missing DNS entry must be retained for recovery")
+
+	predicateIDs := libovsdbops.NewDbObjectIDs(libovsdbops.AddressSetEgressFirewallDNS, DefaultNetworkControllerName, nil)
+	addressSets, err := libovsdbops.FindAddressSetsWithPredicate(nbClient, libovsdbops.GetPredicate[*nbdb.AddressSet](predicateIDs, nil))
+	require.NoError(t, err)
+	assert.Empty(t, addressSets, "unreferenced address set should be deleted")
 }
 
 func TestAdd(t *testing.T) {
