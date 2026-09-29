@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"reflect"
-	"strings"
 	"time"
 
 	netv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
@@ -108,9 +107,10 @@ func (c *Controller) updateNAD(obj client.Object, namespace string) (_ *netv1.Ne
 		return nil, fmt.Errorf("foreign NetworkAttachmentDefinition with the desired name already exist [%s/%s]", nadCopy.Namespace, nadCopy.Name)
 	}
 
-	// NAD update path, need to merge internal (k8s.ovn.org) current annotations with desired
+	// Keep annotations added to the NAD by other controllers. Annotations on the
+	// UDN or CUDN take precedence, but removing one leaves its NAD value.
 	for k, v := range nadCopy.Annotations {
-		if strings.HasPrefix(k, types.OvnK8sPrefix) {
+		if _, exists := desiredNAD.Annotations[k]; !exists {
 			if desiredNAD.Annotations == nil {
 				desiredNAD.Annotations = make(map[string]string)
 			}

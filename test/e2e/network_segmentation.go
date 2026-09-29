@@ -1512,6 +1512,31 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 				assertL2SecondaryNetAttachDefManifest(nadClient, defaultNetNamespace.Name, testUdnName, testUdnUID)
 			})
 
+			It("should preserve NAD annotations when UDN annotations change", func() {
+				nads := nadClient.NetworkAttachmentDefinitions(defaultNetNamespace.Name)
+				nad, err := nads.Get(context.Background(), testUdnName, metav1.GetOptions{})
+				Expect(err).NotTo(HaveOccurred(), "should get the UDN's NAD")
+				if nad.Annotations == nil {
+					nad.Annotations = make(map[string]string)
+				}
+				nad.Annotations["example.com/local"] = "nad-only"
+				nad.Annotations["example.com/shared"] = "nad-value"
+				_, err = nads.Update(context.Background(), nad, metav1.UpdateOptions{})
+				Expect(err).NotTo(HaveOccurred(), "should annotate the UDN's NAD")
+
+				_, err = f.DynamicClient.Resource(udnGVR).Namespace(defaultNetNamespace.Name).Patch(
+					context.Background(), testUdnName, types.MergePatchType,
+					[]byte(`{"metadata":{"annotations":{"example.com/shared":"udn-value"}}}`), metav1.PatchOptions{})
+				Expect(err).NotTo(HaveOccurred(), "should annotate the UDN")
+
+				Eventually(func(g Gomega) {
+					nad, err := nads.Get(context.Background(), testUdnName, metav1.GetOptions{})
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(nad.Annotations).To(HaveKeyWithValue("example.com/local", "nad-only"))
+					g.Expect(nad.Annotations).To(HaveKeyWithValue("example.com/shared", "udn-value"))
+				}, 15*time.Second, time.Second).Should(Succeed(), "UDN annotations should take precedence without removing NAD-only annotations")
+			})
+
 			It("should delete NetworkAttachmentDefinition when UserDefinedNetwork is deleted", func() {
 				By("delete UserDefinedNetwork")
 				_, err := e2ekubectl.RunKubectl(defaultNetNamespace.Name, "delete", userDefinedNetworkResource, testUdnName)
@@ -1773,6 +1798,35 @@ spec:
 			By("verify a NetworkAttachmentDefinition is created according to spec")
 			for _, testNsName := range testTenantNamespaces {
 				assertClusterNADManifest(nadClient, testNsName, testClusterUdnName, testUdnUID)
+			}
+		})
+
+		It("should preserve namespace-specific NAD annotations when CUDN annotations change", func() {
+			for _, nsName := range testTenantNamespaces {
+				nads := nadClient.NetworkAttachmentDefinitions(nsName)
+				nad, err := nads.Get(context.Background(), testClusterUdnName, metav1.GetOptions{})
+				Expect(err).NotTo(HaveOccurred(), "should get the CUDN's NAD in %s", nsName)
+				if nad.Annotations == nil {
+					nad.Annotations = make(map[string]string)
+				}
+				nad.Annotations["example.com/local"] = nsName
+				nad.Annotations["example.com/shared"] = "nad-value"
+				_, err = nads.Update(context.Background(), nad, metav1.UpdateOptions{})
+				Expect(err).NotTo(HaveOccurred(), "should annotate the CUDN's NAD in %s", nsName)
+			}
+
+			_, err := f.DynamicClient.Resource(clusterUDNGVR).Patch(
+				context.Background(), testClusterUdnName, types.MergePatchType,
+				[]byte(`{"metadata":{"annotations":{"example.com/shared":"cudn-value"}}}`), metav1.PatchOptions{})
+			Expect(err).NotTo(HaveOccurred(), "should annotate the CUDN")
+
+			for _, nsName := range testTenantNamespaces {
+				Eventually(func(g Gomega) {
+					nad, err := nadClient.NetworkAttachmentDefinitions(nsName).Get(context.Background(), testClusterUdnName, metav1.GetOptions{})
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(nad.Annotations).To(HaveKeyWithValue("example.com/local", nsName))
+					g.Expect(nad.Annotations).To(HaveKeyWithValue("example.com/shared", "cudn-value"))
+				}, 15*time.Second, time.Second).Should(Succeed(), "CUDN annotations should take precedence in %s without removing NAD-only annotations", nsName)
 			}
 		})
 
