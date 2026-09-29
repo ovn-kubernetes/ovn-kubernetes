@@ -41,4 +41,14 @@ func RegisterConfiguredRollers(m *Manager) {
 			m.OVNClient().AdminPolicyRouteClient,
 		))
 	}
+	if config.OVNKubernetesFeature.EnableAdminNetworkPolicy {
+		m.RegisterRoller(NewAdminNetworkPolicyRoller(
+			m.WatchFactory().ANPInformer().Lister(),
+			m.OVNClient().ANPClient,
+		))
+		m.RegisterRoller(NewBaselineAdminNetworkPolicyRoller(
+			m.WatchFactory().BANPInformer().Lister(),
+			m.OVNClient().ANPClient,
+		))
+	}
 }
