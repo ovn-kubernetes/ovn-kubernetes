@@ -867,6 +867,26 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 		}
 	}
 
+	// CNI-server-only short-circuit: primary-network side-effects
+	// (management port controller, encap-IP annotation, gateway pre-start)
+	// are the responsibility of a sibling container or the host in this
+	// deployment mode. Keep the CNI server (created above) and OVN
+	// SB remote wired so pod ADD/DEL and OVS programming still work.
+	if config.OvnKubeNode.CNIServerOnly {
+		klog.Infof("cni-server-only mode: skipping mgmt-port controller, " +
+			"encap-IP annotation, and gateway pre-start")
+		nc.nodeAddress = nodeAddr
+		if err := nodeAnnotator.Run(); err != nil {
+			return fmt.Errorf("failed to run node annotator: %w", err)
+		}
+		if config.IsModeDPU() || config.IsModeFull() {
+			if err := config.OvnSouth.SetOVNRemote(); err != nil {
+				return fmt.Errorf("unable to configure the local OVN Southbound database endpoint: %w", err)
+			}
+		}
+		return nil
+	}
+
 	// Setup management ports
 	nc.mgmtPortController, err = createNodeManagementPortController(
 		nc.ovsClient,
@@ -931,14 +951,19 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 
 	var err error
 
-	if nc.mgmtPortController == nil {
+	// In cni-server-only mode the mgmt-port controller is intentionally nil
+	// (see Init()). Everything below that touches mgmtPortController /
+	// Gateway is gated on this same flag.
+	if !config.OvnKubeNode.CNIServerOnly && nc.mgmtPortController == nil {
 		return fmt.Errorf("default node network controller hasn't been pre-started")
 	}
 
 	waiter := newStartupWaiter()
 
 	// Complete gateway initialization
-	if config.IsModeDPUHost() {
+	if config.OvnKubeNode.CNIServerOnly {
+		klog.Infof("cni-server-only mode: skipping gateway main-start")
+	} else if config.IsModeDPUHost() {
 		err = nc.initGatewayDPUHost()
 		if err != nil {
 			return err
@@ -960,37 +985,44 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 		}
 	}
 
-	// Wait for management port and gateway resources to be created by the master
-	klog.Infof("Waiting for gateway and management port readiness...")
-	start := time.Now()
-	if err := waiter.Wait(); err != nil {
-		return err
-	}
-	// Set masquerade IP reconciliation callback for all modes except DPU.
-	// DPU mode does not configure masquerade resources.
-	if config.OvnKubeNode.Mode != types.NodeModeDPU {
-		gw, ok := nc.Gateway.(*gateway)
-		if !ok {
-			return fmt.Errorf("unexpected gateway type %T, expected *gateway", nc.Gateway)
+	// Wait for management port and gateway resources to be created by the master.
+	// Skipped in cni-server-only mode (nothing to wait for — no gateway, no mgmt-port).
+	if !config.OvnKubeNode.CNIServerOnly {
+		klog.Infof("Waiting for gateway and management port readiness...")
+		start := time.Now()
+		if err := waiter.Wait(); err != nil {
+			return err
 		}
-		if gw.nodeIPManager == nil {
-			return fmt.Errorf("node IP manager not initialized for gateway")
-		}
-		gw.nodeIPManager.OnMasqueradeIPChanged = func() {
-			if err := nc.masqReconciler.ensure(); err != nil {
-				klog.Errorf("Masquerade reconciler on masquerade IP change: %v", err)
+		// Set masquerade IP reconciliation callback for all modes except DPU.
+		// DPU mode does not configure masquerade resources.
+		if config.OvnKubeNode.Mode != types.NodeModeDPU {
+			gw, ok := nc.Gateway.(*gateway)
+			if !ok {
+				return fmt.Errorf("unexpected gateway type %T, expected *gateway", nc.Gateway)
+			}
+			if gw.nodeIPManager == nil {
+				return fmt.Errorf("node IP manager not initialized for gateway")
+			}
+			gw.nodeIPManager.OnMasqueradeIPChanged = func() {
+				if err := nc.masqReconciler.ensure(); err != nil {
+					klog.Errorf("Masquerade reconciler on masquerade IP change: %v", err)
+				}
 			}
 		}
+		err = nc.Gateway.Start()
+		if err != nil {
+			return fmt.Errorf("failed to start gateway: %w", err)
+		}
+		klog.Infof("Gateway and management port readiness took %v", time.Since(start))
+	} else {
+		klog.Infof("cni-server-only mode: skipping gateway.Start / masq reconciler / mgmt-port wait")
 	}
-	err = nc.Gateway.Start()
-	if err != nil {
-		return fmt.Errorf("failed to start gateway: %w", err)
-	}
-	klog.Infof("Gateway and management port readiness took %v", time.Since(start))
 
 	// Note(adrianc): DPU deployments are expected to support the new shared gateway changes, upgrade flow
 	// is not needed. Future upgrade flows will need to take DPUs into account.
-	if config.IsModeDPU() || config.IsModeFull() {
+	// Skipped in cni-server-only mode — svc route on the node belongs to the
+	// primary-network owner, not the CNI-server-only sidecar.
+	if !config.OvnKubeNode.CNIServerOnly && (config.IsModeDPU() || config.IsModeFull()) {
 		if config.IsModeFull() {
 			// Configure route for svc towards shared gateway interface
 			if err := configureSvcRouteViaInterface(nc.routeManager, nc.Gateway.GetGatewayIface(), DummyNextHopIPs()); err != nil {
@@ -1018,8 +1050,9 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 			defer nc.wg.Done()
 			nodeController.Run(stopCh)
 		}(nc.stopChan)
-	} else if config.IsModeDPU() || config.IsModeFull() {
-		// attempt to cleanup the possibly stale bridge
+	} else if !config.OvnKubeNode.CNIServerOnly && (config.IsModeDPU() || config.IsModeFull()) {
+		// attempt to cleanup the possibly stale bridge — owned by the primary
+		// network path; skipped in cni-server-only mode.
 		if err := ovsops.DeleteBridge(nc.ovsClient, "br-ext"); err != nil {
 			klog.Errorf("Deletion of bridge br-ext failed: %v", err)
 		}
@@ -1028,19 +1061,24 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 		}
 	}
 
-	// start management port controller
-	err = nc.mgmtPortController.Start(nc.stopChan)
-	if err != nil {
-		return fmt.Errorf("failed to start management port controller: %w", err)
-	}
-	if config.OVNKubernetesFeature.EnableEgressIP {
-		// Start the health checking server used by egressip, if EgressIPNodeHealthCheckPort is specified
-		if err := nc.startEgressIPHealthCheckingServer(nc.mgmtPortController); err != nil {
-			return err
+	// start management port controller (skipped in cni-server-only mode)
+	if !config.OvnKubeNode.CNIServerOnly {
+		err = nc.mgmtPortController.Start(nc.stopChan)
+		if err != nil {
+			return fmt.Errorf("failed to start management port controller: %w", err)
+		}
+		if config.OVNKubernetesFeature.EnableEgressIP {
+			// Start the health checking server used by egressip, if EgressIPNodeHealthCheckPort is specified
+			if err := nc.startEgressIPHealthCheckingServer(nc.mgmtPortController); err != nil {
+				return err
+			}
 		}
 	}
 
-	if config.IsModeDPU() || config.IsModeFull() {
+	// Service-endpoint / node watchers program node-scoped iptables/nftables
+	// for kube-proxy replacement. Skipped in cni-server-only mode; the
+	// primary-network owner does this.
+	if !config.OvnKubeNode.CNIServerOnly && (config.IsModeDPU() || config.IsModeFull()) {
 		err = nc.WatchEndpointSlices()
 		if err != nil {
 			return fmt.Errorf("failed to watch endpointSlices: %w", err)
@@ -1092,8 +1130,9 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 		}
 	}
 
-	// configure NFT/IPT rules for egressService
-	if config.OVNKubernetesFeature.EnableEgressService && (config.IsModeDPUHost() || config.IsModeFull()) {
+	// configure NFT/IPT rules for egressService — node-scoped, owned by
+	// primary-network path; skipped in cni-server-only mode.
+	if !config.OvnKubeNode.CNIServerOnly && config.OVNKubernetesFeature.EnableEgressService && (config.IsModeDPUHost() || config.IsModeFull()) {
 		wf := nc.watchFactory.(*factory.WatchFactory)
 		c, err := egressservice.NewController(nc.stopChan, nodetypes.OvnKubeNodeSNATMark, nc.name,
 			wf.EgressServiceInformer(), wf.ServiceInformer(), wf.EndpointSliceInformer())
@@ -1104,13 +1143,13 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 			return err
 		}
 	}
-	if config.OVNKubernetesFeature.EnableMultiExternalGateway {
+	if !config.OvnKubeNode.CNIServerOnly && config.OVNKubernetesFeature.EnableMultiExternalGateway {
 		if err = nc.apbExternalRouteNodeController.Run(nc.wg, 1); err != nil {
 			return err
 		}
 	}
 
-	if config.OVNKubernetesFeature.EnableEgressIP && !util.PlatformTypeIsEgressIPCloudProvider() {
+	if !config.OvnKubeNode.CNIServerOnly && config.OVNKubernetesFeature.EnableEgressIP && !util.PlatformTypeIsEgressIPCloudProvider() {
 		c, err := egressip.NewController(nc.Kube, nc.watchFactory.EgressIPInformer(), nc.watchFactory.NodeInformer(),
 			nc.watchFactory.NamespaceInformer(), nc.watchFactory.PodCoreInformer(), nc.networkManager.GetActiveNetworkForNamespace,
 			nc.routeManager, config.IPv4Mode, config.IPv6Mode, nc.name, nc.linkManager)

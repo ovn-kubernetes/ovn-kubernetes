@@ -718,6 +718,15 @@ type OvnKubeNodeConfig struct {
 	// KubeletCgroupPath is the cgroup v2 path kubelet runs under, relative to
 	// /sys/fs/cgroup. When empty, the kubelet.service cgroup is looked up instead.
 	KubeletCgroupPath string `gcfg:"kubelet-cgroup-path"`
+	// CNIServerOnly runs ovnkube-node as a pure CNI server: the Unix socket at
+	// /var/run/ovn-kubernetes/cni/ovn-cni.sock stays up and answers ADD/DEL,
+	// OVN NB/SB clients stay connected, but the primary-network controller
+	// (gateway bridge init, node default route reprogramming, management port
+	// claim, node encap-IP chassis registration, service iptables/nftables
+	// programming) is skipped. Intended for pod-netns / nested / two-container
+	// deployments where a sibling container (or the underlying host) owns the
+	// primary network.
+	CNIServerOnly bool `gcfg:"cni-server-only"`
 }
 
 // ClusterManagerConfig holds configuration for ovnkube-cluster-manager
@@ -1915,6 +1924,17 @@ var OvnKubeNodeFlags = []cli.Flag{
 			MinimumRoutingTableIDStart, MaximumRoutingTableIDStart),
 		Value:       OvnKubeNode.RoutingTableIDStart,
 		Destination: &cliConfig.OvnKubeNode.RoutingTableIDStart,
+	},
+	&cli.BoolFlag{
+		Name: "cni-server-only",
+		Usage: "Run ovnkube-node as a pure CNI server: keeps the CNI Unix " +
+			"socket and OVN NB/SB clients running, but skips primary-network " +
+			"takeover (gateway bridge init, default-route reprogramming, " +
+			"management port claim, node encap-IP annotation, service " +
+			"iptables/nftables). For pod-netns / nested / two-container " +
+			"deployments where the primary network is owned elsewhere.",
+		Value:       OvnKubeNode.CNIServerOnly,
+		Destination: &cliConfig.OvnKubeNode.CNIServerOnly,
 	},
 }
 
