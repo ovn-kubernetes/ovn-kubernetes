@@ -96,6 +96,11 @@ type BaseNetworkController struct {
 	nadKeysLock sync.Mutex
 	lastNADKeys sets.Set[string]
 
+	// Last successfully applied MTU support on each node's cluster/transit router port.
+	nodeClusterRouterPortMTUSupport sync.Map
+	// Last applied MTU support or successful no-port result for each node's gateway.
+	nodeGWRouterPortMTUSupport sync.Map
+
 	// retry framework for pods
 	retryPods *ovnretry.RetryFramework
 	// retry framework for namespaces
@@ -463,6 +468,50 @@ func (bnc *BaseNetworkController) getOVNClusterRouterPortToJoinSwitchIfAddrs() (
 	return gwLRPIPs, nil
 }
 
+// hasGatewayRouter reports whether this network manages gateway routers for local nodes.
+func (bnc *BaseNetworkController) hasGatewayRouter() bool {
+	return bnc.IsDefault() || (util.IsNetworkSegmentationSupportEnabled() && bnc.IsPrimaryNetwork())
+}
+
+// hasClusterRouterPort reports whether this network manages node ports on a cluster or transit router.
+func (bnc *BaseNetworkController) hasClusterRouterPort() bool {
+	return bnc.TopologyType() == types.Layer3Topology || (bnc.hasGatewayRouter() && config.Layer2UsesTransitRouter)
+}
+
+// setNodeGatewayMTUSyncs compares MTU support with the state applied by each component,
+// which may be newer than oldNode after a partial bootstrap or update reconciliation.
+func (bnc *BaseNetworkController) setNodeGatewayMTUSyncs(oldNode, node *corev1.Node, syncs *nodeSyncs) {
+	if bnc.TopologyType() == types.Layer3Topology && util.NoHostSubnet(node) {
+		return
+	}
+	desiredMTUSupport := util.ParseNodeGatewayMTUSupport(node)
+	if bnc.hasClusterRouterPort() {
+		existingClusterPortMTUSupport, synced := bnc.loadClusterRouterPortMTUSupport(node.Name)
+		syncs.syncClusterRouterPort = syncs.syncClusterRouterPort || !synced || existingClusterPortMTUSupport != desiredMTUSupport
+	}
+	if bnc.hasGatewayRouter() {
+		existingGWPortMTUSupport, synced := bnc.loadGWRouterPortMTUSupport(node.Name)
+		syncs.syncGw = syncs.syncGw || !synced || !existingGWPortMTUSupport.matches(node, desiredMTUSupport, oldNode == nil, bnc.GetNetworkName())
+	}
+}
+
+func (bnc *BaseNetworkController) loadClusterRouterPortMTUSupport(nodeName string) (bool, bool) {
+	value, _ := bnc.nodeClusterRouterPortMTUSupport.Load(nodeName)
+	support, synced := value.(bool)
+	return support, synced
+}
+
+func (bnc *BaseNetworkController) loadGWRouterPortMTUSupport(nodeName string) (gatewayMTUSyncState, bool) {
+	value, _ := bnc.nodeGWRouterPortMTUSupport.Load(nodeName)
+	state, synced := value.(gatewayMTUSyncState)
+	return state, synced
+}
+
+func (bnc *BaseNetworkController) forgetNodeGatewayMTUSupport(nodeName string) {
+	bnc.nodeClusterRouterPortMTUSupport.Delete(nodeName)
+	bnc.nodeGWRouterPortMTUSupport.Delete(nodeName)
+}
+
 // syncNodeClusterRouterPort ensures a node's LS to the cluster router's LRP is created.
 // NOTE: We could have created the router port in createNodeLogicalSwitch() instead of here,
 // but chassis ID is not available at that moment. We need the chassis ID to set the
@@ -551,6 +600,7 @@ func (bnc *BaseNetworkController) syncNodeClusterRouterPort(node *corev1.Node, h
 		return err
 	}
 
+	bnc.nodeClusterRouterPortMTUSupport.Store(node.Name, enableGatewayMTU)
 	return nil
 }
 

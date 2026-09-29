@@ -534,7 +534,7 @@ func (oc *DefaultNetworkController) ReconcileNode(ctx context.Context, oldNode, 
 			gwSync := failed || gatewayChanged(oldNode, newNode, oldState, newState, oc.GetNetworkName()) ||
 				nodeChassisChanged(oldNode, newNode) ||
 				defaultNodeSubnetChangedWithState(oldNode, newNode, oldState, newState) ||
-				hostCIDRsChanged(oldNode, newNode) || nodeGatewayMTUSupportChanged(oldNode, newNode)
+				hostCIDRsChanged(oldNode, newNode)
 			_, hoSync := oc.hybridOverlayFailed.Load(newNode.Name)
 			_, syncZoneIC := oc.syncZoneICFailed.Load(newNode.Name)
 			syncZoneIC = syncZoneIC || oc.nodeZoneClusterChanged(oldNode, newNode) || primaryAddrChanged(oldNode, newNode)
@@ -547,6 +547,7 @@ func (oc *DefaultNetworkController) ReconcileNode(ctx context.Context, oldNode, 
 				syncZoneIC:            syncZoneIC,
 			}
 		}
+		oc.setNodeGatewayMTUSyncs(oldNode, newNode, nodeSyncsParam)
 		if err := oc.addUpdateLocalNodeEvent(ctx, newNode, nodeSyncsParam); err != nil {
 			aggregatedErrors = append(aggregatedErrors, err)
 		}

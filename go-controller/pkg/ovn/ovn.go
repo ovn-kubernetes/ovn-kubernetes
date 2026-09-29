@@ -331,11 +331,6 @@ func nodeChassisChanged(oldNode, node *corev1.Node) bool {
 	return util.NodeChassisIDAnnotationChanged(oldNode, node)
 }
 
-// nodeGatewayMTUSupportChanged returns true if annotation "k8s.ovn.org/gateway-mtu-support" on the node was updated.
-func nodeGatewayMTUSupportChanged(oldNode, node *corev1.Node) bool {
-	return oldNode.Annotations[util.OvnNodeGatewayMtuSupport] != node.Annotations[util.OvnNodeGatewayMtuSupport]
-}
-
 // shouldUpdateNode() determines if the ovn-kubernetes plugin should update the state of the node.
 // ovn-kube should not perform an update if it does not assign a hostsubnet, or if you want to change
 // whether or not ovn-kubernetes assigns a hostsubnet

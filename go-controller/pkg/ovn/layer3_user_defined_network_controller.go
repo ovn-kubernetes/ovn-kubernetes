@@ -699,8 +699,7 @@ func (oc *Layer3UserDefinedNetworkController) ReconcileNode(ctx context.Context,
 				gatewayChanged(oldNode, newNode, oldState, newState, oc.GetNetworkName()) ||
 				nodeChassisChanged(oldNode, newNode) ||
 				nodeSubnetChange ||
-				hostCIDRsChanged(oldNode, newNode) ||
-				nodeGatewayMTUSupportChanged(oldNode, newNode)
+				hostCIDRsChanged(oldNode, newNode)
 			_, failed = oc.syncEIPNodeRerouteFailed.Load(newNode.Name)
 			syncReroute := failed || util.NodeHostCIDRsAnnotationChanged(oldNode, newNode)
 			nodeParams = &nodeSyncs{
@@ -712,6 +711,7 @@ func (oc *Layer3UserDefinedNetworkController) ReconcileNode(ctx context.Context,
 				syncReroute:           syncReroute,
 			}
 		}
+		oc.setNodeGatewayMTUSyncs(oldNode, newNode, nodeParams)
 		return oc.addUpdateLocalNodeEvent(ctx, newNode, nodeParams)
 	}
 
@@ -881,7 +881,7 @@ func (oc *Layer3UserDefinedNetworkController) addUpdateLocalNodeEvent(_ context.
 		}
 	}
 
-	if util.IsNetworkSegmentationSupportEnabled() && oc.IsPrimaryNetwork() {
+	if oc.hasGatewayRouter() {
 		if nSyncs.syncMgmtPort {
 			hostSubnets, err := util.ParseNodeHostSubnetAnnotation(node, oc.GetNetworkName())
 			if err != nil {
@@ -905,7 +905,7 @@ func (oc *Layer3UserDefinedNetworkController) addUpdateLocalNodeEvent(_ context.
 		errs = append(errs, errors...)
 	}
 
-	if util.IsNetworkSegmentationSupportEnabled() && oc.IsPrimaryNetwork() {
+	if oc.hasGatewayRouter() {
 		if nSyncs.syncGw {
 			gwManager := oc.gatewayManagerForNode(node.Name)
 			oc.gatewayManagers.Store(node.Name, gwManager)
@@ -1075,6 +1075,7 @@ func (oc *Layer3UserDefinedNetworkController) deleteNodeEvent(node *corev1.Node)
 			oc.gatewayManagers.Delete(node.Name)
 		}
 		oc.lsManager.DeleteSwitch(oc.GetNetworkScopedName(node.Name))
+		oc.forgetNodeGatewayMTUSupport(node.Name)
 		oc.addNodeFailed.Delete(node.Name)
 		oc.mgmtPortFailed.Delete(node.Name)
 		oc.nodeClusterRouterPortFailed.Delete(node.Name)
@@ -1276,6 +1277,7 @@ func (oc *Layer3UserDefinedNetworkController) newGatewayManager(nodeName string)
 		oc.watchFactory,
 		oc.nodeAnnotationCache,
 		oc.addressSetManager,
+		&oc.nodeGWRouterPortMTUSupport,
 		oc.gatewayOptions()...,
 	)
 }

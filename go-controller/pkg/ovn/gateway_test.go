@@ -2461,6 +2461,7 @@ func newGatewayManager(ovn *FakeOVN, nodeName string) *GatewayManager {
 		ovn.watcher,
 		nodecontroller.NewNodeAnnotationCache(),
 		ovn.addressSetManager,
+		&controller.nodeGWRouterPortMTUSupport,
 		WithLoadBalancerGroups(
 			controller.routerLoadBalancerGroupUUID,
 			controller.clusterLoadBalancerGroupUUID,

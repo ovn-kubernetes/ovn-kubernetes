@@ -578,9 +578,10 @@ func (oc *DefaultNetworkController) addUpdateLocalNodeEvent(_ context.Context, n
 		} else {
 			oc.nodeClusterRouterPortFailed.Delete(node.Name)
 		}
-		// delete stale chassis in SBDB if any
+		// Retry router port sync and stale chassis cleanup if cleanup fails.
 		if err := oc.deleteStaleNodeChassis(node); err != nil {
 			errs = append(errs, err)
+			oc.nodeClusterRouterPortFailed.Store(node.Name, true)
 		}
 	}
 
@@ -788,6 +789,7 @@ func (oc *DefaultNetworkController) deleteOVNNodeEvent(node *corev1.Node) error 
 	oc.mgmtPortFailed.Delete(node.Name)
 	oc.gatewaysFailed.Delete(node.Name)
 	oc.nodeClusterRouterPortFailed.Delete(node.Name)
+	oc.forgetNodeGatewayMTUSupport(node.Name)
 	return nil
 }
 
@@ -858,6 +860,7 @@ func (oc *DefaultNetworkController) newGatewayManager(nodeName string) *GatewayM
 		oc.watchFactory,
 		nodecontroller.NewNodeAnnotationCache(),
 		oc.addressSetManager,
+		&oc.nodeGWRouterPortMTUSupport,
 		oc.gatewayOptions()...,
 	)
 	return gatewayManager

@@ -145,9 +145,12 @@ func NodeSubnetAnnotationChanged(oldNode, newNode *corev1.Node) bool {
 }
 
 func NodeSubnetAnnotationChangedForNetwork(oldNode, newNode *corev1.Node, netName string) bool {
-	oldRaw := oldNode.Annotations[types.NodeSubnetsAnnotation]
-	newRaw := newNode.Annotations[types.NodeSubnetsAnnotation]
+	return NodeSubnetAnnotationRawChangedForNetwork(newNode.Name, oldNode.Annotations[types.NodeSubnetsAnnotation],
+		newNode.Annotations[types.NodeSubnetsAnnotation], netName)
+}
 
+// NodeSubnetAnnotationRawChangedForNetwork compares raw node subnet annotations for one network.
+func NodeSubnetAnnotationRawChangedForNetwork(nodeName, oldRaw, newRaw, netName string) bool {
 	if oldRaw == newRaw {
 		return false
 	}
@@ -157,11 +160,11 @@ func NodeSubnetAnnotationChangedForNetwork(oldNode, newNode *corev1.Node, netNam
 
 	var oldSubnets, newSubnets map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(oldRaw), &oldSubnets); err != nil {
-		klog.Errorf("Failed to unmarshal old node %s annotation: %v", oldNode.Name, err)
+		klog.Errorf("Failed to unmarshal old node %s subnet annotation for network %s: %v", nodeName, netName, err)
 		return false
 	}
 	if err := json.Unmarshal([]byte(newRaw), &newSubnets); err != nil {
-		klog.Errorf("Failed to unmarshal new node %s annotation: %v", newNode.Name, err)
+		klog.Errorf("Failed to unmarshal new node %s subnet annotation for network %s: %v", nodeName, netName, err)
 		return false
 	}
 	return !bytes.Equal(oldSubnets[netName], newSubnets[netName])

@@ -615,6 +615,147 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 		Expect(app.Run([]string{app.Name})).To(Succeed())
 	})
 
+	DescribeTable("Layer 3 UDN: reconciles options:gateway_mtu on the cluster router port when gateway MTU support changes", func(duringBootstrap, primary, noHostSubnet bool) {
+		config.OVNKubernetesFeature.EnableMultiNetwork = true
+		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+		netInfo := dummyPrimaryLayer3UserDefinedNetwork("192.168.0.0/16", "192.168.1.0/24")
+		netInfo.isPrimary = primary
+		app.Action = func(*cli.Context) error {
+			netConf := netInfo.netconf()
+			nad, err := newNetworkAttachmentDefinition(ns, nadName, *netConf)
+			Expect(err).NotTo(HaveOccurred())
+
+			const nodeIPv4CIDR = "192.168.126.202/24"
+			testNode, err := newNodeWithUserDefinedNetworks(nodeName, nodeIPv4CIDR, netInfo)
+			Expect(err).NotTo(HaveOccurred())
+			if noHostSubnet {
+				config.Kubernetes.NoHostSubnetNodes, err = metav1.LabelSelectorAsSelector(&metav1.LabelSelector{
+					MatchLabels: nodeNoHostSubnetAnnotation(),
+				})
+				Expect(err).NotTo(HaveOccurred())
+				testNode.Labels = nodeNoHostSubnetAnnotation()
+			}
+
+			fakeOvn.startWithDBSetup(
+				initialDB,
+				&corev1.NamespaceList{Items: []corev1.Namespace{*newUDNNamespace(ns)}},
+				&corev1.NodeList{Items: []corev1.Node{*testNode}},
+				&corev1.PodList{Items: []corev1.Pod{}},
+				&nadapi.NetworkAttachmentDefinitionList{Items: []nadapi.NetworkAttachmentDefinition{*nad}},
+			)
+
+			l3Controller, ok := fakeOvn.fullL3UDNControllers[userDefinedNetworkName]
+			Expect(ok).To(BeTrue())
+			Expect(l3Controller.init(context.Background())).To(Succeed())
+			if noHostSubnet {
+				Expect(l3Controller.ReconcileNode(context.Background(), nil, testNode, nil, nil)).To(Succeed())
+				Expect(l3Controller.lsManager.IsNonHostSubnetSwitch(l3Controller.GetNetworkScopedName(nodeName))).To(BeTrue())
+				syncs := &nodeSyncs{}
+				l3Controller.setNodeGatewayMTUSyncs(nil, testNode, syncs)
+				Expect(syncs.syncClusterRouterPort).To(BeFalse())
+				Expect(syncs.syncGw).To(BeFalse())
+				recordingClient := libovsdbtest.NewRecordingClient(fakeOvn.nbClient)
+				l3Controller.nbClient = recordingClient
+				updated := testNode.DeepCopy()
+				updated.Labels["test-unrelated-label"] = "changed"
+				Expect(l3Controller.ReconcileNode(context.Background(), testNode, updated, nil, nil)).To(Succeed())
+				Expect(recordingClient.Transactions).To(BeEmpty())
+				return nil
+			}
+			missingAnnotation := util.OvnNodeL3GatewayConfig
+			if !primary {
+				missingAnnotation = util.OvnNodeID
+			}
+			if duringBootstrap {
+				By("leaving bootstrap incomplete after the router port has been created")
+				partialNode := testNode.DeepCopy()
+				delete(partialNode.Annotations, missingAnnotation)
+				Expect(l3Controller.ReconcileNode(context.Background(), nil, partialNode, nil, nil)).To(HaveOccurred())
+				_, failed := l3Controller.nodeClusterRouterPortFailed.Load(nodeName)
+				Expect(failed).To(BeFalse())
+			} else {
+				Expect(l3Controller.RegisterNodeHandler()).To(Succeed())
+			}
+
+			lrpName := l3Controller.GetNetworkScopedRouterToSwitchPortName(nodeName)
+			clusterRouterPortOptions := func() (map[string]string, error) {
+				lrp, err := libovsdbops.GetLogicalRouterPort(fakeOvn.nbClient,
+					&nbdb.LogicalRouterPort{Name: lrpName})
+				if err != nil {
+					return nil, err
+				}
+				return lrp.Options, nil
+			}
+
+			By("setting options:gateway_mtu while the node reports gateway MTU support")
+			Eventually(clusterRouterPortOptions).WithTimeout(10 * time.Second).
+				Should(HaveKeyWithValue(libovsdbops.GatewayMTU, fmt.Sprintf("%d", config.Default.MTU)))
+
+			By("annotating the node as not supporting gateway MTU")
+			testNode, err = fakeOvn.fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			testNode.Annotations[util.OvnNodeGatewayMtuSupport] = "false"
+			_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Nodes().Update(context.TODO(), testNode, metav1.UpdateOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			if duringBootstrap {
+				Expect(l3Controller.ReconcileNode(context.Background(), nil, testNode, nil, nil)).To(Succeed())
+			}
+
+			By("removing options:gateway_mtu from the cluster router port")
+			Eventually(clusterRouterPortOptions).WithTimeout(10 * time.Second).
+				ShouldNot(HaveKey(libovsdbops.GatewayMTU))
+			if duringBootstrap {
+				By("reverting MTU support after a partially applied normal update")
+				partialNode := testNode.DeepCopy()
+				delete(partialNode.Annotations, util.OvnNodeGatewayMtuSupport)
+				delete(partialNode.Annotations, missingAnnotation)
+				if !primary {
+					l3Controller.syncZoneICFailed.Store(nodeName, true)
+				}
+				Expect(l3Controller.ReconcileNode(context.Background(), testNode, partialNode, nil, nil)).To(HaveOccurred())
+				Expect(l3Controller.ReconcileNode(context.Background(), testNode, testNode, nil, nil)).To(Succeed())
+				Eventually(clusterRouterPortOptions).ShouldNot(HaveKey(libovsdbops.GatewayMTU))
+			}
+
+			if primary {
+				gatewayOptions := func() (map[string]string, error) {
+					lrp, err := libovsdbops.GetLogicalRouterPort(fakeOvn.nbClient, &nbdb.LogicalRouterPort{
+						Name: types.GWRouterToJoinSwitchPrefix + l3Controller.GetNetworkScopedGWRouterName(nodeName),
+					})
+					if err != nil {
+						return nil, err
+					}
+					return lrp.Options, nil
+				}
+				Eventually(gatewayOptions).ShouldNot(HaveKey(libovsdbops.GatewayMTU))
+			}
+
+			By("annotating the node as supporting gateway MTU again")
+			testNode, err = fakeOvn.fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			testNode.Annotations[util.OvnNodeGatewayMtuSupport] = "true"
+			_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Nodes().Update(context.TODO(), testNode, metav1.UpdateOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			if duringBootstrap {
+				Expect(l3Controller.ReconcileNode(context.Background(), nil, testNode, nil, nil)).To(Succeed())
+			}
+
+			By("restoring options:gateway_mtu on the cluster router port")
+			Eventually(clusterRouterPortOptions).WithTimeout(10 * time.Second).
+				Should(HaveKeyWithValue(libovsdbops.GatewayMTU, fmt.Sprintf("%d", config.Default.MTU)))
+
+			return nil
+		}
+		Expect(app.Run([]string{app.Name})).To(Succeed())
+	},
+		Entry("normal update on a primary network", false, true, false),
+		Entry("bootstrap retry on a primary network", true, true, false),
+		Entry("normal update on a secondary network", false, false, false),
+		Entry("bootstrap retry on a secondary network", true, false, false),
+		Entry("NoHostSubnet node on a primary network", false, true, true),
+		Entry("NoHostSubnet node on a secondary network", false, false, true),
+	)
+
 	Describe("Dynamic UDN allocation with remote node", func() {
 		It("activates a remote node when a NAD becomes active and cleans it up when inactive", func() {
 			Expect(config.PrepareTestConfig()).To(Succeed())

@@ -596,18 +596,19 @@ func (oc *Layer2UserDefinedNetworkController) ReconcileNode(ctx context.Context,
 			shouldSyncGW := gwUpdateFailed ||
 				gatewayChanged(oldNode, newNode, oldState, newState, oc.GetNetworkName()) ||
 				nodeChassisChanged(oldNode, newNode) ||
-				hostCIDRsChanged(oldNode, newNode) ||
-				nodeGatewayMTUSupportChanged(oldNode, newNode)
+				hostCIDRsChanged(oldNode, newNode)
 			_, syncRerouteFailed := oc.syncEIPNodeRerouteFailed.Load(newNode.Name)
 			shouldSyncReroute := syncRerouteFailed || util.NodeHostCIDRsAnnotationChanged(oldNode, newNode)
 			_, clusterRouterPortFailed := oc.nodeClusterRouterPortFailed.Load(newNode.Name)
+			shouldSyncClusterRouterPort := clusterRouterPortFailed
 			nodeParams = &nodeSyncs{
 				syncMgmtPort:          shouldSyncMgmtPort,
 				syncGw:                shouldSyncGW,
 				syncReroute:           shouldSyncReroute,
-				syncClusterRouterPort: clusterRouterPortFailed,
+				syncClusterRouterPort: shouldSyncClusterRouterPort,
 			}
 		}
+		oc.setNodeGatewayMTUSyncs(oldNode, newNode, nodeParams)
 		return oc.addUpdateLocalNodeEvent(ctx, newNode, nodeParams)
 	}
 
@@ -695,8 +696,8 @@ func (oc *Layer2UserDefinedNetworkController) addUpdateLocalNodeEvent(_ context.
 		hostSubnets = append(hostSubnets, subnet.CIDR)
 	}
 
-	if util.IsNetworkSegmentationSupportEnabled() && oc.IsPrimaryNetwork() {
-		if nSyncs.syncClusterRouterPort && config.Layer2UsesTransitRouter {
+	if oc.hasGatewayRouter() {
+		if nSyncs.syncClusterRouterPort && oc.hasClusterRouterPort() {
 			if err = oc.syncClusterRouterPorts(node, hostSubnets); err != nil {
 				errs = append(errs, err)
 				oc.nodeClusterRouterPortFailed.Store(node.Name, true)
@@ -1017,6 +1018,7 @@ func (oc *Layer2UserDefinedNetworkController) deleteNodeEvent(node *corev1.Node)
 	oc.mgmtPortFailed.Delete(node.Name)
 	oc.syncEIPNodeRerouteFailed.Delete(node.Name)
 	oc.syncZoneICFailed.Delete(node.Name)
+	oc.forgetNodeGatewayMTUSupport(node.Name)
 	return nil
 }
 
@@ -1165,6 +1167,7 @@ func (oc *Layer2UserDefinedNetworkController) newGatewayManager(nodeName string)
 		oc.watchFactory,
 		oc.nodeAnnotationCache,
 		oc.addressSetManager,
+		&oc.nodeGWRouterPortMTUSupport,
 		config.Layer2UsesTransitRouter,
 		oc.gatewayOptions()...,
 	)

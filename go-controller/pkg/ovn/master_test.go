@@ -51,6 +51,19 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
+type chassisListFailureClient struct {
+	libovsdbclient.Client
+	listCalls int
+}
+
+func (c *chassisListFailureClient) List(ctx context.Context, result interface{}) error {
+	c.listCalls++
+	if c.listCalls == 1 {
+		return errors.New("injected chassis listing failure")
+	}
+	return c.Client.List(ctx, result)
+}
+
 // Please use following subnets for various networks that we have
 // 172.16.1.0/24 -- physical network that k8s nodes connect to
 // 100.64.0.0/16 -- the join subnet that connects all the L3 gateways with the distributed router
@@ -1381,6 +1394,467 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 			"--nodeport",
 		})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	})
+
+	ginkgo.It("retries stale chassis cleanup after the router port MTU is cached", func() {
+		app.Action = func(ctx *cli.Context) error {
+			_, err := config.InitConfig(ctx, nil, nil)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to initialize test configuration")
+			node, err := kubeFakeClient.CoreV1().Nodes().Get(context.TODO(), node1.Name, metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to get node %s", node1.Name)
+			gomega.Expect(oc.ReconcileNode(context.Background(), nil, node, nil, nil)).To(gomega.Succeed(), "failed to reconcile initial state for node %s", node.Name)
+			staleChassis := &sbdb.Chassis{Name: chassisIDForNode("node1-stale"), Hostname: node.Name}
+			stalePrivate := &sbdb.ChassisPrivate{Name: staleChassis.Name}
+			ops, err := sbClient.Create(staleChassis)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to build stale Chassis create operations")
+			privateOps, err := sbClient.Create(stalePrivate)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to build stale ChassisPrivate create operations")
+			ops = append(ops, privateOps...)
+			_, err = libovsdbops.TransactAndCheck(sbClient, ops)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to seed stale chassis and private rows")
+			gomega.Eventually(func(g gomega.Gomega) {
+				g.Expect(sbClient.Get(context.Background(), &sbdb.Chassis{Name: staleChassis.Name})).To(gomega.Succeed(), "stale chassis %s must be visible before injecting the failure", staleChassis.Name)
+				g.Expect(sbClient.Get(context.Background(), &sbdb.ChassisPrivate{Name: stalePrivate.Name})).To(gomega.Succeed(), "stale private chassis %s must be visible before injecting the failure", stalePrivate.Name)
+			}).Should(gomega.Succeed(), "failed to observe seeded stale chassis rows for node %s", node.Name)
+			faultClient := &chassisListFailureClient{Client: sbClient}
+			oc.sbClient = faultClient
+			updated := node.DeepCopy()
+			updated.Annotations[util.OvnNodeGatewayMtuSupport] = "false"
+			gomega.Expect(oc.ReconcileNode(context.Background(), node, updated, nil, nil)).To(gomega.HaveOccurred(), "reconciliation must report the injected chassis-list failure for node %s", node.Name)
+			gomega.Expect(sbClient.Get(context.Background(), &sbdb.Chassis{Name: staleChassis.Name})).To(gomega.Succeed(), "stale chassis %s must remain after cleanup fails", staleChassis.Name)
+			gomega.Expect(oc.ReconcileNode(context.Background(), node, updated, nil, nil)).To(gomega.Succeed(), "failed to retry chassis cleanup for node %s", node.Name)
+			gomega.Expect(faultClient.listCalls).To(gomega.BeNumerically(">=", 2), "chassis cleanup must retry listing chassis for node %s", node.Name)
+			gomega.Eventually(func() error {
+				return sbClient.Get(context.Background(), &sbdb.Chassis{Name: staleChassis.Name})
+			}).Should(gomega.Equal(libovsdbclient.ErrNotFound), "stale chassis %s must be removed after retry", staleChassis.Name)
+			gomega.Eventually(func() error {
+				return sbClient.Get(context.Background(), &sbdb.ChassisPrivate{Name: stalePrivate.Name})
+			}).Should(gomega.Equal(libovsdbclient.ErrNotFound), "stale private chassis %s must be removed after retry", stalePrivate.Name)
+			return nil
+		}
+		gomega.Expect(app.Run([]string{app.Name, "-cluster-subnets=" + clusterCIDR, "--init-gateways", "--nodeport"})).To(gomega.Succeed(), "failed to run stale chassis cleanup retry test")
+	})
+
+	ginkgo.DescribeTable("does not resync MTU on unrelated node updates", func(disabledGateway, noHostSubnet bool) {
+		app.Action = func(ctx *cli.Context) error {
+			_, err := config.InitConfig(ctx, nil, nil)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to initialize test configuration")
+			node, err := kubeFakeClient.CoreV1().Nodes().Get(context.TODO(), node1.Name, metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to get node %s", node1.Name)
+			if disabledGateway {
+				node.Annotations[util.OvnNodeL3GatewayConfig] = fmt.Sprintf(`{"default":{"mode":%q}}`, config.GatewayModeDisabled)
+			}
+			if noHostSubnet {
+				config.Kubernetes.NoHostSubnetNodes, err = metav1.LabelSelectorAsSelector(&metav1.LabelSelector{
+					MatchLabels: nodeNoHostSubnetAnnotation(),
+				})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to create NoHostSubnet label selector")
+				node.Labels = nodeNoHostSubnetAnnotation()
+			}
+			gomega.Expect(oc.ReconcileNode(context.Background(), nil, node, nil, nil)).To(gomega.Succeed(), "failed to reconcile initial state for node %s", node.Name)
+			_, gatewayCached := oc.loadGWRouterPortMTUSupport(node.Name)
+			gomega.Expect(gatewayCached).To(gomega.Equal(!noHostSubnet), "unexpected gateway MTU cache state for node %s (NoHostSubnet=%t)", node.Name, noHostSubnet)
+
+			updatedNode := node.DeepCopy()
+			if updatedNode.Labels == nil {
+				updatedNode.Labels = map[string]string{}
+			}
+			updatedNode.Labels["test-unrelated-label"] = "changed"
+			recordingClient := libovsdbtest.NewRecordingClient(nbClient)
+			oc.nbClient = recordingClient
+			gomega.Expect(oc.ReconcileNode(context.Background(), node, updatedNode, nil, nil)).To(gomega.Succeed(), "failed to reconcile label-only update for node %s", node.Name)
+			gomega.Expect(recordingClient.Transactions).To(gomega.BeEmpty(), "a label-only update must not reprogram the node")
+			return nil
+		}
+		gomega.Expect(app.Run([]string{
+			app.Name,
+			"-cluster-subnets=" + clusterCIDR,
+			"--init-gateways",
+			"--nodeport",
+		})).To(gomega.Succeed(), "failed to run unrelated node update test (disabledGateway=%t, NoHostSubnet=%t)", disabledGateway, noHostSubnet)
+	},
+		ginkgo.Entry("with a configured gateway", false, false),
+		ginkgo.Entry("with a disabled gateway", true, false),
+		ginkgo.Entry("for a NoHostSubnet node", false, true),
+	)
+
+	ginkgo.It("rejects gateway reconciliation through a cleanup-only manager", func() {
+		gw := NewGatewayManagerForCleanup(nbClient, oc.GetNetInfo(), oc.GetNetworkScopedClusterRouterName(),
+			oc.GetNetworkScopedJoinSwitchName(), oc.GetNetworkScopedGWRouterName(node1.Name), node1.Name, false)
+		gomega.Expect(gw.SyncGateway(&testNode, &GatewayConfig{
+			annoConfig: &util.L3GatewayConfig{Mode: config.GatewayModeDisabled},
+		})).To(gomega.MatchError(gomega.ContainSubstring("was built without an MTU support cache")), "cleanup-only gateway manager must reject reconciliation")
+	})
+
+	ginkgo.It("retries gateway initialization when previously unavailable host subnets appear", func() {
+		node, err := kubeFakeClient.CoreV1().Nodes().Get(context.TODO(), node1.Name, metav1.GetOptions{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to get node %s", node1.Name)
+		subnetsAnnotation := node.Annotations[types.NodeSubnetsAnnotation]
+		delete(node.Annotations, types.NodeSubnetsAnnotation)
+		gw := oc.newGatewayManager(node.Name)
+		gomega.Expect(gw.SyncGateway(node, &GatewayConfig{
+			annoConfig: &util.L3GatewayConfig{Mode: config.GatewayModeShared},
+		})).To(gomega.Succeed(), "failed to sync gateway for node %s without host subnets", node.Name)
+		gatewayPort := &nbdb.LogicalRouterPort{Name: types.GWRouterToJoinSwitchPrefix + types.GWRouterPrefix + node.Name}
+		_, err = libovsdbops.GetLogicalRouterPort(nbClient, gatewayPort)
+		gomega.Expect(err).To(gomega.Equal(libovsdbclient.ErrNotFound), "gateway port %s must not exist without host subnets", gatewayPort.Name)
+
+		syncs := &nodeSyncs{}
+		oc.setNodeGatewayMTUSyncs(nil, node, syncs)
+		gomega.Expect(syncs.syncGw).To(gomega.BeFalse(), "unavailable subnets must not cause repeated gateway syncs")
+
+		updated := node.DeepCopy()
+		updated.Annotations[types.NodeSubnetsAnnotation] = subnetsAnnotation
+		syncs = &nodeSyncs{}
+		oc.setNodeGatewayMTUSyncs(nil, updated, syncs)
+		gomega.Expect(syncs.syncGw).To(gomega.BeTrue(), "a bootstrap retry must notice newly available subnets")
+		gomega.Expect(oc.addUpdateLocalNodeEvent(context.Background(), updated, syncs)).To(gomega.Succeed(), "failed to reconcile restored host subnets on node %s", node.Name)
+		_, err = libovsdbops.GetLogicalRouterPort(nbClient, gatewayPort)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "gateway port %s must be created after host subnets appear", gatewayPort.Name)
+	})
+
+	ginkgo.It("reconciles changed gateway annotations after an enabled gateway synced during bootstrap", func() {
+		app.Action = func(ctx *cli.Context) error {
+			_, err := config.InitConfig(ctx, nil, nil)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to initialize test configuration")
+			node, err := kubeFakeClient.CoreV1().Nodes().Get(context.TODO(), node1.Name, metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to get node %s", node1.Name)
+			partialNode := node.DeepCopy()
+			delete(partialNode.Annotations, util.OVNNodeEncapIPs)
+			gomega.Expect(oc.ReconcileNode(context.Background(), nil, partialNode, nil, nil)).To(gomega.HaveOccurred(), "bootstrap must fail while encapsulation annotations are missing on node %s", node.Name)
+			_, failed := oc.gatewaysFailed.Load(node.Name)
+			gomega.Expect(failed).To(gomega.BeFalse(), "gateway sync must succeed despite incomplete bootstrap on node %s", node.Name)
+			gatewayPort := &nbdb.LogicalRouterPort{Name: types.GWRouterToJoinSwitchPrefix + types.GWRouterPrefix + node.Name}
+			_, err = libovsdbops.GetLogicalRouterPort(nbClient, gatewayPort)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to get gateway router port %s", gatewayPort.Name)
+
+			updated := node.DeepCopy()
+			updated.Annotations[util.OvnNodeL3GatewayConfig] = fmt.Sprintf(`{"default":{"mode":%q}}`, config.GatewayModeDisabled)
+			gomega.Expect(oc.ReconcileNode(context.Background(), nil, updated, nil, nil)).To(gomega.Succeed(), "failed to reconcile disabled gateway during bootstrap retry on node %s", node.Name)
+			_, err = libovsdbops.GetLogicalRouterPort(nbClient, gatewayPort)
+			gomega.Expect(err).To(gomega.Equal(libovsdbclient.ErrNotFound), "gateway router port %s must be removed during bootstrap retry", gatewayPort.Name)
+			return nil
+		}
+		gomega.Expect(app.Run([]string{app.Name, "-cluster-subnets=" + clusterCIDR, "--init-gateways", "--nodeport"})).To(gomega.Succeed(), "failed to run gateway annotation bootstrap test")
+	})
+
+	ginkgo.It("does not resync the gateway for unrelated network subnet changes", func() {
+		node, err := kubeFakeClient.CoreV1().Nodes().Get(context.TODO(), node1.Name, metav1.GetOptions{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to get node %s", node1.Name)
+		gw := oc.newGatewayManager(node.Name)
+		gw.recordGatewayMTUSupport(node, util.ParseNodeGatewayMTUSupport(node))
+		updated := node.DeepCopy()
+		updated.Annotations[types.NodeSubnetsAnnotation] = `{"default":["10.1.1.0/24"],"other-network":["10.2.1.0/24"]}`
+		gomega.Expect(defaultNodeSubnetChangedWithState(node, updated, nil, nil)).To(gomega.BeFalse(), "another network subnet change must not change the default network subnet")
+		syncs := &nodeSyncs{}
+		oc.setNodeGatewayMTUSyncs(nil, updated, syncs)
+		gomega.Expect(syncs.syncGw).To(gomega.BeFalse(), "another network subnet change must not request gateway sync on node %s", node.Name)
+
+		ginkgo.By("avoiding repeated JSON parsing on later updates after another network's subnets changed")
+		allocations := testing.AllocsPerRun(10, func() {
+			syncs := &nodeSyncs{}
+			oc.setNodeGatewayMTUSyncs(updated, updated, syncs)
+		})
+		gomega.Expect(allocations).To(gomega.BeZero(), "unrelated node updates must not allocate while checking cached MTU state")
+
+		updated.Annotations[types.NodeSubnetsAnnotation] = `{"default":["10.1.2.0/24"],"other-network":["10.2.1.0/24"]}`
+		syncs = &nodeSyncs{}
+		oc.setNodeGatewayMTUSyncs(nil, updated, syncs)
+		gomega.Expect(syncs.syncGw).To(gomega.BeTrue(), "bootstrap retries must notice this network's changed subnets")
+	})
+
+	ginkgo.It("requests gateway sync when an IPv6 subnet is added during bootstrap", func() {
+		node, err := kubeFakeClient.CoreV1().Nodes().Get(context.TODO(), node1.Name, metav1.GetOptions{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to get node %s", node1.Name)
+		gw := oc.newGatewayManager(node.Name)
+		gw.recordGatewayMTUSupport(node, util.ParseNodeGatewayMTUSupport(node))
+		updated := node.DeepCopy()
+		updated.Annotations, err = util.UpdateNodeHostSubnetAnnotation(updated.Annotations,
+			ovntest.MustParseIPNets(node1.NodeSubnet, "fd00:10:1:1::/64"), oc.GetNetworkName())
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to add IPv6 subnet annotation on node %s", node.Name)
+
+		syncs := &nodeSyncs{}
+		oc.setNodeGatewayMTUSyncs(nil, updated, syncs)
+		gomega.Expect(syncs.syncGw).To(gomega.BeTrue(), "bootstrap retry must detect an added IPv6 subnet on node %s", node.Name)
+
+		gw.recordGatewayMTUSupport(updated, util.ParseNodeGatewayMTUSupport(updated))
+		syncs = &nodeSyncs{}
+		oc.setNodeGatewayMTUSyncs(nil, updated, syncs)
+		gomega.Expect(syncs.syncGw).To(gomega.BeFalse(), "recorded IPv6 subnet must not request repeated gateway sync on node %s", node.Name)
+	})
+
+	ginkgo.It("initializes a gateway enabled during a bootstrap retry after recording a disabled gateway", func() {
+		app.Action = func(ctx *cli.Context) error {
+			_, err := config.InitConfig(ctx, nil, nil)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to initialize test configuration")
+			node, err := kubeFakeClient.CoreV1().Nodes().Get(context.TODO(), node1.Name, metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to get node %s", node1.Name)
+			disabledNode := node.DeepCopy()
+			disabledNode.Annotations[util.OvnNodeL3GatewayConfig] = fmt.Sprintf(`{"default":{"mode":%q}}`, config.GatewayModeDisabled)
+			delete(disabledNode.Annotations, util.OVNNodeEncapIPs)
+
+			ginkgo.By("leaving bootstrap incomplete after reconciling a disabled gateway")
+			gomega.Expect(oc.ReconcileNode(context.Background(), nil, disabledNode, nil, nil)).To(gomega.HaveOccurred(), "bootstrap must remain incomplete without encapsulation annotations on node %s", node.Name)
+			_, failed := oc.syncZoneICFailed.Load(node.Name)
+			gomega.Expect(failed).To(gomega.BeTrue(), "interconnect sync must remain pending for node %s", node.Name)
+			gatewayState, gatewayCached := oc.loadGWRouterPortMTUSupport(node.Name)
+			gomega.Expect(gatewayCached).To(gomega.BeTrue(), "handled gateway MTU state must be cached for node %s", node.Name)
+			gomega.Expect(gatewayState.support).To(gomega.Equal(util.ParseNodeGatewayMTUSupport(disabledNode)), "cached MTU support must match the disabled gateway node %s", node.Name)
+
+			ginkgo.By("initializing the newly enabled gateway despite unchanged MTU support")
+			gomega.Expect(oc.ReconcileNode(context.Background(), nil, node, nil, nil)).To(gomega.Succeed(), "failed to enable gateway during bootstrap retry on node %s", node.Name)
+			gatewayPort := &nbdb.LogicalRouterPort{Name: types.GWRouterToJoinSwitchPrefix + types.GWRouterPrefix + node.Name}
+			lrp, err := libovsdbops.GetLogicalRouterPort(nbClient, gatewayPort)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to get gateway router port %s", gatewayPort.Name)
+			gomega.Expect(lrp.Options).To(gomega.HaveKeyWithValue(libovsdbops.GatewayMTU, strconv.Itoa(config.Default.MTU)), "gateway router port %s must have the configured MTU", gatewayPort.Name)
+
+			ginkgo.By("recording that no gateway port is needed when the gateway is disabled again")
+			disabledNode = node.DeepCopy()
+			disabledNode.Annotations[util.OvnNodeL3GatewayConfig] = fmt.Sprintf(`{"default":{"mode":%q}}`, config.GatewayModeDisabled)
+			gomega.Expect(oc.ReconcileNode(context.Background(), node, disabledNode, nil, nil)).To(gomega.Succeed(), "failed to disable gateway after bootstrap completed on node %s", node.Name)
+			_, err = libovsdbops.GetLogicalRouterPort(nbClient, gatewayPort)
+			gomega.Expect(err).To(gomega.Equal(libovsdbclient.ErrNotFound), "gateway router port %s must be removed", gatewayPort.Name)
+			gatewayState, gatewayCached = oc.loadGWRouterPortMTUSupport(node.Name)
+			gomega.Expect(gatewayCached).To(gomega.BeTrue(), "handled gateway MTU state must be cached for node %s", node.Name)
+			gomega.Expect(gatewayState.support).To(gomega.Equal(util.ParseNodeGatewayMTUSupport(disabledNode)), "cached MTU support must match the disabled gateway node %s", node.Name)
+			return nil
+		}
+		gomega.Expect(app.Run([]string{
+			app.Name,
+			"-cluster-subnets=" + clusterCIDR,
+			"--init-gateways",
+			"--nodeport",
+		})).To(gomega.Succeed(), "failed to run disabled-to-enabled gateway bootstrap test")
+	})
+
+	ginkgo.DescribeTable("reconciles gateway MTU changes during bootstrap retries", func(initialSupport bool, missingAnnotation string) {
+		app.Action = func(ctx *cli.Context) error {
+			_, err := config.InitConfig(ctx, nil, nil)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to initialize test configuration")
+
+			node, err := kubeFakeClient.CoreV1().Nodes().Get(context.TODO(), node1.Name, metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to get node %s", node1.Name)
+			if !initialSupport {
+				node.Annotations[util.OvnNodeGatewayMtuSupport] = "false"
+			}
+			partialNode := node.DeepCopy()
+			delete(partialNode.Annotations, missingAnnotation)
+
+			ginkgo.By("creating the cluster router port before bootstrap annotations are complete")
+			gomega.Expect(oc.ReconcileNode(context.Background(), nil, partialNode, nil, nil)).To(gomega.HaveOccurred(), "bootstrap must remain incomplete while annotation %s is missing on node %s", missingAnnotation, node.Name)
+			gomega.Expect(oc.hasLocalNodeSwitchState(partialNode)).To(gomega.BeTrue(), "local switch state must exist before component retries on node %s", node.Name)
+			_, failed := oc.gatewaysFailed.Load(node.Name)
+			gomega.Expect(failed).To(gomega.Equal(missingAnnotation == util.OvnNodeL3GatewayConfig), "unexpected gateway failure flag with missing annotation %s on node %s", missingAnnotation, node.Name)
+			_, failed = oc.nodeClusterRouterPortFailed.Load(node.Name)
+			gomega.Expect(failed).To(gomega.BeFalse(), "completed router-port or gateway sync must not retain a failure flag on node %s", node.Name)
+
+			clusterPort := &nbdb.LogicalRouterPort{Name: types.RouterToSwitchPrefix + node.Name}
+			lrp, err := libovsdbops.GetLogicalRouterPort(nbClient, clusterPort)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to get cluster router port %s", clusterPort.Name)
+			_, hasGatewayMTU := lrp.Options[libovsdbops.GatewayMTU]
+			gomega.Expect(hasGatewayMTU).To(gomega.Equal(initialSupport), "cluster router port %s must reflect initial MTU support", clusterPort.Name)
+
+			ginkgo.By("skipping the successful port sync when MTU support has not changed")
+			recordingClient := libovsdbtest.NewRecordingClient(nbClient)
+			oc.nbClient = recordingClient
+			gomega.Expect(oc.ReconcileNode(context.Background(), nil, partialNode, nil, nil)).To(gomega.HaveOccurred(), "bootstrap must remain incomplete while annotation %s is missing on node %s", missingAnnotation, node.Name)
+			for _, transaction := range recordingClient.Transactions {
+				for _, op := range transaction {
+					if op.Table != "Logical_Router_Port" {
+						continue
+					}
+					gomega.Expect(op.Row["name"]).NotTo(gomega.Equal(clusterPort.Name), "unchanged MTU support must not rewrite cluster router port %s", clusterPort.Name)
+					for _, condition := range op.Where {
+						if condition.Column == "_uuid" {
+							gomega.Expect(condition.Value).NotTo(gomega.Equal(ovsdb.UUID{GoUUID: lrp.UUID}), "unchanged MTU support must not select cluster router port %s by UUID", clusterPort.Name)
+						} else if condition.Column == "name" && condition.Function == ovsdb.ConditionEqual {
+							gomega.Expect(condition.Value).NotTo(gomega.Equal(clusterPort.Name), "unchanged MTU support must not select cluster router port %s by name", clusterPort.Name)
+						}
+					}
+				}
+			}
+			oc.nbClient = nbClient
+
+			ginkgo.By("changing gateway MTU support while completing the gateway configuration")
+			if initialSupport {
+				node.Annotations[util.OvnNodeGatewayMtuSupport] = "false"
+			} else {
+				delete(node.Annotations, util.OvnNodeGatewayMtuSupport)
+			}
+			if missingAnnotation == util.OvnNodeL3GatewayConfig {
+				ginkgo.By("retaining the applied MTU support value when port reconciliation fails")
+				missingChassisNode := node.DeepCopy()
+				delete(missingChassisNode.Annotations, util.OvnNodeChassisID)
+				gomega.Expect(oc.ReconcileNode(context.Background(), nil, missingChassisNode, nil, nil)).To(gomega.HaveOccurred(), "router-port sync must fail without the chassis annotation on node %s", node.Name)
+				gatewayMTUSupport, synced := oc.loadClusterRouterPortMTUSupport(node.Name)
+				gomega.Expect(synced).To(gomega.BeTrue(), "failed router-port sync must retain the previous MTU cache for node %s", node.Name)
+				gomega.Expect(gatewayMTUSupport).To(gomega.Equal(initialSupport), "failed router-port sync must preserve the last applied MTU support for node %s", node.Name)
+			}
+
+			gomega.Expect(oc.ReconcileNode(context.Background(), nil, node, nil, nil)).To(gomega.Succeed(), "failed to reconcile completed bootstrap annotations on node %s", node.Name)
+			_, failed = oc.gatewaysFailed.Load(node.Name)
+			gomega.Expect(failed).To(gomega.BeFalse(), "completed router-port or gateway sync must not retain a failure flag on node %s", node.Name)
+
+			ginkgo.By("reconciling MTU support on both router ports during the bootstrap retry")
+			for _, port := range []*nbdb.LogicalRouterPort{
+				clusterPort,
+				{Name: types.GWRouterToJoinSwitchPrefix + types.GWRouterPrefix + node.Name},
+			} {
+				lrp, err = libovsdbops.GetLogicalRouterPort(nbClient, port)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to get router port %s", port.Name)
+				if initialSupport {
+					gomega.Expect(lrp.Options).NotTo(gomega.HaveKey(libovsdbops.GatewayMTU), "port %s", port.Name)
+				} else {
+					gomega.Expect(lrp.Options).To(gomega.HaveKeyWithValue(libovsdbops.GatewayMTU,
+						strconv.Itoa(config.Default.MTU)), "port %s", port.Name)
+				}
+			}
+			clusterMTUSupport, clusterSynced := oc.loadClusterRouterPortMTUSupport(node.Name)
+			gatewayMTUSupport, gatewaySynced := oc.loadGWRouterPortMTUSupport(node.Name)
+			gomega.Expect(clusterSynced && gatewaySynced).To(gomega.BeTrue(), "both router ports must have cached MTU state after bootstrap retry on node %s", node.Name)
+			gomega.Expect(clusterMTUSupport).To(gomega.Equal(!initialSupport), "cluster router port MTU cache must reflect the changed support on node %s", node.Name)
+			gomega.Expect(gatewayMTUSupport.support).To(gomega.Equal(!initialSupport), "gateway router port MTU cache must reflect the changed support on node %s", node.Name)
+
+			ginkgo.By("clearing the applied MTU support values when the node is deleted")
+			gomega.Expect(oc.ReconcileNode(context.Background(), node, nil, nil, nil)).To(gomega.Succeed(), "failed to delete node %s after bootstrap retry", node.Name)
+			_, clusterSynced = oc.loadClusterRouterPortMTUSupport(node.Name)
+			_, gatewaySynced = oc.loadGWRouterPortMTUSupport(node.Name)
+			gomega.Expect(clusterSynced || gatewaySynced).To(gomega.BeFalse(), "deleting node %s must clear both router-port MTU caches", node.Name)
+			return nil
+		}
+
+		gomega.Expect(app.Run([]string{
+			app.Name,
+			"-cluster-subnets=" + clusterCIDR,
+			"--init-gateways",
+			"--nodeport",
+		})).To(gomega.Succeed(), "failed to run bootstrap MTU retry test (initialSupport=%t, missingAnnotation=%s)", initialSupport, missingAnnotation)
+	},
+		ginkgo.Entry("disabling gateway MTU support after gateway setup fails", true, util.OvnNodeL3GatewayConfig),
+		ginkgo.Entry("enabling gateway MTU support after gateway setup fails", false, util.OvnNodeL3GatewayConfig),
+		ginkgo.Entry("disabling gateway MTU support after chassis setup fails", true, util.OVNNodeEncapIPs),
+		ginkgo.Entry("enabling gateway MTU support after chassis setup fails", false, util.OVNNodeEncapIPs),
+	)
+
+	ginkgo.DescribeTable("reconciles reverted gateway MTU support during update retries", func(initialSupport bool, missingAnnotation string) {
+		app.Action = func(ctx *cli.Context) error {
+			_, err := config.InitConfig(ctx, nil, nil)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to initialize test configuration")
+			node, err := kubeFakeClient.CoreV1().Nodes().Get(context.TODO(), node1.Name, metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to get node %s", node1.Name)
+			if !initialSupport {
+				node.Annotations[util.OvnNodeGatewayMtuSupport] = "false"
+			}
+			gomega.Expect(oc.ReconcileNode(context.Background(), nil, node, nil, nil)).To(gomega.Succeed(), "failed to reconcile initial MTU support on node %s", node.Name)
+
+			ginkgo.By("partially applying an MTU support change while an interconnect retry is pending")
+			updatedNode := node.DeepCopy()
+			if initialSupport {
+				updatedNode.Annotations[util.OvnNodeGatewayMtuSupport] = "false"
+			} else {
+				delete(updatedNode.Annotations, util.OvnNodeGatewayMtuSupport)
+			}
+			delete(updatedNode.Annotations, missingAnnotation)
+			oc.syncZoneICFailed.Store(node.Name, true)
+			gomega.Expect(oc.ReconcileNode(context.Background(), node, updatedNode, nil, nil)).To(gomega.HaveOccurred(), "partial MTU update must fail while annotation %s is missing on node %s", missingAnnotation, node.Name)
+			portMTUSupport, _ := oc.loadClusterRouterPortMTUSupport(node.Name)
+			gomega.Expect(portMTUSupport).To(gomega.Equal(!initialSupport), "router-port MTU cache must record the partially applied change on node %s", node.Name)
+
+			ginkgo.By("reverting the annotation to the last fully reconciled node's value")
+			gomega.Expect(oc.ReconcileNode(context.Background(), node, node, nil, nil)).To(gomega.Succeed(), "failed to reconcile reverted MTU support on node %s", node.Name)
+			for _, name := range []string{
+				types.RouterToSwitchPrefix + node.Name,
+				types.GWRouterToJoinSwitchPrefix + types.GWRouterPrefix + node.Name,
+			} {
+				lrp, err := libovsdbops.GetLogicalRouterPort(nbClient, &nbdb.LogicalRouterPort{Name: name})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to get router port %s", name)
+				if initialSupport {
+					gomega.Expect(lrp.Options).To(gomega.HaveKeyWithValue(libovsdbops.GatewayMTU,
+						strconv.Itoa(config.Default.MTU)), "port %s", name)
+				} else {
+					gomega.Expect(lrp.Options).NotTo(gomega.HaveKey(libovsdbops.GatewayMTU), "port %s", name)
+				}
+			}
+			return nil
+		}
+		gomega.Expect(app.Run([]string{
+			app.Name,
+			"-cluster-subnets=" + clusterCIDR,
+			"--init-gateways",
+			"--nodeport",
+		})).To(gomega.Succeed(), "failed to run reverted MTU retry test (initialSupport=%t, missingAnnotation=%s)", initialSupport, missingAnnotation)
+	},
+		ginkgo.Entry("restoring support after both router ports were updated", true, util.OVNNodeEncapIPs),
+		ginkgo.Entry("disabling support after both router ports were updated", false, util.OVNNodeEncapIPs),
+		ginkgo.Entry("restoring support after only the cluster router port was updated", true, util.OvnNodeL3GatewayConfig),
+		ginkgo.Entry("disabling support after only the cluster router port was updated", false, util.OvnNodeL3GatewayConfig),
+	)
+
+	ginkgo.It("reconciles options:gateway_mtu on the cluster and gateway router ports when gateway MTU support changes", func() {
+		app.Action = func(ctx *cli.Context) error {
+			_, err := config.InitConfig(ctx, nil, nil)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to initialize test configuration")
+
+			startFakeController(oc, wg)
+
+			clusterRouterPortOptions := func() (map[string]string, error) {
+				lrp, err := libovsdbops.GetLogicalRouterPort(nbClient,
+					&nbdb.LogicalRouterPort{Name: types.RouterToSwitchPrefix + node1.Name})
+				if err != nil {
+					return nil, err
+				}
+				return lrp.Options, nil
+			}
+
+			gatewayRouterPortOptions := func() (map[string]string, error) {
+				lrp, err := libovsdbops.GetLogicalRouterPort(nbClient,
+					&nbdb.LogicalRouterPort{Name: types.GWRouterToJoinSwitchPrefix + types.GWRouterPrefix + node1.Name})
+				if err != nil {
+					return nil, err
+				}
+				return lrp.Options, nil
+			}
+
+			ginkgo.By("setting options:gateway_mtu while the node reports gateway MTU support")
+			gomega.Eventually(clusterRouterPortOptions, 10).
+				Should(gomega.HaveKeyWithValue(libovsdbops.GatewayMTU, strconv.Itoa(config.Default.MTU)))
+			gomega.Eventually(gatewayRouterPortOptions, 10).
+				Should(gomega.HaveKeyWithValue(libovsdbops.GatewayMTU, strconv.Itoa(config.Default.MTU)))
+
+			ginkgo.By("annotating the node as not supporting gateway MTU")
+			localNode, err := kubeFakeClient.CoreV1().Nodes().Get(context.TODO(), node1.Name, metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to get node %s", node1.Name)
+			localNode.Annotations[util.OvnNodeGatewayMtuSupport] = "false"
+			_, err = kubeFakeClient.CoreV1().Nodes().Update(context.TODO(), localNode, metav1.UpdateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to update gateway MTU support on node %s", localNode.Name)
+
+			ginkgo.By("removing options:gateway_mtu from the cluster and gateway router ports")
+			gomega.Eventually(clusterRouterPortOptions, 10).ShouldNot(gomega.HaveKey(libovsdbops.GatewayMTU))
+			gomega.Eventually(gatewayRouterPortOptions, 10).ShouldNot(gomega.HaveKey(libovsdbops.GatewayMTU))
+
+			ginkgo.By("annotating the node as supporting gateway MTU again")
+			localNode, err = kubeFakeClient.CoreV1().Nodes().Get(context.TODO(), node1.Name, metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to get node %s", node1.Name)
+			localNode.Annotations[util.OvnNodeGatewayMtuSupport] = "true"
+			_, err = kubeFakeClient.CoreV1().Nodes().Update(context.TODO(), localNode, metav1.UpdateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to update gateway MTU support on node %s", localNode.Name)
+
+			ginkgo.By("restoring options:gateway_mtu on the cluster and gateway router ports")
+			gomega.Eventually(clusterRouterPortOptions, 10).
+				Should(gomega.HaveKeyWithValue(libovsdbops.GatewayMTU, strconv.Itoa(config.Default.MTU)))
+			gomega.Eventually(gatewayRouterPortOptions, 10).
+				Should(gomega.HaveKeyWithValue(libovsdbops.GatewayMTU, strconv.Itoa(config.Default.MTU)))
+
+			return nil
+		}
+
+		err := app.Run([]string{
+			app.Name,
+			"-cluster-subnets=" + clusterCIDR,
+			"--init-gateways",
+			"--nodeport",
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to run gateway MTU update test application")
 	})
 
 	ginkgo.It("reconciles node host subnets after single-stack to dual-stack upgrade", func() {

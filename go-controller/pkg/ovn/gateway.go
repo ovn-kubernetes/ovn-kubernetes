@@ -10,6 +10,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -38,7 +39,30 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
+// gatewayMTUSyncState records the MTU setting and annotations from a successful gateway sync, including when no port is needed.
+type gatewayMTUSyncState struct {
+	support           bool
+	gatewayAnnotation string
+	subnetAnnotation  string
+}
+
+func (state gatewayMTUSyncState) matches(node *corev1.Node, desiredMTUSupport bool, bootstrapRetry bool, netName string) bool {
+	if state.support != desiredMTUSupport {
+		return false
+	}
+	// Unrelated network updates can leave the cached annotation blob older than the current node.
+	// Default/L3 updates already compare per-network node subnets; L2 gateways use network subnets.
+	// Avoid repeatedly parsing the cached blob on normal updates.
+	if !bootstrapRetry {
+		return true
+	}
+	return state.gatewayAnnotation == node.Annotations[util.OvnNodeL3GatewayConfig] &&
+		!util.NodeSubnetAnnotationRawChangedForNetwork(node.Name, state.subnetAnnotation,
+			node.Annotations[types.NodeSubnetsAnnotation], netName)
+}
+
 type GatewayManager struct {
+	gatewayMTUSupportCache  *sync.Map
 	nodeName                string
 	clusterRouterName       string
 	gwRouterName            string
@@ -69,6 +93,15 @@ type GatewayManager struct {
 
 type GatewayOption func(*GatewayManager)
 
+// recordGatewayMTUSupport caches handled MTU state, not full gateway success; callers set gatewaysFailed if later work fails.
+func (gw *GatewayManager) recordGatewayMTUSupport(node *corev1.Node, support bool) {
+	gw.gatewayMTUSupportCache.Store(node.Name, gatewayMTUSyncState{
+		support:           support,
+		gatewayAnnotation: node.Annotations[util.OvnNodeL3GatewayConfig],
+		subnetAnnotation:  node.Annotations[types.NodeSubnetsAnnotation],
+	})
+}
+
 func NewGatewayManagerForLayer2Topology(
 	nodeName string,
 	coopUUID string,
@@ -78,6 +111,7 @@ func NewGatewayManagerForLayer2Topology(
 	watchFactory *factory.WatchFactory,
 	nodeAnnotationCache *nodecontroller.NodeAnnotationCache,
 	addressSetManager *addresssetmanager.AddressSetManager,
+	gatewayMTUSupportCache *sync.Map,
 	useTransitRouter bool,
 	opts ...GatewayOption,
 ) *GatewayManager {
@@ -97,6 +131,7 @@ func NewGatewayManagerForLayer2Topology(
 		watchFactory,
 		nodeAnnotationCache,
 		addressSetManager,
+		gatewayMTUSupportCache,
 		opts...,
 	)
 }
@@ -110,6 +145,7 @@ func NewGatewayManager(
 	watchFactory *factory.WatchFactory,
 	nodeAnnotationCache *nodecontroller.NodeAnnotationCache,
 	addressSetManager *addresssetmanager.AddressSetManager,
+	gatewayMTUSupportCache *sync.Map,
 	opts ...GatewayOption,
 ) *GatewayManager {
 	return newGWManager(
@@ -124,6 +160,7 @@ func NewGatewayManager(
 		watchFactory,
 		nodeAnnotationCache,
 		addressSetManager,
+		gatewayMTUSupportCache,
 		opts...,
 	)
 }
@@ -137,6 +174,7 @@ func newGWManager(
 	watchFactory *factory.WatchFactory,
 	nodeAnnotationCache *nodecontroller.NodeAnnotationCache,
 	addressSetManager *addresssetmanager.AddressSetManager,
+	gatewayMTUSupportCache *sync.Map,
 	opts ...GatewayOption) *GatewayManager {
 	gwManager := &GatewayManager{
 		nodeName:            nodeName,
@@ -151,6 +189,8 @@ func newGWManager(
 		watchFactory:        watchFactory,
 		nodeAnnotationCache: nodeAnnotationCache,
 		addressSetManager:   addressSetManager,
+
+		gatewayMTUSupportCache: gatewayMTUSupportCache,
 	}
 
 	for _, opt := range opts {
@@ -1925,13 +1965,19 @@ func (gw *GatewayManager) SyncGateway(
 	node *corev1.Node,
 	gwConfig *GatewayConfig,
 ) error {
+	// Cleanup-only managers have no MTU cache and must not be used for reconciliation.
+	if gw.gatewayMTUSupportCache == nil {
+		return fmt.Errorf("gateway manager for node %s was built without an MTU support cache", gw.nodeName)
+	}
 	if gwConfig.annoConfig.Mode == config.GatewayModeDisabled {
 		if err := gw.Cleanup(); err != nil {
 			return fmt.Errorf("error cleaning up gateway for node %s: %v", node.Name, err)
 		}
+		gw.recordGatewayMTUSupport(node, util.ParseNodeGatewayMTUSupport(node))
 		return nil
 	}
 	if gwConfig.hostSubnets == nil {
+		gw.recordGatewayMTUSupport(node, util.ParseNodeGatewayMTUSupport(node))
 		return nil
 	}
 
@@ -1945,6 +1991,8 @@ func (gw *GatewayManager) SyncGateway(
 	if err != nil {
 		return fmt.Errorf("failed to init gateway for network %q: %v", gw.netInfo.GetNetworkName(), err)
 	}
+
+	gw.recordGatewayMTUSupport(node, enableGatewayMTU)
 
 	routerName := gw.clusterRouterName
 	if gw.clusterRouterName == "" {

@@ -595,6 +595,125 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 		Expect(app.Run([]string{app.Name})).To(Succeed())
 	})
 
+	DescribeTable("primary layer 2 UDN: reconciles options:gateway_mtu on the transit router port when gateway MTU support changes", func(duringBootstrap, transitRouter bool) {
+		config.OVNKubernetesFeature.EnableMultiNetwork = true
+		setupConfig(dummyLayer2PrimaryUserDefinedNetwork("192.168.0.0/16"), testConfiguration{}, config.GatewayModeShared)
+		app.Action = func(*cli.Context) error {
+			netInfo := dummyLayer2PrimaryUserDefinedNetwork("192.168.0.0/16")
+			netConf := netInfo.netconf()
+
+			nad, err := newNetworkAttachmentDefinition(ns, nadName, *netConf)
+			Expect(err).NotTo(HaveOccurred())
+
+			const nodeIPv4CIDR = "192.168.126.202/24"
+			testNode, err := newNodeWithUserDefinedNetworks(nodeName, nodeIPv4CIDR, netInfo)
+			Expect(err).NotTo(HaveOccurred())
+			originalTopology := config.Layer2UsesTransitRouter
+			DeferCleanup(func() { config.Layer2UsesTransitRouter = originalTopology })
+			config.Layer2UsesTransitRouter = transitRouter
+			if !transitRouter {
+				delete(testNode.Annotations, util.Layer2TopologyVersion)
+			}
+			initialDB.NBData = append(initialDB.NBData, &nbdb.NBGlobal{Name: nodeName, UUID: nodeName})
+
+			fakeOvn.startWithDBSetup(
+				initialDB,
+				&corev1.NamespaceList{Items: []corev1.Namespace{*newUDNNamespace(ns)}},
+				&corev1.NodeList{Items: []corev1.Node{*testNode}},
+				&corev1.PodList{Items: []corev1.Pod{}},
+				&nadapi.NetworkAttachmentDefinitionList{Items: []nadapi.NetworkAttachmentDefinition{*nad}},
+			)
+
+			Expect(fakeOvn.networkManager.Start()).To(Succeed())
+			defer fakeOvn.networkManager.Stop()
+
+			l2Controller, ok := fakeOvn.fullL2UDNControllers[userDefinedNetworkName]
+			Expect(ok).To(BeTrue())
+			Expect(l2Controller.init(context.Background())).To(Succeed())
+			udnNetController, ok := fakeOvn.userDefinedNetworkControllers[userDefinedNetworkName]
+			Expect(ok).To(BeTrue())
+			udnNetController.bnc.ovnClusterLRPToJoinIfAddrs = dummyJoinIPs()
+			if duringBootstrap {
+				By("leaving bootstrap incomplete after the router port has been created")
+				partialNode := testNode.DeepCopy()
+				delete(partialNode.Annotations, util.OvnNodeL3GatewayConfig)
+				Expect(l2Controller.ReconcileNode(context.Background(), nil, partialNode, nil, nil)).To(HaveOccurred())
+				_, failed := l2Controller.nodeClusterRouterPortFailed.Load(nodeName)
+				Expect(failed).To(BeFalse())
+			} else {
+				Expect(l2Controller.RegisterNodeHandler()).To(Succeed())
+			}
+			Expect(l2Controller.WatchNamespaces()).To(Succeed())
+			Expect(l2Controller.WatchPods()).To(Succeed())
+
+			lrpName := l2Controller.GetNetworkScopedRouterToSwitchPortName(nodeName)
+			if !transitRouter {
+				lrpName = l2Controller.gatewayManagerForNode(nodeName).getGWRouterPortName()
+			}
+			transitRouterPortOptions := func() (map[string]string, error) {
+				lrp, err := libovsdbops.GetLogicalRouterPort(fakeOvn.nbClient,
+					&nbdb.LogicalRouterPort{Name: lrpName})
+				if err != nil {
+					return nil, err
+				}
+				return lrp.Options, nil
+			}
+
+			By("setting options:gateway_mtu while the node reports gateway MTU support")
+			if duringBootstrap && !transitRouter {
+				_, err := transitRouterPortOptions()
+				Expect(err).To(HaveOccurred(), "the gateway has not been initialized yet")
+			} else {
+				Eventually(transitRouterPortOptions).WithTimeout(10 * time.Second).
+					Should(HaveKeyWithValue(libovsdbops.GatewayMTU, fmt.Sprintf("%d", config.Default.MTU)))
+			}
+
+			By("annotating the node as not supporting gateway MTU")
+			testNode, err = fakeOvn.fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			testNode.Annotations[util.OvnNodeGatewayMtuSupport] = "false"
+			_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Nodes().Update(context.TODO(), testNode, metav1.UpdateOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			if duringBootstrap {
+				Expect(l2Controller.ReconcileNode(context.Background(), nil, testNode, nil, nil)).To(Succeed())
+			}
+
+			By("removing options:gateway_mtu from the transit router port")
+			Eventually(transitRouterPortOptions).WithTimeout(10 * time.Second).
+				ShouldNot(HaveKey(libovsdbops.GatewayMTU))
+			if duringBootstrap {
+				By("reverting MTU support after a partially applied normal update")
+				partialNode := testNode.DeepCopy()
+				delete(partialNode.Annotations, util.OvnNodeGatewayMtuSupport)
+				delete(partialNode.Annotations, util.OvnNodeL3GatewayConfig)
+				Expect(l2Controller.ReconcileNode(context.Background(), testNode, partialNode, nil, nil)).To(HaveOccurred())
+				Expect(l2Controller.ReconcileNode(context.Background(), testNode, testNode, nil, nil)).To(Succeed())
+				Eventually(transitRouterPortOptions).ShouldNot(HaveKey(libovsdbops.GatewayMTU))
+			}
+
+			if transitRouter {
+				gatewayOptions := func() (map[string]string, error) {
+					lrp, err := libovsdbops.GetLogicalRouterPort(fakeOvn.nbClient, &nbdb.LogicalRouterPort{
+						Name: l2Controller.gatewayManagerForNode(nodeName).getGWRouterPortName(),
+					})
+					if err != nil {
+						return nil, err
+					}
+					return lrp.Options, nil
+				}
+				Eventually(gatewayOptions).ShouldNot(HaveKey(libovsdbops.GatewayMTU))
+			}
+
+			return nil
+		}
+		Expect(app.Run([]string{app.Name})).To(Succeed())
+	},
+		Entry("normal update with a transit router", false, true),
+		Entry("bootstrap retry with a transit router", true, true),
+		Entry("normal update with the legacy gateway topology", false, false),
+		Entry("bootstrap retry with the legacy gateway topology", true, false),
+	)
+
 	It("primary layer 2 UDN: address sets are recreated after controller network recreation", func() {
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
 		setupConfig(dummyLayer2PrimaryUserDefinedNetwork("192.168.0.0/16"), testConfiguration{}, config.GatewayModeShared)
