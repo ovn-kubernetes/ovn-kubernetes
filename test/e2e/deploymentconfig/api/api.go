@@ -22,6 +22,9 @@ type DeploymentConfig interface {
 	ExternalBridgeName() string
 	PrimaryInterfaceName() string
 	GetAgnHostContainerImage() string
+	// OVNControllerLogPath returns the host filesystem path of the ovn-controller log
+	// on cluster nodes (used by e2e to grep ACL audit lines).
+	OVNControllerLogPath() string
 	// IsConfigurationEnabled checks whether a specific configuration flag is enabled in the deployment.
 	IsConfigurationEnabled(config Config) bool
 	NBDBContainerName() string

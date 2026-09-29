@@ -39,6 +39,10 @@ func (k kind) GetAgnHostContainerImage() string {
 	return image.GetE2EImage(image.Agnhost)
 }
 
+func (k kind) OVNControllerLogPath() string {
+	return "/var/log/openvswitch/ovn-controller.log"
+}
+
 func (k kind) IsConfigurationEnabled(config api.Config) bool {
 	switch config {
 	case api.L3UDNMultiSubnetConfig:
