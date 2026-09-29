@@ -3,16 +3,22 @@
 
 package statusmetrics
 
+import (
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+)
+
 // RegisterConfiguredRollers registers resource rollers for features that are
-// enabled and implemented. Individual CRD commits append registrations here.
+// enabled and implemented.
 func RegisterConfiguredRollers(m *Manager) {
 	if m == nil {
 		return
 	}
-	// Rollers are added in subsequent commits:
-	// - EgressFirewall
-	// - EgressQoS
-	// - NetworkQoS
-	// - AdminPolicyBasedExternalRoute
-	// - AdminNetworkPolicy / BaselineAdminNetworkPolicy
+	if config.OVNKubernetesFeature.EnableEgressFirewall {
+		m.RegisterRoller(NewEgressFirewallRoller(
+			m.WatchFactory().EgressFirewallInformer().Lister(),
+			m.WatchFactory().NodeCoreInformer().Lister(),
+			m.OVNClient().EgressFirewallClient,
+			m.NetworkManager(),
+		))
+	}
 }
