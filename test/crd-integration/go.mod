@@ -32,6 +32,8 @@ require (
 // download the kube-apiserver + etcd binaries for envtest.
 tool sigs.k8s.io/controller-runtime/tools/setup-envtest
 
+require github.com/ovn-kubernetes/ovn-kubernetes/test/e2e v0.0.0-20260928202030-299cd3982aac
+
 require (
 	github.com/Masterminds/semver/v3 v3.4.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -79,7 +81,7 @@ require (
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/mod v0.35.0 // indirect
 	golang.org/x/net v0.55.0 // indirect
-	golang.org/x/oauth2 v0.34.0 // indirect
+	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/term v0.43.0 // indirect
