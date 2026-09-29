@@ -21,4 +21,10 @@ func RegisterConfiguredRollers(m *Manager) {
 			m.NetworkManager(),
 		))
 	}
+	if config.OVNKubernetesFeature.EnableEgressQoS {
+		m.RegisterRoller(NewEgressQoSRoller(
+			m.WatchFactory().EgressQoSInformer().Lister(),
+			m.OVNClient().EgressQoSClient,
+		))
+	}
 }
