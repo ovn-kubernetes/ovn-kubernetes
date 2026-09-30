@@ -76,7 +76,6 @@ RUN ./boot.sh
 RUN ./configure --with-ovs-source=/root/ovs/
 RUN make -j rpm-fedora
 RUN rm rpm/rpmbuild/RPMS/x86_64/*debug*
-RUN rm rpm/rpmbuild/RPMS/x86_64/*docker*
 RUN git log -n 1
 
 ########################################
