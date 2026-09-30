@@ -18,7 +18,6 @@ Certain inbound ARP/NDP control traffic entering br-ex is replicated to every UD
 - Changing the shared MAC architecture.
 - OVN core changes (northd, ovn-controller, SB-DB/NB-DB schema).
 - Addressing non-ARP/NDP broadcast traffic.
-- DPU mode support.
 
 ## Introduction
 
@@ -149,6 +148,8 @@ Two mechanisms work together to eliminate ARP/NDP fan-out:
 
 **Generalizing when Uplink feature is enabled:** The above describes the scenario when [Uplink](okep-6019-vrf-lite-shared-gateway-external-bridges.md) is not enabled, i.e. with the CDN GR as source (from where the MAC bindings are copied from) and every UDN GR as a follower (that gets a copy of the MAC bindings). More generally, networks that share a physical OVS bridge form a **group**, with one GR designated as the **source** and every other GR on that bridge acting as a **follower**. A UDN can instead be attached to a separate OVS bridge via the `Uplink` CRD ([OKEP-6019](okep-6019-vrf-lite-shared-gateway-external-bridges.md)); no CDN GR exists on that bridge, so the `openflow manager` designates one of its UDN GRs as the source, and the remaining UDN GRs on that same `Uplink` are followers. Both mechanisms above apply identically to any group, substituting "source GR" for "CDN GR" and "follower GR" for "UDN GR". How the uplink source is first chosen and later replaced is covered under **Source designation** and **Lifecycle Hooks** below. Secondary localnet UDNs cannot currently use Uplinks (blocked by CRD validation), so the external-ingress set on Uplink bridges covers only the physical port.
 
+**Generalizing for DPU mode:** The scenarios below are written for full mode, where the host endpoint on the bridge is OVS `LOCAL`. In DPU mode the same flow patterns apply unchanged, substituting the host PF/VF representor for `LOCAL`. Bridge configuration and static FDB programming already abstract this; the static FDB entry becomes `bridgeMAC → representor` instead of `bridgeMAC → LOCAL`. Steering flows and the `MAC Binding Controller` run on the DPU-side `ovnkube-node` only (never independently on dpu-host), matching where OVS and the gateway OpenFlow manager already run. IPv4/ARP is in scope; IPv6/NDP remains deferred while the DPU gateway path is IPv4-only.
+
 **Note on the following scenarios:** Scenarios 1-3 are drawn for the "default group" on `br-ex`, where `default_patch` is the CDN GR's patch port. On an `Uplink`-backed bridge, the same flow patterns apply unchanged, but `default_patch` refers to that bridge's designated **source** UDN GR's patch port instead (there is no CDN GR on an uplink bridge).
 
 #### Scenario 1: Outbound ARP from UDN GR
@@ -247,6 +248,7 @@ One new flag is added:
 Defaults to `false` and requires `enable-network-segmentation` (validated at startup).
 Changing the flag requires an ovnkube-node restart, which triggers a full flow sync.
 
+In DPU deployments, `disable-udn-arp-ndp-flood` takes effect only on the DPU-side `ovnkube-node` (currently IPv4/ARP). In dpu-host mode it must not install these gateway steering flows or initialize this feature's NB/SB clients or MAC Binding Controller; those run on the DPU.
 
 **Why not reuse `enable-network-segmentation`:** It is already `true` in production. A separate gate allows code to be merged incrementally and flipped only when the pipeline is proven working.
 
@@ -388,6 +390,7 @@ When `disable-udn-arp-ndp-flood` is **False**, the current codebase flows are re
 * E2E tests for multi-UDN external connectivity (IPv4 and IPv6) and MAC\_Binding propagation across UDN gateway routers for both protocols.
 * North-south scale validation (e.g. 70 UDNs) checking pod-to-external-destination connectivity.
 * Regression coverage: existing e2e suites (EgressIP, Services, NetworkPolicy on UDN) run with `disable-udn-arp-ndp-flood` is True.
+* **DPU Mode:** Run the same full mode IPv4 E2E tests also in DPU simulator lanes.
 
 ### Documentation Details
 
@@ -412,8 +415,6 @@ When `disable-udn-arp-ndp-flood` is **False**, the current codebase flows are re
 * **Process failure / SB-DB unavailable:** OVS retains its last-installed flow set on br-ex (including ovn-controller-programmed MAC_Binding flows), so the datapath continues forwarding autonomously during downtime. On restart or reconnect, libovsdb re-syncs state: delivers the full current state as ADD events, and the `MAC Binding Controller` re-applies UDN GR entries from current SB-DB state. Entries that aged out during downtime are re-created on next UDN traffic via the bootstrap path.
 
 * **Event loss under extreme churn:** Server-side conditional filtering limits the monitored set to the local node's CDN GR entries only. If events are still lost, the next periodic reconciliation or default-GR ADD event corrects any drift.
-
-* **No DPU mode support:** DPU mode uses a different architecture where the representor port replaces LOCAL. This design does not apply to DPU mode and the feature gate guard excludes it.
 
 ## OVN-Kubernetes Version Skew
 
