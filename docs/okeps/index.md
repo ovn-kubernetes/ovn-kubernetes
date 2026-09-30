@@ -28,6 +28,10 @@ Static IP address assignment for User Defined Networks.
 
 Advertising pod and service routes to external BGP routers.
 
+**[BGP NodeSelector for PodNetwork](okep-7040-bgp-node-selector-for-pod-network.md)**
+
+Selective PodNetwork advertisement through BGP gateway nodes using RouteAdvertisements and FRRConfiguration node selectors.
+
 **[Layer2 Transit Router](okep-5094-layer2-transit-router.md)**
 
 Layer 2 transit switch architecture for cross-node connectivity.
