@@ -300,7 +300,7 @@ func NewLayer2UserDefinedNetworkController(
 		oc.onLogicalPortCacheAdd = func(pod *corev1.Pod, _ string) {
 			oc.requestLocalPodPolicyRetriesForPod(pod, "logical port cache update")
 			if oc.eIPController != nil {
-				oc.eIPController.addEgressIPPodRetry(pod, "logical port cache update")
+				oc.eIPController.requestEgressIPPodRetry(pod, "logical port cache update")
 			}
 		}
 	}
