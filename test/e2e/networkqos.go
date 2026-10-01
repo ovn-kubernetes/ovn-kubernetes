@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/feature"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
 
 	"github.com/onsi/ginkgo/v2"
