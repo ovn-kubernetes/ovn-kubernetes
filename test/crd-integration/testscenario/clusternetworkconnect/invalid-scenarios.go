@@ -3,7 +3,7 @@
 
 package clusternetworkconnect
 
-import "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/testscenario"
+import "github.com/ovn-kubernetes/ovn-kubernetes/test/crd-integration/testscenario"
 
 var InvalidScenarios = []testscenario.ValidateCRScenario{
 

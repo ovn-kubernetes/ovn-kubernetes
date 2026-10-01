@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright The OVN-Kubernetes Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-package e2e
+package crdintegration
 
 import (
 	. "github.com/onsi/ginkgo/v2"
@@ -9,9 +9,9 @@ import (
 
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/crd-integration/testscenario"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/crd-integration/testscenario/clusternetworkconnect"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/feature"
-	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/testscenario"
-	testscenariocnc "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/testscenario/clusternetworkconnect"
 )
 
 var _ = Describe("ClusterNetworkConnect: API validations", feature.NetworkConnect, func() {
@@ -27,7 +27,7 @@ var _ = Describe("ClusterNetworkConnect: API validations", feature.NetworkConnec
 				Expect(stderr).To(ContainSubstring(s.ExpectedErr))
 			}
 		},
-		Entry("Invalid network selector types", testscenariocnc.InvalidScenarios),
+		Entry("Invalid network selector types", clusternetworkconnect.InvalidScenarios),
 	)
 
 	DescribeTable("api-server should accept valid ClusterNetworkConnect CRs",
@@ -41,7 +41,7 @@ var _ = Describe("ClusterNetworkConnect: API validations", feature.NetworkConnec
 				Expect(err).NotTo(HaveOccurred(), "should create valid ClusterNetworkConnect CR successfully")
 			}
 		},
-		Entry("Valid ClusterNetworkConnect configurations", testscenariocnc.ValidScenarios),
+		Entry("Valid ClusterNetworkConnect configurations", clusternetworkconnect.ValidScenarios),
 	)
 })
 
