@@ -21,7 +21,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"golang.org/x/net/context"
@@ -111,7 +110,6 @@ type kubeletClient struct {
 }
 
 func (rc *kubeletClient) getPodResources(client podresourcesapi.PodResourcesListerClient) error {
-
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -139,41 +137,33 @@ func (rc *kubeletClient) GetPodResourceMap(pod *v1.Pod) (map[string]*types.Resou
 		if pr.Name == name && pr.Namespace == ns {
 			for _, cnt := range pr.Containers {
 				rc.getDevicePluginResources(cnt.Devices, resourceMap)
-				rc.getDRAResources(cnt.DynamicResources, resourceMap)
 			}
 		}
 	}
-	types.SortDeviceIDs(resourceMap)
 	return resourceMap, nil
 }
 
 func (rc *kubeletClient) getDevicePluginResources(devices []*podresourcesapi.ContainerDevices, resourceMap map[string]*types.ResourceInfo) {
+	// One container may have several ContainerDevices rows for the same
+	// ResourceName. Aggregate those IDs, sort once, then append so this
+	// container contributes a single deterministic list without reordering
+	// other containers already in resourceMap.
+	aggregated := map[string][]string{}
+	var resourceOrder []string
+	seen := map[string]struct{}{}
 	for _, dev := range devices {
-		if rInfo, ok := resourceMap[dev.ResourceName]; ok {
-			rInfo.DeviceIDs = append(rInfo.DeviceIDs, dev.DeviceIds...)
-		} else {
-			resourceMap[dev.ResourceName] = &types.ResourceInfo{DeviceIDs: dev.DeviceIds}
+		if _, ok := seen[dev.ResourceName]; !ok {
+			seen[dev.ResourceName] = struct{}{}
+			resourceOrder = append(resourceOrder, dev.ResourceName)
 		}
+		aggregated[dev.ResourceName] = append(aggregated[dev.ResourceName], dev.DeviceIds...)
 	}
-}
-
-func (rc *kubeletClient) getDRAResources(dynamicResources []*podresourcesapi.DynamicResource, resourceMap map[string]*types.ResourceInfo) {
-	for _, dynamicResource := range dynamicResources {
-		var deviceIDs []string
-		for _, claimResource := range dynamicResource.ClaimResources {
-			for _, cdiDevice := range claimResource.CdiDevices {
-				res := strings.Split(cdiDevice.Name, "=")
-				if len(res) == 2 {
-					deviceIDs = append(deviceIDs, res[1])
-				} else {
-					logging.Errorf("GetPodResourceMap: Invalid CDI format")
-				}
-			}
-		}
-		if rInfo, ok := resourceMap[dynamicResource.ClaimName]; ok {
+	for _, name := range resourceOrder {
+		deviceIDs := types.CopyAndSortDeviceIDs(aggregated[name])
+		if rInfo, ok := resourceMap[name]; ok {
 			rInfo.DeviceIDs = append(rInfo.DeviceIDs, deviceIDs...)
 		} else {
-			resourceMap[dynamicResource.ClaimName] = &types.ResourceInfo{DeviceIDs: deviceIDs}
+			resourceMap[name] = &types.ResourceInfo{DeviceIDs: deviceIDs}
 		}
 	}
 }
