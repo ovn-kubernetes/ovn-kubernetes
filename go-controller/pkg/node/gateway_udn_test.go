@@ -330,6 +330,146 @@ func TestUplinkGatewayInterfaceName(t *testing.T) {
 	}
 }
 
+func udnMarkChainTestMapElements(targetChain, otherChain string) map[string][]knftables.Element {
+	return map[string][]knftables.Element{
+		nftablesUDNMarkNodePortsMap: {
+			{Key: []string{"tcp", "30080"}, Value: []string{"jump " + targetChain}},
+			{Key: []string{"tcp", "30081"}, Value: []string{"jump " + otherChain}},
+		},
+		nftablesUDNMarkExternalIPsV4Map: {
+			{Key: []string{"192.0.2.1", "tcp", "80"}, Value: []string{"jump " + targetChain}},
+			{Key: []string{"192.0.2.2", "tcp", "80"}, Value: []string{"jump " + otherChain}},
+		},
+		nftablesUDNMarkExternalIPsV6Map: {
+			{Key: []string{"2001:db8::1", "tcp", "80"}, Value: []string{"jump " + targetChain}},
+			{Key: []string{"2001:db8::2", "tcp", "80"}, Value: []string{"jump " + otherChain}},
+		},
+	}
+}
+
+func populateUDNMarkChainTestState(nft knftables.Interface, targetChain, otherChain string) error {
+	tx := nft.NewTransaction()
+	tx.Add(&knftables.Chain{Name: targetChain})
+	tx.Add(&knftables.Chain{Name: otherChain})
+	for mapName, elements := range udnMarkChainTestMapElements(targetChain, otherChain) {
+		mapType := "inet_proto . inet_service : verdict"
+		if mapName == nftablesUDNMarkExternalIPsV4Map {
+			mapType = "ipv4_addr . inet_proto . inet_service : verdict"
+		} else if mapName == nftablesUDNMarkExternalIPsV6Map {
+			mapType = "ipv6_addr . inet_proto . inet_service : verdict"
+		}
+		tx.Add(&knftables.Map{Name: mapName, Type: mapType})
+		for _, element := range elements {
+			element.Map = mapName
+			tx.Add(&element)
+		}
+	}
+	return nft.Run(context.Background(), tx)
+}
+
+func verifyUDNMarkChainDeleted(nft knftables.Interface, targetChain, otherChain string) error {
+	for mapName := range udnMarkChainTestMapElements(targetChain, otherChain) {
+		actual, err := nft.ListElements(context.Background(), "map", mapName)
+		if err != nil {
+			return fmt.Errorf("failed to list map %s: %w", mapName, err)
+		}
+		if len(actual) != 1 || len(actual[0].Value) != 1 || actual[0].Value[0] != "jump "+otherChain {
+			return fmt.Errorf("expected map %s to retain only the entry for %s, got %#v", mapName, otherChain, actual)
+		}
+	}
+
+	chains, err := nft.List(context.Background(), "chain")
+	if err != nil {
+		return fmt.Errorf("failed to list chains: %w", err)
+	}
+	hasTarget, hasOther := false, false
+	for _, chain := range chains {
+		hasTarget = hasTarget || chain == targetChain
+		hasOther = hasOther || chain == otherChain
+	}
+	if hasTarget || !hasOther {
+		return fmt.Errorf("expected %s to be deleted and %s to remain; chains are %v", targetChain, otherChain, chains)
+	}
+	return nil
+}
+
+func TestDelMarkChainRemovesOnlyItsServiceMapReferences(t *testing.T) {
+	nft := nodenft.SetFakeNFTablesHelper()
+	targetChain := GetUDNMarkChain("0x1001")
+	otherChain := GetUDNMarkChain("0x1002")
+	if err := populateUDNMarkChainTestState(nft, targetChain, otherChain); err != nil {
+		t.Fatalf("failed to set up fake nftables state: %v", err)
+	}
+
+	udng := &UserDefinedNetworkGateway{pktMark: 0x1001}
+	if err := udng.delMarkChain(); err != nil {
+		t.Fatalf("delMarkChain failed: %v", err)
+	}
+	if err := verifyUDNMarkChainDeleted(nft, targetChain, otherChain); err != nil {
+		t.Error(err)
+	}
+}
+
+func TestDelMarkChainAgainstKernel(t *testing.T) {
+	testNS, err := testutils.NewNS()
+	if err != nil {
+		if isKernelNFTablesUnavailable(err) {
+			t.Skipf("network namespace is unavailable: %v", err)
+		}
+		t.Fatalf("failed to create network namespace: %v", err)
+	}
+	defer testNS.Close()
+
+	err = testNS.Do(func(ns.NetNS) error {
+		nft, err := knftables.New(knftables.InetFamily, nodenft.OVNKubernetesNFTablesName)
+		if err != nil {
+			return err
+		}
+		tx := nft.NewTransaction()
+		tx.Add(&knftables.Table{})
+		if err := nft.Run(context.Background(), tx); err != nil {
+			return err
+		}
+
+		targetChain := GetUDNMarkChain("0x1001")
+		otherChain := GetUDNMarkChain("0x1002")
+		if err := populateUDNMarkChainTestState(nft, targetChain, otherChain); err != nil {
+			return fmt.Errorf("failed to populate kernel nftables state: %w", err)
+		}
+		if err := deleteUDNMarkChain(nft, 0x1001); err != nil {
+			return fmt.Errorf("failed to delete mark chain from kernel nftables: %w", err)
+		}
+		return verifyUDNMarkChainDeleted(nft, targetChain, otherChain)
+	})
+	if err != nil {
+		if isKernelNFTablesUnavailable(err) {
+			t.Skipf("kernel nftables test is unavailable: %v", err)
+		}
+		t.Fatalf("kernel nftables test failed: %v", err)
+	}
+}
+
+func isKernelNFTablesUnavailable(err error) bool {
+	if errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.ENOSYS) || errors.Is(err, syscall.EROFS) {
+		return true
+	}
+	message := strings.ToLower(err.Error())
+	for _, unavailable := range []string{
+		"operation not permitted",
+		"permission denied",
+		"read-only file system",
+		"not supported",
+		"protocol not supported",
+		"executable file not found",
+		"no such file or directory",
+	} {
+		if strings.Contains(message, unavailable) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestConfigureUplinkStaticFDBEntry(t *testing.T) {
 	tests := []struct {
 		name        string
