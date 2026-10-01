@@ -847,6 +847,9 @@ var _ = ginkgo.Describe("e2e egress IP validation", feature.EgressIP, func() {
 
 		// Determine what mode the CI is running in and get relevant endpoint information for the tests
 		ginkgo.BeforeEach(func() {
+			// If a later spec in the same network subtree skips before node assignment,
+			// AfterEach can restore nodes from the previous spec. So reset the nodes here.
+			egress1Node, egress2Node = node{}, node{}
 			providerCtx = infraprovider.Get().NewTestContext()
 			nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 3)
 			framework.ExpectNoError(err)
@@ -977,15 +980,18 @@ var _ = ginkgo.Describe("e2e egress IP validation", feature.EgressIP, func() {
 		})
 
 		ginkgo.AfterEach(func() {
-			// ensure all nodes are ready and reachable before any other cleanup;
-			// tests may have left nodes NotReady or unreachable intentionally
+			// BeforeEach may have skipped before egress nodes were set.
+			if egress1Node.name == "" {
+				return
+			}
+			// Restore egress nodes before listing Ready nodes; tests may have left
+			// them NotReady or unreachable intentionally.
 			for _, node := range []string{egress1Node.name, egress2Node.name} {
 				setNodeReady(providerCtx, node, true)
 				setNodeReachable(node, true)
 				waitForNoTaint(node, "node.kubernetes.io/unreachable")
 				waitForNoTaint(node, "node.kubernetes.io/not-ready")
 			}
-
 			nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 3)
 			framework.ExpectNoError(err)
 			if len(nodes.Items) < 3 {
@@ -2067,6 +2073,152 @@ spec:
 			ginkgo.By("27. Check connectivity from pod to an external \"node\" and verify that the IP is the egress IP")
 			err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod1Name, true, []string{egressIP1.String()}))
 			framework.ExpectNoError(err, "27. Check connectivity from pod to an external \"node\" and verify that the IP is the egress IP, failed, err: %v", err)
+		})
+
+		/* This test does the following:
+		   0. Add the "k8s.ovn.org/egress-assignable" label to two nodes
+		   1. Create two EgressIP objects with the same egress IP address
+		   2. Check that exactly one EgressIP object has status assigned and the other remains unassigned
+		   2b. For 30s, that single assignment stays on the shared IP and on one of the egress nodes
+		*/
+		ginkgo.It("Should ensure no duplicate egressIP is assigned to egress nodes", func() {
+			const (
+				egressIPCreateKubectlTimeout = 30 * time.Second
+				egressIPGetKubectlTimeout    = 15 * time.Second
+			)
+			runKubectlWithTimeout := func(timeout time.Duration, args ...string) (string, error) {
+				return e2ekubectl.NewKubectlCommand("default", args...).WithTimeout(time.After(timeout)).Exec()
+			}
+
+			ginkgo.By("0. Add the \"k8s.ovn.org/egress-assignable\" label to two nodes")
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable", "dummy")
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress2Node.name, "k8s.ovn.org/egress-assignable", "dummy")
+
+			updateNamespaceLabels(f, f.Namespace, map[string]string{
+				"name": f.Namespace.Name,
+			})
+
+			var sharedEgressIP net.IP
+			var err error
+			if utilnet.IsIPv6String(egress1Node.nodeIP) {
+				sharedEgressIP, err = allocators.NewPrimaryIPv6(egress1Node.name)
+			} else {
+				sharedEgressIP, err = allocators.NewPrimaryIPv4(egress1Node.name)
+			}
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate new Egress IP")
+
+			namespaceLabels := map[string]string{
+				"name": f.Namespace.Name,
+			}
+			egressLabels2 := map[string]string{
+				"wants": "egress2",
+			}
+
+			ginkgo.By("1. Create two EgressIP objects with the same egress IP address")
+			egressIPConfig := createEIPManifest(egressIPName, podEgressLabel, namespaceLabels, sharedEgressIP.String())
+			if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
+				framework.Failf("Unable to write CRD config to disk: %v", err)
+			}
+			defer func() {
+				if err := os.Remove(egressIPYaml); err != nil {
+					framework.Logf("Unable to remove the CRD config from disk: %v", err)
+				}
+			}()
+			framework.Logf("Create the first EgressIP configuration")
+			_, err = runKubectlWithTimeout(egressIPCreateKubectlTimeout, "create", "-f", egressIPYaml)
+			framework.ExpectNoError(err, "failed to create EgressIP %q", egressIPName)
+			ginkgo.DeferCleanup(func() {
+				e2ekubectl.RunKubectl("default", "delete", "eip", egressIPName, "--ignore-not-found=true")
+			})
+
+			egressIPConfig2 := createEIPManifest(egressIPName2, egressLabels2, namespaceLabels, sharedEgressIP.String())
+			if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig2), 0644); err != nil {
+				framework.Failf("Unable to write CRD config to disk: %v", err)
+			}
+			framework.Logf("Create the second EgressIP configuration")
+			_, err = runKubectlWithTimeout(egressIPCreateKubectlTimeout, "create", "-f", egressIPYaml)
+			framework.ExpectNoError(err, "failed to create EgressIP %q", egressIPName2)
+			ginkgo.DeferCleanup(func() {
+				e2ekubectl.RunKubectl("default", "delete", "eip", egressIPName2, "--ignore-not-found=true")
+			})
+
+			getBothEgressIPStatuses := func() (status1, status2 []egressIPStatus, err error) {
+				egressIPStdout, err := runKubectlWithTimeout(egressIPGetKubectlTimeout, "get", "eip", "-o", "json")
+				if err != nil {
+					return nil, nil, fmt.Errorf("failed to get EgressIP objects: %w", err)
+				}
+				allEgressIPs := egressIPs{}
+				if err := json.Unmarshal([]byte(egressIPStdout), &allEgressIPs); err != nil {
+					return nil, nil, fmt.Errorf("failed to decode EgressIP objects: %w", err)
+				}
+				var found1, found2 bool
+				for _, item := range allEgressIPs.Items {
+					switch item.Metadata.Name {
+					case egressIPName:
+						status1 = item.Status.Items
+						found1 = true
+					case egressIPName2:
+						status2 = item.Status.Items
+						found2 = true
+					}
+				}
+				if !found1 || !found2 {
+					return nil, nil, fmt.Errorf("expected EgressIP objects %q and %q in list, saw %d items",
+						egressIPName, egressIPName2, len(allEgressIPs.Items))
+				}
+				return status1, status2, nil
+			}
+
+			ginkgo.By("2. Check that exactly one EgressIP object is assigned and the other is not")
+			err = wait.PollImmediate(retryInterval, retryTimeout, func() (bool, error) {
+				status1, status2, err := getBothEgressIPStatuses()
+				if err != nil {
+					return false, fmt.Errorf("polling EgressIP assignment for %q and %q (shared IP %s): %w",
+						egressIPName, egressIPName2, sharedEgressIP.String(), err)
+				}
+				if len(status1)+len(status2) != 1 {
+					return false, nil
+				}
+				assigned := status1
+				if len(status1) != 1 {
+					assigned = status2
+				}
+				if assigned[0].EgressIP != sharedEgressIP.String() {
+					return false, nil
+				}
+				if assigned[0].Node != egress1Node.name && assigned[0].Node != egress2Node.name {
+					return false, nil
+				}
+				return true, nil
+			})
+			allowedEgressNodes := []string{egress1Node.name, egress2Node.name}
+			framework.ExpectNoError(err,
+				"expected exactly one assignment for shared egress IP %s across EgressIPs %q and %q on allowed nodes %v",
+				sharedEgressIP.String(), egressIPName, egressIPName2, allowedEgressNodes)
+
+			ginkgo.By("2b. Ensure the single assignment stays on one egress node while reconciliation continues")
+			gomega.Consistently(func(g gomega.Gomega) {
+				status1, status2, err := getBothEgressIPStatuses()
+				g.Expect(err).NotTo(gomega.HaveOccurred(),
+					"failed to get EgressIP status for %q and %q", egressIPName, egressIPName2)
+				g.Expect(len(status1)+len(status2)).To(gomega.Equal(1),
+					"expected exactly one assignment across EgressIPs %q and %q for shared IP %s on allowed nodes %v; %q has %d status items, %q has %d",
+					egressIPName, egressIPName2, sharedEgressIP.String(), allowedEgressNodes,
+					egressIPName, len(status1), egressIPName2, len(status2))
+				assigned := status1
+				assignedName := egressIPName
+				if len(status1) != 1 {
+					assigned = status2
+					assignedName = egressIPName2
+				}
+				g.Expect(assigned[0].EgressIP).To(gomega.Equal(sharedEgressIP.String()),
+					"EgressIP %q should advertise shared IP %s", assignedName, sharedEgressIP.String())
+				g.Expect(allowedEgressNodes).To(gomega.ContainElement(assigned[0].Node),
+					"EgressIP %q assigned node %q should be one of allowed nodes %v for shared IP %s",
+					assignedName, assigned[0].Node, allowedEgressNodes, sharedEgressIP.String())
+			}, 30*time.Second, retryInterval).Should(gomega.Succeed(),
+				"EgressIPs %q and %q should keep a single assignment of shared IP %s on nodes %v",
+				egressIPName, egressIPName2, sharedEgressIP.String(), allowedEgressNodes)
 		})
 
 		// Validate the egress IP works with egress firewall by creating two httpd
