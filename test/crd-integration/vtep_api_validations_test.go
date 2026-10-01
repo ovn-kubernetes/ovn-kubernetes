@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright The OVN-Kubernetes Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-package e2e
+package crdintegration
 
 import (
 	. "github.com/onsi/ginkgo/v2"
@@ -9,9 +9,9 @@ import (
 
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/crd-integration/testscenario"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/crd-integration/testscenario/vtep"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/feature"
-	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/testscenario"
-	testscenariovtep "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/testscenario/vtep"
 )
 
 var _ = Describe("EVPN: VTEP API validations", feature.RouteAdvertisements, feature.EVPN, func() {
@@ -27,7 +27,7 @@ var _ = Describe("EVPN: VTEP API validations", feature.RouteAdvertisements, feat
 				Expect(stderr).To(ContainSubstring(s.ExpectedErr))
 			}
 		},
-		Entry("Invalid VTEP configurations", testscenariovtep.Invalid),
+		Entry("Invalid VTEP configurations", vtep.Invalid),
 	)
 
 	DescribeTable("api-server should accept valid VTEP CRs",
@@ -41,7 +41,7 @@ var _ = Describe("EVPN: VTEP API validations", feature.RouteAdvertisements, feat
 				Expect(err).NotTo(HaveOccurred(), "should create valid VTEP CR successfully")
 			}
 		},
-		Entry("Valid VTEP configurations", testscenariovtep.Valid),
+		Entry("Valid VTEP configurations", vtep.Valid),
 	)
 
 	DescribeTable("api-server should reject invalid VTEP updates",
@@ -60,7 +60,7 @@ var _ = Describe("EVPN: VTEP API validations", feature.RouteAdvertisements, feat
 				Expect(stderr).To(ContainSubstring(s.ExpectedErr))
 			}
 		},
-		Entry("Invalid VTEP update configurations", testscenariovtep.InvalidUpdates),
+		Entry("Invalid VTEP update configurations", vtep.InvalidUpdates),
 	)
 
 	DescribeTable("api-server should accept valid VTEP updates",
@@ -78,7 +78,7 @@ var _ = Describe("EVPN: VTEP API validations", feature.RouteAdvertisements, feat
 				Expect(err).NotTo(HaveOccurred(), "should update VTEP CR successfully")
 			}
 		},
-		Entry("Valid VTEP update configurations", testscenariovtep.ValidUpdates),
+		Entry("Valid VTEP update configurations", vtep.ValidUpdates),
 	)
 })
 
