@@ -7,8 +7,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
-
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/crd-integration/testscenario"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/crd-integration/testscenario/clusternetworkconnect"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/feature"
@@ -18,13 +16,15 @@ var _ = Describe("ClusterNetworkConnect: API validations", feature.NetworkConnec
 	DescribeTable("api-server should reject invalid ClusterNetworkConnect CRs",
 		func(scenarios []testscenario.ValidateCRScenario) {
 			DeferCleanup(func() {
-				cleanupClusterNetworkConnectCRsTest(scenarios)
+				cleanupValidateCRsTest(ctx, k8sClient, scenarios)
 			})
 			for _, s := range scenarios {
 				By(s.Description)
-				_, stderr, err := e2ekubectl.NewKubectlCommand("", "apply", "-f", "-").WithStdinData(s.Manifest).ExecWithFullOutput()
+				obj, err := testscenario.ValidateScenarioToObject(s)
+				Expect(err).ToNot(HaveOccurred(), "must convert scenario to kubernetes object")
+				err = k8sClient.Create(ctx, obj)
 				Expect(err).To(HaveOccurred(), "should fail to create invalid ClusterNetworkConnect CR")
-				Expect(stderr).To(ContainSubstring(s.ExpectedErr))
+				Expect(err.Error()).To(ContainSubstring(s.ExpectedErr))
 			}
 		},
 		Entry("Invalid network selector types", clusternetworkconnect.InvalidScenarios),
@@ -33,23 +33,16 @@ var _ = Describe("ClusterNetworkConnect: API validations", feature.NetworkConnec
 	DescribeTable("api-server should accept valid ClusterNetworkConnect CRs",
 		func(scenarios []testscenario.ValidateCRScenario) {
 			DeferCleanup(func() {
-				cleanupClusterNetworkConnectCRsTest(scenarios)
+				cleanupValidateCRsTest(ctx, k8sClient, scenarios)
 			})
 			for _, s := range scenarios {
 				By(s.Description)
-				_, err := e2ekubectl.RunKubectlInput("", s.Manifest, "apply", "-f", "-")
+				obj, err := testscenario.ValidateScenarioToObject(s)
+				Expect(err).ToNot(HaveOccurred(), "must convert scenario to kubernetes object")
+				err = k8sClient.Create(ctx, obj)
 				Expect(err).NotTo(HaveOccurred(), "should create valid ClusterNetworkConnect CR successfully")
 			}
 		},
 		Entry("Valid ClusterNetworkConnect configurations", clusternetworkconnect.ValidScenarios),
 	)
 })
-
-func cleanupClusterNetworkConnectCRsTest(scenarios []testscenario.ValidateCRScenario) {
-	for _, s := range scenarios {
-		e2ekubectl.RunKubectlInput("", s.Manifest, "delete", "-f", "-")
-	}
-	_, stderr, err := e2ekubectl.RunKubectlWithFullOutput("", "get", "clusternetworkconnects")
-	Expect(err).NotTo(HaveOccurred())
-	Expect(stderr).To(Equal("No resources found\n"))
-}
