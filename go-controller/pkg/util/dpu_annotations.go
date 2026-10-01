@@ -160,9 +160,8 @@ func UnmarshalPodDPUConnStatusAllNetworks(annotations map[string]string) (map[st
 }
 
 // MarshalPodDPUConnStatus merges the given connection statuses into the pod's
-// DPU connection status annotation. Only the keys present in statusMap are
-// updated or deleted; other existing entries are left intact. A nil value
-// in the map deletes that NAD's status entry.
+// DPU connection status annotation. Only the keys in statusMap are touched, and
+// a nil value deletes that NAD's entry.
 func MarshalPodDPUConnStatus(annotations map[string]string, statusMap map[string]*DPUConnectionStatus) (map[string]string, error) {
 	if annotations == nil {
 		annotations = make(map[string]string)
@@ -223,9 +222,8 @@ func UnmarshalPodDPUConnStatus(annotations map[string]string, nadKey string) (*D
 }
 
 // UpdatePodDPUConnStatusWithRetry updates the DPU connection status annotation
-// on the pod retrying on conflict. Only the keys in statusMap are updated;
-// existing entries for other NADs are left intact. A nil value deletes that
-// NAD's status entry.
+// on the pod, retrying on conflict. Only the keys in statusMap are touched, and
+// a nil value deletes that NAD's entry.
 func UpdatePodDPUConnStatusWithRetry(podLister listers.PodLister, kube kube.Interface, pod *corev1.Pod, statusMap map[string]*DPUConnectionStatus) error {
 	updatePodAnnotationNoRollback := func(pod *corev1.Pod) (*corev1.Pod, func(), error) {
 		var err error

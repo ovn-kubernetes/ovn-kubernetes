@@ -5,14 +5,16 @@ package dpu
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
+
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
@@ -21,18 +23,19 @@ import (
 	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 )
 
-// dpuConnectionState tracks the per-NAD DPU connection state for a pod stored
-// in podNADToDPUCDMap. It uses the resolved VF representor name directly instead
-// of PfId/VfId, allowing state to be bootstrapped from OVS external_ids on restart.
+// dpuConnectionState is the DPU connection state of one NAD of a pod. The VF
+// representor name is stored already resolved, so that the state can be rebuilt
+// from OVS external_ids on restart.
 type dpuConnectionState struct {
 	vfRepName string
 	sandboxId string
 }
 
-// podDPUState wraps the per-NAD state map with a mutex to protect concurrent
-// access from different reconcilers (e.g. pod and NAD reconciler).
+// podDPUState holds the per-NAD state of a single pod, along with the UID of the
+// pod incarnation it was created for. Access is serialized by the podStates key
+// lock.
 type podDPUState struct {
-	sync.Mutex
+	uid       k8stypes.UID
 	nadStates map[string]*dpuConnectionState
 }
 
@@ -43,11 +46,11 @@ func (c *Controller) addDPUPodForNAD(pod *corev1.Pod, state *dpuConnectionState,
 	podInterfaceInfo, err := cni.PodAnnotation2PodInfo(pod.Annotations, nil,
 		string(pod.UID), "", nadKey, netInfo.GetNetworkName(), netInfo.MTU())
 	if err != nil {
-		return fmt.Errorf("failed to get pod interface information of %s: %v. retrying", podDesc, err)
+		return fmt.Errorf("failed to get pod interface information of %s: %v", podDesc, err)
 	}
 	err = c.addRepPort(pod, state, podInterfaceInfo, getter)
 	if err != nil {
-		return fmt.Errorf("failed to add rep port for %s, %v. retrying", podDesc, err)
+		return fmt.Errorf("failed to add rep port for %s: %v", podDesc, err)
 	}
 	return nil
 }
@@ -62,59 +65,68 @@ func dpuConnectionStateChanged(oldState *dpuConnectionState, newState *dpuConnec
 	return oldState.vfRepName != newState.vfRepName || oldState.sandboxId != newState.sandboxId
 }
 
-// getNetInfoForNADKey returns the NetInfo for a NAD key. The nadKey may be
-// indexed (e.g. "ns/nad/1" when a pod references the same NAD multiple times),
-// but networkMgr only tracks the base "ns/nad" key, so we strip the index.
-// For the default network, GetNetInfoForNADKey doesn't work because the default
-// network has no NAD resource, so we fall back to GetNetwork.
-func (c *Controller) getNetInfoForNADKey(nadKey string) util.NetInfo {
+// getNetInfoForNADKey returns the NetInfo for a NAD key, or nil when the NAD it
+// names no longer exists. An indexed key ("ns/nad/1", from a pod referencing the
+// same NAD more than once) is stripped to the base key networkMgr tracks, and
+// the default network is looked up with GetNetwork since it has no NAD resource.
+// A key that cannot be parsed is a malformed annotation rather than a deleted
+// NAD, so it is reported as an error.
+func (c *Controller) getNetInfoForNADKey(nadKey string) (util.NetInfo, error) {
 	if nadKey == types.DefaultNetworkName {
-		return c.networkMgr.GetNetwork(nadKey)
+		return c.networkMgr.GetNetwork(nadKey), nil
 	}
 	nadName, _, err := util.GetNadFromIndexedNADKey(nadKey)
 	if err != nil {
-		klog.Warningf("Failed to parse NAD key %s: %v", nadKey, err)
-		return nil
+		return nil, fmt.Errorf("failed to parse NAD key %s: %w", nadKey, err)
 	}
-	return c.networkMgr.GetNetInfoForNADKey(nadName)
+	return c.networkMgr.GetNetInfoForNADKey(nadName), nil
 }
 
-// handleAddOrUpdateDPUPod reconciles DPU state for a pod
+// handleAddOrUpdateDPUPod reconciles DPU state for a pod.
+// The podStates lock for podKey must be held by the caller.
 func (c *Controller) handleAddOrUpdateDPUPod(podKey string, pod *corev1.Pod, clientSet cni.PodInfoGetter) error {
 	allDPUCDs, err := util.UnmarshalPodDPUConnDetailsAllNetworks(pod.Annotations)
 	if err != nil {
 		return err
 	}
 
-	// Desired NADs: those present in the DPU connection details annotation
-	// AND whose network still exists in networkMgr.
-	desiredNADStates := make(map[string]*dpuConnectionState)
+	// Desired NADs: those in the connection details annotation whose network
+	// still exists. Each one keeps the NetInfo the add below configures from.
+	type desiredNAD struct {
+		state   *dpuConnectionState
+		netInfo util.NetInfo
+	}
+	desiredNADs := make(map[string]desiredNAD)
 	for nadKey, dpuCD := range allDPUCDs {
-		if c.getNetInfoForNADKey(nadKey) != nil {
-			vfRepName, err := util.GetDPUOps().GetPortRepresentor(dpuCD.PfId, dpuCD.VfId)
-			if err != nil {
-				return fmt.Errorf("failed to get VF representor for pod %s/%s NAD %s (PfId=%s, VfId=%s): %v",
-					pod.Namespace, pod.Name, nadKey, dpuCD.PfId, dpuCD.VfId, err)
-			}
-			desiredNADStates[nadKey] = &dpuConnectionState{
+		netInfo, err := c.getNetInfoForNADKey(nadKey)
+		if err != nil {
+			return err
+		}
+		if netInfo == nil {
+			klog.V(5).Infof("Network of NAD %s not found, skipping it for pod %s", nadKey, podKey)
+			continue
+		}
+		vfRepName, err := util.GetDPUOps().GetPortRepresentor(dpuCD.PfId, dpuCD.VfId)
+		if err != nil {
+			return fmt.Errorf("failed to get VF representor for pod %s/%s NAD %s (PfId=%s, VfId=%s): %v",
+				pod.Namespace, pod.Name, nadKey, dpuCD.PfId, dpuCD.VfId, err)
+		}
+		desiredNADs[nadKey] = desiredNAD{
+			state: &dpuConnectionState{
 				vfRepName: vfRepName,
 				sandboxId: dpuCD.SandboxId,
-			}
+			},
+			netInfo: netInfo,
 		}
 	}
-	if len(desiredNADStates) == 0 {
-		return c.handleDeleteDPUPodByKey(podKey)
+	if len(desiredNADs) == 0 {
+		return c.handleDeleteDPUPod(podKey, pod)
 	}
 
-	var ps *podDPUState
-	if v, ok := c.podNADToDPUCDMap.Load(pod.UID); ok {
-		ps = v.(*podDPUState)
-	} else {
-		ps = &podDPUState{nadStates: make(map[string]*dpuConnectionState)}
-		c.podNADToDPUCDMap.Store(pod.UID, ps)
-	}
-	ps.Lock()
-	defer ps.Unlock()
+	ps, _ := c.podStates.LoadOrStore(podKey, &podDPUState{
+		uid:       pod.UID,
+		nadStates: make(map[string]*dpuConnectionState),
+	})
 
 	klog.V(5).Infof("Reconcile for Pod: %s (UID %s)", podKey, pod.UID)
 
@@ -122,10 +134,11 @@ func (c *Controller) handleAddOrUpdateDPUPod(podKey string, pod *corev1.Pod, cli
 
 	// First clean up NADs that existed before but are either not desired or updated.
 	var validPortsToDelete []string
-	var nadsToDelete []string
+	var nadsToUntrack []string
+	nadsToKeep := make(map[string]*dpuConnectionState, len(ps.nadStates))
 	for nadKey, state := range ps.nadStates {
-		desiredState, exists := desiredNADStates[nadKey]
-		if !exists || dpuConnectionStateChanged(state, desiredState) {
+		desired, exists := desiredNADs[nadKey]
+		if !exists || dpuConnectionStateChanged(state, desired.state) {
 			klog.Infof("Deleting stale VF representor %s for pod %s NAD %s", state.vfRepName, podKey, nadKey)
 			valid, err := validateRepPort(state.vfRepName, state.sandboxId, nadKey)
 			if err != nil {
@@ -134,9 +147,35 @@ func (c *Controller) handleAddOrUpdateDPUPod(podKey string, pod *corev1.Pod, cli
 			if valid {
 				validPortsToDelete = append(validPortsToDelete, state.vfRepName)
 			}
-			nadsToDelete = append(nadsToDelete, nadKey)
+			nadsToUntrack = append(nadsToUntrack, nadKey)
+			continue
 		}
+		if _, err := libovsdbops.GetOVSInterface(c.ovsClient, state.vfRepName); err != nil {
+			if !errors.Is(err, libovsdbclient.ErrNotFound) {
+				return fmt.Errorf("failed to look up representor %s for pod %s NAD %s: %w",
+					state.vfRepName, podKey, nadKey, err)
+			}
+			// Untracking it is what makes the loop below add it back.
+			klog.Infof("VF representor %s for pod %s NAD %s is gone from OVS, re-adding",
+				state.vfRepName, podKey, nadKey)
+			nadsToUntrack = append(nadsToUntrack, nadKey)
+			continue
+		}
+		nadsToKeep[nadKey] = state
 	}
+
+	// Make the status match the NADs that stay configured, before the deletions
+	// below: the host side waits on this status to plumb a new sandbox, and must
+	// not be told a representor is ready once it has been deleted. NADs added
+	// below get their status from addRepPort instead.
+	if err := c.reconcileDPUConnStatus(pod, podKey, nadsToKeep); err != nil {
+		if len(validPortsToDelete) > 0 {
+			// Nothing is untracked yet, so the next retry finds these ports.
+			return err
+		}
+		errs = append(errs, err)
+	}
+
 	if len(validPortsToDelete) > 0 {
 		setRepPortInterfacesDown(validPortsToDelete)
 		if err := libovsdbops.DeleteMultiplePortsWithInterfaces(c.ovsClient, "br-int", validPortsToDelete...); err != nil {
@@ -144,78 +183,80 @@ func (c *Controller) handleAddOrUpdateDPUPod(podKey string, pod *corev1.Pod, cli
 		}
 	}
 
-	if len(nadsToDelete) > 0 {
-		// Update connection status in one go
-		statusMap := map[string]*util.DPUConnectionStatus{}
-		for _, nadKey := range nadsToDelete {
-			statusMap[nadKey] = nil
-		}
-		if err := util.UpdatePodDPUConnStatusWithRetry(c.watchFactory.PodCoreInformer().Lister(), c.kube, pod, statusMap); err != nil {
-			if !util.IsAnnotationAlreadySetError(err) {
-				return fmt.Errorf("failed to clear DPU connection status %v for pod %s: %v", statusMap, podKey, err)
-			}
-		}
-		for _, nadKey := range nadsToDelete {
-			delete(ps.nadStates, nadKey)
-		}
+	// Only untrack once the ports are gone, so that a failed deletion is picked
+	// up by the next retry.
+	for _, nadKey := range nadsToUntrack {
+		delete(ps.nadStates, nadKey)
 	}
 
 	// Then setup NADs that are new or updated.
-	for nadKey, desiredState := range desiredNADStates {
-		if _, ok := ps.nadStates[nadKey]; !ok {
-			netInfo := c.getNetInfoForNADKey(nadKey)
-			if netInfo == nil {
-				klog.Warningf("Network not found for NAD %s, skipping pod %s", nadKey, podKey)
-				continue
-			}
-			if err := c.addDPUPodForNAD(pod, desiredState, netInfo, nadKey, clientSet); err != nil {
-				klog.Errorf("Error adding pod %s NAD %s: %v", podKey, nadKey, err)
-				errs = append(errs, err)
-				continue
-			}
-			ps.nadStates[nadKey] = desiredState
+	for nadKey, desired := range desiredNADs {
+		if _, ok := ps.nadStates[nadKey]; ok {
+			continue
 		}
+		if err := c.addDPUPodForNAD(pod, desired.state, desired.netInfo, nadKey, clientSet); err != nil {
+			klog.Errorf("Error adding pod %s NAD %s: %v", podKey, nadKey, err)
+			errs = append(errs, err)
+			continue
+		}
+		ps.nadStates[nadKey] = desired.state
 	}
 
-	c.podKeyToUID.Store(podKey, pod.UID)
 	return utilerrors.Join(errs...)
 }
 
-// handleDeleteDPUPodByKey cleans up DPU state using the namespace/name key to find the UID.
-// Only removes the podKeyToUID entry after all NAD state has been successfully cleaned up,
-// so that retries can still locate the UID.
-func (c *Controller) handleDeleteDPUPodByKey(podKey string) error {
-	uidVal, ok := c.podKeyToUID.Load(podKey)
-	if !ok {
-		return nil
-	}
-	uid := uidVal.(k8stypes.UID)
-	if err := c.handleDeleteDPUPodByUID(uid, podKey); err != nil {
+// reconcileDPUConnStatus makes the pod's connection status annotation match the
+// NADs tracked for it: every tracked NAD is reported ready, every other entry
+// is removed.
+func (c *Controller) reconcileDPUConnStatus(pod *corev1.Pod, podKey string, tracked map[string]*dpuConnectionState) error {
+	currentStatus, err := util.UnmarshalPodDPUConnStatusAllNetworks(pod.Annotations)
+	if err != nil {
 		return err
 	}
-	c.podKeyToUID.Delete(podKey)
+
+	statusMap := map[string]*util.DPUConnectionStatus{}
+	for nadKey := range tracked {
+		if status, ok := currentStatus[nadKey]; !ok || status.Status != util.DPUConnectionStatusReady {
+			statusMap[nadKey] = &util.DPUConnectionStatus{Status: util.DPUConnectionStatusReady}
+		}
+	}
+	for nadKey := range currentStatus {
+		if _, ok := tracked[nadKey]; !ok {
+			statusMap[nadKey] = nil
+		}
+	}
+	if len(statusMap) == 0 {
+		return nil
+	}
+
+	klog.V(5).Infof("Updating DPU connection status of pod %s for %d NADs", podKey, len(statusMap))
+	err = util.UpdatePodDPUConnStatusWithRetry(c.watchFactory.PodCoreInformer().Lister(), c.kube, pod, statusMap)
+	if err != nil && !util.IsAnnotationAlreadySetError(err) {
+		return fmt.Errorf("failed to update DPU connection status of pod %s: %v", podKey, err)
+	}
 	return nil
 }
 
-// handleDeleteDPUPodByUID cleans up DPU state for a specific pod UID.
-// Pod is already deleted, so no annotation updates are needed; port deletions
-// are batched into a single OVSDB transaction.
-func (c *Controller) handleDeleteDPUPodByUID(uid k8stypes.UID, podKey string) error {
-	v, ok := c.podNADToDPUCDMap.Load(uid)
+// handleDeleteDPUPod cleans up all DPU state tracked for podKey, batching the
+// port deletions into a single OVSDB transaction. pod must be passed when it
+// still exists, so that the connection status it carries can be cleared; a UID
+// mismatch means the state belongs to an earlier pod of the same name.
+// The state entry is dropped last, so that a retry still finds the ports.
+// The podStates lock for podKey must be held by the caller.
+func (c *Controller) handleDeleteDPUPod(podKey string, pod *corev1.Pod) error {
+	ps, ok := c.podStates.Load(podKey)
 	if !ok {
+		// Nothing is tracked, but the pod can still carry status that this
+		// controller never got to clean up.
+		if pod != nil {
+			return c.reconcileDPUConnStatus(pod, podKey, nil)
+		}
 		return nil
 	}
-	ps := v.(*podDPUState)
-	ps.Lock()
-	defer ps.Unlock()
 
-	klog.V(5).Infof("Delete for Pod: %s (UID %s)", podKey, uid)
+	klog.V(5).Infof("Delete for Pod: %s (UID %s)", podKey, ps.uid)
 	var portsToDelete []string
-	var nadsToDelete []string
 	for nadKey, state := range ps.nadStates {
-		if state == nil {
-			continue
-		}
 		klog.Infof("Deleting VF representor %s for pod %s NAD %s", state.vfRepName, podKey, nadKey)
 		valid, err := validateRepPort(state.vfRepName, state.sandboxId, nadKey)
 		if err != nil {
@@ -224,7 +265,14 @@ func (c *Controller) handleDeleteDPUPodByUID(uid k8stypes.UID, podKey string) er
 		if valid {
 			portsToDelete = append(portsToDelete, state.vfRepName)
 		}
-		nadsToDelete = append(nadsToDelete, nadKey)
+	}
+
+	// Clear the status before the ports go away, so that the host side is never
+	// told a representor is ready after it has been deleted.
+	if pod != nil && pod.UID == ps.uid {
+		if err := c.reconcileDPUConnStatus(pod, podKey, nil); err != nil {
+			return err
+		}
 	}
 
 	if len(portsToDelete) > 0 {
@@ -235,10 +283,7 @@ func (c *Controller) handleDeleteDPUPodByUID(uid k8stypes.UID, podKey string) er
 		klog.Infof("Deleted %d representor ports from br-int for pod %s", len(portsToDelete), podKey)
 	}
 
-	for _, nadKey := range nadsToDelete {
-		delete(ps.nadStates, nadKey)
-	}
-	c.podNADToDPUCDMap.Delete(uid)
+	c.podStates.Delete(podKey)
 	return nil
 }
 
@@ -272,7 +317,7 @@ func (c *Controller) addRepPort(pod *corev1.Pod, state *dpuConnectionState, ifIn
 	// TODO(adrianc): we should update Status in case of error as well
 	statusMap := map[string]*util.DPUConnectionStatus{nadKey: {Status: util.DPUConnectionStatusReady, Reason: ""}}
 	err = util.UpdatePodDPUConnStatusWithRetry(c.watchFactory.PodCoreInformer().Lister(), c.kube, pod, statusMap)
-	if err != nil {
+	if err != nil && !util.IsAnnotationAlreadySetError(err) {
 		_ = c.delRepPort(pod, state, nadKey)
 		return fmt.Errorf("failed to update connection status annotation for %s: %v", podDesc, err)
 	}
@@ -299,10 +344,10 @@ func (c *Controller) delRepPort(pod *corev1.Pod, state *dpuConnectionState, nadK
 	return nil
 }
 
-// validateRepPort checks that the OVS port matches the expected sandbox and NAD key.
-// Returns (true, nil) if valid; (false, nil) if the port doesn't exist or belongs
-// to a different pod/NAD (mismatch is permanent, so retrying would not help);
-// (false, err) only on transient OVS lookup failures.
+// validateRepPort checks that the OVS port matches the expected sandbox and NAD
+// key. Returns (true, nil) if valid; (false, nil) if the port doesn't exist or
+// belongs to a different pod/NAD, which no retry can fix and is logged as an
+// error; (false, err) only on transient OVS lookup failures.
 func validateRepPort(vfRepName, sandboxId, nadKey string) (bool, error) {
 	ifExists, sandbox, expectedNADKey, err := util.GetOVSPortPodInfo(vfRepName)
 	if err != nil {
@@ -313,11 +358,13 @@ func validateRepPort(vfRepName, sandboxId, nadKey string) (bool, error) {
 		return false, nil
 	}
 	if sandbox != sandboxId {
-		klog.Warningf("OVS port %s belongs to sandbox %s, not %s; skipping", vfRepName, sandbox, sandboxId)
+		klog.Errorf("OVS port %s belongs to sandbox %s, not the expected %s; leaving it in place",
+			vfRepName, sandbox, sandboxId)
 		return false, nil
 	}
 	if expectedNADKey != nadKey {
-		klog.Warningf("OVS port %s belongs to NAD %s, not %s; skipping", vfRepName, expectedNADKey, nadKey)
+		klog.Errorf("OVS port %s belongs to NAD %s, not the expected %s; leaving it in place",
+			vfRepName, expectedNADKey, nadKey)
 		return false, nil
 	}
 	return true, nil

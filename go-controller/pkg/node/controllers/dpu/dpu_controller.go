@@ -5,7 +5,6 @@ package dpu
 
 import (
 	"fmt"
-	"sync"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -25,25 +24,22 @@ import (
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/syncmap"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
 
-// Controller is a single controller that manages DPU representor port lifecycle
-// for pods across all networks (default + user-defined). It replaces the
-// per-network watchPodsDPU pattern.
+// Controller manages the DPU representor port lifecycle for pods across all
+// networks, default and user-defined.
 type Controller struct {
 	watchFactory factory.NodeWatchFactory
 	kube         kube.Interface
 	networkMgr   networkmanager.Interface
 	ovsClient    libovsdbclient.Client
 
-	// nodeName is the (host) node this DPU serves. In DPU mode ovnkube runs as
-	// combined ovnkube-controller + node, so the pod informer is cluster-wide
-	// (no spec.nodeName field selector). We must filter pods to this node
-	// ourselves, otherwise multiple DPUs would fight over the same representor.
+	// nodeName is the Kubernetes node whose pods this DPU serves.
 	nodeName string
 
 	podController controller.Controller
@@ -53,15 +49,9 @@ type Controller struct {
 	nadReconciler   controller.Reconciler
 	nadReconcilerID uint64
 
-	// podNADToDPUCDMap tracks the per-NAD DPU connection state for all pods
-	// across all networks. Key is pod.UID; value is *podDPUState.
-	// New entries are only Store'd from the pod sync path (initial sync or
-	// pod reconciler); the NAD reconciler only reads and deletes entries.
-	podNADToDPUCDMap sync.Map
-
-	// podKeyToUID maps pod key (namespace/name) to the pod UID tracked in
-	// podNADToDPUCDMap.
-	podKeyToUID sync.Map
+	// podStates tracks the DPU connection state of the pods this DPU serves,
+	// keyed by pod key (namespace/name).
+	podStates *syncmap.SyncMap[*podDPUState]
 }
 
 func NewController(
@@ -82,6 +72,7 @@ func NewController(
 		podLister:    podLister,
 		clientSet:    cni.NewClientSet(kclient, podLister),
 		nodeName:     nodeName,
+		podStates:    syncmap.NewSyncMap[*podDPUState](),
 	}
 
 	c.podController = controller.NewController("dpu-pod-controller",
@@ -90,8 +81,11 @@ func NewController(
 			Reconcile:      c.reconcileDPUPod,
 			ObjNeedsUpdate: c.dpuPodNeedsUpdate,
 			Threadiness:    1,
-			Informer:       wf.LocalPodInformer(),
-			Lister:         podLister.List,
+			// Giving up on a pod would leak its representor until the pod is
+			// deleted or ovnkube restarts.
+			MaxAttempts: controller.InfiniteAttempts,
+			Informer:    wf.LocalPodInformer(),
+			Lister:      podLister.List,
 		})
 
 	c.nadReconciler = controller.NewReconciler("dpu-nad-reconciler",
@@ -108,7 +102,6 @@ func NewController(
 func (c *Controller) Start() error {
 	klog.Info("Starting DPU pod controller")
 
-	// RegisterNADReconciler handles NAD deletion and cleans up representors for the deleted NAD
 	c.nadReconcilerID = c.networkMgr.RegisterNADReconciler(c.nadReconciler)
 	return controller.StartWithInitialSync(c.bootstrapDPUPodMapFromOVS, c.podController, c.nadReconciler)
 }
@@ -126,22 +119,19 @@ func (c *Controller) dpuPodNeedsUpdate(oldPod, newPod *corev1.Pod) bool {
 	if oldPod == nil || newPod == nil {
 		return true
 	}
-	// Reconcile on connection-details changes, and also if the pod's node
-	// assignment changes, so reconcileDPUPod can clean up any state/representor
-	// created for a pod that is no longer scheduled on this node.
+	if oldPod.Spec.NodeName == newPod.Spec.NodeName && newPod.Spec.NodeName != c.nodeName {
+		return false
+	}
+	// Reconcile on connection-details changes, on the pod getting scheduled, and
+	// on the OVN annotation, which carries the MAC the representor is configured
+	// with and can land after the connection details.
 	return oldPod.Annotations[util.DPUConnectionDetailsAnnot] != newPod.Annotations[util.DPUConnectionDetailsAnnot] ||
+		oldPod.Annotations[types.OvnPodAnnotationName] != newPod.Annotations[types.OvnPodAnnotationName] ||
 		oldPod.Spec.NodeName != newPod.Spec.NodeName
 }
 
-// reconcileDPUPod reconciles the DPU state for a single pod.
-// In DPU mode ovnkube runs as combined ovnkube-controller + node, so the pod
-// informer is cluster-wide and returns pods for all nodes. A pod not scheduled
-// on the node this DPU serves (c.nodeName) is treated as a deletion so any
-// representor/state we may have created is cleaned up; the DPU on the pod's
-// actual node is responsible for its representor.
-// The key is namespace/name from the controller workqueue. The podNADToDPUCDMap
-// is keyed by pod.UID to handle the case where a pod is recreated with the same
-// name but a different UID (e.g. StatefulSet after host reboot).
+// reconcileDPUPod reconciles the DPU state of a single pod. The key is
+// namespace/name from the workqueue, which is also the podStates key.
 func (c *Controller) reconcileDPUPod(key string) error {
 	namespace, name, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
@@ -150,95 +140,90 @@ func (c *Controller) reconcileDPUPod(key string) error {
 	}
 
 	pod, err := c.watchFactory.GetPod(namespace, name)
-	if err != nil && !apierrors.IsNotFound(err) {
-		return err
-	}
-
-	// If the pod is not (or no longer) scheduled on the node this DPU serves,
-	// treat it as a deletion so any representor/state gets cleaned up. This also
-	// covers the case where a pod's node assignment changes away from this node.
-	if pod != nil && pod.Spec.NodeName != c.nodeName {
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			return err
+		}
 		pod = nil
 	}
 
-	if err != nil || pod == nil {
-		return c.handleDeleteDPUPodByKey(key)
+	// The pod informer is cluster-wide in DPU mode. Neither a pod of another
+	// node nor a host-network pod has a representor here, so both are treated
+	// as a deletion.
+	if pod != nil && (pod.Spec.NodeName != c.nodeName || util.PodWantsHostNetwork(pod)) {
+		pod = nil
 	}
 
-	if util.PodWantsHostNetwork(pod) {
-		return c.handleDeleteDPUPodByKey(key)
-	}
+	return c.podStates.DoWithLock(key, func(key string) error {
+		if pod == nil {
+			return c.handleDeleteDPUPod(key, nil)
+		}
 
-	// If the UID changed (pod recreated with same name), clean up the old UID's state first
-	if oldUIDVal, ok := c.podKeyToUID.Load(key); ok {
-		oldUID := oldUIDVal.(k8stypes.UID)
-		if oldUID != pod.UID {
-			if err := c.handleDeleteDPUPodByUID(oldUID, key); err != nil {
+		// If the UID changed (pod recreated with same name), clean up the old pod's state first
+		if ps, ok := c.podStates.Load(key); ok && ps.uid != pod.UID {
+			if err := c.handleDeleteDPUPod(key, pod); err != nil {
 				return err
 			}
 		}
-	}
 
-	return c.handleAddOrUpdateDPUPod(key, pod, c.clientSet)
+		return c.handleAddOrUpdateDPUPod(key, pod, c.clientSet)
+	})
 }
 
-// reconcileNAD is called by the NAD reconciler when a NAD is added/updated/deleted.
-// For NAD deletion, it cleans up OVS representor ports matching the deleted NAD
-// and removes local state. No action for NAD creation/update.
+// reconcileNAD is called by the NAD reconciler when a NAD is added, updated or
+// deleted. It only requeues the pods that reference the NAD, leaving
+// reconcileDPUPod as the sole writer of representors and annotations.
 func (c *Controller) reconcileNAD(nadName string) error {
-	if c.networkMgr.GetNetInfoForNADKey(nadName) != nil {
-		return nil
-	}
-
-	klog.Infof("NAD %s deleted, cleaning up representor ports", nadName)
-
-	// Find all OVS interfaces whose NAD external ID matches the deleted NAD.
-	// The external ID may be indexed (e.g. "ns/nad/1"), so strip the index
-	// before comparing.
-	p := func(item *vswitchd.Interface) bool {
-		nadExtID := item.ExternalIDs[types.NADExternalID]
-		nad, _, _ := util.GetNadFromIndexedNADKey(nadExtID)
-		return nad == nadName
-	}
-	ovsIfaces, err := ovsops.FindInterfacesWithPredicate(c.ovsClient, p)
+	podKeys, err := c.podsToRequeueForNAD(nadName)
 	if err != nil {
-		return fmt.Errorf("failed to find interfaces for NAD %s: %w", nadName, err)
+		return err
 	}
 
-	if len(ovsIfaces) > 0 {
-		var portNames []string
-		for _, iface := range ovsIfaces {
-			portNames = append(portNames, iface.Name)
-		}
-		setRepPortInterfacesDown(portNames)
-		if err := libovsdbops.DeleteMultiplePortsWithInterfaces(c.ovsClient, "br-int", portNames...); err != nil {
-			return fmt.Errorf("failed to delete representor ports %v for NAD %s: %w", portNames, nadName, err)
-		}
-		klog.Infof("Deleted representor ports %v from br-int for NAD %s", portNames, nadName)
+	if len(podKeys) > 0 {
+		klog.Infof("NAD %s changed, requeueing pods %v", nadName, podKeys)
 	}
-
-	// Clean up local state only after OVS ports are successfully removed.
-	// On OVS failure we return early and keep the entries so that pod
-	// deletion can still find and clean up the representor ports.
-	c.podNADToDPUCDMap.Range(func(_, val interface{}) bool {
-		ps := val.(*podDPUState)
-		ps.Lock()
-		defer ps.Unlock()
-		for nadKey := range ps.nadStates {
-			nad, _, _ := util.GetNadFromIndexedNADKey(nadKey)
-			if nad == nadName {
-				delete(ps.nadStates, nadKey)
-			}
-		}
-		return true
-	})
+	for _, podKey := range podKeys {
+		c.podController.Reconcile(podKey)
+	}
 
 	return nil
 }
 
-// bootstrapDPUPodMapFromOVS pre-populates podNADToDPUCDMap and podKeyToUID from
-// existing OVS representor ports, and removes orphaned representor ports whose pods
-// no longer exist.
+// podsToRequeueForNAD returns the keys of the pods on this node whose DPU
+// connection details refer to nadName.
+func (c *Controller) podsToRequeueForNAD(nadName string) ([]string, error) {
+	pods, err := c.watchFactory.GetAllPods()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list pods for NAD %s: %w", nadName, err)
+	}
+
+	var podKeys []string
+	for _, pod := range pods {
+		if pod.Spec.NodeName != c.nodeName {
+			continue
+		}
+		allDPUCDs, err := util.UnmarshalPodDPUConnDetailsAllNetworks(pod.Annotations)
+		if err != nil {
+			klog.Warningf("Failed to unmarshal DPU connection details of pod %s/%s: %v", pod.Namespace, pod.Name, err)
+			continue
+		}
+		// A repeat attachment to the same NAD is keyed "ns/nad/1", "ns/nad/2",
+		// so the bare key is present whenever the pod references the NAD.
+		if _, ok := allDPUCDs[nadName]; !ok {
+			continue
+		}
+		podKey, err := cache.MetaNamespaceKeyFunc(pod)
+		if err != nil {
+			klog.Errorf("Failed to get key for pod %s/%s: %v", pod.Namespace, pod.Name, err)
+			continue
+		}
+		podKeys = append(podKeys, podKey)
+	}
+	return podKeys, nil
+}
+
+// bootstrapDPUPodMapFromOVS pre-populates podStates from existing OVS representor
+// ports, and removes orphaned representor ports whose pods no longer exist.
 func (c *Controller) bootstrapDPUPodMapFromOVS() error {
 	var errs []error
 	p := func(item *vswitchd.Interface) bool {
@@ -281,7 +266,6 @@ func (c *Controller) bootstrapDPUPodMapFromOVS() error {
 		}
 
 		uid := k8stypes.UID(podUID)
-		podKey := podKeyFromIfaceID(ifaceID, nadKey)
 
 		if !existingUIDs[uid] {
 			klog.Infof("DPU bootstrap: removing orphaned representor %s (pod UID %s, NAD %s): pod no longer exists", repName, podUID, nadKey)
@@ -289,24 +273,21 @@ func (c *Controller) bootstrapDPUPodMapFromOVS() error {
 			continue
 		}
 
-		state := &dpuConnectionState{
+		podKey := podKeyFromIfaceID(ifaceID, nadKey)
+		if podKey == "" {
+			klog.Warningf("DPU bootstrap: cannot derive pod key from iface-id %q, leaving representor %s untracked", ifaceID, repName)
+			continue
+		}
+
+		// No key lock needed: this runs as the initial sync, before the
+		// controller workers start.
+		ps, _ := c.podStates.LoadOrStore(podKey, &podDPUState{
+			uid:       uid,
+			nadStates: make(map[string]*dpuConnectionState),
+		})
+		ps.nadStates[nadKey] = &dpuConnectionState{
 			vfRepName: repName,
 			sandboxId: sandbox,
-		}
-
-		// No ps.Lock() needed: this runs as the initial sync before controller
-		// workers are started (see StartWithInitialSync), so no concurrent access.
-		var ps *podDPUState
-		if v, ok := c.podNADToDPUCDMap.Load(uid); ok {
-			ps = v.(*podDPUState)
-		} else {
-			ps = &podDPUState{nadStates: make(map[string]*dpuConnectionState)}
-			c.podNADToDPUCDMap.Store(uid, ps)
-		}
-		ps.nadStates[nadKey] = state
-
-		if podKey != "" {
-			c.podKeyToUID.Store(podKey, uid)
 		}
 	}
 
