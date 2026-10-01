@@ -7,7 +7,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/crd-integration/testscenario"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/crd-integration/testscenario/vtep"
@@ -18,13 +18,15 @@ var _ = Describe("EVPN: VTEP API validations", feature.RouteAdvertisements, feat
 	DescribeTable("api-server should reject invalid VTEP CRs",
 		func(scenarios []testscenario.ValidateCRScenario) {
 			DeferCleanup(func() {
-				cleanupVTEPCRsTest(scenarios)
+				cleanupValidateCRsTest(ctx, k8sClient, scenarios)
 			})
 			for _, s := range scenarios {
 				By(s.Description)
-				_, stderr, err := e2ekubectl.NewKubectlCommand("", "apply", "-f", "-").WithStdinData(s.Manifest).ExecWithFullOutput()
+				obj, err := testscenario.ValidateScenarioToObject(s)
+				Expect(err).ToNot(HaveOccurred(), "must convert scenario to kubernetes object")
+				err = k8sClient.Create(ctx, obj)
 				Expect(err).To(HaveOccurred(), "should fail to create invalid VTEP CR")
-				Expect(stderr).To(ContainSubstring(s.ExpectedErr))
+				Expect(err.Error()).To(ContainSubstring(s.ExpectedErr))
 			}
 		},
 		Entry("Invalid VTEP configurations", vtep.Invalid),
@@ -33,11 +35,13 @@ var _ = Describe("EVPN: VTEP API validations", feature.RouteAdvertisements, feat
 	DescribeTable("api-server should accept valid VTEP CRs",
 		func(scenarios []testscenario.ValidateCRScenario) {
 			DeferCleanup(func() {
-				cleanupVTEPCRsTest(scenarios)
+				cleanupValidateCRsTest(ctx, k8sClient, scenarios)
 			})
 			for _, s := range scenarios {
 				By(s.Description)
-				_, err := e2ekubectl.RunKubectlInput("", s.Manifest, "apply", "-f", "-")
+				obj, err := testscenario.ValidateScenarioToObject(s)
+				Expect(err).ToNot(HaveOccurred(), "must convert scenario to kubernetes object")
+				err = k8sClient.Create(ctx, obj)
 				Expect(err).NotTo(HaveOccurred(), "should create valid VTEP CR successfully")
 			}
 		},
@@ -47,17 +51,23 @@ var _ = Describe("EVPN: VTEP API validations", feature.RouteAdvertisements, feat
 	DescribeTable("api-server should reject invalid VTEP updates",
 		func(scenarios []testscenario.UpdateCRScenario) {
 			DeferCleanup(func() {
-				cleanupVTEPUpdateTest(scenarios)
+				cleanupUpdateCRScenario(ctx, k8sClient, scenarios)
 			})
 			for _, s := range scenarios {
 				By("Creating initial VTEP: " + s.Description)
-				_, err := e2ekubectl.RunKubectlInput("", s.InitialManifest, "apply", "-f", "-")
+				initialObj, updateObj, err := testscenario.UpdateCRScenarioToObject(s)
+				Expect(err).ToNot(HaveOccurred(), "must convert scenario to kubernetes object")
+				err = k8sClient.Create(ctx, initialObj)
 				Expect(err).NotTo(HaveOccurred(), "should create initial VTEP CR successfully")
 
 				By("Updating VTEP (should fail): " + s.Description)
-				_, stderr, err := e2ekubectl.NewKubectlCommand("", "apply", "-f", "-").WithStdinData(s.Manifest).ExecWithFullOutput()
+				// resource version must get set on update, therefore retrieve the newly created object and update the spec
+				err = k8sClient.Get(ctx, types.NamespacedName{Namespace: initialObj.GetNamespace(), Name: initialObj.GetName()}, initialObj)
+				Expect(err).NotTo(HaveOccurred(), "should get valid CR from KAPI server")
+				updateObj.SetResourceVersion(initialObj.GetResourceVersion())
+				err = k8sClient.Update(ctx, updateObj)
 				Expect(err).To(HaveOccurred(), "should fail to update VTEP CR")
-				Expect(stderr).To(ContainSubstring(s.ExpectedErr))
+				Expect(err.Error()).To(ContainSubstring(s.ExpectedErr))
 			}
 		},
 		Entry("Invalid VTEP update configurations", vtep.InvalidUpdates),
@@ -66,42 +76,24 @@ var _ = Describe("EVPN: VTEP API validations", feature.RouteAdvertisements, feat
 	DescribeTable("api-server should accept valid VTEP updates",
 		func(scenarios []testscenario.UpdateCRScenario) {
 			DeferCleanup(func() {
-				cleanupVTEPUpdateTest(scenarios)
+				cleanupUpdateCRScenario(ctx, k8sClient, scenarios)
 			})
 			for _, s := range scenarios {
 				By("Creating initial VTEP: " + s.Description)
-				_, err := e2ekubectl.RunKubectlInput("", s.InitialManifest, "apply", "-f", "-")
+				initialObj, updateObj, err := testscenario.UpdateCRScenarioToObject(s)
+				Expect(err).ToNot(HaveOccurred(), "must convert scenario to kubernetes object")
+				err = k8sClient.Create(ctx, initialObj)
 				Expect(err).NotTo(HaveOccurred(), "should create initial VTEP CR successfully")
 
 				By("Updating VTEP (should succeed): " + s.Description)
-				_, err = e2ekubectl.RunKubectlInput("", s.Manifest, "apply", "-f", "-")
+				// resource version must get set on update, therefore retrieve the newly created object and update the spec
+				err = k8sClient.Get(ctx, types.NamespacedName{Namespace: initialObj.GetNamespace(), Name: initialObj.GetName()}, initialObj)
+				Expect(err).NotTo(HaveOccurred(), "should get valid CR from KAPI server")
+				updateObj.SetResourceVersion(initialObj.GetResourceVersion())
+				err = k8sClient.Update(ctx, updateObj)
 				Expect(err).NotTo(HaveOccurred(), "should update VTEP CR successfully")
 			}
 		},
 		Entry("Valid VTEP update configurations", vtep.ValidUpdates),
 	)
 })
-
-func cleanupVTEPCRsTest(scenarios []testscenario.ValidateCRScenario) {
-	for _, s := range scenarios {
-		e2ekubectl.RunKubectlInput("", s.Manifest, "delete", "--ignore-not-found", "-f", "-")
-	}
-	// Verify each named resource is gone individually — a global "no resources found"
-	// check is not parallel-safe since other concurrent tests may have live VTEPs.
-	for _, s := range scenarios {
-		if s.Name == "" {
-			continue
-		}
-		stdout, _, err := e2ekubectl.RunKubectlWithFullOutput("", "get", "vtep", s.Name, "--ignore-not-found")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(stdout).To(BeEmpty(), "VTEP %q should have been deleted", s.Name)
-	}
-}
-
-func cleanupVTEPUpdateTest(scenarios []testscenario.UpdateCRScenario) {
-	crScenarios := make([]testscenario.ValidateCRScenario, len(scenarios))
-	for i, s := range scenarios {
-		crScenarios[i] = s.ValidateCRScenario
-	}
-	cleanupVTEPCRsTest(crScenarios)
-}
