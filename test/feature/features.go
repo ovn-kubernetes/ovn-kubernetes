@@ -5,7 +5,7 @@ package feature
 
 import (
 	"github.com/onsi/ginkgo/v2"
-	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/label"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/feature/label"
 )
 
 var (

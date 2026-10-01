@@ -7,8 +7,8 @@ require (
 	github.com/k8snetworkplumbingwg/ipamclaims v0.5.1-alpha
 	github.com/k8snetworkplumbingwg/multi-networkpolicy v1.0.1
 	github.com/k8snetworkplumbingwg/network-attachment-definition-client v1.7.7
-	github.com/onsi/ginkgo/v2 v2.28.1
-	github.com/onsi/gomega v1.39.1
+	github.com/onsi/ginkgo/v2 v2.33.0
+	github.com/onsi/gomega v1.40.0
 	github.com/pkg/errors v0.9.1
 	golang.org/x/sync v0.20.0
 	k8s.io/api v0.36.2
@@ -69,7 +69,7 @@ require (
 	github.com/google/cel-go v0.26.0 // indirect
 	github.com/google/gnostic-models v0.7.0 // indirect
 	github.com/google/goterm v0.0.0-20190703233501-fc88cf888a3f // indirect
-	github.com/google/pprof v0.0.0-20260115054156-294ebfa9ad83 // indirect
+	github.com/google/pprof v0.0.0-20260402051712-545e8a4df936 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
@@ -176,6 +176,7 @@ require (
 	github.com/onsi/ginkgo v1.16.5
 	github.com/openshift-kni/k8sreporter v1.0.6
 	github.com/ovn-kubernetes/ovn-kubernetes/go-controller v1.0.0
+	github.com/ovn-kubernetes/ovn-kubernetes/test/feature v0.0.0-00010101000000-000000000000
 	go.universe.tf/metallb v0.0.0-00010101000000-000000000000
 	golang.org/x/crypto v0.52.0
 	google.golang.org/grpc v1.81.1
@@ -192,5 +193,6 @@ replace (
 	github.com/coreos/go-iptables => github.com/trozet/go-iptables v0.0.0-20240328221912-077e672b3808
 	github.com/docker/docker => github.com/docker/docker v26.1.5+incompatible
 	github.com/ovn-kubernetes/ovn-kubernetes/go-controller => ../../go-controller
+	github.com/ovn-kubernetes/ovn-kubernetes/test/feature => ../feature
 	go.universe.tf/metallb => github.com/metallb/metallb v0.14.9
 )
