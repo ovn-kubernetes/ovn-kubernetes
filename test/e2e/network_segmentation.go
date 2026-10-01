@@ -31,6 +31,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	v1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -39,8 +40,10 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/dynamic"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/kubectl/pkg/util/podutils"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
@@ -1702,6 +1705,128 @@ spec:
 			Reason:  "SyncError",
 			Message: expectedMessage,
 		}))
+	})
+
+	It("when foreign NAD exists, UserDefinedNetwork status should report not-ready", func() {
+		const nadName = "udn-network"
+
+		By("create primary NAD without UDN owner reference")
+		foreignNAD := generateNAD(newNetworkAttachmentConfig(networkAttachmentConfigParams{
+			role:        "primary",
+			topology:    "layer3",
+			name:        nadName,
+			networkName: nadName,
+			cidr:        primaryLayer3MultiCIDRs(),
+		}), f.ClientSet)
+		_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(context.Background(), foreignNAD, metav1.CreateOptions{})
+		Expect(err).NotTo(HaveOccurred())
+
+		By("create primary UDN CR with the same name as the foreign NAD")
+		cleanup, err := createManifest(f.Namespace.Name, newPrimaryUserDefinedNetworkManifest(cs, nadName))
+		DeferCleanup(cleanup)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("verify UDN status reports foreign NAD conflict")
+		expectedMessage := fmt.Sprintf("foreign NetworkAttachmentDefinition with the desired name already exist [%s/%s]",
+			f.Namespace.Name, nadName)
+		Eventually(func(g Gomega) []metav1.Condition {
+			conditionsJSON, err := e2ekubectl.RunKubectl(f.Namespace.Name, "get", "userdefinednetwork", nadName, "-o", "jsonpath={.status.conditions}")
+			g.Expect(err).NotTo(HaveOccurred())
+			var actualConditions []metav1.Condition
+			g.Expect(json.Unmarshal([]byte(conditionsJSON), &actualConditions)).To(Succeed())
+			return normalizeConditions(actualConditions)
+		}, 5*time.Second, 1*time.Second).Should(ConsistOf(metav1.Condition{
+			Type:    "NetworkCreated",
+			Status:  metav1.ConditionFalse,
+			Reason:  "SyncError",
+			Message: expectedMessage,
+		}))
+	})
+
+	Context("RBAC for UserDefinedNetwork", func() {
+		It("should allow users with namespace UDN permissions to create primary UDN", func() {
+			const (
+				saName   = "udn-manager"
+				roleName = "udn-manager"
+				udnName  = "l3-network"
+			)
+			ns := f.Namespace.Name
+
+			By("create service account, Role, and RoleBinding")
+			_, err := cs.CoreV1().ServiceAccounts(ns).Create(context.Background(), &v1.ServiceAccount{
+				ObjectMeta: metav1.ObjectMeta{Name: saName, Namespace: ns},
+			}, metav1.CreateOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() error {
+				return cs.CoreV1().ServiceAccounts(ns).Delete(context.Background(), saName, metav1.DeleteOptions{})
+			})
+
+			_, err = cs.RbacV1().Roles(ns).Create(context.Background(), &rbacv1.Role{
+				ObjectMeta: metav1.ObjectMeta{Name: roleName, Namespace: ns},
+				Rules: []rbacv1.PolicyRule{{
+					APIGroups: []string{"k8s.ovn.org"},
+					Resources: []string{"userdefinednetworks"},
+					Verbs:     []string{"get", "list", "watch", "create", "update", "delete"},
+				}},
+			}, metav1.CreateOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() error {
+				return cs.RbacV1().Roles(ns).Delete(context.Background(), roleName, metav1.DeleteOptions{})
+			})
+
+			_, err = cs.RbacV1().RoleBindings(ns).Create(context.Background(), &rbacv1.RoleBinding{
+				ObjectMeta: metav1.ObjectMeta{Name: roleName, Namespace: ns},
+				Subjects: []rbacv1.Subject{{
+					Kind:      rbacv1.ServiceAccountKind,
+					Name:      saName,
+					Namespace: ns,
+				}},
+				RoleRef: rbacv1.RoleRef{
+					APIGroup: rbacv1.GroupName,
+					Kind:     "Role",
+					Name:     roleName,
+				},
+			}, metav1.CreateOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() error {
+				return cs.RbacV1().RoleBindings(ns).Delete(context.Background(), roleName, metav1.DeleteOptions{})
+			})
+
+			impersonatedConfig := rest.CopyConfig(f.ClientConfig())
+			impersonatedConfig.Impersonate = rest.ImpersonationConfig{
+				UserName: fmt.Sprintf("system:serviceaccount:%s:%s", ns, saName),
+			}
+			impersonatedClient, err := dynamic.NewForConfig(impersonatedConfig)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("create primary UDN as service account user")
+			udnManifest := newPrimaryUserDefinedNetworkManifest(cs, udnName)
+			jsonManifest, err := yaml.ToJSON([]byte(udnManifest))
+			Expect(err).NotTo(HaveOccurred())
+			udnObj := &unstructured.Unstructured{}
+			Expect(json.Unmarshal(jsonManifest, &udnObj.Object)).To(Succeed())
+
+			Eventually(func() error {
+				_, err := impersonatedClient.Resource(udnGVR).Namespace(ns).Create(context.Background(), udnObj, metav1.CreateOptions{})
+				if err != nil && kerrors.IsAlreadyExists(err) {
+					return nil
+				}
+				return err
+			}, 30*time.Second, 2*time.Second).Should(Succeed())
+			DeferCleanup(func() error {
+				return f.DynamicClient.Resource(udnGVR).Namespace(ns).Delete(context.Background(), udnName, metav1.DeleteOptions{})
+			})
+
+			By("verify UDN is ready")
+			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, ns, udnName), 30*time.Second, 1*time.Second).Should(Succeed())
+
+			By("verify NAD is created")
+			nad, err := nadClient.NetworkAttachmentDefinitions(ns).Get(context.Background(), udnName, metav1.GetOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(nad.OwnerReferences).To(HaveLen(1))
+			Expect(nad.OwnerReferences[0].Kind).To(Equal("UserDefinedNetwork"))
+			Expect(nad.OwnerReferences[0].Name).To(Equal(udnName))
+		})
 	})
 
 	Context("ClusterUserDefinedNetwork CRD Controller", func() {
