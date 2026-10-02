@@ -173,11 +173,16 @@ spec:
   IP addresses in a `ipamclaims.k8s.cni.cncf.io` object. This IP addresses will
   be reused by other pods if requested. Useful for KubeVirt VMs. Only makes
   sense if the `subnets` attribute is also defined.
+- `macSecurityMode` (string, optional): `enabled` (default) or `disabled`.
+  When `disabled` the network logical-switch-port MAC security is turned off.
+  The `disabled` mode requires `subnets` to be **unset**. The `enabled` mode
+  preserves the default MAC protection with or without IPAM.
 
 > [!NOTE]
 > when the subnets attribute is omitted, the logical switch implementing the
   network will only provide layer 2 communication, and the users must configure
-  IPs for the pods. Port security will only prevent MAC spoofing.
+  IPs for the pods. Port security will only prevent MAC spoofing, unless it has
+  been disabled, see [MAC Security](#mac-security).
 
 > [!NOTE]
 > switched - layer2 - secondary networks **only** allow for east/west traffic.
@@ -233,15 +238,118 @@ localnet network.
 - `physicalNetworkName` (string, optional): the name of the physical network to
   which the OVN overlay will connect. When omitted, it will default to the value
   of the localnet network name on the NAD's `.spec.config.name`.
+- `macSecurityMode` (string, optional): `enabled` (default) or `disabled`.
+  When `disabled` the network logical-switch-port MAC security is turned off.
+  The `disabled` mode requires `subnets` to be **unset**. The `enabled` mode
+  preserves the default MAC protection with or without IPAM.
 
 > [!NOTE]
 > when the subnets attribute is omitted, the logical switch implementing the
   network will only provide layer 2 communication, and the users must configure
-  IPs for the pods. Port security will only prevent MAC spoofing.
+  IPs for the pods. Port security will only prevent MAC spoofing, unless it has
+  been disabled, see [MAC Security](#mac-security).
 
 > [!NOTE]
 > updates to the network specification require the attached workloads restart. All the network-attachment-definitions 
   pointing to the same network must have a consistent configuration, and then workloads must be restarted.
+
+### MAC Security
+By default, OVN-Kubernetes secondary networks only allow a pod's interface to
+send and receive traffic using the MAC address it was assigned. 
+MAC Security can be turned off to allow traffic with unknown source/destination MAC addresses.
+
+This is useful for workloads that bridge or relay traffic on behalf of other MAC addresses, such as:
+- Nested virtualization
+- Network functions forwarding traffic (firewalls, routers, load balancers) of other MAC addresses, 
+  or share a virtual MAC for high availability (e.g. keepalived/VRRP).
+
+Opt-out from MAC security is supported on secondary `layer2` and `localnet`
+networks with IPAM disabled.
+
+MAC security mode changes on day2 are not supported.
+
+#### Opt-out from MAC security on a `NetworkAttachmentDefinition`
+Set `macSecurityMode` to `disabled` in the NAD config:
+
+Layer2 topology example:
+```yaml
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: l2-network
+  namespace: ns1
+spec:
+  config: |2
+    {
+            "cniVersion": "1.0.0",
+            "name": "tenantyellow",
+            "type": "ovn-k8s-cni-overlay",
+            "netAttachDefName": "ns1/l2-network",
+            "topology":"layer2",
+            "mtu": 1300,
+            "macSecurityMode": "disabled"
+    }
+```
+
+Localnet topology example:
+```yaml
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: localnet-network
+  namespace: ns1
+spec:
+  config: |2
+    {
+            "cniVersion": "1.0.0",
+            "name": "tenantblack",
+            "type": "ovn-k8s-cni-overlay",
+            "netAttachDefName": "ns1/localnet-network",
+            "topology":"localnet",
+            "vlanID": 33,
+            "mtu": 1500,
+            "macSecurityMode": "disabled"
+    }
+```
+
+#### Opt-out from MAC security on a `UserDefinedNetwork` and `ClusterUserDefinedNetwork`
+Set `macSecurity.mode` to `Disabled` under the topology's config:
+
+```yaml
+apiVersion: k8s.ovn.org/v1
+kind: UserDefinedNetwork
+metadata:
+  name: virt-l2-net
+  namespace: blue
+spec:
+  topology: Layer2
+  layer2:
+    role: Secondary
+    ipam: 
+      mode: Disabled
+    macSecurity: 
+      mode: Disabled
+```
+
+```yaml
+apiVersion: k8s.ovn.org/v1
+kind: ClusterUserDefinedNetwork
+metadata:
+  name: virt-l2-net
+spec:
+  namespaceSelector:
+    matchLabels:
+      tenant: yellow
+  network:
+    topology: Localnet
+    localnet:
+      role: Secondary
+      physicalNetworkName: localnet1
+      ipam:
+        mode: Disabled
+      macSecurity:
+        mode: Disabled
+```
 
 ### Setting a secondary-network on the pod
 The user must specify the secondary-network attachments via the
