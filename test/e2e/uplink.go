@@ -38,6 +38,7 @@ import (
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes"
@@ -726,6 +727,67 @@ var _ = ginkgo.Describe("Network Segmentation Uplink default-VRF egress", featur
 			"expected gateway readiness to remain published after replacement Uplink programming",
 		)
 		waitForCUDNUplinksReady(f, networkName)
+	})
+
+	// Uplink bridges are admin-owned and may disappear under an active CUDN.
+	// ovnkube-node must degrade the UplinkState and keep running, and the
+	// CUDN must still be cleaned up once deleted.
+	ginkgo.It("keeps ovnkube-node running when the Uplink bridge is deleted under an active CUDN", func() {
+		env := provisionUplinkWithActiveCUDN(f, ictx, ipFamilySet, testSuffix, "upbrdel")
+		node, uplinkName, bridgeName, networkName := env.node, env.uplinkName, env.bridgeName, env.networkName
+
+		restartsBefore, err := ovnkubeNodeRestarts(f)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		ginkgo.By("deleting the Uplink bridge on the node while the CUDN still uses it")
+		ovsPods, err := uplinkOVSPodsByNode(f)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		ovsPod, ok := ovsPods[node.Name]
+		gomega.Expect(ok).To(gomega.BeTrue(), "expected an ovnkube-node pod on node %s", node.Name)
+		gomega.Expect(runOVSCommand(ovsPod, "ovs-vsctl --timeout=15 del-br %s", bridgeName)).To(gomega.Succeed())
+
+		ginkgo.By("waiting for the UplinkState to report the missing bridge")
+		gomega.Eventually(func() error {
+			state, err := getUplinkState(f, uplinkName, node.Name)
+			if err != nil {
+				return err
+			}
+			resolved, err := uplinkStateCondition(state, uplinkv1alpha1.UplinkStateConditionResolved)
+			if err != nil {
+				return err
+			}
+			if resolved.Status != metav1.ConditionFalse {
+				return fmt.Errorf("UplinkState %s is still resolved after deleting bridge %s",
+					state.GetName(), bridgeName)
+			}
+			return nil
+		}).WithTimeout(uplinkTimeout).WithPolling(uplinkPoll).Should(gomega.Succeed())
+
+		ginkgo.By("checking that no ovnkube-node restarts while the bridge is gone")
+		// Covers several rounds of the 15s OpenFlow port check and of the
+		// network cleanup retry.
+		gomega.Consistently(func() error {
+			return expectSameOvnkubeNodeRestarts(f, restartsBefore)
+		}).WithTimeout(uplinkShortTimeout).WithPolling(5 * time.Second).Should(gomega.Succeed())
+
+		ginkgo.By("deleting the CUDN and checking that its node cleanup converges")
+		deleteCtx, cancel := context.WithTimeout(context.Background(), uplinkTimeout)
+		defer cancel()
+		gomega.Expect(e2epod.DeletePodWithWait(deleteCtx, f.ClientSet, env.pod)).To(gomega.Succeed())
+		gomega.Expect(f.DynamicClient.Resource(clusterUDNGVR).Delete(
+			deleteCtx, networkName, metav1.DeleteOptions{},
+		)).To(gomega.Succeed())
+		// The node drops the CUDN from GatewayReady only once its dataplane
+		// cleanup succeeded; a cleanup failing on the missing bridge keeps the
+		// condition False.
+		waitForUplinkStateGatewayCondition(
+			f,
+			uplinkName,
+			node.Name,
+			metav1.ConditionTrue,
+			uplinkv1alpha1.UplinkStateReasonNoActiveCUDNs,
+		)
+		gomega.Expect(expectSameOvnkubeNodeRestarts(f, restartsBefore)).To(gomega.Succeed())
 	})
 })
 
@@ -3582,6 +3644,54 @@ func uplinkOVSPodsByNode(f *framework.Framework) (map[string]corev1.Pod, error) 
 	return byNode, nil
 }
 
+// ovnkubeNodeRestart identifies an ovnkube-node pod and how often its
+// containers restarted.
+type ovnkubeNodeRestart struct {
+	podUID   types.UID
+	restarts int32
+}
+
+// ovnkubeNodeRestarts returns, by node, the ovnkube-node pod identity and the
+// sum of its containers' restart counts.
+func ovnkubeNodeRestarts(f *framework.Framework) (map[string]ovnkubeNodeRestart, error) {
+	pods, err := uplinkOVSPodsByNode(f)
+	if err != nil {
+		return nil, err
+	}
+	restarts := make(map[string]ovnkubeNodeRestart, len(pods))
+	for nodeName, pod := range pods {
+		var count int32
+		for _, status := range pod.Status.ContainerStatuses {
+			count += status.RestartCount
+		}
+		restarts[nodeName] = ovnkubeNodeRestart{podUID: pod.UID, restarts: count}
+	}
+	return restarts, nil
+}
+
+// expectSameOvnkubeNodeRestarts fails when any ovnkube-node pod restarted a
+// container or was replaced since before was taken.
+func expectSameOvnkubeNodeRestarts(f *framework.Framework, before map[string]ovnkubeNodeRestart) error {
+	after, err := ovnkubeNodeRestarts(f)
+	if err != nil {
+		return err
+	}
+	for nodeName, want := range before {
+		got, ok := after[nodeName]
+		if !ok {
+			return fmt.Errorf("ovnkube-node pod on node %s disappeared", nodeName)
+		}
+		if got.podUID != want.podUID {
+			return fmt.Errorf("ovnkube-node pod on node %s was replaced", nodeName)
+		}
+		if got.restarts != want.restarts {
+			return fmt.Errorf("ovnkube-node on node %s restarted: container restarts went from %d to %d",
+				nodeName, want.restarts, got.restarts)
+		}
+	}
+	return nil
+}
+
 func runOVSCommand(pod corev1.Pod, format string, args ...any) error {
 	ginkgo.GinkgoHelper()
 	cmd := fmt.Sprintf(format, args...)
@@ -4262,7 +4372,12 @@ func createUplinkCUDN(
 		return fmt.Errorf("failed to create CUDN %s: %w", name, err)
 	}
 	ictx.AddCleanUpFn(func() error {
-		return client.Delete(context.Background(), name, metav1.DeleteOptions{})
+		// Specs may delete the CUDN themselves.
+		err := client.Delete(context.Background(), name, metav1.DeleteOptions{})
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return err
 	})
 	gomega.Eventually(networkReadyFunc(client, name)).
 		WithTimeout(uplinkTimeout).

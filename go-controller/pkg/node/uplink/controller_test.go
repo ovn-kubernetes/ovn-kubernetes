@@ -2132,6 +2132,35 @@ func newUplink(name string, selectorKey string, selectorValue string, hostInterf
 	}
 }
 
+func TestOVSBridgeEventsRediscoverLocalUplinkStates(t *testing.T) {
+	g := gomega.NewWithT(t)
+	resolved := newHostResolvedUplinkState("blue.node-a", "blue", "node-a", "eth1")
+	resolved.Status.OVSBridge = &uplinkv1alpha1.OVSBridgeStatus{Name: "brblue"}
+	unresolved := newUplinkState("red.node-a", "red", "node-a")
+	remote := newHostResolvedUplinkState("blue.node-b", "blue", "node-b", "eth1")
+	remote.Status.OVSBridge = &uplinkv1alpha1.OVSBridgeStatus{Name: "brblue"}
+	controller, _ := newTestController(t, nil, nil, resolved, unresolved, remote)
+	reconciler := controller.uplinkStateController.(*controllerutil.FakeController)
+	controller.ovsEventsActive.Store(true)
+
+	// A deleted bridge rediscovers every UplinkState of this node, none of other nodes.
+	controller.handleOVSBridgeEvent(vswitchd.BridgeTable, &vswitchd.Bridge{Name: "brblue"})
+	g.Expect(reconciler.Reconciles).To(gomega.ConsistOf("Reconcile:blue.node-a", "Reconcile:red.node-a"))
+
+	// So does an added bridge, which is also how a repopulated cache reports survivors.
+	controller.handleOVSBridgeEvent(vswitchd.BridgeTable, &vswitchd.Bridge{Name: "brred"})
+	g.Expect(reconciler.Reconciles).To(gomega.HaveLen(4))
+
+	// Other tables are ignored.
+	controller.handleOVSBridgeEvent(vswitchd.PortTable, &vswitchd.Port{Name: "brblue"})
+	g.Expect(reconciler.Reconciles).To(gomega.HaveLen(4))
+
+	// Events after Stop are ignored.
+	controller.ovsEventsActive.Store(false)
+	controller.handleOVSBridgeEvent(vswitchd.BridgeTable, &vswitchd.Bridge{Name: "brblue"})
+	g.Expect(reconciler.Reconciles).To(gomega.HaveLen(4))
+}
+
 func newUplinkState(name, uplinkName, nodeName string) *uplinkv1alpha1.UplinkState {
 	return &uplinkv1alpha1.UplinkState{
 		ObjectMeta: metav1.ObjectMeta{
