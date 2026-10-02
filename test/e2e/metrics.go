@@ -19,7 +19,7 @@ import (
 	"k8s.io/kubernetes/test/e2e/framework"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
-	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/feature"
 )
 
 // These smoke tests guard what the metrics unit tests structurally cannot: that
