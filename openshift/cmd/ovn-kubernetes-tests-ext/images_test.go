@@ -11,8 +11,43 @@ import (
 	"github.com/openshift-eng/openshift-tests-extension/pkg/extension"
 	ocpdeploymentconfig "github.com/ovn-kubernetes/ovn-kubernetes/openshift/test/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig/api"
 	deploymentconfigapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig/api"
 )
+
+func TestFedoraImageUsesConfiguredRepository(t *testing.T) {
+	const tag = "e2e-quay-io-kubevirt-fedora-with-test-tooling-container-disk-v1-8-2-DmMayTpvDZVswLv0"
+
+	for _, repo := range []string{
+		"",
+		"quay.io/openshift/community-e2e-images",
+		"mirror.example.com:5000/e2e",
+	} {
+		t.Run(repo, func(t *testing.T) {
+			t.Setenv("KUBE_TEST_REPO", repo)
+
+			want := ocpdeploymentconfig.FedoraKubevirtContainerDiskImage
+			if repo != "" {
+				want = repo + ":" + tag
+			}
+
+			got := deploymentconfig.Get().
+				GetImage(api.FedoraKubevirtContainerDisk).PullSpec
+			if got != want {
+				t.Fatalf("repo %q: got %q, want %q", repo, got, want)
+			}
+			found := false
+			for _, image := range deploymentconfig.Get().GetRequiredImages() {
+				if image.PullSpec == ocpdeploymentconfig.FedoraKubevirtContainerDiskImage {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatal("discovery must advertise the original Fedora pullspec")
+			}
+		})
+	}
+}
 
 func TestSplitImagePullSpec(t *testing.T) {
 	t.Parallel()

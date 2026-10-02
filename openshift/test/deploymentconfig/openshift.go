@@ -6,6 +6,7 @@ package deploymentconfig
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -19,9 +20,13 @@ import (
 	imageutils "k8s.io/kubernetes/test/utils/image"
 )
 
+// FedoraKubevirtContainerDiskImage matches Origin's approved live-migration test image.
+const FedoraKubevirtContainerDiskImage = "quay.io/kubevirt/fedora-with-test-tooling-container-disk:v1.8.2"
+
 var (
 	imageIDMapping map[api.ImageID]imageutils.ImageID = map[api.ImageID]imageutils.ImageID{
-		api.Agnhost: imageutils.Agnhost,
+		api.Agnhost:                     imageutils.Agnhost,
+		api.FedoraKubevirtContainerDisk: imageutils.None,
 	}
 	imageConfigMap map[api.ImageID]api.ImageConfig
 )
@@ -32,6 +37,10 @@ func init() {
 		api.Agnhost: {
 			ImageID:  api.Agnhost,
 			PullSpec: imageutils.GetE2EImage(imageutils.Agnhost),
+		},
+		api.FedoraKubevirtContainerDisk: {
+			ImageID:  api.FedoraKubevirtContainerDisk,
+			PullSpec: FedoraKubevirtContainerDiskImage,
 		},
 	}
 }
@@ -107,6 +116,13 @@ func (m *openshift) NBDBContainerName() string {
 }
 
 func (m *openshift) GetImage(imageID api.ImageID) api.ImageConfig {
+	if imageID == api.FedoraKubevirtContainerDisk && os.Getenv("KUBE_TEST_REPO") != "" {
+		pullSpec, err := imageutils.ReplaceRegistryInImageURL(imageConfigMap[imageID].PullSpec)
+		if err != nil {
+			panic(err)
+		}
+		return api.ImageConfig{ImageID: imageID, PullSpec: pullSpec}
+	}
 	return imageConfigMap[imageID]
 }
 
@@ -125,7 +141,7 @@ func (m *openshift) GetRequiredImages() []api.ImageConfig {
 		}
 		imageConfigs = append(imageConfigs, api.ImageConfig{
 			ImageID:  api.ImageID(newID),
-			PullSpec: m.GetImage(imageID).PullSpec,
+			PullSpec: imageConfigMap[imageID].PullSpec,
 		})
 	}
 	return imageConfigs
