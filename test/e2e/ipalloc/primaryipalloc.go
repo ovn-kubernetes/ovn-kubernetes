@@ -5,13 +5,16 @@ package ipalloc
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
+	"sync"
+
+	"github.com/onsi/ginkgo/v2"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	v1 "k8s.io/client-go/kubernetes/typed/core/v1"
-	"net"
-	"sync"
 )
 
 // primaryIPAllocator attempts to allocate an IP in the same subnet as a nodes primary network
@@ -24,18 +27,34 @@ type primaryIPAllocator struct {
 
 var pia *primaryIPAllocator
 
+var errNoRange = errors.New("no shared primary IP range")
+
+func IsNoRangeError(err error) bool {
+	return errors.Is(err, errNoRange)
+}
+
 // InitPrimaryIPAllocator must be called to init IP allocator(s). Callers must be synchronise.
 func InitPrimaryIPAllocator(nodeClient v1.NodeInterface) error {
-	var err error
-	pia, err = newPrimaryIPAllocator(nodeClient)
-	return err
+	allocator, err := newPrimaryIPAllocator(nodeClient)
+	if err != nil {
+		pia = nil
+		return err
+	}
+	pia = allocator
+	return nil
 }
 
 func NewPrimaryIPv4() (net.IP, error) {
+	if pia == nil || pia.v4 == nil {
+		ginkgo.Skip("primary IPv4 allocation is unavailable on this cluster", 2)
+	}
 	return pia.AllocateNextV4()
 }
 
 func NewPrimaryIPv6() (net.IP, error) {
+	if pia == nil || pia.v6 == nil {
+		ginkgo.Skip("primary IPv6 allocation is unavailable on this cluster", 2)
+	}
 	return pia.AllocateNextV6()
 }
 
@@ -80,7 +99,7 @@ func newPrimaryIPAllocator(nodeClient v1.NodeInterface) (*primaryIPAllocator, er
 			return ipa, err
 		}
 		if !isIPWithinAllSubnets(ipNets, nextIP) {
-			return ipa, fmt.Errorf("IP %s is not within all Node subnets", nextIP)
+			return ipa, fmt.Errorf("%w: IP %s is not within all Node subnets", errNoRange, nextIP)
 		}
 	}
 	if nodePrimaryIPs.V6.IP != nil {
@@ -93,7 +112,7 @@ func newPrimaryIPAllocator(nodeClient v1.NodeInterface) (*primaryIPAllocator, er
 			return ipa, err
 		}
 		if !isIPWithinAllSubnets(ipNets, nextIP) {
-			return ipa, fmt.Errorf("IP %s is not within all Node subnets", nextIP)
+			return ipa, fmt.Errorf("%w: IP %s is not within all Node subnets", errNoRange, nextIP)
 		}
 	}
 

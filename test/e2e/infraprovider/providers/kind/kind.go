@@ -26,8 +26,11 @@ import (
 	"k8s.io/kubernetes/test/e2e/framework"
 )
 
+const ProviderName = "kind"
+
 type kind struct {
 	engine   *container.Engine
+	runtime  containerRuntime
 	HostPort *portalloc.PortAllocator
 }
 
@@ -39,12 +42,13 @@ func New() api.Provider {
 	cmdRunner := runner.NewDirectRunner()
 	kind := &kind{
 		engine:   container.NewEngine(ce.String(), cmdRunner),
+		runtime:  ce,
 		HostPort: portalloc.New(1024, 65535)}
 	return kind
 }
 
 func (k *kind) Name() string {
-	return "kind"
+	return ProviderName
 }
 
 func (k *kind) PrimaryNetwork() (api.Network, error) {
@@ -107,7 +111,7 @@ func (k *kind) PreloadImages(imgs []string) {
 		var out []byte
 		err := wait.ExponentialBackoff(pullBackoff, func() (bool, error) {
 			var pullErr error
-			out, pullErr = exec.Command(engine.String(), "pull", img).CombinedOutput()
+			out, pullErr = exec.Command(k.runtime.String(), "pull", img).CombinedOutput()
 			if pullErr != nil {
 				framework.Logf("Retrying pull for image %s: %v (%s)", img, pullErr, out)
 				return false, nil
@@ -118,9 +122,9 @@ func (k *kind) PreloadImages(imgs []string) {
 			framework.Logf("Warning: failed to pull image %s after retries: %v (%s)", img, err, out)
 			continue
 		}
-		if engine == podman {
+		if k.runtime == podman {
 			os.Remove("/tmp/image.tar")
-			out, err = exec.Command(engine.String(), "save", "-o", "/tmp/image.tar", img).CombinedOutput()
+			out, err = exec.Command(k.runtime.String(), "save", "-o", "/tmp/image.tar", img).CombinedOutput()
 			if err != nil {
 				framework.Logf("Warning: failed to save image %s: %v (%s)", img, err, out)
 				continue
