@@ -13,6 +13,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/allocators"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
 
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
@@ -212,11 +214,10 @@ var _ = Describe("Network Segmentation: Preconfigured Layer2 UDN", feature.Netwo
 	)
 
 	Context("duplicate IP validation with primary UDN layer 2 pods", func() {
-		const (
-			duplicateIPv4 = "10.128.0.200/16"
-			duplicateIPv6 = "2014:100:200::200/60"
-			networkCIDRv4 = "10.128.0.0/16"
-			networkCIDRv6 = "2014:100:200::0/60"
+		var (
+			networkCIDRv4, networkCIDRv6 = allocators.GetFirstUDNSubnets()
+			duplicateIPv4                = subnetOffsetIP(networkCIDRv4, 200) + "/" + strings.Split(networkCIDRv4, "/")[1]
+			duplicateIPv6                = subnetOffsetIP(networkCIDRv6, 200) + "/" + strings.Split(networkCIDRv6, "/")[1]
 		)
 
 		type duplicateIPTestConfig struct {
@@ -233,7 +234,7 @@ var _ = Describe("Network Segmentation: Preconfigured Layer2 UDN", feature.Netwo
 					return []string{"pause"}
 				}),
 				withAnnotations(map[string]string{
-					"v1.multus-cni.io/default-network": fmt.Sprintf(`[{"name":"default", "namespace":"ovn-kubernetes", "ips": %s}]`, string(ips)),
+					"v1.multus-cni.io/default-network": fmt.Sprintf(`[{"name":"default", "namespace":%q, "ips": %s}]`, deploymentconfig.Get().OVNKubernetesNamespace(), string(ips)),
 				}),
 			)
 			podConfig.namespace = f.Namespace.Name
@@ -250,7 +251,7 @@ var _ = Describe("Network Segmentation: Preconfigured Layer2 UDN", feature.Netwo
 					return []string{"pause"}
 				}),
 				withAnnotations(map[string]string{
-					"v1.multus-cni.io/default-network": fmt.Sprintf(`[{"name":"default", "namespace":"ovn-kubernetes", "ips": %s}]`, string(ips)),
+					"v1.multus-cni.io/default-network": fmt.Sprintf(`[{"name":"default", "namespace":%q, "ips": %s}]`, deploymentconfig.Get().OVNKubernetesNamespace(), string(ips)),
 				}),
 			)
 			podConfig.namespace = f.Namespace.Name
