@@ -201,7 +201,7 @@ func composeFedoraWithTestToolingVMI(namespace string, labels, annotations, node
 			NetworkData: networkData,
 		},
 	}
-	return composeVMI(namespace, labels, annotations, nodeSelector, networkSource, cloudInitVolumeSource, kubevirt.FedoraWithTestToolingContainerDiskImage)
+	return composeVMI(namespace, labels, annotations, nodeSelector, networkSource, cloudInitVolumeSource, images.FedoraContainerDisk())
 }
 
 func composeFedoraWithTestToolingVM(namespace string, labels, annotations, nodeSelector map[string]string,
@@ -302,12 +302,6 @@ func removeImagesFromNodes(cs kubernetes.Interface, imageURL string) error {
 		}
 	}
 	return nil
-}
-
-func init() {
-	if os.Getenv("KIND_INSTALL_KUBEVIRT") == "true" {
-		images.Add(images.Netshoot())
-	}
 }
 
 var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, func() {
@@ -1395,7 +1389,7 @@ config:
 		})
 
 		AfterAll(func() {
-			Expect(removeImagesInNodes(kubevirt.FedoraWithTestToolingContainerDiskImage)).To(Succeed())
+			Expect(removeImagesInNodes(images.FedoraContainerDisk())).To(Succeed())
 		})
 
 		DescribeTable("when live migration", func(td liveMigrationTestData) {
@@ -1501,7 +1495,7 @@ config:
 	})
 	Context("with user defined networks and persistent ips configured", Ordered, func() {
 		AfterAll(func() {
-			Expect(removeImagesInNodes(kubevirt.FedoraWithTestToolingContainerDiskImage)).To(Succeed())
+			Expect(removeImagesInNodes(images.FedoraContainerDisk())).To(Succeed())
 		})
 		type testCommand struct {
 			description string
@@ -2225,7 +2219,7 @@ ip route add %[3]s via %[4]s
 			}
 		)
 		AfterAll(func() {
-			Expect(removeImagesInNodes(kubevirt.FedoraWithTestToolingContainerDiskImage)).To(Succeed())
+			Expect(removeImagesInNodes(images.FedoraContainerDisk())).To(Succeed())
 		})
 		BeforeEach(func() {
 			ns, err := fr.CreateNamespace(context.TODO(), fr.BaseName, map[string]string{
@@ -2328,7 +2322,7 @@ ethernets:
 			namespace = fr.Namespace.Name
 		})
 		AfterAll(func() {
-			Expect(removeImagesInNodes(kubevirt.FedoraWithTestToolingContainerDiskImage)).To(Succeed())
+			Expect(removeImagesInNodes(images.FedoraContainerDisk())).To(Succeed())
 		})
 		var (
 			ipv4CIDR             = "172.31.0.0/24"
