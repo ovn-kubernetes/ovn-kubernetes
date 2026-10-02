@@ -1346,7 +1346,23 @@ func removePMTUDNodeNFTRules(nodeIPs []net.IP) error {
 	return nil
 }
 
+// ownNodeDeletedExit terminates ovnkube-node once the Node object it runs on
+// behalf of is deleted; a variable so that unit tests can intercept the exit.
+var ownNodeDeletedExit = func(nodeName string) {
+	klog.Errorf("Node %q that this ovnkube-node instance runs on behalf of was deleted; exiting so that "+
+		"the restarted process re-initializes against the current Node object", nodeName)
+	klog.FlushAndExit(klog.ExitFlushTimeout, 1)
+}
+
 func (nc *DefaultNodeNetworkController) deleteNode(node *corev1.Node) {
+	if config.IsModeDPU() && node.Name == nc.name {
+		// In DPU mode the process does not run on the deleted node, so nothing
+		// else stops it, and what it wrote to the Node object is only written at
+		// startup: exit and let the container restart against the new node.
+		ownNodeDeletedExit(nc.name)
+		return
+	}
+
 	gw := nc.Gateway.(*gateway)
 	gw.openflowManager.deleteFlowsByKey(getPMTUDKey(node.Name))
 
