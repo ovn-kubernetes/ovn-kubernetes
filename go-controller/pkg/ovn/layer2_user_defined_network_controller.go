@@ -138,7 +138,7 @@ func (h *layer2UserDefinedNetworkControllerEventHandler) UpdateResource(oldObj, 
 	case factory.PodType:
 		newPod := newObj.(*corev1.Pod)
 		oldPod := oldObj.(*corev1.Pod)
-		if err := h.oc.ensurePodForUserDefinedNetwork(newPod, shouldAddPort(oldPod, newPod, inRetryCache)); err != nil {
+		if err := h.oc.reconcilePodForUserDefinedNetwork(oldPod, newPod, inRetryCache); err != nil {
 			return err
 		}
 
@@ -271,24 +271,25 @@ func NewLayer2UserDefinedNetworkController(
 
 			BaseUserDefinedNetworkController: BaseUserDefinedNetworkController{
 				BaseNetworkController: BaseNetworkController{
-					CommonNetworkControllerInfo: *cnci,
-					controllerName:              getNetworkControllerName(netInfo.GetNetworkName()),
-					ReconcilableNetInfo:         util.NewReconcilableNetInfo(netInfo),
-					lsManager:                   lsManager,
-					logicalPortCache:            portCache,
-					namespaces:                  make(map[string]*namespaceInfo),
-					namespacesMutex:             sync.Mutex{},
-					addressSetFactory:           addressSetFactory,
-					networkPolicies:             syncmap.NewSyncMap[*networkPolicy](),
-					sharedNetpolPortGroups:      syncmap.NewSyncMap[*defaultDenyPortGroups](),
-					stopChan:                    stopChan,
-					wg:                          &sync.WaitGroup{},
-					cancelableCtx:               util.NewCancelableContext(),
-					networkManager:              networkManager,
-					routeImportManager:          routeImportManager,
-					addressSetManager:           addressSetManager,
-					nodeReconciler:              nodeReconciler,
-					nodeAnnotationCache:         nodeAnnotationCache,
+					CommonNetworkControllerInfo:  *cnci,
+					controllerName:               getNetworkControllerName(netInfo.GetNetworkName()),
+					ReconcilableNetInfo:          util.NewReconcilableNetInfo(netInfo),
+					lsManager:                    lsManager,
+					logicalPortCache:             portCache,
+					namespaces:                   make(map[string]*namespaceInfo),
+					namespacesMutex:              sync.Mutex{},
+					addressSetFactory:            addressSetFactory,
+					networkPolicies:              syncmap.NewSyncMap[*networkPolicy](),
+					networkPolicyKeysByNamespace: syncmap.NewSyncMap[sets.Set[string]](),
+					sharedNetpolPortGroups:       syncmap.NewSyncMap[*defaultDenyPortGroups](),
+					stopChan:                     stopChan,
+					wg:                           &sync.WaitGroup{},
+					cancelableCtx:                util.NewCancelableContext(),
+					networkManager:               networkManager,
+					routeImportManager:           routeImportManager,
+					addressSetManager:            addressSetManager,
+					nodeReconciler:               nodeReconciler,
+					nodeAnnotationCache:          nodeAnnotationCache,
 				},
 			},
 		},
@@ -301,7 +302,6 @@ func NewLayer2UserDefinedNetworkController(
 	}
 	if oc.IsPrimaryNetwork() {
 		oc.onLogicalPortCacheAdd = func(pod *corev1.Pod, _ string) {
-			oc.requestLocalPodPolicyRetriesForPod(pod, "logical port cache update")
 			if oc.eIPController != nil {
 				oc.eIPController.addEgressIPPodRetry(pod, "logical port cache update")
 			}
