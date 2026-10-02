@@ -749,6 +749,71 @@ func TestNodeDontSNATSubnetAnnotationChanged(t *testing.T) {
 			},
 			result: false,
 		},
+		{
+			desc: "new annotation added",
+			oldNode: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{}},
+			},
+			newNode: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						OvnNodeSNATExcludeSubnets: `["10.0.0.0/16"]`,
+					},
+				},
+			},
+			result: true,
+		},
+		{
+			desc: "new annotation removed",
+			oldNode: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						OvnNodeSNATExcludeSubnets: `["10.0.0.0/16"]`,
+					},
+				},
+			},
+			newNode: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{}},
+			},
+			result: true,
+		},
+		{
+			desc: "new annotation value changed",
+			oldNode: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						OvnNodeSNATExcludeSubnets: `["10.0.0.0/16"]`,
+					},
+				},
+			},
+			newNode: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						OvnNodeSNATExcludeSubnets: `["192.168.1.0/24"]`,
+					},
+				},
+			},
+			result: true,
+		},
+		{
+			desc: "old annotation unchanged but new annotation added",
+			oldNode: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						OvnNodeDontSNATSubnets: `["192.168.1.0/24"]`,
+					},
+				},
+			},
+			newNode: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						OvnNodeDontSNATSubnets:    `["192.168.1.0/24"]`,
+						OvnNodeSNATExcludeSubnets: `["10.0.0.0/16"]`,
+					},
+				},
+			},
+			result: true,
+		},
 	}
 
 	for i, tc := range tests {
@@ -852,6 +917,47 @@ func TestParseNodeDontSNATSubnetsList(t *testing.T) {
 			expectError: false,
 		},
 		{
+			desc: "new annotation only",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "node-new",
+					Annotations: map[string]string{
+						OvnNodeSNATExcludeSubnets: `["10.1.0.0/16"]`,
+					},
+				},
+			},
+			expected:    []string{"10.1.0.0/16"},
+			expectError: false,
+		},
+		{
+			desc: "both annotations non-overlapping subnets are merged",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "node-merge",
+					Annotations: map[string]string{
+						OvnNodeDontSNATSubnets:    `["192.168.1.0/24"]`,
+						OvnNodeSNATExcludeSubnets: `["10.1.0.0/16"]`,
+					},
+				},
+			},
+			expected:    []string{"192.168.1.0/24", "10.1.0.0/16"},
+			expectError: false,
+		},
+		{
+			desc: "both annotations overlapping subnets are deduplicated",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "node-dedup",
+					Annotations: map[string]string{
+						OvnNodeDontSNATSubnets:    `["192.168.1.0/24", "10.0.0.0/16"]`,
+						OvnNodeSNATExcludeSubnets: `["10.0.0.0/16", "fd00::/64"]`,
+					},
+				},
+			},
+			expected:    []string{"192.168.1.0/24", "10.0.0.0/16", "fd00::/64"},
+			expectError: false,
+		},
+		{
 			desc: "invalid annotation value (not JSON)",
 			node: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
@@ -886,7 +992,7 @@ func TestParseNodeDontSNATSubnetsList(t *testing.T) {
 				require.Error(t, err)
 			} else {
 				require.NoError(t, err)
-				assert.Equal(t, tc.expected, result)
+				assert.ElementsMatch(t, tc.expected, result)
 			}
 		})
 	}

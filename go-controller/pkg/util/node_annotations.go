@@ -17,6 +17,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/util/retry"
+	"k8s.io/klog/v2"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
@@ -156,8 +157,14 @@ const (
 	// ovnNodeEncapIPs is used to indicate encap IPs set on the node
 	OVNNodeEncapIPs = "k8s.ovn.org/node-encap-ips"
 
-	// OvnNodeDontSNATSubnets is a user assigned source subnets that should avoid SNAT at ovn-k8s-mp0 interface
+	// OvnNodeDontSNATSubnets is a user assigned annotation that specifies subnets that should
+	// bypass SNAT for both ingress and egress traffic.
+	// Deprecated: use OvnNodeSNATExcludeSubnets instead.
 	OvnNodeDontSNATSubnets = "k8s.ovn.org/node-ingress-snat-exclude-subnets"
+
+	// OvnNodeSNATExcludeSubnets is a user assigned annotation that specifies subnets that should
+	// bypass SNAT for both ingress and egress traffic.
+	OvnNodeSNATExcludeSubnets = "k8s.ovn.org/node-snat-exclude-subnets"
 )
 
 type L3GatewayConfig struct {
@@ -953,30 +960,41 @@ func ParseNodeHostCIDRsList(node *corev1.Node) ([]string, error) {
 	return parseNodeAnnotationList(node, OVNNodeHostCIDRs)
 }
 
+// ParseNodeDontSNATSubnetsList returns the merged list of subnets from both the deprecated
+// OvnNodeDontSNATSubnets and the new OvnNodeSNATExcludeSubnets annotations.
 func ParseNodeDontSNATSubnetsList(node *corev1.Node) ([]string, error) {
-	return parseNodeAnnotationList(node, OvnNodeDontSNATSubnets)
+	if _, ok := node.Annotations[OvnNodeDontSNATSubnets]; ok {
+		klog.Warningf("Node %s uses deprecated annotation %q, please migrate to %q",
+			node.Name, OvnNodeDontSNATSubnets, OvnNodeSNATExcludeSubnets)
+	}
+	old, err := parseNodeAnnotationList(node, OvnNodeDontSNATSubnets)
+	if err != nil {
+		return nil, err
+	}
+	newSubnets, err := parseNodeAnnotationList(node, OvnNodeSNATExcludeSubnets)
+	if err != nil {
+		return nil, err
+	}
+	return sets.New[string](old...).Insert(newSubnets...).UnsortedList(), nil
 }
 
-// NodeDontSNATSubnetAnnotationChanged returns true if the OvnNodeDontSNATSubnets in the corev1.Nodes doesn't match
+// NodeDontSNATSubnetAnnotationChanged returns true if either SNAT exclude annotation changed between the two nodes.
 func NodeDontSNATSubnetAnnotationChanged(oldNode, newNode *corev1.Node) bool {
-	oldVal, oldOk := oldNode.Annotations[OvnNodeDontSNATSubnets]
-	newVal, newOk := newNode.Annotations[OvnNodeDontSNATSubnets]
-
-	if oldOk != newOk {
-		return true
+	for _, key := range []string{OvnNodeDontSNATSubnets, OvnNodeSNATExcludeSubnets} {
+		oldVal, oldOk := oldNode.Annotations[key]
+		newVal, newOk := newNode.Annotations[key]
+		if oldOk != newOk || (oldOk && newOk && oldVal != newVal) {
+			return true
+		}
 	}
-
-	if oldOk && newOk && oldVal != newVal {
-		return true
-	}
-
 	return false
 }
 
-// NodeDontSNATSubnetAnnotationExist returns true OvnNodeDontSNATSubnets annotation key exists in node annotation
+// NodeDontSNATSubnetAnnotationExist returns true if either SNAT exclude annotation exists on the node.
 func NodeDontSNATSubnetAnnotationExist(node *corev1.Node) bool {
-	_, ok := node.Annotations[OvnNodeDontSNATSubnets]
-	return ok
+	_, ok1 := node.Annotations[OvnNodeDontSNATSubnets]
+	_, ok2 := node.Annotations[OvnNodeSNATExcludeSubnets]
+	return ok1 || ok2
 }
 
 func parseNodeAnnotationList(node *corev1.Node, annotationKey string) ([]string, error) {
