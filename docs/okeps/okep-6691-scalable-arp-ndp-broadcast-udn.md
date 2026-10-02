@@ -144,7 +144,7 @@ Even below the resubmit limit, every ARP packet traverses all N UDN pipelines un
 Two mechanisms work together to eliminate ARP/NDP fan-out:
 
 1. **Traffic Steering** (4 priority-52 flows per external-ingress port): Intercepts inbound **unicast** ARP and NDP addressed to the shared MAC (`dl_dst=<bridgeMAC>`) from external-ingress ports above the existing paths that bypass `no-flood` (priority-10 and 50 flows), and redirects it to `default_patch` + `NORMAL`, so only the CDN GR and the kernel (via LOCAL) see it. Broadcast and multicast ARP/NDP fall through to the priority-0 catch-all `NORMAL` flow, which floods to the source GR and LOCAL (`no-flood` excludes CUDN patches). An **external-ingress port** is any OVS port on the bridge that carries inbound ARP/NDP from outside OVN's GR pipeline: `ofPortPhys` (physical uplink) and secondary localnet UDN patch ports. When `disable-udn-arp-ndp-flood` is True, existing ARP/NDP fan-out flows (priority-10/11/12, table-1 priority-14) are not rendered.
-2. **MAC_Binding Propagation** (for both IPv4 and IPv6): A new component propagates the CDN GR's resolved neighbor bindings to every UDN GR via direct SB-DB writes.
+2. **MAC_Binding Propagation** (for both IPv4 and IPv6): A new component propagates the CDN GR's resolved neighbor bindings to every UDN GR, using two complementary strategies: dynamic SB-DB `MAC_Binding` mirroring for neighbors whose lifecycle is not controlled by the cluster (e.g. the default gateway), and static NB-DB `Static_MAC_Binding` entries for node IPs, whose lifecycle is known from the K8s Node API.
 
 **Generalizing when Uplink feature is enabled:** The above describes the scenario when [Uplink](okep-6019-vrf-lite-shared-gateway-external-bridges.md) is not enabled, i.e. with the CDN GR as source (from where the MAC bindings are copied from) and every UDN GR as a follower (that gets a copy of the MAC bindings). More generally, networks that share a physical OVS bridge form a **group**, with one GR designated as the **source** and every other GR on that bridge acting as a **follower**. A UDN can instead be attached to a separate OVS bridge via the `Uplink` CRD ([OKEP-6019](okep-6019-vrf-lite-shared-gateway-external-bridges.md)); no CDN GR exists on that bridge, so the `openflow manager` designates one of its UDN GRs as the source, and the remaining UDN GRs on that same `Uplink` are followers. Both mechanisms above apply identically to any group, substituting "source GR" for "CDN GR" and "follower GR" for "UDN GR". How the uplink source is first chosen and later replaced is covered under **Source designation** and **Lifecycle Hooks** below. Secondary localnet UDNs cannot currently use Uplinks (blocked by CRD validation), so the external-ingress set on Uplink bridges covers only the physical port.
 
@@ -295,14 +295,18 @@ Priority-52 flows include optional `[matchVLAN]` (`dl_vlan=<Gateway.VLANID>` whe
 
 #### MAC_Binding Propagation
 
-For any neighbor a group's source GR has already resolved, the `MAC Binding Controller` propagates that resolution to every follower GR in the same group by writing a `MAC_Binding` entry directly to SB-DB for each follower GR's external port. This turns O(N) fan-out into a single control-plane propagation step, and applies identically to IPv4 (ARP) and IPv6 (NDP). 
-These entries are dynamic (subject to `mac_binding_age_threshold`, default 300s) and benefit from OVN's built-in lifecycle management.
+The `MAC Binding Controller` gives every follower GR the neighbor resolutions it needs without that follower ever seeing ARP/NDP traffic directly, using two complementary strategies:
+
+- **Dynamic `MAC_Binding` mirroring** (SB-DB): for neighbors whose lifecycle is not controlled by the cluster (the default gateway, external hosts). For any such neighbor a group's source GR has already resolved, the controller propagates that resolution to every follower GR in the same group by writing a `MAC_Binding` entry directly to SB-DB for each follower GR's external port. This turns O(N) fan-out into a single control-plane propagation step, and applies identically to IPv4 (ARP) and IPv6 (NDP). These entries are dynamic (subject to `mac_binding_age_threshold`, default 300s) and benefit from OVN's built-in lifecycle management.
+- **Static `Static_MAC_Binding`** (NB-DB): for **node IPs**, whose lifecycle is fully known from the K8s Node API. Node objects provide authoritative IP-to-MAC mapping. Since the controller already knows exactly when a node's IP or MAC changes, these entries are written once as permanent NB-DB rows with `override_dynamic_mac=true` (which gives them precedence over any dynamic `MAC_Binding` for the same IP), instead of being refreshed on OVN's dynamic-entry timers. Dynamic mirroring explicitly skips node IPs to avoid writing both a dynamic and a static entry for the same IP.
 
 **Source designation:** For the default group the source is always the CDN GR, there is nothing to designate. For an uplink group, the `openflow manager` (which already owns that bridge's steering-flows) designates one of the UDN GRs on the bridge as source. The source is the network whose GR patch port is the one that will receive ARP/NDP replies from the wire. Since all UDNs on the same uplink bridge share the same L2 domain, any UDN's GR resolves the same neighbors; the selection among available UDNs is arbitrary. When the current source UDN is removed, the openflow manager picks any remaining UDN on the bridge, updates the steering-flows to point at it (see [Traffic Isolation and Steering](#traffic-isolation-and-steering)), and informs the `MAC Binding Controller`.
 
-For brevity, the remainder of this section (Mechanism, Event Handling, MAC_Binding Lifecycle, Probing Amplification) illustrates the mechanism using the default group's terminology ("CDN GR", "UDN GR"); the same behavior applies identically within any uplink group by substituting "source GR" and "follower GR".
+For brevity, the [Dynamic MAC_Binding Mirroring](#dynamic-mac_binding-mirroring) subsection below (Mechanism, Event Handling, MAC_Binding Lifecycle, Probing Amplification, Lifecycle Hooks) illustrates the mechanism using the default group's terminology ("CDN GR", "UDN GR"); the same behavior applies identically within any uplink group by substituting "source GR" and "follower GR".
 
-##### Mechanism
+##### Dynamic MAC_Binding Mirroring
+
+###### Mechanism
 
 1. When any GR (default or UDN) resolves a neighbor (via ARP Request or NDP NS), the ARP reply/NA is steered to `default_patch` by the priority-52 flow ([Scenario 2](#scenario-2-inbound-unicast-arp-reply)), and the CDN GR creates or updates a dynamic `MAC_Binding` entry in SB-DB. When a UDN GR triggers resolution, it does not receive the reply/NA directly, only the CDN GR does. OVN buffers the original IP packet that triggered the ARP/NS request for up to 10 seconds (limits: 1000 unique destinations, 4 packets per destination).
 2. The `MAC Binding Controller` watches `MAC_Binding` changes via the libovsdb SB-DB event handler, filtering for entries on tracked source GR ports (e.g. `rtoe-GR_<node>` for the default group).
@@ -310,9 +314,8 @@ For brevity, the remainder of this section (Mechanism, Event Handling, MAC_Bindi
 4. Bidirectional UDN traffic (e.g. TCP) keeps entries alive via `MAC_CACHE_USE` (return traffic refreshes timestamp). Entries never expire while bidirectional traffic flows.
 5. Idle entries expire after 300s (without controller involvement); on next traffic, resolution repeats from step 1.
 
-**Scale:** This produces `N x M` MAC_Binding entries per node per protocol, where N is the number of UDNs and M is the number of neighbors the CDN GR has resolved for that protocol. M is driven by the GR's **connected route** for its external subnet. The GR's external port (`rtoe-GR_*`) is assigned the node's IP with a prefix length, which creates an implicit connected route for the entire subnet. Since all cluster nodes sit on the same external subnet, the best-case M = default gateway + number of nodes, for each of IPv4 and IPv6. At 500 UDNs and 500 nodes, that is ~250K MAC_Binding entries per node per protocol (~500K entries per node with both IPv4 and IPv6 enabled). Every resolved binding is propagated to **all** UDN GRs regardless of which UDN triggered the resolution (the returning reply/NA is steered to `default_patch` with no correlation to the originating UDN).
 
-##### Event Handling
+###### Event Handling
 
 - **ADD** (new IP resolved): Write `MAC_Binding` for all UDN GRs with same `(IP, MAC)` and fresh timestamp in a single batched transaction. ovn-controller installs flows incrementally (no northd involvement).
 - **UPDATE** (MAC changed): Update all UDN GR MAC_Bindings with the new MAC.
@@ -325,7 +328,7 @@ For brevity, the remainder of this section (Mechanism, Event Handling, MAC_Bindi
 
 **Potential improvement:** If timestamp-driven write amplification becomes a concern at extreme scale, the controller could switch to periodic reconciliation: sweep every half binding expiration time, refresh UDN entries approaching expiry in one batch.
 
-##### MAC_Binding Lifecycle
+###### MAC_Binding Lifecycle
 
 Dynamic `MAC_Binding` entries expire after `mac_binding_age_threshold` (default 300s) unless actively refreshed. OVN provides two complementary mechanisms that extend binding lifetime based on traffic:
 
@@ -335,7 +338,7 @@ Dynamic `MAC_Binding` entries expire after `mac_binding_age_threshold` (default 
 
 Entries that are neither refreshed nor probed (idle) expire at 300s. On next traffic, the router re-resolves from scratch.
 
-**CDN GR binding (propagation source):** Subject to the lifecycle mechanisms described above. For destinations the default network actually uses (gateway, other nodes), `mac_cache_use` and stale probes keep the binding alive directly from that traffic. For destinations reached only via UDN traffic, the CDN GR has no *IP* traffic of its own (UDN-bound data traffic is redirected by conntrack directly into the specific UDN's own pipeline, never reaching the CDN GR). This rarely leaves the binding idle, though: any inbound ARP request or NDP NS whose target matches the router's own IP (the shared node IP, identical on every GR) creates a `MAC_Binding` entry from the requester's `(IP, MAC)` regardless of the OVN `always_learn_from_arp_request` setting (OVN-Kubernetes default `false`), and any *subsequent* ARP/NDP of any kind from that same `(MAC, IP)` refreshes it in place, propagated by the `MAC Binding Controller` to all N follower GRs either way. This **ARP/NDP-request-driven keep-alive** contributes on keeping the full `M`-sized neighbor set (default gateway + every other cluster node) continuously resolved on the CDN GR and continuously propagated to all N follower GRs, regardless of whether any UDN is actually forwarding traffic to a given neighbor.
+**CDN GR binding (propagation source):** Subject to the lifecycle mechanisms described above. For destinations the default network actually uses (the gateway, other hosts on the external subnet), `mac_cache_use` and stale probes keep the binding alive directly from that traffic. For destinations reached only via UDN traffic, the CDN GR has no *IP* traffic of its own (UDN-bound data traffic is redirected by conntrack directly into the specific UDN's own pipeline, never reaching the CDN GR). This rarely leaves the binding idle, though: any inbound ARP request or NDP NS whose target matches the router's own IP (the shared node IP, identical on every GR) creates a `MAC_Binding` entry from the requester's `(IP, MAC)` regardless of the OVN `always_learn_from_arp_request` setting (OVN-Kubernetes default `false`), and any *subsequent* ARP/NDP of any kind from that same `(MAC, IP)` refreshes it in place. This **ARP/NDP-request-driven keep-alive** contributes to keeping the `M_external`-sized neighbor set (default gateway and any other non-node hosts on the external subnet) continuously resolved on the CDN GR, and the `MAC Binding Controller` propagates any such refresh to all N follower GRs either way, regardless of whether any UDN is actually forwarding traffic to a given neighbor.
 
 Whenever the CDN GR's binding is refreshed (by either mechanism), the `MAC Binding Controller` mirrors the timestamp update to all UDN GR bindings for that destination. This propagation is an **additional** refresh source for UDN GR bindings, on top of the OVN mechanisms that apply to them independently from their own traffic. When propagation stops (CDN GR binding expires), UDN GR bindings fall back to their own traffic-based refresh (see below).
 
@@ -347,13 +350,13 @@ Whenever the CDN GR's binding is refreshed (by either mechanism), the `MAC Bindi
 
 In all active-traffic cases, the UDN GR's binding can outlive the CDN GR's binding. When propagation timestamp refreshes are active (CDN GR binding is alive), the UDN GR's binding stays "fresh" from ovn-controller's perspective, so `mac_cache_use` and stale probes on the UDN GR rarely fire, propagation is the primary refresh path.
 
-##### Probing Amplification
+###### Probing Amplification
 
-The `MAC Binding Controller` propagates every CDN GR binding to *all* UDN GRs, including those that have no traffic to that destination. These unused entries are kept fresh by propagation while the CDN GR's binding is alive. However, OVN's stale probe mechanism must correctly identify unused entries to avoid amplification: with N UDNs × M propagated bindings per UDN, probing all entries would produce O(N × M) unicast ARP/NDP packets on the wire every probing cycle.
+The `MAC Binding Controller` propagates every CDN GR binding to *all* UDN GRs, including those that have no traffic to that destination. These unused entries are kept fresh by propagation while the CDN GR's binding is alive. However, OVN's stale probe mechanism must correctly identify unused entries to avoid amplification: with N UDNs × `M_external` dynamically-mirrored bindings per UDN, probing all entries would produce O(N × `M_external`) unicast ARP/NDP packets on the wire every probing cycle. Node IPs do not contribute here since they are static entries, not subject to OVN's stale-probe mechanism at all.
 
-OVN requires a fix that skips probing inactive entries. Without this fix, at 500 UDNs × 500 neighbors, up to ~250K probes fire per probing cycle per node per protocol. [This OVN fix](https://mail.openvswitch.org/pipermail/ovs-dev/2026-September/435673.html) is a **prerequisite** for the mid-term solution at scale.
+OVN requires a fix that skips probing inactive entries. [This OVN fix](https://mail.openvswitch.org/pipermail/ovs-dev/2026-September/435673.html) is a **prerequisite** for the mid-term solution at scale.
 
-##### Lifecycle Hooks
+###### Lifecycle Hooks
 
 | Trigger | Action |
 |---------|--------|
@@ -364,6 +367,40 @@ OVN requires a fix that skips probing inactive entries. Without this fix, at 500
 | Uplink backing bridge change | See below |
 
 **Edge case — backing bridge change:** `Uplink.spec.nodeConfigs` is mutable ([OKEP-6019](okep-6019-vrf-lite-shared-gateway-external-bridges.md)), so an administrator can change `hostInterfaceName` while CUDNs still reference the Uplink. OKEP-6019 documents this as a disruptive operation that "can temporarily degrade CUDNs while node state is rediscovered." The new interface may resolve to a different OVS bridge. If the previously learned IP-to-MAC mappings are not valid on the new physical attachment, existing source `MAC_Binding` rows are stale. When the GR is reconciled in place, its OVN logical topology and its `Datapath_Binding` remains unchanged, so those rows are not removed merely because the backing bridge changed. They remain subject to the GR's configured `mac_binding_age_threshold` and may be corrected earlier by OVN's stale-binding probing or a fresh ARP/NDP resolution. The `MAC Binding Controller` **amplifies** this pre-existing Uplink limitation by copying source bindings to all followers. It does not flush follower entries on a bridge change, and since the `MAC Binding Controller` ignores source DELETE events ([Event Handling](#event-handling)), follower rows can outlive the source's expired entries until their own timestamps expire. Connectivity to affected destinations may be disrupted during this convergence window.
+
+##### Static MAC Bindings for Node IPs
+
+###### Mechanism
+
+1. For default group, the `MAC Binding Controller` watches `Node` objects (add/update/delete) for changes to `status.addresses` InternalIP entries and the [shared MAC](#the-shared-mac) carried in the `k8s.ovn.org/l3-gateway-config` annotation. For a uplink group the controller watches `UplinkState` for changes to `status.ipAddresses` paired with its `status.macAddress`, plus changes to group membership and the designated source.
+2. On any such change, it recomputes the on-link node IPs: only IPs within the local node's gateway subnets are kept, paired with each node's shared MAC.
+3. It writes a `Static_MAC_Binding` entry to NB-DB for each **follower** GR's external port, for every on-link node IP, with `override_dynamic_mac=true`.
+4. The CDN GR is **never** a target: it receives ARP replies/NDP NAs directly via the priority-52 steering flow and creates its own dynamic `MAC_Binding` ([Scenario 2](#scenario-2-inbound-unicast-arp-reply)), so it has no resolution gap to fill. Writing a static entry there would instead risk shadowing a fresher dynamic entry during a MAC change, since `override_dynamic_mac=true` takes precedence over dynamic entries.
+5. On an `Uplink`-backed bridge, the designated source GR gets update-only treatment: existing static entries it inherited while it was still a follower are kept current (MAC updates) and individual IPs are removed if a node leaves, but it is never given new entries. This avoids connectivity blips when a former follower is promoted to source, its inherited entries stay in place rather than being bulk-wiped and re-resolved dynamically.
+6. **Ownership disambiguation:** the `Static_MAC_Binding` table has no `ExternalIDs` column, so ownership cannot be tagged on the row. The gateway already writes a few `Static_MAC_Binding` entries on GR external ports for fixed masquerade IPs. The controller will treat those known masquerade IPs as gateway-owned and leaves them alone; any other IP on a GR external port will be treated as controller-owned (its node-IP static bindings). Any future component writing `Static_MAC_Binding` rows to GR ports would need to either use one of those known masquerade IPs or coordinate a different ownership scheme.
+
+###### Lifecycle Hooks
+
+Static `Static_MAC_Binding` entries have no TTL, no `mac_cache_use` involvement, and no stale probing, none of the OVN lifecycle mechanisms described in [MAC_Binding Lifecycle](#mac_binding-lifecycle) apply to them. Their lifecycle is entirely controller-driven, and they survive OVN aging and ovn-controller restarts without any refresh mechanism.
+
+| Trigger | Action |
+|---------|--------|
+| Node added / node IP changed / shared MAC changed | Recompute the on-link node IPs; ensure a `Static_MAC_Binding` on all followers for each new or changed `(IP, MAC)`; delete the entry from all followers for any IP that is no longer a node IP. |
+| Node deleted | The node's IP vanishes from the on-link set → delete its `Static_MAC_Binding` from all followers. |
+| GR port appears (`Port_Binding` add) | `MAC Binding Controller` catches the new follower up with the default group's current on-link node-IP `Static_MAC_Binding` entries. |
+| GR port disappears (`Port_Binding` delete) | `MAC Binding Controller` deletes any stale controller-owned `Static_MAC_Binding` rows on that port. This covers UDN deletion. |
+| Node process restart | `MAC Binding Controller` rebuilds the on-link node IPs from the node informer cache and reconciles `Static_MAC_Binding` rows for all followers; stale controller-owned static entries on ports that no longer exist are deleted. |
+| Source UDN promoted (uplink group) | When a former follower becomes the designated source, existing static entries it inherited while it was a follower are kept in place and receive update-only treatment (MAC updates; individual IP removal when a node leaves); it is never given new entries. Remaining followers continue to receive full reconcile against the on-link node-IP set. |
+| Gate disable (`disable-udn-arp-ndp-flood` turned off) | Because nothing else ages or corrects these rows, the gate-disable path (which requires a restart) must clear controller-owned `Static_MAC_Binding` entries as part of that transition. |
+
+##### Scale
+
+This produces `N x M` entries per node per protocol, where N is the number of UDNs/CUDNs and M is the number of neighbors the source GR has resolved for that protocol, split across the two propagation strategies:
+
+- **Dynamic `MAC_Binding` entries (SB-DB):** `N x M_external` per protocol, where `M_external` is the number of non-node neighbors on the external subnet (default gateway, external hosts sharing the L2 segment). The size of `M_external` is deployment-dependent.
+- **Static `Static_MAC_Binding` entries (NB-DB):** `N x M_nodes` per protocol, where `M_nodes` is the number of node IPs, bounded by cluster size. At 500 UDNs and 500 nodes, that is up to ~250K static entries per node per protocol (~500K with both IPv4 and IPv6 enabled). These are one-time writes that change only on node join/leave/IP-change: no timestamp refresh writes, no OVN lifecycle management (no aging, no `mac_cache_use` sweeps, no stale probes, no `mac_binding_removal_limit` batch-deletes).
+
+The total entry count is `N x M` (split across SB-DB dynamic entries and NB-DB static entries), but the **continuous write load** is proportional to `M_external` only, the `N x M_nodes` static entries are write-once, so the ~56s `mac_cache_use` refresh cycle (see [Event Handling](#event-handling)) only affects the `N x M_external` dynamic entries. Both SB-DB and NB-DB load must be validated in scale testing for a given deployment's `M_external` / `M_nodes` split.
 
 #### Complete Flow Priority Table (br-ex Table 0)
 
@@ -403,14 +440,15 @@ When `disable-udn-arp-ndp-flood` is **False**, the current codebase flows are re
 
 * **FDB learning dependency:** The trailing `NORMAL` in the priority-52 unicast steering flows serves two roles: (1) FDB learning (OVS records `source_MAC → in_port`), and (2) LOCAL delivery via the static FDB entry `bridgeMAC → LOCAL`. When ARP arrives from `ofPortPhys`, FDB learning records `source_MAC → ofPortPhys`. If `NORMAL` is accidentally removed, both FDB learning breaks and LOCAL stops receiving unicast ARP/NDP (breaking the kernel's neighbor table).
 
-* **MAC_Binding scale:** The `N x M` entry count (see [Scale](#mac_binding-propagation)) must be validated in scale testing to confirm SB-DB can handle the load. If timestamp-driven write amplification becomes a concern, the controller can switch to periodic reconciliation.
+* **MAC_Binding scale:** The `N x M` entry count (see [Scale](#scale)) must be validated in scale testing to confirm both SB-DB (dynamic `N x M_external` entries) and NB-DB (static `N x M_nodes` entries) can handle the load. If dynamic timestamp-driven write amplification becomes a concern, the controller can switch to periodic reconciliation for the dynamic mechanism.
 
 * **Thundering herd on northd batch-deletes:** If northd batch-deletes expired entries for all 500 UDN GRs across both protocols (e.g., all timestamps aligned), each UDN GR sends ARP/NS on next traffic. The neighbor receives up to 500 requests per protocol. Controller sees one ADD on the CDN GR per protocol → re-creates 500 entries in one batch transaction each. Mitigated by northd's `mac_binding_removal_limit` option which caps deletions per sweep.
+This applies to the [dynamic mechanism](#dynamic-mac_binding-mirroring) only, for an `M_external` neighbor. 
 
-* **CDN GR binding refresh for essentially the full `M` population:** Because hosts on the external subnet periodically re-resolve their neighbors/gateway as ordinary IP-stack behavior, independent of any UDN traffic, ARP/NDP-request-driven keep-alive is the dominant (often the *only*, since UDN-bound IP traffic never reaches the CDN GR's own pipeline) mechanism keeping the **entire** `M`-sized neighbor set (default gateway + every other cluster node) continuously alive on the CDN GR and continuously propagated to all N follower GRs, regardless of whether a specific UDN is actually forwarding traffic to a given neighbor. Concrete implications to validate in scale testing:
-  - **Persistent, not transient, footprint:** the `N x M` MAC_Binding count should be expected to sit near its full ceiling essentially continuously.
-  - **Continuous write load, not periodic bursts:** since `mac_cache_use`'s sweep is periodic (~56s), not per-packet, most of `M` can be marked active in the same sweep — so the `MAC Binding Controller` can face up to `N x M` propagation writes roughly every 56s.
-**Design implication:** the [periodic-reconciliation mitigation](#event-handling) (a cooldown that skips a rewrite if a follower's row was refreshed recently enough, e.g. every ~150s instead of every ~56s) should be treated as a likely-needed default, not an optional fallback for extreme scale.
+* **CDN GR binding refresh for the full `M_external` population:** Because hosts on the external subnet periodically re-resolve their neighbors/gateway as ordinary IP-stack behavior, independent of any UDN traffic, ARP/NDP-request-driven keep-alive is the dominant (often the *only*, since UDN-bound IP traffic never reaches the CDN GR's own pipeline) mechanism keeping the `M_external`-sized neighbor set (default gateway and any other non-node hosts on the external subnet) continuously alive on the CDN GR and continuously propagated to all N follower GRs, regardless of whether a specific UDN is actually forwarding traffic to a given neighbor. Concrete implications to validate in scale testing:
+  - **Persistent, not transient, footprint:** the `N x M_external` dynamic `MAC_Binding` count should be expected to sit near its full ceiling essentially continuously.
+  - **Continuous write load, not periodic bursts:** since `mac_cache_use`'s sweep is periodic (~56s), not per-packet, most of `M_external` can be marked active in the same sweep — so the `MAC Binding Controller` can face up to `N x M_external` propagation writes roughly every 56s.
+**Design implication:** the [periodic-reconciliation mitigation](#event-handling) (a cooldown that skips a rewrite if a follower's row was refreshed recently enough, e.g. every ~150s instead of every ~56s) is more or less important depending on `M_external` for a given deployment, the larger the non-node population sharing the external subnet, the more it matters.
 
 * **Process failure / SB-DB unavailable:** OVS retains its last-installed flow set on br-ex (including ovn-controller-programmed MAC_Binding flows), so the datapath continues forwarding autonomously during downtime. On restart or reconnect, libovsdb re-syncs state: delivers the full current state as ADD events, and the `MAC Binding Controller` re-applies UDN GR entries from current SB-DB state. Entries that aged out during downtime are re-created on next UDN traffic via the bootstrap path.
 
@@ -498,6 +536,14 @@ Watch the CDN GR's `MAC_Binding` in SB-DB. Write `StaticMACBinding` entries to N
 - **Reconciliation complexity:** StaticMACBinding entries have no `ExternalIDs` field, making ownership tracking difficult. Startup reconciliation requires distinguishing propagated entries from dummy masquerade entries by IP range. Dynamic MAC_Binding entries are self-reconciling, the controller just re-creates from the CDN GR's current state.
 - **northd cost:** `build_static_mac_binding_table()` is not incremental. Every NB-DB StaticMACBinding transaction triggers a full recompute of this function (iterates ALL entries). Direct SB MAC_Binding writes bypass northd entirely — ovn-controller processes them incrementally via `lflow_handle_changed_mac_bindings`.
 - **Overrides dynamic bindings:** `override_dynamic_mac=true` at priority 150 prevents any mechanism from correcting a stale entry except the controller itself. If the controller misses a MAC change (crash during failover), the stale entry persists indefinitely causing a permanent black-hole that UDN GRs cannot self-heal from. Dynamic MAC_Binding at priority 100 expires naturally and is re-resolved with the correct MAC.
+
+**Why this same mechanism is used for node IPs despite being rejected here:** The rejection above is about using `Static_MAC_Binding` as the **general** propagation mechanism for arbitrary external neighbors resolved dynamically off the wire. [Static MAC Bindings for Node IPs](#static-mac-bindings-for-node-ips) uses the same NB-DB table for a narrower, known-lifecycle population, where each rejection reason above does not apply:
+
+- **No traffic-based lifecycle** does not apply: the K8s Node API (not wire traffic) is the lifecycle source, so entries are added and removed by Node add/update/delete events -- there is no idle-neighbor accumulation to clean up.
+- **Probe infrastructure complexity** does not apply: there is no need to probe anything, since the controller already knows a node's current IP and MAC from the Node object, it never has to guess whether a binding is still correct.
+- **Reconciliation complexity** is reduced, not eliminated: `Static_MAC_Binding` still has no `ExternalIDs` field, but ownership is disambiguated by IP -- known gateway masquerade IPs (`CreateDummyGWMacBindings`) are left alone; any other IP on a GR external port is controller-owned (see [Ownership disambiguation](#static-mac-bindings-for-node-ips)).
+- **northd cost** still applies in principle (`build_static_mac_binding_table()` is still non-incremental), but node IP changes are infrequent (node join/leave/IP change), so the write rate is low compared to the dynamic mechanism's ~56s timestamp-refresh cycle.
+- **Overrides dynamic bindings dangerously** is a smaller risk here: for node IPs the controller is the sole authoritative source (there is no independent dynamic resolution path to conflict with, since dynamic mirroring explicitly skips node IPs), and a missed MAC change is corrected on the next Node update event rather than persisting indefinitely.
 
 ### Kernel Neighbor Table as ARP Proxy Source of Truth
 
