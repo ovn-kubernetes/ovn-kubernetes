@@ -8,7 +8,7 @@ become hard to maintain such code.
 All OVN-Kubernetes docs are kept under the `docs/` folder in the main path.
 There are specific folders such as `features` and `developer-guide` where
 you can add your commit against. These simple `.md` files are referred from
-the navigation tile in `mkdocs.yaml` file which is what is used to
+the navigation tile in `mkdocs.yml` file which is what is used to
 build our [website](https://ovn-kubernetes.io/).
 
 As a developer and contributor to this project; it is recommended that you
