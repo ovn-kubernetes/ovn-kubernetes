@@ -15,7 +15,6 @@ import (
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	uplinkinformers "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/informers/externalversions/uplink/v1alpha1"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iprulemanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/managementport"
@@ -27,8 +26,6 @@ import (
 // and reacting upon the watched resources (e.g. pods, endpoints) for user-defined networks
 type UserDefinedNodeNetworkController struct {
 	BaseNodeNetworkController
-	// pod events factory handler
-	podHandler *factory.Handler
 	// responsible for programing gateway elements for this network
 	gateway *UserDefinedNetworkGateway
 	// management port device manager
@@ -90,14 +87,6 @@ func NewUserDefinedNodeNetworkController(
 func (nc *UserDefinedNodeNetworkController) Start(_ context.Context) error {
 	klog.Infof("Starting UDN node network controller for network %s", nc.GetNetworkName())
 
-	// enable adding ovs ports for dpu pods in both primary and secondary user-defined networks
-	if (config.OVNKubernetesFeature.EnableMultiNetwork || util.IsNetworkSegmentationSupportEnabled()) && config.IsModeDPU() {
-		handler, err := nc.watchPodsDPU()
-		if err != nil {
-			return err
-		}
-		nc.podHandler = handler
-	}
 	if util.IsNetworkSegmentationSupportEnabled() && nc.IsPrimaryNetwork() {
 		if err := nc.gateway.Start(); err != nil {
 			return fmt.Errorf("failed to start node gateway for network %s at node %s: %w",
@@ -120,10 +109,6 @@ func (nc *UserDefinedNodeNetworkController) Stop() {
 		nc.gateway.Stop()
 	}
 	nc.wg.Wait()
-
-	if nc.podHandler != nil {
-		nc.watchFactory.RemovePodHandler(nc.podHandler)
-	}
 }
 
 // Cleanup cleans up node entities for the given user-defined network
