@@ -589,6 +589,42 @@ func TestUserDefinedNetworkGatewayReconcilesUplinkConfiguration(t *testing.T) {
 		}
 	})
 
+	t.Run("changed default gateways update routes without replacing the gateway", func(t *testing.T) {
+		state := resolvedGatewayUplinkState("uplink1", "node-a")
+		state.UID = "new-uid"
+		udnGateway, _, _ := newUplinkGatewayReconcileHarness(t, state)
+		current := uplinkGatewayFingerprintFromState(state)
+		current.defaultGateways = "192.0.2.254"
+		udnGateway.uplinkGatewayCleanupRequired = true
+		udnGateway.uplinkStateUID = "old-uid"
+		udnGateway.uplinkFingerprint = current
+
+		// No netlink expectation is set: any teardown or setup call fails.
+		if _, _, err := udnGateway.reconcileUplinkConfiguration(); err != nil {
+			t.Fatalf("changed default gateways failed: %v", err)
+		}
+		if !udnGateway.uplinkGatewayCleanupRequired {
+			t.Fatal("changed default gateways released gateway programming")
+		}
+		if udnGateway.uplinkFingerprint != uplinkGatewayFingerprintFromState(state) {
+			t.Fatalf("changed default gateways left fingerprint %#v", udnGateway.uplinkFingerprint)
+		}
+		if udnGateway.uplinkStateUID != state.UID {
+			t.Fatal("changed default gateways did not adopt the handled UplinkState identity")
+		}
+		var nextHops []string
+		for _, nextHop := range udnGateway.nextHops {
+			nextHops = append(nextHops, nextHop.String())
+		}
+		var published []string
+		for _, gateway := range state.Status.DefaultGateways {
+			published = append(published, string(gateway))
+		}
+		if strings.Join(nextHops, ",") != strings.Join(published, ",") {
+			t.Fatalf("next hops %v do not follow the published gateways %v", nextHops, published)
+		}
+	})
+
 	t.Run("unchanged configuration preserves programming", func(t *testing.T) {
 		state := resolvedGatewayUplinkState("uplink1", "node-a")
 		state.UID = "new-uid"

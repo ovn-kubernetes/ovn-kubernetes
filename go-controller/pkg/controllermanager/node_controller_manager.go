@@ -333,7 +333,7 @@ func NewNodeControllerManager(ovnClient *util.OVNClientset, wf factory.NodeWatch
 			wf.UplinkStateInformer(),
 		)
 		ncm.uplinkController = nodeuplink.NewController(
-			name, wf, ncm.ovnNodeClient, ncm.ovsClient)
+			name, wf, ncm.ovnNodeClient, ncm.ovsClient, ncm.routeManager)
 	}
 
 	return ncm, nil

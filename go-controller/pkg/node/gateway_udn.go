@@ -908,9 +908,84 @@ func (udng *UserDefinedNetworkGateway) reconcileUplinkConfiguration() (
 		udng.uplinkStateUID = state.UID
 		return state.UID, observedFingerprint, nil
 	}
+	if udng.uplinkGatewayCleanupRequired &&
+		fingerprintsDifferOnlyInDefaultGateways(udng.uplinkFingerprint, observedFingerprint) {
+		return state.UID, observedFingerprint,
+			udng.updateUplinkDefaultGateways(resolved, state.UID, observedFingerprint)
+	}
 	return state.UID, observedFingerprint,
 		udng.replaceUplinkGateway(resolved, state.UID, observedFingerprint)
 }
+
+// gatewaysOfFamiliesWithout returns the previous gateways of the IP families
+// that have no gateway among the current ones.
+func gatewaysOfFamiliesWithout(previous, current []net.IP) []net.IP {
+	var covered [2]bool
+	for _, gateway := range current {
+		covered[map[bool]int{false: 0, true: 1}[utilnet.IsIPv6(gateway)]] = true
+	}
+	var orphaned []net.IP
+	for _, gateway := range previous {
+		if !covered[map[bool]int{false: 0, true: 1}[utilnet.IsIPv6(gateway)]] {
+			orphaned = append(orphaned, gateway)
+		}
+	}
+	return orphaned
+}
+
+func fingerprintsDifferOnlyInDefaultGateways(a, b uplinkGatewayFingerprint) bool {
+	a.defaultGateways = b.defaultGateways
+	return a == b
+}
+
+// updateUplinkDefaultGateways follows a change of the published default
+// gateways without replacing the gateway: replacing it releases the gateway
+// interface from the network VRF, which drops a BGP session running over it.
+// The gateway router is programmed from UplinkState by the OVN side; on the
+// host only the managed default routes of the network VRF depend on the next
+// hops.
+func (udng *UserDefinedNetworkGateway) updateUplinkDefaultGateways(
+	resolved *resolvedUplinkGateway,
+	stateUID k8stypes.UID,
+	fingerprint uplinkGatewayFingerprint,
+) error {
+	previous := udng.nextHops
+	udng.nextHops = resolved.defaultGateways
+	// Under VRF-Lite the network VRF holds no managed default: nothing to do
+	// on the host.
+	managedDefaults := (config.IsModeDPUHost() || config.IsModeFull()) &&
+		(!udng.isNetworkAdvertised || udng.isNetworkAdvertisedToDefaultVRF)
+	if managedDefaults {
+		// A failed update leaves the routes half-changed: keep the programmed
+		// next hops and mark the fingerprint so the next reconcile retries
+		// this update rather than matching the stored fingerprint or
+		// rebuilding the gateway. A family that still has a gateway gets its
+		// managed default replaced in place; one that lost every gateway
+		// needs its managed default deleted.
+		fail := func(err error) error {
+			udng.nextHops = previous
+			udng.uplinkFingerprint.defaultGateways = pendingDefaultGateways
+			return newUplinkGatewayError(uplinkv1alpha1.UplinkStateReasonGatewayProgrammingFailed, err)
+		}
+		orphaned, err := udng.defaultRoutesFor(gatewaysOfFamiliesWithout(previous, resolved.defaultGateways))
+		if err == nil && len(orphaned) > 0 {
+			err = udng.vrfManager.DeleteVRFRoutes(util.GetNetworkVRFName(udng.NetInfo), orphaned)
+		}
+		if err != nil {
+			return fail(fmt.Errorf("failed to remove the managed default routes of network %s: %w", udng.GetNetworkName(), err))
+		}
+		if err := udng.updateUDNVRFIPRoute(); err != nil {
+			return fail(err)
+		}
+	}
+	udng.uplinkStateUID = stateUID
+	udng.uplinkFingerprint = fingerprint
+	return nil
+}
+
+// pendingDefaultGateways marks a fingerprint whose default gateway update
+// failed: no published list matches it, so the update is retried.
+const pendingDefaultGateways = "pending"
 
 // reconcileUplinkState makes this CUDN's gateway match the newest informer
 // state. The controller retries errors indefinitely; operationMutex serializes
@@ -1313,6 +1388,12 @@ func (udng *UserDefinedNetworkGateway) computeRoutesForUDN(mpLink netlink.Link) 
 }
 
 func (udng *UserDefinedNetworkGateway) getDefaultRoute() ([]netlink.Route, error) {
+	return udng.defaultRoutesFor(udng.nextHops)
+}
+
+// defaultRoutesFor builds the managed default routes of the network VRF for
+// the given next hops, one per next hop of a configured IP family.
+func (udng *UserDefinedNetworkGateway) defaultRoutesFor(nextHops []net.IP) ([]netlink.Route, error) {
 	networkMTU := udng.NetInfo.MTU()
 	if networkMTU == 0 {
 		networkMTU = config.Default.MTU
@@ -1322,11 +1403,11 @@ func (udng *UserDefinedNetworkGateway) getDefaultRoute() ([]netlink.Route, error
 	var defaultAnyCIDR *net.IPNet
 	hasV4Subnet, hasV6Subnet := udng.IPMode()
 	if udng.Uplink() != "" {
-		if len(udng.nextHops) == 0 {
+		if len(nextHops) == 0 {
 			return nil, nil
 		}
 	}
-	for _, nextHop := range udng.nextHops {
+	for _, nextHop := range nextHops {
 		isV6 := utilnet.IsIPv6(nextHop)
 		if (isV6 && !hasV6Subnet) || (!isV6 && !hasV4Subnet) {
 			continue
@@ -1770,7 +1851,7 @@ func (udng *UserDefinedNetworkGateway) updateUDNVRFIPRoute() error {
 func (udng *UserDefinedNetworkGateway) removeManagedDefaultRoutesFromVRF() error {
 	vrfDeviceName := util.GetNetworkVRFName(udng.NetInfo)
 	filter := &netlink.Route{Table: udng.vrfTableId}
-	routes, err := util.GetNetLinkOps().RouteListFiltered(netlink.FAMILY_ALL, filter, netlink.RT_FILTER_TABLE)
+	routes, err := util.GetNetLinkOps().RouteListFilteredStrict(netlink.FAMILY_ALL, filter, netlink.RT_FILTER_TABLE)
 	if err != nil {
 		return fmt.Errorf("unable to list routes of VRF table %d for network %s, err: %v",
 			udng.vrfTableId, udng.GetNetworkName(), err)

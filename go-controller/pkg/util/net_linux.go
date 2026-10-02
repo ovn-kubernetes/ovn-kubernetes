@@ -68,6 +68,7 @@ type NetLinkOps interface {
 	RouteReplace(route *netlink.Route) error
 	RouteListFiltered(family int, filter *netlink.Route, filterMask uint64) ([]netlink.Route, error)
 	RouteListFilteredIter(family int, filter *netlink.Route, filterMask uint64, f func(netlink.Route) bool) error
+	RouteListFilteredStrict(family int, filter *netlink.Route, filterMask uint64) ([]netlink.Route, error)
 	RuleListFiltered(family int, filter *netlink.Rule, filterMask uint64) ([]netlink.Rule, error)
 	RuleAdd(rule *netlink.Rule) error
 	RuleDel(rule *netlink.Rule) error
@@ -269,6 +270,38 @@ func (defaultNetLinkOps) RouteListFiltered(family int, filter *netlink.Route, fi
 
 func (defaultNetLinkOps) RouteListFilteredIter(family int, filter *netlink.Route, filterMask uint64, f func(netlink.Route) bool) error {
 	return netlink.RouteListFilteredIter(family, filter, filterMask, f)
+}
+
+// netlinkSocketTimeout bounds a dump on a dedicated netlink handle, matching
+// the library's timeout on package-level sockets.
+const netlinkSocketTimeout = 60 * time.Second
+
+// RouteListFilteredStrict uses a per-call handle with NETLINK_GET_STRICT_CHK
+// enabled so the kernel applies the table filter server-side; the package
+// handle dumps the whole FIB and filters it after deserialization.
+func (defaultNetLinkOps) RouteListFilteredStrict(family int, filter *netlink.Route, filterMask uint64) ([]netlink.Route, error) {
+	h, err := netlink.NewHandle(unix.NETLINK_ROUTE)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create netlink handle: %v", err)
+	}
+	defer h.Close()
+	// A handle has no socket timeout unless set; the package-level calls get
+	// one from the library.
+	if err := h.SetSocketTimeout(netlinkSocketTimeout); err != nil {
+		return nil, fmt.Errorf("failed to set the netlink handle timeout: %v", err)
+	}
+	if err := h.SetStrictCheck(true); err != nil {
+		klog.V(5).Infof("Failed to enable strict check on netlink handle, falling back to unfiltered dump: %v", err)
+		return netlink.RouteListFiltered(family, filter, filterMask)
+	}
+	routes, err := h.RouteListFiltered(family, filter, filterMask)
+	if err != nil {
+		// Kernels 4.20 to 5.6 reject a strict dump of both families when a
+		// multicast routing table exists.
+		klog.V(5).Infof("Strict netlink route dump failed, falling back to unfiltered dump: %v", err)
+		return netlink.RouteListFiltered(family, filter, filterMask)
+	}
+	return routes, nil
 }
 
 func (defaultNetLinkOps) RuleListFiltered(family int, filter *netlink.Rule, filterMask uint64) ([]netlink.Rule, error) {
