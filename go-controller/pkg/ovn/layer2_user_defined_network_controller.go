@@ -224,7 +224,7 @@ type Layer2UserDefinedNetworkController struct {
 	eIPController *EgressIPController
 
 	// reconcile the virtual machine default gateway sending GARPs and RAs
-	defaultGatewayReconciler *kubevirt.DefaultGatewayReconciler
+	defaultGatewayReconciler *kubevirt.Layer2GatewayReconciler
 
 	remoteNodesNoRouter sync.Map
 }
@@ -312,7 +312,7 @@ func NewLayer2UserDefinedNetworkController(
 
 	if util.IsNetworkSegmentationSupportEnabled() && netInfo.IsPrimaryNetwork() {
 		oc.svcController = serviceController
-		oc.defaultGatewayReconciler = kubevirt.NewDefaultGatewayReconciler(
+		oc.defaultGatewayReconciler = kubevirt.NewLayer2GatewayReconciler(
 			oc.watchFactory,
 			oc.GetNetInfo(),
 			util.GetNetworkScopedK8sMgmtHostIntfName(uint(oc.GetNetworkID())),

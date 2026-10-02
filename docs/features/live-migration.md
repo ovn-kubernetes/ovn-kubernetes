@@ -125,11 +125,17 @@ Login and check that the VM has receive a proper address `virtctl console fedora
 Also we can check the neighbours cache to verify it later on
 ```bash
 [fedora@fedora ~]arp -a
-_gateway (10.244.2.1) at 0a:58:a9:fe:01:01 [ether] on eth0
+_gateway (10.244.2.1) at 0a:58:0a:f4:02:01 [ether] on eth0
 ```
 
-The default gateway is the pod network subnet gateway IP. The ARP proxy feature
-ensures the gateway MAC address remains consistent across live migrations.
+The default IPv4 gateway is the pod network subnet gateway IP. On its subnet's
+owning node it resolves to that node's logical router port MAC; on other nodes
+it resolves to the ARP proxy MAC. When the migration target domain becomes ready,
+OVN-Kubernetes sends gratuitous ARPs from the target node's management port to
+refresh the guest's gateway mapping with the ARP proxy MAC on every node,
+including on return to the subnet owner. A subsequent ARP resolution on the
+owning node may restore its LRP MAC; the next migration refreshes the mapping
+again. The guest's IPv6 gateway configuration is unchanged.
 
 ```bash
 [fedora@fedora ~]ip route
@@ -148,7 +154,8 @@ kubectl get vmim -A -o yaml
       completed: true
 ```
 
-After migration, the network configuration is the same - including the GW neighbor cache.
+After migration, the IP configuration is the same. The IPv4 gateway neighbor
+entry is refreshed for the destination node.
 ```bash
 oc get vmi -A
 NAMESPACE   NAME     AGE   PHASE     IP            NODENAME     READY
@@ -263,7 +270,7 @@ Benefit of the bridge binding is that is able to expose the pod IP to the VM as 
 To implement live migration ovn-kubernetes do the following:
 - Send DHCP replies advertising the allocated IP address and subnet gateway to the guest VM (via OVN-Kubernetes DHCP options configured for the logical switch ports).
 - A point to point routing is used so one node's subnet IP can be routed from different node
-- The VM's gateway IP (subnet gateway) and MAC are kept consistent across nodes using ARP proxy
+- The VM's IPv4 gateway IP (subnet gateway) is preserved, and gratuitous ARPs update its gateway MAC after migration
 
 **Point to point routing:**
 
