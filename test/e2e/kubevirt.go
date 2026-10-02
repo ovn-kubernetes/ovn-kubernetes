@@ -304,12 +304,6 @@ func removeImagesFromNodes(cs kubernetes.Interface, imageURL string) error {
 	return nil
 }
 
-func init() {
-	if os.Getenv("KIND_INSTALL_KUBEVIRT") == "true" {
-		images.Add(images.Netshoot())
-	}
-}
-
 var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, func() {
 	var (
 		fr                  = wrappedTestFramework("kv-live-migration")

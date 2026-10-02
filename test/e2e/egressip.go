@@ -43,7 +43,6 @@ import (
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	"k8s.io/kubernetes/test/e2e/framework/pod"
 	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
-	"k8s.io/kubernetes/test/utils/image"
 	utilnet "k8s.io/utils/net"
 )
 
@@ -1296,7 +1295,7 @@ spec:
 			ginkgo.By("2. Creating host-networked pod, on non-egress node acting as \"another node\"")
 			p, err := createPod(f, hostNetPodName, egress2Node.name, f.Namespace.Name, []string{}, map[string]string{}, func(p *corev1.Pod) {
 				p.Spec.HostNetwork = true
-				p.Spec.Containers[0].Image = image.GetE2EImage(image.Agnhost)
+				p.Spec.Containers[0].Image = images.AgnHost()
 				p.Spec.Containers[0].Args = getAgnHostHTTPPortBindCMDArgs(hostNetPort)
 			})
 			framework.ExpectNoError(err)
@@ -3357,7 +3356,7 @@ spec:
 								Containers: []corev1.Container{
 									{
 										Name:    "continuous-ping",
-										Image:   image.GetE2EImage(image.Agnhost),
+										Image:   images.AgnHost(),
 										Command: mainCommand,
 									},
 								},
