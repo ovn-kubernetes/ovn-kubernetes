@@ -167,6 +167,30 @@ var _ = Describe("User Defined Network Controller", func() {
 			}
 		})
 		Context("reconcile UDN CR", func() {
+			It("should preserve NAD-local annotations", func() {
+				udn := testSecondaryUDN()
+				nad := testNAD()
+				nad.Annotations = map[string]string{
+					"example.com/partition-name":    "local-partition",
+					ovntypes.OvnNetworkIDAnnotation: "6",
+				}
+				desiredNAD := testNAD()
+				desiredNAD.Annotations = map[string]string{"parent": "value"}
+				c = newTestController(renderNadStub(desiredNAD), udn, nad, testNamespace(udn.Namespace))
+				Expect(c.Run()).To(Succeed())
+
+				Eventually(func(g Gomega) {
+					actualNAD, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().
+						NetworkAttachmentDefinitions(udn.Namespace).Get(context.Background(), udn.Name, metav1.GetOptions{})
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(actualNAD.Annotations).To(Equal(map[string]string{
+						"parent":                        "value",
+						"example.com/partition-name":    "local-partition",
+						ovntypes.OvnNetworkIDAnnotation: "6",
+					}))
+				}, 2*time.Second).Should(Succeed())
+			})
+
 			It("should create NAD successfully", func() {
 				udn := testPrimaryUDN()
 				expectedNAD := testNAD()
@@ -1653,7 +1677,7 @@ var _ = Describe("User Defined Network Controller", func() {
 				Expect(apierrors.IsNotFound(err)).To(BeTrue(), "NAD should not be created when EVPN is disabled")
 			})
 
-			It("should update NAD annotations and preserve internal OVNK annotations on UDN update", func() {
+			It("should update CUDN annotations and preserve NAD-local annotations", func() {
 				testNamespaces := []string{"red", "blue"}
 				var objs []runtime.Object
 				for _, nsName := range testNamespaces {
@@ -1684,6 +1708,23 @@ var _ = Describe("User Defined Network Controller", func() {
 				c = newTestController(template.RenderNetAttachDefManifest, objs...)
 				Expect(c.Run()).To(Succeed())
 
+				By("adding distinct annotations to the CUDN-owned NADs")
+				for _, nsName := range testNamespaces {
+					nad, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().
+						NetworkAttachmentDefinitions(nsName).Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					nad.Annotations["example.com/partition-name"] = nsName + "-partition"
+					nad.Annotations["foo2"] = "nad-local"
+					_, err = cs.NetworkAttchDefClient.K8sCniCncfIoV1().
+						NetworkAttachmentDefinitions(nsName).Update(context.Background(), nad, metav1.UpdateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					Eventually(func(g Gomega) {
+						cachedNAD, err := c.nadLister.NetworkAttachmentDefinitions(nsName).Get(cudn.Name)
+						g.Expect(err).NotTo(HaveOccurred())
+						g.Expect(cachedNAD.Annotations["example.com/partition-name"]).To(Equal(nsName + "-partition"))
+					}, 2*time.Second).Should(Succeed())
+				}
+
 				By("updating CUDN with a new annotation")
 				cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
 				Expect(err).NotTo(HaveOccurred())
@@ -1694,7 +1735,9 @@ var _ = Describe("User Defined Network Controller", func() {
 
 				for testNamespace, expectedNAD := range expectedNsNADs {
 					expectedNAD.Annotations = map[string]string{
+						"foo":                             "bar",
 						"foo2":                            "bar2",
+						"example.com/partition-name":      testNamespace + "-partition",
 						ovntypes.OvnNetworkNameAnnotation: networkName,
 						ovntypes.OvnNetworkIDAnnotation:   "6",
 					}
