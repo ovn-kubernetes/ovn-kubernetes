@@ -3,7 +3,7 @@
 
 package cudn
 
-import "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/testscenario"
+import "github.com/ovn-kubernetes/ovn-kubernetes/test/crd-integration/testscenario"
 
 var Layer2CUDNValid = []testscenario.ValidateCRScenario{
 	{
@@ -186,6 +186,7 @@ var Layer2UDNValid = []testscenario.ValidateCRScenario{
 apiVersion: k8s.ovn.org/v1
 kind: UserDefinedNetwork
 metadata:
+  namespace: default
   name: primary-with-default-gateway
 spec:
   topology: Layer2
@@ -201,6 +202,7 @@ spec:
 apiVersion: k8s.ovn.org/v1
 kind: UserDefinedNetwork
 metadata:
+  namespace: default
   name: dual-stack-with-gateways
 spec:
   topology: Layer2
@@ -216,6 +218,7 @@ spec:
 apiVersion: k8s.ovn.org/v1
 kind: UserDefinedNetwork
 metadata:
+  namespace: default
   name: network-with-infra-subnets
 spec:
   topology: Layer2
@@ -231,6 +234,7 @@ spec:
 apiVersion: k8s.ovn.org/v1
 kind: UserDefinedNetwork
 metadata:
+  namespace: default
   name: gateway-in-infra-subnets
 spec:
   topology: Layer2
@@ -247,6 +251,7 @@ spec:
 apiVersion: k8s.ovn.org/v1
 kind: UserDefinedNetwork
 metadata:
+  namespace: default
   name: network-with-reserved-subnets
 spec:
   topology: Layer2
@@ -262,6 +267,7 @@ spec:
 apiVersion: k8s.ovn.org/v1
 kind: UserDefinedNetwork
 metadata:
+  namespace: default
   name: non-overlapping-subnets
 spec:
   topology: Layer2
@@ -279,6 +285,7 @@ spec:
 apiVersion: k8s.ovn.org/v1
 kind: UserDefinedNetwork
 metadata:
+  namespace: default
   name: complete-dual-stack-config
 spec:
   topology: Layer2
@@ -298,6 +305,7 @@ spec:
 apiVersion: k8s.ovn.org/v1
 kind: UserDefinedNetwork
 metadata:
+  namespace: default
   name: ipv6-only-complete
 spec:
   topology: Layer2

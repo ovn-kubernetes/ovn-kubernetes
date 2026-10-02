@@ -3,7 +3,7 @@
 
 package cudn
 
-import "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/testscenario"
+import "github.com/ovn-kubernetes/ovn-kubernetes/test/crd-integration/testscenario"
 
 var Layer2CUDNInvalid = []testscenario.ValidateCRScenario{
 	{
@@ -238,6 +238,7 @@ var Layer2UDNInvalid = []testscenario.ValidateCRScenario{
 apiVersion: k8s.ovn.org/v1
 kind: UserDefinedNetwork
 metadata:
+  namespace: default
   name: default-gateway-secondary-fail
 spec:
   topology: Layer2
@@ -254,6 +255,7 @@ spec:
 apiVersion: k8s.ovn.org/v1
 kind: UserDefinedNetwork
 metadata:
+  namespace: default
   name: default-gateway-outside-subnet-fail
 spec:
   topology: Layer2
@@ -270,6 +272,7 @@ spec:
 apiVersion: k8s.ovn.org/v1
 kind: UserDefinedNetwork
 metadata:
+  namespace: default
   name: default-gateway-outside-infra-fail
 spec:
   topology: Layer2
@@ -287,6 +290,7 @@ spec:
 apiVersion: k8s.ovn.org/v1
 kind: UserDefinedNetwork
 metadata:
+  namespace: default
   name: reserved-subnets-no-subnets-fail
 spec:
   topology: Layer2
@@ -304,6 +308,7 @@ spec:
 apiVersion: k8s.ovn.org/v1
 kind: UserDefinedNetwork
 metadata:
+  namespace: default
   name: infra-subnets-no-subnets-fail
 spec:
   topology: Layer2
