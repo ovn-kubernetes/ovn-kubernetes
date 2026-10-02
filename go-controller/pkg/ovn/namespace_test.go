@@ -104,7 +104,7 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 			gomega.Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData([]libovsdb.TestData{ns1, ns2, qosAS, hybridNodeAS, efAS}))
 
 			// now namespace address sets will be cleaned up
-			err := fakeOvn.controller.syncNamespaces([]interface{}{namespace1})
+			err := fakeOvn.controller.syncNamespaces(context.Background(), []interface{}{namespace1})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			gomega.Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData([]libovsdb.TestData{qosAS, hybridNodeAS, efAS}))

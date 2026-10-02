@@ -4,6 +4,7 @@
 package evpn
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -327,7 +328,7 @@ func (c *Controller) reconcileNodeAddressChange() error {
 // The synthetic keys reconcileVTEPAnnotationChange and
 // reconcileNodeAddressChange trigger reconciliation of unmanaged VTEPs
 // whose annotated IPs are stale or missing.
-func (c *Controller) reconcile(key string) error {
+func (c *Controller) reconcile(_ context.Context, key string) error {
 	switch key {
 	case reconcileVTEPAnnotationChange:
 		// node annotation changed, reset the cached annotation to re-read
@@ -444,7 +445,7 @@ func (c *Controller) ensureDevices(vtep *vtepv1.VTEP, vtepIPv4, vtepIPv6 net.IP)
 	return networks, nil
 }
 
-func (c *Controller) reconcileNAD(key string) error {
+func (c *Controller) reconcileNAD(_ context.Context, key string) error {
 	netInfo := c.networkMgr.GetNetInfoForNADKey(key)
 	c.nadVTEPInfoLock.Lock()
 	defer c.nadVTEPInfoLock.Unlock()

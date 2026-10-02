@@ -168,7 +168,7 @@ func NewController(
 		c.uplinkStateLister = wf.UplinkStateInformer().Lister()
 	}
 
-	handleError := func(key string, errorstatus error) error {
+	handleError := func(ctx context.Context, key string, errorstatus error) error {
 		ra, err := c.raLister.Get(key)
 		if apierrors.IsNotFound(err) {
 			return nil
@@ -181,7 +181,7 @@ func NewController(
 			)
 		}
 
-		return c.updateRAStatus(ra, false, errorstatus)
+		return c.updateRAStatus(ctx, ra, false, errorstatus)
 	}
 
 	raConfig := &controllerutil.ControllerConfig[ratypes.RouteAdvertisements]{
@@ -217,7 +217,7 @@ func NewController(
 
 	nodeConfig := &controllerutil.ControllerConfig[corev1.Node]{
 		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
-		Reconcile:      func(_ string) error { c.raController.ReconcileAll(); return nil },
+		Reconcile:      func(_ context.Context, _ string) error { c.raController.ReconcileAll(); return nil },
 		Threadiness:    1,
 		Informer:       wf.NodeCoreInformer().Informer(),
 		Lister:         wf.NodeCoreInformer().Lister().List,
@@ -228,7 +228,7 @@ func NewController(
 	if util.IsUplinkEnabled() {
 		uplinkStateConfig := &controllerutil.ControllerConfig[uplinkv1alpha1.UplinkState]{
 			RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
-			Reconcile:      func(_ string) error { c.raController.ReconcileAll(); return nil },
+			Reconcile:      func(_ context.Context, _ string) error { c.raController.ReconcileAll(); return nil },
 			Threadiness:    1,
 			Informer:       wf.UplinkStateInformer().Informer(),
 			Lister:         c.uplinkStateLister.List,
@@ -372,7 +372,7 @@ func (c *Controller) ReconcileNetwork(_ string, old, new util.NetInfo) {
 //
 // The controller processes selected events of RouteAdvertisements,
 // FRRConfigurations, Nodes, EgressIPs, NADs and namespaces.
-func (c *Controller) reconcile(name string) error {
+func (c *Controller) reconcile(ctx context.Context, name string) error {
 	startTime := time.Now()
 	klog.V(5).Infof("Syncing routeadvertisements %q", name)
 	defer func() {
@@ -389,29 +389,29 @@ func (c *Controller) reconcile(name string) error {
 		c.deleteRANetworks(name)
 	}
 
-	hadUpdates, err := c.reconcileRouteAdvertisements(name, ra)
+	hadUpdates, err := c.reconcileRouteAdvertisements(ctx, name, ra)
 	if err != nil && !errors.Is(err, errConfig) && !errors.Is(err, errPending) {
 		return fmt.Errorf("failed to reconcile RouteAdvertisements %q: %w", name, err)
 	}
 
-	return c.updateRAStatus(ra, hadUpdates, err)
+	return c.updateRAStatus(ctx, ra, hadUpdates, err)
 }
 
-func (c *Controller) reconcileRouteAdvertisements(name string, ra *ratypes.RouteAdvertisements) (bool, error) {
+func (c *Controller) reconcileRouteAdvertisements(ctx context.Context, name string, ra *ratypes.RouteAdvertisements) (bool, error) {
 	// generate FRRConfigurations
-	frrConfigs, nads, cfgErr := c.generateFRRConfigurations(ra)
+	frrConfigs, nads, cfgErr := c.generateFRRConfigurations(ctx, ra)
 	if cfgErr != nil && !errors.Is(cfgErr, errPending) {
 		return false, cfgErr
 	}
 
 	// update them
-	hadFRRConfigUpdates, err := c.updateFRRConfigurations(name, frrConfigs)
+	hadFRRConfigUpdates, err := c.updateFRRConfigurations(ctx, name, frrConfigs)
 	if err != nil {
 		return false, fmt.Errorf("failed updating FRRConfigurations for RouteAdvertisements %q: %w", name, err)
 	}
 
 	// annotate NADs
-	hadNADUpdates, err := c.updateNADs(name, nads)
+	hadNADUpdates, err := c.updateNADs(ctx, name, nads)
 	if err != nil {
 		return false, fmt.Errorf("failed annotating NADs for RouteAdvertisements %q: %w", name, err)
 	}
@@ -485,7 +485,7 @@ type ipVRFConfig struct {
 
 // generateFRRConfigurations generates FRRConfigurations for the route
 // advertisements. Also returns the selected network NADs.
-func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) ([]*frrtypes.FRRConfiguration, []*nadtypes.NetworkAttachmentDefinition, error) {
+func (c *Controller) generateFRRConfigurations(ctx context.Context, ra *ratypes.RouteAdvertisements) ([]*frrtypes.FRRConfiguration, []*nadtypes.NetworkAttachmentDefinition, error) {
 	if ra == nil {
 		return nil, nil, nil
 	}
@@ -500,7 +500,7 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 
 	// if we are matching on the well known default network label, create an
 	// internal nad for it if it doesn't exist
-	nads, err := c.getSelectedNADs(ra.Spec.NetworkSelectors)
+	nads, err := c.getSelectedNADs(ctx, ra.Spec.NetworkSelectors)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1518,7 +1518,7 @@ func vtepCIDRPrefixSelectors(cidrs []string) []frrtypes.PrefixSelector {
 // RouteAdvertisements. It fetches existing FRRConfigurations by label and
 // indexes them by the annotated key. Then compares this state with desired
 // state and creates, updates or deletes the FRRConfigurations accordingly.
-func (c *Controller) updateFRRConfigurations(ra string, frrConfigurations []*frrtypes.FRRConfiguration) (bool, error) {
+func (c *Controller) updateFRRConfigurations(ctx context.Context, ra string, frrConfigurations []*frrtypes.FRRConfiguration) (bool, error) {
 	var hadUpdates bool
 
 	// fetch the currently existing FRRConfigurations for this
@@ -1552,7 +1552,7 @@ func (c *Controller) updateFRRConfigurations(ra string, frrConfigurations []*frr
 		if len(oldFRRConfigs) == 0 {
 			// does not exist, create
 			_, err := c.frrClient.ApiV1beta1().FRRConfigurations(newFRRConfig.Namespace).Create(
-				context.Background(),
+				ctx,
 				newFRRConfig,
 				metav1.CreateOptions{
 					FieldManager: fieldManager,
@@ -1580,7 +1580,7 @@ func (c *Controller) updateFRRConfigurations(ra string, frrConfigurations []*frr
 		newFRRConfig.Name = oldFRRConfig.Name
 		newFRRConfig.ResourceVersion = oldFRRConfig.ResourceVersion
 		_, err := c.frrClient.ApiV1beta1().FRRConfigurations(newFRRConfig.Namespace).Update(
-			context.Background(),
+			ctx,
 			newFRRConfig,
 			metav1.UpdateOptions{
 				FieldManager: fieldManager,
@@ -1596,7 +1596,7 @@ func (c *Controller) updateFRRConfigurations(ra string, frrConfigurations []*frr
 	for _, obsoleteFRRConfigs := range existing {
 		for _, obsoleteFRRConfig := range obsoleteFRRConfigs {
 			err := c.frrClient.ApiV1beta1().FRRConfigurations(obsoleteFRRConfig.Namespace).Delete(
-				context.Background(),
+				ctx,
 				obsoleteFRRConfig.Name,
 				metav1.DeleteOptions{},
 			)
@@ -1614,7 +1614,7 @@ func (c *Controller) updateFRRConfigurations(ra string, frrConfigurations []*frr
 // RouteAdvertisements. It iterates all the existing NADs updating the
 // annotation accordingly, adding or removing the RouteAdvertisements reference
 // as needed.
-func (c *Controller) updateNADs(ra string, nads []*nadtypes.NetworkAttachmentDefinition) (bool, error) {
+func (c *Controller) updateNADs(ctx context.Context, ra string, nads []*nadtypes.NetworkAttachmentDefinition) (bool, error) {
 	var hadUpdates bool
 	selected := sets.New[string]()
 	for _, nad := range nads {
@@ -1661,6 +1661,7 @@ func (c *Controller) updateNADs(ra string, nads []*nadtypes.NetworkAttachmentDef
 		}
 
 		err = k.SetAnnotationsOnNAD(
+			ctx,
 			nad.Namespace,
 			nad.Name,
 			map[string]string{
@@ -1683,7 +1684,7 @@ func (c *Controller) updateNADs(ra string, nads []*nadtypes.NetworkAttachmentDef
 
 // updateRAStatus update the RouteAdvertisements 'Accepted' status according to
 // the error provided
-func (c *Controller) updateRAStatus(ra *ratypes.RouteAdvertisements, hadUpdates bool, err error) error {
+func (c *Controller) updateRAStatus(ctx context.Context, ra *ratypes.RouteAdvertisements, hadUpdates bool, err error) error {
 	if ra == nil {
 		return nil
 	}
@@ -1740,7 +1741,7 @@ func (c *Controller) updateRAStatus(ra *ratypes.RouteAdvertisements, hadUpdates 
 	}
 
 	_, err = c.raClient.K8sV1().RouteAdvertisements().ApplyStatus(
-		context.Background(),
+		ctx,
 		raapply.RouteAdvertisements(ra.Name).WithStatus(
 			raapply.RouteAdvertisementsStatus().WithStatus(status).WithConditions(
 				util.ConditionToApply(condition),
@@ -1758,14 +1759,14 @@ func (c *Controller) updateRAStatus(ra *ratypes.RouteAdvertisements, hadUpdates 
 	return nil
 }
 
-func (c *Controller) getSelectedNADs(networkSelectors apitypes.NetworkSelectors) ([]*nadtypes.NetworkAttachmentDefinition, error) {
+func (c *Controller) getSelectedNADs(ctx context.Context, networkSelectors apitypes.NetworkSelectors) ([]*nadtypes.NetworkAttachmentDefinition, error) {
 	var selected []*nadtypes.NetworkAttachmentDefinition
 	for _, networkSelector := range networkSelectors {
 		switch networkSelector.NetworkSelectionType {
 		case apitypes.DefaultNetwork:
 			// if we are selecting the default networkdefault network label,
 			// make sure a NAD exists for it
-			nad, err := util.EnsureDefaultNetworkNAD(c.nadLister, c.nadClient)
+			nad, err := util.EnsureDefaultNetworkNAD(ctx, c.nadLister, c.nadClient)
 			if err != nil {
 				return nil, fmt.Errorf("failed to ensure default network NAD: %w", err)
 			}
@@ -1944,7 +1945,7 @@ func nsNeedsUpdate(oldObj, newObj *corev1.Namespace) bool {
 	return oldObj != nil && newObj != nil && !reflect.DeepEqual(oldObj.Labels, newObj.Labels)
 }
 
-func (c *Controller) reconcileFRRConfiguration(key string) error {
+func (c *Controller) reconcileFRRConfiguration(_ context.Context, key string) error {
 	namespace, name, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
 		klog.Errorf("Failed spliting FRFConfiguration reconcile key %q: %v", key, err)
@@ -1971,7 +1972,7 @@ func (c *Controller) reconcileFRRConfiguration(key string) error {
 	return nil
 }
 
-func (c *Controller) reconcileNAD(key string) error {
+func (c *Controller) reconcileNAD(_ context.Context, key string) error {
 	namespace, name, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
 		klog.Errorf("Failed spliting NAD reconcile key %q: %v", key, err)
@@ -2022,7 +2023,7 @@ func isUnnumberedNeighbor(neighbor frrtypes.Neighbor) bool {
 	return neighbor.Address == "" && neighbor.Interface != ""
 }
 
-func (c *Controller) reconcileEgressIPs(string) error {
+func (c *Controller) reconcileEgressIPs(_ context.Context, _ string) error {
 	// reconcile RAs that advertise EIPs
 	ras, err := c.raLister.List(labels.Everything())
 	if err != nil {

@@ -363,12 +363,12 @@ func (bnc *BaseNetworkController) releasePodIPs(pInfo *lpInfo) error {
 	return nil
 }
 
-func (bnc *BaseNetworkController) waitForNodeLogicalSwitch(switchName string) (*nbdb.LogicalSwitch, error) {
+func (bnc *BaseNetworkController) waitForNodeLogicalSwitch(ctx context.Context, switchName string) (*nbdb.LogicalSwitch, error) {
 	// Wait for the node logical switch to be created by the ClusterController and be present
 	// in libovsdb's cache. The node switch will be created when the node's logical network infrastructure
 	// is created by the node watch
 	ls := &nbdb.LogicalSwitch{Name: switchName}
-	if err := wait.PollUntilContextTimeout(context.Background(), 30*time.Millisecond, 30*time.Second, true, func(_ context.Context) (bool, error) {
+	if err := wait.PollUntilContextTimeout(ctx, 30*time.Millisecond, 30*time.Second, true, func(_ context.Context) (bool, error) {
 		if subnets := bnc.lsManager.GetSwitchSubnets(switchName); subnets == nil {
 			// A cache miss is expected while node topology reconciliation is still creating the switch.
 			// Keep polling until it appears or the overall wait times out.
@@ -431,9 +431,9 @@ func (bnc *BaseNetworkController) getExpectedSwitchName(pod *corev1.Pod) (string
 // to the same virtual machine, for normal pods it will unmarshal and return
 // it, also there returned boolean will be true if the pod subnet belong to
 // controller's zone.
-func (bnc *BaseNetworkController) ensurePodAnnotation(pod *corev1.Pod, nadKey string) (*util.PodAnnotation, bool, error) {
+func (bnc *BaseNetworkController) ensurePodAnnotation(ctx context.Context, pod *corev1.Pod, nadKey string) (*util.PodAnnotation, bool, error) {
 	if kubevirt.IsPodLiveMigratable(pod) {
-		podAnnotation, err := kubevirt.EnsurePodAnnotationForVM(bnc.watchFactory, bnc.kube, pod, nadKey)
+		podAnnotation, err := kubevirt.EnsurePodAnnotationForVM(ctx, bnc.watchFactory, bnc.kube, pod, nadKey)
 		if err != nil {
 			return nil, false, err
 		}
@@ -452,7 +452,7 @@ func (bnc *BaseNetworkController) ensurePodAnnotation(pod *corev1.Pod, nadKey st
 	return podAnnotation, true, nil
 }
 
-func (bnc *BaseNetworkController) addLogicalPortToNetwork(pod *corev1.Pod, nadKey string,
+func (bnc *BaseNetworkController) addLogicalPortToNetwork(ctx context.Context, pod *corev1.Pod, nadKey string,
 	network *nadapi.NetworkSelectionElement, enable *bool) (ops []ovsdb.Operation,
 	lsp *nbdb.LogicalSwitchPort, podAnnotation *util.PodAnnotation, newlyCreatedPort bool, err error) {
 	var ls *nbdb.LogicalSwitch
@@ -477,7 +477,7 @@ func (bnc *BaseNetworkController) addLogicalPortToNetwork(pod *corev1.Pod, nadKe
 			pod.Namespace, pod.Name, pod.Spec.NodeName, podState)
 	}
 
-	ls, err = bnc.waitForNodeLogicalSwitch(switchName)
+	ls, err = bnc.waitForNodeLogicalSwitch(ctx, switchName)
 	if err != nil {
 		return nil, nil, nil, false, err
 	}
@@ -578,9 +578,9 @@ func (bnc *BaseNetworkController) addLogicalPortToNetwork(pod *corev1.Pod, nadKe
 	// functionally equivalent going forward.
 	var annotationUpdated bool
 	if bnc.IsUserDefinedNetwork() {
-		podAnnotation, annotationUpdated, err = bnc.allocatePodAnnotationForUserDefinedNetwork(pod, existingLSP, nadKey, network, networkRole)
+		podAnnotation, annotationUpdated, err = bnc.allocatePodAnnotationForUserDefinedNetwork(ctx, pod, existingLSP, nadKey, network, networkRole)
 	} else {
-		podAnnotation, annotationUpdated, err = bnc.allocatePodAnnotation(pod, existingLSP, podDesc, nadKey, network, networkRole)
+		podAnnotation, annotationUpdated, err = bnc.allocatePodAnnotation(ctx, pod, existingLSP, podDesc, nadKey, network, networkRole)
 	}
 
 	if err != nil {
@@ -642,8 +642,9 @@ func (bnc *BaseNetworkController) addLogicalPortToNetwork(pod *corev1.Pod, nadKe
 	return ops, lsp, podAnnotation, annotationUpdated && !lspExist, nil
 }
 
-func (bnc *BaseNetworkController) updatePodAnnotationWithRetry(origPod *corev1.Pod, podInfo *util.PodAnnotation, nadKey string) error {
+func (bnc *BaseNetworkController) updatePodAnnotationWithRetry(ctx context.Context, origPod *corev1.Pod, podInfo *util.PodAnnotation, nadKey string) error {
 	return util.UpdatePodAnnotationWithRetry(
+		ctx,
 		bnc.watchFactory.PodCoreInformer().Lister(),
 		bnc.kube,
 		origPod,
@@ -793,7 +794,7 @@ func calculateStaticMAC(podDesc string, mac string) (net.HardwareAddr, error) {
 }
 
 // allocatePodAnnotation and update the corresponding pod annotation.
-func (bnc *BaseNetworkController) allocatePodAnnotation(pod *corev1.Pod, existingLSP *nbdb.LogicalSwitchPort, podDesc,
+func (bnc *BaseNetworkController) allocatePodAnnotation(ctx context.Context, pod *corev1.Pod, existingLSP *nbdb.LogicalSwitchPort, podDesc,
 	nadKey string, network *nadapi.NetworkSelectionElement, networkRole string) (*util.PodAnnotation, bool, error) {
 	var releaseIPs bool
 	var podMac net.HardwareAddr
@@ -801,7 +802,7 @@ func (bnc *BaseNetworkController) allocatePodAnnotation(pod *corev1.Pod, existin
 
 	switchName := pod.Spec.NodeName
 
-	podAnnotation, zoneContainsPodSubnet, err := bnc.ensurePodAnnotation(pod, nadKey)
+	podAnnotation, zoneContainsPodSubnet, err := bnc.ensurePodAnnotation(ctx, pod, nadKey)
 	if err != nil {
 		return nil, false, fmt.Errorf("unable to ensure pod annotation: %v", err)
 	}
@@ -936,7 +937,7 @@ func (bnc *BaseNetworkController) allocatePodAnnotation(pod *corev1.Pod, existin
 	klog.V(5).Infof("Annotation values: ip=%v ; mac=%s ; gw=%s",
 		podIfAddrs, podMac, podAnnotation.Gateways)
 	annoStart := time.Now()
-	err = bnc.updatePodAnnotationWithRetry(pod, podAnnotation, nadKey)
+	err = bnc.updatePodAnnotationWithRetry(ctx, pod, podAnnotation, nadKey)
 	podAnnoTime := time.Since(annoStart)
 	klog.Infof("[%s] addLogicalPort annotation time took %v", podDesc, podAnnoTime)
 	if err != nil {
@@ -949,7 +950,7 @@ func (bnc *BaseNetworkController) allocatePodAnnotation(pod *corev1.Pod, existin
 
 // allocatePodAnnotationForUserDefinedNetwork and update the corresponding pod
 // annotation.
-func (bnc *BaseNetworkController) allocatePodAnnotationForUserDefinedNetwork(pod *corev1.Pod, lsp *nbdb.LogicalSwitchPort,
+func (bnc *BaseNetworkController) allocatePodAnnotationForUserDefinedNetwork(ctx context.Context, pod *corev1.Pod, lsp *nbdb.LogicalSwitchPort,
 	nadKey string, network *nadapi.NetworkSelectionElement, networkRole string) (*util.PodAnnotation, bool, error) {
 	switchName, err := bnc.getExpectedSwitchName(pod)
 	if err != nil {
@@ -1002,6 +1003,7 @@ func (bnc *BaseNetworkController) allocatePodAnnotationForUserDefinedNetwork(pod
 			nadKey, pod.Namespace, pod.Name, pod.Spec.NodeName, err)
 	}
 	updatedPod, podAnnotation, err := bnc.podAnnotationAllocator.AllocatePodAnnotation(
+		ctx,
 		ipAllocator,
 		node,
 		pod,

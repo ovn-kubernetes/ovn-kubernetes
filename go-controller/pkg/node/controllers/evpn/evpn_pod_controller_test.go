@@ -4,6 +4,7 @@
 package evpn
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"syscall"
@@ -98,7 +99,7 @@ var _ = Describe("EVPN pod controller", func() {
 			}
 			ctrl.podLister = newFakePodLister(pod)
 
-			Expect(ctrl.reconcilePod("test-ns/test-pod")).To(Succeed())
+			Expect(ctrl.reconcilePod(context.Background(), "test-ns/test-pod")).To(Succeed())
 
 			By("verifying FDB entry was added on OVS port")
 			nlMock.AssertCalled(GinkgoT(), "NeighSet", mock.MatchedBy(func(n *netlink.Neigh) bool {
@@ -141,7 +142,7 @@ var _ = Describe("EVPN pod controller", func() {
 			// Pod not in lister = deleted
 			ctrl.podLister = newFakePodLister()
 
-			Expect(ctrl.reconcilePod(key)).To(Succeed())
+			Expect(ctrl.reconcilePod(context.Background(), key)).To(Succeed())
 
 			By("verifying FDB entry was deleted")
 			nlMock.AssertCalled(GinkgoT(), "NeighDel", mock.MatchedBy(func(n *netlink.Neigh) bool {
@@ -176,7 +177,7 @@ var _ = Describe("EVPN pod controller", func() {
 
 			ctrl.podLister = newFakePodLister()
 
-			Expect(ctrl.reconcilePod(key)).To(Succeed())
+			Expect(ctrl.reconcilePod(context.Background(), key)).To(Succeed())
 
 			By("verifying cache is cleaned up even though OVS port and SVI were gone")
 			_, exists := ctrl.podNeighbors[key]
@@ -204,7 +205,7 @@ var _ = Describe("EVPN pod controller", func() {
 
 			ctrl.podLister = newFakePodLister()
 
-			Expect(ctrl.reconcilePod(key)).To(Succeed())
+			Expect(ctrl.reconcilePod(context.Background(), key)).To(Succeed())
 
 			By("verifying FDB was NOT attempted on the gone OVS port")
 			nlMock.AssertNotCalled(GinkgoT(), "NeighDel", mock.MatchedBy(func(n *netlink.Neigh) bool {
@@ -241,7 +242,7 @@ var _ = Describe("EVPN pod controller", func() {
 			}
 			ctrl.podLister = newFakePodLister(pod)
 
-			Expect(ctrl.reconcilePod("test-ns/test-pod")).To(Succeed())
+			Expect(ctrl.reconcilePod(context.Background(), "test-ns/test-pod")).To(Succeed())
 			nlMock.AssertNotCalled(GinkgoT(), "NeighSet", mock.Anything)
 
 			By("verifying no cache entry was created")
@@ -264,7 +265,7 @@ var _ = Describe("EVPN pod controller", func() {
 			}
 			ctrl.podLister = newFakePodLister(pod)
 
-			Expect(ctrl.reconcilePod("test-ns/test-pod")).To(Succeed())
+			Expect(ctrl.reconcilePod(context.Background(), "test-ns/test-pod")).To(Succeed())
 			nlMock.AssertNotCalled(GinkgoT(), "NeighSet", mock.Anything)
 		})
 
@@ -294,7 +295,7 @@ var _ = Describe("EVPN pod controller", func() {
 			nlMock.On("LinkByName", "svl2-test").Return(sviLink, nil)
 			nlMock.On("NeighDel", mock.Anything).Return(nil)
 
-			Expect(ctrl.reconcilePod(key)).To(Succeed())
+			Expect(ctrl.reconcilePod(context.Background(), key)).To(Succeed())
 
 			_, exists := ctrl.podNeighbors[key]
 			Expect(exists).To(BeFalse(), "cache should be cleared for completed pod")
@@ -329,7 +330,7 @@ var _ = Describe("EVPN pod controller", func() {
 
 			ctrl.podLister = newFakePodLister()
 
-			Expect(ctrl.reconcilePod(key)).To(Succeed())
+			Expect(ctrl.reconcilePod(context.Background(), key)).To(Succeed())
 
 			By("verifying cache is cleaned up despite ENOENT errors")
 			_, exists := ctrl.podNeighbors[key]
@@ -343,7 +344,7 @@ var _ = Describe("EVPN pod controller", func() {
 			}
 			ctrl.podLister = newFakePodLister(pod)
 
-			Expect(ctrl.reconcilePod("test-ns/remote-pod")).To(Succeed())
+			Expect(ctrl.reconcilePod(context.Background(), "test-ns/remote-pod")).To(Succeed())
 			nlMock.AssertNotCalled(GinkgoT(), "NeighSet", mock.Anything)
 		})
 
@@ -411,7 +412,7 @@ var _ = Describe("EVPN pod controller", func() {
 				targetPod := newVirtLauncherPod("virt-launcher-target", nodeName, 0, false)
 				ctrl.podLister = newFakePodLister(sourcePod, targetPod)
 
-				Expect(ctrl.reconcilePod("test-ns/virt-launcher-target")).To(Succeed())
+				Expect(ctrl.reconcilePod(context.Background(), "test-ns/virt-launcher-target")).To(Succeed())
 
 				nlMock.AssertNotCalled(GinkgoT(), "NeighSet", mock.Anything)
 
@@ -429,7 +430,7 @@ var _ = Describe("EVPN pod controller", func() {
 
 				nlMock.On("NeighSet", mock.Anything).Return(nil)
 
-				Expect(ctrl.reconcilePod("test-ns/virt-launcher-target")).To(Succeed())
+				Expect(ctrl.reconcilePod(context.Background(), "test-ns/virt-launcher-target")).To(Succeed())
 
 				mac, _ := net.ParseMAC("0a:58:0a:00:00:05")
 
@@ -456,7 +457,7 @@ var _ = Describe("EVPN pod controller", func() {
 
 				nlMock.On("NeighSet", mock.Anything).Return(nil)
 
-				Expect(ctrl.reconcilePod("test-ns/virt-launcher-target")).To(
+				Expect(ctrl.reconcilePod(context.Background(), "test-ns/virt-launcher-target")).To(
 					Succeed(), "target-only post-migration reconciliation should succeed",
 				)
 			})
@@ -468,7 +469,7 @@ var _ = Describe("EVPN pod controller", func() {
 				targetPod := newVirtLauncherPod("virt-launcher-target", nodeName, 0, true)
 				ctrl.podLister = newFakePodLister(targetPod)
 
-				Expect(ctrl.reconcilePod("test-ns/virt-launcher-target")).To(
+				Expect(ctrl.reconcilePod(context.Background(), "test-ns/virt-launcher-target")).To(
 					Succeed(), "remote target-only post-migration reconciliation should succeed",
 				)
 
@@ -499,7 +500,7 @@ var _ = Describe("EVPN pod controller", func() {
 
 				nlMock.On("NeighDel", mock.Anything).Return(nil)
 
-				Expect(ctrl.reconcilePod(sourceKey)).To(Succeed())
+				Expect(ctrl.reconcilePod(context.Background(), sourceKey)).To(Succeed())
 
 				By("verifying FDB entry was deleted from OVS port")
 				nlMock.AssertCalled(GinkgoT(), "NeighDel", mock.MatchedBy(func(n *netlink.Neigh) bool {

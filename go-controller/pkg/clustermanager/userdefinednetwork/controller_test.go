@@ -2113,7 +2113,7 @@ var _ = Describe("User Defined Network Controller", func() {
 			mutatedNAD.ObjectMeta.OwnerReferences = []metav1.OwnerReference{{Kind: "DifferentKind"}}
 			c := newTestController(noopRenderNadStub(), udn, mutatedNAD, testNamespace("test"))
 
-			_, err := c.syncUserDefinedNetwork(udn)
+			_, err := c.syncUserDefinedNetwork(context.Background(), udn)
 			Expect(err).To(Equal(errors.New("foreign NetworkAttachmentDefinition with the desired name already exist [test/test]")))
 		})
 
@@ -2123,7 +2123,7 @@ var _ = Describe("User Defined Network Controller", func() {
 			unmanagedNAD.OwnerReferences[0].UID = "99"
 			c := newTestController(noopRenderNadStub(), udn, unmanagedNAD, testNamespace("test"))
 
-			_, err := c.syncUserDefinedNetwork(udn)
+			_, err := c.syncUserDefinedNetwork(context.Background(), udn)
 			Expect(err).ToNot(HaveOccurred())
 
 			unmanagedNAD, err = cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(udn.Namespace).Get(context.Background(), unmanagedNAD.Name, metav1.GetOptions{})
@@ -2138,7 +2138,7 @@ var _ = Describe("User Defined Network Controller", func() {
 			nad := testNAD()
 			c := newTestController(noopRenderNadStub(), udn, nad, testNamespace("test"))
 
-			_, err := c.syncUserDefinedNetwork(udn)
+			_, err := c.syncUserDefinedNetwork(context.Background(), udn)
 			Expect(err).ToNot(HaveOccurred())
 
 			_, err = cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(udn.Namespace).Get(context.Background(), nad.Name, metav1.GetOptions{})
@@ -2155,7 +2155,7 @@ var _ = Describe("User Defined Network Controller", func() {
 				return true, nil, expectedErr
 			})
 
-			_, err := c.syncUserDefinedNetwork(udn)
+			_, err := c.syncUserDefinedNetwork(context.Background(), udn)
 			Expect(err).To(MatchError(expectedErr))
 		})
 
@@ -2165,7 +2165,7 @@ var _ = Describe("User Defined Network Controller", func() {
 			nad.Finalizers = nil
 			c := newTestController(noopRenderNadStub(), udn, nad, testNamespace("test"))
 
-			_, err := c.syncUserDefinedNetwork(udn)
+			_, err := c.syncUserDefinedNetwork(context.Background(), udn)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(udn.Finalizers).To(BeEmpty())
 		})
@@ -2173,7 +2173,7 @@ var _ = Describe("User Defined Network Controller", func() {
 			udn := testsUDNWithDeletionTimestamp(time.Now())
 			c := newTestController(noopRenderNadStub(), udn, testNamespace("test"))
 
-			_, err := c.syncUserDefinedNetwork(udn)
+			_, err := c.syncUserDefinedNetwork(context.Background(), udn)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(udn.Finalizers).To(BeEmpty())
 		})
@@ -2188,7 +2188,7 @@ var _ = Describe("User Defined Network Controller", func() {
 				return true, nil, expectedErr
 			})
 
-			_, err := c.syncUserDefinedNetwork(udn)
+			_, err := c.syncUserDefinedNetwork(context.Background(), udn)
 			Expect(err).To(MatchError(expectedErr))
 		})
 
@@ -2207,7 +2207,7 @@ var _ = Describe("User Defined Network Controller", func() {
 			}
 			c := newTestController(renderNadStub(nad), udn, nad, pod, testNamespace("test"))
 
-			_, err := c.syncUserDefinedNetwork(udn)
+			_, err := c.syncUserDefinedNetwork(context.Background(), udn)
 			Expect(err).ToNot(HaveOccurred())
 
 			Expect(udn.Finalizers).To(BeEmpty())
@@ -2231,7 +2231,7 @@ var _ = Describe("User Defined Network Controller", func() {
 				objs = append(objs, udn, nad)
 				c := newTestController(renderNadStub(nad), objs...)
 
-				_, err := c.syncUserDefinedNetwork(udn)
+				_, err := c.syncUserDefinedNetwork(context.Background(), udn)
 				Expect(err).To(MatchError(ContainSubstring(expectedErr.Error())))
 
 				actual, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(udn.Namespace).Get(context.Background(), nad.Name, metav1.GetOptions{})
@@ -2275,7 +2275,7 @@ var _ = Describe("User Defined Network Controller", func() {
 				udn := testPrimaryUDN()
 				c := newTestController(noopRenderNadStub(), udn)
 
-				Expect(c.updateUserDefinedNetworkStatus(udn, nad, syncErr)).To(Succeed(), "should update status successfully")
+				Expect(c.updateUserDefinedNetworkStatus(context.Background(), udn, nad, syncErr)).To(Succeed(), "should update status successfully")
 
 				assertUserDefinedNetworkStatus(cs.UserDefinedNetworkClient, udn, expectedStatus)
 			},
@@ -2329,7 +2329,7 @@ var _ = Describe("User Defined Network Controller", func() {
 
 			nad := testNAD()
 			syncErr := errors.New("sync error")
-			Expect(c.updateUserDefinedNetworkStatus(udn, nad, syncErr)).To(Succeed(), "should update status successfully")
+			Expect(c.updateUserDefinedNetworkStatus(context.Background(), udn, nad, syncErr)).To(Succeed(), "should update status successfully")
 
 			expectedStatus := &udnv1.UserDefinedNetworkStatus{
 				Conditions: []metav1.Condition{
@@ -2344,7 +2344,7 @@ var _ = Describe("User Defined Network Controller", func() {
 			assertUserDefinedNetworkStatus(cs.UserDefinedNetworkClient, udn, expectedStatus)
 
 			anotherSyncErr := errors.New("another sync error")
-			Expect(c.updateUserDefinedNetworkStatus(udn, nad, anotherSyncErr)).To(Succeed(), "should update status successfully")
+			Expect(c.updateUserDefinedNetworkStatus(context.Background(), udn, nad, anotherSyncErr)).To(Succeed(), "should update status successfully")
 
 			expectedUpdatedStatus := &udnv1.UserDefinedNetworkStatus{
 				Conditions: []metav1.Condition{
@@ -2369,21 +2369,21 @@ var _ = Describe("User Defined Network Controller", func() {
 
 			udn := testPrimaryUDN()
 			nad := testNAD()
-			Expect(c.updateUserDefinedNetworkStatus(udn, nad, nil)).To(MatchError(expectedError))
+			Expect(c.updateUserDefinedNetworkStatus(context.Background(), udn, nad, nil)).To(MatchError(expectedError))
 		})
 	})
 
 	Context("ClusterUserDefinedNetwork object sync", func() {
 		It("should succeed given no CR", func() {
 			c := newTestController(noopRenderNadStub())
-			_, err := c.syncClusterUDN(nil, nil)
+			_, err := c.syncClusterUDN(context.Background(), nil, nil)
 			Expect(err).To(Not(HaveOccurred()))
 		})
 		It("should succeed when no namespace match namespace-selector", func() {
 			cudn := testClusterUDN("test", "red")
 			c := newTestController(noopRenderNadStub(), cudn)
 
-			nads, err := c.syncClusterUDN(cudn, nil)
+			nads, err := c.syncClusterUDN(context.Background(), cudn, nil)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(nads).To(BeEmpty())
 		})
@@ -2392,7 +2392,7 @@ var _ = Describe("User Defined Network Controller", func() {
 				NamespaceSelector: metav1.LabelSelector{}}}
 			c := newTestController(noopRenderNadStub(), cudn)
 
-			nads, err := c.syncClusterUDN(cudn, nil)
+			nads, err := c.syncClusterUDN(context.Background(), cudn, nil)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(nads).To(BeEmpty())
 
@@ -2406,7 +2406,7 @@ var _ = Describe("User Defined Network Controller", func() {
 
 			cudn := testClusterUDN("test", "blue")
 
-			_, err := c.syncClusterUDN(cudn, nil)
+			_, err := c.syncClusterUDN(context.Background(), cudn, nil)
 			Expect(err).To(MatchError(expectedErr))
 		})
 
@@ -2442,7 +2442,7 @@ var _ = Describe("User Defined Network Controller", func() {
 			deletedCUDN.DeletionTimestamp = &metav1.Time{Time: time.Now()}
 			c := newTestController(noopRenderNadStub(), deletedCUDN)
 
-			nads, err := c.syncClusterUDN(deletedCUDN, nil)
+			nads, err := c.syncClusterUDN(context.Background(), deletedCUDN, nil)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(nads).To(BeEmpty())
 		})
@@ -2451,7 +2451,7 @@ var _ = Describe("User Defined Network Controller", func() {
 			deletedCUDN.DeletionTimestamp = &metav1.Time{Time: time.Now()}
 			c := newTestController(noopRenderNadStub(), deletedCUDN)
 
-			nads, err := c.syncClusterUDN(deletedCUDN, nil)
+			nads, err := c.syncClusterUDN(context.Background(), deletedCUDN, nil)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(nads).To(BeEmpty())
 			Expect(deletedCUDN.Finalizers).To(BeEmpty())
@@ -2467,7 +2467,7 @@ var _ = Describe("User Defined Network Controller", func() {
 				expectedNAD := testClusterUdnNAD(cudn.Name, testNs.Name)
 				c = newTestController(renderNadStub(expectedNAD), cudn, testNs, expectedNAD)
 
-				nads, err := c.syncClusterUDN(cudn, nil)
+				nads, err := c.syncClusterUDN(context.Background(), cudn, nil)
 				Expect(err).ToNot(HaveOccurred())
 				Expect(nads).To(ConsistOf(*expectedNAD))
 
@@ -2479,7 +2479,7 @@ var _ = Describe("User Defined Network Controller", func() {
 			})
 
 			It("should delete NAD", func() {
-				nads, err := c.syncClusterUDN(cudn, nil)
+				nads, err := c.syncClusterUDN(context.Background(), cudn, nil)
 				Expect(err).ToNot(HaveOccurred())
 				Expect(nads).To(BeEmpty())
 				Expect(cudn.Finalizers).To(BeEmpty())
@@ -2494,7 +2494,7 @@ var _ = Describe("User Defined Network Controller", func() {
 					return true, nil, expectedErr
 				})
 
-				_, err := c.syncClusterUDN(cudn, nil)
+				_, err := c.syncClusterUDN(context.Background(), cudn, nil)
 				Expect(err).To(MatchError(expectedErr))
 			})
 			It("should fail remove NAD finalizer when delete NAD fails", func() {
@@ -2503,7 +2503,7 @@ var _ = Describe("User Defined Network Controller", func() {
 					return true, nil, expectedErr
 				})
 
-				_, err := c.syncClusterUDN(cudn, nil)
+				_, err := c.syncClusterUDN(context.Background(), cudn, nil)
 				Expect(err).To(MatchError(expectedErr))
 			})
 		})
@@ -2512,7 +2512,7 @@ var _ = Describe("User Defined Network Controller", func() {
 	Context("ClusterUserDefinedNetwork status update", func() {
 		It("should succeed given no CR", func() {
 			c := newTestController(noopRenderNadStub())
-			Expect(c.updateClusterUDNStatus(nil, nil, nil, false)).To(Succeed())
+			Expect(c.updateClusterUDNStatus(context.Background(), nil, nil, nil, false)).To(Succeed())
 		})
 		It("should fail when CR apply status fails", func() {
 			cudn := testClusterUDN("test")
@@ -2523,7 +2523,7 @@ var _ = Describe("User Defined Network Controller", func() {
 				return true, nil, expectedErr
 			})
 
-			Expect(c.updateClusterUDNStatus(cudn, nil, nil, false)).ToNot(Succeed())
+			Expect(c.updateClusterUDNStatus(context.Background(), cudn, nil, nil, false)).ToNot(Succeed())
 		})
 		It("should reflect active namespaces", func() {
 			testNsNames := []string{"red", "green"}
@@ -2536,7 +2536,7 @@ var _ = Describe("User Defined Network Controller", func() {
 				testNADs = append(testNADs, *testClusterUdnNAD(cudn.Name, nsName))
 			}
 
-			Expect(c.updateClusterUDNStatus(cudn, testNADs, nil, false)).To(Succeed())
+			Expect(c.updateClusterUDNStatus(context.Background(), cudn, testNADs, nil, false)).To(Succeed())
 
 			cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
 			Expect(err).ToNot(HaveOccurred())
@@ -2562,7 +2562,7 @@ var _ = Describe("User Defined Network Controller", func() {
 			nadGreen.DeletionTimestamp = &metav1.Time{Time: time.Now()}
 			testNADs = append(testNADs, nadGreen)
 
-			Expect(c.updateClusterUDNStatus(cudn, testNADs, nil, false)).To(Succeed())
+			Expect(c.updateClusterUDNStatus(context.Background(), cudn, testNADs, nil, false)).To(Succeed())
 
 			cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
 			Expect(err).ToNot(HaveOccurred())
@@ -2587,7 +2587,7 @@ var _ = Describe("User Defined Network Controller", func() {
 			}
 
 			testErr := errors.New("test sync NAD error")
-			Expect(c.updateClusterUDNStatus(cudn, testNADs, testErr, false)).To(Succeed())
+			Expect(c.updateClusterUDNStatus(context.Background(), cudn, testNADs, testErr, false)).To(Succeed())
 
 			cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
 			Expect(err).ToNot(HaveOccurred())
@@ -2764,7 +2764,7 @@ var _ = Describe("User Defined Network Controller", func() {
 
 			cudnObj, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), "test-cudn", metav1.GetOptions{})
 			Expect(err).NotTo(HaveOccurred())
-			_, err = c.syncClusterUDN(cudnObj, nil)
+			_, err = c.syncClusterUDN(context.Background(), cudnObj, nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			Consistently(func() string {
