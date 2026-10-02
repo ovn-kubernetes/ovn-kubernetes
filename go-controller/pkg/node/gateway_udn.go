@@ -557,8 +557,11 @@ func GetUDNMarkChain(pktMark string) string {
 	return "udn-mark-" + pktMark
 }
 
-// delMarkChain removes the UDN packet mark nftables chain
+// delMarkChain removes service-map references to the UDN before deleting its packet mark chain.
 func (udng *UserDefinedNetworkGateway) delMarkChain() error {
+	udnServiceMarkLock.Lock()
+	defer udnServiceMarkLock.Unlock()
+
 	nft, err := nodenft.GetNFTablesHelper()
 	if err != nil {
 		return err
@@ -566,6 +569,25 @@ func (udng *UserDefinedNetworkGateway) delMarkChain() error {
 	tx := nft.NewTransaction()
 	chain := &knftables.Chain{
 		Name: GetUDNMarkChain(fmt.Sprintf("0x%x", udng.pktMark)),
+	}
+	for _, mapName := range []string{
+		nftablesUDNMarkNodePortsMap,
+		nftablesUDNMarkExternalIPsV4Map,
+		nftablesUDNMarkExternalIPsV6Map,
+	} {
+		elements, err := nft.ListElements(context.TODO(), "map", mapName)
+		if err != nil {
+			if knftables.IsNotFound(err) {
+				continue
+			}
+			return fmt.Errorf("failed to list UDN service mark map %s before deleting chain %s: %w", mapName, chain.Name, err)
+		}
+		for _, element := range elements {
+			if len(element.Value) == 1 && element.Value[0] == "jump "+chain.Name {
+				tx.Add(element)
+				tx.Delete(element)
+			}
+		}
 	}
 	// Delete would return an error if we tried to delete a chain that didn't exist, so
 	// we do an Add first (which is a no-op if the chain already exists) and then Delete.
