@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/kubernetes/test/e2e/framework"
 )
 
@@ -42,6 +43,10 @@ type ClusterProvider interface {
 	Name() string
 	// Get platform specific timeout values
 	GetDefaultTimeoutContext() *framework.TimeoutContext
+	// InfrastructureNetworkExclusions returns infrastructure network CIDRs
+	// (e.g., bastion host or hypervisor subnets) that should be excluded from
+	// test subnet allocations to prevent overlaps with external hosts.
+	InfrastructureNetworkExclusions() (ipv4, ipv6 sets.Set[string])
 }
 
 type ExternalContainerProvider interface {

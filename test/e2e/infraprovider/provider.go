@@ -26,6 +26,11 @@ func Get() api.Provider {
 	return infraProvider
 }
 
+// IsSet returns true if the infrastructure provider has been initialized.
+func IsSet() bool {
+	return infraProvider != nil
+}
+
 // IsKind returns true if cluster provider is KinD
 func IsKind() bool {
 	_, err := exec.LookPath("kubectl")

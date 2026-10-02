@@ -12,11 +12,11 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/allocators"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/diagnostics"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
-	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/ipalloc"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/label"
 
 	deploymentkind "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig/configs/kind"
@@ -55,7 +55,7 @@ var _ = ginkgo.BeforeSuite(func() {
 	client, err := clientset.NewForConfig(config)
 	framework.ExpectNoError(err, "k8 clientset is required to list nodes")
 	if os.Getenv(uplinkDPUGatewayNetworkEnv) == "" {
-		err = ipalloc.InitPrimaryIPAllocator(client.CoreV1().Nodes())
+		err = allocators.InitPrimaryIPAllocator(client.CoreV1().Nodes())
 		framework.ExpectNoError(err, "failed to initialize node primary IP allocator")
 	} else {
 		framework.Logf("Skipping primary IP allocator initialization for DPU Uplink e2e")
