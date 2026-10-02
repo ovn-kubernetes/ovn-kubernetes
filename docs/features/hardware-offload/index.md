@@ -1,6 +1,7 @@
 ---
 title: Hardware Acceleration
 hide:
+  - navigation
   - toc
 ---
 
@@ -8,10 +9,26 @@ hide:
 
 Offload OVS datapath processing to SmartNICs and DPUs.
 
-**[OVS Acceleration with kernel datapath](ovs-kernel.md)**
+<div class="landing-grid" markdown>
+
+<div class="landing-card" markdown>
+
+### OVS Acceleration with kernel datapath
 
 Offload OVS flow processing to SmartNIC hardware using the kernel TC datapath.
 
-**[OVS Acceleration with DOCA datapath](ovs-doca.md)**
+[Read more](ovs-kernel.md){ .landing-btn }
+
+</div>
+
+<div class="landing-card" markdown>
+
+### OVS Acceleration with DOCA datapath
 
 Offload OVS to NVIDIA BlueField DPUs using the DOCA-based datapath.
+
+[Read more](ovs-doca.md){ .landing-btn }
+
+</div>
+
+</div>
