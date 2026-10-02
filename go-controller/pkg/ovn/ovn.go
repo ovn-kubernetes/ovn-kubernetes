@@ -222,11 +222,15 @@ func (oc *DefaultNetworkController) ensureRemoteZonePod(pod *corev1.Pod) error {
 	return nil
 }
 
-// removePod tried to tear down a pod. It returns nil on success and error on failure;
+// removePod tries to tear down a pod. It returns nil on success and error on failure;
 // failure indicates the pod tear down should be retried later.
 func (oc *DefaultNetworkController) removePod(pod *corev1.Pod, portInfo *lpInfo) error {
 	// Clear applied state regardless of which zone handles the delete.
 	defer oc.logicalPortCache.remove(pod, ovntypes.DefaultNetworkName)
+
+	if err := kubevirt.CleanUpLiveMigratablePod(oc.nbClient, oc.watchFactory, pod); err != nil {
+		return err
+	}
 
 	var errs []error
 	if oc.isPodScheduledOnLocalNode(pod) {
@@ -246,10 +250,6 @@ func (oc *DefaultNetworkController) removePod(pod *corev1.Pod, portInfo *lpInfo)
 
 	if len(errs) > 0 {
 		return utilerrors.Join(errs...)
-	}
-
-	if err := kubevirt.CleanUpLiveMigratablePod(oc.nbClient, oc.watchFactory, pod); err != nil {
-		return err
 	}
 
 	oc.forgetPodReleasedBeforeStartup(string(pod.UID), ovntypes.DefaultNetworkName)

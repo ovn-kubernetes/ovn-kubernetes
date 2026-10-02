@@ -20,6 +20,7 @@ import (
 	ktypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
+	k8sretry "k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
@@ -256,7 +257,7 @@ func (bnc *BaseNetworkController) deletePodLogicalPortWithOwnershipCheck(pod *co
 
 	var allOps, ops []ovsdb.Operation
 
-	if ops, err = bnc.deletePodFromNamespacePortGroupOps(nil, pod.Namespace,
+	if ops, err = bnc.deletePodFromNamespace(pod.Namespace,
 		portUUID); err != nil {
 		return nil, fmt.Errorf("unable to delete pod %s from namespace: %w", podDesc, err)
 	}
@@ -372,37 +373,32 @@ func (bnc *BaseNetworkController) releasePodIPs(pInfo *lpInfo) error {
 	return nil
 }
 
-func podIPReleaseKey(pod *corev1.Pod) string {
-	return pod.Namespace + "/" + pod.Name + "/" + string(pod.UID)
-}
-
 // releasePodIPsOnce records progress independently of the informer and port
 // cache. Later policy/NAD cleanup can fail after IPAM has already released the
 // addresses; a retry must not release a different pod's new reservation.
 func (bnc *BaseNetworkController) releasePodIPsOnce(pod *corev1.Pod, nadKey string, pInfo *lpInfo) error {
 	bnc.podIPReleasesMutex.Lock()
 	defer bnc.podIPReleasesMutex.Unlock()
-	key := podIPReleaseKey(pod)
-	if bnc.podIPReleases[key].Has(nadKey) {
+	if bnc.podIPReleases[pod.UID].Has(nadKey) {
 		return nil
 	}
 	if err := bnc.releasePodIPs(pInfo); err != nil {
 		return err
 	}
 	if bnc.podIPReleases == nil {
-		bnc.podIPReleases = make(map[string]sets.Set[string])
+		bnc.podIPReleases = make(map[ktypes.UID]sets.Set[string])
 	}
-	if bnc.podIPReleases[key] == nil {
-		bnc.podIPReleases[key] = sets.New[string]()
+	if bnc.podIPReleases[pod.UID] == nil {
+		bnc.podIPReleases[pod.UID] = sets.New[string]()
 	}
-	bnc.podIPReleases[key].Insert(nadKey)
+	bnc.podIPReleases[pod.UID].Insert(nadKey)
 	return nil
 }
 
 func (bnc *BaseNetworkController) wasPodIPReleased(pod *corev1.Pod, nadKey string) bool {
 	bnc.podIPReleasesMutex.Lock()
 	defer bnc.podIPReleasesMutex.Unlock()
-	return bnc.podIPReleases[podIPReleaseKey(pod)].Has(nadKey)
+	return bnc.podIPReleases[pod.UID].Has(nadKey)
 }
 
 // forgetPodIPReleases retires progress after successful reconciliation. Passing
@@ -410,14 +406,13 @@ func (bnc *BaseNetworkController) wasPodIPReleased(pod *corev1.Pod, nadKey strin
 func (bnc *BaseNetworkController) forgetPodIPReleases(pod *corev1.Pod, nadKeys ...string) {
 	bnc.podIPReleasesMutex.Lock()
 	defer bnc.podIPReleasesMutex.Unlock()
-	key := podIPReleaseKey(pod)
 	if len(nadKeys) == 0 {
-		delete(bnc.podIPReleases, key)
+		delete(bnc.podIPReleases, pod.UID)
 		return
 	}
-	bnc.podIPReleases[key].Delete(nadKeys...)
-	if len(bnc.podIPReleases[key]) == 0 {
-		delete(bnc.podIPReleases, key)
+	bnc.podIPReleases[pod.UID].Delete(nadKeys...)
+	if len(bnc.podIPReleases[pod.UID]) == 0 {
+		delete(bnc.podIPReleases, pod.UID)
 	}
 }
 
@@ -802,6 +797,43 @@ func (bnc *BaseNetworkController) delLSPOps(logicalPort, switchName,
 	return ops, nil
 }
 
+func (bnc *BaseNetworkController) addPodToNamespacePortGroupOps(ops []ovsdb.Operation, ns, portUUID string) ([]ovsdb.Operation, error) {
+	if !bnc.needNamespacedPortGroup() || portUUID == "" {
+		return ops, nil
+	}
+
+	// Namespace handling owns group lifetime. A pod that outlives namespace
+	// teardown must not recreate the group; missing dependencies are retried.
+	pgName := bnc.getNamespacePortGroupName(ns)
+	// The namespace handler may be only milliseconds behind pod setup. Retry
+	// just this cache lookup briefly before falling back to a full pod retry.
+	var membershipOps []ovsdb.Operation
+	err := k8sretry.OnError(k8sretry.DefaultRetry, func(err error) bool {
+		return errors.Is(err, libovsdbclient.ErrNotFound)
+	}, func() error {
+		var err error
+		membershipOps, err = libovsdbops.AddPortsToPortGroupOps(bnc.nbClient, ops, pgName, portUUID)
+		return err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to add pod port %s to namespace port group %s: %w", portUUID, pgName, err)
+	}
+	return membershipOps, nil
+}
+
+func (bnc *BaseNetworkController) deletePodFromNamespace(ns string, portUUID string) ([]ovsdb.Operation, error) {
+	if !bnc.needNamespacedPortGroup() || portUUID == "" {
+		return nil, nil
+	}
+
+	pgName := bnc.getNamespacePortGroupName(ns)
+	ops, err := libovsdbops.DeletePortsFromPortGroupOps(bnc.nbClient, nil, pgName, portUUID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to delete pod port %s from namespace port group %s: %w", portUUID, pgName, err)
+	}
+	return ops, nil
+}
+
 // isPodScheduledOnLocalNode returns true when the pod is scheduled on the node
 // managed by this controller.
 func (bnc *BaseNetworkController) isPodScheduledOnLocalNode(pod *corev1.Pod) bool {
@@ -900,7 +932,7 @@ func (bnc *BaseNetworkController) allocatePodAnnotation(pod *corev1.Pod, existin
 				}
 				if err = bnc.lsManager.AllocateIPs(switchName, podIfAddrs); err != nil &&
 					(!ipallocator.IsErrAllocated(err) || requireIPAMReservation) {
-					return nil, false, fmt.Errorf("unable to ensure IPs allocated for already annotated pod: %s, IPs: %s, error: %v",
+					return nil, false, fmt.Errorf("unable to ensure IPs allocated for already annotated pod: %s, IPs: %s, error: %w",
 						podDesc, util.JoinIPNetIPs(podIfAddrs, " "), err)
 				}
 			}
@@ -958,6 +990,7 @@ func (bnc *BaseNetworkController) allocatePodAnnotation(pod *corev1.Pod, existin
 			}
 			if len(generatedPodIfAddrs) > 0 {
 				podIfAddrs = generatedPodIfAddrs
+				podMac = generatedPodMac
 			}
 		}
 	}

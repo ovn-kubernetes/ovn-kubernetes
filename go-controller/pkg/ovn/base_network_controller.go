@@ -18,6 +18,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	knet "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	ktypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -181,7 +182,7 @@ type BaseNetworkController struct {
 	// IP releases completed during an unfinished pod reconcile. Keep these
 	// receipts until the entire reconcile succeeds, not just LSP teardown.
 	podIPReleasesMutex sync.Mutex
-	podIPReleases      map[string]sets.Set[string]
+	podIPReleases      map[ktypes.UID]sets.Set[string]
 
 	// IP addresses of OVN Cluster logical router port ("GwRouterToJoinSwitchPrefix + OVNClusterRouter")
 	// connecting to the join switch
