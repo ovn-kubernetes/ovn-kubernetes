@@ -134,9 +134,10 @@ be verified without live pod networking:
 Do **not** add these to `test/e2e/` or `test/e2e/testscenario/`.  The E2E
 suite requires a full Kind cluster; CRD admission tests do not.  Adding them
 to the E2E suite makes them slower, harder to run locally, and harder to
-iterate on.  Schema-only tests currently in
+iterate on.  `test/crd-integration/testscenario/` is the new home for
+schema-only scenarios. The remaining un-migrated scenarios still in
 [`test/e2e/testscenario/`](https://github.com/ovn-kubernetes/ovn-kubernetes/tree/master/test/e2e/testscenario)
-should be migrated here over time (tracked in
+should be migrated over time (tracked in
 [ovn-kubernetes#6932](https://github.com/ovn-kubernetes/ovn-kubernetes/issues/6932)).
 
 # Conformance Tests
