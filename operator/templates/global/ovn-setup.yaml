@@ -1,0 +1,135 @@
+{{- if or .Values.skipCallToK8s (eq (include "needNamespace" "ovn-kubernetes") "true") }}
+---
+# ovn-namespace.yaml
+#
+# Setup for Kubernetes to support the ovn-kubernetes plugin
+#
+# Create the namespace for ovn-kubernetes.
+#
+# This provisioning is done as part of installation after the cluster is
+# up and before the ovn daemonsets are created.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ovn-kubernetes
+{{- end }}
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: ovn-kubernetes
+  name: ovn-k8s-configmap
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "watch", "list"]
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - create
+  - get
+  - list
+  - update
+---
+
+{{- $hostNetworkNamespace := .Values.hostNetworkNamespace | default "ovn-host-network"}}
+# The network cidr and service cidr are set in the ovn-config configmap
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: ovn-config
+  namespace: ovn-kubernetes
+data:
+  net_cidr:      {{ .Values.podNetwork }}
+  svc_cidr:      {{ .Values.serviceNetwork }}
+  k8s_apiserver: {{ .Values.k8sAPIServer }}
+  mtu:           {{ .Values.mtu | default 1500 | quote }}
+  host_network_namespace: {{ $hostNetworkNamespace }}
+
+---
+# ovnkube-config ConfigMap
+#
+# Configuration for ovnkube binaries
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: ovnkube-config
+  namespace: ovn-kubernetes
+data:
+  ovnkube.conf: |
+{{- if .Values.global.enableNoOverlay }}
+    [default]
+    transport = no-overlay
+
+    [no-overlay]
+{{- if .Values.global.enableNoOverlaySnat }}
+    outbound-snat = enabled
+{{- else }}
+    outbound-snat = disabled
+{{- end }}
+    routing = {{ if .Values.global.enableNoOverlayManagedRouting }}managed{{ else }}unmanaged{{ end }}
+{{- if .Values.global.enableNoOverlayManagedRouting }}
+
+    [bgp-managed]
+    as-number = {{ .Values.global.managedBGPASNumber | default 64512 }}
+    topology = {{ .Values.global.managedBGPTopology | default "full-mesh" }}
+    frr-namespace = {{ .Values.global.managedBGPFRRNamespace | default "frr-k8s-system" }}
+{{- end }}
+{{- end }}
+{{- if or (hasKey .Values.global "routingTableIDStart") (hasKey .Values.global "kubeletCgroupPath") }}
+
+    [ovnkubenode]
+{{- if hasKey .Values.global "routingTableIDStart" }}
+    routing-table-id-start = {{ .Values.global.routingTableIDStart }}
+{{- end }}
+{{- if hasKey .Values.global "kubeletCgroupPath" }}
+    kubelet-cgroup-path = {{ .Values.global.kubeletCgroupPath }}
+{{- end }}
+{{- end }}
+
+{{- if or .Values.global.skipCallToK8s (eq (include "needNamespace" $hostNetworkNamespace) "true") }}
+---
+# ovn-host-network-namespace.yaml
+#
+# Create the namespace for classifying host network traffic.
+#
+# This provisioning is done as part of installation after the cluster is
+# up and before the ovn daemonsets are created.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $hostNetworkNamespace }}
+{{- end }}
+
+{{- if and (eq (hasKey .Values.global "enableRouteAdvertisements" | ternary .Values.global.enableRouteAdvertisements false) true) (eq (hasKey .Values.global "advertiseDefaultNetwork" | ternary .Values.global.advertiseDefaultNetwork false) true) }}
+---
+apiVersion: k8s.ovn.org/v1
+kind: RouteAdvertisements
+metadata:
+  name: default
+spec:
+  networkSelectors:
+    - networkSelectionType: DefaultNetwork
+  nodeSelector: {}
+  frrConfigurationSelector:
+    matchLabels:
+      name: receive-all
+  advertisements:
+    - "PodNetwork"
+{{- end }}
+
+{{- if (and .Values.global.dockerConfigSecret .Values.global.dockerConfigSecret.create) }}
+---
+apiVersion: v1
+type: kubernetes.io/dockerconfigjson
+kind: Secret
+metadata:
+  namespace: {{ .Values.global.namespace }}
+  name: {{ .Values.global.imagePullSecretName }}
+data:
+  .dockerconfigjson: {{ include "dockerconfigjson" .Values.global.dockerConfigSecret | b64enc }}
+{{- end }}
