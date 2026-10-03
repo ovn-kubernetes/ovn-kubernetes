@@ -2955,29 +2955,15 @@ func (e *EgressIPController) getGatewayNextHop(ni util.NetInfo, node *corev1.Nod
 		return e.getRouterPortIP(types.GWRouterToJoinSwitchPrefix+ni.GetNetworkScopedGWRouterName(node.Name), isIPv6)
 	} else if ni.TopologyType() == types.Layer2Topology {
 		if config.Layer2UsesTransitRouter {
-			upgradedNode := util.UDNLayer2NodeUsesTransitRouter(node)
-			if upgradedNode {
-				transitRouterInfo, err := getTransitRouterInfo(ni, node)
-				if err != nil {
-					return nil, err
-				}
-				nodeTransitIP, err := util.MatchFirstIPNetFamily(isIPv6, transitRouterInfo.gatewayRouterNets)
-				if err != nil {
-					return nil, fmt.Errorf("could not find transit router IP of node %v for this family %v: %v", node, isIPv6, err)
-				}
-				return nodeTransitIP.IP, nil
-			} else {
-				gwIPs, err := udn.GetGWRouterIPs(node, ni)
-				if err != nil {
-					return nil, fmt.Errorf("failed to get gateway router IPs for node %s: %w", node.Name, err)
-				}
-				gwIP, err := util.MatchFirstIPNetFamily(isIPv6, gwIPs)
-				if err != nil {
-					return nil, fmt.Errorf("failed to find a gateway router IP for node %s that matches the EgressIP IP family (is IPv6: %v): %w",
-						node.Name, isIPv6, err)
-				}
-				return gwIP.IP, nil
+			transitRouterInfo, err := getTransitRouterInfo(ni, node)
+			if err != nil {
+				return nil, err
 			}
+			nodeTransitIP, err := util.MatchFirstIPNetFamily(isIPv6, transitRouterInfo.gatewayRouterNets)
+			if err != nil {
+				return nil, fmt.Errorf("could not find transit router IP of node %v for this family %v: %v", node, isIPv6, err)
+			}
+			return nodeTransitIP.IP, nil
 		}
 		// If egress node is local, retrieve the external default gateway next hops from the Node L3 gateway annotation.
 		// We must pick one of the next hops to add to the LRP reroute next hops to not break ECMP.
@@ -3576,57 +3562,6 @@ func (e *EgressIPController) ensureRouterPoliciesForNetwork(ni util.NetInfo, nod
 		}
 	}
 
-	return nil
-}
-
-// updateNodeNextHop updates the next hop IP for reroute policies on the node's logical router.
-// Only used during layer2 topology upgrade to change gwIP to the transit routerIP
-func (e *EgressIPController) updateNodeNextHop(ni util.NetInfo, node *corev1.Node) error {
-	e.lockNetwork(ni.GetNetworkName())
-	defer e.unlockNetwork(ni.GetNetworkName())
-
-	transitRouterInfo, err := getTransitRouterInfo(ni, node)
-	if err != nil {
-		return err
-	}
-	gwIPs, err := udn.GetGWRouterIPs(node, ni)
-	if err != nil {
-		return fmt.Errorf("failed to get gateway router IPs for node %s: %w", node.Name, err)
-	}
-	for _, transitIP := range transitRouterInfo.gatewayRouterNets {
-		gwIP, err := util.MatchFirstIPNetFamily(utilnet.IsIPv6(transitIP.IP), gwIPs)
-		if err != nil {
-			return fmt.Errorf("failed to find a gateway router IP for node %s that matches the transit IP %v family: %w",
-				node.Name, transitIP, err)
-		}
-		// replace reroute policies with the new next hop IP
-		ops, err := libovsdbops.ReplaceNextHopForLogicalRouterPolicyWithPredicateOps(
-			e.nbClient, nil, func(policy *nbdb.LogicalRouterPolicy) bool {
-				if policy.Priority != types.EgressIPReroutePriority {
-					return false
-				}
-				// Restrict to this network and controller
-				if policy.ExternalIDs[libovsdbops.NetworkKey.String()] != ni.GetNetworkName() ||
-					policy.ExternalIDs[libovsdbops.OwnerControllerKey.String()] != e.controllerName ||
-					policy.ExternalIDs[libovsdbops.OwnerTypeKey.String()] != libovsdbops.EgressIPOwnerType {
-					return false
-				}
-				for _, nextHop := range policy.Nexthops {
-					if nextHop == gwIP.IP.String() {
-						return true
-					}
-				}
-				return false
-			}, gwIP.IP.String(), transitIP.IP.String())
-		if err != nil {
-			return fmt.Errorf("failed to build update reroute policies ops for node %s with transit IP %s: %v",
-				node.Name, transitIP.IP.String(), err)
-		}
-		if _, err = libovsdbops.TransactAndCheck(e.nbClient, ops); err != nil {
-			return fmt.Errorf("failed to update reroute policies for node %s with transit IP %s: %v",
-				node.Name, transitIP.IP.String(), err)
-		}
-	}
 	return nil
 }
 
