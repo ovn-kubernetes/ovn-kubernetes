@@ -1,4 +1,3 @@
-{{- if eq (hasKey .Values.global "enableOvnKubeIdentity" | ternary .Values.global.enableOvnKubeIdentity true) true }}
 # ovnkube-identity
 # starts ovnkube-identity
 # it is run on the master(s).
@@ -7,7 +6,7 @@ apiVersion: apps/v1
 metadata:
   name: ovnkube-identity
   # namespace set up by install
-  namespace: ovn-kubernetes
+  namespace: {{ .global.namespace }}
   annotations:
     kubernetes.io/description: |
       This DaemonSet launches the ovnkube-identity networking component on control-plane nodes.
@@ -30,21 +29,30 @@ spec:
         type: infra
         kubernetes.io/os: "linux"
     spec:
-      {{- if .Values.global.imagePullSecretName }}
+      {{- with .global.imagePullSecrets }}
       imagePullSecrets:
-      - name: {{ .Values.global.imagePullSecretName }}
+{{ toYaml . | indent 6 }}
       {{- end }}
       priorityClassName: "system-cluster-critical"
       serviceAccountName: ovnkube-identity
       hostNetwork: true
       dnsPolicy: Default
       nodeSelector:
+      {{- with get .ovnkubeIdentity "nodePlacement" "nodeSelector" }}
+{{ toYaml . | indent 8 }}
+      {{- else }}
         node-role.kubernetes.io/control-plane: ""
         kubernetes.io/os: "linux"
+      {{- end }}
+      {{- with get .ovnkubeIdentity "nodePlacement" "affinity" }}
+      affinity:
+{{ toYaml . | indent 8 }}
+      {{- end }}
       containers:
       - name: ovnkube-identity
-        image: {{ include "getImage" . }}
-        imagePullPolicy: {{ default "IfNotPresent" .Values.global.image.pullPolicy }}
+        {{- $image := .ovnkubeIdentity.ovnkubeIdentity.image }}
+        image: "{{ $image.repository }}:{{ $image.tag }}{{ if $image.sha256 }}@sha256:{{ $image.sha256 }}{{ end }}"
+        imagePullPolicy: IfNotPresent
         command: ["/root/ovnkube.sh", "ovnkube-identity"]
         securityContext:
           runAsUser: 0
@@ -57,10 +65,10 @@ spec:
           - mountPath: /etc/webhook-cert/
             name: webhook-cert
         env:
-          {{ if .Values.global.enableCoredumps -}}
+          {{- if .global.enableCoredump }}
           - name: GOTRACEBACK
             value: "crash"
-          {{ end -}}
+          {{- end }}
           - name: OVN_DAEMONSET_VERSION
             value: "1.4.0"
           - name: K8S_APISERVER
@@ -69,13 +77,16 @@ spec:
                 key: k8s_apiserver
                 name: ovn-config
           - name: OVNKUBE_LOGLEVEL
-            value: {{ default 4 .Values.logLevel | quote }}
+            value: "{{ or .ovnkubeIdentity.customVariables.logLevel 4 }}"
           - name: OVN_HYBRID_OVERLAY_ENABLE
-            value: {{ default "" .Values.global.enableHybridOverlay | quote }}
+            value: "{{ if has "hybridOverlay" .global.featureGates }}true{{ end }}"
       volumes:
         - name: webhook-cert
           secret:
             secretName: ovnkube-webhook-cert
       tolerations:
+      {{- with get .ovnkubeIdentity "nodePlacement" "tolerations" }}
+{{ toYaml . | indent 6 }}
+      {{- else }}
       - operator: "Exists"
-{{- end }}
+      {{- end }}

@@ -1,20 +1,5 @@
-{{- if eq (hasKey .Values.global "enableOvnKubeIdentity" | ternary .Values.global.enableOvnKubeIdentity true) true }}
-# Create self signed CA and webhook cert
-# NOTE: The CA and certificate are not renewed after they expire, this should only be used in development environments
-{{- $ca := genCA "self-signed-ca" 400 }}
-{{- $cert := genSignedCert "localhost" nil (list "localhost") 365 $ca }}
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: ovnkube-webhook-cert
-  namespace: ovn-kubernetes
-data:
-  tls.crt: {{ $cert.Cert | b64enc | quote }}
-  tls.key: {{ $cert.Key | b64enc | quote }}
-type: kubernetes.io/tls
-
----
+# The serving certificate Secret (ovnkube-webhook-cert) is created by the
+# OVNK8s Operator, which injects its CA bundle here.
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
 metadata:
@@ -23,7 +8,7 @@ webhooks:
   - name: ovn-kubernetes-admission-webhook-node.k8s.io
     clientConfig:
       url: https://localhost:9443/node
-      caBundle: {{ $ca.Cert | b64enc | quote }}
+      caBundle: "{{ or .ovnkubeIdentity.webhookCABundle "" | b64enc }}"
     admissionReviewVersions: ['v1']
     sideEffects: None
     failurePolicy: Fail
@@ -67,7 +52,7 @@ webhooks:
   - name: ovn-kubernetes-admission-webhook-pod.k8s.io
     clientConfig:
       url: https://localhost:9443/pod
-      caBundle: {{ $ca.Cert | b64enc | quote }}
+      caBundle: "{{ or .ovnkubeIdentity.webhookCABundle "" | b64enc }}"
     admissionReviewVersions: ['v1']
     sideEffects: None
     matchConditions:
@@ -77,7 +62,7 @@ webhooks:
       # the caller supplies the identity pod label.
       - name: skip-ovnkube-identity-self-pods
         expression: >-
-          !(request.namespace == "ovn-kubernetes" && has(object.metadata.labels) &&
+          !(request.namespace == "{{ .global.namespace }}" && has(object.metadata.labels) &&
           "name" in object.metadata.labels && object.metadata.labels["name"] == "ovnkube-identity" &&
           [object, oldObject].all(p, p == null || !has(p.metadata.annotations) ||
             !["k8s.ovn.org/pod-networks", "k8s.ovn.org/dpu.connection-details",
@@ -97,7 +82,7 @@ webhooks:
   - name: ovn-kubernetes-admission-webhook-uplinkstate.k8s.io
     clientConfig:
       url: https://localhost:9443/uplinkstate
-      caBundle: {{ $ca.Cert | b64enc | quote }}
+      caBundle: "{{ or .ovnkubeIdentity.webhookCABundle "" | b64enc }}"
     admissionReviewVersions: ['v1']
     sideEffects: None
     failurePolicy: Fail
@@ -107,4 +92,3 @@ webhooks:
         apiVersions: ["v1alpha1"]
         resources: ["uplinkstates"]
         scope: "Cluster"
-{{- end }}

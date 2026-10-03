@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
     name: ovnkube-cluster-manager
-    namespace: ovn-kubernetes
+    namespace: {{ .global.namespace }}
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -16,14 +16,14 @@ roleRef:
 subjects:
     - kind: ServiceAccount
       name: ovnkube-cluster-manager
-      namespace: ovn-kubernetes
+      namespace: {{ .global.namespace }}
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
     name: ovnkube-cluster-manager-configmaps
-    namespace: ovn-kubernetes
+    namespace: {{ .global.namespace }}
 roleRef:
     name: ovn-k8s-configmap
     kind: Role
@@ -31,7 +31,7 @@ roleRef:
 subjects:
     - kind: ServiceAccount
       name: ovnkube-cluster-manager
-      namespace: ovn-kubernetes
+      namespace: {{ .global.namespace }}
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -126,19 +126,19 @@ rules:
           - baselineadminnetworkpolicies/status
       verbs: [ "patch" ]
 
-    {{- if eq (hasKey .Values.global "enableNetworkSegmentation" | ternary .Values.global.enableNetworkSegmentation false) true }}
+    {{- if has "userDefinedNetworks" .global.featureGates }}
     - apiGroups: ["discovery.k8s.io"]
       resources:
           - endpointslices
       verbs: [ "create", "update", "delete", "deletecollection" ]
     {{- end }}
-    {{- if eq (hasKey .Values.global "enableDNSNameResolver" | ternary .Values.global.enableDNSNameResolver false) true }}
+    {{- if has "dnsNameResolver" .global.featureGates }}
     - apiGroups: ["network.openshift.io"]
       resources:
           - dnsnameresolvers
       verbs: [ "create", "delete", "list", "patch", "update", "watch" ]
     {{- end }}
-    {{- if eq (hasKey .Values.global "enableRouteAdvertisements" | ternary .Values.global.enableRouteAdvertisements false) true }}
+    {{- if has "routing.routeAdvertisements" .global.featureGates }}
     - apiGroups: ["k8s.ovn.org"]
       resources:
           - routeadvertisements
@@ -152,7 +152,7 @@ rules:
           - frrconfigurations
       verbs: [ "create", "delete", "get", "list", "patch", "update", "watch" ]
     {{- end }}
-    {{- if eq (hasKey .Values.global "enableNetworkConnect" | ternary .Values.global.enableNetworkConnect false) true }}
+    {{- if has "userDefinedNetworks.networkConnect" .global.featureGates }}
     - apiGroups: ["k8s.ovn.org"]
       resources:
           - clusternetworkconnects
@@ -197,7 +197,7 @@ spec:
         operations:  ["UPDATE"]
         resources:   ["namespaces"]
 
-{{- if eq (hasKey .Values.global "enablePreconfiguredUDNAddresses" | ternary .Values.global.enablePreconfiguredUDNAddresses false) true }}
+{{- if has "userDefinedNetworks.preconfiguredAddresses" .global.featureGates }}
 ---
 # Prevent changing the default-network annotation on a pod after creation.
 apiVersion: admissionregistration.k8s.io/v1
@@ -258,7 +258,7 @@ spec:
   - expression: 'request.operation != "UPDATE" || !has(oldObject.metadata.annotations) || !("k8s.ovn.org/egressip-mark" in oldObject.metadata.annotations) || (has(object.metadata.annotations) && ("k8s.ovn.org/egressip-mark" in object.metadata.annotations) && oldObject.metadata.annotations["k8s.ovn.org/egressip-mark"] == object.metadata.annotations["k8s.ovn.org/egressip-mark"])'
     message: 'The "k8s.ovn.org/egressip-mark" annotation cannot be modified or removed once set. This annotation is managed by the system.'
     reason: Invalid
-  - expression: 'request.operation != "UPDATE" || !has(object.metadata.annotations) || !("k8s.ovn.org/egressip-mark" in object.metadata.annotations) || (has(oldObject.metadata.annotations) && ("k8s.ovn.org/egressip-mark" in oldObject.metadata.annotations)) || request.userInfo.username == "system:serviceaccount:ovn-kubernetes:ovnkube-cluster-manager"'
+  - expression: 'request.operation != "UPDATE" || !has(object.metadata.annotations) || !("k8s.ovn.org/egressip-mark" in object.metadata.annotations) || (has(oldObject.metadata.annotations) && ("k8s.ovn.org/egressip-mark" in oldObject.metadata.annotations)) || request.userInfo.username == "system:serviceaccount:{{ .global.namespace }}:ovnkube-cluster-manager"'
     message: 'A regular user must not add "k8s.ovn.org/egressip-mark" annotation to an EgressIP custom resource.'
     reason: Invalid
 
@@ -271,7 +271,7 @@ spec:
   policyName: egressip-mark-annotation-validation
   validationActions: [Deny]
 
-{{- if eq (hasKey .Values.global "enableNetworkConnect" | ternary .Values.global.enableNetworkConnect false) true }}
+{{- if has "userDefinedNetworks.networkConnect" .global.featureGates }}
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
@@ -319,7 +319,7 @@ spec:
       has(object.metadata.annotations) &&
       "k8s.ovn.org/connect-router-tunnel-key" in object.metadata.annotations &&
       request.userInfo.username ==
-      "system:serviceaccount:ovn-kubernetes:ovnkube-cluster-manager")
+      "system:serviceaccount:{{ .global.namespace }}:ovnkube-cluster-manager")
     message: >-
       The "k8s.ovn.org/connect-router-tunnel-key" annotation is immutable once set
       and can only be added by the cluster-manager service account.
@@ -332,7 +332,7 @@ spec:
   - expression: >-
       request.operation != "UPDATE" ||
       request.userInfo.username ==
-      "system:serviceaccount:ovn-kubernetes:ovnkube-cluster-manager" ||
+      "system:serviceaccount:{{ .global.namespace }}:ovnkube-cluster-manager" ||
       ((!has(oldObject.metadata.annotations) ||
       !("k8s.ovn.org/network-connect-subnet" in oldObject.metadata.annotations)) &&
       (!has(object.metadata.annotations) ||

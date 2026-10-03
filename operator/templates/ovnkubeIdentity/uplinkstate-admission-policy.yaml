@@ -1,4 +1,3 @@
-{{- if eq (hasKey .Values.global "enableOvnKubeIdentity" | ternary .Values.global.enableOvnKubeIdentity true) true }}
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
@@ -62,4 +61,3 @@ metadata:
 spec:
   policyName: ovnkube-uplinkstate-ownership
   validationActions: [Deny]
-{{- end }}

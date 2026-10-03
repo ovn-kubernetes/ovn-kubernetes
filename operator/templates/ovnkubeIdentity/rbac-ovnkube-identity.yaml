@@ -1,9 +1,8 @@
-{{- if eq (hasKey .Values.global "enableOvnKubeIdentity" | ternary .Values.global.enableOvnKubeIdentity true) true }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
     name: ovnkube-identity
-    namespace: ovn-kubernetes
+    namespace: {{ .global.namespace }}
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -17,14 +16,14 @@ roleRef:
 subjects:
     - kind: ServiceAccount
       name: ovnkube-identity
-      namespace: ovn-kubernetes
+      namespace: {{ .global.namespace }}
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
     name: ovnkube-identity-configmaps
-    namespace: ovn-kubernetes
+    namespace: {{ .global.namespace }}
 roleRef:
     name: ovn-k8s-configmap
     kind: Role
@@ -32,7 +31,7 @@ roleRef:
 subjects:
     - kind: ServiceAccount
       name: ovnkube-identity
-      namespace: ovn-kubernetes
+      namespace: {{ .global.namespace }}
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -62,4 +61,3 @@ rules:
       resourceNames:
           - kubernetes.io/kube-apiserver-client
       verbs: ["approve"]
-{{- end }}

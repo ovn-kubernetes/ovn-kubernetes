@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
     name: ovnkube-node
-    namespace: ovn-kubernetes
+    namespace: {{ .global.namespace }}
 
 # When ovn_enable_ovnkube_identity is true, an ovnkube-node process will identify as a user in a system:ovn-nodes group,
 # not the ovnkube-node serviceAccount
@@ -16,14 +16,14 @@ roleRef:
     kind: ClusterRole
     apiGroup: rbac.authorization.k8s.io
 subjects:
-    {{- if eq (hasKey .Values.global "enableOvnKubeIdentity" | ternary .Values.global.enableOvnKubeIdentity true) true }}
+    {{- if has "ovnkubeIdentity" .global.components }}
     - kind: Group
       name: system:ovn-nodes
       apiGroup: rbac.authorization.k8s.io
     {{- else }}
     - kind: ServiceAccount
       name: ovnkube-node
-      namespace: ovn-kubernetes
+      namespace: {{ .global.namespace }}
     {{- end }}
 
 
@@ -43,51 +43,32 @@ roleRef:
 subjects:
     - kind: ServiceAccount
       name: ovnkube-node
-      namespace: ovn-kubernetes
+      namespace: {{ .global.namespace }}
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
     name: ovnkube-node-configmaps
-    namespace: ovn-kubernetes
+    namespace: {{ .global.namespace }}
 roleRef:
     name: ovn-k8s-configmap
     kind: Role
     apiGroup: rbac.authorization.k8s.io
 subjects:
-    {{- if eq (hasKey .Values.global "enableOvnKubeIdentity" | ternary .Values.global.enableOvnKubeIdentity true) true }}
+    {{- if has "ovnkubeIdentity" .global.components }}
     - kind: Group
       name: system:ovn-nodes
       apiGroup: rbac.authorization.k8s.io
     {{- else }}
     - kind: ServiceAccount
       name: ovnkube-node
-      namespace: ovn-kubernetes
+      namespace: {{ .global.namespace }}
     {{- end }}
 
-# ovnkube-node needs configmap access in ovn-k ns for topology version:
-# https://github.com/ovn-kubernetes/ovn-kubernetes/blob/e1e7d40f9a6c6038b52696c1b8f8915a4d73160e/go-controller/pkg/ovn/topology_version.go#L28
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-    name: ovnkube-node-ic-configmaps-update
-    namespace: ovn-kubernetes
-roleRef:
-    name: ovn-k8s-configmap-update
-    kind: Role
-    apiGroup: rbac.authorization.k8s.io
-subjects:
-    {{- if eq (hasKey .Values.global "enableOvnKubeIdentity" | ternary .Values.global.enableOvnKubeIdentity true) true }}
-    - kind: Group
-      name: system:ovn-nodes
-      apiGroup: rbac.authorization.k8s.io
-    {{- else }}
-    - kind: ServiceAccount
-      name: ovnkube-node
-      namespace: ovn-kubernetes
-    {{- end }}
+# The chart's ovnkube-node-ic-configmaps-update RoleBinding is omitted: it
+# references a Role the chart no longer defines, and the operator cannot
+# bind a Role that does not exist.
 
 # even when ovn_enable_ovnkube_identity is enabled, an ovnkube-node service account
 # is used in the ovnkube-node pod during initialization:
@@ -97,7 +78,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
     name: ovnkube-node-ep
-    namespace: ovn-kubernetes
+    namespace: {{ .global.namespace }}
 roleRef:
     name: ovnkube-node-ep
     kind: Role
@@ -105,7 +86,7 @@ roleRef:
 subjects:
     - kind: ServiceAccount
       name: ovnkube-node
-      namespace: ovn-kubernetes
+      namespace: {{ .global.namespace }}
 
 
 ---
@@ -191,7 +172,7 @@ rules:
       resources:
           - uplinkstates
       verbs: [ "create", "delete", "patch", "update" ]
-    {{- if or (eq (hasKey .Values.global "enableRouteAdvertisements" | ternary .Values.global.enableRouteAdvertisements false) true) (eq (hasKey .Values.global "enableNoOverlayManagedRouting" | ternary .Values.global.enableNoOverlayManagedRouting false) true) }}
+    {{- if or (has "routing.routeAdvertisements" .global.featureGates) (has "userDefinedNetworks.noOverlay.managedRouting" .global.featureGates) }}
     - apiGroups: ["k8s.ovn.org"]
       resources:
           - routeadvertisements
@@ -201,7 +182,7 @@ rules:
           - frrconfigurations
       verbs: ["get", "list", "watch"]
     {{- end }}
-    {{- if eq (hasKey .Values.global "enableOvnKubeIdentity" | ternary .Values.global.enableOvnKubeIdentity true) true }}
+    {{- if has "ovnkubeIdentity" .global.components }}
     - apiGroups: ["certificates.k8s.io"]
       resources:
           - certificatesigningrequests
@@ -221,7 +202,7 @@ rules:
           - pods/status # ovnkube-controller, and ovnkube-node in DPU mode updates pod annotations for local pods
           - nodes/status
       verbs: [ "patch", "update" ]
-    {{- if eq (hasKey .Values.global "enableDNSNameResolver" | ternary .Values.global.enableDNSNameResolver false) true }}
+    {{- if has "dnsNameResolver" .global.featureGates }}
     - apiGroups: ["network.openshift.io"]
       resources:
           - dnsnameresolvers
@@ -234,7 +215,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
     name: ovnkube-node-ep
-    namespace: ovn-kubernetes
+    namespace: {{ .global.namespace }}
 rules:
     - apiGroups: [""]
       resources:
@@ -243,27 +224,26 @@ rules:
           - get
           - create
 
-{{- $tags := (.Values.tags | default dict) }}
-{{- if (index $tags "ovnkube-node-dpu-host") }}
+{{- if has "ovnkubeNodeDpuHost" .global.components }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
     name: ovnkube-node-dpu-leases
-    namespace: ovn-kubernetes
+    namespace: {{ .global.namespace }}
 roleRef:
     name: ovnkube-node-dpu-leases
     kind: Role
     apiGroup: rbac.authorization.k8s.io
 subjects:
-    {{- if eq (hasKey .Values.global "enableOvnKubeIdentity" | ternary .Values.global.enableOvnKubeIdentity true) true }}
+    {{- if has "ovnkubeIdentity" .global.components }}
     - kind: Group
       name: system:ovn-nodes
       apiGroup: rbac.authorization.k8s.io
     {{- else }}
     - kind: ServiceAccount
       name: ovnkube-node
-      namespace: ovn-kubernetes
+      namespace: {{ .global.namespace }}
     {{- end }}
 
 ---
@@ -271,7 +251,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
     name: ovnkube-node-dpu-leases
-    namespace: ovn-kubernetes
+    namespace: {{ .global.namespace }}
 rules:
     - apiGroups: ["coordination.k8s.io"]
       resources:

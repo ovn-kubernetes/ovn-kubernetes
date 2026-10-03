@@ -463,7 +463,7 @@ func TestContainerImageMapping(t *testing.T) {
 	}
 
 	wantContainers := []string{
-		"nbOvsdb", "sbOvsdb", "ovnNorthd", "ovnController", "ovnkubeController",
+		"nbOvsdb", "sbOvsdb", "ovnNorthd", "ovnController", "ovnkubeController", "ovsMetricsExporter",
 	}
 	got := node.ContainerImageMapping[DefaultImageName]
 	if !equalUnordered(got, wantContainers) {

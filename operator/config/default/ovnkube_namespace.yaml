@@ -2,3 +2,8 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: ovn-kubernetes
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ovn-host-network
