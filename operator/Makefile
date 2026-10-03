@@ -96,6 +96,10 @@ verify-crds: ## Verify the bundled OVN-Kubernetes CRDs match the Helm chart.
 helm-parity: ## Compare rendered manifests with the Helm chart on a kind cluster (HELM_PARITY_PROFILE=standard|features).
 	hack/helm-parity/check-helm-parity.sh
 
+.PHONY: kind
+kind: ## Create a kind cluster with OVN-Kubernetes installed by the operator (see hack/kind.sh).
+	hack/kind.sh
+
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
 	"$(GOLANGCI_LINT)" run

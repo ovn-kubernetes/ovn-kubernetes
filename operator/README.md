@@ -15,3 +15,5 @@ Run `make help` to list all targets. The common ones are:
 - `make test` runs the unit and envtest tests.
 - `make lint` runs golangci-lint.
 - `make build` builds the manager binary.
+- `make kind` creates a kind cluster with OVN-Kubernetes installed by the
+  operator, using the upstream `ovn-kube-ubuntu:master` image.
