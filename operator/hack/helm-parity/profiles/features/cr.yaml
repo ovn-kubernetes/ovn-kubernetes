@@ -1,0 +1,72 @@
+# Every feature gate the API exposes, dual-stack networks, non-default
+# subnets, local gateway mode, and no identity webhook. helm-values.yaml
+# describes the same installation for the chart.
+apiVersion: k8s.ovn.org/v1alpha1
+kind: OVNK8sOperator
+metadata:
+  name: default
+  namespace: ovnk8s-operator-system
+spec:
+  global:
+    k8sAPIServer: https://172.25.0.2:6443
+    podNetwork:
+      - cidr: 10.244.0.0/16
+        hostPrefix: 24
+      - cidr: fd00:10:244::/48
+        hostPrefix: 64
+    serviceNetwork:
+      - 10.96.0.0/16
+      - fd00:10:96::/112
+    mtu: 1400
+    deploymentMode: standard
+    gatewayMode: local
+    namespace: ovn-kubernetes
+    v4JoinSubnet: 100.65.0.0/16
+    v6JoinSubnet: fd99::/64
+    v4MasqueradeSubnet: 169.254.64.0/18
+    v6MasqueradeSubnet: fd70::/112
+    emptyLbEvents: true
+    enableCoredump: true
+    metrics:
+      ip: 10.0.0.1
+    routingTableIDStart: 1002
+  featureGates:
+    userDefinedNetworks:
+      preconfiguredAddresses: {}
+      advertisedIsolationMode: loose
+      noOverlay:
+        snat: true
+        managedRouting:
+          asNumber: 65001
+          topology: full-mesh
+          frrNamespace: frr-system
+      dynamicUDNAllocation:
+        deletionGracePeriod: 60
+      networkConnect: {}
+    routing:
+      routeAdvertisements:
+        advertiseDefaultNetwork: true
+      evpn: {}
+    egress:
+      ip:
+        healthCheckPort: 9200
+      firewall: {}
+      qos: {}
+      service: {}
+    networkPolicy:
+      admin: {}
+      icmp: {}
+    interconnect:
+      v4TransitSwitchSubnet: 100.89.0.0/16
+      v6TransitSwitchSubnet: fd96::/64
+    hybridOverlay: {}
+    multiExternalGateway: {}
+    uplink: {}
+    persistentIPs: {}
+    dnsNameResolver: {}
+    networkQoS: {}
+    lflowCache:
+      cacheLimit: 1000
+      cacheLimitKb: 2000
+    multicast: {}
+    serviceTemplateSupport: {}

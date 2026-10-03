@@ -92,6 +92,10 @@ sync-crds: ## Copy the OVN-Kubernetes CRDs from the Helm chart into the template
 verify-crds: ## Verify the bundled OVN-Kubernetes CRDs match the Helm chart.
 	diff -r $(CHART_CRDS) templates/global/crds
 
+.PHONY: helm-parity
+helm-parity: ## Compare rendered manifests with the Helm chart on a kind cluster (HELM_PARITY_PROFILE=standard|features).
+	hack/helm-parity/check-helm-parity.sh
+
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
 	"$(GOLANGCI_LINT)" run

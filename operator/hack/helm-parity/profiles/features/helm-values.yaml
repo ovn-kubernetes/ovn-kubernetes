@@ -1,0 +1,43 @@
+# Layered on the chart's values-single-node-zone.yaml; the same installation
+# as cr.yaml.
+podNetwork: 10.244.0.0/16/24,fd00:10:244::/48/64
+serviceNetwork: 10.96.0.0/16,fd00:10:96::/112
+global:
+  gatewayMode: local
+  v4JoinSubnet: 100.65.0.0/16
+  v6JoinSubnet: fd99::/64
+  v4MasqueradeSubnet: 169.254.64.0/18
+  v6MasqueradeSubnet: fd70::/112
+  emptyLbEvents: true
+  enableCoredumps: true
+  metricsIp: 10.0.0.1
+  routingTableIDStart: 1002
+  # The operator turns multi-network on with user-defined networks.
+  enableMultiNetwork: true
+  enableNetworkSegmentation: true
+  enablePreconfiguredUDNAddresses: true
+  advertisedUDNIsolationMode: loose
+  enableNoOverlay: true
+  enableNoOverlaySnat: true
+  enableNoOverlayManagedRouting: true
+  managedBGPASNumber: 65001
+  managedBGPFRRNamespace: frr-system
+  enableDynamicUDNAllocation: true
+  dynamicUDNGracePeriod: 60
+  enableNetworkConnect: true
+  enableRouteAdvertisements: true
+  advertiseDefaultNetwork: true
+  enableEVPN: true
+  egressIpHealthCheckPort: 9200
+  enableAdminNetworkPolicy: true
+  allowICMPNetworkPolicy: true
+  v4TransitSubnet: 100.89.0.0/16
+  v6TransitSubnet: fd96::/64
+  enableHybridOverlay: true
+  enableUplink: true
+  enableDNSNameResolver: true
+  enableNetworkQos: true
+  lFlowCacheLimit: 1000
+  lFlowCacheLimitKb: 2000
+  enableMulticast: true
+  enableOvnKubeIdentity: false
