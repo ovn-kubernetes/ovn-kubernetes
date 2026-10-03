@@ -1,0 +1,9 @@
+apiVersion: k8s.ovn.org/v1alpha1
+kind: OVNK8sOperator
+metadata:
+  labels:
+    app.kubernetes.io/name: ovnk8s-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: ovnk8soperator-sample
+spec:
+  # TODO(user): Add fields here
