@@ -1,0 +1,104 @@
+# Operator embedded config — loaded via go:embed.
+#
+# Contains operator internals and component defaults.
+# Feature gates are entirely user-controlled via the CR.
+# Values hardcoded in Helm templates (gatewayMode=shared, etc.) stay in templates.
+# NodePlacement defaults are in the templates; user overrides via CR componentOverrides.
+#
+# Updated during releases by changing versions, image tags, and sha256 digests.
+
+# version: The OVN-Kubernetes release version bundled by this operator.
+# Stored in status.version after a successful deployment and used for upgrade
+# comparison.
+version: "1.4.0"
+
+# minUpgradeVersion: The minimum OVN-Kubernetes release that can upgrade to this
+# version. If a cluster is running an older release, the upgrade is blocked.
+# Empty string means no minimum — any prior version can upgrade.
+minUpgradeVersion: ""
+# TODO: How to add a dependency on CNI upgrades supported only for IC mode deployments.
+
+# modes: deployment-topology → component composition. Mode owns the list of
+# components, nothing else. Per-component defaults live in `components:` below.
+modes:
+  standard:
+    components: [ovnkubeControlPlane, ovnkubeNode]
+    # Off by default for optionalComponents. Enable via componentOverrides[name].enabled = true
+    optionalComponents: [ovnkubeIdentity]
+  dpu-host:
+    components: [ovnkubeControlPlane, ovnkubeNodeDpuHost]
+    optionalComponents: [ovnkubeIdentity]
+  dpu:
+    components: [ovnkubeNodeDpu]
+
+components:
+  - resourceName: ovnkubeControlPlane
+    resourceType: Deployment
+    dependsOn: []
+
+    # Fallback image for non-release builds. Release/CI builds override
+    # repository/tag/digest via -ldflags (see images.go) to pin the exact
+    # ovnkube built for the branch. The fallback keeps a plain
+    # `go build` / `make docker-build` functional out of the box.
+    containerImages:
+      - name: default
+        repository: ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-ubuntu
+        tag: master
+
+    containerImageMapping:
+      default:
+        - ovnkubeClusterManager
+
+  - resourceName: ovnkubeNode
+    resourceType: DaemonSet
+    dependsOn:
+      - ovnkubeControlPlane
+      - ovnkubeIdentity   # pruned by buildComponentDAG when identity is disabled
+
+    # Fallback image; overridden at build time via -ldflags. See above.
+    containerImages:
+      - name: default
+        repository: ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-ubuntu
+        tag: master
+
+    containerImageMapping:
+      default:
+        - nbOvsdb
+        - sbOvsdb
+        - ovnNorthd
+        - ovnController
+        - ovnkubeController
+
+  - resourceName: ovnkubeIdentity
+    resourceType: DaemonSet
+    dependsOn: [ovnkubeControlPlane]
+
+    containerImages:
+      - name: default
+        repository: ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-ubuntu
+        tag: master
+
+    containerImageMapping:
+      default:
+        - ovnkubeIdentity
+
+  - resourceName: ovnkubeNodeDpuHost
+    resourceType: DaemonSet
+    dependsOn:
+      - ovnkubeControlPlane
+      - ovnkubeIdentity   # pruned by buildComponentDAG when identity is disabled
+
+    containerImages:
+      - name: default
+        repository: ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-ubuntu
+        tag: master
+
+    containerImageMapping:
+      default:
+        - ovnkubeNode
+
+  # Stub component — declared so mode resolution works end-to-end. CRs that
+  # resolve it fail at render time until its template exists.
+  - resourceName: ovnkubeNodeDpu
+    resourceType: DaemonSet
+    dependsOn: []

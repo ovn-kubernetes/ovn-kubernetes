@@ -1,0 +1,263 @@
+# Simplified OVN-Kubernetes Connectivity Test Hook
+# This test validates basic networking functionality within the operator namespace
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: "{{.OVNK8sOperator.Name}}-connectivity-test-sa"
+  namespace: "{{.OVNK8sOperator.Namespace}}"
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: "{{.OVNK8sOperator.Name}}-connectivity-test-role"
+  namespace: "{{.OVNK8sOperator.Namespace}}"
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch", "create", "delete"]
+- apiGroups: [""]
+  resources: ["pods/exec"]
+  verbs: ["create"]
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: "{{.OVNK8sOperator.Name}}-connectivity-test-rb"
+  namespace: "{{.OVNK8sOperator.Namespace}}"
+subjects:
+- kind: ServiceAccount
+  name: "{{.OVNK8sOperator.Name}}-connectivity-test-sa"
+  namespace: "{{.OVNK8sOperator.Namespace}}"
+roleRef:
+  kind: Role
+  name: "{{.OVNK8sOperator.Name}}-connectivity-test-role"
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Role for OVN-Kubernetes namespace (to check OVN pods)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: "{{.OVNK8sOperator.Name}}-connectivity-test-ovn-role"
+  namespace: "{{.global.namespace}}"
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["get", "list"]
+
+---
+# RoleBinding for OVN-Kubernetes namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: "{{.OVNK8sOperator.Name}}-connectivity-test-ovn-rb"
+  namespace: "{{.global.namespace}}"
+subjects:
+- kind: ServiceAccount
+  name: "{{.OVNK8sOperator.Name}}-connectivity-test-sa"
+  namespace: "{{.OVNK8sOperator.Namespace}}"
+roleRef:
+  kind: Role
+  name: "{{.OVNK8sOperator.Name}}-connectivity-test-ovn-role"
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: "{{.OVNK8sOperator.Name}}-connectivity-test"
+  namespace: "{{.OVNK8sOperator.Namespace}}"
+spec:
+  template:
+    spec:
+      serviceAccountName: "{{.OVNK8sOperator.Name}}-connectivity-test-sa"
+      containers:
+      - name: connectivity-test
+        image: bitnami/kubectl:latest
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          set -e
+          
+          echo "=========================================="
+          echo "Starting OVN-Kubernetes Connectivity Test"
+          echo "=========================================="
+          echo "OVN-K8s Operator: $OVNK8S_OPERATOR_NAME"
+          echo "Namespace: $OVNK8S_OPERATOR_NAMESPACE"
+          echo "OVN-K8s Namespace: $OVN_KUBERNETES_NAMESPACE"
+          echo "=========================================="
+          
+          # Test 1: Check if OVN-Kubernetes pods are running
+          echo ""
+          echo "=== Test 1: Checking OVN-Kubernetes Pod Status ==="
+          echo "Checking pods in namespace: $OVN_KUBERNETES_NAMESPACE"
+          
+          # Check ovnkube-control-plane pods
+          echo "OVNKube Control Plane pods:"
+          kubectl get pods -n "$OVN_KUBERNETES_NAMESPACE" -l name=ovnkube-control-plane -o wide || {
+              echo "ERROR: No ovnkube-control-plane pods found"
+              exit 1
+          }
+          
+          # Check ovnkube-node pods
+          echo ""
+          echo "OVNKube Node pods:"
+          kubectl get pods -n "$OVN_KUBERNETES_NAMESPACE" -l app=ovnkube-node -o wide || {
+              echo "ERROR: No ovnkube-node pods found"
+              exit 1
+          }
+          
+          # Verify all pods are running
+          echo ""
+          echo "Verifying all OVN pods are in Running state..."
+          NOT_RUNNING=$(kubectl get pods -n "$OVN_KUBERNETES_NAMESPACE" --field-selector=status.phase!=Running --no-headers | wc -l)
+          if [ "$NOT_RUNNING" -gt 0 ]; then
+              echo "ERROR: Found $NOT_RUNNING pods not in Running state:"
+              kubectl get pods -n "$OVN_KUBERNETES_NAMESPACE" --field-selector=status.phase!=Running
+              exit 1
+          else
+              echo "SUCCESS: All OVN-Kubernetes pods are running"
+          fi
+          
+          # Test 2: Basic pod creation and connectivity test
+          echo ""
+          echo "=== Test 2: Pod Creation and Connectivity Test ==="
+          
+          # Use unique names to avoid conflicts
+          TEST_SUFFIX=$(date +%s)
+          POD1_NAME="connectivity-test-pod-1-$TEST_SUFFIX"
+          POD2_NAME="connectivity-test-pod-2-$TEST_SUFFIX"
+          
+          # Function to cleanup on exit
+          cleanup() {
+              echo "Cleaning up test pods..."
+              kubectl delete pod "$POD1_NAME" -n "$OVNK8S_OPERATOR_NAMESPACE" --ignore-not-found=true
+              kubectl delete pod "$POD2_NAME" -n "$OVNK8S_OPERATOR_NAMESPACE" --ignore-not-found=true
+          }
+          trap cleanup EXIT
+          
+          # Create test pods in operator namespace
+          echo "Creating test pods in namespace $OVNK8S_OPERATOR_NAMESPACE..."
+          cat <<EOF | kubectl apply -f -
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: $POD1_NAME
+            namespace: "$OVNK8S_OPERATOR_NAMESPACE"
+            labels:
+              app: connectivity-test
+              test-run: "$TEST_SUFFIX"
+          spec:
+            containers:
+            - name: test
+              image: busybox:1.35
+              command: ["sleep", "3600"]
+              resources:
+                requests:
+                  memory: "64Mi"
+                  cpu: "50m"
+                limits:
+                  memory: "128Mi"
+                  cpu: "100m"
+          ---
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: $POD2_NAME
+            namespace: "$OVNK8S_OPERATOR_NAMESPACE"
+            labels:
+              app: connectivity-test
+              test-run: "$TEST_SUFFIX"
+          spec:
+            containers:
+            - name: test
+              image: busybox:1.35
+              command: ["sleep", "3600"]
+              resources:
+                requests:
+                  memory: "64Mi"
+                  cpu: "50m"
+                limits:
+                  memory: "128Mi"
+                  cpu: "100m"
+          EOF
+          
+          # Wait for pods to be ready
+          echo "Waiting for test pods to be ready..."
+          kubectl wait --for=condition=Ready pod/$POD1_NAME -n "$OVNK8S_OPERATOR_NAMESPACE" --timeout=120s
+          kubectl wait --for=condition=Ready pod/$POD2_NAME -n "$OVNK8S_OPERATOR_NAMESPACE" --timeout=120s
+          
+          # Get pod IPs
+          POD1_IP=$(kubectl get pod $POD1_NAME -n "$OVNK8S_OPERATOR_NAMESPACE" -o jsonpath='{.status.podIP}')
+          POD2_IP=$(kubectl get pod $POD2_NAME -n "$OVNK8S_OPERATOR_NAMESPACE" -o jsonpath='{.status.podIP}')
+          
+          echo "Pod IPs:"
+          echo "  $POD1_NAME: $POD1_IP"
+          echo "  $POD2_NAME: $POD2_IP"
+          
+          # Test pod-to-pod connectivity
+          echo ""
+          echo "Testing pod-to-pod connectivity..."
+          echo "  $POD1_NAME -> $POD2_NAME:"
+          kubectl exec $POD1_NAME -n "$OVNK8S_OPERATOR_NAMESPACE" -- ping -c 3 -W 5 "$POD2_IP" || {
+              echo "ERROR: Connectivity test failed: $POD1_NAME cannot reach $POD2_NAME"
+              exit 1
+          }
+          
+          echo "  $POD2_NAME -> $POD1_NAME:"
+          kubectl exec $POD2_NAME -n "$OVNK8S_OPERATOR_NAMESPACE" -- ping -c 3 -W 5 "$POD1_IP" || {
+              echo "ERROR: Connectivity test failed: $POD2_NAME cannot reach $POD1_NAME"
+              exit 1
+          }
+          
+          echo "SUCCESS: Pod-to-pod connectivity successful!"
+          
+          # Test 3: DNS Resolution
+          echo ""
+          echo "=== Test 3: DNS Resolution Test ==="
+          echo "Testing DNS resolution..."
+          
+          # Test internal DNS
+          echo "  Testing Kubernetes DNS service resolution:"
+          kubectl exec $POD1_NAME -n "$OVNK8S_OPERATOR_NAMESPACE" -- nslookup kubernetes.default.svc.cluster.local || {
+              echo "ERROR: DNS resolution failed for kubernetes.default.svc.cluster.local"
+              exit 1
+          }
+          
+          # Test external DNS (if internet access available)
+          echo "  Testing external DNS resolution:"
+          kubectl exec $POD1_NAME -n "$OVNK8S_OPERATOR_NAMESPACE" -- nslookup google.com || {
+              echo "WARNING: External DNS resolution failed (this may be expected in restricted environments)"
+          }
+          
+          echo "SUCCESS: DNS resolution test completed"
+          
+          echo ""
+          echo "=========================================="
+          echo "SUCCESS: OVN-Kubernetes Connectivity Test PASSED"
+          echo "=========================================="
+          echo "All connectivity tests completed successfully!"
+          echo "- OVN pods are running"
+          echo "- Pod-to-pod connectivity works"
+          echo "- DNS resolution works"
+          echo "=========================================="
+        env:
+        - name: OVNK8S_OPERATOR_NAME
+          value: "{{.OVNK8sOperator.Name}}"
+        - name: OVNK8S_OPERATOR_NAMESPACE
+          value: "{{.OVNK8sOperator.Namespace}}"
+        - name: OVN_KUBERNETES_NAMESPACE
+          value: "{{.global.namespace}}"
+      restartPolicy: Never
+  backoffLimit: 2
+  activeDeadlineSeconds: 600  # 10 minutes should be enough for simplified test
+  ttlSecondsAfterFinished: 600  # Automatically cleanup after 10 minutes 
