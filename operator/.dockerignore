@@ -15,4 +15,5 @@
 
 # Re-include files embedded into or shipped with the manager
 !internal/defaults/config.yaml
+!templates/**
 !test-hooks/**

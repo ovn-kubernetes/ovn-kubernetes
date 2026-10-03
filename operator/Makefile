@@ -79,6 +79,19 @@ vet: ## Run go vet against code.
 test: manifests generate fmt vet setup-envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test ./... -coverprofile cover.out
 
+# The bundled OVN-Kubernetes CRDs come from the Helm chart, which
+# codegen keeps in sync with go-controller/pkg/crd.
+CHART_CRDS := ../helm/ovn-kubernetes/crds
+
+.PHONY: sync-crds
+sync-crds: ## Copy the OVN-Kubernetes CRDs from the Helm chart into the templates.
+	rm -rf templates/global/crds
+	cp -R $(CHART_CRDS) templates/global/crds
+
+.PHONY: verify-crds
+verify-crds: ## Verify the bundled OVN-Kubernetes CRDs match the Helm chart.
+	diff -r $(CHART_CRDS) templates/global/crds
+
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
 	"$(GOLANGCI_LINT)" run

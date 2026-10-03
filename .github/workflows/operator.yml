@@ -5,6 +5,7 @@ on:
     branches: [ master, release-* ]
     paths:
       - 'operator/**'
+      - 'helm/ovn-kubernetes/crds/**'
       - '.github/workflows/operator.yml'
 
 permissions:
@@ -38,6 +39,9 @@ jobs:
       run: |
         git status --porcelain
         test -z "$(git status --porcelain)"
+
+    - name: Verify bundled CRDs match the Helm chart
+      run: make verify-crds
 
     - name: Verify linting rules are enforced
       run: make lint

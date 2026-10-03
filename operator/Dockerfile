@@ -40,6 +40,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a \
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /
 COPY --from=builder /workspace/manager .
+COPY --from=builder /workspace/templates /templates
 COPY --from=builder /workspace/test-hooks /test-hooks
 USER 65532:65532
 
