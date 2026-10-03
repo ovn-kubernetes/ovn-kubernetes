@@ -20,7 +20,7 @@ import (
 var _ = Describe("OVNK8sOperator Controller", func() {
 	Context("When reconciling a resource", func() {
 		const (
-			resourceName      = "test-resource"
+			resourceName      = k8sv1alpha1.SingletonName
 			resourceNamespace = "default"
 		)
 
@@ -41,7 +41,16 @@ var _ = Describe("OVNK8sOperator Controller", func() {
 						Name:      resourceName,
 						Namespace: resourceNamespace,
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: k8sv1alpha1.OVNK8sOperatorSpec{
+						Global: k8sv1alpha1.GlobalConfig{
+							K8sAPIServer:   "https://172.25.0.2:6443",
+							PodNetwork:     []k8sv1alpha1.PodNetworkEntry{{CIDR: "10.244.0.0/16", HostPrefix: 24}},
+							ServiceNetwork: []string{"10.96.0.0/16"},
+							MTU:            1400,
+							DeploymentMode: k8sv1alpha1.DeploymentModeStandard,
+							Namespace:      "ovn-kubernetes",
+						},
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}
