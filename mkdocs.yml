@@ -155,6 +155,7 @@ nav:
       - RouteAdvertisements: api-reference/routeadvertisements-api-spec.md
       - ClusterNetworkConnect: api-reference/clusternetworkconnect-api-spec.md
       - VTEP: api-reference/vtep-api-spec.md
+      - OVNK8sOperator: api-reference/ovnk8soperator-api-spec.md
   - Features:
     - features/index.md
     - Universal Connectivity:
