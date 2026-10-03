@@ -31,6 +31,10 @@ const (
 
 	// ManagedBy is the LabelManagedBy value on operator-managed resources.
 	ManagedBy = "ovnk8s-operator"
+
+	// FieldManager is the server-side apply field manager for the fields the
+	// operator sets.
+	FieldManager = ManagedBy
 )
 
 // WorkloadResource represents a main workload resource that needs validation
@@ -124,45 +128,22 @@ func (d *ResourceDeployer) deployManifest(ctx context.Context, manifest *rendere
 		"name", obj.GetName(),
 		"namespace", obj.GetNamespace())
 
-	// Create or update the resource
-	if err := d.createOrUpdate(ctx, obj); err != nil {
-		return nil, fmt.Errorf("failed to create/update resource %s/%s: %w",
+	if err := d.apply(ctx, obj); err != nil {
+		return nil, fmt.Errorf("failed to apply resource %s/%s: %w",
 			obj.GetKind(), obj.GetName(), err)
 	}
 
 	return obj, nil
 }
 
-// createOrUpdate creates the resource if it doesn't exist, patches if it does
-func (d *ResourceDeployer) createOrUpdate(ctx context.Context, obj client.Object) error {
-	logger := log.FromContext(ctx).WithValues(
-		"kind", obj.GetObjectKind().GroupVersionKind().Kind,
-		"name", obj.GetName(),
-		"namespace", obj.GetNamespace())
-
-	// Try to get existing resource
-	existing := obj.DeepCopyObject().(client.Object)
-	err := d.Get(ctx, client.ObjectKeyFromObject(obj), existing)
-
-	if err != nil {
-		if client.IgnoreNotFound(err) != nil {
-			return fmt.Errorf("failed to get existing resource: %w", err)
-		}
-
-		// Resource doesn't exist, create it
-		logger.Info("Creating resource")
-		return d.Create(ctx, obj)
-	}
-
-	// Resource exists, patch it using strategic merge
-	logger.Info("Patching existing resource")
-
-	// Copy the resourceVersion from existing to new object before patching
-	obj.SetResourceVersion(existing.GetResourceVersion())
-
-	// Create a strategic merge patch
-	patch := client.MergeFrom(existing)
-	return d.Patch(ctx, obj, patch)
+// apply server-side applies obj with forced ownership, so the object matches
+// what the operator renders: edited fields are restored and fields it no
+// longer renders are removed.
+func (d *ResourceDeployer) apply(ctx context.Context, obj *unstructured.Unstructured) error {
+	log.FromContext(ctx).Info("Applying resource",
+		"kind", obj.GetKind(), "name", obj.GetName(), "namespace", obj.GetNamespace())
+	return d.Apply(ctx, client.ApplyConfigurationFromUnstructured(obj),
+		client.FieldOwner(FieldManager), client.ForceOwnership)
 }
 
 // isWorkloadResource checks if the resource type is a main workload that needs validation

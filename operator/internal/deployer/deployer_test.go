@@ -482,6 +482,37 @@ data:
 			Expect(err).ToNot(HaveOccurred())
 			Expect(configMap.Data["key"]).To(Equal("value2"))
 		})
+
+		It("should own the fields it applies and remove fields it no longer renders", func() {
+			ownedClient := fake.NewClientBuilder().WithScheme(scheme).WithReturnManagedFields().Build()
+			resourceDeployer = deployer.NewResourceDeployer(ownedClient, scheme)
+			key := client.ObjectKey{Name: testConfigName, Namespace: metav1.NamespaceDefault}
+			deploy := func(data string) {
+				GinkgoHelper()
+				manifests := []*renderer.RenderedManifest{{
+					Content:      "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: test-config\n  namespace: default\ndata:\n" + data,
+					TemplatePath: configMapTemplatePath,
+					FileName:     configMapFileName,
+				}}
+				_, err := resourceDeployer.DeployComponentManifests(ctx, "test-component", manifests, ovnk8sOperator)
+				Expect(err).ToNot(HaveOccurred())
+			}
+
+			deploy("  key: value\n  extra: value\n")
+			configMap := &corev1.ConfigMap{}
+			Expect(ownedClient.Get(ctx, key, configMap)).To(Succeed())
+			configMap.Data["key"] = "edited"
+			Expect(ownedClient.Update(ctx, configMap, client.FieldOwner("someone-else"))).To(Succeed())
+
+			deploy("  key: value\n")
+
+			Expect(ownedClient.Get(ctx, key, configMap)).To(Succeed())
+			Expect(configMap.Data).To(Equal(map[string]string{"key": "value"}))
+			Expect(configMap.ManagedFields).To(ContainElement(SatisfyAll(
+				HaveField("Manager", deployer.FieldManager),
+				HaveField("Operation", metav1.ManagedFieldsOperationApply),
+			)))
+		})
 	})
 })
 
