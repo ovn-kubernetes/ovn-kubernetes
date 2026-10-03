@@ -80,6 +80,16 @@ type GlobalConfig struct {
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="spec.global.deploymentMode is immutable; delete and recreate the CR to change topology"
 	DeploymentMode string `json:"deploymentMode"`
 
+	// GatewayMode selects how pod traffic leaves the cluster.
+	// "shared" — egress stays in the OVN/OVS datapath and leaves through the
+	// node's gateway bridge; hardware offloadable.
+	// "local" — egress enters the host networking stack through the
+	// management port and follows the host's routes.
+	// +optional
+	// +kubebuilder:default=shared
+	// +kubebuilder:validation:Enum=shared;local
+	GatewayMode string `json:"gatewayMode,omitempty"`
+
 	// Namespace specifies the target namespace for OVN-Kubernetes resources.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:XValidation:rule="self != 'ovnk8s-operator-system'",message="spec.global.namespace cannot be the operator's own namespace (ovnk8s-operator-system)"

@@ -1392,6 +1392,18 @@ spec:
                       EnableCoredump enables coredump collection by setting GOTRACEBACK=crash
                       on OVN-Kubernetes containers. Useful for debugging Go panics.
                     type: boolean
+                  gatewayMode:
+                    default: shared
+                    description: |-
+                      GatewayMode selects how pod traffic leaves the cluster.
+                      "shared" — egress stays in the OVN/OVS datapath and leaves through the
+                      node's gateway bridge; hardware offloadable.
+                      "local" — egress enters the host networking stack through the
+                      management port and follows the host's routes.
+                    enum:
+                    - shared
+                    - local
+                    type: string
                   imagePullSecrets:
                     description: |-
                       ImagePullSecrets references Secrets in the operator's own namespace
