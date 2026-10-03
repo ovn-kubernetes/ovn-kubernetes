@@ -20,6 +20,7 @@ import (
 	k8sv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/operator/api/v1alpha1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/defaults"
 	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/deployer"
+	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/kinds"
 )
 
 // Standard condition types for OVNK8sOperator
@@ -113,9 +114,9 @@ type StatusManager struct {
 }
 
 // NewStatusManager creates a new StatusManager
-func NewStatusManager(client client.Client, embeddedConfig *defaults.EmbeddedConfig) *StatusManager {
+func NewStatusManager(k8sClient client.Client, embeddedConfig *defaults.EmbeddedConfig) *StatusManager {
 	return &StatusManager{
-		Client:         client,
+		Client:         k8sClient,
 		embeddedConfig: embeddedConfig,
 	}
 }
@@ -448,11 +449,11 @@ func (s *StatusManager) getResourceType(componentName string) string {
 // getWorkloadReplicas extracts replica information from workload resources
 func (s *StatusManager) getWorkloadReplicas(workload deployer.WorkloadResource) (int32, int32) {
 	switch workload.Type {
-	case "Deployment":
+	case kinds.Deployment:
 		return s.getDeploymentReplicas(workload.Object)
-	case "DaemonSet":
+	case kinds.DaemonSet:
 		return s.getDaemonSetReplicas(workload.Object)
-	case "StatefulSet":
+	case kinds.StatefulSet:
 		return s.getStatefulSetReplicas(workload.Object)
 	default:
 		// For unknown workload types, assume 1 replica

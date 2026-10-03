@@ -3,51 +3,57 @@
 
 package deployer
 
+import (
+	"slices"
+
+	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/kinds"
+)
+
 // ResourceOrder defines the deployment order for Kubernetes resources
 // Resources are deployed in this order to ensure dependencies are satisfied
 var ResourceOrder = []string{
-	"PriorityClass",
-	"Namespace",
-	"NetworkPolicy",
-	"ResourceQuota",
-	"LimitRange",
-	"PodSecurityPolicy",
-	"PodDisruptionBudget",
-	"ServiceAccount",
-	"Secret",
+	kinds.PriorityClass,
+	kinds.Namespace,
+	kinds.NetworkPolicy,
+	kinds.ResourceQuota,
+	kinds.LimitRange,
+	kinds.PodSecurityPolicy,
+	kinds.PodDisruptionBudget,
+	kinds.ServiceAccount,
+	kinds.Secret,
 	"SecretList",
-	"ConfigMap",
-	"StorageClass",
-	"PersistentVolume",
-	"PersistentVolumeClaim",
-	"CustomResourceDefinition",
-	"ClusterRole",
+	kinds.ConfigMap,
+	kinds.StorageClass,
+	kinds.PersistentVolume,
+	kinds.PersistentVolumeClaim,
+	kinds.CustomResourceDefinition,
+	kinds.ClusterRole,
 	"ClusterRoleList",
-	"ClusterRoleBinding",
+	kinds.ClusterRoleBinding,
 	"ClusterRoleBindingList",
-	"Role",
+	kinds.Role,
 	"RoleList",
-	"RoleBinding",
+	kinds.RoleBinding,
 	"RoleBindingList",
-	"Service",
-	"NetworkAttachmentDefinition",
-	"RouteAdvertisements",
-	"DaemonSet",
-	"Pod",
-	"ReplicationController",
-	"ReplicaSet",
-	"Deployment",
-	"HorizontalPodAutoscaler",
-	"StatefulSet",
-	"Job",
-	"CronJob",
-	"IngressClass",
-	"Ingress",
-	"APIService",
-	"MutatingWebhookConfiguration",
-	"ValidatingWebhookConfiguration",
-	"ValidatingAdmissionPolicy",
-	"ValidatingAdmissionPolicyBinding",
+	kinds.Service,
+	kinds.NetworkAttachmentDefinition,
+	kinds.RouteAdvertisements,
+	kinds.DaemonSet,
+	kinds.Pod,
+	kinds.ReplicationController,
+	kinds.ReplicaSet,
+	kinds.Deployment,
+	kinds.HorizontalPodAutoscaler,
+	kinds.StatefulSet,
+	kinds.Job,
+	kinds.CronJob,
+	kinds.IngressClass,
+	kinds.Ingress,
+	kinds.APIService,
+	kinds.MutatingWebhookConfiguration,
+	kinds.ValidatingWebhookConfiguration,
+	kinds.ValidatingAdmissionPolicy,
+	kinds.ValidatingAdmissionPolicyBinding,
 }
 
 // IsKnownResourceType reports whether kind appears in ResourceOrder. Kinds
@@ -55,10 +61,5 @@ var ResourceOrder = []string{
 // the deployer uses this to fail fast rather than silently drop a rendered
 // manifest.
 func IsKnownResourceType(kind string) bool {
-	for _, k := range ResourceOrder {
-		if k == kind {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(ResourceOrder, kind)
 }

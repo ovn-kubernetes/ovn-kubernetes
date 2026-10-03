@@ -15,6 +15,12 @@ import (
 	. "github.com/onsi/gomega"
 )
 
+const (
+	version1       = "1.0.0"
+	version2       = "2.0.0"
+	invalidVersion = "invalid-version"
+)
+
 var _ = Describe("Version Management", func() {
 	var (
 		reconciler     *OVNK8sOperatorReconciler
@@ -25,7 +31,7 @@ var _ = Describe("Version Management", func() {
 	BeforeEach(func() {
 		reconciler = &OVNK8sOperatorReconciler{
 			EmbeddedConfig: &defaults.EmbeddedConfig{
-				Version:           "1.0.0",
+				Version:           version1,
 				MinUpgradeVersion: "",
 			},
 		}
@@ -42,7 +48,7 @@ var _ = Describe("Version Management", func() {
 		Context("when current version is empty (fresh installation)", func() {
 			It("should require a rollout", func() {
 				ovnk8sOperator.Status.Version = ""
-				reconciler.EmbeddedConfig.Version = "1.0.0"
+				reconciler.EmbeddedConfig.Version = version1
 
 				action, err := reconciler.checkVersionAction(ctx, ovnk8sOperator)
 				Expect(err).ToNot(HaveOccurred())
@@ -52,8 +58,8 @@ var _ = Describe("Version Management", func() {
 
 		Context("when current version matches target version", func() {
 			It("should reconcile without a rollout", func() {
-				ovnk8sOperator.Status.Version = "1.0.0"
-				reconciler.EmbeddedConfig.Version = "1.0.0"
+				ovnk8sOperator.Status.Version = version1
+				reconciler.EmbeddedConfig.Version = version1
 
 				action, err := reconciler.checkVersionAction(ctx, ovnk8sOperator)
 				Expect(err).ToNot(HaveOccurred())
@@ -63,8 +69,8 @@ var _ = Describe("Version Management", func() {
 
 		Context("when no minimum upgrade version is specified", func() {
 			It("should require a rollout for upgrades", func() {
-				ovnk8sOperator.Status.Version = "1.0.0"
-				reconciler.EmbeddedConfig.Version = "2.0.0"
+				ovnk8sOperator.Status.Version = version1
+				reconciler.EmbeddedConfig.Version = version2
 				reconciler.EmbeddedConfig.MinUpgradeVersion = ""
 
 				action, err := reconciler.checkVersionAction(ctx, ovnk8sOperator)
@@ -73,8 +79,8 @@ var _ = Describe("Version Management", func() {
 			})
 
 			It("should block downgrades even when no minimum upgrade version is specified", func() {
-				ovnk8sOperator.Status.Version = "2.0.0"
-				reconciler.EmbeddedConfig.Version = "1.0.0"
+				ovnk8sOperator.Status.Version = version2
+				reconciler.EmbeddedConfig.Version = version1
 				reconciler.EmbeddedConfig.MinUpgradeVersion = ""
 
 				action, err := reconciler.checkVersionAction(ctx, ovnk8sOperator)
@@ -87,8 +93,8 @@ var _ = Describe("Version Management", func() {
 		Context("when upgrade is valid", func() {
 			It("should require a rollout", func() {
 				ovnk8sOperator.Status.Version = "1.5.0"
-				reconciler.EmbeddedConfig.Version = "2.0.0"
-				reconciler.EmbeddedConfig.MinUpgradeVersion = "1.0.0"
+				reconciler.EmbeddedConfig.Version = version2
+				reconciler.EmbeddedConfig.MinUpgradeVersion = version1
 
 				action, err := reconciler.checkVersionAction(ctx, ovnk8sOperator)
 				Expect(err).ToNot(HaveOccurred())
@@ -99,8 +105,8 @@ var _ = Describe("Version Management", func() {
 		Context("when current version is below minimum upgrade version", func() {
 			It("should block the upgrade", func() {
 				ovnk8sOperator.Status.Version = "0.9.0"
-				reconciler.EmbeddedConfig.Version = "2.0.0"
-				reconciler.EmbeddedConfig.MinUpgradeVersion = "1.0.0"
+				reconciler.EmbeddedConfig.Version = version2
+				reconciler.EmbeddedConfig.MinUpgradeVersion = version1
 
 				action, err := reconciler.checkVersionAction(ctx, ovnk8sOperator)
 				Expect(err).To(HaveOccurred())
@@ -111,9 +117,9 @@ var _ = Describe("Version Management", func() {
 
 		Context("when attempting a downgrade", func() {
 			It("should block the downgrade", func() {
-				ovnk8sOperator.Status.Version = "2.0.0"
-				reconciler.EmbeddedConfig.Version = "1.0.0"
-				reconciler.EmbeddedConfig.MinUpgradeVersion = "1.0.0"
+				ovnk8sOperator.Status.Version = version2
+				reconciler.EmbeddedConfig.Version = version1
+				reconciler.EmbeddedConfig.MinUpgradeVersion = version1
 
 				action, err := reconciler.checkVersionAction(ctx, ovnk8sOperator)
 				Expect(err).To(HaveOccurred())
@@ -124,9 +130,9 @@ var _ = Describe("Version Management", func() {
 
 		Context("when versions have invalid format", func() {
 			It("should block an invalid current version", func() {
-				ovnk8sOperator.Status.Version = "invalid-version"
-				reconciler.EmbeddedConfig.Version = "2.0.0"
-				reconciler.EmbeddedConfig.MinUpgradeVersion = "1.0.0"
+				ovnk8sOperator.Status.Version = invalidVersion
+				reconciler.EmbeddedConfig.Version = version2
+				reconciler.EmbeddedConfig.MinUpgradeVersion = version1
 
 				action, err := reconciler.checkVersionAction(ctx, ovnk8sOperator)
 				Expect(err).To(HaveOccurred())
@@ -135,9 +141,9 @@ var _ = Describe("Version Management", func() {
 			})
 
 			It("should block an invalid target version", func() {
-				ovnk8sOperator.Status.Version = "1.0.0"
-				reconciler.EmbeddedConfig.Version = "invalid-version"
-				reconciler.EmbeddedConfig.MinUpgradeVersion = "1.0.0"
+				ovnk8sOperator.Status.Version = version1
+				reconciler.EmbeddedConfig.Version = invalidVersion
+				reconciler.EmbeddedConfig.MinUpgradeVersion = version1
 
 				action, err := reconciler.checkVersionAction(ctx, ovnk8sOperator)
 				Expect(err).To(HaveOccurred())
@@ -146,9 +152,9 @@ var _ = Describe("Version Management", func() {
 			})
 
 			It("should block an invalid minimum upgrade version", func() {
-				ovnk8sOperator.Status.Version = "1.0.0"
-				reconciler.EmbeddedConfig.Version = "2.0.0"
-				reconciler.EmbeddedConfig.MinUpgradeVersion = "invalid-version"
+				ovnk8sOperator.Status.Version = version1
+				reconciler.EmbeddedConfig.Version = version2
+				reconciler.EmbeddedConfig.MinUpgradeVersion = invalidVersion
 
 				action, err := reconciler.checkVersionAction(ctx, ovnk8sOperator)
 				Expect(err).To(HaveOccurred())
@@ -166,12 +172,12 @@ var _ = Describe("Version Management", func() {
 
 			Expect(classifyRolloutOperation(ovnk8sOperator, targetVersion, action)).To(Equal(expected))
 		},
-		Entry("fresh installation", "", "", k8sv1alpha1.UpgradeStatus(""), "1.0.0", versionActionRollout, rolloutOperationInstallation),
-		Entry("version upgrade", "1.0.0", "1.0.0", k8sv1alpha1.UpgradeStatusCompleted, "1.1.0", versionActionRollout, rolloutOperationUpgrade),
-		Entry("ordinary same-version reconciliation", "1.0.0", "1.0.0", k8sv1alpha1.UpgradeStatusCompleted, "1.0.0", versionActionReconcile, rolloutOperationSteady),
-		Entry("recovery after reverting a failed upgrade", "1.0.0", "1.1.0", k8sv1alpha1.UpgradeStatusFailed, "1.0.0", versionActionReconcile, rolloutOperationRecovery),
-		Entry("retry of a failed same-version recovery", "1.0.0", "1.0.0", k8sv1alpha1.UpgradeStatusFailed, "1.0.0", versionActionReconcile, rolloutOperationRecovery),
-		Entry("blocked completed-release rollback", "2.0.0", "2.0.0", k8sv1alpha1.UpgradeStatusCompleted, "1.0.0", versionActionBlock, rolloutOperationBlocked),
+		Entry("fresh installation", "", "", k8sv1alpha1.UpgradeStatus(""), version1, versionActionRollout, rolloutOperationInstallation),
+		Entry("version upgrade", version1, version1, k8sv1alpha1.UpgradeStatusCompleted, "1.1.0", versionActionRollout, rolloutOperationUpgrade),
+		Entry("ordinary same-version reconciliation", version1, version1, k8sv1alpha1.UpgradeStatusCompleted, version1, versionActionReconcile, rolloutOperationSteady),
+		Entry("recovery after reverting a failed upgrade", version1, "1.1.0", k8sv1alpha1.UpgradeStatusFailed, version1, versionActionReconcile, rolloutOperationRecovery),
+		Entry("retry of a failed same-version recovery", version1, version1, k8sv1alpha1.UpgradeStatusFailed, version1, versionActionReconcile, rolloutOperationRecovery),
+		Entry("blocked completed-release rollback", version2, version2, k8sv1alpha1.UpgradeStatusCompleted, version1, versionActionBlock, rolloutOperationBlocked),
 	)
 
 	Describe("validateVersionUpgrade", func() {
@@ -215,7 +221,7 @@ var _ = Describe("Version Management", func() {
 
 		Context("when version doesn't have 'v' prefix", func() {
 			It("should add 'v' prefix", func() {
-				result := normalizeVersion("1.0.0")
+				result := normalizeVersion(version1)
 				Expect(result).To(Equal("v1.0.0"))
 			})
 		})
@@ -251,7 +257,7 @@ var _ = Describe("Version Management", func() {
 		Context("when dealing with semantic version edge cases", func() {
 			It("should handle three-part versions correctly", func() {
 				reconciler.EmbeddedConfig.Version = "1.2.4"
-				reconciler.EmbeddedConfig.MinUpgradeVersion = "1.0.0"
+				reconciler.EmbeddedConfig.MinUpgradeVersion = version1
 				ovnk8sOperator.Status.Version = "1.2.3"
 
 				action, err := reconciler.checkVersionAction(ctx, ovnk8sOperator)
@@ -260,8 +266,8 @@ var _ = Describe("Version Management", func() {
 			})
 
 			It("should handle major version upgrades", func() {
-				reconciler.EmbeddedConfig.Version = "2.0.0"
-				reconciler.EmbeddedConfig.MinUpgradeVersion = "1.0.0"
+				reconciler.EmbeddedConfig.Version = version2
+				reconciler.EmbeddedConfig.MinUpgradeVersion = version1
 				ovnk8sOperator.Status.Version = "1.9.9"
 
 				action, err := reconciler.checkVersionAction(ctx, ovnk8sOperator)
@@ -272,7 +278,7 @@ var _ = Describe("Version Management", func() {
 
 		Context("when dealing with pre-release versions", func() {
 			It("should handle pre-release version upgrades", func() {
-				reconciler.EmbeddedConfig.Version = "1.0.0"
+				reconciler.EmbeddedConfig.Version = version1
 				reconciler.EmbeddedConfig.MinUpgradeVersion = "1.0.0-alpha.1"
 				ovnk8sOperator.Status.Version = "1.0.0-alpha.1"
 

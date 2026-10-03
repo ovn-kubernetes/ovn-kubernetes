@@ -31,6 +31,10 @@ const SecretName = "ovnkube-webhook-cert"
 const (
 	caValidity     = 10 * 365 * 24 * time.Hour
 	serverValidity = 365 * 24 * time.Hour
+
+	caCertKey      = "ca.crt"
+	caKeyKey       = "ca.key"
+	serverHostname = "localhost"
 )
 
 // EnsureWebhookCert returns the PEM CA bundle for the ovnkube-identity webhook.
@@ -68,8 +72,8 @@ func EnsureWebhookCert(ctx context.Context, c client.Client, namespace, crName s
 		Data: map[string][]byte{
 			corev1.TLSCertKey:       m.serverCertPEM,
 			corev1.TLSPrivateKeyKey: m.serverKeyPEM,
-			"ca.crt":                m.caCertPEM,
-			"ca.key":                m.caKeyPEM,
+			caCertKey:               m.caCertPEM,
+			caKeyKey:                m.caKeyPEM,
 		},
 	}
 	if err := c.Create(ctx, secret); err != nil {
@@ -87,7 +91,7 @@ func EnsureWebhookCert(ctx context.Context, c client.Client, namespace, crName s
 // caFromSecret extracts the ca.crt field from the given Secret, returning an
 // error if the field is absent or empty.
 func caFromSecret(s *corev1.Secret) ([]byte, error) {
-	ca := s.Data["ca.crt"]
+	ca := s.Data[caCertKey]
 	if len(ca) == 0 {
 		return nil, fmt.Errorf("secret %s/%s missing ca.crt", s.Namespace, s.Name)
 	}
@@ -130,8 +134,8 @@ func generate() (*material, error) {
 		return nil, fmt.Errorf("generate server key: %w", err)
 	}
 	srvTmpl := &x509.Certificate{
-		Subject:     pkix.Name{CommonName: "localhost"},
-		DNSNames:    []string{"localhost"},
+		Subject:     pkix.Name{CommonName: serverHostname},
+		DNSNames:    []string{serverHostname},
 		NotBefore:   now.Add(-time.Hour),
 		NotAfter:    now.Add(serverValidity),
 		KeyUsage:    x509.KeyUsageDigitalSignature,

@@ -10,6 +10,19 @@ import (
 	. "github.com/onsi/gomega"
 )
 
+const (
+	testOperatorName       = "test-operator"
+	testNamespace          = "test-namespace"
+	testConfigName         = "test-config"
+	deploymentListKind     = "DeploymentList"
+	nadGroup               = "k8s.cni.cncf.io"
+	ovnGroup               = "k8s.ovn.org"
+	deploymentTemplatePath = "templates/deployment.yaml"
+	deploymentFileName     = "deployment.yaml"
+	configMapTemplatePath  = "templates/configmap.yaml"
+	configMapFileName      = "configmap.yaml"
+)
+
 func TestDeployer(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Deployer Suite")

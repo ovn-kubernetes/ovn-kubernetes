@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -40,9 +41,9 @@ type TestHookFile struct {
 
 // NewTestHookRunner creates a new test hook runner.
 // Shares the controller's TemplateRenderer for consistent template data context.
-func NewTestHookRunner(client client.Client, scheme *runtime.Scheme, testHooksDir string, templateRenderer *renderer.TemplateRenderer) *TestHookRunner {
+func NewTestHookRunner(k8sClient client.Client, scheme *runtime.Scheme, testHooksDir string, templateRenderer *renderer.TemplateRenderer) *TestHookRunner {
 	return &TestHookRunner{
-		Client:           client,
+		Client:           k8sClient,
 		Scheme:           scheme,
 		TestHooksDir:     testHooksDir,
 		TemplateRenderer: templateRenderer,
@@ -324,9 +325,7 @@ func (r *TestHookRunner) cleanupResources(ctx context.Context, resources []clien
 	logger := log.FromContext(ctx)
 
 	// Delete in reverse order
-	for i := len(resources) - 1; i >= 0; i-- {
-		resource := resources[i]
-
+	for _, resource := range slices.Backward(resources) {
 		// Use background propagation policy for Jobs to ensure child Pods are also deleted
 		// This prevents the warning about preserved child pods
 		deleteOptions := &client.DeleteOptions{}

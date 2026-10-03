@@ -14,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/deployer"
+	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/kinds"
 	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/validator"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -110,11 +111,11 @@ var _ = Describe("ComponentValidator", func() {
 				// Create a ready deployment
 				deployment := &appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      "test-deployment",
-						Namespace: "default",
+						Name:      testDeploymentName,
+						Namespace: metav1.NamespaceDefault,
 					},
 					Spec: appsv1.DeploymentSpec{
-						Replicas: int32Ptr(3),
+						Replicas: new(int32(3)),
 					},
 					Status: appsv1.DeploymentStatus{
 						ReadyReplicas:     3,
@@ -129,8 +130,8 @@ var _ = Describe("ComponentValidator", func() {
 				workloads := []deployer.WorkloadResource{
 					{
 						Object: deployment,
-						Type:   "Deployment",
-						Name:   "test-deployment",
+						Type:   kinds.Deployment,
+						Name:   testDeploymentName,
 					},
 				}
 
@@ -146,11 +147,11 @@ var _ = Describe("ComponentValidator", func() {
 				// Create ready deployment
 				deployment := &appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      "test-deployment",
-						Namespace: "default",
+						Name:      testDeploymentName,
+						Namespace: metav1.NamespaceDefault,
 					},
 					Spec: appsv1.DeploymentSpec{
-						Replicas: int32Ptr(2),
+						Replicas: new(int32(2)),
 					},
 					Status: appsv1.DeploymentStatus{
 						ReadyReplicas:     2,
@@ -162,8 +163,8 @@ var _ = Describe("ComponentValidator", func() {
 				// Create ready daemonset
 				daemonSet := &appsv1.DaemonSet{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      "test-daemonset",
-						Namespace: "default",
+						Name:      testDaemonSetName,
+						Namespace: metav1.NamespaceDefault,
 					},
 					Status: appsv1.DaemonSetStatus{
 						DesiredNumberScheduled: 2,
@@ -178,8 +179,8 @@ var _ = Describe("ComponentValidator", func() {
 				Expect(fakeClient.Create(ctx, daemonSet)).To(Succeed())
 
 				workloads := []deployer.WorkloadResource{
-					{Object: deployment, Type: "Deployment", Name: "test-deployment"},
-					{Object: daemonSet, Type: "DaemonSet", Name: "test-daemonset"},
+					{Object: deployment, Type: kinds.Deployment, Name: testDeploymentName},
+					{Object: daemonSet, Type: kinds.DaemonSet, Name: testDaemonSetName},
 				}
 
 				// Use shorter timeout for testing
@@ -196,11 +197,11 @@ var _ = Describe("ComponentValidator", func() {
 				// Create unready deployment
 				deployment := &appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      "test-deployment",
-						Namespace: "default",
+						Name:      testDeploymentName,
+						Namespace: metav1.NamespaceDefault,
 					},
 					Spec: appsv1.DeploymentSpec{
-						Replicas: int32Ptr(3),
+						Replicas: new(int32(3)),
 					},
 					Status: appsv1.DeploymentStatus{
 						ReadyReplicas:     1, // Not all ready
@@ -215,8 +216,8 @@ var _ = Describe("ComponentValidator", func() {
 				workloads := []deployer.WorkloadResource{
 					{
 						Object: deployment,
-						Type:   "Deployment",
-						Name:   "test-deployment",
+						Type:   kinds.Deployment,
+						Name:   testDeploymentName,
 					},
 				}
 
@@ -234,11 +235,11 @@ var _ = Describe("ComponentValidator", func() {
 				// Create deployment with failing condition
 				deployment := &appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      "test-deployment",
-						Namespace: "default",
+						Name:      testDeploymentName,
+						Namespace: metav1.NamespaceDefault,
 					},
 					Spec: appsv1.DeploymentSpec{
-						Replicas: int32Ptr(3),
+						Replicas: new(int32(3)),
 					},
 					Status: appsv1.DeploymentStatus{
 						ReadyReplicas: 0,
@@ -258,8 +259,8 @@ var _ = Describe("ComponentValidator", func() {
 				workloads := []deployer.WorkloadResource{
 					{
 						Object: deployment,
-						Type:   "Deployment",
-						Name:   "test-deployment",
+						Type:   kinds.Deployment,
+						Name:   testDeploymentName,
 					},
 				}
 
@@ -279,14 +280,14 @@ var _ = Describe("ComponentValidator", func() {
 				deployment := &appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "nonexistent-deployment",
-						Namespace: "default",
+						Namespace: metav1.NamespaceDefault,
 					},
 				}
 
 				workloads := []deployer.WorkloadResource{
 					{
 						Object: deployment,
-						Type:   "Deployment",
+						Type:   kinds.Deployment,
 						Name:   "nonexistent-deployment",
 					},
 				}
@@ -315,31 +316,31 @@ var _ = Describe("ComponentValidator", func() {
 
 			// Test Deployment validator
 			deployment := &appsv1.Deployment{
-				ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
-				Spec:       appsv1.DeploymentSpec{Replicas: int32Ptr(1)},
+				ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: metav1.NamespaceDefault},
+				Spec:       appsv1.DeploymentSpec{Replicas: new(int32(1))},
 				Status:     appsv1.DeploymentStatus{ReadyReplicas: 1, AvailableReplicas: 1, UpdatedReplicas: 1},
 			}
 			Expect(fakeClient.Create(ctx, deployment)).To(Succeed())
 
 			// Test DaemonSet validator
 			daemonSet := &appsv1.DaemonSet{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-ds", Namespace: "default"},
+				ObjectMeta: metav1.ObjectMeta{Name: "test-ds", Namespace: metav1.NamespaceDefault},
 				Status:     appsv1.DaemonSetStatus{DesiredNumberScheduled: 1, NumberReady: 1, NumberAvailable: 1, UpdatedNumberScheduled: 1},
 			}
 			Expect(fakeClient.Create(ctx, daemonSet)).To(Succeed())
 
 			// Test StatefulSet validator
 			statefulSet := &appsv1.StatefulSet{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-sts", Namespace: "default"},
-				Spec:       appsv1.StatefulSetSpec{Replicas: int32Ptr(1)},
+				ObjectMeta: metav1.ObjectMeta{Name: "test-sts", Namespace: metav1.NamespaceDefault},
+				Spec:       appsv1.StatefulSetSpec{Replicas: new(int32(1))},
 				Status:     appsv1.StatefulSetStatus{ReadyReplicas: 1, CurrentReplicas: 1, UpdatedReplicas: 1},
 			}
 			Expect(fakeClient.Create(ctx, statefulSet)).To(Succeed())
 
 			workloads := []deployer.WorkloadResource{
-				{Object: deployment, Type: "Deployment", Name: "test"},
-				{Object: daemonSet, Type: "DaemonSet", Name: "test-ds"},
-				{Object: statefulSet, Type: "StatefulSet", Name: "test-sts"},
+				{Object: deployment, Type: kinds.Deployment, Name: testName},
+				{Object: daemonSet, Type: kinds.DaemonSet, Name: "test-ds"},
+				{Object: statefulSet, Type: kinds.StatefulSet, Name: "test-sts"},
 			}
 
 			componentValidator.Config.Timeout = 1 * time.Second
@@ -359,17 +360,17 @@ var _ = Describe("ComponentValidator", func() {
 			// Create a minimal object that would use GenericWorkloadValidator
 			obj := &metav1.PartialObjectMetadata{
 				TypeMeta: metav1.TypeMeta{
-					Kind:       "CustomResource",
+					Kind:       customResourceKind,
 					APIVersion: "custom.io/v1",
 				},
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-custom",
-					Namespace: "default",
+					Name:      testCustomName,
+					Namespace: metav1.NamespaceDefault,
 				},
 			}
 
 			workloads := []deployer.WorkloadResource{
-				{Object: obj, Type: "CustomResource", Name: "test-custom"},
+				{Object: obj, Type: customResourceKind, Name: testCustomName},
 			}
 
 			componentValidator.Config.Timeout = 1 * time.Second
@@ -395,14 +396,14 @@ var _ = Describe("ComponentValidator", func() {
 			componentValidator = validator.NewComponentValidatorWithConfig(fakeClient, config)
 
 			deployment := &appsv1.Deployment{
-				ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
-				Spec:       appsv1.DeploymentSpec{Replicas: int32Ptr(1)},
+				ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: metav1.NamespaceDefault},
+				Spec:       appsv1.DeploymentSpec{Replicas: new(int32(1))},
 				Status:     appsv1.DeploymentStatus{ReadyReplicas: 0}, // Not ready
 			}
 			Expect(fakeClient.Create(ctx, deployment)).To(Succeed())
 
 			workloads := []deployer.WorkloadResource{
-				{Object: deployment, Type: "Deployment", Name: "test"},
+				{Object: deployment, Type: kinds.Deployment, Name: testName},
 			}
 
 			err := componentValidator.ValidateComponent(ctx, "test-component", workloads)
@@ -420,14 +421,14 @@ var _ = Describe("ComponentValidator", func() {
 			componentValidator = validator.NewComponentValidatorWithConfig(fakeClient, config)
 
 			deployment := &appsv1.Deployment{
-				ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
-				Spec:       appsv1.DeploymentSpec{Replicas: int32Ptr(1)},
+				ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: metav1.NamespaceDefault},
+				Spec:       appsv1.DeploymentSpec{Replicas: new(int32(1))},
 				Status:     appsv1.DeploymentStatus{ReadyReplicas: 0}, // Not ready
 			}
 			Expect(fakeClient.Create(ctx, deployment)).To(Succeed())
 
 			workloads := []deployer.WorkloadResource{
-				{Object: deployment, Type: "Deployment", Name: "test"},
+				{Object: deployment, Type: kinds.Deployment, Name: testName},
 			}
 
 			err := componentValidator.ValidateComponent(ctx, "test-component", workloads)
@@ -446,11 +447,11 @@ var _ = Describe("ComponentValidator", func() {
 
 			// Don't create the deployment so it will fail to fetch
 			deployment := &appsv1.Deployment{
-				ObjectMeta: metav1.ObjectMeta{Name: "nonexistent", Namespace: "default"},
+				ObjectMeta: metav1.ObjectMeta{Name: "nonexistent", Namespace: metav1.NamespaceDefault},
 			}
 
 			workloads := []deployer.WorkloadResource{
-				{Object: deployment, Type: "Deployment", Name: "nonexistent"},
+				{Object: deployment, Type: kinds.Deployment, Name: "nonexistent"},
 			}
 
 			err := componentValidator.ValidateComponent(ctx, "test-component", workloads)
@@ -459,8 +460,3 @@ var _ = Describe("ComponentValidator", func() {
 		})
 	})
 })
-
-// Helper function to create int32 pointer
-func int32Ptr(i int32) *int32 {
-	return &i
-}

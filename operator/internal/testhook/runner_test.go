@@ -82,7 +82,7 @@ var _ = Describe("TestHookRunner", func() {
 	AfterEach(func() {
 		// Cleanup temporary directory
 		if tempDir != "" {
-			os.RemoveAll(tempDir)
+			Expect(os.RemoveAll(tempDir)).To(Succeed())
 		}
 	})
 
@@ -115,7 +115,7 @@ var _ = Describe("TestHookRunner", func() {
 
 		Context("when test hooks directory doesn't exist", func() {
 			It("should return nil without error", func() {
-				os.RemoveAll(tempDir)
+				Expect(os.RemoveAll(tempDir)).To(Succeed())
 				err := testHookRunner.RunTestHooks(ctx, ovnk8sOperator)
 				Expect(err).ToNot(HaveOccurred())
 			})

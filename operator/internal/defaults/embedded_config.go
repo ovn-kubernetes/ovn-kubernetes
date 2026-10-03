@@ -88,6 +88,10 @@ func parseAndValidateConfig(data []byte) (*EmbeddedConfig, error) {
 	return &config, nil
 }
 
+// DefaultImageName is the logical image name that covers every container of a
+// component unless the component maps containers to other images.
+const DefaultImageName = "default"
+
 // applyImageDefaults overrides each component's "default" container image
 // with the build-time linker-stamped values in images.go, so release/CI
 // builds pin the exact ovnkube-c (repository/tag/digest) produced for the
@@ -106,12 +110,12 @@ func (c *EmbeddedConfig) applyImageDefaults() {
 		comp := &c.Components[i]
 		// Only touch the "default" image, and only where the component maps
 		// containers to it. Components using other image names are untouched.
-		if _, ok := comp.ContainerImageMapping["default"]; !ok {
+		if _, ok := comp.ContainerImageMapping[DefaultImageName]; !ok {
 			continue
 		}
 		updated := false
 		for j := range comp.ContainerImages {
-			if comp.ContainerImages[j].Name == "default" {
+			if comp.ContainerImages[j].Name == DefaultImageName {
 				comp.ContainerImages[j].Repository = OvnKubeImageRepository
 				comp.ContainerImages[j].Tag = OvnKubeImageTag
 				comp.ContainerImages[j].SHA256 = digest
@@ -121,7 +125,7 @@ func (c *EmbeddedConfig) applyImageDefaults() {
 		}
 		if !updated {
 			comp.ContainerImages = append(comp.ContainerImages, EmbeddedContainerImage{
-				Name:       "default",
+				Name:       DefaultImageName,
 				Repository: OvnKubeImageRepository,
 				Tag:        OvnKubeImageTag,
 				SHA256:     digest,

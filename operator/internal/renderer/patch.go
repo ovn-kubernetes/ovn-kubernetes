@@ -12,14 +12,15 @@ import (
 	"sigs.k8s.io/yaml"
 
 	k8sv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/operator/api/v1alpha1"
+	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/kinds"
 )
 
 // workloadKinds are the resource kinds that patches can target.
 // Patches only apply to main workload resources, not sibling Services/ConfigMaps.
 var workloadKinds = map[string]bool{
-	"Deployment":  true,
-	"DaemonSet":   true,
-	"StatefulSet": true,
+	kinds.Deployment:  true,
+	kinds.DaemonSet:   true,
+	kinds.StatefulSet: true,
 }
 
 // ApplyPatches applies user-defined patches to rendered manifests.

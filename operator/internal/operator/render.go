@@ -9,7 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	sigyaml "sigs.k8s.io/yaml"
@@ -66,7 +66,7 @@ func runRender(args []string, stdout io.Writer) error {
 	for name := range manifests {
 		components = append(components, name)
 	}
-	sort.Strings(components)
+	slices.Sort(components)
 
 	for _, component := range components {
 		for _, m := range manifests[component] {
@@ -80,7 +80,9 @@ func runRender(args []string, stdout io.Writer) error {
 				}
 				continue
 			}
-			fmt.Fprintf(stdout, "---\n# Source: %s/%s\n%s\n", component, m.FileName, m.Content)
+			if _, err := fmt.Fprintf(stdout, "---\n# Source: %s/%s\n%s\n", component, m.FileName, m.Content); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -96,7 +98,7 @@ func loadCR(path string) (*k8sv1alpha1.OVNK8sOperator, error) {
 	}
 
 	var found *k8sv1alpha1.OVNK8sOperator
-	for _, doc := range strings.Split("\n"+string(content), "\n---") {
+	for doc := range strings.SplitSeq("\n"+string(content), "\n---") {
 		if strings.TrimSpace(doc) == "" {
 			continue
 		}

@@ -12,6 +12,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/deployer"
+	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/kinds"
 )
 
 // ComponentValidator validates workload resources for components
@@ -37,9 +38,9 @@ type ValidationResult struct {
 }
 
 // NewComponentValidatorWithConfig creates a new ComponentValidator with custom configuration
-func NewComponentValidatorWithConfig(client client.Client, config *ValidationConfig) *ComponentValidator {
+func NewComponentValidatorWithConfig(k8sClient client.Client, config *ValidationConfig) *ComponentValidator {
 	return &ComponentValidator{
-		Client: client,
+		Client: k8sClient,
 		Config: config,
 	}
 }
@@ -130,11 +131,11 @@ func (v *ComponentValidator) validateWorkload(ctx context.Context, componentName
 // getValidatorForWorkload returns the appropriate validator for the workload type
 func (v *ComponentValidator) getValidatorForWorkload(workloadType string) WorkloadValidator {
 	switch workloadType {
-	case "Deployment":
+	case kinds.Deployment:
 		return &DeploymentValidator{}
-	case "DaemonSet":
+	case kinds.DaemonSet:
 		return &DaemonSetValidator{}
-	case "StatefulSet":
+	case kinds.StatefulSet:
 		return &StatefulSetValidator{}
 	default:
 		return &GenericWorkloadValidator{}

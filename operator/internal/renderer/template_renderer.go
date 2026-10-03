@@ -9,9 +9,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"text/template"
 
@@ -187,6 +188,12 @@ func buildPodNetworkCIDR(entries []k8sv1alpha1.PodNetworkEntry) string {
 	return strings.Join(parts, ",")
 }
 
+const (
+	gateGroupRouting       = "routing"
+	gateGroupEgress        = "egress"
+	gateGroupNetworkPolicy = "networkPolicy"
+)
+
 // gateContainers lists the dotted paths under featureGates whose map values
 // hold nested gates rather than gate configuration. The flatten recurses only
 // into these; any other map value is the gate's configuration, verbatim.
@@ -195,9 +202,9 @@ func buildPodNetworkCIDR(entries []k8sv1alpha1.PodNetworkEntry) string {
 var gateContainers = map[string]bool{
 	"userDefinedNetworks":           true,
 	"userDefinedNetworks.noOverlay": true,
-	"routing":                       true,
-	"egress":                        true,
-	"networkPolicy":                 true,
+	gateGroupRouting:                true,
+	gateGroupEgress:                 true,
+	gateGroupNetworkPolicy:          true,
 }
 
 // buildFeatureGateData converts the typed FeatureGates struct into:
@@ -249,14 +256,12 @@ func buildFeatureGateData(fg *k8sv1alpha1.FeatureGates) ([]string, map[string]an
 				existing = map[string]any{}
 				gateConfig[prefix] = existing
 			}
-			for k, v := range ownConfig {
-				existing[k] = v
-			}
+			maps.Copy(existing, ownConfig)
 		}
 	}
 	walk("", fgMap)
 
-	sort.Strings(enabledGates)
+	slices.Sort(enabledGates)
 	return enabledGates, gateConfig, nil
 }
 
@@ -460,7 +465,7 @@ func templateFuncs(templatesDir string) template.FuncMap {
 			if err != nil {
 				return "", fmt.Errorf("failed to include raw template %q: %w", path, err)
 			}
-			defer file.Close()
+			defer func() { _ = file.Close() }()
 
 			content, err := io.ReadAll(file)
 			if err != nil {
@@ -487,10 +492,8 @@ func templateFuncs(templatesDir string) template.FuncMap {
 					}
 				}
 			case []string:
-				for _, v := range h {
-					if v == needle {
-						return true
-					}
+				if slices.Contains(h, needle) {
+					return true
 				}
 			}
 			return false

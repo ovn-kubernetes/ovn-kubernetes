@@ -11,6 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/kinds"
 	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/validator"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -30,11 +31,11 @@ var _ = Describe("WorkloadValidators", func() {
 			It("should return ready for fully deployed deployment", func() {
 				deployment := &appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      "test-deployment",
-						Namespace: "default",
+						Name:      testDeploymentName,
+						Namespace: metav1.NamespaceDefault,
 					},
 					Spec: appsv1.DeploymentSpec{
-						Replicas: int32Ptr(3),
+						Replicas: new(int32(3)),
 					},
 					Status: appsv1.DeploymentStatus{
 						ReadyReplicas:     3,
@@ -47,8 +48,8 @@ var _ = Describe("WorkloadValidators", func() {
 				Expect(err).ToNot(HaveOccurred())
 				Expect(result).ToNot(BeNil())
 				Expect(result.Ready).To(BeTrue())
-				Expect(result.WorkloadName).To(Equal("test-deployment"))
-				Expect(result.WorkloadType).To(Equal("Deployment"))
+				Expect(result.WorkloadName).To(Equal(testDeploymentName))
+				Expect(result.WorkloadType).To(Equal(kinds.Deployment))
 				Expect(result.Message).To(ContainSubstring("Ready: 3/3"))
 				Expect(result.Message).To(ContainSubstring("Available: 3/3"))
 				Expect(result.Message).To(ContainSubstring("Updated: 3/3"))
@@ -57,7 +58,7 @@ var _ = Describe("WorkloadValidators", func() {
 			It("should handle deployment with nil replicas (defaults to 1)", func() {
 				deployment := &appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "test-deployment",
+						Name: testDeploymentName,
 					},
 					Spec: appsv1.DeploymentSpec{
 						Replicas: nil, // Should default to 1
@@ -78,10 +79,10 @@ var _ = Describe("WorkloadValidators", func() {
 			It("should handle zero replicas deployment", func() {
 				deployment := &appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "test-deployment",
+						Name: testDeploymentName,
 					},
 					Spec: appsv1.DeploymentSpec{
-						Replicas: int32Ptr(0),
+						Replicas: new(int32(0)),
 					},
 					Status: appsv1.DeploymentStatus{
 						ReadyReplicas:     0,
@@ -101,10 +102,10 @@ var _ = Describe("WorkloadValidators", func() {
 			It("should return not ready when replicas don't match", func() {
 				deployment := &appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "test-deployment",
+						Name: testDeploymentName,
 					},
 					Spec: appsv1.DeploymentSpec{
-						Replicas: int32Ptr(3),
+						Replicas: new(int32(3)),
 					},
 					Status: appsv1.DeploymentStatus{
 						ReadyReplicas:     2, // Not all ready
@@ -122,10 +123,10 @@ var _ = Describe("WorkloadValidators", func() {
 			It("should return not ready when available replicas don't match", func() {
 				deployment := &appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "test-deployment",
+						Name: testDeploymentName,
 					},
 					Spec: appsv1.DeploymentSpec{
-						Replicas: int32Ptr(3),
+						Replicas: new(int32(3)),
 					},
 					Status: appsv1.DeploymentStatus{
 						ReadyReplicas:     3,
@@ -143,10 +144,10 @@ var _ = Describe("WorkloadValidators", func() {
 			It("should return not ready when updated replicas don't match", func() {
 				deployment := &appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "test-deployment",
+						Name: testDeploymentName,
 					},
 					Spec: appsv1.DeploymentSpec{
-						Replicas: int32Ptr(3),
+						Replicas: new(int32(3)),
 					},
 					Status: appsv1.DeploymentStatus{
 						ReadyReplicas:     3,
@@ -164,10 +165,10 @@ var _ = Describe("WorkloadValidators", func() {
 			It("should handle deployment with progressing=false condition", func() {
 				deployment := &appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "test-deployment",
+						Name: testDeploymentName,
 					},
 					Spec: appsv1.DeploymentSpec{
-						Replicas: int32Ptr(3),
+						Replicas: new(int32(3)),
 					},
 					Status: appsv1.DeploymentStatus{
 						ReadyReplicas: 0,
@@ -192,19 +193,19 @@ var _ = Describe("WorkloadValidators", func() {
 			It("should handle unstructured deployment objects", func() {
 				unstructuredDeployment := &unstructured.Unstructured{
 					Object: map[string]any{
-						"apiVersion": "apps/v1",
-						"kind":       "Deployment",
-						"metadata": map[string]any{
-							"name":      "test-deployment",
-							"namespace": "default",
+						fieldAPIVersion: appsv1.SchemeGroupVersion.String(),
+						fieldKind:       kinds.Deployment,
+						fieldMetadata: map[string]any{
+							fieldName:      testDeploymentName,
+							fieldNamespace: metav1.NamespaceDefault,
 						},
-						"spec": map[string]any{
-							"replicas": int64(2), // JSON numbers become int64
+						fieldSpec: map[string]any{
+							fieldReplicas: int64(2), // JSON numbers become int64
 						},
-						"status": map[string]any{
-							"readyReplicas":     int64(2),
-							"availableReplicas": int64(2),
-							"updatedReplicas":   int64(2),
+						fieldStatus: map[string]any{
+							fieldReadyReplicas:   int64(2),
+							"availableReplicas":  int64(2),
+							fieldUpdatedReplicas: int64(2),
 						},
 					},
 				}
@@ -212,7 +213,7 @@ var _ = Describe("WorkloadValidators", func() {
 				result, err := deploymentValidator.ValidateReadiness(unstructuredDeployment)
 				Expect(err).ToNot(HaveOccurred())
 				Expect(result.Ready).To(BeTrue())
-				Expect(result.WorkloadName).To(Equal("test-deployment"))
+				Expect(result.WorkloadName).To(Equal(testDeploymentName))
 				Expect(result.Message).To(ContainSubstring("Ready: 2/2"))
 			})
 
@@ -220,10 +221,10 @@ var _ = Describe("WorkloadValidators", func() {
 				// Create an invalid unstructured object
 				invalidObject := &unstructured.Unstructured{
 					Object: map[string]any{
-						"apiVersion": "v1",
-						"kind":       "Pod", // Wrong kind
-						"metadata": map[string]any{
-							"name": "test-pod",
+						fieldAPIVersion: "v1",
+						fieldKind:       kinds.Pod,
+						fieldMetadata: map[string]any{
+							fieldName: testPodName,
 						},
 					},
 				}
@@ -250,7 +251,7 @@ var _ = Describe("WorkloadValidators", func() {
 			It("should return error for non-deployment objects", func() {
 				pod := &corev1.Pod{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "test-pod",
+						Name: testPodName,
 					},
 				}
 
@@ -273,8 +274,8 @@ var _ = Describe("WorkloadValidators", func() {
 			It("should return ready for fully deployed daemonset", func() {
 				daemonSet := &appsv1.DaemonSet{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      "test-daemonset",
-						Namespace: "default",
+						Name:      testDaemonSetName,
+						Namespace: metav1.NamespaceDefault,
 					},
 					Status: appsv1.DaemonSetStatus{
 						DesiredNumberScheduled: 3,
@@ -288,8 +289,8 @@ var _ = Describe("WorkloadValidators", func() {
 				Expect(err).ToNot(HaveOccurred())
 				Expect(result).ToNot(BeNil())
 				Expect(result.Ready).To(BeTrue())
-				Expect(result.WorkloadName).To(Equal("test-daemonset"))
-				Expect(result.WorkloadType).To(Equal("DaemonSet"))
+				Expect(result.WorkloadName).To(Equal(testDaemonSetName))
+				Expect(result.WorkloadType).To(Equal(kinds.DaemonSet))
 				Expect(result.Message).To(ContainSubstring("Ready: 3/3"))
 				Expect(result.Message).To(ContainSubstring("Available: 3/3"))
 				Expect(result.Message).To(ContainSubstring("Updated: 3/3"))
@@ -300,7 +301,7 @@ var _ = Describe("WorkloadValidators", func() {
 			It("should return not ready when desired is zero", func() {
 				daemonSet := &appsv1.DaemonSet{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "test-daemonset",
+						Name: testDaemonSetName,
 					},
 					Status: appsv1.DaemonSetStatus{
 						DesiredNumberScheduled: 0, // No nodes to schedule on
@@ -319,7 +320,7 @@ var _ = Describe("WorkloadValidators", func() {
 			It("should return not ready when not all pods are ready", func() {
 				daemonSet := &appsv1.DaemonSet{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "test-daemonset",
+						Name: testDaemonSetName,
 					},
 					Status: appsv1.DaemonSetStatus{
 						DesiredNumberScheduled: 3,
@@ -338,7 +339,7 @@ var _ = Describe("WorkloadValidators", func() {
 			It("should return not ready when not all pods are available", func() {
 				daemonSet := &appsv1.DaemonSet{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "test-daemonset",
+						Name: testDaemonSetName,
 					},
 					Status: appsv1.DaemonSetStatus{
 						DesiredNumberScheduled: 3,
@@ -357,7 +358,7 @@ var _ = Describe("WorkloadValidators", func() {
 			It("should return not ready when not all pods are updated", func() {
 				daemonSet := &appsv1.DaemonSet{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "test-daemonset",
+						Name: testDaemonSetName,
 					},
 					Status: appsv1.DaemonSetStatus{
 						DesiredNumberScheduled: 3,
@@ -376,7 +377,7 @@ var _ = Describe("WorkloadValidators", func() {
 			It("should handle misscheduled pods", func() {
 				daemonSet := &appsv1.DaemonSet{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "test-daemonset",
+						Name: testDaemonSetName,
 					},
 					Status: appsv1.DaemonSetStatus{
 						DesiredNumberScheduled: 3,
@@ -398,13 +399,13 @@ var _ = Describe("WorkloadValidators", func() {
 			It("should handle unstructured daemonset objects", func() {
 				unstructuredDaemonSet := &unstructured.Unstructured{
 					Object: map[string]any{
-						"apiVersion": "apps/v1",
-						"kind":       "DaemonSet",
-						"metadata": map[string]any{
-							"name":      "test-daemonset",
-							"namespace": "default",
+						fieldAPIVersion: appsv1.SchemeGroupVersion.String(),
+						fieldKind:       kinds.DaemonSet,
+						fieldMetadata: map[string]any{
+							fieldName:      testDaemonSetName,
+							fieldNamespace: metav1.NamespaceDefault,
 						},
-						"status": map[string]any{
+						fieldStatus: map[string]any{
 							"desiredNumberScheduled": int64(2),
 							"numberReady":            int64(2),
 							"numberAvailable":        int64(2),
@@ -416,7 +417,7 @@ var _ = Describe("WorkloadValidators", func() {
 				result, err := daemonSetValidator.ValidateReadiness(unstructuredDaemonSet)
 				Expect(err).ToNot(HaveOccurred())
 				Expect(result.Ready).To(BeTrue())
-				Expect(result.WorkloadName).To(Equal("test-daemonset"))
+				Expect(result.WorkloadName).To(Equal(testDaemonSetName))
 				Expect(result.Message).To(ContainSubstring("Ready: 2/2"))
 			})
 		})
@@ -425,7 +426,7 @@ var _ = Describe("WorkloadValidators", func() {
 			It("should return error for non-daemonset objects", func() {
 				deployment := &appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "test-deployment",
+						Name: testDeploymentName,
 					},
 				}
 
@@ -448,11 +449,11 @@ var _ = Describe("WorkloadValidators", func() {
 			It("should return ready for fully deployed statefulset", func() {
 				statefulSet := &appsv1.StatefulSet{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      "test-statefulset",
-						Namespace: "default",
+						Name:      testStatefulSetName,
+						Namespace: metav1.NamespaceDefault,
 					},
 					Spec: appsv1.StatefulSetSpec{
-						Replicas: int32Ptr(3),
+						Replicas: new(int32(3)),
 					},
 					Status: appsv1.StatefulSetStatus{
 						ReadyReplicas:   3,
@@ -465,8 +466,8 @@ var _ = Describe("WorkloadValidators", func() {
 				Expect(err).ToNot(HaveOccurred())
 				Expect(result).ToNot(BeNil())
 				Expect(result.Ready).To(BeTrue())
-				Expect(result.WorkloadName).To(Equal("test-statefulset"))
-				Expect(result.WorkloadType).To(Equal("StatefulSet"))
+				Expect(result.WorkloadName).To(Equal(testStatefulSetName))
+				Expect(result.WorkloadType).To(Equal(kinds.StatefulSet))
 				Expect(result.Message).To(ContainSubstring("Ready: 3/3"))
 				Expect(result.Message).To(ContainSubstring("Current: 3/3"))
 				Expect(result.Message).To(ContainSubstring("Updated: 3/3"))
@@ -475,7 +476,7 @@ var _ = Describe("WorkloadValidators", func() {
 			It("should handle statefulset with nil replicas (defaults to 1)", func() {
 				statefulSet := &appsv1.StatefulSet{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "test-statefulset",
+						Name: testStatefulSetName,
 					},
 					Spec: appsv1.StatefulSetSpec{
 						Replicas: nil, // Should default to 1
@@ -496,10 +497,10 @@ var _ = Describe("WorkloadValidators", func() {
 			It("should handle zero replicas statefulset", func() {
 				statefulSet := &appsv1.StatefulSet{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "test-statefulset",
+						Name: testStatefulSetName,
 					},
 					Spec: appsv1.StatefulSetSpec{
-						Replicas: int32Ptr(0),
+						Replicas: new(int32(0)),
 					},
 					Status: appsv1.StatefulSetStatus{
 						ReadyReplicas:   0,
@@ -519,10 +520,10 @@ var _ = Describe("WorkloadValidators", func() {
 			It("should return not ready when ready replicas don't match", func() {
 				statefulSet := &appsv1.StatefulSet{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "test-statefulset",
+						Name: testStatefulSetName,
 					},
 					Spec: appsv1.StatefulSetSpec{
-						Replicas: int32Ptr(3),
+						Replicas: new(int32(3)),
 					},
 					Status: appsv1.StatefulSetStatus{
 						ReadyReplicas:   2, // Not all ready
@@ -540,10 +541,10 @@ var _ = Describe("WorkloadValidators", func() {
 			It("should return not ready when current replicas don't match", func() {
 				statefulSet := &appsv1.StatefulSet{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "test-statefulset",
+						Name: testStatefulSetName,
 					},
 					Spec: appsv1.StatefulSetSpec{
-						Replicas: int32Ptr(3),
+						Replicas: new(int32(3)),
 					},
 					Status: appsv1.StatefulSetStatus{
 						ReadyReplicas:   3,
@@ -561,10 +562,10 @@ var _ = Describe("WorkloadValidators", func() {
 			It("should return not ready when updated replicas don't match", func() {
 				statefulSet := &appsv1.StatefulSet{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "test-statefulset",
+						Name: testStatefulSetName,
 					},
 					Spec: appsv1.StatefulSetSpec{
-						Replicas: int32Ptr(3),
+						Replicas: new(int32(3)),
 					},
 					Status: appsv1.StatefulSetStatus{
 						ReadyReplicas:   3,
@@ -584,19 +585,19 @@ var _ = Describe("WorkloadValidators", func() {
 			It("should handle unstructured statefulset objects", func() {
 				unstructuredStatefulSet := &unstructured.Unstructured{
 					Object: map[string]any{
-						"apiVersion": "apps/v1",
-						"kind":       "StatefulSet",
-						"metadata": map[string]any{
-							"name":      "test-statefulset",
-							"namespace": "default",
+						fieldAPIVersion: appsv1.SchemeGroupVersion.String(),
+						fieldKind:       kinds.StatefulSet,
+						fieldMetadata: map[string]any{
+							fieldName:      testStatefulSetName,
+							fieldNamespace: metav1.NamespaceDefault,
 						},
-						"spec": map[string]any{
-							"replicas": int64(2),
+						fieldSpec: map[string]any{
+							fieldReplicas: int64(2),
 						},
-						"status": map[string]any{
-							"readyReplicas":   int64(2),
-							"currentReplicas": int64(2),
-							"updatedReplicas": int64(2),
+						fieldStatus: map[string]any{
+							fieldReadyReplicas:   int64(2),
+							"currentReplicas":    int64(2),
+							fieldUpdatedReplicas: int64(2),
 						},
 					},
 				}
@@ -604,7 +605,7 @@ var _ = Describe("WorkloadValidators", func() {
 				result, err := statefulSetValidator.ValidateReadiness(unstructuredStatefulSet)
 				Expect(err).ToNot(HaveOccurred())
 				Expect(result.Ready).To(BeTrue())
-				Expect(result.WorkloadName).To(Equal("test-statefulset"))
+				Expect(result.WorkloadName).To(Equal(testStatefulSetName))
 				Expect(result.Message).To(ContainSubstring("Ready: 2/2"))
 			})
 		})
@@ -613,7 +614,7 @@ var _ = Describe("WorkloadValidators", func() {
 			It("should return error for non-statefulset objects", func() {
 				deployment := &appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "test-deployment",
+						Name: testDeploymentName,
 					},
 				}
 
@@ -635,8 +636,8 @@ var _ = Describe("WorkloadValidators", func() {
 		It("should always return ready for any object", func() {
 			pod := &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-pod",
-					Namespace: "default",
+					Name:      testPodName,
+					Namespace: metav1.NamespaceDefault,
 				},
 			}
 
@@ -644,7 +645,7 @@ var _ = Describe("WorkloadValidators", func() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(result).ToNot(BeNil())
 			Expect(result.Ready).To(BeTrue())
-			Expect(result.WorkloadName).To(Equal("test-pod"))
+			Expect(result.WorkloadName).To(Equal(testPodName))
 			Expect(result.WorkloadType).To(Equal("")) // GVK Kind will be empty for typed objects in tests
 			Expect(result.Message).To(Equal("Generic validation - resource exists"))
 		})
@@ -652,11 +653,11 @@ var _ = Describe("WorkloadValidators", func() {
 		It("should handle unstructured objects", func() {
 			customResource := &unstructured.Unstructured{
 				Object: map[string]any{
-					"apiVersion": "custom.io/v1",
-					"kind":       "CustomResource",
-					"metadata": map[string]any{
-						"name":      "test-custom",
-						"namespace": "default",
+					fieldAPIVersion: "custom.io/v1",
+					fieldKind:       customResourceKind,
+					fieldMetadata: map[string]any{
+						fieldName:      testCustomName,
+						fieldNamespace: metav1.NamespaceDefault,
 					},
 				},
 			}
@@ -664,17 +665,17 @@ var _ = Describe("WorkloadValidators", func() {
 			result, err := genericValidator.ValidateReadiness(customResource)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(result.Ready).To(BeTrue())
-			Expect(result.WorkloadName).To(Equal("test-custom"))
-			Expect(result.WorkloadType).To(Equal("CustomResource"))
+			Expect(result.WorkloadName).To(Equal(testCustomName))
+			Expect(result.WorkloadType).To(Equal(customResourceKind))
 		})
 
 		It("should handle objects without namespace", func() {
 			clusterRole := &unstructured.Unstructured{
 				Object: map[string]any{
-					"apiVersion": "rbac.authorization.k8s.io/v1",
-					"kind":       "ClusterRole",
-					"metadata": map[string]any{
-						"name": "test-cluster-role",
+					fieldAPIVersion: "rbac.authorization.k8s.io/v1",
+					fieldKind:       kinds.ClusterRole,
+					fieldMetadata: map[string]any{
+						fieldName: "test-cluster-role",
 					},
 				},
 			}
@@ -683,7 +684,7 @@ var _ = Describe("WorkloadValidators", func() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(result.Ready).To(BeTrue())
 			Expect(result.WorkloadName).To(Equal("test-cluster-role"))
-			Expect(result.WorkloadType).To(Equal("ClusterRole"))
+			Expect(result.WorkloadType).To(Equal(kinds.ClusterRole))
 		})
 	})
 
@@ -697,8 +698,8 @@ var _ = Describe("WorkloadValidators", func() {
 
 				// Test with proper typed object
 				deployment := &appsv1.Deployment{
-					ObjectMeta: metav1.ObjectMeta{Name: "test"},
-					Spec:       appsv1.DeploymentSpec{Replicas: int32Ptr(1)},
+					ObjectMeta: metav1.ObjectMeta{Name: testName},
+					Spec:       appsv1.DeploymentSpec{Replicas: new(int32(1))},
 					Status:     appsv1.DeploymentStatus{ReadyReplicas: 1, AvailableReplicas: 1, UpdatedReplicas: 1},
 				}
 
@@ -713,14 +714,14 @@ var _ = Describe("WorkloadValidators", func() {
 				// Test with unstructured object
 				unstructured := &unstructured.Unstructured{
 					Object: map[string]any{
-						"apiVersion": "apps/v1",
-						"kind":       "Deployment",
-						"metadata":   map[string]any{"name": "test"},
-						"spec":       map[string]any{"replicas": int64(1)},
-						"status": map[string]any{
-							"readyReplicas":     int64(1),
-							"availableReplicas": int64(1),
-							"updatedReplicas":   int64(1),
+						fieldAPIVersion: appsv1.SchemeGroupVersion.String(),
+						fieldKind:       kinds.Deployment,
+						fieldMetadata:   map[string]any{fieldName: testName},
+						fieldSpec:       map[string]any{fieldReplicas: int64(1)},
+						fieldStatus: map[string]any{
+							fieldReadyReplicas:   int64(1),
+							"availableReplicas":  int64(1),
+							fieldUpdatedReplicas: int64(1),
 						},
 					},
 				}
@@ -734,7 +735,7 @@ var _ = Describe("WorkloadValidators", func() {
 				validator := &validator.DeploymentValidator{}
 
 				// Test with wrong object type
-				pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "test"}}
+				pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: testName}}
 
 				result, err := validator.ValidateReadiness(pod)
 				Expect(err).To(HaveOccurred())
@@ -748,9 +749,9 @@ var _ = Describe("WorkloadValidators", func() {
 				// Test with unstructured object that can't be converted
 				unstructured := &unstructured.Unstructured{
 					Object: map[string]any{
-						"apiVersion": "v1",
-						"kind":       "Pod", // Wrong kind for Deployment validator
-						"metadata":   map[string]any{"name": "test"},
+						fieldAPIVersion: "v1",
+						fieldKind:       kinds.Pod,
+						fieldMetadata:   map[string]any{fieldName: testName},
 					},
 				}
 

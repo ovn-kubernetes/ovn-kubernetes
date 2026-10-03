@@ -12,6 +12,8 @@ import (
 	k8sv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/operator/api/v1alpha1"
 )
 
+const testImageRepository = "registry.example/test/ovnkube-c"
+
 // TestMain stamps the image-default vars for the whole package's tests so
 // existing tests behave as if the binary were built with -ldflags. Tests
 // that exercise the unset-stamp path (like TestImageDefaultsAppliedWhenConfigOmitsImage)
@@ -329,7 +331,7 @@ func TestImageDefaultsOverriddenByLdflags(t *testing.T) {
 	prevRepo := OvnKubeImageRepository
 	prevTag := OvnKubeImageTag
 	prevDigest := OvnKubeImageDigest
-	OvnKubeImageRepository = "registry.example/test/ovnkube-c"
+	OvnKubeImageRepository = testImageRepository
 	OvnKubeImageTag = "v9.9.9"
 	OvnKubeImageDigest = "sha256:deadbeef"
 	t.Cleanup(func() {
@@ -352,10 +354,10 @@ func TestImageDefaultsOverriddenByLdflags(t *testing.T) {
 			continue
 		}
 		img := comp.ContainerImages[0]
-		if img.Name != "default" {
+		if img.Name != DefaultImageName {
 			t.Errorf("component %q: image name = %q, want \"default\"", comp.ResourceName, img.Name)
 		}
-		if img.Repository != "registry.example/test/ovnkube-c" {
+		if img.Repository != testImageRepository {
 			t.Errorf("component %q repo = %q, want ldflags override", comp.ResourceName, img.Repository)
 		}
 		if img.Tag != "v9.9.9" {
@@ -414,7 +416,7 @@ func TestImageStampedWithoutDigest(t *testing.T) {
 	prevRepo := OvnKubeImageRepository
 	prevTag := OvnKubeImageTag
 	prevDigest := OvnKubeImageDigest
-	OvnKubeImageRepository = "registry.example/test/ovnkube-c"
+	OvnKubeImageRepository = testImageRepository
 	OvnKubeImageTag = "mr-12345"
 	OvnKubeImageDigest = ""
 	t.Cleanup(func() {
@@ -437,7 +439,7 @@ func TestImageStampedWithoutDigest(t *testing.T) {
 			t.Fatalf("component %q: no default image present", name)
 		}
 		img := comp.ContainerImages[0]
-		if img.Repository != "registry.example/test/ovnkube-c" {
+		if img.Repository != testImageRepository {
 			t.Errorf("component %q repo = %q, want stamped override (not config.yaml fallback)", name, img.Repository)
 		}
 		if img.Tag != "mr-12345" {
@@ -463,7 +465,7 @@ func TestContainerImageMapping(t *testing.T) {
 	wantContainers := []string{
 		"nbOvsdb", "sbOvsdb", "ovnNorthd", "ovnController", "ovnkubeController",
 	}
-	got := node.ContainerImageMapping["default"]
+	got := node.ContainerImageMapping[DefaultImageName]
 	if !equalUnordered(got, wantContainers) {
 		t.Errorf("default image mapping: got %v, want %v", got, wantContainers)
 	}

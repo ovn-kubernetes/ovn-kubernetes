@@ -31,10 +31,10 @@ func testEmbeddedConfig() *defaults.EmbeddedConfig {
 				ResourceName: k8sv1alpha1.ComponentOvnkubeControlPlane,
 				ResourceType: "Deployment",
 				ContainerImages: []defaults.EmbeddedContainerImage{
-					{Name: "default", Repository: "example.io/ovnkube", Tag: "v1.0", SHA256: "abc123"},
+					{Name: defaults.DefaultImageName, Repository: "example.io/ovnkube", Tag: "v1.0", SHA256: "abc123"},
 				},
 				ContainerImageMapping: map[string][]string{
-					"default": {"ovnkubeClusterManager"},
+					defaults.DefaultImageName: {"ovnkubeClusterManager"},
 				},
 			},
 			{
@@ -42,10 +42,10 @@ func testEmbeddedConfig() *defaults.EmbeddedConfig {
 				ResourceType: "DaemonSet",
 				DependsOn:    []string{k8sv1alpha1.ComponentOvnkubeControlPlane},
 				ContainerImages: []defaults.EmbeddedContainerImage{
-					{Name: "default", Repository: "example.io/ovnkube", Tag: "v1.0", SHA256: "abc123"},
+					{Name: defaults.DefaultImageName, Repository: "example.io/ovnkube", Tag: "v1.0", SHA256: "abc123"},
 				},
 				ContainerImageMapping: map[string][]string{
-					"default": {"nbOvsdb", "sbOvsdb", "ovnNorthd", "ovnController", "ovnkubeController"},
+					defaults.DefaultImageName: {"nbOvsdb", "sbOvsdb", "ovnNorthd", "ovnController", "ovnkubeController"},
 				},
 			},
 		},
@@ -93,7 +93,7 @@ var _ = Describe("TemplateRenderer", func() {
 	})
 
 	AfterEach(func() {
-		os.RemoveAll(tempDir)
+		Expect(os.RemoveAll(tempDir)).To(Succeed())
 	})
 
 	Describe("SplitYAMLDocuments", func() {
@@ -381,7 +381,7 @@ noOverlay: {{ has "userDefinedNetworks.noOverlay" .global.featureGates }}`), 064
 				{
 					ResourceName: k8sv1alpha1.ComponentOvnkubeControlPlane,
 					ContainerImages: []k8sv1alpha1.ContainerImage{
-						{Name: "default", Repository: "custom.io/ovnkube", Tag: "v2.0"},
+						{Name: defaults.DefaultImageName, Repository: "custom.io/ovnkube", Tag: "v2.0"},
 					},
 				},
 			}

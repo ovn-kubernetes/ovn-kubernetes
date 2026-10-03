@@ -6,17 +6,18 @@ package operator
 import (
 	"flag"
 	"os"
+	"strconv"
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
-	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	k8sv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/operator/api/v1alpha1"
@@ -63,19 +64,22 @@ func Run() {
 	var probeAddr string
 	var kubeAPIServer string
 	var validationTimeout time.Duration
+	var logLevel int
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8181", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
 	flag.StringVar(&kubeAPIServer, "kube-api-server", "", "The address of the Kubernetes API server. Overrides any value in kubeconfig.")
 	flag.DurationVar(&validationTimeout, "validation-timeout", 5*time.Minute, "The timeout for component validation operations.")
-	opts := zap.Options{
-		Development: true,
-	}
-	opts.BindFlags(flag.CommandLine)
+	flag.IntVar(&logLevel, "loglevel", 4, "klog verbosity. Errors and info messages are always printed.")
 	flag.Parse()
 
-	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	var level klog.Level
+	if err := level.Set(strconv.Itoa(logLevel)); err != nil {
+		klog.Errorf("Failed to set klog log level: %v", err)
+		os.Exit(1)
+	}
+	ctrl.SetLogger(klog.NewKlogr())
 
 	// Get Kubernetes configuration with optional overrides
 	config, err := ctrl.GetConfig()

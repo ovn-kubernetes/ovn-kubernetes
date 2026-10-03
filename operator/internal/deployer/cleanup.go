@@ -6,6 +6,7 @@ package deployer
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -16,6 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	k8sv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/operator/api/v1alpha1"
+	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/kinds"
 )
 
 // CleanupResources deletes all resources created by the OVNK8sOperator instance.
@@ -27,16 +29,15 @@ func (d *ResourceDeployer) CleanupResources(ctx context.Context, ovnk8sOperator 
 
 	// Build label selector for all resources created by this OVNK8sOperator
 	labelSelector := client.MatchingLabels{
-		"app.kubernetes.io/managed-by":           "ovnk8s-operator",
-		"ovnk8s-operator.ovn.org/ovnk8soperator": ovnk8sOperator.GetName(),
+		LabelManagedBy: ManagedBy,
+		LabelOwner:     ovnk8sOperator.GetName(),
 	}
 
 	deletedCount := 0
 	errorCount := 0
 
 	// Process each resource type from ResourceOrder in reverse order
-	for i := len(ResourceOrder) - 1; i >= 0; i-- {
-		resourceType := ResourceOrder[i]
+	for _, resourceType := range slices.Backward(ResourceOrder) {
 		// Skip list types as they're just for grouping
 		if strings.HasSuffix(resourceType, "List") {
 			continue
@@ -109,12 +110,12 @@ func (d *ResourceDeployer) CleanupResources(ctx context.Context, ovnk8sOperator 
 
 func isNamespacedResource(kind string) bool {
 	switch kind {
-	case "PriorityClass", "Namespace", "PodSecurityPolicy", "StorageClass",
-		"PersistentVolume", "CustomResourceDefinition", "ClusterRole",
-		"ClusterRoleBinding", "IngressClass", "APIService",
-		"MutatingWebhookConfiguration", "ValidatingWebhookConfiguration",
-		"ValidatingAdmissionPolicy", "ValidatingAdmissionPolicyBinding",
-		"RouteAdvertisements":
+	case kinds.PriorityClass, kinds.Namespace, kinds.PodSecurityPolicy, kinds.StorageClass,
+		kinds.PersistentVolume, kinds.CustomResourceDefinition, kinds.ClusterRole,
+		kinds.ClusterRoleBinding, kinds.IngressClass, kinds.APIService,
+		kinds.MutatingWebhookConfiguration, kinds.ValidatingWebhookConfiguration,
+		kinds.ValidatingAdmissionPolicy, kinds.ValidatingAdmissionPolicyBinding,
+		kinds.RouteAdvertisements:
 		return false
 	default:
 		return true
@@ -125,62 +126,62 @@ func isNamespacedResource(kind string) bool {
 func getGVK(kind string) *schema.GroupVersionKind {
 	switch kind {
 	// Core API (v1) - empty group
-	case "Namespace", "ServiceAccount", "Secret", "ConfigMap", "Service",
-		"PersistentVolume", "PersistentVolumeClaim", "Pod", "ReplicationController",
-		"LimitRange", "ResourceQuota":
+	case kinds.Namespace, kinds.ServiceAccount, kinds.Secret, kinds.ConfigMap, kinds.Service,
+		kinds.PersistentVolume, kinds.PersistentVolumeClaim, kinds.Pod, kinds.ReplicationController,
+		kinds.LimitRange, kinds.ResourceQuota:
 		return &schema.GroupVersionKind{Group: "", Version: "v1", Kind: kind}
 
 	// Apps API (apps/v1)
-	case "Deployment", "DaemonSet", "StatefulSet", "ReplicaSet":
+	case kinds.Deployment, kinds.DaemonSet, kinds.StatefulSet, kinds.ReplicaSet:
 		return &schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: kind}
 
 	// Batch API (batch/v1)
-	case "Job", "CronJob":
+	case kinds.Job, kinds.CronJob:
 		return &schema.GroupVersionKind{Group: "batch", Version: "v1", Kind: kind}
 
 	// RBAC API (rbac.authorization.k8s.io/v1)
-	case "ClusterRole", "ClusterRoleBinding", "Role", "RoleBinding":
+	case kinds.ClusterRole, kinds.ClusterRoleBinding, kinds.Role, kinds.RoleBinding:
 		return &schema.GroupVersionKind{Group: "rbac.authorization.k8s.io", Version: "v1", Kind: kind}
 
 	// Networking API (networking.k8s.io/v1)
-	case "NetworkPolicy", "Ingress", "IngressClass":
+	case kinds.NetworkPolicy, kinds.Ingress, kinds.IngressClass:
 		return &schema.GroupVersionKind{Group: "networking.k8s.io", Version: "v1", Kind: kind}
 
 	// Policy API (policy/v1)
-	case "PodDisruptionBudget":
+	case kinds.PodDisruptionBudget:
 		return &schema.GroupVersionKind{Group: "policy", Version: "v1", Kind: kind}
 
 	// Storage API (storage.k8s.io/v1)
-	case "StorageClass":
+	case kinds.StorageClass:
 		return &schema.GroupVersionKind{Group: "storage.k8s.io", Version: "v1", Kind: kind}
 
 	// Scheduling API (scheduling.k8s.io/v1)
-	case "PriorityClass":
+	case kinds.PriorityClass:
 		return &schema.GroupVersionKind{Group: "scheduling.k8s.io", Version: "v1", Kind: kind}
 
 	// Extensions (apiextensions.k8s.io/v1)
-	case "CustomResourceDefinition":
+	case kinds.CustomResourceDefinition:
 		return &schema.GroupVersionKind{Group: "apiextensions.k8s.io", Version: "v1", Kind: kind}
 
 	// Admission (admissionregistration.k8s.io/v1)
-	case "MutatingWebhookConfiguration", "ValidatingWebhookConfiguration",
-		"ValidatingAdmissionPolicy", "ValidatingAdmissionPolicyBinding":
+	case kinds.MutatingWebhookConfiguration, kinds.ValidatingWebhookConfiguration,
+		kinds.ValidatingAdmissionPolicy, kinds.ValidatingAdmissionPolicyBinding:
 		return &schema.GroupVersionKind{Group: "admissionregistration.k8s.io", Version: "v1", Kind: kind}
 
 	// Autoscaling (autoscaling/v2)
-	case "HorizontalPodAutoscaler":
+	case kinds.HorizontalPodAutoscaler:
 		return &schema.GroupVersionKind{Group: "autoscaling", Version: "v2", Kind: kind}
 
 	// API registration (apiregistration.k8s.io/v1)
-	case "APIService":
+	case kinds.APIService:
 		return &schema.GroupVersionKind{Group: "apiregistration.k8s.io", Version: "v1", Kind: kind}
 
 	// Multus (k8s.cni.cncf.io/v1)
-	case "NetworkAttachmentDefinition":
+	case kinds.NetworkAttachmentDefinition:
 		return &schema.GroupVersionKind{Group: "k8s.cni.cncf.io", Version: "v1", Kind: kind}
 
 	// OVN-Kubernetes (k8s.ovn.org/v1)
-	case "RouteAdvertisements":
+	case kinds.RouteAdvertisements:
 		return &schema.GroupVersionKind{Group: "k8s.ovn.org", Version: "v1", Kind: kind}
 
 	default:

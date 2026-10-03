@@ -14,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	k8sv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/operator/api/v1alpha1"
+	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/kinds"
 	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/renderer"
 )
 
@@ -23,6 +24,15 @@ type ResourceDeployer struct {
 	Scheme *runtime.Scheme
 }
 
+// Labels that identify the resources an OVNK8sOperator instance manages.
+const (
+	LabelManagedBy = "app.kubernetes.io/managed-by"
+	LabelOwner     = "ovnk8s-operator.ovn.org/ovnk8soperator"
+
+	// ManagedBy is the LabelManagedBy value on operator-managed resources.
+	ManagedBy = "ovnk8s-operator"
+)
+
 // WorkloadResource represents a main workload resource that needs validation
 type WorkloadResource struct {
 	Object client.Object
@@ -31,9 +41,9 @@ type WorkloadResource struct {
 }
 
 // NewResourceDeployer creates a new ResourceDeployer instance
-func NewResourceDeployer(client client.Client, scheme *runtime.Scheme) *ResourceDeployer {
+func NewResourceDeployer(k8sClient client.Client, scheme *runtime.Scheme) *ResourceDeployer {
 	return &ResourceDeployer{
-		Client: client,
+		Client: k8sClient,
 		Scheme: scheme,
 	}
 }
@@ -104,8 +114,8 @@ func (d *ResourceDeployer) deployManifest(ctx context.Context, manifest *rendere
 	if labels == nil {
 		labels = make(map[string]string)
 	}
-	labels["app.kubernetes.io/managed-by"] = "ovnk8s-operator"
-	labels["ovnk8s-operator.ovn.org/ovnk8soperator"] = owner.GetName()
+	labels[LabelManagedBy] = ManagedBy
+	labels[LabelOwner] = owner.GetName()
 	labels["ovnk8s-operator.ovn.org/component"] = componentName
 	obj.SetLabels(labels)
 
@@ -158,7 +168,7 @@ func (d *ResourceDeployer) createOrUpdate(ctx context.Context, obj client.Object
 // isWorkloadResource checks if the resource type is a main workload that needs validation
 func isWorkloadResource(resourceType string) bool {
 	switch resourceType {
-	case "Deployment", "DaemonSet", "StatefulSet":
+	case kinds.Deployment, kinds.DaemonSet, kinds.StatefulSet:
 		return true
 	default:
 		return false

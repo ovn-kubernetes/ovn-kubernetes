@@ -6,6 +6,7 @@ package validator
 import (
 	"fmt"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/kinds"
 	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -41,7 +42,7 @@ func convertToTyped[T any](obj client.Object, typeName string) (*T, error) {
 type DeploymentValidator struct{}
 
 func (d *DeploymentValidator) ValidateReadiness(obj client.Object) (*ValidationResult, error) {
-	deployment, err := convertToTyped[appsv1.Deployment](obj, "Deployment")
+	deployment, err := convertToTyped[appsv1.Deployment](obj, kinds.Deployment)
 	if err != nil {
 		return nil, err
 	}
@@ -59,7 +60,7 @@ func (d *DeploymentValidator) ValidateReadiness(obj client.Object) (*ValidationR
 	if ready == desired && available == desired && updated == desired {
 		return &ValidationResult{
 			WorkloadName: deployment.Name,
-			WorkloadType: "Deployment",
+			WorkloadType: kinds.Deployment,
 			Ready:        true,
 			Message:      fmt.Sprintf("Ready: %d/%d, Available: %d/%d, Updated: %d/%d", ready, desired, available, desired, updated, desired),
 		}, nil
@@ -70,7 +71,7 @@ func (d *DeploymentValidator) ValidateReadiness(obj client.Object) (*ValidationR
 		if condition.Type == appsv1.DeploymentProgressing && condition.Status == "False" {
 			return &ValidationResult{
 				WorkloadName: deployment.Name,
-				WorkloadType: "Deployment",
+				WorkloadType: kinds.Deployment,
 				Ready:        false,
 				Message:      fmt.Sprintf("Deployment failed to progress: %s", condition.Message),
 			}, nil
@@ -79,7 +80,7 @@ func (d *DeploymentValidator) ValidateReadiness(obj client.Object) (*ValidationR
 
 	return &ValidationResult{
 		WorkloadName: deployment.Name,
-		WorkloadType: "Deployment",
+		WorkloadType: kinds.Deployment,
 		Ready:        false,
 		Message:      fmt.Sprintf("Ready: %d/%d, Available: %d/%d, Updated: %d/%d", ready, desired, available, desired, updated, desired),
 	}, nil
@@ -89,7 +90,7 @@ func (d *DeploymentValidator) ValidateReadiness(obj client.Object) (*ValidationR
 type DaemonSetValidator struct{}
 
 func (d *DaemonSetValidator) ValidateReadiness(obj client.Object) (*ValidationResult, error) {
-	daemonSet, err := convertToTyped[appsv1.DaemonSet](obj, "DaemonSet")
+	daemonSet, err := convertToTyped[appsv1.DaemonSet](obj, kinds.DaemonSet)
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +104,7 @@ func (d *DaemonSetValidator) ValidateReadiness(obj client.Object) (*ValidationRe
 	if desired > 0 && ready == desired && available == desired && updated == desired {
 		return &ValidationResult{
 			WorkloadName: daemonSet.Name,
-			WorkloadType: "DaemonSet",
+			WorkloadType: kinds.DaemonSet,
 			Ready:        true,
 			Message:      fmt.Sprintf("Ready: %d/%d, Available: %d/%d, Updated: %d/%d", ready, desired, available, desired, updated, desired),
 		}, nil
@@ -113,7 +114,7 @@ func (d *DaemonSetValidator) ValidateReadiness(obj client.Object) (*ValidationRe
 	if daemonSet.Status.NumberMisscheduled > 0 {
 		return &ValidationResult{
 			WorkloadName: daemonSet.Name,
-			WorkloadType: "DaemonSet",
+			WorkloadType: kinds.DaemonSet,
 			Ready:        false,
 			Message:      fmt.Sprintf("Ready: %d/%d, Misscheduled: %d", ready, desired, daemonSet.Status.NumberMisscheduled),
 		}, nil
@@ -121,7 +122,7 @@ func (d *DaemonSetValidator) ValidateReadiness(obj client.Object) (*ValidationRe
 
 	return &ValidationResult{
 		WorkloadName: daemonSet.Name,
-		WorkloadType: "DaemonSet",
+		WorkloadType: kinds.DaemonSet,
 		Ready:        false,
 		Message:      fmt.Sprintf("Ready: %d/%d, Available: %d/%d, Updated: %d/%d", ready, desired, available, desired, updated, desired),
 	}, nil
@@ -131,7 +132,7 @@ func (d *DaemonSetValidator) ValidateReadiness(obj client.Object) (*ValidationRe
 type StatefulSetValidator struct{}
 
 func (s *StatefulSetValidator) ValidateReadiness(obj client.Object) (*ValidationResult, error) {
-	statefulSet, err := convertToTyped[appsv1.StatefulSet](obj, "StatefulSet")
+	statefulSet, err := convertToTyped[appsv1.StatefulSet](obj, kinds.StatefulSet)
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +150,7 @@ func (s *StatefulSetValidator) ValidateReadiness(obj client.Object) (*Validation
 	if ready == desired && current == desired && updated == desired {
 		return &ValidationResult{
 			WorkloadName: statefulSet.Name,
-			WorkloadType: "StatefulSet",
+			WorkloadType: kinds.StatefulSet,
 			Ready:        true,
 			Message:      fmt.Sprintf("Ready: %d/%d, Current: %d/%d, Updated: %d/%d", ready, desired, current, desired, updated, desired),
 		}, nil
@@ -157,7 +158,7 @@ func (s *StatefulSetValidator) ValidateReadiness(obj client.Object) (*Validation
 
 	return &ValidationResult{
 		WorkloadName: statefulSet.Name,
-		WorkloadType: "StatefulSet",
+		WorkloadType: kinds.StatefulSet,
 		Ready:        false,
 		Message:      fmt.Sprintf("Ready: %d/%d, Current: %d/%d, Updated: %d/%d", ready, desired, current, desired, updated, desired),
 	}, nil

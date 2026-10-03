@@ -6,6 +6,7 @@ package deployer_test
 import (
 	"context"
 
+	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -15,6 +16,7 @@ import (
 
 	k8sv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/operator/api/v1alpha1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/deployer"
+	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/kinds"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -36,8 +38,8 @@ var _ = Describe("CleanupResources", func() {
 		// Create OVNK8sOperator instance
 		ovnk8sOperator = &k8sv1alpha1.OVNK8sOperator{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      "test-operator",
-				Namespace: "test-namespace",
+				Name:      testOperatorName,
+				Namespace: testNamespace,
 			},
 			Spec: k8sv1alpha1.OVNK8sOperatorSpec{
 				Global: k8sv1alpha1.GlobalConfig{Namespace: "ovn-kubernetes"},
@@ -50,28 +52,28 @@ var _ = Describe("CleanupResources", func() {
 			// Create fake resources with operator labels
 			deployment := &unstructured.Unstructured{}
 			deployment.SetGroupVersionKind(schema.GroupVersionKind{
-				Group:   "apps",
+				Group:   appsv1.GroupName,
 				Version: "v1",
-				Kind:    "Deployment",
+				Kind:    kinds.Deployment,
 			})
 			deployment.SetName("test-deployment")
 			deployment.SetNamespace("ovn-kubernetes")
 			deployment.SetLabels(map[string]string{
-				"app.kubernetes.io/managed-by":           "ovnk8s-operator",
-				"ovnk8s-operator.ovn.org/ovnk8soperator": "test-operator",
+				deployer.LabelManagedBy: deployer.ManagedBy,
+				deployer.LabelOwner:     testOperatorName,
 			})
 
 			service := &unstructured.Unstructured{}
 			service.SetGroupVersionKind(schema.GroupVersionKind{
 				Group:   "",
 				Version: "v1",
-				Kind:    "Service",
+				Kind:    kinds.Service,
 			})
 			service.SetName("test-service")
 			service.SetNamespace("ovn-kubernetes")
 			service.SetLabels(map[string]string{
-				"app.kubernetes.io/managed-by":           "ovnk8s-operator",
-				"ovnk8s-operator.ovn.org/ovnk8soperator": "test-operator",
+				deployer.LabelManagedBy: deployer.ManagedBy,
+				deployer.LabelOwner:     testOperatorName,
 			})
 
 			// Create fake client with resources
@@ -90,9 +92,9 @@ var _ = Describe("CleanupResources", func() {
 			// Verify deployment was deleted
 			deploymentList := &unstructured.UnstructuredList{}
 			deploymentList.SetGroupVersionKind(schema.GroupVersionKind{
-				Group:   "apps",
+				Group:   appsv1.GroupName,
 				Version: "v1",
-				Kind:    "DeploymentList",
+				Kind:    deploymentListKind,
 			})
 			err = fakeClient.List(ctx, deploymentList)
 			Expect(err).ToNot(HaveOccurred())
@@ -113,15 +115,15 @@ var _ = Describe("CleanupResources", func() {
 		It("should delete a labelled NetworkAttachmentDefinition", func() {
 			nad := &unstructured.Unstructured{}
 			nad.SetGroupVersionKind(schema.GroupVersionKind{
-				Group:   "k8s.cni.cncf.io",
+				Group:   nadGroup,
 				Version: "v1",
-				Kind:    "NetworkAttachmentDefinition",
+				Kind:    kinds.NetworkAttachmentDefinition,
 			})
 			nad.SetName("ovn-primary")
 			nad.SetNamespace("ovn-kubernetes")
 			nad.SetLabels(map[string]string{
-				"app.kubernetes.io/managed-by":           "ovnk8s-operator",
-				"ovnk8s-operator.ovn.org/ovnk8soperator": "test-operator",
+				deployer.LabelManagedBy: deployer.ManagedBy,
+				deployer.LabelOwner:     testOperatorName,
 			})
 
 			fakeClient = fake.NewClientBuilder().
@@ -134,7 +136,7 @@ var _ = Describe("CleanupResources", func() {
 
 			nadList := &unstructured.UnstructuredList{}
 			nadList.SetGroupVersionKind(schema.GroupVersionKind{
-				Group:   "k8s.cni.cncf.io",
+				Group:   nadGroup,
 				Version: "v1",
 				Kind:    "NetworkAttachmentDefinitionList",
 			})
@@ -145,14 +147,14 @@ var _ = Describe("CleanupResources", func() {
 		It("should delete a labelled RouteAdvertisements", func() {
 			routeAdvertisements := &unstructured.Unstructured{}
 			routeAdvertisements.SetGroupVersionKind(schema.GroupVersionKind{
-				Group:   "k8s.ovn.org",
+				Group:   ovnGroup,
 				Version: "v1",
-				Kind:    "RouteAdvertisements",
+				Kind:    kinds.RouteAdvertisements,
 			})
 			routeAdvertisements.SetName("advertise-default-network")
 			routeAdvertisements.SetLabels(map[string]string{
-				"app.kubernetes.io/managed-by":           "ovnk8s-operator",
-				"ovnk8s-operator.ovn.org/ovnk8soperator": "test-operator",
+				deployer.LabelManagedBy: deployer.ManagedBy,
+				deployer.LabelOwner:     testOperatorName,
 			})
 
 			fakeClient = fake.NewClientBuilder().
@@ -165,7 +167,7 @@ var _ = Describe("CleanupResources", func() {
 
 			routeAdvertisementsList := &unstructured.UnstructuredList{}
 			routeAdvertisementsList.SetGroupVersionKind(schema.GroupVersionKind{
-				Group:   "k8s.ovn.org",
+				Group:   ovnGroup,
 				Version: "v1",
 				Kind:    "RouteAdvertisementsList",
 			})
@@ -177,12 +179,12 @@ var _ = Describe("CleanupResources", func() {
 			// Add a resource without matching labels
 			otherDeployment := &unstructured.Unstructured{}
 			otherDeployment.SetGroupVersionKind(schema.GroupVersionKind{
-				Group:   "apps",
+				Group:   appsv1.GroupName,
 				Version: "v1",
-				Kind:    "Deployment",
+				Kind:    kinds.Deployment,
 			})
 			otherDeployment.SetName("other-deployment")
-			otherDeployment.SetNamespace("default")
+			otherDeployment.SetNamespace(metav1.NamespaceDefault)
 			otherDeployment.SetLabels(map[string]string{
 				"app": "other-app",
 			})
@@ -200,9 +202,9 @@ var _ = Describe("CleanupResources", func() {
 			// Verify other deployment was NOT deleted
 			deploymentList := &unstructured.UnstructuredList{}
 			deploymentList.SetGroupVersionKind(schema.GroupVersionKind{
-				Group:   "apps",
+				Group:   appsv1.GroupName,
 				Version: "v1",
-				Kind:    "DeploymentList",
+				Kind:    deploymentListKind,
 			})
 			err = fakeClient.List(ctx, deploymentList)
 			Expect(err).ToNot(HaveOccurred())
@@ -213,13 +215,13 @@ var _ = Describe("CleanupResources", func() {
 		It("should not delete matching resources from another namespace", func() {
 			otherDeployment := &unstructured.Unstructured{}
 			otherDeployment.SetGroupVersionKind(schema.GroupVersionKind{
-				Group: "apps", Version: "v1", Kind: "Deployment",
+				Group: appsv1.GroupName, Version: "v1", Kind: kinds.Deployment,
 			})
 			otherDeployment.SetName("other-deployment")
 			otherDeployment.SetNamespace("other-namespace")
 			otherDeployment.SetLabels(map[string]string{
-				"app.kubernetes.io/managed-by":           "ovnk8s-operator",
-				"ovnk8s-operator.ovn.org/ovnk8soperator": "test-operator",
+				deployer.LabelManagedBy: deployer.ManagedBy,
+				deployer.LabelOwner:     testOperatorName,
 			})
 
 			fakeClient = fake.NewClientBuilder().
@@ -231,7 +233,7 @@ var _ = Describe("CleanupResources", func() {
 			Expect(resourceDeployer.CleanupResources(ctx, ovnk8sOperator)).To(Succeed())
 			deploymentList := &unstructured.UnstructuredList{}
 			deploymentList.SetGroupVersionKind(schema.GroupVersionKind{
-				Group: "apps", Version: "v1", Kind: "DeploymentList",
+				Group: appsv1.GroupName, Version: "v1", Kind: deploymentListKind,
 			})
 			Expect(fakeClient.List(ctx, deploymentList)).To(Succeed())
 			Expect(deploymentList.Items).To(HaveLen(1))

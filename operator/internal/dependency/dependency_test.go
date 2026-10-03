@@ -10,6 +10,11 @@ import (
 	. "github.com/onsi/gomega"
 )
 
+const (
+	masterComponent = "ovn-master"
+	nodeComponent   = "ovn-node"
+)
+
 // Test the DAG (Directed Acyclic Graph) functionality
 var _ = Describe("DAG", func() {
 	var dag *dependency.DAG
@@ -33,11 +38,11 @@ var _ = Describe("DAG", func() {
 	// Test adding components without dependencies
 	Context("when adding components without dependencies", func() {
 		It("should handle a single component", func() {
-			dag.AddComponent("ovn-master", []string{})
+			dag.AddComponent(masterComponent, []string{})
 
 			order, err := dag.GetUpgradeOrder()
 			Expect(err).ToNot(HaveOccurred())
-			Expect(order).To(Equal([]string{"ovn-master"}))
+			Expect(order).To(Equal([]string{masterComponent}))
 		})
 
 		It("should handle multiple independent components", func() {
@@ -57,26 +62,26 @@ var _ = Describe("DAG", func() {
 	Context("when components have simple dependencies", func() {
 		It("should handle a linear dependency chain", func() {
 			// ovn-node depends on ovn-master
-			dag.AddComponent("ovn-master", []string{})
-			dag.AddComponent("ovn-node", []string{"ovn-master"})
+			dag.AddComponent(masterComponent, []string{})
+			dag.AddComponent(nodeComponent, []string{masterComponent})
 
 			order, err := dag.GetUpgradeOrder()
 			Expect(err).ToNot(HaveOccurred())
-			Expect(order).To(Equal([]string{"ovn-master", "ovn-node"}))
+			Expect(order).To(Equal([]string{masterComponent, nodeComponent}))
 		})
 
 		It("should handle multiple components depending on the same component", func() {
 			// Both ovn-node and ovn-controller depend on ovn-master
-			dag.AddComponent("ovn-master", []string{})
-			dag.AddComponent("ovn-node", []string{"ovn-master"})
-			dag.AddComponent("ovn-controller", []string{"ovn-master"})
+			dag.AddComponent(masterComponent, []string{})
+			dag.AddComponent(nodeComponent, []string{masterComponent})
+			dag.AddComponent("ovn-controller", []string{masterComponent})
 
 			order, err := dag.GetUpgradeOrder()
 			Expect(err).ToNot(HaveOccurred())
 
 			// ovn-master should be first, others can be in any order but alphabetically sorted
-			Expect(order[0]).To(Equal("ovn-master"))
-			Expect(order[1:]).To(ConsistOf("ovn-controller", "ovn-node"))
+			Expect(order[0]).To(Equal(masterComponent))
+			Expect(order[1:]).To(ConsistOf("ovn-controller", nodeComponent))
 		})
 	})
 
@@ -108,13 +113,13 @@ var _ = Describe("DAG", func() {
 			// Create a realistic OVN scenario:
 			// global -> ovn-master -> ovn-node -> ovn-controller
 			dag.AddComponent("global", []string{})
-			dag.AddComponent("ovn-master", []string{"global"})
-			dag.AddComponent("ovn-node", []string{"ovn-master"})
-			dag.AddComponent("ovn-controller", []string{"ovn-node"})
+			dag.AddComponent(masterComponent, []string{"global"})
+			dag.AddComponent(nodeComponent, []string{masterComponent})
+			dag.AddComponent("ovn-controller", []string{nodeComponent})
 
 			order, err := dag.GetUpgradeOrder()
 			Expect(err).ToNot(HaveOccurred())
-			Expect(order).To(Equal([]string{"global", "ovn-master", "ovn-node", "ovn-controller"}))
+			Expect(order).To(Equal([]string{"global", masterComponent, nodeComponent, "ovn-controller"}))
 		})
 	})
 
@@ -157,7 +162,7 @@ var _ = Describe("DAG", func() {
 	Context("when handling edge cases", func() {
 		It("should detect disconnected components (dependencies that don't exist)", func() {
 			// Component depends on something that doesn't exist
-			dag.AddComponent("ovn-node", []string{"non-existent-master"})
+			dag.AddComponent(nodeComponent, []string{"non-existent-master"})
 
 			_, err := dag.GetUpgradeOrder()
 			Expect(err).To(HaveOccurred())
@@ -167,13 +172,13 @@ var _ = Describe("DAG", func() {
 
 		It("should handle adding the same component multiple times", func() {
 			// Adding same component twice should overwrite
-			dag.AddComponent("ovn-master", []string{})
-			dag.AddComponent("ovn-master", []string{}) // No dependencies this time
+			dag.AddComponent(masterComponent, []string{})
+			dag.AddComponent(masterComponent, []string{}) // No dependencies this time
 
 			order, err := dag.GetUpgradeOrder()
 			Expect(err).ToNot(HaveOccurred())
 			// Should only appear once in the result
-			Expect(order).To(Equal([]string{"ovn-master"}))
+			Expect(order).To(Equal([]string{masterComponent}))
 		})
 
 		It("should maintain consistent ordering across multiple calls", func() {

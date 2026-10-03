@@ -11,6 +11,8 @@ import (
 	. "github.com/onsi/gomega"
 )
 
+const controlPlaneManifestFile = "deployment.yaml[0]"
+
 var _ = Describe("ApplyPatches", func() {
 	var baseManifest string
 
@@ -35,14 +37,14 @@ spec:
 	Describe("JSON Patch (RFC 6902)", func() {
 		It("should replace a value", func() {
 			manifests := renderer.ComponentManifests{
-				"ovnkubeControlPlane": []*renderer.RenderedManifest{
-					{Content: baseManifest, FileName: "deployment.yaml[0]"},
+				k8sv1alpha1.ComponentOvnkubeControlPlane: []*renderer.RenderedManifest{
+					{Content: baseManifest, FileName: controlPlaneManifestFile},
 				},
 			}
 
 			overrides := []k8sv1alpha1.ComponentOverride{
 				{
-					ResourceName: "ovnkubeControlPlane",
+					ResourceName: k8sv1alpha1.ComponentOvnkubeControlPlane,
 					Patches: []k8sv1alpha1.ComponentPatch{
 						{
 							Type: k8sv1alpha1.JSONPatchType,
@@ -56,19 +58,19 @@ spec:
 
 			err := renderer.ApplyPatches(manifests, overrides)
 			Expect(err).ToNot(HaveOccurred())
-			Expect(manifests["ovnkubeControlPlane"][0].Content).To(ContainSubstring("replicas: 5"))
+			Expect(manifests[k8sv1alpha1.ComponentOvnkubeControlPlane][0].Content).To(ContainSubstring("replicas: 5"))
 		})
 
 		It("should add a field", func() {
 			manifests := renderer.ComponentManifests{
-				"ovnkubeControlPlane": []*renderer.RenderedManifest{
-					{Content: baseManifest, FileName: "deployment.yaml[0]"},
+				k8sv1alpha1.ComponentOvnkubeControlPlane: []*renderer.RenderedManifest{
+					{Content: baseManifest, FileName: controlPlaneManifestFile},
 				},
 			}
 
 			overrides := []k8sv1alpha1.ComponentOverride{
 				{
-					ResourceName: "ovnkubeControlPlane",
+					ResourceName: k8sv1alpha1.ComponentOvnkubeControlPlane,
 					Patches: []k8sv1alpha1.ComponentPatch{
 						{
 							Type: k8sv1alpha1.JSONPatchType,
@@ -82,19 +84,19 @@ spec:
 
 			err := renderer.ApplyPatches(manifests, overrides)
 			Expect(err).ToNot(HaveOccurred())
-			Expect(manifests["ovnkubeControlPlane"][0].Content).To(ContainSubstring("custom: label"))
+			Expect(manifests[k8sv1alpha1.ComponentOvnkubeControlPlane][0].Content).To(ContainSubstring("custom: label"))
 		})
 
 		It("should replace container resources", func() {
 			manifests := renderer.ComponentManifests{
-				"ovnkubeControlPlane": []*renderer.RenderedManifest{
-					{Content: baseManifest, FileName: "deployment.yaml[0]"},
+				k8sv1alpha1.ComponentOvnkubeControlPlane: []*renderer.RenderedManifest{
+					{Content: baseManifest, FileName: controlPlaneManifestFile},
 				},
 			}
 
 			overrides := []k8sv1alpha1.ComponentOverride{
 				{
-					ResourceName: "ovnkubeControlPlane",
+					ResourceName: k8sv1alpha1.ComponentOvnkubeControlPlane,
 					Patches: []k8sv1alpha1.ComponentPatch{
 						{
 							Type: k8sv1alpha1.JSONPatchType,
@@ -110,7 +112,7 @@ spec:
 
 			err := renderer.ApplyPatches(manifests, overrides)
 			Expect(err).ToNot(HaveOccurred())
-			content := manifests["ovnkubeControlPlane"][0].Content
+			content := manifests[k8sv1alpha1.ComponentOvnkubeControlPlane][0].Content
 			Expect(content).To(ContainSubstring("cpu: 200m"))
 			Expect(content).To(ContainSubstring("memory: 512Mi"))
 			Expect(content).To(ContainSubstring("memory: 1Gi"))
@@ -118,14 +120,14 @@ spec:
 
 		It("should return error for invalid JSON patch", func() {
 			manifests := renderer.ComponentManifests{
-				"ovnkubeControlPlane": []*renderer.RenderedManifest{
-					{Content: baseManifest, FileName: "deployment.yaml[0]"},
+				k8sv1alpha1.ComponentOvnkubeControlPlane: []*renderer.RenderedManifest{
+					{Content: baseManifest, FileName: controlPlaneManifestFile},
 				},
 			}
 
 			overrides := []k8sv1alpha1.ComponentOverride{
 				{
-					ResourceName: "ovnkubeControlPlane",
+					ResourceName: k8sv1alpha1.ComponentOvnkubeControlPlane,
 					Patches: []k8sv1alpha1.ComponentPatch{
 						{Type: k8sv1alpha1.JSONPatchType, Patch: `not valid json`},
 					},
@@ -141,14 +143,14 @@ spec:
 	Describe("Merge Patch (RFC 7386)", func() {
 		It("should merge fields", func() {
 			manifests := renderer.ComponentManifests{
-				"ovnkubeControlPlane": []*renderer.RenderedManifest{
-					{Content: baseManifest, FileName: "deployment.yaml[0]"},
+				k8sv1alpha1.ComponentOvnkubeControlPlane: []*renderer.RenderedManifest{
+					{Content: baseManifest, FileName: controlPlaneManifestFile},
 				},
 			}
 
 			overrides := []k8sv1alpha1.ComponentOverride{
 				{
-					ResourceName: "ovnkubeControlPlane",
+					ResourceName: k8sv1alpha1.ComponentOvnkubeControlPlane,
 					Patches: []k8sv1alpha1.ComponentPatch{
 						{
 							Type:  k8sv1alpha1.MergePatchType,
@@ -160,19 +162,19 @@ spec:
 
 			err := renderer.ApplyPatches(manifests, overrides)
 			Expect(err).ToNot(HaveOccurred())
-			Expect(manifests["ovnkubeControlPlane"][0].Content).To(ContainSubstring("replicas: 7"))
+			Expect(manifests[k8sv1alpha1.ComponentOvnkubeControlPlane][0].Content).To(ContainSubstring("replicas: 7"))
 		})
 
 		It("should accept YAML-formatted patch", func() {
 			manifests := renderer.ComponentManifests{
-				"ovnkubeControlPlane": []*renderer.RenderedManifest{
-					{Content: baseManifest, FileName: "deployment.yaml[0]"},
+				k8sv1alpha1.ComponentOvnkubeControlPlane: []*renderer.RenderedManifest{
+					{Content: baseManifest, FileName: controlPlaneManifestFile},
 				},
 			}
 
 			overrides := []k8sv1alpha1.ComponentOverride{
 				{
-					ResourceName: "ovnkubeControlPlane",
+					ResourceName: k8sv1alpha1.ComponentOvnkubeControlPlane,
 					Patches: []k8sv1alpha1.ComponentPatch{
 						{
 							Type: k8sv1alpha1.MergePatchType,
@@ -189,7 +191,7 @@ metadata:
 
 			err := renderer.ApplyPatches(manifests, overrides)
 			Expect(err).ToNot(HaveOccurred())
-			content := manifests["ovnkubeControlPlane"][0].Content
+			content := manifests[k8sv1alpha1.ComponentOvnkubeControlPlane][0].Content
 			Expect(content).To(ContainSubstring("replicas: 10"))
 			Expect(content).To(ContainSubstring("custom: annotation"))
 		})
@@ -198,14 +200,14 @@ metadata:
 	Describe("Default patch type", func() {
 		It("should default to JSON patch when type is empty", func() {
 			manifests := renderer.ComponentManifests{
-				"ovnkubeControlPlane": []*renderer.RenderedManifest{
-					{Content: baseManifest, FileName: "deployment.yaml[0]"},
+				k8sv1alpha1.ComponentOvnkubeControlPlane: []*renderer.RenderedManifest{
+					{Content: baseManifest, FileName: controlPlaneManifestFile},
 				},
 			}
 
 			overrides := []k8sv1alpha1.ComponentOverride{
 				{
-					ResourceName: "ovnkubeControlPlane",
+					ResourceName: k8sv1alpha1.ComponentOvnkubeControlPlane,
 					Patches: []k8sv1alpha1.ComponentPatch{
 						{
 							// Type omitted — should default to JSON patch
@@ -217,21 +219,21 @@ metadata:
 
 			err := renderer.ApplyPatches(manifests, overrides)
 			Expect(err).ToNot(HaveOccurred())
-			Expect(manifests["ovnkubeControlPlane"][0].Content).To(ContainSubstring("replicas: 9"))
+			Expect(manifests[k8sv1alpha1.ComponentOvnkubeControlPlane][0].Content).To(ContainSubstring("replicas: 9"))
 		})
 	})
 
 	Describe("Multiple patches", func() {
 		It("should apply patches in order", func() {
 			manifests := renderer.ComponentManifests{
-				"ovnkubeControlPlane": []*renderer.RenderedManifest{
-					{Content: baseManifest, FileName: "deployment.yaml[0]"},
+				k8sv1alpha1.ComponentOvnkubeControlPlane: []*renderer.RenderedManifest{
+					{Content: baseManifest, FileName: controlPlaneManifestFile},
 				},
 			}
 
 			overrides := []k8sv1alpha1.ComponentOverride{
 				{
-					ResourceName: "ovnkubeControlPlane",
+					ResourceName: k8sv1alpha1.ComponentOvnkubeControlPlane,
 					Patches: []k8sv1alpha1.ComponentPatch{
 						{
 							Type:  k8sv1alpha1.MergePatchType,
@@ -249,7 +251,7 @@ metadata:
 
 			err := renderer.ApplyPatches(manifests, overrides)
 			Expect(err).ToNot(HaveOccurred())
-			content := manifests["ovnkubeControlPlane"][0].Content
+			content := manifests[k8sv1alpha1.ComponentOvnkubeControlPlane][0].Content
 			Expect(content).To(ContainSubstring("replicas: 5"))
 			Expect(content).To(ContainSubstring("env: prod"))
 		})
@@ -258,25 +260,25 @@ metadata:
 	Describe("Edge cases", func() {
 		It("should skip components with no patches", func() {
 			manifests := renderer.ComponentManifests{
-				"ovnkubeControlPlane": []*renderer.RenderedManifest{
-					{Content: baseManifest, FileName: "deployment.yaml[0]"},
+				k8sv1alpha1.ComponentOvnkubeControlPlane: []*renderer.RenderedManifest{
+					{Content: baseManifest, FileName: controlPlaneManifestFile},
 				},
 			}
 
 			overrides := []k8sv1alpha1.ComponentOverride{
-				{ResourceName: "ovnkubeControlPlane"}, // no patches
+				{ResourceName: k8sv1alpha1.ComponentOvnkubeControlPlane},
 			}
 
 			err := renderer.ApplyPatches(manifests, overrides)
 			Expect(err).ToNot(HaveOccurred())
 			// Content should be unchanged
-			Expect(manifests["ovnkubeControlPlane"][0].Content).To(Equal(baseManifest))
+			Expect(manifests[k8sv1alpha1.ComponentOvnkubeControlPlane][0].Content).To(Equal(baseManifest))
 		})
 
 		It("should skip non-existent components", func() {
 			manifests := renderer.ComponentManifests{
-				"ovnkubeControlPlane": []*renderer.RenderedManifest{
-					{Content: baseManifest, FileName: "deployment.yaml[0]"},
+				k8sv1alpha1.ComponentOvnkubeControlPlane: []*renderer.RenderedManifest{
+					{Content: baseManifest, FileName: controlPlaneManifestFile},
 				},
 			}
 
@@ -295,8 +297,8 @@ metadata:
 
 		It("should handle empty overrides", func() {
 			manifests := renderer.ComponentManifests{
-				"ovnkubeControlPlane": []*renderer.RenderedManifest{
-					{Content: baseManifest, FileName: "deployment.yaml[0]"},
+				k8sv1alpha1.ComponentOvnkubeControlPlane: []*renderer.RenderedManifest{
+					{Content: baseManifest, FileName: controlPlaneManifestFile},
 				},
 			}
 
@@ -317,15 +319,15 @@ spec:
   - port: 9411`
 
 			manifests := renderer.ComponentManifests{
-				"ovnkubeControlPlane": []*renderer.RenderedManifest{
-					{Content: baseManifest, FileName: "deployment.yaml[0]"},
+				k8sv1alpha1.ComponentOvnkubeControlPlane: []*renderer.RenderedManifest{
+					{Content: baseManifest, FileName: controlPlaneManifestFile},
 					{Content: serviceManifest, FileName: "deployment.yaml[1]"},
 				},
 			}
 
 			overrides := []k8sv1alpha1.ComponentOverride{
 				{
-					ResourceName: "ovnkubeControlPlane",
+					ResourceName: k8sv1alpha1.ComponentOvnkubeControlPlane,
 					Patches: []k8sv1alpha1.ComponentPatch{
 						{
 							Type:  k8sv1alpha1.MergePatchType,
@@ -339,10 +341,10 @@ spec:
 			Expect(err).ToNot(HaveOccurred())
 
 			// Deployment should be patched
-			Expect(manifests["ovnkubeControlPlane"][0].Content).To(ContainSubstring("replicas: 5"))
+			Expect(manifests[k8sv1alpha1.ComponentOvnkubeControlPlane][0].Content).To(ContainSubstring("replicas: 5"))
 
 			// Service should be untouched
-			Expect(manifests["ovnkubeControlPlane"][1].Content).To(Equal(serviceManifest))
+			Expect(manifests[k8sv1alpha1.ComponentOvnkubeControlPlane][1].Content).To(Equal(serviceManifest))
 		})
 
 		It("should patch DaemonSet but not ConfigMap", func() {

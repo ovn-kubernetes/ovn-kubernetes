@@ -11,7 +11,7 @@ package dependency
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 )
 
 // Component represents a node in the DAG
@@ -119,7 +119,7 @@ func (d *DAG) GetUpgradeOrder() ([]string, error) {
 	}
 
 	// Sort queue to ensure consistent order
-	sort.Strings(queue)
+	slices.Sort(queue)
 
 	var result []string
 	for len(queue) > 0 {
@@ -137,7 +137,7 @@ func (d *DAG) GetUpgradeOrder() ([]string, error) {
 			}
 		}
 		// Sort queue again to maintain consistent order
-		sort.Strings(queue)
+		slices.Sort(queue)
 	}
 
 	// Check if we processed all nodes

@@ -15,6 +15,7 @@ import (
 
 	k8sv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/operator/api/v1alpha1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/deployer"
+	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/kinds"
 	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/renderer"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -40,8 +41,8 @@ var _ = Describe("Manifest Classification", func() {
 
 		ovnk8sOperator = &k8sv1alpha1.OVNK8sOperator{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      "test-operator",
-				Namespace: "test-namespace",
+				Name:      testOperatorName,
+				Namespace: testNamespace,
 			},
 		}
 	})
@@ -57,8 +58,8 @@ metadata:
   name: test-config
 data:
   key: value`,
-						TemplatePath: "templates/configmap.yaml",
-						FileName:     "configmap.yaml",
+						TemplatePath: configMapTemplatePath,
+						FileName:     configMapFileName,
 					},
 				}
 
@@ -80,8 +81,8 @@ metadata:
   name: test-config
 data:
   key: value`,
-						TemplatePath: "templates/configmap.yaml",
-						FileName:     "configmap.yaml",
+						TemplatePath: configMapTemplatePath,
+						FileName:     configMapFileName,
 					},
 					{
 						Content: `apiVersion: v1
@@ -114,8 +115,8 @@ spec:
       containers:
       - name: test
         image: nginx`,
-						TemplatePath: "templates/deployment.yaml",
-						FileName:     "deployment.yaml",
+						TemplatePath: deploymentTemplatePath,
+						FileName:     deploymentFileName,
 					},
 				}
 
@@ -123,7 +124,7 @@ spec:
 
 				Expect(err).ToNot(HaveOccurred())
 				Expect(workloads).To(HaveLen(1)) // Only Deployment is a workload
-				Expect(workloads[0].Type).To(Equal("Deployment"))
+				Expect(workloads[0].Type).To(Equal(kinds.Deployment))
 			})
 
 			It("should classify multiple manifests of the same type", func() {
@@ -255,25 +256,25 @@ metadata:
 					isWorkload   bool
 				}{
 					{
-						name: "ConfigMap",
+						name: kinds.ConfigMap,
 						content: `apiVersion: v1
 kind: ConfigMap
 metadata:
   name: test`,
-						expectedType: "ConfigMap",
+						expectedType: kinds.ConfigMap,
 						isWorkload:   false,
 					},
 					{
-						name: "Service",
+						name: kinds.Service,
 						content: `apiVersion: v1
 kind: Service
 metadata:
   name: test`,
-						expectedType: "Service",
+						expectedType: kinds.Service,
 						isWorkload:   false,
 					},
 					{
-						name: "Deployment",
+						name: kinds.Deployment,
 						content: `apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -291,11 +292,11 @@ spec:
       containers:
       - name: test
         image: nginx`,
-						expectedType: "Deployment",
+						expectedType: kinds.Deployment,
 						isWorkload:   true,
 					},
 					{
-						name: "DaemonSet",
+						name: kinds.DaemonSet,
 						content: `apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -312,11 +313,11 @@ spec:
       containers:
       - name: test
         image: nginx`,
-						expectedType: "DaemonSet",
+						expectedType: kinds.DaemonSet,
 						isWorkload:   true,
 					},
 					{
-						name: "StatefulSet",
+						name: kinds.StatefulSet,
 						content: `apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -334,31 +335,31 @@ spec:
       containers:
       - name: test
         image: nginx`,
-						expectedType: "StatefulSet",
+						expectedType: kinds.StatefulSet,
 						isWorkload:   true,
 					},
 					{
-						name: "Secret",
+						name: kinds.Secret,
 						content: `apiVersion: v1
 kind: Secret
 metadata:
   name: test
 data:
   key: dmFsdWU=`,
-						expectedType: "Secret",
+						expectedType: kinds.Secret,
 						isWorkload:   false,
 					},
 					{
-						name: "ServiceAccount",
+						name: kinds.ServiceAccount,
 						content: `apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: test`,
-						expectedType: "ServiceAccount",
+						expectedType: kinds.ServiceAccount,
 						isWorkload:   false,
 					},
 					{
-						name: "ClusterRole",
+						name: kinds.ClusterRole,
 						content: `apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -367,7 +368,7 @@ rules:
 - apiGroups: [""]
   resources: ["pods"]
   verbs: ["get", "list"]`,
-						expectedType: "ClusterRole",
+						expectedType: kinds.ClusterRole,
 						isWorkload:   false,
 					},
 				}
@@ -425,7 +426,7 @@ spec:
 
 				Expect(err).ToNot(HaveOccurred())
 				Expect(workloads).To(HaveLen(1))
-				Expect(workloads[0].Type).To(Equal("Deployment"))
+				Expect(workloads[0].Type).To(Equal(kinds.Deployment))
 			})
 
 			It("should fail fast on a kind missing from ResourceOrder", func() {

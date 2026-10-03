@@ -19,11 +19,14 @@ import (
 	k8sv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/operator/api/v1alpha1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/defaults"
 	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/deployer"
+	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/kinds"
 	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/status"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
+
+const testVersion = "1.0.0"
 
 var _ = Describe("StatusManager", func() {
 	var (
@@ -84,10 +87,10 @@ var _ = Describe("StatusManager", func() {
 			}).
 			Build()
 		testConfig := &defaults.EmbeddedConfig{
-			Version: "1.0.0",
+			Version: testVersion,
 			Components: []defaults.EmbeddedComponent{
-				{ResourceName: "ovnkubeControlPlane", ResourceType: "Deployment"},
-				{ResourceName: "ovnkubeNode", ResourceType: "DaemonSet"},
+				{ResourceName: "ovnkubeControlPlane", ResourceType: kinds.Deployment},
+				{ResourceName: "ovnkubeNode", ResourceType: kinds.DaemonSet},
 			},
 		}
 		statusManager = status.NewStatusManager(statusClient, testConfig)
@@ -116,7 +119,7 @@ var _ = Describe("StatusManager", func() {
 			It("should extract replica information from Deployment", func() {
 				deployment := &appsv1.Deployment{
 					Spec: appsv1.DeploymentSpec{
-						Replicas: int32Ptr(5),
+						Replicas: new(int32(5)),
 					},
 					Status: appsv1.DeploymentStatus{
 						ReadyReplicas: 3,
@@ -163,7 +166,7 @@ var _ = Describe("StatusManager", func() {
 			It("should extract replica information from StatefulSet", func() {
 				statefulSet := &appsv1.StatefulSet{
 					Spec: appsv1.StatefulSetSpec{
-						Replicas: int32Ptr(3),
+						Replicas: new(int32(3)),
 					},
 					Status: appsv1.StatefulSetStatus{
 						ReadyReplicas: 2,
@@ -182,7 +185,7 @@ var _ = Describe("StatusManager", func() {
 				unstructuredDeployment := &unstructured.Unstructured{
 					Object: map[string]any{
 						"apiVersion": "apps/v1",
-						"kind":       "Deployment",
+						"kind":       kinds.Deployment,
 						"spec": map[string]any{
 							"replicas": int64(4), // JSON numbers become int64
 						},
@@ -202,7 +205,7 @@ var _ = Describe("StatusManager", func() {
 				invalidObject := &unstructured.Unstructured{
 					Object: map[string]any{
 						"apiVersion": "v1",
-						"kind":       "Pod", // Wrong kind for deployment conversion
+						"kind":       kinds.Pod,
 					},
 				}
 
@@ -301,11 +304,11 @@ var _ = Describe("StatusManager", func() {
 			Expect(ovnk8sOperator.Status.UpgradeStatus).To(BeEmpty())
 
 			Expect(statusManager.UpdateRolloutInProgress(ctx, ovnk8sOperator,
-				"1.0.0", status.ReasonInstallationInProgress,
+				testVersion, status.ReasonInstallationInProgress,
 				"Installing OVN-Kubernetes release 1.0.0")).To(Succeed())
 
 			Expect(ovnk8sOperator.Status.Version).To(BeEmpty())
-			Expect(ovnk8sOperator.Status.TargetVersion).To(Equal("1.0.0"))
+			Expect(ovnk8sOperator.Status.TargetVersion).To(Equal(testVersion))
 			Expect(ovnk8sOperator.Status.UpgradeStatus).To(Equal(k8sv1alpha1.UpgradeStatusInProgress))
 
 			upgradeCondition := apimeta.FindStatusCondition(ovnk8sOperator.Status.Conditions, status.ConditionTypeUpgradeComplete)
@@ -319,11 +322,11 @@ var _ = Describe("StatusManager", func() {
 			Expect(cniCondition.Reason).To(Equal(status.ReasonCNIInitializing))
 
 			Expect(statusManager.UpdateRolloutComplete(ctx, ovnk8sOperator,
-				"1.0.0", status.ReasonInstallationCompleted,
+				testVersion, status.ReasonInstallationCompleted,
 				"Installation completed", "All CNI components operational")).To(Succeed())
 
-			Expect(ovnk8sOperator.Status.Version).To(Equal("1.0.0"))
-			Expect(ovnk8sOperator.Status.TargetVersion).To(Equal("1.0.0"))
+			Expect(ovnk8sOperator.Status.Version).To(Equal(testVersion))
+			Expect(ovnk8sOperator.Status.TargetVersion).To(Equal(testVersion))
 			Expect(ovnk8sOperator.Status.UpgradeStatus).To(Equal(k8sv1alpha1.UpgradeStatusCompleted))
 			upgradeCondition = apimeta.FindStatusCondition(ovnk8sOperator.Status.Conditions, status.ConditionTypeUpgradeComplete)
 			Expect(upgradeCondition.Status).To(Equal(metav1.ConditionTrue))
@@ -332,7 +335,7 @@ var _ = Describe("StatusManager", func() {
 		})
 
 		It("should keep the completed version until an upgrade completes", func() {
-			ovnk8sOperator.Status.Version = "1.0.0"
+			ovnk8sOperator.Status.Version = testVersion
 			ovnk8sOperator.Status.Conditions = []metav1.Condition{{
 				Type:    status.ConditionTypeCNIHealthy,
 				Status:  metav1.ConditionTrue,
@@ -345,7 +348,7 @@ var _ = Describe("StatusManager", func() {
 				"1.1.0", status.ReasonUpgradeInProgress,
 				"Upgrading OVN-Kubernetes from 1.0.0 to 1.1.0")).To(Succeed())
 
-			Expect(ovnk8sOperator.Status.Version).To(Equal("1.0.0"))
+			Expect(ovnk8sOperator.Status.Version).To(Equal(testVersion))
 			Expect(ovnk8sOperator.Status.TargetVersion).To(Equal("1.1.0"))
 			Expect(ovnk8sOperator.Status.UpgradeStatus).To(Equal(k8sv1alpha1.UpgradeStatusInProgress))
 			cniCondition := apimeta.FindStatusCondition(ovnk8sOperator.Status.Conditions, status.ConditionTypeCNIHealthy)
@@ -361,7 +364,7 @@ var _ = Describe("StatusManager", func() {
 		})
 
 		It("should atomically complete a rollout and report healthy CNI", func() {
-			ovnk8sOperator.Status.Version = "1.0.0"
+			ovnk8sOperator.Status.Version = testVersion
 
 			Expect(statusManager.UpdateRolloutComplete(ctx, ovnk8sOperator,
 				"1.1.0", status.ReasonUpgradeCompleted,
@@ -384,7 +387,7 @@ var _ = Describe("StatusManager", func() {
 			statusPatchErr = errors.New("status patch failed")
 
 			err := statusManager.UpdateRolloutInProgress(ctx, ovnk8sOperator,
-				"1.0.0", status.ReasonInstallationInProgress,
+				testVersion, status.ReasonInstallationInProgress,
 				"Installing OVN-Kubernetes release 1.0.0")
 
 			Expect(err).To(MatchError(ContainSubstring("status patch failed")))
@@ -392,18 +395,18 @@ var _ = Describe("StatusManager", func() {
 
 			statusPatchErr = nil
 			Expect(statusManager.UpdateRolloutComplete(ctx, ovnk8sOperator,
-				"1.0.0", status.ReasonInstallationCompleted,
+				testVersion, status.ReasonInstallationCompleted,
 				"Installation completed", "All CNI components operational")).To(Succeed())
 
 			persisted := &k8sv1alpha1.OVNK8sOperator{}
 			Expect(statusClient.Get(ctx, client.ObjectKeyFromObject(ovnk8sOperator), persisted)).To(Succeed())
-			Expect(persisted.Status.Version).To(Equal("1.0.0"))
-			Expect(persisted.Status.TargetVersion).To(Equal("1.0.0"))
+			Expect(persisted.Status.Version).To(Equal(testVersion))
+			Expect(persisted.Status.TargetVersion).To(Equal(testVersion))
 			Expect(persisted.Status.UpgradeStatus).To(Equal(k8sv1alpha1.UpgradeStatusCompleted))
 		})
 
 		It("should preserve completed version and CNI health on a pre-workload failure", func() {
-			ovnk8sOperator.Status.Version = "1.0.0"
+			ovnk8sOperator.Status.Version = testVersion
 			ovnk8sOperator.Status.Conditions = []metav1.Condition{{
 				Type:   status.ConditionTypeCNIHealthy,
 				Status: metav1.ConditionTrue,
@@ -415,7 +418,7 @@ var _ = Describe("StatusManager", func() {
 				"1.1.0", status.ReasonTemplateRenderingFailed,
 				"Template rendering failed")).To(Succeed())
 
-			Expect(ovnk8sOperator.Status.Version).To(Equal("1.0.0"))
+			Expect(ovnk8sOperator.Status.Version).To(Equal(testVersion))
 			Expect(ovnk8sOperator.Status.TargetVersion).To(Equal("1.1.0"))
 			Expect(ovnk8sOperator.Status.UpgradeStatus).To(Equal(k8sv1alpha1.UpgradeStatusFailed))
 			cniCondition := apimeta.FindStatusCondition(ovnk8sOperator.Status.Conditions, status.ConditionTypeCNIHealthy)
@@ -423,14 +426,14 @@ var _ = Describe("StatusManager", func() {
 		})
 
 		It("should atomically fail a rollout and report degraded CNI", func() {
-			ovnk8sOperator.Status.Version = "1.0.0"
+			ovnk8sOperator.Status.Version = testVersion
 			Expect(statusClient.Status().Update(ctx, ovnk8sOperator)).To(Succeed())
 
 			Expect(statusManager.UpdateRolloutFailedAndCNIDegraded(ctx, ovnk8sOperator,
 				"1.1.0", status.ReasonComponentDeploymentFailed,
 				"Component deployment failed", "Component is unavailable")).To(Succeed())
 
-			Expect(ovnk8sOperator.Status.Version).To(Equal("1.0.0"))
+			Expect(ovnk8sOperator.Status.Version).To(Equal(testVersion))
 			Expect(ovnk8sOperator.Status.TargetVersion).To(Equal("1.1.0"))
 			Expect(ovnk8sOperator.Status.UpgradeStatus).To(Equal(k8sv1alpha1.UpgradeStatusFailed))
 			upgradeCondition := apimeta.FindStatusCondition(ovnk8sOperator.Status.Conditions, status.ConditionTypeUpgradeComplete)
@@ -529,10 +532,10 @@ var _ = Describe("StatusManager", func() {
 
 		It("should return correct resource type for existing component", func() {
 			resourceType := testStatusManager.GetResourceType("ovnkubeControlPlane")
-			Expect(resourceType).To(Equal("Deployment"))
+			Expect(resourceType).To(Equal(kinds.Deployment))
 
 			resourceType = testStatusManager.GetResourceType("ovnkubeNode")
-			Expect(resourceType).To(Equal("DaemonSet"))
+			Expect(resourceType).To(Equal(kinds.DaemonSet))
 		})
 
 		It("should return Unknown for non-existent component", func() {
@@ -631,11 +634,11 @@ func (t *TestableStatusManager) GetStatefulSetReplicas(obj any) (int32, int32) {
 
 func (t *TestableStatusManager) GetWorkloadReplicas(workload deployer.WorkloadResource) (int32, int32) {
 	switch workload.Type {
-	case "Deployment":
+	case kinds.Deployment:
 		return t.GetDeploymentReplicas(workload.Object)
-	case "DaemonSet":
+	case kinds.DaemonSet:
 		return t.GetDaemonSetReplicas(workload.Object)
-	case "StatefulSet":
+	case kinds.StatefulSet:
 		return t.GetStatefulSetReplicas(workload.Object)
 	default:
 		return 1, 1 // Default for unknown types
@@ -646,15 +649,10 @@ func (t *TestableStatusManager) GetResourceType(componentName string) string {
 	// Test helper - hardcoded for test components
 	switch componentName {
 	case "ovnkubeControlPlane":
-		return "Deployment"
+		return kinds.Deployment
 	case "ovnkubeNode":
-		return "DaemonSet"
+		return kinds.DaemonSet
 	default:
 		return "Unknown"
 	}
-}
-
-// Helper function to create int32 pointer
-func int32Ptr(i int32) *int32 {
-	return &i
 }

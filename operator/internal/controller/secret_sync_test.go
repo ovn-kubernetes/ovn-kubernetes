@@ -24,6 +24,7 @@ const (
 	testWorkloadNamespace = "ovn-kubernetes"
 	testSecretName        = "registry-credentials"
 	testCRName            = "ovn-kubernetes"
+	staleSecretName       = "stale"
 )
 
 func newSyncScheme() *runtime.Scheme {
@@ -69,7 +70,7 @@ var _ = Describe("SyncImagePullSecrets", func() {
 	)
 
 	dockerData := map[string][]byte{
-		".dockerconfigjson": []byte(`{"auths":{"registry.example.com":{"auth":"Zm9vOmJhcg=="}}}`),
+		corev1.DockerConfigJsonKey: []byte(`{"auths":{"registry.example.com":{"auth":"Zm9vOmJhcg=="}}}`),
 	}
 
 	BeforeEach(func() {
@@ -166,7 +167,7 @@ var _ = Describe("SyncImagePullSecrets", func() {
 					Namespace: testWorkloadNamespace,
 				},
 				Type: corev1.SecretTypeDockerConfigJson,
-				Data: map[string][]byte{".dockerconfigjson": []byte("stale")},
+				Data: map[string][]byte{corev1.DockerConfigJsonKey: []byte("stale")},
 			}
 			cr := newCRWithSecrets([]string{testSecretName}, nil)
 			buildReconciler(src, unowned)
@@ -200,7 +201,7 @@ var _ = Describe("SyncImagePullSecrets", func() {
 			src := sourceSecret("current", corev1.SecretTypeDockerConfigJson, dockerData)
 			stale := &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "stale",
+					Name:      staleSecretName,
 					Namespace: testWorkloadNamespace,
 					Labels: map[string]string{
 						managedByLabel: managedByValue,
@@ -217,7 +218,7 @@ var _ = Describe("SyncImagePullSecrets", func() {
 
 			got := &corev1.Secret{}
 			err := fakeCli.Get(ctx, types.NamespacedName{
-				Namespace: testWorkloadNamespace, Name: "stale",
+				Namespace: testWorkloadNamespace, Name: staleSecretName,
 			}, got)
 			Expect(apierrors.IsNotFound(err)).To(BeTrue(), "expected stale Secret to be NotFound, got: %v", err)
 		})
@@ -248,7 +249,7 @@ var _ = Describe("SyncImagePullSecrets", func() {
 			no := false
 			stale := &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "stale",
+					Name:      staleSecretName,
 					Namespace: testWorkloadNamespace,
 					Labels: map[string]string{
 						managedByLabel: managedByValue,
@@ -265,15 +266,15 @@ var _ = Describe("SyncImagePullSecrets", func() {
 
 			got := &corev1.Secret{}
 			Expect(fakeCli.Get(ctx, types.NamespacedName{
-				Namespace: testWorkloadNamespace, Name: "stale",
+				Namespace: testWorkloadNamespace, Name: staleSecretName,
 			}, got)).To(Succeed())
 		})
 	})
 
 	Context("multiple secrets", func() {
 		It("copies all of them", func() {
-			src1 := sourceSecret("a", corev1.SecretTypeDockerConfigJson, map[string][]byte{".dockerconfigjson": []byte("one")})
-			src2 := sourceSecret("b", corev1.SecretTypeDockerConfigJson, map[string][]byte{".dockerconfigjson": []byte("two")})
+			src1 := sourceSecret("a", corev1.SecretTypeDockerConfigJson, map[string][]byte{corev1.DockerConfigJsonKey: []byte("one")})
+			src2 := sourceSecret("b", corev1.SecretTypeDockerConfigJson, map[string][]byte{corev1.DockerConfigJsonKey: []byte("two")})
 			cr := newCRWithSecrets([]string{"a", "b"}, nil)
 			buildReconciler(src1, src2)
 

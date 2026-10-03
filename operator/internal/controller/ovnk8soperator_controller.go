@@ -71,7 +71,7 @@ func (r *OVNK8sOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// Skip finalizer logic if configured (useful for testing)
 	if !r.SkipFinalizers {
 		// Check if the OVNK8sOperator is being deleted
-		if !ovnk8sOperator.ObjectMeta.DeletionTimestamp.IsZero() {
+		if !ovnk8sOperator.DeletionTimestamp.IsZero() {
 			return r.handleDeletion(ctx, ovnk8sOperator)
 		}
 
@@ -476,7 +476,7 @@ func (r *OVNK8sOperatorReconciler) logComponentManifests(ctx context.Context, co
 // buildComponentDAG builds a dependency DAG from a resolved component list.
 // Caller passes the result of EmbeddedConfig.ResolveComponents(cr) so the DAG
 // only spans components actually in scope for this CR's mode + enabled flags.
-func buildComponentDAG(components []defaults.EmbeddedComponent) (*dependency.DAG, error) {
+func buildComponentDAG(components []defaults.EmbeddedComponent) *dependency.DAG {
 	present := make(map[string]bool, len(components))
 	for _, comp := range components {
 		present[comp.ResourceName] = true
@@ -493,7 +493,7 @@ func buildComponentDAG(components []defaults.EmbeddedComponent) (*dependency.DAG
 		}
 		dagInstance.AddComponent(comp.ResourceName, deps)
 	}
-	return dagInstance, nil
+	return dagInstance
 }
 
 // getUpgradePlan returns the deployment order of components for this CR.
@@ -507,10 +507,7 @@ func getUpgradePlan(ctx context.Context, cr *k8sv1alpha1.OVNK8sOperator, embedde
 		return nil, fmt.Errorf("resolve components for mode %q: %w", cr.Spec.Global.DeploymentMode, err)
 	}
 
-	dagInstance, err := buildComponentDAG(resolved)
-	if err != nil {
-		return nil, err
-	}
+	dagInstance := buildComponentDAG(resolved)
 
 	componentOrder, err := dagInstance.GetUpgradeOrder()
 	if err != nil {

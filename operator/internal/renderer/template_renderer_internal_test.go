@@ -10,6 +10,14 @@ import (
 
 	k8sv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/operator/api/v1alpha1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/defaults"
+	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/kinds"
+)
+
+const (
+	testImageRepository = "example.io/ovnkube"
+	testImageTag        = "v1.0"
+	testImageDigest     = "abc123"
+	testCABundle        = "PEM-CA-DATA"
 )
 
 // testEmbeddedConfigWithIdentity returns an embedded config that includes
@@ -27,32 +35,32 @@ func testEmbeddedConfigWithIdentity() *defaults.EmbeddedConfig {
 		Components: []defaults.EmbeddedComponent{
 			{
 				ResourceName: k8sv1alpha1.ComponentOvnkubeControlPlane,
-				ResourceType: "Deployment",
+				ResourceType: kinds.Deployment,
 				ContainerImages: []defaults.EmbeddedContainerImage{
-					{Name: "default", Repository: "example.io/ovnkube", Tag: "v1.0", SHA256: "abc123"},
+					{Name: defaults.DefaultImageName, Repository: testImageRepository, Tag: testImageTag, SHA256: testImageDigest},
 				},
 				ContainerImageMapping: map[string][]string{
-					"default": {"ovnkubeClusterManager"},
+					defaults.DefaultImageName: {"ovnkubeClusterManager"},
 				},
 			},
 			{
 				ResourceName: k8sv1alpha1.ComponentOvnkubeNode,
-				ResourceType: "DaemonSet",
+				ResourceType: kinds.DaemonSet,
 				ContainerImages: []defaults.EmbeddedContainerImage{
-					{Name: "default", Repository: "example.io/ovnkube", Tag: "v1.0", SHA256: "abc123"},
+					{Name: defaults.DefaultImageName, Repository: testImageRepository, Tag: testImageTag, SHA256: testImageDigest},
 				},
 				ContainerImageMapping: map[string][]string{
-					"default": {"ovnkubeController"},
+					defaults.DefaultImageName: {"ovnkubeController"},
 				},
 			},
 			{
 				ResourceName: k8sv1alpha1.ComponentOvnkubeIdentity,
-				ResourceType: "DaemonSet",
+				ResourceType: kinds.DaemonSet,
 				ContainerImages: []defaults.EmbeddedContainerImage{
-					{Name: "default", Repository: "example.io/ovnkube-identity", Tag: "v1.0", SHA256: "def456"},
+					{Name: defaults.DefaultImageName, Repository: "example.io/ovnkube-identity", Tag: testImageTag, SHA256: "def456"},
 				},
 				ContainerImageMapping: map[string][]string{
-					"default": {"ovnkubeIdentity"},
+					defaults.DefaultImageName: {"ovnkubeIdentity"},
 				},
 			},
 		},
@@ -74,22 +82,22 @@ func testEmbeddedConfigWithoutIdentity() *defaults.EmbeddedConfig {
 		Components: []defaults.EmbeddedComponent{
 			{
 				ResourceName: k8sv1alpha1.ComponentOvnkubeControlPlane,
-				ResourceType: "Deployment",
+				ResourceType: kinds.Deployment,
 				ContainerImages: []defaults.EmbeddedContainerImage{
-					{Name: "default", Repository: "example.io/ovnkube", Tag: "v1.0", SHA256: "abc123"},
+					{Name: defaults.DefaultImageName, Repository: testImageRepository, Tag: testImageTag, SHA256: testImageDigest},
 				},
 				ContainerImageMapping: map[string][]string{
-					"default": {"ovnkubeClusterManager"},
+					defaults.DefaultImageName: {"ovnkubeClusterManager"},
 				},
 			},
 			{
 				ResourceName: k8sv1alpha1.ComponentOvnkubeNode,
-				ResourceType: "DaemonSet",
+				ResourceType: kinds.DaemonSet,
 				ContainerImages: []defaults.EmbeddedContainerImage{
-					{Name: "default", Repository: "example.io/ovnkube", Tag: "v1.0", SHA256: "abc123"},
+					{Name: defaults.DefaultImageName, Repository: testImageRepository, Tag: testImageTag, SHA256: testImageDigest},
 				},
 				ContainerImageMapping: map[string][]string{
-					"default": {"ovnkubeController"},
+					defaults.DefaultImageName: {"ovnkubeController"},
 				},
 			},
 		},
@@ -115,7 +123,7 @@ func TestBuildTemplateData_DoesNotInjectWebhookCABundleWhenIdentityDisabled(t *t
 
 	// Pass a non-empty WebhookCABundle; it must be silently discarded because
 	// the identity component is not in the resolved set.
-	data, err := r.buildTemplateData(cr, RenderOptions{WebhookCABundle: "PEM-CA-DATA"})
+	data, err := r.buildTemplateData(cr, RenderOptions{WebhookCABundle: testCABundle})
 	if err != nil {
 		t.Fatalf("buildTemplateData: %v", err)
 	}
@@ -144,7 +152,7 @@ func TestBuildTemplateData_InjectsWebhookCABundleWhenIdentityEnabled(t *testing.
 		},
 	}
 
-	data, err := r.buildTemplateData(cr, RenderOptions{WebhookCABundle: "PEM-CA-DATA"})
+	data, err := r.buildTemplateData(cr, RenderOptions{WebhookCABundle: testCABundle})
 	if err != nil {
 		t.Fatalf("buildTemplateData: %v", err)
 	}
@@ -152,7 +160,7 @@ func TestBuildTemplateData_InjectsWebhookCABundleWhenIdentityEnabled(t *testing.
 	if !ok {
 		t.Fatalf("ovnkubeIdentity component data missing")
 	}
-	if comp["webhookCABundle"] != "PEM-CA-DATA" {
+	if comp["webhookCABundle"] != testCABundle {
 		t.Fatalf("webhookCABundle = %v, want PEM-CA-DATA", comp["webhookCABundle"])
 	}
 }
@@ -216,7 +224,7 @@ func TestBuildFeatureGateDataFullyPopulated(t *testing.T) {
 
 	wantGates := []string{
 		"dnsNameResolver",
-		"egress",
+		gateGroupEgress,
 		"egress.firewall",
 		"egress.ip",
 		"egress.qos",
@@ -226,12 +234,12 @@ func TestBuildFeatureGateDataFullyPopulated(t *testing.T) {
 		"lflowCache",
 		"multiExternalGateway",
 		"multicast",
-		"networkPolicy",
+		gateGroupNetworkPolicy,
 		"networkPolicy.admin",
 		"networkPolicy.icmp",
 		"networkQoS",
 		"persistentIPs",
-		"routing",
+		gateGroupRouting,
 		"routing.evpn",
 		"routing.routeAdvertisements",
 		"serviceTemplateSupport",
@@ -272,7 +280,7 @@ func TestBuildFeatureGateDataFullyPopulated(t *testing.T) {
 	assertConfig("routing.routeAdvertisements", "advertiseDefaultNetwork", true)
 
 	// Group containers with no scalar fields of their own must not have config.
-	for _, gate := range []string{"routing", "egress", "networkPolicy"} {
+	for _, gate := range []string{gateGroupRouting, gateGroupEgress, gateGroupNetworkPolicy} {
 		if _, ok := config[gate]; ok {
 			t.Errorf("unexpected config for group container %q: %v", gate, config[gate])
 		}

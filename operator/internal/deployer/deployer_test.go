@@ -17,10 +17,40 @@ import (
 
 	k8sv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/operator/api/v1alpha1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/deployer"
+	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/kinds"
 	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/renderer"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+)
+
+const (
+	deploymentManifest = `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-deployment
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: test
+  template:
+    metadata:
+      labels:
+        app: test
+    spec:
+      containers:
+      - name: test
+        image: nginx`
+
+	configMapManifest = `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: test-config
+  namespace: default
+data:
+  key: value`
 )
 
 var _ = Describe("ResourceDeployer", func() {
@@ -44,8 +74,8 @@ var _ = Describe("ResourceDeployer", func() {
 
 		ovnk8sOperator = &k8sv1alpha1.OVNK8sOperator{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      "test-operator",
-				Namespace: "test-namespace",
+				Name:      testOperatorName,
+				Namespace: testNamespace,
 			},
 		}
 	})
@@ -97,26 +127,9 @@ var _ = Describe("ResourceDeployer", func() {
 			It("should deploy deployment and return workload resource", func() {
 				manifests := []*renderer.RenderedManifest{
 					{
-						Content: `apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: test-deployment
-  namespace: default
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: test
-  template:
-    metadata:
-      labels:
-        app: test
-    spec:
-      containers:
-      - name: test
-        image: nginx`,
-						TemplatePath: "templates/deployment.yaml",
-						FileName:     "deployment.yaml",
+						Content:      deploymentManifest,
+						TemplatePath: deploymentTemplatePath,
+						FileName:     deploymentFileName,
 					},
 				}
 
@@ -124,13 +137,13 @@ spec:
 
 				Expect(err).ToNot(HaveOccurred())
 				Expect(workloads).To(HaveLen(1))
-				Expect(workloads[0].Type).To(Equal("Deployment"))
+				Expect(workloads[0].Type).To(Equal(kinds.Deployment))
 				Expect(workloads[0].Name).To(Equal("test-deployment"))
 				Expect(workloads[0].Object).ToNot(BeNil())
 
 				// Verify the resource was created in the fake client
 				deployment := &appsv1.Deployment{}
-				err = fakeClient.Get(ctx, client.ObjectKey{Name: "test-deployment", Namespace: "default"}, deployment)
+				err = fakeClient.Get(ctx, client.ObjectKey{Name: "test-deployment", Namespace: metav1.NamespaceDefault}, deployment)
 				Expect(err).ToNot(HaveOccurred())
 				Expect(deployment.Name).To(Equal("test-deployment"))
 			})
@@ -138,26 +151,9 @@ spec:
 			It("should deploy multiple workload types and return all workload resources", func() {
 				manifests := []*renderer.RenderedManifest{
 					{
-						Content: `apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: test-deployment
-  namespace: default
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: test
-  template:
-    metadata:
-      labels:
-        app: test
-    spec:
-      containers:
-      - name: test
-        image: nginx`,
-						TemplatePath: "templates/deployment.yaml",
-						FileName:     "deployment.yaml",
+						Content:      deploymentManifest,
+						TemplatePath: deploymentTemplatePath,
+						FileName:     deploymentFileName,
 					},
 					{
 						Content: `apiVersion: apps/v1
@@ -192,8 +188,8 @@ spec:
 				for _, wl := range workloads {
 					workloadTypes[wl.Type] = wl.Name
 				}
-				Expect(workloadTypes["Deployment"]).To(Equal("test-deployment"))
-				Expect(workloadTypes["DaemonSet"]).To(Equal("test-daemonset"))
+				Expect(workloadTypes[kinds.Deployment]).To(Equal("test-deployment"))
+				Expect(workloadTypes[kinds.DaemonSet]).To(Equal("test-daemonset"))
 			})
 		})
 
@@ -201,15 +197,9 @@ spec:
 			It("should deploy non-workload resources but not return them as workloads", func() {
 				manifests := []*renderer.RenderedManifest{
 					{
-						Content: `apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: test-config
-  namespace: default
-data:
-  key: value`,
-						TemplatePath: "templates/configmap.yaml",
-						FileName:     "configmap.yaml",
+						Content:      configMapManifest,
+						TemplatePath: configMapTemplatePath,
+						FileName:     configMapFileName,
 					},
 					{
 						Content: `apiVersion: v1
@@ -234,11 +224,11 @@ spec:
 
 				// Verify the non-workload resources were created
 				configMap := &corev1.ConfigMap{}
-				err = fakeClient.Get(ctx, client.ObjectKey{Name: "test-config", Namespace: "default"}, configMap)
+				err = fakeClient.Get(ctx, client.ObjectKey{Name: testConfigName, Namespace: metav1.NamespaceDefault}, configMap)
 				Expect(err).ToNot(HaveOccurred())
 
 				service := &corev1.Service{}
-				err = fakeClient.Get(ctx, client.ObjectKey{Name: "test-service", Namespace: "default"}, service)
+				err = fakeClient.Get(ctx, client.ObjectKey{Name: "test-service", Namespace: metav1.NamespaceDefault}, service)
 				Expect(err).ToNot(HaveOccurred())
 			})
 		})
@@ -266,9 +256,9 @@ spec:
 
 				nad := &unstructured.Unstructured{}
 				nad.SetGroupVersionKind(schema.GroupVersionKind{
-					Group: "k8s.cni.cncf.io", Version: "v1", Kind: "NetworkAttachmentDefinition",
+					Group: nadGroup, Version: "v1", Kind: kinds.NetworkAttachmentDefinition,
 				})
-				Expect(fakeClient.Get(ctx, client.ObjectKey{Name: "ovn-primary", Namespace: "default"}, nad)).To(Succeed())
+				Expect(fakeClient.Get(ctx, client.ObjectKey{Name: "ovn-primary", Namespace: metav1.NamespaceDefault}, nad)).To(Succeed())
 				Expect(nad.GetName()).To(Equal("ovn-primary"))
 			})
 		})
@@ -299,7 +289,7 @@ spec:
 
 				routeAdvertisements := &unstructured.Unstructured{}
 				routeAdvertisements.SetGroupVersionKind(schema.GroupVersionKind{
-					Group: "k8s.ovn.org", Version: "v1", Kind: "RouteAdvertisements",
+					Group: ovnGroup, Version: "v1", Kind: kinds.RouteAdvertisements,
 				})
 				Expect(fakeClient.Get(ctx, client.ObjectKey{Name: "advertise-default-network"}, routeAdvertisements)).To(Succeed())
 				Expect(routeAdvertisements.GetLabels()).To(HaveKeyWithValue(
@@ -312,37 +302,14 @@ spec:
 			It("should deploy all resources and return only workload resources", func() {
 				manifests := []*renderer.RenderedManifest{
 					{
-						Content: `apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: test-config
-  namespace: default
-data:
-  key: value`,
-						TemplatePath: "templates/configmap.yaml",
-						FileName:     "configmap.yaml",
+						Content:      configMapManifest,
+						TemplatePath: configMapTemplatePath,
+						FileName:     configMapFileName,
 					},
 					{
-						Content: `apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: test-deployment
-  namespace: default
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: test
-  template:
-    metadata:
-      labels:
-        app: test
-    spec:
-      containers:
-      - name: test
-        image: nginx`,
-						TemplatePath: "templates/deployment.yaml",
-						FileName:     "deployment.yaml",
+						Content:      deploymentManifest,
+						TemplatePath: deploymentTemplatePath,
+						FileName:     deploymentFileName,
 					},
 				}
 
@@ -350,15 +317,15 @@ spec:
 
 				Expect(err).ToNot(HaveOccurred())
 				Expect(workloads).To(HaveLen(1)) // Only the deployment
-				Expect(workloads[0].Type).To(Equal("Deployment"))
+				Expect(workloads[0].Type).To(Equal(kinds.Deployment))
 
 				// Verify both resources were created
 				configMap := &corev1.ConfigMap{}
-				err = fakeClient.Get(ctx, client.ObjectKey{Name: "test-config", Namespace: "default"}, configMap)
+				err = fakeClient.Get(ctx, client.ObjectKey{Name: testConfigName, Namespace: metav1.NamespaceDefault}, configMap)
 				Expect(err).ToNot(HaveOccurred())
 
 				deployment := &appsv1.Deployment{}
-				err = fakeClient.Get(ctx, client.ObjectKey{Name: "test-deployment", Namespace: "default"}, deployment)
+				err = fakeClient.Get(ctx, client.ObjectKey{Name: "test-deployment", Namespace: metav1.NamespaceDefault}, deployment)
 				Expect(err).ToNot(HaveOccurred())
 			})
 		})
@@ -410,15 +377,9 @@ metadata:
 		It("should add proper labels to deployed resources", func() {
 			manifests := []*renderer.RenderedManifest{
 				{
-					Content: `apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: test-config
-  namespace: default
-data:
-  key: value`,
-					TemplatePath: "templates/configmap.yaml",
-					FileName:     "configmap.yaml",
+					Content:      configMapManifest,
+					TemplatePath: configMapTemplatePath,
+					FileName:     configMapFileName,
 				},
 			}
 
@@ -427,14 +388,14 @@ data:
 
 			// Verify labels were added
 			configMap := &corev1.ConfigMap{}
-			err = fakeClient.Get(ctx, client.ObjectKey{Name: "test-config", Namespace: "default"}, configMap)
+			err = fakeClient.Get(ctx, client.ObjectKey{Name: testConfigName, Namespace: metav1.NamespaceDefault}, configMap)
 			Expect(err).ToNot(HaveOccurred())
 
 			labels := configMap.GetLabels()
-			Expect(labels).To(HaveKey("app.kubernetes.io/managed-by"))
-			Expect(labels["app.kubernetes.io/managed-by"]).To(Equal("ovnk8s-operator"))
-			Expect(labels).To(HaveKey("ovnk8s-operator.ovn.org/ovnk8soperator"))
-			Expect(labels["ovnk8s-operator.ovn.org/ovnk8soperator"]).To(Equal("test-operator"))
+			Expect(labels).To(HaveKey(deployer.LabelManagedBy))
+			Expect(labels[deployer.LabelManagedBy]).To(Equal(deployer.ManagedBy))
+			Expect(labels).To(HaveKey(deployer.LabelOwner))
+			Expect(labels[deployer.LabelOwner]).To(Equal(testOperatorName))
 			Expect(labels).To(HaveKey("ovnk8s-operator.ovn.org/component"))
 			Expect(labels["ovnk8s-operator.ovn.org/component"]).To(Equal("test-component"))
 		})
@@ -451,8 +412,8 @@ metadata:
     existing-label: existing-value
 data:
   key: value`,
-					TemplatePath: "templates/configmap.yaml",
-					FileName:     "configmap.yaml",
+					TemplatePath: configMapTemplatePath,
+					FileName:     configMapFileName,
 				},
 			}
 
@@ -461,14 +422,14 @@ data:
 
 			// Verify existing labels are preserved and new ones added
 			configMap := &corev1.ConfigMap{}
-			err = fakeClient.Get(ctx, client.ObjectKey{Name: "test-config", Namespace: "default"}, configMap)
+			err = fakeClient.Get(ctx, client.ObjectKey{Name: testConfigName, Namespace: metav1.NamespaceDefault}, configMap)
 			Expect(err).ToNot(HaveOccurred())
 
 			labels := configMap.GetLabels()
 			Expect(labels).To(HaveKey("existing-label"))
 			Expect(labels["existing-label"]).To(Equal("existing-value"))
-			Expect(labels).To(HaveKey("app.kubernetes.io/managed-by"))
-			Expect(labels["app.kubernetes.io/managed-by"]).To(Equal("ovnk8s-operator"))
+			Expect(labels).To(HaveKey(deployer.LabelManagedBy))
+			Expect(labels[deployer.LabelManagedBy]).To(Equal(deployer.ManagedBy))
 		})
 	})
 
@@ -484,8 +445,8 @@ metadata:
   namespace: default
 data:
   key: value1`,
-					TemplatePath: "templates/configmap.yaml",
-					FileName:     "configmap.yaml",
+					TemplatePath: configMapTemplatePath,
+					FileName:     configMapFileName,
 				},
 			}
 
@@ -494,7 +455,7 @@ data:
 
 			// Verify initial value
 			configMap := &corev1.ConfigMap{}
-			err = fakeClient.Get(ctx, client.ObjectKey{Name: "test-config", Namespace: "default"}, configMap)
+			err = fakeClient.Get(ctx, client.ObjectKey{Name: testConfigName, Namespace: metav1.NamespaceDefault}, configMap)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(configMap.Data["key"]).To(Equal("value1"))
 
@@ -508,8 +469,8 @@ metadata:
   namespace: default
 data:
   key: value2`,
-					TemplatePath: "templates/configmap.yaml",
-					FileName:     "configmap.yaml",
+					TemplatePath: configMapTemplatePath,
+					FileName:     configMapFileName,
 				},
 			}
 
@@ -517,7 +478,7 @@ data:
 			Expect(err).ToNot(HaveOccurred())
 
 			// Verify the resource was updated
-			err = fakeClient.Get(ctx, client.ObjectKey{Name: "test-config", Namespace: "default"}, configMap)
+			err = fakeClient.Get(ctx, client.ObjectKey{Name: testConfigName, Namespace: metav1.NamespaceDefault}, configMap)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(configMap.Data["key"]).To(Equal("value2"))
 		})

@@ -27,6 +27,7 @@ import (
 	k8sv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/operator/api/v1alpha1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/defaults"
 	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/deployer"
+	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/kinds"
 	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/renderer"
 	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/status"
 	"github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/testhook"
@@ -47,24 +48,24 @@ func testEmbeddedConfig(version string) *defaults.EmbeddedConfig {
 		Components: []defaults.EmbeddedComponent{
 			{
 				ResourceName: k8sv1alpha1.ComponentOvnkubeControlPlane,
-				ResourceType: "Deployment",
+				ResourceType: kinds.Deployment,
 				DependsOn:    []string{},
 				ContainerImages: []defaults.EmbeddedContainerImage{
-					{Name: "default", Repository: "example.io/ovnkube", Tag: "v1.0"},
+					{Name: defaults.DefaultImageName, Repository: "example.io/ovnkube", Tag: "v1.0"},
 				},
 				ContainerImageMapping: map[string][]string{
-					"default": {"ovnkubeClusterManager"},
+					defaults.DefaultImageName: {"ovnkubeClusterManager"},
 				},
 			},
 			{
 				ResourceName: k8sv1alpha1.ComponentOvnkubeNode,
-				ResourceType: "DaemonSet",
+				ResourceType: kinds.DaemonSet,
 				DependsOn:    []string{k8sv1alpha1.ComponentOvnkubeControlPlane, k8sv1alpha1.ComponentOvnkubeIdentity},
 				ContainerImages: []defaults.EmbeddedContainerImage{
-					{Name: "default", Repository: "example.io/ovnkube", Tag: "v1.0"},
+					{Name: defaults.DefaultImageName, Repository: "example.io/ovnkube", Tag: "v1.0"},
 				},
 				ContainerImageMapping: map[string][]string{
-					"default": {"ovnkubeController", "nbOvsdb", "sbOvsdb", "ovnNorthd", "ovnController"},
+					defaults.DefaultImageName: {"ovnkubeController", "nbOvsdb", "sbOvsdb", "ovnNorthd", "ovnController"},
 				},
 			},
 		},
@@ -85,7 +86,8 @@ func testCRSpec() k8sv1alpha1.OVNK8sOperatorSpec {
 	}
 }
 
-func completedOperatorStatus(version string, generation int64) k8sv1alpha1.OVNK8sOperatorStatus {
+func completedOperatorStatus(generation int64) k8sv1alpha1.OVNK8sOperatorStatus {
+	const version = "0.9.0"
 	transitionTime := metav1.Now()
 	return k8sv1alpha1.OVNK8sOperatorStatus{
 		Version:       version,
@@ -116,7 +118,7 @@ func completedOperatorStatus(version string, generation int64) k8sv1alpha1.OVNK8
 
 func createEmptyDefaultTemplateDirs(templateDir string) {
 	for _, component := range []string{
-		"global",
+		globalComponentName,
 		k8sv1alpha1.ComponentOvnkubeControlPlane,
 		k8sv1alpha1.ComponentOvnkubeNode,
 	} {
@@ -129,7 +131,7 @@ func createBadTemplateDir(tempDir string) string {
 	Expect(os.MkdirAll(badTemplateDir, 0755)).To(Succeed())
 
 	// Create global directory with invalid template
-	globalDir := filepath.Join(badTemplateDir, "global")
+	globalDir := filepath.Join(badTemplateDir, globalComponentName)
 	Expect(os.MkdirAll(globalDir, 0755)).To(Succeed())
 
 	// Create invalid template syntax
@@ -148,7 +150,7 @@ func createValidTemplateDir(tempDir string) string {
 	Expect(os.MkdirAll(validTemplateDir, 0755)).To(Succeed())
 
 	// Create global directory with valid template
-	globalDir := filepath.Join(validTemplateDir, "global")
+	globalDir := filepath.Join(validTemplateDir, globalComponentName)
 	Expect(os.MkdirAll(globalDir, 0755)).To(Succeed())
 
 	validTemplate := `apiVersion: v1
@@ -191,6 +193,21 @@ data:
 
 	return validTemplateDir
 }
+
+const (
+	testWorkloadName      = "test"
+	compA                 = "comp-a"
+	compB                 = "comp-b"
+	modeRequiredComponent = "mode-required"
+	modeOptionalComponent = "mode-optional"
+	baseComponent         = "base"
+	middleComponent       = "middle"
+
+	testConfigMapManifest    = "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: test-config\n  namespace: default"
+	ovnNodeConfigMapManifest = "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: ovn-node-config\n  namespace: default"
+	testManifestFile         = "test.yaml"
+	ovnNodeManifestFile      = "ovn-node.yaml"
+)
 
 var _ = Describe("NetworkOperator Controller", func() {
 	// These specs exercise the reconciler against a live apiserver (envtest).
@@ -259,7 +276,7 @@ var _ = Describe("NetworkOperator Controller", func() {
 		}
 
 		// Create embedded config for tests
-		embeddedConfig := testEmbeddedConfig("1.0.0")
+		embeddedConfig := testEmbeddedConfig(version1)
 
 		// Create reconciler with real client (envtest provides this)
 		reconciler = &OVNK8sOperatorReconciler{
@@ -283,7 +300,7 @@ var _ = Describe("NetworkOperator Controller", func() {
 
 	AfterEach(func() {
 		if tempDir != "" {
-			os.RemoveAll(tempDir)
+			Expect(os.RemoveAll(tempDir)).To(Succeed())
 		}
 	})
 
@@ -312,8 +329,8 @@ var _ = Describe("NetworkOperator Controller", func() {
 
 					updated := &k8sv1alpha1.OVNK8sOperator{}
 					Expect(k8sClient.Get(ctx, req.NamespacedName, updated)).To(Succeed())
-					Expect(updated.Status.Version).To(Equal("1.0.0"))
-					Expect(updated.Status.TargetVersion).To(Equal("1.0.0"))
+					Expect(updated.Status.Version).To(Equal(version1))
+					Expect(updated.Status.TargetVersion).To(Equal(version1))
 					Expect(updated.Status.UpgradeStatus).To(Equal(k8sv1alpha1.UpgradeStatusCompleted))
 					Expect(updated.Status.Conditions).To(HaveLen(3))
 
@@ -362,7 +379,7 @@ var _ = Describe("NetworkOperator Controller", func() {
 
 			Context("with template rendering failures", func() {
 				BeforeEach(func() {
-					networkOperator.Status = completedOperatorStatus("0.9.0", networkOperator.Generation)
+					networkOperator.Status = completedOperatorStatus(networkOperator.Generation)
 					Expect(k8sClient.Status().Update(ctx, networkOperator)).To(Succeed())
 
 					// Use template directory with invalid syntax
@@ -380,7 +397,7 @@ var _ = Describe("NetworkOperator Controller", func() {
 					updated := &k8sv1alpha1.OVNK8sOperator{}
 					Expect(k8sClient.Get(ctx, req.NamespacedName, updated)).To(Succeed())
 					Expect(updated.Status.Version).To(Equal("0.9.0"))
-					Expect(updated.Status.TargetVersion).To(Equal("1.0.0"))
+					Expect(updated.Status.TargetVersion).To(Equal(version1))
 					Expect(updated.Status.UpgradeStatus).To(Equal(k8sv1alpha1.UpgradeStatusFailed))
 					upgradeCondition := apimeta.FindStatusCondition(updated.Status.Conditions, status.ConditionTypeUpgradeComplete)
 					Expect(upgradeCondition).ToNot(BeNil())
@@ -412,7 +429,7 @@ var _ = Describe("NetworkOperator Controller", func() {
 					updated := &k8sv1alpha1.OVNK8sOperator{}
 					Expect(k8sClient.Get(ctx, req.NamespacedName, updated)).To(Succeed())
 					Expect(updated.Status.Version).To(BeEmpty())
-					Expect(updated.Status.TargetVersion).To(Equal("1.0.0"))
+					Expect(updated.Status.TargetVersion).To(Equal(version1))
 					Expect(updated.Status.UpgradeStatus).To(Equal(k8sv1alpha1.UpgradeStatusFailed))
 
 					upgradeCondition := apimeta.FindStatusCondition(updated.Status.Conditions, status.ConditionTypeUpgradeComplete)
@@ -434,7 +451,7 @@ var _ = Describe("NetworkOperator Controller", func() {
 
 			Context("with component deployment failures", func() {
 				BeforeEach(func() {
-					networkOperator.Status = completedOperatorStatus("0.9.0", networkOperator.Generation)
+					networkOperator.Status = completedOperatorStatus(networkOperator.Generation)
 					Expect(k8sClient.Status().Update(ctx, networkOperator)).To(Succeed())
 
 					// Create templates with invalid Kubernetes resources that will fail deployment
@@ -447,7 +464,7 @@ kind: ConfigMap
 metadata:
   name: test-config`
 
-					Expect(os.WriteFile(filepath.Join(invalidTemplateDir, "global", "invalid.yaml"), []byte(invalidResource), 0644)).To(Succeed())
+					Expect(os.WriteFile(filepath.Join(invalidTemplateDir, globalComponentName, "invalid.yaml"), []byte(invalidResource), 0644)).To(Succeed())
 					reconciler.TemplateRenderer = renderer.NewTemplateRenderer(invalidTemplateDir, reconciler.EmbeddedConfig)
 				})
 
@@ -461,7 +478,7 @@ metadata:
 					updated := &k8sv1alpha1.OVNK8sOperator{}
 					Expect(k8sClient.Get(ctx, req.NamespacedName, updated)).To(Succeed())
 					Expect(updated.Status.Version).To(Equal("0.9.0"))
-					Expect(updated.Status.TargetVersion).To(Equal("1.0.0"))
+					Expect(updated.Status.TargetVersion).To(Equal(version1))
 					Expect(updated.Status.UpgradeStatus).To(Equal(k8sv1alpha1.UpgradeStatusFailed))
 					upgradeCondition := apimeta.FindStatusCondition(updated.Status.Conditions, status.ConditionTypeUpgradeComplete)
 					Expect(upgradeCondition).ToNot(BeNil())
@@ -475,7 +492,7 @@ metadata:
 
 			Context("with component validation failures", func() {
 				BeforeEach(func() {
-					networkOperator.Status = completedOperatorStatus("0.9.0", networkOperator.Generation)
+					networkOperator.Status = completedOperatorStatus(networkOperator.Generation)
 					Expect(k8sClient.Status().Update(ctx, networkOperator)).To(Succeed())
 
 					// Create templates with workloads that will fail validation
@@ -528,7 +545,7 @@ spec:
 					updated := &k8sv1alpha1.OVNK8sOperator{}
 					Expect(k8sClient.Get(ctx, req.NamespacedName, updated)).To(Succeed())
 					Expect(updated.Status.Version).To(Equal("0.9.0"))
-					Expect(updated.Status.TargetVersion).To(Equal("1.0.0"))
+					Expect(updated.Status.TargetVersion).To(Equal(version1))
 					Expect(updated.Status.UpgradeStatus).To(Equal(k8sv1alpha1.UpgradeStatusFailed))
 					upgradeCondition := apimeta.FindStatusCondition(updated.Status.Conditions, status.ConditionTypeUpgradeComplete)
 					Expect(upgradeCondition).ToNot(BeNil())
@@ -572,7 +589,7 @@ spec:
 						Timeout: 1, // 1 second timeout
 					}
 					Expect(k8sClient.Update(ctx, networkOperator)).To(Succeed())
-					networkOperator.Status = completedOperatorStatus("0.9.0", networkOperator.Generation)
+					networkOperator.Status = completedOperatorStatus(networkOperator.Generation)
 					Expect(k8sClient.Status().Update(ctx, networkOperator)).To(Succeed())
 
 					reconciler.TestHookRunner = testhook.NewTestHookRunner(k8sClient, k8sClient.Scheme(), testHooksDir, reconciler.TemplateRenderer)
@@ -588,7 +605,7 @@ spec:
 					updated := &k8sv1alpha1.OVNK8sOperator{}
 					Expect(k8sClient.Get(ctx, req.NamespacedName, updated)).To(Succeed())
 					Expect(updated.Status.Version).To(Equal("0.9.0"))
-					Expect(updated.Status.TargetVersion).To(Equal("1.0.0"))
+					Expect(updated.Status.TargetVersion).To(Equal(version1))
 					Expect(updated.Status.UpgradeStatus).To(Equal(k8sv1alpha1.UpgradeStatusFailed))
 					upgradeCondition := apimeta.FindStatusCondition(updated.Status.Conditions, status.ConditionTypeUpgradeComplete)
 					Expect(upgradeCondition).ToNot(BeNil())
@@ -632,8 +649,8 @@ spec:
 						createEmptyDefaultTemplateDirs(tempDir)
 						originalTransition = metav1.NewTime(time.Unix(1, 0))
 						networkOperator.Status = k8sv1alpha1.OVNK8sOperatorStatus{
-							Version:       "1.0.0",
-							TargetVersion: "1.0.0",
+							Version:       version1,
+							TargetVersion: version1,
 							UpgradeStatus: k8sv1alpha1.UpgradeStatusCompleted,
 							Conditions: []metav1.Condition{
 								{
@@ -654,7 +671,7 @@ spec:
 								},
 							},
 						}
-						reconciler.EmbeddedConfig.Version = "1.0.0"
+						reconciler.EmbeddedConfig.Version = version1
 						Expect(k8sClient.Status().Update(ctx, networkOperator)).To(Succeed())
 					})
 
@@ -666,8 +683,8 @@ spec:
 
 						updated := &k8sv1alpha1.OVNK8sOperator{}
 						Expect(k8sClient.Get(ctx, req.NamespacedName, updated)).To(Succeed())
-						Expect(updated.Status.Version).To(Equal("1.0.0"))
-						Expect(updated.Status.TargetVersion).To(Equal("1.0.0"))
+						Expect(updated.Status.Version).To(Equal(version1))
+						Expect(updated.Status.TargetVersion).To(Equal(version1))
 						Expect(updated.Status.UpgradeStatus).To(Equal(k8sv1alpha1.UpgradeStatusCompleted))
 						upgradeCondition := apimeta.FindStatusCondition(updated.Status.Conditions, status.ConditionTypeUpgradeComplete)
 						Expect(upgradeCondition).ToNot(BeNil())
@@ -679,10 +696,10 @@ spec:
 				Context("when an upgrade succeeds", func() {
 					BeforeEach(func() {
 						createEmptyDefaultTemplateDirs(tempDir)
-						networkOperator.Status.Version = "1.0.0"
-						networkOperator.Status.TargetVersion = "1.0.0"
+						networkOperator.Status.Version = version1
+						networkOperator.Status.TargetVersion = version1
 						networkOperator.Status.UpgradeStatus = k8sv1alpha1.UpgradeStatusCompleted
-						reconciler.EmbeddedConfig.Version = "2.0.0"
+						reconciler.EmbeddedConfig.Version = version2
 						Expect(k8sClient.Status().Update(ctx, networkOperator)).To(Succeed())
 					})
 
@@ -694,8 +711,8 @@ spec:
 
 						updated := &k8sv1alpha1.OVNK8sOperator{}
 						Expect(k8sClient.Get(ctx, req.NamespacedName, updated)).To(Succeed())
-						Expect(updated.Status.Version).To(Equal("2.0.0"))
-						Expect(updated.Status.TargetVersion).To(Equal("2.0.0"))
+						Expect(updated.Status.Version).To(Equal(version2))
+						Expect(updated.Status.TargetVersion).To(Equal(version2))
 						Expect(updated.Status.UpgradeStatus).To(Equal(k8sv1alpha1.UpgradeStatusCompleted))
 						upgradeCondition := apimeta.FindStatusCondition(updated.Status.Conditions, status.ConditionTypeUpgradeComplete)
 						Expect(upgradeCondition).ToNot(BeNil())
@@ -709,8 +726,8 @@ spec:
 						createEmptyDefaultTemplateDirs(tempDir)
 						transitionTime := metav1.Now()
 						networkOperator.Status = k8sv1alpha1.OVNK8sOperatorStatus{
-							Version:       "1.0.0",
-							TargetVersion: "2.0.0",
+							Version:       version1,
+							TargetVersion: version2,
 							UpgradeStatus: k8sv1alpha1.UpgradeStatusFailed,
 							Conditions: []metav1.Condition{
 								{
@@ -731,7 +748,7 @@ spec:
 								},
 							},
 						}
-						reconciler.EmbeddedConfig.Version = "1.0.0"
+						reconciler.EmbeddedConfig.Version = version1
 						Expect(k8sClient.Status().Update(ctx, networkOperator)).To(Succeed())
 					})
 
@@ -743,8 +760,8 @@ spec:
 
 						updated := &k8sv1alpha1.OVNK8sOperator{}
 						Expect(k8sClient.Get(ctx, req.NamespacedName, updated)).To(Succeed())
-						Expect(updated.Status.Version).To(Equal("1.0.0"))
-						Expect(updated.Status.TargetVersion).To(Equal("1.0.0"))
+						Expect(updated.Status.Version).To(Equal(version1))
+						Expect(updated.Status.TargetVersion).To(Equal(version1))
 						Expect(updated.Status.UpgradeStatus).To(Equal(k8sv1alpha1.UpgradeStatusCompleted))
 						upgradeCondition := apimeta.FindStatusCondition(updated.Status.Conditions, status.ConditionTypeUpgradeComplete)
 						Expect(upgradeCondition).ToNot(BeNil())
@@ -760,8 +777,8 @@ spec:
 					BeforeEach(func() {
 						transitionTime := metav1.Now()
 						networkOperator.Status = k8sv1alpha1.OVNK8sOperatorStatus{
-							Version:       "2.0.0",
-							TargetVersion: "2.0.0",
+							Version:       version2,
+							TargetVersion: version2,
 							UpgradeStatus: k8sv1alpha1.UpgradeStatusCompleted,
 							Conditions: []metav1.Condition{{
 								Type:               status.ConditionTypeCNIHealthy,
@@ -772,7 +789,7 @@ spec:
 								Message:            "CNI is healthy",
 							}},
 						}
-						reconciler.EmbeddedConfig.Version = "1.0.0"
+						reconciler.EmbeddedConfig.Version = version1
 						reconciler.EmbeddedConfig.MinUpgradeVersion = "" // Test that downgrades are blocked even without minUpgradeVersion
 						Expect(k8sClient.Status().Update(ctx, networkOperator)).To(Succeed())
 					})
@@ -785,8 +802,8 @@ spec:
 
 						updated := &k8sv1alpha1.OVNK8sOperator{}
 						Expect(k8sClient.Get(ctx, req.NamespacedName, updated)).To(Succeed())
-						Expect(updated.Status.Version).To(Equal("2.0.0"))
-						Expect(updated.Status.TargetVersion).To(Equal("1.0.0"))
+						Expect(updated.Status.Version).To(Equal(version2))
+						Expect(updated.Status.TargetVersion).To(Equal(version1))
 						Expect(updated.Status.UpgradeStatus).To(Equal(k8sv1alpha1.UpgradeStatusFailed))
 						upgradeCondition := apimeta.FindStatusCondition(updated.Status.Conditions, status.ConditionTypeUpgradeComplete)
 						Expect(upgradeCondition).ToNot(BeNil())
@@ -801,8 +818,8 @@ spec:
 				Context("when current version is below minimum", func() {
 					BeforeEach(func() {
 						networkOperator.Status.Version = "0.9.0"
-						reconciler.EmbeddedConfig.Version = "2.0.0"
-						reconciler.EmbeddedConfig.MinUpgradeVersion = "1.0.0"
+						reconciler.EmbeddedConfig.Version = version2
+						reconciler.EmbeddedConfig.MinUpgradeVersion = version1
 						Expect(k8sClient.Status().Update(ctx, networkOperator)).To(Succeed())
 
 						// Create valid templates for testing version blocking
@@ -820,9 +837,9 @@ spec:
 
 				Context("with invalid semantic versions", func() {
 					BeforeEach(func() {
-						networkOperator.Status.Version = "invalid-version"
-						reconciler.EmbeddedConfig.Version = "2.0.0"
-						reconciler.EmbeddedConfig.MinUpgradeVersion = "1.0.0"
+						networkOperator.Status.Version = invalidVersion
+						reconciler.EmbeddedConfig.Version = version2
+						reconciler.EmbeddedConfig.MinUpgradeVersion = version1
 						Expect(k8sClient.Status().Update(ctx, networkOperator)).To(Succeed())
 					})
 
@@ -854,7 +871,7 @@ spec:
         command: ["echo", "hello"]
       restartPolicy: Never`
 
-					Expect(os.WriteFile(filepath.Join(testHooksDir, "test.yaml"), []byte(jobYaml), 0644)).To(Succeed())
+					Expect(os.WriteFile(filepath.Join(testHooksDir, testManifestFile), []byte(jobYaml), 0644)).To(Succeed())
 
 					// Disable test hooks in spec
 					networkOperator.Spec.TestHooks = &k8sv1alpha1.TestHooksSpec{
@@ -945,8 +962,8 @@ spec:
 				manifests, err := reconciler.renderComponentTemplates(ctx, networkOperator)
 
 				Expect(err).ToNot(HaveOccurred())
-				Expect(manifests).To(HaveKey("global"))
-				Expect(manifests["global"]).To(HaveLen(1))
+				Expect(manifests).To(HaveKey(globalComponentName))
+				Expect(manifests[globalComponentName]).To(HaveLen(1))
 			})
 		})
 
@@ -971,14 +988,14 @@ spec:
 
 		BeforeEach(func() {
 			componentManifests = renderer.ComponentManifests{
-				"global": []*renderer.RenderedManifest{
-					{Content: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: test-config\n  namespace: default", FileName: "test.yaml"},
+				globalComponentName: []*renderer.RenderedManifest{
+					{Content: testConfigMapManifest, FileName: testManifestFile},
 				},
 				k8sv1alpha1.ComponentOvnkubeControlPlane: []*renderer.RenderedManifest{
 					{Content: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: ovn-master-config\n  namespace: default", FileName: "ovn-master.yaml"},
 				},
 				k8sv1alpha1.ComponentOvnkubeNode: []*renderer.RenderedManifest{
-					{Content: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: ovn-node-config\n  namespace: default", FileName: "ovn-node.yaml"},
+					{Content: ovnNodeConfigMapManifest, FileName: ovnNodeManifestFile},
 				},
 			}
 		})
@@ -1003,14 +1020,14 @@ spec:
 			BeforeEach(func() {
 				// Use invalid resources that will fail deployment
 				componentManifests = renderer.ComponentManifests{
-					"global": []*renderer.RenderedManifest{
+					globalComponentName: []*renderer.RenderedManifest{
 						{Content: "apiVersion: invalid/v999\nkind: ConfigMap\nmetadata:\n  name: test-config\n  namespace: default", FileName: "invalid.yaml"},
 					},
 					k8sv1alpha1.ComponentOvnkubeControlPlane: []*renderer.RenderedManifest{
 						{Content: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: ovn-master-config\n  namespace: default", FileName: "ovn-master.yaml"},
 					},
 					k8sv1alpha1.ComponentOvnkubeNode: []*renderer.RenderedManifest{
-						{Content: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: ovn-node-config\n  namespace: default", FileName: "ovn-node.yaml"},
+						{Content: ovnNodeConfigMapManifest, FileName: ovnNodeManifestFile},
 					},
 				}
 			})
@@ -1028,8 +1045,8 @@ spec:
 			BeforeEach(func() {
 				// Create manifest with deployment that will fail validation due to timeout
 				componentManifests = renderer.ComponentManifests{
-					"global": []*renderer.RenderedManifest{
-						{Content: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: test-config\n  namespace: default", FileName: "test.yaml"},
+					globalComponentName: []*renderer.RenderedManifest{
+						{Content: testConfigMapManifest, FileName: testManifestFile},
 					},
 					k8sv1alpha1.ComponentOvnkubeControlPlane: []*renderer.RenderedManifest{
 						{Content: `apiVersion: apps/v1
@@ -1052,7 +1069,7 @@ spec:
         image: nonexistent:latest`, FileName: "deployment.yaml"},
 					},
 					k8sv1alpha1.ComponentOvnkubeNode: []*renderer.RenderedManifest{
-						{Content: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: ovn-node-config\n  namespace: default", FileName: "ovn-node.yaml"},
+						{Content: ovnNodeConfigMapManifest, FileName: ovnNodeManifestFile},
 					},
 				}
 
@@ -1079,7 +1096,7 @@ spec:
 
 		BeforeEach(func() {
 			manifests = []*renderer.RenderedManifest{
-				{Content: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: test-config\n  namespace: default", FileName: "test.yaml"},
+				{Content: testConfigMapManifest, FileName: testManifestFile},
 			}
 		})
 
@@ -1123,19 +1140,19 @@ spec:
 			It("should return validation error", func() {
 				// Create a deployment that won't be ready in time
 				deployment := &appsv1.Deployment{
-					ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+					ObjectMeta: metav1.ObjectMeta{Name: testWorkloadName, Namespace: metav1.NamespaceDefault},
 					Spec: appsv1.DeploymentSpec{
-						Replicas: int32Ptr(1),
+						Replicas: new(int32(1)),
 						Selector: &metav1.LabelSelector{
-							MatchLabels: map[string]string{"app": "test"},
+							MatchLabels: map[string]string{"app": testWorkloadName},
 						},
 						Template: corev1.PodTemplateSpec{
 							ObjectMeta: metav1.ObjectMeta{
-								Labels: map[string]string{"app": "test"},
+								Labels: map[string]string{"app": testWorkloadName},
 							},
 							Spec: corev1.PodSpec{
 								Containers: []corev1.Container{
-									{Name: "test", Image: "nonexistent:latest"},
+									{Name: testWorkloadName, Image: "nonexistent:latest"},
 								},
 							},
 						},
@@ -1148,8 +1165,8 @@ spec:
 				workloads := []deployer.WorkloadResource{
 					{
 						Object: deployment,
-						Type:   "Deployment",
-						Name:   "test",
+						Type:   kinds.Deployment,
+						Name:   testWorkloadName,
 					},
 				}
 
@@ -1167,9 +1184,8 @@ spec:
 	Describe("buildNetworkOperatorDAG", func() {
 		Context("with valid component dependencies", func() {
 			It("should build DAG successfully", func() {
-				dag, err := buildComponentDAG(reconciler.EmbeddedConfig.Components)
+				dag := buildComponentDAG(reconciler.EmbeddedConfig.Components)
 
-				Expect(err).ToNot(HaveOccurred())
 				Expect(dag).ToNot(BeNil())
 			})
 		})
@@ -1177,19 +1193,18 @@ spec:
 		Context("with circular dependencies", func() {
 			BeforeEach(func() {
 				reconciler.EmbeddedConfig.Components = []defaults.EmbeddedComponent{
-					{ResourceName: "comp-a", ResourceType: "Deployment", DependsOn: []string{"comp-b"}},
-					{ResourceName: "comp-b", ResourceType: "Deployment", DependsOn: []string{"comp-a"}},
+					{ResourceName: compA, ResourceType: kinds.Deployment, DependsOn: []string{compB}},
+					{ResourceName: compB, ResourceType: kinds.Deployment, DependsOn: []string{compA}},
 				}
 			})
 
 			It("should return error for circular dependencies", func() {
-				dag, err := buildComponentDAG(reconciler.EmbeddedConfig.Components)
+				dag := buildComponentDAG(reconciler.EmbeddedConfig.Components)
 
-				Expect(err).ToNot(HaveOccurred()) // DAG creation succeeds
-				Expect(dag).ToNot(BeNil())
+				Expect(dag).ToNot(BeNil()) // DAG creation succeeds
 
 				// But getting upgrade order should fail
-				_, err = dag.GetUpgradeOrder()
+				_, err := dag.GetUpgradeOrder()
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("cycle"))
 			})
@@ -1198,20 +1213,19 @@ spec:
 		Context("with dangling dependency edges", func() {
 			BeforeEach(func() {
 				reconciler.EmbeddedConfig.Components = []defaults.EmbeddedComponent{
-					{ResourceName: "comp-a", ResourceType: "Deployment", DependsOn: []string{"missing-comp"}},
+					{ResourceName: compA, ResourceType: kinds.Deployment, DependsOn: []string{"missing-comp"}},
 				}
 			})
 
 			It("should prune edges to missing components and succeed", func() {
-				dag, err := buildComponentDAG(reconciler.EmbeddedConfig.Components)
+				dag := buildComponentDAG(reconciler.EmbeddedConfig.Components)
 
-				Expect(err).ToNot(HaveOccurred())
 				Expect(dag).ToNot(BeNil())
 
 				// Missing dep edge is pruned, so GetUpgradeOrder succeeds
 				order, err := dag.GetUpgradeOrder()
 				Expect(err).ToNot(HaveOccurred())
-				Expect(order).To(Equal([]string{"comp-a"}))
+				Expect(order).To(Equal([]string{compA}))
 			})
 		})
 	})
@@ -1223,7 +1237,7 @@ spec:
 
 				Expect(err).ToNot(HaveOccurred())
 				Expect(order).To(Equal([]string{
-					"global",
+					globalComponentName,
 					k8sv1alpha1.ComponentOvnkubeControlPlane,
 					k8sv1alpha1.ComponentOvnkubeNode,
 				}))
@@ -1234,11 +1248,11 @@ spec:
 			BeforeEach(func() {
 				// Create components with a circular dependency (real DAG failure)
 				reconciler.EmbeddedConfig.Components = []defaults.EmbeddedComponent{
-					{ResourceName: "comp-a", ResourceType: "Deployment", DependsOn: []string{"comp-b"}},
-					{ResourceName: "comp-b", ResourceType: "Deployment", DependsOn: []string{"comp-a"}},
+					{ResourceName: compA, ResourceType: kinds.Deployment, DependsOn: []string{compB}},
+					{ResourceName: compB, ResourceType: kinds.Deployment, DependsOn: []string{compA}},
 				}
 				reconciler.EmbeddedConfig.Modes = map[string]defaults.EmbeddedMode{
-					k8sv1alpha1.DeploymentModeStandard: {Components: []string{"comp-a", "comp-b"}},
+					k8sv1alpha1.DeploymentModeStandard: {Components: []string{compA, compB}},
 				}
 			})
 
@@ -1253,21 +1267,21 @@ spec:
 		Context("with non-default mode and optional components", func() {
 			BeforeEach(func() {
 				reconciler.EmbeddedConfig.Components = []defaults.EmbeddedComponent{
-					{ResourceName: "mode-required", ResourceType: "Deployment", DependsOn: []string{}},
-					{ResourceName: "mode-optional", ResourceType: "DaemonSet", DependsOn: []string{"mode-required"}},
-					{ResourceName: "other-mode-only", ResourceType: "Deployment", DependsOn: []string{}},
+					{ResourceName: modeRequiredComponent, ResourceType: kinds.Deployment, DependsOn: []string{}},
+					{ResourceName: modeOptionalComponent, ResourceType: kinds.DaemonSet, DependsOn: []string{modeRequiredComponent}},
+					{ResourceName: "other-mode-only", ResourceType: kinds.Deployment, DependsOn: []string{}},
 				}
 				reconciler.EmbeddedConfig.Modes = map[string]defaults.EmbeddedMode{
 					k8sv1alpha1.DeploymentModeStandard: {Components: []string{"other-mode-only"}},
 					k8sv1alpha1.DeploymentModeDpuHost: {
-						Components:         []string{"mode-required"},
-						OptionalComponents: []string{"mode-optional"},
+						Components:         []string{modeRequiredComponent},
+						OptionalComponents: []string{modeOptionalComponent},
 					},
 				}
 				networkOperator.Spec.Global.DeploymentMode = k8sv1alpha1.DeploymentModeDpuHost
 				disabled := false
 				networkOperator.Spec.ComponentOverrides = []k8sv1alpha1.ComponentOverride{
-					{ResourceName: "mode-optional", Enabled: &disabled},
+					{ResourceName: modeOptionalComponent, Enabled: &disabled},
 				}
 			})
 
@@ -1276,9 +1290,9 @@ spec:
 
 				Expect(err).ToNot(HaveOccurred())
 				Expect(order).To(HaveLen(2)) // global + mode-required
-				Expect(order[0]).To(Equal("global"))
-				Expect(order).To(ContainElement("mode-required"))
-				Expect(order).ToNot(ContainElement("mode-optional"))
+				Expect(order[0]).To(Equal(globalComponentName))
+				Expect(order).To(ContainElement(modeRequiredComponent))
+				Expect(order).ToNot(ContainElement(modeOptionalComponent))
 				Expect(order).ToNot(ContainElement("other-mode-only"))
 			})
 		})
@@ -1286,13 +1300,13 @@ spec:
 		Context("with complex dependency chain", func() {
 			BeforeEach(func() {
 				reconciler.EmbeddedConfig.Components = []defaults.EmbeddedComponent{
-					{ResourceName: "base", DependsOn: []string{}},
-					{ResourceName: "middle", DependsOn: []string{"base"}},
-					{ResourceName: "top", DependsOn: []string{"middle"}},
-					{ResourceName: "parallel", DependsOn: []string{"base"}},
+					{ResourceName: baseComponent, DependsOn: []string{}},
+					{ResourceName: middleComponent, DependsOn: []string{baseComponent}},
+					{ResourceName: "top", DependsOn: []string{middleComponent}},
+					{ResourceName: "parallel", DependsOn: []string{baseComponent}},
 				}
 				reconciler.EmbeddedConfig.Modes = map[string]defaults.EmbeddedMode{
-					k8sv1alpha1.DeploymentModeStandard: {Components: []string{"base", "middle", "top", "parallel"}},
+					k8sv1alpha1.DeploymentModeStandard: {Components: []string{baseComponent, middleComponent, "top", "parallel"}},
 				}
 			})
 
@@ -1301,7 +1315,7 @@ spec:
 
 				Expect(err).ToNot(HaveOccurred())
 				Expect(order).To(HaveLen(5)) // global + 4 components
-				Expect(order[0]).To(Equal("global"))
+				Expect(order[0]).To(Equal(globalComponentName))
 
 				// Find indices of components
 				indices := make(map[string]int)
@@ -1310,9 +1324,9 @@ spec:
 				}
 
 				// Verify dependency order
-				Expect(indices["base"]).To(BeNumerically("<", indices["middle"]))
-				Expect(indices["middle"]).To(BeNumerically("<", indices["top"]))
-				Expect(indices["base"]).To(BeNumerically("<", indices["parallel"]))
+				Expect(indices[baseComponent]).To(BeNumerically("<", indices[middleComponent]))
+				Expect(indices[middleComponent]).To(BeNumerically("<", indices["top"]))
+				Expect(indices[baseComponent]).To(BeNumerically("<", indices["parallel"]))
 			})
 		})
 	})
@@ -1320,20 +1334,9 @@ spec:
 	Describe("Edge Cases and Error Handling", func() {
 		Context("with nil NetworkOperator", func() {
 			It("should handle nil NetworkOperator in DAG building", func() {
-				defer func() {
-					// Catch potential panic from nil pointer dereference
-					if r := recover(); r != nil {
-						// Panic is expected behavior for nil input
-						Expect(r).ToNot(BeNil())
-					}
-				}()
+				dag := buildComponentDAG(nil)
 
-				dag, err := buildComponentDAG(nil)
-
-				// If no panic, check the result
-				if err == nil {
-					Expect(dag).ToNot(BeNil())
-				}
+				Expect(dag).ToNot(BeNil())
 			})
 		})
 
@@ -1345,9 +1348,8 @@ spec:
 			})
 
 			It("should handle empty component names", func() {
-				dag, err := buildComponentDAG(reconciler.EmbeddedConfig.Components)
+				dag := buildComponentDAG(reconciler.EmbeddedConfig.Components)
 
-				Expect(err).ToNot(HaveOccurred())
 				Expect(dag).ToNot(BeNil())
 
 				// Getting upgrade order may or may not fail depending on implementation
@@ -1360,10 +1362,10 @@ spec:
 			BeforeEach(func() {
 				// Create a large number of components
 				components := make([]defaults.EmbeddedComponent, 100)
-				for i := 0; i < 100; i++ {
+				for i := range 100 {
 					components[i] = defaults.EmbeddedComponent{
 						ResourceName: fmt.Sprintf("component-%d", i),
-						ResourceType: "Deployment",
+						ResourceType: kinds.Deployment,
 						DependsOn:    []string{},
 					}
 				}
@@ -1371,9 +1373,8 @@ spec:
 			})
 
 			It("should handle large component lists", func() {
-				dag, err := buildComponentDAG(reconciler.EmbeddedConfig.Components)
+				dag := buildComponentDAG(reconciler.EmbeddedConfig.Components)
 
-				Expect(err).ToNot(HaveOccurred())
 				Expect(dag).ToNot(BeNil())
 
 				order, err := dag.GetUpgradeOrder()
@@ -1388,7 +1389,7 @@ spec:
 			manifests := []*renderer.RenderedManifest{
 				{
 					Content:      "test content",
-					FileName:     "test.yaml",
+					FileName:     testManifestFile,
 					TemplatePath: "/path/to/template",
 				},
 			}
@@ -1465,11 +1466,6 @@ func (e *errorStatusWriter) Apply(_ context.Context, _ runtime.ApplyConfiguratio
 	return fmt.Errorf("client error: failed to apply status")
 }
 
-// Helper function for creating int32 pointers
-func int32Ptr(i int32) *int32 {
-	return &i
-}
-
 func TestBuildComponentDAG_PrunesEdgesToAbsentComponents(t *testing.T) {
 	// Dependencies outside the resolved set are pruned, while dependencies
 	// between present components retain their ordering constraint.
@@ -1477,10 +1473,7 @@ func TestBuildComponentDAG_PrunesEdgesToAbsentComponents(t *testing.T) {
 		{ResourceName: "ovnkubeControlPlane", DependsOn: nil},
 		{ResourceName: "ovnkubeNode", DependsOn: []string{"ovnkubeControlPlane", "ovnkubeIdentity"}},
 	}
-	dag, err := buildComponentDAG(resolved)
-	if err != nil {
-		t.Fatalf("buildComponentDAG: %v", err)
-	}
+	dag := buildComponentDAG(resolved)
 	order, err := dag.GetUpgradeOrder()
 	if err != nil {
 		t.Fatalf("GetUpgradeOrder returned error (dangling edge not pruned): %v", err)
@@ -1511,7 +1504,7 @@ func TestGetUpgradePlanEmbeddedInstallationOrder(t *testing.T) {
 			name: "standard without identity",
 			mode: k8sv1alpha1.DeploymentModeStandard,
 			want: []string{
-				"global",
+				globalComponentName,
 				k8sv1alpha1.ComponentOvnkubeControlPlane,
 				k8sv1alpha1.ComponentOvnkubeNode,
 			},
@@ -1523,7 +1516,7 @@ func TestGetUpgradePlanEmbeddedInstallationOrder(t *testing.T) {
 				{ResourceName: k8sv1alpha1.ComponentOvnkubeIdentity, Enabled: &identityEnabled},
 			},
 			want: []string{
-				"global",
+				globalComponentName,
 				k8sv1alpha1.ComponentOvnkubeControlPlane,
 				k8sv1alpha1.ComponentOvnkubeIdentity,
 				k8sv1alpha1.ComponentOvnkubeNode,
@@ -1533,7 +1526,7 @@ func TestGetUpgradePlanEmbeddedInstallationOrder(t *testing.T) {
 			name: "dpu-host without identity",
 			mode: k8sv1alpha1.DeploymentModeDpuHost,
 			want: []string{
-				"global",
+				globalComponentName,
 				k8sv1alpha1.ComponentOvnkubeControlPlane,
 				k8sv1alpha1.ComponentOvnkubeNodeDpuHost,
 			},
@@ -1545,7 +1538,7 @@ func TestGetUpgradePlanEmbeddedInstallationOrder(t *testing.T) {
 				{ResourceName: k8sv1alpha1.ComponentOvnkubeIdentity, Enabled: &identityEnabled},
 			},
 			want: []string{
-				"global",
+				globalComponentName,
 				k8sv1alpha1.ComponentOvnkubeControlPlane,
 				k8sv1alpha1.ComponentOvnkubeIdentity,
 				k8sv1alpha1.ComponentOvnkubeNodeDpuHost,
