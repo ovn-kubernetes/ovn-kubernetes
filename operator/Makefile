@@ -3,6 +3,19 @@
 
 # Image URL to use all building/pushing image targets
 IMG ?= controller:latest
+
+# Default OVN-Kubernetes image stamped into the manager; empty keeps the
+# fallback from internal/defaults/config.yaml.
+OVNKUBE_IMAGE_REPO ?=
+OVNKUBE_IMAGE_TAG ?=
+OVNKUBE_IMAGE_DIGEST ?=
+DEFAULTS_PKG := github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/defaults
+LDFLAGS := -X $(DEFAULTS_PKG).OvnKubeImageRepository=$(OVNKUBE_IMAGE_REPO) \
+	-X $(DEFAULTS_PKG).OvnKubeImageTag=$(OVNKUBE_IMAGE_TAG) \
+	-X $(DEFAULTS_PKG).OvnKubeImageDigest=$(OVNKUBE_IMAGE_DIGEST)
+IMAGE_BUILD_ARGS := --build-arg OVNKUBE_IMAGE_REPO=$(OVNKUBE_IMAGE_REPO) \
+	--build-arg OVNKUBE_IMAGE_TAG=$(OVNKUBE_IMAGE_TAG) \
+	--build-arg OVNKUBE_IMAGE_DIGEST=$(OVNKUBE_IMAGE_DIGEST)
 # YEAR defines the year value used for substituting the YEAR placeholder in the boilerplate header.
 YEAR ?= $(shell date +%Y)
 
@@ -82,7 +95,7 @@ lint-config: golangci-lint ## Verify golangci-lint linter configuration
 
 .PHONY: build
 build: manifests generate fmt vet ## Build manager binary.
-	go build -o bin/manager cmd/main.go
+	go build -ldflags "$(LDFLAGS)" -o bin/manager cmd/main.go
 
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
@@ -95,7 +108,7 @@ run: manifests generate fmt vet ## Run a controller from your host.
 # make docker-build IMG=<img> BASE_IMAGE=docker.io/library/golang:1.26
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
-	$(CONTAINER_TOOL) build $(if $(BASE_IMAGE),--build-arg BASE_IMAGE=$(BASE_IMAGE)) -t ${IMG} .
+	$(CONTAINER_TOOL) build $(if $(BASE_IMAGE),--build-arg BASE_IMAGE=$(BASE_IMAGE)) $(IMAGE_BUILD_ARGS) -t ${IMG} .
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
@@ -114,7 +127,7 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile > Dockerfile.cross
 	- $(CONTAINER_TOOL) buildx create --name ovnk8s-operator-builder
 	$(CONTAINER_TOOL) buildx use ovnk8s-operator-builder
-	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) $(if $(BASE_IMAGE),--build-arg BASE_IMAGE=$(BASE_IMAGE)) --tag ${IMG} -f Dockerfile.cross .
+	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) $(if $(BASE_IMAGE),--build-arg BASE_IMAGE=$(BASE_IMAGE)) $(IMAGE_BUILD_ARGS) --tag ${IMG} -f Dockerfile.cross .
 	- $(CONTAINER_TOOL) buildx rm ovnk8s-operator-builder
 	rm Dockerfile.cross
 

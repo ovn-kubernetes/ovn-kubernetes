@@ -1,11 +1,9 @@
-# Adds namespace to all resources.
-namespace: ovnk8s-operator-system
+# Namespaces are set in each manifest instead of here: the operator also binds
+# roles in the ovn-kubernetes namespace, which a global namespace would override.
 
 # Value of this field is prepended to the
 # names of all resources, e.g. a deployment named
 # "wordpress" becomes "alices-wordpress".
-# Note that it should also match with the prefix (text before '-') of the namespace
-# field above.
 namePrefix: ovnk8s-operator-
 
 # Labels to add to all resources and selectors.
@@ -18,6 +16,7 @@ resources:
 - ../crd
 - ../rbac
 - ../manager
+- ovnkube_namespace.yaml
 # [WEBHOOK] To enable webhook, uncomment all the sections with [WEBHOOK] prefix including the one in
 # crd/kustomization.yaml
 #- ../webhook
@@ -26,19 +25,19 @@ resources:
 # [PROMETHEUS] To enable prometheus monitor, uncomment all sections with 'PROMETHEUS'.
 #- ../prometheus
 # [METRICS] Expose the controller manager metrics service.
-- metrics_service.yaml
+#- metrics_service.yaml
 # [NETWORK POLICY] Control ingress to metrics and webhook ports.
 # Allow metrics traffic from pods in namespaces labeled 'metrics: enabled'.
 # Allow webhook traffic from all sources.
 #- ../network-policy
 
 # Uncomment the patches line if you enable Metrics
-patches:
+#patches:
 # [METRICS] The following patch will enable the metrics endpoint using HTTPS and the port :8443.
 # More info: https://book.kubebuilder.io/reference/metrics
-- path: manager_metrics_patch.yaml
-  target:
-    kind: Deployment
+#- path: manager_metrics_patch.yaml
+#  target:
+#    kind: Deployment
 
 # Uncomment the patches line if you enable Metrics and CertManager
 # [METRICS-WITH-CERTS] To enable metrics protected with certManager, uncomment the following line.

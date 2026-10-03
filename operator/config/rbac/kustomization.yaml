@@ -7,6 +7,10 @@ resources:
 - service_account.yaml
 - role.yaml
 - role_binding.yaml
+- operator_role_binding.yaml
+- target_role_binding.yaml
+- ovnk8soperator_role.yaml
+- ovnk8soperator_role_binding.yaml
 - leader_election_role.yaml
 - leader_election_role_binding.yaml
 # The following RBAC configurations are used to protect
@@ -15,9 +19,9 @@ resources:
 # can access the metrics endpoint. Comment the following
 # permissions if you want to disable this protection.
 # More info: https://book.kubebuilder.io/reference/metrics.html
-- metrics_auth_role.yaml
-- metrics_auth_role_binding.yaml
-- metrics_reader_role.yaml
+#- metrics_auth_role.yaml
+#- metrics_auth_role_binding.yaml
+#- metrics_reader_role.yaml
 # For each CRD, "Admin", "Editor" and "Viewer" roles are scaffolded by
 # default, aiding admins in cluster management. Those roles are
 # not used by the ovnk8s-operator itself. You can comment the following lines

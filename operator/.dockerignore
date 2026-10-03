@@ -12,3 +12,7 @@
 # Re-include Go module files
 !go.mod
 !go.sum
+
+# Re-include files embedded into or shipped with the manager
+!internal/defaults/config.yaml
+!test-hooks/**

@@ -5,13 +5,13 @@ metadata:
     control-plane: controller-manager
     app.kubernetes.io/name: ovnk8s-operator
     app.kubernetes.io/managed-by: kustomize
-  name: system
+  name: ovnk8s-operator-system
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: controller-manager
-  namespace: system
+  namespace: ovnk8s-operator-system
   labels:
     control-plane: controller-manager
     app.kubernetes.io/name: ovnk8s-operator
@@ -22,6 +22,8 @@ spec:
       control-plane: controller-manager
       app.kubernetes.io/name: ovnk8s-operator
   replicas: 1
+  strategy:
+    type: Recreate
   template:
     metadata:
       annotations:
@@ -50,6 +52,19 @@ spec:
       #             operator: In
       #             values:
       #               - linux
+      # The operator installs the CNI, so it cannot depend on pod networking or
+      # wait for nodes to become ready.
+      hostNetwork: true
+      dnsPolicy: Default
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
+      tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+      - key: node.kubernetes.io/not-ready
+        operator: Exists
+        effect: NoSchedule
       securityContext:
         # Projects are configured by default to adhere to the "restricted" Pod Security Standards.
         # This ensures that deployments meet the highest security requirements for Kubernetes.
@@ -62,11 +77,18 @@ spec:
         - /manager
         args:
           - --leader-elect
-          - --health-probe-bind-address=:8081
+          - --health-probe-bind-address=:8181
+          - --kube-api-server=$(KUBE_API_SERVER)
         image: controller:latest
+        imagePullPolicy: IfNotPresent
         name: manager
+        env:
+        # Must be reachable without pod networking. 127.0.0.1:6443 is the local
+        # API server on kubeadm-style control-plane nodes.
+        - name: KUBE_API_SERVER
+          value: "https://127.0.0.1:6443"
         ports:
-        - containerPort: 8081
+        - containerPort: 8181
           name: health
           protocol: TCP
         securityContext:
@@ -78,13 +100,13 @@ spec:
         livenessProbe:
           httpGet:
             path: /healthz
-            port: 8081
+            port: 8181
           initialDelaySeconds: 15
           periodSeconds: 20
         readinessProbe:
           httpGet:
             path: /readyz
-            port: 8081
+            port: 8181
           initialDelaySeconds: 5
           periodSeconds: 10
         # TODO(user): Configure the resources accordingly based on the project requirements.

@@ -7,6 +7,11 @@ ARG BASE_IMAGE=golang:1.26
 FROM ${BASE_IMAGE} AS builder
 ARG TARGETOS
 ARG TARGETARCH
+# Default OVN-Kubernetes image stamped into the binary; empty keeps the
+# fallback from internal/defaults/config.yaml.
+ARG OVNKUBE_IMAGE_REPO=""
+ARG OVNKUBE_IMAGE_TAG=""
+ARG OVNKUBE_IMAGE_DIGEST=""
 
 WORKDIR /workspace
 # Copy the Go Modules manifests
@@ -24,13 +29,18 @@ COPY . .
 # was called. For example, if we call make docker-build in a local env which has the Apple Silicon M1 SO
 # the docker BUILDPLATFORM arg will be linux/arm64 when for Apple x86 it will be linux/amd64. Therefore,
 # by leaving it empty we can ensure that the container and binary shipped on it will have the same platform.
-RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o manager cmd/main.go
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a \
+    -ldflags "-X github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/defaults.OvnKubeImageRepository=${OVNKUBE_IMAGE_REPO} \
+              -X github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/defaults.OvnKubeImageTag=${OVNKUBE_IMAGE_TAG} \
+              -X github.com/ovn-kubernetes/ovn-kubernetes/operator/internal/defaults.OvnKubeImageDigest=${OVNKUBE_IMAGE_DIGEST}" \
+    -o manager cmd/main.go
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /
 COPY --from=builder /workspace/manager .
+COPY --from=builder /workspace/test-hooks /test-hooks
 USER 65532:65532
 
 ENTRYPOINT ["/manager"]

@@ -1,0 +1,36 @@
+# Namespaced access to the OVNK8sOperator CR for the operator's
+# controller-manager ServiceAccount. Scoped to ovnk8s-operator-system so the
+# operator cannot read or modify CRs elsewhere in the cluster.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  labels:
+    app.kubernetes.io/name: ovnk8s-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: cr-manager-role
+  namespace: ovnk8s-operator-system
+rules:
+- apiGroups:
+  - k8s.ovn.org
+  resources:
+  - ovnk8soperators
+  verbs:
+  - get
+  - list
+  - watch
+  - update
+  - patch
+- apiGroups:
+  - k8s.ovn.org
+  resources:
+  - ovnk8soperators/status
+  verbs:
+  - get
+  - update
+  - patch
+- apiGroups:
+  - k8s.ovn.org
+  resources:
+  - ovnk8soperators/finalizers
+  verbs:
+  - update
