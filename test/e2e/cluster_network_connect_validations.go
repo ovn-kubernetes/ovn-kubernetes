@@ -9,7 +9,7 @@ import (
 
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 
-	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/feature"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/testscenario"
 	testscenariocnc "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/testscenario/clusternetworkconnect"
 )
@@ -22,7 +22,7 @@ var _ = Describe("ClusterNetworkConnect: API validations", feature.NetworkConnec
 			})
 			for _, s := range scenarios {
 				By(s.Description)
-				_, stderr, err := runKubectlInputWithFullOutput("", s.Manifest, "create", "-f", "-")
+				_, stderr, err := e2ekubectl.NewKubectlCommand("", "apply", "-f", "-").WithStdinData(s.Manifest).ExecWithFullOutput()
 				Expect(err).To(HaveOccurred(), "should fail to create invalid ClusterNetworkConnect CR")
 				Expect(stderr).To(ContainSubstring(s.ExpectedErr))
 			}
