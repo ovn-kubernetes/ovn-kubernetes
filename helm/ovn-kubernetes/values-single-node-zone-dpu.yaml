@@ -151,6 +151,10 @@ global:
   # -- ovn-controller wait time in ms before clearing OpenFlow rules during start up
   # @default 0
   ofctrlWaitBeforeClear: "0"
+  # -- Whether or not to enable jemalloc (via LD_PRELOAD) for OVN and OVS daemons
+  enableJemalloc: true
+  # -- jemalloc configuration string (passed as MALLOC_CONF)
+  jemallocMallocConf: "background_thread:true,dirty_decay_ms:10000,muzzy_decay_ms:10000"
   # -- Container images
   # -- Image for DPUs
   dpuImage:

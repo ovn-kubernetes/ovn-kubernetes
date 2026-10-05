@@ -81,6 +81,12 @@ spec:
         env:
         - name: OVN_DAEMONSET_VERSION
           value: "1.4.0"
+        {{- if .Values.global.enableJemalloc }}
+        - name: LD_PRELOAD
+          value: "libjemalloc.so.2"
+        - name: MALLOC_CONF
+          value: {{ default "background_thread:true,dirty_decay_ms:10000,muzzy_decay_ms:10000" .Values.global.jemallocMallocConf | quote }}
+        {{- end }}
         - name: OVN_LOGLEVEL_NB
           value: {{ default "-vconsole:info -vfile:info" .Values.nbLogLevel | quote }}
         - name: OVN_GATEWAY_MODE
@@ -161,6 +167,12 @@ spec:
         env:
         - name: OVN_DAEMONSET_VERSION
           value: "1.4.0"
+        {{- if .Values.global.enableJemalloc }}
+        - name: LD_PRELOAD
+          value: "libjemalloc.so.2"
+        - name: MALLOC_CONF
+          value: {{ default "background_thread:true,dirty_decay_ms:10000,muzzy_decay_ms:10000" .Values.global.jemallocMallocConf | quote }}
+        {{- end }}
         - name: OVN_LOGLEVEL_SB
           value: {{ default "-vconsole:info -vfile:info" .Values.sbLogLevel | quote }}
         - name: K8S_APISERVER
@@ -227,6 +239,12 @@ spec:
         env:
         - name: OVN_DAEMONSET_VERSION
           value: "1.4.0"
+        {{- if .Values.global.enableJemalloc }}
+        - name: LD_PRELOAD
+          value: "libjemalloc.so.2"
+        - name: MALLOC_CONF
+          value: {{ default "background_thread:true,dirty_decay_ms:10000,muzzy_decay_ms:10000" .Values.global.jemallocMallocConf | quote }}
+        {{- end }}
         - name: OVN_LOGLEVEL_NORTHD
           value: {{ default "-vconsole:info -vfile:info" .Values.northdLogLevel | quote }}
         - name: K8S_APISERVER
@@ -561,6 +579,12 @@ spec:
         env:
         - name: OVN_DAEMONSET_VERSION
           value: "1.4.0"
+        {{- if .Values.global.enableJemalloc }}
+        - name: LD_PRELOAD
+          value: "libjemalloc.so.2"
+        - name: MALLOC_CONF
+          value: {{ default "background_thread:true,dirty_decay_ms:10000,muzzy_decay_ms:10000" .Values.global.jemallocMallocConf | quote }}
+        {{- end }}
         - name: OVN_LOGLEVEL_CONTROLLER
           value: {{ default "-vconsole:info" .Values.ovnControllerLogLevel | quote }}
         - name: K8S_APISERVER

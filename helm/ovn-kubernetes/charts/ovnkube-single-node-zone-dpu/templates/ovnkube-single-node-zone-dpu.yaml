@@ -81,6 +81,12 @@ spec:
         env:
         - name: OVN_DAEMONSET_VERSION
           value: "1.4.0"
+        {{- if .Values.global.enableJemalloc }}
+        - name: LD_PRELOAD
+          value: "libjemalloc.so.2"
+        - name: MALLOC_CONF
+          value: {{ default "background_thread:true,dirty_decay_ms:10000,muzzy_decay_ms:10000" .Values.global.jemallocMallocConf | quote }}
+        {{- end }}
         - name: OVNKUBE_NODE_MODE
           value: "dpu"
         - name: OVN_LOGLEVEL_NB
@@ -146,6 +152,12 @@ spec:
         env:
         - name: OVN_DAEMONSET_VERSION
           value: "1.4.0"
+        {{- if .Values.global.enableJemalloc }}
+        - name: LD_PRELOAD
+          value: "libjemalloc.so.2"
+        - name: MALLOC_CONF
+          value: {{ default "background_thread:true,dirty_decay_ms:10000,muzzy_decay_ms:10000" .Values.global.jemallocMallocConf | quote }}
+        {{- end }}
         - name: OVNKUBE_NODE_MODE
           value: "dpu"
         - name: OVN_LOGLEVEL_SB
@@ -201,6 +213,12 @@ spec:
         env:
         - name: OVN_DAEMONSET_VERSION
           value: "1.4.0"
+        {{- if .Values.global.enableJemalloc }}
+        - name: LD_PRELOAD
+          value: "libjemalloc.so.2"
+        - name: MALLOC_CONF
+          value: {{ default "background_thread:true,dirty_decay_ms:10000,muzzy_decay_ms:10000" .Values.global.jemallocMallocConf | quote }}
+        {{- end }}
         - name: OVNKUBE_NODE_MODE
           value: "dpu"
         - name: OVN_LOGLEVEL_NORTHD
@@ -481,6 +499,12 @@ spec:
         env:
         - name: OVN_DAEMONSET_VERSION
           value: "1.4.0"
+        {{- if .Values.global.enableJemalloc }}
+        - name: LD_PRELOAD
+          value: "libjemalloc.so.2"
+        - name: MALLOC_CONF
+          value: {{ default "background_thread:true,dirty_decay_ms:10000,muzzy_decay_ms:10000" .Values.global.jemallocMallocConf | quote }}
+        {{- end }}
         - name: OVNKUBE_NODE_MODE
           value: "dpu"
         - name: OVN_LOGLEVEL_CONTROLLER
