@@ -232,5 +232,6 @@ nav:
     - Disable Port Security: okeps/okep-3926-disable-port-security.md
     - OVN Observability API: okeps/okep-5212-ovnobserv-api.md
     - EgressIP Node Selector: okeps/okep-6800-egressip-node-selector.md
+    - BGP NodeSelector for PodNetwork: okeps/okep-7040-bgp-node-selector-for-pod-network.md
   - Blog:
     - OVN-Kubernetes Blog: blog/index.md
