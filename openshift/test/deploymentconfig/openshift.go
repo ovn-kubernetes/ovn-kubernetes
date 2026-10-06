@@ -16,6 +16,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
 	imageutils "k8s.io/kubernetes/test/utils/image"
 )
@@ -123,6 +124,17 @@ func (m *openshift) GetImage(imageID api.ImageID) api.ImageConfig {
 		}
 		return api.ImageConfig{ImageID: imageID, PullSpec: pullSpec}
 	}
+	if imageID == api.Netshoot {
+		pullSpec := os.Getenv("NETSHOOT_IMAGE")
+		if pullSpec == "" {
+			pullSpec = strings.TrimSpace(e2ekubectl.RunKubectlOrDie("openshift", "get", "imagestream", "network-tools",
+				"-o=jsonpath={.status.tags[?(@.tag==\"latest\")].items[0].dockerImageReference}"))
+			if pullSpec == "" {
+				panic("openshift/network-tools:latest has no imported Docker image reference")
+			}
+		}
+		return api.ImageConfig{ImageID: imageID, PullSpec: pullSpec}
+	}
 	return imageConfigMap[imageID]
 }
 
@@ -135,6 +147,10 @@ func (m *openshift) AddRequiredImage(imageID ...api.ImageID) {
 func (m *openshift) GetRequiredImages() []api.ImageConfig {
 	imageConfigs := []api.ImageConfig{}
 	for imageID := range m.requiredImages {
+		if imageID == api.Netshoot {
+			// network-tools is supplied by the payload, not the test-image mirror.
+			continue
+		}
 		newID, ok := imageIDMapping[imageID]
 		if !ok {
 			newID = imageutils.None
