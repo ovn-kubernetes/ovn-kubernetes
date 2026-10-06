@@ -424,15 +424,7 @@ func (c *nadController) OnNetworkRefChange(node, nadNamespacedName string, activ
 	isLocal := c.usesLocalDynamicFiltering() && node == c.filterNADsOnNode
 	networkName := nadNetwork.GetNetworkName()
 	affectedNetworks := c.getNetworkAndConnectedNetworks(networkName)
-	for _, affectedNetwork := range affectedNetworks {
-		c.notifyNetworkRefReconcilers(node, affectedNetwork)
-	}
-	// Enqueue a network reconcile for remote nodes (non-blocking).
-	if !isLocal {
-		for _, affectedNetwork := range affectedNetworks {
-			c.networkController.NotifyNetworkRefChange(affectedNetwork, node)
-		}
-	}
+	c.notifyNetworkActivityChange(node, affectedNetworks)
 	// Let the NAD controller handle lifecycle/teardown decisions asynchronously for local networks only.
 	if isLocal {
 		// Tracker events can arrive before syncNAD has populated nadsByNetwork
@@ -441,7 +433,28 @@ func (c *nadController) OnNetworkRefChange(node, nadNamespacedName string, activ
 		c.reconcile(nadNamespacedName)
 		c.reconcileNetworkActivity(affectedNetworks)
 	}
+}
 
+// notifyNetworkActivityChange queues activity checks without deciding whether
+// a network is active. Consumers recompute activity from the latest state.
+func (c *nadController) notifyNetworkActivityChange(node string, networkNames []string) {
+	isLocal := c.usesLocalDynamicFiltering() && node == c.filterNADsOnNode
+	for _, networkName := range networkNames {
+		c.notifyNetworkRefReconcilers(node, networkName)
+		// Local network lifecycle is handled through NAD reconciliation.
+		if !isLocal {
+			c.networkController.NotifyNetworkRefChange(networkName, node)
+		}
+	}
+}
+
+// reconcileCNCNetworkActivity handles activity changes caused by CNC topology,
+// including nodes whose pod and EgressIP references have not changed.
+func (c *nadController) reconcileCNCNetworkActivity(networkNames []string, nodes []*corev1.Node) {
+	c.reconcileNetworkActivity(networkNames)
+	for _, node := range nodes {
+		c.notifyNetworkActivityChange(node.Name, networkNames)
+	}
 }
 
 // getNetworkAndConnectedNetworks returns the provided network and all networks
@@ -725,6 +738,13 @@ func (c *nadController) syncAllCNCs() error {
 		return err
 	}
 
+	// List nodes before changing connectivity so a failed list cannot consume
+	// the topology change without scheduling its activity checks.
+	nodes, err := c.nodeLister.List(labels.Everything())
+	if err != nil {
+		return fmt.Errorf("failed to list nodes while syncing all CNCs: %w", err)
+	}
+
 	selectedNetworksByCNC := map[string]sets.Set[string]{}
 	networkIDsByCNC := map[string]sets.Set[int]{}
 	cncsByNetworkID := map[int]sets.Set[string]{}
@@ -749,7 +769,7 @@ func (c *nadController) syncAllCNCs() error {
 	networksToReconcile := c.updateCNCConnectivityLocked()
 	c.Unlock()
 
-	c.reconcileNetworkActivity(networksToReconcile.UnsortedList())
+	c.reconcileCNCNetworkActivity(networksToReconcile.UnsortedList(), nodes)
 	return nil
 }
 
@@ -767,6 +787,11 @@ func (c *nadController) syncCNC(key string) error {
 		selectedNetworks, networkIDs = c.networkSelectionsForCNC(cnc)
 	}
 
+	nodes, err := c.nodeLister.List(labels.Everything())
+	if err != nil {
+		return fmt.Errorf("failed to list nodes while syncing CNC %q: %w", key, err)
+	}
+
 	c.Lock()
 	if c.cncSelectedNetworks == nil {
 		c.cncSelectedNetworks = map[string]sets.Set[string]{}
@@ -780,7 +805,7 @@ func (c *nadController) syncCNC(key string) error {
 	networksToReconcile := c.updateCNCConnectivityLocked()
 	c.Unlock()
 
-	c.reconcileNetworkActivity(networksToReconcile.UnsortedList())
+	c.reconcileCNCNetworkActivity(networksToReconcile.UnsortedList(), nodes)
 	return nil
 }
 
