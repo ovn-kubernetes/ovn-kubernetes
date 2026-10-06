@@ -49,8 +49,9 @@ type ContinuousAllocator interface {
 }
 
 var (
-	ErrFull      = errors.New("subnet address pool exhausted")
-	ErrAllocated = errors.New("provided IP is already allocated")
+	ErrFull             = errors.New("subnet address pool exhausted")
+	ErrAllocated        = errors.New("provided IP is already allocated")
+	ErrAllocatedByOther = fmt.Errorf("IP reservation belongs to another owner: %w", ErrAllocated)
 )
 
 // IsErrAllocated returns true if err is of type ErrAllocated
