@@ -924,7 +924,9 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						EgressIP: egressIP2,
 					},
 				}
-				err = patchEgressIP(fakeOvn.controller.kube.PatchEgressIP, eIP.Name, generateEgressIPPatches(eIP1Mark, oneNodeStatus)...)
+				err = patchEgressIP(func(name string, patchData []byte) error {
+					return fakeOvn.controller.kube.PatchEgressIP(context.Background(), name, patchData)
+				}, eIP.Name, generateEgressIPPatches(eIP1Mark, oneNodeStatus)...)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				gomega.Eventually(getEgressIPStatusLen(eIP.Name)).Should(gomega.Equal(1))
 				expectedDatabaseStateOneEgressNode := []libovsdbtest.TestData{
@@ -1056,7 +1058,9 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseStateOneEgressNode))
 
 				ginkgo.By("restore both nodes as egressable")
-				err = patchEgressIP(fakeOvn.controller.kube.PatchEgressIP, eIP.Name, generateEgressIPPatches(eIP1Mark, twoNodeStatus)...)
+				err = patchEgressIP(func(name string, patchData []byte) error {
+					return fakeOvn.controller.kube.PatchEgressIP(context.Background(), name, patchData)
+				}, eIP.Name, generateEgressIPPatches(eIP1Mark, twoNodeStatus)...)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				gomega.Eventually(getEgressIPStatusLen(eIP.Name)).Should(gomega.Equal(2))
 				ginkgo.By("ensure expected equals actual")
