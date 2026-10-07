@@ -41,6 +41,7 @@ var (
 	NetworkQos                    = New("NetworkQos")
 	NetworkConnect                = New("NetworkConnect")
 	Metrics                       = New("Metrics")
+	MACSecurity                   = New("MACSecurity")
 )
 
 func New(name string) ginkgo.Labels {

@@ -1033,6 +1033,10 @@ func (bsnc *BaseUserDefinedNetworkController) setPodLogicalSwitchPortAddressesAn
 		lsp.Addresses = []string{
 			strings.Join(append([]string{mac}, ips...), " "),
 		}
+
+		if bsnc.MACSecurityMode() == types.MACSecurityModeDisabled {
+			lsp.Addresses = append(lsp.Addresses, "unknown")
+		}
 	}
 	switchName, err := bsnc.getExpectedSwitchName(pod)
 	if err != nil {

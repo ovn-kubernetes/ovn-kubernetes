@@ -173,11 +173,16 @@ spec:
   IP addresses in a `ipamclaims.k8s.cni.cncf.io` object. This IP addresses will
   be reused by other pods if requested. Useful for KubeVirt VMs. Only makes
   sense if the `subnets` attribute is also defined.
+- `macSecurityMode` (string, optional): `enabled` (default) or `disabled`.
+  When `disabled` the network logical-switch-port MAC security is turned off.
+  The `disabled` mode requires `subnets` to be **unset**. The `enabled` mode
+  preserves the default MAC protection with or without IPAM.
 
 > [!NOTE]
 > when the subnets attribute is omitted, the logical switch implementing the
   network will only provide layer 2 communication, and the users must configure
-  IPs for the pods. Port security will only prevent MAC spoofing.
+  IPs for the pods. Port security will only prevent MAC spoofing, unless it has
+  been disabled, see [MAC Security](../user-defined-networks/user-defined-networks.md#mac-security).
 
 > [!NOTE]
 > switched - layer2 - secondary networks **only** allow for east/west traffic.
@@ -233,11 +238,16 @@ localnet network.
 - `physicalNetworkName` (string, optional): the name of the physical network to
   which the OVN overlay will connect. When omitted, it will default to the value
   of the localnet network name on the NAD's `.spec.config.name`.
+- `macSecurityMode` (string, optional): `enabled` (default) or `disabled`.
+  When `disabled` the network logical-switch-port MAC security is turned off.
+  The `disabled` mode requires `subnets` to be **unset**. The `enabled` mode
+  preserves the default MAC protection with or without IPAM.
 
 > [!NOTE]
 > when the subnets attribute is omitted, the logical switch implementing the
   network will only provide layer 2 communication, and the users must configure
-  IPs for the pods. Port security will only prevent MAC spoofing.
+  IPs for the pods. Port security will only prevent MAC spoofing, unless it has
+  been disabled, see [MAC Security](../user-defined-networks/user-defined-networks.md#mac-security).
 
 > [!NOTE]
 > updates to the network specification require the attached workloads restart. All the network-attachment-definitions 

@@ -721,6 +721,61 @@ along with preserving their IPs.
 
 ![overlapping-podips](images/Layer2VMMigration.png)
 
+### MAC Security
+
+By default, secondary UDNs restrict each pod interface to its assigned MAC address.
+Disabling MAC security allows traffic with other source and destination MAC
+addresses, supporting workloads such as nested virtualization, network functions
+that forward traffic for other MAC addresses, or workloads sharing a virtual MAC
+for high availability.
+
+MAC security can only be disabled on secondary `Layer2` and `Localnet` networks
+with IPAM disabled. Set `macSecurity.mode: Disabled` and `ipam.mode: Disabled`
+under the topology's configuration when creating the network. If `macSecurity`
+is omitted, MAC security remains enabled. Changing the mode after creation is
+not supported.
+
+For example, create a Layer2 `UserDefinedNetwork`:
+
+```yaml
+apiVersion: k8s.ovn.org/v1
+kind: UserDefinedNetwork
+metadata:
+  name: virt-l2-net
+  namespace: blue
+spec:
+  topology: Layer2
+  layer2:
+    role: Secondary
+    ipam:
+      mode: Disabled
+    macSecurity:
+      mode: Disabled
+```
+
+For a Layer2 `ClusterUserDefinedNetwork`, use the same configuration under
+`spec.network.layer2`. Localnet is available through `ClusterUserDefinedNetwork`:
+
+```yaml
+apiVersion: k8s.ovn.org/v1
+kind: ClusterUserDefinedNetwork
+metadata:
+  name: virt-localnet
+spec:
+  namespaceSelector:
+    matchLabels:
+      tenant: yellow
+  network:
+    topology: Localnet
+    localnet:
+      role: Secondary
+      physicalNetworkName: localnet1
+      ipam:
+        mode: Disabled
+      macSecurity:
+        mode: Disabled
+```
+
 ### Services on UDNs
 
 Creating a service on UDNs is same as creating them on default
