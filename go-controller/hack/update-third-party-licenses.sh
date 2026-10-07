@@ -72,6 +72,18 @@ source_copy_override_paths() {
         github.com/kr/logfmt@v0.0.0-20140226030751-b84e30acd515)
             printf '%s\n' "Readme"
             ;;
+        github.com/JohnCGriffin/overflow@v0.0.0-20211019200055-46fa312c352c)
+            printf '%s\n' "README.md"
+            ;;
+        github.com/hudl/fargo@v1.3.0)
+            printf '%s\n' "README.md"
+            ;;
+        github.com/streadway/handy@v0.0.0-20190108123426-d5acb3125c2a)
+            printf '%s\n' "README.md"
+            ;;
+        github.com/mattn/goveralls@v0.0.5)
+            printf '%s\n' "README.md"
+            ;;
     esac
 }
 
