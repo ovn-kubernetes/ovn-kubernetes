@@ -2097,6 +2097,55 @@ func TestCNCConnectivityRetry(t *testing.T) {
 	}
 }
 
+func TestCNCUnchangedConnectivitySkipsNodeList(t *testing.T) {
+	for _, path := range []string{"single CNC", "all CNCs"} {
+		t.Run(path, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			nc, cncs, nodes := newCNCConnectivityTestController(t)
+			reconcile := func(key string) error {
+				if path == "all CNCs" {
+					return nc.syncAllCNCs()
+				}
+				return nc.syncCNC(key)
+			}
+
+			g.Expect(reconcile("blue-green")).To(gomega.Succeed(), "create the blue-green connection")
+			g.Expect(nc.getNetworkAndConnectedNetworks("blue")).To(gomega.ConsistOf("blue", "green"),
+				"blue and green must be connected before the no-op reconciliation")
+
+			// An unavailable node cache must not prevent a no-op reconciliation.
+			nodes.err = fmt.Errorf("node cache unavailable")
+			g.Expect(reconcile("blue-green")).To(gomega.Succeed(), "reconcile unchanged connectivity without listing nodes")
+			g.Expect(nc.getNetworkAndConnectedNetworks("blue")).To(gomega.ConsistOf("blue", "green"),
+				"blue and green must remain connected after the no-op reconciliation")
+
+			// A second CNC connects the same pair. Adding or removing a redundant
+			// connection must also succeed without access to the node cache.
+			duplicate := cncs.cncs["blue-green"].DeepCopy()
+			duplicate.Name = "blue-green-duplicate"
+			cncs.cncs[duplicate.Name] = duplicate
+			g.Expect(reconcile(duplicate.Name)).To(gomega.Succeed(), "reconcile the overlapping blue-green CNC")
+
+			delete(cncs.cncs, "blue-green")
+			g.Expect(reconcile("blue-green")).To(gomega.Succeed(), "delete the original CNC without listing nodes")
+			g.Expect(nc.getNetworkAndConnectedNetworks("blue")).To(gomega.ConsistOf("blue", "green"),
+				"blue must retain green as a peer through the remaining CNC")
+			g.Expect(nc.getNetworkAndConnectedNetworks("green")).To(gomega.ConsistOf("green", "blue"),
+				"green must retain blue as a peer through the remaining CNC")
+
+			// Removing the final CNC must remove the connection. This also checks
+			// that the earlier no-op reconciliations saved their CNC changes.
+			nodes.err = nil
+			delete(cncs.cncs, duplicate.Name)
+			g.Expect(reconcile(duplicate.Name)).To(gomega.Succeed(), "delete the last blue-green CNC")
+			g.Expect(nc.getNetworkAndConnectedNetworks("blue")).To(gomega.ConsistOf("blue"),
+				"blue must have no peers after deleting the last CNC")
+			g.Expect(nc.getNetworkAndConnectedNetworks("green")).To(gomega.ConsistOf("green"),
+				"green must have no peers after deleting the last CNC")
+		})
+	}
+}
+
 func TestSyncCNCIncludesClusterIPServiceConnectivity(t *testing.T) {
 	g := gomega.NewWithT(t)
 
