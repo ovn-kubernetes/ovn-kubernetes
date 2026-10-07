@@ -3233,7 +3233,7 @@ func TestOnNetworkRefChangeKeepsNADActiveWhenAnotherTrackerStillReferencesIt(t *
 	g.Expect(nc.markedForRemoval).ToNot(gomega.HaveKey(key))
 }
 
-func TestReconcileNetworkActivityRequeuesKnownNADs(t *testing.T) {
+func TestRequeueNetworkNADs(t *testing.T) {
 	g := gomega.NewWithT(t)
 	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 	config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
@@ -3272,7 +3272,7 @@ func TestReconcileNetworkActivityRequeuesKnownNADs(t *testing.T) {
 		cncConnectedNetworks: map[string]sets.Set[string]{},
 	}
 
-	nc.reconcileNetworkActivity([]string{"net-a", "net-b"})
+	nc.requeueNetworkNADs([]string{"net-a", "net-b"})
 
 	fakeController := nc.controller.(*controller.FakeController)
 	fakeController.Lock()

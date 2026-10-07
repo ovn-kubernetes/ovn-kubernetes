@@ -434,7 +434,7 @@ func (c *nadController) OnNetworkRefChange(node, nadNamespacedName string, activ
 		// for this NAD. Requeue the changed key directly, then requeue any
 		// already-known NADs for this network and its CNC-connected peers.
 		c.reconcile(nadNamespacedName)
-		c.reconcileNetworkActivity(affectedNetworks)
+		c.requeueNetworkNADs(affectedNetworks)
 	}
 }
 
@@ -454,7 +454,7 @@ func (c *nadController) notifyNetworkActivityChange(node string, networkNames []
 // reconcileCNCNetworkActivity handles activity changes caused by CNC topology,
 // including nodes whose pod and EgressIP references have not changed.
 func (c *nadController) reconcileCNCNetworkActivity(networkNames []string, nodes []*corev1.Node) {
-	c.reconcileNetworkActivity(networkNames)
+	c.requeueNetworkNADs(networkNames)
 	for _, node := range nodes {
 		c.notifyNetworkActivityChange(node.Name, networkNames)
 	}
@@ -477,10 +477,10 @@ func (c *nadController) getNetworkAndConnectedNetworks(networkName string) []str
 	return networks
 }
 
-// reconcileNetworkActivity requeues NAD sync for all NADs belonging to the
+// requeueNetworkNADs requeues NAD sync for all NADs belonging to the
 // provided networks. syncNAD recomputes current activity and updates local
 // Dynamic UDN removal state.
-func (c *nadController) reconcileNetworkActivity(networkNames []string) {
+func (c *nadController) requeueNetworkNADs(networkNames []string) {
 	if len(networkNames) == 0 {
 		return
 	}
