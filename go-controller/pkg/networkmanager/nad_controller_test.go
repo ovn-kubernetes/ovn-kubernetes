@@ -24,6 +24,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/sets"
+	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 
@@ -1880,6 +1881,271 @@ func TestNodeHasNetworkIncludesCNCConnectivity(t *testing.T) {
 	g.Expect(nc.NodeHasNetwork("node1", "net-c")).To(gomega.BeFalse())
 }
 
+func TestCNCActivatesNetworkOnPeerPodNode(t *testing.T) {
+	tests := []struct {
+		name      string
+		reconcile func(*nadController, string) error
+	}{
+		{
+			name:      "single CNC",
+			reconcile: (*nadController).syncCNC,
+		},
+		{
+			name: "all CNCs",
+			reconcile: func(nads *nadController, _ string) error {
+				return nads.syncAllCNCs()
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			testCNCActivatesNetworkOnPeerPodNode(t, tt.reconcile)
+		})
+	}
+}
+
+func testCNCActivatesNetworkOnPeerPodNode(t *testing.T, reconcile func(*nadController, string) error) {
+	t.Helper()
+	g := gomega.NewWithT(t)
+	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed(), "prepare test configuration")
+	t.Cleanup(func() {
+		g.Expect(config.PrepareTestConfig()).To(gomega.Succeed(), "reset test configuration during cleanup")
+	})
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+	config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
+
+	// Blue already has a pod on node1. Green has no pods there, but its
+	// network controller is running (it could serve pods on other nodes).
+	manager := &testControllerManager{controllers: map[string]NetworkController{}}
+	networks := newNetworkController("test", "", manager, nil)
+	ids := id.NewIDAllocator("NetworkIDs", MaxNetworks)
+	g.Expect(ids.ReserveID("blue", 1)).To(gomega.Succeed(), "reserve network ID 1 for blue")
+	g.Expect(ids.ReserveID("green", 2)).To(gomega.Succeed(), "reserve network ID 2 for green")
+
+	nodeIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+	g.Expect(nodeIndexer.Add(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1"}})).To(gomega.Succeed(),
+		"add node1 to the node informer cache")
+	nads := &nadController{
+		networkController:  networks,
+		networkIDAllocator: ids,
+		nodeLister:         corelisters.NewNodeLister(nodeIndexer),
+		nads:               map[string]string{"blue-ns/blue": "blue"},
+		primaryNADs:        map[string]string{},
+		nadsByNetwork:      map[string]sets.Set[string]{"blue": sets.New("blue-ns/blue")},
+		dynamicFilterNADs:  map[string]bool{"blue-ns/blue": true},
+		podTracker: &PodTrackerController{nodeNADToPodCache: map[string]map[string]map[string]struct{}{
+			"node1": {"blue-ns/blue": {"blue-pod": {}}},
+		}},
+	}
+	networks.nodeHasNetwork = nads.NodeHasNetwork
+
+	// Keep workers stopped and run reconciles explicitly, so the result does
+	// not depend on goroutine scheduling or a timeout.
+	nads.controller = controller.NewController("test-nads", &controller.ControllerConfig[nettypes.NetworkAttachmentDefinition]{
+		Reconcile:   func(string) error { return nil },
+		Threadiness: 1,
+	})
+	greenNAD, err := buildNAD("green", "green-ns", &ovncnitypes.NetConf{
+		NetConf:  cnitypes.NetConf{Name: "green", Type: "ovn-k8s-cni-overlay"},
+		Topology: types.Layer3Topology,
+		Role:     types.NetworkRolePrimary,
+		NADName:  "green-ns/green",
+		Subnets:  "10.200.0.0/16",
+	})
+	g.Expect(err).NotTo(gomega.HaveOccurred(), "build NAD green-ns/green")
+	isController := true
+	greenNAD.OwnerReferences = []metav1.OwnerReference{{Kind: "UserDefinedNetwork", Name: "green", Controller: &isController}}
+	g.Expect(nads.syncNAD("green-ns/green", greenNAD)).To(gomega.Succeed(),
+		"reconcile NAD green-ns/green before connecting the networks")
+	g.Expect(networks.syncNetwork("green")).To(gomega.Succeed(),
+		"reconcile network green before connecting the networks")
+
+	greenActiveOnNode := false
+	g.Expect(manager.controllers["green "+types.Layer3Topology]).NotTo(gomega.BeNil(),
+		"green's layer3 controller must exist before connecting the networks")
+	greenController := manager.controllers["green "+types.Layer3Topology].(*testNetworkController)
+	greenController.handleRefChange = func(node string, active bool) {
+		if node == "node1" {
+			greenActiveOnNode = active
+		}
+	}
+	g.Expect(nads.NodeHasNetwork("node1", "blue")).To(gomega.BeTrue(),
+		"blue must be active on node1 because it has an existing pod there")
+	g.Expect(nads.NodeHasNetwork("node1", "green")).To(gomega.BeFalse(),
+		"green must be inactive on node1 before connecting the networks")
+
+	// Connecting the networks makes green necessary on blue's pod node,
+	// even though no pod was added and neither network's configuration changed.
+	cnc := &networkconnectv1.ClusterNetworkConnect{ObjectMeta: metav1.ObjectMeta{
+		Name: "blue-green",
+		Annotations: map[string]string{
+			"k8s.ovn.org/network-connect-subnet": `{"layer3_1":{"ipv4":"192.168.0.0/24"},"layer3_2":{"ipv4":"192.168.1.0/24"}}`,
+		},
+	}}
+	cncLister := &fakeCNCLister{cncs: map[string]*networkconnectv1.ClusterNetworkConnect{cnc.Name: cnc}}
+	nads.cncLister = cncLister
+	g.Expect(reconcile(nads, cnc.Name)).To(gomega.Succeed(), "reconcile CNC blue-green connectivity")
+	g.Expect(nads.NodeHasNetwork("node1", "green")).To(gomega.BeTrue(),
+		"green must be active on node1 after connecting it to blue")
+
+	// Process the NAD and network work after the CNC change. The running
+	// controller must learn the same activity state as the network manager.
+	g.Expect(nads.syncNAD("green-ns/green", greenNAD)).To(gomega.Succeed(),
+		"reconcile NAD green-ns/green after connecting the networks")
+	g.Expect(networks.syncNetwork("green")).To(gomega.Succeed(),
+		"reconcile network green after connecting the networks")
+	g.Expect(greenActiveOnNode).To(gomega.BeTrue(),
+		"green's running controller must learn that CNC made green active on node1")
+
+	// Keep the existing pod and controller: deleting only the CNC must undo
+	// green's activity on node1 without another pod notification.
+	delete(cncLister.cncs, cnc.Name)
+	g.Expect(reconcile(nads, cnc.Name)).To(gomega.Succeed(), "reconcile CNC blue-green deletion")
+	g.Expect(nads.NodeHasNetwork("node1", "blue")).To(gomega.BeTrue(),
+		"blue must remain active on node1 because its pod still exists")
+	g.Expect(nads.NodeHasNetwork("node1", "green")).To(gomega.BeFalse(),
+		"green must be inactive on node1 after disconnecting it from blue")
+
+	g.Expect(nads.syncNAD("green-ns/green", greenNAD)).To(gomega.Succeed(),
+		"reconcile NAD green-ns/green after disconnecting the networks")
+	g.Expect(networks.syncNetwork("green")).To(gomega.Succeed(),
+		"reconcile network green after disconnecting the networks")
+	g.Expect(greenActiveOnNode).To(gomega.BeFalse(),
+		"green's running controller must learn that CNC deletion made green inactive on node1")
+}
+
+// failingNodeLister allows reconciliation retries to be tested without workers
+// or timing-dependent informer failures.
+type failingNodeLister struct {
+	corelisters.NodeLister
+	err error
+}
+
+func (l *failingNodeLister) List(selector labels.Selector) ([]*corev1.Node, error) {
+	if l.err != nil {
+		return nil, l.err
+	}
+	return l.NodeLister.List(selector)
+}
+
+func newCNCConnectivityTestController(t *testing.T) (*nadController, *fakeCNCLister, *failingNodeLister) {
+	t.Helper()
+	g := gomega.NewWithT(t)
+	ids := id.NewIDAllocator("NetworkIDs", MaxNetworks)
+	g.Expect(ids.ReserveID("blue", 1)).To(gomega.Succeed(), "reserve blue's network ID")
+	g.Expect(ids.ReserveID("green", 2)).To(gomega.Succeed(), "reserve green's network ID")
+
+	cnc := &networkconnectv1.ClusterNetworkConnect{ObjectMeta: metav1.ObjectMeta{
+		Name: "blue-green",
+		Annotations: map[string]string{
+			"k8s.ovn.org/network-connect-subnet": `{"layer3_1":{"ipv4":"192.168.0.0/24"},"layer3_2":{"ipv4":"192.168.1.0/24"}}`,
+		},
+	}}
+	cncs := &fakeCNCLister{cncs: map[string]*networkconnectv1.ClusterNetworkConnect{cnc.Name: cnc}}
+	nodes := &failingNodeLister{
+		NodeLister: corelisters.NewNodeLister(cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})),
+	}
+	nc := &nadController{
+		networkController:  newNetworkController("test", "", nil, nil),
+		networkIDAllocator: ids,
+		cncLister:          cncs,
+		nodeLister:         nodes,
+		nadsByNetwork: map[string]sets.Set[string]{
+			"blue":  sets.New[string](),
+			"green": sets.New[string](),
+		},
+	}
+	return nc, cncs, nodes
+}
+
+func TestCNCConnectivityRetry(t *testing.T) {
+	for _, path := range []string{"single CNC", "all CNCs"} {
+		t.Run(path, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			nc, cncs, nodes := newCNCConnectivityTestController(t)
+			reconcile := func() error {
+				if path == "all CNCs" {
+					return nc.syncAllCNCs()
+				}
+				return nc.syncCNC("blue-green")
+			}
+
+			// A failed node list must leave the connection pending for retry.
+			nodes.err = fmt.Errorf("node cache unavailable")
+			g.Expect(reconcile()).To(gomega.MatchError(gomega.ContainSubstring("node cache unavailable")),
+				"creating the connection must report the node-list failure")
+			g.Expect(nc.getNetworkAndConnectedNetworks("blue")).To(gomega.ConsistOf("blue"),
+				"green must remain disconnected from blue after the failed reconciliation")
+			nodes.err = nil
+			g.Expect(reconcile()).To(gomega.Succeed(), "retry creating the connection")
+			g.Expect(nc.getNetworkAndConnectedNetworks("blue")).To(gomega.ConsistOf("blue", "green"),
+				"retry must connect blue and green")
+
+			// The same retry guarantee applies to disconnections.
+			nodes.err = fmt.Errorf("node cache unavailable")
+			delete(cncs.cncs, "blue-green")
+			g.Expect(reconcile()).To(gomega.MatchError(gomega.ContainSubstring("node cache unavailable")),
+				"deleting the connection must report the node-list failure")
+			g.Expect(nc.getNetworkAndConnectedNetworks("blue")).To(gomega.ConsistOf("blue", "green"),
+				"green must remain connected to blue after the failed reconciliation")
+			nodes.err = nil
+			g.Expect(reconcile()).To(gomega.Succeed(), "retry deleting the connection")
+			g.Expect(nc.getNetworkAndConnectedNetworks("blue")).To(gomega.ConsistOf("blue"),
+				"retry must disconnect green from blue")
+		})
+	}
+}
+
+func TestCNCUnchangedConnectivitySkipsNodeList(t *testing.T) {
+	for _, path := range []string{"single CNC", "all CNCs"} {
+		t.Run(path, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			nc, cncs, nodes := newCNCConnectivityTestController(t)
+			reconcile := func(key string) error {
+				if path == "all CNCs" {
+					return nc.syncAllCNCs()
+				}
+				return nc.syncCNC(key)
+			}
+
+			g.Expect(reconcile("blue-green")).To(gomega.Succeed(), "create the blue-green connection")
+			g.Expect(nc.getNetworkAndConnectedNetworks("blue")).To(gomega.ConsistOf("blue", "green"),
+				"blue and green must be connected before the no-op reconciliation")
+
+			// An unavailable node cache must not prevent a no-op reconciliation.
+			nodes.err = fmt.Errorf("node cache unavailable")
+			g.Expect(reconcile("blue-green")).To(gomega.Succeed(), "reconcile unchanged connectivity without listing nodes")
+			g.Expect(nc.getNetworkAndConnectedNetworks("blue")).To(gomega.ConsistOf("blue", "green"),
+				"blue and green must remain connected after the no-op reconciliation")
+
+			// A second CNC connects the same pair. Adding or removing a redundant
+			// connection must also succeed without access to the node cache.
+			duplicate := cncs.cncs["blue-green"].DeepCopy()
+			duplicate.Name = "blue-green-duplicate"
+			cncs.cncs[duplicate.Name] = duplicate
+			g.Expect(reconcile(duplicate.Name)).To(gomega.Succeed(), "reconcile the overlapping blue-green CNC")
+
+			delete(cncs.cncs, "blue-green")
+			g.Expect(reconcile("blue-green")).To(gomega.Succeed(), "delete the original CNC without listing nodes")
+			g.Expect(nc.getNetworkAndConnectedNetworks("blue")).To(gomega.ConsistOf("blue", "green"),
+				"blue must retain green as a peer through the remaining CNC")
+			g.Expect(nc.getNetworkAndConnectedNetworks("green")).To(gomega.ConsistOf("green", "blue"),
+				"green must retain blue as a peer through the remaining CNC")
+
+			// Removing the final CNC must remove the connection. This also checks
+			// that the earlier no-op reconciliations saved their CNC changes.
+			nodes.err = nil
+			delete(cncs.cncs, duplicate.Name)
+			g.Expect(reconcile(duplicate.Name)).To(gomega.Succeed(), "delete the last blue-green CNC")
+			g.Expect(nc.getNetworkAndConnectedNetworks("blue")).To(gomega.ConsistOf("blue"),
+				"blue must have no peers after deleting the last CNC")
+			g.Expect(nc.getNetworkAndConnectedNetworks("green")).To(gomega.ConsistOf("green"),
+				"green must have no peers after deleting the last CNC")
+		})
+	}
+}
+
 func TestSyncCNCIncludesClusterIPServiceConnectivity(t *testing.T) {
 	g := gomega.NewWithT(t)
 
@@ -2967,7 +3233,7 @@ func TestOnNetworkRefChangeKeepsNADActiveWhenAnotherTrackerStillReferencesIt(t *
 	g.Expect(nc.markedForRemoval).ToNot(gomega.HaveKey(key))
 }
 
-func TestReconcileNetworkActivityRequeuesKnownNADs(t *testing.T) {
+func TestRequeueNetworkNADs(t *testing.T) {
 	g := gomega.NewWithT(t)
 	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 	config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
@@ -3006,7 +3272,7 @@ func TestReconcileNetworkActivityRequeuesKnownNADs(t *testing.T) {
 		cncConnectedNetworks: map[string]sets.Set[string]{},
 	}
 
-	nc.reconcileNetworkActivity([]string{"net-a", "net-b"})
+	nc.requeueNetworkNADs([]string{"net-a", "net-b"})
 
 	fakeController := nc.controller.(*controller.FakeController)
 	fakeController.Lock()

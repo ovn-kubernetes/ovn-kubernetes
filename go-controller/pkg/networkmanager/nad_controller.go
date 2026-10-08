@@ -5,6 +5,7 @@ package networkmanager
 
 import (
 	"fmt"
+	"maps"
 	"reflect"
 	"sort"
 	"strconv"
@@ -181,7 +182,9 @@ func newController(
 					Lister:         c.cncLister.List,
 					Reconcile:      c.syncCNC,
 					ObjNeedsUpdate: c.cncNeedsUpdate,
-					Threadiness:    1,
+					// Start completes syncAllCNCs before starting this single worker.
+					// Connectivity comparison and cache updates rely on serial CNC syncs.
+					Threadiness: 1,
 				},
 			)
 		}
@@ -424,24 +427,37 @@ func (c *nadController) OnNetworkRefChange(node, nadNamespacedName string, activ
 	isLocal := c.usesLocalDynamicFiltering() && node == c.filterNADsOnNode
 	networkName := nadNetwork.GetNetworkName()
 	affectedNetworks := c.getNetworkAndConnectedNetworks(networkName)
-	for _, affectedNetwork := range affectedNetworks {
-		c.notifyNetworkRefReconcilers(node, affectedNetwork)
-	}
-	// Enqueue a network reconcile for remote nodes (non-blocking).
-	if !isLocal {
-		for _, affectedNetwork := range affectedNetworks {
-			c.networkController.NotifyNetworkRefChange(affectedNetwork, node)
-		}
-	}
+	c.notifyNetworkActivityChange(node, affectedNetworks)
 	// Let the NAD controller handle lifecycle/teardown decisions asynchronously for local networks only.
 	if isLocal {
 		// Tracker events can arrive before syncNAD has populated nadsByNetwork
 		// for this NAD. Requeue the changed key directly, then requeue any
 		// already-known NADs for this network and its CNC-connected peers.
 		c.reconcile(nadNamespacedName)
-		c.reconcileNetworkActivity(affectedNetworks)
+		c.requeueNetworkNADs(affectedNetworks)
 	}
+}
 
+// notifyNetworkActivityChange queues activity checks without deciding whether
+// a network is active. Consumers recompute activity from the latest state.
+func (c *nadController) notifyNetworkActivityChange(node string, networkNames []string) {
+	isLocal := c.usesLocalDynamicFiltering() && node == c.filterNADsOnNode
+	for _, networkName := range networkNames {
+		c.notifyNetworkRefReconcilers(node, networkName)
+		// Local network lifecycle is handled through NAD reconciliation.
+		if !isLocal {
+			c.networkController.NotifyNetworkRefChange(networkName, node)
+		}
+	}
+}
+
+// reconcileCNCNetworkActivity handles activity changes caused by CNC topology,
+// including nodes whose pod and EgressIP references have not changed.
+func (c *nadController) reconcileCNCNetworkActivity(networkNames []string, nodes []*corev1.Node) {
+	c.requeueNetworkNADs(networkNames)
+	for _, node := range nodes {
+		c.notifyNetworkActivityChange(node.Name, networkNames)
+	}
 }
 
 // getNetworkAndConnectedNetworks returns the provided network and all networks
@@ -461,10 +477,10 @@ func (c *nadController) getNetworkAndConnectedNetworks(networkName string) []str
 	return networks
 }
 
-// reconcileNetworkActivity requeues NAD sync for all NADs belonging to the
+// requeueNetworkNADs requeues NAD sync for all NADs belonging to the
 // provided networks. syncNAD recomputes current activity and updates local
 // Dynamic UDN removal state.
-func (c *nadController) reconcileNetworkActivity(networkNames []string) {
+func (c *nadController) requeueNetworkNADs(networkNames []string) {
 	if len(networkNames) == 0 {
 		return
 	}
@@ -671,14 +687,44 @@ func changedCNCNetworks(oldConnected, newConnected map[string]sets.Set[string]) 
 	return networksToReconcile
 }
 
-// updateCNCConnectivityLocked refreshes the derived CNC adjacency map from the
-// selected network cache and returns networks whose peer set changed.
-// Caller must hold nadController lock.
-func (c *nadController) updateCNCConnectivityLocked() sets.Set[string] {
-	connectedNetworks := buildCNCConnectedNetworks(c.cncSelectedNetworks)
-	networksToReconcile := changedCNCNetworks(c.cncConnectedNetworks, connectedNetworks)
-	c.cncConnectedNetworks = connectedNetworks
-	return networksToReconcile
+// nextCNCSelections returns the selections after updating or deleting one CNC,
+// without changing the current cache.
+func (c *nadController) nextCNCSelections(key string, selectedNetworks sets.Set[string]) map[string]sets.Set[string] {
+	// Selection sets are replaced, not edited, so only the outer map needs copying.
+	c.RLock()
+	nextSelections := maps.Clone(c.cncSelectedNetworks)
+	c.RUnlock()
+	if nextSelections == nil {
+		nextSelections = map[string]sets.Set[string]{}
+	}
+
+	if selectedNetworks == nil {
+		delete(nextSelections, key)
+	} else {
+		nextSelections[key] = selectedNetworks
+	}
+	return nextSelections
+}
+
+// cncActivityChanges finds networks whose peers will change and the nodes to
+// notify. Callers must not save nextConnectedNetworks if listing nodes fails:
+// otherwise the next attempt would see no change and skip the notifications.
+//
+// CNC reconciliations run serially, so cached connectivity cannot change
+// between this comparison and the caller's update.
+func (c *nadController) cncActivityChanges(nextConnectedNetworks map[string]sets.Set[string]) (sets.Set[string], []*corev1.Node, error) {
+	c.RLock()
+	changedNetworks := changedCNCNetworks(c.cncConnectedNetworks, nextConnectedNetworks)
+	c.RUnlock()
+	if len(changedNetworks) == 0 {
+		return changedNetworks, nil, nil
+	}
+
+	nodes, err := c.nodeLister.List(labels.Everything())
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to list nodes: %w", err)
+	}
+	return changedNetworks, nodes, nil
 }
 
 // updateCNCNetworkIDsLocked updates the per-CNC owner ID cache and reverse
@@ -725,12 +771,12 @@ func (c *nadController) syncAllCNCs() error {
 		return err
 	}
 
-	selectedNetworksByCNC := map[string]sets.Set[string]{}
+	nextSelectedNetworks := map[string]sets.Set[string]{}
 	networkIDsByCNC := map[string]sets.Set[int]{}
 	cncsByNetworkID := map[int]sets.Set[string]{}
 	for _, cnc := range cncs {
 		selectedNetworks, networkIDs := c.networkSelectionsForCNC(cnc)
-		selectedNetworksByCNC[cnc.Name] = selectedNetworks
+		nextSelectedNetworks[cnc.Name] = selectedNetworks
 		networkIDsByCNC[cnc.Name] = networkIDs
 		for networkID := range networkIDs {
 			indexedCNCs := cncsByNetworkID[networkID]
@@ -742,14 +788,20 @@ func (c *nadController) syncAllCNCs() error {
 		}
 	}
 
+	nextConnectedNetworks := buildCNCConnectedNetworks(nextSelectedNetworks)
+	changedNetworks, nodes, err := c.cncActivityChanges(nextConnectedNetworks)
+	if err != nil {
+		return fmt.Errorf("failed to sync all CNCs: %w", err)
+	}
+
 	c.Lock()
-	c.cncSelectedNetworks = selectedNetworksByCNC
+	c.cncSelectedNetworks = nextSelectedNetworks
 	c.cncNetworkIDs = networkIDsByCNC
 	c.cncsByNetworkID = cncsByNetworkID
-	networksToReconcile := c.updateCNCConnectivityLocked()
+	c.cncConnectedNetworks = nextConnectedNetworks
 	c.Unlock()
 
-	c.reconcileNetworkActivity(networksToReconcile.UnsortedList())
+	c.reconcileCNCNetworkActivity(changedNetworks.UnsortedList(), nodes)
 	return nil
 }
 
@@ -767,20 +819,20 @@ func (c *nadController) syncCNC(key string) error {
 		selectedNetworks, networkIDs = c.networkSelectionsForCNC(cnc)
 	}
 
+	nextSelectedNetworks := c.nextCNCSelections(key, selectedNetworks)
+	nextConnectedNetworks := buildCNCConnectedNetworks(nextSelectedNetworks)
+	changedNetworks, nodes, err := c.cncActivityChanges(nextConnectedNetworks)
+	if err != nil {
+		return fmt.Errorf("failed to sync CNC %q: %w", key, err)
+	}
+
 	c.Lock()
-	if c.cncSelectedNetworks == nil {
-		c.cncSelectedNetworks = map[string]sets.Set[string]{}
-	}
-	if selectedNetworks == nil {
-		delete(c.cncSelectedNetworks, key)
-	} else {
-		c.cncSelectedNetworks[key] = selectedNetworks
-	}
+	c.cncSelectedNetworks = nextSelectedNetworks
 	c.updateCNCNetworkIDsLocked(key, networkIDs)
-	networksToReconcile := c.updateCNCConnectivityLocked()
+	c.cncConnectedNetworks = nextConnectedNetworks
 	c.Unlock()
 
-	c.reconcileNetworkActivity(networksToReconcile.UnsortedList())
+	c.reconcileCNCNetworkActivity(changedNetworks.UnsortedList(), nodes)
 	return nil
 }
 

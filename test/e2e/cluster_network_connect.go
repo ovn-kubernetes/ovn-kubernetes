@@ -3153,6 +3153,131 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			terminatingPodFinalizer = "k8s.ovn.org/e2e-terminating-pod"
 		)
 
+		It("should activate peer networks on existing pod nodes when a CNC is created", func() {
+			if !isDynamicUDNEnabled() {
+				Skip("test requires DYNAMIC_UDN_ALLOCATION=true")
+			}
+
+			nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), cs, 2)
+			Expect(err).NotTo(HaveOccurred(), "find nodes for the existing UDN pods")
+			Expect(nodes.Items).To(HaveLen(2), "test requires two schedulable nodes")
+			blueNode, greenNode := nodes.Items[0].Name, nodes.Items[1].Name
+			testID := rand.String(5)
+			blueNamespace := "cnc-existing-blue-" + testID
+			greenNamespace := "cnc-existing-green-" + testID
+			udnName := "test-net"
+			cncName := generateCNCName()
+			selection := map[string]string{"cnc-existing-pods": testID}
+
+			DeferCleanup(func() {
+				deleteCNC(cncName)
+				deleteNamespace(cs, blueNamespace)
+				deleteNamespace(cs, greenNamespace)
+			})
+
+			By("Creating two isolated L3 UDNs before creating the CNC")
+			createUDNNamespaceWithName(cs, blueNamespace, selection)
+			createUDNNamespaceWithName(cs, greenNamespace, selection)
+			createLayer3PrimaryUDNWithSubnets(cs, blueNamespace, udnName, []string{"10.142.0.0/16"}, []string{"2014:100:800::0/60"})
+			createLayer3PrimaryUDNWithSubnets(cs, greenNamespace, udnName, []string{"10.143.0.0/16"}, []string{"2014:100:900::0/60"})
+			for _, namespace := range []string{blueNamespace, greenNamespace} {
+				Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, namespace, udnName), 60*time.Second, time.Second).
+					Should(Succeed(), "UDN %s/%s must be ready", namespace, udnName)
+			}
+
+			By("Creating one pod on each network, on different nodes")
+			blueConfig := httpServerPodConfig("blue-pod", blueNamespace)
+			blueConfig.nodeSelector = map[string]string{nodeHostnameKey: blueNode}
+			bluePod := runUDNPod(cs, blueNamespace, blueConfig, nil)
+			greenConfig := httpServerPodConfig("green-pod", greenNamespace)
+			greenConfig.nodeSelector = map[string]string{nodeHostnameKey: greenNode}
+			greenPod := runUDNPod(cs, greenNamespace, greenConfig, nil)
+
+			waitForActiveNodes := func(namespace string, count int) {
+				Eventually(func(g Gomega) {
+					udn, err := f.DynamicClient.Resource(udnGVR).Namespace(namespace).Get(context.Background(), udnName, metav1.GetOptions{})
+					g.Expect(err).NotTo(HaveOccurred(), "read UDN %s/%s activity status", namespace, udnName)
+					conditions, err := getConditions(udn)
+					g.Expect(err).NotTo(HaveOccurred(), "parse UDN %s/%s conditions", namespace, udnName)
+					for _, condition := range conditions {
+						if condition.Type == "NodesSelected" {
+							g.Expect(condition.Status).To(Equal(metav1.ConditionTrue))
+							g.Expect(condition.Message).To(Equal(fmt.Sprintf("%d node(s) rendered with network", count)))
+							return
+						}
+					}
+					g.Expect(conditions).To(ContainElement(HaveField("Type", "NodesSelected")))
+				}, 60*time.Second, time.Second).Should(Succeed(),
+					"UDN %s/%s must report %d active nodes", namespace, udnName, count)
+			}
+
+			// Pod readiness alone does not establish that the activity notification
+			// was consumed. NodesSelected is reported by that notification handler;
+			// waiting for it keeps the pod events ahead of the CNC graph change.
+			By("Waiting for cluster-manager to consume both pod activity notifications")
+			for _, namespace := range []string{blueNamespace, greenNamespace} {
+				waitForActiveNodes(namespace, 1)
+			}
+
+			blueNetwork := blueNamespace + "_" + udnName
+			greenNetwork := greenNamespace + "_" + udnName
+			peerNodes := []struct {
+				networkName string
+				nodeName    string
+			}{
+				{blueNetwork, greenNode},
+				{greenNetwork, blueNode},
+			}
+			By("Verifying neither network has allocated a subnet on its peer's pod node")
+			for _, peer := range peerNodes {
+				v4Subnets, v6Subnets, err := getNodeSubnetAssignments(cs, peer.networkName)
+				Expect(err).NotTo(HaveOccurred(), "read subnet assignments for %s", peer.networkName)
+				Expect(v4Subnets).NotTo(HaveKey(peer.nodeName),
+					"network %s must have no IPv4 subnet on node %s before CNC creation", peer.networkName, peer.nodeName)
+				Expect(v6Subnets).NotTo(HaveKey(peer.nodeName),
+					"network %s must have no IPv6 subnet on node %s before CNC creation", peer.networkName, peer.nodeName)
+			}
+
+			By("Connecting the networks without adding or changing any pods")
+			createOrUpdateCNC(cs, cncName, nil, selection)
+			verifyCNCHasBothAnnotations(cncName)
+			verifyCNCSubnetAnnotationNetworkCount(cncName, 2)
+
+			By("Verifying CNC activates each network on both existing pod nodes")
+			for _, namespace := range []string{blueNamespace, greenNamespace} {
+				waitForActiveNodes(namespace, 2)
+			}
+
+			By("Verifying each network allocates a subnet on its peer's pod node")
+			for _, peer := range peerNodes {
+				Eventually(func(g Gomega) {
+					v4Subnets, v6Subnets, err := getNodeSubnetAssignments(cs, peer.networkName)
+					g.Expect(err).NotTo(HaveOccurred(), "read subnet assignments for %s", peer.networkName)
+					if isIPv4Supported(cs) {
+						g.Expect(v4Subnets).To(HaveKey(peer.nodeName))
+					}
+					if isIPv6Supported(cs) {
+						g.Expect(v6Subnets).To(HaveKey(peer.nodeName))
+					}
+				}, 60*time.Second, time.Second).Should(Succeed(),
+					"network %s must allocate a subnet on node %s after CNC creation", peer.networkName, peer.nodeName)
+			}
+
+			By("Verifying the existing pods can reach each other through the new CNC")
+			blueIPs := getPrimaryNetworkPodIPs(blueNamespace, bluePod.Name, udnName)
+			greenIPs := getPrimaryNetworkPodIPs(greenNamespace, greenPod.Name, udnName)
+			for _, greenIP := range greenIPs {
+				Eventually(func() error {
+					return checkPingConnectivity(blueNamespace, bluePod.Name, greenIP)
+				}, 60*time.Second, 2*time.Second).Should(Succeed(), "blue pod must reach green pod at %s", greenIP)
+			}
+			for _, blueIP := range blueIPs {
+				Eventually(func() error {
+					return checkPingConnectivity(greenNamespace, greenPod.Name, blueIP)
+				}, 60*time.Second, 2*time.Second).Should(Succeed(), "green pod must reach blue pod at %s", blueIP)
+			}
+		})
+
 		It("should connect cross-node UDN pods and retain terminating node state", func() {
 			if !isDynamicUDNEnabled() {
 				Skip("test requires DYNAMIC_UDN_ALLOCATION=true")
