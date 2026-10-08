@@ -59,6 +59,7 @@ func RegisterNodeMetrics(stopChan <-chan struct{}) {
 		if config.Metrics.EnableScaleMetrics {
 			libovsdbops.RegisterTransactMetrics()
 		}
+		registerNodeBGPMetrics()
 		prometheus.MustRegister(MetricCNIRequestDuration)
 		prometheus.MustRegister(MetricNodeReadyDuration)
 		prometheus.MustRegister(metricOvnNodePortEnabled)
