@@ -135,6 +135,23 @@ All metrics in this section are rooted at `ovnkube_master_libovsdb_`.
 | `disconnects_total` | Counter | `primary_model` | libovsdb client disconnects. |
 | `monitors` | Gauge | `primary_model` | Running libovsdb monitors. |
 
+## OVSDB Transaction Metrics
+
+These metrics are observed by the shared OVSDB transaction path used by
+ovnkube-controller and ovnkube-node for writes to the OVN northbound, OVN
+southbound, and Open vSwitch databases. A transaction with no operations, or
+one whose context is already cancelled, is not submitted and not counted.
+They are registered only when
+`--metrics-enable-scale` is enabled. The `db` label is the database name, such
+as `OVN_Northbound`, `OVN_Southbound`, or `Open_vSwitch`.
+
+All metrics in this section are rooted at `ovnkube_ovsdb_`.
+
+| Name | Type | Labels | Description |
+| --- | --- | --- | --- |
+| `txn_duration_seconds` | Histogram | `db`, `result` | Time in seconds taken by an OVSDB transaction, including reconnect retries and result checking. The `result` label is `success` or `error`. |
+| `txn_ops` | Histogram | `db` | Number of operations submitted in a single OVSDB transaction. |
+
 ## Shared OVN-Kubernetes Metrics
 
 All metrics in this section are rooted at `ovnkube_`.

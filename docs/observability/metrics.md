@@ -22,6 +22,7 @@ values.
 ## Change log
 This list is to help notify if there are additions, changes or removals to metrics. Latest changes are at the top of this list.
 
+- Add `ovnkube_ovsdb_txn_duration_seconds` and `ovnkube_ovsdb_txn_ops`, observed on every OVSDB transaction by ovnkube-controller and ovnkube-node, registered with `--metrics-enable-scale`
 - Deprecate `ovnkube_controller_resource_add_latency_seconds`, `ovnkube_controller_resource_update_latency_seconds`, and `ovnkube_controller_resource_delete_latency_seconds`. These metrics will be removed in the next release.
 - Remove the Raft-only `ovn_db_cluster_*` metrics because supported OVN NB and SB databases run as standalone instances.
 - Add `ovnkube_clustermanager_route_advertisement_condition`, `ovnkube_clustermanager_cluster_user_defined_network_condition`, and `ovnkube_clustermanager_vtep_condition` condition metrics
