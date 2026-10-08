@@ -30,7 +30,7 @@ These metrics are registered on the leader.
 | `cluster_user_defined_networks` | Gauge | `role`, `topology`, `transport` | Number of ClusterUserDefinedNetwork resources. A CUDN is counted once its finalizer is added and uncounted when it is deleted or disappears. |
 | `cluster_user_defined_network_condition` | Gauge | `name`, `condition`, `status` | CUDN status condition. Both `status="true"` and `status="false"` are emitted; the active status is `1`. The series of a CUDN are removed when it is deleted or disappears. |
 | `udn_nodes_rendered` | Gauge | `network_name` | Number of nodes on which a UDN or CUDN is rendered. Registered only when dynamic UDN allocation is enabled. The series of a CUDN is removed when it is deleted or disappears. |
-| `route_advertisement_condition` | Gauge | `name`, `condition`, `status` | RouteAdvertisements status condition. Registered only when route advertisements are enabled. |
+| `route_advertisement_condition` | Gauge | `name`, `condition`, `status` | RouteAdvertisements status condition. Both `status="true"` and `status="false"` are emitted; the active status is `1`. Registered only when route advertisements are enabled. The series of a RouteAdvertisements are removed when it is deleted. |
 | `vtep_condition` | Gauge | `name`, `condition`, `status` | VTEP status condition. Registered only when EVPN is enabled. |
 
 ### Egress IP metrics
@@ -59,6 +59,21 @@ The `name` label on UDN histograms identifies the network.
 | `workqueue_unfinished_work_seconds` | Gauge | `name` | Total in-progress work not yet observed by the work-duration metric. |
 | `workqueue_longest_running_processor_seconds` | Gauge | `name` | Runtime of the longest-running workqueue processor. |
 | `workqueue_retries_total` | Counter | `name` | Workqueue retries. |
+
+### RouteAdvertisements scale metrics
+
+These metrics are registered only when both route advertisements and
+`--metrics-enable-scale` are enabled. Except where noted, the `name` label is
+the RouteAdvertisements resource name, and its series are removed when the
+resource is deleted.
+
+| Name | Type | Labels | Description |
+| --- | --- | --- | --- |
+| `route_advertisement_reconcile_duration_seconds` | Histogram | `name`, `result` | Time in seconds spent reconciling a RouteAdvertisements resource. The `result` label is `success`, `error`, `config_error`, or `pending`. |
+| `route_advertisement_frr_configurations` | Gauge | `name` | Number of FRRConfigurations currently generated for a RouteAdvertisements resource. Grows with the number of nodes and selected source FRRConfigurations. |
+| `route_advertisement_frr_configuration_processed_total` | Counter | `name`, `op` | Generated FRRConfigurations processed by a reconcile. The `op` label is `create`, `update`, `delete`, or `unchanged`, where `unchanged` counts objects that were compared and found up to date. |
+| `route_advertisement_advertised_prefixes` | Gauge | `name`, `family` | Number of distinct prefixes advertised by a RouteAdvertisements resource. The `family` label is `ipv4` or `ipv6`. |
+| `route_advertisement_nad_updates_total` | Counter | `name` | NetworkAttachmentDefinition annotation updates issued by a RouteAdvertisements reconcile. |
 
 ## Shared OVN-Kubernetes Metrics
 

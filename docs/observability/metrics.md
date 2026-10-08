@@ -22,6 +22,8 @@ values.
 ## Change log
 This list is to help notify if there are additions, changes or removals to metrics. Latest changes are at the top of this list.
 
+- Add the `ovnkube_clustermanager_route_advertisement_*` reconcile, FRRConfiguration, prefix, and NAD metrics, registered with route advertisements and `--metrics-enable-scale`
+- Add `ovnkube_controller_route_import_*` metrics, registered with `--enable-route-advertisements` and `--metrics-enable-scale`, and `ovnkube_node_evpn_*` metrics, registered with `--enable-evpn` and `--metrics-enable-scale`
 - Add `ovnkube_ovsdb_txn_duration_seconds` and `ovnkube_ovsdb_txn_ops`, observed on every OVSDB transaction by ovnkube-controller and ovnkube-node, registered with `--metrics-enable-scale`
 - Deprecate `ovnkube_controller_resource_add_latency_seconds`, `ovnkube_controller_resource_update_latency_seconds`, and `ovnkube_controller_resource_delete_latency_seconds`. These metrics will be removed in the next release.
 - Remove the Raft-only `ovn_db_cluster_*` metrics because supported OVN NB and SB databases run as standalone instances.
