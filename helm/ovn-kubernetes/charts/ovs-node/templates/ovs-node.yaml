@@ -87,12 +87,6 @@ spec:
         env:
         - name: OVN_DAEMONSET_VERSION
           value: "1.4.0"
-        {{- if .Values.global.enableJemalloc }}
-        - name: LD_PRELOAD
-          value: "libjemalloc.so.2"
-        - name: MALLOC_CONF
-          value: {{ default "background_thread:true,dirty_decay_ms:10000,muzzy_decay_ms:10000" .Values.global.jemallocMallocConf | quote }}
-        {{- end }}
         lifecycle:
           preStop:
             exec:

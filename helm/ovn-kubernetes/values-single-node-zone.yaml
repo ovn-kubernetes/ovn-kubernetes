@@ -172,10 +172,6 @@ global:
   ofctrlWaitBeforeClear: ""
   # -- Separate log file for libovsdb client
   libovsdbClientLogFile: ""
-  # -- Whether or not to enable jemalloc (via LD_PRELOAD) for OVN and OVS daemons
-  enableJemalloc: true
-  # -- jemalloc configuration string (passed as MALLOC_CONF)
-  jemallocMallocConf: "background_thread:true,dirty_decay_ms:10000,muzzy_decay_ms:10000"
   image:
     # -- Image repository for ovn-kubernetes components
     repository: ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-ubuntu

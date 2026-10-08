@@ -91,6 +91,8 @@ fi
 # OVN_ENABLE_DNSNAMERESOLVER - enable dns name resolver support
 # OVN_ALLOW_ICMP_NETPOL - allow ICMP and ICMPv6 regardless of network policy
 # OVN_OBSERV_ENABLE - enable observability for ovnkube
+# OVN_ENABLE_JEMALLOC - enable jemalloc for OVN and OVS daemons via LD_PRELOAD (default true)
+# OVN_JEMALLOC_MALLOC_CONF - jemalloc configuration string
 
 # The argument to the command is the operation to be performed
 # ovn-controller ovn-node display display_env ovn_debug
@@ -115,6 +117,10 @@ ovnkube_logfile_maxage=${OVNKUBE_LOGFILE_MAXAGE:-"5"}
 # logfile for libovsdb client. When not specified, the ovsdb client logs
 # are not separated from the "main" --logfile used by ovnkube
 ovnkube_libovsdb_client_logfile=${OVNKUBE_LIBOVSDB_CLIENT_LOGFILE:-}
+
+# jemalloc configuration for OVN and OVS daemons
+ovn_enable_jemalloc=${OVN_ENABLE_JEMALLOC:-"true"}
+ovn_jemalloc_malloc_conf=${OVN_JEMALLOC_MALLOC_CONF:-"background_thread:true,dirty_decay_ms:10000,muzzy_decay_ms:10000"}
 
 # ovnkube.sh version (Update during each release)
 ovnkube_version="1.4.0"
@@ -356,6 +362,36 @@ setup_ovs_permissions() {
     chown -R ${ovs_user_id} ${OVN_RUNDIR}
     chown -R ${ovs_user_id} ${OVN_LOGDIR}
   fi
+}
+
+get_jemalloc_lib() {
+  if [[ -n "${OVN_JEMALLOC_LIB:-}" ]]; then
+    echo "${OVN_JEMALLOC_LIB}"
+    return 0
+  fi
+  local lib
+  for lib in /usr/lib64/libjemalloc.so.2 /usr/lib/*-linux-gnu/libjemalloc.so.2 /usr/lib/libjemalloc.so.2 /lib64/libjemalloc.so.2 /lib/libjemalloc.so.2; do
+    if [[ -f "${lib}" ]]; then
+      echo "${lib}"
+      return 0
+    fi
+  done
+  if command -v ldconfig >/dev/null 2>&1 && ldconfig -p 2>/dev/null | grep -q "libjemalloc\.so\.2"; then
+    echo "libjemalloc.so.2"
+    return 0
+  fi
+  return 1
+}
+
+run_with_jemalloc_if_enabled() {
+  if [[ "${ovn_enable_jemalloc}" == "true" ]]; then
+    local jemalloc_lib
+    if jemalloc_lib=$(get_jemalloc_lib); then
+      LD_PRELOAD="${jemalloc_lib}" MALLOC_CONF="${ovn_jemalloc_malloc_conf}" "$@"
+      return $?
+    fi
+  fi
+  "$@"
 }
 
 run_as_ovs_user_if_needed() {
@@ -817,16 +853,18 @@ ovs-server() {
   # bridge, and move IP configuration as necessary.
   ovs_options="${ovs_options} --delete-transient-ports"
 
-  /usr/share/openvswitch/scripts/ovs-ctl start --no-ovs-vswitchd \
-    --system-id=random ${ovs_options} ${USER_ARGS} "$@"
+  run_with_jemalloc_if_enabled \
+    /usr/share/openvswitch/scripts/ovs-ctl start --no-ovs-vswitchd \
+      --system-id=random ${ovs_options} ${USER_ARGS} "$@"
 
   # Reduce stack size to 2M from default 8M as per below commit on Openvswitch
   # https://github.com/openvswitch/ovs/commit/b82a90e266e1246fe2973db97c95df22558174ea
   # added while troubleshooting on https://bugzilla.redhat.com/show_bug.cgi?id=1572797
   ulimit -s 2048
 
-  /usr/share/openvswitch/scripts/ovs-ctl start --no-ovsdb-server \
-    --system-id=random ${ovs_options} ${USER_ARGS} "$@"
+  run_with_jemalloc_if_enabled \
+    /usr/share/openvswitch/scripts/ovs-ctl start --no-ovsdb-server \
+      --system-id=random ${ovs_options} ${USER_ARGS} "$@"
 
   if [[ $(nproc) -gt 32 ]]; then
     echo "Warning: Higher memory allocation by ovs-vswitchd is expected due to high number of n-handler-threads and n-revalidator-threads"
@@ -881,9 +919,10 @@ local-nb-ovsdb() {
   rm -f ${OVN_RUNDIR}/ovnnb_db.pid
 
   echo "=============== run nb-ovsdb (unix sockets only) =========="
-  run_as_ovs_user_if_needed \
-    ${OVNCTL_PATH} run_nb_ovsdb --no-monitor \
-    --ovn-nb-log="${ovn_loglevel_nb}" &
+  run_with_jemalloc_if_enabled \
+    run_as_ovs_user_if_needed \
+      ${OVNCTL_PATH} run_nb_ovsdb --no-monitor \
+      --ovn-nb-log="${ovn_loglevel_nb}" &
 
   wait_for_event attempts=3 process_ready ovnnb_db
   echo "=============== nb-ovsdb (unix sockets only) ========== RUNNING"
@@ -920,9 +959,10 @@ local-sb-ovsdb() {
   rm -f ${OVN_RUNDIR}/ovnsb_db.pid
 
   echo "=============== run sb-ovsdb (unix sockets only) ========== "
-  run_as_ovs_user_if_needed \
-    ${OVNCTL_PATH} run_sb_ovsdb --no-monitor \
-    --ovn-sb-log="${ovn_loglevel_sb}" &
+  run_with_jemalloc_if_enabled \
+    run_as_ovs_user_if_needed \
+      ${OVNCTL_PATH} run_sb_ovsdb --no-monitor \
+      --ovn-sb-log="${ovn_loglevel_sb}" &
 
   wait_for_event attempts=3 process_ready ovnsb_db
   echo "=============== sb-ovsdb (unix sockets only) ========== RUNNING"
@@ -950,11 +990,12 @@ run-ovn-northd() {
 
   # no monitor (and no detach), start northd which connects to the
   # local NB/SB OVSDB unix sockets
-  run_as_ovs_user_if_needed \
-    ${OVNCTL_PATH} start_northd \
-    --no-monitor --ovn-manage-ovsdb=no \
-    --ovn-northd-log="${ovn_loglevel_northd}" \
-    ${ovn_northd_opts}
+  run_with_jemalloc_if_enabled \
+    run_as_ovs_user_if_needed \
+      ${OVNCTL_PATH} start_northd \
+      --no-monitor --ovn-manage-ovsdb=no \
+      --ovn-northd-log="${ovn_loglevel_northd}" \
+      ${ovn_northd_opts}
 
   wait_for_event attempts=3 process_ready ovn-northd
   echo "=============== run_ovn_northd ========== RUNNING"
@@ -2163,10 +2204,11 @@ ovn-controller() {
   rm -f /var/run/ovn-kubernetes/cni/*
   rm -f ${OVN_RUNDIR}/ovn-controller.*.ctl
 
-  run_as_ovs_user_if_needed \
-    ${OVNCTL_PATH} --no-monitor start_controller \
-    --ovn-controller-log="${ovn_loglevel_controller}" \
-    ${ovn_controller_opts}
+  run_with_jemalloc_if_enabled \
+    run_as_ovs_user_if_needed \
+      ${OVNCTL_PATH} --no-monitor start_controller \
+      --ovn-controller-log="${ovn_loglevel_controller}" \
+      ${ovn_controller_opts}
 
   wait_for_event attempts=3 process_ready ovn-controller
   echo "=============== ovn-controller ========== running"
