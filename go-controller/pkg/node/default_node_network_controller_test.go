@@ -1484,7 +1484,19 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 							strings.Contains(cleanDump, "add element inet ovn-kubernetes mgmtport-no-snat-subnets-v6 { fd00::/64 }")
 					}).WithTimeout(2 * time.Second).Should(BeTrue())
 
-					By("deleting node should remove nftables elements")
+					By("deleting a remote node should NOT clear the local no-SNAT nftables sets")
+					remoteNode := corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "remote-node"}}
+					_, err = kubeFakeClient.CoreV1().Nodes().Create(context.TODO(), &remoteNode, metav1.CreateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					err = kubeFakeClient.CoreV1().Nodes().Delete(context.TODO(), "remote-node", metav1.DeleteOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					Consistently(func() bool {
+						cleanDump := strings.ReplaceAll(nft.Dump(), "\r", "")
+						return strings.Contains(cleanDump, "add element inet ovn-kubernetes mgmtport-no-snat-subnets-v4 { 192.167.1.0/24 }")
+					}).WithTimeout(1 * time.Second).Should(BeTrue())
+
+					By("deleting local node should remove no-SNAT nftables elements")
 					err = kubeFakeClient.CoreV1().Nodes().Delete(context.TODO(), nodeName, metav1.DeleteOptions{})
 					Expect(err).NotTo(HaveOccurred())
 
