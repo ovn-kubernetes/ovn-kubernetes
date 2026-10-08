@@ -88,8 +88,8 @@ These metrics are registered only when `--metrics-enable-scale` is enabled.
 | `udn_nbdb_programmed_duration_seconds` | Histogram | `topology` | Time to program the northbound database while initializing a UDN, grouped by topology. |
 | `workqueue_depth` | Gauge | `name` | Current workqueue depth. |
 | `workqueue_adds_total` | Counter | `name` | Items added to a workqueue. |
-| `workqueue_queue_duration_seconds` | Histogram | `name` | Time an item remains queued before processing. |
-| `workqueue_work_duration_seconds` | Histogram | `name` | Time spent processing an item. |
+| `workqueue_queue_duration_seconds` | Histogram | `name` | Time an item remains queued before processing. Buckets are powers of two from 1ms to ~524s. |
+| `workqueue_work_duration_seconds` | Histogram | `name` | Time spent processing an item. Buckets are powers of two from 1ms to ~524s. |
 | `workqueue_unfinished_work_seconds` | Gauge | `name` | Total in-progress work not yet observed by the work-duration metric. |
 | `workqueue_longest_running_processor_seconds` | Gauge | `name` | Runtime of the longest-running workqueue processor. |
 | `workqueue_retries_total` | Counter | `name` | Workqueue retries. |
