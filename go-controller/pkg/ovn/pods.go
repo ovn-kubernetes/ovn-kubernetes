@@ -169,6 +169,22 @@ func (oc *DefaultNetworkController) deleteLogicalPort(pod *corev1.Pod, portInfo 
 		return nil
 	}
 
+	if util.PodCompleted(pod) && !kubevirt.IsPodLiveMigratable(pod) {
+		// Startup reserves only IPs in the node's current subnets. Use the
+		// same set for cleanup so an obsolete IP cannot block their release.
+		subnets := oc.lsManager.GetSwitchSubnets(pInfo.logicalSwitch)
+		var currentIPs []*net.IPNet
+		for _, ip := range pInfo.ips {
+			if util.IsIPContainedInAnyCIDR(ip.IP, subnets...) {
+				currentIPs = append(currentIPs, ip)
+			}
+		}
+		pInfo.ips = currentIPs
+		if len(pInfo.ips) == 0 {
+			return nil
+		}
+	}
+
 	canCleanup, err := oc.canCleanupPodIPResources(pod, pInfo.logicalSwitch, pInfo.ips)
 	if err != nil {
 		return fmt.Errorf("cannot determine if IP resources can be cleaned up for pod %s: %w", podDesc, err)
