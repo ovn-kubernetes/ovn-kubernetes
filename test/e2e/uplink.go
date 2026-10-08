@@ -389,6 +389,44 @@ var _ = ginkgo.Describe("Network Segmentation Uplink default-VRF egress", featur
 			uplinkPodToClientIPAndExpect(env.pod, serverIP, expectedSourceIP)
 		}
 
+		ginkgo.By("updating the default gateways on the same Uplink bridge")
+		vrfName := waitForCUDNVRFName(f, networkName)
+		readVRFIndex := func() string {
+			ginkgo.GinkgoHelper()
+			out, err := infraprovider.Get().ExecK8NodeCommand(node.Name, []string{"cat", "/sys/class/net/" + vrfName + "/ifindex"})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			return strings.TrimSpace(out)
+		}
+		initialVRFIndex := readVRFIndex()
+		updatedIface := initialNodeIface
+		updatedIface.IPv4Gateway = initialServer.IPv4
+		updatedIface.IPv6Gateway = initialServer.IPv6
+		gomega.Expect(configureUplinkBridgeDefaultRoutes(ictx, env.bridgeName,
+			map[string]infraapi.NetworkInterface{node.Name: updatedIface})).To(gomega.Succeed())
+
+		// An Uplink spec change triggers rediscovery on this release. Adding
+		// the node's OS to its hostname selector keeps the same bridge selected.
+		nodeOS := node.Labels[corev1.LabelOSStable]
+		gomega.Expect(nodeOS).NotTo(gomega.BeEmpty())
+		gomega.Eventually(func() error {
+			return updateUplinkNodeConfig(f, uplinkName, hostname, func(cfg map[string]interface{}) error {
+				return unstructured.SetNestedField(cfg, nodeOS, "nodeSelector", "matchLabels", corev1.LabelOSStable)
+			})
+		}).WithTimeout(uplinkTimeout).WithPolling(uplinkPoll).Should(gomega.Succeed())
+		for _, family := range ipFamilySet.UnsortedList() {
+			nextHop := getFirstIPStringOfFamily(family, []string{initialServer.IPv4, initialServer.IPv6})
+			cidr := "0.0.0.0/0"
+			if family == utilnet.IPv6 {
+				cidr = "::/0"
+			}
+			gomega.Eventually(func() error {
+				return uplinkRouteShownIn(node.Name, "vrf "+vrfName, cidr, nextHop)
+			}).WithTimeout(uplinkTimeout).WithPolling(uplinkPoll).Should(gomega.Succeed(),
+				"expected CUDN VRF %s to use default gateway %s", vrfName, nextHop)
+		}
+		gomega.Expect(readVRFIndex()).To(gomega.Equal(initialVRFIndex),
+			"changing only default gateways rebuilt CUDN VRF %s", vrfName)
+
 		ginkgo.By("provisioning a replacement Uplink bridge and underlay")
 		replacementAlloc, err := allocators.AllocateBGP(f, ictx)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred(),

@@ -144,8 +144,8 @@ type UserDefinedNetworkGateway struct {
 	// can still be reported against the UplinkState this gateway handled.
 	uplinkStateUID    k8stypes.UID
 	uplinkFingerprint uplinkGatewayFingerprint
-	// A failed teardown may already have removed resources. Rebuild the
-	// gateway on retry even if discovery returns the same configuration.
+	// A failed teardown or route update can leave the gateway partially programmed.
+	// Rebuild it on retry even if discovery returns the same configuration.
 	uplinkGatewayPartial bool
 
 	// save BGP state at the start of reconciliation loop run to handle it consistently throughout the run
@@ -828,8 +828,8 @@ func (udng *UserDefinedNetworkGateway) unconfigureUplinkGateway() error {
 	if !udng.uplinkGatewayCleanupRequired {
 		return nil
 	}
+	udng.uplinkGatewayPartial = true
 	if err := udng.delNetwork(); err != nil {
-		udng.uplinkGatewayPartial = true
 		return fmt.Errorf("failed to unconfigure Uplink gateway for network %s: %w", udng.GetNetworkName(), err)
 	}
 	udng.uplinkGatewayCleanupRequired = false
@@ -908,14 +908,87 @@ func (udng *UserDefinedNetworkGateway) reconcileUplinkConfiguration() (
 		)
 	}
 
-	if udng.uplinkGatewayCleanupRequired && !udng.uplinkGatewayPartial &&
-		udng.uplinkFingerprint == observedFingerprint {
+	programmed := udng.uplinkGatewayCleanupRequired && !udng.uplinkGatewayPartial
+	if programmed && udng.uplinkFingerprint == observedFingerprint {
 		// Readiness-only status changes must not disturb working dataplane.
 		udng.uplinkStateUID = state.UID
 		return state.UID, observedFingerprint, nil
 	}
+	if programmed &&
+		fingerprintsDifferOnlyInDefaultGateways(udng.uplinkFingerprint, observedFingerprint) {
+		return state.UID, observedFingerprint,
+			udng.updateUplinkDefaultGateways(resolved, state.UID, observedFingerprint)
+	}
 	return state.UID, observedFingerprint,
 		udng.replaceUplinkGateway(resolved, state.UID, observedFingerprint)
+}
+
+func fingerprintsDifferOnlyInDefaultGateways(a, b uplinkGatewayFingerprint) bool {
+	a.defaultGateways = b.defaultGateways
+	return a == b
+}
+
+// updateUplinkDefaultGateways follows a change of the published default
+// gateways without replacing the gateway: replacing it releases the gateway
+// interface from the network VRF, which drops a BGP session running over it.
+// The gateway router is programmed from UplinkState by the OVN side; on the
+// host only the managed default routes of the network VRF depend on the next
+// hops.
+func (udng *UserDefinedNetworkGateway) updateUplinkDefaultGateways(
+	resolved *resolvedUplinkGateway,
+	stateUID k8stypes.UID,
+	fingerprint uplinkGatewayFingerprint,
+) error {
+	udng.nextHops = resolved.defaultGateways
+	if config.IsModeDPUHost() || config.IsModeFull() {
+		// A family left without any gateway needs its managed default
+		// removed; updateUDNVRFIPRoute replaces the managed default of a
+		// family that still has one in place, or removes every managed
+		// default under VRF-Lite, including those a failed advertisement
+		// reconcile left behind. A failure leaves the routes half-changed,
+		// so the next reconcile rebuilds the gateway.
+		v4Gateways, v6Gateways := util.SplitIPsByIPFamily(resolved.defaultGateways)
+		hasV4Subnet, hasV6Subnet := udng.IPMode()
+		var orphaned []netlink.Route
+		if hasV4Subnet && len(v4Gateways) == 0 {
+			orphaned = append(orphaned, udng.managedDefaultRouteKey(false))
+		}
+		if hasV6Subnet && len(v6Gateways) == 0 {
+			orphaned = append(orphaned, udng.managedDefaultRouteKey(true))
+		}
+		var err error
+		if len(orphaned) > 0 {
+			err = udng.vrfManager.DeleteVRFRoutes(util.GetNetworkVRFName(udng.NetInfo), orphaned)
+		}
+		if err == nil {
+			err = udng.updateUDNVRFIPRoute()
+		}
+		if err != nil {
+			udng.uplinkGatewayPartial = true
+			return newUplinkGatewayError(uplinkv1alpha1.UplinkStateReasonGatewayProgrammingFailed, err)
+		}
+	}
+	udng.uplinkStateUID = stateUID
+	udng.uplinkFingerprint = fingerprint
+	return nil
+}
+
+// managedDefaultRouteKey returns the managed default route of the family as
+// the VRF manager tracks it, without a next hop: deleting it removes and
+// untracks the route via whichever gateway it was installed through, also
+// when the kernel no longer has it. The protocol keeps an unmanaged default
+// migrated into the VRF table by the enslavement out of the match.
+func (udng *UserDefinedNetworkGateway) managedDefaultRouteKey(isV6 bool) netlink.Route {
+	_, anyCIDR, _ := net.ParseCIDR("0.0.0.0/0")
+	if isV6 {
+		_, anyCIDR, _ = net.ParseCIDR("::/0")
+	}
+	return netlink.Route{
+		LinkIndex: udng.gwInterfaceIndex,
+		Dst:       anyCIDR,
+		Table:     udng.vrfTableId,
+		Protocol:  netlink.RouteProtocol(types.OVNKProtocol),
+	}
 }
 
 // reconcileUplinkState makes this CUDN's gateway match the newest informer
