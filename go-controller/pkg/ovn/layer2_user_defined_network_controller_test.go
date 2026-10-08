@@ -595,6 +595,74 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 		Expect(app.Run([]string{app.Name})).To(Succeed())
 	})
 
+	DescribeTable("primary layer 2 UDN: the first add of the local node connects the network switch to the transit router",
+		func(gatewayMarkedFailed bool) {
+			config.OVNKubernetesFeature.EnableMultiNetwork = true
+			config.Layer2UsesTransitRouter = true
+			setupConfig(dummyLayer2PrimaryUserDefinedNetwork("192.168.0.0/16"), testConfiguration{}, config.GatewayModeShared)
+			app.Action = func(*cli.Context) error {
+				netInfo := dummyLayer2PrimaryUserDefinedNetwork("192.168.0.0/16")
+				netConf := netInfo.netconf()
+				networkConfig, err := util.NewNetInfo(netConf)
+				Expect(err).NotTo(HaveOccurred())
+				mutableNetInfo := util.NewMutableNetInfo(networkConfig)
+
+				nad, err := newNetworkAttachmentDefinition(ns, nadName, *netConf)
+				Expect(err).NotTo(HaveOccurred())
+				fakeNetworkManager := &testnm.FakeNetworkManager{
+					PrimaryNetworks: map[string]util.NetInfo{},
+				}
+				fakeNetworkManager.PrimaryNetworks[ns] = mutableNetInfo
+
+				const nodeIPv4CIDR = "192.168.126.202/24"
+				testNode, err := newNodeWithUserDefinedNetworks(nodeName, nodeIPv4CIDR, netInfo)
+				Expect(err).NotTo(HaveOccurred())
+				nbZone := &nbdb.NBGlobal{Name: nodeName, UUID: nodeName}
+				initialDB.NBData = append(initialDB.NBData, nbZone)
+
+				fakeOvn.startWithDBSetup(
+					initialDB,
+					&corev1.NamespaceList{Items: []corev1.Namespace{*newUDNNamespace(ns)}},
+					&corev1.NodeList{Items: []corev1.Node{*testNode}},
+					&corev1.PodList{Items: []corev1.Pod{}},
+					&nadapi.NetworkAttachmentDefinitionList{Items: []nadapi.NetworkAttachmentDefinition{*nad}},
+				)
+
+				Expect(fakeOvn.networkManager.Start()).To(Succeed())
+				defer fakeOvn.networkManager.Stop()
+
+				l2Controller, ok := fakeOvn.fullL2UDNControllers[userDefinedNetworkName]
+				Expect(ok).To(BeTrue())
+				Expect(l2Controller.init(context.Background())).To(Succeed())
+				udnNetController, ok := fakeOvn.userDefinedNetworkControllers[userDefinedNetworkName]
+				Expect(ok).To(BeTrue())
+				udnNetController.bnc.ovnClusterLRPToJoinIfAddrs = dummyJoinIPs()
+
+				if gatewayMarkedFailed {
+					// What reconcile does when the network's advertisement
+					// on this node changes, if that happens before the
+					// node's first add has succeeded.
+					l2Controller.MarkGatewaySyncNeeded(nodeName)
+				}
+				Expect(l2Controller.RegisterNodeHandler()).To(Succeed())
+				defer l2Controller.DeregisterNodeHandler()
+
+				stotrName := l2Controller.GetNetworkScopedSwitchToRouterPortName("")
+				Eventually(func(g Gomega) {
+					ports, err := libovsdbops.FindLogicalSwitchPortWithPredicate(fakeOvn.nbClient, func(lsp *nbdb.LogicalSwitchPort) bool {
+						return lsp.Name == stotrName
+					})
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(ports).NotTo(BeEmpty())
+				}).WithTimeout(10 * time.Second).Should(Succeed())
+				return nil
+			}
+			Expect(app.Run([]string{app.Name})).To(Succeed())
+		},
+		Entry("with nothing marked failed", false),
+		Entry("with the gateway marked failed before it", true),
+	)
+
 	It("primary layer 2 UDN: address sets are recreated after controller network recreation", func() {
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
 		setupConfig(dummyLayer2PrimaryUserDefinedNetwork("192.168.0.0/16"), testConfiguration{}, config.GatewayModeShared)
