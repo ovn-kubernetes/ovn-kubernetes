@@ -58,6 +58,7 @@ func RegisterNodeMetrics(stopChan <-chan struct{}) {
 		// ovnkube-node metrics
 		if config.Metrics.EnableScaleMetrics {
 			libovsdbops.RegisterTransactMetrics()
+			registerNodeBGPMetrics()
 		}
 		prometheus.MustRegister(MetricCNIRequestDuration)
 		prometheus.MustRegister(MetricNodeReadyDuration)
