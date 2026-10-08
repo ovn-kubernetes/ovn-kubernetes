@@ -55,17 +55,27 @@ func TransactAndCheckWithContext(ctx context.Context, c client.Client, ops []ovs
 
 	klog.V(5).Infof("Configuring OVN: %+v", ops)
 
+	db := c.Schema().Name
+	metricTxnOps.WithLabelValues(db).Observe(float64(len(ops)))
+	start := time.Now()
+	result := txnResultSuccess
+	defer func() {
+		metricTxnDuration.WithLabelValues(db, result).Observe(time.Since(start).Seconds())
+	}()
+
 	ctx, cancel := context.WithTimeout(ctx, config.Default.OVSDBTxnTimeout)
 	defer cancel()
 
 	results, err := TransactWithRetry(ctx, c, ops)
 	if err != nil {
+		result = txnResultError
 		return nil, fmt.Errorf("error in transact with ops %+v: %w", ops, err)
 	}
 
 	opErrors, err := ovsdb.CheckOperationResults(results, ops)
 	if err != nil {
-		return nil, fmt.Errorf("error in transact with ops %+v results %+v and errors %+v: %v", ops, results, opErrors, err)
+		result = txnResultError
+		return nil, fmt.Errorf("error in transact with ops %+v results %+v and errors %+v: %w", ops, results, opErrors, err)
 	}
 
 	return results, nil

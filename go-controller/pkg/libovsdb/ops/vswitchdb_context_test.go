@@ -182,6 +182,10 @@ func (c *acknowledgementClient) Get(ctx context.Context, row libovsdbmodel.Model
 	return c.get(ctx, row.(*vswitchd.OpenvSwitch))
 }
 
+func (c *acknowledgementClient) Schema() ovsdb.DatabaseSchema {
+	return vswitchd.Schema()
+}
+
 func TestVSwitchdAcknowledgementPolling(t *testing.T) {
 	for _, tc := range []struct {
 		name                                         string
