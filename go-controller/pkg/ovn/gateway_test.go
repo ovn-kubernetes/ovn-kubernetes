@@ -9,6 +9,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
@@ -1646,7 +1647,7 @@ var _ = ginkgo.Describe("Gateway Init Operations", func() {
 			config.Gateway.EphemeralPortRange = config.DefaultEphemeralPortRange
 		})
 
-		ginkgo.It("creates a dual-stack gateway in OVN", func() {
+		ginkgo.DescribeTable("creates a dual-stack gateway in OVN", func(malformedNode bool) {
 			config.IPv6Mode = true
 			// covers both IPv4, IPv6 single stack cases since path is the same.
 			routeUUID1 := "route1-UUID"
@@ -1668,6 +1669,19 @@ var _ = ginkgo.Describe("Gateway Init Operations", func() {
 				Name:         types.OVNClusterRouter,
 				StaticRoutes: []string{routeUUID1, routeUUID2},
 			}
+			var preservedRoutes []libovsdbtest.TestData
+			var preservedRouteIDs []string
+			if malformedNode {
+				for i, subnet := range ovntest.MustParseIPNets("10.129.0.0/23", "fd01:0:0:1::/64") {
+					route := &nbdb.LogicalRouterStaticRoute{
+						UUID: fmt.Sprintf("uncertain-route-%d-UUID", i), IPPrefix: subnet.String(),
+						Nexthop: util.GetNodeManagementIfAddr(subnet).IP.String(), Policy: &nbdb.LogicalRouterStaticRoutePolicySrcIP,
+					}
+					preservedRoutes = append(preservedRoutes, route)
+					preservedRouteIDs = append(preservedRouteIDs, route.UUID)
+				}
+				expectedOVNClusterRouter.StaticRoutes = append(expectedOVNClusterRouter.StaticRoutes, preservedRouteIDs...)
+			}
 			expectedNodeSwitch := &nbdb.LogicalSwitch{
 				UUID: nodeName + "-UUID",
 				Name: nodeName,
@@ -1685,7 +1699,7 @@ var _ = ginkgo.Describe("Gateway Init Operations", func() {
 				Name: types.ClusterRouterLBGroupName,
 			}
 			fakeOvn.startWithDBSetup(libovsdbtest.TestSetup{
-				NBData: []libovsdbtest.TestData{
+				NBData: append([]libovsdbtest.TestData{
 					// tests migration from shared to local
 					leftoverJoinRoute1,
 					leftoverJoinRoute2,
@@ -1698,8 +1712,13 @@ var _ = ginkgo.Describe("Gateway Init Operations", func() {
 					expectedClusterLBGroup,
 					expectedSwitchLBGroup,
 					expectedRouterLBGroup,
-				},
+				}, preservedRoutes...),
 			})
+			if malformedNode {
+				gomega.Expect(fakeOvn.watcher.NodeCoreInformer().Informer().GetStore().Add(&corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{Name: "other-node", Annotations: map[string]string{types.NodeSubnetsAnnotation: "not-json"}},
+				})).To(gomega.Succeed(), "cache another node with malformed subnet information")
+			}
 
 			config.IPv4Mode = true
 			config.IPv6Mode = true
@@ -1741,14 +1760,19 @@ var _ = ginkgo.Describe("Gateway Init Operations", func() {
 
 			testData := []libovsdbtest.TestData{}
 			skipSnat := false
-			expectedOVNClusterRouter.StaticRoutes = []string{} // the leftover SGW route should have got deleted
+			expectedOVNClusterRouter.StaticRoutes = preservedRouteIDs // remove old join routes, but keep uncertain management routes
 			// We don't set up the Allow from mgmt port ACL here
 			mgmtPortIP := ""
 			expectedDatabaseState := generateGatewayInitExpectedNB(testData, expectedOVNClusterRouter, expectedNodeSwitch,
 				nodeName, clusterIPSubnets, hostSubnets, l3GatewayConfig, joinLRPIPs, defLRPIPs, skipSnat, mgmtPortIP,
 				"1400")
-			gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
-		})
+			expectedDatabaseState = append(expectedDatabaseState, preservedRoutes...)
+			gomega.Eventually(fakeOvn.nbClient, 2*time.Second, 20*time.Millisecond).Should(libovsdbtest.HaveData(expectedDatabaseState),
+				"finish gateway setup including NAT while retaining uncertain routes")
+		},
+			ginkgo.Entry("with valid node annotations", false),
+			ginkgo.Entry("when another node's subnet annotation is malformed", true),
+		)
 
 		ginkgo.It("ensures a leftover route on ovn_cluster_router to join subnet is removed", func() {
 			joinLRPIPs := ovntest.MustParseIPNets("100.64.0.3/16")
