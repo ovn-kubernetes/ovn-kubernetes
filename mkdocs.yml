@@ -70,6 +70,8 @@ plugins:
       fallback_to_build_date: true
 markdown_extensions:
   - admonition
+  - attr_list
+  - md_in_html
   - meta
   - pymdownx.emoji:
       emoji_index: !!python/name:material.extensions.emoji.twemoji
