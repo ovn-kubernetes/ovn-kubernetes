@@ -577,13 +577,6 @@ var _ = Describe("DHCP IPAM workload differentiation", func() {
 		dhcpStub           *dhcpOpsStub
 	)
 
-	// cmdDel resolves the host-side OVS interface of a DeviceID-backed
-	// attachment with these lookups (newest key first, NAD-key fallback)
-	const (
-		hostIfaceFindCmd         = "ovs-vsctl --timeout=30 --no-heading --format=csv --data=bare --columns=name find Interface external-ids:sandbox=824bceff24af3 external_ids:pod-if-name=net1"
-		hostIfaceFallbackFindCmd = "ovs-vsctl --timeout=30 --no-heading --format=csv --data=bare --columns=name find Interface external-ids:sandbox=824bceff24af3 external_ids:k8s.ovn.org/nad=foo-ns/localnet-nad"
-	)
-
 	dhcpIP := func() *current.IPConfig {
 		return &current.IPConfig{
 			Address: net.IPNet{IP: net.ParseIP("10.1.192.213"), Mask: net.CIDRMask(24, 32)},
@@ -942,8 +935,6 @@ var _ = Describe("DHCP IPAM workload differentiation", func() {
 			fakeSriovnetOps.On("IsVfPciVfioBound", "0000:65:00.2").Return(true)
 			// the DeviceID teardown path resolves the host-side OVS interface;
 			// none exists in this harness and the lookup failure is tolerated
-			fexec.AddFakeCmd(&testing.ExpectedCmd{Cmd: hostIfaceFindCmd, Output: ""})
-			fexec.AddFakeCmd(&testing.ExpectedCmd{Cmd: hostIfaceFallbackFindCmd, Output: ""})
 			startCNIServer(testing.NewNamespace(podNamespace), pod)
 
 			handlePodRequest()

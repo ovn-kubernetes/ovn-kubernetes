@@ -37,11 +37,20 @@ func clearPodBandwidthWithOVSClient(ovsClient libovsdbclient.Client, sandboxID s
 		return err
 	}
 	portNames := make(map[string]struct{}, len(ifaces))
+	var ops []ovsdb.Operation
 	for _, iface := range ifaces {
 		portNames[iface.Name] = struct{}{}
+		// Clearing bandwidth also removes pod egress policing, including when
+		// both annotations are absent and ConfigureOVS will skip the setter.
+		update := &vswitchd.Interface{UUID: iface.UUID}
+		ifaceOps, err := ovsClient.Where(update).Update(update,
+			&update.IngressPolicingRate, &update.IngressPolicingBurst)
+		if err != nil {
+			return err
+		}
+		ops = append(ops, ifaceOps...)
 	}
 
-	var ops []ovsdb.Operation
 	ports, err := ovsops.FindOVSPortsWithPredicate(ovsClient, func(port *vswitchd.Port) bool {
 		_, ok := portNames[port.Name]
 		return ok

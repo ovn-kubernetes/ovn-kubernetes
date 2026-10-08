@@ -143,10 +143,10 @@ func TestClearPodBandwidthWithOVSClient(t *testing.T) {
 			&vswitchd.OpenvSwitch{UUID: ovsUUID, Bridges: []string{bridgeUUID}},
 			&vswitchd.Bridge{UUID: bridgeUUID, Name: "br-int", Ports: []string{sandboxPortUUID, otherPortUUID}},
 			&vswitchd.Port{UUID: sandboxPortUUID, Name: "sandbox-port", Interfaces: []string{sandboxIfaceUUID}, QOS: &qosUUID},
-			&vswitchd.Interface{UUID: sandboxIfaceUUID, Name: "sandbox-port", ExternalIDs: map[string]string{"sandbox": "sandboxID"}},
+			&vswitchd.Interface{UUID: sandboxIfaceUUID, Name: "sandbox-port", ExternalIDs: map[string]string{"sandbox": "sandboxID"}, IngressPolicingRate: 2000, IngressPolicingBurst: 200},
 			&vswitchd.QoS{UUID: qosUUID, Type: "linux-htb", ExternalIDs: map[string]string{"sandbox": "sandboxID"}},
 			&vswitchd.Port{UUID: otherPortUUID, Name: "other-port", Interfaces: []string{otherIfaceUUID}, QOS: &otherQOSUUID},
-			&vswitchd.Interface{UUID: otherIfaceUUID, Name: "other-port", ExternalIDs: map[string]string{"sandbox": "other-sandbox"}},
+			&vswitchd.Interface{UUID: otherIfaceUUID, Name: "other-port", ExternalIDs: map[string]string{"sandbox": "other-sandbox"}, IngressPolicingRate: 3000, IngressPolicingBurst: 300},
 			&vswitchd.QoS{UUID: otherQOSUUID, Type: "linux-htb", ExternalIDs: map[string]string{"sandbox": "other-sandbox"}},
 		},
 	})
@@ -172,12 +172,61 @@ func TestClearPodBandwidthWithOVSClient(t *testing.T) {
 	require.Nil(t, sandboxPort.QOS)
 
 	require.False(t, qosExists(qosUUID), "expected sandbox QoS to be deleted")
+	sandboxIface, err := ovsops.GetOVSInterface(ovsClient, "sandbox-port")
+	require.NoError(t, err)
+	require.Zero(t, sandboxIface.IngressPolicingRate)
+	require.Zero(t, sandboxIface.IngressPolicingBurst)
 
 	otherPort := &vswitchd.Port{UUID: otherPortUUID}
 	require.NoError(t, ovsClient.Get(context.Background(), otherPort))
 	require.NotNil(t, otherPort.QOS)
 	require.Equal(t, otherQOSUUID, *otherPort.QOS)
 	require.True(t, qosExists(otherQOSUUID), "expected unrelated QoS to be preserved")
+	otherIface, err := ovsops.GetOVSInterface(ovsClient, "other-port")
+	require.NoError(t, err)
+	require.Equal(t, 3000, otherIface.IngressPolicingRate)
+	require.Equal(t, 300, otherIface.IngressPolicingBurst)
+}
+
+func TestReconfigurePodBandwidthWithOVSClient(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		ingressBPS int64
+		egressBPS  int64
+	}{
+		{name: "remove egress limit", ingressBPS: 10_000_000},
+		{name: "remove ingress limit", egressBPS: 3_000_000},
+		{name: "remove both limits"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ovsClient, cleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
+				OVSData: []libovsdbtest.TestData{
+					&vswitchd.OpenvSwitch{UUID: "root", Bridges: []string{"bridge"}},
+					&vswitchd.Bridge{UUID: "bridge", Name: "br-int", Ports: []string{"port"}},
+					&vswitchd.Port{UUID: "port", Name: "pod-port", Interfaces: []string{"iface"}},
+					&vswitchd.Interface{UUID: "iface", Name: "pod-port", ExternalIDs: map[string]string{"sandbox": "sandboxID"}},
+				},
+			})
+			require.NoError(t, err)
+			t.Cleanup(cleanup.Cleanup)
+			require.NoError(t, setPodBandwidth(ovsClient, "sandboxID", "pod-port", 5_000_000, 2_000_000))
+
+			// ConfigureOVS clears existing limits before applying the new annotations,
+			// and skips the setter entirely when both annotations are absent.
+			require.NoError(t, clearPodBandwidth(ovsClient, "sandboxID"))
+			if test.ingressBPS > 0 || test.egressBPS > 0 {
+				require.NoError(t, setPodBandwidth(ovsClient, "sandboxID", "pod-port", test.ingressBPS, test.egressBPS))
+			}
+
+			port, err := ovsops.GetOVSPort(ovsClient, "pod-port")
+			require.NoError(t, err)
+			require.Equal(t, test.ingressBPS > 0, port.QOS != nil)
+			iface, err := ovsops.GetOVSInterface(ovsClient, "pod-port")
+			require.NoError(t, err)
+			require.Equal(t, int(test.egressBPS/1000), iface.IngressPolicingRate)
+			require.Equal(t, int(test.egressBPS/10000), iface.IngressPolicingBurst)
+		})
+	}
 }
 
 func TestSetPodBandwidthWithOVSClient(t *testing.T) {

@@ -38,6 +38,10 @@ type openflowManager struct {
 	staticFlowsSet        bool
 	staticFlowHostIPs     []net.IP
 	staticFlowHostSubnets []*net.IPNet
+	pmtudFlowIPs          map[string][]string // protected by staticFlowsMu
+	// Only the Run loop refreshes patch ports and retries service resyncs.
+	uplinkServicesNeedResync bool
+	resyncServices           func() error
 	// localnetPortChan coalesces OVSDB events that may change whether a managed
 	// bridge has a localnet topology patch port.
 	localnetPortChan chan struct{}
@@ -713,6 +717,13 @@ func (c *openflowManager) Run(stopChan <-chan struct{}, doneWg *sync.WaitGroup) 
 						continue
 					}
 				}
+				// Refresh UDN patch ports before checking uplink bridges: an
+				// unassigned or recreated patch port is recoverable, while a
+				// changed physical port still requires the existing restart.
+				if _, err := c.refreshBridgeFlowCache(); err != nil {
+					klog.Errorf("Failed to refresh gateway bridge flows: %v", err)
+					continue
+				}
 				failedUplinkBridgeChecks := map[string]struct{}{}
 				for bridgeName, config := range c.getUplinkBridgePortConfigurations() {
 					if err := checkPorts(c.ovsClient, config.netConfigs, config.physIntf, config.ofPortPhys); err != nil {
@@ -720,13 +731,6 @@ func (c *openflowManager) Run(stopChan <-chan struct{}, doneWg *sync.WaitGroup) 
 						failedUplinkBridgeChecks[bridgeName] = struct{}{}
 						continue
 					}
-				}
-				// Localnet topology patch ports are created and removed asynchronously by
-				// ovn-controller. Re-render static flows before each periodic sync so
-				// priority-102 NORMAL flows follow the current bridge membership.
-				if _, err := c.refreshBridgeFlowCache(); err != nil {
-					klog.Errorf("Failed to refresh gateway bridge flows: %v", err)
-					continue
 				}
 				c.syncFlowsSkippingUplinkBridges(failedUplinkBridgeChecks)
 			case <-c.localnetPortChan:
@@ -764,6 +768,12 @@ func (c *openflowManager) Run(stopChan <-chan struct{}, doneWg *sync.WaitGroup) 
 }
 
 func (c *openflowManager) updateBridgePMTUDFlowCache(key string, ipAddrs []string) {
+	c.staticFlowsMu.Lock()
+	defer c.staticFlowsMu.Unlock()
+	if c.pmtudFlowIPs == nil {
+		c.pmtudFlowIPs = make(map[string][]string)
+	}
+	c.pmtudFlowIPs[key] = append([]string(nil), ipAddrs...)
 	dftFlows := c.defaultBridge.PMTUDDropFlows(ipAddrs)
 	c.updateFlowCacheEntry(key, dftFlows)
 	if c.externalGatewayBridge != nil {
@@ -772,6 +782,20 @@ func (c *openflowManager) updateBridgePMTUDFlowCache(key string, ipAddrs []strin
 	}
 	_ = c.forEachUplinkBridge(func(_ string, bridge *openflowBridge) error {
 		bridge.updateFlowCacheEntry(key, bridge.PMTUDDropFlows(ipAddrs))
+		return nil
+	})
+}
+
+func (c *openflowManager) deleteBridgePMTUDFlowCache(key string) {
+	c.staticFlowsMu.Lock()
+	defer c.staticFlowsMu.Unlock()
+	delete(c.pmtudFlowIPs, key)
+	c.deleteFlowsByKey(key)
+	if c.externalGatewayBridge != nil {
+		c.externalGatewayBridge.deleteFlowsByKey(key)
+	}
+	_ = c.forEachUplinkBridge(func(_ string, bridge *openflowBridge) error {
+		bridge.deleteFlowsByKey(key)
 		return nil
 	})
 }
@@ -795,14 +819,52 @@ func (c *openflowManager) updateBridgeFlowCache(hostIPs []net.IP, hostSubnets []
 }
 
 // refreshBridgeFlowCache re-renders static flows with the most recently
-// supplied node addresses. It is serialized with address-driven updates so a
-// periodic refresh cannot overwrite newer address information. The return
-// value reports whether the static flow cache changed.
+// supplied node addresses and current Uplink patch ports. It also follows
+// localnet port membership changes. It is serialized with address-driven
+// updates so a periodic refresh cannot overwrite newer address information.
+// The return value reports whether flows need to be synced.
 func (c *openflowManager) refreshBridgeFlowCache() (bool, error) {
 	c.staticFlowsMu.Lock()
-	defer c.staticFlowsMu.Unlock()
+	changed, err := c.refreshBridgeFlowCacheLocked()
+	c.staticFlowsMu.Unlock()
+	if err != nil {
+		return changed, err
+	}
+	// Service retry processing can update flow caches. Enqueue it without
+	// holding the static-flow or bridge locks, and retry on the next refresh
+	// if enqueueing fails after the new port numbers have already been stored.
+	if c.uplinkServicesNeedResync {
+		changed = true
+		if c.resyncServices != nil {
+			if err := c.resyncServices(); err != nil {
+				return changed, fmt.Errorf("failed to resync services after uplink patch port change: %w", err)
+			}
+		}
+		c.uplinkServicesNeedResync = false
+	}
+	return changed, nil
+}
+
+// The caller must hold staticFlowsMu.
+func (c *openflowManager) refreshBridgeFlowCacheLocked() (bool, error) {
 	if !c.staticFlowsSet {
 		return false, nil
+	}
+	if err := c.forEachUplinkBridge(func(_ string, bridge *openflowBridge) error {
+		changed, err := bridge.RefreshUDNPatchPorts()
+		if changed {
+			c.uplinkServicesNeedResync = true
+			// Service flows and groups can still reference the old port even
+			// when the replacement is not ready. Rebuild the bridge cache and
+			// let the service retry framework repopulate service entries.
+			bridge.resetFlowCacheToNormal()
+			for key, ips := range c.pmtudFlowIPs {
+				bridge.updateFlowCacheEntry(key, bridge.PMTUDDropFlows(ips))
+			}
+		}
+		return err
+	}); err != nil {
+		return false, err
 	}
 	return c.updateBridgeFlowCacheLocked(c.staticFlowHostIPs, c.staticFlowHostSubnets)
 }

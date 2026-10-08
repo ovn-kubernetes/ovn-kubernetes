@@ -12,10 +12,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onsi/gomega"
+
+	"k8s.io/utils/ptr"
+
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 	"github.com/ovn-kubernetes/libovsdb/model"
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/udn"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/bridgeconfig"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
@@ -24,6 +30,172 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
+
+func TestOpenFlowManagerRefreshesUplinkPatchPort(t *testing.T) {
+	g := gomega.NewWithT(t)
+	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+	t.Cleanup(func() { _ = config.PrepareTestConfig() })
+	config.IPv4Mode = true
+	config.IPv6Mode = true
+	config.Gateway.Mode = config.GatewayModeShared
+	config.Gateway.V4MasqueradeSubnet = "169.254.0.0/17"
+	config.Gateway.V6MasqueradeSubnet = "fd69::/112"
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+	config.OVNKubernetesFeature.EnableUplink = true
+
+	const bridgeName = "br-uplink"
+	netInfo, err := util.ParseNADInfo(generateUplinkNAD("blue", "blue", "test",
+		types.Layer3Topology, "100.128.0.0/16/24,fd00:100::/48/64", types.NetworkRolePrimary, "uplink1"))
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	patchName := netInfo.GetNetworkScopedPatchPortName(bridgeName, "node-a")
+	ovsClient, cleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
+		OVSData: []libovsdbtest.TestData{
+			&vswitchd.OpenvSwitch{UUID: "ovs-root", Bridges: []string{"default-bridge", "uplink-bridge"}},
+			&vswitchd.Bridge{UUID: "default-bridge", Name: "breth0"},
+			&vswitchd.Bridge{UUID: "uplink-bridge", Name: bridgeName,
+				Ports: []string{"physical-port", "patch-port"}, ExternalIDs: map[string]string{"bridge-uplink": "eth1"}},
+			&vswitchd.Port{UUID: "physical-port", Name: "eth1", Interfaces: []string{"physical-interface"}},
+			&vswitchd.Interface{UUID: "physical-interface", Name: "eth1", Type: "system", Ofport: ptr.To(1)},
+			&vswitchd.Port{UUID: "patch-port", Name: patchName, Interfaces: []string{"patch-interface"}},
+			&vswitchd.Interface{UUID: "patch-interface", Name: patchName, Type: "patch", Ofport: ptr.To(3)},
+		},
+	})
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	t.Cleanup(cleanup.Cleanup)
+	ips := ovntest.MustParseIPNets("172.28.0.3/24", "fd28::3/64")
+	mac := ovntest.MustParseMAC("62:41:d0:54:3d:64")
+	fexec := ovntest.NewFakeExec()
+	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+		Cmd:    "sysctl -w net.ipv4.conf.br-uplink.forwarding = 1",
+		Output: "net.ipv4.conf.br-uplink.forwarding = 1",
+	})
+	if util.SupportsIPv6InterfaceForwarding() {
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "sysctl -w net.ipv6.conf.br-uplink.force_forwarding = 1",
+			Output: "net.ipv6.conf.br-uplink.force_forwarding = 1",
+		})
+	}
+	g.Expect(util.SetExec(fexec)).To(gomega.Succeed())
+	t.Cleanup(util.ResetRunner)
+	bridge, err := bridgeconfig.NewUnmanagedBridgeConfiguration(ovsClient, bridgeName, bridgeName,
+		"node-a", "physnet-blue", ips, mac, nil)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(bridge.ConfigureBridgePorts()).To(gomega.Succeed())
+	masqIPs, err := udn.AllocateV4MasqueradeIPs(3)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	masqIPsV6, err := udn.AllocateV6MasqueradeIPs(3)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(bridge.AddNetworkConfig(netInfo, ovntest.MustParseIPNets("100.128.0.0/24", "fd00:100::/64"),
+		ovntest.MustParseIPNets("100.128.0.2/24", "fd00:100::2/64"), 4, 0x1001, masqIPsV6, masqIPs)).To(gomega.Succeed())
+	g.Expect(bridge.SetNetworkOfPatchPort(netInfo.GetNetworkName())).To(gomega.Succeed())
+	uplinkBridge := newOpenflowBridge(bridge)
+	ofm := &openflowManager{
+		defaultBridge: newOpenflowBridge(bridgeconfig.TestDefaultBridgeConfigWithOVSClient(ovsClient, ips, mac)),
+		uplinkBridges: map[string]*openflowBridge{bridgeName: uplinkBridge},
+		ovsClient:     ovsClient,
+	}
+	g.Expect(ofm.updateBridgeFlowCache(nil, nil)).To(gomega.Succeed())
+	const pmtudKey = "PMTUD_test-node"
+	ofm.updateBridgePMTUDFlowCache(pmtudKey, []string{"172.28.0.8", "fd28::8"})
+	resyncCalls := 0
+	resyncErr := errors.New("service enqueue failed")
+	ofm.resyncServices = func() error {
+		resyncCalls++
+		g.Expect(ofm.staticFlowsMu.TryLock()).To(gomega.BeTrue(), "service retries must run without the static-flow mutex")
+		ofm.staticFlowsMu.Unlock()
+		return resyncErr
+	}
+	initialFlows := uplinkBridge.getFlowsByKey("DEFAULT")
+	g.Expect(strings.Join(initialFlows, "\n")).To(gomega.ContainSubstring("in_port=3,"))
+	uplinkBridge.updateFlowCacheEntry("stale-service", []string{"actions=output:3"})
+	uplinkBridge.updateGroupCacheEntry("stale-service", []string{"group_id=100,type=select,bucket=actions=output:3"})
+	defaultFlows := ofm.getFlowsByKey("DEFAULT")
+
+	for _, tc := range []struct {
+		name     string
+		ofport   *int
+		missing  bool
+		recreate bool
+		want     string
+	}{
+		{name: "renumbered", ofport: ptr.To(2), want: "2"},
+		{name: "unassigned"},
+		{name: "invalid", ofport: ptr.To(-1)},
+		{name: "ready again", ofport: ptr.To(7), want: "7"},
+		{name: "missing", ofport: ptr.To(7), missing: true},
+		{name: "returned", ofport: ptr.To(8), recreate: true, want: "8"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			if tc.missing {
+				g.Expect(ops.DeletePortWithInterfaces(ovsClient, bridgeName, patchName)).To(gomega.Succeed())
+				g.Eventually(func() error {
+					_, err := ops.GetOVSInterface(ovsClient, patchName)
+					return err
+				}, 3*time.Second, 10*time.Millisecond).Should(gomega.MatchError(libovsdbclient.ErrNotFound))
+			} else {
+				if tc.recreate {
+					g.Expect(ops.CreateOrUpdatePodPort(ovsClient, bridgeName, patchName, &vswitchd.Port{},
+						&vswitchd.Interface{Type: "patch", Ofport: tc.ofport})).To(gomega.Succeed())
+				} else {
+					iface, err := ops.GetOVSInterface(ovsClient, patchName)
+					g.Expect(err).NotTo(gomega.HaveOccurred())
+					iface.Ofport = tc.ofport
+					operations, err := ovsClient.Where(&vswitchd.Interface{UUID: iface.UUID}).Update(iface, &iface.Ofport)
+					g.Expect(err).NotTo(gomega.HaveOccurred())
+					_, err = ops.TransactAndCheck(ovsClient, operations)
+					g.Expect(err).NotTo(gomega.HaveOccurred())
+				}
+				g.Eventually(func(g gomega.Gomega) {
+					iface, err := ops.GetOVSInterface(ovsClient, patchName)
+					g.Expect(err).NotTo(gomega.HaveOccurred())
+					g.Expect(iface.Ofport).To(gomega.Equal(tc.ofport))
+				}, 3*time.Second, 10*time.Millisecond).Should(gomega.Succeed())
+			}
+
+			_, err = ofm.refreshBridgeFlowCache()
+			if resyncErr != nil {
+				g.Expect(err).To(gomega.MatchError(resyncErr))
+				resyncErr = nil
+				retryChanged, retryErr := ofm.refreshBridgeFlowCache()
+				g.Expect(retryErr).NotTo(gomega.HaveOccurred())
+				g.Expect(retryChanged).To(gomega.BeTrue(), "the failed service resync must be retried")
+				err = nil
+			}
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+			g.Expect(bridge.GetNetworkConfig(netInfo.GetNetworkName()).OfPortPatch).To(gomega.Equal(tc.want))
+			g.Expect(uplinkBridge.getFlowsByKey("stale-service")).To(gomega.BeEmpty())
+			g.Expect(uplinkBridge.getGroupsByKey("stale-service")).To(gomega.BeEmpty())
+			flows := strings.Join(uplinkBridge.getFlowsByKey("DEFAULT"), "\n")
+			g.Expect(flows).NotTo(gomega.ContainSubstring("in_port=3,"))
+			g.Expect(flows).NotTo(gomega.ContainSubstring("output:3"))
+			if tc.want != "" {
+				g.Expect(flows).To(gomega.ContainSubstring("in_port=" + tc.want + ","))
+				g.Expect(flows).To(gomega.ContainSubstring("output:" + tc.want))
+				g.Expect(uplinkBridge.getFlowsByKey(pmtudKey)).To(gomega.HaveLen(2))
+				for _, flow := range uplinkBridge.getFlowsByKey(pmtudKey) {
+					g.Expect(flow).To(gomega.ContainSubstring("in_port=" + tc.want + ","))
+				}
+			} else {
+				g.Expect(bridge.GetActiveNetworkBridgeConfigCopy(netInfo.GetNetworkName())).To(gomega.BeNil())
+				g.Expect(flows).NotTo(gomega.ContainSubstring("ct_mark=0x4"))
+				g.Expect(uplinkBridge.getFlowsByKey(pmtudKey)).To(gomega.BeEmpty())
+			}
+			g.Expect(ofm.getFlowsByKey("DEFAULT")).To(gomega.ConsistOf(defaultFlows))
+			calls := resyncCalls
+			changed, err := ofm.refreshBridgeFlowCache()
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+			g.Expect(changed).To(gomega.BeFalse())
+			g.Expect(resyncCalls).To(gomega.Equal(calls), "unchanged ports must not resync services")
+		})
+	}
+	g.Expect(resyncCalls).To(gomega.Equal(6)) // five port changes and one failed enqueue
+	ofm.deleteBridgePMTUDFlowCache(pmtudKey)
+	g.Expect(ofm.defaultBridge.getFlowsByKey(pmtudKey)).To(gomega.BeEmpty())
+	g.Expect(uplinkBridge.getFlowsByKey(pmtudKey)).To(gomega.BeEmpty())
+	g.Expect(ofm.pmtudFlowIPs).NotTo(gomega.HaveKey(pmtudKey))
+}
 
 func TestOpenFlowManagerLocalnetPortEvents(t *testing.T) {
 	ofm := &openflowManager{

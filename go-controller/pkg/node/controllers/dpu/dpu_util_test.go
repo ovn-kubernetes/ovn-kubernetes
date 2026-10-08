@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"sync/atomic"
-	"time"
 
 	"github.com/stretchr/testify/mock"
 
@@ -55,31 +54,6 @@ func (f *failOnceClient) Transact(ctx context.Context, ops ...ovsdb.Operation) (
 		return nil, fmt.Errorf("injected transient ovsdb failure")
 	}
 	return f.Client.Transact(ctx, ops...)
-}
-
-func emulateVSwitchdConfig(ovsClient libovsdbclient.Client) func() {
-	stop := make(chan struct{})
-	go func() {
-		ticker := time.NewTicker(10 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-stop:
-				return
-			case <-ticker.C:
-				ovs, err := libovsdbops.GetOpenvSwitch(ovsClient)
-				if err != nil || ovs.CurCfg >= ovs.NextCfg {
-					continue
-				}
-				updated := &vswitchd.OpenvSwitch{UUID: ovs.UUID, CurCfg: ovs.NextCfg}
-				ops, err := ovsClient.Where(&vswitchd.OpenvSwitch{UUID: ovs.UUID}).Update(updated, &updated.CurCfg)
-				if err == nil {
-					_, _ = libovsdbops.TransactAndCheck(ovsClient, ops)
-				}
-			}
-		}
-	}()
-	return func() { close(stop) }
 }
 
 type ovnInstalledClient struct {
@@ -337,7 +311,7 @@ var _ = Describe("Node DPU tests", func() {
 				})
 				Expect(err).NotTo(HaveOccurred())
 				ovsCleanup = ctx
-				DeferCleanup(emulateVSwitchdConfig(ovsClient))
+				DeferCleanup(libovsdbtest.EmulateVSwitchdConfig(ovsClient))
 				ctrl.ovsClient = &ovnInstalledClient{
 					Client:    ovsClient,
 					ifaceName: vfRep,
