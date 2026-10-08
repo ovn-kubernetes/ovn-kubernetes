@@ -402,9 +402,6 @@ func (c *Controller) delRepPort(pod *corev1.Pod, state *dpuConnectionState, nadK
 // belongs to a different pod/NAD, which no retry can fix and is logged as an
 // error; (false, err) only on transient OVS lookup failures.
 func validateRepPort(ovsClient libovsdbclient.Client, vfRepName, sandboxId, nadKey string) (bool, error) {
-	if ovsClient == nil {
-		return false, fmt.Errorf("cannot validate VF representor %s without an OVS client", vfRepName)
-	}
 	iface, err := libovsdbops.GetOVSInterface(ovsClient, vfRepName)
 	ifExists := err == nil
 	if errors.Is(err, libovsdbclient.ErrNotFound) {

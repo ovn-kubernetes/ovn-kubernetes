@@ -786,7 +786,7 @@ func unconfigureMgmtRepresentorPort(ovsClient libovsdbclient.Client, mgmtPortNam
 	}
 	savedName := ""
 	if iface != nil {
-		savedName = iface.ExternalIDs["ovn-orig-mgmt-port-rep-name"]
+		savedName = iface.ExternalIDs[types.OvnOriginalManagementPortRepNameExternalID]
 	}
 	return DeleteManagementPortRepInterface(ovsClient, types.DefaultNetworkName, mgmtPortName, savedName)
 }

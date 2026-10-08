@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"time"
 
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -171,7 +172,7 @@ func UpdateOpenvSwitchSettings(ovsClient libovsdbclient.Client, externalIDs, oth
 func SetBridgeFlowCollectors(ovsClient libovsdbclient.Client, bridgeName string, netflow *vswitchd.NetFlow, sflow *vswitchd.SFlow, ipfix *vswitchd.IPFIX) error {
 	bridge, err := GetBridge(ovsClient, bridgeName)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get bridge %s for flow collector configuration: %w", bridgeName, err)
 	}
 	var operations []ovsdb.Operation
 	collectors := []libovsdbmodel.Model{}
@@ -212,7 +213,10 @@ func SetBridgeFlowCollectors(ovsClient libovsdbclient.Client, bridgeName string,
 	}
 	operations = append(operations, updateOps...)
 	_, err = TransactAndCheck(ovsClient, operations)
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to configure flow collectors on bridge %s: %w", bridgeName, err)
+	}
+	return nil
 }
 
 // RemoveOpenvSwitchExternalIDs removes the given keys from the Open_vSwitch
@@ -316,26 +320,15 @@ func GetPortBridge(ovsClient libovsdbclient.Client, portName string) (*vswitchd.
 // port-to-br judgment: callers decide what bridge membership of the returned
 // ports means.
 func FindPortsForPortOrInterface(ovsClient libovsdbclient.Client, name string) ([]*vswitchd.Port, error) {
-	interfaces, err := FindInterfacesWithPredicate(ovsClient, func(iface *vswitchd.Interface) bool {
-		return iface.Name == name
-	})
-	if err != nil {
+	iface, err := GetOVSInterface(ovsClient, name)
+	if err != nil && !errors.Is(err, libovsdbclient.ErrNotFound) {
 		return nil, fmt.Errorf("failed to look up OVS interface %s: %w", name, err)
-	}
-	interfaceIDs := make(map[string]struct{}, len(interfaces))
-	for _, iface := range interfaces {
-		interfaceIDs[iface.UUID] = struct{}{}
 	}
 	ports, err := FindOVSPortsWithPredicate(ovsClient, func(port *vswitchd.Port) bool {
 		if port.Name == name {
 			return true
 		}
-		for _, interfaceID := range port.Interfaces {
-			if _, ok := interfaceIDs[interfaceID]; ok {
-				return true
-			}
-		}
-		return false
+		return iface != nil && slices.Contains(port.Interfaces, iface.UUID)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to look up OVS port for %s: %w", name, err)
@@ -681,6 +674,22 @@ func GetOVSInterface(ovsClient libovsdbclient.Client, name string) (*vswitchd.In
 	}
 
 	return found[0], nil
+}
+
+// GetOVSInterfaceOfPort returns the interface's ofport, or an error if it is
+// unset or invalid. If ifExists is true, a missing interface returns "", nil.
+func GetOVSInterfaceOfPort(ovsClient libovsdbclient.Client, name string, ifExists bool) (string, error) {
+	iface, err := GetOVSInterface(ovsClient, name)
+	if ifExists && errors.Is(err, libovsdbclient.ErrNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if iface.Ofport == nil || *iface.Ofport == -1 {
+		return "", fmt.Errorf("interface %s has no valid ofport", name)
+	}
+	return strconv.Itoa(*iface.Ofport), nil
 }
 
 // RemoveOVSInterfaceExternalIDs removes the given keys from an Interface's

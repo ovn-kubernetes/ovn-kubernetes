@@ -732,10 +732,8 @@ EOF
 }
 
 # install_ovs_tools_on_nodes installs ovs-vsctl and ovs-ofctl on every kind node.
-# Strictly, only unprivileged mode needs them: there the CNI plugin running
-# on the node plugs the pod interface into OVS itself, so the OVS client
-# tools have to be on the node's PATH. They are installed for every
-# deployment anyway because they make debugging from the node easier.
+# They are installed for debugging; CNI operations use libovsdb in both
+# privileged and unprivileged modes and do not require these executables.
 # They talk to the ovs-node pod through the sockets in /var/run/openvswitch;
 # the node must not run OVS daemons of its own, so the package's units are
 # masked before installing it.

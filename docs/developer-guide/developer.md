@@ -32,6 +32,31 @@ forget to update the `OVN_SCHEMA_VERSION` in our `Makefile` which is used to dow
 If that version seems to be outdated, probably best to update that as well and re-generate the schema
 bindings.
 
+## Working with the local OVS database
+
+Node, CNI, and hybrid-overlay code use the typed `pkg/vswitchd` models and
+`pkg/libovsdb/ops` helpers to read and update the local OVS database. Pass the
+component's OVS client to these helpers. OpenFlow operations and daemon control
+commands still use `ovs-ofctl` and `ovs-appctl`.
+
+An OVSDB transaction commits configuration before `ovs-vswitchd` necessarily
+applies it. Use `TransactAndCheckAndWaitForVSwitchd` when the next step needs
+the resulting Linux device or OVS port. CNI ADD instead waits for the interface's
+`ovn-installed` readiness signal, which also covers OVN's flow installation.
+Keep waits bounded and honor request cancellation where supported.
+
+The unprivileged CNI shim creates a short-lived OVS client with monitors limited
+to the tables and columns needed by ADD or DEL. ADD shares its client across
+the default and primary user-defined network attachments; DPU-host requests
+do not connect to local OVS. Close the client when the request finishes.
+
+For unit tests, use `pkg/testing/libovsdb.NewOVSTestHarness` and seed related
+Bridge, Port, and Interface rows. Tests that wait for `ovs-vswitchd` can use
+`EmulateVSwitchdConfig`; call its returned stop function before cleaning up the
+harness. It waits for the emulator to exit, but does not create Linux devices
+or install flows. Use the existing netlink and OpenFlow test fixtures for those
+effects.
+
 ## Generating CRD yamls using codegen
 
 In order to generate the latest yaml files for a given CRD or to add a new CRD, once
