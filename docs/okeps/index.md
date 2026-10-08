@@ -67,3 +67,7 @@ VRF-Lite shared gateway mode with external bridge uplinks.
 **[Disable MAC Spoof Protection on Secondary Networks](okep-3926-disable-port-security.md)**
 
 Allow disabling port security on secondary network interfaces.
+
+**[Increase the MaxNetworks Limit](okep-6943-increase-max-networks-limit.md)**
+
+Make the NAD tunnel-keys annotation authoritative so `MaxNetworks` can grow from 4096 to 99999 and networks that don't use tunnel keys stop consuming them.
