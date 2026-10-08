@@ -19,6 +19,35 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
+// RetrieveAllMACAddressesFromGuest reads the MAC addresses of the guest's
+// Ethernet interfaces without depending on guest interface naming.
+func RetrieveAllMACAddressesFromGuest(cli *Client, vmi *kubevirtv1.VirtualMachineInstance) ([]string, error) {
+	output, err := cli.RunCommand(vmi, "ip -j link show", 2*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("failed retrieving guest link addresses: %s: %w", output, err)
+	}
+	var interfaces []struct {
+		Name     string `json:"ifname"`
+		LinkType string `json:"link_type"`
+		Address  string `json:"address"`
+	}
+	if err := json.Unmarshal([]byte(output), &interfaces); err != nil {
+		return nil, fmt.Errorf("failed unmarshaling guest link addresses: %s: %w", output, err)
+	}
+	var addresses []string
+	for _, iface := range interfaces {
+		if iface.LinkType != "ether" {
+			continue
+		}
+		mac, err := net.ParseMAC(iface.Address)
+		if err != nil {
+			return nil, fmt.Errorf("invalid MAC address on guest interface %s: %w", iface.Name, err)
+		}
+		addresses = append(addresses, mac.String())
+	}
+	return addresses, nil
+}
+
 func RetrieveCachedGatewayMAC(cli *Client, vmi *kubevirtv1.VirtualMachineInstance, dev, cidr string) (string, error) {
 	_, ipNet, err := net.ParseCIDR(cidr)
 	if err != nil {
