@@ -557,6 +557,44 @@ func (oc *Layer2UserDefinedNetworkController) MarkGatewaySyncNeeded(nodeName str
 	oc.gatewaysFailed.Store(nodeName, true)
 }
 
+// localNodeSyncs returns what an add (oldNode nil) or update of the local
+// node has to sync.
+func (oc *Layer2UserDefinedNetworkController) localNodeSyncs(oldNode, newNode *corev1.Node, oldState, newState *nodecontroller.NodeAnnotationState) *nodeSyncs {
+	if oldNode == nil {
+		// An add syncs everything, whatever is marked failed: a mark
+		// can be set before the node's first add has succeeded, such
+		// as by reconcile when the network's advertisement changes,
+		// and syncing only what is marked would then leave the rest
+		// of the node's topology uncreated. Every sync is
+		// create-or-update, so a retried add redoes what already
+		// succeeded at no more than the cost of doing it.
+		return &nodeSyncs{
+			syncMgmtPort:          true,
+			syncGw:                true,
+			syncReroute:           true,
+			syncClusterRouterPort: true,
+		}
+	}
+	nodeSubnetChange := nodeSubnetChangedForUDN(oldNode, newNode, oc.GetNetworkName(), oldState, newState)
+	_, mgmtUpdateFailed := oc.mgmtPortFailed.Load(newNode.Name)
+	shouldSyncMgmtPort := mgmtUpdateFailed || nodeSubnetChange
+	_, gwUpdateFailed := oc.gatewaysFailed.Load(newNode.Name)
+	shouldSyncGW := gwUpdateFailed ||
+		gatewayChanged(oldNode, newNode, oldState, newState, oc.GetNetworkName()) ||
+		nodeChassisChanged(oldNode, newNode) ||
+		hostCIDRsChanged(oldNode, newNode) ||
+		nodeGatewayMTUSupportChanged(oldNode, newNode)
+	_, syncRerouteFailed := oc.syncEIPNodeRerouteFailed.Load(newNode.Name)
+	shouldSyncReroute := syncRerouteFailed || util.NodeHostCIDRsAnnotationChanged(oldNode, newNode)
+	_, clusterRouterPortFailed := oc.nodeClusterRouterPortFailed.Load(newNode.Name)
+	return &nodeSyncs{
+		syncMgmtPort:          shouldSyncMgmtPort,
+		syncGw:                shouldSyncGW,
+		syncReroute:           shouldSyncReroute,
+		syncClusterRouterPort: clusterRouterPortFailed,
+	}
+}
+
 // ReconcileNode reconciles a node for a layer2 UDN controller.
 func (oc *Layer2UserDefinedNetworkController) ReconcileNode(ctx context.Context, oldNode, newNode *corev1.Node, oldState, newState *nodecontroller.NodeAnnotationState) error {
 	if newNode == nil {
@@ -567,48 +605,7 @@ func (oc *Layer2UserDefinedNetworkController) ReconcileNode(ctx context.Context,
 	}
 
 	if oc.isLocalNode(newNode) {
-		var nodeParams *nodeSyncs
-		if oldNode == nil {
-			_, syncMgmtPort := oc.mgmtPortFailed.Load(newNode.Name)
-			_, syncGw := oc.gatewaysFailed.Load(newNode.Name)
-			_, syncReroute := oc.syncEIPNodeRerouteFailed.Load(newNode.Name)
-			_, syncClusterRouterPort := oc.nodeClusterRouterPortFailed.Load(newNode.Name)
-			if syncMgmtPort || syncGw || syncReroute || syncClusterRouterPort {
-				nodeParams = &nodeSyncs{
-					syncMgmtPort:          syncMgmtPort,
-					syncGw:                syncGw,
-					syncReroute:           syncReroute,
-					syncClusterRouterPort: syncClusterRouterPort,
-				}
-			} else {
-				nodeParams = &nodeSyncs{
-					syncMgmtPort:          true,
-					syncGw:                true,
-					syncReroute:           true,
-					syncClusterRouterPort: true,
-				}
-			}
-		} else {
-			nodeSubnetChange := nodeSubnetChangedForUDN(oldNode, newNode, oc.GetNetworkName(), oldState, newState)
-			_, mgmtUpdateFailed := oc.mgmtPortFailed.Load(newNode.Name)
-			shouldSyncMgmtPort := mgmtUpdateFailed || nodeSubnetChange
-			_, gwUpdateFailed := oc.gatewaysFailed.Load(newNode.Name)
-			shouldSyncGW := gwUpdateFailed ||
-				gatewayChanged(oldNode, newNode, oldState, newState, oc.GetNetworkName()) ||
-				nodeChassisChanged(oldNode, newNode) ||
-				hostCIDRsChanged(oldNode, newNode) ||
-				nodeGatewayMTUSupportChanged(oldNode, newNode)
-			_, syncRerouteFailed := oc.syncEIPNodeRerouteFailed.Load(newNode.Name)
-			shouldSyncReroute := syncRerouteFailed || util.NodeHostCIDRsAnnotationChanged(oldNode, newNode)
-			_, clusterRouterPortFailed := oc.nodeClusterRouterPortFailed.Load(newNode.Name)
-			nodeParams = &nodeSyncs{
-				syncMgmtPort:          shouldSyncMgmtPort,
-				syncGw:                shouldSyncGW,
-				syncReroute:           shouldSyncReroute,
-				syncClusterRouterPort: clusterRouterPortFailed,
-			}
-		}
-		return oc.addUpdateLocalNodeEvent(ctx, newNode, nodeParams)
+		return oc.addUpdateLocalNodeEvent(ctx, newNode, oc.localNodeSyncs(oldNode, newNode, oldState, newState))
 	}
 
 	if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
