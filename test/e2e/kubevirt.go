@@ -1856,7 +1856,7 @@ write_files:
 
 			if td.topology == udnv1.NetworkTopologyLocalnet {
 				By("setting up the localnet underlay")
-				Expect(providerCtx.SetupUnderlay(fr, infraapi.Underlay{LogicalNetworkName: networkName})).To(Succeed())
+				Expect(infraprovider.SetupUnderlay(providerCtx, fr, infraapi.Underlay{LogicalNetworkName: networkName})).To(Succeed())
 			}
 			createCUDN(ctx, cudn)
 
@@ -2407,7 +2407,7 @@ chpasswd: { expire: False }
 			cudn, networkName := kubevirt.GenerateCUDN(namespace, "net1", udnv1.NetworkTopologyLocalnet, udnv1.NetworkRoleSecondary, udnv1.DualStackCIDRs{})
 			createCUDN(ctx, cudn)
 
-			Expect(providerCtx.SetupUnderlay(fr, infraapi.Underlay{LogicalNetworkName: networkName})).To(Succeed())
+			Expect(infraprovider.SetupUnderlay(providerCtx, fr, infraapi.Underlay{LogicalNetworkName: networkName})).To(Succeed())
 
 			type vmConfig struct {
 				ipv4 string
@@ -2453,7 +2453,7 @@ chpasswd: { expire: False }
 			cudn, networkName := kubevirt.GenerateCUDN(namespace, "net1", udnv1.NetworkTopologyLocalnet, udnv1.NetworkRoleSecondary, udnv1.DualStackCIDRs{})
 			createCUDN(ctx, cudn)
 
-			Expect(providerCtx.SetupUnderlay(fr, infraapi.Underlay{LogicalNetworkName: networkName})).To(Succeed())
+			Expect(infraprovider.SetupUnderlay(providerCtx, fr, infraapi.Underlay{LogicalNetworkName: networkName})).To(Succeed())
 
 			workerNodeList, err := fr.ClientSet.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{LabelSelector: labels.FormatLabels(map[string]string{"node-role.kubernetes.io/worker": ""})})
 			Expect(err).NotTo(HaveOccurred())
@@ -2589,7 +2589,7 @@ chpasswd: { expire: False }
 
 			if topology == udnv1.NetworkTopologyLocalnet {
 				By("setting up the localnet underlay")
-				Expect(providerCtx.SetupUnderlay(fr, infraapi.Underlay{LogicalNetworkName: networkName})).To(Succeed())
+				Expect(infraprovider.SetupUnderlay(providerCtx, fr, infraapi.Underlay{LogicalNetworkName: networkName})).To(Succeed())
 			}
 
 			By("create client VM")
