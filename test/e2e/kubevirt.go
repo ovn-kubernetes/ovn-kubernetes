@@ -2042,6 +2042,17 @@ ip route add %[3]s via %[4]s
 				}
 			}
 
+			if td.role == udnv1.NetworkRolePrimary && td.test.description == liveMigrate.description && isIPv4Supported(fr.ClientSet) {
+				step = by(vmi.Name, "Checking the cached IPv4 gateway MAC before live migration")
+				expectedGatewayMAC, err := kubevirt.GenerateGatewayMAC(getCUDNSubnets(cudn))
+				Expect(err).NotTo(HaveOccurred(), step)
+				Eventually(kubevirt.RetrieveCachedGatewayMAC).
+					WithArguments(virtClient, vmi, "enp1s0", cidrIPv4).
+					WithTimeout(10*time.Second).
+					WithPolling(time.Second).
+					Should(Equal(expectedGatewayMAC), step)
+			}
+
 			by(vmi.Name, fmt.Sprintf("Running %s for %s", td.test.description, td.resource.description))
 			td.test.cmd()
 
@@ -2109,7 +2120,7 @@ ip route add %[3]s via %[4]s
 						WithArguments(virtClient, vmi).
 						WithTimeout(5*time.Second).
 						WithPolling(time.Second).
-						Should(Equal([]string{targetNodeIPv6GatewayPath}), "should reconcile ipv6 gateway nexthop after live migration")
+						Should(Equal([]string{targetNodeIPv6GatewayPath}), "should retain the stable IPv6 gateway after live migration without synthetic RAs")
 				}
 			}
 		},
