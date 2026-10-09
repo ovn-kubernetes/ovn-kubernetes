@@ -17,7 +17,7 @@ JOB_NAME?="$@"
 #   make test-crd ENVTEST_K8S_VERSION=1.37.0   # override k8s version
 ENVTEST_ASSETS_DIR ?= $(CURDIR)/_artifacts/envtest-bin
 # Keep in sync with K8S_VERSION in .github/workflows/test.yml
-ENVTEST_K8S_VERSION ?= 1.36.2
+ENVTEST_K8S_VERSION ?= 1.37.0
 
 .PHONY: test-crd
 test-crd:
