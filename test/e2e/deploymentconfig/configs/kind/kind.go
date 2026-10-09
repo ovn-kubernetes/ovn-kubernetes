@@ -4,12 +4,20 @@
 package kind
 
 import (
+	"context"
+	"fmt"
 	"os"
+	"sync"
+	"time"
 
 	imageutils "k8s.io/kubernetes/test/utils/image"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig/api"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 var (
@@ -71,14 +79,19 @@ func init() {
 }
 
 type kind struct {
-	requiredImages map[api.ImageID]struct{}
+	kubeConfig      *rest.Config
+	requiredImages  map[api.ImageID]struct{}
+	nodeSubnetsOnce sync.Once
+	nodeSubnets     map[string][]string
+	nodeSubnetsErr  error
 }
 
-func New() api.DeploymentConfig {
+func New(config *rest.Config) api.DeploymentConfig {
 	if !infraprovider.IsKind() {
 		panic("Cluster provider must be KinD type")
 	}
 	return &kind{
+		kubeConfig:     config,
 		requiredImages: make(map[api.ImageID]struct{}),
 	}
 }
@@ -134,4 +147,44 @@ func (k *kind) GetRequiredImages() []api.ImageConfig {
 		imageConfigs = append(imageConfigs, k.GetImage(imageID))
 	}
 	return imageConfigs
+}
+
+func (k *kind) GetProviderNodeSubnets() (map[string][]string, error) {
+	k.nodeSubnetsOnce.Do(func() {
+		if k.kubeConfig == nil {
+			k.nodeSubnets = make(map[string][]string)
+			return
+		}
+		kubeClient, err := kubernetes.NewForConfig(k.kubeConfig)
+		if err != nil {
+			k.nodeSubnetsErr = fmt.Errorf("failed to create kubernetes client: %w", err)
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		nodes, err := kubeClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+		if err != nil {
+			k.nodeSubnetsErr = fmt.Errorf("failed to list nodes: %w", err)
+			return
+		}
+		result := make(map[string][]string, len(nodes.Items))
+		for i := range nodes.Items {
+			node := &nodes.Items[i]
+			parsed, err := util.ParseNodePrimaryIfAddr(node)
+			if err != nil {
+				k.nodeSubnetsErr = fmt.Errorf("failed to parse node %s primary address: %w", node.Name, err)
+				return
+			}
+			var subnets []string
+			if parsed.V4.Net != nil {
+				subnets = append(subnets, parsed.V4.Net.String())
+			}
+			if parsed.V6.Net != nil {
+				subnets = append(subnets, parsed.V6.Net.String())
+			}
+			result[node.Name] = subnets
+		}
+		k.nodeSubnets = result
+	})
+	return k.nodeSubnets, k.nodeSubnetsErr
 }

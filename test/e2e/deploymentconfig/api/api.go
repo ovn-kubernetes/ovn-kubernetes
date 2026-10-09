@@ -52,4 +52,9 @@ type DeploymentConfig interface {
 	AddRequiredImage(imageID ...ImageID)
 	// GetRequiredImages returns the set of images needed for the current test run.
 	GetRequiredImages() []ImageConfig
+	// GetProviderNodeSubnets returns the routable subnet CIDRs for all nodes,
+	// keyed by node name. Each node's slice contains IPv4 and/or IPv6 CIDRs
+	// depending on the cluster's IP family configuration. Results are cached
+	// after the first call.
+	GetProviderNodeSubnets() (map[string][]string, error)
 }
