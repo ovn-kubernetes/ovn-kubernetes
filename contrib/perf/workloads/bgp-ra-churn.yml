@@ -1,0 +1,123 @@
+---
+# BGP RouteAdvertisements churn.
+#
+# Fourth rung, and the only one that is not create-only. Same shape as
+# bgp-ra-density-deep, 40 RouteAdvertisements on 12 nodes, but after everything
+# has settled it deletes and recreates a tenth of the RAs, five times over.
+#
+# This is the lane that can test bottleneck hypothesis 1, the ReconcileAll()
+# fan-out, which the density lanes structurally cannot. They create each
+# RouteAdvertisements once and measure 20 RAs producing exactly 20 reconciles
+# and zero unchanged writes: with nothing else changing there is no
+# amplification to see. Here four RAs change per cycle while thirty-six sit
+# idle, so the question becomes how many reconciles those four changes cost.
+#
+# The signal is raFRRConfigurationProcessed split by op. If a change only
+# reconciles the RAs it touched, each cycle adds roughly 4 x 12 creates and
+# little else. If ReconcileAll re-enqueues every RA on any NAD or
+# FRRConfiguration event, each cycle also adds around 36 x 12 unchanged writes:
+# work that recomputes the whole configuration and throws it away. The ratio of
+# unchanged to create is the measurement.
+#
+# Keep in sync with bgp-ra-density-deep.yml; the only intended differences are
+# the job names, the churn configuration and this header.
+global:
+  measurements:
+    - name: pprof
+      # Must match the profile duration below. pprofInterval is the period of
+      # the ticker that starts a collection, ?seconds= is how long each one
+      # blocks sampling, so coverage is duration/interval: at 1m against 30s
+      # half the wall time is unsampled, which is how the first CI run's 42s of
+      # RA work landed entirely in a gap. It cannot go lower than the duration
+      # either, because Go refuses a second concurrent CPU profile.
+      #
+      # Matching does not close every hole. kube-burner collects start.pprof
+      # first and the ticker's first periodic lands a full interval after that
+      # collection began, so start+30s to start+60s is never sampled: measured
+      # at 30.1s locally, and it is where the second CI run's RA work fell. A
+      # CPU-bound burst in the first minute would still be invisible. That is
+      # tolerable here only because this reconcile is I/O bound, under 2
+      # core-seconds across a whole run with no ovn-kubernetes frames in any
+      # profile, so the apiserver request metrics carry the attribution and
+      # these profiles only confirm the absence of CPU.
+      pprofInterval: 30s
+      pprofDirectory: pprof-data
+      pprofTargets:
+      - name: ovnkube-control-plane
+        namespace: "ovn-kubernetes"
+        labelSelector: {name: ovnkube-control-plane}
+        url: http://localhost:9411/debug/pprof/profile?seconds=30
+      - name: ovnkube-control-plane-heap
+        namespace: "ovn-kubernetes"
+        labelSelector: {name: ovnkube-control-plane}
+        url: http://localhost:9411/debug/pprof/heap
+      - name: ovnkube-controller
+        namespace: "ovn-kubernetes"
+        labelSelector: {app: ovnkube-node}
+        url: http://localhost:9410/debug/pprof/profile?seconds=30
+      - name: ovnkube-controller-heap
+        namespace: "ovn-kubernetes"
+        labelSelector: {app: ovnkube-node}
+        url: http://localhost:9410/debug/pprof/heap
+
+jobs:
+# Networks first, so their NADs exist before any RouteAdvertisements selects
+# them. Creating them in one job keeps the RA reconciles from racing a growing
+# set of NADs.
+- name: bgp-ra-churn-networks
+  jobIterations: 1
+  qps: 10
+  burst: 10
+  namespacedIterations: false
+  waitWhenFinished: true
+  cleanup: true
+  objects:
+    - objectTemplate: workloads/templates/bgp/ns.yml
+      replicas: 40
+
+    - objectTemplate: workloads/templates/bgp/cudn_l3.yml
+      replicas: 40
+      waitOptions:
+        customStatusPaths:
+        - key: '(.conditions.[] | select(.type == "NetworkCreated")).status'
+          value: "True"
+
+# One RouteAdvertisements per network. This is the job whose cost the lane
+# exists to measure, so it is separated from network creation.
+- name: bgp-ra-churn
+  jobIterations: 1
+  qps: 10
+  burst: 10
+  namespacedIterations: false
+  waitWhenFinished: true
+  cleanup: true
+  # The RouteAdvertisements are accepted in seconds, which is shorter than the
+  # 30s scrape interval, so without a pause every rate() and histogram_quantile()
+  # in metrics-ovnk.yml covers a window with fewer than two samples and indexes
+  # nothing. metricsClosing defaults to afterJobPause, so this pause is inside
+  # the measured range. It also gives the 1m pprof measurement time to fire.
+  jobPause: 1m
+  # mode: objects, not the default of namespaces. RouteAdvertisements are
+  # cluster-scoped, so the namespace mode would not touch them, and churning
+  # the namespaces would tear down the CUDNs this lane needs to hold still.
+  # Objects default to churn: true and this job holds nothing but RAs, so no
+  # per-object flag is needed; the networks job above is left alone.
+  #
+  # 10% of 40 is 4 RAs per cycle. The delay has to exceed the 30s scrape
+  # interval or consecutive cycles land in one sample and the per-cycle cost
+  # cannot be separated.
+  churnConfig:
+    mode: objects
+    percent: 10
+    cycles: 5
+    delay: 1m
+  # Snapshot the quantities that cannot be Prometheus series: generated object
+  # counts, FRRNodeState sizes and the peer's view.
+  beforeCleanup: "./collect-bgp-state.sh bgp-ra-churn"
+  objects:
+    - objectTemplate: workloads/templates/bgp/ra.yml
+      replicas: 40
+      waitOptions:
+        customStatusPaths:
+        - key: '(.conditions.[] | select(.type == "Accepted")).status'
+          value: "True"
