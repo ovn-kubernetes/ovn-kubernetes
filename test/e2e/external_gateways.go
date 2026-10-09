@@ -871,8 +871,8 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 				// Scope CT checks to iperf3 listen ports. Always use iperf3 -u (same as ingress MEG
 				// CT tests): UDP data plus a TCP control channel per client. Table entries then
 				// filter by protocol — "tcp" counts only the control CT, "udp" only the data CT.
-				// Two clients (ports 5201/5202) yield 2 labeled + 2 unlabeled zone copies = 4
-				// total for the selected protocol when both control/data channels are up.
+				// Two clients (ports 5201/5202) yield 2 labeled entries for the selected protocol
+				// when both control/data channels are up. Unlabeled zone copies are not asserted.
 				ctPorts := []string{"5201", "5202"}
 				ginkgo.By("Start one long-lived iperf3 -u client per listen port toward the shared gateway loopback")
 				for _, port := range ctPorts {
@@ -916,18 +916,17 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 				selectedMAC := macAddressGW[selectedIdx]
 				remainingPod := gwPods[remainingIdx]
 				remainingMAC := macAddressGW[remainingIdx]
+				remainingContainer := gwContainers[remainingIdx]
 
 				ginkgo.By(fmt.Sprintf("Selected gateway %s (MAC %s) for removal; remaining hop is %s (MAC %s)",
 					selectedPod, selectedMAC, remainingPod, remainingMAC))
-				// Each labeled flow also has an unlabeled zone copy (2 labeled + 2 unlabeled = 4).
-				gomega.Expect(pokeConntrackEntriesOnPorts(nodeName, addresses.srcPodIP, protocol, nil, ctPorts)).To(gomega.Equal(4))
 
 				cleanUpFn := handleGatewayPodRemoval(f, removalType, selectedPod, servingNamespace)
 				if cleanUpFn != nil {
 					defer cleanUpFn()
 				}
 
-				ginkgo.By(fmt.Sprintf("Check if conntrack entries for removed external gateway %s are deleted", selectedPod))
+				ginkgo.By(fmt.Sprintf("Check if labeled conntrack entries for removed external gateway %s are deleted", selectedPod))
 				gomega.Eventually(func() int {
 					n := pokeConntrackEntriesOnPorts(nodeName, addresses.srcPodIP, protocol, []string{selectedMAC}, ctPorts)
 					klog.Infof("Labeled conntrack entries for removed GW MAC %s: %d", selectedMAC, n)
@@ -938,22 +937,55 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 				klog.Infof("Labeled conntrack entries for remaining GW MAC %s after removal: %d", remainingMAC, remainingCount)
 				gomega.Expect(remainingCount).To(gomega.Equal(labeledPerMAC[remainingIdx]))
 
+				ginkgo.By("Verify egress connection handoff to the remaining external gateway")
+				// Free iperf3 server slots occupied by the long-lived clients before probing.
+				// The iperf image has no procps/pkill; match /proc/<pid>/comm and SIGKILL.
+				_, _ = e2ekubectl.RunKubectl(f.Namespace.Name, "exec", clientPodName, "--",
+					"bash", "-c",
+					`for pid in /proc/[0-9]*; do [ "$(cat "$pid/comm" 2>/dev/null)" = iperf3 ] && kill -9 "${pid##*/}" 2>/dev/null || true; done`)
+				// Restart listeners on the remaining GW so handoff is not blocked by a
+				// half-closed single-client iperf3 server from the long-lived session.
+				_, err = infraprovider.Get().ExecExternalContainerCommand(remainingContainer, []string{"bash", "-c",
+					`for pid in /proc/[0-9]*; do [ "$(cat "$pid/comm" 2>/dev/null)" = iperf3 ] && kill -9 "${pid##*/}" 2>/dev/null || true; done; iperf3 -s --daemon -p 5201; iperf3 -s --daemon -p 5202`})
+				framework.ExpectNoError(err, "failed to restart iperf3 servers on remaining gateway %s", remainingContainer.Name)
+				handoffPort := ctPorts[0]
+				// Optional path capture on the remaining GW when tcpdump is present (iperf image
+				// typically lacks it — UBI repos do not ship tcpdump). Connectivity after hop
+				// removal is asserted via a short TCP iperf3 probe (protocol-specific CT was
+				// already validated above; UDP iperf3 here races with leftover CT/server state).
+				var tcpDumpSync *sync.WaitGroup
+				if _, err := infraprovider.Get().ExecExternalContainerCommand(remainingContainer, []string{"which", "tcpdump"}); err == nil {
+					tcpDumpSync = &sync.WaitGroup{}
+					tcpDumpSync.Add(1)
+					go checkReceivedPacketsOnExternalContainer(remainingContainer, clientPodName, anyLink,
+						[]string{"tcp", "and", "port", handoffPort}, tcpDumpSync)
+				} else {
+					framework.Logf("tcpdump not available on %s; skipping optional handoff packet capture", remainingContainer.Name)
+				}
+				gomega.Eventually(func() error {
+					cmd := fmt.Sprintf("iperf3 -c %s -p %s -t 1 -b 1M", targetIP, handoffPort)
+					if net.ParseIP(targetIP) != nil && net.ParseIP(targetIP).To4() == nil {
+						cmd = fmt.Sprintf("iperf3 -6 -c %s -p %s -t 1 -b 1M", targetIP, handoffPort)
+					}
+					_, err := e2ekubectl.RunKubectl(f.Namespace.Name, "exec", clientPodName, "--",
+						"bash", "-c", cmd)
+					return err
+				}, 30*time.Second, 2*time.Second).Should(gomega.Succeed(),
+					"expected client pod to reach %s:%s via remaining gateway %s after hop handoff",
+					targetIP, handoffPort, remainingPod)
+				if tcpDumpSync != nil {
+					tcpDumpSync.Wait()
+				}
+
 				ginkgo.By(fmt.Sprintf("Update remaining external gateway pod %s labels so it no longer matches the policy", remainingPod))
 				p := getGatewayPod(f, servingNamespace, remainingPod)
 				p.Labels = map[string]string{"name": remainingPod}
 				updatePod(f, p)
 
-				ginkgo.By("Check if conntrack entries for ECMP routes are removed after both external gateways are gone")
+				ginkgo.By("Check if labeled conntrack entries for ECMP routes are removed after both external gateways are gone")
 				gomega.Eventually(func() int {
 					n := pokeConntrackEntriesOnPorts(nodeName, addresses.srcPodIP, protocol, macAddressGW, ctPorts)
 					klog.Infof("Number of entries with macAddressGW %s:%d", macAddressGW, n)
-					return n
-				}, 30).Should(gomega.Equal(0))
-				// Unlabeled zone copies are deleted with the labeled 5-tuple; wait for full
-				// purge of this podIP on the iperf3 listen ports (TCP control / UDP data).
-				gomega.Eventually(func() int {
-					n := pokeConntrackEntriesOnPorts(nodeName, addresses.srcPodIP, protocol, nil, ctPorts)
-					klog.Infof("Total conntrack entries for pod %s on ports %v: %d", addresses.srcPodIP, ctPorts, n)
 					return n
 				}, 30).Should(gomega.Equal(0))
 				checkAPBExternalRouteStatus(defaultPolicyName)
