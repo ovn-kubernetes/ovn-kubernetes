@@ -1908,7 +1908,7 @@ func newNodePortWatcher(
 	return npw, nil
 }
 
-func cleanupSharedGateway(ovsClient libovsdbclient.Client) error {
+func cleanupSharedGateway(ctx context.Context, ovsClient libovsdbclient.Client) error {
 	if (config.IsModeDPU() || config.IsModeFull()) && ovsClient != nil {
 		// NicToBridge() may be created before-hand, only delete the patch port here
 		ports, err := ovsops.FindOVSPortsWithPredicate(ovsClient, func(p *vswitchd.Port) bool {
@@ -1936,7 +1936,7 @@ func cleanupSharedGateway(ovsClient libovsdbclient.Client) error {
 		// patch ports yet. Wait before restoring NORMAL flows below so those
 		// flows cannot forward traffic through the old OVN patch ports.
 		// This runs during node cleanup, outside the CNI ADD path.
-		if err := ovsops.TransactAndCheckAndWaitForVSwitchd(ovsClient, ops); err != nil {
+		if err := ovsops.TransactAndCheckAndWaitForVSwitchd(ctx, ovsClient, ops); err != nil {
 			return fmt.Errorf("failed to delete ovn-localnet-port ports: %w", err)
 		}
 
