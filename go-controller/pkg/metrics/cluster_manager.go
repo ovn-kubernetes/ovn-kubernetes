@@ -275,6 +275,7 @@ func RegisterClusterManagerFunctional() {
 			prometheus.MustRegister(metricUDNUpdateNodeAnnotationDuration)
 			prometheus.MustRegister(metricUDNNADSyncDuration)
 			registerWorkqueueMetrics(types.MetricOvnkubeNamespace, types.MetricOvnkubeSubsystemClusterManager)
+			registerClientGoMetrics()
 		}
 		if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
 			prometheus.MustRegister(metricUDNNodesRendered)
