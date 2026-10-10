@@ -605,16 +605,26 @@ func (bnc *BaseNetworkController) createNodeLogicalSwitch(nodeName string, hostS
 	if bnc.multicastSupport {
 		logicalSwitch.OtherConfig["mcast_snoop"] = "true"
 
-		// Configure IGMP/MLD querier if the gateway IP address is known.
-		// Otherwise disable it.
+		// Always store querier source addresses when the gateway IP is known.
+		// mcast_querier itself is enabled only while some namespace has
+		// k8s.ovn.org/multicast-enabled=true.
 		if v4Gateway != nil || v6Gateway != nil {
-			logicalSwitch.OtherConfig["mcast_querier"] = "true"
 			logicalSwitch.OtherConfig["mcast_eth_src"] = nodeLRPMAC.String()
 			if v4Gateway != nil {
 				logicalSwitch.OtherConfig["mcast_ip4_src"] = v4Gateway.String()
 			}
 			if v6Gateway != nil {
 				logicalSwitch.OtherConfig["mcast_ip6_src"] = util.HWAddrToIPv6LLA(nodeLRPMAC).String()
+			}
+
+			multicastEnabled, err := bnc.isAnyNamespaceMulticastEnabled()
+			if err != nil {
+				return err
+			}
+			if multicastEnabled {
+				logicalSwitch.OtherConfig["mcast_querier"] = "true"
+			} else {
+				logicalSwitch.OtherConfig["mcast_querier"] = "false"
 			}
 		} else {
 			logicalSwitch.OtherConfig["mcast_querier"] = "false"
@@ -1276,4 +1286,86 @@ func (bnc *BaseNetworkController) ensureDHCP(pod *corev1.Pod, podAnnotation *uti
 	opts = append(opts, kubevirt.WithIPv4DNSServer(ipv4DNSServer), kubevirt.WithIPv6DNSServer(ipv6DNSServer))
 
 	return kubevirt.EnsureDHCPOptionsForLSP(bnc.controllerName, bnc.nbClient, pod, podAnnotation.IPs, lsp, opts...)
+}
+
+// isAnyNamespaceMulticastEnabled reports whether at least one namespace watched by
+// this network has the multicast-enabled annotation.
+func (bnc *BaseNetworkController) isAnyNamespaceMulticastEnabled() (bool, error) {
+	namespaces, err := bnc.watchFactory.GetNamespaces()
+	if err != nil {
+		return false, fmt.Errorf("failed to get namespaces for multicast querier check: %w", err)
+	}
+	for _, ns := range namespaces {
+		if bnc.shouldFilterNamespace(ns.Name) {
+			continue
+		}
+		if isNamespaceMulticastEnabled(ns.Annotations) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// syncNodeLogicalSwitchQueriers updates mcast_querier on this network's node logical
+// switches based on whether any namespace it watches has multicast enabled.
+func (bnc *BaseNetworkController) syncNodeLogicalSwitchQueriers() error {
+	if !bnc.multicastSupport {
+		return nil
+	}
+
+	enabled, err := bnc.isAnyNamespaceMulticastEnabled()
+	if err != nil {
+		return err
+	}
+	mcastQuerier := "false"
+	if enabled {
+		mcastQuerier = "true"
+	}
+
+	// Only switches owned by this network. Default-network switches have no
+	// network external ID. User-defined networks set k8s.ovn.org/network.
+	networkName := bnc.GetNetworkName()
+	p := func(item *nbdb.LogicalSwitch) bool {
+		if item.OtherConfig["mcast_snoop"] != "true" {
+			return false
+		}
+		swNetwork := item.ExternalIDs[types.NetworkExternalID]
+		if bnc.IsUserDefinedNetwork() {
+			return swNetwork == networkName
+		}
+		return swNetwork == ""
+	}
+	switches, err := libovsdbops.FindLogicalSwitchesWithPredicate(bnc.nbClient, p)
+	if err != nil {
+		return fmt.Errorf("failed to find logical switches for querier sync: %w", err)
+	}
+
+	var updateErrs []error
+	for _, sw := range switches {
+		if sw.OtherConfig["mcast_querier"] == mcastQuerier {
+			continue
+		}
+
+		// Only enable if we have the necessary source addresses
+		if enabled && sw.OtherConfig["mcast_eth_src"] == "" {
+			klog.Errorf("Skipping mcast_querier enable for switch %s: missing source config", sw.Name)
+			updateErrs = append(updateErrs, fmt.Errorf("switch %s is missing mcast_eth_src", sw.Name))
+			continue
+		}
+
+		newConfig := make(map[string]string)
+		for k, v := range sw.OtherConfig {
+			newConfig[k] = v
+		}
+		newConfig["mcast_querier"] = mcastQuerier
+
+		sw.OtherConfig = newConfig
+		if err := libovsdbops.UpdateLogicalSwitchSetOtherConfig(bnc.nbClient, sw); err != nil {
+			klog.Errorf("Failed to update mcast_querier to %s for switch %s: %v", mcastQuerier, sw.Name, err)
+			updateErrs = append(updateErrs, fmt.Errorf("switch %s: %w", sw.Name, err))
+			continue
+		}
+		klog.Infof("Updated mcast_querier to %s for switch %s", mcastQuerier, sw.Name)
+	}
+	return errors.Join(updateErrs...)
 }

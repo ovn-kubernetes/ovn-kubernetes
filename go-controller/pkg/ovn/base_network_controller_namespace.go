@@ -175,6 +175,9 @@ func (bnc *BaseNetworkController) syncNamespaces(namespaces []interface{}) error
 		if err = bnc.syncNsMulticast(nsWithMulticast); err != nil {
 			return fmt.Errorf("error in syncing multicast for namespaces: %v", err)
 		}
+		if err = bnc.syncNodeLogicalSwitchQueriers(); err != nil {
+			return fmt.Errorf("error in syncing node logical switch queriers: %w", err)
+		}
 	}
 	// clean up deprecated namespace-owned address sets
 	predicateIDs = libovsdbops.NewDbObjectIDs(libovsdbops.AddressSetNamespace, bnc.controllerName, nil)
@@ -196,7 +199,6 @@ func (bnc *BaseNetworkController) multicastUpdateNamespace(ns *corev1.Namespace,
 	}
 
 	var err error
-	nsInfo.multicastEnabled = enabled
 	if enabled {
 		err = bnc.createMulticastAllowPolicy(ns.Name, nsInfo)
 	} else {
@@ -205,18 +207,27 @@ func (bnc *BaseNetworkController) multicastUpdateNamespace(ns *corev1.Namespace,
 	if err != nil {
 		return err
 	}
+	// Update the cache only after the switches are synced, so a failed sync is retried.
+	if err = bnc.syncNodeLogicalSwitchQueriers(); err != nil {
+		return fmt.Errorf("failed to synchronize node logical switch queriers: %w", err)
+	}
+	nsInfo.multicastEnabled = enabled
 	return nil
 }
 
 // Cleans up the multicast policy for this namespace if multicast was
 // previously allowed.
 func (bnc *BaseNetworkController) multicastDeleteNamespace(ns *corev1.Namespace, nsInfo *namespaceInfo) error {
-	if nsInfo.multicastEnabled {
-		nsInfo.multicastEnabled = false
-		if err := bnc.deleteMulticastAllowPolicy(ns.Name, nsInfo); err != nil {
-			return err
-		}
+	if !nsInfo.multicastEnabled {
+		return nil
 	}
+	if err := bnc.deleteMulticastAllowPolicy(ns.Name, nsInfo); err != nil {
+		return err
+	}
+	if err := bnc.syncNodeLogicalSwitchQueriers(); err != nil {
+		return fmt.Errorf("failed to synchronize node logical switch queriers: %w", err)
+	}
+	nsInfo.multicastEnabled = false
 	return nil
 }
 
