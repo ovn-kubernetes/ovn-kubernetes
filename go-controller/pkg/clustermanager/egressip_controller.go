@@ -1129,9 +1129,10 @@ func (eIPC *egressIPClusterController) reconcileEgressIP(old, new *egressipv1.Eg
 		// added/removed, assignments which don't change do not require any
 		// further setup.
 		// Validate CloudPrivateIPConfig creation for both IPv4 and IPv6
+		validStatusToAdd := statusToAdd
 		if len(statusToAdd) > 0 {
 			eIPC.nodeAllocator.Lock()
-			validStatusToAdd := []egressipv1.EgressIPStatusItem{}
+			validStatusToAdd = []egressipv1.EgressIPStatusItem{}
 
 			for _, item := range statusToAdd {
 				eNode, exists := eIPC.nodeAllocator.cache[item.Node]
@@ -1155,10 +1156,9 @@ func (eIPC *egressIPClusterController) reconcileEgressIP(old, new *egressipv1.Eg
 						if ipv4Allocated > *eNode.egressIPConfig.Capacity.IPv4 {
 							klog.Warningf("IPv4 capacity exceeded for Node %s: allocated=%d, capacity=%d, rejecting %s",
 								item.Node, ipv4Allocated, *eNode.egressIPConfig.Capacity.IPv4, item.EgressIP)
-							// ROLLBACK FIX: Remove rejected IP from allocation map to clear stale cache
+							// Remove rejected IPv4 from allocation map to clear stale cache
 							delete(eNode.allocations, item.EgressIP)
-							eIPC.nodeAllocator.Unlock()
-							return fmt.Errorf("IPv4 capacity exceeded on node %s, deleting allocation %s", eNode.name, item.EgressIP)
+							continue
 						}
 					}
 				}
@@ -1170,10 +1170,9 @@ func (eIPC *egressIPClusterController) reconcileEgressIP(old, new *egressipv1.Eg
 						if ipv6Allocated > *eNode.egressIPConfig.Capacity.IPv6 {
 							klog.Warningf("IPv6 capacity exceeded for Node %s: allocated=%d, capacity=%d, rejecting %s",
 								item.Node, ipv6Allocated, *eNode.egressIPConfig.Capacity.IPv6, item.EgressIP)
-							// ROLLBACK FIX: Remove rejected IP from allocation map to clear stale cache
+							// Remove rejected IPv6 from allocation map to clear stale cache
 							delete(eNode.allocations, item.EgressIP)
-							eIPC.nodeAllocator.Unlock()
-							return fmt.Errorf("IPv6 capacity exceeded on node %s, deleting allocation %s", eNode.name, item.EgressIP)
+							continue
 						}
 					}
 				}
@@ -1185,13 +1184,9 @@ func (eIPC *egressIPClusterController) reconcileEgressIP(old, new *egressipv1.Eg
 			if len(validStatusToAdd) == 0 {
 				klog.Warningf("No valid IPs for CloudPrivateIPConfig creation for EgressIP %s", name)
 			}
-			if err := eIPC.executeCloudPrivateIPConfigChange(name, validStatusToAdd, statusToRemove); err != nil {
-				return err
-			}
-		} else {
-			if err := eIPC.executeCloudPrivateIPConfigChange(name, statusToAdd, statusToRemove); err != nil {
-				return err
-			}
+		}
+		if err := eIPC.executeCloudPrivateIPConfigChange(name, validStatusToAdd, statusToRemove); err != nil {
+			return err
 		}
 	}
 
