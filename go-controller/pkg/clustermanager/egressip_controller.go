@@ -1221,12 +1221,11 @@ func (eIPC *egressIPClusterController) syncCloudPrivateIPConfigs(objs []interfac
 			if _, exists := cloudPrivateIPConfigMap[cloudPrivateIPConfigName]; exists {
 				// CPIC exists - check if it has failed status by fetching the actual object
 				cpic, err := eIPC.watchFactory.GetCloudPrivateIPConfig(cloudPrivateIPConfigName)
-				if err == nil && cpic != nil && len(cpic.Status.Conditions) > 0 {
-					lastCondition := cpic.Status.Conditions[0]
-					if lastCondition.Status == "False" && lastCondition.Type == "Assigned" {
+				if err == nil && cpic != nil {
+					if cond := meta.FindStatusCondition(cpic.Status.Conditions, string(ocpcloudnetworkapi.Assigned)); cond != nil && cond.Status == metav1.ConditionFalse {
 						// This CPIC failed - don't include in updated status
 						klog.Warningf("Removing failed CloudPrivateIPConfig %s from EgressIP %s status. Reason: %s",
-							cloudPrivateIPConfigName, egressIP.Name, lastCondition.Message)
+							cloudPrivateIPConfigName, egressIP.Name, cond.Message)
 						cloudPrivateIPNotFound = true
 						continue
 					}
