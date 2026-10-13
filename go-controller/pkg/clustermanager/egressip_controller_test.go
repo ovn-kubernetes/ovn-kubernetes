@@ -360,7 +360,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 		}
 	}
 
-	nodeSwitch := func() string {
+	assignedEgressNode := func() string {
 		_, nodes := getEgressIPStatus(egressIPName)
 		if len(nodes) != 1 {
 			return ""
@@ -544,7 +544,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				gomega.Eventually(getEgressIPStatusLen(egressIPName)).Should(gomega.Equal(1))
-				gomega.Eventually(nodeSwitch).Should(gomega.Equal(node2.Name))
+				gomega.Eventually(assignedEgressNode).Should(gomega.Equal(node2.Name))
 				egressIPs, _ = getEgressIPStatus(egressIPName)
 				gomega.Expect(egressIPs[0]).To(gomega.Equal(egressIP))
 
@@ -665,7 +665,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				gomega.Eventually(getEgressIPStatusLen(egressIPName)).Should(gomega.Equal(1))
-				gomega.Eventually(nodeSwitch).Should(gomega.Equal(node2.Name))
+				gomega.Eventually(assignedEgressNode).Should(gomega.Equal(node2.Name))
 				egressIPs, _ = getEgressIPStatus(egressIPName)
 				gomega.Expect(egressIPs[0]).To(gomega.Equal(egressIP))
 				return nil
@@ -5676,7 +5676,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 					err := fakeClusterManagerOVN.fakeClient.KubeClient.CoreV1().Nodes().Delete(context.TODO(), assigned, metav1.DeleteOptions{})
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					gomega.Eventually(getEgressIPStatusLen(egressIPName)).Should(gomega.Equal(1))
-					gomega.Eventually(nodeSwitch).Should(gomega.Equal(remaining))
+					gomega.Eventually(assignedEgressNode).Should(gomega.Equal(remaining))
 
 					err = fakeClusterManagerOVN.fakeClient.KubeClient.CoreV1().Nodes().Delete(context.TODO(), remaining, metav1.DeleteOptions{})
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -5905,7 +5905,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 
 					// node2 was never probed under the old selector; wait for ticker.
 					gomega.Eventually(getEgressIPStatusLen(egressIPName)).WithTimeout(6 * time.Second).Should(gomega.Equal(1))
-					gomega.Eventually(nodeSwitch).WithTimeout(6 * time.Second).Should(gomega.Equal(node2Name))
+					gomega.Eventually(assignedEgressNode).WithTimeout(6 * time.Second).Should(gomega.Equal(node2Name))
 					gomega.Eventually(nodeHasAllocations(node1Name)).Should(gomega.BeFalse())
 					gomega.Eventually(nodeHasAllocations(node2Name)).Should(gomega.BeTrue())
 					return nil
@@ -6120,7 +6120,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 					startWatchers()
 
 					gomega.Eventually(getEgressIPStatusLen(egressIPName)).Should(gomega.Equal(1))
-					gomega.Eventually(nodeSwitch).Should(gomega.Equal(node2Name))
+					gomega.Eventually(assignedEgressNode).Should(gomega.Equal(node2Name))
 					gomega.Eventually(nodeHasAllocations(node1Name)).Should(gomega.BeFalse())
 					gomega.Eventually(nodeHasAllocations(node2Name)).Should(gomega.BeTrue())
 					return nil
@@ -6190,7 +6190,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 					gomega.Consistently(getEgressIPStatusLen(egressIPName)).WithTimeout(300 * time.Millisecond).Should(gomega.Equal(1))
-					gomega.Consistently(nodeSwitch).WithTimeout(300 * time.Millisecond).Should(gomega.Equal(node1Name))
+					gomega.Consistently(assignedEgressNode).WithTimeout(300 * time.Millisecond).Should(gomega.Equal(node1Name))
 					return nil
 				}
 				gomega.Expect(app.Run([]string{app.Name})).NotTo(gomega.HaveOccurred())
@@ -6227,7 +6227,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 
 					// Assignment must remain on node1 — no unnecessary move.
 					gomega.Consistently(getEgressIPStatusLen(egressIPName)).WithTimeout(300 * time.Millisecond).Should(gomega.Equal(1))
-					gomega.Consistently(nodeSwitch).WithTimeout(300 * time.Millisecond).Should(gomega.Equal(node1Name))
+					gomega.Consistently(assignedEgressNode).WithTimeout(300 * time.Millisecond).Should(gomega.Equal(node1Name))
 					return nil
 				}
 				gomega.Expect(app.Run([]string{app.Name})).NotTo(gomega.HaveOccurred())
