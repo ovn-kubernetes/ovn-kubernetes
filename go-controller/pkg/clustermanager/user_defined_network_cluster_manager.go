@@ -4,6 +4,8 @@
 package clustermanager
 
 import (
+	"context"
+
 	cnitypes "github.com/containernetworking/cni/pkg/types"
 
 	"k8s.io/client-go/tools/record"
@@ -163,7 +165,7 @@ func (sncm *userDefinedNetworkClusterManager) CleanupStaleNetworks(validNetworks
 
 	for netName, oc := range staleNetworkControllers {
 		klog.Infof("Cleanup stale network %s", netName)
-		err = oc.Cleanup()
+		err = oc.Cleanup(context.TODO())
 		if err != nil {
 			klog.Errorf("Failed to clean up stale network %s: %v", netName, err)
 		}

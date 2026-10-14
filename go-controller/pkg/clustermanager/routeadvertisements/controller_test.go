@@ -3020,7 +3020,7 @@ exit
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 			// prime the default network NAD
 			if defaultNAD == nil {
-				defaultNAD, err = util.EnsureDefaultNetworkNAD(c.nadLister, c.nadClient)
+				defaultNAD, err = util.EnsureDefaultNetworkNAD(context.Background(), c.nadLister, c.nadClient)
 				g.Expect(err).ToNot(gomega.HaveOccurred())
 				// update it with the annotation that network manager would set
 				defaultNAD.Annotations = map[string]string{types.OvnNetworkNameAnnotation: types.DefaultNetworkName}
@@ -3054,7 +3054,7 @@ exit
 			// so they don't leak into subsequent subtests.
 			t.Cleanup(func() { metrics.DeleteRouteAdvertisementCondition(tt.reconcile) })
 
-			if err := c.reconcile(tt.reconcile); (err != nil) != tt.wantErr {
+			if err := c.reconcile(context.Background(), tt.reconcile); (err != nil) != tt.wantErr {
 				t.Fatalf("Controller.reconcile() error = %v, wantErr %v", err, tt.wantErr)
 			}
 
@@ -3198,7 +3198,7 @@ func TestController_reconcileOnNetworkActivity(t *testing.T) {
 	c := NewController(nm.Interface(), wf, fakeClientset)
 
 	// prime the default network NAD
-	defaultNAD, err := util.EnsureDefaultNetworkNAD(c.nadLister, c.nadClient)
+	defaultNAD, err := util.EnsureDefaultNetworkNAD(context.Background(), c.nadLister, c.nadClient)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	defaultNAD.Annotations = map[string]string{types.OvnNetworkNameAnnotation: types.DefaultNetworkName}
 	_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(defaultNAD.Namespace).Update(context.Background(), defaultNAD, metav1.UpdateOptions{})
@@ -3534,7 +3534,7 @@ func TestUpdates(t *testing.T) {
 
 			reconciled := []string{}
 			reconciledMutex := sync.Mutex{}
-			reconcile := func(ra string) error {
+			reconcile := func(_ context.Context, ra string) error {
 				reconciledMutex.Lock()
 				defer reconciledMutex.Unlock()
 				reconciled = append(reconciled, ra)
@@ -3679,7 +3679,7 @@ func TestController_updateRAStatus(t *testing.T) {
 	}
 
 	// first reconcile fails with error A
-	err = c.updateRAStatus(getRA(), false, fmt.Errorf("%w: error A", errConfig))
+	err = c.updateRAStatus(context.Background(), getRA(), false, fmt.Errorf("%w: error A", errConfig))
 	g.Expect(err).ToNot(gomega.HaveOccurred(), "first reconcile with error A should update the status")
 	accepted := meta.FindStatusCondition(getRA().Status.Conditions, "Accepted")
 	g.Expect(accepted).NotTo(gomega.BeNil(), "the Accepted condition should be set after the first reconcile")
@@ -3700,7 +3700,7 @@ func TestController_updateRAStatus(t *testing.T) {
 
 	// second reconcile fails with error B for the same reason: the message
 	// must be refreshed
-	err = c.updateRAStatus(getRA(), false, fmt.Errorf("%w: error B", errConfig))
+	err = c.updateRAStatus(context.Background(), getRA(), false, fmt.Errorf("%w: error B", errConfig))
 	g.Expect(err).ToNot(gomega.HaveOccurred(), "second reconcile with error B should update the status")
 	accepted = meta.FindStatusCondition(getRA().Status.Conditions, "Accepted")
 	g.Expect(accepted).NotTo(gomega.BeNil(), "the Accepted condition should still be set after error B")
@@ -3711,7 +3711,7 @@ func TestController_updateRAStatus(t *testing.T) {
 
 	// third reconcile fails with a different reason: reason and message must
 	// be refreshed
-	err = c.updateRAStatus(getRA(), false, fmt.Errorf("%w: error C", errPending))
+	err = c.updateRAStatus(context.Background(), getRA(), false, fmt.Errorf("%w: error C", errPending))
 	g.Expect(err).ToNot(gomega.HaveOccurred(), "third reconcile with error C should update the status")
 	accepted = meta.FindStatusCondition(getRA().Status.Conditions, "Accepted")
 	g.Expect(accepted).NotTo(gomega.BeNil(), "the Accepted condition should still be set after error C")
@@ -3732,13 +3732,13 @@ func TestController_updateRAStatus(t *testing.T) {
 		return patches
 	}
 	patches := countStatusPatches()
-	err = c.updateRAStatus(getRA(), false, fmt.Errorf("%w: error C", errPending))
+	err = c.updateRAStatus(context.Background(), getRA(), false, fmt.Errorf("%w: error C", errPending))
 	g.Expect(err).ToNot(gomega.HaveOccurred(), "a reconcile with an unchanged error should succeed")
 	g.Expect(countStatusPatches()).To(gomega.Equal(patches), "an unchanged status must not be re-applied")
 
 	// fifth reconcile fails with the same error but had FRRConfig/NAD updates:
 	// the status must be applied even though the condition is unchanged
-	err = c.updateRAStatus(getRA(), true, fmt.Errorf("%w: error C", errPending))
+	err = c.updateRAStatus(context.Background(), getRA(), true, fmt.Errorf("%w: error C", errPending))
 	g.Expect(err).ToNot(gomega.HaveOccurred(), "a reconcile with updates should update the status")
 	g.Expect(countStatusPatches()).To(gomega.Equal(patches+1), "hadUpdates should apply the status even when the condition is unchanged")
 	accepted = meta.FindStatusCondition(getRA().Status.Conditions, "Accepted")
@@ -3746,7 +3746,7 @@ func TestController_updateRAStatus(t *testing.T) {
 
 	// sixth reconcile succeeds: the condition status flips and the transition
 	// time must be bumped
-	err = c.updateRAStatus(getRA(), false, nil)
+	err = c.updateRAStatus(context.Background(), getRA(), false, nil)
 	g.Expect(err).ToNot(gomega.HaveOccurred(), "a successful reconcile should update the status")
 	accepted = meta.FindStatusCondition(getRA().Status.Conditions, "Accepted")
 	g.Expect(accepted).NotTo(gomega.BeNil(), "the Accepted condition should still be set after a successful reconcile")

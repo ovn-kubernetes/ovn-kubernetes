@@ -29,11 +29,11 @@ func (fnc *FakeNetworkController) Start(_ context.Context) error {
 
 func (fnc *FakeNetworkController) Stop() {}
 
-func (fnc *FakeNetworkController) Cleanup() error {
+func (fnc *FakeNetworkController) Cleanup(context.Context) error {
 	return nil
 }
 
-func (fnc *FakeNetworkController) Reconcile(util.NetInfo) error {
+func (fnc *FakeNetworkController) Reconcile(context.Context, util.NetInfo) error {
 	return nil
 }
 
