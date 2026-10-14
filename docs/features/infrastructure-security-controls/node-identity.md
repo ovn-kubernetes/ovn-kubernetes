@@ -48,8 +48,16 @@ This is intentional as it helps ensure that the certificate rotation works seaml
 
 ## Validating Admission Webhook
 
-The feature introduces a validating webhook for updates to `pod/status` and `node/status`.\
-The `ovnkube-node` pod exclusively updates the status on both resources, so it is sufficient to verify only update requests.\
+The feature introduces validating webhooks for updates to `pods/status`, and for creation and updates of `nodes`, including `nodes/status`.
+Node annotations can also be written through the main Node resource, so both paths must be checked.
+An API-server match condition skips the node webhook for other callers unless
+an annotation with the `k8s.ovn.org/` prefix is added, changed, or removed.
+Ordinary node registration without OVN annotations and unrelated label, taint,
+and status updates therefore do not depend on webhook availability. Requests
+using `system:ovn-node` credentials always reach the webhook so that their
+metadata and status restrictions remain enforced. Matching requests fail closed
+if the webhook cannot be reached. Custom deployments must include this match
+condition along with the expanded resource rules.
 The webhooks include the following checks for each `ovnkube-node` pod:
 - Modifying annotations on pods hosted on its own node.
 - Modifying annotations on its own node.
@@ -59,6 +67,21 @@ The webhooks include the following checks for each `ovnkube-node` pod:
 The allowed annotations list contains both common and feature specific values:
  - By default, the webhook will verify common node annotations and pod/node annotations set by the ovnkube-node component.
  - When `enable-hybrid-overlay` parameter is provided the webhook will validate additional node annotations set by the ovnkube-node component for hybrid overlay.
+
+The node webhook also protects cluster-manager's `k8s.ovn.org/node-id` and
+`k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids` annotations.
+Only identities configured with `--extra-allowed-user` may add, change, or remove
+these annotations. The deployment configures the ovnkube-cluster-manager service
+account as a trusted user. Node credentials cannot write these annotations,
+even on their own node. Other users can continue updating unrelated annotations
+and node status while preserving protected annotations.
+
+Custom deployments must update the node webhook rules to include `CREATE` and
+`UPDATE` on `nodes`, and `UPDATE` on `nodes/status`. Configure all required trusted
+controller identities before enabling these protections. Administrative repair
+of protected annotations also requires an explicitly trusted identity. Existing
+annotation values are not revalidated when they remain unchanged; this protection
+does not repair preexisting corrupt allocations or validate NAD/CNC resources.
 
 The specific annotation values can be found in `go-controller/pkg/ovnwebhook/nodeadmission.go` and `go-controller/pkg/ovnwebhook/podadmission.go` files.
 
