@@ -9,12 +9,15 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"testing"
 
 	v1 "k8s.io/api/admission/v1"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	corelisters "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/tools/cache"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	hotypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
@@ -47,7 +50,7 @@ func TestNewNodeAdmissionWebhook(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := NewNodeAdmissionWebhook(tt.enableHybridOverlay); !got.annotationKeys.HasAll(tt.expectedKeys...) {
+			if got := NewNodeAdmissionWebhook(testNodeLister(t), tt.enableHybridOverlay); !got.annotationKeys.HasAll(tt.expectedKeys...) {
 				t.Errorf("NewNodeAdmissionWebhook() = %v, want %v", got.annotationKeys, tt.expectedKeys)
 			}
 		})
@@ -59,8 +62,69 @@ var userName = fmt.Sprintf("%s:%s", csrapprover.NamePrefix, nodeName)
 var additionalNamePrefix = "system:foobar"
 var additionalUserName = fmt.Sprintf("%s:%s", additionalNamePrefix, nodeName)
 
+func testNodeLister(t *testing.T, nodes ...*corev1.Node) corelisters.NodeLister {
+	t.Helper()
+	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+	for _, node := range nodes {
+		if err := indexer.Add(node); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return corelisters.NewNodeLister(indexer)
+}
+
+func TestNodeAdmission_ValidateVTEPs(t *testing.T) {
+	peer := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+		Name: "peer", Annotations: map[string]string{util.OVNNodeVTEPs: `{"vtep":{"ips":["100.64.0.2","fd00::2"]}}`},
+	}}
+	peer.Status.Addresses = []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: "192.0.2.2"}}
+	tests := []struct {
+		name       string
+		annotation string
+		remove     bool
+		wantError  string
+	}{
+		{name: "allows secondary interface and dual-stack addresses", annotation: `{"vtep":{"ips":["100.64.0.1","fd00::1"]}}`},
+		{name: "rejects malformed JSON", annotation: "not-json", wantError: "failed to parse"},
+		{name: "rejects appended IPv4", annotation: `{"vtep":{"ips":["100.64.0.1","100.64.0.99"]}}`, wantError: "multiple IPs"},
+		{name: "rejects appended IPv6", annotation: `{"vtep":{"ips":["fd00::1","fd00::99"]}}`, wantError: "multiple IPs"},
+		{name: "rejects malformed IP", annotation: `{"vtep":{"ips":["not-an-ip"]}}`, wantError: "invalid IP"},
+		{name: "rejects prefix in place of IP", annotation: `{"vtep":{"ips":["100.64.0.1/24"]}}`, wantError: "invalid IP"},
+		{name: "rejects peer VTEP IPv4", annotation: `{"vtep":{"ips":["100.64.0.2"]}}`, wantError: "already claimed by node"},
+		{name: "rejects peer VTEP IPv6 in alternate notation", annotation: `{"vtep":{"ips":["fd00:0:0:0:0:0:0:2"]}}`, wantError: "already claimed by node"},
+		{name: "rejects peer node IP without a VTEP claim", annotation: `{"vtep":{"ips":["192.0.2.2"]}}`, wantError: "already claimed by node"},
+		{name: "allows removing a malformed annotation", remove: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			oldNode := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName,
+				Annotations: map[string]string{util.OVNNodeVTEPs: "not-json"}}}
+			if !tt.remove {
+				oldNode.Annotations = nil
+			}
+			newNode := oldNode.DeepCopy()
+			newNode.Annotations = map[string]string{}
+			if !tt.remove {
+				newNode.Annotations[util.OVNNodeVTEPs] = tt.annotation
+			}
+			adm := NewNodeAdmissionWebhook(testNodeLister(t, oldNode, peer), false)
+			ctx := admission.NewContextWithRequest(context.Background(), admission.Request{
+				AdmissionRequest: v1.AdmissionRequest{UserInfo: authenticationv1.UserInfo{Username: userName}},
+			})
+			_, err := adm.ValidateUpdate(ctx, oldNode, newNode)
+			if tt.wantError == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("expected error containing %q, got %v", tt.wantError, err)
+			}
+		})
+	}
+}
+
 func TestNodeAdmission_ValidateUpdate(t *testing.T) {
-	adm := NewNodeAdmissionWebhook(false)
+	adm := NewNodeAdmissionWebhook(testNodeLister(t), false)
 	tests := []struct {
 		name        string
 		ctx         context.Context
@@ -427,7 +491,7 @@ func TestNodeAdmission_ValidateUpdate(t *testing.T) {
 	}
 }
 func TestNodeAdmission_ValidateUpdateHybridOverlay(t *testing.T) {
-	adm := NewNodeAdmissionWebhook(true)
+	adm := NewNodeAdmissionWebhook(testNodeLister(t), true)
 	tests := []struct {
 		name        string
 		ctx         context.Context

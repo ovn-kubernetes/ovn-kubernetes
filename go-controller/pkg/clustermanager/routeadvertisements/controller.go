@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"reflect"
 	"slices"
@@ -68,8 +69,19 @@ const (
 var (
 	errConfig      = errors.New("configuration error")
 	errPending     = errors.New("configuration pending")
+	errInvalidVTEP = fmt.Errorf("%w: invalid VTEP annotation", errConfig)
 	cudnController = userdefinednetworkv1.SchemeGroupVersion.WithKind("ClusterUserDefinedNetwork")
 )
+
+// incompleteVTEPConfigurationError identifies nodes whose advertisements must
+// be withdrawn even when another error prevents generating a complete state.
+type incompleteVTEPConfigurationError struct {
+	invalidNodes sets.Set[string]
+	err          error
+}
+
+func (e *incompleteVTEPConfigurationError) Error() string { return e.err.Error() }
+func (e *incompleteVTEPConfigurationError) Unwrap() error { return e.err }
 
 // Controller reconciles RouteAdvertisements
 type Controller struct {
@@ -400,11 +412,34 @@ func (c *Controller) reconcile(name string) error {
 func (c *Controller) reconcileRouteAdvertisements(name string, ra *ratypes.RouteAdvertisements) (bool, error) {
 	// generate FRRConfigurations
 	frrConfigs, nads, cfgErr := c.generateFRRConfigurations(ra)
-	if cfgErr != nil && !errors.Is(cfgErr, errPending) {
+	var incomplete *incompleteVTEPConfigurationError
+	if errors.As(cfgErr, &incomplete) {
+		// The generated state is incomplete. Preserve existing configurations
+		// for other nodes, withdrawing only known-invalid nodes' advertisements.
+		existing, err := c.frrLister.List(labels.SelectorFromSet(labels.Set{types.OvnRouteAdvertisementsKey: name}))
+		if err != nil {
+			return false, err
+		}
+		var hadUpdates bool
+		for _, config := range existing {
+			if !incomplete.invalidNodes.Has(config.Spec.NodeSelector.MatchLabels["kubernetes.io/hostname"]) {
+				continue
+			}
+			err = c.frrClient.ApiV1beta1().FRRConfigurations(config.Namespace).Delete(context.Background(), config.Name, metav1.DeleteOptions{})
+			if err != nil && !apierrors.IsNotFound(err) {
+				return hadUpdates, fmt.Errorf("failed withdrawing invalid VTEP configuration %q: %w", config.Name, err)
+			}
+			hadUpdates = true
+		}
+		return hadUpdates, cfgErr
+	}
+	if cfgErr != nil && !errors.Is(cfgErr, errPending) && !errors.Is(cfgErr, errInvalidVTEP) {
 		return false, cfgErr
 	}
 
 	// update them
+	// VTEP validation errors still apply the sanitized desired state, so a bad
+	// annotation cannot preserve advertisements from the last reconciliation.
 	hadFRRConfigUpdates, err := c.updateFRRConfigurations(name, frrConfigs)
 	if err != nil {
 		return false, fmt.Errorf("failed updating FRRConfigurations for RouteAdvertisements %q: %w", name, err)
@@ -628,9 +663,16 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 	if !nodeSelector.Empty() && advertisements.Has(ratypes.PodNetwork) {
 		return nil, nil, fmt.Errorf("%w: node selector has to select all nodes if pod network is advertised", errConfig)
 	}
-	nodes, err := c.nodeLister.List(nodeSelector)
+	// Select nodes and validate their VTEP ownership against the same snapshot.
+	allNodes, err := c.nodeLister.List(labels.Everything())
 	if err != nil {
 		return nil, nil, err
+	}
+	nodes := make([]*corev1.Node, 0, len(allNodes))
+	for _, node := range allNodes {
+		if nodeSelector.Matches(labels.Set(node.Labels)) {
+			nodes = append(nodes, node)
+		}
 	}
 	if len(nodes) == 0 {
 		return nil, nil, fmt.Errorf("%w: no nodes selected", errPending)
@@ -714,6 +756,7 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 	// ovnkube-node. This runs after EVPN validation so c.vtepLister (only
 	// initialized when EVPN is enabled) is safe to dereference.
 	vtepCIDRSet := sets.New[string]()
+	vtepCIDRs := map[string][]*net.IPNet{}
 	for _, vtepName := range sets.List(vtepNames) {
 		vtep, err := c.vtepLister.Get(vtepName)
 		if err != nil {
@@ -722,37 +765,29 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 		for _, cidr := range vtep.Spec.CIDRs {
 			vtepCIDRSet.Insert(string(cidr))
 		}
+		vtepCIDRs[vtepName], err = util.ParseIPNets(vtep.Spec.CIDRs)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%w: failed to parse VTEP %q CIDRs: %w", errConfig, vtepName, err)
+		}
 	}
 	vtepIPsByNode := map[string]sets.Set[string]{}
-	for _, node := range nodes {
-		vteps, err := util.ParseNodeVTEPs(node)
-		if err != nil {
-			if util.IsAnnotationNotSetError(err) {
-				// Annotation not yet written; skip for now and rely on the
-				// node update event (nodeNeedsUpdate) to re-trigger reconciliation
-				// once the annotation is set.
-				continue
-			}
-			// A malformed annotation must not be silently skipped: the
-			// VTEP IPs for this node would not be advertised, breaking
-			// VXLAN underlay reachability and all EVPN traffic to/from it.
-			return nil, nil, fmt.Errorf("%w: failed to parse VTEP annotation for VTEPs %v on node %s: %w", errConfig, sets.List(vtepNames), node.Name, err)
-		}
-		for _, vtepName := range sets.List(vtepNames) {
-			entry, ok := vteps[vtepName]
-			if !ok || len(entry.IPs) == 0 {
-				continue
-			}
-			if vtepIPsByNode[node.Name] == nil {
-				vtepIPsByNode[node.Name] = sets.New[string]()
-			}
-			for _, ip := range entry.IPs {
-				if utilnet.IsIPv6String(ip) {
-					vtepIPsByNode[node.Name].Insert(ip + "/128")
-				} else {
-					vtepIPsByNode[node.Name].Insert(ip + "/32")
+	invalidVTEPNodes := sets.New[string]()
+	var vtepErrors []error
+	if len(vtepNames) > 0 {
+		// Check all nodes, including those outside this RA's selectors. A node
+		// must not advertise a VTEP address belonging to an unselected peer.
+		ipOwners := util.GetNodeVTEPIPOwners(allNodes)
+		for _, node := range nodes {
+			prefixes, validationErr := getNodeVTEPPrefixes(node, vtepCIDRs, ipOwners)
+			if validationErr != nil {
+				if util.IsAnnotationNotSetError(validationErr) {
+					continue
 				}
+				invalidVTEPNodes.Insert(node.Name)
+				vtepErrors = append(vtepErrors, fmt.Errorf("%w: %w", errInvalidVTEP, validationErr))
+				continue
 			}
+			vtepIPsByNode[node.Name] = prefixes
 		}
 	}
 	selectedNetworks.vtepIPsByNode = make(map[string][]string, len(vtepIPsByNode))
@@ -760,6 +795,16 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 		selectedNetworks.vtepIPsByNode[node] = sets.List(ips)
 	}
 	selectedNetworks.vtepCIDRs = sets.List(vtepCIDRSet)
+	vtepValidationErr := errors.Join(vtepErrors...)
+	generationError := func(err error) error {
+		if len(invalidVTEPNodes) == 0 {
+			return err
+		}
+		return &incompleteVTEPConfigurationError{
+			invalidNodes: invalidVTEPNodes,
+			err:          errors.Join(vtepValidationErr, err),
+		}
+	}
 
 	// helper to gather host subnets and cache during reconcile
 	// TODO perhaps cache across reconciles as well
@@ -840,6 +885,11 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 	// that processing and error messages are deterministic across reconciles
 	for _, node := range nodes {
 		nodeName := node.Name
+		// Exclude invalid nodes from desired state so previously generated
+		// advertisements are withdrawn instead of retained on validation errors.
+		if invalidVTEPNodes.Has(nodeName) {
+			continue
+		}
 		frrConfigs := nodeToFRRConfig[nodeName]
 		// reset node specific information
 		selectedNetworks.hostNetworkSubnets = map[string][]string{}
@@ -873,7 +923,7 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 			selectedNetworks.hostNetworkSubnets[network], err = getPrefixes(nodeName, network,
 				selectedNetworks.networkTopology[network], selectedNetworks.networkSubnets[network])
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, generationError(err)
 			}
 			selectedNetworks.hostSubnets = append(selectedNetworks.hostSubnets, selectedNetworks.hostNetworkSubnets[network]...)
 			// ordered
@@ -899,7 +949,7 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 				frrRouterVRFs,
 			)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, generationError(err)
 			}
 			if new == nil {
 				// if we got nil, we didn't match any VRF
@@ -910,18 +960,41 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 					// per-network skip above.
 					continue
 				}
-				return nil, nil, fmt.Errorf("%w: FRRConfiguration %q selected for node %q has no VRF matching the RouteAdvertisements target VRF or any selected network",
-					errConfig, frrConfig.Name, nodeName)
+				return nil, nil, generationError(fmt.Errorf("%w: FRRConfiguration %q selected for node %q has no VRF matching the RouteAdvertisements target VRF or any selected network",
+					errConfig, frrConfig.Name, nodeName))
 			}
 			generated = append(generated, new)
 		}
 		// check that we matched all the networks selected for this node on 'auto'
 		if ra.Spec.TargetVRF == "auto" && !matchedNetworks.HasAll(nodeNetworks...) {
-			return nil, nil, fmt.Errorf("%w: selected FRRConfigurations for node %q don't match all selected networks with target VRF 'auto'", errConfig, nodeName)
+			return nil, nil, generationError(fmt.Errorf("%w: selected FRRConfigurations for node %q don't match all selected networks with target VRF 'auto'", errConfig, nodeName))
 		}
 	}
 
-	return generated, nads, nil
+	// Validation alone leaves a complete, sanitized desired state to apply.
+	return generated, nads, vtepValidationErr
+}
+
+func getNodeVTEPPrefixes(node *corev1.Node, vtepCIDRs map[string][]*net.IPNet, ipOwners map[string]sets.Set[string]) (sets.Set[string], error) {
+	vteps, err := util.ValidateSelectedNodeVTEPs(node, ipOwners, sets.New(slices.Collect(maps.Keys(vtepCIDRs))...))
+	if err != nil {
+		return nil, err
+	}
+	prefixes := sets.New[string]()
+	for _, name := range slices.Sorted(maps.Keys(vtepCIDRs)) {
+		for _, address := range vteps[name].IPs {
+			ip := net.ParseIP(address)
+			if !util.IsIPContainedInAnyCIDR(ip, vtepCIDRs[name]...) {
+				return nil, fmt.Errorf("node %q VTEP %q IP %q is outside its configured CIDRs", node.Name, name, address)
+			}
+			if ip.To4() == nil {
+				prefixes.Insert(address + "/128")
+			} else {
+				prefixes.Insert(address + "/32")
+			}
+		}
+	}
+	return prefixes, nil
 }
 
 // nodeHasLayer2Allocation reports whether the node has a gateway router LRP
@@ -1910,6 +1983,7 @@ func nadNeedsUpdate(oldObj, newObj *nadtypes.NetworkAttachmentDefinition) bool {
 func nodeNeedsUpdate(oldObj, newObj *corev1.Node) bool {
 	return oldObj == nil || newObj == nil ||
 		!reflect.DeepEqual(oldObj.Labels, newObj.Labels) ||
+		!reflect.DeepEqual(oldObj.Status.Addresses, newObj.Status.Addresses) ||
 		util.NodeSubnetAnnotationChanged(oldObj, newObj) ||
 		// With dynamic UDN allocation in legacy layer2 topology, the tunnel
 		// ID allocation determines which nodes advertise the network.

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net"
 	"os"
 	"slices"
 	"strings"
@@ -151,6 +152,7 @@ type testNode struct {
 	ChassisIDAnnotation       string
 	VTEPIPs                   map[string][]string
 	RawVTEPAnnotation         *string
+	Addresses                 []corev1.NodeAddress
 }
 
 func (tn testNode) Node() *corev1.Node {
@@ -192,6 +194,36 @@ func (tn testNode) Node() *corev1.Node {
 			Generation:  int64(tn.Generation),
 			Annotations: annotations,
 		},
+		Status: corev1.NodeStatus{Addresses: tn.Addresses},
+	}
+}
+
+func TestGetNodeVTEPPrefixes(t *testing.T) {
+	cidrs := map[string][]*net.IPNet{
+		"vtep":  {ovntest.MustParseIPNet("100.64.0.0/16"), ovntest.MustParseIPNet("fd00::/64")},
+		"other": {ovntest.MustParseIPNet("192.0.2.0/24")},
+	}
+	for _, tt := range []struct {
+		name      string
+		ips       []string
+		prefixes  []string
+		wantError bool
+	}{
+		{name: "canonical dual-stack host prefixes", ips: []string{"100.64.0.1", "fd00:0:0:0::1"}, prefixes: []string{"100.64.0.1/32", "fd00::1/128"}},
+		{name: "IPv4 outside the CIDRs", ips: []string{"198.51.100.1"}, wantError: true},
+		{name: "IPv6 outside the CIDRs", ips: []string{"fd01::1"}, wantError: true},
+		{name: "address in another VTEP's CIDR", ips: []string{"192.0.2.1"}, wantError: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			node := (&testNode{Name: "node", VTEPIPs: map[string][]string{"vtep": tt.ips}}).Node()
+			prefixes, err := getNodeVTEPPrefixes(node, cidrs, util.GetNodeVTEPIPOwners([]*corev1.Node{node}))
+			if (err != nil) != tt.wantError {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !tt.wantError {
+				gomega.NewWithT(t).Expect(prefixes.UnsortedList()).To(gomega.ConsistOf(tt.prefixes))
+			}
+		})
 	}
 }
 
@@ -2603,7 +2635,7 @@ exit
 			reconcile:            "ra",
 			expectAcceptedStatus: metav1.ConditionFalse,
 			expectFRRConfigs:     []*testFRRConfig{},
-			expectNADAnnotations: map[string]map[string]string{"blue": {}},
+			expectNADAnnotations: map[string]map[string]string{"blue": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
 		},
 		{
 			name:       "with dynamic UDN allocation, ignores nodes where the selected network is not allocated and advertises dual-stack subnets where it is",
@@ -2916,6 +2948,83 @@ exit
 			expectNADAnnotations: map[string]map[string]string{"blue": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}, "red": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
 		},
 	}
+	// Seed generated configurations to verify that invalid updates withdraw
+	// existing advertisements while preserving configurations for valid nodes.
+	for _, base := range slices.Clone(tests) {
+		if base.name != "advertises VTEP IPs per node across multiple nodes" {
+			continue
+		}
+		for _, staleIPs := range []string{
+			`["not-an-ip"]`,
+			`["192.0.2.1","192.0.2.2"]`,
+		} {
+			tt := base
+			tt.name = "advertises selected VTEPs despite unrelated stale entry " + staleIPs
+			tt.nodes = slices.Clone(base.nodes)
+			node := *base.nodes[0]
+			node.RawVTEPAnnotation = ptr.To(`{"my-vtep":{"ips":["100.64.0.1"]},"stale-vtep":{"ips":` + staleIPs + `}}`)
+			tt.nodes[0] = &node
+			tests = append(tests, tt)
+		}
+		for _, invalid := range []struct {
+			name            string
+			annotation      string
+			conflict        bool
+			unselected      bool
+			generationError bool
+		}{
+			{name: "withdraws malformed VTEP advertisements", annotation: "not-json"},
+			{name: "withdraws only invalid node on unrelated generation failure", annotation: `{"my-vtep":{"ips":["not-an-ip"]}}`, generationError: true},
+			{name: "withdraws extra same-family advertisements", annotation: `{"my-vtep":{"ips":["100.64.0.1","100.64.0.99"]}}`},
+			{name: "withdraws invalid IP advertisements", annotation: `{"my-vtep":{"ips":["not-an-ip"]}}`},
+			{name: "withdraws injected prefix advertisements", annotation: `{"my-vtep":{"ips":["100.64.0.1/24"]}}`},
+			{name: "withdraws out-of-range advertisements", annotation: `{"my-vtep":{"ips":["192.0.2.1"]}}`},
+			{name: "withdraws duplicate VTEP advertisements", annotation: `{"my-vtep":{"ips":["100.64.0.2"]}}`, conflict: true},
+			{name: "rejects VTEP belonging to unselected node", annotation: `{"my-vtep":{"ips":["100.64.0.2"]}}`, conflict: true, unselected: true},
+		} {
+			tt := base
+			tt.name = invalid.name
+			tt.expectAcceptedStatus = metav1.ConditionFalse
+			tt.nodes = nil
+			for _, node := range base.nodes {
+				copy := *node
+				tt.nodes = append(tt.nodes, &copy)
+			}
+			tt.nodes[0].RawVTEPAnnotation = ptr.To(invalid.annotation)
+			tt.expectFRRConfigs = base.expectFRRConfigs[1:]
+			if invalid.generationError {
+				tt.nodes[1].SubnetsAnnotation = "not-json"
+				tt.expectFRRConfigs = base.expectFRRConfigs[1:]
+				tt.nads = nil
+				for _, nad := range base.nads {
+					copy := *nad
+					copy.Annotations = map[string]string{types.OvnRouteAdvertisementsKey: `["ra"]`}
+					tt.nads = append(tt.nads, &copy)
+				}
+			}
+			if invalid.conflict {
+				tt.expectFRRConfigs = nil
+			}
+			if invalid.unselected {
+				ra := *base.ra
+				ra.AdvertisePods = false
+				ra.AdvertiseEgressIPs = true
+				ra.TargetVRF = "blue"
+				ra.NodeSelector = map[string]string{"selected": "true"}
+				tt.ra = &ra
+				tt.nodes[0].Labels = map[string]string{"selected": "true"}
+			}
+			tt.frrConfigs = slices.Clone(base.frrConfigs)
+			for i, generated := range base.expectFRRConfigs {
+				copy := *generated
+				copy.Name = fmt.Sprintf("%sexisting-%d", generateName, i)
+				copy.Namespace = frrNamespace
+				tt.frrConfigs = append(tt.frrConfigs, &copy)
+			}
+			tests = append(tests, tt)
+		}
+	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			g := gomega.NewWithT(t)
@@ -3444,6 +3553,12 @@ func TestUpdates(t *testing.T) {
 			name:              "reconciles all RAs on updated Node labels",
 			oldObject:         &testNode{Name: "eip"},
 			newObject:         &testNode{Name: "eip", Labels: map[string]string{"select": "1"}},
+			expectedReconcile: []string{"ra1", "ra2", "ra3"},
+		},
+		{
+			name:              "reconciles all RAs on updated Node IP ownership",
+			oldObject:         &testNode{Name: "eip"},
+			newObject:         &testNode{Name: "eip", Addresses: []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: "192.0.2.1"}}},
 			expectedReconcile: []string{"ra1", "ra2", "ra3"},
 		},
 		{

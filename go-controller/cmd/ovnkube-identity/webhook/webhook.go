@@ -70,12 +70,20 @@ func Run(ctx context.Context, restCfg *rest.Config, config Config) error {
 
 	stopCh := make(chan struct{})
 	defer close(stopCh)
+	informerFactory := informers.NewSharedInformerFactory(kubeClient, 10*time.Minute)
+	nodeInformer := informerFactory.Core().V1().Nodes().Informer()
+	informerFactory.Start(stopCh)
+	klog.Infof("Waiting for caches to sync")
+	if !cache.WaitForCacheSync(ctx.Done(), nodeInformer.HasSynced) {
+		return fmt.Errorf("failed to sync node informer cache")
+	}
+	nodeLister := listers.NewNodeLister(nodeInformer.GetIndexer())
 
 	webhookMux := http.NewServeMux()
 
 	nodeWebhook := admission.WithValidator(
 		scheme.Scheme,
-		ovnwebhook.NewNodeAdmissionWebhook(config.EnableHybridOverlay, config.ExtraAllowedUsers...),
+		ovnwebhook.NewNodeAdmissionWebhook(nodeLister, config.EnableHybridOverlay, config.ExtraAllowedUsers...),
 	).WithRecoverPanic(true)
 
 	nodeHandler, err := admission.StandaloneWebhook(
@@ -90,13 +98,6 @@ func Run(ctx context.Context, restCfg *rest.Config, config Config) error {
 	}
 	webhookMux.Handle("/node", nodeHandler)
 
-	informerFactory := informers.NewSharedInformerFactory(kubeClient, 10*time.Minute)
-	nodeInformer := informerFactory.Core().V1().Nodes().Informer()
-	informerFactory.Start(stopCh)
-	klog.Infof("Waiting for caches to sync")
-	cache.WaitForCacheSync(ctx.Done(), nodeInformer.HasSynced)
-
-	nodeLister := listers.NewNodeLister(nodeInformer.GetIndexer())
 	podWebhook := admission.WithValidator(
 		scheme.Scheme,
 		ovnwebhook.NewPodAdmissionWebhook(nodeLister, config.PodAdmissionConditions, config.ExtraAllowedUsers...),
