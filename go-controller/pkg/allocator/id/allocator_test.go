@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
 func TestIDAllocator_ReleaseID(t *testing.T) {
@@ -262,6 +264,93 @@ func TestReserveIDsOutOfRange(t *testing.T) {
 				t.Fatal("expected exhaustion")
 			}
 		})
+	}
+}
+
+func TestTunnelKeysAllocator_ValidateKeys(t *testing.T) {
+	allocator := NewTunnelKeyAllocator("test")
+	transitSwitchBase := 16711683
+	tunnelKeyBase := 16715779
+
+	valid := []struct {
+		networkID  int
+		tunnelKeys []int
+	}{
+		// what AllocateKeys produces for a network in the preserved range
+		{1, []int{transitSwitchBase + 1}},
+		{1, []int{transitSwitchBase + 1, tunnelKeyBase}},
+		// both boundaries of the valid network ID range
+		{0, []int{transitSwitchBase}},
+		{types.MaxNetworks - 1, []int{transitSwitchBase + types.MaxNetworks - 1}},
+		{1, nil},
+	}
+	for _, tc := range valid {
+		if err := allocator.ValidateKeys(tc.networkID, tc.tunnelKeys); err != nil {
+			t.Errorf("network %d: unexpected error validating keys %v: %v", tc.networkID, tc.tunnelKeys, err)
+		}
+	}
+
+	forged := []struct {
+		networkID  int
+		tunnelKeys []int
+	}{
+		// invalid network IDs must fail even when no keys are annotated
+		{-1, nil},
+		{-1, []int{tunnelKeyBase}},
+		{types.MaxNetworks, nil},
+		{types.MaxNetworks, []int{tunnelKeyBase}},
+		{5000, []int{tunnelKeyBase}},
+		// claiming the transit switch key of another network
+		{1, []int{transitSwitchBase + 2}},
+		{5000, []int{transitSwitchBase + 2}},
+		{1, []int{transitSwitchBase + 1, transitSwitchBase + 2}},
+		// too many keys even when each key is otherwise valid
+		{1, []int{transitSwitchBase + 1, tunnelKeyBase, tunnelKeyBase + 1}},
+		// no transit switch key where AllocateKeys would have put one
+		{1, []int{tunnelKeyBase}},
+	}
+	for _, tc := range forged {
+		if err := allocator.ValidateKeys(tc.networkID, tc.tunnelKeys); err == nil {
+			t.Errorf("network %d: expect error validating keys %v", tc.networkID, tc.tunnelKeys)
+		}
+	}
+}
+
+func TestTunnelKeysAllocator_ValidatePreservedKeys(t *testing.T) {
+	allocator := NewTunnelKeyAllocator("test")
+	transitSwitchBase := 16711683
+	tunnelKeyBase := 16715779
+
+	// ReserveKeys strips a preserved key rather than reserving it, so a resource
+	// that is not a network has to be told apart from one before reserving
+	preserved := [][]int{
+		{transitSwitchBase},
+		{transitSwitchBase + 5},
+		{transitSwitchBase + types.MaxNetworks - 1},
+		{tunnelKeyBase, transitSwitchBase},
+	}
+	for _, keys := range preserved {
+		if err := allocator.ValidatePreservedKeys(keys); err == nil {
+			t.Errorf("expect error validating preserved keys %v", keys)
+		}
+	}
+
+	allocatable := [][]int{
+		nil,
+		{tunnelKeyBase},
+		{transitSwitchBase - 1},
+		{tunnelKeyBase, tunnelKeyBase + 1},
+	}
+	for _, keys := range allocatable {
+		if err := allocator.ValidatePreservedKeys(keys); err != nil {
+			t.Errorf("unexpected error validating keys %v: %v", keys, err)
+		}
+	}
+
+	// ReserveKeys on its own strips a preserved key and reports success, which
+	// is what makes the check above necessary
+	if err := allocator.ReserveKeys("resource1", []int{transitSwitchBase + 5}); err != nil {
+		t.Errorf("expect ReserveKeys to accept a preserved key, but got %v", err)
 	}
 }
 

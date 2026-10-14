@@ -356,6 +356,11 @@ const (
 	// Logical Switch or Router Port
 	MaxLogicalPortTunnelKey = 32767
 
+	// MaxDatapathTunnelKey is the highest tunnel key a datapath (Logical Switch
+	// or Router) can be given, from
+	// https://github.com/ovn-org/ovn/blob/cfaf849c034469502fc97149f20676dec4d76595/lib/ovn-util.h#L159-L164
+	MaxDatapathTunnelKey = (1 << 24) - 1
+
 	// MaxNetworks is the maximum number of networks, including the default network.
 	MaxNetworks = 4096
 

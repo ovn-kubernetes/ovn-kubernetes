@@ -164,7 +164,8 @@ func UpdateNetworkConnectRouterTunnelKeyAnnotation(cncName string, cncClient net
 }
 
 // ParseNetworkConnectTunnelKeyAnnotation parses the tunnel key annotation from the given CNC.
-// Returns 0 if annotation is missing.
+// Returns 0 if the annotation is missing, malformed, or outside
+// (0, ovntypes.MaxDatapathTunnelKey], allowing cluster-manager to replace it.
 func ParseNetworkConnectTunnelKeyAnnotation(cnc *networkconnectv1.ClusterNetworkConnect) (int, error) {
 	if cnc == nil || cnc.Annotations == nil {
 		return 0, nil
@@ -175,9 +176,18 @@ func ParseNetworkConnectTunnelKeyAnnotation(cnc *networkconnectv1.ClusterNetwork
 		return 0, nil
 	}
 
+	// Treat unusable controller-owned output as unallocated so cluster-manager
+	// replaces it and other readers wait instead of programming it into OVN.
 	tunnelID, err := strconv.Atoi(annotationValue)
 	if err != nil {
-		return 0, fmt.Errorf("failed to parse tunnel key annotation: %v", err)
+		klog.Warningf("Ignoring malformed %q tunnel key %q on CNC %s: %v",
+			OvnConnectRouterTunnelKeyAnnotation, annotationValue, cnc.Name, err)
+		return 0, nil
+	}
+	if tunnelID <= 0 || tunnelID > ovntypes.MaxDatapathTunnelKey {
+		klog.Warningf("Ignoring out of range %q tunnel key %q on CNC %s, expected (0, %d]",
+			OvnConnectRouterTunnelKeyAnnotation, annotationValue, cnc.Name, ovntypes.MaxDatapathTunnelKey)
+		return 0, nil
 	}
 
 	return tunnelID, nil

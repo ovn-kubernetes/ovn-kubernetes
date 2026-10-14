@@ -25,6 +25,7 @@ import (
 	utilnet "k8s.io/utils/net"
 
 	hotypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/id"
 	udncontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork"
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
@@ -1033,19 +1034,19 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				allocator, err := initTunnelKeysAllocator(clientSet.NetworkAttchDefClient, clientSet.NetworkConnectClient)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				// check that reserving different keys for test2 will fail
-				err = allocator.ReserveKeys("test1", []int{16711685, 16715779})
+				err = allocator.ReserveKeys(id.NetworkTunnelKeyOwner("test1"), []int{16711685, 16715779})
 				gomega.Expect(err).To(gomega.HaveOccurred())
-				gomega.Expect(err.Error()).To(gomega.ContainSubstring("can't reserve ids [16715779] for the resource test1. It is already allocated with different ids [16715780]"))
+				gomega.Expect(err.Error()).To(gomega.ContainSubstring("can't reserve ids [16715779] for the resource network/test1. It is already allocated with different ids [16715780]"))
 				// now try to allocate correct number of keys for test1 and check that returned IDs are correct
-				ids, err := allocator.AllocateKeys("test1", 2, 2)
+				ids, err := allocator.AllocateKeys(id.NetworkTunnelKeyOwner("test1"), 2, 2)
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 				gomega.Expect(ids).To(gomega.Equal([]int{16711685, 16715780}))
 				// now allocate ids for networkID 1
-				ids, err = allocator.AllocateKeys("test2", 1, 2)
+				ids, err = allocator.AllocateKeys(id.NetworkTunnelKeyOwner("test2"), 1, 2)
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 				gomega.Expect(ids).To(gomega.Equal([]int{16711684, 16715779}))
 				// now try networkID 3 to make sure IDs of nad test1 are not allocated again
-				ids, err = allocator.AllocateKeys("test3", 3, 2)
+				ids, err = allocator.AllocateKeys(id.NetworkTunnelKeyOwner("test3"), 3, 2)
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 				gomega.Expect(ids).To(gomega.Equal([]int{16711686, 16715781}))
 				return nil
@@ -1086,20 +1087,20 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				allocator, err := initTunnelKeysAllocator(clientSet.NetworkAttchDefClient, clientSet.NetworkConnectClient)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				// check that reserving different keys for cnc1 will fail
-				err = allocator.ReserveKeys("cnc1", []int{16715780})
+				err = allocator.ReserveKeys(id.NetworkConnectTunnelKeyOwner("cnc1"), []int{16715780})
 				gomega.Expect(err).To(gomega.HaveOccurred())
-				gomega.Expect(err.Error()).To(gomega.ContainSubstring("can't reserve ids [16715780] for the resource cnc1. It is already allocated with different ids [16715779]"))
+				gomega.Expect(err.Error()).To(gomega.ContainSubstring("can't reserve ids [16715780] for the resource cnc/cnc1. It is already allocated with different ids [16715779]"))
 				// now try to allocate key for cnc1 (using networkID 4097 as CNCs do)
 				// and check that returned ID is the already reserved one
-				ids, err := allocator.AllocateKeys("cnc1", 4097, 1)
+				ids, err := allocator.AllocateKeys(id.NetworkConnectTunnelKeyOwner("cnc1"), 4097, 1)
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 				gomega.Expect(ids).To(gomega.Equal([]int{16715779}))
 				// now allocate id for cnc2 (which had no annotation, also using networkID 4097)
-				ids, err = allocator.AllocateKeys("cnc2", 4097, 1)
+				ids, err = allocator.AllocateKeys(id.NetworkConnectTunnelKeyOwner("cnc2"), 4097, 1)
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 				gomega.Expect(ids).To(gomega.Equal([]int{16715780}))
 				// now try cnc3 to make sure IDs of cnc1 and cnc2 are not allocated again
-				ids, err = allocator.AllocateKeys("cnc3", 4097, 1)
+				ids, err = allocator.AllocateKeys(id.NetworkConnectTunnelKeyOwner("cnc3"), 4097, 1)
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 				gomega.Expect(ids).To(gomega.Equal([]int{16715781}))
 				return nil
@@ -1112,7 +1113,124 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 
-		ginkgo.It("check for combined NAD and CNC tunnel keys allocations", func() {
+		ginkgo.It("starts up with an unusable CNC tunnel key annotation", func() {
+			app.Action = func(_ *cli.Context) error {
+				config.OVNKubernetesFeature.EnableNetworkConnect = true
+				config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+				config.OVNKubernetesFeature.EnableMultiNetwork = true
+				// anyone who can write a CNC can annotate any of these, and
+				// start up used to fail for the whole cluster on each one. the
+				// last is a key preserved for a network transit switch, which a
+				// CNC is not allowed to keep either
+				cncs := []runtime.Object{}
+				for i, key := range []string{"-5", "0", "99999999", "notanumber", "16711684"} {
+					cncs = append(cncs, &networkconnect.ClusterNetworkConnect{
+						ObjectMeta: metav1.ObjectMeta{
+							Name: fmt.Sprintf("cnc%d", i),
+							Annotations: map[string]string{
+								util.OvnConnectRouterTunnelKeyAnnotation: key,
+							},
+						},
+					})
+				}
+				clientSet := util.GetOVNClientset(cncs...)
+
+				allocator, err := initTunnelKeysAllocator(clientSet.NetworkAttchDefClient, clientSet.NetworkConnectClient)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				// nothing was reserved, so the first CNC to sync gets the first key
+				ids, err := allocator.AllocateKeys(id.NetworkConnectTunnelKeyOwner("cnc0"), 4097, 1)
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+				gomega.Expect(ids).To(gomega.Equal([]int{16715779}))
+				return nil
+			}
+
+			err := app.Run([]string{
+				app.Name,
+				"-cluster-subnets=" + clusterCIDR,
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("skips NADs with unusable tunnel keys instead of failing start up", func() {
+			app.Action = func(_ *cli.Context) error {
+				config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+				config.OVNKubernetesFeature.EnableMultiNetwork = true
+				// anyone who can write a NAD can set these, so neither a key the
+				// allocator cannot represent nor an unparseable value may stop
+				// cluster manager from starting
+				forged := testing.GenerateNAD("forged", "forged", "test", ovntypes.Layer2Topology,
+					"10.0.0.0/24", ovntypes.NetworkRolePrimary)
+				forged.Annotations = map[string]string{
+					ovntypes.OvnNetworkTunnelKeysAnnotation: "[16711685,5]",
+				}
+				garbage := testing.GenerateNAD("garbage", "garbage", "test2", ovntypes.Layer2Topology,
+					"10.0.1.0/24", ovntypes.NetworkRolePrimary)
+				garbage.Annotations = map[string]string{
+					ovntypes.OvnNetworkTunnelKeysAnnotation: "not-json",
+				}
+				good := testing.GenerateNAD("good", "good", "test3", ovntypes.Layer2Topology,
+					"10.0.2.0/24", ovntypes.NetworkRolePrimary)
+				good.Annotations = map[string]string{
+					ovntypes.OvnNetworkTunnelKeysAnnotation: "[16711685,16715779]",
+				}
+				clientSet := util.GetOVNClientset(forged, garbage, good)
+
+				allocator, err := initTunnelKeysAllocator(clientSet.NetworkAttchDefClient, clientSet.NetworkConnectClient)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				// the well formed NAD is still reserved, so re-allocating returns its keys
+				ids, err := allocator.AllocateKeys(id.NetworkTunnelKeyOwner("good"), 2, 2)
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+				gomega.Expect(ids).To(gomega.Equal([]int{16711685, 16715779}))
+				return nil
+			}
+
+			err := app.Run([]string{
+				app.Name,
+				"-cluster-subnets=" + clusterCIDR,
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("skips NADs with oversized tunnel keys so the surplus is not leaked", func() {
+			app.Action = func(_ *cli.Context) error {
+				config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+				config.OVNKubernetesFeature.EnableMultiNetwork = true
+				// a primary layer2 network needs only two tunnel keys, but anyone
+				// who can write a NAD can annotate more. Reserving the surplus would
+				// leave it held under the network's name for good, so init must skip
+				// the NAD and let the NAD controller allocate a valid set on reconcile.
+				oversized := testing.GenerateNAD("oversized", "oversized", "test", ovntypes.Layer2Topology,
+					"10.0.0.0/24", ovntypes.NetworkRolePrimary)
+				oversized.Annotations = map[string]string{
+					ovntypes.OvnNetworkTunnelKeysAnnotation: "[16711685,16715779,16715780]",
+				}
+				good := testing.GenerateNAD("good", "good", "test2", ovntypes.Layer2Topology,
+					"10.0.1.0/24", ovntypes.NetworkRolePrimary)
+				good.Annotations = map[string]string{
+					ovntypes.OvnNetworkTunnelKeysAnnotation: "[16711685,16715781]",
+				}
+				clientSet := util.GetOVNClientset(oversized, good)
+
+				allocator, err := initTunnelKeysAllocator(clientSet.NetworkAttchDefClient, clientSet.NetworkConnectClient)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				// the oversized NAD was skipped, so none of its keys are reserved
+				// and both remain free for another network to take
+				gomega.Expect(allocator.ReserveKeys("other", []int{16715779, 16715780})).To(gomega.Succeed())
+				// a well formed NAD alongside it is still reserved
+				ids, err := allocator.AllocateKeys(id.NetworkTunnelKeyOwner("good"), 2, 2)
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+				gomega.Expect(ids).To(gomega.Equal([]int{16711685, 16715781}))
+				return nil
+			}
+
+			err := app.Run([]string{
+				app.Name,
+				"-cluster-subnets=" + clusterCIDR,
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("check for combined NAD and same-named CNC tunnel keys allocations", func() {
 			app.Action = func(_ *cli.Context) error {
 				config.OVNKubernetesFeature.EnableNetworkConnect = true
 				config.OVNKubernetesFeature.EnableNetworkSegmentation = true
@@ -1128,7 +1246,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				// CNC uses networkID 4097, so it gets keys from idsAllocator range (16715779+)
 				cnc1 := &networkconnect.ClusterNetworkConnect{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "cnc1",
+						Name: "test1",
 						Annotations: map[string]string{
 							util.OvnConnectRouterTunnelKeyAnnotation: "16715780",
 						},
@@ -1140,11 +1258,11 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				allocator, err := initTunnelKeysAllocator(clientSet.NetworkAttchDefClient, clientSet.NetworkConnectClient)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				// verify NAD keys are reserved (networkID 2 => first key from preserved range)
-				ids, err := allocator.AllocateKeys("test1", 2, 2)
+				ids, err := allocator.AllocateKeys(id.NetworkTunnelKeyOwner("test1"), 2, 2)
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 				gomega.Expect(ids).To(gomega.Equal([]int{16711685, 16715779}))
 				// verify CNC key is reserved (networkID 4097 => all keys from idsAllocator)
-				ids, err = allocator.AllocateKeys("cnc1", 4097, 1)
+				ids, err = allocator.AllocateKeys(id.NetworkConnectTunnelKeyOwner("test1"), 4097, 1)
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 				gomega.Expect(ids).To(gomega.Equal([]int{16715780}))
 				// test conflict: CNC tries to reserve NAD's random pool key (16715779)
@@ -1156,7 +1274,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				gomega.Expect(err).To(gomega.HaveOccurred())
 				gomega.Expect(err.Error()).To(gomega.ContainSubstring("already reserved"))
 				// allocate new keys for a new NAD (networkID 3) and ensure reserved keys are not reused
-				ids, err = allocator.AllocateKeys("newnetwork", 3, 2)
+				ids, err = allocator.AllocateKeys(id.NetworkTunnelKeyOwner("newnetwork"), 3, 2)
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 				// first key: 16711686 (preserved range for networkID 3)
 				// second key: 16715781 (skipping 16715779 for test1 and 16715780 for cnc1)
@@ -1370,6 +1488,79 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 					}
 					return strconv.Atoi(tunnelKeyStr)
 				}, 5).Should(gomega.Equal(16715781)) // Should still be the same pre-populated value
+
+				return nil
+			}
+
+			err := app.Run([]string{
+				app.Name,
+				"-cluster-subnets=" + clusterCIDR,
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("repairs an oversized tunnel keys annotation across start up and reconcile without leaking the surplus", func() {
+			app.Action = func(ctx *cli.Context) error {
+				config.OVNKubernetesFeature.EnableMultiNetwork = true
+				config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+
+				// neta is a primary layer2 network (needs two keys) that an earlier
+				// run left with an oversized annotation: the transit switch key for
+				// network 2 plus two dynamic keys, one too many. initTunnelKeysAllocator
+				// must skip it at start up, and the NAD controller must repair it on
+				// reconcile without leaking the surplus dynamic key.
+				neta := testing.GenerateNAD("neta", "neta", "nsa", ovntypes.Layer2Topology,
+					"10.0.0.0/24", ovntypes.NetworkRolePrimary)
+				neta.Annotations = map[string]string{
+					ovntypes.OvnNetworkIDAnnotation:         "2",
+					ovntypes.OvnNetworkTunnelKeysAnnotation: "[16711685,16715779,16715780]",
+				}
+				// netb is a second primary layer2 network with no keys yet; it must
+				// be able to take the key neta's surplus would otherwise have leaked
+				netb := testing.GenerateNAD("netb", "netb", "nsb", ovntypes.Layer2Topology,
+					"10.0.1.0/24", ovntypes.NetworkRolePrimary)
+				netb.Annotations = map[string]string{
+					ovntypes.OvnNetworkIDAnnotation: "3",
+				}
+				fakeClient := util.GetOVNClientset(neta, netb)
+
+				var err error
+				f, err = factory.NewClusterManagerWatchFactory(fakeClient.GetClusterManagerClientset())
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = f.Start()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				clusterManager, err := NewClusterManager(fakeClient.GetClusterManagerClientset(), f, "identity", nil)
+				gomega.Expect(clusterManager).NotTo(gomega.BeNil())
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = clusterManager.Start(ctx.Context)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				defer clusterManager.Stop()
+
+				gomega.Eventually(func(g gomega.Gomega) {
+					a, err := fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().
+						NetworkAttachmentDefinitions("nsa").Get(context.TODO(), "neta", metav1.GetOptions{})
+					g.Expect(err).NotTo(gomega.HaveOccurred())
+					b, err := fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().
+						NetworkAttachmentDefinitions("nsb").Get(context.TODO(), "netb", metav1.GetOptions{})
+					g.Expect(err).NotTo(gomega.HaveOccurred())
+
+					aKeys, err := util.ParseTunnelKeysAnnotation(a.Annotations[ovntypes.OvnNetworkTunnelKeysAnnotation])
+					g.Expect(err).NotTo(gomega.HaveOccurred())
+					bKeys, err := util.ParseTunnelKeysAnnotation(b.Annotations[ovntypes.OvnNetworkTunnelKeysAnnotation])
+					g.Expect(err).NotTo(gomega.HaveOccurred())
+
+					// each network ends up with exactly two keys: the transit switch
+					// key derived from its network ID and one dynamic key
+					g.Expect(aKeys).To(gomega.HaveLen(2))
+					g.Expect(bKeys).To(gomega.HaveLen(2))
+					g.Expect(aKeys[0]).To(gomega.Equal(16711685)) // network ID 2
+					g.Expect(bKeys[0]).To(gomega.Equal(16711686)) // network ID 3
+					// the two dynamic keys are exactly the two lowest in the pool:
+					// the oversized surplus was freed, not leaked, so netb could take
+					// it rather than being pushed to 16715781
+					g.Expect([]int{aKeys[1], bKeys[1]}).To(gomega.ConsistOf(16715779, 16715780))
+				}, 10).Should(gomega.Succeed())
 
 				return nil
 			}
