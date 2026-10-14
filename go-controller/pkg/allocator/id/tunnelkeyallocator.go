@@ -3,6 +3,16 @@
 
 package id
 
+// NetworkTunnelKeyOwner returns the allocator owner for a NAD network.
+func NetworkTunnelKeyOwner(name string) string {
+	return "network/" + name
+}
+
+// NetworkConnectTunnelKeyOwner returns the allocator owner for a CNC router.
+func NetworkConnectTunnelKeyOwner(name string) string {
+	return "cnc/" + name
+}
+
 // TunnelKeysAllocator is used to allocate tunnel Keys for distributed OVN datapaths.
 // It preserves first 4096 keys for the already-used transit switch IDs based on the networkID.
 type TunnelKeysAllocator struct {

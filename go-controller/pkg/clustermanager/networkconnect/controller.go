@@ -240,13 +240,9 @@ func (c *Controller) initialSync() error {
 
 		// Restore tunnel key in allocator if present
 		if tunnelID > 0 {
-			// Reserve tunnel key in the allocator so it won't be re-allocated
-			// We already reserve the key from cluster manager sync in initTunnelKeysAllocator,
-			// but no harm in doing it again here for completeness.
-			if err := c.tunnelKeysAllocator.ReserveKeys(cnc.Name, []int{tunnelID}); err != nil {
+			// initTunnelKeysAllocator already reserved this key; this also supports standalone initialization.
+			if err := c.tunnelKeysAllocator.ReserveKeys(id.NetworkConnectTunnelKeyOwner(cnc.Name), []int{tunnelID}); err != nil {
 				klog.Warningf("Failed to restore tunnel key %d for CNC %s: %v", tunnelID, cnc.Name, err)
-			} else {
-				klog.V(4).Infof("Restored tunnel key %d for CNC %s", tunnelID, cnc.Name)
 			}
 		}
 
