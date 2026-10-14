@@ -18,9 +18,9 @@ func NewTunnelKeyAllocator(name string) *TunnelKeysAllocator {
 	// total number of datapath(switches and routers) keys
 	maxDPKey := (1 << 24) - 1
 	// We have already used some keys for transit switch tunnels, the maximum tunnel key that is already allocated
-	// is BaseTransitSwitchTunnelKey + MaxNetworks.
+	// is BaseTransitSwitchTunnelKey + 4096 - 1.
 	// BaseTransitSwitchTunnelKey = 16711683
-	// MaxNetworks = 4096
+	// The preserved range remains fixed independently of MaxNetworks.
 	rangeStart := 16711683 + 4096
 	// this is how many keys are left for allocation
 	freeIDs := maxDPKey - rangeStart + 1
@@ -39,17 +39,25 @@ func NewTunnelKeyAllocator(name string) *TunnelKeysAllocator {
 // If less keys than numOfKeys are already allocated for the resource name, it will allocate the missing amount.
 // If more keys than numOfKeys are already allocated for the resource name, it returns an error.
 func (allocator *TunnelKeysAllocator) AllocateKeys(name string, networkID, numOfKeys int) ([]int, error) {
+	keys, _, err := allocator.AllocateKeysWithRollback(name, networkID, numOfKeys)
+	return keys, err
+}
+
+// AllocateKeysWithRollback allocates keys and returns a function that releases
+// only keys added by this call. Existing keys remain reserved on rollback.
+// The caller must serialize operations for this resource until it commits or
+// rolls back the allocation.
+func (allocator *TunnelKeysAllocator) AllocateKeysWithRollback(name string, networkID, numOfKeys int) ([]int, func(), error) {
 	allocatedIDs := make([]int, 0, numOfKeys)
 	if networkID < allocator.preservedRange && numOfKeys > 0 {
-		// transit switch tunnel key is preserved
 		allocatedIDs = append(allocatedIDs, allocator.idsOffset+networkID)
-		numOfKeys -= 1
+		numOfKeys--
 	}
-	newIDs, err := allocator.idsAllocator.AllocateIDs(name, numOfKeys)
+	newIDs, rollback, err := allocator.idsAllocator.AllocateIDsWithRollback(name, numOfKeys)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return append(allocatedIDs, newIDs...), nil
+	return append(allocatedIDs, newIDs...), rollback, nil
 }
 
 // ReserveKeys reserves 'tunnelKeys' for the resource 'name'. It returns an
@@ -57,11 +65,20 @@ func (allocator *TunnelKeysAllocator) AllocateKeys(name string, networkID, numOf
 // It also returns an error if the resource 'name' has a different 'tunnelKeys' slice
 // already reserved. Slice elements order is important for comparison.
 func (allocator *TunnelKeysAllocator) ReserveKeys(name string, tunnelKeys []int) error {
-	if len(tunnelKeys) > 0 && tunnelKeys[0]-allocator.idsOffset < allocator.preservedRange {
+	_, err := allocator.ReserveKeysWithRollback(name, tunnelKeys)
+	return err
+}
+
+// ReserveKeysWithRollback reserves keys and returns a function that releases only
+// reservations added by this call. Existing reservations survive rollback.
+// The caller must serialize operations for this resource until it commits or
+// rolls back the reservation.
+func (allocator *TunnelKeysAllocator) ReserveKeysWithRollback(name string, tunnelKeys []int) (func(), error) {
+	if len(tunnelKeys) > 0 && tunnelKeys[0] >= allocator.idsOffset && tunnelKeys[0]-allocator.idsOffset < allocator.preservedRange {
 		// transit switch tunnel key is not allocated by the allocator
 		tunnelKeys = tunnelKeys[1:]
 	}
-	return allocator.idsAllocator.ReserveIDs(name, tunnelKeys)
+	return allocator.idsAllocator.ReserveIDsWithRollback(name, tunnelKeys)
 }
 
 // ReleaseKeys releases the tunnelKeys allocated for the resource 'name'

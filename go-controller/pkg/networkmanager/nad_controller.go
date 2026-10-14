@@ -1604,6 +1604,8 @@ func (c *nadController) handleNetworkAnnotations(new util.MutableNetInfo, nad *n
 	}
 	name := new.GetNetworkName()
 
+	// Roll back both newly reserved and newly allocated IDs, keeping prior ownership.
+	allocatedNetworkID := c.networkIDAllocator.GetID(name) == types.InvalidID
 	// a network ID was annotated, check if it is free to use or stale
 	if id != types.InvalidID {
 		err = c.networkIDAllocator.ReserveID(name, id)
@@ -1621,19 +1623,19 @@ func (c *nadController) handleNetworkAnnotations(new util.MutableNetInfo, nad *n
 		return nil
 	}
 
-	// tunnel key annotation doesn't need the same check ^ because it is initialized outside the
-	// nad controller and has already assured that all annotated tunnel keys are reserved.
-
-	// we are about to allocate resources, so prepare a cleanup function
-	// in case of error to release them.
-	var allocatedNetworkID, allocatedTunnelKeys bool
+	// If reconciliation fails, release only newly acquired allocations.
+	// Existing allocations may still serve this network or another NAD sharing it.
+	var rollbackTunnelKeys, rollbackReservedTunnelKeys func()
 	defer func() {
 		if err != nil {
 			if allocatedNetworkID {
 				c.networkIDAllocator.ReleaseID(name)
 			}
-			if allocatedTunnelKeys {
-				c.tunnelKeysAllocator.ReleaseKeys(name)
+			if rollbackTunnelKeys != nil {
+				rollbackTunnelKeys()
+			}
+			if rollbackReservedTunnelKeys != nil {
+				rollbackReservedTunnelKeys()
 			}
 		}
 	}()
@@ -1643,7 +1645,6 @@ func (c *nadController) handleNetworkAnnotations(new util.MutableNetInfo, nad *n
 		if err != nil {
 			return fmt.Errorf("failed to allocate network ID: %w", err)
 		}
-		allocatedNetworkID = true
 
 		// check if there is still a network running with that ID in the process
 		// of being stopped
@@ -1653,21 +1654,31 @@ func (c *nadController) handleNetworkAnnotations(new util.MutableNetInfo, nad *n
 		}
 	}
 
-	// allocate tunnel keys
-	if len(tunnelKeys) != getNumberOfTunnelKeys(new) {
+	neededKeys := getNumberOfTunnelKeys(new)
+	if neededKeys == 0 {
+		tunnelKeys = nil
+		// A config change can remove the need for keys; keep them until the patch succeeds.
+		defer func() {
+			if err == nil {
+				c.tunnelKeysAllocator.ReleaseKeys(name)
+			}
+		}()
+	} else {
+		// Only cluster-manager writes complete key sets, but a config rename
+		// can leave them reserved for the original network at startup.
 		if len(tunnelKeys) > 0 {
-			// this should never happen, but if it does
-			// AllocateKeys will add missing keys, when len(tunnelKeys) < getNumberOfTunnelKeys(new)
-			// and will return an error when len(tunnelKeys) > getNumberOfTunnelKeys(new)
-			// log an error for visibility
-			klog.Errorf("Unexpected number of tunnel keys annotated on NAD for network %s, expected %d got %d",
-				name, getNumberOfTunnelKeys(new), len(tunnelKeys))
+			rollbackReservedTunnelKeys, err = c.tunnelKeysAllocator.ReserveKeysWithRollback(name, tunnelKeys)
+			if err != nil {
+				klog.Warningf("%s: could not reserve tunnel keys annotated on NAD %s for network %s, using the network's allocation: %v", c.name, nadKey, name, err)
+			}
 		}
-		tunnelKeys, err = c.tunnelKeysAllocator.AllocateKeys(name, id, getNumberOfTunnelKeys(new))
+		// A raw NAD can change the required key count without changing the network
+		// name; UDN topology and role are immutable. Preserve the existing keys if
+		// allocating additional keys or persisting the annotations fails.
+		tunnelKeys, rollbackTunnelKeys, err = c.tunnelKeysAllocator.AllocateKeysWithRollback(name, id, neededKeys)
 		if err != nil {
 			return fmt.Errorf("failed to allocate tunnel keys: %w", err)
 		}
-		allocatedTunnelKeys = true
 	}
 
 	// set and annotate the network ID

@@ -16,6 +16,7 @@ import (
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
 	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+	nadclientfake "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/fake"
 	nadlisters "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
 	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/format"
@@ -24,7 +25,9 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
+	k8stesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 
@@ -1852,6 +1855,51 @@ func TestResourceCleanup(t *testing.T) {
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 }
 
+func newClusterNADTestController(t *testing.T) (*nadController, *util.OVNClusterManagerClientset) {
+	t.Helper()
+	g := gomega.NewWithT(t)
+	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	tcm := &testControllerManager{
+		controllers: map[string]NetworkController{},
+		defaultNetwork: &testNetworkController{
+			ReconcilableNetInfo: &util.DefaultNetInfo{},
+		},
+	}
+	fakeClient := util.GetOVNClientset().GetClusterManagerClientset()
+	wf, err := factory.NewClusterManagerWatchFactory(fakeClient)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	c := &nadController{
+		nads:                map[string]string{},
+		primaryNADs:         map[string]string{},
+		networkController:   newNetworkController("", "", tcm, nil),
+		networkIDAllocator:  id.NewIDAllocator("NetworkIDs", MaxNetworks),
+		tunnelKeysAllocator: id.NewTunnelKeyAllocator("TunnelKeys"),
+		nadClient:           fakeClient.NetworkAttchDefClient,
+		namespaceLister:     &fakeNamespaceLister{},
+		nodeLister:          wf.NodeCoreInformer().Lister(),
+	}
+	g.Expect(c.networkIDAllocator.ReserveID(types.DefaultNetworkName, types.DefaultNetworkID)).To(gomega.Succeed())
+	g.Expect(c.networkController.Start()).To(gomega.Succeed())
+	t.Cleanup(c.networkController.Stop)
+	return c, fakeClient
+}
+
+func primaryLayer2NADConfig(nadKey string) *ovncnitypes.NetConf {
+	return &ovncnitypes.NetConf{
+		Topology: types.Layer2Topology,
+		NetConf: cnitypes.NetConf{
+			Name: "networkAPrimary",
+			Type: "ovn-k8s-cni-overlay",
+		},
+		Subnets: "10.1.130.0/24",
+		Role:    types.NetworkRolePrimary,
+		MTU:     1400,
+		NADName: nadKey,
+	}
+}
+
 func buildNADWithAnnotations(name, namespace string, network *ovncnitypes.NetConf, annotations map[string]string) (*nettypes.NetworkAttachmentDefinition, error) {
 	nad, err := ovntesting.BuildNAD(name, namespace, network)
 	if err != nil {
@@ -3396,4 +3444,148 @@ func TestGetActiveNetworkForNamespace_ReturnsNotFoundWhenNamespaceAbsent(t *test
 	_, err := c.GetActiveNetworkForNamespace("missing-ns")
 	g.Expect(err).To(gomega.HaveOccurred())
 	g.Expect(apierrors.IsNotFound(err)).To(gomega.BeTrue())
+}
+
+func TestSyncNADPatchFailureCleansAllocations(t *testing.T) {
+	for _, retry := range []bool{false, true} {
+		t.Run(fmt.Sprintf("retry=%t", retry), func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			nadController, fakeClient := newClusterNADTestController(t)
+
+			nadNs := "test"
+			nadName := "nad_1"
+			nadKey := nadNs + "/" + nadName
+			netConf := primaryLayer2NADConfig(nadKey)
+			// A NAD can retain CM-written allocations while a non-OVN config is
+			// skipped at startup, then return to OVN with a different network name.
+			annotations := map[string]string{
+				types.OvnNetworkNameAnnotation:       "previous-network",
+				types.OvnNetworkIDAnnotation:         "1",
+				types.OvnNetworkTunnelKeysAnnotation: "[16711684,16715790]",
+			}
+			nad, err := buildNADWithAnnotations(nadName, nadNs, netConf, annotations)
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+			_, err = nadController.nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nadNs).Create(context.Background(), nad, metav1.CreateOptions{})
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+			failPatch := true
+			fakeClient.NetworkAttchDefClient.(*nadclientfake.Clientset).PrependReactor("patch", "network-attachment-definitions", func(_ k8stesting.Action) (bool, runtime.Object, error) {
+				if failPatch {
+					return true, nil, fmt.Errorf("temporary API failure")
+				}
+				return false, nil, nil
+			})
+			g.Expect(nadController.syncNAD(nadKey, nad)).To(gomega.MatchError(gomega.ContainSubstring("temporary API failure")))
+			g.Expect(nadController.networkIDAllocator.GetID(netConf.Name)).To(gomega.Equal(types.InvalidID))
+			g.Expect(nadController.nads).NotTo(gomega.HaveKey(nadKey))
+			unchanged, err := nadController.nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nadNs).Get(context.Background(), nadName, metav1.GetOptions{})
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+			g.Expect(unchanged.Annotations).To(gomega.Equal(nad.Annotations))
+			g.Expect(nadController.tunnelKeysAllocator.ReserveKeys("probe", []int{16715790})).To(gomega.Succeed())
+			nadController.tunnelKeysAllocator.ReleaseKeys("probe")
+
+			var repairedKeys []int
+			if retry {
+				failPatch = false
+				g.Expect(nadController.syncNAD(nadKey, nad)).To(gomega.Succeed())
+				updated, getErr := nadController.nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nadNs).Get(context.Background(), nadName, metav1.GetOptions{})
+				g.Expect(getErr).NotTo(gomega.HaveOccurred())
+				repairedKeys, err = util.ParseTunnelKeysAnnotation(updated.Annotations[types.OvnNetworkTunnelKeysAnnotation])
+				g.Expect(err).NotTo(gomega.HaveOccurred())
+				networkID := nadController.networkIDAllocator.GetID(netConf.Name)
+				g.Expect(repairedKeys).To(gomega.HaveLen(2))
+				g.Expect(repairedKeys[0]).To(gomega.Equal(16711683 + networkID))
+				g.Expect(nadController.tunnelKeysAllocator.ReserveKeys("probe", repairedKeys[1:])).NotTo(gomega.Succeed())
+				g.Expect(nadController.syncNAD(nadKey, updated)).To(gomega.Succeed())
+			}
+
+			// A delete before retry has no cached network; rollback must already have freed its reservations.
+			g.Expect(nadController.nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nadNs).Delete(context.Background(), nadName, metav1.DeleteOptions{})).To(gomega.Succeed())
+			g.Expect(nadController.syncNAD(nadKey, nil)).To(gomega.Succeed())
+			g.Expect(nadController.networkIDAllocator.GetID(netConf.Name)).To(gomega.Equal(types.InvalidID))
+			g.Expect(nadController.networkIDAllocator.ReserveID("other", 1)).To(gomega.Succeed())
+			g.Expect(nadController.tunnelKeysAllocator.ReserveKeys("other", []int{16715790})).To(gomega.Succeed())
+			if len(repairedKeys) > 0 && repairedKeys[1] != 16715790 {
+				g.Expect(nadController.tunnelKeysAllocator.ReserveKeys("retry-probe", repairedKeys[1:])).To(gomega.Succeed())
+			}
+		})
+	}
+}
+
+func TestSyncNADConfigChangeUpdatesTunnelKeyCount(t *testing.T) {
+	g := gomega.NewWithT(t)
+	c, client := newClusterNADTestController(t)
+	conf := primaryLayer2NADConfig("test/nad")
+	nad, err := buildNADWithAnnotations("nad", "test", conf, nil)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	_, err = client.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("test").Create(context.Background(), nad, metav1.CreateOptions{})
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(c.syncNAD("test/nad", nad)).To(gomega.Succeed())
+	current, err := c.nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("test").Get(context.Background(), "nad", metav1.GetOptions{})
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	oldKeys, err := util.ParseTunnelKeysAnnotation(current.Annotations[types.OvnNetworkTunnelKeysAnnotation])
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(oldKeys).To(gomega.HaveLen(2))
+	failPatch := true
+	client.NetworkAttchDefClient.(*nadclientfake.Clientset).PrependReactor("patch", "network-attachment-definitions", func(_ k8stesting.Action) (bool, runtime.Object, error) {
+		if failPatch {
+			return true, nil, fmt.Errorf("temporary API failure")
+		}
+		return false, nil, nil
+	})
+	// Only the configuration changes; cluster-manager's annotations stay intact.
+	conf.Role = types.NetworkRoleSecondary
+	changed, err := buildNADWithAnnotations("nad", "test", conf, current.Annotations)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	_, err = c.nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("test").Update(context.Background(), changed, metav1.UpdateOptions{})
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(c.syncNAD("test/nad", changed)).To(gomega.HaveOccurred())
+	g.Expect(c.tunnelKeysAllocator.ReserveKeys("probe", oldKeys[1:])).NotTo(gomega.Succeed())
+	failPatch = false
+	g.Expect(c.syncNAD("test/nad", changed)).To(gomega.Succeed())
+	secondary, err := c.nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("test").Get(context.Background(), "nad", metav1.GetOptions{})
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	secondaryKeys, parseErr := util.ParseTunnelKeysAnnotation(secondary.Annotations[types.OvnNetworkTunnelKeysAnnotation])
+	g.Expect(parseErr).NotTo(gomega.HaveOccurred())
+	g.Expect(secondaryKeys).To(gomega.BeEmpty())
+	g.Expect(c.tunnelKeysAllocator.ReserveKeys("probe", oldKeys[1:])).To(gomega.Succeed())
+	c.tunnelKeysAllocator.ReleaseKeys("probe")
+	conf.Role = types.NetworkRolePrimary
+	changed, err = buildNADWithAnnotations("nad", "test", conf, secondary.Annotations)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	_, err = c.nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("test").Update(context.Background(), changed, metav1.UpdateOptions{})
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(c.syncNAD("test/nad", changed)).To(gomega.Succeed())
+	primary, err := c.nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("test").Get(context.Background(), "nad", metav1.GetOptions{})
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	keys, err := util.ParseTunnelKeysAnnotation(primary.Annotations[types.OvnNetworkTunnelKeysAnnotation])
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(keys).To(gomega.HaveLen(2))
+	g.Expect(keys[0]).To(gomega.Equal(16711683 + c.networkIDAllocator.GetID(conf.Name)))
+	g.Expect(c.tunnelKeysAllocator.ReserveKeys("probe", keys[1:])).NotTo(gomega.Succeed())
+}
+
+func TestSyncNADPatchFailurePreservesSharedNetworkTunnelKeys(t *testing.T) {
+	g := gomega.NewWithT(t)
+	c, client := newClusterNADTestController(t)
+	conf := primaryLayer2NADConfig("first/nad")
+	first, err := buildNADWithAnnotations("nad", "first", conf, nil)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	_, err = c.nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("first").Create(context.Background(), first, metav1.CreateOptions{})
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(c.syncNAD("first/nad", first)).To(gomega.Succeed())
+	saved, err := c.nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("first").Get(context.Background(), "nad", metav1.GetOptions{})
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	keys, err := util.ParseTunnelKeysAnnotation(saved.Annotations[types.OvnNetworkTunnelKeysAnnotation])
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	conf.NADName = "second/nad"
+	second, err := buildNADWithAnnotations("nad", "second", conf, nil)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	_, err = c.nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("second").Create(context.Background(), second, metav1.CreateOptions{})
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	client.NetworkAttchDefClient.(*nadclientfake.Clientset).PrependReactor("patch", "network-attachment-definitions", func(_ k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, fmt.Errorf("temporary API failure")
+	})
+	g.Expect(c.syncNAD("second/nad", second)).To(gomega.HaveOccurred())
+	g.Expect(c.tunnelKeysAllocator.ReserveKeys("probe", keys[1:])).NotTo(gomega.Succeed())
+	g.Expect(c.networkIDAllocator.GetID(conf.Name)).To(gomega.Equal(1))
 }
