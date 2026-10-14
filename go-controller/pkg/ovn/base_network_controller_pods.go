@@ -98,7 +98,27 @@ func (bnc *BaseNetworkController) allocatePodIPsOnSwitch(pod *corev1.Pod,
 	if err := bnc.waitForNodeLogicalSwitchSubnetsInCache(switchName); err != nil {
 		return expectedLogicalPortName, err
 	}
-	if err = bnc.lsManager.AllocateIPs(switchName, annotations.IPs); err != nil {
+	ips := annotations.IPs
+	if util.PodCompleted(pod) && bnc.TopologyType() == ovntypes.Layer3Topology {
+		// A terminal pod can outlive its node's subnet allocation. Keep any
+		// addresses still in this switch reserved until normal pod cleanup,
+		// including the other family when only one subnet changed. Addresses
+		// outside the switch cannot be reserved here and must not block startup.
+		subnets := bnc.lsManager.GetSwitchSubnets(switchName)
+		ips = nil
+		for _, ip := range annotations.IPs {
+			if util.IsIPContainedInAnyCIDR(ip.IP, subnets...) {
+				ips = append(ips, ip)
+			} else {
+				klog.Infof("Ignoring obsolete IP %s for completed pod %s/%s on switch %s with subnets %v",
+					ip.IP, pod.Namespace, pod.Name, switchName, subnets)
+			}
+		}
+		if len(ips) == 0 {
+			return expectedLogicalPortName, nil
+		}
+	}
+	if err = bnc.lsManager.AllocateIPs(switchName, ips); err != nil {
 		if err == ipallocator.ErrAllocated {
 			// already allocated: log a warning but not stop syncPod from continuing
 			klog.Warningf("Already allocated IPs: %s for pod: %s in phase: %v on switch: %s",
