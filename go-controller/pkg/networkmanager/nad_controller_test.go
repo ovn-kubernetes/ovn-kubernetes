@@ -129,7 +129,7 @@ func TestSyncNAD_NotifiesReconcilers(t *testing.T) {
 		networks:           map[string]util.MutableNetInfo{},
 		networkControllers: map[string]*networkControllerState{},
 	}
-	netIDAlloc := id.NewIDAllocator("NetworkIDs", MaxNetworks)
+	netIDAlloc := id.NewIDAllocator("NetworkIDs", types.MaxNetworks)
 	g.Expect(netIDAlloc.ReserveID(types.DefaultNetworkName, types.DefaultNetworkID)).To(gomega.Succeed())
 
 	c := &nadController{
@@ -244,7 +244,7 @@ func TestSyncNAD_ForceDeleteKeepsCacheForExistingNAD(t *testing.T) {
 		},
 	}
 
-	netIDAlloc := id.NewIDAllocator("NetworkIDs", MaxNetworks)
+	netIDAlloc := id.NewIDAllocator("NetworkIDs", types.MaxNetworks)
 	g.Expect(netIDAlloc.ReserveID(types.DefaultNetworkName, types.DefaultNetworkID)).To(gomega.Succeed())
 
 	c := &nadController{
@@ -271,7 +271,7 @@ func TestSyncNAD_ForceDeleteRemovesCacheOnActualDelete(t *testing.T) {
 	key := "ns/nad"
 	ns := "ns"
 
-	netIDAlloc := id.NewIDAllocator("NetworkIDs", MaxNetworks)
+	netIDAlloc := id.NewIDAllocator("NetworkIDs", types.MaxNetworks)
 	g.Expect(netIDAlloc.ReserveID(types.DefaultNetworkName, types.DefaultNetworkID)).To(gomega.Succeed())
 
 	c := &nadController{
@@ -894,7 +894,7 @@ func TestNADController(t *testing.T) {
 				nads:                map[string]string{},
 				primaryNADs:         map[string]string{},
 				networkController:   newNetworkController("", "", tcm, nil),
-				networkIDAllocator:  id.NewIDAllocator("NetworkIDs", MaxNetworks),
+				networkIDAllocator:  id.NewIDAllocator("NetworkIDs", types.MaxNetworks),
 				tunnelKeysAllocator: id.NewTunnelKeyAllocator("TunnelKeys"),
 				nadClient:           fakeClient.NetworkAttchDefClient,
 				nodeLister:          wf.NodeCoreInformer().Lister(),
@@ -1047,7 +1047,7 @@ func TestNetworkGracePeriodCleanup(t *testing.T) {
 		nads:                map[string]string{},
 		primaryNADs:         map[string]string{},
 		networkController:   newNetworkController("", "", tcm, nil),
-		networkIDAllocator:  id.NewIDAllocator("NetworkIDs", MaxNetworks),
+		networkIDAllocator:  id.NewIDAllocator("NetworkIDs", types.MaxNetworks),
 		tunnelKeysAllocator: id.NewTunnelKeyAllocator("TunnelKeys"),
 		nadClient:           fakeClient.NetworkAttchDefClient,
 		namespaceLister:     &fakeNamespaceLister{},
@@ -1144,7 +1144,7 @@ func TestFilteredNADDeleteReleasesNetworkID(t *testing.T) {
 		nads:               map[string]string{},
 		primaryNADs:        map[string]string{},
 		networkController:  newNetworkController("", "", tcm, nil),
-		networkIDAllocator: id.NewIDAllocator("NetworkIDs", MaxNetworks),
+		networkIDAllocator: id.NewIDAllocator("NetworkIDs", types.MaxNetworks),
 		filterNADsOnNode:   "node1",
 	}
 	g.Expect(nadController.networkIDAllocator.ReserveID(types.DefaultNetworkName, types.DefaultNetworkID)).To(gomega.Succeed())
@@ -1210,7 +1210,7 @@ func TestFilteredAndActiveNADDeleteRetainsIDUntilNoRefs(t *testing.T) {
 		nads:               map[string]string{},
 		primaryNADs:        map[string]string{},
 		networkController:  newNetworkController("", "", tcm, nil),
-		networkIDAllocator: id.NewIDAllocator("NetworkIDs", MaxNetworks),
+		networkIDAllocator: id.NewIDAllocator("NetworkIDs", types.MaxNetworks),
 		filterNADsOnNode:   "node1",
 		podTracker:         pt,
 	}
@@ -1302,7 +1302,7 @@ func TestNodeHasNetworkIgnoresDynamicFilteringForBareNADs(t *testing.T) {
 				dynamicFilterNADs:  map[string]bool{},
 				primaryNADs:        map[string]string{},
 				networkController:  newNetworkController("", "", tcm, nil),
-				networkIDAllocator: id.NewIDAllocator("NetworkIDs", MaxNetworks),
+				networkIDAllocator: id.NewIDAllocator("NetworkIDs", types.MaxNetworks),
 				filterNADsOnNode:   "node1",
 			}
 			g.Expect(nadController.networkIDAllocator.ReserveID(types.DefaultNetworkName, types.DefaultNetworkID)).To(gomega.Succeed())
@@ -1355,7 +1355,7 @@ func TestDynamicDeleteDoesNotReleaseNetworkID(t *testing.T) {
 		nads:               map[string]string{},
 		primaryNADs:        map[string]string{},
 		networkController:  newNetworkController("", "", tcm, nil),
-		networkIDAllocator: id.NewIDAllocator("NetworkIDs", MaxNetworks),
+		networkIDAllocator: id.NewIDAllocator("NetworkIDs", types.MaxNetworks),
 	}
 	g.Expect(nadController.networkIDAllocator.ReserveID(types.DefaultNetworkName, types.DefaultNetworkID)).To(gomega.Succeed())
 
@@ -1455,7 +1455,7 @@ func TestSyncAll(t *testing.T) {
 		},
 		{
 			name:              "nad with upper boundary network ID gets a replacement",
-			testNADs:          []TestNAD{{name: "test/nad1", netconf: network_A, networkID: strconv.Itoa(MaxNetworks)}},
+			testNADs:          []TestNAD{{name: "test/nad1", netconf: network_A, networkID: strconv.Itoa(types.MaxNetworks)}},
 			mode:              modeClusterManager,
 			expectGeneratedID: true,
 		},
@@ -1813,7 +1813,7 @@ func TestResourceCleanup(t *testing.T) {
 		nads:                map[string]string{},
 		primaryNADs:         map[string]string{},
 		networkController:   newNetworkController("", "", tcm, nil),
-		networkIDAllocator:  id.NewIDAllocator("NetworkIDs", MaxNetworks),
+		networkIDAllocator:  id.NewIDAllocator("NetworkIDs", types.MaxNetworks),
 		tunnelKeysAllocator: id.NewTunnelKeyAllocator("TunnelKeys"),
 		nadClient:           fakeClient.NetworkAttchDefClient,
 		namespaceLister:     &fakeNamespaceLister{},
@@ -1915,7 +1915,7 @@ func TestNodeHasNetworkIncludesCNCConnectivity(t *testing.T) {
 func TestSyncCNCIncludesClusterIPServiceConnectivity(t *testing.T) {
 	g := gomega.NewWithT(t)
 
-	networkIDAllocator := id.NewIDAllocator("NetworkIDs", MaxNetworks)
+	networkIDAllocator := id.NewIDAllocator("NetworkIDs", types.MaxNetworks)
 	g.Expect(networkIDAllocator.ReserveID(types.DefaultNetworkName, types.DefaultNetworkID)).To(gomega.Succeed())
 	g.Expect(networkIDAllocator.ReserveID("net-a", 1)).To(gomega.Succeed())
 	g.Expect(networkIDAllocator.ReserveID("net-b", 2)).To(gomega.Succeed())
@@ -1956,7 +1956,7 @@ func TestSyncCNCIncludesClusterIPServiceConnectivity(t *testing.T) {
 func TestSyncCNCSyncsOnlyRequestedCNC(t *testing.T) {
 	g := gomega.NewWithT(t)
 
-	networkIDAllocator := id.NewIDAllocator("NetworkIDs", MaxNetworks)
+	networkIDAllocator := id.NewIDAllocator("NetworkIDs", types.MaxNetworks)
 	g.Expect(networkIDAllocator.ReserveID(types.DefaultNetworkName, types.DefaultNetworkID)).To(gomega.Succeed())
 	for networkName, networkID := range map[string]int{
 		"net-a": 1,
@@ -2028,7 +2028,7 @@ func TestSyncCNCIndexesUnresolvedNetworkIDs(t *testing.T) {
 	g.Expect(controller.Start(cncReconciler)).To(gomega.Succeed())
 	defer controller.Stop(cncReconciler)
 
-	networkIDAllocator := id.NewIDAllocator("NetworkIDs", MaxNetworks)
+	networkIDAllocator := id.NewIDAllocator("NetworkIDs", types.MaxNetworks)
 	g.Expect(networkIDAllocator.ReserveID(types.DefaultNetworkName, types.DefaultNetworkID)).To(gomega.Succeed())
 
 	cnc := &networkconnectv1.ClusterNetworkConnect{
@@ -2062,7 +2062,7 @@ func TestSyncCNCIndexesUnresolvedNetworkIDs(t *testing.T) {
 func TestSyncCNCDeletePreservesOtherConnectivity(t *testing.T) {
 	g := gomega.NewWithT(t)
 
-	networkIDAllocator := id.NewIDAllocator("NetworkIDs", MaxNetworks)
+	networkIDAllocator := id.NewIDAllocator("NetworkIDs", types.MaxNetworks)
 	g.Expect(networkIDAllocator.ReserveID(types.DefaultNetworkName, types.DefaultNetworkID)).To(gomega.Succeed())
 	for networkName, networkID := range map[string]int{
 		"net-a": 1,
@@ -2192,7 +2192,7 @@ func TestOnNetworkRefChangeReconcilesCNCConnectedNetworks(t *testing.T) {
 	g.Expect(controller.Start(nadSyncController)).To(gomega.Succeed())
 	defer controller.Stop(nadSyncController)
 
-	networkIDAllocator := id.NewIDAllocator("NetworkIDs", MaxNetworks)
+	networkIDAllocator := id.NewIDAllocator("NetworkIDs", types.MaxNetworks)
 	g.Expect(networkIDAllocator.ReserveID(types.DefaultNetworkName, types.DefaultNetworkID)).To(gomega.Succeed())
 	g.Expect(networkIDAllocator.ReserveID("net-a", 7)).To(gomega.Succeed())
 
@@ -2252,7 +2252,7 @@ func TestSyncNADNotFilteredWhenCNCConnectedNetworkActive(t *testing.T) {
 		},
 	}
 
-	networkIDAllocator := id.NewIDAllocator("NetworkIDs", MaxNetworks)
+	networkIDAllocator := id.NewIDAllocator("NetworkIDs", types.MaxNetworks)
 	g.Expect(networkIDAllocator.ReserveID(types.DefaultNetworkName, types.DefaultNetworkID)).To(gomega.Succeed())
 	g.Expect(networkIDAllocator.ReserveID("net-a", 1)).To(gomega.Succeed())
 
@@ -2313,7 +2313,7 @@ func TestSyncNADClearsStaleRemovalMarkWhenDynamicNetworkActive(t *testing.T) {
 		},
 	}
 
-	networkIDAllocator := id.NewIDAllocator("NetworkIDs", MaxNetworks)
+	networkIDAllocator := id.NewIDAllocator("NetworkIDs", types.MaxNetworks)
 	g.Expect(networkIDAllocator.ReserveID(types.DefaultNetworkName, types.DefaultNetworkID)).To(gomega.Succeed())
 
 	nc := &nadController{
@@ -2362,7 +2362,7 @@ func TestSyncNADClearsExpiredRemovalMarkWhenDynamicNetworkActive(t *testing.T) {
 	config.OVNKubernetesFeature.EnableMultiNetwork = true
 
 	key := "ns1/nad-a"
-	networkIDAllocator := id.NewIDAllocator("NetworkIDs", MaxNetworks)
+	networkIDAllocator := id.NewIDAllocator("NetworkIDs", types.MaxNetworks)
 	g.Expect(networkIDAllocator.ReserveID(types.DefaultNetworkName, types.DefaultNetworkID)).To(gomega.Succeed())
 	g.Expect(networkIDAllocator.ReserveID("net-a", 1)).To(gomega.Succeed())
 
@@ -2422,7 +2422,7 @@ func TestSyncNADDoesNotRescheduleAlreadyDynamicallyRemovedNAD(t *testing.T) {
 	config.OVNKubernetesFeature.UDNDeletionGracePeriod = time.Hour
 
 	key := "ns1/nad-a"
-	networkIDAllocator := id.NewIDAllocator("NetworkIDs", MaxNetworks)
+	networkIDAllocator := id.NewIDAllocator("NetworkIDs", types.MaxNetworks)
 	g.Expect(networkIDAllocator.ReserveID(types.DefaultNetworkName, types.DefaultNetworkID)).To(gomega.Succeed())
 	g.Expect(networkIDAllocator.ReserveID("net-a", 1)).To(gomega.Succeed())
 
@@ -2489,7 +2489,7 @@ func newDynamicRemovalTestController(g *gomega.WithT) (*nadController, string, s
 
 	keyA := "ns1/nad-a"
 	keyB := "ns2/nad-a"
-	networkIDAllocator := id.NewIDAllocator("NetworkIDs", MaxNetworks)
+	networkIDAllocator := id.NewIDAllocator("NetworkIDs", types.MaxNetworks)
 	g.Expect(networkIDAllocator.ReserveID(types.DefaultNetworkName, types.DefaultNetworkID)).To(gomega.Succeed())
 	g.Expect(networkIDAllocator.ReserveID("net-a", 1)).To(gomega.Succeed())
 
@@ -2621,7 +2621,7 @@ func TestOnNetworkRefChangeNotifiesNetworkRefReconcilers(t *testing.T) {
 	nc := &nadController{
 		controller:            nadSyncController,
 		filterNADsOnNode:      "node1",
-		networkIDAllocator:    id.NewIDAllocator("NetworkIDs", MaxNetworks),
+		networkIDAllocator:    id.NewIDAllocator("NetworkIDs", types.MaxNetworks),
 		nadLister:             &fakeNADLister{nads: map[string]*nettypes.NetworkAttachmentDefinition{nad.Name: nad}},
 		networkRefReconcilers: map[uint64]networkRefReconcilerRegistration{},
 	}
@@ -2688,7 +2688,7 @@ func TestOnNetworkRefChangeNotifiesConnectedNetworkRefReconcilers(t *testing.T) 
 		controller:            nadSyncController,
 		filterNADsOnNode:      "local-node",
 		networkController:     newNetworkController("", "", nil, nil),
-		networkIDAllocator:    id.NewIDAllocator("NetworkIDs", MaxNetworks),
+		networkIDAllocator:    id.NewIDAllocator("NetworkIDs", types.MaxNetworks),
 		nadLister:             &fakeNADLister{nads: map[string]*nettypes.NetworkAttachmentDefinition{nadA.Name: nadA}},
 		networkRefReconcilers: map[uint64]networkRefReconcilerRegistration{},
 		cncConnectedNetworks: map[string]sets.Set[string]{
@@ -2772,7 +2772,7 @@ func TestOnNetworkRefChangeRendersCNCConnectedNetworksWhenNodeBecomesActive(t *t
 		nodeNADToPodCache: map[string]map[string]map[string]struct{}{},
 	}
 
-	networkIDAllocator := id.NewIDAllocator("NetworkIDs", MaxNetworks)
+	networkIDAllocator := id.NewIDAllocator("NetworkIDs", types.MaxNetworks)
 	g.Expect(networkIDAllocator.ReserveID(types.DefaultNetworkName, types.DefaultNetworkID)).To(gomega.Succeed())
 
 	var nc *nadController
@@ -2887,7 +2887,7 @@ func TestOnNetworkRefChangeClearsCNCConnectedRemovalMarks(t *testing.T) {
 
 	keyA := util.GetNADName(nadA.Namespace, nadA.Name)
 	keyB := util.GetNADName(nadB.Namespace, nadB.Name)
-	networkIDAllocator := id.NewIDAllocator("NetworkIDs", MaxNetworks)
+	networkIDAllocator := id.NewIDAllocator("NetworkIDs", types.MaxNetworks)
 	g.Expect(networkIDAllocator.ReserveID(types.DefaultNetworkName, types.DefaultNetworkID)).To(gomega.Succeed())
 	podTracker := &PodTrackerController{
 		nodeNADToPodCache: map[string]map[string]map[string]struct{}{
@@ -2982,7 +2982,7 @@ func TestOnNetworkRefChangeMarksCNCConnectedNetworksInactive(t *testing.T) {
 
 	keyA := util.GetNADName(nadA.Namespace, nadA.Name)
 	keyB := util.GetNADName(nadB.Namespace, nadB.Name)
-	networkIDAllocator := id.NewIDAllocator("NetworkIDs", MaxNetworks)
+	networkIDAllocator := id.NewIDAllocator("NetworkIDs", types.MaxNetworks)
 	g.Expect(networkIDAllocator.ReserveID(types.DefaultNetworkName, types.DefaultNetworkID)).To(gomega.Succeed())
 	stopCh := make(chan struct{})
 	defer close(stopCh)
@@ -3055,7 +3055,7 @@ func TestOnNetworkRefChangeKeepsNADActiveWhenAnotherTrackerStillReferencesIt(t *
 	}}
 
 	key := util.GetNADName(nad.Namespace, nad.Name)
-	networkIDAllocator := id.NewIDAllocator("NetworkIDs", MaxNetworks)
+	networkIDAllocator := id.NewIDAllocator("NetworkIDs", types.MaxNetworks)
 	g.Expect(networkIDAllocator.ReserveID(types.DefaultNetworkName, types.DefaultNetworkID)).To(gomega.Succeed())
 	stopCh := make(chan struct{})
 	defer close(stopCh)
@@ -3161,7 +3161,7 @@ func TestSyncCNCRequeuesAffectedNetworkNADs(t *testing.T) {
 
 	keyA := "ns1/nad-a"
 	keyB := "ns1/nad-b"
-	networkIDAllocator := id.NewIDAllocator("NetworkIDs", MaxNetworks)
+	networkIDAllocator := id.NewIDAllocator("NetworkIDs", types.MaxNetworks)
 	g.Expect(networkIDAllocator.ReserveID(types.DefaultNetworkName, types.DefaultNetworkID)).To(gomega.Succeed())
 	g.Expect(networkIDAllocator.ReserveID("net-a", 1)).To(gomega.Succeed())
 	g.Expect(networkIDAllocator.ReserveID("net-b", 2)).To(gomega.Succeed())
@@ -3278,7 +3278,7 @@ func TestOnNetworkRefChangeNotifiesNetworkController(t *testing.T) {
 				nads:                map[string]string{},
 				primaryNADs:         map[string]string{},
 				networkController:   newNetworkController("", "", tcm, nil),
-				networkIDAllocator:  id.NewIDAllocator("NetworkIDs", MaxNetworks),
+				networkIDAllocator:  id.NewIDAllocator("NetworkIDs", types.MaxNetworks),
 				tunnelKeysAllocator: id.NewTunnelKeyAllocator("TunnelKeys"),
 				nadLister:           nadLister,
 			}
@@ -3409,7 +3409,7 @@ func TestOnNetworkRefChangeNotifiesConnectedRemoteNetworkControllers(t *testing.
 				dynamicFilterNADs:  map[string]bool{keyA: true, keyB: true},
 				primaryNADs:        map[string]string{},
 				networkController:  networkController,
-				networkIDAllocator: id.NewIDAllocator("NetworkIDs", MaxNetworks),
+				networkIDAllocator: id.NewIDAllocator("NetworkIDs", types.MaxNetworks),
 				nadLister:          &fakeNADLister{nads: map[string]*nettypes.NetworkAttachmentDefinition{nadA.Name: nadA, nadB.Name: nadB}},
 				cncConnectedNetworks: map[string]sets.Set[string]{
 					"net-a": sets.New[string]("net-b"),

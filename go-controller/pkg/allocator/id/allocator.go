@@ -169,6 +169,11 @@ func newIDsAllocator(name string, maxIds int, offset int) *idsAllocator {
 func (idsAllocator *idsAllocator) AllocateIDs(name string, numOfIDs int) ([]int, error) {
 	idsAllocator.nameIdsMap.LockKey(name)
 	defer idsAllocator.nameIdsMap.UnlockKey(name)
+	return idsAllocator.allocateIDs(name, numOfIDs)
+}
+
+// allocateIDs requires the caller to hold the resource's key lock.
+func (idsAllocator *idsAllocator) allocateIDs(name string, numOfIDs int) ([]int, error) {
 	// Check the idMap and return the id if its already allocated
 	ids, ok := idsAllocator.nameIdsMap.Load(name)
 	if ok {
@@ -249,4 +254,25 @@ func (idsAllocator *idsAllocator) ReleaseIDs(name string) {
 		idsAllocator.idBitmap.Release(id - idsAllocator.offset)
 	}
 	idsAllocator.nameIdsMap.Delete(name)
+}
+
+// TrimIDs releases the ids 'name' holds beyond the first numOfIDs, keeping the
+// rest allocated to 'name'. It is a no-op if 'name' holds numOfIDs or fewer. Only
+// this resource's own ids are touched, under its key lock, so no other resource
+// is affected.
+func (idsAllocator *idsAllocator) TrimIDs(name string, numOfIDs int) {
+	idsAllocator.nameIdsMap.LockKey(name)
+	defer idsAllocator.nameIdsMap.UnlockKey(name)
+	existingIDs, ok := idsAllocator.nameIdsMap.Load(name)
+	if !ok || len(existingIDs) <= numOfIDs {
+		return
+	}
+	for _, id := range existingIDs[numOfIDs:] {
+		idsAllocator.idBitmap.Release(id - idsAllocator.offset)
+	}
+	if numOfIDs == 0 {
+		idsAllocator.nameIdsMap.Delete(name)
+		return
+	}
+	idsAllocator.nameIdsMap.Store(name, existingIDs[:numOfIDs])
 }
