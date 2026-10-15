@@ -1117,9 +1117,13 @@ func (eIPC *egressIPClusterController) reconcileEgressIP(ctx context.Context, ol
 			// and returning an error would block egress node reconciliation
 			// when deleteEgressNode calls reconcileEgressIP for every EIP
 			// with status on a departing node. Existing assignments are
-			// deliberately preserved — removing them for a near-unreachable
-			// parse error would disrupt traffic unnecessarily.
+			// deliberately preserved to avoid disrupting traffic.
+			// Surface the misconfiguration via an event so a user can see
+			// it via `kubectl describe egressip`.
 			klog.Errorf("EgressIP %s has invalid egressNodeSelector, skipping reconciliation: %v", name, err)
+			eIPRef := corev1.ObjectReference{Kind: "EgressIP", Name: name}
+			eIPC.recorder.Eventf(&eIPRef, corev1.EventTypeWarning, "InvalidEgressNodeSelector",
+				"egressNodeSelector on EgressIP %s is invalid: %v", name, err)
 			return nil
 		}
 		eIPC.setEgressIPNodeSelector(name, selector)
