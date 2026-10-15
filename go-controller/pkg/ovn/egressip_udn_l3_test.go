@@ -423,6 +423,8 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				gomega.Expect(fakeOvn.networkManager.Start()).Should(gomega.Succeed())
 				defer fakeOvn.networkManager.Stop()
+				// Mirror UDN controller Start: register network after pods are in the port cache.
+				gomega.Expect(fakeOvn.eIPController.SyncNetworkReady(netInfo.GetNetworkName())).To(gomega.Succeed())
 				err = fakeOvn.controller.WatchEgressIPPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchEgressIPNamespaces()
@@ -793,6 +795,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.eIPController.ensureSwitchPoliciesForNode(secConInfo.bnc.GetNetInfo(), node1Name)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(fakeOvn.eIPController.SyncNetworkReady(networkName1)).To(gomega.Succeed())
 				err = fakeOvn.controller.WatchEgressIPPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchEgressIPNamespaces()
@@ -1325,6 +1328,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				err = fakeOvn.networkManager.Start()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				defer fakeOvn.networkManager.Stop()
+				gomega.Expect(fakeOvn.eIPController.SyncNetworkReady(networkName1)).To(gomega.Succeed())
 				err = fakeOvn.controller.WatchEgressIPPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchEgressIPNamespaces()
@@ -2073,6 +2077,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.eIPController.ensureSwitchPoliciesForNode(netInfo, node1Name)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(fakeOvn.eIPController.SyncNetworkReady(networkName1)).To(gomega.Succeed())
 				err = fakeOvn.controller.WatchEgressIPPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchEgressIPNamespaces()
@@ -2444,6 +2449,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.eIPController.ensureSwitchPoliciesForNode(netInfo, node1Name)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(fakeOvn.eIPController.SyncNetworkReady(networkName1)).To(gomega.Succeed())
 				err = fakeOvn.controller.WatchEgressIPPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchEgressIPNamespaces()
@@ -2815,6 +2821,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				defer fakeOvn.networkManager.Stop()
 				fakeOvn.controller.nodeName = node1Name
 				fakeOvn.eIPController.nodeName = node1Name
+				gomega.Expect(fakeOvn.eIPController.SyncNetworkReady(networkName1)).To(gomega.Succeed())
 				err = fakeOvn.controller.WatchEgressIPPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchEgressIPNamespaces()

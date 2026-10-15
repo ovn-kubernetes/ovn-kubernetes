@@ -359,6 +359,7 @@ func (oc *Layer3UserDefinedNetworkController) Stop() {
 		return
 	}
 	klog.Infof("Stop %s UDN controller of network %s", oc.TopologyType(), oc.GetNetworkName())
+	oc.unregisterEgressIPNetwork()
 	oc.DeregisterServiceNetwork()
 	oc.DeregisterNodeHandler()
 	close(oc.stopChan)
@@ -393,6 +394,7 @@ func (oc *Layer3UserDefinedNetworkController) Cleanup() error {
 	// Note : Cluster manager removes the subnet annotation for the node.
 	netName := oc.GetNetworkName()
 	klog.Infof("Delete OVN logical entities for %s network controller of network %s", types.Layer3Topology, netName)
+	oc.unregisterEgressIPNetwork()
 
 	// For primary L3 UDN only: when this is a cleanup-only controller (dummy for stale UDN
 	// cleanup; GetNetworkID() is InvalidID because netInfo was never reconciled from a NAD),
@@ -528,6 +530,8 @@ func (oc *Layer3UserDefinedNetworkController) run() error {
 		return err
 	}
 
+	oc.enqueueEgressIPNetwork()
+
 	if util.IsMultiNetworkPoliciesSupportEnabled() && !oc.IsPrimaryNetwork() {
 		// WatchMultiNetworkPolicy depends on WatchPods and WatchNamespaces
 		if err := oc.WatchMultiNetworkPolicy(); err != nil {
@@ -566,6 +570,22 @@ func (oc *Layer3UserDefinedNetworkController) run() error {
 	klog.Infof("Completing all the Watchers for network %s took %v", oc.GetNetworkName(), time.Since(start))
 
 	return nil
+}
+
+func (oc *Layer3UserDefinedNetworkController) enqueueEgressIPNetwork() {
+	if !config.OVNKubernetesFeature.EnableEgressIP || !util.IsNetworkSegmentationSupportEnabled() ||
+		!oc.IsPrimaryNetwork() || oc.eIPController == nil {
+		return
+	}
+	oc.eIPController.EnqueueNetwork(oc.GetNetworkName())
+}
+
+func (oc *Layer3UserDefinedNetworkController) unregisterEgressIPNetwork() {
+	if !config.OVNKubernetesFeature.EnableEgressIP || !util.IsNetworkSegmentationSupportEnabled() ||
+		!oc.IsPrimaryNetwork() || oc.eIPController == nil {
+		return
+	}
+	oc.eIPController.UnregisterNetwork(oc.GetNetworkName())
 }
 
 func (oc *Layer3UserDefinedNetworkController) waitForLocalZoneNodeLogicalSwitches() error {

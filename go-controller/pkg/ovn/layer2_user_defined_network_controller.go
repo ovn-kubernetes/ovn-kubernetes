@@ -361,6 +361,7 @@ func (oc *Layer2UserDefinedNetworkController) run() error {
 	if err != nil {
 		return err
 	}
+	oc.enqueueEgressIPNetwork()
 	if oc.svcController != nil {
 		startSvc := time.Now()
 
@@ -375,10 +376,27 @@ func (oc *Layer2UserDefinedNetworkController) run() error {
 	return nil
 }
 
+func (oc *Layer2UserDefinedNetworkController) enqueueEgressIPNetwork() {
+	if !config.OVNKubernetesFeature.EnableEgressIP || !util.IsNetworkSegmentationSupportEnabled() ||
+		!oc.IsPrimaryNetwork() || oc.eIPController == nil {
+		return
+	}
+	oc.eIPController.EnqueueNetwork(oc.GetNetworkName())
+}
+
+func (oc *Layer2UserDefinedNetworkController) unregisterEgressIPNetwork() {
+	if !config.OVNKubernetesFeature.EnableEgressIP || !util.IsNetworkSegmentationSupportEnabled() ||
+		!oc.IsPrimaryNetwork() || oc.eIPController == nil {
+		return
+	}
+	oc.eIPController.UnregisterNetwork(oc.GetNetworkName())
+}
+
 // Cleanup cleans up logical entities for the given network, called from net-attach-def routine
 // could be called from a dummy Controller (only has CommonNetworkControllerInfo set)
 func (oc *Layer2UserDefinedNetworkController) Cleanup() error {
 	networkName := oc.GetNetworkName()
+	oc.unregisterEgressIPNetwork()
 
 	// For primary Layer2 UDN only: when this is a cleanup-only controller (dummy for stale UDN
 	// cleanup; GetNetworkID() is InvalidID because netInfo was never reconciled from a NAD),
@@ -511,6 +529,7 @@ func (oc *Layer2UserDefinedNetworkController) init() (err error) {
 
 func (oc *Layer2UserDefinedNetworkController) Stop() {
 	klog.Infof("Stopping controller for UDN %s", oc.GetNetworkName())
+	oc.unregisterEgressIPNetwork()
 	oc.DeregisterServiceNetwork()
 	oc.DeregisterNodeHandler()
 	oc.BaseLayer2UserDefinedNetworkController.stop()
