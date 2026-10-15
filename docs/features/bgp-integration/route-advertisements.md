@@ -75,16 +75,16 @@ configuration. Please use the `Feature Config` option
 `enable-route-advertisements` under `OVNKubernetesFeatureConfig` config to
 enable it.
 
-## Local kind demo
+## Local KinD demo
 
-A local kind cluster can enable route advertisements with
+A local KinD cluster can enable route advertisements with
 `contrib/kind.sh -mne -rae`.
 For FRR-k8s development, apply the patches in
 `contrib/frr-k8s/patches` to an FRR-k8s checkout and run the patched
 `hack/demo/demo.sh` script from that checkout.
 
 Without arguments, the demo configures the main BGP session only. It discovers
-the kind node `InternalIP` addresses and the external FRR peer address for each
+the KinD node `InternalIP` addresses and the external FRR peer address for each
 available IP family. In a dual-stack cluster, the rendered FRR and Kubernetes
 configuration includes both IPv4 and IPv6 peers.
 
@@ -1040,10 +1040,6 @@ B>* 172.26.0.0/16 [200/0] via 172.18.0.5, breth0 (vrf default), weight 1, 01:39:
 FRR applies its configuration to the host networking stack in the form of
 routes. Thus standard tooling can be used for dataplane troubleshooting:
 connectivity checks, tcpdump, ovn-trace, ovs-trace, ...
-
-## Best Practices
-
-TBD
 
 ## Future Items
 

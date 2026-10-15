@@ -2,7 +2,7 @@ The following is a walkthrough for an installation in an environment with 4 virt
 
 Note that the resulting environment might be highly unstable.
 
-If your goal is to set up an environment quickly or to set up a development environment, see the [kind installation documentation](launching-ovn-kubernetes-on-kind.md) instead.
+If your goal is to set up an environment quickly or to set up a development environment, see the [KinD installation documentation](launching-ovn-kubernetes-on-kind.md) instead.
 
 ## Environment setup
 
@@ -293,7 +293,7 @@ rtt min/avg/max/mdev = 18.506/18.506/18.506/0.000 ms
 
 ### Install container runtime engine and kubeadm (node1, node2, node3)
 
-The following will be a brief walkthrough of what's requried to install the container runtime and kubernetes. For further details, follow the `kubeadm` documentation:
+The following will be a brief walkthrough of what's required to install the container runtime and kubernetes. For further details, follow the `kubeadm` documentation:
 * [https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/create-cluster-kubeadm/](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/create-cluster-kubeadm/)
 * [https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/)
 
@@ -428,8 +428,8 @@ ln -s $(which pip3) /usr/local/bin/pip
 
 Install golang, for further details see [https://golang.org/doc/install](https://golang.org/doc/install):
 ~~~
-curl -L -O https://golang.org/dl/go1.17.linux-amd64.tar.gz
-rm -rf /usr/local/go && tar -C /usr/local -xzf go1.17.linux-amd64.tar.gz
+curl -L -O https://go.dev/dl/go1.26.3.linux-amd64.tar.gz
+rm -rf /usr/local/go && tar -C /usr/local -xzf go1.26.3.linux-amd64.tar.gz
 echo "export PATH=$PATH:/usr/local/go/bin" >> ~/.bashrc
 source ~/.bashrc
 go version

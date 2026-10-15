@@ -104,8 +104,6 @@ NAME                                                    CREATED AT
 baselineadminnetworkpolicies.policy.networking.k8s.io   2023-10-01T11:33:58Z
 ```
 
-## Workflow Description
-
 ## Implementation Details
 
 ### User facing API Changes
@@ -125,7 +123,11 @@ metadata:
 spec:
   priority: 34
   subject:
-    namespaces: {}
+    namespaces:
+      matchExpressions:
+      - key: kubernetes.io/metadata.name
+        operator: NotIn
+        values: [kube-system, ovn-kubernetes]
   ingress:
   - name: "allow-from-ingress-nginx" # rule0
     action: "Allow"
@@ -170,11 +172,14 @@ spec:
             kubernetes.io/metadata.name: kube-system
         podSelector:
           matchLabels:
-            app: dns
+            k8s-app: kube-dns
     ports:
     - portNumber:
         protocol: UDP
-        port: 5353
+        port: 53
+    - portNumber:
+        protocol: TCP
+        port: 53
   - name: "allow-to-kapi-server" # rule1
     action: "Allow"
     to:
@@ -228,8 +233,9 @@ spec:
 ```
 
 * `subject` is the set of pods selected by `cluster-control` ANP, on
-  which the rules in the policy are applied on. Here its all the pods
-  in the cluster.
+  which the rules in the policy are applied. Here it is all pods outside
+  the `kube-system` and `ovn-kubernetes` namespaces; pods in those namespaces
+  are not subject to this ANP.
 * Each AdminNetworkPolicy resource will have a`.spec.priority` field. `priority`
   is 34 here that determines the priority of this ANP versus other
   ANPs in your cluster.  The lower the number the higher the precedence.
@@ -237,17 +243,17 @@ spec:
   by OVN-Kubernetes) is the lowest priority.
 * `ingress` has 5 rules:
     * rule0: always allow ingress traffic coming from ingress-nginx namespace
-      to all the pods in the cluster
-    * rule1: always allow TCP ingress traffic coming from port 7564 of
+      to selected pods
+    * rule1: always allow TCP ingress traffic to destination port 7564 from
       pods in monitoring namespace
     * rule2: always allow all ingress traffic from `open` tenant's namespaces
     * rule3: always pass all ingress traffic from `restricted` tenant's namespaces
       (please check the following sections to learn more about what `pass` is)
     * rule4: deny all other ingress traffic including same namespace pods
 * `egress` has 6 rules:
-    * rule0: always allow egress traffic coming from all pods to dns pods
-    * rule1: always allow TCP egress traffic coming from all pods to KAPI pods
-    * rule2: always allow all egress traffic coming from all pods to splunk logging
+    * rule0: always allow egress traffic coming from selected pods to dns pods
+    * rule1: always allow TCP egress traffic coming from selected pods to KAPI pods
+    * rule2: always allow all egress traffic coming from selected pods to splunk logging
       tenant at TCP ports 8991 and 8992
     * rule3: always allow all egress traffic to `open` tenant's namespaces, company's
       intranet CIDR ranges and all worker nodes in the cluster
@@ -302,7 +308,7 @@ you are selecting ALL the pods in the cluster including
 `kube-system` and `ovn-kubernetes` namespaces which is
 something you probably don't want to do. If you do this,
 then the cluster will go into a non-functional state since
-basic infrastructued pods cannot communicate unless you
+basic infrastructure pods cannot communicate unless you
 explicitly define higher priority allow rules.
 
 Almost always you probably need a policy that looks like:
@@ -601,7 +607,7 @@ severity            : []
 tier                : 1
 ```
 
-`nbdb.AdressSet`: These can be listed using `ovn-nbctl list address-set`
+`nbdb.AddressSet`: These can be listed using `ovn-nbctl list address-set`
 
 The Ingress Address-Sets for the above AdminNetworkPolicy are:
 
@@ -905,7 +911,7 @@ spec:
           matchExpressions:
           - key: tenant
             operator: NotIn
-            value: yellow
+            values: [yellow]
   egress:
     - action: Deny
       to:
@@ -913,7 +919,7 @@ spec:
           matchExpressions:
           - key: tenant
             operator: NotIn
-            value: yellow
+            values: [yellow]
 ```
 In that case you don't need a 43 priority ANP.
 However note that if you define it this way then each
@@ -1117,7 +1123,7 @@ Here you can see that `0.0.0.0/0` is the only IP in
 the set but it means all IPs.
 
 So now match makes more sense: Where we are saying
-source of traffic shoule be the port of any one of these pods in the
+source of traffic should be the port of any one of these pods in the
 port-group AND destination is any IP, then we `drop` the
 packet which is the `action` on the ACL.
 
@@ -1269,7 +1275,7 @@ help users understand what's happening in this feature.
   pods; so atmost only "DENY from all other pods" can be expressed as the best
   case default deny for ingress. In case of egress, one can deny to 0.0.0.0/0
   and it will act like a default deny to everything.
-* When using 0.0.0.0/0 to DENY everything, it is recommeded to be extra careful.
+* When using 0.0.0.0/0 to DENY everything, it is recommended to be extra careful.
   If higher priority allow rules for essential traffic like towards DNS and
   KAPI-server are not defined before doing the default-deny, then you have the
   potential to lock up your entire cluster leaving it in a non-functional state.
@@ -1289,7 +1295,7 @@ help users understand what's happening in this feature.
   requirements for a strong `Allow`.
   On the other hand, if you don't (plan to) have any network policies in your cluster
   you can just use `Allow` instead to indicate you don't want to block the traffic.
-* Since `0-100` is the supported priority range, it is always better when designing
+* Since `0-99` is the supported priority range, it is always better when designing
   your admin policies to use a middle range like `30-70` by leaving some placeholder
   priorities before and after. Even in the middle range, be careful to leave gaps so
   that as your infrastructure requirements evolve over time, you are able to insert

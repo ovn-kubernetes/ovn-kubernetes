@@ -45,7 +45,7 @@ Create the VFs
 echo '4' > /sys/class/net/enp3s0f0/device/sriov_numvfs
 ```
 
-Verfiy the VFs are created
+Verify the VFs are created
 
 ```
 ip link show enp3s0f0
@@ -132,10 +132,9 @@ Multus Config
 
 Deploy multus CNI as daemonset see https://github.com/intel/multus-cni
 
-Create NetworkAttachementDefinition CRD with OVN CNI config
+Create NetworkAttachmentDefinition CRD with OVN CNI config
 
 ```yaml
-Kubernetes Network CRD Spec:
 apiVersion: "k8s.cni.cncf.io/v1"
 kind: NetworkAttachmentDefinition
 metadata:
@@ -143,7 +142,7 @@ metadata:
   annotations:
     k8s.v1.cni.cncf.io/resourceName: mellanox.com/cx5_sriov_switchdev
 spec:
-  Config: '{"cniVersion":"0.3.1","name":"ovn-kubernetes","type":"ovn-k8s-cni-overlay","ipam":{},"dns":{}}'
+  config: '{"cniVersion":"0.3.1","name":"ovn-kubernetes","type":"ovn-k8s-cni-overlay","ipam":{},"dns":{}}'
 ```
 
 ## Deploy POD with OVS hardware-offload
@@ -251,7 +250,7 @@ In addition to all the steps listed above, insert the virtio-vdpa driver and the
     $ modprobe virtio-vdpa
     $ modprobe mlx5-vdpa
 
-The the `vdpa` tool (part of iproute package) is used to create a vdpa device on top
+The `vdpa` tool (part of iproute package) is used to create a vdpa device on top
 of an existing VF:
 
     $ vdpa mgmtdev show

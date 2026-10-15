@@ -2,7 +2,7 @@
 Please make sure you've read and understood our contributing guidelines;
 https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/CONTRIBUTING.md
 
-** Make sure all your commits include a signature generated with `git commit -s` **
+**Make sure all your commits include a DCO sign-off added with `git commit -s`.**
 
 All changes must adhere to this template to make it easy for reviewers
 and preserve rationale/history behind every change
@@ -45,7 +45,7 @@ which areas of the code were changed as it's easier to assign reviewers
 - [ ] My code requires tests
 - [ ] if so, I have added and/or updated the tests as required
 - [ ] My code does not require tests
-- [ ] All the tests have passed in the CI <!-- If not leave a comment as to why the CI is red and if you need help understanding what's wrong -->
+- [ ] All required CI checks have passed <!-- If checks are pending or failing, note that here. -->
 
 ## How to verify it
 <!--
