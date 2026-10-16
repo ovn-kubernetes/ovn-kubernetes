@@ -27,6 +27,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
@@ -144,6 +145,8 @@ type testNode struct {
 	Generation                int
 	Labels                    map[string]string
 	PrimaryAddressAnnotation  string
+	InternalIPs               []string
+	OmitPrimaryAddress        bool
 	DPUHostAddressAnnotation  string
 	SubnetsAnnotation         string
 	TunnelIDsAnnotation       string
@@ -185,7 +188,15 @@ func (tn testNode) Node() *corev1.Node {
 		vtepJSON, _ := json.Marshal(vteps)
 		annotations[util.OVNNodeVTEPs] = string(vtepJSON)
 	}
+	if tn.OmitPrimaryAddress {
+		delete(annotations, util.OvnNodeIfAddr)
+	}
+	var addresses []corev1.NodeAddress
+	for _, ip := range tn.InternalIPs {
+		addresses = append(addresses, corev1.NodeAddress{Type: corev1.NodeInternalIP, Address: ip})
+	}
 	return &corev1.Node{
+		Status: corev1.NodeStatus{Addresses: addresses},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        tn.Name,
 			Labels:      tn.Labels,
@@ -1512,11 +1523,23 @@ func TestController_reconcile(t *testing.T) {
 			expectAcceptedStatus: metav1.ConditionFalse,
 		},
 		{
+			name: "reports pending managed peering without InternalIP addresses",
+			ra:   &testRA{Name: "ra", AdvertisePods: true, SelectsDefault: true},
+			frrConfigs: []*testFRRConfig{{Name: types.ManagedBGPConfigurationName, Namespace: frrNamespace,
+				Routers: []*testRouter{{ASN: 1, Neighbors: []*testNeighbor{{ASN: 1, Address: "10.0.0.2"}}}},
+			}},
+			nodes:                         []*testNode{{Name: "node", SubnetsAnnotation: `{ "default": "1.1.0.0/24" }`}},
+			reconcile:                     "ra",
+			expectAcceptedStatus:          metav1.ConditionFalse,
+			expectAcceptedMessageContains: "waiting for InternalIP addresses",
+		},
+
+		{
 			name: "excludes self-neighbor from per-node FRRConfiguration",
 			ra:   &testRA{Name: "ra", AdvertisePods: true, SelectsDefault: true},
 			frrConfigs: []*testFRRConfig{
 				{
-					Name:      "frrConfig-base",
+					Name:      types.ManagedBGPConfigurationName,
 					Namespace: frrNamespace,
 					Routers: []*testRouter{
 						{ASN: 1, Neighbors: []*testNeighbor{
@@ -1529,6 +1552,46 @@ func TestController_reconcile(t *testing.T) {
 			nodes: []*testNode{
 				{
 					Name:                     "node",
+					InternalIPs:              []string{"10.0.0.1", "fd00::1"},
+					SubnetsAnnotation:        "{\"default\":\"1.1.0.0/24\"}",
+					PrimaryAddressAnnotation: "{\"ipv4\":\"192.0.2.1/24\"}",
+				},
+			},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra/" + types.ManagedBGPConfigurationName + "/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.1.0.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "10.0.0.2", Advertise: []string{"1.1.0.0/24"}},
+						}},
+					}},
+			},
+			expectNADAnnotations: map[string]map[string]string{"default": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
+		},
+		{
+			name: "preserves user-defined peers matching the primary address",
+			ra:   &testRA{Name: "ra", AdvertisePods: true, SelectsDefault: true},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "user-defined",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "10.0.0.1"}, // self for node
+							{ASN: 1, Address: "10.0.0.2"}, // other node
+						}},
+					},
+				},
+			},
+			nodes: []*testNode{
+				{
+					Name:                     "node",
+					OmitPrimaryAddress:       false,
+					InternalIPs:              []string{"10.0.0.1", "fd00::1"},
 					SubnetsAnnotation:        "{\"default\":\"1.1.0.0/24\"}",
 					PrimaryAddressAnnotation: "{\"ipv4\":\"10.0.0.1/24\"}",
 				},
@@ -1538,10 +1601,53 @@ func TestController_reconcile(t *testing.T) {
 			expectFRRConfigs: []*testFRRConfig{
 				{
 					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
-					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig-base/node"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra/" + "user-defined" + "/node"},
 					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
+					RawConfig:    "router bgp 1\n address-family ipv4 unicast\n  neighbor 10.0.0.1 allowas-in origin\n  neighbor 10.0.0.2 allowas-in origin\n exit-address-family\nexit\n!\n",
 					Routers: []*testRouter{
 						{ASN: 1, Prefixes: []string{"1.1.0.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "10.0.0.1", Advertise: []string{"1.1.0.0/24"}},
+							{ASN: 1, Address: "10.0.0.2", Advertise: []string{"1.1.0.0/24"}},
+						}},
+					}},
+			},
+			expectNADAnnotations: map[string]map[string]string{"default": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
+		},
+		{
+			name: "generates user-defined peering without the primary address annotation",
+			ra:   &testRA{Name: "ra", AdvertisePods: true, SelectsDefault: true},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "user-defined",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "10.0.0.1"}, // self for node
+							{ASN: 1, Address: "10.0.0.2"}, // other node
+						}},
+					},
+				},
+			},
+			nodes: []*testNode{
+				{
+					Name:                     "node",
+					OmitPrimaryAddress:       true,
+					InternalIPs:              []string{"10.0.0.1", "fd00::1"},
+					SubnetsAnnotation:        "{\"default\":\"1.1.0.0/24\"}",
+					PrimaryAddressAnnotation: "{\"ipv4\":\"192.0.2.1/24\"}",
+				},
+			},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra/" + "user-defined" + "/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
+					RawConfig:    "router bgp 1\n address-family ipv4 unicast\n  neighbor 10.0.0.1 allowas-in origin\n  neighbor 10.0.0.2 allowas-in origin\n exit-address-family\nexit\n!\n",
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.1.0.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "10.0.0.1", Advertise: []string{"1.1.0.0/24"}},
 							{ASN: 1, Address: "10.0.0.2", Advertise: []string{"1.1.0.0/24"}},
 						}},
 					}},
@@ -1553,7 +1659,7 @@ func TestController_reconcile(t *testing.T) {
 			ra:   &testRA{Name: "ra", AdvertisePods: true, SelectsDefault: true},
 			frrConfigs: []*testFRRConfig{
 				{
-					Name:      "frrConfig-base",
+					Name:      types.ManagedBGPConfigurationName,
 					Namespace: frrNamespace,
 					Routers: []*testRouter{
 						{ASN: 1, Neighbors: []*testNeighbor{
@@ -1566,6 +1672,7 @@ func TestController_reconcile(t *testing.T) {
 			nodes: []*testNode{
 				{
 					Name:                     "node",
+					InternalIPs:              []string{"10.0.0.1", "fd00::1"},
 					SubnetsAnnotation:        "{\"default\":[\"1.1.0.0/24\",\"fd01::/64\"]}",
 					PrimaryAddressAnnotation: "{\"ipv4\":\"10.0.0.1/24\",\"ipv6\":\"fd00::1/64\"}",
 				},
@@ -1576,7 +1683,7 @@ func TestController_reconcile(t *testing.T) {
 			expectFRRConfigs: []*testFRRConfig{
 				{
 					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
-					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig-base/node"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra/" + types.ManagedBGPConfigurationName + "/node"},
 					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
 					Routers: []*testRouter{
 						{ASN: 1, Prefixes: []string{"1.1.0.0/24", "fd01::/64"}, Neighbors: []*testNeighbor{
@@ -3165,6 +3272,9 @@ exit
 					HostSubnetLength: 64,
 				},
 			}
+			previousManagedBGP := config.ManagedBGP
+			config.ManagedBGP.FRRNamespace = frrNamespace
+			t.Cleanup(func() { config.ManagedBGP = previousManagedBGP })
 			config.Default.Transport = tt.transport
 			if tt.ipv6 {
 				config.IPv6Mode = true
@@ -3386,6 +3496,11 @@ const unsafeInputValue = "eth0\nx"
 
 func newUnsafeInputTest(t *testing.T, g *gomega.WithT, generated ...*testFRRConfig) *unsafeInputTest {
 	t.Helper()
+	return newFRRReconcileTest(t, g, unsafeInputValue, generated...)
+}
+
+func newFRRReconcileTest(t *testing.T, g *gomega.WithT, peerInterface string, generated ...*testFRRConfig) *unsafeInputTest {
+	t.Helper()
 	previousDefault, previousFeatures, previousGateway := config.Default, config.OVNKubernetesFeature, config.Gateway
 	t.Cleanup(func() {
 		config.Default, config.OVNKubernetesFeature, config.Gateway = previousDefault, previousFeatures, previousGateway
@@ -3430,7 +3545,7 @@ func newUnsafeInputTest(t *testing.T, g *gomega.WithT, generated ...*testFRRConf
 		Namespace: frrNamespace,
 		Routers: []*testRouter{
 			{ASN: 1, Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
-				{ASN: 1, Interface: unsafeInputValue},
+				{ASN: 1, Interface: peerInterface},
 			}},
 		},
 	}
@@ -3910,6 +4025,13 @@ func TestUpdates(t *testing.T) {
 			expectedReconcile: []string{"ra1", "ra2", "ra3"},
 		},
 		{
+			name:              "reconciles all RAs on updated Node InternalIP addresses",
+			oldObject:         &testNode{Name: "node"},
+			newObject:         &testNode{Name: "node", InternalIPs: []string{"192.0.2.1"}},
+			expectedReconcile: []string{"ra1", "ra2", "ra3"},
+		},
+
+		{
 			name:              "reconciles all RAs on updated Node labels",
 			oldObject:         &testNode{Name: "eip"},
 			newObject:         &testNode{Name: "eip", Labels: map[string]string{"select": "1"}},
@@ -4221,4 +4343,67 @@ func TestController_updateRAStatus(t *testing.T) {
 	g.Expect(accepted).NotTo(gomega.BeNil(), "the Accepted condition should still be set after a successful reconcile")
 	g.Expect(accepted.Status).To(gomega.Equal(metav1.ConditionTrue), "the Accepted condition should be true after a successful reconcile")
 	g.Expect(accepted.LastTransitionTime.Time).To(gomega.BeTemporally(">", rewound.Time), "a status flip should bump the transition time")
+}
+
+// Healthy nodes on both sides of a failing node must be updated, while only
+// still-selected configurations for the failed node survive reconciliation.
+func TestController_reconcilePartialNodeFailure(t *testing.T) {
+	for _, pending := range []bool{false, true} {
+		t.Run(fmt.Sprintf("pending=%t", pending), func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			old := generatedFRRConfig("ovnk-generated-old", "node1", true)
+			obsolete := generatedFRRConfig("ovnk-generated-deleted", "deleted-node", true)
+			removedSource := generatedFRRConfig("ovnk-generated-removed-source", "node1", true)
+			removedSource.Annotations[types.OvnRouteAdvertisementsKey] = "ra/removed-source/node1"
+			tt := newFRRReconcileTest(t, g, "eth0", old, obsolete, removedSource)
+			config.Gateway.Mode = config.GatewayModeShared
+			ctx := context.Background()
+			node := (&testNode{Name: "node1", SubnetsAnnotation: `{"default":"1.1.1.0/24"}`}).Node()
+			if pending {
+				node.Annotations[util.OVNNodePrimaryDPUHostAddr] = `{"ipv4":"172.18.0.1/24"}`
+			} else {
+				node.Annotations["k8s.ovn.org/node-subnets"] = "invalid"
+			}
+			_, err := tt.fakeClientset.KubeClient.CoreV1().Nodes().Create(ctx, node, metav1.CreateOptions{})
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+			healthy := (&testNode{Name: "node2", SubnetsAnnotation: `{"default":"1.1.2.0/24"}`, OmitPrimaryAddress: true}).Node()
+			_, err = tt.fakeClientset.KubeClient.CoreV1().Nodes().Create(ctx, healthy, metav1.CreateOptions{})
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+			g.Eventually(func() error { _, err := tt.c.nodeLister.Get("node2"); return err }).Should(gomega.Succeed())
+			g.Eventually(func() error { _, err := tt.c.nodeLister.Get("node1"); return err }).Should(gomega.Succeed())
+			g.Expect(tt.c.reconcile("ra")).To(gomega.Succeed())
+			configs, err := tt.fakeClientset.FRRClient.ApiV1beta1().FRRConfigurations("frrNamespace").List(ctx, metav1.ListOptions{})
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+			var keys []string
+			for _, cfg := range configs.Items {
+				if key := cfg.Annotations[types.OvnRouteAdvertisementsKey]; key != "" {
+					keys = append(keys, key)
+				}
+			}
+			g.Expect(keys).To(gomega.ConsistOf("ra/frrConfig/node", "ra/frrConfig/node1", "ra/frrConfig/node2"))
+			preserved, err := tt.fakeClientset.FRRClient.ApiV1beta1().FRRConfigurations("frrNamespace").Get(ctx, old.Name, metav1.GetOptions{})
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+			g.Expect(preserved.Spec).To(gomega.Equal(old.FRRConfiguration().Spec))
+			ra, err := tt.fakeClientset.RouteAdvertisementsClient.K8sV1().RouteAdvertisements().Get(ctx, "ra", metav1.GetOptions{})
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+			condition := meta.FindStatusCondition(ra.Status.Conditions, "Accepted")
+			g.Expect(condition).NotTo(gomega.BeNil())
+			g.Expect(condition.Status).To(gomega.Equal(metav1.ConditionFalse))
+			g.Expect(condition.Message).To(gomega.ContainSubstring("node1"))
+			// Recover the node, then verify the preserved configuration is replaced.
+			delete(node.Annotations, util.OVNNodePrimaryDPUHostAddr)
+			node.Annotations["k8s.ovn.org/node-subnets"] = `{"default":"1.1.1.0/24"}`
+			_, err = tt.fakeClientset.KubeClient.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+			g.Eventually(func() map[string]string { n, _ := tt.c.nodeLister.Get("node1"); return n.Annotations }).Should(gomega.Equal(node.Annotations))
+			g.Eventually(func() int { cfgs, _ := tt.c.frrLister.List(labels.Everything()); return len(cfgs) }).Should(gomega.Equal(4))
+			g.Expect(tt.c.reconcile("ra")).To(gomega.Succeed())
+			updated, err := tt.fakeClientset.FRRClient.ApiV1beta1().FRRConfigurations("frrNamespace").Get(ctx, old.Name, metav1.GetOptions{})
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+			g.Expect(updated.Spec.BGP.Routers[0].Prefixes).To(gomega.Equal([]string{"1.1.1.0/24"}))
+			ra, err = tt.fakeClientset.RouteAdvertisementsClient.K8sV1().RouteAdvertisements().Get(ctx, "ra", metav1.GetOptions{})
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+			g.Expect(meta.IsStatusConditionTrue(ra.Status.Conditions, "Accepted")).To(gomega.BeTrue())
+		})
+	}
 }

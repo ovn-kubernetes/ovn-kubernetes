@@ -391,6 +391,15 @@ func (c *Controller) reconcile(name string) error {
 	}
 
 	hadUpdates, err := c.reconcileRouteAdvertisements(name, ra)
+	var nodeErr *nodeGenerationError
+	if errors.As(err, &nodeErr) {
+		if statusErr := c.updateRAStatus(ra, hadUpdates, err); statusErr != nil {
+			return statusErr
+		}
+		// A pending/configuration error on one node must not suppress retries
+		// for an API or other transient failure on another node.
+		return nodeErr.retryError()
+	}
 	if err != nil && !errors.Is(err, errConfig) && !errors.Is(err, errPending) {
 		return fmt.Errorf("failed to reconcile RouteAdvertisements %q: %w", name, err)
 	}
@@ -421,12 +430,18 @@ func (c *Controller) reconcileRouteAdvertisements(name string, ra *ratypes.Route
 		}
 		return deleted || hadNADUpdates, cfgErr
 	}
-	if cfgErr != nil && !errors.Is(cfgErr, errPending) {
+	var nodeErr *nodeGenerationError
+	partial := errors.As(cfgErr, &nodeErr)
+	if cfgErr != nil && !partial && !errors.Is(cfgErr, errPending) {
 		return false, cfgErr
 	}
 
 	// update them
-	hadFRRConfigUpdates, err := c.updateFRRConfigurations(name, frrConfigs)
+	var preserve sets.Set[string]
+	if partial {
+		preserve = nodeErr.preserve
+	}
+	hadFRRConfigUpdates, err := c.updateFRRConfigurations(name, frrConfigs, preserve)
 	if err != nil {
 		return false, fmt.Errorf("failed updating FRRConfigurations for RouteAdvertisements %q: %w", name, err)
 	}
@@ -438,6 +453,26 @@ func (c *Controller) reconcileRouteAdvertisements(name string, ra *ratypes.Route
 	}
 
 	return hadFRRConfigUpdates || hadNADUpdates, cfgErr
+}
+
+// nodeGenerationError carries partial generation failures and the existing
+// node/template configurations that must survive until those nodes recover.
+type nodeGenerationError struct {
+	errs     []error
+	preserve sets.Set[string]
+}
+
+func (e *nodeGenerationError) Error() string   { return errors.Join(e.errs...).Error() }
+func (e *nodeGenerationError) Unwrap() []error { return e.errs }
+
+func (e *nodeGenerationError) retryError() error {
+	var retryErrors []error
+	for _, err := range e.errs {
+		if !errors.Is(err, errConfig) && !errors.Is(err, errPending) {
+			retryErrors = append(retryErrors, err)
+		}
+	}
+	return errors.Join(retryErrors...)
 }
 
 // selectedNetworks is a helper struct that stores information about networks
@@ -862,90 +897,110 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 		return prefixes, nil
 	}
 
+	failures := &nodeGenerationError{preserve: sets.New[string]()}
 	generated := []*frrtypes.FRRConfiguration{}
 	// iterate nodes in their sorted order rather than ranging over the map, so
 	// that processing and error messages are deterministic across reconciles
 	for _, node := range nodes {
 		nodeName := node.Name
 		frrConfigs := nodeToFRRConfig[nodeName]
-		// reset node specific information
-		selectedNetworks.hostNetworkSubnets = map[string][]string{}
-		selectedNetworks.hostSubnets = []string{}
+		nodeConfigs, nodeErr := func() ([]*frrtypes.FRRConfiguration, error) {
+			var nodeConfigs []*frrtypes.FRRConfiguration
+			// reset node specific information
+			selectedNetworks.hostNetworkSubnets = map[string][]string{}
+			selectedNetworks.hostSubnets = []string{}
 
-		// gather node specific information
-		nodeNetworks := make([]string, 0, len(selectedNetworks.networks))
-		for _, network := range selectedNetworks.networks {
-			if !c.nm.NodeHasNetwork(nodeName, network) {
-				// only advertise a network on nodes where it is active, that
-				// is, with pods or EgressIPs attached to it; NodeHasNetwork
-				// returns false only with dynamic UDN allocation enabled.
-				// The network manager notifies us when a network goes active
-				// or inactive on a node.
-				continue
-			}
-			if config.OVNKubernetesFeature.EnableDynamicUDNAllocation &&
-				!config.Layer2UsesTransitRouter &&
-				selectedNetworks.networkTopology[network] == types.Layer2Topology &&
-				!c.nodeHasLayer2Allocation(nodeName, network) {
-				// Legacy layer2 topology uses the tunnel ID allocation as a
-				// signal that the network is rendered on the node. The allocation
-				// is stored as a node annotation whose update triggers this
-				// reconcile. Transit-router topology intentionally has no such
-				// allocation, so NodeHasNetwork above is the available signal there.
-				// TODO: replace with a per-node network status once
-				// available, to know when the network is actually rendered.
-				continue
-			}
-			nodeNetworks = append(nodeNetworks, network)
-			selectedNetworks.hostNetworkSubnets[network], err = getPrefixes(nodeName, network,
-				selectedNetworks.networkTopology[network], selectedNetworks.networkSubnets[network])
-			if err != nil {
-				return nil, nil, err
-			}
-			selectedNetworks.hostSubnets = append(selectedNetworks.hostSubnets, selectedNetworks.hostNetworkSubnets[network]...)
-			// ordered
-			slices.Sort(selectedNetworks.hostNetworkSubnets[network])
-		}
-		// order, dedup
-		selectedNetworks.hostSubnets = sets.List(sets.New(selectedNetworks.hostSubnets...))
-
-		// if there is no prefixes to advertise for this node, skip it
-		if len(selectedNetworks.hostSubnets) == 0 {
-			continue
-		}
-
-		matchedNetworks := sets.New[string]()
-		for _, frrConfig := range frrConfigs {
-			// generate FRRConfiguration for each source FRRConfiguration/node combination
-			new, err := c.generateFRRConfiguration(
-				ra,
-				frrConfig,
-				nodeName,
-				selectedNetworks,
-				matchedNetworks,
-				frrRouterVRFs,
-			)
-			if err != nil {
-				return nil, nil, err
-			}
-			if new == nil {
-				// if we got nil, we didn't match any VRF
-				if ra.Spec.TargetVRF == "auto" && frrConfigOnlyMatchesInactiveNetworks(frrConfig, selectedNetworks, nodeNetworks) {
-					// this FRRConfiguration only carries routers for VRFs of
-					// selected networks that are not active on this node:
-					// skip it for this node instead of failing, mirroring the
-					// per-network skip above.
+			// gather node specific information
+			nodeNetworks := make([]string, 0, len(selectedNetworks.networks))
+			for _, network := range selectedNetworks.networks {
+				if !c.nm.NodeHasNetwork(nodeName, network) {
+					// only advertise a network on nodes where it is active, that
+					// is, with pods or EgressIPs attached to it; NodeHasNetwork
+					// returns false only with dynamic UDN allocation enabled.
+					// The network manager notifies us when a network goes active
+					// or inactive on a node.
 					continue
 				}
-				return nil, nil, fmt.Errorf("%w: FRRConfiguration %q selected for node %q has no VRF matching the RouteAdvertisements target VRF or any selected network",
-					errConfig, frrConfig.Name, nodeName)
+				if config.OVNKubernetesFeature.EnableDynamicUDNAllocation &&
+					!config.Layer2UsesTransitRouter &&
+					selectedNetworks.networkTopology[network] == types.Layer2Topology &&
+					!c.nodeHasLayer2Allocation(nodeName, network) {
+					// Legacy layer2 topology uses the tunnel ID allocation as a
+					// signal that the network is rendered on the node. The allocation
+					// is stored as a node annotation whose update triggers this
+					// reconcile. Transit-router topology intentionally has no such
+					// allocation, so NodeHasNetwork above is the available signal there.
+					// TODO: replace with a per-node network status once
+					// available, to know when the network is actually rendered.
+					continue
+				}
+				nodeNetworks = append(nodeNetworks, network)
+				selectedNetworks.hostNetworkSubnets[network], err = getPrefixes(nodeName, network,
+					selectedNetworks.networkTopology[network], selectedNetworks.networkSubnets[network])
+				if err != nil {
+					return nil, err
+				}
+				selectedNetworks.hostSubnets = append(selectedNetworks.hostSubnets, selectedNetworks.hostNetworkSubnets[network]...)
+				// ordered
+				slices.Sort(selectedNetworks.hostNetworkSubnets[network])
 			}
-			generated = append(generated, new)
+			// order, dedup
+			selectedNetworks.hostSubnets = sets.List(sets.New(selectedNetworks.hostSubnets...))
+
+			// if there is no prefixes to advertise for this node, skip it
+			if len(selectedNetworks.hostSubnets) == 0 {
+				return nil, nil
+			}
+
+			matchedNetworks := sets.New[string]()
+			for _, frrConfig := range frrConfigs {
+				// generate FRRConfiguration for each source FRRConfiguration/node combination
+				new, err := c.generateFRRConfiguration(
+					ra,
+					frrConfig,
+					nodeName,
+					selectedNetworks,
+					matchedNetworks,
+					frrRouterVRFs,
+				)
+				if err != nil {
+					return nil, err
+				}
+				if new == nil {
+					// if we got nil, we didn't match any VRF
+					if ra.Spec.TargetVRF == "auto" && frrConfigOnlyMatchesInactiveNetworks(frrConfig, selectedNetworks, nodeNetworks) {
+						// this FRRConfiguration only carries routers for VRFs of
+						// selected networks that are not active on this node:
+						// skip it for this node instead of failing, mirroring the
+						// per-network skip above.
+						continue
+					}
+					return nil, fmt.Errorf("%w: FRRConfiguration %q selected for node %q has no VRF matching the RouteAdvertisements target VRF or any selected network",
+						errConfig, frrConfig.Name, nodeName)
+				}
+				nodeConfigs = append(nodeConfigs, new)
+			}
+			// check that we matched all the networks selected for this node on 'auto'
+			if ra.Spec.TargetVRF == "auto" && !matchedNetworks.HasAll(nodeNetworks...) {
+				return nil, fmt.Errorf("%w: selected FRRConfigurations for node %q don't match all selected networks with target VRF 'auto'", errConfig, nodeName)
+			}
+			return nodeConfigs, nil
+		}()
+		if nodeErr != nil {
+			// Unsafe template input must still take the global validation cleanup path.
+			if errors.Is(nodeErr, errUnsafeFRRInput) {
+				return nil, nil, nodeErr
+			}
+			failures.errs = append(failures.errs, fmt.Errorf("node %q: %w", nodeName, nodeErr))
+			for _, source := range frrConfigs {
+				failures.preserve.Insert(fmt.Sprintf("%s/%s/%s", ra.Name, source.Name, nodeName))
+			}
+			continue
 		}
-		// check that we matched all the networks selected for this node on 'auto'
-		if ra.Spec.TargetVRF == "auto" && !matchedNetworks.HasAll(nodeNetworks...) {
-			return nil, nil, fmt.Errorf("%w: selected FRRConfigurations for node %q don't match all selected networks with target VRF 'auto'", errConfig, nodeName)
-		}
+		generated = append(generated, nodeConfigs...)
+	}
+	if len(failures.errs) > 0 {
+		return generated, nads, failures
 	}
 
 	return generated, nads, nil
@@ -1070,30 +1125,25 @@ func (c *Controller) generateFRRConfiguration(
 		targetRouter := router
 		targetRouter.Prefixes = advertisePrefixes
 
-		// For managed FRRConfigurations, the base config lists all nodes as
-		// neighbors. When generating the per-node FRRConfiguration, we need
-		// to exclude the node itself from its own neighbor list to avoid
-		// self-peering. Look up the node's primary interface addresses so
-		// we can filter them out below.
 		node, err := c.nodeLister.Get(nodeName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get node %s: %w", nodeName, err)
 		}
-		nodeIfAddr, err := util.GetNodeIfAddrAnnotation(node)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get node %s primary interface address annotation: %w", nodeName, err)
-		}
-		// a neighbor at one of the node's own addresses is the node itself
+		// The managed full-mesh template uses Kubernetes InternalIPs. Filter
+		// against that same source, not the primary interface annotation.
+		// User-provided templates own their peer lists, which may use other
+		// interfaces or VRFs where these addresses are not local.
 		var nodeAddrs []netip.Addr
-		for _, cidr := range []string{nodeIfAddr.IPv4, nodeIfAddr.IPv6} {
-			if cidr == "" {
-				continue
+		if source.Name == types.ManagedBGPConfigurationName && source.Namespace == config.ManagedBGP.FRRNamespace {
+			v4, v6 := util.GetNodeInternalAddrs(node)
+			for _, ip := range []net.IP{v4, v6} {
+				if addr, ok := netip.AddrFromSlice(ip); ok {
+					nodeAddrs = append(nodeAddrs, addr.Unmap())
+				}
 			}
-			prefix, err := netip.ParsePrefix(cidr)
-			if err != nil {
-				return nil, fmt.Errorf("failed to parse node %s primary interface address %q: %w", nodeName, cidr, err)
+			if len(nodeAddrs) == 0 {
+				return nil, fmt.Errorf("%w: waiting for InternalIP addresses for node %q", errPending, nodeName)
 			}
-			nodeAddrs = append(nodeAddrs, prefix.Addr().Unmap())
 		}
 
 		dpuHostGatewayNextHops, err := c.getDPUHostGatewayNextHops(node, selectedNetworks, matchedNetwork)
@@ -1618,7 +1668,7 @@ func (c *Controller) deleteUnvalidatedFRRConfigurations(ra string) (deleted bool
 // RouteAdvertisements. It fetches existing FRRConfigurations by label and
 // indexes them by the annotated key. Then compares this state with desired
 // state and creates, updates or deletes the FRRConfigurations accordingly.
-func (c *Controller) updateFRRConfigurations(ra string, frrConfigurations []*frrtypes.FRRConfiguration) (bool, error) {
+func (c *Controller) updateFRRConfigurations(ra string, frrConfigurations []*frrtypes.FRRConfiguration, preserve sets.Set[string]) (bool, error) {
 	var hadUpdates bool
 
 	// fetch the currently existing FRRConfigurations for this
@@ -1694,7 +1744,10 @@ func (c *Controller) updateFRRConfigurations(ra string, frrConfigurations []*frr
 	}
 
 	// delete FRRConfigurations that should not exist
-	for _, obsoleteFRRConfigs := range existing {
+	for key, obsoleteFRRConfigs := range existing {
+		if preserve.Has(key) {
+			continue
+		}
 		for _, obsoleteFRRConfig := range obsoleteFRRConfigs {
 			err := c.frrClient.ApiV1beta1().FRRConfigurations(obsoleteFRRConfig.Namespace).Delete(
 				context.Background(),
@@ -1800,7 +1853,10 @@ func (c *Controller) updateRAStatus(ra *ratypes.RouteAdvertisements, hadUpdates 
 	if err != nil {
 		status = fmt.Sprintf("Not Accepted: %v", err)
 		msg = err.Error()
+		var nodeErr *nodeGenerationError
 		switch {
+		case errors.As(err, &nodeErr) && nodeErr.retryError() != nil:
+			reason = "InternalError"
 		case errors.Is(err, errConfig):
 			reason = "ConfigurationError"
 		case errors.Is(err, errPending):
@@ -2011,6 +2067,7 @@ func nadNeedsUpdate(oldObj, newObj *nadtypes.NetworkAttachmentDefinition) bool {
 func nodeNeedsUpdate(oldObj, newObj *corev1.Node) bool {
 	return oldObj == nil || newObj == nil ||
 		!reflect.DeepEqual(oldObj.Labels, newObj.Labels) ||
+		!reflect.DeepEqual(oldObj.Status.Addresses, newObj.Status.Addresses) ||
 		util.NodeSubnetAnnotationChanged(oldObj, newObj) ||
 		// With dynamic UDN allocation in legacy layer2 topology, the tunnel
 		// ID allocation determines which nodes advertise the network.
