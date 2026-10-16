@@ -83,3 +83,7 @@ DHCP-based IPAM for localnet secondary networks.
 **[Scalable ARP/NDP Broadcast Handling for UDN](okep-6691-scalable-arp-ndp-broadcast-udn.md)**
 
 Scalable ARP/NDP broadcast handling to keep UDN external connectivity working at high UDN density.
+
+**[OVN-Kubernetes Operator](okep-7136-ovn-kubernetes-operator.md)**
+
+Operator that installs and upgrades OVN-Kubernetes from a single custom resource.
