@@ -31,5 +31,3 @@ the service traffic
 external bridge
 * transit-switch: distributed across the nodes in the cluster and responsible
 for routing traffic between the different zones.
-
-FIXME: This page is lazily written, there is so much more to do here.

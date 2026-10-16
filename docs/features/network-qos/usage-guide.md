@@ -12,7 +12,7 @@
 
 Differentiated Services Code Point (DSCP) marking and egress bandwidth metering let you prioritize or police specific traffic flows. The new **NetworkQoS** Custom Resource Definition (CRD) in [ovn-kubernetes](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/helm/ovn-kubernetes/crds/k8s.ovn.org_networkqoses.yaml) makes both features available to Kubernetes users on **all** pod interfaces—primary or secondary—without touching pod manifests.
 
-This guide provides a step-by-step example of how to use this feature. Before you begin, ensure that you have a Kubernetes cluster configured with the ovn-kubernetes CNI. Since the examples use network attachments, you must run the cluster with multiple network support enabled. In a kind cluster, you would use the following flags:
+This guide provides a step-by-step example of how to use this feature. Before you begin, ensure that you have a Kubernetes cluster configured with the ovn-kubernetes CNI. Since the examples use network attachments, you must run the cluster with multiple network support enabled. In a KinD cluster, you would use the following flags:
 
 ```bash
 cd contrib
@@ -201,8 +201,8 @@ pod2 has ip 10.245.2.3
 
 `qos-external` limits **only** traffic on pods that carry `nqos-app=bw-limited`. That means:
 
-* **pod1 → pod0**: *unlimited* (no matching label)
-* **pod1 → pod2**: *rate-limited* to ≈ 20 Mbit/s
+* **pod0 → pod1**: *unlimited* (no matching label)
+* **pod2 → pod1**: *rate-limited* to ≈ 20 Mbit/s
 
 Follow these steps to verify it with `iperf3`.
 
@@ -211,22 +211,22 @@ Follow these steps to verify it with `iperf3`.
 kubectl -n default exec pod0 -- iperf3 -s -p 5201 &
 kubectl -n default exec pod2 -- iperf3 -s -p 5201 &
 
-# 2) From pod1 → pod0  (EXPECTED ≈ line rate)
+# 2) From pod0 → pod1  (EXPECTED ≈ line rate; -R reverses the direction)
 kubectl -n default exec pod1 -- iperf3 -c "$DST_IP_POD0"   -p 5201 -R -t 10
 
-# 3) From pod1 → pod2  (EXPECTED ≈ 20 Mbit/s)
+# 3) From pod2 → pod1  (EXPECTED ≈ 20 Mbit/s; -R reverses the direction)
 kubectl -n default exec pod1 -- iperf3 -c "$DST_IP_POD2"   -p 5201 -R -t 10
 ```
 
 Sample output:
 
 ```
-# to pod0 (unlimited)
+# from pod0 to pod1 (unlimited)
 [ ID] Interval           Transfer     Bitrate         Retr
 [  5]   0.00-10.00  sec  37.2 GBytes  31.9 Gbits/sec  607             sender
 [  5]   0.00-10.00  sec  37.2 GBytes  31.9 Gbits/sec                  receiver
 
-# to pod1 (rate-limited)
+# from pod2 to pod1 (rate-limited)
 [ ID] Interval           Transfer     Bitrate         Retr
 [  5]   0.00-10.00  sec  20.8 MBytes  17.4 Mbits/sec  4056             sender
 [  5]   0.00-10.00  sec  20.8 MBytes  17.4 Mbits/sec                  receiver
@@ -295,7 +295,7 @@ Below is an *abbreviated* map of the CRD schema returned by `kubectl explain net
 | Field | Type | Required | Purpose |
 | ----- | ----- | ----- | ----- |
 | **podSelector** | `LabelSelector` | No | Selects pods whose traffic will be evaluated by the QoS rules. If empty, all pods in the namespace are selected. |
-| **networkSelectors[]** | list `NetworkSelector` | No | Restricts the rule to traffic on specific networks. If absent, the rule matches any interface. *(See §5.2)* |
+| **networkSelectors[]** | list `NetworkSelector` | No | Restricts the rule to traffic on specific networks. If absent, the rule matches only the default network. *(See §5.2)* |
 | **priority** | `int` | **Yes** | Higher number → chosen first when multiple `NetworkQoS` objects match the same packet. |
 | **egress[]** | list `EgressRule` | **Yes** | One or more marking / policing rules. Evaluated in the order listed. *(See §5.3)* |
 

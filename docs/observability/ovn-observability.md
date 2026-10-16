@@ -100,7 +100,7 @@ that is decoded by `go-controller/observability-lib`.
 ### OVN-Kubernetes Implementation Details
 
 `Sample_collector` and `Sampling_app` are created or cleaned up when the observability is enabled/disabled on startup.
-When one of the supported objects (for example, network policy) is created, ovn-kuberentes generates an nbdb `Sample` for it.
+When one of the supported objects (for example, network policy) is created, OVN-Kubernetes generates an nbdb `Sample` for it.
 
 To decode the samples into human-readable information, `go-controller/observability-lib` is used. It finds `Sample`
 by the attached `Sample.Metadata` and then gets corresponding db object (e.g. ACL) based on `Sampling_app.ID` and `Sample.UUID`.
@@ -117,10 +117,6 @@ To make OVS start sending samples for an existing `Sample_collector`, a new OVSD
 needs to be created with `Flow_Sample_Collector_Set.ID` value of `Sample_collector.SetID`. 
 This is done by the `go-controller/observability-lib` and it is important to note that only one `Flow_Sample_Collector_Set`
 should be created for a given `Sample_collector.SetID` value at a time. But if such entry already exists, it can be reused.
-
-## Best Practices
-
-TDB
 
 ## Future Items
 
@@ -150,7 +146,7 @@ This applies to
   
   in both cases ANP will have only first-packet sample.
 
-Use caution when running the `ovnkube-observe` tool. Currently it has poor resource management and consumes a lot of 
+Use caution when running the `ovnkube-observ` tool. Currently it has poor resource management and consumes a lot of
 CPU when many packets are sent. Tracked here https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5203
 
 ## References

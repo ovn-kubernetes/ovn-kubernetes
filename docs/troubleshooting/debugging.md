@@ -15,17 +15,17 @@ But if you installed OVS from source, and don't use a startup script,
 this will be empty.  If you clone your VM, then you may endup with
 same system-id for all your VMs - which is a problem.
 
-### All nodes should register with OVN SB database.
+### Check chassis registration in the local OVN SB database.
 
-On the master, run:
+Against the SBDB for the zone being diagnosed, run:
 
 ```
 ovn-sbctl list chassis
 ```
 
-You should see as many records as the number of nodes in your cluster.  The
-"name" column in each record represents the system-id of each host and they
-should all be unique.
+In the interconnect architecture, each node has its own zone and SB database,
+so this command does not list every node in the cluster. The "name" column
+identifies the chassis registered in the local database.
 
 ## Hosts should have unique node names.
 
@@ -59,7 +59,7 @@ modprobe vport-geneve  # or vport-stt for "stt".
 
 ### Sanity check cross host ping.
 
-Since on each host, a OVS internal device named "k8s-$NODENAME" is created
+Since on each host, an OVS internal device named "ovn-k8s-mp0" is created
 with the second IP address in the subnet assigned for that node, you should be
 able to check cross host connectivity by pinging these internal devices across
 hosts.
