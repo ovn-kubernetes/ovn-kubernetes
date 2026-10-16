@@ -409,9 +409,7 @@ func (cm *ClusterManager) Reconcile(name string, old, new util.NetInfo) error {
 }
 
 // initTunnelKeysAllocator reserves any existing tunnel keys to avoid re-allocation.
-// It will be shared across multiple controllers and should account for different object types.
-// Good news is that we don't care about missing events, because we only need to reserve ids that are already
-// annotated, and no one else can annotate them except ClusterManager.
+// Warn and skip unusable allocations so startup can proceed; NAD/CNC reconciliation repairs them.
 func initTunnelKeysAllocator(nadClient networkattchmentdefclientset.Interface, cncClient networkconnectclientset.Interface) (*id.TunnelKeysAllocator, error) {
 	tunnelKeysAllocator := id.NewTunnelKeyAllocator("TunnelKeys")
 
@@ -434,10 +432,23 @@ func initTunnelKeysAllocator(nadClient networkattchmentdefclientset.Interface, c
 			networkName := netconf.Name
 			tunnelKeys, err := util.ParseTunnelKeysAnnotation(nad.Annotations[types.OvnNetworkTunnelKeysAnnotation])
 			if err != nil {
-				return nil, fmt.Errorf("failed to parse annotated tunnel keys: %w", err)
+				klog.Warningf("Ignoring unparseable tunnel keys annotated on NAD %s/%s: %v", nad.Namespace, nad.Name, err)
+				continue
 			}
-			if err = tunnelKeysAllocator.ReserveKeys(networkName, tunnelKeys); err != nil {
-				return nil, fmt.Errorf("failed to reserve tunnel keys %v for network %s: %w", tunnelKeys, networkName, err)
+			// anyone who can write a NAD can oversize this annotation; reserving
+			// more keys than the network needs would leave the surplus held under
+			// its name, so skip it and let the NAD controller allocate a valid set
+			// when it reconciles
+			if netInfo, niErr := util.NewNetInfo(netconf); niErr == nil {
+				if needed := util.GetNumberOfTunnelKeys(netInfo); len(tunnelKeys) > needed {
+					klog.Warningf("Ignoring oversized tunnel keys %v annotated on NAD %s/%s for network %s, expected %d",
+						tunnelKeys, nad.Namespace, nad.Name, networkName, needed)
+					continue
+				}
+			}
+			if err = tunnelKeysAllocator.ReserveKeys(id.NetworkTunnelKeyOwner(networkName), tunnelKeys); err != nil {
+				klog.Warningf("Ignoring tunnel keys %v annotated on NAD %s/%s for network %s: %v",
+					tunnelKeys, nad.Namespace, nad.Name, networkName, err)
 			}
 		}
 	}
@@ -449,11 +460,18 @@ func initTunnelKeysAllocator(nadClient networkattchmentdefclientset.Interface, c
 		for _, cnc := range existingCNCs.Items {
 			tunnelID, err := util.ParseNetworkConnectTunnelKeyAnnotation(&cnc)
 			if err != nil {
-				return nil, fmt.Errorf("failed to parse annotated tunnel ID: %w", err)
+				klog.Warningf("Ignoring unparseable tunnel key annotated on CNC %s: %v", cnc.Name, err)
+				continue
 			}
 			if tunnelID != 0 {
-				if err = tunnelKeysAllocator.ReserveKeys(cnc.Name, []int{tunnelID}); err != nil {
-					return nil, fmt.Errorf("failed to reserve tunnel ID %d for CNC %s: %w", tunnelID, cnc.Name, err)
+				// a CNC is not a network, so a key preserved for a transit switch is
+				// checked for separately: ReserveKeys strips it rather than refusing it
+				keysErr := tunnelKeysAllocator.ValidatePreservedKeys([]int{tunnelID})
+				if keysErr == nil {
+					keysErr = tunnelKeysAllocator.ReserveKeys(id.NetworkConnectTunnelKeyOwner(cnc.Name), []int{tunnelID})
+				}
+				if keysErr != nil {
+					klog.Warningf("Ignoring tunnel key %d annotated on CNC %s: %v", tunnelID, cnc.Name, keysErr)
 				}
 			}
 		}

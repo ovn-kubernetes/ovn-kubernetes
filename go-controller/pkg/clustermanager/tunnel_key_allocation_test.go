@@ -6,9 +6,10 @@ package clustermanager
 import (
 	"fmt"
 	"math"
-	"strings"
+	"slices"
 	"testing"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/id"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	ovntesting "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -25,12 +26,21 @@ func TestInitTunnelKeysAllocatorOutOfRange(t *testing.T) {
 			// Keep the derived transit key valid so the dynamic key reaches the bitmap.
 			nad.Annotations = map[string]string{types.OvnNetworkTunnelKeysAnnotation: fmt.Sprintf("[%d,%d]", 16711683+1, invalid)}
 			client := util.GetOVNClientset(nad)
+			// Startup skips invalid reservations so reconciliation can allocate valid replacements.
 			allocator, err := initTunnelKeysAllocator(client.NetworkAttchDefClient, client.NetworkConnectClient)
-			if err == nil || !strings.Contains(err.Error(), "outside allocation range") {
-				t.Fatalf("expected startup bounds error, got %v", err)
+			if err != nil {
+				t.Fatalf("invalid tunnel key blocked startup: %v", err)
 			}
-			if allocator != nil {
-				t.Fatal("returned allocator after failed initialization")
+			if allocator == nil {
+				t.Fatal("successful initialization returned no allocator")
+			}
+			// Allocate valid replacement keys for the network whose reservation was skipped.
+			keys, err := allocator.AllocateKeys(id.NetworkTunnelKeyOwner("test"), 1, 2)
+			if err != nil {
+				t.Fatalf("failed to allocate replacement tunnel keys: %v", err)
+			}
+			if !slices.Equal(keys, []int{16711684, 16715779}) {
+				t.Fatalf("unexpected replacement tunnel keys: %v", keys)
 			}
 		})
 	}

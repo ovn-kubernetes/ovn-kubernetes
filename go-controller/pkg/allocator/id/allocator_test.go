@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
 func TestIDAllocator_ReleaseID(t *testing.T) {
@@ -262,5 +264,147 @@ func TestReserveIDsOutOfRange(t *testing.T) {
 				t.Fatal("expected exhaustion")
 			}
 		})
+	}
+}
+
+func TestTunnelKeysAllocator_ValidateKeys(t *testing.T) {
+	allocator := NewTunnelKeyAllocator("test")
+	transitSwitchBase := 16711683
+	tunnelKeyBase := 16715779
+
+	valid := []struct {
+		networkID  int
+		tunnelKeys []int
+	}{
+		// what AllocateKeys produces for a network in the preserved range
+		{1, []int{transitSwitchBase + 1}},
+		{1, []int{transitSwitchBase + 1, tunnelKeyBase}},
+		// both boundaries of the valid network ID range
+		{0, []int{transitSwitchBase}},
+		{types.MaxNetworks - 1, []int{transitSwitchBase + types.MaxNetworks - 1}},
+		{1, nil},
+	}
+	for _, tc := range valid {
+		if err := allocator.ValidateKeys(tc.networkID, tc.tunnelKeys); err != nil {
+			t.Errorf("network %d: unexpected error validating keys %v: %v", tc.networkID, tc.tunnelKeys, err)
+		}
+	}
+
+	forged := []struct {
+		networkID  int
+		tunnelKeys []int
+	}{
+		// invalid network IDs must fail even when no keys are annotated
+		{-1, nil},
+		{-1, []int{tunnelKeyBase}},
+		{types.MaxNetworks, nil},
+		{types.MaxNetworks, []int{tunnelKeyBase}},
+		{5000, []int{tunnelKeyBase}},
+		// claiming the transit switch key of another network
+		{1, []int{transitSwitchBase + 2}},
+		{5000, []int{transitSwitchBase + 2}},
+		{1, []int{transitSwitchBase + 1, transitSwitchBase + 2}},
+		// too many keys even when each key is otherwise valid
+		{1, []int{transitSwitchBase + 1, tunnelKeyBase, tunnelKeyBase + 1}},
+		// no transit switch key where AllocateKeys would have put one
+		{1, []int{tunnelKeyBase}},
+	}
+	for _, tc := range forged {
+		if err := allocator.ValidateKeys(tc.networkID, tc.tunnelKeys); err == nil {
+			t.Errorf("network %d: expect error validating keys %v", tc.networkID, tc.tunnelKeys)
+		}
+	}
+}
+
+func TestTunnelKeysAllocator_ValidatePreservedKeys(t *testing.T) {
+	allocator := NewTunnelKeyAllocator("test")
+	transitSwitchBase := 16711683
+	tunnelKeyBase := 16715779
+
+	// ReserveKeys strips a preserved key rather than reserving it, so a resource
+	// that is not a network has to be told apart from one before reserving
+	preserved := [][]int{
+		{transitSwitchBase},
+		{transitSwitchBase + 5},
+		{transitSwitchBase + types.MaxNetworks - 1},
+		{tunnelKeyBase, transitSwitchBase},
+	}
+	for _, keys := range preserved {
+		if err := allocator.ValidatePreservedKeys(keys); err == nil {
+			t.Errorf("expect error validating preserved keys %v", keys)
+		}
+	}
+
+	allocatable := [][]int{
+		nil,
+		{tunnelKeyBase},
+		{transitSwitchBase - 1},
+		{tunnelKeyBase, tunnelKeyBase + 1},
+	}
+	for _, keys := range allocatable {
+		if err := allocator.ValidatePreservedKeys(keys); err != nil {
+			t.Errorf("unexpected error validating keys %v: %v", keys, err)
+		}
+	}
+
+	// ReserveKeys on its own strips a preserved key and reports success, which
+	// is what makes the check above necessary
+	if err := allocator.ReserveKeys("resource1", []int{transitSwitchBase + 5}); err != nil {
+		t.Errorf("expect ReserveKeys to accept a preserved key, but got %v", err)
+	}
+}
+
+func TestTunnelKeysAllocatorRollbackPreservesExistingKeys(t *testing.T) {
+	allocator := NewTunnelKeyAllocator("test")
+	existing := []int{16715790}
+	if err := allocator.ReserveKeys("network", existing); err != nil {
+		t.Fatal(err)
+	}
+	keys, rollback, err := allocator.AllocateKeysWithRollback("network", 5000, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rollback()
+	if err := allocator.ReserveKeys("other", existing); err == nil {
+		t.Fatal("rollback released an existing key")
+	}
+	if err := allocator.ReserveKeys("other", keys[1:]); err != nil {
+		t.Fatalf("rollback retained a newly allocated key: %v", err)
+	}
+	keys, err = allocator.AllocateKeys("network", 5000, 1)
+	if err != nil || !slices.Equal(keys, existing) {
+		t.Fatalf("existing reservation changed: keys=%v, err=%v", keys, err)
+	}
+}
+
+// GetKeys returns a copy of the dynamic keys currently owned by name, or nil
+// when none are reserved. Transit switch keys derived from network IDs are not
+// tracked by the allocator and are excluded from the result.
+func (allocator *TunnelKeysAllocator) GetKeys(name string) []int {
+	allocator.idsAllocator.nameIdsMap.LockKey(name)
+	defer allocator.idsAllocator.nameIdsMap.UnlockKey(name)
+	keys, _ := allocator.idsAllocator.nameIdsMap.Load(name)
+	return slices.Clone(keys)
+}
+
+func TestTunnelKeysAllocatorGetKeys(t *testing.T) {
+	allocator := NewTunnelKeyAllocator("test")
+	if keys := allocator.GetKeys("missing"); keys != nil {
+		t.Fatalf("unexpected allocation: %v", keys)
+	}
+	expected := []int{16715790}
+	if err := allocator.ReserveKeys("network", []int{16711684, expected[0]}); err != nil {
+		t.Fatal(err)
+	}
+	keys := allocator.GetKeys("network")
+	if !slices.Equal(keys, expected) {
+		t.Fatalf("unexpected dynamic keys: %v", keys)
+	}
+	keys[0]++
+	if keys := allocator.GetKeys("network"); !slices.Equal(keys, expected) {
+		t.Fatalf("lookup exposed mutable allocator state: %v", keys)
+	}
+	if err := allocator.ReserveKeys("other", []int{16715779}); err != nil {
+		t.Fatalf("lookup unexpectedly allocated a key: %v", err)
 	}
 }

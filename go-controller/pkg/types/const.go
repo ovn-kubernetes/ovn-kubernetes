@@ -356,6 +356,21 @@ const (
 	// Logical Switch or Router Port
 	MaxLogicalPortTunnelKey = 32767
 
+	// MaxDatapathTunnelKey is the highest tunnel key a datapath (Logical Switch
+	// or Router) can be given, from
+	// https://github.com/ovn-org/ovn/blob/cfaf849c034469502fc97149f20676dec4d76595/lib/ovn-util.h#L159-L164
+	MaxDatapathTunnelKey = (1 << 24) - 1
+
+	// MaxNetworks is the maximum number of networks, including the default network.
+	MaxNetworks = 4096
+
+	// MinNodeID is 2 because ID 1 maps to the cluster router's join-switch IP.
+	MinNodeID = 2
+
+	// MaxNodeIDs is the highest node ID that can be allocated. Limited to the
+	// maximum number of nodes supported by k8s.
+	MaxNodeIDs = 5000
+
 	// InformerSyncTimeout is used when waiting for the initial informer cache sync
 	// (i.e. all existing objects should be listed by the informer).
 	// It allows ~5 list() retries with the default reflector exponential backoff config

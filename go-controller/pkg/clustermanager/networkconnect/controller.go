@@ -240,11 +240,21 @@ func (c *Controller) initialSync() error {
 
 		// Restore tunnel key in allocator if present
 		if tunnelID > 0 {
-			// Reserve tunnel key in the allocator so it won't be re-allocated
-			// We already reserve the key from cluster manager sync in initTunnelKeysAllocator,
-			// but no harm in doing it again here for completeness.
-			if err := c.tunnelKeysAllocator.ReserveKeys(cnc.Name, []int{tunnelID}); err != nil {
-				klog.Warningf("Failed to restore tunnel key %d for CNC %s: %v", tunnelID, cnc.Name, err)
+			// initTunnelKeysAllocator reserved this key already, but it can only warn
+			// when it could not, so the outcome is checked again here, where the key
+			// can be dropped. A CNC is not a network, so a key preserved for a transit
+			// switch is checked for separately: ReserveKeys strips it rather than
+			// refusing it.
+			keysErr := c.tunnelKeysAllocator.ValidatePreservedKeys([]int{tunnelID})
+			if keysErr == nil {
+				keysErr = c.tunnelKeysAllocator.ReserveKeys(id.NetworkConnectTunnelKeyOwner(cnc.Name), []int{tunnelID})
+			}
+			if keysErr != nil {
+				// the key belongs to someone else, so it is not ours to keep.
+				// Forget it to let syncClusterNetworkConnect allocate a
+				// replacement, as it does for a CNC that has none yet.
+				klog.Warningf("Ignoring tunnel key %d annotated on CNC %s: %v", tunnelID, cnc.Name, keysErr)
+				cncState.tunnelID = 0
 			} else {
 				klog.V(4).Infof("Restored tunnel key %d for CNC %s", tunnelID, cnc.Name)
 			}

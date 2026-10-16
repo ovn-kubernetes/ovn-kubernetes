@@ -34,6 +34,11 @@ import (
 var (
 	ErrorAttachDefNotOvnManaged = errors.New("net-attach-def not managed by OVN")
 	ErrorUnsupportedIPAMKey     = errors.New("IPAM key is not supported. Use OVN-K provided IPAM via the `subnets` attribute")
+	// ErrorMalformedNetworkIDAnnotation and ErrorMalformedTunnelKeysAnnotation wrap
+	// a ParseNADInfo failure caused by an unparseable controller-owned allocation
+	// annotation, named so the caller can tell which annotation is at fault.
+	ErrorMalformedNetworkIDAnnotation  = errors.New("malformed network ID annotation")
+	ErrorMalformedTunnelKeysAnnotation = errors.New("malformed tunnel keys annotation")
 )
 
 // NetInfo exposes read-only information about a network.
@@ -1572,6 +1577,20 @@ func newNetInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) {
 	return ni, nil
 }
 
+// GetNumberOfTunnelKeys returns how many datapath tunnel keys 'netInfo' needs
+// annotated. Only a primary Layer2 UDN needs any: one for its layer2 switch and
+// one for its transit router. Layer3, secondary Layer2, localnet and the default
+// network derive their single key from the network ID, so they get none here.
+func GetNumberOfTunnelKeys(netInfo NetInfo) int {
+	if netInfo.IsDefault() {
+		return 0
+	}
+	if netInfo.TopologyType() != types.Layer2Topology || !netInfo.IsPrimaryNetwork() {
+		return 0
+	}
+	return 2
+}
+
 // GetAnnotatedNetworkName gets the network name annotated by cluster manager
 // nad controller
 func GetAnnotatedNetworkName(netattachdef *nettypes.NetworkAttachmentDefinition) string {
@@ -1604,21 +1623,32 @@ func ParseNADInfo(nad *nettypes.NetworkAttachmentDefinition) (NetInfo, error) {
 	if n.GetNetworkName() == types.DefaultNetworkName {
 		id = types.DefaultNetworkID
 	}
-	if nad.Annotations[types.OvnNetworkIDAnnotation] != "" {
-		annotated := nad.Annotations[types.OvnNetworkIDAnnotation]
-		id, err = strconv.Atoi(annotated)
+	// malformed allocation annotations are reported as sentinel-wrapped errors so
+	// the caller can blank the offending annotation and let it be reallocated; both
+	// are collected so a single parse reports every one that needs clearing
+	var annotationErrs []error
+	if annotated := nad.Annotations[types.OvnNetworkIDAnnotation]; annotated != "" {
+		parsed, parseErr := strconv.Atoi(annotated)
+		if parseErr != nil {
+			annotationErrs = append(annotationErrs, fmt.Errorf("%w: %v", ErrorMalformedNetworkIDAnnotation, parseErr))
+		} else {
+			id = parsed
+			n.SetNetworkID(id)
+		}
+	} else {
+		n.SetNetworkID(id)
+	}
+
+	if annotated := nad.Annotations[types.OvnNetworkTunnelKeysAnnotation]; annotated != "" {
+		tunnelKeys, err := ParseTunnelKeysAnnotation(annotated)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse annotated network ID: %w", err)
+			annotationErrs = append(annotationErrs, fmt.Errorf("%w: %v", ErrorMalformedTunnelKeysAnnotation, err))
+		} else {
+			n.SetTunnelKeys(tunnelKeys)
 		}
 	}
-	n.SetNetworkID(id)
-
-	if nad.Annotations[types.OvnNetworkTunnelKeysAnnotation] != "" {
-		tunnelKeys, err := ParseTunnelKeysAnnotation(nad.Annotations[types.OvnNetworkTunnelKeysAnnotation])
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse annotated tunnel keys: %w", err)
-		}
-		n.SetTunnelKeys(tunnelKeys)
+	if len(annotationErrs) > 0 {
+		return nil, errors.Join(annotationErrs...)
 	}
 	return n, nil
 }

@@ -18,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	hotypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
@@ -74,6 +75,13 @@ var hybridOverlayNodeAnnotationChecks = map[string]checkNodeAnnot{
 	hotypes.HybridOverlayDRIP:  nil,
 }
 
+// These allocation annotations are owned by cluster-manager. Keep them separate
+// from annotationKeys, which also grants ovnkube-node permission to write.
+var clusterManagerNodeAnnotationKeys = sets.New(
+	util.OvnNodeID,
+	types.UDNLayer2NodeGRLRPTunnelIDAnnotation,
+)
+
 type NodeAdmission struct {
 	annotationChecks  map[string]checkNodeAnnot
 	annotationKeys    sets.Set[string]
@@ -96,13 +104,20 @@ func NewNodeAdmissionWebhook(enableHybridOverlay bool, extraAllowedUsers ...stri
 
 var _ admission.Validator[*corev1.Node] = &NodeAdmission{}
 
-func (p NodeAdmission) ValidateCreate(_ context.Context, _ *corev1.Node) (warnings admission.Warnings, err error) {
-	// Ignore creation, the webhook is configured to only handle nodes/status updates
-	return nil, nil
+func (p NodeAdmission) ValidateCreate(ctx context.Context, node *corev1.Node) (warnings admission.Warnings, err error) {
+	req, err := admission.RequestFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if _, isOVNKubeNode := ovnkubeNodeIdentity(req.UserInfo); isOVNKubeNode {
+		// Node credentials only have update permissions on nodes/status.
+		return nil, fmt.Errorf("user %q is not allowed to create nodes", req.UserInfo.Username)
+	}
+	return nil, p.validateProtectedAnnotations(req.UserInfo.Username, node.Name, slices.Collect(maps.Keys(node.Annotations)))
 }
 
 func (p NodeAdmission) ValidateDelete(_ context.Context, _ *corev1.Node) (warnings admission.Warnings, err error) {
-	// Ignore deletion, the webhook is configured to only handle nodes/status updates
+	// Node deletion is outside the webhook rules.
 	return nil, nil
 }
 
@@ -118,17 +133,8 @@ func (p NodeAdmission) ValidateUpdate(ctx context.Context, oldNode, newNode *cor
 	changedKeys := slices.Collect(maps.Keys(changes))
 
 	if !isOVNKubeNode {
-		if !p.annotationKeys.HasAny(changedKeys...) {
-			// the user is not an ovnkube-node and hasn't changed any ovnkube-node annotations
-			return nil, nil
-		}
-
-		if !p.extraAllowedUsers.Has(req.UserInfo.Username) {
-			// the user is not in extraAllowedUsers
-			return nil, fmt.Errorf("user %q is not allowed to set the following annotations on node: %q: %v",
-				req.UserInfo.Username,
-				newNode.Name,
-				p.annotationKeys.Intersection(sets.New[string](changedKeys...)).UnsortedList())
+		if err := p.validateProtectedAnnotations(req.UserInfo.Username, newNode.Name, changedKeys); err != nil {
+			return nil, err
 		}
 
 		// The user is not ovnkube-node, in this case the nodeName comes from the object
@@ -163,8 +169,8 @@ func (p NodeAdmission) ValidateUpdate(ctx context.Context, oldNode, newNode *cor
 	// Verify that nothing but the annotations changed.
 	// Since ovnkube-node only has the node/status permissions, it is enough to check .Status and .ObjectMeta only.
 	// Ignore .ManagedFields fields which are modified on every update.
-	oldNodeShallowCopy := oldNode
-	newNodeShallowCopy := newNode
+	oldNodeShallowCopy := *oldNode
+	newNodeShallowCopy := *newNode
 	oldNodeShallowCopy.Annotations = nil
 	newNodeShallowCopy.Annotations = nil
 	oldNodeShallowCopy.ManagedFields = nil
@@ -191,4 +197,16 @@ func (p NodeAdmission) ValidateUpdate(ctx context.Context, oldNode, newNode *cor
 	}
 
 	return nil, nil
+}
+
+// validateProtectedAnnotations restricts non-node users to explicitly trusted
+// identities. Node credentials are checked against annotationKeys separately.
+func (p NodeAdmission) validateProtectedAnnotations(username, nodeName string, changedKeys []string) error {
+	protectedKeys := p.annotationKeys.Union(clusterManagerNodeAnnotationKeys)
+	changedProtectedKeys := protectedKeys.Intersection(sets.New(changedKeys...))
+	if changedProtectedKeys.Len() == 0 || p.extraAllowedUsers.Has(username) {
+		return nil
+	}
+	return fmt.Errorf("user %q is not allowed to set the following annotations on node: %q: %v",
+		username, nodeName, sets.List(changedProtectedKeys))
 }
