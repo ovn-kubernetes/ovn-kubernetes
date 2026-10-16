@@ -75,6 +75,12 @@ should support named targetPorts that resolve to different ports on different en
 # https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5119
 \[sig-network\] Services should implement NodePort and HealthCheckNodePort correctly when ExternalTrafficPolicy changes
 
+# The upstream pod-generation test replaces the whole annotations map, removing
+# k8s.ovn.org/pod-networks. The pod webhook intentionally rejects that removal.
+# TODO: Re-enable once the prebuilt Kubernetes test preserves existing annotations.
+# https://github.com/ovn-kubernetes/ovn-kubernetes/pull/7103
+pod generation should start at 1 and increment per update
+
 # Skip Alpha features in general
 \[Feature:Alpha\]
 \[Alpha\]

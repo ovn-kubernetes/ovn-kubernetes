@@ -61,6 +61,8 @@ spec:
           - name: GOTRACEBACK
             value: "crash"
           {{ end -}}
+          - name: OVN_KUBEVIRT_CONTROLLER_USERS
+            value: {{ join "," .Values.kubeVirtControllerUsers | quote }}
           - name: OVN_DAEMONSET_VERSION
             value: "1.4.0"
           - name: K8S_APISERVER

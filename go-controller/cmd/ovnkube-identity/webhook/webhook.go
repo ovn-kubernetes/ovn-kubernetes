@@ -38,6 +38,7 @@ var logger = klog.NewKlogr()
 type Config struct {
 	EnableHybridOverlay     bool
 	ExtraAllowedUsers       []string
+	KubeVirtUsers           []string
 	CSRAcceptanceConditions []csrapprover.CSRAcceptanceCondition
 	PodAdmissionConditions  []ovnwebhook.PodAdmissionConditionOption
 	CertDir                 string
@@ -99,7 +100,7 @@ func Run(ctx context.Context, restCfg *rest.Config, config Config) error {
 	nodeLister := listers.NewNodeLister(nodeInformer.GetIndexer())
 	podWebhook := admission.WithValidator(
 		scheme.Scheme,
-		ovnwebhook.NewPodAdmissionWebhook(nodeLister, config.PodAdmissionConditions, config.ExtraAllowedUsers...),
+		ovnwebhook.NewPodAdmissionWebhook(nodeLister, config.PodAdmissionConditions, config.KubeVirtUsers, config.ExtraAllowedUsers...),
 	).WithRecoverPanic(true)
 	podHandler, err := admission.StandaloneWebhook(
 		podWebhook,

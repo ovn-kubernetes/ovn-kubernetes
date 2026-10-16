@@ -2,3 +2,8 @@ logLevel: 4
 logFileMaxSize: 100
 logFileMaxBackups: 5
 logFileMaxAge: 5
+
+# Authenticated controller identities, not the service accounts of VM workloads.
+# Override this list when KubeVirt is installed in another namespace.
+kubeVirtControllerUsers:
+  - system:serviceaccount:kubevirt:kubevirt-controller

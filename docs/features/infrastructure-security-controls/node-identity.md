@@ -48,8 +48,21 @@ This is intentional as it helps ensure that the certificate rotation works seaml
 
 ## Validating Admission Webhook
 
-The feature introduces a validating webhook for updates to `pod/status` and `node/status`.\
-The `ovnkube-node` pod exclusively updates the status on both resources, so it is sufficient to verify only update requests.\
+The feature introduces a validating webhook for pod creation, updates to `pods` and
+`pods/status`, and updates to `nodes/status`.
+
+`k8s.ovn.org/pod-networks` is controller-generated allocation output. It must not
+be supplied on pod creation, including in workload templates or restored pod
+manifests. After creation, only authorized network identities may modify or remove
+it. Unrelated pod updates may retain the annotation unchanged. Static address
+requests and IPAM claim references remain supported through network selection
+inputs; controllers populate the allocation result afterward. KubeVirt migration
+likewise copies the source allocation onto the target pod after creation.
+
+Deployments supplying their own webhook configuration must register both pod
+resources and the CREATE/UPDATE operations; updating the webhook binary alone does
+not extend admission coverage. These protections require the webhook to be enabled.
+
 The webhooks include the following checks for each `ovnkube-node` pod:
 - Modifying annotations on pods hosted on its own node.
 - Modifying annotations on its own node.
@@ -79,3 +92,42 @@ ovnkube-identity-57f9778d99-llfqz   1/1     Running   0          30m   172.18.0.
 ```
 This approach allows us to collocate the webhook with the API server for better response times
 and avoid relying on cluster networking.
+
+## KubeVirt pod identity
+
+The pod webhook reserves the launcher label (`kubevirt.io=virt-launcher`), VM name
+and node labels, domain annotation, live-migration opt-in annotation, and migration
+readiness timestamp for authenticated KubeVirt controllers. Other users cannot
+add, change, or remove these fields, or reassign launcher controller ownership.
+Garbage collection may still remove ownership or clear deletion-blocking flags. Ordinary
+status and metadata updates retaining these fields are allowed. This prevents a
+pod creator from impersonating a migration target and making OVN copy another
+VM's IP allocation or redirect its routes.
+
+Configure each trusted controller's exact Kubernetes username using the repeatable
+`--kubevirt-controller-user` flag or the comma-separated
+`OVN_KUBEVIRT_CONTROLLER_USERS` environment variable. The binary trusts no
+KubeVirt users by default. The Helm chart's
+`ovnkube-identity.kubeVirtControllerUsers` list defaults to
+`system:serviceaccount:kubevirt:kubevirt-controller`; override it for a different
+installation namespace. Do not include tenant workload identities. This list does
+not grant permission to write `pod-networks`, and `--extra-allowed-user` does not
+grant permission to author KubeVirt identity metadata.
+
+Launcher pods must have a VMI controller owner with a UID, and their domain
+annotation must match that owner's name. This also prevents an overridden domain
+annotation in a VM template from selecting another VM's allocation. VM users
+continue to configure migration on VM/VMI resources; KubeVirt authors the reserved
+fields on the resulting pods. IPAM claim references and static address requests
+remain unaffected.
+
+These checks apply to admission requests, not retroactively to existing pods.
+Audit existing pods for forged allocation or migration metadata when enabling the
+policy. Custom webhook manifests must retain admission coverage for these fields,
+including any self-pod exclusions, and configure the trusted KubeVirt users before
+starting or migrating VMs. Downstream deployments that do not use this Helm
+chart must configure both `CREATE` and `UPDATE` admission for `pods` and
+`pods/status`, preserve the protected-metadata checks in self-pod exclusions,
+and explicitly supply their KubeVirt controller service-account usernames.
+The username identifies the authenticated API caller, not the service account
+assigned to the workload pod.

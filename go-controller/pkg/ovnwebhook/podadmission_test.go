@@ -436,7 +436,7 @@ func TestPodAdmission_ValidateUpdate(t *testing.T) {
 				nodes: map[string]*corev1.Node{tt.node.Name: tt.node},
 			}, []PodAdmissionConditionOption{
 				additionalPodAdmissions,
-			})
+			}, nil)
 			_, err := padm.ValidateUpdate(tt.ctx, tt.oldObj, tt.newObj)
 			if err != tt.expectedErr && err.Error() != tt.expectedErr.Error() {
 				t.Errorf("ValidateUpdate() error = %v, expectedErr %v", err, tt.expectedErr)
@@ -526,7 +526,7 @@ func TestPodAdmission_ValidateUpdateExtraUsers(t *testing.T) {
 				nodes: map[string]*corev1.Node{tt.node.Name: tt.node},
 			}, []PodAdmissionConditionOption{
 				additionalPodAdmissions,
-			}, extraUser)
+			}, nil, extraUser)
 			_, err := padm.ValidateUpdate(tt.ctx, tt.oldObj, tt.newObj)
 			if err != tt.expectedErr && err.Error() != tt.expectedErr.Error() {
 				t.Errorf("ValidateUpdate() error = %v, expectedErr %v", err, tt.expectedErr)

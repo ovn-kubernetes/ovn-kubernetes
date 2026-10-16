@@ -53,6 +53,7 @@ type config struct {
 	waitForKAPIDuration        time.Duration
 	localKAPIPort              int
 	extraAllowedUsers          cli.StringSlice
+	kubeVirtUsers              cli.StringSlice
 	csrAcceptanceConditionFile string
 	csrAcceptanceConditions    []csrapprover.CSRAcceptanceCondition
 	podAdmissionConditionFile  string
@@ -242,6 +243,12 @@ func main() {
 			Usage:       "Configure extra user that is allowed to modify annotations protected by the webhook, can be used multiple times",
 			Destination: &cliCfg.extraAllowedUsers,
 		},
+		&cli.StringSliceFlag{
+			Name:        "kubevirt-controller-user",
+			Usage:       "Authenticated KubeVirt controller user allowed to author pod network identity and migration metadata; repeat for multiple installations",
+			EnvVars:     []string{"OVN_KUBEVIRT_CONTROLLER_USERS"},
+			Destination: &cliCfg.kubeVirtUsers,
+		},
 		&cli.DurationFlag{
 			Name:        "wait-for-kubernetes-api",
 			Usage:       "Configure the duration to wait for the local kubernetes API to terminate before exiting. (Default: \"0\", which means no wait)",
@@ -317,6 +324,7 @@ func runWebhook(ctx context.Context, restCfg *rest.Config) error {
 	return identitywebhook.Run(ctx, restCfg, identitywebhook.Config{
 		EnableHybridOverlay:     cliCfg.enableHybridOverlay,
 		ExtraAllowedUsers:       cliCfg.extraAllowedUsers.Value(),
+		KubeVirtUsers:           cliCfg.kubeVirtUsers.Value(),
 		CSRAcceptanceConditions: cliCfg.csrAcceptanceConditions,
 		PodAdmissionConditions:  cliCfg.podAdmissionConditions,
 		CertDir:                 cliCfg.certDir,
