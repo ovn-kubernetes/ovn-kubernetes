@@ -377,7 +377,7 @@ func (oc *DefaultNetworkController) InitEgressServiceZoneController() (*egresssv
 		createDefaultNodeRouteToExternal,
 		oc.stopChan, oc.watchFactory.EgressServiceInformer(), oc.watchFactory.ServiceCoreInformer(),
 		oc.watchFactory.EndpointSliceCoreInformer(),
-		oc.watchFactory.NodeCoreInformer(), oc.nodeName)
+		oc.watchFactory.NodeCoreInformer(), oc.watchFactory.PodCoreInformer(), oc.nodeName)
 }
 
 func (oc *DefaultNetworkController) newANPController() error {

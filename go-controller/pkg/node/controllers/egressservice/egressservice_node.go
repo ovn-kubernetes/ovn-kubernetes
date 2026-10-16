@@ -68,6 +68,9 @@ type Controller struct {
 	egressServiceSynced cache.InformerSynced
 	egressServiceQueue  workqueue.TypedRateLimitingInterface[string]
 
+	podLister  corelisters.PodLister
+	podsSynced cache.InformerSynced
+
 	serviceLister  corelisters.ServiceLister
 	servicesSynced cache.InformerSynced
 
@@ -93,7 +96,8 @@ type svcState struct {
 func NewController(stopCh <-chan struct{}, returnMark, thisNode string,
 	esInformer egressserviceinformer.EgressServiceInformer,
 	serviceInformer cache.SharedIndexInformer,
-	endpointSliceInformer cache.SharedIndexInformer) (*Controller, error) {
+	endpointSliceInformer cache.SharedIndexInformer,
+	podInformer cache.SharedIndexInformer) (*Controller, error) {
 	klog.Info("Setting up event handlers for Egress Services")
 
 	c := &Controller{
@@ -125,6 +129,14 @@ func NewController(stopCh <-chan struct{}, returnMark, thisNode string,
 		UpdateFunc: c.onServiceUpdate,
 		DeleteFunc: c.onServiceDelete,
 	}))
+	if err != nil {
+		return nil, err
+	}
+
+	c.podLister = corelisters.NewPodLister(podInformer.GetIndexer())
+	c.podsSynced = podInformer.HasSynced
+	_, err = podInformer.AddEventHandler(factory.WithUpdateHandlingForObjReplace(
+		util.EgressServicePodEventHandler(c.serviceLister, c.egressServiceQueue.Add)))
 	if err != nil {
 		return nil, err
 	}
@@ -192,6 +204,10 @@ func (c *Controller) Run(wg *sync.WaitGroup, threadiness int) error {
 
 	if !util.WaitForInformerCacheSyncWithTimeout("egressservices_services", c.stopCh, c.servicesSynced) {
 		return fmt.Errorf("timed out waiting for service caches (for egress services) to sync")
+	}
+
+	if !util.WaitForInformerCacheSyncWithTimeout("egressservices_pods", c.stopCh, c.podsSynced) {
+		return fmt.Errorf("timed out waiting for pod caches (for egress services) to sync")
 	}
 
 	if !util.WaitForInformerCacheSyncWithTimeout("egressservices_endpointslices", c.stopCh, c.endpointSlicesSynced) {
@@ -934,6 +950,11 @@ func (c *Controller) allEndpointsFor(svc *corev1.Service, localOnly bool) (sets.
 		return nil, nil, err
 	}
 
+	podIPs, err := util.EgressServicePodIPs(svc, c.podLister)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	v4Endpoints := sets.New[string]()
 	v6Endpoints := sets.New[string]()
 
@@ -953,6 +974,10 @@ func (c *Controller) allEndpointsFor(svc *corev1.Service, localOnly bool) (sets.
 			}
 			for _, ip := range ep.Addresses {
 				ipStr := utilnet.ParseIPSloppy(ip).String()
+				node, owned := podIPs[ipStr]
+				if !owned || (ep.NodeName != nil && *ep.NodeName != node) || (localOnly && node != c.thisNode) {
+					continue
+				}
 				if !services.IsHostEndpoint(ipStr, &util.DefaultNetInfo{}) {
 					epsToInsert.Insert(ipStr)
 				}

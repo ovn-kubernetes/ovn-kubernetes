@@ -10,6 +10,8 @@ By introducing a new CRD `EgressService`, users could request that egress packet
 The CRD is namespace scoped. The name of the EgressService corresponds to the name of a LoadBalancer Service that should be affected by this functionality. Note the mapping of EgressService to Kubernetes Service is 1to1.
 The feature is supported fully by "Local" gateway mode and almost entirely by "Shared" gateway mode (it does not support [Network without LoadBalancer SNAT](#network-without-loadbalancer-snat). In any case the affected traffic will be that which is coming from a pod to a destination outside of the cluster - meaning pod-pod / pod-service / pod-node traffic will not be affected.
 
+EndpointSlice addresses are eligible for egress rules only when they match the status IPs of non-host-network pods in the Service's namespace. For Services with a selector, those pods must also match the selector. Selectorless Services can reference pods in the same namespace. If an endpoint specifies a node, it must match the pod's assigned node. Addresses without a matching pod, including addresses belonging to another namespace, are ignored.
+
 Announcing the service externally (for ingress traffic) is handled by a LoadBalancer provider (like MetalLB) and not by OVN-Kubernetes as explained later.
 
 Always check the dependencies on the [Requirements page](../requirements.md)
