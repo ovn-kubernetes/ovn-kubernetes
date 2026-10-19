@@ -158,11 +158,12 @@ non-docs destinations should keep using absolute URLs as usual.
 
 **Exception: root files symlinked into `docs/governance/`.** Files such as
 `CONTRIBUTING.md`, `GOVERNANCE.md`, and `MEETINGS.md` live at the repository
-root and are symlinked under `docs/governance/` for the website. A relative
-path that is correct from `docs/governance/` (for example
+root and are symlinked under `docs/governance/` for the website. Relative
+links between these root files work in both locations. A relative path to a
+different docs directory that is correct from `docs/governance/` (for example
 `../installation/launching-ovn-kubernetes-on-kind.md`) breaks when the same
 file is viewed on GitHub at the repo root. For those shared files, use a
-versioned absolute docs URL instead, for example
+versioned absolute docs URL for cross-directory docs links, for example
 `https://ovn-kubernetes.io/master/installation/launching-ovn-kubernetes-on-kind/`,
 so the link works both on GitHub and on the published site.
 

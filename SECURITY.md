@@ -36,7 +36,7 @@ If a vulnerability is reported but considered low priority, it may be converted 
 The reporter is expected to take part in that decision and in the handling of the report in general: we
 rely on reporters to answer questions, review the proposed fix and reply within a reasonable time. If a
 reporter does not respond, we may proceed with triage, the fix and disclosure without them.
-Should a vulnerability be considered severe, we will endeavour to patch it within 48 hours of acceptance and may ask you to collaborate with us on a temporary private fork of the repository.
+When the maintainers confirm a vulnerability is severe, we will endeavour to patch it within 48 hours of that confirmation and will update the reporter if that target cannot be met. We may ask you to collaborate with us on a temporary private fork of the repository.
 Fixes are prepared for `master` and for every supported release branch, and are disclosed together
 with the advisory. Before publishing, we may allow extra time for [adopters](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/ADOPTERS.md) that ship
 OVN-Kubernetes to prepare their own releases, so that users are not left exposed once the details become public.
@@ -77,4 +77,3 @@ Security advisories are managed by the [Maintainers](MAINTAINERS.md) on
 8. Click **Publish advisory**. This makes the advisory public, deletes the temporary private fork and submits
    the advisory to the [GitHub Advisory Database](https://github.com/advisories), which after review may
    notify dependent projects through Dependabot.
-
