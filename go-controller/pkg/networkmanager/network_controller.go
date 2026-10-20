@@ -8,17 +8,21 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
+	"slices"
 	"sync"
 	"time"
 
 	nadtypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	nadlisters "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
+	frrtypes "github.com/metallb/frr-k8s/api/v1beta1"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/sets"
 	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
@@ -66,35 +70,51 @@ func newNetworkController(name, node string, cm ControllerManager, wf watchFacto
 		networkConfig,
 	)
 
-	if nc.hasRouteAdvertisements() {
+	// Both node agents use their local FRR configurations to program the datapath.
+	if node != "" && util.IsRouteAdvertisementsEnabled() {
 		nc.nadLister = wf.NADInformer().Lister()
 		nadIndexer := wf.NADInformer().Informer().GetIndexer()
 		nc.getNADsForRouteAdvertisement = func(raName string) ([]*nadtypes.NetworkAttachmentDefinition, error) {
 			return factory.GetNADsForRouteAdvertisement(nadIndexer, raName)
 		}
-		nc.raLister = wf.RouteAdvertisementsInformer().Lister()
 		nc.nodeLister = wf.NodeCoreInformer().Lister()
-
-		// ra controller
-		raConfig := &controller.ControllerConfig[ratypes.RouteAdvertisements]{
+		nc.frrIndexer = wf.FRRConfigurationsInformer().Informer().GetIndexer()
+		nc.lastLegacyIntents = make(map[string]advertisementIntents)
+		nc.legacyRALister = wf.RouteAdvertisementsInformer().Lister()
+		nc.legacyRAController = controller.NewController(nc.name+" legacy RA", &controller.ControllerConfig[ratypes.RouteAdvertisements]{
+			RateLimiter: workqueue.DefaultTypedControllerRateLimiter[string](),
+			Informer:    wf.RouteAdvertisementsInformer().Informer(),
+			Lister:      nc.legacyRALister.List,
+			Reconcile:   nc.syncRouteAdvertisements,
+			ObjNeedsUpdate: func(old, new *ratypes.RouteAdvertisements) bool {
+				if old != nil && old.UID != new.UID {
+					return true
+				}
+				before, wasPending := legacyRAIntent(old)
+				after, pending := legacyRAIntent(new)
+				return pending != wasPending || !reflect.DeepEqual(before, after)
+			},
+			Threadiness: 1,
+		})
+		nc.frrController = controller.NewController(nc.name+" FRR", &controller.ControllerConfig[frrtypes.FRRConfiguration]{
 			RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
-			Informer:       wf.RouteAdvertisementsInformer().Informer(),
-			Lister:         nc.raLister.List,
-			Reconcile:      nc.syncRouteAdvertisements,
-			ObjNeedsUpdate: raNeedsUpdate,
+			Informer:       wf.FRRConfigurationsInformer().Informer(),
+			Lister:         wf.FRRConfigurationsInformer().Lister().List,
+			Reconcile:      func(_ string) error { return nc.syncRunningNetworks() },
+			ObjNeedsUpdate: frrNeedsUpdate,
 			Threadiness:    1,
-		}
-		nc.raController = controller.NewController(
-			nc.name,
-			raConfig,
-		)
+		})
 
-		// node controller
 		nodeConfig := &controller.ControllerConfig[corev1.Node]{
-			RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
-			Informer:       wf.NodeCoreInformer().Informer(),
-			Lister:         nc.nodeLister.List,
-			Reconcile:      func(string) error { return nc.syncRunningNetworks() },
+			RateLimiter: workqueue.DefaultTypedControllerRateLimiter[string](),
+			Informer:    wf.NodeCoreInformer().Informer(),
+			Lister:      nc.nodeLister.List,
+			Reconcile: func(nodeName string) error {
+				if nodeName != node {
+					return nil
+				}
+				return nc.syncRunningNetworks()
+			},
 			ObjNeedsUpdate: nodeNeedsUpdate,
 			Threadiness:    1,
 		}
@@ -116,6 +136,8 @@ type networkControllerState struct {
 	startFailed bool
 }
 
+type advertisementIntents map[string]util.RouteAdvertisementsIntent
+
 type networkController struct {
 	sync.RWMutex
 
@@ -123,12 +145,17 @@ type networkController struct {
 	node string
 
 	nadLister                    nadlisters.NetworkAttachmentDefinitionLister
-	getNADsForRouteAdvertisement func(raName string) ([]*nadtypes.NetworkAttachmentDefinition, error)
-	raLister                     ralisters.RouteAdvertisementsLister
 	nodeLister                   corelisters.NodeLister
+	frrIndexer                   cache.Indexer
+	frrController                controller.Controller
+	legacyRALister               ralisters.RouteAdvertisementsLister
+	legacyRAController           controller.Controller
+	getNADsForRouteAdvertisement func(raName string) ([]*nadtypes.NetworkAttachmentDefinition, error)
+
+	// Last successfully reconciled name-only RA intents, keyed by network and RA.
+	lastLegacyIntents map[string]advertisementIntents
 
 	networkReconciler controller.Reconciler
-	raController      controller.Controller
 	nodeController    controller.Controller
 
 	cm                 ControllerManager
@@ -156,8 +183,8 @@ type networkController struct {
 // EnsuredNetwork before this call
 func (c *networkController) Start() error {
 	controllers := []controller.Reconciler{c.networkReconciler}
-	if c.raController != nil {
-		controllers = append(controllers, c.raController)
+	if c.frrController != nil {
+		controllers = append(controllers, c.frrController, c.legacyRAController)
 	}
 	if c.nodeController != nil {
 		controllers = append(controllers, c.nodeController)
@@ -170,8 +197,8 @@ func (c *networkController) Start() error {
 
 func (c *networkController) Stop() {
 	controllers := []controller.Reconciler{c.networkReconciler}
-	if c.raController != nil {
-		controllers = append(controllers, c.raController)
+	if c.frrController != nil {
+		controllers = append(controllers, c.frrController, c.legacyRAController)
 	}
 	if c.nodeController != nil {
 		controllers = append(controllers, c.nodeController)
@@ -451,13 +478,17 @@ func (c *networkController) syncNetwork(network string) error {
 	}()
 
 	have, stoppedAndDeleting, startFailed := c.getReconcilableNetworkState(network)
-	want := c.getNetwork(network)
+	c.RLock()
+	want := c.networks[network]
+	lastLegacy := c.lastLegacyIntents[network]
+	c.RUnlock()
 	compatible := util.AreNetworksCompatible(have, want)
 
 	// we will dispose of the old network if deletion is in progress or if
 	// non-reconcilable configuration changed. A stopped controller whose Start
 	// failed remains the cleanup owner and must release that state before a new
 	// controller may attempt to program the same network.
+	previousLegacy := lastLegacy
 	dispose := startFailed || stoppedAndDeleting || !compatible
 	if dispose {
 		err := c.deleteNetwork(network)
@@ -465,12 +496,12 @@ func (c *networkController) syncNetwork(network string) error {
 			return err
 		}
 		have = nil
+		previousLegacy = nil
 	}
 
-	// fetch other relevant network information
-	err := c.gatherNetwork(want, have)
+	legacy, err := c.setAdvertisements(want, previousLegacy)
 	if err != nil {
-		return fmt.Errorf("failed to fetch other network information for network %s: %w", network, err)
+		return fmt.Errorf("failed to determine route advertisements for network %s: %w", network, err)
 	}
 
 	ensureNetwork := !compatible || util.DoesNetworkNeedReconciliation(have, want)
@@ -489,6 +520,15 @@ func (c *networkController) syncNetwork(network string) error {
 		}
 	}
 
+	if !maps.Equal(lastLegacy, legacy) {
+		c.Lock()
+		if len(legacy) == 0 {
+			delete(c.lastLegacyIntents, network)
+		} else {
+			c.lastLegacyIntents[network] = legacy
+		}
+		c.Unlock()
+	}
 	c.reconcilePendingNetworkRefChanges(network)
 
 	return nil
@@ -565,173 +605,159 @@ func (c *networkController) deleteNetwork(network string) error {
 	return nil
 }
 
-func (c *networkController) gatherNetwork(network util.MutableNetInfo, current util.NetInfo) error {
-	if network == nil {
-		return nil
-	}
-	return c.setAdvertisements(network, current)
-}
-
-func (c *networkController) setAdvertisements(network util.MutableNetInfo, current util.NetInfo) error {
-	if !network.IsDefault() && !network.IsPrimaryNetwork() {
-		return nil
-	}
-	if !c.hasRouteAdvertisements() {
-		return nil
-	}
-	if c.getNADKeysForNetwork == nil {
-		return fmt.Errorf("missing NAD resolver for network %q", network.GetNetworkName())
+func (c *networkController) setAdvertisements(network util.MutableNetInfo, previousLegacy advertisementIntents) (advertisementIntents, error) {
+	if c.frrController == nil || network == nil || (!network.IsDefault() && !network.IsPrimaryNetwork()) {
+		return nil, nil
 	}
 
-	raNames := sets.New[string]()
+	// Cluster manager records on the NADs what each applied RA asks for. An
+	// entry only changes once a new state is applied, so an RA that is being
+	// edited, rejected or deleted keeps its last applied intent until then.
+	intents := advertisementIntents{}
+	conflicts := sets.New[string]()
+	legacyRefs := sets.New[string]()
 	for _, nadNamespacedName := range c.getNADKeysForNetwork(network.GetNetworkName()) {
 		namespace, name, err := cache.SplitMetaNamespaceKey(nadNamespacedName)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		nad, err := c.nadLister.NetworkAttachmentDefinitions(namespace).Get(name)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
-		var nadRANames []string
-		if nad.Annotations[types.OvnRouteAdvertisementsKey] != "" {
-			err = json.Unmarshal([]byte(nad.Annotations[types.OvnRouteAdvertisementsKey]), &nadRANames)
-			if err != nil {
-				return err
+		if raw := nad.Annotations[types.OvnRouteAdvertisementsKey]; raw != "" {
+			var refs []string
+			if err := json.Unmarshal([]byte(raw), &refs); err != nil {
+				return nil, fmt.Errorf("reading legacy RA references on NAD %s/%s: %w", namespace, name, err)
+			}
+			legacyRefs.Insert(refs...)
+		}
+		if nad.Annotations[types.OvnRouteAdvertisementsIntentKey] == "" {
+			continue
+		}
+		var nadIntents advertisementIntents
+		if err := json.Unmarshal([]byte(nad.Annotations[types.OvnRouteAdvertisementsIntentKey]), &nadIntents); err != nil {
+			return nil, err
+		}
+		for raName, intent := range nadIntents {
+			current, seen := intents[raName]
+			switch {
+			case !seen || (current.UID == "" && intent.UID != ""):
+				// A versioned copy supersedes any disagreements between older,
+				// unversioned annotations during an upgrade.
+				intents[raName] = intent
+				conflicts.Delete(raName)
+			case current.UID == intent.UID:
+				if intent.Generation > current.Generation {
+					intents[raName] = intent
+				} else if current.UID == "" && current != intent {
+					conflicts.Insert(raName)
+				}
+			case intent.UID != "":
+				// After a delete and recreate, the old RA can have the higher
+				// generation. Wait for its NAD copies to disappear.
+				conflicts.Insert(raName)
 			}
 		}
-
-		raNames.Insert(nadRANames...)
 	}
 
 	podAdvertisements := map[string][]string{}
 	eipAdvertisements := map[string][]string{}
-	for raName := range raNames {
-		ra, err := c.raLister.Get(raName)
-		if apierrors.IsNotFound(err) {
-			// A stale NAD annotation should not prevent a network controller
-			// from starting. Preserve the current advertised state until the
-			// RouteAdvertisements controller removes the stale annotation.
-			preserveAdvertisements(network, current)
-			return nil
+	var legacy advertisementIntents
+	node, err := c.nodeLister.Get(c.node)
+	if err != nil && !apierrors.IsNotFound(err) {
+		return nil, err
+	}
+	if node != nil {
+		for name := range intents {
+			legacyRefs.Delete(name)
 		}
+		legacy, err = c.getLegacyRAIntents(legacyRefs, previousLegacy)
 		if err != nil {
-			return err
+			return nil, err
 		}
-
-		advertisements := sets.New(ra.Spec.Advertisements...)
-		if !advertisements.Has(ratypes.PodNetwork) {
-			continue
-		}
-
-		accepted := meta.FindStatusCondition(ra.Status.Conditions, "Accepted")
-		if accepted == nil {
-			// if there is no status we can safely ignore
-			continue
-		}
-		if accepted.Status != metav1.ConditionTrue || accepted.ObservedGeneration != ra.Generation {
-			// The RA is not accepted yet (e.g. a brand-new network whose
-			// subnets haven't been allocated). Don't abort here: starting the
-			// controller is what lets the node allocator assign subnets, which
-			// is in turn what lets the RA become accepted - aborting would
-			// deadlock the two. Keep the previously-advertised VRFs (empty for
-			// a new network) for now; the RA's later transition to Accepted
-			// re-triggers this sync and fills in the real VRFs.
-			preserveAdvertisements(network, current)
-			return nil
-		}
-
-		nodeSelector, err := metav1.LabelSelectorAsSelector(&ra.Spec.NodeSelector)
-		if err != nil {
-			return err
-		}
-
-		nodes, err := c.nodeLister.List(nodeSelector)
-		if err != nil {
-			return err
-		}
-
-		vrf := ra.Spec.TargetVRF
-		if vrf == "" {
-			vrf = types.DefaultNetworkName
-		}
-
-		for _, node := range nodes {
-			if !c.isNodeManaged(node) {
+		maps.Copy(intents, legacy)
+		for raName, intent := range intents {
+			if conflicts.Has(raName) {
 				continue
 			}
-			if advertisements.Has(ratypes.PodNetwork) {
-				podAdvertisements[node.Name] = append(podAdvertisements[node.Name], vrf)
+			// No-overlay and EVPN keep their routing domain while the node
+			// is degraded. Only overlay can fall back to normal external SNAT.
+			if !legacyRefs.Has(raName) && network.Transport() != types.NetworkTransportNoOverlay && network.Transport() != types.NetworkTransportEVPN {
+				ready, err := c.nodeAdvertisementsReady(raName, intent, network, node)
+				if err != nil {
+					return nil, err
+				}
+				if !ready {
+					continue
+				}
 			}
-			if advertisements.Has(ratypes.EgressIP) {
-				eipAdvertisements[node.Name] = append(eipAdvertisements[node.Name], vrf)
+			vrf := intent.TargetVRF
+			if vrf == "" {
+				vrf = types.DefaultNetworkName
+			}
+			podAdvertisements[c.node] = append(podAdvertisements[c.node], vrf)
+			if intent.EgressIP {
+				eipAdvertisements[c.node] = append(eipAdvertisements[c.node], vrf)
 			}
 		}
 	}
 	network.SetPodNetworkAdvertisedVRFs(podAdvertisements)
 	network.SetEgressIPAdvertisedVRFs(eipAdvertisements)
-	return nil
+	return legacy, nil
 }
 
-// preserveAdvertisements carries the currently-advertised VRFs over to the
-// network being synced, so a missing or not-yet-accepted RouteAdvertisements
-// neither blocks the controller from starting nor clears existing advertisement
-// state. For a brand-new network, current is nil and the advertised VRFs are
-// left empty.
-func preserveAdvertisements(network util.MutableNetInfo, current util.NetInfo) {
-	if current == nil {
-		return
+// During migration, one NAD can already carry blue's new intent while red
+// still has only a name. While red's next generation is pending, retain the
+// VRF last applied for that RA on this network. A cold start has no such history.
+func (c *networkController) getLegacyRAIntents(refs sets.Set[string], previous advertisementIntents) (advertisementIntents, error) {
+	if len(refs) == 0 {
+		return nil, nil
 	}
-	network.SetPodNetworkAdvertisedVRFs(current.GetPodNetworkAdvertisedVRFs())
-	network.SetEgressIPAdvertisedVRFs(current.GetEgressIPAdvertisedVRFs())
+	legacy := make(advertisementIntents, len(refs))
+	for name := range refs {
+		ra, err := c.legacyRALister.Get(name)
+		missing := apierrors.IsNotFound(err)
+		if err != nil && !missing {
+			return nil, err
+		}
+		intent, pending := legacyRAIntent(ra)
+		if intent != nil {
+			legacy[name] = *intent
+		} else if old, ok := previous[name]; ok && (missing || (pending && old.UID == ra.UID)) {
+			// A deleted RA can leave a name on the NAD until its routes are
+			// withdrawn. A replacement with the same name owns different routes.
+			legacy[name] = old
+		}
+	}
+	return legacy, nil
 }
 
-func (c *networkController) hasRouteAdvertisements() bool {
-	return util.IsRouteAdvertisementsEnabled()
-}
-
-func (c *networkController) isNodeManaged(node *corev1.Node) bool {
-	if c.node == "" {
-		// cluster manager manages all nodes
-		return true
+// A name-only NAD reference can start pod advertisement from the old cluster
+// manager's Accepted condition. Once the new manager reports Degraded, the
+// node may only keep a VRF it already applied until the NAD carries its intent.
+// Remove this compatibility path after one release.
+func legacyRAIntent(ra *ratypes.RouteAdvertisements) (intent *util.RouteAdvertisementsIntent, pending bool) {
+	if ra == nil {
+		return nil, false
 	}
-	// ovnkube-node only manages its own node.
-	return node.Name == c.node
-}
-
-func raNeedsUpdate(oldRA, newRA *ratypes.RouteAdvertisements) bool {
-	if oldRA == nil || newRA == nil {
-		// handle RA add/delete through the NAD annotation update
-		return false
+	if degraded := meta.FindStatusCondition(ra.Status.Conditions, "Degraded"); degraded != nil {
+		// EgressIP-only RAs keep their NAD reference without a pod intent.
+		// A successful reconcile of that generation confirms pod withdrawal.
+		withdrawn := !slices.Contains(ra.Spec.Advertisements, ratypes.PodNetwork) &&
+			degraded.ObservedGeneration == ra.Generation && degraded.Status == metav1.ConditionFalse
+		return nil, !withdrawn
 	}
-
-	// don't process resync or objects that are marked for deletion
-	if oldRA.ResourceVersion == newRA.ResourceVersion ||
-		!newRA.GetDeletionTimestamp().IsZero() {
-		return false
+	accepted := meta.FindStatusCondition(ra.Status.Conditions, ratypes.RouteAdvertisementsAccepted)
+	if accepted == nil {
+		return nil, false
 	}
-
-	// the RA needs to be accepted on its current generation, otherwise we
-	// commit to no change
-	newCondition := meta.FindStatusCondition(newRA.Status.Conditions, "Accepted")
-	if newCondition == nil {
-		return false
+	if accepted.Status != metav1.ConditionTrue || accepted.ObservedGeneration != ra.Generation {
+		return nil, true
 	}
-	if newCondition.Status != metav1.ConditionTrue {
-		return false
-	}
-	if newCondition.ObservedGeneration != newRA.Generation {
-		return false
-	}
-	// there had to be a change on observed generation or status, otherwise we
-	// already processed this RA in its current form
-	oldCondition := meta.FindStatusCondition(oldRA.Status.Conditions, "Accepted")
-	if oldCondition == nil {
-		return true
-	}
-	return oldCondition.ObservedGeneration != newCondition.ObservedGeneration || oldCondition.Status != newCondition.Status
+	return util.NewRouteAdvertisementsIntent(ra), false
 }
 
 func nodeNeedsUpdate(oldNode, newNode *corev1.Node) bool {
@@ -745,7 +771,7 @@ func nodeNeedsUpdate(oldNode, newNode *corev1.Node) bool {
 		return false
 	}
 
-	return !reflect.DeepEqual(oldNode.Labels, newNode.Labels)
+	return !reflect.DeepEqual(oldNode.Labels, newNode.Labels) || oldNode.Annotations[types.NodeSubnetsAnnotation] != newNode.Annotations[types.NodeSubnetsAnnotation]
 }
 
 func (c *networkController) getRunningNetwork(id int) string {
@@ -772,4 +798,47 @@ func (c *networkController) GetNetworkByID(id int) util.NetInfo {
 		return c.networks[name]
 	}
 	return nil
+}
+
+// FRR merges configurations on the node. IPv4 and IPv6 can use different
+// peering templates, so each current pod prefix needs an export in the
+// intended VRF somewhere among this RA's generated configurations.
+func (c *networkController) nodeAdvertisementsReady(raName string, intent util.RouteAdvertisementsIntent, network util.NetInfo, node *corev1.Node) (bool, error) {
+	configs, err := c.frrIndexer.ByIndex(types.OvnRouteAdvertisementsKey, raName)
+	if err != nil {
+		return false, fmt.Errorf("failed to look up FRRConfigurations for RouteAdvertisements %q on node %q: %w", raName, node.Name, err)
+	}
+	prefixes, err := util.GetRouteAdvertisementsPodPrefixes(network, node)
+	if err != nil {
+		// This network's node prefixes are not ready yet.
+		return false, nil
+	}
+	vrf := intent.ResolvedVRF(network)
+	for _, obj := range configs {
+		cfg := obj.(*frrtypes.FRRConfiguration)
+		if !cfg.DeletionTimestamp.IsZero() {
+			continue
+		}
+		selector, err := metav1.LabelSelectorAsSelector(&cfg.Spec.NodeSelector)
+		if err != nil || !selector.Matches(labels.Set(node.Labels)) {
+			continue
+		}
+		prefixes = slices.DeleteFunc(prefixes, func(prefix string) bool {
+			return util.RouteAdvertisementsConfigurationExportsPrefix(cfg, vrf, prefix)
+		})
+		if len(prefixes) == 0 {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func frrNeedsUpdate(old, new *frrtypes.FRRConfiguration) bool {
+	if old != nil && new != nil && reflect.DeepEqual(old.Labels, new.Labels) && reflect.DeepEqual(old.Spec, new.Spec) &&
+		reflect.DeepEqual(old.DeletionTimestamp, new.DeletionTimestamp) {
+		return false
+	}
+	// The informer already filters objects to this node.
+	return (old != nil && old.Labels[types.OvnRouteAdvertisementsKey] != "") ||
+		(new != nil && new.Labels[types.OvnRouteAdvertisementsKey] != "")
 }

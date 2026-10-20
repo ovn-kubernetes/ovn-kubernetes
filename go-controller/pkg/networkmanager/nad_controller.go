@@ -1319,6 +1319,7 @@ func (c *nadController) nadNeedsUpdate(oldNAD, newNAD *nettypes.NetworkAttachmen
 	// also reconcile the network in case its route advertisements changed
 	return !reflect.DeepEqual(oldNAD.Spec, newNAD.Spec) ||
 		oldNAD.Annotations[types.OvnRouteAdvertisementsKey] != newNAD.Annotations[types.OvnRouteAdvertisementsKey] ||
+		oldNAD.Annotations[types.OvnRouteAdvertisementsIntentKey] != newNAD.Annotations[types.OvnRouteAdvertisementsIntentKey] ||
 		oldNAD.Annotations[types.OvnNetworkIDAnnotation] != newNAD.Annotations[types.OvnNetworkIDAnnotation] ||
 		oldNAD.Annotations[types.OvnNetworkTunnelKeysAnnotation] != newNAD.Annotations[types.OvnNetworkTunnelKeysAnnotation] ||
 		oldNAD.Annotations[types.OvnNetworkNameAnnotation] != newNAD.Annotations[types.OvnNetworkNameAnnotation]
