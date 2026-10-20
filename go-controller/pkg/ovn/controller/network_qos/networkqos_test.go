@@ -11,6 +11,7 @@ import (
 	"time"
 
 	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -28,6 +29,7 @@ import (
 	networkqoslister "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/listers/networkqos/v1alpha1"
 	crdtypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/addresssetmanager"
@@ -1186,6 +1188,69 @@ var _ = Describe("NetworkQoS status", func() {
 })
 
 var _ = Describe("NetworkQoS restart and upgrade", func() {
+	It("migrates source address-set matches to port groups idempotently", func() {
+		nqos := newNetworkQoS("qos-source-upgrade", nil)
+		qosIDs := libovsdbops.NewDbObjectIDs(libovsdbops.NetworkQoS, defaultControllerNam, map[libovsdbops.ExternalIDKey]string{
+			libovsdbops.ObjectNameKey: ovnObjectName(testNamespace, nqos.Name),
+			libovsdbops.RuleIndex:     "0",
+		})
+		legacyIDs := libovsdbops.NewDbObjectIDs(libovsdbops.AddressSetNetworkQoS, defaultControllerNam,
+			map[libovsdbops.ExternalIDKey]string{
+				libovsdbops.ObjectNameKey:   ovnObjectName(testNamespace, nqos.Name),
+				libovsdbops.RuleIndex:       "src",
+				libovsdbops.IpBlockIndexKey: "0",
+			})
+		legacyAS, _ := addressset.GetTestDbAddrSets(legacyIDs, []string{testPodDefaultIP})
+		previous := &nbdb.QoS{
+			UUID:        "88888888-8888-8888-8888-888888888888",
+			Direction:   nbdb.QoSDirectionToLport,
+			Priority:    11000,
+			Match:       "ip4.src == $" + legacyAS.Name,
+			Action:      map[string]int{nbdb.QoSActionDSCP: 50},
+			Bandwidth:   map[string]int{nbdb.QoSBandwidthRate: 10000, nbdb.QoSBandwidthBurst: 100000},
+			ExternalIDs: qosIDs.GetExternalIDs(),
+		}
+		db := initialDB()
+		db.NBData[0].(*nbdb.LogicalSwitch).QOSRules = []string{previous.UUID}
+		db.NBData = append(db.NBData, previous, legacyAS)
+		startController(db, testNamespaceObj(), testPod(), nqos)
+
+		qos := eventuallyQoS(defaultControllerNam, testNamespace, nqos.Name, 0)
+		Expect(qos.UUID).To(Equal(previous.UUID))
+		Eventually(func() string {
+			qos = findQoS(defaultControllerNam, testNamespace, nqos.Name, 0)
+			if qos == nil {
+				return ""
+			}
+			return qos.Match
+		}).WithTimeout(10 * time.Second).Should(MatchRegexp(`^inport == @\w+ && \(ip4 \|\| ip6\)$`))
+		var portGroups []*nbdb.PortGroup
+		Eventually(func() []*nbdb.PortGroup {
+			portGroups = findSourcePortGroup(defaultControllerNam, testNamespace, nqos.Name)
+			return portGroups
+		}).WithTimeout(10 * time.Second).Should(HaveLen(1))
+		Expect(portGroups[0].Ports).To(ConsistOf(testPodDefaultLSPUUID))
+		Eventually(func() []*nbdb.AddressSet {
+			addrSets, err := libovsdbops.FindAddressSetsWithPredicate(nbClient, func(addrSet *nbdb.AddressSet) bool {
+				return isNetworkQoSObject(addrSet.ExternalIDs, "", ovnObjectName(testNamespace, nqos.Name))
+			})
+			Expect(err).NotTo(HaveOccurred())
+			return addrSets
+		}).Should(BeEmpty())
+
+		By("reconciling the already-migrated policy again")
+		c := newDirectController(nbClient)
+		_, err := c.ensureNetworkQoSForNetwork(nqos, c.newNetworkContext(&util.DefaultNetInfo{}), nil)
+		Expect(err).To(Succeed())
+		reconciled := findQoS(defaultControllerNam, testNamespace, nqos.Name, 0)
+		Expect(reconciled.UUID).To(Equal(previous.UUID))
+		Expect(reconciled.Match).To(Equal(qos.Match))
+		reconciledPortGroups := findSourcePortGroup(defaultControllerNam, testNamespace, nqos.Name)
+		Expect(reconciledPortGroups).To(HaveLen(1))
+		Expect(reconciledPortGroups[0].UUID).To(Equal(portGroups[0].UUID))
+		Expect(reconciledPortGroups[0].Ports).To(ConsistOf(testPodDefaultLSPUUID))
+	})
+
 	It("turns the layer2 rules of previous versions around in place", func() {
 		startController(initialDB(), testNamespaceObj(), testPod())
 		nad := ovnk8stesting.GenerateNAD(streamNetwork, streamNetwork, "default", types.Layer2Topology,
@@ -1251,8 +1316,12 @@ var _ = Describe("NetworkQoS restart and upgrade", func() {
 				if owner == streamControllerName {
 					qos.ExternalIDs[types.NetworkExternalID] = streamNetwork
 				}
+				portGroupIDs := sourcePortGroupDbIDs(owner, ovnObjectName(testNamespace, nqos.Name))
 				db.NBData[index].(*nbdb.LogicalSwitch).QOSRules = []string{qos.UUID}
-				db.NBData = append(db.NBData, qos, legacyAS)
+				db.NBData = append(db.NBData, qos, legacyAS, &nbdb.PortGroup{
+					Name:        libovsdbutil.GetPortGroupName(portGroupIDs),
+					ExternalIDs: portGroupIDs.GetExternalIDs(),
+				})
 			}
 			startController(db, streamNAD(map[string]string{"name": "no-longer-selected"}), testNamespaceObj(), testPod(), nqos)
 			eventuallyNoQoS(streamControllerName, testNamespace, nqos.Name, 0)
@@ -1289,6 +1358,9 @@ var _ = Describe("NetworkQoS restart and upgrade", func() {
 				libovsdbops.ObjectNameKey: "some-namespace",
 				libovsdbops.PriorityKey:   "1000",
 			}).GetExternalIDs()
+		stalePortGroupIDs := sourcePortGroupDbIDs(defaultControllerNam, "some-namespace:deleted-qos")
+		namespacePortGroupIDs := libovsdbops.NewDbObjectIDs(libovsdbops.PortGroupNamespace, defaultControllerNam,
+			map[libovsdbops.ExternalIDKey]string{libovsdbops.ObjectNameKey: testNamespace})
 		db := &libovsdbtest.TestSetup{
 			NBData: []libovsdbtest.TestData{
 				&nbdb.LogicalSwitch{
@@ -1311,6 +1383,14 @@ var _ = Describe("NetworkQoS restart and upgrade", func() {
 					Action:      map[string]int{nbdb.QoSActionDSCP: 20},
 					ExternalIDs: egressQoSExternalIDs,
 				},
+				&nbdb.PortGroup{
+					Name:        libovsdbutil.GetPortGroupName(stalePortGroupIDs),
+					ExternalIDs: stalePortGroupIDs.GetExternalIDs(),
+				},
+				&nbdb.PortGroup{
+					Name:        libovsdbutil.GetPortGroupName(namespacePortGroupIDs),
+					ExternalIDs: namespacePortGroupIDs.GetExternalIDs(),
+				},
 			},
 		}
 		startController(db, testNamespaceObj())
@@ -1332,5 +1412,19 @@ var _ = Describe("NetworkQoS restart and upgrade", func() {
 			Expect(err).NotTo(HaveOccurred())
 			return len(qoses)
 		}).WithTimeout(2 * time.Second).WithPolling(500 * time.Millisecond).Should(Equal(1))
+
+		By("deleting only the stale NetworkQoS port group")
+		Eventually(func() []*nbdb.PortGroup {
+			portGroups, err := libovsdbops.FindPortGroupsWithPredicate(nbClient, func(pg *nbdb.PortGroup) bool {
+				return isNetworkQoSObject(pg.ExternalIDs, "", "some-namespace:deleted-qos")
+			})
+			Expect(err).NotTo(HaveOccurred())
+			return portGroups
+		}).Should(BeEmpty())
+		portGroups, err := libovsdbops.FindPortGroupsWithPredicate(nbClient, func(pg *nbdb.PortGroup) bool {
+			return pg.ExternalIDs[libovsdbops.OwnerTypeKey.String()] == string(libovsdbops.NamespaceOwnerType)
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(portGroups).To(HaveLen(1))
 	})
 })

@@ -404,6 +404,14 @@ with `podSelector: {}` left the destination unrestricted, and
 namespace. NetworkQoS objects relying on that select different destinations
 after an upgrade; review them before upgrading.
 
+Source `podSelector` matching is attachment and logical-switch-port based. On
+each selected network, OVN-Kubernetes puts the logical switch ports of local,
+non-host-network, non-completed pods attached to that network into a
+NetworkQoS-owned port group, and the QoS match uses that port group. Source
+selection therefore does not depend on pod IP addresses. Labeled destination
+selectors remain address-set based because destination pods may be scheduled on
+any node.
+
 The controller canonicalizes `ipBlock.cidr` and `ipBlock.except` CIDRs before
 building OVN matches. For example, `10.0.0.7/24` becomes `10.0.0.0/24`, and
 expanded IPv6 addresses use compressed notation. A bare address, such as

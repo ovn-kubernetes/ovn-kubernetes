@@ -121,9 +121,11 @@ func (c *Controller) bindQoSToLocalSwitch(qosState *networkQoSState, sourcePortG
 			qos.ExternalIDs[types.NetworkExternalID] = nctx.netInfo.GetNetworkName()
 		}
 		id := qos.ExternalIDs[libovsdbops.RuleIndex.String()]
-		if current := existingByID[id]; current != nil && qosEqual(current, qos) {
+		current := existingByID[id]
+		if current != nil {
 			qos.UUID = current.UUID
-		} else {
+		}
+		if current == nil || !qosEqual(current, qos) {
 			changed = append(changed, qos)
 		}
 		qoses = append(qoses, qos)

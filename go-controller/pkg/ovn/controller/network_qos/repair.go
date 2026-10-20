@@ -18,7 +18,8 @@ import (
 
 // Queue deleted policies for cleanup and record legacy address sets before workers start.
 // Queued deletions retry normally. Objects without a policy name have no queue key, so
-// delete them here. Only NetworkQoS-owned objects are considered.
+// delete them here. Only NetworkQoS-owned QoS rules, port groups, and address sets are
+// considered.
 func (c *Controller) repairNetworkQoSes() error {
 	start := time.Now()
 	defer func() {
@@ -49,6 +50,12 @@ func (c *Controller) repairNetworkQoSes() error {
 	if err != nil {
 		return fmt.Errorf("failed to look up the address sets the per-network controllers owned: %w", err)
 	}
+	portGroups, err := libovsdbops.FindPortGroupsWithPredicate(c.nbClient, func(portGroup *nbdb.PortGroup) bool {
+		return isOwnedByNetworkQoS(portGroup.ExternalIDs)
+	})
+	if err != nil {
+		return fmt.Errorf("failed to look up the port groups owned by NetworkQoS: %w", err)
+	}
 
 	staleKeys := sets.New[string]()
 	var unnamedQoSes []*nbdb.QoS
@@ -72,14 +79,26 @@ func (c *Controller) repairNetworkQoSes() error {
 			staleKeys.Insert(key)
 		}
 	}
+	var unnamedPortGroups []*nbdb.PortGroup
+	for _, portGroup := range portGroups {
+		objectName := portGroup.ExternalIDs[libovsdbops.ObjectNameKey.String()]
+		key, ok := nqosKeyOf(objectName)
+		if !ok {
+			unnamedPortGroups = append(unnamedPortGroups, portGroup)
+			continue
+		}
+		if !existing.Has(objectName) {
+			staleKeys.Insert(key)
+		}
+	}
 	for key := range staleKeys {
 		klog.V(4).Infof("Removing what was programmed for NetworkQoS %s, which no longer exists", key)
 		c.nqosController.Reconcile(key)
 	}
-	if len(unnamedQoSes) > 0 || len(unnamedAddrSets) > 0 {
+	if len(unnamedQoSes) > 0 || len(unnamedAddrSets) > 0 || len(unnamedPortGroups) > 0 {
 		// Without a policy name, failed cleanup has to wait until the next restart.
-		if err := c.deleteUnnamed(unnamedQoSes, unnamedAddrSets); err != nil {
-			klog.Errorf("Failed to delete the QoS rules and address sets owned by no NetworkQoS: %v", err)
+		if err := c.deleteUnnamed(unnamedQoSes, unnamedPortGroups, unnamedAddrSets); err != nil {
+			klog.Errorf("Failed to delete the QoS rules, port groups, and address sets owned by no NetworkQoS: %v", err)
 		}
 	}
 	return nil
@@ -93,8 +112,11 @@ func nqosKeyOf(objectName string) (string, bool) {
 	return nqosKey(namespace, name), true
 }
 
-func (c *Controller) deleteUnnamed(qoses []*nbdb.QoS, addrSets []*nbdb.AddressSet) error {
+func (c *Controller) deleteUnnamed(qoses []*nbdb.QoS, portGroups []*nbdb.PortGroup, addrSets []*nbdb.AddressSet) error {
 	if err := c.deleteOvnQoSes(qoses); err != nil {
+		return err
+	}
+	if err := c.deletePortGroups(portGroups); err != nil {
 		return err
 	}
 	ops, err := libovsdbops.DeleteAddressSetsOps(c.nbClient, nil, addrSets...)
