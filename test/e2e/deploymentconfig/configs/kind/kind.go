@@ -107,6 +107,12 @@ func (k *kind) IsConfigurationEnabled(config api.Config) bool {
 		val, present := os.LookupEnv("DISABLE_UDN_ARP_NDP_FLOOD")
 		udnARPNDPFloodDisabled := present && val == "true"
 		return udnARPNDPFloodDisabled
+	case api.NoOverlay:
+		val, present := os.LookupEnv("ENABLE_NO_OVERLAY")
+		return present && val == "true"
+	case api.LinkLocalForwardingDisabled:
+		val, present := os.LookupEnv("OVN_DISABLE_LINK_LOCAL_FORWARDING")
+		return present && val == "true"
 	default:
 		return false
 	}
