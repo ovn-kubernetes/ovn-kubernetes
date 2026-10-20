@@ -4,6 +4,8 @@
 package kind
 
 import (
+	"os"
+
 	"k8s.io/kubernetes/test/utils/image"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig/api"
@@ -45,6 +47,12 @@ func (k kind) IsConfigurationEnabled(config api.Config) bool {
 		// Currently enabled by default for Kind cluster. Could use
 		// an ENV variable check instead if we need variability later.
 		return true
+	case api.NoOverlay:
+		val, present := os.LookupEnv("ENABLE_NO_OVERLAY")
+		return present && val == "true"
+	case api.LinkLocalForwardingDisabled:
+		val, present := os.LookupEnv("OVN_DISABLE_LINK_LOCAL_FORWARDING")
+		return present && val == "true"
 	default:
 		return false
 	}

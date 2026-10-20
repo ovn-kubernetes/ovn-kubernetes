@@ -12,6 +12,28 @@ type Config string
 const (
 	// L3UDNMultiSubnetConfig indicates whether L3 User Defined Network multi-subnet support is enabled
 	L3UDNMultiSubnetConfig Config = "L3UDNMultiSubnet"
+	// NoOverlay indicates whether the default network uses the no-overlay transport
+	NoOverlay Config = "NoOverlay"
+	// LinkLocalForwardingDisabled indicates whether the disable-link-local-forwarding gateway option is set
+	LinkLocalForwardingDisabled Config = "LinkLocalForwardingDisabled"
+)
+
+type ImageID int
+
+type ImageConfig struct {
+	ImageID  ImageID
+	PullSpec string
+}
+
+// Image IDs for OVN-Kubernetes e2e test images
+const (
+	Agnhost ImageID = iota
+	Netshoot
+	Nginx
+	FRR
+	DNSMasq
+	FedoraKubevirtContainerDisk
+	MaxDefaultImageIDs
 )
 
 // DeploymentConfig offers visibility into the configuration OVN-Kubernetes environment for e2e test cases. This includes all host or node level config.
