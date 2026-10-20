@@ -32,8 +32,8 @@ func isNetworkQoSObject(externalIDs map[string]string, ownerController, objectNa
 		externalIDs[libovsdbops.ObjectNameKey.String()] == objectName
 }
 
-func generateNetworkQoSMatch(source addrSetRef, rule *GressRule, ipv4Enabled, ipv6Enabled bool) string {
-	match := source.matchString(trafficDirSource, ipv4Enabled, ipv6Enabled)
+func generateNetworkQoSMatch(sourcePortGroupName string, rule *GressRule, ipv4Enabled, ipv6Enabled bool) string {
+	match := fmt.Sprintf("inport == @%s && (ip4 || ip6)", sourcePortGroupName)
 	if classifierMatch := rule.Classifier.ToQosMatchString(ipv4Enabled, ipv6Enabled); classifierMatch != "" {
 		match += " && " + classifierMatch
 	}

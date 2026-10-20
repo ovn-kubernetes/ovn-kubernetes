@@ -425,6 +425,7 @@ func (oc *DefaultNetworkController) newNetworkQoSController() error {
 		oc.nbClient,
 		oc.kube.NetworkQoSClient,
 		oc.watchFactory.NetworkQoSInformer(),
+		oc.watchFactory.PodCoreInformer(),
 		oc.watchFactory.NamespaceCoreInformer(),
 		nadInformer,
 		oc.networkManager,

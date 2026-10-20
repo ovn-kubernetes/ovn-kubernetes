@@ -25,6 +25,8 @@ import (
 // Switch creation requeues policies waiting for it.
 var errLogicalSwitchMissing = errors.New("logical switch not created yet")
 
+var errLogicalSwitchPortMissing = errors.New("logical switch port not created yet")
+
 // Look up rules by their indexed IDs when the network is known.
 // An empty ownerController means search all networks.
 func (c *Controller) findOwnedQoSes(ownerController, objectName string) ([]*nbdb.QoS, error) {
@@ -80,7 +82,7 @@ func (c *Controller) switchesReferencingQoSes(qoses []*nbdb.QoS) (map[string][]*
 
 // Bind rules even with no source pods because an empty source set matches no traffic.
 // Returns the rule IDs of the rows bound to the switch.
-func (c *Controller) bindQoSToLocalSwitch(qosState *networkQoSState, source addrSetRef, rules []*GressRule,
+func (c *Controller) bindQoSToLocalSwitch(qosState *networkQoSState, sourcePortGroupName string, rules []*GressRule,
 	existing []*nbdb.QoS, nctx *networkContext) (sets.Set[string], error) {
 	bound := sets.New[string]()
 	if len(rules) == 0 {
@@ -128,7 +130,7 @@ func (c *Controller) bindQoSToLocalSwitch(qosState *networkQoSState, source addr
 		bound.Insert(id)
 	}
 	for index, rule := range rules {
-		match := generateNetworkQoSMatch(source, rule, ipv4Enabled, ipv6Enabled)
+		match := generateNetworkQoSMatch(sourcePortGroupName, rule, ipv4Enabled, ipv6Enabled)
 		qos := &nbdb.QoS{
 			Action:      map[string]int{},
 			Bandwidth:   map[string]int{},
@@ -294,6 +296,16 @@ func (c *Controller) cleanupUnselectedNetworks(objectName string, networks map[s
 	if err = c.deleteOvnQoSes(qoses); err != nil {
 		return err
 	}
+	portGroups, err := libovsdbops.FindPortGroupsWithPredicate(c.nbClient, func(pg *nbdb.PortGroup) bool {
+		return isNetworkQoSObject(pg.ExternalIDs, "", objectName) &&
+			!selectedControllers.Has(pg.ExternalIDs[libovsdbops.OwnerControllerKey.String()])
+	})
+	if err != nil {
+		return fmt.Errorf("failed to look up port groups on unselected networks for %s: %w", objectName, err)
+	}
+	if err = c.deletePortGroups(portGroups); err != nil {
+		return err
+	}
 	return c.deleteLegacyAddressSets(objectName, func(ownerController string) bool {
 		return !selectedControllers.Has(ownerController)
 	})
@@ -308,12 +320,51 @@ func (c *Controller) deleteByObjectName(ownerController, objectName string) erro
 	if err = c.deleteOvnQoSes(qoses); err != nil {
 		return fmt.Errorf("error cleaning up OVN QoSes for %s: %w", objectName, err)
 	}
+	portGroups, err := c.findOwnedPortGroups(ownerController, objectName)
+	if err != nil {
+		return err
+	}
+	if err = c.deletePortGroups(portGroups); err != nil {
+		return fmt.Errorf("error cleaning up port groups for %s: %w", objectName, err)
+	}
 	if err = c.deleteLegacyAddressSets(objectName, func(controller string) bool {
 		return ownerController == "" || controller == ownerController
 	}); err != nil {
 		return fmt.Errorf("error cleaning up address sets for %s: %w", objectName, err)
 	}
 	return nil
+}
+
+func (c *Controller) findOwnedPortGroups(ownerController, objectName string) ([]*nbdb.PortGroup, error) {
+	portGroups, err := libovsdbops.FindPortGroupsWithPredicate(c.nbClient, func(pg *nbdb.PortGroup) bool {
+		return isNetworkQoSObject(pg.ExternalIDs, ownerController, objectName)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to look up the port groups of %s: %w", objectName, err)
+	}
+	return portGroups, nil
+}
+
+func (c *Controller) deletePortGroups(portGroups []*nbdb.PortGroup) error {
+	if len(portGroups) == 0 {
+		return nil
+	}
+	ops, err := libovsdbops.DeletePortGroupsOps(c.nbClient, nil, portGroupNames(portGroups)...)
+	if err != nil {
+		return fmt.Errorf("failed to get ops to delete port groups: %w", err)
+	}
+	if _, err := libovsdbops.TransactAndCheck(c.nbClient, ops); err != nil {
+		return fmt.Errorf("failed to delete port groups: %w", err)
+	}
+	return nil
+}
+
+func portGroupNames(portGroups []*nbdb.PortGroup) []string {
+	names := make([]string, 0, len(portGroups))
+	for _, portGroup := range portGroups {
+		names = append(names, portGroup.Name)
+	}
+	return names
 }
 
 func (c *Controller) deleteOvnQoSes(qoses []*nbdb.QoS) error {

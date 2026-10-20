@@ -38,9 +38,11 @@ type networkQoSState struct {
 	controllerName string
 	// Requeue this policy if a switch with this name is created.
 	switchName string
+	// Source matches use this NetworkQoS-owned port group.
+	sourcePortGroupName string
 
-	// source or destination selectors may share the same address set.
-	addrSetKeys sets.Set[string]
+	// Destination selectors may share the same address set.
+	destinationAddrSetKeys sets.Set[string]
 
 	applied bool
 
@@ -64,6 +66,12 @@ func qosDbObjectIDs(controllerName, objectName, ruleID string) *libovsdbops.DbOb
 	})
 }
 
+func sourcePortGroupDbIDs(controllerName, objectName string) *libovsdbops.DbObjectIDs {
+	return libovsdbops.NewDbObjectIDs(libovsdbops.PortGroupNetworkQoS, controllerName, map[libovsdbops.ExternalIDKey]string{
+		libovsdbops.ObjectNameKey: objectName,
+	})
+}
+
 func ruleStringID(ruleIndex int) string {
 	return fmt.Sprintf("%d", ruleIndex)
 }
@@ -81,10 +89,10 @@ func (state *networkQoSState) addrSetBackRef() string {
 }
 
 func (state *networkQoSState) holdAddressSet(ref addrSetRef) {
-	if state.addrSetKeys == nil {
-		state.addrSetKeys = sets.New[string]()
+	if state.destinationAddrSetKeys == nil {
+		state.destinationAddrSetKeys = sets.New[string]()
 	}
-	state.addrSetKeys.Insert(ref.key)
+	state.destinationAddrSetKeys.Insert(ref.key)
 }
 
 // GressRule represents one egress rule and its OVN QoS settings.

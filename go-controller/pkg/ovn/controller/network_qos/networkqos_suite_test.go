@@ -20,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes"
+	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/util/workqueue"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
@@ -35,7 +36,6 @@ import (
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
-	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/addresssetmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/syncmap"
 	ovnk8stesting "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
@@ -48,16 +48,23 @@ import (
 )
 
 const (
-	testNode             = "node1"
-	testNamespace        = "network-qos-test"
-	testPodName          = "client-pod"
-	testPodDefaultIP     = "10.192.177.4"
-	testPodStreamIP      = "10.128.2.3"
-	streamNADKey         = "default/stream"
-	streamNetwork        = "stream"
-	defaultControllerNam = types.DefaultNetworkControllerName
-	streamControllerName = streamNetwork + "-network-controller"
-	defaultNADKey        = "default/default-network"
+	testNode                    = "node1"
+	testNamespace               = "network-qos-test"
+	testPodName                 = "client-pod"
+	testPodDefaultIP            = "10.192.177.4"
+	testPodStreamIP             = "10.128.2.3"
+	testPodDefaultLSPUUID       = "11111111-1111-1111-1111-111111111111"
+	testPodStreamLSPUUID        = "22222222-2222-2222-2222-222222222222"
+	otherNamespaceClientLSPUUID = "33333333-3333-3333-3333-333333333333"
+	sourceRemoteLSPUUID         = "44444444-4444-4444-4444-444444444444"
+	sourceHostLSPUUID           = "55555555-5555-5555-5555-555555555555"
+	sourceCompletedLSPUUID      = "66666666-6666-6666-6666-666666666666"
+	sourceOtherLabelLSPUUID     = "77777777-7777-7777-7777-777777777777"
+	streamNADKey                = "default/stream"
+	streamNetwork               = "stream"
+	defaultControllerNam        = types.DefaultNetworkControllerName
+	streamControllerName        = streamNetwork + "-network-controller"
+	defaultNADKey               = "default/default-network"
 )
 
 // Fix the network roles so these tests do not depend on the roles inferred from NADs.
@@ -122,8 +129,21 @@ var _ = AfterEach(func() {
 func initialDB() *libovsdbtest.TestSetup {
 	return &libovsdbtest.TestSetup{
 		NBData: []libovsdbtest.TestData{
-			&nbdb.LogicalSwitch{Name: testNode},
-			&nbdb.LogicalSwitch{Name: streamNetwork + "_" + testNode},
+			&nbdb.LogicalSwitch{Name: testNode,
+				Ports: []string{testPodDefaultLSPUUID, otherNamespaceClientLSPUUID}},
+			&nbdb.LogicalSwitch{Name: streamNetwork + "_" + testNode, Ports: []string{testPodStreamLSPUUID}},
+			&nbdb.LogicalSwitchPort{
+				UUID: testPodDefaultLSPUUID,
+				Name: util.GetLogicalPortName(testNamespace, testPodName),
+			},
+			&nbdb.LogicalSwitchPort{
+				UUID: testPodStreamLSPUUID,
+				Name: util.GetUserDefinedNetworkLogicalPortName(testNamespace, testPodName, streamNADKey),
+			},
+			&nbdb.LogicalSwitchPort{
+				UUID: otherNamespaceClientLSPUUID,
+				Name: util.GetLogicalPortName("other-qos-namespace", "other-client"),
+			},
 		},
 	}
 }
@@ -276,6 +296,7 @@ func startControllerWithRateLimiter(db *libovsdbtest.TestSetup, rateLimiter work
 		nbClient,
 		fakeNQoSClient,
 		watchFactory.NetworkQoSInformer(),
+		watchFactory.PodCoreInformer(),
 		watchFactory.NamespaceCoreInformer(),
 		nadInformer,
 		networkManagerMock,
@@ -297,11 +318,16 @@ func startControllerWithRateLimiter(db *libovsdbtest.TestSetup, rateLimiter work
 
 // Use the test address set manager without starting controller workers.
 func newDirectController(client libovsdbclient.Client) *Controller {
+	var podLister corelisters.PodLister
+	if watchFactory != nil {
+		podLister = watchFactory.PodCoreInformer().Lister()
+	}
 	return &Controller{
 		nodeName:           testNode,
 		nbClient:           client,
 		networkManager:     &networkmanager.FakeNetworkManager{},
 		addressSetManager:  addrSetManager,
+		podLister:          podLister,
 		cache:              syncmap.NewSyncMap[*nqosCacheEntry](),
 		reportedFailures:   sets.New[string](),
 		unreportedFailures: sets.New[string](),
@@ -392,44 +418,48 @@ func eventuallySwitchHasQoS(switchName string, qos *nbdb.QoS) {
 		fmt.Sprintf("QoS rule %s not bound to switch %s", qos.UUID, switchName))
 }
 
-func sourceAddressSetIDs(controllerName string) *libovsdbops.DbObjectIDs {
-	return addresssetmanager.GetPodSelectorAddrSetDbIDs(
-		&metav1.LabelSelector{MatchLabels: map[string]string{"app": "client"}},
-		nil,
-		nil,
-		testNamespace, controllerName, false, addresssetmanager.ExcludeHostNetworkPods(), addresssetmanager.WithNodeName(testNode))
-}
-
-func sourceAddresses(controllerName string) []string {
-	addrSetFactory := addressset.NewOvnAddressSetFactory(nbClient, config.IPv4Mode, config.IPv6Mode)
-	addrSet, err := addrSetFactory.GetAddressSet(sourceAddressSetIDs(controllerName))
-	if err != nil {
-		return nil
-	}
-	v4, v6 := addrSet.GetAddresses()
-	return append(v4, v6...)
-}
-
 func findAddressSets(ids *libovsdbops.DbObjectIDs) []*nbdb.AddressSet {
 	addrSets, err := libovsdbops.FindAddressSetsWithPredicate(nbClient, libovsdbops.GetPredicate[*nbdb.AddressSet](ids, nil))
 	Expect(err).NotTo(HaveOccurred())
 	return addrSets
 }
 
-func findSourceAddressSets(controllerName string) []*nbdb.AddressSet {
-	return findAddressSets(sourceAddressSetIDs(controllerName))
+func findSourcePortGroups(controllerName string) []*nbdb.PortGroup {
+	portGroups, err := libovsdbops.FindPortGroupsWithPredicate(nbClient, func(pg *nbdb.PortGroup) bool {
+		return pg.ExternalIDs[libovsdbops.OwnerTypeKey.String()] == string(libovsdbops.NetworkQoSOwnerType) &&
+			pg.ExternalIDs[libovsdbops.OwnerControllerKey.String()] == controllerName
+	})
+	Expect(err).NotTo(HaveOccurred())
+	return portGroups
 }
 
-func eventuallyAddressSetHas(controllerName, address string) {
+func findSourcePortGroup(controllerName, namespace, name string) []*nbdb.PortGroup {
+	objectName := ovnObjectName(namespace, name)
+	portGroups, err := libovsdbops.FindPortGroupsWithPredicate(nbClient, func(pg *nbdb.PortGroup) bool {
+		return isNetworkQoSObject(pg.ExternalIDs, controllerName, objectName)
+	})
+	Expect(err).NotTo(HaveOccurred())
+	return portGroups
+}
+
+func sourcePortGroupPorts(controllerName string) []string {
+	ports := []string{}
+	for _, portGroup := range findSourcePortGroups(controllerName) {
+		ports = append(ports, portGroup.Ports...)
+	}
+	return ports
+}
+
+func eventuallySourcePortGroupHas(controllerName, lspUUID string) {
 	Eventually(func() []string {
-		return sourceAddresses(controllerName)
-	}).WithTimeout(10*time.Second).WithPolling(500*time.Millisecond).Should(ContainElement(address),
-		fmt.Sprintf("address %s missing from the source address set of %s", address, controllerName))
+		return sourcePortGroupPorts(controllerName)
+	}).WithTimeout(10*time.Second).WithPolling(500*time.Millisecond).Should(ContainElement(lspUUID),
+		fmt.Sprintf("logical switch port %s missing from the source port group of %s", lspUUID, controllerName))
 }
 
-func eventuallyNoAddressSet(controllerName string) {
-	Eventually(func() []*nbdb.AddressSet {
-		return findSourceAddressSets(controllerName)
+func eventuallyNoSourcePortGroup(controllerName string) {
+	Eventually(func() []*nbdb.PortGroup {
+		return findSourcePortGroups(controllerName)
 	}).WithTimeout(10*time.Second).WithPolling(500*time.Millisecond).Should(BeEmpty(),
-		fmt.Sprintf("the source address set on %s was not deleted", controllerName))
+		fmt.Sprintf("the source port group on %s was not deleted", controllerName))
 }

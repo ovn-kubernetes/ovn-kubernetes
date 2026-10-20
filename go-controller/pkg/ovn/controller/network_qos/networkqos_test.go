@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -69,10 +70,12 @@ var _ = Describe("NetworkQoS rules", func() {
 		eventuallySwitchHasQoS(nctx.logicalSwitchName(testNode), qos)
 		Expect(qos.Direction).To(Equal(nbdb.QoSDirectionToLport))
 		// Only the packets of local pods are classified here.
-		Eventually(func() []string { return sourceAddresses(streamControllerName) }).Should(ConsistOf(testPodStreamIP))
-		sets := findSourceAddressSets(streamControllerName)
+		Eventually(func() []string {
+			return sourcePortGroupPorts(streamControllerName)
+		}).Should(ConsistOf(testPodStreamLSPUUID))
+		sets := findSourcePortGroups(streamControllerName)
 		Expect(sets).To(HaveLen(1))
-		Expect(qos.Match).To(Equal("ip4.src == {$" + sets[0].Name + "}"))
+		Expect(qos.Match).To(Equal("inport == @" + sets[0].Name + " && (ip4 || ip6)"))
 	})
 
 	// Packets to a Service enter a layer2 switch twice on their source node: addressed to a
@@ -115,11 +118,11 @@ var _ = Describe("NetworkQoS rules", func() {
 		}
 		match := ruleMatch(0)
 		Eventually(match).Should(HaveSuffix(" && !(eth.dst == 0a:58:0a:80:00:01 && ip4.dst == 10.128.0.0/16)"))
-		sets := findSourceAddressSets(streamControllerName)
+		sets := findSourcePortGroups(streamControllerName)
 		Expect(sets).To(HaveLen(1))
-		Expect(match()).To(HavePrefix("ip4.src == {$" + sets[0].Name + "} && "))
+		Expect(match()).To(HavePrefix("inport == @" + sets[0].Name + " && (ip4 || ip6) && "))
 		Expect(findQoS(streamControllerName, testNamespace, nqos.Name, 0).Direction).To(Equal(nbdb.QoSDirectionFromLport))
-		Eventually(ruleMatch(1)).Should(Equal("ip4.src == {$" + sets[0].Name + "} && !(eth.dst == 0a:58:0a:80:00:01 && ip4.dst == 10.128.0.0/16)"))
+		Eventually(ruleMatch(1)).Should(Equal("inport == @" + sets[0].Name + " && (ip4 || ip6) && !(eth.dst == 0a:58:0a:80:00:01 && ip4.dst == 10.128.0.0/16)"))
 		// The rules apply on the last pass, so the skipped one needs no row.
 		Expect(findReturnPassQoS(streamControllerName, testNamespace, nqos.Name, 0)).To(BeNil())
 
@@ -159,7 +162,9 @@ var _ = Describe("NetworkQoS rules", func() {
 			&nbdb.LogicalRouter{Name: router.Name, Ports: []string{"rtos-uuid"}},
 			&nbdb.LogicalSwitchPort{UUID: "stor-uuid", Name: "stor-" + testNode, Type: "router",
 				Options: map[string]string{libovsdbops.RouterPort: "rtos-" + testNode}},
-			&nbdb.LogicalSwitch{UUID: "node-switch-uuid", Name: testNode, Ports: []string{"stor-uuid"}},
+			&nbdb.LogicalSwitchPort{UUID: testPodDefaultLSPUUID, Name: util.GetLogicalPortName(testNamespace, testPodName)},
+			&nbdb.LogicalSwitch{UUID: "node-switch-uuid", Name: testNode,
+				Ports: []string{"stor-uuid", testPodDefaultLSPUUID}},
 		}}
 		nqos := newNetworkQoS("qos-node-switch-router", nil)
 		// A rule without a bandwidth limit skips the same pass, so that rules of lower priority
@@ -178,7 +183,7 @@ var _ = Describe("NetworkQoS rules", func() {
 				return ""
 			}
 		}
-		Eventually(ruleMatch(1)).Should(MatchRegexp(`^ip4\.src == \{\$\w+\} && !\(eth\.src == 0a:58:0a:c0:b1:01\)$`))
+		Eventually(ruleMatch(1)).Should(MatchRegexp(`^inport == @\w+ && \(ip4 \|\| ip6\) && !\(eth\.src == 0a:58:0a:c0:b1:01\)$`))
 		returnPassMatch := func(index int) func() string {
 			return func() string {
 				if qos := findReturnPassQoS(defaultControllerNam, testNamespace, nqos.Name, index); qos != nil {
@@ -187,8 +192,8 @@ var _ = Describe("NetworkQoS rules", func() {
 				return ""
 			}
 		}
-		Eventually(returnPassMatch(0)).Should(MatchRegexp(`^ip4\.src == \{\$\w+\} && eth\.src == 0a:58:0a:c0:b1:01$`))
-		Eventually(returnPassMatch(1)).Should(MatchRegexp(`^ip4\.src == \{\$\w+\} && eth\.src == 0a:58:0a:c0:b1:01$`))
+		Eventually(returnPassMatch(0)).Should(MatchRegexp(`^inport == @\w+ && \(ip4 \|\| ip6\) && eth\.src == 0a:58:0a:c0:b1:01$`))
+		Eventually(returnPassMatch(1)).Should(MatchRegexp(`^inport == @\w+ && \(ip4 \|\| ip6\) && eth\.src == 0a:58:0a:c0:b1:01$`))
 
 		By("following another router port")
 		Expect(libovsdbops.CreateOrUpdateLogicalRouterPort(nbClient, router,
@@ -232,9 +237,14 @@ var _ = Describe("NetworkQoS rules", func() {
 				Options: map[string]string{libovsdbops.RouterPort: "rtos-" + testNode}},
 			&nbdb.LogicalSwitchPort{UUID: "stream-stor-uuid", Name: "stream-stor-" + testNode, Type: "router",
 				Options: map[string]string{libovsdbops.RouterPort: "stream-rtos-" + testNode}},
-			&nbdb.LogicalSwitch{UUID: "node-switch-uuid", Name: testNode, Ports: []string{"stor-uuid"},
+			&nbdb.LogicalSwitchPort{UUID: testPodDefaultLSPUUID, Name: util.GetLogicalPortName(testNamespace, testPodName)},
+			&nbdb.LogicalSwitchPort{UUID: testPodStreamLSPUUID,
+				Name: util.GetUserDefinedNetworkLogicalPortName(testNamespace, testPodName, streamNADKey)},
+			&nbdb.LogicalSwitch{UUID: "node-switch-uuid", Name: testNode,
+				Ports:    []string{"stor-uuid", testPodDefaultLSPUUID},
 				QOSRules: []string{egressQoS.UUID}},
-			&nbdb.LogicalSwitch{UUID: "stream-switch-uuid", Name: streamNetwork + "_" + testNode, Ports: []string{"stream-stor-uuid"}},
+			&nbdb.LogicalSwitch{UUID: "stream-switch-uuid", Name: streamNetwork + "_" + testNode,
+				Ports: []string{"stream-stor-uuid", testPodStreamLSPUUID}},
 			egressQoS,
 		}}
 		selected := map[string]string{"qos": "enabled"}
@@ -338,6 +348,205 @@ var _ = Describe("NetworkQoS rules", func() {
 	})
 })
 
+var _ = Describe("NetworkQoS source port groups", func() {
+	It("reconciles exact membership from eligibility, locality, and attachment", func() {
+		remote := defaultNetworkPod("source-remote", testNamespace, "node2", "10.192.177.11", "client")
+		host := defaultNetworkPod("source-host", testNamespace, testNode, "10.192.177.12", "client")
+		host.Spec.HostNetwork = true
+		completed := defaultNetworkPod("source-completed", testNamespace, testNode, "10.192.177.13", "client")
+		completed.Status.Phase = corev1.PodSucceeded
+		otherLabel := defaultNetworkPod("source-other-label", testNamespace, testNode, "10.192.177.14", "other")
+
+		lsp := func(namespace, name, uuid string) *nbdb.LogicalSwitchPort {
+			return &nbdb.LogicalSwitchPort{UUID: uuid, Name: util.GetLogicalPortName(namespace, name)}
+		}
+		db := initialDB()
+		db.NBData = append(db.NBData,
+			lsp(remote.Namespace, remote.Name, sourceRemoteLSPUUID),
+			lsp(host.Namespace, host.Name, sourceHostLSPUUID),
+			lsp(completed.Namespace, completed.Name, sourceCompletedLSPUUID),
+			lsp(otherLabel.Namespace, otherLabel.Name, sourceOtherLabelLSPUUID),
+		)
+		nm := startController(db, testNamespaceObj(), testPod(), remote, host, completed, otherLabel)
+		c := newDirectController(nbClient)
+		c.networkManager = nm
+		nqos := newNetworkQoS("qos-source-membership", nil)
+		defaultState := &networkQoSState{
+			name: nqos.Name, namespace: nqos.Namespace,
+			controllerName: defaultControllerNam, networkName: types.DefaultNetworkName,
+		}
+		streamState := &networkQoSState{
+			name: nqos.Name, namespace: nqos.Namespace,
+			controllerName: streamControllerName, networkName: streamNetwork,
+		}
+		defaultNctx := c.newNetworkContext(&util.DefaultNetInfo{})
+		streamInfo, err := util.ParseNADInfo(streamNAD(nil))
+		Expect(err).NotTo(HaveOccurred())
+		streamNetInfo := util.NewMutableNetInfo(streamInfo)
+		streamNetInfo.AddNADs(streamNADKey)
+		streamNctx := c.newNetworkContext(streamNetInfo)
+
+		ensure := func() {
+			Expect(c.ensureSourcePortGroup(nqos, defaultState, defaultNctx)).To(Succeed())
+			Expect(c.ensureSourcePortGroup(nqos, streamState, streamNctx)).To(Succeed())
+		}
+		membership := func(controllerName string) []string {
+			portGroups := findSourcePortGroup(controllerName, nqos.Namespace, nqos.Name)
+			Expect(portGroups).To(HaveLen(1))
+			return portGroups[0].Ports
+		}
+		ensure()
+		Expect(membership(defaultControllerNam)).To(ConsistOf(testPodDefaultLSPUUID))
+		Expect(membership(streamControllerName)).To(ConsistOf(testPodStreamLSPUUID))
+
+		updatePod := func(mutate func(*corev1.Pod)) {
+			pod, err := fakeKubeClient.CoreV1().Pods(testNamespace).Get(context.Background(), testPodName, metav1.GetOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			pod = pod.DeepCopy()
+			pod.ResourceVersion = fmt.Sprint(time.Now().UnixNano())
+			mutate(pod)
+			_, err = fakeKubeClient.CoreV1().Pods(testNamespace).Update(context.Background(), pod, metav1.UpdateOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(func() *corev1.Pod {
+				current, err := c.podLister.Pods(testNamespace).Get(testPodName)
+				if err != nil {
+					return nil
+				}
+				return current
+			}).Should(SatisfyAll(
+				HaveField("Labels", Equal(pod.Labels)),
+				HaveField("Spec.NodeName", Equal(pod.Spec.NodeName)),
+				HaveField("Annotations", Equal(pod.Annotations)),
+			))
+		}
+
+		By("changing source labels")
+		updatePod(func(pod *corev1.Pod) { pod.Labels["app"] = "not-selected" })
+		ensure()
+		Expect(membership(defaultControllerNam)).To(BeEmpty())
+		Expect(membership(streamControllerName)).To(BeEmpty())
+		updatePod(func(pod *corev1.Pod) { pod.Labels["app"] = "client" })
+		ensure()
+		Expect(membership(defaultControllerNam)).To(ConsistOf(testPodDefaultLSPUUID))
+
+		By("changing locality")
+		updatePod(func(pod *corev1.Pod) { pod.Spec.NodeName = "node2" })
+		ensure()
+		Expect(membership(defaultControllerNam)).To(BeEmpty())
+		updatePod(func(pod *corev1.Pod) { pod.Spec.NodeName = testNode })
+		ensure()
+		Expect(membership(defaultControllerNam)).To(ConsistOf(testPodDefaultLSPUUID))
+
+		By("changing only the secondary-network attachment")
+		updatePod(func(pod *corev1.Pod) { pod.Annotations[nettypes.NetworkAttachmentAnnot] = "[]" })
+		ensure()
+		Expect(membership(defaultControllerNam)).To(ConsistOf(testPodDefaultLSPUUID))
+		Expect(membership(streamControllerName)).To(BeEmpty())
+		updatePod(func(pod *corev1.Pod) {
+			pod.Annotations[nettypes.NetworkAttachmentAnnot] = fmt.Sprintf(`[{"name":"%s","namespace":"default"}]`, streamNetwork)
+		})
+		ensure()
+		Expect(membership(streamControllerName)).To(ConsistOf(testPodStreamLSPUUID))
+	})
+
+	It("removes a source logical switch port when its pod stops matching", func() {
+		nqos := newNetworkQoS("qos-source-label-removal", nil)
+		startController(initialDB(), testNamespaceObj(), testPod(), nqos)
+		eventuallySourcePortGroupHas(defaultControllerNam, testPodDefaultLSPUUID)
+
+		pod, err := fakeKubeClient.CoreV1().Pods(testNamespace).Get(context.Background(), testPodName, metav1.GetOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		pod = pod.DeepCopy()
+		pod.ResourceVersion = fmt.Sprint(time.Now().UnixNano())
+		pod.Labels["app"] = "not-selected"
+		_, err = fakeKubeClient.CoreV1().Pods(testNamespace).Update(context.Background(), pod, metav1.UpdateOptions{})
+		Expect(err).NotTo(HaveOccurred())
+
+		Eventually(func() []string {
+			return sourcePortGroupPorts(defaultControllerNam)
+		}).Should(BeEmpty())
+	})
+
+	It("skips default-network source ports when another network is active", func() {
+		nm := startController(initialDB(), testNamespaceObj(), testPod())
+		nad := ovnk8stesting.GenerateNAD("primary-network", "primary-network", testNamespace,
+			types.Layer3Topology, "10.200.0.0/16", types.NetworkRolePrimary)
+		netInfo, err := util.ParseNADInfo(nad)
+		Expect(err).NotTo(HaveOccurred())
+		nm.PrimaryNetworks = map[string]util.NetInfo{testNamespace: netInfo}
+
+		c := newDirectController(nbClient)
+		c.networkManager = nm
+		portNames, err := c.sourceLogicalPortNames(
+			testPod(),
+			c.newNetworkContext(&util.DefaultNetInfo{}),
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(portNames).To(BeEmpty())
+	})
+
+	It("waits for a missing source logical switch port and converges without a failure condition", func() {
+		nqos := newNetworkQoS("qos-missing-source-port", nil)
+		db := &libovsdbtest.TestSetup{NBData: []libovsdbtest.TestData{
+			&nbdb.LogicalSwitch{Name: testNode},
+		}}
+		startController(db, testNamespaceObj(), testPod(), nqos)
+		key := nqosKey(testNamespace, nqos.Name)
+		Expect(findQoS(defaultControllerNam, testNamespace, nqos.Name, 0)).To(BeNil())
+		Consistently(func() []metav1.Condition { return conditions(nqos.Name) }).
+			WithTimeout(2 * time.Second).Should(BeEmpty())
+
+		Expect(libovsdbops.CreateOrUpdateLogicalSwitchPortsOnSwitch(nbClient,
+			&nbdb.LogicalSwitch{Name: testNode}, &nbdb.LogicalSwitchPort{
+				UUID: testPodDefaultLSPUUID,
+				Name: util.GetLogicalPortName(testNamespace, testPodName),
+			})).To(Succeed())
+		qos := eventuallyQoS(defaultControllerNam, testNamespace, nqos.Name, 0)
+		eventuallySwitchHasQoS(testNode, qos)
+		Expect(qos.Match).To(MatchRegexp(`^inport == @\w+ && \(ip4 \|\| ip6\)$`))
+		Expect(conditions(nqos.Name)).To(BeEmpty())
+		Expect(nqosController.isProgrammed(key)).To(BeTrue())
+	})
+
+	It("selects source LSPs on an IPAM-less localnet", func() {
+		iplessNAD := ovnk8stesting.GenerateNAD("ipless", "ipless", "default", types.LocalnetTopology, "", types.NetworkRoleSecondary)
+		iplessInfo, err := util.ParseNADInfo(iplessNAD)
+		Expect(err).NotTo(HaveOccurred())
+		ipv4Mode, ipv6Mode := iplessInfo.IPMode()
+		Expect(ipv4Mode || ipv6Mode).To(BeFalse(), "the test network must have no IP family")
+		iplessNADKey := "default/ipless"
+		iplessLSPUUID := "88888888-8888-8888-8888-888888888888"
+		db := initialDB()
+		db.NBData = append(db.NBData,
+			&nbdb.LogicalSwitch{Name: "ipless-source-ls", Ports: []string{iplessLSPUUID}},
+			&nbdb.LogicalSwitchPort{
+				UUID: iplessLSPUUID,
+				Name: util.GetUserDefinedNetworkLogicalPortName(testNamespace, testPodName, iplessNADKey),
+			},
+		)
+		iplessPod := testPod()
+		iplessPod.Annotations[nettypes.NetworkAttachmentAnnot] = `[{"name":"ipless","namespace":"default"}]`
+		nm := startController(db, iplessNAD, testNamespaceObj(), iplessPod)
+		nm.Lock()
+		nm.NADNetworks[iplessNADKey] = iplessInfo
+		nm.Unlock()
+
+		c := newDirectController(nbClient)
+		c.networkManager = nm
+		nqos := newNetworkQoS("qos-ipless-source", nil)
+		state := &networkQoSState{
+			name: nqos.Name, namespace: nqos.Namespace,
+			controllerName: "ipless-network-controller", networkName: "ipless",
+		}
+		Expect(c.ensureSourcePortGroup(nqos, state, c.newNetworkContext(iplessInfo))).To(Succeed())
+		portGroups := findSourcePortGroup(state.controllerName, nqos.Namespace, nqos.Name)
+		Expect(portGroups).To(HaveLen(1))
+		Expect(portGroups[0].Ports).To(ConsistOf(iplessLSPUUID))
+		Expect(generateNetworkQoSMatch(state.sourcePortGroupName, &GressRule{}, false, false)).
+			To(Equal("inport == @" + state.sourcePortGroupName + " && (ip4 || ip6)"))
+	})
+})
+
 var _ = Describe("NetworkQoS network selection", func() {
 	It("programs the default network and a secondary network from a single instance", func() {
 		selected := map[string]string{"qos": "enabled"}
@@ -348,21 +557,21 @@ var _ = Describe("NetworkQoS network selection", func() {
 		defaultQoS := eventuallyQoS(defaultControllerNam, testNamespace, nqos.Name, 0)
 		Expect(defaultQoS.ExternalIDs).NotTo(HaveKey(types.NetworkExternalID))
 		eventuallySwitchHasQoS(testNode, defaultQoS)
-		eventuallyAddressSetHas(defaultControllerNam, testPodDefaultIP)
+		eventuallySourcePortGroupHas(defaultControllerNam, testPodDefaultLSPUUID)
 
 		By("binding a QoS rule to the secondary network node switch")
 		streamQoS := eventuallyQoS(streamControllerName, testNamespace, nqos.Name, 0)
 		Expect(streamQoS.ExternalIDs).To(HaveKeyWithValue(types.NetworkExternalID, streamNetwork))
 		eventuallySwitchHasQoS(streamNetwork+"_"+testNode, streamQoS)
-		eventuallyAddressSetHas(streamControllerName, testPodStreamIP)
+		eventuallySourcePortGroupHas(streamControllerName, testPodStreamLSPUUID)
 
 		By("clearing every network when the NetworkQoS is deleted")
 		Expect(fakeNQoSClient.K8sV1alpha1().NetworkQoSes(testNamespace).Delete(context.Background(), nqos.Name,
 			metav1.DeleteOptions{})).To(Succeed())
 		eventuallyNoQoS(defaultControllerNam, testNamespace, nqos.Name, 0)
 		eventuallyNoQoS(streamControllerName, testNamespace, nqos.Name, 0)
-		eventuallyNoAddressSet(defaultControllerNam)
-		eventuallyNoAddressSet(streamControllerName)
+		eventuallyNoSourcePortGroup(defaultControllerNam)
+		eventuallyNoSourcePortGroup(streamControllerName)
 	})
 
 	It("stops programming a network whose NAD no longer matches the network selector", func() {
@@ -393,7 +602,7 @@ var _ = Describe("NetworkQoS network selection", func() {
 		By("notifying the controller through the network manager NAD reconciler")
 		networkManagerMock.TriggerHandlers(streamNADKey, nil, false)
 		eventuallyNoQoS(streamControllerName, testNamespace, nqos.Name, 0)
-		eventuallyNoAddressSet(streamControllerName)
+		eventuallyNoSourcePortGroup(streamControllerName)
 	})
 
 	It("updates network selection when only namespace labels change", func() {
@@ -420,20 +629,20 @@ var _ = Describe("NetworkQoS network selection", func() {
 		setSelected("yes", "2")
 		qos := eventuallyQoS(streamControllerName, testNamespace, nqos.Name, 0)
 		eventuallySwitchHasQoS(streamNetwork+"_"+testNode, qos)
-		eventuallyAddressSetHas(streamControllerName, testPodStreamIP)
+		eventuallySourcePortGroupHas(streamControllerName, testPodStreamLSPUUID)
 
 		By("deselecting and selecting it again")
 		setSelected("no", "3")
 		eventuallyNoQoS(streamControllerName, testNamespace, nqos.Name, 0)
-		eventuallyNoAddressSet(streamControllerName)
+		eventuallyNoSourcePortGroup(streamControllerName)
 		setSelected("yes", "4")
 		eventuallyQoS(streamControllerName, testNamespace, nqos.Name, 0)
-		eventuallyAddressSetHas(streamControllerName, testPodStreamIP)
+		eventuallySourcePortGroupHas(streamControllerName, testPodStreamLSPUUID)
 
 		By("removing the namespace before its NAD delete event arrives")
 		Expect(fakeKubeClient.CoreV1().Namespaces().Delete(context.Background(), "default", metav1.DeleteOptions{})).To(Succeed())
 		eventuallyNoQoS(streamControllerName, testNamespace, nqos.Name, 0)
-		eventuallyNoAddressSet(streamControllerName)
+		eventuallyNoSourcePortGroup(streamControllerName)
 	})
 
 	It("selects every cluster user defined network with an empty network selector", func() {
@@ -486,7 +695,7 @@ var _ = Describe("NetworkQoS network selection", func() {
 		nm := startController(initialDB(), nad, testNamespaceObj(), testPod(), nqos)
 		qos := eventuallyQoS(streamControllerName, testNamespace, nqos.Name, 0)
 		eventuallySwitchHasQoS(streamNetwork+"_"+testNode, qos)
-		eventuallyAddressSetHas(streamControllerName, testPodStreamIP)
+		eventuallySourcePortGroupHas(streamControllerName, testPodStreamLSPUUID)
 		key := nqosKey(testNamespace, nqos.Name)
 		state := func() *nqosCacheEntry {
 			var state *nqosCacheEntry
@@ -529,11 +738,16 @@ var _ = Describe("NetworkQoS network selection", func() {
 		Expect(err).NotTo(HaveOccurred())
 		eventuallyNoQoS(streamControllerName, testNamespace, nqos.Name, 0)
 		Expect(libovsdbops.CreateOrUpdateLogicalSwitch(nbClient, &nbdb.LogicalSwitch{Name: streamNetwork + "_" + testNode})).To(Succeed())
+		Expect(libovsdbops.CreateOrUpdateLogicalSwitchPortsOnSwitch(nbClient,
+			&nbdb.LogicalSwitch{Name: streamNetwork + "_" + testNode}, &nbdb.LogicalSwitchPort{
+				UUID: testPodStreamLSPUUID,
+				Name: util.GetUserDefinedNetworkLogicalPortName(testNamespace, testPodName, streamNADKey),
+			})).To(Succeed())
 
-		By("restoring rules and address sets once the new network creates its switch")
+		By("restoring rules and destination address sets once the new network creates its switch")
 		qos = eventuallyQoS(streamControllerName, testNamespace, nqos.Name, 0)
 		eventuallySwitchHasQoS(streamNetwork+"_"+testNode, qos)
-		eventuallyAddressSetHas(streamControllerName, testPodStreamIP)
+		eventuallySourcePortGroupHas(streamControllerName, testPodStreamLSPUUID)
 	})
 })
 
@@ -541,14 +755,18 @@ var _ = Describe("NetworkQoS logical switches", func() {
 	It("programs a NetworkQoS once its delayed logical switch is created, without reporting a failure", func() {
 		nqos := newNetworkQoS("qos-delayed-switch", nil)
 		rateLimiter := workqueue.NewTypedItemFastSlowRateLimiter[string](10*time.Millisecond, 10*time.Millisecond, 1)
-		startControllerWithRateLimiter(&libovsdbtest.TestSetup{}, rateLimiter, testNamespaceObj(), testPod(), nqos)
+		db := &libovsdbtest.TestSetup{NBData: []libovsdbtest.TestData{
+			&nbdb.LogicalSwitch{Name: "source-ls", Ports: []string{testPodDefaultLSPUUID}},
+			&nbdb.LogicalSwitchPort{UUID: testPodDefaultLSPUUID, Name: util.GetLogicalPortName(testNamespace, testPodName)},
+		}}
+		startControllerWithRateLimiter(db, rateLimiter, testNamespaceObj(), testPod(), nqos)
 		key := nqosKey(testNamespace, nqos.Name)
 		Eventually(func() bool { return nqosController.isProgrammed(key) }).Should(BeTrue())
 
 		By("waiting for the switch rather than failing and retrying")
 		Consistently(func() int { return rateLimiter.NumRequeues(key) }).WithTimeout(time.Second).Should(BeZero())
 		Expect(conditions(nqos.Name)).To(BeEmpty())
-		eventuallyAddressSetHas(defaultControllerNam, testPodDefaultIP)
+		eventuallySourcePortGroupHas(defaultControllerNam, testPodDefaultLSPUUID)
 
 		By("creating the switch without another Kubernetes event")
 		Expect(libovsdbops.CreateOrUpdateLogicalSwitch(nbClient, &nbdb.LogicalSwitch{Name: testNode})).To(Succeed())
@@ -585,19 +803,19 @@ var _ = Describe("NetworkQoS logical switches", func() {
 		nqos := newNetworkQoS("qos-no-pods", nil)
 		startController(initialDB(), testNamespaceObj(), nqos)
 
-		By("binding to the node switch with an empty source address set")
+		By("binding to the node switch with an empty source port group")
 		defaultQoS := eventuallyQoS(defaultControllerNam, testNamespace, nqos.Name, 0)
 		eventuallySwitchHasQoS(testNode, defaultQoS)
-		Expect(sourceAddresses(defaultControllerNam)).To(BeEmpty())
+		Expect(sourcePortGroupPorts(defaultControllerNam)).To(BeEmpty())
 
-		By("holding the address of a pod created afterwards")
+		By("holding the logical switch port of a pod created afterwards")
 		_, err := fakeKubeClient.CoreV1().Pods(testNamespace).Create(context.Background(), testPod(), metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred())
-		eventuallyAddressSetHas(defaultControllerNam, testPodDefaultIP)
+		eventuallySourcePortGroupHas(defaultControllerNam, testPodDefaultLSPUUID)
 	})
 })
 
-var _ = Describe("NetworkQoS address sets", func() {
+var _ = Describe("NetworkQoS destination address sets", func() {
 	It("keeps an empty destination pod selector within the policy namespace", func() {
 		nqos := newNetworkQoS("qos-empty-selectors", nil)
 		nqos.Spec.Egress[0].Classifier.To = []nqosapi.Destination{{PodSelector: &metav1.LabelSelector{}}}
@@ -652,7 +870,9 @@ var _ = Describe("NetworkQoS address sets", func() {
 			})).To(Succeed())
 			return exists
 		}).Should(BeFalse())
-		Eventually(func() []*nbdb.AddressSet { return findSourceAddressSets(defaultControllerNam) }).Should(BeEmpty())
+		Eventually(func() []*nbdb.PortGroup {
+			return findSourcePortGroup(defaultControllerNam, first.Namespace, first.Name)
+		}).Should(BeEmpty())
 		Expect(findAddressSets(ids)).To(HaveLen(1))
 		Expect(findQoS(defaultControllerNam, second.Namespace, second.Name, 0).UUID).To(Equal(qos.UUID))
 		eventuallySwitchHasQoS(testNode, qos)
@@ -706,25 +926,26 @@ var _ = Describe("NetworkQoS address sets", func() {
 		Expect(fakeNQoSClient.K8sV1alpha1().NetworkQoSes(testNamespace).Delete(context.Background(), second.Name, metav1.DeleteOptions{})).To(Succeed())
 		Eventually(func() []*nbdb.AddressSet { return findAddressSets(idsA) }).Should(BeEmpty())
 		Expect(findAddressSets(idsB)).To(HaveLen(1))
-		eventuallyAddressSetHas(defaultControllerNam, testPodDefaultIP)
+		eventuallySourcePortGroupHas(defaultControllerNam, testPodDefaultLSPUUID)
 
 		By("releasing all remaining sets and rules after the last policy is deleted")
 		Expect(fakeNQoSClient.K8sV1alpha1().NetworkQoSes(testNamespace).Delete(context.Background(), first.Name, metav1.DeleteOptions{})).To(Succeed())
 		eventuallyNoQoS(defaultControllerNam, testNamespace, first.Name, 0)
 		Eventually(func() []*nbdb.AddressSet { return findAddressSets(idsB) }).Should(BeEmpty())
-		eventuallyNoAddressSet(defaultControllerNam)
+		eventuallyNoSourcePortGroup(defaultControllerNam)
 	})
 
-	DescribeTable("retains address sets while QoS removal fails",
+	DescribeTable("retains referenced OVN objects while QoS removal fails",
 		func(deleteObject bool) {
 			startController(initialDB(), testNamespaceObj(), testPod())
 			nqos := newNetworkQoS("qos-delete-retry", nil)
+			nqos.Spec.Egress[0].Classifier.To = []nqosapi.Destination{{PodSelector: &metav1.LabelSelector{}}}
 			c := newDirectController(nbClient)
 			state, err := c.ensureNetworkQoSForNetwork(nqos, c.newNetworkContext(&util.DefaultNetInfo{}), nil)
 			Expect(err).NotTo(HaveOccurred())
 			qos := eventuallyQoS(defaultControllerNam, testNamespace, nqos.Name, 0)
 			eventuallySwitchHasQoS(testNode, qos)
-			eventuallyAddressSetHas(defaultControllerNam, testPodDefaultIP)
+			eventuallySourcePortGroupHas(defaultControllerNam, testPodDefaultLSPUUID)
 			key := nqosKey(testNamespace, nqos.Name)
 			c.cache.Store(key, &nqosCacheEntry{networks: map[string]*networkQoSState{types.DefaultNetworkName: state}})
 			c.nbClient = &failQoSUnbindClient{Client: nbClient}
@@ -736,12 +957,12 @@ var _ = Describe("NetworkQoS address sets", func() {
 			}
 			Expect(clear()).To(MatchError(ContainSubstring("temporary QoS unbind failure")))
 			eventuallySwitchHasQoS(testNode, qos)
-			Expect(findSourceAddressSets(defaultControllerNam)).To(HaveLen(1), "a bound QoS must retain its referenced address set")
-			Expect(state.addrSetKeys).NotTo(BeEmpty())
+			Expect(findSourcePortGroups(defaultControllerNam)).To(HaveLen(1), "a bound QoS must retain its referenced source port group")
+			Expect(state.destinationAddrSetKeys).NotTo(BeEmpty())
 			Expect(clear()).To(Succeed())
 			eventuallyNoQoS(defaultControllerNam, testNamespace, nqos.Name, 0)
-			eventuallyNoAddressSet(defaultControllerNam)
-			Expect(state.addrSetKeys).To(BeEmpty())
+			eventuallyNoSourcePortGroup(defaultControllerNam)
+			Expect(state.destinationAddrSetKeys).To(BeEmpty())
 		},
 		Entry("when deleting the policy", true),
 		Entry("when deselecting a network", false),
@@ -750,22 +971,29 @@ var _ = Describe("NetworkQoS address sets", func() {
 	It("cleans both networks if the policy is deleted before one of them finishes provisioning", func() {
 		selected := map[string]string{"qos": "enabled"}
 		nqos := newNetworkQoS("qos-partial-network", crdtypes.NetworkSelectors{nadSelector(selected)})
-		db := &libovsdbtest.TestSetup{NBData: []libovsdbtest.TestData{&nbdb.LogicalSwitch{Name: testNode}}}
+		db := &libovsdbtest.TestSetup{NBData: []libovsdbtest.TestData{
+			&nbdb.LogicalSwitch{Name: testNode},
+			&nbdb.LogicalSwitch{Name: "source-stream-ls", Ports: []string{testPodStreamLSPUUID}},
+			&nbdb.LogicalSwitchPort{UUID: testPodDefaultLSPUUID, Name: util.GetLogicalPortName(testNamespace, testPodName)},
+			&nbdb.LogicalSwitchPort{UUID: testPodStreamLSPUUID,
+				Name: util.GetUserDefinedNetworkLogicalPortName(testNamespace, testPodName, streamNADKey)},
+		}}
+		db.NBData[0].(*nbdb.LogicalSwitch).Ports = []string{testPodDefaultLSPUUID}
 		limiter := workqueue.NewTypedItemFastSlowRateLimiter[string](10*time.Millisecond, 10*time.Millisecond, 1)
 		startControllerWithRateLimiter(db, limiter, defaultNetworkNAD(selected), streamNAD(selected), testNamespaceObj(), testPod(), nqos)
 		qos := eventuallyQoS(defaultControllerNam, testNamespace, nqos.Name, 0)
 		eventuallySwitchHasQoS(testNode, qos)
-		eventuallyAddressSetHas(defaultControllerNam, testPodDefaultIP)
-		eventuallyAddressSetHas(streamControllerName, testPodStreamIP)
+		eventuallySourcePortGroupHas(defaultControllerNam, testPodDefaultLSPUUID)
+		eventuallySourcePortGroupHas(streamControllerName, testPodStreamLSPUUID)
 		By("waiting for the switch of the network being set up without reporting a failure")
 		Consistently(func() []metav1.Condition { return conditions(nqos.Name) }).WithTimeout(time.Second).Should(BeEmpty())
 		Expect(limiter.NumRequeues(nqosKey(testNamespace, nqos.Name))).To(BeZero())
 
-		By("deleting the policy while the network being set up holds address-set references")
+		By("deleting the policy while the network being set up holds destination address-set references")
 		Expect(fakeNQoSClient.K8sV1alpha1().NetworkQoSes(testNamespace).Delete(context.Background(), nqos.Name, metav1.DeleteOptions{})).To(Succeed())
 		eventuallyNoQoS(defaultControllerNam, testNamespace, nqos.Name, 0)
-		eventuallyNoAddressSet(defaultControllerNam)
-		eventuallyNoAddressSet(streamControllerName)
+		eventuallyNoSourcePortGroup(defaultControllerNam)
+		eventuallyNoSourcePortGroup(streamControllerName)
 	})
 })
 
@@ -814,7 +1042,7 @@ var _ = Describe("NetworkQoS status", func() {
 		startController(initialDB(), testNamespaceObj(), testPod(), nqos)
 		qos := eventuallyQoS(defaultControllerNam, testNamespace, nqos.Name, 0)
 		eventuallySwitchHasQoS(testNode, qos)
-		eventuallyAddressSetHas(defaultControllerNam, testPodDefaultIP)
+		eventuallySourcePortGroupHas(defaultControllerNam, testPodDefaultLSPUUID)
 
 		By("updating it to a spec no network accepts")
 		updated, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(testNamespace).Get(context.Background(), nqos.Name, metav1.GetOptions{})
@@ -827,7 +1055,7 @@ var _ = Describe("NetworkQoS status", func() {
 		Eventually(func() []metav1.Condition { return conditions(nqos.Name) }).Should(ConsistOf(
 			HaveField("Message", ContainSubstring("invalid spec"))))
 		eventuallyNoQoS(defaultControllerNam, testNamespace, nqos.Name, 0)
-		eventuallyNoAddressSet(defaultControllerNam)
+		eventuallyNoSourcePortGroup(defaultControllerNam)
 	})
 
 	It("leaves an invalid spec to the zone that reports it, and reports it once that zone no longer does", func() {
@@ -861,12 +1089,13 @@ var _ = Describe("NetworkQoS status", func() {
 		)))
 	})
 
-	It("reports the pods whose addresses cannot be resolved, and retracts it once the address set manager resolves them", func() {
+	It("reports destination pods whose addresses cannot be resolved, and retracts it once the address set manager resolves them", func() {
 		pod := testPod()
 		resolvable := pod.Annotations[types.OvnPodAnnotationName]
 		pod.Annotations[types.OvnPodAnnotationName] = "malformed"
 		nad := streamNAD(map[string]string{"name": streamNetwork})
 		nqos := newNetworkQoS("qos-unresolved", crdtypes.NetworkSelectors{nadSelector(nad.Labels)})
+		nqos.Spec.Egress[0].Classifier.To = []nqosapi.Destination{{PodSelector: &metav1.LabelSelector{}}}
 		// Delay retries for an hour so recovery depends on the address set notification.
 		rateLimiter := workqueue.NewTypedItemFastSlowRateLimiter[string](time.Hour, time.Hour, 0)
 		startControllerWithRateLimiter(initialDB(), rateLimiter, nad, testNamespaceObj(), pod, nqos)
@@ -878,16 +1107,16 @@ var _ = Describe("NetworkQoS status", func() {
 			HaveField("Type", conditionTypeReady+testNode),
 			HaveField("Status", metav1.ConditionFalse),
 			HaveField("Message", types.NetworkQoSErrorMsg+
-				": failed to resolve the addresses of the pods it selects on network(s) "+streamNetwork),
+				": failed to resolve the addresses of destination pods on network(s) "+streamNetwork),
 		)))
-		Expect(sourceAddresses(streamControllerName)).To(BeEmpty())
+		Expect(sourcePortGroupPorts(streamControllerName)).To(ConsistOf(testPodStreamLSPUUID))
 
 		By("retracting the failure once the addresses are resolved")
 		pod.Annotations[types.OvnPodAnnotationName] = resolvable
 		pod.ResourceVersion = "2"
 		_, err := fakeKubeClient.CoreV1().Pods(testNamespace).Update(context.Background(), pod, metav1.UpdateOptions{})
 		Expect(err).NotTo(HaveOccurred())
-		eventuallyAddressSetHas(streamControllerName, testPodStreamIP)
+		eventuallySourcePortGroupHas(streamControllerName, testPodStreamLSPUUID)
 		Eventually(func() []metav1.Condition { return conditions(nqos.Name) }).WithTimeout(10 * time.Second).Should(BeEmpty())
 	})
 
@@ -1030,7 +1259,7 @@ var _ = Describe("NetworkQoS restart and upgrade", func() {
 			if keepDefault {
 				qos := eventuallyQoS(defaultControllerNam, testNamespace, nqos.Name, 0)
 				eventuallySwitchHasQoS(testNode, qos)
-				eventuallyAddressSetHas(defaultControllerNam, testPodDefaultIP)
+				eventuallySourcePortGroupHas(defaultControllerNam, testPodDefaultLSPUUID)
 			} else {
 				eventuallyNoQoS(defaultControllerNam, testNamespace, nqos.Name, 0)
 			}

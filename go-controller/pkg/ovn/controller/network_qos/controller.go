@@ -49,6 +49,8 @@ type Controller struct {
 	nqosClientSet        networkqosclientset.Interface
 	nqosController       controller.Controller
 	nqosLister           networkqoslister.NetworkQoSLister
+	podController        controller.Controller
+	podLister            corelisters.PodLister
 	namespaceController  controller.Controller
 	namespaceLister      corelisters.NamespaceLister
 	nadLister            nadlisters.NetworkAttachmentDefinitionLister
@@ -77,6 +79,7 @@ func NewController(
 	nbClient libovsdbclient.Client,
 	nqosClient networkqosclientset.Interface,
 	nqosInformer networkqosinformer.NetworkQoSInformer,
+	podInformer coreinformers.PodInformer,
 	namespaceInformer coreinformers.NamespaceInformer,
 	nadInformer nadinformers.NetworkAttachmentDefinitionInformer,
 	netManager networkmanager.Interface,
@@ -99,6 +102,7 @@ func NewController(
 		networkManager:     netManager,
 		addressSetManager:  addressSetManager,
 		nqosLister:         nqosInformer.Lister(),
+		podLister:          podInformer.Lister(),
 		namespaceLister:    namespaceInformer.Lister(),
 		cache:              syncmap.NewSyncMap[*nqosCacheEntry](),
 		reportedFailures:   sets.New[string](),
@@ -109,6 +113,14 @@ func NewController(
 	}
 
 	c.nqosController = controller.NewController("networkqos_networkqos", c.networkQoSControllerConfig(nqosInformer, threadiness))
+
+	c.podController = controller.NewController("networkqos_pod", &controller.ControllerConfig[corev1.Pod]{
+		Informer:       podInformer.Informer(),
+		Lister:         c.podLister.List,
+		Reconcile:      c.reconcilePod,
+		ObjNeedsUpdate: podNeedsUpdate,
+		Threadiness:    threadiness,
+	})
 
 	c.namespaceController = controller.NewController("networkqos_namespace", &controller.ControllerConfig[corev1.Namespace]{
 		Informer:       namespaceInformer.Informer(),
@@ -163,6 +175,7 @@ func (c *Controller) Start() (err error) {
 	return controller.StartWithInitialSync(
 		c.repairNetworkQoSes,
 		c.nqosController,
+		c.podController,
 		c.namespaceController,
 		c.nadReconciler,
 		c.switchReconciler,
@@ -174,6 +187,7 @@ func (c *Controller) Stop() {
 	c.networkManager.DeRegisterNADReconciler(c.nadReconcilerID)
 	controller.Stop(
 		c.nqosController,
+		c.podController,
 		c.namespaceController,
 		c.nadReconciler,
 		c.switchReconciler,

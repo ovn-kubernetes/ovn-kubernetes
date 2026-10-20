@@ -336,7 +336,7 @@ func TestFailureReasonIsStable(t *testing.T) {
 	g := gomega.NewWithT(t)
 	g.Expect(failureReason([]string{"a", "b"}, nil, nil)).To(gomega.Equal("failed to configure network(s) a, b"))
 	g.Expect(failureReason([]string{"a"}, []string{"b"}, []string{"c"})).To(gomega.Equal("failed to configure network(s) a; " +
-		"failed to resolve the addresses of the pods it selects on network(s) b; failed to remove it from network(s) c"))
+		"failed to resolve the addresses of destination pods on network(s) b; failed to remove it from network(s) c"))
 }
 
 func TestCountFailuresIgnoresSuccesses(t *testing.T) {

@@ -40,6 +40,8 @@ const (
 	maxConditionMessageLength = 1024
 	// Recheck in case the client dropped a switch event when its buffer filled.
 	logicalSwitchRecheckInterval = time.Minute
+	// A pod API event does not guarantee that its logical switch port is in NBDB yet.
+	logicalSwitchPortRecheckInterval = time.Second
 )
 
 func (c *Controller) syncNetworkQoS(key string) error {
@@ -103,7 +105,7 @@ func (c *Controller) syncNetworkQoS(key string) error {
 		delete(programmed, networkName)
 	}
 
-	waitingForSwitch := false
+	waitingForSwitch, waitingForPort := false, false
 	for _, networkName := range slices.Sorted(maps.Keys(desiredNetworks)) {
 		networkStartTime := time.Now()
 		state, err := c.ensureNetworkQoSForNetwork(nqos, c.newNetworkContext(desiredNetworks[networkName]), programmed[networkName])
@@ -116,6 +118,12 @@ func (c *Controller) syncNetworkQoS(key string) error {
 			// Switch creation requeues this policy.
 			klog.V(4).Infof("NetworkQoS %s waits for logical switch %s of network %s", key, state.switchName, networkName)
 			waitingForSwitch = true
+		case errors.Is(err, errLogicalSwitchPortMissing):
+			// The port group contains every selected LSP that exists; missing
+			// LSPs are retried without reporting a failure condition.
+			klog.V(4).Infof("NetworkQoS %s waits for source logical switch ports on network %s: %v",
+				key, networkName, err)
+			waitingForPort = true
 		case errors.Is(err, errAddressesUnresolved):
 			// The address set manager requeues this policy when the error clears.
 			unresolvedNetworks = append(unresolvedNetworks, networkName)
@@ -135,6 +143,9 @@ func (c *Controller) syncNetworkQoS(key string) error {
 	if waitingForSwitch {
 		c.nqosController.ReconcileAfter(key, logicalSwitchRecheckInterval)
 	}
+	if waitingForPort {
+		c.nqosController.ReconcileAfter(key, logicalSwitchPortRecheckInterval)
+	}
 
 	if len(errs) > 0 {
 		return utilerrors.Join(utilerrors.Join(errs...),
@@ -152,7 +163,7 @@ func failureReason(failedNetworks, unresolvedNetworks, failedRemovals []string) 
 		reasons = append(reasons, "failed to configure network(s) "+strings.Join(failedNetworks, ", "))
 	}
 	if len(unresolvedNetworks) > 0 {
-		reasons = append(reasons, "failed to resolve the addresses of the pods it selects on network(s) "+
+		reasons = append(reasons, "failed to resolve the addresses of destination pods on network(s) "+
 			strings.Join(unresolvedNetworks, ", "))
 	}
 	if len(failedRemovals) > 0 {
@@ -257,21 +268,21 @@ func parsePrefix(s string) (netip.Prefix, error) {
 
 func (c *Controller) ensureNetworkQoSForNetwork(nqos *networkqosapi.NetworkQoS, nctx *networkContext, previous *networkQoSState) (*networkQoSState, error) {
 	state := &networkQoSState{
-		name:           nqos.Name,
-		namespace:      nqos.Namespace,
-		networkName:    nctx.netInfo.GetNetworkName(),
-		controllerName: nctx.controllerName,
-		switchName:     nctx.logicalSwitchName(c.nodeName),
-		addrSetKeys:    sets.New[string](),
-		inherited:      previous == nil || previous.inherited,
+		name:                   nqos.Name,
+		namespace:              nqos.Namespace,
+		networkName:            nctx.netInfo.GetNetworkName(),
+		controllerName:         nctx.controllerName,
+		switchName:             nctx.logicalSwitchName(c.nodeName),
+		destinationAddrSetKeys: sets.New[string](),
+		inherited:              previous == nil || previous.inherited,
 	}
 	previousKeys := sets.New[string]()
 	if previous != nil {
-		previousKeys = previous.addrSetKeys
+		previousKeys = previous.destinationAddrSetKeys
 	}
 	// Old QoS rules may still reference these sets until a retry succeeds.
 	fail := func(err error) (*networkQoSState, error) {
-		state.addrSetKeys = state.addrSetKeys.Union(previousKeys)
+		state.destinationAddrSetKeys = state.destinationAddrSetKeys.Union(previousKeys)
 		return state, err
 	}
 	if state.switchName == "" {
@@ -279,8 +290,10 @@ func (c *Controller) ensureNetworkQoSForNetwork(nqos *networkqosapi.NetworkQoS, 
 	}
 
 	rules := buildGressRules(nqos)
-	source, err := c.ensureAddressSets(nqos, state, rules, nctx)
-	if err != nil {
+	if err := c.ensureSourcePortGroup(nqos, state, nctx); err != nil {
+		return fail(err)
+	}
+	if err := c.ensureDestinationAddressSets(nqos, state, rules, nctx); err != nil {
 		return fail(err)
 	}
 	existing, err := c.findOwnedQoSes(state.controllerName, state.getObjectNameKey())
@@ -288,7 +301,7 @@ func (c *Controller) ensureNetworkQoSForNetwork(nqos *networkqosapi.NetworkQoS, 
 		return fail(err)
 	}
 	start := time.Now()
-	bound, err := c.bindQoSToLocalSwitch(state, source, rules, existing, nctx)
+	bound, err := c.bindQoSToLocalSwitch(state, state.sourcePortGroupName, rules, existing, nctx)
 	if err != nil {
 		return fail(err)
 	}
@@ -299,7 +312,7 @@ func (c *Controller) ensureNetworkQoSForNetwork(nqos *networkqosapi.NetworkQoS, 
 		return fail(fmt.Errorf("failed to delete stale QoSes: %w", err))
 	}
 	recordOvnOperationDuration("remove", time.Since(start))
-	// All remaining rules now use address sets registered by this process.
+	// All destination rules now use address sets registered by this process.
 	state.inherited = false
 	// The rewritten rules no longer reference the legacy sets.
 	if err := c.deleteLegacyAddressSets(state.getObjectNameKey(), func(ownerController string) bool {
@@ -307,23 +320,23 @@ func (c *Controller) ensureNetworkQoSForNetwork(nqos *networkqosapi.NetworkQoS, 
 	}); err != nil {
 		return fail(err)
 	}
-	if err := c.releaseAddressSets(state, previousKeys.Difference(state.addrSetKeys)); err != nil {
+	if err := c.releaseAddressSets(state, previousKeys.Difference(state.destinationAddrSetKeys)); err != nil {
 		return fail(err)
 	}
 	state.applied = true
-	// The rules may still use stale addresses if pod address resolution failed.
-	if err := c.addressSetErrors(state); err != nil {
+	// The rules may still use stale addresses if destination pod resolution failed.
+	if err := c.destinationAddressSetErrors(state); err != nil {
 		return state, fmt.Errorf("%w: %w", errAddressesUnresolved, err)
 	}
 	return state, nil
 }
 
 // The address set manager requeues affected policies when address resolution recovers.
-var errAddressesUnresolved = errors.New("the addresses of the selected pods cannot be resolved")
+var errAddressesUnresolved = errors.New("the addresses of selected destination pods cannot be resolved")
 
-func (c *Controller) addressSetErrors(state *networkQoSState) error {
+func (c *Controller) destinationAddressSetErrors(state *networkQoSState) error {
 	var errs []error
-	for _, key := range sets.List(state.addrSetKeys) {
+	for _, key := range sets.List(state.destinationAddrSetKeys) {
 		if err := c.addressSetManager.AddressSetError(key); err != nil {
 			errs = append(errs, fmt.Errorf("address set %s: %w", key, err))
 		}
@@ -331,15 +344,8 @@ func (c *Controller) addressSetErrors(state *networkQoSState) error {
 	return utilerrors.Join(errs...)
 }
 
-func (c *Controller) ensureAddressSets(nqos *networkqosapi.NetworkQoS, qosState *networkQoSState, rules []*GressRule,
-	nctx *networkContext) (addrSetRef, error) {
-	// Each zone only owns the pod ports on its node, so only those pods can be sources.
-	source, err := c.ensureAddressSet(qosState, nctx, &nqos.Spec.PodSelector, nil, nqos.Namespace,
-		addresssetmanager.WithNodeName(c.nodeName))
-	if err != nil {
-		return source, fmt.Errorf("failed to ensure the source address set: %w", err)
-	}
-
+func (c *Controller) ensureDestinationAddressSets(nqos *networkqosapi.NetworkQoS, qosState *networkQoSState,
+	rules []*GressRule, nctx *networkContext) error {
 	for ruleIndex, rule := range rules {
 		for destIndex, dest := range rule.Classifier.Destinations {
 			if !dest.hasSelectors() {
@@ -347,16 +353,17 @@ func (c *Controller) ensureAddressSets(nqos *networkqosapi.NetworkQoS, qosState 
 			}
 			podSelector, namespaceSelector, namespace := destinationSelectors(dest, nqos.Namespace)
 			// Destinations may be on any node.
-			dest.addrSet, err = c.ensureAddressSet(qosState, nctx, podSelector, namespaceSelector, namespace)
+			addrSet, err := c.ensureDestinationAddressSet(qosState, nctx, podSelector, namespaceSelector, namespace)
 			if err != nil {
-				return source, fmt.Errorf("failed to ensure the address set of rule %d destination %d: %w", ruleIndex, destIndex, err)
+				return fmt.Errorf("failed to ensure the address set of rule %d destination %d: %w", ruleIndex, destIndex, err)
 			}
+			dest.addrSet = addrSet
 		}
 	}
-	return source, nil
+	return nil
 }
 
-func (c *Controller) ensureAddressSet(qosState *networkQoSState, nctx *networkContext,
+func (c *Controller) ensureDestinationAddressSet(qosState *networkQoSState, nctx *networkContext,
 	podSelector, namespaceSelector *metav1.LabelSelector, namespace string,
 	opts ...addresssetmanager.AddressSetOption) (addrSetRef, error) {
 	// Host-network pod IPs are node IPs and must not be subject to pod QoS.
@@ -371,7 +378,7 @@ func (c *Controller) ensureAddressSet(qosState *networkQoSState, nctx *networkCo
 	if err != nil {
 		return ref, err
 	}
-	if ipv4Mode, ipv6Mode := nctx.netInfo.IPMode(); ref.matchString(trafficDirSource, ipv4Mode, ipv6Mode) == "" {
+	if ipv4Mode, ipv6Mode := nctx.netInfo.IPMode(); ref.matchString(trafficDirDest, ipv4Mode, ipv6Mode) == "" {
 		return ref, fmt.Errorf("address set %s holds none of the IP families of network %s", key, qosState.networkName)
 	}
 	return ref, nil
@@ -392,13 +399,13 @@ func destinationSelectors(dest *Destination, nqosNamespace string) (podSelector,
 
 func (c *Controller) releaseAddressSets(qosState *networkQoSState, keys sets.Set[string]) error {
 	var errs []error
-	// Take a copy because releasing a key also removes it from addrSetKeys.
+	// Take a copy because releasing a key also removes it from destinationAddrSetKeys.
 	for _, key := range keys.UnsortedList() {
 		if err := c.addressSetManager.DeleteAddressSet(key, qosState.addrSetBackRef()); err != nil {
 			errs = append(errs, fmt.Errorf("failed to release address set %s: %w", key, err))
 			continue
 		}
-		qosState.addrSetKeys.Delete(key)
+		qosState.destinationAddrSetKeys.Delete(key)
 	}
 	return utilerrors.Join(errs...)
 }
@@ -415,7 +422,7 @@ func (c *Controller) clearNetworkQoS(key, namespace, name string) error {
 	var errs []error
 	if entry != nil {
 		for _, state := range entry.networks {
-			if err := c.releaseAddressSets(state, state.addrSetKeys); err != nil {
+			if err := c.releaseAddressSets(state, state.destinationAddrSetKeys); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -450,7 +457,7 @@ func (c *Controller) clearNetworkQoSOnNetwork(state *networkQoSState) error {
 	if err := c.deleteByObjectName(state.controllerName, state.getObjectNameKey()); err != nil {
 		return err
 	}
-	return c.releaseAddressSets(state, state.addrSetKeys)
+	return c.releaseAddressSets(state, state.destinationAddrSetKeys)
 }
 
 // Only report failures to avoid a status write from every node on success.
