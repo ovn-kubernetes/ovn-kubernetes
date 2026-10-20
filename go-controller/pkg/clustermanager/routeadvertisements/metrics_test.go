@@ -4,10 +4,36 @@
 package routeadvertisements
 
 import (
+	"maps"
 	"testing"
 
 	frrtypes "github.com/metallb/frr-k8s/api/v1beta1"
+	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
+	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
+
+func expectFRRMetrics(t *testing.T, ra string, configs, ipv4, ipv6 float64) {
+	t.Helper()
+	metrics.RegisterClusterManagerFunctional()
+	for metric, want := range map[string]map[string]float64{
+		"route_advertisement_frr_configurations":  {"": configs},
+		"route_advertisement_advertised_prefixes": {"ipv4": ipv4, "ipv6": ipv6},
+	} {
+		name := prometheus.BuildFQName(types.MetricOvnkubeNamespace, types.MetricOvnkubeSubsystemClusterManager, metric)
+		got := map[string]float64{}
+		for _, sample := range ovntest.FindMetricFamily(name).GetMetric() {
+			if ovntest.MetricLabelValue(sample.Label, "name") == ra {
+				got[ovntest.MetricLabelValue(sample.Label, "family")] = sample.GetGauge().GetValue()
+			}
+		}
+		if !maps.Equal(got, want) {
+			t.Errorf("%s for RA %s: got %v, want %v", metric, ra, got, want)
+		}
+	}
+}
 
 func TestCountAdvertisedPrefixes(t *testing.T) {
 	config := func(routers ...frrtypes.Router) *frrtypes.FRRConfiguration {
