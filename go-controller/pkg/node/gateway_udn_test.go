@@ -22,6 +22,7 @@ import (
 	"github.com/containernetworking/plugins/pkg/testutils"
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	nadfake "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/fake"
+	frrfake "github.com/metallb/frr-k8s/pkg/client/clientset/versioned/fake"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/mock"
 	"github.com/vishvananda/netlink"
@@ -2326,6 +2327,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			UplinkClient:              uplinkfake.NewSimpleClientset(),
 			UserDefinedNetworkClient:  udnfakeclient.NewSimpleClientset(),
 			RouteAdvertisementsClient: rafakeclient.NewSimpleClientset(),
+			FRRClient:                 frrfake.NewSimpleClientset(),
 		}
 
 		stop := make(chan struct{})
