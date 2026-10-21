@@ -5,7 +5,7 @@ package app
 
 import (
 	"context"
-	"sync"
+	"fmt"
 	"time"
 
 	"github.com/urfave/cli/v2"
@@ -13,10 +13,17 @@ import (
 	"k8s.io/klog/v2"
 	kexec "k8s.io/utils/exec"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
+
+const metricsCollectionIntervalFlag = "metrics-collection-interval"
+
+func ovsExporterMetricsCollectionInterval(ctx *cli.Context) time.Duration {
+	return time.Duration(ctx.Int(metricsCollectionIntervalFlag)) * time.Second
+}
 
 var OvsExporterCommand = cli.Command{
 	Name:  "ovs-exporter",
@@ -25,6 +32,13 @@ var OvsExporterCommand = cli.Command{
 		&cli.StringFlag{
 			Name:  "metrics-bind-address",
 			Usage: `The IP address and port for the metrics server to serve on (default ":9310")`,
+		},
+		&cli.IntFlag{
+			Name: metricsCollectionIntervalFlag,
+			Usage: fmt.Sprintf("Interval in seconds at which OVS metric values are extracted. "+
+				"Zero collects on demand during each scrape. Negative uses the default (%fs).",
+				config.DefaultMetricsCollectionInterval.Seconds()),
+			Value: int(config.DefaultMetricsCollectionInterval / time.Second),
 		},
 	},
 	Action: func(ctx *cli.Context) error {
@@ -47,33 +61,22 @@ var OvsExporterCommand = cli.Command{
 			return err
 		}
 
-		wg := &sync.WaitGroup{}
-
 		opts := metrics.MetricServerOptions{
-			BindAddress:      bindAddress,
-			EnableOVSMetrics: true,
-			OnFatalError:     cancel,
-			OVSDBClient:      ovsClient,
-			// CollectionInterval left unset: the standalone exporter uses the
-			// default (defaultCollectionInterval) since it does not parse the
-			// full metrics config.
+			BindAddress:        bindAddress,
+			EnableOVSMetrics:   true,
+			OnFatalError:       cancel,
+			OVSDBClient:        ovsClient,
+			CollectionInterval: ovsExporterMetricsCollectionInterval(ctx),
 		}
 
-		_ = metrics.StartMetricsServer(opts, innerCtx.Done(), wg)
+		_, metricsDone := metrics.StartMetricsServer(opts, innerCtx.Done())
 
 		// run until cancelled (by OS signal or fatal error)
 		<-innerCtx.Done()
 		klog.Info("Shutdown signal received, stopping metrics server...")
 
-		// Wait for all goroutines to finish with a timeout
-		done := make(chan struct{})
-		go func() {
-			wg.Wait()
-			close(done)
-		}()
-
 		select {
-		case <-done:
+		case <-metricsDone:
 			klog.Info("Metrics server stopped gracefully")
 		case <-time.After(10 * time.Second):
 			klog.Warning("Timeout waiting for metrics server to stop")
