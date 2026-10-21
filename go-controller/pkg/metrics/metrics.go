@@ -32,7 +32,7 @@ const (
 	metricsUpdateInterval = 5 * time.Minute
 
 	// defaultCollectionInterval is how often the background loop refreshes OVS/OVN
-	// metric values when MetricServerOptions.CollectionInterval is unset.
+	// metric values when MetricServerOptions.CollectionInterval is unset or negative.
 	defaultCollectionInterval = config.DefaultMetricsCollectionInterval
 
 	// metricsAppctlTimeout (seconds) bounds every ovs-appctl/ovn-appctl subprocess on
@@ -441,8 +441,9 @@ func writePlainText(statusCode int, text string, w http.ResponseWriter) {
 
 // StartMetricsServer runs the prometheus listener so that metrics can be collected.
 // It registers metrics based on the enabled flags in MetricServerOptions and returns
-// the MetricServer instance to allow dynamic metric registration via Enable* methods.
-func StartMetricsServer(opts MetricServerOptions, stopChan <-chan struct{}, wg *sync.WaitGroup) *MetricServer {
+// the MetricServer instance and a channel that closes after all of its background
+// goroutines stop.
+func StartMetricsServer(opts MetricServerOptions, stopChan <-chan struct{}) (*MetricServer, <-chan struct{}) {
 	klog.Infof("Starting Metrics Server on address: %s", opts.BindAddress)
 	metricsServer := NewMetricServer(opts)
 
@@ -451,20 +452,32 @@ func StartMetricsServer(opts MetricServerOptions, stopChan <-chan struct{}, wg *
 	// metrics for which the corresponding Enable* flag is true.
 	metricsServer.registerMetrics()
 
-	wg.Add(1)
+	done := make(chan struct{})
 	go func() {
-		defer wg.Done()
-		klog.Infof("Metrics Server starts to run ...")
-		metricsServer.Run(stopChan)
+		defer close(done)
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			klog.Infof("Metrics Server starts to run ...")
+			metricsServer.Run(stopChan)
+		}()
+
+		if opts.CollectionInterval != 0 {
+			// Extraction runs out of band from scraping: the loop refreshes the registry
+			// on its own interval and the scrape handler only serializes it.
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				metricsServer.runCollectionLoop(stopChan)
+			}()
+		} else {
+			klog.Infof("Metrics collection is on on-demand mode, no background collection loop will be started")
+		}
+
+		wg.Wait()
 	}()
 
-	// Extraction runs out of band from scraping: the loop refreshes the registry
-	// on its own interval and the scrape handler only serializes it.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		metricsServer.runCollectionLoop(stopChan)
-	}()
-
-	return metricsServer
+	return metricsServer, done
 }
