@@ -2201,13 +2201,18 @@ func IsPodNetworkAdvertisedAtNode(netInfo NetInfo, node string) bool {
 // IsPodNetworkAdvertisedAtNodeDefaultVRF returns true if the pod network is
 // advertised at the given node in the default VRF. For networks with EVPN
 // transport this always returns false as those networks should not be
-// advertised in the default VRF.
+// advertised in the default VRF. A no-overlay network that no
+// RouteAdvertisements advertises is advertised in the default VRF, as with the
+// default RouteAdvertisements targetVRF.
 func IsPodNetworkAdvertisedAtNodeDefaultVRF(netInfo NetInfo, node string) bool {
+	vrfs := netInfo.GetPodNetworkAdvertisedOnNodeVRFs(node)
 	switch netInfo.Transport() {
 	case types.NetworkTransportEVPN:
 		return false
+	case types.NetworkTransportNoOverlay:
+		return len(vrfs) == 0 || slices.Contains(vrfs, types.DefaultNetworkName)
 	default:
-		return slices.Contains(netInfo.GetPodNetworkAdvertisedOnNodeVRFs(node), types.DefaultNetworkName)
+		return slices.Contains(vrfs, types.DefaultNetworkName)
 	}
 }
 

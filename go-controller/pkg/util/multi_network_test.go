@@ -3164,3 +3164,45 @@ func TestGetUDNVRFName(t *testing.T) {
 	g.Expect(GetUDNVRFName(ovntypes.InvalidID)).To(gomega.BeEmpty(),
 		"the name can't be derived while the network ID is unknown")
 }
+
+func TestIsPodNetworkAdvertisedAtNodeDefaultVRF(t *testing.T) {
+	const node = "node1"
+	newNetInfo := func(g *gomega.WithT, transport string, vrfs []string) NetInfo {
+		netInfo, err := NewNetInfo(&ovncnitypes.NetConf{
+			NetConf:   cnitypes.NetConf{Name: "network"},
+			Topology:  ovntypes.Layer3Topology,
+			Subnets:   "10.128.0.0/16/24",
+			Transport: transport,
+		})
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+		mutable := NewMutableNetInfo(netInfo)
+		if vrfs != nil {
+			mutable.SetPodNetworkAdvertisedVRFs(map[string][]string{node: vrfs})
+		}
+		return mutable
+	}
+
+	tests := []struct {
+		name      string
+		transport string
+		vrfs      []string
+		expected  bool
+	}{
+		{name: "overlay without RouteAdvertisements", transport: "", vrfs: nil, expected: false},
+		{name: "overlay advertised in the default VRF", transport: "", vrfs: []string{ovntypes.DefaultNetworkName}, expected: true},
+		{name: "overlay advertised in its own VRF", transport: "", vrfs: []string{"network"}, expected: false},
+		{name: "no-overlay without RouteAdvertisements", transport: ovntypes.NetworkTransportNoOverlay, vrfs: nil, expected: true},
+		{name: "no-overlay advertised in the default VRF", transport: ovntypes.NetworkTransportNoOverlay, vrfs: []string{ovntypes.DefaultNetworkName}, expected: true},
+		{name: "no-overlay advertised in its own VRF", transport: ovntypes.NetworkTransportNoOverlay, vrfs: []string{"network"}, expected: false},
+		{name: "EVPN without RouteAdvertisements", transport: ovntypes.NetworkTransportEVPN, vrfs: nil, expected: false},
+		{name: "EVPN advertised in the default VRF", transport: ovntypes.NetworkTransportEVPN, vrfs: []string{ovntypes.DefaultNetworkName}, expected: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			netInfo := newNetInfo(g, test.transport, test.vrfs)
+			g.Expect(IsPodNetworkAdvertisedAtNodeDefaultVRF(netInfo, node)).To(gomega.Equal(test.expected))
+			g.Expect(IsPodNetworkAdvertisedAtNode(netInfo, node)).To(gomega.Equal(test.transport != "" || len(test.vrfs) > 0))
+		})
+	}
+}
