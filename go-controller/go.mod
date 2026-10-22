@@ -178,3 +178,5 @@ require (
 // and the dependency above bumped to a release containing that change,
 // or support for iptables is dropped
 replace github.com/coreos/go-iptables => github.com/trozet/go-iptables v0.0.0-20240328221912-077e672b3808
+
+tool github.com/ovn-kubernetes/libovsdb/cmd/modelgen
