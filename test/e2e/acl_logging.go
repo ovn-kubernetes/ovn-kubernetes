@@ -193,23 +193,21 @@ var _ = Describe("ACL Logging for AdminNetworkPolicy and BaselineAdminNetworkPol
 	)
 	BeforeEach(func() {
 		nsNames[0] = fr.Namespace.Name
-		suffix := framework.RandomSuffix()
-		nsNames[1] = fmt.Sprintf("anp-peer-restricted-%s", suffix)
-		nsNames[2] = fmt.Sprintf("anp-peer-open-%s", suffix)
-		nsNames[3] = fmt.Sprintf("anp-peer-unknown-%s", suffix)
+
+		By("creating peer namespaces that are selected by the admin network policy")
+		peerNamespacePrefixes := []string{"anp-peer-restricted", "anp-peer-open", "anp-peer-unknown"}
+		for i, prefix := range peerNamespacePrefixes {
+			ns, err := fr.CreateNamespace(context.TODO(), prefix, map[string]string{})
+			Expect(err).NotTo(HaveOccurred(), "failed to create peer namespace %s", prefix)
+			nsNames[i+1] = ns.Name
+		}
 
 		By("creating an admin network policy")
-		err := makeAdminNetworkPolicy(anpName, "10", fr.Namespace.Name, nsNames[1], nsNames[2], nsNames[3])
+		err := makeAdminNetworkPolicy(anpName, "10", nsNames[0], nsNames[1], nsNames[2], nsNames[3])
 		Expect(err).NotTo(HaveOccurred())
 
 		By("configuring the ACL logging level for the ANP")
 		Expect(setANPACLLogSeverity(anpName, initialDenyACLSeverity, initialAllowACLSeverity, initialPassACLSeverity)).To(Succeed())
-
-		By("creating peer namespaces that are selected by the admin network policy")
-		for _, ns := range nsNames[1:] {
-			_, err = e2ekubectl.RunKubectl("default", "create", "ns", ns)
-			Expect(err).NotTo(HaveOccurred())
-		}
 
 		By("creating pods in subject and peer namespaces")
 		cmd := []string{"/bin/bash", "-c", "/agnhost netexec --http-port 8000"}
