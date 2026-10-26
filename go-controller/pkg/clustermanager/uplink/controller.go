@@ -1126,8 +1126,15 @@ func uplinkNeedsUpdate(oldObj, newObj *uplinkv1alpha1.Uplink) bool {
 	if oldObj == nil {
 		return true
 	}
+	// A resolved UplinkState can arrive before an earlier Ready write
+	// reaches this cache. Reconcile delayed Ready changes to recover even
+	// when the UplinkState event saw the previous condition as unchanged.
 	return !reflect.DeepEqual(oldObj.Spec, newObj.Spec) ||
-		oldObj.DeletionTimestamp.IsZero() != newObj.DeletionTimestamp.IsZero()
+		oldObj.DeletionTimestamp.IsZero() != newObj.DeletionTimestamp.IsZero() ||
+		!reflect.DeepEqual(
+			meta.FindStatusCondition(oldObj.Status.Conditions, uplinkv1alpha1.UplinkConditionReady),
+			meta.FindStatusCondition(newObj.Status.Conditions, uplinkv1alpha1.UplinkConditionReady),
+		)
 }
 
 func uplinkStateNeedsUpdate(oldObj, newObj *uplinkv1alpha1.UplinkState) bool {

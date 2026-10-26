@@ -83,6 +83,79 @@ func TestUplinkControllerAggregatesReadyState(t *testing.T) {
 	))
 }
 
+func TestUplinkControllerRestoresUplinkReadinessAfterCacheLag(t *testing.T) {
+	g := gomega.NewWithT(t)
+	setSharedGatewayMode(t)
+	uplink := withFinalizer(newUplink("br-blue", "role", "blue", "br-new"))
+	state := newResolvedUplinkState("br-blue", "node-a", "br-new")
+	controller, client := newTestController(t,
+		newNode("node-a", map[string]string{"role": "blue"}),
+		uplink,
+		state,
+		newCUDN("blue", uplink.Name),
+	)
+	getUplink := func() *uplinkv1alpha1.Uplink {
+		current, err := client.UplinkClient.K8sV1alpha1().Uplinks().Get(
+			context.Background(), uplink.Name, metav1.GetOptions{},
+		)
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+		return current
+	}
+
+	// Advance the Uplink and UplinkState caches independently to reproduce
+	// a resolved state arriving before an earlier readiness write.
+	uplinkIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+	stateIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+	g.Expect(uplinkIndexer.Add(uplink)).To(gomega.Succeed())
+	g.Expect(stateIndexer.Add(state)).To(gomega.Succeed())
+	controller.uplinkLister = uplinklisters.NewUplinkLister(uplinkIndexer)
+	controller.uplinkStateLister = uplinklisters.NewUplinkStateLister(stateIndexer)
+	g.Expect(controller.reconcileUplink(uplink.Name)).To(gomega.Succeed())
+	readyUplink := getUplink()
+	g.Expect(getUplinkCondition(g, client, uplink.Name, uplinkv1alpha1.UplinkConditionReady).Status).
+		To(gomega.Equal(metav1.ConditionTrue))
+	g.Expect(uplinkIndexer.Update(readyUplink)).To(gomega.Succeed())
+
+	// The old resolved interface no longer matches the updated Uplink
+	// spec. Hold back the resulting Ready=False event from its cache.
+	oldState := state.DeepCopy()
+	oldState.Status.HostInterfaceName = "br-old"
+	g.Expect(stateIndexer.Update(oldState)).To(gomega.Succeed())
+	g.Expect(controller.reconcileUplink(uplink.Name)).To(gomega.Succeed())
+	g.Expect(getUplinkCondition(g, client, uplink.Name, uplinkv1alpha1.UplinkConditionReady).Status).
+		To(gomega.Equal(metav1.ConditionFalse))
+
+	// Resolution catches up, but the cached Ready=True suppresses the
+	// recovery write. The CUDN can become ready independently because it
+	// evaluates the resolved UplinkState rather than the Uplink condition.
+	g.Expect(stateIndexer.Update(state)).To(gomega.Succeed())
+	g.Expect(controller.reconcileUplink(uplink.Name)).To(gomega.Succeed())
+	notReadyUplink := getUplink()
+	g.Expect(getUplinkCondition(g, client, uplink.Name, uplinkv1alpha1.UplinkConditionReady).Status).
+		To(gomega.Equal(metav1.ConditionFalse))
+	g.Expect(controller.reconcileCUDN("blue")).To(gomega.Succeed())
+	g.Expect(getCUDNCondition(g, client, "blue", conditionTypeUplinksReady).Status).
+		To(gomega.Equal(metav1.ConditionTrue))
+
+	// Delivering the delayed status event must trigger recovery.
+	g.Expect(uplinkIndexer.Update(notReadyUplink)).To(gomega.Succeed())
+	g.Expect(uplinkNeedsUpdate(readyUplink, notReadyUplink)).To(gomega.BeTrue())
+	g.Expect(controller.reconcileUplink(uplink.Name)).To(gomega.Succeed())
+	recoveredUplink := getUplink()
+	g.Expect(getUplinkCondition(g, client, uplink.Name, uplinkv1alpha1.UplinkConditionReady)).To(gomega.And(
+		gomega.HaveField("Status", metav1.ConditionTrue),
+		gomega.HaveField("Reason", reasonReady),
+	))
+
+	// Our recovery event settles without further API writes.
+	g.Expect(uplinkNeedsUpdate(notReadyUplink, recoveredUplink)).To(gomega.BeTrue())
+	g.Expect(uplinkIndexer.Update(recoveredUplink)).To(gomega.Succeed())
+	fakeClient := client.UplinkClient.(*uplinkfake.Clientset)
+	actionsBefore := len(fakeClient.Actions())
+	g.Expect(controller.reconcileUplink(uplink.Name)).To(gomega.Succeed())
+	g.Expect(fakeClient.Actions()).To(gomega.HaveLen(actionsBefore))
+}
+
 func TestUplinkControllerKeepsUplinkReadyForGatewayProgrammingFailure(t *testing.T) {
 	g := gomega.NewWithT(t)
 	controller, client := newTestController(t,
