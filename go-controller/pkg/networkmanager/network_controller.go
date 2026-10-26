@@ -446,12 +446,18 @@ func (c *networkController) syncAll() error {
 	return nil
 }
 
+// syncNetworks reconciles all known networks
 func (c *networkController) syncNetworks() error {
+	// Reconciled unconditionally: the default network may not be in
+	// c.networks yet, for example before its NAD has been processed.
 	c.networkReconciler.Reconcile(types.DefaultNetworkName)
 	// Controllers are registered only after Start returns. Include desired
 	// networks so updates during startup remain queued for reconciliation.
 	for _, network := range c.getAllNetworks() {
-		c.networkReconciler.Reconcile(network.GetNetworkName())
+		if name := network.GetNetworkName(); name != types.DefaultNetworkName {
+			klog.V(5).Infof("%s: queuing network %s for resync", c.name, name)
+			c.networkReconciler.Reconcile(name)
+		}
 	}
 
 	return nil
