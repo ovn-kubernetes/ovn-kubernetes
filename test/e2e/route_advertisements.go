@@ -3430,6 +3430,43 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 									otherNetworkSpec.Layer2.Subnets = matchL2SubnetsByIPFamilies(ipFamilySet, otherNetworkSpec.Layer2.Subnets...)
 								}
 
+								// For the EVPN overlapping-CIDR case the shared VTEP is already
+								// Accepted, so waitForVTEPAccepted (inside runEVPNNetworkAndServers)
+								// returns immediately. But the new FRRConfiguration created for the
+								// second CUDN triggers frr-k8s on every node to re-merge its
+								// configuration, potentially causing a full FRR reload that drops
+								// and re-establishes the EVPN BGP session with the external FRR.
+								// Since zebra on the external FRR takes extra time to recover (see
+								// the FIXME note above about zebra start-up delays), add an explicit
+								// convergence wait here before any pods are created, so that the
+								// BGP session is fully established and route exchange can begin
+								// immediately once pod IPs are allocated.
+								//
+								// Snapshot each node's FRRNodeState resourceVersion BEFORE
+								// configureNetworkWithInfra so we can detect when frr-k8s has
+								// actually finished reconciling the new FRRConfiguration (as opposed
+								// to observing a pre-existing Established session that was satisfied
+								// before the re-merge even began).
+								var preConfigFRRNodeStateRVs map[string]string
+								if networkType == cudnAdvertisedEVPNOverlappingCIDRSharedVTEP {
+									snapshotCtx, snapshotCancel := context.WithTimeout(context.Background(), 30*time.Second)
+									defer snapshotCancel()
+									snapshotNodes, snapshotErr := e2enode.GetReadySchedulableNodes(snapshotCtx, f.ClientSet)
+									gomega.Expect(snapshotErr).NotTo(gomega.HaveOccurred(),
+										"failed to list nodes for FRRNodeState snapshot")
+									preConfigFRRNodeStateRVs = make(map[string]string, len(snapshotNodes.Items))
+									for i := range snapshotNodes.Items {
+										n := snapshotNodes.Items[i].Name
+										rv, _, rvErr := e2ekubectl.NewKubectlCommand(
+											"", "get", "frrnodestate", n,
+											"-o", "jsonpath={.metadata.resourceVersion}",
+										).WithTimeout(time.NewTimer(30 * time.Second).C).ExecWithFullOutput()
+										gomega.Expect(rvErr).NotTo(gomega.HaveOccurred(),
+											"failed to get FRRNodeState resourceVersion for node %s", n)
+										preConfigFRRNodeStateRVs[n] = strings.TrimSpace(rv)
+									}
+								}
+
 								otherNamespace, _, _ = configureNetworkWithInfra(
 									f,
 									ictx,
@@ -3440,6 +3477,67 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 									otherNetworkSpec,
 									otherBGPAlloc,
 								)
+
+								if networkType == cudnAdvertisedEVPNOverlappingCIDRSharedVTEP {
+									externalFRRIP, externalFRRErr := getExternalFRRIP(ipFamilySet)
+									gomega.Expect(externalFRRErr).NotTo(gomega.HaveOccurred(),
+										"failed to determine external FRR IP for EVPN convergence check")
+									nodeListCtx, nodeListCancel := context.WithTimeout(context.Background(), 30*time.Second)
+									defer nodeListCancel()
+									nodeList, listErr := e2enode.GetReadySchedulableNodes(nodeListCtx, f.ClientSet)
+									gomega.Expect(listErr).NotTo(gomega.HaveOccurred(),
+										"failed to list ready schedulable nodes for EVPN convergence check")
+
+									// A changed FRRNodeState resourceVersion confirms frr-k8s has
+									// finished reconciling the new FRRConfiguration on that node.
+									// Wait for this on every node before checking the BGP session.
+									ginkgo.By("Waiting for frr-k8s to re-merge the new FRRConfiguration on all nodes")
+									for i := range nodeList.Items {
+										nodeName := nodeList.Items[i].Name
+										preRV := preConfigFRRNodeStateRVs[nodeName]
+										gomega.Eventually(func() error {
+											rv, _, rvErr := e2ekubectl.NewKubectlCommand(
+												"", "get", "frrnodestate", nodeName,
+												"-o", "jsonpath={.metadata.resourceVersion}",
+											).WithTimeout(time.NewTimer(30 * time.Second).C).ExecWithFullOutput()
+											if rvErr != nil {
+												return fmt.Errorf("node %s: failed to get FRRNodeState: %w", nodeName, rvErr)
+											}
+											if strings.TrimSpace(rv) == preRV {
+												return fmt.Errorf("node %s: FRRNodeState not yet updated (resourceVersion still %s)", nodeName, preRV)
+											}
+											return nil
+										}, 2*time.Minute, 2*time.Second).Should(gomega.Succeed(),
+											"frr-k8s did not update FRRNodeState on node %s within timeout", nodeName)
+									}
+
+									// Poll all nodes inside a single Eventually so that every
+									// retry re-checks every node. Per-node Eventually calls would
+									// allow an earlier node's session to drop while a later node
+									// is still converging, leaving the first node unchecked.
+									ginkgo.By("Waiting for EVPN BGP sessions to re-converge on all nodes after overlapping CUDN setup")
+									gomega.Eventually(func() error {
+										for i := range nodeList.Items {
+											nodeName := nodeList.Items[i].Name
+											// "show bgp l2vpn evpn summary established" uses FRR's
+											// built-in state filter: only established peers appear
+											// in the output. A missing externalFRRIP means the
+											// session has not yet converged.
+											attemptCtx, attemptCancel := context.WithTimeout(context.Background(), 30*time.Second)
+											defer attemptCancel()
+											out, execErr := execVtyshOnFRRK8s(attemptCtx, f, nodeName, "show bgp l2vpn evpn summary established")
+											framework.Logf("show bgp l2vpn evpn summary established on node %s: \n%s", nodeName, out)
+											if execErr != nil {
+												return fmt.Errorf("node %s: vtysh error: %w", nodeName, execErr)
+											}
+											if !strings.Contains(out, externalFRRIP) {
+												return fmt.Errorf("node %s: EVPN BGP session with %s is not yet established", nodeName, externalFRRIP)
+											}
+										}
+										return nil
+									}, 5*time.Minute, 5*time.Second).Should(gomega.Succeed(),
+										"EVPN BGP sessions with external FRR not established on all nodes within timeout")
+								}
 							})
 
 							ginkgo.It("Both networks are isolated", func() {
@@ -3890,8 +3988,10 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 			for _, node := range nodes.Items {
 				var output string
 				gomega.Eventually(func() error {
+					attemptCtx, attemptCancel := context.WithTimeout(context.Background(), 30*time.Second)
+					defer attemptCancel()
 					var err error
-					output, err = execVtyshOnFRRK8s(f, node.Name, fmt.Sprintf("show bgp l2vpn evpn route vni %s type multicast", macVRFVNI))
+					output, err = execVtyshOnFRRK8s(attemptCtx, f, node.Name, fmt.Sprintf("show bgp l2vpn evpn route vni %s type multicast", macVRFVNI))
 					if err != nil {
 						return err
 					}
@@ -3930,8 +4030,10 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 			ginkgo.By("Validation 2: Type-2 (MAC/IP) for PodA and MAC-VRF external agnhost on PodA's node")
 			var type2Output string
 			gomega.Eventually(func() error {
+				attemptCtx, attemptCancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer attemptCancel()
 				var err error
-				type2Output, err = execVtyshOnFRRK8s(f, nodeA, fmt.Sprintf("show bgp l2vpn evpn route vni %s type macip", macVRFVNI))
+				type2Output, err = execVtyshOnFRRK8s(attemptCtx, f, nodeA, fmt.Sprintf("show bgp l2vpn evpn route vni %s type macip", macVRFVNI))
 				framework.Logf("Type-2 MAC/IP routes on %s, vtysh out:\n%s", nodeA, type2Output)
 				if err != nil {
 					return err
@@ -4057,9 +4159,9 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 })
 
 // getFRRK8sPodOnNode returns the frr-k8s DaemonSet pod on the given node.
-func getFRRK8sPodOnNode(f *framework.Framework, nodeName string) (*corev1.Pod, error) {
+func getFRRK8sPodOnNode(ctx context.Context, f *framework.Framework, nodeName string) (*corev1.Pod, error) {
 	ns := deploymentconfig.Get().FRRK8sNamespace()
-	pods, err := f.ClientSet.CoreV1().Pods(ns).List(context.Background(), metav1.ListOptions{
+	pods, err := f.ClientSet.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{
 		FieldSelector: "spec.nodeName=" + nodeName,
 		LabelSelector: "app=frr-k8s",
 	})
@@ -4077,13 +4179,26 @@ func getFRRK8sPodOnNode(f *framework.Framework, nodeName string) (*corev1.Pod, e
 }
 
 // execVtyshOnFRRK8s runs a vtysh -c command in the FRR sidecar of the frr-k8s pod on the given node.
-func execVtyshOnFRRK8s(f *framework.Framework, nodeName string, vtyshCmd string) (string, error) {
-	pod, err := getFRRK8sPodOnNode(f, nodeName)
+func execVtyshOnFRRK8s(ctx context.Context, f *framework.Framework, nodeName string, vtyshCmd string) (string, error) {
+	pod, err := getFRRK8sPodOnNode(ctx, f, nodeName)
 	if err != nil {
 		return "", err
 	}
-	args := []string{"exec", pod.Name, "-c", frrContainerName, "--", "vtysh", "-c", vtyshCmd}
-	return e2ekubectl.RunKubectl(deploymentconfig.Get().FRRK8sNamespace(), args...)
+	deadline, ok := ctx.Deadline()
+	var timeoutCh <-chan time.Time
+	if ok {
+		if remaining := time.Until(deadline); remaining > 0 {
+			timeoutCh = time.NewTimer(remaining).C
+		} else {
+			return "", ctx.Err()
+		}
+	} else {
+		timeoutCh = time.NewTimer(30 * time.Second).C
+	}
+	out, _, execErr := e2ekubectl.NewKubectlCommand(deploymentconfig.Get().FRRK8sNamespace(),
+		"exec", pod.Name, "-c", frrContainerName, "--", "vtysh", "-c", vtyshCmd,
+	).WithTimeout(timeoutCh).ExecWithFullOutput()
+	return out, execErr
 }
 
 // bumE2EQuoteTcpdumpFilter wraps a BPF for safe use in sh -c for tcpdump.
