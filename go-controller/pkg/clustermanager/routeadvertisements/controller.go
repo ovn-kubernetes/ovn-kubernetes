@@ -702,7 +702,11 @@ func (c *Controller) generateFRRConfigurations(ctx context.Context, ra *ratypes.
 		return nil, nil, err
 	}
 	if !nodeSelector.Empty() && advertisements.Has(ratypes.PodNetwork) {
-		return nil, nil, fmt.Errorf("%w: node selector has to select all nodes if pod network is advertised", errConfig)
+		for _, network := range selectedNetworks.networks {
+			if selectedNetworks.networkTransport[network] == types.NetworkTransportNoOverlay {
+				return nil, nil, fmt.Errorf("%w: nodeSelector is not supported for PodNetwork when selected networks use NoOverlay transport", errConfig)
+			}
+		}
 	}
 	nodes, err := c.nodeLister.List(nodeSelector)
 	if err != nil {
@@ -900,6 +904,23 @@ func (c *Controller) generateFRRConfigurations(ctx context.Context, ra *ratypes.
 				subnets = networkSubnets
 				if len(subnets) == 0 {
 					return nil, fmt.Errorf("%w: no layer2 subnets found", errConfig)
+				}
+			} else if !nodeSelector.Empty() {
+				// gateway node: advertise all nodes' host subnets
+				allNodes, err := c.nodeLister.List(labels.Everything())
+				if err != nil {
+					return nil, err
+				}
+				for _, n := range allNodes {
+					nodeSubnets, err := getHostSubnets(n.Name, network)
+					if err != nil {
+						// node may not have subnet annotation yet, skip it
+						continue
+					}
+					subnets = append(subnets, nodeSubnets...)
+				}
+				if len(subnets) == 0 {
+					return nil, fmt.Errorf("%w: will wait for subnet annotation to be set for network %q", errConfig, network)
 				}
 			} else {
 				subnets, err = getHostSubnets(nodeName, network)
