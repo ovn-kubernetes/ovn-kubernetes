@@ -45,6 +45,48 @@ func (c *blockingListOVSClient) List(ctx context.Context, result interface{}) er
 	return c.Client.List(ctx, result)
 }
 
+// TestPatchedNetConfigsRefreshesAdvertisedState verifies flow rebuilds refresh Advertised from live state.
+func TestPatchedNetConfigsRefreshesAdvertisedState(t *testing.T) {
+	g := gomega.NewWithT(t)
+	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+	t.Cleanup(func() { _ = config.PrepareTestConfig() })
+
+	nodeName := "node-a"
+	nad := ovntest.GenerateNAD("bluenet", "rednad", "greenamespace",
+		ovntypes.Layer2Topology, "10.1.0.0/16", ovntypes.NetworkRolePrimary)
+	netInfo, err := util.ParseNADInfo(nad)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	mutableNetInfo := util.NewMutableNetInfo(netInfo)
+
+	b := &BridgeConfiguration{
+		nodeName:  nodeName,
+		netConfig: map[string]*BridgeUDNConfiguration{},
+	}
+	g.Expect(b.AddNetworkConfig(mutableNetInfo, nil, nil, 0, 0, nil, nil)).To(gomega.Succeed())
+	// patchedNetConfigs skips entries without a patch port; fake one in so this
+	// entry is considered.
+	b.netConfig[mutableNetInfo.GetNetworkName()].OfPortPatch = "5"
+
+	netConfigs := b.patchedNetConfigs()
+	g.Expect(netConfigs).To(gomega.HaveLen(1))
+	g.Expect(netConfigs[0].Advertised.Load()).To(gomega.BeFalse(),
+		"network should start out unadvertised")
+
+	// Simulate the RouteAdvertisements becoming Accepted after network creation,
+	// without going through the advertised-state reconcile that would normally
+	// call Advertised.Store() directly. Any other flow-cache rebuild trigger
+	// (node IP change, Service/Endpoint churn) must still observe the live
+	// state instead of the stale cached false from creation time.
+	mutableNetInfo.SetPodNetworkAdvertisedVRFs(map[string][]string{
+		nodeName: {ovntypes.DefaultNetworkName},
+	})
+
+	netConfigs = b.patchedNetConfigs()
+	g.Expect(netConfigs).To(gomega.HaveLen(1))
+	g.Expect(netConfigs[0].Advertised.Load()).To(gomega.BeTrue(),
+		"a flow-cache rebuild from any trigger must pick up the now-accepted advertisement")
+}
+
 func TestBridgedGatewayNodeSetupSerializesBridgeMappingUpdates(t *testing.T) {
 	g := gomega.NewWithT(t)
 	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())

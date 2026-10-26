@@ -51,6 +51,8 @@ type BridgeUDNConfiguration struct {
 	Transport string
 	// OutboundSNAT setting for this network ("enabled", "disabled", or "")
 	OutboundSNAT string
+	// Re-derive Advertised from live NetInfo on every flow rebuild.
+	netInfo util.NetInfo
 }
 
 func (netConfig *BridgeUDNConfiguration) ShallowCopy() *BridgeUDNConfiguration {
@@ -65,6 +67,7 @@ func (netConfig *BridgeUDNConfiguration) ShallowCopy() *BridgeUDNConfiguration {
 		NodeSubnets:  netConfig.NodeSubnets,
 		Transport:    netConfig.Transport,
 		OutboundSNAT: netConfig.OutboundSNAT,
+		netInfo:      netConfig.netInfo,
 	}
 	copy.Advertised.Store(netConfig.Advertised.Load())
 	return copy
@@ -486,6 +489,7 @@ func (b *BridgeConfiguration) AddNetworkConfig(nInfo util.NetInfo, nodeSubnets, 
 			NodeSubnets:   nodeSubnets,
 			Transport:     nInfo.Transport(),
 			OutboundSNAT:  nInfo.OutboundSNAT(),
+			netInfo:       nInfo,
 		}
 		netConfig.Advertised.Store(util.IsPodNetworkAdvertisedAtNode(nInfo, b.nodeName))
 
@@ -532,12 +536,16 @@ func (b *BridgeConfiguration) HasNetworkConfigs() bool {
 	return len(b.netConfig) > 0
 }
 
-// must be called with mutex held
+// patchedNetConfigs refreshes each network's Advertised flag from live NetInfo.
+// Caller holds b.mutex.
 func (b *BridgeConfiguration) patchedNetConfigs() []*BridgeUDNConfiguration {
 	result := make([]*BridgeUDNConfiguration, 0, len(b.netConfig))
 	for _, netConfig := range b.netConfig {
 		if netConfig.OfPortPatch == "" {
 			continue
+		}
+		if !netConfig.IsDefaultNetwork() && netConfig.netInfo != nil {
+			netConfig.Advertised.Store(util.IsPodNetworkAdvertisedAtNode(netConfig.netInfo, b.nodeName))
 		}
 		result = append(result, netConfig)
 	}
