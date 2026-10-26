@@ -532,7 +532,7 @@ jobs:
       matrix:
         # Valid options are:
         # target: ["shard-conformance", "no-uplink", "control-plane", "multi-homing", "node-ip-mac-migration",
-        #          "external-gateway", "kv-live-migration", "network-segmentation",
+        #          "external-gateway", "kv-live-migration", "kv-live-migration-serial", "network-segmentation",
         #          "network-segmentation-dynamic", "bgp", "bgp-no-overlay", "bgp-no-overlay-dynamic", "bgp-loose-isolation",
         #          "evpn", "traffic-flow-test-only", "tools", "serial"]
         #         shard-conformance: hybrid-overlay = multicast-enable = emptylb-enable = false
@@ -573,6 +573,11 @@ jobs:
           - {"target": "external-gateway", "gateway-mode": "local",  "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged"}
           - {"target": "kv-live-migration", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "3", "network-segmentation": "enable-network-segmentation", "routeadvertisements": "true"}
           - {"target": "kv-live-migration", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "3", "network-segmentation": "enable-network-segmentation", "routeadvertisements": "true", "evpn": "enable-evpn"}
+          # Dedicated non-parallel lane for Kubevirt Virtual Machines specs
+          # labeled Serial, such as the CUDN/RA/VM recreation race check.
+          # The parallel kv-live-migration lane above skips these specs via
+          # the Serial label. This lane reuses that lane's network settings.
+          - {"target": "kv-live-migration-serial", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "3", "network-segmentation": "enable-network-segmentation", "routeadvertisements": "true"}
           - {"target": "control-plane", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "forwarding": "disable-forwarding"}
           - {"target": "network-segmentation", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged", "forwarding": "disable-forwarding"}
           - {"target": "network-segmentation", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "unprivileged"}
@@ -609,19 +614,19 @@ jobs:
       OVN_GATEWAY_MODE: "${{ matrix.gateway-mode }}"
       OVN_DUMMY_GATEWAY_BRIDGE: "${{ matrix.target == 'no-uplink' }}"
       OVN_SECOND_BRIDGE: "${{ matrix.second-bridge == '2br' }}"
-      ENABLE_MULTI_NET: "${{ matrix.target == 'multi-homing' || matrix.target == 'kv-live-migration' || startsWith(matrix.target, 'network-segmentation') || matrix.target == 'tools' || matrix.target == 'traffic-flow-test-only' || matrix.routeadvertisements != '' }}"
+      ENABLE_MULTI_NET: "${{ matrix.target == 'multi-homing' || startsWith(matrix.target, 'kv-live-migration') || startsWith(matrix.target, 'network-segmentation') || matrix.target == 'tools' || matrix.target == 'traffic-flow-test-only' || matrix.routeadvertisements != '' }}"
       ENABLE_NETWORK_SEGMENTATION: "${{ startsWith(matrix.target, 'network-segmentation') || matrix.network-segmentation == 'enable-network-segmentation' }}"
       PLATFORM_IPV4_SUPPORT: "${{ matrix.ipfamily == 'IPv4' || matrix.ipfamily == 'dualstack' }}"
       PLATFORM_IPV6_SUPPORT: "${{ matrix.ipfamily == 'IPv6' || matrix.ipfamily == 'dualstack' }}"
       KIND_LOCAL_REGISTRY: "${{ matrix.local-kind-registry == 'true' }}"
-      KIND_INSTALL_KUBEVIRT: "${{ matrix.target == 'kv-live-migration' }}"
+      KIND_INSTALL_KUBEVIRT: "${{ startsWith(matrix.target, 'kv-live-migration') }}"
       # the DHCP IPAM e2e needs the dhcp CNI plugin binary on every node for
       # the regular-pod delegation path (contrib/kind-common.sh install_plugins)
-      KIND_INSTALL_PLUGINS: "${{ matrix.target == 'kv-live-migration' }}"
+      KIND_INSTALL_PLUGINS: "${{ startsWith(matrix.target, 'kv-live-migration') }}"
       KIND_NUM_WORKER: "${{ matrix.num-workers }}"
       OVN_DISABLE_FORWARDING: "${{ matrix.forwarding == 'disable-forwarding' }}"
       OVN_ENABLE_DNSNAMERESOLVER: "${{ matrix.dns-name-resolver == 'enable-dns-name-resolver' }}"
-      OVN_NETWORK_QOS_ENABLE: "${{ matrix.target == 'control-plane' || matrix.target == 'kv-live-migration' }}"
+      OVN_NETWORK_QOS_ENABLE: "${{ matrix.target == 'control-plane' || startsWith(matrix.target, 'kv-live-migration') }}"
       TRAFFIC_FLOW_TESTS: "${{ matrix.traffic-flow-tests }}"
       ENABLE_ROUTE_ADVERTISEMENTS: "${{ matrix.routeadvertisements != '' }}"
       ENABLE_EVPN: "${{ matrix.target == 'evpn' || matrix.evpn == 'enable-evpn' }}"
@@ -631,7 +636,9 @@ jobs:
       ENABLE_PRE_CONF_UDN_ADDR: "${{ startsWith(matrix.target, 'network-segmentation') || matrix.network-segmentation == 'enable-network-segmentation' }}"
       ADVERTISED_UDN_ISOLATION_MODE: "${{ matrix.advertised-udn-isolation-mode }}"
       # Managed BGP tests change the shared template and must run serially.
-      PARALLEL: "${{ matrix.target != 'serial' && matrix.target != 'bgp-managed' }}"
+      # kv-live-migration-serial carries Kubevirt specs labeled Serial, which
+      # the parallel kv-live-migration lane would otherwise skip.
+      PARALLEL: "${{ matrix.target != 'serial' && matrix.target != 'bgp-managed' && matrix.target != 'kv-live-migration-serial' }}"
       OVN_UNPRIVILEGED_MODE: "${{ matrix.cni-mode == 'unprivileged' }}"
       MULTI_POD_SUBNET: true
       DYNAMIC_UDN_ALLOCATION: "${{ endsWith(matrix.target, '-dynamic') }}"
@@ -794,6 +801,10 @@ jobs:
           # provisioned with the dhcp CNI plugin (KIND_INSTALL_PLUGINS),
           # kubevirt and NetworkQoS
           make -C test control-plane WHAT="Kubevirt Virtual Machines|Localnet DHCP IPAM"
+        elif [ "${{ matrix.target }}" == "kv-live-migration-serial" ]; then
+          # Non-parallel: runs Kubevirt Virtual Machines specs labeled Serial
+          # that the parallel kv-live-migration lane skips.
+          make -C test control-plane WHAT="Kubevirt Virtual Machines"
         elif [[ "${{ matrix.target }}" == network-segmentation* ]]; then
           make -C test control-plane WHAT="Network Segmentation"
           make -C test control-plane WHAT="ClusterNetworkConnect"
