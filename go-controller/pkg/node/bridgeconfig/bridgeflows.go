@@ -1155,6 +1155,22 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 							nodetypes.DefaultOpenFlowCookie, input, bridgeMacAddress, ipv, ipv, subnet, ofPortPhys))
 				}
 			}
+			// When network is advertised on this gateway node, add ingress flows
+			// for the cluster-wide subnet to steer remote pod traffic into OVN.
+			// Uses priority 290 (below 300 for local NodeSubnets) so that local
+			// node's more specific host subnet flow takes precedence. Only ingress
+			// flows are needed — remote pods are not local, so no egress (priority
+			// 104) flows are added for remote subnets.
+			if isNetworkAdvertised {
+				for _, clusterEntry := range netConfig.Subnets {
+					cidr := clusterEntry.CIDR
+					ipv := getIPv(cidr)
+					dftFlows = append(dftFlows,
+						fmt.Sprintf("cookie=%s, priority=290, table=0, in_port=%s, %s, %s_dst=%s, "+
+							"actions=output:%s",
+							nodetypes.DefaultOpenFlowCookie, ofPortPhys, ipv, ipv, cidr, output))
+				}
+			}
 		}
 
 		// table 1, we check to see if this dest mac is the shared mac, if so send to host
