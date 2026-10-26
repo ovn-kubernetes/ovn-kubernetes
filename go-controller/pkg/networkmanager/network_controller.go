@@ -411,10 +411,11 @@ func (c *networkController) syncAll() error {
 	return nil
 }
 
+// syncRunningNetworks reconciles all known networks
 func (c *networkController) syncRunningNetworks() error {
 	c.networkReconciler.Reconcile(types.DefaultNetworkName)
-	for _, network := range c.getAllNetworkStates() {
-		c.networkReconciler.Reconcile(network.controller.GetNetworkName())
+	for _, network := range c.getAllNetworks() {
+		c.networkReconciler.Reconcile(network.GetNetworkName())
 	}
 
 	return nil
