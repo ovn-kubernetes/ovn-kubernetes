@@ -26,6 +26,8 @@ import (
 	discovery "k8s.io/api/discovery/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	ktypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/utils/ptr"
@@ -310,7 +312,11 @@ func (m *mockNetworkManagerWithLateNAD) GetActiveNetworkForNamespace(namespace s
 
 // verifyNFTablesRule checks if an nftables rule exists and asserts the expected state
 func verifyNFTablesRule(nft knftables.Interface, serviceIP string, servicePort, nodePort int32, shouldExist bool, message string) {
-	elements, err := nft.ListElements(context.Background(), "map", "nodeports-v4")
+	verifyNFTablesRuleInMap(nft, "nodeports-v4", serviceIP, servicePort, nodePort, shouldExist, message)
+}
+
+func verifyNFTablesRuleInMap(nft knftables.Interface, mapName, serviceIP string, servicePort, nodePort int32, shouldExist bool, message string) {
+	elements, err := nft.ListElements(context.Background(), "map", mapName)
 	Expect(err).NotTo(HaveOccurred())
 
 	servicePortStr := fmt.Sprintf("%d", servicePort)
@@ -328,6 +334,26 @@ func verifyNFTablesRule(nft knftables.Interface, serviceIP string, servicePort, 
 	} else {
 		Expect(exists).To(BeFalse(), message)
 	}
+}
+
+func verifyNoSNATEndpoint(nft knftables.Interface, ip string, port int32, shouldExist bool) {
+	elements, err := nft.ListElements(context.Background(), "set", types.NFTMgmtPortNoSNATServicesV4)
+	Expect(err).NotTo(HaveOccurred())
+
+	exists := false
+	for _, element := range elements {
+		if len(element.Key) == 3 && element.Key[0] == ip && element.Key[1] == "tcp" && element.Key[2] == fmt.Sprintf("%d", port) {
+			exists = true
+			break
+		}
+	}
+	Expect(exists).To(Equal(shouldExist), fmt.Sprintf("no-SNAT endpoint rule for %s:%d should exist=%t", ip, port, shouldExist))
+}
+
+func ensureNoSNATServicesSet(nft knftables.Interface) error {
+	tx := nft.NewTransaction()
+	tx.Add(&knftables.Set{Name: types.NFTMgmtPortNoSNATServicesV4, Type: "ipv4_addr . inet_proto . inet_service"})
+	return nft.Run(context.Background(), tx)
 }
 
 // setupServiceAndEndpointSliceWithRules creates a service and endpoint slice, adds them to npw,
@@ -387,6 +413,167 @@ func setupServiceAndEndpointSliceWithRules(npw *nodePortWatcher, nft knftables.I
 
 	return epSlice
 }
+
+type blockingServiceLookupWatchFactory struct {
+	factory.NodeWatchFactory
+	service            *corev1.Service
+	serviceErr         error
+	endpointSlices     []*discovery.EndpointSlice
+	endpointSlicesErr  error
+	serviceLookupStart chan struct{}
+	releaseServiceRead chan struct{}
+}
+
+type updateBlockingNetworkManager struct {
+	networkmanager.Interface
+	blockNextLookup bool
+	lookupStarted   chan struct{}
+	releaseLookup   chan struct{}
+	lookupCalls     chan struct{}
+}
+
+func (m *updateBlockingNetworkManager) GetActiveNetworkForNamespace(string) (util.NetInfo, error) {
+	select {
+	case m.lookupCalls <- struct{}{}:
+	default:
+	}
+	if m.blockNextLookup {
+		m.blockNextLookup = false
+		close(m.lookupStarted)
+		<-m.releaseLookup
+	}
+	return &util.DefaultNetInfo{}, nil
+}
+
+type serviceEndpointSnapshotWatchFactory struct {
+	factory.NodeWatchFactory
+	service        *corev1.Service
+	endpointSlices []*discovery.EndpointSlice
+}
+
+func (wf *serviceEndpointSnapshotWatchFactory) GetService(string, string) (*corev1.Service, error) {
+	return wf.service, nil
+}
+
+func (wf *serviceEndpointSnapshotWatchFactory) GetServiceEndpointSlices(string, string, string) ([]*discovery.EndpointSlice, error) {
+	return wf.endpointSlices, nil
+}
+
+func (wf *blockingServiceLookupWatchFactory) GetService(_, _ string) (*corev1.Service, error) {
+	close(wf.serviceLookupStart)
+	select {
+	case <-wf.releaseServiceRead:
+		return wf.service, wf.serviceErr
+	case <-time.After(5 * time.Second):
+		return nil, fmt.Errorf("timed out waiting to release the blocked Service lookup")
+	}
+}
+
+func (wf *blockingServiceLookupWatchFactory) GetServiceEndpointSlices(_, _, _ string) ([]*discovery.EndpointSlice, error) {
+	return wf.endpointSlices, wf.endpointSlicesErr
+}
+
+func waitForTestWorker(done <-chan struct{}, description string) {
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		GinkgoT().Errorf("timed out waiting for %s worker during cleanup", description)
+	}
+}
+
+func runEndpointHandlerAgainstServiceDeletion(npw *nodePortWatcher, watcher factory.NodeWatchFactory,
+	service *corev1.Service, endpointSlices []*discovery.EndpointSlice, handlerName string, handler func() error) (error, error) {
+	GinkgoHelper()
+	blockingFactory := &blockingServiceLookupWatchFactory{
+		NodeWatchFactory:   watcher,
+		service:            service,
+		endpointSlices:     endpointSlices,
+		serviceLookupStart: make(chan struct{}),
+		releaseServiceRead: make(chan struct{}),
+	}
+	npw.watchFactory = blockingFactory
+	var handlerStarted, deleteStarted bool
+	handlerFinished := make(chan struct{})
+	deleteFinished := make(chan struct{})
+	releaseServiceRead := func() {
+		select {
+		case <-blockingFactory.releaseServiceRead:
+		default:
+			close(blockingFactory.releaseServiceRead)
+		}
+	}
+	defer func() {
+		releaseServiceRead()
+		if handlerStarted {
+			waitForTestWorker(handlerFinished, handlerName)
+		}
+		if deleteStarted {
+			waitForTestWorker(deleteFinished, "DeleteService")
+		}
+	}()
+
+	handlerDone := make(chan error, 1)
+	handlerStarted = true
+	go func() {
+		defer close(handlerFinished)
+		handlerDone <- handler()
+	}()
+	Eventually(blockingFactory.serviceLookupStart).WithTimeout(5*time.Second).WithPolling(10*time.Millisecond).
+		Should(BeClosed(), fmt.Sprintf("%s should reach the blocked Service lookup", handlerName))
+
+	cacheLockHeld := !npw.serviceInfoLock.TryLock()
+	if !cacheLockHeld {
+		npw.serviceInfoLock.Unlock()
+	}
+	Expect(cacheLockHeld).To(BeTrue(), fmt.Sprintf("%s should hold the cache lock during Service lookup", handlerName))
+
+	deleteService := service.DeepCopy()
+	deleteService.Spec.Ports = nil // Avoid conntrack operations; rule teardown uses the cached Service.
+	deleteDone := make(chan error, 1)
+	deleteStarted = true
+	go func() {
+		defer close(deleteFinished)
+		deleteDone <- npw.DeleteService(deleteService)
+	}()
+	releaseServiceRead()
+
+	var handlerErr, deleteErr error
+	Eventually(handlerDone).WithTimeout(5 * time.Second).WithPolling(10 * time.Millisecond).Should(Receive(&handlerErr))
+	Eventually(deleteDone).WithTimeout(5 * time.Second).WithPolling(10 * time.Millisecond).Should(Receive(&deleteErr))
+	return handlerErr, deleteErr
+}
+
+var _ = Describe("mergePortToLBEndpoints", func() {
+	It("unions endpoint IPs by service port and target port", func() {
+		oldEndpoints := util.PortToLBEndpoints{
+			"TCP/http": {
+				{Port: 8080, V4IPs: []string{"10.0.0.1"}, V6IPs: []string{"2001:db8::1"}},
+				{Port: 9090, V4IPs: []string{"10.0.0.2"}},
+			},
+		}
+		newEndpoints := util.PortToLBEndpoints{
+			"TCP/http": {
+				{Port: 8080, V4IPs: []string{"10.0.0.1", "10.0.0.3"}, V6IPs: []string{"2001:db8::2"}},
+				{Port: 9090, V6IPs: []string{"2001:db8::3"}},
+			},
+			"UDP/dns": {
+				{Port: 5353, V4IPs: []string{"10.0.0.4"}},
+			},
+		}
+
+		merged := mergePortToLBEndpoints(oldEndpoints, newEndpoints)
+
+		Expect(merged).To(Equal(util.PortToLBEndpoints{
+			"TCP/http": {
+				{Port: 8080, V4IPs: []string{"10.0.0.1", "10.0.0.3"}, V6IPs: []string{"2001:db8::1", "2001:db8::2"}},
+				{Port: 9090, V4IPs: []string{"10.0.0.2"}, V6IPs: []string{"2001:db8::3"}},
+			},
+			"UDP/dns": {
+				{Port: 5353, V4IPs: []string{"10.0.0.4"}},
+			},
+		}), "merge should preserve both old and current endpoints, without duplicates")
+	})
+})
 
 var _ = Describe("DeleteEndpointSlice", func() {
 	var (
@@ -605,7 +792,7 @@ var _ = Describe("DeleteEndpointSlice", func() {
 			nil,
 		} {
 			hasHost := endpoints != nil
-			Expect(npw.updateEndpointRules(svc, &util.DefaultNetInfo{}, old, endpoints, hasHost)).To(Succeed())
+			Expect(npw.updateEndpointRules(svc, &util.DefaultNetInfo{}, old, endpoints, hasHost, false)).To(Succeed())
 			if hasHost {
 				Expect(npw.ofm.defaultBridge.flows()).NotTo(ConsistOf(originalFlows))
 			}
@@ -760,10 +947,10 @@ var _ = Describe("DeleteEndpointSlice", func() {
 		}}
 		// IPv4 flows are installed, IPv6 fails, and nftables still commits.
 		npw.gatewayIPv6 = ""
-		Expect(npw.updateEndpointRules(svc, &util.DefaultNetInfo{}, old, endpoints, true)).To(MatchError(ContainSubstring("gateway IP not available for protocol tcp6")))
+		Expect(npw.updateEndpointRules(svc, &util.DefaultNetInfo{}, old, endpoints, true, false)).To(MatchError(ContainSubstring("gateway IP not available for protocol tcp6")))
 		Expect(npw.ofm.defaultBridge.groupCache).NotTo(BeEmpty())
 		Expect(fakeNFT.Dump()).NotTo(Equal(originalNFT))
-		Expect(npw.updateEndpointRules(svc, &util.DefaultNetInfo{}, old, nil, false)).To(Succeed())
+		Expect(npw.updateEndpointRules(svc, &util.DefaultNetInfo{}, old, nil, false, false)).To(Succeed())
 		Expect(npw.ofm.defaultBridge.flows()).To(ConsistOf(originalFlows))
 		Expect(npw.ofm.defaultBridge.groupCache).To(BeEmpty())
 		Expect(fakeNFT.Dump()).To(Equal(originalNFT), "the committed host configuration must be remembered for cleanup")
@@ -911,10 +1098,279 @@ var _ = Describe("DeleteEndpointSlice", func() {
 		})
 	})
 
+	Context("when endpoint rule installation fails", func() {
+		DescribeTable("retries adding endpoint rules after an nftables add failure",
+			func(reconcileWithAddService bool) {
+				const (
+					serviceIP      = "10.96.0.30"
+					loadBalancerIP = "192.0.2.30"
+					newEndpointIP  = "10.244.0.31"
+					servicePort    = int32(80)
+				)
+				targetPort := int32(8080)
+				service := newServiceWithoutNodePortAllocation(testService, testNamespace, serviceIP,
+					[]corev1.ServicePort{{
+						Name:       "http",
+						Protocol:   corev1.ProtocolTCP,
+						Port:       servicePort,
+						TargetPort: intstr.FromInt(int(targetPort)),
+					}}, corev1.ServiceTypeLoadBalancer, nil,
+					corev1.ServiceStatus{LoadBalancer: corev1.LoadBalancerStatus{Ingress: []corev1.LoadBalancerIngress{{IP: loadBalancerIP}}}},
+					true, false)
+				// Keep this test focused on nftables rule state without requiring
+				// ovs-ofctl to be available.
+				config.Gateway.AllowNoUplink = true
+				npw.ofportPhys = ""
+				portName := "http"
+				protocol := corev1.ProtocolTCP
+				endpointNodeName := nodeName
+				endpointSlice := func(ip string) *discovery.EndpointSlice {
+					return newEndpointSlice(testService, testNamespace,
+						[]discovery.Endpoint{{Addresses: []string{ip}, NodeName: &endpointNodeName}},
+						[]discovery.EndpointPort{{Name: &portName, Protocol: &protocol, Port: &targetPort}})
+				}
+				newSlice := endpointSlice(newEndpointIP)
+				watchFactory := &serviceEndpointSnapshotWatchFactory{
+					NodeWatchFactory: watcher,
+					service:          service,
+				}
+				npw.watchFactory = watchFactory
+				Expect(npw.AddService(service)).To(Succeed())
+
+				watchFactory.endpointSlices = []*discovery.EndpointSlice{newSlice}
+
+				reconcile := func() error {
+					if reconcileWithAddService {
+						return npw.AddService(service)
+					}
+					return npw.AddEndpointSlice(newSlice)
+				}
+				Expect(reconcile()).To(HaveOccurred(), "adding the endpoint rule should fail while its nftables set is absent")
+
+				Expect(ensureNoSNATServicesSet(nft)).To(Succeed())
+				Expect(reconcile()).To(Succeed(), "the next reconciliation should retry installing the current endpoint rule")
+				verifyNoSNATEndpoint(nft, newEndpointIP, targetPort, true)
+			},
+			Entry("AddService", true),
+			Entry("AddEndpointSlice", false),
+		)
+	})
+
+	Context("when a Service is deleted during endpoint slice add", func() {
+		It("does not cache endpoint rules after service deletion", func() {
+			setupServiceAndEndpointSliceWithRules(npw, nft, testService, testNamespace,
+				"10.96.0.20", "10.244.0.20", 80, 30091, nil)
+			name := ktypes.NamespacedName{Namespace: testNamespace, Name: testService}
+			service := newService(testService, testNamespace, "10.96.0.20",
+				[]corev1.ServicePort{{
+					Name:       "http",
+					Protocol:   corev1.ProtocolTCP,
+					Port:       80,
+					TargetPort: intstr.FromInt(8080),
+					NodePort:   30091,
+				}}, corev1.ServiceTypeNodePort, nil, corev1.ServiceStatus{}, false, false)
+
+			portName := "http"
+			port := int32(8080)
+			protocol := corev1.ProtocolTCP
+			nodeName := nodeName
+			updatedEndpointSlice := newEndpointSlice(testService, testNamespace,
+				[]discovery.Endpoint{{Addresses: []string{"10.244.0.21"}, NodeName: &nodeName}},
+				[]discovery.EndpointPort{{Name: &portName, Protocol: &protocol, Port: &port}})
+
+			addErr, deleteErr := runEndpointHandlerAgainstServiceDeletion(npw, watcher, service,
+				[]*discovery.EndpointSlice{updatedEndpointSlice}, "AddEndpointSlice", func() error {
+					return npw.AddEndpointSlice(updatedEndpointSlice)
+				})
+			Expect(addErr).NotTo(HaveOccurred(), "AddEndpointSlice should successfully finish before Service deletion")
+			Expect(deleteErr).NotTo(HaveOccurred(), "DeleteService should successfully remove the Service rules")
+
+			_, exists := npw.getServiceInfo(name)
+			Expect(exists).To(BeFalse(), "deleted Service should not remain in the cache")
+			verifyNFTablesRule(nft, "10.96.0.20", 80, 30091, false, "nftables rule should be deleted with the Service")
+		})
+
+		It("serializes endpoint slice deletion with Service deletion", func() {
+			epSlice := setupServiceAndEndpointSliceWithRules(npw, nft, testService, testNamespace,
+				"10.96.0.23", "10.244.0.24", 80, 30094, nil)
+			service := newService(testService, testNamespace, "10.96.0.23",
+				[]corev1.ServicePort{{
+					Name:       "http",
+					Protocol:   corev1.ProtocolTCP,
+					Port:       80,
+					TargetPort: intstr.FromInt(8080),
+					NodePort:   30094,
+				}}, corev1.ServiceTypeNodePort, nil, corev1.ServiceStatus{}, false, false)
+			endpointDeleteErr, serviceDeleteErr := runEndpointHandlerAgainstServiceDeletion(npw, watcher, service,
+				nil, "DeleteEndpointSlice", func() error {
+					return npw.DeleteEndpointSlice(epSlice)
+				})
+			Expect(endpointDeleteErr).NotTo(HaveOccurred(), "DeleteEndpointSlice should finish before Service deletion")
+			Expect(serviceDeleteErr).NotTo(HaveOccurred(), "DeleteService should successfully remove the Service rules")
+
+			name := ktypes.NamespacedName{Namespace: testNamespace, Name: testService}
+			_, exists := npw.getServiceInfo(name)
+			Expect(exists).To(BeFalse(), "deleted Service should not remain in the cache")
+			verifyNFTablesRule(nft, "10.96.0.23", 80, 30094, false, "Service deletion should remove rules after endpoint slice deletion")
+		})
+
+		It("holds the cache lock until service rules are deleted", func() {
+			setupServiceAndEndpointSliceWithRules(npw, nft, testService, testNamespace,
+				"10.96.0.21", "10.244.0.22", 80, 30092, nil)
+			service := newService(testService, testNamespace, "10.96.0.21", nil,
+				corev1.ServiceTypeNodePort, nil, corev1.ServiceStatus{}, false, false)
+
+			npw.gatewayIPLock.Lock()
+			gatewayIPLockReleased := false
+			deleteWorkerStarted := false
+			deleteWorkerFinished := make(chan struct{})
+			defer func() {
+				if !gatewayIPLockReleased {
+					npw.gatewayIPLock.Unlock()
+				}
+				if deleteWorkerStarted {
+					waitForTestWorker(deleteWorkerFinished, "DeleteService")
+				}
+			}()
+
+			deleteDone := make(chan error, 1)
+			deleteWorkerStarted = true
+			go func() {
+				defer close(deleteWorkerFinished)
+				deleteDone <- npw.DeleteService(service)
+			}()
+
+			cacheLockAvailable := func() bool {
+				if !npw.serviceInfoLock.TryLock() {
+					return false
+				}
+				npw.serviceInfoLock.Unlock()
+				return true
+			}
+			Eventually(cacheLockAvailable).WithTimeout(5*time.Second).WithPolling(10*time.Millisecond).Should(BeFalse(), "DeleteService should acquire the cache lock")
+			Consistently(cacheLockAvailable).WithTimeout(100*time.Millisecond).WithPolling(10*time.Millisecond).Should(BeFalse(), "DeleteService should retain the cache lock while deleting rules")
+
+			npw.gatewayIPLock.Unlock()
+			gatewayIPLockReleased = true
+			var deleteErr error
+			Eventually(deleteDone).WithTimeout(5*time.Second).WithPolling(10*time.Millisecond).Should(Receive(&deleteErr), "DeleteService should finish after rule teardown is unblocked")
+			Expect(deleteErr).NotTo(HaveOccurred())
+			_, exists := npw.getServiceInfo(ktypes.NamespacedName{Namespace: testNamespace, Name: testService})
+			Expect(exists).To(BeFalse(), "service rules should be removed from the cache after deletion")
+		})
+
+		DescribeTable("holds the cache lock until conntrack cleanup completes",
+			func(clusterIPs []string, ipFamilies []corev1.IPFamily, ipv4Enabled, ipv6Enabled bool) {
+				config.IPv4Mode = ipv4Enabled
+				config.IPv6Mode = ipv6Enabled
+				nft = nodenft.SetFakeNFTablesHelper()
+				Expect(initGatewayNFTables()).To(Succeed())
+
+				service := newService(testService, testNamespace, clusterIPs[0],
+					[]corev1.ServicePort{{
+						Name:       "http",
+						Protocol:   corev1.ProtocolTCP,
+						Port:       80,
+						TargetPort: intstr.FromInt(8080),
+						NodePort:   30093,
+					}}, corev1.ServiceTypeNodePort, nil, corev1.ServiceStatus{}, false, false)
+				service.Spec.ClusterIPs = clusterIPs
+				service.Spec.IPFamilies = ipFamilies
+				Expect(npw.AddService(service)).To(Succeed())
+
+				mapNames := make([]string, 0, len(clusterIPs))
+				originalNetlinkOps := util.GetNetLinkOps()
+				netlinkMock := new(utilMocks.NetLinkOps)
+				util.SetNetLinkOpMockInst(netlinkMock)
+				DeferCleanup(func() { util.SetNetLinkOpMockInst(originalNetlinkOps) })
+
+				conntrackStarted := make(chan struct{}, len(clusterIPs))
+				releaseConntrack := make(chan struct{})
+				deleteWorkerStarted := false
+				deleteWorkerFinished := make(chan struct{})
+				defer func() {
+					select {
+					case <-releaseConntrack:
+					default:
+						close(releaseConntrack)
+					}
+					if deleteWorkerStarted {
+						waitForTestWorker(deleteWorkerFinished, "DeleteService")
+					}
+				}()
+
+				for _, serviceIP := range clusterIPs {
+					family := netlink.FAMILY_V4
+					mapName := nftablesNodePortsV4
+					if net.ParseIP(serviceIP).To4() == nil {
+						family = netlink.FAMILY_V6
+						mapName = nftablesNodePortsV6
+					}
+					mapNames = append(mapNames, mapName)
+					verifyNFTablesRuleInMap(nft, mapName, serviceIP, 80, 30093, true,
+						"Service rule should exist before deletion")
+					netlinkMock.On("ConntrackDeleteFilters",
+						netlink.ConntrackTableType(netlink.ConntrackTable),
+						netlink.InetFamily(family),
+						makeConntrackFilter(serviceIP, 80, corev1.ProtocolTCP, netlink.ConntrackOrigDstIP)).
+						Return(uint(0), nil).
+						Run(func(mock.Arguments) {
+							conntrackStarted <- struct{}{}
+							<-releaseConntrack
+						}).Once()
+				}
+
+				deleteDone := make(chan error, 1)
+				deleteWorkerStarted = true
+				go func() {
+					defer close(deleteWorkerFinished)
+					deleteDone <- npw.DeleteService(service)
+				}()
+				Eventually(conntrackStarted).WithTimeout(5*time.Second).WithPolling(10*time.Millisecond).Should(Receive(), "DeleteService should reach conntrack cleanup")
+
+				cacheLockAvailable := npw.serviceInfoLock.TryLock()
+				if cacheLockAvailable {
+					npw.serviceInfoLock.Unlock()
+				}
+				Expect(cacheLockAvailable).To(BeFalse(), "DeleteService should retain the cache lock during conntrack cleanup")
+				for i, serviceIP := range clusterIPs {
+					verifyNFTablesRuleInMap(nft, mapNames[i], serviceIP, 80, 30093, false,
+						"Service rule should be removed before conntrack cleanup finishes")
+				}
+
+				close(releaseConntrack)
+				var deleteErr error
+				Eventually(deleteDone).WithTimeout(5*time.Second).WithPolling(10*time.Millisecond).Should(Receive(&deleteErr), "DeleteService should finish after conntrack cleanup is unblocked")
+				Expect(deleteErr).NotTo(HaveOccurred())
+				Expect(npw.serviceInfoLock.TryLock()).To(BeTrue(), "DeleteService should release the cache lock after conntrack cleanup")
+				npw.serviceInfoLock.Unlock()
+				netlinkMock.AssertExpectations(GinkgoT())
+			},
+			Entry("IPv6-only service", []string{"fd00:10:96::22"}, []corev1.IPFamily{corev1.IPv6Protocol}, false, true),
+			Entry("dual-stack service", []string{"10.96.0.22", "fd00:10:96::22"}, []corev1.IPFamily{corev1.IPv4Protocol, corev1.IPv6Protocol}, true, true),
+		)
+	})
+
 	Context("when network lookup returns other errors", func() {
 		It("should execute delServiceRules but return error from network lookup", func() {
 			// Setup service and endpoint slice with nftables rules
 			epSlice := setupServiceAndEndpointSliceWithRules(npw, nft, testService, testNamespace, "10.96.0.3", "10.244.0.3", 80, 30082, nil)
+			service := newService(testService, testNamespace, "10.96.0.3",
+				[]corev1.ServicePort{{
+					Name:       "http",
+					Protocol:   corev1.ProtocolTCP,
+					Port:       80,
+					TargetPort: intstr.FromInt(8080),
+					NodePort:   30082,
+				}}, corev1.ServiceTypeNodePort, nil, corev1.ServiceStatus{}, false, false)
+			blockingWatchFactory := &blockingServiceLookupWatchFactory{
+				NodeWatchFactory:   watcher,
+				service:            service,
+				serviceLookupStart: make(chan struct{}),
+				releaseServiceRead: make(chan struct{}),
+			}
+			close(blockingWatchFactory.releaseServiceRead)
+			npw.watchFactory = blockingWatchFactory
 
 			// Replace network manager with one that returns a generic error
 			npw.networkManager = &mockNetworkManagerWithError{}
@@ -946,6 +1402,31 @@ var _ = Describe("DeleteEndpointSlice", func() {
 		})
 	})
 
+	Context("when the Service is missing during endpoint slice deletion", func() {
+		It("cleans up existing rules without restoring them", func() {
+			epSlice := setupServiceAndEndpointSliceWithRules(npw, nft, testService, testNamespace,
+				"10.96.0.30", "10.244.0.30", 80, 30100, nil)
+			blockingWatchFactory := &blockingServiceLookupWatchFactory{
+				NodeWatchFactory: watcher,
+				serviceErr: apierrors.NewNotFound(
+					schema.GroupResource{Resource: "services"}, testService),
+				endpointSlicesErr: apierrors.NewNotFound(
+					schema.GroupResource{Group: "discovery.k8s.io", Resource: "endpointslices"}, epSlice.Name),
+				serviceLookupStart: make(chan struct{}),
+				releaseServiceRead: make(chan struct{}),
+			}
+			close(blockingWatchFactory.releaseServiceRead)
+			npw.watchFactory = blockingWatchFactory
+
+			err := npw.DeleteEndpointSlice(epSlice)
+			Expect(err).NotTo(HaveOccurred(), "missing Service should still allow endpoint rule cleanup")
+			verifyNFTablesRule(nft, "10.96.0.30", 80, 30100, false,
+				"endpoint deletion should remove rules and not recreate them for a missing Service")
+			_, exists := npw.getServiceInfo(ktypes.NamespacedName{Namespace: testNamespace, Name: testService})
+			Expect(exists).To(BeFalse(), "successfully cleaned rules should remove the missing Service cache entry")
+		})
+	})
+
 	Context("when namespace is deleted before processing endpoint slice", func() {
 		It("should clean up old rules even when namespace is gone", func() {
 			// Setup service and endpoint slice with nftables rules
@@ -960,6 +1441,134 @@ var _ = Describe("DeleteEndpointSlice", func() {
 			// nftables rules should be deleted even though namespace lookup failed
 			verifyNFTablesRule(nft, "10.96.0.10", 80, 30090, false, "nftables rule should be deleted even when namespace lookup fails")
 		})
+	})
+
+	It("serializes service updates with endpoint-slice rule reconciliation", func() {
+		const (
+			serviceIP = "10.0.0.41"
+			lbIP      = "192.0.2.41"
+			oldEPIP   = "10.244.0.41"
+			newEPIP   = "10.244.0.42"
+		)
+
+		portName := "dns"
+		protocol := corev1.ProtocolUDP
+		endpointPort := int32(8080)
+		endpoint := func(ip string) *discovery.EndpointSlice {
+			nodeName := "test-node"
+			return newEndpointSlice(testService, testNamespace,
+				[]discovery.Endpoint{{Addresses: []string{ip}, NodeName: &nodeName}},
+				[]discovery.EndpointPort{{Name: &portName, Protocol: &protocol, Port: &endpointPort}})
+		}
+		oldSlice := endpoint(oldEPIP)
+		newSlice := endpoint(newEPIP)
+		oldService := newServiceWithoutNodePortAllocation(testService, testNamespace, serviceIP,
+			[]corev1.ServicePort{{Name: portName, Protocol: protocol, Port: 80, TargetPort: intstr.FromInt(8080)}},
+			corev1.ServiceTypeLoadBalancer, nil,
+			corev1.ServiceStatus{LoadBalancer: corev1.LoadBalancerStatus{Ingress: []corev1.LoadBalancerIngress{{IP: lbIP}}}},
+			true, false)
+		newService := oldService.DeepCopy()
+		newService.Spec.Ports[0].Port = 81
+		Expect(ensureNoSNATServicesSet(nft)).To(Succeed())
+
+		watchFactory := &serviceEndpointSnapshotWatchFactory{
+			NodeWatchFactory: watcher,
+			service:          newService,
+			endpointSlices:   []*discovery.EndpointSlice{oldSlice},
+		}
+		npw.watchFactory = watchFactory
+		blockingNetworkManager := &updateBlockingNetworkManager{
+			lookupStarted: make(chan struct{}),
+			releaseLookup: make(chan struct{}),
+			lookupCalls:   make(chan struct{}, 3),
+		}
+		npw.networkManager = blockingNetworkManager
+		originalExecRunner := util.RunCmdExecRunner
+		fakeExec := ovntest.NewFakeExec()
+		Expect(util.SetExec(fakeExec)).To(Succeed())
+		fakeExec.AddRepeatedFakeCmd(&ovntest.ExpectedCmd{Cmd: "ovs-ofctl show breth0"}, 3)
+		DeferCleanup(func() {
+			util.RunCmdExecRunner = originalExecRunner
+			util.ResetRunner()
+		})
+
+		originalNetlinkOps := util.GetNetLinkOps()
+		netlinkMock := new(utilMocks.NetLinkOps)
+		util.SetNetLinkOpMockInst(netlinkMock)
+		DeferCleanup(func() { util.SetNetLinkOpMockInst(originalNetlinkOps) })
+		netlinkMock.On("ConntrackDeleteFilters", mock.Anything, mock.Anything, mock.Anything).
+			Return(uint(0), nil)
+
+		Expect(npw.AddService(oldService)).To(Succeed())
+		select {
+		case <-blockingNetworkManager.lookupCalls:
+		default:
+		}
+		watchFactory.endpointSlices = []*discovery.EndpointSlice{newSlice}
+		blockingNetworkManager.blockNextLookup = true
+
+		updateDone := make(chan error, 1)
+		updateFinished := make(chan struct{})
+		updateStarted := false
+		addFinished := make(chan struct{})
+		addStarted := false
+		DeferCleanup(func() {
+			select {
+			case <-blockingNetworkManager.releaseLookup:
+			default:
+				close(blockingNetworkManager.releaseLookup)
+			}
+			if updateStarted {
+				waitForTestWorker(updateFinished, "UpdateService")
+			}
+			if addStarted {
+				waitForTestWorker(addFinished, "AddEndpointSlice")
+			}
+		})
+		updateStarted = true
+		go func() {
+			defer close(updateFinished)
+			updateDone <- npw.UpdateService(oldService, newService)
+		}()
+		Eventually(blockingNetworkManager.lookupStarted).WithTimeout(5*time.Second).WithPolling(10*time.Millisecond).
+			Should(BeClosed(), "UpdateService should pause after deleting old rules and before adding updated rules")
+		Eventually(blockingNetworkManager.lookupCalls).WithTimeout(5*time.Second).WithPolling(10*time.Millisecond).
+			Should(Receive(), "UpdateService should reach network lookup while holding the lifecycle lock")
+
+		addDone := make(chan error, 1)
+		addStarted = true
+		go func() {
+			defer close(addFinished)
+			addDone <- npw.AddEndpointSlice(newSlice)
+		}()
+		Eventually(blockingNetworkManager.lookupCalls).WithTimeout(5*time.Second).WithPolling(10*time.Millisecond).
+			Should(Receive(), "AddEndpointSlice should reach network lookup while UpdateService holds the service lifecycle lock")
+		Expect(npw.serviceInfoLock.TryLock()).To(BeFalse(), "UpdateService must keep the lifecycle lock through rule installation")
+		close(blockingNetworkManager.releaseLookup)
+		var updateErr error
+		Eventually(updateDone).WithTimeout(5 * time.Second).WithPolling(10 * time.Millisecond).Should(Receive(&updateErr))
+		Expect(updateErr).NotTo(HaveOccurred())
+		var addErr error
+		Eventually(addDone).WithTimeout(5 * time.Second).WithPolling(10 * time.Millisecond).Should(Receive(&addErr))
+		Expect(addErr).NotTo(HaveOccurred())
+
+		noSNATSetElements, err := nft.ListElements(context.Background(), "set", types.NFTMgmtPortNoSNATServicesV4)
+		Expect(err).NotTo(HaveOccurred())
+		containsEndpoint := func(ip string) bool {
+			for _, element := range noSNATSetElements {
+				if len(element.Key) == 3 && element.Key[0] == ip && element.Key[1] == "udp" && element.Key[2] == "8080" {
+					return true
+				}
+			}
+			return false
+		}
+		Expect(containsEndpoint(newEPIP)).To(BeTrue(), "the replacement endpoint rule should be installed")
+		Expect(containsEndpoint(oldEPIP)).To(BeFalse(), "the stale endpoint rule should be removed by serialized reconciliation")
+
+		Expect(npw.DeleteService(newService)).To(Succeed())
+		noSNATSetElements, err = nft.ListElements(context.Background(), "set", types.NFTMgmtPortNoSNATServicesV4)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(containsEndpoint(newEPIP)).To(BeFalse(), "DeleteService should remove the endpoint present in its cache")
 	})
 })
 
@@ -1228,6 +1837,31 @@ var _ = Describe("SyncServices", func() {
 			verifyNFTablesRule(nft, "10.96.0.40", 80, 30093, true,
 				"nftables rule should be created when UDN is active on this node")
 		})
+	})
+
+	It("recreates missing nftables rules when an existing service is retried", func() {
+		// Avoid openflow dependency in this test.
+		config.Gateway.AllowNoUplink = true
+		npw.ofportPhys = ""
+
+		service := newService(testService, testNamespace, "10.96.0.50",
+			[]corev1.ServicePort{{
+				Name:       "http",
+				Protocol:   corev1.ProtocolTCP,
+				Port:       80,
+				TargetPort: intstr.FromInt(8080),
+				NodePort:   30095,
+			}},
+			corev1.ServiceTypeNodePort, nil, corev1.ServiceStatus{}, false, false)
+
+		Expect(npw.AddService(service)).To(Succeed())
+		Expect(nodenft.DeleteObjects(getGatewayNFTRules(service, nil, false))).To(Succeed())
+		verifyNFTablesRule(nft, "10.96.0.50", 80, 30095, false,
+			"test setup should remove the Service nftables rules")
+
+		Expect(npw.AddService(service)).To(Succeed())
+		verifyNFTablesRule(nft, "10.96.0.50", 80, 30095, true,
+			"retrying the Service add should recreate missing nftables rules")
 	})
 })
 
