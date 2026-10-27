@@ -1,0 +1,20 @@
+apiVersion: k8s.ovn.org/v1
+kind: RouteAdvertisements
+metadata:
+  name: advertise-l3-udn
+spec:
+  #targetVRF: auto                          # auto-map each network to its VRF
+  advertisements:
+    - PodNetwork
+  nodeSelector:
+    matchLabels:
+      role: gateway
+  frrConfigurationSelector:
+    matchLabels:
+      bgp: "true"
+  networkSelectors:
+    - networkSelectionType: ClusterUserDefinedNetworks
+      clusterUserDefinedNetworkSelector:
+        networkSelector:
+          matchLabels:
+            advertise: "true"              # selects the tenant-red CUDN
