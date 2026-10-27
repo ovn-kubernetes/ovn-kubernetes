@@ -377,7 +377,7 @@ jobs:
         GO111MODULE=off goveralls -coverprofile=gover.coverprofile -service=github
 
   ovn-upgrade-e2e:
-    name: Upgrade OVN from Base to PR branch based image (${{ matrix.gateway-mode }})
+    name: Upgrade OVN from Base to PR branch based image (${{ matrix.gateway-mode }}, ${{ matrix.scenario }})
     if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 240
@@ -392,25 +392,34 @@ jobs:
         # the control plane paused; stage 2 rolls the last node and resumes the
         # control plane. e2e runs after each stage.
         gateway-mode: [local, shared]
+        scenario: [conformance]
+        include:
+          - gateway-mode: local
+            scenario: kubevirt
     env:
-      JOB_NAME: "Upgrade-Tests-${{ matrix.gateway-mode }}-dualstack"
+      JOB_NAME: "Upgrade-Tests-${{ matrix.gateway-mode }}-${{ matrix.scenario }}"
+      KIND_INSTALL_KUBEVIRT: "${{ matrix.scenario == 'kubevirt' }}"
+      KIND_NUM_WORKER: "${{ matrix.scenario == 'kubevirt' && '3' || '2' }}"
+      OVN_KUBEVIRT_UPGRADE: "${{ matrix.scenario == 'kubevirt' }}"
+      PARALLEL: "false"
       PLATFORM_IPV4_SUPPORT: "true"
-      PLATFORM_IPV6_SUPPORT: "true"
+      PLATFORM_IPV6_SUPPORT: "${{ matrix.scenario != 'kubevirt' }}"
       OVN_HYBRID_OVERLAY_ENABLE: "false"
       OVN_GATEWAY_MODE: "${{ matrix.gateway-mode }}"
       # Network Segmentation includes UDN multicast tests that are not gated
       # on the feature flag.
-      OVN_MULTICAST_ENABLE:  "true"
+      OVN_MULTICAST_ENABLE: "${{ matrix.scenario != 'kubevirt' }}"
       # UDN features carry the most cross-version state (network IDs, tunnel
       # keys, masquerade IPs, cluster-manager written pod annotations), so the
       # upgrade cluster runs with them enabled and the Network Segmentation
       # suite is part of the post-stage checks. Match the network-segmentation
       # e2e target flags so the same skip lists apply.
+      # KubeVirt also needs NAD access for default-network VMs.
       ENABLE_MULTI_NET: "true"
-      ENABLE_NETWORK_SEGMENTATION: "true"
-      ENABLE_NETWORK_CONNECT: "true"
-      ENABLE_UPLINK: "true"
-      KIND_INSTALL_METALLB: "true"
+      ENABLE_NETWORK_SEGMENTATION: "${{ matrix.scenario != 'kubevirt' }}"
+      ENABLE_NETWORK_CONNECT: "${{ matrix.scenario != 'kubevirt' }}"
+      ENABLE_UPLINK: "${{ matrix.scenario != 'kubevirt' }}"
+      KIND_INSTALL_METALLB: "${{ matrix.scenario != 'kubevirt' }}"
       # TODO(koolzz): deprecate once infra is switched completely to kind-helm.sh
       USE_HELM: "true"
     steps:
@@ -528,17 +537,29 @@ jobs:
           rm -rf kubernetes kubernetes-test-linux-amd64.tar.gz
         fi
 
+    # The spec keeps its migrated VM and traffic running across both stages.
+    - name: Upgrade with an already-migrated default-network VM
+      if: matrix.scenario == 'kubevirt'
+      env:
+        # Retrying the spec would no longer start on the base image.
+        FLAKE_ATTEMPTS: "1"
+      run: |
+        export OVN_IMAGE="ovn-daemonset-fedora:pr"
+        make -C test control-plane WHAT="Kubevirt Virtual Machines.*with default pod network.*before upgrade"
+
     # Stage 1 rolls every ovnkube-node but one to the PR image while the
     # cluster-manager stays on the base image, so e2e covers both skews the
     # supported order produces: new nodes with an old control plane, and new
     # nodes with an old node. Stage 2 rolls the last node, resumes the control
     # plane, and e2e runs again on the fully upgraded cluster.
     - name: ovn upgrade stage 1 (nodes-first)
+      if: matrix.scenario != 'kubevirt'
       run: |
         export OVN_IMAGE="ovn-daemonset-fedora:pr"
         UPGRADE_STAGE=nodes-first make -C test staged-upgrade-ovn
 
     - name: Run E2E shard-conformance after nodes-first
+      if: matrix.scenario != 'kubevirt'
       run: |
         JOB_NAME="${JOB_NAME}-nodes-first" make -C test shard-conformance
 
@@ -552,6 +573,7 @@ jobs:
     # L3 entry probes 20x20 pod pairs with 2s connect timeouts and takes 4 to
     # 8 minutes for the same isolation check.
     - name: Run E2E Network Segmentation after nodes-first
+      if: matrix.scenario != 'kubevirt'
       run: |
         JOB_NAME="${JOB_NAME}-nodes-first-udn" make -C test control-plane \
           WHAT="Network Segmentation can perform east/west traffic between nodes|created using ClusterUserDefinedNetwork is isolated from the default network|isolates overlapping CIDRs with L2 primary UDN|Network Segmentation: services|Network Segmentation: Node Annotations|UserDefinedNetwork CRD Controller|ClusterUserDefinedNetwork CRD Controller"
@@ -561,20 +583,24 @@ jobs:
     # and NodePort service paths, and the control plane disruption tests.
     # Narrowed to named tests to keep each stage around 40 minutes.
     - name: Run E2E control-plane skew suites after nodes-first
+      if: matrix.scenario != 'kubevirt'
       run: |
         JOB_NAME="${JOB_NAME}-nodes-first-cp" make -C test control-plane \
           WHAT="Should validate the egress IP functionality against remote hosts|Should re-assign egress IPs when node readiness / reachability goes down/up|Should validate the egress firewall policy functionality for allowed IP|Should validate the egress firewall policy functionality for allowed CIDR and port|should provide Internet connection continuously when|Validating ingress traffic|queries to the nodePort service shall work|Creates a host-network service|session-affinity|Maintains service connectivity during rolling update|e2e network policy hairpinning validation|Network Policy: ICMP bypass"
 
     - name: ovn upgrade stage 2 (control-plane-last)
+      if: matrix.scenario != 'kubevirt'
       run: |
         export OVN_IMAGE="ovn-daemonset-fedora:pr"
         UPGRADE_STAGE=control-plane-last make -C test staged-upgrade-ovn
 
     - name: Run E2E shard-conformance after control-plane-last
+      if: matrix.scenario != 'kubevirt'
       run: |
         JOB_NAME="${JOB_NAME}-control-plane-last" make -C test shard-conformance
 
     - name: Run E2E Network Segmentation after control-plane-last
+      if: matrix.scenario != 'kubevirt'
       run: |
         JOB_NAME="${JOB_NAME}-control-plane-last-udn" make -C test control-plane \
           WHAT="Network Segmentation can perform east/west traffic between nodes|created using ClusterUserDefinedNetwork is isolated from the default network|isolates overlapping CIDRs with L2 primary UDN|Network Segmentation: services|Network Segmentation: Node Annotations|UserDefinedNetwork CRD Controller|ClusterUserDefinedNetwork CRD Controller"
@@ -584,6 +610,7 @@ jobs:
     # and NodePort service paths, and the control plane disruption tests.
     # Narrowed to named tests to keep each stage around 40 minutes.
     - name: Run E2E control-plane skew suites after control-plane-last
+      if: matrix.scenario != 'kubevirt'
       run: |
         JOB_NAME="${JOB_NAME}-control-plane-last-cp" make -C test control-plane \
           WHAT="Should validate the egress IP functionality against remote hosts|Should re-assign egress IPs when node readiness / reachability goes down/up|Should validate the egress firewall policy functionality for allowed IP|Should validate the egress firewall policy functionality for allowed CIDR and port|should provide Internet connection continuously when|Validating ingress traffic|queries to the nodePort service shall work|Creates a host-network service|session-affinity|Maintains service connectivity during rolling update|e2e network policy hairpinning validation|Network Policy: ICMP bypass"

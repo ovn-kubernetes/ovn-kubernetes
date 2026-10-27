@@ -11,6 +11,9 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -62,6 +65,45 @@ import (
 	kubevirtv1 "kubevirt.io/api/core/v1"
 	kvmigrationsv1alpha1 "kubevirt.io/api/migrations/v1alpha1"
 )
+
+// Keep one client socket across the upgrade, but let the receiver accept a new
+// translated source port. iperf3 connects its UDP receiver to the original peer
+// and also depends on TCP control, making it unsuitable for this recovery check.
+const upgradeUDPProbeScript = `import socket
+import sys
+import time
+
+mode, address, port = sys.argv[1], sys.argv[2], int(sys.argv[3])
+family = socket.AF_INET6 if ":" in address else socket.AF_INET
+sock = socket.socket(family, socket.SOCK_DGRAM)
+sock.settimeout(1)
+if mode == "server":
+    sock.bind((address, port))
+    while True:
+        try:
+            data, peer = sock.recvfrom(1024)
+            print("UDP_RECEIVED", data.decode().strip(), peer[0], peer[1], flush=True)
+            sock.sendto(data, peer)
+        except socket.timeout:
+            pass
+        except OSError as error:
+            print("UDP_ERROR", error, flush=True)
+else:
+    sock.connect((address, port))
+    sequence = 0
+    while True:
+        sequence += 1
+        data = str(sequence).encode()
+        try:
+            sock.send(data)
+            if sock.recv(1024) == data:
+                print("UDP_ACK", sequence, *sock.getsockname()[:2], flush=True)
+        except socket.timeout:
+            pass
+        except OSError as error:
+            print("UDP_ERROR", error, flush=True)
+        time.sleep(0.2)
+`
 
 func newControllerRuntimeClient() (crclient.Client, error) {
 	config, err := clientcmd.BuildConfigFromFlags("", os.Getenv("KUBECONFIG"))
@@ -305,9 +347,12 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 		mode                kubevirtv1.MigrationMode
 		numberOfVMs         int
 		shouldExpectFailure bool
+		upgrade             bool
 	}
 
 	type execFnType = func(cmd string) (string, error)
+
+	var upgradeComplete bool
 
 	var (
 		// northSouthIperfLogFile and northSouthIperfPidFile compose the log
@@ -665,6 +710,71 @@ fi
 			return ips
 		}
 
+		defaultNetworkVMAddresses = func(vmi *kubevirtv1.VirtualMachineInstance) []string {
+			var addresses []string
+			for _, network := range vmi.Spec.Networks {
+				if network.Pod == nil {
+					continue
+				}
+				for _, iface := range vmi.Status.Interfaces {
+					if iface.Name != network.Name {
+						continue
+					}
+					for _, address := range iface.IPs {
+						ip := net.ParseIP(address)
+						if ip != nil && ip.IsGlobalUnicast() {
+							addresses = append(addresses, address)
+						}
+					}
+				}
+			}
+			return addresses
+		}
+
+		// A successful external connection alone cannot distinguish mp0 from GR
+		// egress. Capture the VM's original source before host SNAT on mp0.
+		checkFreshDefaultNetworkEgress = func(vmi *kubevirtv1.VirtualMachineInstance, address, stage string) {
+			GinkgoHelper()
+			capture := IsGatewayModeLocal(fr.ClientSet) && (os.Getenv("OVN_KUBEVIRT_UPGRADE") != "true" || upgradeComplete)
+			monitor := ""
+			if capture {
+				var source string
+				for _, ip := range defaultNetworkVMAddresses(vmi) {
+					if utilnet.IsIPv6String(ip) == utilnet.IsIPv6String(address) {
+						source = ip
+						break
+					}
+				}
+				Expect(source).NotTo(BeEmpty(), "VM must report a default-network IP matching %s", address)
+				monitor = fmt.Sprintf("vm-egress-%x", time.Now().UnixNano())
+				startTcpdumpMonitorPodOnNode(fr, time.Minute, monitor, vmi.Status.NodeName, "ovn-k8s-mp0", "-nn -l",
+					fmt.Sprintf("'src host %s and dst host %s and tcp dst port %d'", source, address, iperf3DefaultPort))
+				defer func() {
+					err := fr.ClientSet.CoreV1().Pods(namespace).Delete(context.Background(), monitor, metav1.DeleteOptions{})
+					Expect(err).NotTo(HaveOccurred())
+				}()
+				// Running only means the container started. Wait for tcpdump
+				// to open the interface before generating the new connection.
+				Eventually(func() (string, error) {
+					logs, err := fr.ClientSet.CoreV1().Pods(namespace).GetLogs(monitor, &corev1.PodLogOptions{}).DoRaw(context.Background())
+					return string(logs), err
+				}).WithTimeout(30 * time.Second).WithPolling(time.Second).Should(ContainSubstring("listening on ovn-k8s-mp0"))
+			}
+			output := ""
+			Eventually(func() error {
+				var err error
+				output, err = virtClient.RunCommand(vmi, fmt.Sprintf("timeout 10s iperf3 -c %s -p %d -t 1 --connect-timeout 3000", address, iperf3DefaultPort), 15*time.Second)
+				return err
+			}).WithPolling(6*time.Second).WithTimeout(2*time.Minute).Should(Succeed(), func() string { return stage + ": " + output })
+			if capture {
+				Eventually(func() (string, error) {
+					logs, err := fr.ClientSet.CoreV1().Pods(namespace).GetLogs(monitor, &corev1.PodLogOptions{}).DoRaw(context.Background())
+					return string(logs), err
+				}).WithTimeout(10*time.Second).WithPolling(time.Second).Should(ContainSubstring(" > "),
+					"fresh VM egress must traverse mp0 on %s", vmi.Status.NodeName)
+			}
+		}
+
 		checkConnectivity = func(vmName string, externalContainer infraapi.ExternalContainer, serverAddresses []string, serverPort int32, stage string) {
 			GinkgoHelper()
 			by(vmName, "Check connectivity "+stage)
@@ -686,6 +796,20 @@ fi
 					trafficTimeout = 2 * time.Second
 				}
 				checkNorthSouthIngressIperfTraffic(externalContainer, []string{address}, serverPort, trafficTimeout, step)
+			}
+
+			var externalIPs []string
+			if isIPv4Supported(fr.ClientSet) {
+				externalIPs = append(externalIPs, externalContainer.IPv4)
+			}
+			if isIPv6Supported(fr.ClientSet) {
+				externalIPs = append(externalIPs, externalContainer.IPv6)
+			}
+			Expect(externalIPs).NotTo(BeEmpty())
+			for _, address := range externalIPs {
+				Expect(net.ParseIP(address)).NotTo(BeNil(), "external container must have an address for each cluster IP family")
+				step := by(vmName, stage+": Check a fresh TCP connection to external address "+address)
+				checkFreshDefaultNetworkEgress(vmi, address, step)
 			}
 
 			stage = by(vmName, stage+": Check e/w tcp traffic")
@@ -1118,9 +1242,193 @@ config:
 				liveMigrateFailed(vmi)
 				checkConnectivityAndNetworkPolicies(vm.Name, externalContainer, serverAddresses, serverPort, "after live migrate to check failed migration")
 			} else {
+				if td.upgrade {
+					// Guest DHCP readiness does not refresh this VMI object or
+					// wait for KubeVirt to publish the addresses in its status.
+					by(vm.Name, "Wait for default-network IPs in VMI status before migration")
+					expectedAddresses := len(getSupportedIPFamiliesSlice(fr.ClientSet))
+					Eventually(func() ([]string, error) {
+						if err := crClient.Get(context.Background(), crclient.ObjectKeyFromObject(vmi), vmi); err != nil {
+							return nil, err
+						}
+						return defaultNetworkVMAddresses(vmi), nil
+					}).WithTimeout(time.Minute).WithPolling(time.Second).Should(HaveLen(expectedAddresses),
+						"VMI status must report the original IPs before migration")
+				}
 				originalNode := vmi.Status.NodeName
+				originalIPs := defaultNetworkVMAddresses(vmi)
 				by(vm.Name, "Live migrate for the first time")
 				liveMigrateAndCheck(vm.Name, td.mode, externalContainer, serverAddresses, serverPort, "after live migrate for the first time")
+
+				if td.upgrade {
+					Expect(crClient.Get(context.Background(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
+					Expect(vmi.Status.NodeName).NotTo(Equal(originalNode))
+					before := vmi.DeepCopy()
+					Expect(defaultNetworkVMAddresses(before)).To(ConsistOf(originalIPs), "migration must retain the original IPs")
+					currentNode, err := fr.ClientSet.CoreV1().Nodes().Get(context.Background(), before.Status.NodeName, metav1.GetOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					currentSubnets, err := util.ParseNodeHostSubnetAnnotation(currentNode, "default")
+					Expect(err).NotTo(HaveOccurred())
+					Expect(originalIPs).NotTo(BeEmpty())
+					for _, ip := range originalIPs {
+						for _, subnet := range currentSubnets {
+							Expect(subnet.Contains(net.ParseIP(ip))).To(BeFalse(), "VM address %s must be outside the current node's subnet %s", ip, subnet)
+						}
+					}
+					// Log both endpoints even when a post-upgrade assertion fails.
+					externalIPs := filterIPs(fr.ClientSet, externalContainer.IPv4, externalContainer.IPv6)
+					defer func() {
+						output, err := virtClient.RunCommand(vmi, "tail -n 10 /tmp/upgrade-*.log", 10*time.Second)
+						AddReportEntry("VM upgrade traffic logs", fmt.Sprintf("%s\nerror: %v", output, err))
+						output, err = infraprovider.Get().ExecExternalContainerCommand(externalContainer,
+							[]string{"bash", "-c", "tail -n 10 /tmp/upgrade-server-*.log"})
+						AddReportEntry("external upgrade traffic logs", fmt.Sprintf("%s\nerror: %v", output, err))
+					}()
+					installProbe := fmt.Sprintf("printf %%s %s | base64 -d > /tmp/upgrade-udp.py && command -v python3",
+						base64.StdEncoding.EncodeToString([]byte(upgradeUDPProbeScript)))
+					output, err := virtClient.RunCommand(vmi, installProbe, 10*time.Second)
+					Expect(err).NotTo(HaveOccurred(), output)
+					output, err = infraprovider.Get().ExecExternalContainerCommand(externalContainer, []string{"bash", "-c", installProbe})
+					Expect(err).NotTo(HaveOccurred(), output)
+					udpSequence := func(address string) (int64, error) {
+						output, err := virtClient.RunCommand(vmi, fmt.Sprintf("tail -n 10 /tmp/upgrade-udp-%s.log", address), 10*time.Second)
+						if err != nil {
+							return 0, err
+						}
+						var latest int64
+						for _, line := range strings.Split(output, "\n") {
+							fields := strings.Fields(line)
+							if len(fields) == 4 && fields[0] == "UDP_ACK" {
+								sequence, err := strconv.ParseInt(fields[1], 10, 64)
+								if err != nil {
+									return 0, err
+								}
+								latest = max(latest, sequence)
+							}
+						}
+						return latest, nil
+					}
+					udpBefore := map[string]int64{}
+					for _, address := range externalIPs {
+						// TCP survival is informational because the NAT state changes.
+						output, err := infraprovider.Get().ExecExternalContainerCommand(externalContainer, []string{"bash", "-c",
+							fmt.Sprintf("iperf3 -s -B %s -p 5202 -D --forceflush --timestamps='%%s ' --logfile /tmp/upgrade-server-tcp-%s.log", address, address)})
+						Expect(err).NotTo(HaveOccurred(), output)
+						log := fmt.Sprintf("/tmp/upgrade-tcp-%s.log", address)
+						output, err = virtClient.RunCommand(vmi, fmt.Sprintf("nohup iperf3 -c %s -p 5202 -b 1M -t 0 --forceflush --timestamps='%%s ' --logfile %s >/dev/null 2>&1 &", address, log), 10*time.Second)
+						Expect(err).NotTo(HaveOccurred(), output)
+						execFn := func(cmd string) (string, error) { return virtClient.RunCommand(vmi, cmd, 10*time.Second) }
+						checkIperfTraffic(log, execFn, 10*time.Second, "established TCP before upgrade")
+						receiver := func(cmd string) (string, error) {
+							return infraprovider.Get().ExecExternalContainerCommand(externalContainer, []string{"bash", "-c", cmd})
+						}
+						checkIperfTraffic(fmt.Sprintf("/tmp/upgrade-server-tcp-%s.log", address), receiver, 10*time.Second, "TCP receiver before upgrade")
+
+						// Echo requests use one socket and no TCP control connection.
+						// The blocked VM-subnet return routes require working SNAT
+						// for replies, including after the translated port changes.
+						by(vm.Name, "Start persistent UDP echo to "+address+" before upgrade")
+						output, err = receiver(fmt.Sprintf("nohup python3 /tmp/upgrade-udp.py server %s 5203 > /tmp/upgrade-server-udp-%s.log 2>&1 &", address, address))
+						Expect(err).NotTo(HaveOccurred(), output)
+						output, err = virtClient.RunCommand(vmi, fmt.Sprintf("nohup python3 /tmp/upgrade-udp.py client %s 5203 > /tmp/upgrade-udp-%s.log 2>&1 &", address, address), 10*time.Second)
+						Expect(err).NotTo(HaveOccurred(), output)
+						Eventually(func() (int64, error) {
+							sequence, err := udpSequence(address)
+							udpBefore[address] = sequence
+							return sequence, err
+						}).WithTimeout(30*time.Second).WithPolling(time.Second).Should(BeNumerically(">", 0),
+							"UDP echo must work before upgrade")
+					}
+					By("Upgrade OVN-Kubernetes while the already-migrated VM remains running")
+					upgradeScript, err := filepath.Abs("../scripts/staged-upgrade-ovn.sh")
+					Expect(err).NotTo(HaveOccurred())
+					for _, stage := range []string{"nodes-first", "control-plane-last"} {
+						ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+						cmd := exec.CommandContext(ctx, "bash", upgradeScript, stage)
+						cmd.Stdout, cmd.Stderr = GinkgoWriter, GinkgoWriter
+						err = cmd.Run()
+						cancel()
+						Expect(err).NotTo(HaveOccurred(), "base-to-PR upgrade stage %s must complete", stage)
+					}
+					upgradeComplete = true
+					Expect(crClient.Get(context.Background(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
+					Expect(vmi.UID).To(Equal(before.UID), "upgrade must not recreate the VM")
+					Expect(vmi.Status.NodeName).To(Equal(before.Status.NodeName), "upgrade must not remigrate the VM")
+					Expect(vmi.Status.MigrationState.MigrationUID).To(Equal(before.Status.MigrationState.MigrationUID))
+					for i := range before.Status.Interfaces {
+						Expect(vmi.Status.Interfaces[i].IPs).To(ConsistOf(before.Status.Interfaces[i].IPs))
+					}
+
+					// Check TCP receiver progress after cutover rather than a stale
+					// success line written before the upgrade.
+					tcpReceivedSince := func(address string, since int64) (bool, error) {
+						log := fmt.Sprintf("/tmp/upgrade-server-tcp-%s.log", address)
+						output, err := infraprovider.Get().ExecExternalContainerCommand(externalContainer, []string{"tail", "-n", "10", log})
+						if err != nil {
+							return false, err
+						}
+						for _, line := range strings.Split(output, "\n") {
+							fields := strings.Fields(line)
+							if len(fields) == 0 || !strings.Contains(line, " sec ") {
+								continue
+							}
+							timestamp, err := strconv.ParseInt(fields[0], 10, 64)
+							if err != nil || timestamp < since {
+								continue
+							}
+							for i, field := range fields {
+								if field == "Bytes" || field == "KBytes" || field == "MBytes" || field == "GBytes" {
+									if i > 0 {
+										bytes, err := strconv.ParseFloat(fields[i-1], 64)
+										if err == nil && bytes > 0 {
+											return true, nil
+										}
+									}
+								}
+							}
+						}
+						return false, nil
+					}
+					since := time.Now().Unix()
+					for _, address := range externalIPs {
+						by(vm.Name, "Check UDP echo to "+address+" resumes on the original socket after upgrade")
+						lastSequence, err := udpSequence(address)
+						Expect(err).NotTo(HaveOccurred())
+						lastSequence = max(lastSequence, udpBefore[address])
+						Eventually(func() (int64, error) { return udpSequence(address) }).
+							WithTimeout(time.Minute).WithPolling(time.Second).Should(BeNumerically(">", lastSequence),
+							"UDP echo must resume after upgrade without replacing the client socket")
+						// TCP can require reconnecting when moving between OVN
+						// and host conntrack. Record whether the existing stream
+						// recovered; the fresh TCP check below is mandatory.
+						survived, err := tcpReceivedSince(address, since)
+						Expect(err).NotTo(HaveOccurred())
+						AddReportEntry("established TCP after upgrade "+address, fmt.Sprintf("receiver resumed: %t (false means reconnect required)", survived))
+					}
+					// Ingress uses unchanged GR/service state. Bound recovery
+					// after the control-plane restart without restarting clients.
+					for _, address := range serverAddresses {
+						checkNorthSouthIngressIperfTraffic(externalContainer, []string{address}, serverPort, 2*time.Minute, "after upgrade")
+					}
+					checkConnectivityAndNetworkPolicies(vm.Name, externalContainer, serverAddresses, serverPort, "after upgrade on the non-owner node")
+					for _, address := range externalIPs {
+						output, err := virtClient.RunCommand(vmi, fmt.Sprintf("timeout 15s iperf3 -c %s -p %d -u -b 1M -t 2 --connect-timeout 3000 -J", address, iperf3DefaultPort), 20*time.Second)
+						Expect(err).NotTo(HaveOccurred(), "fresh UDP after upgrade: %s", output)
+						start, end := strings.Index(output, "{"), strings.LastIndex(output, "}")
+						Expect(start).To(BeNumerically(">=", 0), output)
+						Expect(end).To(BeNumerically(">", start), output)
+						var result struct {
+							End struct {
+								SumReceived struct {
+									Bytes int64 `json:"bytes"`
+								} `json:"sum_received"`
+							} `json:"end"`
+						}
+						Expect(json.Unmarshal([]byte(output[start:end+1]), &result)).To(Succeed(), output)
+						Expect(result.End.SumReceived.Bytes).To(BeNumerically(">", 0), "UDP receiver must report delivery: %s", output)
+					}
+					return
+				}
 
 				by(vm.Name, "Live migrate for the second time to a node not owning the subnet")
 				// Remove the node selector label from original node to force
@@ -1302,6 +1610,16 @@ config:
 
 	Context("with default pod network", func() {
 		BeforeEach(func() {
+			upgradeComplete = false
+			selectedNodes = nil
+			upgradeSpec, err := CurrentSpecReport().MatchesLabelFilter("KubeVirtUpgrade")
+			Expect(err).NotTo(HaveOccurred())
+			if upgradeSpec != (os.Getenv("OVN_KUBEVIRT_UPGRADE") == "true") {
+				Skip("upgrade scenarios run only in the dedicated upgrade lane")
+			}
+			if upgradeSpec {
+				Expect(IsGatewayModeLocal(fr.ClientSet)).To(BeTrue())
+			}
 			ns, err := fr.CreateNamespace(context.TODO(), fr.BaseName, map[string]string{
 				"e2e-framework": fr.BaseName,
 			})
@@ -1343,7 +1661,7 @@ config:
 			d.IPTablesDumpingDaemonSet()
 			d.NFTablesDumpingDaemonSet()
 
-			By("Create external container to run the iperf3 clients")
+			By("Create external container to run the iperf3 clients and servers")
 			externalContainer := infraapi.ExternalContainer{
 				Name:    namespace + "-iperf",
 				Image:   images.Netshoot(),
@@ -1355,6 +1673,26 @@ config:
 			externalContainer.Network = primaryProviderNetwork
 			externalContainer, err = providerCtx.CreateExternalContainer(externalContainer)
 			Expect(err).NotTo(HaveOccurred(), "creation of external container is test dependency")
+
+			By("Block return routes to the VM subnets so external egress requires SNAT")
+			for _, node := range selectedNodes {
+				subnets, err := util.ParseNodeHostSubnetAnnotation(&node, "default")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(subnets).NotTo(BeEmpty())
+				for _, subnet := range subnets {
+					family := "-4"
+					if utilnet.IsIPv6CIDR(subnet) {
+						family = "-6"
+					}
+					output, err := infraprovider.Get().ExecExternalContainerCommand(externalContainer, []string{
+						"ip", family, "route", "replace", "blackhole", subnet.String(),
+					})
+					Expect(err).NotTo(HaveOccurred(), "block return route to %s: %s", subnet, output)
+				}
+			}
+			By("Start external iperf3 servers for fresh VM egress connections")
+			output, err := infraprovider.Get().ExecExternalContainerCommand(externalContainer, []string{"bash", "-c", iperfServerScript})
+			Expect(err).NotTo(HaveOccurred(), output)
 
 			bandwidthPerMigration := resource.MustParse("40Mi")
 			forcePostCopyMigrationPolicy := &kvmigrationsv1alpha1.MigrationPolicy{
@@ -1418,6 +1756,9 @@ config:
 			Entry("with pre-copy succeeds, should keep connectivity", liveMigrationTestData{
 				mode:        kubevirtv1.MigrationPreCopy,
 				numberOfVMs: 1,
+			}),
+			Entry("with pre-copy before upgrade, should preserve the migrated VM", Serial, Label("KubeVirtUpgrade"), liveMigrationTestData{
+				mode: kubevirtv1.MigrationPreCopy, numberOfVMs: 1, upgrade: true,
 			}),
 			Entry("with post-copy succeeds, should keep connectivity", liveMigrationTestData{
 				mode:        kubevirtv1.MigrationPostCopy,
