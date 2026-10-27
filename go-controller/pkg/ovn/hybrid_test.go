@@ -496,14 +496,11 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			err = fakeClient.KubeClient.CoreV1().Nodes().Delete(context.TODO(), node1.Name, *metav1.NewDeleteOptions(0))
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			// the best way to check if a node is deleted is to check some of the explicitly deleted elements
-			gomega.Eventually(func() ([]string, error) {
-				clusterRouter, err := libovsdbops.GetLogicalRouter(clusterController.nbClient, &nbdb.LogicalRouter{Name: types.OVNClusterRouter})
-				if err != nil {
-					return nil, err
-				}
-				return clusterRouter.Policies, nil
-			}, 2).Should(gomega.BeEmpty())
+			// The surviving cluster router retains only the shared chain terminals.
+			gomega.Eventually(func() ([]*nbdb.LogicalRouterPolicy, error) {
+				return libovsdbops.FindALogicalRouterPoliciesWithPredicate(clusterController.nbClient,
+					types.OVNClusterRouter, func(*nbdb.LogicalRouterPolicy) bool { return true })
+			}, 2).Should(libovsdbtest.ConsistOfIgnoringUUIDs(expectedDefaultEgressTerminals(types.OVNClusterRouter)...))
 
 			gomega.Eventually(func() error {
 				_, err := libovsdbops.GetLogicalSwitchPort(clusterController.nbClient, &nbdb.LogicalSwitchPort{Name: "jtor-GR_node1"})
@@ -1021,14 +1018,11 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			err = fakeClient.KubeClient.CoreV1().Nodes().Delete(context.TODO(), node1.Name, *metav1.NewDeleteOptions(0))
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			// the best way to check if a node is deleted is to check some of the explicitly deleted elements
-			gomega.Eventually(func() ([]string, error) {
-				clusterRouter, err := libovsdbops.GetLogicalRouter(clusterController.nbClient, &nbdb.LogicalRouter{Name: types.OVNClusterRouter})
-				if err != nil {
-					return nil, err
-				}
-				return clusterRouter.Policies, nil
-			}, 20).Should(gomega.BeEmpty())
+			// The surviving cluster router retains only the shared chain terminals.
+			gomega.Eventually(func() ([]*nbdb.LogicalRouterPolicy, error) {
+				return libovsdbops.FindALogicalRouterPoliciesWithPredicate(clusterController.nbClient,
+					types.OVNClusterRouter, func(*nbdb.LogicalRouterPolicy) bool { return true })
+			}, 20).Should(libovsdbtest.ConsistOfIgnoringUUIDs(expectedDefaultEgressTerminals(types.OVNClusterRouter)...))
 
 			gomega.Eventually(func() error {
 				_, err := libovsdbops.GetLogicalSwitchPort(clusterController.nbClient, &nbdb.LogicalSwitchPort{Name: "jtor-GR_node1"})

@@ -2134,19 +2134,18 @@ func expectedLayer3EgressEntities(netInfo util.NetInfo, gwConfig util.L3GatewayC
 			udnEnabledSvcV4ASHashName, _ := addressset.GetHashNamesForAS(udnenabledsvc.GetAddressSetDBIDs())
 			masqSNAT.Match += fmt.Sprintf(" && (ip4.dst == $%s || ip4.dst == $%s)", nodeIPV4ASHashName, udnEnabledSvcV4ASHashName)
 		}
-		// In shared gateway mode a network whose east/west traffic goes through
-		// the interconnect overlay expresses pod egress as a default route to
-		// the gateway router. Local gateway mode, EVPN and no-overlay keep a
-		// per-node-subnet src-ip route.
+		// Layer 3 networks use a mode-specific destination default.
 		egressRoute := expectedGRStaticRoute(staticRouteUUID1, nodeSubnet.String(), lrsrNextHop,
 			&nbdb.LogicalRouterStaticRoutePolicySrcIP, nil, netInfo)
-		if config.Gateway.Mode != config.GatewayModeLocal &&
-			netInfo.Transport() != types.NetworkTransportNoOverlay && !hasEVPN {
+		if util.UsesDefaultEgressRoute(netInfo) {
 			allIPs := "0.0.0.0/0"
 			if knet.IsIPv6String(lrsrNextHop) {
 				allIPs = "::/0"
 			}
 			egressRoute = expectedGRStaticRoute(staticRouteUUID1, allIPs, lrsrNextHop, nil, nil, netInfo)
+			for key, value := range defaultEgressRouteExternalIDs(clusterRouterName, allIPs) {
+				egressRoute.ExternalIDs[key] = value
+			}
 		}
 		expectedEntities = append(expectedEntities,
 			&nbdb.LogicalRouterPort{
@@ -2166,6 +2165,9 @@ func expectedLayer3EgressEntities(netInfo util.NetInfo, gwConfig util.L3GatewayC
 		clusterRouter.Nat = []string{masqSNATUUID1}
 		clusterRouter.Policies = []string{routerPolicyUUID1, routerPolicyUUID2}
 		clusterRouter.StaticRoutes = []string{staticRouteUUID1, staticRouteUUID2}
+		if util.UsesOverlayEgressPolicyChains(netInfo) {
+			expectedEntities = appendDefaultEgressExpectedPolicies(expectedEntities, clusterRouter, nodeName, netInfo, []*net.IPNet{nodeSubnet}, []*net.IPNet{gwRouterJoinIPAddress()})
+		}
 	}
 	return expectedEntities
 }

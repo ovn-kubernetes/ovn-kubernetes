@@ -134,7 +134,6 @@ type DefaultNetworkController struct {
 	hybridOverlayFailed         sync.Map
 	syncZoneICFailed            sync.Map
 	syncEIPNodeRerouteFailed    sync.Map
-	syncEIPNodeFailed           sync.Map
 
 	// variable to determine if all pods present on the node during startup have been processed
 	// updated atomically
@@ -1038,13 +1037,8 @@ func (h *defaultNetworkControllerEventHandler) AddResource(ctx context.Context, 
 		h.oc.eIPC.nodeState.UnlockKey(node.Name)
 
 		shouldSyncReroute := true
-		shouldSyncEIPNode := true
 		if fromRetryLoop {
 			_, shouldSyncReroute = h.oc.syncEIPNodeRerouteFailed.Load(node.Name)
-			_, shouldSyncEIPNode = h.oc.syncEIPNodeFailed.Load(node.Name)
-			// addEgressNode runs after the reroute setup, so a reroute failure
-			// means that the egress node setup was never attempted.
-			shouldSyncEIPNode = shouldSyncEIPNode || shouldSyncReroute
 		}
 
 		if shouldSyncReroute {
@@ -1064,16 +1058,7 @@ func (h *defaultNetworkControllerEventHandler) AddResource(ctx context.Context, 
 			}
 			h.oc.syncEIPNodeRerouteFailed.Delete(node.Name)
 		}
-		if shouldSyncEIPNode {
-			// Add routing specific to Egress IP NOTE: GARP configuration that
-			// Egress IP depends on is added from the gateway reconciliation logic
-			err := h.oc.eIPC.addEgressNode(node)
-			if err != nil {
-				h.oc.syncEIPNodeFailed.Store(node.Name, true)
-				return err
-			}
-			h.oc.syncEIPNodeFailed.Delete(node.Name)
-		}
+
 		return nil
 
 	case factory.NamespaceType:
@@ -1145,17 +1130,6 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(ctx context.Contex
 			h.oc.syncEIPNodeRerouteFailed.Delete(newNode.Name)
 		}
 
-		_, syncEIPNodeFailed := h.oc.syncEIPNodeFailed.Load(newNode.Name)
-		// A reroute failure from AddResource prevented addEgressNode from
-		// running. Retry it after the reroute setup succeeds.
-		if syncEIPNodeFailed || rerouteRetryPending {
-			err := h.oc.eIPC.addEgressNode(newNode)
-			if err != nil {
-				h.oc.syncEIPNodeFailed.Store(newNode.Name, true)
-				return err
-			}
-			h.oc.syncEIPNodeFailed.Delete(newNode.Name)
-		}
 		return nil
 
 	case factory.NamespaceType:
@@ -1204,7 +1178,6 @@ func (h *defaultNetworkControllerEventHandler) DeleteResource(ctx context.Contex
 		h.oc.eIPC.nodeState.Delete(node.Name)
 		h.oc.eIPC.nodeState.UnlockKey(node.Name)
 		h.oc.syncEIPNodeRerouteFailed.Delete(node.Name)
-		h.oc.syncEIPNodeFailed.Delete(node.Name)
 		return nil
 
 	case factory.NamespaceType:

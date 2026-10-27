@@ -26,7 +26,6 @@ import (
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	egressipv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
-	udngenerator "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/udn"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
@@ -39,10 +38,8 @@ import (
 
 var _ = ginkgo.Describe("EgressIP Operations for user defined network with topology L3", func() {
 	var (
-		app     *cli.App
-		fakeOvn *FakeOVN
-
-		nodeUDNLogicalRouterIPv4  = []string{"100.65.0.2"}
+		app                       *cli.App
+		fakeOvn                   *FakeOVN
 		node2UDNLogicalRouterIPv4 = []string{"100.65.0.3"}
 	)
 
@@ -157,7 +154,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 			gomega.Expect(reconciledNodes.Has(node1Name)).To(gomega.BeTrue())
 		})
 
-		ginkgo.It("creates EgressIP routes and no-reroute policies for each primary Layer3 UDN subnet", func() {
+		ginkgo.It("creates no-reroute policies without source routes for each primary Layer3 UDN subnet", func() {
 			netInfo := dummyPrimaryLayer3UserDefinedNetwork("192.168.0.0/16,192.169.0.0/16", "192.168.1.0/24")
 			nad, err := newNetworkAttachmentDefinition(ns, nadName, *netInfo.netconf())
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -186,27 +183,17 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 			)
 			gomega.Expect(fakeOvn.eIPController.SyncNodeCache()).To(gomega.Succeed())
 
-			gomega.Expect(fakeOvn.eIPController.ensureRouterPoliciesForNetwork(mutableNetInfo, node)).To(gomega.Succeed())
-
-			gatewayIPs, err := udngenerator.GetGWRouterIPs(node, mutableNetInfo)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(gatewayIPs).To(gomega.HaveLen(1))
-			expectedNextHop := gatewayIPs[0].IP.String()
+			gomega.Expect(fakeOvn.eIPController.ensureRouterPoliciesForNetwork(mutableNetInfo)).To(gomega.Succeed())
 			routes, err := libovsdbops.GetRouterLogicalRouterStaticRoutesWithPredicate(
 				fakeOvn.nbClient,
 				&nbdb.LogicalRouter{Name: routerName},
 				func(route *nbdb.LogicalRouterStaticRoute) bool {
 					return route.Policy != nil &&
-						*route.Policy == nbdb.LogicalRouterStaticRoutePolicySrcIP &&
-						route.Nexthop == expectedNextHop
+						*route.Policy == nbdb.LogicalRouterStaticRoutePolicySrcIP
 				},
 			)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			routePrefixes := sets.New[string]()
-			for _, route := range routes {
-				routePrefixes.Insert(route.IPPrefix)
-			}
-			gomega.Expect(routePrefixes.HasAll("192.168.0.0/16", "192.169.0.0/16")).To(gomega.BeTrue())
+			gomega.Expect(routes).To(gomega.BeEmpty())
 
 			findNoRerouteMatches := func(policyName egressIPNoReroutePolicyName) []string {
 				policies, err := libovsdbops.FindALogicalRouterPoliciesWithPredicate(
@@ -417,7 +404,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				iUDN, nUDN, _ := net.ParseCIDR(v4Pod1IPNode1Net1 + "/23")
 				nUDN.IP = iUDN
 				fakeOvn.controller.logicalPortCache.add(&egressPodUDNLocal, "", util.GetNADName(nad.Namespace, nad.Name), "", nil, []*net.IPNet{nUDN})
-				err = fakeOvn.eIPController.ensureRouterPoliciesForNetwork(netInfo, &node1)
+				err = fakeOvn.eIPController.ensureRouterPoliciesForNetwork(netInfo)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.eIPController.ensureSwitchPoliciesForNode(netInfo, node1Name)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -446,7 +433,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				node1LRP := "k8s-node1"
 				expectedDatabaseStateTwoEgressNodes := []libovsdbtest.TestData{
 					// CDN
-					getReRouteStaticRoute(v4ClusterSubnet, nodeLogicalRouterIPv4[0]),
+
 					getReRoutePolicy(podV4IP, "4", "reroute-UUID", []string{nodeLogicalRouterIPv4[0], v4Node2Tsp},
 						getEgressIPLRPReRouteDbIDs(eIP.Name, egressPodCDNLocal.Namespace, egressPodCDNLocal.Name, IPFamilyValueV4, ovntypes.DefaultNetworkName, ovntypes.DefaultNetworkControllerName).GetExternalIDs()),
 					&nbdb.LogicalRouterPolicy{
@@ -474,7 +461,6 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						UUID: ovntypes.OVNClusterRouter + "-UUID",
 						Policies: []string{"default-no-reroute-UUID", "no-reroute-service-UUID",
 							"default-no-reroute-node-UUID", "default-no-reroute-reply-traffic", "reroute-UUID"},
-						StaticRoutes: []string{"reroute-static-route-UUID"},
 					},
 					&nbdb.LogicalRouterPort{
 						UUID:     ovntypes.GWRouterToJoinSwitchPrefix + ovntypes.GWRouterPrefix + node1.Name + "-UUID",
@@ -530,7 +516,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					egressNodeIPsASv4,
 
 					// UDN
-					getReRouteStaticRouteForController(v4Net1, nodeUDNLogicalRouterIPv4[0], netInfo.GetNetworkName()),
+
 					getReRoutePolicyForController(egressIPName, eipNamespace2, podName2, v4Pod1IPNode1Net1, eIP1Mark, IPFamilyValueV4, []string{nodeLogicalRouterIPv4[0], v4Node2Tsp}, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName),
 					getGWPktMarkLRPForController(eIP1Mark, egressIPName, eipNamespace2, podName2, v4Pod1IPNode1Net1, IPFamilyValueV4, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName),
 					getGWPktMarkLRPForController(eIP1Mark, egressIPName, eipNamespace2, podName4, v4Pod2IPNode2Net1, IPFamilyValueV4, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName),
@@ -570,7 +556,6 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						Policies: []string{"udn-default-no-reroute-node-UUID", "udn-default-no-reroute-UUID", "udn-no-reroute-service-UUID",
 							fmt.Sprintf("%s-no-reroute-reply-traffic", netInfo.GetNetworkName()), "udn-enabled-svc-no-reroute-UUID",
 							getReRoutePolicyUUID(eipNamespace2, podName2, IPFamilyValueV4, netInfo.GetNetworkName())},
-						StaticRoutes: []string{fmt.Sprintf("%s-reroute-static-route-UUID", netInfo.GetNetworkName())},
 					},
 					&nbdb.LogicalRouter{
 						UUID:        netInfo.GetNetworkScopedGWRouterName(node1.Name) + "-UUID",
@@ -598,7 +583,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					udnEnabledSvcV4,
 				}
 				ginkgo.By("ensure expected equals actual")
-				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseStateTwoEgressNodes))
+				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(withDefaultEgressExemptions(expectedDatabaseStateTwoEgressNodes)))
 				return nil
 			}
 			err := app.Run([]string{app.Name})
@@ -792,7 +777,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				defer fakeOvn.networkManager.Stop()
 				// simulate Start() of UDN controller
-				err = fakeOvn.eIPController.ensureRouterPoliciesForNetwork(secConInfo.bnc.GetNetInfo(), &node1)
+				err = fakeOvn.eIPController.ensureRouterPoliciesForNetwork(secConInfo.bnc.GetNetInfo())
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.eIPController.ensureSwitchPoliciesForNode(secConInfo.bnc.GetNetInfo(), node1Name)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -823,7 +808,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				node1LRP := "k8s-node1"
 				expectedDatabaseStateTwoEgressNodes := []libovsdbtest.TestData{
 					// CDN
-					getReRouteStaticRoute(v4ClusterSubnet, nodeLogicalRouterIPv4[0]),
+
 					getReRoutePolicy(podV4IP, "4", "reroute-UUID", []string{nodeLogicalRouterIPv4[0], v4Node2Tsp},
 						getEgressIPLRPReRouteDbIDs(eIP.Name, egressPodCDNLocal.Namespace, egressPodCDNLocal.Name, IPFamilyValueV4, ovntypes.DefaultNetworkName, ovntypes.DefaultNetworkControllerName).GetExternalIDs()),
 					&nbdb.LogicalRouterPolicy{
@@ -851,7 +836,6 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						UUID: ovntypes.OVNClusterRouter + "-UUID",
 						Policies: []string{"default-no-reroute-UUID", "no-reroute-service-UUID",
 							"default-no-reroute-node-UUID", "default-no-reroute-reply-traffic", "reroute-UUID"},
-						StaticRoutes: []string{"reroute-static-route-UUID"},
 					},
 					&nbdb.LogicalRouterPort{
 						UUID:     ovntypes.GWRouterToJoinSwitchPrefix + ovntypes.GWRouterPrefix + node1.Name + "-UUID",
@@ -907,7 +891,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					egressNodeIPsASv4,
 
 					// UDN
-					getReRouteStaticRouteForController(v4Net1, nodeUDNLogicalRouterIPv4[0], netInfo.GetNetworkName()),
+
 					getReRoutePolicyForController(egressIPName, eipNamespace2, podName2, v4Pod1IPNode1Net1, eIP1Mark, IPFamilyValueV4, []string{nodeLogicalRouterIPv4[0], v4Node2Tsp}, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName),
 					getGWPktMarkLRPForController(eIP1Mark, egressIPName, eipNamespace2, podName2, v4Pod1IPNode1Net1, IPFamilyValueV4, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName),
 					getGWPktMarkLRPForController(eIP1Mark, egressIPName, eipNamespace2, podName4, v4Pod2IPNode2Net1, IPFamilyValueV4, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName),
@@ -947,7 +931,6 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						Policies: []string{"udn-default-no-reroute-node-UUID", "udn-default-no-reroute-UUID", "udn-no-reroute-service-UUID", "udn-enabled-svc-no-reroute-UUID",
 							fmt.Sprintf("%s-no-reroute-reply-traffic", netInfo.GetNetworkName()),
 							getReRoutePolicyUUID(eipNamespace2, podName2, IPFamilyValueV4, netInfo.GetNetworkName())},
-						StaticRoutes: []string{fmt.Sprintf("%s-reroute-static-route-UUID", netInfo.GetNetworkName())},
 					},
 					&nbdb.LogicalRouter{
 						UUID:        netInfo.GetNetworkScopedGWRouterName(node1.Name) + "-UUID",
@@ -975,7 +958,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					udnEnabledSvcV4,
 				}
 				ginkgo.By("ensure expected equals actual")
-				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseStateTwoEgressNodes))
+				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(withDefaultEgressExemptions(expectedDatabaseStateTwoEgressNodes)))
 				ginkgo.By("patch EgressIP status to ensure remote node is egressable only")
 				oneNodeStatus := []egressipv1.EgressIPStatusItem{
 					{
@@ -990,7 +973,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				gomega.Eventually(getEgressIPStatusLen(eIP.Name)).Should(gomega.Equal(1))
 				expectedDatabaseStateOneEgressNode := []libovsdbtest.TestData{
 					// CDN
-					getReRouteStaticRoute(v4ClusterSubnet, nodeLogicalRouterIPv4[0]),
+
 					getReRoutePolicy(podV4IP, "4", "reroute-UUID", []string{v4Node2Tsp},
 						getEgressIPLRPReRouteDbIDs(eIP.Name, egressPodCDNLocal.Namespace, egressPodCDNLocal.Name, IPFamilyValueV4, ovntypes.DefaultNetworkName, ovntypes.DefaultNetworkControllerName).GetExternalIDs()),
 					&nbdb.LogicalRouterPolicy{
@@ -1017,7 +1000,6 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						UUID: ovntypes.OVNClusterRouter + "-UUID",
 						Policies: []string{"default-no-reroute-UUID", "no-reroute-service-UUID",
 							"default-no-reroute-node-UUID", "default-no-reroute-reply-traffic", "reroute-UUID"},
-						StaticRoutes: []string{"reroute-static-route-UUID"},
 					},
 					&nbdb.LogicalRouterPort{
 						UUID:     ovntypes.GWRouterToJoinSwitchPrefix + ovntypes.GWRouterPrefix + node1.Name + "-UUID",
@@ -1051,7 +1033,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					egressNodeIPsASv4,
 
 					// UDN
-					getReRouteStaticRouteForController(v4Net1, nodeUDNLogicalRouterIPv4[0], netInfo.GetNetworkName()),
+
 					getReRoutePolicyForController(egressIPName, eipNamespace2, podName2, v4Pod1IPNode1Net1, eIP1Mark, IPFamilyValueV4, []string{v4Node2Tsp}, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName),
 					getNoReRoutePolicyForUDNEnabledSvc(false, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName, egressIPServedPodsASUDNv4.Name, egressSVCServedPodsASv4.Name, udnEnabledSvcV4.Name),
 					&nbdb.LogicalRouterPolicy{
@@ -1089,7 +1071,6 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						Policies: []string{"udn-default-no-reroute-node-UUID", "udn-default-no-reroute-UUID", "udn-no-reroute-service-UUID", "udn-enabled-svc-no-reroute-UUID",
 							fmt.Sprintf("%s-no-reroute-reply-traffic", netInfo.GetNetworkName()),
 							getReRoutePolicyUUID(eipNamespace2, podName2, IPFamilyValueV4, netInfo.GetNetworkName())},
-						StaticRoutes: []string{fmt.Sprintf("%s-reroute-static-route-UUID", netInfo.GetNetworkName())},
 					},
 					&nbdb.LogicalRouter{
 						UUID:        netInfo.GetNetworkScopedGWRouterName(node1.Name) + "-UUID",
@@ -1115,7 +1096,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					udnEnabledSvcV4,
 				}
 				ginkgo.By("ensure expected equals actual")
-				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseStateOneEgressNode))
+				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(withDefaultEgressExemptions(expectedDatabaseStateOneEgressNode)))
 
 				ginkgo.By("restore both nodes as egressable")
 				err = patchEgressIP(func(name string, patchData []byte) error {
@@ -1124,7 +1105,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				gomega.Eventually(getEgressIPStatusLen(eIP.Name)).Should(gomega.Equal(2))
 				ginkgo.By("ensure expected equals actual")
-				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseStateTwoEgressNodes))
+				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(withDefaultEgressExemptions(expectedDatabaseStateTwoEgressNodes)))
 				return nil
 			}
 			err := app.Run([]string{app.Name})
@@ -1364,7 +1345,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				node1LRP := "k8s-node1"
 				expectedDatabaseStateTwoEgressNodes := []libovsdbtest.TestData{
 					// CDN
-					getReRouteStaticRoute(v4ClusterSubnet, nodeLogicalRouterIPv4[0]),
+
 					getReRoutePolicy(podV4IP, "4", "reroute-UUID", []string{nodeLogicalRouterIPv4[0], v4Node2Tsp},
 						getEgressIPLRPReRouteDbIDs(eIP.Name, egressPodCDNLocal.Namespace, egressPodCDNLocal.Name, IPFamilyValueV4, ovntypes.DefaultNetworkName, ovntypes.DefaultNetworkControllerName).GetExternalIDs()),
 					&nbdb.LogicalRouterPolicy{
@@ -1392,7 +1373,6 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						UUID: ovntypes.OVNClusterRouter + "-UUID",
 						Policies: []string{"default-no-reroute-UUID", "no-reroute-service-UUID",
 							"default-no-reroute-node-UUID", "default-no-reroute-reply-traffic", "reroute-UUID"},
-						StaticRoutes: []string{"reroute-static-route-UUID"},
 					},
 					&nbdb.LogicalRouterPort{
 						UUID:     ovntypes.GWRouterToJoinSwitchPrefix + ovntypes.GWRouterPrefix + node1.Name + "-UUID",
@@ -1448,7 +1428,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					egressNodeIPsASv4,
 
 					// UDN
-					getReRouteStaticRouteForController(v4Net1, nodeUDNLogicalRouterIPv4[0], netInfo.GetNetworkName()),
+
 					getReRoutePolicyForController(egressIPName, eipNamespace2, podName2, v4Pod1IPNode1Net1, eIP1Mark, IPFamilyValueV4, []string{nodeLogicalRouterIPv4[0], v4Node2Tsp}, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName),
 					getGWPktMarkLRPForController(eIP1Mark, egressIPName, eipNamespace2, podName2, v4Pod1IPNode1Net1, IPFamilyValueV4, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName),
 					getGWPktMarkLRPForController(eIP1Mark, egressIPName, eipNamespace2, podName4, v4Pod2IPNode2Net1, IPFamilyValueV4, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName),
@@ -1529,7 +1509,6 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 							fmt.Sprintf("%s-no-reroute-reply-traffic", netInfo.GetNetworkName()),
 							getReRoutePolicyUUID(eipNamespace2, podName2, IPFamilyValueV4, netInfo.GetNetworkName())},
 						StaticRoutes: []string{
-							fmt.Sprintf("%s-reroute-static-route-UUID", netInfo.GetNetworkName()),
 							fmt.Sprintf("static-route-%s-%s-UUID", v4Node2Net1, v4Node2Tsp),
 							fmt.Sprintf("static-route-%s-%s-UUID", node2UDNLogicalRouterIPv4[0], v4Node2Tsp),
 						},
@@ -1639,7 +1618,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					udnEnabledSvcV4,
 				}
 				ginkgo.By("ensure expected equals actual")
-				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveDataIgnoringUUIDs(expectedDatabaseStateTwoEgressNodes))
+				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveDataIgnoringUUIDs(withDefaultEgressExemptions(expectedDatabaseStateTwoEgressNodes)))
 				ginkgo.By("delete EgressIP")
 				err = fakeOvn.fakeClient.EgressIPClient.K8sV1().EgressIPs().Delete(context.TODO(), eIP.Name, metav1.DeleteOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1647,7 +1626,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				egressIPServedPodsASUDNv4.Addresses = nil
 				expectedDatabaseState := []libovsdbtest.TestData{
 					// CDN
-					getReRouteStaticRoute(v4ClusterSubnet, nodeLogicalRouterIPv4[0]),
+
 					&nbdb.LogicalRouterPolicy{
 						Priority:    ovntypes.DefaultNoRereoutePriority,
 						Match:       fmt.Sprintf("ip4.src == %s && ip4.dst == %s", v4ClusterSubnet, v4ClusterSubnet),
@@ -1672,7 +1651,6 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						UUID: ovntypes.OVNClusterRouter + "-UUID",
 						Policies: []string{"default-no-reroute-UUID", "no-reroute-service-UUID",
 							"default-no-reroute-node-UUID", "default-no-reroute-reply-traffic"},
-						StaticRoutes: []string{"reroute-static-route-UUID"},
 					},
 					&nbdb.LogicalRouterPort{
 						UUID:     ovntypes.GWRouterToJoinSwitchPrefix + ovntypes.GWRouterPrefix + node1.Name + "-UUID",
@@ -1706,7 +1684,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					egressNodeIPsASv4,
 
 					// UDN
-					getReRouteStaticRouteForController(v4Net1, nodeUDNLogicalRouterIPv4[0], netInfo.GetNetworkName()),
+
 					getNoReRoutePolicyForUDNEnabledSvc(false, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName, egressIPServedPodsASUDNv4.Name, egressSVCServedPodsASv4.Name, udnEnabledSvcV4.Name),
 					&nbdb.LogicalRouterPolicy{
 						Priority:    ovntypes.DefaultNoRereoutePriority,
@@ -1784,7 +1762,6 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 							fmt.Sprintf("%s-no-reroute-reply-traffic", netInfo.GetNetworkName()),
 						},
 						StaticRoutes: []string{
-							fmt.Sprintf("%s-reroute-static-route-UUID", netInfo.GetNetworkName()),
 							fmt.Sprintf("static-route-%s-%s-UUID", v4Node2Net1, v4Node2Tsp),
 							fmt.Sprintf("static-route-%s-%s-UUID", node2UDNLogicalRouterIPv4[0], v4Node2Tsp),
 						},
@@ -1891,7 +1868,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					udnEnabledSvcV4,
 				}
 				ginkgo.By("ensure expected equals actual")
-				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveDataIgnoringUUIDs(expectedDatabaseState))
+				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveDataIgnoringUUIDs(withDefaultEgressExemptions(expectedDatabaseState)))
 				return nil
 			}
 			err := app.Run([]string{app.Name})
@@ -2080,7 +2057,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				err = fakeOvn.networkManager.Start()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				defer fakeOvn.networkManager.Stop()
-				err = fakeOvn.eIPController.ensureRouterPoliciesForNetwork(netInfo, &node1)
+				err = fakeOvn.eIPController.ensureRouterPoliciesForNetwork(netInfo)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.eIPController.ensureSwitchPoliciesForNode(netInfo, node1Name)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -2121,7 +2098,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				node1LRP := "k8s-node1"
 				expectedDatabaseStateTwoEgressNodes := []libovsdbtest.TestData{
 					// CDN
-					getReRouteStaticRoute(v4ClusterSubnet, nodeLogicalRouterIPv4[0]),
+
 					getReRoutePolicy(podV4IP, "4", "reroute-UUID", []string{nodeLogicalRouterIPv4[0], v4Node2Tsp},
 						getEgressIPLRPReRouteDbIDs(eIP.Name, egressPodCDN.Namespace, egressPodCDN.Name, IPFamilyValueV4, ovntypes.DefaultNetworkName, ovntypes.DefaultNetworkControllerName).GetExternalIDs()),
 					&nbdb.NAT{
@@ -2160,7 +2137,6 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						UUID: ovntypes.OVNClusterRouter + "-UUID",
 						Policies: []string{"default-no-reroute-UUID", "no-reroute-service-UUID",
 							"default-no-reroute-node-UUID", "default-no-reroute-reply-traffic", "reroute-UUID"},
-						StaticRoutes: []string{"reroute-static-route-UUID"},
 					},
 					&nbdb.LogicalRouterPort{
 						UUID:     ovntypes.GWRouterToJoinSwitchPrefix + ovntypes.GWRouterPrefix + node1.Name + "-UUID",
@@ -2194,7 +2170,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					egressNodeIPsASv4,
 
 					// UDN
-					getReRouteStaticRouteForController(v4Net1, nodeUDNLogicalRouterIPv4[0], netInfo.GetNetworkName()),
+
 					getReRoutePolicyForController(egressIPName, eipNamespace2, podName2, v4Pod1IPNode1Net1, eIP1Mark, IPFamilyValueV4, []string{nodeLogicalRouterIPv4[0], v4Node2Tsp}, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName),
 					getGWPktMarkLRPForController(eIP1Mark, egressIPName, eipNamespace2, podName2, v4Pod1IPNode1Net1, IPFamilyValueV4, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName),
 					getNoReRoutePolicyForUDNEnabledSvc(false, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName, egressIPServedPodsASUDNv4.Name, egressSVCServedPodsASv4.Name, udnEnabledSvcV4.Name),
@@ -2233,7 +2209,6 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						Policies: []string{"udn-default-no-reroute-node-UUID", "udn-default-no-reroute-UUID", "udn-no-reroute-service-UUID", "udn-enabled-svc-no-reroute-UUID",
 							fmt.Sprintf("%s-no-reroute-reply-traffic", netInfo.GetNetworkName()),
 							getReRoutePolicyUUID(eipNamespace2, podName2, IPFamilyValueV4, netInfo.GetNetworkName())},
-						StaticRoutes: []string{fmt.Sprintf("%s-reroute-static-route-UUID", netInfo.GetNetworkName())},
 					},
 					&nbdb.LogicalRouter{
 						UUID:        netInfo.GetNetworkScopedGWRouterName(node1.Name) + "-UUID",
@@ -2260,7 +2235,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					udnEnabledSvcV4,
 				}
 				ginkgo.By("ensure expected equals actual")
-				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveDataIgnoringUUIDs(expectedDatabaseStateTwoEgressNodes))
+				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveDataIgnoringUUIDs(withDefaultEgressExemptions(expectedDatabaseStateTwoEgressNodes)))
 				return nil
 			}
 			err := app.Run([]string{app.Name})
@@ -2453,7 +2428,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				err = fakeOvn.networkManager.Start()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				defer fakeOvn.networkManager.Stop()
-				err = fakeOvn.eIPController.ensureRouterPoliciesForNetwork(netInfo, &node1)
+				err = fakeOvn.eIPController.ensureRouterPoliciesForNetwork(netInfo)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.eIPController.ensureSwitchPoliciesForNode(netInfo, node1Name)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -2478,7 +2453,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				node1LRP := "k8s-node1"
 				expectedDatabaseStateTwoEgressNodes := []libovsdbtest.TestData{
 					// CDN
-					getReRouteStaticRoute(v4ClusterSubnet, nodeLogicalRouterIPv4[0]),
+
 					getReRoutePolicy(podV4IP, "4", "reroute-UUID", []string{nodeLogicalRouterIPv4[0], v4Node2Tsp},
 						getEgressIPLRPReRouteDbIDs(eIP.Name, egressPodCDN.Namespace, egressPodCDN.Name, IPFamilyValueV4, ovntypes.DefaultNetworkName, ovntypes.DefaultNetworkControllerName).GetExternalIDs()),
 					&nbdb.NAT{
@@ -2517,7 +2492,6 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						UUID: ovntypes.OVNClusterRouter + "-UUID",
 						Policies: []string{"default-no-reroute-UUID", "no-reroute-service-UUID",
 							"default-no-reroute-node-UUID", "default-no-reroute-reply-traffic", "reroute-UUID"},
-						StaticRoutes: []string{"reroute-static-route-UUID"},
 					},
 					&nbdb.LogicalRouterPort{
 						UUID:     ovntypes.GWRouterToJoinSwitchPrefix + ovntypes.GWRouterPrefix + node1.Name + "-UUID",
@@ -2551,7 +2525,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					egressNodeIPsASv4,
 
 					// UDN
-					getReRouteStaticRouteForController(v4Net1, nodeUDNLogicalRouterIPv4[0], netInfo.GetNetworkName()),
+
 					getReRoutePolicyForController(egressIPName, eipNamespace2, podName2, v4Pod1IPNode1Net1, eIP1Mark, IPFamilyValueV4, []string{nodeLogicalRouterIPv4[0], v4Node2Tsp}, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName),
 					getGWPktMarkLRPForController(eIP1Mark, egressIPName, eipNamespace2, podName2, v4Pod1IPNode1Net1, IPFamilyValueV4, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName),
 					getNoReRoutePolicyForUDNEnabledSvc(false, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName, egressIPServedPodsASUDNv4.Name, egressSVCServedPodsASv4.Name, udnEnabledSvcV4.Name),
@@ -2590,7 +2564,6 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						Policies: []string{"udn-default-no-reroute-node-UUID", "udn-default-no-reroute-UUID", "udn-no-reroute-service-UUID", "udn-enabled-svc-no-reroute-UUID",
 							fmt.Sprintf("%s-no-reroute-reply-traffic", netInfo.GetNetworkName()),
 							getReRoutePolicyUUID(eipNamespace2, podName2, IPFamilyValueV4, netInfo.GetNetworkName())},
-						StaticRoutes: []string{fmt.Sprintf("%s-reroute-static-route-UUID", netInfo.GetNetworkName())},
 					},
 					&nbdb.LogicalRouter{
 						UUID:        netInfo.GetNetworkScopedGWRouterName(node1.Name) + "-UUID",
@@ -2617,7 +2590,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					udnEnabledSvcV4,
 				}
 				ginkgo.By("ensure expected equals actual")
-				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseStateTwoEgressNodes))
+				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(withDefaultEgressExemptions(expectedDatabaseStateTwoEgressNodes)))
 				return nil
 			}
 			err := app.Run([]string{app.Name})
@@ -2865,7 +2838,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				node1LRP := "k8s-node1"
 				expectedDatabaseStateTwoEgressNodes := []libovsdbtest.TestData{
 					// CDN
-					getReRouteStaticRoute(v4ClusterSubnet, nodeLogicalRouterIPv4[0]),
+
 					getReRoutePolicy(podV4IP, "4", "reroute-UUID", []string{nodeLogicalRouterIPv4[0], v4Node2Tsp},
 						getEgressIPLRPReRouteDbIDs(eIP.Name, egressPodCDNLocal.Namespace, egressPodCDNLocal.Name, IPFamilyValueV4, ovntypes.DefaultNetworkName, ovntypes.DefaultNetworkControllerName).GetExternalIDs()),
 					&nbdb.LogicalRouterPolicy{
@@ -2893,7 +2866,6 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						UUID: ovntypes.OVNClusterRouter + "-UUID",
 						Policies: []string{"default-no-reroute-UUID", "no-reroute-service-UUID",
 							"default-no-reroute-node-UUID", "default-no-reroute-reply-traffic", "reroute-UUID"},
-						StaticRoutes: []string{"reroute-static-route-UUID"},
 					},
 					&nbdb.LogicalRouterPort{
 						UUID:     ovntypes.GWRouterToJoinSwitchPrefix + ovntypes.GWRouterPrefix + node1.Name + "-UUID",
@@ -2949,7 +2921,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					egressNodeIPsASv4,
 
 					// UDN
-					getReRouteStaticRouteForController(v4Net1, nodeUDNLogicalRouterIPv4[0], netInfo.GetNetworkName()),
+
 					getReRoutePolicyForController(egressIPName, eipNamespace2, podName2, v4Pod1IPNode1Net1, eIP1Mark, IPFamilyValueV4, []string{nodeLogicalRouterIPv4[0], v4Node2Tsp}, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName),
 					getGWPktMarkLRPForController(eIP1Mark, egressIPName, eipNamespace2, podName2, v4Pod1IPNode1Net1, IPFamilyValueV4, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName),
 					getGWPktMarkLRPForController(eIP1Mark, egressIPName, eipNamespace2, podName4, v4Pod2IPNode2Net1, IPFamilyValueV4, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName),
@@ -3030,7 +3002,6 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 							fmt.Sprintf("%s-no-reroute-reply-traffic", netInfo.GetNetworkName()),
 							getReRoutePolicyUUID(eipNamespace2, podName2, IPFamilyValueV4, netInfo.GetNetworkName())},
 						StaticRoutes: []string{
-							fmt.Sprintf("%s-reroute-static-route-UUID", netInfo.GetNetworkName()),
 							fmt.Sprintf("static-route-%s-%s-UUID", v4Node2Net1, v4Node2Tsp),
 							fmt.Sprintf("static-route-%s-%s-UUID", node2UDNLogicalRouterIPv4[0], v4Node2Tsp),
 						},
@@ -3140,7 +3111,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					udnEnabledSvcV4,
 				}
 				ginkgo.By("ensure expected equals actual")
-				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseStateTwoEgressNodes))
+				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(withDefaultEgressExemptions(expectedDatabaseStateTwoEgressNodes)))
 				return nil
 			}
 			err := app.Run([]string{app.Name})
@@ -3172,15 +3143,6 @@ func getNoReRouteReplyTrafficPolicyForController(network, controller string) *nb
 		Action:      nbdb.LogicalRouterPolicyActionAllow,
 		ExternalIDs: getEgressIPLRPNoReRouteDbIDs(ovntypes.DefaultNoRereoutePriority, ReplyTrafficNoReroute, IPFamilyValue, network, controller).GetExternalIDs(),
 		UUID:        fmt.Sprintf("%s-no-reroute-reply-traffic", network),
-	}
-}
-
-func getReRouteStaticRouteForController(clusterSubnet, nextHop, network string) *nbdb.LogicalRouterStaticRoute {
-	return &nbdb.LogicalRouterStaticRoute{
-		Nexthop:  nextHop,
-		Policy:   &nbdb.LogicalRouterStaticRoutePolicySrcIP,
-		IPPrefix: clusterSubnet,
-		UUID:     fmt.Sprintf("%s-reroute-static-route-UUID", network),
 	}
 }
 
