@@ -18,6 +18,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/sets"
 	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
@@ -638,12 +639,32 @@ func (c *networkController) setAdvertisements(network util.MutableNetInfo, curre
 			vrf = types.DefaultNetworkName
 		}
 
-		for _, node := range nodes {
+		// When PodNetwork is advertised with a non-empty nodeSelector
+		// (selecting a subset of gateway nodes for FRR), SNAT must be
+		// disabled on all nodes so that pods on non-gateway nodes
+		// preserve their IPs for external traffic. The nodeSelector
+		// controls FRRConfiguration generation, not SNAT behavior.
+		podNodes := nodes
+		if !nodeSelector.Empty() && advertisements.Has(ratypes.PodNetwork) {
+			allNodes, err := c.nodeLister.List(labels.Everything())
+			if err != nil {
+				return err
+			}
+			podNodes = allNodes
+		}
+
+		for _, node := range podNodes {
 			if !c.isNodeManaged(node) {
 				continue
 			}
 			if advertisements.Has(ratypes.PodNetwork) {
 				podAdvertisements[node.Name] = append(podAdvertisements[node.Name], vrf)
+			}
+		}
+
+		for _, node := range nodes {
+			if !c.isNodeManaged(node) {
+				continue
 			}
 			if advertisements.Has(ratypes.EgressIP) {
 				eipAdvertisements[node.Name] = append(eipAdvertisements[node.Name], vrf)
