@@ -613,9 +613,10 @@ type GatewayConfig struct {
 	VLANID uint `gcfg:"vlan-id"`
 	// NodeportEnable sets whether to provide Kubernetes NodePort service or not
 	NodeportEnable bool `gcfg:"nodeport"`
-	// RawNodePortAddresses is a comma-separated list of CIDRs and/or the keyword
-	// "primary" that restrict which local node IPs may receive NodePort traffic.
-	// When empty, NodePort traffic is accepted on all local node IPs.
+	// RawNodePortAddresses is a comma-separated list of CIDRs and/or keywords
+	// ("primary", "all") that restrict which local node IPs may receive NodePort
+	// traffic. When empty or set to "all", NodePort traffic is accepted on all
+	// local node IPs. The "localhost" keyword is not supported.
 	RawNodePortAddresses string `gcfg:"nodeport-addresses"`
 	// NodePortAddresses holds the parsed nodeport-addresses configuration.
 	NodePortAddresses *NodePortAddressConfig
@@ -1744,9 +1745,10 @@ var OVNGatewayFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name: "nodeport-addresses",
-		Usage: "Comma-separated CIDRs and/or the keyword \"primary\" that restrict " +
-			"which local node IPs may receive NodePort traffic. When unset, NodePort " +
-			"traffic is accepted on all local node IPs.",
+		Usage: "Comma-separated CIDRs and/or keywords \"primary\" and \"all\" that " +
+			"restrict which local node IPs may receive NodePort traffic. When unset " +
+			"or set to \"all\", NodePort traffic is accepted on all local node IPs. " +
+			"The \"localhost\" keyword is not supported.",
 		Destination: &cliConfig.Gateway.RawNodePortAddresses,
 	},
 	&cli.BoolFlag{

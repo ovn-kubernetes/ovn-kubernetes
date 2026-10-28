@@ -11,17 +11,24 @@ import (
 	utilnet "k8s.io/utils/net"
 )
 
-const nodePortAddressesPrimary = "primary"
+const (
+	nodePortAddressesPrimary   = "primary"
+	nodePortAddressesAll       = "all"
+	nodePortAddressesLocalhost = "localhost"
+)
 
 // NodePortAddressConfig restricts which local node IP addresses may receive
-// NodePort traffic. When unset, all local node IPs are allowed.
+// NodePort traffic. When unset or set to "all", all local node IPs are allowed.
 type NodePortAddressConfig struct {
 	cidrs      []*net.IPNet
 	usePrimary bool
+	matchAll   bool
 }
 
 // ParseNodePortAddresses parses the nodeport-addresses configuration value.
-// An empty string means NodePort traffic is accepted on all local node IPs.
+// An empty string or the keyword "all" means NodePort traffic is accepted on
+// all local node IPs. Supported keywords are "primary" and "all", which may be
+// mixed with CIDRs. The "localhost" keyword is not supported.
 func ParseNodePortAddresses(raw string) (*NodePortAddressConfig, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -34,15 +41,26 @@ func ParseNodePortAddresses(raw string) (*NodePortAddressConfig, error) {
 		if entry == "" {
 			continue
 		}
-		if entry == nodePortAddressesPrimary {
+		switch entry {
+		case nodePortAddressesPrimary:
 			cfg.usePrimary = true
 			continue
+		case nodePortAddressesAll:
+			cfg.matchAll = true
+			continue
+		case nodePortAddressesLocalhost:
+			return nil, fmt.Errorf("nodeport-addresses keyword %q is not supported; OVN-Kubernetes does not implement localhost NodePorts", entry)
 		}
 		_, cidr, err := utilnet.ParseCIDRSloppy(entry)
 		if err != nil {
 			return nil, fmt.Errorf("invalid nodeport-addresses entry %q: %w", entry, err)
 		}
 		cfg.cidrs = append(cfg.cidrs, cidr)
+	}
+
+	if cfg.matchAll {
+		// "all" accepts NodePort on every local IP, matching kube-proxy semantics.
+		return &NodePortAddressConfig{matchAll: true}, nil
 	}
 
 	if !cfg.usePrimary && len(cfg.cidrs) == 0 {
@@ -54,7 +72,7 @@ func ParseNodePortAddresses(raw string) (*NodePortAddressConfig, error) {
 // Restricted reports whether NodePort traffic should be limited to specific
 // local node IP addresses.
 func (c *NodePortAddressConfig) Restricted() bool {
-	if c == nil {
+	if c == nil || c.matchAll {
 		return false
 	}
 	return c.usePrimary || len(c.cidrs) > 0

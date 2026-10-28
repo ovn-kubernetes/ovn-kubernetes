@@ -80,6 +80,31 @@ var _ = ginkgo.Describe("NodePortAddressConfig", func() {
 		gomega.Expect(filtered).To(gomega.Equal(hosts), "filtered addresses should preserve the original host order")
 	})
 
+	ginkgo.It("treats all as unrestricted", func() {
+		cfg, err := ParseNodePortAddresses("all")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "all selector should parse successfully")
+		gomega.Expect(cfg.Restricted()).To(gomega.BeFalse(), "all should not restrict NodePort addresses")
+
+		hosts := []net.IP{net.ParseIP("10.0.0.5"), net.ParseIP("192.168.1.5")}
+		gomega.Expect(cfg.FilterHostAddresses(hosts, nil)).To(gomega.Equal(hosts), "all should return all host addresses")
+	})
+
+	ginkgo.It("treats all mixed with other selectors as unrestricted", func() {
+		cfg, err := ParseNodePortAddresses("all,primary,10.0.0.0/8")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "all mixed with other selectors should parse successfully")
+		gomega.Expect(cfg.Restricted()).To(gomega.BeFalse(), "all should override other selectors")
+
+		hosts := []net.IP{net.ParseIP("10.0.0.5"), net.ParseIP("192.168.1.5")}
+		gomega.Expect(cfg.FilterHostAddresses(hosts, nil)).To(gomega.Equal(hosts), "all should return all host addresses even when mixed")
+	})
+
+	ginkgo.It("rejects localhost keyword", func() {
+		_, err := ParseNodePortAddresses("localhost")
+		gomega.Expect(err).To(gomega.HaveOccurred(), "localhost keyword should be rejected")
+		gomega.Expect(err.Error()).To(gomega.ContainSubstring("localhost"), "error should mention localhost")
+		gomega.Expect(err.Error()).To(gomega.ContainSubstring("not supported"), "error should explain localhost is unsupported")
+	})
+
 	ginkgo.It("rejects invalid CIDR values", func() {
 		_, err := ParseNodePortAddresses("not-a-cidr")
 		gomega.Expect(err).To(gomega.HaveOccurred(), "invalid CIDR values should be rejected")
