@@ -6,6 +6,7 @@ package e2e
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -3453,7 +3454,8 @@ func assertNADOwnedByUserDefinedNetwork(dynamicClient dynamic.Interface, nads na
 
 // waitForUDNObjectDeleted polls until the namespace-scoped UserDefinedNetwork is no longer present.
 func waitForUDNObjectDeleted(client dynamic.Interface, namespace, name string) error {
-	if err := wait.PollImmediate(1*time.Second, 30*time.Second, func() (bool, error) {
+	var lastGetErr error
+	err := wait.PollImmediate(1*time.Second, 30*time.Second, func() (bool, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_, err := client.Resource(udnGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
@@ -3461,13 +3463,22 @@ func waitForUDNObjectDeleted(client dynamic.Interface, namespace, name string) e
 			return true, nil
 		}
 		if err != nil {
-			return false, fmt.Errorf("get UDN %s/%s while waiting for deletion: %w", namespace, name, err)
+			lastGetErr = fmt.Errorf("get UDN %s/%s while waiting for deletion: %w", namespace, name, err)
+			return false, nil
 		}
+		lastGetErr = nil
 		return false, nil
-	}); err != nil {
-		return fmt.Errorf("wait for UDN %s/%s deletion: %w", namespace, name, err)
+	})
+	if err == nil {
+		return nil
 	}
-	return nil
+	if errors.Is(err, wait.ErrWaitTimeout) {
+		if lastGetErr != nil {
+			return fmt.Errorf("wait for UDN %s/%s deletion: %w", namespace, name, lastGetErr)
+		}
+		return fmt.Errorf("wait for UDN %s/%s deletion: object still exists after timeout", namespace, name)
+	}
+	return fmt.Errorf("wait for UDN %s/%s deletion: %w", namespace, name, err)
 }
 
 // userDefinedNetworkReadyFunc returns a function that checks for the NetworkCreated condition in the provided udn
