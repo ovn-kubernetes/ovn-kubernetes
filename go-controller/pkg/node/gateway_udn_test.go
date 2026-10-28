@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/cache"
@@ -457,7 +459,12 @@ func newUplinkGatewayReconcileHarness(
 		&netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "breth0", Index: 1}}, nil,
 	).Once()
 
-	uplinkClient := uplinkfake.NewSimpleClientset(state)
+	uplinkClient := uplinkfake.NewSimpleClientset()
+	if state != nil {
+		if _, err := uplinkClient.K8sV1alpha1().UplinkStates().Create(context.Background(), state, metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	informerFactory := uplinkinformerfactory.NewSharedInformerFactory(uplinkClient, 0)
 	uplinkStateInformer := informerFactory.K8s().V1alpha1().UplinkStates()
 	_ = uplinkStateInformer.Informer()
@@ -508,6 +515,16 @@ func expectMissingGatewayVRF(
 	netlinkOps.On("IsLinkNotFoundError", notFoundErr).Return(true).Once()
 }
 
+type countingGatewayStateLister struct {
+	uplinklisters.UplinkStateLister
+	reads atomic.Int32
+}
+
+func (l *countingGatewayStateLister) Get(name string) (*uplinkv1alpha1.UplinkState, error) {
+	l.reads.Add(1)
+	return l.UplinkStateLister.Get(name)
+}
+
 func TestUserDefinedNetworkGatewayReconcilesUplinkConfiguration(t *testing.T) {
 	if err := config.PrepareTestConfig(); err != nil {
 		t.Fatalf("failed to prepare test config: %v", err)
@@ -520,6 +537,57 @@ func TestUserDefinedNetworkGatewayReconcilesUplinkConfiguration(t *testing.T) {
 	config.OVNKubernetesFeature.EnableMultiNetwork = true
 	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 	config.OVNKubernetesFeature.EnableUplink = true
+
+	t.Run("startup waits for creation and discovery events without retries", func(t *testing.T) {
+		g := NewWithT(t)
+		udng, _, _ := newUplinkGatewayReconcileHarness(t, nil)
+		lister := &countingGatewayStateLister{UplinkStateLister: udng.uplinkStateLister}
+		udng.uplinkStateLister = lister
+		g.Expect(udng.Start()).To(Succeed())
+		g.Consistently(func() int32 { return lister.reads.Load() }, 150*time.Millisecond, 10*time.Millisecond).Should(Equal(int32(1)))
+		// Advertisement events must also wait for initial gateway programming.
+		g.Expect(udng.reconcileGateway(udng.GetNetworkName())).To(Succeed())
+		state := resolvedGatewayUplinkState("uplink1", "node-a")
+		state.UID = "pending-state"
+		state.Status.Conditions[0].Status = metav1.ConditionFalse
+		client := udng.uplinkStateGatewayStatusController.uplinkClient.K8sV1alpha1().UplinkStates()
+		created, err := client.Create(context.Background(), state, metav1.CreateOptions{})
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Eventually(func() int32 { return lister.reads.Load() }, time.Second, 10*time.Millisecond).Should(Equal(int32(2)))
+		status := udng.uplinkStateGatewayStatusController
+		g.Eventually(func() bool {
+			status.mutex.Lock()
+			defer status.mutex.Unlock()
+			observed := status.uplinks["uplink1"]
+			return observed != nil && observed.networks[udng.GetNetworkName()] != nil &&
+				observed.networks[udng.GetNetworkName()].phase == uplinkGatewayNetworkFailed
+		}, time.Second, 10*time.Millisecond).Should(BeTrue())
+		g.Consistently(func() int32 { return lister.reads.Load() }, 150*time.Millisecond, 10*time.Millisecond).Should(Equal(int32(2)))
+		created.Status.Conditions[0].Message = "discovery changed"
+		_, err = client.Update(context.Background(), created, metav1.UpdateOptions{})
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Eventually(func() int32 { return lister.reads.Load() }, time.Second, 10*time.Millisecond).Should(Equal(int32(3)))
+		g.Consistently(func() int32 { return lister.reads.Load() }, 150*time.Millisecond, 10*time.Millisecond).Should(Equal(int32(3)))
+		g.Expect(client.Delete(context.Background(), created.Name, metav1.DeleteOptions{})).To(Succeed())
+		g.Eventually(func() int32 { return lister.reads.Load() }, time.Second, 10*time.Millisecond).Should(Equal(int32(4)))
+		g.Consistently(func() int32 { return lister.reads.Load() }, 150*time.Millisecond, 10*time.Millisecond).Should(Equal(int32(4)))
+		_, err = client.Create(context.Background(), state, metav1.CreateOptions{})
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Eventually(func() int32 { return lister.reads.Load() }, time.Second, 10*time.Millisecond).Should(Equal(int32(5)))
+		g.Consistently(func() int32 { return lister.reads.Load() }, 150*time.Millisecond, 10*time.Millisecond).Should(Equal(int32(5)))
+	})
+
+	t.Run("missing state cleanup failure remains retryable", func(t *testing.T) {
+		udng, netlinkOps, _ := newUplinkGatewayReconcileHarness(t, nil)
+		udng.uplinkGatewayCleanupRequired = true
+		cleanupErr := errors.New("cleanup failed")
+		netlinkOps.On("LinkByName", util.GetNetworkVRFName(udng.NetInfo)).Return(nil, cleanupErr).Once()
+		netlinkOps.On("IsLinkNotFoundError", cleanupErr).Return(false).Once()
+		err := udng.reconcileUplinkState(uplinkutil.StateName("uplink1", "node-a"))
+		if err == nil || !strings.Contains(err.Error(), cleanupErr.Error()) {
+			t.Fatalf("expected retryable cleanup error, got %v", err)
+		}
+	})
 
 	t.Run("unresolved state unconfigures existing programming", func(t *testing.T) {
 		state := resolvedGatewayUplinkState("uplink1", "node-a")
@@ -552,13 +620,16 @@ func TestUserDefinedNetworkGatewayReconcilesUplinkConfiguration(t *testing.T) {
 		}
 	})
 
-	t.Run("unconfiguration failure retains cleanup ownership", func(t *testing.T) {
-		state := resolvedGatewayUplinkState("uplink1", "node-a")
+	t.Run("failed withdrawal retries cleanup when discovery recovers", func(t *testing.T) {
+		g := NewWithT(t)
+		resolved := resolvedGatewayUplinkState("uplink1", "node-a")
+		resolved.UID = "old-uid"
+		state := resolved.DeepCopy()
 		state.Status.Conditions[0].Status = metav1.ConditionFalse
-		udnGateway, netlinkOps, _ := newUplinkGatewayReconcileHarness(t, state)
-		current := uplinkGatewayFingerprint{bridgeName: "old-bridge"}
+		udnGateway, netlinkOps, nodeLister := newUplinkGatewayReconcileHarness(t, state)
+		current := uplinkGatewayFingerprintFromState(resolved)
 		udnGateway.uplinkGatewayCleanupRequired = true
-		udnGateway.uplinkStateUID = "old-uid"
+		udnGateway.uplinkStateUID = resolved.UID
 		udnGateway.uplinkFingerprint = current
 		withdrawErr := errors.New("failed to remove old programming")
 		netlinkOps.On("LinkByName", util.GetNetworkVRFName(udnGateway.NetInfo)).
@@ -574,9 +645,27 @@ func TestUserDefinedNetworkGatewayReconcilesUplinkConfiguration(t *testing.T) {
 		if !udnGateway.uplinkGatewayCleanupRequired || udnGateway.uplinkFingerprint != current {
 			t.Fatal("failed withdrawal released ownership of old programming")
 		}
-		if udnGateway.uplinkStateUID != "old-uid" {
+		if udnGateway.uplinkStateUID != resolved.UID {
 			t.Fatal("failed withdrawal released the old UplinkState identity")
 		}
+		g.Expect(udnGateway.reconcileGateway(udnGateway.GetNetworkName())).To(Succeed())
+
+		client := udnGateway.uplinkStateGatewayStatusController.uplinkClient.K8sV1alpha1().UplinkStates()
+		_, err = client.Update(context.Background(), resolved, metav1.UpdateOptions{})
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Eventually(func() (bool, error) {
+			cached, err := udnGateway.uplinkStateLister.Get(resolved.Name)
+			if err != nil {
+				return false, err
+			}
+			return meta.IsStatusConditionTrue(cached.Status.Conditions, uplinkv1alpha1.UplinkStateConditionResolved), nil
+		}, time.Second, 10*time.Millisecond).Should(BeTrue())
+
+		expectMissingGatewayVRF(netlinkOps, udnGateway)
+		addErr := errors.New("management port lookup failed")
+		nodeLister.On("Get", "node-a").Return(nil, addErr).Once()
+		_, _, err = udnGateway.reconcileUplinkConfiguration()
+		g.Expect(err).To(MatchError(ContainSubstring(addErr.Error())))
 	})
 
 	t.Run("unchanged configuration preserves programming", func(t *testing.T) {
@@ -648,6 +737,9 @@ func TestUserDefinedNetworkGatewayReconcilesUplinkConfiguration(t *testing.T) {
 			t.Fatalf("failed replacement retained UID: %s",
 				udnGateway.uplinkStateUID)
 		}
+		if err := udnGateway.reconcileGateway(udnGateway.GetNetworkName()); err != nil {
+			t.Fatalf("advertisement reconciliation did not wait for replacement to succeed: %v", err)
+		}
 	})
 
 	t.Run("resolved state starts initial programming", func(t *testing.T) {
@@ -670,6 +762,9 @@ func TestUserDefinedNetworkGatewayReconcilesUplinkConfiguration(t *testing.T) {
 		}
 		if observedFingerprint != uplinkGatewayFingerprintFromState(state) {
 			t.Fatal("failed programming did not produce a status fingerprint")
+		}
+		if err := udnGateway.reconcileGateway(udnGateway.GetNetworkName()); err != nil {
+			t.Fatalf("advertisement reconciliation did not wait for initial programming to succeed: %v", err)
 		}
 	})
 }
