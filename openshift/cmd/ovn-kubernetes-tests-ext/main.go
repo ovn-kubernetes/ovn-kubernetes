@@ -49,6 +49,7 @@ const (
 	featureLabelEVPN                = "Feature:EVPN"
 	featureLabelNetworkSegmentation = "Feature:NetworkSegmentation"
 	featureLabelEgressIP            = "Feature:EgressIP"
+	featureLabelMACSecurity         = "Feature:MACSecurity"
 	// Test constants used for test categorization and filtering
 	EIPSecondaryNetworkTestPrefix = "secondary-host-eip"
 )
@@ -126,6 +127,12 @@ func main() {
 	ovnTestsExtension.AddSuite(extension.Suite{
 		Name:       "ovn-kubernetes/conformance/parallel",
 		Qualifiers: []string{"name.contains('[Suite:ovn-kubernetes/conformance/parallel')"},
+	})
+
+	// The dedicated virtualization OTE lane selects this suite directly.
+	ovnTestsExtension.AddSuite(extension.Suite{
+		Name:       "ovn-kubernetes/conformance/serial/virtualization",
+		Qualifiers: []string{"name.contains('[Suite:ovn-kubernetes/conformance/serial/virtualization')"},
 	})
 
 	// Initialize cluster infra if kubeconfig is available. When no kubeconfig is present

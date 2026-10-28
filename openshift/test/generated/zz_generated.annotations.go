@@ -1212,73 +1212,73 @@ var AppendedAnnotations = map[string]string{
 
 	"Hybrid-overlay subnet claims rejects a remote node claiming an arbitrary subnet": "[Suite:ovn-kubernetes/conformance/parallel]",
 
-	"Kubevirt Virtual Machines IP family validation for layer2 primary networks should fail when dual-stack network requests only IPv4": "[Disabled:Unimplemented]",
+	"Kubevirt Virtual Machines IP family validation for layer2 primary networks should fail when dual-stack network requests only IPv4": "[Disabled:Unimplemented][Suite:ovn-kubernetes/conformance/serial/virtualization]",
 
-	"Kubevirt Virtual Machines IP family validation for layer2 primary networks should fail when dual-stack network requests only IPv6": "[Disabled:Unimplemented]",
+	"Kubevirt Virtual Machines IP family validation for layer2 primary networks should fail when dual-stack network requests only IPv6": "[Disabled:Unimplemented][Suite:ovn-kubernetes/conformance/serial/virtualization]",
 
-	"Kubevirt Virtual Machines IP family validation for layer2 primary networks should fail when single-stack IPv4 network requests multiple IPv4 IPs": "[Disabled:Unimplemented]",
+	"Kubevirt Virtual Machines IP family validation for layer2 primary networks should fail when single-stack IPv4 network requests multiple IPv4 IPs": "[Disabled:Unimplemented][Suite:ovn-kubernetes/conformance/serial/virtualization]",
 
-	"Kubevirt Virtual Machines IP family validation for layer2 primary networks should fail when single-stack IPv6 network requests multiple IPv6 IPs": "[Disabled:Unimplemented]",
+	"Kubevirt Virtual Machines IP family validation for layer2 primary networks should fail when single-stack IPv6 network requests multiple IPv6 IPs": "[Disabled:Unimplemented][Suite:ovn-kubernetes/conformance/serial/virtualization]",
 
-	"Kubevirt Virtual Machines IP family validation for layer2 primary networks should succeed when dual-stack network requests correct IPs (1 IPv4 + 1 IPv6)": "[Disabled:Unimplemented]",
+	"Kubevirt Virtual Machines IP family validation for layer2 primary networks should succeed when dual-stack network requests correct IPs (1 IPv4 + 1 IPv6)": "[Disabled:Unimplemented][Suite:ovn-kubernetes/conformance/serial/virtualization]",
 
-	"Kubevirt Virtual Machines duplicate addresses validation should fail when creating second VM with duplicate static IP": "[Disabled:Unimplemented]",
+	"Kubevirt Virtual Machines duplicate addresses validation should fail when creating second VM with duplicate static IP": "[Disabled:Unimplemented][Suite:ovn-kubernetes/conformance/serial/virtualization]",
 
-	"Kubevirt Virtual Machines duplicate addresses validation should fail when creating second VM with duplicate user requested MAC": "[Disabled:Unimplemented]",
+	"Kubevirt Virtual Machines duplicate addresses validation should fail when creating second VM with duplicate user requested MAC": "[Disabled:Unimplemented][Suite:ovn-kubernetes/conformance/serial/virtualization]",
 
-	"Kubevirt Virtual Machines ipv4 subnet exhaustion should fail when subnet is exhausted": "[Disabled:Unimplemented]",
+	"Kubevirt Virtual Machines ipv4 subnet exhaustion should fail when subnet is exhausted": "[Disabled:Unimplemented][Suite:ovn-kubernetes/conformance/serial/virtualization]",
 
-	"Kubevirt Virtual Machines user-defined network port-security disabled, TCP connections with spoofed MAC should survive successful and failed live migration over localnet": "[Disabled:Unimplemented]",
+	"Kubevirt Virtual Machines user-defined network port-security disabled, TCP connections with spoofed MAC should survive successful and failed live migration over localnet": "[Disabled:Unimplemented][Suite:ovn-kubernetes/conformance/serial/virtualization]",
 
-	"Kubevirt Virtual Machines user-defined network port-security disabled, TCP connections with spoofed MAC should survive successful and failed live migration over secondary layer2": "[Disabled:Unimplemented]",
+	"Kubevirt Virtual Machines user-defined network port-security disabled, TCP connections with spoofed MAC should survive successful and failed live migration over secondary layer2": "[Suite:ovn-kubernetes/conformance/serial/virtualization]",
 
-	"Kubevirt Virtual Machines with default pod network when live migration with post-copy succeeds, should keep connectivity": "[Disabled:Unimplemented]",
+	"Kubevirt Virtual Machines with default pod network when live migration with post-copy succeeds, should keep connectivity": "[Disabled:Unimplemented][Suite:ovn-kubernetes/conformance/serial/virtualization]",
 
-	"Kubevirt Virtual Machines with default pod network when live migration with pre-copy fails, should keep connectivity": "[Disabled:Unimplemented]",
+	"Kubevirt Virtual Machines with default pod network when live migration with pre-copy fails, should keep connectivity": "[Disabled:Unimplemented][Suite:ovn-kubernetes/conformance/serial/virtualization]",
 
-	"Kubevirt Virtual Machines with default pod network when live migration with pre-copy succeeds, should keep connectivity": "[Disabled:Unimplemented]",
+	"Kubevirt Virtual Machines with default pod network when live migration with pre-copy succeeds, should keep connectivity": "[Disabled:Unimplemented][Suite:ovn-kubernetes/conformance/serial/virtualization]",
 
-	"Kubevirt Virtual Machines with kubevirt VM using layer2 UDPN should configure IPv4 and IPv6 using DHCP and NDP": "[Disabled:Unimplemented]",
+	"Kubevirt Virtual Machines with kubevirt VM using layer2 UDPN should configure IPv4 and IPv6 using DHCP and NDP": "[Disabled:Unimplemented][Suite:ovn-kubernetes/conformance/serial/virtualization]",
 
-	"Kubevirt Virtual Machines with user defined networks and persistent ips configured should keep ip after live migration failed of VirtualMachine with interface binding for UDN with Primary/Layer2 ingress routed over evpn": "[Disabled:Unimplemented]",
+	"Kubevirt Virtual Machines with user defined networks and persistent ips configured should keep ip after live migration failed of VirtualMachine with interface binding for UDN with Primary/Layer2 ingress routed over evpn": "[Disabled:Unimplemented][Suite:ovn-kubernetes/conformance/serial/virtualization]",
 
-	"Kubevirt Virtual Machines with user defined networks and persistent ips configured should keep ip after live migration failed of VirtualMachineInstance with Secondary/Localnet ingress snat": "[Disabled:Unimplemented]",
+	"Kubevirt Virtual Machines with user defined networks and persistent ips configured should keep ip after live migration failed of VirtualMachineInstance with Secondary/Localnet ingress snat": "[Disabled:Unimplemented][Suite:ovn-kubernetes/conformance/serial/virtualization]",
 
-	"Kubevirt Virtual Machines with user defined networks and persistent ips configured should keep ip after live migration failed of VirtualMachineInstance with interface binding for UDN with Primary/Layer2 ingress snat": "[Disabled:Unimplemented]",
+	"Kubevirt Virtual Machines with user defined networks and persistent ips configured should keep ip after live migration failed of VirtualMachineInstance with interface binding for UDN with Primary/Layer2 ingress snat": "[Disabled:Unimplemented][Suite:ovn-kubernetes/conformance/serial/virtualization]",
 
-	"Kubevirt Virtual Machines with user defined networks and persistent ips configured should keep ip after live migration of VirtualMachine with Secondary/Layer2 ingress snat": "[Disabled:Unimplemented]",
+	"Kubevirt Virtual Machines with user defined networks and persistent ips configured should keep ip after live migration of VirtualMachine with Secondary/Layer2 ingress snat": "[Disabled:Unimplemented][Suite:ovn-kubernetes/conformance/serial/virtualization]",
 
-	"Kubevirt Virtual Machines with user defined networks and persistent ips configured should keep ip after live migration of VirtualMachine with Secondary/Localnet ingress snat": "[Disabled:Unimplemented]",
+	"Kubevirt Virtual Machines with user defined networks and persistent ips configured should keep ip after live migration of VirtualMachine with Secondary/Localnet ingress snat": "[Disabled:Unimplemented][Suite:ovn-kubernetes/conformance/serial/virtualization]",
 
-	"Kubevirt Virtual Machines with user defined networks and persistent ips configured should keep ip after live migration of VirtualMachine with interface binding for UDN and statics IPs and MAC with Primary/Layer2 ingress routed": "[Disabled:Unimplemented]",
+	"Kubevirt Virtual Machines with user defined networks and persistent ips configured should keep ip after live migration of VirtualMachine with interface binding for UDN and statics IPs and MAC with Primary/Layer2 ingress routed": "[Disabled:Unimplemented][Suite:ovn-kubernetes/conformance/serial/virtualization]",
 
-	"Kubevirt Virtual Machines with user defined networks and persistent ips configured should keep ip after live migration of VirtualMachine with interface binding for UDN and statics IPs and MAC with Primary/Layer2 ingress snat": "[Disabled:Unimplemented]",
+	"Kubevirt Virtual Machines with user defined networks and persistent ips configured should keep ip after live migration of VirtualMachine with interface binding for UDN and statics IPs and MAC with Primary/Layer2 ingress snat": "[Disabled:Unimplemented][Suite:ovn-kubernetes/conformance/serial/virtualization]",
 
-	"Kubevirt Virtual Machines with user defined networks and persistent ips configured should keep ip after live migration of VirtualMachine with interface binding for UDN with Primary/Layer2 ingress routed over evpn": "[Disabled:Unimplemented]",
+	"Kubevirt Virtual Machines with user defined networks and persistent ips configured should keep ip after live migration of VirtualMachine with interface binding for UDN with Primary/Layer2 ingress routed over evpn": "[Disabled:Unimplemented][Suite:ovn-kubernetes/conformance/serial/virtualization]",
 
-	"Kubevirt Virtual Machines with user defined networks and persistent ips configured should keep ip after live migration of VirtualMachine with interface binding for UDN with Primary/Layer2 ingress routed": "[Disabled:Unimplemented]",
+	"Kubevirt Virtual Machines with user defined networks and persistent ips configured should keep ip after live migration of VirtualMachine with interface binding for UDN with Primary/Layer2 ingress routed": "[Disabled:Unimplemented][Suite:ovn-kubernetes/conformance/serial/virtualization]",
 
-	"Kubevirt Virtual Machines with user defined networks and persistent ips configured should keep ip after live migration of VirtualMachine with interface binding for UDN with Primary/Layer2 ingress snat": "[Disabled:Unimplemented]",
+	"Kubevirt Virtual Machines with user defined networks and persistent ips configured should keep ip after live migration of VirtualMachine with interface binding for UDN with Primary/Layer2 ingress snat": "[Disabled:Unimplemented][Suite:ovn-kubernetes/conformance/serial/virtualization]",
 
-	"Kubevirt Virtual Machines with user defined networks and persistent ips configured should keep ip after live migration of VirtualMachineInstance with Secondary/Layer2 ingress snat": "[Disabled:Unimplemented]",
+	"Kubevirt Virtual Machines with user defined networks and persistent ips configured should keep ip after live migration of VirtualMachineInstance with Secondary/Layer2 ingress snat": "[Disabled:Unimplemented][Suite:ovn-kubernetes/conformance/serial/virtualization]",
 
-	"Kubevirt Virtual Machines with user defined networks and persistent ips configured should keep ip after live migration of VirtualMachineInstance with Secondary/Localnet ingress snat": "[Disabled:Unimplemented]",
+	"Kubevirt Virtual Machines with user defined networks and persistent ips configured should keep ip after live migration of VirtualMachineInstance with Secondary/Localnet ingress snat": "[Disabled:Unimplemented][Suite:ovn-kubernetes/conformance/serial/virtualization]",
 
-	"Kubevirt Virtual Machines with user defined networks and persistent ips configured should keep ip after live migration of VirtualMachineInstance with interface binding for UDN with Primary/Layer2 ingress snat": "[Disabled:Unimplemented]",
+	"Kubevirt Virtual Machines with user defined networks and persistent ips configured should keep ip after live migration of VirtualMachineInstance with interface binding for UDN with Primary/Layer2 ingress snat": "[Disabled:Unimplemented][Suite:ovn-kubernetes/conformance/serial/virtualization]",
 
-	"Kubevirt Virtual Machines with user defined networks and persistent ips configured should keep ip after restart of VirtualMachine with Secondary/Layer2 ingress snat": "[Disabled:Unimplemented]",
+	"Kubevirt Virtual Machines with user defined networks and persistent ips configured should keep ip after restart of VirtualMachine with Secondary/Layer2 ingress snat": "[Disabled:Unimplemented][Suite:ovn-kubernetes/conformance/serial/virtualization]",
 
-	"Kubevirt Virtual Machines with user defined networks and persistent ips configured should keep ip after restart of VirtualMachine with Secondary/Localnet ingress snat": "[Disabled:Unimplemented]",
+	"Kubevirt Virtual Machines with user defined networks and persistent ips configured should keep ip after restart of VirtualMachine with Secondary/Localnet ingress snat": "[Disabled:Unimplemented][Suite:ovn-kubernetes/conformance/serial/virtualization]",
 
-	"Kubevirt Virtual Machines with user defined networks and persistent ips configured should keep ip after restart of VirtualMachine with interface binding for UDN and statics IPs and MAC with Primary/Layer2 ingress snat": "[Disabled:Unimplemented]",
+	"Kubevirt Virtual Machines with user defined networks and persistent ips configured should keep ip after restart of VirtualMachine with interface binding for UDN and statics IPs and MAC with Primary/Layer2 ingress snat": "[Disabled:Unimplemented][Suite:ovn-kubernetes/conformance/serial/virtualization]",
 
-	"Kubevirt Virtual Machines with user defined networks and persistent ips configured should keep ip after restart of VirtualMachine with interface binding for UDN with Primary/Layer2 ingress snat": "[Disabled:Unimplemented]",
+	"Kubevirt Virtual Machines with user defined networks and persistent ips configured should keep ip after restart of VirtualMachine with interface binding for UDN with Primary/Layer2 ingress snat": "[Disabled:Unimplemented][Suite:ovn-kubernetes/conformance/serial/virtualization]",
 
-	"Kubevirt Virtual Machines with user defined networks with ipamless localnet topology should maintain tcp connection with minimal downtime after failed live migration": "[Disabled:Unimplemented]",
+	"Kubevirt Virtual Machines with user defined networks with ipamless localnet topology should maintain tcp connection with minimal downtime after failed live migration": "[Disabled:Unimplemented][Suite:ovn-kubernetes/conformance/serial/virtualization]",
 
-	"Kubevirt Virtual Machines with user defined networks with ipamless localnet topology should maintain tcp connection with minimal downtime after succeeded live migration": "[Disabled:Unimplemented]",
+	"Kubevirt Virtual Machines with user defined networks with ipamless localnet topology should maintain tcp connection with minimal downtime after succeeded live migration": "[Disabled:Unimplemented][Suite:ovn-kubernetes/conformance/serial/virtualization]",
 
-	"Kubevirt Virtual Machines with user defined networks with ipamless localnet topology should start multiple VMs with same hostname": "[Disabled:Unimplemented]",
+	"Kubevirt Virtual Machines with user defined networks with ipamless localnet topology should start multiple VMs with same hostname": "[Disabled:Unimplemented][Suite:ovn-kubernetes/conformance/serial/virtualization]",
 
 	"Load Balancer Service Tests with MetalLB Should ensure connectivity works on an external service when mtu changes in intermediate node": "[Disabled:Unimplemented]",
 
@@ -1748,17 +1748,17 @@ var AppendedAnnotations = map[string]string{
 
 	"Network Segmentation: Localnet using ClusterUserDefinedNetwork CR, pods in different namespaces, should communicate over localnet topology": "[Disabled:Unimplemented]",
 
-	"Network Segmentation: MAC security using ClusterUserDefinedNetwork, connectivity between client and server pods over localnet, when mac-security disabled, should succeed (MAC spoofed traffic is allowed)": "[Suite:ovn-kubernetes/conformance/parallel]",
+	"Network Segmentation: MAC security using ClusterUserDefinedNetwork, connectivity between client and server pods over localnet, when mac-security disabled, should succeed (MAC spoofed traffic is allowed)": "[Disabled:Unimplemented]",
 
-	"Network Segmentation: MAC security using ClusterUserDefinedNetwork, connectivity between client and server pods over localnet, when mac-security enabled, should fail": "[Suite:ovn-kubernetes/conformance/parallel]",
+	"Network Segmentation: MAC security using ClusterUserDefinedNetwork, connectivity between client and server pods over localnet, when mac-security enabled, should fail": "[Disabled:Unimplemented]",
 
-	"Network Segmentation: MAC security using ClusterUserDefinedNetwork, connectivity between client and server pods over secondary layer2, when mac-security disabled, should succeed (MAC spoofed traffic is allowed)": "[Suite:ovn-kubernetes/conformance/parallel]",
+	"Network Segmentation: MAC security using ClusterUserDefinedNetwork, connectivity between client and server pods over secondary layer2, when mac-security disabled, should succeed (MAC spoofed traffic is allowed)": "[Disabled:Unimplemented]",
 
-	"Network Segmentation: MAC security using ClusterUserDefinedNetwork, connectivity between client and server pods over secondary layer2, when mac-security enabled, should fail": "[Suite:ovn-kubernetes/conformance/parallel]",
+	"Network Segmentation: MAC security using ClusterUserDefinedNetwork, connectivity between client and server pods over secondary layer2, when mac-security enabled, should fail": "[Disabled:Unimplemented]",
 
-	"Network Segmentation: MAC security using UserDefinedNetwork, connectivity between client and server pods over secondary layer2, when mac-security disabled, should succeed (MAC spoofed traffic is allowed)": "[Suite:ovn-kubernetes/conformance/parallel]",
+	"Network Segmentation: MAC security using UserDefinedNetwork, connectivity between client and server pods over secondary layer2, when mac-security disabled, should succeed (MAC spoofed traffic is allowed)": "[Disabled:Unimplemented]",
 
-	"Network Segmentation: MAC security using UserDefinedNetwork, connectivity between client and server pods over secondary layer2, when mac-security enabled, should fail": "[Suite:ovn-kubernetes/conformance/parallel]",
+	"Network Segmentation: MAC security using UserDefinedNetwork, connectivity between client and server pods over secondary layer2, when mac-security enabled, should fail": "[Disabled:Unimplemented]",
 
 	"Network Segmentation: Network Policies on a user defined primary network ICMP should bypass default deny policy for UDNs when enabled in L2 dualstack primary UDN": "[Suite:ovn-kubernetes/conformance/parallel]",
 
