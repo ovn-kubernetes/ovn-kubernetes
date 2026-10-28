@@ -1536,6 +1536,27 @@ func GetUserDefinedNetworkPrefix(netName string) string {
 	return name + "_"
 }
 
+// GetNetworkScopedNameForNetwork scopes a name to the network identified by
+// netName, without requiring a NetInfo. It mirrors NetInfo.GetNetworkScopedName:
+// the default network is unscoped, user defined networks are prefixed with
+// GetUserDefinedNetworkPrefix(netName).
+func GetNetworkScopedNameForNetwork(netName, name string) string {
+	if netName == types.DefaultNetworkName {
+		return name
+	}
+	return GetUserDefinedNetworkPrefix(netName) + name
+}
+
+// GetNetworkScopedGWRouterExtPortName returns the external Gateway Router port
+// name (the "rtoe-" router-to-external-switch port) for the given network on the
+// given node, derived from the network name alone. It is equivalent to
+// types.GWRouterToExtSwitchPrefix + NetInfo.GetNetworkScopedGWRouterName(nodeName)
+// but does not require a NetInfo.
+func GetNetworkScopedGWRouterExtPortName(netName, nodeName string) string {
+	gwRouterName := GetGatewayRouterFromNode(GetNetworkScopedNameForNetwork(netName, nodeName))
+	return types.GWRouterToExtSwitchPrefix + gwRouterName
+}
+
 func NewNetInfo(netconf *ovncnitypes.NetConf) (NetInfo, error) {
 	return newNetInfo(netconf)
 }
@@ -1606,6 +1627,7 @@ func ParseNADInfo(nad *nettypes.NetworkAttachmentDefinition) (NetInfo, error) {
 	}
 	if nad.Annotations[types.OvnNetworkIDAnnotation] != "" {
 		annotated := nad.Annotations[types.OvnNetworkIDAnnotation]
+		// Only ovn-k8s cluster-manager writes network IDs, so malformed values are unexpected.
 		id, err = strconv.Atoi(annotated)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse annotated network ID: %w", err)
@@ -1613,8 +1635,9 @@ func ParseNADInfo(nad *nettypes.NetworkAttachmentDefinition) (NetInfo, error) {
 	}
 	n.SetNetworkID(id)
 
-	if nad.Annotations[types.OvnNetworkTunnelKeysAnnotation] != "" {
-		tunnelKeys, err := ParseTunnelKeysAnnotation(nad.Annotations[types.OvnNetworkTunnelKeysAnnotation])
+	if annotated := nad.Annotations[types.OvnNetworkTunnelKeysAnnotation]; annotated != "" {
+		// Only ovn-k8s cluster-manager writes tunnel keys, so malformed values are unexpected.
+		tunnelKeys, err := ParseTunnelKeysAnnotation(annotated)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse annotated tunnel keys: %w", err)
 		}

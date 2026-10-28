@@ -745,6 +745,10 @@ func (gw *GatewayManager) deleteStaleDRRoutes(gwConfig *GatewayConfig, staleSubn
 	return nil
 }
 
+// updateClusterRouterStaticRoutes reconciles the routes the cluster router
+// needs in order to send pod egress traffic to this node's gateway router, and
+// removes the ones left behind by the gateway mode the node is moving away
+// from.
 func (gw *GatewayManager) updateClusterRouterStaticRoutes(gwConfig *GatewayConfig, gwRouterIPs []net.IP) error {
 	// We need to add a route to the Gateway router's IP, on the
 	// cluster router, to ensure that the return traffic goes back
@@ -798,6 +802,17 @@ func (gw *GatewayManager) updateClusterRouterStaticRoutes(gwConfig *GatewayConfi
 		return nil
 	}
 
+	useDefaultEgressRoute := usesDefaultEgressRoute(gw.netInfo)
+
+	if useDefaultEgressRoute {
+		if err := gw.createDefaultEgressRoute(nextHops); err != nil {
+			return err
+		}
+	} else if err := gw.deleteDefaultEgressRoute(gw.containsJoinIP); err != nil {
+		// Covers switching to local gateway mode or to another transport.
+		return err
+	}
+
 	// Add source IP address based routes in distributed router
 	// for this gateway router.
 	for _, hostSubnet := range gwConfig.hostSubnets {
@@ -830,6 +845,19 @@ func (gw *GatewayManager) updateClusterRouterStaticRoutes(gwConfig *GatewayConfi
 			mgmtIfAddr := gw.netInfo.GetNodeManagementIP(hostSubnet)
 			gw.staticRouteCleanup([]net.IP{mgmtIfAddr.IP}, hostSubnet)
 
+			if useDefaultEgressRoute {
+				// The src-ip route for this node subnet is superseded by the
+				// default route created above. Remove any instance left behind
+				// by a previous version: being more specific, it keeps
+				// outranking dst-ip routes to remote node subnets.
+				if err := libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicate(
+					gw.nbClient, gw.clusterRouterName, p); err != nil {
+					return fmt.Errorf("error deleting superseded static route for %s in %s: %v",
+						lrsr.IPPrefix, gw.clusterRouterName, err)
+				}
+				continue
+			}
+
 			if err := libovsdbops.CreateOrReplaceLogicalRouterStaticRouteWithPredicate(
 				gw.nbClient,
 				gw.clusterRouterName,
@@ -855,6 +883,98 @@ func (gw *GatewayManager) updateClusterRouterStaticRoutes(gwConfig *GatewayConfi
 				return fmt.Errorf("error deleting static route %+v in GR %s: %v", lrsr, gw.clusterRouterName, err)
 			}
 		}
+	}
+	return nil
+}
+
+// usesDefaultEgressRoute reports whether pod egress on the network's cluster
+// router is expressed as a default route to this node's gateway router rather
+// than as a src-ip route per node subnet. It holds in shared gateway mode for
+// Layer3 networks whose east/west traffic goes through the interconnect
+// overlay, where a zone's cluster router only carries that zone's subnets, so a
+// single route covers every pod in the zone.
+//
+// The default route is preferred because OVN ranks src-ip against dst-ip routes
+// by comparing prefix lengths across the two fields. A node subnet src-ip route
+// therefore outranks the dst-ip route to a remote node subnet whenever the local
+// node subnet mask is longer than the remote one, and east/west traffic leaves
+// the zone through the gateway.
+//
+// Local gateway mode is excluded because there the src-ip route is what forces
+// pod egress through the management port, by outranking the less specific
+// cluster subnet src-ip routes that CreateDefaultRouteToExternal points at the
+// gateway router. A default route is too weak to win that comparison.
+func usesDefaultEgressRoute(netInfo util.NetInfo) bool {
+	if config.Gateway.Mode == config.GatewayModeLocal {
+		return false
+	}
+	if netInfo.TopologyType() != types.Layer3Topology {
+		return false
+	}
+	switch netInfo.Transport() {
+	case types.NetworkTransportEVPN, types.NetworkTransportNoOverlay:
+		return false
+	default:
+		return true
+	}
+}
+
+// defaultRoutePrefix returns the all-addresses prefix of nextHop's IP family.
+func defaultRoutePrefix(nextHop net.IP) string {
+	if utilnet.IsIPv6(nextHop) {
+		return "::/0"
+	}
+	return "0.0.0.0/0"
+}
+
+// createDefaultEgressRoute adds a default dst-ip route on the cluster router
+// pointing at this node's gateway router. It covers pod egress for every subnet
+// in the zone: the connected routes for local node subnets and the routes to
+// remote node subnets and remote gateway router IPs are all more specific, so
+// they keep winning longest-prefix-match.
+func (gw *GatewayManager) createDefaultEgressRoute(nextHops []net.IP) error {
+	for _, nextHop := range nextHops {
+		lrsr := nbdb.LogicalRouterStaticRoute{
+			IPPrefix: defaultRoutePrefix(nextHop),
+			Nexthop:  nextHop.String(),
+		}
+		if gw.netInfo.IsUserDefinedNetwork() {
+			lrsr.ExternalIDs = map[string]string{
+				types.NetworkExternalID:  gw.netInfo.GetNetworkName(),
+				types.TopologyExternalID: gw.netInfo.TopologyType(),
+			}
+		}
+		p := func(item *nbdb.LogicalRouterStaticRoute) bool {
+			return item.IPPrefix == lrsr.IPPrefix &&
+				libovsdbops.PolicyEqualPredicate(lrsr.Policy, item.Policy)
+		}
+		if err := libovsdbops.CreateOrReplaceLogicalRouterStaticRouteWithPredicate(gw.nbClient,
+			gw.clusterRouterName, &lrsr, p, &lrsr.Nexthop); err != nil {
+			return fmt.Errorf("error creating default egress route %+v in %s: %v",
+				lrsr, gw.clusterRouterName, err)
+		}
+	}
+	return nil
+}
+
+// deleteDefaultEgressRoute removes the default dst-ip routes on the cluster
+// router whose next hop satisfies matchNextHop. It drops the route belonging to
+// the gateway mode the node is moving away from, or the one left behind when a
+// network changes transport.
+func (gw *GatewayManager) deleteDefaultEgressRoute(matchNextHop func(net.IP) bool) error {
+	p := func(item *nbdb.LogicalRouterStaticRoute) bool {
+		if item.IPPrefix != "0.0.0.0/0" && item.IPPrefix != "::/0" {
+			return false
+		}
+		if item.Policy != nil && *item.Policy != nbdb.LogicalRouterStaticRoutePolicyDstIP {
+			return false
+		}
+		return matchNextHop(net.ParseIP(item.Nexthop))
+	}
+	if err := libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicate(gw.nbClient,
+		gw.clusterRouterName, p); err != nil {
+		return fmt.Errorf("error deleting default egress route in %s: %v",
+			gw.clusterRouterName, err)
 	}
 	return nil
 }

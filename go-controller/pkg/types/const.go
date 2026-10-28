@@ -359,6 +359,13 @@ const (
 	// Logical Switch or Router Port
 	MaxLogicalPortTunnelKey = 32767
 
+	// MinNodeID is 2 because ID 1 maps to the cluster router's join-switch IP.
+	MinNodeID = 2
+
+	// MaxNodeIDs is the highest node ID that can be allocated. Limited to the
+	// maximum number of nodes supported by k8s.
+	MaxNodeIDs = 5000
+
 	// InformerSyncTimeout is used when waiting for the initial informer cache sync
 	// (i.e. all existing objects should be listed by the informer).
 	// It allows ~5 list() retries with the default reflector exponential backoff config
@@ -375,7 +382,8 @@ const (
 	// GRMACBindingAgeThreshold is the lifetime in seconds of each MAC binding
 	// entry for the gateway routers. After this time, the entry is removed and
 	// may be refreshed with a new ARP request.
-	GRMACBindingAgeThreshold = "300"
+	GRMACBindingAgeThreshold    = "300"
+	GRMACBindingAgeThresholdInt = 300
 
 	// InvalidID signifies an invalid ID. Currently used for network and tunnel IDs.
 	InvalidID = -1

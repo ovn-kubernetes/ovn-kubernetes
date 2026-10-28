@@ -1174,8 +1174,15 @@ func uplinkNeedsUpdate(oldObj, newObj *uplinkv1alpha1.Uplink) bool {
 	if oldObj == nil {
 		return true
 	}
+	// A resolved UplinkState can arrive before an earlier Ready write
+	// reaches this cache. Reconcile delayed Ready changes to recover even
+	// when the UplinkState event saw the previous condition as unchanged.
 	return !reflect.DeepEqual(oldObj.Spec, newObj.Spec) ||
-		oldObj.DeletionTimestamp.IsZero() != newObj.DeletionTimestamp.IsZero()
+		oldObj.DeletionTimestamp.IsZero() != newObj.DeletionTimestamp.IsZero() ||
+		!reflect.DeepEqual(
+			meta.FindStatusCondition(oldObj.Status.Conditions, uplinkv1alpha1.UplinkConditionReady),
+			meta.FindStatusCondition(newObj.Status.Conditions, uplinkv1alpha1.UplinkConditionReady),
+		)
 }
 
 func uplinkStateNeedsUpdate(oldObj, newObj *uplinkv1alpha1.UplinkState) bool {
@@ -1193,8 +1200,15 @@ func cudnNeedsUpdate(oldObj, newObj *udnv1.ClusterUserDefinedNetwork) bool {
 	if newObj == nil {
 		return true
 	}
+	// A readiness write can reach this cache after an UplinkState event
+	// has already reconciled against the previous condition. Reconcile
+	// our condition changes so that delayed writes cannot leave it stale.
 	return !reflect.DeepEqual(oldObj.Spec.Uplinks, newObj.Spec.Uplinks) ||
-		oldObj.DeletionTimestamp.IsZero() != newObj.DeletionTimestamp.IsZero()
+		oldObj.DeletionTimestamp.IsZero() != newObj.DeletionTimestamp.IsZero() ||
+		!reflect.DeepEqual(
+			meta.FindStatusCondition(oldObj.Status.Conditions, conditionTypeUplinksReady),
+			meta.FindStatusCondition(newObj.Status.Conditions, conditionTypeUplinksReady),
+		)
 }
 
 func nodeNeedsUpdate(oldObj, newObj *corev1.Node) bool {

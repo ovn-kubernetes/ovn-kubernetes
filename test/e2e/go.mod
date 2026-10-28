@@ -2,6 +2,8 @@ module github.com/ovn-kubernetes/ovn-kubernetes/test/e2e
 
 go 1.26.0
 
+toolchain go1.26.10
+
 require (
 	github.com/google/go-cmp v0.7.0
 	github.com/k8snetworkplumbingwg/ipamclaims v0.5.1-alpha
@@ -131,7 +133,7 @@ require (
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/exp v0.0.0-20251219203646-944ab1f22d93 // indirect
 	golang.org/x/mod v0.41.0 // indirect
-	golang.org/x/net v0.58.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/term v0.46.0 // indirect

@@ -167,21 +167,32 @@ func newIDsAllocator(name string, maxIds int, offset int) *idsAllocator {
 // If less ids than numOfIDs are already allocated for the resource name, it will allocate the missing amount.
 // If more ids than numOfIDs are already allocated for the resource name, it returns an error.
 func (idsAllocator *idsAllocator) AllocateIDs(name string, numOfIDs int) ([]int, error) {
+	ids, _, err := idsAllocator.AllocateIDsWithRollback(name, numOfIDs)
+	return ids, err
+}
+
+// AllocateIDsWithRollback allocates IDs and returns a function that releases only
+// IDs added by this call. Existing IDs remain allocated on rollback. The caller
+// must serialize operations for name until it keeps or rolls back the allocation.
+func (idsAllocator *idsAllocator) AllocateIDsWithRollback(name string, numOfIDs int) ([]int, func(), error) {
 	idsAllocator.nameIdsMap.LockKey(name)
 	defer idsAllocator.nameIdsMap.UnlockKey(name)
 	// Check the idMap and return the id if its already allocated
 	ids, ok := idsAllocator.nameIdsMap.Load(name)
+	previouslyAllocated := len(ids)
+	rollback := func() {
+		idsAllocator.trimIDs(name, previouslyAllocated)
+	}
 	if ok {
 		if len(ids) == numOfIDs {
-			return ids, nil
+			return ids, rollback, nil
 		}
 		if len(ids) > numOfIDs {
-			return ids, fmt.Errorf("the resource %s already has more ids allocated %v than requested %v", name, ids, numOfIDs)
+			return ids, nil, fmt.Errorf("the resource %s already has more ids allocated %v than requested %v", name, ids, numOfIDs)
 		}
 	} else {
 		ids = make([]int, 0, numOfIDs)
 	}
-	previouslyAllocated := len(ids)
 	for len(ids) < numOfIDs {
 		id, allocated, _ := idsAllocator.idBitmap.AllocateNext()
 		if !allocated {
@@ -189,16 +200,16 @@ func (idsAllocator *idsAllocator) AllocateIDs(name string, numOfIDs int) ([]int,
 			for _, id := range ids[previouslyAllocated:] {
 				idsAllocator.idBitmap.Release(id - idsAllocator.offset)
 			}
-			return ids, fmt.Errorf("failed to allocate the id for the resource %s", name)
+			return ids, nil, fmt.Errorf("failed to allocate the id for the resource %s", name)
 		}
 		ids = append(ids, id+idsAllocator.offset)
 	}
 	if len(ids) == 0 {
 		// don't store empty slice in the map
-		return ids, nil
+		return ids, rollback, nil
 	}
 	idsAllocator.nameIdsMap.Store(name, ids)
-	return ids, nil
+	return ids, rollback, nil
 }
 
 // ReserveIDs reserves 'ids' for the resource 'name'. It returns an
@@ -206,15 +217,27 @@ func (idsAllocator *idsAllocator) AllocateIDs(name string, numOfIDs int) ([]int,
 // It also returns an error if the resource 'name' has a different 'ids' slice
 // already reserved. Slice elements order is important for comparison.
 func (idsAllocator *idsAllocator) ReserveIDs(name string, ids []int) error {
+	_, err := idsAllocator.ReserveIDsWithRollback(name, ids)
+	return err
+}
+
+// ReserveIDsWithRollback reserves IDs and returns a function that releases only
+// reservations added by this call. Existing reservations survive rollback. The
+// caller must serialize operations for name until it keeps or rolls back the reservation.
+func (idsAllocator *idsAllocator) ReserveIDsWithRollback(name string, ids []int) (func(), error) {
 	idsAllocator.nameIdsMap.LockKey(name)
 	defer idsAllocator.nameIdsMap.UnlockKey(name)
 	existingIDs, ok := idsAllocator.nameIdsMap.Load(name)
+	previousCount := len(existingIDs)
+	rollback := func() {
+		idsAllocator.trimIDs(name, previousCount)
+	}
 	if ok {
 		if slices.Equal(existingIDs, ids) {
 			// All good. The ids are already reserved by the same resource name.
-			return nil
+			return rollback, nil
 		}
-		return fmt.Errorf("can't reserve ids %v for the resource %s. It is already allocated with different ids %v",
+		return nil, fmt.Errorf("can't reserve ids %v for the resource %s. It is already allocated with different ids %v",
 			ids, name, existingIDs)
 	}
 	allocatedIDs := make([]int, 0, len(ids))
@@ -227,14 +250,14 @@ func (idsAllocator *idsAllocator) ReserveIDs(name string, ids []int) error {
 				idsAllocator.idBitmap.Release(allocatedID - idsAllocator.offset)
 			}
 			if err != nil {
-				return fmt.Errorf("failed to reserve id %d for resource %s: %w", id, name, err)
+				return nil, fmt.Errorf("failed to reserve id %d for resource %s: %w", id, name, err)
 			}
-			return fmt.Errorf("id %d is already reserved by another resource", id)
+			return nil, fmt.Errorf("id %d is already reserved by another resource", id)
 		}
 		allocatedIDs = append(allocatedIDs, id)
 	}
 	idsAllocator.nameIdsMap.Store(name, allocatedIDs)
-	return nil
+	return rollback, nil
 }
 
 // ReleaseIDs releases all ids allocated for the resource 'name'
@@ -249,4 +272,25 @@ func (idsAllocator *idsAllocator) ReleaseIDs(name string) {
 		idsAllocator.idBitmap.Release(id - idsAllocator.offset)
 	}
 	idsAllocator.nameIdsMap.Delete(name)
+}
+
+// trimIDs releases the ids 'name' holds beyond the first numOfIDs, keeping the
+// rest allocated to 'name'. It is a no-op if 'name' holds numOfIDs or fewer. Only
+// this resource's own ids are touched, under its key lock, so no other resource
+// is affected.
+func (idsAllocator *idsAllocator) trimIDs(name string, numOfIDs int) {
+	idsAllocator.nameIdsMap.LockKey(name)
+	defer idsAllocator.nameIdsMap.UnlockKey(name)
+	existingIDs, ok := idsAllocator.nameIdsMap.Load(name)
+	if !ok || len(existingIDs) <= numOfIDs {
+		return
+	}
+	for _, id := range existingIDs[numOfIDs:] {
+		idsAllocator.idBitmap.Release(id - idsAllocator.offset)
+	}
+	if numOfIDs == 0 {
+		idsAllocator.nameIdsMap.Delete(name)
+		return
+	}
+	idsAllocator.nameIdsMap.Store(name, existingIDs[:numOfIDs])
 }
