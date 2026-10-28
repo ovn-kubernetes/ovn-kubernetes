@@ -121,8 +121,8 @@ func newGenerator(labelToTestNames, labelToLabels map[string][]string) *labelApp
 	allLabelsSet := sets.New[string]()
 	matches := make(map[string]*regexp.Regexp)
 	stringMatches := make(map[string][]string)
-	for _, labels := range labelToLabels {
-		allLabelsSet.Insert(labels...)
+	for label := range labelToLabels {
+		allLabelsSet.Insert(label)
 	}
 
 	for label, matchTestNames := range labelToTestNames {
