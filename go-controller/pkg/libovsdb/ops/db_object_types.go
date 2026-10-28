@@ -382,6 +382,11 @@ var PortGroupUDN = newObjectIDsType(portGroup, UDNIsolationOwnerType, []External
 	ObjectNameKey,
 })
 
+var PortGroupNetworkQoS = newObjectIDsType(portGroup, NetworkQoSOwnerType, []ExternalIDKey{
+	// NetworkQoS namespace:name
+	ObjectNameKey,
+})
+
 var LogicalRouterPolicyEgressIP = newObjectIDsType(logicalRouterPolicy, EgressIPOwnerType, []ExternalIDKey{
 	// the priority of the LRP
 	PriorityKey,

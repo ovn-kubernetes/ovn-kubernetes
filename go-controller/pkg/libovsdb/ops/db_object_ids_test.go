@@ -5,6 +5,24 @@ package ops
 
 import "testing"
 
+func TestPortGroupNetworkQoSExternalIDs(t *testing.T) {
+	ids := NewDbObjectIDs(PortGroupNetworkQoS, "default-network-controller", map[ExternalIDKey]string{
+		ObjectNameKey: "network-qos-test:policy",
+	})
+
+	want := map[string]string{
+		OwnerControllerKey.String(): "default-network-controller",
+		OwnerTypeKey.String():       string(NetworkQoSOwnerType),
+		ObjectNameKey.String():      "network-qos-test:policy",
+		PrimaryIDKey.String():       "default-network-controller:NetworkQoS:network-qos-test:policy",
+	}
+	for key, value := range want {
+		if got := ids.GetExternalIDs()[key]; got != value {
+			t.Fatalf("external ID %s = %q, want %q", key, got, value)
+		}
+	}
+}
+
 func TestBuildCIDRKey(t *testing.T) {
 	tests := []struct {
 		name string
