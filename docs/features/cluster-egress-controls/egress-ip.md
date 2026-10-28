@@ -16,10 +16,10 @@ Always check the dependencies on the [Requirements page](../requirements.md)
 ## Annotations
 
 The cluster manager sets `k8s.ovn.org/egressip-mark` when it allocates a mark.
-That update adds or replaces only that key. Other annotations on the EgressIP,
-including ones added by GitOps tools, stay in place. The mark annotation is
-managed by the system: it cannot be set when the EgressIP is created, and it
-cannot be changed or removed once it is set.
+That update adds only that key, and only when the mark is absent. Other
+annotations on the EgressIP, including ones added by GitOps tools, stay in
+place. The mark annotation is managed by the system: it cannot be set when
+the EgressIP is created, and it cannot be changed or removed once it is set.
 
 ## Node Requirements
 
