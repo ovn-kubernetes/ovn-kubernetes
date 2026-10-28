@@ -23,9 +23,11 @@ Against the SBDB for the zone being diagnosed, run:
 ovn-sbctl list chassis
 ```
 
-In the interconnect architecture, each node has its own zone and SB database,
-so this command does not list every node in the cluster. The "name" column
-identifies the chassis registered in the local database.
+In the interconnect architecture, each node has its own zone and SB database.
+This command lists the local chassis and synchronized remote-node chassis in
+that database. The `name` column identifies each chassis; the `is-remote` value
+in `other_config` is `true` for remote-node records and `false` for the local
+record.
 
 ## Hosts should have unique node names.
 

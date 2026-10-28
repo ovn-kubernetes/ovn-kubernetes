@@ -44,6 +44,9 @@ Before installing this Helm chart, Prometheus and Grafana must be installed.
 ## Installing prometheus-grafana helm chart
 
 The [kube-prometheus-stack](https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack) helm chart installs prometheus and grafana.
+On a new cluster without a CNI, install OVN-Kubernetes first with
+`monitoring.enableServiceMonitor=false` (the default). The monitoring chart's
+pre-install admission Job requires working pod networking.
 
 ```
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
@@ -61,10 +64,10 @@ From the repository root, install the dashboards in the same namespace:
 helm install sdn-dashboard helm/sdn-dashboard -n monitoring
 ```
 
-When installing OVN-Kubernetes, set `monitoring.enableServiceMonitor=true` to
-create the ServiceMonitors needed for metric scraping. The chart's default
-ServiceMonitor label, `release: kube-prometheus-stack`, matches the Prometheus
-release name used above.
+After installing kube-prometheus-stack, upgrade OVN-Kubernetes with
+`monitoring.enableServiceMonitor=true` to create the ServiceMonitors needed for
+metric scraping. The chart's default ServiceMonitor label,
+`release: kube-prometheus-stack`, matches the Prometheus release name used above.
 
 ## Port Forwarding to access Grafana and Prometheus UI
 
