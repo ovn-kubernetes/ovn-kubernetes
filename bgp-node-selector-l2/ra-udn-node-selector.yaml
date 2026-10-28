@@ -1,0 +1,19 @@
+apiVersion: k8s.ovn.org/v1
+kind: RouteAdvertisements
+metadata:
+  name: advertise-l2-udn
+spec:
+  advertisements:
+    - PodNetwork
+  nodeSelector:
+    matchLabels:
+      role: gateway
+  frrConfigurationSelector:
+    matchLabels:
+      bgp: "true"
+  networkSelectors:
+    - networkSelectionType: ClusterUserDefinedNetworks
+      clusterUserDefinedNetworkSelector:
+        networkSelector:
+          matchLabels:
+            advertise: "true"
