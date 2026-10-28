@@ -118,8 +118,19 @@ func (h *egressNodeAvailabilityHandlerViaHealthCheck) checkMode(restore bool) (s
 	portNode := getTemplateContainerEnv(ovnKubeNamespace, "daemonset/ovnkube-node", getNodeContainerName(), OVN_EGRESSIP_HEALTHCHECK_PORT_ENV_NAME)
 	portControlPlane := getTemplateContainerEnv(ovnKubeNamespace, "deployment/ovnkube-control-plane", "ovnkube-cluster-manager", OVN_EGRESSIP_HEALTHCHECK_PORT_ENV_NAME)
 
+	// An empty value means the port was never set, not that legacy health check
+	// is in use: ovnkube defaults to the GRPC port in that case. Without this,
+	// the handler assumes legacy, decides it must switch to GRPC, and updates
+	// both workloads even though nothing needs to change.
+	if portNode == "" {
+		portNode = DEFAULT_OVN_EGRESSIP_GRPC_HEALTHCHECK_PORT
+	}
+	if portControlPlane == "" {
+		portControlPlane = DEFAULT_OVN_EGRESSIP_GRPC_HEALTHCHECK_PORT
+	}
+
 	wantLegacy := (h.Legacy && !restore) || (h.modeWasLegacy && restore)
-	isLegacy := portNode == "" || portNode == OVN_EGRESSIP_LEGACY_HEALTHCHECK_PORT_ENV
+	isLegacy := portNode == OVN_EGRESSIP_LEGACY_HEALTHCHECK_PORT_ENV
 	outOfSync := portNode != portControlPlane
 
 	if !h.modeWasChecked {
