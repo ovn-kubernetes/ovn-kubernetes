@@ -6,6 +6,7 @@ package ovn
 import (
 	"context"
 	"fmt"
+	"net"
 	"strings"
 
 	mnpapi "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/apis/k8s.cni.cncf.io/v1beta1"
@@ -66,15 +67,38 @@ func (bsnc *BaseUserDefinedNetworkController) shouldApplyMultiPolicy(mpolicy *mn
 	return false
 }
 
+// convertMultiNetPolicyIPBlock validates the ipBlock the same way the API server
+// validates NetworkPolicy ipBlocks. The MultiNetworkPolicy CRD does not validate
+// these fields and they are interpolated verbatim into ACL matches.
+func convertMultiNetPolicyIPBlock(ipb *mnpapi.IPBlock) (*knet.IPBlock, error) {
+	_, cidrIPNet, err := net.ParseCIDR(ipb.CIDR)
+	if err != nil {
+		return nil, fmt.Errorf("invalid ipBlock cidr %q: %w", ipb.CIDR, err)
+	}
+	for _, exceptCIDRStr := range ipb.Except {
+		_, exceptCIDR, err := net.ParseCIDR(exceptCIDRStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid ipBlock except %q: %w", exceptCIDRStr, err)
+		}
+		cidrMaskLen, _ := cidrIPNet.Mask.Size()
+		exceptMaskLen, _ := exceptCIDR.Mask.Size()
+		if !cidrIPNet.Contains(exceptCIDR.IP) || cidrMaskLen >= exceptMaskLen {
+			return nil, fmt.Errorf("ipBlock except %q must be a strict subset of cidr %q", exceptCIDRStr, ipb.CIDR)
+		}
+	}
+	return &knet.IPBlock{CIDR: ipb.CIDR, Except: ipb.Except}, nil
+}
+
 func convertMultiNetPolicyToNetPolicy(mpolicy *mnpapi.MultiNetworkPolicy, allowPeerSelectors bool) (*knet.NetworkPolicy, error) {
 	var policy knet.NetworkPolicy
 	var ipb *knet.IPBlock
+	var err error
 
 	policy.Name = mpolicy.Name
 	policy.Namespace = mpolicy.Namespace
 	policy.Spec.PodSelector = mpolicy.Spec.PodSelector
 	policy.Annotations = mpolicy.Annotations
-	policy.Spec.Ingress = make([]knet.NetworkPolicyIngressRule, len(mpolicy.Spec.Ingress))
+	policy.Spec.Ingress = make([]knet.NetworkPolicyIngressRule, 0, len(mpolicy.Spec.Ingress))
 	for i, mingress := range mpolicy.Spec.Ingress {
 		var ingress knet.NetworkPolicyIngressRule
 		ingress.Ports = make([]knet.NetworkPolicyPort, len(mingress.Ports))
@@ -85,24 +109,33 @@ func convertMultiNetPolicyToNetPolicy(mpolicy *mnpapi.MultiNetworkPolicy, allowP
 				EndPort:  mport.EndPort,
 			}
 		}
-		ingress.From = make([]knet.NetworkPolicyPeer, len(mingress.From))
-		for j, mfrom := range mingress.From {
+		ingress.From = make([]knet.NetworkPolicyPeer, 0, len(mingress.From))
+		for _, mfrom := range mingress.From {
 			if !allowPeerSelectors && isPeerSelector(mfrom) {
 				return nil, fmt.Errorf("invalid ingress peer %v in multi-network policy %s; IPAM-less networks can only have `ipBlock` peers", mfrom, mpolicy.Name)
 			}
 			ipb = nil
 			if mfrom.IPBlock != nil {
-				ipb = &knet.IPBlock{CIDR: mfrom.IPBlock.CIDR, Except: mfrom.IPBlock.Except}
+				ipb, err = convertMultiNetPolicyIPBlock(mfrom.IPBlock)
+				if err != nil {
+					klog.Warningf("Ignoring ingress peer in multi-network policy %s/%s: %v", mpolicy.Namespace, mpolicy.Name, err)
+					continue
+				}
 			}
-			ingress.From[j] = knet.NetworkPolicyPeer{
+			ingress.From = append(ingress.From, knet.NetworkPolicyPeer{
 				PodSelector:       mfrom.PodSelector,
 				NamespaceSelector: mfrom.NamespaceSelector,
 				IPBlock:           ipb,
-			}
+			})
 		}
-		policy.Spec.Ingress[i] = ingress
+		// an empty peer list allows all sources, so a rule whose peers were all ignored must be dropped
+		if len(mingress.From) > 0 && len(ingress.From) == 0 {
+			klog.Warningf("Ignoring ingress rule %d in multi-network policy %s/%s: all peers are invalid", i, mpolicy.Namespace, mpolicy.Name)
+			continue
+		}
+		policy.Spec.Ingress = append(policy.Spec.Ingress, ingress)
 	}
-	policy.Spec.Egress = make([]knet.NetworkPolicyEgressRule, len(mpolicy.Spec.Egress))
+	policy.Spec.Egress = make([]knet.NetworkPolicyEgressRule, 0, len(mpolicy.Spec.Egress))
 	for i, megress := range mpolicy.Spec.Egress {
 		var egress knet.NetworkPolicyEgressRule
 		egress.Ports = make([]knet.NetworkPolicyPort, len(megress.Ports))
@@ -113,22 +146,30 @@ func convertMultiNetPolicyToNetPolicy(mpolicy *mnpapi.MultiNetworkPolicy, allowP
 				EndPort:  mport.EndPort,
 			}
 		}
-		egress.To = make([]knet.NetworkPolicyPeer, len(megress.To))
-		for j, mto := range megress.To {
+		egress.To = make([]knet.NetworkPolicyPeer, 0, len(megress.To))
+		for _, mto := range megress.To {
 			if !allowPeerSelectors && isPeerSelector(mto) {
 				return nil, fmt.Errorf("invalid egress peer %v in multi-network policy %s; IPAM-less networks can only have `ipBlock` peers", mto, mpolicy.Name)
 			}
 			ipb = nil
 			if mto.IPBlock != nil {
-				ipb = &knet.IPBlock{CIDR: mto.IPBlock.CIDR, Except: mto.IPBlock.Except}
+				ipb, err = convertMultiNetPolicyIPBlock(mto.IPBlock)
+				if err != nil {
+					klog.Warningf("Ignoring egress peer in multi-network policy %s/%s: %v", mpolicy.Namespace, mpolicy.Name, err)
+					continue
+				}
 			}
-			egress.To[j] = knet.NetworkPolicyPeer{
+			egress.To = append(egress.To, knet.NetworkPolicyPeer{
 				PodSelector:       mto.PodSelector,
 				NamespaceSelector: mto.NamespaceSelector,
 				IPBlock:           ipb,
-			}
+			})
 		}
-		policy.Spec.Egress[i] = egress
+		if len(megress.To) > 0 && len(egress.To) == 0 {
+			klog.Warningf("Ignoring egress rule %d in multi-network policy %s/%s: all peers are invalid", i, mpolicy.Namespace, mpolicy.Name)
+			continue
+		}
+		policy.Spec.Egress = append(policy.Spec.Egress, egress)
 	}
 	policy.Spec.PolicyTypes = make([]knet.PolicyType, len(mpolicy.Spec.PolicyTypes))
 	for i, mpolicytype := range mpolicy.Spec.PolicyTypes {
