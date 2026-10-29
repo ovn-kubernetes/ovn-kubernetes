@@ -16,9 +16,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/workqueue"
 
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	ratypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -788,6 +790,63 @@ func TestNetworkControllerAsyncSyncAllSkipsInlineStart(t *testing.T) {
 	ctrl, _, startFailed := nm.getReconcilableNetworkState(networkName)
 	g.Expect(ctrl).ToNot(gomega.BeNil())
 	g.Expect(startFailed).To(gomega.BeFalse())
+}
+
+// TestNetworkControllerSyncRunningNetworksQueuesKnownNetworks verifies that
+// syncRunningNetworks queues every network known to the controller, even one
+// that did not go through Start and so has no controller state yet.
+func TestNetworkControllerSyncRunningNetworksQueuesKnownNetworks(t *testing.T) {
+	g := gomega.NewWithT(t)
+	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+	t.Cleanup(func() {
+		g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+	})
+
+	netConf := &ovncnitypes.NetConf{
+		NetConf: cnitypes.NetConf{
+			Name: "udn-net",
+			Type: "ovn-k8s-cni-overlay",
+		},
+		Topology: types.Layer3Topology,
+		Role:     types.NetworkRolePrimary,
+		NADName:  "ns1/primary",
+		Subnets:  "10.128.0.0/14",
+	}
+	netInfo, err := util.NewNetInfo(netConf)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	mutableNetInfo := util.NewMutableNetInfo(netInfo)
+	mutableNetInfo.SetNADs(netConf.NADName)
+	networkName := mutableNetInfo.GetNetworkName()
+
+	var mu sync.Mutex
+	var reconciled []string
+	fakeReconciler := controller.NewReconciler("test-network-reconciler", &controller.ReconcilerConfig{
+		RateLimiter: workqueue.DefaultTypedControllerRateLimiter[string](),
+		Reconcile: func(key string) error {
+			mu.Lock()
+			defer mu.Unlock()
+			reconciled = append(reconciled, key)
+			return nil
+		},
+		Threadiness: 1,
+		MaxAttempts: controller.InfiniteAttempts,
+	})
+	g.Expect(controller.Start(fakeReconciler)).To(gomega.Succeed())
+	t.Cleanup(func() { controller.Stop(fakeReconciler) })
+
+	nm := newNetworkController("", "", &testControllerManager{controllers: map[string]NetworkController{}}, nil, false)
+	nm.networkReconciler = fakeReconciler
+	// Place the network directly in c.networks without going through
+	// EnsureNetwork/Start, so no networkControllerState exists for it yet.
+	nm.setNetwork(networkName, mutableNetInfo)
+
+	g.Expect(nm.syncRunningNetworks()).To(gomega.Succeed())
+
+	g.Eventually(func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), reconciled...)
+	}).WithTimeout(2 * time.Second).Should(gomega.ContainElements(types.DefaultNetworkName, networkName))
 }
 
 // TestNetworkController_ConcurrentReconciliation validates that the networkReconciler
