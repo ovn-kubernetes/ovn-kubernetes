@@ -19,6 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
@@ -703,15 +704,12 @@ func ParseNodePrimaryIfAddr(node *corev1.Node) (*ParsedNodeEgressIPConfiguration
 	if err != nil {
 		return nil, err
 	}
-	unlimitedIPv4 := UnlimitedNodeCapacity
-	unlimitedIPv6 := UnlimitedNodeCapacity
-	unlimitedIP := UnlimitedNodeCapacity
 	nodeEgressIPConfig := nodeEgressIPConfiguration{
 		IFAddr: ifAddr(*nodeIfAddr),
 		Capacity: Capacity{
-			IP:   &unlimitedIP,
-			IPv4: &unlimitedIPv4,
-			IPv6: &unlimitedIPv6,
+			IP:   ptr.To(UnlimitedNodeCapacity),
+			IPv4: ptr.To(UnlimitedNodeCapacity),
+			IPv6: ptr.To(UnlimitedNodeCapacity),
 		},
 	}
 	parsedEgressIPConfig, err := parseNodeEgressIPConfig(&nodeEgressIPConfig)
@@ -804,15 +802,12 @@ func ParseCloudEgressIPConfig(node *corev1.Node) (*ParsedNodeEgressIPConfigurati
 	if !ok {
 		return nil, newAnnotationNotSetError("%s annotation not found for node %q", cloudEgressIPConfigAnnotationKey, node.Name)
 	}
-	unlimitedIPv4 := UnlimitedNodeCapacity
-	unlimitedIPv6 := UnlimitedNodeCapacity
-	unlimitedIP := UnlimitedNodeCapacity
 	nodeEgressIPConfig := []nodeEgressIPConfiguration{
 		{
 			Capacity: Capacity{
-				IP:   &unlimitedIP,
-				IPv4: &unlimitedIPv4,
-				IPv6: &unlimitedIPv6,
+				IP:   ptr.To(UnlimitedNodeCapacity),
+				IPv4: ptr.To(UnlimitedNodeCapacity),
+				IPv6: ptr.To(UnlimitedNodeCapacity),
 			},
 		},
 	}
