@@ -27,7 +27,7 @@ var (
 	// New test images should ideally be sourced from the upstream k8s.io/kubernetes/test/utils/image package.
 	// Failing to find an image from upstream k8s, please get community approval because downstream consumers must
 	// pre-approve new images.
-	netshoot              = "ghcr.io/nicolaka/netshoot:v0.13"
+	netshoot              = "ghcr.io/nicolaka/netshoot:v0.16"
 	nginx                 = "nginx:1"
 	metallbLBService      = "quay.io/itssurya/dev-images:metallb-lbservice"
 	udpServerSrcIPPrinter = "quay.io/itssurya/dev-images:udp-server-srcip-printer"
