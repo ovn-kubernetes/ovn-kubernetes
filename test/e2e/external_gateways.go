@@ -1484,12 +1484,12 @@ func setupGatewayContainersForConntrackTest(f *framework.Framework, providerCtx 
 	addressesv6 := gatewayTestIPs{gatewayIPs: make([]string, 2)}
 	ginkgo.By("Creating the gateway containers for the UDP test")
 	gwExternalContainer1 := infraapi.ExternalContainer{Name: getContainerName(gwContainer1Template, 12345),
-		Image: images.IPerf3(), Network: network, CmdArgs: []string{}, ExtPort: 12345}
+		Image: images.Netshoot(), Network: network, CmdArgs: []string{"sleep", "infinity"}, ExtPort: 12345}
 	gwExternalContainer1, err = providerCtx.CreateExternalContainer(gwExternalContainer1)
 	framework.ExpectNoError(err, "failed to create external container (%s)", gwExternalContainer1)
 
 	gwExternalContainer2 := infraapi.ExternalContainer{Name: getContainerName(gwContainer2Template, 12345),
-		Image: images.IPerf3(), Network: network, CmdArgs: []string{}, ExtPort: 12345}
+		Image: images.Netshoot(), Network: network, CmdArgs: []string{"sleep", "infinity"}, ExtPort: 12345}
 	gwExternalContainer2, err = providerCtx.CreateExternalContainer(gwExternalContainer2)
 	framework.ExpectNoError(err, "failed to create external container (%s)", gwExternalContainer2)
 	if network.Name() == "host" {
@@ -1503,8 +1503,8 @@ func setupGatewayContainersForConntrackTest(f *framework.Framework, providerCtx 
 	gwExternalContainers := []infraapi.ExternalContainer{gwExternalContainer1, gwExternalContainer2}
 	node := nodes.Items[0]
 	ginkgo.By("Creating the source pod to reach the destination ips from")
-	clientPod, err = createPod(f, srcPodName, node.Name, f.Namespace.Name, []string{}, map[string]string{}, func(p *corev1.Pod) {
-		p.Spec.Containers[0].Image = images.IPerf3()
+	clientPod, err = createPod(f, srcPodName, node.Name, f.Namespace.Name, []string{"sleep", "infinity"}, map[string]string{}, func(p *corev1.Pod) {
+		p.Spec.Containers[0].Image = images.Netshoot()
 	})
 	framework.ExpectNoError(err)
 	networkInfo, err := infraprovider.Get().GetK8NodeNetworkInterface(node.Name, network)
@@ -1539,9 +1539,6 @@ func setupGatewayContainersForConntrackTest(f *framework.Framework, providerCtx 
 
 	// A route back to the src pod must be set in order for the ping reply to work.
 	for _, gwExternalContainer := range gwExternalContainers {
-		ginkgo.By(fmt.Sprintf("Install iproute in %s", gwExternalContainer.Name))
-		_, err = infraprovider.Get().ExecExternalContainerCommand(gwExternalContainer, []string{"dnf", "install", "-y", "iproute"})
-		framework.ExpectNoError(err, "failed to install iproute package on the test container %s", gwExternalContainer.Name)
 		if testIPv4 {
 			ginkgo.By(fmt.Sprintf("Adding a route from %s to the src pod with IP %s", gwExternalContainer.Name, addressesv4.srcPodIP))
 			_, err = infraprovider.Get().ExecExternalContainerCommand(gwExternalContainer, []string{"ip", "-4", "route", "add", addressesv4.srcPodIP,
