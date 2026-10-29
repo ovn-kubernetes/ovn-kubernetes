@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"strings"
 
+	deploymentconfigapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig/api"
+
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/kubernetes/test/e2e/framework"
 )
 
@@ -37,11 +40,15 @@ type ClusterProvider interface {
 	// PreloadImages pulls the given images and loads them into the cluster
 	// so that they are available to pods without a runtime pull. Providers
 	// that do not support preloading may implement this as a no-op.
-	PreloadImages(images []string)
+	PreloadImages(images []deploymentconfigapi.ImageConfig)
 	// Name returns the name of the cluster provider, example 'kind'.
 	Name() string
 	// Get platform specific timeout values
 	GetDefaultTimeoutContext() *framework.TimeoutContext
+	// InfrastructureNetworkExclusions returns infrastructure network CIDRs
+	// (e.g., bastion host or hypervisor subnets) that should be excluded from
+	// test subnet allocations to prevent overlaps with external hosts.
+	InfrastructureNetworkExclusions() (ipv4, ipv6 sets.Set[string])
 }
 
 type ExternalContainerProvider interface {

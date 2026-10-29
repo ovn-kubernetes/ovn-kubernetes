@@ -9,13 +9,13 @@ import (
 	"sync"
 
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-kubernetes/libovsdb/client"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	uplinkinformers "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/informers/externalversions/uplink/v1alpha1"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iprulemanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/managementport"
@@ -27,8 +27,6 @@ import (
 // and reacting upon the watched resources (e.g. pods, endpoints) for user-defined networks
 type UserDefinedNodeNetworkController struct {
 	BaseNodeNetworkController
-	// pod events factory handler
-	podHandler *factory.Handler
 	// responsible for programing gateway elements for this network
 	gateway *UserDefinedNetworkGateway
 	// management port device manager
@@ -90,14 +88,6 @@ func NewUserDefinedNodeNetworkController(
 func (nc *UserDefinedNodeNetworkController) Start(_ context.Context) error {
 	klog.Infof("Starting UDN node network controller for network %s", nc.GetNetworkName())
 
-	// enable adding ovs ports for dpu pods in both primary and secondary user-defined networks
-	if (config.OVNKubernetesFeature.EnableMultiNetwork || util.IsNetworkSegmentationSupportEnabled()) && config.IsModeDPU() {
-		handler, err := nc.watchPodsDPU()
-		if err != nil {
-			return err
-		}
-		nc.podHandler = handler
-	}
 	if util.IsNetworkSegmentationSupportEnabled() && nc.IsPrimaryNetwork() {
 		if err := nc.gateway.Start(); err != nil {
 			return fmt.Errorf("failed to start node gateway for network %s at node %s: %w",
@@ -120,10 +110,6 @@ func (nc *UserDefinedNodeNetworkController) Stop() {
 		nc.gateway.Stop()
 	}
 	nc.wg.Wait()
-
-	if nc.podHandler != nil {
-		nc.watchFactory.RemovePodHandler(nc.podHandler)
-	}
 }
 
 // Cleanup cleans up node entities for the given user-defined network
@@ -167,6 +153,7 @@ func (nc *UserDefinedNodeNetworkController) shouldReconcileNetworkChange(old, ne
 // 2. OpenFlows on br-ex bridge to forward traffic to correct ofports
 func (nc *UserDefinedNodeNetworkController) Reconcile(netInfo util.NetInfo) error {
 	reconcilePodNetwork := nc.shouldReconcileNetworkChange(nc.ReconcilableNetInfo, netInfo)
+	oldNamespaces := sets.New(nc.GetNADNamespaces()...)
 	err := util.ReconcileNetInfo(nc.ReconcilableNetInfo, netInfo)
 	if err != nil {
 		klog.Errorf("Failed to reconcile network information for network %s: %v", nc.GetNetworkName(), err)
@@ -175,6 +162,20 @@ func (nc *UserDefinedNodeNetworkController) Reconcile(netInfo util.NetInfo) erro
 	if reconcilePodNetwork {
 		if nc.gateway != nil {
 			nc.gateway.Reconcile()
+		}
+	}
+
+	// Services in a namespace that joins this already running network were
+	// skipped while the namespace had no active primary network. AddNetwork only
+	// replays services when the network starts, so replay them here.
+	if nc.IsPrimaryNetwork() && nc.gateway != nil && nc.gateway.gateway != nil &&
+		nc.gateway.gateway.servicesRetryFramework != nil {
+		joined := sets.List(sets.New(nc.GetNADNamespaces()...).Difference(oldNamespaces))
+		if len(joined) > 0 {
+			if errs := nc.gateway.gateway.resyncNamespaceServices(joined); len(errs) > 0 {
+				return fmt.Errorf("failed to resync services for namespaces %v joining network %s: %w",
+					joined, nc.GetNetworkName(), kerrors.NewAggregate(errs))
+			}
 		}
 	}
 

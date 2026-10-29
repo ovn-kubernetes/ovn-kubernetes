@@ -5,17 +5,23 @@ package e2e
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
+	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	ovnkubeutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 )
@@ -48,7 +54,7 @@ var _ = Describe("Network Segmentation: Node Annotations", feature.NetworkSegmen
 
 		// Serial() is required because this test modifies cluster-wide state (node annotations)
 		// that controls Layer2UsesTransitRouter and affects ovnkube-control-plane behavior.
-		It("should clean up tunnel ID annotations when UDN is deleted with transit router topology", Serial, func() {
+		It("should clean up tunnel ID annotations when UDN is deleted with transit router topology", Serial, func(ctx SpecContext) {
 			// This test verifies that tunnel ID annotations are cleaned up when a UDN is deleted
 			// in transit router topology. The test simulates a migration scenario by:
 			// 1. Creating an L2 primary network
@@ -88,7 +94,7 @@ var _ = Describe("Network Segmentation: Node Annotations", feature.NetworkSegmen
 			Expect(err).NotTo(HaveOccurred())
 
 			By("waiting for network to be ready")
-			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, f.Namespace.Name, testUdnName), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, f.Namespace.Name, testUdnName), 30*time.Second, time.Second).Should(Succeed())
 
 			By("verifying no tunnel ID annotations are allocated in transit router topology")
 
@@ -106,6 +112,16 @@ var _ = Describe("Network Segmentation: Node Annotations", feature.NetworkSegmen
 			}
 
 			By("manually injecting tunnel ID annotations on nodes (simulating legacy migration scenario)")
+			// Simulated controller-owned allocations must use the authorized writer.
+			clusterManagerConfig := rest.CopyConfig(f.ClientConfig())
+			clusterManagerConfig.Impersonate = rest.ImpersonationConfig{
+				UserName: fmt.Sprintf("system:serviceaccount:%s:ovnkube-cluster-manager",
+					deploymentconfig.Get().OVNKubernetesNamespace()),
+			}
+			clusterManagerClient, err := clientset.NewForConfig(clusterManagerConfig)
+			Expect(err).NotTo(HaveOccurred())
+			patchCtx, cancelPatch := context.WithTimeout(ctx, retryTimeout)
+			defer cancelPatch()
 			networkKey := f.Namespace.Name + "_" + testUdnName
 			injectedTunnelIDs := make(map[string]int)
 			nodeList, err = e2enode.GetReadySchedulableNodes(context.TODO(), cs)
@@ -117,9 +133,31 @@ var _ = Describe("Network Segmentation: Node Annotations", feature.NetworkSegmen
 				tunnelID := 10 + i
 				injectedTunnelIDs[node.Name] = tunnelID
 
-				node.Annotations, err = ovnkubeutil.UpdateUDNLayer2NodeGRLRPTunnelIDs(node.Annotations, networkKey, tunnelID)
-				Expect(err).NotTo(HaveOccurred())
-				_, err = cs.CoreV1().Nodes().Update(context.TODO(), node, metav1.UpdateOptions{})
+				err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+					// Rebuild from current annotations to preserve concurrent allocations.
+					currentNode, err := cs.CoreV1().Nodes().Get(patchCtx, node.Name, metav1.GetOptions{})
+					if err != nil {
+						return err
+					}
+					annotations, err := ovnkubeutil.UpdateUDNLayer2NodeGRLRPTunnelIDs(currentNode.Annotations, networkKey, tunnelID)
+					if err != nil {
+						return err
+					}
+					annotationPatch, err := json.Marshal(map[string]any{
+						"metadata": map[string]any{
+							"resourceVersion": currentNode.ResourceVersion,
+							"annotations": map[string]string{
+								ovntypes.UDNLayer2NodeGRLRPTunnelIDAnnotation: annotations[ovntypes.UDNLayer2NodeGRLRPTunnelIDAnnotation],
+							},
+						},
+					})
+					if err != nil {
+						return err
+					}
+					_, err = clusterManagerClient.CoreV1().Nodes().Patch(patchCtx, node.Name,
+						k8stypes.MergePatchType, annotationPatch, metav1.PatchOptions{}, "status")
+					return err
+				})
 				Expect(err).NotTo(HaveOccurred(), "failed to inject tunnel ID on node %s", node.Name)
 				framework.Logf("Injected tunnel ID %s: %d on node %s (simulating legacy state)", networkKey, tunnelID, node.Name)
 			}
@@ -216,7 +254,7 @@ var _ = Describe("Network Segmentation: Node Annotations", feature.NetworkSegmen
 			Expect(allNodesUseTransitRouter).To(BeTrue(), "all nodes should have TransitRouter enabled")
 		})
 
-		It("should NOT allocate tunnel ID annotations for L3 networks", func() {
+		It("should NOT allocate tunnel ID annotations for L3 networks", func(ctx SpecContext) {
 			testUdnName := "node-annotation-not-l3-tunnel-id"
 			By("creating an L3 network")
 			netConfig := &networkAttachmentConfigParams{
@@ -232,7 +270,7 @@ var _ = Describe("Network Segmentation: Node Annotations", feature.NetworkSegmen
 			Expect(err).NotTo(HaveOccurred())
 
 			By("waiting for network to be ready")
-			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, f.Namespace.Name, testUdnName), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, f.Namespace.Name, testUdnName), 30*time.Second, time.Second).Should(Succeed())
 
 			By("verifying tunnel ID annotations are NOT allocated on nodes")
 			nodeList, err := e2enode.GetReadySchedulableNodes(context.TODO(), cs)
@@ -250,7 +288,7 @@ var _ = Describe("Network Segmentation: Node Annotations", feature.NetworkSegmen
 			}
 		})
 
-		It("should NOT allocate tunnel ID annotations for secondary L2 networks", func() {
+		It("should NOT allocate tunnel ID annotations for secondary L2 networks", func(ctx SpecContext) {
 			testUdnName := "node-annotation-not-l2-tunnel-id"
 			By("creating a secondary L2 network")
 			netConfig := &networkAttachmentConfigParams{
@@ -266,7 +304,7 @@ var _ = Describe("Network Segmentation: Node Annotations", feature.NetworkSegmen
 			Expect(err).NotTo(HaveOccurred())
 
 			By("waiting for network to be ready")
-			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, f.Namespace.Name, testUdnName), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, f.Namespace.Name, testUdnName), 30*time.Second, time.Second).Should(Succeed())
 
 			By("verifying tunnel ID annotations are NOT allocated on nodes")
 			nodeList, err := e2enode.GetReadySchedulableNodes(context.TODO(), cs)

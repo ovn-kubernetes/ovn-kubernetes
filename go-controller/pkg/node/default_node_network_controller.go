@@ -84,13 +84,6 @@ type BaseNodeNetworkController struct {
 	// Used by DPU representor cleanup and other OVS-aware bookkeeping.
 	ovsClient client.Client
 
-	// podNADToDPUCDMap tracks the NAD/DPU_ConnectionDetails mapping for all NADs that each pod requests.
-	// Key is pod.UUID; value is nadToDPUCDMap (of map[string]*util.DPUConnectionDetails). Key of nadToDPUCDMap
-	// is nadName; value is DPU_ConnectionDetails when VF representor is successfully configured for that
-	// given NAD. DPU mode only
-	// Note that we assume that Pod's Network Attachment Selection Annotation will not change over time.
-	podNADToDPUCDMap sync.Map
-
 	// stopChan and WaitGroup per controller
 	stopChan chan struct{}
 	wg       *sync.WaitGroup
@@ -926,10 +919,8 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 
 // Start learns the subnets assigned to it by the master controller
 // and calls the SetupNode script which establishes the logical switch
-func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
+func (nc *DefaultNodeNetworkController) Start(ctx context.Context) (err error) {
 	klog.Infof("Starting the default node network controller")
-
-	var err error
 
 	if nc.mgmtPortController == nil {
 		return fmt.Errorf("default node network controller hasn't been pre-started")
@@ -968,7 +959,7 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 	}
 	// Set masquerade IP reconciliation callback for all modes except DPU.
 	// DPU mode does not configure masquerade resources.
-	if config.OvnKubeNode.Mode != types.NodeModeDPU {
+	if !config.IsModeDPU() {
 		gw, ok := nc.Gateway.(*gateway)
 		if !ok {
 			return fmt.Errorf("unexpected gateway type %T, expected *gateway", nc.Gateway)
@@ -1006,7 +997,7 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 			nc.Kube,
 			nc.name,
 			nc.watchFactory.NodeInformer(),
-			nc.watchFactory.LocalPodInformer(),
+			nc.watchFactory.PodInformer(),
 			informer.NewDefaultEventHandler,
 			false,
 		)
@@ -1074,11 +1065,7 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 		}
 	}
 
-	if config.IsModeDPU() {
-		if _, err := nc.watchPodsDPU(); err != nil {
-			return err
-		}
-	} else {
+	if !config.IsModeDPU() {
 		// start the cni server
 		if nc.cniServer != nil {
 			if err := nc.cniServer.Start(cni.ServerRunDir); err != nil {
@@ -1096,7 +1083,7 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 	if config.OVNKubernetesFeature.EnableEgressService && (config.IsModeDPUHost() || config.IsModeFull()) {
 		wf := nc.watchFactory.(*factory.WatchFactory)
 		c, err := egressservice.NewController(nc.stopChan, nodetypes.OvnKubeNodeSNATMark, nc.name,
-			wf.EgressServiceInformer(), wf.ServiceInformer(), wf.EndpointSliceInformer())
+			wf.EgressServiceInformer(), wf.ServiceInformer(), wf.EndpointSliceInformer(), wf.PodInformer())
 		if err != nil {
 			return err
 		}
@@ -1346,7 +1333,23 @@ func removePMTUDNodeNFTRules(nodeIPs []net.IP) error {
 	return nil
 }
 
+// ownNodeDeletedExit terminates ovnkube-node once the Node object it runs on
+// behalf of is deleted; a variable so that unit tests can intercept the exit.
+var ownNodeDeletedExit = func(nodeName string) {
+	klog.Errorf("Node %q that this ovnkube-node instance runs on behalf of was deleted; exiting so that "+
+		"the restarted process re-initializes against the current Node object", nodeName)
+	klog.FlushAndExit(klog.ExitFlushTimeout, 1)
+}
+
 func (nc *DefaultNodeNetworkController) deleteNode(node *corev1.Node) {
+	if config.IsModeDPU() && node.Name == nc.name {
+		// In DPU mode the process does not run on the deleted node, so nothing
+		// else stops it, and what it wrote to the Node object is only written at
+		// startup: exit and let the container restart against the new node.
+		ownNodeDeletedExit(nc.name)
+		return
+	}
+
 	gw := nc.Gateway.(*gateway)
 	gw.openflowManager.deleteFlowsByKey(getPMTUDKey(node.Name))
 

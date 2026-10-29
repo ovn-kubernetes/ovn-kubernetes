@@ -5,9 +5,9 @@ package userdefinednetwork
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"reflect"
-	"strings"
 	"time"
 
 	netv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
@@ -15,10 +15,12 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/structured-merge-diff/v6/fieldpath"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork/template"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
@@ -28,6 +30,8 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utiludn "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/udn"
 )
+
+const nadFieldManager = "user-defined-network-controller"
 
 func (c *Controller) updateNAD(obj client.Object, namespace string) (_ *netv1.NetworkAttachmentDefinition, err error) {
 	start := time.Now()
@@ -78,61 +82,182 @@ func (c *Controller) updateNAD(obj client.Object, namespace string) (_ *netv1.Ne
 	nadCopy := existingNAD.DeepCopy()
 
 	if nadCopy == nil {
-		// creating NAD in case no primary network exist should be atomic and synchronized with
-		// any other thread that create NADs.
-		c.createNetworkLock.Lock()
-		defer c.createNetworkLock.Unlock()
-
-		if utiludn.IsPrimaryNetwork(template.GetSpec(obj)) {
-			actualNads, err := c.nadLister.NetworkAttachmentDefinitions(namespace).List(labels.Everything())
-			if err != nil {
-				return nil, fmt.Errorf("failed to list  NetworkAttachmentDefinition: %w", err)
-			}
-			// This is best-effort check no primary NAD exist before creating one,
-			// noting prevent primary NAD from being created right after this check.
-			if err := PrimaryNetAttachDefNotExist(actualNads); err != nil {
-				return nil, err
-			}
-		}
-
-		newNAD, err := c.nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespace).Create(context.Background(), desiredNAD, metav1.CreateOptions{})
+		nadCopy, err = c.createNAD(obj, namespace, desiredNAD)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create NetworkAttachmentDefinition: %w", err)
+			return nil, err
 		}
-		klog.Infof("Created NetworkAttachmentDefinition [%s/%s]", newNAD.Namespace, newNAD.Name)
-
-		return newNAD, nil
+		klog.Infof("Created NetworkAttachmentDefinition [%s/%s]", nadCopy.Namespace, nadCopy.Name)
 	}
 
 	if !metav1.IsControlledBy(nadCopy, obj) {
 		return nil, fmt.Errorf("foreign NetworkAttachmentDefinition with the desired name already exist [%s/%s]", nadCopy.Namespace, nadCopy.Name)
 	}
 
-	// NAD update path, need to merge internal (k8s.ovn.org) current annotations with desired
-	for k, v := range nadCopy.Annotations {
-		if strings.HasPrefix(k, types.OvnK8sPrefix) {
-			if desiredNAD.Annotations == nil {
-				desiredNAD.Annotations = make(map[string]string)
-			}
-			desiredNAD.Annotations[k] = v
+	if nadCopy.Spec.Config != desiredNAD.Spec.Config || !reflect.DeepEqual(nadCopy.Labels, desiredNAD.Labels) {
+		nadCopy.Spec.Config = desiredNAD.Spec.Config
+		nadCopy.Labels = desiredNAD.Labels
+		nadCopy, err = c.nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespace).
+			Update(context.Background(), nadCopy, metav1.UpdateOptions{})
+		if err != nil {
+			return nil, fmt.Errorf("failed to update NetworkAttachmentDefinition: %w", err)
 		}
 	}
 
-	if reflect.DeepEqual(nadCopy.Spec.Config, desiredNAD.Spec.Config) && reflect.DeepEqual(nadCopy.ObjectMeta.Labels, desiredNAD.ObjectMeta.Labels) &&
-		reflect.DeepEqual(desiredNAD.Annotations, nadCopy.Annotations) {
-		return nadCopy, nil
+	return c.applyNADAnnotations(nadCopy, desiredNAD.Annotations)
+}
+
+func (c *Controller) createNAD(obj client.Object, namespace string, desiredNAD *netv1.NetworkAttachmentDefinition) (*netv1.NetworkAttachmentDefinition, error) {
+	// Serialize the primary-network check and creation with other NAD creators.
+	c.createNetworkLock.Lock()
+	defer c.createNetworkLock.Unlock()
+
+	if utiludn.IsPrimaryNetwork(template.GetSpec(obj)) {
+		actualNads, err := c.nadLister.NetworkAttachmentDefinitions(namespace).List(labels.Everything())
+		if err != nil {
+			return nil, fmt.Errorf("failed to list NetworkAttachmentDefinition: %w", err)
+		}
+		// The informer cache makes this a best-effort check for an existing primary NAD.
+		if err := PrimaryNetAttachDefNotExist(actualNads); err != nil {
+			return nil, err
+		}
 	}
 
-	nadCopy.Spec.Config = desiredNAD.Spec.Config
-	nadCopy.ObjectMeta.Labels = desiredNAD.ObjectMeta.Labels
-	nadCopy.Annotations = desiredNAD.Annotations
-	updatedNAD, err := c.nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nadCopy.Namespace).Update(context.Background(), nadCopy, metav1.UpdateOptions{})
+	newNAD, err := c.nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespace).Create(context.Background(), desiredNAD, metav1.CreateOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create NetworkAttachmentDefinition: %w", err)
+	}
+
+	return newNAD, nil
+}
+
+func (c *Controller) applyNADAnnotations(nad *netv1.NetworkAttachmentDefinition, annotations map[string]string) (*netv1.NetworkAttachmentDefinition, error) {
+	// An empty parent needs an apply only to release previously applied keys.
+	if len(annotations) == 0 && !hasNADAnnotationApplyManager(nad) {
+		return nad, nil
+	}
+
+	nad, err := c.migrateNADAnnotationOwnership(nad, annotations)
+	if err != nil {
+		return nil, err
+	}
+
+	// Apply only parent annotations. Including NAD-local keys would claim them.
+	// The UID prevents updating a replacement NAD with a different owner.
+	annotationIntent := map[string]any{
+		"apiVersion": netv1.SchemeGroupVersion.String(),
+		"kind":       "NetworkAttachmentDefinition",
+		"metadata": metav1.ObjectMeta{
+			Name:            nad.Name,
+			Namespace:       nad.Namespace,
+			UID:             nad.UID,
+			ResourceVersion: nad.ResourceVersion,
+			Annotations:     annotations,
+		},
+	}
+	data, err := json.Marshal(annotationIntent)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal NetworkAttachmentDefinition: %w", err)
+	}
+
+	updatedNAD, err := c.nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nad.Namespace).Patch(
+		context.Background(), nad.Name, k8stypes.ApplyPatchType, data,
+		metav1.PatchOptions{FieldManager: nadFieldManager, Force: ptr.To(true)})
 	if err != nil {
 		return nil, fmt.Errorf("failed to update NetworkAttachmentDefinition: %w", err)
 	}
 	klog.Infof("Updated NetworkAttachmentDefinition [%s/%s]", updatedNAD.Namespace, updatedNAD.Name)
 
 	return updatedNAD, nil
+}
+
+func hasNADAnnotationApplyManager(nad *netv1.NetworkAttachmentDefinition) bool {
+	for _, entry := range nad.ManagedFields {
+		if entry.Manager == nadFieldManager && entry.Operation == metav1.ManagedFieldsOperationApply && entry.Subresource == "" {
+			return true
+		}
+	}
+	return false
+}
+
+// migrateNADAnnotationOwnership is also needed for new NADs because Create
+// writes parent annotations with Update ownership. It cannot be removed until
+// creation establishes annotation ownership through SSA and supported upgrades
+// no longer need to migrate legacy NADs.
+func (c *Controller) migrateNADAnnotationOwnership(nad *netv1.NetworkAttachmentDefinition, annotations map[string]string) (*netv1.NetworkAttachmentDefinition, error) {
+	if hasNADAnnotationApplyManager(nad) {
+		return nad, nil
+	}
+
+	// An unchanged first apply shares ownership with old Update writers, which
+	// would prevent later removal. Release only current parent keys from Update
+	// records; preserve local keys and deliberate ownership by other appliers.
+	parentFields := fieldpath.NewSet()
+	for key := range annotations {
+		parentFields.Insert(fieldpath.MakePathOrDie("metadata", "annotations", key))
+	}
+	entries := append([]metav1.ManagedFieldsEntry(nil), nad.ManagedFields...)
+	changed := false
+	for i := range entries {
+		entry := &entries[i]
+		if entry.Operation != metav1.ManagedFieldsOperationUpdate || entry.Subresource != "" || entry.FieldsV1 == nil {
+			continue
+		}
+		fields := fieldpath.NewSet()
+		if err := fields.FromJSON(entry.FieldsV1.GetRawReader()); err != nil {
+			return nil, fmt.Errorf("failed to read NAD annotation ownership: %w", err)
+		}
+		remaining := fields.Difference(parentFields)
+		if fields.Equals(remaining) {
+			continue
+		}
+		raw, err := remaining.ToJSON()
+		if err != nil {
+			return nil, fmt.Errorf("failed to encode NAD annotation ownership: %w", err)
+		}
+		entry.FieldsV1 = &metav1.FieldsV1{Raw: raw}
+		changed = true
+	}
+	if !changed {
+		return nad, nil
+	}
+
+	adoptedFields := fieldpath.NewSet()
+	for key := range annotations {
+		if _, exists := nad.Annotations[key]; exists {
+			adoptedFields.Insert(fieldpath.MakePathOrDie("metadata", "annotations", key))
+		}
+	}
+	raw, err := adoptedFields.ToJSON()
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode adopted NAD annotation ownership: %w", err)
+	}
+	entries = append(entries, metav1.ManagedFieldsEntry{
+		Manager:    nadFieldManager,
+		Operation:  metav1.ManagedFieldsOperationApply,
+		APIVersion: netv1.SchemeGroupVersion.String(),
+		// NAD update filtering requires a timestamp on each ownership record.
+		Time:       ptr.To(metav1.Now()),
+		FieldsType: "FieldsV1",
+		FieldsV1:   &metav1.FieldsV1{Raw: raw},
+	})
+
+	// Transfer ownership atomically without changing values. If the subsequent
+	// apply fails, its ownership record still lets a retry remove annotations
+	// deleted from the parent in the meantime. Both writes use resourceVersion
+	// so a concurrent writer cannot acquire ownership unnoticed between them.
+	data, err := json.Marshal(map[string]any{"metadata": map[string]any{
+		"resourceVersion": nad.ResourceVersion,
+		"managedFields":   entries,
+	}})
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal NAD ownership migration: %w", err)
+	}
+	updated, err := c.nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nad.Namespace).
+		Patch(context.Background(), nad.Name, k8stypes.MergePatchType, data, metav1.PatchOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to migrate NAD annotation ownership: %w", err)
+	}
+	return updated, nil
 }
 
 func (c *Controller) deleteNAD(obj client.Object, namespace string) error {

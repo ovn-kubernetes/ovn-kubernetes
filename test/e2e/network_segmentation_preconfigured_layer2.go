@@ -56,7 +56,7 @@ var _ = Describe("Network Segmentation: Preconfigured Layer2 UDN", feature.Netwo
 	})
 
 	DescribeTable("should respect network configuration",
-		func(config testConfig) {
+		func(ctx SpecContext, config testConfig) {
 			netConfig := config.netConfig
 
 			By("creating the L2 network")
@@ -66,7 +66,7 @@ var _ = Describe("Network Segmentation: Preconfigured Layer2 UDN", feature.Netwo
 			cleanup, err := createManifest(netConfig.namespace, udnManifest)
 			Expect(err).NotTo(HaveOccurred())
 			DeferCleanup(cleanup)
-			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, netConfig.namespace, netConfig.name), 5*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, netConfig.namespace, netConfig.name), 5*time.Second, time.Second).Should(Succeed())
 
 			By("creating a pod on the custom L2 network")
 			podConfig := *podConfig("gateway-test-pod")
@@ -295,7 +295,7 @@ var _ = Describe("Network Segmentation: Preconfigured Layer2 UDN", feature.Netwo
 		})
 
 		DescribeTable("should fail when creating second pod with duplicate static IP",
-			func(config duplicateIPTestConfig) {
+			func(ctx SpecContext, config duplicateIPTestConfig) {
 				podIPs := filterCIDRs(f.ClientSet, config.podIP)
 
 				if len(podIPs) == 0 {
@@ -315,7 +315,7 @@ var _ = Describe("Network Segmentation: Preconfigured Layer2 UDN", feature.Netwo
 				cleanup, err := createManifest(netConfig.namespace, udnManifest)
 				Expect(err).NotTo(HaveOccurred())
 				DeferCleanup(cleanup)
-				Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, netConfig.namespace, netConfig.name), 5*time.Second, time.Second).Should(Succeed())
+				Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, netConfig.namespace, netConfig.name), 5*time.Second, time.Second).Should(Succeed())
 
 				By("Creating first pod with static IP")
 				pod1 := createPodWithStaticIP("test-pod-1", podIPs)

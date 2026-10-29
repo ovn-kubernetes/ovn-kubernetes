@@ -175,6 +175,79 @@ spec:
       subnets: ["192.168.1.0/24"]
 `,
 	},
+	{
+		Description: "valid, secondary, disabled mac-security",
+		Name:        "layer2-mac-security-disabled-success",
+		Manifest: `
+apiVersion: k8s.ovn.org/v1
+kind: ClusterUserDefinedNetwork
+metadata:
+  name: layer2-mac-security-disabled-success
+spec:
+  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
+  network:
+    topology: Layer2
+    layer2:
+      role: Secondary
+      ipam: {mode: Disabled}
+      macSecurity: { mode: Disabled }
+`,
+	},
+	{
+		Description: "valid, secondary, explicitly enabled mac-security",
+		Name:        "layer2-mac-security-explicitly-enabled-success",
+		Manifest: `
+apiVersion: k8s.ovn.org/v1
+kind: ClusterUserDefinedNetwork
+metadata:
+  name: layer2-mac-security-explicitly-enabled-success
+spec:
+  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
+  network:
+    topology: Layer2
+    layer2:
+      role: Secondary
+      ipam: {mode: Disabled}
+      macSecurity: { mode: Enabled }
+`,
+	},
+	{
+		Description: "valid, primary, ipam.mode unset, explicitly enabled mac-security",
+		Name:        "layer2-mac-security-primary-enabled-success",
+		Manifest: `
+apiVersion: k8s.ovn.org/v1
+kind: ClusterUserDefinedNetwork
+metadata:
+  name: layer2-mac-security-primary-default-ipam-success
+spec:
+  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
+  network:
+    topology: Layer2
+    layer2:
+      role: Primary
+      macSecurity: { mode: Enabled }
+      subnets: ["192.168.1.0/24", "2001:db8::/64"]
+`,
+	},
+	{
+		Description: "valid, primary, ipam.mode set, explicitly enabled mac-security",
+		Name:        "layer2-mac-security-primary-enabled-ipam-success",
+		Manifest: `
+apiVersion: k8s.ovn.org/v1
+kind: ClusterUserDefinedNetwork
+metadata:
+  name: layer2-mac-security-primary-enabled-ipam-success
+spec:
+  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
+  network:
+    topology: Layer2
+    layer2:
+      role: Primary
+      macSecurity: { mode: Enabled }
+      ipam: { mode: Enabled }
+      subnets: ["192.168.1.0/24", "2001:db8::/64"]
+`,
+	},
 }
 
 // Layer2UDNValid scenarios use UserDefinedNetwork (namespace-scoped) — Name is intentionally
@@ -306,6 +379,71 @@ spec:
     subnets: ["2001:db8::/64"]
     infrastructureSubnets: ["2001:db8::/80"]
     defaultGatewayIPs: ["2001:db8::1"]
+`,
+	},
+	{
+		Description: "valid, secondary, disabled mac-security",
+		Name:        "layer2-mac-security-disabled-success",
+		Manifest: `
+apiVersion: k8s.ovn.org/v1
+kind: UserDefinedNetwork
+metadata:
+  name: layer2-mac-security-disabled-success
+spec:
+  topology: Layer2
+  layer2:
+    role: Secondary
+    ipam: {mode: Disabled}
+    macSecurity: { mode: Disabled }
+`,
+	},
+	{
+		Description: "valid, secondary, explicitly enabled mac-security",
+		Name:        "layer2-mac-security-explicitly-enabled-success",
+		Manifest: `
+apiVersion: k8s.ovn.org/v1
+kind: UserDefinedNetwork
+metadata:
+  name: layer2-mac-security-explicitly-enabled-success
+spec:
+  topology: Layer2
+  layer2:
+    role: Secondary
+    ipam: {mode: Disabled}
+    macSecurity: { mode: Enabled }
+`,
+	},
+	{
+		Description: "valid, primary, ipam.mode unset, explicitly enabled mac-security",
+		Name:        "layer2-mac-security-primary-default-ipam-enabled-success",
+		Manifest: `
+apiVersion: k8s.ovn.org/v1
+kind: UserDefinedNetwork
+metadata:
+  name: layer2-mac-security-primary-default-ipam-success
+spec:
+  topology: Layer2
+  layer2:
+    role: Primary
+    macSecurity: { mode: Enabled }
+    subnets: ["192.168.1.0/24", "2001:db8::/64"]
+`,
+	},
+	{
+		Description: "valid, primary, ipam.mode set, explicitly enabled mac-security",
+		Name:        "layer2-mac-security-primary-enabled-ipam-success",
+		Manifest: `
+apiVersion: k8s.ovn.org/v1
+kind: UserDefinedNetwork
+metadata:
+  name: layer2-mac-security-primary-enabled-ipam-success
+spec:
+  topology: Layer2
+  layer2:
+    role: Primary
+    macSecurity: { mode: Enabled }
+    ipam: { mode: Enabled }
+    subnets: ["192.168.1.0/24", "2001:db8::/64"]
 `,
 	},
 }

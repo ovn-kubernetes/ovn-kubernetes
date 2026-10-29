@@ -54,16 +54,16 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", feature.Networ
 		})
 
 		DescribeTableSubtree("created using",
-			func(createNetworkFn func(c networkAttachmentConfigParams) error) {
+			func(createNetworkFn func(ctx context.Context, c networkAttachmentConfigParams) error) {
 				DescribeTable(
 					"mirrors EndpointSlices managed by the default controller for namespaces with user defined primary networks",
-					func(
+					func(ctx SpecContext,
 						netConfig networkAttachmentConfigParams,
 						isHostNetwork bool,
 					) {
 						By("creating the network")
 						netConfig.namespace = f.Namespace.Name
-						Expect(createNetworkFn(netConfig)).To(Succeed())
+						Expect(createNetworkFn(ctx, netConfig)).To(Succeed())
 
 						replicas := int32(3)
 						By("creating the deployment")
@@ -165,26 +165,26 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", feature.Networ
 					),
 				)
 			},
-			Entry("NetworkAttachmentDefinitions", func(c networkAttachmentConfigParams) error {
+			Entry("NetworkAttachmentDefinitions", func(_ context.Context, c networkAttachmentConfigParams) error {
 				netConfig := newNetworkAttachmentConfig(c)
 				nad := generateNAD(netConfig, f.ClientSet)
 				_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(context.Background(), nad, metav1.CreateOptions{})
 				return err
 			}),
-			Entry("UserDefinedNetwork", func(c networkAttachmentConfigParams) error {
+			Entry("UserDefinedNetwork", func(ctx context.Context, c networkAttachmentConfigParams) error {
 				udnManifest := generateUserDefinedNetworkManifest(&c, f.ClientSet)
 				cleanup, err := createManifest(f.Namespace.Name, udnManifest)
 				DeferCleanup(cleanup)
-				Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, f.Namespace.Name, c.name), 5*time.Second, time.Second).Should(Succeed())
+				Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, f.Namespace.Name, c.name), 5*time.Second, time.Second).Should(Succeed())
 				return err
 			}),
 		)
 
 		DescribeTableSubtree("created using",
-			func(createNetworkFn func(c networkAttachmentConfigParams) error) {
+			func(createNetworkFn func(ctx context.Context, c networkAttachmentConfigParams) error) {
 				DescribeTable(
 					"does not mirror EndpointSlices in namespaces not using user defined primary networks",
-					func(
+					func(ctx SpecContext,
 						netConfig networkAttachmentConfigParams,
 					) {
 						By("creating default net namespace")
@@ -198,7 +198,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", feature.Networ
 						Expect(err).NotTo(HaveOccurred())
 						By("creating the network")
 						netConfig.namespace = defaultNetNamespace.Name
-						Expect(createNetworkFn(netConfig)).To(Succeed())
+						Expect(createNetworkFn(ctx, netConfig)).To(Succeed())
 
 						replicas := int32(3)
 						By("creating the deployment")
@@ -251,17 +251,17 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", feature.Networ
 					),
 				)
 			},
-			Entry("NetworkAttachmentDefinitions", func(c networkAttachmentConfigParams) error {
+			Entry("NetworkAttachmentDefinitions", func(_ context.Context, c networkAttachmentConfigParams) error {
 				netConfig := newNetworkAttachmentConfig(c)
 				nad := generateNAD(netConfig, f.ClientSet)
 				_, err := nadClient.NetworkAttachmentDefinitions(fmt.Sprintf("%s-default", f.Namespace.Name)).Create(context.Background(), nad, metav1.CreateOptions{})
 				return err
 			}),
-			Entry("UserDefinedNetwork", func(c networkAttachmentConfigParams) error {
+			Entry("UserDefinedNetwork", func(ctx context.Context, c networkAttachmentConfigParams) error {
 				udnManifest := generateUserDefinedNetworkManifest(&c, f.ClientSet)
 				cleanup, err := createManifest(fmt.Sprintf("%s-default", f.Namespace.Name), udnManifest)
 				DeferCleanup(cleanup)
-				Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, fmt.Sprintf("%s-default", f.Namespace.Name), c.name), 5*time.Second, time.Second).Should(Succeed())
+				Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, fmt.Sprintf("%s-default", f.Namespace.Name), c.name), 5*time.Second, time.Second).Should(Succeed())
 				return err
 			}),
 		)

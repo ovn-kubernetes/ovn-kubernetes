@@ -4,13 +4,6 @@ on:
   merge_group:
   pull_request:
     branches: [ master,release-* ]
-    # Only run jobs if at least one non-doc file is changed
-    paths-ignore:
-      - 'docs/**'
-      - '**/*.md'
-      - 'mkdocs.yml'
-      - '.github/ISSUE_TEMPLATE/**'
-      - '.github/PULL_REQUEST_TEMPLATE.md'
   schedule:
     - cron: '0 */12 * * *'
   workflow_dispatch:
@@ -43,8 +36,48 @@ env:
   # OVN_GITREF: main
 
 jobs:
+  changes:
+    name: Check changed files
+    runs-on: ubuntu-24.04
+    permissions:
+      pull-requests: read
+    outputs:
+      run_ci: ${{ steps.filter.outputs.run_ci }}
+    steps:
+    - name: Check whether CI is needed
+      id: filter
+      uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+      with:
+        script: |
+          // Scheduled, manual, and merge-group runs always run the full CI suite.
+          if (context.eventName !== 'pull_request') {
+            core.setOutput('run_ci', 'true');
+            return;
+          }
+          const files = await github.paginate(github.rest.pulls.listFiles, {
+            ...context.repo,
+            pull_number: context.issue.number,
+            per_page: 100,
+          });
+          const isDoc = path => path.startsWith('docs/') || path.endsWith('.md') ||
+            path === 'mkdocs.yml' || path === '.coderabbit.yml' ||
+            path.startsWith('.github/ISSUE_TEMPLATE/');
+          // The API caps results at 3000 files. Never skip CI on an incomplete list.
+          // Check both paths of a rename so moving code into docs still runs CI.
+          const runCI = files.length === 0 || files.length >= 3000 ||
+            files.some(file => !isDoc(file.filename) ||
+              (file.previous_filename && !isDoc(file.previous_filename)));
+          core.setOutput('run_ci', String(runCI));
+
+  go-cache:
+    needs: changes
+    if: needs.changes.outputs.run_ci == 'true'
+    uses: ./.github/workflows/prepare-go-cache.yml
+
   # separate job for parallelism
   verify-lint-generated-code:
+    needs: [ changes, go-cache ]
+    if: needs.changes.outputs.run_ci == 'true'
     name: Verify lint and generated code
     runs-on: ubuntu-24.04
     steps:
@@ -52,14 +85,7 @@ jobs:
       uses: actions/checkout@v6
 
     - name: Set up Go
-      uses: actions/setup-go@v6
-      with:
-        go-version-file: 'go-controller/go.mod'
-        # Disabling cache to avoid warnings until these two issues are fixed
-        # https://github.com/actions/setup-go/issues/424
-        # https://github.com/actions/setup-go/issues/403
-        # cache-dependency-path: "**/*.sum"
-        cache: false
+      uses: ./.github/actions/setup-go
       id: go
 
     - name: Verify linting rules are enforced
@@ -81,6 +107,8 @@ jobs:
         make verify-mocksgen
 
   build-base:
+    needs: changes
+    if: needs.changes.outputs.run_ci == 'true'
     name: Build-base
     runs-on: ubuntu-24.04
     steps:
@@ -126,11 +154,7 @@ jobs:
       uses: actions/setup-go@v6
       with:
         go-version-file: 'go-controller/go.mod'
-        # Disabling cache to avoid warnings until these two issues are fixed
-        # https://github.com/actions/setup-go/issues/424
-        # https://github.com/actions/setup-go/issues/403
-        # cache-dependency-path: "**/*.sum"
-        cache: false
+        cache-dependency-path: "**/*.sum"
       id: go
 
     - name: Build - from base branch
@@ -174,6 +198,9 @@ jobs:
         path: ${{ env.CI_IMAGE_BASE_TAR }}
 
   build-pr:
+    needs: [ changes, go-cache ]
+    # A failed file check must fail this required check, rather than skip it.
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.run_ci != 'false') }}
     name: Build-PR
     runs-on: ubuntu-24.04
     env:
@@ -182,6 +209,16 @@ jobs:
       PR_IMAGE_TARGET: fedora-image
       PR_IMAGE_ARTIFACT: test-image-pr
     steps:
+    - name: Verify changed-file check succeeded
+      env:
+        CHANGES_RESULT: ${{ needs.changes.result }}
+        RUN_CI: ${{ needs.changes.outputs.run_ci }}
+      run: test "$CHANGES_RESULT" = success && test "$RUN_CI" = true
+
+    - name: Verify module cache preparation succeeded
+      env:
+        CACHE_RESULT: ${{ needs.go-cache.result }}
+      run: test "$CACHE_RESULT" = success
     # These anchored steps are shared with build-pr-ubuntu below.
     - &restore_pr_image_cache
       name: Restore PR image cache
@@ -213,14 +250,7 @@ jobs:
     - &setup_pr_image_go
       name: Set up Go
       if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
-      uses: actions/setup-go@v6
-      with:
-        go-version-file: 'go-controller/go.mod'
-        # Disabling cache to avoid warnings until these two issues are fixed
-        # https://github.com/actions/setup-go/issues/424
-        # https://github.com/actions/setup-go/issues/403
-        # cache-dependency-path: "**/*.sum"
-        cache: false
+      uses: ./.github/actions/setup-go
       id: go
 
     - name: Build - from current pr branch
@@ -229,7 +259,7 @@ jobs:
         set -x
         pushd go-controller
            # exit early if there are formatting, go mod / vendor, or license tree issues
-           make gofmt
+           make gofmt CONTAINER_RUNNABLE=1
            make verify-go-mod-vendor
            make verify-third-party-licenses
            make
@@ -269,6 +299,8 @@ jobs:
         path: ${{ env.CI_DIST_IMAGES_OUTPUT }}/${{ env.CI_IMAGE_PR_TAR }}
 
   build-pr-ubuntu:
+    needs: [ changes, go-cache ]
+    if: needs.changes.outputs.run_ci == 'true'
     name: Build-PR (Ubuntu)
     runs-on: ubuntu-24.04
     env:
@@ -287,6 +319,8 @@ jobs:
     - *upload_pr_image
 
   test-pr:
+    needs: [ changes, go-cache ]
+    if: needs.changes.outputs.run_ci == 'true'
     name: Test-PR
     runs-on: ubuntu-24.04
     steps:
@@ -294,14 +328,7 @@ jobs:
       uses: actions/checkout@v6
 
     - name: Set up Go
-      uses: actions/setup-go@v6
-      with:
-        go-version-file: 'go-controller/go.mod'
-        # Disabling cache to avoid warnings until these two issues are fixed
-        # https://github.com/actions/setup-go/issues/424
-        # https://github.com/actions/setup-go/issues/403
-        # cache-dependency-path: "**/*.sum"
-        cache: false
+      uses: ./.github/actions/setup-go
       id: go
 
     - name: Install VRF kernel module
@@ -383,10 +410,8 @@ jobs:
       uses: actions/setup-go@v6
       with:
         go-version-file: 'go-controller/go.mod'
-        # Disabling cache to avoid warnings until these two issues are fixed
-        # https://github.com/actions/setup-go/issues/424
-        # https://github.com/actions/setup-go/issues/403
-        # cache-dependency-path: "**/*.sum"
+        # Restore modules after the PR checkout below, avoiding two cache
+        # extractions into the same directory with overlapping read-only files.
         cache: false
       id: go
 
@@ -436,6 +461,9 @@ jobs:
 
     - name: Check out code into the Go module directory - from PR branch
       uses: actions/checkout@v6
+
+    - name: Restore PR Go modules
+      uses: ./.github/actions/setup-go
 
     - name: Export kind logs
       if: always()
@@ -514,60 +542,61 @@ jobs:
         # ipfamily: ["ipv4", "ipv6", "dualstack"]
         # disable-snat-multiple-gws: ["noSnatGW", "snatGW"]
         # second-bridge: ["2br", "1br"]
-        # ic: ["ic-single-node-zones"]
+        # cni-mode: ["privileged", "unprivileged"]
         # num-workers : "<integer value>"
         # forwarding : ["", "disable-forwarding"]
         # dns-name-resolver : ["", "enable-dns-name-resolver"]
         # network-segmentation : ["", "enable-network-segmentation"]
         # traffic-flow-tests : "<tests range. i.e. 1-24>"
         include:
-          - {"target": "shard-conformance", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones"}
+          - {"target": "shard-conformance", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "cni-mode": "privileged"}
           # Keep dedicated coverage for a local gateway bridge without a system uplink so gateway initialization
           # cannot silently fall back to the normal bridge-plus-uplink topology.
-          - {"target": "no-uplink", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones"}
-          - {"target": "shard-conformance", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default"}
-          - {"target": "shard-conformance", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default"}
-          - {"target": "shard-conformance", "gateway-mode": "shared", "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "no-overlay": "true"}
-          - {"target": "shard-conformance", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "managed", "no-overlay": "managed"}
-          - {"target": "shard-conformance", "gateway-mode": "shared", "ipfamily": "ipv6",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones"}
-          - {"target": "shard-conformance", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones"}
-          - {"target": "control-plane", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "dns-name-resolver": "enable-dns-name-resolver"}
-          - {"target": "control-plane", "gateway-mode": "local",  "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "dns-name-resolver": "enable-dns-name-resolver", "image_family": "ubuntu"}
-          - {"target": "control-plane", "gateway-mode": "local",  "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones"}
-          - {"target": "control-plane", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "2br", "ic": "ic-single-node-zones"}
-          - {"target": "control-plane", "gateway-mode": "shared", "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "2br", "ic": "ic-single-node-zones", "cni-mode": "unprivileged"}
-          - {"target": "multi-homing", "gateway-mode": "shared",  "ipfamily": "dualstack",      "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones"}
-          - {"target": "node-ip-mac-migration", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones"}
-          - {"target": "multi-homing", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "network-segmentation": "enable-network-segmentation"}
-          - {"target": "external-gateway", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "2br", "ic": "ic-single-node-zones"}
-          - {"target": "external-gateway", "gateway-mode": "local",  "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones"}
-          - {"target": "external-gateway", "gateway-mode": "shared", "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "2br", "ic": "ic-single-node-zones"}
-          - {"target": "external-gateway", "gateway-mode": "local",  "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones"}
-          - {"target": "kv-live-migration", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "num-workers": "3", "network-segmentation": "enable-network-segmentation", "routeadvertisements": "true"}
-          - {"target": "kv-live-migration", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "num-workers": "3", "network-segmentation": "enable-network-segmentation", "routeadvertisements": "true", "evpn": "enable-evpn"}
-          - {"target": "control-plane", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "forwarding": "disable-forwarding"}
-          - {"target": "network-segmentation", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "forwarding": "disable-forwarding"}
-          - {"target": "network-segmentation", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones"}
-          - {"target": "network-segmentation-dynamic", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "cni-mode": "unprivileged"}
-          - {"target": "network-segmentation", "gateway-mode": "shared", "ipfamily": "ipv6", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones"}
-          - {"target": "bgp", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "dns-name-resolver": "enable-dns-name-resolver"}
-          - {"target": "bgp", "gateway-mode": "shared",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "dns-name-resolver": "enable-dns-name-resolver"}
-          - {"target": "bgp", "gateway-mode": "local",  "ipfamily": "ipv6", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation"}
+          - {"target": "no-uplink", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged"}
+          - {"target": "shard-conformance", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default"}
+          - {"target": "shard-conformance", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default"}
+          - {"target": "shard-conformance", "gateway-mode": "shared", "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default", "no-overlay": "true"}
+          - {"target": "shard-conformance", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "managed", "no-overlay": "managed"}
+          - {"target": "shard-conformance", "gateway-mode": "shared", "ipfamily": "ipv6",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "cni-mode": "privileged"}
+          - {"target": "shard-conformance", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "cni-mode": "privileged"}
+          - {"target": "control-plane", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "cni-mode": "privileged", "dns-name-resolver": "enable-dns-name-resolver"}
+          - {"target": "control-plane", "gateway-mode": "local",  "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged", "dns-name-resolver": "enable-dns-name-resolver", "image_family": "ubuntu"}
+          - {"target": "control-plane", "gateway-mode": "local",  "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged"}
+          - {"target": "control-plane", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "2br", "cni-mode": "privileged"}
+          - {"target": "control-plane", "gateway-mode": "shared", "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "2br", "cni-mode": "unprivileged"}
+          - {"target": "multi-homing", "gateway-mode": "shared",  "ipfamily": "dualstack",      "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "cni-mode": "privileged"}
+          - {"target": "node-ip-mac-migration", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "cni-mode": "privileged"}
+          - {"target": "multi-homing", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "network-segmentation": "enable-network-segmentation"}
+          - {"target": "external-gateway", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "2br", "cni-mode": "privileged"}
+          - {"target": "external-gateway", "gateway-mode": "local",  "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged"}
+          - {"target": "external-gateway", "gateway-mode": "shared", "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "2br", "cni-mode": "privileged"}
+          - {"target": "external-gateway", "gateway-mode": "local",  "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged"}
+          - {"target": "kv-live-migration", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "3", "network-segmentation": "enable-network-segmentation", "routeadvertisements": "true"}
+          - {"target": "kv-live-migration", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "3", "network-segmentation": "enable-network-segmentation", "routeadvertisements": "true", "evpn": "enable-evpn"}
+          - {"target": "control-plane", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "forwarding": "disable-forwarding"}
+          - {"target": "network-segmentation", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged", "forwarding": "disable-forwarding"}
+          - {"target": "network-segmentation", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "unprivileged"}
+          - {"target": "network-segmentation-dynamic", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "unprivileged"}
+          - {"target": "network-segmentation", "gateway-mode": "shared", "ipfamily": "ipv6", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged"}
+          - {"target": "bgp", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "dns-name-resolver": "enable-dns-name-resolver"}
+          - {"target": "bgp", "gateway-mode": "shared",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "dns-name-resolver": "enable-dns-name-resolver"}
+          - {"target": "bgp", "gateway-mode": "local",  "ipfamily": "ipv6", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation"}
           # no-overlay mode cannot be enabled alongside other tests: activating it on the default network requires
           # restarting ovn-k pods (day-2 reconfiguration), which would disrupt any concurrently running test jobs.
           # Dedicated no-overlay jobs are therefore required to cover feature combinations that may interact with
           # no-overlay (e.g. BGP route advertisements, network-segmentation) where implementations are not strictly orthogonal.
-          - {"target": "bgp-no-overlay-dynamic", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "no-overlay": "snat-enabled"}
-          - {"target": "bgp-no-overlay", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "no-overlay": "true"}
-          - {"target": "bgp-loose-isolation", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "advertised-udn-isolation-mode": "loose"}
-          - {"target": "evpn", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "evpn": "enable-evpn"}
-          - {"target": "traffic-flow-test-only", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "traffic-flow-tests": "1-24", "network-segmentation": "enable-network-segmentation"}
-          - {"target": "tools", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "SnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "network-segmentation": "enable-network-segmentation"}
-          - {"target": "serial", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "ic": "ic-single-node-zones"}
-    needs: [ build-pr, build-pr-ubuntu ]
-    if: ${{ !cancelled() }}
+          - {"target": "bgp-managed", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "managed", "no-overlay": "managed"}
+          - {"target": "bgp-no-overlay-dynamic", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "no-overlay": "snat-enabled"}
+          - {"target": "bgp-no-overlay", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "no-overlay": "true"}
+          - {"target": "bgp-loose-isolation", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "advertised-udn-isolation-mode": "loose"}
+          - {"target": "evpn", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "evpn": "enable-evpn"}
+          - {"target": "traffic-flow-test-only", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged", "traffic-flow-tests": "1-24", "network-segmentation": "enable-network-segmentation"}
+          - {"target": "tools", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "SnatGW", "second-bridge": "1br", "cni-mode": "privileged", "network-segmentation": "enable-network-segmentation"}
+          - {"target": "serial", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "cni-mode": "privileged"}
+    needs: [ changes, build-pr, build-pr-ubuntu ]
+    if: ${{ !cancelled() && needs.changes.outputs.run_ci == 'true' }}
     env:
-      JOB_NAME: "${{ matrix.target }}-${{ matrix.gateway-mode }}-${{ matrix.ipfamily }}-${{ matrix.disable-snat-multiple-gws }}-${{ matrix.second-bridge }}-${{ matrix.ic }}-${{ matrix.image_family || 'fedora' }}"
+      JOB_NAME: "${{ matrix.target }}-${{ matrix.gateway-mode }}-${{ matrix.ipfamily }}-${{ matrix.disable-snat-multiple-gws }}-${{ matrix.second-bridge }}-${{ matrix.cni-mode }}-${{ matrix.image_family || 'fedora' }}"
       OVN_HYBRID_OVERLAY_ENABLE: ${{ matrix.target == 'control-plane' && (matrix.ipfamily == 'ipv4' || matrix.ipfamily == 'dualstack' ) }}
       OVN_MULTICAST_ENABLE:  "${{ matrix.target == 'control-plane' || startsWith(matrix.target, 'network-segmentation') || startsWith(matrix.target, 'bgp') }}"
       OVN_EMPTY_LB_EVENTS: "${{ matrix.target == 'control-plane' || startsWith(matrix.target, 'bgp') }}"
@@ -599,10 +628,10 @@ jobs:
       ADVERTISE_DEFAULT_NETWORK:  "${{ matrix.routeadvertisements == 'advertise-default' }}"
       ENABLE_NETWORK_CONNECT: "${{ startsWith(matrix.target, 'network-segmentation') }}"
       ENABLE_UPLINK: "${{ startsWith(matrix.target, 'network-segmentation') || matrix.network-segmentation == 'enable-network-segmentation' }}"
-      ENABLE_PRE_CONF_UDN_ADDR: "${{ matrix.ic == 'ic-single-node-zones' && (startsWith(matrix.target, 'network-segmentation') || matrix.network-segmentation == 'enable-network-segmentation') }}"
+      ENABLE_PRE_CONF_UDN_ADDR: "${{ startsWith(matrix.target, 'network-segmentation') || matrix.network-segmentation == 'enable-network-segmentation' }}"
       ADVERTISED_UDN_ISOLATION_MODE: "${{ matrix.advertised-udn-isolation-mode }}"
-      # Override PARALLEL=true for Serial tests target to run Serial tests
-      PARALLEL: "${{ matrix.target != 'serial' }}"
+      # Managed BGP tests change the shared template and must run serially.
+      PARALLEL: "${{ matrix.target != 'serial' && matrix.target != 'bgp-managed' }}"
       OVN_UNPRIVILEGED_MODE: "${{ matrix.cni-mode == 'unprivileged' }}"
       MULTI_POD_SUBNET: true
       DYNAMIC_UDN_ALLOCATION: "${{ endsWith(matrix.target, '-dynamic') }}"
@@ -657,14 +686,7 @@ jobs:
         docker system info
 
     - name: Set up Go
-      uses: actions/setup-go@v6
-      with:
-        go-version-file: 'go-controller/go.mod'
-        # Disabling cache to avoid warnings until these two issues are fixed
-        # https://github.com/actions/setup-go/issues/424
-        # https://github.com/actions/setup-go/issues/403
-        # cache-dependency-path: "**/*.sum"
-        cache: false
+      uses: ./.github/actions/setup-go
       id: go
 
     - name: Set up environment
@@ -779,8 +801,8 @@ jobs:
           make -C test control-plane WHAT="EVPN"
         elif [ "${{ matrix.target }}" == "bgp" ] || [ "${{ matrix.target }}" == "bgp-no-overlay" ] || [ "${{ matrix.target }}" == "bgp-no-overlay-dynamic" ] || [ "${{ matrix.target }}" == "bgp-loose-isolation" ]; then
           make -C test control-plane
-        elif [ "${{ matrix.target }}" == "serial" ]; then
-          # Run only Serial tests with ginkgo focus
+        elif [ "${{ matrix.target }}" == "serial" ] || [ "${{ matrix.target }}" == "bgp-managed" ]; then
+          # Run the Serial suite with the environment's compatibility filters.
           make -C test control-plane WHAT=Serial
         elif [ "${{ matrix.target }}" == "tools" ]; then
           make -C go-controller build
@@ -847,14 +869,7 @@ jobs:
       uses: actions/checkout@v6
 
     - name: Set up Go
-      uses: actions/setup-go@v6
-      with:
-        go-version-file: 'go-controller/go.mod'
-        # Disabling cache to avoid warnings until these two issues are fixed
-        # https://github.com/actions/setup-go/issues/424
-        # https://github.com/actions/setup-go/issues/403
-        # cache-dependency-path: "**/*.sum"
-        cache: false
+      uses: ./.github/actions/setup-go
       id: go
 
     - name: Set up environment

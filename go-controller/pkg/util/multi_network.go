@@ -59,6 +59,7 @@ type NetInfo interface {
 	Vlan() uint
 	AllowsPersistentIPs() bool
 	PhysicalNetworkName() string
+	MACSecurityMode() string
 	Transport() string
 	OutboundSNAT() string
 	EVPNVTEPName() string
@@ -682,6 +683,11 @@ func (nInfo *DefaultNetInfo) PhysicalNetworkName() string {
 	return ""
 }
 
+// MACSecurityMode returns enabled, as MAC spoof protection is always enabled on the default network.
+func (nInfo *DefaultNetInfo) MACSecurityMode() string {
+	return types.MACSecurityModeEnabled
+}
+
 // Transport returns the transport protocol for east-west traffic
 func (nInfo *DefaultNetInfo) Transport() string {
 	return config.Default.Transport
@@ -769,6 +775,8 @@ type userDefinedNetInfo struct {
 	physicalNetworkName string
 	defaultGatewayIPs   []net.IP
 	managementIPs       []net.IP
+
+	macSecurityMode string
 
 	transport    string
 	evpn         *ovncnitypes.EVPNConfig
@@ -924,6 +932,14 @@ func (nInfo *userDefinedNetInfo) AllowsPersistentIPs() bool {
 // PhysicalNetworkName returns the user provided physical network name value
 func (nInfo *userDefinedNetInfo) PhysicalNetworkName() string {
 	return nInfo.physicalNetworkName
+}
+
+// MACSecurityMode returns MAC security mode to be set for the network LSPs
+func (nInfo *userDefinedNetInfo) MACSecurityMode() string {
+	if nInfo.macSecurityMode == "" {
+		return types.MACSecurityModeEnabled
+	}
+	return nInfo.macSecurityMode
 }
 
 // Transport returns the transport protocol for east-west traffic
@@ -1154,6 +1170,11 @@ func (nInfo *userDefinedNetInfo) canReconcile(other NetInfo) bool {
 		return false
 	}
 
+	// omitted mode-security mode is equivalent to enabled (preserves current behavior)
+	if nInfo.MACSecurityMode() != other.MACSecurityMode() {
+		return false
+	}
+
 	lessCIDRNetworkEntry := func(a, b config.CIDRNetworkEntry) bool { return a.String() < b.String() }
 	if !cmp.Equal(nInfo.Subnets(), other.Subnets(), cmpopts.SortSlices(lessCIDRNetworkEntry)) {
 		// For Layer3 topology, adding subnets is considered compatible and reconcilable
@@ -1203,6 +1224,7 @@ func (nInfo *userDefinedNetInfo) copy() *userDefinedNetInfo {
 		outboundSNAT:          nInfo.outboundSNAT,
 		uplink:                nInfo.uplink,
 		ipamType:              nInfo.ipamType,
+		macSecurityMode:       nInfo.macSecurityMode,
 	}
 	// copy mutables
 	c.mutableNetInfo.copyFrom(&nInfo.mutableNetInfo)
@@ -1307,6 +1329,7 @@ func newLayer2NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 		transport:             netconf.Transport,
 		evpn:                  netconf.EVPN,
 		uplink:                netconf.Uplink,
+		macSecurityMode:       netconf.MACSecurityMode,
 		mutableNetInfo: mutableNetInfo{
 			id:      types.InvalidID,
 			nads:    sets.Set[string]{},
@@ -1342,6 +1365,7 @@ func newLocalnetNetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error
 		physicalNetworkName: netconf.PhysicalNetworkName,
 		uplink:              netconf.Uplink,
 		ipamType:            netconf.IPAM.Type,
+		macSecurityMode:     netconf.MACSecurityMode,
 		mutableNetInfo: mutableNetInfo{
 			id:      types.InvalidID,
 			nads:    sets.Set[string]{},
@@ -1512,6 +1536,27 @@ func GetUserDefinedNetworkPrefix(netName string) string {
 	return name + "_"
 }
 
+// GetNetworkScopedNameForNetwork scopes a name to the network identified by
+// netName, without requiring a NetInfo. It mirrors NetInfo.GetNetworkScopedName:
+// the default network is unscoped, user defined networks are prefixed with
+// GetUserDefinedNetworkPrefix(netName).
+func GetNetworkScopedNameForNetwork(netName, name string) string {
+	if netName == types.DefaultNetworkName {
+		return name
+	}
+	return GetUserDefinedNetworkPrefix(netName) + name
+}
+
+// GetNetworkScopedGWRouterExtPortName returns the external Gateway Router port
+// name (the "rtoe-" router-to-external-switch port) for the given network on the
+// given node, derived from the network name alone. It is equivalent to
+// types.GWRouterToExtSwitchPrefix + NetInfo.GetNetworkScopedGWRouterName(nodeName)
+// but does not require a NetInfo.
+func GetNetworkScopedGWRouterExtPortName(netName, nodeName string) string {
+	gwRouterName := GetGatewayRouterFromNode(GetNetworkScopedNameForNetwork(netName, nodeName))
+	return types.GWRouterToExtSwitchPrefix + gwRouterName
+}
+
 func NewNetInfo(netconf *ovncnitypes.NetConf) (NetInfo, error) {
 	return newNetInfo(netconf)
 }
@@ -1582,6 +1627,7 @@ func ParseNADInfo(nad *nettypes.NetworkAttachmentDefinition) (NetInfo, error) {
 	}
 	if nad.Annotations[types.OvnNetworkIDAnnotation] != "" {
 		annotated := nad.Annotations[types.OvnNetworkIDAnnotation]
+		// Only ovn-k8s cluster-manager writes network IDs, so malformed values are unexpected.
 		id, err = strconv.Atoi(annotated)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse annotated network ID: %w", err)
@@ -1589,8 +1635,9 @@ func ParseNADInfo(nad *nettypes.NetworkAttachmentDefinition) (NetInfo, error) {
 	}
 	n.SetNetworkID(id)
 
-	if nad.Annotations[types.OvnNetworkTunnelKeysAnnotation] != "" {
-		tunnelKeys, err := ParseTunnelKeysAnnotation(nad.Annotations[types.OvnNetworkTunnelKeysAnnotation])
+	if annotated := nad.Annotations[types.OvnNetworkTunnelKeysAnnotation]; annotated != "" {
+		// Only ovn-k8s cluster-manager writes tunnel keys, so malformed values are unexpected.
+		tunnelKeys, err := ParseTunnelKeysAnnotation(annotated)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse annotated tunnel keys: %w", err)
 		}
@@ -1648,6 +1695,10 @@ func ValidateNetConf(nadName string, netconf *ovncnitypes.NetConf) error {
 
 	if netconf.Role != "" && netconf.Role != types.NetworkRolePrimary && netconf.Role != types.NetworkRoleSecondary {
 		return fmt.Errorf("invalid network role value %s", netconf.Role)
+	}
+
+	if err := validateMacSecurity(netconf); err != nil {
+		return fmt.Errorf("invalid MAC security mode: %w", err)
 	}
 
 	if netconf.IPAM.Type != "" && netconf.IPAM.Type != types.IPAMTypeDHCP {
@@ -1720,6 +1771,39 @@ func ValidateNetConf(nadName string, netconf *ovncnitypes.NetConf) error {
 	if netconf.Topology != types.LocalnetTopology && netconf.Name != types.DefaultNetworkName {
 		if _, _, err := SubnetOverlapCheck(netconf); err != nil {
 			return fmt.Errorf("invalid subnet configuration: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func validateMacSecurity(netconf *ovncnitypes.NetConf) error {
+	if netconf.MACSecurityMode == "" {
+		return nil
+	}
+	validValues := []string{types.MACSecurityModeEnabled, types.MACSecurityModeDisabled}
+	if !slices.Contains(validValues, netconf.MACSecurityMode) {
+		return fmt.Errorf("invalid value, must be one of: %v", validValues)
+	}
+
+	// Enabled mode preserves current behavior, enforcing MAC spoof protection at the LSP level.
+	if netconf.MACSecurityMode == types.MACSecurityModeEnabled {
+		return nil
+	}
+
+	if netconf.MACSecurityMode == types.MACSecurityModeDisabled {
+		if netconf.Role == types.NetworkRolePrimary {
+			return fmt.Errorf("only supported on secondary networks")
+		}
+		supportedTopologies := []string{types.Layer2Topology, types.LocalnetTopology}
+		if !slices.Contains(supportedTopologies, netconf.Topology) {
+			return fmt.Errorf("unsupported topology, must be one of %v", supportedTopologies)
+		}
+		if netconf.Subnets != "" {
+			return fmt.Errorf("cannot be used when IPAM is enabled (subnets are specified)")
+		}
+		if netconf.AllowPersistentIPs {
+			return fmt.Errorf("cannot be used with allowPersistentIPs, which require IPAM to be enabled")
 		}
 	}
 

@@ -28,7 +28,7 @@ The `OVNKubeCSRController` performs several checks to validate the requested cer
 - Checking that the certificate expiration does not exceed the maximum allowed duration.
 
 Once the certificate is approved and signed, `ovnkube-node` uses it to communicate with the API server and request a new certificate upon expiration.
-The RBAC rules are consistent across all `ovnkube-node` pods, we use the `system:ovn-nodes` group as the subject for Role/ClusterRole bindings to avoid duplication:
+The RBAC rules are consistent across all `ovnkube-node` pods. We use the `system:ovn-nodes` group as the subject for Role/ClusterRole bindings to avoid duplication:
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -48,17 +48,55 @@ This is intentional as it helps ensure that the certificate rotation works seaml
 
 ## Validating Admission Webhook
 
-The feature introduces a validating webhook for updates to `pod/status` and `node/status`.\
-The `ovnkube-node` pod exclusively updates the status on both resources, so it is sufficient to verify only update requests.\
+The feature introduces validating webhooks for pod creation, updates to `pods` and
+`pods/status`, and creation and updates of `nodes`, including `nodes/status`.
+
+For cluster-wide pod annotation protection, see [Security](security.md#protected-pod-annotations).
+
+Node annotations can also be written through the main Node resource, so both paths must be checked.
+An API-server match condition skips the node webhook for other callers unless
+an annotation with the `k8s.ovn.org/` prefix is added, changed, or removed.
+Ordinary node registration without OVN annotations and unrelated label, taint,
+and status updates therefore do not depend on webhook availability. Requests
+using `system:ovn-node` credentials always reach the webhook so that their
+metadata and status restrictions remain enforced. Matching requests fail closed
+if the webhook cannot be reached. Custom deployments must include this match
+condition along with the expanded resource rules.
+
 The webhooks include the following checks for each `ovnkube-node` pod:
+
 - Modifying annotations on pods hosted on its own node.
 - Modifying annotations on its own node.
 - Modifying only allowed annotations.
 - Not modifying anything other than annotations.
 
 The allowed annotations list contains both common and feature specific values:
+
  - By default, the webhook will verify common node annotations and pod/node annotations set by the ovnkube-node component.
  - When `enable-hybrid-overlay` parameter is provided the webhook will validate additional node annotations set by the ovnkube-node component for hybrid overlay.
+
+Cluster-manager's allocation annotations, including `k8s.ovn.org/node-id` and
+`k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids`, are protected by a
+separate [admission policy](index.md#controller-owned-node-annotations).
+That protection remains active when NodeIdentity is disabled and authorizes
+only the cluster-manager service account; `--extra-allowed-user` does not
+override it. Node credentials cannot write these annotations, even on their
+own node. Other users can update unrelated annotations and node status while
+preserving protected annotations.
+
+Custom deployments must update the node webhook rules to include `CREATE` and
+`UPDATE` on `nodes`, and `UPDATE` on `nodes/status`. Configure all required trusted
+controller identities before enabling these protections. Administrative repair
+requires an identity authorized by every applicable webhook and admission
+policy. Existing annotation values are not revalidated when they remain
+unchanged; this protection does not repair preexisting corrupt allocations or
+validate NAD/CNC resources.
+
+When recreating a Node from saved YAML, normally omit protected OVN annotations
+and let the controllers regenerate them. Replaying those annotations during
+creation may be rejected even if they were valid on the original Node. See
+[Controller-owned Node annotations](index.md#controller-owned-node-annotations)
+for allocations protected independently of NodeIdentity.
 
 The specific annotation values can be found in `go-controller/pkg/ovnwebhook/nodeadmission.go` and `go-controller/pkg/ovnwebhook/podadmission.go` files.
 
@@ -68,10 +106,10 @@ must match the node's [k8s.ovn.org/node-subnets](https://github.com/ovn-kubernet
 
 ## DaemonSet
 
-In Kind,
+In KinD,
 the feature is enabled by default and can be disabled with `--disable-ovnkube-identity` when creating the cluster.\
 By default,
-the webhook listens on the nodes `localhost` address so there has to be an instance running on the control-plane node:
+the webhook listens on the node's `localhost` address, so there has to be an instance running on the control-plane node:
 ```
 kubectl get pod -lname=ovnkube-identity -n ovn-kubernetes  -o wide
 NAME                                READY   STATUS    RESTARTS   AGE   IP           NODE                NOMINATED NODE   READINESS GATES

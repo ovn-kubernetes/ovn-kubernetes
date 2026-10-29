@@ -14,6 +14,27 @@ const (
 	L3UDNMultiSubnetConfig Config = "L3UDNMultiSubnet"
 )
 
+type ImageID int
+
+type ImageConfig struct {
+	ImageID  ImageID
+	PullSpec string
+}
+
+// Image IDs for OVN-Kubernetes e2e test images
+const (
+	Agnhost ImageID = iota
+	IPerf3
+	Netshoot
+	Nginx
+	MetalLBLBService
+	UDPServerSrcIPPrinter
+	FRR
+	DNSMasq
+	FedoraKubevirtContainerDisk
+	MaxDefaultImageIDs
+)
+
 // DeploymentConfig offers visibility into the configuration OVN-Kubernetes environment for e2e test cases. This includes all host or node level config.
 // Remove when OVN-Kubernetes exposes its config via an API.
 type DeploymentConfig interface {
@@ -21,8 +42,22 @@ type DeploymentConfig interface {
 	FRRK8sNamespace() string
 	ExternalBridgeName() string
 	PrimaryInterfaceName() string
-	GetAgnHostContainerImage() string
 	// IsConfigurationEnabled checks whether a specific configuration flag is enabled in the deployment.
 	IsConfigurationEnabled(config Config) bool
 	NBDBContainerName() string
+	// GetImage returns the ImageConfig for a given image ID.
+	GetImage(imageID ImageID) ImageConfig
+	// AddRequiredImage registers images that are needed by a test suite. Call after
+	// checking if the configuration is enabled so that only images for enabled
+	// test suites are included.
+	AddRequiredImage(imageID ...ImageID)
+	// GetRequiredImages returns the set of images needed for the current test run.
+	GetRequiredImages() []ImageConfig
+	// GetNodeMachineNetworks returns the routable subnet CIDRs for all nodes,
+	// keyed by node name. Each node's slice contains IPv4 and/or IPv6 CIDRs
+	// depending on the cluster's IP family configuration.
+	GetNodeMachineNetworks() (map[string][]string, error)
+	// OVNControllerLogPath returns the host filesystem path of the ovn-controller log
+	// on cluster nodes (used by e2e to grep ACL audit lines).
+	OVNControllerLogPath() string
 }

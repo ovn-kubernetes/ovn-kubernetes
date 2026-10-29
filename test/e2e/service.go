@@ -20,12 +20,12 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/allocators"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
 	infraapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
-	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/ipalloc"
 	e2eendpointslice "k8s.io/kubernetes/test/e2e/framework/endpointslice"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -46,7 +46,6 @@ import (
 	e2eservice "k8s.io/kubernetes/test/e2e/framework/service"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	testutils "k8s.io/kubernetes/test/utils"
-	imageutils "k8s.io/kubernetes/test/utils/image"
 	utilnet "k8s.io/utils/net"
 	"k8s.io/utils/pointer"
 	"k8s.io/utils/ptr"
@@ -175,7 +174,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 		targetPort := infraprovider.Get().GetK8HostPort()
 		config := testutils.RCConfig{
 			Client:               cs,
-			Image:                imageutils.GetE2EImage(imageutils.Agnhost),
+			Image:                images.AgnHost(),
 			Command:              []string{"/agnhost", "serve-hostname", fmt.Sprintf("--port=%d", targetPort)},
 			Name:                 "backend",
 			Labels:               jig.Labels,
@@ -566,19 +565,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 									// flush this on all 3 nodes else we will run into the
 									// bug: https://issues.redhat.com/browse/OCPBUGS-7609.
 									// TODO: Revisit this once https://bugzilla.redhat.com/show_bug.cgi?id=2169839 is fixed.
-									ovnKubernetesNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
-									ovnKubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnKubernetesNamespace).List(context.TODO(), metav1.ListOptions{
-										LabelSelector: "app=ovnkube-node",
-									})
-									if err != nil {
-										framework.Failf("could not get ovnkube-node pods: %v", err)
-									}
-									for _, ovnKubeNodePod := range ovnKubeNodePods.Items {
-										framework.Logf("Flushing the ip route cache on %s", ovnKubeNodePod.Name)
-										_, err := e2ekubectl.RunKubectl(ovnKubernetesNamespace, "exec", ovnKubeNodePod.Name, "--container", getNodeContainerName(), "--",
-											"ip", "route", "flush", "cache")
-										framework.ExpectNoError(err, "Flushing the ip route cache failed")
-									}
+									flushRouteCacheOnAllNodes(f.ClientSet)
 								}
 							}
 						})
@@ -1054,12 +1041,12 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 					nodeIPs[node.Name] = make(map[int]string)
 				}
 				if IsIPv6Cluster(f.ClientSet) {
-					newIPIP, err := ipalloc.NewPrimaryIPv6()
-					framework.ExpectNoError(err, "must get new primary provider IPv4")
+					newIPIP, err := allocators.NewPrimaryIPv6(node.Name)
+					framework.ExpectNoError(err, "must get new primary provider IPv6")
 					newIP = newIPIP.String()
 					nodeIPs[node.Name][6] = newIP
 				} else {
-					newIPIP, err := ipalloc.NewPrimaryIPv4()
+					newIPIP, err := allocators.NewPrimaryIPv4(node.Name)
 					framework.ExpectNoError(err, "must get new primary provider IPv4")
 					nodeIPs[node.Name][4] = newIPIP.String()
 				}
@@ -1668,7 +1655,7 @@ spec:
 						Containers: []v1.Container{
 							{
 								Name:    "agnhost",
-								Image:   imageutils.GetE2EImage(imageutils.Agnhost),
+								Image:   images.AgnHost(),
 								Command: []string{"/agnhost", "serve-hostname", fmt.Sprintf("--port=%d", oldTargetPort)},
 								Ports: []v1.ContainerPort{
 									{
@@ -1969,7 +1956,7 @@ spec:
 				Containers: []v1.Container{
 					{
 						Name:    "agnhost",
-						Image:   imageutils.GetE2EImage(imageutils.Agnhost),
+						Image:   images.AgnHost(),
 						Command: []string{"/agnhost", "serve-hostname", fmt.Sprintf("--port=%d", port1)},
 						Ports: []v1.ContainerPort{
 							{
@@ -1996,7 +1983,7 @@ spec:
 				Containers: []v1.Container{
 					{
 						Name:    "agnhost",
-						Image:   imageutils.GetE2EImage(imageutils.Agnhost),
+						Image:   images.AgnHost(),
 						Command: []string{"/agnhost", "serve-hostname", fmt.Sprintf("--port=%d", port2)},
 						Ports: []v1.ContainerPort{
 							{
@@ -2132,7 +2119,7 @@ spec:
 				Containers: []v1.Container{
 					{
 						Name:    "agnhost",
-						Image:   imageutils.GetE2EImage(imageutils.Agnhost),
+						Image:   images.AgnHost(),
 						Command: []string{"/agnhost", "netexec", fmt.Sprintf("--http-port=%d", port1), "--udp-port=-1"},
 						Ports: []v1.ContainerPort{
 							{
@@ -2161,7 +2148,7 @@ spec:
 				Containers: []v1.Container{
 					{
 						Name:    "agnhost",
-						Image:   imageutils.GetE2EImage(imageutils.Agnhost),
+						Image:   images.AgnHost(),
 						Command: []string{"/agnhost", "netexec", fmt.Sprintf("--http-port=%d", port2), "--udp-port=-1"},
 						Ports: []v1.ContainerPort{
 							{
@@ -2307,7 +2294,7 @@ spec:
 				Containers: []v1.Container{
 					{
 						Name:    "agnhost",
-						Image:   imageutils.GetE2EImage(imageutils.Agnhost),
+						Image:   images.AgnHost(),
 						Command: []string{"/agnhost", "netexec", fmt.Sprintf("--http-port=%d", port1), "--udp-port=-1"},
 						Ports: []v1.ContainerPort{
 							{
@@ -2336,7 +2323,7 @@ spec:
 				Containers: []v1.Container{
 					{
 						Name:    "agnhost",
-						Image:   imageutils.GetE2EImage(imageutils.Agnhost),
+						Image:   images.AgnHost(),
 						Command: []string{"/agnhost", "netexec", fmt.Sprintf("--http-port=%d", port2), "--udp-port=-1"},
 						Ports: []v1.ContainerPort{
 							{
@@ -2631,12 +2618,6 @@ var _ = ginkgo.Describe("Service Hairpin SNAT", feature.Service, func() {
 	})
 
 })
-
-func init() {
-	if os.Getenv("KIND_INSTALL_METALLB") == "true" {
-		images.Add(images.Nginx(), images.MetalLBLBService(), images.UDPServerSrcIPPrinter())
-	}
-}
 
 var _ = ginkgo.Describe("Load Balancer Service Tests with MetalLB", feature.Service, func() {
 
@@ -3271,7 +3252,7 @@ spec:
 			framework.Failf("could not get expected srcIP!, target pod logs:\n%q", targetPodLogs)
 		}
 	})
-	ginkgo.It("Should ensure load balancer service works when ETP=local and backend pods are also egressIP served pods", func() {
+	ginkgo.It("Should ensure load balancer service works when ETP=local and backend pods are also egressIP served pods", func(ctx ginkgo.SpecContext) {
 		// TEST LOGIC: This test uses metaLB BGP for advertising routes towards 1 KIND ovnk cluster node
 		// (node where the service backend pods live) as potential candidate to reach the load balancer service (192.168.10.0 service VIP).
 		// There is also a FRR router that sits in front of the KIND cluster through which traffic flows to the service VIP.
@@ -3377,11 +3358,13 @@ spec:
 		ginkgo.By("Create an EgressIP object with one egress IP defined")
 		// Assign the egress IP without conflicting with any node IP,
 		// the kind subnet is /16 or /64 so the following should be fine.
+		nonBackendNode, err := f.ClientSet.CoreV1().Nodes().Get(ctx, nonBackendNodeName, metav1.GetOptions{})
+		framework.ExpectNoError(err, "must get non-backend node object")
 		var egressIP1 net.IP
 		if utilnet.IsIPv6String(svcLoadBalancerIP) {
-			egressIP1, err = ipalloc.NewPrimaryIPv6()
+			egressIP1, err = allocators.NewPrimaryIPv6(nonBackendNode.Name)
 		} else {
-			egressIP1, err = ipalloc.NewPrimaryIPv4()
+			egressIP1, err = allocators.NewPrimaryIPv4(nonBackendNode.Name)
 		}
 		framework.ExpectNoError(err, "must allocate new Node IP for EgressIP IP")
 		var egressIPConfig = `apiVersion: k8s.ovn.org/v1

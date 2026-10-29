@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/validation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 	kexec "k8s.io/utils/exec"
@@ -644,6 +645,13 @@ type GatewayConfig struct {
 	// the source IP of the NAT will be a shared Node IP address. If unset, the value will be determined by sysctl lookup
 	// for the kernel's ephemeral range: net.ipv4.ip_local_port_range. Format is "<min port>-<max port>".
 	EphemeralPortRange string `gcfg:"ephemeral-port-range"`
+
+	// DisableUDNARPNDPFlood might provide better scale capabilities with large
+	// number of UDNs. Instead of flooding ARP/NDP traffic from the gateway to
+	// the UDNs which might overload vswitchd or even drop packets, only CDN or
+	// UDN in an uplink group will get the traffic, OVNK will mirror the
+	// resulting mac binding entries to the UDNs.
+	DisableUDNARPNDPFlood bool `gcfg:"disable-udn-arp-ndp-flood"`
 }
 
 // EgressIPHealthCheckTLSConfig holds TLS settings for the Egress IP gRPC
@@ -1806,6 +1814,14 @@ var OVNGatewayFlags = []cli.Flag{
 		Usage:       "DEPRECATED; use --gateway-mode instead",
 		Destination: &gatewayLocal,
 	},
+	&cli.BoolFlag{
+		Name: "disable-udn-arp-ndp-flood",
+		Usage: "This option might provide better scale capabilities with large number of UDNs. Instead of flooding " +
+			"ARP/NDP traffic from the gateway to the UDNs which might overload vswitchd or even drop packets, only CDN " +
+			"or UDN in an uplink group will get the traffic, OVNK will mirror the resulting mac binding entries to the UDNs.",
+		Destination: &cliConfig.Gateway.DisableUDNARPNDPFlood,
+		Value:       Gateway.DisableUDNARPNDPFlood,
+	},
 }
 
 // ClusterMgrHAFlags capture leader election flags for cluster manager
@@ -2359,7 +2375,34 @@ func completeGatewayConfig(allSubnets *ConfigSubnets, masqueradeIPs *MasqueradeI
 	allSubnets.Append(ConfigSubnetMasquerade, v4MasqueradeCIDR)
 	allSubnets.Append(ConfigSubnetMasquerade, v6MasqueradeCIDR)
 
+	// Precompute the set consumed by IsGatewayStaticMACBindingIP now that the
+	// masquerade IPs are final; this is the only place they are finalized.
+	gatewayStaticMACBindingIPs = sets.New[string]()
+	for _, ip := range []net.IP{
+		masqueradeIPs.V4DummyNextHopMasqueradeIP,
+		masqueradeIPs.V6DummyNextHopMasqueradeIP,
+		masqueradeIPs.V4HostMasqueradeIP,
+		masqueradeIPs.V6HostMasqueradeIP,
+	} {
+		if ip != nil {
+			gatewayStaticMACBindingIPs.Insert(ip.String())
+		}
+	}
+
 	return nil
+}
+
+// gatewayStaticMACBindingIPs is the precomputed set of masquerade IP strings
+// the gateway programs as static MAC bindings on gateway router external ports,
+// populated by completeGatewayConfig. Read it through
+// IsGatewayStaticMACBindingIP.
+var gatewayStaticMACBindingIPs sets.Set[string]
+
+// IsGatewayStaticMACBindingIP reports whether ip is one of the masquerade IPs
+// the gateway programs as static MAC bindings on gateway router external ports
+// (the dummy next-hop and host masquerade IPs).
+func IsGatewayStaticMACBindingIP(ip string) bool {
+	return gatewayStaticMACBindingIPs.Has(ip)
 }
 
 func buildOVNKubernetesFeatureConfig(cli, file *config) error {
@@ -2578,6 +2621,28 @@ func validateConfig() error {
 		return err
 	}
 
+	// Validate gateway configuration
+	if err := validateGatewayConfig(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateGatewayConfig validates cross-configuration dependencies of the gateway
+// configuration.
+func validateGatewayConfig() error {
+	// disable-udn-arp-ndp-flood relies on the MAC binding controller mirroring
+	// bindings to UDN gateway routers, which only exist with Network Segmentation.
+	if Gateway.DisableUDNARPNDPFlood && !OVNKubernetesFeature.EnableNetworkSegmentation {
+		return fmt.Errorf("disable-udn-arp-ndp-flood cannot be enabled without also enabling Network Segmentation")
+	}
+	// The gateway bridge flows and the MAC binding controller the feature relies
+	// on run where OVN and OVS do (full and DPU modes), not on the DPU host.
+	if Gateway.DisableUDNARPNDPFlood && IsModeDPUHost() {
+		return fmt.Errorf("disable-udn-arp-ndp-flood is not supported in DPU host mode")
+	}
+
 	return nil
 }
 
@@ -2778,16 +2843,22 @@ func InitConfigSa(ctx *cli.Context, exec kexec.Interface, saPath string, default
 	return initConfigWithPath(ctx, exec, saPath, defaults)
 }
 
-// stripTokenFromK8sConfig removes k8s SA token & CAData values
-// from the KubernetesConfig struct used for logging.
-func stripTokenFromK8sConfig() KubernetesConfig {
-	k8sConf := Kubernetes
-	// Token and CAData are sensitive fields so stripping
-	// them while logging.
+// redactKubernetesConfig returns a copy of k8sConf with the bearer token and
+// CA material cleared. Every log line that prints a KubernetesConfig must go
+// through it, and any new field carrying inline credentials must be cleared here.
+func redactKubernetesConfig(k8sConf KubernetesConfig) KubernetesConfig {
 	k8sConf.Token = ""
 	k8sConf.CACertData = ""
 	k8sConf.CAData = []byte{}
 	return k8sConf
+}
+
+// redactConfig returns a copy of cfg safe to log. The Kubernetes section is
+// the only one that carries inline credentials; every other section holds
+// file paths or non-secret settings.
+func redactConfig(cfg config) config {
+	cfg.Kubernetes = redactKubernetesConfig(cfg.Kubernetes)
+	return cfg
 }
 
 // initConfigWithPath reads the given config file (or if empty, reads the config file
@@ -2847,7 +2918,7 @@ func initConfigWithPath(ctx *cli.Context, exec kexec.Interface, saPath string, d
 			klog.Warningf("Warning on parsing config file: %s", err)
 		}
 		klog.Infof("Parsed config file %s", f.Name())
-		klog.Infof("Parsed config: %+v", cfg)
+		klog.Infof("Parsed config: %+v", redactConfig(cfg))
 	}
 
 	if defaults == nil {
@@ -2991,7 +3062,7 @@ func initConfigWithPath(ctx *cli.Context, exec kexec.Interface, saPath string, d
 	klog.V(5).Infof("Monitoring config: %+v", Monitoring)
 	klog.V(5).Infof("IPFIX config: %+v", IPFIX)
 	klog.V(5).Infof("CNI config: %+v", CNI)
-	klog.V(5).Infof("Kubernetes config: %+v", stripTokenFromK8sConfig())
+	klog.V(5).Infof("Kubernetes config: %+v", redactKubernetesConfig(Kubernetes))
 	klog.V(5).Infof("Gateway config: %+v", Gateway)
 	klog.V(5).Infof("OVN North config: %+v", OvnNorth)
 	klog.V(5).Infof("OVN South config: %+v", OvnSouth)

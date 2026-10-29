@@ -167,6 +167,58 @@ var _ = Describe("User Defined Network Controller", func() {
 			}
 		})
 		Context("reconcile UDN CR", func() {
+			It("should preserve NAD-local annotations", func() {
+				udn := testSecondaryUDN()
+				nad := testNAD()
+				nad.Annotations = map[string]string{
+					"example.com/partition-name":    "local-partition",
+					ovntypes.OvnNetworkIDAnnotation: "6",
+				}
+				desiredNAD := testNAD()
+				desiredNAD.Annotations = map[string]string{"parent": "value"}
+				c = newTestController(renderNadStub(desiredNAD), udn, nad, testNamespace(udn.Namespace))
+				Expect(c.Run()).To(Succeed())
+
+				Eventually(func(g Gomega) {
+					actualNAD, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().
+						NetworkAttachmentDefinitions(udn.Namespace).Get(context.Background(), udn.Name, metav1.GetOptions{})
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(actualNAD.Annotations).To(Equal(map[string]string{
+						"parent":                        "value",
+						"example.com/partition-name":    "local-partition",
+						ovntypes.OvnNetworkIDAnnotation: "6",
+					}))
+				}, 2*time.Second).Should(Succeed())
+			})
+
+			It("should report annotation reconciliation failures", func() {
+				udn := testSecondaryUDN()
+				udn.Annotations = map[string]string{"example.com/team": "networking"}
+				nad, err := template.RenderNetAttachDefManifest(udn, udn.Namespace)
+				Expect(err).NotTo(HaveOccurred(), "render the existing NAD")
+				nad.Annotations = nil
+				c = newTestController(template.RenderNetAttachDefManifest, udn, nad, testNamespace(udn.Namespace))
+				cs.NetworkAttchDefClient.(*netv1fakeclientset.Clientset).PrependReactor("patch", "network-attachment-definitions",
+					func(action testing.Action) (bool, runtime.Object, error) {
+						if action.(testing.PatchAction).GetPatchType() == types.ApplyPatchType {
+							return true, nil, errors.New("apply error")
+						}
+						return false, nil, nil
+					})
+				Expect(c.Run()).To(Succeed(), "start the controller")
+
+				Eventually(func(g Gomega) {
+					actualUDN, err := cs.UserDefinedNetworkClient.K8sV1().UserDefinedNetworks(udn.Namespace).
+						Get(context.Background(), udn.Name, metav1.GetOptions{})
+					g.Expect(err).NotTo(HaveOccurred(), "get the UDN status")
+					g.Expect(actualUDN.Status.Conditions).To(ContainElement(And(
+						HaveField("Type", "NetworkCreated"),
+						HaveField("Status", metav1.ConditionFalse),
+						HaveField("Message", ContainSubstring("apply error")),
+					)), "report the annotation apply failure")
+				}, 2*time.Second).Should(Succeed())
+			})
+
 			It("should create NAD successfully", func() {
 				udn := testPrimaryUDN()
 				expectedNAD := testNAD()
@@ -1653,7 +1705,7 @@ var _ = Describe("User Defined Network Controller", func() {
 				Expect(apierrors.IsNotFound(err)).To(BeTrue(), "NAD should not be created when EVPN is disabled")
 			})
 
-			It("should update NAD annotations and preserve internal OVNK annotations on UDN update", func() {
+			It("should update CUDN annotations and preserve NAD-local annotations", func() {
 				testNamespaces := []string{"red", "blue"}
 				var objs []runtime.Object
 				for _, nsName := range testNamespaces {
@@ -1684,17 +1736,36 @@ var _ = Describe("User Defined Network Controller", func() {
 				c = newTestController(template.RenderNetAttachDefManifest, objs...)
 				Expect(c.Run()).To(Succeed())
 
+				By("adding distinct annotations to the CUDN-owned NADs")
+				for _, nsName := range testNamespaces {
+					nad, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().
+						NetworkAttachmentDefinitions(nsName).Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					nad.Annotations["example.com/partition-name"] = nsName + "-partition"
+					nad.Annotations["foo2"] = "nad-local"
+					_, err = cs.NetworkAttchDefClient.K8sCniCncfIoV1().
+						NetworkAttachmentDefinitions(nsName).Update(context.Background(), nad, metav1.UpdateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					Eventually(func(g Gomega) {
+						cachedNAD, err := c.nadLister.NetworkAttachmentDefinitions(nsName).Get(cudn.Name)
+						g.Expect(err).NotTo(HaveOccurred())
+						g.Expect(cachedNAD.Annotations["example.com/partition-name"]).To(Equal(nsName + "-partition"))
+					}, 2*time.Second).Should(Succeed())
+				}
+
 				By("updating CUDN with a new annotation")
 				cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
 				Expect(err).NotTo(HaveOccurred())
 				updatedCUDN := cudn.DeepCopy()
-				updatedCUDN.Annotations = map[string]string{"foo2": "bar2"}
+				updatedCUDN.Annotations = map[string]string{"foo": "bar", "foo2": "bar2"}
 				_, err = cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Update(context.Background(), updatedCUDN, metav1.UpdateOptions{})
 				Expect(err).NotTo(HaveOccurred())
 
 				for testNamespace, expectedNAD := range expectedNsNADs {
 					expectedNAD.Annotations = map[string]string{
+						"foo":                             "bar",
 						"foo2":                            "bar2",
+						"example.com/partition-name":      testNamespace + "-partition",
 						ovntypes.OvnNetworkNameAnnotation: networkName,
 						ovntypes.OvnNetworkIDAnnotation:   "6",
 					}
@@ -1704,8 +1775,7 @@ var _ = Describe("User Defined Network Controller", func() {
 							NetworkAttachmentDefinitions(testNamespace).
 							Get(context.Background(), cudn.Name, metav1.GetOptions{})
 						g.Expect(err).NotTo(HaveOccurred())
-						g.Expect(actualNAD).To(Equal(expectedNAD), "NAD should exist, have updated "+
-							"annotations, and preserve internal annotations")
+						g.Expect(actualNAD.Annotations).To(Equal(expectedNAD.Annotations), "NAD should have updated annotations and preserve local annotations")
 					}).Should(Succeed())
 				}
 			})
@@ -1873,6 +1943,19 @@ var _ = Describe("User Defined Network Controller", func() {
 						Expect(err).NotTo(HaveOccurred())
 						testPods = append(testPods, *pod)
 					}
+
+					// deleteNAD checks pods through the informer cache; make sure
+					// the pods are visible there before triggering the deletion.
+					// This doesn't fix the potential race where pod is created right after the CUDN is deleted
+					// or when pod informer cache lags, but that is also not the point of this test.
+					// Since we can only do best-effort check for the pods, we need to make sure informer cache
+					// is synced before we delete the CUDN.
+					Eventually(func(g Gomega) {
+						for _, pod := range testPods {
+							_, err := c.podInformer.Lister().Pods(pod.Namespace).Get(pod.Name)
+							g.Expect(err).NotTo(HaveOccurred())
+						}
+					}, 2*time.Second).Should(Succeed())
 
 					By("mark CR for deletion")
 					p := fmt.Sprintf(`[{"op": "replace", "path": "./metadata/deletionTimestamp", "value": %q }]`, "2024-01-01T00:00:00Z")

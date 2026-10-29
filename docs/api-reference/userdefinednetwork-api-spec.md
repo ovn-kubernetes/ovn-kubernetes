@@ -246,6 +246,7 @@ _Appears in:_
 | `defaultGatewayIPs` _[DualStackIPs](#dualstackips)_ | defaultGatewayIPs specifies the default gateway IP used in the internal OVN topology.<br />Dual-stack clusters may set 2 IPs (one for each IP family), otherwise only 1 IP is allowed.<br />This field is only allowed for "Primary" network.<br />It is not recommended to set this field without explicit need and understanding of the OVN network topology.<br />When omitted, an IP from the subnets field is used. |  | MaxItems: 2 <br />MinItems: 1 <br />Optional: \{\} <br /> |
 | `joinSubnets` _[DualStackCIDRs](#dualstackcidrs)_ | JoinSubnets are used inside the OVN network topology.<br />Dual-stack clusters may set 2 subnets (one for each IP family), otherwise only 1 subnet is allowed.<br />This field is only allowed for "Primary" network.<br />It is not recommended to set this field without explicit need and understanding of the OVN network topology.<br />When omitted, the platform will choose a reasonable default which is subject to change over time. |  | MaxItems: 2 <br />MaxLength: 43 <br />MinItems: 1 <br />Optional: \{\} <br /> |
 | `ipam` _[IPAMConfig](#ipamconfig)_ | IPAM section contains IPAM-related configuration for the network. |  | MinProperties: 1 <br />Optional: \{\} <br /> |
+| `macSecurity` _[MACSecurityConfig](#macsecurityconfig)_ | macSecurity configures MAC spoof protection on the network's logical switch ports. |  | Optional: \{\} <br /> |
 
 
 #### Layer3Config
@@ -305,6 +306,42 @@ _Appears in:_
 | `ipam` _[IPAMConfig](#ipamconfig)_ | ipam configurations for the network.<br />ipam is optional. When omitted, `subnets` must be specified.<br />When `ipam.mode` is `Disabled` or `DHCP`, `subnets` must be omitted.<br />`ipam.mode` controls how much of the IP configuration will be managed by OVN.<br />   When `Enabled`, OVN-Kubernetes will apply IP configuration to the SDN infra and assign IPs from the selected<br />   subnet to the pods.<br />   When `Disabled`, OVN-Kubernetes only assigns MAC addresses, and provides layer2 communication, and enables users<br />   to configure IP addresses on the pods.<br />   When `DHCP`, IP assignment is delegated to a DHCP server reachable on the physical network. OVN-Kubernetes<br />   learns the assigned IPs but does not allocate them. Currently supported only for IPv4.<br />`ipam.lifecycle` controls IP addresses management lifecycle.<br />   When set to 'Persistent', the assigned IP addresses will be persisted in `ipamclaims.k8s.cni.cncf.io` object.<br />	  Useful for VMs, IP address will be persistent after restarts and migrations. Supported when `ipam.mode` is `Enabled`. |  | MinProperties: 1 <br />Optional: \{\} <br /> |
 | `mtu` _integer_ | mtu is the maximum transmission unit for a network.<br />mtu is optional. When omitted, the configured value in OVN-Kubernetes (defaults to 1500 for localnet topology)<br />is used for the network.<br />Minimum value for IPv4 subnet is 576, and for IPv6 subnet is 1280.<br />Maximum value is 65536.<br />In a scenario `physicalNetworkName` points to OVS bridge mapping of a network configured with certain MTU settings,<br />this field enables configuring the same MTU on pod interface, having the pod MTU aligned with the network MTU.<br />Misaligned MTU across the stack (e.g.: pod has MTU X, node NIC has MTU Y), could result in network disruptions<br />and bad performance. |  | Maximum: 65536 <br />Minimum: 576 <br />Optional: \{\} <br /> |
 | `vlan` _[VLANConfig](#vlanconfig)_ | vlan configuration for the network.<br />vlan.mode is the VLAN mode.<br />  When "Access" is set, OVN-Kubernetes configures the network logical switch port in access mode.<br />vlan.access is the access VLAN configuration.<br />vlan.access.id is the VLAN ID (VID) to be set on the network logical switch port.<br />vlan is optional, when omitted the underlying network default VLAN will be used (usually `1`).<br />When set, OVN-Kubernetes will apply VLAN configuration to the SDN infra and to the connected pods. |  | Optional: \{\} <br /> |
+| `macSecurity` _[MACSecurityConfig](#macsecurityconfig)_ | macSecurity configures MAC spoof protection on the network's logical switch ports. |  | Optional: \{\} <br /> |
+
+
+#### MACSecurityConfig
+
+
+
+MACSecurityConfig configures MAC spoof protection behavior.
+
+
+
+_Appears in:_
+- [Layer2Config](#layer2config)
+- [LocalnetConfig](#localnetconfig)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `mode` _[MACSecurityMode](#macsecuritymode)_ | mode controls the MAC spoof protection enforcement posture.<br />`Enabled` (default) restricts traffic to assigned addresses.<br />`Disabled` removes all MAC spoof protection restrictions and enables unknown MAC address<br />handling for nested virtualization and NFV use cases.<br />Only `Disabled` requires ipam.mode to be Disabled. |  | Enum: [Enabled Disabled] <br />Required: \{\} <br />Required: \{\} <br /> |
+
+
+#### MACSecurityMode
+
+_Underlying type:_ _string_
+
+
+
+_Validation:_
+- Enum: [Enabled Disabled]
+
+_Appears in:_
+- [MACSecurityConfig](#macsecurityconfig)
+
+| Field | Description |
+| --- | --- |
+| `Enabled` |  |
+| `Disabled` |  |
 
 
 #### NetworkIPAMLifecycle

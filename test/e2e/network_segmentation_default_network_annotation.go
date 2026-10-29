@@ -35,7 +35,7 @@ var _ = Describe("Network Segmentation: Default network multus annotation", feat
 		mac       string
 		lifecycle udnv1.NetworkIPAMLifecycle
 	}
-	DescribeTable("when added with static IP and MAC to a pod belonging to primary UDN", func(tc testCase) {
+	DescribeTable("when added with static IP and MAC to a pod belonging to primary UDN", func(ctx SpecContext, tc testCase) {
 		if !isPreConfiguredUdnAddressesEnabled() {
 			Skip("ENABLE_PRE_CONF_UDN_ADDR not configured")
 		}
@@ -71,7 +71,7 @@ var _ = Describe("Network Segmentation: Default network multus annotation", feat
 		By("Create a UserDefinedNetwork with Layer2 topology and wait for availability")
 		udn, err = udnClient.K8sV1().UserDefinedNetworks(f.Namespace.Name).Create(context.TODO(), udn, metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred(), "Should create UserDefinedNetwork")
-		Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, udn.Namespace, udn.Name), 5*time.Second, time.Second).Should(Succeed())
+		Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, udn.Namespace, udn.Name), 5*time.Second, time.Second).Should(Succeed())
 
 		// Create the Pod in the generated namespace
 		By("Create a Pod with the default network annotation and wait for readiness")
@@ -142,7 +142,7 @@ var _ = Describe("Network Segmentation: Default network multus annotation", feat
 	)
 
 	Context("ValidatingAdmissionPolicy protection", func() {
-		It("should prevent adding, modifying and removing the default-network annotation on existing pods", func() {
+		It("should prevent adding, modifying and removing the default-network annotation on existing pods", func(ctx SpecContext) {
 			if !isPreConfiguredUdnAddressesEnabled() {
 				Skip("ENABLE_PRE_CONF_UDN_ADDR not configured")
 			}
@@ -178,7 +178,7 @@ var _ = Describe("Network Segmentation: Default network multus annotation", feat
 			By("Creating a UserDefinedNetwork")
 			udn, err = udnClient.K8sV1().UserDefinedNetworks(f.Namespace.Name).Create(context.TODO(), udn, metav1.CreateOptions{})
 			Expect(err).NotTo(HaveOccurred(), "Should create UserDefinedNetwork")
-			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, udn.Namespace, udn.Name), 5*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, udn.Namespace, udn.Name), 5*time.Second, time.Second).Should(Succeed())
 
 			By("Creating a pod with the default-network annotation")
 

@@ -51,7 +51,7 @@ DPU side resolves the local OVS bridge from that state.
 
 ### Simulated DPU (`simulate-dpu`)
 
-Hardware DPUs rely on SR-IOV and switchdev metadata so OVN-Kubernetes can resolve representors, PCI relationships, and related details. For development and CI, the same code paths can run on **simulated** platforms (for example Kind or VMs using virtio instead of a real switchdev DPU NICs) where that metadata is absent or different.
+Hardware DPUs rely on SR-IOV and switchdev metadata so OVN-Kubernetes can resolve representors, PCI relationships, and related details. For development and CI, the same code paths can run on **simulated** platforms (for example KinD or VMs using virtio instead of a real switchdev DPU NICs) where that metadata is absent or different.
 
 The ovnkube-node flag **`--simulate-dpu`** (config file `[OvnKubeNode]` key `simulate-dpu`, Helm `global.simulateDpu`) turns on **simulated DPU operations** instead of the default switchdev-based implementation. When the node mode is `dpu` or `dpu-host`, this selects the simulated `DPUOps` backend. Operational parameters such as representor naming, device addressing, and host-representor discovery follow the patterns used in simulated environments (for example `rep<pfId>-<funcId>` style names and netdev-based identifiers) rather than sysfs/sriovnet switchdev discovery.
 
@@ -66,6 +66,22 @@ The flag has no effect in full (non-DPU) node mode. Use it together with the cor
 - ovnkube-controller-with-node
 - ovn-controller
 - ovs-metrics
+
+## Host Node deletion
+
+In DPU mode `ovnkube-controller-with-node` runs on the DPU but acts on behalf of
+the host `Node` object (`K8S_NODE`), and the node-level annotations it owns
+(`k8s.ovn.org/node-chassis-id`, `k8s.ovn.org/l3-gateway-config`,
+`k8s.ovn.org/node-mgmt-port-mac-addresses`, ...) are written once at startup.
+Deleting the host `Node` from the cluster does not stop the pod on the DPU the way
+it would for a pod running on the deleted node itself.
+
+When ovnkube-node in DPU mode observes the deletion of the `Node` it manages, it
+exits. The container restarts and fails until the host `Node` is registered
+again, then initializes against the new `Node` object and rewrites its
+annotations. Expect the DPU-side ovnkube-node pod to crash-loop while the host
+node is absent; this is the intended signal that the node is gone, not a fault
+of the DPU.
 
 ## DPU health monitoring
 

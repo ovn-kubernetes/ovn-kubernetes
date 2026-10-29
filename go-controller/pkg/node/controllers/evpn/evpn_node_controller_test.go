@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 
 	nadfake "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/fake"
 	"github.com/stretchr/testify/mock"
@@ -970,6 +971,9 @@ var _ = Describe("EVPN node controller", func() {
 
 			bridgeName := GetEVPNBridgeName(vtepName)
 			vxlan4Name := GetEVPNVXLANName(vtepName, utilnet.IPv4)
+			// The initial annotation write queues another reconciliation through
+			// onNodeUpdate. Wait for both passes before asserting that an
+			// unchanged-address event does not cause any more device updates.
 			Eventually(func() []string {
 				ensuredMu.Lock()
 				defer ensuredMu.Unlock()
@@ -978,7 +982,7 @@ var _ = Describe("EVPN node controller", func() {
 					names = append(names, cfg.Link.Attrs().Name)
 				}
 				return names
-			}).Should(ContainElements(bridgeName, vxlan4Name))
+			}).Should(ConsistOf(bridgeName, vxlan4Name, bridgeName, vxlan4Name))
 
 			By("recording call count after initial reconciliation completes")
 			ensuredMu.Lock()
@@ -1173,18 +1177,52 @@ var _ = Describe("EVPN node controller", func() {
 			}).Should(ConsistOf("100.64.0.1"))
 		})
 
+		DescribeTable("repairs forged VTEP annotations even with the controller's field manager", func(ips string) {
+			ndm.On("DeleteLink", mock.Anything).Return(nil)
+			ndm.On("EnsureLink", mock.Anything).Return(nil)
+			am.SetIPs([]net.IP{net.ParseIP("100.64.0.1")})
+			_, err := vtepClient.K8sV1().VTEPs().Create(context.Background(), &vtepv1.VTEP{
+				ObjectMeta: metav1.ObjectMeta{Name: vtepName},
+				Spec:       vtepv1.VTEPSpec{CIDRs: []vtepv1.CIDR{"100.64.0.0/24"}, Mode: vtepv1.VTEPModeUnmanaged},
+			}, metav1.CreateOptions{})
+			Expect(err).NotTo(HaveOccurred(), "creating unmanaged VTEP")
+			readIPs := func() ([]string, error) {
+				node, readErr := kubeClient.CoreV1().Nodes().Get(context.Background(), nodeName, metav1.GetOptions{})
+				if readErr != nil {
+					return nil, readErr
+				}
+				vteps, parseErr := util.ParseNodeVTEPs(node)
+				return vteps[vtepName].IPs, parseErr
+			}
+			Eventually(readIPs, 5*time.Second, 100*time.Millisecond).Should(ConsistOf("100.64.0.1"), "the initial annotation must contain the discovered node address")
+			node, err := kubeClient.CoreV1().Nodes().Get(context.Background(), nodeName, metav1.GetOptions{})
+			Expect(err).NotTo(HaveOccurred(), "reading node before forging its VTEP annotation")
+			node.Annotations[util.OVNNodeVTEPs] = `{"vtep1":{"ips":` + ips + `}}`
+			node.ManagedFields = []metav1.ManagedFieldsEntry{{Manager: vtepAnnotationFieldManager, Time: &metav1.Time{Time: metav1.Now().Time}}}
+			_, err = kubeClient.CoreV1().Nodes().Update(context.Background(), node, metav1.UpdateOptions{})
+			Expect(err).NotTo(HaveOccurred(), "updating forged VTEP annotation")
+			Eventually(readIPs, 5*time.Second, 100*time.Millisecond).Should(ConsistOf("100.64.0.1"), "repair must replace the forged entry with the discovered node address")
+		},
+			Entry("replaced address", `["100.64.0.2"]`),
+			Entry("appended address", `["100.64.0.1","100.64.0.99"]`),
+			Entry("unsupported family", `["100.64.0.1","fd00::99"]`),
+		)
+
 		It("reconciles VTEP with VID/VNI mappings when a network is added or removed", func() {
 			const nadKey = "test-ns/test-nad"
 
 			var ensuredMu sync.Mutex
-			var ensuredCfgs []netlinkdevicemanager.DeviceConfig
+			// Keep the latest desired state: an in-flight reconcile can still
+			// apply old mappings after the network is removed.
+			ensuredCfgs := map[string]netlinkdevicemanager.DeviceConfig{}
 
 			By("allowing any NDM calls throughout the test")
 			ndm.On("DeleteLink", mock.Anything).Return(nil)
 			ndm.On("EnsureLink", mock.Anything).Return(nil).Run(func(args mock.Arguments) {
 				ensuredMu.Lock()
 				defer ensuredMu.Unlock()
-				ensuredCfgs = append(ensuredCfgs, args.Get(0).(netlinkdevicemanager.DeviceConfig))
+				cfg := args.Get(0).(netlinkdevicemanager.DeviceConfig)
+				ensuredCfgs[cfg.Link.Attrs().Name] = cfg
 			})
 
 			By("creating an unmanaged VTEP and setting up addresses")
@@ -1213,8 +1251,10 @@ var _ = Describe("EVPN node controller", func() {
 			netInfo.On("GetNetworkName").Return("mynet")
 			netInfo.On("GetNetworkID").Return(5)
 			netInfo.On("GetNetworkScopedSwitchName", mock.Anything).Return("mynet_ovn_layer2_switch")
+			fakeNM.Lock()
 			fakeNM.NADNetworks = map[string]util.NetInfo{nadKey: netInfo}
 			fakeNM.PrimaryNetworks = map[string]util.NetInfo{"test-ns": netInfo}
+			fakeNM.Unlock()
 			fakeNM.TriggerHandlers(nadKey, netInfo, false)
 
 			l3SVIName := GetEVPNL3SVIName(netInfo)
@@ -1268,25 +1308,19 @@ var _ = Describe("EVPN node controller", func() {
 			ensuredMu.Unlock()
 
 			By("simulating network removal and verifying VXLAN has no mappings")
-			ensuredMu.Lock()
-			ensuredCfgs = nil
-			ensuredMu.Unlock()
 			fakeNM.Lock()
 			fakeNM.NADNetworks = nil
 			fakeNM.PrimaryNetworks = nil
 			fakeNM.Unlock()
 			fakeNM.TriggerHandlers(nadKey, nil, true)
 
-			Eventually(func() bool {
+			Eventually(func(g Gomega) {
 				ensuredMu.Lock()
 				defer ensuredMu.Unlock()
-				for _, cfg := range ensuredCfgs {
-					if cfg.Link.Attrs().Name == vxlan4Name {
-						return len(cfg.VIDVNIMappings) == 0
-					}
-				}
-				return false
-			}).Should(BeTrue())
+				cfg, found := ensuredCfgs[vxlan4Name]
+				g.Expect(found).To(BeTrue(), "VXLAN configuration recorded")
+				g.Expect(cfg.VIDVNIMappings).To(BeEmpty(), "latest VXLAN mappings after network removal")
+			}).Should(Succeed())
 
 			By("verifying stale SVIs were deleted after network removal")
 			Eventually(func() bool {

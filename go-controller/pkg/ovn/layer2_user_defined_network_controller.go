@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,7 +27,6 @@ import (
 	nodecontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/node"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/udn"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kubevirt"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -134,21 +134,7 @@ func (h *layer2UserDefinedNetworkControllerEventHandler) DeleteResource(obj, cac
 // Given an old and a new object; The inRetryCache boolean argument is to indicate if the given resource
 // is in the retryCache or not.
 func (h *layer2UserDefinedNetworkControllerEventHandler) UpdateResource(oldObj, newObj interface{}, inRetryCache bool) error {
-	switch h.objType {
-	case factory.PodType:
-		newPod := newObj.(*corev1.Pod)
-		oldPod := oldObj.(*corev1.Pod)
-		if err := h.oc.ensurePodForUserDefinedNetwork(newPod, shouldAddPort(oldPod, newPod, inRetryCache)); err != nil {
-			return err
-		}
-
-		if h.oc.isPodScheduledOnLocalNode(newPod) {
-			return h.oc.updateLocalPodEvent(newPod)
-		}
-		return nil
-	default:
-		return h.oc.UpdateUserDefinedNetworkResourceCommon(h.objType, oldObj, newObj, inRetryCache)
-	}
+	return h.oc.UpdateUserDefinedNetworkResourceCommon(h.objType, oldObj, newObj, inRetryCache)
 }
 
 func (h *layer2UserDefinedNetworkControllerEventHandler) SyncFunc(objs []interface{}) error {
@@ -222,11 +208,6 @@ type Layer2UserDefinedNetworkController struct {
 
 	// EgressIP controller utilized only to initialize a network with OVN polices to support EgressIP functionality.
 	eIPController *EgressIPController
-
-	// reconcile the virtual machine default gateway sending GARPs and RAs
-	defaultGatewayReconciler *kubevirt.DefaultGatewayReconciler
-
-	remoteNodesNoRouter sync.Map
 }
 
 // NewLayer2UserDefinedNetworkController create a new OVN controller for the given layer2 NAD
@@ -297,13 +278,15 @@ func NewLayer2UserDefinedNetworkController(
 		gatewayTopologyFactory: topology.NewGatewayTopologyFactory(cnci.nbClient),
 		gatewayManagers:        sync.Map{},
 		eIPController:          eIPController,
-		remoteNodesNoRouter:    sync.Map{},
 	}
 	if oc.IsPrimaryNetwork() {
 		oc.onLogicalPortCacheAdd = func(pod *corev1.Pod, _ string) {
 			oc.requestLocalPodPolicyRetriesForPod(pod, "logical port cache update")
 			if oc.eIPController != nil {
-				oc.eIPController.addEgressIPPodRetry(pod, "logical port cache update")
+				if err := oc.eIPController.addEgressIPPodRetry(pod, "logical port cache update"); err != nil {
+					klog.Warningf("Failed to enqueue EgressIP retry for pod %s/%s after logical port cache update: %v",
+						pod.Namespace, pod.Name, err)
+				}
 			}
 		}
 	}
@@ -312,12 +295,6 @@ func NewLayer2UserDefinedNetworkController(
 
 	if util.IsNetworkSegmentationSupportEnabled() && netInfo.IsPrimaryNetwork() {
 		oc.svcController = serviceController
-		oc.defaultGatewayReconciler = kubevirt.NewDefaultGatewayReconciler(
-			oc.watchFactory,
-			oc.GetNetInfo(),
-			util.GetNetworkScopedK8sMgmtHostIntfName(uint(oc.GetNetworkID())),
-			oc.networkManager.GetNetworkNameForNADKey,
-		)
 	}
 
 	if oc.allocatesPodAnnotation() {
@@ -364,6 +341,7 @@ func (oc *Layer2UserDefinedNetworkController) run() error {
 	if err != nil {
 		return err
 	}
+	oc.enqueueEgressIPNetwork()
 	if oc.svcController != nil {
 		startSvc := time.Now()
 
@@ -378,10 +356,35 @@ func (oc *Layer2UserDefinedNetworkController) run() error {
 	return nil
 }
 
+func (oc *Layer2UserDefinedNetworkController) enqueueEgressIPNetwork() {
+	if !config.OVNKubernetesFeature.EnableEgressIP || !util.IsNetworkSegmentationSupportEnabled() ||
+		!oc.IsPrimaryNetwork() || oc.eIPController == nil {
+		return
+	}
+	oc.eIPController.EnqueueNetwork(oc.GetNetworkName())
+}
+
+func (oc *Layer2UserDefinedNetworkController) unregisterEgressIPNetwork() {
+	if !config.OVNKubernetesFeature.EnableEgressIP || !util.IsNetworkSegmentationSupportEnabled() ||
+		!oc.IsPrimaryNetwork() || oc.eIPController == nil {
+		return
+	}
+	oc.eIPController.UnregisterNetwork(oc.GetNetworkName())
+}
+
+func (oc *Layer2UserDefinedNetworkController) cleanupEgressIPAddressSet() error {
+	if !config.OVNKubernetesFeature.EnableEgressIP || !util.IsNetworkSegmentationSupportEnabled() ||
+		!oc.IsPrimaryNetwork() || oc.eIPController == nil {
+		return nil
+	}
+	return oc.eIPController.DestroyNetworkServedPodsAddressSet(oc.GetNetworkName())
+}
+
 // Cleanup cleans up logical entities for the given network, called from net-attach-def routine
 // could be called from a dummy Controller (only has CommonNetworkControllerInfo set)
 func (oc *Layer2UserDefinedNetworkController) Cleanup() error {
 	networkName := oc.GetNetworkName()
+	oc.unregisterEgressIPNetwork()
 
 	// For primary Layer2 UDN only: when this is a cleanup-only controller (dummy for stale UDN
 	// cleanup; GetNetworkID() is InvalidID because netInfo was never reconciled from a NAD),
@@ -450,6 +453,12 @@ func (oc *Layer2UserDefinedNetworkController) Cleanup() error {
 	cleanupLoadBalancerGroups(oc.nbClient, oc.GetNetInfo(),
 		oc.switchLoadBalancerGroupUUID, oc.clusterLoadBalancerGroupUUID, oc.routerLoadBalancerGroupUUID)
 
+	// Remove the EgressIP served-pods address set after router/policy teardown;
+	// it is not covered by this network's own address-set cleanup.
+	if err := oc.cleanupEgressIPAddressSet(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -471,7 +480,7 @@ func (oc *Layer2UserDefinedNetworkController) init() (err error) {
 	oc.defaultCOPPUUID = defaultCOPPUUID
 
 	if config.Layer2UsesTransitRouter && oc.IsPrimaryNetwork() {
-		if _, err = oc.newClusterRouter(); err != nil {
+		if _, err = oc.newClusterRouter(oc.GetTunnelKeys()); err != nil {
 			return fmt.Errorf("failed to create OVN cluster router for network %q: %v", oc.GetNetworkName(), err)
 		}
 	}
@@ -514,12 +523,21 @@ func (oc *Layer2UserDefinedNetworkController) init() (err error) {
 
 func (oc *Layer2UserDefinedNetworkController) Stop() {
 	klog.Infof("Stopping controller for UDN %s", oc.GetNetworkName())
+	oc.unregisterEgressIPNetwork()
 	oc.DeregisterServiceNetwork()
 	oc.DeregisterNodeHandler()
 	oc.BaseLayer2UserDefinedNetworkController.stop()
 }
 
 func (oc *Layer2UserDefinedNetworkController) Reconcile(netInfo util.NetInfo) error {
+	// Upgrades may replace a network tunnel key that collided with a same-named CNC under the legacy shared owner.
+	if config.Layer2UsesTransitRouter && oc.IsPrimaryNetwork() && oc.hasInterconnectTransport() &&
+		!slices.Equal(oc.GetTunnelKeys(), netInfo.GetTunnelKeys()) {
+		// Update OVN before caching the keys so a failed write remains retryable.
+		if _, err := oc.newClusterRouter(netInfo.GetTunnelKeys()); err != nil {
+			return fmt.Errorf("failed to update transit router tunnel key for network %s: %w", oc.GetNetworkName(), err)
+		}
+	}
 	if err := oc.BaseNetworkController.reconcile(
 		netInfo,
 		func(node string) { oc.gatewaysFailed.Store(node, true) },
@@ -590,7 +608,7 @@ func (oc *Layer2UserDefinedNetworkController) ReconcileNode(oldNode, newNode *co
 				syncClusterRouterPort: clusterRouterPortFailed,
 			}
 		}
-		return oc.addUpdateLocalNodeEvent(newNode, nodeParams, newState)
+		return oc.addUpdateLocalNodeEvent(newNode, nodeParams)
 	}
 
 	if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
@@ -609,10 +627,6 @@ func (oc *Layer2UserDefinedNetworkController) ReconcileNode(oldNode, newNode *co
 	}
 
 	_, syncZoneIC := oc.syncZoneICFailed.Load(newNode.Name)
-	_, oldNodeNoRouter := oc.remoteNodesNoRouter.Load(oldNode.Name)
-	if oldNodeNoRouter && util.UDNLayer2NodeUsesTransitRouter(newNode) {
-		syncZoneIC = true
-	}
 	if util.NodeChassisIDAnnotationChanged(oldNode, newNode) {
 		syncZoneIC = true
 	}
@@ -671,7 +685,7 @@ func (oc *Layer2UserDefinedNetworkController) newRetryFramework(
 	)
 }
 
-func (oc *Layer2UserDefinedNetworkController) addUpdateLocalNodeEvent(node *corev1.Node, nSyncs *nodeSyncs, state *nodecontroller.NodeAnnotationState) error {
+func (oc *Layer2UserDefinedNetworkController) addUpdateLocalNodeEvent(node *corev1.Node, nSyncs *nodeSyncs) error {
 	var errs []error
 	var err error
 
@@ -682,7 +696,7 @@ func (oc *Layer2UserDefinedNetworkController) addUpdateLocalNodeEvent(node *core
 
 	if util.IsNetworkSegmentationSupportEnabled() && oc.IsPrimaryNetwork() {
 		if nSyncs.syncClusterRouterPort && config.Layer2UsesTransitRouter {
-			if err = oc.syncClusterRouterPorts(node, hostSubnets, state); err != nil {
+			if err = oc.syncClusterRouterPorts(node, hostSubnets); err != nil {
 				errs = append(errs, err)
 				oc.nodeClusterRouterPortFailed.Store(node.Name, true)
 			} else {
@@ -793,7 +807,7 @@ func (oc *Layer2UserDefinedNetworkController) addUpdateRemoteNodeEvent(node *cor
 func (oc *Layer2UserDefinedNetworkController) addInterconnectSetupForRemoteNode(node *corev1.Node, state *nodecontroller.NodeAnnotationState) error {
 	var err error
 	if config.Layer2UsesTransitRouter {
-		err = oc.addRouterSetupForRemoteNodeGR(node, state)
+		err = oc.addRouterSetupForRemoteNodeGR(node)
 	} else {
 		err = oc.addSwitchPortForRemoteNodeGR(node, state)
 	}
@@ -870,62 +884,7 @@ func (oc *Layer2UserDefinedNetworkController) addSwitchPortForRemoteNodeGR(node 
 	return nil
 }
 
-func (oc *Layer2UserDefinedNetworkController) cleanupSwitchPortForRemoteNodeGR(nodeName string) error {
-	sw := &nbdb.LogicalSwitch{Name: oc.GetNetworkScopedSwitchName("")}
-	logicalSwitchPort := &nbdb.LogicalSwitchPort{
-		Name: types.SwitchToRouterPrefix + sw.Name + "_" + nodeName,
-	}
-	return libovsdbops.DeleteLogicalSwitchPorts(oc.nbClient, sw, logicalSwitchPort)
-}
-
-func (oc *Layer2UserDefinedNetworkController) addRouterSetupForRemoteNodeGR(node *corev1.Node, state *nodecontroller.NodeAnnotationState) error {
-	if _, ok := oc.remoteNodesNoRouter.Load(node.Name); ok {
-		// remote node uses old topology
-		if util.UDNLayer2NodeUsesTransitRouter(node) {
-			// node has just been upgraded
-			// upgrade remote node connection
-			// delete old switch port
-			if err := oc.cleanupSwitchPortForRemoteNodeGR(node.Name); err != nil {
-				return fmt.Errorf("failed to cleanup port for remote node %s: %v", node.Name, err)
-			}
-			if err := oc.eIPController.updateNodeNextHop(oc.GetNetInfo(), node); err != nil {
-				return fmt.Errorf("failed to ensure EgressIP switch policies for network %s: %v", oc.GetNetworkName(), err)
-			}
-			oc.remoteNodesNoRouter.Delete(node.Name)
-			// cleanup upgrade topology if this was the last old-topo node
-			// check if remoteNodesNoRouter is empty
-			isEmpty := true
-			oc.remoteNodesNoRouter.Range(func(_, _ interface{}) bool {
-				isEmpty = false
-				return false // Stop iterating immediately
-			})
-
-			if isEmpty {
-				// cleanup upgrade topology if it exists
-				if err := oc.cleanupUpgradeTopology(); err != nil {
-					return fmt.Errorf("failed to cleanup upgrade topology for network %s: %w", oc.GetNetworkName(), err)
-				}
-			}
-		} else {
-			// node is still using old topology
-			if err := oc.addSwitchPortForRemoteNodeGR(node, state); err != nil {
-				return err
-			}
-			gwRouterJoinIPs, err := udn.GetGWRouterIPs(node, oc.GetNetInfo())
-			if err != nil {
-				return err
-			}
-			// create joinIP via joinIP routes to send traffic via the switch port by always having the longest-prefix-match (LPM).
-			// In OVN routes with dst-ip and src-ip policies are evaluated at the same time and selected based on LPM,
-			// and we have the following route for pod network 10.10.0.0/24:
-			// 10.10.0.0/24                 10.10.0.2 src-ip
-			// Connected route for the join IP is based on the joinSubnet, which is always /16.
-			// That means, that for traffic with src IP from the podSubnet dst IP from joinSubnet,
-			// the winning route is joinIP if podSubnet mask is <= 16 and podSubnet otherwise.
-			// That is not the desired behavior, that is why we add always-winning routes for joinIPs.
-			return oc.addTransitRouterRoutes(node, gwRouterJoinIPs)
-		}
-	}
+func (oc *Layer2UserDefinedNetworkController) addRouterSetupForRemoteNodeGR(node *corev1.Node) error {
 	transitRouterInfo, err := getTransitRouterInfo(oc.GetNetInfo(), node)
 	if err != nil {
 		return nil
@@ -1173,9 +1132,9 @@ func (oc *Layer2UserDefinedNetworkController) nodeGatewayConfig(node *corev1.Nod
 	}, nil
 }
 
-// newClusterRouter creates the cluster router for the network. This router is a
+// newClusterRouter creates or updates the cluster router for the network. This router is a
 // transit router if the interconnect overlay is in use.
-func (oc *Layer2UserDefinedNetworkController) newClusterRouter() (*nbdb.LogicalRouter, error) {
+func (oc *Layer2UserDefinedNetworkController) newClusterRouter(tunnelKeys []int) (*nbdb.LogicalRouter, error) {
 	if !oc.hasInterconnectTransport() {
 		return oc.gatewayTopologyFactory.NewClusterRouter(
 			oc.GetNetworkScopedClusterRouterName(),
@@ -1184,7 +1143,6 @@ func (oc *Layer2UserDefinedNetworkController) newClusterRouter() (*nbdb.LogicalR
 		)
 	}
 
-	tunnelKeys := oc.GetTunnelKeys()
 	if len(tunnelKeys) != 2 {
 		return nil, fmt.Errorf("layer2 network %s with transit router enabled requires exactly 2 tunnel keys, got: %v", oc.GetNetworkName(), tunnelKeys)
 	}
@@ -1279,43 +1237,8 @@ func (oc *Layer2UserDefinedNetworkController) DeregisterServiceNetwork() {
 	}
 }
 
-func (oc *Layer2UserDefinedNetworkController) updateLocalPodEvent(pod *corev1.Pod) error {
-	if kubevirt.IsPodAllowedForMigration(pod, oc.GetNetInfo()) {
-		kubevirtLiveMigrationStatus, err := kubevirt.DiscoverLiveMigrationStatus(oc.watchFactory.PodCoreInformer().Lister(), pod)
-		if err != nil {
-			return err
-		}
-		if kubevirtLiveMigrationStatus != nil && kubevirtLiveMigrationStatus.TargetPod.Name == pod.Name {
-			if err := oc.reconcileLiveMigrationTargetZone(kubevirtLiveMigrationStatus); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func (oc *Layer2UserDefinedNetworkController) reconcileLiveMigrationTargetZone(kubevirtLiveMigrationStatus *kubevirt.LiveMigrationStatus) error {
-	if oc.defaultGatewayReconciler == nil {
-		return nil
-	}
-	hasIPv4Subnet, hasIPv6Subnet := oc.IPMode()
-	if hasIPv4Subnet {
-		if err := oc.defaultGatewayReconciler.ReconcileIPv4AfterLiveMigration(kubevirtLiveMigrationStatus); err != nil {
-			return fmt.Errorf("failed reconciling IPv4 default gw after live migration at target pod '%s/%s': %w",
-				kubevirtLiveMigrationStatus.TargetPod.Namespace, kubevirtLiveMigrationStatus.TargetPod.Name, err)
-		}
-	}
-	if hasIPv6Subnet {
-		if err := oc.defaultGatewayReconciler.ReconcileIPv6AfterLiveMigration(kubevirtLiveMigrationStatus); err != nil {
-			return fmt.Errorf("failed reconciling IPv6 default gw after live migration at target pod '%s/%s': %w",
-				kubevirtLiveMigrationStatus.TargetPod.Namespace, kubevirtLiveMigrationStatus.TargetPod.Name, err)
-		}
-	}
-	return nil
-}
-
 // syncClusterRouterPorts connects the network switch to the transit router
-func (oc *Layer2UserDefinedNetworkController) syncClusterRouterPorts(node *corev1.Node, hostSubnets []*net.IPNet, state *nodecontroller.NodeAnnotationState) error {
+func (oc *Layer2UserDefinedNetworkController) syncClusterRouterPorts(node *corev1.Node, hostSubnets []*net.IPNet) error {
 	switchName := oc.GetNetworkScopedSwitchName("")
 
 	// Connect the switch to the router.
@@ -1337,207 +1260,13 @@ func (oc *Layer2UserDefinedNetworkController) syncClusterRouterPorts(node *corev
 		return err
 	}
 
-	if err = oc.syncNodeClusterRouterPort(node, hostSubnets); err != nil {
-		return err
-	}
-
-	// check if remoteNodesNoRouter is empty
-	isEmpty := true
-	oc.remoteNodesNoRouter.Range(func(_, _ interface{}) bool {
-		isEmpty = false
-		return false // Stop iterating immediately
-	})
-
-	if !isEmpty {
-		// now add upgrade-only connection using IP-less port
-		if err = oc.ensureUpgradeTopology(node, state); err != nil {
-			return fmt.Errorf("failed to ensure upgrade topology for node %s: %w", node.Name, err)
-		}
-	} else {
-		// cleanup upgrade topology if it exists
-		if err = oc.cleanupUpgradeTopology(); err != nil {
-			return fmt.Errorf("failed to cleanup upgrade topology for network %s: %w", oc.GetNetworkName(), err)
-		}
-	}
-	return nil
-}
-
-func (oc *Layer2UserDefinedNetworkController) ensureUpgradeTopology(node *corev1.Node, state *nodecontroller.NodeAnnotationState) error {
-	switchName := oc.GetNetworkScopedSwitchName("")
-	sw := nbdb.LogicalSwitch{Name: switchName}
-
-	// create switch to router connection with GR MAC and dummy join IPs
-	upgradeRouterPortName := types.TransitRouterToSwitchPrefix + switchName + "-upgrade"
-	// create switch port
-	upgradeSwitchPort := nbdb.LogicalSwitchPort{
-		Name:      types.SwitchToTransitRouterPrefix + switchName + "-upgrade",
-		Type:      "router",
-		Addresses: []string{"router"},
-		Options: map[string]string{
-			libovsdbops.RouterPort: upgradeRouterPortName,
-		},
-		ExternalIDs: map[string]string{
-			types.NetworkExternalID:  oc.GetNetworkName(),
-			types.TopologyExternalID: oc.TopologyType(),
-		},
-	}
-	tunnelID, err := oc.tunnelIDForNode(state)
-	if err != nil {
-		if util.IsAnnotationNotSetError(err) {
-			// wait for the annotation to be assigned
-			return types.NewSuppressedError(err)
-		}
-		return fmt.Errorf("failed to fetch tunnelID annotation from the node %s for network %s, err: %w",
-			node.Name, oc.GetNetworkName(), err)
-	}
-	upgradeSwitchPort.Options[libovsdbops.RequestedTnlKey] = strconv.Itoa(tunnelID)
-
-	err = libovsdbops.CreateOrUpdateLogicalSwitchPortsOnSwitch(oc.nbClient, &sw, &upgradeSwitchPort)
-	if err != nil {
-		klog.Errorf("Failed to add logical port %+v to switch %s: %v", upgradeSwitchPort, switchName, err)
-		return err
-	}
-	// create router port
-	// find GW MAC
-	gwRouterJoinNets, err := udn.GetGWRouterIPs(node, oc.GetNetInfo())
-	if err != nil {
-		return fmt.Errorf("failed composing LRP addresses for layer2 network %s: %w", oc.GetNetworkName(), err)
-	}
-	// add fake joinIPs
-	fakeJoinIPs, err := oc.getLastJoinIPs()
-	if err != nil {
-		return fmt.Errorf("failed to get fake join IPs for network %s: %w", oc.GetNetworkName(), err)
-	}
-
-	gwLRPMAC := util.IPAddrToHWAddr(gwRouterJoinNets[0].IP)
-	logicalRouterPort := nbdb.LogicalRouterPort{
-		Name:     upgradeRouterPortName,
-		MAC:      gwLRPMAC.String(),
-		Networks: util.IPNetsToStringSlice(fakeJoinIPs),
-	}
-	logicalRouter := nbdb.LogicalRouter{Name: oc.GetNetworkScopedClusterRouterName()}
-
-	err = libovsdbops.CreateOrUpdateLogicalRouterPort(oc.nbClient, &logicalRouter, &logicalRouterPort,
-		nil, &logicalRouterPort.MAC, &logicalRouterPort.Networks, &logicalRouterPort.Options)
-	if err != nil {
-		return fmt.Errorf("failed to add logical router port %s, error: %v", upgradeRouterPortName, err)
-	}
-
-	// now add masq subnet to the router port, this ensures that only one port respond to the
-	// ARP/NDP requests for the masq IPs
-	lrpName := oc.GetNetworkScopedRouterToSwitchPortName("")
-	trRouterPort, err := libovsdbops.GetLogicalRouterPort(oc.nbClient, &nbdb.LogicalRouterPort{Name: lrpName})
-	if err != nil {
-		return fmt.Errorf("failed to get logical router port %s: %w", lrpName, err)
-	}
-	masqSubnets, err := udn.GetUDNMgmtPortMasqueradeIPs(oc.GetNetworkID())
-	if err != nil {
-		return fmt.Errorf("failed to get masquerade IPs, network %s (%d): %w", oc.GetNetworkName(), oc.GetNetworkID(), err)
-	}
-
-	existingNetworkSet := sets.New(trRouterPort.Networks...)
-	newNetworksSet := sets.New(util.IPNetsToStringSlice(masqSubnets)...)
-	// Only add masq IPs if they are not already present
-	if existingNetworkSet.IsSuperset(newNetworksSet) {
-		return nil
-	}
-	trRouterPort.Networks = append(trRouterPort.Networks, newNetworksSet.UnsortedList()...)
-	err = libovsdbops.CreateOrUpdateLogicalRouterPort(oc.nbClient, &logicalRouter, trRouterPort, nil, &trRouterPort.Networks)
-	if err != nil {
-		return fmt.Errorf("failed to update logical router port %s with masq IPs: %w", lrpName, err)
-	}
-	return nil
-}
-
-func (oc *Layer2UserDefinedNetworkController) cleanupUpgradeTopology() error {
-	// 1. Delete switch to router connection with GR MAC and dummy join IPs
-	switchName := oc.GetNetworkScopedSwitchName("")
-	sw := nbdb.LogicalSwitch{Name: switchName}
-	logicalRouter := nbdb.LogicalRouter{Name: oc.GetNetworkScopedClusterRouterName()}
-
-	upgradeRouterPortName := types.TransitRouterToSwitchPrefix + switchName + "-upgrade"
-	upgradeSwitchPortName := types.SwitchToTransitRouterPrefix + switchName + "-upgrade"
-	if err := libovsdbops.DeleteLogicalSwitchPorts(oc.nbClient, &sw, &nbdb.LogicalSwitchPort{Name: upgradeSwitchPortName}); err != nil {
-		return fmt.Errorf("failed to delete logical switch port %s: %w", upgradeSwitchPortName, err)
-	}
-	if err := libovsdbops.DeleteLogicalRouterPorts(oc.nbClient, &logicalRouter, &nbdb.LogicalRouterPort{Name: upgradeRouterPortName}); err != nil {
-		return fmt.Errorf("failed to delete logical router port %s: %w", upgradeRouterPortName, err)
-	}
-	// 2. Delete masq IPs from the router port as it is no longer needed
-	lrpName := oc.GetNetworkScopedRouterToSwitchPortName("")
-	masqSubnets, err := udn.GetUDNMgmtPortMasqueradeIPs(oc.GetNetworkID())
-	if err != nil {
-		return fmt.Errorf("failed to get masquerade IPs, network %s (%d): %w", oc.GetNetworkName(), oc.GetNetworkID(), err)
-	}
-	trRouterPort, err := libovsdbops.GetLogicalRouterPort(oc.nbClient, &nbdb.LogicalRouterPort{Name: lrpName})
-	if err != nil {
-		return fmt.Errorf("failed to get logical router port %s: %w", lrpName, err)
-	}
-	updatedNetworks := sets.New(trRouterPort.Networks...)
-	staleNetworksSet := sets.New[string](util.IPNetsToStringSlice(masqSubnets)...)
-	if updatedNetworks.Intersection(staleNetworksSet).Len() == 0 {
-		// No masq IPs to remove, nothing to do
-		return nil
-	}
-	for network := range staleNetworksSet {
-		updatedNetworks.Delete(network)
-	}
-	trRouterPort.Networks = updatedNetworks.UnsortedList()
-	err = libovsdbops.CreateOrUpdateLogicalRouterPort(oc.nbClient, &logicalRouter, trRouterPort, nil, &trRouterPort.Networks)
-	if err != nil {
-		return fmt.Errorf("failed to update logical router port %s with masq IPs: %w", lrpName, err)
-	}
-	return nil
-}
-
-// getLastJoinIPs checks if the last IP of the join subnet is already allocated to any of the nodes
-// if it is, then we cannot use it as fake join IP, and we return an error
-// if it is not, then we return the last IPs of the join subnets
-func (oc *Layer2UserDefinedNetworkController) getLastJoinIPs() ([]*net.IPNet, error) {
-	// we want to make sure that our fake IP, which is the last IP of the join subnet
-	// is not already allocated to any of the nodes.
-	// If there is at least one small subnet (that has little IPs), we need to check all existing nodeIDs to make sure
-	// the last IP is not allocated.
-	// This is expensive operation, so we avoid it if we can with the smallestSubnetZeroes check.
-	// smallestSubnetZeroes is the number of zeroes in the mask of the smallest subnet
-	smallestSubnetZeroes := 128
-	for _, joinSubnet := range oc.JoinSubnets() {
-		maskLength, totalSize := joinSubnet.Mask.Size()
-		zeroes := totalSize - maskLength
-		if zeroes < smallestSubnetZeroes {
-			smallestSubnetZeroes = zeroes
-		}
-	}
-	// The IP allocation is based on the nodeID, so we assume that if the joinSubnet has >= 12 zeroes in the mask
-	// then it is impossible/difficult to reach the last IP. For that you would need to have 4096 (=2^12) nodes.
-	if smallestSubnetZeroes < 12 {
-		// subnet is small, we have to check nodeIDs
-		nodes, err := oc.watchFactory.GetNodes()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get nodes when checking for fake join IPs for network %s: %v", oc.GetNetworkName(), err)
-		}
-		lastIPNodeID := (1 << smallestSubnetZeroes) - 2 // -1 for broadcast
-		for _, node := range nodes {
-			nodeID, err := util.GetNodeID(node)
-			if err != nil {
-				// Don't consider this node as cluster-manager has not allocated node id yet.
-				continue
-			}
-			if nodeID == lastIPNodeID {
-				// we have a collision, we cannot use the last IP
-				return nil, fmt.Errorf("cannot use the last IP of the join subnet as fake join IP, node %s has nodeID %d", node.Name, nodeID)
-			}
-		}
-		// we checked all nodes, and none of them have the last IP, so we can use it
-	}
-	return udn.GetLastIPsFromJoinSubnet(oc.GetNetInfo()), nil
+	return oc.syncNodeClusterRouterPort(node, hostSubnets)
 }
 
 // syncNodes finds nodes that still have LRP on the transit router, but the node doesn't exist anymore
 // and cleans it up.
 func (oc *Layer2UserDefinedNetworkController) syncNodes(nodes []interface{}) error {
 	foundNodeNames := sets.New[string]()
-	activeNodes := make([]*corev1.Node, 0, len(nodes))
 	dynamicUDN := config.OVNKubernetesFeature.EnableDynamicUDNAllocation
 	for _, obj := range nodes {
 		node, ok := obj.(*corev1.Node)
@@ -1546,7 +1275,6 @@ func (oc *Layer2UserDefinedNetworkController) syncNodes(nodes []interface{}) err
 		}
 		if oc.isLocalNode(node) {
 			foundNodeNames.Insert(node.Name)
-			activeNodes = append(activeNodes, node)
 			continue
 		}
 		// Clean up remote nodes that went inactive
@@ -1557,10 +1285,8 @@ func (oc *Layer2UserDefinedNetworkController) syncNodes(nodes []interface{}) err
 			continue
 		}
 		foundNodeNames.Insert(node.Name)
-		activeNodes = append(activeNodes, node)
 	}
 	// Transit Router cleanup
-	oc.setRemoteNodesNoTransitRouter(activeNodes)
 	// Get the transit router. If it's not present - no cleanup to do
 	tr := &nbdb.LogicalRouter{
 		Name: oc.GetNetworkScopedClusterRouterName(),
@@ -1603,18 +1329,6 @@ func (oc *Layer2UserDefinedNetworkController) syncNodes(nodes []interface{}) err
 
 func (oc *Layer2UserDefinedNetworkController) nodeHasActiveNetwork(nodeName string) bool {
 	return oc.networkManager.NodeHasNetwork(nodeName, oc.GetNetworkName())
-}
-
-// setRemoteNodesNoTransitRouter finds remote nodes that do not use transit router.
-func (oc *Layer2UserDefinedNetworkController) setRemoteNodesNoTransitRouter(nodes []*corev1.Node) {
-	for _, node := range nodes {
-		if oc.isLocalNode(node) {
-			continue
-		}
-		if !util.UDNLayer2NodeUsesTransitRouter(node) {
-			oc.remoteNodesNoRouter.Store(node.Name, true)
-		}
-	}
 }
 
 // HandleNetworkRefChange marks the node for interconnect sync so a queued update does not skip it.

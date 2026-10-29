@@ -325,6 +325,10 @@ func TestUplinkBridgeServiceFlowsUseUDNMark(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to render bridge flows: %v", err)
 	}
+	// Uplink bridges can carry UDNs without the default network.
+	expectFlowContainingAll(t, flows,
+		"priority=10, table=0,", "dl_dst=62:41:d0:54:3d:64",
+		"actions=output:patch-ovsbr1_bluenet,NORMAL")
 
 	expectedIPv4HostToService := fmt.Sprintf("cookie=%s, priority=500, in_port=LOCAL, ip, "+
 		"pkt_mark=0x1001, ip_dst=10.96.0.0/16, "+
@@ -521,18 +525,31 @@ func TestArpFanoutFilterFlowsIncludeVLAN(t *testing.T) {
 
 	expectFlow(t, flows, expectedIPv4)
 	expectFlow(t, flows, expectedIPv6)
-	// Priority-11 flows forward external broadcast ARP/NA to all GR patches.
-	// Action output order is non-deterministic (map iteration), so we use
-	// substring matching instead of exact flow comparison.
+	expectFlowContainingAll(t, flows,
+		"priority=10, table=0, dl_vlan=100, dl_dst=62:41:d0:54:3d:64",
+		"actions=output:patch-breth0_ov,output:patch-breth0_bluenet,NORMAL")
+	// NORMAL reaches default first; only primary UDNs need explicit outputs.
 	expectFlowContainingAll(t, flows,
 		fmt.Sprintf("cookie=%s", nodetypes.DefaultOpenFlowCookie),
 		"priority=11", "in_port=eth0", "dl_vlan=100", "dl_dst=ff:ff:ff:ff:ff:ff", "arp",
-		"actions=", "output:patch-breth0_bluenet", "output:patch-breth0_ov", "NORMAL")
+		"actions=NORMAL,output:patch-breth0_bluenet")
 	expectFlowContainingAll(t, flows,
 		fmt.Sprintf("cookie=%s", nodetypes.DefaultOpenFlowCookie),
 		"priority=11", "in_port=eth0", "dl_vlan=100", "dl_dst=33:33:00:00:00:01",
 		fmt.Sprintf("icmpv6_type=%d", types.NeighborAdvertisementICMPType),
-		"actions=", "output:patch-breth0_bluenet", "output:patch-breth0_ov", "NORMAL")
+		"actions=NORMAL,output:patch-breth0_bluenet")
+	for _, icmpType := range []int{types.RouteAdvertisementICMPType, types.NeighborAdvertisementICMPType} {
+		expectFlow(t, flows, fmt.Sprintf("cookie=%s, priority=14, table=1,icmp6,icmpv6_type=%d actions=FLOOD,output:patch-breth0_bluenet",
+			nodetypes.DefaultOpenFlowCookie, icmpType))
+	}
+	// Exercise priority 10 on a bridge carrying only the default network.
+	delete(bridge.netConfig, "bluenet")
+	flows, err = bridge.commonFlows(nil)
+	if err != nil {
+		t.Fatalf("failed to render bridge flows: %v", err)
+	}
+	expectFlow(t, flows, fmt.Sprintf("cookie=%s, priority=10, table=0, dl_vlan=100, dl_dst=62:41:d0:54:3d:64, actions=output:patch-breth0_ov,NORMAL",
+		nodetypes.DefaultOpenFlowCookie))
 }
 
 func mustParseMAC(t *testing.T, value string) net.HardwareAddr {

@@ -146,10 +146,16 @@ fi
 # advertisement lanes are the exception: allow tests in the intersection of
 # network segmentation and route advertisements when both features are enabled.
 UPLINK_TESTS="Uplink"
+DPU_TESTS="DPU"
 NETWORK_SEGMENTATION_TESTS="Network Segmentation"
 if [[ "${WHAT}" = "${UPLINK_TESTS}" ]]; then
   require_label "Feature:Uplink"
   shift # don't "focus" on Uplink since we filter by label
+elif [[ "${WHAT}" = "${DPU_TESTS}" ]]; then
+  # Feature:DPU specs need the dpu-simulator layout and the Uplink e2e environment,
+  # and disrupt a host node, so the dpu-sim no-overlay lane runs them after Uplink.
+  require_label "Feature:DPU"
+  shift # don't "focus" on DPU since we filter by label
 elif [[ "${WHAT}" = "${NETWORK_SEGMENTATION_TESTS}"* ]]; then
   require_label "Feature:NetworkSegmentation"
   shift # don't "focus" on Network Segmentation since we filter by label
@@ -207,6 +213,12 @@ fi
 # allocation (okep-5552).
 if [ "$DYNAMIC_UDN_ALLOCATION" == true ]; then
   skip "BGP: For BGP configured networks"
+fi
+
+# Managed routing provides an internal full mesh, without the external FRR
+# router and bgpnet server required by this default-network advertisement suite.
+if [ "$ENABLE_NO_OVERLAY_MANAGED_ROUTING" == true ]; then
+  skip "BGP: When default podNetwork is advertised"
 fi
 
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ]; then

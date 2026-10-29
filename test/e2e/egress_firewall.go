@@ -115,7 +115,7 @@ func egressFirewallPolicyValidationTests(useUDN bool, udnTopology string) {
 		f := wrappedTestFramework(svcname)
 
 		// Determine what mode the CI is running in and get relevant endpoint information for the tests
-		ginkgo.BeforeEach(func() {
+		ginkgo.BeforeEach(func(ctx ginkgo.SpecContext) {
 			nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 2)
 			framework.ExpectNoError(err)
 			if len(nodes.Items) < 2 {
@@ -182,7 +182,7 @@ func egressFirewallPolicyValidationTests(useUDN bool, udnTopology string) {
 				default:
 					framework.Failf("unsupported UDN topology %q", udnTopology)
 				}
-				gomega.Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, f.Namespace.Name, netConfig.name),
+				gomega.Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, f.Namespace.Name, netConfig.name),
 					30*time.Second, time.Second).Should(gomega.Succeed())
 			}
 		})

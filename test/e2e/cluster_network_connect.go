@@ -730,7 +730,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 	Context("when networks exist before CNC creation", func() {
 		// Single network tests using DescribeTable
 		DescribeTable("single network: has both subnet and tunnel ID annotations",
-			func(topology, kind string) {
+			func(ctx SpecContext, topology, kind string) {
 				cncName := generateCNCName()
 				networkName := fmt.Sprintf("test-%s-%s", strings.ToLower(kind), rand.String(5))
 				testLabel := map[string]string{fmt.Sprintf("test-%s-%s", strings.ToLower(kind), strings.ToLower(topology)): "true"}
@@ -749,7 +749,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 					createPrimaryUDNWithSubnets(cs, ns.Name, networkName, topology, v4, v6)
 
 					By("waiting for UDN to be ready")
-					Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, ns.Name, networkName), 30*time.Second, time.Second).Should(Succeed())
+					Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, ns.Name, networkName), 30*time.Second, time.Second).Should(Succeed())
 
 					By("creating a CNC with PUDN selector")
 					createOrUpdateCNC(cs, cncName, nil, testLabel)
@@ -766,7 +766,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 					createPrimaryCUDNWithSubnets(cs, networkName, topology, testLabel, v4, v6, ns.Name)
 
 					By("waiting for CUDN to be ready")
-					Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, networkName), 30*time.Second, time.Second).Should(Succeed())
+					Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, networkName), 30*time.Second, time.Second).Should(Succeed())
 
 					By("creating a CNC with CUDN selector")
 					createOrUpdateCNC(cs, cncName, testLabel, nil)
@@ -785,7 +785,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 
 		// Multiple networks of same kind tests using DescribeTable
 		DescribeTable("multiple networks (2xL3 + 2xL2): has all networks in subnet annotation",
-			func(kind string) {
+			func(ctx SpecContext, kind string) {
 				cncName := generateCNCName()
 				testLabel := map[string]string{fmt.Sprintf("test-multi-%s", strings.ToLower(kind)): "true"}
 				var namespaces []*corev1.Namespace
@@ -824,7 +824,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 
 					By("waiting for all UDNs to be ready")
 					for i, ns := range namespaces {
-						Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, ns.Name, networkNames[i]), 30*time.Second, time.Second).Should(Succeed())
+						Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, ns.Name, networkNames[i]), 30*time.Second, time.Second).Should(Succeed())
 					}
 
 					By("creating a CNC with PUDN selector")
@@ -862,7 +862,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 
 					By("waiting for all CUDNs to be ready")
 					for i := 0; i < 4; i++ {
-						Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, networkNames[i]), 30*time.Second, time.Second).Should(Succeed())
+						Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, networkNames[i]), 30*time.Second, time.Second).Should(Succeed())
 					}
 
 					By("creating a CNC with CUDN selector")
@@ -878,7 +878,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			Entry("P-CUDNs (one multi-ns)", "CUDN"),
 		)
 
-		It("full matrix (2x each type) - has all 8 networks in subnet annotation", func() {
+		It("full matrix (2x each type) - has all 8 networks in subnet annotation", func(ctx SpecContext) {
 			cncName := generateCNCName()
 			cudnLabel := map[string]string{"test-full-matrix": "true"}
 			udnLabel := map[string]string{"test-full-matrix": "true"}
@@ -944,10 +944,10 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 
 			By("waiting for all networks to be ready")
 			for _, name := range cudnNames {
-				Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, name), 30*time.Second, time.Second).Should(Succeed())
+				Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, name), 30*time.Second, time.Second).Should(Succeed())
 			}
 			for i, ns := range udnNamespaces {
-				Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, ns.Name, udnNames[i]), 30*time.Second, time.Second).Should(Succeed())
+				Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, ns.Name, udnNames[i]), 30*time.Second, time.Second).Should(Succeed())
 			}
 
 			By("creating a CNC with both CUDN and PUDN selectors")
@@ -966,7 +966,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 	Context("when CNC is created before networks", func() {
 		// Single network tests using DescribeTable
 		DescribeTable("single network created after CNC: annotations are updated",
-			func(topology, kind string) {
+			func(ctx SpecContext, topology, kind string) {
 				cncName := generateCNCName()
 				networkName := fmt.Sprintf("test-%s-%s", strings.ToLower(kind), rand.String(5))
 				testLabel := map[string]string{fmt.Sprintf("test-dyn-%s-%s", strings.ToLower(kind), strings.ToLower(topology)): "true"}
@@ -993,7 +993,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 					expectedTopologies = append(expectedTopologies, topology)
 
 					By("waiting for UDN to be ready")
-					Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, ns.Name, networkName), 30*time.Second, time.Second).Should(Succeed())
+					Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, ns.Name, networkName), 30*time.Second, time.Second).Should(Succeed())
 				} else {
 					ns := createUDNNamespace(cs, fmt.Sprintf("test-dyn-%s-%s", strings.ToLower(kind), strings.ToLower(topology)), nil)
 					nextSubnets := newTestNetworkSubnetsAllocator()
@@ -1015,7 +1015,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 					expectedTopologies = append(expectedTopologies, topology)
 
 					By("waiting for CUDN to be ready")
-					Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, networkName), 30*time.Second, time.Second).Should(Succeed())
+					Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, networkName), 30*time.Second, time.Second).Should(Succeed())
 				}
 
 				By("verifying CNC annotations are updated to include the network")
@@ -1031,7 +1031,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 
 		// Multiple networks created after CNC
 		DescribeTable("multiple networks created after CNC: annotations are updated",
-			func(kind string) {
+			func(ctx SpecContext, kind string) {
 				cncName := generateCNCName()
 				testLabel := map[string]string{fmt.Sprintf("test-dyn-multi-%s", strings.ToLower(kind)): "true"}
 				var namespaces []*corev1.Namespace
@@ -1076,7 +1076,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 
 					By("waiting for all UDNs to be ready")
 					for i, ns := range namespaces {
-						Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, ns.Name, networkNames[i]), 30*time.Second, time.Second).Should(Succeed())
+						Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, ns.Name, networkNames[i]), 30*time.Second, time.Second).Should(Succeed())
 					}
 				} else {
 					// CUDN case
@@ -1117,7 +1117,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 
 					By("waiting for all CUDNs to be ready")
 					for i := 0; i < 4; i++ {
-						Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, networkNames[i]), 30*time.Second, time.Second).Should(Succeed())
+						Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, networkNames[i]), 30*time.Second, time.Second).Should(Succeed())
 					}
 				}
 
@@ -1130,7 +1130,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			Entry("P-CUDNs (one multi-ns)", "CUDN"),
 		)
 
-		It("full matrix created after CNC - annotations are updated with all 8 networks", func() {
+		It("full matrix created after CNC - annotations are updated with all 8 networks", func(ctx SpecContext) {
 			cncName := generateCNCName()
 			cudnLabel := map[string]string{"test-dyn-full-matrix": "true"}
 			udnLabel := map[string]string{"test-dyn-full-matrix": "true"}
@@ -1202,10 +1202,10 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 
 			By("waiting for all networks to be ready")
 			for _, name := range cudnNames {
-				Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, name), 30*time.Second, time.Second).Should(Succeed())
+				Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, name), 30*time.Second, time.Second).Should(Succeed())
 			}
 			for i, ns := range udnNamespaces {
-				Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, ns.Name, udnNames[i]), 30*time.Second, time.Second).Should(Succeed())
+				Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, ns.Name, udnNames[i]), 30*time.Second, time.Second).Should(Succeed())
 			}
 
 			By("verifying CNC has all 8 networks in subnet annotation")
@@ -1221,7 +1221,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 	Context("when networks are added to existing CNC", func() {
 		// Adding single network to CNC with existing networks
 		DescribeTable("adding a network to CNC with existing networks: count increases",
-			func(initialTopology, addedTopology, kind string) {
+			func(ctx SpecContext, initialTopology, addedTopology, kind string) {
 				cncName := generateCNCName()
 				testLabel := map[string]string{fmt.Sprintf("test-add-%s", strings.ToLower(kind)): "true"}
 				var namespaces []*corev1.Namespace
@@ -1248,7 +1248,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 					v4, v6 := nextSubnets(initialTopology == "Layer3")
 					createPrimaryUDNWithSubnets(cs, namespaces[0].Name, networkNames[0], initialTopology, v4, v6)
 					expectedTopologies = append(expectedTopologies, initialTopology)
-					Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, namespaces[0].Name, networkNames[0]), 30*time.Second, time.Second).Should(Succeed())
+					Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, namespaces[0].Name, networkNames[0]), 30*time.Second, time.Second).Should(Succeed())
 
 					By("creating CNC with PUDN selector")
 					createOrUpdateCNC(cs, cncName, nil, testLabel)
@@ -1262,7 +1262,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 					v4, v6 = nextSubnets(addedTopology == "Layer3")
 					createPrimaryUDNWithSubnets(cs, namespaces[1].Name, networkNames[1], addedTopology, v4, v6)
 					expectedTopologies = append(expectedTopologies, addedTopology)
-					Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, namespaces[1].Name, networkNames[1]), 30*time.Second, time.Second).Should(Succeed())
+					Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, namespaces[1].Name, networkNames[1]), 30*time.Second, time.Second).Should(Succeed())
 				} else {
 					// CUDN case
 					for i := 1; i <= 2; i++ {
@@ -1285,7 +1285,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 					v4, v6 := nextSubnets(initialTopology == "Layer3")
 					createPrimaryCUDNWithSubnets(cs, networkNames[0], initialTopology, testLabel, v4, v6, namespaces[0].Name)
 					expectedTopologies = append(expectedTopologies, initialTopology)
-					Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, networkNames[0]), 30*time.Second, time.Second).Should(Succeed())
+					Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, networkNames[0]), 30*time.Second, time.Second).Should(Succeed())
 
 					By("creating CNC with CUDN selector")
 					createOrUpdateCNC(cs, cncName, testLabel, nil)
@@ -1299,7 +1299,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 					v4, v6 = nextSubnets(addedTopology == "Layer3")
 					createPrimaryCUDNWithSubnets(cs, networkNames[1], addedTopology, testLabel, v4, v6, namespaces[1].Name)
 					expectedTopologies = append(expectedTopologies, addedTopology)
-					Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, networkNames[1]), 30*time.Second, time.Second).Should(Succeed())
+					Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, networkNames[1]), 30*time.Second, time.Second).Should(Succeed())
 				}
 
 				By("verifying CNC now has 2 networks in subnet annotation")
@@ -1312,7 +1312,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			Entry("add L3 P-CUDN to L2 P-CUDN", "Layer2", "Layer3", "CUDN"),
 		)
 
-		It("adding mixed networks (P-UDN + P-CUDN) to existing CNC - all networks appear", func() {
+		It("adding mixed networks (P-UDN + P-CUDN) to existing CNC - all networks appear", func(ctx SpecContext) {
 			cncName := generateCNCName()
 			cudnLabel := map[string]string{"test-add-mixed": "true"}
 			udnLabel := map[string]string{"test-add-mixed": "true"}
@@ -1350,8 +1350,8 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			createLayer3PrimaryUDNWithSubnets(cs, udnNs.Name, initialUdnName, v4, v6)
 			expectedTopologies = append(expectedTopologies, "Layer3")
 
-			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, initialCudnName), 30*time.Second, time.Second).Should(Succeed())
-			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, udnNs.Name, initialUdnName), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, initialCudnName), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, udnNs.Name, initialUdnName), 30*time.Second, time.Second).Should(Succeed())
 
 			By("creating CNC with both selectors")
 			createOrUpdateCNC(cs, cncName, cudnLabel, udnLabel)
@@ -1369,8 +1369,8 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			createLayer2PrimaryUDNWithSubnets(cs, addedUdnNs.Name, addedUdnName, v4, v6)
 			expectedTopologies = append(expectedTopologies, "Layer2")
 
-			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, addedCudnName), 30*time.Second, time.Second).Should(Succeed())
-			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, addedUdnNs.Name, addedUdnName), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, addedCudnName), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, addedUdnNs.Name, addedUdnName), 30*time.Second, time.Second).Should(Succeed())
 
 			By("verifying CNC now has 4 networks")
 			verifyCNCSubnetAnnotationNetworkCount(cncName, 4)
@@ -1384,7 +1384,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 	Context("when networks are deleted from CNC", func() {
 		// Deleting single network from CNC with multiple networks
 		DescribeTable("deleting networks from CNC: count decreases to zero",
-			func(topology, kind string) {
+			func(ctx SpecContext, topology, kind string) {
 				cncName := generateCNCName()
 				testLabel := map[string]string{fmt.Sprintf("test-del-%s", strings.ToLower(kind)): "true"}
 				var namespaces []*corev1.Namespace
@@ -1412,7 +1412,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 					v4, v6 = nextSubnets(topology == "Layer3")
 					createPrimaryUDNWithSubnets(cs, namespaces[1].Name, networkNames[1], topology, v4, v6)
 					for i, ns := range namespaces {
-						Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, ns.Name, networkNames[i]), 30*time.Second, time.Second).Should(Succeed())
+						Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, ns.Name, networkNames[i]), 30*time.Second, time.Second).Should(Succeed())
 					}
 
 					By("creating CNC with PUDN selector")
@@ -1454,7 +1454,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 					v4, v6 = nextSubnets(topology == "Layer3")
 					createPrimaryCUDNWithSubnets(cs, networkNames[1], topology, testLabel, v4, v6, namespaces[1].Name)
 					for i := 0; i < 2; i++ {
-						Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, networkNames[i]), 30*time.Second, time.Second).Should(Succeed())
+						Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, networkNames[i]), 30*time.Second, time.Second).Should(Succeed())
 					}
 
 					By("creating CNC with CUDN selector")
@@ -1485,7 +1485,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			Entry("delete L3 then L3 P-CUDN", "Layer3", "CUDN"),
 		)
 
-		It("deleting mixed networks (P-UDN + P-CUDN) - annotations update correctly", func() {
+		It("deleting mixed networks (P-UDN + P-CUDN) - annotations update correctly", func(ctx SpecContext) {
 			cncName := generateCNCName()
 			cudnLabel := map[string]string{"test-del-mixed": "true"}
 			udnLabel := map[string]string{"test-del-mixed": "true"}
@@ -1522,10 +1522,10 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryUDNWithSubnets(cs, udnNs2.Name, udnName2, v4, v6)
 
-			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName1), 30*time.Second, time.Second).Should(Succeed())
-			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName2), 30*time.Second, time.Second).Should(Succeed())
-			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, udnNs1.Name, udnName1), 30*time.Second, time.Second).Should(Succeed())
-			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, udnNs2.Name, udnName2), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, cudnName1), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, cudnName2), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, udnNs1.Name, udnName1), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, udnNs2.Name, udnName2), 30*time.Second, time.Second).Should(Succeed())
 
 			By("creating CNC with both selectors")
 			createOrUpdateCNC(cs, cncName, cudnLabel, udnLabel)
@@ -1557,7 +1557,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 	// Group 6: CNC Selector Update - CNC spec.networkSelectors changed (4 tests)
 	// ===========================================
 	Context("when CNC selector is updated", func() {
-		It("widening then narrowing CUDN selector - count increases then decreases", func() {
+		It("widening then narrowing CUDN selector - count increases then decreases", func(ctx SpecContext) {
 			cncName := generateCNCName()
 			commonLabel := map[string]string{"test-cudn-sel": "true"}
 			specificLabel := map[string]string{"test-cudn-sel": "true", "specific": "true"}
@@ -1581,8 +1581,8 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			createLayer3PrimaryCUDNWithSubnets(cs, cudnName1, commonLabel, v4, v6, ns1.Name)
 			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryCUDNWithSubnets(cs, cudnName2, specificLabel, v4, v6, ns2.Name)
-			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName1), 30*time.Second, time.Second).Should(Succeed())
-			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName2), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, cudnName1), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, cudnName2), 30*time.Second, time.Second).Should(Succeed())
 
 			By("creating CNC with specific selector (matches only second CUDN)")
 			createOrUpdateCNC(cs, cncName, specificLabel, nil)
@@ -1607,7 +1607,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			verifyCNCSubnetAnnotationContent(cncName, []string{"Layer2"})
 		})
 
-		It("widening then narrowing PUDN namespace selector - count increases then decreases", func() {
+		It("widening then narrowing PUDN namespace selector - count increases then decreases", func(ctx SpecContext) {
 			cncName := generateCNCName()
 			commonLabel := map[string]string{"test-pudn-sel": "true"}
 			specificLabel := map[string]string{"test-pudn-sel": "true", "specific": "true"}
@@ -1631,8 +1631,8 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			createLayer3PrimaryUDNWithSubnets(cs, ns1.Name, udnName1, v4, v6)
 			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryUDNWithSubnets(cs, ns2.Name, udnName2, v4, v6)
-			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, ns1.Name, udnName1), 30*time.Second, time.Second).Should(Succeed())
-			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, ns2.Name, udnName2), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, ns1.Name, udnName1), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, ns2.Name, udnName2), 30*time.Second, time.Second).Should(Succeed())
 
 			By("creating CNC with specific selector (matches only second namespace)")
 			createOrUpdateCNC(cs, cncName, nil, specificLabel)
@@ -1657,7 +1657,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			verifyCNCSubnetAnnotationContent(cncName, []string{"Layer2"})
 		})
 
-		It("adding and removing PUDN selector from CNC - count increases then decreases", func() {
+		It("adding and removing PUDN selector from CNC - count increases then decreases", func(ctx SpecContext) {
 			cncName := generateCNCName()
 			cudnLabel := map[string]string{"test-toggle-pudn-sel": "true"}
 			udnLabel := map[string]string{"test-toggle-pudn-sel": "true"}
@@ -1681,8 +1681,8 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			createLayer3PrimaryCUDNWithSubnets(cs, cudnName, cudnLabel, v4, v6, cudnNs.Name)
 			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryUDNWithSubnets(cs, udnNs.Name, udnName, v4, v6)
-			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName), 30*time.Second, time.Second).Should(Succeed())
-			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, udnNs.Name, udnName), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, cudnName), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, udnNs.Name, udnName), 30*time.Second, time.Second).Should(Succeed())
 
 			By("creating CNC with only CUDN selector")
 			createOrUpdateCNC(cs, cncName, cudnLabel, nil)
@@ -1709,7 +1709,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			verifyCNCSubnetAnnotationContent(cncName, []string{"Layer3"})
 		})
 
-		It("adding and removing CUDN selector from CNC - count increases then decreases", func() {
+		It("adding and removing CUDN selector from CNC - count increases then decreases", func(ctx SpecContext) {
 			cncName := generateCNCName()
 			cudnLabel := map[string]string{"test-toggle-cudn-sel": "true"}
 			udnLabel := map[string]string{"test-toggle-cudn-sel": "true"}
@@ -1733,8 +1733,8 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			createLayer3PrimaryCUDNWithSubnets(cs, cudnName, cudnLabel, v4, v6, cudnNs.Name)
 			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryUDNWithSubnets(cs, udnNs.Name, udnName, v4, v6)
-			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName), 30*time.Second, time.Second).Should(Succeed())
-			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, udnNs.Name, udnName), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, cudnName), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, udnNs.Name, udnName), 30*time.Second, time.Second).Should(Succeed())
 
 			By("creating CNC with only PUDN selector")
 			createOrUpdateCNC(cs, cncName, nil, udnLabel)
@@ -1773,7 +1773,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 	// Group 7: Label Mutation - network/namespace labels changed (2 tests)
 	// ===========================================
 	Context("when network or namespace labels are mutated", func() {
-		It("CUDN label mutation - adding then removing label changes CNC count", func() {
+		It("CUDN label mutation - adding then removing label changes CNC count", func(ctx SpecContext) {
 			cncName := generateCNCName()
 			cncLabel := map[string]string{"test-cudn-label": "true"}
 
@@ -1796,8 +1796,8 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			createLayer3PrimaryCUDNWithSubnets(cs, cudnName1, cncLabel, v4, v6, ns1.Name)
 			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryCUDNWithSubnets(cs, cudnName2, map[string]string{"other": "label"}, v4, v6, ns2.Name)
-			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName1), 30*time.Second, time.Second).Should(Succeed())
-			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName2), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, cudnName1), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, cudnName2), 30*time.Second, time.Second).Should(Succeed())
 
 			By("creating CNC with CUDN selector")
 			createOrUpdateCNC(cs, cncName, cncLabel, nil)
@@ -1832,7 +1832,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			verifyCNCSubnetAnnotationContent(cncName, []string{})
 		})
 
-		It("namespace label mutation - adding then removing label changes CNC count", func() {
+		It("namespace label mutation - adding then removing label changes CNC count", func(ctx SpecContext) {
 			cncName := generateCNCName()
 			cncLabel := map[string]string{"test-ns-label": "true"}
 
@@ -1855,8 +1855,8 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			createLayer3PrimaryUDNWithSubnets(cs, ns1.Name, udnName1, v4, v6)
 			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryUDNWithSubnets(cs, ns2.Name, udnName2, v4, v6)
-			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, ns1.Name, udnName1), 30*time.Second, time.Second).Should(Succeed())
-			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, ns2.Name, udnName2), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, ns1.Name, udnName1), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, ns2.Name, udnName2), 30*time.Second, time.Second).Should(Succeed())
 
 			By("creating CNC with PUDN namespace selector")
 			createOrUpdateCNC(cs, cncName, nil, cncLabel)
@@ -1913,7 +1913,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			cnc2ConnectSubnetIPv6Prefix = 120
 		)
 
-		It("two CNCs with non-overlapping selectors - each tracks its own networks", func() {
+		It("two CNCs with non-overlapping selectors - each tracks its own networks", func(ctx SpecContext) {
 			cncName1 := generateCNCName()
 			cncName2 := generateCNCName()
 			label1 := map[string]string{"test-multi-cnc-1": "true"}
@@ -1939,8 +1939,8 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			createLayer3PrimaryCUDNWithSubnets(cs, cudnName1, label1, v4, v6, ns1.Name)
 			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryCUDNWithSubnets(cs, cudnName2, label2, v4, v6, ns2.Name)
-			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName1), 30*time.Second, time.Second).Should(Succeed())
-			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName2), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, cudnName1), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, cudnName2), 30*time.Second, time.Second).Should(Succeed())
 
 			By("creating first CNC matching first CUDN (with first connect subnet)")
 			createOrUpdateCNCWithSubnets(cncName1, label1, nil, generateConnectSubnets(cs))
@@ -1967,7 +1967,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 				"CNCs should have different tunnel IDs")
 		})
 
-		It("two CNCs matching same network - both track the network (this works but is usually treated as misconfiguration)", func() {
+		It("two CNCs matching same network - both track the network (this works but is usually treated as misconfiguration)", func(ctx SpecContext) {
 			cncName1 := generateCNCName()
 			cncName2 := generateCNCName()
 			sharedLabel := map[string]string{"test-shared-cudn": "true"}
@@ -1986,7 +1986,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			By("creating a CUDN with shared label")
 			v4, v6 := nextSubnets(true)
 			createLayer3PrimaryCUDNWithSubnets(cs, cudnName, sharedLabel, v4, v6, ns.Name)
-			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, cudnName), 30*time.Second, time.Second).Should(Succeed())
 
 			By("creating first CNC matching the CUDN (with first connect subnet)")
 			createOrUpdateCNCWithSubnets(cncName1, sharedLabel, nil, generateConnectSubnets(cs))
@@ -2012,7 +2012,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 				"CNCs should have different tunnel IDs")
 		})
 
-		It("deleting one CNC does not affect the other", func() {
+		It("deleting one CNC does not affect the other", func(ctx SpecContext) {
 			cncName1 := generateCNCName()
 			cncName2 := generateCNCName()
 			label1 := map[string]string{"test-cnc-delete-1": "true"}
@@ -2037,8 +2037,8 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			createLayer3PrimaryCUDNWithSubnets(cs, cudnName1, label1, v4, v6, ns1.Name)
 			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryCUDNWithSubnets(cs, cudnName2, label2, v4, v6, ns2.Name)
-			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName1), 30*time.Second, time.Second).Should(Succeed())
-			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName2), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, cudnName1), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, cudnName2), 30*time.Second, time.Second).Should(Succeed())
 
 			By("creating two CNCs with different selectors and different connect subnets")
 			createOrUpdateCNCWithSubnets(cncName1, label1, nil, generateConnectSubnets(cs))
@@ -2064,7 +2064,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 	// Group 9: CNC Lifecycle - CNC deletion and recreation
 	// ===========================================
 	Context("CNC lifecycle", func() {
-		It("CNC deletion and recreation - tunnel ID is allocated after recreate", func() {
+		It("CNC deletion and recreation - tunnel ID is allocated after recreate", func(ctx SpecContext) {
 			cncName := generateCNCName()
 			cncLabel := map[string]string{"test-cnc-lifecycle": "true"}
 			nextSubnets := newTestNetworkSubnetsAllocator()
@@ -2081,7 +2081,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			By("creating a CUDN")
 			v4, v6 := nextSubnets(true)
 			createLayer3PrimaryCUDNWithSubnets(cs, cudnName, cncLabel, v4, v6, ns.Name)
-			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, cudnName), 30*time.Second, time.Second).Should(Succeed())
 
 			By("creating CNC")
 			createOrUpdateCNC(cs, cncName, cncLabel, nil)
@@ -2114,7 +2114,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			Expect(newTunnelID).NotTo(Equal(originalTunnelID))
 		})
 
-		It("tunnel ID is stable across CNC spec updates", func() {
+		It("tunnel ID is stable across CNC spec updates", func(ctx SpecContext) {
 			cncName := generateCNCName()
 			label1 := map[string]string{"test-tunnel-stable-1": "true"}
 			label2 := map[string]string{"test-tunnel-stable-2": "true"}
@@ -2138,8 +2138,8 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			createLayer3PrimaryCUDNWithSubnets(cs, cudnName1, label1, v4, v6, ns1.Name)
 			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryCUDNWithSubnets(cs, cudnName2, label2, v4, v6, ns2.Name)
-			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName1), 30*time.Second, time.Second).Should(Succeed())
-			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName2), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, cudnName1), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, cudnName2), 30*time.Second, time.Second).Should(Succeed())
 
 			By("creating CNC matching first CUDN")
 			createOrUpdateCNC(cs, cncName, label1, nil)
@@ -2182,7 +2182,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 	// Group 10: Full Lifecycle Workflow (1 comprehensive test)
 	// ===========================================
 	Context("full lifecycle workflow", func() {
-		It("comprehensive workflow - create, add, update, remove networks through CNC lifecycle", func() {
+		It("comprehensive workflow - create, add, update, remove networks through CNC lifecycle", func(ctx SpecContext) {
 			cncName := generateCNCName()
 			cudnLabel := map[string]string{"test-lifecycle": "true"}
 			udnLabel := map[string]string{"test-lifecycle": "true"}
@@ -2222,7 +2222,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			v4, v6 := nextSubnets(true)
 			createLayer3PrimaryCUDNWithSubnets(cs, cudnName1, cudnLabel, v4, v6, cudnNs1.Name)
 			expectedTopologies = append(expectedTopologies, "Layer3")
-			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName1), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, cudnName1), 30*time.Second, time.Second).Should(Succeed())
 			verifyCNCSubnetAnnotationNetworkCount(cncName, 1)
 			verifyCNCSubnetAnnotationContent(cncName, expectedTopologies)
 
@@ -2231,7 +2231,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryUDNWithSubnets(cs, udnNs1.Name, udnName1, v4, v6)
 			expectedTopologies = append(expectedTopologies, "Layer2")
-			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, udnNs1.Name, udnName1), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, udnNs1.Name, udnName1), 30*time.Second, time.Second).Should(Succeed())
 			verifyCNCSubnetAnnotationNetworkCount(cncName, 2)
 			verifyCNCSubnetAnnotationContent(cncName, expectedTopologies)
 
@@ -2240,7 +2240,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryCUDNWithSubnets(cs, cudnName2, cudnLabel, v4, v6, cudnNs2.Name)
 			expectedTopologies = append(expectedTopologies, "Layer2")
-			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName2), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, cudnName2), 30*time.Second, time.Second).Should(Succeed())
 			verifyCNCSubnetAnnotationNetworkCount(cncName, 3)
 			verifyCNCSubnetAnnotationContent(cncName, expectedTopologies)
 
@@ -2249,7 +2249,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			v4, v6 = nextSubnets(true)
 			createLayer3PrimaryUDNWithSubnets(cs, udnNs2.Name, udnName2, v4, v6)
 			expectedTopologies = append(expectedTopologies, "Layer3")
-			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, udnNs2.Name, udnName2), 30*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, udnNs2.Name, udnName2), 30*time.Second, time.Second).Should(Succeed())
 			verifyCNCSubnetAnnotationNetworkCount(cncName, 4)
 			verifyCNCSubnetAnnotationContent(cncName, expectedTopologies)
 
@@ -2313,7 +2313,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 		})
 	})
 
-	It("reports error on selected networks subnet overlap", func() {
+	It("reports error on selected networks subnet overlap", func(ctx SpecContext) {
 		cncName := generateCNCName()
 		testLabel := map[string]string{"test-udn": "true"}
 
@@ -2339,8 +2339,8 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 		createPrimaryUDNWithSubnets(cs, ns2.Name, udnName2, topology, subnetList(overlapV4Subnet), subnetList(overlapV6Subnet))
 
 		By("waiting for UDNs to be ready")
-		Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, ns1.Name, udnName1), 30*time.Second, time.Second).Should(Succeed())
-		Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, ns2.Name, udnName2), 30*time.Second, time.Second).Should(Succeed())
+		Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, ns1.Name, udnName1), 30*time.Second, time.Second).Should(Succeed())
+		Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, ns2.Name, udnName2), 30*time.Second, time.Second).Should(Succeed())
 
 		By("creating a CNC with PUDN selector matching both namespaces")
 		createOrUpdateCNC(cs, cncName, nil, testLabel)
@@ -2453,7 +2453,7 @@ var _ = Describe("ClusterNetworkConnect ValidatingAdmissionPolicy", feature.Netw
 	// but the cluster-manager sets it immediately after CNC creation so there is no
 	// reliable e2e window to test that branch. Rule 1 (CREATE rejection) and the
 	// modify/remove tests below provide sufficient coverage.
-	It("should reject modifying or removing connect-router-tunnel-key once set", func() {
+	It("should reject modifying or removing connect-router-tunnel-key once set", func(ctx SpecContext) {
 		cncName := generateCNCName()
 		cncLabel := map[string]string{"test-vap-tunnel-key": "true"}
 		nextSubnets := newTestNetworkSubnetsAllocator()
@@ -2470,7 +2470,7 @@ var _ = Describe("ClusterNetworkConnect ValidatingAdmissionPolicy", feature.Netw
 		By("creating a CUDN and CNC so cluster-manager sets both annotations")
 		v4, v6 := nextSubnets(true)
 		createLayer3PrimaryCUDNWithSubnets(cs, cudnName, cncLabel, v4, v6, ns.Name)
-		Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName), 30*time.Second, time.Second).Should(Succeed())
+		Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, cudnName), 30*time.Second, time.Second).Should(Succeed())
 
 		createOrUpdateCNC(cs, cncName, cncLabel, nil)
 		verifyCNCHasBothAnnotations(cncName)
@@ -2501,7 +2501,7 @@ var _ = Describe("ClusterNetworkConnect ValidatingAdmissionPolicy", feature.Netw
 				` once set and can only be added by the cluster-manager service account.`)))
 	})
 
-	It("should reject regular user modifying or removing network-connect-subnet annotation", func() {
+	It("should reject regular user modifying or removing network-connect-subnet annotation", func(ctx SpecContext) {
 		cncName := generateCNCName()
 		cncLabel := map[string]string{"test-vap-subnet": "true"}
 		nextSubnets := newTestNetworkSubnetsAllocator()
@@ -2518,7 +2518,7 @@ var _ = Describe("ClusterNetworkConnect ValidatingAdmissionPolicy", feature.Netw
 		By("creating a CUDN and CNC so cluster-manager sets both annotations")
 		v4, v6 := nextSubnets(true)
 		createLayer3PrimaryCUDNWithSubnets(cs, cudnName, cncLabel, v4, v6, ns.Name)
-		Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName), 30*time.Second, time.Second).Should(Succeed())
+		Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, cudnName), 30*time.Second, time.Second).Should(Succeed())
 
 		createOrUpdateCNC(cs, cncName, cncLabel, nil)
 		verifyCNCHasBothAnnotations(cncName)
@@ -2755,7 +2755,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 	Context("Pod to pod connectivity validation", func() {
 		const nodeHostnameKey = "kubernetes.io/hostname"
 
-		It("should manage cross-network connectivity through CNC lifecycle", func() {
+		It("should manage cross-network connectivity through CNC lifecycle", func(ctx SpecContext) {
 			// Test identifiers
 			testID := rand.String(5)
 			cncName := generateCNCName()
@@ -2830,14 +2830,14 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			createLayer3PrimaryCUDNWithSubnets(cs, blackCUDN, cudnLabel, v4, v6, blackNs0, blackNs1)
 
 			By("1. Waiting for black CUDN to be ready")
-			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, blackCUDN), 60*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, blackCUDN), 60*time.Second, time.Second).Should(Succeed())
 
 			By("1. Creating white CUDN targeting white-ns-0 and white-ns-1")
 			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryCUDNWithSubnets(cs, whiteCUDN, cudnLabel, v4, v6, whiteNs0, whiteNs1)
 
 			By("1. Waiting for white CUDN to be ready")
-			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, whiteCUDN), 60*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, whiteCUDN), 60*time.Second, time.Second).Should(Succeed())
 
 			By("1. Creating pods in black CUDN namespaces (on different nodes for cross-node testing)")
 			blackPodConfig0 := httpServerPodConfig("black-pod-0", blackNs0)
@@ -2871,14 +2871,14 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			createLayer3PrimaryUDNWithSubnets(cs, blueNs, blueUDN, v4, v6)
 
 			By("2. Waiting for blue UDN to be ready")
-			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, blueNs, blueUDN), 60*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, blueNs, blueUDN), 60*time.Second, time.Second).Should(Succeed())
 
 			By("2. Creating green UDN (L2)")
 			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryUDNWithSubnets(cs, greenNs, greenUDN, v4, v6)
 
 			By("2. Waiting for green UDN to be ready")
-			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, greenNs, greenUDN), 60*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, greenNs, greenUDN), 60*time.Second, time.Second).Should(Succeed())
 
 			By("2. Creating pods in blue UDN namespace (on different nodes for same and cross-node testing)")
 			bluePodConfig0 := httpServerPodConfig("blue-pod-0", blueNs)
@@ -3153,7 +3153,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			terminatingPodFinalizer = "k8s.ovn.org/e2e-terminating-pod"
 		)
 
-		It("should connect cross-node UDN pods and retain terminating node state", func() {
+		It("should connect cross-node UDN pods and retain terminating node state", func(ctx SpecContext) {
 			if !isDynamicUDNEnabled() {
 				Skip("test requires DYNAMIC_UDN_ALLOCATION=true")
 			}
@@ -3204,8 +3204,8 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			createLayer2PrimaryUDNWithSubnets(cs, l2Namespace, l2UDNName, []string{"10.141.0.0/16"}, []string{"2014:100:700::0/60"})
 
 			By("Waiting for both UDNs to be ready")
-			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, l3Namespace, l3UDNName), 60*time.Second, time.Second).Should(Succeed())
-			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, l2Namespace, l2UDNName), 60*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, l3Namespace, l3UDNName), 60*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, l2Namespace, l2UDNName), 60*time.Second, time.Second).Should(Succeed())
 
 			By("Creating the CNC before either node becomes active for the selected UDNs")
 			createOrUpdateCNC(cs, cncName, nil, udnLabel)
@@ -3392,7 +3392,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 		   9. Delete CNC-1, verify blue <-> green still works, blue <-/-> red
 		   10. Delete CNC-2, verify all networks isolated
 		*/
-		It("should maintain non-transitive connectivity when a network is selected by multiple CNCs", func() {
+		It("should maintain non-transitive connectivity when a network is selected by multiple CNCs", func(ctx SpecContext) {
 			// Test identifiers
 			testID := rand.String(5)
 			cnc1Name := fmt.Sprintf("color-1-%s", testID)
@@ -3475,7 +3475,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			createLayer2PrimaryUDNWithSubnets(cs, blueNs, blueUDN, v4, v6)
 
 			By("3. Waiting for blue UDN to be ready")
-			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, blueNs, blueUDN), 60*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, blueNs, blueUDN), 60*time.Second, time.Second).Should(Succeed())
 
 			By("3. Verifying CNC-1 now has 1 network (blue)")
 			verifyCNCSubnetAnnotationNetworkCount(cnc1Name, 1)
@@ -3502,7 +3502,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			createLayer3PrimaryCUDNWithSubnets(cs, redCUDN, redLabel, v4, v6, redNs)
 
 			By("4. Waiting for red CUDN to be ready")
-			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, redCUDN), 60*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, redCUDN), 60*time.Second, time.Second).Should(Succeed())
 
 			By("4. Verifying CNC-1 now has 2 networks (blue + red)")
 			verifyCNCSubnetAnnotationNetworkCount(cnc1Name, 2)
@@ -3529,7 +3529,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			createLayer3PrimaryUDNWithSubnets(cs, greenNs, greenUDN, v4, v6)
 
 			By("5. Waiting for green UDN to be ready")
-			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, greenNs, greenUDN), 60*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, greenNs, greenUDN), 60*time.Second, time.Second).Should(Succeed())
 
 			By("5. Verifying CNC-1 still has 2 networks (blue + red)")
 			verifyCNCSubnetAnnotationNetworkCount(cnc1Name, 2)
@@ -3642,7 +3642,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 		      - red-svc and blue-svc no longer connected via CNC-1
 		   7. Delete CNC-2, verify all services isolated
 		*/
-		It("should maintain non-transitive service connectivity when a network is selected by multiple CNCs", func() {
+		It("should maintain non-transitive service connectivity when a network is selected by multiple CNCs", func(ctx SpecContext) {
 			// Same topology as above but with ServiceNetwork enabled:
 			// CNC-1: blue + red, CNC-2: blue + green
 			// Verify service VIPs work cross-network and survive CNC-1 deletion
@@ -3708,7 +3708,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			By("2. Creating blue namespace, L2 UDN, and pods")
 			createUDNNamespaceWithName(cs, blueNs, blueLabel)
 			createLayer2PrimaryUDNWithSubnets(cs, blueNs, blueUDN, subnetList("10.128.0.0/16"), subnetList("2014:100:200::0/60"))
-			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, blueNs, blueUDN), 60*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, blueNs, blueUDN), 60*time.Second, time.Second).Should(Succeed())
 
 			bluePodConfig0 := httpServerPodConfig("blue-pod-0", blueNs)
 			bluePodConfig0.nodeSelector = map[string]string{nodeHostnameKey: node1Name}
@@ -3722,7 +3722,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			By("2. Creating red namespace, L3 CUDN, and pods")
 			createUDNNamespaceWithName(cs, redNs, nil)
 			createLayer3PrimaryCUDNWithSubnets(cs, redCUDN, redLabel, subnetList("10.129.0.0/16"), subnetList("2014:100:300::0/60"), redNs)
-			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, redCUDN), 60*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, redCUDN), 60*time.Second, time.Second).Should(Succeed())
 
 			redPodConfig0 := httpServerPodConfig("red-pod-0", redNs)
 			redPodConfig0.nodeSelector = map[string]string{nodeHostnameKey: node1Name}
@@ -3732,7 +3732,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			By("2. Creating green namespace, L3 UDN, and pods")
 			createUDNNamespaceWithName(cs, greenNs, greenLabel)
 			createLayer3PrimaryUDNWithSubnets(cs, greenNs, greenUDN, subnetList("10.130.0.0/16"), subnetList("2014:100:400::0/60"))
-			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, greenNs, greenUDN), 60*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, greenNs, greenUDN), 60*time.Second, time.Second).Should(Succeed())
 
 			greenPodConfig0 := httpServerPodConfig("green-pod-0", greenNs)
 			greenPodConfig0.nodeSelector = map[string]string{nodeHostnameKey: node1Name}
@@ -3879,7 +3879,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 		   6. Delete CNC-1, verify CNC-2 maintains service connectivity
 		   7. Delete CNC-2, verify all services isolated
 		*/
-		It("should maintain service connectivity when both CNCs select the exact same networks", func() {
+		It("should maintain service connectivity when both CNCs select the exact same networks", func(ctx SpecContext) {
 			// Both CNCs select the same 2 networks with ServiceNetwork
 			// Deleting one CNC should not break the other's service connectivity
 
@@ -3938,7 +3938,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			By("2. Creating net-A namespace, L3 CUDN, and pods")
 			createUDNNamespaceWithName(cs, netANs, nil)
 			createLayer3PrimaryCUDNWithSubnets(cs, netACUDN, sharedCUDNLabel, subnetList("10.128.0.0/16"), subnetList("2014:100:200::0/60"), netANs)
-			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, netACUDN), 60*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, netACUDN), 60*time.Second, time.Second).Should(Succeed())
 
 			netAPodConfig := httpServerPodConfig("net-a-pod-0", netANs)
 			netAPodConfig.nodeSelector = map[string]string{nodeHostnameKey: node1Name}
@@ -3948,7 +3948,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			By("2. Creating net-B namespace, L2 UDN, and pods")
 			createUDNNamespaceWithName(cs, netBNs, sharedUDNLabel)
 			createLayer2PrimaryUDNWithSubnets(cs, netBNs, netBUDN, subnetList("10.129.0.0/16"), subnetList("2014:100:300::0/60"))
-			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, netBNs, netBUDN), 60*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, netBNs, netBUDN), 60*time.Second, time.Second).Should(Succeed())
 
 			netBPodConfig := httpServerPodConfig("net-b-pod-0", netBNs)
 			netBPodConfig.nodeSelector = map[string]string{nodeHostnameKey: node2Name}
@@ -4140,7 +4140,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			}
 		}
 
-		BeforeEach(func() {
+		BeforeEach(func(ctx SpecContext) {
 			// Get 2 schedulable nodes for cross-node testing
 			nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), cs, 2)
 			Expect(err).NotTo(HaveOccurred())
@@ -4195,11 +4195,11 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 
 			By("Setup: Creating black CUDN (L3)")
 			createLayer3PrimaryCUDNWithSubnets(cs, blackCUDN, cudnLabel, subnetList("10.128.0.0/16"), subnetList("2014:100:200::0/60"), blackNs0, blackNs1)
-			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, blackCUDN), 60*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, blackCUDN), 60*time.Second, time.Second).Should(Succeed())
 
 			By("Setup: Creating white CUDN (L2)")
 			createLayer2PrimaryCUDNWithSubnets(cs, whiteCUDN, cudnLabel, subnetList("10.129.0.0/16"), subnetList("2014:100:300::0/60"), whiteNs0, whiteNs1)
-			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, whiteCUDN), 60*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, whiteCUDN), 60*time.Second, time.Second).Should(Succeed())
 
 			By("Setup: Creating pods in black CUDN namespaces")
 			blackPodConfig0 := httpServerPodConfig("black-pod-0", blackNs0)
@@ -4234,11 +4234,11 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 
 			By("Setup: Creating blue UDN (L3)")
 			createLayer3PrimaryUDNWithSubnets(cs, blueNs, blueUDN, subnetList("10.130.0.0/16"), subnetList("2014:100:400::0/60"))
-			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, blueNs, blueUDN), 60*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, blueNs, blueUDN), 60*time.Second, time.Second).Should(Succeed())
 
 			By("Setup: Creating green UDN (L2)")
 			createLayer2PrimaryUDNWithSubnets(cs, greenNs, greenUDN, subnetList("10.131.0.0/16"), subnetList("2014:100:500::0/60"))
-			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, greenNs, greenUDN), 60*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, greenNs, greenUDN), 60*time.Second, time.Second).Should(Succeed())
 
 			By("Setup: Creating pods in blue UDN namespace")
 			bluePodConfig0 = httpServerPodConfig("blue-pod-0", blueNs)
@@ -4393,7 +4393,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 		   44. Re-create CNC with service connectivity enabled
 		   45. Verify all cross-network service connectivity restored
 		*/
-		It("should manage cross-network service connectivity through CNC lifecycle", func() {
+		It("should manage cross-network service connectivity through CNC lifecycle", func(ctx SpecContext) {
 			// Setup (Steps 1-4) completed in BeforeEach
 			// This test starts from Step 5
 			var err error
@@ -4659,7 +4659,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			// =====================================================================
 			By("31. Recreating blue PUDN network")
 			createLayer3PrimaryUDNWithSubnets(cs, blueNs, blueUDN, subnetList("103.103.0.0/16"), subnetList("2014:100:400::0/60"))
-			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, blueNs, blueUDN), 60*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, blueNs, blueUDN), 60*time.Second, time.Second).Should(Succeed())
 
 			By("31. Recreating blue pods")
 			pods["blue-pod-0"] = runUDNPod(cs, blueNs, bluePodConfig0, nil)
@@ -4676,7 +4676,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			// =====================================================================
 			By("32. Recreating green PUDN network")
 			createLayer2PrimaryUDNWithSubnets(cs, greenNs, greenUDN, subnetList("104.104.0.0/16"), subnetList("2014:100:500::0/60"))
-			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, greenNs, greenUDN), 60*time.Second, time.Second).Should(Succeed())
+			Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, greenNs, greenUDN), 60*time.Second, time.Second).Should(Succeed())
 
 			By("32. Recreating green pods")
 			pods["green-pod-0"] = runUDNPod(cs, greenNs, greenPodConfig0, nil)

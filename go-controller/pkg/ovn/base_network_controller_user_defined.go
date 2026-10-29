@@ -33,6 +33,7 @@ import (
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/addresssetmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/udnenabledsvc"
+	logicalswitchmanager "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
@@ -377,21 +378,18 @@ func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(pod 
 		}
 	}
 
-	// Register the pod with the namespace (nsInfo + namespace port group,
-	// used by multicast and egress firewall) on any network whose pod IPs
-	// are known, including DHCP-learned ones.
+	// Add membership to the namespace-owned port group, used by multicast and
+	// egress firewall, on networks with known (including DHCP-learned) pod IPs.
 	if bsnc.doesNetworkHaveDiscoverablePodIPs() &&
 		(util.IsMultiNetworkPoliciesSupportEnabled() || (util.IsNetworkSegmentationSupportEnabled() && bsnc.IsPrimaryNetwork())) {
-		// Ensure the namespace/nsInfo exists
 		portUUID := ""
 		if lsp != nil {
 			portUUID = lsp.UUID
 		}
-		addOps, err := bsnc.addPodToNamespaceForUserDefinedNetwork(pod.Namespace, portUUID)
+		ops, err = bsnc.addPodToNamespacePortGroupOps(ops, pod.Namespace, portUUID)
 		if err != nil {
 			return err
 		}
-		ops = append(ops, addOps...)
 	}
 
 	recordOps, txOkCallBack, _, err := bsnc.AddConfigDurationRecord("pod", pod.Namespace, pod.Name)
@@ -493,7 +491,8 @@ func (bsnc *BaseUserDefinedNetworkController) removePodForUserDefinedNetwork(pod
 			}
 		}
 		bsnc.logicalPortCache.remove(pod, nadKey)
-		pInfo, err := bsnc.deletePodLogicalPort(pod, portInfo, nadKey)
+		var pInfo *lpInfo
+		pInfo, err = bsnc.deletePodLogicalPort(pod, portInfo, nadKey)
 		if err != nil {
 			return err
 		}
@@ -503,39 +502,30 @@ func (bsnc *BaseUserDefinedNetworkController) removePodForUserDefinedNetwork(pod
 			continue
 		}
 
-		// do not release IP address unless we have validated no other pod is using it
 		if pInfo == nil || len(pInfo.ips) == 0 {
-			bsnc.forgetPodReleasedBeforeStartup(string(pod.UID), nadKey)
 			continue
 		}
 
-		// Releasing IPs needs to happen last so that we can deterministically know that if delete failed that
-		// the IP of the pod needs to be released. Otherwise we could have a completed pod failed to be removed
-		// and we dont know if the IP was released or not, and subsequently could accidentally release the IP
-		// while it is now on another pod
+		// Release only after this attachment's port is gone. LSM preserves
+		// any addresses that have since been allocated to a different owner.
 		klog.Infof("Attempting to release IPs for pod: %s/%s, ips: %s network %s", pod.Namespace, pod.Name,
 			util.JoinIPNetIPs(pInfo.ips, " "), bsnc.GetNetworkName())
-		if err = bsnc.releasePodIPs(pInfo); err != nil {
+		if err = bsnc.releasePodIPs(pod, nadKey, pInfo); err != nil {
 			return err
 		}
-
-		bsnc.forgetPodReleasedBeforeStartup(string(pod.UID), nadKey)
-
 	}
 	return nil
 }
 
 func (bsnc *BaseUserDefinedNetworkController) syncPodsForUserDefinedNetwork(pods []interface{}) error {
-	annotatedLocalPods := map[*corev1.Pod]map[string]*util.PodAnnotation{}
+	orderedPods, err := logicalswitchmanager.SortPodsForIPAM(pods)
+	if err != nil {
+		return err
+	}
 	// get the list of logical switch ports (equivalent to pods). Reserve all existing Pod IPs to
 	// avoid subsequent new Pods getting the same duplicate Pod IP.
 	expectedLogicalPorts := make(map[string]bool)
-	for _, podInterface := range pods {
-		pod, ok := podInterface.(*corev1.Pod)
-		if !ok {
-			return fmt.Errorf("spurious object in syncPods: %v", podInterface)
-		}
-
+	for _, pod := range orderedPods {
 		var activeNetwork util.NetInfo
 		var err error
 		if bsnc.IsPrimaryNetwork() {
@@ -585,7 +575,12 @@ func (bsnc *BaseUserDefinedNetworkController) syncPodsForUserDefinedNetwork(pods
 		}
 
 		isLocalPod := bsnc.isPodScheduledOnLocalNode(pod)
-		hasRemotePort := !isLocalPod || bsnc.isLayer2WithInterconnectTransport()
+		// Keep the ports whose annotation another component writes: remote
+		// ports, layer2 interconnect ports, and localnet ports of pods that
+		// are not completed, which the cluster manager (subnets) or the CNI
+		// (DHCP) annotates.
+		keepPort := !isLocalPod || bsnc.isLayer2WithInterconnectTransport() ||
+			(bsnc.TopologyType() == types.LocalnetTopology && !util.PodCompleted(pod))
 
 		for nadKey := range networkMap {
 			annotations, err := util.UnmarshalPodAnnotation(pod.Annotations, nadKey)
@@ -606,36 +601,13 @@ func (bsnc *BaseUserDefinedNetworkController) syncPodsForUserDefinedNetwork(pods
 				if expectedLogicalPortName != "" {
 					expectedLogicalPorts[expectedLogicalPortName] = true
 				}
-
-				if annotatedLocalPods[pod] == nil {
-					annotatedLocalPods[pod] = map[string]*util.PodAnnotation{}
-				}
-				annotatedLocalPods[pod][nadKey] = annotations
-			} else if hasRemotePort {
-				// keep also track of remote ports created for layer2 on
-				// interconnect
+			} else if keepPort {
 				expectedLogicalPorts[bsnc.GetLogicalPortName(pod, nadKey)] = true
 			}
 		}
 	}
 
-	// keep track of which pods might have already been released
-	bsnc.trackPodsReleasedBeforeStartup(annotatedLocalPods)
-
 	return bsnc.deleteStaleLogicalSwitchPorts(expectedLogicalPorts)
-}
-
-// addPodToNamespaceForUserDefinedNetwork returns the ops needed to add pod's IP to the namespace's address set.
-func (bsnc *BaseUserDefinedNetworkController) addPodToNamespaceForUserDefinedNetwork(ns string, portUUID string) ([]ovsdb.Operation, error) {
-	var err error
-	nsInfo, nsUnlock, err := bsnc.ensureNamespaceLockedForUserDefinedNetwork(ns, true, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to ensure namespace locked: %v", err)
-	}
-
-	defer nsUnlock()
-
-	return bsnc.addLocalPodToNamespaceLocked(nsInfo, portUUID)
 }
 
 // AddNamespaceForUserDefinedNetwork creates corresponding addressset in ovn db for User Defined Network
@@ -1032,6 +1004,10 @@ func (bsnc *BaseUserDefinedNetworkController) setPodLogicalSwitchPortAddressesAn
 
 		lsp.Addresses = []string{
 			strings.Join(append([]string{mac}, ips...), " "),
+		}
+
+		if bsnc.MACSecurityMode() == types.MACSecurityModeDisabled {
+			lsp.Addresses = append(lsp.Addresses, "unknown")
 		}
 	}
 	switchName, err := bsnc.getExpectedSwitchName(pod)

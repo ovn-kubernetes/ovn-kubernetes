@@ -1145,8 +1145,8 @@ func (pr *PodRequest) deletePodConntrack(podLister corev1listers.PodLister, pod 
 	// north/south NodePort/SNAT ingress connection routed to the VM) that must
 	// survive the migration. Compute, once per DEL, the set of IPs still owned
 	// by another living pod of the VM and skip only those; genuinely released
-	// IPs (e.g. the source pod's default-network IP) are still flushed as
-	// before.
+	// IPs (e.g. the source pod's infrastructure IP for a primary UDN) are
+	// still flushed as before.
 	preservedIPs := pr.migrationPreservedIPs(podLister, pod)
 
 	for _, ip := range result.IPs {
@@ -1175,10 +1175,9 @@ func (pr *PodRequest) deletePodConntrack(podLister corev1listers.PodLister, pod 
 // another living pod of the same KubeVirt VM as the pod being torn down,
 // because of a live migration: the migration target pod when the source is
 // deleted, or the source pod when a failed migration target is deleted.
-// Only the IPs actually preserved across the migration are returned:
-// the cluster default network is skipped, since it allocates per-node subnets
-// and its IPs move with the pod, not with the VM; genuinely released IPs keep
-// being flushed.
+// All networks are considered: VMs on the cluster default network can preserve
+// their IPs across nodes too. deletePodConntrack still flushes addresses that
+// are not owned by the surviving pod, such as released infrastructure IPs.
 //
 // An empty set is returned (flush everything, the previous behavior) when:
 //   - podLister or pod is nil (the unprivileged CNI shim has no apiserver
@@ -1188,10 +1187,8 @@ func (pr *PodRequest) deletePodConntrack(podLister corev1listers.PodLister, pod 
 //
 // Note: podLister requires cluster-wide pod visibility, since the surviving
 // pod of a live migration always runs on a different node. The cniserver's
-// podLister is backed by factory.LocalPodInformer(), which today watches pods
-// on all nodes; if that informer is ever scoped down to node-local pods, this
-// function will return an empty set (see the TODO on the pod informer
-// registration in pkg/factory/factory.go NewNodeWatchFactory).
+// podLister is backed by factory.PodInformer(), which watches pods
+// on all nodes.
 func (pr *PodRequest) migrationPreservedIPs(podLister corev1listers.PodLister, pod *corev1.Pod) sets.Set[string] {
 	preservedIPs := sets.New[string]()
 	if podLister == nil || pod == nil {
@@ -1217,14 +1214,7 @@ func (pr *PodRequest) migrationPreservedIPs(podLister corev1listers.PodLister, p
 				vmPod.Namespace, vmPod.Name, err)
 			continue
 		}
-		for nadName, podNetwork := range podNetworks {
-			// The cluster default network allocates per-node subnets, so its
-			// IPs are never preserved across a live migration: the surviving
-			// pod owns a different IP from its own node's subnet, and the
-			// deleted pod's default-network IP is genuinely released.
-			if nadName == types.DefaultNetworkName {
-				continue
-			}
+		for _, podNetwork := range podNetworks {
 			for _, ipStr := range podNetwork.IPs {
 				ip, _, err := net.ParseCIDR(ipStr)
 				if err != nil {

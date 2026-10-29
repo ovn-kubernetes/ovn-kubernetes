@@ -8,6 +8,10 @@ OVN patch ports, and the kernel (LOCAL port or a PF/VF representor on DPU
 setups). This document describes the flow tables, their responsibilities,
 and the design decisions behind notable flow sets.
 
+Here, UDN means a user-defined network with the primary role. This applies
+to networks defined through either `UserDefinedNetwork` or
+`ClusterUserDefinedNetwork`; the network role determines this behavior.
+
 For service-specific traffic flows, see
 [Host-to-NodePort Hairpin Traffic](host-to-node-port-hairpin-trafficflow.md)
 and [Service Traffic Policy](service-traffic-policy.md).
@@ -41,14 +45,28 @@ rules handle traffic destined to the shared bridge MAC:
 
 - **Priority 10 (fan-out)** — When a packet arrives with
   `dl_dst=<bridgeMAC>`, it is replicated to every OVN patch port (default
-  network + all Cluster User Defined Network (CUDN) GRs) and also sent
-  to NORMAL for LOCAL delivery.
-  This ensures all OVN networks can process traffic destined to the node.
+  network + all primary UDN GRs). The default
+  patch is processed before the UDN outputs, with NORMAL for LOCAL delivery
+  kept last. The rule offers traffic destined to the node to each OVN network.
 
   ```text
   priority=10, table=0, dl_dst=<bridgeMAC>,
       actions=output:<patch-default>,output:<patch-udn1>,...,NORMAL
   ```
+
+  Each patch output traverses the OVN pipeline and consumes part of OVS's
+  resubmit budget for a flow translation. At high UDN counts, fan-out can
+  exceed that budget before reaching every network. OVS's
+  `patch_port_output()` clears errors from the peer bridge when returning
+  to the external bridge, preserving accumulated datapath actions. The
+  resubmit counter remains exhausted, so later patch branches still fail.
+  Processing the default patch first uses this error boundary to protect
+  it from later UDN branches exhausting the budget. ARP MAC
+  learning does not require a datapath recirculation for this protection.
+  This is specific to the patch-port fan-out path: an error that reaches
+  the outer `xlate_actions()` handler clears the accumulated actions.
+  It does not remove the UDN limit or isolate the default network from
+  shared CPU load.
 
 - **Priority 10 / 9 (OVN egress validation)** — For each patch port, a
   rule verifies that traffic coming from OVN has `dl_src=<bridgeMAC>`. A
@@ -65,17 +83,17 @@ rules handle traffic destined to the shared bridge MAC:
 
 ### ARP/NDP Behavior
 
-When CUDNs are enabled, each CUDN gateway
-router (GR) has an external interface that shares the node's physical IP.
+Each primary UDN gateway router (GR) on the shared bridge has an external
+interface that shares the node's physical IP.
 Without filtering, every GR replies to ARP/NDP requests for the node IP,
 creating a reply storm that floods the physical network with identical
 frames. Remote nodes passively learn redundant `MAC_Binding` entries,
-and `ovs-vswitchd` CPU scales linearly with the number of CUDNs. In
+and `ovs-vswitchd` CPU scales linearly with the number of UDNs. In
 testing, 70 CUDNs drove `ovs-vswitchd` CPU to ~400% with packet drops.
 
-#### No-Flood on CUDN Patch Ports
+#### No-Flood on UDN Patch Ports
 
-CUDN GR patch ports have the `OFPPC_NO_FLOOD` OpenFlow port config flag
+UDN GR patch ports have the `OFPPC_NO_FLOOD` OpenFlow port config flag
 set via `ovs-ofctl mod-port`. This prevents NORMAL's implicit flood
 action from reaching them, while still allowing explicit `output:<port>`
 actions to deliver traffic. The flag is initially set when the patch
@@ -102,22 +120,26 @@ priority=12, table=0, icmp6, icmpv6_type=135, nd_target=fd00::3,
 NORMAL performs FDB learning (recording the external source MAC on its
 ingress port) and delivers to LOCAL via broadcast flooding (since
 `dl_dst=ff:ff:ff:ff:ff:ff` for ARP, or solicited-node multicast for
-NS). Because CUDN ports are no-flood, NORMAL's flood does not reach
+NS). Because UDN ports are no-flood, NORMAL's flood does not reach
 them. Only the default GR replies — no storm.
 
 #### Priority-11: External Broadcast ARP/NA Forwarding
 
 With no-flood, broadcast ARP from external sources (e.g. a gateway router
-announcing a new MAC via GARP) would no longer reach CUDNs. Priority-11
-flows match broadcast ARP arriving on the physical port and explicitly
-forward to all GR patches so their MAC_Bindings stay current:
+announcing a new MAC via GARP) would no longer reach UDNs. Priority-11
+flows match broadcast ARP arriving on the physical port. NORMAL delivers
+to the default patch and host first; explicit UDN outputs follow so their
+MAC_Bindings can also be updated:
 
 ```text
 priority=11, table=0, in_port=<phys>, dl_dst=ff:ff:ff:ff:ff:ff, arp,
-    actions=output:<default-patch>,output:<cudn1-patch>,...,NORMAL
+    actions=NORMAL,output:<udn1-patch>,...
 priority=11, table=0, in_port=<phys>, dl_dst=33:33:00:00:00:01, icmp6, icmpv6_type=136,
-    actions=output:<default-patch>,output:<cudn1-patch>,...,NORMAL
+    actions=NORMAL,output:<udn1-patch>,...
 ```
+
+The default patch is not explicitly output again: it already receives the
+broadcast or multicast through NORMAL. UDN patches remain no-flood.
 
 The IPv6 flow matches `dl_dst=33:33:00:00:00:01` — the Ethernet multicast
 MAC for IPv6 all-nodes (`ff02::1`). This restricts to unsolicited Neighbor
@@ -131,7 +153,7 @@ how kernel static neighbor entries prevent this).
 Unicast solicited NAs — i.e. an external host replying to a Neighbor
 Solicitation that the *node* sent — arrive with `dl_dst=bridgeMAC` and
 are handled by priority-50 (`dl_dst=bridgeMAC, ip6 → ct → table 1`),
-then delivered to CUDN patches via priority-14's explicit output actions.
+then delivered to UDN patches via priority-14's explicit output actions.
 This is distinct from the GR's *outgoing* NA reply to an NS for the
 node IP: that exits OVN via the patch port and is handled by the
 priority-10 egress validation flow (`in_port=<patch>, dl_src=bridgeMAC
@@ -149,18 +171,18 @@ All remaining traffic falls through to the default rule:
 priority=0, table=0, actions=NORMAL
 ```
 
-Because CUDN patch ports have `no-flood`, NORMAL's flood does not reach
-them. When a CUDN sends an ARP for an external host (or any other
+Because UDN patch ports have `no-flood`, NORMAL's flood does not reach
+them. When a UDN sends an ARP for an external host (or any other
 broadcast/unknown-unicast), it hits priority-0, NORMAL performs an FDB
-lookup, and floods only to non-CUDN ports if the MAC is unknown. There
-is no cross-CUDN contamination through this path.
+lookup, and floods only to non-UDN ports if the MAC is unknown. There
+is no cross-UDN contamination through this path.
 
 #### Why All Three Layers Are Required
 
 The no-flood setting, priority-12, and priority-11 form a dependency chain
 where each compensates for the one below:
 
-1. **no-flood** prevents NORMAL from flooding to CUDNs → solves the storm.
+1. **no-flood** prevents NORMAL from flooding to UDNs → solves the storm.
 2. **Priority 11** is needed because no-flood also blocks legitimate
    broadcast ARP (GARPs from external routers) → explicitly forwards
    external broadcast to all GR patches so MAC bindings stay current.
@@ -172,29 +194,30 @@ where each compensates for the one below:
 Removing any one breaks the design:
 
 - Without priority 12: node-IP ARPs hit priority 11 → storm returns.
-- Without priority 11: GARPs never reach CUDNs → stale MAC bindings.
-- Without no-flood: NORMAL floods everything to CUDNs → storm returns
+- Without priority 11: GARPs never reach UDNs → stale MAC bindings.
+- Without no-flood: NORMAL floods everything to UDNs → storm returns
   (and priorities 11/12 become pointless).
 
 The priority-12 and priority-11 table-0 ARP/NDP flows above are generated by
 `arpFanoutFilterFlows()` in `go-controller/pkg/node/bridgeconfig/bridgeflows.go`.
 The priority-0 catch-all NORMAL rule is part of the base bridge configuration.
 
-#### Table-1: ICMPv6 FLOOD with CUDN Delivery
+#### Table-1: ICMPv6 FLOOD with UDN Delivery
 
 Existing table-1 flows FLOOD ICMPv6 Router Advertisements (type 134) and
 Neighbor Advertisements (type 136) because they cannot create conntrack
-entries (kernel bug). Since FLOOD also respects no-flood, CUDN patches
-are prepended as explicit outputs:
+entries (kernel bug). FLOOD delivers to the default patch and host before
+the UDN fan-out can exhaust the resubmit budget. Since FLOOD also respects
+no-flood, UDN patches are appended as explicit outputs:
 
 ```text
 priority=14, table=1, icmp6, icmpv6_type=134,
-    actions=output:<cudn1-patch>,output:<cudn2-patch>,...,FLOOD
+    actions=FLOOD,output:<udn1-patch>,output:<udn2-patch>,...
 priority=14, table=1, icmp6, icmpv6_type=136,
-    actions=output:<cudn1-patch>,output:<cudn2-patch>,...,FLOOD
+    actions=FLOOD,output:<udn1-patch>,output:<udn2-patch>,...
 ```
 
-When no CUDNs are configured, these remain plain `actions=FLOOD`.
+When no UDNs are configured, these remain plain `actions=FLOOD`.
 
 ## Code Reference
 

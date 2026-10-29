@@ -38,11 +38,11 @@ Open vSwitch (OVS) at its core.
 ```text
 go-controller/        # Main Go codebase — feature implementations, component code, ovnkube binaries, CRDs, libovsdb models, observability library, hybrid-overlay
 test/e2e/             # End-to-end Ginkgo tests covering all features (network policy, egress, UDN, KubeVirt, BGP, etc.)
-test/crd-integration/ # CRD integration tests (defaulting, validation, CEL) — run via envtest, no Kind cluster needed
+test/crd-integration/ # CRD integration tests (defaulting, validation, CEL) — run via envtest, no KinD cluster needed
 dist/                 # Container images (Dockerfiles) and deployment YAML manifests
 helm/                 # Helm charts for deploying ovn-kubernetes
 docs/                 # mkdocs source for ovn-kubernetes.io — OKEPs, feature docs, design docs, developer, installation guides
-contrib/              # Kind cluster scripts, local deployment helpers (kind.sh), and development tooling
+contrib/              # KinD cluster scripts, local deployment helpers (kind.sh), and development tooling
 LICENSES/             # License and third-party package licensing information
 ```
 
@@ -55,9 +55,23 @@ make lint           # Format and lint Go code (required before PR)
 make test           # Run unit tests
 ```
 
-E2E tests run via CI on Kind clusters. See `test/e2e/` for Ginkgo test suites.
-To run E2E locally, first set up a Kind cluster using `contrib/kind.sh`, then run the tests.
+E2E tests run via CI on KinD clusters. See `test/e2e/` for Ginkgo test suites.
+To run E2E locally, first set up a KinD cluster using `contrib/kind.sh`, then run the tests.
 See `docs/developer-guide/local_testing_guide.md` for more details.
+
+When adding E2E tests or changing their selection requirements, verify that at
+least one CI lane actually executes each new or affected spec. Trace the lane
+in `.github/workflows/` through `test/Makefile` and `test/scripts/` to the test:
+check suite selection, focus/skip expressions, feature labels, `Serial` and
+`PARALLEL` handling, cluster feature flags, and runtime skip prerequisites.
+A lane that only runs Kubernetes conformance tests does not cover specs in
+`test/e2e/`. If no suitable lane selects the spec with its prerequisites enabled,
+update CI wiring as part of the change or explicitly report the coverage gap.
+Record the lane and selection evidence in the validation summary. Compilation,
+a green unrelated job, or a focused dry-run alone does not prove CI execution.
+When CI results are available, check logs or reports for the specific spec and
+confirm it ran rather than being skipped. If execution is still pending or
+unavailable, state that limitation instead of claiming the test ran in CI.
 
 CRD admission tests (defaulting, validation, CEL rules) belong in `test/crd-integration/`,
 not in `test/e2e/`. They run against a real API server via envtest — no cluster needed.
@@ -66,6 +80,13 @@ Run with `make test-crd` from `test/`. See
 required, and `docs/developer-guide/local_testing_guide.md#crd-integration-tests` for how
 to run and add new tests.
 
+Changes under `test/` are exempt from requirements to add unit tests. Do not
+request or add unit tests for code in this directory, including test helpers,
+image configuration, deployment configuration, and infrastructure providers.
+Validate changes with the existing builds and relevant test suites as appropriate,
+and preserve coverage of existing scenarios. If a PR also changes product code
+outside `test/`, the usual test requirements still apply to those product changes.
+
 ## Key Conventions
 
 See `CONTRIBUTING.md` for full details:
@@ -73,6 +94,20 @@ See `CONTRIBUTING.md` for full details:
 - [Pull request checklist](CONTRIBUTING.md#pull-request-checklist)
 - [Sign your commits (DCO)](CONTRIBUTING.md#sign-your-commits)
 - [AI guidelines](CONTRIBUTING.md#ai-guidelines)
+
+### Production invariants and test setup
+
+Do not add nil checks, fallback paths, optional callbacks, or other production
+hooks for states excluded by the supported initialization flow, call chain,
+or API contract. Establish whether a condition is reachable in production
+before adding defensive handling. Keep checks for genuinely optional inputs,
+external data, and reachable lifecycle or error conditions.
+
+Do not weaken production invariants or silently skip required work just to let
+unit tests use partially initialized objects or avoid the normal test harness.
+Use existing fixtures, fakes, and harnesses to construct valid objects, and keep
+test-only helpers in test files. New production injection points or abstractions
+must have a design justification beyond making a particular test easier to write.
 
 ## OKEPs (Enhancement Proposals)
 
@@ -109,6 +144,17 @@ annotation on any node — the `mode` field will be `"local"` or `"shared"`.
 Shared gateway is the default.
 
 ## Docs
+
+### Website validation
+
+The website has no unit test suite. Do not request unit, regression, or E2E
+tests, or introduce a test framework, for documentation or website infrastructure
+changes. This includes documentation content, `mkdocs.yml` navigation/configuration,
+website assets/templates, documentation dependencies, and website build/deployment
+scripts or workflows, including fixes to website behavior. Validate with the existing
+documentation build and manual preview/link checks as appropriate. If a PR also
+changes product code, the usual test requirements still apply to those code changes.
+
 ### API Reference
 ```bash
 make -C docs/ generate-api-reference  # Generating API reference docs

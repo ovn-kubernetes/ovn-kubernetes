@@ -98,6 +98,7 @@ func GetPortGroup(nbClient libovsdbclient.Client, pg *nbdb.PortGroup) (*nbdb.Por
 	return found[0], nil
 }
 
+// AddPortsToPortGroupOps returns operations to add ports to an existing port group.
 func AddPortsToPortGroupOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, name string, ports ...string) ([]ovsdb.Operation, error) {
 	if len(ports) == 0 {
 		return ops, nil

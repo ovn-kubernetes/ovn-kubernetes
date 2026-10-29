@@ -7,6 +7,7 @@ on:
       - 'docs/**'
       - '**/*.md'
       - 'mkdocs.yml'
+      - '.coderabbit.yml'
       - '.github/ISSUE_TEMPLATE/**'
       - '.github/PULL_REQUEST_TEMPLATE.md'
   push:
@@ -28,7 +29,7 @@ env:
 
 jobs:
   kind-dpu-offload:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 180
     steps:
       - name: Checkout OVN-Kubernetes (PR/push)
@@ -49,7 +50,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: dpu-simulator/go.mod
-          cache: true
+          cache-dependency-path: "**/*.sum"
 
       - name: Install libvirt development headers
         run: sudo apt-get update && sudo apt-get install -y libvirt-dev
@@ -135,7 +136,7 @@ jobs:
         run: ./bin/dpu-sim --config config-kind-ovnk-offload.yaml --ovn-kubernetes-path "$OVN_KUBERNETES_PATH" --cleanup || true
 
   kind-dpu-no-overlay:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 180
     env:
       DPU_SIM_PATH: ${{ github.workspace }}/dpu-simulator
@@ -160,7 +161,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: dpu-simulator/go.mod
-          cache: true
+          cache-dependency-path: "**/*.sum"
 
       - name: Install libvirt development headers
         run: sudo apt-get update && sudo apt-get install -y libvirt-dev
@@ -248,6 +249,31 @@ jobs:
           export ENABLE_NO_OVERLAY=true
           export DYNAMIC_UDN_ALLOCATION=true
           make -C test control-plane WHAT="Uplink"
+
+      # Feature:DPU specs delete and re-register a host node, so they run last,
+      # on the same clusters and with the same environment as the Uplink specs.
+      - name: Run DPU host-node e2e tests
+        working-directory: ovn-kubernetes
+        run: |
+          set -euo pipefail
+          source "${DPU_SIM_PATH}/kubeconfig/helm-values/dpu-sim-dpu-frr-k8s.env"
+          export KUBECONFIG="${DPU_SIM_PATH}/kubeconfig/dpu-sim-host.kubeconfig"
+          export OVN_TEST_DPU_UPLINK_NETWORK="dpu-sim-uplink"
+          if [ -z "${DPU_SIM_UPLINK_HOST_INTERFACES:-}" ]; then
+            echo "::error::dpu-sim did not publish DPU_SIM_UPLINK_HOST_INTERFACES; check uplink_vfs_count in its config"
+            exit 1
+          fi
+          export OVN_TEST_DPU_UPLINK_HOST_INTERFACE="${DPU_SIM_UPLINK_HOST_INTERFACES%%,*}"
+          export OVN_TEST_DPU_UPLINK_EXPECTED_BRIDGE="breth-uplink"
+          export OVN_TEST_BGP_SERVER_NET_SUBNET_IPV4="172.29.0.0/16"
+          export OVN_TEST_BGP_SERVER_NET_SUBNET_IPV6="fc00:f853:ccd:e797::/64"
+          export ENABLE_MULTI_NET=true
+          export ENABLE_NETWORK_SEGMENTATION=true
+          export ENABLE_ROUTE_ADVERTISEMENTS=true
+          export ENABLE_UPLINK=true
+          export ENABLE_NO_OVERLAY=true
+          export DYNAMIC_UDN_ALLOCATION=true
+          make -C test control-plane WHAT="DPU"
 
       - name: Export kind logs on failure
         if: failure()

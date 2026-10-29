@@ -32,7 +32,7 @@ Enable it by passing `--enable-uplink` to the ovnkube components (this requires
     enableUplink: true
 ```
 
-* kind: pass `--multi-network-enable` (`-mne`), `--network-segmentation-enable`
+* KinD: pass `--multi-network-enable` (`-mne`), `--network-segmentation-enable`
   (`-nse`), and `--uplink-enable` (`-ue`) to `contrib/kind.sh`
 
 A `ClusterUserDefinedNetwork` keeps its `spec.uplinks` field regardless of the
@@ -353,6 +353,14 @@ against the recreated object's UID and configuration. The CUDN returns to
 its `Uplink` is terminating (its `UplinkState` objects are deleted on purpose
 during teardown), no longer exists, or no longer selects the node.
 
+The OVS bridge an `Uplink` selects is administrator-owned and may be deleted
+while a CUDN is still active on it. ovnkube-node keeps running: discovery
+reports `Resolved=False`, the active CUDNs tear down their gateway programming
+on that node and report `GatewayReady=False`, and the OpenFlow manager stops
+syncing flows to the missing bridge until the CUDNs are gone from it. Once the
+bridge is recreated and resolved again, the CUDNs are reprogrammed through the
+usual configuration-change path.
+
 The CUDN reports a CUDN-specific `UplinksReady` condition. This condition is
 computed from the active nodes for that CUDN, not directly from aggregate
 `Uplink.status`. This matters with Dynamic UDN, where two CUDNs can reference
@@ -385,6 +393,12 @@ node again creates a fresh lifecycle and programs the gateways from newly
 resolved state. By contrast, recreating an `UplinkState` with an unchanged
 resolved configuration restores its readiness condition without disrupting
 working gateway programming.
+
+When a node is deleted, its ovnkube-node is no longer there to remove the
+node's `UplinkState` objects, and they are not garbage collected with the node
+because their owner is the `Uplink`. OVN-Kubernetes deletes them across all
+`Uplink` objects as soon as it observes the node deletion, so `UplinkState`
+listings only show nodes that exist.
 
 ## Dynamic UDN
 

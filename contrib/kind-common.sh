@@ -458,6 +458,24 @@ docker_disable_ipv6() {
   done
 }
 
+kind_connect_extra_network() {
+  local network=$1 node=$2 endpoints index
+  local -a args=()
+  endpoints=$("$OCI_BIN" inspect "$node" | jq -c '.[0].NetworkSettings.Networks')
+  if jq -e --arg network "$network" 'has($network)' <<< "$endpoints" >/dev/null; then
+    return 0
+  fi
+  if [ "$OCI_BIN" = docker ]; then
+    # Docker 28+ can reorder endpoints on restart. Pin all extra networks
+    # to eth1 and above, leaving the primary Kind network as the only
+    # automatically named endpoint. Docker picks the lowest unused suffix,
+    # so the primary stays eth0 regardless of endpoint attachment order.
+    index=$(jq 'length' <<< "$endpoints")
+    args+=(--driver-opt "com.docker.network.endpoint.ifname=eth${index}")
+  fi
+  "$OCI_BIN" network connect "${args[@]}" "$network" "$node"
+}
+
 docker_create_second_interface() {
   echo "adding second interfaces to nodes"
 
@@ -466,7 +484,7 @@ docker_create_second_interface() {
 
   KIND_NODES=$(kind get nodes --name "${KIND_CLUSTER_NAME}")
   for n in $KIND_NODES; do
-    "$OCI_BIN" network connect xgw "$n"
+    kind_connect_extra_network xgw "$n"
   done
 }
 
@@ -544,7 +562,7 @@ docker_create_uplink_interface() {
   KIND_NODES=$(kind_get_nodes)
   for n in $KIND_NODES; do
     if [ -z "$(kind_uplink_network_value "$n" IPAddress)" ]; then
-      "$OCI_BIN" network connect "${OVN_UPLINK_NETWORK_NAME}" "$n"
+      kind_connect_extra_network "${OVN_UPLINK_NETWORK_NAME}" "$n"
     fi
   done
 }
@@ -552,12 +570,12 @@ docker_create_uplink_interface() {
 disable_bridge_netfilter() {
   echo "disabling bridge netfilter for KIND container bridge networks"
 
-  sudo modprobe br_netfilter || true
-  for sysctl_name in \
-    net.bridge.bridge-nf-call-iptables \
-    net.bridge.bridge-nf-call-ip6tables; do
-    if sysctl -n "${sysctl_name}" >/dev/null 2>&1; then
-      sudo sysctl -w "${sysctl_name}=0"
+  local key current
+  [ -e /proc/sys/net/bridge/bridge-nf-call-iptables ] || sudo modprobe br_netfilter || true
+  for key in bridge-nf-call-iptables bridge-nf-call-ip6tables; do
+    current=$(cat "/proc/sys/net/bridge/${key}" 2>/dev/null) || continue
+    if [ "${current}" != 0 ]; then
+      sudo sysctl -w "net.bridge.${key}=0"
     fi
   done
 }
@@ -1330,7 +1348,7 @@ docker_create_second_disconnected_interface() {
 
   KIND_NODES=$(kind_get_nodes)
   for n in $KIND_NODES; do
-    "$OCI_BIN" network connect "$bridge_name" "$n" || true
+    kind_connect_extra_network "$bridge_name" "$n"
   done
 }
 
@@ -1609,7 +1627,7 @@ readonly FRR_K8S_VERSION=v0.0.0-20260603082256-b43efcb206be
 readonly FRR_K8S_GIT_REF=b43efcb206be
 readonly FRR_K8S_OVNK_BGP_PATCH="${DIR}/frr-k8s/patches/0001-Improvements-to-the-demo.patch"
 readonly FRR_K8S_UPSTREAM_FRR_IMAGE=quay.io/frrouting/frr:10.4.3
-readonly FRR_DEPLOYED_IMAGE=quay.io/frrouting/frr:10.6.0
+readonly FRR_DEPLOYED_IMAGE=quay.io/frrouting/frr:10.6.2
 # Override to test newer FRR builds in the in-cluster frr-k8s daemonset
 # without changing the pinned frr-k8s release.
 FRR_K8S_FRR_IMAGE=${FRR_K8S_FRR_IMAGE:-${FRR_DEPLOYED_IMAGE}}

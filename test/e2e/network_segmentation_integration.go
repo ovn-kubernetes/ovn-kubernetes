@@ -15,9 +15,9 @@ import (
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/allocators"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
-	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/ipalloc"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -45,7 +45,7 @@ var _ = Describe("Network Segmentation: integration", feature.NetworkSegmentatio
 		Expect(err).NotTo(HaveOccurred())
 	})
 
-	It("should recover ovnkube pods after restart with primary and secondary UDN resources", func() {
+	It("should recover ovnkube pods after restart with primary and secondary UDN resources", func(ctx SpecContext) {
 		const (
 			primaryUDNName     = "primary-udn"
 			secondaryUDNName   = "secondary-udn"
@@ -69,13 +69,13 @@ var _ = Describe("Network Segmentation: integration", feature.NetworkSegmentatio
 		cleanupPrimaryUDN, err := createManifest(primaryNamespace, newPrimaryUserDefinedNetworkManifest(cs, primaryUDNName))
 		Expect(err).NotTo(HaveOccurred())
 		defer cleanupPrimaryUDN()
-		Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, primaryNamespace, primaryUDNName), 30*time.Second, time.Second).Should(Succeed())
+		Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, primaryNamespace, primaryUDNName), 30*time.Second, time.Second).Should(Succeed())
 
 		By("creating a secondary UDN and waiting until it is ready")
 		cleanupSecondaryUDN, err := createManifest(primaryNamespace, newL2SecondaryUDNManifest(secondaryUDNName))
 		Expect(err).NotTo(HaveOccurred())
 		defer cleanupSecondaryUDN()
-		Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, primaryNamespace, secondaryUDNName), 30*time.Second, time.Second).Should(Succeed())
+		Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, primaryNamespace, secondaryUDNName), 30*time.Second, time.Second).Should(Succeed())
 
 		By("labeling the primary namespace so it matches the EgressIP namespace selector")
 		primaryNSObj, err := cs.CoreV1().Namespaces().Get(context.Background(), primaryNamespace, metav1.GetOptions{})
@@ -102,11 +102,11 @@ var _ = Describe("Network Segmentation: integration", feature.NetworkSegmentatio
 		By("creating an EgressIP object selected by the primary UDN namespace and pod label")
 		var egressIP string
 		if isIPv4Supported(cs) {
-			egressIPv4, allocErr := ipalloc.NewPrimaryIPv4()
+			egressIPv4, allocErr := allocators.NewPrimaryIPv4(nodes.Items[0].Name)
 			Expect(allocErr).NotTo(HaveOccurred())
 			egressIP = egressIPv4.String()
 		} else {
-			egressIPv6, allocErr := ipalloc.NewPrimaryIPv6()
+			egressIPv6, allocErr := allocators.NewPrimaryIPv6(nodes.Items[0].Name)
 			Expect(allocErr).NotTo(HaveOccurred())
 			egressIP = egressIPv6.String()
 		}

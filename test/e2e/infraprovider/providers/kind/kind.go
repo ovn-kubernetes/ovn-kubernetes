@@ -13,6 +13,7 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
+	deploymentconfigapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig/api"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/engine/container"
@@ -22,6 +23,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/kubernetes/test/e2e/framework"
 )
@@ -95,7 +97,7 @@ func (k *kind) ListNetworks() ([]string, error) {
 	return k.engine.ListNetworks()
 }
 
-func (k *kind) PreloadImages(imgs []string) {
+func (k *kind) PreloadImages(imgs []deploymentconfigapi.ImageConfig) {
 	clusterName := kindClusterName()
 	if clusterName == "" {
 		framework.Logf("Warning: could not determine KIND cluster name, skipping image preload")
@@ -103,37 +105,37 @@ func (k *kind) PreloadImages(imgs []string) {
 	}
 	pullBackoff := wait.Backoff{Duration: 5 * time.Second, Factor: 2, Steps: 5}
 	for _, img := range imgs {
-		framework.Logf("Preloading image %s into KIND cluster %s", img, clusterName)
+		framework.Logf("Preloading image %s into KIND cluster %s", img.PullSpec, clusterName)
 		var out []byte
 		err := wait.ExponentialBackoff(pullBackoff, func() (bool, error) {
 			var pullErr error
-			out, pullErr = exec.Command(engine.String(), "pull", img).CombinedOutput()
+			out, pullErr = exec.Command(engine.String(), "pull", img.PullSpec).CombinedOutput()
 			if pullErr != nil {
-				framework.Logf("Retrying pull for image %s: %v (%s)", img, pullErr, out)
+				framework.Logf("Retrying pull for image %s: %v (%s)", img.PullSpec, pullErr, out)
 				return false, nil
 			}
 			return true, nil
 		})
 		if err != nil {
-			framework.Logf("Warning: failed to pull image %s after retries: %v (%s)", img, err, out)
+			framework.Logf("Warning: failed to pull image %s after retries: %v (%s)", img.PullSpec, err, out)
 			continue
 		}
 		if engine == podman {
 			os.Remove("/tmp/image.tar")
-			out, err = exec.Command(engine.String(), "save", "-o", "/tmp/image.tar", img).CombinedOutput()
+			out, err = exec.Command(engine.String(), "save", "-o", "/tmp/image.tar", img.PullSpec).CombinedOutput()
 			if err != nil {
-				framework.Logf("Warning: failed to save image %s: %v (%s)", img, err, out)
+				framework.Logf("Warning: failed to save image %s: %v (%s)", img.PullSpec, err, out)
 				continue
 			}
 			out, err = exec.Command("kind", "load", "image-archive", "/tmp/image.tar", "--name", clusterName).CombinedOutput()
 		} else {
-			out, err = exec.Command("kind", "load", "docker-image", img, "--name", clusterName).CombinedOutput()
+			out, err = exec.Command("kind", "load", "docker-image", img.PullSpec, "--name", clusterName).CombinedOutput()
 		}
 		if err != nil {
-			framework.Logf("Warning: failed to load image %s into KIND cluster %s: %v (%s)", img, clusterName, err, out)
+			framework.Logf("Warning: failed to load image %s into KIND cluster %s: %v (%s)", img.PullSpec, clusterName, err, out)
 			continue
 		}
-		framework.Logf("Preloaded image %s into KIND cluster %s", img, clusterName)
+		framework.Logf("Preloaded image %s into KIND cluster %s", img.PullSpec, clusterName)
 	}
 }
 
@@ -148,6 +150,10 @@ func kindClusterName() string {
 		return strings.TrimPrefix(ctx, "kind-")
 	}
 	return ""
+}
+
+func (k *kind) InfrastructureNetworkExclusions() (ipv4, ipv6 sets.Set[string]) {
+	return nil, nil
 }
 
 func (k *kind) ShutdownNode(nodeName string) error {
