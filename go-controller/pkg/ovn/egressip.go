@@ -1287,6 +1287,53 @@ func (e *EgressIPController) isPodScheduledOnLocalNode(pod *corev1.Pod) bool {
 	return util.PodScheduled(pod) && pod.Spec.NodeName == e.nodeName
 }
 
+// PodIPsNeedingNodeSNAT returns pod IPs that still need node-IP SNAT.
+// It filters out families already covered by same-node EgressIP.
+func (e *EgressIPController) PodIPsNeedingNodeSNAT(pod *corev1.Pod, podIPs []*net.IPNet) []*net.IPNet {
+	if e == nil {
+		return podIPs
+	}
+	podKey := getPodKey(pod)
+	var coveredV4, coveredV6 bool
+	_ = e.podAssignment.DoWithLock(podKey, func(_ string) error {
+		podState, exists := e.podAssignment.Load(podKey)
+		if !exists || podState.egressIPName == "" {
+			return nil
+		}
+		for status, state := range podState.egressStatuses.statusMap {
+			// Skip pending assignments (startup/sync).
+			if state != "" {
+				continue
+			}
+			if status.Node != pod.Spec.NodeName {
+				continue
+			}
+			if utilnet.IsIPv6String(status.EgressIP) {
+				coveredV6 = true
+			} else {
+				coveredV4 = true
+			}
+		}
+		return nil
+	})
+
+	if !coveredV4 && !coveredV6 {
+		return podIPs
+	}
+
+	remaining := make([]*net.IPNet, 0, len(podIPs))
+	for _, ip := range podIPs {
+		if utilnet.IsIPv6CIDR(ip) && coveredV6 {
+			continue
+		}
+		if !utilnet.IsIPv6CIDR(ip) && coveredV4 {
+			continue
+		}
+		remaining = append(remaining, ip)
+	}
+	return remaining
+}
+
 // getNodeLocality reports whether nodeName is managed by this controller and
 // whether the node has been observed. Callers use the second result to avoid
 // programming OVN for nodes that have not been added or were already deleted.
