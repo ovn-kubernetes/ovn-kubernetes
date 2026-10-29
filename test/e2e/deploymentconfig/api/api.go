@@ -24,7 +24,6 @@ type ImageConfig struct {
 // Image IDs for OVN-Kubernetes e2e test images
 const (
 	Agnhost ImageID = iota
-	IPerf3
 	Netshoot
 	Nginx
 	FRR

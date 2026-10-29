@@ -12,10 +12,6 @@ func AgnHost() string {
 	return deploymentconfig.Get().GetImage(api.Agnhost).PullSpec
 }
 
-func IPerf3() string {
-	return deploymentconfig.Get().GetImage(api.IPerf3).PullSpec
-}
-
 // DNSMasq returns an image containing the dnsmasq DHCP server, used as the
 // external DHCP server on the underlay for DHCP-IPAM localnet tests.
 func DNSMasq() string {
