@@ -534,6 +534,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 				fakeOvn.addressSetManager,
 				nil,
 				nil,
+				nil,
 			)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(dummyController.Cleanup(context.Background())).To(Succeed())
@@ -697,6 +698,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 				fakeOvn.addressSetManager,
 				nil,
 				fakeOvn.controller.ServiceController(),
+				nil,
 			)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(l2ControllerNew.init(context.Background())).To(Succeed())
