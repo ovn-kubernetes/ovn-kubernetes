@@ -84,17 +84,17 @@ func TestMain(m *testing.M) {
 	deploymentconfig.Set(deploymentkind.New(restConfig))
 	if os.Getenv("OVN_NETWORK_QOS_ENABLE") == "true" ||
 		os.Getenv("ENABLE_NO_OVERLAY") == "true" ||
-		os.Getenv("KIND_INSTALL_KUBEVIRT") == "true" {
+		os.Getenv("KIND_INSTALL_KUBEVIRT") == "true" ||
+		os.Getenv("OVN_ENABLE_EX_GW_NETWORK_BRIDGE") == "true" {
 		deploymentconfig.Get().AddRequiredImage(api.Netshoot)
-	}
-	if os.Getenv("OVN_ENABLE_EX_GW_NETWORK_BRIDGE") == "true" {
-		deploymentconfig.Get().AddRequiredImage(api.IPerf3)
 	}
 	if os.Getenv("ENABLE_ROUTE_ADVERTISEMENTS") == "true" {
 		deploymentconfig.Get().AddRequiredImage(api.FRR)
 	}
 	if os.Getenv("KIND_INSTALL_METALLB") == "true" {
-		deploymentconfig.Get().AddRequiredImage(api.Nginx, api.MetalLBLBService, api.UDPServerSrcIPPrinter)
+		deploymentconfig.Get().AddRequiredImage(api.Nginx)
+		// lbclient in contrib/kind-common.sh uses NETSHOOT_IMAGE.
+		deploymentconfig.Get().AddRequiredImage(api.Netshoot)
 	}
 
 	os.Exit(m.Run())

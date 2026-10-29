@@ -30,14 +30,6 @@ func Nginx() string {
 	return deploymentconfig.Get().GetImage(api.Nginx).PullSpec
 }
 
-func MetalLBLBService() string {
-	return deploymentconfig.Get().GetImage(api.MetalLBLBService).PullSpec
-}
-
-func UDPServerSrcIPPrinter() string {
-	return deploymentconfig.Get().GetImage(api.UDPServerSrcIPPrinter).PullSpec
-}
-
 func FRR() string {
 	return deploymentconfig.Get().GetImage(api.FRR).PullSpec
 }

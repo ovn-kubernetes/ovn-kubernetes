@@ -986,9 +986,12 @@ install_metallb() {
     # Enable IPv6 forwarding in FRR
     $OCI_BIN exec frr sysctl -w net.ipv6.conf.all.forwarding=1
   fi
-  # Note: this image let's us use it also for creating load balancer backends that can send big packets
+  # External MetalLB client: needs iproute and nc. Prefer NETSHOOT_IMAGE when set
+  # so offline/mirrored environments can override the default.
+  NETSHOOT_IMAGE="${NETSHOOT_IMAGE:-ghcr.io/nicolaka/netshoot:v0.16}"
   $OCI_BIN rm -f lbclient
-  $OCI_BIN run  --cap-add NET_ADMIN --user 0  -d --network clientnet  --rm  --name lbclient  quay.io/itssurya/dev-images:metallb-lbservice
+  $OCI_BIN run --cap-add NET_ADMIN --user 0 -d --network clientnet --rm --name lbclient \
+    --entrypoint sleep "${NETSHOOT_IMAGE}" infinity
   popd
   delete_metallb_dir
 
