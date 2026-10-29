@@ -95,5 +95,24 @@ annotation without the subnet attribute defined are possible if the policy
 **only features** `ipBlock` peers. If the `net-attach-def` features the
 `subnet` attribute, it can also feature `namespaceSelectors` and `podSelectors`.
 
+## Validation of `ipBlock` peers
+The `MultiNetworkPolicy` CRD does not validate the `cidr` and `except`
+fields of an `ipBlock` peer, so OVN-Kubernetes validates them when it
+translates the policy. The rules are:
+
+- `cidr` must be a CIDR (`10.10.0.0/16`) or a bare IP address (`10.10.1.42`).
+  A bare IP is treated as a single-host CIDR (`/32` or `/128`).
+- Each entry in `except` must also be a CIDR or a bare IP address, must be
+  contained in `cidr`, and must be a strict subset of it.
+- A CIDR with host bits set, such as `10.10.1.42/24`, is accepted and
+  canonicalized to its network address, `10.10.1.0/24`.
+
+A peer that fails validation is **ignored**, not rejected: the policy is still
+applied without that peer, and a warning is logged by `ovnkube-controller`
+naming the policy and the reason. If every peer of a rule is invalid, the whole
+rule is ignored. Because `policyTypes` still selects the pods for isolation,
+dropping a rule never turns the policy into an allow-all: a rule with no valid
+peers simply allows nothing.
+
 ## User facing API Changes
 There are no user facing API Changes.
