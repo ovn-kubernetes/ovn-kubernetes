@@ -220,9 +220,14 @@ func copyIndexes(model model.Model) model.Model {
 			Name: t.Name,
 		}
 	case *nbdb.LogicalRouterPolicy:
-		return &nbdb.LogicalRouterPolicy{
+		indexes := &nbdb.LogicalRouterPolicy{
 			UUID: t.UUID,
 		}
+		// Policies without a primary ID still need predicate-based lookup.
+		if id := t.ExternalIDs[types.PrimaryIDKey]; id != "" {
+			indexes.ExternalIDs = map[string]string{types.PrimaryIDKey: id}
+		}
+		return indexes
 	case *nbdb.LogicalRouterPort:
 		return &nbdb.LogicalRouterPort{
 			UUID: t.UUID,
