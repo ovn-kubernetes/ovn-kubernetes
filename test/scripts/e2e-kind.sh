@@ -148,6 +148,16 @@ should function for service endpoints using hostNetwork
 RA_SKIPPED_TESTS="
 "
 
+# Upgrade OVN jobs create KinD from base (older Kubernetes) then refresh
+# e2e.test to the PR pin. Skip 1.37 Conformance that needs APIs only present
+# on the newer minor. Regular (non-upgrade) lanes keep running these.
+# TODO: Drop once base and PR share the same K8S_VERSION.
+UPGRADE_K8S_SKEW_SKIPPED_TESTS="
+\[FeatureGate:ClusterTrustBundle\]
+PodCertificateRequest API
+DeviceTaintRule
+"
+
 # Github CI doesn´t offer IPv6 connectivity, so always skip IPv6 only tests.
 #  See: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/1522
 SKIPPED_TESTS=$SKIPPED_TESTS$IPV6_ONLY_TESTS
@@ -176,6 +186,11 @@ fi
 # Skip tests that are unsupported or broken when the default pod network is advertised
 if [ "$ADVERTISE_DEFAULT_NETWORK" == true ]; then
   SKIPPED_TESTS=$SKIPPED_TESTS$RA_SKIPPED_TESTS
+fi
+
+# OVN upgrade CI: cluster K8s = base, e2e.test = PR (see upgrade-ovn.sh).
+if [ "${OVN_UPGRADE_E2E:-false}" == true ]; then
+  SKIPPED_TESTS=$SKIPPED_TESTS$UPGRADE_K8S_SKEW_SKIPPED_TESTS
 fi
 
 SKIPPED_TESTS="$(groomTestList "${SKIPPED_TESTS}")"
