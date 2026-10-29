@@ -4197,6 +4197,209 @@ spec:
 				"Both EgressIPs should have been assigned despite orphan node %s", orphanNodeName)
 		})
 
+		/*
+		   Test Case: Validate node capacity limit enforcement and prevent stale CloudPrivateIPConfig creation.
+		   Reference: https://github.com/ovn-kubernetes/ovn-kubernetes/pull/7094
+		   Steps:
+		   1. Pick a worker node (Node1) reporting the cloud egress-ipconfig annotation.
+		   2. Parse the cloud egress-ipconfig capacity and subnet for Node1.
+		   3. Enable "k8s.ovn.org/egress-assignable" on Node1 (recording and clearing other worker nodes, then restoring on teardown).
+		   4. Create (usableCapacity + 2) EgressIPs on the same subnet as Node1.
+		   5. Validate:
+		      - Exactly usableCapacity EgressIPs are assigned to Node1.
+		      - The last 2 EgressIPs remain unassigned.
+		      - For the unassigned EgressIPs, CloudPrivateIPConfig objects are NOT created (Error NotFound).
+		*/
+		ginkgo.It("Should not create CloudPrivateIPConfig or assign EgressIPs exceeding node capacity", func() {
+			if isUserDefinedNetwork(netConfigParams) {
+				ginkgo.Skip("Unsupported for UDNs")
+			}
+
+			ginkgo.By("1. Pick up a worker node with cloud egress-ipconfig annotation")
+			nodeList, err := f.ClientSet.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{
+				LabelSelector: "node-role.kubernetes.io/worker",
+			})
+			framework.ExpectNoError(err, "failed to list worker nodes")
+
+			type egressIPConfig struct {
+				Interface string `json:"interface"`
+				IfAddr    struct {
+					IPv4 string `json:"ipv4"`
+					IPv6 string `json:"ipv6"`
+				} `json:"ifaddr"`
+				Capacity struct {
+					IPv4 int `json:"ipv4"`
+					IPv6 int `json:"ipv6"`
+				} `json:"capacity"`
+			}
+
+			var targetNode *corev1.Node
+			var targetRawCapacity int
+			var targetSubnet *net.IPNet
+			var targetInterface string
+
+			const cloudEgressIPConfigAnnotation = "cloud.network.openshift.io/egress-ipconfig"
+			for i := range nodeList.Items {
+				node := &nodeList.Items[i]
+				annotation, ok := node.Annotations[cloudEgressIPConfigAnnotation]
+				if !ok || annotation == "" {
+					continue
+				}
+
+				var configs []egressIPConfig
+				if err := json.Unmarshal([]byte(annotation), &configs); err == nil && len(configs) > 0 {
+					if configs[0].Capacity.IPv4 > 0 && configs[0].IfAddr.IPv4 != "" {
+						_, ipnet, err := net.ParseCIDR(configs[0].IfAddr.IPv4)
+						if err == nil {
+							targetNode = node
+							targetRawCapacity = configs[0].Capacity.IPv4
+							targetSubnet = ipnet
+							targetInterface = configs[0].Interface
+							break
+						}
+					}
+				}
+			}
+
+			if targetNode == nil {
+				ginkgo.Skip("No worker node found with cloud.network.openshift.io/egress-ipconfig annotation (requires cloud platform)")
+			}
+
+			// In cloud providers (e.g. AWS ENI), 1 IP is reserved for the primary node interface:
+			// Usable EgressIP slots = Raw Capacity - 1 (e.g., 14 - 1 = 13 usable slots)
+			usableCapacity := targetRawCapacity - 1
+			framework.Logf("Selected node: %s, ENI: %s, Subnet: %s, Raw Capacity: %d, Usable Capacity: %d",
+				targetNode.Name, targetInterface, targetSubnet.String(), targetRawCapacity, usableCapacity)
+
+			ginkgo.By("2. Isolate target node and preserve pre-existing labels for suite restoration")
+			var previouslyLabeledNodes []string
+			for _, node := range nodeList.Items {
+				if _, hasLabel := node.Labels["k8s.ovn.org/egress-assignable"]; hasLabel {
+					previouslyLabeledNodes = append(previouslyLabeledNodes, node.Name)
+					if node.Name != targetNode.Name {
+						e2enode.RemoveLabelOffNode(f.ClientSet, node.Name, "k8s.ovn.org/egress-assignable")
+					}
+				}
+			}
+			defer func() {
+				// Restore original cluster label state
+				for _, name := range previouslyLabeledNodes {
+					e2enode.AddOrUpdateLabelOnNode(f.ClientSet, name, "k8s.ovn.org/egress-assignable", "dummy")
+				}
+			}()
+
+			ginkgo.By("3. Enable egress-assignable on target node")
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, targetNode.Name, "k8s.ovn.org/egress-assignable", "dummy")
+			defer e2enode.RemoveLabelOffNode(f.ClientSet, targetNode.Name, "k8s.ovn.org/egress-assignable")
+
+			ginkgo.By(fmt.Sprintf("4. Creating %d (usableCapacity + 2) EgressIPs on the same subnet as target node", usableCapacity+2))
+			totalEIPs := usableCapacity + 2
+			baseIP := targetSubnet.IP.Mask(targetSubnet.Mask).To4()
+			//ipInt := uint32(baseIP[0])<<24 | uint32(baseIP[1])<<16 | uint32(baseIP[2])<<8 | uint32(baseIP[3]) + 150
+			ipInt := (uint32(baseIP[0])<<24 | uint32(baseIP[1])<<16 | uint32(baseIP[2])<<8 | uint32(baseIP[3])) + 150
+
+			type testEIPItem struct {
+				name      string
+				namespace string
+				ip        string
+			}
+			var testItems []testEIPItem
+
+			tmpDir, err := os.MkdirTemp("", "egressip-cap-test-")
+			framework.ExpectNoError(err, "failed to create temp dir")
+			defer os.RemoveAll(tmpDir)
+
+			for i := 1; i <= totalEIPs; i++ {
+				curIPInt := ipInt + uint32(i)
+				eipAddr := fmt.Sprintf("%d.%d.%d.%d", byte(curIPInt>>24), byte(curIPInt>>16), byte(curIPInt>>8), byte(curIPInt))
+				eipName := fmt.Sprintf("eip-cap-auto-%d", i)
+				nsName := fmt.Sprintf("eip-cap-ns-%d", i)
+
+				testItems = append(testItems, testEIPItem{
+					name:      eipName,
+					namespace: nsName,
+					ip:        eipAddr,
+				})
+
+				nsYAML := fmt.Sprintf(`apiVersion: v1
+kind: Namespace
+metadata:
+  name: %s
+  labels:
+    app.kubernetes.io/autoeip: %s
+---
+apiVersion: k8s.ovn.org/v1
+kind: EgressIP
+metadata:
+  name: %s
+  labels:
+    app.kubernetes.io/managed-by: e2e-capacity-test
+spec:
+  egressIPs:
+  - %s
+  namespaceSelector:
+    matchLabels:
+      app.kubernetes.io/autoeip: %s
+`, nsName, nsName, eipName, eipAddr, nsName)
+
+				manifestPath := filepath.Join(tmpDir, fmt.Sprintf("%s.yaml", eipName))
+				err := os.WriteFile(manifestPath, []byte(nsYAML), 0644)
+				framework.ExpectNoError(err, "failed to write manifest")
+
+				e2ekubectl.RunKubectlOrDie("default", "apply", "-f", manifestPath)
+			}
+
+			// Defer resource cleanup
+			defer func() {
+				for _, item := range testItems {
+					_, _ = e2ekubectl.RunKubectl("default", "delete", "egressip", item.name, "--ignore-not-found=true")
+					_, _ = e2ekubectl.RunKubectl("default", "delete", "namespace", item.namespace, "--ignore-not-found=true", "--wait=false")
+					_, _ = e2ekubectl.RunKubectl("default", "delete", "cloudprivateipconfig", item.ip, "--ignore-not-found=true")
+				}
+			}()
+
+			ginkgo.By(fmt.Sprintf("5. Validate exactly %d EgressIPs are assigned to target node", usableCapacity))
+			err = wait.PollImmediate(retryInterval, retryTimeout, func() (bool, error) {
+				assignedCount := 0
+				for _, item := range testItems {
+					statuses := getSpecificEgressIPStatusItems(item.name)
+					for _, st := range statuses {
+						if st.Node == targetNode.Name && st.EgressIP == item.ip {
+							assignedCount++
+						}
+					}
+				}
+				framework.Logf("Assigned EgressIPs to node %s: %d / %d", targetNode.Name, assignedCount, usableCapacity)
+				return assignedCount == usableCapacity, nil
+			})
+			framework.ExpectNoError(err, "expected exactly %d EgressIPs assigned to %s", usableCapacity, targetNode.Name)
+
+			ginkgo.By("6. Identify the 2 unassigned overflow EgressIPs")
+			var unassignedItems []testEIPItem
+			for _, item := range testItems {
+				statuses := getSpecificEgressIPStatusItems(item.name)
+				if len(statuses) == 0 {
+					unassignedItems = append(unassignedItems, item)
+				}
+			}
+			gomega.Expect(unassignedItems).To(gomega.HaveLen(2), "expected exactly 2 unassigned EgressIPs exceeding capacity")
+
+			ginkgo.By("7. Validate that NO CloudPrivateIPConfig CRDs were created for the unassigned EgressIPs")
+			// Asynchronously verify across 10 seconds that controller does not create any degraded CloudPrivateIPConfigs
+			gomega.Consistently(func() bool {
+				for _, item := range unassignedItems {
+					stdout, err := e2ekubectl.RunKubectl("default", "get", "cloudprivateipconfig", item.ip)
+					if err == nil || !strings.Contains(stdout, "NotFound") {
+						return false
+					}
+				}
+				return true
+			}, 10*time.Second, 2*time.Second).Should(gomega.BeTrue(),
+				"CloudPrivateIPConfig objects must not be created for unassigned EgressIPs exceeding capacity")
+
+			framework.Logf("✓ Verified capacity limit: %d assigned, 2 overflowed, 0 stale CloudPrivateIPConfigs created", usableCapacity)
+		})
+
 		ginkgo.It("should prevent duplicate MAC responses when egress node is rebooted", func() {
 			if !isNetworkSegmentationEnabled() {
 				ginkgo.Skip("network segmentation is disabled")
