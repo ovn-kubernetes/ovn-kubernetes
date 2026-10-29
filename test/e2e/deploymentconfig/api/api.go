@@ -27,8 +27,6 @@ const (
 	IPerf3
 	Netshoot
 	Nginx
-	MetalLBLBService
-	UDPServerSrcIPPrinter
 	FRR
 	DNSMasq
 	FedoraKubevirtContainerDisk
