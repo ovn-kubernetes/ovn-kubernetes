@@ -167,7 +167,7 @@ func (oc *DefaultNetworkController) ensureLocalZonePod(ctx context.Context, oldP
 
 	if kubevirt.IsPodLiveMigratable(pod) {
 		v4Subnets, v6Subnets := util.GetClusterSubnetsWithHostPrefix()
-		return kubevirt.EnsureDefaultNetworkForLocalMigratablePod(oc.watchFactory, oc.nbClient, oc.lsManager, pod, append(v4Subnets, v6Subnets...))
+		return kubevirt.EnsureDefaultNetworkForMigratablePod(oc.watchFactory, oc.nbClient, oc.lsManager, oc.nodeName, pod, append(v4Subnets, v6Subnets...))
 	}
 
 	return nil
@@ -179,7 +179,7 @@ func (oc *DefaultNetworkController) ensureLocalZonePod(ctx context.Context, oldP
 // It returns nil on success and error on failure; failure indicates the pod set up should be retried later.
 func (oc *DefaultNetworkController) ensureRemoteZonePod(_ context.Context, _, pod *corev1.Pod) error {
 	if kubevirt.IsPodLiveMigratable(pod) {
-		return kubevirt.EnsureRemoteZonePodAddressesToNodeRoute(oc.watchFactory, oc.nbClient, pod)
+		return kubevirt.EnsureDefaultNetworkForMigratablePod(oc.watchFactory, oc.nbClient, oc.lsManager, oc.nodeName, pod, nil)
 	}
 	return nil
 }
