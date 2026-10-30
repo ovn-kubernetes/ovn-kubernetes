@@ -777,6 +777,10 @@ func getIntfName(ovsClient libovsdbclient.Client, gatewayIntf string) (string, e
 // bridgedGatewayNodeSetup enables forwarding on bridge interface, sets up the physical network name mappings for the bridge,
 // and returns an ifaceID created from the bridge name and the node name
 func bridgedGatewayNodeSetup(ovsClient libovsdbclient.Client, nodeName, bridgeName, physicalNetworkName string) (string, error) {
+	// the bridge mapping format is "physnet1:br1,physnet2:br2", so commas and colons are not allowed in the physical network name
+	if strings.ContainsAny(physicalNetworkName, ",:") {
+		return "", fmt.Errorf("invalid physical network name %q: cannot contain ',' or ':'", physicalNetworkName)
+	}
 	err := util.SetForwardingModeForInterface(bridgeName)
 	if err != nil {
 		return "", err
