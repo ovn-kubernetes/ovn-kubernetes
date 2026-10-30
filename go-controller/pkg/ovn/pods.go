@@ -307,14 +307,19 @@ func (oc *DefaultNetworkController) addLogicalPort(ctx context.Context, pod *cor
 	}
 
 	if config.Gateway.DisableSNATMultipleGWs {
-		// Add NAT rules to pods if disable SNAT is set. External gateway routes
-		// (and the associated per-pod SNAT removal) are programmed by the
-		// AdminPolicyBasedExternalRoute controller.
-		snatOps, err := oc.AddPodSNATOps(pod.Spec.NodeName, podAnnotation.IPs)
-		if err != nil {
-			return err
+		// Add NAT rules for shared gateway. Skip if same-node EgressIP
+		// already handles the SNAT for this family.
+		snatIPs := podAnnotation.IPs
+		if oc.eIPC != nil {
+			snatIPs = oc.eIPC.PodIPsNeedingNodeSNAT(pod, snatIPs)
 		}
-		ops = append(ops, snatOps...)
+		if len(snatIPs) > 0 {
+			snatOps, err := oc.AddPodSNATOps(pod.Spec.NodeName, snatIPs)
+			if err != nil {
+				return err
+			}
+			ops = append(ops, snatOps...)
+		}
 	}
 
 	recordOps, txOkCallBack, _, err := oc.AddConfigDurationRecord("pod", pod.Namespace, pod.Name)
