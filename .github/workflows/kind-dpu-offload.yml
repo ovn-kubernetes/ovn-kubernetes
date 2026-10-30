@@ -1,15 +1,9 @@
 name: DPU Offload
 
 on:
+  merge_group:
   pull_request:
     branches: [ master, release-* ]
-    paths-ignore:
-      - 'docs/**'
-      - '**/*.md'
-      - 'mkdocs.yml'
-      - '.coderabbit.yml'
-      - '.github/ISSUE_TEMPLATE/**'
-      - '.github/PULL_REQUEST_TEMPLATE.md'
   push:
     branches:
       - master
@@ -28,7 +22,41 @@ env:
   KIND_EXPERIMENTAL_PROVIDER: docker
 
 jobs:
+  changes:
+    name: Check DPU changed files
+    runs-on: ubuntu-24.04
+    permissions:
+      pull-requests: read
+    outputs:
+      run_ci: ${{ steps.filter.outputs.run_ci }}
+    steps:
+    - name: Check whether CI is needed
+      id: filter
+      uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+      with:
+        script: |
+          // Keep the docs-only PR exemption while always reporting a summary.
+          // Queue, push and manual runs execute both DPU lanes.
+          if (context.eventName !== 'pull_request') {
+            core.setOutput('run_ci', 'true');
+            return;
+          }
+          const files = await github.paginate(github.rest.pulls.listFiles, {
+            ...context.repo,
+            pull_number: context.issue.number,
+            per_page: 100,
+          });
+          const isDoc = path => path.startsWith('docs/') || path.endsWith('.md') ||
+            path === 'mkdocs.yml' || path === '.coderabbit.yml' ||
+            path.startsWith('.github/ISSUE_TEMPLATE/');
+          const runCI = files.length === 0 || files.length >= 3000 ||
+            files.some(file => !isDoc(file.filename) ||
+              (file.previous_filename && !isDoc(file.previous_filename)));
+          core.setOutput('run_ci', String(runCI));
+
   kind-dpu-offload:
+    needs: changes
+    if: needs.changes.outputs.run_ci == 'true'
     runs-on: ubuntu-26.04
     timeout-minutes: 180
     steps:
@@ -136,6 +164,8 @@ jobs:
         run: ./bin/dpu-sim --config config-kind-ovnk-offload.yaml --ovn-kubernetes-path "$OVN_KUBERNETES_PATH" --cleanup || true
 
   kind-dpu-no-overlay:
+    needs: changes
+    if: needs.changes.outputs.run_ci == 'true'
     runs-on: ubuntu-26.04
     timeout-minutes: 180
     env:
@@ -307,3 +337,26 @@ jobs:
         if: always()
         working-directory: dpu-simulator
         run: ./bin/dpu-sim --config "${DPU_SIM_CONFIG}" --ovn-kubernetes-path "$OVN_KUBERNETES_PATH" --cleanup || true
+
+  ci-summary:
+    name: DPU CI Summary
+    if: always()
+    runs-on: ubuntu-24.04
+    needs: [ changes, kind-dpu-offload, kind-dpu-no-overlay ]
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        persist-credentials: false
+        sparse-checkout: .github/scripts
+    - name: Check required CI results
+      uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+      env:
+        CI_NEEDS: ${{ toJSON(needs) }}
+      with:
+        script: |
+          const summarize = require('./.github/scripts/ci-summary.js');
+          const failures = summarize({
+            needs: JSON.parse(process.env.CI_NEEDS),
+            eventName: context.eventName,
+          });
+          if (failures.length) core.setFailed(failures.join('\n'));

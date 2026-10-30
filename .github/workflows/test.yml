@@ -16,6 +16,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # A merge group has no github.base_ref. Use its exact baseline for upgrade
+  # tests, while the default checkout continues to test the combined candidate.
+  CI_BASE_REF: ${{ github.event.merge_group.base_sha || github.base_ref || github.ref_name }}
   K8S_VERSION: v1.36.4
   KIND_CLUSTER_NAME: ovn
   KIND_INSTALL_INGRESS: true
@@ -136,8 +139,10 @@ jobs:
             exit 0
         fi
 
-        if docker pull ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-fedora:${{ github.base_ref || github.ref_name }}; then
-            docker tag ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-fedora:${{ github.base_ref || github.ref_name }} ovn-daemonset-fedora:dev
+        # Branch-tagged images need not match the queue's base SHA. Build that
+        # baseline locally instead of upgrading from a stale or candidate image.
+        if [ "$GITHUB_EVENT_NAME" != merge_group ] && docker pull "ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-fedora:${CI_BASE_REF}"; then
+            docker tag "ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-fedora:${CI_BASE_REF}" ovn-daemonset-fedora:dev
 
             echo "BASE_IMAGE_RESTORED=true" >> "$GITHUB_OUTPUT"
             exit 0
@@ -147,7 +152,7 @@ jobs:
       if: steps.is_base_image_build_needed.outputs.BASE_IMAGE_RESTORED != 'true' && success()
       uses: actions/checkout@v6
       with:
-        ref: ${{ github.base_ref || github.ref_name }}
+        ref: ${{ env.CI_BASE_REF }}
 
     - name: Set up Go
       if: steps.is_base_image_build_needed.outputs.BASE_IMAGE_RESTORED != 'true' && success()
@@ -418,7 +423,7 @@ jobs:
     - name: Check out code into the Go module directory - from Base branch
       uses: actions/checkout@v6
       with:
-          ref: ${{ github.base_ref || github.ref_name }}
+          ref: ${{ env.CI_BASE_REF }}
 
     - name: Set up Go
       uses: actions/setup-go@v6
@@ -1055,6 +1060,40 @@ jobs:
       with:
         name: kind-ovndbs-${{ env.JOB_NAME }}-${{ github.run_id }}
         path: /tmp/kind/ovndbs
+
+  ci-summary:
+    name: CI Summary
+    if: always()
+    runs-on: ubuntu-24.04
+    needs:
+      - changes
+      - go-cache
+      - verify-lint-generated-code
+      - build-base
+      - build-pr
+      - build-pr-ubuntu
+      - test-pr
+      - ovn-upgrade-e2e
+      - e2e
+      - e2e-dual-conversion
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        persist-credentials: false
+        sparse-checkout: .github/scripts
+    - name: Check required CI results
+      uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+      env:
+        CI_NEEDS: ${{ toJSON(needs) }}
+      with:
+        script: |
+          const summarize = require('./.github/scripts/ci-summary.js');
+          const failures = summarize({
+            needs: JSON.parse(process.env.CI_NEEDS),
+            eventName: context.eventName,
+            skippedOnSchedule: ['ovn-upgrade-e2e', 'e2e-dual-conversion'],
+          });
+          if (failures.length) core.setFailed(failures.join('\n'));
 
   coredump-stacktraces:
     name: Collect coredump stack traces
