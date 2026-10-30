@@ -50,9 +50,8 @@ type NetworkQoS struct {
 // Spec defines the desired state of NetworkQoS
 type Spec struct {
 	// networkSelector selects the networks on which the pod IPs need to be added to the source address set.
-	// NetworkQoS controller currently supports `NetworkAttachmentDefinitions` type only.
 	// +optional
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="networkSelector is immutable"
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="networkSelectors are immutable"
 	// +kubebuilder:validation:XValidation:rule="self.all(sel, sel.networkSelectionType == 'ClusterUserDefinedNetworks' || sel.networkSelectionType == 'NetworkAttachmentDefinitions')", message="Unsupported network selection type"
 	NetworkSelectors crdtypes.NetworkSelectors `json:"networkSelectors,omitempty"`
 
@@ -107,6 +106,7 @@ type Classifier struct {
 
 // Bandwidth controls the maximum of rate traffic that can be sent
 // or received on the matching packets.
+// +kubebuilder:validation:XValidation:rule="!has(self.burst) || has(self.rate)",message="rate is required when burst is set"
 type Bandwidth struct {
 	// rate The value of rate limit in kbps. Traffic over the limit
 	// will be dropped.
@@ -127,9 +127,10 @@ type Bandwidth struct {
 
 // Port specifies destination protocol and port on which NetworkQoS
 // rule is applied
+// +kubebuilder:validation:XValidation:rule="!has(self.port) || has(self.protocol)",message="protocol is required when port is set"
 type Port struct {
-	// protocol (tcp, udp, sctp) that the traffic must match.
-	// +kubebuilder:validation:Pattern=^TCP|UDP|SCTP$
+	// protocol (TCP, UDP or SCTP) that the traffic must match.
+	// +kubebuilder:validation:Enum=TCP;UDP;SCTP
 	// +optional
 	Protocol string `json:"protocol"`
 
