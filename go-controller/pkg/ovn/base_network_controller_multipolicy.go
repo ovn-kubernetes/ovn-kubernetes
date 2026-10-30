@@ -67,26 +67,50 @@ func (bsnc *BaseUserDefinedNetworkController) shouldApplyMultiPolicy(mpolicy *mn
 	return false
 }
 
+// parseCIDROrIP parses a CIDR, or converts a bare IP into a single-host CIDR,
+// by adding a /32 or /128 mask depending on the IP version.
+// MultiNetworkPolicy doesn't have CIDR validation, so a bare IP used to work
+// before the validation was added since OVN match operands accept bare IPs.
+func parseCIDROrIP(value string) (*net.IPNet, error) {
+	if _, ipNet, err := net.ParseCIDR(value); err == nil {
+		return ipNet, nil
+	}
+	ip := net.ParseIP(value)
+	if ip == nil {
+		return nil, fmt.Errorf("%q is neither a CIDR nor an IP address", value)
+	}
+	bits := 32
+	if ip.To4() == nil {
+		bits = 128
+	}
+	return &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)}, nil
+}
+
 // convertMultiNetPolicyIPBlock validates the ipBlock the same way the API server
 // validates NetworkPolicy ipBlocks. The MultiNetworkPolicy CRD does not validate
 // these fields and they are interpolated verbatim into ACL matches.
 func convertMultiNetPolicyIPBlock(ipb *mnpapi.IPBlock) (*knet.IPBlock, error) {
-	_, cidrIPNet, err := net.ParseCIDR(ipb.CIDR)
+	cidrIPNet, err := parseCIDROrIP(ipb.CIDR)
 	if err != nil {
-		return nil, fmt.Errorf("invalid ipBlock cidr %q: %w", ipb.CIDR, err)
+		return nil, fmt.Errorf("invalid ipBlock cidr: %w", err)
+	}
+	var except []string
+	if len(ipb.Except) > 0 {
+		except = make([]string, 0, len(ipb.Except))
 	}
 	for _, exceptCIDRStr := range ipb.Except {
-		_, exceptCIDR, err := net.ParseCIDR(exceptCIDRStr)
+		exceptCIDR, err := parseCIDROrIP(exceptCIDRStr)
 		if err != nil {
-			return nil, fmt.Errorf("invalid ipBlock except %q: %w", exceptCIDRStr, err)
+			return nil, fmt.Errorf("invalid ipBlock except: %w", err)
 		}
 		cidrMaskLen, _ := cidrIPNet.Mask.Size()
 		exceptMaskLen, _ := exceptCIDR.Mask.Size()
 		if !cidrIPNet.Contains(exceptCIDR.IP) || cidrMaskLen >= exceptMaskLen {
 			return nil, fmt.Errorf("ipBlock except %q must be a strict subset of cidr %q", exceptCIDRStr, ipb.CIDR)
 		}
+		except = append(except, exceptCIDR.String())
 	}
-	return &knet.IPBlock{CIDR: ipb.CIDR, Except: ipb.Except}, nil
+	return &knet.IPBlock{CIDR: cidrIPNet.String(), Except: except}, nil
 }
 
 func convertMultiNetPolicyToNetPolicy(mpolicy *mnpapi.MultiNetworkPolicy, allowPeerSelectors bool) (*knet.NetworkPolicy, error) {
