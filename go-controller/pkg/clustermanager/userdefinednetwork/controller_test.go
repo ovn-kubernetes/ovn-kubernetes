@@ -23,6 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/testing"
+	"k8s.io/client-go/util/workqueue"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -92,10 +93,12 @@ var _ = Describe("User Defined Network Controller", func() {
 		if util.IsEVPNEnabled() {
 			vtepInformer = f.VTEPInformer()
 		}
-		return New(cs.NetworkAttchDefClient, f.NADInformer(),
+		c := New(cs.NetworkAttchDefClient, f.NADInformer(),
 			cs.UserDefinedNetworkClient, f.UserDefinedNetworkInformer(), f.ClusterUserDefinedNetworkInformer(),
 			renderNADStub, networkManager.Interface(), f.PodCoreInformer(), f.NamespaceInformer(), vtepInformer, f.RouteAdvertisementsInformer(), nil,
 		)
+		c.networkInUseBackoff = testNetworkInUseBackoff()
+		return c
 	}
 
 	// newTestControllerWithNetworkManager creates a controller with a started NetworkManager.
@@ -115,10 +118,12 @@ var _ = Describe("User Defined Network Controller", func() {
 		if util.IsEVPNEnabled() {
 			vtepInformer = f.VTEPInformer()
 		}
-		return New(cs.NetworkAttchDefClient, f.NADInformer(),
+		c := New(cs.NetworkAttchDefClient, f.NADInformer(),
 			cs.UserDefinedNetworkClient, f.UserDefinedNetworkInformer(), f.ClusterUserDefinedNetworkInformer(),
 			renderNADStub, nm.Interface(), f.PodCoreInformer(), f.NamespaceInformer(), vtepInformer, f.RouteAdvertisementsInformer(), nil,
 		)
+		c.networkInUseBackoff = testNetworkInUseBackoff()
+		return c
 	}
 
 	expectTransportCondition := func(cudnName string, status metav1.ConditionStatus, reason, message string) {
@@ -521,8 +526,6 @@ var _ = Describe("User Defined Network Controller", func() {
 				pod2 := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod-2", Namespace: udn.Namespace, Annotations: testOVNPodAnnot}}
 
 				c = newTestController(renderNadStub(nad), udn, nad, pod1, pod2, testNamespace("test"))
-				// user short interval to make the controller re-enqueue requests
-				c.networkInUseRequeueInterval = 50 * time.Millisecond
 				Expect(c.Run()).To(Succeed())
 
 				assertFinalizersPresent(cs.UserDefinedNetworkClient, cs.NetworkAttchDefClient, udn, pod1, pod2)
@@ -1820,8 +1823,6 @@ var _ = Describe("User Defined Network Controller", func() {
 
 					By("start test controller")
 					c = newTestController(renderNadStub(testClusterUdnNAD(cudnName, "")), testObjs...)
-					// user short interval to make the controller re-enqueue requests when network in use
-					c.networkInUseRequeueInterval = 50 * time.Millisecond
 					Expect(c.Run()).To(Succeed())
 
 					Eventually(func() []metav1.Condition {
@@ -2590,6 +2591,114 @@ var _ = Describe("User Defined Network Controller", func() {
 				Expect(err).To(MatchError(expectedErr))
 			})
 		})
+
+		It("when CR is being deleted after a sync that failed once its NAD existed, should delete the NAD and remove finalizer from CR", func() {
+			const testNsName = "blue"
+			testNs := testNamespace(testNsName)
+			cudn := testClusterUDN("test", testNs.Name)
+			expectedNAD := testClusterUdnNAD(cudn.Name, testNs.Name)
+			expectedNAD.Annotations = map[string]string{"parent": "value"}
+			c := newTestController(renderNadStub(expectedNAD), cudn, testNs)
+			cs.NetworkAttchDefClient.(*netv1fakeclientset.Clientset).PrependReactor("patch", "network-attachment-definitions", func(testing.Action) (bool, runtime.Object, error) {
+				return true, nil, errors.New("test conflict")
+			})
+
+			By("sync the CR while the NAD annotation patch fails after the NAD is created")
+			_, err := c.syncClusterUDN(context.Background(), cudn, nil)
+			Expect(err).To(MatchError(ContainSubstring("test conflict")), "the sync should fail at the NAD annotation patch")
+			Expect(c.namespaceTracker[cudn.Name].UnsortedList()).To(ConsistOf(testNsName), "the namespace should be tracked as soon as its NAD is created")
+
+			By("mark CR for deletion before the created NAD reaches the informer cache")
+			cudn.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+			cudn, err = cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Update(context.Background(), cudn, metav1.UpdateOptions{})
+			Expect(err).ToNot(HaveOccurred(), "marking the CR for deletion should succeed")
+
+			nads, err := c.syncClusterUDN(context.Background(), cudn, nil)
+			Expect(err).ToNot(HaveOccurred(), "the deletion sync should succeed")
+			Expect(nads).To(BeEmpty(), "no NAD should be left after the deletion sync")
+			Expect(cudn.Finalizers).To(BeEmpty(), "the CR finalizer should be removed")
+
+			nadList, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNsName).List(context.Background(), metav1.ListOptions{})
+			Expect(err).ToNot(HaveOccurred(), "listing the NADs should succeed")
+			Expect(nadList.Items).To(BeEmpty(), "the NAD left by the failed sync should be deleted")
+			Expect(c.namespaceTracker).ToNot(HaveKey(cudn.Name), "the CR should no longer be tracked")
+		})
+
+		DescribeTable("should clean up after a NAD create times out",
+			func(nadCreated, deleteCUDN bool) {
+				testNs := testNamespace("blue")
+				cudn := testClusterUDN("test", testNs.Name)
+				expectedNAD := testClusterUdnNAD(cudn.Name, testNs.Name)
+				c := newTestController(renderNadStub(expectedNAD), cudn, testNs)
+				nadClient := cs.NetworkAttchDefClient.(*netv1fakeclientset.Clientset)
+				nadClient.PrependReactor("create", "network-attachment-definitions", func(action testing.Action) (bool, runtime.Object, error) {
+					if nadCreated {
+						// The API server can persist the NAD before the client times out
+						// waiting for its response.
+						create := action.(testing.CreateAction)
+						Expect(nadClient.Tracker().Create(action.GetResource(), create.GetObject(), action.GetNamespace())).To(Succeed())
+					}
+					return true, &netv1.NetworkAttachmentDefinition{}, apierrors.NewTimeoutError("NAD create response timed out", 0)
+				})
+
+				_, err := c.syncClusterUDN(context.Background(), cudn, nil)
+				Expect(apierrors.IsTimeout(err)).To(BeTrue())
+
+				if deleteCUDN {
+					By("deleting the CUDN before its creation is retried")
+					cudn.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+					cudn, err = cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Update(context.Background(), cudn, metav1.UpdateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+				} else {
+					By("terminating the namespace before its creation is retried")
+					testNs.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+					_, err = cs.KubeClient.CoreV1().Namespaces().Update(context.Background(), testNs, metav1.UpdateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					Eventually(func() bool {
+						ns, err := c.namespaceInformer.Lister().Get(testNs.Name)
+						return err == nil && !ns.DeletionTimestamp.IsZero()
+					}).Should(BeTrue())
+				}
+
+				nads, err := c.syncClusterUDN(context.Background(), cudn, nil)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(nads).To(BeEmpty())
+				_, err = nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), expectedNAD.Name, metav1.GetOptions{})
+				Expect(apierrors.IsNotFound(err)).To(BeTrue(), "the NAD must not remain protected after cleanup")
+				Expect(c.namespaceTracker[cudn.Name]).To(BeEmpty())
+				if deleteCUDN {
+					Expect(cudn.Finalizers).To(BeEmpty())
+				}
+			},
+			Entry("CUDN deleted after the NAD was persisted", true, true),
+			Entry("CUDN deleted without the NAD being persisted", false, true),
+			Entry("namespace terminating after the NAD was persisted", true, false),
+			Entry("namespace terminating without the NAD being persisted", false, false),
+		)
+
+		It("when adding the finalizer fails and the CR is then gone, should stop tracking the CR", func() {
+			cudn := testClusterUDN("test", "blue")
+			cudn.Finalizers = nil
+			c := newTestController(noopRenderNadStub(), cudn, testNamespace("blue"))
+			expectedErr := errors.New("test err")
+			cs.UserDefinedNetworkClient.(*udnfakeclient.Clientset).PrependReactor("update", "clusteruserdefinednetworks", func(testing.Action) (bool, runtime.Object, error) {
+				return true, nil, expectedErr
+			})
+
+			_, err := c.syncClusterUDN(context.Background(), cudn, nil)
+			Expect(err).To(MatchError(expectedErr), "the sync should fail at adding the CR finalizer")
+			Expect(c.namespaceTracker).To(HaveKey(cudn.Name), "the failed sync leaves a tracker entry for the CR")
+
+			By("delete the CR, which has no finalizer")
+			Expect(cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Delete(context.Background(), cudn.Name, metav1.DeleteOptions{})).To(Succeed(), "deleting the CR should succeed")
+			Eventually(func() bool {
+				_, err := c.cudnLister.Get(cudn.Name)
+				return apierrors.IsNotFound(err)
+			}, 5*time.Second, 50*time.Millisecond).Should(BeTrue(), "the deleted CR should leave the informer cache")
+
+			Expect(c.reconcileCUDN(context.Background(), cudn.Name)).To(Succeed(), "reconciling a CR that is gone should succeed")
+			Expect(c.namespaceTracker).ToNot(HaveKey(cudn.Name), "the CR should no longer be tracked")
+		})
 	})
 
 	Context("ClusterUserDefinedNetwork status update", func() {
@@ -3329,6 +3438,12 @@ func testClusterUdnNAD(name, namespace string) *netv1.NetworkAttachmentDefinitio
 		},
 		Spec: netv1.NetworkAttachmentDefinitionSpec{},
 	}
+}
+
+// testNetworkInUseBackoff retries a blocked deletion every 50 ms so specs
+// can wait for it with the default Eventually timeout.
+func testNetworkInUseBackoff() workqueue.TypedRateLimiter[string] {
+	return workqueue.NewTypedItemExponentialFailureRateLimiter[string](50*time.Millisecond, 50*time.Millisecond)
 }
 
 func noopRenderNadStub() RenderNetAttachDefManifest {

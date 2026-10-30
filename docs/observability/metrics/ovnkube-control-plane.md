@@ -27,9 +27,9 @@ These metrics are registered on the leader.
 | `allocated_v4_host_subnets` | Gauge | `network_name` | Number of currently allocated IPv4 host subnets per network. |
 | `allocated_v6_host_subnets` | Gauge | `network_name` | Number of currently allocated IPv6 host subnets per network. |
 | `user_defined_networks` | Gauge | `role`, `topology` | Number of UserDefinedNetwork resources. |
-| `cluster_user_defined_networks` | Gauge | `role`, `topology`, `transport` | Number of ClusterUserDefinedNetwork resources. |
-| `cluster_user_defined_network_condition` | Gauge | `name`, `condition`, `status` | CUDN status condition. Both `status="true"` and `status="false"` are emitted; the active status is `1`. |
-| `udn_nodes_rendered` | Gauge | `network_name` | Number of nodes on which a UDN or CUDN is rendered. Registered only when dynamic UDN allocation is enabled. |
+| `cluster_user_defined_networks` | Gauge | `role`, `topology`, `transport` | Number of ClusterUserDefinedNetwork resources. A CUDN is counted once its finalizer is added and uncounted when it is deleted or disappears. |
+| `cluster_user_defined_network_condition` | Gauge | `name`, `condition`, `status` | CUDN status condition. Both `status="true"` and `status="false"` are emitted; the active status is `1`. The series of a CUDN are removed when it is deleted or disappears. |
+| `udn_nodes_rendered` | Gauge | `network_name` | Number of nodes on which a UDN or CUDN is rendered. Registered only when dynamic UDN allocation is enabled. The series of a CUDN is removed when it is deleted or disappears. |
 | `route_advertisement_condition` | Gauge | `name`, `condition`, `status` | RouteAdvertisements status condition. Registered only when route advertisements are enabled. |
 | `vtep_condition` | Gauge | `name`, `condition`, `status` | VTEP status condition. Registered only when EVPN is enabled. |
 
