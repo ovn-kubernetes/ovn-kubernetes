@@ -21,6 +21,7 @@ import (
 
 var (
 	agnHost = imageutils.GetE2EImage(imageutils.Agnhost)
+	nginx   = imageutils.GetE2EImage(imageutils.NginxNew)
 	// We limit the set of images used by e2e to reduce duplication and to allow us to provide offline mirroring of images
 	// for customers and restricted test environments.
 	// Ideally, every image used in e2e must be part of this package.
@@ -28,7 +29,6 @@ var (
 	// Failing to find an image from upstream k8s, please get community approval because downstream consumers must
 	// pre-approve new images.
 	netshoot = "ghcr.io/nicolaka/netshoot:v0.16"
-	nginx    = "nginx:1"
 	frr      = "quay.io/frrouting/frr:10.5.3"
 	// dnsmasq 2.83; pinned by digest for CI reproducibility.
 	// TODO: mirror to a project-controlled registry (ghcr/quay) — docker.io
