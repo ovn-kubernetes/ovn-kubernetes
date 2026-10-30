@@ -361,16 +361,17 @@ every `UserDefinedNetwork` and `ClusterUserDefinedNetwork`, and on the
 sets its deletion timestamp, but the resource and its NADs stay until no pod uses
 the network any more.
 
-While a pod is still attached, the `NetworkCreated` condition of the network
-resource turns `False` with reason `NetworkAttachmentDefinitionSyncError` and a
-message that names the pods still using it. The cluster manager retries the
+While a pod is still attached, the `NetworkCreated` condition turns `False`, with
+reason `SyncError` for a `UserDefinedNetwork` or
+`NetworkAttachmentDefinitionSyncError` for a `ClusterUserDefinedNetwork`. The
+message names the pods still using the network. The cluster manager retries the
 deletion with an exponential backoff, from 100 ms up to 5 s between attempts, so a
 network blocked for a long time is checked a few times a minute instead of on
 every pass. Once the last pod is gone, the next attempt removes the finalizer from
 the NADs, deletes them, waits for the network controller to stop, and then removes
-the finalizer from the network resource. A NAD is released even if the sync that
-created it failed before it could record it, so a network deleted right after its
-creation does not stay stuck.
+the finalizer from the network resource. A NAD is released even if its creation
+response was lost or a later step of the sync failed, so a network deleted right
+after its creation does not stay stuck.
 
 ### Expanding a Primary Layer3 UDN with additional cluster subnets
 

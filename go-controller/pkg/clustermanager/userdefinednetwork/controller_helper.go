@@ -107,8 +107,8 @@ func (c *Controller) updateNAD(ctx context.Context, obj client.Object, namespace
 }
 
 // createNAD creates the NAD of obj in the given namespace. For a CUDN it
-// records the namespace in namespaceTracker as soon as the NAD exists, so a
-// sync that fails later still leaves the deletion branch something to release.
+// records the namespace before attempting creation, since an error response
+// does not guarantee that the API server did not persist the NAD.
 // Must be called with namespaceTrackerLock held when obj is a CUDN.
 func (c *Controller) createNAD(ctx context.Context, obj client.Object, namespace string, desiredNAD *netv1.NetworkAttachmentDefinition) (*netv1.NetworkAttachmentDefinition, error) {
 	// Serialize the primary-network check and creation with other NAD creators.
@@ -126,12 +126,12 @@ func (c *Controller) createNAD(ctx context.Context, obj client.Object, namespace
 		}
 	}
 
+	if cudn, ok := obj.(*userdefinednetworkv1.ClusterUserDefinedNetwork); ok {
+		c.namespaceTracker[cudn.Name].Insert(namespace)
+	}
 	newNAD, err := c.nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespace).Create(ctx, desiredNAD, metav1.CreateOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create NetworkAttachmentDefinition: %w", err)
-	}
-	if cudn, ok := obj.(*userdefinednetworkv1.ClusterUserDefinedNetwork); ok {
-		c.namespaceTracker[cudn.Name].Insert(namespace)
 	}
 
 	return newNAD, nil
