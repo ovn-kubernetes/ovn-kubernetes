@@ -119,6 +119,7 @@ type MACBindingController struct {
 
 type uplinkSourceProvider interface {
 	GetMacBindingSourceForUplinks() map[string]string
+	RegisterUplinkCallback(func(string))
 }
 
 // NewMACBindingController creates a new MACBindingController.
@@ -215,6 +216,8 @@ func (c *MACBindingController) Run(stopCh <-chan struct{}) error {
 		return fmt.Errorf("failed to register node nodeIPs handlers: %w", err)
 	}
 	defer c.deRegisterNodeIPsHandlers()
+
+	c.uplinkSourceProvider.RegisterUplinkCallback(c.ReconcileUplinkSource)
 
 	// start the reconcilers
 	reconcilers := []controller.Reconciler{
@@ -500,6 +503,9 @@ func (c *MACBindingController) getMacBindingSourceForUplinks() map[string]string
 	macBindingSourceForUplinks := c.uplinkSourceProvider.GetMacBindingSourceForUplinks()
 	if macBindingSourceForUplinks == nil {
 		macBindingSourceForUplinks = map[string]string{}
+	}
+	for uplinkName, udnName := range macBindingSourceForUplinks {
+		macBindingSourceForUplinks[uplinkName] = util.GetNetworkScopedGWRouterExtPortName(udnName, c.nodeName)
 	}
 	macBindingSourceForUplinks[""] = c.cdnGatewayPort
 	c.macBindingSourceForUplinks.CompareAndSwap(macBindingSourceForUplinksPtr, &macBindingSourceForUplinks)
