@@ -4210,16 +4210,14 @@ spec:
 		      - The last 2 EgressIPs remain unassigned.
 		      - For the unassigned EgressIPs, CloudPrivateIPConfig objects are NOT created (Error NotFound).
 		*/
-		ginkgo.It("Should not create CloudPrivateIPConfig or assign EgressIPs exceeding node capacity", func() {
+		ginkgo.It("Should not create CloudPrivateIPConfig or assign EgressIPs exceeding cloud node capacity [Cloud]", feature.EgressIP, func() {
 			if isUserDefinedNetwork(netConfigParams) {
 				ginkgo.Skip("Unsupported for UDNs")
 			}
 
-			ginkgo.By("1. Pick up a worker node with cloud egress-ipconfig annotation")
-			nodeList, err := f.ClientSet.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{
-				LabelSelector: "node-role.kubernetes.io/worker",
-			})
-			framework.ExpectNoError(err, "failed to list worker nodes")
+			ginkgo.By("1. Select a cloud worker node for capacity testing")
+			nodeList, err := f.ClientSet.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
+			framework.ExpectNoError(err, "failed to list cluster nodes")
 
 			type egressIPConfig struct {
 				Interface string `json:"interface"`
@@ -4262,13 +4260,13 @@ spec:
 			}
 
 			if targetNode == nil {
-				ginkgo.Skip("No worker node found with cloud.network.openshift.io/egress-ipconfig annotation (requires cloud platform)")
+				ginkgo.Skip("In non-cloud environments (like KIND), OVN-Kubernetes does not have an ENI limit.")
 			}
 
 			// In cloud providers (e.g. AWS ENI), 1 IP is reserved for the primary node interface:
 			// Usable EgressIP slots = Raw Capacity - 1 (e.g., 14 - 1 = 13 usable slots)
 			usableCapacity := targetRawCapacity - 1
-			framework.Logf("Selected node: %s, ENI: %s, Subnet: %s, Raw Capacity: %d, Usable Capacity: %d",
+			framework.Logf("Selected cloud node: %s, Interface: %s, Subnet: %s, Raw Capacity: %d, Usable Capacity: %d",
 				targetNode.Name, targetInterface, targetSubnet.String(), targetRawCapacity, usableCapacity)
 
 			ginkgo.By("2. Isolate target node and preserve pre-existing labels for suite restoration")
@@ -4295,7 +4293,6 @@ spec:
 			ginkgo.By(fmt.Sprintf("4. Creating %d (usableCapacity + 2) EgressIPs on the same subnet as target node", usableCapacity+2))
 			totalEIPs := usableCapacity + 2
 			baseIP := targetSubnet.IP.Mask(targetSubnet.Mask).To4()
-			//ipInt := uint32(baseIP[0])<<24 | uint32(baseIP[1])<<16 | uint32(baseIP[2])<<8 | uint32(baseIP[3]) + 150
 			ipInt := (uint32(baseIP[0])<<24 | uint32(baseIP[1])<<16 | uint32(baseIP[2])<<8 | uint32(baseIP[3])) + 150
 
 			type testEIPItem struct {
@@ -4385,7 +4382,7 @@ spec:
 			gomega.Expect(unassignedItems).To(gomega.HaveLen(2), "expected exactly 2 unassigned EgressIPs exceeding capacity")
 
 			ginkgo.By("7. Validate that NO CloudPrivateIPConfig CRDs were created for the unassigned EgressIPs")
-			// Asynchronously verify across 10 seconds that controller does not create any degraded CloudPrivateIPConfigs
+			// Verifies PR #7094 fix: no stale/degraded CloudPrivateIPConfigs are generated for overflow IPs
 			gomega.Consistently(func() bool {
 				for _, item := range unassignedItems {
 					stdout, err := e2ekubectl.RunKubectl("default", "get", "cloudprivateipconfig", item.ip)
