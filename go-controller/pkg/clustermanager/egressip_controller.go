@@ -622,12 +622,13 @@ func (eIPC *egressIPClusterController) getEgressIPNodeSelectors() MultiSelector 
 	return ms
 }
 
-func (eIPC *egressIPClusterController) setNodeHostCIDRsReady(nodeName string, assignable bool) {
+func (eIPC *egressIPClusterController) isNodeHostCIDRsReady(nodeName string) bool {
 	eIPC.nodeAllocator.Lock()
 	defer eIPC.nodeAllocator.Unlock()
 	if eNode, exists := eIPC.nodeAllocator.cache[nodeName]; exists {
-		eNode.isHostCIDRsReady = assignable
+		return eNode.isHostCIDRsReady
 	}
+	return false
 }
 
 func (eIPC *egressIPClusterController) isEgressNodeReady(egressNode *corev1.Node) bool {
@@ -937,10 +938,9 @@ func (eIPC *egressIPClusterController) deleteEgressNode(ctx context.Context, nod
 // Update event — not only for nodes that carry a particular label — so that
 // annotation changes (written asynchronously by ovnkube-node or the
 // cloud-network-config-controller after the object is first observed) are
-// always reflected.  The function only populates structural fields
-// (egressIPConfig, mgmtIPs, labels); the health flags (isReady, isReachable,
-// isHostCIDRsReady) are left to the caller, which determines them from the
-// live node object.
+// always reflected.  The function populates structural fields (egressIPConfig,
+// mgmtIPs, labels) and isHostCIDRsReady (derived from the host-cidrs annotation).
+// The health flags isReady and isReachable are left to the caller.
 func (eIPC *egressIPClusterController) initEgressIPAllocator(node *corev1.Node) (err error) {
 	parsedEgressIPConfig, err := util.GetNodeEIPConfig(node)
 	if err != nil {
@@ -954,21 +954,32 @@ func (eIPC *egressIPClusterController) initEgressIPAllocator(node *corev1.Node) 
 	for i, subnet := range nodeSubnets {
 		mgmtIPs[i] = util.GetNodeManagementIfAddr(subnet).IP
 	}
+	// Derive isHostCIDRsReady from host-cidrs annotation (k8s.ovn.org/host-cidrs).
+	// Parse errors or empty CIDRs make the node ineligible for EgressIP assignment.
+	hostCIDRs, hostCIDRsErr := util.ParseNodeHostCIDRsDropNetMask(node)
+	isHostCIDRsReady := hostCIDRsErr == nil && hostCIDRs.Len() > 0
+	if hostCIDRsErr != nil {
+		klog.Warningf("Node %s is not egress-assignable: failed to parse host-cidrs: %v", node.Name, hostCIDRsErr)
+	} else if hostCIDRs.Len() == 0 {
+		klog.Warningf("Node %s is not egress-assignable: host-cidrs contains no host CIDRs", node.Name)
+	}
 	eIPC.nodeAllocator.Lock()
 	defer eIPC.nodeAllocator.Unlock()
 	if eNode, exists := eIPC.nodeAllocator.cache[node.Name]; !exists {
 		eIPC.nodeAllocator.cache[node.Name] = &egressNode{
-			name:           node.Name,
-			egressIPConfig: parsedEgressIPConfig,
-			mgmtIPs:        mgmtIPs,
-			allocations:    make(map[string]string),
-			healthClient:   hccAllocator.allocate(node.Name),
-			labels:         labels.Set(node.GetLabels()),
+			name:             node.Name,
+			egressIPConfig:   parsedEgressIPConfig,
+			mgmtIPs:          mgmtIPs,
+			allocations:      make(map[string]string),
+			healthClient:     hccAllocator.allocate(node.Name),
+			labels:           labels.Set(node.GetLabels()),
+			isHostCIDRsReady: isHostCIDRsReady,
 		}
 	} else {
 		eNode.egressIPConfig = parsedEgressIPConfig
 		eNode.mgmtIPs = mgmtIPs
 		eNode.labels = labels.Set(node.GetLabels())
+		eNode.isHostCIDRsReady = isHostCIDRsReady
 	}
 	return nil
 }

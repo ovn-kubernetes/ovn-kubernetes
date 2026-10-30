@@ -61,20 +61,6 @@ func (h *egressIPClusterControllerEventHandler) AddResource(ctx context.Context,
 		if isReady {
 			h.eIPC.setNodeEgressReady(node.Name, true)
 		}
-		// Record isHostCIDRsReady for every node, not only selector-matched
-		// ones. If we gated this on selector matching, a node added before any
-		// EgressIP exists would never be marked usable (chicken-and-egg: empty
-		// selector cache means no match, health flags never set, later EIPs
-		// find zero nodes). Recording it unconditionally keeps the flag fresh
-		// for when an EgressIP or the reachability loop eventually needs it.
-		hostCIDRs, err := util.ParseNodeHostCIDRsDropNetMask(node)
-		nodeHasUsableHostCIDRs := err == nil && hostCIDRs.Len() > 0
-		if err != nil {
-			klog.Warningf("Node %s is not egress-assignable: failed to parse host-cidrs: %v", node.Name, err)
-		} else if hostCIDRs.Len() == 0 {
-			klog.Warningf("Node %s is not egress-assignable: host-cidrs contains no host CIDRs", node.Name)
-		}
-		h.eIPC.setNodeHostCIDRsReady(node.Name, nodeHasUsableHostCIDRs)
 
 		isReachable := h.eIPC.isEgressNodeReachable(node)
 		if isReachable {
@@ -84,8 +70,9 @@ func (h *egressIPClusterControllerEventHandler) AddResource(ctx context.Context,
 		// EIP reconciler if this node can satisfy at least one EgressIP's
 		// selector; calling addEgressNode for every healthy node would cause
 		// needless reconciliation churn for nodes no EIP will ever use.
+		// isHostCIDRsReady was set by initEgressIPAllocator.
 		if isReachable && isReady {
-			if nodeHasUsableHostCIDRs {
+			if h.eIPC.isNodeHostCIDRsReady(node.Name) {
 				selectors := h.eIPC.getEgressIPNodeSelectors()
 				nodeLabels := labels.Set(node.GetLabels())
 				if selectors.Matches(nodeLabels) {
@@ -146,20 +133,11 @@ func (h *egressIPClusterControllerEventHandler) UpdateResource(ctx context.Conte
 		// each other. Assignment still requires ready && reachable; recording
 		// the flags unconditionally avoids stale cache when a node is not yet
 		// selected or not yet ready.
+		// isHostCIDRsReady is already updated by initEgressIPAllocator above.
 		isNewReady := h.eIPC.isEgressNodeReady(newNode)
 		h.eIPC.setNodeEgressReady(newNode.Name, isNewReady)
 		isNewReachable := h.eIPC.isEgressNodeReachable(newNode)
 		h.eIPC.setNodeEgressReachable(newNode.Name, isNewReachable)
-		if isHostCIDRsAltered {
-			newCIDRs, newErr := util.ParseNodeHostCIDRsDropNetMask(newNode)
-			newUsableHostCIDRs := newErr == nil && newCIDRs.Len() > 0
-			if newErr != nil {
-				klog.Warningf("Node %s is not egress-assignable: failed to parse host-cidrs: %v", newNode.Name, newErr)
-			} else if newCIDRs.Len() == 0 {
-				klog.Warningf("Node %s is not egress-assignable: host-cidrs contains no host CIDRs", newNode.Name)
-			}
-			h.eIPC.setNodeHostCIDRsReady(newNode.Name, newUsableHostCIDRs)
-		}
 
 		// Check selector match to decide whether assignment reconciliation is needed.
 		selectors := h.eIPC.getEgressIPNodeSelectors()
