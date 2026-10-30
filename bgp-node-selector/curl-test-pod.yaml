@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: curl-tester-1
+  namespace: red
+spec:
+  nodeName: ovn-worker3
+  containers:
+  - name: curl
+    image: curlimages/curl:8.10.1
+    command: ["sleep", "3600000"]
+  restartPolicy: Never

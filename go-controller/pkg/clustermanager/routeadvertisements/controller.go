@@ -96,6 +96,7 @@ type Controller struct {
 	frrLister         frrlisters.FRRConfigurationLister
 	nadLister         nadlisters.NetworkAttachmentDefinitionLister
 	nodeLister        corelisters.NodeLister
+	podLister         corelisters.PodLister
 	raLister          ralisters.RouteAdvertisementsLister
 	namespaceLister   corelisters.NamespaceLister
 	uplinkStateLister uplinklisters.UplinkStateLister
@@ -109,6 +110,7 @@ type Controller struct {
 	frrController         controllerutil.Controller
 	nadController         controllerutil.Controller
 	nodeController        controllerutil.Controller
+	podController         controllerutil.Controller
 	raController          controllerutil.Controller
 	nsController          controllerutil.Controller
 	uplinkStateController controllerutil.Controller
@@ -173,6 +175,7 @@ func NewController(
 		frrLister:       wf.FRRConfigurationsInformer().Lister(),
 		nadLister:       wf.NADInformer().Lister(),
 		nodeLister:      wf.NodeCoreInformer().Lister(),
+		podLister:       wf.PodCoreInformer().Lister(),
 		raLister:        wf.RouteAdvertisementsInformer().Lister(),
 		namespaceLister: wf.NamespaceInformer().Lister(),
 		frrClient:       ovnClient.FRRClient,
@@ -243,6 +246,16 @@ func NewController(
 	}
 	c.nodeController = controllerutil.NewController("clustermanager routeadvertisements node controller", nodeConfig)
 
+	podConfig := &controllerutil.ControllerConfig[corev1.Pod]{
+		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
+		Reconcile:      func(_ string) error { c.raController.ReconcileAll(); return nil },
+		Threadiness:    1,
+		Informer:       wf.PodCoreInformer().Informer(),
+		Lister:         wf.PodCoreInformer().Lister().List,
+		ObjNeedsUpdate: podNeedsUpdate,
+	}
+	c.podController = controllerutil.NewController("clustermanager routeadvertisements pod controller", podConfig)
+
 	if util.IsUplinkEnabled() {
 		uplinkStateConfig := &controllerutil.ControllerConfig[uplinkv1alpha1.UplinkState]{
 			RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
@@ -308,6 +321,7 @@ func (c *Controller) Start() error {
 		c.frrController,
 		c.nadController,
 		c.nodeController,
+		c.podController,
 		c.raController,
 	}
 	if util.IsUplinkEnabled() {
@@ -325,6 +339,7 @@ func (c *Controller) Stop() {
 		c.frrController,
 		c.nadController,
 		c.nodeController,
+		c.podController,
 		c.raController,
 	}
 	if util.IsUplinkEnabled() {
@@ -702,7 +717,11 @@ func (c *Controller) generateFRRConfigurations(ctx context.Context, ra *ratypes.
 		return nil, nil, err
 	}
 	if !nodeSelector.Empty() && advertisements.Has(ratypes.PodNetwork) {
-		return nil, nil, fmt.Errorf("%w: node selector has to select all nodes if pod network is advertised", errConfig)
+		for _, network := range selectedNetworks.networks {
+			if selectedNetworks.networkTransport[network] == types.NetworkTransportNoOverlay {
+				return nil, nil, fmt.Errorf("%w: nodeSelector is not supported for PodNetwork when selected networks use NoOverlay transport", errConfig)
+			}
+		}
 	}
 	nodes, err := c.nodeLister.List(nodeSelector)
 	if err != nil {
@@ -897,9 +916,55 @@ func (c *Controller) generateFRRConfigurations(ctx context.Context, ra *ratypes.
 		var subnets []string
 		if advertisements.Has(ratypes.PodNetwork) {
 			if networkTopology == types.Layer2Topology {
-				subnets = networkSubnets
+				if !nodeSelector.Empty() {
+					// Gateway node: advertise per-pod /32 (or /128) IPs instead of the
+					// entire L2 subnet, so that only pods actually present are reachable
+					// via the selected gateway nodes.
+					nadKeys := c.nm.GetNADKeysForNetwork(network)
+					if len(nadKeys) == 0 {
+						return nil, fmt.Errorf("%w: no NAD keys found for network %q", errConfig, network)
+					}
+					for _, nadKey := range nadKeys {
+						ns, _, err := cache.SplitMetaNamespaceKey(nadKey)
+						if err != nil {
+							return nil, fmt.Errorf("invalid NAD key %q: %w", nadKey, err)
+						}
+						pods, err := c.podLister.Pods(ns).List(labels.Everything())
+						if err != nil {
+							return nil, err
+						}
+						for _, pod := range pods {
+							if pod.Status.Phase != corev1.PodRunning || pod.Spec.HostNetwork {
+								continue
+							}
+							podIPs := util.GetPodCIDRsWithFullMaskOfNetwork(pod, nadKey)
+							for _, ipNet := range podIPs {
+								subnets = append(subnets, ipNet.String())
+							}
+						}
+					}
+				} else {
+					subnets = networkSubnets
+					if len(subnets) == 0 {
+						return nil, fmt.Errorf("%w: no layer2 subnets found", errConfig)
+					}
+				}
+			} else if !nodeSelector.Empty() {
+				// gateway node: advertise all nodes' host subnets
+				allNodes, err := c.nodeLister.List(labels.Everything())
+				if err != nil {
+					return nil, err
+				}
+				for _, n := range allNodes {
+					nodeSubnets, err := getHostSubnets(n.Name, network)
+					if err != nil {
+						// node may not have subnet annotation yet, skip it
+						continue
+					}
+					subnets = append(subnets, nodeSubnets...)
+				}
 				if len(subnets) == 0 {
-					return nil, fmt.Errorf("%w: no layer2 subnets found", errConfig)
+					return nil, fmt.Errorf("%w: will wait for subnet annotation to be set for network %q", errConfig, network)
 				}
 			} else {
 				subnets, err = getHostSubnets(nodeName, network)
@@ -2348,6 +2413,16 @@ func nodeNeedsUpdate(oldObj, newObj *corev1.Node) bool {
 		util.NodeL3GatewayAnnotationChanged(oldObj, newObj) ||
 		util.NodeChassisIDAnnotationChanged(oldObj, newObj) ||
 		util.NodeVTEPsAnnotationChanged(oldObj, newObj)
+}
+
+func podNeedsUpdate(oldObj, newObj *corev1.Pod) bool {
+	// Reconcile on pod add/delete, phase transitions, and pod-networks annotation changes
+	// (which carry the IPs used for /32 advertisements).
+	if oldObj == nil || newObj == nil {
+		return true
+	}
+	return oldObj.Status.Phase != newObj.Status.Phase ||
+		oldObj.Annotations[types.OvnPodAnnotationName] != newObj.Annotations[types.OvnPodAnnotationName]
 }
 
 func uplinkStateNeedsUpdate(oldObj, newObj *uplinkv1alpha1.UplinkState) bool {

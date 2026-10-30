@@ -28,7 +28,6 @@ type RouteAdvertisements struct {
 }
 
 // RouteAdvertisementsSpec defines the desired state of RouteAdvertisements
-// +kubebuilder:validation:XValidation:rule="(!has(self.nodeSelector.matchLabels) && !has(self.nodeSelector.matchExpressions)) || !('PodNetwork' in self.advertisements)",message="If 'PodNetwork' is selected for advertisement, a 'nodeSelector' can't be specified as it needs to be advertised on all nodes"
 // +kubebuilder:validation:XValidation:rule="!self.networkSelectors.exists(i, i.networkSelectionType != 'DefaultNetwork' && i.networkSelectionType != 'ClusterUserDefinedNetworks')",message="Only DefaultNetwork or ClusterUserDefinedNetworks can be selected"
 type RouteAdvertisementsSpec struct {
 	// targetVRF determines which VRF the routes should be advertised in.

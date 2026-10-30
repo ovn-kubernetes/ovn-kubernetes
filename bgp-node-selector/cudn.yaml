@@ -1,0 +1,17 @@
+apiVersion: k8s.ovn.org/v1
+kind: ClusterUserDefinedNetwork
+metadata:
+  name: tenant-red
+  labels:
+    advertise: "true"
+spec:
+  namespaceSelector:
+    matchLabels:
+      tenant: red
+  network:
+    topology: Layer3
+    layer3:
+      role: Primary
+      subnets:
+        - cidr: "10.200.0.0/16"
+          hostSubnet: 24

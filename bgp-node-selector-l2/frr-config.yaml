@@ -1,0 +1,17 @@
+apiVersion: frrk8s.metallb.io/v1beta1
+kind: FRRConfiguration
+metadata:
+  name: bgp-peering-blue
+  namespace: frr-k8s-system
+  labels:
+    bgp: "true"
+spec:
+  nodeSelector:
+    matchLabels:
+      role: gateway
+  bgp:
+    routers:
+      - asn: 64512
+        neighbors:
+          - asn: 64512
+            address: 172.18.0.6
