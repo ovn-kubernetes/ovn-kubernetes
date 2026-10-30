@@ -7,6 +7,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net"
@@ -644,32 +645,7 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 	})
 })
 
-// Helper functions for Layer3 subnet configurations
-func cudnLayer3SubnetsA() []udnv1.Layer3Subnet {
-	if deploymentconfig.Get().IsConfigurationEnabled(deploymentconfigapi.L3UDNMultiSubnetConfig) {
-		return []udnv1.Layer3Subnet{{
-			CIDR:       "102.102.0.0/23",
-			HostSubnet: 24,
-		}, {
-			CIDR:       "102.104.0.0/16",
-			HostSubnet: 24,
-		}, {
-			CIDR:       "2013:100:200::0/63",
-			HostSubnet: 64,
-		}, {
-			CIDR:       "2013:100:201::0/48",
-			HostSubnet: 64,
-		}}
-	}
-	return []udnv1.Layer3Subnet{{
-		CIDR:       "102.102.0.0/16",
-		HostSubnet: 24,
-	}, {
-		CIDR:       "2013:100:200::0/60",
-		HostSubnet: 64,
-	}}
-}
-
+// Helper function for Layer3 subnet configurations
 func cudnLayer3SubnetsB() []udnv1.Layer3Subnet {
 	if deploymentconfig.Get().IsConfigurationEnabled(deploymentconfigapi.L3UDNMultiSubnetConfig) {
 		return []udnv1.Layer3Subnet{{
@@ -1429,8 +1405,131 @@ var _ = ginkgo.Describe("BGP: When an advertised CUDN network is dynamically all
 	})
 })
 
+// isolationCUDNGenerator builds one of the two networks of the BGP isolation
+// setup, allocating the subnets that its topology needs.
+type isolationCUDNGenerator func(f *framework.Framework, cleanUp infraapi.ContextCleanUp) (*udnv1.ClusterUserDefinedNetwork, error)
+
+const (
+	isolationHostPortKey  = "bgp-isolation-hostport"
+	isolationHostPortBase = 25000
+	isolationHostPorts    = 1000
+)
+
+// isolationCleanUp collects the de-allocation callbacks of a run of the BGP isolation setup.
+type isolationCleanUp struct {
+	fns []func() error
+}
+
+func (c *isolationCleanUp) AddCleanUpFn(fn func() error) {
+	c.fns = append(c.fns, fn)
+}
+
+// run releases every allocation of the run. A release that fails leaves its
+// index taken in the shared allocator for good, so the errors are returned
+// rather than only logged.
+func (c *isolationCleanUp) run() error {
+	var errs []error
+	for _, fn := range c.fns {
+		if err := fn(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	c.fns = nil
+	return errors.Join(errs...)
+}
+
+// allocateIsolationLayer3Subnets allocates the subnets of a layer3 network of
+// the BGP isolation setup. On multi subnet deployments it takes a second
+// allocation and narrows the first, so that the first subnet is too small for
+// all the nodes and allocation spills over to the second.
+func allocateIsolationLayer3Subnets(f *framework.Framework, cleanUp infraapi.ContextCleanUp) ([]udnv1.Layer3Subnet, error) {
+	alloc, err := allocators.AllocateBGP(f, cleanUp)
+	if err != nil {
+		return nil, fmt.Errorf("failed to allocate network subnets: %w", err)
+	}
+
+	if !deploymentconfig.Get().IsConfigurationEnabled(deploymentconfigapi.L3UDNMultiSubnetConfig) {
+		return []udnv1.Layer3Subnet{
+			{CIDR: udnv1.CIDR(alloc.UDNSubnet), HostSubnet: 24},
+			{CIDR: udnv1.CIDR(alloc.UDNSubnet6), HostSubnet: 64},
+		}, nil
+	}
+
+	extraSubnet, err := allocators.AllocateBGP(f, cleanUp)
+	if err != nil {
+		return nil, fmt.Errorf("failed to allocate extra network subnets: %w", err)
+	}
+	return []udnv1.Layer3Subnet{
+		{CIDR: udnv1.CIDR(firstSubnetOf(alloc.UDNSubnet, 23)), HostSubnet: 24},
+		{CIDR: udnv1.CIDR(extraSubnet.UDNSubnet), HostSubnet: 24},
+		{CIDR: udnv1.CIDR(firstSubnetOf(alloc.UDNSubnet6, 63)), HostSubnet: 64},
+		{CIDR: udnv1.CIDR(extraSubnet.UDNSubnet6), HostSubnet: 64},
+	}, nil
+}
+
+// allocateIsolationLayer2Subnets allocates the subnets of a layer2 network of
+// the BGP isolation setup.
+func allocateIsolationLayer2Subnets(f *framework.Framework, cleanUp infraapi.ContextCleanUp) (udnv1.DualStackCIDRs, error) {
+	alloc, err := allocators.AllocateBGP(f, cleanUp)
+	if err != nil {
+		return nil, fmt.Errorf("failed to allocate network subnets: %w", err)
+	}
+	return udnv1.DualStackCIDRs{udnv1.CIDR(alloc.UDNSubnet), udnv1.CIDR(alloc.UDNSubnet6)}, nil
+}
+
+// newIsolationCUDN builds a network of the BGP isolation setup.
+func newIsolationCUDN(name string, network udnv1.NetworkSpec) *udnv1.ClusterUserDefinedNetwork {
+	return &udnv1.ClusterUserDefinedNetwork{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: name + "-",
+			Labels:       map[string]string{name: ""},
+		},
+		Spec: udnv1.ClusterUserDefinedNetworkSpec{Network: network},
+	}
+}
+
+// newIsolationLayer3CUDN returns a generator of layer3 network.
+// A nil noOverlay builds a network with the default transport.
+func newIsolationLayer3CUDN(name string, noOverlay *udnv1.NoOverlayConfig) isolationCUDNGenerator {
+	return func(f *framework.Framework, cleanUp infraapi.ContextCleanUp) (*udnv1.ClusterUserDefinedNetwork, error) {
+		subnets, err := allocateIsolationLayer3Subnets(f, cleanUp)
+		if err != nil {
+			return nil, err
+		}
+		network := udnv1.NetworkSpec{
+			Topology: udnv1.NetworkTopologyLayer3,
+			Layer3: &udnv1.Layer3Config{
+				Role:    udnv1.NetworkRolePrimary,
+				Subnets: subnets,
+			},
+		}
+		if noOverlay != nil {
+			network.Transport = udnv1.TransportOptionNoOverlay
+			network.NoOverlay = noOverlay
+		}
+		return newIsolationCUDN(name, network), nil
+	}
+}
+
+// newIsolationLayer2CUDN returns a generator of layer2 network.
+func newIsolationLayer2CUDN(name string) isolationCUDNGenerator {
+	return func(f *framework.Framework, cleanUp infraapi.ContextCleanUp) (*udnv1.ClusterUserDefinedNetwork, error) {
+		subnets, err := allocateIsolationLayer2Subnets(f, cleanUp)
+		if err != nil {
+			return nil, err
+		}
+		return newIsolationCUDN(name, udnv1.NetworkSpec{
+			Topology: udnv1.NetworkTopologyLayer2,
+			Layer2: &udnv1.Layer2Config{
+				Role:    udnv1.NetworkRolePrimary,
+				Subnets: subnets,
+			},
+		}), nil
+	}
+}
+
 var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
-	ginkgo.DescribeTableSubtree("between advertised networks", func(cudnATemplate, cudnBTemplate *udnv1.ClusterUserDefinedNetwork) {
+	ginkgo.DescribeTableSubtree("between advertised networks", func(cudnAGen, cudnBGen isolationCUDNGenerator) {
 		const nodePortBackendLabel = "nodeport-backend"
 		const clientNodeBackend = "client-node"
 		const remoteNodeBackend = "remote-node"
@@ -1447,9 +1546,15 @@ var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
 		// can match the longer error string.
 		const curlConnectionRefusedCode = "exit code 7"
 
+		// Label used to advertise both networks of a run with a single RA. Its
+		// value is unique per run, see isolationLabelValue below.
+		const advertisedNetworksIsolationLabel = "advertised-networks-isolation"
+
 		f := wrappedTestFramework("bgp-network-isolation")
 		f.SkipNamespaceCreation = true
 		var udnNamespaceA, udnNamespaceB *corev1.Namespace
+		// defaultNetNamespace hosts the default network workloads of this run
+		var defaultNetNamespace *corev1.Namespace
 		var nodes *corev1.NodeList
 		// podsNetA has 4 pods in cudnA, two on nodes[0], one on nodes[1], and one on nodes[2] - done in BeforeEach
 		var podsNetA []*corev1.Pod
@@ -1461,6 +1566,9 @@ var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
 		var nodesNetB []corev1.Node
 		var svcNodePortNetA, svcNodePortNetAClientNodeBackend, svcNodePortNetARemoteNodeBackend, svcNodePortNetANodePortNodeBackend, svcNodePortNetB, svcNodePortNetDefault, svcNodePortETPLocalDefault, svcNodePortETPLocalNetA *corev1.Service
 		var cudnA, cudnB *udnv1.ClusterUserDefinedNetwork
+		var cudnATemplate, cudnBTemplate *udnv1.ClusterUserDefinedNetwork
+		// de-allocation callbacks of this run, invoked in AfterAll
+		var allocCleanUp isolationCleanUp
 		var ra *rav1.RouteAdvertisements
 		var hostNetworkPort int
 		ginkgo.Context("", ginkgo.Ordered, ginkgo.ContinueOnFailure, func() {
@@ -1483,7 +1591,24 @@ var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
 				udnNamespaceB, err = createLongLivedTestingNamespace(ctx, f, f.BaseName, nsLabels)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
+				// The default network workloads of this run get their own namespace as well.
+				// They used to live in the "default" namespace with deterministic names, which
+				// collides as soon as two copies of this setup run at the same time.
+				defaultNetNamespace, err = createLongLivedTestingNamespace(ctx, f, f.BaseName+"-default", map[string]string{
+					"e2e-framework": f.BaseName,
+				})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
 				ginkgo.By("Configuring networks")
+				cudnATemplate, err = cudnAGen(f, &allocCleanUp)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				cudnBTemplate, err = cudnBGen(f, &allocCleanUp)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				networkA, err := json.Marshal(cudnATemplate.Spec.Network)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				networkB, err := json.Marshal(cudnBTemplate.Spec.Network)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				framework.Logf("Networks of this run: A %s, B %s", networkA, networkB)
 				cudnATemplate.Spec.NamespaceSelector = metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{
 					Key:      "kubernetes.io/metadata.name",
 					Operator: metav1.LabelSelectorOpIn,
@@ -1495,9 +1620,15 @@ var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
 					Values:   []string{udnNamespaceB.Name},
 				}}}
 
-				// set a common label used to advertise both networks with one RA
-				cudnATemplate.Labels["advertised-networks-isolation"] = ""
-				cudnBTemplate.Labels["advertised-networks-isolation"] = ""
+				// Set a common label used to advertise both networks with one
+				// RA. The value is unique per run so that the RA created below
+				// only selects the two networks created here: test runners that
+				// execute each spec of this ordered container in its own
+				// process run this setup concurrently, and an RA selecting
+				// another run's networks is rejected with ConfigurationError.
+				isolationLabelValue := udnNamespaceA.Name
+				cudnATemplate.Labels[advertisedNetworksIsolationLabel] = isolationLabelValue
+				cudnBTemplate.Labels[advertisedNetworksIsolationLabel] = isolationLabelValue
 
 				udnClient, err := udnclientset.NewForConfig(f.ClientConfig())
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1534,11 +1665,15 @@ var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
 				gomega.Expect(len(nodes.Items)).To(gomega.BeNumerically(">", 2))
 				// create host networked pod
 				ginkgo.By("Creating host network pods on each node")
-				// get random port in case the test retries and port is already in use on host node
-				min := 25000
-				max := 25999
-				hostNetworkPort = rand.Intn(max-min+1) + min
-				framework.Logf("Random host networked port chosen: %d", hostNetworkPort)
+				// Allocate the port cluster wide rather than picking a random
+				// one: concurrent runs of this setup bind it on the same nodes.
+				hostPortIdx, err := allocators.AllocateInt(f, isolationHostPortKey, isolationHostPorts)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				allocCleanUp.AddCleanUpFn(func() error {
+					return allocators.DeallocateInt(f, isolationHostPortKey, hostPortIdx)
+				})
+				hostNetworkPort = isolationHostPortBase + hostPortIdx
+				framework.Logf("Host networked port allocated: %d", hostNetworkPort)
 
 				ginkgo.By("Setting up pods and services")
 
@@ -1574,7 +1709,7 @@ var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
 				podNetBSpec.Spec.NodeName = nodes.Items[1].Name
 				podNetBSpec.Labels = map[string]string{"network": cudnB.Name}
 
-				podNetDefaultSpec := e2epod.NewAgnhostPod("default", fmt.Sprintf("pod-1-%s-net-default", nodes.Items[1].Name), nil, nil, []corev1.ContainerPort{{ContainerPort: 8080}}, "netexec")
+				podNetDefaultSpec := e2epod.NewAgnhostPod(defaultNetNamespace.Name, fmt.Sprintf("pod-1-%s-net-default", nodes.Items[1].Name), nil, nil, []corev1.ContainerPort{{ContainerPort: 8080}}, "netexec")
 				podNetDefaultSpec.Spec.NodeName = nodes.Items[1].Name
 				podNetDefaultSpec.Labels = map[string]string{"network": "default"}
 
@@ -1584,7 +1719,7 @@ var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
 					podsNetA = append(podsNetA, e2epod.NewPodClient(f).Create(context.TODO(), p))
 				}
 				podNetB = e2epod.PodClientNS(f, udnNamespaceB.Name).Create(context.TODO(), podNetBSpec)
-				podNetDefault = e2epod.PodClientNS(f, "default").Create(context.TODO(), podNetDefaultSpec)
+				podNetDefault = e2epod.PodClientNS(f, defaultNetNamespace.Name).Create(context.TODO(), podNetDefaultSpec)
 
 				// Create services (don't need pods to be ready).
 				familyPolicy := corev1.IPFamilyPolicyPreferDualStack
@@ -1616,16 +1751,16 @@ var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				svc.Name = "service-default"
-				svc.Namespace = "default"
+				svc.Namespace = defaultNetNamespace.Name
 				svc.Spec.Selector = map[string]string{"network": "default"}
 				svc.Spec.Type = corev1.ServiceTypeNodePort
-				svcNodePortNetDefault, err = f.ClientSet.CoreV1().Services("default").Create(context.Background(), svc, metav1.CreateOptions{})
+				svcNodePortNetDefault, err = f.ClientSet.CoreV1().Services(defaultNetNamespace.Name).Create(context.Background(), svc, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				// create one nodePort service with externalTrafficPolicy=Local in default namespace
+				// create one nodePort service with externalTrafficPolicy=Local in the default network namespace
 				svc.Name = "nodeport-default-etp-local"
 				svc.Spec.ExternalTrafficPolicy = corev1.ServiceExternalTrafficPolicyTypeLocal
-				svcNodePortETPLocalDefault, err = f.ClientSet.CoreV1().Services("default").Create(context.Background(), svc, metav1.CreateOptions{})
+				svcNodePortETPLocalDefault, err = f.ClientSet.CoreV1().Services(defaultNetNamespace.Name).Create(context.Background(), svc, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				// create one nodePort service with externalTrafficPolicy=Local in udnNamespaceA
@@ -1661,7 +1796,7 @@ var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
 								NetworkSelectionType: apitypes.ClusterUserDefinedNetworks,
 								ClusterUserDefinedNetworkSelector: &apitypes.ClusterUserDefinedNetworkSelector{
 									NetworkSelector: metav1.LabelSelector{
-										MatchLabels: map[string]string{"advertised-networks-isolation": ""},
+										MatchLabels: map[string]string{advertisedNetworksIsolationLabel: isolationLabelValue},
 									},
 								},
 							},
@@ -1762,6 +1897,13 @@ var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
 			})
 
 			ginkgo.AfterAll(func() {
+				// Release the subnets and the host port of this run even if
+				// the clean up below fails, so that a failing run does not
+				// leak them for the rest of the suite.
+				defer func() {
+					gomega.Expect(allocCleanUp.run()).To(gomega.Succeed())
+				}()
+
 				if udnNamespaceA != nil {
 					gomega.Expect(f.ClientSet.CoreV1().Pods(udnNamespaceA.Name).DeleteCollection(context.Background(), metav1.DeleteOptions{}, metav1.ListOptions{})).To(gomega.Succeed())
 				}
@@ -1827,6 +1969,11 @@ var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
 					err = f.ClientSet.CoreV1().Namespaces().Delete(context.Background(), udnNamespaceB.Name, metav1.DeleteOptions{})
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					udnNamespaceB = nil
+				}
+				if defaultNetNamespace != nil {
+					err = f.ClientSet.CoreV1().Namespaces().Delete(context.Background(), defaultNetNamespace.Name, metav1.DeleteOptions{})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					defaultNetNamespace = nil
 				}
 			})
 
@@ -2441,119 +2588,22 @@ var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
 		})
 	},
 		ginkgo.Entry("Layer3",
-			&udnv1.ClusterUserDefinedNetwork{
-				ObjectMeta: metav1.ObjectMeta{
-					GenerateName: "bgp-l3a-",
-					Labels:       map[string]string{"bgp-l3a": ""},
-				},
-				Spec: udnv1.ClusterUserDefinedNetworkSpec{
-					Network: udnv1.NetworkSpec{
-						Topology: udnv1.NetworkTopologyLayer3,
-						Layer3: &udnv1.Layer3Config{
-							Role:    "Primary",
-							Subnets: cudnLayer3SubnetsA(),
-						},
-					},
-				},
-			}, &udnv1.ClusterUserDefinedNetwork{
-				ObjectMeta: metav1.ObjectMeta{
-					GenerateName: "bgp-l3b-",
-					Labels:       map[string]string{"bgp-l3b": ""},
-				},
-				Spec: udnv1.ClusterUserDefinedNetworkSpec{
-					Network: udnv1.NetworkSpec{
-						Topology: udnv1.NetworkTopologyLayer3,
-						Layer3: &udnv1.Layer3Config{
-							Role:    "Primary",
-							Subnets: cudnLayer3SubnetsB(),
-						},
-					},
-				},
-			},
+			newIsolationLayer3CUDN("bgp-l3a", nil),
+			newIsolationLayer3CUDN("bgp-l3b", nil),
 		),
 		ginkgo.Entry("Layer3 no-overlay SNAT disabled unmanaged routing", feature.NoOverlay,
-			&udnv1.ClusterUserDefinedNetwork{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:   "bgp-l3-noovl-unmgd-net-a",
-					Labels: map[string]string{"bgp-l3-noovl-unmgd-net-a": ""},
-				},
-				Spec: udnv1.ClusterUserDefinedNetworkSpec{
-					Network: udnv1.NetworkSpec{
-						Topology: udnv1.NetworkTopologyLayer3,
-						Layer3: &udnv1.Layer3Config{
-							Role: "Primary",
-							Subnets: []udnv1.Layer3Subnet{{
-								CIDR:       "102.102.0.0/16",
-								HostSubnet: 24,
-							}, {
-								CIDR:       "2013:100:200::0/60",
-								HostSubnet: 64,
-							}},
-						},
-						Transport: udnv1.TransportOptionNoOverlay,
-						NoOverlay: &udnv1.NoOverlayConfig{
-							OutboundSNAT: udnv1.SNATDisabled,
-							Routing:      udnv1.RoutingUnmanaged,
-						},
-					},
-				},
-			}, &udnv1.ClusterUserDefinedNetwork{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:   "bgp-l3-noovl-unmgd-net-b",
-					Labels: map[string]string{"bgp-l3-noovl-unmgd-net-b": ""},
-				},
-				Spec: udnv1.ClusterUserDefinedNetworkSpec{
-					Network: udnv1.NetworkSpec{
-						Topology: udnv1.NetworkTopologyLayer3,
-						Layer3: &udnv1.Layer3Config{
-							Role: "Primary",
-							Subnets: []udnv1.Layer3Subnet{{
-								CIDR:       "103.103.0.0/16",
-								HostSubnet: 24,
-							}, {
-								CIDR:       "2014:100:200::0/60",
-								HostSubnet: 64,
-							}},
-						},
-						Transport: udnv1.TransportOptionNoOverlay,
-						NoOverlay: &udnv1.NoOverlayConfig{
-							OutboundSNAT: udnv1.SNATDisabled,
-							Routing:      udnv1.RoutingUnmanaged,
-						},
-					},
-				},
-			},
+			newIsolationLayer3CUDN("bgp-l3-noovl-unmgd-net-a", &udnv1.NoOverlayConfig{
+				OutboundSNAT: udnv1.SNATDisabled,
+				Routing:      udnv1.RoutingUnmanaged,
+			}),
+			newIsolationLayer3CUDN("bgp-l3-noovl-unmgd-net-b", &udnv1.NoOverlayConfig{
+				OutboundSNAT: udnv1.SNATDisabled,
+				Routing:      udnv1.RoutingUnmanaged,
+			}),
 		),
 		ginkgo.Entry("Layer2",
-			&udnv1.ClusterUserDefinedNetwork{
-				ObjectMeta: metav1.ObjectMeta{
-					GenerateName: "bgp-l2a-",
-					Labels:       map[string]string{"bgp-l2a": ""},
-				},
-				Spec: udnv1.ClusterUserDefinedNetworkSpec{
-					Network: udnv1.NetworkSpec{
-						Topology: udnv1.NetworkTopologyLayer2,
-						Layer2: &udnv1.Layer2Config{
-							Role:    "Primary",
-							Subnets: udnv1.DualStackCIDRs{"102.102.0.0/16", "2013:100:200::0/60"},
-						},
-					},
-				},
-			}, &udnv1.ClusterUserDefinedNetwork{
-				ObjectMeta: metav1.ObjectMeta{
-					GenerateName: "bgp-l2b-",
-					Labels:       map[string]string{"bgp-l2b": ""},
-				},
-				Spec: udnv1.ClusterUserDefinedNetworkSpec{
-					Network: udnv1.NetworkSpec{
-						Topology: udnv1.NetworkTopologyLayer2,
-						Layer2: &udnv1.Layer2Config{
-							Role:    "Primary",
-							Subnets: udnv1.DualStackCIDRs{"103.103.0.0/16", "2014:100:200::0/60"},
-						},
-					},
-				},
-			},
+			newIsolationLayer2CUDN("bgp-l2a"),
+			newIsolationLayer2CUDN("bgp-l2b"),
 		),
 	)
 })
