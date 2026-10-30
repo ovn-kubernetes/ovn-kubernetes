@@ -120,10 +120,12 @@ func TestDefaultNetworkGatewayGARP(t *testing.T) {
 
 func TestLocalMigratablePodRoutingAndGateway(t *testing.T) {
 	for _, tc := range []struct {
-		name                                                        string
+		name, transport                                             string
 		home, notReady, source, ipv6Only, routeFailure, sendFailure bool
 	}{
 		{name: "foreign target"},
+		{name: "no-overlay foreign target", transport: types.NetworkTransportNoOverlay},
+		{name: "no-overlay IPv6 target", transport: types.NetworkTransportNoOverlay, ipv6Only: true},
 		{name: "return home", home: true},
 		{name: "in progress", notReady: true},
 		{name: "source pod", source: true},
@@ -134,6 +136,8 @@ func TestLocalMigratablePodRoutingAndGateway(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require.NoError(t, config.PrepareTestConfig())
+			config.Default.Transport = tc.transport
+			t.Cleanup(func() { require.NoError(t, config.PrepareTestConfig()) })
 			config.IPv4Mode, config.IPv6Mode = !tc.ipv6Only, tc.ipv6Only
 			wf, err := factory.NewOVNKubeControllerWatchFactory(util.GetOVNClientset().GetOVNKubeControllerClientset(), "target")
 			require.NoError(t, err)
@@ -147,9 +151,9 @@ func TestLocalMigratablePodRoutingAndGateway(t *testing.T) {
 			if !tc.notReady {
 				pod.Annotations[kubevirtv1.MigrationTargetReadyTimestamp] = "ready"
 			}
-			podIP, gateway, clusterCIDR := "10.244.1.8/24", "10.244.1.1", "10.244.0.0/16"
+			podIP, gateway := "10.244.1.8/24", "10.244.1.1"
 			if tc.ipv6Only {
-				podIP, gateway, clusterCIDR = "fd00:1::8/64", "fd00:1::1", "fd00::/48"
+				podIP, gateway = "fd00:1::8/64", "fd00:1::1"
 			}
 			pod.Annotations, err = util.MarshalPodAnnotation(pod.Annotations, &util.PodAnnotation{
 				IPs: ovntest.MustParseIPNets(podIP), MAC: ovntest.MustParseMAC("0a:58:0a:f4:01:08"), Gateways: ovntest.MustParseIPs(gateway),
@@ -197,7 +201,11 @@ func TestLocalMigratablePodRoutingAndGateway(t *testing.T) {
 					if tc.home {
 						return len(routes) == 0
 					}
-					return len(routes) == 2
+					// Gateway reconciliation owns egress. Migration only adds
+					// the host destination route to the current node switch.
+					return len(routes) == 1 && routes[0].IPPrefix == "10.244.1.8" &&
+						ptr.Deref(routes[0].Policy, "") == nbdb.LogicalRouterStaticRoutePolicyDstIP &&
+						ptr.Deref(routes[0].OutputPort, "") == "rtos-target"
 				}, time.Second, 10*time.Millisecond)
 				require.Equal(t, ARPProxyMAC, garp.MAC().String())
 				if tc.sendFailure && calls == 1 {
@@ -208,13 +216,12 @@ func TestLocalMigratablePodRoutingAndGateway(t *testing.T) {
 			if tc.source {
 				pod = source
 			}
-			clusterSubnets := []config.CIDRNetworkEntry{{CIDR: ovntest.MustParseIPNet(clusterCIDR), HostSubnetLength: 24}}
 			if tc.routeFailure || tc.ipv6Only {
 				// Exercise the public coordinator: route failures and IPv6-only
 				// configurations must not attempt to send a GARP.
-				err = EnsureDefaultNetworkForLocalMigratablePod(wf, nbClient, lsManager, pod, clusterSubnets)
+				err = EnsureDefaultNetworkForLocalMigratablePod(wf, nbClient, lsManager, pod)
 			} else {
-				require.NoError(t, ensureLocalZonePodAddressesToNodeRoute(wf, nbClient, lsManager, pod, types.DefaultNetworkName, clusterSubnets))
+				require.NoError(t, ensureLocalZonePodAddressesToNodeRoute(wf, nbClient, lsManager, pod, types.DefaultNetworkName))
 				if tc.notReady || tc.source {
 					err = reconcileIPv4GatewayForMigratablePod(wf, pod)
 				} else {
@@ -230,7 +237,7 @@ func TestLocalMigratablePodRoutingAndGateway(t *testing.T) {
 				require.Zero(t, calls)
 			case tc.sendFailure:
 				require.ErrorIs(t, err, sendErr)
-				require.NoError(t, ensureLocalZonePodAddressesToNodeRoute(wf, nbClient, lsManager, pod, types.DefaultNetworkName, clusterSubnets))
+				require.NoError(t, ensureLocalZonePodAddressesToNodeRoute(wf, nbClient, lsManager, pod, types.DefaultNetworkName))
 				status, discoverErr := DiscoverLiveMigrationStatus(wf.PodCoreInformer().Lister(), pod)
 				require.NoError(t, discoverErr)
 				require.NotNil(t, status)

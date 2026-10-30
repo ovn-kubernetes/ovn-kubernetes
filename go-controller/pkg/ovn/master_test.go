@@ -624,6 +624,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		nodeAnnotator = kube.NewNodeAnnotator(&kube.Kube{KClient: kubeFakeClient}, testNode.Name)
 		l3GatewayConfig = node1.gatewayConfig(config.GatewayModeLocal, uint(vlanID))
+		l3GatewayConfig.LocalGatewaySNATSubnets = []string{clusterCIDR}
 		err = util.SetL3GatewayConfig(nodeAnnotator, l3GatewayConfig)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		if config.OVNKubernetesFeature.EnableEgressIP {
@@ -763,13 +764,33 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 				types.OVNClusterRouter, badRoute, p)
 
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			// Old nodes have no readiness marker. Keep their source route
+			// until node startup publishes the expanded host SNAT coverage.
+			l3GatewayConfig.LocalGatewaySNATSubnets = nil
+			gomega.Expect(util.SetL3GatewayConfig(nodeAnnotator, l3GatewayConfig)).To(gomega.Succeed())
+			gomega.Expect(nodeAnnotator.Run()).To(gomega.Succeed())
+
 			ginkgo.By("Syncing node with OVNK")
 			node, err := oc.kube.GetNodeForWindows(testNode.Name)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			err = oc.syncNodeManagementPortDefault(node, node.Name, []*net.IPNet{subnet})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			err = oc.syncNodeGateway(node)
+			gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("waiting for local gateway host SNAT")))
+			routes, err := libovsdbops.FindLogicalRouterStaticRoutesWithPredicate(nbClient,
+				func(route *nbdb.LogicalRouterStaticRoute) bool {
+					return route.IPPrefix == subnet.String() && route.Nexthop == badRoute.Nexthop
+				})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(routes).To(gomega.HaveLen(1), "readiness gate must preserve the old route")
+			l3GatewayConfig.LocalGatewaySNATSubnets = []string{clusterCIDR}
+			gomega.Expect(util.SetL3GatewayConfig(nodeAnnotator, l3GatewayConfig)).To(gomega.Succeed())
+			gomega.Expect(nodeAnnotator.Run()).To(gomega.Succeed())
+			node, err = oc.kube.GetNodeForWindows(testNode.Name)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			err = oc.syncNodeGateway(node)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
 			ginkgo.By("Stale route should have been removed")
 
 			skipSnat := false

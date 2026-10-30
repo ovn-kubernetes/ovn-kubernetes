@@ -129,6 +129,14 @@ if [[ "${WHAT}" != "${KV_LIVE_MIGRATION_TESTS}"* ]]; then
   skip $KV_LIVE_MIGRATION_TESTS
 fi
 
+# This scenario upgrades the running cluster itself and must have exclusive
+# access to a base-image cluster with KubeVirt and three worker nodes.
+if [[ "${OVN_KUBEVIRT_UPGRADE:-false}" == "true" ]]; then
+  require_label "KubeVirtUpgrade"
+else
+  skip_label "KubeVirtUpgrade"
+fi
+
 # Only run Localnet DHCP IPAM tests if they are explicitly requested: they
 # need the dhcp CNI plugin binary on the nodes (KIND_INSTALL_PLUGINS) and
 # NetworkQoS enabled. Contains-match, not prefix: the requesting lane carries

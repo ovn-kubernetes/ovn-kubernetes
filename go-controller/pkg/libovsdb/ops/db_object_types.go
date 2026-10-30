@@ -34,6 +34,7 @@ const (
 	// HybridNodeRouteOwnerType is transferred from egressgw to apbRoute controller with the same dbIDs
 	HybridNodeRouteOwnerType    ownerType = "HybridNodeRoute"
 	EgressIPOwnerType           ownerType = "EgressIP"
+	DefaultEgressOwnerType      ownerType = "DefaultEgress"
 	EgressServiceOwnerType      ownerType = "EgressService"
 	ClusterNodeIPsOwnerType     ownerType = "ClusterNodeIPs"
 	MulticastNamespaceOwnerType ownerType = "MulticastNS"
@@ -72,6 +73,8 @@ const (
 	CIDRKey                 ExternalIDKey = types.OvnK8sPrefix + "/cidr"
 	PortPolicyProtocolKey   ExternalIDKey = "port-policy-protocol"
 	RouterNameKey           ExternalIDKey = "router-name"
+	ChainKey                ExternalIDKey = "chain"
+	MatchKey                ExternalIDKey = "match"
 )
 
 // ObjectIDsTypes should only be created here
@@ -380,6 +383,18 @@ var PortGroupUDN = newObjectIDsType(portGroup, UDNIsolationOwnerType, []External
 	// currently uses:
 	// secondaryPods - on default network switch to distinguish non-primary pods
 	ObjectNameKey,
+})
+
+var LogicalRouterPolicyDefaultEgress = newObjectIDsType(logicalRouterPolicy, DefaultEgressOwnerType, []ExternalIDKey{
+	RouterNameKey,
+	ChainKey,
+	PriorityKey,
+	MatchKey,
+})
+
+var LogicalRouterStaticRouteDefaultEgress = newObjectIDsType(logicalRouterStaticRoute, DefaultEgressOwnerType, []ExternalIDKey{
+	RouterNameKey,
+	CIDRKey,
 })
 
 var LogicalRouterPolicyEgressIP = newObjectIDsType(logicalRouterPolicy, EgressIPOwnerType, []ExternalIDKey{

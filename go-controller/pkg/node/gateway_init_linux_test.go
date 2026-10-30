@@ -98,7 +98,7 @@ add chain inet ovn-kubernetes ovn-kube-local-gw-masq { type nat hook postrouting
 add rule inet ovn-kubernetes ovn-kube-local-gw-masq ip saddr 169.254.169.1 masquerade
 add rule inet ovn-kubernetes ovn-kube-local-gw-masq jump ovn-kube-pod-subnet-masq
 add chain inet ovn-kubernetes ovn-kube-pod-subnet-masq
-add rule inet ovn-kubernetes ovn-kube-pod-subnet-masq ip saddr 10.1.1.0/24 masquerade
+add rule inet ovn-kubernetes ovn-kube-pod-subnet-masq ip saddr 10.1.0.0/16 masquerade
 `
 
 // The additional rules expected if initGatewayNFTables() is called
@@ -529,6 +529,7 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 		}
 
 		expectedNFT := nftablesRulesBase + nftablesRulesGatewayServices
+		expectedNFT += "add chain inet ovn-kubernetes ovn-kube-pod-subnet-masq\n"
 		err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 		Expect(err).NotTo(HaveOccurred())
 
@@ -1262,6 +1263,22 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 				ovsClient,
 			)
 			Expect(err).NotTo(HaveOccurred())
+			// Readiness must only become visible after the initial host rules
+			// cover the entire cluster, before later gateway Init/reconciliation.
+			var readyCIDRs []string
+			for _, subnet := range config.Default.ClusterSubnets {
+				readyCIDRs = append(readyCIDRs, subnet.CIDR.String())
+				family := "ip"
+				if utilnet.IsIPv6CIDR(subnet.CIDR) {
+					family = "ip6"
+				}
+				var rules []string
+				for _, rule := range nft.Table.Chains[nftablesPodSubnetMasqChain].Rules {
+					rules = append(rules, rule.Rule)
+				}
+				Expect(rules).To(ContainElement(fmt.Sprintf("%s saddr %s masquerade", family, subnet.CIDR)))
+			}
+
 			ovs, err := ovsops.GetOpenvSwitch(ovsClient)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(ovs.ExternalIDs).To(HaveKeyWithValue("ovn-bridge-mappings", types.PhysicalNetworkName+":breth0"))
@@ -1272,6 +1289,11 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 
 			err = nodeAnnotator.Run()
 			Expect(err).NotTo(HaveOccurred())
+			annotatedNode, err := kubeFakeClient.CoreV1().Nodes().Get(context.Background(), nodeName, metav1.GetOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			gatewayConfig, err := util.ParseNodeL3GatewayAnnotation(annotatedNode)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(gatewayConfig.LocalGatewaySNATSubnets).To(ConsistOf(readyCIDRs))
 
 			// we cannot start the shared gw directly because it will spawn a goroutine that may not be bound to the test netns
 			// Start does two things, starts nodeIPManager which spawns a go routine and also starts openflow manager by spawning a go routine

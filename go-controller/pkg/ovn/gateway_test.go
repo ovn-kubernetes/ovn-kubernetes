@@ -98,7 +98,7 @@ func generateGatewayInitExpectedNB(testData []libovsdbtest.TestData, expectedOVN
 // northbound rows gatewayInit is expected to produce for a node, so that callers
 // can assert on the whole database. The rows depend on the configured gateway
 // mode: pod egress leaves the cluster router by a default route to the gateway
-// router in shared mode, and by a per-node-subnet src-ip route to the
+// router in shared mode, and by a default route to the
 // management port in local mode.
 func generateGatewayInitExpectedNBWithPodNetworkAdvertised(testData []libovsdbtest.TestData, expectedOVNClusterRouter *nbdb.LogicalRouter,
 	expectedNodeSwitch *nbdb.LogicalSwitch, nodeName string, clusterIPSubnets []*net.IPNet, hostSubnets []*net.IPNet,
@@ -155,36 +155,22 @@ func generateGatewayInitExpectedNBWithPodNetworkAdvertised(testData []libovsdbte
 		})
 
 	}
-	if config.Gateway.Mode == config.GatewayModeShared {
-		// Pod egress is expressed as a single default route per IP family to
-		// the local gateway router, rather than one src-ip route per node
-		// subnet.
-		for i, joinLRPIP := range joinLRPIPs {
-			allIPs := "0.0.0.0/0"
-			if utilnet.IsIPv6CIDR(joinLRPIP) {
-				allIPs = "::/0"
-			}
-			ocrStaticRouteNamedUUID := fmt.Sprintf("default-static-route-ovn-cluster-router-%v-UUID", i)
-			expectedOVNClusterRouter.StaticRoutes = append(expectedOVNClusterRouter.StaticRoutes, ocrStaticRouteNamedUUID)
-			testData = append(testData, &nbdb.LogicalRouterStaticRoute{
-				UUID:     ocrStaticRouteNamedUUID,
-				IPPrefix: allIPs,
-				Nexthop:  joinLRPIP.IP.String(),
-			})
+	for i, hostSubnet := range hostSubnets {
+		allIPs := "0.0.0.0/0"
+		if utilnet.IsIPv6CIDR(hostSubnet) {
+			allIPs = "::/0"
 		}
-	}
-	if config.Gateway.Mode == config.GatewayModeLocal && nodeMgmtPortIP != "" {
-		for i, hostSubnet := range hostSubnets {
-			ocrStaticRouteNamedUUID := fmt.Sprintf("subnet-static-route-ovn-cluster-router-%v-UUID", i)
-			expectedOVNClusterRouter.StaticRoutes = append(expectedOVNClusterRouter.StaticRoutes, ocrStaticRouteNamedUUID)
-			testData = append(testData, &nbdb.LogicalRouterStaticRoute{
-				UUID:     ocrStaticRouteNamedUUID,
-				Policy:   &nbdb.LogicalRouterStaticRoutePolicySrcIP,
-				IPPrefix: hostSubnet.String(),
-				Nexthop:  nodeMgmtPortIP,
-			})
+		joinIP, err := util.MatchFirstIPNetFamily(utilnet.IsIPv6CIDR(hostSubnet), joinLRPIPs)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		nextHop := joinIP.IP.String()
+		if config.Gateway.Mode == config.GatewayModeLocal {
+			nextHop = util.GetNodeManagementIfAddr(hostSubnet).IP.String()
 		}
+		uuid := fmt.Sprintf("default-static-route-ovn-cluster-router-%v-UUID", i)
+		expectedOVNClusterRouter.StaticRoutes = append(expectedOVNClusterRouter.StaticRoutes, uuid)
+		testData = append(testData, &nbdb.LogicalRouterStaticRoute{UUID: uuid, IPPrefix: allIPs, Nexthop: nextHop, ExternalIDs: defaultEgressRouteExternalIDs(expectedOVNClusterRouter.Name, allIPs)})
 	}
+	testData = appendDefaultEgressExpectedPolicies(testData, expectedOVNClusterRouter, nodeName, &util.DefaultNetInfo{}, hostSubnets, joinLRPIPs)
 
 	if hasIPv4 {
 		staticServiceRouteNamedUUID := "static-service-route-v4-UUID"
@@ -2161,7 +2147,7 @@ var _ = ginkgo.Describe("Gateway Init Operations", func() {
 				},
 			})
 
-			err := newGatewayManager(fakeOvn, nodeName).Cleanup()
+			err := newGatewayManager(fakeOvn, nodeName).Cleanup(fakeOvn.controller.nodeName)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			expectedDatabaseState := []libovsdbtest.TestData{
@@ -2297,7 +2283,7 @@ var _ = ginkgo.Describe("Gateway Init Operations", func() {
 					},
 				},
 			})
-			err := newGatewayManager(fakeOvn, nodeName).Cleanup()
+			err := newGatewayManager(fakeOvn, nodeName).Cleanup(fakeOvn.controller.nodeName)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			expectedDatabaseState := []libovsdbtest.TestData{

@@ -175,6 +175,11 @@ type L3GatewayConfig struct {
 	NextHops            []net.IP
 	NodePortEnable      bool
 	VLANID              *uint
+
+	// LocalGatewaySNATSubnets records the cluster CIDRs whose host SNAT rules
+	// are installed. Old nodes omit this, so routing upgrades wait for the
+	// node's host setup before sending retained VM addresses through mp0.
+	LocalGatewaySNATSubnets []string
 }
 
 type l3GatewayConfigJSON struct {
@@ -192,6 +197,8 @@ type l3GatewayConfigJSON struct {
 	NextHop             string             `json:"next-hop,omitempty"`
 	NodePortEnable      string             `json:"node-port-enable,omitempty"`
 	VLANID              string             `json:"vlan-id,omitempty"`
+
+	LocalGatewaySNATSubnets []string `json:"local-gateway-snat-subnets,omitempty"`
 }
 
 func (cfg *L3GatewayConfig) MarshalJSON() ([]byte, error) {
@@ -202,6 +209,7 @@ func (cfg *L3GatewayConfig) MarshalJSON() ([]byte, error) {
 		return json.Marshal(&cfgjson)
 	}
 
+	cfgjson.LocalGatewaySNATSubnets = cfg.LocalGatewaySNATSubnets
 	cfgjson.BridgeID = cfg.BridgeID
 	cfgjson.InterfaceID = cfg.InterfaceID
 	cfgjson.MACAddress = cfg.MACAddress.String()
@@ -250,6 +258,7 @@ func (cfg *L3GatewayConfig) UnmarshalJSON(bytes []byte) error {
 		return fmt.Errorf("bad 'mode' value %q", cfgjson.Mode)
 	}
 
+	cfg.LocalGatewaySNATSubnets = cfgjson.LocalGatewaySNATSubnets
 	cfg.BridgeID = cfgjson.BridgeID
 	cfg.InterfaceID = cfgjson.InterfaceID
 	cfg.EgressGWInterfaceID = cfgjson.EgressGWInterfaceID

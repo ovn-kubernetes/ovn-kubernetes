@@ -735,7 +735,7 @@ func (bsnc *BaseUserDefinedNetworkController) WatchMultiNetworkPolicy() error {
 // even when nodes are gone.
 func cleanupGatewayRoutersForNetworkFromDB(nbClient libovsdbclient.Client,
 	netInfo util.NetInfo,
-	clusterRouterName, joinSwitchName string,
+	clusterRouterName, joinSwitchName, localNodeName string,
 ) error {
 	var errs []error
 	networkName := netInfo.GetNetworkName()
@@ -751,7 +751,7 @@ func cleanupGatewayRoutersForNetworkFromDB(nbClient libovsdbclient.Client,
 	for _, lr := range routers {
 		nodeName := netInfo.RemoveNetworkScopeFromName(util.GetWorkerFromGatewayRouter(lr.Name))
 		gw := NewGatewayManagerForCleanup(nbClient, netInfo, clusterRouterName, joinSwitchName, lr.Name, nodeName, layer2UseTransitRouter)
-		if err := gw.Cleanup(); err != nil {
+		if err := gw.Cleanup(localNodeName); err != nil {
 			errs = append(errs, fmt.Errorf("failed to cleanup gateway router %s for network %q (node %s): %w", lr.Name, networkName, nodeName, err))
 		}
 	}

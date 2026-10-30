@@ -152,8 +152,12 @@ type operationModel struct {
 	Model interface{}
 	// ModelPredicate specifies a predicate to look up models in the cache.
 	// If Model is provided with non-zero index column values, ModelPredicate
-	// will be ignored.
+	// will be ignored unless FilterIndexedResults is set.
 	ModelPredicate interface{}
+	// FilterIndexedResults applies ModelPredicate to candidates found through
+	// a non-UUID index. Use it when that index does not uniquely identify the
+	// desired object. UUID lookups retain their precedence over predicates.
+	FilterIndexedResults bool
 	// ExistingResult is where the results of the look up are added to.
 	// Required when Model is not specified.
 	ExistingResult interface{}
@@ -472,7 +476,17 @@ func (m *modelClient) where(opModel *operationModel) error {
 	ctx, cancel := context.WithTimeout(context.Background(), config.Default.OVSDBTxnTimeout)
 	defer cancel()
 	var err error
-	if err = m.client.Where(copyModel).List(ctx, opModel.ExistingResult); err != nil {
+	lookup := m.client.Where(copyModel)
+	if opModel.FilterIndexedResults && getUUID(copyModel) == "" && opModel.ModelPredicate != nil {
+		candidates := getListFromModel(copyModel)
+		if err = lookup.List(ctx, candidates); err != nil {
+			return err
+		}
+		// Restrict even an empty candidate set; falling back to a full scan
+		// could select an unrelated object that happens to match the predicate.
+		lookup = m.client.WhereCacheByUUIDs(opModel.ModelPredicate, extractUUIDsFromModels(candidates)...)
+	}
+	if err = lookup.List(ctx, opModel.ExistingResult); err != nil {
 		return err
 	}
 	if opModel.Model == nil || opModel.BulkOp {

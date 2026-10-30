@@ -21,7 +21,6 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	nodecontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/node"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kubevirt"
-	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/addresssetmanager"
@@ -166,8 +165,7 @@ func (oc *DefaultNetworkController) ensureLocalZonePod(ctx context.Context, oldP
 	}
 
 	if kubevirt.IsPodLiveMigratable(pod) {
-		v4Subnets, v6Subnets := util.GetClusterSubnetsWithHostPrefix()
-		return kubevirt.EnsureDefaultNetworkForLocalMigratablePod(oc.watchFactory, oc.nbClient, oc.lsManager, pod, append(v4Subnets, v6Subnets...))
+		return kubevirt.EnsureDefaultNetworkForLocalMigratablePod(oc.watchFactory, oc.nbClient, oc.lsManager, pod)
 	}
 
 	return nil
@@ -296,6 +294,7 @@ func (oc *DefaultNetworkController) syncNodeGateway(node *corev1.Node) error {
 
 	if err := oc.newGatewayManager(node.Name).SyncGateway(node,
 		gwConfig,
+		oc.nodeName,
 	); err != nil {
 		return fmt.Errorf("error creating gateway for node %s: %v", node.Name, err)
 	}
@@ -373,10 +372,6 @@ func (oc *DefaultNetworkController) InitEgressServiceZoneController() (*egresssv
 	ensureNodeNoReroutePolicies := func(_ libovsdbclient.Client, _ addressset.AddressSetFactory, _, _, _ string, _ addressset.AddressSet, _, _ bool) error {
 		return nil
 	}
-	// used only when IC=true
-	createDefaultNodeRouteToExternal := func(_ libovsdbclient.Client, _, _ string, _ []config.CIDRNetworkEntry, _ []*net.IPNet) error {
-		return nil
-	}
 
 	if !config.OVNKubernetesFeature.EnableEgressIP {
 		initClusterEgressPolicies = func(nbClient libovsdbclient.Client, addressSetFactory addressset.AddressSetFactory,
@@ -388,15 +383,13 @@ func (oc *DefaultNetworkController) InitEgressServiceZoneController() (*egresssv
 			return InitClusterEgressPolicies(nbClient, addressSetFactory, ni, clusterSubnets, controllerName, routerName, clusterNodeIPsAddrSetDbIDs)
 		}
 		ensureNodeNoReroutePolicies = func(nbClient libovsdbclient.Client, addressSetFactory addressset.AddressSetFactory,
-			network, router, controller string, clusterNodesAddressSets addressset.AddressSet, v4, v6 bool) error {
-			return ensureDefaultNoRerouteNodePolicies(nbClient, addressSetFactory, network, router, controller, clusterNodesAddressSets, v4, v6)
+			_, router, controller string, clusterNodesAddressSets addressset.AddressSet, v4, v6 bool) error {
+			return ensureDefaultNoRerouteNodePolicies(nbClient, addressSetFactory, oc.GetNetInfo(), router, controller, clusterNodesAddressSets, v4, v6)
 		}
-		createDefaultNodeRouteToExternal = libovsdbutil.CreateDefaultRouteToExternal
 	}
 
 	return egresssvc_zone.NewController(oc.GetNetInfo(), ovntypes.DefaultNetworkControllerName, oc.client, oc.nbClient, oc.addressSetFactory,
 		oc.addressSetManager, initClusterEgressPolicies, ensureNodeNoReroutePolicies,
-		createDefaultNodeRouteToExternal,
 		oc.stopChan, oc.watchFactory.EgressServiceInformer(), oc.watchFactory.ServiceCoreInformer(),
 		oc.watchFactory.EndpointSliceCoreInformer(),
 		oc.watchFactory.NodeCoreInformer(), oc.watchFactory.PodCoreInformer(), oc.nodeName)

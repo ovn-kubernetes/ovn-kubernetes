@@ -150,6 +150,20 @@ const (
 	EgressIPSNATMarkPriority           = 95
 	EgressLiveMigrationReroutePriority = 10
 
+	// Default egress uses a main-chain jump below EgressIP. The remaining
+	// priorities are private to the default-egress and default-egress-node chains.
+	// OVN versions without chain checks on ECMP policy flows can match a main
+	// chain EgressIP policy again after a jump. Every fallback decision, even
+	// the terminal allow, must outrank EgressIP's priority 100 to prevent this.
+	DefaultEgressTerminalPriority    = 110
+	DefaultEgressJumpPriority        = 90
+	DefaultEgressDestinationPriority = 140
+	DefaultEgressLocalPriority       = 130
+	DefaultEgressClusterPriority     = 120
+	DefaultEgressChain               = "default-egress"
+	DefaultEgressNodeChain           = "default-egress-node"
+	DefaultEgressControllerName      = "default-egress-controller"
+
 	// EndpointSliceMirrorControllerName mirror EndpointSlice controller name (used as a value for the "endpointslice.kubernetes.io/managed-by" label)
 	EndpointSliceMirrorControllerName = "endpointslice-mirror-controller.k8s.ovn.org"
 	// EndpointSliceDefaultControllerName default kubernetes EndpointSlice controller name (used as a value for the "endpointslice.kubernetes.io/managed-by" label)

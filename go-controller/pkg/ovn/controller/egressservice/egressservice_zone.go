@@ -29,7 +29,6 @@ import (
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	controllerutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	egressserviceapi "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1"
 	egressserviceinformer "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/informers/externalversions/egressservice/v1"
@@ -55,7 +54,6 @@ type InitClusterEgressPoliciesFunc func(client libovsdbclient.Client, addressSet
 type EnsureNoRerouteNodePoliciesFunc func(client libovsdbclient.Client, addressSetFactory addressset.AddressSetFactory,
 	networkName, clusterRouter, controllerName string, clusterNodesAddressSets addressset.AddressSet, v4, v6 bool) error
 type DeleteLegacyDefaultNoRerouteNodePoliciesFunc func(nbClient libovsdbclient.Client, clusterRouter, nodeName string) error
-type CreateDefaultRouteToExternalFunc func(nbClient libovsdbclient.Client, clusterRouter, gwRouterName string, clusterSubnets []config.CIDRNetworkEntry, gatewayIPs []*net.IPNet) error
 
 type Controller struct {
 	// network information
@@ -67,9 +65,8 @@ type Controller struct {
 	stopCh         <-chan struct{}
 	sync.Mutex
 
-	initClusterEgressPolicies         InitClusterEgressPoliciesFunc
-	ensureNoRerouteNodePolicies       EnsureNoRerouteNodePoliciesFunc
-	createDefaultRouteToExternalForIC CreateDefaultRouteToExternalFunc
+	initClusterEgressPolicies   InitClusterEgressPoliciesFunc
+	ensureNoRerouteNodePolicies EnsureNoRerouteNodePoliciesFunc
 
 	services       map[string]*svcState  // svc key -> state, for services that have sourceIPBy LBIP
 	nodes          map[string]*nodeState // node name -> state, contains nodes that host an egress service
@@ -133,7 +130,6 @@ func NewController(
 	addressSetManager *addresssetmanager.AddressSetManager,
 	initClusterEgressPolicies InitClusterEgressPoliciesFunc,
 	ensureNoRerouteNodePolicies EnsureNoRerouteNodePoliciesFunc,
-	createDefaultRouteToExternalForIC CreateDefaultRouteToExternalFunc,
 	stopCh <-chan struct{},
 	esInformer egressserviceinformer.EgressServiceInformer,
 	serviceInformer coreinformers.ServiceInformer,
@@ -144,20 +140,19 @@ func NewController(
 	klog.Info("Setting up event handlers for Egress Services")
 
 	c := &Controller{
-		NetInfo:                           netInfo,
-		controllerName:                    controllerName,
-		client:                            client,
-		nbClient:                          nbClient,
-		addressSetFactory:                 addressSetFactory,
-		addressSetManager:                 addressSetManager,
-		initClusterEgressPolicies:         initClusterEgressPolicies,
-		ensureNoRerouteNodePolicies:       ensureNoRerouteNodePolicies,
-		createDefaultRouteToExternalForIC: createDefaultRouteToExternalForIC,
-		stopCh:                            stopCh,
-		services:                          map[string]*svcState{},
-		nodes:                             map[string]*nodeState{},
-		nodesZoneState:                    map[string]bool{},
-		zone:                              zone,
+		NetInfo:                     netInfo,
+		controllerName:              controllerName,
+		client:                      client,
+		nbClient:                    nbClient,
+		addressSetFactory:           addressSetFactory,
+		addressSetManager:           addressSetManager,
+		initClusterEgressPolicies:   initClusterEgressPolicies,
+		ensureNoRerouteNodePolicies: ensureNoRerouteNodePolicies,
+		stopCh:                      stopCh,
+		services:                    map[string]*svcState{},
+		nodes:                       map[string]*nodeState{},
+		nodesZoneState:              map[string]bool{},
+		zone:                        zone,
 	}
 
 	c.egressServiceLister = esInformer.Lister()

@@ -16,9 +16,7 @@ import (
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/udn"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	logicalswitchmanager "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -65,8 +63,8 @@ func DeleteRoutingForMigratedPod(nbClient libovsdbclient.Client, pod *corev1.Pod
 // for a local live-migratable pod and refreshes its IPv4 gateway neighbor entry
 // when the migration target is ready.
 func EnsureDefaultNetworkForLocalMigratablePod(watchFactory *factory.WatchFactory, nbClient libovsdbclient.Client,
-	lsManager *logicalswitchmanager.LogicalSwitchManager, pod *corev1.Pod, clusterSubnets []config.CIDRNetworkEntry) error {
-	if err := ensureLocalZonePodAddressesToNodeRoute(watchFactory, nbClient, lsManager, pod, types.DefaultNetworkName, clusterSubnets); err != nil {
+	lsManager *logicalswitchmanager.LogicalSwitchManager, pod *corev1.Pod) error {
+	if err := ensureLocalZonePodAddressesToNodeRoute(watchFactory, nbClient, lsManager, pod, types.DefaultNetworkName); err != nil {
 		return fmt.Errorf("failed ensuring local-zone migration routes for pod %s/%s: %w", pod.Namespace, pod.Name, err)
 	}
 	if config.IPv4Mode {
@@ -78,13 +76,10 @@ func EnsureDefaultNetworkForLocalMigratablePod(watchFactory *factory.WatchFactor
 // ensureLocalZonePodAddressesToNodeRoute adds static routes to the ovn_cluster_router logical router
 // so VM traffic works as expected after live migration when the pod is running in the local zone.
 //
-// Following is the list of NB logical resources created:
-//
-//   - static route with cluster wide CIDR as src-ip prefix and nexthop GR; it has less
-//     priority than route to use overlay in case of pod to pod communication
-//   - static route with VM ip as dst-ip prefix and output port the LRP pointing to the VM's node switch
+// It creates a destination host route pointing to the VM's node switch.
+// Egress defaults are owned by gateway reconciliation.
 func ensureLocalZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory, nbClient libovsdbclient.Client,
-	lsManager *logicalswitchmanager.LogicalSwitchManager, pod *corev1.Pod, nadKey string, clusterSubnets []config.CIDRNetworkEntry) error {
+	lsManager *logicalswitchmanager.LogicalSwitchManager, pod *corev1.Pod, nadKey string) error {
 	vmReady, err := virtualMachineReady(watchFactory, pod)
 	if err != nil {
 		return err
@@ -106,21 +101,6 @@ func ensureLocalZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory, 
 			return fmt.Errorf("failed configuring pod routing when deleting stale static routes or policies for pod %s/%s: %v", pod.Namespace, pod.Name, err)
 		}
 		return nil
-	}
-
-	// NOTE: EIP & ESVC use same route and if this is already present thanks to
-	// those features, this will be a no-op.
-	node, err := watchFactory.GetNode(pod.Spec.NodeName)
-	if err != nil {
-		return fmt.Errorf("failed getting to list node %q for pod %s/%s: %w", pod.Spec.NodeName, pod.Namespace, pod.Name, err)
-	}
-	gatewayIPs, err := udn.GetGWRouterIPs(node, &util.DefaultNetInfo{})
-	if err != nil {
-		return fmt.Errorf("failed to get default network gateway router join IPs for node %q: %w", node.Name, err)
-	}
-	if err := libovsdbutil.CreateDefaultRouteToExternal(nbClient, types.OVNClusterRouter,
-		types.GWRouterPrefix+pod.Spec.NodeName, clusterSubnets, gatewayIPs); err != nil {
-		return err
 	}
 
 	for _, podIP := range podAnnotation.IPs {
