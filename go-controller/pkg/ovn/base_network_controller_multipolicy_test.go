@@ -173,6 +173,47 @@ var _ = Describe("convertMultiNetPolicyToNetPolicy", func() {
 			))
 	})
 
+	It("translates an IPAM policy with a bare IP in the `ipBlock` except list", func() {
+		allowPeerSelectors := true
+		ingress := multiNetPolicyWithIngressIPBlock()
+		ingress.Spec.Ingress[0].From[0].IPBlock.Except = []string{"10.10.1.42"}
+		Expect(convertMultiNetPolicyToNetPolicy(ingress, allowPeerSelectors)).To(Equal(
+			&netv1.NetworkPolicy{
+				Spec: netv1.NetworkPolicySpec{
+					Ingress: []netv1.NetworkPolicyIngressRule{
+						{
+							From:  []netv1.NetworkPolicyPeer{{IPBlock: &netv1.IPBlock{CIDR: "10.10.0.0/16", Except: []string{"10.10.1.42/32"}}}},
+							Ports: []netv1.NetworkPolicyPort{},
+						},
+					},
+					Egress:      []netv1.NetworkPolicyEgressRule{},
+					PolicyTypes: []netv1.PolicyType{},
+				},
+			},
+		), "a bare IP in except should be converted to a single-host CIDR")
+	})
+
+	It("translates an IPAM policy with a bare IPv6 address in the `ipBlock` except list", func() {
+		allowPeerSelectors := true
+		ingress := multiNetPolicyWithIngressIPBlock()
+		ingress.Spec.Ingress[0].From[0].IPBlock.CIDR = "fd00::/64"
+		ingress.Spec.Ingress[0].From[0].IPBlock.Except = []string{"fd00::1"}
+		Expect(convertMultiNetPolicyToNetPolicy(ingress, allowPeerSelectors)).To(Equal(
+			&netv1.NetworkPolicy{
+				Spec: netv1.NetworkPolicySpec{
+					Ingress: []netv1.NetworkPolicyIngressRule{
+						{
+							From:  []netv1.NetworkPolicyPeer{{IPBlock: &netv1.IPBlock{CIDR: "fd00::/64", Except: []string{"fd00::1/128"}}}},
+							Ports: []netv1.NetworkPolicyPort{},
+						},
+					},
+					Egress:      []netv1.NetworkPolicyEgressRule{},
+					PolicyTypes: []netv1.PolicyType{},
+				},
+			},
+		), "a bare IPv6 address in except should be converted to a /128 CIDR")
+	})
+
 	It("ignores malformed `ipBlock` peers and drops rules left without peers", func() {
 		allowPeerSelectors := true
 		for _, ipBlock := range []*v1beta1.IPBlock{
