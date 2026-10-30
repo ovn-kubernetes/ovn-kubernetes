@@ -127,6 +127,19 @@ func (e *egressIPDial) dial(ip net.IP, timeout time.Duration) bool {
 
 var hccAllocator healthcheckClientAllocator = &egressIPHealthcheckClientAllocator{}
 
+// MultiSelector is a set of compiled label selectors with OR-match semantics.
+type MultiSelector []labels.Selector
+
+// Matches reports whether the given labels match any selector in the set.
+func (ms MultiSelector) Matches(l labels.Set) bool {
+	for _, sel := range ms {
+		if sel.Matches(l) {
+			return true
+		}
+	}
+	return false
+}
+
 // egressNode is a cache helper used for egress IP assignment, representing an egress node
 type egressNode struct {
 	egressIPConfig     *util.ParsedNodeEgressIPConfiguration
@@ -439,6 +452,11 @@ type egressIPClusterController struct {
 	retryEgressIPs *objretry.RetryFramework
 	// retry framework for Cloud private IP config
 	retryCloudPrivateIPConfig *objretry.RetryFramework
+	// egressIPNodeSelectors caches each EgressIP's compiled egressNodeSelector.
+	// Updated by reconcileEgressIP; read by node event handlers and the
+	// reachability loop via getEgressIPNodeSelectors().
+	egressIPNodeSelectorsMu sync.RWMutex
+	egressIPNodeSelectors   map[string]labels.Selector
 	// egressNodes events factory handler
 	egressNodeHandler *factory.Handler
 	// egressIP events factory handler
@@ -469,6 +487,7 @@ func newEgressIPController(ovnClient *util.OVNClusterManagerClientset, wf *facto
 		egressIPTotalTimeout:              config.OVNKubernetesFeature.EgressIPReachabiltyTotalTimeout,
 		reachabilityCheckInterval:         egressIPReachabilityCheckInterval,
 		egressIPNodeHealthCheckPort:       config.OVNKubernetesFeature.EgressIPNodeHealthCheckPort,
+		egressIPNodeSelectors:             make(map[string]labels.Selector),
 		stopChan:                          make(chan struct{}),
 	}
 	eIPC.initRetryFramework()
@@ -601,8 +620,47 @@ func (eIPC *egressIPClusterController) initEgressNodeReachability(ctx context.Co
 		eIPC.ensureAllocatorEgressIPAssignments(egressIP)
 	}
 
+	// Prepopulate the selector cache so the reachability goroutine has selectors
+	// from its first tick. reconcileEgressIP keeps the cache current after
+	// WatchEgressIP starts.
+	eIPC.egressIPNodeSelectorsMu.Lock()
+	for _, eIP := range egressIPs {
+		sel, err := egressNodeSelectorFromSpec(eIP.Spec.EgressNodeSelector)
+		if err != nil {
+			klog.Warningf("Skipping invalid egressNodeSelector for EgressIP %s while prepopulating selector cache: %v", eIP.Name, err)
+			continue
+		}
+		eIPC.egressIPNodeSelectors[eIP.Name] = sel
+	}
+	eIPC.egressIPNodeSelectorsMu.Unlock()
+
 	go eIPC.checkEgressNodesReachability()
 	return nil
+}
+
+// setEgressIPNodeSelector stores a compiled selector for the given EgressIP.
+func (eIPC *egressIPClusterController) setEgressIPNodeSelector(name string, sel labels.Selector) {
+	eIPC.egressIPNodeSelectorsMu.Lock()
+	defer eIPC.egressIPNodeSelectorsMu.Unlock()
+	eIPC.egressIPNodeSelectors[name] = sel
+}
+
+// deleteEgressIPNodeSelector removes the selector for the given EgressIP.
+func (eIPC *egressIPClusterController) deleteEgressIPNodeSelector(name string) {
+	eIPC.egressIPNodeSelectorsMu.Lock()
+	defer eIPC.egressIPNodeSelectorsMu.Unlock()
+	delete(eIPC.egressIPNodeSelectors, name)
+}
+
+// getEgressIPNodeSelectors returns a snapshot of all cached EgressIP selectors.
+func (eIPC *egressIPClusterController) getEgressIPNodeSelectors() MultiSelector {
+	eIPC.egressIPNodeSelectorsMu.RLock()
+	defer eIPC.egressIPNodeSelectorsMu.RUnlock()
+	ms := make(MultiSelector, 0, len(eIPC.egressIPNodeSelectors))
+	for _, sel := range eIPC.egressIPNodeSelectors {
+		ms = append(ms, sel)
+	}
+	return ms
 }
 
 func (eIPC *egressIPClusterController) setNodeEgressAssignable(nodeName string, isAssignable bool) {
@@ -1034,8 +1092,10 @@ func (eIPC *egressIPClusterController) reconcileEgressIP(ctx context.Context, ol
 			klog.Errorf("EgressIP %s has invalid egressNodeSelector, skipping reconciliation: %v", name, err)
 			return nil
 		}
+		eIPC.setEgressIPNodeSelector(name, selector)
 	} else {
 		eIPC.deallocMark(name)
+		eIPC.deleteEgressIPNodeSelector(name)
 	}
 
 	// Validate the spec and use only the valid egress IPs when performing any
