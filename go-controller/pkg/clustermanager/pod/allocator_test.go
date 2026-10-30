@@ -23,6 +23,7 @@ import (
 	kubevirtv1 "kubevirt.io/api/core/v1"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	apitypes "k8s.io/apimachinery/pkg/types"
@@ -484,6 +485,9 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 						Name:      "claim",
 						Namespace: "namespace",
 					},
+					Spec: ipamclaimsapi.IPAMClaimSpec{
+						Network: "nad",
+					},
 					Status: ipamclaimsapi.IPAMClaimStatus{
 						IPs: []string{"192.168.200.80/24"},
 					},
@@ -507,6 +511,9 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 						Name:      "claim",
 						Namespace: "namespace",
 					},
+					Spec: ipamclaimsapi.IPAMClaimSpec{
+						Network: "nad",
+					},
 					Status: ipamclaimsapi.IPAMClaimStatus{
 						IPs: []string{"192.168.200.80/24"},
 					},
@@ -514,6 +521,62 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 				release: true,
 			},
 			ipam:            true,
+			expectIDRelease: true,
+		},
+		{
+			name: "Pod on network, persistent IP requested, IPAMClaim belongs to another network",
+			args: args{
+				new: &testPod{
+					scheduled: true,
+					network: &nadapi.NetworkSelectionElement{
+						Name:               "nad",
+						Namespace:          "namespace",
+						IPAMClaimReference: "claim",
+					},
+				},
+				ipamClaim: &ipamclaimsapi.IPAMClaim{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "claim",
+						Namespace: "namespace",
+					},
+					Spec: ipamclaimsapi.IPAMClaimSpec{
+						Network: "other-network",
+					},
+					Status: ipamclaimsapi.IPAMClaimStatus{
+						IPs: []string{"192.168.200.80/24"},
+					},
+				},
+			},
+			ipam:         true,
+			expectError:  "failed to update pod namespace/pod: error retrieving IPAMClaim for pod namespace/pod: IPAMClaim namespace/claim: ignored IPAMClaim: it belongs to other network",
+			expectEvents: []string{"Warning ErrorAllocatingPod failed to update pod namespace/pod: error retrieving IPAMClaim for pod namespace/pod: IPAMClaim namespace/claim: ignored IPAMClaim: it belongs to other network"},
+		},
+		{
+			name: "Pod deleted, persistent IPs requested *but* IPAMClaim belongs to another network, IP released",
+			args: args{
+				old: &testPod{
+					scheduled: true,
+					network: &nadapi.NetworkSelectionElement{
+						Name:               "nad",
+						IPAMClaimReference: "claim",
+					},
+				},
+				ipamClaim: &ipamclaimsapi.IPAMClaim{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "claim",
+						Namespace: "namespace",
+					},
+					Spec: ipamclaimsapi.IPAMClaimSpec{
+						Network: "other-network",
+					},
+					Status: ipamclaimsapi.IPAMClaimStatus{
+						IPs: []string{"192.168.200.80/24"},
+					},
+				},
+				release: true,
+			},
+			ipam:            true,
+			expectIPRelease: true,
 			expectIDRelease: true,
 		},
 		{
@@ -530,6 +593,9 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "claim",
 						Namespace: "namespace",
+					},
+					Spec: ipamclaimsapi.IPAMClaimSpec{
+						Network: "nad",
 					},
 					Status: ipamclaimsapi.IPAMClaimStatus{},
 				},
@@ -1225,5 +1291,132 @@ func generateIPAMClaimsListerAndTeardownFunc(stopChannel <-chan struct{}, ipamCl
 	informerFactory.WaitForCacheSync(stopChannel)
 	return lister, func() {
 		informerFactory.Shutdown()
+	}
+}
+
+// TestPodAllocatorClaimScope exercises lookup through the pod reconciliation path,
+// including NAD mapping, real IP reservations, and cleanup.
+func TestPodAllocatorClaimScope(t *testing.T) {
+	const (
+		podNamespace = "pod-namespace"
+		nadNamespace = "nad-namespace"
+		claimName    = "claim"
+		nadKey       = nadNamespace + "/nad"
+	)
+	for _, topology := range []string{types.Layer2Topology, types.LocalnetTopology} {
+		for _, tc := range []struct {
+			name                             string
+			claimInPodNamespace              bool
+			claimInNADNamespace              bool
+			podNamespaceClaimHasWrongNetwork bool
+		}{
+			{name: "rejects a claim that exists only in the NAD namespace", claimInNADNamespace: true},
+			{name: "uses claim in pod namespace when NAD is in another namespace", claimInPodNamespace: true},
+			{name: "uses the pod namespace's claim, ignoring an identically named claim in the NAD's namespace", claimInPodNamespace: true, claimInNADNamespace: true},
+			{name: "rejects claim in pod namespace when its network does not match", claimInPodNamespace: true, podNamespaceClaimHasWrongNetwork: true},
+		} {
+			t.Run(topology+"/"+tc.name, func(t *testing.T) {
+				g := gomega.NewWithT(t)
+				g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+				config.IPv4Mode, config.IPv6Mode = true, true
+				config.OVNKubernetesFeature.EnableMultiNetwork = true
+				config.OVNKubernetesFeature.EnablePersistentIPs = true
+				netInfo, err := util.NewNetInfo(&ovncnitypes.NetConf{
+					NetConf: cnitypes.NetConf{Name: "network"}, Topology: topology,
+					Subnets: "10.0.0.0/24,fd00::/64", AllowPersistentIPs: true,
+				})
+				g.Expect(err).NotTo(gomega.HaveOccurred())
+				mutable := util.NewMutableNetInfo(netInfo)
+				mutable.AddNADs(nadKey)
+				netInfo = mutable
+				ipam := subnet.NewAllocator()
+				g.Expect(ipam.AddOrUpdateSubnet(subnet.SubnetConfig{
+					Name: "network", Subnets: ovntest.MustParseIPNets("10.0.0.0/24", "fd00::/64"),
+				})).To(gomega.Succeed())
+				pods := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+				nodes := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+				claims := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+				g.Expect(nodes.Add(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node"}})).To(gomega.Succeed())
+				kube := &kubemocks.InterfaceOVN{}
+				kube.On("PatchPodStatusAnnotations", mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+					g.Expect(pods.Update(args.Get(2).(*corev1.Pod).DeepCopy())).To(gomega.Succeed())
+				}).Return(nil)
+				reconciler := persistentips.NewIPAMClaimReconciler(kube, netInfo, ipamclaimslister.NewIPAMClaimLister(claims))
+				podNamespaceClaim := &ipamclaimsapi.IPAMClaim{
+					ObjectMeta: metav1.ObjectMeta{Name: claimName, Namespace: podNamespace, UID: "pod-namespace-claim"},
+					Spec:       ipamclaimsapi.IPAMClaimSpec{Network: "network"},
+					Status:     ipamclaimsapi.IPAMClaimStatus{IPs: []string{"10.0.0.5/24", "fd00::5/64"}},
+				}
+				// Use the same claim name but different IPs to detect lookup in the NAD's
+				// namespace instead of the pod's namespace.
+				nadNamespaceClaim := &ipamclaimsapi.IPAMClaim{
+					ObjectMeta: metav1.ObjectMeta{Name: claimName, Namespace: nadNamespace, UID: "nad-namespace-claim"},
+					Spec:       ipamclaimsapi.IPAMClaimSpec{Network: "network"},
+					Status:     ipamclaimsapi.IPAMClaimStatus{IPs: []string{"10.0.0.6/24", "fd00::6/64"}},
+				}
+				if tc.podNamespaceClaimHasWrongNetwork {
+					podNamespaceClaim.Spec.Network = "other-network"
+				}
+				if tc.claimInPodNamespace {
+					g.Expect(claims.Add(podNamespaceClaim)).To(gomega.Succeed())
+				}
+				if tc.claimInNADNamespace {
+					g.Expect(claims.Add(nadNamespaceClaim)).To(gomega.Succeed())
+				}
+				g.Expect(reconciler.Sync(claims.List(), ipam)).To(gomega.Succeed())
+				podLister := corelisters.NewPodLister(pods)
+				ids := id.NewIDAllocator("network", 1000)
+				g.Expect(ids.ReserveID("zero", 0)).To(gomega.Succeed())
+				a := NewPodAllocator(netInfo, pod.NewPodAnnotationAllocator(netInfo, podLister, kube, reconciler),
+					ipam, reconciler, &networkmanager.FakeNetworkManager{NADNetworks: map[string]util.NetInfo{nadKey: netInfo}},
+					record.NewFakeRecorder(10), ids, corelisters.NewNodeLister(nodes))
+				p := testPod{scheduled: true, network: &nadapi.NetworkSelectionElement{
+					Name: "nad", Namespace: nadNamespace, IPAMClaimReference: claimName,
+				}}.getPod(t)
+				p.Namespace = podNamespace
+				g.Expect(pods.Add(p)).To(gomega.Succeed())
+				err = a.Reconcile(t.Context(), nil, p)
+				switch {
+				case !tc.claimInPodNamespace:
+					g.Expect(err).To(gomega.MatchError(apierrors.IsNotFound, "IsNotFound"))
+				case tc.podNamespaceClaimHasWrongNetwork:
+					g.Expect(err).To(gomega.MatchError(persistentips.ErrIgnoredIPAMClaim))
+				default:
+					g.Expect(err).NotTo(gomega.HaveOccurred())
+				}
+				p, err = podLister.Pods(p.Namespace).Get(p.Name)
+				g.Expect(err).NotTo(gomega.HaveOccurred())
+				annotation, err := util.UnmarshalPodAnnotation(p.Annotations, nadKey)
+				if !tc.claimInPodNamespace || tc.podNamespaceClaimHasWrongNetwork {
+					g.Expect(err).To(gomega.HaveOccurred())
+					kube.AssertNotCalled(t, "PatchPodStatusAnnotations", mock.Anything, mock.Anything, mock.Anything)
+				} else {
+					g.Expect(err).NotTo(gomega.HaveOccurred())
+					g.Expect(util.StringSlice(annotation.IPs)).To(gomega.Equal(podNamespaceClaim.Status.IPs))
+					g.Expect(a.Reconcile(t.Context(), p, nil)).To(gomega.Succeed())
+					g.Expect(ipam.OwnsIPs("network", persistentips.IPAMClaimOwner(podNamespaceClaim), annotation.IPs)).To(gomega.BeTrue())
+				}
+				if !tc.claimInPodNamespace {
+					// A claim in the NAD namespace must not prevent cleanup of this
+					// pod's own reservation, for example after its claim reference changes.
+					cleanupIPs := ovntest.MustParseIPNets("10.0.0.7/24", "fd00::7/64")
+					owner := podIdAllocationName(nadKey, string(p.UID))
+					g.Expect(ipam.AllocateIPs("network", owner, cleanupIPs)).To(gomega.Succeed())
+					g.Expect(ids.ReserveID(owner, 100)).To(gomega.Succeed())
+					p.Annotations, err = util.MarshalPodAnnotation(p.Annotations, &util.PodAnnotation{
+						IPs: cleanupIPs, MAC: util.IPAddrToHWAddr(cleanupIPs[0].IP), TunnelID: 100,
+					}, nadKey)
+					g.Expect(err).NotTo(gomega.HaveOccurred())
+					g.Expect(a.Reconcile(t.Context(), p, nil)).To(gomega.Succeed())
+					g.Expect(ipam.OwnsIPs("network", owner, cleanupIPs)).To(gomega.BeFalse())
+				}
+				if tc.claimInNADNamespace {
+					stored, err := ipamclaimslister.NewIPAMClaimLister(claims).IPAMClaims(nadNamespaceClaim.Namespace).Get(nadNamespaceClaim.Name)
+					g.Expect(err).NotTo(gomega.HaveOccurred())
+					g.Expect(stored).To(gomega.Equal(nadNamespaceClaim))
+					g.Expect(ipam.OwnsIPs("network", persistentips.IPAMClaimOwner(nadNamespaceClaim), ovntest.MustParseIPNets(nadNamespaceClaim.Status.IPs...))).To(gomega.BeTrue())
+				}
+			})
+		}
 	}
 }

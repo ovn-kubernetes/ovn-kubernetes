@@ -44,7 +44,7 @@ func IPAMClaimOwner(claim *ipamclaimsapi.IPAMClaim) string {
 }
 
 type PersistentAllocations interface {
-	FindIPAMClaim(claimName string, namespace string) (*ipamclaimsapi.IPAMClaim, error)
+	FindIPAMClaim(claimName string, podNamespace string) (*ipamclaimsapi.IPAMClaim, error)
 
 	Reconcile(ctx context.Context, oldIPAMClaim *ipamclaimsapi.IPAMClaim, newIPAMClaim *ipamclaimsapi.IPAMClaim, ipReleaser IPReleaser) error
 
@@ -147,16 +147,37 @@ func (icr *IPAMClaimReconciler) Reconcile(
 	return nil
 }
 
-func (icr *IPAMClaimReconciler) FindIPAMClaim(claimName string, namespace string) (*ipamclaimsapi.IPAMClaim, error) {
+// FindIPAMClaim returns the IPAMClaim named claimName, provided it belongs to
+// the network this reconciler acts upon. It returns
+// ErrPersistentIPsNotAvailableOnNetwork if the network does not honor
+// IPAMClaims, and ErrIgnoredIPAMClaim if the claim belongs to another network.
+//
+// podNamespace must be the namespace of the pod referencing the claim, never a
+// namespace taken from the pod's network selection elements: those are
+// attacker-controlled and would let a pod claim the persistent IPs of a
+// workload in another namespace.
+func (icr *IPAMClaimReconciler) FindIPAMClaim(claimName string, podNamespace string) (*ipamclaimsapi.IPAMClaim, error) {
 	if icr.lister == nil ||
 		!util.DoesNetworkRequireIPAM(icr.netInfo) ||
 		icr.netInfo.TopologyType() == ovnktypes.Layer3Topology ||
 		claimName == "" {
 		return nil, ErrPersistentIPsNotAvailableOnNetwork
 	}
-	claim, err := icr.lister.IPAMClaims(namespace).Get(claimName)
+	claim, err := icr.lister.IPAMClaims(podNamespace).Get(claimName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get IPAMClaim %q: %w", claimName, err)
+	}
+	if claim.Spec.Network != icr.netInfo.GetNetworkName() {
+		klog.Errorf(
+			"IPAMClaim %s/%s belongs to network %q but was referenced on network %q",
+			claim.Namespace,
+			claim.Name,
+			claim.Spec.Network,
+			icr.netInfo.GetNetworkName(),
+		)
+		// avoid leaking the network names, this error may surface as a pod
+		// event, which is visible to non-admins.
+		return nil, fmt.Errorf("IPAMClaim %s/%s: %w", claim.Namespace, claim.Name, ErrIgnoredIPAMClaim)
 	}
 	return claim, nil
 }

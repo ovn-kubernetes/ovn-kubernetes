@@ -369,6 +369,14 @@ it in the network selection element upon pod creation;
 OVN-Kubernetes will then persist the IP addresses it has allocated the pod in the `IPAMClaim`. This flow
 is portrayed in the sequence diagram below.
 
+The referenced `IPAMClaim` must be in the pod's namespace, even when the
+network selection element references a NAD in another namespace. Its
+`spec.network` must match the network name in the NAD configuration, not
+the NAD's Kubernetes resource name.
+
+These checks do not restrict claim reuse between pods in the same namespace
+on the same network.
+
 ```mermaid
 sequenceDiagram
   actor user

@@ -456,7 +456,7 @@ func allocatePodAnnotationWithRollback(
 		hasIPAMClaim = false
 	}
 	if hasIPAMClaim {
-		ipamClaim, err = claimsReconciler.FindIPAMClaim(network.IPAMClaimReference, network.Namespace)
+		ipamClaim, err = claimsReconciler.FindIPAMClaim(network.IPAMClaimReference, pod.GetNamespace())
 		if err != nil {
 			err = fmt.Errorf("error retrieving IPAMClaim for pod %s/%s: %w", pod.GetNamespace(), pod.GetName(), err)
 			return
