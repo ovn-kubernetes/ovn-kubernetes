@@ -214,7 +214,7 @@ func (c *Controller) migrateNADAnnotationOwnership(ctx context.Context, nad *net
 		if err != nil {
 			return nil, fmt.Errorf("failed to encode NAD annotation ownership: %w", err)
 		}
-		entry.FieldsV1 = &metav1.FieldsV1{Raw: raw}
+		entry.FieldsV1 = metav1.NewFieldsV1(string(raw))
 		changed = true
 	}
 	if !changed {
@@ -238,7 +238,7 @@ func (c *Controller) migrateNADAnnotationOwnership(ctx context.Context, nad *net
 		// NAD update filtering requires a timestamp on each ownership record.
 		Time:       ptr.To(metav1.Now()),
 		FieldsType: "FieldsV1",
-		FieldsV1:   &metav1.FieldsV1{Raw: raw},
+		FieldsV1:   metav1.NewFieldsV1(string(raw)),
 	})
 
 	// Transfer ownership atomically without changing values. If the subsequent

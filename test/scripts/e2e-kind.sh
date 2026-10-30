@@ -33,6 +33,12 @@ KubeProxy
 # NOT IMPLEMENTED; SEE DISCUSSION IN https://github.com/ovn-kubernetes/ovn-kubernetes/pull/1225
 named port.+\[Feature:NetworkPolicy\]
 
+# k8s 1.37: deliberately omits 'named port' from the name so the skip above does not match
+# See: https://github.com/kubernetes/kubernetes/pull/139160
+# TODO: Remove after the bug is fixed in OVNK
+# https://github.com/ovn-kubernetes/ovn-kubernetes/issues/7213
+cannot limit to the requested port.+\[Feature:NetworkPolicy\]
+
 # NOT IMPLEMENTED: Service CIDR is a GA feature in K8s v1.33 which is not yet
 # supported in OVN-K.
 \[sig-network\].+Service CIDRs
@@ -86,6 +92,11 @@ pod generation should start at 1 and increment per update
 \[Feature:Alpha\]
 \[Alpha\]
 
+# NOT IMPLEMENTED: localhost NodePorts (kube-proxy feature; OVN-K replaces kube-proxy)
+# New in k8s 1.37 e2e.test — https://kep.k8s.io/6032
+# See: https://github.com/kubernetes/kubernetes/pull/141763
+\[Feature:LocalhostNodePorts\]
+
 # Skip Beta features by feature name for visibility
 \[FeatureGate:MultiCIDRServiceAllocator\] \[Beta\]
 
@@ -137,6 +148,16 @@ should function for service endpoints using hostNetwork
 RA_SKIPPED_TESTS="
 "
 
+# Upgrade OVN jobs create KinD from base (older Kubernetes) then refresh
+# e2e.test to the PR pin. Skip 1.37 Conformance that needs APIs only present
+# on the newer minor. Regular (non-upgrade) lanes keep running these.
+# TODO: Drop once base and PR share the same K8S_VERSION.
+UPGRADE_K8S_SKEW_SKIPPED_TESTS="
+\[FeatureGate:ClusterTrustBundle\]
+PodCertificateRequest API
+DeviceTaintRule
+"
+
 # Github CI doesn´t offer IPv6 connectivity, so always skip IPv6 only tests.
 #  See: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/1522
 SKIPPED_TESTS=$SKIPPED_TESTS$IPV6_ONLY_TESTS
@@ -165,6 +186,11 @@ fi
 # Skip tests that are unsupported or broken when the default pod network is advertised
 if [ "$ADVERTISE_DEFAULT_NETWORK" == true ]; then
   SKIPPED_TESTS=$SKIPPED_TESTS$RA_SKIPPED_TESTS
+fi
+
+# OVN upgrade CI: cluster K8s = base, e2e.test = PR (see upgrade-ovn.sh).
+if [ "${OVN_UPGRADE_E2E:-false}" == true ]; then
+  SKIPPED_TESTS=$SKIPPED_TESTS$UPGRADE_K8S_SKEW_SKIPPED_TESTS
 fi
 
 SKIPPED_TESTS="$(groomTestList "${SKIPPED_TESTS}")"

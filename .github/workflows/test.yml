@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  K8S_VERSION: v1.36.4
+  K8S_VERSION: v1.37.0
   KIND_CLUSTER_NAME: ovn
   KIND_INSTALL_INGRESS: true
   KIND_ALLOW_SYSTEM_WRITES: true
@@ -539,6 +539,9 @@ jobs:
         UPGRADE_STAGE=nodes-first make -C test staged-upgrade-ovn
 
     - name: Run E2E shard-conformance after nodes-first
+      env:
+        # Cluster stays on base K8s; e2e.test is refreshed to the PR pin.
+        OVN_UPGRADE_E2E: "true"
       run: |
         JOB_NAME="${JOB_NAME}-nodes-first" make -C test shard-conformance
 
@@ -571,6 +574,9 @@ jobs:
         UPGRADE_STAGE=control-plane-last make -C test staged-upgrade-ovn
 
     - name: Run E2E shard-conformance after control-plane-last
+      env:
+        # Cluster stays on base K8s; e2e.test is refreshed to the PR pin.
+        OVN_UPGRADE_E2E: "true"
       run: |
         JOB_NAME="${JOB_NAME}-control-plane-last" make -C test shard-conformance
 
