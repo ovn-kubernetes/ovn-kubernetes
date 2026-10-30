@@ -1623,11 +1623,17 @@ get_kubevirt_release_url() {
     echo "$kubevirt_release_url"
 }
 
-readonly FRR_K8S_VERSION=v0.0.0-20260603082256-b43efcb206be
-readonly FRR_K8S_GIT_REF=b43efcb206be
+# DO NOT MERGE: frr-k8s from metallb/frr-k8s#510 (v0.0.27 + FRR master with
+# the bgpd hidden-instance fix of FRRouting/frr#23851, head 26ca639f6a), to run this CI against
+# it. The manifest of that branch already pins the FRR image below.
+readonly FRR_K8S_REPO=https://github.com/ricky-rav/frr-k8s
+readonly FRR_K8S_BRANCH=test/frr-10.7.1
+readonly FRR_K8S_VERSION=v0.0.27-test-frr-10.7.1
+readonly FRR_K8S_GIT_REF=d384feb607f0e2956c774115c92476ed04677a6e
 readonly FRR_K8S_OVNK_BGP_PATCH="${DIR}/frr-k8s/patches/0001-Improvements-to-the-demo.patch"
 readonly FRR_K8S_UPSTREAM_FRR_IMAGE=quay.io/frrouting/frr:10.4.3
-readonly FRR_DEPLOYED_IMAGE=quay.io/frrouting/frr:10.6.2
+readonly FRR_K8S_MANIFEST_FRR_IMAGE=ghcr.io/ricky-rav/frr:master-hidden-disable-v11
+readonly FRR_DEPLOYED_IMAGE=ghcr.io/ricky-rav/frr:master-hidden-disable-v11
 # Override to test newer FRR builds in the in-cluster frr-k8s daemonset
 # without changing the pinned frr-k8s release.
 FRR_K8S_FRR_IMAGE=${FRR_K8S_FRR_IMAGE:-${FRR_DEPLOYED_IMAGE}}
@@ -1637,7 +1643,7 @@ clone_frr() {
   [ -d "$FRR_TMP_DIR" ] || {
     mkdir -p "$FRR_TMP_DIR" && trap 'rm -rf $FRR_TMP_DIR' EXIT
     pushd "$FRR_TMP_DIR" || exit 1
-    git clone --no-tags --single-branch --branch main https://github.com/metallb/frr-k8s
+    git clone --no-tags --single-branch --branch "$FRR_K8S_BRANCH" "$FRR_K8S_REPO"
     pushd frr-k8s
     git checkout --detach "$FRR_K8S_GIT_REF"
     popd
@@ -1887,10 +1893,12 @@ install_frr_k8s() {
   # Match the manifest's current upstream image exactly. If the pinned frr-k8s
   # manifest changes its FRR image, replace_in_file_or_exit fails and this
   # override must be reviewed before it changes what CI deploys.
-  replace_in_file_or_exit \
-    "${FRR_TMP_DIR}"/frr-k8s/config/all-in-one/frr-k8s.yaml \
-    "${FRR_K8S_UPSTREAM_FRR_IMAGE}" \
-    "${FRR_K8S_FRR_IMAGE}"
+  if [ "${FRR_K8S_MANIFEST_FRR_IMAGE}" != "${FRR_K8S_FRR_IMAGE}" ]; then
+    replace_in_file_or_exit \
+      "${FRR_TMP_DIR}"/frr-k8s/config/all-in-one/frr-k8s.yaml \
+      "${FRR_K8S_MANIFEST_FRR_IMAGE}" \
+      "${FRR_K8S_FRR_IMAGE}"
+  fi
 
   if [ "${bgp_port}" -ne 0 ]; then
     local frr_yaml="${FRR_TMP_DIR}/frr-k8s/config/all-in-one/frr-k8s.yaml"
