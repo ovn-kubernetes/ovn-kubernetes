@@ -193,23 +193,21 @@ var _ = Describe("ACL Logging for AdminNetworkPolicy and BaselineAdminNetworkPol
 	)
 	BeforeEach(func() {
 		nsNames[0] = fr.Namespace.Name
-		suffix := framework.RandomSuffix()
-		nsNames[1] = fmt.Sprintf("anp-peer-restricted-%s", suffix)
-		nsNames[2] = fmt.Sprintf("anp-peer-open-%s", suffix)
-		nsNames[3] = fmt.Sprintf("anp-peer-unknown-%s", suffix)
+
+		By("creating peer namespaces that are selected by the admin network policy")
+		peerNamespacePrefixes := []string{"anp-peer-restricted", "anp-peer-open", "anp-peer-unknown"}
+		for i, prefix := range peerNamespacePrefixes {
+			ns, err := fr.CreateNamespace(context.TODO(), prefix, map[string]string{})
+			Expect(err).NotTo(HaveOccurred(), "failed to create peer namespace %s", prefix)
+			nsNames[i+1] = ns.Name
+		}
 
 		By("creating an admin network policy")
-		err := makeAdminNetworkPolicy(anpName, "10", fr.Namespace.Name, nsNames[1], nsNames[2], nsNames[3])
+		err := makeAdminNetworkPolicy(anpName, "10", nsNames[0], nsNames[1], nsNames[2], nsNames[3])
 		Expect(err).NotTo(HaveOccurred())
 
 		By("configuring the ACL logging level for the ANP")
 		Expect(setANPACLLogSeverity(anpName, initialDenyACLSeverity, initialAllowACLSeverity, initialPassACLSeverity)).To(Succeed())
-
-		By("creating peer namespaces that are selected by the admin network policy")
-		for _, ns := range nsNames[1:] {
-			_, err = e2ekubectl.RunKubectl("default", "create", "ns", ns)
-			Expect(err).NotTo(HaveOccurred())
-		}
 
 		By("creating pods in subject and peer namespaces")
 		cmd := []string{"/bin/bash", "-c", "/agnhost netexec --http-port 8000"}
@@ -960,8 +958,25 @@ func makeDenyAllPolicy(f *framework.Framework, ns string, policyName string) (*k
 	return f.ClientSet.NetworkingV1().NetworkPolicies(ns).Create(context.TODO(), policy, metav1.CreateOptions{})
 }
 
+func writeACLLoggingManifestToTempFile(pattern, content string) string {
+	f, err := os.CreateTemp("", pattern)
+	if err != nil {
+		framework.Failf("Unable to create temp file for CRD config: %v", err)
+	}
+	name := f.Name()
+	if _, err := f.WriteString(content); err != nil {
+		_ = f.Close()
+		_ = os.Remove(name)
+		framework.Failf("Unable to write CRD config to disk: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(name)
+		framework.Failf("Unable to close temp file for CRD config: %v", err)
+	}
+	return name
+}
+
 func makeAdminNetworkPolicy(anpName, priority, anpSubjectNS, restrictedPeerNS, openPeerNS, unknownPeerNS string) error {
-	anpYaml := "anp.yaml"
 	var anpConfig = fmt.Sprintf(`apiVersion: policy.networking.k8s.io/v1alpha1
 kind: AdminNetworkPolicy
 metadata:
@@ -993,10 +1008,7 @@ spec:
           kubernetes.io/metadata.name: %s
 `, anpName, priority, anpSubjectNS, restrictedPeerNS, openPeerNS, unknownPeerNS)
 
-	if err := os.WriteFile(anpYaml, []byte(anpConfig), 0644); err != nil {
-		framework.Failf("Unable to write CRD config to disk: %v", err)
-	}
-
+	anpYaml := writeACLLoggingManifestToTempFile("anp-*.yaml", anpConfig)
 	defer func() {
 		if err := os.Remove(anpYaml); err != nil {
 			framework.Logf("Unable to remove the CRD config from disk: %v", err)
@@ -1008,7 +1020,6 @@ spec:
 }
 
 func makeBaselineAdminNetworkPolicy(banpSubjectNS, restrictedPeerNS, unknownPeerNS string) error {
-	banpYaml := "banp.yaml"
 	var banpConfig = fmt.Sprintf(`apiVersion: policy.networking.k8s.io/v1alpha1
 kind: BaselineAdminNetworkPolicy
 metadata:
@@ -1033,10 +1044,7 @@ spec:
           kubernetes.io/metadata.name: %s
 `, banpSubjectNS, restrictedPeerNS, unknownPeerNS)
 
-	if err := os.WriteFile(banpYaml, []byte(banpConfig), 0644); err != nil {
-		framework.Failf("Unable to write CRD config to disk: %v", err)
-	}
-
+	banpYaml := writeACLLoggingManifestToTempFile("banp-*.yaml", banpConfig)
 	defer func() {
 		if err := os.Remove(banpYaml); err != nil {
 			framework.Logf("Unable to remove the CRD config from disk: %v", err)
