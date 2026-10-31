@@ -40,8 +40,9 @@ func New() api.Provider {
 	ce := getContainerRuntime()
 	cmdRunner := runner.NewDirectRunner()
 	kind := &kind{
-		engine:   container.NewEngine(ce.String(), cmdRunner),
-		HostPort: portalloc.New(1024, 65535)}
+		engine: container.NewEngine(ce.String(), cmdRunner),
+		// upper bound stays below the ephemeral range (net.ipv4.ip_local_port_range)
+		HostPort: portalloc.New(1024, 32767)}
 	return kind
 }
 
