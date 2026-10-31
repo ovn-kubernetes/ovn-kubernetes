@@ -21,19 +21,15 @@ import (
 
 var (
 	agnHost = imageutils.GetE2EImage(imageutils.Agnhost)
+	nginx   = imageutils.GetE2EImage(imageutils.NginxNew)
 	// We limit the set of images used by e2e to reduce duplication and to allow us to provide offline mirroring of images
 	// for customers and restricted test environments.
 	// Ideally, every image used in e2e must be part of this package.
 	// New test images should ideally be sourced from the upstream k8s.io/kubernetes/test/utils/image package.
 	// Failing to find an image from upstream k8s, please get community approval because downstream consumers must
 	// pre-approve new images.
-	// FIXME: iperf3 image should not be retrieved from a users repo and should not have latest tag
-	iperf3                = "quay.io/sronanrh/iperf:latest"
-	netshoot              = "ghcr.io/nicolaka/netshoot:v0.13"
-	nginx                 = "nginx:1"
-	metallbLBService      = "quay.io/itssurya/dev-images:metallb-lbservice"
-	udpServerSrcIPPrinter = "quay.io/itssurya/dev-images:udp-server-srcip-printer"
-	frr                   = "quay.io/frrouting/frr:10.5.3"
+	netshoot = "ghcr.io/nicolaka/netshoot:v0.16"
+	frr      = "quay.io/frrouting/frr:10.5.3"
 	// dnsmasq 2.83; pinned by digest for CI reproducibility.
 	// TODO: mirror to a project-controlled registry (ghcr/quay) — docker.io
 	// pulls are rate-limited in CI and this is a personal repository.
@@ -47,20 +43,11 @@ func init() {
 	if agnHostOverride := os.Getenv("AGNHOST_IMAGE"); agnHostOverride != "" {
 		agnHost = agnHostOverride
 	}
-	if iperf3Override := os.Getenv("IPERF3_IMAGE"); iperf3Override != "" {
-		iperf3 = iperf3Override
-	}
 	if netshootOverride := os.Getenv("NETSHOOT_IMAGE"); netshootOverride != "" {
 		netshoot = netshootOverride
 	}
 	if nginxOverride := os.Getenv("NGINX_IMAGE"); nginxOverride != "" {
 		nginx = nginxOverride
-	}
-	if metallbLBServiceOverride := os.Getenv("METALLB_LB_SERVICE_IMAGE"); metallbLBServiceOverride != "" {
-		metallbLBService = metallbLBServiceOverride
-	}
-	if udpServerOverride := os.Getenv("UDP_SERVER_SRCIP_PRINTER_IMAGE"); udpServerOverride != "" {
-		udpServerSrcIPPrinter = udpServerOverride
 	}
 	if frrOverride := os.Getenv("FRR_IMAGE"); frrOverride != "" {
 		frr = frrOverride
@@ -71,11 +58,8 @@ func init() {
 
 	imageConfigs = map[api.ImageID]string{
 		api.Agnhost:                     agnHost,
-		api.IPerf3:                      iperf3,
 		api.Netshoot:                    netshoot,
 		api.Nginx:                       nginx,
-		api.MetalLBLBService:            metallbLBService,
-		api.UDPServerSrcIPPrinter:       udpServerSrcIPPrinter,
 		api.FRR:                         frr,
 		api.DNSMasq:                     dnsmasq,
 		api.FedoraKubevirtContainerDisk: fedoraKubevirtContainerDisk,
