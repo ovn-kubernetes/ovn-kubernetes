@@ -28,29 +28,86 @@ import (
 	"k8s.io/kubernetes/test/e2e/framework"
 )
 
-type kind struct {
-	engine   *container.Engine
-	HostPort *portalloc.PortAllocator
+// DefaultPrimaryNetwork is the container network a KinD cluster attaches its
+// node containers to.
+const DefaultPrimaryNetwork = "kind"
+
+// EnvPrimaryNetwork overrides the cluster's primary container network name.
+const EnvPrimaryNetwork = "OVN_TEST_PRIMARY_NETWORK"
+
+// Options configures the provider. The zero value drives the local container
+// runtime, which is the plain KinD setup.
+type Options struct {
+	// Runtime is the container runtime holding the cluster's node containers,
+	// "docker" or "podman". Empty falls back to CONTAINER_RUNTIME, then docker.
+	Runtime string
+	// Runner executes the runtime's commands. A nil Runner runs them on this
+	// machine; a remote Runner (see runner.NewSSHRunnerFromConfig) drives a
+	// cluster whose node containers live on another host. Either way the
+	// kubeconfig is local, because the test binary talks to the API server
+	// directly.
+	Runner api.Runner
+	// PrimaryNetwork is the name of the cluster's primary container network
+	// (returned by PrimaryNetwork). Empty falls back to OVN_TEST_PRIMARY_NETWORK,
+	// then DefaultPrimaryNetwork.
+	PrimaryNetwork string
 }
 
-func New() api.Provider {
+type kind struct {
+	engine         *container.Engine
+	runtime        containerRuntime
+	runner         api.Runner
+	primaryNetwork string
+	HostPort       *portalloc.PortAllocator
+}
+
+// New returns a provider driving opts.Runtime through opts.Runner. Everything
+// that reaches the node containers goes through that runner, so the same
+// provider serves a local KinD cluster and one whose runtime is reached over
+// SSH.
+func New(opts Options) (api.Provider, error) {
 	if !infraprovider.IsKind() {
-		panic("Cluster provider must be KinD type")
+		return nil, fmt.Errorf("cluster provider must be KinD type")
 	}
-	ce := getContainerRuntime()
-	cmdRunner := runner.NewDirectRunner()
-	kind := &kind{
-		engine:   container.NewEngine(ce.String(), cmdRunner),
-		HostPort: portalloc.New(1024, 65535)}
-	return kind
+	ce, err := parseContainerRuntime(opts.Runtime)
+	if err != nil {
+		return nil, err
+	}
+	cmdRunner := opts.Runner
+	if cmdRunner == nil {
+		cmdRunner = runner.NewDirectRunner()
+	}
+	primaryNetwork := strings.TrimSpace(opts.PrimaryNetwork)
+	if primaryNetwork == "" {
+		primaryNetwork = strings.TrimSpace(os.Getenv(EnvPrimaryNetwork))
+	}
+	if primaryNetwork == "" {
+		primaryNetwork = DefaultPrimaryNetwork
+	}
+	return &kind{
+		engine:         container.NewEngine(ce.String(), cmdRunner),
+		runtime:        ce,
+		runner:         cmdRunner,
+		primaryNetwork: primaryNetwork,
+		HostPort:       portalloc.New(1024, 65535),
+	}, nil
 }
 
 func (k *kind) Name() string {
 	return "kind"
 }
 
+// Close releases resources held by the runner, such as the SSH runner's cached
+// client. Runners without a Close are left alone.
+func (k *kind) Close() error {
+	if closer, ok := k.runner.(interface{ Close() error }); ok {
+		return closer.Close()
+	}
+	return nil
+}
+
 func (k *kind) PrimaryNetwork() (api.Network, error) {
-	return k.GetNetwork("kind")
+	return k.GetNetwork(k.primaryNetwork)
 }
 
 func (k *kind) GetNetwork(name string) (api.Network, error) {
@@ -97,19 +154,34 @@ func (k *kind) ListNetworks() ([]string, error) {
 	return k.engine.ListNetworks()
 }
 
+// imageArchivePath is where podman image archives are staged before `kind load`
+// picks them up. It lives on the runtime host, so the runner both writes and
+// reads it.
+const imageArchivePath = "/tmp/image.tar"
+
+// PreloadImages pulls imgs with the container runtime and loads them into the
+// cluster's node image stores. Every step runs through the runner, so with a
+// remote runner the runtime, the image archive and the `kind` binary are all on
+// the runtime host. The cluster name comes from the local kubeconfig, which
+// names the same cluster either way.
 func (k *kind) PreloadImages(imgs []deploymentconfigapi.ImageConfig) {
 	clusterName := kindClusterName()
 	if clusterName == "" {
 		framework.Logf("Warning: could not determine KIND cluster name, skipping image preload")
 		return
 	}
+	k.preloadImages(clusterName, imgs)
+}
+
+// preloadImages carries out the preload for an already resolved cluster name.
+func (k *kind) preloadImages(clusterName string, imgs []deploymentconfigapi.ImageConfig) {
 	pullBackoff := wait.Backoff{Duration: 5 * time.Second, Factor: 2, Steps: 5}
 	for _, img := range imgs {
 		framework.Logf("Preloading image %s into KIND cluster %s", img.PullSpec, clusterName)
-		var out []byte
+		var out string
 		err := wait.ExponentialBackoff(pullBackoff, func() (bool, error) {
 			var pullErr error
-			out, pullErr = exec.Command(engine.String(), "pull", img.PullSpec).CombinedOutput()
+			out, pullErr = k.runner.Run(k.runtime.String(), "pull", img.PullSpec)
 			if pullErr != nil {
 				framework.Logf("Retrying pull for image %s: %v (%s)", img.PullSpec, pullErr, out)
 				return false, nil
@@ -120,16 +192,18 @@ func (k *kind) PreloadImages(imgs []deploymentconfigapi.ImageConfig) {
 			framework.Logf("Warning: failed to pull image %s after retries: %v (%s)", img.PullSpec, err, out)
 			continue
 		}
-		if engine == podman {
-			os.Remove("/tmp/image.tar")
-			out, err = exec.Command(engine.String(), "save", "-o", "/tmp/image.tar", img.PullSpec).CombinedOutput()
+		if k.runtime == podman {
+			if rmOut, rmErr := k.runner.Run("rm", "-f", imageArchivePath); rmErr != nil {
+				framework.Logf("Warning: failed to remove stale %s: %v (%s)", imageArchivePath, rmErr, rmOut)
+			}
+			out, err = k.runner.Run(k.runtime.String(), "save", "-o", imageArchivePath, img.PullSpec)
 			if err != nil {
 				framework.Logf("Warning: failed to save image %s: %v (%s)", img.PullSpec, err, out)
 				continue
 			}
-			out, err = exec.Command("kind", "load", "image-archive", "/tmp/image.tar", "--name", clusterName).CombinedOutput()
+			out, err = k.runner.Run("kind", "load", "image-archive", imageArchivePath, "--name", clusterName)
 		} else {
-			out, err = exec.Command("kind", "load", "docker-image", img.PullSpec, "--name", clusterName).CombinedOutput()
+			out, err = k.runner.Run("kind", "load", "docker-image", img.PullSpec, "--name", clusterName)
 		}
 		if err != nil {
 			framework.Logf("Warning: failed to load image %s into KIND cluster %s: %v (%s)", img.PullSpec, clusterName, err, out)
