@@ -18,6 +18,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	"k8s.io/utils/ptr"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
@@ -1157,6 +1158,425 @@ func TestIsNodeAnnotationPatchRetryable(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.expected, IsNodeAnnotationPatchRetryable(tc.err))
+		})
+	}
+}
+
+// Unit tests for capacity pointer aliasing bug fix
+// These tests verify that IPv4, IPv6, and IP capacity fields use independent pointers
+// and that values are correctly preserved during JSON unmarshaling.
+//
+// Bug context: Before the fix, all three capacity pointers pointed to the same variable,
+// causing JSON unmarshal to overwrite IPv4 with IPv6's value. For example, unmarshaling
+// {"ipv4":14,"ipv6":15} would result in both IPv4=15 and IPv6=15 instead of the correct
+// IPv4=14 and IPv6=15.
+
+// TestParseCloudEgressIPConfig_DifferentIPv4IPv6Capacity verifies that ParseCloudEgressIPConfig
+// correctly handles different IPv4 and IPv6 capacity values without pointer aliasing issues.
+// This is the primary test case that would fail with the pointer aliasing bug.
+func TestParseCloudEgressIPConfig_DifferentIPv4IPv6Capacity(t *testing.T) {
+	tests := []struct {
+		name          string
+		capacityJSON  string
+		expectedIPv4  *int
+		expectedIPv6  *int
+		expectedIP    *int
+		expectError   bool
+		errorContains string
+	}{
+		{
+			name:         "Different IPv4 and IPv6 capacities - verifies no pointer aliasing",
+			capacityJSON: `[{"capacity":{"ipv4":14,"ipv6":15}}]`,
+			expectedIPv4: ptr.To(14),
+			expectedIPv6: ptr.To(15),
+			expectedIP:   ptr.To(UnlimitedNodeCapacity), // IP field not set in annotation, defaults to unlimited
+			expectError:  false,
+		},
+		{
+			name:         "Same IPv4 and IPv6 capacities",
+			capacityJSON: `[{"capacity":{"ipv4":10,"ipv6":10}}]`,
+			expectedIPv4: ptr.To(10),
+			expectedIPv6: ptr.To(10),
+			expectedIP:   ptr.To(UnlimitedNodeCapacity),
+			expectError:  false,
+		},
+		{
+			name:         "Zero capacity values",
+			capacityJSON: `[{"capacity":{"ipv4":0,"ipv6":0}}]`,
+			expectedIPv4: ptr.To(0),
+			expectedIPv6: ptr.To(0),
+			expectedIP:   ptr.To(UnlimitedNodeCapacity),
+			expectError:  false,
+		},
+		{
+			name:         "Large capacity values",
+			capacityJSON: `[{"capacity":{"ipv4":1000,"ipv6":2000}}]`,
+			expectedIPv4: ptr.To(1000),
+			expectedIPv6: ptr.To(2000),
+			expectedIP:   ptr.To(UnlimitedNodeCapacity),
+			expectError:  false,
+		},
+		{
+			name:         "All three capacity fields set",
+			capacityJSON: `[{"capacity":{"ip":100,"ipv4":14,"ipv6":15}}]`,
+			expectedIPv4: ptr.To(14),
+			expectedIPv6: ptr.To(15),
+			expectedIP:   ptr.To(100),
+			expectError:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			node := &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-node",
+					Annotations: map[string]string{
+						OvnNodeIfAddr:                    `{"ipv4":"192.168.1.10/24"}`,
+						cloudEgressIPConfigAnnotationKey: tt.capacityJSON,
+					},
+				},
+			}
+
+			config, err := ParseCloudEgressIPConfig(node)
+
+			if tt.expectError {
+				require.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+				return
+			}
+
+			require.NoError(t, err)
+			require.NotNil(t, config)
+
+			// Verify IPv4 capacity
+			if tt.expectedIPv4 == nil {
+				assert.Nil(t, config.Capacity.IPv4, "IPv4 capacity should be nil")
+			} else {
+				require.NotNil(t, config.Capacity.IPv4, "IPv4 capacity should not be nil")
+				assert.Equal(t, *tt.expectedIPv4, *config.Capacity.IPv4, "IPv4 capacity value mismatch")
+			}
+
+			// Verify IPv6 capacity
+			if tt.expectedIPv6 == nil {
+				assert.Nil(t, config.Capacity.IPv6, "IPv6 capacity should be nil")
+			} else {
+				require.NotNil(t, config.Capacity.IPv6, "IPv6 capacity should not be nil")
+				assert.Equal(t, *tt.expectedIPv6, *config.Capacity.IPv6, "IPv6 capacity value mismatch")
+			}
+
+			// Verify IP capacity
+			if tt.expectedIP == nil {
+				assert.Nil(t, config.Capacity.IP, "IP capacity should be nil")
+			} else {
+				require.NotNil(t, config.Capacity.IP, "IP capacity should not be nil")
+				assert.Equal(t, *tt.expectedIP, *config.Capacity.IP, "IP capacity value mismatch")
+			}
+		})
+	}
+}
+
+// TestParseCloudEgressIPConfig_IPv4OnlyCapacity verifies that ParseCloudEgressIPConfig
+// correctly handles IPv4-only capacity (IPv6 defaults to unlimited).
+func TestParseCloudEgressIPConfig_IPv4OnlyCapacity(t *testing.T) {
+	tests := []struct {
+		name         string
+		capacityJSON string
+		expectedIPv4 *int
+	}{
+		{
+			name:         "IPv4 capacity 10",
+			capacityJSON: `[{"capacity":{"ipv4":10}}]`,
+			expectedIPv4: ptr.To(10),
+		},
+		{
+			name:         "IPv4 capacity 14 (AWS m6i.xlarge typical)",
+			capacityJSON: `[{"capacity":{"ipv4":14}}]`,
+			expectedIPv4: ptr.To(14),
+		},
+		{
+			name:         "IPv4 capacity 0",
+			capacityJSON: `[{"capacity":{"ipv4":0}}]`,
+			expectedIPv4: ptr.To(0),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			node := &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-node",
+					Annotations: map[string]string{
+						OvnNodeIfAddr:                    `{"ipv4":"192.168.1.10/24"}`,
+						cloudEgressIPConfigAnnotationKey: tt.capacityJSON,
+					},
+				},
+			}
+
+			config, err := ParseCloudEgressIPConfig(node)
+
+			require.NoError(t, err)
+			require.NotNil(t, config)
+			require.NotNil(t, config.Capacity.IPv4, "IPv4 capacity should not be nil")
+			assert.Equal(t, *tt.expectedIPv4, *config.Capacity.IPv4, "IPv4 capacity value mismatch")
+			// IPv6 not specified in annotation, should default to UnlimitedNodeCapacity
+			require.NotNil(t, config.Capacity.IPv6, "IPv6 capacity should default to unlimited")
+			assert.Equal(t, UnlimitedNodeCapacity, *config.Capacity.IPv6, "IPv6 should default to UnlimitedNodeCapacity")
+		})
+	}
+}
+
+// TestParseCloudEgressIPConfig_IPv6OnlyCapacity verifies that ParseCloudEgressIPConfig
+// correctly handles IPv6-only capacity (IPv4 defaults to unlimited).
+func TestParseCloudEgressIPConfig_IPv6OnlyCapacity(t *testing.T) {
+	tests := []struct {
+		name         string
+		capacityJSON string
+		expectedIPv6 *int
+	}{
+		{
+			name:         "IPv6 capacity 20",
+			capacityJSON: `[{"capacity":{"ipv6":20}}]`,
+			expectedIPv6: ptr.To(20),
+		},
+		{
+			name:         "IPv6 capacity 15",
+			capacityJSON: `[{"capacity":{"ipv6":15}}]`,
+			expectedIPv6: ptr.To(15),
+		},
+		{
+			name:         "IPv6 capacity 0",
+			capacityJSON: `[{"capacity":{"ipv6":0}}]`,
+			expectedIPv6: ptr.To(0),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			node := &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-node",
+					Annotations: map[string]string{
+						OvnNodeIfAddr:                    `{"ipv4":"192.168.1.10/24"}`,
+						cloudEgressIPConfigAnnotationKey: tt.capacityJSON,
+					},
+				},
+			}
+
+			config, err := ParseCloudEgressIPConfig(node)
+
+			require.NoError(t, err)
+			require.NotNil(t, config)
+			// IPv4 not specified in annotation, should default to UnlimitedNodeCapacity
+			require.NotNil(t, config.Capacity.IPv4, "IPv4 capacity should default to unlimited")
+			assert.Equal(t, UnlimitedNodeCapacity, *config.Capacity.IPv4, "IPv4 should default to UnlimitedNodeCapacity")
+			require.NotNil(t, config.Capacity.IPv6, "IPv6 capacity should not be nil")
+			assert.Equal(t, *tt.expectedIPv6, *config.Capacity.IPv6, "IPv6 capacity value mismatch")
+		})
+	}
+}
+
+// TestParseCloudEgressIPConfig_CapacityPointerIndependence verifies that the three capacity
+// pointers (IPv4, IPv6, IP) point to independent memory locations. This is the critical test
+// that verifies the pointer aliasing bug is fixed.
+func TestParseCloudEgressIPConfig_CapacityPointerIndependence(t *testing.T) {
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-node",
+			Annotations: map[string]string{
+				OvnNodeIfAddr:                    `{"ipv4":"192.168.1.10/24"}`,
+				cloudEgressIPConfigAnnotationKey: `[{"capacity":{"ip":100,"ipv4":14,"ipv6":15}}]`,
+			},
+		},
+	}
+
+	config, err := ParseCloudEgressIPConfig(node)
+	require.NoError(t, err)
+	require.NotNil(t, config)
+
+	// All three fields should be set
+	require.NotNil(t, config.Capacity.IPv4, "IPv4 capacity should not be nil")
+	require.NotNil(t, config.Capacity.IPv6, "IPv6 capacity should not be nil")
+	require.NotNil(t, config.Capacity.IP, "IP capacity should not be nil")
+
+	// Verify initial values are correct
+	assert.Equal(t, 14, *config.Capacity.IPv4, "Initial IPv4 value incorrect")
+	assert.Equal(t, 15, *config.Capacity.IPv6, "Initial IPv6 value incorrect")
+	assert.Equal(t, 100, *config.Capacity.IP, "Initial IP value incorrect")
+
+	// Critical test: Verify pointers are independent
+	// If pointers were aliased (pointing to same memory), these assertions would fail
+
+	// Test 1: IPv4 and IPv6 pointers must be different
+	ipv4Addr := fmt.Sprintf("%p", config.Capacity.IPv4)
+	ipv6Addr := fmt.Sprintf("%p", config.Capacity.IPv6)
+	assert.NotEqual(t, ipv4Addr, ipv6Addr,
+		"IPv4 and IPv6 capacity pointers must point to different memory locations")
+
+	// Test 2: IPv4 and IP pointers must be different
+	ipAddr := fmt.Sprintf("%p", config.Capacity.IP)
+	assert.NotEqual(t, ipv4Addr, ipAddr,
+		"IPv4 and IP capacity pointers must point to different memory locations")
+
+	// Test 3: IPv6 and IP pointers must be different
+	assert.NotEqual(t, ipv6Addr, ipAddr,
+		"IPv6 and IP capacity pointers must point to different memory locations")
+
+	// Test 4: Modifying one value should not affect others
+	// This would fail if pointers were aliased
+	originalIPv4 := *config.Capacity.IPv4
+	originalIPv6 := *config.Capacity.IPv6
+	originalIP := *config.Capacity.IP
+
+	// Modify IPv4
+	*config.Capacity.IPv4 = 999
+
+	// Verify IPv6 and IP are unchanged
+	assert.Equal(t, originalIPv6, *config.Capacity.IPv6,
+		"Modifying IPv4 should not affect IPv6 (pointer independence)")
+	assert.Equal(t, originalIP, *config.Capacity.IP,
+		"Modifying IPv4 should not affect IP (pointer independence)")
+
+	// Restore and modify IPv6
+	*config.Capacity.IPv4 = originalIPv4
+	*config.Capacity.IPv6 = 888
+
+	// Verify IPv4 and IP are unchanged
+	assert.Equal(t, originalIPv4, *config.Capacity.IPv4,
+		"Modifying IPv6 should not affect IPv4 (pointer independence)")
+	assert.Equal(t, originalIP, *config.Capacity.IP,
+		"Modifying IPv6 should not affect IP (pointer independence)")
+
+	// Restore and modify IP
+	*config.Capacity.IPv6 = originalIPv6
+	*config.Capacity.IP = 777
+
+	// Verify IPv4 and IPv6 are unchanged
+	assert.Equal(t, originalIPv4, *config.Capacity.IPv4,
+		"Modifying IP should not affect IPv4 (pointer independence)")
+	assert.Equal(t, originalIPv6, *config.Capacity.IPv6,
+		"Modifying IP should not affect IPv6 (pointer independence)")
+}
+
+// TestParseNodePrimaryIfAddr_CapacityPointerIndependence verifies that ParseNodePrimaryIfAddr
+// also correctly uses independent pointers for capacity fields. This tests the non-cloud
+// provider code path.
+func TestParseNodePrimaryIfAddr_CapacityPointerIndependence(t *testing.T) {
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-node",
+			Annotations: map[string]string{
+				OvnNodeIfAddr: `{"ipv4":"192.168.1.10/24","ipv6":"fd00::10/64"}`,
+			},
+		},
+	}
+
+	config, err := ParseNodePrimaryIfAddr(node)
+	require.NoError(t, err)
+	require.NotNil(t, config)
+
+	// All three fields should be set to UnlimitedNodeCapacity by default
+	require.NotNil(t, config.Capacity.IPv4, "IPv4 capacity should not be nil")
+	require.NotNil(t, config.Capacity.IPv6, "IPv6 capacity should not be nil")
+	require.NotNil(t, config.Capacity.IP, "IP capacity should not be nil")
+
+	// Verify initial values are UnlimitedNodeCapacity
+	assert.Equal(t, UnlimitedNodeCapacity, *config.Capacity.IPv4, "Initial IPv4 value incorrect")
+	assert.Equal(t, UnlimitedNodeCapacity, *config.Capacity.IPv6, "Initial IPv6 value incorrect")
+	assert.Equal(t, UnlimitedNodeCapacity, *config.Capacity.IP, "Initial IP value incorrect")
+
+	// Critical test: Verify pointers are independent
+
+	// Test 1: All three pointers must be different
+	ipv4Addr := fmt.Sprintf("%p", config.Capacity.IPv4)
+	ipv6Addr := fmt.Sprintf("%p", config.Capacity.IPv6)
+	ipAddr := fmt.Sprintf("%p", config.Capacity.IP)
+
+	assert.NotEqual(t, ipv4Addr, ipv6Addr,
+		"IPv4 and IPv6 capacity pointers must point to different memory locations")
+	assert.NotEqual(t, ipv4Addr, ipAddr,
+		"IPv4 and IP capacity pointers must point to different memory locations")
+	assert.NotEqual(t, ipv6Addr, ipAddr,
+		"IPv6 and IP capacity pointers must point to different memory locations")
+
+	// Test 2: Modifying one value should not affect others
+	originalIPv4 := *config.Capacity.IPv4
+	originalIPv6 := *config.Capacity.IPv6
+	originalIP := *config.Capacity.IP
+
+	// Modify IPv4
+	*config.Capacity.IPv4 = 10
+
+	// Verify IPv6 and IP are unchanged
+	assert.Equal(t, originalIPv6, *config.Capacity.IPv6,
+		"Modifying IPv4 should not affect IPv6 (pointer independence)")
+	assert.Equal(t, originalIP, *config.Capacity.IP,
+		"Modifying IPv4 should not affect IP (pointer independence)")
+
+	// Restore and modify IPv6
+	*config.Capacity.IPv4 = originalIPv4
+	*config.Capacity.IPv6 = 20
+
+	// Verify IPv4 and IP are unchanged
+	assert.Equal(t, originalIPv4, *config.Capacity.IPv4,
+		"Modifying IPv6 should not affect IPv4 (pointer independence)")
+	assert.Equal(t, originalIP, *config.Capacity.IP,
+		"Modifying IPv6 should not affect IP (pointer independence)")
+}
+
+// TestParseNodePrimaryIfAddr_DefaultCapacity verifies that ParseNodePrimaryIfAddr
+// sets all capacity fields to UnlimitedNodeCapacity by default.
+func TestParseNodePrimaryIfAddr_DefaultCapacity(t *testing.T) {
+	tests := []struct {
+		name        string
+		annotations map[string]string
+	}{
+		{
+			name: "IPv4 only",
+			annotations: map[string]string{
+				OvnNodeIfAddr: `{"ipv4":"192.168.1.10/24"}`,
+			},
+		},
+		{
+			name: "IPv6 only",
+			annotations: map[string]string{
+				OvnNodeIfAddr: `{"ipv6":"fd00::10/64"}`,
+			},
+		},
+		{
+			name: "Dual stack",
+			annotations: map[string]string{
+				OvnNodeIfAddr: `{"ipv4":"192.168.1.10/24","ipv6":"fd00::10/64"}`,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			node := &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        "test-node",
+					Annotations: tt.annotations,
+				},
+			}
+
+			config, err := ParseNodePrimaryIfAddr(node)
+			require.NoError(t, err)
+			require.NotNil(t, config)
+
+			// All three capacity fields should be UnlimitedNodeCapacity
+			require.NotNil(t, config.Capacity.IPv4, "IPv4 capacity should not be nil")
+			require.NotNil(t, config.Capacity.IPv6, "IPv6 capacity should not be nil")
+			require.NotNil(t, config.Capacity.IP, "IP capacity should not be nil")
+
+			assert.Equal(t, UnlimitedNodeCapacity, *config.Capacity.IPv4,
+				"IPv4 capacity should be UnlimitedNodeCapacity")
+			assert.Equal(t, UnlimitedNodeCapacity, *config.Capacity.IPv6,
+				"IPv6 capacity should be UnlimitedNodeCapacity")
+			assert.Equal(t, UnlimitedNodeCapacity, *config.Capacity.IP,
+				"IP capacity should be UnlimitedNodeCapacity")
 		})
 	}
 }
