@@ -930,12 +930,16 @@ func (bnc *BaseNetworkController) doesNetworkHaveDiscoverablePodIPs() bool {
 	return util.DoesNetworkHaveDiscoverablePodIPs(bnc.GetNetInfo())
 }
 
-func (bnc *BaseNetworkController) getPodNADKeys(pod *corev1.Pod) []string {
+func (bnc *BaseNetworkController) getPodNADKeys(pod *corev1.Pod) ([]string, error) {
 	if !bnc.IsUserDefinedNetwork() {
-		return []string{types.DefaultNetworkName}
+		return []string{types.DefaultNetworkName}, nil
 	}
-	podNADKeys, _ := util.PodNADKeys(pod, bnc.GetNetInfo(), bnc.networkManager.GetNetworkNameForNADKey)
-	return podNADKeys
+	nadKeys, err := util.PodNADKeys(pod, bnc.GetNetInfo(), bnc.networkManager.GetNetworkNameForNADKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve NAD keys for pod %s/%s on network %s: %w",
+			pod.Namespace, pod.Name, bnc.GetNetworkName(), err)
+	}
+	return nadKeys, nil
 }
 
 func (bnc *BaseNetworkController) getClusterPortGroupDbIDs(base string) *libovsdbops.DbObjectIDs {

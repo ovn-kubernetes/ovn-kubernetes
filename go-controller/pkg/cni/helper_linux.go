@@ -1026,6 +1026,11 @@ func (*defaultPodRequestInterfaceOps) UnconfigureInterface(pr *PodRequest, ifInf
 	if !pr.IsVFIO {
 		netns, err := ns.GetNS(pr.Netns)
 		if err != nil {
+			var missingNS ns.NSPathNotExistErr
+			if ifInfo.IsDPUHostMode && errors.As(err, &missingNS) {
+				// A repeated DEL may arrive after the old sandbox is gone.
+				return nil
+			}
 			return fmt.Errorf("failed to get container namespace %s: %v", podDesc, err)
 		}
 		defer netns.Close()
@@ -1043,6 +1048,11 @@ func (*defaultPodRequestInterfaceOps) UnconfigureInterface(pr *PodRequest, ifInf
 			// container side interface deletion
 			link, err := util.GetNetLinkOps().LinkByName(pr.IfName)
 			if err != nil {
+				if ifInfo.IsDPUHostMode && util.GetNetLinkOps().IsLinkNotFoundError(err) {
+					// An earlier DEL may have restored the interface while its
+					// annotation cleanup failed and requested this retry.
+					return nil
+				}
 				return fmt.Errorf("failed to get container interface %s %s: %v", pr.IfName, podDesc, err)
 			}
 			if pr.CNIConf.DeviceID != "" {
@@ -1079,9 +1089,12 @@ func (*defaultPodRequestInterfaceOps) UnconfigureInterface(pr *PodRequest, ifInf
 			// the host before the namespace is destroyed. Propagate errors so
 			// that the runtime retries the DEL rather than proceeding with the
 			// namespace teardown.
-			if err := returnSimulatedNetdevsToHost(netns, hostNS); err != nil {
-				return fmt.Errorf("failed to return simulated netdevices to host namespace %s: %v", podDesc, err)
+			if restoreErr := returnSimulatedNetdevsToHost(netns, hostNS); restoreErr != nil {
+				return errors.Join(err, fmt.Errorf("failed to return simulated netdevices to host namespace %s: %w", podDesc, restoreErr))
 			}
+		}
+		if ifInfo.IsDPUHostMode {
+			return err
 		}
 	}
 

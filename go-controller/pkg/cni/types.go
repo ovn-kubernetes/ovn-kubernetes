@@ -118,6 +118,9 @@ type Response struct {
 	PrimaryUDNPodInfo *PodInterfaceInfo
 	PrimaryUDNPodReq  *PodRequest
 	KubeAuth          *KubeAPIAuth
+	// CleanupError is a CNIDel annotation error reported after the unprivileged
+	// shim attempts interface cleanup.
+	CleanupError string `json:",omitempty"`
 }
 
 func (response *Response) Marshal() ([]byte, error) {

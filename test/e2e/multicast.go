@@ -11,9 +11,11 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
 
 	v1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/kubernetes/test/e2e/framework"
@@ -66,6 +68,70 @@ var _ = ginkgo.Describe("Multicast", feature.Multicast, func() {
 		})
 		ginkgo.It("should be able to receive multicast IGMP query", func() {
 			testMulticastIGMPQuery(fr, clientNodeInfo, serverNodeInfo)
+		})
+		ginkgo.It("should preserve namespace and policy port-group membership when a pod is recreated", func(ctx ginkgo.SpecContext) {
+			const podName = "recreated-pod"
+			const policyName = "deny-recreated-pod"
+			const pollTimeout = 60 * time.Second
+			const pollInterval = time.Second
+			namespace := fr.Namespace.Name
+			ovnNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+			dbPod, err := findOVNNBDBPod(fr.ClientSet, ovnNamespace)
+			framework.ExpectNoError(err, "find the NBDB used for membership assertions")
+			// In interconnect mode each node has its own database. Keep both
+			// incarnations on the node whose NBDB we inspect.
+			runNBCTL := func(args ...string) (string, error) {
+				return runOVNNBCTLOnPod(fr, dbPod, append([]string{"--timeout=10"}, args...)...)
+			}
+			findGroup := func(ownerType, name, column string) (string, error) {
+				return runNBCTL("--data=bare", "--no-heading", "--columns="+column, "find", "Port_Group",
+					"external_ids:k8s.ovn.org/owner-controller=default-network-controller",
+					"external_ids:k8s.ovn.org/owner-type="+ownerType, "external_ids:k8s.ovn.org/name="+name)
+			}
+			_, err = fr.ClientSet.NetworkingV1().NetworkPolicies(namespace).Create(ctx, &networkingv1.NetworkPolicy{
+				ObjectMeta: metav1.ObjectMeta{Name: policyName},
+				Spec: networkingv1.NetworkPolicySpec{
+					PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{"app": podName}},
+					PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress, networkingv1.PolicyTypeEgress},
+				},
+			}, metav1.CreateOptions{})
+			framework.ExpectNoError(err, "create the policy before either pod incarnation")
+			gomega.Eventually(func() (string, error) {
+				return findGroup("NetworkPolicy", namespace+":"+policyName, "_uuid")
+			}, pollTimeout, pollInterval).ShouldNot(gomega.BeEmpty(), "wait for the selecting policy to be applied")
+
+			create := func() *v1.Pod {
+				pod, err := createGenericPodWithLabel(fr, podName, dbPod.Spec.NodeName, namespace,
+					[]string{"/agnhost", "pause"}, map[string]string{"app": podName})
+				framework.ExpectNoError(err, "create the pod on the inspected NBDB's node")
+				return pod
+			}
+			assertMembership := func(pod *v1.Pod, staleUUID string) string {
+				ginkgo.GinkgoHelper()
+				var portUUID string
+				gomega.Eventually(func(g gomega.Gomega) {
+					var err error
+					portUUID, err = runNBCTL("--data=bare", "--no-heading", "--columns=_uuid", "find", "Logical_Switch_Port",
+						"name="+namespace+"_"+podName, "options:iface-id-ver="+string(pod.UID))
+					g.Expect(err).NotTo(gomega.HaveOccurred(), "query the LSP belonging to pod UID %s", pod.UID)
+					g.Expect(portUUID).NotTo(gomega.BeEmpty(), "the LSP must belong to the current pod UID")
+					for ownerType, name := range map[string]string{"Namespace": namespace, "NetworkPolicy": namespace + ":" + policyName} {
+						ports, lookupErr := findGroup(ownerType, name, "ports")
+						g.Expect(lookupErr).NotTo(gomega.HaveOccurred(), "query %s port-group membership", ownerType)
+						g.Expect(ports).To(gomega.ContainSubstring(portUUID), "%s must contain the current port", ownerType)
+						if staleUUID != "" && staleUUID != portUUID {
+							g.Expect(ports).NotTo(gomega.ContainSubstring(staleUUID), "%s must not retain the deleted port", ownerType)
+						}
+					}
+				}, pollTimeout, pollInterval).Should(gomega.Succeed(), "reconcile namespace and policy membership for pod UID %s", pod.UID)
+				return portUUID
+			}
+			oldPod := create()
+			oldPortUUID := assertMembership(oldPod, "")
+			framework.ExpectNoError(e2epod.DeletePodWithWait(ctx, fr.ClientSet, oldPod), "delete the original pod")
+			newPod := create()
+			gomega.Expect(newPod.UID).NotTo(gomega.Equal(oldPod.UID))
+			assertMembership(newPod, oldPortUUID)
 		})
 	})
 })

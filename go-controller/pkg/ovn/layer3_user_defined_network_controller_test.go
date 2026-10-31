@@ -5,6 +5,7 @@ package ovn
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"slices"
@@ -20,6 +21,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	knet "k8s.io/utils/net"
 	"k8s.io/utils/ptr"
+
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
@@ -352,6 +355,75 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 			}),
 			config.GatewayModeLocal,
 		),
+	)
+
+	DescribeTable("deletes OVN pod state on a cache miss with unusable annotations", func(annotation string) {
+		app.Action = func(*cli.Context) error {
+			config.OVNKubernetesFeature.EnableMultiNetwork = true
+			config.OVNKubernetesFeature.EnableEgressFirewall = true
+			config.Gateway.Mode = config.GatewayModeShared
+			netInfo := dummySecondaryLayer3UserDefinedNetwork("192.168.0.0/16", "192.168.1.0/24")
+			podInfo := dummyTestPod(ns, netInfo)
+			netConf := netInfo.netconf()
+			networkConfig, err := util.NewNetInfo(netConf)
+			Expect(err).NotTo(HaveOccurred(), "construct the secondary network configuration")
+			nad, err := newNetworkAttachmentDefinition(ns, nadName, *netConf)
+			Expect(err).NotTo(HaveOccurred(), "construct the network attachment definition")
+			testNode, err := newNodeWithUserDefinedNetworks(nodeName, "192.168.126.202/24", netInfo)
+			Expect(err).NotTo(HaveOccurred(), "construct the node with its UDN subnet")
+
+			initialPod := newMultiHomedPod(podInfo, netInfo)
+			if annotation == "" {
+				delete(initialPod.Annotations, types.OvnPodAnnotationName)
+			} else {
+				initialPod.Annotations[types.OvnPodAnnotationName] = annotation
+			}
+
+			udnPortInfo := podInfo.udnPodInfos[netInfo.netName].allportInfo[netInfo.nadName]
+			ovnPodInfo := podInfo
+			ovnPodInfo.portUUID = udnPortInfo.portUUID
+			ovnPodInfo.podIP = udnPortInfo.podIP
+			ovnPodInfo.podMAC = udnPortInfo.podMAC
+			initialNBData := append([]libovsdbtest.TestData{}, initialDB.NBData...)
+			initialNBData = append(initialNBData, getExpectedPodsAndSwitches(networkConfig, []testPod{ovnPodInfo}, []string{nodeName}, netInfo.nadName)...)
+			portName := util.GetUserDefinedNetworkLogicalPortName(podInfo.namespace, podInfo.podName, netInfo.nadName)
+			portUUID := portName + "-UUID"
+			nsPG := buildNamespacedPortGroup(podInfo.namespace, getNetworkControllerName(netInfo.netName))
+			nsPG.Ports = []string{portUUID}
+			initialNBData = append(initialNBData, nsPG)
+
+			fakeOvn.startWithDBSetup(
+				libovsdbtest.TestSetup{NBData: initialNBData},
+				&corev1.NamespaceList{Items: []corev1.Namespace{*testing.NewNamespace(ns)}},
+				&corev1.NodeList{Items: []corev1.Node{*testNode}},
+				&corev1.PodList{Items: []corev1.Pod{*initialPod}},
+				&nadapi.NetworkAttachmentDefinitionList{Items: []nadapi.NetworkAttachmentDefinition{*nad}},
+			)
+
+			Expect(fakeOvn.NewUserDefinedNetworkController(nad)).To(Succeed(), "initialize the user-defined network controller")
+			userDefinedNetController, ok := fakeOvn.userDefinedNetworkControllers[userDefinedNetworkName]
+			Expect(ok).To(BeTrue())
+			podInfo.populateUserDefinedNetworkLogicalSwitchCache(userDefinedNetController)
+
+			Expect(userDefinedNetController.bnc.getPortInfoForUserDefinedNetwork(initialPod)).To(BeNil())
+
+			userDefinedNetController.bnc.networkManager = networkmanager.Default().Interface()
+			Expect(userDefinedNetController.bnc.removePodForUserDefinedNetwork(context.Background(), initialPod, nil)).To(Succeed(), "remove the pod using NBDB state despite unusable annotations")
+
+			_, err = libovsdbops.GetLogicalSwitchPort(fakeOvn.nbClient, &nbdb.LogicalSwitchPort{Name: portName})
+			Expect(errors.Is(err, libovsdbclient.ErrNotFound)).To(BeTrue(), "cleanup must remove port %s despite unusable pod annotations: %v", portName, err)
+
+			pg, err := libovsdbops.GetPortGroup(fakeOvn.nbClient, &nbdb.PortGroup{Name: nsPG.Name})
+			Expect(err).NotTo(HaveOccurred(), "read namespace port-group membership after pod cleanup")
+			Expect(pg.Ports).To(BeEmpty())
+
+			return nil
+		}
+
+		Expect(app.Run([]string{app.Name})).To(Succeed(), "run the annotation-independent pod cleanup scenario")
+	},
+		Entry("missing annotation", ""),
+		Entry("malformed annotation", "not-a-json-annotation"),
 	)
 
 	DescribeTable(
