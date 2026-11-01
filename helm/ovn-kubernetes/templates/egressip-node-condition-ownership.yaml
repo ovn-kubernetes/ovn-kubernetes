@@ -1,0 +1,36 @@
+{{- /*
+SPDX-FileCopyrightText: Copyright The OVN-Kubernetes Contributors
+SPDX-License-Identifier: Apache-2.0
+*/ -}}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: ovn-node-egressip-conditions
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["k8s.ovn.org"]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["egressips"]
+  matchConditions:
+    - name: ovn-node-identity
+      expression: >-
+        request.userInfo.username == "system:serviceaccount:ovn-kubernetes:ovnkube-node" ||
+        "system:ovn-nodes" in request.userInfo.groups
+  validations:
+    - expression: >-
+        object.spec == oldObject.spec &&
+        (has(object.status) && has(object.status.items) ? object.status.items : []) ==
+        (has(oldObject.status) && has(oldObject.status.items) ? oldObject.status.items : [])
+      message: OVN node credentials may report EgressIP conditions but cannot change the spec or assignments.
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: ovn-node-egressip-conditions
+spec:
+  policyName: ovn-node-egressip-conditions
+  validationActions: [Deny]
