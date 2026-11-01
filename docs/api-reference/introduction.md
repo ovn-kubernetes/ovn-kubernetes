@@ -33,6 +33,7 @@ This section contains the API Reference guide for features
 designed and implemented by OVN-Kubernetes
 
 * [EgressIP](egress-ip-api-spec.md)
+* [TrafficClass](traffic-class-api-spec.md)
 * [EgressService](egress-service-api-spec.md)
 * [EgressQoS](egress-qos-api-spec.md)
 * [EgressFirewall](egress-firewall-api-spec.md)
