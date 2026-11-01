@@ -12,10 +12,12 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	knet "k8s.io/api/networking/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
 	egressfirewall "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
+	trafficclassv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/trafficclass/v1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics/recorders"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
@@ -28,6 +30,9 @@ type baseNetworkControllerEventHandler struct{}
 // object and then add the new one.
 func hasResourceAnUpdateFunc(objType reflect.Type) bool {
 	switch objType {
+	case factory.TrafficClassType:
+		// Retain old labels as pending deletes until all former owners are refreshed.
+		return false
 	case factory.PodType,
 		factory.NodeType,
 		factory.EgressIPType,
@@ -91,6 +96,17 @@ func (h *baseNetworkControllerEventHandler) areResourcesEqual(objType reflect.Ty
 		}
 		return reflect.DeepEqual(oldEgressFirewall.Spec, newEgressFirewall.Spec), nil
 
+	case factory.TrafficClassType:
+		oldClass, ok := obj1.(*trafficclassv1.TrafficClass)
+		if !ok {
+			return false, fmt.Errorf("could not cast obj1 of type %T to *trafficclassv1.TrafficClass", obj1)
+		}
+		newClass, ok := obj2.(*trafficclassv1.TrafficClass)
+		if !ok {
+			return false, fmt.Errorf("could not cast obj2 of type %T to *trafficclassv1.TrafficClass", obj2)
+		}
+		return labels.Equals(oldClass.Labels, newClass.Labels) && apiequality.Semantic.DeepEqual(oldClass.Spec, newClass.Spec), nil
+
 	case factory.EgressIPType,
 		factory.EgressIPNamespaceType,
 		factory.EgressNodeType:
@@ -153,6 +169,9 @@ func (h *baseNetworkControllerEventHandler) getResourceFromInformerCache(objType
 
 	case factory.EgressIPType:
 		obj, err = watchFactory.GetEgressIP(name)
+
+	case factory.TrafficClassType:
+		obj, err = watchFactory.GetTrafficClass(name)
 
 	case factory.MultiNetworkPolicyType:
 		obj, err = watchFactory.GetMultiNetworkPolicy(namespace, name)

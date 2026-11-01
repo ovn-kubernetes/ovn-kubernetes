@@ -78,7 +78,8 @@ func (syncer *LRPSyncer) syncEgressIPReRoutes() error {
 	}
 	noOwnerFn := libovsdbops.GetNoOwnerPredicate[*nbdb.LogicalRouterPolicy]()
 	p := func(item *nbdb.LogicalRouterPolicy) bool {
-		return item.Priority == ovntypes.EgressIPCatchAllReroutePriority && noOwnerFn(item) && item.Match != "" && item.ExternalIDs["name"] != ""
+		// Legacy catch-all reroutes used priority 100 before selective traffic.
+		return (item.Priority == ovntypes.EgressIPCatchAllReroutePriority || item.Priority == ovntypes.EgressIPLegacyReroutePriority) && item.Action == nbdb.LogicalRouterPolicyActionReroute && noOwnerFn(item) && item.Match != "" && item.ExternalIDs["name"] != ""
 	}
 	lrpList, err := libovsdbops.FindALogicalRouterPoliciesWithPredicate(syncer.nbClient, ovntypes.OVNClusterRouter, p)
 	if err != nil {

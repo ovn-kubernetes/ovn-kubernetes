@@ -14,12 +14,15 @@ import (
 	utilnet "k8s.io/utils/net"
 
 	"github.com/ovn-kubernetes/libovsdb/client"
+	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
+
+const legacyUDNHostCIDRPolicyPriority = 99
 
 type PolicyBasedRoutesManager struct {
 	clusterRouterName string
@@ -70,7 +73,7 @@ func (pbr *PolicyBasedRoutesManager) AddSameNodeIPPolicy(nodeName, mgmtPortIP st
 }
 
 // AddHostCIDRPolicy adds the following policy in local-gateway-mode for UDN L2 topology to the GR
-// 99 ip4.dst == 172.18.0.0/16 && ip4.src == 10.100.200.0/24         reroute              10.100.200.2
+// 98 ip4.dst == 172.18.0.0/16 && ip4.src == 10.100.200.0/24         reroute              10.100.200.2
 // Since rtoe of GR is directly connected to the hostCIDR range in LGW even with the following
 // reroute to mp0 src-ip route on GR that we add from syncNodeManagementPort:
 // 10.100.200.0/24    10.100.200.2 src-ip
@@ -249,11 +252,30 @@ func (pbr *PolicyBasedRoutesManager) createPolicyBasedRoutes(match, priority, ne
 
 	p := func(item *nbdb.LogicalRouterPolicy) bool {
 		// the match criteria being passed around already features the LRP name scoped to the network
-		return item.Priority == lrp.Priority && item.Match == lrp.Match
+		return item.Priority == lrp.Priority && item.Match == lrp.Match &&
+			(priority != ovntypes.UDNHostCIDRPolicyPriority || item.ExternalIDs[ovntypes.NetworkExternalID] == pbr.netInfo.GetNetworkName())
 	}
 
-	err = libovsdbops.CreateOrUpdateLogicalRouterPolicyWithPredicate(pbr.nbClient, pbr.clusterRouterName, &lrp, p,
+	var ops []ovsdb.Operation
+	if priority == ovntypes.UDNHostCIDRPolicyPriority {
+		// Match the legacy host policy exactly; priority 99 also belongs to EgressIP.
+		legacy, lookupErr := libovsdbops.FindALogicalRouterPoliciesWithPredicate(pbr.nbClient, pbr.clusterRouterName, func(item *nbdb.LogicalRouterPolicy) bool {
+			return item.Priority == legacyUDNHostCIDRPolicyPriority && item.Match == match &&
+				item.ExternalIDs[ovntypes.NetworkExternalID] == pbr.netInfo.GetNetworkName()
+		})
+		if lookupErr != nil {
+			return lookupErr
+		}
+		ops, err = libovsdbops.DeleteLogicalRouterPoliciesOps(pbr.nbClient, ops, pbr.clusterRouterName, legacy...)
+		if err != nil {
+			return err
+		}
+	}
+	ops, err = libovsdbops.CreateOrUpdateLogicalRouterPolicyWithPredicateOps(pbr.nbClient, ops, pbr.clusterRouterName, &lrp, p,
 		&lrp.Nexthops, &lrp.Action)
+	if err == nil {
+		_, err = libovsdbops.TransactAndCheck(pbr.nbClient, ops)
+	}
 	if err != nil {
 		return fmt.Errorf("error creating policy %+v on router %s: %v", lrp, pbr.clusterRouterName, err)
 	}

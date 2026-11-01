@@ -192,8 +192,6 @@ var _ = ginkgo.Describe("EgressIP network registration", func() {
 						egressIPName: {egressStatuses: egressStatuses{make(statusMap)}, podIPs: podIPs, network: ni},
 					},
 					standbyEgressIPNames: sets.New(egressIP2Name),
-					podIPs:               podIPs,
-					network:              ni,
 				})
 				gomega.Expect(e.podAssignment.DoWithLock(podKey, func(string) error {
 					return e.deletePodEgressIPAssignments(ni, egressIPName, nil, pod, true)
