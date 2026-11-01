@@ -46,6 +46,7 @@ generate-api-reference: crd-ref-docs
 		[clusternetworkconnect]=clusternetworkconnect-api-spec.md \
 		[egressfirewall]=egress-firewall-api-spec.md \
 		[egressip]=egress-ip-api-spec.md \
+		[trafficclass]=traffic-class-api-spec.md \
 		[egressqos]=egress-qos-api-spec.md \
 		[egressservice]=egress-service-api-spec.md \
 		[routeadvertisements]=routeadvertisements-api-spec.md \
@@ -57,6 +58,7 @@ generate-api-reference: crd-ref-docs
 		out="$${api_ref_docs[$$src]}"; \
 		echo "Generating docs/api-reference/$$out from go-controller/pkg/crd/$$src"; \
 		$(GO_BIN_DIR)/crd-ref-docs --source-path ../go-controller/pkg/crd/$$src \
+			--max-depth=20 \
 			--config=../crd-docs-config.yaml \
 			--renderer=markdown \
 			--output-path=./api-reference/$$out \
