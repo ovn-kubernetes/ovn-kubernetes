@@ -369,6 +369,7 @@ func (oc *DefaultNetworkController) Stop() {
 		oc.efController.Stop()
 	}
 	if oc.eIPC != nil {
+		oc.eIPC.StopTrafficConditions()
 		oc.eIPC.StopNADReconciler()
 	}
 	if oc.routeImportManager != nil {
@@ -715,6 +716,9 @@ func (oc *DefaultNetworkController) run(ctx context.Context) error {
 	}
 
 	if config.OVNKubernetesFeature.EnableEgressIP {
+		if err := oc.eIPC.StartTrafficConditions(oc.stopChan); err != nil {
+			return err
+		}
 		if err := oc.eIPC.StartNADReconciler(); err != nil {
 			return err
 		}
