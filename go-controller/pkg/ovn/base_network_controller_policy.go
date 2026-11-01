@@ -922,7 +922,7 @@ func (bnc *BaseNetworkController) reconcileLocalPodForNetworkPolicy(np *networkP
 			delete(recordedPorts, portName)
 		}
 		np.setLocalPortsForPod(pod, recordedPorts)
-		if !bnc.IsUserDefinedNetwork() && config.Metrics.EnableScaleMetrics {
+		if bnc.networkPolicyMetricsEnabled() {
 			metrics.RecordNetpolLocalPodEvent("delete", time.Since(start))
 		}
 	}
@@ -946,7 +946,7 @@ func (bnc *BaseNetworkController) reconcileLocalPodForNetworkPolicy(np *networkP
 			recordedPorts[portName] = portUUID
 		}
 		np.setLocalPortsForPod(pod, recordedPorts)
-		if !bnc.IsUserDefinedNetwork() && config.Metrics.EnableScaleMetrics {
+		if bnc.networkPolicyMetricsEnabled() {
 			metrics.RecordNetpolLocalPodEvent("add", time.Since(start))
 		}
 	}
@@ -987,6 +987,87 @@ func (bnc *BaseNetworkController) deleteNetworkPolicyFromNamespaceIndex(np *netw
 func (bnc *BaseNetworkController) getNetworkPolicyKeysForNamespace(namespace string) []string {
 	policyKeys, _ := bnc.networkPolicyKeysByNamespace.Load(namespace)
 	return sets.List(policyKeys)
+}
+
+// transactPodLogicalPort commits a port together with membership in the policies
+// already selecting it. Publishing an active port before its default-deny
+// membership would leave it unprotected if the later policy transaction failed.
+func (bnc *BaseNetworkController) transactPodLogicalPort(pod *corev1.Pod, nadKey, switchName string,
+	lsp *nbdb.LogicalSwitchPort, annotation *util.PodAnnotation, ops []ovsdb.Operation) error {
+	start := time.Now()
+	var policies []*networkPolicy
+	if lsp != nil && bnc.isPodScheduledOnLocalNode(pod) && bnc.podExpectedInLogicalCache(pod) {
+		// Take policy locks in sorted order, without holding the namespace-index
+		// lock: policy creation publishes that index while holding its key lock.
+		for _, key := range bnc.getNetworkPolicyKeysForNamespace(pod.Namespace) {
+			bnc.networkPolicies.LockKey(key)
+			defer bnc.networkPolicies.UnlockKey(key)
+			np, found := bnc.networkPolicies.Load(key)
+			if found && !np.deleted && np.localPodSelector != nil && np.localPodSelector.Matches(labels.Set(pod.Labels)) {
+				policies = append(policies, np)
+			}
+		}
+	}
+
+	var sharedPGs *defaultDenyPortGroups
+	if len(policies) > 0 {
+		bnc.sharedNetpolPortGroups.LockKey(pod.Namespace)
+		defer bnc.sharedNetpolPortGroups.UnlockKey(pod.Namespace)
+		var found bool
+		sharedPGs, found = bnc.sharedNetpolPortGroups.Load(pod.Namespace)
+		if !found {
+			return fmt.Errorf("default deny port groups for pod %s/%s do not exist", pod.Namespace, pod.Name)
+		}
+		groups := sets.New[string]()
+		for _, np := range policies {
+			groups.Insert(np.portGroupName)
+			if np.isIngress {
+				groups.Insert(bnc.defaultDenyPortGroupName(pod.Namespace, libovsdbutil.ACLIngress))
+			}
+			if np.isEgress {
+				groups.Insert(bnc.defaultDenyPortGroupName(pod.Namespace, libovsdbutil.ACLEgress))
+			}
+		}
+		for _, group := range sets.List(groups) {
+			if PortGroupHasPorts(bnc.nbClient, group, []string{lsp.UUID}) {
+				continue
+			}
+			var err error
+			ops, err = libovsdbops.AddPortsToPortGroupOps(bnc.nbClient, ops, group, lsp.UUID)
+			if err != nil {
+				return fmt.Errorf("failed to protect pod %s/%s port %s with port group %s: %w",
+					pod.Namespace, pod.Name, lsp.Name, group, err)
+			}
+		}
+	}
+
+	if _, err := libovsdbops.TransactAndCheckAndSetUUIDs(bnc.nbClient, lsp, ops); err != nil {
+		return fmt.Errorf("failed to transact port and policy membership for pod %s/%s network %s: %w",
+			pod.Namespace, pod.Name, bnc.GetNetworkName(), err)
+	}
+	if lsp == nil {
+		return nil
+	}
+	if lsp.UUID == "" {
+		return fmt.Errorf("transaction returned an empty UUID for pod %s/%s port %s", pod.Namespace, pod.Name, lsp.Name)
+	}
+
+	// No policy bookkeeping changes before commit, so failures need no rollback.
+	// Use the real UUID returned by the transaction, never its temporary name.
+	for _, np := range policies {
+		ports := np.getLocalPortsForPod(pod)
+		changed := ports[lsp.Name] != lsp.UUID
+		sharedPGs.addPortsForPolicy(np, map[string]string{lsp.Name: lsp.UUID})
+		ports[lsp.Name] = lsp.UUID
+		np.setLocalPortsForPod(pod, ports)
+		if changed && bnc.networkPolicyMetricsEnabled() {
+			metrics.RecordNetpolLocalPodEvent("add", time.Since(start))
+		}
+	}
+	// Keep cache publication inside the policy locks so concurrent reconciliation
+	// cannot replace the new membership with a previous cached port incarnation.
+	bnc.logicalPortCache.add(pod, switchName, nadKey, bnc.GetNetworkName(), lsp.UUID, annotation.MAC, annotation.IPs)
+	return nil
 }
 
 func (bnc *BaseNetworkController) reconcileNetworkPolicyPortGroups(pod *corev1.Pod) error {
@@ -1093,7 +1174,7 @@ func (bnc *BaseNetworkController) bootstrapLocalPodsForNetworkPolicy(np *network
 	for _, podPorts := range podPortsToRecord {
 		np.setLocalPortsForPod(podPorts.pod, podPorts.ports)
 	}
-	if !bnc.IsUserDefinedNetwork() && config.Metrics.EnableScaleMetrics {
+	if bnc.networkPolicyMetricsEnabled() {
 		metrics.RecordNetpolLocalPodEvent("add", time.Since(start))
 	}
 

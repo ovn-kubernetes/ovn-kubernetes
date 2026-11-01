@@ -113,3 +113,54 @@ We prefer level-driven controllers built with `pkg/controller/controller.go`. Wh
 - The network manager is the source of truth for NADs; register a lightweight, non-blocking handler via `RegisterNADReconciler` that will queue keys to the Reconciler.
 - RegisterNADReconciler  **before** starting controller workers to avoid missing events during startup.
 - For a concrete example, see `go-controller/pkg/ovn/controller/egressfirewall/egressfirewall.go`.
+
+### Pod reconciliation and applied state
+
+The default and user-defined network controllers route pod events through
+`ReconcilePod`. The existing event and retry framework still schedules the work;
+this entry point does not introduce a separate pod controller. Add and update
+passes derive required work from the current pod and the controller's applied
+logical-port state, rather than relying only on the preceding event.
+
+`GetPodState` retains an independent snapshot of each applied port's UUID,
+logical switch, addresses, and network ownership for deletion retries. Cleanup
+uses that snapshot, pod annotations, and NBDB when needed. Before deleting UDN
+resources for a reused pod name, the controller checks the current pod UID and
+port ownership. It preserves replacement-owned resources and collects errors
+from independent cleanup steps so a retry can finish the remaining work.
+
+Policies record port UUIDs per pod. Reconciliation compares these records with
+selectors, zone placement, and current port state. Temporary cache misses retain
+existing protection and request a retry. Creating a port also adds it to the
+already-published policies selecting it, including their default-deny groups, in
+the same NBDB transaction. Policy records and logical-port cache state are
+published only after that transaction succeeds. Policy locks are acquired in
+sorted key order before the shared default-deny lock; the namespace-index lock
+must not be held while acquiring policy locks. Policy creation publishes its
+index entry under its own key lock before bootstrapping existing pods.
+
+Live changes to the network-selection annotation remain unsupported, as described
+in the [multi-homing limitations](../features/multiple-networks/multi-homing.md#limitations).
+Removing a NAD from that annotation does not prove that its interface or port
+has been removed. Existing policy protection is retained until the recorded LSP
+is gone. This does not provide hot-unplug or change CNI/IPAM ownership.
+
+The `Multicast` E2E spec named `should preserve namespace and policy port-group
+membership when a pod is recreated` checks normal creation and same-name
+replacement against NBDB. It inspects the database on the pod's node, including
+in interconnect deployments. The `control-plane` matrix in
+`.github/workflows/test.yml` enables multicast and invokes `make -C test
+control-plane`, which runs `test/scripts/e2e-cp.sh` and the OVN-Kubernetes E2E
+suite. The spec has the `Feature:Multicast` label, is not `Serial`, and is selected
+by the regular `.` focus with `PARALLEL=true`. It requires two ready nodes and a
+running NBDB pod; it has no IP-family restriction. No-overlay lanes exclude
+multicast. For a focused run on a cluster with multicast enabled:
+
+```sh
+make -C test control-plane WHAT='should preserve namespace and policy port-group membership when a pod is recreated'
+```
+
+Unit tests exercise transaction failures, missing policy groups, cache loss,
+partial cleanup, and stale deletion snapshots deterministically. The E2E spec
+covers replacement through the public pod API; it does not force a particular
+ordering of controller retries.

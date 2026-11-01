@@ -324,21 +324,14 @@ func (oc *DefaultNetworkController) addLogicalPort(ctx context.Context, pod *cor
 	ops = append(ops, recordOps...)
 
 	transactStart := time.Now()
-	_, err = libovsdbops.TransactAndCheckAndSetUUIDs(oc.nbClient, lsp, ops)
+	err = oc.transactPodLogicalPort(pod, nadKey, switchName, lsp, podAnnotation, ops)
 	libovsdbExecuteTime = time.Since(transactStart)
 	if err != nil {
-		return fmt.Errorf("error transacting operations %+v: %v", ops, err)
+		return err
 	}
 	txOkCallBack()
 	oc.podRecorder.AddLSP(pod.UID, oc.GetNetInfo())
 
-	// if somehow lspUUID is empty, there is a bug here with interpreting OVSDB results
-	if len(lsp.UUID) == 0 {
-		return fmt.Errorf("UUID is empty from LSP: %+v", *lsp)
-	}
-
-	// Add the pod's logical switch port to the port cache
-	_ = oc.logicalPortCache.add(pod, switchName, types.DefaultNetworkName, lsp.UUID, podAnnotation.MAC, podAnnotation.IPs)
 	if oc.onLogicalPortCacheAdd != nil {
 		oc.onLogicalPortCacheAdd(pod, types.DefaultNetworkName)
 	}
