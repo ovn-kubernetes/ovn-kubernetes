@@ -175,6 +175,7 @@ rules:
     - apiGroups: ["k8s.ovn.org"]
       resources:
           - egressfirewalls
+          - trafficclasses
           - egressips
           - egressqoses
           - egressservices
@@ -187,6 +188,11 @@ rules:
           - uplinkstates
           - vteps
       verbs: [ "get", "list", "watch" ]
+    # EgressIP has no status subresource; condition patches use the main resource.
+    - apiGroups: ["k8s.ovn.org"]
+      resources:
+          - egressips
+      verbs: [ "patch" ]
     - apiGroups: ["k8s.ovn.org"]
       resources:
           - uplinkstates

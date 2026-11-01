@@ -187,6 +187,8 @@ spec:
           value: {{ default "" .Values.global.enableHybridOverlay | quote }}
         - name: OVN_ADMIN_NETWORK_POLICY_ENABLE
           value: {{ default "" .Values.global.enableAdminNetworkPolicy | quote }}
+        - name: OVN_TRAFFIC_CLASS_ENABLE
+          value: {{ default false .Values.global.enableTrafficClass | quote }}
         - name: OVN_EGRESSIP_ENABLE
           value: {{ default "" .Values.global.enableEgressIp | quote }}
         - name: OVN_EGRESSIP_HEALTHCHECK_PORT
