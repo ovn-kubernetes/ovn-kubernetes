@@ -31,12 +31,22 @@ type Interface interface {
 
 // This struct should be updated whenever a new netlink.Rule field is used in the codebase.
 type IPRule struct {
+	IPProto  int
+	Dport    PortRange
+	Sport    PortRange
 	Priority int
 	Table    int
 	Family   int
 	Mark     uint32
 	Src      netip.Prefix
 	Dst      netip.Prefix
+}
+
+// PortRange keeps optional ports comparable by value for IPRule map keys.
+// Set distinguishes an explicit zero interval from an unconstrained port.
+type PortRange struct {
+	netlink.RulePortRange
+	Set bool
 }
 
 type ruleState struct {
@@ -61,6 +71,15 @@ func (r IPRule) String() string {
 	if r.Dst.IsValid() {
 		s += fmt.Sprintf(" dst:%s", r.Dst)
 	}
+	if r.IPProto != 0 {
+		s += fmt.Sprintf(" ipproto:%d", r.IPProto)
+	}
+	if r.Dport.Set {
+		s += fmt.Sprintf(" dport:%d-%d", r.Dport.Start, r.Dport.End)
+	}
+	if r.Sport.Set {
+		s += fmt.Sprintf(" sport:%d-%d", r.Sport.Start, r.Sport.End)
+	}
 	return s
 }
 
@@ -68,14 +87,22 @@ func (r IPRule) String() string {
 // This function does not copy a netlink rule one-to-one.
 // If additional fields are needed, they must be added to IPRule.
 func IPRuleFromNetlinkRule(r *netlink.Rule) IPRule {
-	return IPRule{
+	rule := IPRule{
 		Priority: r.Priority,
+		IPProto:  r.IPProto,
 		Table:    r.Table,
 		Family:   r.Family,
 		Mark:     r.Mark,
 		Src:      ipNetToPrefix(r.Src),
 		Dst:      ipNetToPrefix(r.Dst),
 	}
+	if r.Dport != nil {
+		rule.Dport = PortRange{RulePortRange: *r.Dport, Set: true}
+	}
+	if r.Sport != nil {
+		rule.Sport = PortRange{RulePortRange: *r.Sport, Set: true}
+	}
+	return rule
 }
 
 func (r IPRule) toNetlinkRule() *netlink.Rule {
@@ -84,6 +111,15 @@ func (r IPRule) toNetlinkRule() *netlink.Rule {
 	nl.Table = r.Table
 	nl.Family = r.Family
 	nl.Mark = r.Mark
+	nl.IPProto = r.IPProto
+	if r.Dport.Set {
+		port := r.Dport.RulePortRange
+		nl.Dport = &port
+	}
+	if r.Sport.Set {
+		port := r.Sport.RulePortRange
+		nl.Sport = &port
+	}
 	nl.Src = prefixToIPNet(r.Src)
 	nl.Dst = prefixToIPNet(r.Dst)
 	return nl
