@@ -13,6 +13,7 @@ import (
 	clusternetworkconnectv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/informers/externalversions/clusternetworkconnect/v1"
 	egressipv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/informers/externalversions/egressip/v1"
 	routeadvertisementsv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/informers/externalversions/routeadvertisements/v1"
+	trafficclassv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/trafficclass/v1/apis/informers/externalversions/trafficclass/v1"
 	v1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/informers/externalversions/uplink/v1alpha1"
 	userdefinednetworkv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/informers/externalversions/userdefinednetwork/v1"
 	vtepv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/informers/externalversions/vtep/v1"
@@ -798,6 +799,26 @@ func (_m *NodeWatchFactory) Start() error {
 		r0 = rf()
 	} else {
 		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// TrafficClassInformer provides a mock function with no fields
+func (_m *NodeWatchFactory) TrafficClassInformer() trafficclassv1.TrafficClassInformer {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for TrafficClassInformer")
+	}
+
+	var r0 trafficclassv1.TrafficClassInformer
+	if rf, ok := ret.Get(0).(func() trafficclassv1.TrafficClassInformer); ok {
+		r0 = rf()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(trafficclassv1.TrafficClassInformer)
+		}
 	}
 
 	return r0
