@@ -13,7 +13,15 @@ import (
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iprulemanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/routemanager"
+	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 )
+
+// Publish applied SNAT state even if pruning startup claims fails.
+func (c *Controller) syncOwnedResources(owner string, applied *state) error {
+	pruneErr := c.pruneOwnedResources(owner, applied)
+	snatErr := c.syncSelectiveSNAT(owner, applied)
+	return utilerrors.Join(pruneErr, snatErr)
+}
 
 // Claim changes and manager operations share a lock so a last-owner deletion
 // cannot race with another owner acquiring the same resource.
@@ -97,4 +105,45 @@ func (c *Controller) deleteOwnedRoute(owner string, route netlink.Route) error {
 		delete(c.routeOwners, owner)
 	}
 	return nil
+}
+
+// A first reconciliation may replace claims seeded by startup repair without
+// having an applied cache entry. Keep only claims represented by its new state.
+// Caller holds the owner's cache lock.
+func (c *Controller) pruneOwnedResources(owner string, applied *state) error {
+	wantedRules := sets.New[iprulemanager.IPRule]()
+	var wantedRoutes []netlink.Route
+	if applied != nil {
+		for _, pods := range applied.namespacesWithPodIPConfigs {
+			for _, configs := range pods {
+				for _, config := range configs.elems {
+					wantedRules.Insert(config.ipRule)
+				}
+			}
+		}
+		wantedRoutes = applied.eIPConfig.routes
+	}
+	c.ruleOwnersMutex.Lock()
+	obsoleteRules := c.ruleOwners[owner].Difference(wantedRules)
+	c.ruleOwnersMutex.Unlock()
+	var errs []error
+	for rule := range obsoleteRules {
+		if err := c.deleteOwnedIPRule(owner, rule); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	c.routeOwnersMutex.Lock()
+	obsoleteRoutes := slices.Clone(c.routeOwners[owner])
+	c.routeOwnersMutex.Unlock()
+	for _, route := range obsoleteRoutes {
+		if slices.ContainsFunc(wantedRoutes, func(wanted netlink.Route) bool {
+			return routemanager.SameKey(wanted, route)
+		}) {
+			continue
+		}
+		if err := c.deleteOwnedRoute(owner, route); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return utilerrors.Join(errs...)
 }
