@@ -213,6 +213,11 @@ type EgressIPController struct {
 	trafficMatches sync.Map
 	// trafficSelection reuses resolved owners while their informer objects are unchanged.
 	trafficSelection egressiputil.PodTrafficSelectionCache
+	// trafficConditions reports cluster-wide selection independently of applied OVN state.
+	trafficConditions        controller.Reconciler
+	trafficConditionHandlers []trafficConditionHandler
+	// Only the traffic-condition worker accesses previously reported protocol warnings.
+	trafficProtocolWarnings map[string]sets.Set[egressiputil.UnsupportedProtocol]
 	// logicalPortCache allows access to pod IPs for all networks
 	logicalPortCache *PortCache
 	// nodeState tracks every observed node. Locality is derived from nodeName;
@@ -284,6 +289,7 @@ func NewEIPController(
 		v4:                v4,
 		v6:                v6,
 	}
+	e.trafficProtocolWarnings = map[string]sets.Set[egressiputil.UnsupportedProtocol]{}
 	nadReconcilerConfig := &controller.ReconcilerConfig{
 		RateLimiter: workqueue.DefaultTypedControllerRateLimiter[string](),
 		Reconcile: func(_ context.Context, key string) error {
