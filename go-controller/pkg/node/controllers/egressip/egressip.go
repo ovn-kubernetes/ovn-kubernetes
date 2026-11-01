@@ -131,6 +131,12 @@ type Controller struct {
 	// cache is a cache of configuration states for EIPs, key is EgressIP Name.
 	cache *syncmap.SyncMap[*state]
 
+	// Shared resources have independent ownership locks; owner reconciliations remain concurrent.
+	ruleOwnersMutex  sync.Mutex
+	ruleOwners       map[string]sets.Set[iprulemanager.IPRule]
+	routeOwnersMutex sync.Mutex
+	routeOwners      map[string][]netlink.Route
+
 	// referencedObjects should only be accessed with referencedObjectsLock
 	referencedObjectsLock sync.RWMutex
 	// referencedObjects is a cache of objects that every EIP has selected for its config.
@@ -174,6 +180,8 @@ func NewController(k kube.Interface, eIPInformer egressipinformer.EgressIPInform
 		),
 		getActiveNetworkForNamespace: getActiveNetworkForNamespaceFn,
 		cache:                        syncmap.NewSyncMap[*state](),
+		ruleOwners:                   make(map[string]sets.Set[iprulemanager.IPRule]),
+		routeOwners:                  make(map[string][]netlink.Route),
 		referencedObjectsLock:        sync.RWMutex{},
 		referencedObjects:            map[string]*referencedObjects{},
 		routeManager:                 routeManager,
