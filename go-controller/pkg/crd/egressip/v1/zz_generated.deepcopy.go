@@ -89,6 +89,11 @@ func (in *EgressIPSpec) DeepCopyInto(out *EgressIPSpec) {
 		*out = new(metav1.LabelSelector)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.TrafficSelector != nil {
+		in, out := &in.TrafficSelector, &out.TrafficSelector
+		*out = new(metav1.LabelSelector)
+		(*in).DeepCopyInto(*out)
+	}
 	return
 }
 
@@ -109,6 +114,13 @@ func (in *EgressIPStatus) DeepCopyInto(out *EgressIPStatus) {
 		in, out := &in.Items, &out.Items
 		*out = make([]EgressIPStatusItem, len(*in))
 		copy(*out, *in)
+	}
+	if in.Conditions != nil {
+		in, out := &in.Conditions, &out.Conditions
+		*out = make([]metav1.Condition, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
 	}
 	return
 }

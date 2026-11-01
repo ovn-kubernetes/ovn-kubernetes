@@ -1,0 +1,339 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: trafficclasses.k8s.ovn.org
+spec:
+  group: k8s.ovn.org
+  names:
+    kind: TrafficClass
+    listKind: TrafficClassList
+    plural: trafficclasses
+    shortNames:
+    - tc
+    singular: trafficclass
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.matches[*].destinationCIDR
+      name: Matches
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: TrafficClass defines matches selectable by EgressIP resources.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: TrafficClassSpec defines destination matches.
+            properties:
+              matches:
+                description: Matches are ORed together.
+                items:
+                  description: TrafficMatch matches a network, optionally restricted
+                    to L4 protocols and ports.
+                  properties:
+                    destinationCIDR:
+                      description: DestinationCIDR must use the canonical network
+                        address.
+                      maxLength: 43
+                      type: string
+                      x-kubernetes-validations:
+                      - message: CIDR must be a valid network address
+                        rule: isCIDR(self) && cidr(self) == cidr(self).masked()
+                    protocols:
+                      description: Protocols are ORed together; omission matches all
+                        protocols and ports.
+                      items:
+                        description: ProtocolMatch selects exactly one transport protocol.
+                        properties:
+                          sctp:
+                            description: SCTP selects SCTP traffic.
+                            properties:
+                              destinationPort:
+                                description: DestinationPort matches the packet destination
+                                  port.
+                                properties:
+                                  number:
+                                    description: Number selects one port.
+                                    format: int32
+                                    maximum: 65535
+                                    minimum: 1
+                                    type: integer
+                                  range:
+                                    description: Range selects an inclusive range
+                                      of ports.
+                                    properties:
+                                      end:
+                                        description: End is the last port.
+                                        format: int32
+                                        maximum: 65535
+                                        minimum: 1
+                                        type: integer
+                                      start:
+                                        description: Start is the first port.
+                                        format: int32
+                                        maximum: 65535
+                                        minimum: 1
+                                        type: integer
+                                    required:
+                                    - end
+                                    - start
+                                    type: object
+                                    x-kubernetes-validations:
+                                    - message: end must be greater than or equal to
+                                        start
+                                      rule: self.end >= self.start
+                                type: object
+                                x-kubernetes-validations:
+                                - message: exactly one of number or range must be
+                                    set
+                                  rule: has(self.number) != has(self.range)
+                              sourcePort:
+                                description: SourcePort matches the packet source
+                                  port.
+                                properties:
+                                  number:
+                                    description: Number selects one port.
+                                    format: int32
+                                    maximum: 65535
+                                    minimum: 1
+                                    type: integer
+                                  range:
+                                    description: Range selects an inclusive range
+                                      of ports.
+                                    properties:
+                                      end:
+                                        description: End is the last port.
+                                        format: int32
+                                        maximum: 65535
+                                        minimum: 1
+                                        type: integer
+                                      start:
+                                        description: Start is the first port.
+                                        format: int32
+                                        maximum: 65535
+                                        minimum: 1
+                                        type: integer
+                                    required:
+                                    - end
+                                    - start
+                                    type: object
+                                    x-kubernetes-validations:
+                                    - message: end must be greater than or equal to
+                                        start
+                                      rule: self.end >= self.start
+                                type: object
+                                x-kubernetes-validations:
+                                - message: exactly one of number or range must be
+                                    set
+                                  rule: has(self.number) != has(self.range)
+                            type: object
+                          tcp:
+                            description: TCP selects TCP traffic.
+                            properties:
+                              destinationPort:
+                                description: DestinationPort matches the packet destination
+                                  port.
+                                properties:
+                                  number:
+                                    description: Number selects one port.
+                                    format: int32
+                                    maximum: 65535
+                                    minimum: 1
+                                    type: integer
+                                  range:
+                                    description: Range selects an inclusive range
+                                      of ports.
+                                    properties:
+                                      end:
+                                        description: End is the last port.
+                                        format: int32
+                                        maximum: 65535
+                                        minimum: 1
+                                        type: integer
+                                      start:
+                                        description: Start is the first port.
+                                        format: int32
+                                        maximum: 65535
+                                        minimum: 1
+                                        type: integer
+                                    required:
+                                    - end
+                                    - start
+                                    type: object
+                                    x-kubernetes-validations:
+                                    - message: end must be greater than or equal to
+                                        start
+                                      rule: self.end >= self.start
+                                type: object
+                                x-kubernetes-validations:
+                                - message: exactly one of number or range must be
+                                    set
+                                  rule: has(self.number) != has(self.range)
+                              sourcePort:
+                                description: SourcePort matches the packet source
+                                  port.
+                                properties:
+                                  number:
+                                    description: Number selects one port.
+                                    format: int32
+                                    maximum: 65535
+                                    minimum: 1
+                                    type: integer
+                                  range:
+                                    description: Range selects an inclusive range
+                                      of ports.
+                                    properties:
+                                      end:
+                                        description: End is the last port.
+                                        format: int32
+                                        maximum: 65535
+                                        minimum: 1
+                                        type: integer
+                                      start:
+                                        description: Start is the first port.
+                                        format: int32
+                                        maximum: 65535
+                                        minimum: 1
+                                        type: integer
+                                    required:
+                                    - end
+                                    - start
+                                    type: object
+                                    x-kubernetes-validations:
+                                    - message: end must be greater than or equal to
+                                        start
+                                      rule: self.end >= self.start
+                                type: object
+                                x-kubernetes-validations:
+                                - message: exactly one of number or range must be
+                                    set
+                                  rule: has(self.number) != has(self.range)
+                            type: object
+                          udp:
+                            description: UDP selects UDP traffic.
+                            properties:
+                              destinationPort:
+                                description: DestinationPort matches the packet destination
+                                  port.
+                                properties:
+                                  number:
+                                    description: Number selects one port.
+                                    format: int32
+                                    maximum: 65535
+                                    minimum: 1
+                                    type: integer
+                                  range:
+                                    description: Range selects an inclusive range
+                                      of ports.
+                                    properties:
+                                      end:
+                                        description: End is the last port.
+                                        format: int32
+                                        maximum: 65535
+                                        minimum: 1
+                                        type: integer
+                                      start:
+                                        description: Start is the first port.
+                                        format: int32
+                                        maximum: 65535
+                                        minimum: 1
+                                        type: integer
+                                    required:
+                                    - end
+                                    - start
+                                    type: object
+                                    x-kubernetes-validations:
+                                    - message: end must be greater than or equal to
+                                        start
+                                      rule: self.end >= self.start
+                                type: object
+                                x-kubernetes-validations:
+                                - message: exactly one of number or range must be
+                                    set
+                                  rule: has(self.number) != has(self.range)
+                              sourcePort:
+                                description: SourcePort matches the packet source
+                                  port.
+                                properties:
+                                  number:
+                                    description: Number selects one port.
+                                    format: int32
+                                    maximum: 65535
+                                    minimum: 1
+                                    type: integer
+                                  range:
+                                    description: Range selects an inclusive range
+                                      of ports.
+                                    properties:
+                                      end:
+                                        description: End is the last port.
+                                        format: int32
+                                        maximum: 65535
+                                        minimum: 1
+                                        type: integer
+                                      start:
+                                        description: Start is the first port.
+                                        format: int32
+                                        maximum: 65535
+                                        minimum: 1
+                                        type: integer
+                                    required:
+                                    - end
+                                    - start
+                                    type: object
+                                    x-kubernetes-validations:
+                                    - message: end must be greater than or equal to
+                                        start
+                                      rule: self.end >= self.start
+                                type: object
+                                x-kubernetes-validations:
+                                - message: exactly one of number or range must be
+                                    set
+                                  rule: has(self.number) != has(self.range)
+                            type: object
+                        type: object
+                        x-kubernetes-validations:
+                        - message: exactly one of tcp, udp, or sctp must be set
+                          rule: 'has(self.tcp) ? !has(self.udp) && !has(self.sctp)
+                            : has(self.udp) != has(self.sctp)'
+                      type: array
+                      x-kubernetes-list-type: atomic
+                  required:
+                  - destinationCIDR
+                  type: object
+                maxItems: 25
+                minItems: 1
+                type: array
+                x-kubernetes-list-type: atomic
+            required:
+            - matches
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources: {}

@@ -29,6 +29,7 @@ _Appears in:_
 | `namespaceSelector` _[LabelSelector](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#labelselector-v1-meta)_ | NamespaceSelector applies the egress IP only to the namespace(s) whose label<br />matches this definition. This field is mandatory. |  |  |
 | `podSelector` _[LabelSelector](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#labelselector-v1-meta)_ | PodSelector applies the egress IP only to the pods whose label<br />matches this definition. This field is optional, and in case it is not set:<br />results in the egress IP being applied to all pods in the namespace(s)<br />matched by the NamespaceSelector. In case it is set: is intersected with<br />the NamespaceSelector, thus applying the egress IP to the pods<br />(in the namespace(s) already matched by the NamespaceSelector) which<br />match this pod selector. |  | Optional: \{\} <br /> |
 | `egressNodeSelector` _[LabelSelector](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#labelselector-v1-meta)_ | EgressNodeSelector limits the pool of nodes that can host the<br />EgressIPs in this object; it applies to all EgressIPs in this object.<br />Only nodes whose labels match this selector are eligible for assignment.<br />This field is optional. When not specified by the user, the CRD<br />default is applied: \{matchExpressions: [\{key:<br />k8s.ovn.org/egress-assignable, operator: Exists\}]\}.<br />An empty selector (\{\}) matches all nodes in the cluster including<br />control plane nodes — use with caution as it expands the eligible<br />node pool and health-check set to the entire cluster.<br />This field restricts only where the IPs in this EgressIP object are<br />placed; it does not reserve the matched nodes for exclusive use.<br />Other EgressIP objects can still consume capacity on the same nodes. | \{ matchExpressions:[map[key:k8s.ovn.org/egress-assignable operator:Exists]] \} | Optional: \{\} <br /> |
+| `trafficSelector` _[LabelSelector](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#labelselector-v1-meta)_ | TrafficSelector selects TrafficClasses whose destinations use this EgressIP.<br />When omitted, this EgressIP applies to all egress traffic.<br />Expression operators and value counts must form a valid Kubernetes label selector. |  | Optional: \{\} <br /> |
 
 
 #### EgressIPStatus
@@ -44,7 +45,8 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `items` _[EgressIPStatusItem](#egressipstatusitem) array_ | The list of assigned egress IPs and their corresponding node assignment. |  |  |
+| `items` _[EgressIPStatusItem](#egressipstatusitem) array_ | The list of assigned egress IPs and their corresponding node assignment. | \{  \} |  |
+| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#condition-v1-meta) array_ | Conditions describe traffic selector resolution and conflicts. |  | Optional: \{\} <br /> |
 
 
 #### EgressIPStatusItem
