@@ -44,6 +44,20 @@ import (
 	util_mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks"
 )
 
+// TestDPUCleanupMissingNamespace keeps repeated DEL requests safe after sandbox teardown.
+func TestDPUCleanupMissingNamespace(t *testing.T) {
+	for _, netnsPath := range []string{"", t.TempDir() + "/already-removed"} {
+		t.Run(netnsPath, func(t *testing.T) {
+			pr := &PodRequest{
+				PodNamespace: "namespace", PodName: "pod", SandboxID: "old-sandbox", IfName: "eth0", Netns: netnsPath,
+				CNIConf: &ovncnitypes.NetConf{DeviceID: "0000:05:00.4"},
+			}
+			err := (&defaultPodRequestInterfaceOps{}).UnconfigureInterface(pr, &PodInterfaceInfo{IsDPUHostMode: true}, nil, nil)
+			require.NoError(t, err, "an already-removed DPU sandbox needs no further interface cleanup")
+		})
+	}
+}
+
 func TestRenameLink(t *testing.T) {
 	mockNetLinkOps := new(util_mocks.NetLinkOps)
 	mockLink := new(netlink_mocks.Link)
