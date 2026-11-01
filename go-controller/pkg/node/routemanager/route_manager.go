@@ -248,6 +248,18 @@ func SameKey(a, b netlink.Route) bool {
 	return keyFromNetlink(na) == keyFromNetlink(nb)
 }
 
+// Matches reports whether the installed route satisfies the requested route,
+// including the metric after the manager's kernel normalization.
+func Matches(wanted, installed netlink.Route) bool {
+	w, err := validateAndNormalizeRoute(&wanted)
+	if err != nil {
+		return false
+	}
+	// An on-link route or a single next hop must not match an obsolete gateway or ECMP route.
+	return w.Gw.Equal(installed.Gw) && len(w.MultiPath) == len(installed.MultiPath) &&
+		routePartiallyEqualWantedToExisting(w, &installed)
+}
+
 // sync will iterate through all routes seen on a node and ensure any route
 // manager managed routes are applied. Any conflicting additional routes are
 // removed. Other routes are preserved.

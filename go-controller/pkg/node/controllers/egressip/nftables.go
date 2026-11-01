@@ -16,10 +16,14 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
-// initNFTables creates and runs a transaction populating the chain/map/rule definitions for
+func (c *Controller) initNFTables() error {
+	return c.configureNFTables(ovnconfig.OVNKubernetesFeature.EnableTrafficClass)
+}
+
+// configureNFTables creates and runs a transaction populating the chain/map/rule definitions for
 // EgressIP: the SNAT chain and v4/v6 maps, the LGW connmark chain (or its cleanup when not in LGW
 // mode), and the secondary-interface chain that drops pod traffic that hasn't been SNATed yet.
-func (c *Controller) initNFTables() error {
+func (c *Controller) configureNFTables(keepSelectiveSNAT bool) error {
 	nft, err := nodenft.GetNFTablesHelper()
 	if err != nil {
 		return fmt.Errorf("failed to get nftables helper: %w", err)
@@ -33,6 +37,15 @@ func (c *Controller) initNFTables() error {
 		Priority: knftables.PtrTo(knftables.SNATPriority),
 	})
 	tx.Flush(&knftables.Chain{Name: types.EgressIPNFTablesChainName})
+
+	if keepSelectiveSNAT {
+		tx.Add(&knftables.Chain{Name: selectiveSNATChain})
+		tx.Add(&knftables.Rule{Chain: types.EgressIPNFTablesChainName, Rule: "jump " + selectiveSNATChain})
+	} else {
+		tx.Add(&knftables.Chain{Name: selectiveSNATChain})
+		tx.Flush(&knftables.Chain{Name: selectiveSNATChain})
+		tx.Delete(&knftables.Chain{Name: selectiveSNATChain})
+	}
 
 	if c.v4 {
 		tx.Add(&knftables.Map{

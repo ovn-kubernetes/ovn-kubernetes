@@ -25,6 +25,7 @@ type Interface interface {
 	Add(rule IPRule) error
 	AddWithMetadata(rule IPRule, metadata string) error
 	Delete(rule IPRule) error
+	DeleteWithoutRetry(rule IPRule) error
 	DeleteWithMetadata(metadata string) error
 	OwnPriority(priority int, installed ...IPRule) error
 }
@@ -221,6 +222,16 @@ func (rm *Controller) AddWithMetadata(rule IPRule, metadata string) error {
 
 // Delete stops managed an IP rule and ensures its deleted
 func (rm *Controller) Delete(rule IPRule) error {
+	return rm.delete(rule, true)
+}
+
+// DeleteWithoutRetry leaves a failed deletion to the caller, which owns the
+// other dataplane state that must remain installed while the rule is active.
+func (rm *Controller) DeleteWithoutRetry(rule IPRule) error {
+	return rm.delete(rule, false)
+}
+
+func (rm *Controller) delete(rule IPRule, retry bool) error {
 	rule = rule.normalized()
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
@@ -229,7 +240,9 @@ func (rm *Controller) Delete(rule IPRule) error {
 	}
 
 	if err := netlink.RuleDel(rule.toNetlinkRule()); err != nil && !errors.Is(err, syscall.ENOENT) {
-		rm.rules[rule] = ruleState{metadata: rm.rules[rule].metadata, delete: true}
+		if retry {
+			rm.rules[rule] = ruleState{metadata: rm.rules[rule].metadata, delete: true}
+		}
 		return fmt.Errorf("failed to delete IP rule (%s): %w", rule.String(), err)
 	}
 	delete(rm.rules, rule)
