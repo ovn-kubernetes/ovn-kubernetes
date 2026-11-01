@@ -146,6 +146,7 @@ nav:
       - api-reference/index.md
       - Introduction: api-reference/introduction.md
       - EgressIP: api-reference/egress-ip-api-spec.md
+      - TrafficClass: api-reference/traffic-class-api-spec.md
       - EgressService: api-reference/egress-service-api-spec.md
       - EgressQoS: api-reference/egress-qos-api-spec.md
       - EgressFirewall: api-reference/egress-firewall-api-spec.md
@@ -173,6 +174,7 @@ nav:
     - ClusterEgressControls:
       - features/cluster-egress-controls/index.md
       - EgressIP: features/cluster-egress-controls/egress-ip.md
+      - TrafficClass: features/cluster-egress-controls/traffic-class.md
       - EgressService: features/cluster-egress-controls/egress-service.md
       - EgressQoS: features/cluster-egress-controls/egress-qos.md
     - InfrastructureSecurityControls:

@@ -21,6 +21,9 @@ All metrics in this section are rooted at `ovnkube_controller_`.
 | `resource_delete_latency_seconds` | Histogram | None | **Deprecated:** This metric will be removed in the next release. Time to process all handlers for a delete event. |
 | `logfile_size_bytes` | Gauge | `logfile_name` | Size of the configured ovnkube-controller log file. No series is produced when file logging is not configured. |
 
+The `sync_duration_seconds` label `resource_name="egress traffic class"` is
+recorded when both EgressIP and TrafficClass are enabled.
+
 ### Pod and Service Programming
 
 | Name | Type | Labels | Description |
