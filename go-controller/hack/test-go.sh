@@ -86,6 +86,7 @@ root_pkgs=(
     "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllermanager"
     "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node"
     "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/controllers/egressip"
+    "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iprulemanager"
     "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iptables"
     "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/managementport"
     "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/routemanager"
