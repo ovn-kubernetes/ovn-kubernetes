@@ -67,9 +67,6 @@ func (e *EgressIPController) ensureEgressTraffic(eip *egressipv1.EgressIP) error
 		}
 		klog.Errorf("EgressIP %s selects no traffic: %v", eip.Name, err)
 	}
-	for _, unsupported := range resolution.Unsupported {
-		klog.Warningf("EgressIP %s: TrafficClass %s match %d protocol %d is unsupported", eip.Name, unsupported.Class, unsupported.Match, unsupported.Protocol)
-	}
 	destinations := resolution.Destinations
 	cidrOnly, l4 := egressip.SplitByL4(destinations)
 	addresses := make([]string, 0, len(cidrOnly))
