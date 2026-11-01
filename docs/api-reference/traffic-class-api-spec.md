@@ -27,8 +27,8 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `number` _integer_ | Number selects one port. |  | Maximum: 65535 <br />Minimum: 1 <br />Optional: \{\} <br /> |
-| `range` _[PortRange](#portrange)_ | Range selects an inclusive range of ports. |  | Optional: \{\} <br /> |
+| `number` _integer_ | Number matches a single port from 1 to 65535 and is mutually exclusive with Range. |  | Maximum: 65535 <br />Minimum: 1 <br />Optional: \{\} <br /> |
+| `range` _[PortRange](#portrange)_ | Range includes both endpoints and is mutually exclusive with Number. |  | Optional: \{\} <br /> |
 
 
 #### PortProtocol
@@ -61,8 +61,8 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `start` _integer_ | Start is the first port. |  | Maximum: 65535 <br />Minimum: 1 <br /> |
-| `end` _integer_ | End is the last port. |  | Maximum: 65535 <br />Minimum: 1 <br /> |
+| `start` _integer_ | Start is inclusive and must not exceed End. |  | Maximum: 65535 <br />Minimum: 1 <br /> |
+| `end` _integer_ | End is inclusive; equal endpoints match a single port. |  | Maximum: 65535 <br />Minimum: 1 <br /> |
 
 
 #### ProtocolMatch
@@ -78,9 +78,9 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `tcp` _[PortProtocol](#portprotocol)_ | TCP selects TCP traffic. |  | Optional: \{\} <br /> |
-| `udp` _[PortProtocol](#portprotocol)_ | UDP selects UDP traffic. |  | Optional: \{\} <br /> |
-| `sctp` _[PortProtocol](#portprotocol)_ | SCTP selects SCTP traffic. |  | Optional: \{\} <br /> |
+| `tcp` _[PortProtocol](#portprotocol)_ | TCP applies the port filters to TCP packets; an empty object matches all TCP ports. |  | Optional: \{\} <br /> |
+| `udp` _[PortProtocol](#portprotocol)_ | UDP applies the port filters to UDP packets; an empty object matches all UDP ports. |  | Optional: \{\} <br /> |
+| `sctp` _[PortProtocol](#portprotocol)_ | SCTP applies the port filters to SCTP packets; an empty object matches all SCTP ports. |  | Optional: \{\} <br /> |
 
 
 #### TrafficClass
