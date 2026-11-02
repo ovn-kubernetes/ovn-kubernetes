@@ -2323,6 +2323,16 @@ create_kind_cluster() {
 
   kind create cluster --name "${KIND_CLUSTER_NAME}" --kubeconfig "${KUBECONFIG}" --image "${KIND_IMAGE}":"${K8S_VERSION}" --config=${KIND_CONFIG_LCL} --retain
 
+  if [[ "${KIND_HUGEPAGES_2MI:-0}" != "0" ]]; then
+    docker run --rm --privileged --pid=host alpine:3.20 \
+      nsenter -t 1 -m -u -i -n sh -c \
+      "echo ${KIND_HUGEPAGES_2MI} > /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages"
+    for n in $(kind_get_nodes); do
+      docker exec "$n" systemctl restart kubelet
+    done
+    sleep 8
+  fi
+
   cat "${KUBECONFIG}"
 }
 
