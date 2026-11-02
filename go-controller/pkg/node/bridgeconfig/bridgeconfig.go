@@ -46,6 +46,10 @@ type BridgeUDNConfiguration struct {
 	Subnets       []config.CIDRNetworkEntry
 	NodeSubnets   []*net.IPNet
 	Advertised    atomic.Bool
+	// BGPGateway is true when this node is not RA-selected but the network
+	// has pod advertisements on other nodes. The node may receive inbound
+	// BGP traffic and needs ingress flows, but SNAT is not affected.
+	BGPGateway    atomic.Bool
 	ManagementIPs []*net.IPNet
 	// Transport mode for this network ("no-overlay", "evpn", or "" for default network)
 	Transport string
@@ -67,6 +71,7 @@ func (netConfig *BridgeUDNConfiguration) ShallowCopy() *BridgeUDNConfiguration {
 		OutboundSNAT: netConfig.OutboundSNAT,
 	}
 	copy.Advertised.Store(netConfig.Advertised.Load())
+	copy.BGPGateway.Store(netConfig.BGPGateway.Load())
 	return copy
 }
 
@@ -488,6 +493,7 @@ func (b *BridgeConfiguration) AddNetworkConfig(nInfo util.NetInfo, nodeSubnets, 
 			OutboundSNAT:  nInfo.OutboundSNAT(),
 		}
 		netConfig.Advertised.Store(util.IsPodNetworkAdvertisedAtNode(nInfo, b.nodeName))
+		netConfig.BGPGateway.Store(nInfo.IsBGPGateway())
 
 		b.netConfig[netName] = netConfig
 	} else {

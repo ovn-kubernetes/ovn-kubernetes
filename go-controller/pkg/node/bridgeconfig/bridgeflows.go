@@ -1103,6 +1103,7 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 		//   table=0, n_packets=0, n_bytes=0, priority=104,ip,in_port=LOCAL,dl_src=02:42:ac:12:00:03,nw_src=<nodeSubnet> actions=output:eth0
 		for _, netConfig := range b.patchedNetConfigs() {
 			isNetworkAdvertised := netConfig.Advertised.Load()
+			isBGPGateway := netConfig.BGPGateway.Load()
 			// disableSNATMultipleGWs only applies to default network
 			disableSNATMultipleGWs := netConfig.IsDefaultNetwork() && config.Gateway.DisableSNATMultipleGWs
 
@@ -1119,9 +1120,10 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 							nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, ipv, ipv, cidr))
 				}
 			}
-			// skip if MEG is disabled for the default network
-			// and the network (default or UDN) is not advertised
-			if !disableSNATMultipleGWs && !isNetworkAdvertised {
+			// skip if MEG is disabled for the default network,
+			// the network (default or UDN) is not advertised,
+			// and this node is not a BGP gateway for remote advertised subnets
+			if !disableSNATMultipleGWs && !isNetworkAdvertised && !isBGPGateway {
 				continue
 			}
 			output := netConfig.OfPortPatch
@@ -1155,13 +1157,14 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 							nodetypes.DefaultOpenFlowCookie, input, bridgeMacAddress, ipv, ipv, subnet, ofPortPhys))
 				}
 			}
-			// When network is advertised on this gateway node, add ingress flows
-			// for the cluster-wide subnet to steer remote pod traffic into OVN.
+			// When network is advertised on this node or this node is a BGP
+			// gateway for remote advertised subnets, add ingress flows for
+			// the cluster-wide subnet to steer remote pod traffic into OVN.
 			// Uses priority 290 (below 300 for local NodeSubnets) so that local
 			// node's more specific host subnet flow takes precedence. Only ingress
 			// flows are needed — remote pods are not local, so no egress (priority
 			// 104) flows are added for remote subnets.
-			if isNetworkAdvertised {
+			if isNetworkAdvertised || isBGPGateway {
 				for _, clusterEntry := range netConfig.Subnets {
 					cidr := clusterEntry.CIDR
 					ipv := getIPv(cidr)

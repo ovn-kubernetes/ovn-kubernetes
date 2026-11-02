@@ -7,7 +7,7 @@ spec:
     - PodNetwork
   nodeSelector:
     matchLabels:
-      role: gateway
+      owner: blue-network
   frrConfigurationSelector:
     matchLabels:
       bgp: "true"

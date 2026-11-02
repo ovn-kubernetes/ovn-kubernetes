@@ -583,6 +583,10 @@ func NewOVNKubeControllerWatchFactory(ovnClientset *util.OVNKubeControllerClient
 		wf.raFactory = routeadvertisementsinformerfactory.NewSharedInformerFactory(ovnClientset.RouteAdvertisementsClient, resyncInterval)
 		// make sure shared informer is created for a factory, so on wf.raFactory.Start() it is initialized and caches are synced.
 		wf.raFactory.K8s().V1().RouteAdvertisements().Informer()
+
+		wf.frrFactory = frrinformerfactory.NewSharedInformerFactory(ovnClientset.FRRClient, resyncInterval)
+		// make sure shared informer is created for a factory, so on wf.frrFactory.Start() it is initialized and caches are synced.
+		wf.frrFactory.Api().V1beta1().FRRConfigurations().Informer()
 	}
 
 	if config.OVNKubernetesFeature.EnableNetworkQoS {
@@ -929,6 +933,10 @@ func NewNodeWatchFactory(ovnClientset *util.OVNNodeClientset, nodeName string) (
 		wf.raFactory = routeadvertisementsinformerfactory.NewSharedInformerFactory(ovnClientset.RouteAdvertisementsClient, resyncInterval)
 		// make sure shared informer is created for a factory, so on wf.raFactory.Start() it is initialized and caches are synced.
 		wf.raFactory.K8s().V1().RouteAdvertisements().Informer()
+
+		wf.frrFactory = frrinformerfactory.NewSharedInformerFactory(ovnClientset.FRRClient, resyncInterval)
+		// make sure shared informer is created for a factory, so on wf.frrFactory.Start() it is initialized and caches are synced.
+		wf.frrFactory.Api().V1beta1().FRRConfigurations().Informer()
 	}
 
 	if util.IsEVPNEnabled() {

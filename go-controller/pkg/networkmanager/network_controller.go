@@ -12,13 +12,14 @@ import (
 	"sync"
 	"time"
 
+	frrlisters "github.com/metallb/frr-k8s/pkg/client/listers/api/v1beta1"
 	nadlisters "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
@@ -71,6 +72,11 @@ func newNetworkController(name, node string, cm ControllerManager, wf watchFacto
 		nc.nadLister = wf.NADInformer().Lister()
 		nc.raLister = wf.RouteAdvertisementsInformer().Lister()
 		nc.nodeLister = wf.NodeCoreInformer().Lister()
+		// FRR lister is only needed on the node side to detect if
+		// this node is an FRR gateway for BGP advertised subnets.
+		if nc.node != "" {
+			nc.frrLister = wf.FRRConfigurationsInformer().Lister()
+		}
 
 		// ra controller
 		raConfig := &controller.ControllerConfig[ratypes.RouteAdvertisements]{
@@ -126,6 +132,7 @@ type networkController struct {
 
 	nadLister  nadlisters.NetworkAttachmentDefinitionLister
 	raLister   ralisters.RouteAdvertisementsLister
+	frrLister  frrlisters.FRRConfigurationLister
 	nodeLister corelisters.NodeLister
 
 	networkReconciler controller.Reconciler
@@ -589,6 +596,7 @@ func (c *networkController) setAdvertisements(network util.MutableNetInfo, curre
 
 	podAdvertisements := map[string][]string{}
 	eipAdvertisements := map[string][]string{}
+	var frrConfigSelectors []labels.Selector
 	for raName := range raNames {
 		ra, err := c.raLister.Get(raName)
 		if apierrors.IsNotFound(err) {
@@ -639,40 +647,60 @@ func (c *networkController) setAdvertisements(network util.MutableNetInfo, curre
 			vrf = types.DefaultNetworkName
 		}
 
-		// When PodNetwork is advertised with a non-empty nodeSelector
-		// (selecting a subset of gateway nodes for FRR), SNAT must be
-		// disabled on all nodes so that pods on non-gateway nodes
-		// preserve their IPs for external traffic. The nodeSelector
-		// controls FRRConfiguration generation, not SNAT behavior.
-		podNodes := nodes
-		if !nodeSelector.Empty() && advertisements.Has(ratypes.PodNetwork) {
-			allNodes, err := c.nodeLister.List(labels.Everything())
-			if err != nil {
-				return err
-			}
-			podNodes = allNodes
-		}
-
-		for _, node := range podNodes {
+		for _, node := range nodes {
 			if !c.isNodeManaged(node) {
 				continue
 			}
 			if advertisements.Has(ratypes.PodNetwork) {
 				podAdvertisements[node.Name] = append(podAdvertisements[node.Name], vrf)
 			}
-		}
-
-		for _, node := range nodes {
-			if !c.isNodeManaged(node) {
-				continue
-			}
 			if advertisements.Has(ratypes.EgressIP) {
 				eipAdvertisements[node.Name] = append(eipAdvertisements[node.Name], vrf)
 			}
 		}
+
+		// Track FRRConfigurationSelectors for RAs with PodNetwork and
+		// non-empty nodeSelector, to determine if this node is a BGP
+		// gateway for remote advertised subnets.
+		if !nodeSelector.Empty() && len(nodes) > 0 {
+			frrSelector, err := metav1.LabelSelectorAsSelector(&ra.Spec.FRRConfigurationSelector)
+			if err == nil {
+				frrConfigSelectors = append(frrConfigSelectors, frrSelector)
+			}
+		}
 	}
+
+	// Determine if this node is a BGP gateway: not RA-selected but
+	// matched by an FRRConfiguration's nodeSelector.
+	bgpGateway := false
+	if c.node != "" && len(podAdvertisements) == 0 && len(frrConfigSelectors) > 0 {
+		localNode, err := c.nodeLister.Get(c.node)
+		if err == nil {
+			for _, frrSelector := range frrConfigSelectors {
+				frrConfigs, err := c.frrLister.List(frrSelector)
+				if err != nil {
+					continue
+				}
+				for _, frrConfig := range frrConfigs {
+					frrNodeSelector, err := metav1.LabelSelectorAsSelector(&frrConfig.Spec.NodeSelector)
+					if err != nil {
+						continue
+					}
+					if frrNodeSelector.Matches(labels.Set(localNode.Labels)) {
+						bgpGateway = true
+						break
+					}
+				}
+				if bgpGateway {
+					break
+				}
+			}
+		}
+	}
+
 	network.SetPodNetworkAdvertisedVRFs(podAdvertisements)
 	network.SetEgressIPAdvertisedVRFs(eipAdvertisements)
+	network.SetBGPGateway(bgpGateway)
 	return nil
 }
 
@@ -687,6 +715,7 @@ func preserveAdvertisements(network util.MutableNetInfo, current util.NetInfo) {
 	}
 	network.SetPodNetworkAdvertisedVRFs(current.GetPodNetworkAdvertisedVRFs())
 	network.SetEgressIPAdvertisedVRFs(current.GetEgressIPAdvertisedVRFs())
+	network.SetBGPGateway(current.IsBGPGateway())
 }
 
 func (c *networkController) hasRouteAdvertisements() bool {

@@ -155,6 +155,7 @@ type UserDefinedNetworkGateway struct {
 	// save BGP state at the start of reconciliation loop run to handle it consistently throughout the run
 	isNetworkAdvertisedToDefaultVRF bool
 	isNetworkAdvertised             bool
+	isBGPGateway                    bool
 }
 
 func NewUserDefinedNetworkGateway(netInfo util.NetInfo, node *corev1.Node, nodeInformer coreinformers.NodeInformer,
@@ -1652,6 +1653,7 @@ func (udng *UserDefinedNetworkGateway) reconcileAdvertisedState() error {
 			return fmt.Errorf("missing bridge configuration for network %s", udng.GetNetworkName())
 		}
 		netConfig.Advertised.Store(udng.isNetworkAdvertised)
+		netConfig.BGPGateway.Store(udng.isBGPGateway)
 	}
 
 	if config.IsModeDPU() && udng.Uplink() != "" {
@@ -2003,4 +2005,5 @@ func (udng *UserDefinedNetworkGateway) deleteAdvertisedUDNIsolationRules() error
 func (udng *UserDefinedNetworkGateway) updateAdvertisementStatus() {
 	udng.isNetworkAdvertised = util.IsPodNetworkAdvertisedAtNode(udng.NetInfo, udng.node.Name)
 	udng.isNetworkAdvertisedToDefaultVRF = util.IsPodNetworkAdvertisedAtNodeDefaultVRF(udng.NetInfo, udng.node.Name)
+	udng.isBGPGateway = udng.NetInfo.IsBGPGateway()
 }

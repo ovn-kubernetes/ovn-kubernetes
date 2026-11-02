@@ -95,6 +95,9 @@ type NetInfo interface {
 	// GetEgressIPAdvertisedNodes return the nodes where egress IP are
 	// advertised.
 	GetEgressIPAdvertisedNodes() []string
+	// IsBGPGateway returns true if this node is a BGP gateway for remote
+	// advertised subnets of this network.
+	IsBGPGateway() bool
 
 	// derived information.
 	GetNADNamespaces() []string
@@ -144,6 +147,9 @@ type MutableNetInfo interface {
 
 	// Nodes advertising Egress IP
 	SetEgressIPAdvertisedVRFs(eipAdvertisements map[string][]string)
+
+	// BGP gateway status for this node
+	SetBGPGateway(bgpGateway bool)
 }
 
 // NewMutableNetInfo builds a copy of netInfo as a MutableNetInfo
@@ -253,6 +259,7 @@ type mutableNetInfo struct {
 	nads                     sets.Set[string]
 	podNetworkAdvertisements map[string][]string
 	eipAdvertisements        map[string][]string
+	bgpGateway               bool
 
 	// subnets can be added for Layer3 networks
 	subnets []config.CIDRNetworkEntry
@@ -299,6 +306,7 @@ func (l *mutableNetInfo) equals(r *mutableNetInfo) bool {
 		reflect.DeepEqual(l.nads, r.nads) &&
 		reflect.DeepEqual(l.podNetworkAdvertisements, r.podNetworkAdvertisements) &&
 		reflect.DeepEqual(l.eipAdvertisements, r.eipAdvertisements) &&
+		l.bgpGateway == r.bgpGateway &&
 		cmp.Equal(l.subnets, r.subnets, cmpopts.SortSlices(lessCIDR))
 }
 
@@ -313,6 +321,7 @@ func (l *mutableNetInfo) copyFrom(r *mutableNetInfo) {
 	aux.nads = r.nads.Clone()
 	aux.setPodNetworkAdvertisedOnVRFs(r.podNetworkAdvertisements)
 	aux.setEgressIPAdvertisedAtNodes(r.eipAdvertisements)
+	aux.bgpGateway = r.bgpGateway
 	aux.subnets = append([]config.CIDRNetworkEntry(nil), r.subnets...)
 	aux.namespaces = r.namespaces.Clone()
 	r.RUnlock()
@@ -323,6 +332,7 @@ func (l *mutableNetInfo) copyFrom(r *mutableNetInfo) {
 	l.nads = aux.nads
 	l.podNetworkAdvertisements = aux.podNetworkAdvertisements
 	l.eipAdvertisements = aux.eipAdvertisements
+	l.bgpGateway = aux.bgpGateway
 	l.subnets = aux.subnets
 	l.namespaces = aux.namespaces
 }
@@ -419,6 +429,18 @@ func (nInfo *mutableNetInfo) GetEgressIPAdvertisedNodes() []string {
 	nInfo.RLock()
 	defer nInfo.RUnlock()
 	return maps.Keys(nInfo.eipAdvertisements)
+}
+
+func (nInfo *mutableNetInfo) SetBGPGateway(bgpGateway bool) {
+	nInfo.Lock()
+	defer nInfo.Unlock()
+	nInfo.bgpGateway = bgpGateway
+}
+
+func (nInfo *mutableNetInfo) IsBGPGateway() bool {
+	nInfo.RLock()
+	defer nInfo.RUnlock()
+	return nInfo.bgpGateway
 }
 
 // SetNADs replaces the NADs associated with the network
