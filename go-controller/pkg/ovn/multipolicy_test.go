@@ -622,6 +622,9 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 					alternateAppliedPort.name: alternateAppliedPort.uuid,
 				}
 				expectMembership(appliedMembership)
+				if cleanup != "level driven" {
+					udnController.DeregisterPodHandler()
+				}
 
 				// Neither an annotation edit nor an expiring cache entry proves an
 				// applied LSP is gone. Keep both ports protected while retrying.
@@ -635,66 +638,131 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 					firstAppliedPort.appliedNetworkName, firstAppliedPort.uuid, firstAppliedPort.mac, firstAppliedPort.ips)
 
 				pod, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(namespace1.Name).Update(context.TODO(), shrunkPod, metav1.UpdateOptions{})
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				expectMembership(map[string]string{firstAppliedPort.name: firstAppliedPort.uuid})
-				// Wait until the shrink reconcile begins retiring the port, not
-				// just the membership change made above. Pod-key serialization
-				// keeps reattachment behind the in-flight teardown.
-				gomega.Eventually(func() bool {
-					info, err := udnController.logicalPortCache.get(pod, alternateNADKey)
-					return err != nil || !info.expires.IsZero()
-				}).Should(gomega.BeTrue())
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "update the pod to select only the original attachment")
+				if cleanup == "level driven" {
+					expectMembership(map[string]string{firstAppliedPort.name: firstAppliedPort.uuid})
+					// Wait until the shrink reconcile begins retiring the port, not
+					// just the membership change made above. Pod-key serialization
+					// keeps reattachment behind the in-flight teardown.
+					gomega.Eventually(func() bool {
+						info, err := udnController.logicalPortCache.get(pod, alternateNADKey)
+						return err != nil || !info.expires.IsZero()
+					}).Should(gomega.BeTrue())
+
+					pod.Annotations[nettypes.NetworkAttachmentAnnot] = alternateNADKey
+					pod, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(namespace1.Name).Update(context.TODO(), pod, metav1.UpdateOptions{})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					// Reattachment creates a new LSP; the deleted port's UUID is no
+					// longer a valid policy membership expectation.
+					oldAlternateUUID := alternateAppliedPort.uuid
+					gomega.Eventually(func() bool {
+						info, err := udnController.logicalPortCache.get(pod, alternateNADKey)
+						if err != nil || !info.expires.IsZero() || info.uuid == oldAlternateUUID {
+							return false
+						}
+						alternateAppliedPort = info
+						return true
+					}).Should(gomega.BeTrue())
+					expectMembership(map[string]string{alternateAppliedPort.name: alternateAppliedPort.uuid})
+
+					delete(pod.Annotations, nettypes.NetworkAttachmentAnnot)
+					pod, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(namespace1.Name).Update(context.TODO(), pod, metav1.UpdateOptions{})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred(), "remove the pod network-selection annotation")
+
+					expectMembership(map[string]string{})
+
+					// Drain and stop background pod reconciliation before injecting stale
+					// membership. Otherwise the detached-pod update can legitimately race
+					// this retry-path setup and remove the injected state itself.
+					udnController.DeregisterPodHandler()
+
+					// A retry must retire a stale record for a deleted attachment.
+					// Do not substitute a live port: the prerequisite intentionally
+					// preserves protection until the recorded UUID is gone.
+					staleMembership := map[string]string{firstAppliedPort.name: firstAppliedPort.uuid}
+					np.setLocalPortsForPod(pod, staleMembership)
+					gomega.Expect(np.getLocalPortsForPod(podIdentity)).To(gomega.Equal(staleMembership))
+
+					_, err = udnController.ReconcilePod(context.Background(), pod, pod, nil)
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					expectMembership(map[string]string{})
+
+					return nil
+				}
+				gomega.Expect(udnController.reconcileNetworkPolicyPortGroups(pod)).To(gomega.Succeed(), "reconcile the reduced attachment selection")
+				expectMembership(appliedMembership)
 
 				pod.Annotations[nettypes.NetworkAttachmentAnnot] = alternateNADKey
 				pod, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(namespace1.Name).Update(context.TODO(), pod, metav1.UpdateOptions{})
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				// Reattachment creates a new LSP; the deleted port's UUID is no
-				// longer a valid policy membership expectation.
-				oldAlternateUUID := alternateAppliedPort.uuid
-				gomega.Eventually(func() bool {
-					info, err := udnController.logicalPortCache.get(pod, alternateNADKey)
-					if err != nil || !info.expires.IsZero() || info.uuid == oldAlternateUUID {
-						return false
-					}
-					alternateAppliedPort = info
-					return true
-				}).Should(gomega.BeTrue())
-				expectMembership(map[string]string{alternateAppliedPort.name: alternateAppliedPort.uuid})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "switch the pod to the alternate attachment")
+				gomega.Expect(udnController.reconcileNetworkPolicyPortGroups(pod)).To(gomega.Succeed(), "reconcile the alternate attachment selection")
+				expectMembership(appliedMembership)
 
 				delete(pod.Annotations, nettypes.NetworkAttachmentAnnot)
 				pod, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(namespace1.Name).Update(context.TODO(), pod, metav1.UpdateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "remove the pod network-selection annotation")
 
-				// Drain and stop background pod reconciliation before injecting stale
-				// membership. Otherwise the detached-pod update can legitimately race
-				// this retry-path setup and remove the injected state itself.
-				udnController.DeregisterPodHandler()
+				udnController.logicalPortCache.remove(pod, nadNamespacedName)
+				udnController.logicalPortCache.remove(pod, alternateNADKey)
 
-				// A retry that observes the latest detached pod must still converge
-				// stale policy/default-deny membership to empty. The detached UDN
-				// LSPs have already been deleted, so use another live LSP UUID to
-				// keep this deliberately corrupt strong reference in NBDB long enough
-				// for the retry to clean it up.
-				defaultLSP, err := libovsdbops.GetLogicalSwitchPort(fakeOvn.nbClient,
-					&nbdb.LogicalSwitchPort{Name: nPodTest.portName})
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				staleMembership := map[string]string{firstAppliedPort.name: defaultLSP.UUID}
-				policyOps, err := libovsdbops.AddPortsToPortGroupOps(fakeOvn.nbClient, nil,
-					np.portGroupName, defaultLSP.UUID)
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				gomega.Expect(udnController.denyPGAddPorts(np, staleMembership, policyOps)).To(gomega.Succeed())
-				np.setLocalPortsForPod(pod, staleMembership)
-				expectMembership(staleMembership)
+				// Forced retries must also preserve the still-connected ports,
+				// regardless of the logical port cache's expiration state.
+				gomega.Expect(udnController.reconcileNetworkPolicyPortGroups(pod)).To(gomega.Succeed(), "reconcile removed selection while retaining applied-port protection")
+				expectMembership(appliedMembership)
+				for _, applied := range []*lpInfo{firstAppliedPort, alternateAppliedPort} {
+					lsp, err := libovsdbops.GetLogicalSwitchPort(fakeOvn.nbClient, &nbdb.LogicalSwitchPort{UUID: applied.uuid})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred(), "read the still-applied attachment port")
+					gomega.Expect(lsp.Enabled == nil || *lsp.Enabled).To(gomega.BeTrue(), "removing network selection must leave applied port %s enabled", applied.name)
+					portUUID, switchName, err := udnController.lookupPortUUIDAndSwitchName(applied.name)
+					gomega.Expect(err).NotTo(gomega.HaveOccurred(), "locate the switch containing the still-applied port")
+					gomega.Expect(portUUID).To(gomega.Equal(applied.uuid), "removing network selection must preserve applied port %s identity", applied.name)
+					gomega.Expect(switchName).To(gomega.Equal(applied.logicalSwitch), "removing network selection must preserve applied port %s switch membership", applied.name)
+				}
 
-				_, err = udnController.ReconcilePod(context.Background(), pod, pod, nil)
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				expectMembership(map[string]string{})
+				// Losing the applied cache must not remove protection either;
+				// the recorded UUIDs can still be resolved from NBDB.
+				udnController.logicalPortCache.removeAllForNetwork(userDefinedNetworkName)
+				gomega.Expect(udnController.reconcileNetworkPolicyPortGroups(pod)).To(gomega.Succeed(), "recover policy membership after losing the port cache")
+				expectMembership(appliedMembership)
+
+				switch cleanup {
+				case "port teardown":
+					for _, applied := range []*lpInfo{firstAppliedPort, alternateAppliedPort} {
+						gomega.Expect(libovsdbops.DeleteLogicalSwitchPorts(fakeOvn.nbClient,
+							&nbdb.LogicalSwitch{Name: applied.logicalSwitch},
+							&nbdb.LogicalSwitchPort{UUID: applied.uuid})).To(gomega.Succeed(), "delete the applied attachment port")
+						gomega.Eventually(func() error {
+							_, err := libovsdbops.GetLogicalSwitchPort(fakeOvn.nbClient, &nbdb.LogicalSwitchPort{UUID: applied.uuid})
+							return err
+						}, 2*time.Second).Should(gomega.MatchError(libovsdbclient.ErrNotFound), "wait for attachment port %s to leave NBDB before reconciling policy membership", applied.name)
+						gomega.Expect(udnController.reconcileNetworkPolicyPortGroups(pod)).To(gomega.Succeed(), "remove policy membership after port teardown")
+						delete(appliedMembership, applied.name)
+						expectMembership(appliedMembership)
+					}
+				case "selector change":
+					pod.Labels = nil
+					pod, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(namespace1.Name).Update(context.TODO(), pod, metav1.UpdateOptions{})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred(), "remove the pod labels matching the policy")
+					gomega.Expect(udnController.reconcileNetworkPolicyPortGroups(pod)).To(gomega.Succeed(), "remove policy membership after the pod stops matching the selector")
+					expectMembership(map[string]string{})
+				case "pod deletion":
+					_, err = udnController.ReconcilePod(context.Background(), pod, nil, udnController.GetPodState(pod))
+					gomega.Expect(err).NotTo(gomega.HaveOccurred(), "remove policy membership and ports after pod deletion")
+					expectMembership(map[string]string{})
+					for _, applied := range []*lpInfo{firstAppliedPort, alternateAppliedPort} {
+						gomega.Eventually(func() error {
+							_, err := libovsdbops.GetLogicalSwitchPort(fakeOvn.nbClient, &nbdb.LogicalSwitchPort{UUID: applied.uuid})
+							return err
+						}, 2*time.Second).Should(gomega.MatchError(libovsdbclient.ErrNotFound), "pod deletion must remove attachment port %s from NBDB", applied.name)
+					}
+				}
 
 				return nil
 			}
 
 			gomega.Expect(app.Run([]string{app.Name})).To(gomega.Succeed(), "run the applied-attachment policy retention scenario")
 		},
+			ginkgo.Entry("through level-driven detach and reattachment", "level driven"),
 			ginkgo.Entry("until the recorded logical ports are deleted", "port teardown"),
 			ginkgo.Entry("while the policy still selects the pod", "selector change"),
 			ginkgo.Entry("until the pod is deleted", "pod deletion"),

@@ -173,7 +173,7 @@ func newPodControllerForTest(t *testing.T, pods ...*corev1.Pod) *Controller {
 		podLister: newPodLister(t, pods...),
 		podController: controller.NewController("pod-test-controller", &controller.ControllerConfig[corev1.Pod]{
 			RateLimiter: workqueue.DefaultTypedControllerRateLimiter[string](),
-			Reconcile:   func(string) error { return nil },
+			Reconcile:   func(context.Context, string) error { return nil },
 			Threadiness: 1,
 			Lister: func(labels.Selector) ([]*corev1.Pod, error) {
 				return nil, nil
@@ -405,7 +405,7 @@ func TestBootstrapSkipsOnlyConfirmedEmptyPods(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, pod := range []*corev1.Pod{selected, unrelated, retained} {
-		if err := c.reconcilePod(pod.Namespace + "/" + pod.Name + "|net-a"); err != nil {
+		if err := c.reconcilePod(context.Background(), pod.Namespace+"/"+pod.Name+"|net-a"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -415,7 +415,7 @@ func TestBootstrapSkipsOnlyConfirmedEmptyPods(t *testing.T) {
 	// The empty-state result is startup-only. Once a pod is reconciled, its
 	// subsequently detached attachment must still be cleaned up.
 	handler.expect["ns/selected"] = false
-	if err := c.reconcilePod("ns/selected|net-a"); err != nil {
+	if err := c.reconcilePod(context.Background(), "ns/selected|net-a"); err != nil {
 		t.Fatal(err)
 	}
 	if handler.deleteCalls != 2 || handler.lastDeletePod.UID != selected.UID {
@@ -457,7 +457,7 @@ func TestBootstrapPreservesObservationsDuringSync(t *testing.T) {
 			if err := <-registerErr; err != nil {
 				t.Fatal(err)
 			}
-			if err := c.reconcilePod("ns/pod|net-a"); err != nil {
+			if err := c.reconcilePod(context.Background(), "ns/pod|net-a"); err != nil {
 				t.Fatal(err)
 			}
 			if len(handler.events) == 0 || handler.events[0] != "delete:"+string(observed.UID) {
@@ -530,7 +530,7 @@ func TestBootstrapKeepsListedUIDAcrossRapidSameNameDeletes(t *testing.T) {
 		t.Fatalf("unexpected register error: %v", err)
 	}
 
-	if err := c.reconcilePod("ns/pod|net-a"); err != nil {
+	if err := c.reconcilePod(context.Background(), "ns/pod|net-a"); err != nil {
 		t.Fatalf("unexpected reconcile error: %v", err)
 	}
 	if got := handler.events; len(got) == 0 || got[0] != "delete:"+string(listedPod.UID) {

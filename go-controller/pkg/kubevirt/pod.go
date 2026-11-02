@@ -159,13 +159,13 @@ func EnsurePodAnnotationForVM(ctx context.Context, watchFactory *factory.WatchFa
 	var podAnnotation *util.PodAnnotation
 	err := withLiveMigrationVMLock(pod, func() error {
 		var err error
-		podAnnotation, err = ensurePodAnnotationForVMLocked(watchFactory, kube, pod, nadKey)
+		podAnnotation, err = ensurePodAnnotationForVMLocked(ctx, watchFactory, kube, pod, nadKey)
 		return err
 	})
 	return podAnnotation, err
 }
 
-func ensurePodAnnotationForVMLocked(watchFactory *factory.WatchFactory, kube *kube.KubeOVN, pod *corev1.Pod, nadKey string) (*util.PodAnnotation, error) {
+func ensurePodAnnotationForVMLocked(ctx context.Context, watchFactory *factory.WatchFactory, kube *kube.KubeOVN, pod *corev1.Pod, nadKey string) (*util.PodAnnotation, error) {
 	if podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, nadKey); err == nil {
 		return podAnnotation, nil
 	}

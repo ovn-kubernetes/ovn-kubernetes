@@ -456,6 +456,7 @@ func (bsnc *BaseUserDefinedNetworkController) rememberIncompletePodPorts(pod *co
 	}
 }
 
+// ReconcilePod makes the pod's state on this network match its current desired state.
 func (bsnc *BaseUserDefinedNetworkController) ReconcilePod(ctx context.Context, oldPod, newPod *corev1.Pod, lastState interface{}) (state interface{}, reconcileErr error) {
 	var appliedPortInfoMap map[string]*lpInfo
 	if lastState != nil {
@@ -483,7 +484,8 @@ func (bsnc *BaseUserDefinedNetworkController) ReconcilePod(ctx context.Context, 
 			return nil, fmt.Errorf("pod delete reconcile for network %s is missing pod", bsnc.GetNetworkName())
 		}
 		if err := bsnc.removePodForUserDefinedNetwork(ctx, oldPod, appliedPortInfoMap); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to tear down pod %s/%s on network %s: %w",
+				oldPod.Namespace, oldPod.Name, bsnc.GetNetworkName(), err)
 		}
 		bsnc.finishPodReconcile(oldPod)
 		return nil, nil
@@ -524,8 +526,15 @@ func (bsnc *BaseUserDefinedNetworkController) ReconcilePod(ctx context.Context, 
 		eventReason = "ErrorUpdatingResource"
 	}
 	err = bsnc.ensurePodForUserDefinedNetwork(ctx, newPod, addPort, eventReason)
-	if err == nil {
+	if err != nil {
+		err = fmt.Errorf("failed to ensure pod %s/%s on network %s: %w",
+			newPod.Namespace, newPod.Name, bsnc.GetNetworkName(), err)
+	} else {
 		err = bsnc.reconcileNetworkPolicyPortGroups(newPod)
+		if err != nil {
+			err = fmt.Errorf("failed to reconcile policy membership for pod %s/%s on network %s: %w",
+				newPod.Namespace, newPod.Name, bsnc.GetNetworkName(), err)
+		}
 	}
 	if err != nil {
 		if addPort {
