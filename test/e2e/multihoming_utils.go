@@ -20,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/rand"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/kubernetes/test/e2e/framework"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	"k8s.io/utils/ptr"
@@ -33,6 +34,8 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig/api"
 	deploymentconfigapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig/api"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
 )
 
 func netCIDR(netCIDR string, netPrefixLengthPerNode int) string {
@@ -347,6 +350,41 @@ func httpServerContainerCmd(port uint16) []string {
 	return []string{"netexec", "--http-port", fmt.Sprintf("%d", port)}
 }
 
+// multiProtoServerContainerCmd runs agnhost netexec serving TCP (http), UDP and SCTP
+// on the same port, so a single server pod can be probed over all three protocols.
+// When sctp is false the SCTP listener is disabled (so the pod can start on clusters
+// without the sctp kernel module).
+func multiProtoServerContainerCmd(port uint16, sctp bool) []string {
+	cmd := []string{
+		"netexec",
+		fmt.Sprintf("--http-port=%d", port),
+		fmt.Sprintf("--udp-port=%d", port),
+	}
+	if sctp {
+		cmd = append(cmd, fmt.Sprintf("--sctp-port=%d", port))
+	}
+	return cmd
+}
+
+// multiProtoServerContainers builds one agnhost netexec container per port, each
+// serving TCP/UDP (and SCTP when sctp is true) on that single port. agnhost only
+// listens on one port per invocation, so a server that must answer on several ports
+// (e.g. the boundaries of an endPort range and ports just outside it) needs one
+// container per port. Every probed port has a listener so that a blocked connection
+// times out (policy drop) rather than being refused (no listener).
+func multiProtoServerContainers(ports []uint16, sctp bool) []v1.Container {
+	containers := make([]v1.Container, 0, len(ports))
+	for _, port := range ports {
+		containers = append(containers, v1.Container{
+			Name:            fmt.Sprintf("port-%d", port),
+			Image:           images.AgnHost(),
+			Args:            multiProtoServerContainerCmd(port, sctp),
+			SecurityContext: &v1.SecurityContext{Privileged: ptr.To(true)},
+		})
+	}
+	return containers
+}
+
 func podNetworkStatus(pod *v1.Pod, predicates ...func(nadapi.NetworkStatus) bool) ([]nadapi.NetworkStatus, error) {
 	podNetStatus, found := pod.Annotations[nadapi.NetworkStatusAnnot]
 	if !found {
@@ -463,6 +501,96 @@ func connectToServer(clientPodConfig podConfiguration, serverIP string, port uin
 
 	_, err := e2ekubectl.RunKubectl(clientPodConfig.namespace, append(baseArgs, target)...)
 	return err
+}
+
+// protocolToConnectArg maps a core/v1 protocol to the value expected by the agnhost
+// `connect` subcommand `--protocol` flag.
+func protocolToConnectArg(proto v1.Protocol) string {
+	switch proto {
+	case v1.ProtocolUDP:
+		return "udp"
+	case v1.ProtocolSCTP:
+		return "sctp"
+	default:
+		return "tcp"
+	}
+}
+
+// connectToServerWithProtocol attempts a TCP, UDP or SCTP connection to serverIP:port
+// from the client pod using the agnhost `connect` subcommand. agnhost connect performs
+// a request/response round-trip for every protocol (including UDP), exiting non-zero on
+// any failure, so a nil error means the port is reachable for that protocol and a
+// non-nil error means it was blocked/unreachable.
+func connectToServerWithProtocol(clientPodConfig podConfiguration, serverIP string, port uint16, proto v1.Protocol) error {
+	target := net.JoinHostPort(serverIP, fmt.Sprintf("%d", port))
+	_, err := e2ekubectl.RunKubectl(
+		clientPodConfig.namespace,
+		"exec",
+		clientPodConfig.name,
+		"--",
+		"/agnhost",
+		"connect",
+		"--timeout=2s",
+		fmt.Sprintf("--protocol=%s", protocolToConnectArg(proto)),
+		target,
+	)
+	return err
+}
+
+// reachServerWithProtocol waits for the server pod to be Running and then probes it
+// from the client pod over the requested protocol via connectToServerWithProtocol.
+func reachServerWithProtocol(cs clientset.Interface, serverConfig podConfiguration, clientConfig podConfiguration, serverIP string, serverPort uint16, proto v1.Protocol) error {
+	updatedPod, err := cs.CoreV1().Pods(serverConfig.namespace).Get(context.Background(), serverConfig.name, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+	if updatedPod.Status.Phase != v1.PodRunning {
+		return fmt.Errorf("server pod %s/%s not running", serverConfig.namespace, serverConfig.name)
+	}
+	return connectToServerWithProtocol(clientConfig, serverIP, serverPort, proto)
+}
+
+// ensureSCTPModuleLoaded best-effort loads the SCTP kernel module on the given node by
+// running `modprobe sctp` from a short-lived privileged, host-network pod pinned to that
+// node, and then verifying SCTP is registered in /proc/net/protocols. It returns true
+// when SCTP is available on that node. The nodeName must be the node the test pods are
+// also pinned to, so that SCTP is guaranteed loaded where the traffic actually flows.
+// Callers should Skip() the SCTP portion of a test when this returns false, since
+// upstream CI does not guarantee the sctp module is loaded.
+func ensureSCTPModuleLoaded(f *framework.Framework, namespace, nodeName string) bool {
+	const loaderPodName = "sctp-module-loader"
+	loaderConfig := podConfiguration{
+		name:         loaderPodName,
+		namespace:    namespace,
+		isPrivileged: true,
+		hostNetwork:  true,
+		nodeSelector: map[string]string{"kubernetes.io/hostname": nodeName},
+		containerCmd: []string{"pause"},
+	}
+	podSpec := generatePodSpec(loaderConfig)
+	_, err := f.ClientSet.CoreV1().Pods(namespace).Create(context.Background(), podSpec, metav1.CreateOptions{})
+	if err != nil {
+		framework.Logf("unable to create SCTP module loader pod: %v", err)
+		return false
+	}
+	defer func() {
+		_ = f.ClientSet.CoreV1().Pods(namespace).Delete(context.Background(), loaderPodName, metav1.DeleteOptions{})
+	}()
+
+	if err := e2epod.WaitTimeoutForPodRunningInNamespace(context.Background(), f.ClientSet, loaderPodName, namespace, infraprovider.Get().GetDefaultTimeoutContext().PodStart); err != nil {
+		framework.Logf("SCTP module loader pod did not become ready: %v", err)
+		return false
+	}
+
+	// modprobe may fail if the module is already loaded or built-in; ignore its error
+	// and rely on the /proc/net/protocols check for the authoritative answer.
+	_, _, _ = ExecShellInPodWithFullOutput(f, namespace, loaderPodName, "modprobe sctp || true")
+	stdout, _, err := ExecShellInPodWithFullOutput(f, namespace, loaderPodName, "cat /proc/net/protocols")
+	if err != nil {
+		framework.Logf("unable to read /proc/net/protocols to verify SCTP: %v", err)
+		return false
+	}
+	return strings.Contains(stdout, "SCTP")
 }
 
 func getMTUByInterfaceName(output, interfaceName string) (int, error) {
@@ -622,6 +750,36 @@ func multiNetPolicyPortRange(port, endPort int) mnpapi.MultiNetworkPolicyPort {
 	return netpolPort
 }
 
+// multiNetPolicyPortProto builds a single-port MultiNetworkPolicyPort for the given protocol.
+func multiNetPolicyPortProto(port int, proto v1.Protocol) mnpapi.MultiNetworkPolicyPort {
+	protocol := proto
+	p := intstr.FromInt32(int32(port))
+	return mnpapi.MultiNetworkPolicyPort{
+		Protocol: &protocol,
+		Port:     &p,
+	}
+}
+
+// multiNetPolicyPortRangeProto builds a [port, endPort] range MultiNetworkPolicyPort
+// (i.e. sets EndPort) for the given protocol.
+func multiNetPolicyPortRangeProto(port, endPort int, proto v1.Protocol) mnpapi.MultiNetworkPolicyPort {
+	netpolPort := multiNetPolicyPortProto(port, proto)
+	endPort32 := int32(endPort)
+	netpolPort.EndPort = &endPort32
+	return netpolPort
+}
+
+// multiNetEndPortRangeAllProtocols returns a [port, endPort] range for each of
+// TCP, UDP and SCTP - mirroring a MultiNetworkPolicy that lists an endPort range
+// for all three protocols.
+func multiNetEndPortRangeAllProtocols(port, endPort int) []mnpapi.MultiNetworkPolicyPort {
+	return []mnpapi.MultiNetworkPolicyPort{
+		multiNetPolicyPortRangeProto(port, endPort, v1.ProtocolTCP),
+		multiNetPolicyPortRangeProto(port, endPort, v1.ProtocolUDP),
+		multiNetPolicyPortRangeProto(port, endPort, v1.ProtocolSCTP),
+	}
+}
+
 func multiNetIngressLimitingPolicy(policyFor string, appliesFor metav1.LabelSelector, allowForSelector metav1.LabelSelector, allowPorts ...mnpapi.MultiNetworkPolicyPort) *mnpapi.MultiNetworkPolicy {
 	var (
 		portAllowlist []mnpapi.MultiNetworkPolicyPort
@@ -647,6 +805,35 @@ func multiNetIngressLimitingPolicy(policyFor string, appliesFor metav1.LabelSele
 				},
 			},
 			PolicyTypes: []mnpapi.MultiPolicyType{mnpapi.PolicyTypeIngress},
+		},
+	}
+}
+
+// multiNetEgressLimitingPolicy builds an egress MultiNetworkPolicy that only allows
+// traffic towards pods matching allowForSelector on the given allowPorts (which may
+// carry an EndPort range). It is the egress counterpart of multiNetIngressLimitingPolicy.
+func multiNetEgressLimitingPolicy(policyFor string, appliesFor metav1.LabelSelector, allowForSelector metav1.LabelSelector, allowPorts ...mnpapi.MultiNetworkPolicyPort) *mnpapi.MultiNetworkPolicy {
+	var portAllowlist []mnpapi.MultiNetworkPolicyPort
+	portAllowlist = append(portAllowlist, allowPorts...)
+	return &mnpapi.MultiNetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{
+			PolicyForAnnotation: policyFor,
+		},
+			Name: "allow-egress-ports-via-pod-selector",
+		},
+		Spec: mnpapi.MultiNetworkPolicySpec{
+			PodSelector: appliesFor,
+			Egress: []mnpapi.MultiNetworkPolicyEgressRule{
+				{
+					Ports: portAllowlist,
+					To: []mnpapi.MultiNetworkPolicyPeer{
+						{
+							PodSelector: &allowForSelector,
+						},
+					},
+				},
+			},
+			PolicyTypes: []mnpapi.MultiPolicyType{mnpapi.PolicyTypeEgress},
 		},
 	}
 }

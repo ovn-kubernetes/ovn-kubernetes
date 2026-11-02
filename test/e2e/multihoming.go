@@ -2732,6 +2732,232 @@ ip a add %[4]s/24 dev %[2]s
 			),
 		)
 	})
+
+	Context("with multi-network policies enforcing endPort on a Layer2 secondary UDN", feature.NetworkSegmentation, func() {
+		const (
+			udnNamespacePrefix = "udn-endport"
+			primaryUDNName     = "layer2-pudn1"
+			secondaryUDNName   = "layer2-sudn1"
+			// Dual-stack subnets; filterCIDRsAndJoin drops the families the cluster
+			// does not support, so these degrade to single-stack automatically.
+			primaryUDNSubnets   = "10.10.0.0/16,2010:100:201::0/60"
+			secondaryUDNSubnets = "10.50.0.0/16,2010:100:202::0/60"
+			serverPodName       = "endport-server"
+			clientPodName       = "endport-client"
+			endPortRangeStart   = 32000
+			endPortRangeEnd     = 32768
+		)
+
+		// Ports inside the allowed [32000, 32768] range (start, middle, end) must be
+		// reachable; ports just outside it must be blocked. agnhost listens on all of
+		// them so a blocked connection times out (policy drop) rather than being
+		// refused (no listener).
+		var (
+			inRangePorts   = []uint16{32000, 32500, 32768}
+			outRangePorts  = []uint16{31999, 32769}
+			allServerPorts = append(append([]uint16{}, inRangePorts...), outRangePorts...)
+		)
+
+		var (
+			udnNamespace  string
+			serverPodCfg  podConfiguration
+			clientPodCfg  podConfiguration
+			sctpAvailable bool
+		)
+
+		// probedProtocols returns the protocols under test, honouring SCTP availability.
+		probedProtocols := func() []v1.Protocol {
+			protocols := []v1.Protocol{v1.ProtocolTCP, v1.ProtocolUDP}
+			if sctpAvailable {
+				protocols = append(protocols, v1.ProtocolSCTP)
+			}
+			return protocols
+		}
+
+		BeforeEach(func() {
+			if !isNetworkSegmentationEnabled() {
+				Skip("Skipping UDN endPort tests: ENABLE_NETWORK_SEGMENTATION is not set to true")
+			}
+
+			By("creating a UDN-enabled namespace")
+			ns, err := cs.CoreV1().Namespaces().Create(
+				context.Background(),
+				&v1.Namespace{
+					ObjectMeta: metav1.ObjectMeta{
+						GenerateName: udnNamespacePrefix + "-",
+						Labels: map[string]string{
+							RequiredUDNNamespaceLabel: "",
+						},
+					},
+				},
+				metav1.CreateOptions{},
+			)
+			Expect(err).NotTo(HaveOccurred())
+			udnNamespace = ns.Name
+			DeferCleanup(func() {
+				blockUntilEverythingIsGone := metav1.DeletePropagationForeground
+				Expect(cs.CoreV1().Namespaces().Delete(
+					context.Background(),
+					udnNamespace,
+					metav1.DeleteOptions{PropagationPolicy: &blockUntilEverythingIsGone},
+				)).To(Succeed())
+			})
+
+			By("creating a Layer2 primary UDN and waiting until it is ready")
+			primaryUDNParams := networkAttachmentConfigParams{
+				name:     primaryUDNName,
+				topology: "layer2",
+				role:     "primary",
+				cidr:     primaryUDNSubnets,
+			}
+			cleanupPrimaryUDN, err := createManifest(udnNamespace, generateUserDefinedNetworkManifest(&primaryUDNParams, cs))
+			DeferCleanup(cleanupPrimaryUDN)
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(userDefinedNetworkReadyFunc(context.Background(), f.DynamicClient, udnNamespace, primaryUDNName), 30*time.Second, time.Second).Should(Succeed())
+
+			By("creating a Layer2 secondary UDN and waiting until it is ready")
+			secondaryUDNParams := networkAttachmentConfigParams{
+				name:     secondaryUDNName,
+				topology: "layer2",
+				role:     "secondary",
+				cidr:     secondaryUDNSubnets,
+			}
+			cleanupSecondaryUDN, err := createManifest(udnNamespace, generateUserDefinedNetworkManifest(&secondaryUDNParams, cs))
+			DeferCleanup(cleanupSecondaryUDN)
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(userDefinedNetworkReadyFunc(context.Background(), f.DynamicClient, udnNamespace, secondaryUDNName), 30*time.Second, time.Second).Should(Succeed())
+
+			By("selecting a single node to co-locate the SCTP loader and the test pods")
+			nodes, err := e2enode.GetReadySchedulableNodes(context.Background(), cs)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(nodes.Items).NotTo(BeEmpty())
+			testNode := nodes.Items[0].Name
+			nodeSelector := map[string]string{nodeHostnameKey: testNode}
+
+			By("loading the SCTP kernel module on the test node (SCTP assertions are skipped if unavailable)")
+			sctpAvailable = ensureSCTPModuleLoaded(f, udnNamespace, testNode)
+			if !sctpAvailable {
+				framework.Logf("SCTP module not available on node %s; SCTP portion of the test will be skipped", testNode)
+			}
+
+			By("creating the server pod attached to the secondary UDN serving TCP/UDP/SCTP on each probed port")
+			serverPodCfg = podConfiguration{
+				name:         serverPodName,
+				namespace:    udnNamespace,
+				isPrivileged: true,
+				attachments:  []nadapi.NetworkSelectionElement{{Name: secondaryUDNName}},
+				labels:       map[string]string{"app": "endport-server"},
+				nodeSelector: nodeSelector,
+			}
+			// agnhost serves a single port per invocation, so run one agnhost
+			// container per probed port.
+			serverContainers := multiProtoServerContainers(allServerPorts, sctpAvailable)
+			runUDNPod(cs, udnNamespace, serverPodCfg, func(pod *v1.Pod) {
+				pod.Spec.Containers = serverContainers
+			})
+
+			By("creating the client pod attached to the secondary UDN")
+			clientPodCfg = podConfiguration{
+				name:         clientPodName,
+				namespace:    udnNamespace,
+				isPrivileged: true,
+				attachments:  []nadapi.NetworkSelectionElement{{Name: secondaryUDNName}},
+				labels:       map[string]string{"app": "endport-client"},
+				nodeSelector: nodeSelector,
+			}
+			runUDNPod(cs, udnNamespace, clientPodCfg, nil)
+		})
+
+		// assertAllPortsReachable verifies that, before any policy is applied, every
+		// probed port (both in-range and out-of-range) is reachable for every protocol,
+		// on every supported IP family (each server IP). This establishes the baseline so
+		// that any subsequent block is attributable to the policy rather than to a missing
+		// listener or broken setup.
+		assertAllPortsReachable := func(serverIPs []string) {
+			for _, serverIP := range serverIPs {
+				serverIP := serverIP
+				for _, proto := range probedProtocols() {
+					proto := proto
+					for _, port := range allServerPorts {
+						port := port
+						By(fmt.Sprintf("asserting %s port %d on %s is reachable before any policy", proto, port, serverIP))
+						Eventually(func() error {
+							return reachServerWithProtocol(cs, serverPodCfg, clientPodCfg, serverIP, port, proto)
+						}, 2*time.Minute, 6*time.Second).Should(Succeed())
+					}
+				}
+			}
+		}
+
+		// assertEndPortRangeEnforced verifies that, for every probed protocol and every
+		// supported IP family (each server IP), the in-range ports (boundaries and middle)
+		// are reachable while the out-of-range ports (just below the start and just above
+		// the end) are blocked.
+		assertEndPortRangeEnforced := func(serverIPs []string) {
+			for _, serverIP := range serverIPs {
+				serverIP := serverIP
+				for _, proto := range probedProtocols() {
+					proto := proto
+					for _, reachablePort := range inRangePorts {
+						reachablePort := reachablePort
+						By(fmt.Sprintf("asserting %s port %d on %s (inside the endPort range) is reachable", proto, reachablePort, serverIP))
+						Eventually(func() error {
+							return reachServerWithProtocol(cs, serverPodCfg, clientPodCfg, serverIP, reachablePort, proto)
+						}, 2*time.Minute, 6*time.Second).Should(Succeed())
+					}
+					for _, blockedPort := range outRangePorts {
+						blockedPort := blockedPort
+						By(fmt.Sprintf("asserting %s port %d on %s (outside the endPort range) is blocked", proto, blockedPort, serverIP))
+						// Require agnhost's TIMEOUT marker specifically: the connection must
+						// be dropped by the policy (times out), not refused because nothing is
+						// listening (the server listens on every probed port) or failing for
+						// another reason.
+						Eventually(func() error {
+							return connectToServerWithProtocol(clientPodCfg, serverIP, blockedPort, proto)
+						}, 2*time.Minute, 6*time.Second).Should(MatchError(ContainSubstring("TIMEOUT")))
+					}
+				}
+			}
+		}
+
+		It("enforces an ingress endPort range for TCP/UDP/SCTP", func() {
+			serverIPs, err := podIPsForAttachment(cs, udnNamespace, serverPodName, secondaryUDNName)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("asserting every probed port is reachable before applying any policy")
+			assertAllPortsReachable(serverIPs)
+
+			By("applying an ingress MultiNetworkPolicy allowing only the endPort range")
+			policy := multiNetIngressLimitingPolicy(
+				secondaryUDNName,
+				metav1.LabelSelector{MatchLabels: map[string]string{"app": "endport-server"}},
+				metav1.LabelSelector{MatchLabels: map[string]string{"app": "endport-client"}},
+				multiNetEndPortRangeAllProtocols(endPortRangeStart, endPortRangeEnd)...,
+			)
+			Expect(createMultiNetworkPolicy(mnpClient, udnNamespace, policy)).To(Succeed())
+
+			assertEndPortRangeEnforced(serverIPs)
+		})
+
+		It("enforces an egress endPort range for TCP/UDP/SCTP", func() {
+			serverIPs, err := podIPsForAttachment(cs, udnNamespace, serverPodName, secondaryUDNName)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("asserting every probed port is reachable before applying any policy")
+			assertAllPortsReachable(serverIPs)
+
+			By("applying an egress MultiNetworkPolicy allowing only the endPort range")
+			policy := multiNetEgressLimitingPolicy(
+				secondaryUDNName,
+				metav1.LabelSelector{MatchLabels: map[string]string{"app": "endport-client"}},
+				metav1.LabelSelector{MatchLabels: map[string]string{"app": "endport-server"}},
+				multiNetEndPortRangeAllProtocols(endPortRangeStart, endPortRangeEnd)...,
+			)
+			Expect(createMultiNetworkPolicy(mnpClient, udnNamespace, policy)).To(Succeed())
+
+			assertEndPortRangeEnforced(serverIPs)
+		})
+	})
 })
 
 func kickstartPod(cs clientset.Interface, configuration podConfiguration) *v1.Pod {
