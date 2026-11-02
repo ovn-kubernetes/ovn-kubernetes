@@ -1285,7 +1285,7 @@ spec:
 				return err
 			})
 
-			hostNetPort := infraprovider.Get().GetK8HostPort()
+			hostNetPort := infraprovider.Get().GetK8HostPort(f)
 			// Use a fixed pod name instead of deriving it from the node name to avoid
 			// exceeding the 63-character limit or including dots in the pod name.
 			hostNetPodName := "egress-host-net-pod"
