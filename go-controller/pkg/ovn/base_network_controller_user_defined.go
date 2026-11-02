@@ -159,6 +159,18 @@ func (bsnc *BaseUserDefinedNetworkController) getPodPortInfoFromNBDB(
 			}
 			switchNames.Insert(replacementSwitch)
 		}
+		// Use the discovery index without recovering ports from unrelated switches.
+		candidates, err := libovsdbops.FindLogicalSwitchPortsByNamespaceAndNetwork(bsnc.nbClient, pod.Namespace, bsnc.GetNetworkName())
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to find OVN pod ports for pod %s/%s on network %s: %w",
+				pod.Namespace, pod.Name, bsnc.GetNetworkName(), err)
+		}
+		podPorts := make(map[string]*nbdb.LogicalSwitchPort)
+		for _, lsp := range candidates {
+			if matchesPod(lsp) {
+				podPorts[lsp.UUID] = lsp
+			}
+		}
 		for switchName := range switchNames {
 			ls, err := libovsdbops.GetLogicalSwitch(bsnc.nbClient, &nbdb.LogicalSwitch{Name: switchName})
 			if errors.Is(err, libovsdbclient.ErrNotFound) {
@@ -168,14 +180,7 @@ func (bsnc *BaseUserDefinedNetworkController) getPodPortInfoFromNBDB(
 				return nil, nil, fmt.Errorf("failed to find switch %s while recovering pod ports: %w", switchName, err)
 			}
 			for _, uuid := range ls.Ports {
-				lsp, err := libovsdbops.GetLogicalSwitchPort(bsnc.nbClient, &nbdb.LogicalSwitchPort{UUID: uuid})
-				if errors.Is(err, libovsdbclient.ErrNotFound) {
-					continue
-				}
-				if err != nil {
-					return nil, nil, fmt.Errorf("failed to find port %s on switch %s: %w", uuid, switchName, err)
-				}
-				if matchesPod(lsp) {
+				if lsp, found := podPorts[uuid]; found {
 					lsps = append(lsps, lsp)
 					portSwitches[lsp.UUID] = switchName
 				}
@@ -491,6 +496,7 @@ func (bsnc *BaseUserDefinedNetworkController) rememberIncompletePodPorts(pod *co
 	}
 }
 
+// ReconcilePod makes the pod's state on this network match its current desired state.
 func (bsnc *BaseUserDefinedNetworkController) ReconcilePod(ctx context.Context, oldPod, newPod *corev1.Pod, lastState interface{}) (state interface{}, reconcileErr error) {
 	var appliedPortInfoMap map[string]*lpInfo
 	if lastState != nil {
@@ -518,7 +524,8 @@ func (bsnc *BaseUserDefinedNetworkController) ReconcilePod(ctx context.Context, 
 			return nil, fmt.Errorf("pod delete reconcile for network %s is missing pod", bsnc.GetNetworkName())
 		}
 		if err := bsnc.removePodForUserDefinedNetwork(ctx, oldPod, appliedPortInfoMap); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to tear down pod %s/%s on network %s: %w",
+				oldPod.Namespace, oldPod.Name, bsnc.GetNetworkName(), err)
 		}
 		bsnc.finishPodReconcile(oldPod)
 		return nil, nil
@@ -685,7 +692,7 @@ func (bsnc *BaseUserDefinedNetworkController) removeStalePodPortsForUserDefinedN
 
 // AddUserDefinedNetworkResourceCommon adds the specified object to the cluster according to its type and returns the error,
 // if any, yielded during object creation. This function is called for User Defined Networks only.
-func (bsnc *BaseUserDefinedNetworkController) AddUserDefinedNetworkResourceCommon(ctx context.Context, objType reflect.Type, obj interface{}) error {
+func (bsnc *BaseUserDefinedNetworkController) AddUserDefinedNetworkResourceCommon(_ context.Context, objType reflect.Type, obj interface{}) error {
 	switch objType {
 	case factory.NamespaceType:
 		ns, ok := obj.(*corev1.Namespace)
@@ -725,7 +732,7 @@ func (bsnc *BaseUserDefinedNetworkController) AddUserDefinedNetworkResourceCommo
 // called for User Defined Networks only.
 // Given an old and a new object; The inRetryCache boolean argument is to indicate if the given resource
 // is in the retryCache or not.
-func (bsnc *BaseUserDefinedNetworkController) UpdateUserDefinedNetworkResourceCommon(ctx context.Context, objType reflect.Type, oldObj, newObj interface{}, _ bool) error {
+func (bsnc *BaseUserDefinedNetworkController) UpdateUserDefinedNetworkResourceCommon(_ context.Context, objType reflect.Type, oldObj, newObj interface{}, _ bool) error {
 	switch objType {
 	case factory.NamespaceType:
 		oldNs, newNs := oldObj.(*corev1.Namespace), newObj.(*corev1.Namespace)
@@ -778,7 +785,7 @@ func (bsnc *BaseUserDefinedNetworkController) UpdateUserDefinedNetworkResourceCo
 // Given an object and optionally a cachedObj; cachedObj is the internal cache entry for this object,
 // used for now for pods.
 // This function is called for User Defined Networks only.
-func (bsnc *BaseUserDefinedNetworkController) DeleteUserDefinedNetworkResourceCommon(ctx context.Context, objType reflect.Type, obj, _ interface{}) error {
+func (bsnc *BaseUserDefinedNetworkController) DeleteUserDefinedNetworkResourceCommon(_ context.Context, objType reflect.Type, obj, _ interface{}) error {
 	switch objType {
 	case factory.NamespaceType:
 		ns := obj.(*corev1.Namespace)

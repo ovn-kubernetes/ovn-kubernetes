@@ -31,6 +31,7 @@ import (
 	networkconnectcontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/networkconnect"
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 )
 
 const egressFirewallDNSDefaultDuration = 30 * time.Minute
@@ -110,6 +111,7 @@ func (oc *DefaultNetworkController) PodExpectedOnNetwork(pod *corev1.Pod) (bool,
 	return util.PodScheduled(pod) && !util.PodCompleted(pod), nil
 }
 
+// ReconcilePod makes the pod's network state match its current desired state.
 func (oc *DefaultNetworkController) ReconcilePod(ctx context.Context, oldPod, newPod *corev1.Pod, lastState interface{}) (state interface{}, err error) {
 	recordedPod := oc.recordPodReconcileStart(oldPod, newPod)
 	defer func() {
@@ -129,7 +131,11 @@ func (oc *DefaultNetworkController) ReconcilePod(ctx context.Context, oldPod, ne
 				return nil, fmt.Errorf("pod delete reconcile for network %s expected *lpInfo cache state but got %T", oc.GetNetworkName(), lastState)
 			}
 		}
-		return nil, oc.removePod(ctx, oldPod, portInfo)
+		if err := oc.removePod(ctx, oldPod, portInfo); err != nil {
+			return nil, fmt.Errorf("failed to tear down pod %s/%s on network %s: %w",
+				oldPod.Namespace, oldPod.Name, oc.GetNetworkName(), err)
+		}
+		return nil, nil
 	}
 	// Retry full setup until the shared controller records a successful reconcile.
 	addPort := oldPod == nil || oc.shouldEnsurePodLogicalPort(newPod, ovntypes.DefaultNetworkName)

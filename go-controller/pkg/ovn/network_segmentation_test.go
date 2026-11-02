@@ -295,7 +295,8 @@ var _ = ginkgo.Describe("OVN Pod Operations with network segmentation", func() {
 				t.populateLogicalSwitchCache(fakeOvn)
 				gomega.Expect(fakeOvn.controller.WatchNamespaces()).To(gomega.Succeed())
 				gomega.Expect(fakeOvn.controller.setupUDNACLs(nil)).To(gomega.Succeed())
-				gomega.Expect(fakeOvn.controller.addLogicalPort(context.Background(), oldPod)).To(gomega.Succeed())
+				_, err = fakeOvn.controller.addLogicalPort(context.Background(), oldPod)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				appliedState := fakeOvn.controller.GetPodState(oldPod)
 				gomega.Expect(appliedState).NotTo(gomega.BeNil())

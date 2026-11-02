@@ -713,7 +713,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				}
 				fakeOvn.startWithDBSetup(initialDB, pod, dns, ovntest.NewNamespace(t.namespace), newNode(node1Name, "192.168.126.202/24"))
 				t.populateLogicalSwitchCache(fakeOvn)
-				state, err := fakeOvn.controller.ReconcilePod(nil, pod, nil)
+				state, err := fakeOvn.controller.ReconcilePod(context.Background(), nil, pod, nil)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				lsp, err := libovsdbops.GetLogicalSwitchPort(fakeOvn.nbClient, &nbdb.LogicalSwitchPort{Name: t.portName})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -728,7 +728,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 					_, err := fakeOvn.controller.watchFactory.GetService(dns.Namespace, dns.Name)
 					return apierrors.IsNotFound(err)
 				}).Should(gomega.BeTrue())
-				_, err = fakeOvn.controller.ReconcilePod(pod, pod, state)
+				_, err = fakeOvn.controller.ReconcilePod(context.Background(), pod, pod, state)
 				gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("failed configuring DHCP")))
 				cached, err := fakeOvn.controller.logicalPortCache.get(pod, ovntypes.DefaultNetworkName)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -740,7 +740,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 					_, err := fakeOvn.controller.watchFactory.GetService(dns.Namespace, dns.Name)
 					return err
 				}).Should(gomega.Succeed())
-				_, err = fakeOvn.controller.ReconcilePod(pod, pod, state)
+				_, err = fakeOvn.controller.ReconcilePod(context.Background(), pod, pod, state)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				lsp, err = libovsdbops.GetLogicalSwitchPort(fakeOvn.nbClient, &nbdb.LogicalSwitchPort{Name: t.portName})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())

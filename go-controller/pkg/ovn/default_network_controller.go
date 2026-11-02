@@ -982,7 +982,7 @@ func (h *defaultNetworkControllerEventHandler) IsResourceScheduled(obj interface
 // AddResource adds the specified object to the cluster according to its type and returns the error,
 // if any, yielded during object creation.
 // Given an object to add and a boolean specifying if the function was executed from iterateRetryResources
-func (h *defaultNetworkControllerEventHandler) AddResource(ctx context.Context, obj interface{}, fromRetryLoop bool) error {
+func (h *defaultNetworkControllerEventHandler) AddResource(_ context.Context, obj interface{}, fromRetryLoop bool) error {
 	switch h.objType {
 	case factory.EgressIPType:
 		eIP := obj.(*egressipv1.EgressIP)
@@ -1059,7 +1059,7 @@ func (h *defaultNetworkControllerEventHandler) AddResource(ctx context.Context, 
 // type and returns the error, if any, yielded during the object update.
 // Given an old and a new object; The inRetryCache boolean argument is to indicate if the given resource
 // is in the retryCache or not.
-func (h *defaultNetworkControllerEventHandler) UpdateResource(ctx context.Context, oldObj, newObj interface{}, _ bool) error {
+func (h *defaultNetworkControllerEventHandler) UpdateResource(_ context.Context, oldObj, newObj interface{}, _ bool) error {
 	switch h.objType {
 	case factory.EgressIPType:
 		oldEIP := oldObj.(*egressipv1.EgressIP)
@@ -1129,7 +1129,7 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(ctx context.Contex
 // DeleteResource deletes the object from the cluster according to the delete logic of its resource type.
 // Given an object and optionally a cachedObj; cachedObj is the internal cache entry for this object,
 // used for now for pods and network policies.
-func (h *defaultNetworkControllerEventHandler) DeleteResource(ctx context.Context, obj, _ interface{}) error {
+func (h *defaultNetworkControllerEventHandler) DeleteResource(_ context.Context, obj, _ interface{}) error {
 	switch h.objType {
 	case factory.EgressIPType:
 		eIP := obj.(*egressipv1.EgressIP)

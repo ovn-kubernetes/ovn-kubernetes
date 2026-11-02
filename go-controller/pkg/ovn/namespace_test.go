@@ -302,7 +302,7 @@ func TestNamespacePortGroupConcurrentMembership(t *testing.T) {
 				go func() {
 					<-start
 					_, unlock, err := bnc.ensureNamespaceLockedCommon(namespace.Name, false, namespace,
-						func(*namespaceInfo, *corev1.Namespace) error { return nil })
+						func(context.Context, *namespaceInfo, *corev1.Namespace) error { return nil })
 					if err == nil {
 						unlock()
 					}
