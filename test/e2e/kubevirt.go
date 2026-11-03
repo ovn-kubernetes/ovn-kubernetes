@@ -2461,19 +2461,8 @@ runcmd:
 			By("creating server pods")
 			nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.Background(), fr.ClientSet, 3)
 			Expect(err).NotTo(HaveOccurred())
-			var testNodes []corev1.Node
-			// Exclude the VM's source node: an iperf server on that node loses connectivity after migration
-			// because a stale OVN FDB entry directs traffic to the disabled/addressless source LSP instead
-			// of the underlay. A defect in the iperf3 downtime detector can make this persistent failure
-			// appear intermittent. Ref: https://redhat.atlassian.net/browse/FDP-4420
-			// TODO: remove this node filtering once the OVN bug is resolved.
-			for _, node := range nodes.Items {
-				if node.Name != vmi.Status.NodeName {
-					testNodes = append(testNodes, node)
-				}
-			}
-			Expect(testNodes).NotTo(BeEmpty())
-			iperfServerTestPods, err = createIperfServerPods(testNodes, cudn.Name, udnv1.NetworkRoleSecondary, serverCIDRs)
+			Expect(nodes.Items).NotTo(BeEmpty())
+			iperfServerTestPods, err = createIperfServerPods(nodes.Items, cudn.Name, udnv1.NetworkRoleSecondary, serverCIDRs)
 			Expect(err).NotTo(HaveOccurred())
 			serverIPsByName := podsMultusNetworkIPs(iperfServerTestPods, podNetworkStatusByNetConfigPredicate(namespace, cudn.Name, strings.ToLower(string(udnv1.NetworkRoleSecondary))))
 			Expect(serverIPsByName).NotTo(BeEmpty())
