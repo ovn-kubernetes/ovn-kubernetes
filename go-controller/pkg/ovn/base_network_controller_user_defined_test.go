@@ -841,6 +841,7 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 			Expect(err).NotTo(HaveOccurred())
 			nadToCreate := nad.DeepCopy()
 			ovntest.AnnotateNADWithNetworkID("3", nadToCreate)
+			Expect(ovntest.EnsurePrimaryNADOwner(fakeOVN.fakeClient.UserDefinedNetworkClient, nadToCreate)).To(Succeed())
 			_, err = fakeOVN.fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nadToCreate.Namespace).Create(
 				context.Background(), nadToCreate, metav1.CreateOptions{})
 			Expect(err).NotTo(HaveOccurred())

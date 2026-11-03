@@ -165,12 +165,6 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", feature.Networ
 					),
 				)
 			},
-			Entry("NetworkAttachmentDefinitions", func(_ context.Context, c networkAttachmentConfigParams) error {
-				netConfig := newNetworkAttachmentConfig(c)
-				nad := generateNAD(netConfig, f.ClientSet)
-				_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(context.Background(), nad, metav1.CreateOptions{})
-				return err
-			}),
 			Entry("UserDefinedNetwork", func(ctx context.Context, c networkAttachmentConfigParams) error {
 				udnManifest := generateUserDefinedNetworkManifest(&c, f.ClientSet)
 				cleanup, err := createManifest(f.Namespace.Name, udnManifest)

@@ -4,13 +4,16 @@
 package testing
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	ktesting "k8s.io/client-go/testing"
 
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
@@ -18,6 +21,8 @@ import (
 	networkconnectfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/clientset/versioned/fake"
 	uplinkv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1"
 	uplinkfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/clientset/versioned/fake"
+	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	udnclient "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned"
 	vtepv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
 	vtepfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -350,4 +355,60 @@ func BuildNAD(name, namespace string, network *ovncnitypes.NetConf) (*nadapi.Net
 		return nil, err
 	}
 	return GenerateNADWithConfig(name, namespace, string(config)), nil
+}
+
+// PrimaryNADOwner supplies a UDN or CUDN parent for a primary NAD test fixture and sets
+// its controller reference. Secondary and default-network fixtures need no owner.
+func PrimaryNADOwner(nad *nadapi.NetworkAttachmentDefinition) runtime.Object {
+	conf := &ovncnitypes.NetConf{}
+	if json.Unmarshal([]byte(nad.Spec.Config), conf) != nil || conf.Role != types.NetworkRolePrimary || conf.Topology == "" {
+		return nil
+	}
+	owner := &udnv1.UserDefinedNetwork{
+		ObjectMeta: metav1.ObjectMeta{Name: nad.Name, Namespace: nad.Namespace, UID: k8stypes.UID(nad.Namespace + "/" + nad.Name)},
+		Spec: udnv1.UserDefinedNetworkSpec{
+			Topology: udnv1.NetworkTopologyLayer2,
+			Layer2:   &udnv1.Layer2Config{Role: udnv1.NetworkRolePrimary},
+		},
+	}
+	if conf.Topology == types.Layer3Topology {
+		owner.Spec.Topology = udnv1.NetworkTopologyLayer3
+		owner.Spec.Layer2 = nil
+		owner.Spec.Layer3 = &udnv1.Layer3Config{Role: udnv1.NetworkRolePrimary}
+	}
+	if ref := metav1.GetControllerOf(nad); ref != nil {
+		owner.Name = ref.Name
+		owner.UID = ref.UID
+		if owner.UID == "" {
+			owner.UID = k8stypes.UID(ref.Name + "-uid")
+		}
+		if ref.Kind == "ClusterUserDefinedNetwork" {
+			cudn := &udnv1.ClusterUserDefinedNetwork{
+				ObjectMeta: metav1.ObjectMeta{Name: owner.Name, UID: owner.UID},
+				Spec: udnv1.ClusterUserDefinedNetworkSpec{Network: udnv1.NetworkSpec{
+					Topology: owner.Spec.Topology, Layer2: owner.Spec.Layer2, Layer3: owner.Spec.Layer3,
+				}},
+			}
+			nad.OwnerReferences = []metav1.OwnerReference{*metav1.NewControllerRef(cudn, udnv1.SchemeGroupVersion.WithKind("ClusterUserDefinedNetwork"))}
+			return cudn
+		}
+	}
+	nad.OwnerReferences = []metav1.OwnerReference{*metav1.NewControllerRef(owner, udnv1.SchemeGroupVersion.WithKind("UserDefinedNetwork"))}
+	return owner
+}
+
+// EnsurePrimaryNADOwner creates the parent resource for a primary NAD fixture.
+// A shared CUDN may already exist when a second namespace joins the network.
+func EnsurePrimaryNADOwner(client udnclient.Interface, nad *nadapi.NetworkAttachmentDefinition) error {
+	var err error
+	switch owner := PrimaryNADOwner(nad).(type) {
+	case *udnv1.UserDefinedNetwork:
+		_, err = client.K8sV1().UserDefinedNetworks(owner.Namespace).Create(context.Background(), owner, metav1.CreateOptions{})
+	case *udnv1.ClusterUserDefinedNetwork:
+		_, err = client.K8sV1().ClusterUserDefinedNetworks().Create(context.Background(), owner, metav1.CreateOptions{})
+	}
+	if apierrors.IsAlreadyExists(err) {
+		return nil
+	}
+	return err
 }

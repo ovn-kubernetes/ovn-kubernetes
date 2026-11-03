@@ -132,11 +132,24 @@ The cluster default network still refreshes IPv4 gateway neighbors after live
 migration because its gateway MAC can change between the subnet owner and
 foreign nodes. See [Live Migration](../live-migration.md) for that behavior.
 
+## Primary network ownership
+
+Create primary networks through `UserDefinedNetwork` or `ClusterUserDefinedNetwork`.
+OVN-Kubernetes ignores a primary NetworkAttachmentDefinition unless its controller
+owner reference identifies an existing UDN or CUDN with the same UID and a primary
+network role. A raw primary NAD, a reference to a missing owner, or a stale owner
+UID produces an `InvalidConfig` warning event and does not allocate or activate a
+network. Removing valid ownership also withdraws a previously accepted network.
+Secondary NADs and the cluster default network are unaffected.
+
+Before upgrading, replace manually authored primary NADs with UDN/CUDN-managed
+networks; existing raw primary NADs are no longer activated after restart.
+
 ## Allocation annotations
 
 Cluster manager owns the network ID and tunnel key annotations on
 NetworkAttachmentDefinitions. Configure networks through the UDN/CUDN API or
-NAD network configuration; do not assign these allocation annotations manually.
+secondary NAD network configuration; do not assign these allocation annotations manually.
 
 An admission policy permits only cluster manager to add, change, or remove
 `k8s.ovn.org/network-id` and `k8s.ovn.org/tunnel-keys`, including during NAD
@@ -930,26 +943,23 @@ and annotations (Label values have a length limit of 63 characters):
 
 Example:
 
-With the following NetworkAttachmentDefinition:
+With the following UserDefinedNetwork in a namespace labeled
+`k8s.ovn.org/primary-user-defined-network`:
 
 ```yaml
-apiVersion: k8s.cni.cncf.io/v1
-kind: NetworkAttachmentDefinition
+apiVersion: k8s.ovn.org/v1
+kind: UserDefinedNetwork
 metadata:
   name: l3-network
   namespace: nad-l3
 spec:
-  config: |2
-    {
-            "cniVersion": "1.0.0",
-            "name": "l3-network",
-            "type": "ovn-k8s-cni-overlay",
-            "topology":"layer3",
-            "subnets": "10.128.0.0/16/24",
-            "mtu": 1300,
-            "netAttachDefName": "nad-l3/l3-network",
-            "role": "primary"
-    }
+  topology: Layer3
+  layer3:
+    role: Primary
+    mtu: 1300
+    subnets:
+    - cidr: 10.128.0.0/16
+      hostSubnet: 24
 ```
 
 We can observe the following EndpointSlices created for a one-replica deployment
@@ -1003,14 +1013,14 @@ ports:
 kind: EndpointSlice
 apiVersion: discovery.k8s.io/v1
 metadata:
-  name: l3-network-sample-deployment-hgkmw
-  generateName: l3-network-sample-deployment-
+  name: sample-deployment-hgkmw
+  generateName: sample-deployment-
   labels:
     endpointslice.kubernetes.io/managed-by: endpointslice-mirror-controller.k8s.ovn.org
     k8s.ovn.org/service-name: sample-deployment
     k8s.ovn.org/source-endpointslice-version: "31533"
   annotations:
-    k8s.ovn.org/endpointslice-network: l3-network
+    k8s.ovn.org/endpointslice-network: nad-l3_l3-network
     k8s.ovn.org/source-endpointslice: sample-deployment-rkk4n
   namespace: nad-l3
   resourceVersion: "31535"
