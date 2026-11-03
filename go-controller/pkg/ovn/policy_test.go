@@ -1348,6 +1348,12 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 				gomega.Eventually(func() ([]nbdb.ACL, error) {
 					return getNetpolACLs(fakeOvn.nbClient)
 				}, 5*time.Second).Should(gomega.BeEmpty())
+
+				return nil
+			}
+			gomega.Expect(app.Run([]string{app.Name})).To(gomega.Succeed())
+		})
+
 		ginkgo.It("pod reconcile updates existing network policy local pod membership", func() {
 			app.Action = func(*cli.Context) error {
 				namespace1 := *ovntest.NewNamespace(namespaceName1)
