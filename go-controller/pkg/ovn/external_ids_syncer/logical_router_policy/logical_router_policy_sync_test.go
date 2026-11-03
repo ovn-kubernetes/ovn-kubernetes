@@ -465,7 +465,7 @@ func getNoReRouteLRP(match string, externalIDs map[string]string, options map[st
 func getReRouteLRP(podNamespace, podName, podIP string, mark int, ipFamily egressIPFamilyValue, nextHops []string,
 	externalIDs map[string]string, controller string) *nbdb.LogicalRouterPolicy {
 	lrp := &nbdb.LogicalRouterPolicy{
-		Priority:    types.EgressIPReroutePriority,
+		Priority:    types.EgressIPCatchAllReroutePriority,
 		Match:       fmt.Sprintf("%s.src == %s", ipFamily, podIP),
 		Action:      nbdb.LogicalRouterPolicyActionReroute,
 		Nexthops:    nextHops,
