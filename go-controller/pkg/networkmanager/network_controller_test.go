@@ -797,6 +797,61 @@ func TestNetworkControllerFinishesTerminalCleanupBeforeFailedStartRecreation(t *
 	g.Expect(tcm.cleaned).To(gomega.HaveLen(2))
 }
 
+func TestNetworkControllerReconcilesAdvertisementUpdateDuringStart(t *testing.T) {
+	g := gomega.NewWithT(t)
+	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+	t.Cleanup(func() { g.Expect(config.PrepareTestConfig()).To(gomega.Succeed()) })
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+
+	netInfo, err := util.NewNetInfo(&ovncnitypes.NetConf{
+		NetConf:  cnitypes.NetConf{Name: "starting-udn", Type: "ovn-k8s-cni-overlay"},
+		Topology: types.Layer3Topology,
+		Role:     types.NetworkRolePrimary,
+		Subnets:  "10.128.0.0/14",
+	})
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	starting := make(chan struct{})
+	finishStart := make(chan struct{})
+	var finishOnce sync.Once
+	unblockStart := func() { finishOnce.Do(func() { close(finishStart) }) }
+	tcm := &testControllerManager{
+		controllers: map[string]NetworkController{},
+		defaultNetwork: &testNetworkController{
+			ReconcilableNetInfo: &util.DefaultNetInfo{},
+		},
+		beforeStart: func() {
+			close(starting)
+			<-finishStart
+		},
+	}
+	nm := newNetworkController("", "node1", tcm, nil, true)
+	t.Cleanup(func() {
+		unblockStart()
+		nm.Stop()
+	})
+	want := util.NewMutableNetInfo(netInfo)
+	nm.EnsureNetwork(want)
+	g.Expect(nm.Start()).To(gomega.Succeed())
+	g.Eventually(starting).Should(gomega.BeClosed())
+	g.Expect(nm.getNetworkState(netInfo.GetNetworkName()).controller).To(gomega.BeNil())
+
+	// Supply the new advertisement state while Start is blocked, then invoke
+	// the same scheduling path used by RA and FRR informer callbacks. The
+	// starting controller has already copied the old, unadvertised state.
+	updated := util.NewMutableNetInfo(netInfo)
+	expected := map[string][]string{"node1": {types.DefaultNetworkName}}
+	updated.SetPodNetworkAdvertisedVRFs(expected)
+	nm.setNetwork(updated.GetNetworkName(), updated)
+	g.Expect(nm.syncNetworks()).To(gomega.Succeed())
+	unblockStart()
+
+	g.Eventually(func(g gomega.Gomega) {
+		ctrl, _, _ := nm.getReconcilableNetworkState(netInfo.GetNetworkName())
+		g.Expect(ctrl).NotTo(gomega.BeNil())
+		g.Expect(ctrl.GetPodNetworkAdvertisedVRFs()).To(gomega.Equal(expected))
+	}).Should(gomega.Succeed(), "advertisement updates during Start must converge without another event")
+}
+
 func TestNetworkControllerAsyncSyncAllSkipsInlineStart(t *testing.T) {
 	g := gomega.NewWithT(t)
 	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
