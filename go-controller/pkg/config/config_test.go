@@ -1191,6 +1191,29 @@ enable-pprof=true
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	})
 
+	DescribeTable("validates EgressGateway health configuration",
+		func(port, timeout int, valid bool) {
+			err := runInit(app, 1, cfgFile,
+				fmt.Sprintf("-egressgateway-node-healthcheck-port=%d", port),
+				fmt.Sprintf("-egressgateway-reachability-total-timeout=%d", timeout))
+			if valid {
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(OVNKubernetesFeature.EgressGatewayNodeHealthCheckPort).To(gomega.Equal(port))
+				gomega.Expect(OVNKubernetesFeature.EgressGatewayReachabilityTotalTimeout).To(gomega.Equal(timeout))
+			} else {
+				gomega.Expect(err).To(gomega.MatchError("invalid EgressGateway health port or timeout"))
+			}
+		},
+		Entry("accepts the minimum port", 1, 1, true),
+		Entry("accepts the maximum port", 65535, 1, true),
+		Entry("rejects zero timeout", 9108, 0, false),
+		Entry("rejects zero port", 0, 1, false),
+		Entry("rejects zero port and timeout", 0, 0, false),
+		Entry("rejects negative port", -1, 1, false),
+		Entry("rejects port above the maximum", 65536, 1, false),
+		Entry("rejects negative timeout", 9108, -1, false),
+	)
+
 	It("returns an error when the gateway mode is invalid", func() {
 		app.Action = func(ctx *cli.Context) error {
 			_, err := InitConfig(ctx, kexec.New(), nil)

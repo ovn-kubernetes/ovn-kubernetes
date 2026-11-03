@@ -176,9 +176,11 @@ var (
 
 	// OVNKubernetesFeature config holds OVN-Kubernetes feature enhancement config file parameters and command-line overrides
 	OVNKubernetesFeature = OVNKubernetesFeatureConfig{
-		EgressIPReachabiltyTotalTimeout: 1,
-		AdvertisedUDNIsolationMode:      AdvertisedUDNIsolationModeStrict,
-		UDNDeletionGracePeriod:          120 * time.Second,
+		EgressIPReachabiltyTotalTimeout:       1,
+		EgressGatewayReachabilityTotalTimeout: 1,
+		EgressGatewayNodeHealthCheckPort:      9108,
+		AdvertisedUDNIsolationMode:            AdvertisedUDNIsolationModeStrict,
+		UDNDeletionGracePeriod:                120 * time.Second,
 	}
 
 	// OvnNorth holds local northbound database paths.
@@ -196,6 +198,9 @@ var (
 
 	// EgressIPHealthCheckTLS holds TLS settings for the Egress IP gRPC health-check channel.
 	EgressIPHealthCheckTLS EgressIPHealthCheckTLSConfig
+
+	// EgressGatewayHealthCheckTLS holds TLS settings for the independent gateway health channel.
+	EgressGatewayHealthCheckTLS EgressGatewayHealthCheckTLSConfig
 
 	// OvsPaths holds OVS location details
 	OvsPaths = OvsPathConfig{
@@ -568,27 +573,30 @@ type OVNKubernetesFeatureConfig struct {
 	// EgressIP feature is enabled
 	EnableEgressIP bool `gcfg:"enable-egress-ip"`
 	// EgressIP node reachability total timeout in seconds
-	EgressIPReachabiltyTotalTimeout int  `gcfg:"egressip-reachability-total-timeout"`
-	EnableEgressFirewall            bool `gcfg:"enable-egress-firewall"`
-	EnableEgressQoS                 bool `gcfg:"enable-egress-qos"`
-	EnableEgressService             bool `gcfg:"enable-egress-service"`
-	EgressIPNodeHealthCheckPort     int  `gcfg:"egressip-node-healthcheck-port"`
-	EnableMultiNetwork              bool `gcfg:"enable-multi-network"`
-	EnableNetworkSegmentation       bool `gcfg:"enable-network-segmentation"`
-	EnableNetworkConnect            bool `gcfg:"enable-network-connect"`
-	EnableUplink                    bool `gcfg:"enable-uplink"`
-	EnablePreconfiguredUDNAddresses bool `gcfg:"enable-preconfigured-udn-addresses"`
-	EnableRouteAdvertisements       bool `gcfg:"enable-route-advertisements"`
-	EnableEVPN                      bool `gcfg:"enable-evpn"`
-	EnableMultiNetworkPolicy        bool `gcfg:"enable-multi-networkpolicy"`
-	EnableStatelessNetPol           bool `gcfg:"enable-stateless-netpol"`
-	EnableMultiExternalGateway      bool `gcfg:"enable-multi-external-gateway"`
-	EnablePersistentIPs             bool `gcfg:"enable-persistent-ips"`
-	EnableDNSNameResolver           bool `gcfg:"enable-dns-name-resolver"`
-	EnableServiceTemplateSupport    bool `gcfg:"enable-svc-template-support"`
-	EnableObservability             bool `gcfg:"enable-observability"`
-	EnableNetworkQoS                bool `gcfg:"enable-network-qos"`
-	AllowICMPNetworkPolicy          bool `gcfg:"allow-icmp-network-policy"`
+	EgressIPReachabiltyTotalTimeout int `gcfg:"egressip-reachability-total-timeout"`
+	// EgressGateway node reachability total timeout in seconds; must be positive.
+	EgressGatewayReachabilityTotalTimeout int  `gcfg:"egressgateway-reachability-total-timeout"`
+	EgressGatewayNodeHealthCheckPort      int  `gcfg:"egressgateway-node-healthcheck-port"`
+	EnableEgressFirewall                  bool `gcfg:"enable-egress-firewall"`
+	EnableEgressQoS                       bool `gcfg:"enable-egress-qos"`
+	EnableEgressService                   bool `gcfg:"enable-egress-service"`
+	EgressIPNodeHealthCheckPort           int  `gcfg:"egressip-node-healthcheck-port"`
+	EnableMultiNetwork                    bool `gcfg:"enable-multi-network"`
+	EnableNetworkSegmentation             bool `gcfg:"enable-network-segmentation"`
+	EnableNetworkConnect                  bool `gcfg:"enable-network-connect"`
+	EnableUplink                          bool `gcfg:"enable-uplink"`
+	EnablePreconfiguredUDNAddresses       bool `gcfg:"enable-preconfigured-udn-addresses"`
+	EnableRouteAdvertisements             bool `gcfg:"enable-route-advertisements"`
+	EnableEVPN                            bool `gcfg:"enable-evpn"`
+	EnableMultiNetworkPolicy              bool `gcfg:"enable-multi-networkpolicy"`
+	EnableStatelessNetPol                 bool `gcfg:"enable-stateless-netpol"`
+	EnableMultiExternalGateway            bool `gcfg:"enable-multi-external-gateway"`
+	EnablePersistentIPs                   bool `gcfg:"enable-persistent-ips"`
+	EnableDNSNameResolver                 bool `gcfg:"enable-dns-name-resolver"`
+	EnableServiceTemplateSupport          bool `gcfg:"enable-svc-template-support"`
+	EnableObservability                   bool `gcfg:"enable-observability"`
+	EnableNetworkQoS                      bool `gcfg:"enable-network-qos"`
+	AllowICMPNetworkPolicy                bool `gcfg:"allow-icmp-network-policy"`
 	// This feature requires a kernel fix https://github.com/torvalds/linux/commit/7f3287db654395f9c5ddd246325ff7889f550286
 	// to work on a kind cluster. Flag allows to disable it for current CI, will be turned on when github runners have this fix.
 	AdvertisedUDNIsolationMode string `gcfg:"advertised-udn-isolation-mode"`
@@ -798,49 +806,51 @@ type ManagedBGPConfig struct {
 
 // Config is used to read the structured config file and to cache config in testcases
 type config struct {
-	Default                DefaultConfig
-	Logging                LoggingConfig
-	Monitoring             MonitoringConfig
-	IPFIX                  IPFIXConfig
-	CNI                    CNIConfig
-	OVNKubernetesFeature   OVNKubernetesFeatureConfig
-	Kubernetes             KubernetesConfig
-	Metrics                MetricsConfig
-	TLS                    TLSConfig
-	EgressIPHealthCheckTLS EgressIPHealthCheckTLSConfig `gcfg:"egressip-healthcheck-tls"`
-	OvnNorth               legacyOvnNorthConfig
-	OvnSouth               OvnDBConfig
-	Gateway                GatewayConfig
-	ClusterMgrHA           HAConfig
-	HybridOverlay          HybridOverlayConfig
-	OvnKubeNode            OvnKubeNodeConfig
-	ClusterManager         ClusterManagerConfig
-	OvsPaths               OvsPathConfig
-	NoOverlay              NoOverlayConfig  `gcfg:"no-overlay"`
-	ManagedBGP             ManagedBGPConfig `gcfg:"bgp-managed"`
+	Default                     DefaultConfig
+	Logging                     LoggingConfig
+	Monitoring                  MonitoringConfig
+	IPFIX                       IPFIXConfig
+	CNI                         CNIConfig
+	OVNKubernetesFeature        OVNKubernetesFeatureConfig
+	Kubernetes                  KubernetesConfig
+	Metrics                     MetricsConfig
+	TLS                         TLSConfig
+	EgressIPHealthCheckTLS      EgressIPHealthCheckTLSConfig      `gcfg:"egressip-healthcheck-tls"`
+	EgressGatewayHealthCheckTLS EgressGatewayHealthCheckTLSConfig `gcfg:"egressgateway-healthcheck-tls"`
+	OvnNorth                    legacyOvnNorthConfig
+	OvnSouth                    OvnDBConfig
+	Gateway                     GatewayConfig
+	ClusterMgrHA                HAConfig
+	HybridOverlay               HybridOverlayConfig
+	OvnKubeNode                 OvnKubeNodeConfig
+	ClusterManager              ClusterManagerConfig
+	OvsPaths                    OvsPathConfig
+	NoOverlay                   NoOverlayConfig  `gcfg:"no-overlay"`
+	ManagedBGP                  ManagedBGPConfig `gcfg:"bgp-managed"`
 }
 
 var (
-	savedDefault                DefaultConfig
-	savedLogging                LoggingConfig
-	savedMonitoring             MonitoringConfig
-	savedIPFIX                  IPFIXConfig
-	savedCNI                    CNIConfig
-	savedOVNKubernetesFeature   OVNKubernetesFeatureConfig
-	savedKubernetes             KubernetesConfig
-	savedMetrics                MetricsConfig
-	savedTLS                    TLSConfig
-	savedOvnNorth               OvnDBConfig
-	savedOvnSouth               OvnDBConfig
-	savedEgressIPHealthCheckTLS EgressIPHealthCheckTLSConfig
-	savedGateway                GatewayConfig
-	savedClusterMgrHA           HAConfig
-	savedHybridOverlay          HybridOverlayConfig
-	savedOvnKubeNode            OvnKubeNodeConfig
-	savedClusterManager         ClusterManagerConfig
-	savedOvsPaths               OvsPathConfig
-	savedNoOverlay              NoOverlayConfig
-	savedManagedBGP             ManagedBGPConfig
+	savedDefault                     DefaultConfig
+	savedLogging                     LoggingConfig
+	savedMonitoring                  MonitoringConfig
+	savedIPFIX                       IPFIXConfig
+	savedCNI                         CNIConfig
+	savedOVNKubernetesFeature        OVNKubernetesFeatureConfig
+	savedKubernetes                  KubernetesConfig
+	savedMetrics                     MetricsConfig
+	savedTLS                         TLSConfig
+	savedOvnNorth                    OvnDBConfig
+	savedOvnSouth                    OvnDBConfig
+	savedEgressIPHealthCheckTLS      EgressIPHealthCheckTLSConfig
+	savedEgressGatewayHealthCheckTLS EgressGatewayHealthCheckTLSConfig
+	savedGateway                     GatewayConfig
+	savedClusterMgrHA                HAConfig
+	savedHybridOverlay               HybridOverlayConfig
+	savedOvnKubeNode                 OvnKubeNodeConfig
+	savedClusterManager              ClusterManagerConfig
+	savedOvsPaths                    OvsPathConfig
+	savedNoOverlay                   NoOverlayConfig
+	savedManagedBGP                  ManagedBGPConfig
 
 	// legacy service-cluster-ip-range CLI option
 	serviceClusterIPRange string
@@ -874,6 +884,7 @@ func init() {
 	savedOvnNorth = OvnNorth
 	savedOvnSouth = OvnSouth
 	savedEgressIPHealthCheckTLS = EgressIPHealthCheckTLS
+	savedEgressGatewayHealthCheckTLS = EgressGatewayHealthCheckTLS
 	savedGateway = Gateway
 	savedClusterMgrHA = ClusterMgrHA
 	savedHybridOverlay = HybridOverlay
@@ -909,6 +920,7 @@ func PrepareTestConfig() error {
 	OvnNorth = savedOvnNorth
 	OvnSouth = savedOvnSouth
 	EgressIPHealthCheckTLS = savedEgressIPHealthCheckTLS
+	EgressGatewayHealthCheckTLS = savedEgressGatewayHealthCheckTLS
 	Gateway = savedGateway
 	HybridOverlay = savedHybridOverlay
 	OvnKubeNode = savedOvnKubeNode
@@ -1314,6 +1326,18 @@ var OVNK8sFeatureFlags = []cli.Flag{
 		Usage:       "EgressIP node reachability total timeout in seconds",
 		Destination: &cliConfig.OVNKubernetesFeature.EgressIPReachabiltyTotalTimeout,
 		Value:       1,
+	},
+	&cli.IntFlag{
+		Name:        "egressgateway-reachability-total-timeout",
+		Usage:       "EgressGateway node reachability total timeout in seconds; must be positive",
+		Destination: &cliConfig.OVNKubernetesFeature.EgressGatewayReachabilityTotalTimeout,
+		Value:       OVNKubernetesFeature.EgressGatewayReachabilityTotalTimeout,
+	},
+	&cli.IntFlag{
+		Name:        "egressgateway-node-healthcheck-port",
+		Usage:       "Configure EgressGateway node reachability using gRPC on this TCP port (1-65535)",
+		Destination: &cliConfig.OVNKubernetesFeature.EgressGatewayNodeHealthCheckPort,
+		Value:       OVNKubernetesFeature.EgressGatewayNodeHealthCheckPort,
 	},
 	&cli.BoolFlag{
 		Name:        "enable-egress-firewall",
@@ -2013,6 +2037,7 @@ func GetFlags(customFlags []cli.Flag) []cli.Flag {
 	flags = append(flags, MetricsFlags...)
 	flags = append(flags, TLSFlags...)
 	flags = append(flags, EgressIPHealthCheckTLSFlags...)
+	flags = append(flags, EgressGatewayHealthCheckTLSFlags...)
 	flags = append(flags, OvnNBFlags...)
 	flags = append(flags, OvnSBFlags...)
 	flags = append(flags, OVNGatewayFlags...)
@@ -2924,16 +2949,17 @@ func initConfigWithPath(ctx *cli.Context, exec kexec.Interface, saPath string, d
 			OvnDBConfig:                  savedOvnNorth,
 			EgressIPHealthCheckTLSConfig: savedEgressIPHealthCheckTLS,
 		},
-		OvnSouth:               savedOvnSouth,
-		EgressIPHealthCheckTLS: savedEgressIPHealthCheckTLS,
-		Gateway:                savedGateway,
-		ClusterMgrHA:           savedClusterMgrHA,
-		HybridOverlay:          savedHybridOverlay,
-		OvnKubeNode:            savedOvnKubeNode,
-		ClusterManager:         savedClusterManager,
-		OvsPaths:               savedOvsPaths,
-		NoOverlay:              savedNoOverlay,
-		ManagedBGP:             savedManagedBGP,
+		OvnSouth:                    savedOvnSouth,
+		EgressIPHealthCheckTLS:      savedEgressIPHealthCheckTLS,
+		EgressGatewayHealthCheckTLS: savedEgressGatewayHealthCheckTLS,
+		Gateway:                     savedGateway,
+		ClusterMgrHA:                savedClusterMgrHA,
+		HybridOverlay:               savedHybridOverlay,
+		OvnKubeNode:                 savedOvnKubeNode,
+		ClusterManager:              savedClusterManager,
+		OvsPaths:                    savedOvsPaths,
+		NoOverlay:                   savedNoOverlay,
+		ManagedBGP:                  savedManagedBGP,
 	}
 
 	configFile, configFileIsDefault = getConfigFilePath(ctx)
@@ -3091,6 +3117,14 @@ func initConfigWithPath(ctx *cli.Context, exec kexec.Interface, saPath string, d
 		return "", err
 	}
 	EgressIPHealthCheckTLS = *tlsConfig
+	gatewayTLSConfig, err := buildEgressGatewayHealthCheckTLSConfig(&cfg.EgressGatewayHealthCheckTLS, &cliConfig.EgressGatewayHealthCheckTLS)
+	if err != nil {
+		return "", err
+	}
+	EgressGatewayHealthCheckTLS = *gatewayTLSConfig
+	if OVNKubernetesFeature.EgressGatewayNodeHealthCheckPort <= 0 || OVNKubernetesFeature.EgressGatewayNodeHealthCheckPort > 65535 || OVNKubernetesFeature.EgressGatewayReachabilityTotalTimeout <= 0 {
+		return "", fmt.Errorf("invalid EgressGateway health port or timeout")
+	}
 
 	if err := completeConfig(); err != nil {
 		return "", err

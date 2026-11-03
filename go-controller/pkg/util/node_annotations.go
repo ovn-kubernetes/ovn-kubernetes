@@ -116,6 +116,11 @@ const (
 	// OVNNodeBridgeEgressIPs contains the EIP addresses that are assigned to default external bridge linux interface of type OVS.
 	OVNNodeBridgeEgressIPs = "k8s.ovn.org/bridge-egress-ips"
 
+	// EgressGatewayLabel selects nodes for default-network gateway egress.
+	EgressGatewayLabel = "k8s.ovn.org/egress-gateway"
+	// EgressGatewayReady reports node readiness and independent gateway health.
+	EgressGatewayReady = "k8s.ovn.org/egress-gateway-ready"
+
 	// egressIPConfigAnnotationKey is used to indicate the cloud subnet and
 	// capacity for each node. It is set by
 	// openshift/cloud-network-config-controller
