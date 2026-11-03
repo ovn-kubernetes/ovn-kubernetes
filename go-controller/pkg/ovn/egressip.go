@@ -1751,30 +1751,32 @@ func (e *EgressIPController) addEgressIPPodRetry(pod *corev1.Pod, reason string)
 }
 
 func (e *EgressIPController) syncStaleAddressSetIPs(egressIPCache egressIPCache, include egressIPNetworkFilter) error {
+	// Each network shares one address set, so combine all owners before replacing it.
+	networks := map[string]sets.Set[string]{}
 	for _, networkPodCache := range egressIPCache.egressIPNameToPods {
 		for networkName, podCache := range networkPodCache {
 			if !include(networkName) {
 				continue
 			}
-			dbIDs := getEgressIPAddrSetDbIDs(EgressIPServedPodsAddrSetName, networkName, e.controllerName)
-			as, err := e.addressSetFactory.EnsureAddressSet(dbIDs)
-			if err != nil {
-				return fmt.Errorf("network %s: cannot ensure that addressSet for egressIP pods %s exists %v", networkName, EgressIPServedPodsAddrSetName, err)
+			if networks[networkName] == nil {
+				networks[networkName] = sets.New[string]()
 			}
-			var allEIPServedPodIPs []net.IP
 			// we only care about pods on this controller's node for the address-set since
 			// traffic from remote pods towards nodeIP won't reach this controller's node
-			for _, podIPs := range podCache.egressLocalPods {
-				for podIP := range podIPs {
-					allEIPServedPodIPs = append(allEIPServedPodIPs, net.ParseIP(podIP))
-				}
+			for _, ips := range podCache.egressLocalPods {
+				networks[networkName].Insert(ips.UnsortedList()...)
 			}
-
-			// we replace all IPs in the address-set based on eIP cache constructed from kapi
-			// note that setIPs is not thread-safe
-			if err = as.SetAddresses(util.StringSlice(allEIPServedPodIPs)); err != nil {
-				return fmt.Errorf("network %s: cannot reset egressPodIPs in address set %v: err: %v", networkName, EgressIPServedPodsAddrSetName, err)
-			}
+		}
+	}
+	for networkName, ips := range networks {
+		as, err := e.addressSetFactory.EnsureAddressSet(getEgressIPAddrSetDbIDs(EgressIPServedPodsAddrSetName, networkName, e.controllerName))
+		if err != nil {
+			return fmt.Errorf("network %s: cannot ensure that addressSet for egressIP pods %s exists %v", networkName, EgressIPServedPodsAddrSetName, err)
+		}
+		// we replace all IPs in the address-set based on eIP cache constructed from kapi
+		// note that setIPs is not thread-safe
+		if err = as.SetAddresses(sets.List(ips)); err != nil {
+			return fmt.Errorf("network %s: cannot reset egressPodIPs in address set %v: err: %v", networkName, EgressIPServedPodsAddrSetName, err)
 		}
 	}
 	return nil
