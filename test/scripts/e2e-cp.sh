@@ -107,6 +107,10 @@ if [ "$ENABLE_MULTI_NET" != "true" ]; then
   skip "Multi Homing"
 fi
 
+if [ "$OVN_ENABLE_PERSISTENT_IPS" != "true" ]; then
+  skip_label "Feature:PersistentIPs"
+fi
+
 if [ "$OVN_NETWORK_QOS_ENABLE" != "true" ]; then
   skip "e2e NetworkQoS validation"
 fi

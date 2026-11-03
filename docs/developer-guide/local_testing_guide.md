@@ -59,6 +59,14 @@ Before setting up KinD and before running the actual tests, export essential env
 
 The environment variables and their values depend on the actual test scenario that you want to run.
 
+Export `OVN_ENABLE_PERSISTENT_IPS=true` before deploying KinD and running tests
+to enable persistent IPs and include tests labeled `Feature:PersistentIPs`.
+Use `false` to disable the feature and exclude those tests. KinD defaults to
+enabling the feature, but the control-plane test runner excludes these tests
+unless the variable is explicitly set to `true`. When invoking the E2E binary
+directly against a cluster without persistent IPs, pass
+`-ginkgo.label-filter='!Feature:PersistentIPs'`.
+
 Look at the `e2e` action (search for `name: e2e`) in [ovn-kubernetes/.github/workflows/test.yml](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/.github/workflows/test.yml). Prior to installing KinD, set the following environment variables according to your needs:
 ```
 export KIND_CLUSTER_NAME=ovn

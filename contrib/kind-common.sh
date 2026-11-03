@@ -208,6 +208,7 @@ set_common_default_params() {
   KIND_NUM_WORKER=${KIND_NUM_WORKER:-2}
 
   ENABLE_MULTI_NET=${ENABLE_MULTI_NET:-false}
+  OVN_ENABLE_PERSISTENT_IPS=${OVN_ENABLE_PERSISTENT_IPS:-true}
   ENABLE_NETWORK_SEGMENTATION=${ENABLE_NETWORK_SEGMENTATION:-false}
   if [ "$ENABLE_NETWORK_SEGMENTATION" == true ] && [ "$ENABLE_MULTI_NET" != true ]; then
     echo "Network segmentation (UDN) requires multi-network to be enabled (-mne)"

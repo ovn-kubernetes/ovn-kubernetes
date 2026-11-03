@@ -1430,7 +1430,7 @@ config:
 			}),
 		)
 	})
-	Context("with user defined networks and persistent ips configured", func() {
+	Context("with user defined networks and persistent ips configured", feature.PersistentIPs, func() {
 		type testCommand struct {
 			description string
 			cmd         func()
@@ -2095,7 +2095,7 @@ ip route add %[3]s via %[4]s
 			}),
 		)
 	})
-	Context("with kubevirt VM using layer2 UDPN", func() {
+	Context("with kubevirt VM using layer2 UDPN", feature.PersistentIPs, func() {
 		var (
 			cidrIPv4   = "172.31.0.0/24"
 			cidrIPv6   = "2010:100:200::/60"
@@ -2550,7 +2550,7 @@ runcmd:
 			Should(Succeed(), fmt.Sprintf("IPAMClaim %s should have expected failure status", ipamClaimName))
 	}
 
-	Context("duplicate addresses validation", func() {
+	Context("duplicate addresses validation", feature.PersistentIPs, func() {
 		const networkName = "net1"
 		var (
 			cudn                         *udnv1.ClusterUserDefinedNetwork
@@ -2681,7 +2681,7 @@ runcmd:
 		})
 	})
 
-	Context("IP family validation for layer2 primary networks", func() {
+	Context("IP family validation for layer2 primary networks", feature.PersistentIPs, func() {
 		var cidrIPv4, cidrIPv6 string
 		BeforeEach(func() {
 			if !isPreConfiguredUdnAddressesEnabled() {
@@ -2795,7 +2795,7 @@ runcmd:
 		})
 	})
 
-	Context("ipv4 subnet exhaustion", func() {
+	Context("ipv4 subnet exhaustion", feature.PersistentIPs, func() {
 		const networkName = "net1"
 		var (
 			cudn     *udnv1.ClusterUserDefinedNetwork
