@@ -7,12 +7,16 @@ import (
 	"context"
 	"net"
 	"strconv"
+	"sync"
+	"time"
 
 	"golang.org/x/net/proxy"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/credentials/tls/certprovider/pemfile"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/security/advancedtls"
 
 	"k8s.io/klog/v2"
 
@@ -22,6 +26,103 @@ import (
 const (
 	serviceEgressGatewayNode = "Service_Egress_Gateway"
 )
+
+type egressGatewayHealthServerHandler struct {
+	grpc_health_v1.UnimplementedHealthServer
+}
+
+func (egressGatewayHealthServerHandler) Check(_ context.Context, req *grpc_health_v1.HealthCheckRequest) (*grpc_health_v1.HealthCheckResponse, error) {
+	response := grpc_health_v1.HealthCheckResponse{}
+
+	if req.GetService() == serviceEgressGatewayNode {
+		response.Status = grpc_health_v1.HealthCheckResponse_SERVING
+	} else {
+		response.Status = grpc_health_v1.HealthCheckResponse_NOT_SERVING
+	}
+	return &response, nil
+}
+
+// EgressGatewayHealthServer interface is the means for spawning a gRPC server for
+// the egress gateway health check service.
+type EgressGatewayHealthServer interface {
+	Run(stopCh <-chan struct{})
+}
+type egressGatewayHealthServer struct {
+	// Management port bound by server
+	nodeMgmtIP net.IP
+
+	// The gateway endpoint has its own port, independent of EgressIP.
+	healthCheckPort int
+}
+
+// NewEgressGatewayHealthServer allocates an Egress Gateway health server.
+func NewEgressGatewayHealthServer(nodeMgmtIP net.IP, healthCheckPort int) (EgressGatewayHealthServer, error) {
+	return &egressGatewayHealthServer{
+		nodeMgmtIP:      nodeMgmtIP,
+		healthCheckPort: healthCheckPort,
+	}, nil
+}
+
+// Run spawns gRPC server for handling the egress gateway health check service.
+func (ehs *egressGatewayHealthServer) Run(stopCh <-chan struct{}) {
+	nodeAddr := net.JoinHostPort(ehs.nodeMgmtIP.String(), strconv.Itoa(ehs.healthCheckPort))
+	lis, err := net.Listen("tcp", nodeAddr)
+	if err != nil {
+		klog.Fatalf("Health checking listen failed: %v", err)
+	}
+
+	wg := &sync.WaitGroup{}
+
+	opts := []grpc.ServerOption{}
+	cfg := &config.EgressGatewayHealthCheckTLS
+	if cfg.Cert == "" || cfg.PrivKey == "" {
+		klog.Warning("Health checking using insecure connection")
+	} else {
+		// certProvider is responsible for reloading the certificate if it rotates.
+		// Use a short RefreshDuration to ensure that the certificate is reloaded if the cluster was suspended.
+		certProvider, err := pemfile.NewProvider(pemfile.Options{
+			CertFile:        cfg.Cert,
+			KeyFile:         cfg.PrivKey,
+			RefreshDuration: time.Minute,
+		})
+		if err != nil {
+			klog.Fatalf("Failed to create the cert provider: %v", err)
+		}
+		defer certProvider.Close()
+
+		srvOpts := &advancedtls.ServerOptions{
+			IdentityOptions: advancedtls.IdentityCertificateOptions{
+				IdentityProvider: certProvider,
+			},
+		}
+		serverTLSCreds, err := advancedtls.NewServerCreds(srvOpts)
+		if err != nil {
+			klog.Fatalf("Failed to create the server creds: %v", err)
+		}
+		opts = append(opts, grpc.Creds(serverTLSCreds))
+	}
+
+	grpcServer := grpc.NewServer(opts...)
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		grpc_health_v1.RegisterHealthServer(grpcServer, &egressGatewayHealthServerHandler{})
+		klog.Infof("Starting Egress Gateway Health Server on %s:%d", ehs.nodeMgmtIP.String(), ehs.healthCheckPort)
+		if err := grpcServer.Serve(lis); err != nil && err != grpc.ErrServerStopped {
+			klog.Fatalf("Egress Gateway Health checking server failed: %v", err)
+		}
+		klog.Infof("Stopped Egress Gateway Health Server on %s:%d", ehs.nodeMgmtIP.String(), ehs.healthCheckPort)
+	}()
+
+	<-stopCh
+
+	klog.Info("Shutting down Egress Gateway Health Server")
+	grpcServer.Stop()
+	wg.Wait()
+	klog.Info("Egress Gateway Health Server is shutdown")
+}
 
 // EgressGatewayHealthClient interface offers the functions needed for connecting to
 // the egress gateway health check service.

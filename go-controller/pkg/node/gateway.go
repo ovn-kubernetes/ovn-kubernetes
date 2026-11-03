@@ -43,6 +43,7 @@ type Gateway interface {
 	GetUplinkName() string
 	SetDefaultGatewayBridgeMAC(addr net.HardwareAddr)
 	SetDefaultPodNetworkAdvertised(bool)
+	GetDefaultPodNetworkAdvertised() bool
 	SetDefaultBridgeGARPDropFlows(bool)
 	Reconcile() error
 }
