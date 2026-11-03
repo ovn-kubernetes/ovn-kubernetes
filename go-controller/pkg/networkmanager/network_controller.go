@@ -76,7 +76,7 @@ func newNetworkController(name, node string, cm ControllerManager, wf watchFacto
 			RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
 			Informer:       wf.FRRConfigurationsInformer().Informer(),
 			Lister:         wf.FRRConfigurationsInformer().Lister().List,
-			Reconcile:      func(_ context.Context, _ string) error { return nc.syncRunningNetworks() },
+			Reconcile:      func(_ context.Context, _ string) error { return nc.syncNetworks() },
 			ObjNeedsUpdate: nc.frrNeedsUpdate,
 			Threadiness:    1,
 		})
@@ -86,7 +86,7 @@ func newNetworkController(name, node string, cm ControllerManager, wf watchFacto
 			RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
 			Informer:       wf.RouteAdvertisementsInformer().Informer(),
 			Lister:         nc.raLister.List,
-			Reconcile:      func(_ context.Context, _ string) error { return nc.syncRunningNetworks() },
+			Reconcile:      func(_ context.Context, _ string) error { return nc.syncNetworks() },
 			ObjNeedsUpdate: raNeedsUpdate,
 			Threadiness:    1,
 		}
@@ -100,7 +100,7 @@ func newNetworkController(name, node string, cm ControllerManager, wf watchFacto
 			RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
 			Informer:       wf.NodeCoreInformer().Informer(),
 			Lister:         nc.nodeLister.List,
-			Reconcile:      func(_ context.Context, _ string) error { return nc.syncRunningNetworks() },
+			Reconcile:      func(_ context.Context, _ string) error { return nc.syncNetworks() },
 			ObjNeedsUpdate: nodeNeedsUpdate,
 			Threadiness:    1,
 		}
@@ -431,10 +431,12 @@ func (c *networkController) syncAll() error {
 	return nil
 }
 
-func (c *networkController) syncRunningNetworks() error {
+func (c *networkController) syncNetworks() error {
 	c.networkReconciler.Reconcile(types.DefaultNetworkName)
-	for _, network := range c.getAllNetworkStates() {
-		c.networkReconciler.Reconcile(network.controller.GetNetworkName())
+	// Controllers are registered only after Start returns. Include desired
+	// networks so updates during startup remain queued for reconciliation.
+	for _, network := range c.getAllNetworks() {
+		c.networkReconciler.Reconcile(network.GetNetworkName())
 	}
 
 	return nil
