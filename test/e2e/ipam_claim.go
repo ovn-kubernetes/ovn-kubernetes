@@ -22,7 +22,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
 )
 
-var _ = Describe("Multi Homing persistent IPAM claims", feature.MultiHoming, func() {
+var _ = Describe("Multi Homing persistent IPAM claims", feature.MultiHoming, feature.PersistentIPs, func() {
 	f := wrappedTestFramework("ipam-claim-scope")
 
 	var (

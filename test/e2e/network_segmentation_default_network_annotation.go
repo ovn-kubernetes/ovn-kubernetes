@@ -130,14 +130,14 @@ var _ = Describe("Network Segmentation: Default network multus annotation", feat
 			Should(Equal(corev1.PodPending))
 	},
 
-		Entry("should create the pod with the specified static IP and MAC address with persistent IPAM", testCase{
-			ips: []string{"103.0.0.3/16", "2014:100:200::3/60"},
-			mac: "02:A1:B2:C3:D4:E5",
+		Entry("should create the pod with the specified static IP and MAC address with persistent IPAM", feature.PersistentIPs, testCase{
+			ips:       []string{"103.0.0.3/16", "2014:100:200::3/60"},
+			mac:       "02:A1:B2:C3:D4:E5",
 			lifecycle: udnv1.IPAMLifecyclePersistent,
 		}),
 		Entry("should create the pod with the specified static IP and MAC address without persistent IPAM enabled", testCase{
-			ips:       []string{"103.0.0.3/16", "2014:100:200::3/60"},
-			mac:       "02:B1:C2:D3:E4:F5",
+			ips: []string{"103.0.0.3/16", "2014:100:200::3/60"},
+			mac: "02:B1:C2:D3:E4:F5",
 		}),
 	)
 

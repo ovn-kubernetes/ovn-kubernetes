@@ -21,6 +21,8 @@ env:
   KIND_INSTALL_INGRESS: true
   KIND_ALLOW_SYSTEM_WRITES: true
   ENABLE_COREDUMPS: true
+  # Keep cluster deployment and persistent-IP test selection in sync.
+  OVN_ENABLE_PERSISTENT_IPS: true
   # This skips tests tagged as Serial for most lanes
   # Serial tests are run in a dedicated lane
   PARALLEL: true

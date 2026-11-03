@@ -33,6 +33,7 @@ var (
 	Interconnect          = New("Interconnect")
 	Multicast             = New("Multicast")
 	MultiHoming           = New("MultiHoming")
+	PersistentIPs         = New("PersistentIPs")
 	NodeIPMACMigration    = New("NodeIPMACMigration")
 	NoOverlay             = New("NoOverlay")
 	OVSCPUPin             = New("OVSCPUPin")
