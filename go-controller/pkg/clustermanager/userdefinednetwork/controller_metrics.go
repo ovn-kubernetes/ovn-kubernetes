@@ -20,16 +20,8 @@ type cudnMetricKey struct {
 // seedCUDNCountMetrics populates the metric tracker from existing CUDNs at
 // startup, then sets the gauge once.
 //
-// Only finalized CUDNs are seeded. This preserves the tracker invariant: every
-// entry in cudnMetricTracker has a finalizer that guarantees cudnMetricUncounted
-// will run during deletion. Unfinalized CUDNs are safe to skip — they will be
-// counted by cudnMetricCounted when the reconcile loop adds the finalizer.
-//
-// Without this guard a tracker leak is possible: if an unfinalized CUDN is
-// deleted before the controller reconciles it, Kubernetes garbage-collects it
-// immediately (no finalizer), reconcileCUDN sees NotFound, syncClusterUDN(nil)
-// short-circuits, and cudnMetricUncounted is never called — leaving a phantom
-// entry in the tracker.
+// Only finalized CUDNs are seeded: a CUDN without the finalizer is counted by
+// cudnMetricCounted once the reconcile loop adds it.
 func (c *Controller) seedCUDNCountMetrics(cudnNADs cudnToNADs) {
 	for _, entry := range cudnNADs {
 		if !controllerutil.ContainsFinalizer(entry.cudn, template.FinalizerUserDefinedNetwork) {
@@ -63,20 +55,21 @@ func (c *Controller) trackCUDN(name string, spec *userdefinednetworkv1.NetworkSp
 }
 
 // cudnMetricUncounted records that a CUDN is no longer counted in the gauge
-// metric. The caller must have already removed the finalizer.
-func (c *Controller) cudnMetricUncounted(name string, spec *userdefinednetworkv1.NetworkSpec) {
-	role, topology, transport := cudnMetricLabels(spec)
-	key := cudnMetricKey{role, topology, transport}
-	names := c.cudnMetricTracker[key]
-	if names == nil || !names.Has(name) {
+// metric. It looks the CUDN up by name, since a CUDN that disappeared without
+// the finalizer has no spec left to derive its label combination from.
+func (c *Controller) cudnMetricUncounted(name string) {
+	for key, names := range c.cudnMetricTracker {
+		if !names.Has(name) {
+			continue
+		}
+		names.Delete(name)
+		if names.Len() == 0 {
+			delete(c.cudnMetricTracker, key)
+			metrics.DeleteCUDNCount(key.role, key.topology, key.transport)
+		} else {
+			metrics.SetCUDNCount(key.role, key.topology, key.transport, float64(names.Len()))
+		}
 		return
-	}
-	names.Delete(name)
-	if names.Len() == 0 {
-		delete(c.cudnMetricTracker, key)
-		metrics.DeleteCUDNCount(key.role, key.topology, key.transport)
-	} else {
-		metrics.SetCUDNCount(key.role, key.topology, key.transport, float64(names.Len()))
 	}
 }
 
