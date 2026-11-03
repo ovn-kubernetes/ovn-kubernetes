@@ -4,6 +4,7 @@
 package macbinding
 
 import (
+	"context"
 	"sync"
 	"testing"
 
@@ -45,7 +46,7 @@ func startRecorder(g gomega.Gomega, name string) (*recorder, controller.Reconcil
 	rec := &recorder{}
 	r := controller.NewReconciler(name, &controller.ReconcilerConfig{
 		RateLimiter: controller.DefaultRateLimiter[string](),
-		Reconcile:   func(key string) error { rec.record(key); return nil },
+		Reconcile:   func(_ context.Context, key string) error { rec.record(key); return nil },
 		Threadiness: 1,
 		MaxAttempts: 1,
 	})

@@ -4,6 +4,7 @@
 package macbinding
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"testing"
@@ -265,7 +266,7 @@ func TestReconcileNetworks(t *testing.T) {
 				c.getMacBindingSourceForUplinks()
 			}
 
-			g.Expect(c.reconcileNetwork(tt.reconcileKey)).To(gomega.Succeed())
+			g.Expect(c.reconcileNetwork(context.Background(), tt.reconcileKey)).To(gomega.Succeed())
 
 			// Keys enqueued on the mac-binding reconciler for a catch-up.
 			if len(tt.wantMbEnqueued) == 0 {

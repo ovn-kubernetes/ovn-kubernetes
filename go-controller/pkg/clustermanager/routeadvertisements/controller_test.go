@@ -256,7 +256,7 @@ func TestDeleteIncompleteVTEPConfigurations(t *testing.T) {
 				return false, nil, nil
 			})
 			c := &Controller{frrClient: client, frrLister: frrlisters.NewFRRConfigurationLister(indexer)}
-			updated, remaining, err := c.deleteIncompleteVTEPConfigurations("ra", sets.New("invalid-node"), unsafeInput)
+			updated, remaining, err := c.deleteIncompleteVTEPConfigurations(context.Background(), "ra", sets.New("invalid-node"), unsafeInput)
 			g.Expect(updated).To(gomega.BeTrue(), "successful deletion must be recorded despite other failures")
 			g.Expect(remaining).To(gomega.Equal(3), "failed deletions and the valid configuration must remain")
 			g.Expect(errors.Is(err, failureA)).To(gomega.BeTrue(), "cleanup must retain the first deletion error")
@@ -3722,7 +3722,7 @@ exit
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 			// prime the default network NAD
 			if defaultNAD == nil {
-				defaultNAD, err = util.EnsureDefaultNetworkNAD(c.nadLister, c.nadClient)
+				defaultNAD, err = util.EnsureDefaultNetworkNAD(context.Background(), c.nadLister, c.nadClient)
 				g.Expect(err).ToNot(gomega.HaveOccurred())
 				// update it with the annotation that network manager would set
 				defaultNAD.Annotations = map[string]string{types.OvnNetworkNameAnnotation: types.DefaultNetworkName}
@@ -3759,7 +3759,7 @@ exit
 			if tt.eipListError != nil {
 				c.eipLister = failingEIPLister{EgressIPLister: c.eipLister, err: tt.eipListError}
 			}
-			reconcileErr := c.reconcile(tt.reconcile)
+			reconcileErr := c.reconcile(context.Background(), tt.reconcile)
 			if (reconcileErr != nil) != tt.wantErr {
 				t.Fatalf("Controller.reconcile() error = %v, wantErr %v", reconcileErr, tt.wantErr)
 			}
@@ -3940,7 +3940,7 @@ func newUnsafeInputTest(t *testing.T, g *gomega.WithT, generated ...*testFRRConf
 
 	// prime the default network NAD, annotated as advertised by this
 	// RouteAdvertisements and by another one
-	defaultNAD, err := util.EnsureDefaultNetworkNAD(tt.c.nadLister, tt.c.nadClient)
+	defaultNAD, err := util.EnsureDefaultNetworkNAD(context.Background(), tt.c.nadLister, tt.c.nadClient)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	defaultNAD.Annotations = map[string]string{
 		types.OvnNetworkNameAnnotation:  types.DefaultNetworkName,
@@ -4030,7 +4030,7 @@ func TestController_reconcileDeletesFRRConfigurationsOnUnsafeInput(t *testing.T)
 	// the error is returned for a retry and names the validation reason, the
 	// NAD reference is kept
 	tt.failDelete.Store(true)
-	err := tt.c.reconcile("ra")
+	err := tt.c.reconcile(context.Background(), "ra")
 	g.Expect(err).To(gomega.HaveOccurred())
 	g.Expect(err.Error()).To(gomega.ContainSubstring("injected delete failure"))
 	g.Expect(err.Error()).To(gomega.ContainSubstring("frrConfig-unvalidated"))
@@ -4044,7 +4044,7 @@ func TestController_reconcileDeletesFRRConfigurationsOnUnsafeInput(t *testing.T)
 	// reason, the generated FRRConfigurations are gone
 	tt.failDelete.Store(false)
 	tt.failNADPatch.Store(true)
-	err = tt.c.reconcile("ra")
+	err = tt.c.reconcile(context.Background(), "ra")
 	g.Expect(err).To(gomega.HaveOccurred())
 	g.Expect(err.Error()).To(gomega.ContainSubstring("injected NAD patch failure"))
 	g.Expect(err.Error()).To(gomega.ContainSubstring("invalid neighbor"))
@@ -4056,7 +4056,7 @@ func TestController_reconcileDeletesFRRConfigurationsOnUnsafeInput(t *testing.T)
 	// NAD only references the other RouteAdvertisements and this one is not
 	// accepted
 	tt.failNADPatch.Store(false)
-	err = tt.c.reconcile("ra")
+	err = tt.c.reconcile(context.Background(), "ra")
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(tt.frrConfigNames()).To(gomega.ConsistOf("frrConfig"))
 	g.Expect(tt.defaultNADAnnotation()).To(gomega.Equal("[\"other\"]"))
@@ -4074,7 +4074,7 @@ func TestController_reconcileKeepsValidatedFRRConfigurationsOnUnsafeInput(t *tes
 		generatedFRRConfig("frrConfig-validated", "node2", true),
 	)
 
-	err := tt.c.reconcile("ra")
+	err := tt.c.reconcile(context.Background(), "ra")
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(tt.frrConfigNames()).To(gomega.ConsistOf("frrConfig", "frrConfig-validated"))
 	g.Expect(tt.defaultNADAnnotation()).To(gomega.Equal("[\"ra\",\"other\"]"))
@@ -4148,7 +4148,7 @@ func TestController_reconcileOnNetworkActivity(t *testing.T) {
 	c := NewController(nm.Interface(), wf, fakeClientset)
 
 	// prime the default network NAD
-	defaultNAD, err := util.EnsureDefaultNetworkNAD(c.nadLister, c.nadClient)
+	defaultNAD, err := util.EnsureDefaultNetworkNAD(context.Background(), c.nadLister, c.nadClient)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	defaultNAD.Annotations = map[string]string{types.OvnNetworkNameAnnotation: types.DefaultNetworkName}
 	_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(defaultNAD.Namespace).Update(context.Background(), defaultNAD, metav1.UpdateOptions{})
@@ -4245,7 +4245,7 @@ func TestCrossRASelectionEvents(t *testing.T) {
 		Lister:         wf.RouteAdvertisementsInformer().Lister().List,
 		ObjNeedsUpdate: c.raNeedsUpdate,
 		OnDelete:       c.onRADelete,
-		Reconcile: func(name string) error {
+		Reconcile: func(_ context.Context, name string) error {
 			mu.Lock()
 			defer mu.Unlock()
 			seen.Insert(name)
@@ -4570,7 +4570,7 @@ func TestUpdates(t *testing.T) {
 
 			reconciled := []string{}
 			reconciledMutex := sync.Mutex{}
-			reconcile := func(ra string) error {
+			reconcile := func(_ context.Context, ra string) error {
 				reconciledMutex.Lock()
 				defer reconciledMutex.Unlock()
 				reconciled = append(reconciled, ra)
@@ -4715,7 +4715,7 @@ func TestController_updateRAStatus(t *testing.T) {
 	}
 
 	// first reconcile fails with error A
-	err = c.updateRAStatus(getRA(), false, fmt.Errorf("%w: error A", errConfig))
+	err = c.updateRAStatus(context.Background(), getRA(), false, fmt.Errorf("%w: error A", errConfig))
 	g.Expect(err).ToNot(gomega.HaveOccurred(), "first reconcile with error A should update the status")
 	accepted := meta.FindStatusCondition(getRA().Status.Conditions, "Accepted")
 	g.Expect(accepted).NotTo(gomega.BeNil(), "the Accepted condition should be set after the first reconcile")
@@ -4736,7 +4736,7 @@ func TestController_updateRAStatus(t *testing.T) {
 
 	// second reconcile fails with error B for the same reason: the message
 	// must be refreshed
-	err = c.updateRAStatus(getRA(), false, fmt.Errorf("%w: error B", errConfig))
+	err = c.updateRAStatus(context.Background(), getRA(), false, fmt.Errorf("%w: error B", errConfig))
 	g.Expect(err).ToNot(gomega.HaveOccurred(), "second reconcile with error B should update the status")
 	accepted = meta.FindStatusCondition(getRA().Status.Conditions, "Accepted")
 	g.Expect(accepted).NotTo(gomega.BeNil(), "the Accepted condition should still be set after error B")
@@ -4747,7 +4747,7 @@ func TestController_updateRAStatus(t *testing.T) {
 
 	// third reconcile fails with a different reason: reason and message must
 	// be refreshed
-	err = c.updateRAStatus(getRA(), false, errors.Join(errInvalidVTEP, fmt.Errorf("%w: error C", errPending)))
+	err = c.updateRAStatus(context.Background(), getRA(), false, errors.Join(errInvalidVTEP, fmt.Errorf("%w: error C", errPending)))
 	g.Expect(err).ToNot(gomega.HaveOccurred(), "third reconcile with error C should update the status")
 	accepted = meta.FindStatusCondition(getRA().Status.Conditions, "Accepted")
 	g.Expect(accepted).NotTo(gomega.BeNil(), "the Accepted condition should still be set after error C")
@@ -4768,13 +4768,13 @@ func TestController_updateRAStatus(t *testing.T) {
 		return patches
 	}
 	patches := countStatusPatches()
-	err = c.updateRAStatus(getRA(), false, errors.Join(errInvalidVTEP, fmt.Errorf("%w: error C", errPending)))
+	err = c.updateRAStatus(context.Background(), getRA(), false, errors.Join(errInvalidVTEP, fmt.Errorf("%w: error C", errPending)))
 	g.Expect(err).ToNot(gomega.HaveOccurred(), "a reconcile with an unchanged error should succeed")
 	g.Expect(countStatusPatches()).To(gomega.Equal(patches), "an unchanged status must not be re-applied")
 
 	// fifth reconcile fails with the same error but had FRRConfig/NAD updates:
 	// the status must be applied even though the condition is unchanged
-	err = c.updateRAStatus(getRA(), true, errors.Join(errInvalidVTEP, fmt.Errorf("%w: error C", errPending)))
+	err = c.updateRAStatus(context.Background(), getRA(), true, errors.Join(errInvalidVTEP, fmt.Errorf("%w: error C", errPending)))
 	g.Expect(err).ToNot(gomega.HaveOccurred(), "a reconcile with updates should update the status")
 	g.Expect(countStatusPatches()).To(gomega.Equal(patches+1), "hadUpdates should apply the status even when the condition is unchanged")
 	accepted = meta.FindStatusCondition(getRA().Status.Conditions, "Accepted")
@@ -4782,7 +4782,7 @@ func TestController_updateRAStatus(t *testing.T) {
 
 	// sixth reconcile succeeds: the condition status flips and the transition
 	// time must be bumped
-	err = c.updateRAStatus(getRA(), false, nil)
+	err = c.updateRAStatus(context.Background(), getRA(), false, nil)
 	g.Expect(err).ToNot(gomega.HaveOccurred(), "a successful reconcile should update the status")
 	accepted = meta.FindStatusCondition(getRA().Status.Conditions, "Accepted")
 	g.Expect(accepted).NotTo(gomega.BeNil(), "the Accepted condition should still be set after a successful reconcile")
@@ -4814,7 +4814,7 @@ func TestManagedPeeringMissingInternalIPs(t *testing.T) {
 		_, nodeErr := tt.c.nodeLister.Get("node1")
 		return apierrors.IsNotFound(oldErr) && newErr == nil && nodeErr == nil
 	}, 5*time.Second).Should(gomega.BeTrue(), "observe managed template and healthy node")
-	err = tt.c.reconcile("ra")
+	err = tt.c.reconcile(context.Background(), "ra")
 	g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("waiting for InternalIP addresses")))
 	g.Expect(errors.Is(err, errPending)).To(gomega.BeFalse(), "missing addresses must not enter pending cleanup")
 	ra, err := tt.fakeClientset.RouteAdvertisementsClient.K8sV1().RouteAdvertisements().Get(ctx, "ra", metav1.GetOptions{})
@@ -4837,7 +4837,7 @@ func TestManagedPeeringMissingInternalIPs(t *testing.T) {
 	}
 	addresses := []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: "10.0.0.1"}}
 	setAddresses(addresses)
-	g.Expect(tt.c.reconcile("ra")).To(gomega.Succeed(), "generate both nodes after addresses appear")
+	g.Expect(tt.c.reconcile(context.Background(), "ra")).To(gomega.Succeed(), "generate both nodes after addresses appear")
 	before, err := client.List(ctx, metav1.ListOptions{})
 	g.Expect(err).NotTo(gomega.HaveOccurred(), "snapshot node configurations")
 	g.Expect(before.Items).To(gomega.HaveLen(3), "template and two generated configurations")
@@ -4847,7 +4847,7 @@ func TestManagedPeeringMissingInternalIPs(t *testing.T) {
 	nadBefore := tt.defaultNADAnnotation()
 	setAddresses(nil)
 	for i := 0; i < 2; i++ {
-		g.Expect(tt.c.reconcile("ra")).To(gomega.MatchError(gomega.ContainSubstring("waiting for InternalIP addresses")), "retry %d", i)
+		g.Expect(tt.c.reconcile(context.Background(), "ra")).To(gomega.MatchError(gomega.ContainSubstring("waiting for InternalIP addresses")), "retry %d", i)
 		after, err := client.List(ctx, metav1.ListOptions{})
 		g.Expect(err).NotTo(gomega.HaveOccurred(), "read configurations after failed generation")
 		g.Expect(after.Items).To(gomega.ConsistOf(before.Items), "preserve healthy and addressless node configurations")
@@ -4864,7 +4864,7 @@ func TestManagedPeeringMissingInternalIPs(t *testing.T) {
 	g.Expect(err).NotTo(gomega.HaveOccurred(), "update recovering node subnet")
 	setAddresses(addresses)
 	g.Eventually(func() error {
-		if err := tt.c.reconcile("ra"); err != nil {
+		if err := tt.c.reconcile(context.Background(), "ra"); err != nil {
 			return err
 		}
 		configs, err := client.List(ctx, metav1.ListOptions{})

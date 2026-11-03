@@ -1,0 +1,65 @@
+{{- if eq (hasKey .Values.global "enableOvnKubeIdentity" | ternary .Values.global.enableOvnKubeIdentity true) true }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: ovnkube-uplinkstate-ownership
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["k8s.ovn.org"]
+        apiVersions: ["*"]
+        operations: ["UPDATE", "DELETE"]
+        resources: ["uplinkstates"]
+        scope: "Cluster"
+  variables:
+    - name: oldOwners
+      expression: "has(oldObject.metadata.ownerReferences) ? oldObject.metadata.ownerReferences : []"
+    - name: newOwners
+      expression: "request.operation == 'UPDATE' && has(object.metadata.ownerReferences) ? object.metadata.ownerReferences : []"
+  validations:
+    # Status writes stay in-process, including patches and server-side apply.
+    - expression: >-
+        request.operation != 'UPDATE' ||
+        request.userInfo.username == 'system:ovn-node:' + oldObject.spec.nodeName
+      message: "only the owning OVN node identity may write UplinkState"
+      reason: Forbidden
+    - expression: >-
+        request.operation != 'UPDATE' ||
+        (has(object.metadata.finalizers) ? object.metadata.finalizers : []) ==
+        (has(oldObject.metadata.finalizers) ? oldObject.metadata.finalizers : [])
+      message: "OVN node identities may not change UplinkState finalizers"
+      reason: Forbidden
+    # Preserve existing owner references. Older states may block owner
+    # deletion; allow the owning node to clear that flag without a webhook.
+    - expression: >-
+        request.operation != 'UPDATE' ||
+        variables.newOwners == variables.oldOwners ||
+        (size(variables.newOwners) == 1 && size(variables.oldOwners) == 1 &&
+         variables.newOwners[0].apiVersion == variables.oldOwners[0].apiVersion &&
+         variables.newOwners[0].kind == variables.oldOwners[0].kind &&
+         variables.newOwners[0].name == variables.oldOwners[0].name &&
+         variables.newOwners[0].uid == variables.oldOwners[0].uid &&
+         (has(variables.newOwners[0].controller) ? variables.newOwners[0].controller : null) ==
+         (has(variables.oldOwners[0].controller) ? variables.oldOwners[0].controller : null) &&
+         has(variables.newOwners[0].blockOwnerDeletion) &&
+         variables.newOwners[0].blockOwnerDeletion == false)
+      message: "UplinkState owner references are immutable except for setting blockOwnerDeletion to false"
+      reason: Forbidden
+    # Non-node cleanup, including cluster-manager and GC, is authorized by RBAC.
+    # DELETE has no object; ownership must be checked against oldObject.
+    - expression: >-
+        request.operation != 'DELETE' ||
+        !request.userInfo.username.startsWith('system:ovn-node') ||
+        request.userInfo.username == 'system:ovn-node:' + oldObject.spec.nodeName
+      message: "OVN node identities may only delete their own UplinkState"
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: ovnkube-uplinkstate-ownership
+spec:
+  policyName: ovnkube-uplinkstate-ownership
+  validationActions: [Deny]
+{{- end }}

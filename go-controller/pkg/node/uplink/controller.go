@@ -256,7 +256,7 @@ func (c *Controller) Stop() {
 	)
 }
 
-func (c *Controller) reconcileUplink(key string) error {
+func (c *Controller) reconcileUplink(_ context.Context, key string) error {
 	uplink, err := c.uplinkLister.Get(key)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -299,7 +299,7 @@ func (c *Controller) reconcileUplink(key string) error {
 	return nil
 }
 
-func (c *Controller) reconcileNode(key string) error {
+func (c *Controller) reconcileNode(_ context.Context, key string) error {
 	// Delete events bypass nodeNeedsUpdate, so filter remote node deletes here.
 	if key != c.nodeName {
 		return nil
@@ -308,7 +308,7 @@ func (c *Controller) reconcileNode(key string) error {
 	return nil
 }
 
-func (c *Controller) reconcileUplinkState(key string) error {
+func (c *Controller) reconcileUplinkState(_ context.Context, key string) error {
 	state, err := c.uplinkStateLister.Get(key)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -916,15 +916,14 @@ func desiredUplinkState(
 	nodeConfig *uplinkv1alpha1.UplinkNodeConfig,
 	nodeConfigErr error,
 ) *uplinkv1alpha1.UplinkState {
+	// Uplink finalization explicitly cleans up states. A nonblocking owner
+	// reference also permits node creation without uplinks/finalizers access.
+	owner := metav1.NewControllerRef(uplink, uplinkv1alpha1.SchemeGroupVersion.WithKind("Uplink"))
+	owner.BlockOwnerDeletion = ptr.To(false)
 	state := &uplinkv1alpha1.UplinkState{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: name,
-			OwnerReferences: []metav1.OwnerReference{
-				*metav1.NewControllerRef(
-					uplink,
-					uplinkv1alpha1.SchemeGroupVersion.WithKind("Uplink"),
-				),
-			},
+			Name:            name,
+			OwnerReferences: []metav1.OwnerReference{*owner},
 		},
 		Spec: uplinkv1alpha1.UplinkStateSpec{
 			UplinkName: uplink.Name,

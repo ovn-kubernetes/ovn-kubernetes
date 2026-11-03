@@ -50,8 +50,8 @@ Each new release of OVN-Kubernetes is defined with a "version" that represents t
 ### Release Notes
 
 * Every PR must include a `release-note` fenced code block in its description (enforced by CodeRabbit).
-  The block must contain either a short user-facing description of the change or the single word `NONE`
-  if the PR has no user-facing impact (e.g. tests, refactors, CI-only changes):
+  These notes are collected during release cuts to highlight user-facing changes in the changelog.
+  The block must contain either a short user-facing description of the change or the single word `NONE`.
   ````
   ```release-note
   Added support for X feature in Y component.
@@ -63,6 +63,19 @@ Each new release of OVN-Kubernetes is defined with a "version" that represents t
   NONE
   ```
   ````
+* **Write a release note** when the PR does any of the following:
+  - Adds a new user-facing feature or capability
+  - Introduces or changes a CLI flag, config knob, or Helm value that operators set
+  - Adds, changes, or removes a CRD, API field, or user-facing annotation contract
+  - Changes Helm chart templates, default values, or upgrade behavior that affects rendered output
+  - Deprecates or removes existing functionality
+  - Introduces a breaking change or migration step that affects operators or end users
+  - Changes default behavior users or operators rely on
+  - Fixes a bug whose resolution changes user-visible behavior or compatibility
+    (exception: if the bug was never reported by users and the fix lands before
+    any release ships with the broken behavior, `NONE` is acceptable)
+* **Use `NONE`** for everything else: routine bug fixes, refactors, test changes, CI improvements,
+  docs, internal-only changes, performance/scale work, and internal architecture migrations.
 * Release notes are generated from the `release-note` blocks of all PRs merged into a release. Any PR with
   a meaningful (non-`NONE`) `release-note` block will be included in the release notes.
 

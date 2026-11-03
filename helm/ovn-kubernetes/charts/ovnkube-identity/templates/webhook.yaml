@@ -88,4 +88,23 @@ webhooks:
         apiVersions: ["*"]
         resources: ["pods", "pods/status"]
         scope: "*"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: ovn-kubernetes-admission-webhook-uplinkstate
+webhooks:
+  - name: ovn-kubernetes-admission-webhook-uplinkstate.k8s.io
+    clientConfig:
+      url: https://localhost:9443/uplinkstate
+      caBundle: {{ $ca.Cert | b64enc | quote }}
+    admissionReviewVersions: ['v1']
+    sideEffects: None
+    failurePolicy: Fail
+    rules:
+      - operations: ["CREATE"]
+        apiGroups: ["k8s.ovn.org"]
+        apiVersions: ["v1alpha1"]
+        resources: ["uplinkstates"]
+        scope: "Cluster"
 {{- end }}

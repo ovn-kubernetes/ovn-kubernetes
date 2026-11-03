@@ -761,21 +761,65 @@ reviews:
       - name: "Release Notes Section"
         mode: "error"
         instructions: >-
-          Every PR must include a "Release Notes" section whose
-          `release-note` fenced code block contains either a user-facing
-          release note or the single word `NONE` (both are valid entries).
+          Every PR must include a "Release Notes" section with a
+          `release-note` fenced code block containing either a
+          user-facing release note or the single word `NONE`.
+          These notes are collected during release cuts to
+          highlight user-facing changes in the changelog.
 
-          Fail if the "Release Notes" section is missing, the
-          `release-note` block is absent or empty, or it still contains
-          only the template comment.
+          Fail if the section is missing, the block is absent or
+          empty, or it still contains only the template comment.
 
-          Also fail if the PR adds, changes, or removes a flag, API, or
-          user-facing behavior, or deprecates something, but the block is
-          left as `NONE` — ask the author to write a short user-facing
-          note instead.
+          Require an actual release note (not `NONE`) only when the
+          PR does one or more of the following:
 
-          Pass if the block contains a meaningful user-facing note, or if
-          it contains `NONE` and the PR genuinely has no user-facing
-          impact (tests, refactors, CI, internal-only changes).
+          - Adds a new user-facing feature or capability.
+
+          - Introduces or changes a CLI flag, config knob, or Helm
+            value that operators set. Do not count internal
+            environment variables that are implementation details
+            or used only by CI, kind scripts, or test
+            infrastructure.
+
+          - Adds, changes, or removes a CRD, API field, or
+            user-facing annotation contract (e.g.
+            k8s.ovn.org/open-default-ports). Internal annotations
+            used only for controller bookkeeping (e.g.
+            k8s.ovn.org/node-subnets) do not count.
+
+          - Changes Helm chart templates, default values, or upgrade
+            behavior in a way that affects the rendered chart output
+            or user-facing configuration. Internal Helm refactors
+            with unchanged rendered behavior do not count.
+
+          - Deprecates or removes existing functionality.
+
+          - Introduces a breaking change or migration step that
+            affects operators or end users (e.g. required manual
+            action on upgrade, changed external traffic path).
+            Internal OVN plumbing changes (e.g. switching from
+            static routes to logical router policies) do not
+            count unless they change observable behavior for
+            end users.
+
+          - Changes default behavior users or operators rely on
+            (e.g. default gateway mode, default IPAM range,
+            default service behavior).
+
+          - Fixes a bug whose resolution changes user-visible
+            behavior or compatibility in a way operators should
+            know about (e.g. traffic that was incorrectly routed
+            now takes a different path). If the bug was never
+            reported by users and the fix lands before any
+            release ships with the broken behavior, `NONE` is
+            acceptable.
+
+          For everything else — routine bug fixes, refactors, test
+          changes, CI improvements, docs, internal-only changes,
+          performance work, internal architecture migrations —
+          `NONE` is the correct entry. Do not ask authors to write
+          a release note for every bug fix; the release notes should
+          highlight what operators and users need to know, not
+          catalog every merged PR.
 chat:
   auto_reply: true

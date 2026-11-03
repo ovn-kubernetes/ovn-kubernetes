@@ -1080,7 +1080,7 @@ var _ = Describe("SyncServices", func() {
 				},
 				gateway: &UserDefinedNetworkGateway{NetInfo: netInfo, gateway: g},
 			}
-			Expect(nc.Reconcile(joined)).To(Succeed())
+			Expect(nc.Reconcile(context.Background(), joined)).To(Succeed())
 
 			// 3. The service must end up programmed without any further service event.
 			Eventually(ruleExists, 5*time.Second).Should(BeTrue(),

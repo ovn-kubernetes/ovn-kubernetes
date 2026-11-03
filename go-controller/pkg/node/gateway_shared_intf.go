@@ -829,9 +829,10 @@ func addServiceRules(service *corev1.Service, netInfo util.NetInfo, localEndpoin
 	if npw == nil || !npw.dpuMode {
 		// add nftables rules only in full mode
 		nftObjs := getGatewayNFTRules(service, localEndpoints, svcHasLocalHostNetEndPnt)
-		if activeNetwork != nil &&
-			shouldAddUDNServiceMarkRules(netInfo, npw.nodeIPManager.nodeName) {
-			nftObjs = append(nftObjs, getUDNNFTRules(service, activeNetwork)...)
+		if activeNetwork != nil {
+			if err := reconcileUDNServiceMarkRules(service, netInfo, npw.nodeIPManager.nodeName, activeNetwork); err != nil {
+				errors = append(errors, err)
+			}
 		}
 		if len(nftObjs) > 0 {
 			if err := nodenft.AddObjects(nftObjs); err != nil {
@@ -976,6 +977,17 @@ func (npw *nodePortWatcher) AddService(service *corev1.Service) error {
 			return fmt.Errorf("failed to update flows for service %s/%s: %w", service.Namespace, service.Name, err)
 		}
 		npw.ofm.requestFlowSync()
+		// Retry adds also represent network advertisement changes. Refresh the
+		// service marks even when the service and endpoints are unchanged.
+		if !npw.dpuMode && netInfo.IsPrimaryNetwork() {
+			netConfig := npw.ofm.getActiveNetwork(netInfo)
+			if netConfig == nil {
+				return fmt.Errorf("missing bridge configuration for network %s", netInfo.GetNetworkName())
+			}
+			if err := reconcileUDNServiceMarkRules(service, netInfo, npw.nodeIPManager.nodeName, netConfig); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -2247,7 +2259,7 @@ func updateMasqueradeAnnotation(nodeName string, kube kube.Interface) error {
 	if err != nil {
 		return fmt.Errorf("unable to generate masquerade subnet annotation update: %w", err)
 	}
-	if err := kube.SetAnnotationsOnNode(nodeName, nodeAnnotation); err != nil {
+	if err := kube.SetAnnotationsOnNode(context.TODO(), nodeName, nodeAnnotation); err != nil {
 		return fmt.Errorf("unable to set node masquerade subnet annotation update: %w", err)
 	}
 	return nil

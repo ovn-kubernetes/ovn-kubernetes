@@ -46,10 +46,40 @@ subjects:
 Note: By default, the generated certificates have a brief lifetime set (10min).
 This is intentional as it helps ensure that the certificate rotation works seamlessly, but it might be adjusted in production environments.
 
+## UplinkState Ownership
+
+When node identity is enabled, only `system:ovn-node:<nodeName>` may create or
+update an `UplinkState` whose `spec.nodeName` matches that identity.
+A `ValidatingAdmissionPolicy` enforces update ownership and unchanged finalizers
+inside the API server. The CRD makes both spec identity fields immutable.
+The policy also preserves owner references, allowing only the owning node to
+set `blockOwnerDeletion` to `false` on existing references. All updates,
+including patches and server-side apply, avoid the identity webhook.
+
+The webhook validates the caller's node identity and the canonical object name,
+including hashed names, on creation. It does not look up Uplinks or Nodes or
+validate owner references. Nodes cannot set finalizers at creation.
+Administrators and `--extra-allowed-user` identities have no create or update
+exemption.
+
+The existing naming scheme can generate the same object name for different
+Uplink/node pairs containing dots. Admission does not resolve those collisions;
+both pairs still compete for one object name.
+
+Nodes manage their own states. The admission policy rejects deletion of another
+node's state using the existing object's identity. Other RBAC-authorized callers
+can delete states, including cluster-manager when a Node is deleted and garbage
+collection when an Uplink is deleted. Deletes do not call the webhook.
+
+In split DPU deployments, the DPU and DPU-host need a trusted identity mapping
+before enabling this restriction. The DPU Helm values currently disable node
+identity.
+
 ## Validating Admission Webhook
 
 The feature introduces validating webhooks for pod creation, updates to `pods` and
-`pods/status`, and creation and updates of `nodes`, including `nodes/status`.
+`pods/status`, creation and updates of `nodes`, including `nodes/status`, and
+creation of `uplinkstates`.
 
 For cluster-wide pod annotation protection, see [Security](security.md#protected-pod-annotations).
 
@@ -117,3 +147,37 @@ ovnkube-identity-57f9778d99-llfqz   1/1     Running   0          30m   172.18.0.
 ```
 This approach allows us to collocate the webhook with the API server for better response times
 and avoid relying on cluster networking.
+
+## TLS Configuration
+
+The ovnkube-identity webhook server supports TLS configuration options to control the security parameters of the HTTPS endpoint.
+
+### --tls-min-version
+
+Sets the minimum TLS version supported by the webhook server. Example values: `VersionTLS12`, `VersionTLS13`.
+If omitted, the Go default minimum TLS version is used.
+
+### --tls-cipher-suites
+
+Comma-separated list of cipher suite names for TLS 1.0-1.2 connections. This option is ignored for TLS 1.3, which uses a fixed set of cipher suites.
+Example: `TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384`.
+If omitted, the Go default cipher suites are used.
+
+### --tls-curve-preferences
+
+Comma-separated list of numeric Go `crypto/tls` CurveID values, specifying the allowed key-exchange mechanisms.
+The supported values depend on the Go version in use.
+See [crypto/tls.CurveID](https://pkg.go.dev/crypto/tls#CurveID) for values supported by each Go version.
+
+Common curve values:
+- `23` - P-256 (CurveP256)
+- `24` - P-384 (CurveP384)
+- `25` - P-521 (CurveP521)
+- `29` - X25519
+
+Example: `--tls-curve-preferences=23,24,29` restricts the server to the P-256, P-384, and X25519 key-exchange mechanisms.
+
+**Note:** The order of curves in the list is ignored. Go selects key exchange mechanisms from this list using its own internal preference order.
+
+**Behavior:**
+- **Omitted flag:** Uses the Go default key-exchange mechanisms (recommended for most deployments).

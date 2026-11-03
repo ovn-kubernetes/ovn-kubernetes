@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -469,7 +470,12 @@ func newUplinkGatewayReconcileHarness(
 		&netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "breth0", Index: 1}}, nil,
 	).Once()
 
-	uplinkClient := uplinkfake.NewSimpleClientset(state)
+	uplinkClient := uplinkfake.NewSimpleClientset()
+	if state != nil {
+		if _, err := uplinkClient.K8sV1alpha1().UplinkStates().Create(context.Background(), state, metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	informerFactory := uplinkinformerfactory.NewSharedInformerFactory(uplinkClient, 0)
 	uplinkStateInformer := informerFactory.K8s().V1alpha1().UplinkStates()
 	_ = uplinkStateInformer.Informer()
@@ -522,6 +528,16 @@ func expectMissingGatewayVRF(
 	netlinkOps.On("IsLinkNotFoundError", notFoundErr).Return(true).Once()
 }
 
+type countingGatewayStateLister struct {
+	uplinklisters.UplinkStateLister
+	reads atomic.Int32
+}
+
+func (l *countingGatewayStateLister) Get(name string) (*uplinkv1alpha1.UplinkState, error) {
+	l.reads.Add(1)
+	return l.UplinkStateLister.Get(name)
+}
+
 func TestUserDefinedNetworkGatewayReconcilesUplinkConfiguration(t *testing.T) {
 	if err := config.PrepareTestConfig(); err != nil {
 		t.Fatalf("failed to prepare test config: %v", err)
@@ -534,6 +550,57 @@ func TestUserDefinedNetworkGatewayReconcilesUplinkConfiguration(t *testing.T) {
 	config.OVNKubernetesFeature.EnableMultiNetwork = true
 	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 	config.OVNKubernetesFeature.EnableUplink = true
+
+	t.Run("startup waits for creation and discovery events without retries", func(t *testing.T) {
+		g := NewWithT(t)
+		udng, _, _ := newUplinkGatewayReconcileHarness(t, nil)
+		lister := &countingGatewayStateLister{UplinkStateLister: udng.uplinkStateLister}
+		udng.uplinkStateLister = lister
+		g.Expect(udng.Start()).To(Succeed())
+		g.Consistently(func() int32 { return lister.reads.Load() }, 150*time.Millisecond, 10*time.Millisecond).Should(Equal(int32(1)))
+		// Advertisement events must also wait for initial gateway programming.
+		g.Expect(udng.reconcileGateway(udng.GetNetworkName())).To(Succeed())
+		state := resolvedGatewayUplinkState("uplink1", "node-a")
+		state.UID = "pending-state"
+		state.Status.Conditions[0].Status = metav1.ConditionFalse
+		client := udng.uplinkStateGatewayStatusController.uplinkClient.K8sV1alpha1().UplinkStates()
+		created, err := client.Create(context.Background(), state, metav1.CreateOptions{})
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Eventually(func() int32 { return lister.reads.Load() }, time.Second, 10*time.Millisecond).Should(Equal(int32(2)))
+		status := udng.uplinkStateGatewayStatusController
+		g.Eventually(func() bool {
+			status.mutex.Lock()
+			defer status.mutex.Unlock()
+			observed := status.uplinks["uplink1"]
+			return observed != nil && observed.networks[udng.GetNetworkName()] != nil &&
+				observed.networks[udng.GetNetworkName()].phase == uplinkGatewayNetworkFailed
+		}, time.Second, 10*time.Millisecond).Should(BeTrue())
+		g.Consistently(func() int32 { return lister.reads.Load() }, 150*time.Millisecond, 10*time.Millisecond).Should(Equal(int32(2)))
+		created.Status.Conditions[0].Message = "discovery changed"
+		_, err = client.Update(context.Background(), created, metav1.UpdateOptions{})
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Eventually(func() int32 { return lister.reads.Load() }, time.Second, 10*time.Millisecond).Should(Equal(int32(3)))
+		g.Consistently(func() int32 { return lister.reads.Load() }, 150*time.Millisecond, 10*time.Millisecond).Should(Equal(int32(3)))
+		g.Expect(client.Delete(context.Background(), created.Name, metav1.DeleteOptions{})).To(Succeed())
+		g.Eventually(func() int32 { return lister.reads.Load() }, time.Second, 10*time.Millisecond).Should(Equal(int32(4)))
+		g.Consistently(func() int32 { return lister.reads.Load() }, 150*time.Millisecond, 10*time.Millisecond).Should(Equal(int32(4)))
+		_, err = client.Create(context.Background(), state, metav1.CreateOptions{})
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Eventually(func() int32 { return lister.reads.Load() }, time.Second, 10*time.Millisecond).Should(Equal(int32(5)))
+		g.Consistently(func() int32 { return lister.reads.Load() }, 150*time.Millisecond, 10*time.Millisecond).Should(Equal(int32(5)))
+	})
+
+	t.Run("missing state cleanup failure remains retryable", func(t *testing.T) {
+		udng, netlinkOps, _ := newUplinkGatewayReconcileHarness(t, nil)
+		udng.uplinkGatewayCleanupRequired = true
+		cleanupErr := errors.New("cleanup failed")
+		netlinkOps.On("LinkByName", util.GetNetworkVRFName(udng.NetInfo)).Return(nil, cleanupErr).Once()
+		netlinkOps.On("IsLinkNotFoundError", cleanupErr).Return(false).Once()
+		err := udng.reconcileUplinkState(uplinkutil.StateName("uplink1", "node-a"))
+		if err == nil || !strings.Contains(err.Error(), cleanupErr.Error()) {
+			t.Fatalf("expected retryable cleanup error, got %v", err)
+		}
+	})
 
 	t.Run("unresolved state unconfigures existing programming", func(t *testing.T) {
 		state := resolvedGatewayUplinkState("uplink1", "node-a")
@@ -784,6 +851,9 @@ func TestUserDefinedNetworkGatewayReconcilesUplinkConfiguration(t *testing.T) {
 			t.Fatalf("failed replacement retained UID: %s",
 				udnGateway.uplinkStateUID)
 		}
+		if err := udnGateway.reconcileGateway(udnGateway.GetNetworkName()); err != nil {
+			t.Fatalf("advertisement reconciliation did not wait for replacement to succeed: %v", err)
+		}
 	})
 
 	t.Run("resolved state starts initial programming", func(t *testing.T) {
@@ -806,6 +876,9 @@ func TestUserDefinedNetworkGatewayReconcilesUplinkConfiguration(t *testing.T) {
 		}
 		if observedFingerprint != uplinkGatewayFingerprintFromState(state) {
 			t.Fatal("failed programming did not produce a status fingerprint")
+		}
+		if err := udnGateway.reconcileGateway(udnGateway.GetNetworkName()); err != nil {
+			t.Fatalf("advertisement reconciliation did not wait for initial programming to succeed: %v", err)
 		}
 	})
 }
@@ -1166,6 +1239,8 @@ func noOverlayLayer3NetInfo(t *testing.T) util.NetInfo {
 	return netInfo
 }
 
+// TestShouldAddUDNServiceMarkRules checks eligibility for the primary network's
+// default-VRF service path across transports and advertisement targets.
 func TestShouldAddUDNServiceMarkRules(t *testing.T) {
 	if err := config.PrepareTestConfig(); err != nil {
 		t.Fatalf("failed to prepare test config: %v", err)
@@ -1205,8 +1280,8 @@ func TestShouldAddUDNServiceMarkRules(t *testing.T) {
 	}
 
 	noOverlayNetInfo := noOverlayLayer3NetInfo(t)
-	if !shouldAddUDNServiceMarkRules(noOverlayNetInfo, nodeName) {
-		t.Fatalf("expected service mark rules for no-overlay network without explicit advertised VRF")
+	if shouldAddUDNServiceMarkRules(noOverlayNetInfo, nodeName) {
+		t.Fatalf("expected no service mark rules for no-overlay network without explicit default VRF")
 	}
 
 	noOverlayDefaultVRFNetInfo := util.NewMutableNetInfo(noOverlayNetInfo)
@@ -1606,10 +1681,10 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			}}).Return(nil)
 		nodeAnnotatorMock.On("Set", mock.Anything, mock.Anything).Return(nil)
 		nodeAnnotatorMock.On("Run").Return(nil)
-		kubeMock.On("SetAnnotationsOnNode", node.Name, map[string]interface{}{
+		kubeMock.On("SetAnnotationsOnNode", mock.Anything, node.Name, map[string]interface{}{
 			"k8s.ovn.org/node-masquerade-subnet": "{\"ipv4\":\"169.254.0.0/17\",\"ipv6\":\"fd69::/112\"}",
 		}).Return(nil)
-		kubeMock.On("SetAnnotationsOnNode", node.Name, map[string]interface{}{
+		kubeMock.On("SetAnnotationsOnNode", mock.Anything, node.Name, map[string]interface{}{
 			"k8s.ovn.org/host-cidrs":          "[\"192.168.1.10/24\",\"fc00:f853:ccd:e793::3/64\"]",
 			"k8s.ovn.org/l3-gateway-config":   "{\"default\":{\"mode\":\"\"}}",
 			"k8s.ovn.org/node-primary-ifaddr": "{\"ipv4\":\"192.168.1.10/24\",\"ipv6\":\"fc00:f853:ccd:e793::3/64\"}",
@@ -1842,10 +1917,10 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			}}).Return(nil)
 		nodeAnnotatorMock.On("Set", mock.Anything, mock.Anything).Return(nil)
 		nodeAnnotatorMock.On("Run").Return(nil)
-		kubeMock.On("SetAnnotationsOnNode", node.Name, map[string]interface{}{
+		kubeMock.On("SetAnnotationsOnNode", mock.Anything, node.Name, map[string]interface{}{
 			"k8s.ovn.org/node-masquerade-subnet": "{\"ipv4\":\"169.254.0.0/17\",\"ipv6\":\"fd69::/112\"}",
 		}).Return(nil)
-		kubeMock.On("SetAnnotationsOnNode", node.Name, map[string]interface{}{
+		kubeMock.On("SetAnnotationsOnNode", mock.Anything, node.Name, map[string]interface{}{
 			"k8s.ovn.org/host-cidrs":          "[\"192.168.1.10/24\",\"fc00:f853:ccd:e793::3/64\"]",
 			"k8s.ovn.org/l3-gateway-config":   "{\"default\":{\"mode\":\"\"}}",
 			"k8s.ovn.org/node-primary-ifaddr": "{\"ipv4\":\"192.168.1.10/24\",\"ipv6\":\"fc00:f853:ccd:e793::3/64\"}",
@@ -2044,7 +2119,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			}}).Return(nil)
 		nodeAnnotatorMock.On("Set", mock.Anything, mock.Anything).Return(nil)
 		nodeAnnotatorMock.On("Run").Return(nil)
-		kubeMock.On("SetAnnotationsOnNode", node.Name, map[string]interface{}{
+		kubeMock.On("SetAnnotationsOnNode", mock.Anything, node.Name, map[string]interface{}{
 			"k8s.ovn.org/node-masquerade-subnet": "{\"ipv4\":\"169.254.0.0/17\",\"ipv6\":\"fd69::/112\"}",
 		}).Return(nil)
 
@@ -2281,10 +2356,10 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			}}).Return(nil)
 		nodeAnnotatorMock.On("Set", mock.Anything, mock.Anything).Return(nil)
 		nodeAnnotatorMock.On("Run").Return(nil)
-		kubeMock.On("SetAnnotationsOnNode", node.Name, map[string]interface{}{
+		kubeMock.On("SetAnnotationsOnNode", mock.Anything, node.Name, map[string]interface{}{
 			"k8s.ovn.org/node-masquerade-subnet": "{\"ipv4\":\"169.254.0.0/17\",\"ipv6\":\"fd69::/112\"}",
 		}).Return(nil)
-		kubeMock.On("SetAnnotationsOnNode", node.Name, map[string]interface{}{
+		kubeMock.On("SetAnnotationsOnNode", mock.Anything, node.Name, map[string]interface{}{
 			"k8s.ovn.org/host-cidrs":          "[\"192.168.1.10/24\",\"fc00:f853:ccd:e793::3/64\"]",
 			"k8s.ovn.org/l3-gateway-config":   "{\"default\":{\"mode\":\"\"}}",
 			"k8s.ovn.org/node-primary-ifaddr": "{\"ipv4\":\"192.168.1.10/24\",\"ipv6\":\"fc00:f853:ccd:e793::3/64\"}",

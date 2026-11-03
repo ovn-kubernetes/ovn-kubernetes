@@ -156,7 +156,7 @@ func TestNodeAllocationUpdateRepairsInvalidID(t *testing.T) {
 			if err := nac.syncNodeIDs([]interface{}{node}); err != nil {
 				t.Fatalf("restore node ID allocations: %v", err)
 			}
-			if err := handler.UpdateResource(node, node, false); err != nil {
+			if err := handler.UpdateResource(context.Background(), node, node, false); err != nil {
 				t.Fatalf("reconcile invalid node ID update: %v", err)
 			}
 			updated, err := client.CoreV1().Nodes().Get(context.Background(), node.Name, metav1.GetOptions{})

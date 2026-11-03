@@ -39,6 +39,7 @@
 package macbinding
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"strings"
@@ -253,7 +254,7 @@ func (c *MACBindingController) ReconcileUplinkSource(network string) {
 // --- reconcile Networks ----------------------------------------------------
 
 // reconcileNetwork or all networks with a zero key.
-func (c *MACBindingController) reconcileNetwork(key string) error {
+func (c *MACBindingController) reconcileNetwork(_ context.Context, key string) error {
 	if key == "" {
 		// special key "" reconciles all
 		return c.syncAllNetworks()
@@ -275,7 +276,7 @@ func (c *MACBindingController) enqueueAllNetworks() {
 // bindings:
 //   - all dynamic mac bindings from the uplink/source to a follower where key is "<follower>"
 //   - a dynamic mac binding from the source to all followers where the key is "<source>|<ip>"
-func (c *MACBindingController) reconcileDynamicMacBindings(key string) error {
+func (c *MACBindingController) reconcileDynamicMacBindings(_ context.Context, key string) error {
 	return c.doReconcileDynamicMacBindings(key, addWarnDelayThreshold)
 }
 
@@ -286,7 +287,7 @@ func (c *MACBindingController) enqueueDynamicMacBinding(source, ip string) {
 // reconcileDynamicMacBindingsRefresh handles the timestamp refresh of dynamic
 // mac bindings. Key is "<source>|<ip>". Handled through a different queue to
 // not disturb mission critical additions of new mac bindings.
-func (c *MACBindingController) reconcileDynamicMacBindingsRefresh(key string) error {
+func (c *MACBindingController) reconcileDynamicMacBindingsRefresh(_ context.Context, key string) error {
 	return c.doReconcileDynamicMacBindings(key, refreshWarnDelayThreshold)
 }
 
@@ -319,7 +320,7 @@ func (c *MACBindingController) doReconcileDynamicMacBindings(key string, warnDel
 // reconcileStaticMacBindings handles the reconciliation of static mac bindings:
 //   - apply or remove a node IP static mac binding where key is "<uplink>|<ip>"
 //   - ensure or remove a follower's static mac bindings where key is "<follower>"
-func (c *MACBindingController) reconcileStaticMacBindings(key string) error {
+func (c *MACBindingController) reconcileStaticMacBindings(_ context.Context, key string) error {
 	parts := strings.Split(key, keySep)
 	switch len(parts) {
 	case 2:
@@ -344,7 +345,7 @@ func (c *MACBindingController) enqueueFollowerStaticMacBindings(follower string)
 
 // reconcileNodeIPs recomputes the node-IP ip->mac map for an uplink where the
 // key is "<uplink>".
-func (c *MACBindingController) reconcileNodeIPs(key string) error {
+func (c *MACBindingController) reconcileNodeIPs(_ context.Context, key string) error {
 	return c.syncNodeIPsForUplink(key)
 }
 

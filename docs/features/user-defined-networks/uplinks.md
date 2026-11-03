@@ -150,7 +150,10 @@ or if the bridge has no discoverable physical uplink.
 
 After discovery succeeds, ovnkube-node updates the per-node `UplinkState` with
 the resolved bridge name, MAC address, IP addresses, and default gateways.
-OVN-Kubernetes then uses that state to build the CUDN gateway configuration.
+OVN-Kubernetes then uses that state to build the CUDN gateway configuration. Gateway
+reconciliation waits for UplinkState creation and discovery updates through
+informer events. Missing or unresolved discovery data does not trigger periodic
+retries; failures programming or removing gateway configuration still retry.
 
 ## DPU Deployments
 

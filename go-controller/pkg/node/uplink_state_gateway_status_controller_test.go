@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onsi/gomega"
 	"github.com/vishvananda/netlink"
 
 	corev1 "k8s.io/api/core/v1"
@@ -160,11 +161,15 @@ func prepareUplinkStateGatewayStatusControllerTest(t *testing.T) {
 
 type countingUplinkStateLister struct {
 	uplinklisters.UplinkStateLister
-	gets atomic.Int32
+	gets     atomic.Int32
+	failGets atomic.Bool
 }
 
 func (l *countingUplinkStateLister) Get(name string) (*uplinkv1alpha1.UplinkState, error) {
 	l.gets.Add(1)
+	if l.failGets.Load() {
+		return nil, errors.New("transient cache read failure")
+	}
 	return l.UplinkStateLister.Get(name)
 }
 
@@ -1194,119 +1199,138 @@ func TestUDNUplinkStateControllerFiltersReadinessUpdates(t *testing.T) {
 	}
 }
 
-func TestUDNUplinkStateControllerRetriesUntilSuccess(t *testing.T) {
-	prepareUplinkStateGatewayStatusControllerTest(t)
-	config.OvnKubeNode.Mode = types.NodeModeDPUHost
-	const (
-		uplinkName = "uplink1"
-		nodeName   = "node-a"
-	)
+func TestUDNUplinkStateControllerRecovery(t *testing.T) {
+	for _, retryable := range []bool{false, true} {
+		name := "invalid discovery waits for an event"
+		if retryable {
+			name = "cache errors retry until success"
+		}
+		t.Run(name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			prepareUplinkStateGatewayStatusControllerTest(t)
+			config.OvnKubeNode.Mode = types.NodeModeDPUHost
+			const (
+				uplinkName = "uplink1"
+				nodeName   = "node-a"
+			)
 
-	state := newUplinkStateFixture(uplinkName, nodeName)
-	state.Status.Type = uplinkv1alpha1.UplinkTypeOVSBridge
-	state.Status.HostInterfaceName = "eth0"
-	state.Status.MACAddress = "invalid"
-	state.Status.IPAddresses = []uplinkv1alpha1.IPAddressCIDR{"192.0.2.10/24"}
-	client := uplinkfake.NewSimpleClientset(state)
-	informerFactory := uplinkinformerfactory.NewSharedInformerFactory(client, 0)
-	informer := informerFactory.K8s().V1alpha1().UplinkStates()
-	sharedInformer := informer.Informer()
-	informerStop := make(chan struct{})
-	informerFactory.Start(informerStop)
-	t.Cleanup(func() { close(informerStop) })
-
-	statusController := NewUplinkStateGatewayStatusController(
-		nodeName,
-		client,
-		informer,
-	)
-	t.Cleanup(statusController.Stop)
-	countingLister := &countingUplinkStateLister{UplinkStateLister: informer.Lister()}
-	network := util.NewMutableNetInfo(uplinkGatewayNetInfo(t, "red", uplinkName))
-	network.SetNetworkID(3)
-	config.Gateway.Interface = "eth0"
-	config.Gateway.V4MasqueradeSubnet = "169.254.0.0/17"
-	netlinkOps := utilmocks.NewNetLinkOps(t)
-	originalNetlinkOps := util.GetNetLinkOps()
-	util.SetNetLinkOpMockInst(netlinkOps)
-	t.Cleanup(func() { util.SetNetLinkOpMockInst(originalNetlinkOps) })
-	netlinkOps.On("LinkByName", "eth0").Return(
-		&netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "eth0", Index: 1}}, nil,
-	).Once()
-
-	udnGateway, err := NewUserDefinedNetworkGateway(
-		network,
-		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}},
-		emptyNodeInformer(),
-		nil,
-		nil,
-		nil,
-		&gateway{},
-		nil,
-		informer,
-		statusController,
-	)
-	if err != nil {
-		t.Fatalf("failed to create UDN gateway: %v", err)
-	}
-	udnGateway.uplinkStateLister = countingLister
-	t.Cleanup(udnGateway.Stop)
-
-	if err := controllerutil.Start(udnGateway.uplinkStateController); err != nil {
-		t.Fatalf("failed to start UplinkState controller: %v", err)
-	}
-
-	// Four attempts was the old bounded retry limit. Wait for a fifth failed
-	// attempt to prove the level-driven controller keeps the key active.
-	err = wait.PollUntilContextTimeout(
-		context.Background(),
-		5*time.Millisecond,
-		time.Second,
-		true,
-		func(context.Context) (bool, error) {
-			return countingLister.gets.Load() >= 5, nil
-		},
-	)
-	if err != nil {
-		t.Fatalf("UplinkState controller stopped retrying: %v", err)
-	}
-
-	validState := state.DeepCopy()
-	validState.Status.MACAddress = "02:42:ac:12:00:02"
-	_, err = resolvedUplinkGatewayFromState(
-		validState,
-		uplinkName,
-		nodeName,
-		false,
-	)
-	if err != nil {
-		t.Fatalf("failed to resolve valid UplinkState: %v", err)
-	}
-	udnGateway.operationMutex.Lock()
-	udnGateway.uplinkGatewayCleanupRequired = true
-	udnGateway.uplinkFingerprint = uplinkGatewayFingerprintFromState(validState)
-	if err := sharedInformer.GetIndexer().Update(validState); err != nil {
-		udnGateway.operationMutex.Unlock()
-		t.Fatalf("failed to update cached UplinkState: %v", err)
-	}
-	udnGateway.operationMutex.Unlock()
-
-	err = wait.PollUntilContextTimeout(
-		context.Background(),
-		5*time.Millisecond,
-		time.Second,
-		true,
-		func(context.Context) (bool, error) {
-			statusController.mutex.Lock()
-			defer statusController.mutex.Unlock()
-			uplinkState := statusController.uplinks[uplinkName]
-			if uplinkState == nil || uplinkState.networks[network.GetNetworkName()] == nil {
-				return false, nil
+			state := newUplinkStateFixture(uplinkName, nodeName)
+			state.Status.Type = uplinkv1alpha1.UplinkTypeOVSBridge
+			state.Status.HostInterfaceName = "eth0"
+			state.Status.MACAddress = "02:42:ac:12:00:02"
+			if !retryable {
+				state.Status.MACAddress = "invalid"
 			}
-			return uplinkState.networks[network.GetNetworkName()].phase == uplinkGatewayNetworkReady, nil
-		},
-	)
-	if err != nil {
-		t.Fatalf("UplinkState controller did not recover after the input became valid: %v", err)
+			state.Status.IPAddresses = []uplinkv1alpha1.IPAddressCIDR{"192.0.2.10/24"}
+			client := uplinkfake.NewSimpleClientset(state)
+			informerFactory := uplinkinformerfactory.NewSharedInformerFactory(client, 0)
+			informer := informerFactory.K8s().V1alpha1().UplinkStates()
+			informer.Informer()
+			informerStop := make(chan struct{})
+			informerFactory.Start(informerStop)
+			t.Cleanup(func() { close(informerStop) })
+
+			statusController := NewUplinkStateGatewayStatusController(
+				nodeName,
+				client,
+				informer,
+			)
+			t.Cleanup(statusController.Stop)
+			countingLister := &countingUplinkStateLister{UplinkStateLister: informer.Lister()}
+			countingLister.failGets.Store(retryable)
+			network := util.NewMutableNetInfo(uplinkGatewayNetInfo(t, "red", uplinkName))
+			network.SetNetworkID(3)
+			config.Gateway.Interface = "eth0"
+			config.Gateway.V4MasqueradeSubnet = "169.254.0.0/17"
+			netlinkOps := utilmocks.NewNetLinkOps(t)
+			originalNetlinkOps := util.GetNetLinkOps()
+			util.SetNetLinkOpMockInst(netlinkOps)
+			t.Cleanup(func() { util.SetNetLinkOpMockInst(originalNetlinkOps) })
+			netlinkOps.On("LinkByName", "eth0").Return(
+				&netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "eth0", Index: 1}}, nil,
+			).Once()
+
+			udnGateway, err := NewUserDefinedNetworkGateway(
+				network,
+				&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}},
+				emptyNodeInformer(),
+				nil,
+				nil,
+				nil,
+				&gateway{},
+				nil,
+				informer,
+				statusController,
+			)
+			if err != nil {
+				t.Fatalf("failed to create UDN gateway: %v", err)
+			}
+			udnGateway.uplinkStateLister = countingLister
+			t.Cleanup(udnGateway.Stop)
+
+			if err := controllerutil.Start(udnGateway.uplinkStateController); err != nil {
+				t.Fatalf("failed to start UplinkState controller: %v", err)
+			}
+
+			if retryable {
+				// Four attempts was the old bounded retry limit. A fifth failed
+				// cache read proves operational errors keep the key active.
+				g.Eventually(countingLister.gets.Load, time.Second, 5*time.Millisecond).
+					Should(gomega.BeNumerically(">=", 5))
+			} else {
+				g.Eventually(countingLister.gets.Load, time.Second, 5*time.Millisecond).
+					Should(gomega.Equal(int32(1)))
+				g.Consistently(countingLister.gets.Load, 150*time.Millisecond, 5*time.Millisecond).
+					Should(gomega.Equal(int32(1)))
+			}
+
+			validState := state.DeepCopy()
+			validState.Status.MACAddress = "02:42:ac:12:00:02"
+			_, err = resolvedUplinkGatewayFromState(
+				validState,
+				uplinkName,
+				nodeName,
+				false,
+			)
+			if err != nil {
+				t.Fatalf("failed to resolve valid UplinkState: %v", err)
+			}
+			udnGateway.operationMutex.Lock()
+			udnGateway.uplinkGatewayCleanupRequired = true
+			udnGateway.uplinkFingerprint = uplinkGatewayFingerprintFromState(validState)
+			if retryable {
+				// Resume cache reads without an informer event: the queued retry
+				// must recover on its own.
+				countingLister.failGets.Store(false)
+			} else {
+				// Use the fake API so the informer delivers the discovery update.
+				// Updating the indexer directly would not enqueue reconciliation.
+				_, err = client.K8sV1alpha1().UplinkStates().Update(
+					context.Background(), validState, metav1.UpdateOptions{})
+			}
+			udnGateway.operationMutex.Unlock()
+			if err != nil {
+				t.Fatalf("failed to update UplinkState: %v", err)
+			}
+
+			err = wait.PollUntilContextTimeout(
+				context.Background(),
+				5*time.Millisecond,
+				time.Second,
+				true,
+				func(context.Context) (bool, error) {
+					statusController.mutex.Lock()
+					defer statusController.mutex.Unlock()
+					uplinkState := statusController.uplinks[uplinkName]
+					if uplinkState == nil || uplinkState.networks[network.GetNetworkName()] == nil {
+						return false, nil
+					}
+					return uplinkState.networks[network.GetNetworkName()].phase == uplinkGatewayNetworkReady, nil
+				},
+			)
+			if err != nil {
+				t.Fatalf("UplinkState controller did not recover after the input became valid: %v", err)
+			}
+		})
 	}
 }

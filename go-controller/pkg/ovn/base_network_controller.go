@@ -4,6 +4,7 @@
 package ovn
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -140,14 +141,16 @@ type BaseNetworkController struct {
 	// network policies map, key should be retrieved with getPolicyKey(policy *knet.NetworkPolicy).
 	// network policies that failed to be created will also be added here, and can be retried or cleaned up later.
 	// network policy is only deleted from this map after successful cleanup.
-	// Allowed order of locking is namespace Lock -> oc.networkPolicies key Lock -> networkPolicy.Lock
+	// Allowed order of locking is namespace Lock -> networkPolicies key Lock -> sharedNetpolPortGroups key Lock.
 	// Don't take namespace Lock while holding networkPolicy key lock to avoid deadlock.
 	networkPolicies *syncmap.SyncMap[*networkPolicy]
+	// Indexes policies by namespace for pod membership reconciliation.
+	networkPolicyKeysByNamespace *syncmap.SyncMap[sets.Set[string]]
 
 	// map of existing shared port groups for network policies
 	// port group exists in the db if and only if port group key is present in this map
 	// key is namespace
-	// allowed locking order is namespace Lock -> networkPolicy.Lock -> sharedNetpolPortGroups key Lock
+	// allowed locking order is namespace Lock -> networkPolicies key Lock -> sharedNetpolPortGroups key Lock
 	// make sure to keep this order to avoid deadlocks
 	sharedNetpolPortGroups *syncmap.SyncMap[*defaultDenyPortGroups]
 
@@ -183,7 +186,7 @@ type BaseNetworkController struct {
 	nqosController *nqoscontroller.Controller
 }
 
-func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed func(string)) error {
+func (oc *BaseNetworkController) reconcile(_ context.Context, netInfo util.NetInfo, setNodeFailed func(string)) error {
 	// gather some information first
 	reconcileLocalNode := false
 	subnetsChanged := clusterSubnetsChanged(oc, netInfo)
@@ -1000,7 +1003,7 @@ func (bnc *BaseNetworkController) isLayer2WithInterconnectTransport() bool {
 }
 
 // HandleNetworkRefChange enqueues node reconciliation when a NAD reference becomes active/inactive.
-func (bnc *BaseNetworkController) HandleNetworkRefChange(nodeName string, _ bool) {
+func (bnc *BaseNetworkController) HandleNetworkRefChange(_ context.Context, nodeName string, _ bool) {
 	bnc.nodeReconciler.ReconcileNetwork(nodeName, bnc.GetNetworkName())
 }
 

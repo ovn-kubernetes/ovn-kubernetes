@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/clientset/versioned/scheme"
+	uplinkscheme "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/clientset/versioned/scheme"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/csrapprover"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovnwebhook"
 	ovntls "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/tls"
@@ -94,7 +95,9 @@ func Run(ctx context.Context, restCfg *rest.Config, config Config) error {
 	nodeInformer := informerFactory.Core().V1().Nodes().Informer()
 	informerFactory.Start(stopCh)
 	klog.Infof("Waiting for caches to sync")
-	cache.WaitForCacheSync(ctx.Done(), nodeInformer.HasSynced)
+	if !cache.WaitForCacheSync(ctx.Done(), nodeInformer.HasSynced) {
+		return fmt.Errorf("failed to sync admission informer caches")
+	}
 
 	nodeLister := listers.NewNodeLister(nodeInformer.GetIndexer())
 	podWebhook := admission.WithValidator(
@@ -112,6 +115,19 @@ func Run(ctx context.Context, restCfg *rest.Config, config Config) error {
 		return fmt.Errorf("failed to setup the pod admission webhook: %w", err)
 	}
 	webhookMux.Handle("/pod", podHandler)
+
+	uplinkStateWebhook := admission.WithValidator(
+		uplinkscheme.Scheme,
+		ovnwebhook.NewUplinkStateAdmissionWebhook(),
+	).WithRecoverPanic(true)
+	uplinkStateHandler, err := admission.StandaloneWebhook(uplinkStateWebhook, admission.StandaloneOptions{
+		Logger:      logger.WithName("uplinkstate.network-identity"),
+		MetricsPath: "uplinkstate.network-identity",
+	})
+	if err != nil {
+		return fmt.Errorf("failed to setup the UplinkState admission webhook: %w", err)
+	}
+	webhookMux.Handle("/uplinkstate", uplinkStateHandler)
 
 	certPath := filepath.Join(config.CertDir, "tls.crt")
 	keyPath := filepath.Join(config.CertDir, "tls.key")

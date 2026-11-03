@@ -117,47 +117,6 @@ type dpuHostAddrAnnotation struct {
 	IPv6 string `json:"ipv6"`
 }
 
-var _ = ginkgo.Describe("UplinkState API validation", feature.Uplink, func() {
-	f := wrappedTestFramework("uplink-validation")
-	f.SkipNamespaceCreation = true
-
-	ginkgo.It("accepts up to 256 default gateways across both IP families", func(ctx ginkgo.SpecContext) {
-		for _, count := range []int{0, 256, 257} {
-			ginkgo.By(fmt.Sprintf("validating %d default gateways with the API server", count))
-			gateways := make([]string, 0, count)
-			for i := 0; i < count; i++ {
-				if i%2 == 0 {
-					gateways = append(gateways, fmt.Sprintf("192.0.2.%d", i/2+1))
-				} else {
-					gateways = append(gateways, fmt.Sprintf("2001:db8::%x", i/2+1))
-				}
-			}
-			state := &unstructured.Unstructured{Object: map[string]interface{}{
-				"apiVersion": "k8s.ovn.org/v1alpha1",
-				"kind":       "UplinkState",
-				"metadata":   map[string]interface{}{"generateName": "uplink-validation-"},
-				"spec":       map[string]interface{}{"uplinkName": "validation", "nodeName": "validation"},
-			}}
-			gomega.Expect(unstructured.SetNestedStringSlice(state.Object, gateways, "status", "defaultGateways")).To(gomega.Succeed())
-			// Dry-run exercises the real CRD schema without publishing synthetic
-			// discovery data for the node controllers to consume.
-			created, err := f.DynamicClient.Resource(uplinkStateGVR).Create(ctx, state,
-				metav1.CreateOptions{DryRun: []string{metav1.DryRunAll}})
-			if count > 256 {
-				gomega.Expect(apierrors.IsInvalid(err)).To(gomega.BeTrue(), "expected a CRD validation error: %v", err)
-				gomega.Expect(err.Error()).To(gomega.ContainSubstring("status.defaultGateways"))
-				gomega.Expect(err.Error()).To(gomega.ContainSubstring("256"))
-				continue
-			}
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			actual, found, err := unstructured.NestedStringSlice(created.Object, "status", "defaultGateways")
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(found).To(gomega.BeTrue())
-			gomega.Expect(actual).To(gomega.Equal(gateways))
-		}
-	})
-})
-
 var _ = ginkgo.Describe("Network Segmentation Uplink default-VRF egress", feature.NetworkSegmentation, feature.Uplink, func() {
 	f := wrappedTestFramework("uplink-default")
 	f.SkipNamespaceCreation = true

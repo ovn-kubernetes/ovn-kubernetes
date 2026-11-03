@@ -4,6 +4,7 @@
 package networkmanager
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"sort"
@@ -756,7 +757,7 @@ func (c *nadController) syncAllCNCs() error {
 
 // syncCNC refreshes one queued CNC and requeues affected networks when
 // connectivity relationships change.
-func (c *nadController) syncCNC(key string) error {
+func (c *nadController) syncCNC(_ context.Context, key string) error {
 	cnc, err := c.cncLister.Get(key)
 	if err != nil && !apierrors.IsNotFound(err) {
 		return err
@@ -925,6 +926,8 @@ func (c *nadController) clearDynamicRemovalStateLocked(key string) {
 }
 
 func (c *nadController) syncAll() (err error) {
+	ctx := context.Background()
+
 	existingNADs, err := c.nadLister.List(labels.Everything())
 	if err != nil {
 		return fmt.Errorf("%s: failed to list NADs: %w", c.name, err)
@@ -987,7 +990,7 @@ func (c *nadController) syncAll() (err error) {
 			klog.Errorf("%s: failed to sync %v: %v", c.name, nad, err)
 			continue
 		}
-		if err := c.syncNAD(key, nad); err != nil {
+		if err := c.syncNAD(ctx, key, nad); err != nil {
 			return fmt.Errorf("%s: failed to sync %s: %v", c.name, key, err)
 		}
 	}
@@ -995,7 +998,7 @@ func (c *nadController) syncAll() (err error) {
 	return nil
 }
 
-func (c *nadController) sync(key string) error {
+func (c *nadController) sync(ctx context.Context, key string) error {
 	startTime := time.Now()
 	klog.V(5).Infof("%s: sync NAD %s", c.name, key)
 	defer func() {
@@ -1013,10 +1016,10 @@ func (c *nadController) sync(key string) error {
 		return err
 	}
 
-	return c.syncNAD(key, nad)
+	return c.syncNAD(ctx, key, nad)
 }
 
-func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefinition) (syncErr error) {
+func (c *nadController) syncNAD(ctx context.Context, key string, nad *nettypes.NetworkAttachmentDefinition) (syncErr error) {
 	var nadNetworkName string
 	var nadNetwork util.NetInfo
 	var oldNetwork, ensureNetwork util.MutableNetInfo
@@ -1193,7 +1196,7 @@ func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefin
 	// IDs are not released during dynamicDeletes (going inactive) and are only released on a true
 	// NAD/network delete
 	if !dynamicDelete {
-		if err := c.handleNetworkAnnotations(ensureNetwork, nad, key, previousNetworkName); err != nil {
+		if err := c.handleNetworkAnnotations(ctx, ensureNetwork, nad, key, previousNetworkName); err != nil {
 			return err
 		}
 	}
@@ -1545,7 +1548,7 @@ func (c *nadController) DoWithLock(f func(network util.NetInfo) error) error {
 // If this is the NAD controller running in cluster manager then a new ID
 // is allocated and annotated on the NAD. The NAD controller running in
 // cluster manager also releases here the network ID of a network that is being deleted.
-func (c *nadController) handleNetworkAnnotations(new util.MutableNetInfo, nad *nettypes.NetworkAttachmentDefinition, nadKey, previousNetworkName string) (err error) {
+func (c *nadController) handleNetworkAnnotations(ctx context.Context, new util.MutableNetInfo, nad *nettypes.NetworkAttachmentDefinition, nadKey, previousNetworkName string) (err error) {
 	newNetworkName := ""
 	if new != nil {
 		newNetworkName = new.GetNetworkName()
@@ -1716,6 +1719,7 @@ func (c *nadController) handleNetworkAnnotations(new util.MutableNetInfo, nad *n
 	}
 
 	err = k.SetAnnotationsOnNAD(
+		ctx,
 		nad.Namespace,
 		nad.Name,
 		annotations,
