@@ -65,3 +65,24 @@ func TestSyncStaleAddressSetIPsUnion(t *testing.T) {
 	v4, _ = other.GetAddresses()
 	g.Expect(v4).To(gomega.Equal([]string{"10.129.0.99"}))
 }
+
+func TestEgressPodIPFromMatch(t *testing.T) {
+	for match, want := range map[string]string{
+		"ip4.src == 10.128.0.1":                         "10.128.0.1",
+		"ip6.src == fd10::1 && pkt.mark == 0":           "fd10::1",
+		"ip4.src == 10.128.0.1 && ip4.dst == 192.0.2.1": "10.128.0.1",
+		"ip4.dst == 192.0.2.1":                          "",
+		"ip4.src != 10.128.0.1":                         "",
+		"ip4.src == invalid":                            "",
+		"":                                              "",
+	} {
+		ip := egressPodIPFromMatch(match)
+		if want == "" {
+			if ip != nil {
+				t.Errorf("match %q: unexpected source %s", match, ip)
+			}
+		} else if ip.String() != want {
+			t.Errorf("match %q: got %s, want %s", match, ip, want)
+		}
+	}
+}
