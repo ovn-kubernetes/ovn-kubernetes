@@ -30,8 +30,9 @@ import (
 
 // PodAnnotationAllocator is a utility to handle allocation of the PodAnnotation to Pods.
 type PodAnnotationAllocator struct {
-	podLister listers.PodLister
-	kube      kube.InterfaceOVN
+	podLister         listers.PodLister
+	updateCoordinator *util.PodAnnotationUpdateCoordinator
+	kube              kube.InterfaceOVN
 
 	netInfo              util.NetInfo
 	ipamClaimsReconciler persistentips.PersistentAllocations
@@ -57,6 +58,11 @@ func NewPodAnnotationAllocator(
 		opt(p)
 	}
 	return p
+}
+
+// WithUpdateCoordinator shares same-pod write coordination across network allocators.
+func WithUpdateCoordinator(c *util.PodAnnotationUpdateCoordinator) AllocatorOption {
+	return func(p *PodAnnotationAllocator) { p.updateCoordinator = c }
 }
 
 func WithMACRegistry(m mac.Register) AllocatorOption {
@@ -101,6 +107,7 @@ func (allocator *PodAnnotationAllocator) AllocatePodAnnotation(
 		allocator.macRegistry,
 		reallocateIP,
 		networkRole,
+		allocator.updateCoordinator,
 	)
 }
 
@@ -117,7 +124,7 @@ func allocatePodAnnotation(
 	claimsReconciler persistentips.PersistentAllocations,
 	macRegistry mac.Register,
 	reallocateIP bool,
-	networkRole string) (
+	networkRole string, coordinators ...*util.PodAnnotationUpdateCoordinator) (
 	updatedPod *corev1.Pod,
 	podAnnotation *util.PodAnnotation,
 	err error) {
@@ -144,7 +151,11 @@ func allocatePodAnnotation(
 		return updatedPod, rollback, err
 	}
 
-	err = util.UpdatePodWithRetryOrRollback(
+	update := util.UpdatePodWithRetryOrRollback
+	if len(coordinators) > 0 && coordinators[0] != nil {
+		update = coordinators[0].Update
+	}
+	err = update(
 		ctx,
 		podLister,
 		kube,
@@ -197,6 +208,7 @@ func (allocator *PodAnnotationAllocator) AllocatePodAnnotationWithTunnelID(
 		allocator.macRegistry,
 		reallocateIP,
 		networkRole,
+		allocator.updateCoordinator,
 	)
 }
 
@@ -214,7 +226,7 @@ func allocatePodAnnotationWithTunnelID(
 	claimsReconciler persistentips.PersistentAllocations,
 	macRegistry mac.Register,
 	reallocateIP bool,
-	networkRole string) (
+	networkRole string, coordinators ...*util.PodAnnotationUpdateCoordinator) (
 	updatedPod *corev1.Pod,
 	podAnnotation *util.PodAnnotation,
 	err error) {
@@ -238,7 +250,11 @@ func allocatePodAnnotationWithTunnelID(
 		return updatedPod, rollback, err
 	}
 
-	err = util.UpdatePodWithRetryOrRollback(
+	update := util.UpdatePodWithRetryOrRollback
+	if len(coordinators) > 0 && coordinators[0] != nil {
+		update = coordinators[0].Update
+	}
+	err = update(
 		ctx,
 		podLister,
 		kube,
