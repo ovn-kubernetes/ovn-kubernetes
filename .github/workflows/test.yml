@@ -672,6 +672,8 @@ jobs:
           - {"target": "traffic-flow-test-only", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged", "traffic-flow-tests": "1-24", "network-segmentation": "enable-network-segmentation"}
           - {"target": "tools", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "SnatGW", "second-bridge": "1br", "cni-mode": "privileged", "network-segmentation": "enable-network-segmentation"}
           - {"target": "serial", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "cni-mode": "privileged"}
+          - {"target": "egress-gateway", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "cni-mode": "privileged"}
+          - {"target": "egress-gateway", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "cni-mode": "privileged"}
     needs: [ changes, build-pr, build-pr-ubuntu ]
     if: ${{ !cancelled() && needs.changes.outputs.run_ci == 'true' }}
     env:
@@ -684,7 +686,7 @@ jobs:
       CI_E2E_IMAGE_ARTIFACT: "${{ matrix.image_family == 'ubuntu' && 'test-image-pr-ubuntu' || 'test-image-pr' }}"
       CI_E2E_IMAGE_TAR: "${{ matrix.image_family == 'ubuntu' && 'image-pr-ubuntu.tar' || 'image-pr.tar' }}"
       OVN_DISABLE_SNAT_MULTIPLE_GWS: "${{ matrix.disable-snat-multiple-gws == 'noSnatGW' }}"
-      KIND_INSTALL_METALLB: "${{ matrix.target == 'control-plane' || startsWith(matrix.target, 'network-segmentation') }}"
+      KIND_INSTALL_METALLB: "${{ matrix.target == 'control-plane' || matrix.target == 'egress-gateway' || startsWith(matrix.target, 'network-segmentation') }}"
       OVN_GATEWAY_MODE: "${{ matrix.gateway-mode }}"
       OVN_DUMMY_GATEWAY_BRIDGE: "${{ matrix.target == 'no-uplink' }}"
       OVN_SECOND_BRIDGE: "${{ matrix.second-bridge == '2br' }}"
@@ -711,11 +713,12 @@ jobs:
       ENABLE_PRE_CONF_UDN_ADDR: "${{ startsWith(matrix.target, 'network-segmentation') || matrix.network-segmentation == 'enable-network-segmentation' }}"
       ADVERTISED_UDN_ISOLATION_MODE: "${{ matrix.advertised-udn-isolation-mode }}"
       # Managed BGP tests change the shared template and must run serially.
+      # EgressGateway tests share node labels and a host-network server.
       # The ARP/NDP flood lane carries Serial specs that PARALLEL=true would skip,
       # and they are the only CI coverage of the MAC binding mirroring controller.
       # Compared against 'true' rather than negated: any non-empty string, "false"
       # included, is truthy in a GitHub expression.
-      PARALLEL: "${{ matrix.target != 'serial' && matrix.target != 'bgp-managed' && matrix.disable-udn-arp-ndp-flood != 'true' }}"
+      PARALLEL: "${{ matrix.target != 'serial' && matrix.target != 'bgp-managed' && matrix.target != 'egress-gateway' && matrix.disable-udn-arp-ndp-flood != 'true' }}"
       OVN_UNPRIVILEGED_MODE: "${{ matrix.cni-mode == 'unprivileged' }}"
       MULTI_POD_SUBNET: true
       DYNAMIC_UDN_ALLOCATION: "${{ endsWith(matrix.target, '-dynamic') }}"
@@ -873,6 +876,8 @@ jobs:
           make -C test control-plane WHAT="Node IP and MAC address migration"
         elif [ "${{ matrix.target }}" == "external-gateway" ]; then
           make -C test control-plane WHAT="External Gateway"
+        elif [ "${{ matrix.target }}" == "egress-gateway" ]; then
+          make -C test control-plane WHAT=EgressGateway
         elif [ "${{ matrix.target }}" == "kv-live-migration" ]; then
           # the DHCP IPAM suite (dhcp_ipam.go) rides this lane: it is the one
           # provisioned with the dhcp CNI plugin (KIND_INSTALL_PLUGINS),
