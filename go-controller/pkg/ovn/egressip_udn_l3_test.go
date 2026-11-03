@@ -3186,7 +3186,7 @@ func getReRouteStaticRouteForController(clusterSubnet, nextHop, network string) 
 
 func getReRoutePolicyForController(eIPName, podNamespace, podName, podIP string, mark int, ipFamily egressIPFamilyValue, nextHops []string, network, controller string) *nbdb.LogicalRouterPolicy {
 	return &nbdb.LogicalRouterPolicy{
-		Priority:    ovntypes.EgressIPReroutePriority,
+		Priority:    ovntypes.EgressIPCatchAllReroutePriority,
 		Match:       fmt.Sprintf("%s.src == %s", ipFamily, podIP),
 		Action:      nbdb.LogicalRouterPolicyActionReroute,
 		Nexthops:    nextHops,
@@ -3218,7 +3218,7 @@ func getGWPktMarkLRPForController(mark int, eIPName, podNamespace, podName, podI
 	dbIDs := getEgressIPLRPSNATMarkDbIDs(eIPName, podNamespace, podName, ipFamily, network, controller)
 	return &nbdb.LogicalRouterPolicy{
 		UUID:        getGWPktMarkLRPUUID(podNamespace, podName, ipFamily, network),
-		Priority:    ovntypes.EgressIPSNATMarkPriority,
+		Priority:    ovntypes.EgressIPCatchAllSNATMarkPriority,
 		Action:      nbdb.LogicalRouterPolicyActionAllow,
 		ExternalIDs: dbIDs.GetExternalIDs(),
 		Options:     getMarkOptions(mark),

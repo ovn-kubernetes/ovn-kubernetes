@@ -102,7 +102,7 @@ func udnEgressIPRerouteLRP(
 ) *nbdb.LogicalRouterPolicy {
 	return &nbdb.LogicalRouterPolicy{
 		UUID:     uuid,
-		Priority: types.EgressIPReroutePriority,
+		Priority: types.EgressIPCatchAllReroutePriority,
 		Match:    fmt.Sprintf("ip4.src == %s", podIP),
 		Action:   nbdb.LogicalRouterPolicyActionReroute,
 		Nexthops: []string{joinIP},
@@ -111,7 +111,7 @@ func udnEgressIPRerouteLRP(
 			types.DefaultNetworkControllerName,
 			map[libovsdbops.ExternalIDKey]string{
 				libovsdbops.ObjectNameKey: fmt.Sprintf("%s_%s/%s", egressIPName, namespace, podName),
-				libovsdbops.PriorityKey:   fmt.Sprintf("%d", types.EgressIPReroutePriority),
+				libovsdbops.PriorityKey:   fmt.Sprintf("%d", types.EgressIPCatchAllReroutePriority),
 				libovsdbops.IPFamilyKey:   "ip4",
 				libovsdbops.NetworkKey:    networkName,
 			},
@@ -303,7 +303,7 @@ func prepareUDNEgressIPNBControllerManagerTest(
 
 	findUDNEgressIPRerouteLRP := func(podIP, egressPodName string) ([]*nbdb.LogicalRouterPolicy, error) {
 		return libovsdbops.FindLogicalRouterPoliciesWithPredicate(nbClient, func(item *nbdb.LogicalRouterPolicy) bool {
-			return item.Priority == types.EgressIPReroutePriority &&
+			return item.Priority == types.EgressIPCatchAllReroutePriority &&
 				item.Match == fmt.Sprintf("ip4.src == %s", podIP) &&
 				item.ExternalIDs[libovsdbops.NetworkKey.String()] == cfg.NetworkName &&
 				item.ExternalIDs[libovsdbops.ObjectNameKey.String()] == fmt.Sprintf("%s_%s/%s", cfg.EgressIPName, cfg.Namespace, egressPodName)

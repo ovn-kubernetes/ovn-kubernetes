@@ -78,7 +78,7 @@ func (syncer *LRPSyncer) syncEgressIPReRoutes() error {
 	}
 	noOwnerFn := libovsdbops.GetNoOwnerPredicate[*nbdb.LogicalRouterPolicy]()
 	p := func(item *nbdb.LogicalRouterPolicy) bool {
-		return item.Priority == ovntypes.EgressIPReroutePriority && noOwnerFn(item) && item.Match != "" && item.ExternalIDs["name"] != ""
+		return item.Priority == ovntypes.EgressIPCatchAllReroutePriority && noOwnerFn(item) && item.Match != "" && item.ExternalIDs["name"] != ""
 	}
 	lrpList, err := libovsdbops.FindALogicalRouterPoliciesWithPredicate(syncer.nbClient, ovntypes.OVNClusterRouter, p)
 	if err != nil {
@@ -390,7 +390,7 @@ func getClusterSubnets() ([]*net.IPNet, []*net.IPNet) {
 func getEgressIPLRPReRouteDbIDs(egressIPName, podNamespace, podName string, ipFamily egressIPFamilyValue, network, controller string) *libovsdbops.DbObjectIDs {
 	return libovsdbops.NewDbObjectIDs(libovsdbops.LogicalRouterPolicyEgressIP, controller, map[libovsdbops.ExternalIDKey]string{
 		libovsdbops.ObjectNameKey: fmt.Sprintf("%s_%s/%s", egressIPName, podNamespace, podName),
-		libovsdbops.PriorityKey:   fmt.Sprintf("%d", ovntypes.EgressIPReroutePriority),
+		libovsdbops.PriorityKey:   fmt.Sprintf("%d", ovntypes.EgressIPCatchAllReroutePriority),
 		libovsdbops.IPFamilyKey:   string(ipFamily),
 		libovsdbops.NetworkKey:    network,
 	})

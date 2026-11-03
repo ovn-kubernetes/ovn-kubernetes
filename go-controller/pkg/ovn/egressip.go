@@ -86,7 +86,7 @@ func getEgressIPAddrSetDbIDs(name egressIPAddrSetName, network, controller strin
 func getEgressIPLRPReRouteDbIDs(egressIPName, podNamespace, podName string, ipFamily egressIPFamilyValue, network, controller string) *libovsdbops.DbObjectIDs {
 	return libovsdbops.NewDbObjectIDs(libovsdbops.LogicalRouterPolicyEgressIP, controller, map[libovsdbops.ExternalIDKey]string{
 		libovsdbops.ObjectNameKey: fmt.Sprintf("%s%s%s/%s", egressIPName, dbIDEIPNamePodDivider, podNamespace, podName),
-		libovsdbops.PriorityKey:   fmt.Sprintf("%d", types.EgressIPReroutePriority),
+		libovsdbops.PriorityKey:   fmt.Sprintf("%d", types.EgressIPCatchAllReroutePriority),
 		libovsdbops.IPFamilyKey:   string(ipFamily),
 		libovsdbops.NetworkKey:    network,
 	})
@@ -154,7 +154,7 @@ func getEgressIPQoSRuleDbIDs(ipFamily egressIPFamilyValue, network, controller s
 func getEgressIPLRPSNATMarkDbIDs(eIPName, podNamespace, podName string, ipFamily egressIPFamilyValue, network, controller string) *libovsdbops.DbObjectIDs {
 	return libovsdbops.NewDbObjectIDs(libovsdbops.LogicalRouterPolicyEgressIP, controller, map[libovsdbops.ExternalIDKey]string{
 		libovsdbops.ObjectNameKey: fmt.Sprintf("%s_%s/%s", eIPName, podNamespace, podName),
-		libovsdbops.PriorityKey:   fmt.Sprintf("%d", types.EgressIPSNATMarkPriority),
+		libovsdbops.PriorityKey:   fmt.Sprintf("%d", types.EgressIPCatchAllSNATMarkPriority),
 		libovsdbops.IPFamilyKey:   string(ipFamily),
 		libovsdbops.NetworkKey:    network,
 	})
@@ -1798,7 +1798,7 @@ func (e *EgressIPController) syncStaleGWMarkRules(egressIPCache egressIPCache, i
 		}
 
 		invalidLRPPredicate := func(item *nbdb.LogicalRouterPolicy) bool {
-			if item.Priority != types.EgressIPSNATMarkPriority || item.Action != nbdb.LogicalRouterPolicyActionAllow {
+			if item.Priority != types.EgressIPCatchAllSNATMarkPriority || item.Action != nbdb.LogicalRouterPolicyActionAllow {
 				return false
 			}
 			// skip if owned by another controller
@@ -1913,7 +1913,7 @@ func (e *EgressIPController) syncStaleGWMarkRules(egressIPCache egressIPCache, i
 			}
 			lrp := nbdb.LogicalRouterPolicy{
 				Match:       fmt.Sprintf("%s.src == %s", getEIPIPFamily(isEIPIPv6), podIPStr),
-				Priority:    types.EgressIPSNATMarkPriority,
+				Priority:    types.EgressIPCatchAllSNATMarkPriority,
 				Action:      nbdb.LogicalRouterPolicyActionAllow,
 				ExternalIDs: dbIDs.GetExternalIDs(),
 				Options:     map[string]string{"pkt_mark": mark},
@@ -1982,7 +1982,7 @@ func (e *EgressIPController) syncPodAssignmentCache(egressIPCache egressIPCache,
 				continue
 			}
 			p1 := func(item *nbdb.LogicalRouterPolicy) bool {
-				return item.Priority == types.EgressIPReroutePriority &&
+				return item.Priority == types.EgressIPCatchAllReroutePriority &&
 					item.ExternalIDs[libovsdbops.NetworkKey.String()] == networkName &&
 					item.ExternalIDs[libovsdbops.OwnerControllerKey.String()] == e.controllerName &&
 					strings.HasPrefix(item.ExternalIDs[libovsdbops.ObjectNameKey.String()], egressIPName+dbIDEIPNamePodDivider)
@@ -2115,7 +2115,7 @@ func (e *EgressIPController) syncStaleEgressReroutePolicy(cache egressIPCache, i
 		logicalRouterPolicyStaleNexthops := []*nbdb.LogicalRouterPolicy{}
 		// select LRPs scoped to the correct LRP priority, network and EIP name
 		p := func(item *nbdb.LogicalRouterPolicy) bool {
-			if item.Priority != types.EgressIPReroutePriority || item.ExternalIDs[libovsdbops.NetworkKey.String()] != networkName ||
+			if item.Priority != types.EgressIPCatchAllReroutePriority || item.ExternalIDs[libovsdbops.NetworkKey.String()] != networkName ||
 				item.ExternalIDs[libovsdbops.OwnerControllerKey.String()] != e.controllerName ||
 				item.ExternalIDs[libovsdbops.OwnerTypeKey.String()] != string(libovsdbops.EgressIPOwnerType) {
 				return false
@@ -3440,7 +3440,7 @@ func (e *EgressIPController) createReroutePolicyOps(ni util.NetInfo, ops []ovsdb
 
 		lrp := nbdb.LogicalRouterPolicy{
 			Match:       fmt.Sprintf("%s.src == %s", ipFamilyName(isEgressIPv6), podIPNet.IP.String()),
-			Priority:    types.EgressIPReroutePriority,
+			Priority:    types.EgressIPCatchAllReroutePriority,
 			Nexthops:    []string{nextHopIP},
 			Action:      nbdb.LogicalRouterPolicyActionReroute,
 			ExternalIDs: dbIDs.GetExternalIDs(),
@@ -3507,7 +3507,7 @@ func (e *EgressIPController) createGWMarkPolicyOps(ni util.NetInfo, ops []ovsdb.
 	for _, podIPNet := range util.MatchAllIPNetFamily(isEgressIPv6, podIPNets) {
 		lrp := nbdb.LogicalRouterPolicy{
 			Match:       fmt.Sprintf("%s.src == %s && pkt.mark == 0", ovnIPFamilyName, podIPNet.IP.String()), // only add pkt mark if one already doesn't exist
-			Priority:    types.EgressIPSNATMarkPriority,
+			Priority:    types.EgressIPCatchAllSNATMarkPriority,
 			Action:      nbdb.LogicalRouterPolicyActionAllow,
 			ExternalIDs: dbIDs.GetExternalIDs(),
 			Options:     options,
@@ -3543,7 +3543,7 @@ func (e *EgressIPController) deleteGWMarkPolicyForStatusOps(ni util.NetInfo, ops
 	ipFamilyValue := getEIPIPFamily(isEgressIPv6)
 	predicateIDs := libovsdbops.NewDbObjectIDs(libovsdbops.LogicalRouterPolicyEgressIP, e.controllerName,
 		map[libovsdbops.ExternalIDKey]string{
-			libovsdbops.PriorityKey: fmt.Sprintf("%d", types.EgressIPSNATMarkPriority),
+			libovsdbops.PriorityKey: fmt.Sprintf("%d", types.EgressIPCatchAllSNATMarkPriority),
 			libovsdbops.IPFamilyKey: string(ipFamilyValue),
 			libovsdbops.NetworkKey:  ni.GetNetworkName(),
 		})
@@ -3584,7 +3584,7 @@ func (e *EgressIPController) deleteEgressIPStatusSetup(ni util.NetInfo, name str
 				break
 			}
 		}
-		return item.Priority == types.EgressIPReroutePriority && hasIPNexthop &&
+		return item.Priority == types.EgressIPCatchAllReroutePriority && hasIPNexthop &&
 			item.ExternalIDs[libovsdbops.NetworkKey.String()] == ni.GetNetworkName() &&
 			item.ExternalIDs[libovsdbops.OwnerControllerKey.String()] == e.controllerName &&
 			item.ExternalIDs[libovsdbops.OwnerTypeKey.String()] == string(libovsdbops.EgressIPOwnerType) &&
@@ -3640,7 +3640,7 @@ func (e *EgressIPController) ensureOnlyValidNextHops(ni util.NetInfo, name, node
 	// in the LogicalRouterPolicy, then delete nexthop(s) from LogicalRouterPolicy if
 	// it doesn't match with nexthops derived from eIP.Status.
 	policyPred := func(item *nbdb.LogicalRouterPolicy) bool {
-		return item.Priority == types.EgressIPReroutePriority &&
+		return item.Priority == types.EgressIPCatchAllReroutePriority &&
 			strings.HasPrefix(item.ExternalIDs[libovsdbops.ObjectNameKey.String()], name+dbIDEIPNamePodDivider) &&
 			item.ExternalIDs[libovsdbops.NetworkKey.String()] == ni.GetNetworkName()
 	}

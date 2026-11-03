@@ -2255,7 +2255,7 @@ var _ = ginkgo.Describe("Gateway Init Operations", func() {
 					},
 					// add a stale egressIP reroute policy with nexthop == node's joinIP
 					&nbdb.LogicalRouterPolicy{
-						Priority: types.EgressIPReroutePriority,
+						Priority: types.EgressIPCatchAllReroutePriority,
 						Match:    "ip4.src == 10.224.0.5",
 						Action:   nbdb.LogicalRouterPolicyActionReroute,
 						Nexthops: []string{"100.64.0.1"},
