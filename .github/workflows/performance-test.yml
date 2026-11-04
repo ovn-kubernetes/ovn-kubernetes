@@ -69,14 +69,21 @@ jobs:
         # dns-name-resolver : ["", "enable-dns-name-resolver"]
         # network-segmentation : ["", "enable-network-segmentation"]
         # traffic-flow-tests : "<tests range. i.e. 1-24>"
+        # Legacy - no need to test without pods.
+        #  - {"target": "control-plane", perf-test: "udn-density-l2-noPods", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "3", "network-segmentation": ""}
+        #  - {"target": "control-plane", perf-test: "cudn-density-l2-noPods", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "3", "network-segmentation": ""}
         include:
-          - {"target": "control-plane", perf-test: "kubelet-density-cni", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "3", "network-segmentation": ""}
-          - {"target": "control-plane", perf-test: "udn-density-l2-noPods", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "3", "network-segmentation": ""}
-          - {"target": "control-plane", perf-test: "cudn-density-l2-noPods", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "3", "network-segmentation": ""}
-          - {"target": "control-plane", perf-test: "udn-density-l2-pods", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "3", "network-segmentation": ""}
-          - {"target": "control-plane", perf-test: "cudn-density-l2-pods-netpol", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "3", "network-segmentation": ""}
-          - {"target": "control-plane", perf-test: "udn-density-l2-pods-netpol", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "3", "network-segmentation": ""}
-          - {"target": "control-plane", perf-test: "udn-density-l3-pods-netpol", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "3", "network-segmentation": ""}
+          - {"target": "control-plane", perf-test: "kubelet-density-cni", "dynamic": "false", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "20", "network-segmentation": ""}
+          - {"target": "control-plane", perf-test: "udn-density-l2-pods", "dynamic": "true",  "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "20", "network-segmentation": ""}
+          - {"target": "control-plane", perf-test: "udn-density-l2-pods","dynamic": "true", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "20", "network-segmentation": ""}
+          - {"target": "control-plane", perf-test: "cudn-density-l2-pods-netpol","dynamic": "true", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "20", "network-segmentation": ""}
+          - {"target": "control-plane", perf-test: "udn-density-l2-pods-netpol","dynamic": "true", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "20", "network-segmentation": ""}
+          - {"target": "control-plane", perf-test: "udn-density-l3-pods-netpol","dynamic": "true", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "20", "network-segmentation": ""}
+          - {"target": "control-plane", perf-test: "udn-density-l2-pods", "dynamic": "false",  "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "20", "network-segmentation": ""}
+          - {"target": "control-plane", perf-test: "udn-density-l2-pods","dynamic": "false", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "20", "network-segmentation": ""}
+          - {"target": "control-plane", perf-test: "cudn-density-l2-pods-netpol","dynamic": "false", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "20", "network-segmentation": ""}
+          - {"target": "control-plane", perf-test: "udn-density-l2-pods-netpol","dynamic": "false", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "20", "network-segmentation": ""}
+          - {"target": "control-plane", perf-test: "udn-density-l3-pods-netpol","dynamic": "false", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "20", "network-segmentation": ""}
     env:
       ES_SERVER: "${{ secrets.PERF_DATASTORE }}"
       JOB_NAME: "${{ matrix.target }}-${{ matrix.gateway-mode }}-${{ matrix.ipfamily }}-${{ matrix.disable-snat-multiple-gws }}-${{ matrix.second-bridge }}-${{ matrix.cni-mode }}"
@@ -84,6 +91,7 @@ jobs:
       OVN_MULTICAST_ENABLE:  "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' || matrix.target == 'network-segmentation' || matrix.target == 'bgp' || matrix.target == 'bgp-loose-isolation' }}"
       OVN_EMPTY_LB_EVENTS: "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' || matrix.target == 'bgp' || matrix.target == 'bgp-loose-isolation' }}"
       OVN_DISABLE_SNAT_MULTIPLE_GWS: "${{ matrix.disable-snat-multiple-gws == 'noSnatGW' }}"
+      DYNAMIC_UDN_ALLOCATION: "${{ matrix.dynamic }}"
       KIND_INSTALL_METALLB: "false"
       OVN_GATEWAY_MODE: "${{ matrix.gateway-mode }}"
       OVN_SECOND_BRIDGE: "${{ matrix.second-bridge == '2br' }}"
@@ -314,9 +322,25 @@ jobs:
         path: prometheus-install.log
         retention-days: 7
 
-    - name: Download and setup kube-burner v2.5.0
+    - name: Install sysstat and start host resource monitor
       run: |
-        curl -L https://github.com/kube-burner/kube-burner/releases/download/v2.5.0/kube-burner-V2.5.0-linux-x86_64.tar.gz | tar xz
+        # Sample host-level CPU/memory/process/IO/network usage into
+        # /tmp/host-metrics-<workload> while the kube-burner workload runs.
+        command -v pidstat >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y sysstat; }
+        # Runners may be reused; start from a clean directory.
+        rm -rf "/tmp/host-metrics-${{ matrix.perf-test }}"
+        bash contrib/perf/host-monitor.sh \
+          --output /tmp/host-metrics-${{ matrix.perf-test }} \
+          --interval 10 \
+          --top-n 50 \
+          --procs-every 30 &
+        echo $! > /tmp/host-monitor.pid
+        sleep 2
+        cat /tmp/host-metrics-${{ matrix.perf-test }}/meta.json
+
+    - name: Download and setup kube-burner v2.8.7
+      run: |
+        curl -L https://github.com/kube-burner/kube-burner/releases/download/v2.8.7/kube-burner-V2.8.7-linux-x86_64.tar.gz | tar xz
         chmod +x kube-burner
         sudo mv kube-burner /usr/local/bin/
 
@@ -332,6 +356,10 @@ jobs:
         # Make sure the port-forward is up prior to running the workload
         sleep 30
 
+        # Mark workload phases on the host monitor timeline
+        HOST_METRICS_DIR=/tmp/host-metrics-${{ matrix.perf-test }}
+        bash "${GITHUB_WORKSPACE}/contrib/perf/host-monitor.sh" --output "${HOST_METRICS_DIR}" event kube-burner-start
+
         cd contrib/perf
 
         #Generate metadata.
@@ -342,11 +370,38 @@ jobs:
         else
           kube-burner init --config workloads/${{ matrix.perf-test }}.yml -e metric-endpoint.yml --user-metadata perf-meta.yml
         fi
-        
+
+        bash "${GITHUB_WORKSPACE}/contrib/perf/host-monitor.sh" --output "${HOST_METRICS_DIR}" event kube-burner-end
+
         mkdir -p /tmp/${{ matrix.perf-test }}/pprof-data
         mkdir -p /tmp/${{ matrix.perf-test }}/perf
         cp -r pprof-data/* /tmp/${{ matrix.perf-test }}/pprof-data
         cp -r * /tmp/${{ matrix.perf-test }}/perf
+
+    - name: Stop host resource monitor
+      if: always()
+      run: |
+        if [ -f /tmp/host-monitor.pid ]; then
+          MON_PID=$(cat /tmp/host-monitor.pid)
+          kill -TERM "$MON_PID" 2>/dev/null || true
+          for _ in $(seq 1 15); do
+            kill -0 "$MON_PID" 2>/dev/null || break
+            sleep 1
+          done
+        fi
+        if [ -f "/tmp/host-metrics-${{ matrix.perf-test }}/meta.json" ]; then
+          echo "=== host metrics meta ==="
+          cat "/tmp/host-metrics-${{ matrix.perf-test }}/meta.json"
+        fi
+
+    - name: Upload host metrics
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ matrix.perf-test }}-host-metrics-${{ github.run_id }}
+        path: /tmp/host-metrics-${{ matrix.perf-test }}
+        if-no-files-found: warn
+        retention-days: 7
 
     - name: Generate performance report
       if: ${{ matrix.perf-test == 'kubelet-density-cni' || matrix.perf-test == 'udn-density-l2-noPods' || matrix.perf-test == 'cudn-density-l2-noPods' || matrix.perf-test == 'udn-density-l2-pods' || matrix.perf-test == 'cudn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l3-pods-netpol' }}
