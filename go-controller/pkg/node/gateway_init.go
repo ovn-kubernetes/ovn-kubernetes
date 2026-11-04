@@ -380,8 +380,8 @@ func (nc *DefaultNodeNetworkController) initGatewayMainStart(gw *gateway, waiter
 
 // interfaceForEXGW takes the interface requested to act as exgw bridge
 // and returns the name of the bridge if exists, or the interface itself
-// if the bridge needs to be created. In this last scenario, BridgeForInterface
-// will create the bridge.
+// if the bridge needs to be created or the interface needs to be re-plugged
+// into it. In this last scenario, BridgeForInterface will (re)create the bridge.
 func interfaceForEXGW(ovsClient libovsdbclient.Client, intfName string) (string, error) {
 	if _, err := ovsops.GetBridge(ovsClient, intfName); err == nil {
 		// It's a bridge
@@ -391,13 +391,25 @@ func interfaceForEXGW(ovsClient libovsdbclient.Client, intfName string) (string,
 	}
 
 	bridge := util.GetBridgeName(intfName)
-	if _, err := ovsops.GetBridge(ovsClient, bridge); err == nil {
-		// not a bridge, but the corresponding bridge was already created
-		return bridge, nil
-	} else if !errors.Is(err, libovsdbclient.ErrNotFound) {
-		return "", fmt.Errorf("failed to check whether OVS bridge %s exists for interface %s: %w", bridge, intfName, err)
+	if _, err := ovsops.GetBridge(ovsClient, bridge); err != nil {
+		if !errors.Is(err, libovsdbclient.ErrNotFound) {
+			return "", fmt.Errorf("failed to check whether OVS bridge %s exists for interface %s: %w", bridge, intfName, err)
+		}
+		return intfName, nil
 	}
-	return intfName, nil
+	// The corresponding bridge was already created. The uplink port is marked
+	// transient by NicToBridge, so it is removed when OVS restarts with
+	// --delete-transient-ports (e.g. after a node reboot) while the bridge
+	// itself persists. In that case return the interface so that it gets
+	// plugged back into the bridge.
+	if _, err := ovsops.GetPortBridge(ovsClient, intfName); err != nil {
+		if !errors.Is(err, libovsdbclient.ErrNotFound) {
+			return "", fmt.Errorf("failed to find bridge that has port %s: %w", intfName, err)
+		}
+		klog.Infof("Interface %s is not plugged into existing OVS bridge %s, it will be re-added", intfName, bridge)
+		return intfName, nil
+	}
+	return bridge, nil
 }
 
 // TODO(adrianc): revisit if support for nodeIPManager is needed.
