@@ -2912,6 +2912,14 @@ ip a add %[4]s/24 dev %[2]s
 						// be dropped by the policy (times out), not refused because nothing is
 						// listening (the server listens on every probed port) or failing for
 						// another reason.
+						//
+						// Mechanism/coupling: `agnhost connect` prints "TIMEOUT" to stderr and
+						// exits non-zero on a timeout. connectToServerWithProtocol discards the
+						// command's stdout, but the k8s RunKubectl/Exec helper wraps BOTH stdout
+						// and stderr into the returned error on a non-zero exit, so the marker is
+						// still visible via MatchError here. This match is therefore coupled to
+						// agnhost's exact "TIMEOUT" wording (test/images/agnhost/connect) and to
+						// that error-wrapping behaviour; if either changes, update this assertion.
 						Eventually(func() error {
 							return connectToServerWithProtocol(clientPodCfg, serverIP, blockedPort, proto)
 						}, 2*time.Minute, 6*time.Second).Should(MatchError(ContainSubstring("TIMEOUT")))

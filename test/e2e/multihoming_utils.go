@@ -735,19 +735,11 @@ func blockedClient(podName string) string {
 }
 
 func multiNetPolicyPort(port int) mnpapi.MultiNetworkPolicyPort {
-	tcp := v1.ProtocolTCP
-	p := intstr.FromInt32(int32(port))
-	return mnpapi.MultiNetworkPolicyPort{
-		Protocol: &tcp,
-		Port:     &p,
-	}
+	return multiNetPolicyPortProto(port, v1.ProtocolTCP)
 }
 
 func multiNetPolicyPortRange(port, endPort int) mnpapi.MultiNetworkPolicyPort {
-	netpolPort := multiNetPolicyPort(port)
-	endPort32 := int32(endPort)
-	netpolPort.EndPort = &endPort32
-	return netpolPort
+	return multiNetPolicyPortRangeProto(port, endPort, v1.ProtocolTCP)
 }
 
 // multiNetPolicyPortProto builds a single-port MultiNetworkPolicyPort for the given protocol.
