@@ -43,6 +43,7 @@ Component ownership areas and their maintainers.
 **[Coding Guide](developer.md)**
 
 Code conventions, patterns, and best practices for OVN-Kubernetes development.
+Includes the pod node-SNAT and EgressIP assignment lock contract.
 
 **[OVN-Kubernetes Container Images](image-build.md)**
 
