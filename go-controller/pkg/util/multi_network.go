@@ -1493,7 +1493,7 @@ func getIPMode(subnets []config.CIDRNetworkEntry) (bool, bool) {
 
 // GetNADName returns key of NetAttachDefInfo.NetAttachDefs map, also used as Pod annotation key
 func GetNADName(namespace, name string) string {
-	return fmt.Sprintf("%s/%s", namespace, name)
+	return namespace + "/" + name
 }
 
 // GetIndexedNADKey returns key of NetAttachDefInfo.NetAttachDefs map for multiple identical NADs, also used as Pod annotation key
@@ -1502,7 +1502,7 @@ func GetIndexedNADKey(nadName string, n int) string {
 	if n == 0 {
 		return nadName
 	}
-	return fmt.Sprintf("%s/%d", nadName, n)
+	return nadName + "/" + strconv.Itoa(n)
 }
 
 // GetNadFromIndexedNADKey returns NAD name part from a nadName key (with or without index)
