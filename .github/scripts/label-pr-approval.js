@@ -8,27 +8,20 @@ async function pullRequestsToLabel({ github, context }) {
     return prs.map(pr => pr.number);
   }
 
-  let source;
   if (context.eventName === 'pull_request_target') {
-    source = context.payload.pull_request.head;
-  } else {
-    const run = context.payload.workflow_run;
-    source = { repo: run.head_repository, ref: run.head_branch };
+    return [context.payload.pull_request.number];
   }
 
-  // Fork workflow runs can have an empty pull_requests array. Resolve the
-  // source branch through the API, including PRs targeting different branches.
-  // Runs for the same source branch can replace each other's pending runs.
-  // Reconcile all matching PRs so none of those updates are lost.
-  const prs = await github.paginate(github.rest.pulls.list, {
-    ...context.repo,
-    state: 'open',
-    head: `${source.repo.owner.login}:${source.ref}`,
-    per_page: 100,
-  });
-  return prs
-    .filter(pr => pr.head.repo?.id === source.repo.id)
-    .map(pr => pr.number);
+  // Fork review runs can report the upstream head_repository and no PRs.
+  // pr-review.yml carries the PR number in its run-name instead.
+  const title = context.payload.workflow_run.display_title;
+  const match = /^Review PR ([1-9]\d*)$/.exec(title);
+  const number = Number(match?.[1]);
+  if (!Number.isSafeInteger(number)) {
+    throw new Error(`Invalid review workflow run name: ${title}`);
+  }
+
+  return [number];
 }
 
 async function hasApproval(github, repo, number) {

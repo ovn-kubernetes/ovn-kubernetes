@@ -41,14 +41,12 @@ jobs:
        github.event.workflow_run.event == 'pull_request_review' &&
        github.event.workflow_run.conclusion == 'success')
     concurrency:
-      # Use the same source branch key for PR and review events, including forks.
+      # Match the review run name so PR and review events serialize per PR.
       group: >-
         pr-approval-${{
-          github.event.pull_request.head.repo.id ||
-          github.event.workflow_run.head_repository.id || 'manual'
-        }}-${{
-          github.event.pull_request.head.ref ||
-          github.event.workflow_run.head_branch || 'all'
+          github.event.pull_request.number &&
+          format('Review PR {0}', github.event.pull_request.number) ||
+          github.event.workflow_run.display_title || 'manual'
         }}
     permissions:
       contents: read

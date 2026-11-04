@@ -24,9 +24,8 @@ function createRepository(prs) {
           const pr = prs.find(pr => pr.number === pull_number);
           return { data: { ...pr, labels: [...pr.labels].map(name => ({ name })) } };
         },
-        list: async ({ state, head, page, per_page }) => {
-          const matching = prs.filter(pr => pr.state === state &&
-            (!head || `${pr.head.repo.owner.login}:${pr.head.ref}` === head));
+        list: async ({ state, page, per_page }) => {
+          const matching = prs.filter(pr => pr.state === state);
           return { data: matching.slice((page - 1) * per_page, page * per_page) };
         },
       },
@@ -171,23 +170,54 @@ test('refreshes all open PRs across pages on manual dispatch', async () => {
   }
 });
 
-test('labels all PRs from the triggering source branch and leaves other PRs untouched', async t => {
+test('refreshes only the triggering PR on PR and fork review events', async t => {
   for (const eventName of ['pull_request_target', 'workflow_run']) {
     await t.test(eventName, async () => {
-      const prs = Array.from({ length: 4 }, (_, i) => pullRequest(i + 1, [review('APPROVED')]));
-      prs[1].head = { ...prs[1].head, ref: 'unrelated' };
-      prs[2].head = { ...prs[2].head, repo: { ...prs[2].head.repo, id: 3 } };
+      const prs = Array.from({ length: 3 }, (_, i) =>
+        pullRequest(7184 + i, [review('APPROVED')], ['size/S']));
+      const repository = createRepository(prs);
 
       const payload = eventName === 'pull_request_target' ? { pull_request: prs[0] } : {
         workflow_run: {
-          head_repository: { id: 2, owner: { login: 'contributor' } },
+          display_title: 'Review PR 7184',
+          // Fork review runs can report the upstream repository and no PRs.
+          head_repository: { id: 65489927, owner: { login: 'ovn-kubernetes' } },
           head_branch: 'feature',
           pull_requests: [],
         },
       };
-      await createRepository(prs).label(eventName, payload);
+      await repository.label(eventName, payload);
 
-      assert.deepEqual(prs.map(pr => pr.labels.has('has-approval')), [true, false, false, true]);
+      assert.deepEqual(prs.map(pr => [...pr.labels]), [
+        ['size/S', 'has-approval'], ['size/S'], ['size/S'],
+      ]);
+
+      prs[0].reviews = [];
+      await repository.label(eventName, payload);
+      assert.deepEqual(prs.map(pr => [...pr.labels]), [['size/S'], ['size/S'], ['size/S']]);
+    });
+  }
+});
+
+test('rejects invalid review run names without changing labels', async t => {
+  const titles = [
+    undefined,
+    'old PR title',
+    'Review PR 0',
+    'Review PR 1 extra',
+    'Review PR 9007199254740992',
+  ];
+
+  for (const title of titles) {
+    await t.test(String(title), async () => {
+      const pr = pullRequest(1, [review('APPROVED')], ['size/S']);
+      const repository = createRepository([pr]);
+
+      await assert.rejects(
+        repository.label('workflow_run', { workflow_run: { display_title: title } }),
+        /Invalid review workflow run name/,
+      );
+      assert.deepEqual(pr.labels, new Set(['size/S']));
     });
   }
 });
