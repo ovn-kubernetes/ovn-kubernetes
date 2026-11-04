@@ -2459,10 +2459,19 @@ runcmd:
 			Expect(virtClient.LoginToFedora(vmi, "fedora", "fedora")).To(Succeed(), step)
 
 			By("creating server pods")
-			nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.Background(), fr.ClientSet, 3)
+			nodes, err := e2enode.GetReadySchedulableNodes(context.Background(), fr.ClientSet)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(nodes.Items).NotTo(BeEmpty())
-			iperfServerTestPods, err = createIperfServerPods(nodes.Items, cudn.Name, udnv1.NetworkRoleSecondary, serverCIDRs)
+			var testNodes []corev1.Node
+			// TODO: remove this node filtering
+			// connectivity check from the migration source node, to verify OVN fix work as expected
+			for _, node := range nodes.Items {
+				if node.Name == vmi.Status.NodeName {
+					testNodes = append(testNodes, node)
+				}
+			}
+			Expect(testNodes).NotTo(BeEmpty())
+			iperfServerTestPods, err = createIperfServerPods(testNodes, cudn.Name, udnv1.NetworkRoleSecondary, serverCIDRs)
 			Expect(err).NotTo(HaveOccurred())
 			serverIPsByName := podsMultusNetworkIPs(iperfServerTestPods, podNetworkStatusByNetConfigPredicate(namespace, cudn.Name, strings.ToLower(string(udnv1.NetworkRoleSecondary))))
 			Expect(serverIPsByName).NotTo(BeEmpty())
