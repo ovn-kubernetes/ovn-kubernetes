@@ -4197,6 +4197,8 @@ spec:
 				"Both EgressIPs should have been assigned despite orphan node %s", orphanNodeName)
 		})
 
+
+
 		ginkgo.It("should prevent duplicate MAC responses when egress node is rebooted", func() {
 			if !isNetworkSegmentationEnabled() {
 				ginkgo.Skip("network segmentation is disabled")
