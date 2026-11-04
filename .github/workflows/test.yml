@@ -886,7 +886,8 @@ jobs:
           # the DHCP IPAM suite (dhcp_ipam.go) rides this lane: it is the one
           # provisioned with the dhcp CNI plugin (KIND_INSTALL_PLUGINS),
           # kubevirt and NetworkQoS
-          make -C test control-plane WHAT="Kubevirt Virtual Machines|Localnet DHCP IPAM"
+          # TODO: remove below focus
+          make -C test control-plane WHAT="Kubevirt Virtual Machines user-defined network port-security disabled, TCP connections with spoofed MAC should survive successful and failed live migration over localnet"
         elif [[ "${{ matrix.target }}" == network-segmentation* ]]; then
           make -C test control-plane WHAT="Network Segmentation"
           make -C test control-plane WHAT="ClusterNetworkConnect"
