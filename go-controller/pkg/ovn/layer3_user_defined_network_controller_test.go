@@ -222,7 +222,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				Expect(userDefinedNetController.bnc.WatchPods()).To(Succeed())
 
 				if netInfo.isPrimary {
-					Expect(userDefinedNetController.bnc.WatchNetworkPolicy()).To(Succeed())
 					Eventually(func() string {
 						ninfo, err := fakeOvn.networkManager.Interface().GetActiveNetworkForNamespace(ns)
 						if err != nil {
@@ -233,6 +232,13 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 						}
 						return ninfo.GetNetworkName()
 					}).WithTimeout(3 * time.Second).To(Equal(netInfo.netName))
+					// Policy creation needs the pod's logical port in the cache. Otherwise
+					// it enters the retry queue, whose interval exceeds the NBDB assertion timeout.
+					Eventually(func() error {
+						_, err := userDefinedNetController.bnc.logicalPortCache.get(pod, netInfo.nadName)
+						return err
+					}).WithTimeout(5 * time.Second).Should(Succeed())
+					Expect(userDefinedNetController.bnc.WatchNetworkPolicy()).To(Succeed())
 				}
 
 				// check that after start networks annotations and nbdb will be updated
