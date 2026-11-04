@@ -4197,6 +4197,210 @@ spec:
 				"Both EgressIPs should have been assigned despite orphan node %s", orphanNodeName)
 		})
 
+		// countSNATsForEIPOnNode returns how many NAT rows on the given node's
+		// NBDB have external_ip equal to the provided egress IP.
+		countSNATsForEIPOnNode := func(nodeName, eip string) (int, error) {
+			ovnKubernetesNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+			dbContainerName := deploymentconfig.Get().NBDBContainerName()
+			dbPods, err := e2ekubectl.RunKubectl(ovnKubernetesNamespace, "get", "pods", "-l", "app=ovnkube-node", "--field-selector", fmt.Sprintf("spec.nodeName=%s", nodeName), "-o=jsonpath='{.items..metadata.name}'")
+			if err != nil {
+				return 0, err
+			}
+			dbPod := strings.TrimSuffix(strings.TrimPrefix(strings.Split(dbPods, " ")[0], "'"), "'")
+			if dbPod == "" {
+				return 0, fmt.Errorf("no ovnkube-node pod found on node %s", nodeName)
+			}
+			externalIP := fmt.Sprintf("external_ip=%s", eip)
+			if isIPv6TestRun {
+				externalIP = fmt.Sprintf("external_ip=\"%s\"", eip)
+			}
+			out, err := e2ekubectl.RunKubectl(ovnKubernetesNamespace, "exec", dbPod, "-c", dbContainerName, "--", "ovn-nbctl", "--columns=external_ip", "find", "nat", externalIP)
+			if err != nil {
+				return 0, err
+			}
+			return strings.Count(out, eip), nil
+		}
+
+		// forceEgressIPFailover removes the egress-assignable label from the node
+		// the EgressIP is currently assigned to, and returns the previously
+		// assigned node and the node it moved to.
+		forceEgressIPFailover := func() (string, string) {
+			statuses := verifyEgressIPStatusLengthEquals(1, nil)
+			assignedNode := statuses[0].Node
+			// Remove the label via kubectl: e2enode.RemoveLabelOffNode is a no-op
+			// for labels whose value is empty, which would leave the node
+			// egress-assignable and prevent failover.
+			e2ekubectl.RunKubectlOrDie("default", "label", "node", assignedNode, "k8s.ovn.org/egress-assignable-")
+			statuses = verifyEgressIPStatusLengthEquals(1, func(statuses []egressIPStatus) bool {
+				return statuses[0].Node != assignedNode
+			})
+			return assignedNode, statuses[0].Node
+		}
+
+		ginkgo.It("Should not leave duplicate SNAT entries on the gateway router after EgressIP failover", func() {
+			if isUserDefinedNetwork(netConfigParams) {
+				ginkgo.Skip("Unsupported for UDNs")
+			}
+
+			ginkgo.By("1. Labeling both egress nodes as egress-assignable")
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable", "")
+			defer e2enode.RemoveLabelOffNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable")
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress2Node.name, "k8s.ovn.org/egress-assignable", "")
+			defer e2enode.RemoveLabelOffNode(f.ClientSet, egress2Node.name, "k8s.ovn.org/egress-assignable")
+
+			ginkgo.By("2. Creating an EgressIP object")
+			podNamespace := f.Namespace
+			labels := map[string]string{"name": f.Namespace.Name}
+			updateNamespaceLabels(f, podNamespace, labels)
+			var egressIP net.IP
+			var err error
+			if isIPv6TestRun {
+				egressIP, err = allocators.NewPrimaryIPv6(egress1Node.name)
+			} else {
+				egressIP, err = allocators.NewPrimaryIPv4(egress1Node.name)
+			}
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate egress IP")
+			egressIPConfig := createEIPManifest(egressIPName, podEgressLabel, labels, egressIP.String())
+			if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
+				framework.Failf("Unable to write EgressIP config: %v", err)
+			}
+			defer os.Remove(egressIPYaml)
+			e2ekubectl.RunKubectlOrDie("default", "create", "-f", egressIPYaml)
+
+			ginkgo.By("3. Creating a pod matching the EgressIP so a SNAT is programmed")
+			_, err = createGenericPodWithLabel(f, pod1Name, egress1Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
+			framework.ExpectNoError(err, "failed to create pod matching EgressIP selector")
+			_, err = getPodIPWithRetry(f.ClientSet, isIPv6TestRun, f.Namespace.Name, pod1Name)
+			framework.ExpectNoError(err, "failed to get pod IP")
+
+			ginkgo.By("4. Waiting for the initial SNAT to be programmed on the assigned node before failover")
+			initialNode := verifyEgressIPStatusLengthEquals(1, nil)[0].Node
+			gomega.Eventually(func(g gomega.Gomega) {
+				count, err := countSNATsForEIPOnNode(initialNode, egressIP.String())
+				g.Expect(err).NotTo(gomega.HaveOccurred(), "failed to count SNAT entries for egress IP %s on assigned node %s", egressIP.String(), initialNode)
+				g.Expect(count).To(gomega.Equal(1), "exactly one SNAT for egress IP %s should be programmed on assigned node %s before failover", egressIP.String(), initialNode)
+			}).WithTimeout(retryTimeout).WithPolling(retryInterval).Should(gomega.Succeed(),
+				"the initial SNAT should be programmed on the assigned node before forcing failover")
+
+			ginkgo.By("5. Forcing failover by removing the egress-assignable label from the assigned node")
+			assignedNode, newNode := forceEgressIPFailover()
+			framework.Logf("EgressIP %s failed over from node %s to node %s", egressIP.String(), assignedNode, newNode)
+
+			ginkgo.By("6. Verifying the gateway router on the new node has exactly one SNAT entry and no duplicates")
+			gomega.Eventually(func(g gomega.Gomega) {
+				count, err := countSNATsForEIPOnNode(newNode, egressIP.String())
+				g.Expect(err).NotTo(gomega.HaveOccurred(), "failed to count SNAT entries for egress IP %s on node %s", egressIP.String(), newNode)
+				g.Expect(count).To(gomega.Equal(1), "the new egress node should have exactly one SNAT entry for egress IP %s after failover (no duplicates, and the entry must exist)", egressIP.String())
+			}).WithTimeout(retryTimeout).WithPolling(retryInterval).Should(gomega.Succeed(),
+				"the new egress node should have exactly one SNAT entry for the egress IP after failover")
+		})
+
+		ginkgo.It("Should not leave stale SNAT entries after EgressIP failover", func() {
+			if isUserDefinedNetwork(netConfigParams) {
+				ginkgo.Skip("Unsupported for UDNs")
+			}
+
+			ginkgo.By("1. Labeling both egress nodes as egress-assignable")
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable", "")
+			defer e2enode.RemoveLabelOffNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable")
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress2Node.name, "k8s.ovn.org/egress-assignable", "")
+			defer e2enode.RemoveLabelOffNode(f.ClientSet, egress2Node.name, "k8s.ovn.org/egress-assignable")
+
+			ginkgo.By("2. Creating an EgressIP object")
+			podNamespace := f.Namespace
+			labels := map[string]string{"name": f.Namespace.Name}
+			updateNamespaceLabels(f, podNamespace, labels)
+			var egressIP net.IP
+			var err error
+			if isIPv6TestRun {
+				egressIP, err = allocators.NewPrimaryIPv6(egress1Node.name)
+			} else {
+				egressIP, err = allocators.NewPrimaryIPv4(egress1Node.name)
+			}
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate egress IP")
+			egressIPConfig := createEIPManifest(egressIPName, podEgressLabel, labels, egressIP.String())
+			if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
+				framework.Failf("Unable to write EgressIP config: %v", err)
+			}
+			defer os.Remove(egressIPYaml)
+			e2ekubectl.RunKubectlOrDie("default", "create", "-f", egressIPYaml)
+
+			ginkgo.By("3. Creating a pod matching the EgressIP so a SNAT is programmed")
+			_, err = createGenericPodWithLabel(f, pod1Name, egress1Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
+			framework.ExpectNoError(err, "failed to create pod matching EgressIP selector")
+			_, err = getPodIPWithRetry(f.ClientSet, isIPv6TestRun, f.Namespace.Name, pod1Name)
+			framework.ExpectNoError(err, "failed to get pod IP")
+
+			ginkgo.By("4. Waiting for the initial SNAT to be programmed on the assigned node before failover")
+			initialNode := verifyEgressIPStatusLengthEquals(1, nil)[0].Node
+			gomega.Eventually(func(g gomega.Gomega) {
+				count, err := countSNATsForEIPOnNode(initialNode, egressIP.String())
+				g.Expect(err).NotTo(gomega.HaveOccurred(), "failed to count SNAT entries for egress IP %s on assigned node %s", egressIP.String(), initialNode)
+				g.Expect(count).To(gomega.Equal(1), "exactly one SNAT for egress IP %s should be programmed on assigned node %s before failover", egressIP.String(), initialNode)
+			}).WithTimeout(retryTimeout).WithPolling(retryInterval).Should(gomega.Succeed(),
+				"the initial SNAT should be programmed on the assigned node before forcing failover")
+
+			ginkgo.By("5. Forcing failover by removing the egress-assignable label from the assigned node")
+			assignedNode, newNode := forceEgressIPFailover()
+			framework.Logf("EgressIP %s failed over from node %s to node %s", egressIP.String(), assignedNode, newNode)
+
+			ginkgo.By("6. Verifying no stale SNAT entries remain on the old node and the new node has exactly one")
+			gomega.Eventually(func(g gomega.Gomega) {
+				staleCount, err := countSNATsForEIPOnNode(assignedNode, egressIP.String())
+				g.Expect(err).NotTo(gomega.HaveOccurred(), "failed to count SNAT entries for egress IP %s on old node %s", egressIP.String(), assignedNode)
+				g.Expect(staleCount).To(gomega.Equal(0), "stale SNAT entries remained on the old egress node after failover")
+				newCount, err := countSNATsForEIPOnNode(newNode, egressIP.String())
+				g.Expect(err).NotTo(gomega.HaveOccurred(), "failed to count SNAT entries for egress IP %s on new node %s", egressIP.String(), newNode)
+				g.Expect(newCount).To(gomega.Equal(1), "the new egress node should have exactly one SNAT entry for egress IP %s after failover (no duplicates, and the entry must exist)", egressIP.String())
+			}).WithTimeout(retryTimeout).WithPolling(retryInterval).Should(gomega.Succeed(),
+				"no stale SNAT entries should remain and the new node should have exactly one after failover")
+		})
+
+		ginkgo.It("Should allow a pod to reach the kubernetes service by DNS name when an EgressIP is applied", func() {
+			if isUserDefinedNetwork(netConfigParams) {
+				ginkgo.Skip("Unsupported for UDNs")
+			}
+
+			ginkgo.By("1. Labeling node 1 as egress-assignable")
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable", "")
+			defer e2enode.RemoveLabelOffNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable")
+
+			ginkgo.By("2. Creating an EgressIP object assigned to node 1")
+			podNamespace := f.Namespace
+			labels := map[string]string{"name": f.Namespace.Name}
+			updateNamespaceLabels(f, podNamespace, labels)
+			var egressIP net.IP
+			var err error
+			if isIPv6TestRun {
+				egressIP, err = allocators.NewPrimaryIPv6(egress1Node.name)
+			} else {
+				egressIP, err = allocators.NewPrimaryIPv4(egress1Node.name)
+			}
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate egress IP")
+			egressIPConfig := createEIPManifest(egressIPName, podEgressLabel, labels, egressIP.String())
+			if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
+				framework.Failf("Unable to write EgressIP config: %v", err)
+			}
+			defer os.Remove(egressIPYaml)
+			e2ekubectl.RunKubectlOrDie("default", "create", "-f", egressIPYaml)
+
+			ginkgo.By("3. Verifying the EgressIP is assigned to node 1 and creating a matching pod on it")
+			verifyEgressIPStatusLengthEquals(1, func(statuses []egressIPStatus) bool {
+				return statuses[0].Node == egress1Node.name
+			})
+			_, err = createGenericPodWithLabel(f, pod1Name, egress1Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
+			framework.ExpectNoError(err, "failed to create pod matching EgressIP selector")
+			_, err = getPodIPWithRetry(f.ClientSet, isIPv6TestRun, f.Namespace.Name, pod1Name)
+			framework.ExpectNoError(err, "failed to get pod IP")
+
+			ginkgo.By("4. Verifying the pod can reach the kubernetes service by DNS name")
+			gomega.Eventually(func() error {
+				_, err := e2ekubectl.RunKubectl(f.Namespace.Name, "exec", pod1Name, "--", "curl", "--connect-timeout", "5", "-k", "-s", "https://kubernetes.default.svc")
+				return err
+			}).WithTimeout(retryTimeout).WithPolling(retryInterval).ShouldNot(gomega.HaveOccurred(),
+				"pod should be able to reach the kubernetes service by DNS name while an EgressIP is applied")
+		})
+
 		ginkgo.It("should prevent duplicate MAC responses when egress node is rebooted", func() {
 			if !isNetworkSegmentationEnabled() {
 				ginkgo.Skip("network segmentation is disabled")
