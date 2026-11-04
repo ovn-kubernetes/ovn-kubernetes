@@ -273,6 +273,87 @@ func TestSharedNoOverlayNodeIPFlowUsesNATInDefaultConntrackZone(t *testing.T) {
 	expectFlow(t, flows, expectedIPv6)
 }
 
+func TestMasqueradedHostServiceFlowsApplyExistingNAT(t *testing.T) {
+	for _, mode := range []config.GatewayMode{config.GatewayModeLocal, config.GatewayModeShared} {
+		for _, family := range []string{"IPv4", "IPv6", "dual-stack"} {
+			for _, segmentation := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/%s/segmentation=%t", mode, family, segmentation), func(t *testing.T) {
+					if err := config.PrepareTestConfig(); err != nil {
+						t.Fatalf("failed to prepare test config: %v", err)
+					}
+					t.Cleanup(func() { _ = config.PrepareTestConfig() })
+					config.Gateway.Mode = mode
+					config.IPv4Mode = family != "IPv6"
+					config.IPv6Mode = family != "IPv4"
+					config.OVNKubernetesFeature.EnableMultiNetwork = true
+					config.OVNKubernetesFeature.EnableNetworkSegmentation = segmentation
+					config.Gateway.V4MasqueradeSubnet = "169.254.0.0/17"
+					config.Gateway.V6MasqueradeSubnet = "fd69::/112"
+					if err := config.AllocateV4MasqueradeIPs(net.ParseIP("169.254.0.0"), &config.Gateway.MasqueradeIPs); err != nil {
+						t.Fatalf("failed to allocate IPv4 masquerade IPs: %v", err)
+					}
+
+					bridge := &BridgeConfiguration{
+						ofPortPhys: "eth0",
+						ofPortHost: nodetypes.OvsLocalPort,
+						macAddress: mustParseMAC(t, "62:41:d0:54:3d:64"),
+						netConfig: map[string]*BridgeUDNConfiguration{
+							types.DefaultNetworkName: {OfPortPatch: "patch-default", MasqCTMark: nodetypes.CtMarkOVN},
+							"blue": {
+								OfPortPatch: "patch-blue", MasqCTMark: "0x4", PktMark: "0x1001",
+								V4MasqIPs: &udngenerator.MasqueradeIPs{
+									GatewayRouter:  mustParseIPNet(t, "169.254.0.11/32"),
+									ManagementPort: mustParseIPNet(t, "169.254.0.12/32"),
+								},
+								V6MasqIPs: &udngenerator.MasqueradeIPs{
+									GatewayRouter:  mustParseIPNet(t, "fd69::11/128"),
+									ManagementPort: mustParseIPNet(t, "fd69::12/128"),
+								},
+							},
+						},
+					}
+					config.Kubernetes.ServiceCIDRs = nil
+					if config.IPv4Mode {
+						bridge.ips = append(bridge.ips, mustParseIPNet(t, "172.18.0.3/16"))
+						config.Kubernetes.ServiceCIDRs = append(config.Kubernetes.ServiceCIDRs, mustParseIPNet(t, "10.96.0.0/16"))
+					}
+					if config.IPv6Mode {
+						bridge.ips = append(bridge.ips, mustParseIPNet(t, "fd00::3/64"))
+						config.Kubernetes.ServiceCIDRs = append(config.Kubernetes.ServiceCIDRs, mustParseIPNet(t, "fd10:96::/112"))
+					}
+					flows, err := bridge.flowsForDefaultBridge(nil)
+					if err != nil {
+						t.Fatalf("failed to render host service flows: %v", err)
+					}
+					for _, cidr := range config.Kubernetes.ServiceCIDRs {
+						proto, subnet, hostIP, udnIP := "ip", config.Gateway.V4MasqueradeSubnet,
+							config.Gateway.MasqueradeIPs.V4HostMasqueradeIP, "169.254.0.12"
+						if cidr.IP.To4() == nil {
+							proto, subnet, hostIP, udnIP = "ipv6", config.Gateway.V6MasqueradeSubnet,
+								config.Gateway.MasqueradeIPs.V6HostMasqueradeIP, "fd69::12"
+						}
+						// Ordinary host requests must still establish an SNAT mapping.
+						expectFlowContainingAll(t, flows, "priority=500, in_port=LOCAL, "+proto+",",
+							fmt.Sprintf("%s_dst=%s", proto, cidr),
+							fmt.Sprintf("actions=ct(commit,zone=%d,nat(src=%s),table=2)", config.Default.HostMasqConntrackZone, hostIP))
+						match := fmt.Sprintf("priority=550, in_port=LOCAL, %s, %s_src=%s, %s_dst=%s,", proto, proto, subnet, proto, cidr)
+						if segmentation {
+							// Bare NAT translates related ICMP quotes without requesting a new UDN source mapping.
+							expectFlowContainingAll(t, flows, match,
+								fmt.Sprintf("actions=ct(commit,zone=%d,nat,table=2)", config.Default.HostMasqConntrackZone))
+							expectFlowContainingAll(t, flows, "priority=200, table=2, "+proto+",",
+								fmt.Sprintf("%s_src=%s", proto, udnIP), "actions=drop")
+							expectFlowContainingAll(t, flows, "priority=250, table=2, "+proto+", pkt_mark=0x1001,", "output:patch-blue")
+						} else {
+							expectNoFlow(t, flows, match)
+						}
+					}
+				})
+			}
+		}
+	}
+}
+
 func TestUplinkBridgeServiceFlowsUseUDNMark(t *testing.T) {
 	if err := config.PrepareTestConfig(); err != nil {
 		t.Fatalf("failed to prepare test config: %v", err)

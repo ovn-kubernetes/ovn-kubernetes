@@ -26,6 +26,17 @@ host full control over outbound path selection.
 Note: For some no-overlay CUDN paths, OVN network-scoped router SNAT-exemption/NAT
 objects also participate, so the exact SNAT mechanism is network-type dependent.
 
+### Service Path MTU Discovery
+
+When a Service response exceeds the MTU of a host route in local gateway mode,
+the host generates an ICMP error so the backend can reduce its packet size.
+The host Service conntrack path must translate the packet quoted inside that
+error using the existing NAT mapping before returning it to OVN. This also
+applies when network segmentation is enabled and the host selects a source
+address from the masquerade subnet. Preserving the quoted connection tuple
+allows Path MTU Discovery to work for both local and remote backends without
+changing the host's ICMP source-selection sysctl.
+
 ## Pod Egress Routing on the Cluster Router
 
 In **shared** gateway mode, for Layer 3 networks whose east-west traffic goes

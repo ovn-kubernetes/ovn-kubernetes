@@ -284,12 +284,13 @@ func (b *BridgeConfiguration) flowsForDefaultBridge(extraIPs []net.IP) ([]string
 				svcCIDR, config.Default.HostMasqConntrackZone, masqIP))
 
 		if util.IsNetworkSegmentationSupportEnabled() {
-			// table 0, Host (UDNs) -> OVN towards SVC, SNAT to special IP.
-			// For packets originating from UDN, commit without NATing, those
-			// have already been SNATed to the masq IP of the UDN.
+			// UDN packets are already SNATed to their masquerade IP, so do not
+			// request a new source mapping. Host-generated ICMP errors can also
+			// select a source in this subnet. Apply existing NAT mappings to
+			// translate their quoted tuples to the Service connection seen by OVN.
 			dftFlows = append(dftFlows,
 				fmt.Sprintf("cookie=%s, priority=550, in_port=%s, %s, %s_src=%s, %s_dst=%s, "+
-					"actions=ct(commit,zone=%d,table=2)",
+					"actions=ct(commit,zone=%d,nat,table=2)",
 					nodetypes.DefaultOpenFlowCookie, ofPortHost, protoPrefix, protoPrefix,
 					masqSubnet, protoPrefix, svcCIDR, config.Default.HostMasqConntrackZone))
 			if util.IsRouteAdvertisementsEnabled() {
