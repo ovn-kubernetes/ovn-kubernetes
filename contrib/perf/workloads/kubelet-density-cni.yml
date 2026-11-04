@@ -24,13 +24,13 @@ global:
         url: http://localhost:9411/debug/pprof/heap
 jobs:
   - name: kubelet-density-cni
-    jobIterations: 100
-    qps: 10
-    burst: 10
-    namespacedIterations: false 
+    jobIterations: {{.ITERATIONS}}
+    qps: 20
+    burst: 20
+    namespacedIterations: false
     namespace: kubelet-density-cni
     waitWhenFinished: true
-    podWait: false 
+    podWait: false
     preLoadImages: true
     preLoadPeriod: 5m
     churnConfig:
