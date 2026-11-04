@@ -33,9 +33,12 @@ env:
   CI_IMAGE_PR_TAR: image-pr.tar
   CI_DIST_IMAGES_OUTPUT: dist/images/_output/
 
-  # To run CI over custom OVN
-  # OVN_REPO: https://github.com/ovn-org/ovn
-  # OVN_GITREF: main
+  # TODO: remove below variable override
+  # build OVN from latest stable branch 26.09, consuming the fix for https://redhat.atlassian.net/browse/FDP-4432
+  # https://github.com/ovn-org/ovn/commit/03fd372c879bae388d81d9d5433fa2c1698ca2d9
+  # since RPM containing the fix has not been published yet
+  OVN_REPO: "https://github.com/ovn-org/ovn"
+  OVN_GITREF: "branch-26.09"
 
 jobs:
   changes:
