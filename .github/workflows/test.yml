@@ -33,9 +33,12 @@ env:
   CI_IMAGE_PR_TAR: image-pr.tar
   CI_DIST_IMAGES_OUTPUT: dist/images/_output/
 
-  # To run CI over custom OVN
-  # OVN_REPO: https://github.com/ovn-org/ovn
-  # OVN_GITREF: main
+  # TODO: remove below variable override
+  # build OVN from latest stable branch 26.09, consuming the fix for https://redhat.atlassian.net/browse/FDP-4432
+  # https://github.com/ovn-org/ovn/commit/03fd372c879bae388d81d9d5433fa2c1698ca2d9
+  # since RPM containing the fix has not been published yet
+  OVN_REPO: "https://github.com/ovn-org/ovn"
+  OVN_GITREF: "branch-26.09"
 
 jobs:
   changes:
@@ -77,36 +80,36 @@ jobs:
     uses: ./.github/workflows/prepare-go-cache.yml
 
   # separate job for parallelism
-  verify-lint-generated-code:
-    needs: [ changes, go-cache ]
-    if: needs.changes.outputs.run_ci == 'true'
-    name: Verify lint and generated code
-    runs-on: ubuntu-24.04
-    steps:
-    - name: Check out code
-      uses: actions/checkout@v6
-
-    - name: Set up Go
-      uses: ./.github/actions/setup-go
-      id: go
-
-    - name: Verify linting rules are enforced
-      run: |
-        set -x
-        # Run natively so golangci-lint uses the Go toolchain from setup-go
-        # (go-version-file: go-controller/go.mod), not the version baked into
-        # the golangci-lint container image.
-        make -C go-controller/ lint CONTAINER_RUNTIME=run-natively
-
-    - name: Verify generated code is up to date
-      run: |
-        cd go-controller
-        make verify-codegen
-
-    - name: Verify generated mocks are up to date
-      run: |
-        cd go-controller
-        make verify-mocksgen
+#  verify-lint-generated-code:
+#    needs: [ changes, go-cache ]
+#    if: needs.changes.outputs.run_ci == 'true'
+#    name: Verify lint and generated code
+#    runs-on: ubuntu-24.04
+#    steps:
+#    - name: Check out code
+#      uses: actions/checkout@v6
+#
+#    - name: Set up Go
+#      uses: ./.github/actions/setup-go
+#      id: go
+#
+#    - name: Verify linting rules are enforced
+#      run: |
+#        set -x
+#        # Run natively so golangci-lint uses the Go toolchain from setup-go
+#        # (go-version-file: go-controller/go.mod), not the version baked into
+#        # the golangci-lint container image.
+#        make -C go-controller/ lint CONTAINER_RUNTIME=run-natively
+#
+#    - name: Verify generated code is up to date
+#      run: |
+#        cd go-controller
+#        make verify-codegen
+#
+#    - name: Verify generated mocks are up to date
+#      run: |
+#        cd go-controller
+#        make verify-mocksgen
 
   build-base:
     needs: changes
@@ -320,297 +323,297 @@ jobs:
     - *cache_pr_image
     - *upload_pr_image
 
-  test-pr:
-    needs: [ changes, go-cache ]
-    if: needs.changes.outputs.run_ci == 'true'
-    name: Test-PR
-    runs-on: ubuntu-24.04
-    steps:
-    - name: Check out code into the Go module directory
-      uses: actions/checkout@v6
+#  test-pr:
+#    needs: [ changes, go-cache ]
+#    if: needs.changes.outputs.run_ci == 'true'
+#    name: Test-PR
+#    runs-on: ubuntu-24.04
+#    steps:
+#    - name: Check out code into the Go module directory
+#      uses: actions/checkout@v6
+#
+#    - name: Set up Go
+#      uses: ./.github/actions/setup-go
+#      id: go
+#
+#    - name: Install VRF kernel module
+#      run: |
+#        set -x
+#        # Newer Ubuntu kernels ship vrf in linux-modules and have no
+#        # linux-modules-extra package, so only install it when needed.
+#        if ! sudo modprobe vrf; then
+#          sudo apt update
+#          sudo apt-get install linux-modules-extra-$(uname -r) -y
+#          sudo modprobe vrf
+#        fi
+#
+#    - name: Run unit tests
+#      run: |
+#        set -x
+#        pushd go-controller
+#        COVERALLS=1 CONTAINER_RUNNABLE=1 make check
+#        popd
+#
+#    # CRD integration tests (envtest — real kube-apiserver + etcd, no Kind
+#    # cluster) run here alongside the unit tests rather than in a dedicated
+#    # lane: they are lightweight (seconds) and gate every PR on CRD admission
+#    # behaviour without spinning up a separate job.
+#    - name: Run CRD integration tests
+#      run: |
+#        set -x
+#        pushd test
+#        make test-crd
+#        popd
+#
+#    - name: Submit code coverage to Coveralls
+#      continue-on-error: true
+#      env:
+#        COVERALLS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+#      run: |
+#        set -x
+#        go install github.com/mattn/goveralls@latest
+#        go install github.com/modocache/gover@latest
+#        PATH=$PATH:$(go env GOPATH)/bin
+#
+#        mkdir -p $(go env GOPATH)/src/github.com/ovn-kubernetes
+#        ln -sf $(pwd) $(go env GOPATH)/src/github.com/ovn-kubernetes/ovn-kubernetes
+#
+#        gover
+#        GO111MODULE=off goveralls -coverprofile=gover.coverprofile -service=github
 
-    - name: Set up Go
-      uses: ./.github/actions/setup-go
-      id: go
-
-    - name: Install VRF kernel module
-      run: |
-        set -x
-        # Newer Ubuntu kernels ship vrf in linux-modules and have no
-        # linux-modules-extra package, so only install it when needed.
-        if ! sudo modprobe vrf; then
-          sudo apt update
-          sudo apt-get install linux-modules-extra-$(uname -r) -y
-          sudo modprobe vrf
-        fi
-
-    - name: Run unit tests
-      run: |
-        set -x
-        pushd go-controller
-        COVERALLS=1 CONTAINER_RUNNABLE=1 make check
-        popd
-
-    # CRD integration tests (envtest — real kube-apiserver + etcd, no Kind
-    # cluster) run here alongside the unit tests rather than in a dedicated
-    # lane: they are lightweight (seconds) and gate every PR on CRD admission
-    # behaviour without spinning up a separate job.
-    - name: Run CRD integration tests
-      run: |
-        set -x
-        pushd test
-        make test-crd
-        popd
-
-    - name: Submit code coverage to Coveralls
-      continue-on-error: true
-      env:
-        COVERALLS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        set -x
-        go install github.com/mattn/goveralls@latest
-        go install github.com/modocache/gover@latest
-        PATH=$PATH:$(go env GOPATH)/bin
-
-        mkdir -p $(go env GOPATH)/src/github.com/ovn-kubernetes
-        ln -sf $(pwd) $(go env GOPATH)/src/github.com/ovn-kubernetes/ovn-kubernetes
-
-        gover
-        GO111MODULE=off goveralls -coverprofile=gover.coverprofile -service=github
-
-  ovn-upgrade-e2e:
-    name: Upgrade OVN from Base to PR branch based image (${{ matrix.gateway-mode }})
-    if: github.event_name != 'schedule'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 240
-    needs:
-      - build-base
-      - build-pr
-    strategy:
-      fail-fast: false
-      matrix:
-        # The supported order is nodes first, then the control plane (see
-        # docs/design/upgrades.md). Stage 1 rolls every node but one and keeps
-        # the control plane paused; stage 2 rolls the last node and resumes the
-        # control plane. e2e runs after each stage.
-        gateway-mode: [local, shared]
-    env:
-      JOB_NAME: "Upgrade-Tests-${{ matrix.gateway-mode }}-dualstack"
-      PLATFORM_IPV4_SUPPORT: "true"
-      PLATFORM_IPV6_SUPPORT: "true"
-      OVN_HYBRID_OVERLAY_ENABLE: "false"
-      OVN_GATEWAY_MODE: "${{ matrix.gateway-mode }}"
-      # Network Segmentation includes UDN multicast tests that are not gated
-      # on the feature flag.
-      OVN_MULTICAST_ENABLE:  "true"
-      # UDN features carry the most cross-version state (network IDs, tunnel
-      # keys, masquerade IPs, cluster-manager written pod annotations), so the
-      # upgrade cluster runs with them enabled and the Network Segmentation
-      # suite is part of the post-stage checks. Match the network-segmentation
-      # e2e target flags so the same skip lists apply.
-      ENABLE_MULTI_NET: "true"
-      ENABLE_NETWORK_SEGMENTATION: "true"
-      ENABLE_NETWORK_CONNECT: "true"
-      ENABLE_UPLINK: "true"
-      KIND_INSTALL_METALLB: "true"
-      # TODO(koolzz): deprecate once infra is switched completely to kind-helm.sh
-      USE_HELM: "true"
-    steps:
-
-    - name: Check out code into the Go module directory - from Base branch
-      uses: actions/checkout@v6
-      with:
-          ref: ${{ github.base_ref || github.ref_name }}
-
-    - name: Set up Go
-      uses: actions/setup-go@v6
-      with:
-        go-version-file: 'go-controller/go.mod'
-        # Restore modules after the PR checkout below, avoiding two cache
-        # extractions into the same directory with overlapping read-only files.
-        cache: false
-      id: go
-
-    - name: Set up environment
-      run: |
-        export GOPATH=$(go env GOPATH)
-        echo "GOPATH=$GOPATH" >> $GITHUB_ENV
-        echo "$GOPATH/bin" >> $GITHUB_PATH
-
-    # UDN gateways create a VRF device per network; the runner kernel needs the
-    # vrf module loaded before the kind nodes start.
-    - name: Install VRF kernel module
-      run: |
-        set -x
-        if ! sudo modprobe vrf; then
-          sudo apt update
-          sudo apt-get install linux-modules-extra-$(uname -r) -y
-          sudo modprobe vrf
-        fi
-
-    - name: Free up disk space
-      uses: ./.github/actions/free-disk-space
-
-    - name: Download test-image-base
-      uses: actions/download-artifact@v8
-      with:
-        name: test-image-base
-
-    - name: Disable ufw
-      # For IPv6 and Dualstack, ufw (Uncomplicated Firewall) should be disabled.
-      # Not needed for KIND deployments, so just disable all the time.
-      run: |
-        sudo ufw disable
-
-    - name: Disable containerd image store
-      # Workaround for https://github.com/kubernetes-sigs/kind/issues/3795
-      run: |
-        sudo mkdir -p /etc/docker
-        docker --version || true
-        containerd --version || true
-        [ -s "/etc/docker/daemon.json" ] && {
-          cat "/etc/docker/daemon.json" | jq '. + {"features":{"containerd-snapshotter": false}}' | sudo tee /etc/docker/daemon.$$
-        } || {
-          echo '{"features":{"containerd-snapshotter": false}}' | sudo tee /etc/docker/daemon.$$
-        }
-        sudo mv -f /etc/docker/daemon.$$ /etc/docker/daemon.json
-        sudo systemctl restart docker
-
-    - name: Load docker image
-      run: |
-        docker load --input ${CI_IMAGE_BASE_TAR} && rm -rf ${CI_IMAGE_BASE_TAR}
-        docker images || true
-
-    - name: kind setup
-      run: |
-        export OVN_IMAGE="ovn-daemonset-fedora:dev"
-        make -C test install-kind
-
-    - name: Check out code into the Go module directory - from PR branch
-      uses: actions/checkout@v6
-
-    - name: Restore PR Go modules
-      uses: ./.github/actions/setup-go
-
-    - name: Export kind logs
-      if: always()
-      run: |
-        ./contrib/export-kind-logs.sh
-        set -x
-        docker ps -a
-        docker exec ovn-control-plane crictl images
-        docker exec ovn-worker crictl images
-        docker exec ovn-worker2 crictl images
-
-    - name: Upload kind logs
-      if: always()
-      uses: actions/upload-artifact@v7
-      with:
-        name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}
-        path: /tmp/kind/logs
-
-    - name: Download test-image-pr
-      uses: actions/download-artifact@v8
-      with:
-        name: test-image-pr
-
-    - name: Load docker image
-      run: |
-        docker load --input ${CI_IMAGE_PR_TAR} && rm -rf ${CI_IMAGE_PR_TAR}
-
-    # install-kind ran from the base branch, so the e2e binary matches the base
-    # Kubernetes version. Refresh it if the PR branch pins a different one.
-    - name: Refresh e2e binary to PR branch Kubernetes version
-      run: |
-        K8S_VERSION=$(sed -n 's/^K8S_VERSION="\(.*\)"/\1/p' test/scripts/install-kind.sh)
-        if [[ "$(/usr/local/bin/e2e.test --version)" != "${K8S_VERSION}" ]]; then
-          curl -LO https://dl.k8s.io/${K8S_VERSION}/kubernetes-test-linux-amd64.tar.gz
-          tar xvzf kubernetes-test-linux-amd64.tar.gz
-          sudo mv kubernetes/test/bin/e2e.test kubernetes/test/bin/ginkgo /usr/local/bin/
-          rm -rf kubernetes kubernetes-test-linux-amd64.tar.gz
-        fi
-
-    # Stage 1 rolls every ovnkube-node but one to the PR image while the
-    # cluster-manager stays on the base image, so e2e covers both skews the
-    # supported order produces: new nodes with an old control plane, and new
-    # nodes with an old node. Stage 2 rolls the last node, resumes the control
-    # plane, and e2e runs again on the fully upgraded cluster.
-    - name: ovn upgrade stage 1 (nodes-first)
-      run: |
-        export OVN_IMAGE="ovn-daemonset-fedora:pr"
-        UPGRADE_STAGE=nodes-first make -C test staged-upgrade-ovn
-
-    - name: Run E2E shard-conformance after nodes-first
-      run: |
-        JOB_NAME="${JOB_NAME}-nodes-first" make -C test shard-conformance
-
-    # Primary UDN east/west, isolation, overlapping CIDRs, services, node
-    # annotations and the UDN/CUDN controllers: the state that crosses the
-    # cluster-manager/node boundary. Table names are used instead of the
-    # "a user defined primary network" context because that string also
-    # matches the pod2Egress and services contexts. Isolation runs for one
-    # creation method only (CUDN), since the method does not change the
-    # node-side behaviour, and overlapping CIDRs runs only its L2 entry: the
-    # L3 entry probes 20x20 pod pairs with 2s connect timeouts and takes 4 to
-    # 8 minutes for the same isolation check.
-    - name: Run E2E Network Segmentation after nodes-first
-      run: |
-        JOB_NAME="${JOB_NAME}-nodes-first-udn" make -C test control-plane \
-          WHAT="Network Segmentation can perform east/west traffic between nodes|created using ClusterUserDefinedNetwork is isolated from the default network|isolates overlapping CIDRs with L2 primary UDN|Network Segmentation: services|Network Segmentation: Node Annotations|UserDefinedNetwork CRD Controller|ClusterUserDefinedNetwork CRD Controller"
-
-    # Default-network features whose protocol spans cluster-manager and node:
-    # EgressIP assignment vs. node programming, egress firewall ACLs, ingress
-    # and NodePort service paths, and the control plane disruption tests.
-    # Narrowed to named tests to keep each stage around 40 minutes.
-    - name: Run E2E control-plane skew suites after nodes-first
-      run: |
-        JOB_NAME="${JOB_NAME}-nodes-first-cp" make -C test control-plane \
-          WHAT="Should validate the egress IP functionality against remote hosts|Should re-assign egress IPs when node readiness / reachability goes down/up|Should validate the egress firewall policy functionality for allowed IP|Should validate the egress firewall policy functionality for allowed CIDR and port|should provide Internet connection continuously when|Validating ingress traffic|queries to the nodePort service shall work|Creates a host-network service|session-affinity|Maintains service connectivity during rolling update|e2e network policy hairpinning validation|Network Policy: ICMP bypass"
-
-    - name: ovn upgrade stage 2 (control-plane-last)
-      run: |
-        export OVN_IMAGE="ovn-daemonset-fedora:pr"
-        UPGRADE_STAGE=control-plane-last make -C test staged-upgrade-ovn
-
-    - name: Run E2E shard-conformance after control-plane-last
-      run: |
-        JOB_NAME="${JOB_NAME}-control-plane-last" make -C test shard-conformance
-
-    - name: Run E2E Network Segmentation after control-plane-last
-      run: |
-        JOB_NAME="${JOB_NAME}-control-plane-last-udn" make -C test control-plane \
-          WHAT="Network Segmentation can perform east/west traffic between nodes|created using ClusterUserDefinedNetwork is isolated from the default network|isolates overlapping CIDRs with L2 primary UDN|Network Segmentation: services|Network Segmentation: Node Annotations|UserDefinedNetwork CRD Controller|ClusterUserDefinedNetwork CRD Controller"
-
-    # Default-network features whose protocol spans cluster-manager and node:
-    # EgressIP assignment vs. node programming, egress firewall ACLs, ingress
-    # and NodePort service paths, and the control plane disruption tests.
-    # Narrowed to named tests to keep each stage around 40 minutes.
-    - name: Run E2E control-plane skew suites after control-plane-last
-      run: |
-        JOB_NAME="${JOB_NAME}-control-plane-last-cp" make -C test control-plane \
-          WHAT="Should validate the egress IP functionality against remote hosts|Should re-assign egress IPs when node readiness / reachability goes down/up|Should validate the egress firewall policy functionality for allowed IP|Should validate the egress firewall policy functionality for allowed CIDR and port|should provide Internet connection continuously when|Validating ingress traffic|queries to the nodePort service shall work|Creates a host-network service|session-affinity|Maintains service connectivity during rolling update|e2e network policy hairpinning validation|Network Policy: ICMP bypass"
-
-    - name: Export kind logs
-      if: always()
-      run: ./contrib/export-kind-logs.sh /tmp/kind/logs-kind-pr-branch
-
-    - name: Upload kind logs
-      if: always()
-      uses: actions/upload-artifact@v7
-      with:
-        name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}-after-upgrade
-        path: /tmp/kind/logs-kind-pr-branch
-
-    - name: Upload coredumps for post-processing
-      if: failure()
-      continue-on-error: true
-      timeout-minutes: 5
-      uses: actions/upload-artifact@v7
-      with:
-        name: coredumps-${{ env.JOB_NAME }}-${{ github.run_id }}
-        path: /tmp/kind/logs/coredumps
-        if-no-files-found: ignore
-        retention-days: 1
+#  ovn-upgrade-e2e:
+#    name: Upgrade OVN from Base to PR branch based image (${{ matrix.gateway-mode }})
+#    if: github.event_name != 'schedule'
+#    runs-on: ubuntu-24.04
+#    timeout-minutes: 240
+#    needs:
+#      - build-base
+#      - build-pr
+#    strategy:
+#      fail-fast: false
+#      matrix:
+#        # The supported order is nodes first, then the control plane (see
+#        # docs/design/upgrades.md). Stage 1 rolls every node but one and keeps
+#        # the control plane paused; stage 2 rolls the last node and resumes the
+#        # control plane. e2e runs after each stage.
+#        gateway-mode: [local, shared]
+#    env:
+#      JOB_NAME: "Upgrade-Tests-${{ matrix.gateway-mode }}-dualstack"
+#      PLATFORM_IPV4_SUPPORT: "true"
+#      PLATFORM_IPV6_SUPPORT: "true"
+#      OVN_HYBRID_OVERLAY_ENABLE: "false"
+#      OVN_GATEWAY_MODE: "${{ matrix.gateway-mode }}"
+#      # Network Segmentation includes UDN multicast tests that are not gated
+#      # on the feature flag.
+#      OVN_MULTICAST_ENABLE:  "true"
+#      # UDN features carry the most cross-version state (network IDs, tunnel
+#      # keys, masquerade IPs, cluster-manager written pod annotations), so the
+#      # upgrade cluster runs with them enabled and the Network Segmentation
+#      # suite is part of the post-stage checks. Match the network-segmentation
+#      # e2e target flags so the same skip lists apply.
+#      ENABLE_MULTI_NET: "true"
+#      ENABLE_NETWORK_SEGMENTATION: "true"
+#      ENABLE_NETWORK_CONNECT: "true"
+#      ENABLE_UPLINK: "true"
+#      KIND_INSTALL_METALLB: "true"
+#      # TODO(koolzz): deprecate once infra is switched completely to kind-helm.sh
+#      USE_HELM: "true"
+#    steps:
+#
+#    - name: Check out code into the Go module directory - from Base branch
+#      uses: actions/checkout@v6
+#      with:
+#          ref: ${{ github.base_ref || github.ref_name }}
+#
+#    - name: Set up Go
+#      uses: actions/setup-go@v6
+#      with:
+#        go-version-file: 'go-controller/go.mod'
+#        # Restore modules after the PR checkout below, avoiding two cache
+#        # extractions into the same directory with overlapping read-only files.
+#        cache: false
+#      id: go
+#
+#    - name: Set up environment
+#      run: |
+#        export GOPATH=$(go env GOPATH)
+#        echo "GOPATH=$GOPATH" >> $GITHUB_ENV
+#        echo "$GOPATH/bin" >> $GITHUB_PATH
+#
+#    # UDN gateways create a VRF device per network; the runner kernel needs the
+#    # vrf module loaded before the kind nodes start.
+#    - name: Install VRF kernel module
+#      run: |
+#        set -x
+#        if ! sudo modprobe vrf; then
+#          sudo apt update
+#          sudo apt-get install linux-modules-extra-$(uname -r) -y
+#          sudo modprobe vrf
+#        fi
+#
+#    - name: Free up disk space
+#      uses: ./.github/actions/free-disk-space
+#
+#    - name: Download test-image-base
+#      uses: actions/download-artifact@v8
+#      with:
+#        name: test-image-base
+#
+#    - name: Disable ufw
+#      # For IPv6 and Dualstack, ufw (Uncomplicated Firewall) should be disabled.
+#      # Not needed for KIND deployments, so just disable all the time.
+#      run: |
+#        sudo ufw disable
+#
+#    - name: Disable containerd image store
+#      # Workaround for https://github.com/kubernetes-sigs/kind/issues/3795
+#      run: |
+#        sudo mkdir -p /etc/docker
+#        docker --version || true
+#        containerd --version || true
+#        [ -s "/etc/docker/daemon.json" ] && {
+#          cat "/etc/docker/daemon.json" | jq '. + {"features":{"containerd-snapshotter": false}}' | sudo tee /etc/docker/daemon.$$
+#        } || {
+#          echo '{"features":{"containerd-snapshotter": false}}' | sudo tee /etc/docker/daemon.$$
+#        }
+#        sudo mv -f /etc/docker/daemon.$$ /etc/docker/daemon.json
+#        sudo systemctl restart docker
+#
+#    - name: Load docker image
+#      run: |
+#        docker load --input ${CI_IMAGE_BASE_TAR} && rm -rf ${CI_IMAGE_BASE_TAR}
+#        docker images || true
+#
+#    - name: kind setup
+#      run: |
+#        export OVN_IMAGE="ovn-daemonset-fedora:dev"
+#        make -C test install-kind
+#
+#    - name: Check out code into the Go module directory - from PR branch
+#      uses: actions/checkout@v6
+#
+#    - name: Restore PR Go modules
+#      uses: ./.github/actions/setup-go
+#
+#    - name: Export kind logs
+#      if: always()
+#      run: |
+#        ./contrib/export-kind-logs.sh
+#        set -x
+#        docker ps -a
+#        docker exec ovn-control-plane crictl images
+#        docker exec ovn-worker crictl images
+#        docker exec ovn-worker2 crictl images
+#
+#    - name: Upload kind logs
+#      if: always()
+#      uses: actions/upload-artifact@v7
+#      with:
+#        name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}
+#        path: /tmp/kind/logs
+#
+#    - name: Download test-image-pr
+#      uses: actions/download-artifact@v8
+#      with:
+#        name: test-image-pr
+#
+#    - name: Load docker image
+#      run: |
+#        docker load --input ${CI_IMAGE_PR_TAR} && rm -rf ${CI_IMAGE_PR_TAR}
+#
+#    # install-kind ran from the base branch, so the e2e binary matches the base
+#    # Kubernetes version. Refresh it if the PR branch pins a different one.
+#    - name: Refresh e2e binary to PR branch Kubernetes version
+#      run: |
+#        K8S_VERSION=$(sed -n 's/^K8S_VERSION="\(.*\)"/\1/p' test/scripts/install-kind.sh)
+#        if [[ "$(/usr/local/bin/e2e.test --version)" != "${K8S_VERSION}" ]]; then
+#          curl -LO https://dl.k8s.io/${K8S_VERSION}/kubernetes-test-linux-amd64.tar.gz
+#          tar xvzf kubernetes-test-linux-amd64.tar.gz
+#          sudo mv kubernetes/test/bin/e2e.test kubernetes/test/bin/ginkgo /usr/local/bin/
+#          rm -rf kubernetes kubernetes-test-linux-amd64.tar.gz
+#        fi
+#
+#    # Stage 1 rolls every ovnkube-node but one to the PR image while the
+#    # cluster-manager stays on the base image, so e2e covers both skews the
+#    # supported order produces: new nodes with an old control plane, and new
+#    # nodes with an old node. Stage 2 rolls the last node, resumes the control
+#    # plane, and e2e runs again on the fully upgraded cluster.
+#    - name: ovn upgrade stage 1 (nodes-first)
+#      run: |
+#        export OVN_IMAGE="ovn-daemonset-fedora:pr"
+#        UPGRADE_STAGE=nodes-first make -C test staged-upgrade-ovn
+#
+#    - name: Run E2E shard-conformance after nodes-first
+#      run: |
+#        JOB_NAME="${JOB_NAME}-nodes-first" make -C test shard-conformance
+#
+#    # Primary UDN east/west, isolation, overlapping CIDRs, services, node
+#    # annotations and the UDN/CUDN controllers: the state that crosses the
+#    # cluster-manager/node boundary. Table names are used instead of the
+#    # "a user defined primary network" context because that string also
+#    # matches the pod2Egress and services contexts. Isolation runs for one
+#    # creation method only (CUDN), since the method does not change the
+#    # node-side behaviour, and overlapping CIDRs runs only its L2 entry: the
+#    # L3 entry probes 20x20 pod pairs with 2s connect timeouts and takes 4 to
+#    # 8 minutes for the same isolation check.
+#    - name: Run E2E Network Segmentation after nodes-first
+#      run: |
+#        JOB_NAME="${JOB_NAME}-nodes-first-udn" make -C test control-plane \
+#          WHAT="Network Segmentation can perform east/west traffic between nodes|created using ClusterUserDefinedNetwork is isolated from the default network|isolates overlapping CIDRs with L2 primary UDN|Network Segmentation: services|Network Segmentation: Node Annotations|UserDefinedNetwork CRD Controller|ClusterUserDefinedNetwork CRD Controller"
+#
+#    # Default-network features whose protocol spans cluster-manager and node:
+#    # EgressIP assignment vs. node programming, egress firewall ACLs, ingress
+#    # and NodePort service paths, and the control plane disruption tests.
+#    # Narrowed to named tests to keep each stage around 40 minutes.
+#    - name: Run E2E control-plane skew suites after nodes-first
+#      run: |
+#        JOB_NAME="${JOB_NAME}-nodes-first-cp" make -C test control-plane \
+#          WHAT="Should validate the egress IP functionality against remote hosts|Should re-assign egress IPs when node readiness / reachability goes down/up|Should validate the egress firewall policy functionality for allowed IP|Should validate the egress firewall policy functionality for allowed CIDR and port|should provide Internet connection continuously when|Validating ingress traffic|queries to the nodePort service shall work|Creates a host-network service|session-affinity|Maintains service connectivity during rolling update|e2e network policy hairpinning validation|Network Policy: ICMP bypass"
+#
+#    - name: ovn upgrade stage 2 (control-plane-last)
+#      run: |
+#        export OVN_IMAGE="ovn-daemonset-fedora:pr"
+#        UPGRADE_STAGE=control-plane-last make -C test staged-upgrade-ovn
+#
+#    - name: Run E2E shard-conformance after control-plane-last
+#      run: |
+#        JOB_NAME="${JOB_NAME}-control-plane-last" make -C test shard-conformance
+#
+#    - name: Run E2E Network Segmentation after control-plane-last
+#      run: |
+#        JOB_NAME="${JOB_NAME}-control-plane-last-udn" make -C test control-plane \
+#          WHAT="Network Segmentation can perform east/west traffic between nodes|created using ClusterUserDefinedNetwork is isolated from the default network|isolates overlapping CIDRs with L2 primary UDN|Network Segmentation: services|Network Segmentation: Node Annotations|UserDefinedNetwork CRD Controller|ClusterUserDefinedNetwork CRD Controller"
+#
+#    # Default-network features whose protocol spans cluster-manager and node:
+#    # EgressIP assignment vs. node programming, egress firewall ACLs, ingress
+#    # and NodePort service paths, and the control plane disruption tests.
+#    # Narrowed to named tests to keep each stage around 40 minutes.
+#    - name: Run E2E control-plane skew suites after control-plane-last
+#      run: |
+#        JOB_NAME="${JOB_NAME}-control-plane-last-cp" make -C test control-plane \
+#          WHAT="Should validate the egress IP functionality against remote hosts|Should re-assign egress IPs when node readiness / reachability goes down/up|Should validate the egress firewall policy functionality for allowed IP|Should validate the egress firewall policy functionality for allowed CIDR and port|should provide Internet connection continuously when|Validating ingress traffic|queries to the nodePort service shall work|Creates a host-network service|session-affinity|Maintains service connectivity during rolling update|e2e network policy hairpinning validation|Network Policy: ICMP bypass"
+#
+#    - name: Export kind logs
+#      if: always()
+#      run: ./contrib/export-kind-logs.sh /tmp/kind/logs-kind-pr-branch
+#
+#    - name: Upload kind logs
+#      if: always()
+#      uses: actions/upload-artifact@v7
+#      with:
+#        name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}-after-upgrade
+#        path: /tmp/kind/logs-kind-pr-branch
+#
+#    - name: Upload coredumps for post-processing
+#      if: failure()
+#      continue-on-error: true
+#      timeout-minutes: 5
+#      uses: actions/upload-artifact@v7
+#      with:
+#        name: coredumps-${{ env.JOB_NAME }}-${{ github.run_id }}
+#        path: /tmp/kind/logs/coredumps
+#        if-no-files-found: ignore
+#        retention-days: 1
 
   e2e:
     name: e2e
@@ -639,53 +642,54 @@ jobs:
         # network-segmentation : ["", "enable-network-segmentation"]
         # traffic-flow-tests : "<tests range. i.e. 1-24>"
         include:
-          - {"target": "shard-conformance", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "cni-mode": "privileged"}
+#          - {"target": "shard-conformance", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "cni-mode": "privileged"}
           # Keep dedicated coverage for a local gateway bridge without a system uplink so gateway initialization
           # cannot silently fall back to the normal bridge-plus-uplink topology.
-          - {"target": "no-uplink", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged"}
-          - {"target": "shard-conformance", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default"}
-          - {"target": "shard-conformance", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default"}
-          - {"target": "shard-conformance", "gateway-mode": "shared", "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default", "no-overlay": "true"}
-          - {"target": "shard-conformance", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "managed", "no-overlay": "managed"}
-          - {"target": "shard-conformance", "gateway-mode": "shared", "ipfamily": "ipv6",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "cni-mode": "privileged"}
-          - {"target": "shard-conformance", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "cni-mode": "privileged"}
-          - {"target": "control-plane", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "cni-mode": "privileged", "dns-name-resolver": "enable-dns-name-resolver"}
-          - {"target": "control-plane", "gateway-mode": "local",  "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged", "dns-name-resolver": "enable-dns-name-resolver", "image_family": "ubuntu"}
-          - {"target": "control-plane", "gateway-mode": "local",  "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged"}
-          - {"target": "control-plane", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "2br", "cni-mode": "privileged"}
-          - {"target": "control-plane", "gateway-mode": "shared", "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "2br", "cni-mode": "unprivileged"}
-          - {"target": "multi-homing", "gateway-mode": "shared",  "ipfamily": "dualstack",      "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "cni-mode": "privileged"}
-          - {"target": "node-ip-mac-migration", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "cni-mode": "privileged"}
-          - {"target": "multi-homing", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "network-segmentation": "enable-network-segmentation"}
-          - {"target": "external-gateway", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "2br", "cni-mode": "privileged"}
-          - {"target": "external-gateway", "gateway-mode": "local",  "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged"}
-          - {"target": "external-gateway", "gateway-mode": "shared", "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "2br", "cni-mode": "privileged"}
-          - {"target": "external-gateway", "gateway-mode": "local",  "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged"}
+#          - {"target": "no-uplink", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged"}
+#          - {"target": "shard-conformance", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default"}
+#          - {"target": "shard-conformance", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default"}
+#          - {"target": "shard-conformance", "gateway-mode": "shared", "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default", "no-overlay": "true"}
+#          - {"target": "shard-conformance", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "managed", "no-overlay": "managed"}
+#          - {"target": "shard-conformance", "gateway-mode": "shared", "ipfamily": "ipv6",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "cni-mode": "privileged"}
+#          - {"target": "shard-conformance", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "cni-mode": "privileged"}
+#          - {"target": "control-plane", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "cni-mode": "privileged", "dns-name-resolver": "enable-dns-name-resolver"}
+#          - {"target": "control-plane", "gateway-mode": "local",  "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged", "dns-name-resolver": "enable-dns-name-resolver", "image_family": "ubuntu"}
+#          - {"target": "control-plane", "gateway-mode": "local",  "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged"}
+#          - {"target": "control-plane", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "2br", "cni-mode": "privileged"}
+#          - {"target": "control-plane", "gateway-mode": "shared", "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "2br", "cni-mode": "unprivileged"}
+#          - {"target": "multi-homing", "gateway-mode": "shared",  "ipfamily": "dualstack",      "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "cni-mode": "privileged"}
+#          - {"target": "node-ip-mac-migration", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "cni-mode": "privileged"}
+#          - {"target": "multi-homing", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "network-segmentation": "enable-network-segmentation"}
+#          - {"target": "external-gateway", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "2br", "cni-mode": "privileged"}
+#          - {"target": "external-gateway", "gateway-mode": "local",  "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged"}
+#          - {"target": "external-gateway", "gateway-mode": "shared", "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "2br", "cni-mode": "privileged"}
+#          - {"target": "external-gateway", "gateway-mode": "local",  "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged"}
           - {"target": "kv-live-migration", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "3", "network-segmentation": "enable-network-segmentation", "routeadvertisements": "true"}
           - {"target": "kv-live-migration", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "3", "network-segmentation": "enable-network-segmentation", "routeadvertisements": "true", "evpn": "enable-evpn"}
-          - {"target": "control-plane", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "forwarding": "disable-forwarding"}
-          - {"target": "network-segmentation", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged", "forwarding": "disable-forwarding"}
-          - {"target": "network-segmentation", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "unprivileged"}
-          - {"target": "network-segmentation-dynamic", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "unprivileged"}
-          - {"target": "network-segmentation", "gateway-mode": "shared", "ipfamily": "ipv6", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged"}
-          - {"target": "bgp", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "dns-name-resolver": "enable-dns-name-resolver"}
-          - {"target": "bgp", "gateway-mode": "shared",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "dns-name-resolver": "enable-dns-name-resolver"}
-          - {"target": "bgp", "gateway-mode": "local",  "ipfamily": "ipv6", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation"}
+#          - {"target": "control-plane", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "forwarding": "disable-forwarding"}
+#          - {"target": "network-segmentation", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged", "forwarding": "disable-forwarding"}
+#          - {"target": "network-segmentation", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "unprivileged"}
+#          - {"target": "network-segmentation-dynamic", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "unprivileged"}
+#          - {"target": "network-segmentation", "gateway-mode": "shared", "ipfamily": "ipv6", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged"}
+#          - {"target": "bgp", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "dns-name-resolver": "enable-dns-name-resolver"}
+#          - {"target": "bgp", "gateway-mode": "shared",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "dns-name-resolver": "enable-dns-name-resolver"}
+#          - {"target": "bgp", "gateway-mode": "local",  "ipfamily": "ipv6", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation"}
           # no-overlay mode cannot be enabled alongside other tests: activating it on the default network requires
           # restarting ovn-k pods (day-2 reconfiguration), which would disrupt any concurrently running test jobs.
           # Dedicated no-overlay jobs are therefore required to cover feature combinations that may interact with
           # no-overlay (e.g. BGP route advertisements, network-segmentation) where implementations are not strictly orthogonal.
-          - {"target": "bgp-managed", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "managed", "no-overlay": "managed"}
-          - {"target": "bgp-no-overlay-dynamic", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "no-overlay": "snat-enabled"}
-          - {"target": "bgp-no-overlay", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "no-overlay": "true"}
-          - {"target": "bgp-loose-isolation", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "advertised-udn-isolation-mode": "loose"}
-          - {"target": "evpn", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "evpn": "enable-evpn"}
-          - {"target": "traffic-flow-test-only", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged", "traffic-flow-tests": "1-24", "network-segmentation": "enable-network-segmentation"}
-          - {"target": "tools", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "SnatGW", "second-bridge": "1br", "cni-mode": "privileged", "network-segmentation": "enable-network-segmentation"}
-          - {"target": "serial", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "cni-mode": "privileged"}
+#          - {"target": "bgp-managed", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "managed", "no-overlay": "managed"}
+#          - {"target": "bgp-no-overlay-dynamic", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "no-overlay": "snat-enabled"}
+#          - {"target": "bgp-no-overlay", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "no-overlay": "true"}
+#          - {"target": "bgp-loose-isolation", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "advertised-udn-isolation-mode": "loose"}
+#          - {"target": "evpn", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "evpn": "enable-evpn"}
+#          - {"target": "traffic-flow-test-only", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged", "traffic-flow-tests": "1-24", "network-segmentation": "enable-network-segmentation"}
+#          - {"target": "tools", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "SnatGW", "second-bridge": "1br", "cni-mode": "privileged", "network-segmentation": "enable-network-segmentation"}
+#          - {"target": "serial", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "cni-mode": "privileged"}
     needs: [ changes, build-pr, build-pr-ubuntu ]
     if: ${{ !cancelled() && needs.changes.outputs.run_ci == 'true' }}
     env:
+      FLAKE_ATTEMPTS: 0
       JOB_NAME: "${{ matrix.target }}-${{ matrix.gateway-mode }}-${{ matrix.ipfamily }}-${{ matrix.disable-snat-multiple-gws }}-${{ matrix.second-bridge }}-${{ matrix.cni-mode }}-${{ matrix.image_family || 'fedora' }}"
       OVN_HYBRID_OVERLAY_ENABLE: ${{ matrix.target == 'control-plane' && (matrix.ipfamily == 'ipv4' || matrix.ipfamily == 'dualstack' ) }}
       OVN_MULTICAST_ENABLE:  "${{ matrix.target == 'control-plane' || startsWith(matrix.target, 'network-segmentation') || startsWith(matrix.target, 'bgp') }}"
@@ -883,7 +887,8 @@ jobs:
           # the DHCP IPAM suite (dhcp_ipam.go) rides this lane: it is the one
           # provisioned with the dhcp CNI plugin (KIND_INSTALL_PLUGINS),
           # kubevirt and NetworkQoS
-          make -C test control-plane WHAT="Kubevirt Virtual Machines|Localnet DHCP IPAM"
+          # TODO: remove below focus
+          make -C test control-plane WHAT="Kubevirt Virtual Machines user-defined network port-security disabled, TCP connections with spoofed MAC should survive successful and failed live migration over localnet"
         elif [[ "${{ matrix.target }}" == network-segmentation* ]]; then
           make -C test control-plane WHAT="Network Segmentation"
           make -C test control-plane WHAT="ClusterNetworkConnect"
@@ -939,163 +944,163 @@ jobs:
         if-no-files-found: ignore
         retention-days: 1
 
-  e2e-dual-conversion:
-    name: e2e-dual-conversion
-    if: github.event_name != 'schedule'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    needs: [ build-pr ]
-    env:
-      JOB_NAME: "DualStack-conversion-shared"
-      PLATFORM_IPV4_SUPPORT: "true"
-      PLATFORM_IPV6_SUPPORT: "false"
-      OVN_HYBRID_OVERLAY_ENABLE: "false"
-      OVN_GATEWAY_MODE: "shared"
-      OVN_MULTICAST_ENABLE:  "false"
-      DUALSTACK_CONVERSION:  "true"
-    steps:
+#  e2e-dual-conversion:
+#    name: e2e-dual-conversion
+#    if: github.event_name != 'schedule'
+#    runs-on: ubuntu-24.04
+#    timeout-minutes: 60
+#    needs: [ build-pr ]
+#    env:
+#      JOB_NAME: "DualStack-conversion-shared"
+#      PLATFORM_IPV4_SUPPORT: "true"
+#      PLATFORM_IPV6_SUPPORT: "false"
+#      OVN_HYBRID_OVERLAY_ENABLE: "false"
+#      OVN_GATEWAY_MODE: "shared"
+#      OVN_MULTICAST_ENABLE:  "false"
+#      DUALSTACK_CONVERSION:  "true"
+#    steps:
+#
+#    - name: Check out code into the Go module directory
+#      uses: actions/checkout@v6
+#
+#    - name: Set up Go
+#      uses: ./.github/actions/setup-go
+#      id: go
+#
+#    - name: Set up environment
+#      run: |
+#        export GOPATH=$(go env GOPATH)
+#        echo "GOPATH=$GOPATH" >> $GITHUB_ENV
+#        echo "$GOPATH/bin" >> $GITHUB_PATH
+#
+#    - name: Free up disk space
+#      uses: ./.github/actions/free-disk-space
+#
+#    - name: Disable ufw
+#      # For IPv6 and Dualstack, ufw (Uncomplicated Firewall) should be disabled.
+#      # Not needed for KIND deployments, so just disable all the time.
+#      run: |
+#        sudo ufw disable
+#
+#    - name: Download test-image-pr
+#      uses: actions/download-artifact@v8
+#      with:
+#        name: test-image-pr
+#
+#    - name: Disable containerd image store
+#      # Workaround for https://github.com/kubernetes-sigs/kind/issues/3795
+#      run: |
+#        sudo mkdir -p /etc/docker
+#        docker --version || true
+#        containerd --version || true
+#        [ -s "/etc/docker/daemon.json" ] && {
+#          cat "/etc/docker/daemon.json" | jq '. + {"features":{"containerd-snapshotter": false}}' | sudo tee /etc/docker/daemon.$$
+#        } || {
+#          echo '{"features":{"containerd-snapshotter": false}}' | sudo tee /etc/docker/daemon.$$
+#        }
+#        sudo mv -f /etc/docker/daemon.$$ /etc/docker/daemon.json
+#        sudo systemctl restart docker
+#
+#    - name: Load docker image
+#      run: |
+#        docker load --input ${CI_IMAGE_PR_TAR} && rm -rf ${CI_IMAGE_PR_TAR}
+#        docker images || true
+#
+#
+#    - name: kind IPv4 setup
+#      run: |
+#        export OVN_IMAGE="ovn-daemonset-fedora:pr"
+#        make -C test install-kind
+#
+#    - name: Convert IPv4 cluster to Dual Stack
+#      run: |
+#        ./contrib/kind-dual-stack-conversion.sh
+#
+#    - name: Run Dual-Stack Tests
+#      run: |
+#        make -C test shard-test WHAT="Networking Granular Checks\|DualStack"
+#
+#    - name: Run Dual-Stack Control-Plane Tests
+#      run: |
+#        make -C test control-plane WHAT="DualStack"
+#
+#    - name: Export kind logs
+#      if: always()
+#      run: ./contrib/export-kind-logs.sh
+#
+#    - name: Upload kind logs
+#      if: always()
+#      uses: actions/upload-artifact@v7
+#      with:
+#        name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}
+#        path: /tmp/kind/logs
+#
+#    - name: Upload coredumps for post-processing
+#      if: failure()
+#      continue-on-error: true
+#      timeout-minutes: 5
+#      uses: actions/upload-artifact@v7
+#      with:
+#        name: coredumps-${{ env.JOB_NAME }}-${{ github.run_id }}
+#        path: /tmp/kind/logs/coredumps
+#        if-no-files-found: ignore
+#        retention-days: 1
+#
+#    - name: Export ovn dbs
+#      if: ${{ failure() }}
+#      run: |
+#        mkdir -p /tmp/kind/ovndbs
+#        for node in ovn-control-plane ovn-worker ovn-worker2
+#        do for db in ovnnb_db.db ovnsb_db.db
+#          do docker cp ${node}:/var/lib/openvswitch/${db} /tmp/kind/ovndbs/${node}_${db} ||:
+#          done
+#        done
+#
+#    - name: Upload ovn dbs
+#      if: ${{ failure() }}
+#      uses: actions/upload-artifact@v7
+#      with:
+#        name: kind-ovndbs-${{ env.JOB_NAME }}-${{ github.run_id }}
+#        path: /tmp/kind/ovndbs
 
-    - name: Check out code into the Go module directory
-      uses: actions/checkout@v6
-
-    - name: Set up Go
-      uses: ./.github/actions/setup-go
-      id: go
-
-    - name: Set up environment
-      run: |
-        export GOPATH=$(go env GOPATH)
-        echo "GOPATH=$GOPATH" >> $GITHUB_ENV
-        echo "$GOPATH/bin" >> $GITHUB_PATH
-
-    - name: Free up disk space
-      uses: ./.github/actions/free-disk-space
-
-    - name: Disable ufw
-      # For IPv6 and Dualstack, ufw (Uncomplicated Firewall) should be disabled.
-      # Not needed for KIND deployments, so just disable all the time.
-      run: |
-        sudo ufw disable
-
-    - name: Download test-image-pr
-      uses: actions/download-artifact@v8
-      with:
-        name: test-image-pr
-
-    - name: Disable containerd image store
-      # Workaround for https://github.com/kubernetes-sigs/kind/issues/3795
-      run: |
-        sudo mkdir -p /etc/docker
-        docker --version || true
-        containerd --version || true
-        [ -s "/etc/docker/daemon.json" ] && {
-          cat "/etc/docker/daemon.json" | jq '. + {"features":{"containerd-snapshotter": false}}' | sudo tee /etc/docker/daemon.$$
-        } || {
-          echo '{"features":{"containerd-snapshotter": false}}' | sudo tee /etc/docker/daemon.$$
-        }
-        sudo mv -f /etc/docker/daemon.$$ /etc/docker/daemon.json
-        sudo systemctl restart docker
-
-    - name: Load docker image
-      run: |
-        docker load --input ${CI_IMAGE_PR_TAR} && rm -rf ${CI_IMAGE_PR_TAR}
-        docker images || true
-
-
-    - name: kind IPv4 setup
-      run: |
-        export OVN_IMAGE="ovn-daemonset-fedora:pr"
-        make -C test install-kind
-
-    - name: Convert IPv4 cluster to Dual Stack
-      run: |
-        ./contrib/kind-dual-stack-conversion.sh
-
-    - name: Run Dual-Stack Tests
-      run: |
-        make -C test shard-test WHAT="Networking Granular Checks\|DualStack"
-
-    - name: Run Dual-Stack Control-Plane Tests
-      run: |
-        make -C test control-plane WHAT="DualStack"
-
-    - name: Export kind logs
-      if: always()
-      run: ./contrib/export-kind-logs.sh
-
-    - name: Upload kind logs
-      if: always()
-      uses: actions/upload-artifact@v7
-      with:
-        name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}
-        path: /tmp/kind/logs
-
-    - name: Upload coredumps for post-processing
-      if: failure()
-      continue-on-error: true
-      timeout-minutes: 5
-      uses: actions/upload-artifact@v7
-      with:
-        name: coredumps-${{ env.JOB_NAME }}-${{ github.run_id }}
-        path: /tmp/kind/logs/coredumps
-        if-no-files-found: ignore
-        retention-days: 1
-
-    - name: Export ovn dbs
-      if: ${{ failure() }}
-      run: |
-        mkdir -p /tmp/kind/ovndbs
-        for node in ovn-control-plane ovn-worker ovn-worker2
-        do for db in ovnnb_db.db ovnsb_db.db
-          do docker cp ${node}:/var/lib/openvswitch/${db} /tmp/kind/ovndbs/${node}_${db} ||:
-          done
-        done
-
-    - name: Upload ovn dbs
-      if: ${{ failure() }}
-      uses: actions/upload-artifact@v7
-      with:
-        name: kind-ovndbs-${{ env.JOB_NAME }}-${{ github.run_id }}
-        path: /tmp/kind/ovndbs
-
-  coredump-stacktraces:
-    name: Collect coredump stack traces
-    if: always() && contains(needs.*.result, 'failure')
-    continue-on-error: true
-    runs-on: ubuntu-24.04
-    timeout-minutes: 120
-    needs:
-      - ovn-upgrade-e2e
-      - e2e
-      - e2e-dual-conversion
-    steps:
-    - name: Check out code
-      uses: actions/checkout@v6
-      with:
-        persist-credentials: false
-
-    - name: Free up disk space
-      continue-on-error: true
-      timeout-minutes: 10
-      uses: ./.github/actions/free-disk-space
-
-    - name: Download coredumps from failed E2E lanes
-      uses: actions/download-artifact@v8
-      with:
-        pattern: coredumps-*
-        path: /tmp/coredumps
-
-    - name: Extract and print coredump stack traces
-      continue-on-error: true
-      timeout-minutes: 90
-      run: ./contrib/coredump/collect-stacktraces.sh /tmp/coredumps /tmp/stacktraces
-
-    - name: Upload combined coredump stack traces
-      if: always()
-      continue-on-error: true
-      timeout-minutes: 5
-      uses: actions/upload-artifact@v7
-      with:
-        name: coredump-stacktraces-${{ github.run_id }}
-        path: /tmp/stacktraces
-        if-no-files-found: ignore
+#  coredump-stacktraces:
+#    name: Collect coredump stack traces
+#    if: always() && contains(needs.*.result, 'failure')
+#    continue-on-error: true
+#    runs-on: ubuntu-24.04
+#    timeout-minutes: 120
+#    needs:
+#      - ovn-upgrade-e2e
+#      - e2e
+#      - e2e-dual-conversion
+#    steps:
+#    - name: Check out code
+#      uses: actions/checkout@v6
+#      with:
+#        persist-credentials: false
+#
+#    - name: Free up disk space
+#      continue-on-error: true
+#      timeout-minutes: 10
+#      uses: ./.github/actions/free-disk-space
+#
+#    - name: Download coredumps from failed E2E lanes
+#      uses: actions/download-artifact@v8
+#      with:
+#        pattern: coredumps-*
+#        path: /tmp/coredumps
+#
+#    - name: Extract and print coredump stack traces
+#      continue-on-error: true
+#      timeout-minutes: 90
+#      run: ./contrib/coredump/collect-stacktraces.sh /tmp/coredumps /tmp/stacktraces
+#
+#    - name: Upload combined coredump stack traces
+#      if: always()
+#      continue-on-error: true
+#      timeout-minutes: 5
+#      uses: actions/upload-artifact@v7
+#      with:
+#        name: coredump-stacktraces-${{ github.run_id }}
+#        path: /tmp/stacktraces
+#        if-no-files-found: ignore

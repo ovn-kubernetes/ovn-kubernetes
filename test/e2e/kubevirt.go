@@ -2459,16 +2459,14 @@ runcmd:
 			Expect(virtClient.LoginToFedora(vmi, "fedora", "fedora")).To(Succeed(), step)
 
 			By("creating server pods")
-			nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.Background(), fr.ClientSet, 3)
+			nodes, err := e2enode.GetReadySchedulableNodes(context.Background(), fr.ClientSet)
 			Expect(err).NotTo(HaveOccurred())
+			Expect(nodes.Items).NotTo(BeEmpty())
 			var testNodes []corev1.Node
-			// Exclude the VM's source node: an iperf server on that node loses connectivity after migration
-			// because a stale OVN FDB entry directs traffic to the disabled/addressless source LSP instead
-			// of the underlay. A defect in the iperf3 downtime detector can make this persistent failure
-			// appear intermittent. Ref: https://redhat.atlassian.net/browse/FDP-4420
-			// TODO: remove this node filtering once the OVN bug is resolved.
+			// TODO: remove this node filtering
+			// connectivity check from the migration source node, to verify OVN fix work as expected
 			for _, node := range nodes.Items {
-				if node.Name != vmi.Status.NodeName {
+				if node.Name == vmi.Status.NodeName {
 					testNodes = append(testNodes, node)
 				}
 			}
