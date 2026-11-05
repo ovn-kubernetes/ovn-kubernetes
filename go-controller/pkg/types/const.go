@@ -292,6 +292,8 @@ const (
 	UDNEnabledServiceExternalID = OvnK8sPrefix + "/" + "udn-enabled-default-service"
 	// key for management port name, indicating the netdev link name associated with the given management port representor OVS interface
 	OvnManagementPortNameExternalID = OvnK8sPrefix + "/management-port-name"
+	// OvnOriginalManagementPortRepNameExternalID preserves the representor name before renaming it.
+	OvnOriginalManagementPortRepNameExternalID = "ovn-orig-mgmt-port-rep-name"
 	// EVPNVTEPExternalID is the external-id key used to tag OVS ports with their EVPN VTEP name
 	EVPNVTEPExternalID = "evpn-vtep"
 	// RequiredUDNNamespaceLabel is the required namespace label for enabling primary UDNs
