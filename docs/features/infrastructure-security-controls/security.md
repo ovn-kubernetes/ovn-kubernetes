@@ -44,6 +44,24 @@ either the old or new pod contains a protected annotation.
 The checks apply to admission requests; they do not retroactively validate
 annotations on existing pods.
 
+## Controller-owned node annotations
+
+An admission policy unconditionally protects these controller-owned node
+annotations, permitting only `ovnkube-cluster-manager` to add, change, or
+remove them:
+
+- `k8s.ovn.org/node-subnets`: pod subnet allocations.
+- `k8s.ovn.org/node-id`: node IDs used to derive network resources.
+- `k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids`: per-network
+  router port tunnel IDs.
+
+When hybrid overlay is enabled, the policy also protects
+`k8s.ovn.org/hybrid-overlay-node-subnet`, allowing the cluster manager plus
+configured `global.hybridOverlaySubnetWriters`.
+
+This protection covers node creation and updates through both `nodes` and
+`nodes/status`, and does not depend on the optional NodeIdentity service.
+
 ## Per-node security
 
 [Node identity](node-identity.md) gives each `ovnkube-node` a distinct client
