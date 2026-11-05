@@ -152,6 +152,13 @@ that is decoded by `go-controller/observability-lib`.
 `Sample_collector` entries are created and cleaned up as `ObservabilityConfig` resources are added, updated or removed, one collector per configured `CollectorID`/probability combination.
 When one of the supported objects (for example, network policy) is created, OVN-Kubernetes generates a nbdb `Sample` for it.
 
+ACLs that already exist when an `ObservabilityConfig` is added, changed or removed are updated by the observability
+manager itself. It finds every sampled ACL from the owner type recorded in the ACL's `external_ids`, resolves the
+collectors for that feature and namespace, and updates only the ACL's `sample_new`/`sample_est` columns. The controller
+that owns the ACL is not involved and the object it came from is not re-reconciled, so a configuration change never
+rebuilds port groups, address sets or the ACL rules themselves. ACLs that do not correspond to a Kubernetes object
+(node management port and UDN isolation ACLs, for instance) are covered the same way.
+
 To decode the samples into human-readable information, `go-controller/observability-lib` is used. It finds `Sample`
 by the attached `Sample.Metadata` and then gets corresponding db object (e.g. ACL) based on `Sampling_app.ID` and `Sample.UUID`.
 The message is then constructed using db object (e.g. ACL) `external_ids`.
