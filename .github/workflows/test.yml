@@ -23,9 +23,6 @@ env:
   ENABLE_COREDUMPS: true
   # Keep cluster deployment and persistent-IP test selection in sync.
   OVN_ENABLE_PERSISTENT_IPS: true
-  # This skips tests tagged as Serial for most lanes
-  # Serial tests are run in a dedicated lane
-  PARALLEL: true
 
   # This must be a directory
   CI_IMAGE_CACHE: tmp/image_cache/
@@ -624,7 +621,7 @@ jobs:
         # target: ["shard-conformance", "no-uplink", "control-plane", "multi-homing", "node-ip-mac-migration",
         #          "external-gateway", "kv-live-migration", "network-segmentation",
         #          "network-segmentation-dynamic", "bgp", "bgp-no-overlay", "bgp-no-overlay-dynamic", "bgp-loose-isolation",
-        #          "evpn", "traffic-flow-test-only", "tools", "serial"]
+        #          "evpn", "traffic-flow-test-only", "tools"]
         #         shard-conformance: hybrid-overlay = multicast-enable = emptylb-enable = false
         #         control-plane: hybrid-overlay = multicast-enable = emptylb-enable = true
         #         targets ending in "-dynamic" run with dynamic UDN allocation enabled
@@ -682,7 +679,6 @@ jobs:
           - {"target": "evpn", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "evpn": "enable-evpn"}
           - {"target": "traffic-flow-test-only", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged", "traffic-flow-tests": "1-24", "network-segmentation": "enable-network-segmentation"}
           - {"target": "tools", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "SnatGW", "second-bridge": "1br", "cni-mode": "privileged", "network-segmentation": "enable-network-segmentation"}
-          - {"target": "serial", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "cni-mode": "privileged"}
     needs: [ changes, build-pr, build-pr-ubuntu ]
     if: ${{ !cancelled() && needs.changes.outputs.run_ci == 'true' }}
     env:
@@ -720,8 +716,6 @@ jobs:
       ENABLE_UPLINK: "${{ startsWith(matrix.target, 'network-segmentation') || matrix.network-segmentation == 'enable-network-segmentation' }}"
       ENABLE_PRE_CONF_UDN_ADDR: "${{ startsWith(matrix.target, 'network-segmentation') || matrix.network-segmentation == 'enable-network-segmentation' }}"
       ADVERTISED_UDN_ISOLATION_MODE: "${{ matrix.advertised-udn-isolation-mode }}"
-      # Managed BGP tests change the shared template and must run serially.
-      PARALLEL: "${{ matrix.target != 'serial' && matrix.target != 'bgp-managed' }}"
       OVN_UNPRIVILEGED_MODE: "${{ matrix.cni-mode == 'unprivileged' }}"
       MULTI_POD_SUBNET: true
       DYNAMIC_UDN_ALLOCATION: "${{ endsWith(matrix.target, '-dynamic') }}"
@@ -891,9 +885,10 @@ jobs:
           make -C test control-plane WHAT="EVPN"
         elif [ "${{ matrix.target }}" == "bgp" ] || [ "${{ matrix.target }}" == "bgp-no-overlay" ] || [ "${{ matrix.target }}" == "bgp-no-overlay-dynamic" ] || [ "${{ matrix.target }}" == "bgp-loose-isolation" ]; then
           make -C test control-plane
-        elif [ "${{ matrix.target }}" == "serial" ] || [ "${{ matrix.target }}" == "bgp-managed" ]; then
-          # Run the Serial suite with the environment's compatibility filters.
-          make -C test control-plane WHAT=Serial
+        elif [ "${{ matrix.target }}" == "bgp-managed" ]; then
+          # Managed routing deploys no external FRR router or bgpnet server, so
+          # only run the specs that target managed BGP and node restarts.
+          make -C test control-plane WHAT="BGP: managed self-peer filtering|Node Shutdown and Startup"
         elif [ "${{ matrix.target }}" == "tools" ]; then
           make -C go-controller build
           make -C test tools

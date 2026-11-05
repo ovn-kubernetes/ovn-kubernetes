@@ -22,10 +22,6 @@ env:
   KIND_CLUSTER_NAME: ovn
   KIND_INSTALL_INGRESS: true
   KIND_ALLOW_SYSTEM_WRITES: true
-  # This skips tests tagged as Serial for most lanes
-  # Serial tests are run in a dedicated lane
-  PARALLEL: true
-
   # This must be a directory
   CI_IMAGE_CACHE: tmp/image_cache/
   CI_IMAGE_BASE_TAR: image-base.tar
@@ -55,7 +51,7 @@ jobs:
       fail-fast: false
       matrix:
         # Valid options are:
-        # target: ["shard-conformance", "control-plane", "multi-homing", "node-ip-mac-migration", "serial"]
+        # target: ["shard-conformance", "control-plane", "multi-homing", "node-ip-mac-migration"]
         #         shard-conformance: hybrid-overlay = multicast-enable = emptylb-enable = false
         #         control-plane: hybrid-overlay = multicast-enable = emptylb-enable = true
         # perf-test: ["all","kubelet-density-cni", "udn-density-l2-noPods", "cudn-density-l2-noPods", "udn-density-l2-pods", "cudn-density-l2-pods-netpol", "udn-density-l2-pods-netpol", "udn-density-l3-pods-netpol"]
@@ -102,8 +98,6 @@ jobs:
       ENABLE_PRE_CONF_UDN_ADDR: "${{ matrix.target == 'network-segmentation' || matrix.network-segmentation == 'enable-network-segmentation' }}"
       ENABLE_NETWORK_CONNECT: "${{ matrix.target == 'network-segmentation' }}"
       ADVERTISED_UDN_ISOLATION_MODE: "${{ matrix.advertised-udn-isolation-mode }}"
-      # Override PARALLEL=true for Serial tests target to run Serial tests
-      PARALLEL: "${{ matrix.target != 'serial' }}"
       OVN_UNPRIVILEGED_MODE: "${{ matrix.cni-mode == 'unprivileged' }}"
       MULTI_POD_SUBNET: true
       # Performance test specific settings
