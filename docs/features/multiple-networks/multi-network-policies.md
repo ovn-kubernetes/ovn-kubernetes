@@ -106,6 +106,8 @@ translates the policy. The rules are:
   contained in `cidr`, and must be a strict subset of it.
 - A CIDR with host bits set, such as `10.10.1.42/24`, is accepted and
   canonicalized to its network address, `10.10.1.0/24`.
+- IPv4-mapped IPv6 values, such as `::ffff:10.10.1.42`, are not allowed, as they are
+  for `NetworkPolicy` since Kubernetes 1.36.
 
 A peer that fails validation is **ignored**, not rejected: the policy is still
 applied without that peer, and a warning is logged by `ovnkube-controller`

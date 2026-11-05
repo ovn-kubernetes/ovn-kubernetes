@@ -71,19 +71,24 @@ func (bsnc *BaseUserDefinedNetworkController) shouldApplyMultiPolicy(mpolicy *mn
 // by adding a /32 or /128 mask depending on the IP version.
 // MultiNetworkPolicy doesn't have CIDR validation, so a bare IP used to work
 // before the validation was added since OVN match operands accept bare IPs.
+// IPv4-mapped IPv6 values are rejected, like the API server does for NetworkPolicy.
 func parseCIDROrIP(value string) (*net.IPNet, error) {
-	if _, ipNet, err := net.ParseCIDR(value); err == nil {
-		return ipNet, nil
+	ip, ipNet, err := net.ParseCIDR(value)
+	if err != nil {
+		ip = net.ParseIP(value)
+		if ip == nil {
+			return nil, fmt.Errorf("%q is neither a CIDR nor an IP address", value)
+		}
+		bits := 32
+		if ip.To4() == nil {
+			bits = 128
+		}
+		ipNet = &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)}
 	}
-	ip := net.ParseIP(value)
-	if ip == nil {
-		return nil, fmt.Errorf("%q is neither a CIDR nor an IP address", value)
+	if ip.To4() != nil && strings.Contains(value, ":") {
+		return nil, fmt.Errorf("%q is an IPv4-mapped IPv6 address, which is not supported", value)
 	}
-	bits := 32
-	if ip.To4() == nil {
-		bits = 128
-	}
-	return &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)}, nil
+	return ipNet, nil
 }
 
 // convertMultiNetPolicyIPBlock validates the ipBlock the same way the API server
