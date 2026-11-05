@@ -88,7 +88,8 @@ func TestMain(m *testing.M) {
 		os.Getenv("OVN_ENABLE_EX_GW_NETWORK_BRIDGE") == "true" {
 		deploymentconfig.Get().AddRequiredImage(api.Netshoot)
 	}
-	if os.Getenv("ENABLE_ROUTE_ADVERTISEMENTS") == "true" {
+	if os.Getenv("ENABLE_ROUTE_ADVERTISEMENTS") == "true" ||
+		os.Getenv("OVN_ENABLE_EX_GW_NETWORK_BRIDGE") == "true" {
 		deploymentconfig.Get().AddRequiredImage(api.FRR)
 	}
 	if os.Getenv("KIND_INSTALL_METALLB") == "true" {

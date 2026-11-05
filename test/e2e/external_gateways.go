@@ -35,12 +35,9 @@ import (
 	"k8s.io/kubernetes/test/e2e/framework/skipper"
 )
 
-// This is the image used for the containers acting as externalgateways, built
-// out from the e2e/images/Dockerfile.frr dockerfile
 const (
-	externalContainerImage = "quay.io/trozet/ovnkbfdtest:0.3"
-	defaultPolicyName      = "default-route-policy"
-	anyLink                = "any"
+	defaultPolicyName = "default-route-policy"
+	anyLink           = "any"
 )
 
 // GatewayRemovalType defines ways to remove pod as external gateway
@@ -225,15 +222,7 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 					gwIP := addresses.targetIPs[0]
 					success := false
 					for i := 0; i < singleTargetRetries; i++ {
-						args := []string{"exec", srcPingPodName, "--"}
-						if protocol == "tcp" {
-							args = append(args, "bash", "-c", fmt.Sprintf("echo | nc -w 1 %s %d", gwIP, gwPort))
-						} else {
-							args = append(args, "bash", "-c", fmt.Sprintf("echo | nc -w 1 -u %s %d", gwIP, gwPort))
-						}
-						res, err := e2ekubectl.RunKubectl(f.Namespace.Name, args...)
-						framework.ExpectNoError(err, "failed to reach %s (%s)", gwIP, protocol)
-						hostname := strings.TrimSuffix(res, "\n")
+						hostname := pokeHostnameViaNC(srcPingPodName, f.Namespace.Name, protocol, gwIP, gwPort)
 						if hostname != "" {
 							returnedHostNames[hostname] = struct{}{}
 						}
@@ -283,7 +272,7 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 						res, err := infraprovider.Get().ExecExternalContainerCommand(c, []string{"hostname"})
 						framework.ExpectNoError(err, "failed to run hostname in %s", c)
 						hostname := strings.TrimSuffix(res, "\n")
-						res, err = infraprovider.Get().ExecExternalContainerCommand(c, []string{"hostname", "-I"})
+						res, err = infraprovider.Get().ExecExternalContainerCommand(c, []string{"hostname", "-i"})
 						framework.ExpectNoError(err, "failed to run hostname in %s", c)
 						ips := strings.TrimSuffix(res, "\n")
 						framework.Logf("Hostname for %s is %s, with IP addresses: %s", c, hostname, ips)
@@ -353,8 +342,9 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 						_, err = infraprovider.Get().ExecExternalContainerCommand(gateway, []string{"ndptool", "-t", "na", "-U",
 							"-i", infraprovider.Get().ExternalContainerPrimaryInterfaceName(), "-T", gatewayContainerNetworkInfo.IPv6, "send"})
 					} else {
-						_, err = infraprovider.Get().ExecExternalContainerCommand(gateway, []string{"arping", "-U", gatewayContainerNetworkInfo.IPv4,
-							"-I", infraprovider.Get().ExternalContainerPrimaryInterfaceName(), "-c", "1", "-s", gatewayContainerNetworkInfo.IPv4})
+						_, err = infraprovider.Get().ExecExternalContainerCommand(gateway, []string{"arping", "-U",
+							"-I", infraprovider.Get().ExternalContainerPrimaryInterfaceName(), "-c", "1", "-s", gatewayContainerNetworkInfo.IPv4,
+							gatewayContainerNetworkInfo.IPv4})
 					}
 					framework.ExpectNoError(err, "arp / nd must succeed")
 					time.Sleep(1 * time.Second)
@@ -1263,9 +1253,9 @@ func setupGatewayContainers(f *framework.Framework, providerCtx infraapi.Context
 
 	var err error
 	externalContainer1 := infraapi.ExternalContainer{Name: getContainerName(container1Template, uint16(gwTCPPort)),
-		Image: externalContainerImage, Network: network, CmdArgs: []string{}, ExtPort: uint16(gwTCPPort)}
+		Image: images.FRR(), Network: network, CmdArgs: []string{"sleep", "infinity"}, ExtPort: uint16(gwTCPPort)}
 	externalContainer2 := infraapi.ExternalContainer{Name: getContainerName(container2Template, uint16(gwTCPPort)),
-		Image: externalContainerImage, Network: network, CmdArgs: []string{}, ExtPort: uint16(gwTCPPort)}
+		Image: images.FRR(), Network: network, CmdArgs: []string{"sleep", "infinity"}, ExtPort: uint16(gwTCPPort)}
 
 	gwContainers := []infraapi.ExternalContainer{externalContainer1, externalContainer2}
 	addressesv4 := gatewayTestIPs{targetIPs: make([]string, 0)}
@@ -1278,6 +1268,7 @@ func setupGatewayContainers(f *framework.Framework, providerCtx infraapi.Context
 		gwContainers = []infraapi.ExternalContainer{externalContainer1}
 		externalContainer1, err = providerCtx.CreateExternalContainer(externalContainer1)
 		framework.ExpectNoError(err, "failed to create external container: %s", externalContainer1.String())
+		prepareExternalGatewayContainer(externalContainer1)
 		providerCtx.AddCleanUpFn(func() error {
 			return providerCtx.DeleteExternalContainer(externalContainer1)
 		})
@@ -1297,6 +1288,7 @@ func setupGatewayContainers(f *framework.Framework, providerCtx infraapi.Context
 		for i, gwContainer := range gwContainers {
 			gwContainers[i], err = providerCtx.CreateExternalContainer(gwContainer)
 			framework.ExpectNoError(err, "failed to create external container: %s", gwContainer.String())
+			prepareExternalGatewayContainer(gwContainers[i])
 			if gwContainers[i].GetIPv4() != "" {
 				addressesv4.gatewayIPs = append(addressesv4.gatewayIPs, gwContainers[i].GetIPv4())
 			}
@@ -1371,11 +1363,11 @@ func setupGatewayContainers(f *framework.Framework, providerCtx infraapi.Context
 	// This sets up a listener that replies with the hostname, both on tcp and on udp
 	setupListenersOrDie := func(container infraapi.ExternalContainer, gwAddress string) {
 		_, err = infraprovider.Get().ExecExternalContainerCommand(container,
-			[]string{"bash", "-c", fmt.Sprintf("while true; do echo $(hostname) | nc -l -u %s %d; done &", gwAddress, gwUDPPort)})
+			[]string{"bash", "-c", fmt.Sprintf("while true; do echo $(hostname) | nc -l -u -W 1 %s %d; done &", gwAddress, gwUDPPort)})
 		framework.ExpectNoError(err, "failed to setup UDP listener for %s on %s", gwAddress, container)
 
 		_, err = infraprovider.Get().ExecExternalContainerCommand(container,
-			[]string{"bash", "-c", fmt.Sprintf("while true; do echo $(hostname) | nc -l %s %d; done &", gwAddress, gwTCPPort)})
+			[]string{"bash", "-c", fmt.Sprintf("while true; do echo $(hostname) | nc -l -N %s %d; done &", gwAddress, gwTCPPort)})
 		framework.ExpectNoError(err, "failed to setup TCP listener for %s on %s", gwAddress, container)
 	}
 
@@ -1573,9 +1565,10 @@ func reachPodFromGateway(srcContainer infraapi.ExternalContainer, targetAddress,
 	ginkgo.By(fmt.Sprintf("Checking that %s can reach the pod", srcContainer))
 	var cmd []string
 	if protocol == "tcp" {
-		cmd = []string{"curl", "-s", fmt.Sprintf("http://%s/hostname", net.JoinHostPort(targetAddress, targetPort))}
+		cmd = []string{"curl", "-s", "--connect-timeout", "5", "-m", "10",
+			fmt.Sprintf("http://%s/hostname", net.JoinHostPort(targetAddress, targetPort))}
 	} else {
-		cmd = []string{"bash", "-c", "cat <(echo hostname) <(sleep 1) | nc -u " + targetAddress + " " + targetPort}
+		cmd = []string{"bash", "-c", "cat <(echo hostname) <(sleep 1) | nc -u -w 1 " + targetAddress + " " + targetPort}
 	}
 	res, err := infraprovider.Get().ExecExternalContainerCommand(srcContainer, cmd)
 	framework.ExpectNoError(err, "Failed to reach pod %s (%s) from external container %s", targetAddress, protocol, srcContainer)
@@ -1778,7 +1771,7 @@ func hostNameForExternalContainer(container infraapi.ExternalContainer) string {
 func pokeHostnameViaNC(podName, namespace, protocol, target string, port int) string {
 	args := []string{"exec", podName, "--"}
 	if protocol == "tcp" {
-		args = append(args, "bash", "-c", fmt.Sprintf("echo | nc -w 1 %s %d", target, port))
+		args = append(args, "bash", "-c", fmt.Sprintf("echo | nc -w 1 -N %s %d", target, port))
 	} else {
 		args = append(args, "bash", "-c", fmt.Sprintf("echo | nc -w 1 -u %s %d", target, port))
 	}
@@ -1816,7 +1809,21 @@ func pokeConntrackEntries(nodeName, podIP, protocol string, patterns []string) i
 	return numOfConnEntries
 }
 
+// prepareExternalGatewayContainer installs packages the official FRR image
+// does not include but that external-gateway e2e needs.
+func prepareExternalGatewayContainer(container infraapi.ExternalContainer) {
+	_, err := infraprovider.Get().ExecExternalContainerCommand(container, []string{
+		"apk", "add", "--no-cache", "tcpdump", "iputils", "iproute2", "netcat-openbsd", "curl", "libndp",
+	})
+	framework.ExpectNoError(err, "failed to install gateway tools on external gateway %s", container.Name)
+}
+
 func setupBFDOnExternalContainer(network infraapi.Network, container infraapi.ExternalContainer, nodes []corev1.Node) {
+	_, err := infraprovider.Get().ExecExternalContainerCommand(container, []string{
+		"sed", "-i", "s/^bfdd=no/bfdd=yes/", "/etc/frr/daemons",
+	})
+	framework.ExpectNoError(err, "failed to enable bfdd in %s", container)
+
 	// we set a bfd peer for each address of each node
 	for _, node := range nodes {
 		// we must use container network for second bridge scenario
@@ -1852,7 +1859,7 @@ EOF
 			framework.ExpectNoError(err, "failed to setup FRR peer %s in %s", a, container)
 		}
 	}
-	_, err := infraprovider.Get().ExecExternalContainerCommand(container, []string{"/usr/libexec/frr/frrinit.sh", "start"})
+	_, err = infraprovider.Get().ExecExternalContainerCommand(container, []string{"/usr/lib/frr/frrinit.sh", "start"})
 	framework.ExpectNoError(err, "failed to start frr in %s", container)
 }
 
