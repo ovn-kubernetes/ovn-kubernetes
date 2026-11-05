@@ -69,7 +69,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", feature.Networ
 						By("creating the deployment")
 						var port uint16 = 80
 						if isHostNetwork {
-							port = infraprovider.Get().GetK8HostPort()
+							port = infraprovider.Get().GetK8HostPort(f)
 						}
 						deployment := e2edeployment.NewDeployment("test-deployment", replicas, map[string]string{"app": "test"}, "agnhost", images.AgnHost(), appsv1.RollingUpdateDeploymentStrategyType)
 						deployment.Namespace = f.Namespace.Name
