@@ -839,9 +839,18 @@ func ExecCommandInContainerWithFullOutput(f *framework.Framework, namespace, pod
 	return e2epod.ExecWithOptions(f, options)
 }
 
+// ovnControllerACLLogLines returns ovn-controller log lines that contain acl_log for the given node.
+func ovnControllerACLLogLines(targetNodeName string) (string, error) {
+	logPath := deploymentconfig.Get().OVNControllerLogPath()
+	// grep exits 1 when there are no matches; treat that as an empty result, not an error.
+	script := fmt.Sprintf("test -r %s || exit 2; grep acl_log %s || test $? -eq 1",
+		logPath, logPath)
+	return infraprovider.Get().ExecK8NodeCommand(targetNodeName, []string{"sh", "-c", script})
+}
+
 func assertACLLogs(targetNodeName string, policyNameRegex string, expectedACLVerdict string, expectedACLSeverity string) (bool, error) {
 	framework.Logf("collecting the ovn-controller logs for node: %s", targetNodeName)
-	targetNodeLog, err := infraprovider.Get().ExecK8NodeCommand(targetNodeName, []string{"grep", "acl_log", deploymentconfig.Get().OVNControllerLogPath()})
+	targetNodeLog, err := ovnControllerACLLogLines(targetNodeName)
 	if err != nil {
 		return false, fmt.Errorf("error accessing logs in node %s: %v", targetNodeName, err)
 	}
@@ -1137,7 +1146,7 @@ func countACLLogs(targetNodeName string, policyNameRegex string, expectedACLVerd
 	count := 0
 
 	framework.Logf("collecting the ovn-controller logs for node: %s", targetNodeName)
-	targetNodeLog, err := infraprovider.Get().ExecK8NodeCommand(targetNodeName, []string{"cat", deploymentconfig.Get().OVNControllerLogPath()})
+	targetNodeLog, err := ovnControllerACLLogLines(targetNodeName)
 	if err != nil {
 		return 0, fmt.Errorf("error accessing logs in node %s: %v", targetNodeName, err)
 	}
