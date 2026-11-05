@@ -221,6 +221,9 @@ var _ = Describe("convertMultiNetPolicyToNetPolicy", func() {
 			{CIDR: "10.10.0.0/16", Except: []string{"10.10.1.0/24, 0.0.0.0/0"}},
 			{CIDR: "10.10.0.0/16", Except: []string{"10.20.0.0/24"}},
 			{CIDR: "10.10.0.0/16", Except: []string{"10.0.0.0/8"}},
+			{CIDR: "::ffff:10.10.0.0/112"},
+			{CIDR: "::ffff:10.10.0.0/80"},
+			{CIDR: "10.10.0.0/16", Except: []string{"::ffff:10.10.1.42"}},
 		} {
 			valid := v1beta1.MultiNetworkPolicyPeer{IPBlock: &v1beta1.IPBlock{CIDR: "10.10.0.0/16"}}
 			invalid := v1beta1.MultiNetworkPolicyPeer{IPBlock: ipBlock}
