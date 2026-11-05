@@ -52,6 +52,8 @@ func (s routeStream) RouteListFilteredIter(family int, filter *netlink.Route, ma
 	return s.err
 }
 
+// TestBGPRoutesDiscardsInterruptedDump ensures receive errors discard partial
+// results so an incomplete dump cannot withdraw valid routes from OVN.
 func TestBGPRoutesDiscardsInterruptedDump(t *testing.T) {
 	_, dst, _ := net.ParseCIDR("192.0.2.0/24")
 	for _, dumpErr := range []error{netlink.ErrDumpInterrupted, errors.New("receive failed")} {
@@ -65,6 +67,8 @@ func TestBGPRoutesDiscardsInterruptedDump(t *testing.T) {
 	}
 }
 
+// TestBGPRoutesStreamsBothFamilies checks IPv4 and IPv6 streaming, multipath
+// uplink selection and exclusion of pod subnets without kernel access.
 func TestBGPRoutesStreamsBothFamilies(t *testing.T) {
 	_, v4, _ := net.ParseCIDR("192.0.2.0/24")
 	_, v6, _ := net.ParseCIDR("2001:db8::/64")
@@ -85,6 +89,7 @@ func TestBGPRoutesStreamsBothFamilies(t *testing.T) {
 	}
 }
 
+// BenchmarkBGPRoutesStreaming measures importing 10,000 routes from an iterator.
 func BenchmarkBGPRoutesStreaming(b *testing.B) {
 	routes := make([]netlink.Route, 10000)
 	for i := range routes {
