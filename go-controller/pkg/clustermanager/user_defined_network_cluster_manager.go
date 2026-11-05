@@ -25,9 +25,10 @@ import (
 // by network manager to create and delete network controllers.
 type userDefinedNetworkClusterManager struct {
 	// networkManager creates and deletes network controllers
-	networkManager networkmanager.Interface
-	ovnClient      *util.OVNClusterManagerClientset
-	watchFactory   *factory.WatchFactory
+	networkManager       networkmanager.Interface
+	ovnClient            *util.OVNClusterManagerClientset
+	watchFactory         *factory.WatchFactory
+	podUpdateCoordinator *util.PodAnnotationUpdateCoordinator
 
 	// event recorder used to post events to k8s
 	recorder record.EventRecorder
@@ -45,11 +46,12 @@ func newUserDefinedNetworkClusterManager(
 ) (*userDefinedNetworkClusterManager, error) {
 	klog.Infof("Creating user-defined network cluster manager")
 	sncm := &userDefinedNetworkClusterManager{
-		ovnClient:      ovnClient,
-		watchFactory:   wf,
-		networkManager: networkManager,
-		recorder:       recorder,
-		nodeReconciler: nodeReconciler,
+		ovnClient:            ovnClient,
+		podUpdateCoordinator: util.NewPodAnnotationUpdateCoordinator(ovnClient.KubeClient),
+		watchFactory:         wf,
+		networkManager:       networkManager,
+		recorder:             recorder,
+		nodeReconciler:       nodeReconciler,
 	}
 	return sncm, nil
 }
@@ -80,6 +82,7 @@ func (sncm *userDefinedNetworkClusterManager) NewNetworkController(nInfo util.Ne
 		sncm.errorReporter,
 		sncm.nodeReconciler,
 	)
+	sncc.podUpdateCoordinator = sncm.podUpdateCoordinator
 	return sncc, nil
 }
 
