@@ -6,6 +6,7 @@ package util
 import (
 	"fmt"
 	"net"
+	"slices"
 	"testing"
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
@@ -2469,6 +2470,56 @@ func TestAreNetworksCompatible(t *testing.T) {
 				test.expectationDescription,
 			)
 		})
+	}
+}
+
+func TestNetworkSubnetReconciliation(t *testing.T) {
+	const (
+		podSubnetV4 = "10.128.0.0/16"
+		podSubnetV6 = "fd00:10::/48"
+		otherSubnet = "10.129.0.0/16"
+	)
+	v4 := config.CIDRNetworkEntry{CIDR: ovntest.MustParseIPNet(podSubnetV4), HostSubnetLength: 24}
+	v6 := config.CIDRNetworkEntry{CIDR: ovntest.MustParseIPNet(podSubnetV6), HostSubnetLength: 64}
+	other := config.CIDRNetworkEntry{CIDR: ovntest.MustParseIPNet(otherSubnet), HostSubnetLength: 24}
+	differentHostLength := config.CIDRNetworkEntry{CIDR: v4.CIDR, HostSubnetLength: 25}
+	v4Mapped := config.CIDRNetworkEntry{
+		CIDR: &net.IPNet{IP: v4.CIDR.IP.To16(), Mask: v4.CIDR.Mask}, HostSubnetLength: 24,
+	}
+	tests := []struct {
+		name        string
+		left, right []config.CIDRNetworkEntry
+		equal       bool
+	}{
+		{name: "nil", equal: true},
+		{name: "empty", left: []config.CIDRNetworkEntry{}, right: []config.CIDRNetworkEntry{}, equal: true},
+		{name: "nil versus empty", right: []config.CIDRNetworkEntry{}},
+		{name: "same subnet", left: []config.CIDRNetworkEntry{v4}, right: []config.CIDRNetworkEntry{v4}, equal: true},
+		{name: "IPv4 representation", left: []config.CIDRNetworkEntry{v4}, right: []config.CIDRNetworkEntry{v4Mapped}, equal: true},
+		{name: "different subnet", left: []config.CIDRNetworkEntry{v4}, right: []config.CIDRNetworkEntry{other}},
+		{name: "different host prefix", left: []config.CIDRNetworkEntry{v4}, right: []config.CIDRNetworkEntry{differentHostLength}},
+		{name: "added subnet", left: []config.CIDRNetworkEntry{v4}, right: []config.CIDRNetworkEntry{v4, v6}},
+		{name: "reordered subnets", left: []config.CIDRNetworkEntry{v4, v6}, right: []config.CIDRNetworkEntry{v6, v4}, equal: true},
+	}
+	for _, topology := range []string{ovntypes.Layer2Topology, ovntypes.Layer3Topology, ovntypes.LocalnetTopology} {
+		for _, tt := range tests {
+			t.Run(topology+"/"+tt.name, func(t *testing.T) {
+				g := gomega.NewWithT(t)
+				left := &userDefinedNetInfo{topology: topology, mutableNetInfo: mutableNetInfo{subnets: tt.left}}
+				right := &userDefinedNetInfo{topology: topology, mutableNetInfo: mutableNetInfo{subnets: tt.right}}
+				leftBefore, rightBefore := slices.Clone(tt.left), slices.Clone(tt.right)
+				// Layer3 permits subnet changes (additions only, enforced by the
+				// CRD), and Subnets() normalizes an empty slice to nil, so a nil
+				// and an empty subnet list also compare compatible.
+				compatible := tt.equal || topology == ovntypes.Layer3Topology || len(tt.left) == 0 && len(tt.right) == 0
+				g.Expect(AreNetworksCompatible(left, right)).To(gomega.Equal(compatible),
+					"subnet compatibility must preserve the topology's update rules")
+				g.Expect(DoesNetworkNeedReconciliation(left, right)).To(gomega.Equal(!tt.equal),
+					"only changes in subnet values or duplicate counts should require reconciliation")
+				g.Expect(left.subnets).To(gomega.Equal(leftBefore), "comparison must not reorder the current network's subnets")
+				g.Expect(right.subnets).To(gomega.Equal(rightBefore), "comparison must not reorder the desired network's subnets")
+			})
+		}
 	}
 }
 
