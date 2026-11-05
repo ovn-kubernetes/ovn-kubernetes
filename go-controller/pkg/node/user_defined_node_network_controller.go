@@ -143,6 +143,8 @@ func (nc *UserDefinedNodeNetworkController) shouldReconcileNetworkChange(old, ne
 		return true
 	case util.IsPodNetworkAdvertisedAtNodeDefaultVRF(old, nc.name) != util.IsPodNetworkAdvertisedAtNodeDefaultVRF(new, nc.name):
 		return true
+	case old.IsBGPGateway() != new.IsBGPGateway():
+		return true
 	}
 	return false
 }

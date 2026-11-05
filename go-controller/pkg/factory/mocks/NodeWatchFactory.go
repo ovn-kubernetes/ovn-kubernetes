@@ -12,6 +12,7 @@ import (
 	v1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/informers/externalversions/adminpolicybasedroute/v1"
 	clusternetworkconnectv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/informers/externalversions/clusternetworkconnect/v1"
 	egressipv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/informers/externalversions/egressip/v1"
+	frrk8sv1beta1 "github.com/metallb/frr-k8s/pkg/client/informers/externalversions/api/v1beta1"
 	routeadvertisementsv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/informers/externalversions/routeadvertisements/v1"
 	v1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/informers/externalversions/uplink/v1alpha1"
 	userdefinednetworkv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/informers/externalversions/userdefinednetwork/v1"
@@ -774,6 +775,26 @@ func (_m *NodeWatchFactory) RouteAdvertisementsInformer() routeadvertisementsv1.
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(routeadvertisementsv1.RouteAdvertisementsInformer)
+		}
+	}
+
+	return r0
+}
+
+// FRRConfigurationsInformer provides a mock function with no fields
+func (_m *NodeWatchFactory) FRRConfigurationsInformer() frrk8sv1beta1.FRRConfigurationInformer {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for FRRConfigurationsInformer")
+	}
+
+	var r0 frrk8sv1beta1.FRRConfigurationInformer
+	if rf, ok := ret.Get(0).(func() frrk8sv1beta1.FRRConfigurationInformer); ok {
+		r0 = rf()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(frrk8sv1beta1.FRRConfigurationInformer)
 		}
 	}
 

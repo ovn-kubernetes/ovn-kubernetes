@@ -243,7 +243,8 @@ func (nc *DefaultNodeNetworkController) initRetryFrameworkForNode() {
 func (oc *DefaultNodeNetworkController) shouldReconcileNetworkChange(old, new util.NetInfo) bool {
 	wasPodNetworkAdvertisedAtNode := util.IsPodNetworkAdvertisedAtNode(old, oc.name)
 	isPodNetworkAdvertisedAtNode := util.IsPodNetworkAdvertisedAtNode(new, oc.name)
-	return wasPodNetworkAdvertisedAtNode != isPodNetworkAdvertisedAtNode
+	return wasPodNetworkAdvertisedAtNode != isPodNetworkAdvertisedAtNode ||
+		old.IsBGPGateway() != new.IsBGPGateway()
 }
 
 func (oc *DefaultNodeNetworkController) Reconcile(_ context.Context, netInfo util.NetInfo) error {

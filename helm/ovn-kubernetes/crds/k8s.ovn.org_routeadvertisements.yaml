@@ -544,10 +544,6 @@ spec:
             - nodeSelector
             type: object
             x-kubernetes-validations:
-            - message: If 'PodNetwork' is selected for advertisement, a 'nodeSelector'
-                can't be specified as it needs to be advertised on all nodes
-              rule: (!has(self.nodeSelector.matchLabels) && !has(self.nodeSelector.matchExpressions))
-                || !('PodNetwork' in self.advertisements)
             - message: Only DefaultNetwork or ClusterUserDefinedNetworks can be selected
               rule: '!self.networkSelectors.exists(i, i.networkSelectionType != ''DefaultNetwork''
                 && i.networkSelectionType != ''ClusterUserDefinedNetworks'')'
