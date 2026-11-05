@@ -689,6 +689,7 @@ jobs:
     needs: [ changes, build-pr, build-pr-ubuntu ]
     if: ${{ !cancelled() && needs.changes.outputs.run_ci == 'true' }}
     env:
+      FLAKE_ATTEMPTS: 0
       JOB_NAME: "${{ matrix.target }}-${{ matrix.gateway-mode }}-${{ matrix.ipfamily }}-${{ matrix.disable-snat-multiple-gws }}-${{ matrix.second-bridge }}-${{ matrix.cni-mode }}-${{ matrix.image_family || 'fedora' }}"
       OVN_HYBRID_OVERLAY_ENABLE: ${{ matrix.target == 'control-plane' && (matrix.ipfamily == 'ipv4' || matrix.ipfamily == 'dualstack' ) }}
       OVN_MULTICAST_ENABLE:  "${{ matrix.target == 'control-plane' || startsWith(matrix.target, 'network-segmentation') || startsWith(matrix.target, 'bgp') }}"
