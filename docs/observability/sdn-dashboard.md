@@ -6,11 +6,6 @@ This helm chart installs the dashboards for ovn-kubernetes. The dashboards are i
   - OVN K8S / Node Agent
   - OVN K8S / Cluster Manager
 
-```
-helm install sdn-dashboard sdn-dashboard/
-```
-
-
 ## Values
 
 <table>
@@ -49,10 +44,13 @@ Before installing this Helm chart, Prometheus and Grafana must be installed.
 ## Installing prometheus-grafana helm chart
 
 The [kube-prometheus-stack](https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack) helm chart installs prometheus and grafana.
+On a new cluster without a CNI, install OVN-Kubernetes first with
+`monitoring.enableServiceMonitor=false` (the default). The monitoring chart's
+pre-install admission Job requires working pod networking.
 
 ```
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack -n <desired_namespace> --set prometheusOperator.tls.enabled=false --set prometheusOperator.admissionWebhooks.enabled=false --set prometheusOperator.admissionWebhooks.patch.enabled=false
+helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack -n monitoring --create-namespace
 ```
 
 By default this chart installs additional, dependent charts:
@@ -60,14 +58,23 @@ By default this chart installs additional, dependent charts:
 - [prometheus-community/prometheus-node-exporter](https://github.com/prometheus-community/helm-charts/tree/main/charts/prometheus-node-exporter)
 - [grafana/grafana](https://github.com/grafana/helm-charts/tree/main/charts/grafana)
 
-After configuring Prometheus and Grafana and installing sdn-dashboard helm chart, ovn-kubernetes can be installed and the metrics will be scraped.
+From the repository root, install the dashboards in the same namespace:
+
+```
+helm install sdn-dashboard helm/sdn-dashboard -n monitoring
+```
+
+After installing kube-prometheus-stack, upgrade OVN-Kubernetes with
+`monitoring.enableServiceMonitor=true` to create the ServiceMonitors needed for
+metric scraping. The chart's default ServiceMonitor label,
+`release: kube-prometheus-stack`, matches the Prometheus release name used above.
 
 ## Port Forwarding to access Grafana and Prometheus UI
 
 ```
-kubectl -n <desired_namespace> port-forward deployment/kube-prometheus-stack-grafana 3000:3000 --address 0.0.0.0
+kubectl -n monitoring port-forward deployment/kube-prometheus-stack-grafana 3000:3000
 
-kubectl -n <desired_namespace> port-forward prometheus-kube-prometheus-stack-prometheus-0 9090:9090 --address 0.0.0.0
+kubectl -n monitoring port-forward prometheus-kube-prometheus-stack-prometheus-0 9090:9090
 ```
 
 ### Credentials to access the dashboard
