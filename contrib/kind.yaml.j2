@@ -48,6 +48,12 @@ kubeadmConfigPatches:
     kubeletExtraArgs:
       - name: "v"
         value: "{{ cluster_log_level }}"
+      - name: "cpu-manager-policy"
+        value: "static"
+      - name: "reserved-cpus"
+        value: "0-3"
+      - name: "topology-manager-policy"
+        value: "single-numa-node"
   ---
   kind: JoinConfiguration
   apiVersion: kubeadm.k8s.io/v1beta4
@@ -55,6 +61,12 @@ kubeadmConfigPatches:
     kubeletExtraArgs:
       - name: "v"
         value: "{{ cluster_log_level }}"
+      - name: "cpu-manager-policy"
+        value: "static"
+      - name: "reserved-cpus"
+        value: "0-3"
+      - name: "topology-manager-policy"
+        value: "single-numa-node"
 nodes:
  - role: control-plane
    kubeadmConfigPatches:
