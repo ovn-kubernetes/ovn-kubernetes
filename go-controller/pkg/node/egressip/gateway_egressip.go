@@ -457,16 +457,21 @@ func (g *BridgeEIPAddrManager) getAnnotationIPs() ([]net.IP, error) {
 
 // isOVNNetworkIP checks if the given IP belongs to the OVN (primary) network
 // Returns true if the IP is on the OVN network, false if it's on a secondary network
+//
+// Use GetNodeEIPConfig to resolve the primary network: on cloud platforms the subnet
+// that may host an EgressIP comes from the cloud egress IP config annotation, not the
+// node primary interface address, which some clouds set to a /32. This also matches
+// what the cluster manager uses to decide a node may host an EgressIP.
 func (g *BridgeEIPAddrManager) isOVNNetworkIP(ip net.IP) (bool, error) {
 	node, err := g.nodeLister.Get(g.nodeName)
 	if err != nil {
 		return false, fmt.Errorf("failed to get node %s: %v", g.nodeName, err)
 	}
-	nodePrimaryIPs, err := util.ParseNodePrimaryIfAddr(node)
+	eIPConfig, err := util.GetNodeEIPConfig(node)
 	if err != nil {
-		return false, fmt.Errorf("failed to parse node primary interface address for node %s: %v", g.nodeName, err)
+		return false, fmt.Errorf("failed to get egress IP config for node %s: %w", g.nodeName, err)
 	}
-	return util.IsOVNNetwork(nodePrimaryIPs, ip), nil
+	return util.IsOVNNetwork(eIPConfig, ip), nil
 }
 
 // parseAndValidateEIP parses and validates an EgressIP for this node
