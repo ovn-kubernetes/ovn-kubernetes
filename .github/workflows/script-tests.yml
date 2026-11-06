@@ -5,11 +5,17 @@ on:
     paths:
     - '.github/scripts/**'
     - '.github/workflows/script-tests.yml'
+    - '.github/workflows/test.yml'
+    - '.github/workflows/kind-dpu-offload.yml'
+    - '.github/workflows/area-merge.yml'
   push:
     branches: [master, release-*]
     paths:
     - '.github/scripts/**'
     - '.github/workflows/script-tests.yml'
+    - '.github/workflows/test.yml'
+    - '.github/workflows/kind-dpu-offload.yml'
+    - '.github/workflows/area-merge.yml'
   merge_group:
   workflow_dispatch:
 

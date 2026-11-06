@@ -34,6 +34,8 @@ module.exports = async ({ github, context, core }) => {
     commenter = comment.user.login.toLowerCase();
   } else if (context.eventName === 'check_suite') {
     const suite = context.payload.check_suite;
+    // Queue validation is owned by GitHub, not another request to merge a PR.
+    if (suite.head_branch?.startsWith('gh-readonly-queue/')) return;
     for (const pr of (suite.pull_requests || [])) {
       pullNumbers.push(pr.number);
     }
@@ -145,6 +147,7 @@ module.exports = async ({ github, context, core }) => {
 
     // For check_suite retries, find who previously ran /area-maintainer-approved
     let requester = commenter;
+    let requestComment = context.eventName === 'issue_comment' ? context.payload.comment : null;
     let allComments = null;
     if (!requester) {
       allComments = await fetchAllComments(prNumber);
@@ -155,6 +158,7 @@ module.exports = async ({ github, context, core }) => {
                    c.user.login.toLowerCase() !== prAuthor);
       if (mergeComment) {
         requester = mergeComment.user.login.toLowerCase();
+        requestComment = mergeComment;
       }
     }
 
@@ -224,6 +228,54 @@ module.exports = async ({ github, context, core }) => {
       continue;
     }
 
+    // Detect the target branch's queue rather than maintaining a second switch.
+    // A failed lookup must never select the direct-merge path.
+    let queueEnabled;
+    let queuePR;
+    try {
+      const { repository } = await github.graphql(`
+        query($owner: String!, $repo: String!, $branch: String!, $number: Int!) {
+          repository(owner: $owner, name: $repo) {
+            mergeQueue(branch: $branch) { id }
+            pullRequest(number: $number) {
+              id
+              headRefOid
+              baseRefName
+              mergeQueueEntry { id }
+              timelineItems(last: 1, itemTypes: [ADDED_TO_MERGE_QUEUE_EVENT, REMOVED_FROM_MERGE_QUEUE_EVENT]) {
+                nodes {
+                  ... on AddedToMergeQueueEvent { createdAt }
+                  ... on RemovedFromMergeQueueEvent { createdAt }
+                }
+              }
+            }
+          }
+        }
+      `, { ...context.repo, branch: pr.base.ref, number: prNumber });
+      queueEnabled = repository.mergeQueue !== null;
+      queuePR = repository.pullRequest;
+      if (queuePR.headRefOid !== pr.head.sha || queuePR.baseRefName !== pr.base.ref) {
+        throw new Error('PR head or target branch changed; run /area-maintainer-approved again');
+      }
+    } catch (e) {
+      core.setFailed(`Cannot determine merge queue state for PR #${prNumber}: ${e.message}`);
+      continue;
+    }
+
+    if (queueEnabled && queuePR.mergeQueueEntry) {
+      core.info(`PR #${prNumber} is already queued`);
+      continue;
+    }
+    // A waiting comment authorizes the initial enqueue only. A later CI event
+    // must not requeue a PR that failed validation or was deliberately removed.
+    if (queueEnabled && context.eventName === 'check_suite') {
+      const lastQueueEvent = queuePR.timelineItems.nodes[0];
+      if (lastQueueEvent && new Date(lastQueueEvent.createdAt) >= new Date(requestComment.created_at)) {
+        core.info(`PR #${prNumber} needs a new /area-maintainer-approved request after leaving the queue`);
+        continue;
+      }
+    }
+
     // Check CI status
     const ref = pr.head.sha;
 
@@ -267,6 +319,9 @@ module.exports = async ({ github, context, core }) => {
 
     for (const run of checkRuns) {
       if (run.name === 'area-merge') continue;
+      // These summaries are staged before becoming required at queue cutover.
+      // Continue checking all their underlying jobs in the meantime.
+      if (!queueEnabled && ['CI Summary', 'DPU CI Summary'].includes(run.name)) continue;
       if (run.status !== 'completed') {
         pendingChecks.push(run.name);
       } else if (run.conclusion !== 'success' && run.conclusion !== 'neutral' && run.conclusion !== 'skipped') {
@@ -327,7 +382,7 @@ module.exports = async ({ github, context, core }) => {
           repo: context.repo.repo,
           issue_number: prNumber,
           body: `${shaMarker}\nArea maintainer @${requester} has approved this PR via \`/area-maintainer-approved\`. ` +
-            `Waiting on CI checks to complete — will merge automatically when all checks pass.\n\n` +
+            `Waiting on CI checks to complete — will ${queueEnabled ? 'enqueue' : 'merge'} automatically when all checks pass.\n\n` +
             `Pending checks:\n` +
             pendingChecks.map(c => `- \`${c}\``).join('\n'),
         });
@@ -335,34 +390,49 @@ module.exports = async ({ github, context, core }) => {
       continue;
     }
 
-    // All checks passed, authorized — merge!
-    core.info(`All checks passed. Merging PR #${prNumber}`);
+    // All checks passed and the requester is authorized. GitHub still enforces
+    // branch protections, including native review requirements, at this step.
+    const operation = queueEnabled ? 'enqueue' : 'merge';
+    core.info(`All checks passed. Will ${operation} PR #${prNumber}`);
     try {
-      await github.rest.pulls.merge({
-        owner: context.repo.owner,
-        repo: context.repo.repo,
-        pull_number: prNumber,
-        sha: ref,
-        merge_method: 'merge',
-        commit_title: `Merge pull request #${prNumber} (/area-maintainer-approved by @${requester})`,
-      });
+      if (queueEnabled) {
+        await github.graphql(`
+          mutation($id: ID!, $sha: GitObjectID!) {
+            enqueuePullRequest(input: {pullRequestId: $id, expectedHeadOid: $sha}) {
+              mergeQueueEntry { id }
+            }
+          }
+        `, { id: queuePR.id, sha: ref });
+      } else {
+        await github.rest.pulls.merge({
+          owner: context.repo.owner,
+          repo: context.repo.repo,
+          pull_number: prNumber,
+          sha: ref,
+          merge_method: 'merge',
+          commit_title: `Merge pull request #${prNumber} (/area-maintainer-approved by @${requester})`,
+        });
+      }
 
       await github.rest.issues.createComment({
         owner: context.repo.owner,
         repo: context.repo.repo,
         issue_number: prNumber,
-        body: `PR merged by area maintainer @${requester} via \`/area-maintainer-approved\`.`,
+        body: queueEnabled
+          ? `PR queued by area maintainer @${requester} via \`/area-maintainer-approved\`. ` +
+            `GitHub will merge it after queue validation passes. If it is removed, review the failure and run the command again.`
+          : `PR merged by area maintainer @${requester} via \`/area-maintainer-approved\`.`,
       });
 
-      core.info(`Successfully merged PR #${prNumber}`);
+      core.info(`Successfully ${queueEnabled ? 'queued' : 'merged'} PR #${prNumber}`);
     } catch (e) {
-      core.setFailed(`Failed to merge PR #${prNumber}: ${e.message}`);
+      core.setFailed(`Failed to ${operation} PR #${prNumber}: ${e.message}`);
       await github.rest.issues.createComment({
         owner: context.repo.owner,
         repo: context.repo.repo,
         issue_number: prNumber,
-        body: `Failed to merge this PR: \`${e.message}\`\n\n` +
-          `A repo maintainer may need to merge manually.`,
+        body: `Failed to ${operation} this PR: \`${e.message}\`\n\n` +
+          `A repo maintainer may need to investigate.`,
       });
     }
   }
