@@ -1160,3 +1160,21 @@ func TestIsNodeAnnotationPatchRetryable(t *testing.T) {
 		})
 	}
 }
+
+func TestL3GatewayConfigLocalSNATReadiness(t *testing.T) {
+	for _, subnets := range [][]string{nil, {"10.128.0.0/16", "fd00::/48"}} {
+		want := L3GatewayConfig{
+			Mode: config.GatewayModeLocal, InterfaceID: "eth0", MACAddress: ovntest.MustParseMAC("00:00:00:11:22:33"),
+			LocalGatewaySNATSubnets: subnets,
+			IPAddresses:             ovntest.MustParseIPNets("192.0.2.2/24"), NextHops: ovntest.MustParseIPs("192.0.2.1"),
+		}
+		data, err := want.MarshalJSON()
+		require.NoError(t, err)
+		var got L3GatewayConfig
+		require.NoError(t, got.UnmarshalJSON(data))
+		require.Equal(t, want.LocalGatewaySNATSubnets, got.LocalGatewaySNATSubnets)
+		if subnets == nil {
+			require.NotContains(t, string(data), "local-gateway-snat-subnets")
+		}
+	}
+}

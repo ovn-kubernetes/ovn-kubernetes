@@ -405,7 +405,7 @@ func (oc *Layer3UserDefinedNetworkController) Cleanup(_ context.Context) error {
 	// when nodes are already gone.
 	if oc.IsPrimaryNetwork() && oc.GetNetworkID() == types.InvalidID {
 		if err := cleanupGatewayRoutersForNetworkFromDB(oc.nbClient, oc.GetNetInfo(),
-			oc.GetNetworkScopedClusterRouterName(), oc.GetNetworkScopedJoinSwitchName()); err != nil {
+			oc.GetNetworkScopedClusterRouterName(), oc.GetNetworkScopedJoinSwitchName(), oc.nodeName); err != nil {
 			return fmt.Errorf("failed to cleanup gateway routers for network %s: %w", netName, err)
 		}
 	}
@@ -430,7 +430,7 @@ func (oc *Layer3UserDefinedNetworkController) Cleanup(_ context.Context) error {
 			)
 			return true
 		}
-		if err := gwManager.Cleanup(); err != nil {
+		if err := gwManager.Cleanup(oc.nodeName); err != nil {
 			klog.Errorf("Failed to cleanup GW manager for network %q on node %s: %v", netName, nodeName, err)
 		}
 		return true
@@ -917,6 +917,7 @@ func (oc *Layer3UserDefinedNetworkController) addUpdateLocalNodeEvent(_ context.
 			} else {
 				if err := gwManager.SyncGateway(node,
 					gwConfig,
+					oc.nodeName,
 				); err != nil {
 					errs = append(errs, fmt.Errorf(
 						"failed to sync node GW for network %q: %v",
@@ -951,7 +952,7 @@ func (oc *Layer3UserDefinedNetworkController) addUpdateLocalNodeEvent(_ context.
 
 	if config.OVNKubernetesFeature.EnableEgressIP && util.IsNetworkSegmentationSupportEnabled() && oc.IsPrimaryNetwork() && nSyncs.syncReroute {
 		rerouteFailed := false
-		if err = oc.eIPController.ensureRouterPoliciesForNetwork(oc.GetNetInfo(), node); err != nil {
+		if err = oc.eIPController.ensureRouterPoliciesForNetwork(oc.GetNetInfo()); err != nil {
 			errs = append(errs, fmt.Errorf("failed to ensure EgressIP router polices for network %s: %v", oc.GetNetworkName(), err))
 			rerouteFailed = true
 		}
@@ -1066,7 +1067,7 @@ func (oc *Layer3UserDefinedNetworkController) deleteNodeEvent(node *corev1.Node)
 
 		if gwObj, ok := oc.gatewayManagers.Load(node.Name); ok {
 			if gw, ok := gwObj.(*GatewayManager); ok {
-				if err := gw.Cleanup(); err != nil {
+				if err := gw.Cleanup(oc.nodeName); err != nil {
 					return fmt.Errorf("failed to cleanup gateway on node %q: %w", node.Name, err)
 				}
 			} else {

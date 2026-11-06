@@ -20,10 +20,9 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/managementport"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
-func initLocalGateway(hostSubnets []*net.IPNet, mgmtPort managementport.Interface) error {
+func initLocalGateway(mgmtPort managementport.Interface, advertised bool) error {
 	if config.IsModeDPU() {
 		return nil
 	}
@@ -36,27 +35,25 @@ func initLocalGateway(hostSubnets []*net.IPNet, mgmtPort managementport.Interfac
 		return fmt.Errorf("failed to configure local forwarding rules for: %s, err: %v", ifName, err)
 	}
 
-	// Set up nftables masquerade rules for this node's subnets.
-	var allCIDRs []*net.IPNet
-	for _, hostSubnet := range hostSubnets {
-		// local gateway mode uses mp0 as default path for all ingress traffic into OVN
-		nextHop, err := util.MatchFirstIPNetFamily(utilnet.IsIPv6CIDR(hostSubnet), mgmtPort.GetAddresses())
-		if err != nil {
-			return fmt.Errorf("failed to find management port address: %w", err)
-		}
-
-		cidr := nextHop.IP.Mask(nextHop.Mask)
-		cidrNet := &net.IPNet{IP: cidr, Mask: nextHop.Mask}
-		allCIDRs = append(allCIDRs, cidrNet)
-	}
-
+	allCIDRs := getLocalGatewaySNATSubnets()
 	if len(allCIDRs) > 0 {
-		if err := initLocalGatewayNFTNATRules(allCIDRs...); err != nil {
+		if err := initLocalGatewayNFTNATRules(advertised, allCIDRs...); err != nil {
 			return fmt.Errorf("failed to setup nftables masquerade rules: %w", err)
 		}
 	}
 
 	return nil
+}
+
+// getLocalGatewaySNATSubnets includes retained VM addresses from other nodes in
+// local gateway mode. It is used only by the default network gateway;
+// UDN management-port SNAT keeps its existing scope.
+func getLocalGatewaySNATSubnets() []*net.IPNet {
+	subnets := make([]*net.IPNet, 0, len(config.Default.ClusterSubnets))
+	for _, subnet := range config.Default.ClusterSubnets {
+		subnets = append(subnets, subnet.CIDR)
+	}
+	return subnets
 }
 
 func getGatewayFamilyAddrs(gatewayIfAddrs []*net.IPNet) (string, string) {

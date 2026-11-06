@@ -18,7 +18,6 @@ import (
 	utilnet "k8s.io/utils/net"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/udn"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/addresssetmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
@@ -139,8 +138,7 @@ func (c *Controller) syncNode(key string) error {
 	if err != nil {
 		return fmt.Errorf("cannot ensure that addressSet %s exists %v", addresssetmanager.ClusterNodeIPsEgressServiceBackRef, err)
 	}
-	network := util.DefaultNetInfo{}
-	networkName := network.GetNetworkName()
+	networkName := c.GetNetworkName()
 	err = c.ensureNoRerouteNodePolicies(c.nbClient, c.addressSetFactory, networkName, c.GetNetworkScopedClusterRouterName(), c.controllerName, clusterNodesAddressSets, config.IPv4Mode, config.IPv6Mode)
 	if err != nil {
 		return err
@@ -164,19 +162,6 @@ func (c *Controller) syncNode(key string) error {
 			delete(c.nodes, nodeName)
 		}
 		return nil
-	}
-
-	gatewayIPs, err := udn.GetGWRouterIPs(n, &network)
-	if err != nil {
-		return fmt.Errorf("failed to get default network gateway router join IPs for node %q: %w", n.Name, err)
-	}
-
-	// At this point the node exists and is ready.
-	if c.isNodeInLocalZone(n) {
-		if err := c.createDefaultRouteToExternalForIC(c.nbClient, c.GetNetworkScopedClusterRouterName(),
-			c.GetNetworkScopedGWRouterName(nodeName), c.Subnets(), gatewayIPs); err != nil {
-			return err
-		}
 	}
 
 	// If the node is used by any service but is not in cache enqueue it

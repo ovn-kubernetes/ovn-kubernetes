@@ -18,6 +18,7 @@ import (
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	egresssvc "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/egressservice"
@@ -79,7 +80,7 @@ func initClusterEgressPoliciesOps(nbClient libovsdbclient.Client, addressSetFact
 	}
 
 	// Create reply traffic policy (batched)
-	ops, err = createDefaultNoRerouteReplyTrafficPolicyOps(nbClient, ni.GetNetworkName(), controllerName, routerName, ops)
+	ops, err = createDefaultNoRerouteReplyTrafficPolicyOps(nbClient, ni, controllerName, routerName, ops)
 	if err != nil {
 		return ops, fmt.Errorf("failed to create no reroute reply traffic policy for network %s: %v", ni.GetNetworkName(), err)
 	}
@@ -227,7 +228,8 @@ func createDefaultNoRerouteServicePoliciesOps(nbClient libovsdbclient.Client, ne
 }
 
 // createDefaultNoRerouteReplyTrafficPolicyOps is the ops-building version of createDefaultNoRerouteReplyTrafficPolicy
-func createDefaultNoRerouteReplyTrafficPolicyOps(nbClient libovsdbclient.Client, network, controller, routerName string, ops []ovsdb.Operation) ([]ovsdb.Operation, error) {
+func createDefaultNoRerouteReplyTrafficPolicyOps(nbClient libovsdbclient.Client, ni util.NetInfo, controller, routerName string, ops []ovsdb.Operation) ([]ovsdb.Operation, error) {
+	network := ni.GetNetworkName()
 	dbIDs := getEgressIPLRPNoReRouteDbIDs(types.DefaultNoRereoutePriority, ReplyTrafficNoReroute, IPFamilyValue, network, controller)
 	lrp := nbdb.LogicalRouterPolicy{
 		Priority:    types.DefaultNoRereoutePriority,
@@ -235,9 +237,15 @@ func createDefaultNoRerouteReplyTrafficPolicyOps(nbClient libovsdbclient.Client,
 		Match:       fmt.Sprintf("pkt.mark == %d", types.EgressIPReplyTrafficConnectionMark),
 		ExternalIDs: dbIDs.GetExternalIDs(),
 	}
+	var err error
+	libovsdbutil.SetDefaultEgressNoReroutePolicy(&lrp, ni, types.DefaultEgressChain)
+	ops, err = libovsdbutil.EnsureDefaultEgressChainOps(nbClient, ops, routerName, ni, types.DefaultEgressChain)
+	if err != nil {
+		return nil, err
+	}
 	// Use predicate generator based on dbIDs to match the original implementation
 	p := libovsdbops.GetPredicate[*nbdb.LogicalRouterPolicy](dbIDs, nil)
-	return libovsdbops.CreateOrUpdateLogicalRouterPolicyWithPredicateOps(nbClient, ops, routerName, &lrp, p)
+	return libovsdbops.CreateOrUpdateLogicalRouterPolicyWithPredicateOps(nbClient, ops, routerName, &lrp, p, &lrp.Action, &lrp.JumpChain, &lrp.Options)
 }
 
 // ensureDefaultNoRerouteUDNEnabledSvcPoliciesOps is the ops-building version of ensureDefaultNoRerouteUDNEnabledSvcPolicies
@@ -338,7 +346,8 @@ func ensureDefaultNoRerouteUDNEnabledSvcPoliciesOps(nbClient libovsdbclient.Clie
 // ensureDefaultNoRerouteNodePoliciesOps builds ovsdb operations for node policies
 // without committing. It follows the accumulator pattern: accepts an existing
 // ops slice, appends new operations, and returns the extended slice for batching.
-func ensureDefaultNoRerouteNodePoliciesOps(nbClient libovsdbclient.Client, addressSetFactory addressset.AddressSetFactory, network, router, controller string, v4, v6 bool, clusterNodesAddressSets addressset.AddressSet, ops []ovsdb.Operation) ([]ovsdb.Operation, error) {
+func ensureDefaultNoRerouteNodePoliciesOps(nbClient libovsdbclient.Client, addressSetFactory addressset.AddressSetFactory, ni util.NetInfo, router, controller string, v4, v6 bool, clusterNodesAddressSets addressset.AddressSet, ops []ovsdb.Operation) ([]ovsdb.Operation, error) {
+	network := ni.GetNetworkName()
 	ipv4ClusterNodeIPAS, ipv6ClusterNodeIPAS := clusterNodesAddressSets.GetASHashNames()
 
 	var as addressset.AddressSet
@@ -374,7 +383,14 @@ func ensureDefaultNoRerouteNodePoliciesOps(nbClient libovsdbclient.Client, addre
 			ipv6EgressIPServedPodsAS, ipv6EgressServiceServedPodsAS, ipv6ClusterNodeIPAS)
 	}
 
-	// Create global allow policy for node traffic (batched)
+	if matchV4 != "" || matchV6 != "" {
+		ops, err = libovsdbutil.EnsureDefaultEgressChainOps(nbClient, ops, router, ni, types.DefaultEgressNodeChain)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Create global no-reroute policy for node traffic (batched)
 	if matchV4 != "" {
 		dbIDs := getEgressIPLRPNoReRoutePodToNodeDbIDs(IPFamilyValueV4, network, controller)
 		lrp := nbdb.LogicalRouterPolicy{
@@ -384,8 +400,9 @@ func ensureDefaultNoRerouteNodePoliciesOps(nbClient libovsdbclient.Client, addre
 			Options:     map[string]string{"pkt_mark": types.EgressIPNodeConnectionMark},
 			ExternalIDs: dbIDs.GetExternalIDs(),
 		}
+		libovsdbutil.SetDefaultEgressNoReroutePolicy(&lrp, ni, types.DefaultEgressNodeChain)
 		p := libovsdbops.GetPredicate[*nbdb.LogicalRouterPolicy](dbIDs, nil)
-		ops, err = libovsdbops.CreateOrUpdateLogicalRouterPolicyWithPredicateOps(nbClient, ops, router, &lrp, p)
+		ops, err = libovsdbops.CreateOrUpdateLogicalRouterPolicyWithPredicateOps(nbClient, ops, router, &lrp, p, &lrp.Match, &lrp.Action, &lrp.JumpChain, &lrp.Options)
 		if err != nil {
 			return ops, err
 		}
@@ -400,8 +417,9 @@ func ensureDefaultNoRerouteNodePoliciesOps(nbClient libovsdbclient.Client, addre
 			Options:     map[string]string{"pkt_mark": types.EgressIPNodeConnectionMark},
 			ExternalIDs: dbIDs.GetExternalIDs(),
 		}
+		libovsdbutil.SetDefaultEgressNoReroutePolicy(&lrp, ni, types.DefaultEgressNodeChain)
 		p := libovsdbops.GetPredicate[*nbdb.LogicalRouterPolicy](dbIDs, nil)
-		ops, err = libovsdbops.CreateOrUpdateLogicalRouterPolicyWithPredicateOps(nbClient, ops, router, &lrp, p)
+		ops, err = libovsdbops.CreateOrUpdateLogicalRouterPolicyWithPredicateOps(nbClient, ops, router, &lrp, p, &lrp.Match, &lrp.Action, &lrp.JumpChain, &lrp.Options)
 		if err != nil {
 			return ops, err
 		}

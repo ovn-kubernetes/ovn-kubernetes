@@ -842,7 +842,7 @@ func (bnc *BaseNetworkController) syncNodeManagementPort(node *corev1.Node, swit
 		if !utilnet.IsIPv6CIDR(hostSubnet) {
 			v4Subnet = hostSubnet
 		}
-		if config.Gateway.Mode == config.GatewayModeLocal {
+		if config.Gateway.Mode == config.GatewayModeLocal && !util.UsesDefaultEgressRoute(bnc.GetNetInfo()) {
 			lrsr := nbdb.LogicalRouterStaticRoute{
 				Policy:   &nbdb.LogicalRouterStaticRoutePolicySrcIP,
 				IPPrefix: hostSubnet.String(),
