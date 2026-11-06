@@ -1722,6 +1722,9 @@ func (c *nadController) handleNetworkAnnotations(ctx context.Context, new util.M
 		ctx,
 		nad.Namespace,
 		nad.Name,
+		// no precondition: these annotations are computed from this
+		// controller's own state rather than from their previous value
+		"",
 		annotations,
 		c.name,
 	)
