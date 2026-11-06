@@ -213,7 +213,7 @@ func NewLocalnetUserDefinedNetworkController(
 			netInfo,
 			cnci.watchFactory.PodCoreInformer().Lister(),
 			cnci.kube,
-			nil)
+		)
 	}
 
 	// disable multicast support for UDNs
