@@ -160,7 +160,7 @@ func CheckDefaultSvcIsolationOVSFlows(flows []string, defaultConfig *BridgeUDNCo
 			ofPortHost, protoPrefix, protoPrefix, svcCIDR, config.Default.HostMasqConntrackZone,
 			masqIP)) {
 			nTable0DefaultFlows++
-		} else if strings.Contains(flow, fmt.Sprintf("priority=550, in_port=%s, %s, %s_src=%s, %s_dst=%s, actions=ct(commit,zone=%d,table=2)",
+		} else if strings.Contains(flow, fmt.Sprintf("priority=550, in_port=%s, %s, %s_src=%s, %s_dst=%s, actions=ct(commit,zone=%d,nat,table=2)",
 			ofPortHost, protoPrefix, protoPrefix, masqSubnet, protoPrefix, svcCIDR, config.Default.HostMasqConntrackZone)) {
 			nTable0UDNMasqFlows++
 		} else if strings.Contains(flow, fmt.Sprintf("priority=100, table=2, actions=set_field:%s->eth_dst,output:%s",
