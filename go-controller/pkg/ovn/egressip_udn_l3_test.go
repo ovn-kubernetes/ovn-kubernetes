@@ -1276,7 +1276,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					&nbdb.LogicalRouterPort{
 						UUID:     ovntypes.GWRouterToJoinSwitchPrefix + ovntypes.GWRouterPrefix + networkName1_ + node1.Name + "-UUID",
 						Name:     ovntypes.GWRouterToJoinSwitchPrefix + ovntypes.GWRouterPrefix + networkName1_ + node1.Name,
-						Networks: []string{nodeLogicalRouterIfAddrV4},
+						Networks: []string{nodeUDNLogicalRouterIPv4[0] + "/16"},
 					},
 					&nbdb.LogicalRouter{
 						Name:        netInfo.GetNetworkScopedClusterRouterName(),
@@ -1301,6 +1301,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						ExternalIDs: util.GenerateExternalIDsForSwitchOrRouter(netInfo),
 					},
 				}
+				initialDB = append(initialDB, udnLocalNodePrereqs(netInfo)...)
 				fakeOvn.startWithDBSetup(
 					libovsdbtest.TestSetup{
 						NBData: initialDB,
@@ -1449,7 +1450,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 
 					// UDN
 					getReRouteStaticRouteForController(v4Net1, nodeUDNLogicalRouterIPv4[0], netInfo.GetNetworkName()),
-					getReRoutePolicyForController(egressIPName, eipNamespace2, podName2, v4Pod1IPNode1Net1, eIP1Mark, IPFamilyValueV4, []string{nodeLogicalRouterIPv4[0], v4Node2Tsp}, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName),
+					getReRoutePolicyForController(egressIPName, eipNamespace2, podName2, v4Pod1IPNode1Net1, eIP1Mark, IPFamilyValueV4, []string{nodeUDNLogicalRouterIPv4[0], v4Node2Tsp}, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName),
 					getGWPktMarkLRPForController(eIP1Mark, egressIPName, eipNamespace2, podName2, v4Pod1IPNode1Net1, IPFamilyValueV4, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName),
 					getGWPktMarkLRPForController(eIP1Mark, egressIPName, eipNamespace2, podName4, v4Pod2IPNode2Net1, IPFamilyValueV4, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName),
 					getNoReRoutePolicyForUDNEnabledSvc(false, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName, egressIPServedPodsASUDNv4.Name, egressSVCServedPodsASv4.Name, udnEnabledSvcV4.Name),
@@ -1638,6 +1639,8 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					egressIPServedPodsASUDNv4,
 					udnEnabledSvcV4,
 				}
+				expectedDatabaseStateTwoEgressNodes = append(expectedDatabaseStateTwoEgressNodes, udnLocalNodePrereqs(netInfo)...)
+				expectedDatabaseStateTwoEgressNodes = withReconciledUDNLocalGateway(expectedDatabaseStateTwoEgressNodes, netInfo, &node1, nodeUDNLogicalRouterIPv4[0], node1IPv4CIDR, util.GetNodeManagementIfAddr(node1UDNSubnet).IP.String(), v4Net1)
 				ginkgo.By("ensure expected equals actual")
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveDataIgnoringUUIDs(expectedDatabaseStateTwoEgressNodes))
 				ginkgo.By("delete EgressIP")
@@ -1890,6 +1893,8 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					egressIPServedPodsASUDNv4,
 					udnEnabledSvcV4,
 				}
+				expectedDatabaseState = append(expectedDatabaseState, udnLocalNodePrereqs(netInfo)...)
+				expectedDatabaseState = withReconciledUDNLocalGateway(expectedDatabaseState, netInfo, &node1, nodeUDNLogicalRouterIPv4[0], node1IPv4CIDR, util.GetNodeManagementIfAddr(node1UDNSubnet).IP.String(), v4Net1)
 				ginkgo.By("ensure expected equals actual")
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveDataIgnoringUUIDs(expectedDatabaseState))
 				return nil
@@ -2769,7 +2774,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					&nbdb.LogicalRouterPort{
 						UUID:     ovntypes.GWRouterToJoinSwitchPrefix + ovntypes.GWRouterPrefix + networkName1_ + node1.Name + "-UUID",
 						Name:     ovntypes.GWRouterToJoinSwitchPrefix + ovntypes.GWRouterPrefix + networkName1_ + node1.Name,
-						Networks: []string{nodeLogicalRouterIfAddrV4},
+						Networks: []string{nodeUDNLogicalRouterIPv4[0] + "/16"},
 					},
 					&nbdb.LogicalRouter{
 						Name:        netInfo.GetNetworkScopedClusterRouterName(),
@@ -2794,6 +2799,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						ExternalIDs: util.GenerateExternalIDsForSwitchOrRouter(netInfo),
 					},
 				}
+				initialDB = append(initialDB, udnLocalNodePrereqs(netInfo)...)
 				fakeOvn.startWithDBSetup(
 					libovsdbtest.TestSetup{
 						NBData: initialDB,
@@ -2950,7 +2956,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 
 					// UDN
 					getReRouteStaticRouteForController(v4Net1, nodeUDNLogicalRouterIPv4[0], netInfo.GetNetworkName()),
-					getReRoutePolicyForController(egressIPName, eipNamespace2, podName2, v4Pod1IPNode1Net1, eIP1Mark, IPFamilyValueV4, []string{nodeLogicalRouterIPv4[0], v4Node2Tsp}, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName),
+					getReRoutePolicyForController(egressIPName, eipNamespace2, podName2, v4Pod1IPNode1Net1, eIP1Mark, IPFamilyValueV4, []string{nodeUDNLogicalRouterIPv4[0], v4Node2Tsp}, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName),
 					getGWPktMarkLRPForController(eIP1Mark, egressIPName, eipNamespace2, podName2, v4Pod1IPNode1Net1, IPFamilyValueV4, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName),
 					getGWPktMarkLRPForController(eIP1Mark, egressIPName, eipNamespace2, podName4, v4Pod2IPNode2Net1, IPFamilyValueV4, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName),
 					getNoReRoutePolicyForUDNEnabledSvc(false, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName, egressIPServedPodsASUDNv4.Name, egressSVCServedPodsASv4.Name, udnEnabledSvcV4.Name),
@@ -3139,8 +3145,10 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					egressIPServedPodsASUDNv4,
 					udnEnabledSvcV4,
 				}
+				expectedDatabaseStateTwoEgressNodes = append(expectedDatabaseStateTwoEgressNodes, udnLocalNodePrereqs(netInfo)...)
+				expectedDatabaseStateTwoEgressNodes = withReconciledUDNLocalGateway(expectedDatabaseStateTwoEgressNodes, netInfo, &node1, nodeUDNLogicalRouterIPv4[0], node1IPv4CIDR, util.GetNodeManagementIfAddr(node1UDNSubnet).IP.String(), v4Net1)
 				ginkgo.By("ensure expected equals actual")
-				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseStateTwoEgressNodes))
+				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveDataIgnoringUUIDs(expectedDatabaseStateTwoEgressNodes))
 				return nil
 			}
 			err := app.Run([]string{app.Name})
@@ -3148,6 +3156,181 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 		})
 	})
 })
+
+// udnLocalNodePrereqs are the OVN objects a local node reconcile needs before it
+// can finish. These tests register the node handler directly, so they are not
+// created by Layer3UserDefinedNetworkController.init.
+func udnLocalNodePrereqs(netInfo util.NetInfo) []libovsdbtest.TestData {
+	return []libovsdbtest.TestData{
+		&nbdb.LogicalSwitch{
+			UUID: netInfo.GetNetworkScopedJoinSwitchName() + "-UUID",
+			Name: netInfo.GetNetworkScopedJoinSwitchName(),
+			ExternalIDs: map[string]string{
+				ovntypes.NetworkExternalID:  netInfo.GetNetworkName(),
+				ovntypes.TopologyExternalID: netInfo.TopologyType(),
+			},
+		},
+		newNetworkClusterPortGroup(netInfo),
+	}
+}
+
+// withReconciledUDNLocalGateway updates an expected NB snapshot for the gateway
+// objects a successful local-node reconcile adds. Remote nodes stay queued until
+// that reconcile returns success, so the expected database has to include them.
+func withReconciledUDNLocalGateway(data []libovsdbtest.TestData, netInfo util.NetInfo, node *corev1.Node, joinIP, nodeIPv4CIDR, mgmtIP, clusterCIDR string) []libovsdbtest.TestData {
+	gwName := netInfo.GetNetworkScopedGWRouterName(node.Name)
+	rtojName := ovntypes.GWRouterToJoinSwitchPrefix + gwName
+	rtoeName := ovntypes.GWRouterToExtSwitchPrefix + gwName
+	jtorName := ovntypes.JoinSwitchToGWRouterPrefix + gwName
+	etorName := ovntypes.EXTSwitchToGWRouterPrefix + gwName
+	extSwitchName := netInfo.GetNetworkScopedExtSwitchName(node.Name)
+	localnetName := netInfo.GetNetworkScopedExtPortName("", node.Name)
+	masqIP := dummyMasqueradeIP().IP.String()
+	nodeIP, nodeIPNet, err := net.ParseCIDR(nodeIPv4CIDR)
+	if err != nil {
+		panic(err)
+	}
+	gwConfig, err := util.ParseNodeL3GatewayAnnotation(node)
+	if err != nil {
+		panic(err)
+	}
+	extIDs := standardNonDefaultNetworkExtIDs(netInfo)
+	joinMAC := util.IPAddrToHWAddr(net.ParseIP(joinIP)).String()
+
+	for _, item := range data {
+		switch obj := item.(type) {
+		case *nbdb.LogicalRouterPort:
+			if obj.Name == rtojName {
+				obj.MAC = joinMAC
+				obj.Networks = []string{joinIP + "/16"}
+				obj.Options = map[string]string{"gateway_mtu": fmt.Sprintf("%d", config.Default.MTU)}
+			}
+		case *nbdb.LogicalRouter:
+			switch obj.Name {
+			case netInfo.GetNetworkScopedClusterRouterName():
+				obj.Policies = append(obj.Policies, "gw-policy-node-ip", "gw-policy-masq-ip")
+				obj.StaticRoutes = append(obj.StaticRoutes, "gw-route-join", "gw-route-default")
+			case gwName:
+				obj.Ports = append(obj.Ports, rtoeName+"-UUID")
+				obj.Nat = append(obj.Nat, "gw-nat-join", "gw-nat-cluster")
+				obj.StaticRoutes = append(obj.StaticRoutes, "gw-route-masq")
+			}
+		case *nbdb.LogicalSwitch:
+			switch obj.Name {
+			case netInfo.GetNetworkScopedSwitchName(node.Name):
+				obj.OtherConfig = map[string]string{"subnet": obj.OtherConfig["subnet"]}
+			case netInfo.GetNetworkScopedJoinSwitchName():
+				obj.Ports = []string{jtorName + "-UUID"}
+			}
+		case *nbdb.PortGroup:
+			if obj.Name == newNetworkClusterPortGroup(netInfo).Name {
+				obj.Ports = []string{"cluster-port-group-port"}
+			}
+		}
+	}
+
+	nodeIPNet.IP = nodeIP
+	data = append(data,
+		&nbdb.LogicalRouterPort{
+			UUID:        rtoeName + "-UUID",
+			Name:        rtoeName,
+			MAC:         gwConfig.MACAddress.String(),
+			Networks:    []string{nodeIPNet.String(), masqIP + "/32"},
+			ExternalIDs: extIDs,
+		},
+		&nbdb.LogicalSwitch{
+			UUID:        extSwitchName + "-UUID",
+			Name:        extSwitchName,
+			ExternalIDs: standardNonDefaultNetworkExtIDsForLogicalSwitch(netInfo),
+			Ports:       []string{localnetName + "-UUID", etorName + "-UUID"},
+		},
+		&nbdb.LogicalSwitchPort{
+			UUID:        localnetName + "-UUID",
+			Name:        localnetName,
+			Addresses:   []string{"unknown"},
+			Type:        "localnet",
+			Options:     map[string]string{"network_name": ovntypes.PhysicalNetworkName},
+			ExternalIDs: extIDs,
+		},
+		&nbdb.LogicalSwitchPort{
+			UUID:        jtorName + "-UUID",
+			Name:        jtorName,
+			Addresses:   []string{"router"},
+			Type:        "router",
+			Options:     map[string]string{libovsdbops.RouterPort: rtojName},
+			ExternalIDs: extIDs,
+		},
+		&nbdb.LogicalSwitchPort{
+			UUID:        etorName + "-UUID",
+			Name:        etorName,
+			Addresses:   []string{gwConfig.MACAddress.String()},
+			Type:        "router",
+			Options:     map[string]string{libovsdbops.RouterPort: rtoeName},
+			ExternalIDs: extIDs,
+		},
+		&nbdb.LogicalRouterStaticRoute{
+			UUID:        "gw-route-join",
+			IPPrefix:    joinIP,
+			Nexthop:     joinIP,
+			ExternalIDs: extIDs,
+		},
+		&nbdb.LogicalRouterStaticRoute{
+			UUID:        "gw-route-default",
+			IPPrefix:    "0.0.0.0/0",
+			Nexthop:     joinIP,
+			ExternalIDs: extIDs,
+		},
+		&nbdb.LogicalRouterStaticRoute{
+			UUID:        "gw-route-masq",
+			IPPrefix:    dummyMasqueradeSubnet().String(),
+			Nexthop:     nextHopMasqueradeIP().String(),
+			OutputPort:  &rtoeName,
+			ExternalIDs: extIDs,
+		},
+		&nbdb.NAT{
+			UUID:        "gw-nat-join",
+			ExternalIP:  masqIP,
+			LogicalIP:   joinIP,
+			Type:        nbdb.NATTypeSNAT,
+			Options:     map[string]string{"stateless": "false"},
+			ExternalIDs: extIDs,
+		},
+		&nbdb.NAT{
+			UUID:        "gw-nat-cluster",
+			ExternalIP:  masqIP,
+			LogicalIP:   clusterCIDR,
+			Type:        nbdb.NATTypeSNAT,
+			Options:     map[string]string{"stateless": "false"},
+			ExternalIDs: extIDs,
+		},
+		&nbdb.LogicalRouterPolicy{
+			UUID:        "gw-policy-node-ip",
+			Priority:    1004,
+			Action:      nbdb.LogicalRouterPolicyActionReroute,
+			Match:       fmt.Sprintf("inport == %q && ip4.dst == %s /* %s */", ovntypes.RouterToSwitchPrefix+netInfo.GetNetworkScopedName(node.Name), nodeIP.String(), netInfo.GetNetworkScopedName(node.Name)),
+			Nexthops:    []string{mgmtIP},
+			ExternalIDs: extIDs,
+		},
+		&nbdb.LogicalRouterPolicy{
+			UUID:        "gw-policy-masq-ip",
+			Priority:    1004,
+			Action:      nbdb.LogicalRouterPolicyActionReroute,
+			Match:       fmt.Sprintf("inport == %q && ip4.dst == %s /* %s */", ovntypes.RouterToSwitchPrefix+netInfo.GetNetworkScopedName(node.Name), masqIP, netInfo.GetNetworkScopedName(node.Name)),
+			Nexthops:    []string{mgmtIP},
+			ExternalIDs: extIDs,
+		},
+	)
+	for _, ip := range staticMACBindingIPs() {
+		data = append(data, &nbdb.StaticMACBinding{
+			UUID:               rtoeName + "-mac-" + ip.String(),
+			IP:                 ip.String(),
+			LogicalPort:        rtoeName,
+			MAC:                util.IPAddrToHWAddr(ip).String(),
+			OverrideDynamicMAC: true,
+		})
+	}
+	return data
+}
 
 func addL3GatewayConfig(annotations map[string]string, nodeIPv4CIDR, mac string) {
 	annotations["k8s.ovn.org/l3-gateway-config"] = fmt.Sprintf(
