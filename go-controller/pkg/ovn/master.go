@@ -581,6 +581,7 @@ func (oc *DefaultNetworkController) addUpdateLocalNodeEvent(_ context.Context, n
 		// delete stale chassis in SBDB if any
 		if err := oc.deleteStaleNodeChassis(node); err != nil {
 			errs = append(errs, err)
+			oc.nodeClusterRouterPortFailed.Store(node.Name, true)
 		}
 	}
 
@@ -633,6 +634,7 @@ func (oc *DefaultNetworkController) addUpdateLocalNodeEvent(_ context.Context, n
 		}
 		if err := annotator.Run(); err != nil {
 			errs = append(errs, fmt.Errorf("failed to set hybrid overlay annotations for node %s: %v", node.Name, err))
+			oc.hybridOverlayFailed.Store(node.Name, true)
 		}
 	}
 
@@ -674,6 +676,9 @@ func (oc *DefaultNetworkController) addUpdateLocalNodeEvent(_ context.Context, n
 		if nSyncs.syncNode || nSyncs.syncGw { // do this only if it is a new node add or a gateway sync happened
 			errors := oc.addAllPodsOnNode(node.Name)
 			errs = append(errs, errors...)
+			if len(errors) > 0 {
+				oc.addNodeFailed.Store(node.Name, true)
+			}
 		}
 	}
 
