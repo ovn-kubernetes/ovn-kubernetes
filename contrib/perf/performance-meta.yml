@@ -1,3 +1,4 @@
 github_ref: $GITHUB_HEAD_REF
 github_ref_name: $GITHUB_REF_NAME
 github_sha: $GITHUB_SHA
+dynamic_udn: $DYNAMIC_UDN_ALLOCATION

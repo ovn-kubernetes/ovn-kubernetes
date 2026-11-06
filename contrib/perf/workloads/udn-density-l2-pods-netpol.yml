@@ -24,9 +24,9 @@ global:
         url: http://localhost:9411/debug/pprof/heap
 jobs:
   - name: udn-density-l2-pods-netpol
-    jobIterations: 100
-    qps: 10
-    burst: 10
+    jobIterations: 500
+    qps: 20
+    burst: 20
     namespacedIterations: true 
     namespace: udn-density-l2-pods-netpol
     waitWhenFinished: true
