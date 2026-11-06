@@ -20,6 +20,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
@@ -32,11 +33,13 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	networkconnectv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
 	networkconnectlister "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/listers/clusternetworkconnect/v1"
+	userdefinednetworkv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	userdefinednetworklister "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/listers/userdefinednetwork/v1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
+	utiludn "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/udn"
 )
 
 // nadController handles namespaced scoped NAD events and
@@ -64,7 +67,8 @@ type nadController struct {
 	nodeLister      corelisters.NodeLister
 	cncLister       networkconnectlister.ClusterNetworkConnectLister
 
-	controller controller.Controller
+	controller       controller.Controller
+	ownerControllers []controller.Reconciler
 	// cncController tracks CNC connectivity and updates derived
 	// network activity for Dynamic UDN filtering.
 	cncController controller.Controller
@@ -218,9 +222,33 @@ func newController(
 	if util.IsNetworkSegmentationSupportEnabled() {
 		if udnInformer := wf.UserDefinedNetworkInformer(); udnInformer != nil {
 			c.udnLister = udnInformer.Lister()
+			c.ownerControllers = append(c.ownerControllers, controller.NewController(c.name+"-udn-owner",
+				&controller.ControllerConfig[userdefinednetworkv1.UserDefinedNetwork]{
+					Informer: udnInformer.Informer(), Lister: c.udnLister.List, Threadiness: 1,
+					ObjNeedsUpdate: func(old, new *userdefinednetworkv1.UserDefinedNetwork) bool {
+						return old == nil || old.UID != new.UID || !reflect.DeepEqual(old.Spec, new.Spec)
+					},
+					Reconcile: func(_ context.Context, key string) error {
+						namespace, name, err := cache.SplitMetaNamespaceKey(key)
+						if err != nil {
+							return err
+						}
+						return c.reconcileOwnedNADs("UserDefinedNetwork", namespace, name)
+					},
+				}))
 		}
 		if cudnInformer := wf.ClusterUserDefinedNetworkInformer(); cudnInformer != nil {
 			c.cudnLister = cudnInformer.Lister()
+			c.ownerControllers = append(c.ownerControllers, controller.NewController(c.name+"-cudn-owner",
+				&controller.ControllerConfig[userdefinednetworkv1.ClusterUserDefinedNetwork]{
+					Informer: cudnInformer.Informer(), Lister: c.cudnLister.List, Threadiness: 1,
+					ObjNeedsUpdate: func(old, new *userdefinednetworkv1.ClusterUserDefinedNetwork) bool {
+						return old == nil || old.UID != new.UID || !reflect.DeepEqual(old.Spec.Network, new.Spec.Network)
+					},
+					Reconcile: func(_ context.Context, name string) error {
+						return c.reconcileOwnedNADs("ClusterUserDefinedNetwork", "", name)
+					},
+				}))
 		}
 		if nsInformer := wf.NamespaceInformer(); nsInformer != nil {
 			c.namespaceLister = nsInformer.Lister()
@@ -516,6 +544,9 @@ func (c *nadController) Start() error {
 	if err != nil {
 		return err
 	}
+	if err := controller.Start(c.ownerControllers...); err != nil {
+		return err
+	}
 
 	if c.cncController != nil {
 		err = controller.StartWithInitialSync(
@@ -559,6 +590,7 @@ func (c *nadController) Stop() {
 		close(c.stopChan)
 	})
 	controller.Stop(c.controller)
+	controller.Stop(c.ownerControllers...)
 	if c.cncController != nil {
 		controller.Stop(c.cncController)
 	}
@@ -925,6 +957,63 @@ func (c *nadController) clearDynamicRemovalStateLocked(key string) {
 	}
 }
 
+// validatePrimaryNAD requires primary networks to be managed by the UDN API.
+// Owner identity is checked against the informer cache, not just the reference
+// supplied in the NAD, so missing or recreated owners cannot authorize a network.
+func (c *nadController) validatePrimaryNAD(nad *nettypes.NetworkAttachmentDefinition, network util.NetInfo) error {
+	if !network.IsPrimaryNetwork() || network.IsDefault() {
+		return nil
+	}
+	if !util.IsNetworkSegmentationSupportEnabled() {
+		return fmt.Errorf("primary NAD requires network segmentation to be enabled")
+	}
+	owner := metav1.GetControllerOf(nad)
+	if owner == nil || owner.APIVersion != userdefinednetworkv1.SchemeGroupVersion.String() || owner.Name == "" || owner.UID == "" {
+		return fmt.Errorf("primary NAD must be controlled by a UserDefinedNetwork or ClusterUserDefinedNetwork")
+	}
+	var ownerUID k8stypes.UID
+	var primary bool
+	switch owner.Kind {
+	case "UserDefinedNetwork":
+		udn, err := c.udnLister.UserDefinedNetworks(nad.Namespace).Get(owner.Name)
+		if err != nil {
+			return fmt.Errorf("failed to get primary NAD owner UserDefinedNetwork %s/%s: %w", nad.Namespace, owner.Name, err)
+		}
+		ownerUID, primary = udn.UID, utiludn.IsPrimaryNetwork(&udn.Spec)
+	case "ClusterUserDefinedNetwork":
+		cudn, err := c.cudnLister.Get(owner.Name)
+		if err != nil {
+			return fmt.Errorf("failed to get primary NAD owner ClusterUserDefinedNetwork %s: %w", owner.Name, err)
+		}
+		ownerUID, primary = cudn.UID, utiludn.IsPrimaryNetwork(&cudn.Spec.Network)
+	default:
+		return fmt.Errorf("primary NAD must be controlled by a UserDefinedNetwork or ClusterUserDefinedNetwork")
+	}
+	if ownerUID != owner.UID {
+		return fmt.Errorf("primary NAD owner %s %s UID does not match its controller reference", owner.Kind, owner.Name)
+	}
+	if !primary {
+		return fmt.Errorf("primary NAD owner %s %s does not define a primary network", owner.Kind, owner.Name)
+	}
+	return nil
+}
+
+// Parent events retry NADs that arrived before their owner in the informer cache,
+// and invalidate NADs whose owner has disappeared or been recreated.
+func (c *nadController) reconcileOwnedNADs(kind, namespace, name string) error {
+	nads, err := c.nadLister.List(labels.Everything())
+	if err != nil {
+		return err
+	}
+	for _, nad := range nads {
+		owner := metav1.GetControllerOf(nad)
+		if owner != nil && owner.Kind == kind && owner.Name == name && (namespace == "" || nad.Namespace == namespace) {
+			c.reconcile(util.GetNADName(nad.Namespace, nad.Name))
+		}
+	}
+	return nil
+}
+
 func (c *nadController) syncAll() (err error) {
 	ctx := context.Background()
 
@@ -948,6 +1037,9 @@ func (c *nadController) syncAll() (err error) {
 		nadNetwork, err := util.NewNetInfo(netconf)
 		if err != nil {
 			klog.Errorf("%s: failed parsing NAD %s/%s: %v", c.name, nad.Namespace, nad.Name, err)
+			continue
+		}
+		if err := c.validatePrimaryNAD(nad, nadNetwork); err != nil {
 			continue
 		}
 		annotated := nad.Annotations[types.OvnNetworkIDAnnotation]
@@ -1094,11 +1186,24 @@ func (c *nadController) syncNAD(ctx context.Context, key string, nad *nettypes.N
 			klog.Errorf("%s: failed parsing NAD %s: %v", c.name, key, err)
 			return nil
 		}
-		nadNetworkName = nadNetwork.GetNetworkName()
-		if c.dynamicFilterNADs == nil {
-			c.dynamicFilterNADs = map[string]bool{}
+		if err := c.validatePrimaryNAD(nad, nadNetwork); err != nil {
+			if c.recorder != nil {
+				c.recorder.Eventf(&corev1.ObjectReference{
+					APIVersion: nettypes.SchemeGroupVersion.String(), Kind: "NetworkAttachmentDefinition",
+					Namespace: nad.Namespace, Name: nad.Name, UID: nad.UID,
+				}, corev1.EventTypeWarning, "InvalidConfig", "Invalid primary network: %v", err)
+			}
+			klog.Errorf("%s: rejecting primary NAD %s: %v", c.name, key, err)
+			// Reconcile as a deletion so an update cannot leave a previously
+			// accepted network active after its ownership becomes invalid.
+			nad, nadNetwork = nil, nil
+		} else {
+			nadNetworkName = nadNetwork.GetNetworkName()
+			if c.dynamicFilterNADs == nil {
+				c.dynamicFilterNADs = map[string]bool{}
+			}
+			c.dynamicFilterNADs[key] = nadRequiresDynamicFiltering(nad)
 		}
-		c.dynamicFilterNADs[key] = nadRequiresDynamicFiltering(nad)
 	}
 
 	defer func() {
@@ -1325,6 +1430,7 @@ func (c *nadController) nadNeedsUpdate(oldNAD, newNAD *nettypes.NetworkAttachmen
 
 	// also reconcile the network in case its route advertisements changed
 	return !reflect.DeepEqual(oldNAD.Spec, newNAD.Spec) ||
+		!reflect.DeepEqual(oldNAD.OwnerReferences, newNAD.OwnerReferences) ||
 		oldNAD.Annotations[types.OvnRouteAdvertisementsKey] != newNAD.Annotations[types.OvnRouteAdvertisementsKey] ||
 		oldNAD.Annotations[types.OvnNetworkIDAnnotation] != newNAD.Annotations[types.OvnNetworkIDAnnotation] ||
 		oldNAD.Annotations[types.OvnNetworkTunnelKeysAnnotation] != newNAD.Annotations[types.OvnNetworkTunnelKeysAnnotation] ||
