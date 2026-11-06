@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -46,8 +47,12 @@ type NodeController struct {
 	nodeName string
 
 	nodeController controller.Controller
-	networkManager networkmanager.Interface
-	nodeLister     v1.NodeLister
+	// localNodeController reconciles this process's own node. It is a separate
+	// single-worker queue so that node is not stuck behind remote nodes queued
+	// for other networks. Nil when nodeName is empty (cluster manager).
+	localNodeController controller.Reconciler
+	networkManager      networkmanager.Interface
+	nodeLister          v1.NodeLister
 
 	// handlers maps network name to node handler.
 	handlers *syncmap.SyncMap[NodeHandler]
@@ -77,10 +82,21 @@ type NodeController struct {
 	latestInformerNodeCache map[string]map[string]*corev1.Node
 	// annotationCache stores parsed annotation maps keyed by node.
 	annotationCache *NodeAnnotationCache
+	// localNodeFirst is the set of networks whose local node has not reconciled
+	// successfully since bootstrap. Remote reconciles for those networks give
+	// the lock back and retry. A failed local reconcile keeps the entry.
+	// Deregistration removes it. Guarded by stateMu.
+	localNodeFirst map[string]struct{}
 
 	startMu sync.Mutex
 	started bool
 }
+
+// localNodeFirstRetry is how long a skipped remote key stays out of the queue.
+// Returning success without reconciling would drop the key, so it is requeued.
+// The delay keeps that same key from being retried in a tight loop. The worker
+// does not wait: it dequeues the next remote key immediately.
+const localNodeFirstRetry = 100 * time.Millisecond
 
 const scopedNodeQueueKeySeparator = "|"
 
@@ -101,6 +117,7 @@ func NewController(wf *factory.WatchFactory, name string, networkManager network
 		nodeCache:               map[string]map[string]*corev1.Node{},
 		latestInformerNodeCache: map[string]map[string]*corev1.Node{},
 		annotationCache:         NewNodeAnnotationCache(),
+		localNodeFirst:          map[string]struct{}{},
 	}
 
 	nodeControllerConfig := &controller.ControllerConfig[corev1.Node]{
@@ -123,6 +140,13 @@ func NewNodeController(wf *factory.WatchFactory, networkManager networkmanager.I
 	}
 	c := NewController(wf, "node-topology", networkManager)
 	c.nodeName = nodeName
+	// Retries stay on this queue because it runs reconcileNode itself, rather than
+	// handing the key back to the shared remote-node queue.
+	c.localNodeController = controller.NewReconciler(c.name+"-local-node", &controller.ReconcilerConfig{
+		Reconcile:   c.reconcileNode,
+		Threadiness: 1,
+		MaxAttempts: controller.InfiniteAttempts,
+	})
 	return c
 }
 
@@ -134,8 +158,14 @@ func (c *NodeController) Start() error {
 		return nil
 	}
 
-	err := controller.Start(c.nodeController)
-	if err != nil {
+	// One Start call so a failure stops every queue this call started. Separate
+	// calls would drop the shared queue's error when the local queue starts, and
+	// would leave the shared workers running when the local queue fails.
+	reconcilers := []controller.Reconciler{c.nodeController}
+	if c.localNodeController != nil {
+		reconcilers = append(reconcilers, c.localNodeController)
+	}
+	if err := controller.Start(reconcilers...); err != nil {
 		return err
 	}
 
@@ -149,11 +179,21 @@ func (c *NodeController) Stop() {
 	c.started = false
 	c.startMu.Unlock()
 	controller.Stop(c.nodeController)
+	if c.localNodeController != nil {
+		controller.Stop(c.localNodeController)
+	}
 }
 
 // ReconcileNetwork queues reconciliation for a single node/network pair.
+// The controller's own node goes to the dedicated local queue so startup waits
+// (waitForInitialNodeSync, waitForLocalZoneNodeLogicalSwitches) are not blocked
+// by remote nodes already queued for other networks.
 func (c *NodeController) ReconcileNetwork(nodeName, netName string) {
-	c.nodeController.Reconcile(scopedNodeQueueKey(nodeName, netName))
+	var reconciler controller.Reconciler = c.nodeController
+	if c.localNodeController != nil && nodeName == c.nodeName {
+		reconciler = c.localNodeController
+	}
+	reconciler.Reconcile(scopedNodeQueueKey(nodeName, netName))
 }
 
 // ReconcileNetworkWithPreflight runs preflight against the network handler and
@@ -218,6 +258,7 @@ func (c *NodeController) DeregisterNetworkController(netName string) {
 		delete(c.nodeActive, key)
 		delete(c.nodeCache, key)
 		delete(c.latestInformerNodeCache, key)
+		delete(c.localNodeFirst, key)
 		c.stateMu.Unlock()
 		return nil
 	})
@@ -237,7 +278,31 @@ func (c *NodeController) reconcileNode(ctx context.Context, key string) error {
 		return nil
 	}
 
-	return c.handlers.DoWithLock(netName, func(handlerKey string) error {
+	// Check the gate before taking the per-network lock. That lock is held for the
+	// whole reconcile, so a remote key waiting on it occupies a shared worker until
+	// the local node finishes.
+	if nodeName != c.nodeName && c.waitingForLocalNode(netName) {
+		// Returning success drops the key. Put it back after the retry delay so
+		// the remote node is reconciled once the local node has released the gate.
+		c.nodeController.ReconcileAfter(key, localNodeFirstRetry)
+		return nil
+	}
+
+	return c.handlers.DoWithLock(netName, func(handlerKey string) (err error) {
+		// Check the gate again: it can be set after the check above and before
+		// this lock is acquired. Clear it only after the local reconcile
+		// succeeds. A failure leaves it set so the retry still has priority.
+		if nodeName == c.nodeName {
+			defer func() {
+				if err == nil {
+					c.clearLocalNodeFirst(netName)
+				}
+			}()
+		} else if c.waitingForLocalNode(netName) {
+			c.nodeController.ReconcileAfter(key, localNodeFirstRetry)
+			return nil
+		}
+
 		handler, ok := c.handlers.Load(handlerKey)
 		if !ok || handler == nil {
 			return nil
@@ -387,10 +452,50 @@ func (c *NodeController) bootstrapNetwork(netName string, handler NodeHandler) e
 	}
 
 	c.setBootstrapNodes(netName, nodes)
+	// Set the gate before any remote key is queued and while registration still
+	// holds the per-network lock. Workers blocked on that lock then observe it
+	// and leave the slow reconcile to the local node.
+	if c.localNodeListed(nodes) {
+		c.markLocalNodeFirst(netName)
+	}
 	for _, node := range nodes {
-		c.nodeController.Reconcile(scopedNodeQueueKey(node.Name, netName))
+		c.ReconcileNetwork(node.Name, netName)
 	}
 	return nil
+}
+
+func (c *NodeController) localNodeListed(nodes []*corev1.Node) bool {
+	if c.localNodeController == nil || c.nodeName == "" {
+		return false
+	}
+	for _, node := range nodes {
+		if node.Name == c.nodeName {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *NodeController) markLocalNodeFirst(netName string) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	if c.localNodeFirst == nil {
+		c.localNodeFirst = map[string]struct{}{}
+	}
+	c.localNodeFirst[netName] = struct{}{}
+}
+
+func (c *NodeController) clearLocalNodeFirst(netName string) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	delete(c.localNodeFirst, netName)
+}
+
+func (c *NodeController) waitingForLocalNode(netName string) bool {
+	c.stateMu.RLock()
+	defer c.stateMu.RUnlock()
+	_, waiting := c.localNodeFirst[netName]
+	return waiting
 }
 
 // setBootstrapNodes stores bootstrap node tracking for a network.
