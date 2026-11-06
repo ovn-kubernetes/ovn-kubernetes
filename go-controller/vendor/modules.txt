@@ -825,8 +825,8 @@ gopkg.in/gcfg.v1/types
 # gopkg.in/inf.v0 v0.9.1
 ## explicit
 gopkg.in/inf.v0
-# gopkg.in/k8snetworkplumbingwg/multus-cni.v4 v4.2.5-0.20260316195000-6eb8514eef3c
-## explicit; go 1.24.11
+# gopkg.in/k8snetworkplumbingwg/multus-cni.v4 v4.3.1
+## explicit; go 1.26.0
 gopkg.in/k8snetworkplumbingwg/multus-cni.v4/pkg/checkpoint
 gopkg.in/k8snetworkplumbingwg/multus-cni.v4/pkg/kubeletclient
 gopkg.in/k8snetworkplumbingwg/multus-cni.v4/pkg/logging

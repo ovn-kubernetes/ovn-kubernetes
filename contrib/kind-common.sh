@@ -1303,7 +1303,7 @@ install_kubevirt_ipam_controller() {
 }
 
 install_multus() {
-  local version="v4.1.3"
+  local version="v4.3.1"
   local image="ghcr.io/k8snetworkplumbingwg/multus-cni:${version}"
   echo "Installing multus-cni $version daemonset ..."
   # Pull the image once on the host and load it into every kind node, instead

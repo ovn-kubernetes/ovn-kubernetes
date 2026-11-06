@@ -260,7 +260,7 @@ OVN-Kubernetes relies on SR-IOV Plugin to provision VFs for the pods. Once alloc
 
 Multus is needed in order to pass the VF allocated by SR-IOV Plugin to OVN-Kubernetes as the DeviceID. Furthermore, in addition to the primary network, OVN-Kubernetes supports Secondary Networks using Secondary Network Attachment Definitions (NADs) or Secondary User Defined Networks (UDNs). In simpler terms, a pod can have a VF for its default gateway interface, as well as one or more VFs for secondary networks. To leverage this capability, Multus needs to be installed. Follow these steps on the jumphost while using the Host kubeconfig.
 
-1.  Download the deployment spec for Multus. Use at least tag v4.2.3:
+1.  Download the deployment spec for Multus. Use at least tag v4.3.1:
 
     ```bash
     user@jumphost: curl -LO https://raw.githubusercontent.com/k8snetworkplumbingwg/multus-cni/master/deployments/multus-daemonset.yml
