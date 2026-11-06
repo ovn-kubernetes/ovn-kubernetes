@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	nadtypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	nadlisters "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
 
 	corev1 "k8s.io/api/core/v1"
@@ -37,6 +38,7 @@ const (
 	// parallelism for bulk UDN creation while controlling resource consumption.
 	// Aligns with Kubernetes controller-manager conventions and UDN service controller.
 	defaultNetworkReconcilerThreadiness = 5
+	routeAdvertisementsNADIndex         = "network-manager-route-advertisements"
 )
 
 func newNetworkController(name, node string, cm ControllerManager, wf watchFactory, asyncNetworkStart bool) *networkController {
@@ -68,6 +70,7 @@ func newNetworkController(name, node string, cm ControllerManager, wf watchFacto
 	// we don't care about route advertisements in cluster manager
 	if nc.hasRouteAdvertisements() {
 		nc.nadLister = wf.NADInformer().Lister()
+		nc.nadIndexer = wf.NADInformer().Informer().GetIndexer()
 		nc.raLister = wf.RouteAdvertisementsInformer().Lister()
 		nc.nodeLister = wf.NodeCoreInformer().Lister()
 
@@ -76,7 +79,7 @@ func newNetworkController(name, node string, cm ControllerManager, wf watchFacto
 			RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
 			Informer:       wf.RouteAdvertisementsInformer().Informer(),
 			Lister:         nc.raLister.List,
-			Reconcile:      func(_ context.Context, _ string) error { return nc.syncRunningNetworks() },
+			Reconcile:      nc.syncRouteAdvertisements,
 			ObjNeedsUpdate: raNeedsUpdate,
 			Threadiness:    1,
 		}
@@ -124,6 +127,7 @@ type networkController struct {
 	asyncNetworkStart bool
 
 	nadLister  nadlisters.NetworkAttachmentDefinitionLister
+	nadIndexer cache.Indexer
 	raLister   ralisters.RouteAdvertisementsLister
 	nodeLister corelisters.NodeLister
 
@@ -137,6 +141,9 @@ type networkController struct {
 	networkControllers map[string]*networkControllerState
 	// getNADKeysForNetwork returns NAD keys associated with a network name.
 	getNADKeysForNetwork func(networkName string) []string
+	// getNetworkNameForNADKey resolves the NAD controller's current network
+	// association, returning an empty string for NADs it has not processed.
+	getNetworkNameForNADKey func(nadKey string) string
 
 	// networkRefLock is used to protect pendingNetworkRefNodes and networkRefStates access
 	networkRefLock sync.Mutex
@@ -155,6 +162,15 @@ type networkController struct {
 // Start will cleanup stale networks that have not been ensured via
 // EnsuredNetwork before this call
 func (c *networkController) Start() error {
+	if c.raController != nil {
+		// The NAD cache may already be populated. AddIndexers also indexes its
+		// existing objects, before any RA workers can use the reverse lookup.
+		if _, exists := c.nadIndexer.GetIndexers()[routeAdvertisementsNADIndex]; !exists {
+			if err := c.nadIndexer.AddIndexers(cache.Indexers{routeAdvertisementsNADIndex: nadRouteAdvertisementsIndex}); err != nil {
+				return fmt.Errorf("failed to index NAD route advertisements: %w", err)
+			}
+		}
+	}
 	controllers := []controller.Reconciler{c.networkReconciler}
 	if c.raController != nil {
 		controllers = append(controllers, c.raController)
@@ -419,6 +435,56 @@ func (c *networkController) syncRunningNetworks() error {
 		c.networkReconciler.Reconcile(network.controller.GetNetworkName())
 	}
 
+	return nil
+}
+
+// nadRouteAdvertisementsIndex indexes each NAD under the RA names recorded in
+// its annotation. These annotations reflect selection resolved by the RA
+// controller, so consumers do not need to evaluate RA network selectors again.
+// The informer cache maintains the index as NADs change or are deleted.
+func nadRouteAdvertisementsIndex(obj interface{}) ([]string, error) {
+	nad := obj.(*nadtypes.NetworkAttachmentDefinition)
+	annotation := nad.Annotations[types.OvnRouteAdvertisementsKey]
+	if annotation == "" {
+		return nil, nil
+	}
+	var names []string
+	if err := json.Unmarshal([]byte(annotation), &names); err != nil {
+		// Invalid annotations must not break informer cache updates. Network
+		// reconciliation reports the error and retries the network.
+		klog.Errorf("Failed to index route advertisements for NAD %s/%s: %v", nad.Namespace, nad.Name, err)
+		return nil, nil
+	}
+	return names, nil
+}
+
+// syncRouteAdvertisements queues only networks whose NADs reference raName.
+// NAD annotation changes independently queue their networks through EnsureNetwork,
+// so this lookup only needs the current references to the advertisement.
+func (c *networkController) syncRouteAdvertisements(_ context.Context, raName string) error {
+	nads, err := c.nadIndexer.ByIndex(routeAdvertisementsNADIndex, raName)
+	if err != nil {
+		return fmt.Errorf("failed to find NADs for route advertisement %s: %w", raName, err)
+	}
+	// Several NADs can belong to the same network, particularly for a CUDN
+	// spanning namespaces. Deduplicate before calling the network reconciler.
+	networks := sets.New[string]()
+	for _, obj := range nads {
+		nad := obj.(*nadtypes.NetworkAttachmentDefinition)
+		network := c.getNetworkNameForNADKey(util.GetNADName(nad.Namespace, nad.Name))
+		// A NAD may not have been processed yet, or its network may be
+		// filtered locally. EnsureNetwork will gather the latest RA state
+		// when that network is created. The default controller is managed
+		// separately through ControllerManager and remains eligible even
+		// without an entry in c.networks.
+		if network == "" || (network != types.DefaultNetworkName && c.getNetwork(network) == nil) {
+			continue
+		}
+		networks.Insert(network)
+	}
+	for network := range networks {
+		c.networkReconciler.Reconcile(network)
+	}
 	return nil
 }
 
