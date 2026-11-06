@@ -69,7 +69,7 @@ func (h *egressIPClusterControllerEventHandler) AddResource(ctx context.Context,
 		if !selectors.Matches(nodeLabels) {
 			return nil
 		}
-		isReachable := h.eIPC.isEgressNodeReachable(node)
+		isReachable := h.eIPC.isEgressNodeReachable(node.Name)
 		if isReachable {
 			h.eIPC.setNodeEgressReachable(node.Name, true)
 		}
@@ -170,7 +170,7 @@ func (h *egressIPClusterControllerEventHandler) UpdateResource(ctx context.Conte
 		// and probes immediately (no periodic-tick wait).
 		var isNewReachable bool
 		if isNewReady {
-			isNewReachable = h.eIPC.isEgressNodeReachable(newNode)
+			isNewReachable = h.eIPC.isEgressNodeReachable(newNode.Name)
 			h.eIPC.setNodeEgressReachable(newNode.Name, isNewReachable)
 		}
 		if oldMatchesSelector {
