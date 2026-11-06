@@ -1946,7 +1946,7 @@ func getPodNADToNetworkMappingWithPredicate(
 ) (bool, map[string]*nettypes.NetworkSelectionElement, error) {
 	// For non-default network controller, try to see if its name exists in the Pod's k8s.v1.cni.cncf.io/networks, if no,
 	// return false;
-	allNetworks, err := GetK8sPodAllNetworkSelections(pod)
+	allNetworks, err := getReadOnlyNetworkSelections(pod)
 	if err != nil {
 		return false, nil, err
 	}
@@ -1971,7 +1971,7 @@ func getPodNADToNetworkMappingWithPredicate(
 		// for multiple NetworkSelectionElements of the same NAD, set its nadName to indexed nadName
 		cnt := nNADs[nadName]
 		nNADs[nadName] = cnt + 1
-		networkSelections[GetIndexedNADKey(nadName, cnt)] = network
+		networkSelections[GetIndexedNADKey(nadName, cnt)] = copyNetworkSelection(network)
 	}
 
 	if len(networkSelections) == 0 {
@@ -2309,7 +2309,7 @@ func GetNetworkRole(
 	}
 
 	// at this point the controller must be a secondary network
-	allNetworks, err := GetK8sPodAllNetworkSelections(pod)
+	allNetworks, err := getReadOnlyNetworkSelections(pod)
 	if err != nil {
 		return "", fmt.Errorf("failed to get pod network mapping: %w", err)
 	}
