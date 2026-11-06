@@ -27,6 +27,7 @@ import (
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	utilnet "k8s.io/utils/net"
+	"k8s.io/utils/ptr"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	egressipv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
@@ -228,7 +229,7 @@ func setupNode(nodeName string, ipNets []string, mockAllocationIPs map[string]st
 		healthClient:     hccAllocator.allocate(nodeName), // using fakeEgressIPHealthClientAllocator
 		name:             nodeName,
 		isReady:          true,
-		isReachable:      true,
+		isReachable:      ptr.To(true),
 		isHostCIDRsReady: true,
 		labels:           labels.Set{"k8s.ovn.org/egress-assignable": ""},
 	}
@@ -279,7 +280,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 		if !ok {
 			panic(fmt.Sprintf("failed to find key %s", s))
 		}
-		return c.isReachable
+		return c.knownReachable()
 	}
 
 	doesEgressIPAllocatorContainSafely := func(s string) bool {
@@ -2082,7 +2083,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				gomega.Eventually(hcClient.IsConnected).Should(gomega.BeTrue())
 				// the node should not be marked as reachable in the update handler as it is not getting added
-				gomega.Consistently(func() bool { return fakeClusterManagerOVN.eIPC.nodeAllocator.cache[node.Name].isReachable }).Should(gomega.BeFalse())
+				gomega.Consistently(func() bool {
+					fakeClusterManagerOVN.eIPC.nodeAllocator.Lock()
+					defer fakeClusterManagerOVN.eIPC.nodeAllocator.Unlock()
+					return fakeClusterManagerOVN.eIPC.nodeAllocator.cache[node.Name].knownReachable()
+				}).Should(gomega.BeFalse())
 
 				// egress IP should get assigned on the next checkEgressNodesReachabilityIterate call
 				// explicitly call check reachability, periodic checker is not active
@@ -2091,6 +2096,172 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				fakeClusterManagerOVN.eIPC.retryEgressNodes.RequestRetryObjs()
 				gomega.Eventually(getEgressIPStatusLen(eIP1.Name)).Should(gomega.Equal(1))
 
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("should assign a newly-created EgressIP to a matching node via the inline probe EIP add path without the periodic reachability check", func() {
+			// A node is labelled and healthy before any EgressIP exists; its reachability
+			// may not be confirmed in the allocator cache (unselected nodes are not
+			// probed). When an EgressIP is created that selects it, assignment must
+			// happen via the EgressIP reconcile path (probeUnknownReachableNodes) -
+			// not wait for the next periodic reachability tick.
+			app.Action = func(*cli.Context) error {
+				egressIP := "192.168.126.101"
+				nodeIPv4 := "192.168.126.51/24"
+				node := corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: node1Name,
+						Annotations: map[string]string{
+							"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\"}", nodeIPv4),
+							"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":[\"%s\"]}", v4NodeSubnet),
+							util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", nodeIPv4),
+						},
+						Labels: map[string]string{
+							"k8s.ovn.org/egress-assignable": "",
+						},
+					},
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
+							{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+						},
+					},
+				}
+				fakeClusterManagerOVN.start(
+					&egressipv1.EgressIPList{},
+					&corev1.NodeList{Items: []corev1.Node{node}},
+				)
+				// Stretch the background reachability check far beyond the test
+				// timeout so the only route to assignment is the EgressIP-add path.
+				fakeClusterManagerOVN.eIPC.reachabilityCheckInterval = 10 * time.Minute
+
+				_, err := fakeClusterManagerOVN.eIPC.WatchEgressNodes()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				_, err = fakeClusterManagerOVN.eIPC.WatchEgressIP()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Node is in the allocator cache; simulate assignable+ready with
+				// unknown reachability (nil), while the probe would succeed.
+				gomega.Eventually(func() bool {
+					fakeClusterManagerOVN.eIPC.nodeAllocator.Lock()
+					defer fakeClusterManagerOVN.eIPC.nodeAllocator.Unlock()
+					_, ok := fakeClusterManagerOVN.eIPC.nodeAllocator.cache[node.Name]
+					return ok
+				}).Should(gomega.BeTrue())
+				fakeClusterManagerOVN.eIPC.nodeAllocator.Lock()
+				fakeClusterManagerOVN.eIPC.nodeAllocator.cache[node.Name].isReachable = nil
+				fakeClusterManagerOVN.eIPC.nodeAllocator.Unlock()
+
+				for len(fakeClusterManagerOVN.fakeRecorder.Events) > 0 {
+					<-fakeClusterManagerOVN.fakeRecorder.Events
+				}
+
+				// Create the EgressIP after the node is already labelled (common workflow).
+				eIP := egressipv1.EgressIP{
+					ObjectMeta: newEgressIPMeta(egressIPName),
+					Spec: egressipv1.EgressIPSpec{
+						EgressNodeSelector: defaultEgressNodeSelectorSpec,
+						EgressIPs:          []string{egressIP},
+					},
+				}
+				_, err = fakeClusterManagerOVN.fakeClient.EgressIPClient.K8sV1().EgressIPs().Create(context.TODO(), &eIP, metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// The EgressIP reconcile path (probeUnknownReachableNodes) must have
+				// confirmed reachability; otherwise assignment below could only come
+				// from some unintended path.
+				gomega.Eventually(func() bool {
+					fakeClusterManagerOVN.eIPC.nodeAllocator.Lock()
+					defer fakeClusterManagerOVN.eIPC.nodeAllocator.Unlock()
+					return fakeClusterManagerOVN.eIPC.nodeAllocator.cache[node.Name].knownReachable()
+				}).Should(gomega.BeTrue())
+
+				// Must be assigned without any manual reachability iteration or periodic tick.
+				gomega.Eventually(getEgressIPStatusLen(eIP.Name)).Should(gomega.Equal(1))
+				egressIPs, nodes := getEgressIPStatus(eIP.Name)
+				gomega.Expect(egressIPs[0]).To(gomega.Equal(egressIP))
+				gomega.Expect(nodes[0]).To(gomega.Equal(node1Name))
+				gomega.Consistently(fakeClusterManagerOVN.fakeRecorder.Events).
+					WithTimeout(500 * time.Millisecond).WithPolling(50 * time.Millisecond).
+					ShouldNot(gomega.Receive(gomega.ContainSubstring("NoMatchingNodeFound")))
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("should not assign a newly-created EgressIP when the matching node is unreachable", func() {
+			// Negative companion to the test above: the EgressIP-path probe must still
+			// gate assignment. When the node's probe fails, the node must not be
+			// activated and a newly-created EgressIP must stay pending.
+			app.Action = func(*cli.Context) error {
+				egressIP := "192.168.126.101"
+				nodeIPv4 := "192.168.126.51/24"
+				node := corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: node1Name,
+						Annotations: map[string]string{
+							"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\"}", nodeIPv4),
+							"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":[\"%s\"]}", v4NodeSubnet),
+							util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", nodeIPv4),
+						},
+						Labels: map[string]string{
+							"k8s.ovn.org/egress-assignable": "",
+						},
+					},
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
+							{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+						},
+					},
+				}
+				fakeClusterManagerOVN.start(
+					&egressipv1.EgressIPList{},
+					&corev1.NodeList{Items: []corev1.Node{node}},
+				)
+				// Stretch the background reachability check far beyond the test
+				// timeout so the only route to assignment would be the EgressIP-add path.
+				fakeClusterManagerOVN.eIPC.reachabilityCheckInterval = 10 * time.Minute
+
+				_, err := fakeClusterManagerOVN.eIPC.WatchEgressNodes()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				_, err = fakeClusterManagerOVN.eIPC.WatchEgressIP()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Node is in the allocator cache; mark reachability unconfirmed and make
+				// its probe fail, so the EgressIP-path probe cannot activate it.
+				gomega.Eventually(func() bool {
+					fakeClusterManagerOVN.eIPC.nodeAllocator.Lock()
+					defer fakeClusterManagerOVN.eIPC.nodeAllocator.Unlock()
+					_, ok := fakeClusterManagerOVN.eIPC.nodeAllocator.cache[node.Name]
+					return ok
+				}).Should(gomega.BeTrue())
+				fakeClusterManagerOVN.eIPC.nodeAllocator.Lock()
+				fakeClusterManagerOVN.eIPC.nodeAllocator.cache[node.Name].isReachable = nil
+				fakeClusterManagerOVN.eIPC.nodeAllocator.Unlock()
+				getEgressIPAllocatorHealthCheckSafely(node.Name).setFakeProbeFailure(true)
+
+				// Create the EgressIP after the node is already labelled (common workflow).
+				eIP := egressipv1.EgressIP{
+					ObjectMeta: newEgressIPMeta(egressIPName),
+					Spec: egressipv1.EgressIPSpec{
+						EgressNodeSelector: defaultEgressNodeSelectorSpec,
+						EgressIPs:          []string{egressIP},
+					},
+				}
+				_, err = fakeClusterManagerOVN.fakeClient.EgressIPClient.K8sV1().EgressIPs().Create(context.TODO(), &eIP, metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// The EgressIP-path probe fails, so the node stays unreachable and the
+				// EgressIP must remain unassigned.
+				gomega.Consistently(func() bool {
+					fakeClusterManagerOVN.eIPC.nodeAllocator.Lock()
+					defer fakeClusterManagerOVN.eIPC.nodeAllocator.Unlock()
+					return fakeClusterManagerOVN.eIPC.nodeAllocator.cache[node.Name].knownReachable()
+				}).WithTimeout(time.Second).WithPolling(100 * time.Millisecond).Should(gomega.BeFalse())
+				gomega.Consistently(getEgressIPStatusLen(eIP.Name)).WithTimeout(time.Second).WithPolling(100 * time.Millisecond).Should(gomega.Equal(0))
 				return nil
 			}
 			err := app.Run([]string{app.Name})

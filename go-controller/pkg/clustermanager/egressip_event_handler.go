@@ -62,7 +62,7 @@ func (h *egressIPClusterControllerEventHandler) AddResource(ctx context.Context,
 			h.eIPC.setNodeEgressReady(node.Name, true)
 		}
 
-		isReachable := h.eIPC.isEgressNodeReachable(node)
+		isReachable := h.eIPC.isEgressNodeReachable(node.Name)
 		if isReachable {
 			h.eIPC.setNodeEgressReachable(node.Name, true)
 		}
@@ -136,7 +136,7 @@ func (h *egressIPClusterControllerEventHandler) UpdateResource(ctx context.Conte
 		// isHostCIDRsReady is already updated by initEgressIPAllocator above.
 		isNewReady := h.eIPC.isEgressNodeReady(newNode)
 		h.eIPC.setNodeEgressReady(newNode.Name, isNewReady)
-		isNewReachable := h.eIPC.isEgressNodeReachable(newNode)
+		isNewReachable := h.eIPC.isEgressNodeReachable(newNode.Name)
 		h.eIPC.setNodeEgressReachable(newNode.Name, isNewReachable)
 
 		// Check selector match to decide whether assignment reconciliation is needed.

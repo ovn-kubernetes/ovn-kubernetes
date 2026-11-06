@@ -29,6 +29,7 @@ import (
 	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
+	"k8s.io/utils/ptr"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/id"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
@@ -123,12 +124,23 @@ type egressNode struct {
 	allocations    map[string]string
 	healthClient   healthcheck.EgressIPHealthClient
 	isReady        bool
-	isReachable    bool
+	// isReachable is a three-state probe result:
+	//   nil   = unknown (not yet probed, or no longer a healthcheck candidate)
+	//   true  = last probe succeeded
+	//   false = last probe failed
+	isReachable *bool
 	// isHostCIDRsReady is true when the node's host-cidrs annotation is present,
 	// parseable, and contains at least one address.
 	isHostCIDRsReady bool
 	name             string
 	labels           labels.Set
+}
+
+// knownReachable reports whether the node has a confirmed successful probe.
+// nil (unknown) and false (failed) are both treated as not reachable for
+// assignment purposes.
+func (e *egressNode) knownReachable() bool {
+	return e.isReachable != nil && *e.isReachable
 }
 
 func (e *egressNode) getAllocationCountForEgressIP(name string) (count int) {
@@ -546,7 +558,7 @@ func (eIPC *egressIPClusterController) getSortedEgressData(selector labels.Selec
 	assignableNodes := []*egressNode{}
 	allAllocations := make(map[string]egressIPNodeStatus)
 	for _, eNode := range eIPC.nodeAllocator.cache {
-		if selector.Matches(eNode.labels) && eNode.isHostCIDRsReady && eNode.isReady && eNode.isReachable {
+		if selector.Matches(eNode.labels) && eNode.isHostCIDRsReady && eNode.isReady && eNode.knownReachable() {
 			assignableNodes = append(assignableNodes, eNode)
 		}
 		for ip, eipName := range eNode.allocations {
@@ -709,20 +721,23 @@ func checkEgressNodesReachabilityIterate(eIPC *egressIPClusterController) {
 		// getSortedEgressData (which additionally requires isReachable,
 		// the value computed here).
 		if selectors.Matches(eNode.labels) && eNode.isHostCIDRsReady && eNode.isReady {
-			wasReachable := eNode.isReachable
+			wasReachable := eNode.knownReachable()
 			isReachable := eIPC.isReachable(eNode.name, eNode.mgmtIPs, eNode.healthClient)
 			if wasReachable && !isReachable {
 				reAddOrDelete[eNode.name] = true
 			} else if !wasReachable && isReachable {
 				reAddOrDelete[eNode.name] = false
 			}
-			eNode.isReachable = isReachable
+			eNode.isReachable = ptr.To(isReachable)
 		} else {
 			// End connection (if there is one). Nodes that aren't egress
 			// candidates (no usable host-cidrs, or not matched by any
 			// EgressIP's nodeSelector) don't need probing. Calling Disconnect
 			// on an already disconnected node is expected to be cheap.
+			// Clear the cached probe result so a later selector match starts
+			// from unknown rather than a stale true/false.
 			eNode.healthClient.Disconnect()
+			eNode.isReachable = nil
 		}
 	}
 	eIPC.nodeAllocator.Unlock()
@@ -761,11 +776,13 @@ func (eIPC *egressIPClusterController) isReachable(nodeName string, mgmtIPs []ne
 	return isReachableViaGRPC(mgmtIPs, healthClient, eIPC.egressIPNodeHealthCheckPort, eIPC.egressIPTotalTimeout)
 }
 
-func (eIPC *egressIPClusterController) isEgressNodeReachable(egressNode *corev1.Node) bool {
+// isEgressNodeReachable returns true if the node is known reachable in cache,
+// otherwise runs a live probe. The old bool cache read is knownReachable().
+func (eIPC *egressIPClusterController) isEgressNodeReachable(nodeName string) bool {
 	eIPC.nodeAllocator.Lock()
 	defer eIPC.nodeAllocator.Unlock()
-	if eNode, exists := eIPC.nodeAllocator.cache[egressNode.Name]; exists {
-		return eNode.isReachable || eIPC.isReachable(eNode.name, eNode.mgmtIPs, eNode.healthClient)
+	if eNode, exists := eIPC.nodeAllocator.cache[nodeName]; exists {
+		return eNode.knownReachable() || eIPC.isReachable(eNode.name, eNode.mgmtIPs, eNode.healthClient)
 	}
 	return false
 }
@@ -794,10 +811,35 @@ func (eIPC *egressIPClusterController) setNodeEgressReachable(nodeName string, i
 	eIPC.nodeAllocator.Lock()
 	defer eIPC.nodeAllocator.Unlock()
 	if eNode, exists := eIPC.nodeAllocator.cache[nodeName]; exists {
-		eNode.isReachable = isReachable
+		eNode.isReachable = ptr.To(isReachable)
 		if !isReachable {
 			eNode.allocations = make(map[string]string)
 		}
+	}
+}
+
+// probeUnknownReachableNodes probes selector-matching ready nodes whose
+// reachability is still unknown (nil) and records the result. Called from the
+// EgressIP reconcile path so newly selected nodes are confirmed before
+// assignment, avoiding a spurious NoMatchingNodeFound when the only issue is
+// that the periodic healthcheck has not probed them yet.
+func (eIPC *egressIPClusterController) probeUnknownReachableNodes(selector labels.Selector) {
+	var unknown []string
+	eIPC.nodeAllocator.Lock()
+	for _, eNode := range eIPC.nodeAllocator.cache {
+		if eNode.isReachable != nil {
+			continue
+		}
+		if !selector.Matches(eNode.labels) || !eNode.isHostCIDRsReady || !eNode.isReady {
+			continue
+		}
+		unknown = append(unknown, eNode.name)
+	}
+	eIPC.nodeAllocator.Unlock()
+
+	for _, name := range unknown {
+		reachable := eIPC.isEgressNodeReachable(name)
+		eIPC.setNodeEgressReachable(name, reachable)
 	}
 }
 
@@ -1081,6 +1123,17 @@ func (eIPC *egressIPClusterController) reconcileEgressIP(ctx context.Context, ol
 			return nil
 		}
 		eIPC.setEgressIPNodeSelector(name, selector)
+		// Newly selected nodes may still have unknown reachability (nil) because
+		// the periodic healthcheck only probes currently selected nodes. Probe
+		// them inline before validate/assign so assignment does not emit a
+		// misleading NoMatchingNodeFound for nodes that are simply unprobed.
+		// On startup, Start() runs WatchEgressNodes (initEgressNodeReachability
+		// prepopulates selectors and starts the periodic prober) then
+		// WatchEgressIP, which replays existing EIPs as Adds into reconcile.
+		// Those Adds also hit this path; nodes already probed (or still nil) are
+		// handled here, while the periodic loop's first tick is only after
+		// reachabilityCheckInterval.
+		eIPC.probeUnknownReachableNodes(selector)
 	} else {
 		eIPC.deallocMark(name)
 		eIPC.deleteEgressIPNodeSelector(name)
@@ -1613,7 +1666,7 @@ func (eIPC *egressIPClusterController) validateEgressIPStatus(name string, items
 				klog.Errorf("Allocator error: EgressIP: %s assigned to node: %s which does not have valid host-cidrs, will attempt rebalancing", name, eIPStatus.Node)
 				validAssignment = false
 			}
-			if !eNode.isReachable {
+			if !eNode.knownReachable() {
 				klog.Errorf("Allocator error: EgressIP: %s assigned to node: %s which is not reachable, will attempt rebalancing", name, eIPStatus.Node)
 				validAssignment = false
 			}
