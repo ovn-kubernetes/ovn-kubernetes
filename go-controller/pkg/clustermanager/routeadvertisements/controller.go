@@ -216,9 +216,14 @@ func NewController(
 	}
 
 	raConfig := &controllerutil.ControllerConfig[ratypes.RouteAdvertisements]{
-		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
-		Reconcile:      c.reconcile,
-		Threadiness:    1,
+		RateLimiter: workqueue.DefaultTypedControllerRateLimiter[string](),
+		Reconcile:   c.reconcile,
+		// Configurable only to measure how much of this queue's wait is
+		// serialisation. Defaults to 1, and raising it is unsafe when
+		// RouteAdvertisements select overlapping networks, because
+		// updateNADs below does a read-modify-write of a shared annotation
+		// with no conflict detection. See ClusterManagerConfig.
+		Threadiness:    config.ClusterManager.RouteAdvertisementsThreadiness,
 		Informer:       wf.RouteAdvertisementsInformer().Informer(),
 		Lister:         wf.RouteAdvertisementsInformer().Lister().List,
 		ObjNeedsUpdate: c.raNeedsUpdate,
