@@ -7,8 +7,10 @@ import (
 	cnitypes "github.com/containernetworking/cni/pkg/types"
 	"github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/apis/k8s.cni.cncf.io/v1beta1"
 
+	corev1 "k8s.io/api/core/v1"
 	netv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -169,6 +171,108 @@ var _ = Describe("convertMultiNetPolicyToNetPolicy", func() {
 					},
 				},
 			))
+	})
+
+	It("translates an IPAM policy with a bare IP in the `ipBlock` except list", func() {
+		allowPeerSelectors := true
+		ingress := multiNetPolicyWithIngressIPBlock()
+		ingress.Spec.Ingress[0].From[0].IPBlock.Except = []string{"10.10.1.42"}
+		Expect(convertMultiNetPolicyToNetPolicy(ingress, allowPeerSelectors)).To(Equal(
+			&netv1.NetworkPolicy{
+				Spec: netv1.NetworkPolicySpec{
+					Ingress: []netv1.NetworkPolicyIngressRule{
+						{
+							From:  []netv1.NetworkPolicyPeer{{IPBlock: &netv1.IPBlock{CIDR: "10.10.0.0/16", Except: []string{"10.10.1.42/32"}}}},
+							Ports: []netv1.NetworkPolicyPort{},
+						},
+					},
+					Egress:      []netv1.NetworkPolicyEgressRule{},
+					PolicyTypes: []netv1.PolicyType{},
+				},
+			},
+		), "a bare IP in except should be converted to a single-host CIDR")
+	})
+
+	It("translates an IPAM policy with a bare IPv6 address in the `ipBlock` except list", func() {
+		allowPeerSelectors := true
+		ingress := multiNetPolicyWithIngressIPBlock()
+		ingress.Spec.Ingress[0].From[0].IPBlock.CIDR = "fd00::/64"
+		ingress.Spec.Ingress[0].From[0].IPBlock.Except = []string{"fd00::1"}
+		Expect(convertMultiNetPolicyToNetPolicy(ingress, allowPeerSelectors)).To(Equal(
+			&netv1.NetworkPolicy{
+				Spec: netv1.NetworkPolicySpec{
+					Ingress: []netv1.NetworkPolicyIngressRule{
+						{
+							From:  []netv1.NetworkPolicyPeer{{IPBlock: &netv1.IPBlock{CIDR: "fd00::/64", Except: []string{"fd00::1/128"}}}},
+							Ports: []netv1.NetworkPolicyPort{},
+						},
+					},
+					Egress:      []netv1.NetworkPolicyEgressRule{},
+					PolicyTypes: []netv1.PolicyType{},
+				},
+			},
+		), "a bare IPv6 address in except should be converted to a /128 CIDR")
+	})
+
+	It("ignores malformed `ipBlock` peers and drops rules left without peers", func() {
+		allowPeerSelectors := true
+		for _, ipBlock := range []*v1beta1.IPBlock{
+			{CIDR: "10.10.0.0/16 || 1==1"},
+			{CIDR: "10.10.0.0/16", Except: []string{"10.10.1.0/24, 0.0.0.0/0"}},
+			{CIDR: "10.10.0.0/16", Except: []string{"10.20.0.0/24"}},
+			{CIDR: "10.10.0.0/16", Except: []string{"10.0.0.0/8"}},
+			{CIDR: "::ffff:10.10.0.0/112"},
+			{CIDR: "::ffff:10.10.0.0/80"},
+			{CIDR: "10.10.0.0/16", Except: []string{"::ffff:10.10.1.42"}},
+		} {
+			valid := v1beta1.MultiNetworkPolicyPeer{IPBlock: &v1beta1.IPBlock{CIDR: "10.10.0.0/16"}}
+			invalid := v1beta1.MultiNetworkPolicyPeer{IPBlock: ipBlock}
+			tcp := corev1.ProtocolTCP
+			port := intstr.FromInt32(8080)
+			ports := []v1beta1.MultiNetworkPolicyPort{{Protocol: &tcp, Port: &port}}
+
+			ingress := multiNetPolicyWithIngressIPBlock()
+			ingress.Spec.Ingress[0].From = []v1beta1.MultiNetworkPolicyPeer{invalid, valid}
+			// This is a rule with all-invalid peers, which shouldn't turn into a port-only match
+			// but instead should be fully removed
+			ingress.Spec.Ingress = append(ingress.Spec.Ingress, v1beta1.MultiNetworkPolicyIngressRule{
+				From:  []v1beta1.MultiNetworkPolicyPeer{invalid},
+				Ports: ports,
+			})
+			Expect(convertMultiNetPolicyToNetPolicy(ingress, allowPeerSelectors)).To(Equal(
+				&netv1.NetworkPolicy{
+					Spec: netv1.NetworkPolicySpec{
+						Ingress: []netv1.NetworkPolicyIngressRule{
+							{
+								From:  []netv1.NetworkPolicyPeer{{IPBlock: &netv1.IPBlock{CIDR: "10.10.0.0/16"}}},
+								Ports: []netv1.NetworkPolicyPort{},
+							},
+						},
+						Egress:      []netv1.NetworkPolicyEgressRule{},
+						PolicyTypes: []netv1.PolicyType{},
+					},
+				}), "ingress ipBlock %+v", ipBlock)
+
+			egress := multiNetPolicyWithEgressIPBlock()
+			egress.Spec.Egress[0].To = []v1beta1.MultiNetworkPolicyPeer{invalid, valid}
+			egress.Spec.Egress = append(egress.Spec.Egress, v1beta1.MultiNetworkPolicyEgressRule{
+				To:    []v1beta1.MultiNetworkPolicyPeer{invalid},
+				Ports: ports,
+			})
+			Expect(convertMultiNetPolicyToNetPolicy(egress, allowPeerSelectors)).To(Equal(
+				&netv1.NetworkPolicy{
+					Spec: netv1.NetworkPolicySpec{
+						Ingress: []netv1.NetworkPolicyIngressRule{},
+						Egress: []netv1.NetworkPolicyEgressRule{
+							{
+								To:    []netv1.NetworkPolicyPeer{{IPBlock: &netv1.IPBlock{CIDR: "10.10.0.0/16"}}},
+								Ports: []netv1.NetworkPolicyPort{},
+							},
+						},
+						PolicyTypes: []netv1.PolicyType{},
+					},
+				}), "egress ipBlock %+v", ipBlock)
+		}
 	})
 
 	It("*fails* to translate an IPAM-less policy with ingress pod selector peers", func() {
