@@ -6,7 +6,9 @@ package node
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -258,6 +260,59 @@ func TestReconcileNetworkWithPreflightScopesHandler(t *testing.T) {
 	}
 	if len(handlerB.gatewaySyncs) != 0 {
 		t.Fatalf("expected net-b preflight to not run, got %v", handlerB.gatewaySyncs)
+	}
+}
+
+// TestReconcileNetworkWithPreflightSerializesWithInFlightSync verifies that a
+// preflight can't be interleaved with an in-flight node sync for the same
+// network, so a sync that clears handler state at its end can't wipe a mark
+// set by the preflight while the sync was running.
+func TestReconcileNetworkWithPreflightSerializesWithInFlightSync(t *testing.T) {
+	handler := &fakeNodeHandler{netName: "net-a"}
+	handlers := syncmap.NewSyncMap[NodeHandler]()
+	handlers.Store(handler.netName, handler)
+
+	c := &NodeController{
+		nodeController: newNodeControllerForTest(1, nil),
+		handlers:       handlers,
+	}
+
+	var marked atomic.Bool
+	syncStarted := make(chan struct{})
+	finishSync := make(chan struct{})
+	syncDone := make(chan struct{})
+	go func() {
+		defer close(syncDone)
+		_ = c.handlers.DoWithLock(handler.netName, func(string) error {
+			close(syncStarted)
+			<-finishSync
+			// a successful sync clears the "needs sync" mark
+			marked.Store(false)
+			return nil
+		})
+	}()
+	<-syncStarted
+
+	preflightDone := make(chan struct{})
+	go func() {
+		defer close(preflightDone)
+		c.ReconcileNetworkWithPreflight("node-a", handler.netName, func(NodeHandler) {
+			marked.Store(true)
+		})
+	}()
+
+	select {
+	case <-preflightDone:
+		t.Fatal("expected preflight to wait for the in-flight sync")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(finishSync)
+	<-syncDone
+	<-preflightDone
+
+	if !marked.Load() {
+		t.Fatal("expected mark set by preflight to survive the in-flight sync")
 	}
 }
 
