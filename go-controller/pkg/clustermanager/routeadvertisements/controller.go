@@ -749,13 +749,10 @@ func (c *Controller) generateFRRConfigurations(ctx context.Context, ra *ratypes.
 		if err != nil {
 			return nil, nil, err
 		}
-		nodes, err := c.nodeLister.List(nodeSelector)
-		if err != nil {
-			return nil, nil, err
-		}
+		// Reuse the RouteAdvertisements selection instead of scanning the
+		// entire node cache and allocating another list for each FRR config.
 		for _, node := range nodes {
-			if _, selected := nodeToFRRConfig[node.Name]; !selected {
-				// this RouteAdvertisements does not select this node, skip
+			if !nodeSelector.Matches(labels.Set(node.Labels)) {
 				continue
 			}
 			nodeToFRRConfig[node.Name] = append(nodeToFRRConfig[node.Name], frrConfig)
