@@ -307,6 +307,10 @@ ovn_enable_svc_template_support=${OVN_ENABLE_SVC_TEMPLATE_SUPPORT:-true}
 
 #OVN_NETWORK_QOS_ENABLE - enable network QoS for ovn-kubernetes
 ovn_network_qos_enable=${OVN_NETWORK_QOS_ENABLE:-false}
+# OVN_ENABLE_STATUS_METRICS - use metrics instead of per-node status shards
+ovn_enable_status_metrics=${OVN_ENABLE_STATUS_METRICS:-false}
+# OVN_STATUS_METRICS_PROMETHEUS_URL - Prometheus query URL for CM status rollup
+ovn_status_metrics_prometheus_url=${OVN_STATUS_METRICS_PROMETHEUS_URL:-}
 # OVN_ENABLE_DNSNAMERESOLVER - enable dns name resolver support
 ovn_enable_dnsnameresolver=${OVN_ENABLE_DNSNAMERESOLVER:-false}
 # OVN_ALLOW_ICMP_NETPOL - allow ICMP/ICMPv6 with network policy
@@ -1236,6 +1240,18 @@ ovnkube-controller() {
   fi
   echo "network_qos_enabled_flag=${network_qos_enabled_flag}"
 
+  status_metrics_enabled_flag=
+  if [[ ${ovn_enable_status_metrics} == "true" ]]; then
+      status_metrics_enabled_flag="--enable-status-metrics"
+  fi
+  echo "status_metrics_enabled_flag=${status_metrics_enabled_flag}"
+
+  status_metrics_prometheus_url_flag=
+  if [[ -n "${ovn_status_metrics_prometheus_url}" ]]; then
+      status_metrics_prometheus_url_flag="--metrics-status-prometheus-url=${ovn_status_metrics_prometheus_url}"
+  fi
+  echo "status_metrics_prometheus_url_flag=${status_metrics_prometheus_url_flag}"
+
   ovn_enable_dnsnameresolver_flag=
   if [[ ${ovn_enable_dnsnameresolver} == "true" ]]; then
 	  ovn_enable_dnsnameresolver_flag="--enable-dns-name-resolver"
@@ -1297,6 +1313,8 @@ ovnkube-controller() {
     ${ovn_v6_join_subnet_opt} \
     ${ovn_v6_masquerade_subnet_opt} \
     ${network_qos_enabled_flag} \
+    ${status_metrics_enabled_flag} \
+    ${status_metrics_prometheus_url_flag} \
     ${ovn_enable_dnsnameresolver_flag} \
     ${dynamic_udn_allocation_flag} \
     ${dynamic_udn_grace_period} \
@@ -1709,6 +1727,18 @@ ovnkube-controller-with-node() {
   fi
   echo "network_qos_enabled_flag=${network_qos_enabled_flag}"
 
+  status_metrics_enabled_flag=
+  if [[ ${ovn_enable_status_metrics} == "true" ]]; then
+      status_metrics_enabled_flag="--enable-status-metrics"
+  fi
+  echo "status_metrics_enabled_flag=${status_metrics_enabled_flag}"
+
+  status_metrics_prometheus_url_flag=
+  if [[ -n "${ovn_status_metrics_prometheus_url}" ]]; then
+      status_metrics_prometheus_url_flag="--metrics-status-prometheus-url=${ovn_status_metrics_prometheus_url}"
+  fi
+  echo "status_metrics_prometheus_url_flag=${status_metrics_prometheus_url_flag}"
+
   ovn_enable_dnsnameresolver_flag=
   if [[ ${ovn_enable_dnsnameresolver} == "true" ]]; then
 	  ovn_enable_dnsnameresolver_flag="--enable-dns-name-resolver"
@@ -1834,6 +1864,8 @@ ovnkube-controller-with-node() {
     ${dynamic_udn_grace_period} \
     ${ovnkube_cluster_default_nad_flag} \
     ${network_qos_enabled_flag} \
+    ${status_metrics_enabled_flag} \
+    ${status_metrics_prometheus_url_flag} \
     ${ovn_enable_dnsnameresolver_flag} \
     ${ovn_disable_requestedchassis_flag} \
     ${cluster_access_opts} \
@@ -2051,6 +2083,18 @@ ovn-cluster-manager() {
   fi
   echo "network_qos_enabled_flag=${network_qos_enabled_flag}"
 
+  status_metrics_enabled_flag=
+  if [[ ${ovn_enable_status_metrics} == "true" ]]; then
+      status_metrics_enabled_flag="--enable-status-metrics"
+  fi
+  echo "status_metrics_enabled_flag=${status_metrics_enabled_flag}"
+
+  status_metrics_prometheus_url_flag=
+  if [[ -n "${ovn_status_metrics_prometheus_url}" ]]; then
+      status_metrics_prometheus_url_flag="--metrics-status-prometheus-url=${ovn_status_metrics_prometheus_url}"
+  fi
+  echo "status_metrics_prometheus_url_flag=${status_metrics_prometheus_url_flag}"
+
   ovn_enable_dnsnameresolver_flag=
   if [[ ${ovn_enable_dnsnameresolver} == "true" ]]; then
 	  ovn_enable_dnsnameresolver_flag="--enable-dns-name-resolver"
@@ -2131,6 +2175,8 @@ ovn-cluster-manager() {
     ${ovn_v4_transit_subnet_opt} \
     ${ovn_v6_transit_subnet_opt} \
     ${network_qos_enabled_flag} \
+    ${status_metrics_enabled_flag} \
+    ${status_metrics_prometheus_url_flag} \
     ${dynamic_udn_allocation_flag} \
     ${dynamic_udn_grace_period} \
     ${ovnkube_cluster_default_nad_flag} \
@@ -2458,6 +2504,18 @@ ovn-node() {
   fi
   echo "network_qos_enabled_flag=${network_qos_enabled_flag}"
 
+  status_metrics_enabled_flag=
+  if [[ ${ovn_enable_status_metrics} == "true" ]]; then
+      status_metrics_enabled_flag="--enable-status-metrics"
+  fi
+  echo "status_metrics_enabled_flag=${status_metrics_enabled_flag}"
+
+  status_metrics_prometheus_url_flag=
+  if [[ -n "${ovn_status_metrics_prometheus_url}" ]]; then
+      status_metrics_prometheus_url_flag="--metrics-status-prometheus-url=${ovn_status_metrics_prometheus_url}"
+  fi
+  echo "status_metrics_prometheus_url_flag=${status_metrics_prometheus_url_flag}"
+
   ovn_v4_masquerade_subnet_opt=
   if [[ -n ${ovn_v4_masquerade_subnet} ]]; then
       ovn_v4_masquerade_subnet_opt="--gateway-v4-masquerade-subnet=${ovn_v4_masquerade_subnet}"
@@ -2544,6 +2602,8 @@ ovn-node() {
         ${dynamic_udn_grace_period} \
         ${ovnkube_cluster_default_nad_flag} \
         ${network_qos_enabled_flag} \
+        ${status_metrics_enabled_flag} \
+        ${status_metrics_prometheus_url_flag} \
         --cluster-subnets ${net_cidr} --k8s-service-cidr=${svc_cidr} \
         --export-ovs-metrics \
         --gateway-mode=${ovn_gateway_mode} ${ovn_gateway_opts} \
