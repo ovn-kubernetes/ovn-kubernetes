@@ -272,6 +272,72 @@ var _ = Describe("Level-driven controller deletedObj", func() {
 	})
 })
 
+var _ = Describe("Level-driven controller onDelete tombstone enqueue", func() {
+	const (
+		// Initial sync and onDelete both use queue.Add, so reconcile is prompt.
+		// Stay above the fake informer's 1s resync period.
+		reconcileTimeout = 2 * time.Second
+		reconcilePolling = 10 * time.Millisecond
+	)
+
+	var (
+		stopChan         chan struct{}
+		reconcileCounter atomic.Uint64
+		ctrl             Controller
+	)
+
+	startNodeController := func(config *ControllerConfig[corev1.Node], objects ...runtime.Object) {
+		fakeClient := util.GetOVNClientset(objects...).GetClusterManagerClientset()
+		coreFactory := informerfactory.NewSharedInformerFactory(fakeClient.KubeClient, time.Second)
+		config.Informer = coreFactory.Core().V1().Nodes().Informer()
+		config.Lister = coreFactory.Core().V1().Nodes().Lister().List
+		if config.RateLimiter == nil {
+			config.RateLimiter = workqueue.NewTypedItemExponentialFailureRateLimiter[string](100*time.Millisecond, 1*time.Second)
+		}
+		ctrl = NewController("controller-name", config)
+		coreFactory.Start(stopChan)
+		err := StartWithInitialSync(nil, ctrl)
+		Expect(err).NotTo(HaveOccurred(), "starting the node controller")
+	}
+
+	BeforeEach(func() {
+		reconcileCounter.Store(0)
+		stopChan = make(chan struct{})
+	})
+
+	AfterEach(func() {
+		close(stopChan)
+		Stop(ctrl)
+	})
+
+	It("enqueues reconcile for DeletedFinalStateUnknown delete events", func() {
+		node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-a"}}
+		config := getDefaultConfig[corev1.Node](&reconcileCounter)
+		var keysMu sync.Mutex
+		var reconciledKeys []string
+		reconcile := config.Reconcile
+		config.Reconcile = func(ctx context.Context, key string) error {
+			keysMu.Lock()
+			reconciledKeys = append(reconciledKeys, key)
+			keysMu.Unlock()
+			return reconcile(ctx, key)
+		}
+		startNodeController(config, node)
+		Eventually(reconcileCounter.Load, reconcileTimeout, reconcilePolling).Should(BeEquivalentTo(1), "initial sync should reconcile the node once")
+		keysMu.Lock()
+		reconciledKeys = nil
+		keysMu.Unlock()
+
+		cc := ctrl.(*controller[corev1.Node])
+		cc.onDelete(cache.DeletedFinalStateUnknown{Key: node.Name, Obj: node})
+		Eventually(func() []string {
+			keysMu.Lock()
+			defer keysMu.Unlock()
+			return append([]string(nil), reconciledKeys...)
+		}, reconcileTimeout, reconcilePolling).Should(Equal([]string{node.Name}), "tombstone delete should enqueue the deleted node key")
+	})
+})
+
 var _ = Describe("Level-driven controllers with shared initialSync", func() {
 	var (
 		fakeClient          *util.OVNClusterManagerClientset
