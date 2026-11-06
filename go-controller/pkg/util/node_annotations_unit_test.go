@@ -1160,3 +1160,31 @@ func TestIsNodeAnnotationPatchRetryable(t *testing.T) {
 		})
 	}
 }
+
+// Unit tests for capacity pointer aliasing bug fix
+// These tests verify that IPv4, IPv6, and IP capacity fields use independent pointers
+// and that values are correctly preserved during JSON unmarshaling.
+//
+// TestParseCloudEgressIPConfigCapacity verifies that ParseCloudEgressIPConfig
+// correctly parses all three capacity fields (IPv4, IPv6, IP) independently without pointer aliasing.
+func TestParseCloudEgressIPConfigCapacity(t *testing.T) {
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-node",
+			Annotations: map[string]string{
+				"cloud.network.openshift.io/egress-ipconfig": `[{"interface":"eni-xxxx","ifaddr":{"ipv4":"10.0.128.0/18"},"capacity":{"ipv4":14,"ipv6":15,"ip":100}}]`,
+				OvnNodeIfAddr: `{"ipv4":"10.0.128.5/18"}`,
+			},
+		},
+	}
+
+	parsed, err := ParseCloudEgressIPConfig(node)
+	require.NoError(t, err)
+	require.NotNil(t, parsed.Capacity.IPv4)
+	require.NotNil(t, parsed.Capacity.IPv6)
+	require.NotNil(t, parsed.Capacity.IP)
+
+	assert.Equal(t, 14, *parsed.Capacity.IPv4, "IPv4 capacity must not be corrupted by other capacity values")
+	assert.Equal(t, 15, *parsed.Capacity.IPv6, "IPv6 capacity must not be corrupted by other capacity values")
+	assert.Equal(t, 100, *parsed.Capacity.IP, "IP capacity must not be corrupted by other capacity values")
+}
