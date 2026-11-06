@@ -26,14 +26,46 @@ type PortCache struct {
 }
 
 type lpInfo struct {
-	name          string
-	uuid          string
-	logicalSwitch string
-	ips           []*net.IPNet
-	mac           net.HardwareAddr
+	name string
+	uuid string
+	// Network controller that wrote this applied cache entry.
+	appliedNetworkName string
+	logicalSwitch      string
+	ips                []*net.IPNet
+	mac                net.HardwareAddr
+	// Open-port annotation committed with the default-network port or its ACLs.
+	udnOpenPorts string
 	// expires, if non-nil, indicates that this object is scheduled to be
 	// removed at the given time
 	expires time.Time
+}
+
+func cloneLPInfo(info *lpInfo) *lpInfo {
+	if info == nil {
+		return nil
+	}
+
+	cloned := *info
+	if info.mac != nil {
+		cloned.mac = append(net.HardwareAddr(nil), info.mac...)
+	}
+	if info.ips != nil {
+		cloned.ips = make([]*net.IPNet, len(info.ips))
+		for i, ipNet := range info.ips {
+			if ipNet == nil {
+				continue
+			}
+			clonedIPNet := *ipNet
+			if ipNet.IP != nil {
+				clonedIPNet.IP = append(net.IP(nil), ipNet.IP...)
+			}
+			if ipNet.Mask != nil {
+				clonedIPNet.Mask = append(net.IPMask(nil), ipNet.Mask...)
+			}
+			cloned.ips[i] = &clonedIPNet
+		}
+	}
+	return &cloned
 }
 
 func NewPortCache(stopChan <-chan struct{}) *PortCache {
@@ -56,8 +88,7 @@ func (c *PortCache) get(pod *corev1.Pod, nadKey string) (*lpInfo, error) {
 	defer c.RUnlock()
 	if infoMap, ok := c.cache[podName]; ok {
 		if info, ok := infoMap[nadKey]; ok {
-			x := *info
-			return &x, nil
+			return cloneLPInfo(info), nil
 		}
 	}
 	return nil, fmt.Errorf("logical port %s (NAD key %s) for pod %s not found in cache",
@@ -69,10 +100,11 @@ func (c *PortCache) getAll(pod *corev1.Pod) (map[string]*lpInfo, error) {
 	c.RLock()
 	defer c.RUnlock()
 	if infoMap, ok := c.cache[podName]; ok {
-		// make a copy of this lpInfo map and return
-		lpInfoMap := map[string]*lpInfo{}
+		// Return an independent applied-state snapshot. In particular, cache
+		// expiration must not mutate state retained by delete retries.
+		lpInfoMap := make(map[string]*lpInfo, len(infoMap))
 		for k, v := range infoMap {
-			lpInfoMap[k] = v
+			lpInfoMap[k] = cloneLPInfo(v)
 		}
 		return lpInfoMap, nil
 	}
@@ -80,11 +112,12 @@ func (c *PortCache) getAll(pod *corev1.Pod) (map[string]*lpInfo, error) {
 }
 
 // Add inserts a pod's logical port into the cache.
-func (c *PortCache) Add(pod *corev1.Pod, logicalSwitch, nadKey, uuid string, mac net.HardwareAddr, ips []*net.IPNet) {
-	_ = c.add(pod, logicalSwitch, nadKey, uuid, mac, ips)
+func (c *PortCache) Add(pod *corev1.Pod, logicalSwitch, nadKey, appliedNetworkName, uuid string, mac net.HardwareAddr, ips []*net.IPNet) {
+	_ = c.add(pod, logicalSwitch, nadKey, appliedNetworkName, uuid, mac, ips)
 }
 
-func (c *PortCache) add(pod *corev1.Pod, logicalSwitch, nadKey, uuid string, mac net.HardwareAddr, ips []*net.IPNet) *lpInfo {
+// add stores applied port state for a pod NAD key.
+func (c *PortCache) add(pod *corev1.Pod, logicalSwitch, nadKey, appliedNetworkName, uuid string, mac net.HardwareAddr, ips []*net.IPNet) *lpInfo {
 	var logicalPort string
 
 	podName := fmt.Sprintf("%s/%s", pod.Namespace, pod.Name)
@@ -95,13 +128,15 @@ func (c *PortCache) add(pod *corev1.Pod, logicalSwitch, nadKey, uuid string, mac
 	}
 	c.Lock()
 	defer c.Unlock()
-	portInfo := &lpInfo{
-		logicalSwitch: logicalSwitch,
-		name:          logicalPort,
-		uuid:          uuid,
-		ips:           ips,
-		mac:           mac,
-	}
+	portInfo := cloneLPInfo(&lpInfo{
+		logicalSwitch:      logicalSwitch,
+		name:               logicalPort,
+		uuid:               uuid,
+		appliedNetworkName: appliedNetworkName,
+		ips:                ips,
+		mac:                mac,
+		udnOpenPorts:       pod.Annotations[util.UDNOpenPortsAnnotationName],
+	})
 	klog.V(5).Infof("port-cache(%s): added port %+v with IP: %s and MAC: %s",
 		logicalPort, portInfo, portInfo.ips, portInfo.mac)
 	m, ok := c.cache[podName]
@@ -111,7 +146,38 @@ func (c *PortCache) add(pod *corev1.Pod, logicalSwitch, nadKey, uuid string, mac
 		m = map[string]*lpInfo{nadKey: portInfo}
 		c.cache[podName] = m
 	}
-	return portInfo
+	return cloneLPInfo(portInfo)
+}
+
+// updateUDNOpenPorts records a successful open-port ACL update.
+func (c *PortCache) updateUDNOpenPorts(pod *corev1.Pod, annotation string) error {
+	c.Lock()
+	defer c.Unlock()
+	podName := pod.Namespace + "/" + pod.Name
+	info := c.cache[podName][types.DefaultNetworkName]
+	if info == nil {
+		return fmt.Errorf("default-network port for pod %s not found in cache", podName)
+	}
+	info.udnOpenPorts = annotation
+	return nil
+}
+
+// removeAllForNetwork clears applied port state for a cleaned-up network.
+func (c *PortCache) removeAllForNetwork(networkName string) {
+	c.Lock()
+	defer c.Unlock()
+	for podName, infoMap := range c.cache {
+		for nadKey, info := range infoMap {
+			if info.appliedNetworkName != networkName {
+				continue
+			}
+			klog.V(5).Infof("port-cache(%s): removing port for cleaned up network %s", info.name, networkName)
+			delete(infoMap, nadKey)
+		}
+		if len(infoMap) == 0 {
+			delete(c.cache, podName)
+		}
+	}
 }
 
 func (c *PortCache) remove(pod *corev1.Pod, nadKey string) {
