@@ -161,6 +161,7 @@ func newController(
 		dynamicallyRemovedNADs: sets.New[string](),
 	}
 	networkController.getNADKeysForNetwork = c.GetNADKeysForNetwork
+	networkController.getNetworkNameForNADKey = c.GetNetworkNameForNADKey
 
 	if cm != nil && config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
 		c.podTracker = NewPodTrackerController(fmt.Sprintf("%s pod-tracker", c.name), wf, c.OnNetworkRefChange, c.GetPrimaryNADForNamespace)
