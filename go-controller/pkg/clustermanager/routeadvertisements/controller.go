@@ -2152,10 +2152,15 @@ func (c *Controller) updateNADs(ctx context.Context, ra string, nads []*nadtypes
 			return hadUpdates, err
 		}
 
+		// The annotation lists every RouteAdvertisements selecting this NAD and
+		// is derived from the cached copy, so a stale cache must fail the patch
+		// with a conflict and requeue the RouteAdvertisements rather than drop
+		// an entry.
 		err = k.SetAnnotationsOnNAD(
 			ctx,
 			nad.Namespace,
 			nad.Name,
+			nad.ResourceVersion,
 			map[string]string{
 				types.OvnRouteAdvertisementsKey: string(nadRAjson),
 			},

@@ -19,6 +19,8 @@ import (
 	"time"
 
 	nadtypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+	nadfake "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/fake"
+	nadlisters "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
 	frrapi "github.com/metallb/frr-k8s/api/v1beta1"
 	frrfake "github.com/metallb/frr-k8s/pkg/client/clientset/versioned/fake"
 	frrlisters "github.com/metallb/frr-k8s/pkg/client/listers/api/v1beta1"
@@ -32,6 +34,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/sets"
 	ctesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
@@ -275,6 +278,71 @@ func TestDeleteIncompleteVTEPConfigurations(t *testing.T) {
 			g.Expect(names).To(gomega.ConsistOf("source", "fail-a", "fail-b", "keep"), "cleanup must delete only eligible configurations whose deletion succeeds")
 		})
 	}
+}
+
+// TestUpdateNADsStaleCacheConflictsAndRequeueRecovers covers the lost-update
+// hazard in the route-advertisements annotation: a patch derived from a stale
+// cache must fail with a conflict, and the requeued reconcile must keep both
+// entries.
+func TestUpdateNADsStaleCacheConflictsAndRequeueRecovers(t *testing.T) {
+	g := gomega.NewWithT(t)
+	nadWithRAs := func(rv string, ras ...string) *nadtypes.NetworkAttachmentDefinition {
+		nad := &nadtypes.NetworkAttachmentDefinition{ObjectMeta: metav1.ObjectMeta{Namespace: "ns1", Name: "nad1", ResourceVersion: rv, Annotations: map[string]string{}}}
+		if len(ras) > 0 {
+			j, err := json.Marshal(ras)
+			g.Expect(err).NotTo(gomega.HaveOccurred(), "marshaling the annotation")
+			nad.Annotations[types.OvnRouteAdvertisementsKey] = string(j)
+		}
+		return nad
+	}
+	liveRAs := func(nad *nadtypes.NetworkAttachmentDefinition) []string {
+		var ras []string
+		g.Expect(json.Unmarshal([]byte(nad.Annotations[types.OvnRouteAdvertisementsKey]), &ras)).To(gomega.Succeed(), "annotation must be a JSON list")
+		return ras
+	}
+	listerFor := func(nad *nadtypes.NetworkAttachmentDefinition) nadlisters.NetworkAttachmentDefinitionLister {
+		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+		g.Expect(indexer.Add(nad)).To(gomega.Succeed(), "seeding the NAD cache")
+		return nadlisters.NewNetworkAttachmentDefinitionLister(indexer)
+	}
+
+	// the apiserver holds an entry from a competing writer that this writer's
+	// cache has not seen yet
+	stale := nadWithRAs("1")
+	live := nadWithRAs("2", "ra-other")
+	preconditions := []string{}
+	client := nadfake.NewSimpleClientset()
+	client.PrependReactor("patch", "network-attachment-definitions", func(action ctesting.Action) (bool, runtime.Object, error) {
+		var patch struct {
+			Metadata metav1.ObjectMeta `json:"metadata"`
+		}
+		if err := json.Unmarshal(action.(ctesting.PatchAction).GetPatch(), &patch); err != nil {
+			return true, nil, err
+		}
+		preconditions = append(preconditions, patch.Metadata.ResourceVersion)
+		if patch.Metadata.ResourceVersion != live.ResourceVersion {
+			return true, nil, apierrors.NewConflict(schema.GroupResource{Group: "k8s.cni.cncf.io", Resource: "network-attachment-definitions"}, live.Name, nil)
+		}
+		updated := live.DeepCopy()
+		maps.Copy(updated.Annotations, patch.Metadata.Annotations)
+		updated.ResourceVersion = "3"
+		live = updated
+		return true, updated.DeepCopy(), nil
+	})
+
+	c := &Controller{nadClient: client, nadLister: listerFor(stale)}
+	_, err := c.updateNADs(context.Background(), "ra-mine", []*nadtypes.NetworkAttachmentDefinition{stale})
+	g.Expect(apierrors.IsConflict(err)).To(gomega.BeTrue(), "a stale cache must fail with a conflict so the RouteAdvertisements is requeued, got %v", err)
+	g.Expect(liveRAs(live)).To(gomega.ConsistOf("ra-other"), "a stale write must not be applied")
+
+	// the requeued reconcile runs once the informer has caught up
+	fresh := live.DeepCopy()
+	c.nadLister = listerFor(fresh)
+	hadUpdates, err := c.updateNADs(context.Background(), "ra-mine", []*nadtypes.NetworkAttachmentDefinition{fresh})
+	g.Expect(err).NotTo(gomega.HaveOccurred(), "updateNADs after requeue")
+	g.Expect(hadUpdates).To(gomega.BeTrue(), "the requeued reconcile must record its update")
+	g.Expect(liveRAs(live)).To(gomega.ConsistOf("ra-mine", "ra-other"), "the requeued reconcile must keep both entries")
+	g.Expect(preconditions).To(gomega.Equal([]string{"1", "2"}), "each patch must be preconditioned on the cached resourceVersion")
 }
 
 // TestConflictingVTEPNodes covers ownership continuity, ambiguous claims, and
