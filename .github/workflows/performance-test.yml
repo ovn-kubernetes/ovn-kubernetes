@@ -105,6 +105,12 @@ jobs:
           # only lane that can test the ReconcileAll() fan-out, which the
           # create-only lanes structurally cannot.
           - {"target": "bgp", perf-test: "bgp-ra-churn", "routeadvertisements": "advertise-cudn", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "9", "network-segmentation": "enable-network-segmentation"}
+          # The A/B twin of bgp-ra-density-deep, identical but for four
+          # reconcile workers instead of one. Diffing the two lanes isolates
+          # the worker count, which tests whether the queue wait the ladder
+          # measures really is serialisation. Every other lane leaves
+          # ra-threadiness unset and gets the binary default of 1.
+          - {"target": "bgp", perf-test: "bgp-ra-density-threads", "routeadvertisements": "advertise-cudn", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "9", "network-segmentation": "enable-network-segmentation", "ra-threadiness": "4"}
     env:
       ES_SERVER: "${{ secrets.PERF_DATASTORE }}"
       JOB_NAME: "${{ matrix.target }}-${{ matrix.gateway-mode }}-${{ matrix.ipfamily }}-${{ matrix.disable-snat-multiple-gws }}-${{ matrix.second-bridge }}-${{ matrix.cni-mode }}"
@@ -141,6 +147,10 @@ jobs:
       # families are never registered.
       # --metrics-enable-pprof is already unconditional in the image.
       OVN_METRICS_SCALE_ENABLE: "true"
+      # Empty on every lane but bgp-ra-density-threads, and the kind script
+      # omits the helm flag entirely when it is empty, so the others keep the
+      # binary default of 1.
+      OVN_RA_THREADINESS: "${{ matrix.ra-threadiness }}"
       KIND_NUM_INFRA: "2"
       KIND_INSTALL_PROMETHEUS: "true"
       KIND_PROMETHEUS_INFRA_ONLY: "true"
@@ -389,7 +399,7 @@ jobs:
         cp -r * /tmp/${{ matrix.perf-test }}/perf
 
     - name: Generate performance report
-      if: ${{ matrix.perf-test == 'kubelet-density-cni' || matrix.perf-test == 'udn-density-l2-noPods' || matrix.perf-test == 'cudn-density-l2-noPods' || matrix.perf-test == 'udn-density-l2-pods' || matrix.perf-test == 'cudn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l3-pods-netpol' || matrix.perf-test == 'bgp-ra-density' || matrix.perf-test == 'bgp-ra-density-wide' || matrix.perf-test == 'bgp-ra-density-deep' || matrix.perf-test == 'bgp-ra-churn' }}
+      if: ${{ matrix.perf-test == 'kubelet-density-cni' || matrix.perf-test == 'udn-density-l2-noPods' || matrix.perf-test == 'cudn-density-l2-noPods' || matrix.perf-test == 'udn-density-l2-pods' || matrix.perf-test == 'cudn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l3-pods-netpol' || matrix.perf-test == 'bgp-ra-density' || matrix.perf-test == 'bgp-ra-density-wide' || matrix.perf-test == 'bgp-ra-density-deep' || matrix.perf-test == 'bgp-ra-churn' || matrix.perf-test == 'bgp-ra-density-threads' }}
       run: |
         cd contrib/perf
         # Generate the performance report
@@ -403,21 +413,21 @@ jobs:
         cat /tmp/${{ matrix.perf-test }}/performance_report.md
 
     - name: Upload performance report
-      if: ${{ matrix.perf-test == 'kubelet-density-cni' || matrix.perf-test == 'udn-density-l2-noPods' || matrix.perf-test == 'cudn-density-l2-noPods' || matrix.perf-test == 'udn-density-l2-pods' || matrix.perf-test == 'cudn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l3-pods-netpol' || matrix.perf-test == 'bgp-ra-density' || matrix.perf-test == 'bgp-ra-density-wide' || matrix.perf-test == 'bgp-ra-density-deep' || matrix.perf-test == 'bgp-ra-churn' }}
+      if: ${{ matrix.perf-test == 'kubelet-density-cni' || matrix.perf-test == 'udn-density-l2-noPods' || matrix.perf-test == 'cudn-density-l2-noPods' || matrix.perf-test == 'udn-density-l2-pods' || matrix.perf-test == 'cudn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l3-pods-netpol' || matrix.perf-test == 'bgp-ra-density' || matrix.perf-test == 'bgp-ra-density-wide' || matrix.perf-test == 'bgp-ra-density-deep' || matrix.perf-test == 'bgp-ra-churn' || matrix.perf-test == 'bgp-ra-density-threads' }}
       uses: actions/upload-artifact@v7
       with:
         name: ${{ matrix.perf-test }}-performance-report-${{ github.run_id }}
         path: /tmp/${{ matrix.perf-test }}/performance_report.md
 
     - name: Upload pprof data
-      if: ${{ matrix.perf-test == 'kubelet-density-cni' || matrix.perf-test == 'udn-density-l2-noPods' || matrix.perf-test == 'cudn-density-l2-noPods' || matrix.perf-test == 'udn-density-l2-pods' || matrix.perf-test == 'cudn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l3-pods-netpol' || matrix.perf-test == 'bgp-ra-density' || matrix.perf-test == 'bgp-ra-density-wide' || matrix.perf-test == 'bgp-ra-density-deep' || matrix.perf-test == 'bgp-ra-churn' }}
+      if: ${{ matrix.perf-test == 'kubelet-density-cni' || matrix.perf-test == 'udn-density-l2-noPods' || matrix.perf-test == 'cudn-density-l2-noPods' || matrix.perf-test == 'udn-density-l2-pods' || matrix.perf-test == 'cudn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l3-pods-netpol' || matrix.perf-test == 'bgp-ra-density' || matrix.perf-test == 'bgp-ra-density-wide' || matrix.perf-test == 'bgp-ra-density-deep' || matrix.perf-test == 'bgp-ra-churn' || matrix.perf-test == 'bgp-ra-density-threads' }}
       uses: actions/upload-artifact@v7
       with:
         name: ${{ matrix.perf-test }}-pprof-${{ github.run_id }}
         path: /tmp/${{ matrix.perf-test }}/pprof-data
 
     - name: Upload performance test data
-      if: ${{ matrix.perf-test == 'kubelet-density-cni' || matrix.perf-test == 'udn-density-l2-noPods' || matrix.perf-test == 'cudn-density-l2-noPods' || matrix.perf-test == 'udn-density-l2-pods' || matrix.perf-test == 'cudn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l3-pods-netpol' || matrix.perf-test == 'bgp-ra-density' || matrix.perf-test == 'bgp-ra-density-wide' || matrix.perf-test == 'bgp-ra-density-deep' || matrix.perf-test == 'bgp-ra-churn' }}
+      if: ${{ matrix.perf-test == 'kubelet-density-cni' || matrix.perf-test == 'udn-density-l2-noPods' || matrix.perf-test == 'cudn-density-l2-noPods' || matrix.perf-test == 'udn-density-l2-pods' || matrix.perf-test == 'cudn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l3-pods-netpol' || matrix.perf-test == 'bgp-ra-density' || matrix.perf-test == 'bgp-ra-density-wide' || matrix.perf-test == 'bgp-ra-density-deep' || matrix.perf-test == 'bgp-ra-churn' || matrix.perf-test == 'bgp-ra-density-threads' }}
       uses: actions/upload-artifact@v7
       with:
         name: ${{ matrix.perf-test }}-performance-test-data-${{ github.run_id }}
