@@ -918,7 +918,8 @@ func (h *defaultNetworkControllerEventHandler) GetInternalCacheEntry(obj interfa
 	switch h.objType {
 	case factory.PodType:
 		pod := obj.(*corev1.Pod)
-		return h.oc.getPortInfo(pod)
+		// Avoid typed-nil applied state.
+		return h.oc.GetPodState(pod)
 	default:
 		return nil
 	}
@@ -1015,7 +1016,7 @@ func (h *defaultNetworkControllerEventHandler) AddResource(ctx context.Context, 
 		if !ok {
 			return fmt.Errorf("could not cast %T object to *corev1.Pod", obj)
 		}
-		return h.oc.reconcilePod(ctx, nil, pod, false)
+		return h.oc.ReconcilePod(ctx, nil, pod, nil, fromRetryLoop)
 
 	case factory.EgressIPType:
 		eIP := obj.(*egressipv1.EgressIP)
@@ -1097,8 +1098,7 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(ctx context.Contex
 	case factory.PodType:
 		oldPod := oldObj.(*corev1.Pod)
 		newPod := newObj.(*corev1.Pod)
-
-		return h.oc.reconcilePod(ctx, oldPod, newPod, inRetryCache)
+		return h.oc.ReconcilePod(ctx, oldPod, newPod, nil, inRetryCache)
 
 	case factory.EgressIPType:
 		oldEIP := oldObj.(*egressipv1.EgressIP)
@@ -1171,13 +1171,8 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(ctx context.Contex
 func (h *defaultNetworkControllerEventHandler) DeleteResource(ctx context.Context, obj, cachedObj interface{}) error {
 	switch h.objType {
 	case factory.PodType:
-		var portInfo *lpInfo
 		pod := obj.(*corev1.Pod)
-
-		if cachedObj != nil {
-			portInfo = cachedObj.(*lpInfo)
-		}
-		return h.oc.deletePod(ctx, pod, portInfo)
+		return h.oc.ReconcilePod(ctx, pod, nil, cachedObj, false)
 
 	case factory.EgressIPType:
 		eIP := obj.(*egressipv1.EgressIP)
