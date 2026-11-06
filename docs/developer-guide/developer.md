@@ -113,3 +113,28 @@ We prefer level-driven controllers built with `pkg/controller/controller.go`. Wh
 - The network manager is the source of truth for NADs; register a lightweight, non-blocking handler via `RegisterNADReconciler` that will queue keys to the Reconciler.
 - RegisterNADReconciler  **before** starting controller workers to avoid missing events during startup.
 - For a concrete example, see `go-controller/pkg/ovn/controller/egressfirewall/egressfirewall.go`.
+
+## Pod node SNAT and EgressIP assignment lock
+
+When `disable-snat-multiple-gws` is enabled, each pod gets a per-IP SNAT on its
+node gateway router that uses the node IP. A same-node EgressIP assignment
+replaces that SNAT with an EgressIP SNAT. Those two rows must not exist together
+for the same pod IP: OVN does not rank match-less SNATs, so a later node-IP SNAT
+write can steal egress identity from EgressIP.
+
+`addLogicalPort` therefore holds `podAssignment`'s per-pod lock from the
+node-SNAT decision through the OVSDB transaction that commits it. While that
+lock is held it calls `podIPsNeedingNodeSNATLocked`, which skips node SNAT only
+for current pod IPs covered by an applied same-node default-network assignment
+whose cached pod UID matches the pod being programmed.
+
+EgressIP reconciliation uses the same `podAssignment` key lock when it deletes
+node SNAT and installs EgressIP SNAT. That ordering means:
+
+1. If pod setup runs first, EgressIP waits, then replaces node SNAT.
+2. If EgressIP runs first, pod setup sees the applied assignment and does not
+   re-create node SNAT.
+
+Any new writer of per-pod node SNAT on the gateway router must take the same
+lock around its read of assignment state and its OVSDB commit. Do not decide
+node SNAT from a snapshot and transact later without the lock.
