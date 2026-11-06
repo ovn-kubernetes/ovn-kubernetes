@@ -4197,6 +4197,144 @@ spec:
 				"Both EgressIPs should have been assigned despite orphan node %s", orphanNodeName)
 		})
 
+		// udnEgressIPSubnets returns per-UDN IPv4 and IPv6 subnets for the two
+		// Layer3 + two Layer2 UDNs, allocated via the provider-agnostic UDN
+		// subnet allocator so they never overlap the machine/infra networks.
+		// When overlapping is true the two Layer3 UDNs share one subnet and the
+		// two Layer2 UDNs share another; otherwise all four are distinct.
+		udnEgressIPSubnets := func(overlapping bool) (v4, v6 []string) {
+			if overlapping {
+				v4Two, v6Two := allocators.GetNthFirstUDNSubnets(2)
+				for _, j := range []int{0, 0, 1, 1} {
+					v4 = append(v4, v4Two[j])
+					v6 = append(v6, v6Two[j])
+				}
+				return v4, v6
+			}
+			return allocators.GetNthFirstUDNSubnets(4)
+		}
+
+		// runMixedUDNEgressIPAssignmentTest creates a default-network namespace plus
+		// four primary-UDN namespaces (two Layer3, two Layer2) selected by the same
+		// EgressIP, places a matching pod in each, and verifies the EgressIP is
+		// assigned.
+		runMixedUDNEgressIPAssignmentTest := func(namePrefix string, overlapping bool) {
+			ginkgo.By("Labeling node 1 as egress-assignable")
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable", "")
+			defer e2enode.RemoveLabelOffNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable")
+
+			ginkgo.By("Labeling the default-network namespace and creating four UDN namespaces")
+			updateNamespaceLabels(f, f.Namespace, map[string]string{"org": "qe"})
+			topologies := []string{"layer3", "layer3", "layer2", "layer2"}
+			v4Subnets, v6Subnets := udnEgressIPSubnets(overlapping)
+			allNS := []string{f.Namespace.Name}
+			for i, topology := range topologies {
+				udnNs := createUDNNamespace(f.ClientSet, namePrefix, map[string]string{"org": "qe"})
+				defer deleteNamespace(f.ClientSet, udnNs.Name)
+				udnName := fmt.Sprintf("%s-%s-%d", namePrefix, topology, i)
+				if topology == "layer3" {
+					createLayer3PrimaryUDNWithSubnets(f.ClientSet, udnNs.Name, udnName, []string{v4Subnets[i]}, []string{v6Subnets[i]})
+				} else {
+					createLayer2PrimaryUDNWithSubnets(f.ClientSet, udnNs.Name, udnName, []string{v4Subnets[i]}, []string{v6Subnets[i]})
+				}
+				allNS = append(allNS, udnNs.Name)
+			}
+
+			ginkgo.By("Creating an EgressIP object selecting all org=qe namespaces")
+			var egressIP net.IP
+			var err error
+			if isIPv6TestRun {
+				egressIP, err = allocators.NewPrimaryIPv6(egress1Node.name)
+			} else {
+				egressIP, err = allocators.NewPrimaryIPv4(egress1Node.name)
+			}
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate egress IP")
+			egressIPConfig := createEIPManifest(egressIPName, podEgressLabel, map[string]string{"org": "qe"}, egressIP.String())
+			if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
+				framework.Failf("Unable to write EgressIP config: %v", err)
+			}
+			defer os.Remove(egressIPYaml)
+			e2ekubectl.RunKubectlOrDie("default", "create", "-f", egressIPYaml)
+
+			ginkgo.By("Creating a matching pod in every namespace on the non-egress node")
+			for i, ns := range allNS {
+				podName := fmt.Sprintf("%s-pod-%d", namePrefix, i)
+				_, err := createGenericPodWithLabel(f, podName, pod1Node.name, ns, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
+				framework.ExpectNoError(err, "failed to create pod in namespace %s", ns)
+			}
+
+			ginkgo.By("Verifying the EgressIP is assigned")
+			verifyEgressIPStatusLengthEquals(1, nil)
+		}
+
+		ginkgo.It("Should assign an EgressIP shared across the default network and multiple non-overlapping UDNs", func() {
+			if isUserDefinedNetwork(netConfigParams) {
+				ginkgo.Skip("test manages its own UDNs; runs on the cluster default network entry")
+			}
+			runMixedUDNEgressIPAssignmentTest("egressip-udn-nonoverlap", false)
+		})
+
+		ginkgo.It("Should assign an EgressIP shared across the default network and multiple overlapping UDNs", func() {
+			if isUserDefinedNetwork(netConfigParams) {
+				ginkgo.Skip("test manages its own UDNs; runs on the cluster default network entry")
+			}
+			runMixedUDNEgressIPAssignmentTest("egressip-udn-overlap", true)
+		})
+
+		ginkgo.It("Should keep the EgressIP assigned after failover when a UDN is present", func() {
+			if isUserDefinedNetwork(netConfigParams) {
+				ginkgo.Skip("test manages its own UDN; runs on the cluster default network entry")
+			}
+
+			ginkgo.By("1. Labeling both egress nodes as egress-assignable")
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable", "")
+			defer e2enode.RemoveLabelOffNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable")
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress2Node.name, "k8s.ovn.org/egress-assignable", "")
+			defer e2enode.RemoveLabelOffNode(f.ClientSet, egress2Node.name, "k8s.ovn.org/egress-assignable")
+
+			ginkgo.By("2. Labeling the default-network namespace and creating a UDN namespace")
+			updateNamespaceLabels(f, f.Namespace, map[string]string{"org": "qe"})
+			udnNs := createUDNNamespace(f.ClientSet, "egressip-udn-failover", map[string]string{"org": "qe"})
+			defer deleteNamespace(f.ClientSet, udnNs.Name)
+			udnV4, udnV6 := allocators.GetNthFirstUDNSubnets(1)
+			createLayer3PrimaryUDNWithSubnets(f.ClientSet, udnNs.Name, "udn-failover", udnV4, udnV6)
+
+			ginkgo.By("3. Creating an EgressIP object selecting org=qe namespaces")
+			var egressIP net.IP
+			var err error
+			if isIPv6TestRun {
+				egressIP, err = allocators.NewPrimaryIPv6(egress1Node.name)
+			} else {
+				egressIP, err = allocators.NewPrimaryIPv4(egress1Node.name)
+			}
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate egress IP")
+			egressIPConfig := createEIPManifest(egressIPName, podEgressLabel, map[string]string{"org": "qe"}, egressIP.String())
+			if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
+				framework.Failf("Unable to write EgressIP config: %v", err)
+			}
+			defer os.Remove(egressIPYaml)
+			e2ekubectl.RunKubectlOrDie("default", "create", "-f", egressIPYaml)
+
+			ginkgo.By("4. Creating a matching pod in the UDN namespace")
+			_, err = createGenericPodWithLabel(f, pod1Name, egress2Node.name, udnNs.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
+			framework.ExpectNoError(err, "failed to create pod in UDN namespace")
+
+			ginkgo.By("5. Verifying the EgressIP is assigned")
+			statuses := verifyEgressIPStatusLengthEquals(1, nil)
+			assignedNode := statuses[0].Node
+
+			ginkgo.By("6. Forcing failover by removing the egress-assignable label from the assigned node")
+			// Remove via kubectl: e2enode.RemoveLabelOffNode is a no-op for
+			// labels with an empty value, which would prevent failover.
+			e2ekubectl.RunKubectlOrDie("default", "label", "node", assignedNode, "k8s.ovn.org/egress-assignable-")
+
+			ginkgo.By("7. Verifying the EgressIP is reassigned to the other node")
+			statuses = verifyEgressIPStatusLengthEquals(1, func(statuses []egressIPStatus) bool {
+				return statuses[0].Node != assignedNode
+			})
+			framework.Logf("EgressIP %s failed over from node %s to node %s", egressIP.String(), assignedNode, statuses[0].Node)
+		})
+
 		ginkgo.It("should prevent duplicate MAC responses when egress node is rebooted", func() {
 			if !isNetworkSegmentationEnabled() {
 				ginkgo.Skip("network segmentation is disabled")
