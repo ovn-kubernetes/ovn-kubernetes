@@ -243,7 +243,11 @@ func (tr *testNetworkRefReconciler) Reconcile(node, networkName string) {
 func (tnc *testNetworkController) Start(context.Context) error {
 	tnc.tcm.Lock()
 	delay := tnc.tcm.startDelay
+	beforeStart := tnc.tcm.beforeStart
 	tnc.tcm.Unlock()
+	if beforeStart != nil {
+		beforeStart()
+	}
 	if delay > 0 {
 		// Simulate a slow UDN Start so async syncAll can return before Start finishes.
 		time.Sleep(delay)
@@ -431,7 +435,8 @@ type testControllerManager struct {
 	raiseErrorWhenStartingController error
 	raiseErrorWhenCleaningController error
 	// startDelay is applied inside testNetworkController.Start for async start tests.
-	startDelay time.Duration
+	startDelay  time.Duration
+	beforeStart func()
 
 	valid []util.NetInfo
 }
