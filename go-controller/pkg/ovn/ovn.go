@@ -289,7 +289,10 @@ func (oc *DefaultNetworkController) WatchEgressIPPods() error {
 
 // syncNodeGateway ensures a node's gateway router is configured
 func (oc *DefaultNetworkController) syncNodeGateway(node *corev1.Node) error {
-	gwConfig, err := oc.nodeGatewayConfig(node)
+	// Read advertisement state once so that the gateway SNATs and isolation
+	// configured in this pass agree with each other.
+	isAdvertised := util.IsPodNetworkAdvertisedAtNode(oc, node.Name)
+	gwConfig, err := oc.nodeGatewayConfig(node, isAdvertised)
 	if err != nil {
 		return fmt.Errorf("error getting gateway config for node %s: %v", node.Name, err)
 	}
@@ -300,7 +303,7 @@ func (oc *DefaultNetworkController) syncNodeGateway(node *corev1.Node) error {
 		return fmt.Errorf("error creating gateway for node %s: %v", node.Name, err)
 	}
 
-	if util.IsPodNetworkAdvertisedAtNode(oc, node.Name) &&
+	if isAdvertised &&
 		config.OVNKubernetesFeature.AdvertisedUDNIsolationMode == config.AdvertisedUDNIsolationModeStrict {
 		return oc.addAdvertisedNetworkIsolation(node.Name)
 	}
