@@ -102,6 +102,22 @@ An empty query file is either a genuinely idle subsystem or a metric name that
 no longer resolves. Prometheus does not distinguish them, so check the name
 against the registered metric before reading an empty file as zero.
 
+## Generating a report
+
+`contrib/perf/analyze-bgp-lanes.py` turns the artifacts of one run into a
+markdown report: convergence per lane, shape and outcome, workqueue figures,
+reconcile work by operation, the scaling fit across the single-worker lanes,
+and one row per adjacent pair isolating a variable. A quantile sitting on the
+last finite histogram bucket is reported as saturated rather than as a value,
+and snapshots that had not converged are excluded from the derived figures.
+
+```bash
+for lane in bgp-ra-density bgp-ra-density-wide bgp-ra-density-deep bgp-ra-churn bgp-ra-density-threads; do
+  gh run download <run-id> -n "${lane}-performance-test-data-<run-id>" -D "${lane}"
+done
+contrib/perf/analyze-bgp-lanes.py . --run-id <run-id> -o report.md
+```
+
 ### The hook snapshot
 
 `contrib/perf/collect-bgp-state.sh` runs as the `beforeCleanup` hook of the
