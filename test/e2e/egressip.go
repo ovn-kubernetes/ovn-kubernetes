@@ -4197,6 +4197,130 @@ spec:
 				"Both EgressIPs should have been assigned despite orphan node %s", orphanNodeName)
 		})
 
+		ginkgo.It("Should not break pod access to host-networked endpoints when an EgressIP is applied", func() {
+			if isUserDefinedNetwork(netConfigParams) {
+				ginkgo.Skip("Unsupported for UDNs")
+			}
+
+			ginkgo.By("1. Labeling node 1 as egress-assignable")
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable", "")
+			defer e2enode.RemoveLabelOffNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable")
+
+			ginkgo.By("2. Creating an EgressIP object assigned to node 1")
+			podNamespace := f.Namespace
+			labels := map[string]string{"name": f.Namespace.Name}
+			updateNamespaceLabels(f, podNamespace, labels)
+			var egressIP net.IP
+			var err error
+			if isIPv6TestRun {
+				egressIP, err = allocators.NewPrimaryIPv6(egress1Node.name)
+			} else {
+				egressIP, err = allocators.NewPrimaryIPv4(egress1Node.name)
+			}
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate egress IP")
+			egressIPConfig := createEIPManifest(egressIPName, podEgressLabel, labels, egressIP.String())
+			if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
+				framework.Failf("Unable to write EgressIP config: %v", err)
+			}
+			defer os.Remove(egressIPYaml)
+			e2ekubectl.RunKubectlOrDie("default", "create", "-f", egressIPYaml)
+
+			ginkgo.By("3. Verifying the EgressIP is assigned to node 1 and creating a matching pod on it")
+			verifyEgressIPStatusLengthEquals(1, func(statuses []egressIPStatus) bool {
+				return statuses[0].Node == egress1Node.name
+			})
+			_, err = createGenericPodWithLabel(f, pod1Name, egress1Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
+			framework.ExpectNoError(err, "failed to create pod matching EgressIP selector")
+			_, err = getPodIPWithRetry(f.ClientSet, isIPv6TestRun, f.Namespace.Name, pod1Name)
+			framework.ExpectNoError(err, "failed to get pod IP")
+
+			ginkgo.By("4. Verifying the pod can still reach the host-networked kubernetes API service")
+			getCtx, cancel := context.WithTimeout(context.Background(), framework.SingleCallTimeout)
+			defer cancel()
+			svc, err := f.ClientSet.CoreV1().Services("default").Get(getCtx, "kubernetes", metav1.GetOptions{})
+			framework.ExpectNoError(err, "failed to get default/kubernetes service")
+			dst := fmt.Sprintf("https://%s", net.JoinHostPort(svc.Spec.ClusterIP, "443"))
+			gomega.Eventually(func() error {
+				_, err := e2ekubectl.RunKubectl(f.Namespace.Name, "exec", pod1Name, "--", "curl", "--connect-timeout", "5", "--max-time", "10", "-k", "-s", dst)
+				return err
+			}).WithTimeout(retryTimeout).WithPolling(retryInterval).ShouldNot(gomega.HaveOccurred(),
+				"pod should retain access to the host-networked kubernetes API service while an EgressIP is applied")
+		})
+
+		ginkgo.It("Should delete SNAT and logical router policy when an egressIP-selected pod is deleted", func() {
+			if isUserDefinedNetwork(netConfigParams) {
+				ginkgo.Skip("Unsupported for UDNs")
+			}
+
+			ginkgo.By("1. Labeling node 1 as egress-assignable")
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable", "")
+			defer e2enode.RemoveLabelOffNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable")
+
+			ginkgo.By("2. Creating an EgressIP object assigned to node 1")
+			podNamespace := f.Namespace
+			labels := map[string]string{"name": f.Namespace.Name}
+			updateNamespaceLabels(f, podNamespace, labels)
+			var egressIP net.IP
+			var err error
+			if isIPv6TestRun {
+				egressIP, err = allocators.NewPrimaryIPv6(egress1Node.name)
+			} else {
+				egressIP, err = allocators.NewPrimaryIPv4(egress1Node.name)
+			}
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate egress IP")
+			egressIPConfig := createEIPManifest(egressIPName, podEgressLabel, labels, egressIP.String())
+			if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
+				framework.Failf("Unable to write EgressIP config: %v", err)
+			}
+			defer os.Remove(egressIPYaml)
+			e2ekubectl.RunKubectlOrDie("default", "create", "-f", egressIPYaml)
+
+			ginkgo.By("3. Verifying the EgressIP is assigned to node 1 and creating a matching pod on it")
+			verifyEgressIPStatusLengthEquals(1, func(statuses []egressIPStatus) bool {
+				return statuses[0].Node == egress1Node.name
+			})
+			_, err = createGenericPodWithLabel(f, pod1Name, egress1Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
+			framework.ExpectNoError(err, "failed to create pod matching EgressIP selector")
+			podIP, err := getPodIPWithRetry(f.ClientSet, isIPv6TestRun, f.Namespace.Name, pod1Name)
+			framework.ExpectNoError(err, "failed to get pod IP")
+
+			ginkgo.By("4. Locating the NBDB pod on node 1 and verifying the SNAT exists for the pod")
+			ovnKubernetesNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+			dbContainerName := deploymentconfig.Get().NBDBContainerName()
+			dbPods, err := e2ekubectl.RunKubectl(ovnKubernetesNamespace, "get", "pods", "-l", "app=ovnkube-node", "--field-selector", fmt.Sprintf("spec.nodeName=%s", egress1Node.name), "-o=jsonpath='{.items..metadata.name}'")
+			framework.ExpectNoError(err, "failed to list ovnkube-node pods on egress node")
+			dbPod := strings.TrimSuffix(strings.TrimPrefix(strings.Split(dbPods, " ")[0], "'"), "'")
+			gomega.Expect(dbPod).NotTo(gomega.BeEmpty(), "must find an ovnkube-node pod on the egress node")
+			logicalIP := fmt.Sprintf("logical_ip=%s", podIP.String())
+			if isIPv6TestRun {
+				logicalIP = fmt.Sprintf("logical_ip=\"%s\"", podIP.String())
+			}
+			podIPMatcher := regexp.MustCompile(regexp.QuoteMeta(podIP.String()) + `\b`)
+			gomega.Eventually(func(g gomega.Gomega) {
+				snats, err := e2ekubectl.RunKubectl(ovnKubernetesNamespace, "exec", dbPod, "-c", dbContainerName, "--", "ovn-nbctl", "--columns=external_ip", "find", "nat", logicalIP)
+				g.Expect(err).NotTo(gomega.HaveOccurred(), "failed to query NBDB SNAT rules on node %s", egress1Node.name)
+				g.Expect(snats).To(gomega.ContainSubstring(egressIP.String()), "SNAT for the egressIP-selected pod %s should exist before deletion", podIP.String())
+			}).WithTimeout(retryTimeout).WithPolling(retryInterval).Should(gomega.Succeed(),
+				"SNAT for the egressIP-selected pod should be programmed before deletion")
+
+			ginkgo.By("5. Deleting the egressIP-selected pod")
+			delCtx, delCancel := context.WithTimeout(context.Background(), framework.SingleCallTimeout)
+			defer delCancel()
+			err = f.ClientSet.CoreV1().Pods(f.Namespace.Name).Delete(delCtx, pod1Name, metav1.DeleteOptions{})
+			framework.ExpectNoError(err, "failed to delete pod")
+
+			ginkgo.By("6. Verifying the SNAT and logical router policy are cleaned up after pod deletion")
+			gomega.Eventually(func(g gomega.Gomega) {
+				snats, err := e2ekubectl.RunKubectl(ovnKubernetesNamespace, "exec", dbPod, "-c", dbContainerName, "--", "ovn-nbctl", "--columns=external_ip", "find", "nat", logicalIP)
+				g.Expect(err).NotTo(gomega.HaveOccurred(), "failed to query NBDB SNAT rules on node %s", egress1Node.name)
+				g.Expect(snats).NotTo(gomega.ContainSubstring(egressIP.String()), "SNAT should be removed after pod deletion")
+				lrPolicies, err := e2ekubectl.RunKubectl(ovnKubernetesNamespace, "exec", dbPod, "-c", dbContainerName, "--", "ovn-nbctl", "--columns=match", "find", "logical_router_policy")
+				g.Expect(err).NotTo(gomega.HaveOccurred(), "failed to query NBDB logical router policies on node %s", egress1Node.name)
+				g.Expect(podIPMatcher.MatchString(lrPolicies)).To(gomega.BeFalse(), "logical router policy referencing pod IP %s should be removed after pod deletion", podIP.String())
+			}).WithTimeout(retryTimeout).WithPolling(retryInterval).Should(gomega.Succeed(),
+				"SNAT and logical router policy for the deleted pod should be cleaned up")
+		})
+
 		ginkgo.It("should prevent duplicate MAC responses when egress node is rebooted", func() {
 			if !isNetworkSegmentationEnabled() {
 				ginkgo.Skip("network segmentation is disabled")
