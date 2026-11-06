@@ -255,8 +255,11 @@ func (oc *BaseNetworkController) doReconcile(reconcileRoutes, reconcilePendingPo
 	}
 
 	if reconcileLocalNode {
-		setNodeFailed(oc.nodeName)
-		oc.nodeReconciler.ReconcileNetwork(oc.nodeName, oc.GetNetworkName())
+		// Mark the node dirty under the node controller's per-network lock so
+		// that an in-flight node sync, which may have already observed the
+		// previous NetInfo, can't clear the mark after we set it.
+		oc.nodeReconciler.ReconcileNetworkWithPreflight(oc.nodeName, oc.GetNetworkName(),
+			func(nodecontroller.NodeHandler) { setNodeFailed(oc.nodeName) })
 	}
 
 	if reconcilePendingPods {

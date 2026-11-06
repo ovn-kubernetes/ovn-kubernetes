@@ -563,6 +563,82 @@ var _ = ginkgo.Describe("Gateway Init Operations", func() {
 			gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
 		})
 
+		ginkgo.It("configures GR SNAT from the advertisement state snapshot in the gateway config", func() {
+			config.OVNKubernetesFeature.EnableEgressIP = true
+			expectedOVNClusterRouter := &nbdb.LogicalRouter{
+				UUID: types.OVNClusterRouter + "-UUID",
+				Name: types.OVNClusterRouter,
+			}
+			expectedNodeSwitch := &nbdb.LogicalSwitch{
+				UUID: nodeName + "-UUID",
+				Name: nodeName,
+			}
+			fakeOvn.startWithDBSetup(libovsdbtest.TestSetup{
+				NBData: []libovsdbtest.TestData{
+					&nbdb.LogicalSwitch{
+						UUID: types.OVNJoinSwitch + "-UUID",
+						Name: types.OVNJoinSwitch,
+					},
+					expectedOVNClusterRouter,
+					expectedNodeSwitch,
+					&nbdb.LoadBalancerGroup{UUID: types.ClusterLBGroupName + "-UUID", Name: types.ClusterLBGroupName},
+					&nbdb.LoadBalancerGroup{UUID: types.ClusterSwitchLBGroupName + "-UUID", Name: types.ClusterSwitchLBGroupName},
+					&nbdb.LoadBalancerGroup{UUID: types.ClusterRouterLBGroupName + "-UUID", Name: types.ClusterRouterLBGroupName},
+				},
+			})
+			// The network is not advertised according to NetInfo, which may
+			// change at any time; the snapshot taken for the sync wins.
+			gomega.Expect(util.IsPodNetworkAdvertisedAtNode(fakeOvn.controller, nodeName)).To(gomega.BeFalse())
+
+			clusterIPSubnets := ovntest.MustParseIPNets("10.128.0.0/14")
+			hostSubnets := ovntest.MustParseIPNets("10.130.0.0/23")
+			joinLRPIPs := ovntest.MustParseIPNets("100.64.0.3/16")
+			defLRPIPs := ovntest.MustParseIPNets("100.64.0.1/16")
+			l3GatewayConfig := &util.L3GatewayConfig{
+				Mode:           config.GatewayModeLocal,
+				ChassisID:      "SYSTEM-ID",
+				BridgeID:       "BRIDGE-ID",
+				InterfaceID:    "INTERFACE-ID",
+				MACAddress:     ovntest.MustParseMAC("11:22:33:44:55:66"),
+				IPAddresses:    ovntest.MustParseIPNets("169.255.33.2/24"),
+				NextHops:       ovntest.MustParseIPs("169.255.33.1"),
+				NodePortEnable: true,
+			}
+			gwConfig := &GatewayConfig{
+				annoConfig:                 l3GatewayConfig,
+				hostSubnets:                hostSubnets,
+				clusterSubnets:             clusterIPSubnets,
+				gwRouterJoinCIDRs:          joinLRPIPs,
+				hostAddrs:                  nil,
+				externalIPs:                extractExternalIPs(l3GatewayConfig),
+				ovnClusterLRPToJoinIfAddrs: defLRPIPs,
+				isPodNetworkAdvertised:     true,
+			}
+
+			var err error
+			fakeOvn.controller.defaultCOPPUUID, err = EnsureDefaultCOPP(fakeOvn.nbClient)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			err = newGatewayManager(fakeOvn, nodeName).gatewayInit(
+				nodeName,
+				gwConfig,
+				true,
+			)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			expectedDatabaseState := generateGatewayInitExpectedNBWithPodNetworkAdvertised(nil, expectedOVNClusterRouter,
+				expectedNodeSwitch, nodeName, clusterIPSubnets, hostSubnets, l3GatewayConfig, joinLRPIPs, defLRPIPs,
+				false, "", "1400", true)
+			// gatewayInit only ensures the cluster node IPs address set exists;
+			// it is populated from node objects elsewhere.
+			for _, data := range expectedDatabaseState {
+				if as, ok := data.(*nbdb.AddressSet); ok {
+					as.Addresses = nil
+				}
+			}
+			gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
+		})
+
 		ginkgo.It("replaces a stale localnet port on the external switch when the interface ID changes", func() {
 			expectedOVNClusterRouter := &nbdb.LogicalRouter{
 				UUID: types.OVNClusterRouter + "-UUID",
