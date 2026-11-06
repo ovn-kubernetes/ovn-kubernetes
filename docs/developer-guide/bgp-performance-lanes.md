@@ -19,6 +19,7 @@ absolutes.
 | `bgp-ra-density-wide` | 12 | 20 | 240 | node count, against density |
 | `bgp-ra-density-deep` | 12 | 40 | 480 | RA count, against wide |
 | `bgp-ra-churn` | 12 | 40 | 480 | churn: a tenth of the RAs deleted and recreated five times, against deep |
+| `bgp-ra-density-threads` | 12 | 40 | 480 | reconcile worker count: four workers instead of one, against deep |
 
 Node count is `num-workers` plus `KIND_NUM_INFRA` (2) plus the control plane.
 Each lane is its own file under `contrib/perf/workloads/`, because the
@@ -31,6 +32,15 @@ own RouteAdvertisements with an empty `nodeSelector`, `PodNetwork` and no
 `targetVRF`, selecting the `receive-all` FRRConfiguration the kind harness
 installs. No pods are created: the pod path is covered by the `udn-density`
 lanes, and leaving it out keeps these lanes focused on the controller.
+
+`bgp-ra-density-threads` is `bgp-ra-density-deep` with four RouteAdvertisements
+reconcile workers instead of one. The workload files are identical apart from
+the job names; the difference is the matrix entry setting `ra-threadiness`,
+which `OVN_RA_THREADINESS` turns into
+`--cluster-manager-route-advertisements-threadiness`. Every other lane leaves
+it unset and keeps the binary default of 1. Diffing the two lanes isolates the
+worker count, which tests whether the queue wait the ladder measures is
+serialisation behind a single worker.
 
 ## Prerequisites
 
