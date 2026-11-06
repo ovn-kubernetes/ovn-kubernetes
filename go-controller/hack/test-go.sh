@@ -91,6 +91,7 @@ root_pkgs=(
     "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/routemanager"
     "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/rulemanager"
     "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/vrfmanager"
+    "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/routeimport"
 )
 
 # These packages are big and require more than the 10m default to run the unit tests
