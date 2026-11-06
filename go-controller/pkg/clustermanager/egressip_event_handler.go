@@ -69,7 +69,7 @@ func (h *egressIPClusterControllerEventHandler) AddResource(ctx context.Context,
 		if !selectors.Matches(nodeLabels) {
 			return nil
 		}
-		isReachable := h.eIPC.isEgressNodeReachable(node)
+		isReachable := h.eIPC.isEgressNodeReachable(node.Name)
 		if isReachable {
 			h.eIPC.setNodeEgressReachable(node.Name, true)
 		}
@@ -159,7 +159,7 @@ func (h *egressIPClusterControllerEventHandler) UpdateResource(ctx context.Conte
 		// - readiness/host-cidrs/cloud-config changed
 		// The reconcile path (validateEgressIPStatus) re-checks all conditions
 		// and only reassigns as needed.
-		isNewReachable := h.eIPC.isEgressNodeReachable(newNode)
+		isNewReachable := h.eIPC.isEgressNodeReachable(newNode.Name)
 		h.eIPC.setNodeEgressReachable(newNode.Name, isNewReachable)
 		if oldMatchesSelector {
 			// Was already matching — delete first to evict stale assignments.
