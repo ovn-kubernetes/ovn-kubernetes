@@ -2152,10 +2152,21 @@ func (c *Controller) updateNADs(ctx context.Context, ra string, nads []*nadtypes
 			return hadUpdates, err
 		}
 
+		// The annotation holds the list of every RouteAdvertisements selecting
+		// this NAD, so it is computed from its previous value as seen in the
+		// informer cache. A plain merge patch has no concurrency control and
+		// two RouteAdvertisements updating one NAD could lose one of the two
+		// entries, which matters because consumers scope their reconciliation
+		// on this annotation and would silently skip the network whose entry
+		// was dropped. Make the write conditional on the cached
+		// resourceVersion: if the cache is stale the patch fails with a
+		// conflict, the RouteAdvertisements is requeued, and the whole
+		// reconcile runs again from a single, fresher snapshot.
 		err = k.SetAnnotationsOnNAD(
 			ctx,
 			nad.Namespace,
 			nad.Name,
+			nad.ResourceVersion,
 			map[string]string{
 				types.OvnRouteAdvertisementsKey: string(nadRAjson),
 			},
