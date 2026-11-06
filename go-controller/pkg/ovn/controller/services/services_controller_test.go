@@ -28,6 +28,7 @@ import (
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	kubetest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
@@ -2075,4 +2076,126 @@ func temporarilyEnableGomegaMaxLengthFormat() {
 
 func restoreGomegaMaxLengthFormat(originalLength int) {
 	format.MaxLength = originalLength
+}
+
+// TestConfigureUDNEnabledServiceRoute verifies that a UDN enabled service
+// route is created on, and reused from, the network cluster router that owns
+// it for both L3 and L2. It also checks idempotent updates,
+// duplicate route removal, missing router errors and that routes belonging
+// to other routers are left untouched.
+func TestConfigureUDNEnabledServiceRoute(t *testing.T) {
+	for _, tt := range []struct {
+		// name is the subtest name.
+		name string
+		// topology is the network topology used to build the sample net
+		// info, L2 or L3.
+		topology string
+		// ipv6 selects IPv6 cluster IP and next hop instead of IPv4.
+		ipv6 bool
+		// existing lists UUIDs of service routes pre-added to the target
+		// router, exercising reuse and duplicate handling.
+		existing []string
+		// missingRouter omits the target router from the test database.
+		missingRouter bool
+		// wantErr expects configureUDNEnabledServiceRoute to fail.
+		wantErr bool
+	}{
+		{name: "layer2 create", topology: types.Layer2Topology},
+		{name: "layer3 create IPv6", topology: types.Layer3Topology, ipv6: true},
+		{name: "layer2 reuse IPv6", topology: types.Layer2Topology, ipv6: true, existing: []string{"existing-route"}},
+		{name: "duplicate routes", topology: types.Layer2Topology, existing: []string{"existing-route", "duplicate-route"}},
+		{name: "missing router", topology: types.Layer2Topology, missingRouter: true, wantErr: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+			config.IPv4Mode, config.IPv6Mode = !tt.ipv6, tt.ipv6
+			t.Cleanup(func() { g.Expect(config.PrepareTestConfig()).To(gomega.Succeed()) })
+			netInfo, err := getSampleUDNNetInfo("test", tt.topology)
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+			routerName := netInfo.GetNetworkScopedClusterRouterName()
+			clusterIP, nextHop := "10.96.0.10", "10.0.0.2"
+			if tt.ipv6 {
+				clusterIP, nextHop = "fd00::10", "fd01::2"
+			}
+			service := &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "test", Name: "service"},
+				Spec:       corev1.ServiceSpec{ClusterIP: clusterIP},
+			}
+			route := &nbdb.LogicalRouterStaticRoute{
+				UUID:     "other-route",
+				IPPrefix: clusterIP,
+				Nexthop:  nextHop,
+				Policy:   ptr.To(nbdb.LogicalRouterStaticRoutePolicyDstIP),
+				ExternalIDs: map[string]string{
+					types.NetworkExternalID:           netInfo.GetNetworkName(),
+					types.TopologyExternalID:          tt.topology,
+					types.UDNEnabledServiceExternalID: "test/service",
+				},
+			}
+			router := &nbdb.LogicalRouter{Name: routerName}
+			otherRouter := &nbdb.LogicalRouter{UUID: "other-router", Name: "other-router", StaticRoutes: []string{route.UUID}}
+			data := []libovsdbtest.TestData{otherRouter, route}
+			for _, routeUUID := range tt.existing {
+				existingRoute := route.DeepCopy()
+				existingRoute.UUID = routeUUID
+				router.StaticRoutes = append(router.StaticRoutes, routeUUID)
+				data = append(data, existingRoute)
+			}
+			if !tt.missingRouter {
+				data = append(data, router)
+			}
+
+			nbClient, cleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{NBData: data}, nil)
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+			t.Cleanup(cleanup.Cleanup)
+
+			c := &Controller{nbClient: nbClient}
+			state := &networkState{netInfo: netInfo, nodeInfo: &nodeInfo{
+				name: nodeA, mgmtIPs: []net.IP{net.ParseIP(nextHop)},
+			}}
+
+			getRoutes := func() []*nbdb.LogicalRouterStaticRoute {
+				routes, err := libovsdbops.GetRouterLogicalRouterStaticRoutesWithPredicate(nbClient, &nbdb.LogicalRouter{Name: routerName}, func(*nbdb.LogicalRouterStaticRoute) bool { return true })
+				g.Expect(err).NotTo(gomega.HaveOccurred())
+				return routes
+			}
+			var existingRoutes []*nbdb.LogicalRouterStaticRoute
+			if !tt.missingRouter {
+				existingRoutes = getRoutes()
+			}
+
+			otherBefore, err := libovsdbops.GetLogicalRouter(nbClient, &nbdb.LogicalRouter{Name: otherRouter.Name})
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+			err = c.configureUDNEnabledServiceRoute(state, service)
+			if tt.wantErr {
+				g.Expect(err).To(gomega.HaveOccurred())
+				return
+			}
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+
+			routes := getRoutes()
+			g.Expect(routes).To(gomega.HaveLen(1))
+			g.Expect(routes[0].IPPrefix).To(gomega.Equal(clusterIP))
+			g.Expect(routes[0].Nexthop).To(gomega.Equal(nextHop))
+			g.Expect(routes[0].ExternalIDs).To(gomega.Equal(route.ExternalIDs))
+			g.Expect(routes[0].UUID).NotTo(gomega.Equal(route.UUID))
+			if len(tt.existing) > 0 {
+				g.Expect(existingRoutes).To(gomega.HaveLen(len(tt.existing)))
+				g.Expect(routes[0].UUID).To(gomega.Equal(existingRoutes[0].UUID))
+			}
+
+			g.Expect(c.configureUDNEnabledServiceRoute(state, service)).To(gomega.Succeed())
+			routesAfter := getRoutes()
+			g.Expect(routesAfter).To(gomega.HaveLen(1))
+			g.Expect(routesAfter[0].UUID).To(gomega.Equal(routes[0].UUID))
+
+			routerAfter, err := libovsdbops.GetLogicalRouter(nbClient, &nbdb.LogicalRouter{Name: routerName})
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+			g.Expect(routerAfter.StaticRoutes).To(gomega.Equal([]string{routes[0].UUID}))
+			otherAfter, err := libovsdbops.GetLogicalRouter(nbClient, &nbdb.LogicalRouter{Name: otherRouter.Name})
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+			g.Expect(otherAfter).To(gomega.Equal(otherBefore))
+		})
+	}
 }

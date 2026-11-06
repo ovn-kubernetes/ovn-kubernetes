@@ -1294,7 +1294,7 @@ func (c *Controller) configureUDNEnabledServiceRoute(state *networkState, servic
 			ExternalIDs: extIDs,
 		}
 		routerName := state.netInfo.GetNetworkScopedClusterRouterName()
-		ops, err = libovsdbops.CreateOrUpdateLogicalRouterStaticRoutesWithPredicateOps(c.nbClient, nil, routerName, &staticRoute, func(item *nbdb.LogicalRouterStaticRoute) bool {
+		ops, err = libovsdbops.CreateOrReplaceLogicalRouterStaticRouteWithPredicateOps(c.nbClient, nil, routerName, &staticRoute, func(item *nbdb.LogicalRouterStaticRoute) bool {
 			return routesEqual(item, &staticRoute)
 		})
 		if err != nil {
