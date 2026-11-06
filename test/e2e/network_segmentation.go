@@ -1891,7 +1891,9 @@ spec:
 		By("verify UDN status reports foreign NAD conflict")
 		expectedMessage := fmt.Sprintf("foreign NetworkAttachmentDefinition with the desired name already exist [%s/%s]", ns, nadName)
 		Eventually(func(g Gomega) []metav1.Condition {
-			conditionsJSON, err := e2ekubectl.RunKubectl(ns, "get", "userdefinednetwork", nadName, "-o", "jsonpath={.status.conditions}")
+			conditionsJSON, err := e2ekubectl.NewKubectlCommand(ns, "get", "userdefinednetwork", nadName, "-o", "jsonpath={.status.conditions}").
+				WithTimeout(time.After(5 * time.Second)).
+				Exec()
 			g.Expect(err).NotTo(HaveOccurred(), "get UDN status conditions")
 			var actualConditions []metav1.Condition
 			g.Expect(json.Unmarshal([]byte(conditionsJSON), &actualConditions)).To(Succeed(), "unmarshal UDN status conditions")
@@ -3560,7 +3562,9 @@ func createManifest(namespace, manifest string) (func(), error) {
 		return cleanup, fmt.Errorf("unable to write udn yaml to disk: %w", err)
 	}
 
-	_, err = e2ekubectl.RunKubectl(namespace, "create", "-f", path)
+	cmd := e2ekubectl.NewKubectlCommand(namespace, "create", "-f", path)
+	cmd.WithTimeout(time.NewTimer(30 * time.Second).C)
+	_, err = cmd.Exec()
 	if err != nil {
 		return cleanup, err
 	}
