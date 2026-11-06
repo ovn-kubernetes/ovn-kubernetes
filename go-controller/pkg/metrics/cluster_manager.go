@@ -7,6 +7,7 @@ import (
 	"errors"
 	"runtime"
 	"sync"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -136,11 +137,60 @@ var metricUDNNodesRendered = prometheus.NewGaugeVec(
 var metricRouteAdvertisementCondition = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 	Namespace: types.MetricOvnkubeNamespace,
 	Subsystem: types.MetricOvnkubeSubsystemClusterManager,
-	Name:      "route_advertisement_condition",
+	Name:      "route_advertisements_condition",
 	Help: "Status condition of RouteAdvertisements resources. " +
 		"Value is 1 for the active status, 0 for the inactive status. " +
 		"Use the 'condition' and 'status' labels to select.",
 }, []string{"name", "condition", "status"})
+
+// RouteAdvertisements metrics are emitted per RouteAdvertisements resource so
+// that a slow or churning reconcile can be attributed to a specific resource.
+// Cardinality is bounded by the number of RouteAdvertisements in the cluster.
+var metricRAReconcileDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+	Namespace: types.MetricOvnkubeNamespace,
+	Subsystem: types.MetricOvnkubeSubsystemClusterManager,
+	Name:      "route_advertisements_reconcile_duration_seconds",
+	Help:      "Time spent reconciling a RouteAdvertisements resource.",
+	Buckets:   prometheus.ExponentialBuckets(.005, 2, 14), // 5ms to ~40s
+}, []string{"name", "result"})
+
+var metricRAFRRConfigurations = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+	Namespace: types.MetricOvnkubeNamespace,
+	Subsystem: types.MetricOvnkubeSubsystemClusterManager,
+	Name:      "route_advertisements_frr_configurations",
+	Help: "Number of FRRConfigurations currently generated for a RouteAdvertisements resource. " +
+		"Grows with the number of nodes and selected source FRRConfigurations.",
+}, []string{"name"})
+
+var metricRAFRRConfigurationProcessed = prometheus.NewCounterVec(prometheus.CounterOpts{
+	Namespace: types.MetricOvnkubeNamespace,
+	Subsystem: types.MetricOvnkubeSubsystemClusterManager,
+	Name:      "route_advertisements_frr_configuration_processed_total",
+	Help: "Generated FRRConfigurations processed by a RouteAdvertisements reconcile, by operation. " +
+		"The 'unchanged' operation counts objects that were compared and found up to date.",
+}, []string{"name", "op"})
+
+var metricRAAdvertisedPrefixes = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+	Namespace: types.MetricOvnkubeNamespace,
+	Subsystem: types.MetricOvnkubeSubsystemClusterManager,
+	Name:      "route_advertisements_advertised_prefixes",
+	Help:      "Number of distinct prefixes advertised by a RouteAdvertisements resource, by IP family.",
+}, []string{"name", "family"})
+
+var metricRANADUpdates = prometheus.NewCounterVec(prometheus.CounterOpts{
+	Namespace: types.MetricOvnkubeNamespace,
+	Subsystem: types.MetricOvnkubeSubsystemClusterManager,
+	Name:      "route_advertisements_nad_updates_total",
+	Help:      "NetworkAttachmentDefinition annotation updates issued by a RouteAdvertisements reconcile.",
+}, []string{"name"})
+
+var metricRANADsListed = prometheus.NewGauge(prometheus.GaugeOpts{
+	Namespace: types.MetricOvnkubeNamespace,
+	Subsystem: types.MetricOvnkubeSubsystemClusterManager,
+	Name:      "route_advertisements_nads_listed",
+	Help: "Number of NetworkAttachmentDefinitions walked by the most recent RouteAdvertisements " +
+		"reconcile. Every reconcile walks all of them.",
+})
 
 var metricCUDNCondition = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 	Namespace: types.MetricOvnkubeNamespace,
@@ -231,6 +281,14 @@ func RegisterClusterManagerFunctional() {
 		}
 		if config.OVNKubernetesFeature.EnableRouteAdvertisements {
 			prometheus.MustRegister(metricRouteAdvertisementCondition)
+			if config.Metrics.EnableScaleMetrics {
+				prometheus.MustRegister(metricRAReconcileDuration)
+				prometheus.MustRegister(metricRAFRRConfigurations)
+				prometheus.MustRegister(metricRAFRRConfigurationProcessed)
+				prometheus.MustRegister(metricRAAdvertisedPrefixes)
+				prometheus.MustRegister(metricRANADUpdates)
+				prometheus.MustRegister(metricRANADsListed)
+			}
 		}
 		if config.OVNKubernetesFeature.EnableEVPN {
 			prometheus.MustRegister(metricVTEPCondition)
@@ -329,6 +387,54 @@ func RecordRouteAdvertisementCondition(name, condition string, status metav1.Con
 // DeleteRouteAdvertisementCondition removes all condition timeseries for a deleted RouteAdvertisements resource.
 func DeleteRouteAdvertisementCondition(name string) {
 	metricRouteAdvertisementCondition.DeletePartialMatch(prometheus.Labels{"name": name})
+}
+
+// RecordRouteAdvertisementReconcile records the duration and outcome of a
+// RouteAdvertisements reconcile.
+func RecordRouteAdvertisementReconcile(name, result string, duration time.Duration) {
+	metricRAReconcileDuration.WithLabelValues(name, result).Observe(duration.Seconds())
+}
+
+// RecordRouteAdvertisementFRRConfigurations records how many FRRConfigurations a
+// RouteAdvertisements currently generates.
+func RecordRouteAdvertisementFRRConfigurations(name string, count int) {
+	metricRAFRRConfigurations.WithLabelValues(name).Set(float64(count))
+}
+
+// RecordRouteAdvertisementFRRConfigurationProcess counts a generated FRRConfiguration
+// processed by a reconcile. Valid operations are create, update, delete and unchanged.
+func RecordRouteAdvertisementFRRConfigurationProcess(name, op string) {
+	metricRAFRRConfigurationProcessed.WithLabelValues(name, op).Inc()
+}
+
+// RecordRouteAdvertisementAdvertisedPrefixes records the number of distinct prefixes
+// advertised by a RouteAdvertisements for an IP family.
+func RecordRouteAdvertisementAdvertisedPrefixes(name, family string, count int) {
+	metricRAAdvertisedPrefixes.WithLabelValues(name, family).Set(float64(count))
+}
+
+// RecordRouteAdvertisementNADUpdate counts a NAD annotation update issued for a
+// RouteAdvertisements.
+func RecordRouteAdvertisementNADUpdate(name string) {
+	metricRANADUpdates.WithLabelValues(name).Inc()
+}
+
+// RecordRouteAdvertisementNADsListed records how many NADs the most recent
+// RouteAdvertisements reconcile walked.
+func RecordRouteAdvertisementNADsListed(count int) {
+	metricRANADsListed.Set(float64(count))
+}
+
+// DeleteRouteAdvertisementMetrics removes all per-resource timeseries for a deleted
+// RouteAdvertisements.
+func DeleteRouteAdvertisementMetrics(name string) {
+	labels := prometheus.Labels{"name": name}
+	metricRouteAdvertisementCondition.DeletePartialMatch(labels)
+	metricRAReconcileDuration.DeletePartialMatch(labels)
+	metricRAFRRConfigurations.DeletePartialMatch(labels)
+	metricRAFRRConfigurationProcessed.DeletePartialMatch(labels)
+	metricRAAdvertisedPrefixes.DeletePartialMatch(labels)
+	metricRANADUpdates.DeletePartialMatch(labels)
 }
 
 // RecordCUDNCondition records the condition metric for a ClusterUserDefinedNetwork resource.

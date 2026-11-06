@@ -1,0 +1,120 @@
+---
+# BGP RouteAdvertisements density, node axis.
+#
+# The twin of bgp-ra-density.yml at twice the node count. Keep the two in sync:
+# the only intended differences are the job names, which have to be distinct so
+# the indexed documents can tell the two lanes apart, and this comment. The
+# workload itself must stay identical or the comparison means nothing.
+#
+# Why a second lane rather than a bigger first one. Generated objects grow as
+# RAs x nodes, and the two factors cost different things. RA count grows the
+# queue depth, which the 6-node lane already shows: wait p99 16s against a work
+# p99 of 1s, the signature of 20 reconciles serialised through one worker. Node
+# count grows the work inside each reconcile instead, because the controller
+# writes one FRRConfiguration per node, so convergence is roughly
+# RAs x nodes x write latency. Real clusters are many nodes and few RAs, so the
+# node axis is the one that predicts them.
+#
+# Two points let the slope be fitted rather than guessed. If reconcile duration
+# doubles from 6 to 12 nodes the cost is linear in nodes and the single worker
+# is the whole story; if it grows faster, the per-node loops in
+# generateFRRConfigurations are superlinear, which is bottleneck hypothesis 2
+# and currently untested on its own axis.
+#
+# Node count comes from the cluster, not from here: num-workers + KIND_NUM_INFRA
+# + 1 for the control plane. The matrix entry sets 9 workers against the
+# standing KIND_NUM_INFRA of 2, which is 12.
+#
+# No pods, as in the twin: the pod path is covered by the udn-density lanes and
+# leaving it out keeps the lane focused on the controller.
+#
+# The job that carries podLatency must be named after this file, because
+# generate_perf_report.py loads podLatencyMeasurement-<perf-test>.json keyed on
+# the matrix value. There is no podLatency here, so the report falls back to
+# the CPU and memory sections.
+global:
+  measurements:
+    - name: pprof
+      # Must match the profile duration below. pprofInterval is the period of
+      # the ticker that starts a collection, ?seconds= is how long each one
+      # blocks sampling, so coverage is duration/interval: at 1m against 30s
+      # half the wall time is unsampled, which is how the first CI run's 42s of
+      # RA work landed entirely in a gap. It cannot go lower than the duration
+      # either, because Go refuses a second concurrent CPU profile.
+      #
+      # Matching does not close every hole. kube-burner collects start.pprof
+      # first and the ticker's first periodic lands a full interval after that
+      # collection began, so start+30s to start+60s is never sampled: measured
+      # at 30.1s locally, and it is where the second CI run's RA work fell. A
+      # CPU-bound burst in the first minute would still be invisible. That is
+      # tolerable here only because this reconcile is I/O bound, under 2
+      # core-seconds across a whole run with no ovn-kubernetes frames in any
+      # profile, so the apiserver request metrics carry the attribution and
+      # these profiles only confirm the absence of CPU.
+      pprofInterval: 30s
+      pprofDirectory: pprof-data
+      pprofTargets:
+      - name: ovnkube-control-plane
+        namespace: "ovn-kubernetes"
+        labelSelector: {name: ovnkube-control-plane}
+        url: http://localhost:9411/debug/pprof/profile?seconds=30
+      - name: ovnkube-control-plane-heap
+        namespace: "ovn-kubernetes"
+        labelSelector: {name: ovnkube-control-plane}
+        url: http://localhost:9411/debug/pprof/heap
+      - name: ovnkube-controller
+        namespace: "ovn-kubernetes"
+        labelSelector: {app: ovnkube-node}
+        url: http://localhost:9410/debug/pprof/profile?seconds=30
+      - name: ovnkube-controller-heap
+        namespace: "ovn-kubernetes"
+        labelSelector: {app: ovnkube-node}
+        url: http://localhost:9410/debug/pprof/heap
+
+jobs:
+# Networks first, so their NADs exist before any RouteAdvertisements selects
+# them. Creating them in one job keeps the RA reconciles from racing a growing
+# set of NADs.
+- name: bgp-ra-density-wide-networks
+  jobIterations: 1
+  qps: 10
+  burst: 10
+  namespacedIterations: false
+  waitWhenFinished: true
+  cleanup: true
+  objects:
+    - objectTemplate: workloads/templates/bgp/ns.yml
+      replicas: 20
+
+    - objectTemplate: workloads/templates/bgp/cudn_l3.yml
+      replicas: 20
+      waitOptions:
+        customStatusPaths:
+        - key: '(.conditions.[] | select(.type == "NetworkCreated")).status'
+          value: "True"
+
+# One RouteAdvertisements per network. This is the job whose cost the lane
+# exists to measure, so it is separated from network creation.
+- name: bgp-ra-density-wide
+  jobIterations: 1
+  qps: 10
+  burst: 10
+  namespacedIterations: false
+  waitWhenFinished: true
+  cleanup: true
+  # The RouteAdvertisements are accepted in seconds, which is shorter than the
+  # 30s scrape interval, so without a pause every rate() and histogram_quantile()
+  # in metrics-ovnk.yml covers a window with fewer than two samples and indexes
+  # nothing. metricsClosing defaults to afterJobPause, so this pause is inside
+  # the measured range. It also gives the 1m pprof measurement time to fire.
+  jobPause: 3m
+  # Snapshot the quantities that cannot be Prometheus series: generated object
+  # counts, FRRNodeState sizes and the peer's view.
+  beforeCleanup: "./collect-bgp-state.sh bgp-ra-density-wide"
+  objects:
+    - objectTemplate: workloads/templates/bgp/ra.yml
+      replicas: 20
+      waitOptions:
+        customStatusPaths:
+        - key: '(.conditions.[] | select(.type == "Accepted")).status'
+          value: "True"

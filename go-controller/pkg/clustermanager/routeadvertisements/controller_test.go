@@ -4689,7 +4689,7 @@ func TestUpdates(t *testing.T) {
 }
 
 func getRAConditionMetricValue(nameLabel, conditionLabel, statusLabel string) (float64, bool) {
-	metricName := prometheus.BuildFQName(types.MetricOvnkubeNamespace, types.MetricOvnkubeSubsystemClusterManager, "route_advertisement_condition")
+	metricName := prometheus.BuildFQName(types.MetricOvnkubeNamespace, types.MetricOvnkubeSubsystemClusterManager, "route_advertisements_condition")
 	return ovntest.GetConditionMetricValue(metricName, nameLabel, conditionLabel, statusLabel)
 }
 
