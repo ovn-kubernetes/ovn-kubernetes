@@ -46,7 +46,8 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.x'
+          # Pin below PyO3's max (minify-html). '3.x' can resolve to unsupported majors.
+          python-version: '3.14'
 
       - name: Install Dependencies
         run: pip install -r requirements.txt
