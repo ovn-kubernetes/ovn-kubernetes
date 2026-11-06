@@ -4381,6 +4381,306 @@ spec:
 			framework.Logf("✓ Test passed: Egress IP migrated cleanly without duplicate MAC responses")
 		})
 
+		/*
+			Test Case: Validate node capacity limit enforcement and prevent stale CloudPrivateIPConfig creation.
+
+			Verify that when EgressIP creation exceeds node capacity:
+			  - Exactly usableCapacity EgressIPs are assigned to the target node.
+			  - The last 2 overflow EgressIPs remain unassigned.
+			  - For unassigned EgressIPs, CloudPrivateIPConfig objects are NOT created.
+
+			Steps:
+				Step-1: Verify this is a supported cloud platform
+				Step-2: Check if we have at least 1 cloud worker node with egress-ipconfig annotation
+				Step-3: Select one worker node for capacity testing
+				Step-4: Snapshot original state and remove egress-assignable from all workers except target
+				Step-5: Set egress-assignable on target node (annotation + label)
+				Step-6: Find capacity, subnet & target interface of the selected node
+				Step-7: Create (usableCapacity + 2) EgressIPs on the same subnet as target node
+				Step-8: Validate exactly usableCapacity EgressIPs are assigned to target node
+				Step-9: Identify the 2 unassigned overflow EgressIPs
+				Step-10: Validate NO CloudPrivateIPConfig CRDs created for unassigned EgressIPs
+		*/
+		ginkgo.It("Should not create CloudPrivateIPConfig or assign EgressIPs exceeding cloud node capacity [Cloud] [Serial]", feature.EgressIP, func() {
+			if isUserDefinedNetwork(netConfigParams) {
+				ginkgo.Skip("Unsupported for UDNs")
+			}
+
+			ginkgo.By("Step-1: Verify this is a supported cloud platform")
+			// Check if running on a cloud platform by looking for cloud provider-specific annotations
+			// This test is specific to cloud environments where ENI/IP capacity is enforced
+			allNodes, err := f.ClientSet.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to list cluster nodes")
+
+			ginkgo.By("Step-2: Check if we have cloud worker nodes with egress-ipconfig annotation")
+			type egressIPConfig struct {
+				Interface string `json:"interface"`
+				IfAddr    struct {
+					IPv4 string `json:"ipv4"`
+					IPv6 string `json:"ipv6"`
+				} `json:"ifaddr"`
+				Capacity struct {
+					IPv4 int `json:"ipv4"`
+					IPv6 int `json:"ipv6"`
+				} `json:"capacity"`
+			}
+
+			var targetNode *corev1.Node
+			var targetRawCapacity int
+			var targetSubnet *net.IPNet
+			var targetInterface string
+			var workerNodesChecked int
+			var workerNodesWithAnnotation int
+
+			const cloudEgressIPConfigAnnotation = "cloud.network.openshift.io/egress-ipconfig"
+			for i := range allNodes.Items {
+				node := &allNodes.Items[i]
+				// Skip non-worker nodes and control-plane nodes
+				if _, isWorker := node.Labels["node-role.kubernetes.io/worker"]; !isWorker {
+					continue
+				}
+				if _, isCP := node.Labels["node-role.kubernetes.io/control-plane"]; isCP {
+					continue
+				}
+
+				workerNodesChecked++
+
+				annotation, ok := node.Annotations[cloudEgressIPConfigAnnotation]
+				if !ok || annotation == "" {
+					framework.Logf("Worker node %s does not have %s annotation (non-cloud environment)", node.Name, cloudEgressIPConfigAnnotation)
+					continue
+				}
+
+				workerNodesWithAnnotation++
+				var configs []egressIPConfig
+				if err := json.Unmarshal([]byte(annotation), &configs); err == nil && len(configs) > 0 {
+					if configs[0].Capacity.IPv4 > 1 && configs[0].IfAddr.IPv4 != "" {
+						_, ipnet, err := net.ParseCIDR(configs[0].IfAddr.IPv4)
+						if err == nil {
+							targetNode = node
+							targetRawCapacity = configs[0].Capacity.IPv4
+							targetSubnet = ipnet
+							targetInterface = configs[0].Interface
+							framework.Logf("Found suitable cloud worker node: %s with capacity %d", node.Name, targetRawCapacity)
+							break
+						}
+					}
+				}
+			}
+
+			if targetNode == nil {
+				framework.Logf("Cloud environment check: checked %d worker nodes, %d had %s annotation, 0 suitable for testing",
+					workerNodesChecked, workerNodesWithAnnotation, cloudEgressIPConfigAnnotation)
+				ginkgo.Skip("Test requires cloud environment (AWS/GCP/Azure/OpenStack). " +
+					"Non-cloud environments (KinD, bare metal, vSphere) do not enforce ENI/IP capacity limits. " +
+					"Skipping test as no worker nodes have cloud.network.openshift.io/egress-ipconfig annotation.")
+			}
+
+			ginkgo.By("Step-3: Select worker node for capacity testing")
+			targetNodeName := targetNode.Name
+			usableCapacity := targetRawCapacity
+			framework.Logf("Selected target cloud worker node: %s, Interface: %s, Subnet: %s, Raw Capacity: %d, Usable Capacity: %d",
+				targetNodeName, targetInterface, targetSubnet.String(), targetRawCapacity, usableCapacity)
+
+			// Snapshot original egress-assignable state for all worker nodes before Step-4 modification
+			type nodeMarkerState struct {
+				hasLabel      bool
+				hasAnnotation bool
+			}
+			originalWorkerStates := make(map[string]nodeMarkerState)
+			for _, node := range allNodes.Items {
+				if _, isWorker := node.Labels["node-role.kubernetes.io/worker"]; isWorker {
+					_, hasLabel := node.Labels["k8s.ovn.org/egress-assignable"]
+					_, hasAnnotation := node.Annotations["k8s.ovn.org/egress-assignable"]
+					originalWorkerStates[node.Name] = nodeMarkerState{
+						hasLabel:      hasLabel,
+						hasAnnotation: hasAnnotation,
+					}
+				}
+			}
+
+			ginkgo.By("Step-4: Remove egress-assignable annotation and label from all worker nodes except target")
+			for _, node := range allNodes.Items {
+				if _, isWorker := node.Labels["node-role.kubernetes.io/worker"]; isWorker && node.Name != targetNodeName {
+					framework.Logf("Removing egress-assignable from non-target worker node: %s", node.Name)
+					_, _ = e2ekubectl.RunKubectl(f.Namespace.Name, "annotate", "node", node.Name, "k8s.ovn.org/egress-assignable-", "--overwrite")
+					_, _ = e2ekubectl.RunKubectl(f.Namespace.Name, "label", "node", node.Name, "k8s.ovn.org/egress-assignable-", "--overwrite")
+				}
+			}
+
+			ginkgo.By("Step-5: Set egress-assignable annotation and label on target node")
+			framework.Logf("Setting egress-assignable annotation and label on target node: %s", targetNodeName)
+			_, _ = e2ekubectl.RunKubectl(f.Namespace.Name, "annotate", "node", targetNodeName, "k8s.ovn.org/egress-assignable=", "--overwrite")
+			_, _ = e2ekubectl.RunKubectl(f.Namespace.Name, "label", "node", targetNodeName, "k8s.ovn.org/egress-assignable=", "--overwrite")
+
+			// Deferred cleanup restoring every worker node to its original pre-test state and reporting errors
+			defer func() {
+				ginkgo.By("Cleanup: restoring original egress-assignable markers on all worker nodes")
+				var cleanupErrors []error
+				for nodeName, state := range originalWorkerStates {
+					if state.hasAnnotation {
+						if _, err := e2ekubectl.RunKubectl(f.Namespace.Name, "annotate", "node", nodeName, "k8s.ovn.org/egress-assignable=", "--overwrite"); err != nil {
+							cleanupErrors = append(cleanupErrors, fmt.Errorf("failed to restore annotation on node %s: %w", nodeName, err))
+						}
+					} else {
+						if _, err := e2ekubectl.RunKubectl(f.Namespace.Name, "annotate", "node", nodeName, "k8s.ovn.org/egress-assignable-", "--overwrite"); err != nil {
+							cleanupErrors = append(cleanupErrors, fmt.Errorf("failed to remove annotation on node %s: %w", nodeName, err))
+						}
+					}
+
+					if state.hasLabel {
+						if _, err := e2ekubectl.RunKubectl(f.Namespace.Name, "label", "node", nodeName, "k8s.ovn.org/egress-assignable=", "--overwrite"); err != nil {
+							cleanupErrors = append(cleanupErrors, fmt.Errorf("failed to restore label on node %s: %w", nodeName, err))
+						}
+					} else {
+						if _, err := e2ekubectl.RunKubectl(f.Namespace.Name, "label", "node", nodeName, "k8s.ovn.org/egress-assignable-", "--overwrite"); err != nil {
+							cleanupErrors = append(cleanupErrors, fmt.Errorf("failed to remove label on node %s: %w", nodeName, err))
+						}
+					}
+				}
+				gomega.Expect(cleanupErrors).To(gomega.BeEmpty(), "errors encountered while restoring worker node markers: %v", cleanupErrors)
+			}()
+
+			// Verify only target node is egress-assignable with a short poll to allow controller sync
+			var currentAssignableWorkers []string
+			pollErr := wait.PollUntilContextTimeout(context.TODO(), 1*time.Second, 15*time.Second, true, func(ctx context.Context) (bool, error) {
+				currentAssignableWorkers = nil
+				freshNodes, err := f.ClientSet.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+				if err != nil {
+					return false, nil
+				}
+				for _, node := range freshNodes.Items {
+					if _, isWorker := node.Labels["node-role.kubernetes.io/worker"]; isWorker {
+						if _, hasLabel := node.Labels["k8s.ovn.org/egress-assignable"]; hasLabel {
+							currentAssignableWorkers = append(currentAssignableWorkers, node.Name)
+						}
+					}
+				}
+				return len(currentAssignableWorkers) == 1 && currentAssignableWorkers[0] == targetNodeName, nil
+			})
+			gomega.Expect(pollErr).NotTo(gomega.HaveOccurred(),
+				"expected only target node %s to be egress-assignable, got: %v", targetNodeName, currentAssignableWorkers)
+			framework.Logf("Isolated node verification: currently assignable workers = %v", currentAssignableWorkers)
+
+			ginkgo.By("Step-6: Capacity, subnet & target interface already determined from annotation")
+			// Already have: usableCapacity, targetSubnet, targetInterface from Step-2
+
+			ginkgo.By(fmt.Sprintf("Step-7: Creating %d (usableCapacity + 2) EgressIPs on the same subnet as target node", usableCapacity+2))
+			totalEIPs := usableCapacity + 2
+			baseIP := targetSubnet.IP.Mask(targetSubnet.Mask).To4()
+			ipInt := (uint32(baseIP[0])<<24 | uint32(baseIP[1])<<16 | uint32(baseIP[2])<<8 | uint32(baseIP[3])) + 150
+
+			type testEIPItem struct {
+				name string
+				ip   string
+			}
+			var createdEIPs []testEIPItem
+
+			// Pre-flight check ensuring generated IPs stay strictly within targetSubnet
+			for i := 0; i < totalEIPs; i++ {
+				curInt := ipInt + uint32(i)
+				candidate := net.IPv4(byte(curInt>>24), byte(curInt>>16), byte(curInt>>8), byte(curInt))
+				if !targetSubnet.Contains(candidate) {
+					framework.Failf("Generated EgressIP %s is outside node subnet %s (capacity %d exceeds the supported subnet range)",
+						candidate.String(), targetSubnet.String(), usableCapacity)
+				}
+			}
+
+			// Register cleanup before creation loop so partial creation failures are cleaned up and reported
+			defer func() {
+				ginkgo.By("Cleanup: deleting all created test EgressIPs")
+				var deleteErrors []error
+				for _, item := range createdEIPs {
+					framework.Logf("Cleanup: deleting EgressIP %s", item.name)
+					if _, err := e2ekubectl.RunKubectl(f.Namespace.Name, "delete", "egressip", item.name, "--ignore-not-found=true"); err != nil {
+						deleteErrors = append(deleteErrors, fmt.Errorf("failed to delete EgressIP %s: %w", item.name, err))
+					}
+				}
+				gomega.Expect(deleteErrors).To(gomega.BeEmpty(), "errors encountered during EgressIP deletion cleanup: %v", deleteErrors)
+			}()
+
+			for i := 0; i < totalEIPs; i++ {
+				curInt := ipInt + uint32(i)
+				eipIP := fmt.Sprintf("%d.%d.%d.%d", byte(curInt>>24), byte(curInt>>16), byte(curInt>>8), byte(curInt))
+				eipName := fmt.Sprintf("e2e-capacity-eip-%d-%s", i, strings.ReplaceAll(eipIP, ".", "-"))
+
+				createdEIPs = append(createdEIPs, testEIPItem{name: eipName, ip: eipIP})
+
+				eipYAML := fmt.Sprintf(`
+apiVersion: k8s.ovn.org/v1
+kind: EgressIP
+metadata:
+  name: %s
+spec:
+  egressIPs:
+  - %s
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: %s
+`, eipName, eipIP, f.Namespace.Name)
+
+				_, err := e2ekubectl.RunKubectlInput(f.Namespace.Name, eipYAML, "apply", "-f", "-")
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to create EgressIP %s", eipName)
+
+				framework.Logf("Created EgressIP [%d/%d]: %s, IP: %s, Intended Target: %s", i+1, totalEIPs, eipName, eipIP, targetNodeName)
+			}
+
+			ginkgo.By(fmt.Sprintf("Step-8: Validating exactly %d EgressIPs are assigned to target node %s", usableCapacity, targetNodeName))
+			var assignedEIPs []string
+			pollErr = wait.PollUntilContextTimeout(context.TODO(), 2*time.Second, 60*time.Second, true, func(ctx context.Context) (bool, error) {
+				assignedEIPs = nil
+				for _, item := range createdEIPs {
+					stdout, err := e2ekubectl.RunKubectl(f.Namespace.Name, "get", "egressip", item.name, "-o", "jsonpath={.status.items[*].node}")
+					if err == nil && strings.TrimSpace(stdout) == targetNodeName {
+						assignedEIPs = append(assignedEIPs, item.name)
+					}
+				}
+				framework.Logf("Polling: %d/%d EgressIPs assigned to target node %s", len(assignedEIPs), usableCapacity, targetNodeName)
+				return len(assignedEIPs) == usableCapacity, nil
+			})
+			gomega.Expect(pollErr).NotTo(gomega.HaveOccurred(),
+				"expected exactly %d EgressIPs assigned to %s, got %d (assigned: %v)",
+				usableCapacity, targetNodeName, len(assignedEIPs), assignedEIPs)
+			framework.Logf("SUCCESS: Exactly %d EgressIPs assigned to target node %s", usableCapacity, targetNodeName)
+
+			ginkgo.By("Step-9: Identify the 2 unassigned overflow EgressIPs")
+			assignedSet := make(map[string]bool)
+			for _, name := range assignedEIPs {
+				assignedSet[name] = true
+			}
+			var unassignedItems []testEIPItem
+			for _, item := range createdEIPs {
+				if !assignedSet[item.name] {
+					unassignedItems = append(unassignedItems, item)
+				}
+			}
+			framework.Logf("Identified unassigned overflow EgressIPs: %v", unassignedItems)
+			gomega.Expect(unassignedItems).To(gomega.HaveLen(2), "expected exactly 2 unassigned overflow EgressIPs")
+
+			ginkgo.By("Step-10: Validate that NO CloudPrivateIPConfig CRDs were created for the unassigned EgressIPs")
+			gomega.Consistently(func() bool {
+				for _, item := range unassignedItems {
+					stdout, err := e2ekubectl.RunKubectl(f.Namespace.Name, "get", "cloudprivateipconfig", item.ip)
+					if err == nil {
+						framework.Logf("CloudPrivateIPConfig unexpectedly found for unassigned IP %s", item.ip)
+						return false
+					}
+					errMsg := stdout
+					if err != nil {
+						errMsg += " " + err.Error()
+					}
+					if !strings.Contains(errMsg, "NotFound") && !strings.Contains(errMsg, "not found") {
+						framework.Logf("Unexpected error when checking CloudPrivateIPConfig for %s: %s", item.ip, errMsg)
+						return false
+					}
+				}
+				return true
+			}, 10*time.Second, 2*time.Second).Should(gomega.BeTrue(),
+				"CloudPrivateIPConfig objects must not be created for unassigned EgressIPs exceeding capacity")
+
+			framework.Logf("SUCCESS: Verified capacity limit: %d assigned, 2 overflowed, 0 stale CloudPrivateIPConfigs created", usableCapacity)
+		})
+
 		ginkgo.DescribeTable("[OVN network] multiple namespaces with different primary networks", func(otherNetworkAttachParms networkAttachmentConfigParams) {
 			if !isNetworkSegmentationEnabled() {
 				ginkgo.Skip("network segmentation is disabled")

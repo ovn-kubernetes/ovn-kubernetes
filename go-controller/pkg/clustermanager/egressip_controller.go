@@ -1163,12 +1163,31 @@ func (eIPC *egressIPClusterController) syncCloudPrivateIPConfigs(ctx context.Con
 		for _, status := range egressIP.Status.Items {
 			cloudPrivateIPConfigName := ipStringToCloudPrivateIPConfigName(status.EgressIP)
 			if _, exists := cloudPrivateIPConfigMap[cloudPrivateIPConfigName]; exists {
+				// CPIC exists - check if it has failed status by fetching the actual object
+				cpic, err := eIPC.watchFactory.GetCloudPrivateIPConfig(cloudPrivateIPConfigName)
+				if err == nil && cpic != nil {
+					if cond := meta.FindStatusCondition(cpic.Status.Conditions, string(ocpcloudnetworkapi.Assigned)); cond != nil && cond.Status == metav1.ConditionFalse {
+						// This CPIC failed - don't include in updated status
+						klog.Warningf("Removing failed CloudPrivateIPConfig %s from EgressIP %s status. Reason: %s",
+							cloudPrivateIPConfigName, egressIP.Name, cond.Message)
+						cloudPrivateIPNotFound = true
+						continue
+					}
+				}
+				// CPIC exists and either succeeded or we can't check its status - keep the status item
 				updatedStatus = append(updatedStatus, status)
 			} else {
 				// Set cloudPrivateIPNotFoundOrInvalid flag to true because egress ip entry not found in
 				// cloud private ip config object. Note that the egress ip status might still reflect an
 				// old node assignment if the informer cache has old data, so do not invalidate if it is
 				// not the same node as the cloud private ip config assignment.
+				// CPIC doesn't exist
+				eIP := net.ParseIP(status.EgressIP)
+				if utilnet.IsIPv4(eIP) {
+					klog.Infof("IPv4 CloudPrivateIPConfig %s not found for EgressIP %s", cloudPrivateIPConfigName, egressIP.Name)
+				} else if utilnet.IsIPv6(eIP) {
+					klog.Infof("IPv6 CloudPrivateIPConfig %s not found for EgressIP %s", cloudPrivateIPConfigName, egressIP.Name)
+				}
 				cloudPrivateIPNotFound = true
 			}
 		}
