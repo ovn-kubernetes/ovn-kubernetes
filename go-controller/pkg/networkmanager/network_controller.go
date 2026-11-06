@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	nadtypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	nadlisters "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
 
 	corev1 "k8s.io/api/core/v1"
@@ -27,6 +28,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	ratypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
 	ralisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/listers/routeadvertisements/v1"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -68,6 +70,7 @@ func newNetworkController(name, node string, cm ControllerManager, wf watchFacto
 	// we don't care about route advertisements in cluster manager
 	if nc.hasRouteAdvertisements() {
 		nc.nadLister = wf.NADInformer().Lister()
+		nc.nadIndexer = wf.NADInformer().Informer().GetIndexer()
 		nc.raLister = wf.RouteAdvertisementsInformer().Lister()
 		nc.nodeLister = wf.NodeCoreInformer().Lister()
 
@@ -76,7 +79,7 @@ func newNetworkController(name, node string, cm ControllerManager, wf watchFacto
 			RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
 			Informer:       wf.RouteAdvertisementsInformer().Informer(),
 			Lister:         nc.raLister.List,
-			Reconcile:      func(_ context.Context, _ string) error { return nc.syncRunningNetworks() },
+			Reconcile:      nc.syncRouteAdvertisements,
 			ObjNeedsUpdate: raNeedsUpdate,
 			Threadiness:    1,
 		}
@@ -124,6 +127,7 @@ type networkController struct {
 	asyncNetworkStart bool
 
 	nadLister  nadlisters.NetworkAttachmentDefinitionLister
+	nadIndexer cache.Indexer
 	raLister   ralisters.RouteAdvertisementsLister
 	nodeLister corelisters.NodeLister
 
@@ -137,6 +141,9 @@ type networkController struct {
 	networkControllers map[string]*networkControllerState
 	// getNADKeysForNetwork returns NAD keys associated with a network name.
 	getNADKeysForNetwork func(networkName string) []string
+	// getNetworkNameForNADKey resolves the NAD controller's current network
+	// association, returning an empty string for NADs it has not processed.
+	getNetworkNameForNADKey func(nadKey string) string
 
 	// networkRefLock is used to protect pendingNetworkRefNodes and networkRefStates access
 	networkRefLock sync.Mutex
@@ -419,6 +426,36 @@ func (c *networkController) syncRunningNetworks() error {
 		c.networkReconciler.Reconcile(network.controller.GetNetworkName())
 	}
 
+	return nil
+}
+
+// syncRouteAdvertisements queues only networks whose NADs reference raName.
+// NAD annotation changes independently queue their networks through EnsureNetwork,
+// so this lookup only needs the current references to the advertisement.
+func (c *networkController) syncRouteAdvertisements(_ context.Context, raName string) error {
+	nads, err := c.nadIndexer.ByIndex(factory.RouteAdvertisementsNADIndex, raName)
+	if err != nil {
+		return fmt.Errorf("failed to find NADs for route advertisement %s: %w", raName, err)
+	}
+	// Several NADs can belong to the same network, particularly for a CUDN
+	// spanning namespaces. Deduplicate before calling the network reconciler.
+	networks := sets.New[string]()
+	for _, obj := range nads {
+		nad := obj.(*nadtypes.NetworkAttachmentDefinition)
+		network := c.getNetworkNameForNADKey(util.GetNADName(nad.Namespace, nad.Name))
+		// A NAD may not have been processed yet, or its network may be
+		// filtered locally. EnsureNetwork will gather the latest RA state
+		// when that network is created. The default controller is managed
+		// separately through ControllerManager and remains eligible even
+		// without an entry in c.networks.
+		if network == "" || (network != types.DefaultNetworkName && c.getNetwork(network) == nil) {
+			continue
+		}
+		networks.Insert(network)
+	}
+	for network := range networks {
+		c.networkReconciler.Reconcile(network)
+	}
 	return nil
 }
 

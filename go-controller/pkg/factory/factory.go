@@ -527,13 +527,9 @@ func NewOVNKubeControllerWatchFactory(ovnClientset *util.OVNKubeControllerClient
 	}
 
 	if config.OVNKubernetesFeature.EnableMultiNetwork {
-		wf.nadFactory = nadinformerfactory.NewSharedInformerFactory(ovnClientset.NetworkAttchDefClient, resyncInterval)
-		wf.informers[NetworkAttachmentDefinitionType], err = newQueuedInformer(eventQueueSize, NetworkAttachmentDefinitionType,
-			wf.nadFactory.K8sCniCncfIo().V1().NetworkAttachmentDefinitions().Informer(), wf.stopChan, minNumEventQueues)
-		if err != nil {
+		if err := wf.initNADInformer(ovnClientset.NetworkAttchDefClient); err != nil {
 			return nil, err
 		}
-
 	}
 
 	if util.IsNetworkSegmentationSupportEnabled() {
@@ -940,12 +936,8 @@ func NewNodeWatchFactory(ovnClientset *util.OVNNodeClientset, nodeName string) (
 	// need to configure OVS interfaces for Pods on secondary networks in the DPU mode
 	// need to know what is the primary network for a namespace on the CNI side, which
 	// needs the NAD factory whenever the UDN feature is used.
-	if config.OVNKubernetesFeature.EnableMultiNetwork && (config.OVNKubernetesFeature.EnableNetworkSegmentation || config.IsModeDPU()) {
-		wf.nadFactory = nadinformerfactory.NewSharedInformerFactory(ovnClientset.NetworkAttchDefClient, resyncInterval)
-		wf.informers[NetworkAttachmentDefinitionType], err = newQueuedInformer(eventQueueSize,
-			NetworkAttachmentDefinitionType, wf.nadFactory.K8sCniCncfIo().V1().NetworkAttachmentDefinitions().Informer(),
-			wf.stopChan, minNumEventQueues)
-		if err != nil {
+	if config.OVNKubernetesFeature.EnableMultiNetwork && (config.OVNKubernetesFeature.EnableNetworkSegmentation || config.IsModeDPU() || util.IsRouteAdvertisementsEnabled()) {
+		if err := wf.initNADInformer(ovnClientset.NetworkAttchDefClient); err != nil {
 			return nil, err
 		}
 	}
@@ -1113,12 +1105,7 @@ func NewClusterManagerWatchFactory(ovnClientset *util.OVNClusterManagerClientset
 	}
 
 	if config.OVNKubernetesFeature.EnableMultiNetwork {
-		wf.nadFactory = nadinformerfactory.NewSharedInformerFactory(ovnClientset.NetworkAttchDefClient, resyncInterval)
-		wf.informers[NetworkAttachmentDefinitionType], err = newQueuedInformer(eventQueueSize,
-			NetworkAttachmentDefinitionType,
-			wf.nadFactory.K8sCniCncfIo().V1().NetworkAttachmentDefinitions().Informer(),
-			wf.stopChan, minNumEventQueues)
-		if err != nil {
+		if err := wf.initNADInformer(ovnClientset.NetworkAttchDefClient); err != nil {
 			return nil, err
 		}
 
