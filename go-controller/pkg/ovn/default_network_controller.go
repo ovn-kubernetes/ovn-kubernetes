@@ -464,19 +464,20 @@ func (oc *DefaultNetworkController) ReconcileNode(ctx context.Context, oldNode, 
 			err := oc.addUpdateHoNodeEvent(newNode)
 			if err != nil {
 				oc.recordNodeErrorEvent(newNode, err)
+				return nodecontroller.RetryWithPreviousNode(err)
 			}
 			return err
 		} else if oldNode != nil && !util.NoHostSubnet(newNode) && util.NoHostSubnet(oldNode) {
 			// The node switched from hybrid-overlay management back to OVN-managed networking.
 			if err := oc.deleteHoNodeEvent(oldNode); err != nil {
 				oc.recordNodeErrorEvent(oldNode, err)
-				return err
+				return nodecontroller.RetryWithPreviousNode(err)
 			}
 			switchToOvnNode = true
 		} else if oldNode == nil && !util.NoHostSubnet(newNode) {
 			if err := oc.deleteHoNodeEvent(newNode); err != nil {
 				oc.recordNodeErrorEvent(newNode, err)
-				return err
+				return nodecontroller.RetryWithPreviousNode(err)
 			}
 		}
 	}
@@ -572,8 +573,10 @@ func (oc *DefaultNetworkController) ReconcileNode(ctx context.Context, oldNode, 
 		// without being deleted from the cluster.
 		// Delete the stale remote chassis mapping so the new chassis can be associated cleanly.
 		if oldNode != nil && nodeChassisChanged(oldNode, newNode) {
+			oc.syncZoneICFailed.Store(newNode.Name, true)
 			if err := oc.zoneChassisHandler.DeleteRemoteZoneNode(oldNode); err != nil {
-				aggregatedErrors = append(aggregatedErrors, err)
+				oc.recordNodeErrorEvent(newNode, err)
+				return nodecontroller.RetryWithPreviousNode(err)
 			}
 			syncZoneIC = true
 		}

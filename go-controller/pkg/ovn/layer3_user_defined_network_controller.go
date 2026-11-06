@@ -844,9 +844,19 @@ func (oc *Layer3UserDefinedNetworkController) addUpdateLocalNodeEvent(_ context.
 		if err != nil {
 			if nSyncs.syncNode {
 				oc.addNodeFailed.Store(node.Name, true)
+			}
+			// No node components have run yet; retain every requested sync,
+			// including work selected by annotation changes on an existing node.
+			if nSyncs.syncClusterRouterPort {
 				oc.nodeClusterRouterPortFailed.Store(node.Name, true)
+			}
+			if nSyncs.syncMgmtPort {
 				oc.mgmtPortFailed.Store(node.Name, true)
+			}
+			if nSyncs.syncZoneIC {
 				oc.syncZoneICFailed.Store(node.Name, true)
+			}
+			if nSyncs.syncReroute {
 				oc.syncEIPNodeRerouteFailed.Store(node.Name, true)
 			}
 			oc.gatewaysFailed.Store(node.Name, true)
@@ -903,6 +913,9 @@ func (oc *Layer3UserDefinedNetworkController) addUpdateLocalNodeEvent(_ context.
 	if nSyncs.syncNode { // do this only if it is a new node add
 		errors := oc.addAllPodsOnNode(node.Name)
 		errs = append(errs, errors...)
+		if len(errors) > 0 {
+			oc.addNodeFailed.Store(node.Name, true)
+		}
 	}
 
 	if util.IsNetworkSegmentationSupportEnabled() && oc.IsPrimaryNetwork() {
@@ -936,6 +949,9 @@ func (oc *Layer3UserDefinedNetworkController) addUpdateLocalNodeEvent(_ context.
 			if nSyncs.syncNode || nSyncs.syncGw { // do this only if it is a new node add or a gateway sync happened
 				errors := oc.addAllPodsOnNode(node.Name)
 				errs = append(errs, errors...)
+				if len(errors) > 0 {
+					oc.addNodeFailed.Store(node.Name, true)
+				}
 			}
 		}
 	}
