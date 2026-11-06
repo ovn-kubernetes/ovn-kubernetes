@@ -1,6 +1,6 @@
 # OKEP-5494: Model Context Protocol for Troubleshooting OVN-Kubernetes
 
-# Problem Statement
+## Problem Statement
 
 Diagnosing an issue in [OVN-Kubernetes](https://ovn-kubernetes.io/) network
 plugin is complex because it has many layers (Kubernetes, OVN-Kubernetes, OVN,
@@ -15,7 +15,7 @@ domain than engineers working on the OVN-Kubernetes plugin. Each
 troubleshooting session to understand where the packet is getting
 blackholed or dropped takes a lot of time to solve (unless it's trivial).
 
-# Goals
+## Goals
 
 The goal of this enhancement is to try to improve "troubleshooting time",
 "tool usage/typing time" and "erase the need to know how to use each of those
@@ -50,7 +50,7 @@ way in speeding up bug triages.
     * We must add benchmarking tests for evaluating the quality of troubleshooting
       specific to CNI Networking.
 
-# Future Goals
+## Future Goals
 
 * Phase2 targets end-users and others using OVN-Kubernetes to troubleshoot
   issues
@@ -75,7 +75,7 @@ way in speeding up bug triages.
   "OVN-Kubernetes network plugin - know it better" chatbot but that is not
   the initial goal here.
 
-# Future-Stretch-Goals
+## Future-Stretch-Goals
 
 * Phase3 includes this getting productized and shipped to end-users using
   OVN-Kubernetes in some far fetched future to run it on production to
@@ -88,7 +88,7 @@ way in speeding up bug triages.
   Running this stack in production is out-of-scope for this OKEP; it is a
   future-stretch goal contingent on security and testing milestones.
 
-# Non-Goals
+## Non-Goals
 
 * We will not be solving the problem around which LLM should be used. Most of
   the good ones (based on community member experience) were proprietary (claude sonnet4
@@ -104,7 +104,7 @@ way in speeding up bug triages.
     * So the quality here will heavily depend on how good the brain LLM is
       which basically won't be in our control much.
 
-# Introduction
+## Introduction
 
 An engineer troubleshooting OVN-Kubernetes usually uses the following set of
 CLI tools in a layered fashion:
@@ -242,7 +242,7 @@ exceptions).
 This enhancement aims to solve this pain point of reducing the time taken to
 execute these tools and analyse these results using MCP Servers and LLMs.
 
-# User Stories
+## User Stories
 
 **As an OVN-Kubernetes developer**, **I want to** troubleshoot my stack
 without needing to know every tool's parameter fields by-heart or by spending
@@ -261,7 +261,7 @@ will need to verify the reasoning thoroughly before accepting the RCA from AI.
 specific information from different parts of the stack without having
 knowledge of the topology or tooling of the stack.
 
-# Proposed Solution
+## Proposed Solution
 
 We build a Golang MCP Server (could be split into a set of MCP Servers in the
 future) that exposes these tools in read only fashion and the LLM backend
@@ -271,7 +271,7 @@ MCP Server code will be in a new repo in
 [ovn-kubernetes org](https://github.com/ovn-kubernetes) called
 **ovn-kubernetes-mcp**.
 
-## Example Workflow for an end-user
+### Example Workflow for an end-user
 
 1. An end-user can use any MCP Client to start a troubleshooting session via
    prompting. The client connects with all the available servers (in our case
@@ -438,11 +438,11 @@ Note2: Feeding container logs to LLM will make the context window
 full pretty fast. We need to investigate a method to ensure we are
 filtering out relevant logs to feed.
 
-## Implementation Details of the OVN-Kubernetes MCP Server
+### Implementation Details of the OVN-Kubernetes MCP Server
 
 See the Alternatives section for other ideas that were discarded.
 
-### Chosen Approach: Direct CLI Tool Exposure (Idea1)
+#### Chosen Approach: Direct CLI Tool Exposure (Idea1)
 
 The initial implementation takes a pragmatic approach by directly exposing the
 existing CLI tools (`ovn-nbctl`, `ovn-sbctl`, `ovs-vsctl`, etc.) as MCP tools.
@@ -480,7 +480,7 @@ troubleshooting requests into appropriate CLI commands.
 This approach was selected as the optimal balance between security,
 functionality, and development effort.
 
-## Security Model and RBAC Constraints
+### Security Model and RBAC Constraints
 
 No matter how we approach this implementation, it is impossible to totally
 secure the execution of networking troubleshooting tools at this stage. Most
@@ -544,11 +544,11 @@ ourselves.
 * **Long-term Path**: Requires RBAC-enabled wrapper tools from upstream
   layered community teams (example netfilter, kernel networking)
 
-## Distributed Execution Context
+### Distributed Execution Context
 
 MCP Server will only be supported on interconnect mode.
 
-### **OVN-Kubernetes Architecture Challenge**
+#### **OVN-Kubernetes Architecture Challenge**
 
 In OVN-Kubernetes interconnect architecture, each node maintains its own local
 instances of critical databases and services:
@@ -562,7 +562,7 @@ instances of critical databases and services:
 This distributed architecture means that troubleshooting commands must be executed
 on the specific node where the relevant data resides.
 
-### **Node-Targeted Command Execution**
+#### **Node-Targeted Command Execution**
 
 **Node Selection Strategy**: All tools requiring node-specific data accept a
 `node_name` parameter as a required argument. The MCP server uses this
@@ -590,9 +590,9 @@ We need to account for testing the LLM Responsibility side which is not
 something we can guarantee but something we are offloading to the LLM that we
 won't solve.
 
-## Deployment Strategy
+### Deployment Strategy
 
-### **Flexible Deployment Modes**
+#### **Flexible Deployment Modes**
 
 The MCP server is designed for flexible deployment without requiring elaborate
 cluster infrastructure. Multiple deployment modes support different use cases
@@ -626,7 +626,7 @@ and security requirements:
 * More elaborate deployment patterns (DaemonSet, Deployment) can be considered
   when we think of use cases beyond ovn-kubernetes developers
 
-## Testing Strategy
+### Testing Strategy
 
 **Unit Testing - MCP Server Tools**:
 
@@ -645,7 +645,7 @@ and security requirements:
   verifying that the LLM can produce meaningful root cause analysis from tool
   outputs
 
-### **Scenario-Based Test Design**
+#### **Scenario-Based Test Design**
 
 **Historical Incident Replay**:
 
@@ -669,7 +669,7 @@ Some examples include:
 * Test correlation of multi-layer data analysis
 * Validate handling of incomplete or missing data scenarios
 
-### **Success Metrics**
+#### **Success Metrics**
 
 * **Accuracy**: Percentage of correct root cause identifications in known
   failure scenarios
@@ -679,7 +679,7 @@ Some examples include:
 * **Safety**: Verification that only read-only operations are executed as
   intended
 
-## Documentation Details
+### Documentation Details
 
 OKEP for the MCP Server will be on
 [https://ovn-kubernetes.io/](https://ovn-kubernetes.io/) . All end-user
@@ -694,9 +694,9 @@ documentation will be on the new repo's docs folder.
 * **Deployment Options**: CLI mode vs. debug container mode setup instructions
 * **Offline Analysis**: Must-gather and sos-report analysis workflows
 
-## Alternative Implementation Ideas
+### Alternative Implementation Ideas
 
-### Idea0: Using Existing kubernetes-mcp-server with Generic Bash Execution
+#### Idea0: Using Existing kubernetes-mcp-server with Generic Bash Execution
 
 **Approach**: Use the existing kubernetes-mcp-server's `pods_exec` tool to run
 arbitrary bash commands like `ovn-nbctl show` or `ip route` directly through
@@ -725,11 +725,11 @@ The fundamental principle that "each layer knows best about how/what tools to
 allow with proper read access" makes a controlled wrapper approach essential
 rather than direct bash execution.
 
-### Idea1: Chosen Approach: Direct CLI Tool Exposure
+#### Idea1: Chosen Approach: Direct CLI Tool Exposure
 
 See the proposed solution section.
 
-### Idea2: libovsdb-client Golang Wrapper
+#### Idea2: libovsdb-client Golang Wrapper
 
 **Approach**: Build a Golang MCP server using `NewOVSDBClient` to directly
 query OVSDB instances with proper RBAC controls implemented through OVSDB's
@@ -747,7 +747,7 @@ native access control mechanisms.
 * **Scope Limitation**: Only addresses database access, missing ovn and ovs
   flow trace simulation and host networking tools
 
-### Idea3: ovsdb-client Binary Wrapper
+#### Idea3: ovsdb-client Binary Wrapper
 
 **Approach**: Create a wrapper around the existing `ovsdb-client` binary
 (owned by the OVS team) to provide structured database access.
@@ -765,7 +765,7 @@ native access control mechanisms.
 * In future once we reach out to OVN and OVS communities to see what
   they plan to do, we could revisit it.
 
-### Idea4: Direct Database Access Wrapper
+#### Idea4: Direct Database Access Wrapper
 
 **Approach**: Build wrapper for direct database read operations bypassing CLI
 and client tools entirely.
@@ -778,7 +778,7 @@ and client tools entirely.
 existing CLI tools already provide all necessary functionality with proven
 reliability.
 
-# Known Risks and Limitations
+## Known Risks and Limitations
 
 * AI! We can trust it only as much as we can throw it.
     * Quality of this troubleshooter depends on the LLM's intelligence
