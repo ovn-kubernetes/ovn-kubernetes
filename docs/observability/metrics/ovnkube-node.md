@@ -80,7 +80,7 @@ These metrics are registered only when `--metrics-enable-scale` is enabled.
 | `egress_ips_assign_latency_seconds` | Histogram | None | Time to assign an egress IP in the OVN northbound database. |
 | `egress_ips_unassign_latency_seconds` | Histogram | None | Time to unassign an egress IP from the OVN northbound database. |
 | `network_policy_event_latency_seconds` | Histogram | `event` | Time to handle a complete network policy create or delete event. |
-| `network_policy_local_pod_event_latency_seconds` | Histogram | `event` | Time to handle a local pod add or delete for network policy. |
+| `network_policy_local_pod_event_latency_seconds` | Histogram | `event` | Time to apply local pod policy membership changes (`add` or `delete`) on the default network and primary UDNs. Adds during port creation include the combined port and policy transaction; later reconciliation records membership changes, including those caused by label or zone updates. Unchanged membership and failed transactions do not add observations. |
 | `network_policy_peer_namespace_event_latency_seconds` | Histogram | `event` | Time to handle a peer namespace add or delete for network policy. |
 | `pod_selector_address_set_pod_event_latency_seconds` | Histogram | `event` | Time to handle a peer pod add or delete for a pod-selector address set. |
 | `pod_selector_address_set_namespace_event_latency_seconds` | Histogram | `event` | Time to handle a peer namespace add or delete for a pod-selector address set. |

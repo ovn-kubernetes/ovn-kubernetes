@@ -45,6 +45,7 @@ import (
 
 type podRequestInterfaceOpsStub struct {
 	unconfiguredInterfaces []*PodInterfaceInfo
+	unconfigureErr         error
 }
 
 func (stub *podRequestInterfaceOpsStub) ConfigureInterface(pr *PodRequest, _ client.Client, _ PodInfoGetter, pii *PodInterfaceInfo) ([]*current.Interface, error) {
@@ -63,7 +64,7 @@ func (stub *podRequestInterfaceOpsStub) ConfigureInterface(pr *PodRequest, _ cli
 }
 func (stub *podRequestInterfaceOpsStub) UnconfigureInterface(_ *PodRequest, ifInfo *PodInterfaceInfo, _ corev1listers.PodLister, _ *corev1.Pod) error {
 	stub.unconfiguredInterfaces = append(stub.unconfiguredInterfaces, ifInfo)
-	return nil
+	return stub.unconfigureErr
 }
 
 // dhcpPodRequestInterfaceOpsStub mimics ConfigureInterface for DHCP IPAM

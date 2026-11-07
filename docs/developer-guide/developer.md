@@ -113,3 +113,96 @@ We prefer level-driven controllers built with `pkg/controller/controller.go`. Wh
 - The network manager is the source of truth for NADs; register a lightweight, non-blocking handler via `RegisterNADReconciler` that will queue keys to the Reconciler.
 - RegisterNADReconciler  **before** starting controller workers to avoid missing events during startup.
 - For a concrete example, see `go-controller/pkg/ovn/controller/egressfirewall/egressfirewall.go`.
+
+### Pod reconciliation and applied state
+
+The default and user-defined network controllers route pod events through
+`ReconcilePod`. The shared pod controller schedules the work. Add and update
+passes derive required work from the current pod and the controller's applied
+logical-port state, rather than relying only on the preceding event.
+
+`GetPodState` retains an independent snapshot of each applied port's UUID,
+logical switch, addresses, and network ownership for deletion retries. Cleanup
+uses that snapshot, pod annotations, and NBDB when needed. Before deleting UDN
+resources for a reused pod name, the controller checks the current pod UID and
+port ownership. It preserves replacement-owned resources and collects errors
+from independent cleanup steps so a retry can finish the remaining work.
+
+Policies record port UUIDs per pod. Reconciliation compares these records with
+selectors, zone placement, and current port state. Temporary cache misses retain
+existing protection and request a retry. Creating a port also adds it to the
+already-published policies selecting it, including their default-deny groups, in
+the same NBDB transaction. Policy records and logical-port cache state are
+published only after that transaction succeeds. Policy locks are acquired in
+sorted key order before the shared default-deny lock; the namespace-index lock
+must not be held while acquiring policy locks. Policy creation publishes its
+index entry under its own key lock before bootstrapping existing pods.
+
+Live changes to the network-selection annotation remain unsupported, as described
+in the [multi-homing limitations](../features/multiple-networks/multi-homing.md#limitations).
+Removing a NAD from that annotation does not prove that its interface or port
+has been removed. Existing policy protection is retained until the recorded LSP
+is gone. This does not provide hot-unplug or change CNI/IPAM ownership.
+
+The `Multicast` E2E spec named `should preserve namespace and policy port-group
+membership when a pod is recreated` checks normal creation and same-name
+replacement against NBDB. It inspects the database on the pod's node, including
+in interconnect deployments. The `control-plane` matrix in
+`.github/workflows/test.yml` enables multicast and invokes `make -C test
+control-plane`, which runs `test/scripts/e2e-cp.sh` and the OVN-Kubernetes E2E
+suite. The spec has the `Feature:Multicast` label, is not `Serial`, and is selected
+by the regular `.` focus with `PARALLEL=true`. It requires two ready nodes and a
+running NBDB pod; it has no IP-family restriction. No-overlay lanes exclude
+multicast. For a focused run on a cluster with multicast enabled:
+
+```sh
+make -C test control-plane WHAT='should preserve namespace and policy port-group membership when a pod is recreated'
+```
+
+Unit tests exercise transaction failures, missing policy groups, cache loss,
+partial cleanup, and stale deletion snapshots deterministically. The E2E spec
+covers replacement through the public pod API; it does not force a particular
+ordering of controller retries.
+
+### Shared pod reconciliation
+
+`pkg/controllers/pod` watches pods once and queues work for registered network
+handlers. Workers read the latest pod from the informer; events are notifications
+to reconcile, not an ordered list of operations to replay. Work is keyed by pod
+and network, but execution is serialized by pod key across networks because all
+attachments share the pod-networks annotation. Network registration and
+deregistration also serialize by network name.
+
+The shared controller and its OVN handlers preserve these invariants:
+
+- **Applied state advances only on success.** Each network retains the last
+  successfully reconciled pod and the handler's teardown state. A failed attempt
+  keeps those snapshots; handlers retain incomplete port state separately so a
+  retry or deletion can finish partially completed work. Informer objects are
+  read-only and must not be used as mutable applied-state storage.
+- **Replacement is teardown followed by setup.** A different UID at the same
+  namespace/name does not overwrite the old generation's state. Teardown must
+  finish first, and OVN cleanup checks ownership before touching a replacement's
+  logical port or releasing its IP reservation.
+- **Leaving a network is not Kubernetes deletion.** `ReconcilePod` receives a nil
+  desired pod for both cases. A live pod can later reattach to the same network;
+  handlers must not infer pod lifecycle completion from that argument alone.
+- **Retries retain cleanup information.** The latest observed pod and bootstrap
+  snapshot provide teardown inputs even if setup never succeeded. A successful
+  teardown is not repeated merely because requeueing related pods failed.
+  Independent networks still receive related-pod work when another lookup fails.
+- **Startup is a barrier, not proof of convergence.** Registration seeds pod
+  state and runs `SyncPods` before allowing that network's workers to proceed.
+  The initial-attempt barrier closes after every listed pod has been attempted,
+  including failures; failed keys remain on the retry queue. Deregistration stops
+  new work and drains in-flight calls before forgetting the network's state.
+- **Ambiguous configuration preserves applied attachments.** A malformed UDN
+  attachment selection produces a configuration event rather than deleting
+  existing ports based on an incomplete desired set. A later relevant update
+  triggers another reconcile. Operational failures remain retryable.
+
+This removes per-network pod event handlers, coalesces repeated events, and gives
+setup, update, and teardown a common retry model. It also avoids replaying completed
+cleanup and preserves state needed to recover from partial failures. It does not
+serialize pod work with namespace reconciliation or make multi-transaction OVN
+programming atomic.

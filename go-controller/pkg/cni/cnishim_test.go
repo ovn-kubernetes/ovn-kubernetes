@@ -6,6 +6,8 @@ package cni
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"testing"
@@ -298,6 +300,41 @@ func TestCmdDel_UnprivilegedMode(t *testing.T) {
 			t.Fatalf("no unconfigured interfaces found")
 		}
 	})
+}
+
+// TestCmdDelUnprivilegedCleanupErrors reports failures only after attempting interface cleanup.
+func TestCmdDelUnprivilegedCleanupErrors(t *testing.T) {
+	cleanupErr := errors.New("interface cleanup failed")
+	for _, annotationError := range []string{"", "annotation cleanup failed"} {
+		for _, interfaceError := range []error{nil, cleanupErr} {
+			t.Run(annotationError+"/"+fmt.Sprint(interfaceError), func(t *testing.T) {
+				withCNIEnv(t, func() {
+					originalOps := podRequestInterfaceOps
+					stub := &podRequestInterfaceOpsStub{unconfigureErr: interfaceError}
+					podRequestInterfaceOps = stub
+					t.Cleanup(func() { podRequestInterfaceOps = originalOps })
+					info := &PodInterfaceInfo{IsDPUHostMode: true, NetdevName: "old-vf"}
+					body, err := json.Marshal(&Response{PodIFInfo: info, CleanupError: annotationError})
+					require.NoError(t, err, "marshal the CNI response containing deferred cleanup errors")
+					plugin := &Plugin{doCNIFunc: func(string, interface{}) ([]byte, error) { return body, nil }}
+					err = plugin.CmdDel(&skel.CmdArgs{
+						StdinData:   []byte(`{"cniVersion":"1.1.0","name":"mynet","type":"ovn-k8s-cni-overlay"}`),
+						ContainerID: "old-sandbox", Netns: "/var/run/netns/old", IfName: "eth0",
+					})
+					require.Equal(t, []*PodInterfaceInfo{info}, stub.unconfiguredInterfaces, "the shim must attempt interface cleanup before returning errors")
+					if annotationError != "" {
+						require.ErrorContains(t, err, annotationError, "the shim must report the deferred annotation cleanup error")
+					}
+					if interfaceError != nil {
+						require.ErrorIs(t, err, interfaceError, "the shim must preserve the interface cleanup error")
+					}
+					if annotationError == "" && interfaceError == nil {
+						require.NoError(t, err, "CNI DEL must succeed when annotation and interface cleanup succeed")
+					}
+				})
+			})
+		}
+	}
 }
 
 func TestCmdGC(t *testing.T) {
