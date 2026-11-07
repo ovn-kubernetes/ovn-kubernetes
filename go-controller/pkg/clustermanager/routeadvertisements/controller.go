@@ -204,7 +204,7 @@ func NewController(
 	raConfig := &controllerutil.ControllerConfig[ratypes.RouteAdvertisements]{
 		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
 		Reconcile:      c.reconcile,
-		Threadiness:    1,
+		Threadiness:    4,
 		Informer:       wf.RouteAdvertisementsInformer().Informer(),
 		Lister:         wf.RouteAdvertisementsInformer().Lister().List,
 		ObjNeedsUpdate: c.raNeedsUpdate,
