@@ -128,6 +128,10 @@ func TestRepairStaticMacBindings(t *testing.T) {
 		&nbdb.StaticMACBinding{UUID: "u2", LogicalPort: udnPort, IP: "10.0.0.11", MAC: nodeIPMAC2, OverrideDynamicMAC: true},
 		// an owned binding on an orphan gateway port is reaped
 		&nbdb.StaticMACBinding{UUID: "u3", LogicalPort: orphanPort, IP: "10.0.0.12", MAC: nodeIPMAC3, OverrideDynamicMAC: true},
+		// the controller writes one owned binding per node IP, so the port of a
+		// deleted network matches several rows unless the cluster has a single
+		// node address
+		&nbdb.StaticMACBinding{UUID: "u6", LogicalPort: orphanPort, IP: "10.0.0.14", MAC: nodeIPMAC2, OverrideDynamicMAC: true},
 		// the gateway's masquerade IP is not owned, even on the orphan port
 		&nbdb.StaticMACBinding{UUID: "u4", LogicalPort: orphanPort, IP: masqIP, MAC: nodeIPMAC3, OverrideDynamicMAC: true},
 		// a non-gateway port is not owned

@@ -195,10 +195,6 @@ func NewNBClientWithEndpoint(endpoint string, promRegistry prometheus.Registerer
 		nbdb.LogicalRouterTable: {{Columns: []model.ColumnKey{{Column: "name"}}}},
 		nbdb.QoSTable:           {{Columns: []model.ColumnKey{{Column: "external_ids", Key: types.PrimaryIDKey}}}},
 	}
-	if config.Gateway.DisableUDNARPNDPFlood {
-		// used by the MAC binding controller
-		indexes[nbdb.StaticMACBindingTable] = []model.ClientIndex{{Columns: []model.ColumnKey{{Column: "logical_port"}}}}
-	}
 	dbModel.SetIndexes(indexes)
 
 	c, err := newClient(endpoint, dbModel, enableMetricsOption)

@@ -76,7 +76,7 @@ func DeleteStaticMACBindingWithPredicateOps(nbClient libovsdbclient.Client, ops 
 		ModelPredicate: p,
 		ExistingResult: &found,
 		ErrNotFound:    false,
-		BulkOp:         false,
+		BulkOp:         true,
 	}
 
 	m := newModelClient(nbClient)
