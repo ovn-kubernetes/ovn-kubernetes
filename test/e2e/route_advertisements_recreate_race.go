@@ -124,11 +124,15 @@ var _ = ginkgo.Describe("Kubevirt Virtual Machines: advertised flows survive CUD
 			},
 		}
 		cUDN, err := udnClient.K8sV1().ClusterUserDefinedNetworks().Create(ctx, cudn, metav1.CreateOptions{})
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to create the ClusterUserDefinedNetwork")
 		// DeferCleanup runs after the It node SpecContext is canceled, so it
 		// needs its own context rather than the (by-then stale) ctx captured above.
-		ginkgo.DeferCleanup(func(cleanupCtx context.Context) {
-			udnClient.K8sV1().ClusterUserDefinedNetworks().Delete(cleanupCtx, cUDN.Name, metav1.DeleteOptions{})
+		ginkgo.DeferCleanup(func(cleanupCtx context.Context) error {
+			err := udnClient.K8sV1().ClusterUserDefinedNetworks().Delete(cleanupCtx, cUDN.Name, metav1.DeleteOptions{})
+			if err == nil || apierrors.IsNotFound(err) {
+				return nil
+			}
+			return fmt.Errorf("delete ClusterUserDefinedNetwork %s: %w", cUDN.Name, err)
 		})
 
 		// Create the RA right away, without waiting for the CUDN to report
@@ -151,9 +155,13 @@ var _ = ginkgo.Describe("Kubevirt Virtual Machines: advertised flows survive CUD
 			},
 		}
 		_, err = raClient.K8sV1().RouteAdvertisements().Create(ctx, ra, metav1.CreateOptions{})
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		ginkgo.DeferCleanup(func(cleanupCtx context.Context) {
-			raClient.K8sV1().RouteAdvertisements().Delete(cleanupCtx, raName, metav1.DeleteOptions{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to create RouteAdvertisements %s", raName)
+		ginkgo.DeferCleanup(func(cleanupCtx context.Context) error {
+			err := raClient.K8sV1().RouteAdvertisements().Delete(cleanupCtx, raName, metav1.DeleteOptions{})
+			if err == nil || apierrors.IsNotFound(err) {
+				return nil
+			}
+			return fmt.Errorf("delete RouteAdvertisements %s: %w", raName, err)
 		})
 
 		// Headless Service, matching the original bug report, so VM boot
@@ -166,7 +174,7 @@ var _ = ginkgo.Describe("Kubevirt Virtual Machines: advertised flows survive CUD
 				Ports:     []corev1.ServicePort{{Port: 8091, Name: "rest"}},
 			},
 		}, metav1.CreateOptions{})
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to create the headless Service")
 
 		ginkgo.By(fmt.Sprintf("booting %d VMs together, without waiting for the CUDN or RA to settle first", numVMs))
 		vms := make([]*kubevirtv1.VirtualMachine, numVMs)
@@ -198,8 +206,12 @@ var _ = ginkgo.Describe("Kubevirt Virtual Machines: advertised flows survive CUD
 			}
 			vms[i] = vm
 			createVirtualMachineWithClient(crClient, vm)
-			ginkgo.DeferCleanup(func(cleanupCtx context.Context) {
-				crClient.Delete(cleanupCtx, vm)
+			ginkgo.DeferCleanup(func(cleanupCtx context.Context) error {
+				err := crClient.Delete(cleanupCtx, vm)
+				if err == nil || apierrors.IsNotFound(err) {
+					return nil
+				}
+				return fmt.Errorf("delete VirtualMachine %s/%s: %w", vm.Namespace, vm.Name, err)
 			})
 		}
 
@@ -246,11 +258,10 @@ var _ = ginkgo.Describe("Kubevirt Virtual Machines: advertised flows survive CUD
 			// Check priority=300 and priority=104 independently: a match for one
 			// priority must not let a missing rule at the other priority pass.
 			for _, priority := range []string{"priority=300", "priority=104"} {
-				gomega.Eventually(func() string {
-					out, _ := e2epodoutput.RunHostCmdWithRetries(ovnkPod.Namespace, ovnkPod.Name,
+				gomega.Eventually(func() (string, error) {
+					return e2epodoutput.RunHostCmdWithRetries(ovnkPod.Namespace, ovnkPod.Name,
 						fmt.Sprintf("ovs-ofctl dump-flows %s | grep '%s'", bridgeName, priority),
 						2*time.Second, 5*time.Second)
-					return out
 				}, 120*time.Second, 2*time.Second).Should(gomega.And(flowMatchers...),
 					"advertised-route flows at %s for %v never appeared on %s on node %s", priority, advertisedSubnets, bridgeName, nodeName)
 			}

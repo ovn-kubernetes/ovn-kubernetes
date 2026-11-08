@@ -898,9 +898,11 @@ jobs:
           # kubevirt and NetworkQoS
           make -C test control-plane WHAT="Kubevirt Virtual Machines|Localnet DHCP IPAM"
         elif [ "${{ matrix.target }}" == "kv-live-migration-serial" ]; then
-          # Non-parallel: runs Kubevirt Virtual Machines specs labeled Serial
-          # that the parallel kv-live-migration lane skips.
-          make -C test control-plane WHAT="Kubevirt Virtual Machines"
+          # Non-parallel: run only the advertised-flow Serial spec that the
+          # parallel kv-live-migration lane skips. Keep the full Describe name
+          # as the focus so this lane does not repeat the non-Serial KubeVirt
+          # migration specs already covered above.
+          make -C test control-plane WHAT="Kubevirt Virtual Machines: advertised flows survive CUDN, RA, and VM recreation"
         elif [[ "${{ matrix.target }}" == network-segmentation* ]]; then
           make -C test control-plane WHAT="Network Segmentation"
           make -C test control-plane WHAT="ClusterNetworkConnect"
