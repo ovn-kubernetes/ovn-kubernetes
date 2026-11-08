@@ -32,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
@@ -50,7 +51,6 @@ import (
 	userdefinednetworkv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	vteplisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/listers/vtep/v1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -2014,6 +2014,21 @@ func (c *Controller) updateFRRConfigurations(ctx context.Context, ra string, frr
 	return hadUpdates, nil
 }
 
+// nadRouteAdvertisements returns the RouteAdvertisements referenced by the NAD
+// annotation.
+func nadRouteAdvertisements(nad *nadtypes.NetworkAttachmentDefinition) (sets.Set[string], error) {
+	ras := sets.New[string]()
+	annotation := nad.Annotations[types.OvnRouteAdvertisementsKey]
+	if annotation == "" {
+		return ras, nil
+	}
+	var names []string
+	if err := json.Unmarshal([]byte(annotation), &names); err != nil {
+		return nil, err
+	}
+	return sets.New(names...), nil
+}
+
 // updateNADs updates the annotation of the NADs that apply for a
 // RouteAdvertisements. It iterates all the existing NADs updating the
 // annotation accordingly, adding or removing the RouteAdvertisements reference
@@ -2030,60 +2045,103 @@ func (c *Controller) updateNADs(ctx context.Context, ra string, nads []*nadtypes
 		return hadUpdates, err
 	}
 
-	k := kube.KubeOVN{
-		NADClient: c.nadClient,
-	}
-
 	// go through all the NADs and update the annotation adding or removing the
 	// reference to this RouteAdvertisements as required
+	var errs []error
 	for _, nad := range nads {
-		var ras []string
-
-		if nad.Annotations[types.OvnRouteAdvertisementsKey] != "" {
-			err := json.Unmarshal([]byte(nad.Annotations[types.OvnRouteAdvertisementsKey]), &ras)
-			if err != nil {
-				return hadUpdates, err
-			}
-		}
-
-		raSet := sets.New(ras...)
-		nadName := nad.Namespace + "/" + nad.Name
-		if selected.Has(nadName) {
-			raSet.Insert(ra)
-			selected.Delete(nadName)
-		} else {
-			raSet.Delete(ra)
-		}
-
-		if len(ras) == raSet.Len() {
-			continue
-		}
-
-		nadRAjson, err := json.Marshal(raSet.UnsortedList())
+		cachedRAs, err := nadRouteAdvertisements(nad)
 		if err != nil {
 			return hadUpdates, err
 		}
 
-		err = k.SetAnnotationsOnNAD(
-			ctx,
-			nad.Namespace,
-			nad.Name,
-			map[string]string{
-				types.OvnRouteAdvertisementsKey: string(nadRAjson),
-			},
-			fieldManager,
-		)
-		if err != nil {
-			return hadUpdates, fmt.Errorf("failed to annotate NAD %q: %w", nad.Name, err)
+		nadName := nad.Namespace + "/" + nad.Name
+		wantReference := selected.Has(nadName)
+		selected.Delete(nadName)
+
+		// Skip the API request when the cached NAD already carries the desired
+		// reference. This is an optimization only: correctness rests on
+		// updateNADReferences re-reading the live NAD and doing nothing when it
+		// already matches, not on a later event. nadNeedsUpdate drops updates
+		// whose last writer is this controller, so our own writes do not trigger
+		// another reconciliation; the cache can only lag behind a write from
+		// another field manager, and those updates are not dropped.
+		if cachedRAs.Has(ra) == wantReference {
+			continue
 		}
 
-		hadUpdates = true
+		updated, err := c.updateNADReferences(ctx, nad.Namespace, nad.Name, ra, wantReference)
+		if apierrors.IsNotFound(err) {
+			// The NAD was deleted after it was listed, so there is nothing
+			// left to annotate.
+			continue
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to annotate NAD %q: %w", nad.Name, err))
+			continue
+		}
+		hadUpdates = hadUpdates || updated
 	}
 	if selected.Len() != 0 {
-		return hadUpdates, fmt.Errorf("failed to annotate NADs that were not found %v", selected.UnsortedList())
+		errs = append(errs, fmt.Errorf("failed to annotate NADs that were not found %v", selected.UnsortedList()))
 	}
 
-	return hadUpdates, nil
+	return hadUpdates, errors.Join(errs...)
+}
+
+// updateNADReferences adds or removes the RouteAdvertisements reference in the
+// NAD annotation. The reference list is rebuilt from the live NAD under
+// optimistic concurrency control: a reconciliation racing another one that
+// annotates the same NAD conflicts and retries with the fresh list instead of
+// overwriting the other reference.
+func (c *Controller) updateNADReferences(ctx context.Context, namespace, name, ra string, reference bool) (bool, error) {
+	var updated bool
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		nad, err := c.nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+
+		ras, err := nadRouteAdvertisements(nad)
+		if err != nil {
+			return err
+		}
+		desired := ras.Clone()
+		if reference {
+			desired.Insert(ra)
+		} else {
+			desired.Delete(ra)
+		}
+		if desired.Equal(ras) {
+			return nil
+		}
+
+		annotation, err := json.Marshal(desired.UnsortedList())
+		if err != nil {
+			return err
+		}
+
+		nad = nad.DeepCopy()
+		if nad.Annotations == nil {
+			nad.Annotations = map[string]string{}
+		}
+		nad.Annotations[types.OvnRouteAdvertisementsKey] = string(annotation)
+		_, err = c.nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespace).Update(
+			ctx,
+			nad,
+			metav1.UpdateOptions{FieldManager: fieldManager},
+		)
+		if err != nil {
+			return err
+		}
+
+		updated = true
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+
+	return updated, nil
 }
 
 // updateRAStatus update the RouteAdvertisements 'Accepted' status according to
