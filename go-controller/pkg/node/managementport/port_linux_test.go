@@ -746,9 +746,9 @@ var _ = Describe("Management Port tests", func() {
 				})
 				// ovn-orig-mgmt-port-netdev-name is now read via libovsdb;
 				// seed it on the harness instead of the fexec.
-				Expect(ovsops.UpdateOpenvSwitchExternalIDs(ovsClient, map[string]string{
+				Expect(ovsops.UpdateOpenvSwitchSettings(ovsClient, map[string]string{
 					"ovn-orig-mgmt-port-netdev-name": netdevName,
-				})).To(Succeed())
+				}, nil)).To(Succeed())
 				netlinkOpsMock.On("LinkByName", netdevName).Return(nil, netlinkMockErr)
 				netlinkOpsMock.On("LinkByName", mgmtPortName).Return(linkMock, nil)
 				netlinkOpsMock.On("AddrList", linkMock, netlink.FAMILY_ALL).Return([]netlink.Addr{}, nil)
@@ -765,9 +765,9 @@ var _ = Describe("Management Port tests", func() {
 				})
 				// ovn-orig-mgmt-port-netdev-name is now read via libovsdb;
 				// seed it on the harness instead of the fexec.
-				Expect(ovsops.UpdateOpenvSwitchExternalIDs(ovsClient, map[string]string{
+				Expect(ovsops.UpdateOpenvSwitchSettings(ovsClient, map[string]string{
 					"ovn-orig-mgmt-port-netdev-name": netdevName,
-				})).To(Succeed())
+				}, nil)).To(Succeed())
 				netlinkOpsMock.On("LinkByName", netdevName).Return(nil, netlinkMockErr)
 				netlinkOpsMock.On("LinkByName", mgmtPortName).Return(linkMock, nil)
 				linkMock.On("Attrs").Return(&netlink.LinkAttrs{Name: mgmtPortName})
@@ -785,9 +785,9 @@ var _ = Describe("Management Port tests", func() {
 				})
 				// ovn-orig-mgmt-port-netdev-name is now read via libovsdb;
 				// seed it on the harness instead of the fexec.
-				Expect(ovsops.UpdateOpenvSwitchExternalIDs(ovsClient, map[string]string{
+				Expect(ovsops.UpdateOpenvSwitchSettings(ovsClient, map[string]string{
 					"ovn-orig-mgmt-port-netdev-name": netdevName,
-				})).To(Succeed())
+				}, nil)).To(Succeed())
 				netlinkOpsMock.On("LinkByName", netdevName).Return(nil, netlinkMockErr)
 				netlinkOpsMock.On("LinkByName", mgmtPortName).Return(linkMock, nil)
 				netlinkOpsMock.On("AddrList", linkMock, netlink.FAMILY_ALL).Return([]netlink.Addr{}, nil)

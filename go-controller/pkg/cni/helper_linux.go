@@ -626,7 +626,7 @@ func addOrUpdatePodPort(ovsClient client.Client, hostIfaceName string,
 			iface.MTURequest = &m
 		}
 		port := &vswitchd.Port{OtherConfig: map[string]string{"transient": "true"}}
-		ops, err := ovsops.CreateOrUpdatePodPortOps(ovsClient, nil, "br-int", hostIfaceName, port, iface)
+		ops, err := ovsops.CreateOrUpdateOVSPortOps(ovsClient, nil, "br-int", hostIfaceName, port, iface)
 		if err != nil {
 			return fmt.Errorf("failed to build operations for plugging pod interface: %v", err)
 		}

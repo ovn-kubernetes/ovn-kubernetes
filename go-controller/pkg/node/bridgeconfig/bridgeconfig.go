@@ -863,9 +863,9 @@ func bridgedGatewayNodeSetup(ovsClient libovsdbclient.Client, nodeName, bridgeNa
 	}
 	mapString += physicalNetworkName + ":" + bridgeName
 
-	if err := ovsops.UpdateOpenvSwitchExternalIDs(ovsClient, map[string]string{
+	if err := ovsops.UpdateOpenvSwitchSettings(ovsClient, map[string]string{
 		"ovn-bridge-mappings": mapString,
-	}); err != nil {
+	}, nil); err != nil {
 		return "", fmt.Errorf("failed to set ovn-bridge-mappings for ovs bridge %s: %w", bridgeName, err)
 	}
 
