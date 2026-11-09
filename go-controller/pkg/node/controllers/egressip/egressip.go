@@ -299,6 +299,12 @@ func (c *Controller) Run(stopCh <-chan struct{}, wg *sync.WaitGroup, threads int
 		return fmt.Errorf("failed to run EgressIP controller because migration from using address labels to a node annotation failed: %v", err)
 	}
 
+	// On DPUHost nodes the DPU publishes node-primary-ifaddr asynchronously, so wait for it
+	// before the one-shot repair below rather than skipping that repair.
+	if err := c.waitForNodeEgressIPConfig(stopCh); err != nil {
+		return fmt.Errorf("failed to run EgressIP controller while waiting for node egress IP config: %v", err)
+	}
+
 	err = wait.PollUntilContextTimeout(wait.ContextForChannel(stopCh), 1*time.Second, 10*time.Second, true,
 		func(_ context.Context) (done bool, err error) {
 			if err := c.repairNode(); err != nil {
@@ -859,6 +865,30 @@ func (c *Controller) getAllEIPs() ([]*eipv1.EgressIP, error) {
 type addrLink struct {
 	addr      string // IP + mask
 	linkIndex int
+}
+
+// waitForNodeEgressIPConfig waits in DPUHost mode for the DPU to publish node-primary-ifaddr.
+// We wait rather than skip the one-shot repairNode() that follows, because that is the only
+// startup cleanup of stale EgressIP addresses, IP rules, routes and nftables SNAT elements.
+// This cannot deadlock: the gateway, which leads to the annotation being published, is started
+// before this controller.
+func (c *Controller) waitForNodeEgressIPConfig(stopCh <-chan struct{}) error {
+	if !ovnconfig.IsModeDPUHost() {
+		return nil
+	}
+
+	err := wait.PollUntilContextTimeout(wait.ContextForChannel(stopCh), 1*time.Second, 5*time.Minute, true,
+		func(_ context.Context) (bool, error) {
+			_, err := c.getNodeEgressIPConfig()
+			return err == nil || !util.IsAnnotationNotSetError(err), nil
+		})
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("timed out after %v waiting for the %s annotation", 5*time.Minute, util.OvnNodeIfAddr)
+		}
+		return fmt.Errorf("failed to wait for the %s annotation: %v", util.OvnNodeIfAddr, err)
+	}
+	return nil
 }
 
 // repairNode generates whats expected and what is seen on the node and removes any stale configuration. This should be
