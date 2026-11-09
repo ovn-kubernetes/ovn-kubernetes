@@ -211,6 +211,7 @@ var _ = ginkgo.Describe("BGP: advertised Layer2 CUDN creation race", feature.Rou
 
 		ginkgo.By("checking both advertised-subnet OpenFlow rules on every node")
 		bridgeName := deploymentconfig.Get().ExternalBridgeName()
+		localGateway := IsGatewayModeLocal(f.ClientSet)
 		ovnkNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
 		ovnDBPodsByNode := make(map[string]string, len(nodes.Items))
 		for _, node := range nodes.Items {
@@ -237,8 +238,8 @@ var _ = ginkgo.Describe("BGP: advertised Layer2 CUDN creation race", feature.Rou
 				}
 				for _, subnet := range advertisedSubnets {
 					for _, priority := range []string{"300", "104"} {
-						if !hasAdvertisedRouteFlow(flows, priority, subnet) {
-							return fmt.Errorf("node %s is missing priority=%s output flow for %s on %s; flows:\n%s",
+						if !hasAdvertisedRouteFlow(flows, priority, subnet, localGateway) {
+							return fmt.Errorf("node %s is missing priority=%s advertised-route flow for %s on %s; flows:\n%s",
 								nodeName, priority, subnet, bridgeName, flows)
 						}
 					}
@@ -353,11 +354,17 @@ var _ = ginkgo.Describe("BGP: advertised Layer2 CUDN creation race", feature.Rou
 	})
 })
 
-func hasAdvertisedRouteFlow(flows, priority, subnet string) bool {
+func hasAdvertisedRouteFlow(flows, priority, subnet string, localGateway bool) bool {
+	expectedAction := "actions=output:"
+	if priority == "300" && localGateway {
+		// In local gateway mode ingress traffic enters the host network stack
+		// instead of the OVN patch port. ovs-ofctl renders output:LOCAL as LOCAL.
+		expectedAction = "actions=LOCAL"
+	}
 	for _, flow := range strings.Split(flows, "\n") {
 		if strings.Contains(flow, "priority="+priority) &&
 			strings.Contains(flow, subnet) &&
-			strings.Contains(flow, "actions=output:") {
+			strings.Contains(flow, expectedAction) {
 			return true
 		}
 	}
