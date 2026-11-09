@@ -1779,6 +1779,12 @@ func newGateway(
 		if err != nil {
 			return fmt.Errorf("failed to create gateway OpenFlow manager: %w", err)
 		}
+		gw.openflowManager.resyncServices = func() error {
+			if gw.servicesRetryFramework == nil {
+				return nil
+			}
+			return utilerrors.Join(gw.resyncAllServices()...)
+		}
 
 		// resync flows on IP change
 		gw.nodeIPManager.AddOnAddressesChangedHandler(func() {
