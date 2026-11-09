@@ -60,7 +60,7 @@ var _ = ginkgo.Describe("BGP: advertised Layer2 CUDN creation race", feature.Rou
 	f := wrappedTestFramework("route-advertisements-recreate-race")
 	f.SkipNamespaceCreation = true
 
-	ginkgo.It("programs every node before accepting traffic, without restarting ovnkube-node", func(ctx ginkgo.SpecContext) {
+	ginkgo.It("programs every node before accepting traffic, without restarting ovnkube-node", ginkgo.MustPassRepeatedly(10), func(ctx ginkgo.SpecContext) {
 		namespace, err := f.CreateNamespace(ctx, f.BaseName, map[string]string{
 			"e2e-framework":           f.BaseName,
 			RequiredUDNNamespaceLabel: "",
