@@ -4879,3 +4879,55 @@ func TestManagedPeeringMissingInternalIPs(t *testing.T) {
 		return errors.New("recovered node configuration has not updated")
 	}, 5*time.Second).Should(gomega.Succeed(), "regenerate after InternalIPs recover")
 }
+
+// TestStartupCleansOrphanedFRRConfigurations verifies cleanup when an RA and its
+// NAD were deleted while cluster-manager was stopped, leaving only FRR output.
+func TestStartupCleansOrphanedFRRConfigurations(t *testing.T) {
+	// 1. Enable NAD/RA informers and disable EVPN so own-write events stay filtered.
+	// 2. Seed generated FRR output without its RA or NAD to model offline deletion.
+	// 3. Start the controllers with no surviving NAD reference to trigger cleanup.
+	// 4. Verify startup discovery queues the missing RA and its FRR output is deleted.
+	previousFeatures := config.OVNKubernetesFeature
+	t.Cleanup(func() { config.OVNKubernetesFeature = previousFeatures })
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	config.OVNKubernetesFeature.EnableRouteAdvertisements = true
+	config.OVNKubernetesFeature.EnableEVPN = false
+
+	g := gomega.NewWithT(t)
+	ctx := context.Background()
+	clients := util.GetOVNClientset().GetClusterManagerClientset()
+	frr := (&testFRRConfig{
+		Name: "ovnk-generated-old", Namespace: "frr", OwnUpdate: true,
+		Labels:      map[string]string{types.OvnRouteAdvertisementsKey: "deleted-ra"},
+		Annotations: map[string]string{types.OvnRouteAdvertisementsKey: "deleted-ra/source/node"},
+	}).FRRConfiguration()
+	_, err := clients.FRRClient.ApiV1beta1().FRRConfigurations("frr").Create(ctx, frr, metav1.CreateOptions{})
+	g.Expect(err).NotTo(gomega.HaveOccurred(), "seed the deleted RA's generated FRRConfiguration with its own-write metadata")
+
+	wf, err := factory.NewClusterManagerWatchFactory(clients)
+	g.Expect(err).NotTo(gomega.HaveOccurred(), "create the watch factory")
+	t.Cleanup(wf.Shutdown)
+	nm, err := networkmanager.NewForCluster(&networkmanager.FakeControllerManager{}, wf, clients, nil, id.NewTunnelKeyAllocator("TunnelKeys"))
+	g.Expect(err).NotTo(gomega.HaveOccurred(), "create the network manager")
+	c := NewController(nm.Interface(), wf, clients)
+	g.Expect(wf.Start()).To(gomega.Succeed(), "start the informers")
+	g.Expect(cache.WaitForCacheSync(ctx.Done(),
+		wf.RouteAdvertisementsInformer().Informer().HasSynced,
+		wf.FRRConfigurationsInformer().Informer().HasSynced,
+		wf.NADInformer().Informer().HasSynced,
+		wf.NodeCoreInformer().Informer().HasSynced,
+	)).To(gomega.BeTrue(), "sync persisted FRR output before startup discovery")
+	g.Expect(nm.Start()).To(gomega.Succeed(), "start the network manager before the RA controller")
+	t.Cleanup(nm.Stop)
+	err = c.Start()
+	g.Expect(err).NotTo(gomega.HaveOccurred(), "start the RA controller and queue orphaned FRR cleanup")
+	t.Cleanup(c.Stop)
+
+	g.Eventually(func(g gomega.Gomega) {
+		configs, err := clients.FRRClient.ApiV1beta1().FRRConfigurations("frr").List(ctx, metav1.ListOptions{
+			LabelSelector: types.OvnRouteAdvertisementsKey + "=deleted-ra",
+		})
+		g.Expect(err).NotTo(gomega.HaveOccurred(), "list remaining generated FRRConfigurations")
+		g.Expect(configs.Items).To(gomega.BeEmpty(), "delete the orphaned FRRConfiguration without another input event")
+	}, 5*time.Second).Should(gomega.Succeed(), "clean up FRR output with no surviving RA or NAD")
+}
