@@ -329,50 +329,42 @@ export NUM_NODES=2
 
 FOCUS=$(echo "${@:1}" | sed 's/ /\\s/g')
 
-# Ginkgo test timeout needs to be lower than both github's timeout and go test
-# timeout to be able to get proper Ginkgo output when it happens.
+# Ginkgo test timeout needs to be lower than github's timeout to be able to
+# get proper Ginkgo output when it happens.
+# Minutes; a trailing "m" is accepted so existing "120m" invocations keep working.
 TEST_TIMEOUT=${TEST_TIMEOUT:-180}
-GO_TEST_TIMEOUT=$((TEST_TIMEOUT + 5))
+TEST_TIMEOUT=${TEST_TIMEOUT%m}
+
+# Number of Ginkgo worker processes. Only the EVPN specs are known to be
+# parallel safe (unique per-test resource names, randomized subnets); every
+# other selection runs on a single worker. Specs marked Serial run after the
+# parallel phase on one worker.
+if [[ "${WHAT}" = "EVPN" ]]; then
+  GINKGO_PROCS=${GINKGO_PROCS:-3}
+else
+  GINKGO_PROCS=${GINKGO_PROCS:-1}
+fi
 
 pushd e2e
 
 go mod download
 
-if [ "$ENABLE_EVPN" = true ] && [[ "${WHAT}" != "${KV_LIVE_MIGRATION_TESTS}"* ]]; then
-  # EVPN tests are parallel-safe (unique per-test resource names, randomized
-  # subnets). Use the ginkgo CLI so that -procs=3 spawns 3 coordinated worker
-  # processes — one per DescribeTable entry.  go test cannot drive Ginkgo
-  # parallelism directly; only the ginkgo binary can start the sync server and
-  # fan out the worker processes.
-  ginkgo run \
-        -procs=3 \
-        -v \
-        --focus="${FOCUS:-.}" \
-        --fail-on-empty \
-        --timeout="${TEST_TIMEOUT}m" \
-        --flake-attempts="${FLAKE_ATTEMPTS:-2}" \
-        --skip="${SKIPPED_TESTS}" \
-        ${LABELED_TESTS:+--label-filter="${LABELED_TESTS}"} \
-        --junit-report="${E2E_REPORT_DIR}/junit_${E2E_REPORT_PREFIX}report.xml" \
-        . \
-        -- \
-        -provider skeleton \
-        -kubeconfig "${KUBECONFIG}" \
-        ${NUM_NODES:+"--num-nodes=${NUM_NODES}"} \
-        ${E2E_REPORT_DIR:+"--report-dir=${E2E_REPORT_DIR}"}
-else
-  go test -test.timeout ${GO_TEST_TIMEOUT}m -v . \
-          -ginkgo.v \
-          -ginkgo.focus ${FOCUS:-.} \
-          -ginkgo.fail-on-empty \
-          -ginkgo.timeout ${TEST_TIMEOUT}m \
-          -ginkgo.flake-attempts ${FLAKE_ATTEMPTS:-2} \
-          -ginkgo.skip="${SKIPPED_TESTS}" \
-          ${LABELED_TESTS:+-ginkgo.label-filter="${LABELED_TESTS}"} \
-          -ginkgo.junit-report=${E2E_REPORT_DIR}/junit_${E2E_REPORT_PREFIX}report.xml \
-          -provider skeleton \
-          -kubeconfig ${KUBECONFIG} \
-          ${NUM_NODES:+"--num-nodes=${NUM_NODES}"} \
-          ${E2E_REPORT_DIR:+"--report-dir=${E2E_REPORT_DIR}"}
-fi
+# The ginkgo CLI is a tool dependency of the e2e module (see go.mod), so its
+# version always matches the Ginkgo library compiled into the suite.
+go tool ginkgo run \
+      --procs="${GINKGO_PROCS}" \
+      -v \
+      --focus="${FOCUS:-.}" \
+      --fail-on-empty \
+      --timeout="${TEST_TIMEOUT}m" \
+      --flake-attempts="${FLAKE_ATTEMPTS:-2}" \
+      --skip="${SKIPPED_TESTS}" \
+      ${LABELED_TESTS:+--label-filter="${LABELED_TESTS}"} \
+      --junit-report="${E2E_REPORT_DIR}/junit_${E2E_REPORT_PREFIX}report.xml" \
+      . \
+      -- \
+      -provider skeleton \
+      -kubeconfig "${KUBECONFIG}" \
+      ${NUM_NODES:+"--num-nodes=${NUM_NODES}"} \
+      ${E2E_REPORT_DIR:+"--report-dir=${E2E_REPORT_DIR}"}
 popd

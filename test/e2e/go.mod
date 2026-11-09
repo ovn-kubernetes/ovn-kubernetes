@@ -195,3 +195,5 @@ replace (
 	github.com/coreos/go-iptables => github.com/trozet/go-iptables v0.0.0-20240328221912-077e672b3808
 	github.com/ovn-kubernetes/ovn-kubernetes/go-controller => ../../go-controller
 )
+
+tool github.com/onsi/ginkgo/v2/ginkgo
