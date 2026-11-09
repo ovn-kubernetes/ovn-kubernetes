@@ -703,8 +703,8 @@ jobs:
       ENABLE_MULTI_NET: "${{ matrix.target == 'multi-homing' || matrix.target == 'kv-live-migration' || startsWith(matrix.target, 'network-segmentation') || matrix.target == 'tools' || matrix.target == 'traffic-flow-test-only' || matrix.routeadvertisements != '' }}"
       ENABLE_NETWORK_SEGMENTATION: "${{ startsWith(matrix.target, 'network-segmentation') || matrix.network-segmentation == 'enable-network-segmentation' }}"
       DISABLE_UDN_ARP_NDP_FLOOD: "${{ matrix.disable-udn-arp-ndp-flood }}"
-      PLATFORM_IPV4_SUPPORT: "${{ matrix.ipfamily == 'IPv4' || matrix.ipfamily == 'dualstack' }}"
-      PLATFORM_IPV6_SUPPORT: "${{ matrix.ipfamily == 'IPv6' || matrix.ipfamily == 'dualstack' }}"
+      PLATFORM_IPV4_SUPPORT: "${{ matrix.ipfamily == 'ipv4' || matrix.ipfamily == 'dualstack' }}"
+      PLATFORM_IPV6_SUPPORT: "${{ matrix.ipfamily == 'ipv6' || matrix.ipfamily == 'dualstack' }}"
       KIND_LOCAL_REGISTRY: "${{ matrix.local-kind-registry == 'true' }}"
       KIND_INSTALL_KUBEVIRT: "${{ matrix.target == 'kv-live-migration' }}"
       # the DHCP IPAM e2e needs the dhcp CNI plugin binary on every node for
