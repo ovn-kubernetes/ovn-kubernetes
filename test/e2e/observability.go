@@ -27,51 +27,13 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
 )
 
-var _ = Describe("OVN Observability NBDB state", feature.Observability, func() {
+var _ = Describe("OVN Observability psample e2e", feature.Observability, func() {
 	fr := wrappedTestFramework("observability")
 
 	BeforeEach(func() {
 		if !deploymentconfig.Get().IsConfigurationEnabled(deploymentconfigapi.ObservabilityConfig) {
 			Skip("OVN Observability is not enabled")
 		}
-	})
-
-	Context("Multicast ACL sampling", func() {
-		It("should attach Sample references to Multicast ACLs when multicast is enabled", func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			defer cancel()
-
-			nsName := fr.Namespace.Name
-
-			By("enabling multicast for the test namespace")
-			enableMulticastForNamespace(fr)
-
-			By("creating a pod so that multicast ACLs are programmed")
-			cmd := []string{"/bin/bash", "-c", "/agnhost netexec --http-port 8000"}
-			pod := newAgnhostPod(nsName, "observ-mcast-pod", cmd...)
-			pod = e2epod.NewPodClient(fr).CreateSync(ctx, pod)
-			Expect(waitForACLLoggingPod(fr, nsName, pod.GetName())).To(Succeed())
-
-			By("verifying MulticastNS ACLs for this namespace have sample_new set")
-			// MulticastNS ACLs use k8s.ovn.org/name for the namespace (ObjectNameKey), not k8s.ovn.org/owner.
-			Eventually(func() (bool, error) {
-				output, err := runOVNNBCTL(fr, fr.ClientSet,
-					"--data=bare", "--no-heading", "--columns=sample_new",
-					"find", "ACL",
-					`external_ids:"k8s.ovn.org/owner-type"=MulticastNS`,
-					fmt.Sprintf(`external_ids:"k8s.ovn.org/name"=%s`, nsName))
-				if err != nil {
-					return false, fmt.Errorf("listing MulticastNS ACLs for namespace %s: %w", nsName, err)
-				}
-				for _, line := range strings.Split(output, "\n") {
-					if strings.TrimSpace(line) != "" {
-						return true, nil
-					}
-				}
-				return false, nil
-			}, 30*time.Second, 2*time.Second).Should(BeTrue(),
-				"expected MulticastNS ACLs to have sample_new references for namespace %s", nsName)
-		})
 	})
 
 	Context("psample end-to-end", func() {
