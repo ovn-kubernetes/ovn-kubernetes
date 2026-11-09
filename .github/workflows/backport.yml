@@ -1,0 +1,43 @@
+name: backport
+on:
+  pull_request_target:
+    types: [closed, labeled]
+
+permissions: {}
+
+jobs:
+  backport:
+    if: |
+      github.event.pull_request.merged &&
+      (github.event.action != 'labeled' || startsWith(github.event.label.name, 'backport:'))
+    runs-on: ubuntu-26.04
+    steps:
+      # Use the repo's app token instead of GITHUB_TOKEN so that the created
+      # backport PRs trigger CI. Events caused by GITHUB_TOKEN do not start
+      # new workflow runs.
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.OVN_KUBERNETES_MERGE_BOT }}
+          private-key: ${{ secrets.OVN_KUBERNETES_MERGE_BOT }}
+
+      - name: Check out code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Create backport PRs
+        uses: korthout/backport-action@8560fb503c275d433c56f05a2f64850093baa9f7 # v4.7.0
+        with:
+          github_token: ${{ steps.app-token.outputs.token }}
+          # Labels are named backport:<target-branch>, e.g. backport:release-1.4
+          label_pattern: '^backport:(release-[0-9]+\.[0-9]+)$'
+          pull_title: '[${target_branch}] ${pull_title}'
+          pull_description: |-
+            Automated backport of #${pull_number} to `${target_branch}`, triggered by a label.
+
+            ---
+
+            ${pull_description}
+          copy_assignees: true
