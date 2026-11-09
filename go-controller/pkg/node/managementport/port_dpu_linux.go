@@ -181,9 +181,9 @@ func (mp *managementPortNetdev) create() error {
 	}
 
 	if link.Attrs().Name != mp.ifName && (config.IsModeDPU() || config.IsModeFull()) {
-		if err := ovsops.UpdateOpenvSwitchExternalIDs(mp.ovsClient, map[string]string{
+		if err := ovsops.UpdateOpenvSwitchSettings(mp.ovsClient, map[string]string{
 			"ovn-orig-mgmt-port-netdev-name": link.Attrs().Name,
-		}); err != nil {
+		}, nil); err != nil {
 			return fmt.Errorf("failed to store original mgmt port interface name: %w", err)
 		}
 	}

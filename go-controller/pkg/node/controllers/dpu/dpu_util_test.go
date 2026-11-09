@@ -337,7 +337,7 @@ var _ = Describe("Node DPU tests", func() {
 
 				// Seed an OVSDB harness with an empty br-int so cni.ConfigureOVS
 				// takes the libovsdb path: GetBridge succeeds, no stale ports
-				// match, and CreateOrUpdatePodPort writes the new port. The
+				// match, and CreateOrUpdateOVSPort writes the new port. The
 				// cleanup path's DeletePortWithInterfaces then finds and deletes
 				// that real port.
 				ovsClient, ctx, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{

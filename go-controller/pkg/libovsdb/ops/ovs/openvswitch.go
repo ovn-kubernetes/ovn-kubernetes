@@ -35,7 +35,7 @@ func GetOpenvSwitch(ovsClient libovsdbclient.Client) (*vswitchd.OpenvSwitch, err
 // UpdateOpenvSwitchExternalIDs is the libovsdb equivalent of
 // `ovs-vsctl set Open_vSwitch . external_ids:key=value ...`.
 func UpdateOpenvSwitchExternalIDs(ovsClient libovsdbclient.Client, kv map[string]string) error {
-	return libovsdbops.UpdateOpenvSwitchExternalIDs(ovsClient, kv)
+	return libovsdbops.UpdateOpenvSwitchSettings(ovsClient, kv, nil)
 }
 
 // RemoveOpenvSwitchExternalIDs is the libovsdb equivalent of
