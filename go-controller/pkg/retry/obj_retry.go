@@ -570,6 +570,21 @@ func (r *RetryFramework) WatchResourceFiltered(namespaceForFilteredHandler strin
 		return nil, fmt.Errorf("%s: no resource handler function found for resource %v. "+
 			"Cannot watch this resource", r.name, r.ResourceHandler.ObjType)
 	}
+	return r.watchResourceWithHandler(addHandlerFunc, namespaceForFilteredHandler, labelSelectorForFilteredHandler)
+}
+
+// WatchPodsWithInitialNADs starts secondary-network Pod allocation with an
+// indexed startup snapshot. Subsequent events use the normal retry path.
+func (r *RetryFramework) WatchPodsWithInitialNADs(nadKeys []string) (*factory.Handler, error) {
+	if r.ResourceHandler.ObjType != factory.PodType {
+		return nil, fmt.Errorf("indexed Pod startup requires a Pod retry handler")
+	}
+	return r.watchResourceWithHandler(func(_ string, _ labels.Selector, funcs cache.ResourceEventHandler, processExisting func(context.Context, []interface{}) error) (*factory.Handler, error) {
+		return r.watchFactory.AddPodHandlerWithInitialNADs(nadKeys, funcs, processExisting)
+	}, "", nil)
+}
+
+func (r *RetryFramework) watchResourceWithHandler(addHandlerFunc factory.AddHandlerFuncType, namespaceForFilteredHandler string, labelSelectorForFilteredHandler labels.Selector) (*factory.Handler, error) {
 
 	// create the actual watcher
 	handler, err := addHandlerFunc(
