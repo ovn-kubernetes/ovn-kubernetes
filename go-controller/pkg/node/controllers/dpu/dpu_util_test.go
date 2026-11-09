@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"sync/atomic"
+	"time"
 
 	"github.com/stretchr/testify/mock"
 
@@ -410,6 +411,37 @@ var _ = Describe("Node DPU tests", func() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc())
 			expectOVSPortAndInterfaceAbsent(ovsClient, vfRep)
+		})
+
+		It("rechecks ownership after waiting for another representor operation", func() {
+			ovsClient, cleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{OVSData: []libovsdbtest.TestData{
+				&vswitchd.OpenvSwitch{UUID: "root", Bridges: []string{"bridge"}},
+				&vswitchd.Bridge{UUID: "bridge", Name: "br-int", Ports: []string{"port"}},
+				&vswitchd.Port{UUID: "port", Name: vfRep, Interfaces: []string{"iface"}},
+				&vswitchd.Interface{UUID: "iface", Name: vfRep, ExternalIDs: map[string]string{"sandbox": state.sandboxId}},
+			}})
+			Expect(err).NotTo(HaveOccurred())
+			defer cleanup.Cleanup()
+			ctrl.ovsClient = ovsClient
+			release, err := libovsdbops.LockOVSInterfaces(context.Background(), ovsClient, vfRep)
+			Expect(err).NotTo(HaveOccurred())
+			defer release()
+			done := make(chan error, 1)
+			go func() { done <- ctrl.delRepPort(&pod, state, types.DefaultNetworkName) }()
+			Consistently(done, 50*time.Millisecond).ShouldNot(Receive())
+			iface, err := libovsdbops.GetOVSInterface(ovsClient, vfRep)
+			Expect(err).NotTo(HaveOccurred())
+			iface.ExternalIDs["sandbox"] = "new-sandbox"
+			ops, err := ovsClient.Where(iface).Update(iface, &iface.ExternalIDs)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = libovsdbops.TransactAndCheck(ovsClient, ops)
+			Expect(err).NotTo(HaveOccurred())
+			release()
+			Eventually(done).Should(Receive(BeNil()))
+			retained, err := libovsdbops.GetOVSInterfaceFromDB(context.Background(), ovsClient, vfRep)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(retained.ExternalIDs["sandbox"]).To(Equal("new-sandbox"))
+			netlinkOpsMock.AssertNotCalled(GinkgoT(), "LinkByName", mock.Anything)
 		})
 
 		It("Does not fail if LinkByName failed", func() {

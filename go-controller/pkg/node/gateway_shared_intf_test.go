@@ -38,17 +38,83 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/bridgeconfig"
 	nodenft "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
+	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	netlink_mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/vishvananda/netlink"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utilMocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
+
+func TestNewNodePortWatcherUplink(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		noUplink      bool
+		missingUplink bool
+		ofport        int
+		wantOfport    string
+		wantError     bool
+	}{
+		{name: "no uplink", noUplink: true},
+		{name: "physical uplink", ofport: 3, wantOfport: "3"},
+		{name: "missing physical uplink", missingUplink: true, wantError: true},
+		{name: "invalid physical ofport", ofport: -1, wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := config.PrepareTestConfig(); err != nil {
+				t.Fatalf("prepare test config: %v", err)
+			}
+			t.Cleanup(func() { _ = config.PrepareTestConfig() })
+			config.Gateway.Mode = config.GatewayModeLocal
+			config.Gateway.AllowNoUplink = tc.noUplink
+			config.IPv4Mode = true
+			nodenft.SetFakeNFTablesHelper()
+			util.SetFakeIPTablesHelpers()
+
+			ovsBridge := &vswitchd.Bridge{UUID: "gateway-bridge", Name: "breth0"}
+			data := []libovsdbtest.TestData{
+				&vswitchd.OpenvSwitch{UUID: "ovs-root", Bridges: []string{ovsBridge.UUID}},
+				ovsBridge,
+			}
+			if !tc.noUplink && !tc.missingUplink {
+				ovsBridge.Ports = []string{"uplink-port"}
+				data = append(data,
+					&vswitchd.Port{UUID: "uplink-port", Name: "eth0", Interfaces: []string{"uplink-interface"}},
+					&vswitchd.Interface{UUID: "uplink-interface", Name: "eth0", Ofport: &tc.ofport},
+				)
+			}
+			ovsClient, cleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{OVSData: data})
+			if err != nil {
+				t.Fatalf("create OVS test harness: %v", err)
+			}
+			t.Cleanup(cleanup.Cleanup)
+			bridge := bridgeconfig.TestDefaultBridgeConfig()
+			if tc.noUplink {
+				bridge = bridgeconfig.TestBridgeConfig("breth0")
+			}
+			npw, err := newNodePortWatcher(bridge, &openflowManager{ovsClient: ovsClient}, nil, nil, nil)
+			if tc.wantError {
+				if err == nil {
+					t.Fatal("expected invalid uplink ofport to fail startup")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("failed to create NodePort watcher: %v", err)
+			}
+			if npw.ofportPhys != tc.wantOfport {
+				t.Fatalf("physical ofport = %q, want %q", npw.ofportPhys, tc.wantOfport)
+			}
+		})
+	}
+}
 
 func TestMasqueradeLinkOperationsAreSerialized(t *testing.T) {
 	if err := config.PrepareTestConfig(); err != nil {
