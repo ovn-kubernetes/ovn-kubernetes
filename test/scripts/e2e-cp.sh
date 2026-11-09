@@ -307,7 +307,8 @@ fi
 export KUBE_CONTAINER_RUNTIME=remote
 export KUBE_CONTAINER_RUNTIME_ENDPOINT=unix:///run/containerd/containerd.sock
 export KUBE_CONTAINER_RUNTIME_NAME=containerd
-export NUM_NODES=2
+# Worker nodes in the cluster, passed to the test framework as --num-nodes.
+export NUM_WORKER_NODES=${KIND_NUM_WORKER:-2}
 
 FOCUS="$*"
 
@@ -340,7 +341,7 @@ if [ "$ENABLE_EVPN" = true ] && [[ "${WHAT}" != "${KV_LIVE_MIGRATION_TESTS}"* ]]
         -- \
         -provider skeleton \
         -kubeconfig "${KUBECONFIG}" \
-        ${NUM_NODES:+"--num-nodes=${NUM_NODES}"} \
+        ${NUM_WORKER_NODES:+"--num-nodes=${NUM_WORKER_NODES}"} \
         ${E2E_REPORT_DIR:+"--report-dir=${E2E_REPORT_DIR}"}
 else
   go test -test.timeout "${GO_TEST_TIMEOUT}m" -v . \
@@ -354,7 +355,7 @@ else
           -ginkgo.junit-report="${E2E_REPORT_DIR}/junit_${E2E_REPORT_PREFIX}report.xml" \
           -provider skeleton \
           -kubeconfig "${KUBECONFIG}" \
-          ${NUM_NODES:+"--num-nodes=${NUM_NODES}"} \
+          ${NUM_WORKER_NODES:+"--num-nodes=${NUM_WORKER_NODES}"} \
           ${E2E_REPORT_DIR:+"--report-dir=${E2E_REPORT_DIR}"}
 fi
 popd
