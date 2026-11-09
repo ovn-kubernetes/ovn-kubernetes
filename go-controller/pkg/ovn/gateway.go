@@ -802,15 +802,8 @@ func (gw *GatewayManager) updateClusterRouterStaticRoutes(gwConfig *GatewayConfi
 		return nil
 	}
 
-	useDefaultEgressRoute := usesDefaultEgressRoute(gw.netInfo)
-
-	if useDefaultEgressRoute {
-		if err := gw.createDefaultEgressRoute(nextHops); err != nil {
-			return err
-		}
-	} else if err := gw.deleteDefaultEgressRoute(gw.containsJoinIP); err != nil {
-		// Covers switching to local gateway mode or to another transport.
-		return err
+	if util.UsesDefaultEgressRoute(gw.netInfo) {
+		return libovsdbutil.ReconcileDefaultEgress(gw.nbClient, gw.clusterRouterName, gw.nodeName, gw.netInfo, gwConfig.hostSubnets, nextHops)
 	}
 
 	// Add source IP address based routes in distributed router
@@ -845,19 +838,6 @@ func (gw *GatewayManager) updateClusterRouterStaticRoutes(gwConfig *GatewayConfi
 			mgmtIfAddr := gw.netInfo.GetNodeManagementIP(hostSubnet)
 			gw.staticRouteCleanup([]net.IP{mgmtIfAddr.IP}, hostSubnet)
 
-			if useDefaultEgressRoute {
-				// The src-ip route for this node subnet is superseded by the
-				// default route created above. Remove any instance left behind
-				// by a previous version: being more specific, it keeps
-				// outranking dst-ip routes to remote node subnets.
-				if err := libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicate(
-					gw.nbClient, gw.clusterRouterName, p); err != nil {
-					return fmt.Errorf("error deleting superseded static route for %s in %s: %v",
-						lrsr.IPPrefix, gw.clusterRouterName, err)
-				}
-				continue
-			}
-
 			if err := libovsdbops.CreateOrReplaceLogicalRouterStaticRouteWithPredicate(
 				gw.nbClient,
 				gw.clusterRouterName,
@@ -883,98 +863,6 @@ func (gw *GatewayManager) updateClusterRouterStaticRoutes(gwConfig *GatewayConfi
 				return fmt.Errorf("error deleting static route %+v in GR %s: %v", lrsr, gw.clusterRouterName, err)
 			}
 		}
-	}
-	return nil
-}
-
-// usesDefaultEgressRoute reports whether pod egress on the network's cluster
-// router is expressed as a default route to this node's gateway router rather
-// than as a src-ip route per node subnet. It holds in shared gateway mode for
-// Layer3 networks whose east/west traffic goes through the interconnect
-// overlay, where a zone's cluster router only carries that zone's subnets, so a
-// single route covers every pod in the zone.
-//
-// The default route is preferred because OVN ranks src-ip against dst-ip routes
-// by comparing prefix lengths across the two fields. A node subnet src-ip route
-// therefore outranks the dst-ip route to a remote node subnet whenever the local
-// node subnet mask is longer than the remote one, and east/west traffic leaves
-// the zone through the gateway.
-//
-// Local gateway mode is excluded because there the src-ip route is what forces
-// pod egress through the management port, by outranking the less specific
-// cluster subnet src-ip routes that CreateDefaultRouteToExternal points at the
-// gateway router. A default route is too weak to win that comparison.
-func usesDefaultEgressRoute(netInfo util.NetInfo) bool {
-	if config.Gateway.Mode == config.GatewayModeLocal {
-		return false
-	}
-	if netInfo.TopologyType() != types.Layer3Topology {
-		return false
-	}
-	switch netInfo.Transport() {
-	case types.NetworkTransportEVPN, types.NetworkTransportNoOverlay:
-		return false
-	default:
-		return true
-	}
-}
-
-// defaultRoutePrefix returns the all-addresses prefix of nextHop's IP family.
-func defaultRoutePrefix(nextHop net.IP) string {
-	if utilnet.IsIPv6(nextHop) {
-		return "::/0"
-	}
-	return "0.0.0.0/0"
-}
-
-// createDefaultEgressRoute adds a default dst-ip route on the cluster router
-// pointing at this node's gateway router. It covers pod egress for every subnet
-// in the zone: the connected routes for local node subnets and the routes to
-// remote node subnets and remote gateway router IPs are all more specific, so
-// they keep winning longest-prefix-match.
-func (gw *GatewayManager) createDefaultEgressRoute(nextHops []net.IP) error {
-	for _, nextHop := range nextHops {
-		lrsr := nbdb.LogicalRouterStaticRoute{
-			IPPrefix: defaultRoutePrefix(nextHop),
-			Nexthop:  nextHop.String(),
-		}
-		if gw.netInfo.IsUserDefinedNetwork() {
-			lrsr.ExternalIDs = map[string]string{
-				types.NetworkExternalID:  gw.netInfo.GetNetworkName(),
-				types.TopologyExternalID: gw.netInfo.TopologyType(),
-			}
-		}
-		p := func(item *nbdb.LogicalRouterStaticRoute) bool {
-			return item.IPPrefix == lrsr.IPPrefix &&
-				libovsdbops.PolicyEqualPredicate(lrsr.Policy, item.Policy)
-		}
-		if err := libovsdbops.CreateOrReplaceLogicalRouterStaticRouteWithPredicate(gw.nbClient,
-			gw.clusterRouterName, &lrsr, p, &lrsr.Nexthop); err != nil {
-			return fmt.Errorf("error creating default egress route %+v in %s: %v",
-				lrsr, gw.clusterRouterName, err)
-		}
-	}
-	return nil
-}
-
-// deleteDefaultEgressRoute removes the default dst-ip routes on the cluster
-// router whose next hop satisfies matchNextHop. It drops the route belonging to
-// the gateway mode the node is moving away from, or the one left behind when a
-// network changes transport.
-func (gw *GatewayManager) deleteDefaultEgressRoute(matchNextHop func(net.IP) bool) error {
-	p := func(item *nbdb.LogicalRouterStaticRoute) bool {
-		if item.IPPrefix != "0.0.0.0/0" && item.IPPrefix != "::/0" {
-			return false
-		}
-		if item.Policy != nil && *item.Policy != nbdb.LogicalRouterStaticRoutePolicyDstIP {
-			return false
-		}
-		return matchNextHop(net.ParseIP(item.Nexthop))
-	}
-	if err := libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicate(gw.nbClient,
-		gw.clusterRouterName, p); err != nil {
-		return fmt.Errorf("error deleting default egress route in %s: %v",
-			gw.clusterRouterName, err)
 	}
 	return nil
 }
@@ -1711,8 +1599,15 @@ func deleteStaleMasqueradeRouteAndMACBinding(nbClient libovsdbclient.Client, rou
 	return nil
 }
 
-// Cleanup removes all the NB DB objects created for a node's gateway
-func (gw *GatewayManager) Cleanup() error {
+// Cleanup removes the NB DB objects created for a node's gateway. localNodeName
+// is the controller's node, which may differ from the gateway's node during
+// remote or stale-node cleanup. Only the local gateway owns default egress.
+func (gw *GatewayManager) Cleanup(localNodeName string) error {
+	if gw.nodeName == localNodeName {
+		if err := libovsdbutil.CleanupLocalDefaultEgress(gw.nbClient, gw.clusterRouterName); err != nil {
+			return fmt.Errorf("failed to clean up local default egress on router %s: %w", gw.clusterRouterName, err)
+		}
+	}
 	// Get the gateway router port's IP address (connected to join switch)
 	var nextHops []net.IP
 
@@ -1920,19 +1815,34 @@ func (gw *GatewayManager) isRoutingAdvertised(node string) bool {
 	return util.IsPodNetworkAdvertisedAtNode(gw.netInfo, node)
 }
 
-// SyncGateway ensures a node's gateway router is configured according to the L3 config and host subnets
+// SyncGateway ensures a node's gateway router is configured according to the L3
+// config and host subnets. localNodeName identifies the controller's node for
+// cleanup when the gateway is disabled.
 func (gw *GatewayManager) SyncGateway(
 	node *corev1.Node,
 	gwConfig *GatewayConfig,
+	localNodeName string,
 ) error {
 	if gwConfig.annoConfig.Mode == config.GatewayModeDisabled {
-		if err := gw.Cleanup(); err != nil {
+		if err := gw.Cleanup(localNodeName); err != nil {
 			return fmt.Errorf("error cleaning up gateway for node %s: %v", node.Name, err)
 		}
 		return nil
 	}
 	if gwConfig.hostSubnets == nil {
 		return nil
+	}
+
+	// A rolling upgrade can reconcile old gateway annotations before the
+	// node manager installs cluster-wide SNAT. Keep the old GR fallback
+	// until the node has prepared host SNAT for every configured cluster CIDR.
+	if gw.netInfo.IsDefault() && config.Gateway.Mode == config.GatewayModeLocal && config.IsModeFull() {
+		readySubnets := sets.New(gwConfig.annoConfig.LocalGatewaySNATSubnets...)
+		for _, subnet := range gw.netInfo.Subnets() {
+			if !readySubnets.Has(subnet.CIDR.String()) {
+				return fmt.Errorf("waiting for local gateway host SNAT on node %q for cluster subnet %s", node.Name, subnet.CIDR)
+			}
+		}
 	}
 
 	enableGatewayMTU := util.ParseNodeGatewayMTUSupport(node)

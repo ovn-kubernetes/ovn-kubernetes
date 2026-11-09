@@ -367,10 +367,12 @@ func CreateOrUpdateLogicalRouterPolicyWithPredicateOps(nbClient libovsdbclient.C
 		{
 			Model:          lrp,
 			ModelPredicate: p,
-			OnModelUpdates: fields,
-			DoAfter:        func() { router.Policies = []string{lrp.UUID} },
-			ErrNotFound:    false,
-			BulkOp:         false,
+			// A policy ID may identify multiple subnet pairs.
+			FilterIndexedResults: p != nil,
+			OnModelUpdates:       fields,
+			DoAfter:              func() { router.Policies = []string{lrp.UUID} },
+			ErrNotFound:          false,
+			BulkOp:               false,
 		},
 		{
 			Model:            router,
@@ -458,12 +460,14 @@ func CreateOrAddNextHopsToLogicalRouterPolicyWithPredicateOps(nbClient libovsdbc
 
 	opModels := []operationModel{
 		{
-			Model:            lrp,
-			ModelPredicate:   p,
-			OnModelMutations: []interface{}{&lrp.Nexthops},
-			DoAfter:          func() { router.Policies = []string{lrp.UUID} },
-			ErrNotFound:      false,
-			BulkOp:           false,
+			Model:          lrp,
+			ModelPredicate: p,
+			// A policy ID may identify multiple subnet pairs.
+			FilterIndexedResults: p != nil,
+			OnModelMutations:     []interface{}{&lrp.Nexthops},
+			DoAfter:              func() { router.Policies = []string{lrp.UUID} },
+			ErrNotFound:          false,
+			BulkOp:               false,
 		},
 		{
 			Model:            router,

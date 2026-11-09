@@ -1700,13 +1700,13 @@ func newGateway(
 		nextHops: gwNextHops,
 	}
 
+	advertised := util.IsPodNetworkAdvertisedAtNode(networkManager.GetNetwork(types.DefaultNetworkName), nodeName)
 	if gatewayMode == config.GatewayModeLocal {
-		if err := initLocalGateway(subnets, mgmtPort); err != nil {
+		if err := initLocalGateway(mgmtPort, advertised); err != nil {
 			return nil, fmt.Errorf("failed to initialize new local gateway, err: %w", err)
 		}
 	}
 
-	advertised := util.IsPodNetworkAdvertisedAtNode(networkManager.GetNetwork(types.DefaultNetworkName), nodeName)
 	gwBridge, exGwBridge, err := gatewayInitInternal(
 		ovsClient, nodeName, gwIntf, egressGWIntf, gwNextHops, subnets, gwIPs, advertised, nodeAnnotator)
 	if err != nil {

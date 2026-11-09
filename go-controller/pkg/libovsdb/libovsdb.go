@@ -188,12 +188,13 @@ func NewNBClientWithEndpoint(endpoint string, promRegistry prometheus.Registerer
 
 	// define client indexes for objects that are using dbIDs
 	indexes := map[string][]model.ClientIndex{
-		nbdb.ACLTable:           {{Columns: []model.ColumnKey{{Column: "external_ids", Key: types.PrimaryIDKey}}}},
-		nbdb.DHCPOptionsTable:   {{Columns: []model.ColumnKey{{Column: "external_ids", Key: types.PrimaryIDKey}}}},
-		nbdb.LoadBalancerTable:  {{Columns: []model.ColumnKey{{Column: "name"}}}},
-		nbdb.LogicalSwitchTable: {{Columns: []model.ColumnKey{{Column: "name"}}}},
-		nbdb.LogicalRouterTable: {{Columns: []model.ColumnKey{{Column: "name"}}}},
-		nbdb.QoSTable:           {{Columns: []model.ColumnKey{{Column: "external_ids", Key: types.PrimaryIDKey}}}},
+		nbdb.ACLTable:                 {{Columns: []model.ColumnKey{{Column: "external_ids", Key: types.PrimaryIDKey}}}},
+		nbdb.DHCPOptionsTable:         {{Columns: []model.ColumnKey{{Column: "external_ids", Key: types.PrimaryIDKey}}}},
+		nbdb.LoadBalancerTable:        {{Columns: []model.ColumnKey{{Column: "name"}}}},
+		nbdb.LogicalSwitchTable:       {{Columns: []model.ColumnKey{{Column: "name"}}}},
+		nbdb.LogicalRouterTable:       {{Columns: []model.ColumnKey{{Column: "name"}}}},
+		nbdb.LogicalRouterPolicyTable: {{Columns: []model.ColumnKey{{Column: "external_ids", Key: types.PrimaryIDKey}}}},
+		nbdb.QoSTable:                 {{Columns: []model.ColumnKey{{Column: "external_ids", Key: types.PrimaryIDKey}}}},
 	}
 	if config.Gateway.DisableUDNARPNDPFlood {
 		// used by the MAC binding controller

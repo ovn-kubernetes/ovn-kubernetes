@@ -898,8 +898,9 @@ func getLocalGatewayPodSubnetMasqueradeNFTRule(cidr *net.IPNet, isAdvertisedNetw
 //		jump ovn-kube-pod-subnet-masq
 //		jump ovn-kube-udn-masq
 //	}
-func getLocalGatewayNATNFTRules(cidrs ...*net.IPNet) ([]*knftables.Rule, error) {
+func getLocalGatewayNATNFTRules(advertised bool, cidrs ...*net.IPNet) ([]*knftables.Rule, error) {
 	var rules []*knftables.Rule
+	masqueradeFamilies := map[bool]bool{}
 
 	// Process each CIDR to support dual-stack
 	for _, cidr := range cidrs {
@@ -923,10 +924,15 @@ func getLocalGatewayNATNFTRules(cidrs ...*net.IPNet) ([]*knftables.Rule, error) 
 				"masquerade",
 			),
 		}
-		rules = append(rules, masqRule)
+		// Several cluster CIDRs can share a family; the host masquerade IP
+		// needs only one rule for that family.
+		if !masqueradeFamilies[isIPv6] {
+			rules = append(rules, masqRule)
+			masqueradeFamilies[isIPv6] = true
+		}
 
 		// Rule2: Pod subnet NAT rule for the pod subnet chain
-		podSubnetRules, err := getLocalGatewayPodSubnetMasqueradeNFTRule(cidr, false)
+		podSubnetRules, err := getLocalGatewayPodSubnetMasqueradeNFTRule(cidr, advertised)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create pod subnet masquerade rule: %w", err)
 		}
@@ -1005,7 +1011,7 @@ func getUDNMasqueradeNFTRules(ipFamily utilnet.IPFamily) ([]*knftables.Rule, err
 
 // initLocalGatewayNFTNATRules sets up nftables rules for local gateway NAT functionality
 // This function supports dual-stack by accepting multiple CIDRs and generating rules for all IP families
-func initLocalGatewayNFTNATRules(cidrs ...*net.IPNet) error {
+func initLocalGatewayNFTNATRules(advertised bool, cidrs ...*net.IPNet) error {
 	nft, err := nodenft.GetNFTablesHelper()
 	if err != nil {
 		return fmt.Errorf("failed to get nftables helper: %w", err)
@@ -1057,7 +1063,7 @@ func initLocalGatewayNFTNATRules(cidrs ...*net.IPNet) error {
 	}
 
 	// Get the existing local gateway NAT rules
-	localGwRules, err := getLocalGatewayNATNFTRules(cidrs...)
+	localGwRules, err := getLocalGatewayNATNFTRules(advertised, cidrs...)
 	if err != nil {
 		return fmt.Errorf("failed to get local gateway NAT rules: %w", err)
 	}

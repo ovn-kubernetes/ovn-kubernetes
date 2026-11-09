@@ -244,7 +244,8 @@ func (oc *DefaultNetworkController) cleanupNodeResources(nodeName string) error 
 		return fmt.Errorf("error deleting node %s logical network: %v", nodeName, err)
 	}
 
-	if err := oc.newGatewayManager(nodeName).Cleanup(); err != nil {
+	gw := oc.newGatewayManager(nodeName)
+	if err := gw.Cleanup(oc.nodeName); err != nil {
 		return fmt.Errorf("failed to clean up node %s gateway: (%w)", nodeName, err)
 	}
 

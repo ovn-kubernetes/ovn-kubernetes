@@ -318,6 +318,14 @@ func (g *gateway) Init(stopChan <-chan struct{}, wg *sync.WaitGroup) error {
 
 	var err error
 
+	// Reconcile host SNAT on every startup, including gateway mode changes.
+	// EgressIP and network advertisement events are not guaranteed to occur.
+	if config.IsModeFull() {
+		if err = g.updateSNATRules(); err != nil {
+			return fmt.Errorf("gateway init failed to reconcile SNAT rules: %w", err)
+		}
+	}
+
 	g.servicesRetryFramework = g.newRetryFrameworkNode(factory.ServiceForGatewayType)
 	if _, err = g.servicesRetryFramework.WatchResource(); err != nil {
 		return fmt.Errorf("gateway init failed to start watching services: %v", err)
@@ -473,6 +481,14 @@ func gatewayInitInternal(ovsClient libovsdbclient.Client, nodeName, gwIntf, egre
 		l3GwConfig.EgressGWIPAddresses = egressGWBridge.GetIPs()
 	}
 
+	// newGateway installs host SNAT before publishing this configuration.
+	// Recording the CIDRs also prevents an old readiness value from enabling
+	// the route transition when the configured cluster CIDRs have changed.
+	if config.Gateway.Mode == config.GatewayModeLocal && config.IsModeFull() {
+		for _, subnet := range getLocalGatewaySNATSubnets() {
+			l3GwConfig.LocalGatewaySNATSubnets = append(l3GwConfig.LocalGatewaySNATSubnets, subnet.String())
+		}
+	}
 	err = util.SetL3GatewayConfig(nodeAnnotator, &l3GwConfig)
 	return gatewayBridge, egressGWBridge, err
 }
@@ -658,7 +674,7 @@ func (g *gateway) updateSNATRules() error {
 		klog.V(5).Info("Skipping SNAT rule update because management port is not initialized yet")
 		return nil
 	}
-	subnets := util.IPsToNetworkIPs(g.nodeIPManager.mgmtPort.GetAddresses()...)
+	subnets := getLocalGatewaySNATSubnets()
 
 	return addOrUpdateLocalGatewayPodSubnetNFTRules(g.GetDefaultPodNetworkAdvertised(), subnets...)
 }

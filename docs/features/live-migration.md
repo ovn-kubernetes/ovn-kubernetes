@@ -274,42 +274,39 @@ To implement live migration ovn-kubernetes do the following:
 
 **Point to point routing:**
 
-When the VM is running at a node that does not "own" it's IP address - e.g. after a live migration - 
-point to point routing is done with static routes: at the local zone (zone where
-vm is running) a route to route inbound traffic to the VM and a cluster wide
-route to route egress n/s traffic to the gw router; at remote zones a static
-route to route traffic to the migrated VM over the transit switch port address.
-By doing this, the VM can live migrate to different node and keep previous 
-addresses (IP / MAC), thus preserving n/s and e/w communication, and ensuring traffic
-goes over the node where the VM is running. The latter reduces inter node communication.
+When a VM runs on a node that does not own its retained IP subnet, the local
+zone installs a host destination route to the VM through that node's switch.
+Remote zones install a host destination route through the current node's transit
+switch address. Returning to the original node removes these migration routes.
 
-If the VM is going back to the node that "owns" the ip, those static routes
-should be reconciled (deleted).
+On the default Layer 3 overlay network, gateway reconciliation owns egress.
+The fallback policy recognizes local pods by the incoming router port, so a
+migrated VM follows the current node's ordinary egress path: mp0 in local gateway
+mode, or the local GR in shared gateway mode. EgressIP and EgressService policies
+still take precedence when the VM is selected by those features. The management
+port's host masquerade rules cover all cluster CIDRs, including retained VM
+addresses from other node subnets. No per-VM source route or host SNAT rule is
+needed. Per-VM destination routes remain necessary for ingress and return traffic.
 
-If the transit switch port address is 10.64.0.3 and gw router is 10.64.0.2, 
-those below are the static routes added to the topology:
+For a VM retaining `10.244.0.8` on node1, whose transit switch address is
+`10.64.0.3`, the migration-specific routes are:
 
 ```text
-Local zone:
-       ┌───────────────────────────┐
-       │     ovn_cluster_router    │
-┌───────────────────────────┐   ┌───────────────────────────┐
-│ static route (egress n/s) │───│ static route (ingress all)│
-│ prefix: 10.244.0.0/16     │   │ prefix: 10.244.0.8        │
-│ nexthop: 10.64.0.2        │   │ nexthop: 10.244.0.8       │
-│ policy: src-ip            │   │ output-port: rtos-node1   │
-└───────────────────────────┘   │ policy: dst-ip            │
-                                └───────────────────────────┘
-Remote zone:
-       ┌───────────────────────────┐
-       │     ovn_cluster_router    │
-┌───────────────────────────┐      │
-│ static route (ingress all)│──────┘
-│ prefix: 10.244.0.8        │
-│ nexthop: 10.64.0.3        │
-│ policy: dst-ip            │
-└───────────────────────────┘
+Local zone, ovn_cluster_router:
+  prefix:      10.244.0.8
+  nexthop:     10.244.0.8
+  output-port: rtos-node1
+  policy:      dst-ip
+
+Remote zone, ovn_cluster_router:
+  prefix:      10.244.0.8
+  nexthop:     10.64.0.3
+  policy:      dst-ip
 ```
+
+The [gateway routing description](../design/gateway-modes.md#pod-egress-routing-on-the-cluster-router)
+details the common fallback chains. Layer 2 UDN migration retains its existing
+routing and SNAT behavior.
 
 
 **Nodes logical switch ports:**
