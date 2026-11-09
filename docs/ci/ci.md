@@ -91,6 +91,11 @@ Below is a description of this target:
   - You can focus on a specific test by appending `WHAT=<test name>` to the make command.
   - See bottom of this document for an example.
 
+Every lane uploads its Ginkgo reports as an `e2e-reports-*` artifact. The
+`e2e-reports` job reads them with `test/scripts/e2e-report-summary.sh` and
+writes to the job summary which specs no lane executed and which specs passed
+only on retry.
+
 All local tests are run by `make control-plane`. The local tests are controlled in
 [ovn-kubernetes/test/scripts/e2e-cp.sh](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/test/scripts/e2e-cp.sh)
 and the actual tests are defined in the directory
