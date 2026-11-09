@@ -220,6 +220,7 @@ ginkgo --nodes=${NUM_NODES} \
 	--skip=${SKIPPED_TESTS} \
 	--timeout=${TEST_TIMEOUT} \
 	--flake-attempts=${FLAKE_ATTEMPTS} \
+	--fail-on-empty \
 	/usr/local/bin/e2e.test \
 	-- \
 	--kubeconfig=${HOME}/ovn.conf \
