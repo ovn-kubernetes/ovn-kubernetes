@@ -734,6 +734,11 @@ jobs:
       ENABLE_NO_OVERLAY: "${{ matrix.no-overlay != '' }}"
       ENABLE_NO_OVERLAY_OUTBOUND_SNAT: "${{ matrix.no-overlay == 'snat-enabled' || matrix.no-overlay == 'managed' }}"
       ENABLE_NO_OVERLAY_MANAGED_ROUTING: "${{ matrix.no-overlay == 'managed' }}"
+      # Budget for the "Run Tests" step. The Ginkgo timeout handed to the test
+      # scripts is derived from it so Ginkgo always reports before GitHub
+      # kills the step. Upstream shard runs and non-Ginkgo targets get 130
+      # minutes, every control-plane suite gets 190.
+      E2E_RUN_TIMEOUT_MINUTES: "${{ (matrix.target == 'shard-conformance' || matrix.target == 'no-uplink' || matrix.target == 'tools' || matrix.target == 'traffic-flow-test-only') && 130 || 190 }}"
     steps:
     - name: Verify selected image build
       env:
@@ -871,12 +876,11 @@ jobs:
       run: make -C test traffic-flow-tests WHAT="setup"
 
     - name: Run Tests
-      # e2e tests take ~60 minutes normally, 120 should be more than enough
-      # set 3 hours for control-plane tests as these might take a while
-      # give 10m extra to give ginkgo chance to timeout before github so that we
-      # get its output
-      timeout-minutes: ${{ startsWith(matrix.target, 'bgp') && 190 || matrix.target == 'evpn' && 190 || matrix.target == 'control-plane' && 190 || matrix.target == 'external-gateway' && 190 || startsWith(matrix.target, 'network-segmentation') && 190 || 130 }}
+      timeout-minutes: ${{ fromJSON(env.E2E_RUN_TIMEOUT_MINUTES) }}
       run: |
+        # Leave Ginkgo 10 minutes to time out and print its report before
+        # GitHub terminates the step.
+        export TEST_TIMEOUT=$((E2E_RUN_TIMEOUT_MINUTES - 10))
         if [ "${{ matrix.target }}" == "multi-homing" ]; then
           make -C test control-plane WHAT="Multi Homing"
         elif [ "${{ matrix.target }}" == "no-uplink" ]; then
@@ -892,7 +896,6 @@ jobs:
           make -C test control-plane WHAT="Kubevirt Virtual Machines|Localnet DHCP IPAM"
         elif [[ "${{ matrix.target }}" == network-segmentation* ]]; then
           make -C test control-plane WHAT="Network Segmentation"
-          make -C test control-plane WHAT="ClusterNetworkConnect"
         elif [ "${{ matrix.target }}" == "evpn" ]; then
           make -C test control-plane WHAT="EVPN"
         elif [ "${{ matrix.target }}" == "bgp" ] || [ "${{ matrix.target }}" == "bgp-no-overlay" ] || [ "${{ matrix.target }}" == "bgp-no-overlay-dynamic" ] || [ "${{ matrix.target }}" == "bgp-loose-isolation" ]; then
@@ -918,6 +921,18 @@ jobs:
         if [ -n "${TRAFFIC_FLOW_TESTS}" ]; then
           make -C test traffic-flow-tests WHAT="run"
         fi
+
+    # ClusterNetworkConnect runs on the network segmentation lanes after the
+    # main suite, which has taken up to 138 minutes of its 190. A step of its
+    # own gives it a Ginkgo timeout that does not depend on how long that suite
+    # took; the suite itself takes 18 to 33 minutes. Its own job name gives it
+    # its own junit file instead of overwriting the main suite's.
+    - name: Run ClusterNetworkConnect tests
+      if: startsWith(matrix.target, 'network-segmentation')
+      timeout-minutes: 55
+      run: |
+        export TEST_TIMEOUT=45
+        JOB_NAME="${JOB_NAME}-cnc" make -C test control-plane WHAT="ClusterNetworkConnect"
 
     - name: Export kind logs
       if: always()

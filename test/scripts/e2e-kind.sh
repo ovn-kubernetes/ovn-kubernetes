@@ -213,12 +213,13 @@ fi
 # timeout needs to be lower than github's timeout. Otherwise github terminates
 # the job and doesn't give ginkgo a chance to print status so that we know why
 # the timeout happened.
-TEST_TIMEOUT=${TEST_TIMEOUT:-120m}
+# Minutes; a trailing "m" is accepted so existing "120m" invocations keep working.
+TEST_TIMEOUT=${TEST_TIMEOUT:-120}
 
 ginkgo --nodes=${NUM_NODES} \
 	--focus=${FOCUS} \
 	--skip=${SKIPPED_TESTS} \
-	--timeout=${TEST_TIMEOUT} \
+	--timeout=${TEST_TIMEOUT%m}m \
 	--flake-attempts=${FLAKE_ATTEMPTS} \
 	/usr/local/bin/e2e.test \
 	-- \
