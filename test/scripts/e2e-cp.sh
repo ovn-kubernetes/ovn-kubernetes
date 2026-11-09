@@ -336,6 +336,7 @@ if [ "$ENABLE_EVPN" = true ] && [[ "${WHAT}" != "${KV_LIVE_MIGRATION_TESTS}"* ]]
         --skip="${SKIPPED_TESTS}" \
         ${LABELED_TESTS:+--label-filter="${LABELED_TESTS}"} \
         --junit-report="${E2E_REPORT_DIR}/junit_${E2E_REPORT_PREFIX}report.xml" \
+        --json-report="${E2E_REPORT_DIR}/${E2E_REPORT_PREFIX}report.json" \
         . \
         -- \
         -provider skeleton \
@@ -352,6 +353,7 @@ else
           -ginkgo.skip="${SKIPPED_TESTS}" \
           ${LABELED_TESTS:+-ginkgo.label-filter="${LABELED_TESTS}"} \
           -ginkgo.junit-report=${E2E_REPORT_DIR}/junit_${E2E_REPORT_PREFIX}report.xml \
+          -ginkgo.json-report=${E2E_REPORT_DIR}/${E2E_REPORT_PREFIX}report.json \
           -provider skeleton \
           -kubeconfig ${KUBECONFIG} \
           ${NUM_NODES:+"--num-nodes=${NUM_NODES}"} \
