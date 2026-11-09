@@ -1019,7 +1019,7 @@ jobs:
 
     - name: Run Dual-Stack Tests
       run: |
-        make -C test shard-test WHAT="Networking Granular Checks\|DualStack"
+        make -C test shard-test WHAT="Networking Granular Checks|DualStack"
 
     - name: Run Dual-Stack Control-Plane Tests
       run: |
