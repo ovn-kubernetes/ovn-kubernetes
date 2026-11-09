@@ -287,7 +287,8 @@ $ make control-plane WHAT="should be able to send multicast UDP traffic between 
 $ popd
 ```
 
-The value of `WHAT=` will be used to modify the `-ginkgo.focus` parameter. Individual tests can be retrieved from this
+The value of `WHAT=` will be used to modify the `--focus` parameter of the `ginkgo` CLI, run as `go tool ginkgo` from the
+e2e module. `GINKGO_PROCS=<n>` sets the number of Ginkgo worker processes (default 1, or 3 for `WHAT=EVPN`). Individual tests can be retrieved from this
 repository under [test/e2e](https://github.com/ovn-kubernetes/ovn-kubernetes/tree/master/test/e2e). To see a list of individual
 tests, one could run:
 ~~~
