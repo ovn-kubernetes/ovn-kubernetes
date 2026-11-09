@@ -154,15 +154,15 @@ DPU_TESTS="DPU"
 NETWORK_SEGMENTATION_TESTS="Network Segmentation"
 if [[ "${WHAT}" = "${UPLINK_TESTS}" ]]; then
   require_label "Feature:Uplink"
-  shift # don't "focus" on Uplink since we filter by label
+  [ $# -eq 0 ] || shift # don't "focus" on Uplink since we filter by label
 elif [[ "${WHAT}" = "${DPU_TESTS}" ]]; then
   # Feature:DPU specs need the dpu-simulator layout and the Uplink e2e environment,
   # and disrupt a host node, so the dpu-sim no-overlay lane runs them after Uplink.
   require_label "Feature:DPU"
-  shift # don't "focus" on DPU since we filter by label
+  [ $# -eq 0 ] || shift # don't "focus" on DPU since we filter by label
 elif [[ "${WHAT}" = "${NETWORK_SEGMENTATION_TESTS}"* ]]; then
   require_label "Feature:NetworkSegmentation"
-  shift # don't "focus" on Network Segmentation since we filter by label
+  [ $# -eq 0 ] || shift # don't "focus" on Network Segmentation since we filter by label
 elif [[ "${WHAT}" != "${NETWORK_SEGMENTATION_TESTS}"* ]]; then
   if [ "$ENABLE_NETWORK_SEGMENTATION" == true ] && [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
     skip_label "Feature:NetworkSegmentation && !(Feature:RouteAdvertisements)"
@@ -188,7 +188,7 @@ fi
 SERIAL_LABEL="Serial"
 if [[ "${WHAT}" = "$SERIAL_LABEL" ]]; then
   require_label "$SERIAL_LABEL"
-  shift # don't "focus" on Serial since we filter by label
+  [ $# -eq 0 ] || shift # don't "focus" on Serial since we filter by label
 fi
 
 if [ "$ENABLE_UPLINK" != true ]; then
