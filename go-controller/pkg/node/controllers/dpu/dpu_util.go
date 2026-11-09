@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -16,12 +17,14 @@ import (
 	"k8s.io/klog/v2"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
 
 // dpuConnectionState is the DPU connection state of one NAD of a pod. The VF
@@ -151,7 +154,7 @@ func (c *Controller) handleAddOrUpdateDPUPod(ctx context.Context, podKey string,
 	var errs []error
 
 	// First clean up NADs that existed before but are either not desired or updated.
-	var validPortsToDelete []string
+	var validPortsToDelete []repPortDeletion
 	var nadsToUntrack []string
 	revalidating := map[string]*dpuConnectionState{}
 	nadsToKeep := make(map[string]*dpuConnectionState, len(ps.nadStates))
@@ -159,13 +162,7 @@ func (c *Controller) handleAddOrUpdateDPUPod(ctx context.Context, podKey string,
 		desired, exists := desiredNADs[nadKey]
 		if !exists || dpuConnectionStateChanged(state, desired.state) {
 			klog.Infof("Deleting stale VF representor %s for pod %s NAD %s", state.vfRepName, podKey, nadKey)
-			valid, err := validateRepPort(c.ovsClient, state.vfRepName, state.sandboxId, nadKey)
-			if err != nil {
-				return fmt.Errorf("failed to validate representor %s for pod %s NAD %s: %w", state.vfRepName, podKey, nadKey, err)
-			}
-			if valid {
-				validPortsToDelete = append(validPortsToDelete, state.vfRepName)
-			}
+			validPortsToDelete = append(validPortsToDelete, repPortDeletion{state.vfRepName, state.sandboxId, nadKey})
 			nadsToUntrack = append(nadsToUntrack, nadKey)
 			continue
 		}
@@ -209,8 +206,7 @@ func (c *Controller) handleAddOrUpdateDPUPod(ctx context.Context, podKey string,
 	}
 
 	if len(validPortsToDelete) > 0 {
-		setRepPortInterfacesDown(validPortsToDelete)
-		if err := libovsdbops.DeleteMultiplePortsWithInterfaces(c.ovsClient, "br-int", validPortsToDelete...); err != nil {
+		if err := c.deleteRepPorts(ctx, validPortsToDelete); err != nil {
 			return fmt.Errorf("failed to delete stale representor ports %v for pod %s: %w", validPortsToDelete, podKey, err)
 		}
 	}
@@ -301,16 +297,10 @@ func (c *Controller) handleDeleteDPUPod(ctx context.Context, podKey string, pod 
 	}
 
 	klog.V(5).Infof("Delete for Pod: %s (UID %s)", podKey, ps.uid)
-	var portsToDelete []string
+	var portsToDelete []repPortDeletion
 	for nadKey, state := range ps.nadStates {
 		klog.Infof("Deleting VF representor %s for pod %s NAD %s", state.vfRepName, podKey, nadKey)
-		valid, err := validateRepPort(c.ovsClient, state.vfRepName, state.sandboxId, nadKey)
-		if err != nil {
-			return fmt.Errorf("failed to validate representor %s for pod %s NAD %s: %w", state.vfRepName, podKey, nadKey, err)
-		}
-		if valid {
-			portsToDelete = append(portsToDelete, state.vfRepName)
-		}
+		portsToDelete = append(portsToDelete, repPortDeletion{state.vfRepName, state.sandboxId, nadKey})
 	}
 
 	// Clear the status before the ports go away, so that the host side is never
@@ -322,11 +312,9 @@ func (c *Controller) handleDeleteDPUPod(ctx context.Context, podKey string, pod 
 	}
 
 	if len(portsToDelete) > 0 {
-		setRepPortInterfacesDown(portsToDelete)
-		if err := libovsdbops.DeleteMultiplePortsWithInterfaces(c.ovsClient, "br-int", portsToDelete...); err != nil {
+		if err := c.deleteRepPorts(ctx, portsToDelete); err != nil {
 			return fmt.Errorf("failed to delete representor ports %v for pod %s: %w", portsToDelete, podKey, err)
 		}
-		klog.Infof("Deleted %d representor ports from br-int for pod %s", len(portsToDelete), podKey)
 	}
 
 	c.podStates.Delete(podKey)
@@ -382,54 +370,89 @@ func (c *Controller) addRepPort(ctx context.Context, pod *corev1.Pod, state *dpu
 func (c *Controller) delRepPort(pod *corev1.Pod, state *dpuConnectionState, nadKey string) error {
 	podDesc := fmt.Sprintf("pod %s/%s for NAD %s", pod.Namespace, pod.Name, nadKey)
 	klog.Infof("Deleting VF representor %s for %s", state.vfRepName, podDesc)
-	valid, err := validateRepPort(c.ovsClient, state.vfRepName, state.sandboxId, nadKey)
-	if err != nil {
-		return err
-	}
-	if !valid {
-		return nil
-	}
-	setRepPortInterfacesDown([]string{state.vfRepName})
-	if err = libovsdbops.DeleteMultiplePortsWithInterfaces(c.ovsClient, "br-int", state.vfRepName); err != nil {
+	if err := c.deleteRepPorts(context.Background(), []repPortDeletion{{state.vfRepName, state.sandboxId, nadKey}}); err != nil {
 		return fmt.Errorf("failed to delete representor port %s from br-int for %s: %w", state.vfRepName, podDesc, err)
 	}
-	klog.Infof("Port %s deleted from bridge br-int", state.vfRepName)
 	return nil
 }
 
-// validateRepPort checks that the OVS port matches the expected sandbox and NAD
-// key. Returns (true, nil) if valid; (false, nil) if the port doesn't exist or
-// belongs to a different pod/NAD, which no retry can fix and is logged as an
-// error; (false, err) only on transient OVS lookup failures.
-func validateRepPort(ovsClient libovsdbclient.Client, vfRepName, sandboxId, nadKey string) (bool, error) {
-	iface, err := libovsdbops.GetOVSInterface(ovsClient, vfRepName)
-	ifExists := err == nil
-	if errors.Is(err, libovsdbclient.ErrNotFound) {
-		err = nil
+// repPortDeletion retains ownership from the pod state or bootstrap snapshot,
+// so a device reused by another sandbox is left alone after taking its lock.
+type repPortDeletion struct {
+	name, sandboxID, nadKey string
+}
+
+func (c *Controller) deleteRepPorts(ctx context.Context, ports []repPortDeletion) error {
+	ctx, cancel := context.WithTimeout(ctx, types.OVSDBTimeout)
+	defer cancel()
+	names := make([]string, 0, len(ports))
+	for _, port := range ports {
+		names = append(names, port.name)
 	}
+	release, err := libovsdbops.LockOVSInterfaces(ctx, c.ovsClient, names...)
 	if err != nil {
-		return false, err
+		return fmt.Errorf("failed to lock representor ports %v for deletion: %w", names, err)
 	}
-	if !ifExists {
-		klog.Infof("VF representor %s is not an OVS interface, nothing to do", vfRepName)
-		return false, nil
+	defer release()
+
+	var ops []ovsdb.Operation
+	var ownedNames []string
+	var errs []error
+	for _, expected := range ports {
+		iface, err := libovsdbops.GetOVSInterfaceFromDB(ctx, c.ovsClient, expected.name)
+		if errors.Is(err, libovsdbclient.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		nadKey := iface.ExternalIDs[types.NADExternalID]
+		if nadKey == "" {
+			nadKey = types.DefaultNetworkName
+		}
+		if iface.ExternalIDs["sandbox"] != expected.sandboxID || nadKey != expected.nadKey {
+			klog.Infof("Leaving representor %s in place: its sandbox or NAD has changed", expected.name)
+			continue
+		}
+		port, err := libovsdbops.GetOVSPort(c.ovsClient, expected.name)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to get representor port %s for deletion: %w", expected.name, err))
+			continue
+		}
+		bridge, err := libovsdbops.GetBridge(c.ovsClient, "br-int")
+		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to get br-int for deletion of representor %s: %w", expected.name, err))
+			continue
+		}
+		if len(port.Interfaces) != 1 || port.Interfaces[0] != iface.UUID || !slices.Contains(bridge.Ports, port.UUID) {
+			errs = append(errs, fmt.Errorf("representor %s is not a single-interface port on br-int", expected.name))
+			continue
+		}
+		// Also guard against OVS changes by writers outside our lock.
+		zero := 0
+		guard, err := c.ovsClient.Where(&vswitchd.Interface{UUID: iface.UUID}).Wait(ovsdb.WaitConditionEqual, &zero, iface, &iface.ExternalIDs)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to guard ownership of representor %s for deletion: %w", expected.name, err))
+			continue
+		}
+		// Keep each port's operations separate until construction succeeds.
+		portOps, err := libovsdbops.DeletePortWithInterfacesOps(c.ovsClient, guard, port, "br-int")
+		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to build deletion of representor %s from br-int: %w", expected.name, err))
+			continue
+		}
+		ops = append(ops, portOps...)
+		ownedNames = append(ownedNames, expected.name)
 	}
-	sandbox := iface.ExternalIDs["sandbox"]
-	expectedNADKey := iface.ExternalIDs[types.NADExternalID]
-	if expectedNADKey == "" {
-		expectedNADKey = types.DefaultNetworkName
+	setRepPortInterfacesDown(ownedNames)
+	_, err = libovsdbops.TransactAndCheckWithContext(ctx, c.ovsClient, ops)
+	if err != nil {
+		errs = append(errs, fmt.Errorf("failed to delete representor ports %v from br-int: %w", ownedNames, err))
+	} else if len(ownedNames) > 0 {
+		klog.Infof("Deleted representor ports %v from br-int", ownedNames)
 	}
-	if sandbox != sandboxId {
-		klog.Errorf("OVS port %s belongs to sandbox %s, not the expected %s; leaving it in place",
-			vfRepName, sandbox, sandboxId)
-		return false, nil
-	}
-	if expectedNADKey != nadKey {
-		klog.Errorf("OVS port %s belongs to NAD %s, not the expected %s; leaving it in place",
-			vfRepName, expectedNADKey, nadKey)
-		return false, nil
-	}
-	return true, nil
+	return errors.Join(errs...)
 }
 
 // setRepPortInterfacesDown sets the link down for each representor interface.

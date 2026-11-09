@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"sync/atomic"
+	"time"
 
 	"github.com/stretchr/testify/mock"
 
@@ -410,6 +411,77 @@ var _ = Describe("Node DPU tests", func() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc())
 			expectOVSPortAndInterfaceAbsent(ovsClient, vfRep)
+		})
+
+		It("rechecks ownership after waiting for another representor operation", func() {
+			ovsClient, cleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{OVSData: []libovsdbtest.TestData{
+				&vswitchd.OpenvSwitch{UUID: "root", Bridges: []string{"bridge"}},
+				&vswitchd.Bridge{UUID: "bridge", Name: "br-int", Ports: []string{"port"}},
+				&vswitchd.Port{UUID: "port", Name: vfRep, Interfaces: []string{"iface"}},
+				&vswitchd.Interface{UUID: "iface", Name: vfRep, ExternalIDs: map[string]string{"sandbox": state.sandboxId}},
+			}})
+			Expect(err).NotTo(HaveOccurred())
+			defer cleanup.Cleanup()
+			ctrl.ovsClient = ovsClient
+			release, err := libovsdbops.LockOVSInterfaces(context.Background(), ovsClient, vfRep)
+			Expect(err).NotTo(HaveOccurred())
+			defer release()
+			done := make(chan error, 1)
+			go func() { done <- ctrl.delRepPort(&pod, state, types.DefaultNetworkName) }()
+			Consistently(done, 50*time.Millisecond).ShouldNot(Receive())
+			iface, err := libovsdbops.GetOVSInterface(ovsClient, vfRep)
+			Expect(err).NotTo(HaveOccurred())
+			iface.ExternalIDs["sandbox"] = "new-sandbox"
+			ops, err := ovsClient.Where(iface).Update(iface, &iface.ExternalIDs)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = libovsdbops.TransactAndCheck(ovsClient, ops)
+			Expect(err).NotTo(HaveOccurred())
+			release()
+			Eventually(done, types.OVSDBTimeout).Should(Receive(BeNil()), "deletion should finish after the representor lock is released")
+			retained, err := libovsdbops.GetOVSInterfaceFromDB(context.Background(), ovsClient, vfRep)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(retained.ExternalIDs["sandbox"]).To(Equal("new-sandbox"))
+			netlinkOpsMock.AssertNotCalled(GinkgoT(), "LinkByName", mock.Anything)
+		})
+
+		It("deletes valid representors while retaining invalid and reassigned ports", func() {
+			ovsClient, cleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{OVSData: []libovsdbtest.TestData{
+				&vswitchd.OpenvSwitch{UUID: "root", Bridges: []string{"bridge", "other-bridge"}},
+				&vswitchd.Bridge{UUID: "bridge", Name: "br-int", Ports: []string{"good-port", "bond-port", "reused-port"}},
+				&vswitchd.Bridge{UUID: "other-bridge", Name: "br-other", Ports: []string{"other-port"}},
+				&vswitchd.Port{UUID: "good-port", Name: vfRep, Interfaces: []string{"good-iface"}},
+				&vswitchd.Interface{UUID: "good-iface", Name: vfRep, ExternalIDs: map[string]string{"sandbox": state.sandboxId}},
+				&vswitchd.Port{UUID: "bond-port", Name: "bond-rep", Interfaces: []string{"bond-iface", "bond-peer"}},
+				&vswitchd.Interface{UUID: "bond-iface", Name: "bond-rep", ExternalIDs: map[string]string{"sandbox": state.sandboxId}},
+				&vswitchd.Interface{UUID: "bond-peer", Name: "bond-peer"},
+				&vswitchd.Port{UUID: "other-port", Name: "other-rep", Interfaces: []string{"other-iface"}},
+				&vswitchd.Interface{UUID: "other-iface", Name: "other-rep", ExternalIDs: map[string]string{"sandbox": state.sandboxId}},
+				&vswitchd.Port{UUID: "reused-port", Name: "reused-rep", Interfaces: []string{"reused-iface"}},
+				&vswitchd.Interface{UUID: "reused-iface", Name: "reused-rep", ExternalIDs: map[string]string{"sandbox": "new-sandbox"}},
+			}})
+			Expect(err).NotTo(HaveOccurred(), "the mixed representor fixture should initialize")
+			defer cleanup.Cleanup()
+			ctrl.ovsClient = ovsClient
+			netlinkOpsMock.On("LinkByName", vfRep).Return(vfLink, nil).Once()
+			netlinkOpsMock.On("LinkSetDown", vfLink).Return(nil).Once()
+			ports := []repPortDeletion{
+				{"bond-rep", state.sandboxId, types.DefaultNetworkName},
+				{vfRep, state.sandboxId, types.DefaultNetworkName},
+				{"other-rep", state.sandboxId, types.DefaultNetworkName},
+				{"reused-rep", state.sandboxId, types.DefaultNetworkName},
+			}
+			for range 2 {
+				err = ctrl.deleteRepPorts(context.Background(), ports)
+				Expect(err).To(MatchError(And(ContainSubstring("bond-rep"), ContainSubstring("other-rep"))),
+					"all validation errors should survive both initial cleanup and retry")
+				expectOVSPortAndInterfaceAbsent(ovsClient, vfRep)
+				for _, name := range []string{"bond-rep", "other-rep", "reused-rep"} {
+					_, err = libovsdbops.GetOVSPort(ovsClient, name)
+					Expect(err).NotTo(HaveOccurred(), "port %s should be preserved", name)
+					netlinkOpsMock.AssertNotCalled(GinkgoT(), "LinkByName", name)
+				}
+			}
+			netlinkOpsMock.AssertExpectations(GinkgoT())
 		})
 
 		It("Does not fail if LinkByName failed", func() {

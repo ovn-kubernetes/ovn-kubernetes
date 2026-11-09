@@ -178,18 +178,17 @@ func TestGetStaticFDBPort(t *testing.T) {
 
 func TestGatewayHostOVSInterfaceResolvesSmartNICRepresentor(t *testing.T) {
 	g := gomega.NewWithT(t)
-	fexec := ovntest.NewFakeExec()
-	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "ovs-vsctl --timeout=15 port-to-br pf0vf1",
-		Stderr: "no bridge for pf0vf1",
-		Err:    fmt.Errorf("not an OVS port"),
+	bridgeUUID := "ovsbr1-uuid"
+	repPortUUID := "pf0vf1-rep-port-uuid"
+	ovsClient, ovsCleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
+		OVSData: []libovsdbtest.TestData{
+			&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{bridgeUUID}},
+			&vswitchd.Bridge{UUID: bridgeUUID, Name: "ovsbr1", Ports: []string{repPortUUID}},
+			&vswitchd.Port{UUID: repPortUUID, Name: "pf0vf1_rep"},
+		},
 	})
-	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "ovs-vsctl --timeout=15 port-to-br pf0vf1_rep",
-		Output: "ovsbr1",
-	})
-	g.Expect(util.SetExec(fexec)).To(gomega.Succeed())
-	t.Cleanup(util.ResetRunner)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	t.Cleanup(ovsCleanup.Cleanup)
 
 	fsOps := utilmocks.NewFileSystemOps(t)
 	origFSOps := util.GetFileSystemOps()
@@ -210,17 +209,81 @@ func TestGatewayHostOVSInterfaceResolvesSmartNICRepresentor(t *testing.T) {
 	sriovOps.On("GetVfIndexByPciAddress", "0000:00:00.1").Return(1, nil)
 	sriovOps.On("GetVfRepresentor", "pf0", 1).Return("pf0vf1_rep", nil)
 
-	rep, err := gatewayHostOVSInterface("ovsbr1", "pf0vf1")
+	rep, err := gatewayHostOVSInterface(ovsClient, "ovsbr1", "pf0vf1")
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(rep).To(gomega.Equal("pf0vf1_rep"))
-	g.Expect(fexec.CalledMatchesExpected()).To(gomega.BeTrue(), fexec.ErrorDesc())
+}
+
+func TestGatewayHostOVSInterfaceResolvesOVSPort(t *testing.T) {
+	tests := []struct {
+		name        string
+		bridges     []*vswitchd.Bridge
+		expectedRep string
+		expectedErr string
+	}{
+		{
+			name: "gateway interface belongs to the expected bridge",
+			bridges: []*vswitchd.Bridge{
+				{UUID: "ovsbr1-uuid", Name: "ovsbr1", Ports: []string{"gateway-port-uuid"}},
+			},
+			expectedRep: "eth1",
+		},
+		{
+			name: "gateway interface belongs to another bridge",
+			bridges: []*vswitchd.Bridge{
+				{UUID: "ovsbr2-uuid", Name: "ovsbr2", Ports: []string{"gateway-port-uuid"}},
+			},
+			expectedErr: "gateway interface eth1 belongs to OVS bridge ovsbr2, expected ovsbr1",
+		},
+		{
+			name: "gateway port belongs to multiple bridges",
+			bridges: []*vswitchd.Bridge{
+				{UUID: "ovsbr1-uuid", Name: "ovsbr1", Ports: []string{"gateway-port-uuid"}},
+				{UUID: "ovsbr2-uuid", Name: "ovsbr2", Ports: []string{"gateway-port-uuid"}},
+			},
+			expectedErr: "failed to resolve OVS bridge for gateway interface eth1: OVSDB corruption",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			bridgeUUIDs := make([]string, 0, len(tc.bridges))
+			ovsData := []libovsdbtest.TestData{
+				&vswitchd.Port{UUID: "gateway-port-uuid", Name: "eth1"},
+			}
+			for _, bridge := range tc.bridges {
+				bridgeUUIDs = append(bridgeUUIDs, bridge.UUID)
+				ovsData = append(ovsData, bridge)
+			}
+			ovsData = append(ovsData, &vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: bridgeUUIDs})
+
+			ovsClient, ovsCleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{OVSData: ovsData})
+			if err != nil {
+				t.Fatalf("failed to create OVS test harness: %v", err)
+			}
+			t.Cleanup(ovsCleanup.Cleanup)
+
+			rep, err := gatewayHostOVSInterface(ovsClient, "ovsbr1", "eth1")
+			if tc.expectedErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.expectedErr) {
+					t.Fatalf("expected error containing %q, got %v", tc.expectedErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("gatewayHostOVSInterface failed: %v", err)
+			}
+			if rep != tc.expectedRep {
+				t.Fatalf("expected gateway OVS interface %q, got %q", tc.expectedRep, rep)
+			}
+		})
+	}
 }
 
 // newDPUUnmanagedBridgeHarness prepares the scaffolding shared by the
 // unmanaged bridge configuration tests: a DPU-mode node config restored on
 // cleanup, an OVSDB with one bridge holding the eth1 uplink and one
-// (Port, Interface) pair per representor name, a fake exec that answers the
-// eth1 ofport probe, and a fresh sriovnet mock installed for the test.
+// (Port, Interface) pair per representor name, a fake exec, and a fresh sriovnet mock installed for the test.
 func newDPUUnmanagedBridgeHarness(t *testing.T, bridgeName string, bridgeExternalIDs map[string]string,
 	repNames ...string) (libovsdbclient.Client, *ovntest.FakeExec, *utilmocks.SriovnetOps) {
 	t.Helper()
@@ -237,15 +300,15 @@ func newDPUUnmanagedBridgeHarness(t *testing.T, bridgeName string, bridgeExterna
 	portUUIDs := []string{"eth1-port-uuid"}
 	ovsData := []libovsdbtest.TestData{
 		&vswitchd.Port{UUID: "eth1-port-uuid", Name: "eth1", Interfaces: []string{"eth1-interface-uuid"}},
-		&vswitchd.Interface{UUID: "eth1-interface-uuid", Name: "eth1", Type: "system"},
+		&vswitchd.Interface{UUID: "eth1-interface-uuid", Name: "eth1", Type: "system", Ofport: ptr.To(7)},
 	}
-	for _, repName := range repNames {
+	for i, repName := range repNames {
 		portUUID := repName + "-port-uuid"
 		interfaceUUID := repName + "-interface-uuid"
 		portUUIDs = append(portUUIDs, portUUID)
 		ovsData = append(ovsData,
 			&vswitchd.Port{UUID: portUUID, Name: repName, Interfaces: []string{interfaceUUID}},
-			&vswitchd.Interface{UUID: interfaceUUID, Name: repName, Type: "system"},
+			&vswitchd.Interface{UUID: interfaceUUID, Name: repName, Type: "system", Ofport: ptr.To(8 + i)},
 		)
 	}
 	ovsData = append(ovsData,
@@ -261,19 +324,14 @@ func newDPUUnmanagedBridgeHarness(t *testing.T, bridgeName string, bridgeExterna
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	t.Cleanup(ovsCleanup.Cleanup)
 
-	fexec := ovntest.NewLooseCompareFakeExec()
-	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "ovs-vsctl --timeout=15 get interface eth1 ofport",
-		Output: "7",
-	})
-	g.Expect(util.SetExec(fexec)).To(gomega.Succeed())
-
 	sriovOps := utilmocks.NewSriovnetOps(t)
 	origSriovOps := util.GetSriovnetOps()
 	util.SetSriovnetOpsInst(sriovOps)
 	t.Cleanup(func() {
 		util.SetSriovnetOpsInst(origSriovOps)
 	})
+	fexec := ovntest.NewFakeExec()
+	g.Expect(util.SetExec(fexec)).To(gomega.Succeed())
 	return ovsClient, fexec, sriovOps
 }
 
@@ -307,7 +365,53 @@ func TestNewUnmanagedBridgeConfigurationResolvesDPUHostRepresentor(t *testing.T)
 		"the PF representor must be selected as the gateway representor")
 	g.Expect(bridge.GetStaticFDBPort()).To(gomega.Equal("pfhpf0"),
 		"the static FDB entry must be pinned to the PF representor")
+	g.Expect(bridge.ConfigureBridgePorts()).To(gomega.Succeed())
+	g.Expect(bridge.ofPortPhys).To(gomega.Equal("7"))
+	g.Expect(bridge.ofPortHost).To(gomega.Equal("8"))
 	g.Expect(fexec.CalledMatchesExpected()).To(gomega.BeTrue(), fexec.ErrorDesc())
+}
+
+func TestConfigureBridgeVLANWaitsForVSwitchd(t *testing.T) {
+	g := gomega.NewWithT(t)
+	oldVLAN := config.Gateway.VLANID
+	t.Cleanup(func() { config.Gateway.VLANID = oldVLAN })
+	config.Gateway.VLANID = 42
+	c, cleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{OVSData: []libovsdbtest.TestData{
+		&vswitchd.OpenvSwitch{UUID: "root", Bridges: []string{"bridge"}},
+		&vswitchd.Bridge{UUID: "bridge", Name: "br-ex", Ports: []string{"port"}},
+		&vswitchd.Port{UUID: "port", Name: "br-ex", Interfaces: []string{"iface"}},
+		&vswitchd.Interface{UUID: "iface", Name: "br-ex", Type: "internal"},
+	}})
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	t.Cleanup(cleanup.Cleanup)
+	bridge := &BridgeConfiguration{ovsClient: c, bridgeName: "br-ex"}
+	done := make(chan error, 1)
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		done <- bridge.ConfigureBridgePorts()
+	}()
+	t.Cleanup(func() {
+		stop := libovsdbtest.EmulateVSwitchdConfig(c)
+		defer stop()
+		<-finished
+	})
+	g.Eventually(func() int {
+		ovs, err := ovsops.GetOpenvSwitch(c)
+		g.Expect(err).NotTo(gomega.HaveOccurred(), "read configuration sequence after the VLAN update")
+		return ovs.NextCfg
+	}, time.Second, 10*time.Millisecond).Should(gomega.Equal(1), "the VLAN transaction must request ovs-vswitchd acknowledgement")
+	select {
+	case err := <-done:
+		t.Fatalf("VLAN configuration returned before acknowledgement: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	port, err := ovsops.GetOVSPort(c, "br-ex")
+	g.Expect(err).NotTo(gomega.HaveOccurred(), "read the bridge's host port after the VLAN transaction")
+	g.Expect(port.Tag).To(gomega.Equal(ptr.To(42)), "the VLAN must be committed before ovs-vswitchd acknowledges it")
+	stop := libovsdbtest.EmulateVSwitchdConfig(c)
+	defer stop()
+	g.Eventually(done, time.Second, 10*time.Millisecond).Should(gomega.Receive(gomega.Succeed()), "VLAN configuration must finish after acknowledgement")
 }
 
 // TestNewUnmanagedBridgeConfigurationResolvesDPUHostFunctionRepresentor covers
@@ -464,4 +568,33 @@ func TestNewUnmanagedBridgeConfigurationResolvesDPUHostVFRepresentor(t *testing.
 	g.Expect(bridge.GetStaticFDBPort()).To(gomega.Equal("pf0vf7"),
 		"the static FDB entry must be pinned to the matching VF representor")
 	g.Expect(fexec.CalledMatchesExpected()).To(gomega.BeTrue(), fexec.ErrorDesc())
+}
+
+func TestGatewayWaitsForRepresentorOfport(t *testing.T) {
+	g := gomega.NewWithT(t)
+	c, cleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{OVSData: []libovsdbtest.TestData{
+		&vswitchd.OpenvSwitch{UUID: "root", Bridges: []string{"bridge"}},
+		&vswitchd.Bridge{UUID: "bridge", Name: "br-ex", Ports: []string{"patch", "rep"}},
+		&vswitchd.Port{UUID: "patch", Name: "patch0", Interfaces: []string{"patch-iface"}},
+		&vswitchd.Interface{UUID: "patch-iface", Name: "patch0", Type: "patch", Ofport: ptr.To(3)},
+		&vswitchd.Port{UUID: "rep", Name: "rep0", Interfaces: []string{"rep-iface"}},
+		&vswitchd.Interface{UUID: "rep-iface", Name: "rep0"},
+	}})
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	t.Cleanup(cleanup.Cleanup)
+	bridge := &BridgeConfiguration{ovsClient: c, bridgeName: "br-ex", gwIfaceRep: "rep0",
+		netConfig: map[string]*BridgeUDNConfiguration{"default": {PatchPort: "patch0"}}}
+	g.Expect(bridge.IsGatewayReady()).To(gomega.BeFalse(), "ready patch ports must not hide a pending representor")
+	iface, err := ovsops.GetOVSInterface(c, "rep0")
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	for _, ofport := range []int{-1, 7} {
+		iface.Ofport = ptr.To(ofport)
+		operations, err := c.Where(iface).Update(iface, &iface.Ofport)
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+		_, err = ovsops.TransactAndCheck(c, operations)
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+		g.Expect(bridge.IsGatewayReady()).To(gomega.Equal(ofport > 0))
+	}
+	g.Expect(bridge.ConfigureBridgePorts()).To(gomega.Succeed())
+	g.Expect(bridge.ofPortHost).To(gomega.Equal("7"))
 }
