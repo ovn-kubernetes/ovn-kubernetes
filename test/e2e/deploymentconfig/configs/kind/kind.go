@@ -14,9 +14,11 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig/api"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/kubernetes/test/e2e/framework"
 )
 
 var (
@@ -99,6 +101,27 @@ func (k *kind) PrimaryInterfaceName() string {
 
 func (k *kind) IsConfigurationEnabled(config api.Config) bool {
 	switch config {
+	case api.TrafficClass:
+		client, err := kubernetes.NewForConfig(k.kubeConfig)
+		framework.ExpectNoError(err, "create the client for TrafficClass deployment discovery")
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		ds, err := client.AppsV1().DaemonSets(k.OVNKubernetesNamespace()).Get(ctx, "ovnkube-node", metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return false
+		}
+		framework.ExpectNoError(err, "read ovnkube-node configuration for TrafficClass")
+		for _, container := range ds.Spec.Template.Spec.Containers {
+			if container.Name != "ovnkube-controller" {
+				continue
+			}
+			for _, env := range container.Env {
+				if env.Name == "OVN_TRAFFIC_CLASS_ENABLE" {
+					return env.Value == "true"
+				}
+			}
+		}
+		return false
 	case api.L3UDNMultiSubnetConfig:
 		// Currently enabled by default for Kind cluster. Could use
 		// an ENV variable check instead if we need variability later.

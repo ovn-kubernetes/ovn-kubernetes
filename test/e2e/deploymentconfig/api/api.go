@@ -12,6 +12,8 @@ type Config string
 const (
 	// L3UDNMultiSubnetConfig indicates whether L3 User Defined Network multi-subnet support is enabled
 	L3UDNMultiSubnetConfig Config = "L3UDNMultiSubnet"
+	// TrafficClass indicates whether selective EgressIP is enabled in the deployment.
+	TrafficClass Config = "TrafficClass"
 	// UDNARPNDPFloodDisabled indicates wheter disabling UDN ARP/NDP flood setting is set true
 	UDNARPNDPFloodDisabled Config = "UDNARPNDPFloodDisabled"
 )
