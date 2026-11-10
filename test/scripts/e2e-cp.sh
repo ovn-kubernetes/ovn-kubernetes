@@ -307,8 +307,15 @@ fi
 export KUBE_CONTAINER_RUNTIME=remote
 export KUBE_CONTAINER_RUNTIME_ENDPOINT=unix:///run/containerd/containerd.sock
 export KUBE_CONTAINER_RUNTIME_NAME=containerd
-# Worker nodes in the cluster, passed to the test framework as --num-nodes.
-export NUM_WORKER_NODES=${KIND_NUM_WORKER:-2}
+# Nodes in the cluster, passed to the test framework as --num-nodes. Counted
+# from the cluster itself so a locally created cluster with any worker count
+# needs no extra variable; KIND_NUM_WORKER plus the control-plane node is the
+# fallback when the API is not reachable yet.
+NODE_COUNT=$(kubectl --kubeconfig "${KUBECONFIG}" get nodes --no-headers 2>/dev/null | wc -l)
+if [ "${NODE_COUNT}" -eq 0 ]; then
+  NODE_COUNT=$(( ${KIND_NUM_WORKER:-2} + 1 ))
+fi
+export NODE_COUNT
 
 FOCUS="$*"
 
@@ -341,7 +348,7 @@ if [ "$ENABLE_EVPN" = true ] && [[ "${WHAT}" != "${KV_LIVE_MIGRATION_TESTS}"* ]]
         -- \
         -provider skeleton \
         -kubeconfig "${KUBECONFIG}" \
-        ${NUM_WORKER_NODES:+"--num-nodes=${NUM_WORKER_NODES}"} \
+        ${NODE_COUNT:+"--num-nodes=${NODE_COUNT}"} \
         ${E2E_REPORT_DIR:+"--report-dir=${E2E_REPORT_DIR}"}
 else
   go test -test.timeout "${GO_TEST_TIMEOUT}m" -v . \
@@ -355,7 +362,7 @@ else
           -ginkgo.junit-report="${E2E_REPORT_DIR}/junit_${E2E_REPORT_PREFIX}report.xml" \
           -provider skeleton \
           -kubeconfig "${KUBECONFIG}" \
-          ${NUM_WORKER_NODES:+"--num-nodes=${NUM_WORKER_NODES}"} \
+          ${NODE_COUNT:+"--num-nodes=${NODE_COUNT}"} \
           ${E2E_REPORT_DIR:+"--report-dir=${E2E_REPORT_DIR}"}
 fi
 popd
