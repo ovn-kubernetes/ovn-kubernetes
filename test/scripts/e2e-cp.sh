@@ -115,6 +115,17 @@ if [ "$OVN_NETWORK_QOS_ENABLE" != "true" ]; then
   skip "e2e NetworkQoS validation"
 fi
 
+# Restarting a kind node loses setup applied to it at runtime (e.g. MetalLB
+# client routes, the external FRR default gateway) and, with extra docker
+# networks attached, may change its node IP, breaking subsequent tests. Only
+# run node restarts in such environments when explicitly requested.
+NODE_SHUTDOWN_TESTS="Node Shutdown and Startup"
+if [[ "${WHAT}" != *"${NODE_SHUTDOWN_TESTS}"* ]] && \
+   { [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ] || [ "$KIND_INSTALL_METALLB" == true ] || \
+     [ "$OVN_SECOND_BRIDGE" == true ] || [ "$ENABLE_MULTI_NET" == true ]; }; then
+  skip "$NODE_SHUTDOWN_TESTS"
+fi
+
 # Only run Node IP/MAC address migration tests if they are explicitly requested
 IP_MIGRATION_TESTS="Node IP and MAC address migration"
 if [[ "${WHAT}" != "${IP_MIGRATION_TESTS}"* ]]; then
