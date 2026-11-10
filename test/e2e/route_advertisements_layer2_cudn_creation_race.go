@@ -209,7 +209,7 @@ var _ = ginkgo.Describe("BGP: advertised Layer2 CUDN creation race", feature.Rou
 			return fmt.Errorf("delete BGP recreation test pods: %w", err)
 		})
 
-		ginkgo.By("checking both advertised-subnet OpenFlow rules on every node")
+		ginkgo.By("waiting for the bridge flows, Layer2 topology, and gateway SNAT to converge")
 		bridgeName := deploymentconfig.Get().ExternalBridgeName()
 		localGateway := IsGatewayModeLocal(f.ClientSet)
 		ovnkNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
@@ -224,59 +224,75 @@ var _ = ginkgo.Describe("BGP: advertised Layer2 CUDN creation race", feature.Rou
 			gomega.Expect(ovnkPods.Items).To(gomega.HaveLen(1), "expected one ovnkube-node pod on %s", nodeName)
 			ovnkPod := ovnkPods.Items[0]
 			ovnDBPodsByNode[nodeName] = ovnkPod.Name
+		}
 
-			gomega.Eventually(func() error {
+		networkName := ovntypes.CUDNPrefix + cUDN.Name
+		switchName := ovnutil.GetNetworkScopedNameForNetwork(networkName, ovntypes.OVNLayer2Switch)
+		stotrPortName := ovntypes.SwitchToTransitRouterPrefix + switchName
+		gomega.Eventually(func() []string {
+			var diagnostics []string
+
+			// Inspect every signature in one poll. Do not stop at the first
+			// missing bridge flow: one unfixed attempt may contain the missing
+			// flow, missing topology, and stale SNAT failures together.
+			for _, node := range nodes.Items {
+				nodeName := node.Name
 				flows, err := e2epodoutput.RunHostCmdWithRetries(
-					ovnkPod.Namespace,
-					ovnkPod.Name,
+					ovnkNamespace,
+					ovnDBPodsByNode[nodeName],
 					fmt.Sprintf("ovs-ofctl dump-flows %s", bridgeName),
 					2*time.Second,
 					5*time.Second,
 				)
 				if err != nil {
-					return err
+					diagnostics = append(diagnostics, fmt.Sprintf(
+						"INSPECTION_ERROR bridge-flows node=%s: %v", nodeName, err))
+					continue
 				}
 				for _, subnet := range advertisedSubnets {
 					for _, priority := range []string{"300", "104"} {
 						if !hasAdvertisedRouteFlow(flows, priority, subnet, localGateway) {
-							return fmt.Errorf("node %s is missing priority=%s advertised-route flow for %s on %s; flows:\n%s",
-								nodeName, priority, subnet, bridgeName, flows)
+							diagnostics = append(diagnostics, fmt.Sprintf(
+								"BUG1_MISSING_BRIDGE_FLOW node=%s priority=%s subnet=%s bridge=%s",
+								nodeName, priority, subnet, bridgeName))
 						}
 					}
 				}
-				return nil
-			}, 2*time.Minute, 2*time.Second).Should(gomega.Succeed())
-		}
-
-		ginkgo.By("checking the Layer2 switch-to-transit-router port")
-		networkName := ovntypes.CUDNPrefix + cUDN.Name
-		switchName := ovnutil.GetNetworkScopedNameForNetwork(networkName, ovntypes.OVNLayer2Switch)
-		stotrPortName := ovntypes.SwitchToTransitRouterPrefix + switchName
-		gomega.Eventually(func() error {
-			portName, err := runOVNNBCTL(
-				f,
-				f.ClientSet,
-				"--data=bare",
-				"--no-heading",
-				"--columns=name",
-				"find",
-				"Logical_Switch_Port",
-				"name="+stotrPortName,
-			)
-			if err != nil {
-				return err
 			}
-			if strings.TrimSpace(portName) != stotrPortName {
-				return fmt.Errorf("switch-to-transit-router port %s is missing; ovn-nbctl returned %q", stotrPortName, portName)
-			}
-			return nil
-		}, 2*time.Minute, 2*time.Second).Should(gomega.Succeed())
 
-		ginkgo.By("checking that every gateway router has advertisement-aware SNAT")
-		for _, node := range nodes.Items {
-			nodeName := node.Name
-			routerName := cudnGatewayRouterName(cUDN.Name, nodeName)
-			gomega.Eventually(func() error {
+			// Every KIND node is its own interconnect zone with a separate
+			// northbound database. Check the switch-to-transit-router port in
+			// every zone; querying an arbitrary database can hide a worker-local
+			// first-Add failure when another zone created its copy of the port.
+			for _, node := range nodes.Items {
+				nodeName := node.Name
+				portName, stderr, err := ExecCommandInContainerWithFullOutput(
+					f,
+					ovnkNamespace,
+					ovnDBPodsByNode[nodeName],
+					"nb-ovsdb",
+					"ovn-nbctl",
+					"--data=bare",
+					"--no-heading",
+					"--columns=name",
+					"find",
+					"Logical_Switch_Port",
+					"name="+stotrPortName,
+				)
+				if err != nil {
+					diagnostics = append(diagnostics, fmt.Sprintf(
+						"INSPECTION_ERROR stotr-port node=%s name=%s: %v, stderr=%s",
+						nodeName, stotrPortName, err, stderr))
+				} else if strings.TrimSpace(portName) != stotrPortName {
+					diagnostics = append(diagnostics, fmt.Sprintf(
+						"BUG2_MISSING_STOTR_PORT node=%s name=%s returned=%q",
+						nodeName, stotrPortName, strings.TrimSpace(portName)))
+				}
+			}
+
+			for _, node := range nodes.Items {
+				nodeName := node.Name
+				routerName := cudnGatewayRouterName(cUDN.Name, nodeName)
 				// In interconnect deployments each zone has its own northbound
 				// database. Query the database on this node: an arbitrary zone's
 				// database does not contain this node's gateway router.
@@ -290,17 +306,23 @@ var _ = ginkgo.Describe("BGP: advertised Layer2 CUDN creation race", feature.Rou
 					routerName,
 				)
 				if err != nil {
-					return fmt.Errorf("failed to list NATs for gateway router %s in node %s's OVN database: %w, stderr: %s",
-						routerName, nodeName, err, stderr)
+					diagnostics = append(diagnostics, fmt.Sprintf(
+						"INSPECTION_ERROR gateway-nat router=%s node=%s: %v, stderr=%s",
+						routerName, nodeName, err, stderr))
+					continue
 				}
 				for _, subnet := range advertisedSubnets {
 					if !hasConditionalSNAT(nats, subnet) {
-						return fmt.Errorf("gateway router %s has no conditional SNAT for %s; NATs:\n%s", routerName, subnet, nats)
+						diagnostics = append(diagnostics, fmt.Sprintf(
+							"BUG3_STALE_SNAT router=%s node=%s subnet=%s nats=%q",
+							routerName, nodeName, subnet, strings.TrimSpace(nats)))
 					}
 				}
-				return nil
-			}, 2*time.Minute, 2*time.Second).Should(gomega.Succeed())
-		}
+			}
+
+			return diagnostics
+		}, 2*time.Minute, 2*time.Second).Should(gomega.BeEmpty(),
+			"the advertised Layer2 CUDN dataplane did not converge")
 
 		ginkgo.By("checking that the external KIND FRR router learns every node path")
 		for _, node := range nodes.Items {
