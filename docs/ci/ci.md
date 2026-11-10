@@ -92,9 +92,10 @@ Below is a description of this target:
   - See bottom of this document for an example.
 
 Every lane uploads its Ginkgo reports as an `e2e-reports-*` artifact. The
-`e2e-reports` job reads them with `test/scripts/e2e-report-summary.sh` and
-writes to the job summary which specs no lane executed and which specs passed
-only on retry.
+`e2e-reports` job reads the control-plane JSON reports with
+`test/scripts/e2e-report-summary.sh` and writes to the job summary which
+`test/e2e` specs no lane executed and which passed only on retry. The shard
+lanes' JUnit reports are uploaded but not summarized.
 
 All local tests are run by `make control-plane`. The local tests are controlled in
 [ovn-kubernetes/test/scripts/e2e-cp.sh](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/test/scripts/e2e-cp.sh)
