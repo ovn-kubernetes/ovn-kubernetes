@@ -15,6 +15,7 @@ var (
 	BaselineNetworkPolicy = New("BaselineNetworkPolicy")
 	NetworkSegmentation   = New("NetworkSegmentation")
 	EgressIP              = New("EgressIP")
+	TrafficClass          = New("TrafficClass")
 	EgressService         = New("EgressService")
 	EgressFirewall        = New("EgressFirewall")
 	EgressQos             = New("EgressQos")
