@@ -747,10 +747,9 @@ func cleanupGatewayRoutersForNetworkFromDB(nbClient libovsdbclient.Client,
 	if err != nil {
 		return fmt.Errorf("failed to find gateway routers for network %s: %w", networkName, err)
 	}
-	layer2UseTransitRouter := netInfo.TopologyType() == types.Layer2Topology && config.Layer2UsesTransitRouter
 	for _, lr := range routers {
 		nodeName := netInfo.RemoveNetworkScopeFromName(util.GetWorkerFromGatewayRouter(lr.Name))
-		gw := NewGatewayManagerForCleanup(nbClient, netInfo, clusterRouterName, joinSwitchName, lr.Name, nodeName, layer2UseTransitRouter)
+		gw := NewGatewayManagerForCleanup(nbClient, netInfo, clusterRouterName, joinSwitchName, lr.Name, nodeName)
 		if err := gw.Cleanup(); err != nil {
 			errs = append(errs, fmt.Errorf("failed to cleanup gateway router %s for network %q (node %s): %w", lr.Name, networkName, nodeName, err))
 		}

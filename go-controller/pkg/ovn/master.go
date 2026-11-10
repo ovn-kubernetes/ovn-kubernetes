@@ -20,7 +20,6 @@ import (
 	hotypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
 	houtil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/hybrid-overlay/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
-	nodecontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/node"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/udn"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
@@ -856,7 +855,6 @@ func (oc *DefaultNetworkController) newGatewayManager(nodeName string) *GatewayM
 		oc.nbClient,
 		oc.GetNetInfo(),
 		oc.watchFactory,
-		nodecontroller.NewNodeAnnotationCache(),
 		oc.addressSetManager,
 		oc.gatewayOptions()...,
 	)
