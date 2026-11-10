@@ -34,7 +34,7 @@ OVN_KUBERNETES_DIR ?= .
 KUBECTL_MINOR ?= $(shell awk '/^[[:space:]]*k8s.io\/kubernetes v/ {gsub(/^v/, "", $$2); split($$2, version, "."); print version[1] "." version[2]; exit}' ../../go-controller/go.mod)
 UBUNTU_BASE_IMAGE ?= ubuntu:26.10
 OVN_DEB_VERSION ?= 26.09.0-1
-FEDORA_BASE_IMAGE ?= quay.io/fedora/fedora:44
+FEDORA_BASE_IMAGE ?= quay.io/fedora/fedora:45
 
 ifeq ($(strip $(KUBECTL_MINOR)),)
 $(error failed to derive KUBECTL_MINOR from ../../go-controller/go.mod)
