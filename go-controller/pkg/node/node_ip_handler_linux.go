@@ -589,7 +589,10 @@ func (c *addressManager) sync() {
 
 	if c.useNetlink {
 		var err error
-		addrs, err = util.GetNetLinkOps().AddrList(nil, getSupportedIPFamily())
+		// host-cidrs records usable host addresses, not the cluster IP family.
+		// The netlink watcher accepts both families. Filtering this sync by
+		// cluster family removed the other family and flapped the annotation.
+		addrs, err = util.GetNetLinkOps().AddrList(nil, netlink.FAMILY_ALL)
 		if err != nil {
 			klog.Errorf("Failed to sync node addresses: unable to list all interface addresses: %v", err)
 			return
@@ -695,14 +698,4 @@ func (c *addressManager) updateOVNEncapIPAndReconnect(newIP net.IP) {
 		klog.Errorf("Failed to set node %s annotations: %v", c.nodeName, err)
 		return
 	}
-}
-
-func getSupportedIPFamily() int {
-	var ipFamily int // value of 0 means include both IP v4 and v6 addresses
-	if config.IPv4Mode && !config.IPv6Mode {
-		ipFamily = netlink.FAMILY_V4
-	} else if !config.IPv4Mode && config.IPv6Mode {
-		ipFamily = netlink.FAMILY_V6
-	}
-	return ipFamily
 }
