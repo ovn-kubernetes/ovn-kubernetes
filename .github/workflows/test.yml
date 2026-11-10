@@ -914,9 +914,6 @@ jobs:
           :
         else
           make -C test "${{ matrix.target }}"
-          if [ "${{ matrix.ipfamily }}" != "ipv6" ]; then
-            make -C test conformance
-          fi
         fi
 
         # If target also specified traffic flow tests to run, do so now
@@ -935,6 +932,16 @@ jobs:
       run: |
         export TEST_TIMEOUT=45
         JOB_NAME="${JOB_NAME}-cnc" make -C test control-plane WHAT="ClusterNetworkConnect"
+
+    # The network policy conformance suite takes about 15 minutes. It runs on
+    # the IPv4 and dual-stack shard and control-plane lanes, after their main
+    # suites; its own step keeps its budget independent of how long they took.
+    - name: Run network policy conformance
+      if: (matrix.target == 'shard-conformance' || matrix.target == 'control-plane') && matrix.ipfamily != 'ipv6'
+      timeout-minutes: 30
+      run: |
+        export CONFORMANCE_TEST_TIMEOUT=25
+        make -C test conformance
 
     - name: Export kind logs
       if: always()
