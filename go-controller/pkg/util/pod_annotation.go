@@ -571,14 +571,18 @@ func GetK8sPodDefaultNetworkSelection(pod *corev1.Pod) (*nadapi.NetworkSelection
 
 // GetK8sPodAllNetworkSelections get pod's all network NetworkSelectionElement from k8s.v1.cni.cncf.io/networks annotation
 func GetK8sPodAllNetworkSelections(pod *corev1.Pod) ([]*nadapi.NetworkSelectionElement, error) {
-	networks, err := nadutils.ParsePodNetworkAnnotation(pod)
+	networks, err := getReadOnlyNetworkSelections(pod)
 	if err != nil {
-		if _, ok := err.(*nadapi.NoK8sNetworkError); !ok {
-			return nil, fmt.Errorf("failed to get all NetworkSelectionElements for pod %s/%s: %v", pod.Namespace, pod.Name, err)
-		}
-		networks = []*nadapi.NetworkSelectionElement{}
+		return nil, err
 	}
-	return networks, nil
+	if networks == nil {
+		return nil, nil
+	}
+	copies := make([]*nadapi.NetworkSelectionElement, len(networks))
+	for i, network := range networks {
+		copies[i] = copyNetworkSelection(network)
+	}
+	return copies, nil
 }
 
 // GetK8sPodNetworkSelection returns the pod's NetworkSelectionElement for the
