@@ -615,8 +615,10 @@ jobs:
   e2e:
     name: e2e
     runs-on: ubuntu-24.04
-    # 30 mins for kind, 180 mins for control-plane tests, 10 minutes for all other steps
-    timeout-minutes: 220
+    # 30 minutes for the kind setup step, 190 for the test step, 55 for the
+    # ClusterNetworkConnect step on the network segmentation lanes, 20 for the
+    # remaining steps including log export
+    timeout-minutes: 295
     strategy:
       fail-fast: false
       matrix:
