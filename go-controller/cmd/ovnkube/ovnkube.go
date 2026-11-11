@@ -291,9 +291,13 @@ func startOvnKube(ctx *cli.Context, cancel context.CancelFunc) error {
 	}
 
 	ovnKubeStartWg := &sync.WaitGroup{}
+	var metricsServerDone <-chan struct{}
 	defer func() {
 		// make sure everything stops and wait
 		cancel()
+		if metricsServerDone != nil {
+			<-metricsServerDone
+		}
 		ovnKubeStartWg.Wait()
 	}()
 
@@ -322,16 +326,17 @@ func startOvnKube(ctx *cli.Context, cancel context.CancelFunc) error {
 
 	if config.Metrics.BindAddress != "" && !combineMetricsEndpoints(runMode) {
 		opts := metrics.MetricServerOptions{
-			BindAddress: config.Metrics.BindAddress,
-			CertFile:    config.Metrics.NodeServerCert,
-			KeyFile:     config.Metrics.NodeServerPrivKey,
-			EnablePprof: config.Metrics.EnablePprof,
+			BindAddress:        config.Metrics.BindAddress,
+			CollectionInterval: time.Duration(config.Metrics.CollectionInterval) * time.Second,
+			CertFile:           config.Metrics.NodeServerCert,
+			KeyFile:            config.Metrics.NodeServerPrivKey,
+			EnablePprof:        config.Metrics.EnablePprof,
 			// Use default registry so existing metric registrations keep working.
 			Registerer:      prometheus.DefaultRegisterer,
 			ApplyTLSOptions: config.TLS.ApplyOptions,
 		}
 
-		metrics.StartMetricsServer(opts, ctx.Done(), ovnKubeStartWg)
+		_, metricsServerDone = metrics.StartMetricsServer(opts, ctx.Done())
 	}
 
 	// In IC mode, only cluster manager runs leader election. Node and
@@ -467,6 +472,7 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 	// there might be dependencies across components when starting so run them
 	// in separate threads
 	wg := &sync.WaitGroup{}
+	var metricsServerDone <-chan struct{}
 	var managerErr, controllerErr, nodeErr, ovsCLIErr error
 
 	if runMode.clusterManager {
@@ -648,7 +654,7 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 				opts.EnablePprof = config.Metrics.EnablePprof
 			}
 
-			metrics.StartMetricsServer(opts, ctx.Done(), wg)
+			_, metricsServerDone = metrics.StartMetricsServer(opts, ctx.Done())
 		}
 	}
 
@@ -658,6 +664,9 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 	cancel()
 	watchFactory.Shutdown()
 	wg.Wait()
+	if metricsServerDone != nil {
+		<-metricsServerDone
+	}
 	klog.Infof("Stopped ovnkube")
 
 	err = utilerrors.Join(managerErr, controllerErr, nodeErr, ovsCLIErr)
