@@ -141,6 +141,21 @@ reviews:
         - Complex flows or multi-component interactions without diagrams:
           suggest adding one.
         - New doc page added without corresponding mkdocs.yml nav update: flag it.
+          Exception: pages under docs/blog/ are managed by the Material
+          blog plugin — do not require nav: or section card-grid entries
+          for blog posts.
+        - New doc page added without a matching card in the applicable
+          section index.md landing-grid: flag it. Section landing pages
+          use card grids; each card needs a title, short description,
+          and a link whose accessible name is the card title (not
+          generic "Read more"). Exception: pages under docs/blog/ do
+          not need section cards.
+        - Nested pages under a sub-directory of the section do not need
+          their own section card; they should be linked from the parent
+          or sub-section overview instead.
+        - New doc pages must keep mkdocs.yml nav and the section card
+          grid in sync; CI runs hack/verify-docs-nav-sync.sh. Blog
+          posts under docs/blog/ are excluded from that check.
         - Flag broken or dead links, wrong anchors, outdated URLs.
         - If a code entity (CRD, field, flag, binary) was renamed or removed,
           flag stale references in docs.
