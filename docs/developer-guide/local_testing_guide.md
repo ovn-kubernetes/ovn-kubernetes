@@ -294,6 +294,21 @@ tests, one could run:
 grep -R ginkgo.It test/
 ~~~
 
+Some tests belong to opt-in suites and need the suite name before the test
+description in `WHAT`. OVS CPU affinity tests stop kubelet and change OVS
+process CPU masks, so they are selected only by the serial CI lane. To run the
+whole suite locally:
+
+```
+make -C test control-plane WHAT="OVS CPU affinity pinning"
+```
+
+To run one OVS CPU affinity spec, include both its suite and spec descriptions:
+
+```
+make -C test control-plane WHAT="OVS CPU affinity pinning retains OVS daemon affinity when Pod Resources queries fail"
+```
+
 For example:
 ~~~
 # grep -R ginkgo.It . | head -1
