@@ -386,6 +386,8 @@ func interfaceForEXGW(ovsClient libovsdbclient.Client, intfName string) (string,
 
 	bridge := util.GetBridgeName(intfName)
 	if _, err := ovsops.GetBridge(ovsClient, bridge); err == nil {
+		// The bridge can outlive its uplink port; returning intfName asks the
+		// caller to recreate or rebind that port during bridge configuration.
 		if actualBridge, _, err := util.RunOVSVsctl("port-to-br", intfName); err != nil || strings.TrimSpace(actualBridge) != bridge {
 			return intfName, nil
 		}

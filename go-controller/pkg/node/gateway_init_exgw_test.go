@@ -36,6 +36,7 @@ var _ = Describe("Gateway Init EXGW", func() {
 			ovsCleanup.Cleanup()
 			ovsCleanup = nil
 		}
+		util.ResetRunner()
 	})
 
 	Context("interfaceForEXGW", func() {
