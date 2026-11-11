@@ -333,7 +333,9 @@ data:
     help: "https://kind.sigs.k8s.io/docs/user/local-registry/"
 EOF
 
-    # Configure containerd hosts.toml for the local registry (containerd 2.x)
+    # Configure containerd hosts.toml for the local registry (containerd 2.x).
+    # containerd only reads this directory when registry.config_path is set,
+    # which kind.yaml.j2 configures via containerdConfigPatches.
     local registry_dir="/etc/containerd/certs.d/localhost:${KIND_LOCAL_REGISTRY_PORT}"
     for node in $(kind get nodes --name "${KIND_CLUSTER_NAME}"); do
         $OCI_BIN exec "${node}" mkdir -p "${registry_dir}"
