@@ -49,7 +49,7 @@ var _ = ginkgo.Describe("nodeGatewayConfig join address contract", func() {
 			}
 
 			oc := getFakeController("default-network-controller")
-			gwConfig, err := oc.nodeGatewayConfig(node)
+			gwConfig, err := oc.nodeGatewayConfig(node, false)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			gomega.Expect(gwConfig.gwRouterJoinCIDRs).To(gomega.HaveLen(1))
 			gomega.Expect(gwConfig.gwRouterJoinCIDRs[0].IP.String()).To(gomega.Equal("100.64.0.2"))
@@ -84,7 +84,7 @@ var _ = ginkgo.Describe("nodeGatewayConfig join address contract", func() {
 			}
 
 			oc := getFakeController("default-network-controller")
-			_, err = oc.nodeGatewayConfig(node)
+			_, err = oc.nodeGatewayConfig(node, false)
 			gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring(
 				fmt.Sprintf("failed to get join switch port IP address for node %s", node.Name))))
 			gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring(
