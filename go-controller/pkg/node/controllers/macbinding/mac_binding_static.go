@@ -131,13 +131,17 @@ func (c *MACBindingController) deleteStaticMacBindingsForFollower(follower strin
 // the lack of externalIDs column in the StaticMACBinding table.
 func (c *MACBindingController) reapStaticMacBindings(port string, owned map[string]string) error {
 	start := time.Now()
-	// fetch all static MAC bindings on the port via the logical_port secondary
-	// index, then keep only those the controller neither owns nor left to the
-	// gateway.
+	// fetch all static MAC bindings on the port with a cache predicate, then
+	// keep only those the controller neither owns nor left to the gateway. A
+	// port scoped model lookup is not available: Static_MAC_Binding is indexed
+	// by (logical_port, ip), so it must not be emulated with a broader client
+	// index (see NewNBClientWithEndpoint).
 	smbs := []*nbdb.StaticMACBinding{}
 	ctx, cancel := context.WithTimeout(context.Background(), config.Default.OVSDBTxnTimeout)
 	defer cancel()
-	if err := c.nbClient.Where(&nbdb.StaticMACBinding{LogicalPort: port}).List(ctx, &smbs); err != nil {
+	if err := c.nbClient.WhereCache(func(smb *nbdb.StaticMACBinding) bool {
+		return smb.LogicalPort == port
+	}).List(ctx, &smbs); err != nil {
 		return fmt.Errorf("failed to list static MAC bindings on port %s: %w", port, err)
 	}
 	stale := smbs[:0]
