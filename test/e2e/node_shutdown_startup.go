@@ -23,7 +23,10 @@ import (
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 )
 
-var _ = ginkgo.Describe("Node Shutdown and Startup", ginkgo.Serial, func() {
+// Disruptive: stopping a node leaves it, or its external connectivity, broken
+// for the rest of the run on some cluster layouts, so only the serial lane
+// runs this container (see test/scripts/e2e-cp.sh).
+var _ = ginkgo.Describe("Node Shutdown and Startup", ginkgo.Serial, ginkgo.Label("Disruptive"), func() {
 	const (
 		nodeShutdownTimeout = 5 * time.Minute
 		nodeStartupTimeout  = 10 * time.Minute

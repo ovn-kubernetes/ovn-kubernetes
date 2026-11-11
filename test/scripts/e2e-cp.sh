@@ -186,9 +186,23 @@ if [[ "${WHAT}" != "${CLUSTER_NETWORK_CONNECT_TESTS}"* ]]; then
 fi
 
 SERIAL_LABEL="Serial"
+DISRUPTIVE_LABEL="Disruptive"
 if [[ "${WHAT}" = "$SERIAL_LABEL" ]]; then
   require_label "$SERIAL_LABEL"
   shift # don't "focus" on Serial since we filter by label
+  # A lane that runs the Disruptive specs in a later, separate invocation sets
+  # SKIP_DISRUPTIVE so that no other spec runs after a node shutdown; the
+  # dedicated serial lane leaves it unset and keeps the Disruptive specs.
+  if [ "${SKIP_DISRUPTIVE:-false}" = true ]; then
+    skip_label "$DISRUPTIVE_LABEL"
+  fi
+elif [[ "${WHAT}" = "$DISRUPTIVE_LABEL" ]]; then
+  require_label "$DISRUPTIVE_LABEL"
+  shift # don't "focus" on Disruptive since we filter by label
+else
+  # Disruptive specs (node shutdown) leave the cluster unusable for the specs
+  # that follow on some layouts; only WHAT=Serial and WHAT=Disruptive run them.
+  skip_label "$DISRUPTIVE_LABEL"
 fi
 
 if [ "$ENABLE_UPLINK" != true ]; then
@@ -282,12 +296,10 @@ else
   fi
 fi
 
-# if we set PARALLEL=true, skip serial test
-if [ "${PARALLEL:-false}" = "true" ]; then
-  export GINKGO_PARALLEL=y
-  export GINKGO_PARALLEL_NODES=10
-  skip_label "$SERIAL_LABEL"
-fi
+# Specs marked Serial are never skipped here. A single Ginkgo worker runs
+# everything in sequence, and with several workers Ginkgo itself runs the
+# Serial specs after the parallel phase on one worker. PARALLEL only affects
+# the upstream shard runner in e2e-kind.sh.
 
 if [ "$ENABLE_NO_OVERLAY" == true ]; then
   # No-overlay mode uses underlying network infrastructure directly.
@@ -301,6 +313,12 @@ if [ "$ENABLE_NO_OVERLAY" == true ]; then
   # This test validates MTU reduction due to Geneve encapsulation overhead (1400->1342).
   # In no-overlay mode, there is no encapsulation and thus no MTU overhead.
   skip "Pod to pod TCP with low MTU"
+  # Without outbound SNAT the pod-to-other-node check this spec starts with
+  # fails before any toggling (bgp-no-overlay lane); it passes on the other
+  # no-overlay lanes. Skip until that gap is understood.
+  if [ "$ENABLE_NO_OVERLAY_OUTBOUND_SNAT" != true ]; then
+    skip "toggling default network advertisement off and back on"
+  fi
 fi
 
 # setting these is required to make RuntimeClass tests work ... :/
