@@ -151,6 +151,36 @@ func TestParseSubnetMapValueRejectsEmptySubnetEntry(t *testing.T) {
 	}
 }
 
+func TestSubnetComparisonAcrossMalformedAttempts(t *testing.T) {
+	for _, malformed := range []string{`{invalid`, `{"default":["invalid-cidr"]}`} {
+		t.Run(malformed, func(t *testing.T) {
+			cache := NewNodeAnnotationCache()
+			oldNode := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+				Name: "node-a", Annotations: map[string]string{
+					types.NodeSubnetsAnnotation: `{"default":["10.1.0.0/24"]}`,
+				},
+			}}
+			for i, raw := range []string{malformed, malformed + " ", `{"default":["10.2.0.0/24"]}`, `{"default":["10.2.0.0/24"]}`} {
+				newNode := oldNode.DeepCopy()
+				newNode.Annotations[types.NodeSubnetsAnnotation] = raw
+				oldState := cache.UpdateNodeAnnotationState(oldNode, false)
+				newState := cache.UpdateNodeAnnotationState(newNode, true)
+				wantChanged := i == 2
+				if got := NodeSubnetAnnotationChangedForNetworkWithState(oldState, newState, types.DefaultNetworkName); got != wantChanged {
+					t.Errorf("attempt %d: parsed comparison = %t, want %t", i, got, wantChanged)
+				}
+				// The raw comparator validates JSON only; invalid CIDRs remain
+				// valid JSON and are compared as before.
+				wantChanged = wantChanged || (i == 0 && malformed != `{invalid`)
+				if got := util.NodeSubnetAnnotationChangedForNetwork(oldNode, newNode, types.DefaultNetworkName); got != wantChanged {
+					t.Errorf("attempt %d: raw comparison = %t, want %t", i, got, wantChanged)
+				}
+				oldNode = newNode
+			}
+		})
+	}
+}
+
 func TestGatewayAnnotationChangedForNetworkWithState(t *testing.T) {
 	cache := NewNodeAnnotationCache()
 

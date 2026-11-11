@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -31,6 +32,7 @@ import (
 
 	hotypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	nodecontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/node"
 	egressfirewallfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1/apis/clientset/versioned/fake"
 	egressipfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/clientset/versioned/fake"
 	egressqosfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1/apis/clientset/versioned/fake"
@@ -469,6 +471,19 @@ func startDefaultNodeController(oc *DefaultNetworkController) {
 			oc.nodeReconciler.Stop()
 		}
 	})
+}
+
+type hybridTransitionFailureClient struct {
+	libovsdbclient.Client
+}
+
+func (c *hybridTransitionFailureClient) Transact(ctx context.Context, ops ...ovsdb.Operation) ([]ovsdb.OperationResult, error) {
+	for _, op := range ops {
+		if op.Op == ovsdb.OperationDelete && op.Table == nbdb.LogicalRouterPortTable {
+			return nil, fmt.Errorf("injected router port deletion failure")
+		}
+	}
+	return c.Client.Transact(ctx, ops...)
 }
 
 func expectRecordedClusterSNATInsertWithExemption(recordingClient *libovsdbtest.RecordingClient, logicalIP, exemptedExtIP string) {
@@ -1263,6 +1278,142 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	})
 
+	ginkgo.DescribeTable("retries hybrid overlay sync until allocation and annotations succeed",
+		func(failure string) {
+			config.HybridOverlay.Enabled = true
+			// Exercise failures after pod bootstrap, which cannot be recovered by syncPods.
+			atomic.StoreUint32(&oc.allInitialPodsProcessed, 1)
+			node, err := kubeFakeClient.CoreV1().Nodes().Get(context.Background(), node1.Name, metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			hoIP := util.GetNodeHybridOverlayIfAddr(ovntest.MustParseIPNet(node1.NodeSubnet))
+			node.Annotations[hotypes.HybridOverlayDRIP] = hoIP.IP.String()
+			node, err = kubeFakeClient.CoreV1().Nodes().Update(context.Background(), node, metav1.UpdateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			_, err = oc.addNode(node)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			failAnnotation := true
+			if failure == "allocation" {
+				gomega.Expect(oc.lsManager.AllocateIPs(node.Name, "conflicting-owner", []*net.IPNet{hoIP})).To(gomega.Succeed())
+			} else {
+				kubeFakeClient.PrependReactor("patch", "nodes", func(action clienttesting.Action) (bool, runtime.Object, error) {
+					if failAnnotation && strings.Contains(string(action.(clienttesting.PatchAction).GetPatch()), failure) {
+						return true, nil, fmt.Errorf("injected annotation failure for %s", failure)
+					}
+					return false, nil, nil
+				})
+			}
+
+			ginkgo.By("preserving the failed stage even though the logical switch port is configured")
+			err = oc.addUpdateLocalNodeEvent(context.Background(), node, &nodeSyncs{syncHo: true})
+			gomega.Expect(err).To(gomega.HaveOccurred())
+			if failure == "allocation" {
+				gomega.Expect(err.Error()).To(gomega.ContainSubstring("cannot allocate hybrid overlay interface addresses"))
+			} else {
+				gomega.Expect(err.Error()).To(gomega.ContainSubstring("injected annotation failure"))
+			}
+			port, err := libovsdbops.GetLogicalSwitchPort(nbClient, &nbdb.LogicalSwitchPort{Name: util.GetHybridOverlayPortName(node.Name)})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(port.Addresses).To(gomega.Equal([]string{util.IPAddrToHWAddr(hoIP.IP).String()}))
+			_, failed := oc.hybridOverlayFailed.Load(node.Name)
+			gomega.Expect(failed).To(gomega.BeTrue())
+
+			ginkgo.By("retrying with identical previous-attempt inputs after the failure is resolved")
+			if failure == "allocation" {
+				gomega.Expect(oc.lsManager.OwnsIPs(node.Name, "hybrid-overlay", []*net.IPNet{hoIP})).To(gomega.BeFalse())
+				gomega.Expect(oc.lsManager.ReleaseIPs(node.Name, "conflicting-owner", []*net.IPNet{hoIP})).To(gomega.Succeed())
+			}
+			failAnnotation = false
+			state := nodecontroller.NewNodeAnnotationCache().UpdateNodeAnnotationState(node, true)
+			gomega.Expect(oc.ReconcileNode(context.Background(), node, node, state, state)).To(gomega.Succeed())
+			gomega.Expect(oc.lsManager.OwnsIPs(node.Name, "hybrid-overlay", []*net.IPNet{hoIP})).To(gomega.BeTrue())
+			_, failed = oc.hybridOverlayFailed.Load(node.Name)
+			gomega.Expect(failed).To(gomega.BeFalse())
+			updatedNode, err := kubeFakeClient.CoreV1().Nodes().Get(context.Background(), node.Name, metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(updatedNode.Annotations).To(gomega.HaveKeyWithValue(hotypes.HybridOverlayDRIP, hoIP.IP.String()))
+			gomega.Expect(updatedNode.Annotations).To(gomega.HaveKeyWithValue(hotypes.HybridOverlayDRMAC, util.IPAddrToHWAddr(hoIP.IP).String()))
+		},
+		ginkgo.Entry("IP allocation failure", "allocation"),
+		ginkgo.Entry("DRIP annotation failure", hotypes.HybridOverlayDRIP),
+		ginkgo.Entry("DRMAC annotation failure", hotypes.HybridOverlayDRMAC),
+	)
+
+	ginkgo.DescribeTable("restores OVN resources after a failed hybrid overlay transition is reverted", func(partialTeardown bool) {
+		app.Action = func(ctx *cli.Context) error {
+			_, err := config.InitConfig(ctx, nil, nil)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			config.HybridOverlay.Enabled = true
+			config.Kubernetes.NoHostSubnetNodes, err = metav1.LabelSelectorAsSelector(&metav1.LabelSelector{
+				MatchLabels: nodeNoHostSubnetAnnotation(),
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			atomic.StoreUint32(&oc.allInitialPodsProcessed, 1)
+			hoIP := util.GetNodeHybridOverlayIfAddr(ovntest.MustParseIPNet(node1.NodeSubnet))
+			gomega.Expect(nodeAnnotator.Set(hotypes.HybridOverlayDRIP, hoIP.IP.String())).To(gomega.Succeed())
+			gomega.Expect(nodeAnnotator.Run()).To(gomega.Succeed())
+			node, err := kubeFakeClient.CoreV1().Nodes().Get(context.Background(), node1.Name, metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(oc.SyncNodes([]*corev1.Node{node})).To(gomega.Succeed())
+			gomega.Expect(oc.ReconcileNode(context.Background(), nil, node, nil, nil)).To(gomega.Succeed())
+			node, err = kubeFakeClient.CoreV1().Nodes().Get(context.Background(), node.Name, metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			checkOVNResources := func() {
+				_, err := libovsdbops.GetLogicalSwitch(nbClient, &nbdb.LogicalSwitch{Name: node.Name})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				_, err = libovsdbops.GetLogicalRouter(nbClient, &nbdb.LogicalRouter{Name: node1.GWRouter})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				_, err = libovsdbops.GetLogicalRouterPort(nbClient, &nbdb.LogicalRouterPort{Name: types.RouterToSwitchPrefix + node.Name})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				for _, portName := range []string{types.K8sPrefix + node.Name, util.GetHybridOverlayPortName(node.Name)} {
+					_, err = libovsdbops.GetLogicalSwitchPort(nbClient, &nbdb.LogicalSwitchPort{Name: portName})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				}
+				gomega.Expect(oc.hasLocalNodeSwitchState(node)).To(gomega.BeTrue())
+				gomega.Expect(oc.lsManager.OwnsIPs(node.Name, "hybrid-overlay", []*net.IPNet{hoIP})).To(gomega.BeTrue())
+			}
+			checkOVNResources()
+
+			ginkgo.By("failing the transition after OVN resources have been deleted")
+			hoNode := node.DeepCopy()
+			hoNode.Labels = nodeNoHostSubnetAnnotation()
+			// An invalid HO subnet makes setup fail after a complete teardown.
+			hoNode.Annotations[hotypes.HybridOverlayNodeSubnet] = "invalid-cidr"
+			if partialTeardown {
+				oc.nbClient = &hybridTransitionFailureClient{Client: nbClient}
+			}
+			err = oc.ReconcileNode(context.Background(), node, hoNode, nil, nil)
+			gomega.Expect(err).To(gomega.HaveOccurred())
+			if partialTeardown {
+				gomega.Expect(err.Error()).To(gomega.ContainSubstring("injected router port deletion failure"))
+			} else {
+				gomega.Expect(err.Error()).To(gomega.ContainSubstring("invalid-cidr"))
+			}
+			oc.nbClient = nbClient
+			_, err = libovsdbops.GetLogicalSwitch(nbClient, &nbdb.LogicalSwitch{Name: node.Name})
+			gomega.Expect(err).To(gomega.MatchError(libovsdbclient.ErrNotFound))
+			// Partial teardown leaves the OVN entry; complete teardown replaces it with an HO entry.
+			gomega.Expect(oc.lsManager.IsNonHostSubnetSwitch(node.Name)).To(gomega.Equal(!partialTeardown))
+
+			ginkgo.By("restoring resources even though retained inputs match the reverted node")
+			state := nodecontroller.NewNodeAnnotationCache().UpdateNodeAnnotationState(node, true)
+			gomega.Expect(oc.ReconcileNode(context.Background(), node, node, state, state)).To(gomega.Succeed())
+			checkOVNResources()
+			for _, failures := range []*sync.Map{&oc.addNodeFailed, &oc.nodeClusterRouterPortFailed,
+				&oc.mgmtPortFailed, &oc.gatewaysFailed, &oc.hybridOverlayFailed, &oc.syncZoneICFailed} {
+				_, failed := failures.Load(node.Name)
+				gomega.Expect(failed).To(gomega.BeFalse())
+			}
+			return nil
+		}
+		gomega.Expect(app.Run([]string{app.Name, "-cluster-subnets=" + clusterCIDR,
+			"--init-gateways", "--gateway-local", "--nodeport"})).To(gomega.Succeed())
+	},
+		ginkgo.Entry("complete OVN teardown followed by HO setup failure", false),
+		ginkgo.Entry("partial OVN teardown", true),
+	)
+
 	ginkgo.It("use node retry for an unmanaged hybrid overlay node node", func() {
 		app.Action = func(ctx *cli.Context) error {
 			_, err := config.InitConfig(ctx, nil, nil)
@@ -1468,6 +1619,71 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 			"--nodeport",
 		})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	})
+
+	ginkgo.It("resyncs gateway changes and reversions while bootstrap interconnect fails", func() {
+		app.Action = func(ctx *cli.Context) error {
+			_, err := config.InitConfig(ctx, nil, nil)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Interconnect runs after gateway reconciliation. Keep it failing
+			// while the gateway successfully applies changing node inputs.
+			nodeAnnotator.Delete(util.OVNNodeEncapIPs)
+			gomega.Expect(nodeAnnotator.Run()).To(gomega.Succeed())
+			// Bootstrap reads from the informer, which may still contain the
+			// valid annotation immediately after the API update.
+			gomega.Eventually(func() (map[string]string, error) {
+				node, err := f.GetNode(node1.Name)
+				if err != nil {
+					return nil, err
+				}
+				return node.Annotations, nil
+			}, 10*time.Second).ShouldNot(gomega.HaveKey(util.OVNNodeEncapIPs))
+			startDefaultNodeController(oc)
+			gomega.Eventually(func() bool {
+				_, failed := oc.syncZoneICFailed.Load(node1.Name)
+				return failed
+			}, 10*time.Second).Should(gomega.BeTrue())
+
+			const originalNextHop = "172.16.16.1"
+			const changedNextHop = "172.16.16.111"
+			for _, nextHop := range []string{originalNextHop, changedNextHop, originalNextHop} {
+				node1.GatewayRouterNextHop = nextHop
+				gomega.Expect(util.SetL3GatewayConfig(nodeAnnotator,
+					node1.gatewayConfig(config.GatewayModeShared, uint(vlanID)))).To(gomega.Succeed())
+				gomega.Expect(nodeAnnotator.Run()).To(gomega.Succeed())
+				gomega.Eventually(func() (sets.Set[string], error) {
+					routes, err := libovsdbops.FindLogicalRouterStaticRoutesWithPredicate(nbClient,
+						func(r *nbdb.LogicalRouterStaticRoute) bool {
+							return r.Nexthop == originalNextHop || r.Nexthop == changedNextHop
+						})
+					if err != nil {
+						return nil, err
+					}
+					nextHops := sets.New[string]()
+					for _, route := range routes {
+						nextHops.Insert(route.Nexthop)
+					}
+					return nextHops, nil
+				}, 10*time.Second).Should(gomega.Equal(sets.New(nextHop)))
+				_, failed := oc.syncZoneICFailed.Load(node1.Name)
+				gomega.Expect(failed).To(gomega.BeTrue())
+			}
+
+			// The outstanding component must still complete once its inputs
+			// are repaired, without another gateway annotation change.
+			gomega.Expect(nodeAnnotator.Set(util.OVNNodeEncapIPs, []string{node1.NodeIP})).To(gomega.Succeed())
+			gomega.Expect(nodeAnnotator.Set(util.OvnTransitSwitchPortAddr,
+				map[string]string{"ipv4": "100.88.0.2/16"})).To(gomega.Succeed())
+			gomega.Expect(nodeAnnotator.Run()).To(gomega.Succeed())
+			gomega.Eventually(func() bool {
+				_, failed := oc.syncZoneICFailed.Load(node1.Name)
+				return failed
+			}).Should(gomega.BeFalse())
+			return nil
+		}
+		gomega.Expect(app.Run([]string{app.Name, "-cluster-subnets=" + clusterCIDR,
+			"--init-gateways", "--nodeport"})).To(gomega.Succeed())
 	})
 
 	ginkgo.It("retries gateway sync after NBDB outage on node update", func() {
