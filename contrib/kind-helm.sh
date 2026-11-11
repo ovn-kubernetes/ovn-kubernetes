@@ -805,6 +805,11 @@ if [ "$KIND_CREATE" == true ]; then
   if [ "$ENABLE_COREDUMPS" == true ]; then
     setup_coredumps
   fi
+  # the kubeconfig must already point at the control-plane container's IP before
+  # connect_local_registry and coredns_patch call kubectl below.
+  if [ "$RUN_IN_CONTAINER" == true ]; then
+    run_script_in_container
+  fi
   if [[ "${KIND_LOCAL_REGISTRY}" == true ]]; then
     connect_local_registry
   fi
