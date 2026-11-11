@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -735,7 +736,7 @@ fi
 			return vmim
 		}
 
-		checkLiveMigrationSucceeded = func(vmName string, migrationMode kubevirtv1.MigrationMode) {
+		checkLiveMigrationSucceeded = func(vmName, sourceNode string, migrationMode kubevirtv1.MigrationMode) {
 			GinkgoHelper()
 			By("checking the VM live-migrated correctly")
 			vmi := &kubevirtv1.VirtualMachineInstance{
@@ -746,8 +747,6 @@ fi
 			}
 			err := crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)
 			Expect(err).NotTo(HaveOccurred(), "should success retrieving vmi")
-			currentNode := vmi.Status.NodeName
-
 			Eventually(func() *kubevirtv1.VirtualMachineInstanceMigrationState {
 				err := crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)
 				Expect(err).NotTo(HaveOccurred())
@@ -757,7 +756,7 @@ fi
 				err := crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)
 				Expect(err).NotTo(HaveOccurred())
 				return vmi.Status.MigrationState.TargetNode
-			}).WithPolling(time.Second).WithTimeout(10*time.Minute).ShouldNot(Equal(currentNode), "should refresh MigrationState")
+			}).WithPolling(time.Second).WithTimeout(10*time.Minute).ShouldNot(Equal(sourceNode), "should refresh MigrationState")
 			Eventually(func() bool {
 				err := crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)
 				Expect(err).NotTo(HaveOccurred())
@@ -789,8 +788,10 @@ fi
 		}
 
 		liveMigrateSucceed = func(vmi *kubevirtv1.VirtualMachineInstance) {
+			Expect(crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
+			sourceNode := vmi.Status.NodeName
 			liveMigrateVirtualMachine(vmi.Name)
-			checkLiveMigrationSucceeded(vmi.Name, kubevirtv1.MigrationPreCopy)
+			checkLiveMigrationSucceeded(vmi.Name, sourceNode, kubevirtv1.MigrationPreCopy)
 		}
 
 		checkLiveMigrationFailed = func(migration *kubevirtv1.VirtualMachineInstanceMigration) {
@@ -1052,8 +1053,16 @@ config:
 			return vms
 		}
 		liveMigrateAndCheck = func(vmName string, migrationMode kubevirtv1.MigrationMode, externalContainer infraapi.ExternalContainer, serverAddresses []string, serverPort int32, step string) {
+			vmi := &kubevirtv1.VirtualMachineInstance{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: namespace,
+					Name:      vmName,
+				},
+			}
+			Expect(crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
+			sourceNode := vmi.Status.NodeName
 			liveMigrateVirtualMachine(vmName)
-			checkLiveMigrationSucceeded(vmName, migrationMode)
+			checkLiveMigrationSucceeded(vmName, sourceNode, migrationMode)
 			checkConnectivityAndNetworkPolicies(vmName, externalContainer, serverAddresses, serverPort, step)
 		}
 
@@ -2404,6 +2413,211 @@ chpasswd: { expire: False }
 			Entry("after succeeded live migration", liveMigrateSucceed),
 			Entry("after failed live migration", liveMigrateFailed),
 		)
+
+		// An ovn-northd recompute while a migration target logical switch port
+		// is disabled removes the port from the _MC_flood/_MC_flood_l2
+		// multicast groups, and enabling the port must add it back
+		// (https://issues.redhat.com/browse/FDP-4022). Make sure the
+		// membership is properly set in this case.
+		It("should keep a live-migrated VM port in the OVN multicast flood groups when ovn-northd recomputes during migration", func(ctx SpecContext) {
+			ovnNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+			execInOVNContainer := func(ctx context.Context, ovnkubeNodePod, containerName string, cmd ...string) (string, error) {
+				ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+				defer cancel()
+				stdout, stderr, err := e2epod.ExecWithOptionsContext(ctx, fr, e2epod.ExecOptions{
+					Command:       cmd,
+					Namespace:     ovnNamespace,
+					PodName:       ovnkubeNodePod,
+					ContainerName: containerName,
+					CaptureStdout: true,
+					CaptureStderr: true,
+				})
+				output := strings.TrimSpace(stdout)
+				if err != nil {
+					return output, fmt.Errorf("failed to run %q in %s/%s: %w, stderr: %q", strings.Join(cmd, " "), ovnkubeNodePod, containerName, err, stderr)
+				}
+				return output, nil
+			}
+			type portBinding struct {
+				uuid     string
+				datapath string
+			}
+			findPortBinding := func(ovnkubeNodePod, lspName string) (*portBinding, error) {
+				output, err := execInOVNContainer(
+					ctx,
+					ovnkubeNodePod,
+					"sb-ovsdb",
+					"ovn-sbctl",
+					"--bare",
+					"--columns=_uuid,datapath",
+					"find",
+					"Port_Binding",
+					"logical_port="+lspName,
+				)
+				if err != nil {
+					return nil, err
+				}
+				if output == "" {
+					return nil, fmt.Errorf("port binding for logical switch port %q not found in SB", lspName)
+				}
+				lines := strings.Split(output, "\n")
+				if len(lines) != 2 {
+					return nil, fmt.Errorf("unexpected port binding output for %q: %q", lspName, output)
+				}
+				return &portBinding{uuid: lines[0], datapath: lines[1]}, nil
+			}
+			portBindingInFloodGroups := func(ovnkubeNodePod, lspName string) error {
+				pb, err := findPortBinding(ovnkubeNodePod, lspName)
+				if err != nil {
+					return err
+				}
+				for _, group := range []string{"_MC_flood", "_MC_flood_l2"} {
+					ports, err := execInOVNContainer(
+						ctx,
+						ovnkubeNodePod,
+						"sb-ovsdb",
+						"ovn-sbctl",
+						"--bare",
+						"--columns=ports",
+						"find",
+						"Multicast_Group",
+						"name="+group,
+						"datapath="+pb.datapath,
+					)
+					if err != nil {
+						return err
+					}
+					if !slices.Contains(strings.Fields(ports), pb.uuid) {
+						return fmt.Errorf("port binding %s (%q) is not a member of multicast group %s on datapath %s; group ports: %q", pb.uuid, lspName, group, pb.datapath, ports)
+					}
+				}
+				return nil
+			}
+
+			By("setting up the localnet underlay")
+			cudn, networkName := kubevirt.GenerateCUDN(namespace, "net1", udnv1.NetworkTopologyLocalnet, udnv1.NetworkRoleSecondary, udnv1.DualStackCIDRs{})
+			createCUDN(ctx, cudn)
+
+			Expect(providerCtx.SetupUnderlay(fr, infraapi.Underlay{LogicalNetworkName: networkName})).To(Succeed())
+
+			var (
+				labels       map[string]string
+				annotations  map[string]string
+				nodeSelector map[string]string
+				networkData  = ""
+			)
+			vm := fedoraWithTestToolingVM(
+				labels,
+				annotations,
+				nodeSelector,
+				kubevirtv1.NetworkSource{
+					Multus: &kubevirtv1.MultusNetwork{
+						NetworkName: cudn.Name,
+					},
+				},
+				userData,
+				networkData,
+			)
+			createVirtualMachine(vm)
+			vmi := &kubevirtv1.VirtualMachineInstance{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: namespace,
+					Name:      vm.Name,
+				},
+			}
+			waitVirtualMachineInstanceReadiness(vmi)
+			Expect(crClient.Get(ctx, crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
+
+			nadName := fmt.Sprintf("%s/%s", namespace, cudn.Name)
+			lspName := func(podName string) string {
+				return util.GetUserDefinedNetworkLogicalPortName(namespace, podName, nadName)
+			}
+
+			By("sanity checking the flood group membership assertion on the VM port before migration")
+			virtLauncherPods, err := fr.ClientSet.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+				LabelSelector: fmt.Sprintf("%s=%s", kubevirtv1.CreatedByLabel, vmi.UID),
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(virtLauncherPods.Items).To(HaveLen(1), "should find exactly one virt-launcher pod for the running VM")
+			sourcePod := virtLauncherPods.Items[0]
+			var sourceOvnPod string
+			Eventually(func(g Gomega) {
+				sourceOvnPod = ovnkubeNodePodOn(g, ctx, fr, sourcePod.Spec.NodeName)
+			}).WithTimeout(time.Minute).WithPolling(time.Second).Should(Succeed())
+			Eventually(func() error {
+				return portBindingInFloodGroups(sourceOvnPod, lspName(sourcePod.Name))
+			}).WithTimeout(time.Minute).WithPolling(2*time.Second).Should(Succeed(), "VM port on the source node should be a member of the multicast flood groups before migration")
+
+			By("running live migration for virtual machine instance")
+			liveMigrateVirtualMachine(vm.Name)
+
+			By("waiting for the migration target pod and node to be reported in VMI status")
+			Eventually(func(g Gomega) {
+				g.Expect(crClient.Get(ctx, crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
+				g.Expect(vmi.Status.MigrationState).NotTo(BeNil(), "migration state should be reported")
+				g.Expect(vmi.Status.MigrationState.TargetNode).NotTo(BeEmpty(), "migration target node should be reported")
+				g.Expect(vmi.Status.MigrationState.TargetPod).NotTo(BeEmpty(), "migration target pod should be reported")
+			}).WithTimeout(2 * time.Minute).WithPolling(500 * time.Millisecond).Should(Succeed())
+			targetNode := vmi.Status.MigrationState.TargetNode
+			targetPod := vmi.Status.MigrationState.TargetPod
+			e2eframework.Logf("migration target: node %s, pod %s", targetNode, targetPod)
+
+			var destinationNodeOVNPod string
+			Eventually(func(g Gomega) {
+				destinationNodeOVNPod = ovnkubeNodePodOn(g, ctx, fr, targetNode)
+			}).WithTimeout(time.Minute).WithPolling(time.Second).Should(Succeed())
+			targetLSP := lspName(targetPod)
+
+			By("forcing one ovn-northd recompute while the migration target LSP is disabled")
+			recomputePidFile := fmt.Sprintf("/tmp/ovn-northd-recompute-%s.pid", vmi.UID)
+			recomputeStopFile := recomputePidFile + ".stop"
+			recomputeResultFile := recomputePidFile + ".result"
+			DeferCleanup(func() {
+				// Keep the stop marker so a delayed exec cannot start polling after cleanup.
+				_, err := execInOVNContainer(context.Background(), destinationNodeOVNPod, "ovn-northd", "sh", "-c",
+					fmt.Sprintf(`touch "%[2]s" && { [ ! -f "%[1]s" ] || { pid="$(cat "%[1]s")"; rm -f "%[1]s"; kill "$pid" 2>/dev/null || ! kill -0 "$pid" 2>/dev/null; }; }`, recomputePidFile, recomputeStopFile))
+				Expect(err).NotTo(HaveOccurred(), "should stop the background ovn-northd recompute loop")
+			})
+			// Force a single recompute once the LSP reports disabled: recomputing
+			// continuously would keep northd's force-recompute flag set when the
+			// LSP is enabled again, and the enable transition would then be
+			// handled by a full recompute, which computes the flood groups
+			// correctly and masks the regression. The loop records whether the
+			// recompute request itself succeeded.
+			recomputeScript := fmt.Sprintf(`
+nohup sh -c '
+fired=0
+while [ ! -f "%[3]s" ]; do
+  v="$(ovn-nbctl --if-exists get logical-switch-port "%[1]s" enabled 2>/dev/null)"
+  if [ "$v" = "false" ] && [ "$fired" = "0" ]; then
+    if ovn-appctl -t ovn-northd inc-engine/recompute; then
+      echo ok > "%[4]s"
+    else
+      echo failed > "%[4]s"
+    fi
+    fired=1
+  elif [ "$v" = "true" ]; then
+    break
+  fi
+  sleep 0.1
+done
+' >/dev/null 2>&1 &
+echo $! > "%[2]s"`, targetLSP, recomputePidFile, recomputeStopFile, recomputeResultFile)
+			_, err = execInOVNContainer(ctx, destinationNodeOVNPod, "ovn-northd", "sh", "-c", recomputeScript)
+			Expect(err).NotTo(HaveOccurred(), "should start the background ovn-northd recompute loop")
+
+			checkLiveMigrationSucceeded(vm.Name, sourcePod.Spec.NodeName, kubevirtv1.MigrationPreCopy)
+
+			By("verifying the forced ovn-northd recompute request succeeded")
+			result, err := execInOVNContainer(ctx, destinationNodeOVNPod, "ovn-northd", "cat", recomputeResultFile)
+			Expect(err).NotTo(HaveOccurred(), "the background loop should have recorded the recompute request result")
+			Expect(strings.TrimSpace(result)).To(Equal("ok"), "the forced ovn-northd recompute request should have succeeded")
+
+			By("asserting the migrated VM port binding is a member of the multicast flood groups")
+			Eventually(func() error {
+				return portBindingInFloodGroups(destinationNodeOVNPod, targetLSP)
+			}).WithTimeout(90*time.Second).WithPolling(2*time.Second).Should(Succeed(), "live-migrated VM port should be a member of the multicast flood groups after ovn-northd recomputed during the migration")
+		})
 	})
 
 	DescribeTable("user-defined network port-security disabled, TCP connections with spoofed MAC should survive successful and failed live migration", feature.MACSecurity,
@@ -2854,3 +3068,15 @@ ethernets:
 		})
 	})
 })
+
+// ovnkubeNodePodOn returns the name of the ovnkube-node pod running on nodeName.
+func ovnkubeNodePodOn(g Gomega, ctx context.Context, fr *e2eframework.Framework, nodeName string) string {
+	GinkgoHelper()
+	pods, err := fr.ClientSet.CoreV1().Pods(deploymentconfig.Get().OVNKubernetesNamespace()).List(ctx, metav1.ListOptions{
+		LabelSelector: "app=ovnkube-node",
+		FieldSelector: fmt.Sprintf("spec.nodeName=%s", nodeName),
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(pods.Items).NotTo(BeEmpty(), "should find ovnkube-node pod on node %s", nodeName)
+	return pods.Items[0].Name
+}
