@@ -27,6 +27,7 @@ import (
 	apitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	udnclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/csrapprover"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	ovnutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/allocators"
@@ -48,6 +49,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/kubectl/pkg/util/podutils"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
@@ -3692,8 +3695,17 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 		if !ipFamilySet.Has(utilnet.IPv4) {
 			e2eskipper.Skipf("IPv6 VTEPs are not supported")
 		}
+		// Every single API request gets its own deadline, so a stalled
+		// apiserver fails the step instead of holding the spec, or its
+		// cleanup, until the suite timeout. Pod creation keeps ctx: it waits
+		// for the pods to run under the framework's own pod start timeout.
 		ctx := context.Background()
-		nodes, err := e2enode.GetReadySchedulableNodes(ctx, f.ClientSet)
+		apiRequest := func() (context.Context, context.CancelFunc) {
+			return context.WithTimeout(ctx, 30*time.Second)
+		}
+		listCtx, cancelList := apiRequest()
+		nodes, err := e2enode.GetReadySchedulableNodes(listCtx, f.ClientSet)
+		cancelList()
 		framework.ExpectNoError(err, "listing nodes for VTEP withdrawal test")
 		if len(nodes.Items) < 2 {
 			e2eskipper.Skipf("VTEP withdrawal test requires two schedulable nodes")
@@ -3718,7 +3730,9 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 		prefixes := make([]string, 2)
 		gomega.Eventually(func() error {
 			for i, node := range nodes.Items[:2] {
-				current, err := f.ClientSet.CoreV1().Nodes().Get(ctx, node.Name, metav1.GetOptions{})
+				getCtx, cancelGet := apiRequest()
+				current, err := f.ClientSet.CoreV1().Nodes().Get(getCtx, node.Name, metav1.GetOptions{})
+				cancelGet()
 				if err != nil {
 					return fmt.Errorf("reading node %s for VTEP prefixes: %w", node.Name, err)
 				}
@@ -3740,9 +3754,11 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 		gomega.Expect(prefixes[0]).NotTo(gomega.Equal(prefixes[1]), "test nodes must have distinct VTEP addresses")
 		checkRoutes := func(targetPresent bool) error {
 			for i, prefix := range prefixes {
+				// The exec helper merges stderr into its result and vtysh warns
+				// on stderr about its missing vtysh.conf, so keep only stdout.
 				output, err := infraprovider.Get().ExecExternalContainerCommand(
 					infraapi.ExternalContainer{Name: routerContainerName},
-					[]string{"vtysh", "-c", "show bgp ipv4 unicast " + prefix + " json"})
+					[]string{"sh", "-c", "vtysh -c 'show bgp ipv4 unicast " + prefix + " json' 2>/dev/null"})
 				if err != nil {
 					return fmt.Errorf("querying external FRR for VTEP prefix %s: %w", prefix, err)
 				}
@@ -3762,6 +3778,25 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 		}
 		ginkgo.By("observing both nodes' VTEP host routes on external FRR")
 		gomega.Eventually(func() error { return checkRoutes(true) }, timeout, polling).Should(gomega.Succeed(), "waiting for both VTEP routes in external FRR")
+		// With ovnkube-identity deployed, the node admission webhook only lets a
+		// node's own ovnkube-node identity change its VTEP annotation, so patch
+		// as that identity. Without it there is no webhook and no RBAC for that
+		// identity, so the test client patches directly.
+		nodeClient := f.ClientSet
+		webhookCtx, cancelWebhook := apiRequest()
+		_, err = f.ClientSet.AdmissionregistrationV1().ValidatingWebhookConfigurations().Get(webhookCtx, "ovn-kubernetes-admission-webhook-node", metav1.GetOptions{})
+		cancelWebhook()
+		if err == nil {
+			nodeConfig := rest.CopyConfig(f.ClientConfig())
+			nodeConfig.Impersonate = rest.ImpersonationConfig{
+				UserName: csrapprover.NamePrefix + ":" + nodes.Items[0].Name,
+				Groups:   []string{"system:ovn-nodes", "system:authenticated"},
+			}
+			nodeClient, err = kubernetes.NewForConfig(nodeConfig)
+			framework.ExpectNoError(err, "creating the node identity client")
+		} else if !apierrors.IsNotFound(err) {
+			framework.ExpectNoError(err, "reading the OVN node admission webhook configuration")
+		}
 		patchAnnotation := func(value string) error {
 			patch, err := json.Marshal(map[string]interface{}{"metadata": map[string]interface{}{
 				"annotations": map[string]string{ovnutil.OVNNodeVTEPs: value},
@@ -3769,7 +3804,9 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 			if err != nil {
 				return fmt.Errorf("encoding VTEP annotation patch: %w", err)
 			}
-			_, err = f.ClientSet.CoreV1().Nodes().Patch(ctx, nodes.Items[0].Name, k8stypes.MergePatchType, patch, metav1.PatchOptions{}, "status")
+			patchCtx, cancelPatch := apiRequest()
+			defer cancelPatch()
+			_, err = nodeClient.CoreV1().Nodes().Patch(patchCtx, nodes.Items[0].Name, k8stypes.MergePatchType, patch, metav1.PatchOptions{}, "status")
 			if err != nil {
 				return fmt.Errorf("patching node %s VTEP annotation: %w", nodes.Items[0].Name, err)
 			}
@@ -3781,7 +3818,9 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 		ginkgo.By("applying malformed JSON so node-side repair cannot race withdrawal")
 		framework.ExpectNoError(patchAnnotation("not-json"), "injecting a malformed VTEP annotation")
 		gomega.Eventually(func() error {
-			ra, err := raClient.K8sV1().RouteAdvertisements().Get(ctx, testNetworkName, metav1.GetOptions{})
+			getCtx, cancelGet := apiRequest()
+			ra, err := raClient.K8sV1().RouteAdvertisements().Get(getCtx, testNetworkName, metav1.GetOptions{})
+			cancelGet()
 			if err != nil {
 				return fmt.Errorf("reading RouteAdvertisements %s after annotation update: %w", testNetworkName, err)
 			}
