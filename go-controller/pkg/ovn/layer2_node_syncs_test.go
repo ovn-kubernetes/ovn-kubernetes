@@ -8,6 +8,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
@@ -19,19 +20,32 @@ func TestLayer2LocalNodeSyncs(t *gotesting.T) {
 	const node = "worker1"
 	all := nodeSyncs{syncMgmtPort: true, syncGw: true, syncReroute: true, syncClusterRouterPort: true}
 	for _, tc := range []struct {
-		name          string
-		add           bool
-		advertised    bool
-		gatewayMarked bool
-		want          nodeSyncs
+		name       string
+		add        bool
+		advertised bool
+		// syncedAdvertised is the advertisement state applied by the last
+		// successful gateway synchronization. Nil means it has never synced.
+		syncedAdvertised *bool
+		gatewayMarked    bool
+		want             nodeSyncs
 	}{
 		{name: "an add syncs everything", add: true, want: all},
 		{name: "an add syncs everything whatever is marked", add: true, gatewayMarked: true, want: all},
-		{name: "an update with nothing changed syncs nothing"},
-		{name: "an update with the gateway marked syncs it", gatewayMarked: true, want: nodeSyncs{syncGw: true}},
+		{name: "an update with nothing changed syncs nothing", syncedAdvertised: ptr.To(false)},
+		{name: "an update with the gateway marked syncs it", syncedAdvertised: ptr.To(false), gatewayMarked: true,
+			want: nodeSyncs{syncGw: true}},
+		{name: "an update syncs the gateway once the network is advertised", advertised: true, syncedAdvertised: ptr.To(false),
+			want: nodeSyncs{syncGw: true}},
+		{name: "an update syncs the gateway once the network is no longer advertised", syncedAdvertised: ptr.To(true),
+			want: nodeSyncs{syncGw: true}},
+		{name: "an update leaves a gateway synced as advertised alone", advertised: true, syncedAdvertised: ptr.To(true)},
+		{name: "an update syncs a gateway that has not been synced", want: nodeSyncs{syncGw: true}},
 	} {
 		t.Run(tc.name, func(t *gotesting.T) {
 			oc := newLayer2NodeSyncsTestController(t, node, tc.advertised)
+			if tc.syncedAdvertised != nil {
+				oc.gatewaySyncedAdvertised.Store(node, *tc.syncedAdvertised)
+			}
 			if tc.gatewayMarked {
 				oc.gatewaysFailed.Store(node, true)
 			}

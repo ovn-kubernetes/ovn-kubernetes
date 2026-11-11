@@ -41,7 +41,7 @@ import (
 // primary CUDN five seconds later. The unfixed code can then leave a node with:
 //   - no priority=300/104 advertised-subnet flows on the external bridge;
 //   - no switch-to-transit-router logical port; or
-//   - an unconditional gateway-router SNAT for the advertised subnet.
+//   - an unconditional gateway- or transit-router SNAT for the advertised subnet.
 //
 // In addition to checking those three signatures directly, the test sends
 // traffic from the upstream KIND external BGP test server, through the FRR
@@ -209,7 +209,7 @@ var _ = ginkgo.Describe("BGP: advertised Layer2 CUDN creation race", feature.Rou
 			return fmt.Errorf("delete BGP recreation test pods: %w", err)
 		})
 
-		ginkgo.By("waiting for the bridge flows, Layer2 topology, and gateway SNAT to converge")
+		ginkgo.By("waiting for the bridge flows, Layer2 topology, and router SNATs to converge")
 		bridgeName := deploymentconfig.Get().ExternalBridgeName()
 		localGateway := IsGatewayModeLocal(f.ClientSet)
 		ovnkNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
@@ -229,6 +229,7 @@ var _ = ginkgo.Describe("BGP: advertised Layer2 CUDN creation race", feature.Rou
 		networkName := ovntypes.CUDNPrefix + cUDN.Name
 		switchName := ovnutil.GetNetworkScopedNameForNetwork(networkName, ovntypes.OVNLayer2Switch)
 		stotrPortName := ovntypes.SwitchToTransitRouterPrefix + switchName
+		transitRouterName := ovnutil.GetNetworkScopedNameForNetwork(networkName, ovntypes.TransitRouter)
 		gomega.Eventually(func() []string {
 			var diagnostics []string
 
@@ -316,6 +317,33 @@ var _ = ginkgo.Describe("BGP: advertised Layer2 CUDN creation race", feature.Rou
 						diagnostics = append(diagnostics, fmt.Sprintf(
 							"BUG3_STALE_SNAT router=%s node=%s subnet=%s nats=%q",
 							routerName, nodeName, subnet, strings.TrimSpace(nats)))
+					}
+				}
+
+				// Gateway synchronization also writes a per-node subnet SNAT to
+				// this zone's transit router. A healthy local gateway router can
+				// therefore hide stale transit-router state unless both routers
+				// are checked separately.
+				nats, stderr, err = ExecCommandInContainerWithFullOutput(
+					f,
+					ovnkNamespace,
+					ovnDBPodsByNode[nodeName],
+					"nb-ovsdb",
+					"ovn-nbctl",
+					"lr-nat-list",
+					transitRouterName,
+				)
+				if err != nil {
+					diagnostics = append(diagnostics, fmt.Sprintf(
+						"INSPECTION_ERROR transit-router-nat router=%s node=%s: %v, stderr=%s",
+						transitRouterName, nodeName, err, stderr))
+					continue
+				}
+				for _, subnet := range advertisedSubnets {
+					if !hasConditionalSNAT(nats, subnet) {
+						diagnostics = append(diagnostics, fmt.Sprintf(
+							"BUG3_STALE_TRANSIT_ROUTER_SNAT router=%s node=%s subnet=%s nats=%q",
+							transitRouterName, nodeName, subnet, strings.TrimSpace(nats)))
 					}
 				}
 			}
