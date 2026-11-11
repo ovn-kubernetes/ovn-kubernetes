@@ -106,7 +106,12 @@ jobs:
 
       - name: Run traffic flow tests
         working-directory: dpu-simulator
-        run: ./bin/dpu-sim tft run --check --config config-kind-ovnk-offload.yaml
+        env:
+          TFT_KUBECONFIG: ${{ github.workspace }}/dpu-simulator/kubeconfig/dpu-sim-host.kubeconfig
+        run: |
+          ./bin/dpu-sim tft run --check \
+            --config config-kind-ovnk-offload.yaml \
+            --tft-config ci/tft-config/tft-overlay.yaml
 
       - name: Export kind logs on failure
         if: failure()
@@ -220,7 +225,12 @@ jobs:
 
       - name: Run traffic flow tests
         working-directory: dpu-simulator
-        run: ./bin/dpu-sim tft run --check --config "${DPU_SIM_CONFIG}"
+        env:
+          TFT_KUBECONFIG: ${{ github.workspace }}/dpu-simulator/kubeconfig/dpu-sim-host.kubeconfig
+        run: |
+          ./bin/dpu-sim tft run --check \
+            --config "${DPU_SIM_CONFIG}" \
+            --tft-config ci/tft-config/tft-no-overlay.yaml
 
       - name: Run Uplink DPU e2e tests
         working-directory: ovn-kubernetes
