@@ -32,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
@@ -2048,7 +2049,8 @@ func (c *Controller) updateNADs(ctx context.Context, ra string, nads []*nadtypes
 
 		raSet := sets.New(ras...)
 		nadName := nad.Namespace + "/" + nad.Name
-		if selected.Has(nadName) {
+		selectedNAD := selected.Has(nadName)
+		if selectedNAD {
 			raSet.Insert(ra)
 			selected.Delete(nadName)
 		} else {
@@ -2059,22 +2061,63 @@ func (c *Controller) updateNADs(ctx context.Context, ra string, nads []*nadtypes
 			continue
 		}
 
-		nadRAjson, err := json.Marshal(raSet.UnsortedList())
-		if err != nil {
-			return hadUpdates, err
-		}
+		// The annotation holds the list of every RouteAdvertisements selecting
+		// this NAD, so each writer computes it from its previous value. A plain
+		// merge patch has no concurrency control and two RouteAdvertisements
+		// updating one NAD would lose one of the two entries, which matters
+		// because consumers scope their reconciliation on this annotation and
+		// would silently skip the network whose entry was dropped. Re-read the
+		// authoritative copy, recompute against it, and make the write
+		// conditional on it not having changed.
+		//
+		// The decision above uses the lister so the common case where nothing
+		// changes costs no extra request.
+		updated := false
+		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			current, err := c.nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nad.Namespace).
+				Get(ctx, nad.Name, metav1.GetOptions{})
+			if err != nil {
+				return err
+			}
 
-		err = k.SetAnnotationsOnNAD(
-			ctx,
-			nad.Namespace,
-			nad.Name,
-			map[string]string{
-				types.OvnRouteAdvertisementsKey: string(nadRAjson),
-			},
-			fieldManager,
-		)
+			var currentRAs []string
+			if current.Annotations[types.OvnRouteAdvertisementsKey] != "" {
+				if err := json.Unmarshal([]byte(current.Annotations[types.OvnRouteAdvertisementsKey]), &currentRAs); err != nil {
+					return err
+				}
+			}
+			currentSet := sets.New(currentRAs...)
+			if selectedNAD {
+				currentSet.Insert(ra)
+			} else {
+				currentSet.Delete(ra)
+			}
+			if len(currentRAs) == currentSet.Len() {
+				// another writer already recorded the same thing
+				return nil
+			}
+
+			nadRAjson, err := json.Marshal(currentSet.UnsortedList())
+			if err != nil {
+				return err
+			}
+			updated = true
+			return k.SetAnnotationsOnNAD(
+				ctx,
+				current.Namespace,
+				current.Name,
+				current.ResourceVersion,
+				map[string]string{
+					types.OvnRouteAdvertisementsKey: string(nadRAjson),
+				},
+				fieldManager,
+			)
+		})
 		if err != nil {
 			return hadUpdates, fmt.Errorf("failed to annotate NAD %q: %w", nad.Name, err)
+		}
+		if !updated {
+			continue
 		}
 
 		hadUpdates = true
