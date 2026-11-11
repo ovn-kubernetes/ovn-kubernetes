@@ -63,6 +63,46 @@ func (c *blockingVSwitchdClient) Get(ctx context.Context, model libovsdbmodel.Mo
 	return c.Client.Get(ctx, model)
 }
 
+func TestDeletePortWaitRetryAfterCommit(t *testing.T) {
+	c, cleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{OVSData: []libovsdbtest.TestData{
+		&vswitchd.OpenvSwitch{UUID: "root", Bridges: []string{"bridge"}},
+		&vswitchd.Bridge{UUID: "bridge", Name: "br-int", Ports: []string{"port"}},
+		&vswitchd.Port{UUID: "port", Name: "rep0", Interfaces: []string{"iface"}},
+		&vswitchd.Interface{UUID: "iface", Name: "rep0"},
+	}})
+	require.NoError(t, err)
+	t.Cleanup(cleanup.Cleanup)
+	for attempt := 0; attempt < 2; attempt++ {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		blocked := &blockingVSwitchdClient{Client: c, phase: "wait", entered: make(chan struct{}), release: make(chan struct{})}
+		done := make(chan error, 1)
+		go func() { done <- DeletePortWithInterfacesAndWaitForVSwitchd(ctx, blocked, "br-int", "rep0") }()
+		select {
+		case <-blocked.entered:
+		case err := <-done:
+			cancel()
+			t.Fatalf("attempt %d returned without waiting: %v", attempt, err)
+		case <-time.After(time.Second):
+			cancel()
+			t.Fatal("deletion did not reach the daemon wait")
+		}
+		_, err := GetOVSPort(c, "rep0")
+		require.ErrorIs(t, err, libovsdbclient.ErrNotFound, "deletion should already be committed")
+		cancel()
+		require.ErrorIs(t, <-done, context.Canceled)
+	}
+	ovs, err := GetOpenvSwitch(c)
+	require.NoError(t, err)
+	require.Equal(t, 1, ovs.NextCfg, "retry must not issue another mutation")
+	ovs.CurCfg = ovs.NextCfg
+	operations, err := c.Where(ovs).Update(ovs, &ovs.CurCfg)
+	require.NoError(t, err)
+	_, err = TransactAndCheck(c, operations)
+	require.NoError(t, err)
+	require.NoError(t, DeletePortWithInterfacesAndWaitForVSwitchd(context.Background(), c, "br-int", "rep0"))
+}
+
 func TestTransactAndCheckAndWaitForVSwitchdCancellation(t *testing.T) {
 	for _, phase := range []string{"lookup", "transaction", "wait"} {
 		t.Run(phase, func(t *testing.T) {
