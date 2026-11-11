@@ -115,6 +115,17 @@ if [ "$OVN_NETWORK_QOS_ENABLE" != "true" ]; then
   skip "e2e NetworkQoS validation"
 fi
 
+# Restarting a kind node loses setup applied to it at runtime (e.g. MetalLB
+# client routes, the external FRR default gateway) and, with extra docker
+# networks attached, may change its node IP, breaking subsequent tests. Only
+# run node restarts in such environments when explicitly requested.
+NODE_SHUTDOWN_TESTS="Node Shutdown and Startup"
+if [[ "${WHAT}" != *"${NODE_SHUTDOWN_TESTS}"* ]] && \
+   { [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ] || [ "$KIND_INSTALL_METALLB" == true ] || \
+     [ "$OVN_SECOND_BRIDGE" == true ] || [ "$ENABLE_MULTI_NET" == true ]; }; then
+  skip "$NODE_SHUTDOWN_TESTS"
+fi
+
 # Only run Node IP/MAC address migration tests if they are explicitly requested
 IP_MIGRATION_TESTS="Node IP and MAC address migration"
 if [[ "${WHAT}" != "${IP_MIGRATION_TESTS}"* ]]; then
@@ -183,12 +194,6 @@ fi
 CLUSTER_NETWORK_CONNECT_TESTS="ClusterNetworkConnect"
 if [[ "${WHAT}" != "${CLUSTER_NETWORK_CONNECT_TESTS}"* ]]; then
   skip $CLUSTER_NETWORK_CONNECT_TESTS
-fi
-
-SERIAL_LABEL="Serial"
-if [[ "${WHAT}" = "$SERIAL_LABEL" ]]; then
-  require_label "$SERIAL_LABEL"
-  shift # don't "focus" on Serial since we filter by label
 fi
 
 if [ "$ENABLE_UPLINK" != true ]; then
@@ -282,13 +287,6 @@ else
   fi
 fi
 
-# if we set PARALLEL=true, skip serial test
-if [ "${PARALLEL:-false}" = "true" ]; then
-  export GINKGO_PARALLEL=y
-  export GINKGO_PARALLEL_NODES=10
-  skip_label "$SERIAL_LABEL"
-fi
-
 if [ "$ENABLE_NO_OVERLAY" == true ]; then
   # No-overlay mode uses underlying network infrastructure directly.
   # Overlay-dependent features are not supported.
@@ -301,6 +299,9 @@ if [ "$ENABLE_NO_OVERLAY" == true ]; then
   # This test validates MTU reduction due to Geneve encapsulation overhead (1400->1342).
   # In no-overlay mode, there is no encapsulation and thus no MTU overhead.
   skip "Pod to pod TCP with low MTU"
+  # Pod egress depends on the default network being advertised in no-overlay
+  # mode, so withdrawing the advertisement breaks connectivity by design.
+  skip "toggling default network advertisement off and back on"
 fi
 
 # setting these is required to make RuntimeClass tests work ... :/
@@ -318,6 +319,8 @@ GO_TEST_TIMEOUT=$((TEST_TIMEOUT + 5))
 
 pushd e2e
 
+# Note: tests run in a single ginkgo process (serially), except for the EVPN
+# path below which uses ginkgo -procs; ginkgo runs Serial specs in isolation there.
 go mod download
 
 if [ "$ENABLE_EVPN" = true ] && [[ "${WHAT}" != "${KV_LIVE_MIGRATION_TESTS}"* ]]; then
