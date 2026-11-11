@@ -5,16 +5,17 @@ package evpn
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"net/netip"
 	"reflect"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
+	"golang.org/x/time/rate"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -52,6 +53,14 @@ type nodeAddressManager interface {
 
 const (
 	ovsBridgeInt = "br-int"
+
+	// OVS internal links appear asynchronously after their ports are created.
+	// Keep retrying until they exist, with a short cap so setup resumes promptly.
+	vtepReconcileBackoffBase = 100 * time.Millisecond
+	vtepReconcileBackoffMax  = 5 * time.Second
+	// Preserve the default queue's shared throttling for external NAD events.
+	vtepReconcileQPS   = 10
+	vtepReconcileBurst = 100
 
 	// reconcileNodeAddressChange is a synthetic key enqueued into the VTEP
 	// controller workqueue when node addresses change. It triggers
@@ -132,7 +141,11 @@ func NewController(nodeName string, wf factory.NodeWatchFactory, kube kube.Inter
 
 	vtepInformer := wf.VTEPInformer()
 	c.vtepController = controller.NewController("evpn-node-vtep-controller", &controller.ControllerConfig[vtepv1.VTEP]{
-		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
+		RateLimiter: workqueue.NewTypedMaxOfRateLimiter(
+			workqueue.NewTypedItemExponentialFailureRateLimiter[string](vtepReconcileBackoffBase, vtepReconcileBackoffMax),
+			&workqueue.TypedBucketRateLimiter[string]{Limiter: rate.NewLimiter(vtepReconcileQPS, vtepReconcileBurst)},
+		),
+		MaxAttempts:    controller.InfiniteAttempts,
 		Reconcile:      c.reconcile,
 		ObjNeedsUpdate: c.vtepNeedsUpdate,
 		Threadiness:    1,
@@ -376,12 +389,6 @@ func (c *Controller) reconcile(_ context.Context, key string) error {
 	}
 
 	if err := c.reconcileOVSPorts(vtep.Name, GetEVPNBridgeName(vtep.Name), networks); err != nil {
-		var linkNotFound netlink.LinkNotFoundError
-		if errors.As(err, &linkNotFound) {
-			klog.V(4).Infof("VTEP %s OVS port not yet available (%v), will retry", vtep.Name, err)
-			c.vtepController.ReconcileRateLimited(vtep.Name)
-			return nil
-		}
 		return fmt.Errorf("failed to reconcile VTEP %s OVS ports: %w", vtep.Name, err)
 	}
 
