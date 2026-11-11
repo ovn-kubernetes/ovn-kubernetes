@@ -646,6 +646,9 @@ func (ncc *networkClusterController) ReconcileNode(ctx context.Context, oldNode,
 			ncc.clearScheduledNodeCleanup(nodeName)
 		}
 		err = ncc.cleanupNode(ctx, nodeName, newNode)
+		if err != nil {
+			err = sharednode.RetryWithPreviousNode(err)
+		}
 	case ncc.isDynamicUDNEnabled() && !ncc.nodeIsActive(newNode.Name):
 		// Dynamic UDN inactive add/update path: clean up now or after grace period
 		nodeName = newNode.Name
@@ -675,6 +678,9 @@ func (ncc *networkClusterController) ReconcileNode(ctx context.Context, oldNode,
 	}
 
 	statusErr := ncc.updateNetworkStatus(ctx, nodeName, err)
+	if statusErr != nil {
+		ncc.nodeSyncFailed.Store(nodeName, true)
+	}
 	return errors.Join(err, statusErr)
 }
 

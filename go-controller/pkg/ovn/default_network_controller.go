@@ -130,6 +130,7 @@ type DefaultNetworkController struct {
 	gatewaysFailed              sync.Map
 	mgmtPortFailed              sync.Map
 	addNodeFailed               sync.Map
+	syncPodsFailed              sync.Map
 	nodeClusterRouterPortFailed sync.Map
 	hybridOverlayFailed         sync.Map
 	syncZoneICFailed            sync.Map
@@ -462,21 +463,33 @@ func (oc *DefaultNetworkController) ReconcileNode(ctx context.Context, oldNode, 
 		if util.NoHostSubnet(newNode) && (oldNode == nil || !util.NoHostSubnet(oldNode)) {
 			// The node switched to hybrid-overlay management, so reconcile the HO-specific topology instead.
 			err := oc.addUpdateHoNodeEvent(newNode)
+			// Even a failed transition can remove OVN resources. Remember what
+			// must be rebuilt if the labels revert to the retained OVN inputs.
+			// Set these after teardown, which clears the existing retry flags.
+			if oc.isLocalNode(newNode) {
+				oc.addNodeFailed.Store(newNode.Name, true)
+				oc.nodeClusterRouterPortFailed.Store(newNode.Name, true)
+				oc.mgmtPortFailed.Store(newNode.Name, true)
+				oc.gatewaysFailed.Store(newNode.Name, true)
+				oc.hybridOverlayFailed.Store(newNode.Name, true)
+			}
+			oc.syncZoneICFailed.Store(newNode.Name, true)
 			if err != nil {
 				oc.recordNodeErrorEvent(newNode, err)
+				return nodecontroller.RetryWithPreviousNode(err)
 			}
 			return err
 		} else if oldNode != nil && !util.NoHostSubnet(newNode) && util.NoHostSubnet(oldNode) {
 			// The node switched from hybrid-overlay management back to OVN-managed networking.
 			if err := oc.deleteHoNodeEvent(oldNode); err != nil {
 				oc.recordNodeErrorEvent(oldNode, err)
-				return err
+				return nodecontroller.RetryWithPreviousNode(err)
 			}
 			switchToOvnNode = true
 		} else if oldNode == nil && !util.NoHostSubnet(newNode) {
 			if err := oc.deleteHoNodeEvent(newNode); err != nil {
 				oc.recordNodeErrorEvent(newNode, err)
-				return err
+				return nodecontroller.RetryWithPreviousNode(err)
 			}
 		}
 	}
@@ -496,6 +509,7 @@ func (oc *DefaultNetworkController) ReconcileNode(ctx context.Context, oldNode, 
 
 		if oldNode == nil {
 			_, nodeSync := oc.addNodeFailed.Load(newNode.Name)
+			_, podsSync := oc.syncPodsFailed.Load(newNode.Name)
 			_, clusterRtrSync := oc.nodeClusterRouterPortFailed.Load(newNode.Name)
 			_, mgmtSync := oc.mgmtPortFailed.Load(newNode.Name)
 			_, gwSync := oc.gatewaysFailed.Load(newNode.Name)
@@ -504,9 +518,10 @@ func (oc *DefaultNetworkController) ReconcileNode(ctx context.Context, oldNode, 
 			// Only replay individual failed pieces after the local switch state exists;
 			// otherwise perform the full local-node add.
 			localSwitchReady := oc.hasLocalNodeSwitchState(newNode)
-			if localSwitchReady && (nodeSync || clusterRtrSync || mgmtSync || gwSync || hoSync || zoneICSync) {
+			if localSwitchReady && (nodeSync || podsSync || clusterRtrSync || mgmtSync || gwSync || hoSync || zoneICSync) {
 				nodeSyncsParam = &nodeSyncs{
 					syncNode:              nodeSync,
+					syncPods:              podsSync,
 					syncClusterRouterPort: clusterRtrSync,
 					syncMgmtPort:          mgmtSync,
 					syncGw:                gwSync,
@@ -525,6 +540,7 @@ func (oc *DefaultNetworkController) ReconcileNode(ctx context.Context, oldNode, 
 			}
 		} else {
 			_, nodeSync := oc.addNodeFailed.Load(newNode.Name)
+			_, podsSync := oc.syncPodsFailed.Load(newNode.Name)
 			nodeSync = nodeSync || defaultNodeSubnetChangedWithState(oldNode, newNode, oldState, newState)
 			_, failed := oc.nodeClusterRouterPortFailed.Load(newNode.Name)
 			clusterRtrSync := failed || nodeChassisChanged(oldNode, newNode) || defaultNodeSubnetChangedWithState(oldNode, newNode, oldState, newState)
@@ -540,6 +556,7 @@ func (oc *DefaultNetworkController) ReconcileNode(ctx context.Context, oldNode, 
 			syncZoneIC = syncZoneIC || oc.nodeZoneClusterChanged(oldNode, newNode) || primaryAddrChanged(oldNode, newNode)
 			nodeSyncsParam = &nodeSyncs{
 				syncNode:              nodeSync,
+				syncPods:              podsSync,
 				syncClusterRouterPort: clusterRtrSync,
 				syncMgmtPort:          mgmtSync,
 				syncGw:                gwSync,
@@ -572,8 +589,10 @@ func (oc *DefaultNetworkController) ReconcileNode(ctx context.Context, oldNode, 
 		// without being deleted from the cluster.
 		// Delete the stale remote chassis mapping so the new chassis can be associated cleanly.
 		if oldNode != nil && nodeChassisChanged(oldNode, newNode) {
+			oc.syncZoneICFailed.Store(newNode.Name, true)
 			if err := oc.zoneChassisHandler.DeleteRemoteZoneNode(oldNode); err != nil {
-				aggregatedErrors = append(aggregatedErrors, err)
+				oc.recordNodeErrorEvent(newNode, err)
+				return nodecontroller.RetryWithPreviousNode(err)
 			}
 			syncZoneIC = true
 		}
