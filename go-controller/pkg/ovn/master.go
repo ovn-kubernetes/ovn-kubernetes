@@ -759,7 +759,7 @@ func (oc *DefaultNetworkController) addUpdateRemoteNodeEvent(node *corev1.Node, 
 func (oc *DefaultNetworkController) deleteNodeEvent(node *corev1.Node) error {
 	klog.V(5).Infof("Deleting Node %q. Removing the node from "+
 		"various caches", node.Name)
-	if config.HybridOverlay.Enabled && util.NoHostSubnet(node) {
+	if config.HybridOverlay.Enabled {
 		if err := oc.deleteHoNodeEvent(node); err != nil {
 			return err
 		}
@@ -839,18 +839,7 @@ func (oc *DefaultNetworkController) deleteHoNodeEvent(node *corev1.Node) error {
 		klog.Infof("Delete hybrid overlay node switch %s", node.Name)
 		oc.lsManager.DeleteSwitch(node.Name)
 	}
-	if subnet, ok := node.Annotations[hotypes.HybridOverlayNodeSubnet]; ok {
-		// Delete the routes and policies for this HO node
-		_, nodeSubnet, err := net.ParseCIDR(subnet)
-		if err != nil {
-			return fmt.Errorf("failed to parse hybridOverlay node subnet for node %s: %w", node.Name, err)
-		}
-		err = oc.removeRoutesToHONodeSubnet(node.Name, nodeSubnet)
-		if err != nil {
-			return fmt.Errorf("failed to remove hybrid overlay static routes and route policy: %w", err)
-		}
-	}
-	return nil
+	return oc.removeRoutesToHONode(node.Name)
 }
 
 func (oc *DefaultNetworkController) newGatewayManager(nodeName string) *GatewayManager {
