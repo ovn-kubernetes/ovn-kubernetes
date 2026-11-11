@@ -1261,7 +1261,20 @@ spec:
 			if secondary {
 				hosting = "secondary-host-eip"
 			}
-			ginkgo.Context(fmt.Sprintf("[%s] [traffic-selector]", hosting), feature.TrafficClass, func() {
+			clusterDefault := isClusterDefaultNetwork(netConfigParams)
+			networkIP, _, _ := strings.Cut(netConfigParams.cidr, "/")
+			ipv6Network := utilnet.IsIPv6String(networkIP)
+			// Core UDN checks cover every family/topology; sample lifecycle tests to avoid repeated node restarts.
+			udnFailover := !clusterDefault && netConfigParams.topology == types.Layer3Topology && !ipv6Network
+			udnRestart := !clusterDefault && netConfigParams.topology == types.Layer2Topology && ipv6Network
+			// Temporary CI scope: retain extended variants, but filter them before fixture setup.
+			focusedCoverage := func(include bool) ginkgo.Labels {
+				if include {
+					return ginkgo.Label()
+				}
+				return ginkgo.Label("TrafficClassExtended")
+			}
+			ginkgo.Context(fmt.Sprintf("[%s] [traffic-selector]", hosting), feature.TrafficClass, focusedCoverage(!secondary || clusterDefault), func() {
 				type selectiveTraffic struct {
 					target, other                   infraapi.ExternalContainer
 					class                           *trafficv1.TrafficClass
@@ -1551,7 +1564,7 @@ spec:
 					}, retryTimeout, retryInterval).Should(gomega.Equal(status))
 				}
 
-				ginkgo.DescribeTable("matching destination port", func(transport string) {
+				ginkgo.DescribeTable("matching destination port", focusedCoverage(false), func(transport string) {
 					traffic := newTraffic()
 					prepareDestinationPortTraffic(traffic, transport)
 					startTraffic(traffic, pod1Node.name)
@@ -1561,7 +1574,7 @@ spec:
 					ginkgo.Entry("UDP", "udp"),
 					ginkgo.Entry("SCTP", "sctp"),
 				)
-				ginkgo.DescribeTable("nonmatching destination port", func(transport string) {
+				ginkgo.DescribeTable("nonmatching destination port", focusedCoverage(clusterDefault), func(transport string) {
 					traffic := newTraffic()
 					ports := prepareDestinationPortTraffic(traffic, transport)
 					startTraffic(traffic, pod1Node.name)
@@ -1577,7 +1590,7 @@ spec:
 					ginkgo.Entry("UDP", "udp"),
 					ginkgo.Entry("SCTP", "sctp"),
 				)
-				ginkgo.It("destination port range boundaries and exclusions", func() {
+				ginkgo.It("destination port range boundaries and exclusions", focusedCoverage(clusterDefault), func() {
 					traffic := newTraffic()
 					ports := prepareDestinationPortTraffic(traffic, "tcp")
 					port := int32(traffic.target.GetPort())
@@ -1604,7 +1617,7 @@ spec:
 					patchClass(traffic.class)
 					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
 				})
-				ginkgo.It("UDP source port range boundaries and exclusions", func() {
+				ginkgo.It("UDP source port range boundaries and exclusions", focusedCoverage(clusterDefault), func() {
 					traffic := newTraffic()
 					prepareSourcePortTraffic(traffic)
 					startTraffic(traffic, pod1Node.name)
@@ -1615,7 +1628,7 @@ spec:
 					probeProtocol(traffic, traffic.target, traffic.unmatched, traffic.protocol, sourcePortStart-1)
 					probeProtocol(traffic, traffic.target, traffic.unmatched, traffic.protocol, sourcePortEnd+1)
 				})
-				ginkgo.DescribeTable("protocol-only and CIDR-only matching", func(transport string) {
+				ginkgo.DescribeTable("protocol-only and CIDR-only matching", focusedCoverage(secondary), func(transport string) {
 					traffic := newTraffic()
 					prepareTraffic(traffic, transport, traffic.target.Network)
 					setProtocolFilter(traffic.class, traffic.protocol, &trafficv1.PortProtocol{})
@@ -1631,7 +1644,7 @@ spec:
 					ginkgo.Entry("UDP", "udp"),
 					ginkgo.Entry("SCTP", "sctp"),
 				)
-				ginkgo.It("combined source and destination port filters", func() {
+				ginkgo.It("combined source and destination port filters", focusedCoverage(clusterDefault), func() {
 					traffic := newTraffic()
 					ports := prepareSourcePortTraffic(traffic)
 					port := int32(traffic.target.GetPort())
@@ -1650,7 +1663,7 @@ spec:
 					patchClass(traffic.class)
 					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol, sourcePortEnd)
 				})
-				ginkgo.It("multiple classes selected by one owner", func() {
+				ginkgo.It("multiple classes selected by one owner", focusedCoverage(secondary), func() {
 					traffic := newTraffic()
 					prepareTraffic(traffic, "tcp", traffic.target.Network)
 					startTraffic(traffic, pod1Node.name)
@@ -1673,7 +1686,7 @@ spec:
 					probeProtocol(traffic, traffic.target, traffic.unmatched, traffic.protocol)
 					probeProtocol(traffic, traffic.other, traffic.unmatched, traffic.protocol)
 				})
-				ginkgo.It("matching and nonmatching destinations and class deletion", func() {
+				ginkgo.It("matching and nonmatching destinations and class deletion", focusedCoverage(clusterDefault), func() {
 					traffic := newTraffic()
 					prepareTraffic(traffic, "tcp", traffic.target.Network)
 					startTraffic(traffic, pod1Node.name)
@@ -1683,7 +1696,7 @@ spec:
 					e2ekubectl.RunKubectlOrDie("default", "delete", "trafficclass", traffic.class.Name)
 					probeProtocol(traffic, traffic.target, traffic.unmatched, traffic.protocol)
 				})
-				ginkgo.It("destination update", func() {
+				ginkgo.It("destination update", focusedCoverage(secondary || !clusterDefault), func() {
 					traffic := newTraffic()
 					prepareTraffic(traffic, "tcp", traffic.target.Network)
 					startTraffic(traffic, pod1Node.name)
@@ -1694,7 +1707,7 @@ spec:
 					probeProtocol(traffic, traffic.other, traffic.selectedIP, traffic.protocol)
 					probeProtocol(traffic, traffic.target, traffic.unmatched, traffic.protocol)
 				})
-				ginkgo.It("label update", func() {
+				ginkgo.It("label update", focusedCoverage(secondary), func() {
 					traffic := newTraffic()
 					prepareTraffic(traffic, "tcp", traffic.target.Network)
 					startTraffic(traffic, pod1Node.name)
@@ -1706,7 +1719,7 @@ spec:
 					patch("trafficclass", traffic.class.Name, map[string]interface{}{"metadata": map[string]interface{}{"labels": traffic.class.Labels}})
 					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
 				})
-				ginkgo.It("selector addition and removal", func() {
+				ginkgo.It("selector addition and removal", focusedCoverage(secondary), func() {
 					traffic := newTraffic()
 					prepareTraffic(traffic, "tcp", traffic.target.Network)
 					selector := traffic.eip.Spec.TrafficSelector
@@ -1723,7 +1736,7 @@ spec:
 					probeProtocol(traffic, traffic.other, traffic.selectedIP, traffic.protocol)
 					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
 				})
-				ginkgo.It("mixed destinations", func() {
+				ginkgo.It("mixed destinations", focusedCoverage(clusterDefault), func() {
 					traffic := newTraffic()
 					prepareDestinationPortTraffic(traffic, "tcp")
 					traffic.class.Spec.Matches = append(traffic.class.Spec.Matches, trafficv1.TrafficMatch{DestinationCIDR: prefix(traffic.other)})
@@ -1737,7 +1750,7 @@ spec:
 					probeProtocol(traffic, traffic.target, traffic.unmatched, traffic.protocol)
 					probeProtocol(traffic, traffic.other, traffic.selectedIP, traffic.protocol)
 				})
-				ginkgo.Context("multiple owners", func() {
+				ginkgo.Context("multiple owners", focusedCoverage(secondary), func() {
 					ginkgo.It("multiple selective owners", func() {
 						traffic := newTraffic()
 						peerNetwork := traffic.target.Network
@@ -1816,7 +1829,7 @@ spec:
 					probeProtocol(traffic, traffic.other, ip, traffic.protocol)
 					return peer, ip
 				}
-				ginkgo.It("multi-owner restart", func() {
+				ginkgo.It("multi-owner restart", focusedCoverage(false), func() {
 					traffic := newTraffic()
 					_, ip := startTwoOwners(traffic)
 					ginkgo.By("Restarting OVN-Kubernetes on the shared egress node")
@@ -1827,7 +1840,7 @@ spec:
 					probeProtocol(traffic, traffic.other, ip, traffic.protocol)
 					deleteOwnerAndCheckPeer(traffic, traffic.eip.Name, traffic.other, ip, traffic.protocol)
 				})
-				ginkgo.It("multi-owner failover", func() {
+				ginkgo.It("multi-owner failover", focusedCoverage(secondary || udnFailover), func() {
 					traffic := newTraffic()
 					peer, ip := startTwoOwners(traffic)
 					ginkgo.By("Moving both owners to the other eligible egress node")
@@ -1880,7 +1893,7 @@ spec:
 					probeTCPFromPod(pod2Name, nonOverlapping, ip)
 					deleteOwnerAndCheckPeer(traffic, traffic.eip.Name, traffic.other, ip, traffic.protocol)
 				})
-				ginkgo.It("three-candidate conflict recomputation", func() {
+				ginkgo.It("three-candidate conflict recomputation", focusedCoverage(clusterDefault || udnRestart), func() {
 					traffic := newTraffic()
 					thirdTarget := createProbe(traffic.probeIPs, "traffic-third", traffic.target.Network, "tcp")
 					prepareTraffic(traffic, "tcp", traffic.target.Network)
@@ -1920,8 +1933,9 @@ spec:
 					probeProtocol(traffic, traffic.target, middleIP, traffic.protocol)
 					probeProtocol(traffic, traffic.other, middleIP, traffic.protocol)
 					expectConflict(youngest.Name, "True")
+					deleteOwnerAndCheckPeer(traffic, traffic.eip.Name, traffic.other, middleIP, traffic.protocol)
 				})
-				ginkgo.DescribeTable("mixed interfaces", func(l4 bool, local bool) {
+				ginkgo.DescribeTable("mixed interfaces", focusedCoverage(clusterDefault && !secondary), func(l4 bool, local bool) {
 					traffic := newTraffic()
 					if secondary || isUserDefinedNetwork(netConfigParams) {
 						ginkgo.Skip("Reverse mixed interfaces apply to the cluster default network with an OVN override")
@@ -1948,7 +1962,7 @@ spec:
 					ginkgo.Entry("secondary default and L4 OVN override across zones", true, false),
 					ginkgo.Entry("secondary default and L4 OVN override in the same zone", true, true),
 				)
-				ginkgo.Context("disjoint protocols", func() {
+				ginkgo.Context("disjoint protocols", focusedCoverage(secondary), func() {
 					startDisjointProtocolOwners := func(traffic *selectiveTraffic) string {
 						traffic.target = createProbe(traffic.probeIPs, "traffic-udp", traffic.target.Network, "udp")
 						prepareDestinationPortTraffic(traffic, "tcp")
@@ -1987,7 +2001,7 @@ spec:
 						deleteOwnerAndCheckPeer(traffic, traffic.eip.Name, traffic.target, ip, "udp")
 					})
 				})
-				ginkgo.It("same destination and protocol with disjoint source ports", func() {
+				ginkgo.It("same destination and protocol with disjoint source ports", focusedCoverage(secondary), func() {
 					traffic := newTraffic()
 					prepareSourcePortTraffic(traffic)
 					startTraffic(traffic, pod1Node.name)
@@ -2019,7 +2033,7 @@ spec:
 					probeProtocol(traffic, traffic.target, ip, traffic.protocol, sourcePortStart+1003)
 					probeProtocol(traffic, traffic.target, fallbackIP, traffic.protocol, sourcePortStart)
 				})
-				ginkgo.It("NetworkPolicy denies selective traffic", func() {
+				ginkgo.It("NetworkPolicy denies selective traffic", focusedCoverage(clusterDefault), func() {
 					traffic := newTraffic()
 					prepareTraffic(traffic, "tcp", traffic.target.Network)
 					startTraffic(traffic, pod1Node.name)
@@ -2039,7 +2053,7 @@ spec:
 					framework.ExpectNoError(f.ClientSet.NetworkingV1().NetworkPolicies(f.Namespace.Name).Delete(deleteCtx, policy.Name, metav1.DeleteOptions{}))
 					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
 				})
-				ginkgo.It("EgressFirewall denies selective traffic", feature.EgressFirewall, func() {
+				ginkgo.It("EgressFirewall denies selective traffic", focusedCoverage(clusterDefault), feature.EgressFirewall, func() {
 					traffic := newTraffic()
 					prepareTraffic(traffic, "tcp", traffic.target.Network)
 					startTraffic(traffic, pod1Node.name)
