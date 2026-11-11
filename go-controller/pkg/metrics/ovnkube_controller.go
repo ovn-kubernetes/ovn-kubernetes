@@ -82,7 +82,7 @@ var MetricResourceAddLatency = prometheus.NewHistogram(prometheus.HistogramOpts{
 	Namespace: types.MetricOvnkubeNamespace,
 	Subsystem: types.MetricOvnkubeSubsystemController,
 	Name:      "resource_add_latency_seconds",
-	Help:      "The duration to process all handlers for a given resource event - add.",
+	Help:      "The duration to process all handlers for a given resource event - add. Deprecated: This metric will be removed in the next release. ",
 	Buckets:   prometheus.ExponentialBuckets(.1, 2, 15)},
 )
 
@@ -92,7 +92,7 @@ var MetricResourceUpdateLatency = prometheus.NewHistogram(prometheus.HistogramOp
 	Namespace: types.MetricOvnkubeNamespace,
 	Subsystem: types.MetricOvnkubeSubsystemController,
 	Name:      "resource_update_latency_seconds",
-	Help:      "The duration to process all handlers for a given resource event - update.",
+	Help:      "The duration to process all handlers for a given resource event - update. Deprecated: This metric will be removed in the next release. ",
 	Buckets:   prometheus.ExponentialBuckets(.1, 2, 15)},
 )
 
@@ -102,7 +102,7 @@ var MetricResourceDeleteLatency = prometheus.NewHistogram(prometheus.HistogramOp
 	Namespace: types.MetricOvnkubeNamespace,
 	Subsystem: types.MetricOvnkubeSubsystemController,
 	Name:      "resource_delete_latency_seconds",
-	Help:      "The duration to process all handlers for a given resource event - delete.",
+	Help:      "The duration to process all handlers for a given resource event - delete. Deprecated: This metric will be removed in the next release. ",
 	Buckets:   prometheus.ExponentialBuckets(.1, 2, 15)},
 )
 
