@@ -1274,7 +1274,6 @@ func (oc *Layer3UserDefinedNetworkController) newGatewayManager(nodeName string)
 		oc.nbClient,
 		oc.GetNetInfo(),
 		oc.watchFactory,
-		oc.nodeAnnotationCache,
 		oc.addressSetManager,
 		oc.gatewayOptions()...,
 	)

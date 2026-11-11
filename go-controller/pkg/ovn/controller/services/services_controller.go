@@ -1255,18 +1255,9 @@ func (c *Controller) cleanupUDNEnabledServiceRoute(state *networkState, key stri
 			route.ExternalIDs[types.UDNEnabledServiceExternalID] == key
 	}
 
-	var ops []ovsdb.Operation
-	var err error
-	if state.netInfo.TopologyType() == types.Layer2Topology && !globalconfig.Layer2UsesTransitRouter {
-		if state.nodeInfo != nil {
-			if ops, err = libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicateOps(c.nbClient, ops, state.netInfo.GetNetworkScopedGWRouterName(state.nodeInfo.name), delPredicate); err != nil {
-				return err
-			}
-		}
-	} else {
-		if ops, err = libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicateOps(c.nbClient, ops, state.netInfo.GetNetworkScopedClusterRouterName(), delPredicate); err != nil {
-			return err
-		}
+	ops, err := libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicateOps(c.nbClient, nil, state.netInfo.GetNetworkScopedClusterRouterName(), delPredicate)
+	if err != nil {
+		return err
 	}
 	_, err = libovsdbops.TransactAndCheck(c.nbClient, ops)
 	return err
@@ -1303,9 +1294,6 @@ func (c *Controller) configureUDNEnabledServiceRoute(state *networkState, servic
 			ExternalIDs: extIDs,
 		}
 		routerName := state.netInfo.GetNetworkScopedClusterRouterName()
-		if state.netInfo.TopologyType() == types.Layer2Topology && !globalconfig.Layer2UsesTransitRouter {
-			routerName = nodeInfo.gatewayRouterName
-		}
 		ops, err = libovsdbops.CreateOrUpdateLogicalRouterStaticRoutesWithPredicateOps(c.nbClient, nil, routerName, &staticRoute, func(item *nbdb.LogicalRouterStaticRoute) bool {
 			return routesEqual(item, &staticRoute)
 		})
