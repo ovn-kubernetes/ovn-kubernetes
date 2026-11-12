@@ -766,6 +766,21 @@ var _ = Describe("Network Segmentation: MAC binding mirroring with ARP/NDP flood
 						expectMirroredEverywhere(g, ip, extBMAC, expectedPorts)
 					}, 90*time.Second, 2*time.Second).Should(Succeed())
 				}
+
+				// The UDN-triggered path is proven; from here on the CDN pod pings
+				// external container B too. OVN only refreshes a binding from the
+				// traffic its own router receives, and the CDN gateway router never
+				// sees the UDN's data traffic. For IPv4, B's ARP requests for the
+				// node IP keep the source copy alive; for IPv6, B sources its
+				// neighbour solicitations from its link-local address, which never
+				// refreshes the global one. The source copy then ages out while the
+				// pinging UDN keeps its own, as OKEP-6691 allows, and every later
+				// spec expecting B's bindings on all gateway routers - the late
+				// CUDN backfill, the restart - would be timing dependent. The age-out
+				// spec stops this ping together with the others.
+				for _, ip := range extBIPs {
+					startBackgroundPing(cdnNamespace, cdnPodName, ip, noFloodPingPidFileForIP(ip))
+				}
 			})
 
 			It("binds node IPs statically on the UDNs instead of mirroring them", func() {
