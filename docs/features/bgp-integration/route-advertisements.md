@@ -347,6 +347,14 @@ spec:
 Note that this configuration also results in the BGP installed routes of the
 default VRF to be imported to the CUDN VRF.
 
+A NetworkAttachmentDefinition matching the `networkSelector` is advertised only
+if it is consistent with a `ClusterUserDefinedNetwork`: its controller owner
+reference identifies an existing CUDN with the same UID, it has the name and
+the network of that CUDN and it is in a namespace matching the CUDN
+`namespaceSelector`. A network stops being advertised once its CUDN selects
+none of the namespaces of its NetworkAttachmentDefinitions, even while pods
+keep it in use.
+
 Multiple types of network selectors can be specified making it possible to merge
 the previous two examples into one:
 

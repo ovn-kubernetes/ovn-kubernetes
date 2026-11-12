@@ -34,6 +34,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation"
 	corelisters "k8s.io/client-go/listers/core/v1"
@@ -153,11 +154,90 @@ type testNamespace struct {
 }
 
 func (tn testNamespace) Namespace() *corev1.Namespace {
+	// the API server sets this label on every namespace
+	namespaceLabels := map[string]string{corev1.LabelMetadataName: tn.Name}
+	maps.Copy(namespaceLabels, tn.Labels)
 	return &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   tn.Name,
-			Labels: tn.Labels,
+			Labels: namespaceLabels,
 		},
+	}
+}
+
+// testCUDN is a ClusterUserDefinedNetwork selecting namespaces by name.
+type testCUDN struct {
+	Name       string
+	UID        k8stypes.UID
+	Labels     map[string]string
+	Namespaces []string
+}
+
+// testCUDNUID is the UID given to the test ClusterUserDefinedNetwork of the
+// given name unless the test sets one.
+func testCUDNUID(name string) k8stypes.UID {
+	return k8stypes.UID(name + "-uid")
+}
+
+func (tc testCUDN) ClusterUserDefinedNetwork() *userdefinednetworkv1.ClusterUserDefinedNetwork {
+	uid := tc.UID
+	if uid == "" {
+		uid = testCUDNUID(tc.Name)
+	}
+	return &userdefinednetworkv1.ClusterUserDefinedNetwork{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   tc.Name,
+			UID:    uid,
+			Labels: tc.Labels,
+		},
+		Spec: userdefinednetworkv1.ClusterUserDefinedNetworkSpec{
+			NamespaceSelector: metav1.LabelSelector{
+				MatchExpressions: []metav1.LabelSelectorRequirement{{
+					Key:      corev1.LabelMetadataName,
+					Operator: metav1.LabelSelectorOpIn,
+					Values:   tc.Namespaces,
+				}},
+			},
+		},
+	}
+}
+
+// testCUDNsForNADs returns the ClusterUserDefinedNetworks that render the
+// given NADs, selecting the namespaces of their NADs. NADs with a forged
+// owner reference have no ClusterUserDefinedNetwork rendering them.
+func testCUDNsForNADs(nads []*testNAD) []*testCUDN {
+	cudns := map[string]*testCUDN{}
+	var names []string
+	for _, nad := range nads {
+		if nad.ForgedOwner != nil || !strings.HasPrefix(nad.Network, types.CUDNPrefix) {
+			continue
+		}
+		name := nad.cudnName()
+		if cudns[name] == nil {
+			cudns[name] = &testCUDN{Name: name}
+			names = append(names, name)
+		}
+		cudns[name].Namespaces = append(cudns[name].Namespaces, nad.Namespace)
+	}
+	rendering := make([]*testCUDN, 0, len(names))
+	for _, name := range names {
+		rendering = append(rendering, cudns[name])
+	}
+	return rendering
+}
+
+// createTestCUDNs creates the given ClusterUserDefinedNetworks and those of
+// their selected namespaces that do not exist yet.
+func createTestCUDNs(g *gomega.WithT, fakeClientset *util.OVNClusterManagerClientset, cudns ...*testCUDN) {
+	for _, cudn := range cudns {
+		_, err := fakeClientset.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Create(context.Background(), cudn.ClusterUserDefinedNetwork(), metav1.CreateOptions{})
+		g.Expect(err).ToNot(gomega.HaveOccurred(), "failed to create ClusterUserDefinedNetwork %s", cudn.Name)
+		for _, namespace := range cudn.Namespaces {
+			_, err := fakeClientset.KubeClient.CoreV1().Namespaces().Create(context.Background(), testNamespace{Name: namespace}.Namespace(), metav1.CreateOptions{})
+			if !apierrors.IsAlreadyExists(err) {
+				g.Expect(err).ToNot(gomega.HaveOccurred(), "failed to create namespace %s", namespace)
+			}
+		}
 	}
 }
 
@@ -657,6 +737,21 @@ type testNAD struct {
 	EVPNMACVRFRouteTarget string
 	EVPNIPVRFVNI          int32
 	EVPNIPVRFRouteTarget  string
+	// CUDN is the name of the ClusterUserDefinedNetwork of the NAD owner
+	// reference, when it differs from the one the network name derives from
+	CUDN string
+	// ForgedOwner replaces the controller owner reference of a NAD that no
+	// ClusterUserDefinedNetwork renders
+	ForgedOwner *testCUDN
+}
+
+// cudnName returns the name of the ClusterUserDefinedNetwork rendering the
+// NAD.
+func (tn testNAD) cudnName() string {
+	if tn.CUDN != "" {
+		return tn.CUDN
+	}
+	return strings.TrimPrefix(tn.Network, types.CUDNPrefix)
 }
 
 func (tn testNAD) NAD() *nadtypes.NetworkAttachmentDefinition {
@@ -673,8 +768,12 @@ func (tn testNAD) NAD() *nadtypes.NetworkAttachmentDefinition {
 		},
 	}
 	if strings.HasPrefix(tn.Network, types.CUDNPrefix) {
+		owner := &testCUDN{Name: tn.cudnName()}
+		if tn.ForgedOwner != nil {
+			owner = tn.ForgedOwner
+		}
 		ownerRef := *metav1.NewControllerRef(
-			&metav1.ObjectMeta{Name: tn.Network},
+			owner.ClusterUserDefinedNetwork(),
 			userdefinednetworkv1.SchemeGroupVersion.WithKind("ClusterUserDefinedNetwork"),
 		)
 		nad.ObjectMeta.OwnerReferences = []metav1.OwnerReference{ownerRef}
@@ -802,25 +901,31 @@ func TestController_reconcile(t *testing.T) {
 		return cfg
 	}
 	tests := []struct {
-		name                 string
-		ra                   *testRA
-		otherRAs             []*testRA
-		frrConfigs           []*testFRRConfig
-		nads                 []*testNAD
-		nodes                []*testNode
-		namespaces           []*testNamespace
-		pods                 []*testPod
-		eips                 []*testEIP
-		vteps                []*vtepv1.VTEP
-		reconcile            string
-		transport            string
-		gatewayMode          config.GatewayMode
-		dynamicUDN           bool
-		ipv6                 bool
-		wantErr              bool
-		eipListError         error
-		expectAcceptedStatus metav1.ConditionStatus
-		expectDegradedStatus metav1.ConditionStatus
+		name       string
+		ra         *testRA
+		otherRAs   []*testRA
+		frrConfigs []*testFRRConfig
+		nads       []*testNAD
+		// cudns are created in addition to the ClusterUserDefinedNetworks
+		// rendering the NADs
+		cudns      []*testCUDN
+		nodes      []*testNode
+		namespaces []*testNamespace
+		// networkSegmentationDisabled runs the case with no
+		// ClusterUserDefinedNetwork API
+		networkSegmentationDisabled bool
+		pods                        []*testPod
+		eips                        []*testEIP
+		vteps                       []*vtepv1.VTEP
+		reconcile                   string
+		transport                   string
+		gatewayMode                 config.GatewayMode
+		dynamicUDN                  bool
+		ipv6                        bool
+		wantErr                     bool
+		eipListError                error
+		expectAcceptedStatus        metav1.ConditionStatus
+		expectDegradedStatus        metav1.ConditionStatus
 		// expectAcceptedMessageContains, when set, is a substring the Accepted
 		// condition message must contain
 		expectAcceptedMessageContains string
@@ -1113,6 +1218,205 @@ func TestController_reconcile(t *testing.T) {
 					}},
 			},
 			expectNADAnnotations: map[string]map[string]string{"red": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}, "blue": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}, "green": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}, "black": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
+		},
+		{
+			name: "does not advertise a NAD whose owner reference names no existing ClusterUserDefinedNetwork",
+			ra:   &testRA{Name: "ra", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "red", Namespace: "red", Network: util.GenerateCUDNNetworkName("red"), Topology: "layer3", Subnet: "1.2.0.0/16", Labels: map[string]string{"selected": "true"}},
+				{Name: "blue", Namespace: "blue", Network: util.GenerateCUDNNetworkName("blue"), Topology: "layer2", Subnet: "8.8.8.0/24", Labels: map[string]string{"selected": "true"}, ForgedOwner: &testCUDN{Name: "blue"}},
+			},
+			namespaces:           []*testNamespace{{Name: "blue"}},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\", \"cluster_udn_red\":\"1.2.0.0/24\"}"}},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectDegradedStatus: metav1.ConditionFalse,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.2.0.0/24"}, Imports: []string{"red"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.2.0.0/24"}},
+						}},
+						{ASN: 1, VRF: "red", Imports: []string{"default"}},
+					}},
+			},
+			expectNADAnnotations: map[string]map[string]string{"red": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
+		},
+		{
+			name: "does not advertise a NAD whose owner reference UID differs from the ClusterUserDefinedNetwork UID",
+			ra:   &testRA{Name: "ra", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "red", Namespace: "red", Network: util.GenerateCUDNNetworkName("red"), Topology: "layer3", Subnet: "1.2.0.0/16", Labels: map[string]string{"selected": "true"}},
+				{Name: "blue", Namespace: "blue", Network: util.GenerateCUDNNetworkName("blue"), Topology: "layer2", Subnet: "8.8.8.0/24", Labels: map[string]string{"selected": "true"}, ForgedOwner: &testCUDN{Name: "blue", UID: "forged"}},
+			},
+			cudns:                []*testCUDN{{Name: "blue", Namespaces: []string{"blue"}}},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\", \"cluster_udn_red\":\"1.2.0.0/24\"}"}},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectDegradedStatus: metav1.ConditionFalse,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.2.0.0/24"}, Imports: []string{"red"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.2.0.0/24"}},
+						}},
+						{ASN: 1, VRF: "red", Imports: []string{"default"}},
+					}},
+			},
+			expectNADAnnotations: map[string]map[string]string{"red": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
+		},
+		{
+			name: "does not advertise a NAD not named after the ClusterUserDefinedNetwork of its owner reference",
+			ra:   &testRA{Name: "ra", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "red", Namespace: "red", Network: util.GenerateCUDNNetworkName("red"), Topology: "layer3", Subnet: "1.2.0.0/16", Labels: map[string]string{"selected": "true"}},
+				{Name: "evil", Namespace: "evil", Network: util.GenerateCUDNNetworkName("green"), Topology: "layer2", Subnet: "8.8.8.0/24", Labels: map[string]string{"selected": "true"}, ForgedOwner: &testCUDN{Name: "green"}},
+			},
+			cudns:                []*testCUDN{{Name: "green", Namespaces: []string{"evil"}}},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\", \"cluster_udn_red\":\"1.2.0.0/24\"}"}},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectDegradedStatus: metav1.ConditionFalse,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.2.0.0/24"}, Imports: []string{"red"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.2.0.0/24"}},
+						}},
+						{ASN: 1, VRF: "red", Imports: []string{"default"}},
+					}},
+			},
+			expectNADAnnotations: map[string]map[string]string{"red": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
+		},
+		{
+			name: "does not advertise a NAD in a namespace the ClusterUserDefinedNetwork of its owner reference does not select",
+			ra:   &testRA{Name: "ra", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "red", Namespace: "red", Network: util.GenerateCUDNNetworkName("red"), Topology: "layer3", Subnet: "1.2.0.0/16", Labels: map[string]string{"selected": "true"}},
+				{Name: "blue", Namespace: "evil", Network: util.GenerateCUDNNetworkName("blue"), Topology: "layer2", Subnet: "8.8.8.0/24", Labels: map[string]string{"selected": "true"}, ForgedOwner: &testCUDN{Name: "blue"}},
+			},
+			namespaces:           []*testNamespace{{Name: "evil"}},
+			cudns:                []*testCUDN{{Name: "blue", Namespaces: []string{"blue"}}},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\", \"cluster_udn_red\":\"1.2.0.0/24\"}"}},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectDegradedStatus: metav1.ConditionFalse,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.2.0.0/24"}, Imports: []string{"red"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.2.0.0/24"}},
+						}},
+						{ASN: 1, VRF: "red", Imports: []string{"default"}},
+					}},
+			},
+			expectNADAnnotations: map[string]map[string]string{"red": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
+		},
+		{
+			name: "does not advertise a NAD whose network is not the network of the ClusterUserDefinedNetwork of its owner reference",
+			ra:   &testRA{Name: "ra", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "red", Namespace: "red", Network: util.GenerateCUDNNetworkName("red"), Topology: "layer3", Subnet: "1.2.0.0/16", Labels: map[string]string{"selected": "true"}},
+				{Name: "blue", Namespace: "blue", Network: util.GenerateCUDNNetworkName("evil"), CUDN: "blue", Topology: "layer2", Subnet: "8.8.8.0/24", Labels: map[string]string{"selected": "true"}},
+			},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\", \"cluster_udn_red\":\"1.2.0.0/24\"}"}},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectDegradedStatus: metav1.ConditionFalse,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.2.0.0/24"}, Imports: []string{"red"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.2.0.0/24"}},
+						}},
+						{ASN: 1, VRF: "red", Imports: []string{"default"}},
+					}},
+			},
+			expectNADAnnotations: map[string]map[string]string{"red": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
+		},
+		{
+			name: "does not advertise a NAD with a ClusterUserDefinedNetwork owner reference when network segmentation is disabled",
+			ra:   &testRA{Name: "ra", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			nads: []*testNAD{
+				{Name: "blue", Namespace: "blue", Network: util.GenerateCUDNNetworkName("blue"), Topology: "layer2", Subnet: "8.8.8.0/24", Labels: map[string]string{"selected": "true"}},
+			},
+			namespaces:                    []*testNamespace{{Name: "blue"}},
+			nodes:                         []*testNode{{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\"}"}},
+			networkSegmentationDisabled:   true,
+			reconcile:                     "ra",
+			expectAcceptedStatus:          metav1.ConditionFalse,
+			expectDegradedStatus:          metav1.ConditionTrue,
+			expectAcceptedMessageContains: "no networks selected",
 		},
 		{
 			name: "(layer3) reconciles eip RouteAdvertisement for a single FRR config, node, non default network and non default target VRF",
@@ -2097,7 +2401,7 @@ func TestController_reconcile(t *testing.T) {
 				},
 			},
 			nads: []*testNAD{
-				{Name: "red", Namespace: "red", Network: util.GenerateCUDNNetworkName("red\nx"),
+				{Name: "red\nx", Namespace: "red", Network: util.GenerateCUDNNetworkName("red\nx"),
 					Topology: "layer2", Subnet: "10.1.0.0/16", Labels: map[string]string{"selected": "true"},
 					EVPNMACVRFVNI: 1000, EVPNMACVRFRouteTarget: "65000:1000"},
 			},
@@ -4053,7 +4357,7 @@ exit
 			config.OVNKubernetesFeature.EnableRouteAdvertisements = true
 			config.OVNKubernetesFeature.EnableEgressIP = true
 			config.OVNKubernetesFeature.EnableEVPN = true
-			config.OVNKubernetesFeature.EnableNetworkSegmentation = tt.dynamicUDN
+			config.OVNKubernetesFeature.EnableNetworkSegmentation = !tt.networkSegmentationDisabled
 			config.OVNKubernetesFeature.EnableDynamicUDNAllocation = tt.dynamicUDN
 			// satisfy EVPN LGW restriction, otherwise no effect
 			config.Gateway.Mode = config.GatewayModeLocal
@@ -4098,6 +4402,10 @@ exit
 			for _, namespace := range tt.namespaces {
 				_, err := fakeClientset.KubeClient.CoreV1().Namespaces().Create(context.Background(), namespace.Namespace(), metav1.CreateOptions{})
 				g.Expect(err).ToNot(gomega.HaveOccurred())
+			}
+
+			if !tt.networkSegmentationDisabled {
+				createTestCUDNs(g, fakeClientset, append(testCUDNsForNADs(tt.nads), tt.cudns...)...)
 			}
 
 			for _, pod := range tt.pods {
@@ -4152,6 +4460,10 @@ exit
 				wf.NADInformer().Informer().HasSynced,
 				wf.NodeCoreInformer().Informer().HasSynced,
 				wf.EgressIPInformer().Informer().HasSynced,
+				wf.NamespaceInformer().Informer().HasSynced,
+			}
+			if !tt.networkSegmentationDisabled {
+				hasSynced = append(hasSynced, wf.ClusterUserDefinedNetworkInformer().Informer().HasSynced)
 			}
 			if config.Gateway.Mode == config.GatewayModeLocal {
 				hasSynced = append(hasSynced, wf.VTEPInformer().Informer().HasSynced)
@@ -4516,12 +4828,45 @@ func (tt *frrReconcileTest) expectRAStatus(accepted, degraded bool) *ratypes.Rou
 	return ra
 }
 
+// createCUDNs makes the ClusterUserDefinedNetworks rendering the NADs select
+// the namespaces of the NADs, creating those that do not exist yet, and waits
+// for the controller to observe them and their namespaces.
+func (tt *frrReconcileTest) createCUDNs(nads ...*testNAD) {
+	tt.t.Helper()
+	client := tt.fakeClientset.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks()
+	for _, cudn := range testCUDNsForNADs(nads) {
+		existing, err := client.Get(context.Background(), cudn.Name, metav1.GetOptions{})
+		if err == nil {
+			cudn.Namespaces = append(existing.Spec.NamespaceSelector.MatchExpressions[0].Values, cudn.Namespaces...)
+			err = client.Delete(context.Background(), cudn.Name, metav1.DeleteOptions{})
+		}
+		if !apierrors.IsNotFound(err) {
+			tt.g.Expect(err).NotTo(gomega.HaveOccurred(), "replace ClusterUserDefinedNetwork %s", cudn.Name)
+		}
+		createTestCUDNs(tt.g, tt.fakeClientset, cudn)
+		tt.g.Eventually(func() ([]string, error) {
+			observed, err := tt.c.cudnLister.Get(cudn.Name)
+			if err != nil {
+				return nil, err
+			}
+			return observed.Spec.NamespaceSelector.MatchExpressions[0].Values, nil
+		}, 5*time.Second).Should(gomega.Equal(cudn.Namespaces), "cache must observe ClusterUserDefinedNetwork %s", cudn.Name)
+		for _, namespace := range cudn.Namespaces {
+			tt.g.Eventually(func() error {
+				_, err := tt.c.namespaceLister.Get(namespace)
+				return err
+			}, 5*time.Second).Should(gomega.Succeed(), "cache must observe namespace %s", namespace)
+		}
+	}
+}
+
 func (tt *frrReconcileTest) addNetwork(nm *networkmanager.FakeNetworkManager, nad *testNAD) {
 	tt.t.Helper()
 	object := nad.NAD()
 	network, err := util.ParseNADInfo(object)
 	tt.g.Expect(err).NotTo(gomega.HaveOccurred(), "parse network from NAD %s/%s", nad.Namespace, nad.Name)
 	nm.PrimaryNetworks[nad.Namespace] = network
+	tt.createCUDNs(nad)
 	_, err = tt.fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nad.Namespace).Create(context.Background(), object, metav1.CreateOptions{})
 	tt.g.Expect(err).NotTo(gomega.HaveOccurred(), "create NAD %s/%s", nad.Namespace, nad.Name)
 	tt.g.Eventually(func() (*nadtypes.NetworkAttachmentDefinition, error) {
@@ -4644,6 +4989,7 @@ func TestController_reconcileOnNetworkActivity(t *testing.T) {
 	nad := &testNAD{Name: "blue", Namespace: "blue", Network: util.GenerateCUDNNetworkName("blue"), Topology: "layer3", Subnet: "1.3.0.0/16", Labels: map[string]string{"selected": "true"}}
 	_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nad.Namespace).Create(context.Background(), nad.NAD(), metav1.CreateOptions{})
 	g.Expect(err).ToNot(gomega.HaveOccurred())
+	createTestCUDNs(g, fakeClientset, testCUDNsForNADs([]*testNAD{nad})...)
 
 	// the node still has a subnet allocated for the network, as during the
 	// deletion grace period, but no workloads attached to it
@@ -4651,11 +4997,9 @@ func TestController_reconcileOnNetworkActivity(t *testing.T) {
 	_, err = fakeClientset.KubeClient.CoreV1().Nodes().Create(context.Background(), node.Node(), metav1.CreateOptions{})
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
-	for _, namespace := range []string{"blue", config.Default.ClusterDefaultNetworkNAD.Namespace} {
-		_, err = fakeClientset.KubeClient.CoreV1().Namespaces().Create(context.Background(),
-			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}}, metav1.CreateOptions{})
-		g.Expect(err).ToNot(gomega.HaveOccurred())
-	}
+	_, err = fakeClientset.KubeClient.CoreV1().Namespaces().Create(context.Background(),
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: config.Default.ClusterDefaultNetworkNAD.Namespace}}, metav1.CreateOptions{})
+	g.Expect(err).ToNot(gomega.HaveOccurred(), "failed to create namespace %s", config.Default.ClusterDefaultNetworkNAD.Namespace)
 
 	wf, err := factory.NewClusterManagerWatchFactory(fakeClientset)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
@@ -4738,6 +5082,168 @@ func TestController_reconcileOnNetworkActivity(t *testing.T) {
 	err = fakeClientset.RouteAdvertisementsClient.K8sV1().RouteAdvertisements().Delete(context.Background(), "ra", metav1.DeleteOptions{})
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Eventually(func() []string { return c.getRAsForNetwork(networkName) }, 5*time.Second).Should(gomega.BeEmpty())
+}
+
+// TestController_reconcileOnCUDNEvents verifies that a NAD is advertised once
+// the ClusterUserDefinedNetwork of its owner reference exists and selects its
+// namespace, and withdrawn once that ClusterUserDefinedNetwork stops selecting
+// the namespace, is deleted or is replaced by one with another UID.
+func TestController_reconcileOnCUDNEvents(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	previousDefault, previousFeatures, previousGateway := config.Default, config.OVNKubernetesFeature, config.Gateway
+	t.Cleanup(func() {
+		config.Default, config.OVNKubernetesFeature, config.Gateway = previousDefault, previousFeatures, previousGateway
+	})
+	frrNamespace := "frrNamespace"
+	config.Default.ClusterSubnets = []config.CIDRNetworkEntry{
+		{
+			CIDR:             ovntest.MustParseIPNet("1.1.0.0/16"),
+			HostSubnetLength: 24,
+		},
+	}
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	config.OVNKubernetesFeature.EnableRouteAdvertisements = true
+	// namespace events must reconcile with no EgressIP support
+	config.OVNKubernetesFeature.EnableEgressIP = false
+	config.OVNKubernetesFeature.EnableEVPN = true
+	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+	config.OVNKubernetesFeature.EnableDynamicUDNAllocation = false
+	config.Gateway.Mode = config.GatewayModeLocal
+
+	fakeClientset := util.GetOVNClientset().GetClusterManagerClientset()
+	addGenerateNameReactor[*frrfake.Clientset](fakeClientset.FRRClient)
+
+	ra := &testRA{Name: "ra", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}}
+	_, err := fakeClientset.RouteAdvertisementsClient.K8sV1().RouteAdvertisements().Create(context.Background(), ra.RouteAdvertisements(), metav1.CreateOptions{})
+	g.Expect(err).ToNot(gomega.HaveOccurred(), "failed to create RouteAdvertisements %s", ra.Name)
+
+	frrConfig := &testFRRConfig{
+		Name:      "frrConfig",
+		Namespace: frrNamespace,
+		Routers: []*testRouter{
+			{ASN: 1, Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+				{ASN: 1, Address: "1.0.0.100"},
+			}},
+		},
+	}
+	_, err = fakeClientset.FRRClient.ApiV1beta1().FRRConfigurations(frrConfig.Namespace).Create(context.Background(), frrConfig.FRRConfiguration(), metav1.CreateOptions{})
+	g.Expect(err).ToNot(gomega.HaveOccurred(), "failed to create FRRConfiguration %s", frrConfig.Name)
+
+	nad := &testNAD{Name: "blue", Namespace: "blue", Network: util.GenerateCUDNNetworkName("blue"), Topology: "layer3", Subnet: "1.3.0.0/16", Labels: map[string]string{"selected": "true"}}
+	_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nad.Namespace).Create(context.Background(), nad.NAD(), metav1.CreateOptions{})
+	g.Expect(err).ToNot(gomega.HaveOccurred(), "failed to create NAD %s/%s", nad.Namespace, nad.Name)
+
+	node := &testNode{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\", \"cluster_udn_blue\":\"1.3.0.0/24\"}"}
+	_, err = fakeClientset.KubeClient.CoreV1().Nodes().Create(context.Background(), node.Node(), metav1.CreateOptions{})
+	g.Expect(err).ToNot(gomega.HaveOccurred(), "failed to create node %s", node.Name)
+
+	for _, namespace := range []string{"blue", config.Default.ClusterDefaultNetworkNAD.Namespace} {
+		_, err = fakeClientset.KubeClient.CoreV1().Namespaces().Create(context.Background(), testNamespace{Name: namespace}.Namespace(), metav1.CreateOptions{})
+		g.Expect(err).ToNot(gomega.HaveOccurred(), "failed to create namespace %s", namespace)
+	}
+
+	wf, err := factory.NewClusterManagerWatchFactory(fakeClientset)
+	g.Expect(err).ToNot(gomega.HaveOccurred(), "failed to create the watch factory")
+
+	nm, err := networkmanager.NewForCluster(&networkmanager.FakeControllerManager{}, wf, fakeClientset, nil, id.NewTunnelKeyAllocator("TunnelKeys"))
+	g.Expect(err).ToNot(gomega.HaveOccurred(), "failed to create the network manager")
+
+	c := NewController(nm.Interface(), wf, fakeClientset)
+
+	err = wf.Start()
+	g.Expect(err).ToNot(gomega.HaveOccurred(), "failed to start the watch factory")
+	defer wf.Shutdown()
+
+	syncCtx, cancelSync := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelSync()
+	g.Expect(cache.WaitForCacheSync(
+		syncCtx.Done(),
+		wf.RouteAdvertisementsInformer().Informer().HasSynced,
+		wf.FRRConfigurationsInformer().Informer().HasSynced,
+		wf.NADInformer().Informer().HasSynced,
+		wf.NodeCoreInformer().Informer().HasSynced,
+		wf.NamespaceInformer().Informer().HasSynced,
+		wf.ClusterUserDefinedNetworkInformer().Informer().HasSynced,
+	)).To(gomega.BeTrue(), "informers did not sync")
+
+	err = nm.Start()
+	g.Expect(err).ToNot(gomega.HaveOccurred(), "failed to start the network manager")
+	defer nm.Stop()
+
+	err = c.Start()
+	g.Expect(err).ToNot(gomega.HaveOccurred(), "failed to start the controller")
+	defer c.Stop()
+
+	t.Cleanup(func() { metrics.DeleteRouteAdvertisementCondition("ra") })
+
+	advertisedPrefixes := func() []string {
+		frrConfigs, err := fakeClientset.FRRClient.ApiV1beta1().FRRConfigurations(frrNamespace).List(context.Background(), metav1.ListOptions{})
+		g.Expect(err).ToNot(gomega.HaveOccurred(), "failed to list FRRConfigurations")
+		var prefixes []string
+		for _, frrConfig := range frrConfigs.Items {
+			if _, generated := frrConfig.Annotations[types.OvnRouteAdvertisementsKey]; !generated {
+				continue
+			}
+			for _, router := range frrConfig.Spec.BGP.Routers {
+				prefixes = append(prefixes, router.Prefixes...)
+			}
+		}
+		return prefixes
+	}
+	raAcceptedMessage := func() string {
+		ra, err := fakeClientset.RouteAdvertisementsClient.K8sV1().RouteAdvertisements().Get(context.Background(), "ra", metav1.GetOptions{})
+		if err != nil {
+			return ""
+		}
+		accepted := meta.FindStatusCondition(ra.Status.Conditions, "Accepted")
+		if accepted == nil {
+			return ""
+		}
+		return accepted.Message
+	}
+	cudns := fakeClientset.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks()
+
+	// the NAD exists before the ClusterUserDefinedNetwork of its owner
+	// reference: nothing is advertised
+	g.Eventually(raAcceptedMessage, 5*time.Second).Should(gomega.ContainSubstring("no networks selected"))
+	g.Expect(advertisedPrefixes()).To(gomega.BeEmpty(), "nothing must be advertised before the ClusterUserDefinedNetwork exists")
+
+	cudn := &testCUDN{Name: "blue", Namespaces: []string{"blue"}}
+	_, err = cudns.Create(context.Background(), cudn.ClusterUserDefinedNetwork(), metav1.CreateOptions{})
+	g.Expect(err).ToNot(gomega.HaveOccurred(), "failed to create ClusterUserDefinedNetwork %s", cudn.Name)
+	g.Eventually(advertisedPrefixes, 5*time.Second).Should(gomega.ConsistOf("1.3.0.0/24"))
+
+	err = cudns.Delete(context.Background(), cudn.Name, metav1.DeleteOptions{})
+	g.Expect(err).ToNot(gomega.HaveOccurred(), "failed to delete ClusterUserDefinedNetwork %s", cudn.Name)
+	g.Eventually(advertisedPrefixes, 5*time.Second).Should(gomega.BeEmpty())
+
+	_, err = cudns.Create(context.Background(), cudn.ClusterUserDefinedNetwork(), metav1.CreateOptions{})
+	g.Expect(err).ToNot(gomega.HaveOccurred(), "failed to recreate ClusterUserDefinedNetwork %s", cudn.Name)
+	g.Eventually(advertisedPrefixes, 5*time.Second).Should(gomega.ConsistOf("1.3.0.0/24"))
+
+	// the ClusterUserDefinedNetwork selects the namespace by this label
+	namespaces := fakeClientset.KubeClient.CoreV1().Namespaces()
+	namespace, err := namespaces.Get(context.Background(), "blue", metav1.GetOptions{})
+	g.Expect(err).ToNot(gomega.HaveOccurred(), "failed to get namespace blue")
+	delete(namespace.Labels, corev1.LabelMetadataName)
+	namespace, err = namespaces.Update(context.Background(), namespace, metav1.UpdateOptions{})
+	g.Expect(err).ToNot(gomega.HaveOccurred(), "failed to remove the label of namespace %s", namespace.Name)
+	g.Eventually(advertisedPrefixes, 5*time.Second).Should(gomega.BeEmpty())
+
+	namespace.Labels = map[string]string{corev1.LabelMetadataName: namespace.Name}
+	_, err = namespaces.Update(context.Background(), namespace, metav1.UpdateOptions{})
+	g.Expect(err).ToNot(gomega.HaveOccurred(), "failed to restore the label of namespace %s", namespace.Name)
+	g.Eventually(advertisedPrefixes, 5*time.Second).Should(gomega.ConsistOf("1.3.0.0/24"))
+
+	// a ClusterUserDefinedNetwork recreated with the same name has another UID
+	err = cudns.Delete(context.Background(), cudn.Name, metav1.DeleteOptions{})
+	g.Expect(err).ToNot(gomega.HaveOccurred(), "failed to delete ClusterUserDefinedNetwork %s", cudn.Name)
+	cudn.UID = "recreated"
+	_, err = cudns.Create(context.Background(), cudn.ClusterUserDefinedNetwork(), metav1.CreateOptions{})
+	g.Expect(err).ToNot(gomega.HaveOccurred(), "failed to recreate ClusterUserDefinedNetwork %s with another UID", cudn.Name)
+	g.Eventually(advertisedPrefixes, 5*time.Second).Should(gomega.BeEmpty())
+	g.Consistently(advertisedPrefixes, time.Second).Should(gomega.BeEmpty())
 }
 
 // TestCrossRASelectionEvents checks that claims are reevaluated on RA changes
@@ -4854,6 +5360,11 @@ func TestUpdates(t *testing.T) {
 		newObject         any
 		initialReconciles []string
 		expectedReconcile []string
+		// nads exist before the object is created
+		nads []*testNAD
+		// networkSegmentationDisabled runs the case with no
+		// ClusterUserDefinedNetwork API
+		networkSegmentationDisabled bool
 	}{
 		{
 			name:              "reconciles all RAs when an FRRConfig gets created",
@@ -4975,10 +5486,64 @@ func TestUpdates(t *testing.T) {
 			expectedReconcile: []string{"ra1", "ra3"},
 		},
 		{
-			name:              "reconciles all RAs that advertise EIPs on updated namespace labels",
+			name:              "reconciles all RAs on updated labels of a namespace with a ClusterUserDefinedNetwork NAD",
+			nads:              []*testNAD{{Name: "net", Namespace: "ns1", Network: util.GenerateCUDNNetworkName("net")}},
+			oldObject:         &testNamespace{Name: "ns1", Labels: map[string]string{"selected": "true"}},
+			newObject:         &testNamespace{Name: "ns1"},
+			expectedReconcile: []string{"ra1", "ra2", "ra3"},
+		},
+		{
+			name:              "reconciles all RAs that advertise EIPs on updated labels of a namespace with no ClusterUserDefinedNetwork NAD",
+			nads:              []*testNAD{{Name: "net", Namespace: "ns1", Network: "net"}},
 			oldObject:         &testNamespace{Name: "ns1", Labels: map[string]string{"selected": "true"}},
 			newObject:         &testNamespace{Name: "ns1"},
 			expectedReconcile: []string{"ra1", "ra3"},
+		},
+		{
+			name:                        "reconciles all RAs that advertise EIPs on updated namespace labels when network segmentation is disabled",
+			oldObject:                   &testNamespace{Name: "ns1", Labels: map[string]string{"selected": "true"}},
+			newObject:                   &testNamespace{Name: "ns1"},
+			expectedReconcile:           []string{"ra1", "ra3"},
+			networkSegmentationDisabled: true,
+		},
+		{
+			name:              "reconciles all RAs when the NAD controller owner reference changes",
+			oldObject:         &testNAD{Name: "net", Namespace: "net", Network: util.GenerateCUDNNetworkName("net"), Labels: map[string]string{"select": "2"}},
+			newObject:         &testNAD{Name: "net", Namespace: "net", Network: util.GenerateCUDNNetworkName("net"), Labels: map[string]string{"select": "2"}, ForgedOwner: &testCUDN{Name: "net", UID: "forged"}},
+			expectedReconcile: []string{"ra1", "ra2", "ra3"},
+		},
+		{
+			name:              "reconciles all RAs when the NAD network name annotation changes",
+			oldObject:         &testNAD{Name: "net", Namespace: "net", Network: util.GenerateCUDNNetworkName("net"), Labels: map[string]string{"select": "2"}},
+			newObject:         &testNAD{Name: "net", Namespace: "net", Network: util.GenerateCUDNNetworkName("other"), CUDN: "net", Labels: map[string]string{"select": "2"}},
+			expectedReconcile: []string{"ra1", "ra2", "ra3"},
+		},
+		{
+			name:              "reconciles all RAs when a NAD becomes secondary and its controller owner reference changes",
+			oldObject:         &testNAD{Name: "net", Namespace: "net", Network: util.GenerateCUDNNetworkName("net"), Labels: map[string]string{"select": "2"}},
+			newObject:         &testNAD{Name: "net", Namespace: "net", Network: util.GenerateCUDNNetworkName("net"), IsSecondary: true, Topology: "layer3", Labels: map[string]string{"select": "2"}, ForgedOwner: &testCUDN{Name: "net", UID: "forged"}},
+			expectedReconcile: []string{"ra1", "ra2", "ra3"},
+		},
+		{
+			name:              "reconciles all RAs on new ClusterUserDefinedNetwork",
+			newObject:         &testCUDN{Name: "net", Namespaces: []string{"net"}},
+			expectedReconcile: []string{"ra1", "ra2", "ra3"},
+		},
+		{
+			name:              "reconciles all RAs on deleted ClusterUserDefinedNetwork",
+			oldObject:         &testCUDN{Name: "net", Namespaces: []string{"net"}},
+			expectedReconcile: []string{"ra1", "ra2", "ra3"},
+		},
+		{
+			name:              "reconciles all RAs when the ClusterUserDefinedNetwork namespace selector changes",
+			oldObject:         &testCUDN{Name: "net", Namespaces: []string{"net"}},
+			newObject:         &testCUDN{Name: "net", Namespaces: []string{"other"}},
+			expectedReconcile: []string{"ra1", "ra2", "ra3"},
+		},
+		{
+			name:      "does not reconcile RAs on ClusterUserDefinedNetwork irrelevant change",
+			oldObject: &testCUDN{Name: "net", Namespaces: []string{"net"}},
+			newObject: &testCUDN{Name: "net", Namespaces: []string{"net"}, Labels: map[string]string{"select": "1"}},
 		},
 		{
 			name:      "does not reconcile RAs on new EIP with no status",
@@ -5091,6 +5656,8 @@ func TestUpdates(t *testing.T) {
 			format.MaxLength = 0
 			defer func() { format.MaxLength = gMaxLength }()
 
+			config.OVNKubernetesFeature.EnableNetworkSegmentation = !tt.networkSegmentationDisabled
+
 			fakeClientset := util.GetOVNClientset().GetClusterManagerClientset()
 
 			wf, err := factory.NewClusterManagerWatchFactory(fakeClientset)
@@ -5146,6 +5713,8 @@ func TestUpdates(t *testing.T) {
 					_, err = fakeClientset.KubeClient.CoreV1().Nodes().Create(context.Background(), t.Node(), metav1.CreateOptions{})
 				case *testNamespace:
 					_, err = fakeClientset.KubeClient.CoreV1().Namespaces().Create(context.Background(), t.Namespace(), metav1.CreateOptions{})
+				case *testCUDN:
+					_, err = fakeClientset.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Create(context.Background(), t.ClusterUserDefinedNetwork(), metav1.CreateOptions{})
 				}
 				return err
 			}
@@ -5162,6 +5731,8 @@ func TestUpdates(t *testing.T) {
 					_, err = fakeClientset.KubeClient.CoreV1().Nodes().Update(context.Background(), t.Node(), metav1.UpdateOptions{})
 				case *testNamespace:
 					_, err = fakeClientset.KubeClient.CoreV1().Namespaces().Update(context.Background(), t.Namespace(), metav1.UpdateOptions{})
+				case *testCUDN:
+					_, err = fakeClientset.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Update(context.Background(), t.ClusterUserDefinedNetwork(), metav1.UpdateOptions{})
 				}
 				return err
 			}
@@ -5178,10 +5749,19 @@ func TestUpdates(t *testing.T) {
 					err = fakeClientset.KubeClient.CoreV1().Nodes().Delete(context.Background(), t.Name, metav1.DeleteOptions{})
 				case *testNamespace:
 					err = fakeClientset.KubeClient.CoreV1().Namespaces().Delete(context.Background(), t.Name, metav1.DeleteOptions{})
+				case *testCUDN:
+					err = fakeClientset.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Delete(context.Background(), t.Name, metav1.DeleteOptions{})
 				}
 				return err
 			}
 
+			for _, nad := range tt.nads {
+				g.Expect(createObj(nad)).To(gomega.Succeed(), "failed to create NAD %s/%s", nad.Namespace, nad.Name)
+				g.Eventually(func() error {
+					_, err := c.nadLister.NetworkAttachmentDefinitions(nad.Namespace).Get(nad.Name)
+					return err
+				}, 5*time.Second).Should(gomega.Succeed(), "cache must observe NAD %s/%s", nad.Namespace, nad.Name)
+			}
 			if tt.oldObject != nil {
 				err = createObj(tt.oldObject)
 				g.Expect(err).ToNot(gomega.HaveOccurred())
@@ -6864,7 +7444,7 @@ func TestNetworkReadinessUsesSelectedNetwork(t *testing.T) {
 	config.OVNKubernetesFeature.EnableDynamicUDNAllocation = false
 	nm := &networkmanager.FakeNetworkManager{PrimaryNetworks: map[string]util.NetInfo{}}
 	networkName := util.GenerateCUDNNetworkName("production-blue-network")
-	tt.addNetwork(nm, &testNAD{Name: "blue", Namespace: "blue", Network: networkName,
+	tt.addNetwork(nm, &testNAD{Name: "production-blue-network", Namespace: "blue", Network: networkName,
 		Topology: types.Layer3Topology, Subnet: "1.3.0.0/16/24", Labels: map[string]string{"color": "blue"}})
 	previous := util.NewMutableNetInfo(nm.GetNetwork(networkName))
 	previous.SetNetworkID(7)
