@@ -57,6 +57,8 @@ Usage:
      log verbosity and level: 5=debug, 4=info, 3=warn, 2=error, 1=fatal (default: 4)
   -logfile string
      path of a file to direct log output to
+  -cnilogfile string
+     path of a file to direct log from cni shim to output to, must be inside /var/log/ovn-kubernetes (default: /var/log/ovn-kubernetes/ovn-k8s-cni-overlay.log)
   -cni-conf-dir string
      the CNI config directory in which to write the overlay CNI config file (default: /etc/cni/net.d)
   -cni-plugin string
