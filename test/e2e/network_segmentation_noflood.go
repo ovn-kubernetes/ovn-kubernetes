@@ -42,6 +42,7 @@ import (
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
+	testutils "k8s.io/kubernetes/test/utils"
 	utilnet "k8s.io/utils/net"
 )
 
@@ -99,6 +100,10 @@ const (
 	// After an ovnkube-node restart the databases in that pod come back empty
 	// and everything has to be relearned and re-mirrored.
 	noFloodReconvergeTimeout = 300 * time.Second
+
+	// noFloodAPICallTimeout bounds a single Kubernetes API request, so a
+	// stalled one cannot hold up the serial suite.
+	noFloodAPICallTimeout = 30 * time.Second
 
 	// Ceiling, not an expected wait. A gateway router only notices a
 	// neighbour's new MAC on its next refresh probe, and in the worst case the
@@ -534,6 +539,40 @@ var _ = Describe("Network Segmentation: MAC binding mirroring with ARP/NDP flood
 				return &pods.Items[0]
 			}
 
+			// onLinkNodeIPMACs returns node IP -> the owning node's gateway MAC
+			// for every node IP on-link on the traffic node's external subnets,
+			// i.e. the node IPs the UDN gateway routers bind statically.
+			onLinkNodeIPMACs := func() map[string]string {
+				gwCfg := noFloodGatewayConfigOf(&trafficNode)
+				var extSubnets []*net.IPNet
+				for _, addr := range gwCfg.IPAddresses {
+					_, subnet, err := net.ParseCIDR(addr)
+					Expect(err).NotTo(HaveOccurred(), "l3-gateway-config ip-address %q must parse", addr)
+					extSubnets = append(extSubnets, subnet)
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), noFloodAPICallTimeout)
+				defer cancel()
+				nodes, err := cs.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+				framework.ExpectNoError(err)
+				onLinkNodeIPs := map[string]string{}
+				for i := range nodes.Items {
+					node := &nodes.Items[i]
+					mac := strings.ToLower(noFloodGatewayConfigOf(node).MACAddress)
+					for _, addr := range node.Status.Addresses {
+						if addr.Type != v1.NodeInternalIP {
+							continue
+						}
+						ip := net.ParseIP(addr.Address)
+						for _, subnet := range extSubnets {
+							if subnet.Contains(ip) {
+								onLinkNodeIPs[addr.Address] = mac
+							}
+						}
+					}
+				}
+				return onLinkNodeIPs
+			}
+
 			// staticMACBindingIPsOn returns the IPs statically bound on one
 			// logical port.
 			staticMACBindingIPsOn := func(port string) []string {
@@ -784,34 +823,9 @@ var _ = Describe("Network Segmentation: MAC binding mirroring with ARP/NDP flood
 			})
 
 			It("binds node IPs statically on the UDNs instead of mirroring them", func() {
-				gwCfg := noFloodGatewayConfigOf(&trafficNode)
-				var extSubnets []*net.IPNet
-				for _, addr := range gwCfg.IPAddresses {
-					_, subnet, err := net.ParseCIDR(addr)
-					Expect(err).NotTo(HaveOccurred(), "l3-gateway-config ip-address %q must parse", addr)
-					extSubnets = append(extSubnets, subnet)
-				}
-
 				By("collecting the node IPs that are on-link on the traffic node's external subnets")
-				nodes, err := cs.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
-				framework.ExpectNoError(err)
 				// node IP -> expected MAC (the owning node's gateway MAC)
-				onLinkNodeIPs := map[string]string{}
-				for i := range nodes.Items {
-					node := &nodes.Items[i]
-					mac := strings.ToLower(noFloodGatewayConfigOf(node).MACAddress)
-					for _, addr := range node.Status.Addresses {
-						if addr.Type != v1.NodeInternalIP {
-							continue
-						}
-						ip := net.ParseIP(addr.Address)
-						for _, subnet := range extSubnets {
-							if subnet.Contains(ip) {
-								onLinkNodeIPs[addr.Address] = mac
-							}
-						}
-					}
-				}
+				onLinkNodeIPs := onLinkNodeIPMACs()
 				Expect(onLinkNodeIPs).NotTo(BeEmpty(), "expected at least one on-link node IP")
 				framework.Logf("on-link node IPs: %v", onLinkNodeIPs)
 
@@ -991,7 +1005,98 @@ var _ = Describe("Network Segmentation: MAC binding mirroring with ARP/NDP flood
 			})
 
 			It("reconverges after ovnkube-node restarts, without leaving orphan static bindings", func() {
-				framework.ExpectNoError(restartOVNKubeNodePod(cs, deploymentconfig.Get().OVNKubernetesNamespace(), trafficNode.Name))
+				onLinkNodeIPs := onLinkNodeIPMACs()
+				Expect(onLinkNodeIPs).NotTo(BeEmpty(), "expected at least one on-link node IP")
+
+				By("creating a CUDN whose gateway router gets the node-IP static bindings")
+				v4, v6 := allocators.GetNthFirstUDNSubnets(6)
+				goneNs := createNamespace(map[string]string{
+					"e2e-framework":           f.BaseName,
+					RequiredUDNNamespaceLabel: "",
+				}).Name
+				goneName := createCUDN(goneNs, "layer2", joinStrings(v4[5], v6[5]), "primary")
+				const gonePodName = "noflood-udn-gone"
+				createPod(goneNs, gonePodName)
+				gonePort := cudnGatewayRouterExtPortName(goneName, trafficNode.Name)
+				Eventually(func(g Gomega) {
+					static, err := listStaticMACBindings(ovnkPod)
+					g.Expect(err).NotTo(HaveOccurred(), "failed to list static MAC bindings on %s", ovnkPod.Name)
+					got := map[string]string{}
+					for _, row := range static {
+						if row.logicalPort == gonePort {
+							got[row.ip] = row.mac
+						}
+					}
+					for ip := range onLinkNodeIPs {
+						g.Expect(got).To(HaveKey(ip), "node IP %s must be statically bound on %s", ip, gonePort)
+					}
+				}, 120*time.Second, 5*time.Second).Should(Succeed())
+
+				// Reason: a network deleted while no ovnkube-controller runs on the
+				// node is removed by the next one in its startup sync, before its MAC
+				// binding controller starts, so only the startup repair can reap the
+				// node-IP static bindings left behind. A graceful pod deletion is not
+				// enough: the terminating process removes the network itself and
+				// reaps them at runtime. The process is frozen instead while the
+				// network goes away, then killed with the pod.
+				By("deleting the CUDN while ovnkube-controller is stopped on the traffic node")
+				oldOVNKPod := ovnkPod.Name
+				ovnkubeProcess := fmt.Sprintf("--init-ovnkube-controller .* --init-node %s( |$)", trafficNode.Name)
+				signalOVNKubeController := func(signal string) error {
+					_, err := e2ekubectl.RunKubectl(ovnkPod.Namespace, "exec", oldOVNKPod, "-c", "ovnkube-controller", "--",
+						"pkill", "-"+signal, "-f", "--", ovnkubeProcess)
+					if err != nil {
+						return fmt.Errorf("failed to send signal %s to ovnkube-controller in %s: %w", signal, oldOVNKPod, err)
+					}
+					return nil
+				}
+				// Resume it if the spec fails before the pod is gone. Once the pod is
+				// deleted its stopped process went with it, and there is nothing to
+				// resume.
+				DeferCleanup(func() {
+					Eventually(func() error {
+						ctx, cancel := context.WithTimeout(context.Background(), noFloodAPICallTimeout)
+						defer cancel()
+						_, err := cs.CoreV1().Pods(ovnkPod.Namespace).Get(ctx, oldOVNKPod, metav1.GetOptions{})
+						if apierrors.IsNotFound(err) {
+							return nil
+						}
+						if err != nil {
+							return fmt.Errorf("failed to get ovnkube-node pod %s: %w", oldOVNKPod, err)
+						}
+						return signalOVNKubeController("CONT")
+					}, time.Minute, 5*time.Second).Should(Succeed(),
+						"ovnkube-controller in %s must be resumed, or every later spec runs against a stopped controller", oldOVNKPod)
+				})
+				framework.ExpectNoError(signalOVNKubeController("STOP"), "must stop ovnkube-controller in %s", oldOVNKPod)
+				// The CNI DEL of the CUDN pod cannot complete while ovnkube-controller
+				// is stopped, so the pod is removed from the API right away.
+				var noGracePeriod int64
+				deleteCtx, cancelDelete := context.WithTimeout(context.Background(), noFloodAPICallTimeout)
+				defer cancelDelete()
+				framework.ExpectNoError(cs.CoreV1().Pods(goneNs).Delete(deleteCtx, gonePodName,
+					metav1.DeleteOptions{GracePeriodSeconds: &noGracePeriod}), "must force delete pod %s/%s", goneNs, gonePodName)
+				deleteNamespaceAndWait(goneNs)
+				_, err := e2ekubectl.RunKubectl("", "delete", "clusteruserdefinednetwork", goneName, "--wait", "--timeout=120s")
+				Expect(err).NotTo(HaveOccurred(), "must delete CUDN %s", goneName)
+				podDeleteCtx, cancelPodDelete := context.WithTimeout(context.Background(), noFloodAPICallTimeout)
+				defer cancelPodDelete()
+				framework.ExpectNoError(cs.CoreV1().Pods(ovnkPod.Namespace).Delete(podDeleteCtx, oldOVNKPod,
+					metav1.DeleteOptions{GracePeriodSeconds: &noGracePeriod}), "must delete ovnkube-node pod %s", oldOVNKPod)
+				Eventually(func(g Gomega) {
+					ctx, cancel := context.WithTimeout(context.Background(), noFloodAPICallTimeout)
+					defer cancel()
+					pods, err := cs.CoreV1().Pods(deploymentconfig.Get().OVNKubernetesNamespace()).List(ctx, metav1.ListOptions{
+						LabelSelector: "app=ovnkube-node",
+						FieldSelector: "spec.nodeName=" + trafficNode.Name,
+					})
+					g.Expect(err).NotTo(HaveOccurred(), "failed to list the ovnkube-node pods on %s", trafficNode.Name)
+					g.Expect(pods.Items).To(HaveLen(1), "expected exactly one ovnkube-node pod on %s", trafficNode.Name)
+					pod := &pods.Items[0]
+					g.Expect(pod.Name).NotTo(Equal(oldOVNKPod), "ovnkube-node pod %s must be replaced", oldOVNKPod)
+					ready, err := testutils.PodRunningReady(pod)
+					g.Expect(ready).To(BeTrue(), "ovnkube-node pod %s must be running and ready: %v", pod.Name, err)
+				}, 3*time.Minute, 2*time.Second).Should(Succeed())
 				// The pod name changed and every later spec reads the databases
 				// through it.
 				ovnkPod = ovnkPodOnNode(trafficNode.Name)
@@ -1028,6 +1133,20 @@ var _ = Describe("Network Segmentation: MAC binding mirroring with ARP/NDP flood
 							"static binding for %s survives on %s, which is not a live gateway router port", row.ip, row.logicalPort)
 					}
 				}, noFloodReconvergeTimeout, 5*time.Second).Should(Succeed())
+
+				By("asserting the CUDN deleted while ovnkube-node was down left no static bindings")
+				Eventually(func(g Gomega) {
+					g.Expect(staticMACBindingIPsOn(gonePort)).To(BeEmpty(),
+						"the static bindings of the deleted CUDN must be reaped on %s", gonePort)
+				}, noFloodReconvergeTimeout, 5*time.Second).Should(Succeed())
+
+				By("asserting the live CUDNs kept their node-IP static bindings")
+				for _, port := range expectedPorts[1:] {
+					got := staticMACBindingIPsOn(port)
+					for ip := range onLinkNodeIPs {
+						Expect(got).To(ContainElement(ip), "node IP %s must stay statically bound on live port %s", ip, port)
+					}
+				}
 			})
 
 			It("converges every gateway router onto the new MAC when the external container changes it", func() {
