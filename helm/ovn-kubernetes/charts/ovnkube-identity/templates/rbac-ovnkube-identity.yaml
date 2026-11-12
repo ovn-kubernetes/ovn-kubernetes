@@ -44,6 +44,10 @@ rules:
       resources:
           - nodes
       verbs: ["get", "list", "watch"]
+    - apiGroups: [""]
+      resources:
+          - pods
+      verbs: ["list", "watch"]
     - apiGroups: ["certificates.k8s.io"]
       resources:
           - certificatesigningrequests
