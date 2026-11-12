@@ -1633,23 +1633,25 @@ func addLinkAndAddresses(name string, addresses []address) error {
 // Ref: https://www.man7.org/linux/man-pages/man8/ip-route.8.html
 func getDefaultIPv4Route(linkIndex int) netlink.Route {
 	// dst is nil because netlink represents a default route as nil
-	return netlink.Route{LinkIndex: linkIndex, Table: util.CalculateRouteTableID(linkIndex), Dst: defaultV4AnyCIDR, Type: unix.RTN_UNICAST}
+	return netlink.Route{LinkIndex: linkIndex, Table: util.CalculateRouteTableID(linkIndex), Dst: defaultV4AnyCIDR, Type: unix.RTN_UNICAST, Protocol: netlink.RouteProtocol(ovntypes.OVNKProtocol)}
 }
 
 func getDefaultIPv6Route(linkIndex int) netlink.Route {
 	// dst is nil because netlink represents a default route as nil
 	// Priority for a default IPv6 route gets set to 1024
 	// Ref : https://access.redhat.com/solutions/3659171
-	return netlink.Route{LinkIndex: linkIndex, Table: util.CalculateRouteTableID(linkIndex), Dst: defaultV6AnyCIDR, Type: unix.RTN_UNICAST, Priority: 1024}
+	return netlink.Route{LinkIndex: linkIndex, Table: util.CalculateRouteTableID(linkIndex), Dst: defaultV6AnyCIDR, Type: unix.RTN_UNICAST, Priority: 1024, Protocol: netlink.RouteProtocol(ovntypes.OVNKProtocol)}
 }
 
 func getDstRoute(linkIndex int, dst string) netlink.Route {
+	var route netlink.Route
 	if utilnet.IsIPv6CIDRString(dst) {
-		return getV6DstRouteForTable(linkIndex, util.CalculateRouteTableID(linkIndex), dst)
+		route = getV6DstRouteForTable(linkIndex, util.CalculateRouteTableID(linkIndex), dst)
 	} else {
-		return getV4DstRouteForTable(linkIndex, util.CalculateRouteTableID(linkIndex), dst)
+		route = getV4DstRouteForTable(linkIndex, util.CalculateRouteTableID(linkIndex), dst)
 	}
-
+	route.Protocol = netlink.RouteProtocol(ovntypes.OVNKProtocol)
+	return route
 }
 
 // Default scope is link for direct unicast routes
@@ -1671,7 +1673,7 @@ func getV6DstRouteForTable(linkIndex, table int, dst string) netlink.Route {
 }
 
 func getLinkLocalRoute(linkIndex int) netlink.Route {
-	return netlink.Route{LinkIndex: linkIndex, Dst: linkLocalCIDR, Table: util.CalculateRouteTableID(linkIndex), Type: unix.RTN_UNICAST, Priority: 256}
+	return netlink.Route{LinkIndex: linkIndex, Dst: linkLocalCIDR, Table: util.CalculateRouteTableID(linkIndex), Type: unix.RTN_UNICAST, Priority: 256, Protocol: netlink.RouteProtocol(ovntypes.OVNKProtocol)}
 }
 
 func getNetlinkAddr(ip, netmask string) *netlink.Addr {
