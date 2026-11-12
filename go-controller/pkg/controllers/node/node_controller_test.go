@@ -540,3 +540,240 @@ func TestReconcileNodeDeleteCacheMissStillClearsState(t *testing.T) {
 		t.Fatal("expected delete reconciliation marker to be cleared")
 	}
 }
+
+func TestReconcileNetworkRoutesLocalNodeToDedicatedQueue(t *testing.T) {
+	const netName = "net-a"
+	shared := make(chan string, 10)
+	local := make(chan string, 10)
+	newQueue := func(name string, keys chan<- string) controller.Reconciler {
+		return controller.NewReconciler(name, &controller.ReconcilerConfig{
+			Reconcile:   func(_ context.Context, key string) error { keys <- key; return nil },
+			Threadiness: 1,
+		})
+	}
+	c := &NodeController{
+		name:                "topology-test",
+		nodeName:            "local-node",
+		nodeController:      newQueue("topology-test-shared", shared).(controller.Controller),
+		localNodeController: newQueue("topology-test-local", local),
+	}
+	if err := controller.Start(c.nodeController, c.localNodeController); err != nil {
+		t.Fatalf("failed to start queues: %v", err)
+	}
+	defer controller.Stop(c.nodeController, c.localNodeController)
+
+	c.ReconcileNetwork("remote-node", netName)
+	c.ReconcileNetwork("local-node", netName)
+
+	expect := func(queue string, keys <-chan string, want string) {
+		t.Helper()
+		select {
+		case got := <-keys:
+			if got != want {
+				t.Fatalf("%s queue got %q, want %q", queue, got, want)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%s queue did not get %q", queue, want)
+		}
+	}
+	expect("shared", shared, scopedNodeQueueKey("remote-node", netName))
+	expect("local", local, scopedNodeQueueKey("local-node", netName))
+	select {
+	case key := <-shared:
+		t.Fatalf("the local node must not be queued on the shared queue, got %q", key)
+	case key := <-local:
+		t.Fatalf("the remote node must not be queued on the local queue, got %q", key)
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+// countingHandler fails the first failures reconciles of a node.
+type countingHandler struct {
+	fakeNodeHandler
+	failures int32
+	calls    atomic.Int32
+}
+
+func (h *countingHandler) ReconcileNode(_ context.Context, _, newNode *corev1.Node, _, _ *NodeAnnotationState) error {
+	if newNode == nil {
+		return nil
+	}
+	if h.calls.Add(1) <= h.failures {
+		return util.NewAnnotationNotSetError("annotation not found for node %q", newNode.Name)
+	}
+	return nil
+}
+
+func TestLocalNodeQueueRetriesUntilReconcileSucceeds(t *testing.T) {
+	const netName = "net-a"
+	if err := config.PrepareTestConfig(); err != nil {
+		t.Fatalf("failed to prepare test config: %v", err)
+	}
+	config.OVNKubernetesFeature.EnableDynamicUDNAllocation = false
+	localNode := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "local-node"}}
+	c := &NodeController{
+		name:               "topology-test",
+		nodeName:           localNode.Name,
+		networkManager:     networkmanager.Default().Interface(),
+		nodeController:     newNodeControllerForTest(1, nil),
+		nodeLister:         newNodeLister(t, localNode),
+		handlers:           syncmap.NewSyncMap[NodeHandler](),
+		nodeReconciliation: map[string]map[string]bool{},
+		nodeActive:         map[string]map[string]struct{}{},
+		nodeCache:          map[string]map[string]*corev1.Node{},
+		annotationCache:    NewNodeAnnotationCache(),
+	}
+	c.localNodeController = controller.NewReconciler("topology-test-local", &controller.ReconcilerConfig{
+		Reconcile:   c.reconcileNode,
+		Threadiness: 1,
+		MaxAttempts: controller.InfiniteAttempts,
+	})
+	handler := &countingHandler{fakeNodeHandler: fakeNodeHandler{netName: netName}, failures: 2}
+
+	if err := c.RegisterNetworkController(handler); err != nil {
+		t.Fatalf("unexpected register error: %v", err)
+	}
+	if err := controller.Start(c.nodeController, c.localNodeController); err != nil {
+		t.Fatalf("failed to start queues: %v", err)
+	}
+	defer controller.Stop(c.nodeController, c.localNodeController)
+
+	deadline := time.Now().Add(10 * time.Second)
+	for handler.calls.Load() < 3 {
+		if time.Now().After(deadline) {
+			t.Fatalf("expected the local node to be retried until it succeeded, calls=%d", handler.calls.Load())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if got := handler.calls.Load(); got != 3 {
+		t.Fatalf("expected no reconcile after success, calls=%d", got)
+	}
+}
+
+// newLocalQueueControllerForTest builds a controller whose shared and local queues only record the
+// keys they receive, so tests can see which queue a node was routed to.
+func newLocalQueueControllerForTest(t *testing.T, nodeName string, shared, local chan<- string, nodes ...*corev1.Node) *NodeController {
+	t.Helper()
+	if err := config.PrepareTestConfig(); err != nil {
+		t.Fatalf("failed to prepare test config: %v", err)
+	}
+	config.OVNKubernetesFeature.EnableDynamicUDNAllocation = false
+	newQueue := func(name string, keys chan<- string) controller.Reconciler {
+		return controller.NewReconciler(name, &controller.ReconcilerConfig{
+			Reconcile:   func(_ context.Context, key string) error { keys <- key; return nil },
+			Threadiness: 1,
+		})
+	}
+	return &NodeController{
+		name:                "topology-test",
+		nodeName:            nodeName,
+		networkManager:      networkmanager.Default().Interface(),
+		nodeController:      newQueue("topology-test-shared", shared).(controller.Controller),
+		localNodeController: newQueue("topology-test-local", local),
+		nodeLister:          newNodeLister(t, nodes...),
+		handlers:            syncmap.NewSyncMap[NodeHandler](),
+		nodeReconciliation:  map[string]map[string]bool{},
+		nodeActive:          map[string]map[string]struct{}{},
+		nodeCache:           map[string]map[string]*corev1.Node{},
+		annotationCache:     NewNodeAnnotationCache(),
+	}
+}
+
+// expectKeys fails unless exactly the wanted keys arrive on the channel.
+func expectKeys(t *testing.T, queue string, keys <-chan string, want ...string) {
+	t.Helper()
+	remaining := map[string]bool{}
+	for _, key := range want {
+		remaining[key] = true
+	}
+	for len(remaining) > 0 {
+		select {
+		case key := <-keys:
+			if !remaining[key] {
+				t.Fatalf("%s queue got unexpected key %q", queue, key)
+			}
+			delete(remaining, key)
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%s queue did not get %v", queue, remaining)
+		}
+	}
+	select {
+	case key := <-keys:
+		t.Fatalf("%s queue got unexpected extra key %q", queue, key)
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+func TestBootstrapReconcilesLocalNodeSynchronously(t *testing.T) {
+	const netName = "net-a"
+	localNode := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "local-node"}}
+	remoteNode := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "remote-node"}}
+	shared, local := make(chan string, 10), make(chan string, 10)
+	c := newLocalQueueControllerForTest(t, localNode.Name, shared, local, localNode, remoteNode)
+	handler := &fakeNodeHandler{netName: netName}
+
+	if err := c.RegisterNetworkController(handler); err != nil {
+		t.Fatalf("unexpected register error: %v", err)
+	}
+	// No queue is running yet, so only the synchronous reconcile can have happened.
+	if handler.reconcileCalls != 1 || handler.lastOldNode != nil {
+		t.Fatalf("expected the local node reconciled once as an add before register returned, calls=%d old=%v",
+			handler.reconcileCalls, handler.lastOldNode)
+	}
+
+	if err := controller.Start(c.nodeController, c.localNodeController); err != nil {
+		t.Fatalf("failed to start queues: %v", err)
+	}
+	defer controller.Stop(c.nodeController, c.localNodeController)
+	expectKeys(t, "shared", shared, scopedNodeQueueKey(remoteNode.Name, netName))
+	expectKeys(t, "local", local)
+}
+
+func TestBootstrapRetriesFailedLocalNodeOnLocalQueue(t *testing.T) {
+	const netName = "net-a"
+	localNode := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "local-node"}}
+	remoteNode := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "remote-node"}}
+	shared, local := make(chan string, 10), make(chan string, 10)
+	c := newLocalQueueControllerForTest(t, localNode.Name, shared, local, localNode, remoteNode)
+	handler := &fakeNodeHandler{netName: netName, reconcileErr: errors.New("annotations not set")}
+
+	if err := c.RegisterNetworkController(handler); err != nil {
+		t.Fatalf("a failed local node reconcile must not fail the bootstrap: %v", err)
+	}
+	if _, ok := c.handlers.Load(netName); !ok {
+		t.Fatal("expected the handler to stay registered")
+	}
+	if !c.nodeNeedsReconciliation(netName, localNode.Name) {
+		t.Fatal("expected the failed local node to still be treated as a new node")
+	}
+
+	if err := controller.Start(c.nodeController, c.localNodeController); err != nil {
+		t.Fatalf("failed to start queues: %v", err)
+	}
+	defer controller.Stop(c.nodeController, c.localNodeController)
+	expectKeys(t, "local", local, scopedNodeQueueKey(localNode.Name, netName))
+	expectKeys(t, "shared", shared, scopedNodeQueueKey(remoteNode.Name, netName))
+}
+
+func TestLocalNodeEventsSkipSharedQueue(t *testing.T) {
+	const netName = "net-a"
+	localNode := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "local-node"}}
+	remoteNode := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "remote-node"}}
+	shared, local := make(chan string, 10), make(chan string, 10)
+	c := newLocalQueueControllerForTest(t, localNode.Name, shared, local, localNode, remoteNode)
+	c.handlers.Store(netName, &fakeNodeHandler{netName: netName})
+	if err := controller.Start(c.nodeController, c.localNodeController); err != nil {
+		t.Fatalf("failed to start queues: %v", err)
+	}
+	defer controller.Stop(c.nodeController, c.localNodeController)
+
+	if c.nodeNeedsReconcile(localNode, localNode) {
+		t.Fatal("expected local node events not to be queued on the shared queue")
+	}
+	if !c.nodeNeedsReconcile(remoteNode, remoteNode) {
+		t.Fatal("expected remote node events to be queued on the shared queue")
+	}
+	expectKeys(t, "local", local, scopedNodeQueueKey(localNode.Name, netName))
+	expectKeys(t, "shared", shared)
+}
