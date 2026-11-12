@@ -4085,6 +4085,190 @@ func TestController_reconcileKeepsValidatedFRRConfigurationsOnUnsafeInput(t *tes
 	expectRANotAccepted(g, tt)
 }
 
+// stagedNetworkManager models the interval where a NAD is visible to the
+// RouteAdvertisements controller before the network manager has processed it.
+type stagedNetworkManager struct {
+	*networkmanager.FakeNetworkManager
+	mutex   sync.RWMutex
+	network util.NetInfo
+}
+
+var _ networkmanager.Interface = &stagedNetworkManager{}
+
+func (m *stagedNetworkManager) GetNetwork(name string) util.NetInfo {
+	if name == types.DefaultNetworkName {
+		return &util.DefaultNetInfo{}
+	}
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+	if m.network != nil && m.network.GetNetworkName() == name {
+		return m.network
+	}
+	return nil
+}
+
+func (m *stagedNetworkManager) setNetwork(network util.NetInfo) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	m.network = network
+}
+
+// TestControllerWaitsForSelectedNetwork verifies the race where a selected NAD
+// reaches the RouteAdvertisements informer before the network manager has
+// processed it. The RouteAdvertisements must stay pending, and the network
+// manager notification must reconcile it after the network becomes available.
+func TestControllerWaitsForSelectedNetwork(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	oldFeatures := config.OVNKubernetesFeature
+	oldGateway := config.Gateway.Mode
+	oldManagedBGP := config.ManagedBGP
+	oldClusterSubnets := config.Default.ClusterSubnets
+	t.Cleanup(func() {
+		config.OVNKubernetesFeature = oldFeatures
+		config.Gateway.Mode = oldGateway
+		config.ManagedBGP = oldManagedBGP
+		config.Default.ClusterSubnets = oldClusterSubnets
+	})
+
+	config.Default.ClusterSubnets = []config.CIDRNetworkEntry{{
+		CIDR:             ovntest.MustParseIPNet("1.1.0.0/16"),
+		HostSubnetLength: 24,
+	}}
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	config.OVNKubernetesFeature.EnableRouteAdvertisements = true
+	config.OVNKubernetesFeature.EnableEgressIP = false
+	config.OVNKubernetesFeature.EnableEVPN = false
+	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+	config.OVNKubernetesFeature.EnableDynamicUDNAllocation = false
+	config.Gateway.Mode = config.GatewayModeLocal
+	config.ManagedBGP.FRRNamespace = "frrNamespace"
+
+	fakeClientset := util.GetOVNClientset().GetClusterManagerClientset()
+	addGenerateNameReactor[*frrfake.Clientset](fakeClientset.FRRClient)
+
+	ra := (&testRA{
+		Name:            "ra",
+		AdvertisePods:   true,
+		NetworkSelector: map[string]string{"selected": "true"},
+	}).RouteAdvertisements()
+	_, err := fakeClientset.RouteAdvertisementsClient.K8sV1().RouteAdvertisements().Create(
+		context.Background(), ra, metav1.CreateOptions{})
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	sourceFRRConfig := (&testFRRConfig{
+		Name:      "frrConfig",
+		Namespace: config.ManagedBGP.FRRNamespace,
+		Routers: []*testRouter{{
+			ASN:      1,
+			Prefixes: []string{"1.1.1.0/24"},
+			Neighbors: []*testNeighbor{{
+				ASN:     1,
+				Address: "1.0.0.100",
+			}},
+		}},
+	}).FRRConfiguration()
+	_, err = fakeClientset.FRRClient.ApiV1beta1().FRRConfigurations(sourceFRRConfig.Namespace).Create(
+		context.Background(), sourceFRRConfig, metav1.CreateOptions{})
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	nadFixture := &testNAD{
+		Name:      "green",
+		Namespace: "green",
+		Network:   util.GenerateCUDNNetworkName("green"),
+		Topology:  types.Layer2Topology,
+		Subnet:    "1.4.0.0/16",
+		Labels:    map[string]string{"selected": "true"},
+	}
+	nad := nadFixture.NAD()
+	_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nad.Namespace).Create(
+		context.Background(), nad, metav1.CreateOptions{})
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	network, err := util.ParseNADInfo(nad)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	mutableNetwork, ok := network.(util.MutableNetInfo)
+	g.Expect(ok).To(gomega.BeTrue())
+	nadKey := util.GetNADName(nad.Namespace, nad.Name)
+	mutableNetwork.SetNADs(nadKey)
+
+	node := (&testNode{Name: "node", SubnetsAnnotation: `{"default":"1.1.0.0/24"}`}).Node()
+	_, err = fakeClientset.KubeClient.CoreV1().Nodes().Create(context.Background(), node, metav1.CreateOptions{})
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	wf, err := factory.NewClusterManagerWatchFactory(fakeClientset)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	baseNetworkManager := &networkmanager.FakeNetworkManager{
+		NADNetworks: map[string]util.NetInfo{nadKey: network},
+	}
+	nm := &stagedNetworkManager{FakeNetworkManager: baseNetworkManager}
+	c := NewController(nm, wf, fakeClientset)
+
+	g.Expect(wf.Start()).To(gomega.Succeed())
+	defer wf.Shutdown()
+	cache.WaitForCacheSync(
+		context.Background().Done(),
+		wf.RouteAdvertisementsInformer().Informer().HasSynced,
+		wf.FRRConfigurationsInformer().Informer().HasSynced,
+		wf.NADInformer().Informer().HasSynced,
+		wf.NodeCoreInformer().Informer().HasSynced,
+	)
+
+	g.Expect(c.Start()).To(gomega.Succeed())
+	defer c.Stop()
+	t.Cleanup(func() { metrics.DeleteRouteAdvertisementCondition(ra.Name) })
+
+	getAcceptedCondition := func() *metav1.Condition {
+		current, err := fakeClientset.RouteAdvertisementsClient.K8sV1().RouteAdvertisements().Get(
+			context.Background(), ra.Name, metav1.GetOptions{})
+		if err != nil {
+			return nil
+		}
+		return meta.FindStatusCondition(current.Status.Conditions, conditionTypeAccepted)
+	}
+	g.Eventually(getAcceptedCondition, 5*time.Second).Should(gomega.And(
+		gomega.HaveField("Status", metav1.ConditionFalse),
+		gomega.HaveField("Reason", "ConfigurationPending"),
+		gomega.HaveField("Message", gomega.ContainSubstring("selected network \"cluster_udn_green\" is not yet known by the network manager")),
+	))
+
+	generatedFRRConfigs := func() []string {
+		configs, err := fakeClientset.FRRClient.ApiV1beta1().FRRConfigurations(config.ManagedBGP.FRRNamespace).List(
+			context.Background(), metav1.ListOptions{})
+		g.Expect(err).ToNot(gomega.HaveOccurred())
+		var generated []string
+		for _, config := range configs.Items {
+			if key := config.Annotations[types.OvnRouteAdvertisementsKey]; key != "" {
+				generated = append(generated, key)
+			}
+		}
+		return generated
+	}
+	g.Expect(generatedFRRConfigs()).To(gomega.BeEmpty())
+	currentNAD, err := fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nad.Namespace).Get(
+		context.Background(), nad.Name, metav1.GetOptions{})
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(currentNAD.Annotations).ToNot(gomega.HaveKey(types.OvnRouteAdvertisementsKey))
+
+	// This is the notification ClusterManager.Reconcile sends after
+	// networkController.EnsureNetwork has made the network visible through
+	// GetNetwork.
+	nm.setNetwork(network)
+	c.ReconcileNetwork(network.GetNetworkName(), nil, network)
+
+	g.Eventually(getAcceptedCondition, 5*time.Second).Should(gomega.HaveField("Status", metav1.ConditionTrue))
+	g.Eventually(generatedFRRConfigs, 5*time.Second).Should(gomega.ConsistOf("ra/frrConfig/node"))
+	g.Eventually(func() string {
+		current, err := fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nad.Namespace).Get(
+			context.Background(), nad.Name, metav1.GetOptions{})
+		if err != nil {
+			return ""
+		}
+		return current.Annotations[types.OvnRouteAdvertisementsKey]
+	}, 5*time.Second).Should(gomega.Equal(`["ra"]`))
+}
+
 // TestController_reconcileOnNetworkActivity verifies that the controller
 // reconciles on network activity changes notified by the network manager: a
 // network going active on a node that still has its subnet allocated, as

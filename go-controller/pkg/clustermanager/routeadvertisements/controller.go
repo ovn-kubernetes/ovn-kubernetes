@@ -653,8 +653,7 @@ func (c *Controller) generateFRRConfigurations(ctx context.Context, ra *ratypes.
 		networkName := util.GetAnnotatedNetworkName(nad)
 		network := c.nm.GetNetwork(networkName)
 		if network == nil {
-			// network not yet known by network manager, skip
-			continue
+			return nil, nil, fmt.Errorf("%w: selected network %q is not yet known by the network manager", errPending, networkName)
 		}
 		if networkSet.Has(networkName) {
 			continue
@@ -740,8 +739,9 @@ func (c *Controller) generateFRRConfigurations(ctx context.Context, ra *ratypes.
 	// reconcile the RouteAdvertisements selecting them. Returning early above
 	// keeps the previous entry, which matches the FRRConfigurations still
 	// deployed from the last successful reconcile; the errors returned above
-	// are only resolved by RA/NAD/node updates, which we watch and which
-	// refresh this cache.
+	// are only resolved by RA/NAD/node updates, which we watch, or by the
+	// network manager notifying ReconcileNetwork when it learns a selected
+	// network. Those events refresh this cache.
 	c.setRANetworks(ra.Name, selectedNetworks.networks)
 
 	// gather selected nodes
