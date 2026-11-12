@@ -18,6 +18,25 @@ OVN should work with any supported OVS release, extra requirements for OVS versi
 Some of the requirements are feature-specific.
 
 ## UDN
+
+### Masquerade Subnet Sizing
+
+Clusters with UDNs must configure a masquerade subnet larger than the binary
+default (`/29` IPv4, `/125` IPv6). See [Masquerade IPs](../design/masquerade-ips.md)
+for details.
+
+**Minimum sizes** (to support MaxNetworks=4096 concurrent UDNs)**:** `/18` (IPv4), `/114` (IPv6). **Recommended:** `/17`, `/112`.
+For IPv4, use `169.254.0.0/17` to avoid overlap with the cloud instance metadata
+IP `169.254.169.254` (AWS, GCP, Azure). For dual-stack, both subnets must
+independently meet the minimum.
+
+**Warning — resizing with active UDNs:** Expanding the subnet with the same base
+address (e.g. `/18` → `/17`) is safe. Any other change (shrinking, changing the
+base address) breaks existing UDNs and is not recoverable without deleting and
+recreating them.
+
+### Kubelet Network Probes
+
 For kubelet network probes to work with UDN pods, the following are required:
 - kernel fix 7f3287db654395f9c5ddd246325ff7889f550286: netfilter: nft_socket: make cgroupsv2 matching work with namespaces)
 
