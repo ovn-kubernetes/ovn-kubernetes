@@ -6,14 +6,96 @@ package testing
 import (
 	"context"
 	gotesting "testing"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/watch"
 	metaapply "k8s.io/client-go/applyconfigurations/meta/v1"
 
 	uplinkv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1"
 	uplinkapply "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/applyconfiguration/uplink/v1alpha1"
 	uplinkfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/clientset/versioned/fake"
+	vtepv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
+	vtepapply "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/applyconfiguration/vtep/v1"
+	vtepfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/clientset/versioned/fake"
 )
+
+func TestVTEPApplyReactorSkipsNoOpUpdates(t *gotesting.T) {
+	client := vtepfake.NewSimpleClientset(&vtepv1.VTEP{
+		ObjectMeta: metav1.ObjectMeta{Name: "vtep-a"},
+	})
+	AddVTEPApplyReactor(client)
+
+	watcher, err := client.K8sV1().VTEPs().Watch(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatalf("failed to watch VTEPs: %v", err)
+	}
+	t.Cleanup(watcher.Stop)
+
+	applyFinalizer := func() {
+		t.Helper()
+		_, err := client.K8sV1().VTEPs().Apply(
+			context.Background(),
+			vtepapply.VTEP("vtep-a").WithFinalizers("k8s.ovn.org/vtep-protection"),
+			metav1.ApplyOptions{FieldManager: "test", Force: true},
+		)
+		if err != nil {
+			t.Fatalf("failed to apply VTEP finalizer: %v", err)
+		}
+	}
+	applyStatus := func() {
+		t.Helper()
+		_, err := client.K8sV1().VTEPs().ApplyStatus(
+			context.Background(),
+			vtepapply.VTEP("vtep-a").WithStatus(
+				vtepapply.VTEPStatus().WithConditions(
+					metaapply.Condition().
+						WithType("Accepted").
+						WithStatus(metav1.ConditionTrue).
+						WithReason("Allocated").
+						WithMessage("VTEP allocation succeeded"),
+				),
+			),
+			metav1.ApplyOptions{FieldManager: "test", Force: true},
+		)
+		if err != nil {
+			t.Fatalf("failed to apply VTEP status: %v", err)
+		}
+	}
+	expectEvent := func(eventType watch.EventType) {
+		t.Helper()
+		select {
+		case event := <-watcher.ResultChan():
+			if event.Type != eventType {
+				t.Fatalf("expected watch event %s, got %s", eventType, event.Type)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for watch event %s", eventType)
+		}
+	}
+	expectNoEvent := func() {
+		t.Helper()
+		select {
+		case event := <-watcher.ResultChan():
+			t.Fatalf("expected no watch event for an unchanged Apply, got %s", event.Type)
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+
+	// The fake tracker emits the object that already existed when the watch
+	// started before delivering later modifications.
+	expectEvent(watch.Added)
+
+	applyFinalizer()
+	expectEvent(watch.Modified)
+	applyFinalizer()
+	expectNoEvent()
+
+	applyStatus()
+	expectEvent(watch.Modified)
+	applyStatus()
+	expectNoEvent()
+}
 
 func TestUplinkApplyReactorPreservesUnmentionedStatusFields(t *gotesting.T) {
 	client := uplinkfake.NewSimpleClientset(&uplinkv1alpha1.UplinkState{
