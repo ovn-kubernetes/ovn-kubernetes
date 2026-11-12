@@ -88,8 +88,8 @@ These metrics are registered only when `--metrics-enable-scale` is enabled.
 | `udn_nbdb_programmed_duration_seconds` | Histogram | `topology` | Time to program the northbound database while initializing a UDN, grouped by topology. |
 | `workqueue_depth` | Gauge | `name` | Current workqueue depth. |
 | `workqueue_adds_total` | Counter | `name` | Items added to a workqueue. |
-| `workqueue_queue_duration_seconds` | Histogram | `name` | Time an item remains queued before processing. |
-| `workqueue_work_duration_seconds` | Histogram | `name` | Time spent processing an item. |
+| `workqueue_queue_duration_seconds` | Histogram | `name` | Time an item remains queued before processing. Buckets are powers of two from 1ms to ~524s. |
+| `workqueue_work_duration_seconds` | Histogram | `name` | Time spent processing an item. Buckets are powers of two from 1ms to ~524s. |
 | `workqueue_unfinished_work_seconds` | Gauge | `name` | Total in-progress work not yet observed by the work-duration metric. |
 | `workqueue_longest_running_processor_seconds` | Gauge | `name` | Runtime of the longest-running workqueue processor. |
 | `workqueue_retries_total` | Counter | `name` | Workqueue retries. |
@@ -108,6 +108,18 @@ Duration values use milliseconds, as indicated by the metric names.
 | `nqos_ns_reconcile_duration_ms` | Histogram | `network` | Time spent applying a namespace change to related NetworkQoS pods. |
 | `nqos_status_patch_duration_ms` | Histogram | `network` | Time spent patching NetworkQoS status. |
 
+### Route Import
+
+These metrics are registered only when both `--enable-route-advertisements`
+and `--metrics-enable-scale` are enabled. The `network` label is the network
+name, and its series are removed when the network is no longer imported.
+
+| Name | Type | Labels | Description |
+| --- | --- | --- | --- |
+| `route_import_sync_duration_seconds` | Histogram | `network`, `result` | Time in seconds spent importing BGP routes for a network, covering the netlink route dump, the OVN static route scan, the diff, and the resulting transaction. The `result` label is `success` or `error`. |
+| `route_import_routes` | Gauge | `network`, `source` | Routes seen by the most recent import sync for a network. Source `bgp` is what the kernel VRF table holds, source `ovn` is what the gateway router holds. |
+| `route_import_operations_total` | Counter | `network`, `op` | Logical router static routes added or deleted by route import. The `op` label is `add` or `delete`. |
+
 ## OVN-Kubernetes Node Metrics
 
 All metrics in this section are rooted at `ovnkube_node_`.
@@ -119,6 +131,21 @@ All metrics in this section are rooted at `ovnkube_node_`.
 | `cni_request_duration_seconds` | Histogram | `command`, `err` | Duration of CNI server requests, grouped by command and error status. |
 | `nodeport_enabled` | Gauge | None | Whether NodePort is enabled on the node: `1` for enabled and `0` otherwise. |
 | `logfile_size_bytes` | Gauge | `logfile_name` | Size of the configured ovnkube log file. No series is produced when file logging is not configured. |
+
+### EVPN
+
+These metrics are registered only when both `--enable-evpn` and
+`--metrics-enable-scale` are enabled. The `vtep` label is the VTEP resource
+name, and its series are removed when the VTEP is deleted.
+
+| Name | Type | Labels | Description |
+| --- | --- | --- | --- |
+| `evpn_pod_program_duration_seconds` | Histogram | `result` | Time in seconds spent programming the FDB and neighbor entries for a single pod on an EVPN network. The `result` label is `success` or `error`. |
+| `evpn_pod_entries` | Gauge | None | Pods on this node with EVPN FDB entries programmed. EVPN route count scales with this, not with node count. |
+| `evpn_neighbor_entries` | Gauge | None | Permanent neighbor entries programmed on this node for pods on EVPN networks. |
+| `evpn_vtep_reconcile_duration_seconds` | Histogram | `vtep`, `result` | Time in seconds spent reconciling the netlink devices for a VTEP. The `result` label is `success` or `error`. |
+| `evpn_networks` | Gauge | `vtep` | EVPN networks this node resolves to a VTEP, as of the last reconcile. |
+| `evpn_vlans_used` | Gauge | `vtep` | VLAN IDs this node maps on a VTEP's single VXLAN device, one per MAC-VRF and one per IP-VRF. The hard limit is 4094. Reported as resolved rather than as programmed, so a count that exceeds what the kernel accepted is still visible; pair with `evpn_vtep_reconcile_duration_seconds{result="error"}` to tell the two apart. |
 
 ## libovsdb Client Metrics
 
@@ -134,6 +161,23 @@ All metrics in this section are rooted at `ovnkube_master_libovsdb_`.
 | `table_updates_total` | Counter | `primary_model`, `database`, `table` | Monitor updates processed, grouped by database and table. |
 | `disconnects_total` | Counter | `primary_model` | libovsdb client disconnects. |
 | `monitors` | Gauge | `primary_model` | Running libovsdb monitors. |
+
+## OVSDB Transaction Metrics
+
+These metrics are observed by the shared OVSDB transaction path used by
+ovnkube-controller and ovnkube-node for writes to the OVN northbound, OVN
+southbound, and Open vSwitch databases. A transaction with no operations, or
+one whose context is already cancelled, is not submitted and not counted.
+They are registered only when
+`--metrics-enable-scale` is enabled. The `db` label is the database name, such
+as `OVN_Northbound`, `OVN_Southbound`, or `Open_vSwitch`.
+
+All metrics in this section are rooted at `ovnkube_ovsdb_`.
+
+| Name | Type | Labels | Description |
+| --- | --- | --- | --- |
+| `txn_duration_seconds` | Histogram | `db`, `result` | Time in seconds taken by an OVSDB transaction, including reconnect retries and result checking. The `result` label is `success` or `error`. |
+| `txn_ops` | Histogram | `db` | Number of operations submitted in a single OVSDB transaction. |
 
 ## Shared OVN-Kubernetes Metrics
 
