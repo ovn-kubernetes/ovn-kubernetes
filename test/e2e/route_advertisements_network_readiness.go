@@ -5,6 +5,7 @@ package e2e
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
+	infraapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -222,10 +224,43 @@ var _ = ginkgo.Describe("BGP: RouteAdvertisements waits for selected network sta
 
 		ginkgo.By("checking that the external FRR router learns the selected Layer2 CUDN prefixes")
 		routerName := name + "-frr"
+		peerNetwork, err := infraprovider.Get().GetNetwork(name)
+		framework.ExpectNoError(err, "getting the isolated BGP peer network")
+		nodePeerInterfaces := collectNodeNetworkInterfaces(nodes.Items, peerNetwork)
 		for _, node := range nodes.Items {
 			for _, subnet := range udnSubnets {
-				checkRouteInFRR(node, string(subnet), routerName, utilnet.IsIPv6CIDRString(string(subnet)))
+				checkRouteViaPeerInFRR(node.Name, nodePeerInterfaces[node.Name], string(subnet), routerName)
 			}
 		}
 	})
 })
+
+// checkRouteViaPeerInFRR verifies a route learned over an isolated BGP peer
+// network. Node InternalIPs cannot be used here because the BGP sessions use
+// addresses from the network created by runBGPNetworkAndServerWithFRRVRF.
+func checkRouteViaPeerInFRR(nodeName string, peerInterface infraapi.NetworkInterface, cidr, routerName string) {
+	ginkgo.GinkgoHelper()
+
+	family := utilnet.IPv4
+	command := []string{"ip", "--json", "route", "show", cidr}
+	if utilnet.IsIPv6CIDRString(cidr) {
+		family = utilnet.IPv6
+		command = []string{"ip", "-6", "--json", "route", "show", cidr}
+	}
+	nextHops := bgpNextHopsForPeer(family, peerInterface)
+	externalRouter := infraapi.ExternalContainer{Name: routerName}
+
+	gomega.Eventually(func() (bool, error) {
+		out, err := infraprovider.Get().ExecExternalContainerCommand(externalRouter, command)
+		if err != nil {
+			return false, fmt.Errorf("failed to get routes from external FRR router %s: %w", routerName, err)
+		}
+		routes := []kernelRoute{}
+		if err := json.Unmarshal([]byte(out), &routes); err != nil {
+			return false, fmt.Errorf("failed to parse routes from external FRR router %s: %w; output: %s", routerName, err, out)
+		}
+		framework.Logf("Routes in external FRR router %s for %s: %s", routerName, cidr, out)
+		return hasBGPRoute(routes, cidr, nextHops...), nil
+	}, 30*time.Second, time.Second).Should(gomega.BeTrue(),
+		"BGP route for %s via node %s peer next hops %v not found on %s", cidr, nodeName, nextHops, routerName)
+}
