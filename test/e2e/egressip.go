@@ -4511,6 +4511,94 @@ spec:
 				role:     "primary",
 			}),
 		)
+
+		if netConfigParams.topology == types.Layer2Topology {
+			ginkgo.It("[OVN network] Should keep ETP=Local NodePort replies on the pod's node when a NetworkQoS selects the pod", feature.NetworkQos, func() {
+				if os.Getenv("OVN_NETWORK_QOS_ENABLE") != "true" {
+					ginkgo.Skip("NetworkQoS is disabled")
+				}
+				ginkgo.By("1. Setting a node that does not host the pod as available for egress")
+				egressNodeAvailabilityHandler := egressNodeAvailabilityHandlerViaLabel{f}
+				egressNodeAvailabilityHandler.Enable(egress1Node.name)
+				defer egressNodeAvailabilityHandler.Restore(egress1Node.name)
+
+				ginkgo.By("2. Creating an EgressIP object that selects the pod")
+				var egressIP net.IP
+				var err error
+				if isIPv6TestRun {
+					egressIP, err = allocators.NewPrimaryIPv6(egress1Node.name)
+				} else {
+					egressIP, err = allocators.NewPrimaryIPv4(egress1Node.name)
+				}
+				framework.ExpectNoError(err, "must allocate new Node IP")
+				_, err = e2ekubectl.RunKubectlInput("default", fmt.Sprintf(`apiVersion: k8s.ovn.org/v1
+kind: EgressIP
+metadata:
+    name: %s
+spec:
+    egressIPs:
+    - %s
+    podSelector:
+        matchLabels:
+            wants: egress
+    namespaceSelector:
+        matchLabels:
+            kubernetes.io/metadata.name: %s
+`, egressIPName, egressIP, f.Namespace.Name), "create", "-f", "-")
+				framework.ExpectNoError(err, "failed to create the EgressIP")
+				statuses := verifyEgressIPStatusLengthEquals(1, nil)
+				gomega.Expect(statuses[0].Node).To(gomega.Equal(egress1Node.name))
+
+				ginkgo.By("3. Creating the pod and an ETP=Local NodePort Service for it")
+				_, err = createGenericPodWithLabel(f, pod1Name, pod1Node.name, f.Namespace.Name,
+					getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
+				framework.ExpectNoError(err, "failed to create pod %s", pod1Name)
+				family := corev1.IPv4Protocol
+				if isIPv6TestRun {
+					family = corev1.IPv6Protocol
+				}
+				service, err := f.ClientSet.CoreV1().Services(f.Namespace.Name).Create(context.TODO(), &corev1.Service{
+					ObjectMeta: metav1.ObjectMeta{Name: "nodeport-etp-local"},
+					Spec: corev1.ServiceSpec{
+						Type:                  corev1.ServiceTypeNodePort,
+						ExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
+						IPFamilies:            []corev1.IPFamily{family},
+						Selector:              podEgressLabel,
+						Ports:                 []corev1.ServicePort{{Protocol: corev1.ProtocolTCP, Port: int32(clusterNetworkHTTPPort)}},
+					},
+				}, metav1.CreateOptions{})
+				framework.ExpectNoError(err, "failed to create the NodePort Service")
+				nodePortURL := fmt.Sprintf("http://%s/hostname",
+					net.JoinHostPort(pod1Node.nodeIP, strconv.Itoa(int(service.Spec.Ports[0].NodePort))))
+				hostname := func() (string, error) {
+					output, err := infraprovider.Get().ExecExternalContainerCommand(primaryTargetExternalContainer,
+						[]string{"curl", "--connect-timeout", "2", "--max-time", "5", "-s", nodePortURL})
+					return strings.TrimSpace(output), err
+				}
+				gomega.Eventually(hostname, 60*time.Second, time.Second).Should(gomega.Equal(pod1Name),
+					"expected an external client to reach the pod through %s", nodePortURL)
+
+				ginkgo.By("4. Creating a NetworkQoS that marks all traffic of the pod")
+				applyNetworkQoS(f.Namespace.Name, "nqos-egressip", fmt.Sprintf(`  networkSelectors:
+  - networkSelectionType: NetworkAttachmentDefinitions
+    networkAttachmentDefinitionSelector:
+      namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: %s
+      networkSelector: {}
+  podSelector:
+    matchLabels:
+      wants: egress
+  priority: 10
+  egress:
+  - dscp: %d
+`, f.Namespace.Name, networkQoSHighDSCP), pod1Node.name, 1)
+
+				ginkgo.By("5. Checking that the external client still reaches the pod")
+				gomega.Consistently(hostname, 15*time.Second, time.Second).Should(gomega.Equal(pod1Name),
+					"expected the replies of the pod to leave through node %s", pod1Node.name)
+			})
+		}
 	},
 		ginkgo.Entry(
 			"Cluster Default",
