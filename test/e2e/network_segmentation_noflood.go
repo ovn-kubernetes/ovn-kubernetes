@@ -159,6 +159,23 @@ func listStaticMACBindings(ovnkPod *v1.Pod) ([]macBindingRow, error) {
 		"ovn-nbctl --format=csv --no-headings --data=bare --columns=logical_port,ip,mac,override_dynamic_mac list Static_MAC_Binding", 4)
 }
 
+// listLogicalRouterPortNames returns the names of every NBDB
+// Logical_Router_Port of the zone that ovnkPod belongs to.
+func listLogicalRouterPortNames(ovnkPod *v1.Pod) (map[string]struct{}, error) {
+	cmd := "ovn-nbctl --format=csv --no-headings --data=bare --columns=name list Logical_Router_Port"
+	out, err := e2epodoutput.RunHostCmdWithRetries(ovnkPod.Namespace, ovnkPod.Name, cmd, framework.Poll, 10*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("%q failed: %w", cmd, err)
+	}
+	names := map[string]struct{}{}
+	for _, line := range strings.Split(out, "\n") {
+		if name := strings.TrimSpace(line); name != "" {
+			names[name] = struct{}{}
+		}
+	}
+	return names, nil
+}
+
 // purgeDynamicMACBindings destroys every MAC_Binding row holding one of ips.
 // Dynamic rows only ever disappear through aging, and the infra provider recycles
 // external container IPs, so a run started within mac_binding_age_threshold of the
@@ -436,6 +453,10 @@ var _ = Describe("Network Segmentation: MAC binding mirroring with ARP/NDP flood
 				// udnNamespace holds the pinging UDN pod; it is selected by cudnNames[0].
 				udnNamespace string
 				cudnNames    []string
+				// suiteCUDNs holds every CUDN these specs create, deleted ones
+				// included, so the dynamic assertions can tell this suite's gateway
+				// routers apart from the ones other suites leave behind.
+				suiteCUDNs []string
 				// the mirroring source plus the three mirroring targets.
 				expectedPorts []string
 				// the static bindings the CDN external port carries before any
@@ -456,15 +477,38 @@ var _ = Describe("Network Segmentation: MAC binding mirroring with ARP/NDP flood
 				Expect(err).NotTo(HaveOccurred(), "must set mac_binding_age_threshold=%d on %v", noFloodTestAgeThreshold, gatewayRoutersOf(expectedPorts))
 			}
 
+			// isSuitePort reports whether port is the external port of the CDN
+			// gateway router or of a gateway router of a CUDN these specs created.
+			isSuitePort := func(port string) bool {
+				if port == defaultGatewayRouterExtPortName(trafficNode.Name) {
+					return true
+				}
+				for _, name := range suiteCUDNs {
+					if port == cudnGatewayRouterExtPortName(name, trafficNode.Name) {
+						return true
+					}
+				}
+				return false
+			}
+
 			// macBindingPorts returns logical port -> MAC for ip in the traffic
-			// node's zone.
+			// node's zone, restricted to the gateway routers of this suite.
+			// Primary UDNs left behind by earlier suites, while their namespaces
+			// are still terminating, are legitimate followers and get the mirror
+			// too; they are not what these specs assert on.
 			macBindingPorts := func(ip string) map[string]string {
 				rows, err := listDynamicMACBindings(ovnkPod)
 				if err != nil {
 					framework.Logf("failed to list MAC_Bindings: %v", err)
 					return nil
 				}
-				return macBindingPortsForIP(rows, ip)
+				ports := macBindingPortsForIP(rows, ip)
+				for port := range ports {
+					if !isSuitePort(port) {
+						delete(ports, port)
+					}
+				}
+				return ports
 			}
 
 			// expectMirroredEverywhere asserts that exactly ports hold ip, all with
@@ -530,6 +574,7 @@ var _ = Describe("Network Segmentation: MAC binding mirroring with ARP/NDP flood
 				}, cs)
 				cleanup, err := createManifest("", manifest)
 				Expect(err).NotTo(HaveOccurred(), "must create CUDN %s", name)
+				suiteCUDNs = append(suiteCUDNs, name)
 				DeferCleanup(func() {
 					deleteNamespaceAndWait(namespace)
 					cleanup()
@@ -952,11 +997,19 @@ var _ = Describe("Network Segmentation: MAC binding mirroring with ARP/NDP flood
 				}
 
 				By("asserting repairStaticMacBindings left no orphans behind")
+				// An orphan is a static binding on a gateway router external port
+				// whose logical router port no longer exists. Bindings on the live
+				// gateway routers of other suites' networks are not orphans.
 				Eventually(func(g Gomega) {
 					static, err := listStaticMACBindings(ovnkPod)
-					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(err).NotTo(HaveOccurred(), "failed to list static MAC bindings on %s", ovnkPod.Name)
+					routerPorts, err := listLogicalRouterPortNames(ovnkPod)
+					g.Expect(err).NotTo(HaveOccurred(), "failed to list Logical_Router_Port names on %s", ovnkPod.Name)
 					for _, row := range static {
-						g.Expect(expectedPorts).To(ContainElement(row.logicalPort),
+						if !strings.HasPrefix(row.logicalPort, ovntypes.GWRouterToExtSwitchPrefix) {
+							continue
+						}
+						g.Expect(routerPorts).To(HaveKey(row.logicalPort),
 							"static binding for %s survives on %s, which is not a live gateway router port", row.ip, row.logicalPort)
 					}
 				}, noFloodReconvergeTimeout, 5*time.Second).Should(Succeed())
