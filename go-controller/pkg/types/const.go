@@ -269,6 +269,8 @@ const (
 
 	// key for network name external-id
 	NetworkExternalID = OvnK8sPrefix + "/" + "network"
+	// V4LinkLocalSubnet is the IPv4 link-local prefix (RFC 3927)
+	V4LinkLocalSubnet = "169.254.0.0/16"
 	// key for node name external-id
 	NodeExternalID = OvnK8sPrefix + "/" + "node"
 	// key for network role external-id: possible values are "default", "primary", "secondary"
