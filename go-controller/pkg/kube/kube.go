@@ -153,8 +153,15 @@ func escapeJSONPatchPathKey(key string) string {
 // passes an object without one, we skip that extra guard and fall back to the
 // narrower per-key tests that are available.
 func (k *Kube) PatchPodStatusAnnotations(ctx context.Context, oldPod, newPod *corev1.Pod) error {
+	_, err := k.PatchPodStatusAnnotationsWithContext(ctx, oldPod, newPod)
+	return err
+}
+
+// PatchPodStatusAnnotationsWithContext returns the committed snapshot so
+// coordinated writers need not wait for informer delivery before merging.
+func (k *Kube) PatchPodStatusAnnotationsWithContext(ctx context.Context, oldPod, newPod *corev1.Pod) (*corev1.Pod, error) {
 	if oldPod.Namespace != newPod.Namespace || oldPod.Name != newPod.Name {
-		return fmt.Errorf("cannot patch annotations for different pods %s/%s and %s/%s",
+		return nil, fmt.Errorf("cannot patch annotations for different pods %s/%s and %s/%s",
 			oldPod.Namespace, oldPod.Name, newPod.Namespace, newPod.Name)
 	}
 
@@ -170,7 +177,7 @@ func (k *Kube) PatchPodStatusAnnotations(ctx context.Context, oldPod, newPod *co
 		}
 	}
 	if len(changedKeys) == 0 {
-		return nil
+		return oldPod, nil
 	}
 
 	keys := make([]string, 0, len(changedKeys))
@@ -247,14 +254,17 @@ func (k *Kube) PatchPodStatusAnnotations(ctx context.Context, oldPod, newPod *co
 		}}, ops...)
 	}
 
+	if oldPod.UID != "" {
+		ops = append([]jsonPatchOp{{Op: "test", Path: "/metadata/uid", Value: oldPod.UID}}, ops...)
+	}
 	patchData, err := json.Marshal(ops)
 	if err != nil {
-		return fmt.Errorf("failed to marshal annotation patch for pod %s/%s: %w", oldPod.Namespace, oldPod.Name, err)
+		return nil, fmt.Errorf("failed to marshal annotation patch for pod %s/%s: %w", oldPod.Namespace, oldPod.Name, err)
 	}
 
 	podDesc := oldPod.Namespace + "/" + oldPod.Name
 	klog.Infof("Patching annotations on pod %s", podDesc)
-	_, err = k.KClient.CoreV1().Pods(oldPod.Namespace).Patch(
+	updated, err := k.KClient.CoreV1().Pods(oldPod.Namespace).Patch(
 		ctx,
 		oldPod.Name,
 		types.JSONPatchType,
@@ -265,7 +275,7 @@ func (k *Kube) PatchPodStatusAnnotations(ctx context.Context, oldPod, newPod *co
 	if err != nil {
 		klog.Errorf("Error in patching annotations on pod %s: %v", podDesc, err)
 	}
-	return err
+	return updated, err
 }
 
 // SetAnnotationsOnNode takes the node name and map of key/value string pairs to set as annotations

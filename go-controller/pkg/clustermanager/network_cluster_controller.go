@@ -68,11 +68,12 @@ type networkClusterController struct {
 	ipamClaimHandler *factory.Handler
 	retryIPAMClaims  *objretry.RetryFramework
 	// tunnelIDAllocator of tunnelIDs within the network
-	tunnelIDAllocator   id.Allocator
-	podAllocator        *pod.PodAllocator
-	nodeAllocator       *node.NodeAllocator
-	ipamClaimReconciler *persistentips.IPAMClaimReconciler
-	subnetAllocator     subnet.Allocator
+	tunnelIDAllocator    id.Allocator
+	podAllocator         *pod.PodAllocator
+	podUpdateCoordinator *util.PodAnnotationUpdateCoordinator
+	nodeAllocator        *node.NodeAllocator
+	ipamClaimReconciler  *persistentips.IPAMClaimReconciler
+	subnetAllocator      subnet.Allocator
 
 	networkManager networkmanager.Interface
 
@@ -472,6 +473,9 @@ func (ncc *networkClusterController) init(ctx context.Context) error {
 		}
 
 		var podAllocOpts []annotationalloc.AllocatorOption
+		if ncc.podUpdateCoordinator != nil {
+			podAllocOpts = append(podAllocOpts, annotationalloc.WithUpdateCoordinator(ncc.podUpdateCoordinator))
+		}
 		if util.IsPreconfiguredUDNAddressesEnabled() &&
 			ncc.IsPrimaryNetwork() &&
 			ncc.TopologyType() == types.Layer2Topology {
