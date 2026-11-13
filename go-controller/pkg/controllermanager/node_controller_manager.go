@@ -471,6 +471,16 @@ func (ncm *NodeControllerManager) Start(ctx context.Context, isOVNKubeController
 		}
 	}
 
+	if ncm.networkManager != nil {
+		err = ncm.networkManager.Start()
+		if err != nil {
+			return fmt.Errorf("failed to start NAD controller: %w", err)
+		}
+	}
+
+	// Reason: the MAC binding controller starts with a full reconcile of every
+	// network the network manager knows about, so it must only run once the
+	// network manager has synced the existing networks.
 	if ncm.macBindingController != nil {
 		ncm.wg.Add(1)
 		go func() {
@@ -479,13 +489,6 @@ func (ncm *NodeControllerManager) Start(ctx context.Context, isOVNKubeController
 				klog.Errorf("MAC binding controller run failed: %v", err)
 			}
 		}()
-	}
-
-	if ncm.networkManager != nil {
-		err = ncm.networkManager.Start()
-		if err != nil {
-			return fmt.Errorf("failed to start NAD controller: %w", err)
-		}
 	}
 
 	if ncm.uplinkController != nil {

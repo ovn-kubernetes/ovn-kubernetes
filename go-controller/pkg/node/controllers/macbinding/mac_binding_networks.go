@@ -132,9 +132,12 @@ func (c *MACBindingController) processNetworks(networks ...string) error {
 		c.enqueueFollowerStaticMacBindings(port)
 	}
 
-	// repair after first full reconcile
+	// repair after the first full reconcile; a failure fails the reconcile so
+	// it is retried
 	if fullReconcile {
-		repair.Do(func() { c.repair(validPorts) })
+		if err := c.repair(); err != nil {
+			return err
+		}
 	}
 
 	return nil

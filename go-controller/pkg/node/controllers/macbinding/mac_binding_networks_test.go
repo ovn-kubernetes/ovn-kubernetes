@@ -14,9 +14,12 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/sets"
 
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/sbdb"
 	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
@@ -409,4 +412,67 @@ func TestUpdateFollowers(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestFullReconcileRetriesFailedRepair verifies the startup sweep of stale
+// static MAC bindings is retried by later full reconciles until it succeeds:
+// a failed sweep fails the full reconcile and leaves the controller unrepaired,
+// and once it succeeds it is not run again.
+func TestFullReconcileRetriesFailedRepair(t *testing.T) {
+	g := gomega.NewWithT(t)
+	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed(), "must prepare the test config")
+	config.Gateway.DisableUDNARPNDPFlood = true
+
+	cdnPort := cdnPortFor("node1")
+	sbClient, sbCleanup, err := libovsdbtest.NewSBTestHarness(libovsdbtest.TestSetup{
+		IgnoreConstraints: true,
+		SBData: []libovsdbtest.TestData{
+			&sbdb.DatapathBinding{UUID: "dp-cdn"},
+			&sbdb.PortBinding{UUID: "pb-cdn", LogicalPort: cdnPort, Datapath: "dp-cdn"},
+		},
+	}, nil)
+	g.Expect(err).NotTo(gomega.HaveOccurred(), "must create the SB test harness")
+	defer sbCleanup.Cleanup()
+
+	orphan := &nbdb.StaticMACBinding{UUID: "u1", LogicalPort: "rtoe-GR_gone_node1", IP: "10.0.0.12", MAC: nodeIPMAC3, OverrideDynamicMAC: true}
+	nbData := func(smbs ...*nbdb.StaticMACBinding) []libovsdbtest.TestData {
+		return repairTestNBData(cdnPort, "rtoe-GR_tenantred_node1", "rtoe-GR_tenantblue_node1", smbs...)
+	}
+	newNB := func() (libovsdbclient.Client, *libovsdbtest.Context) {
+		nbClient, nbCleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{NBData: nbData(orphan)}, nil)
+		g.Expect(err).NotTo(gomega.HaveOccurred(), "must create the NB test harness")
+		return nbClient, nbCleanup
+	}
+
+	_, mbR := startRecorder(g, "mb")
+	defer controller.Stop(mbR)
+	_, netR := startRecorder(g, "network")
+	defer controller.Stop(netR)
+	_, staticR := startRecorder(g, "static")
+	defer controller.Stop(staticR)
+
+	c := newTestController()
+	c.sbClient = sbClient
+	c.networkManager = &networkmanager.FakeNetworkManager{}
+	c.cdnGatewayPort = cdnPort
+	c.dynamicMacBindingReconciler = mbR
+	c.networkReconciler = netR
+	c.staticMacBindingReconciler = staticR
+
+	// failing the sweep: NBDB accepts no transaction
+	brokenNB, brokenCleanup := newNB()
+	defer brokenCleanup.Cleanup()
+	brokenNB.Close()
+	c.nbClient = brokenNB
+	g.Expect(c.reconcileNetwork(context.Background(), "")).To(gomega.MatchError(gomega.ContainSubstring("failed to repair static MAC bindings")),
+		"full reconcile must fail while NBDB rejects transactions")
+	g.Expect(c.repaired.Load()).To(gomega.BeFalse(), "repaired must stay false after a failed sweep")
+
+	// retrying the sweep on the next full reconcile
+	nbClient, nbCleanup := newNB()
+	defer nbCleanup.Cleanup()
+	c.nbClient = nbClient
+	g.Expect(c.reconcileNetwork(context.Background(), "")).To(gomega.Succeed(), "full reconcile must succeed once NBDB accepts transactions")
+	g.Expect(c.repaired.Load()).To(gomega.BeTrue(), "repaired must be set after a successful sweep")
+	g.Eventually(nbClient).Should(libovsdbtest.HaveData(nbData()), "the retried sweep must delete the orphan binding")
 }

@@ -8,8 +8,6 @@ import (
 
 	"github.com/onsi/gomega"
 
-	"k8s.io/apimachinery/pkg/util/sets"
-
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
@@ -104,49 +102,126 @@ func TestDeleteStaticMacBindingsForFollower(t *testing.T) {
 	))
 }
 
-// TestRepairStaticMacBindings verifies the one-shot startup sweep reaps only
-// controller-owned bindings on gateway external ports absent from the known
-// (SBDB-validated) port set — i.e. networks that no longer exist — leaving
-// bindings on known ports, the gateway's own masquerade IPs, and non-gateway
-// ports untouched.
+// repairTestNBData seeds a gateway router owning the external ports of the
+// CDN, of a network the controller tracks and of a network the network manager
+// has not synced yet, plus the given static MAC bindings. The external port of
+// a network deleted while the controller was down has no logical router port.
+func repairTestNBData(cdnPort, udnPort, unsyncedPort string, smbs ...*nbdb.StaticMACBinding) []libovsdbtest.TestData {
+	data := []libovsdbtest.TestData{
+		&nbdb.LogicalRouter{UUID: "gr", Name: "GR_node1", Ports: []string{"lrp-cdn", "lrp-udn", "lrp-unsynced"}},
+		&nbdb.LogicalRouterPort{UUID: "lrp-cdn", Name: cdnPort},
+		&nbdb.LogicalRouterPort{UUID: "lrp-udn", Name: udnPort},
+		&nbdb.LogicalRouterPort{UUID: "lrp-unsynced", Name: unsyncedPort},
+	}
+	for _, smb := range smbs {
+		data = append(data, smb)
+	}
+	return data
+}
+
+// TestRepairStaticMacBindings verifies the startup sweep reaps every
+// controller-owned binding on a gateway external port whose logical router
+// port no longer exists - a network deleted while the controller was down -
+// however many there are, and leaves alone bindings on live ports (including
+// ports of networks the network manager has not synced yet), the gateway's own
+// masquerade IPs and non-gateway ports.
 func TestRepairStaticMacBindings(t *testing.T) {
 	g := gomega.NewWithT(t)
-	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed(), "must prepare the test config")
 	config.Gateway.DisableUDNARPNDPFlood = true
 
 	cdnPort := cdnPortFor("node1")
 	const (
-		udnPort    = "rtoe-GR_tenantred_node1" // a known network's port
-		orphanPort = "rtoe-GR_gone_node1"      // a network deleted while we were down
-		nonGWPort  = "some-lsp"                // not a gateway external port
+		udnPort      = "rtoe-GR_tenantred_node1"  // a tracked network's port
+		unsyncedPort = "rtoe-GR_tenantblue_node1" // a live network not synced yet
+		orphanPort   = "rtoe-GR_gone_node1"       // a network deleted while we were down
+		nonGWPort    = "some-lsp"                 // not a gateway external port
 	)
 	masqIP := config.Gateway.MasqueradeIPs.V4HostMasqueradeIP.String()
-
-	nbClient, nbCleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{NBData: []libovsdbtest.TestData{
-		// owned bindings on known networks' ports survive
-		&nbdb.StaticMACBinding{UUID: "u1", LogicalPort: cdnPort, IP: "10.0.0.10", MAC: nodeIPMAC1, OverrideDynamicMAC: true},
-		&nbdb.StaticMACBinding{UUID: "u2", LogicalPort: udnPort, IP: "10.0.0.11", MAC: nodeIPMAC2, OverrideDynamicMAC: true},
-		// an owned binding on an orphan gateway port is reaped
-		&nbdb.StaticMACBinding{UUID: "u3", LogicalPort: orphanPort, IP: "10.0.0.12", MAC: nodeIPMAC3, OverrideDynamicMAC: true},
-		// the gateway's masquerade IP is not owned, even on the orphan port
-		&nbdb.StaticMACBinding{UUID: "u4", LogicalPort: orphanPort, IP: masqIP, MAC: nodeIPMAC3, OverrideDynamicMAC: true},
+	masqIPv6 := config.Gateway.MasqueradeIPs.V6HostMasqueradeIP.String()
+	row := func(uuid, port, ip, mac string) *nbdb.StaticMACBinding {
+		return &nbdb.StaticMACBinding{UUID: uuid, LogicalPort: port, IP: ip, MAC: mac, OverrideDynamicMAC: true}
+	}
+	kept := []*nbdb.StaticMACBinding{
+		// owned bindings on live gateway ports survive
+		row("u1", cdnPort, "10.0.0.10", nodeIPMAC1),
+		row("u2", udnPort, "10.0.0.11", nodeIPMAC2),
+		row("u7", unsyncedPort, "10.0.0.15", nodeIPMAC2),
+		// the gateway's masquerade IPs are not owned, even on the orphan port
+		row("u4", orphanPort, masqIP, nodeIPMAC3),
+		row("u9", orphanPort, masqIPv6, nodeIPMAC3),
 		// a non-gateway port is not owned
-		&nbdb.StaticMACBinding{UUID: "u5", LogicalPort: nonGWPort, IP: "10.0.0.13", MAC: nodeIPMAC1, OverrideDynamicMAC: true},
-	}}, nil)
-	g.Expect(err).NotTo(gomega.HaveOccurred())
+		row("u5", nonGWPort, "10.0.0.13", nodeIPMAC1),
+	}
+	// every owned binding on the orphan gateway port is reaped
+	orphans := []*nbdb.StaticMACBinding{
+		row("u3", orphanPort, "10.0.0.12", nodeIPMAC3),
+		row("u6", orphanPort, "10.0.0.14", nodeIPMAC1),
+		row("u8", orphanPort, "fd00::12", nodeIPMAC2),
+	}
+
+	nbClient, nbCleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{
+		NBData: repairTestNBData(cdnPort, udnPort, unsyncedPort, append(append([]*nbdb.StaticMACBinding{}, kept...), orphans...)...),
+	}, nil)
+	g.Expect(err).NotTo(gomega.HaveOccurred(), "must create the NB test harness with orphan bindings")
 	defer nbCleanup.Cleanup()
 
 	c := newTestController()
 	c.nbClient = nbClient
 
-	// the known ports the first full reconcile validated against SBDB.
-	c.repairStaticMacBindings(sets.New(cdnPort, udnPort))
+	g.Expect(c.repairStaticMacBindings()).To(gomega.Succeed(), "repairStaticMacBindings must succeed")
 
-	// only the orphan network's owned binding is reaped.
-	g.Eventually(c.nbClient).Should(libovsdbtest.HaveDataIgnoringUUIDs(
-		smb(cdnPort, "10.0.0.10", nodeIPMAC1),
-		smb(udnPort, "10.0.0.11", nodeIPMAC2),
-		smb(orphanPort, masqIP, nodeIPMAC3),
-		smb(nonGWPort, "10.0.0.13", nodeIPMAC1),
-	))
+	g.Eventually(c.nbClient).Should(libovsdbtest.HaveData(repairTestNBData(cdnPort, udnPort, unsyncedPort, kept...)),
+		"repairStaticMacBindings must delete the orphan bindings and keep the rest")
+}
+
+// TestRepairStaticMacBindingsNothingStale verifies the sweep is a no-op when
+// every owned binding sits on a live gateway port.
+func TestRepairStaticMacBindingsNothingStale(t *testing.T) {
+	g := gomega.NewWithT(t)
+	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed(), "must prepare the test config")
+	config.Gateway.DisableUDNARPNDPFlood = true
+
+	cdnPort := cdnPortFor("node1")
+	const (
+		udnPort      = "rtoe-GR_tenantred_node1"
+		unsyncedPort = "rtoe-GR_tenantblue_node1"
+	)
+	live := &nbdb.StaticMACBinding{UUID: "u1", LogicalPort: udnPort, IP: "10.0.0.11", MAC: nodeIPMAC2, OverrideDynamicMAC: true}
+	nbClient, nbCleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{
+		NBData: repairTestNBData(cdnPort, udnPort, unsyncedPort, live),
+	}, nil)
+	g.Expect(err).NotTo(gomega.HaveOccurred(), "must create the NB test harness with only live bindings")
+	defer nbCleanup.Cleanup()
+
+	c := newTestController()
+	c.nbClient = nbClient
+
+	g.Expect(c.repairStaticMacBindings()).To(gomega.Succeed(), "repairStaticMacBindings must succeed")
+	g.Consistently(c.nbClient).Should(libovsdbtest.HaveData(repairTestNBData(cdnPort, udnPort, unsyncedPort, live)),
+		"repairStaticMacBindings must not delete bindings on live ports")
+}
+
+// TestRepairStaticMacBindingsFailure verifies a sweep that cannot delete the
+// stale bindings reports the error, so the caller can retry it.
+func TestRepairStaticMacBindingsFailure(t *testing.T) {
+	g := gomega.NewWithT(t)
+	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed(), "must prepare the test config")
+	config.Gateway.DisableUDNARPNDPFlood = true
+
+	cdnPort := cdnPortFor("node1")
+	orphan := &nbdb.StaticMACBinding{UUID: "u1", LogicalPort: "rtoe-GR_gone_node1", IP: "10.0.0.12", MAC: nodeIPMAC3, OverrideDynamicMAC: true}
+	nbClient, nbCleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{
+		NBData: repairTestNBData(cdnPort, "rtoe-GR_tenantred_node1", "rtoe-GR_tenantblue_node1", orphan),
+	}, nil)
+	g.Expect(err).NotTo(gomega.HaveOccurred(), "must create the NB test harness with an orphan binding")
+	defer nbCleanup.Cleanup()
+
+	c := newTestController()
+	c.nbClient = nbClient
+	// the cache keeps serving reads but no transaction can go through.
+	nbClient.Close()
+
+	g.Expect(c.repairStaticMacBindings()).To(gomega.MatchError(gomega.ContainSubstring("failed to delete stale static MAC bindings")),
+		"repairStaticMacBindings must report that it could not delete the orphan binding")
 }

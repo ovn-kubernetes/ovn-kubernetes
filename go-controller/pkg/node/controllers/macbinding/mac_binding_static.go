@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -18,21 +19,56 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
-// repairStaticMacBindings deletes stale static mac bindings owned by the
-// controller for non-existant networks.
-func (c *MACBindingController) repairStaticMacBindings(knownPorts sets.Set[string]) {
+// repairStaticMacBindings deletes the static MAC bindings owned by the
+// controller on gateway router external ports whose logical router port no
+// longer exists, i.e. networks deleted while the controller was not running.
+// Staleness is decided against NBDB rather than against the networks known to
+// the network manager, so a network that is not synced yet is never mistaken
+// for a deleted one.
+func (c *MACBindingController) repairStaticMacBindings() error {
 	start := time.Now()
-	stale := func(smb *nbdb.StaticMACBinding) bool {
-		return !knownPorts.Has(smb.LogicalPort) &&
-			ops.IsMacBindingControllerOwned(smb.LogicalPort, smb.IP)
+	// Reason: the owned bindings are read before the router ports and deleted
+	// by UUID, so a binding written for a network created during the sweep is
+	// never considered.
+	owned := []*nbdb.StaticMACBinding{}
+	ctx, cancel := context.WithTimeout(context.Background(), config.Default.OVSDBTxnTimeout)
+	defer cancel()
+	err := c.nbClient.WhereCache(func(smb *nbdb.StaticMACBinding) bool {
+		return ops.IsMacBindingControllerOwned(smb.LogicalPort, smb.IP)
+	}).List(ctx, &owned)
+	if err != nil {
+		return fmt.Errorf("failed to list owned static MAC bindings: %w", err)
 	}
-	if err := ops.DeleteStaticMACBindingWithPredicate(c.nbClient, stale); err != nil {
-		klog.Errorf("Failed to delete stale static MAC bindings: %v", err)
-		return
+	if len(owned) == 0 {
+		return nil
 	}
-	klog.V(5).Infof("Deleted stale static MAC bindings, took %s", time.Since(start))
+	routerPorts, err := ops.FindLogicalRouterPortWithPredicate(c.nbClient, func(lrp *nbdb.LogicalRouterPort) bool {
+		return strings.HasPrefix(lrp.Name, types.GWRouterToExtSwitchPrefix)
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list gateway router external ports: %w", err)
+	}
+	livePorts := sets.New[string]()
+	for _, lrp := range routerPorts {
+		livePorts.Insert(lrp.Name)
+	}
+	stale := make([]*nbdb.StaticMACBinding, 0, len(owned))
+	for _, smb := range owned {
+		if !livePorts.Has(smb.LogicalPort) {
+			stale = append(stale, smb)
+		}
+	}
+	if len(stale) == 0 {
+		return nil
+	}
+	if err := ops.DeleteStaticMacBindings(c.nbClient, stale...); err != nil {
+		return fmt.Errorf("failed to delete stale static MAC bindings: %w", err)
+	}
+	klog.Infof("Deleted %d stale static MAC binding(s) of deleted networks, took %s", len(stale), time.Since(start))
+	return nil
 }
 
 // syncStaticMacBinding (re)applies or removes a single node IP's static MAC

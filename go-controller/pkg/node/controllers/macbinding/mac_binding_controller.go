@@ -70,9 +70,6 @@ const (
 	keySep = "|"
 )
 
-// repair done once per run
-var repair sync.Once
-
 // MACBindingController mirrors dynamic MAC bindings and writes static node-IP MAC
 // bindings across a node's networks. See the package doc for the design.
 type MACBindingController struct {
@@ -100,6 +97,10 @@ type MACBindingController struct {
 	// lastBacklogWarningMs throttles the mirror-backlog warning (UnixMilli of
 	// the last emission); see throttleBacklogWarning.
 	lastBacklogWarningMs atomic.Int64
+
+	// repaired records that the startup repair succeeded. Until then every full
+	// network reconcile retries it.
+	repaired atomic.Bool
 
 	// mutex for the following maps
 	sync.RWMutex
@@ -238,9 +239,18 @@ func (c *MACBindingController) Run(stopCh <-chan struct{}) error {
 	return nil
 }
 
-func (c *MACBindingController) repair(knownPorts sets.Set[string]) {
+// repair cleans up what the controller left behind for networks deleted while
+// it was not running. It runs on full network reconciles until it succeeds once.
+func (c *MACBindingController) repair() error {
+	if c.repaired.Load() {
+		return nil
+	}
 	// delete stale static mac bindings
-	c.repairStaticMacBindings(knownPorts)
+	if err := c.repairStaticMacBindings(); err != nil {
+		return fmt.Errorf("failed to repair static MAC bindings: %w", err)
+	}
+	c.repaired.Store(true)
+	return nil
 }
 
 // ReconcileUplinkSource is called by the uplinkSourceProvider to report that
