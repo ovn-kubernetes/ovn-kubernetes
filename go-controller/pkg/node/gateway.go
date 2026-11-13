@@ -506,6 +506,9 @@ func (g *gateway) SetDefaultPodNetworkAdvertised(isPodNetworkAdvertised bool) {
 		return
 	}
 	g.openflowManager.defaultBridge.GetNetworkConfig(types.DefaultNetworkName).Advertised.Store(isPodNetworkAdvertised)
+	if g.openflowManager.externalGatewayBridge != nil {
+		g.openflowManager.externalGatewayBridge.GetNetworkConfig(types.DefaultNetworkName).Advertised.Store(isPodNetworkAdvertised)
+	}
 }
 
 func (g *gateway) GetDefaultPodNetworkAdvertised() bool {

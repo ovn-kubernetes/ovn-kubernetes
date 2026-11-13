@@ -583,6 +583,45 @@ func TestOpenFlowManagerDefaultTargetUsesDefaultBridgeSet(t *testing.T) {
 	}
 }
 
+func TestGatewaySetDefaultPodNetworkAdvertisedUpdatesExternalGatewayBridge(t *testing.T) {
+	defaultBridge := bridgeconfig.TestDefaultBridgeConfig()
+	externalGatewayBridge := bridgeconfig.TestDefaultBridgeConfig()
+	ofm := &openflowManager{
+		defaultBridge:         newOpenflowBridge(defaultBridge),
+		externalGatewayBridge: newOpenflowBridge(externalGatewayBridge),
+	}
+	g := &gateway{openflowManager: ofm}
+
+	g.SetDefaultPodNetworkAdvertised(true)
+	if !g.GetDefaultPodNetworkAdvertised() {
+		t.Fatalf("expected default bridge Advertised to be true")
+	}
+	if !ofm.externalGatewayBridge.GetNetworkConfig(types.DefaultNetworkName).Advertised.Load() {
+		t.Fatalf("expected external gateway bridge Advertised to be true")
+	}
+
+	g.SetDefaultPodNetworkAdvertised(false)
+	if g.GetDefaultPodNetworkAdvertised() {
+		t.Fatalf("expected default bridge Advertised to be false")
+	}
+	if ofm.externalGatewayBridge.GetNetworkConfig(types.DefaultNetworkName).Advertised.Load() {
+		t.Fatalf("expected external gateway bridge Advertised to be false")
+	}
+}
+
+func TestGatewaySetDefaultPodNetworkAdvertisedNoExternalGatewayBridge(t *testing.T) {
+	defaultBridge := bridgeconfig.TestDefaultBridgeConfig()
+	ofm := &openflowManager{
+		defaultBridge: newOpenflowBridge(defaultBridge),
+	}
+	g := &gateway{openflowManager: ofm}
+
+	g.SetDefaultPodNetworkAdvertised(true)
+	if !g.GetDefaultPodNetworkAdvertised() {
+		t.Fatalf("expected default bridge Advertised to be true")
+	}
+}
+
 func TestOpenFlowManagerDefaultNetOVSBridgeFinder(t *testing.T) {
 	const nodeName = "multi-homing-worker-0.maiqueb.org"
 
