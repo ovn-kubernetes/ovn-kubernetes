@@ -34,9 +34,9 @@ import (
 )
 
 // Server serves HTTP endpoints for each service name, with results
-// based on the endpoints.  If there are 0 endpoints for a service, it returns a
-// 503 "Service Unavailable" error (telling LBs not to use this node).  If there
-// are 1 or more endpoints, it returns a 200 "OK".
+// based on local endpoints and network availability. It returns 503 "Service
+// Unavailable" if there are no local endpoints or the service's network is not
+// available on this node, and 200 "OK" otherwise.
 type Server interface {
 	// Make the new set of services be active.  Services that were open before
 	// will be closed.  Services that are new will be opened.  Service that
@@ -72,9 +72,12 @@ type HTTPServer interface {
 	Serve(listener net.Listener) error
 }
 
-// NewServer allocates a new healthcheck server manager.  If either
-// of the injected arguments are nil, defaults will be used.
-func NewServer(hostname string, recorder record.EventRecorder, listener Listener, httpServerFactory HTTPServerFactory) Server {
+// NewServer allocates a new healthcheck server manager. networkAvailable is
+// required and is evaluated on each probe so network changes do not depend on
+// service or endpoint events. If listener or httpServerFactory is nil, defaults
+// will be used.
+func NewServer(hostname string, recorder record.EventRecorder, listener Listener, httpServerFactory HTTPServerFactory,
+	networkAvailable func(namespace string) bool) Server {
 	if listener == nil {
 		listener = stdNetListener{}
 	}
@@ -82,11 +85,12 @@ func NewServer(hostname string, recorder record.EventRecorder, listener Listener
 		httpServerFactory = stdHTTPServerFactory{}
 	}
 	return &server{
-		hostname:    hostname,
-		recorder:    recorder,
-		listener:    listener,
-		httpFactory: httpServerFactory,
-		services:    map[types.NamespacedName]*hcInstance{},
+		hostname:         hostname,
+		recorder:         recorder,
+		listener:         listener,
+		httpFactory:      httpServerFactory,
+		services:         map[types.NamespacedName]*hcInstance{},
+		networkAvailable: networkAvailable,
 	}
 }
 
@@ -112,10 +116,11 @@ func (stdHTTPServerFactory) New(addr string, handler http.Handler) HTTPServer {
 var _ HTTPServerFactory = stdHTTPServerFactory{}
 
 type server struct {
-	hostname    string
-	recorder    record.EventRecorder // can be nil
-	listener    Listener
-	httpFactory HTTPServerFactory
+	hostname         string
+	recorder         record.EventRecorder // can be nil
+	listener         Listener
+	httpFactory      HTTPServerFactory
+	networkAvailable func(namespace string) bool
 
 	lock     sync.RWMutex
 	services map[types.NamespacedName]*hcInstance
@@ -206,7 +211,7 @@ func (h hcHandler) ServeHTTP(resp http.ResponseWriter, _ *http.Request) {
 	h.hcs.lock.RUnlock()
 
 	resp.Header().Set("Content-Type", "application/json")
-	if count == 0 {
+	if count == 0 || !h.hcs.networkAvailable(h.name.Namespace) {
 		resp.WriteHeader(http.StatusServiceUnavailable)
 	} else {
 		resp.WriteHeader(http.StatusOK)

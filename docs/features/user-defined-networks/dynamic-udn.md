@@ -107,6 +107,13 @@ with local ready endpoints; those local endpoint pods make the UDN active on
 the node, so load balancers that honor the health check will target nodes where
 Dynamic UDN has rendered the network.
 
+The per-Service `healthCheckNodePort` also returns HTTP 503 when the namespace's
+UDN is unavailable on the node, even if EndpointSlices still report local ready
+endpoints (for example, host-network endpoints). Each probe checks local network
+availability, so health recovers after reactivation without requiring a Service
+or EndpointSlice update. This check does not apply to shared node-health probes
+or create a health-check port for plain NodePort services.
+
 For NodePort, ExternalIP, or LoadBalancer providers that do not use those health
 checks, make sure external traffic lands on nodes where the UDN is rendered. If
 a provider such as MetalLB advertises service IPs for UDN workloads, configure
