@@ -32,10 +32,6 @@ env:
   CI_IMAGE_PR_TAR: image-pr.tar
   CI_DIST_IMAGES_OUTPUT: dist/images/_output/
 
-  # To run CI over custom OVN
-  # OVN_REPO: https://github.com/ovn-org/ovn
-  # OVN_GITREF: main
-
 jobs:
   go-cache:
     uses: ./.github/workflows/prepare-go-cache.yml
@@ -70,20 +66,31 @@ jobs:
         # network-segmentation : ["", "enable-network-segmentation"]
         # traffic-flow-tests : "<tests range. i.e. 1-24>"
         include:
-          - {"target": "control-plane", perf-test: "kubelet-density-cni", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "3", "network-segmentation": ""}
-          - {"target": "control-plane", perf-test: "udn-density-l2-noPods", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "3", "network-segmentation": ""}
-          - {"target": "control-plane", perf-test: "cudn-density-l2-noPods", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "3", "network-segmentation": ""}
-          - {"target": "control-plane", perf-test: "udn-density-l2-pods", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "3", "network-segmentation": ""}
-          - {"target": "control-plane", perf-test: "cudn-density-l2-pods-netpol", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "3", "network-segmentation": ""}
-          - {"target": "control-plane", perf-test: "udn-density-l2-pods-netpol", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "3", "network-segmentation": ""}
-          - {"target": "control-plane", perf-test: "udn-density-l3-pods-netpol", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "3", "network-segmentation": ""}
+          # Generic test
+          - {"target": "control-plane", perf-test: "kubelet-density-cni","iterations": 800, "dynamic": "false", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "20", "network-segmentation": ""}
+          # Dynamic UDN test
+          - {"target": "control-plane", perf-test: "udn-density-l2-pods","iterations": 750, "dynamic": "true",  "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "20", "network-segmentation": ""}
+          - {"target": "control-plane", perf-test: "cudn-density-l2-pods-netpol","iterations": 750,"dynamic": "true", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "20", "network-segmentation": ""}
+          - {"target": "control-plane", perf-test: "udn-density-l2-pods-netpol","iterations": 750,"dynamic": "true", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "20", "network-segmentation": ""}
+          - {"target": "control-plane", perf-test: "udn-density-l3-pods-netpol","iterations": 750,"dynamic": "true", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "20", "network-segmentation": ""}
+          # Non-dynamic udn test
+          - {"target": "control-plane", perf-test: "udn-density-l2-pods","iterations": 250, "dynamic": "false",  "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "20", "network-segmentation": ""}
+          - {"target": "control-plane", perf-test: "cudn-density-l2-pods-netpol","iterations": 250,"dynamic": "false", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "20", "network-segmentation": ""}
+          - {"target": "control-plane", perf-test: "udn-density-l2-pods-netpol","iterations": 250,"dynamic": "false", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "20", "network-segmentation": ""}
+          # Using a different number of iterations just for l3 due to l3 being harder on the control-plane aspects (annotations, etc)
+          - {"target": "control-plane", perf-test: "udn-density-l3-pods-netpol","iterations": 175,"dynamic": "false", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "20", "network-segmentation": ""}
     env:
       ES_SERVER: "${{ secrets.PERF_DATASTORE }}"
       JOB_NAME: "${{ matrix.target }}-${{ matrix.gateway-mode }}-${{ matrix.ipfamily }}-${{ matrix.disable-snat-multiple-gws }}-${{ matrix.second-bridge }}-${{ matrix.cni-mode }}"
       OVN_HYBRID_OVERLAY_ENABLE: "false"
+      ITERATIONS: "${{ matrix.iterations }}"
+      CNI_MODE: "${{ matrix.cni-mode }}"
+      # unique name to store artifacts.
+      PERF_ARTIFACT_KEY: "${{ matrix.perf-test }}${{ matrix.dynamic == 'true' && '-dynamic-udn' || '' }}"
       OVN_MULTICAST_ENABLE:  "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' || matrix.target == 'network-segmentation' || matrix.target == 'bgp' || matrix.target == 'bgp-loose-isolation' }}"
       OVN_EMPTY_LB_EVENTS: "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' || matrix.target == 'bgp' || matrix.target == 'bgp-loose-isolation' }}"
       OVN_DISABLE_SNAT_MULTIPLE_GWS: "${{ matrix.disable-snat-multiple-gws == 'noSnatGW' }}"
+      DYNAMIC_UDN_ALLOCATION: "${{ matrix.dynamic }}"
       KIND_INSTALL_METALLB: "false"
       OVN_GATEWAY_MODE: "${{ matrix.gateway-mode }}"
       OVN_SECOND_BRIDGE: "${{ matrix.second-bridge == '2br' }}"
@@ -115,13 +122,6 @@ jobs:
     steps:
     - uses: actions/checkout@v6
 
-    # Debug session for the performance test
-    #- name: Setup tmate session
-    #  id: tmate
-    #  uses: mxschmitt/action-tmate@v3
-    #  with:
-    #    detached: true
-  
     - name: Check out code into the Go module directory
       uses: actions/checkout@v6
       with:
@@ -242,13 +242,13 @@ jobs:
         export OVN_IMAGE="ovn-daemonset-fedora:pr"
         # Set enhanced timeouts for large cluster performance testing
         export KIND_CLUSTER_LOGLEVEL=2
-        
+
         # Use the existing kind infrastructure but with enhanced kubelet health settings
         make -C test install-kind
 
         kind get kubeconfig > kconfig
         export KUBECONFIG=${PWD}/kconfig
-        
+
         # Wait for kubelet health on all nodes with retries
         echo "Verifying kubelet health on all nodes..."
         for i in {1..10}; do
@@ -260,7 +260,7 @@ jobs:
             echo "All nodes are ready!"
             break
           fi
-          
+
           if [ $i -eq 10 ]; then
             echo "Cluster health check failed after 10 attempts"
             echo "=== Node Status ==="
@@ -305,23 +305,23 @@ jobs:
         kind get kubeconfig > kconfig
         export KUBECONFIG=${PWD}/kconfig
         ./contrib/install-prometheus-infra.sh
-    
+
     - name: Upload Prometheus installation logs
       if: always()
       uses: actions/upload-artifact@v7
       with:
-        name: prometheus-install-logs-${{ matrix.perf-test }}-${{ github.run_id }}
+        name: prometheus-install-logs-${{ env.PERF_ARTIFACT_KEY }}-${{ github.run_id }}
         path: prometheus-install.log
         retention-days: 7
 
-    - name: Download and setup kube-burner v2.5.0
+    - name: Download and setup kube-burner v2.8.7
       run: |
-        curl -L https://github.com/kube-burner/kube-burner/releases/download/v2.5.0/kube-burner-V2.5.0-linux-x86_64.tar.gz | tar xz
+        curl -L https://github.com/kube-burner/kube-burner/releases/download/v2.8.7/kube-burner-V2.8.7-linux-x86_64.tar.gz | tar xz
         chmod +x kube-burner
         sudo mv kube-burner /usr/local/bin/
 
     - name: "Run kube-burner ${{ matrix.perf-test }} workload"
-      timeout-minutes: 120 
+      timeout-minutes: 120
       run: |
         kind get kubeconfig > kconfig
         export KUBECONFIG=${PWD}/kconfig
@@ -342,14 +342,14 @@ jobs:
         else
           kube-burner init --config workloads/${{ matrix.perf-test }}.yml -e metric-endpoint.yml --user-metadata perf-meta.yml
         fi
-        
+
         mkdir -p /tmp/${{ matrix.perf-test }}/pprof-data
         mkdir -p /tmp/${{ matrix.perf-test }}/perf
         cp -r pprof-data/* /tmp/${{ matrix.perf-test }}/pprof-data
         cp -r * /tmp/${{ matrix.perf-test }}/perf
 
     - name: Generate performance report
-      if: ${{ matrix.perf-test == 'kubelet-density-cni' || matrix.perf-test == 'udn-density-l2-noPods' || matrix.perf-test == 'cudn-density-l2-noPods' || matrix.perf-test == 'udn-density-l2-pods' || matrix.perf-test == 'cudn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l3-pods-netpol' }}
+      if: ${{ matrix.perf-test == 'kubelet-density-cni' || matrix.perf-test == 'udn-density-l2-pods' || matrix.perf-test == 'cudn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l3-pods-netpol' }}
       run: |
         cd contrib/perf
         # Generate the performance report
@@ -363,25 +363,25 @@ jobs:
         cat /tmp/${{ matrix.perf-test }}/performance_report.md
 
     - name: Upload performance report
-      if: ${{ matrix.perf-test == 'kubelet-density-cni' || matrix.perf-test == 'udn-density-l2-noPods' || matrix.perf-test == 'cudn-density-l2-noPods' || matrix.perf-test == 'udn-density-l2-pods' || matrix.perf-test == 'cudn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l3-pods-netpol' }}
+      if: ${{ matrix.perf-test == 'kubelet-density-cni' || matrix.perf-test == 'udn-density-l2-pods' || matrix.perf-test == 'cudn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l3-pods-netpol' }}
       uses: actions/upload-artifact@v7
       with:
-        name: ${{ matrix.perf-test }}-performance-report-${{ github.run_id }}
+        name: ${{ env.PERF_ARTIFACT_KEY }}-performance-report-${{ github.run_id }}
         path: /tmp/${{ matrix.perf-test }}/performance_report.md
 
     - name: Upload pprof data
-      if: ${{ matrix.perf-test == 'kubelet-density-cni' || matrix.perf-test == 'udn-density-l2-noPods' || matrix.perf-test == 'cudn-density-l2-noPods' || matrix.perf-test == 'udn-density-l2-pods' || matrix.perf-test == 'cudn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l3-pods-netpol' }}
+      if: ${{ matrix.perf-test == 'kubelet-density-cni' || matrix.perf-test == 'udn-density-l2-pods' || matrix.perf-test == 'cudn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l3-pods-netpol' }}
       uses: actions/upload-artifact@v7
       with:
-        name: ${{ matrix.perf-test }}-pprof-${{ github.run_id }}
+        name: ${{ env.PERF_ARTIFACT_KEY }}-pprof-${{ github.run_id }}
         path: /tmp/${{ matrix.perf-test }}/pprof-data
 
     - name: Upload performance test data
-      if: ${{ matrix.perf-test == 'kubelet-density-cni' || matrix.perf-test == 'udn-density-l2-noPods' || matrix.perf-test == 'cudn-density-l2-noPods' || matrix.perf-test == 'udn-density-l2-pods' || matrix.perf-test == 'cudn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l3-pods-netpol' }}
+      if: ${{ matrix.perf-test == 'kubelet-density-cni' || matrix.perf-test == 'udn-density-l2-pods' || matrix.perf-test == 'cudn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l3-pods-netpol' }}
       uses: actions/upload-artifact@v7
       with:
-        name: ${{ matrix.perf-test }}-performance-test-data-${{ github.run_id }}
-        path: /tmp/${{ matrix.perf-test }} 
+        name: ${{ env.PERF_ARTIFACT_KEY }}-performance-test-data-${{ github.run_id }}
+        path: /tmp/${{ matrix.perf-test }}
 
     - name: Export kind logs
       if: always()
@@ -393,7 +393,7 @@ jobs:
       if: always()
       uses: actions/upload-artifact@v7
       with:
-        name: ${{ matrix.perf-test }}-kind-logs-${{ github.run_id }}
+        name: ${{ env.PERF_ARTIFACT_KEY }}-kind-logs-${{ github.run_id }}
         path: /tmp/${{ matrix.perf-test }}/logs
 
   build-pr:

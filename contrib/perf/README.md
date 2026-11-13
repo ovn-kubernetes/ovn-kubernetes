@@ -12,8 +12,6 @@ contrib/perf
 ├── requirements.txt                # Python dependencies for CI scripts
 └── workloads                       # Workload definition folder
     ├── kubelet-density-cni.yml             # kubelet-density-cni workload
-    ├── udn-density-l2-noPods.yml           # UDN L2 density without pods
-    ├── cudn-density-l2-noPods.yml          # CUDN L2 density without pods
     ├── udn-density-l2-pods.yml             # UDN L2 density with just one pod
     ├── cudn-density-l2-pods-netpol.yml     # CUDN L2 density with pods, services and network policies
     ├── udn-density-l2-pods-netpol.yml      # UDN L2 density with pods, services and network policies
@@ -29,26 +27,26 @@ For our use-case we make some modifications to the base config shipped with kube
 
 ```
   - name: kubelet-density-cni
-    jobIterations: 100
-    qps: 10
-    burst: 10
+    jobIterations: {{.ITERATIONS}}
+    qps: 20
+    burst: 20
     namespacedIterations: false
     namespace: kubelet-density-cni
     waitWhenFinished: true
     podWait: false
     preLoadImages: true
-    preLoadPeriod: 2m
+    preLoadPeriod: 5m
     churnConfig:
       percent: 10
       cycles: 10
       mode: objects
 ```
 
-We enable churn, which will delete and recreate the objects we created in the namespace. We also lower the QPS to 10/10 since
+We enable churn, which will delete and recreate the objects we created in the namespace. We also cap the QPS at 20/20 since
 we are testing on a KinD cluster.
 
-### udn-density-l2-noPods / cudn-density-l2-noPods
-These workloads create UDN (UserDefinedNetwork) or CUDN (ClusterUserDefinedNetwork) L2 network objects without any pods.
+`jobIterations` is templated: kube-burner renders the workload as a Go template, so `{{.ITERATIONS}}` resolves from the
+`ITERATIONS` environment variable, which the `performance-test` workflow sets per matrix entry.
 
 ### udn-density-l2-pods
 This workload creates UDN L2 networks along with client pods.

@@ -24,24 +24,24 @@ global:
         url: http://localhost:9411/debug/pprof/heap
 jobs:
 - name: cudn-density-l2-namespaces
-  jobIterations: 1
-  qps: 10
-  burst: 10
+  jobIterations: {{.ITERATIONS}}
+  qps: 20
+  burst: 20
   namespacedIterations: true
   waitWhenFinished: true
   cleanup: true
   preLoadImages: false
   objects:
-    - objectTemplate: workloads/templates/udn-density/cudn_l2_grouped.yml
-      replicas: 30
+    - objectTemplate: workloads/templates/udn-density/cudn_l2.yml
+      replicas: 1
 
-    - objectTemplate: workloads/templates/udn-density/cudn_ns_grouped.yml
-      replicas: 150
+    - objectTemplate: workloads/templates/udn-density/cudn_ns.yml
+      replicas: 1
 
 - name: cudn-density-l2-pods-netpol
-  jobIterations: 150
-  qps: 10
-  burst: 10
+  jobIterations: {{.ITERATIONS}}
+  qps: 20
+  burst: 20
   namespacedIterations: true
   namespace: cudn-density-l2-namespaces
   waitWhenFinished: true

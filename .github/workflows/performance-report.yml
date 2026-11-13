@@ -50,17 +50,22 @@ jobs:
         # Organize performance test data
         for dir in *performance-test-data*; do
           if [ -d "$dir" ]; then
+            # The artifact key is the kube-burner job name, suffixed with
+            # -dynamic-udn for the dynamic UDN allocation lane. Keep the suffix
+            # for the report directory so the two lanes stay separate, and strip
+            # it to recover the job name the measurement files are keyed on.
             workload=$(echo "$dir" | sed 's/-performance-test-data-.*//')
+            job_name=$(echo "$workload" | sed 's/-dynamic-udn$//')
             mkdir -p "reports/${workload}"
 
             # Copy the test data
             if [ -d "$dir/perf/metrics" ]; then
-              echo "Processing workload: $workload"
+              echo "Processing workload: $workload (kube-burner job: $job_name)"
 
               # Generate JSON data from raw metrics
               cd contrib/perf
               python3 generate_perf_report.py \
-                --workload "$workload" \
+                --workload "$job_name" \
                 --metrics-dir "../../$dir/perf/metrics" \
                 --json-output "../../reports/${workload}/performance_data.json" \
                 --output "../../reports/${workload}/performance_report.md"
@@ -175,15 +180,16 @@ jobs:
         for dir in baseline-downloads/*performance-test-data*; do
           if [ -d "$dir" ]; then
             workload=$(basename "$dir" | sed 's/-performance-test-data-.*//')
+            job_name=$(echo "$workload" | sed 's/-dynamic-udn$//')
             mkdir -p "baseline-reports/${workload}"
 
             # Generate JSON data from raw metrics
             if [ -d "$dir/perf/metrics" ]; then
-              echo "Processing baseline workload: $workload"
+              echo "Processing baseline workload: $workload (kube-burner job: $job_name)"
 
               cd contrib/perf
               python3 generate_perf_report.py \
-                --workload "$workload" \
+                --workload "$job_name" \
                 --metrics-dir "../../$dir/perf/metrics" \
                 --json-output "../../baseline-reports/${workload}/performance_data.json" \
                 --output "../../baseline-reports/${workload}/performance_report.md"
