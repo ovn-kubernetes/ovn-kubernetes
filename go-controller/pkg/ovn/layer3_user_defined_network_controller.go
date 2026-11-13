@@ -174,6 +174,7 @@ type Layer3UserDefinedNetworkController struct {
 	// Node-specific syncMaps used by node event handler
 	mgmtPortFailed              sync.Map
 	addNodeFailed               sync.Map
+	syncPodsFailed              sync.Map
 	nodeClusterRouterPortFailed sync.Map
 	syncZoneICFailed            sync.Map
 	gatewaysFailed              sync.Map
@@ -252,6 +253,7 @@ func NewLayer3UserDefinedNetworkController(
 		},
 		mgmtPortFailed:              sync.Map{},
 		addNodeFailed:               sync.Map{},
+		syncPodsFailed:              sync.Map{},
 		nodeClusterRouterPortFailed: sync.Map{},
 		syncZoneICFailed:            sync.Map{},
 		gatewaysFailed:              sync.Map{},
@@ -658,14 +660,16 @@ func (oc *Layer3UserDefinedNetworkController) ReconcileNode(ctx context.Context,
 		var nodeParams *nodeSyncs
 		if oldNode == nil {
 			_, nodeSync := oc.addNodeFailed.Load(newNode.Name)
+			_, podsSync := oc.syncPodsFailed.Load(newNode.Name)
 			_, clusterRtrSync := oc.nodeClusterRouterPortFailed.Load(newNode.Name)
 			_, syncMgmtPort := oc.mgmtPortFailed.Load(newNode.Name)
 			_, syncGw := oc.gatewaysFailed.Load(newNode.Name)
 			_, syncZoneIC := oc.syncZoneICFailed.Load(newNode.Name)
 			_, syncReRoute := oc.syncEIPNodeRerouteFailed.Load(newNode.Name)
-			if nodeSync || clusterRtrSync || syncMgmtPort || syncGw || syncZoneIC || syncReRoute {
+			if nodeSync || podsSync || clusterRtrSync || syncMgmtPort || syncGw || syncZoneIC || syncReRoute {
 				nodeParams = &nodeSyncs{
 					syncNode:              nodeSync,
+					syncPods:              podsSync,
 					syncClusterRouterPort: clusterRtrSync,
 					syncMgmtPort:          syncMgmtPort,
 					syncZoneIC:            syncZoneIC,
@@ -687,6 +691,7 @@ func (oc *Layer3UserDefinedNetworkController) ReconcileNode(ctx context.Context,
 			nodeSubnetChange := nodeSubnetChangedForUDN(oldNode, newNode, oc.GetNetworkName(), oldState, newState)
 
 			_, nodeSync := oc.addNodeFailed.Load(newNode.Name)
+			_, podsSync := oc.syncPodsFailed.Load(newNode.Name)
 			nodeSync = nodeSync || nodeSubnetChange
 			_, failed := oc.nodeClusterRouterPortFailed.Load(newNode.Name)
 			clusterRtrSync := failed || nodeChassisChanged(oldNode, newNode) || nodeSubnetChange
@@ -705,6 +710,7 @@ func (oc *Layer3UserDefinedNetworkController) ReconcileNode(ctx context.Context,
 			syncReroute := failed || util.NodeHostCIDRsAnnotationChanged(oldNode, newNode)
 			nodeParams = &nodeSyncs{
 				syncNode:              nodeSync,
+				syncPods:              podsSync,
 				syncClusterRouterPort: clusterRtrSync,
 				syncMgmtPort:          syncMgmtPort,
 				syncZoneIC:            syncZoneIC,
@@ -848,9 +854,19 @@ func (oc *Layer3UserDefinedNetworkController) addUpdateLocalNodeEvent(_ context.
 		if err != nil {
 			if nSyncs.syncNode {
 				oc.addNodeFailed.Store(node.Name, true)
+			}
+			// No node components have run yet; retain every requested sync,
+			// including work selected by annotation changes on an existing node.
+			if nSyncs.syncClusterRouterPort {
 				oc.nodeClusterRouterPortFailed.Store(node.Name, true)
+			}
+			if nSyncs.syncMgmtPort {
 				oc.mgmtPortFailed.Store(node.Name, true)
+			}
+			if nSyncs.syncZoneIC {
 				oc.syncZoneICFailed.Store(node.Name, true)
+			}
+			if nSyncs.syncReroute {
 				oc.syncEIPNodeRerouteFailed.Store(node.Name, true)
 			}
 			oc.gatewaysFailed.Store(node.Name, true)
@@ -904,12 +920,19 @@ func (oc *Layer3UserDefinedNetworkController) addUpdateLocalNodeEvent(_ context.
 	}
 
 	// ensure pods that already exist on this node have their logical ports created
-	if nSyncs.syncNode { // do this only if it is a new node add
+	hasGateway := util.IsNetworkSegmentationSupportEnabled() && oc.IsPrimaryNetwork()
+	// Pod-only retries for primary networks must use the gateway readiness check below.
+	if nSyncs.syncNode || (nSyncs.syncPods && !hasGateway) {
 		errors := oc.addAllPodsOnNode(node.Name)
 		errs = append(errs, errors...)
+		if len(errors) > 0 {
+			oc.syncPodsFailed.Store(node.Name, true)
+		} else {
+			oc.syncPodsFailed.Delete(node.Name)
+		}
 	}
 
-	if util.IsNetworkSegmentationSupportEnabled() && oc.IsPrimaryNetwork() {
+	if hasGateway {
 		if nSyncs.syncGw {
 			gwManager := oc.gatewayManagerForNode(node.Name)
 			oc.gatewayManagers.Store(node.Name, gwManager)
@@ -937,9 +960,14 @@ func (oc *Layer3UserDefinedNetworkController) addUpdateLocalNodeEvent(_ context.
 		// if per pod SNAT is being used, then l3 gateway config is required to be able to add pods
 		_, gwFailed := oc.gatewaysFailed.Load(node.Name)
 		if !gwFailed || !config.Gateway.DisableSNATMultipleGWs {
-			if nSyncs.syncNode || nSyncs.syncGw { // do this only if it is a new node add or a gateway sync happened
+			if nSyncs.syncNode || nSyncs.syncGw || nSyncs.syncPods {
 				errors := oc.addAllPodsOnNode(node.Name)
 				errs = append(errs, errors...)
+				if len(errors) > 0 {
+					oc.syncPodsFailed.Store(node.Name, true)
+				} else {
+					oc.syncPodsFailed.Delete(node.Name)
+				}
 			}
 		}
 	}
@@ -1079,6 +1107,7 @@ func (oc *Layer3UserDefinedNetworkController) deleteNodeEvent(node *corev1.Node)
 		}
 		oc.lsManager.DeleteSwitch(oc.GetNetworkScopedName(node.Name))
 		oc.addNodeFailed.Delete(node.Name)
+		oc.syncPodsFailed.Delete(node.Name)
 		oc.mgmtPortFailed.Delete(node.Name)
 		oc.nodeClusterRouterPortFailed.Delete(node.Name)
 		oc.gatewaysFailed.Delete(node.Name)

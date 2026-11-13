@@ -6,6 +6,7 @@ package node
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/syncmap"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
@@ -33,13 +35,14 @@ type fakeNodeHandler struct {
 	deleteCalls    int
 	lastOldNode    *corev1.Node
 	gatewaySyncs   []string
+	reconcile      func(oldNode, newNode *corev1.Node, oldState, newState *NodeAnnotationState) error
 }
 
 func (f *fakeNodeHandler) GetNetworkName() string {
 	return f.netName
 }
 
-func (f *fakeNodeHandler) ReconcileNode(_ context.Context, oldNode *corev1.Node, newNode *corev1.Node, _, _ *NodeAnnotationState) error {
+func (f *fakeNodeHandler) ReconcileNode(_ context.Context, oldNode *corev1.Node, newNode *corev1.Node, oldState, newState *NodeAnnotationState) error {
 	if oldNode != nil {
 		f.lastOldNode = oldNode.DeepCopy()
 	} else {
@@ -47,9 +50,15 @@ func (f *fakeNodeHandler) ReconcileNode(_ context.Context, oldNode *corev1.Node,
 	}
 	if newNode == nil {
 		f.deleteCalls++
+		if f.reconcile != nil {
+			return f.reconcile(oldNode, newNode, oldState, newState)
+		}
 		return nil
 	}
 	f.reconcileCalls++
+	if f.reconcile != nil {
+		return f.reconcile(oldNode, newNode, oldState, newState)
+	}
 	return f.reconcileErr
 }
 
@@ -345,7 +354,7 @@ func TestNodeControllerFiltersRemoteNetworkActivityByNodeName(t *testing.T) {
 	}
 }
 
-func TestReconcileUpdateFailureKeepsConfiguredCacheAndStoresLatestInformerNode(t *testing.T) {
+func TestReconcileUpdateFailureStoresLastAttempt(t *testing.T) {
 	handler := &fakeNodeHandler{
 		netName:      "net-a",
 		reconcileErr: errors.New("reconcile failed"),
@@ -371,46 +380,293 @@ func TestReconcileUpdateFailureKeepsConfiguredCacheAndStoresLatestInformerNode(t
 	}
 
 	cachedNode := c.getCachedNode(handler.netName, oldNode.Name)
-	if cachedNode == nil || cachedNode.Annotations["v"] != "old" {
-		t.Fatalf("expected configured cache to retain old node, got %#v", cachedNode)
+	if cachedNode == nil || cachedNode.Annotations["v"] != "new" {
+		t.Fatalf("expected cache to store the failed attempt, got %#v", cachedNode)
 	}
 
-	latestInformerNode := c.getLatestInformerNode(handler.netName, oldNode.Name)
-	if latestInformerNode == nil || latestInformerNode.Annotations["v"] != "new" {
-		t.Fatalf("expected latest informer cache to store new node, got %#v", latestInformerNode)
+}
+
+func TestReconcileNodeComparesConsecutiveAttempts(t *testing.T) {
+	for _, bootstrap := range []bool{true, false} {
+		t.Run(fmt.Sprintf("bootstrap=%t", bootstrap), func(t *testing.T) {
+			handler := &fakeNodeHandler{netName: "net-a"}
+			c := &NodeController{
+				networkManager:     &fakeNodeActivityNetworkManager{active: true},
+				handlers:           syncmap.NewSyncMap[NodeHandler](),
+				nodeController:     newNodeControllerForTest(1, nil),
+				nodeReconciliation: map[string]map[string]bool{},
+				annotationCache:    NewNodeAnnotationCache(),
+			}
+			t.Cleanup(c.Stop)
+			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}}
+			setSubnet := func(subnet string) {
+				node = node.DeepCopy()
+				node.Annotations = map[string]string{
+					types.NodeSubnetsAnnotation: fmt.Sprintf(`{"net-a":[%q]}`, subnet),
+				}
+				c.nodeLister = newNodeLister(t, node)
+			}
+			setSubnet("10.1.0.0/24")
+			if err := c.RegisterNetworkController(handler); err != nil {
+				t.Fatal(err)
+			}
+
+			var previous *corev1.Node
+			var appliedSubnet string
+			var subnetSyncs int
+			failLaterComponent := false
+			handler.reconcile = func(oldNode, newNode *corev1.Node, oldState, newState *NodeAnnotationState) error {
+				if previous == nil {
+					if oldNode != nil || oldState != nil {
+						t.Fatal("first attempt must receive nil old node and annotation state")
+					}
+				} else {
+					if oldNode != previous || oldState == nil {
+						t.Fatalf("expected previous attempt %v, got %v", previous, oldNode)
+					}
+					oldSubnets, err := oldState.Subnets(handler.netName)
+					if err != nil || len(oldSubnets) != 1 {
+						t.Fatalf("invalid old annotation state: %v, %v", oldSubnets, err)
+					}
+					if previous.Annotations[types.NodeSubnetsAnnotation] != fmt.Sprintf(`{"net-a":[%q]}`, oldSubnets[0].String()) {
+						t.Fatal("old parsed annotations must match the previous attempt")
+					}
+				}
+				previous = newNode
+				if oldNode == nil || NodeSubnetAnnotationChangedForNetworkWithState(oldState, newState, handler.netName) {
+					subnets, err := newState.Subnets(handler.netName)
+					if err != nil || len(subnets) != 1 {
+						t.Fatalf("invalid new annotation state: %v, %v", subnets, err)
+					}
+					appliedSubnet = subnets[0].String()
+					subnetSyncs++
+				}
+				if failLaterComponent {
+					return errors.New("later component failed")
+				}
+				return nil
+			}
+			key := scopedNodeQueueKey(node.Name, handler.netName)
+			if !bootstrap {
+				if err := c.reconcileNode(context.Background(), key); err != nil {
+					t.Fatal(err)
+				}
+				setSubnet("10.2.0.0/24")
+			}
+
+			failLaterComponent = true
+			for _, subnet := range []string{"10.2.0.0/24", "10.1.0.0/24", "10.2.0.0/24"} {
+				setSubnet(subnet)
+				if err := c.reconcileNode(context.Background(), key); err == nil {
+					t.Fatal("expected later component to fail")
+				}
+				if appliedSubnet != subnet {
+					t.Fatalf("successful component was not resynced: want %s, got %s", subnet, appliedSubnet)
+				}
+			}
+			// Retry unchanged inputs once the failing component can complete. The
+			// already successful component should not be programmed again.
+			previousSyncs := subnetSyncs
+			failLaterComponent = false
+			if err := c.reconcileNode(context.Background(), key); err != nil {
+				t.Fatal(err)
+			}
+			if subnetSyncs != previousSyncs {
+				t.Fatal("unchanged successful component was unnecessarily resynced")
+			}
+			if c.getCachedNode(handler.netName, node.Name) != node {
+				t.Fatal("successful attempt must update the cached inputs")
+			}
+		})
 	}
 }
 
-func TestReconcileDeleteFallsBackToLatestInformerNode(t *testing.T) {
-	handler := &fakeNodeHandler{netName: "net-a"}
-	newNode := &corev1.Node{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        "node-a",
-			Annotations: map[string]string{"cleanup": "needed"},
-		},
+func TestReconcileDeleteUsesFailedAttempt(t *testing.T) {
+	if err := config.PrepareTestConfig(); err != nil {
+		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = config.PrepareTestConfig() })
+	for _, initialCleanup := range []bool{false, true} {
+		t.Run(fmt.Sprintf("initialCleanup=%t", initialCleanup), func(t *testing.T) {
+			handler := &fakeNodeHandler{netName: "net-a", reconcileErr: errors.New("update failed")}
+			if initialCleanup {
+				handler.reconcileErr = RetryWithPreviousNode(handler.reconcileErr)
+			}
+			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+				Name: "node-a", Annotations: map[string]string{"cleanup": "latest-attempt"},
+			}}
+			c := &NodeController{
+				networkManager:     &fakeNodeActivityNetworkManager{active: true},
+				handlers:           syncmap.NewSyncMap[NodeHandler](),
+				nodeReconciliation: map[string]map[string]bool{},
+				annotationCache:    NewNodeAnnotationCache(),
+				nodeLister:         newNodeLister(t, node),
+			}
+			c.handlers.Store(handler.netName, handler)
+			if !initialCleanup {
+				oldNode := node.DeepCopy()
+				oldNode.Annotations["cleanup"] = "previous-success"
+				c.setCachedNode(handler.netName, oldNode)
+			}
+			key := scopedNodeQueueKey(node.Name, handler.netName)
+			if err := c.reconcileNode(context.Background(), key); err == nil {
+				t.Fatal("expected update failure")
+			}
+			c.nodeLister = newNodeLister(t)
+			if err := c.reconcileNode(context.Background(), key); err != nil {
+				t.Fatalf("delete failed: %v", err)
+			}
+			if handler.deleteCalls != 1 || handler.lastOldNode == nil || handler.lastOldNode.Annotations["cleanup"] != "latest-attempt" {
+				t.Fatalf("delete must receive the failed attempt, got %#v", handler.lastOldNode)
+			}
+			if c.getCachedNode(handler.netName, node.Name) != nil || c.nodeNeedsReconciliation(handler.netName, node.Name) {
+				t.Fatal("successful deletion must clear the cache and pending reconciliation")
+			}
+		})
+	}
+}
 
+func TestReconcileNodeRetriesAfterReactivation(t *testing.T) {
+	if err := config.PrepareTestConfig(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = config.PrepareTestConfig() })
+	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+	config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
+	handler := &fakeNodeHandler{netName: "net-a"}
+	fakeNM := &fakeNodeActivityNetworkManager{active: true}
 	c := &NodeController{
-		networkManager:     networkmanager.Default().Interface(),
+		nodeName:           "local-node",
+		networkManager:     fakeNM,
 		handlers:           syncmap.NewSyncMap[NodeHandler](),
 		nodeReconciliation: map[string]map[string]bool{},
-		nodeActive:         map[string]map[string]struct{}{},
-		nodeCache:          map[string]map[string]*corev1.Node{},
 		annotationCache:    NewNodeAnnotationCache(),
 	}
-	c.setLatestInformerNode(handler.netName, newNode)
+	c.handlers.Store(handler.netName, handler)
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a", Annotations: map[string]string{"v": "configured"}}}
+	c.nodeLister = newNodeLister(t, node)
+	key := scopedNodeQueueKey(node.Name, handler.netName)
+	if err := c.reconcileNode(context.Background(), key); err != nil {
+		t.Fatal(err)
+	}
 
-	if err := c.reconcileDelete(context.Background(), handler, newNode.Name, handler.netName, c.getCachedNode(handler.netName, newNode.Name), nil); err != nil {
-		t.Fatalf("reconcileDelete returned error: %v", err)
+	// Cleanup receives the latest attempt, including partially applied inputs.
+	node = node.DeepCopy()
+	node.Annotations["v"] = "partially applied"
+	c.nodeLister = newNodeLister(t, node)
+	handler.reconcileErr = errors.New("update failed")
+	if err := c.reconcileNode(context.Background(), key); err == nil {
+		t.Fatal("expected update failure")
 	}
-	if handler.deleteCalls != 1 {
-		t.Fatalf("expected delete to be called once, got %d", handler.deleteCalls)
+	fakeNM.active = false
+	deleteFails := true
+	handler.reconcile = func(oldNode, newNode *corev1.Node, oldState, newState *NodeAnnotationState) error {
+		if newNode == nil {
+			if oldNode != node || oldState == nil || newState != nil {
+				t.Fatal("delete must use the latest attempt and its parsed annotations")
+			}
+			if deleteFails {
+				return errors.New("delete failed")
+			}
+			return nil
+		}
+		return handler.reconcileErr
 	}
-	if handler.lastOldNode == nil || handler.lastOldNode.Annotations["cleanup"] != "needed" {
-		t.Fatalf("expected delete to use latest informer node, got %#v", handler.lastOldNode)
+	if err := c.reconcileNode(context.Background(), key); err == nil {
+		t.Fatal("expected delete failure")
 	}
-	if c.getLatestInformerNode(handler.netName, newNode.Name) != nil {
-		t.Fatal("expected latest informer cache to be cleared after delete")
+	if !c.nodeNeedsDeleteReconciliation(handler.netName, node.Name) {
+		t.Fatal("failed delete must remain pending")
+	}
+
+	// Reactivate while deletion is pending. Cleanup must finish before the fresh
+	// add, and a failed fresh add must not repeatedly discard its input snapshot.
+	fakeNM.active = true
+	if err := c.reconcileNode(context.Background(), key); err == nil {
+		t.Fatal("expected pending delete to fail again")
+	}
+	if handler.reconcileCalls != 2 {
+		t.Fatal("add/update must not run while deletion is failing")
+	}
+	deleteFails = false
+	if err := c.reconcileNode(context.Background(), key); err == nil {
+		t.Fatal("expected fresh add failure")
+	}
+	if handler.lastOldNode != nil {
+		t.Fatal("first attempt after deletion must receive nil old node")
+	}
+	if !c.nodeHasNetwork(handler.netName, node.Name) {
+		t.Fatal("reactivated node must remain active after the fresh add fails")
+	}
+	if err := c.reconcileNode(context.Background(), key); err == nil {
+		t.Fatal("expected repeated add/update failure")
+	}
+	if handler.lastOldNode == nil || handler.lastOldNode.Annotations["v"] != node.Annotations["v"] {
+		t.Fatal("retry after reactivation must receive the previous attempt")
+	}
+	handler.reconcileErr = nil
+	if err := c.reconcileNode(context.Background(), key); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReconcileNodeRetainsInputsForFailedTransitionCleanup(t *testing.T) {
+	for _, initial := range []bool{true, false} {
+		t.Run(fmt.Sprintf("initial=%t", initial), func(t *testing.T) {
+			handler := &fakeNodeHandler{netName: "net-a"}
+			c := &NodeController{
+				networkManager:     &fakeNodeActivityNetworkManager{active: true},
+				handlers:           syncmap.NewSyncMap[NodeHandler](),
+				nodeReconciliation: map[string]map[string]bool{},
+				annotationCache:    NewNodeAnnotationCache(),
+			}
+			c.handlers.Store(handler.netName, handler)
+			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a", Annotations: map[string]string{"cleanup": "old-resource"}}}
+			key := scopedNodeQueueKey(node.Name, handler.netName)
+			c.nodeLister = newNodeLister(t, node)
+			var cleanupNode *corev1.Node
+			if !initial {
+				if err := c.reconcileNode(context.Background(), key); err != nil {
+					t.Fatal(err)
+				}
+				cleanupNode = node
+			}
+			cleanupErr := errors.New("cleanup failed")
+			cleanupFails := true
+			handler.reconcile = func(oldNode, _ *corev1.Node, oldState, _ *NodeAnnotationState) error {
+				if oldNode != cleanupNode {
+					t.Fatal("cleanup must retain the original node inputs until it succeeds")
+				}
+				if (oldState == nil) != (cleanupNode == nil) {
+					t.Fatal("old parsed state must correspond to the cleanup node")
+				}
+				if cleanupFails {
+					return fmt.Errorf("node transition: %w", RetryWithPreviousNode(cleanupErr))
+				}
+				return errors.New("later component failed")
+			}
+			for _, value := range []string{"new-resource", "another-resource"} {
+				node = node.DeepCopy()
+				node.Annotations["cleanup"] = value
+				c.nodeLister = newNodeLister(t, node)
+				if err := c.reconcileNode(context.Background(), key); !errors.Is(err, cleanupErr) {
+					t.Fatalf("expected wrapped cleanup failure, got %v", err)
+				}
+			}
+			cleanupFails = false
+			if err := c.reconcileNode(context.Background(), key); err == nil {
+				t.Fatal("expected later component failure")
+			}
+			// Once cleanup is complete, ordinary partial failures must advance
+			// the snapshot so subsequent updates can detect input reversions.
+			handler.reconcile = nil
+			if err := c.reconcileNode(context.Background(), key); err != nil {
+				t.Fatal(err)
+			}
+			if handler.lastOldNode == nil || handler.lastOldNode.Annotations["cleanup"] != "another-resource" {
+				t.Fatal("component retry must receive the accepted add/update inputs")
+			}
+		})
 	}
 }
 

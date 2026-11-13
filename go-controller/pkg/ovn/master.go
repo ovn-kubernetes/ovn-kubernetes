@@ -511,6 +511,7 @@ func (oc *DefaultNetworkController) syncChassis(localNode *corev1.Node, remoteZo
 // so the retry logic can control what need to retry based
 type nodeSyncs struct {
 	syncNode              bool
+	syncPods              bool
 	syncClusterRouterPort bool
 	syncMgmtPort          bool
 	syncGw                bool
@@ -521,6 +522,7 @@ type nodeSyncs struct {
 
 func nodeNeedsSync(syncs *nodeSyncs) bool {
 	return syncs.syncNode ||
+		syncs.syncPods ||
 		syncs.syncClusterRouterPort ||
 		syncs.syncMgmtPort ||
 		syncs.syncGw ||
@@ -569,10 +571,11 @@ func (oc *DefaultNetworkController) addUpdateLocalNodeEvent(_ context.Context, n
 	}
 
 	// since the nodeSync objects are created knowing if hybridOverlay is enabled this should work
+	hybridOverlayFailed := false
 	if nSyncs.syncHo && config.HybridOverlay.Enabled {
 		if err = oc.allocateHybridOverlayDRIP(node); err != nil {
 			errs = append(errs, err)
-			oc.hybridOverlayFailed.Store(node.Name, true)
+			hybridOverlayFailed = true
 		}
 	}
 
@@ -586,6 +589,7 @@ func (oc *DefaultNetworkController) addUpdateLocalNodeEvent(_ context.Context, n
 		// delete stale chassis in SBDB if any
 		if err := oc.deleteStaleNodeChassis(node); err != nil {
 			errs = append(errs, err)
+			oc.nodeClusterRouterPortFailed.Store(node.Name, true)
 		}
 	}
 
@@ -614,18 +618,14 @@ func (oc *DefaultNetworkController) addUpdateLocalNodeEvent(_ context.Context, n
 		if config.HybridOverlay.Enabled {
 			if err := oc.handleHybridOverlayPort(node, annotator); err != nil {
 				errs = append(errs, fmt.Errorf("failed to set up hybrid overlay logical switch port for %s: %v", node.Name, err))
-				oc.hybridOverlayFailed.Store(node.Name, true)
-			} else {
-				oc.hybridOverlayFailed.Delete(node.Name)
+				hybridOverlayFailed = true
 			}
 		} else {
-			// pedantic - node should never be stored in hybridOverlayFailed if HO is not enabled
-			oc.hybridOverlayFailed.Delete(node.Name)
-
 			// the node needs to cleanup Hybrid overlay annotations LogicalRouterPolicies and Hybrid overlay port
 			// if it has them and hybrid overlay is not enabled
 			if err := oc.deleteHybridOverlayPort(node); err != nil {
 				errs = append(errs, err)
+				hybridOverlayFailed = true
 			} else {
 				// only clear annotations if tear down was successful
 				if _, exist := node.Annotations[hotypes.HybridOverlayDRMAC]; exist {
@@ -638,6 +638,14 @@ func (oc *DefaultNetworkController) addUpdateLocalNodeEvent(_ context.Context, n
 		}
 		if err := annotator.Run(); err != nil {
 			errs = append(errs, fmt.Errorf("failed to set hybrid overlay annotations for node %s: %v", node.Name, err))
+			hybridOverlayFailed = true
+		}
+		// Port reconciliation can succeed after allocation fails. Keep the retry
+		// flag until every hybrid-overlay stage, including annotation writes, succeeds.
+		if hybridOverlayFailed {
+			oc.hybridOverlayFailed.Store(node.Name, true)
+		} else {
+			oc.hybridOverlayFailed.Delete(node.Name)
 		}
 	}
 
@@ -676,9 +684,14 @@ func (oc *DefaultNetworkController) addUpdateLocalNodeEvent(_ context.Context, n
 	// ensure pods that already exist on this node have their logical ports created
 	// if per pod SNAT is being used, then l3 gateway config is required to be able to add pods
 	if _, gwFailed := oc.gatewaysFailed.Load(node.Name); !gwFailed || !config.Gateway.DisableSNATMultipleGWs {
-		if nSyncs.syncNode || nSyncs.syncGw { // do this only if it is a new node add or a gateway sync happened
+		if nSyncs.syncNode || nSyncs.syncGw || nSyncs.syncPods {
 			errors := oc.addAllPodsOnNode(node.Name)
 			errs = append(errs, errors...)
+			if len(errors) > 0 {
+				oc.syncPodsFailed.Store(node.Name, true)
+			} else {
+				oc.syncPodsFailed.Delete(node.Name)
+			}
 		}
 	}
 
@@ -759,7 +772,7 @@ func (oc *DefaultNetworkController) addUpdateRemoteNodeEvent(node *corev1.Node, 
 func (oc *DefaultNetworkController) deleteNodeEvent(node *corev1.Node) error {
 	klog.V(5).Infof("Deleting Node %q. Removing the node from "+
 		"various caches", node.Name)
-	if config.HybridOverlay.Enabled && util.NoHostSubnet(node) {
+	if config.HybridOverlay.Enabled {
 		if err := oc.deleteHoNodeEvent(node); err != nil {
 			return err
 		}
@@ -790,9 +803,11 @@ func (oc *DefaultNetworkController) deleteOVNNodeEvent(node *corev1.Node) error 
 
 	oc.lsManager.DeleteSwitch(node.Name)
 	oc.addNodeFailed.Delete(node.Name)
+	oc.syncPodsFailed.Delete(node.Name)
 	oc.mgmtPortFailed.Delete(node.Name)
 	oc.gatewaysFailed.Delete(node.Name)
 	oc.nodeClusterRouterPortFailed.Delete(node.Name)
+	oc.hybridOverlayFailed.Delete(node.Name)
 	return nil
 }
 
@@ -839,18 +854,7 @@ func (oc *DefaultNetworkController) deleteHoNodeEvent(node *corev1.Node) error {
 		klog.Infof("Delete hybrid overlay node switch %s", node.Name)
 		oc.lsManager.DeleteSwitch(node.Name)
 	}
-	if subnet, ok := node.Annotations[hotypes.HybridOverlayNodeSubnet]; ok {
-		// Delete the routes and policies for this HO node
-		_, nodeSubnet, err := net.ParseCIDR(subnet)
-		if err != nil {
-			return fmt.Errorf("failed to parse hybridOverlay node subnet for node %s: %w", node.Name, err)
-		}
-		err = oc.removeRoutesToHONodeSubnet(node.Name, nodeSubnet)
-		if err != nil {
-			return fmt.Errorf("failed to remove hybrid overlay static routes and route policy: %w", err)
-		}
-	}
-	return nil
+	return oc.removeRoutesToHONode(node.Name)
 }
 
 func (oc *DefaultNetworkController) newGatewayManager(nodeName string) *GatewayManager {

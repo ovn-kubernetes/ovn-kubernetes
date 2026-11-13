@@ -83,14 +83,9 @@ func (s *NodeAnnotationState) Subnets(netName string) ([]*net.IPNet, error) {
 
 // NodeSubnetAnnotationChangedForNetworkWithState returns true if the node subnet
 // annotation for the given network changed using pre-parsed annotation state.
+// Ignore invalid new values, but reconcile valid repairs of malformed old values.
 func NodeSubnetAnnotationChangedForNetworkWithState(oldState, newState *NodeAnnotationState, netName string) bool {
 	if oldState == nil || newState == nil {
-		return false
-	}
-	if oldState.subnetsErr != nil {
-		if !util.IsAnnotationNotSetError(oldState.subnetsErr) {
-			klog.Errorf("Failed to parse old node %s annotation: %v", oldState.nodeName, oldState.subnetsErr)
-		}
 		return false
 	}
 	if newState.subnetsErr != nil {
@@ -98,6 +93,12 @@ func NodeSubnetAnnotationChangedForNetworkWithState(oldState, newState *NodeAnno
 			klog.Errorf("Failed to parse new node %s annotation: %v", newState.nodeName, newState.subnetsErr)
 		}
 		return false
+	}
+	if oldState.subnetsErr != nil {
+		if !util.IsAnnotationNotSetError(oldState.subnetsErr) {
+			klog.Errorf("Failed to parse old node %s annotation: %v", oldState.nodeName, oldState.subnetsErr)
+		}
+		return true
 	}
 	return !equalIPNetSlices(oldState.subnets[netName], newState.subnets[netName])
 }
