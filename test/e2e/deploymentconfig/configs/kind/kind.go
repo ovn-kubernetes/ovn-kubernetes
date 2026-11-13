@@ -107,6 +107,10 @@ func (k *kind) IsConfigurationEnabled(config api.Config) bool {
 		val, present := os.LookupEnv("DISABLE_UDN_ARP_NDP_FLOOD")
 		udnARPNDPFloodDisabled := present && val == "true"
 		return udnARPNDPFloodDisabled
+	case api.ObservabilityConfig:
+		return os.Getenv("OVN_OBSERV_ENABLE") == "true"
+	case api.NetworkSegmentationConfig:
+		return os.Getenv("ENABLE_NETWORK_SEGMENTATION") == "true"
 	default:
 		return false
 	}
