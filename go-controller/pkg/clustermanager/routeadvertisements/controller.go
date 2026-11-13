@@ -23,6 +23,7 @@ import (
 	frrtypes "github.com/metallb/frr-k8s/api/v1beta1"
 	frrclientset "github.com/metallb/frr-k8s/pkg/client/clientset/versioned"
 	frrlisters "github.com/metallb/frr-k8s/pkg/client/listers/api/v1beta1"
+	"golang.org/x/sync/errgroup"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -62,6 +63,8 @@ const (
 	generateName          = "ovnk-generated-"
 	fieldManager          = "clustermanager-routeadvertisements-controller"
 	conditionTypeAccepted = "Accepted"
+	// Maximum concurrent FRRConfiguration writes within one RA reconciliation.
+	frrConfigurationWriteWorkers = 4
 	// rawConfigPriority is set to an arbitrary value that still allows users to
 	// override if needed.
 	rawConfigPriority = 10
@@ -2004,8 +2007,6 @@ func (c *Controller) deleteUnvalidatedFRRConfigurations(ctx context.Context, ra 
 // indexes them by the annotated key. Then compares this state with desired
 // state and creates, updates or deletes the FRRConfigurations accordingly.
 func (c *Controller) updateFRRConfigurations(ctx context.Context, ra string, frrConfigurations []*frrtypes.FRRConfiguration) (bool, error) {
-	var hadUpdates bool
-
 	metrics.RecordRouteAdvertisementFRRConfigurations(ra, len(frrConfigurations))
 
 	// fetch the currently existing FRRConfigurations for this
@@ -2014,11 +2015,11 @@ func (c *Controller) updateFRRConfigurations(ctx context.Context, ra string, frr
 		MatchLabels: map[string]string{types.OvnRouteAdvertisementsKey: ra},
 	})
 	if err != nil {
-		return hadUpdates, err
+		return false, err
 	}
 	frrConfigs, err := c.frrLister.List(selector)
 	if err != nil {
-		return hadUpdates, err
+		return false, err
 	}
 	// map them by our internal unique key
 	existing := make(map[string][]*frrtypes.FRRConfiguration, len(frrConfigs))
@@ -2030,26 +2031,19 @@ func (c *Controller) updateFRRConfigurations(ctx context.Context, ra string, frr
 		existing[key] = append(existing[key], frrConfig)
 	}
 
-	// go through the FRRConfigurations that should exist for this
-	// RouteAdvertisements
+	type writeOperation struct {
+		config *frrtypes.FRRConfiguration
+		create bool // true for create, false for update
+	}
+	var writes []writeOperation
+	// Match existing objects before issuing parallel writes, so each operation
+	// owns its object and the existing map is only modified serially.
 	for _, newFRRConfig := range frrConfigurations {
 		key := newFRRConfig.Annotations[types.OvnRouteAdvertisementsKey]
 		oldFRRConfigs := existing[key]
 
 		if len(oldFRRConfigs) == 0 {
-			// does not exist, create
-			_, err := c.frrClient.ApiV1beta1().FRRConfigurations(newFRRConfig.Namespace).Create(
-				ctx,
-				newFRRConfig,
-				metav1.CreateOptions{
-					FieldManager: fieldManager,
-				},
-			)
-			if err != nil {
-				return hadUpdates, err
-			}
-			metrics.RecordRouteAdvertisementFRRConfigurationProcess(ra, frrConfigOpCreate)
-			hadUpdates = true
+			writes = append(writes, writeOperation{config: newFRRConfig, create: true})
 			continue
 		}
 
@@ -2069,19 +2063,48 @@ func (c *Controller) updateFRRConfigurations(ctx context.Context, ra string, frr
 		// otherwise update
 		newFRRConfig.Name = oldFRRConfig.Name
 		newFRRConfig.ResourceVersion = oldFRRConfig.ResourceVersion
-		_, err := c.frrClient.ApiV1beta1().FRRConfigurations(newFRRConfig.Namespace).Update(
-			ctx,
-			newFRRConfig,
-			metav1.UpdateOptions{
-				FieldManager: fieldManager,
-			},
-		)
-		if err != nil {
-			return hadUpdates, err
-		}
-		metrics.RecordRouteAdvertisementFRRConfigurationProcess(ra, frrConfigOpUpdate)
-		hadUpdates = true
+		writes = append(writes, writeOperation{config: newFRRConfig, create: false})
 	}
+
+	// Parallel writes overlap the admission latency of the frr-k8s validating
+	// webhook for FRRConfigurations. The errgroup errors on the first failure,
+	// which stops dispatching new writes, and reports that failure. In-flight
+	// writes use ctx rather than the errgroup context so they can finish.
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(frrConfigurationWriteWorkers)
+	for _, op := range writes {
+		g.Go(func() error {
+			// Stop dispatching after the first failure. Returning the context
+			// error keeps g.Wait reporting a cancelled caller too; errgroup
+			// keeps only the first error, so a real write failure wins.
+			if err := gctx.Err(); err != nil {
+				return fmt.Errorf("skipping FRRConfiguration write for %q: %w",
+					op.config.Annotations[types.OvnRouteAdvertisementsKey], err)
+			}
+			client := c.frrClient.ApiV1beta1().FRRConfigurations(op.config.Namespace)
+			if op.create {
+				_, err := client.Create(ctx, op.config, metav1.CreateOptions{FieldManager: fieldManager})
+				if err != nil {
+					return fmt.Errorf("failed to create FRRConfiguration in namespace %q for %q: %w",
+						op.config.Namespace, op.config.Annotations[types.OvnRouteAdvertisementsKey], err)
+				}
+				metrics.RecordRouteAdvertisementFRRConfigurationProcess(ra, frrConfigOpCreate)
+			} else {
+				_, err := client.Update(ctx, op.config, metav1.UpdateOptions{FieldManager: fieldManager})
+				if err != nil {
+					return fmt.Errorf("failed to update FRRConfiguration %s/%s: %w", op.config.Namespace, op.config.Name, err)
+				}
+				metrics.RecordRouteAdvertisementFRRConfigurationProcess(ra, frrConfigOpUpdate)
+			}
+			return nil
+		})
+	}
+	if waitErr := g.Wait(); waitErr != nil {
+		return false, fmt.Errorf("FRRConfiguration write batch of %d failed: %w", len(writes), waitErr)
+	}
+	// Every write succeeded: Wait returns an error if any write failed or
+	// was skipped.
+	hadChanges := len(writes) > 0
 
 	// delete FRRConfigurations that should not exist
 	for _, obsoleteFRRConfigs := range existing {
@@ -2091,15 +2114,20 @@ func (c *Controller) updateFRRConfigurations(ctx context.Context, ra string, frr
 				obsoleteFRRConfig.Name,
 				metav1.DeleteOptions{},
 			)
-			if err != nil && !apierrors.IsNotFound(err) {
-				return hadUpdates, err
+			if err != nil {
+				if !apierrors.IsNotFound(err) {
+					return hadChanges, fmt.Errorf("failed to delete FRRConfiguration %s/%s: %w", obsoleteFRRConfig.Namespace, obsoleteFRRConfig.Name, err)
+				}
+				// Already gone: the desired state is in place, so there is
+				// nothing to report as changed.
+				continue
 			}
 			metrics.RecordRouteAdvertisementFRRConfigurationProcess(ra, frrConfigOpDelete)
-			hadUpdates = true
+			hadChanges = true
 		}
 	}
 
-	return hadUpdates, nil
+	return hadChanges, nil
 }
 
 // updateNADs updates the annotation of the NADs that apply for a

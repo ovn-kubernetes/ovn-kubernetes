@@ -224,6 +224,43 @@ func (tn testNode) Node() *corev1.Node {
 	}
 }
 
+// TestUpdateFRRConfigurationsWriteFailure verifies that a failed write is
+// reported, is not counted as a change, and does not delete obsolete
+// configurations: the reconcile retries the whole set.
+func TestUpdateFRRConfigurationsWriteFailure(t *testing.T) {
+	// 1. Seed the lister with an existing configuration whose spec differs
+	//    from the desired one, plus an obsolete configuration.
+	// 2. Make the client fail every update.
+	// 3. Reconcile the desired configuration.
+	// 4. Verify the update error is returned, no change is reported, and the
+	//    obsolete configuration is not deleted.
+	g := gomega.NewWithT(t)
+	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+
+	existing := generatedFRRConfig("existing", "node", true).FRRConfiguration()
+	existing.Spec = frrapi.FRRConfigurationSpec{}
+	g.Expect(indexer.Add(existing)).To(gomega.Succeed(), "seeding the existing configuration")
+
+	obsolete := generatedFRRConfig("obsolete", "other-node", true).FRRConfiguration()
+	g.Expect(indexer.Add(obsolete)).To(gomega.Succeed(), "seeding the obsolete configuration")
+
+	client := frrfake.NewSimpleClientset()
+	updateErr := errors.New("update failed")
+	client.PrependReactor("update", "frrconfigurations", func(ctesting.Action) (bool, runtime.Object, error) {
+		return true, nil, updateErr
+	})
+
+	c := &Controller{frrClient: client, frrLister: frrlisters.NewFRRConfigurationLister(indexer)}
+	changed, err := c.updateFRRConfigurations(context.Background(), "ra",
+		[]*frrapi.FRRConfiguration{generatedFRRConfig("existing", "node", true).FRRConfiguration()})
+	g.Expect(changed).To(gomega.BeFalse(), "a failed set is retried, so it is not reported as a change")
+	g.Expect(errors.Is(err, updateErr)).To(gomega.BeTrue(), "expected the update error to be returned, got %v", err)
+	g.Expect(err.Error()).To(gomega.ContainSubstring("frrNamespace/existing"), "the error should identify the configuration whose write failed")
+	for _, action := range client.Actions() {
+		g.Expect(action.GetVerb()).NotTo(gomega.Equal("delete"), "obsolete configurations are deleted only after every write succeeds")
+	}
+}
+
 // TestDeleteIncompleteVTEPConfigurations checks that partial deletion failures remain retryable
 // without preventing cleanup of other rejected nodes.
 func TestDeleteIncompleteVTEPConfigurations(t *testing.T) {
