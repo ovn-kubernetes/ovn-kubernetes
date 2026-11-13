@@ -108,6 +108,7 @@ usage() {
     echo "-noe | --no-overlay-enable [snat-enabled|managed] Enable no overlay for the default network. Optional value: 'snat-enabled' to enable SNAT, 'managed' to enable SNAT and managed routing. DEFAULT: disabled."
     echo "-ds  | --disable-snat-multiple-gws            Disable SNAT for multiple external gateways. DEFAULT: Enabled"
     echo "-df  | --disable-forwarding                   Disable forwarding on all interfaces. DEFAULT: Enabled"
+    echo "-dllf | --disable-link-local-forwarding      Drop IPv4 link-local destinations in gateway routers and UDN VRFs. DEFAULT: Disabled"
     echo "--disable-ovnkube-identity                    Disable per-node cert and ovnkube-identity webhook. DEFAULT: Enabled"
     echo "-dgb | --dummy-gateway-bridge                 Use a dummy instead of a real gateway bridge. DEFAULT: Disabled"
     echo "-gm  | --gateway-mode                         Configure the cluster gateway mode (local|shared). DEFAULT: shared"
@@ -263,6 +264,8 @@ parse_args() {
             -ds | --disable-snat-multiple-gws )   OVN_DISABLE_SNAT_MULTIPLE_GWS=true
                                                   ;;
             -df | --disable-forwarding )          OVN_DISABLE_FORWARDING=true
+                                                  ;;
+            -dllf | --disable-link-local-forwarding ) OVN_DISABLE_LINK_LOCAL_FORWARDING=true
                                                   ;;
             -dgb | --dummy-gateway-bridge )       OVN_DUMMY_GATEWAY_BRIDGE=true
                                                   ;;
@@ -547,6 +550,7 @@ print_params() {
      echo "OVN_UPLINK_NETWORK_IPV6 = $OVN_UPLINK_NETWORK_IPV6"
      echo "OVN_DISABLE_SNAT_MULTIPLE_GWS = $OVN_DISABLE_SNAT_MULTIPLE_GWS"
      echo "OVN_DISABLE_FORWARDING = $OVN_DISABLE_FORWARDING"
+     echo "OVN_DISABLE_LINK_LOCAL_FORWARDING = $OVN_DISABLE_LINK_LOCAL_FORWARDING"
      echo "OVN_UNPRIVILEGED_MODE = $OVN_UNPRIVILEGED_MODE"
      echo "OVN_MTU = $OVN_MTU"
      echo "OVN_IMAGE = $OVN_IMAGE"
@@ -709,6 +713,7 @@ helm upgrade --install ovn-kubernetes . -f "${value_file}" ${extra_values_args} 
           --set global.extGatewayNetworkInterface=$(if [ "${OVN_SECOND_BRIDGE}" == "true" ]; then echo "eth1"; else echo ""; fi) \
           --set global.disableSnatMultipleGws=$(if [ "${OVN_DISABLE_SNAT_MULTIPLE_GWS}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.disableForwarding=$(if [ "${OVN_DISABLE_FORWARDING}" == "true" ]; then echo "true"; else echo "false"; fi) \
+          --set global.disableLinkLocalForwarding=$(if [ "${OVN_DISABLE_LINK_LOCAL_FORWARDING}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.unprivilegedMode=$(if [ "${OVN_UNPRIVILEGED_MODE}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.metricsIp="${METRICS_IP:-}" \
           --set ovs-node.updateStrategy="${OVS_NODE_UPDATE_STRATEGY:-RollingUpdate}" \

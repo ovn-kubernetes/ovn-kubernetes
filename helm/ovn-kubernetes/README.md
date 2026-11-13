@@ -49,6 +49,15 @@ false
 			<td>Controls if forwarding is allowed on OVNK controlled interfaces</td>
 		</tr>
 		<tr>
+			<td>global.disableLinkLocalForwarding</td>
+			<td>string</td>
+			<td><pre lang="">
+false
+</pre>
+</td>
+			<td>Drops IPv4 link-local destinations in gateway routers and UDN VRFs instead of forwarding them</td>
+		</tr>
+		<tr>
 			<td>global.disablePacketMtuCheck</td>
 			<td>string</td>
 			<td><pre lang="json">
