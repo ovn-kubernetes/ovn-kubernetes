@@ -744,10 +744,13 @@ func (oc *DefaultNetworkController) addUpdateRemoteNodeEvent(node *corev1.Node, 
 			if err = oc.zoneICHandler.AddRemoteZoneNode(node); err != nil {
 				err = fmt.Errorf("adding or updating remote node IC resources %s failed, err - %w", node.Name, err)
 				oc.syncZoneICFailed.Store(node.Name, true)
+				klog.Errorf("Creating Interconnect resources for remote node %q on network %q failed after %s: %v",
+					node.Name, oc.GetNetworkName(), time.Since(start), err)
 			} else {
 				oc.syncZoneICFailed.Delete(node.Name)
+				klog.V(5).Infof("Created Interconnect resources for remote node %q on network %q, took: %s",
+					node.Name, oc.GetNetworkName(), time.Since(start))
 			}
-			klog.V(5).Infof("Creating Interconnect resources for remote node %q on network %q took: %s", node.Name, oc.GetNetworkName(), time.Since(start))
 		} else {
 			// In no-overlay mode, if chassis handler succeeded, clear the failed state
 			oc.syncZoneICFailed.Delete(node.Name)
