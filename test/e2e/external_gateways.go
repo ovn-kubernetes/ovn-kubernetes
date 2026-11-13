@@ -1783,7 +1783,7 @@ func pokeHostnameViaNC(podName, namespace, protocol, target string, port int) st
 
 // pokeConntrackEntries returns the number of conntrack entries that match the provided pattern, protocol and podIP
 func pokeConntrackEntries(nodeName, podIP, protocol string, patterns []string) int {
-	args := []string{"get", "pods", "--selector=app=ovs-node", "--field-selector", fmt.Sprintf("spec.nodeName=%s", nodeName), "-o", "jsonpath={.items..metadata.name}"}
+	args := []string{"get", "pods", "--selector=app=ovnkube-node", "--field-selector", fmt.Sprintf("spec.nodeName=%s", nodeName), "-o", "jsonpath={.items..metadata.name}"}
 	ovnKubernetesNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
 	ovsPodName, err := e2ekubectl.RunKubectl(ovnKubernetesNamespace, args...)
 	framework.ExpectNoError(err, "failed to get the ovs pod on node %s", nodeName)
