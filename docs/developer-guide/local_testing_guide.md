@@ -287,7 +287,18 @@ $ make control-plane WHAT="should be able to send multicast UDP traffic between 
 $ popd
 ```
 
-The value of `WHAT=` will be used to modify the `-ginkgo.focus` parameter. Individual tests can be retrieved from this
+Specs labeled `Disruptive`, such as `Node Shutdown and Startup`, are excluded from every selection except `WHAT=Serial` and `WHAT=Disruptive`, so use one of those names rather than the spec name to execute them. They stop nodes and can leave a node or its external connectivity broken, so run them only on a disposable cluster. Set `SKIP_DISRUPTIVE=true` to run the other Serial specs without them, then run the `Disruptive` specs last, as the `bgp-managed` lane does:
+
+```bash
+SKIP_DISRUPTIVE=true make -C test control-plane WHAT=Serial
+make -C test control-plane WHAT=Disruptive
+```
+
+A few `WHAT=` values name a suite rather than a spec and select by feature label instead of focus: `Uplink`, `DPU`,
+`EVPN`, `Serial`, `Disruptive`, and anything starting with `Network Segmentation`; text after the `Network Segmentation ` prefix is kept as
+an additional focus within that label. Any other value of `WHAT=` is used as the `--focus`
+parameter of the `ginkgo` CLI, run as `go tool ginkgo` from the
+e2e module. `GINKGO_PROCS=<n>` sets the number of Ginkgo worker processes (default 1, or 3 for `WHAT=EVPN`). Individual tests can be retrieved from this
 repository under [test/e2e](https://github.com/ovn-kubernetes/ovn-kubernetes/tree/master/test/e2e). To see a list of individual
 tests, one could run:
 ~~~
@@ -300,7 +311,7 @@ For example:
 ./e2e/multicast.go:	ginkgo.It("should be able to send multicast UDP traffic between nodes", func() {
 # make control-plane WHAT="should be able to send multicast UDP traffic between nodes"
 (...)
-+ go test -timeout=0 -v . -ginkgo.v -ginkgo.focus 'should\sbe\sable\sto\ssend\smulticast\sUDP\straffic\sbetween\snodes' -ginkgo.flakeAttempts 2 '-ginkgo.skip=Should be allowed to node local cluster-networked endpoints by nodeport services with externalTrafficPolicy=local|e2e ingress to host-networked pods traffic validation|host to host-networked pods traffic validation' -provider skeleton -kubeconfig /root/ovn.conf --num-nodes=2 --report-dir=/root/ovn-kubernetes/test/_artifacts --report-prefix=control-plane_
++ go tool ginkgo run --procs=1 -v '--focus=should\sbe\sable\sto\ssend\smulticast\sUDP\straffic\sbetween\snodes' --fail-on-empty --timeout=180m --flake-attempts=2 '--skip=(...)' '--label-filter=(...)' --junit-report=/root/ovn-kubernetes/test/_artifacts/junit_control-plane_report.xml . -- -provider skeleton -kubeconfig /root/ovn.conf (...)
 I0817 15:26:21.762483 1197731 test_context.go:457] Tolerating taints "node-role.kubernetes.io/control-plane" when considering if nodes are ready
 === RUN   TestE2e
 I0817 15:26:21.762635 1197731 e2e_suite_test.go:67] Saving reports to /root/ovn-kubernetes/test/_artifacts

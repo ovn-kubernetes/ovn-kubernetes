@@ -23,8 +23,8 @@ env:
   ENABLE_COREDUMPS: true
   # Keep cluster deployment and persistent-IP test selection in sync.
   OVN_ENABLE_PERSISTENT_IPS: true
-  # This skips tests tagged as Serial for most lanes
-  # Serial tests are run in a dedicated lane
+  # Run the upstream shard suites on several Ginkgo workers and skip their
+  # [Serial] specs. Control-plane suites always run their Serial specs.
   PARALLEL: true
 
   # This must be a directory
@@ -615,8 +615,9 @@ jobs:
   e2e:
     name: e2e
     runs-on: ubuntu-24.04
-    # 30 mins for kind, 180 mins for control-plane tests, 10 minutes for all other steps
-    timeout-minutes: 220
+    # 30 mins for kind, 180 mins for control-plane tests, 40 minutes for the
+    # Disruptive step on bgp-managed, 10 minutes for all other steps
+    timeout-minutes: 260
     strategy:
       fail-fast: false
       matrix:
@@ -676,7 +677,7 @@ jobs:
           # restarting ovn-k pods (day-2 reconfiguration), which would disrupt any concurrently running test jobs.
           # Dedicated no-overlay jobs are therefore required to cover feature combinations that may interact with
           # no-overlay (e.g. BGP route advertisements, network-segmentation) where implementations are not strictly orthogonal.
-          - {"target": "bgp-managed", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "managed", "no-overlay": "managed"}
+          - {"target": "bgp-managed", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "managed", "no-overlay": "managed", "skip-disruptive": "true"}
           - {"target": "bgp-no-overlay-dynamic", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "no-overlay": "snat-enabled"}
           - {"target": "bgp-no-overlay", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "no-overlay": "true"}
           - {"target": "bgp-loose-isolation", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "cni-mode": "privileged", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "advertised-udn-isolation-mode": "loose"}
@@ -703,6 +704,9 @@ jobs:
       ENABLE_MULTI_NET: "${{ matrix.target == 'multi-homing' || matrix.target == 'kv-live-migration' || startsWith(matrix.target, 'network-segmentation') || matrix.target == 'tools' || matrix.target == 'traffic-flow-test-only' || matrix.routeadvertisements != '' }}"
       ENABLE_NETWORK_SEGMENTATION: "${{ startsWith(matrix.target, 'network-segmentation') || matrix.network-segmentation == 'enable-network-segmentation' }}"
       DISABLE_UDN_ARP_NDP_FLOOD: "${{ matrix.disable-udn-arp-ndp-flood }}"
+      # Set only on lanes that run the Disruptive specs in their own step after
+      # WHAT=Serial; the serial lane keeps them in its WHAT=Serial run.
+      SKIP_DISRUPTIVE: "${{ matrix.skip-disruptive == 'true' }}"
       PLATFORM_IPV4_SUPPORT: "${{ matrix.ipfamily == 'ipv4' || matrix.ipfamily == 'dualstack' }}"
       PLATFORM_IPV6_SUPPORT: "${{ matrix.ipfamily == 'ipv6' || matrix.ipfamily == 'dualstack' }}"
       KIND_LOCAL_REGISTRY: "${{ matrix.local-kind-registry == 'true' }}"
@@ -722,12 +726,6 @@ jobs:
       ENABLE_UPLINK: "${{ startsWith(matrix.target, 'network-segmentation') || matrix.network-segmentation == 'enable-network-segmentation' }}"
       ENABLE_PRE_CONF_UDN_ADDR: "${{ startsWith(matrix.target, 'network-segmentation') || matrix.network-segmentation == 'enable-network-segmentation' }}"
       ADVERTISED_UDN_ISOLATION_MODE: "${{ matrix.advertised-udn-isolation-mode }}"
-      # Managed BGP tests change the shared template and must run serially.
-      # The ARP/NDP flood lane carries Serial specs that PARALLEL=true would skip,
-      # and they are the only CI coverage of the MAC binding mirroring controller.
-      # Compared against 'true' rather than negated: any non-empty string, "false"
-      # included, is truthy in a GitHub expression.
-      PARALLEL: "${{ matrix.target != 'serial' && matrix.target != 'bgp-managed' && matrix.disable-udn-arp-ndp-flood != 'true' }}"
       OVN_UNPRIVILEGED_MODE: "${{ matrix.cni-mode == 'unprivileged' }}"
       MULTI_POD_SUBNET: true
       DYNAMIC_UDN_ALLOCATION: "${{ endsWith(matrix.target, '-dynamic') }}"
@@ -918,6 +916,15 @@ jobs:
         if [ -n "${TRAFFIC_FLOW_TESTS}" ]; then
           make -C test traffic-flow-tests WHAT="run"
         fi
+
+    - name: Run Disruptive tests
+      # Node shutdown runs last and alone, so no other spec runs on a node
+      # that may not recover; the serial lane runs it within WHAT=Serial.
+      if: matrix.skip-disruptive == 'true'
+      timeout-minutes: 40
+      run: |
+        export TEST_TIMEOUT=30
+        JOB_NAME="${JOB_NAME}-disruptive" make -C test control-plane WHAT=Disruptive
 
     - name: Export kind logs
       if: always()

@@ -91,6 +91,17 @@ Below is a description of this target:
   - You can focus on a specific test by appending `WHAT=<test name>` to the make command.
   - See bottom of this document for an example.
 
+The runner does not exclude a spec because it is decorated with `Serial`: a
+single Ginkgo worker runs every spec in sequence and, when several workers are
+used, Ginkgo runs the Serial specs after the parallel phase on one worker. Specs
+labeled `Disruptive`, such as node shutdown, run only with `WHAT=Serial` or
+`WHAT=Disruptive`: on some layouts the restarted node stays NotReady or loses
+external connectivity, which fails the specs that run after it. The `serial`
+lane runs them within `WHAT=Serial`. The dual-stack `bgp-managed` lane sets
+`skip-disruptive` in its matrix entry, which becomes `SKIP_DISRUPTIVE=true`:
+its `WHAT=Serial` run drops the `Disruptive` specs, and a final step runs them
+alone with `WHAT=Disruptive`.
+
 All local tests are run by `make control-plane`. The local tests are controlled in
 [ovn-kubernetes/test/scripts/e2e-cp.sh](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/test/scripts/e2e-cp.sh)
 and the actual tests are defined in the directory
