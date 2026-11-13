@@ -64,6 +64,8 @@ const (
 	conditionTypeAccepted = "Accepted"
 	conditionTypeDegraded = "Degraded"
 	cacheRecheckInterval  = 2 * time.Second
+	// Maximum concurrent FRRConfiguration writes within one RA reconciliation.
+	frrConfigurationWriteWorkers = 4
 	// rawConfigPriority is set to an arbitrary value that still allows users to
 	// override if needed.
 	rawConfigPriority = 10
@@ -2191,8 +2193,14 @@ func (c *Controller) updateFRRConfigurations(ctx context.Context, ra string, res
 	if len(withdrawalErrors) > 0 && (len(result.egressIPOwners) > 0 || unknownNode) {
 		return hadUpdates, errors.Join(withdrawalErrors...)
 	}
-	// go through the FRRConfigurations that should exist for this
-	// RouteAdvertisements
+	type writeOperation struct {
+		config  *frrtypes.FRRConfiguration
+		create  bool
+		written *frrtypes.FRRConfiguration
+		err     error
+	}
+	var writes []writeOperation
+	// Match objects serially so each parallel write owns its configuration.
 	for _, newFRRConfig := range result.frrConfigs {
 		key := keyFor(newFRRConfig)
 		node := key.Name[strings.LastIndexByte(key.Name, '/')+1:]
@@ -2205,21 +2213,7 @@ func (c *Controller) updateFRRConfigurations(ctx context.Context, ra string, res
 		oldFRRConfigs := existing[key]
 
 		if len(oldFRRConfigs) == 0 {
-			// does not exist, create
-			created, err := c.frrClient.ApiV1beta1().FRRConfigurations(newFRRConfig.Namespace).Create(
-				ctx,
-				newFRRConfig,
-				metav1.CreateOptions{
-					FieldManager: fieldManager,
-				},
-			)
-			if err != nil {
-				result.nodeErrors = append(result.nodeErrors, fmt.Errorf("failed to create FRRConfiguration for %s: %w", key, err))
-				continue
-			}
-			c.pendingFRR.written(ra, created)
-			metrics.RecordRouteAdvertisementFRRConfigurationProcess(ra, frrConfigOpCreate)
-			hadUpdates = true
+			writes = append(writes, writeOperation{config: newFRRConfig, create: true})
 			continue
 		}
 
@@ -2240,22 +2234,45 @@ func (c *Controller) updateFRRConfigurations(ctx context.Context, ra string, res
 		// otherwise update
 		newFRRConfig.Name = oldFRRConfig.Name
 		newFRRConfig.ResourceVersion = oldFRRConfig.ResourceVersion
-		updated, err := c.frrClient.ApiV1beta1().FRRConfigurations(newFRRConfig.Namespace).Update(
-			ctx,
-			newFRRConfig,
-			metav1.UpdateOptions{
-				FieldManager: fieldManager,
-			},
-		)
-		if err != nil {
-			err = fmt.Errorf("failed to update FRRConfiguration for %s: %w", key, err)
-			result.nodeErrors = append(result.nodeErrors, err)
-			result.failedFRRUpdate = true
-			delete(existing, key) // Keep duplicates until an update succeeds.
+		writes = append(writes, writeOperation{config: newFRRConfig})
+	}
+
+	// Overlap admission webhook latency, while allowing independent writes to
+	// finish after another fails. Collect results serially before deleting duplicates.
+	var wg sync.WaitGroup
+	writeSlots := make(chan struct{}, frrConfigurationWriteWorkers)
+	for i := range writes {
+		op := &writes[i]
+		writeSlots <- struct{}{}
+		wg.Go(func() {
+			defer func() { <-writeSlots }()
+			client := c.frrClient.ApiV1beta1().FRRConfigurations(op.config.Namespace)
+			if op.create {
+				op.written, op.err = client.Create(ctx, op.config, metav1.CreateOptions{FieldManager: fieldManager})
+			} else {
+				op.written, op.err = client.Update(ctx, op.config, metav1.UpdateOptions{FieldManager: fieldManager})
+			}
+		})
+	}
+	wg.Wait()
+
+	for _, op := range writes {
+		key := keyFor(op.config)
+		operation := frrConfigOpUpdate
+		if op.create {
+			operation = frrConfigOpCreate
+		}
+		if op.err != nil {
+			result.nodeErrors = append(result.nodeErrors, fmt.Errorf("failed to %s FRRConfiguration %s/%s for %s: %w",
+				operation, op.config.Namespace, op.config.Name, key, op.err))
+			if !op.create {
+				result.failedFRRUpdate = true
+				delete(existing, key) // Keep duplicates until an update succeeds.
+			}
 			continue
 		}
-		c.pendingFRR.written(ra, updated)
-		metrics.RecordRouteAdvertisementFRRConfigurationProcess(ra, frrConfigOpUpdate)
+		c.pendingFRR.written(ra, op.written)
+		metrics.RecordRouteAdvertisementFRRConfigurationProcess(ra, operation)
 		hadUpdates = true
 	}
 
