@@ -1,0 +1,538 @@
+# OKEP-6534: Distributed Tracing Support for OVN-Kubernetes
+
+* Issue: [#6534](https://github.com/ovn-kubernetes/ovn-kubernetes/issues/6534)
+
+## Problem Statement
+
+OVN-Kubernetes currently does not provide tracing for the operations it performs. This limits
+visibility into how OVN-Kubernetes handles a resource after it receives a Kubernetes event.
+
+Pod creation is the first path to trace because it crosses several asynchronous Kubernetes and
+OVN-Kubernetes components. When a pod is slow to become ready, or fails before networking is
+complete, operators can usually inspect events, logs, and metrics from individual components, but
+they cannot follow the same pod networking operation through OVN-Kubernetes in a trace.
+
+The initial tracing work should therefore focus on the OVN-Kubernetes operations that are directly
+part of pod creation:
+
+* allocating pod IPs and producing pod network annotations
+* programming OVN logical resources for the pod
+* applying namespace, gateway, SNAT, and related pod networking state
+* handling CNI ADD on the node and configuring the pod interface
+
+## Goals
+
+* Add opt-in distributed tracing support to OVN-Kubernetes, controlled by an OVN-Kubernetes
+  config flag.
+* Add initial tracing coverage for pod creation networking operations, including pod IP
+  allocation, OVN logical resource programming, and pod interface configuration.
+* Support propagated trace context from Kubernetes object annotations so OVN-Kubernetes spans can
+  be correlated with the system that caused the resource operation through OpenTelemetry span
+  links.
+* Make tracing configuration centrally manageable via `ovnkube-config` ConfigMap.
+* Make propagated context annotation key configurable, defaulting to
+  `tracing.k8s.io/traceparent`.
+
+## Non-Goals
+
+* Full tracing coverage for all OVN-Kubernetes resources in this initial implementation.
+* Initial tracing support for NAD lifecycle operations.
+* Defining backend-specific visualization requirements (Grafana/Tempo/Jaeger behavior).
+* Replacing existing logs, events, or metrics.
+
+## Introduction
+
+Tracing support should be added as a general OVN-Kubernetes observability capability, not as a
+one-off debug path for a single code branch. The initial implementation focuses on pod creation
+because that is the most visible workflow where OVN-Kubernetes latency or failures directly affect
+users.
+
+A distributed trace represents one operation as spans emitted by the components that participate
+in it. A span records one unit of work and carries identifiers that relate it to the rest of the
+trace. The W3C `traceparent` format carries those identifiers across service request boundaries.
+
+Kubernetes controllers introduce asynchronous boundaries: a service creates a resource, the API
+server persists it, and reconcilers process it later in different processes. In-memory request
+context cannot cross that boundary. The component that creates the resource can preserve the
+context by writing the W3C `traceparent` value to an annotation. Reconcilers such as
+OVN-Kubernetes can then read the annotation and relate their spans to the originating request.
+The annotation is the integration contract; native tracing support in Kubernetes components is
+not required.
+
+[KEP-5915][k8s-async-trace-kep] proposes a convention for carrying trace context in Kubernetes
+object annotations. This OKEP uses its proposed annotation key as the default for interoperability,
+but the key is configurable and KEP-5915 is not a dependency of OVN-Kubernetes tracing.
+
+When propagated context is present, OVN-Kubernetes supports both `linked` and `parent` modes.
+`Linked` mode is the preferred and default behavior: OVN-Kubernetes starts a new local root span
+and attaches propagated context as a span link. A link is the more accurate relationship for this
+asynchronous workflow: the source request may finish before OVN-Kubernetes begins processing the
+resource, so there is no continuous call stack or active parent operation. A new trace represents
+the independently scheduled reconcile work, while the link preserves its causal relationship to
+the source request without implying a synchronous dependency. This matches the
+[OpenTelemetry span-link use case][otel-span-links] for work queued and executed asynchronously.
+Common open source observability stacks support this relationship: Grafana
+[displays links in span details][grafana-span-links], and Tempo supports
+[querying span-link attributes][tempo-link-query].
+
+`Parent` mode remains an opt-in compatibility alternative. Some tracing backends and visualization
+tools support parent-child trace navigation more completely than span links. Parent mode allows
+integration with such environments while linked mode remains the recommended default.
+
+The design is intentionally incremental:
+
+* provide immediate operational value for pod networking troubleshooting
+* minimize risk by keeping tracing behind an opt-in config flag
+* establish reusable tracing primitives and configuration for future expansion
+
+## User-Stories/Use-Cases
+
+### Story 1: Troubleshoot Pod Network Bring-Up
+
+As a cluster operator, I want spans for OVN-Kubernetes pod creation work so I can identify whether
+latency or failure happened during IP allocation, OVN logical programming, or CNI interface setup.
+
+### Story 2: Correlate Pod Creation Across Control Planes
+
+As a cluster operator, I want OVN-Kubernetes reconcile spans to link to trace context propagated
+by components that create Kubernetes resources in response to service API requests, so I can
+correlate those requests with the resulting pod networking work. This includes higher-level
+service controllers or operators and, when standardized asynchronous propagation is available,
+core Kubernetes components. For example, a VMaaS service may create a VM in response to an API
+request and propagate that request's trace context to the VM resource. A controller creating a Pod
+for the VM carries the annotation to that Pod, where OVN-Kubernetes can read it and link its pod
+networking spans to the original service request. Each component emits its own trace; span links
+preserve the causal relationship without requiring a single nested trace view.
+
+### Story 3: Enable Tracing Deliberately
+
+As a platform administrator, I want tracing to be disabled by default and configured in
+`ovnkube-config` so I can enable it only in clusters where a collector and sampling policy are
+ready.
+
+## Proposed Solution
+
+This proposal adds an opt-in OpenTelemetry-based tracing path to OVN-Kubernetes. When enabled,
+ovnkube-cluster-manager, ovnkube-node, and ovnkube CNI emit spans for selected pod
+creation operations and export them to the configured OTLP endpoint.
+
+The implementation uses `ovnkube-config` for tracing settings and reads propagated trace context
+from Pod annotations when available. Invalid or missing propagated context does not affect pod
+networking; OVN-Kubernetes skips span emission for that operation.
+
+OVN-Kubernetes uses the OpenTelemetry SDK to create spans and exports them using the
+OpenTelemetry Protocol (OTLP). In a typical observability stack, an OpenTelemetry Collector
+receives OTLP spans from OVN-Kubernetes and other instrumented components, batches and processes
+them, and forwards them to a trace backend. A backend such as Tempo stores and indexes the traces,
+and a frontend such as Grafana queries and visualizes them. The Collector, Tempo, and Grafana are
+just one example of an observability stack; other components can be used, and OVN-Kubernetes
+remains independent of the chosen stack as long as the stack can receive traces over OTLP
+
+### API Details
+
+No Kubernetes CRD API schema changes are required for this initial feature.
+
+Configuration is introduced through the existing OVN-Kubernetes config surfaces:
+
+* opt-in config flag in `[ovnkubernetesfeature]`
+* `ovnkube-config` ConfigMap
+
+### Tracing Config Flag
+
+Tracing is gated by a new OVN-Kubernetes config flag in `[ovnkubernetesfeature]`:
+
+* `enable-tracing=false`: existing behavior; no tracing exporter initialization, no spans
+  emitted.
+* `enable-tracing=true`: tracing initialization and span emission enabled, subject to runtime
+  config validity.
+
+In `ovnkube-config`, this is configured in the existing feature section:
+
+```ini
+[ovnkubernetesfeature]
+enable-tracing=true
+```
+
+### Tracing Configuration (`ovnkube-config`)
+
+Add a `[tracing]` section under `ovnkube-config` for OpenTelemetry exporter and runtime
+settings.
+
+```ini
+[tracing]
+endpoint=127.0.0.1:4317
+use-tls=false
+tls-insecure-skip-verify=false
+tls-cacert=
+service-name=ovn-kubernetes
+sampling-rate=1.0
+propagated-context-annotation-key=tracing.k8s.io/traceparent
+propagated-context-mode=linked
+export-timeout=10
+batch-timeout=5
+max-export-batch-size=512
+max-queue-size=2048
+```
+
+Initial fields:
+
+* `endpoint`: OTLP gRPC endpoint for the exporter. Required when tracing is enabled.
+* `use-tls`: boolean for OTLP transport mode (`false` for plaintext, `true` for TLS).
+* `tls-insecure-skip-verify`: skip TLS server certificate verification (only valid when
+  `use-tls=true`).
+* `tls-cacert`: optional CA bundle file used to verify collector certificates (only valid when
+  `use-tls=true`).
+* `service-name`: OpenTelemetry `service.name`; defaults to `ovn-kubernetes`.
+* `sampling-rate`: sampling ratio for new root spans, in range `[0.0, 1.0]`.
+* `propagated-context-annotation-key`: Pod annotation key used for propagated context.
+* `propagated-context-mode`: how propagated context is applied; supported values:
+  * `linked` (default): start a new local root span and attach the propagated context as a link.
+  * `parent`: continue as a child span of the propagated context.
+* `export-timeout`: exporter timeout, in seconds.
+* `batch-timeout`: batch span processor timeout, in seconds.
+* `max-export-batch-size`: maximum number of spans per export batch.
+* `max-queue-size`: maximum queued spans before export.
+
+Validation and fallback:
+
+* If tracing is enabled and `endpoint` is empty, configuration is rejected.
+* `sampling-rate` must be in range `[0.0, 1.0]`.
+* `propagated-context-mode` must be one of `linked` or `parent`.
+* `tls-insecure-skip-verify` and `tls-cacert` require `use-tls=true`.
+* Missing optional values fall back to defaults.
+* Missing annotation key config falls back to `tracing.k8s.io/traceparent`.
+
+### Propagated Context Semantics
+
+OVN-Kubernetes consumes propagated trace context from Pod annotations. OVN-Kubernetes is an
+asynchronous reconciler: controller and CNI work happen later and independently from the request
+or controller that caused the Pod operation. To support different operational preferences,
+OVN-Kubernetes supports two propagated context modes: `linked` (default) and `parent`.
+
+The default annotation key is:
+
+* `tracing.k8s.io/traceparent`
+
+The annotation value uses the W3C `traceparent` format:
+
+```text
+00-<32hex trace id>-<16hex span id>-<2hex flags>
+```
+
+When the annotation exists and is valid, OVN-Kubernetes:
+
+1. Parses trace ID, span ID, and trace flags from the annotation.
+2. Builds a remote `SpanContext` for the propagated source span.
+3. Starts a span for the reconcile or CNI operation according to `propagated-context-mode`:
+   * `linked`: start a new local root span.
+   * `parent`: start a child span with the propagated context as remote parent.
+4. In `linked` mode, attach the propagated context to that span as an OpenTelemetry span link.
+
+Sampling behavior by mode:
+
+* `linked` mode: sampling is decided for the new local root span by OVN-Kubernetes sampling policy
+  (`sampling-rate`) because the propagated context is attached as a link only.
+* `parent` mode: sampling follows the propagated parent `traceparent` flags via parent-based
+  sampling. For example, `flags=01` (sampled) causes the child span to follow the sampled parent
+  path, while `flags=00` follows the not-sampled parent path.
+
+Nested OVN-Kubernetes work started during that operation uses normal context propagation and
+becomes child spans of the span started for that operation.
+
+In `linked` mode, the resulting reconcile root span:
+
+* has its own trace ID and span ID generated by OVN-Kubernetes
+* is not a child of the source span referenced by the annotation
+* includes a span link to the source trace/span ID from the annotation
+
+The global config flag enables the tracing capability, while a valid propagated-context
+annotation opts an individual Pod operation into tracing. When the annotation is missing or
+invalid, OVN-Kubernetes intentionally does not emit even a local root span for that operation.
+Pod processing continues unaffected.
+
+Traced event-driven reconcile invocations start spans according to `propagated-context-mode`.
+Retries and later updates on the same Pod may start new spans and use the then-current annotation
+value. Startup sync over already-existing Pods does not emit reconcile spans or consume propagated
+context.
+
+OVN-Kubernetes has separate async entry points for control-plane reconcile work and node CNI
+handling. Each entry point follows the same `propagated-context-mode` for span relationships.
+Controller reconcile and CNI ADD/DEL are not modeled as parent and child of each other unless one
+synchronously invokes the other in-process.
+
+This annotation-based contract is compatible with
+[KEP-5915: Standardizing Async Trace Context Propagation][k8s-async-trace-kep], which proposes
+storing W3C Trace Context in object annotations and using span links at asynchronous boundaries.
+OVN-Kubernetes does not depend on that KEP being merged or on Kubernetes components emitting
+spans; any resource creator can write a valid context using the configured annotation key.
+
+### Initial Instrumentation Scope
+
+Initial instrumentation is limited to selected critical paths in the pod networking lifecycle:
+
+* ovnkube-cluster-manager pod add/update/delete handling spans
+* ovnkube-controller pod add/update/delete handling spans (default network and user-defined networks)
+* logical port programming sub-operations
+* namespace/address set related pod network setup
+* gateway/SNAT routing operations for pod
+* NBDB transaction operation for pod programming
+* ovnkube-node CNI ADD/DEL handling spans and key sub-operations
+
+Tracing is intended for new source events that represent active pod networking lifecycle work,
+such as pod add, update, and delete events received by OVN-Kubernetes controllers. Startup sync
+over resources that already exist in the API server is not traced as pod creation work. This avoids
+adding new spans to stale propagated contexts and avoids producing misleading traces after a
+controller restart.
+
+NAD-specific lifecycle tracing is excluded from this initial OKEP.
+
+## Implementation Details
+
+### Components
+
+* `pkg/tracing`:
+  * tracer provider initialization/shutdown
+  * propagated context extraction helper from pod annotations
+  * reconcile/CNI span helper that supports both `linked` and `parent` propagated-context modes
+  * common attribute helpers
+* ovnkube-cluster-manager pod path:
+  * start pod add/update/delete handling spans for cluster-wide pod networking decisions
+  * use propagated context from Pod annotations when valid, according to `propagated-context-mode`
+  * emit child spans for pod IP allocation on layer2 secondary networks
+  * do not emit per-pod spans while syncing already-existing pods during startup
+* ovnkube-controller pod path:
+  * start reconcile span for pod add/update resource handling
+  * use propagated context from Pod annotations when valid, according to `propagated-context-mode`
+  * pass context through nested pod handling functions
+  * emit child spans for major sub-operations
+* ovnkube-node/CNI path:
+  * start CNI command spans
+  * use propagated context from Pod annotations when valid, according to `propagated-context-mode`
+  * emit child spans for execution and marshal/transact steps
+
+### Context Propagation Flow (Initial)
+
+For asynchronous resource creation, the component handling the originating request is responsible
+for preserving the trace context on the Kubernetes resources it creates. A simplified VM creation
+flow illustrates the contract:
+
+1. An API client sends a `/create-virtual-instance` request carrying an active W3C `traceparent`.
+2. The VMaaS service extracts that context from the request.
+3. When the service creates the VM resource, it writes the `traceparent` value to the configured
+   tracing annotation.
+4. A controller that creates a Pod for the VM propagates the same annotation to the Pod.
+5. OVN-Kubernetes reads the annotation when it processes the Pod and emits spans for the
+   corresponding networking work.
+
+OVN-Kubernetes emits these spans only when tracing is globally enabled and the Pod carries a valid
+context annotation. Neither native Kubernetes tracing nor KEP-5915 support is required for this
+flow.
+
+For each event-driven reconcile or CNI invocation:
+
+1. Start a span for the OVN-Kubernetes operation according to `propagated-context-mode`.
+2. In `linked` mode, if the annotation is valid, add a span link to the propagated source span
+   context.
+3. Pass the span context through nested functions so sub-operations emit child spans.
+
+If the annotation is missing or invalid, OVN-Kubernetes does not reject or delay pod processing.
+The handler skips span emission and continues normally.
+
+Initial sync after controller startup is treated as controller recovery, not as a new Kubernetes
+resource operation. During this path OVN-Kubernetes reconciles already-existing objects from the
+API server without emitting per-resource operation spans or consuming propagated context.
+
+### Failure Handling
+
+Tracing must not affect pod networking correctness. Failures in the tracing path are handled as
+observability failures, not datapath failures.
+
+* Invalid or unsupported propagated context: ignore the annotation, skip span emission for that
+  operation, and log enough detail for debugging without blocking pod processing.
+* Invalid tracing configuration: reject startup when tracing is enabled and required fields are
+  missing, or when values such as `sampling-rate` are invalid.
+* Exporter or collector unavailable after startup: do not fail pod networking operations; rely on
+  OpenTelemetry batching and export timeout behavior, and log exporter errors at an appropriate
+  rate to avoid log spam.
+
+### Performance Considerations
+
+* Tracing is disabled by default.
+* Sampling and batch settings are configurable in `ovnkube-config`.
+* Production users are expected to tune sampling rates for scale.
+* Sampling reduces exported volume, but instrumentation should still avoid spans for irrelevant
+  events. Sampling is not a substitute for keeping the traced pod path focused on useful networking
+  work.
+
+### Span Naming Rules
+
+Span names follow a dot-separated template:
+
+```text
+{service.component}.{subsystem}.{resource}.{operation}
+```
+
+`{service.component}` identifies the components that emits the span. It is set
+once at startup via OpenTelemetry `service.component` and reused as the first segment of every
+span name in that process.
+
+| Component | Description |
+|-----------|---------|
+| `ovnkube-cluster-manager` | cluster-manager container in ovnkube-control-plane Pod|
+| `ovnkube-node` | ovnkube-node process (network controller, node handlers, and CNI server) |
+
+CNI spans emitted by the in-process CNI server inside ovnkube-node use
+`service.component=ovnkube-node` with `{subsystem}=cni`. Tracing for CNI is
+currently supported on the ovnkube-node CNI server handling path.
+
+`{subsystem}` names the logical controller or handler within the process. Pod networking
+reconcile spans for both the default network and all user-defined network (UDN) topologies
+(layer2, layer3, localnet) use `{subsystem}=network-controller`. Another example is `cni`.
+
+`{resource}` is the Kubernetes/API resource kind in lowercase singular form, such as `pod` or
+`node`. Network identity (default vs UDN, topology, primary/secondary) is carried in span
+attributes rather than the span name:
+
+* `ovn.network.name`
+* `ovn.network.topology`
+* `ovn.network.primary`
+* `ovn.network.user_defined`
+* `k8s.nad` (when applicable)
+
+`{operation}` describes the work being traced:
+
+* **Event-driven root spans** for network-controller pod handlers use plain Kubernetes
+  lifecycle verbs: `add`, `update`, `delete`. Do not prefix these with `event.`.
+* **Child spans** under a root reconcile span name the sub-step being executed, such as
+  `setup-logical-network`, `setup-local-pod-network`, `allocate-network`, or
+  `add-logical-port`.
+* **CNI server** (in ovnkube-node): use `{subsystem}=cni`, `{resource}=pod`, and operations
+  such as `add` / `delete` for the server-side handling path.
+* **Retry queue**: when a reconcile is re-driven from the retry cache, the root span keeps the
+  same `{operation}` (`add`, `update`, or `delete`) and records retry semantics via attributes
+  (`retry.loop` on add, `retry.cache` on update) rather than encoding retry state in the span
+  name.
+
+Examples (with current `service.component` values):
+
+```text
+ovnkube-node.network-controller.pod.add
+ovnkube-node.network-controller.pod.update
+ovnkube-cluster-manager.network-controller.pod.allocate-network
+ovnkube-node.cni.pod.add
+```
+
+## Testing Details
+
+### Unit Testing
+
+* Traceparent parser and validation tests:
+  * valid format
+  * invalid format
+  * invalid hex fields
+  * invalid lengths
+* Context extraction helper tests:
+  * missing annotation
+  * configured key override
+  * valid annotation yields source span context suitable for span links
+* Reconcile span tests for targeted functions:
+  * valid annotation + `linked` mode -> local root span includes a link to the annotation trace/span ID
+  * valid annotation + `parent` mode -> span is a child of the propagated context
+  * missing/invalid annotation -> no spans emitted for that operation
+  * nested operations -> child spans under the operation span
+
+### E2E Testing
+
+* Config flag disabled:
+  * verify no tracing initialization and no span emission expectations
+* Config flag enabled + valid OTEL endpoint:
+  * create pod with propagated annotation
+  * verify OVN-Kubernetes pod-path spans are exported
+  * verify span relationships match `propagated-context-mode`
+* Config flag enabled + invalid annotation:
+  * verify operation succeeds
+  * verify no spans are emitted for that operation
+
+
+## Documentation Details
+
+* Add end-user docs for:
+  * enabling `enable-tracing`
+  * configuring `ovnkube-config` tracing block
+  * annotation key behavior and defaults
+* propagated context semantics for `linked` and `parent` modes
+  * troubleshooting invalid context and exporter connectivity
+* Update `mkdocs.yml` to include this OKEP path.
+
+## Risks, Known Limitations and Mitigations
+
+Risks:
+
+* tracing overhead under high pod churn
+* misconfigured exporter causing noisy logs
+* inconsistent trace-context annotation propagation by resource creators
+
+Mitigations:
+
+* config flag disabled by default
+* configurable sampling and batching
+* graceful fallback when annotation or exporter path is invalid
+
+Known limitations in this initial version:
+
+* initial scope is pod path only
+* NAD and other resources are not covered yet
+* end-to-end correlation depends on resource creators propagating the annotation and on backend
+  support for span links
+
+## OVN-Kubernetes Version Skew
+
+Planned as an initial opt-in capability behind the `enable-tracing` config flag in the next
+available release after merge. This is an OVN-Kubernetes configuration flag, not a Kubernetes
+feature gate with alpha/beta graduation.
+
+Skew behavior:
+
+* upgraded components with tracing enabled can emit spans independently.
+* mixed-version clusters may have partial span coverage.
+
+## Backwards Compatibility
+
+* Backward compatible by default (`enable-tracing=false`).
+* No API breaking changes.
+* No datapath behavior changes.
+
+## Alternatives
+
+* Hard-coded tracing config via environment variables only.
+  * Not selected; ConfigMap-based configuration is more operationally manageable.
+* Broad all-resource tracing in first iteration.
+  * Not selected to reduce risk and scope.
+* Remote parent-child continuation from propagated `traceparent`.
+  * Now supported as an optional mode (`propagated-context-mode=parent`) for environments that
+    prefer explicit parent-child continuation. The default remains `linked`, which is compatible
+    with [KEP-5915][k8s-async-trace-kep] guidance for asynchronous boundaries.
+
+## References
+
+* [KEP-5915: Standardizing Async Trace Context Propagation][k8s-async-trace-kep]
+  (optional interoperability guidance, not a dependency)
+
+* OpenTelemetry Trace Context:
+  * https://www.w3.org/TR/trace-context/
+* OpenTelemetry tracing concepts:
+  * https://opentelemetry.io/docs/concepts/signals/traces/
+* [OpenTelemetry span links][otel-span-links]
+* [OpenTelemetry Link API specification][otel-link-api]
+* OpenTelemetry Collector:
+  * https://opentelemetry.io/docs/collector/
+* Grafana Tempo:
+  * https://grafana.com/oss/tempo/
+* [Grafana span-link visualization][grafana-span-links]
+* [Tempo span-link queries][tempo-link-query]
+
+[k8s-async-trace-kep]: https://github.com/kubernetes/enhancements/issues/5915
+[otel-span-links]: https://opentelemetry.io/docs/concepts/signals/traces/#span-links
+[otel-link-api]: https://opentelemetry.io/docs/specs/otel/trace/api/#link
+[grafana-span-links]: https://grafana.com/docs/grafana/latest/visualizations/explore/trace-integration/#links
+[tempo-link-query]: https://grafana.com/docs/tempo/latest/release-notes/version-2/v2-6/#traceql
