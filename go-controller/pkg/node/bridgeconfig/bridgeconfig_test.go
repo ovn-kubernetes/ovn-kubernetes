@@ -11,6 +11,7 @@ import (
 	"github.com/onsi/gomega"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -18,6 +19,25 @@ import (
 	utilmocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
+
+func TestBridgedGatewayNodeSetupRejectsMappingSeparators(t *testing.T) {
+	g := gomega.NewWithT(t)
+	ovsClient, cleanup, err := libovsdbtest.NewOVSTestHarness(
+		libovsdbtest.TestSetup{OVSData: []libovsdbtest.TestData{
+			&vswitchd.OpenvSwitch{UUID: "root-ovs", ExternalIDs: map[string]string{"ovn-bridge-mappings": "physnet:br-ex"}},
+		}},
+	)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	t.Cleanup(cleanup.Cleanup)
+
+	for _, name := range []string{"net:br-evil", "net,evil:br-evil", "physnet:br-evil,net"} {
+		_, err := bridgedGatewayNodeSetup(ovsClient, "node-a", "br-a", name)
+		g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("cannot contain")), name)
+	}
+	ovs, err := ovsops.GetOpenvSwitch(ovsClient)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(ovs.ExternalIDs["ovn-bridge-mappings"]).To(gomega.Equal("physnet:br-ex"))
+}
 
 func TestGetStaticFDBPort(t *testing.T) {
 	tests := []struct {
