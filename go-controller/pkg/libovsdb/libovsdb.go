@@ -194,6 +194,10 @@ func NewNBClientWithEndpoint(endpoint string, promRegistry prometheus.Registerer
 		nbdb.LogicalSwitchTable: {{Columns: []model.ColumnKey{{Column: "name"}}}},
 		nbdb.LogicalRouterTable: {{Columns: []model.ColumnKey{{Column: "name"}}}},
 		nbdb.QoSTable:           {{Columns: []model.ColumnKey{{Column: "external_ids", Key: types.PrimaryIDKey}}}},
+		nbdb.LogicalSwitchPortTable: {{Columns: []model.ColumnKey{
+			{Column: "external_ids", Key: "namespace"},
+			{Column: "external_ids", Key: types.NetworkExternalID},
+		}}},
 	}
 	if config.Gateway.DisableUDNARPNDPFlood {
 		// used by the MAC binding controller

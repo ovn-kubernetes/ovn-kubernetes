@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
@@ -202,14 +203,25 @@ func getPortsMatches(podAnnotations map[string]string, lspName string) (string, 
 
 // setUDNPodOpenPorts should be called after the pod's lsp is created to add ACLs that allow ingress on required ports.
 // When lspName="", ACLs are removed. If annotation can't be parsed correctly, ACLs will be deleted.
-func (oc *DefaultNetworkController) setUDNPodOpenPorts(podNamespacedName string, podAnnotations map[string]string, lspName string) error {
-	ops, parseErr, err := oc.setUDNPodOpenPortsOps(podNamespacedName, podAnnotations, lspName, nil)
+func (oc *DefaultNetworkController) setUDNPodOpenPorts(pod *corev1.Pod, lspName string) error {
+	ops, parseErr, err := oc.setUDNPodOpenPortsOps(pod.Namespace+"/"+pod.Name, pod.Annotations, lspName, nil)
 	if err != nil {
 		return errors.Join(parseErr, err)
 	}
 	_, err = libovsdbops.TransactAndCheck(oc.nbClient, ops)
 	if err != nil {
 		return utilerrors.Join(parseErr, fmt.Errorf("failed to transact open ports UDN ACLs: %v", err))
+	}
+	if lspName != "" {
+		annotation := pod.Annotations[util.UDNOpenPortsAnnotationName]
+		if parseErr != nil {
+			// Invalid input still commits ACL removal. Record that applied state
+			// so restoring the previous valid annotation recreates its ACLs.
+			annotation = ""
+		}
+		if err := oc.logicalPortCache.updateUDNOpenPorts(pod, annotation); err != nil {
+			return errors.Join(parseErr, err)
+		}
 	}
 	return parseErr
 }
