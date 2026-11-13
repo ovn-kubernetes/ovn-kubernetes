@@ -56,6 +56,10 @@ Writing and previewing documentation for the OVN-Kubernetes website.
 
 Run unit and end-to-end tests locally using KinD clusters.
 
+**[BGP Performance Lanes](bgp-performance-lanes.md)**
+
+What the BGP route advertisements performance lanes measure, how to run one locally, and how to read their artifacts.
+
 **[CI Testing Guide](../ci/ci.md)**
 
 How the CI pipeline works and how to interpret test results.
