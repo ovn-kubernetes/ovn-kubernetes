@@ -504,10 +504,14 @@ func runOVNNBCTL(f *framework.Framework, cs clientset.Interface, args ...string)
 	if err != nil {
 		return "", err
 	}
+	return runOVNNBCTLOnPod(f, dbPod, args...)
+}
+
+func runOVNNBCTLOnPod(f *framework.Framework, dbPod *corev1.Pod, args ...string) (string, error) {
 	cmd := append([]string{"ovn-nbctl"}, args...)
-	stdout, stderr, err := ExecCommandInContainerWithFullOutput(f, ovnNamespace, dbPod.Name, "nb-ovsdb", cmd...)
+	stdout, stderr, err := ExecCommandInContainerWithFullOutput(f, dbPod.Namespace, dbPod.Name, "nb-ovsdb", cmd...)
 	if err != nil {
-		return stdout, fmt.Errorf("failed running ovn-nbctl %v on %s/%s: %w, stderr: %s", args, ovnNamespace, dbPod.Name, err, stderr)
+		return stdout, fmt.Errorf("failed running ovn-nbctl %v on %s/%s: %w, stderr: %s", args, dbPod.Namespace, dbPod.Name, err, stderr)
 	}
 	return strings.TrimSpace(stdout), nil
 }
