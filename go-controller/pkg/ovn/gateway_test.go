@@ -243,6 +243,16 @@ func generateGatewayInitExpectedNBWithPodNetworkAdvertised(testData []libovsdbte
 			OutputPort: &externalRouterPort,
 		})
 	}
+	if config.Gateway.DisableLinkLocalForwarding && hasIPv4 {
+		discardRouteNamedUUID := "static-link-local-discard-route-UUID"
+		grStaticRoutes = append(grStaticRoutes, discardRouteNamedUUID)
+		testData = append(testData, &nbdb.LogicalRouterStaticRoute{
+			UUID:        discardRouteNamedUUID,
+			IPPrefix:    "169.254.0.0/16",
+			Nexthop:     "discard",
+			ExternalIDs: map[string]string{types.LinkLocalDiscardExternalID: ""},
+		})
+	}
 	networks = []string{}
 	physicalIPs := []string{}
 	for _, ip := range l3GatewayConfig.IPAddresses {
@@ -1441,6 +1451,290 @@ var _ = ginkgo.Describe("Gateway Init Operations", func() {
 			gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
 
 		})
+
+		ginkgo.It("creates the link-local discard route on the gateway router when link-local forwarding is disabled", func() {
+			expectedOVNClusterRouter := &nbdb.LogicalRouter{
+				UUID: types.OVNClusterRouter + "-UUID",
+				Name: types.OVNClusterRouter,
+			}
+			expectedNodeSwitch := &nbdb.LogicalSwitch{
+				UUID: nodeName + "-UUID",
+				Name: nodeName,
+			}
+			expectedClusterLBGroup := &nbdb.LoadBalancerGroup{
+				UUID: types.ClusterLBGroupName + "-UUID",
+				Name: types.ClusterLBGroupName,
+			}
+			expectedSwitchLBGroup := &nbdb.LoadBalancerGroup{
+				UUID: types.ClusterSwitchLBGroupName + "-UUID",
+				Name: types.ClusterSwitchLBGroupName,
+			}
+			expectedRouterLBGroup := &nbdb.LoadBalancerGroup{
+				UUID: types.ClusterRouterLBGroupName + "-UUID",
+				Name: types.ClusterRouterLBGroupName,
+			}
+			fakeOvn.startWithDBSetup(libovsdbtest.TestSetup{
+				NBData: []libovsdbtest.TestData{
+					&nbdb.LogicalSwitch{
+						UUID: types.OVNJoinSwitch + "-UUID",
+						Name: types.OVNJoinSwitch,
+					},
+					expectedOVNClusterRouter,
+					expectedNodeSwitch,
+					expectedClusterLBGroup,
+					expectedSwitchLBGroup,
+					expectedRouterLBGroup,
+				},
+			})
+
+			config.IPv4Mode = true
+			config.IPv6Mode = true
+			config.Gateway.DisableLinkLocalForwarding = true
+			clusterIPSubnets := ovntest.MustParseIPNets("10.128.0.0/14", "fd01::/48")
+			hostSubnets := ovntest.MustParseIPNets("10.130.0.0/23", "fd01:0:0:2::/64")
+			joinLRPIPs := ovntest.MustParseIPNets("100.64.0.3/16", "fd98::3/64")
+			defLRPIPs := ovntest.MustParseIPNets("100.64.0.1/16", "fd98::1/64")
+			l3GatewayConfig := &util.L3GatewayConfig{
+				Mode:           config.GatewayModeShared,
+				ChassisID:      "SYSTEM-ID",
+				BridgeID:       "BRIDGE-ID",
+				InterfaceID:    "INTERFACE-ID",
+				MACAddress:     ovntest.MustParseMAC("11:22:33:44:55:66"),
+				IPAddresses:    ovntest.MustParseIPNets("169.255.33.2/24", "fd99::2/64"),
+				NextHops:       ovntest.MustParseIPs("169.255.33.1", "fd99::1"),
+				NodePortEnable: true,
+			}
+			gwConfig := &GatewayConfig{
+				annoConfig:                 l3GatewayConfig,
+				hostSubnets:                hostSubnets,
+				clusterSubnets:             clusterIPSubnets,
+				gwRouterJoinCIDRs:          joinLRPIPs,
+				hostAddrs:                  nil,
+				externalIPs:                extractExternalIPs(l3GatewayConfig),
+				ovnClusterLRPToJoinIfAddrs: defLRPIPs,
+			}
+
+			var err error
+			fakeOvn.controller.defaultCOPPUUID, err = EnsureDefaultCOPP(fakeOvn.nbClient)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to ensure the default COPP")
+
+			err = newGatewayManager(fakeOvn, nodeName).gatewayInit(
+				nodeName,
+				gwConfig,
+				true,
+			)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to initialize the gateway")
+
+			testData := []libovsdbtest.TestData{}
+			skipSnat := false
+			// We don't set up the Allow from mgmt port ACL here
+			mgmtPortIP := ""
+			expectedDatabaseState := generateGatewayInitExpectedNB(testData, expectedOVNClusterRouter, expectedNodeSwitch,
+				nodeName, clusterIPSubnets, hostSubnets, l3GatewayConfig, joinLRPIPs, defLRPIPs, skipSnat, mgmtPortIP,
+				"1400")
+			gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
+		})
+
+		ginkgo.It("removes the link-local discard route from the gateway router when link-local forwarding is enabled", func() {
+			leftoverDiscardRoute := &nbdb.LogicalRouterStaticRoute{
+				UUID:        "leftover-link-local-discard-route-UUID",
+				IPPrefix:    "169.254.0.0/16",
+				Nexthop:     "discard",
+				ExternalIDs: map[string]string{types.LinkLocalDiscardExternalID: ""},
+			}
+			expectedOVNClusterRouter := &nbdb.LogicalRouter{
+				UUID: types.OVNClusterRouter + "-UUID",
+				Name: types.OVNClusterRouter,
+			}
+			expectedNodeSwitch := &nbdb.LogicalSwitch{
+				UUID: nodeName + "-UUID",
+				Name: nodeName,
+			}
+			expectedClusterLBGroup := &nbdb.LoadBalancerGroup{
+				UUID: types.ClusterLBGroupName + "-UUID",
+				Name: types.ClusterLBGroupName,
+			}
+			expectedSwitchLBGroup := &nbdb.LoadBalancerGroup{
+				UUID: types.ClusterSwitchLBGroupName + "-UUID",
+				Name: types.ClusterSwitchLBGroupName,
+			}
+			expectedRouterLBGroup := &nbdb.LoadBalancerGroup{
+				UUID: types.ClusterRouterLBGroupName + "-UUID",
+				Name: types.ClusterRouterLBGroupName,
+			}
+			fakeOvn.startWithDBSetup(libovsdbtest.TestSetup{
+				NBData: []libovsdbtest.TestData{
+					leftoverDiscardRoute,
+					&nbdb.LogicalRouter{
+						UUID:         types.GWRouterPrefix + nodeName + "-UUID",
+						Name:         types.GWRouterPrefix + nodeName,
+						StaticRoutes: []string{leftoverDiscardRoute.UUID},
+					},
+					&nbdb.LogicalSwitch{
+						UUID: types.OVNJoinSwitch + "-UUID",
+						Name: types.OVNJoinSwitch,
+					},
+					expectedOVNClusterRouter,
+					expectedNodeSwitch,
+					expectedClusterLBGroup,
+					expectedSwitchLBGroup,
+					expectedRouterLBGroup,
+				},
+			})
+
+			config.IPv4Mode = true
+			config.IPv6Mode = true
+			clusterIPSubnets := ovntest.MustParseIPNets("10.128.0.0/14", "fd01::/48")
+			hostSubnets := ovntest.MustParseIPNets("10.130.0.0/23", "fd01:0:0:2::/64")
+			joinLRPIPs := ovntest.MustParseIPNets("100.64.0.3/16", "fd98::3/64")
+			defLRPIPs := ovntest.MustParseIPNets("100.64.0.1/16", "fd98::1/64")
+			l3GatewayConfig := &util.L3GatewayConfig{
+				Mode:           config.GatewayModeShared,
+				ChassisID:      "SYSTEM-ID",
+				BridgeID:       "BRIDGE-ID",
+				InterfaceID:    "INTERFACE-ID",
+				MACAddress:     ovntest.MustParseMAC("11:22:33:44:55:66"),
+				IPAddresses:    ovntest.MustParseIPNets("169.255.33.2/24", "fd99::2/64"),
+				NextHops:       ovntest.MustParseIPs("169.255.33.1", "fd99::1"),
+				NodePortEnable: true,
+			}
+			gwConfig := &GatewayConfig{
+				annoConfig:                 l3GatewayConfig,
+				hostSubnets:                hostSubnets,
+				clusterSubnets:             clusterIPSubnets,
+				gwRouterJoinCIDRs:          joinLRPIPs,
+				hostAddrs:                  nil,
+				externalIPs:                extractExternalIPs(l3GatewayConfig),
+				ovnClusterLRPToJoinIfAddrs: defLRPIPs,
+			}
+
+			var err error
+			fakeOvn.controller.defaultCOPPUUID, err = EnsureDefaultCOPP(fakeOvn.nbClient)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to ensure the default COPP")
+
+			err = newGatewayManager(fakeOvn, nodeName).gatewayInit(
+				nodeName,
+				gwConfig,
+				true,
+			)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to initialize the gateway")
+
+			testData := []libovsdbtest.TestData{}
+			skipSnat := false
+			// We don't set up the Allow from mgmt port ACL here
+			mgmtPortIP := ""
+			expectedDatabaseState := generateGatewayInitExpectedNB(testData, expectedOVNClusterRouter, expectedNodeSwitch,
+				nodeName, clusterIPSubnets, hostSubnets, l3GatewayConfig, joinLRPIPs, defLRPIPs, skipSnat, mgmtPortIP,
+				"1400")
+			gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
+		})
+
+		ginkgo.DescribeTable("leaves a discard route for the link-local prefix without the marker alone",
+			func(disableLinkLocalForwarding bool) {
+				// same prefix and nexthop as the route owned by the feature, but no marker
+				foreignDiscardRoute := &nbdb.LogicalRouterStaticRoute{
+					UUID:     "foreign-link-local-discard-route-UUID",
+					IPPrefix: "169.254.0.0/16",
+					Nexthop:  "discard",
+				}
+				expectedOVNClusterRouter := &nbdb.LogicalRouter{
+					UUID: types.OVNClusterRouter + "-UUID",
+					Name: types.OVNClusterRouter,
+				}
+				expectedNodeSwitch := &nbdb.LogicalSwitch{
+					UUID: nodeName + "-UUID",
+					Name: nodeName,
+				}
+				expectedClusterLBGroup := &nbdb.LoadBalancerGroup{
+					UUID: types.ClusterLBGroupName + "-UUID",
+					Name: types.ClusterLBGroupName,
+				}
+				expectedSwitchLBGroup := &nbdb.LoadBalancerGroup{
+					UUID: types.ClusterSwitchLBGroupName + "-UUID",
+					Name: types.ClusterSwitchLBGroupName,
+				}
+				expectedRouterLBGroup := &nbdb.LoadBalancerGroup{
+					UUID: types.ClusterRouterLBGroupName + "-UUID",
+					Name: types.ClusterRouterLBGroupName,
+				}
+				fakeOvn.startWithDBSetup(libovsdbtest.TestSetup{
+					NBData: []libovsdbtest.TestData{
+						foreignDiscardRoute,
+						&nbdb.LogicalRouter{
+							UUID:         types.GWRouterPrefix + nodeName + "-UUID",
+							Name:         types.GWRouterPrefix + nodeName,
+							StaticRoutes: []string{foreignDiscardRoute.UUID},
+						},
+						&nbdb.LogicalSwitch{
+							UUID: types.OVNJoinSwitch + "-UUID",
+							Name: types.OVNJoinSwitch,
+						},
+						expectedOVNClusterRouter,
+						expectedNodeSwitch,
+						expectedClusterLBGroup,
+						expectedSwitchLBGroup,
+						expectedRouterLBGroup,
+					},
+				})
+
+				config.IPv4Mode = true
+				config.IPv6Mode = true
+				config.Gateway.DisableLinkLocalForwarding = disableLinkLocalForwarding
+				clusterIPSubnets := ovntest.MustParseIPNets("10.128.0.0/14", "fd01::/48")
+				hostSubnets := ovntest.MustParseIPNets("10.130.0.0/23", "fd01:0:0:2::/64")
+				joinLRPIPs := ovntest.MustParseIPNets("100.64.0.3/16", "fd98::3/64")
+				defLRPIPs := ovntest.MustParseIPNets("100.64.0.1/16", "fd98::1/64")
+				l3GatewayConfig := &util.L3GatewayConfig{
+					Mode:           config.GatewayModeShared,
+					ChassisID:      "SYSTEM-ID",
+					BridgeID:       "BRIDGE-ID",
+					InterfaceID:    "INTERFACE-ID",
+					MACAddress:     ovntest.MustParseMAC("11:22:33:44:55:66"),
+					IPAddresses:    ovntest.MustParseIPNets("169.255.33.2/24", "fd99::2/64"),
+					NextHops:       ovntest.MustParseIPs("169.255.33.1", "fd99::1"),
+					NodePortEnable: true,
+				}
+				gwConfig := &GatewayConfig{
+					annoConfig:                 l3GatewayConfig,
+					hostSubnets:                hostSubnets,
+					clusterSubnets:             clusterIPSubnets,
+					gwRouterJoinCIDRs:          joinLRPIPs,
+					hostAddrs:                  nil,
+					externalIPs:                extractExternalIPs(l3GatewayConfig),
+					ovnClusterLRPToJoinIfAddrs: defLRPIPs,
+				}
+
+				var err error
+				fakeOvn.controller.defaultCOPPUUID, err = EnsureDefaultCOPP(fakeOvn.nbClient)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to ensure the default COPP")
+
+				err = newGatewayManager(fakeOvn, nodeName).gatewayInit(
+					nodeName,
+					gwConfig,
+					true,
+				)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to initialize the gateway")
+
+				testData := []libovsdbtest.TestData{foreignDiscardRoute}
+				skipSnat := false
+				// We don't set up the Allow from mgmt port ACL here
+				mgmtPortIP := ""
+				expectedDatabaseState := generateGatewayInitExpectedNB(testData, expectedOVNClusterRouter, expectedNodeSwitch,
+					nodeName, clusterIPSubnets, hostSubnets, l3GatewayConfig, joinLRPIPs, defLRPIPs, skipSnat, mgmtPortIP,
+					"1400")
+				// the foreign route must still be on the gateway router, next to the
+				// marked one when the feature is on
+				for _, row := range expectedDatabaseState {
+					if gr, ok := row.(*nbdb.LogicalRouter); ok && gr.Name == types.GWRouterPrefix+nodeName {
+						gr.StaticRoutes = append(gr.StaticRoutes, foreignDiscardRoute.UUID)
+					}
+				}
+				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState),
+					"the discard route without the marker must survive the gateway sync")
+			},
+			ginkgo.Entry("when link-local forwarding is disabled", true),
+			ginkgo.Entry("when link-local forwarding is enabled", false),
+		)
 
 		ginkgo.It("creates a dual-stack gateway in OVN", func() {
 			expectedOVNClusterRouter := &nbdb.LogicalRouter{

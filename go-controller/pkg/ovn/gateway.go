@@ -683,6 +683,10 @@ func (gw *GatewayManager) updateGWRouterStaticRoutes(gwConfig *GatewayConfig, ex
 		}
 	}
 
+	if err := gw.syncLinkLocalDiscardRoutes(); err != nil {
+		return fmt.Errorf("failed to sync the link-local discard route in GR %s: %w", gw.gwRouterName, err)
+	}
+
 	nextHops := gwConfig.annoConfig.NextHops
 	// Add default gateway routes in GR
 	for _, nextHop := range nextHops {
@@ -713,6 +717,52 @@ func (gw *GatewayManager) updateGWRouterStaticRoutes(gwConfig *GatewayConfig, ex
 		if err != nil {
 			return fmt.Errorf("error creating static route %+v in GR %s: %v", lrsr, gw.gwRouterName, err)
 		}
+	}
+	return nil
+}
+
+// discardNextHop is the nexthop value of an OVN static route that drops the
+// matching packets.
+const discardNextHop = "discard"
+
+// linkLocalDiscardRoutePredicate matches the discard route owned by this
+// feature through its marker external ID, so that any other route for the same
+// prefix is left alone.
+func linkLocalDiscardRoutePredicate(item *nbdb.LogicalRouterStaticRoute) bool {
+	_, marked := item.ExternalIDs[types.LinkLocalDiscardExternalID]
+	return marked && item.Nexthop == discardNextHop && item.IPPrefix == types.V4LinkLocalSubnet
+}
+
+// syncLinkLocalDiscardRoutes keeps a discard route for the IPv4 link-local
+// prefix on the gateway router while link-local forwarding is disabled and
+// the network has IPv4, like so:
+//
+//	169.254.0.0/16 discard
+//
+// and removes it otherwise. The masquerade subnet route is more specific and
+// keeps winning over the discard route. IPv6 needs no such route: OVN routes
+// fe80::/64 destinations back out of the ingress port and never forwards them.
+func (gw *GatewayManager) syncLinkLocalDiscardRoutes() error {
+	ipv4, _ := gw.netInfo.IPMode()
+	if config.Gateway.DisableLinkLocalForwarding && ipv4 {
+		lrsr := nbdb.LogicalRouterStaticRoute{
+			IPPrefix:    types.V4LinkLocalSubnet,
+			Nexthop:     discardNextHop,
+			ExternalIDs: map[string]string{types.LinkLocalDiscardExternalID: ""},
+		}
+		if gw.netInfo.IsUserDefinedNetwork() {
+			lrsr.ExternalIDs[types.NetworkExternalID] = gw.netInfo.GetNetworkName()
+			lrsr.ExternalIDs[types.TopologyExternalID] = gw.netInfo.TopologyType()
+		}
+		if err := libovsdbops.CreateOrReplaceLogicalRouterStaticRouteWithPredicate(gw.nbClient, gw.gwRouterName,
+			&lrsr, linkLocalDiscardRoutePredicate); err != nil {
+			return fmt.Errorf("error creating link-local discard route %+v in GR %s: %v", lrsr, gw.gwRouterName, err)
+		}
+		return nil
+	}
+	if err := libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicate(gw.nbClient, gw.gwRouterName,
+		linkLocalDiscardRoutePredicate); err != nil {
+		return fmt.Errorf("error deleting link-local discard route in GR %s: %v", gw.gwRouterName, err)
 	}
 	return nil
 }
