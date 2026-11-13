@@ -892,7 +892,8 @@ jobs:
           make -C test control-plane WHAT="Kubevirt Virtual Machines|Localnet DHCP IPAM"
         elif [[ "${{ matrix.target }}" == network-segmentation* ]]; then
           make -C test control-plane WHAT="Network Segmentation"
-          make -C test control-plane WHAT="ClusterNetworkConnect"
+          # Own report name, or this run overwrites the Network Segmentation report.
+          JOB_NAME="${JOB_NAME}-cnc" make -C test control-plane WHAT="ClusterNetworkConnect"
         elif [ "${{ matrix.target }}" == "evpn" ]; then
           make -C test control-plane WHAT="EVPN"
         elif [ "${{ matrix.target }}" == "bgp" ] || [ "${{ matrix.target }}" == "bgp-no-overlay" ] || [ "${{ matrix.target }}" == "bgp-no-overlay-dynamic" ] || [ "${{ matrix.target }}" == "bgp-loose-isolation" ]; then
@@ -933,6 +934,16 @@ jobs:
       with:
         name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}-${{ strategy.job-index }}
         path: /tmp/kind/logs
+
+    - name: Upload e2e reports
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: e2e-reports-${{ env.JOB_NAME }}-${{ github.run_id }}-${{ strategy.job-index }}
+        path: |
+          test/_artifacts/*.xml
+          test/_artifacts/*.json
+        if-no-files-found: ignore
 
     - name: Upload coredumps for post-processing
       if: failure()
@@ -1063,6 +1074,30 @@ jobs:
       with:
         name: kind-ovndbs-${{ env.JOB_NAME }}-${{ github.run_id }}
         path: /tmp/kind/ovndbs
+
+  e2e-reports:
+    name: e2e spec coverage and flakes
+    # Report only: the summary lists specs that no lane executed and specs
+    # that passed only on retry. Pass --strict once the first list is empty
+    # to turn it into a required check.
+    if: ${{ !cancelled() && needs.changes.outputs.run_ci == 'true' }}
+    needs: [ changes, e2e ]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v6
+      with:
+        persist-credentials: false
+
+    - name: Download e2e reports
+      uses: actions/download-artifact@v8
+      with:
+        pattern: e2e-reports-*
+        path: /tmp/e2e-reports
+
+    - name: Summarize spec coverage and flakes
+      run: ./test/scripts/e2e-report-summary.sh /tmp/e2e-reports
 
   coredump-stacktraces:
     name: Collect coredump stack traces
