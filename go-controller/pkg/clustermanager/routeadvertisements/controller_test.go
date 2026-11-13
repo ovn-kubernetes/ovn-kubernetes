@@ -3646,7 +3646,7 @@ exit
 			config.OVNKubernetesFeature.EnableRouteAdvertisements = true
 			config.OVNKubernetesFeature.EnableEgressIP = true
 			config.OVNKubernetesFeature.EnableEVPN = true
-			config.OVNKubernetesFeature.EnableNetworkSegmentation = tt.dynamicUDN
+			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 			config.OVNKubernetesFeature.EnableDynamicUDNAllocation = tt.dynamicUDN
 			// satisfy EVPN LGW restriction, otherwise no effect
 			config.Gateway.Mode = config.GatewayModeLocal
@@ -3676,7 +3676,9 @@ exit
 			defaultNADName := config.Default.ClusterDefaultNetworkNAD
 			var defaultNAD *nadtypes.NetworkAttachmentDefinition
 			for _, nad := range tt.nads {
-				n, err := fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nad.Namespace).Create(context.Background(), nad.NAD(), metav1.CreateOptions{})
+				nadObj := nad.NAD()
+				g.Expect(ovntest.EnsurePrimaryNADOwner(fakeClientset.UserDefinedNetworkClient, nadObj)).To(gomega.Succeed())
+				n, err := fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nad.Namespace).Create(context.Background(), nadObj, metav1.CreateOptions{})
 				g.Expect(err).ToNot(gomega.HaveOccurred())
 				if nad.Name == defaultNADName.Name && nad.Namespace == defaultNADName.Namespace {
 					defaultNAD = n
@@ -4128,7 +4130,9 @@ func TestController_reconcileOnNetworkActivity(t *testing.T) {
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
 	nad := &testNAD{Name: "blue", Namespace: "blue", Network: util.GenerateCUDNNetworkName("blue"), Topology: "layer3", Subnet: "1.3.0.0/16", Labels: map[string]string{"selected": "true"}}
-	_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nad.Namespace).Create(context.Background(), nad.NAD(), metav1.CreateOptions{})
+	nadObj := nad.NAD()
+	g.Expect(ovntest.EnsurePrimaryNADOwner(fakeClientset.UserDefinedNetworkClient, nadObj)).To(gomega.Succeed())
+	_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nad.Namespace).Create(context.Background(), nadObj, metav1.CreateOptions{})
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
 	// the node still has a subnet allocated for the network, as during the

@@ -6,9 +6,9 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
-	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
@@ -50,7 +50,6 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 
 		var (
 			cs                  clientset.Interface
-			nadClient           nadclient.K8sCniCncfIoV1Interface
 			allowServerPodLabel = map[string]string{"foo": "bar"}
 			denyServerPodLabel  = map[string]string{"abc": "xyz"}
 		)
@@ -62,8 +61,6 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 				RequiredUDNNamespaceLabel: "",
 			})
 			f.Namespace = namespace
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			nadClient, err = nadclient.NewForConfig(f.ClientConfig())
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			namespaceYellow := getNamespaceName(f, nameSpaceYellowSuffix)
@@ -95,11 +92,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 				netConfig := newNetworkAttachmentConfig(netConfigParams)
 				netConfig.namespace = f.Namespace.Name
 				netConfig.cidr = filterCIDRsAndJoin(cs, netConfig.cidr)
-				_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
-					context.Background(),
-					generateNAD(netConfig, f.ClientSet),
-					metav1.CreateOptions{},
-				)
+				err := createPrimaryUDN(f, &netConfig.networkAttachmentConfigParams)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				ginkgo.By("creating client/server pods")
@@ -219,11 +212,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 				netConfig := newNetworkAttachmentConfig(netConfigParams)
 				netConfig.namespace = f.Namespace.Name
 				netConfig.cidr = filterCIDRsAndJoin(cs, netConfig.cidr)
-				_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
-					context.Background(),
-					generateNAD(netConfig, f.ClientSet),
-					metav1.CreateOptions{},
-				)
+				err := createPrimaryUDN(f, &netConfig.networkAttachmentConfigParams)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				ginkgo.By("creating client/server pods")
@@ -330,10 +319,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 				nad := networkAttachmentConfigParams{
 					topology: topology,
 					cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
-					// The yellow, blue and red namespaces are going to served by green network.
-					// Use random suffix for the network name to avoid race between tests.
-					networkName: fmt.Sprintf("%s-%s", "green", rand.String(randomStringLength)),
-					role:        "primary",
+					role:     "primary",
 				}
 				if topology == "layer3" {
 					nad.cidr = primaryLayer3MultiCIDRs()
@@ -342,19 +328,9 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 
 				// Use random suffix in net conf name to avoid race between tests.
 				netConfName := fmt.Sprintf("sharednet-%s", rand.String(randomStringLength))
-				for _, namespace := range []string{namespaceYellow, namespaceBlue} {
-					ginkgo.By("creating the attachment configuration for " + netConfName + " in namespace " + namespace)
-					netConfig := newNetworkAttachmentConfig(nad)
-					netConfig.namespace = namespace
-					netConfig.name = netConfName
-
-					_, err := nadClient.NetworkAttachmentDefinitions(namespace).Create(
-						context.Background(),
-						generateNAD(netConfig, f.ClientSet),
-						metav1.CreateOptions{},
-					)
-					gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				}
+				nad.name = netConfName
+				nad.namespace = strings.Join([]string{namespaceYellow, namespaceBlue}, ",")
+				gomega.Expect(createPrimaryCUDN(f, &nad)).To(gomega.Succeed())
 
 				ginkgo.By("creating client/server pods")
 				allowServerPodConfig.namespace = namespaceYellow
@@ -436,19 +412,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 				// The pod won't run and the namespace address set won't be created until the NAD for the network is added
 				// to the namespace and we test here that once that happens the policy is reconciled to account for it.
 				ginkgo.By("creating NAD for red and orange namespaces and check pod moves into running state")
-				for _, namespace := range []string{namespaceRed, namespaceOrange} {
-					ginkgo.By("creating the attachment configuration for " + netConfName + " in namespace " + namespace)
-					netConfig := newNetworkAttachmentConfig(nad)
-					netConfig.namespace = namespace
-					netConfig.name = netConfName
-
-					_, err := nadClient.NetworkAttachmentDefinitions(namespace).Create(
-						context.Background(),
-						generateNAD(netConfig, f.ClientSet),
-						metav1.CreateOptions{},
-					)
-					gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				}
+				gomega.Expect(setPrimaryCUDNNamespaces(f, netConfName, namespaceYellow, namespaceBlue, namespaceRed, namespaceOrange)).To(gomega.Succeed())
 				gomega.Eventually(func() v1.PodPhase {
 					updatedPod, err := cs.CoreV1().Pods(clientPodConfig.namespace).Get(context.Background(),
 						clientPodConfig.name, metav1.GetOptions{})

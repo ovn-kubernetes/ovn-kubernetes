@@ -83,7 +83,7 @@ func TestInitTunnelKeysAllocatorPreservesCNCAcrossUpgrade(t *testing.T) {
 			namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
 				Name: "ns", Labels: map[string]string{types.RequiredUDNNamespaceLabel: ""},
 			}}
-			client := util.GetOVNClientset(nad, cnc, namespace).GetClusterManagerClientset()
+			client := util.GetOVNClientset(nad, cnc, namespace, ovntesting.PrimaryNADOwner(nad)).GetClusterManagerClientset()
 			allocator, err := initTunnelKeysAllocator(client.NetworkAttchDefClient, client.NetworkConnectClient)
 			g.Expect(err).NotTo(gomega.HaveOccurred())
 			g.Expect(allocator.ReserveKeys(id.NetworkConnectTunnelKeyOwner(cnc.Name), cncKeys)).To(gomega.Succeed())
