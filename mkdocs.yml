@@ -66,10 +66,14 @@ plugins:
       minify_html: true
   - git-revision-date-localized:
       enable_creation_date: true
+      enable_git_follow: false
+      strict: false
       type: date
       fallback_to_build_date: true
 markdown_extensions:
   - admonition
+  - attr_list
+  - md_in_html
   - meta
   - pymdownx.emoji:
       emoji_index: !!python/name:material.extensions.emoji.twemoji

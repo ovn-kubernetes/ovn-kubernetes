@@ -107,7 +107,7 @@ The allowed annotations list contains both common and feature specific values:
 
 Cluster-manager's allocation annotations, including `k8s.ovn.org/node-id` and
 `k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids`, are protected by a
-separate [admission policy](index.md#controller-owned-node-annotations).
+separate [admission policy](security.md#controller-owned-node-annotations).
 That protection remains active when NodeIdentity is disabled and authorizes
 only the cluster-manager service account; `--extra-allowed-user` does not
 override it. Node credentials cannot write these annotations, even on their
@@ -125,7 +125,7 @@ validate NAD/CNC resources.
 When recreating a Node from saved YAML, normally omit protected OVN annotations
 and let the controllers regenerate them. Replaying those annotations during
 creation may be rejected even if they were valid on the original Node. See
-[Controller-owned Node annotations](index.md#controller-owned-node-annotations)
+[Controller-owned Node annotations](security.md#controller-owned-node-annotations)
 for allocations protected independently of NodeIdentity.
 
 The specific annotation values can be found in `go-controller/pkg/ovnwebhook/nodeadmission.go` and `go-controller/pkg/ovnwebhook/podadmission.go` files.
