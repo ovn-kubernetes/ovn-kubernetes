@@ -16,6 +16,10 @@ export KUBE_CONTAINER_RUNTIME_NAME=containerd
 
 pushd conformance
 go mod download
-go test -timeout=0 -v \
+# The suite takes about 15 minutes in CI, which runs it in its own 30 minute
+# step. Keep this below that step budget so the Go timeout reports before
+# GitHub ends the step. Minutes; a trailing "m" is accepted.
+CONFORMANCE_TEST_TIMEOUT=${CONFORMANCE_TEST_TIMEOUT:-25}
+go test -timeout="${CONFORMANCE_TEST_TIMEOUT%m}m" -v \
         -kubeconfig ${KUBECONFIG}
 popd
