@@ -62,6 +62,59 @@ can all coordinate on accept/drop there.
 
 [IP sysctl documentation]: https://www.kernel.org/doc/Documentation/networking/ip-sysctl.txt
 
+### Disable Link-Local Forwarding Config
+
+RFC 3927 requires routers not to forward packets addressed to the IPv4
+link-local prefix `169.254.0.0/16`. By default, OVN-Kubernetes does forward
+them: a pod packet to a link-local destination that is not one of the
+masquerade addresses follows the default route of its OVN gateway router, or of
+its user defined network VRF, and leaves the node like any other external
+traffic. Some deployments rely on that: the instance metadata service of most
+clouds (AWS, GCP, Azure, OpenStack) listens at the link-local address
+`169.254.169.254` and serves instance identity, cloud-init user data and
+workload credentials, and pods reach it through the node this way.
+
+The `disable-link-local-forwarding` config/command-line option drops such
+traffic on the node instead:
+
+  - every OVN gateway router of a network with IPv4 gets a `169.254.0.0/16
+    discard` static route, which drops the packet silently;
+
+  - every user defined network VRF with IPv4 on a host, including a DPU host,
+    gets an `unreachable 169.254.0.0/16` route, which wins over any default
+    route present in the VRF, including one learned from DHCP or BGP, and
+    answers with an ICMP unreachable. It does not win over a connected
+    `169.254.0.0/16` route of an interface enslaved to the VRF, for example a
+    NIC that fell back to an IPv4 link-local address: same prefix length,
+    lower metric.
+
+The `gateway-v4-masquerade-subnet` keeps its own, more specific route, so only
+link-local destinations outside it are dropped; destinations inside it never
+left the node in the first place. The metadata service address
+`169.254.169.254` is outside the default masquerade subnet `169.254.169.0/29`,
+so on the paths the option covers (listed below) pods cannot reach the metadata
+service: deployments whose pods rely on it over one of those paths must leave
+the option off. A masquerade subnet configured to contain the address hands it
+to the masquerade route instead of the drop. The option is refused when that
+subnet contains the whole link-local prefix, since the drop route would then
+shadow it. Routes installed with the option are removed again when it is turned
+off. On an IPv6-only cluster the option has no effect.
+
+The option does not cover:
+
+  - default network pods in local gateway mode, whose egress traffic enters the
+    host through the management port and follows the host's own routing table;
+    the same goes for host network pods and the host itself;
+
+  - pods routed through an external gateway by an AdminPolicyBasedExternalRoute,
+    whose source-based route on the gateway router is more specific than the
+    drop route and sends all their traffic to that gateway;
+
+  - IPv6, which needs nothing: OVN routes `fe80::/64` destinations back out of
+    the port they came in and never forwards them, and the kernel resolves
+    link-local destinations per interface rather than through the VRF default
+    route.
+
 ### VLAN Config
 
 OVN-Kubernetes supports using VLAN tagging for underlay connectivity. To enable VLAN tagging, specify the `vlan-id`
