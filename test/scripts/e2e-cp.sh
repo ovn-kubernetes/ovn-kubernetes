@@ -75,7 +75,7 @@ fi
 
 if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
   # No support for these tests in IPv6 mode yet
-  skip $IPV6_SKIPPED_TESTS
+  skip "$IPV6_SKIPPED_TESTS"
 fi
 
 if [ "$OVN_DISABLE_SNAT_MULTIPLE_GWS" == false ]; then
@@ -130,7 +130,7 @@ fi
 # Only run kubevirt virtual machines tests if they are explicitly requested
 KV_LIVE_MIGRATION_TESTS="Kubevirt Virtual Machines"
 if [[ "${WHAT}" != "${KV_LIVE_MIGRATION_TESTS}"* ]]; then
-  skip $KV_LIVE_MIGRATION_TESTS
+  skip "$KV_LIVE_MIGRATION_TESTS"
 fi
 
 # Only run Localnet DHCP IPAM tests if they are explicitly requested: they
@@ -154,15 +154,15 @@ DPU_TESTS="DPU"
 NETWORK_SEGMENTATION_TESTS="Network Segmentation"
 if [[ "${WHAT}" = "${UPLINK_TESTS}" ]]; then
   require_label "Feature:Uplink"
-  shift # don't "focus" on Uplink since we filter by label
+  [ $# -eq 0 ] || shift # don't "focus" on Uplink since we filter by label
 elif [[ "${WHAT}" = "${DPU_TESTS}" ]]; then
   # Feature:DPU specs need the dpu-simulator layout and the Uplink e2e environment,
   # and disrupt a host node, so the dpu-sim no-overlay lane runs them after Uplink.
   require_label "Feature:DPU"
-  shift # don't "focus" on DPU since we filter by label
+  [ $# -eq 0 ] || shift # don't "focus" on DPU since we filter by label
 elif [[ "${WHAT}" = "${NETWORK_SEGMENTATION_TESTS}"* ]]; then
   require_label "Feature:NetworkSegmentation"
-  shift # don't "focus" on Network Segmentation since we filter by label
+  [ $# -eq 0 ] || shift # don't "focus" on Network Segmentation since we filter by label
 elif [[ "${WHAT}" != "${NETWORK_SEGMENTATION_TESTS}"* ]]; then
   if [ "$ENABLE_NETWORK_SEGMENTATION" == true ] && [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
     skip_label "Feature:NetworkSegmentation && !(Feature:RouteAdvertisements)"
@@ -182,13 +182,13 @@ fi
 # To conserve CI resources, we run these tests as part of the network segmentation tests
 CLUSTER_NETWORK_CONNECT_TESTS="ClusterNetworkConnect"
 if [[ "${WHAT}" != "${CLUSTER_NETWORK_CONNECT_TESTS}"* ]]; then
-  skip $CLUSTER_NETWORK_CONNECT_TESTS
+  skip "$CLUSTER_NETWORK_CONNECT_TESTS"
 fi
 
 SERIAL_LABEL="Serial"
 if [[ "${WHAT}" = "$SERIAL_LABEL" ]]; then
   require_label "$SERIAL_LABEL"
-  shift # don't "focus" on Serial since we filter by label
+  [ $# -eq 0 ] || shift # don't "focus" on Serial since we filter by label
 fi
 
 if [ "$ENABLE_UPLINK" != true ]; then
@@ -307,9 +307,17 @@ fi
 export KUBE_CONTAINER_RUNTIME=remote
 export KUBE_CONTAINER_RUNTIME_ENDPOINT=unix:///run/containerd/containerd.sock
 export KUBE_CONTAINER_RUNTIME_NAME=containerd
-export NUM_NODES=2
+# Nodes in the cluster, passed to the test framework as --num-nodes. Counted
+# from the cluster itself so a locally created cluster with any worker count
+# needs no extra variable; KIND_NUM_WORKER plus the control-plane node is the
+# fallback when the API is not reachable yet.
+NODE_COUNT=$(kubectl --kubeconfig "${KUBECONFIG}" get nodes --no-headers 2>/dev/null | wc -l)
+if [ "${NODE_COUNT}" -eq 0 ]; then
+  NODE_COUNT=$(( ${KIND_NUM_WORKER:-2} + 1 ))
+fi
+export NODE_COUNT
 
-FOCUS=$(echo "${@:1}" | sed 's/ /\\s/g')
+FOCUS="$*"
 
 # Ginkgo test timeout needs to be lower than both github's timeout and go test
 # timeout to be able to get proper Ginkgo output when it happens.
@@ -340,21 +348,21 @@ if [ "$ENABLE_EVPN" = true ] && [[ "${WHAT}" != "${KV_LIVE_MIGRATION_TESTS}"* ]]
         -- \
         -provider skeleton \
         -kubeconfig "${KUBECONFIG}" \
-        ${NUM_NODES:+"--num-nodes=${NUM_NODES}"} \
+        ${NODE_COUNT:+"--num-nodes=${NODE_COUNT}"} \
         ${E2E_REPORT_DIR:+"--report-dir=${E2E_REPORT_DIR}"}
 else
-  go test -test.timeout ${GO_TEST_TIMEOUT}m -v . \
+  go test -test.timeout "${GO_TEST_TIMEOUT}m" -v . \
           -ginkgo.v \
-          -ginkgo.focus ${FOCUS:-.} \
+          -ginkgo.focus "${FOCUS:-.}" \
           -ginkgo.fail-on-empty \
-          -ginkgo.timeout ${TEST_TIMEOUT}m \
-          -ginkgo.flake-attempts ${FLAKE_ATTEMPTS:-2} \
+          -ginkgo.timeout "${TEST_TIMEOUT}m" \
+          -ginkgo.flake-attempts "${FLAKE_ATTEMPTS:-2}" \
           -ginkgo.skip="${SKIPPED_TESTS}" \
           ${LABELED_TESTS:+-ginkgo.label-filter="${LABELED_TESTS}"} \
-          -ginkgo.junit-report=${E2E_REPORT_DIR}/junit_${E2E_REPORT_PREFIX}report.xml \
+          -ginkgo.junit-report="${E2E_REPORT_DIR}/junit_${E2E_REPORT_PREFIX}report.xml" \
           -provider skeleton \
-          -kubeconfig ${KUBECONFIG} \
-          ${NUM_NODES:+"--num-nodes=${NUM_NODES}"} \
+          -kubeconfig "${KUBECONFIG}" \
+          ${NODE_COUNT:+"--num-nodes=${NODE_COUNT}"} \
           ${E2E_REPORT_DIR:+"--report-dir=${E2E_REPORT_DIR}"}
 fi
 popd
