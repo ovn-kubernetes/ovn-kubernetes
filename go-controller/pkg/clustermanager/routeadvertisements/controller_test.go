@@ -4,14 +4,18 @@
 package routeadvertisements
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"net"
+	"net/http"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,6 +23,8 @@ import (
 	"time"
 
 	nadtypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+	nadclientset "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned"
+	nadfake "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/fake"
 	frrapi "github.com/metallb/frr-k8s/api/v1beta1"
 	frrfake "github.com/metallb/frr-k8s/pkg/client/clientset/versioned/fake"
 	frrlisters "github.com/metallb/frr-k8s/pkg/client/listers/api/v1beta1"
@@ -33,6 +39,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/client-go/rest"
 	ctesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
@@ -3858,8 +3865,8 @@ type unsafeInputTest struct {
 	fakeClientset *util.OVNClusterManagerClientset
 	c             *Controller
 	// failDelete makes deleting the FRRConfiguration "frrConfig-unvalidated"
-	// fail, failNADPatch makes patching NADs fail
-	failDelete, failNADPatch atomic.Bool
+	// fail, failNADUpdate makes updating NADs fail
+	failDelete, failNADUpdate atomic.Bool
 	// frrConfigNames returns the names of all FRRConfigurations
 	frrConfigNames func() []string
 	// defaultNADAnnotation returns the default NAD RouteAdvertisements
@@ -3898,10 +3905,10 @@ func newUnsafeInputTest(t *testing.T, g *gomega.WithT, generated ...*testFRRConf
 			}
 			return false, nil, nil
 		})
-	fakeClientset.NetworkAttchDefClient.(Fake).PrependReactor("patch", "network-attachment-definitions",
+	fakeClientset.NetworkAttchDefClient.(Fake).PrependReactor("update", "network-attachment-definitions",
 		func(_ ctesting.Action) (bool, runtime.Object, error) {
-			if tt.failNADPatch.Load() {
-				return true, nil, errors.New("injected NAD patch failure")
+			if tt.failNADUpdate.Load() {
+				return true, nil, errors.New("injected NAD update failure")
 			}
 			return false, nil, nil
 		})
@@ -4047,10 +4054,10 @@ func TestController_reconcileDeletesFRRConfigurationsOnUnsafeInput(t *testing.T)
 	// fails: the error is returned for a retry and names the validation
 	// reason, the generated FRRConfigurations are gone
 	tt.failDelete.Store(false)
-	tt.failNADPatch.Store(true)
+	tt.failNADUpdate.Store(true)
 	err = tt.c.reconcile(context.Background(), "ra")
 	g.Expect(err).To(gomega.HaveOccurred())
-	g.Expect(err.Error()).To(gomega.ContainSubstring("injected NAD patch failure"))
+	g.Expect(err.Error()).To(gomega.ContainSubstring("injected NAD update failure"))
 	g.Expect(err.Error()).To(gomega.ContainSubstring("invalid neighbor"))
 	g.Expect(errors.Is(err, errConfig)).To(gomega.BeFalse(), "a failed NAD update must be retried")
 	g.Expect(tt.frrConfigNames()).To(gomega.ConsistOf("frrConfig"))
@@ -4059,7 +4066,7 @@ func TestController_reconcileDeletesFRRConfigurationsOnUnsafeInput(t *testing.T)
 	// everything succeeds on retry: the source FRRConfiguration is kept, the
 	// NAD only references the other RouteAdvertisements and this one is not
 	// accepted
-	tt.failNADPatch.Store(false)
+	tt.failNADUpdate.Store(false)
 	err = tt.c.reconcile(context.Background(), "ra")
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(tt.frrConfigNames()).To(gomega.ConsistOf("frrConfig"))
@@ -4882,4 +4889,236 @@ func TestManagedPeeringMissingInternalIPs(t *testing.T) {
 		}
 		return errors.New("recovered node configuration has not updated")
 	}, 5*time.Second).Should(gomega.Succeed(), "regenerate after InternalIPs recover")
+}
+
+// newNADAnnotationTest builds a Controller whose NAD informer observes a
+// single NAD in the net namespace, carrying the given annotations.
+func newNADAnnotationTest(t *testing.T, g *gomega.WithT, annotations map[string]string) (*nadfake.Clientset, *Controller) {
+	t.Helper()
+
+	previousMultiNetwork := config.OVNKubernetesFeature.EnableMultiNetwork
+	previousRouteAdvertisements := config.OVNKubernetesFeature.EnableRouteAdvertisements
+	t.Cleanup(func() {
+		config.OVNKubernetesFeature.EnableMultiNetwork = previousMultiNetwork
+		config.OVNKubernetesFeature.EnableRouteAdvertisements = previousRouteAdvertisements
+	})
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	config.OVNKubernetesFeature.EnableRouteAdvertisements = true
+
+	fakeClientset := util.GetOVNClientset().GetClusterManagerClientset()
+	nadClient := fakeClientset.NetworkAttchDefClient.(*nadfake.Clientset)
+	nad := &nadtypes.NetworkAttachmentDefinition{
+		ObjectMeta: metav1.ObjectMeta{Name: "net", Namespace: "net", ResourceVersion: "1", Annotations: annotations},
+	}
+	_, err := nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("net").Create(context.Background(), nad, metav1.CreateOptions{})
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	wf, err := factory.NewClusterManagerWatchFactory(fakeClientset)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	nm, err := networkmanager.NewForCluster(&networkmanager.FakeControllerManager{}, wf, fakeClientset, nil, id.NewTunnelKeyAllocator("TunnelKeys"))
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	c := NewController(nm.Interface(), wf, fakeClientset)
+	g.Expect(wf.Start()).To(gomega.Succeed())
+	t.Cleanup(wf.Shutdown)
+	cache.WaitForCacheSync(context.Background().Done(), wf.NADInformer().Informer().HasSynced)
+
+	return nadClient, c
+}
+
+// TestController_updateNADsConcurrentReconciles checks that reconciles of
+// different RouteAdvertisements annotating the same NAD do not drop each
+// other's reference.
+func TestController_updateNADsConcurrentReconciles(t *testing.T) {
+	nadGVR := nadtypes.SchemeGroupVersion.WithResource("network-attachment-definitions")
+	selectedNAD := func() *nadtypes.NetworkAttachmentDefinition {
+		return &nadtypes.NetworkAttachmentDefinition{ObjectMeta: metav1.ObjectMeta{Name: "net", Namespace: "net"}}
+	}
+	references := func(g *gomega.WithT, nadClient *nadfake.Clientset) []string {
+		nad, err := nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("net").Get(context.Background(), "net", metav1.GetOptions{})
+		g.Expect(err).ToNot(gomega.HaveOccurred())
+		var ras []string
+		g.Expect(json.Unmarshal([]byte(nad.Annotations[types.OvnRouteAdvertisementsKey]), &ras)).To(gomega.Succeed())
+		slices.Sort(ras)
+		return ras
+	}
+
+	t.Run("concurrent reconciles keep both references", func(t *testing.T) {
+		g := gomega.NewWithT(t)
+		nadClient, c := newNADAnnotationTest(t, g, nil)
+
+		// make the fake client reject updates written against a stale
+		// resourceVersion, like the API server does
+		var resourceVersion atomic.Int64
+		resourceVersion.Store(1)
+		nadClient.PrependReactor("update", "network-attachment-definitions", func(action ctesting.Action) (bool, runtime.Object, error) {
+			updatedNAD, ok := action.(ctesting.UpdateAction).GetObject().(*nadtypes.NetworkAttachmentDefinition)
+			if !ok {
+				return true, nil, fmt.Errorf("unexpected object type %T", action.(ctesting.UpdateAction).GetObject())
+			}
+			current, err := nadClient.Tracker().Get(nadGVR, updatedNAD.Namespace, updatedNAD.Name)
+			if err != nil {
+				return true, nil, err
+			}
+			if current.(*nadtypes.NetworkAttachmentDefinition).ResourceVersion != updatedNAD.ResourceVersion {
+				return true, nil, apierrors.NewConflict(nadGVR.GroupResource(), updatedNAD.Name, errors.New("the object has been modified"))
+			}
+			updatedNAD.ResourceVersion = strconv.FormatInt(resourceVersion.Add(1), 10)
+			return false, nil, nil
+		})
+
+		var wg sync.WaitGroup
+		errs := make([]error, 2)
+		for i, ra := range []string{"ra-a", "ra-b"} {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_, errs[i] = c.updateNADs(context.Background(), ra, []*nadtypes.NetworkAttachmentDefinition{selectedNAD()})
+			}()
+		}
+		wg.Wait()
+
+		for _, err := range errs {
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+		}
+		g.Expect(references(g, nadClient)).To(gomega.Equal([]string{"ra-a", "ra-b"}))
+	})
+
+	t.Run("retries when a concurrent writer wins", func(t *testing.T) {
+		g := gomega.NewWithT(t)
+		nadClient, c := newNADAnnotationTest(t, g, nil)
+
+		var injected atomic.Bool
+		nadClient.PrependReactor("update", "network-attachment-definitions", func(_ ctesting.Action) (bool, runtime.Object, error) {
+			if !injected.CompareAndSwap(false, true) {
+				return false, nil, nil
+			}
+			// another reconciliation annotates the NAD between our Get and our
+			// Update
+			current, err := nadClient.Tracker().Get(nadGVR, "net", "net")
+			if err != nil {
+				return true, nil, err
+			}
+			concurrent := current.(*nadtypes.NetworkAttachmentDefinition).DeepCopy()
+			concurrent.Annotations = map[string]string{types.OvnRouteAdvertisementsKey: `["ra-b"]`}
+			concurrent.ResourceVersion = "2"
+			if err := nadClient.Tracker().Update(nadGVR, concurrent, "net"); err != nil {
+				return true, nil, err
+			}
+			return true, nil, apierrors.NewConflict(nadGVR.GroupResource(), "net", errors.New("the object has been modified"))
+		})
+
+		updated, err := c.updateNADs(context.Background(), "ra-a", []*nadtypes.NetworkAttachmentDefinition{selectedNAD()})
+		g.Expect(err).ToNot(gomega.HaveOccurred())
+		g.Expect(updated).To(gomega.BeTrue())
+		g.Expect(references(g, nadClient)).To(gomega.Equal([]string{"ra-a", "ra-b"}))
+	})
+}
+
+// TestController_updateNADsSkipsAPICallWhenCacheMatches pins the cache fast
+// path: when the informer already shows the desired membership, no API request
+// is issued for that NAD. The fast path is what keeps a reconciliation from
+// reading every NAD when nothing changed, so losing it silently would restore
+// that cost without failing any other test.
+func TestController_updateNADsSkipsAPICallWhenCacheMatches(t *testing.T) {
+	selectedNAD := func() *nadtypes.NetworkAttachmentDefinition {
+		return &nadtypes.NetworkAttachmentDefinition{ObjectMeta: metav1.ObjectMeta{Name: "net", Namespace: "net"}}
+	}
+	nadVerbs := func(nadClient *nadfake.Clientset) []string {
+		verbs := []string{}
+		for _, action := range nadClient.Actions() {
+			if action.GetResource().Resource == "network-attachment-definitions" {
+				verbs = append(verbs, action.GetVerb())
+			}
+		}
+		return verbs
+	}
+
+	t.Run("reference already present", func(t *testing.T) {
+		g := gomega.NewWithT(t)
+		nadClient, c := newNADAnnotationTest(t, g, map[string]string{types.OvnRouteAdvertisementsKey: `["ra-a"]`})
+		nadClient.ClearActions()
+
+		updated, err := c.updateNADs(context.Background(), "ra-a", []*nadtypes.NetworkAttachmentDefinition{selectedNAD()})
+		g.Expect(err).ToNot(gomega.HaveOccurred())
+		g.Expect(updated).To(gomega.BeFalse())
+		g.Expect(nadVerbs(nadClient)).To(gomega.BeEmpty())
+	})
+
+	t.Run("reference already absent", func(t *testing.T) {
+		g := gomega.NewWithT(t)
+		nadClient, c := newNADAnnotationTest(t, g, nil)
+		nadClient.ClearActions()
+
+		updated, err := c.updateNADs(context.Background(), "ra-a", nil)
+		g.Expect(err).ToNot(gomega.HaveOccurred())
+		g.Expect(updated).To(gomega.BeFalse())
+		g.Expect(nadVerbs(nadClient)).To(gomega.BeEmpty())
+	})
+}
+
+// nadOptionRecordingTransport answers NAD requests itself and records the
+// fieldManager query parameter of every write. The generated fake client drops
+// update options, so a write can only be inspected at the request level.
+type nadOptionRecordingTransport struct {
+	mu            sync.Mutex
+	fieldManagers []string
+}
+
+func (t *nadOptionRecordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	body := []byte(`{"apiVersion":"k8s.cni.cncf.io/v1","kind":"NetworkAttachmentDefinition","metadata":{"name":"net","namespace":"net","resourceVersion":"1"}}`)
+	if req.Body != nil {
+		written, err := io.ReadAll(req.Body)
+		if err != nil {
+			return nil, err
+		}
+		t.mu.Lock()
+		t.fieldManagers = append(t.fieldManagers, req.URL.Query().Get("fieldManager"))
+		t.mu.Unlock()
+
+		var nad map[string]any
+		if err := json.Unmarshal(written, &nad); err != nil {
+			return nil, err
+		}
+		metadata, ok := nad["metadata"].(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("request body has no metadata: %s", written)
+		}
+		metadata["resourceVersion"] = "2"
+		if body, err = json.Marshal(nad); err != nil {
+			return nil, err
+		}
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(bytes.NewReader(body)),
+		Request:    req,
+	}, nil
+}
+
+// TestController_updateNADsWritesAsFieldManager pins that NAD writes are
+// attributed to this controller. nadNeedsUpdate relies on that attribution
+// through isOwnUpdate to drop events caused by our own updates; without it a
+// single annotation write would fan out into another full reconciliation of
+// every RouteAdvertisements.
+func TestController_updateNADsWritesAsFieldManager(t *testing.T) {
+	g := gomega.NewWithT(t)
+	_, c := newNADAnnotationTest(t, g, nil)
+
+	transport := &nadOptionRecordingTransport{}
+	nadClient, err := nadclientset.NewForConfig(&rest.Config{Host: "https://k8s.invalid", Transport: transport})
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	c.nadClient = nadClient
+
+	updated, err := c.updateNADs(context.Background(), "ra-a", []*nadtypes.NetworkAttachmentDefinition{{
+		ObjectMeta: metav1.ObjectMeta{Name: "net", Namespace: "net"},
+	}})
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(updated).To(gomega.BeTrue())
+
+	transport.mu.Lock()
+	defer transport.mu.Unlock()
+	g.Expect(transport.fieldManagers).To(gomega.Equal([]string{fieldManager}),
+		"NAD writes must be attributed to this controller so nadNeedsUpdate filters them out")
 }
