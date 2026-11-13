@@ -1019,7 +1019,9 @@ jobs:
 
     - name: Run Dual-Stack Tests
       run: |
-        make -C test shard-test WHAT="Networking Granular Checks\|DualStack"
+        # The job env describes the cluster before conversion; the converted
+        # cluster is dual-stack, so lift the dual-stack-only skips here.
+        PLATFORM_IPV6_SUPPORT=true make -C test shard-test WHAT="Networking Granular Checks|DualStack"
 
     - name: Run Dual-Stack Control-Plane Tests
       run: |
