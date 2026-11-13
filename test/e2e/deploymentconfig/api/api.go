@@ -14,6 +14,8 @@ const (
 	L3UDNMultiSubnetConfig Config = "L3UDNMultiSubnet"
 	// UDNARPNDPFloodDisabled indicates wheter disabling UDN ARP/NDP flood setting is set true
 	UDNARPNDPFloodDisabled Config = "UDNARPNDPFloodDisabled"
+	// RouteAdvertisementsConfig indicates whether the RouteAdvertisements feature is enabled
+	RouteAdvertisementsConfig Config = "RouteAdvertisements"
 )
 
 type ImageID int

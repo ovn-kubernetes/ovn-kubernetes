@@ -851,8 +851,9 @@ UDN isolation mode".
 Host service marking follows the same transport-aware routing decision as
 other gateway configuration. For primary user-defined networks, it is enabled
 for unadvertised overlay networks and networks advertised into the default VRF,
-and disabled for EVPN and non-default-VRF routing. An empty no-overlay
-advertisement mapping does not enable default-VRF service marking.
+and disabled for EVPN and non-default-VRF routing. A no-overlay network that
+no RouteAdvertisements advertises routes through the default VRF, so its
+service marking stays enabled.
 
 Changes to the routing decision refresh the affected network's service rules,
 removing or restoring service marks even when the Service object itself has

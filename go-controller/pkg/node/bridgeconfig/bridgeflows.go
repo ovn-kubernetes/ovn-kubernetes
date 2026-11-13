@@ -295,34 +295,34 @@ func (b *BridgeConfiguration) flowsForDefaultBridge(extraIPs []net.IP) ([]string
 					"actions=ct(commit,zone=%d,table=2)",
 					nodetypes.DefaultOpenFlowCookie, ofPortHost, protoPrefix, protoPrefix,
 					masqSubnet, protoPrefix, svcCIDR, config.Default.HostMasqConntrackZone))
-			if util.IsRouteAdvertisementsEnabled() {
-				// If the UDN is advertised then instead of matching on the masqSubnet
-				// we match on the UDNPodSubnet itself and we also don't SNAT to 169.254.0.2
-				// sample flow: cookie=0xdeff105, duration=1472.742s, table=0, n_packets=9, n_bytes=666, priority=550
-				//              ip,in_port=LOCAL,nw_src=103.103.0.0/16,nw_dst=10.96.0.0/16 actions=ct(commit,table=2,zone=64001)
-				for _, netConfig := range b.patchedNetConfigs() {
-					if netConfig.IsDefaultNetwork() {
+			// If the UDN is advertised then instead of matching on the masqSubnet
+			// we match on the UDNPodSubnet itself and we also don't SNAT to 169.254.0.2
+			// sample flow: cookie=0xdeff105, duration=1472.742s, table=0, n_packets=9, n_bytes=666, priority=550
+			//              ip,in_port=LOCAL,nw_src=103.103.0.0/16,nw_dst=10.96.0.0/16 actions=ct(commit,table=2,zone=64001)
+			// Advertised is also set for no-overlay networks, which need these
+			// flows even when the RouteAdvertisements feature is disabled.
+			for _, netConfig := range b.patchedNetConfigs() {
+				if netConfig.IsDefaultNetwork() {
+					continue
+				}
+				if netConfig.Advertised.Load() {
+					var udnAdvertisedSubnets []*net.IPNet
+					for _, clusterEntry := range netConfig.Subnets {
+						udnAdvertisedSubnets = append(udnAdvertisedSubnets, clusterEntry.CIDR)
+					}
+					matchingIPFamilySubnets := matchIPNetFamily(utilnet.IsIPv6CIDR(svcCIDR), udnAdvertisedSubnets)
+					if len(matchingIPFamilySubnets) == 0 {
+						klog.Infof("Unable to determine UDN subnet for the provided family isIPV6: %t", utilnet.IsIPv6CIDR(svcCIDR))
 						continue
 					}
-					if netConfig.Advertised.Load() {
-						var udnAdvertisedSubnets []*net.IPNet
-						for _, clusterEntry := range netConfig.Subnets {
-							udnAdvertisedSubnets = append(udnAdvertisedSubnets, clusterEntry.CIDR)
-						}
-						matchingIPFamilySubnets := matchIPNetFamily(utilnet.IsIPv6CIDR(svcCIDR), udnAdvertisedSubnets)
-						if len(matchingIPFamilySubnets) == 0 {
-							klog.Infof("Unable to determine UDN subnet for the provided family isIPV6: %t", utilnet.IsIPv6CIDR(svcCIDR))
-							continue
-						}
 
-						for _, matchingIPFamilySubnet := range matchingIPFamilySubnets {
-							// Use the filtered subnet for the flow compute instead of the masqueradeIP
-							dftFlows = append(dftFlows,
-								fmt.Sprintf("cookie=%s, priority=550, in_port=%s, %s, %s_src=%s, %s_dst=%s, "+
-									"actions=ct(commit,zone=%d,table=2)",
-									nodetypes.DefaultOpenFlowCookie, ofPortHost, protoPrefix, protoPrefix,
-									matchingIPFamilySubnet.String(), protoPrefix, svcCIDR, config.Default.HostMasqConntrackZone))
-						}
+					for _, matchingIPFamilySubnet := range matchingIPFamilySubnets {
+						// Use the filtered subnet for the flow compute instead of the masqueradeIP
+						dftFlows = append(dftFlows,
+							fmt.Sprintf("cookie=%s, priority=550, in_port=%s, %s, %s_src=%s, %s_dst=%s, "+
+								"actions=ct(commit,zone=%d,table=2)",
+								nodetypes.DefaultOpenFlowCookie, ofPortHost, protoPrefix, protoPrefix,
+								matchingIPFamilySubnet.String(), protoPrefix, svcCIDR, config.Default.HostMasqConntrackZone))
 					}
 				}
 			}
@@ -439,7 +439,9 @@ func (b *BridgeConfiguration) flowsForDefaultBridge(extraIPs []net.IP) ([]string
 			if netConfig.IsDefaultNetwork() {
 				continue
 			}
-			if util.IsRouteAdvertisementsEnabled() && netConfig.Advertised.Load() {
+			// Advertised is also set for no-overlay networks, which need these
+			// flows even when the RouteAdvertisements feature is disabled.
+			if netConfig.Advertised.Load() {
 				var udnAdvertisedSubnets []*net.IPNet
 				for _, clusterEntry := range netConfig.Subnets {
 					udnAdvertisedSubnets = append(udnAdvertisedSubnets, clusterEntry.CIDR)
@@ -482,7 +484,9 @@ func (b *BridgeConfiguration) flowsForDefaultBridge(extraIPs []net.IP) ([]string
 			if netConfig.IsDefaultNetwork() {
 				continue
 			}
-			if util.IsRouteAdvertisementsEnabled() && netConfig.Advertised.Load() {
+			// Advertised is also set for no-overlay networks, which need these
+			// flows even when the RouteAdvertisements feature is disabled.
+			if netConfig.Advertised.Load() {
 				var udnAdvertisedSubnets []*net.IPNet
 				for _, clusterEntry := range netConfig.Subnets {
 					udnAdvertisedSubnets = append(udnAdvertisedSubnets, clusterEntry.CIDR)

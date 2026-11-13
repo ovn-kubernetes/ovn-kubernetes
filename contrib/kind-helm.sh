@@ -616,8 +616,11 @@ ensure_sysctl_min() {
 helm_prereqs() {
     ensure_sysctl_min fs.inotify.max_user_watches 524288
     ensure_sysctl_min fs.inotify.max_user_instances 512
+    # pod IPs cross the kind docker bridge when the default network is advertised
+    # or when unmanaged no-overlay without RAs routes them statically
     if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ] ||
-       [ "$OVN_UPLINK_BRIDGE" == true ]; then
+       [ "$OVN_UPLINK_BRIDGE" == true ] ||
+       is_default_network_unmanaged_no_overlay_without_ra; then
       disable_bridge_netfilter
     fi
 }
@@ -797,6 +800,9 @@ if [ "$KIND_ADD_NODES" == true ]; then
   if [ "$OVN_UPLINK_BRIDGE" == true ]; then
     configure_kind_uplink_bridge
   fi
+  configure_no_overlay_unmanaged_no_ra_static_routes
+  # self-gated on needs_host_pod_subnet_routes
+  configure_pod_subnet_routes_on_runner_host
   exit 0
 fi
 
@@ -849,15 +855,15 @@ if [ "$OVN_ENABLE_DNSNAMERESOLVER" == true ]; then
     add_ocp_dnsnameresolver_to_coredns_config
     update_coredns_deployment_image
 fi
+if needs_external_frr_router; then
+  deploy_frr_external_container
+  deploy_bgp_external_server
+fi
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
   frr_port=0
   if [ "$ENABLE_NO_OVERLAY_MANAGED_ROUTING" == true ]; then
     # Enable bgp port listening on node, required for managed mode. FRR will listen on port 179 to receive BGP updates from other nodes.
     frr_port=179
-  elif [ "${DPU_MODE}" != "host" ]; then
-    # external FRR is required for unmanaged mode where the FRR-K8S speakers run.
-    deploy_frr_external_container
-    deploy_bgp_external_server
   fi
   if [ "${DPU_MODE}" == "host" ]; then
     install_frr_k8s_crds
@@ -926,6 +932,7 @@ if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ] && [ "${DPU_MODE}" != "host" ]; th
     configure_frr_uplink_peers
   fi
 fi
+configure_no_overlay_unmanaged_no_ra_static_routes
 
 restart_dpu_sim_system_deployments_after_ovnk
 

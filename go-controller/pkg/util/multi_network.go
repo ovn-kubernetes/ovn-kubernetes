@@ -28,6 +28,8 @@ import (
 
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	ratypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
+	apitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
@@ -2113,6 +2115,39 @@ func IsRouteAdvertisementsEnabled() bool {
 	return config.OVNKubernetesFeature.EnableMultiNetwork && config.OVNKubernetesFeature.EnableRouteAdvertisements
 }
 
+// MayAdvertisePodNetworks returns true when some network can be considered
+// advertised at a node by IsPodNetworkAdvertisedAtNode: through the
+// RouteAdvertisements feature, or through no-overlay transport, which is
+// supported without that feature for the default network (via config) and for
+// CUDNs (via network segmentation). Datapath pieces shared by all advertised
+// networks must be set up under this condition.
+func MayAdvertisePodNetworks() bool {
+	return IsRouteAdvertisementsEnabled() ||
+		config.Default.Transport == types.NetworkTransportNoOverlay ||
+		IsNetworkSegmentationSupportEnabled()
+}
+
+// RASelectsDefaultNetwork returns true when the RouteAdvertisements selects
+// the default network.
+func RASelectsDefaultNetwork(ra *ratypes.RouteAdvertisements) bool {
+	if ra == nil {
+		return false
+	}
+	for _, networkSelector := range ra.Spec.NetworkSelectors {
+		if networkSelector.NetworkSelectionType == apitypes.DefaultNetwork {
+			return true
+		}
+	}
+	return false
+}
+
+// RAAdvertisesDefaultNetwork returns true when the RouteAdvertisements
+// advertises the default network pod subnets, regardless of its status.
+func RAAdvertisesDefaultNetwork(ra *ratypes.RouteAdvertisements) bool {
+	return ra != nil && slices.Contains(ra.Spec.Advertisements, ratypes.PodNetwork) &&
+		RASelectsDefaultNetwork(ra)
+}
+
 func IsEVPNEnabled() bool {
 	return IsRouteAdvertisementsEnabled() && config.Gateway.Mode == config.GatewayModeLocal && config.OVNKubernetesFeature.EnableEVPN
 }
@@ -2166,13 +2201,18 @@ func IsPodNetworkAdvertisedAtNode(netInfo NetInfo, node string) bool {
 // IsPodNetworkAdvertisedAtNodeDefaultVRF returns true if the pod network is
 // advertised at the given node in the default VRF. For networks with EVPN
 // transport this always returns false as those networks should not be
-// advertised in the default VRF.
+// advertised in the default VRF. A no-overlay network that no
+// RouteAdvertisements advertises is advertised in the default VRF, as with the
+// default RouteAdvertisements targetVRF.
 func IsPodNetworkAdvertisedAtNodeDefaultVRF(netInfo NetInfo, node string) bool {
+	vrfs := netInfo.GetPodNetworkAdvertisedOnNodeVRFs(node)
 	switch netInfo.Transport() {
 	case types.NetworkTransportEVPN:
 		return false
+	case types.NetworkTransportNoOverlay:
+		return len(vrfs) == 0 || slices.Contains(vrfs, types.DefaultNetworkName)
 	default:
-		return slices.Contains(netInfo.GetPodNetworkAdvertisedOnNodeVRFs(node), types.DefaultNetworkName)
+		return slices.Contains(vrfs, types.DefaultNetworkName)
 	}
 }
 

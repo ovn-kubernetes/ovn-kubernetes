@@ -447,7 +447,9 @@ func (cm *ControllerManager) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to init default network controller: %v", err)
 	}
 
-	if util.IsRouteAdvertisementsEnabled() {
+	// The advertised-network isolation port group is consumed by every
+	// network that IsPodNetworkAdvertisedAtNode considers advertised.
+	if util.MayAdvertisePodNetworks() {
 		if err := ovn.ConfigureAdvertisedNetworkIsolation(cm.nbClient); err != nil {
 			return fmt.Errorf("failed to initialize advertised network isolation: %w", err)
 		}
