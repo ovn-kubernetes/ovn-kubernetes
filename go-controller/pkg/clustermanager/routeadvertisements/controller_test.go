@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"net"
+	"net/http"
 	"os"
 	"slices"
 	"strings"
@@ -20,6 +22,7 @@ import (
 
 	nadtypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	frrapi "github.com/metallb/frr-k8s/api/v1beta1"
+	frrclientset "github.com/metallb/frr-k8s/pkg/client/clientset/versioned"
 	frrfake "github.com/metallb/frr-k8s/pkg/client/clientset/versioned/fake"
 	frrlisters "github.com/metallb/frr-k8s/pkg/client/listers/api/v1beta1"
 	"github.com/onsi/gomega"
@@ -33,6 +36,8 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/client-go/rest"
+	restfake "k8s.io/client-go/rest/fake"
 	ctesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
@@ -221,6 +226,169 @@ func (tn testNode) Node() *corev1.Node {
 			Generation:  int64(tn.Generation),
 			Annotations: annotations,
 		},
+	}
+}
+
+func writeTestConfig(key string) *frrapi.FRRConfiguration {
+	return &frrapi.FRRConfiguration{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace:    "test",
+			GenerateName: generateName,
+			Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+			Annotations: map[string]string{
+				types.OvnRouteAdvertisementsKey:          "ra/source/" + key,
+				types.OvnRouteAdvertisementsValidatedKey: "true",
+			},
+		},
+		Spec: frrapi.FRRConfigurationSpec{
+			NodeSelector: metav1.LabelSelector{MatchLabels: map[string]string{"kubernetes.io/hostname": key}},
+		},
+	}
+}
+
+// TestUpdateFRRConfigurationsParallelWrites verifies that creates overlap and
+// obsolete configurations are only deleted after those creates finish.
+func TestUpdateFRRConfigurationsParallelWrites(t *testing.T) {
+	// This test relies on frrConfigurationWriteWorkers allowing all four
+	// creates to run concurrently; it does not check the upper concurrency bound.
+	//
+	// 1. Prepare four missing configurations and one obsolete configuration.
+	// 2. Hold create responses open in an in-memory API transport.
+	// 3. Verify all four creates start before any response is released, with
+	//    no deletion while the creates are blocked.
+	// 4. Release the create responses successfully.
+	// 5. Verify the obsolete configuration is deleted and reconciliation
+	//    returns hadUpdates=true with no error.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+	obsolete := writeTestConfig("obsolete")
+	obsolete.Name = "obsolete"
+	if err := indexer.Add(obsolete); err != nil {
+		t.Fatal(err)
+	}
+	var desired []*frrapi.FRRConfiguration
+	for i := range 4 {
+		desired = append(desired, writeTestConfig(fmt.Sprintf("node-%d", i)))
+	}
+
+	started := make(chan struct{}, 4)
+	release := make(chan struct{})
+	var completed, deletes atomic.Int32
+	// Fake-client reactors are serialized; an in-memory transport lets us
+	// hold responses open while other requests start.
+	httpClient := restfake.CreateHTTPClient(func(req *http.Request) (*http.Response, error) {
+		switch req.Method {
+		case http.MethodPost:
+			started <- struct{}{}
+			select {
+			case <-release:
+			case <-req.Context().Done():
+				return nil, req.Context().Err()
+			}
+			completed.Add(1)
+		case http.MethodDelete:
+			if completed.Load() != 4 {
+				t.Error("deleted obsolete configuration before all creates finished")
+			}
+			deletes.Add(1)
+		default:
+			t.Errorf("unexpected API method: %s", req.Method)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader("{}")),
+		}, nil
+	})
+	client, err := frrclientset.NewForConfigAndClient(&rest.Config{Host: "http://frr.test"}, httpClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &Controller{frrClient: client, frrLister: frrlisters.NewFRRConfigurationLister(indexer)}
+	done := make(chan struct{})
+	var changed bool
+	var writeErr error
+	go func() {
+		changed, writeErr = c.updateFRRConfigurations(ctx, "ra", desired)
+		close(done)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+	// A sequential implementation cannot start all four creates while their
+	// responses are blocked.
+	for range 4 {
+		select {
+		case <-started:
+		case <-ctx.Done():
+			t.Fatal("four creates did not start concurrently")
+		}
+	}
+	if deletes.Load() != 0 {
+		t.Fatal("deleted obsolete configuration while creates were blocked")
+	}
+	close(release)
+	select {
+	case <-done:
+	case <-ctx.Done():
+		t.Fatal("reconciliation did not finish")
+	}
+	if writeErr != nil || !changed {
+		t.Fatalf("changed=%t, err=%v", changed, writeErr)
+	}
+	if deletes.Load() != 1 {
+		t.Errorf("deletes=%d, want 1", deletes.Load())
+	}
+}
+
+func TestUpdateFRRConfigurationsWriteFailures(t *testing.T) {
+	// 1. Prepare failing create/update operations and an obsolete configuration.
+	// 2. Include a successful create in the partial-failure case.
+	// 3. Verify both errors are returned and cleanup is skipped in either case.
+	//    hadUpdates is true only when the successful create was included.
+	for _, scenario := range []string{"partial failure", "all writes fail"} {
+		t.Run(scenario, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+			obsolete := writeTestConfig("obsolete")
+			obsolete.Name = "obsolete"
+			old := writeTestConfig("update")
+			old.Name = "existing"
+			old.ResourceVersion = "123"
+			old.Spec = frrapi.FRRConfigurationSpec{}
+			g.Expect(indexer.Add(obsolete)).To(gomega.Succeed())
+			g.Expect(indexer.Add(old)).To(gomega.Succeed())
+
+			client := frrfake.NewSimpleClientset(obsolete.DeepCopy(), old.DeepCopy())
+			createErr, updateErr := errors.New("create failed"), errors.New("update failed")
+			client.PrependReactor("create", "frrconfigurations", func(action ctesting.Action) (bool, runtime.Object, error) {
+				cfg := action.(ctesting.CreateAction).GetObject().(*frrapi.FRRConfiguration)
+				if cfg.Name == "success" {
+					return false, nil, nil
+				}
+				return true, nil, createErr
+			})
+			client.PrependReactor("update", "frrconfigurations", func(ctesting.Action) (bool, runtime.Object, error) {
+				return true, nil, updateErr
+			})
+			desired := []*frrapi.FRRConfiguration{writeTestConfig("create"), writeTestConfig("update")}
+			if scenario == "partial failure" {
+				success := writeTestConfig("success")
+				success.Name = "success"
+				desired = append(desired, success)
+			}
+
+			c := &Controller{frrClient: client, frrLister: frrlisters.NewFRRConfigurationLister(indexer)}
+			changed, err := c.updateFRRConfigurations(context.Background(), "ra", desired)
+			g.Expect(changed).To(gomega.Equal(scenario == "partial failure"))
+			g.Expect(errors.Is(err, createErr)).To(gomega.BeTrue(), "retain the create error")
+			g.Expect(errors.Is(err, updateErr)).To(gomega.BeTrue(), "retain the update error")
+			for _, action := range client.Actions() {
+				g.Expect(action.GetVerb()).NotTo(gomega.Equal("delete"), "skip cleanup after write failures")
+			}
+		})
 	}
 }
 
