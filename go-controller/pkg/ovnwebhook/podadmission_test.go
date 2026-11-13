@@ -422,6 +422,132 @@ func TestPodAdmission_ValidateUpdate(t *testing.T) {
 			},
 			expectedErr: fmt.Errorf("%s node: %q is not allowed to set the following annotations on pod: \"testpod\": [pod-annotation-invalid1]", additionalNamePrefix, nodeName),
 		},
+		{
+			name: "additional acceptance conditions cannot modify ovnkube-node annotations",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: nodeName,
+				},
+			},
+			ctx: admission.NewContextWithRequest(context.TODO(), admission.Request{
+				AdmissionRequest: admv1.AdmissionRequest{UserInfo: authenticationv1.UserInfo{
+					Username: additionalUserName,
+				}},
+			}),
+			oldObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        podName,
+					Annotations: map[string]string{types.OvnPodAnnotationName: "old"},
+				},
+				Spec: corev1.PodSpec{NodeName: nodeName},
+			},
+			newObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        podName,
+					Annotations: map[string]string{types.OvnPodAnnotationName: "new"},
+				},
+				Spec: corev1.PodSpec{NodeName: nodeName},
+			},
+			expectedErr: fmt.Errorf("%s node: %q is not allowed to set the following annotations on pod: %q: [%s]", additionalNamePrefix, nodeName, podName, types.OvnPodAnnotationName),
+		},
+		{
+			name: "additional acceptance conditions cannot modify allowed annotations on pods on other nodes",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: nodeName,
+				},
+			},
+			ctx: admission.NewContextWithRequest(context.TODO(), admission.Request{
+				AdmissionRequest: admv1.AdmissionRequest{UserInfo: authenticationv1.UserInfo{
+					Username: additionalUserName,
+				}},
+			}),
+			oldObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        podName,
+					Annotations: map[string]string{"pod-annotation-valid1": "old"},
+				},
+				Spec: corev1.PodSpec{NodeName: "other-node"},
+			},
+			newObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        podName,
+					Annotations: map[string]string{"pod-annotation-valid1": "new"},
+				},
+				Spec: corev1.PodSpec{NodeName: "other-node"},
+			},
+			expectedErr: fmt.Errorf("%s on node: %q is not allowed to modify pods %q annotations", additionalNamePrefix, nodeName, podName),
+		},
+		{
+			name: "additional acceptance conditions cannot modify anything other than annotations",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: nodeName,
+				},
+			},
+			ctx: admission.NewContextWithRequest(context.TODO(), admission.Request{
+				AdmissionRequest: admv1.AdmissionRequest{UserInfo: authenticationv1.UserInfo{
+					Username: additionalUserName,
+				}},
+			}),
+			oldObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: podName, Labels: map[string]string{"key": "old"}},
+				Spec:       corev1.PodSpec{NodeName: nodeName},
+			},
+			newObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: podName, Labels: map[string]string{"key": "new"}},
+				Spec:       corev1.PodSpec{NodeName: nodeName},
+			},
+			expectedErr: fmt.Errorf("%s on node: %q is not allowed to modify anything other than annotations", additionalNamePrefix, nodeName),
+		},
+		{
+			name: "additional acceptance conditions cannot modify pod status",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: nodeName,
+				},
+			},
+			ctx: admission.NewContextWithRequest(context.TODO(), admission.Request{
+				AdmissionRequest: admv1.AdmissionRequest{UserInfo: authenticationv1.UserInfo{
+					Username: additionalUserName,
+				}},
+			}),
+			oldObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: podName},
+				Spec:       corev1.PodSpec{NodeName: nodeName},
+				Status:     corev1.PodStatus{Phase: corev1.PodPending},
+			},
+			newObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: podName},
+				Spec:       corev1.PodSpec{NodeName: nodeName},
+				Status:     corev1.PodStatus{Phase: corev1.PodRunning},
+			},
+			expectedErr: fmt.Errorf("%s on node: %q is not allowed to modify anything other than annotations", additionalNamePrefix, nodeName),
+		},
+		{
+			name: "additional acceptance conditions annotations are not protected from other users",
+			node: &corev1.Node{},
+			ctx: admission.NewContextWithRequest(context.TODO(), admission.Request{
+				AdmissionRequest: admv1.AdmissionRequest{UserInfo: authenticationv1.UserInfo{
+					Username: "system:nodes:node",
+				}},
+			}),
+			oldObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        podName,
+					Annotations: map[string]string{"pod-annotation-valid1": "old"},
+				},
+				Spec: corev1.PodSpec{NodeName: "other-node"},
+			},
+			newObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        podName,
+					Annotations: map[string]string{"pod-annotation-valid1": "new"},
+				},
+				Spec: corev1.PodSpec{NodeName: "other-node"},
+			},
+			expectedErr: nil,
+		},
 	}
 
 	allowedPodAnnotations := []string{"pod-annotation-valid1"}
