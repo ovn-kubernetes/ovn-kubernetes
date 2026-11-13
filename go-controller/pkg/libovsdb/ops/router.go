@@ -332,13 +332,11 @@ func GetLogicalRouterPolicy(nbClient libovsdbclient.Client, policy *nbdb.Logical
 	return found[0], nil
 }
 
-// CreateOrUpdateLogicalRouterPolicyWithPredicate looks up a logical router
-// policy from the cache based on a given predicate. If it does not exist, it
-// creates the provided logical router policy. If it does, it updates it. The
-// logical router policy is added to the provided logical router.
-// fields determines which columns to updated. Passing no fields is assumes
-// all fields need to be updated. Passing a single nil field indicates no fields should be updated.
-// Otherwise a caller may pass as many individual fields as desired to specify which columsn need updating.
+// CreateOrUpdateLogicalRouterPolicyWithPredicate creates or updates a policy and
+// attaches it to the named router. A policy UUID takes precedence over the
+// predicate; otherwise, only policies attached to that router are considered.
+// With no fields specified, all non-default columns are updated. Passing a
+// single nil field skips column updates.
 func CreateOrUpdateLogicalRouterPolicyWithPredicate(nbClient libovsdbclient.Client, routerName string, lrp *nbdb.LogicalRouterPolicy, p logicalRouterPolicyPredicate, fields ...interface{}) error {
 	ops, err := CreateOrUpdateLogicalRouterPolicyWithPredicateOps(nbClient, nil, routerName, lrp, p, fields...)
 	if err != nil {
@@ -349,13 +347,25 @@ func CreateOrUpdateLogicalRouterPolicyWithPredicate(nbClient libovsdbclient.Clie
 	return err
 }
 
-// CreateOrUpdateLogicalRouterPolicyWithPredicateOps looks up a logical
-// router policy from the cache based on a given predicate. If it does not
-// exist, it creates the provided logical router policy. If it does, it
-// updates it. The logical router policy is added to the provided logical
-// router. Returns the corresponding ops
+// CreateOrUpdateLogicalRouterPolicyWithPredicateOps creates or updates a policy,
+// attaches it to the named router, and returns the corresponding ops. A policy
+// UUID takes precedence over the predicate; otherwise, only policies attached to
+// that router are considered. Duplicate checks apply when creating a new policy.
 func CreateOrUpdateLogicalRouterPolicyWithPredicateOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation,
 	routerName string, lrp *nbdb.LogicalRouterPolicy, p logicalRouterPolicyPredicate, fields ...interface{}) ([]ovsdb.Operation, error) {
+	if lrp.UUID == "" {
+		existing, err := FindALogicalRouterPoliciesWithPredicate(nbClient, routerName, p)
+		if err != nil {
+			return nil, fmt.Errorf("unable to find logical router policies on router %s: %w", routerName, err)
+		}
+		if len(existing) > 1 {
+			return nil, fmt.Errorf("found multiple logical router policies matching the predicate on router %s: %w", routerName, errMultipleResults)
+		}
+		if len(existing) == 1 {
+			lrp.UUID = existing[0].UUID
+		}
+	}
+
 	if len(fields) == 0 {
 		fields = onModelUpdatesAllNonDefault()
 	}
@@ -366,7 +376,6 @@ func CreateOrUpdateLogicalRouterPolicyWithPredicateOps(nbClient libovsdbclient.C
 	opModels := []operationModel{
 		{
 			Model:          lrp,
-			ModelPredicate: p,
 			OnModelUpdates: fields,
 			DoAfter:        func() { router.Policies = []string{lrp.UUID} },
 			ErrNotFound:    false,
@@ -404,33 +413,21 @@ func UpdateLogicalRouterPoliciesOps(nbClient libovsdbclient.Client, ops []ovsdb.
 	return m.CreateOrUpdateOps(ops, opModels...)
 }
 
-// DeleteLogicalRouterPolicyWithPredicateOps looks up a logical
-// router policy from the cache based on a given predicate and returns the
-// corresponding ops to delete it and remove it from the provided router.
+// DeleteLogicalRouterPolicyWithPredicateOps looks up logical router policies
+// attached to the named router that match the given predicate and returns the
+// corresponding ops to delete them and remove them from that router. Policies
+// matching the predicate on other routers are left untouched.
 func DeleteLogicalRouterPolicyWithPredicateOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, routerName string, p logicalRouterPolicyPredicate) ([]ovsdb.Operation, error) {
-	router := &nbdb.LogicalRouter{
-		Name: routerName,
-	}
-
-	deleted := []*nbdb.LogicalRouterPolicy{}
-	opModels := []operationModel{
-		{
-			ModelPredicate: p,
-			ExistingResult: &deleted,
-			DoAfter:        func() { router.Policies = extractUUIDsFromModels(&deleted) },
-			ErrNotFound:    false,
-			BulkOp:         true,
-		},
-		{
-			Model:            router,
-			OnModelMutations: []interface{}{&router.Policies},
-			ErrNotFound:      false,
-			BulkOp:           false,
-		},
+	deleted, err := FindALogicalRouterPoliciesWithPredicate(nbClient, routerName, p)
+	if err != nil {
+		if errors.Is(err, libovsdbclient.ErrNotFound) {
+			return ops, nil
+		}
+		return nil, fmt.Errorf("unable to find logical router policies on router %s: %w", routerName, err)
 	}
 
 	m := newModelClient(nbClient)
-	return m.DeleteOps(ops, opModels...)
+	return m.DeleteOps(ops, getDeleteOpModelsForLogicalRouterPolicies(routerName, deleted...)...)
 }
 
 // DeleteLogicalRouterPoliciesWithPredicate looks up logical router policies
