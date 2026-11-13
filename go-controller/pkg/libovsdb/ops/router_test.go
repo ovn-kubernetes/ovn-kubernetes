@@ -11,12 +11,58 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onsi/gomega"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 )
+
+// TestCreateOrUpdateLogicalRouterPolicyWithPredicateOps checks that policy creation and
+// updates are limited to the requested router and can be repeated safely.
+func TestCreateOrUpdateLogicalRouterPolicyWithPredicateOps(t *testing.T) {
+	// Give two routers separate policies with identical match conditions. Change
+	// one router's policy from drop to allow and add a new policy to that router.
+	// Apply both requests twice, then check that the original row was reused, no
+	// duplicate was created, and the other router's policy was left unchanged.
+	// Start each request without a UUID to exercise predicate lookup and reuse.
+	g := gomega.NewWithT(t)
+	existing := &nbdb.LogicalRouterPolicy{
+		UUID: uuid.NewString(), Priority: 100, Match: "ip4.src == 10.0.0.0/24", Action: nbdb.LogicalRouterPolicyActionDrop,
+	}
+	other := existing.DeepCopy()
+	other.UUID = uuid.NewString()
+	router := &nbdb.LogicalRouter{UUID: uuid.NewString(), Name: "router", Policies: []string{existing.UUID}}
+	otherRouter := &nbdb.LogicalRouter{UUID: uuid.NewString(), Name: "other-router", Policies: []string{other.UUID}}
+	nbClient, cleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{NBData: []libovsdbtest.TestData{
+		router, otherRouter, existing, other,
+	}}, nil)
+	g.Expect(err).NotTo(gomega.HaveOccurred(), "failed to set up router policy test database")
+	t.Cleanup(cleanup.Cleanup)
+
+	policies := []*nbdb.LogicalRouterPolicy{
+		{Priority: 100, Match: existing.Match, Action: nbdb.LogicalRouterPolicyActionAllow},
+		{Priority: 100, Match: "ip4.src == 10.1.0.0/24", Action: nbdb.LogicalRouterPolicyActionAllow},
+	}
+	for _, policy := range policies {
+		// Apply twice to check both creation/update and idempotency.
+		for attempt := range 2 {
+			policy.UUID = ""
+			ops, err := CreateOrUpdateLogicalRouterPolicyWithPredicateOps(nbClient, nil, router.Name, policy, func(item *nbdb.LogicalRouterPolicy) bool {
+				return item.Priority == policy.Priority && item.Match == policy.Match
+			})
+			g.Expect(err).NotTo(gomega.HaveOccurred(), "failed to build operations for policy %q on router %q (attempt %d)", policy.Match, router.Name, attempt+1)
+			_, err = TransactAndCheck(nbClient, ops)
+			g.Expect(err).NotTo(gomega.HaveOccurred(), "failed to apply policy %q on router %q (attempt %d)", policy.Match, router.Name, attempt+1)
+		}
+	}
+
+	g.Expect(policies[0].UUID).To(gomega.Equal(existing.UUID), "updating policy %q should reuse its UUID", existing.Match)
+	router.Policies = []string{policies[0].UUID, policies[1].UUID}
+	g.Expect(nbClient).To(libovsdbtest.HaveDataExact(router, otherRouter, policies[0], policies[1], other),
+		"expected exactly two policies on router %q and no changes to router %q or its policy", router.Name, otherRouter.Name)
+}
 
 func TestGetRouterLogicalRouterStaticRoutesWithPredicate(t *testing.T) {
 	route1 := &nbdb.LogicalRouterStaticRoute{

@@ -515,7 +515,11 @@ func TestAddSameNodeIPPolicy(t *testing.T) {
 	}
 }
 
+// TestAddHostCIDRPolicy checks host-CIDR policy creation and sharing across Layer2 networks.
 func TestAddHostCIDRPolicy(t *testing.T) {
+	// Add IPv4 and IPv6 host-CIDR policies to a Layer2 network, then test two
+	// networks with identical subnets. Check that both gateway routers reuse
+	// the same policy row when their priority and match are identical.
 	const (
 		node1Name              = "node1"
 		hostCIDRV4RangeStr     = "192.168.1.0/24"
@@ -561,6 +565,17 @@ func TestAddHostCIDRPolicy(t *testing.T) {
 		}
 	)
 
+	otherNetInfo, err := util.NewNetInfo(&ovncnitypes.NetConf{
+		NetConf:    cnitypes.NetConf{Name: "network2"},
+		Topology:   types.Layer2Topology,
+		JoinSubnet: joinSubnetIPv4Str,
+		Subnets:    clusterSubnetIPv4Str + "," + clusterSubnetIPv6Str,
+	})
+	if err != nil {
+		t.Fatalf("failed to create second Layer2 network: %v", err)
+	}
+	otherNetwork := network{info: otherNetInfo, mgntIPv4: node1UDNMgntIPv4Str, mgntIPv6: node1UDNMgntIPv6Str}
+
 	tests := []test{
 		{
 			desc: "[udn][l2][ipv4][ipv6] add hostCIDR policy for L2",
@@ -601,6 +616,37 @@ func TestAddHostCIDRPolicy(t *testing.T) {
 					ExternalIDs: map[string]string{
 						types.NetworkExternalID:  udnL2Network.info.GetNetworkName(),
 						types.TopologyExternalID: udnL2Network.info.TopologyType(),
+					},
+				},
+			},
+		},
+		{
+			desc: "[udn][l2][ipv4] share hostCIDR policy across networks with identical subnets",
+			addPolicies: []policy{
+				{targetNetwork: udnNetworkName, hostInfCIDR: hostCIDRV4Range},
+				{targetNetwork: otherNetInfo.GetNetworkName(), hostInfCIDR: hostCIDRV4Range},
+			},
+			initialDB: networks{udnL2Network, otherNetwork},
+			expectedDB: []libovsdbtest.TestData{
+				&nbdb.LogicalRouter{
+					UUID:     "first-udn-gr-uuid",
+					Name:     l2NetInfo.GetNetworkScopedGWRouterName(node1Name),
+					Policies: []string{"shared-host-cidr-policy"},
+				},
+				&nbdb.LogicalRouter{
+					UUID:     "second-udn-gr-uuid",
+					Name:     otherNetInfo.GetNetworkScopedGWRouterName(node1Name),
+					Policies: []string{"shared-host-cidr-policy"},
+				},
+				&nbdb.LogicalRouterPolicy{
+					UUID:     "shared-host-cidr-policy",
+					Priority: hostCIDRPolicyPrio,
+					Match:    generateHostCIDRMatch(v4Prefix, hostCIDRV4RangeStr, clusterSubnetIPv4Str),
+					Action:   nbdb.LogicalRouterPolicyActionReroute,
+					Nexthops: []string{node1UDNMgntIPv4Str},
+					ExternalIDs: map[string]string{
+						types.NetworkExternalID:  udnNetworkName,
+						types.TopologyExternalID: types.Layer2Topology,
 					},
 				},
 			},
