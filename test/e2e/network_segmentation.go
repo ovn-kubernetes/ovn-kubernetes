@@ -1741,6 +1741,98 @@ spec:
 		}))
 	})
 
+	It("should report an error when the user defined subnet overlaps the join subnet (layer3)", func(ctx SpecContext) {
+		const udnName = "udn-join-overlap"
+
+		By("creating a primary layer3 UserDefinedNetwork whose subnet overlaps the UDN join subnet")
+		// 100.65.0.0/16 (v4) and fd99::/48 (v6) overlap the default user defined
+		// network join subnets, so the network must fail to create.
+		overlapParams := networkAttachmentConfigParams{
+			name:     udnName,
+			topology: "layer3",
+			role:     "primary",
+			cidr:     "100.65.0.0/16,fd99::/48",
+		}
+		cleanup, err := createManifest(f.Namespace.Name, generateUserDefinedNetworkManifest(&overlapParams, cs))
+		DeferCleanup(cleanup)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() {
+			_, _ = e2ekubectl.RunKubectl(f.Namespace.Name, "delete", "userdefinednetwork", udnName, "--ignore-not-found")
+		})
+
+		By("asserting the UserDefinedNetwork reports NetworkCreated=false with an overlap message")
+		Eventually(func(g Gomega) {
+			conditionsJSON, err := e2ekubectl.RunKubectl(f.Namespace.Name, "get", "userdefinednetwork", udnName, "-o", "jsonpath={.status.conditions}")
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(conditionsJSON).NotTo(BeEmpty())
+			var conditions []metav1.Condition
+			g.Expect(json.Unmarshal([]byte(conditionsJSON), &conditions)).To(Succeed())
+			found := false
+			for _, condition := range conditions {
+				if condition.Type == "NetworkCreated" && condition.Status == metav1.ConditionFalse &&
+					strings.Contains(condition.Message, "overlap") {
+					found = true
+					break
+				}
+			}
+			g.Expect(found).To(BeTrue(), "expected NetworkCreated=false with an overlap message, got: %s", conditionsJSON)
+		}, 30*time.Second, 2*time.Second).Should(Succeed())
+	})
+
+	It("should generate an event when the user defined network IP pool is exhausted", func(ctx SpecContext) {
+		if !isIPv4Supported(cs) {
+			Skip("this test requires an IPv4 subnet to exhaust")
+		}
+
+		By("selecting a single node to concentrate IP allocation on")
+		nodes, err := e2enode.GetBoundedReadySchedulableNodes(ctx, cs, 1)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(nodes.Items).NotTo(BeEmpty())
+		node := nodes.Items[0].Name
+
+		By("creating a primary layer3 NAD with a tiny per-node host subnet")
+		cidr := "10.200.0.0/16/30"
+		if isIPv6Supported(cs) {
+			cidr += ",2011:100:200::/60"
+		}
+		netConfig := newNetworkAttachmentConfig(networkAttachmentConfigParams{
+			name:        "ipam-exhaust",
+			networkName: "ipam-exhaust",
+			topology:    "layer3",
+			role:        "primary",
+			cidr:        cidr,
+		})
+		netConfig.namespace = f.Namespace.Name
+		_, err = nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
+			context.Background(),
+			generateNAD(netConfig, cs),
+			metav1.CreateOptions{},
+		)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("creating more pods than the /30 host subnet can allocate, all on the same node")
+		for i := 0; i < 5; i++ {
+			pc := podConfig(fmt.Sprintf("exhaust-pod-%d", i), withNodeSelector(map[string]string{nodeHostnameKey: node}))
+			pc.namespace = f.Namespace.Name
+			_, err := cs.CoreV1().Pods(f.Namespace.Name).Create(context.Background(), generatePodSpec(*pc), metav1.CreateOptions{})
+			Expect(err).NotTo(HaveOccurred())
+		}
+
+		By("asserting an IP allocation failure event is generated")
+		Eventually(func(g Gomega) {
+			events, err := cs.CoreV1().Events(f.Namespace.Name).List(context.Background(), metav1.ListOptions{})
+			g.Expect(err).NotTo(HaveOccurred())
+			found := false
+			for _, event := range events.Items {
+				if strings.Contains(event.Message, "failed to allocate new IPs") {
+					found = true
+					break
+				}
+			}
+			g.Expect(found).To(BeTrue(), "expected an event containing 'failed to allocate new IPs'")
+		}, 90*time.Second, 5*time.Second).Should(Succeed())
+	})
+
 	DescribeTable("should manage annotations present when a network is created", func(ctx SpecContext, clusterScoped bool) {
 		name := randomNetworkMetaName()
 		networkSpec := map[string]any{
