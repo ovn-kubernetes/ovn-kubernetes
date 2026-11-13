@@ -15,7 +15,13 @@ OVN should work with any supported OVS release, extra requirements for OVS versi
 - [OVN releases](https://www.ovn.org/en/releases/all_releases/)
 - [OVS release process](https://docs.openvswitch.org/en/latest/internals/release-process/)
 
-Some of the requirements are feature-specific.
+## Linux kernel
+
+The master release requires Linux 4.20 or later, or a kernel with equivalent
+backports providing `NETLINK_GET_STRICT_CHK` and IPv4/IPv6 route dump filtering
+by table and protocol.
+
+Some of the requirements below are feature-specific.
 
 ## UDN
 For kubelet network probes to work with UDN pods, the following are required:

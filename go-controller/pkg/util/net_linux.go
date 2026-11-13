@@ -268,8 +268,71 @@ func (defaultNetLinkOps) RouteListFiltered(family int, filter *netlink.Route, fi
 	return netlink.RouteListFiltered(family, filter, filterMask)
 }
 
+// RouteListFilteredIter streams matching routes to f until f returns false.
+// When the filter only uses fields the kernel can apply to a route dump, it
+// dumps on a dedicated handle with NETLINK_GET_STRICT_CHK so the kernel can
+// filter routes before sending them to userspace. Filters the kernel cannot
+// apply are dumped without strict checking and filtered by the library instead.
+// Client-side filtering is retained in both cases. Strict checking requires
+// Linux 4.20 or a kernel with equivalent backports; failure to enable it is
+// returned as an error. Dump errors may occur after callbacks have run, so
+// callers must discard incomplete results.
 func (defaultNetLinkOps) RouteListFilteredIter(family int, filter *netlink.Route, filterMask uint64, f func(netlink.Route) bool) error {
-	return netlink.RouteListFilteredIter(family, filter, filterMask, f)
+	listRoutes := netlink.RouteListFilteredIter
+	if strictRouteDumpSupported(filter) {
+		h, err := netlink.NewHandle(unix.NETLINK_ROUTE)
+		if err != nil {
+			return fmt.Errorf("failed to create route dump handle: %w", err)
+		}
+		defer h.Close()
+		// Explicit handles do not inherit the package-level socket timeout.
+		if err := h.SetSocketTimeout(netlink.GetSocketTimeout()); err != nil {
+			return fmt.Errorf("failed to set route dump timeout: %w", err)
+		}
+
+		if err := h.SetStrictCheck(true); err != nil {
+			return fmt.Errorf("failed to enable strict route dump checking: %w", err)
+		}
+		listRoutes = h.RouteListFilteredIter
+	}
+
+	if err := listRoutes(family, filter, filterMask, f); err != nil {
+		return fmt.Errorf("failed to list filtered routes: %w", err)
+	}
+	return nil
+}
+
+// strictRouteDumpSupported reports whether filter only sets fields that the
+// kernel applies to a route dump when NETLINK_GET_STRICT_CHK is enabled. Strict
+// checking makes the kernel validate the dump request instead of ignoring the
+// parts it cannot filter on, so the fields the netlink library serialises decide
+// whether the dump succeeds. filterMask is not consulted: it only selects the
+// library's client side comparison and never reaches the request, so a route
+// with Dst set is rejected whether or not RT_FILTER_DST is passed.
+//
+// The family, table, protocol, type and output interface are the kernel's
+// dump filters. Any subset of them is fine, alone or combined, because the copy
+// compared against below is built from filter itself. The remaining fields
+// either fail the request - nonzero scope, destination, source and TOS prefixes
+// ("Invalid values in header for FIB dump request"), and gateway, preferred source,
+// multipath, MPLS, encap, priority, realm, expiry, nexthop ID and metric
+// attributes ("Unsupported attribute in dump request") - or are not serialised.
+// A single populated field outside the copy therefore rejects the whole request,
+// as the kernel does. Comparing against the copy keeps this an allowlist, so a
+// field the library starts serialising later falls back to the client side
+// filtered dump instead of failing with EINVAL.
+func strictRouteDumpSupported(filter *netlink.Route) bool {
+	if filter == nil {
+		return true
+	}
+	supported := &netlink.Route{
+		Family:    filter.Family,
+		Table:     filter.Table,
+		Protocol:  filter.Protocol,
+		Type:      filter.Type,
+		LinkIndex: filter.LinkIndex,
+	}
+	return reflect.DeepEqual(filter, supported)
 }
 
 func (defaultNetLinkOps) RuleListFiltered(family int, filter *netlink.Rule, filterMask uint64) ([]netlink.Rule, error) {
