@@ -16,6 +16,8 @@ import (
 
 	utilnet "k8s.io/utils/net"
 
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set/mocks"
@@ -89,6 +91,38 @@ func generateRR(dnsName, ip, nextQueryTime string) dns.RR {
 		rr, _ = dns.NewRR(dnsName + ".        " + nextQueryTime + "     IN      A       " + ip)
 	}
 	return rr
+}
+
+func TestUpdateAddressSetRecreatesMissingAddressSet(t *testing.T) {
+	const dnsName = "www.test.com"
+	addresses := []string{"192.0.2.10"}
+	staleAddressSet := new(mocks.AddressSet)
+	recreatedAddressSet := new(mocks.AddressSet)
+	factory := new(mocks.AddressSetFactory)
+
+	staleAddressSet.On("SetAddresses", addresses).
+		Return(fmt.Errorf("address set was removed: %w", libovsdbclient.ErrNotFound)).Once()
+	factory.On("EnsureAddressSet", mock.Anything).Return(recreatedAddressSet, nil).Once()
+	recreatedAddressSet.On("SetAddresses", addresses).Return(nil).Once()
+
+	resolver := &EgressDNS{
+		dnsEntries: map[string]*dnsEntry{
+			dnsName: {
+				dnsAddressSet: staleAddressSet,
+			},
+		},
+		addressSetFactory: factory,
+		controllerName:    DefaultNetworkControllerName,
+	}
+
+	require.NoError(t, resolver.updateAddressSet(dnsName, addresses),
+		"missing address set should be recreated and updated")
+	assert.Same(t, recreatedAddressSet, resolver.dnsEntries[dnsName].dnsAddressSet,
+		"recreated address set should replace the stale handle")
+
+	staleAddressSet.AssertExpectations(t)
+	recreatedAddressSet.AssertExpectations(t)
+	factory.AssertExpectations(t)
 }
 
 func TestAdd(t *testing.T) {
