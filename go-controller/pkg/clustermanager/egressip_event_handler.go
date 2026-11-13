@@ -11,6 +11,7 @@ import (
 	ocpcloudnetworkapi "github.com/openshift/api/cloudnetwork/v1"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	cache "k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
@@ -46,39 +47,39 @@ func (h *egressIPClusterControllerEventHandler) AddResource(ctx context.Context,
 			return nil
 		}
 
-		// Initialize the allocator on every update,
+		// Initialize the allocator on every add,
 		// ovnkube-node/cloud-network-config-controller will make sure to
 		// annotate the node with the egressIPConfig, but that might have
 		// happened after we processed the ADD for that object, hence keep
 		// retrying for all UPDATEs.
+		// Track all nodes in the allocator cache to avoid churn on label changes;
+		// selector filtering happens in getSortedEgressData at assignment time.
 		if err := h.eIPC.initEgressIPAllocator(node); err != nil {
 			klog.Warningf("Egress node initialization error: %v", err)
-		}
-		nodeEgressLabel := util.GetNodeEgressLabel()
-		nodeLabels := node.GetLabels()
-		_, hasEgressLabel := nodeLabels[nodeEgressLabel]
-		if hasEgressLabel {
-			// A node is only assignable when its host-cidrs annotation is
-			// present, parseable, and non-empty; without addresses the
-			// conflict check has no data for this node.
-			hostCIDRs, err := util.ParseNodeHostCIDRsDropNetMask(node)
-			nodeIsAssignable := err == nil && hostCIDRs.Len() > 0
-			if err != nil {
-				klog.Warningf("Node %s is not egress-assignable: failed to parse host-cidrs: %v", node.Name, err)
-			} else if hostCIDRs.Len() == 0 {
-				klog.Warningf("Node %s is not egress-assignable: host-cidrs contains no host CIDRs", node.Name)
-			}
-			h.eIPC.setNodeEgressAssignable(node.Name, nodeIsAssignable)
 		}
 		isReady := h.eIPC.isEgressNodeReady(node)
 		if isReady {
 			h.eIPC.setNodeEgressReady(node.Name, true)
 		}
-		isReachable := h.eIPC.isEgressNodeReachable(node)
-		if hasEgressLabel && isReachable && isReady {
+
+		isReachable := h.eIPC.isEgressNodeReachable(node.Name)
+		if isReachable {
 			h.eIPC.setNodeEgressReachable(node.Name, true)
-			if err := h.eIPC.addEgressNode(ctx, node.Name); err != nil {
-				return err
+		}
+		// Assignment still requires both ready and reachable. Only wake up the
+		// EIP reconciler if this node can satisfy at least one EgressIP's
+		// selector; calling addEgressNode for every healthy node would cause
+		// needless reconciliation churn for nodes no EIP will ever use.
+		// isHostCIDRsReady was set by initEgressIPAllocator.
+		if isReachable && isReady {
+			if h.eIPC.isNodeHostCIDRsReady(node.Name) {
+				selectors := h.eIPC.getEgressIPNodeSelectors()
+				nodeLabels := labels.Set(node.GetLabels())
+				if selectors.Matches(nodeLabels) {
+					if err := h.eIPC.addEgressNode(ctx, node.Name); err != nil {
+						return err
+					}
+				}
 			}
 		}
 	case factory.EgressIPType:
@@ -95,8 +96,7 @@ func (h *egressIPClusterControllerEventHandler) AddResource(ctx context.Context,
 
 // UpdateResource updates the specified object in the cluster to its version in newObj according
 // to its type and returns the error, if any, yielded during the object update.
-// The inRetryCache boolean argument is to indicate if the given resource is in the retryCache or not.
-func (h *egressIPClusterControllerEventHandler) UpdateResource(ctx context.Context, oldObj, newObj interface{}, inRetryCache bool) error {
+func (h *egressIPClusterControllerEventHandler) UpdateResource(ctx context.Context, oldObj, newObj interface{}, _ bool) error {
 	switch h.objType {
 	case factory.EgressIPType:
 		oldEIP := oldObj.(*egressipv1.EgressIP)
@@ -111,113 +111,75 @@ func (h *egressIPClusterControllerEventHandler) UpdateResource(ctx context.Conte
 			return nil
 		}
 
-		// Initialize the allocator on every update,
-		// ovnkube-node/cloud-network-config-controller will make sure to
-		// annotate the node with the egressIPConfig, but that might have
-		// happened after we processed the ADD for that object, hence keep
-		// retrying for all UPDATEs.
+		// Early exit if nothing egress-relevant changed (filters out heartbeats).
+		oldNodeLabels := labels.Set(oldNode.GetLabels())
+		newNodeLabels := labels.Set(newNode.GetLabels())
+		labelsChanged := !reflect.DeepEqual(oldNodeLabels, newNodeLabels)
+		isHostCIDRsAltered := util.NodeHostCIDRsAnnotationChanged(oldNode, newNode)
+		isCloudEgressIPConfigAltered := util.CloudEgressIPConfigAnnotationChanged(oldNode, newNode)
+		readinessChanged := h.eIPC.isEgressNodeReady(oldNode) != h.eIPC.isEgressNodeReady(newNode)
+		if !labelsChanged && !readinessChanged && !isHostCIDRsAltered && !isCloudEgressIPConfigAltered {
+			return nil
+		}
+		klog.V(5).Infof("Node %s egress-relevant update: labels=%t readiness=%t hostCIDRs=%t cloudConfig=%t",
+			newNode.Name, labelsChanged, readinessChanged, isHostCIDRsAltered, isCloudEgressIPConfigAltered)
+
+		// Update allocator cache (labels, mgmtIPs, egressIPConfig).
 		if err := h.eIPC.initEgressIPAllocator(newNode); err != nil {
 			klog.Warningf("Egress node initialization error: %v", err)
 		}
-		nodeEgressLabel := util.GetNodeEgressLabel()
-		oldLabels := oldNode.GetLabels()
-		newLabels := newNode.GetLabels()
-		_, oldHadEgressLabel := oldLabels[nodeEgressLabel]
-		_, newHasEgressLabel := newLabels[nodeEgressLabel]
-		// If the node is not labeled for egress assignment, just return
-		// directly, we don't really need to set the ready / reachable
-		// status on this node if the user doesn't care about using it.
-		if !oldHadEgressLabel && !newHasEgressLabel {
-			return nil
-		}
-		// A node is only assignable when it carries the egress-assignable label
-		// and its host-cidrs annotation is present, parseable, and non-empty.
-		// Without addresses the conflict check has no data for this node.
-		oldNodeIsAssignable := oldHadEgressLabel
-		if oldNodeIsAssignable {
-			hostCIDRs, err := util.ParseNodeHostCIDRsDropNetMask(oldNode)
-			oldNodeIsAssignable = err == nil && hostCIDRs.Len() > 0
-		}
 
-		nodeIsAssignable := newHasEgressLabel
-		if nodeIsAssignable {
-			hostCIDRs, err := util.ParseNodeHostCIDRsDropNetMask(newNode)
-			nodeIsAssignable = err == nil && hostCIDRs.Len() > 0
-			if err != nil {
-				klog.Warningf("Node %s is not egress-assignable: failed to parse host-cidrs: %v", newNode.Name, err)
-			} else if hostCIDRs.Len() == 0 {
-				klog.Warningf("Node %s is not egress-assignable: host-cidrs contains no host CIDRs", newNode.Name)
-			}
-		}
-		h.eIPC.setNodeEgressAssignable(newNode.Name, nodeIsAssignable)
-
-		// setNodeEgressAssignable clears the node's allocation cache when it
-		// turns a node unassignable, on the understanding that the caller then
-		// clears that node's assignments too. Release them here to keep the
-		// cache and status.items in agreement. A node that is genuinely gone is
-		// released anyway by the readiness and reachability handling below, so
-		// this only fires for a labelled, reachable node whose annotation stopped
-		// parsing.
-		if newHasEgressLabel && !nodeIsAssignable && (oldNodeIsAssignable || inRetryCache) {
-			klog.Infof("Node: %s is no longer assignable (host-cidrs annotation missing or invalid), "+
-				"deleting it from egress assignment", newNode.Name)
-			h.eIPC.setNodeEgressReady(newNode.Name, h.eIPC.isEgressNodeReady(newNode))
-			if err := h.eIPC.deleteEgressNode(ctx, newNode.Name); err != nil {
-				return fmt.Errorf("failed to delete egress assignments for node %s: %w", newNode.Name, err)
-			}
-			return nil
-		}
-
-		if oldHadEgressLabel && !newHasEgressLabel {
-			klog.Infof("Node: %s has been un-labeled, deleting it from egress assignment", newNode.Name)
-			return h.eIPC.deleteEgressNode(ctx, oldNode.Name)
-		}
-		isOldReady := h.eIPC.isEgressNodeReady(oldNode)
+		// Update cached health flags independently of selector matching and of
+		// each other. Assignment still requires ready && reachable; recording
+		// the flags unconditionally avoids stale cache when a node is not yet
+		// selected or not yet ready.
+		// isHostCIDRsReady is already updated by initEgressIPAllocator above.
 		isNewReady := h.eIPC.isEgressNodeReady(newNode)
-		isNewReachable := h.eIPC.isEgressNodeReachable(newNode)
-		isHostCIDRsAltered := util.NodeHostCIDRsAnnotationChanged(oldNode, newNode)
-		isCloudEgressIPConfigAltered := util.CloudEgressIPConfigAnnotationChanged(oldNode, newNode)
 		h.eIPC.setNodeEgressReady(newNode.Name, isNewReady)
-		if !oldHadEgressLabel && newHasEgressLabel {
-			klog.Infof("Node: %s has been labeled, adding it for egress assignment", newNode.Name)
-			if isNewReady && isNewReachable {
-				h.eIPC.setNodeEgressReachable(newNode.Name, isNewReachable)
-				if err := h.eIPC.addEgressNode(ctx, newNode.Name); err != nil {
-					return err
-				}
-			} else {
-				klog.Warningf("Node: %s has been labeled, but node is not ready"+
-					" and reachable, cannot use it for egress assignment", newNode.Name)
-			}
+		isNewReachable := h.eIPC.isEgressNodeReachable(newNode.Name)
+		h.eIPC.setNodeEgressReachable(newNode.Name, isNewReachable)
+
+		// Check selector match to decide whether assignment reconciliation is needed.
+		selectors := h.eIPC.getEgressIPNodeSelectors()
+		oldMatchesSelector := selectors.Matches(oldNodeLabels)
+		newMatchesSelector := selectors.Matches(newNodeLabels)
+
+		// Neither old nor new matches any selector — health flags are fresh, no
+		// assignment work needed.
+		if !oldMatchesSelector && !newMatchesSelector {
 			return nil
 		}
-		if isOldReady == isNewReady && !isHostCIDRsAltered && !isCloudEgressIPConfigAltered {
-			return nil
+
+		// Node stopped matching all selectors — remove from assignment.
+		if oldMatchesSelector && !newMatchesSelector {
+			klog.Infof("Node: %s no longer matches any EgressIP selector, deleting it from egress assignment", newNode.Name)
+			h.eIPC.clearNodeEgressAllocations(newNode.Name)
+			return h.eIPC.deleteEgressNode(ctx, newNode.Name)
 		}
-		if !isNewReady {
-			klog.Warningf("Node: %s is not ready, deleting it from egress assignment", newNode.Name)
+
+		// Node matches at least one selector. Trigger reconciliation via
+		// deleteEgressNode + addEgressNode. This handles all cases uniformly:
+		// - node started matching (was unselected, now selected)
+		// - label change flipped which selectors match
+		// - readiness/host-cidrs/cloud-config changed
+		// The reconcile path (validateEgressIPStatus) re-checks all conditions
+		// and only reassigns as needed.
+		if oldMatchesSelector {
+			// Was already matching — delete first to evict stale assignments.
 			if err := h.eIPC.deleteEgressNode(ctx, newNode.Name); err != nil {
 				return err
 			}
-		} else if isNewReady && isNewReachable {
-			// Build a log message that captures all reasons we are re-evaluating,
-			// so operators can correlate annotation changes with re-assignments even
-			// when multiple conditions change simultaneously.
-			switch {
-			case isCloudEgressIPConfigAltered && isHostCIDRsAltered:
-				klog.Infof("Node: %s cloud egress IP config annotation and host CIDRs changed, re-evaluating egress IP assignments", newNode.Name)
-			case isCloudEgressIPConfigAltered:
-				klog.Infof("Node: %s cloud egress IP config annotation changed, re-evaluating egress IP assignments", newNode.Name)
-			default:
-				klog.Infof("Node: %s is ready and reachable, adding it for egress assignment", newNode.Name)
-			}
-			h.eIPC.setNodeEgressReachable(newNode.Name, isNewReachable)
+		}
+		if isNewReady && isNewReachable {
 			if err := h.eIPC.addEgressNode(ctx, newNode.Name); err != nil {
 				return err
 			}
+		} else {
+			klog.V(5).Infof("Node: %s matches an EgressIP selector but is not ready/reachable, skipping assignment", newNode.Name)
 		}
+
 		if isHostCIDRsAltered {
-			// we only need to consider EIPs that are assigned to networks that aren't managed by OVN
+			// We only need to consider EIPs that are assigned to networks that aren't managed by OVN.
 			if err := h.eIPC.reconcileSecondaryHostNetworkEIPs(ctx, newNode); err != nil {
 				return fmt.Errorf("failed to reconsider egress IPs that are secondary host networks: %v", err)
 			}
@@ -246,15 +208,12 @@ func (h *egressIPClusterControllerEventHandler) DeleteResource(ctx context.Conte
 			return nil
 		}
 		h.eIPC.deleteNodeForEgress(node)
-		nodeEgressLabel := util.GetNodeEgressLabel()
-		nodeLabels := node.GetLabels()
-		_, hasEgressLabel := nodeLabels[nodeEgressLabel]
-		if hasEgressLabel {
-			if err := h.eIPC.deleteEgressNode(ctx, node.Name); err != nil {
-				return err
-			}
-		}
-		return nil
+		// Always reconcile EgressIPs assigned to this node, regardless of whether
+		// its current labels still match any selector. deleteEgressNode only acts
+		// on EgressIPs that have a status entry on this node (no-op otherwise), so
+		// gating on current labels buys nothing and could strand stale status when
+		// a node's labels diverged from its recorded assignments before deletion.
+		return h.eIPC.deleteEgressNode(ctx, node.Name)
 	case factory.CloudPrivateIPConfigType:
 		cloudPrivateIPConfig := obj.(*ocpcloudnetworkapi.CloudPrivateIPConfig)
 		return h.eIPC.reconcileCloudPrivateIPConfig(ctx, cloudPrivateIPConfig, nil)
