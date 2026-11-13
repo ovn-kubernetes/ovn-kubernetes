@@ -24,7 +24,8 @@ type Engine struct {
 func NewEngine(runtime string, runner api.Runner) *Engine {
 	containerOps := ops.NewContainerOps(runtime, runner)
 	return &Engine{ops: containerOps,
-		externalContainerPort: portalloc.New(12000, 65535)}
+		// upper bound stays below the ephemeral range (net.ipv4.ip_local_port_range)
+		externalContainerPort: portalloc.New(12000, 32767)}
 }
 
 func (p *Engine) ExternalContainerPrimaryInterfaceName() string {
