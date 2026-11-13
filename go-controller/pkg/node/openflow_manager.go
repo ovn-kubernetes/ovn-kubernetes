@@ -4,6 +4,7 @@
 package node
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -13,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 
 	libovsdbcache "github.com/ovn-kubernetes/libovsdb/cache"
@@ -24,6 +26,7 @@ import (
 	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/bridgeconfig"
 	nodetypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
@@ -954,23 +957,6 @@ func stringListsEqual(a, b []string) bool {
 	return true
 }
 
-// getOfport returns the current ofport of the given OVS interface as a string,
-// or "" if the interface does not exist. It errors if the interface exists but
-// has no valid ofport assigned (unset or -1).
-func getOfport(ovsClient libovsdbclient.Client, name string) (string, error) {
-	iface, err := ovsops.GetOVSInterface(ovsClient, name)
-	if err != nil {
-		if errors.Is(err, libovsdbclient.ErrNotFound) {
-			return "", nil
-		}
-		return "", fmt.Errorf("failed to get ofport of %s: %w", name, err)
-	}
-	if iface.Ofport == nil || *iface.Ofport == -1 {
-		return "", fmt.Errorf("interface %s has invalid ofport", name)
-	}
-	return fmt.Sprintf("%d", *iface.Ofport), nil
-}
-
 // checkUplinkBridgePorts runs checkPorts on every uplink bridge and records
 // the bridges whose flows must not be synced until a check passes. An admin
 // may delete an Uplink bridge at any time: its ports vanish from OVSDB with
@@ -1001,7 +987,7 @@ func checkPorts(ovsClient libovsdbclient.Client, netConfigs []*bridgeconfig.Brid
 		if netConfig.OfPortPatch == "" {
 			continue
 		}
-		curOfportPatch, err := getOfport(ovsClient, netConfig.PatchPort)
+		curOfportPatch, err := ovsops.GetOVSInterfaceOfPort(ovsClient, netConfig.PatchPort, true)
 		if err != nil {
 			return err
 		}
@@ -1024,7 +1010,7 @@ func checkPorts(ovsClient libovsdbclient.Client, netConfigs []*bridgeconfig.Brid
 
 	// it could be that someone removed the physical interface and added it back on the OVS host
 	// bridge, as a result the ofport number changed for that physical interface
-	curOfportPhys, err := getOfport(ovsClient, physIntf)
+	curOfportPhys, err := ovsops.GetOVSInterfaceOfPort(ovsClient, physIntf, true)
 	if err != nil {
 		return err
 	}
@@ -1039,17 +1025,10 @@ func checkPorts(ovsClient libovsdbclient.Client, netConfigs []*bridgeconfig.Brid
 // bootstrapOVSFlows handles ensuring basic, required flows are in place. This is done before OpenFlow manager has
 // been created/started, and only done when there is just a NORMAL flow programmed and OVN/OVS is already setup
 func bootstrapOVSFlows(ovsClient libovsdbclient.Client, nodeName string) error {
-	// see if patch port exists already
-	var portsOutput string
-	var stderr string
-	var err error
-	if portsOutput, stderr, err = util.RunOVSVsctl("--no-heading", "--data=bare", "--format=csv", "--columns",
-		"name", "list", "interface"); err != nil {
-		// bridge exists, but could not list ports
-		return fmt.Errorf("failed to list ports on existing bridge br-int: %s, %w", stderr, err)
+	bridge, patchPort, err := defaultNetworkPatchPort(ovsClient, nodeName)
+	if err != nil {
+		return err
 	}
-
-	bridge, patchPort := localnetPortInfo(nodeName, portsOutput)
 
 	if len(bridge) == 0 {
 		// bridge exists but no patch port was found
@@ -1071,10 +1050,10 @@ func bootstrapOVSFlows(ovsClient libovsdbclient.Client, nodeName string) error {
 	klog.Infof("Default NORMAL flow installed on OVS bridge: %s, will bootstrap with required port security flows", bridge)
 
 	// Get ofport of patchPort
-	ofportPatch, stderr, err := util.GetOVSOfPort("get", "Interface", patchPort, "ofport")
+	ofportPatch, err := ovsops.GetOVSInterfaceOfPort(ovsClient, patchPort, false)
 	if err != nil {
 		return fmt.Errorf("failed while waiting on patch port %q to be created by ovn-controller and "+
-			"while getting ofport. stderr: %q, error: %v", patchPort, stderr, err)
+			"while getting ofport: %v", patchPort, err)
 	}
 
 	var bridgeMACAddress net.HardwareAddr
@@ -1084,9 +1063,9 @@ func bootstrapOVSFlows(ovsClient libovsdbclient.Client, nodeName string) error {
 			return err
 		}
 	} else {
-		bridgeMACAddress, err = util.GetOVSPortMACAddress(bridge)
+		bridgeMACAddress, err = waitForBridgeMAC(context.Background(), ovsClient, bridge)
 		if err != nil {
-			return fmt.Errorf("failed to get MAC address for ovs port %s: %w", bridge, err)
+			return err
 		}
 	}
 
@@ -1101,7 +1080,7 @@ func bootstrapOVSFlows(ovsClient libovsdbclient.Client, nodeName string) error {
 			nodetypes.DefaultOpenFlowCookie, ofportPatch))
 	dftFlows = append(dftFlows, "priority=0, table=0, actions=output:NORMAL")
 
-	_, stderr, err = util.ReplaceOFFlows(bridge, dftFlows)
+	_, stderr, err := util.ReplaceOFFlows(bridge, dftFlows)
 	if err != nil {
 		return fmt.Errorf("failed to add flows, error: %v, stderr, %s, flows: %s", err, stderr, dftFlows)
 	}
@@ -1109,20 +1088,63 @@ func bootstrapOVSFlows(ovsClient libovsdbclient.Client, nodeName string) error {
 	return nil
 }
 
-// localnetPortInfo returns the name of the bridge and the patch port name for the default cluster network
-func localnetPortInfo(nodeName string, portsOutput string) (string, string) {
-	// This needs to work with:
-	// - default network: patch-<bridge name>_<node>-to-br-int
-	// but not with:
-	// - user defined primary network: patch-<bridge name>_<network-name>_<node>-to-br-int
-	// - user defined secondary localnet network: patch-<bridge name>_<network-name>_ovn_localnet_port-to-br-int
-	// TODO: going forward, maybe it would preferable to just read the bridge name from the config.
-	r := regexp.MustCompile(fmt.Sprintf("^patch-([^_]*)_%s-to-br-int$", nodeName))
-	for _, line := range strings.Split(portsOutput, "\n") {
-		matches := r.FindStringSubmatch(line)
-		if len(matches) == 2 {
-			return matches[1], matches[0]
-		}
+// This helper deliberately uses the active default-network mapping, not
+// the first matching interface: old gateway bridges may still have ports.
+func defaultNetworkPatchPort(ovsClient libovsdbclient.Client, nodeName string) (string, string, error) {
+	ovs, err := ovsops.GetOpenvSwitch(ovsClient)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to read default-network bridge mapping: %w", err)
 	}
-	return "", ""
+	for _, mapping := range strings.Split(ovs.ExternalIDs["ovn-bridge-mappings"], ",") {
+		physicalNetwork, bridge, ok := strings.Cut(mapping, ":")
+		if !ok || physicalNetwork != types.PhysicalNetworkName || bridge == "" {
+			continue
+		}
+		patchPort := fmt.Sprintf("patch-%s_%s-to-br-int", bridge, nodeName)
+		iface, err := ovsops.GetOVSInterface(ovsClient, patchPort)
+		if errors.Is(err, libovsdbclient.ErrNotFound) {
+			return "", "", nil
+		}
+		if err != nil {
+			return "", "", fmt.Errorf("failed to get default-network patch interface %s: %w", patchPort, err)
+		}
+		owner, err := ovsops.GetPortBridge(ovsClient, patchPort)
+		if errors.Is(err, libovsdbclient.ErrNotFound) {
+			return "", "", nil
+		}
+		if err != nil {
+			return "", "", fmt.Errorf("failed to get bridge for patch port %s: %w", patchPort, err)
+		}
+		if iface.Type == "patch" && owner.Name == bridge {
+			return bridge, patchPort, nil
+		}
+		return "", "", nil
+	}
+	return "", "", nil
+}
+
+func waitForBridgeMAC(ctx context.Context, ovsClient libovsdbclient.Client, bridge string) (net.HardwareAddr, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	var mac net.HardwareAddr
+	err := wait.PollUntilContextTimeout(ctx, 10*time.Millisecond, types.OVSDBTimeout, true,
+		func(context.Context) (bool, error) {
+			iface, err := ovsops.GetOVSInterface(ovsClient, bridge)
+			if errors.Is(err, libovsdbclient.ErrNotFound) {
+				return false, nil
+			}
+			if err != nil {
+				return false, err
+			}
+			if iface.MACInUse == nil || *iface.MACInUse == "" {
+				return false, nil
+			}
+			mac, err = net.ParseMAC(*iface.MACInUse)
+			return err == nil, err
+		})
+	if err != nil {
+		return nil, fmt.Errorf("waiting for MAC in use on OVS bridge %s: %w", bridge, err)
+	}
+	return mac, nil
 }

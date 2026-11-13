@@ -164,7 +164,7 @@ usage: kind-helm.sh [--delete]
 -obs | --observability                        Enable observability. DEFAULT: Disabled
 -upm | --unprivileged-mode                    Run ovnkube-node without privileged: true.
                                               Installs the OVS client tools (ovs-vsctl, ovs-ofctl) on the
-                                              kind nodes, which the CNI plugin needs in this mode.
+                                              kind nodes for diagnostics; CNI operations use libovsdb.
                                               DEFAULT: Disabled
 -el  | --ovn-empty-lb-events                  Enable empty-lb-events generation for LB without backends. DEFAULT: Disabled
 -ii  | --install-ingress                      Flag to install Ingress Components.
@@ -261,9 +261,11 @@ sudo PATH=$PATH:/usr/local/go/bin ./kind.sh -ep podman
 `NET_ADMIN` added to its capabilities. In this mode ovnkube-node only hands
 the CNI plugin, `ovn-k8s-cni-overlay` in `/opt/cni/bin`, the pod's addresses,
 and the plugin running on the node creates the veth, plugs it into `br-int`
-and waits for the OVN binding itself. For that the plugin runs `ovs-vsctl`
-and `ovs-ofctl` from the node's `PATH`, talking to the `ovs-node` pod through
-the sockets it exposes in `/var/run/openvswitch`.
+and waits for the OVN binding itself. The plugin uses a short-lived libovsdb
+client to configure OVS and observe interface readiness through the OVSDB
+socket exposed by the `ovs-node` pod in `/var/run/openvswitch`. It no longer
+requires `ovs-vsctl` or `ovs-ofctl` on the node's `PATH` for these CNI
+operations.
 
 The container's own `/proc/sys` is read-only without `privileged: true`, so
 the chart mounts the host's `/proc/sys/net` at `/host/proc/sys/net` and
@@ -281,8 +283,8 @@ for the workarounds.
 
 The kind node image does not ship these tools, so the script installs the
 `openvswitch-switch` package on every node before deploying OVN-Kubernetes.
-Only `-upm` strictly needs it, but the tools are installed for every
-deployment because they make debugging OVS from the node easier. The
+They are installed for debugging OVS from the node; CNI operations in
+both privileged and unprivileged modes use libovsdb instead. The
 package's systemd units are masked first, so the node never starts OVS
 daemons of its own; only the client binaries are used. Nodes that already
 have both binaries are left untouched.
