@@ -20,26 +20,24 @@ const (
 	podman containerRuntime = "podman"
 )
 
-var engine containerRuntime
+// EnvContainerRuntime selects the container runtime that holds the cluster's
+// node containers. Optional, defaults to docker.
+const EnvContainerRuntime = "CONTAINER_RUNTIME"
 
-func init() {
-	if cr, found := os.LookupEnv("CONTAINER_RUNTIME"); found {
-		switch strings.ToLower(cr) {
-		case docker.String():
-			engine = docker
-		case podman.String():
-			engine = podman
-		default:
-			panic(fmt.Sprintf("unknown container engine %q. Supported engines are docker or podman.", cr))
-		}
-	} else {
-		engine = docker
+// parseContainerRuntime resolves name to a supported container runtime. An
+// empty name falls back to CONTAINER_RUNTIME, then to docker.
+func parseContainerRuntime(name string) (containerRuntime, error) {
+	if name == "" {
+		name = os.Getenv(EnvContainerRuntime)
 	}
-}
-
-func getContainerRuntime() containerRuntime {
-	if engine.String() == "" {
-		panic("container engine is not set")
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "":
+		return docker, nil
+	case docker.String():
+		return docker, nil
+	case podman.String():
+		return podman, nil
+	default:
+		return "", fmt.Errorf("unknown container runtime %q, supported runtimes are %s or %s", name, docker, podman)
 	}
-	return engine
 }
