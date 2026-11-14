@@ -4,6 +4,7 @@
 package clustermanager
 
 import (
+	"context"
 	"testing"
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
@@ -184,6 +185,27 @@ func TestShouldReconcileNodeWhenNetworkSpecificSubnetChanges(t *testing.T) {
 
 	if !ncc.shouldReconcileNode(oldNode, newNode, oldState, newState, false, false) {
 		t.Fatal("expected changed network subnet to trigger reconciliation")
+	}
+}
+
+func TestCleanupWithoutNodeAllocator(t *testing.T) {
+	if err := config.PrepareTestConfig(); err != nil {
+		t.Fatalf("failed to prepare test config: %v", err)
+	}
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+
+	netInfo := mustClusterManagerNetInfo(t, &ovncnitypes.NetConf{
+		NetConf:  cnitypes.NetConf{Name: "blue", Type: "ovn-k8s-cni-overlay"},
+		Topology: types.Layer3Topology,
+		Role:     types.NetworkRolePrimary,
+		Subnets:  "10.1.0.0/16",
+	})
+	// a network that failed to start never got as far as allocating nodes
+	ncc := &networkClusterController{ReconcilableNetInfo: util.NewReconcilableNetInfo(netInfo)}
+
+	if err := ncc.Cleanup(context.Background()); err != nil {
+		t.Fatalf("expected cleanup of a network without node allocator to succeed, got %v", err)
 	}
 }
 

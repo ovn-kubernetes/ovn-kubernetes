@@ -379,7 +379,7 @@ func (c *Controller) onANPUpdate(oldObj, newObj interface{}) {
 
 // onANPDelete queues the ANP for processing.
 func (c *Controller) onANPDelete(obj interface{}) {
-	key, err := cache.MetaNamespaceKeyFunc(obj)
+	key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("couldn't get key for object %+v: %v", obj, err))
 		return
@@ -427,7 +427,7 @@ func (c *Controller) onBANPUpdate(oldObj, newObj interface{}) {
 
 // onBANPDelete queues the BANP for processing.
 func (c *Controller) onBANPDelete(obj interface{}) {
-	key, err := cache.MetaNamespaceKeyFunc(obj)
+	key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("couldn't get key for object %+v: %v", obj, err))
 		return
@@ -473,7 +473,7 @@ func (c *Controller) onANPNamespaceUpdate(oldObj, newObj interface{}) {
 
 // onANPNamespaceDelete queues the namespace for processing.
 func (c *Controller) onANPNamespaceDelete(obj interface{}) {
-	key, err := cache.MetaNamespaceKeyFunc(obj)
+	key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("couldn't get key for object %+v: %v", obj, err))
 		return
@@ -533,7 +533,7 @@ func (c *Controller) onANPPodUpdate(oldObj, newObj interface{}) {
 
 // onANPPodDelete queues the pod for processing.
 func (c *Controller) onANPPodDelete(obj interface{}) {
-	key, err := cache.MetaNamespaceKeyFunc(obj)
+	key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("couldn't get key for object %+v: %v", obj, err))
 		return
@@ -581,7 +581,7 @@ func (c *Controller) onANPNodeUpdate(oldObj, newObj interface{}) {
 
 // onANPNodeDelete queues the node for processing.
 func (c *Controller) onANPNodeDelete(obj interface{}) {
-	key, err := cache.MetaNamespaceKeyFunc(obj)
+	key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("couldn't get key for object %+v: %v", obj, err))
 		return
