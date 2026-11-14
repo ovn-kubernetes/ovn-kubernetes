@@ -51,6 +51,8 @@ global:
   enableAdminNetworkPolicy: false
   # -- Configure to use EgressIP CRD feature with ovn-kubernetes
   enableEgressIp: false
+  # -- Enable destination and L4 selection for EgressIP (requires EgressIP)
+  enableTrafficClass: false
   # -- Configure EgressIP node reachability using gRPC on this TCP port
   egressIpHealthCheckPort: 9107
   # -- Configure to use EgressService CRD feature with ovn-kubernetes

@@ -111,6 +111,13 @@ if [ "$OVN_ENABLE_PERSISTENT_IPS" != "true" ]; then
   skip_label "Feature:PersistentIPs"
 fi
 
+if [ "$OVN_TRAFFIC_CLASS_ENABLE" != "true" ]; then
+  skip_label "Feature:TrafficClass"
+fi
+
+# Temporary focused TrafficClass matrix while evaluating CI runtime.
+skip_label "TrafficClassExtended"
+
 if [ "$OVN_NETWORK_QOS_ENABLE" != "true" ]; then
   skip "e2e NetworkQoS validation"
 fi

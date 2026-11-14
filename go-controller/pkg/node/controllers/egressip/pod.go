@@ -18,17 +18,19 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iprulemanager"
+	egressiputil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/egressip"
 )
 
 // podIPConfig holds pod specific info to implement egress IP for secondary host networks for a single pod IP. A pod may
 // contain multiple IPs (one for single stack, 2 for dual stack).
 type podIPConfig struct {
-	failed    bool // used for retry
-	v6        bool
-	snatKey   string // pod IP used as key in nftables SNAT map
-	snatValue string // egress IP used as value in nftables SNAT map
-	ifName    string // output interface name used as part of the nftables SNAT map concatenated key
-	ipRule    iprulemanager.IPRule
+	trafficMatch egressiputil.Destination
+	failed       bool // used for retry
+	v6           bool
+	snatKey      string // pod IP used as key in nftables SNAT map
+	snatValue    string // egress IP used as value in nftables SNAT map
+	ifName       string // output interface name used as part of the nftables SNAT map concatenated key
+	ipRule       iprulemanager.IPRule
 }
 
 func newPodIPConfig() *podIPConfig {
@@ -42,11 +44,11 @@ func (pIC *podIPConfig) equal(pIC2 *podIPConfig) bool {
 	if pIC.snatKey != pIC2.snatKey || pIC.snatValue != pIC2.snatValue || pIC.ifName != pIC2.ifName {
 		return false
 	}
-	return pIC.ipRule == pIC2.ipRule
+	return pIC.ipRule == pIC2.ipRule && pIC.trafficMatch == pIC2.trafficMatch
 }
 
 // podIPConfigList holds a list of podIPConfig to configure EIP for a single pod and its IPs.
-// Each item in the list represents one pod IP.
+// Each item represents one pod IP and, for selective owners, one traffic match.
 type podIPConfigList struct {
 	elems []*podIPConfig
 }

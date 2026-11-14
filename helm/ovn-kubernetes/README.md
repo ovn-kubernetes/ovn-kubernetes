@@ -152,6 +152,15 @@ true
 			<td>Configure to use EgressIP CRD feature with ovn-kubernetes</td>
 		</tr>
 		<tr>
+			<td>global.enableTrafficClass</td>
+			<td>bool</td>
+			<td><pre lang="json">
+false
+</pre>
+</td>
+			<td>Enable destination and L4 selection for EgressIP (requires EgressIP)</td>
+		</tr>
+		<tr>
 			<td>global.enableEgressQos</td>
 			<td>bool</td>
 			<td><pre lang="json">

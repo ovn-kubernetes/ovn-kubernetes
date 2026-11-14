@@ -41,6 +41,10 @@ type EgressIPSpecApplyConfiguration struct {
 	// placed; it does not reserve the matched nodes for exclusive use.
 	// Other EgressIP objects can still consume capacity on the same nodes.
 	EgressNodeSelector *metav1.LabelSelectorApplyConfiguration `json:"egressNodeSelector,omitempty"`
+	// TrafficSelector selects TrafficClasses whose destinations use this EgressIP.
+	// When omitted, this EgressIP applies to all egress traffic.
+	// Expression operators and value counts must form a valid Kubernetes label selector.
+	TrafficSelector *metav1.LabelSelectorApplyConfiguration `json:"trafficSelector,omitempty"`
 }
 
 // EgressIPSpecApplyConfiguration constructs a declarative configuration of the EgressIPSpec type for use with
@@ -80,5 +84,13 @@ func (b *EgressIPSpecApplyConfiguration) WithPodSelector(value *metav1.LabelSele
 // If called multiple times, the EgressNodeSelector field is set to the value of the last call.
 func (b *EgressIPSpecApplyConfiguration) WithEgressNodeSelector(value *metav1.LabelSelectorApplyConfiguration) *EgressIPSpecApplyConfiguration {
 	b.EgressNodeSelector = value
+	return b
+}
+
+// WithTrafficSelector sets the TrafficSelector field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the TrafficSelector field is set to the value of the last call.
+func (b *EgressIPSpecApplyConfiguration) WithTrafficSelector(value *metav1.LabelSelectorApplyConfiguration) *EgressIPSpecApplyConfiguration {
+	b.TrafficSelector = value
 	return b
 }

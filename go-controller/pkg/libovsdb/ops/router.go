@@ -450,8 +450,9 @@ func DeleteLogicalRouterPoliciesWithPredicate(nbClient libovsdbclient.Client, ro
 // router policy from the cache based on a given predicate. If it doesn't find
 // any, it creates the provided logical router policy. If it does, adds any
 // missing Nexthops to the existing logical router policy. The logical router
-// policy is added to the provided logical router. Returns the corresponding ops
-func CreateOrAddNextHopsToLogicalRouterPolicyWithPredicateOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, routerName string, lrp *nbdb.LogicalRouterPolicy, p logicalRouterPolicyPredicate) ([]ovsdb.Operation, error) {
+// policy is added to the provided logical router. Optional fieldsToUpdate must
+// exclude Nexthops, which is mutated rather than replaced. Returns the corresponding ops.
+func CreateOrAddNextHopsToLogicalRouterPolicyWithPredicateOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, routerName string, lrp *nbdb.LogicalRouterPolicy, p logicalRouterPolicyPredicate, fieldsToUpdate ...interface{}) ([]ovsdb.Operation, error) {
 	router := &nbdb.LogicalRouter{
 		Name: routerName,
 	}
@@ -460,6 +461,7 @@ func CreateOrAddNextHopsToLogicalRouterPolicyWithPredicateOps(nbClient libovsdbc
 		{
 			Model:            lrp,
 			ModelPredicate:   p,
+			OnModelUpdates:   fieldsToUpdate,
 			OnModelMutations: []interface{}{&lrp.Nexthops},
 			DoAfter:          func() { router.Policies = []string{lrp.UUID} },
 			ErrNotFound:      false,

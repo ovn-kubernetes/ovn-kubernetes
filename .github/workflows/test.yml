@@ -701,6 +701,7 @@ jobs:
       OVN_DUMMY_GATEWAY_BRIDGE: "${{ matrix.target == 'no-uplink' }}"
       OVN_SECOND_BRIDGE: "${{ matrix.second-bridge == '2br' }}"
       ENABLE_MULTI_NET: "${{ matrix.target == 'multi-homing' || matrix.target == 'kv-live-migration' || startsWith(matrix.target, 'network-segmentation') || matrix.target == 'tools' || matrix.target == 'traffic-flow-test-only' || matrix.routeadvertisements != '' }}"
+      OVN_TRAFFIC_CLASS_ENABLE: "${{ matrix.target == 'control-plane' || startsWith(matrix.target, 'network-segmentation') }}"
       ENABLE_NETWORK_SEGMENTATION: "${{ startsWith(matrix.target, 'network-segmentation') || matrix.network-segmentation == 'enable-network-segmentation' }}"
       DISABLE_UDN_ARP_NDP_FLOOD: "${{ matrix.disable-udn-arp-ndp-flood }}"
       PLATFORM_IPV4_SUPPORT: "${{ matrix.ipfamily == 'ipv4' || matrix.ipfamily == 'dualstack' }}"

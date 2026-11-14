@@ -607,6 +607,18 @@ func TestAddHostCIDRPolicy(t *testing.T) {
 		},
 	}
 
+	migration := tests[0]
+	migration.desc = "[udn][l2][ipv4][ipv6] migrate hostCIDR policies without touching EgressIP"
+	legacyV4 := &nbdb.LogicalRouterPolicy{UUID: "legacy-v4", Priority: legacyUDNHostCIDRPolicyPriority, Match: generateHostCIDRMatch(v4Prefix, hostCIDRV4RangeStr, clusterSubnetIPv4Str), Action: nbdb.LogicalRouterPolicyActionReroute, Nexthops: []string{node1UDNMgntIPv4Str}}
+	legacyV6 := &nbdb.LogicalRouterPolicy{UUID: "legacy-v6", Priority: legacyUDNHostCIDRPolicyPriority, Match: generateHostCIDRMatch(v6Prefix, hostCIDRV6RangeStr, clusterSubnetIPv6Str), Action: nbdb.LogicalRouterPolicyActionReroute, Nexthops: []string{node1UDNMgntIPv6Str}}
+	unrelated := &nbdb.LogicalRouterPolicy{UUID: "egress-policy", Priority: 99, Match: "ip4.src == 10.128.0.10", Action: nbdb.LogicalRouterPolicyActionReroute, Nexthops: []string{node1UDNMgntIPv4Str}, ExternalIDs: map[string]string{types.NetworkExternalID: udnNetworkName, types.TopologyExternalID: types.Layer2Topology}}
+	migration.initialDB = networks{udnL2Network.copyNetworkAndSetLRPs(legacyV4, legacyV6, unrelated)}
+	router := *migration.expectedDB[0].(*nbdb.LogicalRouter)
+	router.Policies = append(append([]string(nil), router.Policies...), unrelated.UUID)
+	migration.expectedDB = append([]libovsdbtest.TestData{&router}, migration.expectedDB[1:]...)
+	migration.expectedDB = append(migration.expectedDB, unrelated)
+	tests = append(tests, migration)
+
 	for _, tt := range tests {
 		t.Run(tt.desc, func(t *testing.T) {
 			dbSetup := libovsdbtest.TestSetup{

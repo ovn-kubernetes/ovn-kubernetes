@@ -270,6 +270,12 @@ func schema_pkg_crd_egressip_v1_EgressIPSpec(ref common.ReferenceCallback) commo
 							Ref:         ref(metav1.LabelSelector{}.OpenAPIModelName()),
 						},
 					},
+					"trafficSelector": {
+						SchemaProps: spec.SchemaProps{
+							Description: "TrafficSelector selects TrafficClasses whose destinations use this EgressIP. When omitted, this EgressIP applies to all egress traffic. Expression operators and value counts must form a valid Kubernetes label selector.",
+							Ref:         ref(metav1.LabelSelector{}.OpenAPIModelName()),
+						},
+					},
 				},
 				Required: []string{"egressIPs", "namespaceSelector"},
 			},
@@ -303,12 +309,35 @@ func schema_pkg_crd_egressip_v1_EgressIPStatus(ref common.ReferenceCallback) com
 							},
 						},
 					},
+					"conditions": {
+						VendorExtensible: spec.VendorExtensible{
+							Extensions: spec.Extensions{
+								"x-kubernetes-list-map-keys": []interface{}{
+									"type",
+								},
+								"x-kubernetes-list-type":       "map",
+								"x-kubernetes-patch-merge-key": "type",
+								"x-kubernetes-patch-strategy":  "merge",
+							},
+						},
+						SchemaProps: spec.SchemaProps{
+							Description: "Conditions describe traffic selector resolution and conflicts.",
+							Type:        []string{"array"},
+							Items: &spec.SchemaOrArray{
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Ref: ref(metav1.Condition{}.OpenAPIModelName()),
+									},
+								},
+							},
+						},
+					},
 				},
 				Required: []string{"items"},
 			},
 		},
 		Dependencies: []string{
-			v1.EgressIPStatusItem{}.OpenAPIModelName()},
+			v1.EgressIPStatusItem{}.OpenAPIModelName(), metav1.Condition{}.OpenAPIModelName()},
 	}
 }
 

@@ -138,16 +138,21 @@ const (
 	MGMTPortPolicyPriority                = "1005"
 	NodeSubnetPolicyPriority              = "1004"
 	InterNodePolicyPriority               = "1003"
-	UDNHostCIDRPolicyPriority             = "99"
+	UDNHostCIDRPolicyPriority             = "98"
 	HybridOverlaySubnetPriority           = 1002
 	HybridOverlayReroutePriority          = 501
 	DefaultNoRereoutePriority             = 102
 	EgressSVCReroutePriority              = 101
-	EgressIPReroutePriority               = 100
+	EgressIPCatchAllReroutePriority       = 99
+	EgressIPSelectiveReroutePriority      = 100
+	EgressIPSelectiveNATPriority          = 100
 	EgressIPRerouteQoSRulePriority        = 103
 	NetworkConnectPolicyPriority          = 9001
+	// EgressIPLegacyReroutePriority identifies catch-all policies created before TrafficClass support.
+	EgressIPLegacyReroutePriority = 100
 	// priority of logical router policies on a nodes gateway router
-	EgressIPSNATMarkPriority           = 95
+	EgressIPCatchAllSNATMarkPriority   = 95
+	EgressIPSelectiveSNATMarkPriority  = 96
 	EgressLiveMigrationReroutePriority = 10
 
 	// EndpointSliceMirrorControllerName mirror EndpointSlice controller name (used as a value for the "endpointslice.kubernetes.io/managed-by" label)

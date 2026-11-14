@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright The OVN-Kubernetes Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-// TODO: add IP release functionality to allow reuse of allocated IPs.
+// ReleasePrimaryIP allows tests to reuse addresses after cleanup.
 // The reserved IPv4 range (.200-.254) only provides 55 addresses per subnet,
 // which may become insufficient as more tests adopt this allocator.
 // Consider basing this on AllocateInt/DeallocateInt from int.go which already
@@ -51,8 +51,9 @@ type ipAllocator struct {
 	// base is a cached version of the start IP in the CIDR range as a *big.Int
 	base *big.Int
 	// max is the maximum size of the usable addresses in the range
-	max   int
-	count int
+	max      int
+	count    int
+	released []net.IP
 }
 
 var pia *primaryIPAllocator
@@ -68,6 +69,19 @@ func InitPrimaryIPAllocator(nodeClient v1.NodeInterface) error {
 	}
 	pia, err = newPrimaryIPAllocator(nodeClient, nodeSubnets)
 	return err
+}
+
+// ReleasePrimaryIP returns a previously allocated address to its pool.
+// Call it only after the address is no longer in use.
+func ReleasePrimaryIP(ip net.IP) {
+	pia.mu.Lock()
+	defer pia.mu.Unlock()
+	allocs := pia.v6Allocs
+	if ip.To4() != nil {
+		allocs = pia.v4Allocs
+	}
+	alloc := allocs[subnetKey(ip)]
+	alloc.released = append(alloc.released, ip)
 }
 
 func NewPrimaryIPv4(nodeName string) (net.IP, error) {
@@ -254,6 +268,12 @@ func newIPAllocator(cidr *net.IPNet, start, end byte) *ipAllocator {
 }
 
 func (n *ipAllocator) allocateNextIP() (net.IP, error) {
+	if len(n.released) > 0 {
+		last := len(n.released) - 1
+		ip := n.released[last]
+		n.released = n.released[:last]
+		return ip, nil
+	}
 	if n.count >= n.max {
 		return net.IP{}, fmt.Errorf("limit of %d reached", n.max)
 	}

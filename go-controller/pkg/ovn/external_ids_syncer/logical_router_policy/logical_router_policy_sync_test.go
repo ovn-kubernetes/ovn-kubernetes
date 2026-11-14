@@ -68,11 +68,30 @@ var _ = ginkgo.Describe("OVN Logical Router Syncer", func() {
 	)
 
 	ginkgo.Context("EgressIP", func() {
+		legacyPriority := func(policy *nbdb.LogicalRouterPolicy) *nbdb.LogicalRouterPolicy {
+			policy.Priority = types.EgressIPLegacyReroutePriority
+			return policy
+		}
 		ginkgo.DescribeTable("reroutes", func(sync lrpSync) {
 			// pod reroutes may not have any owner references besides 'name' which equals EgressIP name
 			performTest(defaultNetworkControllerName, sync.initialLRPs, sync.finalLRPs, sync.v4ClusterSubnets, sync.v6ClusterSubnets,
 				sync.v4JoinSubnet, sync.v6JoinSubnet, sync.pods)
 		},
+			ginkgo.Entry("adopt legacy priority-100 reroute", lrpSync{
+				initialLRPs: []*nbdb.LogicalRouterPolicy{legacyPriority(getReRouteLRP(podNamespace, podName, v4PodIPStr, 0, v4IPFamilyValue,
+					v4PodNextHops, map[string]string{"name": egressIPName}, defaultNetworkControllerName))},
+				finalLRPs: []*nbdb.LogicalRouterPolicy{legacyPriority(getReRouteLRP(podNamespace, podName, v4PodIPStr, 0, v4IPFamilyValue,
+					v4PodNextHops, getEgressIPLRPReRouteDbIDs(egressIPName, podNamespace, podName, v4IPFamilyValue, defaultNetworkName, defaultNetworkControllerName).GetExternalIDs(), defaultNetworkControllerName))},
+				v4ClusterSubnets: []*net.IPNet{v4PodClusterSubnet}, v4JoinSubnet: v4JoinSubnet,
+				pods: podsNetInfo{v4PodNetInfo},
+			}),
+			ginkgo.Entry("adopt stale legacy priority-100 reroute for cleanup", lrpSync{
+				initialLRPs: []*nbdb.LogicalRouterPolicy{legacyPriority(getReRouteLRP(podNamespace, podName, v4PodIPStr, 0, v4IPFamilyValue,
+					v4PodNextHops, map[string]string{"name": egressIPName}, defaultNetworkControllerName))},
+				finalLRPs: []*nbdb.LogicalRouterPolicy{legacyPriority(getReRouteLRP(podNamespace, podName, v4PodIPStr, 0, v4IPFamilyValue,
+					v4PodNextHops, getEgressIPLRPReRouteDbIDs(egressIPName, "UNKNOWN", "UNKNOWN", v4IPFamilyValue, defaultNetworkName, defaultNetworkControllerName).GetExternalIDs(), defaultNetworkControllerName))},
+				v4ClusterSubnets: []*net.IPNet{v4PodClusterSubnet}, v4JoinSubnet: v4JoinSubnet,
+			}),
 			ginkgo.Entry("add reference to IPv4 LRP with no reference", lrpSync{
 				initialLRPs: []*nbdb.LogicalRouterPolicy{getReRouteLRP(podNamespace, podName, v4PodIPStr, 0, v4IPFamilyValue,
 					v4PodNextHops, map[string]string{"name": egressIPName}, defaultNetworkControllerName)},
@@ -465,7 +484,7 @@ func getNoReRouteLRP(match string, externalIDs map[string]string, options map[st
 func getReRouteLRP(podNamespace, podName, podIP string, mark int, ipFamily egressIPFamilyValue, nextHops []string,
 	externalIDs map[string]string, controller string) *nbdb.LogicalRouterPolicy {
 	lrp := &nbdb.LogicalRouterPolicy{
-		Priority:    types.EgressIPReroutePriority,
+		Priority:    types.EgressIPCatchAllReroutePriority,
 		Match:       fmt.Sprintf("%s.src == %s", ipFamily, podIP),
 		Action:      nbdb.LogicalRouterPolicyActionReroute,
 		Nexthops:    nextHops,
