@@ -332,13 +332,11 @@ func GetLogicalRouterPolicy(nbClient libovsdbclient.Client, policy *nbdb.Logical
 	return found[0], nil
 }
 
-// CreateOrUpdateLogicalRouterPolicyWithPredicate looks up a logical router
-// policy from the cache based on a given predicate. If it does not exist, it
-// creates the provided logical router policy. If it does, it updates it. The
-// logical router policy is added to the provided logical router.
-// fields determines which columns to updated. Passing no fields is assumes
-// all fields need to be updated. Passing a single nil field indicates no fields should be updated.
-// Otherwise a caller may pass as many individual fields as desired to specify which columsn need updating.
+// CreateOrUpdateLogicalRouterPolicyWithPredicate creates or updates a policy and
+// attaches it to the named router. A policy UUID takes precedence over the
+// predicate; otherwise, only policies attached to that router are considered.
+// With no fields specified, all non-default columns are updated. Passing a
+// single nil field skips column updates.
 func CreateOrUpdateLogicalRouterPolicyWithPredicate(nbClient libovsdbclient.Client, routerName string, lrp *nbdb.LogicalRouterPolicy, p logicalRouterPolicyPredicate, fields ...interface{}) error {
 	ops, err := CreateOrUpdateLogicalRouterPolicyWithPredicateOps(nbClient, nil, routerName, lrp, p, fields...)
 	if err != nil {
@@ -349,13 +347,25 @@ func CreateOrUpdateLogicalRouterPolicyWithPredicate(nbClient libovsdbclient.Clie
 	return err
 }
 
-// CreateOrUpdateLogicalRouterPolicyWithPredicateOps looks up a logical
-// router policy from the cache based on a given predicate. If it does not
-// exist, it creates the provided logical router policy. If it does, it
-// updates it. The logical router policy is added to the provided logical
-// router. Returns the corresponding ops
+// CreateOrUpdateLogicalRouterPolicyWithPredicateOps creates or updates a policy,
+// attaches it to the named router, and returns the corresponding ops. A policy
+// UUID takes precedence over the predicate; otherwise, only policies attached to
+// that router are considered. Duplicate checks apply when creating a new policy.
 func CreateOrUpdateLogicalRouterPolicyWithPredicateOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation,
 	routerName string, lrp *nbdb.LogicalRouterPolicy, p logicalRouterPolicyPredicate, fields ...interface{}) ([]ovsdb.Operation, error) {
+	if lrp.UUID == "" {
+		existing, err := FindALogicalRouterPoliciesWithPredicate(nbClient, routerName, p)
+		if err != nil {
+			return nil, fmt.Errorf("unable to find logical router policies on router %s: %w", routerName, err)
+		}
+		if len(existing) > 1 {
+			return nil, errMultipleResults
+		}
+		if len(existing) == 1 {
+			lrp.UUID = existing[0].UUID
+		}
+	}
+
 	if len(fields) == 0 {
 		fields = onModelUpdatesAllNonDefault()
 	}
@@ -366,7 +376,6 @@ func CreateOrUpdateLogicalRouterPolicyWithPredicateOps(nbClient libovsdbclient.C
 	opModels := []operationModel{
 		{
 			Model:          lrp,
-			ModelPredicate: p,
 			OnModelUpdates: fields,
 			DoAfter:        func() { router.Policies = []string{lrp.UUID} },
 			ErrNotFound:    false,
