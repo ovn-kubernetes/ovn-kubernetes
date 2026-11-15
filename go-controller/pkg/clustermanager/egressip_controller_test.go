@@ -5,6 +5,7 @@ package clustermanager
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"net"
@@ -19,12 +20,15 @@ import (
 	"github.com/onsi/gomega"
 	ocpcloudnetworkapi "github.com/openshift/api/cloudnetwork/v1"
 	ocpconfigapi "github.com/openshift/api/config/v1"
+	cloudservicefake "github.com/openshift/client-go/cloudnetwork/clientset/versioned/fake"
 	"github.com/urfave/cli/v2"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
+	k8stesting "k8s.io/client-go/testing"
 	utilnet "k8s.io/utils/net"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
@@ -4926,6 +4930,56 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 
 			err := app.Run([]string{app.Name})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+	})
+
+	ginkgo.Context("CloudPrivateIPConfig operations", func() {
+		// Verifies that a rejected CloudPrivateIPConfig update does not leave the
+		// informer cache diverged from the apiserver. GetCloudPrivateIPConfig returns
+		// the lister's shared pointer, so mutating Spec.Node in place corrupts the
+		// cache whenever the update is not applied.
+		ginkgo.It("should not mutate the informer cache when an update is rejected", func() {
+			// Steps:
+			// 1. Seed the fake apiserver and informer cache with a CloudPrivateIPConfig
+			//    assigned to node-original.
+			// 2. Inject an update reactor that fails every update. Real update failures
+			//    are rare, so a fake failure is the only deterministic way to exercise
+			//    the rejected path: it leaves the apiserver object untouched while the
+			//    code under test has already mutated the cached object.
+			// 3. Call executeCloudPrivateIPConfigOps to move the object to node-new.
+			// 4. Assert that both the apiserver object and the informer cache still
+			//    report node-original.
+			const (
+				egressIP     = "192.168.126.101"
+				nodeOriginal = "node-original"
+				nodeNew      = "node-new"
+			)
+			cloudPrivateIPConfigName := ipStringToCloudPrivateIPConfigName(egressIP)
+			config.Kubernetes.PlatformType = string(ocpconfigapi.AWSPlatformType)
+			fakeClusterManagerOVN.start(&ocpcloudnetworkapi.CloudPrivateIPConfigList{
+				Items: []ocpcloudnetworkapi.CloudPrivateIPConfig{{
+					ObjectMeta: newCloudPrivateIPConfigMeta(egressIP),
+					Spec:       ocpcloudnetworkapi.CloudPrivateIPConfigSpec{Node: nodeOriginal},
+				}},
+			})
+			fakeClusterManagerOVN.fakeClient.CloudNetworkClient.(*cloudservicefake.Clientset).PrependReactor(
+				"update", "cloudprivateipconfigs", func(k8stesting.Action) (bool, runtime.Object, error) {
+					return true, nil, errors.New("injected update failure")
+				})
+
+			err := fakeClusterManagerOVN.eIPC.executeCloudPrivateIPConfigOps(context.Background(), egressIPName, map[string]*cloudPrivateIPConfigOp{
+				egressIP: {toAdd: nodeNew, toDelete: nodeOriginal},
+			})
+			gomega.Expect(err).To(gomega.HaveOccurred(), "the injected update failure should be returned by executeCloudPrivateIPConfigOps")
+
+			fromAPIServer, err := fakeClusterManagerOVN.fakeClient.CloudNetworkClient.CloudV1().CloudPrivateIPConfigs().Get(
+				context.Background(), cloudPrivateIPConfigName, metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to read the CloudPrivateIPConfig from the fake apiserver")
+			gomega.Expect(fromAPIServer.Spec.Node).To(gomega.Equal(nodeOriginal), "the rejected update must leave the apiserver object assigned to node-original")
+
+			cached, err := fakeClusterManagerOVN.watcher.GetCloudPrivateIPConfig(cloudPrivateIPConfigName)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to read the CloudPrivateIPConfig from the informer cache")
+			gomega.Expect(cached.Spec.Node).To(gomega.Equal(nodeOriginal), "informer cache was mutated by the rejected update")
 		})
 	})
 
