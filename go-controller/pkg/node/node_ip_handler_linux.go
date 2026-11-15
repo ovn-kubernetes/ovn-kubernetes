@@ -224,7 +224,7 @@ func (c *addressManager) runInternal(stopChan <-chan struct{}, subscribe subscri
 
 			c.handleNodePrimaryAddrChange()
 			if addrChanged || !c.doNodeHostCIDRsMatch() {
-				klog.Infof("Host CIDRs changed to %v. Updating node address annotations.", c.cidrs)
+				klog.Infof("Host CIDRs changed to %v. Updating node address annotations.", c.hostCIDRsSnapshot())
 				err := c.updateNodeAddressAnnotations()
 				if err != nil {
 					klog.Errorf("Address Manager failed to update node address annotations: %v", err)
@@ -412,7 +412,16 @@ func (c *addressManager) updateHostCIDRs() error {
 		return nil
 	}
 
-	return util.SetNodeHostCIDRs(c.nodeAnnotator, c.cidrs)
+	return util.SetNodeHostCIDRs(c.nodeAnnotator, c.hostCIDRsSnapshot())
+}
+
+// hostCIDRsSnapshot returns a copy of the current host CIDRs. Callers must not
+// iterate c.cidrs directly since it can be mutated concurrently by the address
+// manager goroutine.
+func (c *addressManager) hostCIDRsSnapshot() sets.Set[string] {
+	c.Lock()
+	defer c.Unlock()
+	return c.cidrs.Clone()
 }
 
 func (c *addressManager) assignCIDRs(nodeHostCIDRs sets.Set[string]) bool {
@@ -609,7 +618,7 @@ func (c *addressManager) sync() {
 	addrChanged := c.assignCIDRs(currAddresses)
 	c.handleNodePrimaryAddrChange()
 	if addrChanged || !c.doNodeHostCIDRsMatch() {
-		klog.Infof("Node address changed to %v. Updating annotations.", currAddresses)
+		klog.Infof("Node address changed to %v. Updating annotations.", c.hostCIDRsSnapshot())
 		err := c.updateNodeAddressAnnotations()
 		if err != nil {
 			klog.Errorf("Address Manager failed to update node address annotations: %v", err)
