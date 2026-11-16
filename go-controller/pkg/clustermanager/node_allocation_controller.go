@@ -7,19 +7,17 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"reflect"
-	"sync"
 
 	corev1 "k8s.io/api/core/v1"
-	cache "k8s.io/client-go/tools/cache"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/id"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	ipgenerator "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/ip"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
-	objretry "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/retry"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -28,14 +26,8 @@ import (
 type nodeAllocationController struct {
 	kube         kube.Interface
 	watchFactory *factory.WatchFactory
-	stopChan     chan struct{}
-	wg           *sync.WaitGroup
 
-	// node events factory handler
-	nodeHandler *factory.Handler
-
-	// retry framework for nodes
-	retryNodes *objretry.RetryFramework
+	nodeController controller.Controller
 
 	// ID allocator for the nodes
 	nodeIDAllocator id.Allocator
@@ -59,7 +51,6 @@ func newNodeAllocationController(ovnClient *util.OVNClusterManagerClientset, wf 
 	kube := &kube.Kube{
 		KClient: ovnClient.KubeClient,
 	}
-	wg := &sync.WaitGroup{}
 
 	var transitSwitchIPv4Generator, transitSwitchIPv6Generator *ipgenerator.IPGenerator
 	var err error
@@ -80,71 +71,67 @@ func newNodeAllocationController(ovnClient *util.OVNClusterManagerClientset, wf 
 	nac := &nodeAllocationController{
 		kube:                       kube,
 		watchFactory:               wf,
-		stopChan:                   make(chan struct{}),
-		wg:                         wg,
 		nodeIDAllocator:            nodeIDAllocator,
 		transitSwitchIPv4Generator: transitSwitchIPv4Generator,
 		transitSwitchIPv6Generator: transitSwitchIPv6Generator,
 	}
 
-	nac.initRetryFramework()
+	nac.nodeController = controller.NewController("node-allocation-controller", &controller.ControllerConfig[corev1.Node]{
+		Informer:       wf.NodeCoreInformer().Informer(),
+		ObjNeedsUpdate: nodeAllocationNeedsUpdate,
+		Reconcile:      nac.reconcileNode,
+		// A node can't do without its ID and transit switch port addresses.
+		MaxAttempts: controller.InfiniteAttempts,
+		Threadiness: 1,
+	})
 	return nac, nil
-}
-
-func (nac *nodeAllocationController) initRetryFramework() {
-	// We are interested in only nodes
-	resourceHandler := &objretry.ResourceHandler{
-		HasUpdateFunc:          true,
-		NeedsUpdateDuringRetry: false,
-		ObjType:                factory.NodeType,
-		EventHandler: &nodeAllocationControllerEventHandler{
-			objType:  factory.NodeType,
-			nac:      nac,
-			syncFunc: nil,
-		},
-	}
-
-	nac.retryNodes = objretry.NewRetryFramework("nodeAllocationController", nac.stopChan, nac.wg, nac.watchFactory, resourceHandler)
 }
 
 // Start starts the node allocation controller to watch the kubernetes nodes
 func (nac *nodeAllocationController) Start(_ context.Context) error {
-	nodeHandler, err := nac.retryNodes.WatchResource()
-
+	// the IDs the nodes already have are reserved before any other is allocated
+	err := controller.StartWithInitialSync(func() error {
+		nodes, err := nac.watchFactory.GetNodes()
+		if err != nil {
+			return fmt.Errorf("failed to list nodes: %w", err)
+		}
+		return nac.syncNodeIDs(nodes)
+	}, nac.nodeController)
 	if err != nil {
 		return fmt.Errorf("unable to watch nodes: %w", err)
 	}
-
-	nac.nodeHandler = nodeHandler
 	return nil
 }
 
 func (nac *nodeAllocationController) Stop() {
-	close(nac.stopChan)
-	nac.wg.Wait()
-
-	if nac.nodeHandler != nil {
-		nac.watchFactory.RemoveNodeHandler(nac.nodeHandler)
-	}
+	controller.Stop(nac.nodeController)
 }
 
-func needsNodeAllocation(node *corev1.Node) bool {
-	if config.HybridOverlay.Enabled && util.NoHostSubnet(node) {
-		// skip hybrid overlay nodes
-		return false
-	}
-
-	if _, err := util.GetNodeID(node); err != nil {
-		return true
-	}
-	if _, ok := node.Annotations[util.OvnTransitSwitchPortAddr]; !ok {
-		return true
-	}
-	return false
+// nodeAllocationNeedsUpdate tells if what this controller sets on a node, or
+// whether it has to set it, changed.
+func nodeAllocationNeedsUpdate(oldNode, newNode *corev1.Node) bool {
+	return oldNode == nil ||
+		util.NodeIDAnnotationChanged(oldNode, newNode) ||
+		util.NodeTransitSwitchPortAddrAnnotationChanged(oldNode, newNode) ||
+		// a node switched between hybrid overlay node and ovn node
+		util.NoHostSubnet(oldNode) != util.NoHostSubnet(newNode)
 }
 
-// handleAddUpdateNodeEvent handles the add or update node event
-func (nac *nodeAllocationController) handleAddUpdateNodeEvent(ctx context.Context, node *corev1.Node) error {
+func (nac *nodeAllocationController) reconcileNode(ctx context.Context, nodeName string) error {
+	node, err := nac.watchFactory.GetNode(nodeName)
+	if apierrors.IsNotFound(err) {
+		nac.nodeIDAllocator.ReleaseID(nodeName)
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("failed to get node %s: %w", nodeName, err)
+	}
+	return nac.allocateNode(ctx, node)
+}
+
+// allocateNode makes sure the node has an ID and the transit switch port
+// addresses derived from it, and that its annotations say so.
+func (nac *nodeAllocationController) allocateNode(ctx context.Context, node *corev1.Node) error {
 	if config.HybridOverlay.Enabled && util.NoHostSubnet(node) {
 		// skip hybrid overlay nodes
 		return nil
@@ -180,28 +167,24 @@ func (nac *nodeAllocationController) handleAddUpdateNodeEvent(ctx context.Contex
 			node.Name, err)
 	}
 
+	upToDate := true
+	for annotation, value := range nodeAnnotations {
+		if node.Annotations[annotation] != value {
+			upToDate = false
+			break
+		}
+	}
+	if upToDate {
+		return nil
+	}
+
 	return nac.kube.SetAnnotationsOnNode(ctx, node.Name, nodeAnnotations)
 }
 
-// handleDeleteNode handles the delete node event.
-func (nac *nodeAllocationController) handleDeleteNode(node *corev1.Node) error {
-	nac.nodeIDAllocator.ReleaseID(node.Name)
-	return nil
-}
-
-func (nac *nodeAllocationController) syncNodes(nodes []interface{}) error {
-	return nac.syncNodeIDs(nodes)
-}
-
-func (nac *nodeAllocationController) syncNodeIDs(nodes []interface{}) error {
+func (nac *nodeAllocationController) syncNodeIDs(nodes []*corev1.Node) error {
 	duplicateIdNodes := []string{}
 
-	for _, nodeObj := range nodes {
-		node, ok := nodeObj.(*corev1.Node)
-		if !ok {
-			return fmt.Errorf("spurious object in syncNodes: %v", nodeObj)
-		}
-
+	for _, node := range nodes {
 		nodeID, _ := util.GetNodeID(node)
 		if nodeID != util.InvalidNodeID {
 			klog.Infof("Node %s has the id %d set", node.Name, nodeID)
@@ -223,164 +206,4 @@ func (nac *nodeAllocationController) syncNodeIDs(nodes []interface{}) error {
 	}
 
 	return nil
-}
-
-// nodeAllocationControllerEventHandler object handles the events
-// from retry framework.
-type nodeAllocationControllerEventHandler struct {
-	objretry.DefaultEventHandler
-
-	objType  reflect.Type
-	nac      *nodeAllocationController
-	syncFunc func([]interface{}) error
-
-	nodeSyncFailed sync.Map
-}
-
-func (h *nodeAllocationControllerEventHandler) FilterOutResource(_ interface{}) bool {
-	return false
-}
-
-// nodeAllocationControllerEventHandler functions
-
-// AddResource adds the specified object to the cluster according to its type and
-// returns the error, if any, yielded during object creation.
-func (h *nodeAllocationControllerEventHandler) AddResource(ctx context.Context, obj interface{}, _ bool) error {
-	var err error
-
-	switch h.objType {
-	case factory.NodeType:
-		node, ok := obj.(*corev1.Node)
-		if !ok {
-			return fmt.Errorf("could not cast %T object to *corev1.Node", obj)
-		}
-		if err = h.nac.handleAddUpdateNodeEvent(ctx, node); err != nil {
-			h.nodeSyncFailed.Store(node.Name, true)
-			return fmt.Errorf("node add failed for %s, will try again later: %w",
-				node.Name, err)
-		}
-		h.nodeSyncFailed.Delete(node.Name)
-	default:
-		return fmt.Errorf("no add function for object type %s", h.objType)
-	}
-	return nil
-}
-
-// UpdateResource updates the specified object in the cluster to its version in newObj according
-// to its type and returns the error, if any, yielded during the object update.
-// The inRetryCache boolean argument is to indicate if the given resource is in the retryCache or not.
-func (h *nodeAllocationControllerEventHandler) UpdateResource(ctx context.Context, _, newObj interface{}, _ bool) error {
-	var err error
-
-	switch h.objType {
-	case factory.NodeType:
-		node, ok := newObj.(*corev1.Node)
-		if !ok {
-			return fmt.Errorf("could not cast %T object to *corev1.Node", newObj)
-		}
-		_, nodeFailed := h.nodeSyncFailed.Load(node.GetName())
-		if !nodeFailed && !needsNodeAllocation(node) {
-			// node ID and transit switch IP are assigned by us and cannot change
-			return nil
-		}
-		if err = h.nac.handleAddUpdateNodeEvent(ctx, node); err != nil {
-			return fmt.Errorf("node update failed for %s, will try again later: %w",
-				node.Name, err)
-		}
-		h.nodeSyncFailed.Delete(node.GetName())
-	default:
-		return fmt.Errorf("no update function for object type %s", h.objType)
-	}
-	return nil
-}
-
-// DeleteResource deletes the object from the cluster according to the delete logic of its resource type.
-// cachedObj is the internal cache entry for this object, used for now for pods and network policies.
-func (h *nodeAllocationControllerEventHandler) DeleteResource(_ context.Context, obj, _ interface{}) error {
-	switch h.objType {
-	case factory.NodeType:
-		node, ok := obj.(*corev1.Node)
-		if !ok {
-			return fmt.Errorf("could not cast obj of type %T to *knet.Node", obj)
-		}
-		err := h.nac.handleDeleteNode(node)
-		if err != nil {
-			return err
-		}
-		h.nodeSyncFailed.Delete(node.GetName())
-	}
-	return nil
-}
-
-func (h *nodeAllocationControllerEventHandler) SyncFunc(_ context.Context, objs []interface{}) error {
-	var syncFunc func([]interface{}) error
-
-	if h.syncFunc != nil {
-		// syncFunc was provided explicitly
-		syncFunc = h.syncFunc
-	} else {
-		switch h.objType {
-		case factory.NodeType:
-			syncFunc = h.nac.syncNodes
-
-		default:
-			return fmt.Errorf("no sync function for object type %s", h.objType)
-		}
-	}
-	if syncFunc == nil {
-		return nil
-	}
-	return syncFunc(objs)
-}
-
-func (h *nodeAllocationControllerEventHandler) AreResourcesEqual(obj1, obj2 interface{}) (bool, error) {
-	// switch based on type
-	if h.objType == factory.NodeType {
-		node1, ok := obj1.(*corev1.Node)
-		if !ok {
-			return false, fmt.Errorf("could not cast obj1 of type %T to *corev1.Node", obj1)
-		}
-		node2, ok := obj2.(*corev1.Node)
-		if !ok {
-			return false, fmt.Errorf("could not cast obj2 of type %T to *corev1.Node", obj2)
-		}
-
-		// Check if the annotations have changed.
-		if util.NodeIDAnnotationChanged(node1, node2) {
-			return false, nil
-		}
-		if util.NodeTransitSwitchPortAddrAnnotationChanged(node1, node2) {
-			return false, nil
-		}
-		// Check if a node is switched between ho node to ovn node
-		if util.NoHostSubnet(node1) != util.NoHostSubnet(node2) {
-			return false, nil
-		}
-		return true, nil
-	}
-
-	return false, nil
-}
-
-// GetResourceFromInformerCache returns the latest state of the object from the informers cache
-// given an object key and its type
-func (h *nodeAllocationControllerEventHandler) GetResourceFromInformerCache(key string) (interface{}, error) {
-	var obj interface{}
-	var name string
-	var err error
-
-	_, name, err = cache.SplitMetaNamespaceKey(key)
-	if err != nil {
-		return nil, fmt.Errorf("failed to split key %s: %w", key, err)
-	}
-
-	switch h.objType {
-	case factory.NodeType:
-		obj, err = h.nac.watchFactory.GetNode(name)
-
-	default:
-		err = fmt.Errorf("object type %s not supported, cannot retrieve it from informers cache",
-			h.objType)
-	}
-	return obj, err
 }
