@@ -395,6 +395,102 @@ ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | 
 			),
 		)
 
+		// This test validates that a primary UDN ClusterIP service remains
+		// reachable after the ovnkube-node pods are restarted, i.e. the service
+		// datapath is correctly reprogrammed on restart.
+		DescribeTable(
+			"primary UDN ClusterIP service should remain reachable after ovnkube-node is restarted",
+			func(netConfigParams networkAttachmentConfigParams) {
+				ctx := context.TODO()
+				namespace := f.Namespace.Name
+				jig := e2eservice.NewTestJig(cs, namespace, "udn-restart-svc")
+
+				By("Selecting 2 schedulable nodes")
+				nodes, err := e2enode.GetBoundedReadySchedulableNodes(ctx, cs, 2)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(len(nodes.Items)).To(BeNumerically(">", 1))
+				endpointNode := &nodes.Items[0]
+				clientNode := &nodes.Items[1]
+
+				By("Creating the UDN attachment configuration")
+				netConfig := newNetworkAttachmentConfig(netConfigParams)
+				netConfig.namespace = namespace
+				_, err = nadClient.NetworkAttachmentDefinitions(namespace).Create(
+					ctx,
+					generateNAD(netConfig, cs),
+					metav1.CreateOptions{},
+				)
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Creating a ClusterIP UDN service")
+				policy := v1.IPFamilyPolicyPreferDualStack
+				udnService, err := jig.CreateUDPService(ctx, func(s *v1.Service) {
+					s.Spec.Ports = []v1.ServicePort{
+						{
+							Name:       "udp",
+							Protocol:   v1.ProtocolUDP,
+							Port:       servicePort,
+							TargetPort: intstr.FromInt(serviceTargetPort),
+						},
+					}
+					s.Spec.Type = v1.ServiceTypeClusterIP
+					s.Spec.IPFamilyPolicy = &policy
+				})
+				framework.ExpectNoError(err)
+
+				By("Creating the UDN backend pod on the endpoint node")
+				udnServerPod := e2epod.NewAgnhostPod(
+					namespace, "backend-pod", nil, nil,
+					[]v1.ContainerPort{
+						{ContainerPort: (serviceTargetPort), Protocol: "UDP"}},
+					"-c",
+					fmt.Sprintf(`
+set -xe
+iface=ovn-udn1
+ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | paste -sd, -)
+./agnhost netexec --udp-port=%d --udp-listen-addresses=$ips
+`, serviceTargetPort))
+				udnServerPod.Spec.Containers[0].Command = []string{"/bin/bash"}
+				udnServerPod.Labels = jig.Labels
+				udnServerPod.Spec.NodeName = endpointNode.Name
+				udnServerPod = e2epod.NewPodClient(f).CreateSync(ctx, udnServerPod)
+
+				By("Creating a UDN client pod on a different node")
+				clientPod := e2epod.NewAgnhostPod(namespace, "udn-client", nil, nil, nil)
+				clientPod.Spec.NodeName = clientNode.Name
+				clientPod = e2epod.NewPodClient(f).CreateSync(ctx, clientPod)
+
+				By("Verifying the ClusterIP service is reachable before the restart")
+				checkConnectionToClusterIPs(f, clientPod, udnService, udnServerPod.Name)
+
+				By("Restarting ovnkube-node pods on both nodes")
+				ovnkNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+				err = restartOVNKubeNodePodsInParallel(cs, ovnkNamespace, endpointNode.Name, clientNode.Name)
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Verifying the ClusterIP service is still reachable after the restart")
+				checkConnectionToClusterIPs(f, clientPod, udnService, udnServerPod.Name)
+			},
+			Entry(
+				"L3 primary UDN",
+				networkAttachmentConfigParams{
+					name:     nadName,
+					topology: "layer3",
+					cidr:     primaryLayer3MultiCIDRs(),
+					role:     "primary",
+				},
+			),
+			Entry(
+				"L2 primary UDN",
+				networkAttachmentConfigParams{
+					name:     nadName,
+					topology: "layer2",
+					cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					role:     "primary",
+				},
+			),
+		)
+
 	})
 
 })
