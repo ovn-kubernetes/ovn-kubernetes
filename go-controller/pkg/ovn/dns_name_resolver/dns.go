@@ -4,6 +4,7 @@
 package dnsnameresolver
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -173,8 +174,31 @@ func (e *EgressDNS) updateEntryForName(dnsName string) error {
 			ipsNoClusterSubnet = append(ipsNoClusterSubnet, ip)
 		}
 	}
-	if err := e.dnsEntries[dnsName].dnsAddressSet.SetAddresses(util.StringSlice(ipsNoClusterSubnet)); err != nil {
-		return fmt.Errorf("cannot add IPs from EgressFirewall AddressSet %s: %v", dnsName, err)
+	if err := e.updateAddressSet(dnsName, util.StringSlice(ipsNoClusterSubnet)); err != nil {
+		return fmt.Errorf("cannot add IPs from EgressFirewall AddressSet %s: %w", dnsName, err)
+	}
+	return nil
+}
+
+// updateAddressSet applies addresses to the cached OVN address set for dnsName.
+// If the database row was removed, it recreates the set and retries once.
+func (e *EgressDNS) updateAddressSet(dnsName string, addresses []string) error {
+	dnsEntry := e.dnsEntries[dnsName]
+	if err := dnsEntry.dnsAddressSet.SetAddresses(addresses); err == nil {
+		return nil
+	} else if !errors.Is(err, libovsdbclient.ErrNotFound) {
+		return err
+	}
+
+	asIndex := GetEgressFirewallDNSAddrSetDbIDs(dnsName, e.controllerName)
+	dnsAddressSet, err := e.addressSetFactory.EnsureAddressSet(asIndex)
+	if err != nil {
+		return fmt.Errorf("failed to recreate address set for DNS name %s: %w", dnsName, err)
+	}
+
+	dnsEntry.dnsAddressSet = dnsAddressSet
+	if err := dnsEntry.dnsAddressSet.SetAddresses(addresses); err != nil {
+		return fmt.Errorf("failed to update recreated address set for DNS name %s: %w", dnsName, err)
 	}
 	return nil
 }
