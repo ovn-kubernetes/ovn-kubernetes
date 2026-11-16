@@ -83,9 +83,23 @@ func DeleteStaticMACBindingWithPredicateOps(nbClient libovsdbclient.Client, ops 
 	return m.DeleteOps(ops, opModel)
 }
 
-// DeleteStaticMACBindingWithPredicate deletes a Static MAC entry for a logical port from the cache
-func DeleteStaticMACBindingWithPredicate(nbClient libovsdbclient.Client, p staticMACBindingPredicate) error {
-	ops, err := DeleteStaticMACBindingWithPredicateOps(nbClient, nil, p)
+// DeleteStaticMACBindingsWithPredicateOps returns ops to delete all Static MAC entries matching the predicate
+func DeleteStaticMACBindingsWithPredicateOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, p staticMACBindingPredicate) ([]ovsdb.Operation, error) {
+	found := []*nbdb.StaticMACBinding{}
+	opModel := operationModel{
+		ModelPredicate: p,
+		ExistingResult: &found,
+		ErrNotFound:    false,
+		BulkOp:         true,
+	}
+
+	m := newModelClient(nbClient)
+	return m.DeleteOps(ops, opModel)
+}
+
+// DeleteStaticMACBindingsWithPredicate deletes all Static MAC entries matching the predicate
+func DeleteStaticMACBindingsWithPredicate(nbClient libovsdbclient.Client, p staticMACBindingPredicate) error {
+	ops, err := DeleteStaticMACBindingsWithPredicateOps(nbClient, nil, p)
 	if err != nil {
 		return err
 	}
