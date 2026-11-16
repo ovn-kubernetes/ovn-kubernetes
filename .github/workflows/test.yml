@@ -518,18 +518,6 @@ jobs:
       run: |
         docker load --input ${CI_IMAGE_PR_TAR} && rm -rf ${CI_IMAGE_PR_TAR}
 
-    # install-kind ran from the base branch, so the e2e binary matches the base
-    # Kubernetes version. Refresh it if the PR branch pins a different one.
-    - name: Refresh e2e binary to PR branch Kubernetes version
-      run: |
-        K8S_VERSION=$(sed -n 's/^K8S_VERSION="\(.*\)"/\1/p' test/scripts/install-kind.sh)
-        if [[ "$(/usr/local/bin/e2e.test --version)" != "${K8S_VERSION}" ]]; then
-          curl -LO https://dl.k8s.io/${K8S_VERSION}/kubernetes-test-linux-amd64.tar.gz
-          tar xvzf kubernetes-test-linux-amd64.tar.gz
-          sudo mv kubernetes/test/bin/e2e.test kubernetes/test/bin/ginkgo /usr/local/bin/
-          rm -rf kubernetes kubernetes-test-linux-amd64.tar.gz
-        fi
-
     # Stage 1 rolls every ovnkube-node but one to the PR image while the
     # cluster-manager stays on the base image, so e2e covers both skews the
     # supported order produces: new nodes with an old control plane, and new
