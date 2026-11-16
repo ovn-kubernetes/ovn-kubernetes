@@ -566,6 +566,9 @@ func (oc *DefaultNetworkController) addUpdateLocalNodeEvent(_ context.Context, n
 			return fmt.Errorf("nodeAdd: error adding node %q: %w", node.Name, err)
 		}
 		oc.addNodeFailed.Delete(node.Name)
+		// The egress node handler may see a node before its switch exists:
+		// it is retried as soon as the switch is there.
+		oc.requestEgressNodeRetry(node)
 	}
 
 	// since the nodeSync objects are created knowing if hybridOverlay is enabled this should work
